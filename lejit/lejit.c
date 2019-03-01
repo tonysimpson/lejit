@@ -2,6 +2,7 @@
 #include <frameobject.h>
 #include "lejit.h"
 #include "mergepoints.h"
+#include "compiler.h"
 
 
 PyObject *LeExc_Exception; 
@@ -26,10 +27,10 @@ static PyObject *attach(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
-
 static PyMethodDef module_methods[] = {
     {"attach", attach, METH_NOARGS, "Start the JIT."},
     MERGEPOINTS_METHODS
+    COMPILER_METHODS
     {NULL, NULL, 0, NULL}
 };
 
@@ -50,11 +51,16 @@ PyInit_lejit(void) {
     }
     if (m != NULL) {
         PyModule_AddObject(m, "Exception", LeExc_Exception);
-        if(!init_mergepoints(m)) {
-            Py_DECREF(m);
-            return NULL;
-        }
+        if(init_mergepoints(m) == -1)
+            goto error;
+        if(init_compiler(m) == -1)
+            goto error;
     }
+    goto done;
+error:
+    Py_DECREF(m);
+    m = NULL;
+done:
     return m;
 }
 

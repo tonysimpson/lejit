@@ -215,22 +215,22 @@ PyObject *Le_MergePointsBuild(PyObject *self, PyObject *args) {
 
 PyObject *LeExc_UnsupportedOpError;
 
-bool init_mergepoints(PyObject *m) {
+int init_mergepoints(PyObject *m) {
     if (PyType_Ready(&LeMergePoint_Type) < 0)
-        return false;
+        return -1;
     if (PyType_Ready(&LeMergePoints_Type) < 0)
-        return false;
+        return -1;
     PyModule_AddObject(m, "MergePoint", (PyObject*)&LeMergePoint_Type);
     PyModule_AddObject(m, "MergePoints", (PyObject*)&LeMergePoints_Type);
     if(!(LeExc_UnsupportedOpError = PyErr_NewException("lejit.UnsupportedOpError", LeExc_Exception, NULL))) {
-        return false;
+        return -1;
     }
     PyModule_AddObject(m, "UnsupportedOpError", LeExc_UnsupportedOpError);
     PyObject *co_to_mp = PyDict_New();
     if (co_to_mp == NULL) {
-        return false;
+        return -1;
     }
     PyModule_AddObject(m, "co_to_mp", co_to_mp);
-    return true;
+    return 0;
 }
 

@@ -32,7 +32,7 @@ PyObject *mergepoints_find_entry_points(PyObject *mergepoints,
 /* All the following required for construction and initialisation of the 
    module. */
 PyObject *Le_MergePointsBuild(PyObject *self, PyObject *args);
-bool init_mergepoints(PyObject *module);
+int init_mergepoints(PyObject *module);
 #define MERGEPOINTS_METHODS \
     {"merge_points_build", Le_MergePointsBuild, METH_VARARGS, \
      "Build MergePoints from code object. Raises UnsupportedOpError" \

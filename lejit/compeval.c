@@ -13,7 +13,7 @@
    requires the code to run upto a defined point when compilation will 
    continue.
    */
-LeEntryPointObject* LeCompEval_Compile(LeCompilerState *s)
+LeEntryPointObject* LeCompEval_Compile(LeStateObject *s)
 {
     LeEntryPointObject *entry_point = NULL;
     PyFrameObject *f;
@@ -70,7 +70,7 @@ LeEntryPointObject* LeCompEval_Compile(LeCompilerState *s)
 #define PREDICTED(op) PRED_##op:
 
 /* Stack manipulation macros */
-#define STACK_LEVEL()     ((int)(stack_pointer - c->c_valuestack))
+#define STACK_LEVEL()     ((int)(stack_pointer - s->s_valuestack))
 #define EMPTY()           (STACK_LEVEL() == 0)
 #define TOP()             (stack_pointer[-1])
 #define SECOND()          (stack_pointer[-2])
@@ -139,28 +139,28 @@ LeEntryPointObject* LeCompEval_Compile(LeCompilerState *s)
     
     f = le_compiler_fake_frame_make(s);
     tstate->frame = f;
-    co = c->c_code;
-    names = c->c_names;
-    consts = c->c_consts;
-    fastlocals = c->c_localsplus;
-    freevars = c->c_localsplus + co->co_nlocals;
+    co = s->s_code;
+    names = s->s_names;
+    consts = s->s_consts;
+    fastlocals = s->s_fastlocals;
+    freevars = s->s_freevars;
 
     first_instr = (_Py_CODEUNIT *) PyBytes_AS_STRING(co->co_code);
 
     next_instr = first_instr;
-    if (c->c_lasti >= 0) {
-        next_instr += c->c_lasti / sizeof(_Py_CODEUNIT) + 1;
+    if (s->s_lasti >= 0) {
+        next_instr += s->s_lasti / sizeof(_Py_CODEUNIT) + 1;
     }
-    stack_pointer = c->c_stacktop;
+    stack_pointer = s->s_stacktop;
     assert(stack_pointer != NULL);
-    c->c_stacktop = NULL;       /* remains NULL unless compilation suspends */
+    s->s_stacktop = NULL;       /* remains NULL unless compilation suspends */
     f->f_executing = 1;
 
 
 main_loop:
     for(;;) {
     fast_next_opcode:
-        c->c_lasti = f->f_lasti = INSTR_OFFSET();
+        s->s_lasti = f->f_lasti = INSTR_OFFSET();
         NEXTOPARG();
     dispatch_opcode:
         switch (opcode) {
