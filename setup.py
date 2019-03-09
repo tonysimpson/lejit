@@ -35,8 +35,7 @@ setup(
     url              = "http://github.com/tonysimpson/lejit",
     license          = "MIT License",
     ext_modules=[Extension(name = 'lejit',
-                           sources = ['./lejit/lejit.c', './lejit/mergepoints.c',],
-                           include_dirs=['./lejit/cpython/Include'],
+                           sources = ['./lejit/lejit.c', './lejit/writer.c'],
                            extra_compile_args = extra_compile_args)], 
     classifiers=CLASSIFIERS,
 )

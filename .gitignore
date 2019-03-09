@@ -2,3 +2,4 @@ build
 *.py[cod]
 *.so
 *.egg-info
+.vscode

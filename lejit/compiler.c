@@ -1,5 +1,5 @@
-#include "compiler.h"
-
+#include "compeval.h"
+#include "state.h"
 
 #define UNBOUNDLOCAL_ERROR_MSG \
     "local variable '%.200s' referenced before assignment"
@@ -13,10 +13,9 @@
    requires the code to run upto a defined point when compilation will 
    continue.
    */
-LeEntryPointObject* LeCompEval_Compile(LeStateObject *s)
+LeEntryPointObject* LeCompiler_Compile(LeStateObject *s)
 {
     LeEntryPointObject *entry_point = NULL;
-    PyFrameObject *f;
 
     /* Copied from ceval.c unless stated. 
        LLTRACE is removed.
@@ -122,23 +121,21 @@ LeEntryPointObject* LeCompEval_Compile(LeStateObject *s)
         Py_XDECREF(traceback); \
     } while(0)
 
-
-    if ((entry_point = le_compiler_merge_or_modify_or_continue(s)) != NULL) {
+    
+    if ((entry_point = merge_or_generalise(s)) != NULL) {
         return entry_point;
     }
     else {
-        entry_point = le_compiler_entry_point_new(s);
+        entry_point = entry_point_new(s);
     }
     /* Start of code */
     /* push frame */
-#if 0
-    /* TODO: what do? */
+    /* TODO: what do? 
     if (Py_EnterRecursiveCall(""))
-        return NULL;
-#endif
+        return NULL; */
     
-    f = le_compiler_fake_frame_make(s);
-    tstate->frame = f;
+    /* In PyEval_EvalFrameEx a frame is pushed here - maybe we should push a 
+       special frame here to make the compilation visible */
     co = s->s_code;
     names = s->s_names;
     consts = s->s_consts;
@@ -154,13 +151,12 @@ LeEntryPointObject* LeCompEval_Compile(LeStateObject *s)
     stack_pointer = s->s_stacktop;
     assert(stack_pointer != NULL);
     s->s_stacktop = NULL;       /* remains NULL unless compilation suspends */
-    f->f_executing = 1;
 
 
 main_loop:
     for(;;) {
     fast_next_opcode:
-        s->s_lasti = f->f_lasti = INSTR_OFFSET();
+        s->s_lasti = INSTR_OFFSET();
         NEXTOPARG();
     dispatch_opcode:
         switch (opcode) {
@@ -199,16 +195,15 @@ main_loop:
 
         case TARGET(RETURN_VALUE): {
             retval = POP();
-            assert(f->f_iblock == 0);
+            /* assert(f->f_iblock == 0); */
             goto return_or_yield;
         }
-
 
 #if USE_COMPUTED_GOTOS
         _unknown_opcode:
 #endif
         default:
-            le_compiler_call_direct(s, LE_CALL_RETURNS_NO_VALUE, fprintf, "isii", stderr, "XXX lineno: %d, opcode: %d\n", PyFrame_GetLineNumber(f), opcode);
+            le_specialiser_call_direct(s, LE_CALL_RETURNS_NO_VALUE, fprintf, "isii", stderr, "XXX lineno: %d, opcode: %d\n", LeState_GetLineNumber(s), opcode);
             PyErr_SetString(PyExc_SystemError, "unknown opcode");
             goto error;
         } /* switch */
@@ -235,13 +230,11 @@ exception_unwind:
 return_or_yield:
 exit_eval_frame:
     /* Py_LeaveRecursiveCall(); TODO: what do? */
-    f->f_executing = 0;
-    /* Remove the fake frame */
-    tstate->frame = f->f_back;
-    Py_XDECREF(f);
-    /* Compile return */
-    le_compiler_return(s, _Le_CheckFunctionResult(s, NULL, retval, "PyEval_EvalFrameEx"));
+    le_specialiser_return(s, _Le_CheckFunctionResult(s, NULL, retval, "PyEval_EvalFrameEx"));
     return entry_point;
 }
 
 
+int init_compeval(PyObject *m) {
+    return 0;
+}
