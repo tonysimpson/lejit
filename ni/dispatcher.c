@@ -1819,6 +1819,34 @@ static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
   return fix_fast_common_case(fs, (long)key, result);
 }
 
+/* psyco_static_type_promotion: as above, but a value that is not a static
+   type goes to the megamorphic version without being made a constant.
+   That version is valid for any value, so the inline fast case may point
+   to it even if the object dies and its address is reused. */
+static code_t *do_promotion_static_type(rt_promotion_t *fs, PyObject *key) {
+  code_t *result;
+  long key1 = (long)key;
+
+  QUICK_LOOKUP_PROMOTION_VALUE(fs, key1, result);
+  if (result == NULL) {
+    rt_local_buf_t *megabuf = NULL;
+    int count = lookup_count_previous_values(fs, &megabuf);
+    if (!PyType_Check(key) ||
+        (((PyTypeObject *)key)->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
+        count >= MEGAMORPHIC_MAX) {
+      if (megabuf == NULL)
+        result = detected_megamorphic_pyobj_site(fs);
+      else
+        result = (code_t *)(megabuf + 1);
+    } else {
+      Py_INCREF(key);
+      result = do_promotion_internal(
+          fs, key1, sk_new((long)key, SkFlagFixed | SkFlagPyObj));
+    }
+  }
+  return fix_fast_common_case(fs, key1, result);
+}
+
 DEFINEFN
 code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
   rt_promotion_t *fs;
@@ -1838,6 +1866,9 @@ code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
   /*case PFlagMegamorphic: ... */
   case PFlagPyObj | PFlagMegamorphic:
     do_promotion = &do_promotion_pyobj_mega;
+    break;
+  case PFlagPyObj | PFlagMegamorphic | PFlagStaticType:
+    do_promotion = &do_promotion_static_type;
     break;
   default:
     psyco_fatal_msg("bad pflags");

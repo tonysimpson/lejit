@@ -264,9 +264,10 @@ static int isinstance_known(PyTypeObject *tp, PyObject *cls, int depth) {
 }
 
 /* the same for a class given as a vinfo: a virtual tuple (built here) is
-   walked item by item, any other run-time tuple is left to CPython, and
-   anything else (a class: long-lived) is promoted. Sets *r; returns false
-   on error or promotion. */
+   walked item by item; otherwise only a static type is promoted. Anything
+   else at run time (a heap class, which a constant would keep alive, or a
+   tuple made elsewhere, a new object each call) is left to CPython. Sets
+   *r; returns false on error or promotion. */
 static bool isinstance_known_v(PsycoObject *po, PyTypeObject *tp,
                                vinfo_t *vcls, int depth, int *r) {
   PyObject *cls;
@@ -283,18 +284,7 @@ static bool isinstance_known_v(PsycoObject *po, PyTypeObject *tp,
         return false;
     return true;
   }
-  if (!is_compiletime(vcls->source)) {
-    /* a tuple made at run time is a new object each time: promoting it
-       would compile a new version per call (up to MEGAMORPHIC_MAX) */
-    PyTypeObject *ctp = Psyco_NeedType(po, vcls);
-    if (ctp == NULL)
-      return false;
-    if (PyType_IsSubtype(ctp, &PyTuple_Type)) {
-      *r = -1;
-      return true;
-    }
-  }
-  m = psyco_pyobj_atcompiletime_mega(po, vcls, &cls);
+  m = psyco_atcompiletime_static_type(po, vcls, &cls);
   if (m < 0)
     return false;
   *r = m == 0 ? -1 : isinstance_known(tp, cls, depth);
@@ -380,29 +370,20 @@ static vinfo_t *pbuiltin_round(PsycoObject *po, vinfo_t *vself,
    PyNumber_Long, which returns an exact int unchanged and uses nb_int
    (float___trunc___impl) for a float. float(x): float_new_impl ->
    PyNumber_Float, which returns an exact float unchanged and uses nb_float
-   (long_float -> PyLong_AsDouble) for an int. The callee is compared with
-   the three types at run time rather than promoted: a promoted class
-   would be kept alive by the compiled code (freeing.namedtuple_code_dies).
-   The comparisons only depend on earlier ones, as respawn requires. */
+   (long_float -> PyLong_AsDouble) for an int. Only a static type
+   callee is promoted: a promoted class would be kept alive by the compiled
+   code (freeing.namedtuple_code_dies). */
 static vinfo_t *ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg,
                            vinfo_t *vkw) {
-  static PyTypeObject *const handled[] = {&PyLong_Type, &PyFloat_Type,
-                                           &PyType_Type};
-  PyObject *t = NULL;
+  PyObject *t;
   PyTypeObject *tp;
   vinfo_t *v, *x;
-  int i;
-  if (!psyco_knowntobe(vkw, 0) || PsycoTuple_Load(varg) != 1)
-    goto fallback;
-  for (i = 0; i < 3 && t == NULL; i++) {
-    condition_code_t cc =
-        integer_cmp_i(po, vtype, (long)handled[i], Py_EQ);
-    if (cc == CC_ERROR)
-      return NULL;
-    if (runtime_condition_f(po, cc))
-      t = (PyObject *)handled[i];
-  }
-  if (t == NULL)
+  int m = psyco_atcompiletime_static_type(po, vtype, &t);
+  if (m < 0)
+    return NULL;
+  if (m == 0 || !psyco_knowntobe(vkw, 0) || PsycoTuple_Load(varg) != 1 ||
+      (t != (PyObject *)&PyType_Type && t != (PyObject *)&PyLong_Type &&
+       t != (PyObject *)&PyFloat_Type))
     goto fallback;
   v = PsycoTuple_GET_ITEM(varg, 0);
   if (t == (PyObject *)&PyType_Type)

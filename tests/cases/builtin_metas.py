@@ -311,6 +311,17 @@ def type_call_many_classes():
         out.append(repr(make(cls, 3)))
     return out
 
+def type_call_alternating(n):
+    # one site switches between heap classes (never constants) and static
+    # types (promoted), in both orders, past MEGAMORPHIC_MAX
+    out = []
+    for i in range(n):
+        cls = (K, int, MyFloat, float, type, K, str, MyInt)[i % 8]
+        r = make(cls, i)
+        out.append(r.a if cls is K else repr(r))
+        out.append(isinstance(i, cls))
+    return out
+
 CASES = [
     ('lens', "[([1, 2], (1,), 'abcd', {'k': 1}), ([], (), '', {})]", {}),
     ('len_user', '[(L(),), (BadLen(),), (5,), (None,)]', {}),
@@ -339,5 +350,6 @@ CASES = [
     ('conversion_loop', [(20,)], {}),
     ('type_calls_other', [()], {}),
     ('type_call_many_classes', [()], {}),
+    ('type_call_alternating', [(3,), (40,)], {}),
     ('pow_bad_calls', [((2, 3),), ((2,),), ((2, 3, 4, 5),)], {}),
 ]

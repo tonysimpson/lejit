@@ -234,6 +234,7 @@ typedef struct c_promotion_s {
 
 #define PFlagPyObj		1
 #define PFlagMegamorphic	2
+#define PFlagStaticType		4  /* with PFlagPyObj|PFlagMegamorphic */
 
 
 
@@ -247,6 +248,12 @@ EXTERNVAR c_promotion_t psyco_nonfixed_pyobj_promotion;
    values. */
 /*EXTERNVAR c_promotion_t psyco_nonfixed_promotion_mega;*/
 EXTERNVAR c_promotion_t psyco_nonfixed_pyobj_promotion_mega;
+
+/* The same, but a value that is not a static (non-heap) type is never made
+   a constant: it goes to the site's megamorphic version at once. A
+   constant is referenced by the compiled code for good, which is free for
+   a static type and keeps anything else alive. */
+EXTERNVAR c_promotion_t psyco_static_type_promotion;
 
 #define MEGAMORPHIC_MAX    5
 

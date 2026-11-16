@@ -54,6 +54,21 @@ def namedtuple_code_dies():
     return [r() is None for r in refs]
 
 
+def isinstance_class_dies():
+    # isinstance's meta must not make a constant of a heap class: the
+    # compiled code would keep it alive (the type-call meta had the same
+    # problem with namedtuple_code_dies)
+    refs = []
+    out = []
+    for k in range(4):
+        C = type('C%d' % k, (), {})
+        out.append(isinstance(5, C))
+        refs.append(weakref.ref(C))
+    del C
+    gc.collect()
+    return out, [r() is None for r in refs]
+
+
 GSRC = compile('''
 def g(a):
     t = 0
@@ -78,5 +93,6 @@ CASES = [
     ('code_dies_with_shared_globals', [()], {'interpreted': 'calls exec (C15)'}),
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec (C15)'}),
     ('namedtuple_code_dies', [()], {'leaks': 'C14 (2): state referenced from machine code'}),
+    ('isinstance_class_dies', [()], {'leaks': 'C14 (2): state referenced from machine code'}),
     ('borrowed_globals_reused', [()], {'leaks': 'C14 (2): a snapshot per new dict'}),
 ]

@@ -162,6 +162,11 @@ PSY_INLINE PyObject *psyco_pyobj_atcompiletime(PsycoObject *po, vinfo_t *vi) {
                                         long *out);*/
 EXTERNFN int psyco_pyobj_atcompiletime_mega(PsycoObject *po, vinfo_t *vi,
                                             PyObject **out);
+/* the same, but only a static type is promoted (psyco_static_type_promotion):
+   returns 0 for anything else at run time. A value that is already
+   compile-time is returned as it is, whatever it is. */
+EXTERNFN int psyco_atcompiletime_static_type(PsycoObject *po, vinfo_t *vi,
+                                             PyObject **out);
 
 
 /* lazy comparison. Returns true if 'vi' is non-NULL, compile-time, and has the

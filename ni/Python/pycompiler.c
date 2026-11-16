@@ -186,6 +186,24 @@ int psyco_pyobj_atcompiletime_mega(PsycoObject *po, vinfo_t *vi,
   }
 }
 
+DEFINEFN
+int psyco_atcompiletime_static_type(PsycoObject *po, vinfo_t *vi,
+                                    PyObject **out) {
+  if (!compute_vinfo(vi, po))
+    return -1;
+  if (is_runtime(vi->source)) {
+    if (vi->source & RunTime_Megamorphic)
+      return 0;
+    PycException_Promote(po, vi, &psyco_static_type_promotion);
+    return -1;
+  } else {
+    source_known_t *sk = CompileTime_Get(vi->source);
+    sk->refcount1_flags |= SkFlagFixed;
+    *out = (PyObject *)sk->value;
+    return 1;
+  }
+}
+
 /***************************************************************/
 /***   pyc_data_t                                            ***/
 
