@@ -36,13 +36,13 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | # | Bug | State | Evidence |
 |---|---|---|---|
 | F1 | **Fixed** (`4cf49f8`). Mixed-type arithmetic raised TypeError: `pabstract.c:binary_op1` was Python 2's, trying number slots only for types with `Py_TPFLAGS_CHECKTYPES`, which doesn't exist in Py3. Now 3.7's. Tests: `tests/cases/mixed.py`. | Fixed | [run] |
-| F2 | **No builtin metas registered.** `pbltinmodule.c` calls `Psyco_DefineMetaModule("__builtin__")`, but Py3's module is `builtins`. | Live (perf) | [read] |
-| F3 | `BUILD_MAP` and the `CALL_FUNCTION` oparg keep their Python 2 meanings but are whitelisted. `RAISE_VARARGS` fixed in `ebc5cfc` (3.x `raise exc from cause`, bare raise reads `exc_info`). `END_FINALLY` keeps Ni's own finally scheme, which is consistent with itself (F18). | **Live** miscompiles | [read] history D2 |
+| F2 | **Fixed** (`5976d48`). No builtin metas were registered: `pbltinmodule.c` looked up Python 2's `"__builtin__"`. Now `builtins`; `len`, `abs`, `id` register, `divmod` (METH_FASTCALL) is skipped by the flags check (F13). | Fixed | [run] |
+| F3 | The `CALL_FUNCTION` oparg is still decoded the Python 2 way (`na \| nk << 8`), right only below 256 positional arguments. Fixed: `RAISE_VARARGS` (`ebc5cfc`), `BUILD_MAP` and new `BUILD_CONST_KEY_MAP` (`295961f`). `END_FINALLY` keeps Ni's own finally scheme, consistent with itself (F18). | **Live** (≥256 args) | [read] |
 | F4 | **Fixed** (`ebc5cfc`). Catching any exception segfaulted: handled-exception state was mapped onto `curexc_*` (Py2's model), and `cimpl_set_exc_info` increfed `curexc_type` just after `PyErr_Fetch` cleared it. Catching now follows 3.7 (EXCEPT_HANDLER block, six stack items, POP_EXCEPT). Tests: `tests/cases/exceptions.py`. What still differs is F18. | Fixed | [run] |
 | F5 | Float division by zero: **fixed** (`9ed7e6c`, `cimpl_fp_div` raises ZeroDivisionError). Still live: `pmath.c` has no domain/range errors, and `ceil`/`floor` return floats. | Live (pmath) | [read]; division [run] |
 | F6 | `pfloatobject.c:direct_compute_float` converts the stored 64-bit word numerically instead of bit-casting it. | Live when frames are rebuilt | [read] |
-| F7 | `pfuncobject.c:compute_function`: `SET_FIELD` uses `\|\|` where `&&` is meant, and stores without `FMUT\|FPYREF`, so the function holds no references to its closure or defaults. | Live if a virtual function escapes | [read]; refcount effect [inferred] |
-| F8 | Calling a virtual function ignores closures and keyword-only defaults. | Live | [inferred] |
+| F7 | **Fixed** (`06e7922`). `compute_function` stored closure/annotations/kwdefaults/defaults with raw puts into fields not declared mutable or reference-holding, under an `\|\|` meant as `&&`; it aborted once importlib functions compiled. Now `PyFunction_Set*`. | Fixed | [run] |
+| F8 | Calling a virtual function ignores closures (code with free or cell variables is now rejected outright, `eec8990`); keyword-only defaults go through `tp_call` (F17). | Mitigated | [inferred] |
 | F9 | `pstructmember.c` `T_STRING_INPLACE` builds bytes where CPython 3 builds str. | Live | [read] |
 | F10 | `pobject.c:PsycoObject_RichCompare` can run a user `__eq__` twice: a residual slot returns NotImplemented, then there's a residual `PyObject_RichCompare`. | Possible | [inferred] |
 | F11 | `pabstract.c:PsycoEval_CallObjectWithKeywords` passes a C-NULL `kw` as `'v'` on the `use_proxy` path, and `psyco_generic_call` dereferences it. | Possible | [inferred] |
@@ -71,6 +71,7 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | B11 | **Fixed** (`da6eb6d`). `ADD_O8_I8`, the `Py_INCREF` emitter, had its `updatable`/`rex_w` arguments swapped, so it was a 32-bit add on `ob_refcnt`. | Was live, benign in practice | [run] encoder test |
 | B12 | **Fixed** (`90b5cce`). `POP_O` passed 0x40 as the ModRM reg bits, so with a 32-bit displacement it encoded `pop rax` plus garbage. | Was latent | [run] encoder test |
 | B13 | **Fixed** (`ea790ae`). Memory operands based on R12 encoded as `[r12+r12*1+d]`, because `OFFSET_ENCODING` passed the base as the SIB index. | Was latent (R12 is not allocated) | [run] encoder test |
+| B14 | **Fixed** (`98f71df`). The PyErr_Occurred check after a -1 result pushed RAX, then let the register allocator run; a spill PUSH made the POP restore the wrong value and left the spilled vinfo above the top of stack. Seen as stale list lengths in loops indexing `c[-1]`, wrong results and code bytes decremented through a code address. Now emitted without allocation. Tests: `tests/cases/loops.py`, `builtin_metas.py`. | Fixed | [run] |
 
 ## Core
 
@@ -83,3 +84,4 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | C6 | **Fixed** (see git log, `frames.c`). Every compiled call leaked its frame: `frame_runtime_capsule_new` increfs the frame, code and globals, but the capsule destructor only freed the struct. Found by the leak check in `tests/run.py`. | [run] |
 | C5 | **Fixed** (`ad3cf79`). The headers defined globals without `extern` (`EXTERNVAR` was empty), so gcc 10+ (`-fno-common`) failed to link. `EXTERNVAR` is now `extern` and `-fcommon` is gone. | [run] |
 | C7 | **Fixed** (`1f46b4b`). `psyco_assert_coherent` didn't count `po->pr.tb` as a live reference, so it aborted when a finally block re-raised with a run-time traceback in a register. Debug builds only. | [run] |
+| C8 | **Fixed** (`09c55a5`). `mergepoints.c` placed the merge point of an EXTENDED_ARG-prefixed instruction after the prefix, where jumps never land and the compiler never stops; the merge-point assertion failed in long functions (`sre_parse`). | [run] |
