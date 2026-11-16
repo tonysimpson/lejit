@@ -1,6 +1,6 @@
 # Builtins with Psyco metas (KNOWN_BUGS F2): len, abs, id, and the
 # METH_FASTCALL ones (divmod, pow), whose metas take a tuple
-# (pmethodobject.h); hash, min, max, isinstance, round; and calls of the
+# (pmethodobject.h); hash, min, max, isinstance, round, sum; and calls of the
 # types int, float and type (a meta for type_call).
 
 class L:
@@ -322,6 +322,84 @@ def type_call_alternating(n):
         out.append(isinstance(i, cls))
     return out
 
+class Add:
+    # records additions, to check sum's order and that none runs twice
+    def __init__(self, v):
+        self.v = v
+    def __add__(self, other):
+        LOG.append(('add', self.v, getattr(other, 'v', other)))
+        return Add(self.v + getattr(other, 'v', other))
+    def __radd__(self, other):
+        LOG.append(('radd', self.v, other))
+        return Add(other + self.v)
+
+def sums(a, b, c):
+    out = []
+    for call in range(7):
+        try:
+            if call == 0:
+                r = sum((a, b, c))
+            elif call == 1:
+                r = sum((a, b), c)
+            elif call == 2:
+                r = sum((a,))
+            elif call == 3:
+                r = sum(())
+            elif call == 4:
+                r = sum((), a)
+            elif call == 5:
+                r = sum((a, b, c), 0.0)
+            else:
+                r = sum((a, b), -0.0)
+            out.append((repr(r), type(r).__name__))
+        except (TypeError, OverflowError) as e:
+            out.append(type(e).__name__ + ': ' + str(e))
+    return out
+
+def sum_direct(a, b, c):
+    # no lambdas: the tuples are virtual in this frame
+    try:
+        r1 = sum((a, b, c))
+        r2 = sum((a, b), c)
+        r3 = sum((c, b, a), -0.0)
+        return repr(r1), repr(r2), repr(r3), type(r1).__name__
+    except (TypeError, OverflowError) as e:
+        return type(e).__name__ + ': ' + str(e)
+
+def sum_order():
+    del LOG[:]
+    r = sum((Add(1), 2, Add(3)), Add(10))
+    s = sum((Add(1), 2))
+    return r.v, s.v, list(LOG)
+
+def sum_bad_start(x):
+    out = []
+    for start in ('', b'', bytearray()):
+        try:
+            out.append(sum((x,), start))
+        except TypeError as e:
+            out.append(str(e))
+    try:
+        out.append(sum())
+    except TypeError as e:
+        out.append(str(e))
+    try:
+        out.append(sum((x,), 0, 1))
+    except TypeError as e:
+        out.append(str(e))
+    return out
+
+def sum_fallbacks(seq):
+    # lists, ranges, constant tuples and iterators
+    return (sum(seq), sum([1, 2.5, 3]), sum(range(10)), sum((1, 2, 3)),
+            sum(iter(seq), 100), sum(seq, 0.5))
+
+def sum_loop(n):
+    t = 0
+    for i in range(n):
+        t = t + sum((i, i * 2, 1)) + sum((i, 0.5))
+    return t
+
 CASES = [
     ('lens', "[([1, 2], (1,), 'abcd', {'k': 1}), ([], (), '', {})]", {}),
     ('len_user', '[(L(),), (BadLen(),), (5,), (None,)]', {}),
@@ -351,5 +429,11 @@ CASES = [
     ('type_calls_other', [()], {}),
     ('type_call_many_classes', [()], {}),
     ('type_call_alternating', [(3,), (40,)], {}),
+    ('sums', "[(1, 2, 3), (1, 2.5, 3), (2**62, 2**62, 1), (True, True, 1), (-0.0, -0.0, -0.0), (1e308, 1e308, 1), (inf, -inf, 1), ('a', 'b', 'c'), ([1], [2], [3]), (1, 'a', 2), (MyInt(1), MyFloat(2.0), 3)]", {}),
+    ('sum_direct', "[(1, 2, 3), (1, 2.5, 3), (2**62, 2**62, 2**62), (True, 1, 0.5), (-0.0, -0.0, -0.0), ('a', 1, 2), ([1], [2], [3])]", {}),
+    ('sum_order', [()], {}),
+    ('sum_bad_start', "[(1,), ('a',)]", {}),
+    ('sum_fallbacks', [([1, 2, 3],), ((4, 5),)], {}),
+    ('sum_loop', [(30,)], {}),
     ('pow_bad_calls', [((2, 3),), ((2,),), ((2, 3, 4, 5),)], {}),
 ]

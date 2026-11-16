@@ -19,6 +19,7 @@ static PyCFunction cimpl_max;
 static PyCFunction cimpl_pow;
 static PyCFunction cimpl_isinstance;
 static PyCFunction cimpl_round;
+static PyCFunction cimpl_sum;
 static ternaryfunc type_call;
 static PyObject *object_class_descr; /* object.__class__ */
 static PyObject *str___class__;
@@ -315,6 +316,63 @@ static vinfo_t *pbuiltin_isinstance(PsycoObject *po, vinfo_t *vself,
   return x != NULL ? PsycoBool_FROM_WORD(x) : NULL;
 }
 
+/* builtin_sum_impl (Python/bltinmodule.c) is a left fold of PyNumber_Add
+   from start (default 0); its C fast paths for exact ints and floats give
+   the same results. Compiled only when the length is known now: a tuple
+   built here or a constant tuple. Every type is promoted before the first
+   addition (restart rule, PATTERNS rule 1): a user __add__ must not run
+   twice. A str, bytes or bytearray start raises, and anything else (lists,
+   iterators: items that are not frame values can't be promoted) is
+   CPython's, as before. */
+static vinfo_t *pbuiltin_sum(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs) {
+  int n = PsycoTuple_Load(vargs);
+  int i, k;
+  vinfo_t *vit, *result, *x;
+  PyTypeObject *tp;
+  if (n != 1 && n != 2)
+    goto fallback;
+  vit = PsycoTuple_GET_ITEM(vargs, 0);
+  if (is_compiletime(vit->source)) {
+    if (!PyTuple_CheckExact((PyObject *)CompileTime_Get(vit->source)->value))
+      goto fallback;
+  } else if (Psyco_KnownType(vit) != &PyTuple_Type)
+    goto fallback;
+  k = PsycoTuple_Load(vit);
+  if (k < 0)
+    goto fallback;
+  if (n == 2) {
+    tp = Psyco_NeedType(po, PsycoTuple_GET_ITEM(vargs, 1));
+    if (tp == NULL)
+      return NULL;
+    if (PyType_IsSubtype(tp, &PyUnicode_Type) ||
+        PyType_IsSubtype(tp, &PyBytes_Type) ||
+        PyType_IsSubtype(tp, &PyByteArray_Type))
+      goto fallback;
+  }
+  for (i = 0; i < k; i++)
+    if (Psyco_NeedType(po, PsycoTuple_GET_ITEM(vit, i)) == NULL)
+      return NULL;
+  if (n == 2) {
+    result = PsycoTuple_GET_ITEM(vargs, 1);
+    vinfo_incref(result);
+  } else
+    result = PsycoLong_FROM_LONG(po, psyco_vi_Zero());
+  for (i = 0; i < k && result != NULL; i++) {
+    vinfo_t *item = PsycoTuple_GET_ITEM(vit, i);
+    if (Psyco_KnownType(result) != NULL)
+      x = PsycoNumber_Add(po, result, item);
+    else /* e.g. from a user __add__: a temporary, so its type can't be
+            promoted; CPython's generic loop */
+      x = psyco_generic_call(po, PyNumber_Add, CfCommonNewRefPyObject, "vv",
+                             result, item);
+    vinfo_decref(result, po);
+    result = x;
+  }
+  return result;
+fallback:
+  return PsycoCFunction_CallFast(po, cimpl_sum, METH_FASTCALL, vself, vargs);
+}
+
 /* An exact float's whole part (trunc or round-half-even) as an int, or
    NULL in *out (with true returned) if it doesn't fit a long: then the
    caller asks CPython, which raises for NaN and infinities or builds a
@@ -435,6 +493,7 @@ void psyco_bltinmodule_init(void) {
   DEFMETA(pow, METH_FASTCALL);
   DEFMETA(isinstance, METH_FASTCALL);
   DEFMETA(round, METH_FASTCALL | METH_KEYWORDS);
+  DEFMETA(sum, METH_FASTCALL);
   type_call = PyType_Type.tp_call;
   Psyco_DefineMeta(type_call, ptype_call);
   str___class__ = PyUnicode_InternFromString("__class__");
