@@ -22,6 +22,32 @@ def long_compare_run():
             many_compares(0, 0, 0, 0, 0, 0)]
 
 
+# KNOWN_BUGS B16: where paths join, the stack is lined up before the jump;
+# with a SUB that clobbered a live comparison (the zero path of an int
+# operand joins the others right after comparing)
+def ident(x):
+    return x
+
+
+def chained(a, b, c):
+    return ident(a <= b <= c)
+
+
+def and_compare(a, b, c):
+    return a and b <= c
+
+
+def joined_compares():
+    vals = [-2, -1, 0, 1, 2]
+    out = []
+    for a in vals:
+        for b in vals:
+            for c in vals:
+                out.append((chained(a, b, c), and_compare(a, b, c)))
+    return out
+
+
 CASES = [
     ('long_compare_run', [()], {}),
+    ('joined_compares', [()], {}),
 ]

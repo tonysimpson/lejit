@@ -1528,11 +1528,15 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
     code += 2;                                                                 \
   } while (0)
 
-/* correct the stack pointer */
+/* correct the stack pointer. With a condition live in the flags this must
+   not touch them, so it is a LEA (upstream's rule; a SUB here broke a
+   virtual bool reaching a join, KNOWN_BUGS B16) */
 #define STACK_CORRECTION(stack_correction)                                     \
   do {                                                                         \
     long _sc = (stack_correction); /* > 0 grows the stack */                  \
-    if (_sc > 0) {                                                             \
+    if (_sc != 0 && HAS_CCREG(po)) {                                           \
+      LEA_R_O(REG_X64_RSP, REG_X64_RSP, -_sc);                                 \
+    } else if (_sc > 0) {                                                      \
       if (FITS_IN_8BITS(_sc)) {                                                \
         SUB_R_I8(REG_X64_RSP, _sc);                                            \
       } else {                                                                 \
