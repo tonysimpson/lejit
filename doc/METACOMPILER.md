@@ -1,6 +1,6 @@
 ---
 written: 2026-11-16
-status: stage 1 started (`64f88e7`: ints)
+status: stage 1 started (`64f88e7` ints, `749985f` floats)
 ---
 # Meta-compiler: approach and tooling options
 
@@ -45,6 +45,26 @@ Token rewriting means working on C tokens (skipping comments, strings and prepro
 
 Still hand-written: the representation of a virtual int. That is `plong_medium_value` (`MEDIUM_VALUE` and its guard on an int that has no `ob_size`), the residual fallbacks, and the `compute`/`direct_compute` functions. This is the runtime-model layer that QUESTIONS 23 asks about; the generator emits calls to it.
 
+## Second slice: floats (`749985f`)
+
+`tools/metac/gen_float.py` reads `Objects/floatobject.c` and writes `ni/Objects/pfloatobject_gen.h`. The shared parts live in `tools/metac/cslots.py`. [run]
+
+- **Shape matched:**
+  - `double` locals, then `CONVERT_TO_DOUBLE(param, x);` for each operand, or reads of `param->ob_fval`.
+  - Then code on doubles only.
+  - Then `return PyFloat_FromDouble(EXPR);`, or `return EXPR;` for `nb_bool`.
+- **Copy-through:** the backend has no floating-point instructions, so the double-only code is copied, nearly verbatim, into a C helper that the meta calls.
+  - The helper is `CfPure`, so it folds on constants. It is `CfPyErrCheck` if it can raise, and `return NULL` becomes `return -1`.
+  - Every name in the copied code must be a double local, a whitelisted libm function (`fmod`, `copysign`, `fabs`, `floor`), `PyErr_SetString` or a `PyExc_*`. So code that touches objects can't slip through.
+- **Macros:** the `PyFPE_*` macros are dropped only after checking that `pyconfig.h` doesn't define `WANT_SIGFPE_HANDLER`. The output also has an `#error` guard for that case.
+- **Result:** 8 of 14 slots (+ - * / % unary - abs bool).
+  - It replaces the hand-written + - * / unary - and abs, with the same helper calls.
+  - `%` and `bool` are new; they were residual calls.
+  - Same speed on nbody and mandel. Test: `tests/cases/floats.py`.
+- **Representation, hand-written:** `psyco_convert_to_double` for `CONVERT_TO_DOUBLE`, `PsycoFloat_AS_DOUBLE` for `ob_fval`, and the compute functions.
+
+Compared with ints, the floats needed no range analysis, because the C helper *is* the C code. That makes copy-through the cheapest pattern so far. It works wherever the backend lacks an operation and the code touches only C scalars.
+
 ## Failures log
 
 Record here each case where the current approach failed: the CPython file and function, what it couldn't do, and what we did.
@@ -57,4 +77,8 @@ Record here each case where the current approach failed: the CPython file and fu
 | `long_abs` | Branches on `Py_SIZE(v) < 0` and calls other slots (`long_neg`, `long_long`). Needs the same `Py_SIZE` rule as `long_bool`, plus calls between translated slots. | Residual. |
 | `long_long` (pos, int, index) | `PyLong_CheckExact(v) ? incref v : _PyLong_Copy(v)`: an identity pattern (P21), not a fast path. | Residual. |
 | `long_pow`, `long_divmod`, shifts, `& ^ |`, `long_float`, `long_true_divide` | 3.7's C has no one-digit fast path to translate; they work on digit arrays. | Residual. |
-
+| `floatobject.c:float_float` (pos, float) | `PyFloat_CheckExact(v) ? incref v : new float`: the identity pattern (P21) again, as for `long_long`. | Unary + stays hand-written, and it always makes a new float (KNOWN_BUGS F22). |
+| `float_divmod`, `float_floor_div` | They return a tuple (`Py_BuildValue`), or take item 0 of `float_divmod`'s. Copy-through only builds a float. | Residual. Candidate: a virtual tuple of two copy-through results. |
+| `float_pow` | Uses `int` locals and many early returns of objects. | Residual. |
+| `float___trunc___impl` (nb_int) | Returns an int (`PyLong_FromDouble`), and the backend can't convert a double to a word. | Residual. |
+| `floatobject.c:float_richcompare` | Not in the number table. Switches on the type of `w`, with an exact int/float comparison. | Hand-written (P26 whitelist: float/float only). |
