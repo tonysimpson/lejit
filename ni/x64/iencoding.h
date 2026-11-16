@@ -753,6 +753,23 @@ typedef enum {
   OFFSET_ENCODING(false, false, 1, 0xFF, 0, 0, 0x30, 0, 0, rm, o)
 /* @asm: pop {r} */
 #define POP_R(r) BASE_ENCODING(false, 0, 0, 0, 0, 0x58, 0, r);
+/* A counted PUSH that a later TEMP_POP_R must undo. 'mark' (an int) records
+   the depth: nothing else may change it in between, e.g. a register spill
+   by the allocator, which would make the POP restore the spilled value
+   instead (KNOWN_BUGS B14). Calls in between are fine: END_CALL restores
+   the depth. */
+#define TEMP_PUSH_R(r, mark)                                                   \
+  do {                                                                         \
+    PUSH_R(r);                                                                 \
+    psyco_inc_stackdepth(po);                                                  \
+    (mark) = po->stack_depth;                                                  \
+  } while (0)
+#define TEMP_POP_R(r, mark)                                                    \
+  do {                                                                         \
+    psyco_assert(po->stack_depth == (mark));                                   \
+    POP_R(r);                                                                  \
+    psyco_dec_stackdepth(po);                                                  \
+  } while (0)
 /* @asm: pop qword ptr [{rm}{o}] */
 #define POP_O(rm, o)                                                           \
   OFFSET_ENCODING(false, false, 1, 0x8F, 0, 0, 0, 0, 0, rm, o)

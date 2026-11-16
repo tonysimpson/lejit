@@ -44,6 +44,7 @@ psyco_call_code_builder(PsycoObject *po, void *fn, int restore,
                         RunTimeSource extraarg, size_t block_size)
 {
     code_t *block_start;
+    int mark;
 
     BEGIN_CODE
     BEGIN_SHORT_JUMP(0);
@@ -51,13 +52,12 @@ psyco_call_code_builder(PsycoObject *po, void *fn, int restore,
     code = block_start;
     code += block_size;
     END_SHORT_JUMP(0);
-    PUSH_R(REG_FUNCTIONS_RETURN);
+    TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
     /* RAX is saved: we can be here from run_time_result_check, before the
        result has a tracked location. Other registers need no saving (only
        callee-saved ones are allocated). The flags are not saved, whatever
        'restore' says: promotion spills them first (NEED_CC) and
        psyco_coding_pause asserts none is left (KNOWN_BUGS B8). */
-    psyco_inc_stackdepth(po);
     BEGIN_CALL(extraarg != SOURCE_DUMMY ? 2 : 1);
     if (extraarg != SOURCE_DUMMY) {
         CALL_SET_ARG_FROM_RT(extraarg, 1);
@@ -65,8 +65,7 @@ psyco_call_code_builder(PsycoObject *po, void *fn, int restore,
     CALL_SET_ARG_IMMED(block_start, 0);
     END_CALL_I(fn);
     MOV_R_R(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN);
-    POP_R(REG_FUNCTIONS_RETURN); /* Restore RAX */
-    psyco_dec_stackdepth(po);
+    TEMP_POP_R(REG_FUNCTIONS_RETURN, mark); /* Restore RAX */
     JMP_R(REG_TRANSIENT_1);
     END_CODE
     return (void *)block_start;
@@ -238,6 +237,7 @@ static vinfo_t *
 run_time_result_check(PsycoObject *po, int flags)
 {
     condition_code_t error_cc;
+    int mark; /* TEMP_PUSH_R */
 #define CMP_RETURN_MINUS_1()                                 \
     do {                                                     \
         BEGIN_CODE                                           \
@@ -335,15 +335,13 @@ test_condition_and_pyerr_occured:
        curexc_type is read into the scratch register instead. */
     BEGIN_CODE
     NEED_CC(); /* before the PUSH: it may take a register */
-    PUSH_R(REG_FUNCTIONS_RETURN);
     /* counted: the call's alignment and RSP-relative addressing use it */
-    psyco_inc_stackdepth(po);
+    TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
     BEGIN_CALL(0);
     END_CALL_I(PyThreadState_Get);
     MOV_R_O(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN,
             offsetof(PyThreadState, curexc_type));
-    POP_R(REG_FUNCTIONS_RETURN);
-    psyco_dec_stackdepth(po);
+    TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
     TEST_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
     END_CODE
     error_cc = CC_NE;
