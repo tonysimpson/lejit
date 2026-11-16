@@ -161,6 +161,20 @@ def mixed_errors():
     return out
 
 
+# comparison results are virtual bools (pboolobject.h): used in jumps,
+# stored, compared by identity, and used as ints
+def bool_results(n):
+    out = []
+    flags = []
+    for i in range(-n, n):
+        b = i < 0
+        f = i * 0.5 >= 1.0
+        flags.append(b)
+        out.append((b, f, b is True, f is False, b + f, -b, b * 3, b == f,
+                    type(b), not b, b and f, b or f))
+    return out, sum(flags), flags.count(True)
+
+
 CASES = [
     ('add_edges', [()], {}),
     ('sub_edges', [()], {}),
@@ -177,4 +191,5 @@ CASES = [
     ('escapes', [(12,)], {}),
     ('loop_counter', [(100,), (0,)], {}),
     ('mixed_errors', [()], {}),
+    ('bool_results', [(4,)], {}),
 ]

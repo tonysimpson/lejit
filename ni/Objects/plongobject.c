@@ -135,6 +135,28 @@ static PyObject *direct_compute_long(vinfo_t *longobj, char *data) {
 
 DEFINEVAR source_virtual_t psyco_computed_long;
 
+static bool compute_bool(PsycoObject *po, vinfo_t *boolobj) {
+  vinfo_t *newobj;
+  vinfo_t *x = vinfo_getitem(boolobj, iLONG_VALUE);
+  if (x == NULL)
+    return false;
+  newobj = psyco_generic_call(po, PyBool_FromLong,
+                              CfPure | CfCommonNewRefPyObject, "v", x);
+  if (newobj == NULL)
+    return false;
+  vinfo_move(po, boolobj, newobj);
+  return true;
+}
+
+static PyObject *direct_compute_bool(vinfo_t *boolobj, char *data) {
+  long value = direct_read_vinfo(vinfo_getitem(boolobj, iLONG_VALUE), data);
+  if (value == -1 && PyErr_Occurred())
+    return NULL;
+  return PyBool_FromLong(value);
+}
+
+DEFINEVAR source_virtual_t psyco_computed_bool;
+
 /***************************************************************/
 /*** int objects meta-implementation                         ***/
 
@@ -327,5 +349,7 @@ void psy_longobject_init(void) {
   Psyco_DefineMeta(PyLong_Type.tp_richcompare, plong_richcompare);
 
   INIT_SVIRTUAL(psyco_computed_long, compute_long, direct_compute_long, 0, 0,
+                0);
+  INIT_SVIRTUAL(psyco_computed_bool, compute_bool, direct_compute_bool, 0, 0,
                 0);
 }

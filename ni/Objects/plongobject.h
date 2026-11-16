@@ -25,8 +25,12 @@
 /* not-yet-computed ints; computing calls PyLong_FromLong */
 EXTERNVAR source_virtual_t psyco_computed_long;
 
+/* not-yet-computed bools (pboolobject.h): virtual ints of type bool */
+EXTERNVAR source_virtual_t psyco_computed_bool;
+
 PSY_INLINE bool PsycoLong_IsVirtual(vinfo_t *v) {
-  return v->source == VirtualTime_New(&psyco_computed_long);
+  return v->source == VirtualTime_New(&psyco_computed_long) ||
+         v->source == VirtualTime_New(&psyco_computed_bool);
 }
 
 /* !! consumes a reference to vlong. PsycoLong_FromLong() does not. */
