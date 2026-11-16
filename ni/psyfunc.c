@@ -387,9 +387,18 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, PyCodeObject *co, vinfo_t *vglobals,
     result = call_with_inline_frame(po, &fncall, recursion);
   } else {
     /* non-inlining call */
+    /* count the call's depth, as ceval does on entering a frame, so that
+       deep recursion raises RecursionError instead of overflowing the C
+       stack (KNOWN_BUGS C12); psyco_call_psyco leaves it after the call.
+       Emitted before the frame is built, so no argument source moves. */
+    if (psyco_generic_call(po, cimpl_enter_recursive_call,
+                           CfNoReturnValue | CfPyErrIfNonNull, "") == NULL)
+      return NULL;
     mypo = psyco_build_frame(&fncall, recursion, &sources);
-    if (mypo == NULL)
+    if (mypo == NULL) {
+      psyco_generic_call(po, cimpl_leave_recursive_call, CfNoReturnValue, "");
       goto pyerr;
+    }
     argcount = get_arguments_count(&mypo->vlocals);
     finfo = psyco_finfo(po, mypo);
 

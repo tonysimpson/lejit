@@ -473,6 +473,18 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
     return run_time_result(po, flags);
 }
 
+DEFINEFN long
+cimpl_enter_recursive_call(void)
+{
+    return Py_EnterRecursiveCall("");
+}
+
+DEFINEFN void
+cimpl_leave_recursive_call(void)
+{
+    Py_LeaveRecursiveCall();
+}
+
 DEFINEFN
 vinfo_t *
 psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
@@ -554,6 +566,16 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
             POP_R(i);
             psyco_dec_stackdepth(po);
         }
+    }
+
+    /* the depth counted by the caller (psyco_call_pyfunc): the result is
+       only in RAX, so no register allocation until it is back */
+    {
+        int mark;
+        TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
+        BEGIN_CALL(0);
+        END_CALL_I(cimpl_leave_recursive_call);
+        TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
     }
 
     if (ccflags)

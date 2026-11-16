@@ -12,7 +12,11 @@ static PyObject *NiCode_Run(PyObject *codebuf, PyFrameObject *f) {
 
   PyThreadState *tstate = PyThreadState_GET();
 
+  /* ceval counts the depth on entering every frame (KNOWN_BUGS C12) */
+  if (Py_EnterRecursiveCall(""))
+    return NULL;
   if (!psyco_frame_start_register(f, &finfo)) {
+    Py_LeaveRecursiveCall();
     return NULL;
   }
   /* as ceval: the frame is the current one while its code runs, so that
@@ -23,6 +27,7 @@ static PyObject *NiCode_Run(PyObject *codebuf, PyFrameObject *f) {
   result = psyco_processor_run((CodeBufferObject *)codebuf,
                                (long *)f->f_localsplus, &finfo);
   tstate->frame = f->f_back;
+  Py_LeaveRecursiveCall();
   psyco_trash_object(NULL); /* free any trashed object now */
   if (!psyco_frame_start_unregister(f)) {
     Py_XDECREF(result);

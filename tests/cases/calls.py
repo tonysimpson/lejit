@@ -47,6 +47,21 @@ def call_builtin_len(s):
 def call_builtin_abs(n):
     return abs(n)
 
+def down(n):
+    return down(n + 1) + 1
+
+# endless recursion in compiled code must raise RecursionError, not
+# overflow the C stack (KNOWN_BUGS C12); twice, to check the depth is
+# given back
+def endless_recursion():
+    out = []
+    for i in range(2):
+        try:
+            down(0)
+        except RecursionError as e:
+            out.append(str(e))
+    return out
+
 CASES = [
     ('call_helper', [(1,), (-4,)], {}),
     ('call_in_loop', [(0,), (50,)], {}),
@@ -57,4 +72,5 @@ CASES = [
     ('call_many', [(1,), (7,)], {}),
     ('call_builtin_len', [('abc',), ((1, 2),), ([],)], {}),
     ('call_builtin_abs', [(-3,), (4,), (-2.5,)], {}),
+    ('endless_recursion', [()], {}),
 ]
