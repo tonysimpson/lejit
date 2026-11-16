@@ -447,11 +447,15 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
     {
       SHRINK_CODE_BUFFER(dm.private_codebuf, code, "unify");
       *target = dm.private_codebuf;
-      /* add a jump from the original code buffer to the new one */
+      /* add a jump from the original code buffer to the new one, unless
+         that is psyco_unify_code()'s throwaway stack buffer (codelimit
+         NULL): the jump could not reach from there, and nothing runs it */
       code = po->code;
-      ni_trace_begin_simple_code(code);
-      JUMP_TO((code_t*) dm.private_codebuf->codestart);
-      ni_trace_end_simple_code(code);
+      if (po->codelimit != NULL) {
+        ni_trace_begin_simple_code(code);
+        JUMP_TO((code_t*) dm.private_codebuf->codestart);
+        ni_trace_end_simple_code(code);
+      }
     }
   PsycoObject_Delete(po);
   return code;
