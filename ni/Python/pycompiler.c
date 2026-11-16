@@ -1269,6 +1269,15 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(v);
         goto fine;
 
+      case DUP_TOP_TWO:
+        v = NTOP(2);
+        w = TOP();
+        vinfo_incref(v);
+        vinfo_incref(w);
+        PUSH(v);
+        PUSH(w);
+        goto fine;
+
       case UNARY_POSITIVE:
         x = PsycoNumber_Positive(po, TOP());
         if (x == NULL)
@@ -1822,6 +1831,20 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(x);
         goto fine;
 
+      case LOAD_METHOD:
+        /* ceval pushes either (method, self) or (NULL, attribute). Ni always
+           does the latter, with a compile-time NULL; the attribute is
+           usually a virtual bound method, so nothing is lost. */
+        w = vinfo_new(CompileTime_New(((long)GETNAMEV(oparg))));
+        x = PsycoObject_GetAttr(po, TOP(), w);
+        vinfo_decref(w, po);
+        if (x == NULL)
+          break;
+        POP_DECREF();
+        PUSH(psyco_vi_Zero());
+        PUSH(x);
+        goto fine;
+
       case COMPARE_OP: {
         condition_code_t cc = CC_ERROR;
         w = TOP();
@@ -2032,6 +2055,20 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
 
         /*MISSING_OPCODE(SETUP_WITH);*/
+
+      case CALL_METHOD: {
+        /* always the (NULL, attribute) form, see LOAD_METHOD */
+        int i, stack_to_pop;
+        extra_assert(psyco_knowntobe(NTOP(oparg + 2), 0));
+        x = psyco_ext_do_calls(po, CALL_FUNCTION, oparg, STACK_POINTER(),
+                               &stack_to_pop);
+        if (x == NULL)
+          break;
+        for (i = stack_to_pop + 1; i--;) /* args, callable and the NULL */
+          POP_DECREF();
+        PUSH(x);
+        goto fine;
+      }
 
       case CALL_FUNCTION:
       case CALL_FUNCTION_KW: {

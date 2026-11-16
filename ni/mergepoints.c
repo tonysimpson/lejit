@@ -195,6 +195,7 @@ _build_merge_points(PyCodeObject *co, int module)
             case ROT_TWO:
             case ROT_THREE:
             case DUP_TOP:
+            case DUP_TOP_TWO:
             case UNARY_POSITIVE:
             case UNARY_NEGATIVE:
             case UNARY_NOT:
