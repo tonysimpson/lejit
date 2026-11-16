@@ -111,7 +111,10 @@ pfunction_simple_call(PsycoObject *po, PyObject *f, vinfo_t *arg,
     /* XXX we capture the code object, so this breaks if someone
        changes the .func_code attribute of the function later */
     co = (PyCodeObject *)PyFunction_GET_CODE(f);
-    if (PyCode_GetNumFree(co) > 0)
+    /* psyco_call_pyfunc's own fallback rebuilds the function from code,
+       globals and defaults, losing keyword-only defaults: call the real
+       function instead */
+    if (PyCode_GetNumFree(co) > 0 || co->co_kwonlyargcount > 0)
         goto fallback;
 
     glob = PyFunction_GET_GLOBALS(f);
@@ -176,6 +179,8 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         co = (PyCodeObject *)psyco_pyobj_atcompiletime(po, fcode);
         if (co == NULL)
             return NULL;
+        if (co->co_kwonlyargcount > 0)
+            goto fallback; /* as in pfunction_simple_call */
 
         fglobals = vinfo_getitem(func, iFUNC_GLOBALS);
         if (fglobals == NULL)
