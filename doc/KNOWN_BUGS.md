@@ -8,7 +8,7 @@ verified: false   # every entry below comes from reading code; nothing has been 
 One list, gathered from the 2026-11-16 reviews (`doc/reviews/2026-11-16/`), the history passes (`doc/history/`) and a direct read of the memory-access code.
 
 - **Live** means a path the current Python 3 code can reach. **Dormant** means the code exists but no current caller triggers it; it will bite when the relevant feature comes back.
-- Evidence: **[read]** means seen in code; **[inferred]** means reasoned, for example from the ISA rules.
+- Evidence: **[read]** means seen in code; **[inferred]** means reasoned, for example from the ISA rules; **[run]** means observed in a test or debugger.
 - When one is confirmed or fixed, record it here with the commit.
 
 ## Memory access: `ni/x64/v_mem_mov.h` and the field functions in `ni/vcompiler.c`
@@ -33,11 +33,11 @@ One list, gathered from the 2026-11-16 reviews (`doc/reviews/2026-11-16/`), the 
 
 | # | Bug | State | Evidence |
 |---|---|---|---|
-| F1 | **Mixed-type arithmetic → TypeError.** `pabstract.c:binary_op1` is Python 2. `NEW_STYLE_NUMBER` is 0 because `Py_TPFLAGS_CHECKTYPES` doesn't exist in Py3, so slots are tried only when both operand types are identical. `1 + 2.0` in a compiled function raises TypeError. | **Live** | [read] |
+| F1 | **Confirmed 2026-11-16 (tests/cases/basic_float.py `mixed`).** **Mixed-type arithmetic → TypeError.** `pabstract.c:binary_op1` is Python 2. `NEW_STYLE_NUMBER` is 0 because `Py_TPFLAGS_CHECKTYPES` doesn't exist in Py3, so slots are tried only when both operand types are identical. `1 + 2.0` in a compiled function raises TypeError. | **Live** | [read] |
 | F2 | **No builtin metas registered.** `pbltinmodule.c` calls `Psyco_DefineMetaModule("__builtin__")`, but Py3's module is `builtins`. | Live (perf) | [read] |
 | F3 | `BUILD_MAP`, `RAISE_VARARGS`, `END_FINALLY` and the `CALL_FUNCTION` oparg keep their Python 2 meanings but are whitelisted. | **Live** miscompiles | [read] history D2 |
 | F4 | Handled-exception state is mapped onto `curexc_*` instead of `exc_info`. | Live | [read] history D1 |
-| F5 | `pfloat_div` has no ZeroDivisionError. `pmath.c` has no domain/range errors, and `ceil`/`floor` return floats. | Live | [read] |
+| F5 | **Confirmed 2026-11-16 (`fdiv_zero` returns inf).** `pfloat_div` has no ZeroDivisionError. `pmath.c` has no domain/range errors, and `ceil`/`floor` return floats. | Live | [read] |
 | F6 | `pfloatobject.c:direct_compute_float` converts the stored 64-bit word numerically instead of bit-casting it. | Live when frames are rebuilt | [read] |
 | F7 | `pfuncobject.c:compute_function`: `SET_FIELD` uses `\|\|` where `&&` is meant, and stores without `FMUT\|FPYREF`, so the function holds no references to its closure or defaults. | Live if a virtual function escapes | [read]; refcount effect [inferred] |
 | F8 | Calling a virtual function ignores closures and keyword-only defaults. | Live | [inferred] |
@@ -48,6 +48,7 @@ One list, gathered from the 2026-11-16 reviews (`doc/reviews/2026-11-16/`), the 
 | F13 | `METH_FASTCALL` builtins are never specialised (`pmethodobject.c`), and `pmath` metas are silently not registered when `ml_flags` differ. | Live (perf) | [read] |
 | F14 | `int` is passed to `"l"` (`va_arg(long)`) in `compute_tuple` and `pfloat_richcompare`. This is undefined behaviour, benign in practice. | Live | [inferred] |
 | F15 | `plongobject.c:PsycoLong_FROM_LONG` leaks on error. | Live | [read] |
+| F16 | **Fixed.** `pfloatobject.c:pfloat_richcompare` dropped the int comparison result without a decref, which left a register owned by an unreachable vinfo. Every float comparison aborted in `psyco_assert_coherent`. | Fixed (see git log) | [run] |
 
 ## Backend (`ni/x64`)
 
@@ -71,3 +72,5 @@ One list, gathered from the 2026-11-16 reviews (`doc/reviews/2026-11-16/`), the 
 | C1 | `psyco_compatible` rejects matches whose return-address slot differs mod 16 (`compare_return_address_in_a_stupid_way`). This is a kludge that causes extra code duplication. | [read] |
 | C2 | Restoring dead-local deletion (history A3, DECISIONS D15) also needs the `CodeBuffer_Check` guard in `psyco_compatible` that `e1fd808` removed. | [read] |
 | C3 | Compiled code and many code-buffer references are never freed. | [read] |
+| C4 | **Fixed** (`601aa8f`). `mergepoints.c:psyco_next_merge_point` walked past the -1 sentinel into unrelated memory. Hit on the first run (importlib). | [run] |
+| C5 | **Fixed** (`300d725`, build). The headers define globals without `extern`, so gcc 10+ (`-fno-common`) fails to link. Built with `-fcommon`; the clean fix is `extern` declarations plus one definition. | [run] |

@@ -234,9 +234,12 @@ static vinfo_t *pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
 #undef SWAP_A_B
     r = psyco_generic_call(po, fn, CfReturnTypeInt | CfPure, "dd", a, b);
     if (r != NULL) {
+      vinfo_t *cmp = r;
       r = psyco_generic_call(po, PyBool_FromLong, CfCommonNewRefPyObject, "v",
-                             r);
-      Psyco_AssertType(po, r, &PyBool_Type);
+                             cmp);
+      vinfo_decref(cmp, po);
+      if (r != NULL)
+        Psyco_AssertType(po, r, &PyBool_Type);
     }
     return r;
   }
