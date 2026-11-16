@@ -1112,7 +1112,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
 
 #define BEGIN_CALL(_num_args)                                                  \
   do {                                                                         \
-    int _last_arg_index = -1;                                                  \
+    int _last_arg_index = (_num_args); /* args are set last first */           \
     int _initial_stack_depth = po->stack_depth;                                \
     /* align stack to 16 byte */                                               \
     int _stack_correction = 0;                                                 \
@@ -1130,12 +1130,13 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
   } while (0)
 #define _CHECK_IS_NEXT_ARG(index)                                              \
   do {                                                                         \
-    /* call in reverse order 0 indexed */                                      \
-    assert(index == _last_arg_index + 1);                                      \
-    _last_arg_index++;                                                         \
+    /* each integer argument once, last first: stack arguments are pushed */ \
+    extra_assert((index) == _last_arg_index - 1);                              \
+    _last_arg_index = (index);                                                 \
   } while (0)
 #define END_CALL_R(r)                                                          \
   do {                                                                         \
+    extra_assert(_last_arg_index == 0); /* every argument was set */        \
     CALL_R(r);                                                                 \
     STACK_CORRECTION(_initial_stack_depth - po->stack_depth);                  \
     po->stack_depth = _initial_stack_depth;                                    \
@@ -1146,6 +1147,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
   while (0)
 #define END_CALL_I(immed)                                                      \
   do {                                                                         \
+    extra_assert(_last_arg_index == 0); /* every argument was set */        \
     CALL_I(immed);                                                             \
     STACK_CORRECTION(_initial_stack_depth - po->stack_depth);                  \
     po->stack_depth = _initial_stack_depth;                                    \
@@ -1158,7 +1160,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
   do {                                                                         \
     vinfo_t *vi = REG_NUMBER(po, reg);                                         \
     if (vi != NULL) {                                                          \
-      assert(RUNTIME_STACK(vi) != RUNTIME_STACK_NONE);                         \
+      extra_assert(RUNTIME_STACK(vi) != RUNTIME_STACK_NONE);                       \
       SET_RUNTIME_REG_TO_NONE(vi);                                             \
       REG_NUMBER(po, (reg)) = NULL;                                            \
     }                                                                          \
@@ -1180,7 +1182,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
     vinfo_t *vi = REG_NUMBER(po, reg);                                         \
     if (vi != NULL) {                                                          \
       if (!callee_saved_reg_table[RUNTIME_REG(vi)]) {                          \
-        assert(RUNTIME_STACK(vi) != RUNTIME_STACK_NONE);                       \
+        extra_assert(RUNTIME_STACK(vi) != RUNTIME_STACK_NONE);                     \
         SET_RUNTIME_REG_TO_NONE(vi);                                           \
         REG_NUMBER(po, (reg)) = NULL;                                          \
       }                                                                        \
@@ -1205,7 +1207,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
   do {                                                                         \
     if (RSOURCE_REG_IS_NONE(source)) {                                         \
       _CHECK_IS_NEXT_ARG(arg_index);                                           \
-      assert(RUNTIME_STACK(vi) != RUNTIME_STACK_NONE);                         \
+      extra_assert(getstack(source) != RUNTIME_STACK_NONE);                    \
       if (arg_index < argument_reg_table_len) {                                \
         reg_t dst_reg = argument_reg_table[arg_index];                         \
         CHECK_AND_UPDATE_TARGET_REG(dst_reg);                                  \
@@ -1222,7 +1224,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
 #define CALL_SET_ARG_FROM_RT_DOUBLE(source, double_arg_index)                  \
   do {                                                                         \
     if (RSOURCE_REG_IS_NONE(source)) {                                         \
-      assert(RUNTIME_STACK(vi) != RUNTIME_STACK_NONE);                         \
+      extra_assert(getstack(source) != RUNTIME_STACK_NONE);                    \
       /* we assume all doubles are passed in xmm registers */                  \
       MOVQ_XMM_O(double_arg_index, REG_X64_RSP,                                \
                  STACK_POS_OFFSET(RSOURCE_STACK(source)));                     \
@@ -1239,8 +1241,8 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
 #define CALL_SET_ARG_FROM_STACK_REF(source, arg_index)                         \
   do {                                                                         \
     _CHECK_IS_NEXT_ARG(arg_index);                                             \
-    assert(RSOURCE_REG_IS_NONE(source));                                       \
-    assert(RUNTIME_STACK(vi) != RUNTIME_STACK_NONE);                           \
+    extra_assert(RSOURCE_REG_IS_NONE(source));                                 \
+    extra_assert(getstack(source) != RUNTIME_STACK_NONE);                      \
     if (arg_index < argument_reg_table_len) {                                  \
       reg_t dst_reg = argument_reg_table[arg_index];                           \
       CHECK_AND_UPDATE_TARGET_REG(dst_reg);                                    \

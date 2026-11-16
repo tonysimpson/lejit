@@ -402,9 +402,8 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
             double_arg_count++;
         }
     }
-    assert(double_arg_count <= arg_count);
-    assert(double_arg_count <=
-           2); /* < 8 would be fine with current backend code */
+    extra_assert(double_arg_count <= arg_count);
+    extra_assert(double_arg_count <= 8); /* xmm0-xmm7 */
     BEGIN_CALL(arg_count - double_arg_count);
     /* SysV numbers integer and floating-point arguments separately: an
        integer argument's register is chosen by its position among the
@@ -523,7 +522,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     for (i = 0; i < argcount; i++) {
         Source source = argsources[i];
         if (RSOURCE_REG_IS_NONE(source)) {
-            assert(getstack(source) != RUNTIME_STACK_NONE);
+            extra_assert(getstack(source) != RUNTIME_STACK_NONE);
             PUSH_O(REG_X64_RSP, STACK_POS_OFFSET(RSOURCE_STACK(source)));
         }
         else {
