@@ -1,5 +1,6 @@
 # Loops whose body needs a respawn (here: the index-is-negative guard) and
-# carries a variable that changes between iterations (KNOWN_BUGS C8).
+# carries a variable that changes between iterations. They hit KNOWN_BUGS
+# B14 (the -1 check after PyLong_AsLong(-1) corrupted the stack).
 
 def neg_index_loop(c):
     k = 0
@@ -37,12 +38,12 @@ def straight_line(c):
     del c[-1]
     return k, c
 
-C8 = {'xfail': 'C8: loop + respawn + loop-carried variable reads a stale list length'}
+
 CASES = [
     ('neg_index_loop', "[(['a'],)]", {}),
-    ('neg_index_loop', "[(['a', 'bb'],)]", C8),
-    ('neg_index_del', "[(['a', 'bb'],)]", C8),
-    ('runtime_neg_index', "[(['a', 'bb'], -1)]", C8),
+    ('neg_index_loop', "[(['a', 'bb'],)]", {}),
+    ('neg_index_del', "[(['a', 'bb'],)]", {}),
+    ('runtime_neg_index', "[(['a', 'bb'], -1)]", {}),
     ('pos_index_loop', "[(['a', 'bb', 'c'],)]", {}),
     ('straight_line', "[(['a', 'bb', 'ccc'],)]", {}),
 ]

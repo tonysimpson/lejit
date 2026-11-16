@@ -325,20 +325,26 @@ test_condition_and_pyerr_occured:
     if (!runtime_condition_f(po, error_cc)) {
         return VINFO_OK;
     }
-    /* XXX tony: We need to preserve RAX over this call.
-    This means we will end up pushing+poping RAX twice which is dumb.
-    It would be nice if the compiler knew to do this automatically. */
+    /* PyErr_Occurred() while the result is still only in RAX: save RAX
+       around the call to PyThreadState_Get. Nothing between the PUSH and
+       the POP may go through the register allocator, which can spill with
+       a PUSH of its own, so that the POP restores the wrong value and the
+       spilled vinfo is left above the top of the stack (KNOWN_BUGS B14).
+       curexc_type is read into the scratch register instead. */
     BEGIN_CODE
+    NEED_CC(); /* before the PUSH: it may take a register */
     PUSH_R(REG_FUNCTIONS_RETURN);
-    END_CODE
-    /* the push must be counted: RSP-relative addressing of spilled values and
-       the alignment of the C call inside psyco_PyErr_Occurred use it */
+    /* counted: the call's alignment and RSP-relative addressing use it */
     psyco_inc_stackdepth(po);
-    error_cc = integer_NON_NULL(po, psyco_PyErr_Occurred(po));
-    BEGIN_CODE
+    BEGIN_CALL(0);
+    END_CALL_I(PyThreadState_Get);
+    MOV_R_O(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN,
+            offsetof(PyThreadState, curexc_type));
     POP_R(REG_FUNCTIONS_RETURN);
-    END_CODE
     psyco_dec_stackdepth(po);
+    TEST_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
+    END_CODE
+    error_cc = CC_NE;
 test_condition:
     if (!runtime_condition_f(po, error_cc)) {
         return VINFO_OK;
