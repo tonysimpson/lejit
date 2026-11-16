@@ -203,13 +203,33 @@ DEFINEFN vinfo_t *PsycoObject_RichCompare(PsycoObject *po, vinfo_t *v,
 DEFINEFN
 vinfo_t *PsycoObject_RichCompareBool(PsycoObject *po, vinfo_t *v, vinfo_t *w,
                                      int op) {
+  /* The result is a temporary, and only values in the frame can be
+     promoted, so if its type isn't known its truth is a run-time call.
+     Unlike CPython there is no v == w shortcut for Py_EQ/Py_NE. */
   vinfo_t *diff;
   vinfo_t *result = PsycoObject_RichCompare(po, v, w, op);
   if (result == NULL)
     return NULL;
-  diff = PsycoObject_IsTrue(po, result);
+  if (Psyco_KnownType(result) != NULL)
+    diff = PsycoObject_IsTrue(po, result);
+  else
+    diff = psyco_generic_call(po, PyObject_IsTrue, CfCommonInquiry, "v",
+                              result);
   vinfo_decref(result, po);
   return diff;
+}
+
+DEFINEFN
+vinfo_t *PsycoObject_Hash(PsycoObject *po, vinfo_t *v) {
+  /* -1 is never a hash: it means an error */
+  PyTypeObject *tp = Psyco_NeedType(po, v);
+  if (tp == NULL)
+    return NULL;
+  if (tp->tp_hash == NULL) /* a type not yet ready: CPython readies it */
+    return psyco_generic_call(po, PyObject_Hash,
+                              CfReturnTypeLong | CfPyErrIfMinus1, "v", v);
+  return Psyco_META1(po, tp->tp_hash, CfReturnTypeLong | CfPyErrIfMinus1, "v",
+                     v);
 }
 
 static vinfo_t *collect_undeletable_vars(vinfo_t *vi, vinfo_t *link) {

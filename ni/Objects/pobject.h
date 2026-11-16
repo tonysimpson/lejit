@@ -98,6 +98,9 @@ EXTERNFN vinfo_t* PsycoObject_GenericGetAttr(PsycoObject* po, vinfo_t* obj,
 
 EXTERNFN vinfo_t* PsycoObject_RichCompare(PsycoObject* po, vinfo_t* v,
 					  vinfo_t* w, int op);
+/* Objects/object.c:PyObject_Hash; the result is a Py_hash_t word */
+EXTERNFN vinfo_t* PsycoObject_Hash(PsycoObject* po, vinfo_t* v);
+
 EXTERNFN vinfo_t* PsycoObject_RichCompareBool(PsycoObject* po,
                                               vinfo_t* v,
                                               vinfo_t* w, int op);

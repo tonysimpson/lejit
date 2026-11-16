@@ -190,6 +190,24 @@ static vinfo_t *plong_fallback1(PsycoObject *po, void *slot, vinfo_t *v) {
 /* + - * unary - ~, generated from Objects/longobject.c */
 #include "plongobject_gen.h"
 
+/* long_hash: a one-digit int hashes to its value, but -1 to -2 (-1 means
+   an error) */
+static long cimpl_long_hash1(long v) { return v == -1 ? -2 : v; }
+
+static vinfo_t *plong_hash(PsycoObject *po, vinfo_t *v) {
+  vinfo_t *a, *x;
+  int r = plong_medium_value(po, v, &a);
+  if (r < 0)
+    return NULL;
+  if (r == 0)
+    return psyco_generic_call(po, PyLong_Type.tp_hash,
+                              CfReturnTypeLong | CfPyErrIfMinus1, "v", v);
+  x = psyco_generic_call(po, cimpl_long_hash1, CfPure | CfReturnTypeLong, "v",
+                         a);
+  vinfo_decref(a, po);
+  return x;
+}
+
 /* long_bool: ob_size != 0, i.e. the value isn't zero */
 static vinfo_t *plong_bool(PsycoObject *po, vinfo_t *v) {
   condition_code_t cc;
@@ -292,6 +310,7 @@ void psy_longobject_init(void) {
   Psyco_DefineMeta(m->nb_floor_divide, plong_div);
   Psyco_DefineMeta(m->nb_bool, plong_bool);
   Psyco_DefineMeta(PyLong_Type.tp_richcompare, plong_richcompare);
+  Psyco_DefineMeta(PyLong_Type.tp_hash, plong_hash);
 
   INIT_SVIRTUAL(psyco_computed_long, compute_long, direct_compute_long, 0, 0,
                 0);

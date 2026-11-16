@@ -11,6 +11,10 @@ static PyCFunction cimpl_len;
 static PyCFunction cimpl_abs;
 static PyCFunction cimpl_apply;
 static PyCFunction cimpl_divmod;
+static PyCFunction cimpl_hash;
+static PyCFunction cimpl_min;
+static PyCFunction cimpl_max;
+static PyCFunction cimpl_pow;
 
 static vinfo_t *get_len_of_range(PsycoObject *po, vinfo_t *lo, vinfo_t *hi
                                  /*, vinfo_t* step == 1 currently*/) {
@@ -148,13 +152,87 @@ static vinfo_t *pbuiltin_divmod(PsycoObject *po, vinfo_t *vself,
                                  vargs);
 }
 
+/* Python/bltinmodule.c:builtin_hash */
+static vinfo_t *pbuiltin_hash(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
+  vinfo_t *x = PsycoObject_Hash(po, vobj);
+  return x != NULL ? PsycoLong_FROM_LONG(po, x) : NULL;
+}
+
+/* bltinmodule.c:min_max with two or more positional arguments: compare in
+   order, keeping the first extreme item, as CPython does. Each comparison
+   picks a path at run time (respawn), so a virtual result stays virtual.
+   Every type is promoted before the first comparison: a promotion restarts
+   the instruction, which would run a comparison already emitted again
+   (a user __gt__ twice). One iterable argument, or key=/default=, goes to
+   CPython: walking a sequence of run-time length can't be compiled (the
+   NFS branch tried). */
+static vinfo_t *pbuiltin_min_max(PsycoObject *po, vinfo_t *vargs,
+                                 vinfo_t *vkw, int op, PyCFunction cimpl) {
+  int i, n = PsycoTuple_Load(vargs);
+  vinfo_t *best, *item, *cmp;
+  if (n < 2 || !psyco_knowntobe(vkw, (long)NULL))
+    return psyco_generic_call(po, cimpl, CfCommonNewRefPyObject, "lvv", NULL,
+                              vargs, vkw);
+  for (i = 0; i < n; i++)
+    if (Psyco_NeedType(po, PsycoTuple_GET_ITEM(vargs, i)) == NULL)
+      return NULL;
+  best = PsycoTuple_GET_ITEM(vargs, 0);
+  for (i = 1; i < n; i++) {
+    item = PsycoTuple_GET_ITEM(vargs, i);
+    cmp = PsycoObject_RichCompareBool(po, item, best, op);
+    if (cmp == NULL)
+      return NULL;
+    switch (runtime_NON_NULL_f(po, cmp)) { /* consumes cmp */
+    case true:
+      best = item;
+      break;
+    case false:
+      break;
+    default:
+      return NULL;
+    }
+  }
+  vinfo_incref(best);
+  return best;
+}
+
+static vinfo_t *pbuiltin_min(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs,
+                             vinfo_t *vkw) {
+  return pbuiltin_min_max(po, vargs, vkw, Py_LT, cimpl_min);
+}
+
+static vinfo_t *pbuiltin_max(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs,
+                             vinfo_t *vkw) {
+  return pbuiltin_min_max(po, vargs, vkw, Py_GT, cimpl_max);
+}
+
+/* builtin_pow: PyNumber_Power(x, y, z=None) */
+static vinfo_t *pbuiltin_pow(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs) {
+  vinfo_t *x, *z;
+  int n = PsycoTuple_Load(vargs);
+  if (n == 2) {
+    z = psyco_vi_None();
+    x = PsycoNumber_Power(po, PsycoTuple_GET_ITEM(vargs, 0),
+                          PsycoTuple_GET_ITEM(vargs, 1), z);
+    vinfo_decref(z, po);
+    return x;
+  }
+  if (n == 3)
+    return PsycoNumber_Power(po, PsycoTuple_GET_ITEM(vargs, 0),
+                             PsycoTuple_GET_ITEM(vargs, 1),
+                             PsycoTuple_GET_ITEM(vargs, 2));
+  return PsycoCFunction_CallFast(po, cimpl_pow, METH_FASTCALL, vself, vargs);
+}
+
 /***************************************************************/
 
 INITIALIZATIONFN
 void psyco_bltinmodule_init(void) {
   /* a meta is registered only if the builtin's ml_flags match (3.7's,
      from Python/bltinmodule.c and its clinic header); apply no longer
-     exists. A METH_FASTCALL meta takes a tuple (pmethodobject.h). */
+     exists. A METH_FASTCALL meta takes a tuple (pmethodobject.h). No meta
+     for iter(): PsycoObject_GetIter gives lists a virtual seq-iterator,
+     right for a for loop but the wrong type for iter() to hand out. */
   PyObject *md = Psyco_DefineMetaModule("builtins");
 
 #define DEFMETA(name, flags)                                                   \
@@ -164,6 +242,10 @@ void psyco_bltinmodule_init(void) {
   DEFMETA(abs, METH_O);
   DEFMETA(apply, METH_VARARGS);
   DEFMETA(divmod, METH_FASTCALL);
+  DEFMETA(hash, METH_O);
+  DEFMETA(min, METH_VARARGS | METH_KEYWORDS);
+  DEFMETA(max, METH_VARARGS | METH_KEYWORDS);
+  DEFMETA(pow, METH_FASTCALL);
 #undef DEFMETA
   Py_XDECREF(md);
 }

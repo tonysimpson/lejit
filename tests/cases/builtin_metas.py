@@ -1,5 +1,6 @@
 # Builtins with Psyco metas (KNOWN_BUGS F2): len, abs, id, and the
-# METH_FASTCALL ones (divmod), whose metas take a tuple (pmethodobject.h).
+# METH_FASTCALL ones (divmod, pow), whose metas take a tuple
+# (pmethodobject.h); hash, min, max.
 
 class L:
     def __len__(self):
@@ -67,6 +68,107 @@ def divmod_bad_calls(t):
         out.append(str(e))
     return out
 
+LOG = []
+
+class Cmp:
+    # records the comparisons min/max make, in order
+    def __init__(self, v):
+        self.v = v
+    def __lt__(self, other):
+        LOG.append(('lt', self.v, other.v))
+        return self.v < other.v
+    def __gt__(self, other):
+        LOG.append(('gt', self.v, other.v))
+        return self.v > other.v
+    def __repr__(self):
+        return 'Cmp(%r)' % self.v
+
+class H:
+    def __hash__(self):
+        return -1          # CPython turns -1 into -2
+
+class BadH:
+    def __hash__(self):
+        return 'x'
+
+def hashes(a):
+    try:
+        return hash(a)
+    except TypeError as e:
+        return str(e)
+
+def str_hash(s):
+    # str hashes are randomised per process: compare within one
+    return hash(s) == hash(s[:1] + s[1:]), hash(s) == hash(s + 'x')
+
+def hash_loop(n):
+    t = 0
+    x = 0.5
+    for i in range(-n, n):
+        t = t + hash(i) + hash(x * i)
+    return t
+
+def min_max(a, b, c):
+    try:
+        return (max(a, b), min(a, b), max(a, b, c), min(c, b, a),
+                max(a, b) is a, min(a, b) is a)
+    except TypeError as e:
+        return str(e)
+
+def min_max_order():
+    del LOG[:]
+    a, b, c = Cmp(2), Cmp(5), Cmp(5)
+    r = (max(a, b, c), min(c, a, b), max(b, c) is b)
+    return r, list(LOG)
+
+def min_max_loop(n):
+    hi = -1
+    lo = n
+    for i in range(n):
+        v = (i * 7) % 11
+        hi = max(hi, v)
+        lo = min(v, lo)
+    return hi, lo
+
+def min_max_fallbacks(seq):
+    out = []
+    for call in range(5):
+        try:
+            if call == 0:
+                out.append(max(seq))
+            elif call == 1:
+                out.append(min(seq, key=abs))
+            elif call == 2:
+                out.append(max(seq, default='empty'))
+            elif call == 3:
+                out.append(max(*seq))
+            else:
+                out.append(min(1))
+        except (TypeError, ValueError) as e:
+            out.append(str(e))
+    return out
+
+def pows(a, b):
+    out = []
+    for z in (None, 5, 0, 2.5):
+        try:
+            out.append(pow(a, b) if z is None else pow(a, b, z))
+        except (TypeError, ValueError, ZeroDivisionError) as e:
+            out.append(type(e).__name__ + ': ' + str(e))
+    return out
+
+def pow_bad_calls(t):
+    out = []
+    try:
+        out.append(pow(2))
+    except TypeError as e:
+        out.append(str(e))
+    try:
+        out.append(pow(*t))
+    except TypeError as e:
+        out.append(str(e))
+    return out
+
 CASES = [
     ('lens', "[([1, 2], (1,), 'abcd', {'k': 1}), ([], (), '', {})]", {}),
     ('len_user', '[(L(),), (BadLen(),), (5,), (None,)]', {}),
@@ -77,4 +179,13 @@ CASES = [
     ('divmods', "[(7, 2), (-7, 2), (7, -2), (2**70, 3), (7.5, 2), (7, 2.5), (1, 0), (1.0, 0.0), ('a', 1)]", {}),
     ('divmod_loop', [(30,)], {}),
     ('divmod_bad_calls', [((7, 3),), ((1,),), ((1, 2, 3),)], {}),
+    ('hashes', "[(0,), (-1,), (-2,), (2**30 - 1,), (-(2**30),), (2**70,), (True,), (-1.0,), (0.5,), (float('inf'),), (float('nan'),), (1e300,), ((1, 2),), ([1],), (H(),), (BadH(),)]", {}),
+    ('str_hash', [('abc',), ('',)], {}),
+    ('hash_loop', [(10,)], {}),
+    ('min_max', "[(1, 2, 3), (2, 1, 0), (1, True, 1.0), (True, 1, 0), (1.0, 1, 2), (float('nan'), 1, 2), (1, float('nan'), 0), (-(2**70), 2**70, 0), (1, 'a', 2), ('b', 'a', 'c')]", {}),
+    ('min_max_order', [()], {}),
+    ('min_max_loop', [(50,)], {}),
+    ('min_max_fallbacks', [([3, -7, 2],), ([],), ((5,),)], {}),
+    ('pows', [(2, 10), (2, -1), (-3, 3), (0, -1), (2.0, 0.5), (2**40, 3)], {}),
+    ('pow_bad_calls', [((2, 3),), ((2,),), ((2, 3, 4, 5),)], {}),
 ]
