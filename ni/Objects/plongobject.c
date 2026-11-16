@@ -293,9 +293,8 @@ RETFLOAT(2, plong_true_divide, nb_true_divide)
 
 static vinfo_t *plong_pow(PsycoObject *po, vinfo_t *v1, vinfo_t *v2,
                           vinfo_t *v3) {
-  /* XXX tony: this is done rather then using a RET* macro because
-  nb_power can return PyLongObject or PyFloatObject? Is this true.
-   */
+  /* not a RET* macro: long_pow returns a float for a negative exponent
+     without modulus (it calls float_pow), so the result type is unknown */
   return psyco_generic_call(po, PyLong_Type.tp_as_number->nb_power,
                             CfCommonCheckNotImplemented, "vvv", v1, v2, v3);
 }

@@ -14,6 +14,8 @@ The Psyco authors' answer was PyPy (write the interpreter in RPython and derive 
 
 > The code of the meta function typically ressembles that of the original function enough that we might dream about a language in which we never have to write the two versions (where Psyco's version could be derived automatically from the standard version).
 
+He went further on the mailing list. On 2002-11-18 he wrote: "I'm currently designing a simple C parser that can turn selected portions of the C core of the regular Python interpreter into a high-level Python version. Yes, that's a kind of C-to-Python translator!" By 2003-10-10 he had moved to PyPy, because the `Objects` files "could be generated automatically if CPython were written in a higher level language than C". The list never says why he dropped the parser. Ni's bet is that today's C tooling (doc/METACOMPILER.md) makes his first route workable. [read] (`../psyco-history/archive/psyco-devel/2002/2002-11-18_999647.md`, `2003/2003-10-10_999800.md`)
+
 ## What the current phase is
 
 Research and classification, not new code. For everything in this repo, decide which of these it is:

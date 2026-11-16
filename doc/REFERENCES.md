@@ -22,6 +22,10 @@ written: 2026-11-16
 - *The Ultimate Psyco Guide*: `doc/psyco_legacy/psycoguide.tex` (in repo). It's user-facing (profilers, `psyco.compact`, `psyco.classes`, known bugs) and useful for understanding features that were removed.
 - Project page: psyco.sourceforge.net (historic).
 
+## Psyco history outside this repo
+
+`~/work/psyco-history` (read-only; start with `HANDOVER-ni.md`): the psyco-devel mailing list (`archive/psyco-devel/`, 379 messages), an hg mirror with upstream branches Ni never got (`git/psyco-hg-mirror.git`: `nfs` 2006 builtin metas, `devel` Tismer 2007–08, 2011–16 master), CVS 2001–05, and what survives of Psyco V2 (`reports/tismer-work.md`). Used for KNOWN_BUGS F26 and the builtin metas.
+
 ## Related local repositories
 
 - `~/work/pointbreak`: the owner's Python debugger library, used by `tools/nianalyser` and `tools/test_harness`.
