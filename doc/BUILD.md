@@ -32,7 +32,13 @@ pip install .                                   # release: -O3
 ## Tests
 Upstream Psyco's test suite (`test/`) and the Ni regression pack were removed (see `doc/history/removed-files.md`). There is currently no automated test suite.
 
-### Planned for the 3.7 baseline (D18); not built yet
+### Running
+- Build Python 3.7.17 once: `pyenv install 3.7.17` (worked as-is on Debian 13 with gcc 14).
+- Build Ni in place: `NI_TRACE=1 NI_ALL_CHECKS=1 ~/.pyenv/versions/3.7.17/bin/python3.7 setup.py build_ext --inplace`.
+- Behaviour: `tests/run.py [-k name] [-v]`. Each case in `tests/cases/*.py` runs with and without Ni in fresh processes, and must compile (or declare `interpreted`). Expected failures name a KNOWN_BUGS id.
+- Encoding: `tests/encoding/check.py [-k MACRO] [-v]`. Checks every `/* @asm: ... */`-annotated emitter in `ni/x64/iencoding.h` against GNU `as`. It takes about a minute.
+
+### Design notes (some still planned)
 - **Encoder tests from intent annotations.** Each emitter (the `iencoding.h` macros, each emission branch in `v_mem_mov.h`) gets a one-line annotation giving the intended instruction in explicit-size syntax, for example `/* @asm: cmp qword [%base + %off], %imm8 */`. A script collects the annotations and instantiates each emitter over its operand domains: every allocatable and transient register, every size and signedness, every addressing form. It then compares the bytes with GNU `as` assembling the same intent. The annotation states what the code is *meant* to emit, so a mismatch is a bug. The current `tools/asm_test_cases.txt` only records what the code does: its `cmp $0,0x20(%rax)` has no size suffix, so `as` picks 32 bits and the test enshrines bug B1.
 - **Lint for unannotated emission.** A grep-level check that every site writing bytes (`WRITE_*`, `*code++`) is inside an annotated emitter, so nothing escapes the encoder tests.
 - **Run-time check through pointbreak.** Optionally, emitters record (address, intent) as code is generated, and pointbreak or nianalyser disassembles the buffer and compares each instruction with its intent. This covers the operand combinations that only occur in real compilations.

@@ -54,7 +54,7 @@ One list, gathered from the 2026-11-16 reviews (`doc/reviews/2026-11-16/`), the 
 
 | # | Bug | State | Evidence |
 |---|---|---|---|
-| B1 | **`CMP_I8_O`/`CMP_I8_A` compare 32 bits** (no REX.W). `CHECK_NONZERO_FROM_RT` uses them for stack values, so a 64-bit value with a zero low half (e.g. `1 << 32`) tests as zero. `tools/asm_test_cases.txt` encodes this same behaviour as the expected output. | **Live** | [read] |
+| B1 | **Fixed** (`d56791d`, found by `tests/encoding/check.py`). **`CMP_I8_O`/`CMP_I8_A` compared 32 bits** (no REX.W). `CHECK_NONZERO_FROM_RT` uses them for stack values, so a 64-bit value with a zero low half (e.g. `1 << 32`) tests as zero. `tools/asm_test_cases.txt` encodes this same behaviour as the expected output. | **Live** | [read] |
 | B2 | `run_time_result_check` / `test_condition_and_pyerr_occured` do `PUSH RAX` without updating `stack_depth`, so calls made inside are misaligned and RSP-relative offsets are off by 8. This may be linked to the alignment kludge in `dispatcher.c:psyco_compatible`. | **Live** (inline `PyErr_Occurred`) | [read]; link [inferred] |
 | B3 | `run_time_call` uses the overall argument index for the integer registers, so an integer after a double goes in the wrong register. | Depends on callers | [inferred] |
 | B4 | `bint_add_i` with an immediate over 32 bits uses `ADD` (clobbers flags) without `NEED_CC()`. | Rare | [read] |
@@ -64,6 +64,9 @@ One list, gathered from the 2026-11-16 reviews (`doc/reviews/2026-11-16/`), the 
 | B8 | `psyco_call_code_builder` ignores its `restore` argument. | Possible lost ccreg | [read] |
 | B9 | Wrong asserts (an undeclared `vi`, reversed `_CHECK_IS_NEXT_ARG`) compile only because CPython builds with `-DNDEBUG`. | Build hazard | [read] |
 | B10 | Executable memory is mapped RWX (no W^X). Hardened kernels may refuse it. | Environment | [read] |
+| B11 | **Fixed** (`da6eb6d`). `ADD_O8_I8`, the `Py_INCREF` emitter, had its `updatable`/`rex_w` arguments swapped, so it was a 32-bit add on `ob_refcnt`. | Was live, benign in practice | [run] encoder test |
+| B12 | **Fixed** (`90b5cce`). `POP_O` passed 0x40 as the ModRM reg bits, so with a 32-bit displacement it encoded `pop rax` plus garbage. | Was latent | [run] encoder test |
+| B13 | **Fixed** (`ea790ae`). Memory operands based on R12 encoded as `[r12+r12*1+d]`, because `OFFSET_ENCODING` passed the base as the SIB index. | Was latent (R12 is not allocated) | [run] encoder test |
 
 ## Core
 
