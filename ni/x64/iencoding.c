@@ -616,6 +616,9 @@ bint_add_i(PsycoObject *po, vinfo_t *rt1, long value2, bool unsafe)
     reg_t rg, dst;
     extra_assert(is_runtime(rt1->source));
     BEGIN_CODE
+    if (!FITS_IN_32BITS(value2))
+        NEED_CC(); /* the ADD below clobbers the flags (the LEA doesn't);
+                      first, as it may take a free register */
     NEED_FREE_REG(dst);
     rg = getreg(rt1->source);
     if (rg == REG_NONE) {
