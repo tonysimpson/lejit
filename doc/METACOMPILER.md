@@ -1,6 +1,6 @@
 ---
 written: 2026-11-16
-status: stage 1 started (`64f88e7` ints, `749985f` floats)
+status: stage 1 started (`64f88e7` ints, `749985f` floats); 3.12 bytecode desk read done
 ---
 # Meta-compiler: approach and tooling options
 
@@ -64,6 +64,36 @@ Still hand-written: the representation of a virtual int. That is `plong_medium_v
 - **Representation, hand-written:** `psyco_convert_to_double` for `CONVERT_TO_DOUBLE`, `PsycoFloat_AS_DOUBLE` for `ob_fval`, and the compute functions.
 
 Compared with ints, the floats needed no range analysis, because the C helper *is* the C code. That makes copy-through the cheapest pattern so far. It works wherever the backend lacks an operation and the code touches only C scalars.
+
+## Bytecode stage: desk read of 3.12's `bytecodes.c` (2026-11-16)
+
+Read from the 3.12.9 source tarball (`Python/bytecodes.c`, `Tools/cases_generator/`); nothing was built or run. The question: does 3.12's DSL make the eval loop (the hand-written `ni/Python/pycompiler.c`) easier to meta-compile than 3.7's `ceval.c`?
+
+**What the DSL gives** [read]:
+- Every one of the 186 instructions declares its stack effect, e.g. `inst(BINARY_OP, (unused/1, lhs, rhs -- res))`. There are no transitional forms without one. Inline-cache entries are declared the same way (`index/1`).
+- Error exits are explicit: `ERROR_IF(cond, label)`, `DECREF_INPUTS()`.
+- The spec's own constraint, "Until the last `DEOPT_IF`, no objects may be allocated, `INCREF`ed, or `DECREF`ed", is Psyco's restart rule (PATTERNS rule 1). The DSL is written to keep instructions restartable, which is what Psyco needs.
+- The parser (`Tools/cases_generator/parser.py`, `lexer.py`) is pure Python with standard-library imports only. It matches stage "Bytecode" in the table above.
+
+**3.7, for contrast** [read]: 119 `TARGET` cases in `ceval.c`. Stack effects are implicit in `POP()`/`TOP()`/`SET_TOP()` sequences, usually popping first (`BINARY_ADD`), which is the order Ni's restart rule forbids ("use TOP() not POP()"). Error paths are `goto error` after manual decrefs. A 3.7 translator has to track the stack symbolically and commit the pops at the end. It can be done, but the generator must infer what 3.12 states outright.
+
+**How the 184 parsed instructions split** (a rough regex classification of the bodies, after removing the `#if ENABLE_SPECIALIZATION` blocks) [run]:
+
+| Group | Count | For Ni |
+|---|---|---|
+| Plain: stack plus C-API calls (`LOAD_FAST`, `UNARY_*`, `BUILD_*`, generic `BINARY_OP` = `binary_ops[oparg](lhs, rhs)`…) | ~56 | Translatable with a small vocabulary: `GETLOCAL`, `SETLOCAL`, each C call mapped to its Psyco meta. |
+| Specialised family members (`BINARY_OP_ADD_INT`, `LOAD_ATTR_SLOT`, `CALL_NO_KW_ISINSTANCE`, `LOAD_GLOBAL_BUILTIN`…) | ~57 | Not code to translate but **specialisation knowledge**: each is `DEOPT_IF(guard)` + a fast path, i.e. a promotion/type switch plus a meta. CPython's developers have written the guards Psyco needs. |
+| Control flow, frame and thread state (`JUMPBY`, `POP_JUMP_IF_*`, `FOR_ITER`, `GLOBALS()`, `frame->`) | ~26 | Small, mechanical vocabulary mapped to Ni's core (jumps, merge points, `LOC_GLOBALS`). |
+| Calls, frames, generators, returns (`CALL`, `RETURN_VALUE`, `YIELD_VALUE`, `SEND`…) | ~11 | Core: Ni does calls and frames itself. Hand-written. |
+| Exceptions (`RAISE_VARARGS`, `RERAISE`, `POP_EXCEPT`…) | ~17 (overcounted) | Core. 3.11+ has no block stack: handlers come from the code object's exception table (`ceval.c:get_exception_handler`). Ni's `SETUP_*`/block-stack unwinding must be rewritten for 3.12 whatever the meta-compiler does. |
+| Instrumentation (`INSTRUMENTED_*`) | 17 | Skip (monitoring, PEP 669). |
+
+**Conclusions** [inferred]:
+1. On 3.12 the bytecode stage is closer to stage 1 than to a new problem. The stack effects, error exits and restartability are given. The generic instructions mostly reduce to "call the meta for this C function", which is what the slot generators already produce.
+2. The specialised families answer a question this project hasn't asked yet: *which* type cases to specialise. They could steer the generated code (which metas to call, which promotions to emit) without being translated themselves.
+3. The hard parts are the same on both versions and are core, not translation: calls and frames, exceptions (a new model on 3.11+), generators.
+4. For the 3.7 slice next: the useful lesson is to give the 3.7 generator a symbolic stack, so that it derives a declared-effect form `(inputs -- outputs)` first and then emits the body. That intermediate form is what 3.12 provides, so the second half of a 3.7 generator should carry over.
+5. 3.12's own globals guard (`LOAD_GLOBAL_MODULE`/`BUILTIN`) uses the dict *keys* version (`ma_keys->dk_version`) plus an entry index, not `ma_version_tag`. That's relevant to QUESTIONS 29.
 
 ## Failures log
 
