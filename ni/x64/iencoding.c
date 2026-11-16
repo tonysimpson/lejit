@@ -52,9 +52,11 @@ psyco_call_code_builder(PsycoObject *po, void *fn, int restore,
     code += block_size;
     END_SHORT_JUMP(0);
     PUSH_R(REG_FUNCTIONS_RETURN);
-    /* XXX tony: Need to preserve RAX because we can be here from
-    run_time_result_check and we don't decided to put RAX in a compiler
-    tracked location until run_time_result. */
+    /* RAX is saved: we can be here from run_time_result_check, before the
+       result has a tracked location. Other registers need no saving (only
+       callee-saved ones are allocated). The flags are not saved, whatever
+       'restore' says: promotion spills them first (NEED_CC) and
+       psyco_coding_pause asserts none is left (KNOWN_BUGS B8). */
     psyco_inc_stackdepth(po);
     BEGIN_CALL(extraarg != SOURCE_DUMMY ? 2 : 1);
     if (extraarg != SOURCE_DUMMY) {

@@ -745,6 +745,9 @@ void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
   /* fill in the coding_pause_t structure and the following 'extra' data */
   psyco_resolved_cc(po, jmpcondition); /* jmpcondition is true if we follow
                                           the branch */
+  /* the proxy's call clobbers the flags (upstream saved them; the x64
+     builder does not, KNOWN_BUGS B8): no other condition may still be live */
+  extra_assert(!HAS_CCREG(po));
   cp->self = codebuf;
   cp->po = po;
   cp->resume_fn = resume_fn;
