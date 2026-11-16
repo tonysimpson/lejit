@@ -3,7 +3,7 @@
 ## 2026-11-16: 3.7 baseline (branch `baseline-3.7`, D18)
 
 Ni builds and runs on CPython 3.7.17 (pyenv, gcc 14). Three test suites, all passing:
-- `tests/run.py`: 115 behaviour cases, each run with and without Ni, required to compile, and leak-checked. No expected failures. Two cases correctly fall back to the interpreter because of unsupported opcodes.
+- `tests/run.py`: 116 behaviour cases, each run with and without Ni, required to compile, and leak-checked. No expected failures. Two cases correctly fall back to the interpreter because of unsupported opcodes.
 - `tests/encoding/check.py`: 56 `@asm`-annotated emitters, about 192k operand combinations, compared with GNU `as`.
 - `tests/encoding/run_v_mem_mov.sh`: about 90k executed loads and stores through `v_mem_mov`.
 
