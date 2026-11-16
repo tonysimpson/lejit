@@ -151,9 +151,10 @@ static vinfo_t *pbuiltin_divmod(PsycoObject *po, vinfo_t *vself,
 
 INITIALIZATIONFN
 void psyco_bltinmodule_init(void) {
-  /* Python 3 calls this module "builtins": the lookup fails, md is NULL and
-     none of the builtin metas below are registered. */
-  PyObject *md = Psyco_DefineMetaModule("__builtin__");
+  /* a meta is registered only if the builtin's ml_flags match: in 3.7 id,
+     len and abs are METH_O; divmod is METH_FASTCALL (so skipped) and apply
+     no longer exists */
+  PyObject *md = Psyco_DefineMetaModule("builtins");
 
 #define DEFMETA(name, flags)                                                   \
   cimpl_##name = Psyco_DefineModuleFn(md, #name, flags, &pbuiltin_##name)

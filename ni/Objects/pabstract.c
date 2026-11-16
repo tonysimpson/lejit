@@ -202,7 +202,12 @@ vinfo_t *PsycoObject_Size(PsycoObject *po, vinfo_t *vi) {
     if (m2 && m2->mp_length)
       f = m2->mp_length;
     else
-      return type_error(po, "len() of unsized object");
+    {
+      PycException_SetFormat(po, PyExc_TypeError,
+                             "object of type '%.200s' has no len()",
+                             tp->tp_name);
+      return NULL;
+    }
   }
 
   return Psyco_META1(po, f, CfCommonPySSizeTResult, "v", vi);
@@ -398,7 +403,9 @@ vinfo_t *PsycoNumber_Absolute(PsycoObject *po, vinfo_t *vi) {
   if (m && m->nb_absolute)
     return Psyco_META1(po, m->nb_absolute, CfCommonNewRefPyObject, "v", vi);
 
-  return type_error(po, "bad operand type for abs()");
+  PycException_SetFormat(po, PyExc_TypeError,
+                         "bad operand type for abs(): '%.200s'", tp->tp_name);
+  return NULL;
 }
 
 #define NB_SLOT(x) offsetof(PyNumberMethods, x)
