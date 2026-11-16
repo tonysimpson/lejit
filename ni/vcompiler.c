@@ -323,9 +323,10 @@ void psyco_assert_coherent1(PsycoObject *po, bool full) {
   vinfo_t *err;
   for (i = 0; i < REG_TOTAL + HAVE_CCREG; i++)
     found[i] = 0;
-  debug_extra_refs.count = 2;
+  debug_extra_refs.count = 3;
   debug_extra_refs.items[0] = po->pr.exc; /* normally private to pycompiler.c,*/
   debug_extra_refs.items[1] = po->pr.val; /* but this is for debugging only */
+  debug_extra_refs.items[2] = po->pr.tb;  /* run-time after END_FINALLY */
   coherent_array(&po->vlocals, po, found, true);
   coherent_array(&debug_extra_refs, po, found, true);
   if (full) {
