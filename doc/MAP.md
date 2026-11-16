@@ -116,6 +116,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tests/compile_bounds.py` | tooling | Fails if warm code keeps starting code buffers (`ni._stats()`); run under Ni by check.sh. | | `843c33f` |
 | `tests/cpython_tests.py` | tooling | Runs 14 of CPython's test modules with and without Ni and compares counts and exit status; known differences listed with KNOWN_BUGS ids. | | `e4f21aa` |
 | `tools/check.sh` | tooling | Build (debug, all checks), refuse a failed or stale build, run every suite (D21). | | `3eb6d33` |
+| `tools/without_fix.sh` | tooling | Runs a command with some uncommitted changes stashed and a forced rebuild, to show a test fails without its fix (D21). | | `NEW` |
 | `tools/demo.py` | tooling | Demo: n-queens, n-body, ASCII Mandelbrot, word counts, timed with and without Ni. | | `e4f21aa` |
 | `tests/encoding/v_mem_mov_test.c`, `run_v_mem_mov.sh` | tooling | Executes `v_mem_mov`'s code and checks the loads and stores. | | `de820e8` |
 | `setup.cfg`, `MANIFEST` | glue | Packaging metadata. | `MANIFEST` still lists upstream `c/` paths: stale. | `e1fd808` |
