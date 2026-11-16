@@ -14,8 +14,8 @@
  *  - a RIP-relative displacement is relative to the end of the instruction,
  *    including a trailing immediate (ADDRESS_ENCODING's imm_len).
  * Tested by executing the emitted code: tests/encoding/run_v_mem_mov.sh.
- * Callers must compute a virtual base or index first (M8): a virtual one
- * would be treated as compile-time.
+ * Callers must compute a virtual base or index first (M8, checked by
+ * extra_assert): a virtual one would be treated as compile-time.
  */
 #ifndef _V_MEM_MOV_H
 #define _V_MEM_MOV_H
@@ -41,6 +41,10 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
     bool rex_w = false;
     bool read = false;
 
+    /* a virtual base or index would be read as a compile-time value
+       (V_CT_GET_VALUE); callers must compute it first (KNOWN_BUGS M8) */
+    extra_assert(base == NULL || !is_virtualtime(base->source));
+    extra_assert(index == NULL || !is_virtualtime(index->source));
     if (v != NULL) {
         /* may emit code */
         if (!compute_vinfo(v, po)) {
