@@ -114,7 +114,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tests/encoding/check.py` | tooling | Checks `@asm`-annotated emitters in `iencoding.h` against GNU `as`. | | `6ca580a` |
 | `tests/smoke.py` | tooling | Stdlib smoke test: about 30 modules, output must match with and without Ni. | | `6ca580a` |
 | `tests/compile_bounds.py` | tooling | Fails if warm code keeps starting code buffers (`ni._stats()`); run under Ni by check.sh. | | `843c33f` |
-| `tests/cpython_tests.py` | tooling | Runs 14 of CPython's test modules with and without Ni and compares counts and exit status; known differences listed with KNOWN_BUGS ids. | | `e4f21aa` |
+| `tests/cpython_tests.py` | tooling | Runs 50 of CPython's test modules with and without Ni and compares counts and exit status; known differences listed with KNOWN_BUGS ids. | | `e4f21aa` |
 | `tools/check.sh` | tooling | Build (debug, all checks), refuse a failed or stale build, run every suite (D21). | | `3eb6d33` |
 | `tools/without_fix.sh` | tooling | Runs a command with some uncommitted changes stashed and a forced rebuild, to show a test fails without its fix (D21). | | `4a5a3e5` |
 | `tools/demo.py` | tooling | Demo: n-queens, n-body, ASCII Mandelbrot, word counts, timed with and without Ni. | | `e4f21aa` |

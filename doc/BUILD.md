@@ -57,7 +57,7 @@ Upstream Psyco's test suite (`test/`) and the Ni regression pack were removed (s
 - To prove an edit is comment-only without building, strip comments and compare against git:
   `gcc -fpreprocessed -E -P -x c FILE | tr -d ' \t\n' | md5sum`, compared with the same for `git show HEAD:FILE`.
 
-**Check everything with one command:** `tools/check.sh`. It builds with `NI_TRACE=1 NI_ALL_CHECKS=1`, stops if the build fails or `ni.so` is older than any source, then runs `tests/run.py`, `tests/encoding/check.py`, the `v_mem_mov` execution tests, `tests/compile_bounds.py` (fails if warm code keeps compiling, via `ni._stats()`), `tests/cpython_tests.py` (14 of CPython's own test modules, counts and exit status must match) and `tests/smoke.py` (stdlib output with and without Ni). About two minutes. [run]
+**Check everything with one command:** `tools/check.sh`. It builds with `NI_TRACE=1 NI_ALL_CHECKS=1`, stops if the build fails or `ni.so` is older than any source, then runs `tests/run.py`, `tests/encoding/check.py`, the `v_mem_mov` execution tests, `tests/compile_bounds.py` (fails if warm code keeps compiling, via `ni._stats()`), `tests/cpython_tests.py` (50 of CPython's own test modules, counts and exit status must match) and `tests/smoke.py` (stdlib output with and without Ni). About two minutes. [run]
 
 **Showing a new test fails without the fix (D21):** `tools/without_fix.sh <changed files> -- <command>`, e.g. `tools/without_fix.sh ni/mergepoints.c -- python3.7 tests/run.py -k framelocals`. It stashes those files' uncommitted changes, removes `ni.so` and rebuilds, runs the command, then restores everything. Stashing by hand just after a build can leave the fixed `ni.so` in place (same-second timestamps). [run]
 

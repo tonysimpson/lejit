@@ -14,10 +14,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
            'test_string', 'test_operator', 'test_itertools', 'test_enum',
            'test_csv', 'test_base64', 'test_functools', 'test_collections',
-           'test_json', 'test_statistics']
+           'test_json', 'test_statistics',
+           'test_list', 'test_dict', 'test_set', 'test_tuple', 'test_math',
+           'test_random', 'test_difflib', 'test_pprint', 'test_shlex',
+           'test_copy', 'test_deque', 'test_sort', 'test_contextlib',
+           'test_abc', 'test_dataclasses', 'test_struct', 'test_re',
+           'test_ordered_dict', 'test_generators', 'test_scope', 'test_class',
+           'test_exceptions', 'test_with', 'test_keywordonlyarg',
+           'test_grammar', 'test_types', 'test_bool', 'test_int', 'test_float',
+           'test_long', 'test_complex', 'test_builtin', 'test_richcmp',
+           'test_userdict', 'test_userlist', 'test_userstring']
 
 # module -> reason it is expected to differ
 KNOWN = {
+    'test_re': 'C11: warnings stacklevel skips compiled callees',
 }
 
 CHILD = r'''
