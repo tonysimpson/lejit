@@ -8,9 +8,6 @@
  *    the arguments, the callee pops them, and the result is a new reference in
  *    RAX);
  *  - condition-code materialisation and the integer ALU emitters.
- * Suspected bug: run_time_call uses the
- * overall argument index for the integer registers, so an integer argument
- * after a double goes in the wrong register.
  */
 
 #include "iencoding.h"
@@ -393,7 +390,7 @@ DEFINEFN vinfo_t *
 run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
               char argtags[], long args[], int total_output_array_size)
 {
-    int stackbase, i, double_arg_count, double_arg_i;
+    int stackbase, i, double_arg_count, double_arg_i, int_arg_i;
     vinfo_t *vresult;
     BEGIN_CODE
     NEED_CC();
@@ -409,13 +406,20 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
     assert(double_arg_count <=
            2); /* < 8 would be fine with current backend code */
     BEGIN_CALL(arg_count - double_arg_count);
-    for (i = arg_count, double_arg_i = double_arg_count - 1; i--;) {
+    /* SysV numbers integer and floating-point arguments separately: an
+       integer argument's register is chosen by its position among the
+       integer arguments only (int_arg_i), not by its overall position */
+    for (i = arg_count, double_arg_i = double_arg_count - 1,
+        int_arg_i = arg_count - double_arg_count;
+         i--;) {
+        if (argtags[i] != 'd' && argtags[i] != 'D')
+            int_arg_i--;
         switch (argtags[i]) {
             case 'v':
-                CALL_SET_ARG_FROM_RT(((vinfo_t *)args[i])->source, i);
+                CALL_SET_ARG_FROM_RT(((vinfo_t *)args[i])->source, int_arg_i);
                 break;
             case 'r':
-                CALL_SET_ARG_FROM_STACK_REF(args[i], i);
+                CALL_SET_ARG_FROM_STACK_REF(args[i], int_arg_i);
                 break;
             case 'a':
             case 'A': {
@@ -427,7 +431,7 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
                     array->items[--j] = vinfo_new(
                         RunTime_NewStack(stackbase, with_reference, false));
                 }
-                CALL_SET_ARG_FROM_STACK_REF(array->items[0]->source, i);
+                CALL_SET_ARG_FROM_STACK_REF(array->items[0]->source, int_arg_i);
                 break;
             }
             case 'd':
@@ -440,7 +444,7 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
                 double_arg_i--;
                 break;
             case 'l':
-                CALL_SET_ARG_IMMED(args[i], i);
+                CALL_SET_ARG_IMMED(args[i], int_arg_i);
                 break;
             default:
                 printf("var_call: unsupported '%c'\n", argtags[i]);
