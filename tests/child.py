@@ -5,7 +5,8 @@ sys.path.insert(0, sys.argv[1])          # repo root (for ni)
 sys.path.insert(0, sys.argv[2])          # cases directory
 mod = importlib.import_module(sys.argv[3])
 fn = getattr(mod, sys.argv[4])
-calls = eval(sys.argv[5], {'nan': float('nan'), 'inf': float('inf')})  # list of argument tuples
+# list of argument tuples: a Python expression evaluated in the case module
+calls = eval(sys.argv[5], dict(vars(mod), nan=float('nan'), inf=float('inf')))
 use_ni = sys.argv[6] == '1'
 if use_ni:
     import ni

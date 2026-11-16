@@ -6,8 +6,14 @@ The results (values or exceptions) must match, and the Ni run must report
 that the function was really compiled. Crashes and hangs fail only that case.
 
 Cases live in tests/cases/*.py, each with a CASES list of
-    (function_name, [args_tuple, ...], options_dict)
-options: 'xfail': 'KNOWN_BUGS id + reason'  (expected to fail; never silent)
+    (function_name, calls, options_dict)
+calls is a list of argument tuples, or a string holding a Python expression
+for one, evaluated in the case module (for arguments without a usable repr).
+options:
+  'xfail': 'KNOWN_BUGS id + reason'   expected to fail; never silent
+  'interpreted': 'reason'             must NOT be compiled (e.g. an opcode
+                                      outside the whitelist); results must
+                                      still match
 
 Usage: run.py [-k substring] [-v]
 """
@@ -20,8 +26,10 @@ TIMEOUT = 20
 
 
 def run_child(modname, fname, calls, use_ni):
+    if not isinstance(calls, str):
+        calls = repr(calls)
     cmd = [PY37, os.path.join(ROOT, 'tests', 'child.py'), ROOT, CASES,
-           modname, fname, repr(calls), '1' if use_ni else '0']
+           modname, fname, calls, '1' if use_ni else '0']
     try:
         p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            timeout=TIMEOUT)
@@ -64,6 +72,9 @@ def main():
         else:
             if got[:-1] != expected:
                 problem = 'results differ: expected %r, got %r' % (expected, got[:-1])
+            elif opts.get('interpreted'):
+                if got[-1] == 'compiled: yes':
+                    problem = 'compiled, but expected to be interpreted'
             elif got[-1] != 'compiled: yes':
                 problem = got[-1]
         xfail = opts.get('xfail')

@@ -1,0 +1,60 @@
+# Python-to-Python calls, globals, recursion.
+
+G = 10
+
+def helper(x):
+    return x + 1
+
+def call_helper(n):
+    return helper(n) * 2
+
+def call_in_loop(n):
+    t = 0
+    i = 0
+    while i < n:
+        t = t + helper(i)
+        i = i + 1
+    return t
+
+def read_global(n):
+    return n + G
+
+def fact(n):
+    if n <= 1:
+        return 1
+    return n * fact(n - 1)
+
+def fib(n):
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def defaults(a, b=5):
+    return a * b
+
+def call_defaults(n):
+    return defaults(n) + defaults(n, 2)
+
+def many_args(a, b, c, d, e, f, g, h):
+    return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8
+
+def call_many(n):
+    return many_args(n, n, n, n, n, n, n, n)
+
+def call_builtin_len(s):
+    return len(s)
+
+def call_builtin_abs(n):
+    return abs(n)
+
+CASES = [
+    ('call_helper', [(1,), (-4,)], {}),
+    ('call_in_loop', [(0,), (50,)], {}),
+    ('read_global', [(1,), (-10,)], {}),
+    ('fact', [(1,), (5,), (20,), (25,)], {}),
+    ('fib', [(0,), (10,), (15,)], {}),
+    ('call_defaults', [(3,)], {}),
+    ('call_many', [(1,), (7,)], {}),
+    ('call_builtin_len', [('abc',), ((1, 2),), ([],)], {}),
+    ('call_builtin_abs', [(-3,), (4,), (-2.5,)], {}),
+]
