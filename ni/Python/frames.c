@@ -52,7 +52,12 @@ stack_frame_info_t *psyco_finfo(PsycoObject *caller, PsycoObject *callee) {
 }
 
 static void frame_runtime_capsule_dealloc(PyObject *capsule) {
-  PyMem_Free(PyCapsule_GetPointer(capsule, NULL));
+  FrameRuntime *fr = (FrameRuntime *)PyCapsule_GetPointer(capsule, NULL);
+  /* release the references taken in frame_runtime_capsule_new */
+  Py_DECREF(fr->py_frame);
+  Py_DECREF(fr->psy_code);
+  Py_DECREF(fr->psy_globals);
+  PyMem_Free(fr);
 }
 
 static PyObject *

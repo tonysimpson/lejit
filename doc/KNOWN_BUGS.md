@@ -78,4 +78,5 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | C2 | Restoring dead-local deletion (history A3, DECISIONS D15) also needs the `CodeBuffer_Check` guard in `psyco_compatible` that `e1fd808` removed. | [read] |
 | C3 | Compiled code and many code-buffer references are never freed. | [read] |
 | C4 | **Fixed** (`601aa8f`). `mergepoints.c:psyco_next_merge_point` walked past the -1 sentinel into unrelated memory. Hit on the first run (importlib). | [run] |
+| C6 | **Fixed** (see git log, `frames.c`). Every compiled call leaked its frame: `frame_runtime_capsule_new` increfs the frame, code and globals, but the capsule destructor only freed the struct. Found by the leak check in `tests/run.py`. | [run] |
 | C5 | **Fixed** (`300d725`, build). The headers define globals without `extern`, so gcc 10+ (`-fno-common`) fails to link. Built with `-fcommon`; the clean fix is `extern` declarations plus one definition. | [run] |
