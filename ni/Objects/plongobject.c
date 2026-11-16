@@ -16,6 +16,7 @@
  */
 #include "plongobject.h"
 #include "pboolobject.h"
+#include "pfloatobject.h"
 
 /* MEDIUM_VALUE(v) of an int that is one digit at run time, as a new
    reference in *pval. Returns 1; 0 if it isn't one digit (the caller falls
@@ -83,7 +84,14 @@ vinfo_t *PsycoLong_AsLong(PsycoObject *po, vinfo_t *v) {
 
 DEFINEFN
 bool PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v, vinfo_t **vd) {
-  /* the backend has no int-to-double conversion */
+  /* the backend has no int-to-double conversion: a C helper. A virtual
+     int's word converts directly; (double)long rounds to nearest even,
+     as PyLong_AsDouble does. */
+  if (PsycoLong_IsVirtual(v)) {
+    *vd = psyco_generic_call(po, cimpl_fp_from_long, CfPure | CfReturnTypeDouble,
+                             "v", v->array->items[iLONG_VALUE]);
+    return *vd != NULL;
+  }
   if ((*vd = psyco_generic_call(po, PyLong_AsDouble,
                                 CfPyErrCheck | CfReturnTypeDouble, "v", v)) ==
       NULL) {

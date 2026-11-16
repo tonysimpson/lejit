@@ -1,6 +1,7 @@
 # Builtins with Psyco metas (KNOWN_BUGS F2): len, abs, id, and the
 # METH_FASTCALL ones (divmod, pow), whose metas take a tuple
-# (pmethodobject.h); hash, min, max, isinstance.
+# (pmethodobject.h); hash, min, max, isinstance, round; and calls of the
+# types int, float and type (a meta for type_call).
 
 class L:
     def __len__(self):
@@ -256,6 +257,60 @@ def isinstance_globals_tuple(x):
     # (Base, int) is built at run time from globals: a virtual tuple
     return isinstance(x, (Base, int)), isinstance(x, (Other, str))
 
+class MyFloat(float):
+    pass
+
+class K:
+    def __init__(self, a):
+        self.a = a
+
+def conversions(x):
+    out = []
+    for fn in (int, float, round, type):
+        try:
+            r = fn(x)
+            out.append((repr(r), type(r).__name__, r is x))
+        except (TypeError, ValueError, OverflowError) as e:
+            out.append(type(e).__name__ + ': ' + str(e))
+    return out
+
+def conversion_loop(n):
+    t = 0
+    x = 0.25
+    for i in range(n):
+        t = t + int(x) + round(x) + int(float(i))
+        x = x + 0.5
+    return t, float(t), type(t)
+
+def type_calls_other():
+    # forms the type_call meta leaves to CPython
+    out = [int('ff', 16), int('12'), int(), float(), float('1.5'),
+           int(3.9), type('T', (), {}).__name__,
+           K(5).a, MyInt(7), MyFloat(1.5), bool(2)]
+    try:
+        out.append(int(1.5, 10))
+    except TypeError as e:
+        out.append(str(e))
+    try:
+        out.append(round(2.567, 2))
+        out.append(round(25, -1))
+        out.append(round(2.5, None))
+        out.append(round(number=3.5))
+    except TypeError as e:
+        out.append(str(e))
+    return out
+
+def make(cls, v):
+    return cls(v)
+
+def type_call_many_classes():
+    # one call site sees many types: the type promotion goes megamorphic
+    out = []
+    for cls in (int, float, str, list, tuple, K, MyInt, MyFloat, bool, type,
+                int, float):
+        out.append(repr(make(cls, 3)))
+    return out
+
 CASES = [
     ('lens', "[([1, 2], (1,), 'abcd', {'k': 1}), ([], (), '', {})]", {}),
     ('len_user', '[(L(),), (BadLen(),), (5,), (None,)]', {}),
@@ -280,5 +335,9 @@ CASES = [
     ('isinstance_bases_change', [()], {}),
     ('isinstance_many_classes', [()], {}),
     ('isinstance_globals_tuple', "[(1,), (Derived(),), ('s',), (2.5,)]", {}),
+    ('conversions', "[(0,), (-7,), (2**62,), (2**63 - 1,), (2**70,), (0.0,), (-0.0,), (2.5,), (3.5,), (-2.5,), (-0.5,), (0.49999999999999994,), (9.2e18,), (9.3e18,), (-9.3e18,), (1e300,), (inf,), (-inf,), (nan,), (True,), (MyInt(5),), (MyFloat(1.5),), ('12',), (None,)]", {}),
+    ('conversion_loop', [(20,)], {}),
+    ('type_calls_other', [()], {}),
+    ('type_call_many_classes', [()], {}),
     ('pow_bad_calls', [((2, 3),), ((2,),), ((2, 3, 4, 5),)], {}),
 ]

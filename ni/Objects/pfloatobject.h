@@ -61,6 +61,20 @@ EXTERNFN int psyco_convert_to_double(PsycoObject* po, vinfo_t* vobj,
   vinfo_t* b1, vinfo_t* b2, int op);*/
 
 
+EXTERNFN double cimpl_fp_from_long(long value);
+
+/* A double holding a whole number (truncated or rounded) as an int:
+   float___trunc___impl's fast case, LONG_MIN < whole < LONG_MAX, as a
+   run-time condition. Returns 1 with a new virtual int in *result, 0 if it
+   doesn't fit (NaN, infinities, huge values: the caller asks CPython), -1
+   on error. */
+EXTERNFN int PsycoFloat_WholeToLong(PsycoObject* po, vinfo_t* vwhole,
+                                    vinfo_t** result);
+/* the whole part of x, as float___trunc___impl and float___round___impl
+   (no ndigits) compute it */
+EXTERNFN vinfo_t* PsycoFloat_Trunc(PsycoObject* po, vinfo_t* vd);
+EXTERNFN vinfo_t* PsycoFloat_RoundEven(PsycoObject* po, vinfo_t* vd);
+
 /* Some C implementations made visible for Modules/pmath.c */
 /*
 EXTERNFN void 

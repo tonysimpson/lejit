@@ -1,5 +1,6 @@
 #include "pbltinmodule.h"
 #include "../Objects/pboolobject.h"
+#include "../Objects/pfloatobject.h"
 #include "../Objects/plistobject.h"
 #include "../Objects/plongobject.h"
 #include "../Objects/pmethodobject.h"
@@ -17,6 +18,8 @@ static PyCFunction cimpl_min;
 static PyCFunction cimpl_max;
 static PyCFunction cimpl_pow;
 static PyCFunction cimpl_isinstance;
+static PyCFunction cimpl_round;
+static ternaryfunc type_call;
 static PyObject *object_class_descr; /* object.__class__ */
 static PyObject *str___class__;
 
@@ -322,6 +325,111 @@ static vinfo_t *pbuiltin_isinstance(PsycoObject *po, vinfo_t *vself,
   return x != NULL ? PsycoBool_FROM_WORD(x) : NULL;
 }
 
+/* An exact float's whole part (trunc or round-half-even) as an int, or
+   NULL in *out (with true returned) if it doesn't fit a long: then the
+   caller asks CPython, which raises for NaN and infinities or builds a
+   big int. */
+static bool float_whole_to_int(PsycoObject *po, vinfo_t *vf, bool round_even,
+                               vinfo_t **out) {
+  vinfo_t *vd, *vw;
+  int r;
+  *out = NULL;
+  vd = PsycoFloat_AS_DOUBLE(po, vf); /* borrowed */
+  if (vd == NULL)
+    return false;
+  vw = round_even ? PsycoFloat_RoundEven(po, vd) : PsycoFloat_Trunc(po, vd);
+  if (vw == NULL)
+    return false;
+  r = PsycoFloat_WholeToLong(po, vw, out);
+  vinfo_decref(vw, po);
+  return r >= 0;
+}
+
+/* builtin_round (Python/bltinmodule.c) without ndigits calls
+   type(number).__round__(): for an exact int that is long_round ->
+   long_long, the same object; for an exact float float___round___impl,
+   round half to even then PyLong_FromDouble. */
+static vinfo_t *pbuiltin_round(PsycoObject *po, vinfo_t *vself,
+                               vinfo_t *vargs) {
+  vinfo_t *v, *x;
+  PyTypeObject *tp;
+  if (PsycoTuple_Load(vargs) == 1) {
+    v = PsycoTuple_GET_ITEM(vargs, 0);
+    tp = Psyco_NeedType(po, v);
+    if (tp == NULL)
+      return NULL;
+    if (tp == &PyLong_Type) {
+      vinfo_incref(v);
+      return v;
+    }
+    if (tp == &PyFloat_Type) {
+      if (!float_whole_to_int(po, v, true, &x))
+        return NULL;
+      if (x != NULL)
+        return x;
+    }
+  }
+  return PsycoCFunction_CallFast(po, cimpl_round, METH_FASTCALL | METH_KEYWORDS,
+                                 vself, vargs);
+}
+
+/* type_call (Objects/typeobject.c) for type(x), int(x) and float(x) with
+   one positional argument of an exact type; everything else, including
+   every class instantiation, is the residual type_call as before.
+   type(x): the "ugly exception", the type itself. int(x): long_new_impl ->
+   PyNumber_Long, which returns an exact int unchanged and uses nb_int
+   (float___trunc___impl) for a float. float(x): float_new_impl ->
+   PyNumber_Float, which returns an exact float unchanged and uses nb_float
+   (long_float -> PyLong_AsDouble) for an int. The callee is compared with
+   the three types at run time rather than promoted: a promoted class
+   would be kept alive by the compiled code (freeing.namedtuple_code_dies).
+   The comparisons only depend on earlier ones, as respawn requires. */
+static vinfo_t *ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg,
+                           vinfo_t *vkw) {
+  static PyTypeObject *const handled[] = {&PyLong_Type, &PyFloat_Type,
+                                           &PyType_Type};
+  PyObject *t = NULL;
+  PyTypeObject *tp;
+  vinfo_t *v, *x;
+  int i;
+  if (!psyco_knowntobe(vkw, 0) || PsycoTuple_Load(varg) != 1)
+    goto fallback;
+  for (i = 0; i < 3 && t == NULL; i++) {
+    condition_code_t cc =
+        integer_cmp_i(po, vtype, (long)handled[i], Py_EQ);
+    if (cc == CC_ERROR)
+      return NULL;
+    if (runtime_condition_f(po, cc))
+      t = (PyObject *)handled[i];
+  }
+  if (t == NULL)
+    goto fallback;
+  v = PsycoTuple_GET_ITEM(varg, 0);
+  if (t == (PyObject *)&PyType_Type)
+    return psyco_get_field(po, v, OB_type);
+  tp = Psyco_NeedType(po, v);
+  if (tp == NULL)
+    return NULL;
+  if ((PyObject *)tp == t) {
+    vinfo_incref(v);
+    return v;
+  }
+  if (t == (PyObject *)&PyLong_Type && tp == &PyFloat_Type) {
+    if (!float_whole_to_int(po, v, false, &x))
+      return NULL;
+    if (x != NULL)
+      return x;
+  }
+  if (t == (PyObject *)&PyFloat_Type && tp == &PyLong_Type) {
+    if (!PsycoLong_AsDouble(po, v, &x))
+      return NULL;
+    return PsycoFloat_FROM_DOUBLE(x);
+  }
+fallback:
+  return psyco_generic_call(po, type_call, CfCommonNewRefPyObject, "vvv",
+                            vtype, varg, vkw);
+}
+
 /***************************************************************/
 
 INITIALIZATIONFN
@@ -345,6 +453,9 @@ void psyco_bltinmodule_init(void) {
   DEFMETA(max, METH_VARARGS | METH_KEYWORDS);
   DEFMETA(pow, METH_FASTCALL);
   DEFMETA(isinstance, METH_FASTCALL);
+  DEFMETA(round, METH_FASTCALL | METH_KEYWORDS);
+  type_call = PyType_Type.tp_call;
+  Psyco_DefineMeta(type_call, ptype_call);
   str___class__ = PyUnicode_InternFromString("__class__");
   object_class_descr = _PyType_Lookup(&PyBaseObject_Type, str___class__);
 #undef DEFMETA

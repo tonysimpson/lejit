@@ -36,6 +36,59 @@ DEFINEFN double cimpl_fp_from_long(long value) { return (double)value; }
 
 DEFINEFN double cimpl_fp_from_float(float value) { return (double)value; }
 
+static int cimpl_fp_fits_long(double whole) {
+  return LONG_MIN < whole && whole < LONG_MAX; /* false for NaN */
+}
+
+static long cimpl_fp_to_long(double whole) { return (long)whole; }
+
+/* float___trunc___impl */
+static double cimpl_fp_trunc(double x) {
+  double wholepart;
+  (void)modf(x, &wholepart);
+  return wholepart;
+}
+
+/* float___round___impl without ndigits: round half to even */
+static double cimpl_fp_round_even(double x) {
+  double rounded = round(x);
+  if (fabs(x - rounded) == 0.5)
+    rounded = 2.0 * round(x / 2.0);
+  return rounded;
+}
+
+DEFINEFN
+vinfo_t *PsycoFloat_Trunc(PsycoObject *po, vinfo_t *vd) {
+  return psyco_generic_call(po, cimpl_fp_trunc, CfPure | CfReturnTypeDouble,
+                            "d", vd);
+}
+
+DEFINEFN
+vinfo_t *PsycoFloat_RoundEven(PsycoObject *po, vinfo_t *vd) {
+  return psyco_generic_call(po, cimpl_fp_round_even,
+                            CfPure | CfReturnTypeDouble, "d", vd);
+}
+
+DEFINEFN
+int PsycoFloat_WholeToLong(PsycoObject *po, vinfo_t *vwhole,
+                           vinfo_t **result) {
+  vinfo_t *x;
+  int r;
+  vinfo_t *fits = psyco_generic_call(po, cimpl_fp_fits_long,
+                                     CfPure | CfReturnTypeInt, "d", vwhole);
+  if (fits == NULL)
+    return -1;
+  r = runtime_NON_NULL_t(po, fits); /* consumes fits */
+  if (r != true)
+    return r == false ? 0 : -1;
+  x = psyco_generic_call(po, cimpl_fp_to_long, CfPure | CfReturnTypeLong, "d",
+                         vwhole);
+  if (x == NULL)
+    return -1;
+  *result = PsycoLong_FROM_WORD(x);
+  return 1;
+}
+
 DEFINEFN
 vinfo_t *PsycoFloat_FromFloat(PsycoObject *po, vinfo_t *vfloat) {
   vinfo_t *x;
