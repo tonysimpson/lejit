@@ -3,7 +3,8 @@
 # failure, so a broken build can never be followed by a test run against an
 # old ni.so. Run from anywhere:  tools/check.sh
 #
-# NI_PY37 overrides the CPython 3.7 interpreter.
+# NI_PY37 overrides the CPython 3.7 interpreter, NI_CPYTHON_SRC its source
+# tree (for the generator check).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY37=${NI_PY37:-$HOME/.pyenv/versions/3.7.17/bin/python3.7}
@@ -17,6 +18,9 @@ stale_sources() {   # sources newer than ni.so (find compares to the ns)
     [ -z "$so" ] && { echo "(no ni.so)"; return; }
     find ni setup.py -newer "$so" \( -name '*.c' -o -name '*.h' -o -name setup.py \) | head -5
 }
+
+step "generated code is up to date (tools/metac)"
+python3 tools/metac/gen_long.py --check
 
 step "build (NI_TRACE=1 NI_ALL_CHECKS=1)"
 # distutils compares whole seconds: an edit in the same second as the last

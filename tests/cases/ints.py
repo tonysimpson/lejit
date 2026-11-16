@@ -30,6 +30,10 @@ def op_mul(a, b):
     return a * b
 
 
+def op_invert(a, b):
+    return ~a, ~b, ~(a + b)
+
+
 def op_cmp(a, b):
     return (a < b, a <= b, a == b, a != b, a > b, a >= b)
 
@@ -44,6 +48,10 @@ def sub_edges():
 
 def mul_edges():
     return table(op_mul)
+
+
+def invert_edges():
+    return table(op_invert)
 
 
 def cmp_edges():
@@ -179,6 +187,7 @@ CASES = [
     ('add_edges', [()], {}),
     ('sub_edges', [()], {}),
     ('mul_edges', [()], {}),
+    ('invert_edges', [()], {}),
     ('cmp_edges', [()], {}),
     ('chain_edges', [()], {}),
     ('grow_past_one_digit', [(40,)], {}),
