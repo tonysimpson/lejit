@@ -350,13 +350,15 @@ not_ok:
 DEFINEFN PyObject *
 psyco_get_merge_points(PyCodeObject *co, int module)
 {
-    PyObject *capsule_or_none;
-    capsule_or_none = PyDict_GetItem(co_to_mp, (PyObject *)co);
-    if (capsule_or_none == NULL) {
-        capsule_or_none = _build_merge_points(co, module);
-        PyDict_SetItem(co_to_mp, (PyObject *)co, capsule_or_none);
+    /* borrowed: the record keeps it */
+    ni_code_extra_t *x = ni_code_extra(co);
+    if (x == NULL) {
+        PyErr_Clear(); /* out of memory: just don't compile */
+        return Py_None;
     }
-    return capsule_or_none;
+    if (x->merge_points == NULL)
+        x->merge_points = _build_merge_points(co, module);
+    return x->merge_points;
 }
 
 DEFINEFN mergepoint_t *

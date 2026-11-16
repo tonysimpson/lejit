@@ -154,8 +154,17 @@ typedef struct stack_frame_info_s stack_frame_info_t; /* def in pycompiler.h */
 
 EXTERNVAR PyObject* PyExc_PsycoError;
 EXTERNVAR PyObject* CPsycoModule;
-EXTERNVAR PyObject* co_to_mp;
-EXTERNVAR PyObject* co_to_entry_point;
+/* What Ni keeps per code object, in its co_extra slot (PEP 523): found by
+   identity, not by value as a dict keyed by code objects would be (equal
+   code objects compare co_consts recursively; KNOWN_BUGS C13). */
+typedef struct {
+  PyObject* merge_points;  /* capsule, Py_None if unsupported, NULL if not
+                              built yet; owned */
+  PyObject* entry_point;   /* (codebuf, globals), Py_None if compiling
+                              failed, NULL if not tried; owned */
+} ni_code_extra_t;
+/* the record for 'co', made on first use; NULL with an exception set */
+EXTERNFN ni_code_extra_t* ni_code_extra(PyCodeObject* co);
 
 /* moved here from vcompiler.h because needed by numerous header files.
    See vcompiler.h for comments */

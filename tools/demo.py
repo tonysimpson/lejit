@@ -108,7 +108,7 @@ for name, f, args in [('nqueens(10)', nqueens, (10,)),
     r = f(*args)
     dt = time.perf_counter() - t
     total += dt
-    compiled = USE_NI and f.__code__ in ni.co_to_entry_point
+    compiled = USE_NI and ni._code_info(f.__code__) == 'compiled'
     shown = 'picture below' if name == 'mandel_art' else r
     print('%-12s %-42s %7.3fs  %s' % (name, shown, dt, 'compiled' if compiled else ''))
     if name == 'mandel_art':

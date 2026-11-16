@@ -19,7 +19,6 @@ MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
 # module -> reason it is expected to differ
 KNOWN = {
     'test_collections': 'under investigation',
-    'test_json': 'under investigation (aborts)',
 }
 
 CHILD = r'''

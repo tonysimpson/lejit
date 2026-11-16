@@ -101,8 +101,37 @@ void ni_trace_unify(PsycoObject *po, CodeBufferObject *match) {}
 #endif
 DEFINEVAR PyObject *PyExc_PsycoError;
 DEFINEVAR PyObject *CPsycoModule;
-DEFINEVAR PyObject *co_to_mp;
-DEFINEVAR PyObject *co_to_entry_point;
+
+/* A record dies with its code object. That only happens to code that
+   was never compiled: every PsycoObject keeps its code object forever, so
+   compiled code is never freed (KNOWN_BUGS C14). */
+static Py_ssize_t code_extra_index = -1;
+
+static void code_extra_free(void *p) {
+  ni_code_extra_t *x = (ni_code_extra_t *)p;
+  Py_XDECREF(x->merge_points);
+  Py_XDECREF(x->entry_point);
+  PyMem_Free(x);
+}
+
+DEFINEFN
+ni_code_extra_t *ni_code_extra(PyCodeObject *co) {
+  void *x;
+  if (_PyCode_GetExtra((PyObject *)co, code_extra_index, &x) < 0)
+    return NULL;
+  if (x == NULL) {
+    x = PyMem_Calloc(1, sizeof(ni_code_extra_t));
+    if (x == NULL) {
+      PyErr_NoMemory();
+      return NULL;
+    }
+    if (_PyCode_SetExtra((PyObject *)co, code_extra_index, x) < 0) {
+      PyMem_Free(x);
+      return NULL;
+    }
+  }
+  return (ni_code_extra_t *)x;
+}
 
 DEFINEFN
 int psyco_fatal_error(char *msg, char *filename, int lineno) {
@@ -119,8 +148,30 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
   return Py_BuildValue("{sl}", "code_buffers", psyco_stat_code_buffers);
 }
 
+/* for tests and tools: what the eval hook did with a code object */
+static PyObject *ni_code_info(PyObject *self, PyObject *co) {
+  void *x;
+  ni_code_extra_t *e;
+  if (!PyCode_Check(co)) {
+    PyErr_SetString(PyExc_TypeError, "_code_info() needs a code object");
+    return NULL;
+  }
+  if (_PyCode_GetExtra(co, code_extra_index, &x) < 0)
+    return NULL;
+  e = (ni_code_extra_t *)x;
+  if (e == NULL || e->merge_points == NULL)
+    return PyUnicode_FromString("not seen");
+  if (e->merge_points == Py_None)
+    return PyUnicode_FromString("unsupported");
+  if (e->entry_point == NULL || e->entry_point == Py_None)
+    return PyUnicode_FromString("no entry point");
+  return PyUnicode_FromString("compiled");
+}
+
 static PyMethodDef module_methods[] = {
     {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
+    {"_code_info", ni_code_info, METH_O,
+     "'not seen', 'unsupported', 'no entry point' or 'compiled'."},
     {NULL, NULL, 0, NULL}};
 
 static struct PyModuleDef ni_module = {PyModuleDef_HEAD_INIT, MODULE_NAME, NULL,
@@ -135,29 +186,8 @@ PyMODINIT_FUNC PyInit_ni(void) {
   module = PyModule_Create(&ni_module);
   /* XXX tony: make this code handle errors properly */
   if (module) {
-    /* The eval hook uses these two dicts for as long as Python code runs,
-       which is after the garbage collector has cleared this module at
-       shutdown (weakref callbacks, __del__): they keep a reference of
-       their own besides the module's (KNOWN_BUGS C10) */
-    co_to_mp = PyDict_New();
-    if (co_to_mp == NULL) {
-      Py_DECREF(module);
-      return NULL;
-    }
-    Py_INCREF(co_to_mp);
-    if (PyModule_AddObject(module, "co_to_mp", co_to_mp)) {
-      Py_DECREF(co_to_mp);
-      Py_DECREF(module);
-      return NULL;
-    }
-    co_to_entry_point = PyDict_New();
-    if (co_to_entry_point == NULL) {
-      Py_DECREF(module);
-      return NULL;
-    }
-    Py_INCREF(co_to_entry_point);
-    if (PyModule_AddObject(module, "co_to_entry_point", co_to_entry_point)) {
-      Py_DECREF(co_to_entry_point);
+    code_extra_index = _PyEval_RequestCodeExtraIndex(code_extra_free);
+    if (code_extra_index < 0) {
       Py_DECREF(module);
       return NULL;
     }

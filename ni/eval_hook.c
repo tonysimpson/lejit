@@ -47,7 +47,8 @@ static PyObject *NiEval_EvalFrame(PyFrameObject *frame, int throwflag) {
     mergepoints = psyco_get_merge_points(co, 0);
     if (mergepoints != Py_None) {
       PyObject *entry_point;
-      entry_point = PyDict_GetItem(co_to_entry_point, (PyObject *)co);
+      ni_code_extra_t *x = ni_code_extra(co); /* made by the call above */
+      entry_point = x->entry_point;
       if (entry_point == NULL) {
         /* Not compiled yet */
         PsycoObject *po;
@@ -57,8 +58,9 @@ static PyObject *NiEval_EvalFrame(PyFrameObject *frame, int throwflag) {
         codebuf = psyco_compile_code(po, PsycoObject_Ready(po));
         entry_point = PyTuple_New(2);
         PyTuple_SET_ITEM(entry_point, 0, (PyObject *)codebuf);
+        Py_INCREF(frame->f_globals);
         PyTuple_SET_ITEM(entry_point, 1, frame->f_globals);
-        PyDict_SetItem(co_to_entry_point, (PyObject *)co, entry_point);
+        x->entry_point = entry_point;
       }
       if (entry_point != Py_None &&
           PyTuple_GET_ITEM(entry_point, 1) == frame->f_globals) {

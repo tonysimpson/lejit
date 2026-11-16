@@ -18,15 +18,9 @@ for args in calls:
     except Exception as e:
         out.append('exc %s: %s' % (type(e).__name__, e))
 if use_ni:
-    code = fn.__code__
-    if code not in ni.co_to_mp:
-        out.append('compiled: no (never seen by the hook)')
-    elif ni.co_to_mp[code] is None:
-        out.append('compiled: no (unsupported opcode or flags)')
-    elif ni.co_to_entry_point.get(code) is None:
-        out.append('compiled: no (no entry point)')
-    else:
-        out.append('compiled: yes')
+    info = ni._code_info(fn.__code__)
+    out.append('compiled: yes' if info == 'compiled' else
+               'compiled: no (%s)' % info)
 # leak check: after warm-up, run the calls 100 more times and report how
 # many more memory blocks are allocated than before
 import gc
