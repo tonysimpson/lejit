@@ -53,6 +53,31 @@ def make_namedtuple():
     return P.__module__, P(1, 2)
 
 
+def tb_inner(a):
+    return a[5]
+
+
+def tb_middle(a):
+    x = 1
+    return tb_inner(a) + x
+
+
+# traceback frames are the compiled frames, linked to their callers
+# (tb_frame.f_back was None; CPython's test_exceptions)
+def traceback_frames(a):
+    try:
+        tb_middle(a)
+    except IndexError:
+        tb = sys.exc_info()[2]
+        out = []
+        while tb is not None:
+            f = tb.tb_frame
+            out.append((f.f_code.co_name, tb.tb_lineno - f.f_code.co_firstlineno,
+                        f.f_back.f_code.co_name if f.f_back else None))
+            tb = tb.tb_next
+        return out
+
+
 def too_deep():
     return sys._getframe(10000)
 
@@ -63,4 +88,5 @@ CASES = [
     ('call_caller_globals', "[()]", {}),
     ('make_namedtuple', "[()]", {'leaks': 'C14 (each namedtuple compiles new code)'}),
     ('too_deep', "[()]", {}),
+    ('traceback_frames', "[([1],)]", {}),
 ]

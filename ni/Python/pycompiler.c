@@ -27,6 +27,7 @@
 #include "../mergepoints.h"
 #include "../processor.h"
 #include "../psyfunc.h"
+#include "frames.h"
 #include "../pycodegen.h"
 
 #include "../Objects/pabstract.h"
@@ -455,11 +456,19 @@ void PycException_Fetch(PsycoObject *po) {
 static PyFrameObject *cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code,
                                       PyObject *globals, int lasti,
                                       int lineno) {
-  /* Make a minimalistic frame object, working around the specific
-     expectations of PyFrame_New(), which is the only reasonable way
-     to create frame objects (because of free lists etc) */
-  PyFrameObject *result;
+  /* The real frame if the code has one (run by NiCode_Run). Otherwise a
+     minimalistic frame object, working around the specific expectations
+     of PyFrame_New(), which is the only reasonable way to create frame
+     objects (because of free lists etc); cimpl_rt_traceback links it to
+     its caller's (KNOWN_BUGS C11) */
+  PyFrameObject *result = psyco_running_real_frame(code);
   PyFrameObject *back = tstate->frame;
+  if (result != NULL) {
+    Py_INCREF(result);
+    result->f_lasti = lasti;
+    result->f_lineno = lineno;
+    return result;
+  }
   tstate->frame = NULL; /* frame objects are not created in stack order
                            with Psyco, so it's probably better not to
                            create plain wrong chained lists */
@@ -478,6 +487,17 @@ static void cimpl_rt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
   PyFrameObject *f = cimpl_new_frame(tstate, code, globals, lasti, lineno);
   /* an out-of-memory error just replaces the current exception */
   if (f != NULL) {
+    /* the exception came out of the frame of the last entry: if that is an
+       emulated one (a compiled callee), this frame is its f_back; an
+       entry is recorded in every frame the exception passes through */
+    PyObject *last = tstate->curexc_traceback;
+    if (last != NULL && PyTraceBack_Check(last)) {
+      PyFrameObject *callee = ((PyTracebackObject *)last)->tb_frame;
+      if (callee->f_back == NULL && callee != f) {
+        Py_INCREF(f);
+        callee->f_back = f;
+      }
+    }
     PyTraceBack_Here(f);
     Py_DECREF(f);
   }

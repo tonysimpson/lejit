@@ -152,6 +152,11 @@ PyFrameObject *psyco_emulate_frame(PyObject *o) {
     /* a real Python frame */
     Py_INCREF(o);
     return (PyFrameObject *)o;
+  } else if (PyTuple_GET_SIZE(o) == 3 && PyFrame_Check(PyTuple_GET_ITEM(o, 2))) {
+    /* (co, globals, f): the real frame whose code NiCode_Run is running */
+    PyObject *f = PyTuple_GET_ITEM(o, 2);
+    Py_INCREF(f);
+    return (PyFrameObject *)f;
   } else {
     /* a Psyco frame: emulate it */
     PyObject *co = PyTuple_GetItem(o, 0);
@@ -305,25 +310,44 @@ static PyFrameObject *nth_frame(int depth) {
   return (PyFrameObject *)pvisitframes(visit_nth_frame, &depth);
 }
 
-static PyObject *ni_getframe(PyObject *self, PyObject *args) {
-  int depth = 0;
-  PyFrameObject *top, *f;
-  if (!PyArg_ParseTuple(args, "|i:_getframe", &depth))
-    return NULL;
-  top = nth_frame(depth);
-  if (top == NULL) {
-    PyErr_SetString(PyExc_ValueError, "call stack is not deep enough");
-    return NULL;
-  }
-  /* link emulated frames to the next frame out; a real frame keeps its own
-     f_back, which skips any compiled callers between it and its creator
-     (frames are not created in stack order) */
-  for (f = top; f->f_lasti == -1 && f->f_back == NULL;) {
+/* as nth_frame, with emulated frames linked to the next frame out; a real
+   frame keeps its own f_back, which skips any compiled callers between it
+   and its creator (frames are not created in stack order) */
+static PyFrameObject *linked_frame(int depth) {
+  PyFrameObject *top = nth_frame(depth), *f;
+  for (f = top; f != NULL && f->f_lasti == -1 && f->f_back == NULL;) {
     PyFrameObject *next = nth_frame(++depth);
     if (next == NULL)
       break;
     f->f_back = next; /* takes the reference */
     f = next;
+  }
+  return top;
+}
+
+DEFINEFN
+PyFrameObject *psyco_running_real_frame(PyCodeObject *co) {
+  PyFrameObject *f = PyThreadState_GET()->frame;
+  FrameRuntime *fstart;
+  if (f == NULL || f->f_code != co)
+    return NULL;
+  fstart = psyco_frame_start_get(f);
+  /* the top compiled frame's finfo slot is odd (-1) except while it is in a
+     compiled sub-call (ABOUT_TO_CALL_SUBFUNCTION) */
+  if (fstart == NULL || (((long)**fstart->psy_frames_start) & 1) == 0)
+    return NULL;
+  return f;
+}
+
+static PyObject *ni_getframe(PyObject *self, PyObject *args) {
+  int depth = 0;
+  PyFrameObject *top;
+  if (!PyArg_ParseTuple(args, "|i:_getframe", &depth))
+    return NULL;
+  top = linked_frame(depth);
+  if (top == NULL) {
+    PyErr_SetString(PyExc_ValueError, "call stack is not deep enough");
+    return NULL;
   }
   return (PyObject *)top;
 }

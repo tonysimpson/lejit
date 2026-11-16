@@ -20,6 +20,9 @@
   to psyco_get_frame().
 */
 EXTERNFN PyFrameObject *psyco_emulate_frame(PyObject *o);
+/* the real frame, if the compiled code 'co' making the current C call is
+   the one NiCode_Run runs (not a compiled callee); borrowed, or NULL */
+EXTERNFN PyFrameObject *psyco_running_real_frame(PyCodeObject *co);
 
 EXTERNFN PyObject *psyco_get_globals(void);
 /* PyObject* psyco_get_locals(void); this one implemented in psyco.c */
