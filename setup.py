@@ -74,9 +74,9 @@ def find_sources(processor, all_static):
         return result
 
 if NI_TRACE:
-    extra_compile_args = ['-O0', '-g3', '-Wall', '-fno-stack-protector', '-fcommon']
+    extra_compile_args = ['-O0', '-g3', '-Wall', '-fno-stack-protector']
 else:
-    extra_compile_args = ['-O3', '-fcommon']
+    extra_compile_args = ['-O3']
 extra_link_args = []
 sources = find_sources(PROCESSOR, ALL_STATIC==1)
 processor_dir = os.path.join('./ni', PROCESSOR)

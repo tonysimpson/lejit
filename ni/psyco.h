@@ -99,7 +99,7 @@ typedef int64_t qword_t;
 # define DEFINEFN    static
 # define INITIALIZATIONFN  PSY_INLINE
 #else
-# define EXTERNVAR
+# define EXTERNVAR   extern
 # define EXTERNFN
 # define DEFINEVAR
 # define DEFINEFN

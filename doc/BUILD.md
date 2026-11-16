@@ -10,7 +10,7 @@ verified: true    # built and tested on 2026-11-16 (Debian 13, gcc 14, CPython 3
 - `libffi` (headers and library). `setup.py` links `-lffi`, and the backend uses it for C calls.
 - `setup.py` uses `distutils`, which was removed in Python 3.12. That's fine under 3.7.
 - CPython 3.7.17 via `pyenv install 3.7.17` (`uv` offers 3.8 at the earliest). libffi headers are present (`/usr/include/x86_64-linux-gnu/ffi.h`).
-- gcc 10+ needs `-fcommon` (set in `setup.py`), because the headers define globals without `extern` (KNOWN_BUGS C5).
+- Builds with gcc 10+ defaults (`-fno-common`): headers declare globals with `EXTERNVAR`, which is `extern` (KNOWN_BUGS C5).
 
 ## Build
 ```

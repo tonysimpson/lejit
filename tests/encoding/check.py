@@ -144,7 +144,7 @@ def build_emitted(case_list, workdir):
     open(cfile, 'w').write('\n'.join(src) + '\n')
     inc = subprocess.check_output([PY37, '-c', "import sysconfig;print(sysconfig.get_paths()['include'])"]).decode().strip()
     exe = os.path.join(workdir, 'emit')
-    subprocess.check_call(['gcc', '-w', '-fcommon', '-O0', '-DALL_CHECKS=0', '-DNI_TRACE=0', '-DALL_STATIC=0',
+    subprocess.check_call(['gcc', '-w', '-O0', '-DALL_CHECKS=0', '-DNI_TRACE=0', '-DALL_STATIC=0',
                            '-I' + inc, '-I' + os.path.join(ROOT, 'ni'), '-I' + os.path.join(ROOT, 'ni', 'x64'),
                            cfile, '-o', exe])
     out = subprocess.check_output([exe]).decode().split('\n')
