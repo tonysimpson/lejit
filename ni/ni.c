@@ -168,10 +168,29 @@ static PyObject *ni_code_info(PyObject *self, PyObject *co) {
   return PyUnicode_FromString("compiled");
 }
 
+/* for debugging (doc/BUILD.md): the (codebuf, globals) the eval hook runs */
+static PyObject *ni_entry_point(PyObject *self, PyObject *co) {
+  void *x;
+  PyObject *e;
+  if (!PyCode_Check(co)) {
+    PyErr_SetString(PyExc_TypeError, "_entry_point() needs a code object");
+    return NULL;
+  }
+  if (_PyCode_GetExtra(co, code_extra_index, &x) < 0)
+    return NULL;
+  e = x ? ((ni_code_extra_t *)x)->entry_point : NULL;
+  if (e == NULL)
+    e = Py_None;
+  Py_INCREF(e);
+  return e;
+}
+
 static PyMethodDef module_methods[] = {
     {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
     {"_code_info", ni_code_info, METH_O,
      "'not seen', 'unsupported', 'no entry point' or 'compiled'."},
+    {"_entry_point", ni_entry_point, METH_O,
+     "(codebuf, globals) run for a code object, or None."},
     {NULL, NULL, 0, NULL}};
 
 static struct PyModuleDef ni_module = {PyModuleDef_HEAD_INIT, MODULE_NAME, NULL,
