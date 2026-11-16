@@ -46,9 +46,9 @@ report_destructor(PyObject *capsule)
         }                           \
     } while (0)
 
-#define ENTER_NEXT()                       \
-    do {                                   \
-        _ENTER_INC(entry_count_index + 1); \
+#define ENTER_NEXT()                               \
+    do {                                           \
+        _ENTER_INC(next_instr - first_instr);      \
     } while (0)
 
 #define ENTER_JUMP_TO(target)   \
@@ -86,17 +86,17 @@ _find_merge_points(PyCodeObject *co)
 
     entry_count[0] = 2; /* start of code is always a merge point */
     for (; next_instr < instr_end;) {
+        /* an instruction with EXTENDED_ARG prefixes is one unit starting at
+           the first prefix: that is where jumps land, and pycompiler.c
+           handles it in one step */
+        entry_count_index = next_instr - first_instr;
         NEXTOPARG();
-    dispatch_opcode:
-        entry_count_index++;
+        while (opcode == EXTENDED_ARG && next_instr < instr_end) {
+            int oldoparg = oparg;
+            NEXTOPARG();
+            oparg |= oldoparg << 8;
+        }
         switch (opcode) {
-            case EXTENDED_ARG: {
-                int oldoparg = oparg;
-                NEXTOPARG();
-                oparg |= oldoparg << 8;
-                ENTER_NEXT();
-                goto dispatch_opcode;
-            }
             case RETURN_VALUE:
                 break;
             case JUMP_ABSOLUTE:
