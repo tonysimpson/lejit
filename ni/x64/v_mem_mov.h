@@ -5,30 +5,17 @@
  * every psyco_get_field/psyco_put_field on a run-time object. It was written
  * for Ni in 5e0f435 (2018) to replace i386's psyco_memory_read/write.
  *
- * Known encoding bugs, found by reading and not yet tested. Most are dormant
- * because the live Python 3 code only reads and writes 8-byte fields; they
- * will bite as soon as narrow fields come back (unicode, compact objects,
- * strings):
- *  1. Signed byte/word loads use MOVSX without REX.W, which sign-extends only
- *     to 32 bits; the 32-bit register write then zero-extends, so -1 reads back
- *     as 0xFFFFFFFF. Live: pstructmember.c T_BYTE/T_SHORT.
- *  2. Word stores put the 0x66 prefix *after* the REX byte (b1 = 0x66 is
- *     written by WRITE_OPCODES after REX_ENCODING). A REX that does not
- *     immediately precede the opcode is ignored, so R8-R15 as the value or base
- *     silently become RAX-RDI.
- *  3. Byte stores from RBP/RSI/RDI emit no REX, which encodes CH/DH/BH instead
- *     of BPL/SIL/DIL. RBP is allocatable (RBP_IS_RESERVED is 0).
- *  4. Immediate stores to a compile-time address use RIP-relative addressing,
- *     but ADDRESS_ENCODING's RIP calculation leaves out the trailing immediate
- *     (1/2/4 bytes), so the store lands that many bytes past the intended
- *     address.
- *  5. Unsigned loads mark the result non-negative even for 64-bit values with
- *     the top bit set (RunTime_NonNeg is a signed fact).
- *  6. (Inefficiency) every negative signed constant is loaded into R10 first.
- * Related: callers must compute a virtual base or index first, because a
- * virtual one is treated as compile-time and dereferenced (the current callers
- * in vcompiler.c do this). psyco_put_field_array passes the signed flag
- * inverted relative to psyco_internal_putfld. More detail: doc/KNOWN_BUGS.md.
+ * x86-64 traps handled here (each was a bug, KNOWN_BUGS M1-M5, M9):
+ *  - MOVSX needs REX.W to sign-extend to 64 bits;
+ *  - the 0x66 operand-size prefix must come before REX, so it is written
+ *    separately, after anything (R11 address loads) emitted ahead of it;
+ *  - byte stores from registers 4-7 without REX would mean AH/CH/DH/BH, so
+ *    the value is copied to R10 first;
+ *  - a RIP-relative displacement is relative to the end of the instruction,
+ *    including a trailing immediate (ADDRESS_ENCODING's imm_len).
+ * Tested by executing the emitted code: tests/encoding/run_v_mem_mov.sh.
+ * Callers must compute a virtual base or index first (M8): a virtual one
+ * would be treated as compile-time.
  */
 #ifndef _V_MEM_MOV_H
 #define _V_MEM_MOV_H
@@ -64,7 +51,9 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
     BEGIN_CODE
     if (v == NULL) {
         NEED_FREE_REG_COND(v_reg, (v_reg != V_GET_REG(base) && v_reg != V_GET_REG(index)));
-        v = vinfo_new(RunTime_New(v_reg, false, (signed_) == false));
+        /* an unsigned field narrower than 8 bytes is known non-negative */
+        v = vinfo_new(RunTime_New(v_reg, false,
+                                  !(signed_) && scale < V_MEM_MOV_SCALE_QWORD));
         REG_NUMBER(po, v_reg) = v;
         read = true;
     } else {
@@ -77,14 +66,18 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
         } else {
             v_reg = REG_NONE;
             value = V_CT_GET_VALUE(v);
-            /* 
-             * If the value is too big we need to load it into a 
-             * register first, as x86_64 only allows 32bit signed
-             *  extended immediates 
-             */
-            if(((signed_) && ((value < 0) || (value >= 2147483648))) || (!(signed_) && !FITS_IN_32BITS(value))) {
-                v_reg = REG_TRANSIENT_1;
-                MOV_R_I(v_reg, value);
+            /* a store only keeps the low bytes, so narrow stores can always
+               use an immediate (truncated here). A qword store sign-extends
+               an imm32, so other values must go through a register. */
+            switch (scale) {
+                case V_MEM_MOV_SCALE_BYTE:  value = (signed char)value; break;
+                case V_MEM_MOV_SCALE_WORD:  value = (short)value; break;
+                case V_MEM_MOV_SCALE_DWORD: value = (int)value; break;
+                default:
+                    if (!FITS_IN_32BITS(value)) {
+                        v_reg = REG_TRANSIENT_1;
+                        MOV_R_I(v_reg, value);
+                    }
             }
         }
     }
@@ -113,11 +106,15 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
         }
     }
     if (read) {
+        /* MOVSX needs REX.W to sign-extend to 64 bits; MOVZX r32 already
+           zero-extends to 64 */
         if (scale == V_MEM_MOV_SCALE_BYTE) {
+            rex_w = (signed_);
             op_len = 2;
             b1 = 0x0F;
             b2 = (signed_) ? 0xBE : 0xB6;
         } else if (scale == V_MEM_MOV_SCALE_WORD) {
+            rex_w = (signed_);
             op_len = 2;
             b1 = 0x0F;
             b2 = (signed_) ? 0xBF : 0xB7;
@@ -142,9 +139,8 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
                 op_len = 1;
                 b1 = 0x88;
             } else if (scale == V_MEM_MOV_SCALE_WORD) {
-                op_len = 2;
-                b1 = 0x66;
-                b2 = 0x89;
+                op_len = 1;     /* 0x66 prefix written below, before REX */
+                b1 = 0x89;
             } else if (scale == V_MEM_MOV_SCALE_DWORD) {
                 op_len = 1;
                 b1 = 0x89;
@@ -159,9 +155,8 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
                 op_len = 1;
                 b1 = 0xC6;
             } else if (scale == V_MEM_MOV_SCALE_WORD) {
-                op_len = 2;
-                b1 = 0x66;
-                b2 = 0xC7;
+                op_len = 1;     /* 0x66 prefix written below, before REX */
+                b1 = 0xC7;
             } else if (scale == V_MEM_MOV_SCALE_DWORD) {
                 op_len = 1;
                 b1 = 0xC7;
@@ -172,14 +167,35 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
             }
         }
     }
+    if (!read && scale == V_MEM_MOV_SCALE_BYTE && v_reg >= 4 && v_reg <= 7) {
+        /* without a REX prefix, registers 4-7 as byte operands mean
+           AH/CH/DH/BH; the encoders only emit REX when needed for R8+,
+           so copy the value to R10 (whose low byte is always R10B) */
+        MOV_R_R(REG_TRANSIENT_1, v_reg);
+        v_reg = REG_TRANSIENT_1;
+    }
+    if (base_reg == REG_NONE &&
+        (index_reg != REG_NONE ||
+         !FITS_IN_32BITS(offset_or_address - (long)code - 64) ||
+         !FITS_IN_32BITS(offset_or_address - (long)code + 64))) {
+        /* absolute address not reachable RIP-relative, or combined with an
+           index: put it in R11 now, before any prefix of the access itself */
+        MOV_R_I(REG_TRANSIENT_2, offset_or_address);
+        base_reg = REG_TRANSIENT_2;
+        offset_or_address = 0;
+    }
+    if (!read && scale == V_MEM_MOV_SCALE_WORD) {
+        WRITE_1(0x66);   /* operand-size prefix: must precede REX */
+    }
     r = (v_reg != REG_NONE ? v_reg : 0);
     if (base_reg == REG_NONE) {
-        if (index_reg == REG_NONE) {
-            ADDRESS_ENCODING(rex_w, op_len, b1, b2, b3, 0, r, offset_or_address);
-        } else {
-            MOV_R_I(REG_TRANSIENT_2, offset_or_address);
-            SIB_ENCODING(false, rex_w, op_len, b1, b2, b3, 0, 0, r, REG_TRANSIENT_2, 0, index_reg, V_MEM_MOV_SCALE_TO_BYTES(scale));
-        }
+        /* RIP-relative; the target is relative to the end of the
+           instruction, after any immediate */
+        int imm_len = 0;
+        if (!read && v_reg == REG_NONE)
+            imm_len = scale == V_MEM_MOV_SCALE_BYTE ? 1 :
+                      scale == V_MEM_MOV_SCALE_WORD ? 2 : 4;
+        ADDRESS_ENCODING(rex_w, op_len, b1, b2, b3, 0, r, offset_or_address, imm_len);
     } else if (index_reg == REG_NONE) {
         OFFSET_ENCODING(false, rex_w, op_len, b1, b2, b3, 0, 0, r, base_reg, offset_or_address);
     } else {

@@ -522,11 +522,13 @@ typedef enum {
     WRITE_OPCODES(op_len, b1, b2, b3);                                         \
     MODRM_ENCODING(mod, r, rm);                                                \
   } while (0)
-#define ADDRESS_ENCODING(rex_w, op_len, b1, b2, b3, mod, r, address)           \
+/* imm_len: bytes of immediate that follow the displacement; RIP-relative
+   addresses are relative to the end of the whole instruction */
+#define ADDRESS_ENCODING(rex_w, op_len, b1, b2, b3, mod, r, address, imm_len)  \
   do {                                                                         \
     long rip_offset;                                                           \
-    rip_offset = (long)address -                                               \
-                 ((long)code + 5 + op_len + ((rex_w || r > 7) ? 1 : 0));       \
+    rip_offset = (long)address - ((long)code + 5 + op_len +                    \
+                                  ((rex_w || r > 7) ? 1 : 0) + (imm_len));     \
     if (FITS_IN_32BITS(rip_offset)) {                                          \
       REX_ENCODING(rex_w, r, 0, 0);                                            \
       WRITE_OPCODES(op_len, b1, b2, b3);                                       \
