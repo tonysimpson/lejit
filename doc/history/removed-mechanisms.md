@@ -96,6 +96,7 @@ The two biggest commits:
 - *Now:* the analysis is gone. `psyco_ge_unused_var` (`ni/dispatcher.h`) is never called. `psyco_delete_unused_vars` (`ni/dispatcher.c`, called from `vcompiler.c` and `pycompiler.c`) iterates an empty list.
 - *Commit:* a880444. Reason stated: "I don't think we need or want to keep the early deletion of vars, but I'm not 100% sure it is what I think."
 - *Trap:* e1fd808 removed the `if (!CodeBuffer_Check(o1)) break;` guard in `psyco_compatible`. That guard is what separated the leading PyLongs from the CodeBuffers in `fatlist`. Restoring A3 needs that guard back.
+- *Restored* in `458ef80` (D15), with a liveness pass written for 3.7.
 - *Relevance:* core.
 
 **A4. Inlining** [read]

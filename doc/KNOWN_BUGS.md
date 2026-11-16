@@ -81,7 +81,7 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | # | Issue | Evidence |
 |---|---|---|
 | C1 | Not a bug: a needed guard, badly named. Compiled code derives call alignment from the return-address slot's position relative to RSP, and unification can't move that slot, so states may only share code if it has the same alignment. Rename and document when touching `dispatcher.c`. Original note: `psyco_compatible` rejects matches whose return-address slot differs mod 16 (`compare_return_address_in_a_stupid_way`). This is a kludge that causes extra code duplication. | [read] |
-| C2 | Restoring dead-local deletion (history A3, DECISIONS D15) also needs the `CodeBuffer_Check` guard in `psyco_compatible` that `e1fd808` removed. | [read] |
+| C2 | **Fixed** (`458ef80`). Restoring dead-local deletion (history A3, DECISIONS D15) needed the `CodeBuffer_Check` guard in `psyco_compatible` that `e1fd808` removed: restored (without it every `tests/cases/liveness.py` case segfaults). | Fixed | [run] |
 | C3 | Compiled code and many code-buffer references are never freed. | [read] |
 | C4 | **Fixed** (`601aa8f`). `mergepoints.c:psyco_next_merge_point` walked past the -1 sentinel into unrelated memory. Hit on the first run (importlib). | [run] |
 | C6 | **Fixed** (see git log, `frames.c`). Every compiled call leaked its frame: `frame_runtime_capsule_new` increfs the frame, code and globals, but the capsule destructor only freed the struct. Found by the leak check in `tests/run.py`. | [run] |
