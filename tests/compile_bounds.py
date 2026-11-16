@@ -76,8 +76,32 @@ def check_dead_locals():
     return 0 if ok else 1
 
 
+# which code is inlined (B6): small straight-line code without globals
+def small(a, b):
+    return a + b
+
+
+def with_loop(n):
+    for i in range(n):
+        pass
+
+
+def uses_global(a):
+    return len(a)
+
+
+def check_inlinable():
+    got = (ni._inlinable(small.__code__), ni._inlinable(with_loop.__code__),
+           ni._inlinable(uses_global.__code__))
+    ok = got == (True, False, False)
+    if not ok or VERBOSE:
+        print('%-4s inlinable small/with_loop/uses_global: %r'
+              % ('ok' if ok else 'FAIL', got))
+    return 0 if ok else 1
+
+
 def main():
-    failed = check_dead_locals()
+    failed = check_dead_locals() + check_inlinable()
     for name, fn, warm, more, allow in CHECKS:
         for args in warm:
             fn(*args)
@@ -90,7 +114,7 @@ def main():
         if bad or VERBOSE:
             print('%-4s %s: %d new code buffers after warm-up (allowed %d)'
                   % ('FAIL' if bad else 'ok', name, grew, allow))
-    print('%d compile-bound checks, %d failed' % (len(CHECKS) + 1, failed))
+    print('%d compile-bound checks, %d failed' % (len(CHECKS) + 2, failed))
     return 1 if failed else 0
 
 

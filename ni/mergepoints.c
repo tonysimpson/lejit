@@ -83,6 +83,21 @@ report_destructor(PyObject *capsule)
 
 #define MAX_MP_DISTANCE 170
 
+/* inlining (upstream's rule): one merge point (the start), no block, no
+   LOAD_GLOBAL (upstream forced a merge point after it), and at most this
+   many instructions that are not "light" (produce little or no code) */
+#define INLINE_MAXIMUM_WEIGHT 6
+#define IS_LIGHT_INSTR(op)                                                   \
+    ((op) == NOP || (op) == POP_TOP || (op) == ROT_TWO ||                    \
+     (op) == ROT_THREE || (op) == DUP_TOP || (op) == DUP_TOP_TWO ||          \
+     (op) == LOAD_CONST || (op) == LOAD_FAST || (op) == STORE_FAST ||        \
+     (op) == DELETE_FAST || (op) == UNPACK_SEQUENCE ||                       \
+     (op) == BUILD_TUPLE || (op) == BUILD_LIST || (op) == BUILD_MAP ||       \
+     (op) == RETURN_VALUE || (op) == JUMP_FORWARD ||                         \
+     (op) == JUMP_ABSOLUTE || (op) == POP_JUMP_IF_FALSE ||                   \
+     (op) == POP_JUMP_IF_TRUE || (op) == JUMP_IF_FALSE_OR_POP ||             \
+     (op) == JUMP_IF_TRUE_OR_POP || (op) == EXTENDED_ARG)
+
 #define MP_HERE()                           \
     do {                                    \
         entry_count[entry_count_index] = 8; \
@@ -260,6 +275,7 @@ _find_merge_points(PyCodeObject *co)
     Py_ssize_t mergepoint_index = 0;
     co_report_t *report;
     int flags = 0;
+    int weight = 0, loads_global = 0;
     Py_ssize_t entry_count_index = -1;
     Py_ssize_t entry_count_len =
         (PyBytes_Size(co->co_code) / sizeof(_Py_CODEUNIT)) + 1;
@@ -286,6 +302,10 @@ _find_merge_points(PyCodeObject *co)
             oparg |= oldoparg << 8;
         }
         is_start[entry_count_index] = 1;
+        if (!IS_LIGHT_INSTR(opcode))
+            weight++;
+        if (opcode == LOAD_GLOBAL)
+            loads_global = 1;
         switch (opcode) {
             /* no successor in this code */
             case RETURN_VALUE:
@@ -357,10 +377,14 @@ _find_merge_points(PyCodeObject *co)
 
     report = (co_report_t *)PyMem_Malloc(
         sizeof(co_report_t) + (sizeof(mergepoint_t) * mergepoint_count));
+    /* the single merge point means no loop and no join: after the call
+       enters the inlined body (pycompiler.c, EInline) the next merge point
+       looked for is past the start, so inlined state is never snapshotted */
+    if (mergepoint_count == 1 && flags == 0 && !loads_global &&
+        weight <= INLINE_MAXIMUM_WEIGHT)
+        flags |= MP_FLAGS_INLINABLE;
     report->flags = flags;
     report->mergepoint_count = mergepoint_count;
-    /* MP_FLAGS_INLINABLE (mergepoint_count == 1 && flags == 0) stays off
-       until the inlining path is checked (KNOWN_BUGS B6; D10 step 2) */
     for (entry_count_index = 0; entry_count_index < entry_count_len;
          entry_count_index++) {
         if (entry_count[entry_count_index] > 1) {

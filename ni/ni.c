@@ -213,6 +213,18 @@ fail:
   return NULL;
 }
 
+/* for tests (B6): would calls to this code be inlined? */
+static PyObject *ni_inlinable(PyObject *self, PyObject *co) {
+  PyObject *mps;
+  if (!PyCode_Check(co)) {
+    PyErr_SetString(PyExc_TypeError, "_inlinable() needs a code object");
+    return NULL;
+  }
+  mps = psyco_get_merge_points((PyCodeObject *)co, 0);
+  return PyBool_FromLong(mps != Py_None &&
+                         (psyco_mp_flags(mps) & MP_FLAGS_INLINABLE) != 0);
+}
+
 /* for debugging (doc/BUILD.md): the (codebuf, globals) the eval hook runs */
 static PyObject *ni_entry_point(PyObject *self, PyObject *co) {
   void *x;
@@ -236,6 +248,8 @@ static PyMethodDef module_methods[] = {
      "'not seen', 'unsupported', 'no entry point' or 'compiled'."},
     {"_dead_locals", ni_dead_locals, METH_O,
      "{offset: [dead local names]} at each merge point, or None."},
+    {"_inlinable", ni_inlinable, METH_O,
+     "True if calls to this code object are inlined."},
     {"_entry_point", ni_entry_point, METH_O,
      "(codebuf, globals) run for a code object, or None."},
     {NULL, NULL, 0, NULL}};

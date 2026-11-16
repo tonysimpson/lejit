@@ -262,13 +262,22 @@ vinfo_t *psyco_save_inline_po(PsycoObject *po) {
 
 DEFINEFN
 PsycoObject *psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a) {
-  int i;
+  int i, oldcount = po->vlocals.count;
+  bool was_inlining = po->pr.is_inlining;
   vinfo_t *v;
+  vinfo_t **old;
   vinfo_array_t *array = *a;
   *a = NullArray;
 
-  for (i = po->vlocals.count; i--;)
-    vinfo_xdecref(po->vlocals.items[i], po);
+  /* the current locals are dropped only once the restored frame is in
+     place: a decref may call a dealloc, and C calls are aligned from the
+     current frame's return address (STACK_DEPTH_SINCE_CALL), which the
+     inlined frame being left doesn't have (KNOWN_BUGS B6) */
+  old = PyMem_Malloc((oldcount + 1) * sizeof(vinfo_t *));
+  if (old == NULL)
+    OUT_OF_MEMORY();
+  memcpy(old, po->vlocals.items, oldcount * sizeof(vinfo_t *));
+
   i = array->count - TOTAL_LOC_INLINE;
   po = PsycoObject_Resize(po, i);
   po->vlocals.count = i; /* attention, vlocals.count cannot be larger than i
@@ -286,6 +295,14 @@ PsycoObject *psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a) {
 
   pyc_data_build(po, psyco_get_merge_points(po->pr.co, -1));
   po->pr.f_builtins = NULL; /* because the globals might have changed */
+
+  /* leaving an inlined frame restores its (never inlining) parent; on
+     entry the old locals were already moved out (psyco_save_inline_po) */
+  po->pr.is_inlining = false;
+  for (i = oldcount; i--;)
+    vinfo_xdecref(old[i], po);
+  po->pr.is_inlining = was_inlining;
+  PyMem_Free(old);
   return po;
 }
 

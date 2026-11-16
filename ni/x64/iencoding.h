@@ -1132,7 +1132,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
   (po->pr.is_inlining                                                          \
        ? (LOC_INLINING == NULL                                                 \
               ? (LOC_CONTINUATION == NULL                                      \
-                     ? -1                                                      \
+                     ? (extra_assert(!"no frame to align from (B6)"), -1)      \
                      : ((po->stack_depth -                                     \
                          getstack(LOC_CONTINUATION->source)) +                 \
                         sizeof(long)))                                         \
