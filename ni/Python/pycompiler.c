@@ -1175,11 +1175,17 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
     psyco_emit_header(po, 3);
   }
 
+  int at_jump_target = 0;
 #if HAVE_NEXT_INSTR_POP
   if (po->pr.next_instr < -1) {
-    /* there is a pending POP operation to be done */
+    /* there is a pending POP operation to be done: this is the target of a
+       POP_JUMP_IF_xxx. With the pop done the state is the target's, so its
+       merge point (often a loop head, for a jump back) is checked before
+       the first instruction; otherwise the path would be compiled afresh
+       up to the next merge point, every back-edge a new copy of the loop */
     POP_DECREF();
     po->pr.next_instr &= ~NEXT_INSTR_POP;
+    at_jump_target = !is_respawning(po);
   }
 #endif
 
@@ -1194,6 +1200,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
     int next_instr = po->pr.next_instr;
     mergepoint_t *mp =
         psyco_next_merge_point(po->pr.merge_points, next_instr + 1);
+
+    if (at_jump_target) {
+      at_jump_target = 0;
+      mp = psyco_next_merge_point(po->pr.merge_points, next_instr);
+      goto fine; /* the merge point check, before any instruction */
+    }
 
     /* main loop */
     while (1) {
