@@ -12,8 +12,7 @@
  *    UPDATABLE_* fields (this is how code is patched).
  *  - Many macros are bare statement sequences (no do/while), and the asserts
  *    here only compile because CPython builds with -DNDEBUG.
- * 32-bit leftovers: CMP_I8_O, CMP_I8_A and ADD_O8_I8 are encoded without REX.W,
- * so they operate on 32 bits.
+ * Emitters marked '@asm:' are checked against GNU as by tests/encoding/check.py.
  */
 /***************************************************************/
 /***       Processor-specific code-producing macros            ***/
@@ -538,38 +537,55 @@ typedef enum {
     }                                                                          \
   } while (0)
 #define BRKP() WRITE_1(0xCC)
+/* @asm: mov {r}, {rm} */
 #define MOV_R_R(r, rm) DIRECT_ENCODING(true, 1, 0x8B, 0, 0, 0, r, rm)
+/* @asm: mov {r:d}, {rm:d} */
 #define MOVZX_QR_DR(r, rm) DIRECT_ENCODING(false, 1, 0x8B, 0, 0, 0, r, rm)
+/* @asm: movsxd {r}, {rm:d} */
 #define MOVSX_QR_DR(r, rm) DIRECT_ENCODING(true, 1, 0x63, 0, 0, 0, r, rm)
+/* @asm: mov {r}, qword ptr [{rm}] */
 #define MOV_R_A(r, rm) INDIRECT_ENCODING(true, 1, 0x8B, 0, 0, 0, r, rm)
+/* @asm: mov qword ptr [{rm}], {r} */
 #define MOV_A_R(rm, r) INDIRECT_ENCODING(true, 1, 0x89, 0, 0, 0, r, rm)
+/* @asm: movabs {rm}, {i:i64} */
 #define MOV_R_I(rm, i)                                                         \
   BASE_ENCODING(true, 0, 0, 0, 0, 0xB8, 0, rm);                                \
   WRITE_64BIT(i)
+/* @asm: movabs {rm}, {i:i64} */
 #define MOV_R_UI(rm, i)                                                        \
   BASE_ENCODING(true, 0, 0, 0, 0, 0xB8, 0, rm);                                \
   UPDATABLE_WRITE_64BIT(i)
+/* @asm: mov {r}, qword ptr [{rm}{o:d8}] */
 #define MOV_R_O8(r, rm, o)                                                     \
   OFFSET_ENCODING(false, true, 1, 0x8B, 0, 0, 0, 8, r, rm, o)
+/* @asm: mov {r}, qword ptr [{rm}{o:d32}] */
 #define MOV_R_O32(r, rm, o)                                                    \
   OFFSET_ENCODING(false, true, 1, 0x8B, 0, 0, 0, 32, r, rm, o)
+/* @asm: mov {r}, qword ptr [{rm}{o}] */
 #define MOV_R_O(r, rm, o)                                                      \
   OFFSET_ENCODING(false, true, 1, 0x8B, 0, 0, 0, 0, r, rm, o)
+/* @asm: mov qword ptr [{rm}{o}], {r} */
 #define MOV_O_R(rm, o, r)                                                      \
   OFFSET_ENCODING(false, true, 1, 0x89, 0, 0, 0, 0, r, rm, o)
+/* @asm: lea {r}, [{rm}{o:d8}] */
 #define LEA_R_O8(r, rm, o)                                                     \
   OFFSET_ENCODING(false, true, 1, 0x8D, 0, 0, 0, 8, r, rm, o)
+/* @asm: lea {r}, [{rm}{o}] */
 #define LEA_R_O(r, rm, o)                                                      \
   OFFSET_ENCODING(false, true, 1, 0x8D, 0, 0, 0, 0, r, rm, o)
+/* @asm: mov {r}, qword ptr [{base}+{index}*{scale}{offset:d8}] */
 #define MOV_R_X8(r, base, offset, index, scale)                                \
   SIB_ENCODING(false, true, 1, 0x8B, 0, 0, 0, 8, r, base, offset, index, scale)
+/* @asm: mov {r}, qword ptr [{base}+{index}*{scale}{offset:d32}] */
 #define MOV_R_X32(r, base, offset, index, scale)                               \
   SIB_ENCODING(false, true, 1, 0x8B, 0, 0, 0, 32, r, base, offset, index, scale)
+/* @asm: movabs r10, {i:i64}; mov qword ptr [{rm}{o}], r10 */
 #define MOV_O_I(rm, o, i)                                                      \
   do {                                                                         \
     MOV_R_I(REG_TRANSIENT_1, i);                                               \
     MOV_O_R(rm, o, REG_TRANSIENT_1);                                           \
   } while (0)
+/* @asm: xchg {rg1}, {rg2} */
 #define XCHG_R_R(rg1, rg2)                                                     \
   do {                                                                         \
     if (rg1 == REG_X64_RAX) {                                                  \
@@ -580,29 +596,41 @@ typedef enum {
       DIRECT_ENCODING(true, 1, 0x87, 0, 0, 0, rg1, rg2);                       \
     }                                                                          \
   } while (0)
+/* @asm: xchg qword ptr [{rm}{o}], {r} */
 #define XCHG_R_O(r, rm, o)                                                     \
   OFFSET_ENCODING(false, true, 1, 0x87, 0, 0, 0, 0, r, rm, o)
+/* @asm: test {rm}, {r} */
 #define TEST_R_R(r, rm) DIRECT_ENCODING(true, 1, 0x85, 0, 0, 0, r, rm)
+/* @asm: test {rm:d}, {r:d} */
 #define TEST_DR_DR(r, rm) DIRECT_ENCODING(false, 1, 0x85, 0, 0, 0, r, rm)
+/* @asm: test {r}, {i:i32} */
 #define TEST_R_I(r, i)                                                         \
   DIRECT_ENCODING(true, 1, 0xF7, 0, 0, 0, 0, r);                               \
   WRITE_32BIT(i)
+/* @asm: cmp {rm}, {r} */
 #define CMP_R_R(r, rm) DIRECT_ENCODING(true, 1, 0x39, 0, 0, 0, r, rm)
+/* @asm: cmp qword ptr [{rm}], {r} */
 #define CMP_R_A(r, rm) INDIRECT_ENCODING(true, 1, 0x39, 0, 0, 0, r, rm)
+/* @asm: cmp qword ptr [{rm}{o:d8}], {r} */
 #define CMP_R_O8(r, rm, o)                                                     \
   OFFSET_ENCODING(false, true, 1, 0x39, 0, 0, 0, 8, r, rm, o)
+/* @asm: cmp qword ptr [{rm}{o}], {i:i8} */
 #define CMP_I8_O(i, rm, o)                                                     \
   OFFSET_ENCODING(false, false, 1, 0x83, 0, 0, 0x38, 0, 0, rm, o);             \
   WRITE_8BIT(i)
+/* @asm: cmp qword ptr [{rm}], {i:i8} */
 #define CMP_I8_A(i, rm)                                                        \
   INDIRECT_ENCODING(false, 1, 0x83, 0, 0, 0x38, 0, rm);                        \
   WRITE_8BIT(i)
+/* @asm: cmp {rm}, {i:i8} */
 #define CMP_I8_R(i, rm)                                                        \
   DIRECT_ENCODING(true, 1, 0x83, 0, 0, 0xF8, 0, rm);                           \
   WRITE_8BIT(i)
+/* @asm: cmp {rm:d}, {i:i8} */
 #define CMP_I8_DR(i, rm)                                                       \
   DIRECT_ENCODING(false, 1, 0x83, 0, 0, 0xF8, 0, rm);                          \
   WRITE_8BIT(i)
+/* @asm: cmp qword ptr [{rm}{o:d32}], {r} */
 #define CMP_R_UO32(r, rm, o)                                                   \
   OFFSET_ENCODING(true, true, 1, 0x39, 0, 0, 0, 32, r, rm, o)
 #define CMP_I_R(i1, r2)                                                        \
@@ -615,6 +643,7 @@ typedef enum {
       CMP_R_R(REG_TRANSIENT_1, (r2));                                          \
     }                                                                          \
   } while (0)
+/* @asm: jmp {r} */
 #define JMP_R(r)                                                               \
   do {                                                                         \
     ni_trace_jump_reg((code_t *)(code), (int)(r));                             \
@@ -633,6 +662,7 @@ typedef enum {
                        (code_t *)(address));                                   \
     UPDATABLE_WRITE_32BIT((address) - ((long)code + 4));                       \
   } while (0)
+/* @asm: call {r} */
 #define CALL_R(r)                                                              \
   do {                                                                         \
     ni_trace_call_reg((code_t *)(code), r);                                    \
@@ -651,44 +681,61 @@ typedef enum {
       CALL_R(REG_TRANSIENT_1);                                                 \
     }                                                                          \
   } while (0)
+/* @asm: add qword ptr [{rm}], {i:i8} */
 #define ADD_A_I8(rm, i)                                                        \
   INDIRECT_ENCODING(true, 1, 0x83, 0, 0, 0, 0, rm);                            \
   WRITE_8BIT(i)
+/* @asm: add qword ptr [{rm}{o:d8}], {i:i8} */
 #define ADD_O8_I8(rm, o, i)                                                    \
   OFFSET_ENCODING(true, false, 1, 0x83, 0, 0, 0, 8, 0, rm, o);                 \
   WRITE_8BIT(i)
+/* @asm: sub qword ptr [{rm}], {i:i8} */
 #define SUB_A_I8(rm, i)                                                        \
   INDIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x28, 0, rm);                         \
   WRITE_8BIT(i)
+/* @asm: add {r}, {rm} */
 #define ADD_R_R(r, rm) DIRECT_ENCODING(true, 1, 0x03, 0, 0, 0, r, rm);
+/* @asm: xor {r}, {rm} */
 #define XOR_R_R(r, rm) DIRECT_ENCODING(true, 1, 0x33, 0, 0, 0, r, rm);
 
+/* @asm: sub {rm}, {i:i8} */
 #define SUB_R_I8(rm, i)                                                        \
   DIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x28, 0, rm);                           \
   WRITE_8BIT(i)
+/* @asm: sub {rm}, {i:i32} */
 #define SUB_R_I32(rm, i)                                                       \
   DIRECT_ENCODING(true, 1, 0x81, 0, 0, 0x28, 0, rm);                           \
   WRITE_32BIT(i)
+/* @asm: add {rm}, {i:i8} */
 #define ADD_R_I8(rm, i)                                                        \
   DIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x0, 0, rm);                            \
   WRITE_8BIT(i)
+/* @asm: add {rm}, {i:i32} */
 #define ADD_R_I32(rm, i)                                                       \
   DIRECT_ENCODING(true, 1, 0x81, 0, 0, 0x0, 0, rm);                            \
   WRITE_32BIT(i)
+/* @asm: imul {r1}, {r2} */
 #define IMUL_R_R(r1, r2)                                                       \
   WRITE_4(REX_64_REG_RM(r1, r2), 0x0F, 0xAF, MODRM_REG_RM(r1, r2))
+/* @asm: set{cc} {r:b} */
 #define SET_R_CC(r, cc)                                                        \
   DIRECT_ENCODING2((r > 3), false, 2, 0x0F, 0x90 | cc, 0, 0, 0, r)
+/* @asm: push qword ptr [{rm}] */
 #define PUSH_A(rm) INDIRECT_ENCODING(false, 1, 0xFF, 0, 0, 0x30, 0, rm)
+/* @asm: push {r} */
 #define PUSH_R(r) BASE_ENCODING(false, 0, 0, 0, 0, 0x50, 0, r);
+/* @asm: movabs r10, {immed:i64}; push r10 */
 #define PUSH_I(immed)                                                          \
   do {                                                                         \
     MOV_R_I(REG_TRANSIENT_1, immed);                                           \
     PUSH_R(REG_TRANSIENT_1);                                                   \
   } while (0)
+/* @asm: push qword ptr [{rm}{o}] */
 #define PUSH_O(rm, o)                                                          \
   OFFSET_ENCODING(false, false, 1, 0xFF, 0, 0, 0x30, 0, 0, rm, o)
+/* @asm: pop {r} */
 #define POP_R(r) BASE_ENCODING(false, 0, 0, 0, 0, 0x58, 0, r);
+/* @asm: pop qword ptr [{rm}{o}] */
 #define POP_O(rm, o)                                                           \
   OFFSET_ENCODING(false, false, 1, 0x8F, 0, 0, 0x40, 0, 0, rm, o)
 #define RET()                                                                  \
@@ -696,6 +743,7 @@ typedef enum {
     ni_trace_return((code_t *)(code), 0);                                      \
     WRITE_1(0xC3);                                                             \
   } while (0)
+/* @asm: ret {n:u16} */
 #define RET_N(n)                                                               \
   do {                                                                         \
     if (n == 0) {                                                              \
@@ -725,6 +773,7 @@ typedef enum {
       WRITE_8BIT(count);                                                       \
     }                                                                          \
   } while (0)
+/* @asm: cqo */
 #define CQO()                                                                  \
   do {                                                                         \
     WRITE_2(REX_64, 0x99);                                                     \
@@ -733,11 +782,17 @@ typedef enum {
 #define SHIFT_BY_RCX_ENCODING(r, mod)                                          \
   DIRECT_ENCODING(true, 1, 0xD3, 0, 0, mod, 0, r)
 
+/* @asm: shl {rg}, {cnt:sh} */
 #define SHIFT_LEFT_BY(rg, cnt) SHIFT_BY_COUNT_ENCODING(rg, 0x20, cnt)
+/* @asm: shl {rg}, cl */
 #define SHIFT_LEFT_CL(rg) SHIFT_BY_RCX_ENCODING(rg, 0x20)
+/* @asm: shr {rg}, {cnt:sh} */
 #define SHIFT_RIGHT_BY(rg, cnt) SHIFT_BY_COUNT_ENCODING(rg, 0x28, cnt)
+/* @asm: shr {rg}, cl */
 #define SHIFT_RIGHT_CL(rg) SHIFT_BY_RCX_ENCODING(rg, 0x28)
+/* @asm: sar {rg}, {cnt:sh} */
 #define SHIFT_SIGNED_RIGHT_BY(rg, cnt) SHIFT_BY_COUNT_ENCODING(rg, 0x38, cnt)
+/* @asm: sar {rg}, cl */
 #define SHIFT_SIGNED_RIGHT_CL(rg) SHIFT_BY_RCX_ENCODING(rg, 0x38)
 
 /* XXX get rid of this ?? */
