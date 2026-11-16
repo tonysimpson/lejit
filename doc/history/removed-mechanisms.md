@@ -196,6 +196,7 @@ The two biggest commits:
 **A19. Compact encoding** [read]
 - *Upstream:* `COMPACT_ENCODING` was tested in about 12 i386 macros.
 - *Now:* `#define COMPACT_ENCODING 1` in `ni/x64/iencoding.h` with no users. imm8/imm32 selection is hard-wired for arithmetic, but `MOV_R_I`, `LOAD_REG_FROM_IMMED`, `PUSH_I`, `MOV_O_I` and `SAVE_IMMED_TO_EBP_BASE` always use the 10-byte `movabs`, via R10 where needed.
+- *Restored* (`9d48399`) [run]: `MOV_R_I`, which the others go through, now picks a 5-byte zero-extending MOV, a 7-byte sign-extending `C7 /0`, or `movabs` only when needed. `MOV_R_UI` (patched later) stays 10 bytes. The `COMPACT_ENCODING` flag itself is still unused.
 - *Commit:* 2e2c05d ("will remove COMPACT_ENCODING in future", stated).
 - *Relevance:* backend.
 
