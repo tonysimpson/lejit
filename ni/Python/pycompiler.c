@@ -15,10 +15,10 @@
  * which is right only below 256 arguments;
  * doc/history/removed-mechanisms.md D2).
  * Exceptions: catching one follows 3.7 (an EXCEPT_HANDLER block over six
- * stack items, cimpl_push_exc_info). A finally block differs from ceval: it
- * gets a single 3-tuple holding any pseudo-exception (EReturn too), which
- * END_FINALLY tells apart from an except clause's exception type, and
- * exc_info isn't set inside it. The Py2 per-frame saved exception
+ * stack items, cimpl_push_exc_info), and a finally block entered by an
+ * exception gets the same. A finally block entered by a pseudo-exception
+ * (EReturn, EBreak, EContinue) differs from ceval: it gets a single 3-tuple,
+ * which END_FINALLY tells apart from an exception type. The Py2 per-frame saved exception
  * (FINALIZE_FRAME_LOCALS, cimpl_finalize_frame_locals) is now never set.
  */
 #include "pycompiler.h"
@@ -2336,29 +2336,14 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         SAVE_NEXT_INSTR(next_instr);
         break;
       }
-      if (b->b_type == SETUP_FINALLY) {
-        /* SETUP_FINALLY always pushes on the stack either a
-           single compile-time None object or three objects
-           (exc, value, traceback). Unlike Python, the latter
-           might represent a pseudo-exception like EReturn. */
-        int next_instr;
-        vinfo_t *exc_info = PsycoTuple_New(3, NULL);
-        PycException_Fetch(po);
-        PsycoTuple_SET_ITEM(exc_info, 0, po->pr.exc);
-        PsycoTuple_SET_ITEM(exc_info, 1, po->pr.val);
-        PsycoTuple_SET_ITEM(exc_info, 2, po->pr.tb);
-        po->pr.exc = NULL;
-        po->pr.val = NULL;
-        po->pr.tb = NULL;
-        PUSH(exc_info);
-        JUMPTO(b->b_handler);
-        SAVE_NEXT_INSTR(next_instr);
-        break;
-      }
-      if (b->b_type == SETUP_EXCEPT && PycException_IsPython(po)) {
+      if ((b->b_type == SETUP_EXCEPT || b->b_type == SETUP_FINALLY) &&
+          PycException_IsPython(po)) {
         /* as 3.7 ceval: an EXCEPT_HANDLER block over six stack items (see
-           cimpl_push_exc_info). A virtual exception is raised for real
-           first, so that the run-time code can fetch it. */
+           cimpl_push_exc_info), for a finally block too, so that the
+           exception is the handled one inside it (KNOWN_BUGS F20);
+           END_FINALLY re-raises it from the top three. A virtual exception
+           is raised for real first, so that the run-time code can fetch
+           it. */
         int next_instr, i, handler = b->b_handler;
         vinfo_array_t *array;
         if (!compute_and_raise_exception(po))
@@ -2375,6 +2360,25 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           PUSH(array->items[i]);
         array_release(array);
         JUMPTO(handler);
+        SAVE_NEXT_INSTR(next_instr);
+        break;
+      }
+      if (b->b_type == SETUP_FINALLY) {
+        /* a pseudo-exception (EReturn, EBreak, EContinue) entering a
+           finally block: unlike Python, it is pushed as a single 3-tuple,
+           which END_FINALLY tells apart from an exception type and
+           re-raises */
+        int next_instr;
+        vinfo_t *exc_info = PsycoTuple_New(3, NULL);
+        PycException_Fetch(po);
+        PsycoTuple_SET_ITEM(exc_info, 0, po->pr.exc);
+        PsycoTuple_SET_ITEM(exc_info, 1, po->pr.val);
+        PsycoTuple_SET_ITEM(exc_info, 2, po->pr.tb);
+        po->pr.exc = NULL;
+        po->pr.val = NULL;
+        po->pr.tb = NULL;
+        PUSH(exc_info);
+        JUMPTO(b->b_handler);
         SAVE_NEXT_INSTR(next_instr);
         break;
       }

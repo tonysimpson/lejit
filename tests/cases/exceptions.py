@@ -132,6 +132,70 @@ def context_kept(a):
     except KeyError as e:
         return type(e.__context__).__name__
 
+# a finally block entered by an exception has it as the handled one, as
+# ceval does (KNOWN_BUGS F20; CPython's test_contextlib)
+def raise_nested(inner, outer):
+    try:
+        raise inner
+    finally:
+        raise outer
+
+def finally_context(a):
+    out = []
+    try:
+        raise_nested(KeyError(1), ValueError(2))
+    except ValueError as e:
+        out.append(repr(e.__context__))
+    try:
+        raise TypeError('outer')
+    except TypeError:
+        try:
+            raise_nested(KeyError(1), ValueError(2))
+        except ValueError as e:
+            out.append(repr(e.__context__))
+            out.append(repr(e.__context__.__context__))
+    return out
+
+def exc_info_in_finally(a):
+    try:
+        try:
+            a[5]
+        finally:
+            seen = exc_info()[0]
+    except IndexError:
+        pass
+    return seen, exc_info()[0]
+
+# leaving the finally block early drops the exception and restores exc_info
+def return_from_finally(a):
+    try:
+        a[5]
+    finally:
+        return exc_info()[0]
+
+def finally_return_then_info(a):
+    return return_from_finally(a), exc_info()[0]
+
+def break_in_finally(n):
+    out = []
+    for i in range(n):
+        try:
+            raise KeyError(i)
+        finally:
+            out.append(exc_info()[0])
+            break
+    out.append(exc_info()[0])
+    return out
+
+def reraise_from_finally(a):
+    try:
+        try:
+            a[5]
+        finally:
+            a.append(0)
+    except IndexError as e:
+        return type(e).__name__, len(a), exc_info()[0]
+
 L = [1, 2]
 
 CASES = [
@@ -154,4 +218,9 @@ CASES = [
     ('except_tuple', '[(L,)]', {}),
     ('raise_in_except', '[(L,)]', {}),
     ('context_kept', '[(L,)]', {}),
+    ('finally_context', '[(L,)]', {}),
+    ('exc_info_in_finally', '[(L,)]', {}),
+    ('finally_return_then_info', '[(L,)]', {}),
+    ('break_in_finally', [(3,)], {}),
+    ('reraise_from_finally', '[([1, 2],)]', {}),
 ]
