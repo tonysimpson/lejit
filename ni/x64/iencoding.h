@@ -616,11 +616,11 @@ typedef enum {
   OFFSET_ENCODING(false, true, 1, 0x39, 0, 0, 0, 8, r, rm, o)
 /* @asm: cmp qword ptr [{rm}{o}], {i:i8} */
 #define CMP_I8_O(i, rm, o)                                                     \
-  OFFSET_ENCODING(false, false, 1, 0x83, 0, 0, 0x38, 0, 0, rm, o);             \
+  OFFSET_ENCODING(false, true, 1, 0x83, 0, 0, 0x38, 0, 0, rm, o);             \
   WRITE_8BIT(i)
 /* @asm: cmp qword ptr [{rm}], {i:i8} */
 #define CMP_I8_A(i, rm)                                                        \
-  INDIRECT_ENCODING(false, 1, 0x83, 0, 0, 0x38, 0, rm);                        \
+  INDIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x38, 0, rm);                        \
   WRITE_8BIT(i)
 /* @asm: cmp {rm}, {i:i8} */
 #define CMP_I8_R(i, rm)                                                        \
