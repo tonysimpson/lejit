@@ -730,7 +730,18 @@ void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
   code_t *calling_code;
   code_t *calling_limit;
   code_t *limit;
-  CodeBufferObject *codebuf = psyco_new_code_buffer(NULL, NULL, &limit);
+  CodeBufferObject *codebuf;
+
+  /* the proxy's call clobbers the flags (KNOWN_BUGS B8): a condition still
+     live in them, such as a virtual bool just compared, is saved in a
+     register first, in the calling code. A conditional pause jumps on the
+     flags, so there the only live condition must be the one it jumps on. */
+  if (jmpcondition == CC_ALWAYS_TRUE) {
+    code_t *code = po->code;
+    NEED_CC();
+    po->code = code;
+  }
+  codebuf = psyco_new_code_buffer(NULL, NULL, &limit);
 
   /* the proxy contains only a jump to do_resume_coding,
      followed by a coding_pause_t structure, itself followed by the
