@@ -24,7 +24,14 @@ pip install .                                   # release: -O3
 `import ni` installs the frame-eval hook immediately (`ni/eval_hook.c`). From then on, every non-module function whose opcodes are all in `ni/mergepoints.c` is compiled on its first call. There's no Python-level API (`module_methods` is empty). The README says only very simple functions work, for example integer loops and `a + b`.
 
 ## Debug
-- **nianalyser** (`tools/nianalyser`): runs the target under `pointbreak`, sets breakpoints on the empty `ni_trace_*` functions in `ni/ni.c`, and records emitted code, jumps, calls and unifications, disassembled with `distorm3`. Needs `pointbreak` (`~/work/pointbreak`, which needs `libunwind-dev` to build), `distorm3` and `intervaltree`. Not run as of 2026-11-16 (`libunwind-dev` isn't installed). Without it, dump a compiled function's code from Python: `ni.co_to_entry_point[f.__code__][0]` is a CodeBuffer; its `codestart` pointer sits just after the object header (offset 16), so read it with ctypes and disassemble with `objdump -b binary -m i386:x86-64`. Promotion records sit inline in the code and disassemble as junk.
+- **nianalyser** (`tools/nianalyser`): runs the target under `pointbreak`, sets breakpoints on the empty `ni_trace_*` functions in `ni/ni.c`, and records emitted code, jumps, calls and unifications, disassembled with `distorm3`. Needs `pointbreak` (`~/work/pointbreak`, which needs `libunwind-dev` to build), `distorm3` and `intervaltree`. Setup (2026-11-16): `sudo apt install libunwind-dev`, then make a venv outside both repos and install pointbreak from a copy (pip builds in-tree, and pointbreak is maintained separately):
+  ```
+  git -C ~/work/pointbreak archive HEAD | tar -x -C /some/dir/pb
+  uv venv --python 3.12 venv && VIRTUAL_ENV=$PWD/venv uv pip install /some/dir/pb distorm3 intervaltree
+  venv/bin/python tools/nianalyser/dump_function.py FUNC ~/.pyenv/versions/3.7.17/bin/python3.7 script.py
+  ```
+  `dump_function.py` prints every chunk emitted for one function, annotated with its line, bytecode offset and compiler call stack. Promotion records sit inline in the code and disassemble as junk.
+- Without pointbreak: `ni.co_to_entry_point[f.__code__][0]` is a CodeBuffer whose `codestart` pointer is at offset 16; read it with ctypes and disassemble with `objdump -b binary -m i386:x86-64`.
 - `tools/test_harness`: counts `NiEval_EvalFrame` against `NiCode_Run` hits, to see how many frames actually ran compiled code.
 - `tools/test_runner`: unittest runner that imports `ni` when `NI_ENABLED` is set.
 - `tools/asm`, `tools/test_asm`, `tools/test_c_encoding`, `tools/asm_test_cases.txt`, `tools/test_mcg_template.c`: check that the C encoding macros in `ni/x64/iencoding.h` emit the same bytes as gcc's assembler.

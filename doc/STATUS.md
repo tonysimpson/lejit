@@ -12,7 +12,7 @@ Fixed (one commit each; details in KNOWN_BUGS):
 - backend: B1, B11–B13 (emitter encodings), M1–M5 and M9 (`v_mem_mov`), B2 (uncounted push), B3 (double/int argument registers);
 - translated, under the D18 exception: F16 (a leak in float comparison that crashed every float compare).
 
-Inspected the generated code for a simple loop with objdump: type promotions with inline caches, then residual calls to `long_add` and the comparison functions (integers aren't virtual yet, D13). nianalyser wasn't run: pointbreak needs `libunwind-dev`, which isn't installed.
+Inspected the generated code for `while_sum` with nianalyser (`tools/nianalyser/dump_function.py`): 80 chunks, all making sense. There are type promotions with inline caches, then residual calls to `long_add`/`long_richcompare` (integers aren't virtual yet, D13). Cheap inefficiencies seen: constant arguments always use a 10-byte `movabs`, even for 0, and stack corrections are emitted as `sub rsp, -8`.
 
 Left alone per D18 (translated layer, to be regenerated): F1–F15 except F16, notably F4 (exceptions) and the opcodes that keep Python 2 meanings. Open backend and core items: B5–B10, M8, C2, C3, C5 (use `extern` properly instead of `-fcommon`).
 

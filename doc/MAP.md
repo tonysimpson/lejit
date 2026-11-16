@@ -120,6 +120,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `doc/psyco_legacy/*` | doc | *The Ultimate Psyco Guide* (LaTeX) and links to Armin's papers and talks. | User-facing; describes removed features (profilers, `psyco.compact`). | `e1fd808` |
 | `tools/nianalyser/` | tooling | Trace analyser: breakpoints on the `ni_trace_*` hooks via `pointbreak`, disassembly via `distorm3`. | See `BUILD.md`. | `e1fd808` |
 | `tools/test_harness` | tooling | Counts `NiEval_EvalFrame` against `NiCode_Run` hits under `pointbreak`. | | `e1fd808` |
+| `tools/nianalyser/dump_function.py` | tooling | Prints the annotated machine code generated for one function (BUILD.md, Debug). | Added 2026-11-16. | (this commit) |
 | `tools/test_runner` | tooling | unittest main; imports `ni` if `NI_ENABLED` is set. | | `e1fd808` |
 | `tools/asm`, `tools/test_asm`, `tools/asm_test_cases.txt` | tooling | Compare encoder-macro bytes with gas output. | Uses distutils; expected output encodes the 32-bit `CMP_I8_O` bug. | `e1fd808` |
 | `tools/test_c_encoding` | tooling | Expand one macro and disassemble it. | Python 2; stale `../c/` path. | `e1fd808` |
