@@ -319,9 +319,14 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
     code = data_new_buffer(code, &dm);
   }
   backpointer = code;
-  ni_trace_begin_simple_code(code);
-  JUMP_TO((code_t*) target_codebuf->codestart);
-  ni_trace_end_simple_code(code);
+  /* psyco_unify_code() passes a throwaway stack buffer with no room
+     (codelimit NULL): if nothing needed a new buffer, the jump would be
+     discarded, and it can't reach the code from the stack anyway (B5) */
+  if (po->codelimit != NULL || dm.private_codebuf != NULL) {
+    ni_trace_begin_simple_code(code);
+    JUMP_TO((code_t*) target_codebuf->codestart);
+    ni_trace_end_simple_code(code);
+  }
   
   /* start a new buffer if the last JUMP_TO overflowed,
      but not if we had no room at all in the first place. */

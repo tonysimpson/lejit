@@ -1403,6 +1403,7 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
   do {                                                                         \
     ni_trace_jump((code_t *)(code), (code_t *)(addr));                         \
     *code++ = 0xE9; /* JMP rel32 */                                            \
+    extra_assert(FITS_IN_32BITS((code_t *)(addr) - (code + 4))); /* B5 */  \
     *(dword_t *)(code) = (addr) - (code + 4);                                  \
     code += 4;                                                                 \
   } while (0)
@@ -1419,6 +1420,7 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
     CAPTURE_CODE_LOCATION                                                      \
     *code++ = 0x0F;                                                            \
     *code++ = 0x80 | (code_t)(condition);                                      \
+    extra_assert(FITS_IN_32BITS((code_t *)(addr) - (code + 4))); /* B5 */  \
     *(dword_t *)(code) = (addr) - (code + 4);                                  \
     code += 4;                                                                 \
     ni_trace_jump_cond((code_t *)(location), (code_t *)(code),                 \
@@ -1429,6 +1431,7 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
   do {                                                                         \
     ni_trace_jump_cond_update((code_t *)(code - 6), (code_t *)(code),          \
                               (code_t *)(addr));                               \
+    extra_assert(FITS_IN_32BITS((code_t *)(addr) - code)); /* B5 */           \
     *(dword_t *)(code - 4) = (addr)-code;                                      \
   } while (0)
 
