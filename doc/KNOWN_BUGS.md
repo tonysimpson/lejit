@@ -35,11 +35,11 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 
 | # | Bug | State | Evidence |
 |---|---|---|---|
-| F1 | **Confirmed 2026-11-16 (tests/cases/basic_float.py `mixed`).** **Mixed-type arithmetic → TypeError.** `pabstract.c:binary_op1` is Python 2. `NEW_STYLE_NUMBER` is 0 because `Py_TPFLAGS_CHECKTYPES` doesn't exist in Py3, so slots are tried only when both operand types are identical. `1 + 2.0` in a compiled function raises TypeError. | **Live** | [read] |
+| F1 | **Fixed** (`4cf49f8`). Mixed-type arithmetic raised TypeError: `pabstract.c:binary_op1` was Python 2's, trying number slots only for types with `Py_TPFLAGS_CHECKTYPES`, which doesn't exist in Py3. Now 3.7's. Tests: `tests/cases/mixed.py`. | Fixed | [run] |
 | F2 | **No builtin metas registered.** `pbltinmodule.c` calls `Psyco_DefineMetaModule("__builtin__")`, but Py3's module is `builtins`. | Live (perf) | [read] |
 | F3 | `BUILD_MAP` and the `CALL_FUNCTION` oparg keep their Python 2 meanings but are whitelisted. `RAISE_VARARGS` fixed in `ebc5cfc` (3.x `raise exc from cause`, bare raise reads `exc_info`). `END_FINALLY` keeps Ni's own finally scheme, which is consistent with itself (F18). | **Live** miscompiles | [read] history D2 |
 | F4 | **Fixed** (`ebc5cfc`). Catching any exception segfaulted: handled-exception state was mapped onto `curexc_*` (Py2's model), and `cimpl_set_exc_info` increfed `curexc_type` just after `PyErr_Fetch` cleared it. Catching now follows 3.7 (EXCEPT_HANDLER block, six stack items, POP_EXCEPT). Tests: `tests/cases/exceptions.py`. What still differs is F18. | Fixed | [run] |
-| F5 | **Confirmed 2026-11-16 (`fdiv_zero` returns inf).** `pfloat_div` has no ZeroDivisionError. `pmath.c` has no domain/range errors, and `ceil`/`floor` return floats. | Live | [read] |
+| F5 | Float division by zero: **fixed** (`9ed7e6c`, `cimpl_fp_div` raises ZeroDivisionError). Still live: `pmath.c` has no domain/range errors, and `ceil`/`floor` return floats. | Live (pmath) | [read]; division [run] |
 | F6 | `pfloatobject.c:direct_compute_float` converts the stored 64-bit word numerically instead of bit-casting it. | Live when frames are rebuilt | [read] |
 | F7 | `pfuncobject.c:compute_function`: `SET_FIELD` uses `\|\|` where `&&` is meant, and stores without `FMUT\|FPYREF`, so the function holds no references to its closure or defaults. | Live if a virtual function escapes | [read]; refcount effect [inferred] |
 | F8 | Calling a virtual function ignores closures and keyword-only defaults. | Live | [inferred] |

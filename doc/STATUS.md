@@ -3,7 +3,7 @@
 ## 2026-11-16: 3.7 baseline (branch `baseline-3.7`, D18)
 
 Ni builds and runs on CPython 3.7.17 (pyenv, gcc 14, `-fcommon`). Three test suites, all passing:
-- `tests/run.py`: 78 behaviour cases, each run with and without Ni, required to compile, and leak-checked. There are 3 expected failures, all bugs in the translated layer: F1 ×2 (mixed-type binary operations raise TypeError) and F5 (float division by zero). Two cases correctly fall back to the interpreter because of unsupported opcodes.
+- `tests/run.py`: 91 behaviour cases, each run with and without Ni, required to compile, and leak-checked. No expected failures. Two cases correctly fall back to the interpreter because of unsupported opcodes.
 - `tests/encoding/check.py`: 56 `@asm`-annotated emitters, about 192k operand combinations, compared with GNU `as`.
 - `tests/encoding/run_v_mem_mov.sh`: about 90k executed loads and stores through `v_mem_mov`.
 
@@ -11,11 +11,11 @@ Fixed (one commit each; details in KNOWN_BUGS):
 - core: C4 (merge-point lookup ran past its sentinel), C6 (every compiled call leaked its frame), M6 (4-byte compile-time field reads);
 - backend: B1, B11–B13 (emitter encodings), M1–M5 and M9 (`v_mem_mov`), B2 (uncounted push), B3 (double/int argument registers);
 - translated, under the D18 exception: F16 (a leak in float comparison that crashed every float compare);
-- translated, at the owner's request: F4 (exceptions now caught the 3.7 way, with `RAISE_VARARGS` from F3), which exposed F17 (keyword-only defaults dropped) and C7 (a debug check).
+- translated, at the owner's request: F4 (exceptions now caught the 3.7 way, with `RAISE_VARARGS` from F3), which exposed F17 (keyword-only defaults dropped) and C7 (a debug check); F1 (mixed-type arithmetic) and F5 (float division by zero).
 
-Inspected the generated code for `while_sum` with nianalyser (`tools/nianalyser/dump_function.py`): 80 chunks, all making sense. There are type promotions with inline caches, then residual calls to `long_add`/`long_richcompare` (integers aren't virtual yet, D13). Cheap inefficiencies seen: constant arguments always use a 10-byte `movabs`, even for 0, and stack corrections are emitted as `sub rsp, -8`.
+Inspected the generated code for `while_sum` with nianalyser (`tools/nianalyser/dump_function.py`): 80 chunks, all making sense. There are type promotions with inline caches, then residual calls to `long_add`/`long_richcompare` (integers aren't virtual yet, D13). A quick benchmark (prime counting, sieve, Collatz, Mandelbrot) ran 2× faster than CPython 3.7 for integer code (every operation is still a residual call) and 5× for float code (floats are virtual). Cheap inefficiencies seen: constant arguments always use a 10-byte `movabs`, even for 0, and stack corrections are emitted as `sub rsp, -8`.
 
-Left alone per D18 (translated layer, to be regenerated): the rest of F1–F18, notably F1 (mixed types) and the opcodes that keep Python 2 meanings. Open backend and core items: B5–B10, M8, C2, C3, C5 (use `extern` properly instead of `-fcommon`).
+Left alone per D18 (translated layer, to be regenerated): the rest of F2–F18, notably the opcodes that keep Python 2 meanings. Open backend and core items: B5–B10, M8, C2, C3, C5 (use `extern` properly instead of `-fcommon`).
 
 ## 2026-11-16: first indexing pass (at `e1fd808`)
 
