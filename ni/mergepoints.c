@@ -302,7 +302,9 @@ DEFINEFN mergepoint_t *
 psyco_next_merge_point(PyObject *mergepoints, int position)
 {
     mergepoint_t *mp = psyco_first_merge_point(mergepoints);
-    while (mp->bytecode_position < position) {
+    /* the array ends with a sentinel whose bytecode_position is -1; stop
+       there rather than walking past it */
+    while (mp->bytecode_position >= 0 && mp->bytecode_position < position) {
         mp++;
     }
     return mp;
