@@ -176,6 +176,11 @@ _build_merge_points(PyCodeObject *co, int module)
     if (co->co_kwonlyargcount) {
         goto not_ok;
     }
+    /* closures aren't supported, and zero-argument super() reads the
+       __class__ cell from a real frame */
+    if (PyTuple_GET_SIZE(co->co_freevars) || PyTuple_GET_SIZE(co->co_cellvars)) {
+        goto not_ok;
+    }
 
     first_instr = (_Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
     next_instr = first_instr;
