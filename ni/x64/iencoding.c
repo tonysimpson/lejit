@@ -8,8 +8,7 @@
  *    the arguments, the callee pops them, and the result is a new reference in
  *    RAX);
  *  - condition-code materialisation and the integer ALU emitters.
- * Suspected bugs: run_time_result_check pushes RAX without updating
- * stack_depth, which misaligns calls made inside it; run_time_call uses the
+ * Suspected bug: run_time_call uses the
  * overall argument index for the integer registers, so an integer argument
  * after a double goes in the wrong register.
  */
@@ -335,10 +334,14 @@ test_condition_and_pyerr_occured:
     BEGIN_CODE
     PUSH_R(REG_FUNCTIONS_RETURN);
     END_CODE
+    /* the push must be counted: RSP-relative addressing of spilled values and
+       the alignment of the C call inside psyco_PyErr_Occurred use it */
+    psyco_inc_stackdepth(po);
     error_cc = integer_NON_NULL(po, psyco_PyErr_Occurred(po));
     BEGIN_CODE
     POP_R(REG_FUNCTIONS_RETURN);
     END_CODE
+    psyco_dec_stackdepth(po);
 test_condition:
     if (!runtime_condition_f(po, error_cc)) {
         return VINFO_OK;
