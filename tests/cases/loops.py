@@ -39,6 +39,17 @@ def straight_line(c):
     return k, c
 
 
+# At the loop head x and y are distinct the first time round and one value
+# afterwards: psyco_unify must put that value in two registers (KNOWN_BUGS B7).
+def shared_after_loop(n):
+    x = n * 3
+    y = n * 5
+    s = 0
+    for i in range(n):
+        s += x * 7 + y
+        x = y
+    return s, x, y
+
 CASES = [
     ('neg_index_loop', "[(['a'],)]", {}),
     ('neg_index_loop', "[(['a', 'bb'],)]", {}),
@@ -46,4 +57,5 @@ CASES = [
     ('runtime_neg_index', "[(['a', 'bb'], -1)]", {}),
     ('pos_index_loop', "[(['a', 'bb', 'c'],)]", {}),
     ('straight_line', "[(['a', 'bb', 'ccc'],)]", {}),
+    ('shared_after_loop', "[(1,), (2,), (6,)]", {}),
 ]

@@ -3,8 +3,9 @@
  * (and reference fix-ups) that turn the current run-time layout into the
  * snapshot's, then jump to its code. If the moves overflow the current buffer
  * they are copied to a new one (data_new_buffer). The register-move phase was
- * rewritten for x86-64 and may mishandle a value that must end up in two
- * registers at once (the XCHG case). Untested.
+ * rewritten for x86-64. A value wanted in several registers (shared in po,
+ * distinct in the snapshot) is moved to one and copied to the others last
+ * (KNOWN_BUGS B7, reached by tests/cases/loops.py shared_after_loop).
  */
 #include "idispatcher.h"
 #include "../dispatcher.h"
@@ -216,6 +217,8 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
 
   int i;
   struct dmove_s dm;
+  vinfo_t* wanted[REG_TOTAL];      /* the targets, before (1) clears them */
+  reg_t copy_from[REG_TOTAL];      /* (1b): copy this register to i */
   code_t* code = po->code;
   code_t* backpointer;
   CodeBufferObject* target_codebuf = lastmatch->matching;
@@ -261,13 +264,23 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
      vinfo_ts it actually used from 'po') */
   code = data_free_unused(code, &dm, &po->vlocals);
 
-  /* update the registers (1): reg-to-reg moves and exchanges */
+  /* update the registers (1): reg-to-reg moves and exchanges. A value
+     can be wanted in several registers (shared in 'po', distinct in the
+     snapshot): it is moved to one target, and copied to the others in
+     (1b), once every register holds its final value (KNOWN_BUGS B7). */
+    memcpy(wanted, dm.copy_regs, sizeof(wanted));
+    for (i=0; i<REG_TOTAL; i++)
+        copy_from[i] = REG_NONE;
     for (i=0; i<REG_TOTAL; i++) {
         vinfo_t* v = dm.copy_regs[i];
         if (v != NULL) {
             reg_t rg = RUNTIME_REG(v);
             if (rg != REG_NONE) {
-                if (rg != i) {
+                if (rg != i && wanted[(int)rg] == v) {
+                    /* v must also stay in rg: copy it in (1b) */
+                    copy_from[i] = rg;
+                }
+                else if (rg != i) {
                     /* Value v is in rg but needs to be in register i */
                     vinfo_t *v2 = REG_NUMBER(po, i);
                     if (v2 != NULL) {
@@ -292,6 +305,23 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
                 }
                 dm.copy_regs[i] = NULL;
             } 
+        }
+    }
+    /* (1b): the extra copies. A register written here is a target of v, so
+       whatever it held is not wanted in any register (that value has
+       already been moved to its own target, or is wanted only on the
+       stack, which is up to date). */
+    for (i=0; i<REG_TOTAL; i++) {
+        if (copy_from[i] != REG_NONE) {
+            vinfo_t *w = REG_NUMBER(po, i);
+            extra_assert(RUNTIME_REG(wanted[i]) == copy_from[i]);
+            ni_trace_begin_simple_code(code);
+            MOV_R_R(i, copy_from[i]);
+            ni_trace_end_simple_code(code);
+            if (w != NULL && w != wanted[i]) {
+                SET_RUNTIME_REG_TO_NONE(w);
+                REG_NUMBER(po, i) = NULL;
+            }
         }
     }
     if (code > dm.code_limit) {
