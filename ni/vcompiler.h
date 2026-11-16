@@ -276,7 +276,9 @@ PSY_INLINE CompileTimeSource set_ct_value(CompileTimeSource s, long v) {
    real-code testing would be welcome.) */
 #define NW_VLISTS 5
 #define NW_TUPLES_NORMAL 4
-#define NW_TUPLES_FUNCALL 4
+/* forced: a tuple passed to a compiled callee and given back must be the
+   same object (KNOWN_BUGS C17) */
+#define NW_TUPLES_FUNCALL NW_FORCE
 #define NW_STRSLICES_NORMAL 5
 #define NW_STRSLICES_FUNCALL 9
 #define NW_CATSTRS_NORMAL 4 /* catstrs also have a vlist internally */

@@ -82,6 +82,27 @@ def generator_names():
     h = renamed_gen()
     return g.__name__, g.__qualname__, h.__name__, h.__qualname__, list(h)
 
+def give_back(b):
+    for x in b:
+        if isinstance(x, type):
+            continue
+    return b
+
+
+# a tuple built in compiled code and passed to a compiled callee must stay
+# one object (KNOWN_BUGS C17; types.resolve_bases does 'is not')
+def tuple_identity_through_call(a):
+    t = (a, object)
+    u = (a, (t, a))
+    return give_back(t) is t, give_back(u) is u, give_back(u)[1][0] is t
+
+
+def new_class_bases():
+    import types
+    def meta(name, bases, ns, **kw):
+        return name, bases, sorted(ns), kw
+    return types.new_class('X', (int, object), dict(metaclass=meta, x=0))
+
 CASES = [
     ('call_helper', [(1,), (-4,)], {}),
     ('call_in_loop', [(0,), (50,)], {}),
@@ -94,4 +115,6 @@ CASES = [
     ('call_builtin_abs', [(-3,), (4,), (-2.5,)], {}),
     ('endless_recursion', [()], {}),
     ('generator_names', [()], {}),
+    ('tuple_identity_through_call', "[(int,)]", {}),
+    ('new_class_bases', [()], {}),
 ]
