@@ -12,20 +12,27 @@ mkdir -p build
 
 step() { printf '\n== %s\n' "$*"; }
 
+stale_sources() {   # sources newer than ni.so (find compares to the ns)
+    local so; so=$(ls ni*.so 2>/dev/null | head -1)
+    [ -z "$so" ] && { echo "(no ni.so)"; return; }
+    find ni setup.py -newer "$so" \( -name '*.c' -o -name '*.h' -o -name setup.py \) | head -5
+}
+
 step "build (NI_TRACE=1 NI_ALL_CHECKS=1)"
+# distutils compares whole seconds: an edit in the same second as the last
+# build looks up to date to it, so remove the module ourselves
+[ -n "$(stale_sources)" ] && rm -f ni*.so
 if ! NI_TRACE=1 NI_ALL_CHECKS=1 "$PY37" setup.py build_ext --inplace > "$LOG" 2>&1; then
     grep -E ": error|Error" "$LOG" | head -20
     echo "BUILD FAILED (full log: $LOG)"
     exit 1
 fi
-# belt and braces: the module must be newer than every source file
-SO=$(ls ni*.so)
-STALE=$(find ni setup.py -newer "$SO" \( -name '*.c' -o -name '*.h' -o -name setup.py \) | head -5)
+STALE=$(stale_sources)
 if [ -n "$STALE" ]; then
-    echo "STALE $SO: older than"; echo "$STALE"
+    echo "STALE ni.so: older than"; echo "$STALE"
     exit 1
 fi
-echo "ok ($SO)"
+echo "ok ($(ls ni*.so))"
 
 step "behaviour tests (tests/run.py)"
 "$PY37" tests/run.py
