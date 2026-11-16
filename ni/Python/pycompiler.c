@@ -841,7 +841,7 @@ done:
 
 /* the code of the following functions is "copy-pasted" from ceval.c */
 
-#define GLOBAL_NAME_ERROR_MSG "global name '%.200s' is not defined"
+#define GLOBAL_NAME_ERROR_MSG "name '%.200s' is not defined"
 #define UNBOUNDLOCAL_ERROR_MSG                                                 \
   "local variable '%.200s' referenced before assignment"
 

@@ -198,6 +198,14 @@ def reraise_from_finally(a):
 
 L = [1, 2]
 
+# F21: the message had Python 2's wording ("global name ...")
+def undefined_global(a):
+    try:
+        return a + not_defined_anywhere
+    except NameError as e:
+        return str(e)
+
+
 CASES = [
     ('catch_as', [(5, 2), (5, 0)], {}),
     ('exc_info_inside', '[(L,)]', {}),
@@ -223,4 +231,5 @@ CASES = [
     ('finally_return_then_info', '[(L,)]', {}),
     ('break_in_finally', [(3,)], {}),
     ('reraise_from_finally', '[([1, 2],)]', {}),
+    ('undefined_global', [(1,)], {}),
 ]
