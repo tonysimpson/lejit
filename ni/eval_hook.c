@@ -56,15 +56,12 @@ static PyObject *NiEval_EvalFrame(PyFrameObject *frame, int throwflag) {
         po = PsycoObject_FromCode(co, frame->f_globals, mergepoints,
                                   DEFAULT_RECURSION);
         codebuf = psyco_compile_code(po, PsycoObject_Ready(po));
-        entry_point = PyTuple_New(2);
-        PyTuple_SET_ITEM(entry_point, 0, (PyObject *)codebuf);
-        Py_INCREF(frame->f_globals);
-        PyTuple_SET_ITEM(entry_point, 1, frame->f_globals);
+        entry_point = (PyObject *)codebuf;
         x->entry_point = entry_point;
+        x->entry_globals = frame->f_globals;
       }
-      if (entry_point != Py_None &&
-          PyTuple_GET_ITEM(entry_point, 1) == frame->f_globals) {
-        return NiCode_Run(PyTuple_GET_ITEM(entry_point, 0), frame);
+      if (entry_point != Py_None && x->entry_globals == frame->f_globals) {
+        return NiCode_Run(entry_point, frame);
       }
     }
   }

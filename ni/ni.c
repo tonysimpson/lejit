@@ -227,7 +227,8 @@ static PyObject *ni_inlinable(PyObject *self, PyObject *co) {
                          (psyco_mp_flags(mps) & MP_FLAGS_INLINABLE) != 0);
 }
 
-/* for debugging (doc/BUILD.md): the (codebuf, globals) the eval hook runs */
+/* for debugging (doc/BUILD.md): (codebuf, address of the globals) the eval
+   hook runs; the address, since the globals are borrowed and may be dead */
 static PyObject *ni_entry_point(PyObject *self, PyObject *co) {
   void *x;
   PyObject *e;
@@ -238,10 +239,10 @@ static PyObject *ni_entry_point(PyObject *self, PyObject *co) {
   if (_PyCode_GetExtra(co, code_extra_index, &x) < 0)
     return NULL;
   e = x ? ((ni_code_extra_t *)x)->entry_point : NULL;
-  if (e == NULL)
-    e = Py_None;
-  Py_INCREF(e);
-  return e;
+  if (e == NULL || e == Py_None)
+    Py_RETURN_NONE;
+  return Py_BuildValue("(On)", e,
+                       (Py_ssize_t)((ni_code_extra_t *)x)->entry_globals);
 }
 
 static PyMethodDef module_methods[] = {

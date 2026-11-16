@@ -975,8 +975,16 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
   INIT_PROCESSOR_PSYCOOBJECT(po);
   po->pr.auto_recursion = AUTO_RECURSION(recursion);
 
-  /* initialize po->vlocals */
-  Py_INCREF(globals);
+  /* initialize po->vlocals. The globals are borrowed (C14): compiled code
+     keeps its constants forever (sk_release), and here that closed a cycle
+     the GC can't see, globals -> function -> code -> co_extra -> buffers ->
+     globals, so code with globals of its own (exec, namedtuple) never died.
+     Borrowing is safe because compiled code uses the dict only as an
+     argument to run-time calls, never its contents at compile time: it
+     runs only in a frame that holds the dict, and if a new dict later gets
+     a dead one's address, the old code does for it what new code would.
+     Code that reads globals at compile time (say a cached LOAD_GLOBAL)
+     must take its own reference (DECISIONS D23). */
   sk = sk_new((long)globals, SkFlagPyObj);
   LOC_GLOBALS = vinfo_new(CompileTime_NewSk(sk));
 

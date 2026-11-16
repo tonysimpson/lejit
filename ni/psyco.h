@@ -160,8 +160,11 @@ EXTERNVAR PyObject* CPsycoModule;
 typedef struct {
   PyObject* merge_points;  /* capsule, Py_None if unsupported, NULL if not
                               built yet; owned */
-  PyObject* entry_point;   /* (codebuf, globals), Py_None if compiling
-                              failed, NULL if not tried; owned */
+  PyObject* entry_point;   /* codebuf, Py_None if compiling failed, NULL if
+                              not tried; owned */
+  PyObject* entry_globals; /* the globals it was compiled for: borrowed, so
+                              maybe dead and reused (vcompiler.c says why
+                              that is safe) */
 } ni_code_extra_t;
 /* the record for 'co', made on first use; NULL with an exception set */
 EXTERNFN ni_code_extra_t* ni_code_extra(PyCodeObject* co);
