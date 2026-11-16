@@ -79,6 +79,21 @@ else:
     extra_compile_args = ['-O3']
 extra_link_args = []
 sources = find_sources(PROCESSOR, ALL_STATIC==1)
+# distutils rebuilds only when a file listed here or in sources is newer
+# than ni.so: list every header and .c file (ni.c #includes the .c files)
+depends = sorted(set(glob.glob('./ni/**/*.h', recursive=True) +
+                     glob.glob('./ni/**/*.c', recursive=True)))
+# switching NI_TRACE or NI_ALL_CHECKS must also rebuild: remember the
+# options, and remove the built module when they change (distutils compares
+# whole seconds, so a fresh stamp file alone is not reliably "newer")
+config = repr((macros, extra_compile_args))
+stamp = os.path.join('build', 'ni_config.stamp')
+if not os.path.exists(stamp) or open(stamp).read() != config:
+    for built in glob.glob('ni*.so') + glob.glob('build/lib*/ni*.so'):
+        os.remove(built)
+    os.makedirs('build', exist_ok=True)
+    with open(stamp, 'w') as f:
+        f.write(config)
 processor_dir = os.path.join('./ni', PROCESSOR)
 
 CLASSIFIERS = [
@@ -104,6 +119,7 @@ setup(
     packages         = ['ni'],
     ext_modules=[Extension(name = 'ni',
                            sources = sources,
+                           depends = depends,
                            extra_compile_args = extra_compile_args,
                            extra_link_args = extra_link_args,
                            define_macros = macros,

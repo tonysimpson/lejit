@@ -57,4 +57,6 @@ Upstream Psyco's test suite (`test/`) and the Ni regression pack were removed (s
 - To prove an edit is comment-only without building, strip comments and compare against git:
   `gcc -fpreprocessed -E -P -x c FILE | tr -d ' \t\n' | md5sum`, compared with the same for `git show HEAD:FILE`.
 
-**Header changes are not rebuilt.** distutils tracks only `.c` files, so after editing a header (for example `ni/x64/iencoding.h`) run `rm -rf build ni*.so` before building, or the tests run a stale `ni.so`. [run]
+**Check everything with one command:** `tools/check.sh`. It builds with `NI_TRACE=1 NI_ALL_CHECKS=1`, stops if the build fails or `ni.so` is older than any source, then runs `tests/run.py`, `tests/encoding/check.py`, the `v_mem_mov` execution tests and `tests/smoke.py` (stdlib output with and without Ni). About a minute. [run]
+
+**Rebuilds.** `setup.py` lists every `.c` and `.h` as a dependency, and removes `ni.so` when the build options change (`build/ni_config.stamp`), so header edits and switching between debug and optimised builds rebuild. distutils compares whole seconds, so an edit in the same second as the last build can still be missed; `tools/check.sh`'s staleness check catches that. [run]

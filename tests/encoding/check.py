@@ -58,6 +58,11 @@ def parse_annotations(path):
     for m in re.finditer(r'/\* @asm: (.*?) \*/\n#define ([A-Z0-9_]+)\(([^)]*)\)', text):
         intent, name, params = m.group(1), m.group(2), [p.strip() for p in m.group(3).split(',') if p.strip()]
         out.append((name, params, intent))
+    # an annotation not directly above its #define would be silently skipped
+    orphans = len(re.findall(r'/\* @asm:', text)) - len(out)
+    if orphans:
+        sys.exit('%s: %d @asm annotation(s) not directly followed by a '
+                 '#define; fix them, or they go untested' % (path, orphans))
     return out
 
 
