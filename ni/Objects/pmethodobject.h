@@ -20,6 +20,13 @@
 EXTERNFN vinfo_t* PsycoCFunction_Call(PsycoObject* po, vinfo_t* func,
                                       vinfo_t* tuple, vinfo_t* kw);
 
+/* A meta for a METH_FASTCALL function takes its positional arguments as a
+   tuple, like a METH_VARARGS one (vself, vargs). Its residual fallback is
+   PsycoCFunction_CallFast: the C function itself takes an array. */
+EXTERNFN vinfo_t* PsycoCFunction_CallFast(PsycoObject* po, PyCFunction meth,
+                                          int flags, vinfo_t* vself,
+                                          vinfo_t* vargs);
+
 
  /***************************************************************/
   /***   Virtual-time object builder                           ***/

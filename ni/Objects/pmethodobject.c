@@ -2,8 +2,9 @@
  * Virtual builtin-method objects ([iCFUNC_M_ML] = PyMethodDef*,
  * [iCFUNC_M_SELF]) and the PyCFunction tp_call meta. The meta promotes m_ml,
  * switches on ml_flags exactly as CPython does, and dispatches to a meta for
- * ml_meth if one is registered. METH_FASTCALL (very common in 3.7) is not
- * handled, so those calls always become a residual PyCFunction_Call.
+ * ml_meth if one is registered. METH_FASTCALL (very common in 3.7) reaches
+ * a meta only if one is registered: there is no residual call of the C
+ * function with a tuple, so otherwise it is a residual PyCFunction_Call.
  */
 #include "pmethodobject.h"
 #include "ptupleobject.h"
@@ -104,6 +105,14 @@ vinfo_t *PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
         goto use_proxy;
       return Psyco_META2(po, ml->ml_meth, CfCommonNewRefPyObject, "vl", vself,
                          NULL);
+    case METH_FASTCALL:
+    case METH_FASTCALL | METH_KEYWORDS: {
+      vinfo_t *(*meta)(PsycoObject *, vinfo_t *, vinfo_t *) =
+          Psyco_Lookup(ml->ml_meth);
+      if (meta == NULL)
+        goto use_proxy;
+      return meta(po, vself, args); /* no keywords here */
+    }
     }
   }
 
@@ -111,6 +120,28 @@ vinfo_t *PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
 use_proxy:
   return psyco_generic_call(po, PyCFunction_Call, CfCommonNewRefPyObject, "vvv",
                             func, args, kwargs);
+}
+
+/* call a METH_FASTCALL function with a tuple's items, no keywords */
+static PyObject *cimpl_call_fast(PyCFunction meth, PyObject *self,
+                                 PyObject *args) {
+  return ((_PyCFunctionFast)meth)(self, &PyTuple_GET_ITEM(args, 0),
+                                  PyTuple_GET_SIZE(args));
+}
+
+static PyObject *cimpl_call_fast_kw(PyCFunction meth, PyObject *self,
+                                    PyObject *args) {
+  return ((_PyCFunctionFastWithKeywords)meth)(
+      self, &PyTuple_GET_ITEM(args, 0), PyTuple_GET_SIZE(args), NULL);
+}
+
+DEFINEFN
+vinfo_t *PsycoCFunction_CallFast(PsycoObject *po, PyCFunction meth, int flags,
+                                 vinfo_t *vself, vinfo_t *vargs) {
+  void *fn = (flags & METH_KEYWORDS) ? (void *)cimpl_call_fast_kw
+                                     : (void *)cimpl_call_fast;
+  return psyco_generic_call(po, fn, CfCommonNewRefPyObject, "lvv",
+                            (long)meth, vself, vargs);
 }
 
 INITIALIZATIONFN

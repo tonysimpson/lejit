@@ -1,6 +1,7 @@
 #include "pbltinmodule.h"
 #include "../Objects/plistobject.h"
 #include "../Objects/plongobject.h"
+#include "../Objects/pmethodobject.h"
 #include "../Objects/pstringobject.h"
 #include "../Objects/ptupleobject.h"
 
@@ -143,17 +144,17 @@ static vinfo_t *pbuiltin_divmod(PsycoObject *po, vinfo_t *vself,
     return PsycoNumber_Divmod(po, PsycoTuple_GET_ITEM(vargs, 0),
                               PsycoTuple_GET_ITEM(vargs, 1));
   }
-  return psyco_generic_call(po, cimpl_divmod, CfCommonNewRefPyObject, "lv",
-                            NULL, vargs);
+  return PsycoCFunction_CallFast(po, cimpl_divmod, METH_FASTCALL, vself,
+                                 vargs);
 }
 
 /***************************************************************/
 
 INITIALIZATIONFN
 void psyco_bltinmodule_init(void) {
-  /* a meta is registered only if the builtin's ml_flags match: in 3.7 id,
-     len and abs are METH_O; divmod is METH_FASTCALL (so skipped) and apply
-     no longer exists */
+  /* a meta is registered only if the builtin's ml_flags match (3.7's,
+     from Python/bltinmodule.c and its clinic header); apply no longer
+     exists. A METH_FASTCALL meta takes a tuple (pmethodobject.h). */
   PyObject *md = Psyco_DefineMetaModule("builtins");
 
 #define DEFMETA(name, flags)                                                   \
@@ -162,7 +163,7 @@ void psyco_bltinmodule_init(void) {
   DEFMETA(len, METH_O);
   DEFMETA(abs, METH_O);
   DEFMETA(apply, METH_VARARGS);
-  DEFMETA(divmod, METH_VARARGS);
+  DEFMETA(divmod, METH_FASTCALL);
 #undef DEFMETA
   Py_XDECREF(md);
 }
