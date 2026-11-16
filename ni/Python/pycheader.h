@@ -64,6 +64,8 @@ typedef struct {
   PyObject* f_builtins;
   PyObject* changing_globals;  /* dict of names of globals that are detected to
                                   change */
+  char split_after_global; /* a guarded LOAD_GLOBAL was just compiled: start a
+                              new block (pycompiler.c:load_global_cached) */
 } pyc_data_t;
 
 #define AUTO_RECURSION_MAX 200

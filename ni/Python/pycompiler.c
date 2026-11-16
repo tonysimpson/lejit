@@ -722,6 +722,158 @@ done:
   return builtins;
 }
 
+/* Cached LOAD_GLOBAL (D25). The name is looked up now, as
+   cimpl_load_global does at run time, and the value becomes a
+   compile-time constant, guarded by the dicts' version tags (PEP 509:
+   every change to a dict gives it a new tag, unique in the process). The
+   guard compares the tags of globals and builtins (a name found in
+   builtins also relies on its absence from globals) with expected tags
+   kept in a per-site global_guard_t. A mismatch jumps to
+   do_changed_global, which redoes the lookup: the same object (an
+   unrelated write to the module) updates the expected tags and resumes;
+   anything else respawns into a version where the name is varying and
+   loaded at run time; a name not found is loaded at run time behind the
+   same guard. The closure owns the value, so a constant that outlives a
+   rebinding stays valid, and owns builtins, whose tag the guard reads; globals stays borrowed (D23): a new dict at its address
+   has a new tag and is looked up. The guard slots are never freed. */
+typedef struct {
+  uint64_t globals_tag;
+  uint64_t builtins_tag;
+} global_guard_t;
+
+#define DICT_ma_version_tag                                                    \
+  FMUT(UNSIGNED_FIELD(PyDictObject, uint64_t, ma_version_tag, NO_PREV_FIELD))
+#define GUARD_globals_tag                                                      \
+  FMUT(UNSIGNED_FIELD(global_guard_t, uint64_t, globals_tag, NO_PREV_FIELD))
+#define GUARD_builtins_tag                                                     \
+  FMUT(UNSIGNED_FIELD(global_guard_t, uint64_t, builtins_tag, NO_PREV_FIELD))
+
+typedef struct {
+  PyObject *name;     /* owned */
+  PyObject *value;    /* owned: the value compiled in, or NULL */
+  PyObject *globals;  /* borrowed (D23) */
+  PyObject *builtins; /* owned */
+  global_guard_t *guard;
+} changed_global_t;
+
+static code_t *do_changed_global(changed_global_t *cg) {
+  PyObject *x = PyDict_GetItem(cg->globals, cg->name);
+  if (x == NULL) {
+    PyObject *b = psy_get_builtins(cg->globals);
+    if (b != cg->builtins)
+      return psyco_do_respawn(cg, sizeof(*cg));
+    x = PyDict_GetItem(b, cg->name);
+  }
+  if (x != cg->value)
+    return psyco_do_respawn(cg, sizeof(*cg));
+  /* no real change */
+  cg->guard->globals_tag = ((PyDictObject *)cg->globals)->ma_version_tag;
+  cg->guard->builtins_tag = ((PyDictObject *)cg->builtins)->ma_version_tag;
+  return psyco_dont_respawn(cg, sizeof(*cg));
+}
+
+/* the tag of 'vdict' differs from the guard's: a new run-time vinfo */
+static vinfo_t *tag_changed(PsycoObject *po, vinfo_t *vdict, vinfo_t *vguard,
+                            defield_t guard_field) {
+  vinfo_t *x, *t1, *t2;
+  t1 = psyco_get_field(po, vdict, DICT_ma_version_tag);
+  if (t1 == NULL)
+    return NULL;
+  t2 = psyco_get_field(po, vguard, guard_field);
+  if (t2 == NULL) {
+    vinfo_decref(t1, po);
+    return NULL;
+  }
+  x = integer_xor(po, t1, t2);
+  vinfo_decref(t2, po);
+  vinfo_decref(t1, po);
+  return x;
+}
+
+/* Returns true with *result a new vinfo for the global, or with *result
+   NULL if it isn't cached here (the caller loads it at run time); false
+   on error. */
+static bool load_global_cached(PsycoObject *po, PyObject *name,
+                               vinfo_t **result) {
+  static global_guard_t respawn_guard; /* written into trashed code only */
+  PyObject *globals, *builtins, *value;
+  global_guard_t *guard;
+  vinfo_t *vguard, *vb, *x, *y, *z;
+  condition_code_t cc;
+  changed_global_t *cg;
+
+  *result = NULL;
+  if (!is_compiletime(LOC_GLOBALS->source))
+    return true;
+  if (po->pr.changing_globals != NULL &&
+      PyDict_GetItem(po->pr.changing_globals, name) != NULL)
+    return true; /* known to change */
+  globals = (PyObject *)CompileTime_Get(LOC_GLOBALS->source)->value;
+  builtins = psy_get_builtins(globals);
+  if (!PyDict_CheckExact(globals) || !PyDict_CheckExact(builtins))
+    return true;
+
+  /* A respawn replays compilation from the block's snapshot with the
+     dicts as they are then, so a cached site must not be re-decided:
+     - everything up to detect_respawn() is independent of what the dicts
+       hold (both tags always guarded, the name looked up afterwards);
+     - the block ends right after the site (split_after_global), so no
+       later respawn point replays through it: later blocks start from a
+       snapshot holding the constant. */
+  if (is_respawning(po))
+    guard = &respawn_guard;
+  else {
+    guard = PyMem_Malloc(sizeof(global_guard_t));
+    if (guard == NULL)
+      OUT_OF_MEMORY();
+    guard->globals_tag = ((PyDictObject *)globals)->ma_version_tag;
+    guard->builtins_tag = ((PyDictObject *)builtins)->ma_version_tag;
+  }
+  vguard = vinfo_new(CompileTime_New((long)guard));
+  vb = vinfo_new(CompileTime_New((long)builtins));
+  x = tag_changed(po, LOC_GLOBALS, vguard, GUARD_globals_tag);
+  y = x == NULL ? NULL : tag_changed(po, vb, vguard, GUARD_builtins_tag);
+  z = y == NULL ? NULL : integer_or(po, x, y);
+  vinfo_xdecref(y, po);
+  vinfo_xdecref(x, po);
+  vinfo_decref(vb, po);
+  vinfo_decref(vguard, po);
+  if (z == NULL)
+    return false;
+  cc = integer_NON_NULL(po, z); /* consumes z */
+  if (cc == CC_ERROR)
+    return false;
+
+  if (detect_respawn(po)) {
+    /* the guard failed and the value really changed: from here on this
+       name is loaded at run time */
+    mark_varying(po, name);
+    return true;
+  }
+  value = PyDict_GetItem(globals, name);
+  if (value == NULL)
+    value = PyDict_GetItem(builtins, name);
+  cg = (changed_global_t *)psyco_prepare_respawn_ex(
+      po, cc, &do_changed_global, sizeof(changed_global_t));
+  po->pr.split_after_global = 1;
+  if (cg != NULL) {
+    cg->name = name;
+    Py_INCREF(name);
+    cg->value = value;
+    Py_XINCREF(value);
+    cg->globals = globals;
+    cg->builtins = builtins;
+    Py_INCREF(builtins);
+    cg->guard = guard;
+  }
+  /* not found: a run-time load raises NameError; the guard catches a
+     later definition */
+  if (value != NULL)
+    /* borrowed from cg (constants are never released, see sk_release) */
+    *result = vinfo_new(CompileTime_NewSk(sk_new((long)value, SkFlagPyObj)));
+  return true;
+}
+
 /* CALL_FUNCTION (oparg positional arguments) and CALL_FUNCTION_KW (oparg
    arguments, the last ones named by the constant tuple on top), as 3.7's
    call_function(). The stack, top down: [names tuple], arguments, callable.
@@ -1708,20 +1860,13 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         /* fall through */
       case LOAD_GLOBAL: {
         PyObject *namev = GETNAMEV(oparg);
-        /* XXX tony: Add back a fast implementation of this for the case when
-          globals is known at compile-time.
-
-          This could use PyDictObject's ma_version_tag to test that the
-          globals dict hasn't changed. The found value would be cached
-          in the compiled code.
-
-          It would need to respaswn if it changes to recompile with a different
-          value, and it would need to deoptimise if it changed a lot.
-
-          To be correct there would also need to be a way to detect
-          shadowing of global variables, I think? */
-
-        /* else { Globals dict is unknown at compile-time } */
+        if (!load_global_cached(po, namev, &v))
+          break;
+        if (v != NULL) {
+          PUSH(v);
+          goto fine;
+        }
+        /* not cached: globals unknown, the name varying or not found */
         v = psyco_generic_call(po, cimpl_load_global, CfCommonNewRefPyObject,
                                "vl", LOC_GLOBALS, namev);
         if (v == NULL)
@@ -2226,6 +2371,18 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             mp = NULL;
           code1 = psyco_compile(po, mp, false);
           goto finished;
+        }
+      }
+
+      /* end the block after a guarded LOAD_GLOBAL (load_global_cached):
+         a new buffer, contiguous, with its own snapshot */
+      if (po->pr.split_after_global) {
+        po->pr.split_after_global = 0;
+        if (!is_respawning(po) && mp->bytecode_position != next_instr) {
+          SAVE_NEXT_INSTR(next_instr);
+          code1 = psyco_compile(po, NULL, true);
+          if (code1 != NULL)
+            goto finished;
         }
       }
 
