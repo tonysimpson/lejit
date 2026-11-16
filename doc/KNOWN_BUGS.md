@@ -53,6 +53,7 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | F16 | **Fixed.** `pfloatobject.c:pfloat_richcompare` dropped the int comparison result without a decref, which left a register owned by an unreachable vinfo. Every float comparison aborted in `psyco_assert_coherent`. | Fixed (see git log) | [run] |
 | F17 | **Fixed** (`0d3e280`). A compiled call to a function with keyword-only arguments failed: the fallback `cimpl_call_pyfunc` rebuilds the function from code, globals and defaults, losing `__kwdefaults__`. Such calls now use the function's own `tp_call`. Exposed by importlib's `_verbose_message` once F4 was fixed. | Fixed | [run] |
 | F18 | Exception details that still differ from 3.7 after F4: (1) a bare `raise` records one extra traceback entry (ceval's reraise skips it); (2) inside a `finally` block during an exception, `sys.exc_info()` isn't set, because Ni pushes a single 3-tuple there, not ceval's EXCEPT_HANDLER; (3) the Py2 per-frame saved exception (`FINALIZE_FRAME_LOCALS`, `cimpl_finalize_frame_locals`, a prologue slot) is now never set, so it is dead code still writing `curexc_*` if reached. | Live (minor) | [read] |
+| F19 | Code with a keyword-argument call (`CALL_FUNCTION_KW`, e.g. `sorted(x, key=f)`) is never compiled: `mergepoints.c` doesn't whitelist the opcode. `pycompiler.c` has a case, sharing `psyco_ext_do_calls` with `CALL_FUNCTION`, which probably still decodes the Python 2 way (F3). Seen in `tools/demo.py` `word_counts`. | Not compiled | [run] |
 
 ## Backend (`ni/x64`)
 
