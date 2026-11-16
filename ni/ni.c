@@ -168,6 +168,51 @@ static PyObject *ni_code_info(PyObject *self, PyObject *co) {
   return PyUnicode_FromString("compiled");
 }
 
+/* for tests (D15): {bytecode offset: [dead local names]} at each merge
+   point, or None if the code isn't compiled */
+static PyObject *ni_dead_locals(PyObject *self, PyObject *co) {
+  PyObject *mps, *result;
+  mergepoint_t *mp;
+  if (!PyCode_Check(co)) {
+    PyErr_SetString(PyExc_TypeError, "_dead_locals() needs a code object");
+    return NULL;
+  }
+  mps = psyco_get_merge_points((PyCodeObject *)co, 0);
+  if (mps == Py_None)
+    Py_RETURN_NONE;
+  result = PyDict_New();
+  if (result == NULL)
+    return NULL;
+  for (mp = psyco_first_merge_point(mps); mp->bytecode_position >= 0; mp++) {
+    PyObject *names = PyList_New(0), *key;
+    Py_ssize_t i;
+    if (names == NULL)
+      goto fail;
+    for (i = 0; i < PyList_GET_SIZE(mp->entries.fatlist); i++) {
+      PyObject *o = PyList_GET_ITEM(mp->entries.fatlist, i);
+      if (!PyLong_Check(o))
+        break;
+      if (PyList_Append(names, PyTuple_GET_ITEM(((PyCodeObject *)co)->co_varnames,
+                                                PyLong_AS_LONG(o))) < 0) {
+        Py_DECREF(names);
+        goto fail;
+      }
+    }
+    key = PyLong_FromLong(mp->bytecode_position);
+    if (key == NULL || PyDict_SetItem(result, key, names) < 0) {
+      Py_XDECREF(key);
+      Py_DECREF(names);
+      goto fail;
+    }
+    Py_DECREF(key);
+    Py_DECREF(names);
+  }
+  return result;
+fail:
+  Py_DECREF(result);
+  return NULL;
+}
+
 /* for debugging (doc/BUILD.md): the (codebuf, globals) the eval hook runs */
 static PyObject *ni_entry_point(PyObject *self, PyObject *co) {
   void *x;
@@ -189,6 +234,8 @@ static PyMethodDef module_methods[] = {
     {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
     {"_code_info", ni_code_info, METH_O,
      "'not seen', 'unsupported', 'no entry point' or 'compiled'."},
+    {"_dead_locals", ni_dead_locals, METH_O,
+     "{offset: [dead local names]} at each merge point, or None."},
     {"_entry_point", ni_entry_point, METH_O,
      "(codebuf, globals) run for a code object, or None."},
     {NULL, NULL, 0, NULL}};

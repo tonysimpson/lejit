@@ -30,6 +30,7 @@ struct CodeBufferObject_s {
 #define SET_CODEMODE(b, mode)   do { } while (0)   /* nothing */
 
 EXTERNVAR PyTypeObject CodeBuffer_Type;
+#define CodeBuffer_Check(v) (Py_TYPE(v) == &CodeBuffer_Type)
 /* code buffers started so far (not proxies): ni._stats() */
 EXTERNVAR long psyco_stat_code_buffers;
 

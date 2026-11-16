@@ -14,10 +14,10 @@
  *  - Promotion: a run-time value is switched on at run time. Each new value
  *    compiles a specialised continuation, cached in a move-to-front list, with
  *    a megamorphic cut-off after MEGAMORPHIC_MAX values.
- * psyco_delete_unused_vars now walks an always-empty list, because the
- * liveness analysis that filled it was removed (doc/history/removed-mechanisms.md
- * A3). State is global and non-re-entrant (cmpinternal, the static result in
- * psyco_compatible).
+ * psyco_delete_unused_vars drops the dead locals that mergepoints.c lists
+ * first in each fatlist (D15; upstream's analysis was removed in a880444,
+ * history A3, and is rewritten there for 3.7). State is global and
+ * non-re-entrant (cmpinternal, the static result in psyco_compatible).
  */
 #include "dispatcher.h"
 #include "Objects/pobject.h"   /* for Psyco_SafelyDeleteVar() */
@@ -1314,6 +1314,8 @@ void psyco_delete_unused_vars(PsycoObject *po, global_entries_t *ge) {
        psyco_compile_code(), before any buffer is allocated,
        it may not emit any code. */
     vi = LOC_LOCALS_PLUS[num];
+    if (vi == NULL)
+      continue;
     LOC_LOCALS_PLUS[num] = Psyco_SafelyDeleteVar(po, vi);
     vinfo_decref(vi, po);
   }
@@ -1352,6 +1354,9 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
   {           /* checking for a match at each step.                  */
     CodeBufferObject *codebuf;
     PyObject *o1 = PyList_GET_ITEM(plist, i);
+    /* the dead locals' numbers come first (mergepoints.c, D15) */
+    if (!CodeBuffer_Check(o1))
+      break;
     codebuf = (CodeBufferObject *)o1;
     result.matching = codebuf;
     result.diff = NullArray;

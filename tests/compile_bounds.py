@@ -56,8 +56,28 @@ CHECKS = [
 ]
 
 
+# the liveness analysis itself (D15): what is dead at each merge point
+def dead_before_loop(n, flag):
+    y = 1.5 if flag else 'abc'
+    z = len(str(y))
+    t = 0
+    for i in range(n):
+        t += i * z
+    return t
+
+
+def check_dead_locals():
+    dead = ni._dead_locals(dead_before_loop.__code__)
+    # at the loop head (FOR_ITER) only t and z are needed; after the loop, t
+    sets = [set(names) for names in dead.values()]
+    ok = {'n', 'flag', 'y', 'i'} in sets and {'n', 'flag', 'y', 'z', 'i'} in sets
+    if not ok or VERBOSE:
+        print('%-4s dead locals: %r' % ('ok' if ok else 'FAIL', dead))
+    return 0 if ok else 1
+
+
 def main():
-    failed = 0
+    failed = check_dead_locals()
     for name, fn, warm, more, allow in CHECKS:
         for args in warm:
             fn(*args)
@@ -70,7 +90,7 @@ def main():
         if bad or VERBOSE:
             print('%-4s %s: %d new code buffers after warm-up (allowed %d)'
                   % ('FAIL' if bad else 'ok', name, grew, allow))
-    print('%d compile-bound checks, %d failed' % (len(CHECKS), failed))
+    print('%d compile-bound checks, %d failed' % (len(CHECKS) + 1, failed))
     return 1 if failed else 0
 
 

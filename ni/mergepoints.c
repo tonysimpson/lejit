@@ -14,6 +14,17 @@
  *     the first prefix. Placement only affects how much code is compiled
  *     and shared: any instruction boundary may be a merge point, which is
  *     what the earlier stop-gap did everywhere.
+ *  3. Liveness of locals (D15, upstream's FULL_CONTROL_FLOW): at each merge
+ *     point, the locals never read again are listed first in its fatlist,
+ *     and psyco_delete_unused_vars drops them before the state is compared,
+ *     so states differing only in dead locals share code. Successors are
+ *     those of 2, made conservative where 3.7 bytecode doesn't say: an
+ *     instruction may reach the handler of every SETUP_EXCEPT/SETUP_FINALLY
+ *     whose body contains it (the compiler lays the body out between the
+ *     SETUP and its handler), BREAK_LOOP every loop exit, END_FINALLY those
+ *     and every CONTINUE_LOOP target. Functions
+ *     that read their frame's locals (locals(), eval()...) are never
+ *     compiled (C15), so dropping dead locals is invisible.
  */
 #include "mergepoints.h"
 #include <Python.h>
@@ -76,6 +87,166 @@ report_destructor(PyObject *capsule)
     do {                                    \
         entry_count[entry_count_index] = 8; \
     } while (0)
+
+/* one bit per local, per instruction start */
+#define LIVE_WORDS(nlocals) (((nlocals) + 63) / 64)
+#define LIVE_TEST(set, i) (((set)[(i) / 64] >> ((i) % 64)) & 1)
+
+static int
+_live_union(uint64_t *dst, const uint64_t *src, int words)
+{
+    int i, changed = 0;
+    for (i = 0; i < words; i++) {
+        uint64_t v = dst[i] | src[i];
+        changed |= v != dst[i];
+        dst[i] = v;
+    }
+    return changed;
+}
+
+/* write the dead locals at each merge point into its fatlist (before any
+   code buffer is added). Returns 0 on memory error, with nothing set. */
+static int
+_find_dead_locals(PyCodeObject *co, co_report_t *report)
+{
+    const _Py_CODEUNIT *first = (_Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
+    Py_ssize_t n = PyBytes_Size(co->co_code) / sizeof(_Py_CODEUNIT);
+    int nlocals = co->co_nlocals, words = LIVE_WORDS(co->co_nlocals);
+    Py_ssize_t i, k, m;
+    int *op, *arg, *nxt;
+    int *setup_at, *handler_at, nsetups = 0; /* try bodies: [setup_at, handler_at) */
+    uint64_t *live, *tmp;
+    unsigned char *jump_targets; /* 1: loop exit, 2: continue target */
+    int changed, ok = 0;
+
+    if (nlocals == 0)
+        return 1;
+    op = PyMem_Calloc(n + 1, sizeof(int));
+    arg = PyMem_Calloc(n + 1, sizeof(int));
+    nxt = PyMem_Calloc(n + 1, sizeof(int));
+    jump_targets = PyMem_Calloc(n + 1, 1);
+    live = PyMem_Calloc((n + 1) * words, sizeof(uint64_t));
+    tmp = PyMem_Calloc(words, sizeof(uint64_t));
+    setup_at = PyMem_Calloc(n + 1, sizeof(int));
+    handler_at = PyMem_Calloc(n + 1, sizeof(int));
+    if (!op || !arg || !nxt || !jump_targets || !live || !tmp || !setup_at ||
+        !handler_at)
+        goto done;
+
+    /* decode: op[i] = -1 except at instruction starts */
+    for (i = 0; i < n; i++)
+        op[i] = -1;
+    op[n] = -1;
+    for (i = 0; i < n;) {
+        Py_ssize_t start = i;
+        int o = _Py_OPCODE(first[i]), a = _Py_OPARG(first[i]);
+        i++;
+        while (o == EXTENDED_ARG && i < n) {
+            a = (a << 8) | _Py_OPARG(first[i]);
+            o = _Py_OPCODE(first[i]);
+            i++;
+        }
+        op[start] = o;
+        arg[start] = a;
+        nxt[start] = (int)i;
+        switch (o) {
+        case SETUP_LOOP:
+            jump_targets[i + a / 2] |= 1;
+            break;
+        case CONTINUE_LOOP:
+            jump_targets[a / 2] |= 2;
+            break;
+        case SETUP_EXCEPT:
+        case SETUP_FINALLY:
+            setup_at[nsetups] = (int)i;
+            handler_at[nsetups++] = (int)(i + a / 2);
+            break;
+        }
+    }
+
+    /* backward dataflow to a fixed point */
+    do {
+        changed = 0;
+        for (i = n - 1; i >= 0; i--) {
+            int o = op[i], a = arg[i];
+            uint64_t *in = live + i * words;
+            if (o < 0)
+                continue;
+            memset(tmp, 0, words * sizeof(uint64_t));
+            for (k = 0; k < nsetups; k++)
+                if (setup_at[k] <= i && i < handler_at[k])
+                    _live_union(tmp, live + handler_at[k] * words, words);
+            switch (o) {
+            case RETURN_VALUE:
+            case RAISE_VARARGS:
+                break;
+            case JUMP_ABSOLUTE:
+            case CONTINUE_LOOP:
+                _live_union(tmp, live + (a / 2) * words, words);
+                break;
+            case JUMP_FORWARD:
+                _live_union(tmp, live + (nxt[i] + a / 2) * words, words);
+                break;
+            case POP_JUMP_IF_FALSE:
+            case POP_JUMP_IF_TRUE:
+            case JUMP_IF_FALSE_OR_POP:
+            case JUMP_IF_TRUE_OR_POP:
+                _live_union(tmp, live + (a / 2) * words, words);
+                _live_union(tmp, live + nxt[i] * words, words);
+                break;
+            case FOR_ITER:
+            case SETUP_LOOP:
+            case SETUP_EXCEPT:
+            case SETUP_FINALLY:
+                _live_union(tmp, live + (nxt[i] + a / 2) * words, words);
+                _live_union(tmp, live + nxt[i] * words, words);
+                break;
+            case BREAK_LOOP:
+            case END_FINALLY:
+                for (k = 0; k < n; k++)
+                    if (op[k] >= 0 && (jump_targets[k] & (o == BREAK_LOOP ? 1 : 3)))
+                        _live_union(tmp, live + k * words, words);
+                if (o == END_FINALLY)
+                    _live_union(tmp, live + nxt[i] * words, words);
+                break;
+            default:
+                _live_union(tmp, live + nxt[i] * words, words);
+            }
+            /* in = uses | (out - defs) */
+            if ((o == STORE_FAST || o == DELETE_FAST) && a < nlocals)
+                tmp[a / 64] &= ~((uint64_t)1 << (a % 64));
+            if ((o == LOAD_FAST || o == DELETE_FAST) && a < nlocals)
+                tmp[a / 64] |= (uint64_t)1 << (a % 64);
+            changed |= _live_union(in, tmp, words);
+        }
+    } while (changed);
+
+    for (m = 0; m < report->mergepoint_count; m++) {
+        mergepoint_t *mp = &report->mergepoints[m];
+        uint64_t *in = live + (mp->bytecode_position / 2) * words;
+        int v;
+        for (v = 0; v < nlocals; v++)
+            if (!LIVE_TEST(in, v)) {
+                PyObject *o = PyLong_FromLong(v);
+                if (o == NULL || PyList_Append(mp->entries.fatlist, o) < 0) {
+                    Py_XDECREF(o);
+                    goto done;
+                }
+                Py_DECREF(o);
+            }
+    }
+    ok = 1;
+done:
+    PyMem_Free(op);
+    PyMem_Free(arg);
+    PyMem_Free(nxt);
+    PyMem_Free(jump_targets);
+    PyMem_Free(live);
+    PyMem_Free(tmp);
+    PyMem_Free(setup_at);
+    PyMem_Free(handler_at);
+    return ok;
+}
 
 static co_report_t *
 _find_merge_points(PyCodeObject *co)
@@ -202,6 +373,15 @@ _find_merge_points(PyCodeObject *co)
     }
     report->mergepoints[mergepoint_count].bytecode_position = -1;
     report->mergepoints[mergepoint_count].entries.fatlist = NULL;
+    if (!_find_dead_locals(co, report)) {
+        /* out of memory: keep every local (the lists may hold some) */
+        PyErr_Clear();
+        for (mergepoint_index = 0; mergepoint_index < mergepoint_count;
+             mergepoint_index++) {
+            PyObject *l = report->mergepoints[mergepoint_index].entries.fatlist;
+            PyList_SetSlice(l, 0, PyList_GET_SIZE(l), NULL);
+        }
+    }
     return report;
 }
 
