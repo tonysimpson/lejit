@@ -37,8 +37,8 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 |---|---|---|---|
 | F1 | **Confirmed 2026-11-16 (tests/cases/basic_float.py `mixed`).** **Mixed-type arithmetic → TypeError.** `pabstract.c:binary_op1` is Python 2. `NEW_STYLE_NUMBER` is 0 because `Py_TPFLAGS_CHECKTYPES` doesn't exist in Py3, so slots are tried only when both operand types are identical. `1 + 2.0` in a compiled function raises TypeError. | **Live** | [read] |
 | F2 | **No builtin metas registered.** `pbltinmodule.c` calls `Psyco_DefineMetaModule("__builtin__")`, but Py3's module is `builtins`. | Live (perf) | [read] |
-| F3 | `BUILD_MAP`, `RAISE_VARARGS`, `END_FINALLY` and the `CALL_FUNCTION` oparg keep their Python 2 meanings but are whitelisted. | **Live** miscompiles | [read] history D2 |
-| F4 | **Confirmed 2026-11-16: catching any exception segfaults** (`cimpl_set_exc_info` increfs `tstate->curexc_type` just after `PyErr_Fetch` cleared it; `tests/cases/control.py` `try_except`). Handled-exception state is mapped onto `curexc_*` instead of `exc_info`, and 3.7's six-value EXCEPT_HANDLER push isn't emulated. | Live | [read] history D1 |
+| F3 | `BUILD_MAP` and the `CALL_FUNCTION` oparg keep their Python 2 meanings but are whitelisted. `RAISE_VARARGS` fixed in `ebc5cfc` (3.x `raise exc from cause`, bare raise reads `exc_info`). `END_FINALLY` keeps Ni's own finally scheme, which is consistent with itself (F18). | **Live** miscompiles | [read] history D2 |
+| F4 | **Fixed** (`ebc5cfc`). Catching any exception segfaulted: handled-exception state was mapped onto `curexc_*` (Py2's model), and `cimpl_set_exc_info` increfed `curexc_type` just after `PyErr_Fetch` cleared it. Catching now follows 3.7 (EXCEPT_HANDLER block, six stack items, POP_EXCEPT). Tests: `tests/cases/exceptions.py`. What still differs is F18. | Fixed | [run] |
 | F5 | **Confirmed 2026-11-16 (`fdiv_zero` returns inf).** `pfloat_div` has no ZeroDivisionError. `pmath.c` has no domain/range errors, and `ceil`/`floor` return floats. | Live | [read] |
 | F6 | `pfloatobject.c:direct_compute_float` converts the stored 64-bit word numerically instead of bit-casting it. | Live when frames are rebuilt | [read] |
 | F7 | `pfuncobject.c:compute_function`: `SET_FIELD` uses `\|\|` where `&&` is meant, and stores without `FMUT\|FPYREF`, so the function holds no references to its closure or defaults. | Live if a virtual function escapes | [read]; refcount effect [inferred] |
@@ -51,6 +51,8 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | F14 | `int` is passed to `"l"` (`va_arg(long)`) in `compute_tuple` and `pfloat_richcompare`. This is undefined behaviour, benign in practice. | Live | [inferred] |
 | F15 | `plongobject.c:PsycoLong_FROM_LONG` leaks on error. | Live | [read] |
 | F16 | **Fixed.** `pfloatobject.c:pfloat_richcompare` dropped the int comparison result without a decref, which left a register owned by an unreachable vinfo. Every float comparison aborted in `psyco_assert_coherent`. | Fixed (see git log) | [run] |
+| F17 | **Fixed** (`0d3e280`). A compiled call to a function with keyword-only arguments failed: the fallback `cimpl_call_pyfunc` rebuilds the function from code, globals and defaults, losing `__kwdefaults__`. Such calls now use the function's own `tp_call`. Exposed by importlib's `_verbose_message` once F4 was fixed. | Fixed | [run] |
+| F18 | Exception details that still differ from 3.7 after F4: (1) a bare `raise` records one extra traceback entry (ceval's reraise skips it); (2) inside a `finally` block during an exception, `sys.exc_info()` isn't set, because Ni pushes a single 3-tuple there, not ceval's EXCEPT_HANDLER; (3) the Py2 per-frame saved exception (`FINALIZE_FRAME_LOCALS`, `cimpl_finalize_frame_locals`, a prologue slot) is now never set, so it is dead code still writing `curexc_*` if reached. | Live (minor) | [read] |
 
 ## Backend (`ni/x64`)
 
@@ -80,3 +82,4 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | C4 | **Fixed** (`601aa8f`). `mergepoints.c:psyco_next_merge_point` walked past the -1 sentinel into unrelated memory. Hit on the first run (importlib). | [run] |
 | C6 | **Fixed** (see git log, `frames.c`). Every compiled call leaked its frame: `frame_runtime_capsule_new` increfs the frame, code and globals, but the capsule destructor only freed the struct. Found by the leak check in `tests/run.py`. | [run] |
 | C5 | **Fixed** (`300d725`, build). The headers define globals without `extern`, so gcc 10+ (`-fno-common`) fails to link. Built with `-fcommon`; the clean fix is `extern` declarations plus one definition. | [run] |
+| C7 | **Fixed** (`1f46b4b`). `psyco_assert_coherent` didn't count `po->pr.tb` as a live reference, so it aborted when a finally block re-raised with a run-time traceback in a register. Debug builds only. | [run] |
