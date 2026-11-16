@@ -1,3 +1,13 @@
+/*
+ * The PMATH_FUNC1/2 macros generate a meta for each math function: unpack the
+ * double arguments, call libm with CfPure (so constants fold), and return a
+ * virtual float. In effect it is a tiny hand-written meta-compiler.
+ * Limitations:
+ *  - no errno or domain checks (math.sqrt(-1) gives nan, not ValueError);
+ *  - ceil/floor return floats (Python 3 returns int);
+ *  - a meta is silently not registered when the function's ml_flags differ
+ *    from those expected (e.g. METH_FASTCALL).
+ */
 /* 
  * Psyco version of python math module, mathmodule.c 
  *

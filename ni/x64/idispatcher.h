@@ -1,3 +1,12 @@
+/*
+ * Code patching used by the dispatcher. conditional_jump_to emits a rel32 jump
+ * and returns a tag; change_cond_jump_target later repoints it once the target
+ * has been compiled (coding pauses, respawn). A promotion site starts with a
+ * patchable 'MOV R10, imm64; CMP reg, R10; JE target', which
+ * fix_fast_common_case rewrites to the last value seen: an inline cache in
+ * front of the C dispatcher. All jumps are rel32, so every code buffer must be
+ * within +-2 GB of every other, and nothing guarantees this.
+ */
  /***************************************************************/
 /***       Processor-specific routines for dispatcher.c        ***/
  /***************************************************************/

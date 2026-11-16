@@ -1,3 +1,18 @@
+/*
+ * The core data model of the specialiser. Every value the compiler handles is
+ * a vinfo_t whose 'source' says *when* the value is known:
+ *   RunTime     - only when the emitted code runs; it lives in a register
+ *                 and/or a stack slot;
+ *   CompileTime - a constant known now (a refcounted source_known_t);
+ *   VirtualTime - not built yet: described by sub-values in vinfo->array and
+ *                 materialised by source_virtual_t.compute_fn only if it
+ *                 escapes.
+ * Source is a tagged long (low 2 bits = time). The RunTime encoding packs the
+ * x86-64 register number into the top bits, so this header is not really
+ * backend-neutral. PsycoObject is the whole compiler state at one bytecode
+ * position; only po->vlocals is compared when looking for code that has
+ * already been compiled. Terms: doc/GLOSSARY.md.
+ */
 /***************************************************************/
 /***           Structures used by the compiler part            ***/
 /***************************************************************/

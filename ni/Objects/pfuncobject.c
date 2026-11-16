@@ -1,3 +1,16 @@
+/*
+ * Virtual function objects created by MAKE_FUNCTION, and the function tp_call
+ * meta. The callee is promoted to a constant (with a megamorphic cut-off) and
+ * the call goes to psyfunc.c:psyco_call_pyfunc, which may inline it. A call to
+ * a function that is still virtual reads its code, globals and defaults
+ * directly and never materialises it.
+ * Suspected bugs (from reading):
+ *  - compute_function's SET_FIELD tests 'other != NULL ||
+ *    !psyco_known_NULL(other)', which should be &&;
+ *  - it stores without FMUT/FPYREF, so the new function holds no references
+ *    to its closure or defaults;
+ *  - the virtual-call path ignores closures and keyword-only defaults.
+ */
 #include "pfuncobject.h"
 #include "../psyfunc.h"
 #include "pclassobject.h"

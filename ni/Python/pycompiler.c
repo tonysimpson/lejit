@@ -1,3 +1,20 @@
+/*
+ * The bytecode compiler: a compile-time copy of ceval.c's main loop. Each
+ * opcode case works on a stack of vinfo_t and calls the compile-time object
+ * protocol (Objects/p*.c). Two things differ from ceval:
+ *  - Restart. If an opcode needs a run-time value as a constant it raises the
+ *    promotion pseudo-exception: compilation stops, a run-time switch is
+ *    emitted, and the *same opcode is re-run from the start* once the value is
+ *    known. So an opcode must do nothing irreversible before the last point
+ *    where it can fail or promote (use TOP(), and POP() only at the end).
+ *  - After the switch come the merge-point checks, then the handling of
+ *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
+ *    exceptions) with ceval-style unwinding of the block stack.
+ * The block opcodes (SETUP_LOOP/EXCEPT/FINALLY) exist only up to 3.7. Some
+ * cases keep Python 2 meanings (BUILD_MAP, RAISE_VARARGS, END_FINALLY), and the
+ * handled-exception state is mapped onto curexc_* rather than exc_info
+ * (doc/history/removed-mechanisms.md D1-D2).
+ */
 #include "pycompiler.h"
 #include "../codemanager.h"
 #include "../dispatcher.h"

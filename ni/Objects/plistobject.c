@@ -1,3 +1,14 @@
+/*
+ * Virtual lists, for short lists only (length <= VLIST_LENGTH_MAX, i.e. 3).
+ * Layout: [iOB_TYPE], [iVAR_SIZE] = length, [LIST_ob_item] (unset while
+ * virtual), then the items from VLIST_ITEMS. Lists are mutable, so they are
+ * forced out of virtual time at any call boundary (INIT_SVIRTUAL_NOCALL) and
+ * whenever they are indexed with a run-time index. compute_vlist emits
+ * PyList_New and the item stores, then forgets the size, which becomes
+ * mutable. The list tp_iter slot is redirected to the generic virtual
+ * seq-iterator (piterobject.c), so a materialised iterator would be an
+ * 'iterator' rather than a 'list_iterator'.
+ */
 #include "plistobject.h"
 #include "plongobject.h"
 #include "piterobject.h"

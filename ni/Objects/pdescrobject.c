@@ -1,3 +1,11 @@
+/*
+ * Metas for member and method descriptor __get__. They are currently
+ * unreachable: nothing dispatches tp_descr_get through Psyco_META, because
+ * attribute lookup (pobject.c:PsycoObject_GetAttr) is a plain residual call.
+ * They do show the convention a translated _PyObject_GenericGetAttrWithDict
+ * would use: (po, PyObject *descr, vinfo_t *obj, PyTypeObject *type), i.e. the
+ * argument format "lvl".
+ */
 #include "../psyfunc.h"
 #include "pdescrobject.h"
 #include "pstructmember.h"

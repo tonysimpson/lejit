@@ -1,3 +1,12 @@
+/*
+ * Virtual floats. Every arithmetic result is a new virtual float whose
+ * [iFLOAT_OB_FVAL] holds the double, so 'a + b * c' is never boxed unless it
+ * escapes. The operations are tiny C helpers (cimpl_fp_*) called with CfPure,
+ * so they fold at compile time when both operands are constants.
+ * Suspected bugs: direct_compute_float converts the stored 64-bit word
+ * numerically instead of reinterpreting its bits; pfloat_div has no
+ * ZeroDivisionError check.
+ */
 #include "pfloatobject.h"
 #include "pboolobject.h"
 #include "plongobject.h"

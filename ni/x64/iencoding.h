@@ -1,3 +1,20 @@
+/*
+ * The x86-64 backend's macro layer: instruction encoders, the register and
+ * condition-code model stored in PsycoObject, spill/reload, SysV C-call macros
+ * and jumps. Conventions to know before editing:
+ *  - Only callee-saved registers (R13, R14, R15, RBX, RBP: see RegistersLoop in
+ *    iencoding.c) hold tracked values, which is why C calls need no spilling.
+ *    R10/R11 are encoder scratch (REG_TRANSIENT_1/2); RAX is the return value.
+ *  - Values are addressed relative to RSP using po->stack_depth. The *_EBP_BASE
+ *    names are i386 leftovers.
+ *  - Any emitter that clobbers the flags must call NEED_CC* first.
+ *  - ONLY_UPDATING=1 re-emits an instruction in place, writing only the
+ *    UPDATABLE_* fields (this is how code is patched).
+ *  - Many macros are bare statement sequences (no do/while), and the asserts
+ *    here only compile because CPython builds with -DNDEBUG.
+ * 32-bit leftovers: CMP_I8_O, CMP_I8_A and ADD_O8_I8 are encoded without REX.W,
+ * so they operate on 32 bits.
+ */
 /***************************************************************/
 /***       Processor-specific code-producing macros            ***/
 /***************************************************************/

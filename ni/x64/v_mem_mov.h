@@ -1,3 +1,35 @@
+/*
+ * v_mem_mov emits one sized load or store, [base + index*size + offset], where
+ * the base, index and value may each be run-time or compile-time (constants
+ * are folded into the displacement or the immediate). It is the code behind
+ * every psyco_get_field/psyco_put_field on a run-time object. It was written
+ * for Ni in 5e0f435 (2018) to replace i386's psyco_memory_read/write.
+ *
+ * Known encoding bugs, found by reading and not yet tested. Most are dormant
+ * because the live Python 3 code only reads and writes 8-byte fields; they
+ * will bite as soon as narrow fields come back (unicode, compact objects,
+ * strings):
+ *  1. Signed byte/word loads use MOVSX without REX.W, which sign-extends only
+ *     to 32 bits; the 32-bit register write then zero-extends, so -1 reads back
+ *     as 0xFFFFFFFF. Live: pstructmember.c T_BYTE/T_SHORT.
+ *  2. Word stores put the 0x66 prefix *after* the REX byte (b1 = 0x66 is
+ *     written by WRITE_OPCODES after REX_ENCODING). A REX that does not
+ *     immediately precede the opcode is ignored, so R8-R15 as the value or base
+ *     silently become RAX-RDI.
+ *  3. Byte stores from RBP/RSI/RDI emit no REX, which encodes CH/DH/BH instead
+ *     of BPL/SIL/DIL. RBP is allocatable (RBP_IS_RESERVED is 0).
+ *  4. Immediate stores to a compile-time address use RIP-relative addressing,
+ *     but ADDRESS_ENCODING's RIP calculation leaves out the trailing immediate
+ *     (1/2/4 bytes), so the store lands that many bytes past the intended
+ *     address.
+ *  5. Unsigned loads mark the result non-negative even for 64-bit values with
+ *     the top bit set (RunTime_NonNeg is a signed fact).
+ *  6. (Inefficiency) every negative signed constant is loaded into R10 first.
+ * Related: callers must compute a virtual base or index first, because a
+ * virtual one is treated as compile-time and dereferenced (the current callers
+ * in vcompiler.c do this). psyco_put_field_array passes the signed flag
+ * inverted relative to psyco_internal_putfld. More detail: doc/KNOWN_BUGS.md.
+ */
 #ifndef _V_MEM_MOV_H
 #define _V_MEM_MOV_H
 

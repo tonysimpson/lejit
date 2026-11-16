@@ -1,3 +1,11 @@
+/*
+ * psyco_unify: given a compatible snapshot, emit the stack and register moves
+ * (and reference fix-ups) that turn the current run-time layout into the
+ * snapshot's, then jump to its code. If the moves overflow the current buffer
+ * they are copied to a new one (data_new_buffer). The register-move phase was
+ * rewritten for x86-64 and may mishandle a value that must end up in two
+ * registers at once (the XCHG case). Untested.
+ */
 #include "idispatcher.h"
 #include "../dispatcher.h"
 #include "../codemanager.h"

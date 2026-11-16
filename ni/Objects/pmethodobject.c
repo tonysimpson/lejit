@@ -1,3 +1,10 @@
+/*
+ * Virtual builtin-method objects ([iCFUNC_M_ML] = PyMethodDef*,
+ * [iCFUNC_M_SELF]) and the PyCFunction tp_call meta. The meta promotes m_ml,
+ * switches on ml_flags exactly as CPython does, and dispatches to a meta for
+ * ml_meth if one is registered. METH_FASTCALL (very common in 3.7) is not
+ * handled, so those calls always become a residual PyCFunction_Call.
+ */
 #include "pmethodobject.h"
 #include "ptupleobject.h"
 

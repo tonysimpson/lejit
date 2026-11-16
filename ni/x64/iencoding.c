@@ -1,3 +1,18 @@
+/*
+ * Backend functions:
+ *  - proxy stubs (psyco_call_code_builder);
+ *  - C calls at run time (run_time_call: SysV registers and 16-byte alignment,
+ *    then run_time_result_check applies the CfPyErr* convention);
+ *  - C calls at compile time (compile_time_call: libffi, for CfPure folding);
+ *  - Psyco-to-Psyco calls (psyco_call_psyco: the caller pushes a finfo slot and
+ *    the arguments, the callee pops them, and the result is a new reference in
+ *    RAX);
+ *  - condition-code materialisation and the integer ALU emitters.
+ * Suspected bugs: run_time_result_check pushes RAX without updating
+ * stack_depth, which misaligns calls made inside it; run_time_call uses the
+ * overall argument index for the integer registers, so an integer argument
+ * after a double goes in the wrong register.
+ */
 
 #include "iencoding.h"
 #include <ffi.h>

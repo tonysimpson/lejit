@@ -1,3 +1,14 @@
+/*
+ * Compile-time copy of Objects/abstract.c (PyNumber_*, PySequence_*,
+ * PyObject_Call/GetItem/...). Mostly a mechanical translation: promote the
+ * type, then dispatch through the slot with Psyco_META*.
+ *
+ * WARNING: binary_op1 is still the Python 2 version. NEW_STYLE_NUMBER tests
+ * Py_TPFLAGS_CHECKTYPES, which does not exist in Python 3, so it is always 0.
+ * As a result the slots are only tried when both operands have the same type,
+ * and mixed operations (int + float, subclass + base) end in a TypeError. The
+ * fix is to re-translate binary_op1 from 3.7. (Found by reading; not run.)
+ */
 #include "pabstract.h"
 #include "../compat2to3.h"
 #include "pclassobject.h"

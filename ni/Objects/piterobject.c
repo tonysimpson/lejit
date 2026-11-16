@@ -1,3 +1,11 @@
+/*
+ * Virtual sequence iterators. Layout: [iOB_TYPE], [iSEQITER_IT_INDEX] (made
+ * run-time at once, so the compiler does not specialise on the loop counter),
+ * [iSEQITER_IT_SEQ]. piter_iternext is a translation of iter_iternext
+ * (IndexError becomes StopIteration) with a shortcut for lists. List iteration
+ * also comes here, because plistobject.c redirects tp_iter. seqiterobject is
+ * re-declared in the header because CPython keeps it private.
+ */
 #include "piterobject.h"
 #include "plistobject.h"
 /* for plist_getitem */

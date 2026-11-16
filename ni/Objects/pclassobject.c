@@ -1,3 +1,8 @@
+/*
+ * Virtual bound methods ([iMETHOD_IM_FUNC] constant, [iMETHOD_IM_SELF]). The
+ * tp_call meta prepends self as a virtual tuple and re-dispatches the call.
+ * The unbound-method branch is a Python 2 leftover.
+ */
 #include "pclassobject.h"
 #include "ptupleobject.h"
 

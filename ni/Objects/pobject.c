@@ -1,3 +1,13 @@
+/*
+ * The generic object protocol at compile time, plus the two primitives that
+ * everything else uses to learn types: Psyco_NeedType (promote the type to a
+ * constant; may raise the promotion pseudo-exception) and Psyco_VerifyType
+ * (true / false / error-or-promotion). Psyco_SafelyDeleteVar decides which dead
+ * locals can be dropped without a run-time decref, using a hard-coded list of
+ * types that have no __del__. GetAttr and GenericGetAttr are plain residual
+ * calls here (upstream specialised them), which is why the tp_descr_get metas
+ * in pdescrobject.c and pfuncobject.c are never reached.
+ */
 #include "pobject.h"
 #include "../compat2to3.h"
 #include "../pycodegen.h"

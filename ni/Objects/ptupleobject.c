@@ -1,3 +1,13 @@
+/*
+ * Virtual tuples. vinfo->array layout: [iOB_TYPE] = &PyTuple_Type and
+ * [iFIX_SIZE] = length (both constants), then the items from iTUPLE_OB_ITEM.
+ * compute_tuple materialises a tuple when it escapes: if every item is a
+ * constant the tuple is built now and becomes a constant, otherwise
+ * PyTuple_New and item stores are emitted. Tuples are immutable, so they stay
+ * virtual across calls. PsycoTuple_Load is how other code gets a compile-time
+ * length and the item vinfos (it returns -1 if the length is unknown, and
+ * refuses constant tuples longer than CT_TUPLE_LOAD_SIZE_LIMIT).
+ */
 #include "ptupleobject.h"
 
 

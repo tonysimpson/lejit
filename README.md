@@ -1,5 +1,9 @@
 # Ni JIT
 
+> **Status (2026):** dormant; being studied as the template for a maintainable
+> Psyco-style JIT whose compile-time CPython layer is generated from CPython's
+> C source. Start with `CLAUDE.md` and `doc/GOAL.md`.
+
 Ni aims to provide a module that just makes Python faster.
 
 Ni is based on a fork of Armin Rigo's Psyco, Armin and the other Psyco

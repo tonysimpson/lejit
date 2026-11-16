@@ -1,3 +1,20 @@
+/*
+ * psyco_compile() makes the merge-point decision. It compares the current state
+ * with the snapshots stored at this merge point (dispatcher.c:psyco_compatible):
+ *   - exact match:   emit unification moves and jump to the existing code;
+ *   - partial match: un-promote the differing constants to run-time and retry;
+ *   - no match:      start new code (or a coding pause if the buffer is full).
+ * A coding pause is a stub that compiles the continuation only when execution
+ * first reaches it.
+ *
+ * Field access (psyco_internal_getfld/putfld) folds loads from compile-time
+ * objects in C and caches results in vinfo->array. Note that the compile-time
+ * read path treats every field of 4 or more bytes as a long: right on i386,
+ * but on x86-64 it reads 8 bytes from a 4-byte field (doc/KNOWN_BUGS.md).
+ *
+ * References to compiled code buffers are mostly dropped ("XXX don't know
+ * what to do with reference"): compiled code is never freed.
+ */
 #include "vcompiler.h"
 #include "Python/pycompiler.h"
 #include "codemanager.h"

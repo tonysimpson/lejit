@@ -1,3 +1,15 @@
+/*
+ * Ni's replacement for Psyco's merge-point analysis. It has two jobs:
+ *  1. It is the opcode whitelist. A code object containing any opcode not
+ *     handled in the switch gets Py_None and is never compiled.
+ *  2. It marks merge points: bytecode positions where the state is compared
+ *     with already-compiled code. Upstream built a control-flow graph and
+ *     placed them only where paths join. Here 'default: MP_HERE()' makes
+ *     almost every instruction a merge point. That works, but it multiplies
+ *     snapshots, and because MP_FLAGS_INLINABLE requires a single merge point
+ *     it also disables inlining. This is a stop-gap, to be replaced by
+ *     control-flow-based placement (doc/DECISIONS.md D10; history A2-A4).
+ */
 #include "mergepoints.h"
 #include <Python.h>
 #include "Python/pycinternal.h"

@@ -1,3 +1,24 @@
+/*
+ * "Have we compiled this state before?" and the run-time switches.
+ *  - Snapshots: each code buffer at a merge point keeps a frozen copy of
+ *    po->vlocals. With VLOCALS_OPC it is compressed into a pseudo-code
+ *    (fz_compress) and compared without being decompressed (compatible_array).
+ *  - psyco_compatible: a linear scan of the snapshots. Fixed constants
+ *    (SkFlagFixed) must match exactly; other differing constants are returned
+ *    in 'diff' to be un-promoted. Ni added a 16-byte stack-alignment test
+ *    (compare_return_address_in_a_stupid_way) that rejects otherwise good
+ *    matches: a kludge for x86-64 call alignment.
+ *  - Respawn: the rare branch of a run-time condition keeps no snapshot. When
+ *    it is first taken, compilation is replayed from the previous snapshot into
+ *    a throw-away buffer until the same point is reached (do_respawn).
+ *  - Promotion: a run-time value is switched on at run time. Each new value
+ *    compiles a specialised continuation, cached in a move-to-front list, with
+ *    a megamorphic cut-off after MEGAMORPHIC_MAX values.
+ * psyco_delete_unused_vars now walks an always-empty list, because the
+ * liveness analysis that filled it was removed (doc/history/removed-mechanisms.md
+ * A3). State is global and non-re-entrant (cmpinternal, the static result in
+ * psyco_compatible).
+ */
 #include "dispatcher.h"
 #include "Objects/pobject.h"   /* for Psyco_SafelyDeleteVar() */
 #include "Python/pycompiler.h" /* for pyc_data_xxx() */

@@ -1,3 +1,11 @@
+/*
+ * Python-aware emitters: Py_INCREF/Py_DECREF (calling tp_dealloc when the
+ * count reaches zero) and the prologue and epilogue for a function's frame
+ * locals. This is CPython object layout and C-API policy living in the
+ * backend; in a tidied design it belongs in a generated Python layer.
+ * FINALIZE_FRAME_LOCALS still follows Python 2's per-frame exception state
+ * (f_exc_*).
+ */
 /***************************************************************/
 /***     Processor- and language-dependent code producers      ***/
 /***************************************************************/

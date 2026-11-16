@@ -1,3 +1,14 @@
+/*
+ * The bridge between translated code and the backend.
+ *  - psyco_generic_call is the residual call. Argument tags (v/l/d/r/a/A) say
+ *    how each argument is passed, and Cf* flags (cf_flags.h) give the return
+ *    type and error convention. With CfPure and every argument compile-time,
+ *    the C function is called now (via libffi) and its result is a constant.
+ *  - Condition codes are virtual values (cc_functions_table) until something
+ *    needs them in a register.
+ *  - The integer_* functions fold constants and otherwise call the x86-64 ALU
+ *    emitters, so this file is part core and part backend.
+ */
 #include "codegen.h"
 #include <iencoding.h>
 #include "Python/frames.h"

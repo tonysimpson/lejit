@@ -1,3 +1,12 @@
+/*
+ * Makes compiled frames visible to Python. stack_frame_info_t records (code,
+ * globals) for each compiled call, and the machine stack is walked through the
+ * finfo slot that each Psyco frame keeps (x64/iprocessor.c). Upstream also
+ * hooked _PyThreadState_GetFrame so that sys._getframe and f_back saw emulated
+ * frames. That hook is commented out (there is no PEP 523 equivalent), so the
+ * real frames are never updated (f_lasti/f_lineno) and inlined callees have no
+ * frame at all.
+ */
 #include "frames.h"
 #include "../Objects/pobject.h"
 #include "../codemanager.h"

@@ -1,3 +1,10 @@
+/*
+ * Entry from C into compiled code. Glue generated at start-up converts the C
+ * ABI to the Psyco convention: it saves the callee-saved registers, aligns the
+ * stack, pushes the arguments and records RSP in the finfo. This file also
+ * generates psyco_int_mul_ovf (used for compile-time overflow checks) and
+ * walks machine-stack frames for frames.c.
+ */
 #include "../Python/frames.h"
 #include "../codemanager.h"
 #include "../dispatcher.h"

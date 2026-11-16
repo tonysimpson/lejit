@@ -1,3 +1,11 @@
+/*
+ * Compile-time PyMember_GetOne: maps each T_* member type onto a field
+ * descriptor and emits a load. Known problems on x86-64:
+ *  - T_INT/T_UINT share the 'long' case, so a 4-byte field is read as 8 bytes;
+ *  - signed T_BYTE/T_SHORT loads go through v_mem_mov's MOVSX without REX.W,
+ *    so negative values come back zero-extended (see x64/v_mem_mov.h);
+ *  - T_STRING_INPLACE builds bytes where CPython 3 builds str.
+ */
 #include "pstructmember.h"
 #include "../Python/pyver.h"
 #include "../compat2to3.h"

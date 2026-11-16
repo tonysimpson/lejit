@@ -1,3 +1,13 @@
+/*
+ * Compile-time Python-to-Python calls (psyco_call_pyfunc). When the callee and
+ * its argument count are known at compile time, the arguments are bound now.
+ * The callee is then either inlined into the caller (the EInline
+ * pseudo-exception swaps po->vlocals) or compiled separately and called with
+ * the Psyco calling convention (psyco_call_psyco). Anything else (keyword-only
+ * arguments, closures, unknown arity, recursion depth used up) becomes a
+ * residual call to cimpl_call_pyfunc. PsycoFunctionObject (the "proxy") is a
+ * leftover of psyco.bind() and is dead code under the eval-frame hook.
+ */
 #include "psyfunc.h"
 #include "Objects/ptupleobject.h"
 #include "Python/frames.h"
