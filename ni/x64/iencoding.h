@@ -1516,15 +1516,17 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
   do {                                                                         \
     long _sc = (stack_correction); /* > 0 grows the stack */                  \
     if (_sc > 0) {                                                             \
-      if (FITS_IN_8BITS(_sc))                                                  \
+      if (FITS_IN_8BITS(_sc)) {                                                \
         SUB_R_I8(REG_X64_RSP, _sc);                                            \
-      else                                                                     \
+      } else {                                                                 \
         SUB_R_I32(REG_X64_RSP, _sc);                                           \
+      }                                                                        \
     } else if (_sc < 0) { /* add rsp, n rather than sub rsp, -n */             \
-      if (FITS_IN_8BITS(-_sc))                                                 \
+      if (FITS_IN_8BITS(-_sc)) {                                               \
         ADD_R_I8(REG_X64_RSP, -_sc);                                           \
-      else                                                                     \
+      } else {                                                                 \
         ADD_R_I32(REG_X64_RSP, -_sc);                                          \
+      }                                                                        \
     }                                                                          \
   } while (0)
 
