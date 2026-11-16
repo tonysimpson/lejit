@@ -27,5 +27,18 @@ if use_ni:
         out.append('compiled: no (no entry point)')
     else:
         out.append('compiled: yes')
+# leak check: after warm-up, run the calls 100 more times and report how
+# many more memory blocks are allocated than before
+import gc
+gc.collect()
+before = sys.getallocatedblocks()
+for _ in range(100):
+    for args in calls:
+        try:
+            fn(*args)
+        except Exception:
+            pass
+gc.collect()
+out.append('leak: %d' % (sys.getallocatedblocks() - before))
 for line in out:
     print(line)

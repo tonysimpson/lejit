@@ -14,6 +14,10 @@ options:
   'interpreted': 'reason'             must NOT be compiled (e.g. an opcode
                                       outside the whitelist); results must
                                       still match
+  'leaks': 'KNOWN_BUGS id'            skip the leak check
+Every case is also leak-checked: after warm-up the calls run 100 more times
+and the growth in sys.getallocatedblocks() must stay within LEAK_SLACK of
+the plain run's.
 
 Usage: run.py [-k substring] [-v]
 """
@@ -23,6 +27,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CASES = os.path.join(ROOT, 'tests', 'cases')
 PY37 = os.environ.get('NI_PY37', os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
 TIMEOUT = 20
+LEAK_SLACK = 50   # blocks; noise allowance for the leak check
 
 
 def run_child(modname, fname, calls, use_ni):
@@ -70,6 +75,8 @@ def main():
         if err:
             problem = err
         else:
+            leak_ref = int(expected.pop().split()[1])
+            leak_ni = int(got.pop().split()[1])
             if got[:-1] != expected:
                 problem = 'results differ: expected %r, got %r' % (expected, got[:-1])
             elif opts.get('interpreted'):
@@ -77,6 +84,9 @@ def main():
                     problem = 'compiled, but expected to be interpreted'
             elif got[-1] != 'compiled: yes':
                 problem = got[-1]
+            elif leak_ni - leak_ref > LEAK_SLACK and not opts.get('leaks'):
+                problem = 'leaks: %d more blocks after 100 extra rounds (%d without Ni)' % (
+                    leak_ni, leak_ref)
         xfail = opts.get('xfail')
         if problem and xfail:
             status = 'xfail'
