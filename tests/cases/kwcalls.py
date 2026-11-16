@@ -59,6 +59,21 @@ exec('def call_300(x):\n    return count_args(%s)\n'
 exec('def call_300_kw(x):\n    return count_args(%s)\n'
      % ', '.join('k%d=x' % i for i in range(300)))
 
+import functools
+
+def capture(*a, **k):
+    return a, k
+
+# functools.partial keeps a **kwargs dict with refcount 1 instead of copying
+# it: the call must hold a reference, as ceval's stack does
+# (CPython's test_functools test_kwargs_copy)
+def partial_kwargs_copy(v):
+    d = {'a': v}
+    p = functools.partial(capture, **d)
+    first = p()
+    d['a'] = v + 2
+    return first, p()
+
 CASES = [
     ('kw_call', "[(1,), ('s',)]", {}),
     ('kw_two', "[(1,), (4,)]", {}),
@@ -72,5 +87,6 @@ CASES = [
     ('star_star_mapping', "[(Mapping(),)]", {}),
     ('kw_loop', "[(10,)]", {}),
     ('call_300', "[(1,)]", {}),
+    ('partial_kwargs_copy', "[(3,)]", {}),
     ('call_300_kw', "[(1,)]", {}),
 ]

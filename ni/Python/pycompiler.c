@@ -772,16 +772,21 @@ static PyObject *cimpl_call_function_ex(PyObject *func, PyObject *callargs,
     }
     callargs = t;
   }
+  /* ceval's stack holds its own reference to kwargs during the call, and
+     callees rely on it: functools.partial keeps a dict whose refcount is 1
+     instead of copying it. Compiled code holds none, so take one. */
+  Py_XINCREF(kwargs);
   result = PyObject_Call(func, callargs, kwargs);
+  Py_XDECREF(kwargs);
   Py_XDECREF(d);
   Py_XDECREF(t);
   return result;
 }
 
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
-   [kwargs], args, callable. An exact tuple and dict (the usual case) are
-   passed straight to PsycoObject_Call, which can specialise the call;
-   anything else is converted at run time, as ceval does. */
+   [kwargs], args, callable. f(*tuple) goes straight to PsycoObject_Call,
+   which can specialise the call; anything else is converted and called at
+   run time, as ceval does. */
 static vinfo_t *psyco_ext_do_call_ex(PsycoObject *po, int oparg,
                                      vinfo_t **stack_top,
                                      int *stack_to_pop) {
@@ -797,16 +802,11 @@ static vinfo_t *psyco_ext_do_call_ex(PsycoObject *po, int oparg,
     return NULL;
   if (kwargs == NULL)
     kwargs = zero = psyco_vi_Zero();
-  if (t == &PyTuple_Type) {
-    if (zero == NULL) {
-      t = Psyco_NeedType(po, kwargs);
-      if (t == NULL)
-        return NULL;
-    }
-    if (zero != NULL || t == &PyDict_Type) {
-      result = PsycoObject_Call(po, func, callargs, kwargs);
-      goto done;
-    }
+  if (t == &PyTuple_Type && zero != NULL) {
+    /* f(*args): the call can be specialised. With **kwargs it goes to the
+       run-time helper, which holds a reference to the dict as ceval does */
+    result = PsycoObject_Call(po, func, callargs, kwargs);
+    goto done;
   }
   result = psyco_generic_call(po, cimpl_call_function_ex,
                               CfCommonNewRefPyObject, "vvv", func, callargs,
