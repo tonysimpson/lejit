@@ -9,6 +9,9 @@ if USE_NI:
     import os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
     import ni
+    if ni._debug_build:
+        print('note: ni.so is a debug build (left by tools/check.sh), about 10% '
+              'slower;\n      for timings: rm ni*.so; python3.7 setup.py build_ext --inplace\n')
 
 
 def place(n, row, cols, d1, d2):

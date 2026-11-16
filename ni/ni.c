@@ -220,6 +220,11 @@ PyMODINIT_FUNC PyInit_ni(void) {
       Py_DECREF(module);
       return NULL;
     }
+    /* so that timings can tell a debug build (tools/check.sh's) */
+    if (PyModule_AddIntConstant(module, "_debug_build", NI_TRACE || ALL_CHECKS)) {
+      Py_DECREF(module);
+      return NULL;
+    }
     initialize_all_files();
   }
   CPsycoModule = module;
