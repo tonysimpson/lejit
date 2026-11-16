@@ -13,7 +13,9 @@
  *    a throw-away buffer until the same point is reached (do_respawn).
  *  - Promotion: a run-time value is switched on at run time. Each new value
  *    compiles a specialised continuation, cached in a move-to-front list, with
- *    a megamorphic cut-off after MEGAMORPHIC_MAX values.
+ *    a megamorphic cut-off after MEGAMORPHIC_MAX values. A promoted value is
+ *    held by the code for good; do_promotion_static_type only specialises on
+ *    static types and sends anything else to the megamorphic version.
  * psyco_delete_unused_vars drops the dead locals that mergepoints.c lists
  * first in each fatlist (D15; upstream's analysis was removed in a880444,
  * history A3, and is rewritten there for 3.7). State is global and
