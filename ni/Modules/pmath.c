@@ -1,12 +1,13 @@
 /*
- * The PMATH_FUNC1/2 macros generate a meta for each math function: unpack the
- * double arguments, call libm with CfPure (so constants fold), and return a
- * virtual float. In effect it is a tiny hand-written meta-compiler.
- * Limitations:
- *  - no errno or domain checks (math.sqrt(-1) gives nan, not ValueError);
- *  - ceil/floor return floats (Python 3 returns int);
- *  - a meta is silently not registered when the function's ml_flags differ
- *    from those expected (e.g. METH_FASTCALL).
+ * The PMATH_FUNC1 macro generates a meta for each one-argument math
+ * function: unpack the double argument, call cimpl_math_1 (3.7's math_1:
+ * the libm call, then ValueError/OverflowError from the result, KNOWN_BUGS
+ * F5) and return a virtual float. ceil and floor take exact floats only and
+ * return an int, as 3.7 does for a float (it has no __floor__ there); other
+ * types go to the real function. atan2, fmod, hypot and pow have special
+ * cases in mathmodule.c and get no meta: the real function is called.
+ * A meta is silently not registered when the function's ml_flags differ
+ * from those expected (e.g. METH_FASTCALL).
  */
 /* 
  * Psyco version of python math module, mathmodule.c 
@@ -40,6 +41,7 @@ extern double modf (double, double *);
 
 
 #include <math.h>
+#include <errno.h>
 /* 
  * This is almost but not quite the same as the 
  * version in pfloatobject.c. The error handling 
@@ -58,12 +60,45 @@ extern double modf (double, double *);
 #define PMATH_RELEASE_DOUBLE(v) \
     vinfo_decref(v, po);
 
-# define PMATH_FUNC1(funcname, func)\
+/* 3.7's math_1_to_whatever for a float result */
+static double cimpl_math_1(double x, long func, long can_overflow) {
+    double r;
+    errno = 0;
+    r = ((double (*)(double))func)(x);
+    if (Py_IS_NAN(r) && !Py_IS_NAN(x)) {
+        PyErr_SetString(PyExc_ValueError, "math domain error");
+        return -1.0;
+    }
+    if (Py_IS_INFINITY(r) && Py_IS_FINITE(x)) {
+        if (can_overflow)
+            PyErr_SetString(PyExc_OverflowError, "math range error");
+        else
+            PyErr_SetString(PyExc_ValueError, "math domain error");
+        return -1.0;
+    }
+    if (Py_IS_FINITE(r) && errno) {
+        /* is_error(): ERANGE with a result below 1 is an underflow, fine */
+        if (errno == EDOM)
+            PyErr_SetString(PyExc_ValueError, "math domain error");
+        else if (errno == ERANGE) {
+            if (fabs(r) < 1.0)
+                return r;
+            PyErr_SetString(PyExc_OverflowError, "math range error");
+        }
+        else
+            PyErr_SetFromErrno(PyExc_ValueError);
+        return -1.0;
+    }
+    return r;
+}
+
+# define PMATH_FUNC1(funcname, func, can_overflow)\
 static PyCFunction fallback_##func;\
 static vinfo_t* pmath_##func(PsycoObject* po, vinfo_t* vself, vinfo_t* v) {\
     vinfo_t *a, *x;\
     PMATH_CONVERT_TO_DOUBLE(v, a);\
-    x = psyco_generic_call(po, func, CfPure|CfReturnTypeDouble, "d", a);\
+    x = psyco_generic_call(po, cimpl_math_1, CfPyErrCheck|CfReturnTypeDouble,\
+                           "dll", a, (long)&func, (long)(can_overflow));\
     PMATH_RELEASE_DOUBLE(a);\
     return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;\
 fallback:\
@@ -72,54 +107,46 @@ error:\
     return NULL;\
 }
 
-#define PMATH_FUNC2(funcname, func ) \
-static PyCFunction fallback_##func; \
-static vinfo_t* pmath_##func(PsycoObject* po, vinfo_t* vself, vinfo_t* varg) { \
-    vinfo_t *a=NULL, *b, *x; \
-    vinfo_t *v1, *v2; \
-    int tuplesize = PsycoTuple_Load(varg); \
-    if (tuplesize != 2) /* wrong or unknown number of arguments */ \
-        goto fallback; \
-    v1 = PsycoTuple_GET_ITEM(varg, 0); \
-    v2 = PsycoTuple_GET_ITEM(varg, 1); \
-    PMATH_CONVERT_TO_DOUBLE(v1, a); \
-    PMATH_CONVERT_TO_DOUBLE(v2, b); \
-    x = psyco_generic_call(po, func, CfPure|CfReturnTypeDouble, \
-                            "dd", a, b); \
-    PMATH_RELEASE_DOUBLE(a); \
-    PMATH_RELEASE_DOUBLE(b); \
-    return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;\
-fallback:                                                   \
-    return psyco_generic_call(po, fallback_##func,          \
-                                CfCommonNewRefPyObject,    \
-                                "lv", NULL, varg);            \
-error:                                                      \
-    if (a != NULL) {                                       \
-        PMATH_RELEASE_DOUBLE(a);                            \
-    }                                                       \
-    return NULL;                                            \
+static PyObject *cimpl_floor_to_int(double x) { return PyLong_FromDouble(floor(x)); }
+static PyObject *cimpl_ceil_to_int(double x) { return PyLong_FromDouble(ceil(x)); }
+
+/* ceil, floor: a float becomes an int; anything else (an int, or a type
+   with __floor__/__ceil__) goes to the real function */
+# define PMATH_TO_INT(func)\
+static PyCFunction fallback_##func;\
+static vinfo_t* pmath_##func(PsycoObject* po, vinfo_t* vself, vinfo_t* v) {\
+    vinfo_t *a, *x;\
+    PyTypeObject *t = Psyco_NeedType(po, v);\
+    if (t == NULL)\
+        return NULL;\
+    if (t != &PyFloat_Type)\
+        goto fallback;\
+    PMATH_CONVERT_TO_DOUBLE(v, a);\
+    x = psyco_generic_call(po, cimpl_##func##_to_int, CfCommonNewRefPyObject,\
+                           "d", a);\
+    PMATH_RELEASE_DOUBLE(a);\
+    return x;\
+fallback:\
+    return psyco_generic_call(po, fallback_##func, CfCommonNewRefPyObject,"lv" , NULL, v);\
+error:\
+    return NULL;\
 }
 
-/* the functions pmath_sin() etc */
-PMATH_FUNC1("acos", acos)
-PMATH_FUNC1("asin", asin)
-PMATH_FUNC1("atan", atan)
-PMATH_FUNC2("atan2", atan2)
-PMATH_FUNC1("ceil", ceil)
-PMATH_FUNC1("cos", cos)
-PMATH_FUNC1("cosh", cosh)
-PMATH_FUNC1("exp", exp)
-PMATH_FUNC1("fabs", fabs)
-PMATH_FUNC1("floor", floor)
-PMATH_FUNC2("fmod", fmod)
-PMATH_FUNC2("hypot", hypot)
-/*PMATH_FUNC2("power", power)*/
-PMATH_FUNC2("pow", pow)
-PMATH_FUNC1("sin", sin)
-PMATH_FUNC1("sinh", sinh)
-PMATH_FUNC1("sqrt", sqrt)
-PMATH_FUNC1("tan", tan)
-PMATH_FUNC1("tanh", tanh)
+/* the functions pmath_sin() etc; can_overflow as in mathmodule.c */
+PMATH_FUNC1("acos", acos, 0)
+PMATH_FUNC1("asin", asin, 0)
+PMATH_FUNC1("atan", atan, 0)
+PMATH_TO_INT(ceil)
+PMATH_FUNC1("cos", cos, 0)
+PMATH_FUNC1("cosh", cosh, 1)
+PMATH_FUNC1("exp", exp, 1)
+PMATH_FUNC1("fabs", fabs, 0)
+PMATH_TO_INT(floor)
+PMATH_FUNC1("sin", sin, 0)
+PMATH_FUNC1("sinh", sinh, 1)
+PMATH_FUNC1("sqrt", sqrt, 0)
+PMATH_FUNC1("tan", tan, 0)
+PMATH_FUNC1("tanh", tanh, 0)
 
 INITIALIZATIONFN
 void psyco_initmath(void)
@@ -135,17 +162,13 @@ void psyco_initmath(void)
     fallback_acos = Psyco_DefineModuleFn(md, "acos", METH1,        pmath_acos);
     fallback_asin = Psyco_DefineModuleFn(md, "asin", METH1,        pmath_asin);
     fallback_atan = Psyco_DefineModuleFn(md, "atan", METH1,        pmath_atan);
-    fallback_atan2= Psyco_DefineModuleFn(md, "atan2",METH_VARARGS, pmath_atan2);
     fallback_ceil = Psyco_DefineModuleFn(md, "ceil", METH1,        pmath_ceil);
     fallback_cos  = Psyco_DefineModuleFn(md, "cos",  METH1,        pmath_cos);
     fallback_cosh = Psyco_DefineModuleFn(md, "cosh", METH1,        pmath_cosh);
     fallback_exp  = Psyco_DefineModuleFn(md, "exp",  METH1,        pmath_exp);
     fallback_fabs = Psyco_DefineModuleFn(md, "fabs", METH1,        pmath_fabs);
     fallback_floor= Psyco_DefineModuleFn(md, "floor",METH1,        pmath_floor);
-    fallback_fmod = Psyco_DefineModuleFn(md, "fmod", METH_VARARGS, pmath_fmod);
-    fallback_hypot= Psyco_DefineModuleFn(md, "hypot",METH_VARARGS, pmath_hypot);
     /*Psyco_DefineModuleFn(md, "power", METH_VARARGS, pmath_power);*/
-    fallback_pow  = Psyco_DefineModuleFn(md, "pow",  METH_VARARGS, pmath_pow);
     fallback_sin  = Psyco_DefineModuleFn(md, "sin",  METH1,        pmath_sin);
     fallback_sinh = Psyco_DefineModuleFn(md, "sinh", METH1,        pmath_sinh);
     fallback_sqrt = Psyco_DefineModuleFn(md, "sqrt", METH1,        pmath_sqrt);
