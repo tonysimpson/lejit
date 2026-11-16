@@ -36,7 +36,7 @@ Then the rest of the baseline: D15 dead-local deletion (`458ef80`), inlining aga
 
 **First generated code** (`64f88e7`, QUESTIONS 26 steps 2–3): `tools/metac/gen_long.py` reads `Objects/longobject.c`. It generates + - * unary - and ~ (5 of 22 int slots), with the same calls as the hand-written versions it replaces. It logs why it skips the rest (`METACOMPILER.md`). Then the floats (`749985f`): `tools/metac/gen_float.py` generates + - * / % unary - abs and bool (8 of 14 slots) by copying the double-only C into helpers. `%` and `bool` are new.
 
-**Builtin metas** (`0feefaf`, after the NeedForSpeed branch's, translated from 3.7's `bltinmodule.c`): `hash`, `min`/`max` (two or more arguments) and `pow`. They needed METH_FASTCALL dispatch (F23: in 3.7 `divmod`, `pow`, `round`, `sum`, `isinstance` and `next` are FASTCALL, so no meta for them could run) and F24.
+**Builtin metas** (`0feefaf`, after the NeedForSpeed branch's, translated from 3.7's `bltinmodule.c`): `hash`, `min`/`max` (two or more arguments) and `pow`. They needed METH_FASTCALL dispatch (F23: in 3.7 `divmod`, `pow`, `round`, `sum`, `isinstance` and `next` are FASTCALL, so no meta for them could run) and F24. Then `isinstance` (`3494aba`: folded to a constant for static types and tuples of them; heap types, `__instancecheck__` and run-time tuples ask CPython), `round(x)` and the type calls `int(x)`, `float(x)`, `type(x)` (`cea78eb`, a meta for `type_call` that compares the callee at run time rather than promoting it). [run] Release build: an `isinstance` dispatch loop 0.045s → 0.030s (CPython 0.033s); an `int()`/`round()`/`float()` loop 0.120s → 0.062s (CPython 0.121s).
 
 ## 2026-11-16: first indexing pass (at `e1fd808`)
 
