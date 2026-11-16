@@ -28,7 +28,7 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | M7 | Moot now: stores no longer look at the signed flag. `psyco_put_field_array` passes `(df & FIELD_UNSIGNED)` as `signed_`; `psyco_internal_putfld` passes `== 0`. The sense is inverted between the two. Stores only use it for the immediate-range test, so the effect is mostly inefficiency. | Live, minor | [read] |
 | M8 | **Guarded** (`f53ef68`). A virtual `base`/`index` would be treated as compile-time and dereferenced (`V_CT_GET_VALUE`). Callers compute them first; `v_mem_mov` now `extra_assert`s it. | Guarded | [read] |
 | M9 | **Fixed:** only qword stores need the value to fit an imm32. Inefficiency: every negative signed constant goes through `MOV R10, imm64` (the range test is `value < 0 \|\| value >= 2^31`). | Live, perf | [read] |
-| M10 | `pstructmember.c` `T_INT`/`T_UINT` use `DEF_ARRAY(long, 0)`, an 8-byte read of a 4-byte field ("XXX assumes sizeof(int) == sizeof(long)"). | **Live** | [read] |
+| M10 | `pstructmember.c` `T_INT`/`T_UINT` use `DEF_ARRAY(long, 0)`, an 8-byte read of a 4-byte field ("XXX assumes sizeof(int) == sizeof(long)"). **Dormant**: `PsycoMember_GetOne` is reached only through the member-descriptor meta, and attribute lookup is a residual call (`pdescrobject.c`), so it can't be tested yet; translated code, left for regeneration (D22). `tests/cases/members.py` reads `co_argcount`/`co_kwonlyargcount` for when it becomes live. | Dormant | [read], [run] |
 | M11 | `pdictobject.c` `DICT_ma_used` is declared `int`, but it's `Py_ssize_t` in Python 3. A 4-byte signed read is fine while counts stay below 2^31. | Live, benign | [read] |
 
 ## Front end (translated CPython)
