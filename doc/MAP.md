@@ -121,7 +121,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/metac/ctokens.py`, `cslots.py`, `gen_long.py`, `gen_float.py` | tooling | Meta-compiler, first slices: a C tokeniser (comments, literals, `#define` bodies, functions, struct fields, initialisers), the shared slot driver, and the int and float generators (`METACOMPILER.md`). `--check` compares with the checked-in output. | | `749985f` |
 | `tools/without_fix.sh` | tooling | Runs a command with some uncommitted changes stashed and a forced rebuild, to show a test fails without its fix (D21). | | `4a5a3e5` |
 | `tools/demo.py` | tooling | Demo: n-queens, n-body, ASCII Mandelbrot, word counts, timed with and without Ni. | | `e4f21aa` |
-| `tools/bench.py` | tooling | Benchmarks against plain CPython: ints, floats, builtin metas, isinstance dispatch (with and without global lookups), demo programs; fresh process per mode, best of 3, results compared. | |
+| `tools/bench.py` | tooling | Benchmarks against plain CPython: ints, floats, builtin metas, isinstance dispatch (with and without global lookups), demo programs; fresh process per mode, best of 3, results compared. | | `29fe738` |
 | `tests/encoding/v_mem_mov_test.c`, `run_v_mem_mov.sh` | tooling | Executes `v_mem_mov`'s code and checks the loads and stores. | | `de820e8` |
 | `setup.cfg`, `MANIFEST` | glue | Packaging metadata. | `MANIFEST` still lists upstream `c/` paths: stale. | `e1fd808` |
 | `.clang-format` | tooling | PEP 7-style formatting (commit `341dde6`). | Only some files have been reformatted, so files mix tabs and 2-space style. | `e1fd808` |
