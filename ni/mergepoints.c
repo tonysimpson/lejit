@@ -276,6 +276,8 @@ _build_merge_points(PyCodeObject *co, int module)
             case SETUP_EXCEPT:
             case SETUP_FINALLY:
             case CALL_FUNCTION:
+            case CALL_FUNCTION_KW:
+            case CALL_FUNCTION_EX:
             case MAKE_FUNCTION:
             case BUILD_SLICE:
             case EXTENDED_ARG:
