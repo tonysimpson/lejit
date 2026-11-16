@@ -64,7 +64,7 @@ CASES = [
     ('break_loop', [(0,), (5,)], {}),
     ('continue_loop', [(10,)], {}),
     ('try_except', [(5, 2)], {}),
-    ('try_except', [(5, 0)], {'xfail': 'F4: handled-exception state uses curexc_*; segfaults in cimpl_set_exc_info'}),
+    ('try_except', [(5, 0)], {}),
     ('try_finally', [(3,)], {}),
     ('raise_it', [(0,)], {}),
     ('raise_it', [(3,)], {'xfail': "F1: 'bad %d' % 3 is str % int, mixed types"}),

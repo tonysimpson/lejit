@@ -206,6 +206,7 @@ _build_merge_points(PyCodeObject *co, int module)
             case NOP:
             case POP_BLOCK:
             case END_FINALLY:
+            case POP_EXCEPT:
             case UNPACK_SEQUENCE:
             case STORE_ATTR:
             case DELETE_ATTR:

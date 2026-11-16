@@ -11,9 +11,14 @@
  *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
  *    exceptions) with ceval-style unwinding of the block stack.
  * The block opcodes (SETUP_LOOP/EXCEPT/FINALLY) exist only up to 3.7. Some
- * cases keep Python 2 meanings (BUILD_MAP, RAISE_VARARGS, END_FINALLY), and the
- * handled-exception state is mapped onto curexc_* rather than exc_info
- * (doc/history/removed-mechanisms.md D1-D2).
+ * cases keep Python 2 meanings (BUILD_MAP, CALL_FUNCTION's oparg;
+ * doc/history/removed-mechanisms.md D2).
+ * Exceptions: catching one follows 3.7 (an EXCEPT_HANDLER block over six
+ * stack items, cimpl_push_exc_info). A finally block differs from ceval: it
+ * gets a single 3-tuple holding any pseudo-exception (EReturn too), which
+ * END_FINALLY tells apart from an except clause's exception type, and
+ * exc_info isn't set inside it. The Py2 per-frame saved exception
+ * (FINALIZE_FRAME_LOCALS, cimpl_finalize_frame_locals) is now never set.
  */
 #include "pycompiler.h"
 #include "../codemanager.h"
@@ -372,68 +377,58 @@ void cimpl_finalize_frame_locals(PyObject *f_exc_type, PyObject *f_exc_value,
   PySys_SetObject("exc_traceback", f_exc_traceback);
 }
 
-PSY_INLINE void cimpl_set_exc_info(PyObject *target[], PyObject **f_exc_type,
-                                   PyObject **f_exc_value,
-                                   PyObject **f_exc_traceback) {
-  /* Equivalent of PyErr_NormalizeException() + set_exc_info() */
+/* Catching an exception, as 3.7 ceval.c's exception_unwind does for
+   SETUP_EXCEPT: the handled exception that was current (tstate->exc_info) is
+   saved, then the pending error is fetched, normalised and made current.
+   target[] gets the six objects ceval pushes, bottom first: old tb, value,
+   type, then new tb, value, type (new references). ceval may push NULL for
+   the old tb/value; Ni's stack can't hold NULL, and None means the same
+   to exc_info readers. */
+static void cimpl_push_exc_info(PyObject *target[]) {
   PyThreadState *tstate = PyThreadState_GET();
-  PyObject *type, *value, *tb;
-  PyObject *tmp_type, *tmp_value, *tmp_tb;
-
-  PyErr_NormalizeException(target + 0, target + 1, target + 2);
-  type = target[0];
-  value = target[1];
-  tb = target[2];
-
-  if (*f_exc_type == NULL) {
-    /* This frame didn't catch an exception before */
-    /* Save previous exception of this thread in this frame */
-    Py_INCREF(tstate->curexc_type);
-    Py_XINCREF(tstate->curexc_value);
-    Py_XINCREF(tstate->curexc_traceback);
-    *f_exc_type = tstate->curexc_type;
-    *f_exc_value = tstate->curexc_value;
-    *f_exc_traceback = tstate->curexc_traceback;
-  }
-  /* Set new exception for this thread */
-  tmp_type = tstate->curexc_type;
-  tmp_value = tstate->curexc_value;
-  tmp_tb = tstate->curexc_traceback;
-  Py_XINCREF(type);
-  Py_XINCREF(value);
-  Py_XINCREF(tb);
-  tstate->curexc_type = type;
-  tstate->curexc_value = value;
-  tstate->curexc_traceback = tb;
-  Py_XDECREF(tmp_type);
-  Py_XDECREF(tmp_value);
-  Py_XDECREF(tmp_tb);
-  /* For b/w compatibility */
-  PySys_SetObject("exc_type", type);
-  PySys_SetObject("exc_value", value);
-  PySys_SetObject("exc_traceback", tb);
-}
-
-static void cimpl_pyerr_fetch_and_normalize(PyObject *target[],
-                                            PyObject **f_exc_type,
-                                            PyObject **f_exc_value,
-                                            PyObject **f_exc_traceback) {
+  _PyErr_StackItem *exc_info = tstate->exc_info;
+  PyObject *exc, *val, *tb;
   extra_assert(PyErr_Occurred());
-  PyErr_Fetch(target + 0, target + 1, target + 2);
-  cimpl_set_exc_info(target, f_exc_type, f_exc_value, f_exc_traceback);
+  target[0] = exc_info->exc_traceback ? exc_info->exc_traceback : Py_None;
+  target[1] = exc_info->exc_value ? exc_info->exc_value : Py_None;
+  target[2] = exc_info->exc_type ? exc_info->exc_type : Py_None;
+  /* the old references move to target[]; borrowed Nones need one */
+  if (exc_info->exc_traceback == NULL) Py_INCREF(Py_None);
+  if (exc_info->exc_value == NULL) Py_INCREF(Py_None);
+  if (exc_info->exc_type == NULL) Py_INCREF(Py_None);
+  PyErr_Fetch(&exc, &val, &tb);
+  PyErr_NormalizeException(&exc, &val, &tb);
+  PyException_SetTraceback(val, tb != NULL ? tb : Py_None);
+  Py_INCREF(exc);
+  exc_info->exc_type = exc;
+  Py_INCREF(val);
+  exc_info->exc_value = val;
+  exc_info->exc_traceback = tb;
+  if (tb == NULL)
+    tb = Py_None;
+  Py_INCREF(tb);
+  target[3] = tb;
+  target[4] = val;
+  target[5] = exc;
 }
 
-static void cimpl_pyerr_normalize(PyObject *exc, PyObject *val, PyObject *tb,
-                                  PyObject *target[], PyObject **f_exc_type,
-                                  PyObject **f_exc_value,
-                                  PyObject **f_exc_traceback) {
-  target[0] = exc;
-  Py_INCREF(exc);
-  target[1] = val;
-  Py_XINCREF(val);
-  target[2] = tb;
-  Py_XINCREF(tb);
-  cimpl_set_exc_info(target, f_exc_type, f_exc_value, f_exc_traceback);
+/* The restoring half (ceval's UNWIND_EXCEPT_HANDLER), for POP_EXCEPT and for
+   unwinding through an EXCEPT_HANDLER block. Doesn't consume its arguments
+   (psyco_generic_call can't express that); the caller decrefs them. */
+static void cimpl_pop_exc_info(PyObject *type, PyObject *value,
+                               PyObject *tb) {
+  _PyErr_StackItem *exc_info = PyThreadState_GET()->exc_info;
+  PyObject *otype = exc_info->exc_type, *ovalue = exc_info->exc_value,
+           *otb = exc_info->exc_traceback;
+  Py_INCREF(type);
+  Py_INCREF(value);
+  Py_INCREF(tb);
+  exc_info->exc_type = type;
+  exc_info->exc_value = value;
+  exc_info->exc_traceback = tb;
+  Py_XDECREF(otype);
+  Py_XDECREF(ovalue);
+  Py_XDECREF(otb);
 }
 
 DEFINEFN
@@ -455,50 +450,6 @@ void PycException_Fetch(PsycoObject *po) {
   }
 }
 
-PSY_INLINE bool PycException_FetchNormalize(PsycoObject *po) {
-  vinfo_t *result;
-  vinfo_array_t *array = array_new(3);
-  vinfo_array_t *f_exc = LOC_CONTINUATION->array;
-
-  /* At runtime, we load the following data into the array:
-
-     array[0] -- exc_type       new exception, normalized
-     array[1] -- exc_value      new exception, normalized
-     array[2] -- exc_traceback  new exception, normalized
-  */
-  extra_assert(f_exc->count >= 3);
-  if (PycException_Is(po, &ERtPython)) {
-    /* fetch and normalize the exception */
-    result = psyco_generic_call(po, cimpl_pyerr_fetch_and_normalize,
-                                CfNoReturnValue, "Arrr", array, f_exc->items[0],
-                                f_exc->items[1], f_exc->items[2]);
-  } else {
-    char args[8];
-    args[0] = 'v';
-    args[1] = po->pr.val == NULL ? 'l' : 'v';
-    args[2] = po->pr.tb == NULL ? 'l' : 'v';
-    args[3] = 'A';
-    args[4] = 'r';
-    args[5] = 'r';
-    args[6] = 'r';
-    args[7] = 0;
-    /* normalize the already-given exception */
-    result =
-        psyco_generic_call(po, cimpl_pyerr_normalize, CfNoReturnValue, args,
-                           po->pr.exc, po->pr.val, po->pr.tb, array,
-                           f_exc->items[0], f_exc->items[1], f_exc->items[2]);
-  }
-  if (result == NULL) {
-    array_release(array);
-    return false;
-  }
-  clear_pseudo_exception(po);
-  po->pr.exc = array->items[0];
-  po->pr.val = array->items[1]; /* po->pr.val!=NULL after this */
-  po->pr.tb = array->items[2];  /* po->pr.tb!=NULL after this */
-  array_release(array);
-  return true;
-}
 
 static PyFrameObject *cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code,
                                       PyObject *globals, int lasti,
@@ -657,6 +608,25 @@ void psyco_pycompiler_init(void) {
 #define STACK_LEVEL() (po->pr.stack_level)
 #define JUMPBY(offset) (next_instr += (offset))
 #define JUMPTO(target) (next_instr = (target))
+
+/* ceval's UNWIND_EXCEPT_HANDLER: drop what the handler left above its six
+   items, then restore the saved exc_info from the bottom three */
+static void unwind_except_handler(PsycoObject *po, PyTryBlock *b) {
+  vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+  vinfo_t *type, *value, *tb;
+  extra_assert(STACK_LEVEL() >= b->b_level + 3);
+  while (STACK_LEVEL() > b->b_level + 3)
+    POP_DECREF();
+  POP(type);
+  POP(value);
+  POP(tb);
+  psyco_generic_call(po, cimpl_pop_exc_info, CfNoReturnValue, "vvv", type,
+                     value, tb);
+  vinfo_decref(tb, po);
+  vinfo_decref(value, po);
+  vinfo_decref(type, po);
+}
+
 
 #define SAVE_NEXT_INSTR(nextinstr1) (po->pr.next_instr = (nextinstr1))
 
@@ -945,105 +915,88 @@ static int cimpl_unpack_list(PyObject *listobject, int argcnt, PyObject **sp) {
    XXX a meta-implementation would be nice (e.g. to know at compile-time
    which exception class we got, so that we can know at compile-time which
    except: statements match) */
-static void cimpl_do_raise(PyObject *type, PyObject *value, PyObject *tb) {
-  if (type == NULL) {
-    /* Reraise */
-    PyThreadState *tstate = PyThreadState_Get();
-    type = tstate->curexc_type == NULL ? Py_None : tstate->curexc_type;
-    value = tstate->curexc_value;
-    tb = tstate->curexc_traceback;
-  }
+/* 3.7 ceval.c do_raise, except that it doesn't consume references to its
+   arguments (psyco_generic_call can't express that), so it takes its own
+   first. The reraise case doesn't return ceval's "don't add a traceback
+   entry" flag, so Ni records one extra traceback entry for a bare raise. */
+static void cimpl_do_raise(PyObject *exc, PyObject *cause) {
+  PyObject *type = NULL, *value = NULL;
 
-  /* unlike the ceval.c version, this never consumes a reference
-     to its arguments (psyco_generic_call cannot handle this). */
-  Py_XINCREF(type);
-  Py_XINCREF(value);
-  Py_XINCREF(tb);
-
-  /* We support the following forms of raise:
-     raise <class>, <classinstance>
-     raise <class>, <argument tuple>
-     raise <class>, None
-     raise <class>, <argument>
-     raise <classinstance>, None
-     raise <string>, <object>
-     raise <string>, None
-
-     An omitted second argument is the same as None.
-
-     In addition, raise <tuple>, <anything> is the same as
-     raising the tuple's first item (and it better have one!);
-     this rule is applied recursively.
-
-     Finally, an optional third argument can be supplied, which
-     gives the traceback to be substituted (useful when
-     re-raising an exception after examining it).  */
-
-  /* First, check the traceback argument, replacing None with
-     NULL. */
-  if (tb == Py_None) {
-    Py_DECREF(tb);
-    tb = NULL;
-  } else if (tb != NULL && !PyTraceBack_Check(tb)) {
-    PyErr_SetString(PyExc_TypeError,
-                    "raise: arg 3 must be a traceback or None");
-    goto raise_error;
-  }
-
-  /* Next, replace a missing value with None */
-  if (value == NULL) {
-    value = Py_None;
-    Py_INCREF(value);
-  }
-
-  /* Next, repeatedly, replace a tuple exception with its first item */
-  while (PyTuple_Check(type) && PyTuple_Size(type) > 0) {
-    PyObject *tmp = type;
-    type = PyTuple_GET_ITEM(type, 0);
-    Py_INCREF(type);
-    Py_DECREF(tmp);
-  }
-
-  if (NiCompatStr_CheckExact(type))
-    /* warning skipped */;
-
-  else if (PyExceptionClass_Check(type))
-    PyErr_NormalizeException(&type, &value, &tb);
-
-  else if (PyExceptionInstance_Check(type)) {
-    /* Raising an instance.  The value should be a dummy. */
-    if (value != Py_None) {
-      PyErr_SetString(PyExc_TypeError,
-                      "instance exception may not have a separate value");
-      goto raise_error;
-    } else {
-      /* Normalize to raise <class>, <instance> */
-      Py_DECREF(value);
-      value = type;
-      type = PyExceptionInstance_Class(type);
-      Py_INCREF(type);
+  if (exc == NULL) {
+    /* Reraise: _PyErr_GetTopmostException isn't exported in 3.7 */
+    _PyErr_StackItem *exc_info = PyThreadState_GET()->exc_info;
+    PyObject *tb;
+    while ((exc_info->exc_type == NULL || exc_info->exc_type == Py_None) &&
+           exc_info->previous_item != NULL)
+      exc_info = exc_info->previous_item;
+    type = exc_info->exc_type;
+    value = exc_info->exc_value;
+    tb = exc_info->exc_traceback;
+    if (type == Py_None || type == NULL) {
+      PyErr_SetString(PyExc_RuntimeError, "No active exception to reraise");
+      return;
     }
+    Py_XINCREF(type);
+    Py_XINCREF(value);
+    Py_XINCREF(tb);
+    PyErr_Restore(type, value, tb);
+    return;
+  }
+  Py_INCREF(exc);
+  Py_XINCREF(cause);
+
+  if (PyExceptionClass_Check(exc)) {
+    type = exc;
+    value = _PyObject_CallNoArg(exc);
+    if (value == NULL)
+      goto raise_error;
+    if (!PyExceptionInstance_Check(value)) {
+      PyErr_Format(PyExc_TypeError,
+                   "calling %R should have returned an instance of "
+                   "BaseException, not %R",
+                   type, Py_TYPE(value));
+      goto raise_error;
+    }
+  } else if (PyExceptionInstance_Check(exc)) {
+    value = exc;
+    type = PyExceptionInstance_Class(exc);
+    Py_INCREF(type);
   } else {
-    /* Not something you can raise.  You get an exception
-       anyway, just not what you specified :-) */
-    PyErr_Format(PyExc_TypeError,
-                 "exceptions must be classes, instances, or "
-                 "strings (deprecated), not %s",
-                 type->ob_type->tp_name);
+    Py_DECREF(exc);
+    PyErr_SetString(PyExc_TypeError,
+                    "exceptions must derive from BaseException");
     goto raise_error;
   }
-  PyErr_Restore(type, value, tb);
-  /*if (tb == NULL)
-          return WHY_EXCEPTION;
-  else
-          return WHY_RERAISE;*/
+
+  if (cause) {
+    PyObject *fixed_cause;
+    if (PyExceptionClass_Check(cause)) {
+      fixed_cause = _PyObject_CallNoArg(cause);
+      if (fixed_cause == NULL)
+        goto raise_error;
+      Py_DECREF(cause);
+    } else if (PyExceptionInstance_Check(cause)) {
+      fixed_cause = cause;
+    } else if (cause == Py_None) {
+      Py_DECREF(cause);
+      fixed_cause = NULL;
+    } else {
+      PyErr_SetString(PyExc_TypeError,
+                      "exception causes must derive from BaseException");
+      goto raise_error;
+    }
+    PyException_SetCause(value, fixed_cause);
+  }
+
+  PyErr_SetObject(type, value);
+  Py_DECREF(value);
+  Py_DECREF(type);
   return;
 
 raise_error:
   Py_XDECREF(value);
   Py_XDECREF(type);
-  Py_XDECREF(tb);
-  /*return WHY_EXCEPTION;*/
+  Py_XDECREF(cause);
 }
 
 static PyObject *cimpl_import_name(PyObject *globals, PyObject *name,
@@ -1449,18 +1402,19 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         break;
 
       case RAISE_VARARGS:
-        u = v = w = x = psyco_vi_Zero();
+        /* 3.x: 0 reraise, 1 raise exc, 2 raise exc from cause */
+        v = w = x = psyco_vi_Zero(); /* NULL; one reference, shared */
         switch (oparg) {
-        case 3:
-          u = NTOP(oparg - 2); /* traceback */
-                               /* Fallthrough */
         case 2:
-          v = NTOP(oparg - 1); /* value */
-                               /* Fallthrough */
+          v = NTOP(1); /* cause */
+          w = NTOP(2); /* exc */
+          psyco_generic_call(po, cimpl_do_raise, CfPyErrAlways, "vv", w, v);
+          break;
         case 1:
-          w = NTOP(oparg - 0); /* exc */
-        case 0:                /* Fallthrough */
-          psyco_generic_call(po, cimpl_do_raise, CfPyErrAlways, "vvv", w, v, u);
+          w = NTOP(1); /* exc */
+          /* Fallthrough */
+        case 0:
+          psyco_generic_call(po, cimpl_do_raise, CfPyErrAlways, "vv", w, v);
           break;
         default:
           PycException_SetString(po, PyExc_SystemError,
@@ -1501,6 +1455,17 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           POP(v);
           vinfo_decref(v, po);
         }
+        goto fine;
+      }
+
+      case POP_EXCEPT: {
+        PyTryBlock *b = block_pop(po);
+        if (b->b_type != EXCEPT_HANDLER) {
+          PycException_SetString(po, PyExc_SystemError,
+                                 "popped block is not an except handler");
+          break;
+        }
+        unwind_except_handler(po, b);
         goto fine;
       }
 
@@ -2268,6 +2233,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         break;
       }
 
+      if (b->b_type == EXCEPT_HANDLER) {
+        /* leaving an except clause by any (pseudo) exception */
+        unwind_except_handler(po, b);
+        continue;
+      }
+
       /* clear the stack up to b->b_level */
       while (STACK_LEVEL() > b->b_level) {
         POP_DECREF(); /* no NULLs here */
@@ -2299,27 +2270,25 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         break;
       }
       if (b->b_type == SETUP_EXCEPT && PycException_IsPython(po)) {
-        /* SETUP_EXCEPT pushes three objects individually as in
-           ceval.c, as needed for bytecode compatibility. See tricks
-           in END_FINALLY to distinguish between the end of a FINALLY
-           and the end of an EXCEPT block. */
-        int next_instr;
-        while (!PycException_FetchNormalize(po)) {
-          /* got an exception while initializing the EXCEPT
-             block... Consider this new exception as overriding
-             the previous one, so that we just re-enter the same
-             EXCEPT block. */
-          /* XXX check that this empty loop cannot be endless */
+        /* as 3.7 ceval: an EXCEPT_HANDLER block over six stack items (see
+           cimpl_push_exc_info). A virtual exception is raised for real
+           first, so that the run-time code can fetch it. */
+        int next_instr, i, handler = b->b_handler;
+        vinfo_array_t *array;
+        if (!compute_and_raise_exception(po))
+          break;
+        clear_pseudo_exception(po);
+        block_setup(po, EXCEPT_HANDLER, -1, STACK_LEVEL()); /* reuses *b */
+        array = array_new(6);
+        if (psyco_generic_call(po, cimpl_push_exc_info, CfNoReturnValue, "A",
+                               array) == NULL) {
+          array_release(array);
+          break;
         }
-        extra_assert(po->pr.val != NULL);
-        extra_assert(po->pr.tb != NULL);
-        PUSH(po->pr.tb);
-        po->pr.tb = NULL;
-        PUSH(po->pr.val);
-        po->pr.val = NULL;
-        PUSH(po->pr.exc);
-        po->pr.exc = NULL;
-        JUMPTO(b->b_handler);
+        for (i = 0; i < 6; i++)
+          PUSH(array->items[i]);
+        array_release(array);
+        JUMPTO(handler);
         SAVE_NEXT_INSTR(next_instr);
         break;
       }
