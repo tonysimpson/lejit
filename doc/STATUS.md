@@ -3,9 +3,10 @@
 ## 2026-11-16: 3.7 baseline (branch `baseline-3.7`, D18)
 
 Ni builds and runs on CPython 3.7.17 (pyenv, gcc 14). Test suites, all passing (`tools/check.sh` runs them all):
-- `tests/run.py`: 129 behaviour cases, each run with and without Ni, required to compile, and leak-checked. No expected failures. Two cases correctly fall back to the interpreter because of unsupported opcodes.
+- `tests/run.py`: 150 behaviour cases, each run with and without Ni, required to compile, and leak-checked. No expected failures. Two cases correctly fall back to the interpreter because of unsupported opcodes.
 - `tests/encoding/check.py`: 56 `@asm`-annotated emitters, about 192k operand combinations, compared with GNU `as`.
 - `tests/encoding/run_v_mem_mov.sh`: about 90k executed loads and stores through `v_mem_mov`.
+- `tests/compile_bounds.py` (how much warm code compiles) and `tests/cpython_tests.py` (14 of CPython's own test modules, with and without Ni).
 
 Fixed (one commit each; details in KNOWN_BUGS):
 - core: C4 (merge-point lookup ran past its sentinel), C6 (every compiled call leaked its frame), M6 (4-byte compile-time field reads);
@@ -19,7 +20,7 @@ Left alone per D18 (translated layer, to be regenerated): the rest of F2–F18, 
 
 Later the same day: A19 (compact immediates), B7 (a value wanted in two registers at unify), B8 (guarded), F19/F3 (keyword and star calls, 300-argument calls), and **D10: merge points from control flow** (`27f066d`). D10 needed B15 and a fix for popping jumps back to a loop head, which otherwise compiled each back-edge afresh. Same speed on hot loops; compile-heavy code (the smoke test) about 2× faster with less memory. Guardrails (D21): `tools/check.sh` runs everything, including `tests/compile_bounds.py`, which bounds how much code is compiled (`ni._stats()`). `tools/demo.py` runs about 2× faster under Ni than plain.
 
-Run with Ni, CPython's own `test_bisect`, `test_heapq`, `test_textwrap`, `test_string`, `test_operator`, `test_itertools`, `test_enum`, `test_csv` and `test_base64` pass; `test_fractions`, `test_json`, `test_statistics`, `test_functools` and `test_collections` differ from plain (also before D10), under investigation.
+Then CPython's own tests (`tests/cpython_tests.py`). 13 of 14 modules now give the same results under Ni as plain. Fixed on the way: F5 (math module metas re-ported from 3.7), C9 (`**kwargs` reference across a call), C10 (crash at exit), C11 (`sys._getframe` now sees compiled frames, partly), C12 (recursion depth counted; endless recursion segfaulted), C13 (per-code data keyed by value: `test_json` aborted). Found and left open: C14 (compiled code is never freed). Still differs: `test_collections` (2 errors), under investigation.
 
 ## 2026-11-16: first indexing pass (at `e1fd808`)
 
