@@ -3,12 +3,17 @@
  *  1. It is the opcode whitelist. A code object containing any opcode not
  *     handled in the switch gets Py_None and is never compiled.
  *  2. It marks merge points: bytecode positions where the state is compared
- *     with already-compiled code. Upstream built a control-flow graph and
- *     placed them only where paths join. Here 'default: MP_HERE()' makes
- *     almost every instruction a merge point. That works, but it multiplies
- *     snapshots, and because MP_FLAGS_INLINABLE requires a single merge point
- *     it also disables inlining. This is a stop-gap, to be replaced by
- *     control-flow-based placement (doc/DECISIONS.md D10; history A2-A4).
+ *     with already-compiled code, and where a new code buffer (and the
+ *     snapshot a respawn replays from) starts. As upstream, they go only
+ *     where control flow needs them (D10): the start, every position
+ *     entered from two or more places, every backward-jump target (loop
+ *     heads), every exception or finally handler, and at least every
+ *     MAX_MP_DISTANCE instructions so that respawn replays stay short.
+ *     Entries are counted per instruction from its successors; an
+ *     instruction with EXTENDED_ARG prefixes counts as one, starting at
+ *     the first prefix. Placement only affects how much code is compiled
+ *     and shared: any instruction boundary may be a merge point, which is
+ *     what the earlier stop-gap did everywhere.
  */
 #include "mergepoints.h"
 #include <Python.h>
@@ -51,10 +56,21 @@ report_destructor(PyObject *capsule)
         _ENTER_INC(next_instr - first_instr);      \
     } while (0)
 
-#define ENTER_JUMP_TO(target)   \
-    do {                        \
-        _ENTER_INC(target / 2); \
+/* target: a byte offset. A backward jump is to a loop head: always a merge
+   point, or compilation would unroll the loop */
+#define ENTER_JUMP_TO(target)                       \
+    do {                                            \
+        Py_ssize_t _t = (target) / 2;               \
+        if (_t <= entry_count_index)                \
+            entry_count[_t] = 8;                    \
+        else                                        \
+            _ENTER_INC(_t);                         \
     } while (0)
+
+/* byte offset just after the current instruction (relative jumps) */
+#define NEXT_OFFSET() ((next_instr - first_instr) * 2)
+
+#define MAX_MP_DISTANCE 170
 
 #define MP_HERE()                           \
     do {                                    \
@@ -77,7 +93,9 @@ _find_merge_points(PyCodeObject *co)
     Py_ssize_t entry_count_len =
         (PyBytes_Size(co->co_code) / sizeof(_Py_CODEUNIT)) + 1;
     unsigned char entry_count[entry_count_len];
+    unsigned char is_start[entry_count_len];
     memset(entry_count, 0, entry_count_len);
+    memset(is_start, 0, entry_count_len);
 
     first_instr = (_Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
     next_instr = first_instr;
@@ -96,34 +114,66 @@ _find_merge_points(PyCodeObject *co)
             NEXTOPARG();
             oparg |= oldoparg << 8;
         }
+        is_start[entry_count_index] = 1;
         switch (opcode) {
+            /* no successor in this code */
             case RETURN_VALUE:
+            case RAISE_VARARGS:
+            case BREAK_LOOP: /* to the SETUP_LOOP target, counted there */
                 break;
+            /* unconditional jumps */
             case JUMP_ABSOLUTE:
+            case CONTINUE_LOOP:
                 ENTER_JUMP_TO(oparg);
                 break;
+            case JUMP_FORWARD:
+                ENTER_JUMP_TO(NEXT_OFFSET() + oparg);
+                break;
+            /* two successors */
+            case POP_JUMP_IF_FALSE:
+            case POP_JUMP_IF_TRUE:
+            case JUMP_IF_FALSE_OR_POP:
+            case JUMP_IF_TRUE_OR_POP:
+                ENTER_JUMP_TO(oparg);
+                ENTER_NEXT();
+                break;
+            case FOR_ITER:
+            case SETUP_LOOP: /* the loop's end, also reached by break */
+                ENTER_JUMP_TO(NEXT_OFFSET() + oparg);
+                ENTER_NEXT();
+                break;
+            /* a handler can be entered from anywhere in the block */
             case SETUP_EXCEPT:
                 flags |= MP_FLAGS_HAS_EXCEPT;
                 MP_HERE();
+                entry_count[(NEXT_OFFSET() + oparg) / 2] = 8;
                 ENTER_NEXT();
                 break;
             case SETUP_FINALLY:
                 flags |= MP_FLAGS_HAS_FINALLY;
                 MP_HERE();
-                ENTER_NEXT();
-                break;
-            case POP_JUMP_IF_FALSE:
-                ENTER_JUMP_TO(oparg);
+                entry_count[(NEXT_OFFSET() + oparg) / 2] = 8;
                 ENTER_NEXT();
                 break;
             default:
-                MP_HERE(); /* XXX tony: we only need MPs where we might
-                              respawn/reenter need to tie this with pycompiler
-                              and make effecient. Just making everything a
-                              mergepoints works but I think it causes lots of
-                              unnecessary reentry points to be written.
-                               */
                 ENTER_NEXT();
+        }
+    }
+
+    /* cap the distance between merge points (in reachable instructions,
+       in bytecode order) */
+    {
+        int distance = 0;
+        for (entry_count_index = 0; entry_count_index < entry_count_len;
+             entry_count_index++) {
+            if (!is_start[entry_count_index] ||
+                entry_count[entry_count_index] == 0)
+                continue;
+            if (entry_count[entry_count_index] > 1 ||
+                ++distance > MAX_MP_DISTANCE) {
+                entry_count[entry_count_index] = 8;
+                distance = 0;
+            }
         }
     }
 
@@ -138,9 +188,8 @@ _find_merge_points(PyCodeObject *co)
         sizeof(co_report_t) + (sizeof(mergepoint_t) * mergepoint_count));
     report->flags = flags;
     report->mergepoint_count = mergepoint_count;
-    if (mergepoint_count == 1 && flags == 0) {
-        report->flags = MP_FLAGS_INLINABLE;
-    }
+    /* MP_FLAGS_INLINABLE (mergepoint_count == 1 && flags == 0) stays off
+       until the inlining path is checked (KNOWN_BUGS B6; D10 step 2) */
     for (entry_count_index = 0; entry_count_index < entry_count_len;
          entry_count_index++) {
         if (entry_count[entry_count_index] > 1) {
