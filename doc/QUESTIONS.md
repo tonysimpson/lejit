@@ -27,6 +27,7 @@ Questions 1–6 were answered on 2026-11-16: see `DECISIONS.md` D10–D15.
 16. `run_time_result_check` pushes RAX without updating `stack_depth`. Is that the cause of known alignment problems (see `compare_return_address_in_a_stupid_way`)?
 17. Is the ±2 GB proximity of code buffers guaranteed anywhere?
 18. R12 is left out of `RegistersLoop`. Deliberate?
+27. **How should compiled code stop holding its globals?** (KNOWN_BUGS C14 (1).) (a) Make `LOC_GLOBALS` a run-time value: every use in `pycompiler.c` is already an argument to a run-time call, but `frames.c:psyco_finfo` embeds it for emulated frames, and callees are specialised on it. (b) Keep it constant but borrowed: a new dict could reuse a dead one's address (wrong `f_builtins`). (c) On 3.12+, borrowed plus a dict watcher (`PyDict_EVENT_DEALLOCATED`) to drop the code. [inferred]
 
 ## Housekeeping
 19. Should `tools/` scripts be fixed (stale `../c/` paths, Py2 `test_c_encoding`) or removed?
