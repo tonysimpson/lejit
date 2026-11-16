@@ -1,4 +1,5 @@
 #include "pbltinmodule.h"
+#include "../Objects/pboolobject.h"
 #include "../Objects/plistobject.h"
 #include "../Objects/plongobject.h"
 #include "../Objects/pmethodobject.h"
@@ -15,6 +16,9 @@ static PyCFunction cimpl_hash;
 static PyCFunction cimpl_min;
 static PyCFunction cimpl_max;
 static PyCFunction cimpl_pow;
+static PyCFunction cimpl_isinstance;
+static PyObject *object_class_descr; /* object.__class__ */
+static PyObject *str___class__;
 
 static vinfo_t *get_len_of_range(PsycoObject *po, vinfo_t *lo, vinfo_t *hi
                                  /*, vinfo_t* step == 1 currently*/) {
@@ -224,6 +228,100 @@ static vinfo_t *pbuiltin_pow(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs) {
   return PsycoCFunction_CallFast(po, cimpl_pow, METH_FASTCALL, vself, vargs);
 }
 
+/* builtin_isinstance: Objects/abstract.c:PyObject_IsInstance decided at
+   compile time from the promoted type of obj and the promoted class (or
+   tuple of classes). 1 or 0 if known, -1 if it must be asked at run time.
+   Only the rules for an exact 'type' cls are folded; a metaclass's
+   __instancecheck__ is never guessed. A heap type's subtype relation can
+   change (__bases__ assignment) and so is never folded; a static type's
+   can't. A false answer also needs obj.__class__ to be the ordinary
+   object.__class__, which recursive_isinstance consults next. */
+static int isinstance_known(PyTypeObject *tp, PyObject *cls, int depth) {
+  if ((PyObject *)tp == cls)
+    return 1;
+  if (PyTuple_Check(cls)) {
+    Py_ssize_t i;
+    if (depth > 8) /* CPython counts recursion here */
+      return -1;
+    for (i = 0; i < PyTuple_GET_SIZE(cls); i++) {
+      int r = isinstance_known(tp, PyTuple_GET_ITEM(cls, i), depth + 1);
+      if (r != 0)
+        return r; /* found, or unknown: then CPython decides it all */
+    }
+    return 0;
+  }
+  if (!PyType_CheckExact(cls) || (tp->tp_flags & Py_TPFLAGS_HEAPTYPE))
+    return -1;
+  if (PyType_IsSubtype(tp, (PyTypeObject *)cls))
+    return 1;
+  if (tp->tp_getattro == PyObject_GenericGetAttr &&
+      _PyType_Lookup(tp, str___class__) == object_class_descr)
+    return 0;
+  return -1;
+}
+
+/* the same for a class given as a vinfo: a virtual tuple (built here) is
+   walked item by item, any other run-time tuple is left to CPython, and
+   anything else (a class: long-lived) is promoted. Sets *r; returns false
+   on error or promotion. */
+static bool isinstance_known_v(PsycoObject *po, PyTypeObject *tp,
+                               vinfo_t *vcls, int depth, int *r) {
+  PyObject *cls;
+  int m;
+  if (Psyco_KnownType(vcls) == &PyTuple_Type && !is_compiletime(vcls->source) &&
+      PsycoTuple_Load(vcls) >= 0) {
+    int i, n = PsycoTuple_Load(vcls);
+    *r = 0;
+    if (depth > 8)
+      *r = -1;
+    for (i = 0; i < n && *r == 0; i++)
+      if (!isinstance_known_v(po, tp, PsycoTuple_GET_ITEM(vcls, i), depth + 1,
+                              r))
+        return false;
+    return true;
+  }
+  if (!is_compiletime(vcls->source)) {
+    /* a tuple made at run time is a new object each time: promoting it
+       would compile a new version per call (up to MEGAMORPHIC_MAX) */
+    PyTypeObject *ctp = Psyco_NeedType(po, vcls);
+    if (ctp == NULL)
+      return false;
+    if (PyType_IsSubtype(ctp, &PyTuple_Type)) {
+      *r = -1;
+      return true;
+    }
+  }
+  m = psyco_pyobj_atcompiletime_mega(po, vcls, &cls);
+  if (m < 0)
+    return false;
+  *r = m == 0 ? -1 : isinstance_known(tp, cls, depth);
+  return true;
+}
+
+static vinfo_t *pbuiltin_isinstance(PsycoObject *po, vinfo_t *vself,
+                                    vinfo_t *vargs) {
+  vinfo_t *vobj, *vcls, *x;
+  PyTypeObject *tp;
+  int r;
+  if (PsycoTuple_Load(vargs) != 2)
+    return PsycoCFunction_CallFast(po, cimpl_isinstance, METH_FASTCALL, vself,
+                                   vargs);
+  vobj = PsycoTuple_GET_ITEM(vargs, 0);
+  vcls = PsycoTuple_GET_ITEM(vargs, 1);
+  tp = Psyco_NeedType(po, vobj);
+  if (tp == NULL)
+    return NULL;
+  if (!isinstance_known_v(po, tp, vcls, 0, &r))
+    return NULL;
+  if (r == 1)
+    return psyco_vi_Py_True();
+  if (r == 0)
+    return psyco_vi_Py_False();
+  x = psyco_generic_call(po, PyObject_IsInstance, CfCommonIntBoolOrError,
+                         "vv", vobj, vcls);
+  return x != NULL ? PsycoBool_FROM_WORD(x) : NULL;
+}
+
 /***************************************************************/
 
 INITIALIZATIONFN
@@ -246,6 +344,9 @@ void psyco_bltinmodule_init(void) {
   DEFMETA(min, METH_VARARGS | METH_KEYWORDS);
   DEFMETA(max, METH_VARARGS | METH_KEYWORDS);
   DEFMETA(pow, METH_FASTCALL);
+  DEFMETA(isinstance, METH_FASTCALL);
+  str___class__ = PyUnicode_InternFromString("__class__");
+  object_class_descr = _PyType_Lookup(&PyBaseObject_Type, str___class__);
 #undef DEFMETA
   Py_XDECREF(md);
 }

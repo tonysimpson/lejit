@@ -1,6 +1,6 @@
 # Builtins with Psyco metas (KNOWN_BUGS F2): len, abs, id, and the
 # METH_FASTCALL ones (divmod, pow), whose metas take a tuple
-# (pmethodobject.h); hash, min, max.
+# (pmethodobject.h); hash, min, max, isinstance.
 
 class L:
     def __len__(self):
@@ -169,6 +169,93 @@ def pow_bad_calls(t):
         out.append(str(e))
     return out
 
+import collections.abc
+import weakref
+
+class Base:
+    pass
+
+class Derived(Base):
+    pass
+
+class Other:
+    pass
+
+class MyInt(int):
+    pass
+
+class FakeInt:
+    # isinstance consults __class__ when the type check fails
+    @property
+    def __class__(self):
+        return int
+
+class Meta(type):
+    def __instancecheck__(cls, inst):
+        return inst == 'yes'
+
+class ByMeta(metaclass=Meta):
+    pass
+
+def isinstances(x):
+    try:
+        return (isinstance(x, int), isinstance(x, (str, float)),
+                isinstance(x, Base), isinstance(x, (Other, (Base, int))),
+                isinstance(x, object), isinstance(x, ()),
+                isinstance(x, collections.abc.Sequence),
+                isinstance(x, ByMeta), isinstance(x, (Base, MyInt)))
+    except TypeError as e:
+        return str(e)
+
+def isinstance_bad(x):
+    out = []
+    for cls in (int, 5, (int, 5), (5, int)):
+        try:
+            out.append(isinstance(x, cls))
+        except TypeError as e:
+            out.append(str(e))
+    try:
+        out.append(isinstance(x))
+    except TypeError as e:
+        out.append(str(e))
+    return out
+
+def isinstance_proxy():
+    b = Derived()
+    p = weakref.proxy(b)
+    return isinstance(p, Base), isinstance(p, weakref.ProxyType), isinstance(p, int)
+
+class C1:
+    pass
+
+class D1:
+    pass
+
+def isinstance_bases_change():
+    # a heap type's subtype relation can change between two calls
+    x = C1()
+    before = isinstance(x, D1)
+    C1.__bases__ = (D1,)
+    during = isinstance(x, D1)
+    C1.__bases__ = (object,)
+    return before, during, isinstance(x, D1)
+
+def check_against(x, classes):
+    return [isinstance(x, c) for c in classes]
+
+def isinstance_many_classes():
+    # one call site sees many classes: the promotion goes megamorphic
+    classes = [int, str, float, list, dict, tuple, set, bytes, Base, Derived,
+               Other, MyInt, bool, complex, frozenset, type, object]
+    out = []
+    for v in (1, 'a', 2.5, [], Derived(), True, MyInt(3)):
+        out.append(check_against(v, classes))
+    return out
+
+def isinstance_globals_tuple(x):
+    # (Base, int) is built at run time from globals: a virtual tuple
+    return isinstance(x, (Base, int)), isinstance(x, (Other, str))
+
 CASES = [
     ('lens', "[([1, 2], (1,), 'abcd', {'k': 1}), ([], (), '', {})]", {}),
     ('len_user', '[(L(),), (BadLen(),), (5,), (None,)]', {}),
@@ -187,5 +274,11 @@ CASES = [
     ('min_max_loop', [(50,)], {}),
     ('min_max_fallbacks', [([3, -7, 2],), ([],), ((5,),)], {}),
     ('pows', [(2, 10), (2, -1), (-3, 3), (0, -1), (2.0, 0.5), (2**40, 3)], {}),
+    ('isinstances', "[(1,), (True,), (2.5,), ('a',), ('yes',), (Base(),), (Derived(),), (Other(),), (MyInt(4),), (FakeInt(),), (None,), ([1],), ((1,),)]", {}),
+    ('isinstance_bad', [(1,), ('s',)], {}),
+    ('isinstance_proxy', [()], {}),
+    ('isinstance_bases_change', [()], {}),
+    ('isinstance_many_classes', [()], {}),
+    ('isinstance_globals_tuple', "[(1,), (Derived(),), ('s',), (2.5,)]", {}),
     ('pow_bad_calls', [((2, 3),), ((2,),), ((2, 3, 4, 5),)], {}),
 ]
