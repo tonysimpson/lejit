@@ -737,7 +737,7 @@ typedef enum {
 #define POP_R(r) BASE_ENCODING(false, 0, 0, 0, 0, 0x58, 0, r);
 /* @asm: pop qword ptr [{rm}{o}] */
 #define POP_O(rm, o)                                                           \
-  OFFSET_ENCODING(false, false, 1, 0x8F, 0, 0, 0x40, 0, 0, rm, o)
+  OFFSET_ENCODING(false, false, 1, 0x8F, 0, 0, 0, 0, 0, rm, o)
 #define RET()                                                                  \
   do {                                                                         \
     ni_trace_return((code_t *)(code), 0);                                      \
