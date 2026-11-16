@@ -205,6 +205,23 @@ _find_merge_points(PyCodeObject *co)
     return report;
 }
 
+/* builtins that read the calling frame's locals, which compiled code keeps
+   in registers and on the machine stack (KNOWN_BUGS C15); upstream had the
+   same list (NoControlFlowIfBuiltin) but only warned at run time */
+static const char *const frame_locals_builtins[] = {
+    "locals", "vars", "dir", "eval", "exec", NULL};
+
+static int
+loads_frame_locals_builtin(PyCodeObject *co, int namei)
+{
+    int i;
+    PyObject *name = PyTuple_GET_ITEM(co->co_names, namei);
+    for (i = 0; frame_locals_builtins[i] != NULL; i++)
+        if (_PyUnicode_EqualToASCIIString(name, frame_locals_builtins[i]))
+            return 1;
+    return 0;
+}
+
 static PyObject *
 _build_merge_points(PyCodeObject *co, int module)
 {
@@ -214,6 +231,7 @@ _build_merge_points(PyCodeObject *co, int module)
     const _Py_CODEUNIT *first_instr;
     const _Py_CODEUNIT *instr_end;
     co_report_t *report;
+    int extended_arg = 0;
 
     /* XXX tony: all these not supported/buggy currently */
     if (module) {
@@ -238,6 +256,10 @@ _build_merge_points(PyCodeObject *co, int module)
 
     for (; next_instr < instr_end;) {
         NEXTOPARG();
+        oparg |= extended_arg;
+        extended_arg = opcode == EXTENDED_ARG ? oparg << 8 : 0;
+        if (opcode == LOAD_GLOBAL && loads_frame_locals_builtin(co, oparg))
+            goto not_ok;
 
         switch (opcode) {
             case POP_TOP:
