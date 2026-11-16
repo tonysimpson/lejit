@@ -10,12 +10,19 @@ static PyObject *NiCode_Run(PyObject *codebuf, PyFrameObject *f) {
   stack_frame_info_t **finfo;
   PyObject *result;
 
+  PyThreadState *tstate = PyThreadState_GET();
+
   if (!psyco_frame_start_register(f, &finfo)) {
     return NULL;
   }
+  /* as ceval: the frame is the current one while its code runs, so that
+     sys._getframe, frames made by calls from here (their f_back) and
+     pvisitframes() see it */
+  tstate->frame = f;
   /* tdict arg is NULL here as it is not used - not sure why */
   result = psyco_processor_run((CodeBufferObject *)codebuf,
                                (long *)f->f_localsplus, &finfo);
+  tstate->frame = f->f_back;
   psyco_trash_object(NULL); /* free any trashed object now */
   if (!psyco_frame_start_unregister(f)) {
     Py_XDECREF(result);

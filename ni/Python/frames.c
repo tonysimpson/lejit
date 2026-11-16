@@ -1,11 +1,12 @@
 /*
  * Makes compiled frames visible to Python. stack_frame_info_t records (code,
  * globals) for each compiled call, and the machine stack is walked through the
- * finfo slot that each Psyco frame keeps (x64/iprocessor.c). Upstream also
- * hooked _PyThreadState_GetFrame so that sys._getframe and f_back saw emulated
- * frames. That hook is commented out (there is no PEP 523 equivalent), so the
- * real frames are never updated (f_lasti/f_lineno) and inlined callees have no
- * frame at all.
+ * finfo slot that each Psyco frame keeps (x64/iprocessor.c). sys._getframe
+ * is replaced by ni_getframe, which counts compiled frames and emulates
+ * them (no locals, first line only). Not yet done: upstream's hook of the
+ * frame getter behind PyEval_GetFrame, and C code that walks
+ * tstate->frame itself (warnings) still skips compiled frames. Real
+ * frames running compiled code are never updated (f_lasti/f_lineno).
  */
 #include "frames.h"
 #include "../Objects/pobject.h"
@@ -106,8 +107,13 @@ DEFINEFN FrameRuntime *psyco_frame_start_get(PyFrameObject *f) {
   if (tdict == NULL) {
     return NULL;
   }
-  return (FrameRuntime *)PyCapsule_GetPointer(
-      PyDict_GetItem(tdict, (PyObject *)f), NULL);
+  {
+    /* most frames are not running compiled code: no entry, and no error */
+    PyObject *cap = PyDict_GetItem(tdict, (PyObject *)f);
+    if (cap == NULL)
+      return NULL;
+    return (FrameRuntime *)PyCapsule_GetPointer(cap, NULL);
+  }
 }
 
 DEFINEFN int psyco_frame_start_unregister(PyFrameObject *f) {
@@ -284,16 +290,59 @@ PyObject *psyco_get_globals(void) {
   return result;
 }
 
-/* XXX tony: need a new way to do this, write a PEP? */
-/*
-static PyFrameObject *psyco_threadstate_getframe(PyThreadState *self) {
-  return (PyFrameObject *)pvisitframes(visit_first_frame, (void *)self);
+/* sys._getframe, replaced (as upstream's support.py did) by a version that
+   also counts compiled frames, which have no real frame object: they are
+   emulated, with f_lasti == -1 and empty locals (KNOWN_BUGS C11; history B2). */
+
+static PyObject *visit_nth_frame(PyObject *o, void *n) {
+  if ((*(int *)n)-- == 0)
+    return (PyObject *)psyco_emulate_frame(o); /* new reference */
+  return NULL;
 }
-*/
+
+/* the frame 'depth' calls below the top, or NULL (no exception set) */
+static PyFrameObject *nth_frame(int depth) {
+  return (PyFrameObject *)pvisitframes(visit_nth_frame, &depth);
+}
+
+static PyObject *ni_getframe(PyObject *self, PyObject *args) {
+  int depth = 0;
+  PyFrameObject *top, *f;
+  if (!PyArg_ParseTuple(args, "|i:_getframe", &depth))
+    return NULL;
+  top = nth_frame(depth);
+  if (top == NULL) {
+    PyErr_SetString(PyExc_ValueError, "call stack is not deep enough");
+    return NULL;
+  }
+  /* link emulated frames to the next frame out; a real frame keeps its own
+     f_back, which skips any compiled callers between it and its creator
+     (frames are not created in stack order) */
+  for (f = top; f->f_lasti == -1 && f->f_back == NULL;) {
+    PyFrameObject *next = nth_frame(++depth);
+    if (next == NULL)
+      break;
+    f->f_back = next; /* takes the reference */
+    f = next;
+  }
+  return (PyObject *)top;
+}
+
+static PyMethodDef ni_getframe_def = {
+    "_getframe", ni_getframe, METH_VARARGS,
+    "_getframe([depth]) -> frameobject\n\n"
+    "Return a frame object from the call stack, counting frames of code\n"
+    "compiled by Ni (emulated: no locals, f_lineno is the first line)."};
 
 INITIALIZATIONFN
 void psyco_frames_init(void) {
-  /* XXX tony: Can't do this anymore. Check the history of this file for old
-   * implementation */
-  //_PyThreadState_GetFrame = psyco_threadstate_getframe;
+  /* Upstream also hooked _PyThreadState_GetFrame (in 3.7,
+     _PyRuntime.gilstate.getframe, behind PyEval_GetFrame), not done yet */
+  PyObject *sysmod = PyImport_ImportModule("sys");
+  PyObject *fn = PyCFunction_New(&ni_getframe_def, NULL);
+  if (sysmod == NULL || fn == NULL ||
+      PyObject_SetAttrString(sysmod, "_getframe", fn) < 0)
+    PyErr_Print();
+  Py_XDECREF(fn);
+  Py_XDECREF(sysmod);
 }

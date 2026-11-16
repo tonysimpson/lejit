@@ -20,7 +20,6 @@ MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
 KNOWN = {
     'test_collections': 'under investigation',
     'test_json': 'under investigation (aborts)',
-    'test_statistics': 'under investigation (import error)',
 }
 
 CHILD = r'''
