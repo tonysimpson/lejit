@@ -687,7 +687,7 @@ typedef enum {
   WRITE_8BIT(i)
 /* @asm: add qword ptr [{rm}{o:d8}], {i:i8} */
 #define ADD_O8_I8(rm, o, i)                                                    \
-  OFFSET_ENCODING(true, false, 1, 0x83, 0, 0, 0, 8, 0, rm, o);                 \
+  OFFSET_ENCODING(false, true, 1, 0x83, 0, 0, 0, 8, 0, rm, o);                 \
   WRITE_8BIT(i)
 /* @asm: sub qword ptr [{rm}], {i:i8} */
 #define SUB_A_I8(rm, i)                                                        \
