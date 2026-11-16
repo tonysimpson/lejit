@@ -33,7 +33,14 @@ static double cimpl_fp_sub(double a, double b) { return a - b; }
 
 static double cimpl_fp_mul(double a, double b) { return a * b; }
 
-static double cimpl_fp_div(double a, double b) { return a / b; }
+/* float_div: dividing by zero raises, it doesn't give inf/nan */
+static double cimpl_fp_div(double a, double b) {
+  if (b == 0.0) {
+    PyErr_SetString(PyExc_ZeroDivisionError, "float division by zero");
+    return -1.0;
+  }
+  return a / b;
+}
 
 static double cimpl_fp_neg(double a) { return -a; }
 
@@ -301,8 +308,9 @@ static vinfo_t *pfloat_mul(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
 static vinfo_t *pfloat_div(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
   vinfo_t *a, *b, *x;
   CONVERT_TO_DOUBLE2(v, a, w, b);
-  x = psyco_generic_call(po, cimpl_fp_div, CfPure | CfReturnTypeDouble, "dd", a,
-                         b);
+  /* not CfPure: it can raise */
+  x = psyco_generic_call(po, cimpl_fp_div, CfPyErrCheck | CfReturnTypeDouble,
+                         "dd", a, b);
   RELEASE_DOUBLE2(a, b);
   return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;
 }
