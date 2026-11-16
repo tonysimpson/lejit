@@ -40,6 +40,9 @@ step "behaviour tests (tests/run.py)"
 step "compile bounds (tests/compile_bounds.py)"
 "$PY37" tests/compile_bounds.py
 
+step "CPython's own tests, with and without Ni (tests/cpython_tests.py)"
+"$PY37" tests/cpython_tests.py
+
 step "encoder tests (tests/encoding/check.py)"
 python3 tests/encoding/check.py
 

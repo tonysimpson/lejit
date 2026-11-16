@@ -135,11 +135,16 @@ PyMODINIT_FUNC PyInit_ni(void) {
   module = PyModule_Create(&ni_module);
   /* XXX tony: make this code handle errors properly */
   if (module) {
+    /* The eval hook uses these two dicts for as long as Python code runs,
+       which is after the garbage collector has cleared this module at
+       shutdown (weakref callbacks, __del__): they keep a reference of
+       their own besides the module's (KNOWN_BUGS C10) */
     co_to_mp = PyDict_New();
     if (co_to_mp == NULL) {
       Py_DECREF(module);
       return NULL;
     }
+    Py_INCREF(co_to_mp);
     if (PyModule_AddObject(module, "co_to_mp", co_to_mp)) {
       Py_DECREF(co_to_mp);
       Py_DECREF(module);
@@ -150,6 +155,7 @@ PyMODINIT_FUNC PyInit_ni(void) {
       Py_DECREF(module);
       return NULL;
     }
+    Py_INCREF(co_to_entry_point);
     if (PyModule_AddObject(module, "co_to_entry_point", co_to_entry_point)) {
       Py_DECREF(co_to_entry_point);
       Py_DECREF(module);
