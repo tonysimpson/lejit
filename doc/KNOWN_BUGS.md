@@ -65,7 +65,7 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | B5 | **Fixed** (`1e65d32`). rel32 jumps assumed every code buffer is within ±2 GB of every other, but `platform.c` mmapped without a hint. Regions are now requested contiguously and one out of reach is refused loudly; the jump emitters `extra_assert` the range. | Fixed | [run] |
 | B6 | `STACK_DEPTH_SINCE_CALL` returns -1 when inlining with no `LOC_CONTINUATION`, which breaks the alignment arithmetic. | Possible | [read] |
 | B7 | `psyco_unify` register phase: when a value must sit in two registers, `XCHG` can move the first copy away. | Possible | [inferred] |
-| B8 | `psyco_call_code_builder` ignores its `restore` argument. | Possible lost ccreg | [read] |
+| B8 | `psyco_call_code_builder` ignores its `restore` argument and saves only RAX. Not live [read]: only callee-saved registers are allocated, promotion does `NEED_CC` first, respawn recompiles, and `psyco_coding_pause` now asserts no condition code survives (`extra_assert`, `4554896`). | Guarded | [read] |
 | B9 | **Fixed** (`2286ac5`). Backend `assert()`s were compiled out by `-DNDEBUG`, and some were wrong (an undeclared `vi`; `_CHECK_IS_NEXT_ARG` required ascending order while callers go last first). Now correct `extra_assert`s, plus a check that every call argument is set. | Fixed | [run] |
 | B10 | Executable memory is mapped RWX (no W^X). Hardened kernels may refuse it. | Environment | [read] |
 | B11 | **Fixed** (`da6eb6d`). `ADD_O8_I8`, the `Py_INCREF` emitter, had its `updatable`/`rex_w` arguments swapped, so it was a 32-bit add on `ob_refcnt`. | Was live, benign in practice | [run] encoder test |

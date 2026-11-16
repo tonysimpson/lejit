@@ -56,3 +56,5 @@ Upstream Psyco's test suite (`test/`) and the Ni regression pack were removed (s
 - CPython's sysconfig CFLAGS include `-DNDEBUG`, so plain `assert()` in the backend is compiled out. Some of those asserts are wrong (`doc/KNOWN_BUGS.md` B9). Psyco's own checks are `extra_assert`, enabled by `NI_ALL_CHECKS=1`.
 - To prove an edit is comment-only without building, strip comments and compare against git:
   `gcc -fpreprocessed -E -P -x c FILE | tr -d ' \t\n' | md5sum`, compared with the same for `git show HEAD:FILE`.
+
+**Header changes are not rebuilt.** distutils tracks only `.c` files, so after editing a header (for example `ni/x64/iencoding.h`) run `rm -rf build ni*.so` before building, or the tests run a stale `ni.so`. [run]
