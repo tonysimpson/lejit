@@ -348,7 +348,10 @@ void psyco_virtualize_exception(PsycoObject *po) {
   extra_assert(exc != NULL);
 
   vexc = vinfo_new(CompileTime_NewSk(sk_new((long)exc, SkFlagPyObj)));
-  vval = vinfo_new(CompileTime_NewSk(sk_new((long)val, SkFlagPyObj)));
+  /* val is NULL for PyErr_SetNone, e.g. MemoryError (Tismer, hg 643589a) */
+  vval = val == NULL
+             ? NULL
+             : vinfo_new(CompileTime_NewSk(sk_new((long)val, SkFlagPyObj)));
   vtb = tb == NULL
             ? NULL
             : vinfo_new(CompileTime_NewSk(sk_new((long)tb, SkFlagPyObj)));
