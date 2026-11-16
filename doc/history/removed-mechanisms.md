@@ -103,6 +103,7 @@ The two biggest commits:
 - *What it did:* small functions were inlined. The upstream test was one merge point, `bytecodeweight <= INLINE_MAXIMUM_WEIGHT` (6), and no block stack.
 - *Now:* `psyco_call_pyfunc`, `call_with_inline_frame`, `EInline` and `psyco_save_inline_po`/`psyco_restore_inline_po` remain. `_find_merge_points` sets `MP_FLAGS_INLINABLE` only when `mergepoint_count == 1 && flags == 0`, which almost never holds when every instruction is a merge point. There is no weight test any more.
 - *Commit:* a880444. Reason inferred: a side effect of A2.
+- *Restored* in `085392a` (D10 step 2), with B6 fixed.
 - *Relevance:* core.
 
 **A5. Integers** [read, via the Objects pass]
