@@ -38,6 +38,8 @@ Then the rest of the baseline: D15 dead-local deletion (`458ef80`), inlining aga
 
 **Builtin metas** (`0feefaf`, after the NeedForSpeed branch's, translated from 3.7's `bltinmodule.c`): `hash`, `min`/`max` (two or more arguments) and `pow`. They needed METH_FASTCALL dispatch (F23: in 3.7 `divmod`, `pow`, `round`, `sum`, `isinstance` and `next` are FASTCALL, so no meta for them could run) and F24. Then `isinstance` (`3494aba`: folded to a constant for static types and tuples of them; heap types, `__instancecheck__` and run-time tuples ask CPython), `round(x)` and the type calls `int(x)`, `float(x)`, `type(x)` (`cea78eb`, a meta for `type_call`), and `sum` over a tuple of known length (`d487bbb`). Both `isinstance` and `type_call` only make constants of static types (`96aaec2`, F25: a promoted heap class stayed alive). [run] Release build: an `isinstance` dispatch loop 0.045s → 0.030s (CPython 0.033s); an `int()`/`round()`/`float()` loop 0.120s → 0.062s (CPython 0.121s); a tuple `sum` loop 0.042s → 0.015s (CPython 0.042s).
 
+**Benchmarks** (`tools/bench.py`, release build, best of 3, fresh process per mode, results checked equal) [run], 2026-11-16 at `0fc9420`: count_primes 3.4×, sieve 3.5×, collatz 3.2×, digit_sums (divmod) 2.0×, mandel 9.7×, quantise (int/float/round) 2.8×, stats (min/max/sum/round/abs) 2.7×, shapes (isinstance dispatch) 1.0×, the same with builtins in locals 4.6×, hashing 1.6×, nqueens 2.5×, nbody 2.4×, word_counts 1.2×; total 2.6×. The gap between shapes and shapes_locals is global lookups: every LOAD_GLOBAL is a run-time dict lookup (`cimpl_load_global`, D23), and in an `isinstance(x, int)` loop they cost about 20 times the work they guard. [run]
+
 ## 2026-11-16: first indexing pass (at `e1fd808`)
 
 Done:
