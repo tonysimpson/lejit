@@ -113,7 +113,15 @@ int psyco_fatal_error(char *msg, char *filename, int lineno) {
 
 const static char MODULE_NAME[] = "ni";
 
-static PyMethodDef module_methods[] = {{NULL, NULL, 0, NULL}};
+/* counters for tests and measurements, e.g. that a loop is not compiled
+   afresh on every back-edge */
+static PyObject *ni_stats(PyObject *self, PyObject *unused) {
+  return Py_BuildValue("{sl}", "code_buffers", psyco_stat_code_buffers);
+}
+
+static PyMethodDef module_methods[] = {
+    {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
+    {NULL, NULL, 0, NULL}};
 
 static struct PyModuleDef ni_module = {PyModuleDef_HEAD_INIT, MODULE_NAME, NULL,
                                        -1, module_methods};

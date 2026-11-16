@@ -37,6 +37,9 @@ echo "ok ($(ls ni*.so))"
 step "behaviour tests (tests/run.py)"
 "$PY37" tests/run.py
 
+step "compile bounds (tests/compile_bounds.py)"
+"$PY37" tests/compile_bounds.py
+
 step "encoder tests (tests/encoding/check.py)"
 python3 tests/encoding/check.py
 

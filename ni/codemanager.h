@@ -30,6 +30,8 @@ struct CodeBufferObject_s {
 #define SET_CODEMODE(b, mode)   do { } while (0)   /* nothing */
 
 EXTERNVAR PyTypeObject CodeBuffer_Type;
+/* code buffers started so far (not proxies): ni._stats() */
+EXTERNVAR long psyco_stat_code_buffers;
 
 
 /* starts a new code buffer. The limit is returned in the optional last argument.
