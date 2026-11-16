@@ -50,6 +50,19 @@ def shared_after_loop(n):
         x = y
     return s, x, y
 
+# The same, with the sharing set up on alternate iterations.
+def alternating_share(n):
+    a = n + 1
+    b = n + 2
+    i = 0
+    while i < n:
+        i += 1
+        if i & 1:
+            b = a
+        else:
+            a = a + b
+    return a, b
+
 CASES = [
     ('neg_index_loop', "[(['a'],)]", {}),
     ('neg_index_loop', "[(['a', 'bb'],)]", {}),
@@ -58,4 +71,5 @@ CASES = [
     ('pos_index_loop', "[(['a', 'bb', 'c'],)]", {}),
     ('straight_line', "[(['a', 'bb', 'ccc'],)]", {}),
     ('shared_after_loop', "[(1,), (2,), (6,)]", {}),
+    ('alternating_share', "[(1,), (2,), (3,), (6,)]", {}),
 ]
