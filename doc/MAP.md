@@ -86,7 +86,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Python/pbltinmodule.h` | glue | Python/bltinmodule.c (header only) | Empty interface header for pbltinmodule.c | - | `e1fd808` |
 | `ni/Python/pycheader.h` | core | Include/frameobject.h (PyFrameObject fields it replaces) | pyc_data_t (language-specific compiler state) and LOC_* slots in po->vlocals. | Only vlocals is compared by the dispatcher; pr fields must not change generated-code meaning. | `e1fd808` |
 | `ni/Python/pycinternal.h` | glue | Include/opcode.h | Includes CPython internal headers / opcode names. |  | `e1fd808` |
-| `ni/Python/pycompiler.c` | translated + core | Python/ceval.c: _PyEval_EvalFrameDefault and helpers (do_raise, import_name, unpack_iterable, call_function) | The bytecode compiler: compile-time re-implementation of ceval's main loop, block stack unwinding, exceptions, tracebacks, imports, calls. | Largest translated file. Opcode cases are mechanical; promotion/inline/merge-point handling at loop end is core. | `609ef00` |
+| `ni/Python/pycompiler.c` | translated + core | Python/ceval.c: _PyEval_EvalFrameDefault and helpers (do_raise, import_name, unpack_iterable, call_function) | The bytecode compiler: compile-time re-implementation of ceval's main loop, block stack unwinding, exceptions, tracebacks, imports, calls. | Largest translated file. Opcode cases are mechanical; promotion/inline/merge-point handling at loop end is core. | `0fae193` |
 | `ni/Python/pycompiler.h` | core | Python/errors.c (PyErr_* analogues) | Pseudo-exceptions, promotion helpers (psyco_atcompiletime), meta-function registry (Psyco_DefineMeta/Psyco_META*), pyc_data_t snapshots. | Psyco_META* is the hook a generated compile-time CPython would plug into. | `e1fd808` |
 | `ni/Python/pyver.h` | glue | none | Python-version feature switches. | Mostly Py2.x version tests now dead under 3.7. | `e1fd808` |
 | `ni/x64/idispatcher.c` | backend + core | none | psyco_unify(): emit stack/register moves (+incref/decref) to make live state match a frozen snapshot, then JMP to it. | Register-move phase was rewritten for x64; XCHG path may break when one vinfo must sit in two registers (see report). | `5408840` |
@@ -110,7 +110,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | file | layer | role | notes | reviewed |
 |---|---|---|---|---|
 | `setup.py` | glue | distutils build of the `ni` extension. Env switches `NI_ALL_STATIC`, `NI_TRACE`, `NI_ALL_CHECKS`; x86_64 only; links libffi; `-fcommon`. | distutils is gone in Python ≥ 3.12. | `f31d8f5` |
-| `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests). | | `32f4c3a` |
+| `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests). | | `0fae193` |
 | `tests/encoding/check.py` | tooling | Checks `@asm`-annotated emitters in `iencoding.h` against GNU `as`. | | `6ca580a` |
 | `tests/smoke.py` | tooling | Stdlib smoke test: about 30 modules, output must match with and without Ni. | | `6ca580a` |
 | `tests/compile_bounds.py` | tooling | Fails if warm code keeps starting code buffers (`ni._stats()`); run under Ni by check.sh. | | `085392a` |

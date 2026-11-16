@@ -55,7 +55,7 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | F18 | Exception details that still differ from 3.7 after F4: (1) a bare `raise` records one extra traceback entry (ceval's reraise skips it); (2) fixed as F20; (3) the Py2 per-frame saved exception (`FINALIZE_FRAME_LOCALS`, `cimpl_finalize_frame_locals`, a prologue slot) is now never set, so it is dead code still writing `curexc_*` if reached. | Live (minor) | [read] |
 | F19 | **Fixed** (`ec836d0`). Code with keyword-argument or star calls was never compiled: `CALL_FUNCTION_KW`/`CALL_FUNCTION_EX` weren't whitelisted, and the shared helper used Python 2's encoding. Still interpreted: `f(x, *a)` and `f(**a, k=1)`, which need `BUILD_TUPLE_UNPACK_WITH_CALL`/`BUILD_MAP_UNPACK_WITH_CALL`. Tests: `tests/cases/kwcalls.py`. | Fixed | [run] |
 | F20 | **Fixed** (`12b7e4e`). A finally block entered by an exception didn't make it the handled exception (F4 left a 3-tuple there): `sys.exc_info()` inside was the outer one, and an exception raised in the finally block chained to the wrong `__context__` (CPython's `test_contextlib`). Now the same EXCEPT_HANDLER block as an except clause (`pycompiler.c`, the unwind loop). Tests: `exceptions.finally_*`, `break_in_finally`. | Fixed | [run] |
-| F21 | NameError from LOAD_GLOBAL says "global name 'x' is not defined" (Python 2 wording; 3.7 says "name 'x' is not defined"): `pycompiler.c:GLOBAL_NAME_ERROR_MSG`. Found by `freeing.borrowed_globals_reused`. | Open | [run] |
+| F21 | **Fixed** (`0fae193`). NameError from LOAD_GLOBAL said "global name 'x' is not defined" (Python 2 wording): `pycompiler.c:GLOBAL_NAME_ERROR_MSG`. Test: `exceptions.undefined_global`. | Fixed | [run] |
 
 ## Backend (`ni/x64`)
 
