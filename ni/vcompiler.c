@@ -8,9 +8,7 @@
  * first reaches it.
  *
  * Field access (psyco_internal_getfld/putfld) folds loads from compile-time
- * objects in C and caches results in vinfo->array. Note that the compile-time
- * read path treats every field of 4 or more bytes as a long: right on i386,
- * but on x86-64 it reads 8 bytes from a 4-byte field (doc/KNOWN_BUGS.md).
+ * objects in C and caches results in vinfo->array.
  *
  * References to compiled code buffers are mostly dropped ("XXX don't know
  * what to do with reference"): compiled code is never freed.
@@ -543,6 +541,12 @@ vinfo_t *psyco_internal_getfld(PsycoObject *po, int findex, defield_t df,
         result = *((unsigned short *)ptr);
       else
         result = *((signed short *)ptr);
+      break;
+    case 2:
+      if ((long)df & FIELD_UNSIGNED)
+        result = *((unsigned int *)ptr);
+      else
+        result = *((int *)ptr);
       break;
     default:
       result = *((long *)ptr);
