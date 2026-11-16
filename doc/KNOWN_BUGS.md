@@ -73,6 +73,7 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | B12 | **Fixed** (`90b5cce`). `POP_O` passed 0x40 as the ModRM reg bits, so with a 32-bit displacement it encoded `pop rax` plus garbage. | Was latent | [run] encoder test |
 | B13 | **Fixed** (`ea790ae`). Memory operands based on R12 encoded as `[r12+r12*1+d]`, because `OFFSET_ENCODING` passed the base as the SIB index. | Was latent (R12 is not allocated) | [run] encoder test |
 | B14 | **Fixed** (`98f71df`). The PyErr_Occurred check after a -1 result pushed RAX, then let the register allocator run; a spill PUSH made the POP restore the wrong value and left the spilled vinfo above the top of stack. Seen as stale list lengths in loops indexing `c[-1]`, wrong results and code bytes decremented through a code address. Now emitted without allocation. Tests: `tests/cases/loops.py`, `builtin_metas.py`. | Fixed | [run] |
+| B15 | **Fixed** (`5408840`). `psyco_unify` wrote a jump to its new buffer at `po->code` even for `psyco_unify_code`'s throwaway stack buffer; B5's range assert fired (importing `enum` once merge points followed control flow). Sibling of B5's final-jump fix. Guard: `tests/smoke.py`. | Fixed | [run] |
 
 ## Core
 

@@ -2,7 +2,7 @@
 
 ## 2026-11-16: 3.7 baseline (branch `baseline-3.7`, D18)
 
-Ni builds and runs on CPython 3.7.17 (pyenv, gcc 14). Three test suites, all passing:
+Ni builds and runs on CPython 3.7.17 (pyenv, gcc 14). Test suites, all passing (`tools/check.sh` runs them all):
 - `tests/run.py`: 129 behaviour cases, each run with and without Ni, required to compile, and leak-checked. No expected failures. Two cases correctly fall back to the interpreter because of unsupported opcodes.
 - `tests/encoding/check.py`: 56 `@asm`-annotated emitters, about 192k operand combinations, compared with GNU `as`.
 - `tests/encoding/run_v_mem_mov.sh`: about 90k executed loads and stores through `v_mem_mov`.
@@ -16,6 +16,10 @@ Fixed (one commit each; details in KNOWN_BUGS):
 Inspected the generated code for `while_sum` with nianalyser (`tools/nianalyser/dump_function.py`): 80 chunks, all making sense. There are type promotions with inline caches, then residual calls to `long_add`/`long_richcompare` (integers aren't virtual yet, D13). A quick benchmark (prime counting, sieve, Collatz, Mandelbrot) ran 2× faster than CPython 3.7 for integer code (every operation is still a residual call) and 5× for float code (floats are virtual). Cheap inefficiencies seen: constant arguments always use a 10-byte `movabs`, even for 0, and stack corrections are emitted as `sub rsp, -8`.
 
 Left alone per D18 (translated layer, to be regenerated): the rest of F2–F18, notably the opcodes that keep Python 2 meanings. Then fixed B4, B5, B9, C5, and guarded M8. Quick wins: LOAD_METHOD/CALL_METHOD, DUP_TOP_TWO, BUILD_MAP/BUILD_CONST_KEY_MAP, builtin metas (F2). Compiling more real code exposed and fixed F7, C8 (EXTENDED_ARG merge points), B14 (stack corruption in the -1 error check), and zero-argument `super()` (closures now rejected). A smoke test of about 30 stdlib modules (json, re, textwrap, argparse, enum, ast, decimal, csv...) gives the same output under Ni as under CPython. Open backend and core items: B6–B8, B10, C2, C3.
+
+Later the same day: A19 (compact immediates), B7 (a value wanted in two registers at unify), B8 (guarded), F19/F3 (keyword and star calls, 300-argument calls), and **D10: merge points from control flow** (`27f066d`). D10 needed B15 and a fix for popping jumps back to a loop head, which otherwise compiled each back-edge afresh. Same speed on hot loops; compile-heavy code (the smoke test) about 2× faster with less memory. Guardrails (D21): `tools/check.sh` runs everything, including `tests/compile_bounds.py`, which bounds how much code is compiled (`ni._stats()`). `tools/demo.py` runs about 2× faster under Ni than plain.
+
+Run with Ni, CPython's own `test_bisect`, `test_heapq`, `test_textwrap`, `test_string`, `test_operator`, `test_itertools`, `test_enum`, `test_csv` and `test_base64` pass; `test_fractions`, `test_json`, `test_statistics`, `test_functools` and `test_collections` differ from plain (also before D10), under investigation.
 
 ## 2026-11-16: first indexing pass (at `e1fd808`)
 
