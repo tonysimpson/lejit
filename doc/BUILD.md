@@ -1,7 +1,7 @@
 ---
 written: 2026-11-16
 head_ref: e1fd808
-verified: false   # not built during indexing; facts below are from setup.py, README and the code
+verified: true    # built and tested on 2026-11-16 (Debian 13, gcc 14, CPython 3.7.17); see STATUS.md
 ---
 # Building, running, debugging
 
@@ -9,7 +9,8 @@ verified: false   # not built during indexing; facts below are from setup.py, RE
 - **CPython 3.7, x86-64 Linux.** The code depends on 3.7 internals (see `REFERENCES.md`), so it won't compile against 3.8+ without porting.
 - `libffi` (headers and library). `setup.py` links `-lffi`, and the backend uses it for C calls.
 - `setup.py` uses `distutils`, which was removed in Python 3.12. That's fine under 3.7.
-- No Python 3.7 was installed on the owner's machine at indexing time (system Python is 3.13). `uv` offers 3.8 at the earliest, not 3.7. `pyenv` is installed and can build 3.7 from source. libffi headers are present (`/usr/include/x86_64-linux-gnu/ffi.h`).
+- CPython 3.7.17 via `pyenv install 3.7.17` (`uv` offers 3.8 at the earliest). libffi headers are present (`/usr/include/x86_64-linux-gnu/ffi.h`).
+- gcc 10+ needs `-fcommon` (set in `setup.py`), because the headers define globals without `extern` (KNOWN_BUGS C5).
 
 ## Build
 ```
@@ -23,14 +24,14 @@ pip install .                                   # release: -O3
 `import ni` installs the frame-eval hook immediately (`ni/eval_hook.c`). From then on, every non-module function whose opcodes are all in `ni/mergepoints.c` is compiled on its first call. There's no Python-level API (`module_methods` is empty). The README says only very simple functions work, for example integer loops and `a + b`.
 
 ## Debug
-- **nianalyser** (`tools/nianalyser`): runs the target under `pointbreak`, sets breakpoints on the empty `ni_trace_*` functions in `ni/ni.c`, and records emitted code, jumps, calls and unifications, disassembled with `distorm3`. Needs `pointbreak` (`~/work/pointbreak`), `distorm3` and `intervaltree`.
+- **nianalyser** (`tools/nianalyser`): runs the target under `pointbreak`, sets breakpoints on the empty `ni_trace_*` functions in `ni/ni.c`, and records emitted code, jumps, calls and unifications, disassembled with `distorm3`. Needs `pointbreak` (`~/work/pointbreak`, which needs `libunwind-dev` to build), `distorm3` and `intervaltree`. Not run as of 2026-11-16 (`libunwind-dev` isn't installed). Without it, dump a compiled function's code from Python: `ni.co_to_entry_point[f.__code__][0]` is a CodeBuffer; its `codestart` pointer sits just after the object header (offset 16), so read it with ctypes and disassemble with `objdump -b binary -m i386:x86-64`. Promotion records sit inline in the code and disassemble as junk.
 - `tools/test_harness`: counts `NiEval_EvalFrame` against `NiCode_Run` hits, to see how many frames actually ran compiled code.
 - `tools/test_runner`: unittest runner that imports `ni` when `NI_ENABLED` is set.
 - `tools/asm`, `tools/test_asm`, `tools/test_c_encoding`, `tools/asm_test_cases.txt`, `tools/test_mcg_template.c`: check that the C encoding macros in `ni/x64/iencoding.h` emit the same bytes as gcc's assembler.
 - gdb: build with `NI_TRACE=1`. Breakpoints on `ni_trace_*` are the natural hooks.
 
 ## Tests
-Upstream Psyco's test suite (`test/`) and the Ni regression pack were removed (see `doc/history/removed-files.md`). There is currently no automated test suite.
+Upstream Psyco's test suite (`test/`) and the Ni regression pack were removed (see `doc/history/removed-files.md`). New suites were added on 2026-11-16 (below).
 
 ### Running
 - Build Python 3.7.17 once: `pyenv install 3.7.17` (worked as-is on Debian 13 with gcc 14).
