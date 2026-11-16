@@ -20,6 +20,16 @@
 
 static source_virtual_t psyco_computed_function;
 
+/* 0 or -1, as a long so that the whole register is meaningful */
+static long cimpl_func_set(PyObject *f, long which, PyObject *value) {
+    switch (which) {
+    case 0: return PyFunction_SetClosure(f, value);
+    case 1: return PyFunction_SetAnnotations(f, value);
+    case 2: return PyFunction_SetKwDefaults(f, value);
+    default: return PyFunction_SetDefaults(f, value);
+    }
+}
+
 static bool
 compute_function(PsycoObject *po, vinfo_t *v)
 {
@@ -47,18 +57,24 @@ compute_function(PsycoObject *po, vinfo_t *v)
     if (newobj == NULL)
         return false;
 
-#define SET_FIELD(def)                                   \
-    do {                                                 \
-        other = vinfo_getitem(v, FIELD_INDEX(def));      \
-        if (other != NULL || !psyco_known_NULL(other)) { \
-            psyco_put_field(po, newobj, def, other);     \
-        }                                                \
+    /* the optional fields go through CPython's setters, which take their
+       own references (KNOWN_BUGS F7: these were raw stores, with || for &&,
+       into fields not declared mutable or reference-holding) */
+#define SET_FIELD(def, which)                                                \
+    do {                                                                     \
+        other = vinfo_getitem(v, FIELD_INDEX(def));                          \
+        if (other != NULL && !psyco_known_NULL(other)) {                     \
+            if (psyco_generic_call(po, cimpl_func_set, CfNoReturnValue |     \
+                                   CfPyErrIfNonNull, "vlv", newobj,          \
+                                   (long)(which), other) == NULL)            \
+                return false;                                                \
+        }                                                                    \
     } while (0)
 
-    SET_FIELD(FUNC_closure);
-    SET_FIELD(FUNC_annotations);
-    SET_FIELD(FUNC_kwdefaults);
-    SET_FIELD(FUNC_defaults);
+    SET_FIELD(FUNC_closure, 0);
+    SET_FIELD(FUNC_annotations, 1);
+    SET_FIELD(FUNC_kwdefaults, 2);
+    SET_FIELD(FUNC_defaults, 3);
 #undef SET_FIELD
 
     /* move the resulting non-virtual Python object back into 'v' */
