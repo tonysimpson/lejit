@@ -476,8 +476,9 @@ typedef enum {
                         rm, offset)                                            \
   do {                                                                         \
     if ((rm & 7) == 4) {                                                       \
+      /* RSP/R12 as base need a SIB byte; index 4 without REX.X = none */      \
       SIB_ENCODING(updatable, rex_w, op_len, b1, b2, b3, mod, size, r, rm,     \
-                   offset, rm, 0);                                             \
+                   offset, REG_X64_RSP, 0);                                    \
     } else {                                                                   \
       REX_ENCODING(rex_w, r, 0, rm);                                           \
       WRITE_OPCODES(op_len, b1, b2, b3);                                       \
