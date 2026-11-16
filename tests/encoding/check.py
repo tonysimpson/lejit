@@ -238,6 +238,10 @@ def normalise(t):
         m = re.match(r'xchg (\S+?),(\S+)$', ins)       # xchg is symmetric
         if m:
             ins = 'xchg ' + ','.join(sorted(m.groups()))
+        m = re.match(r'mov (e[a-z]{2}|r\d+d),(0x[0-9a-f]+)$', ins)  # 32-bit MOV
+        if m:                                          # zero-extends: same as 64
+            r = m.group(1)
+            ins = 'mov %s,%s' % ('r' + r[1:] if r[0] == 'e' else r[:-1], m.group(2))
         if ins == 'xchg rax,rax':
             ins = 'nop'
         parts.append(ins)

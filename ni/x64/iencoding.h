@@ -550,10 +550,25 @@ typedef enum {
 #define MOV_R_A(r, rm) INDIRECT_ENCODING(true, 1, 0x8B, 0, 0, 0, r, rm)
 /* @asm: mov qword ptr [{rm}], {r} */
 #define MOV_A_R(rm, r) INDIRECT_ENCODING(true, 1, 0x89, 0, 0, 0, r, rm)
-/* @asm: movabs {rm}, {i:i64} */
+/* the shortest form (history A19): a 32-bit MOV zero-extends, C7 /0
+   sign-extends an imm32; otherwise the 10-byte movabs. Not for code that
+   is patched later: that is MOV_R_UI. */
+/* @asm: mov {rm}, {i:i64} */
 #define MOV_R_I(rm, i)                                                         \
-  BASE_ENCODING(true, 0, 0, 0, 0, 0xB8, 0, rm);                                \
-  WRITE_64BIT(i)
+  do {                                                                         \
+    long _mov_i = (long)(i);                                                   \
+    if (_mov_i >= 0 && _mov_i <= 0xFFFFFFFFL) {                                \
+      BASE_ENCODING(false, 0, 0, 0, 0, 0xB8, 0, rm);                           \
+      *(dword_t *)code = (dword_t)_mov_i; /* unsigned: not WRITE_32BIT */      \
+      code += 4;                                                               \
+    } else if (FITS_IN_32BITS(_mov_i)) {                                       \
+      DIRECT_ENCODING(true, 1, 0xC7, 0, 0, 0, 0, rm);                          \
+      WRITE_32BIT(_mov_i);                                                     \
+    } else {                                                                   \
+      BASE_ENCODING(true, 0, 0, 0, 0, 0xB8, 0, rm);                            \
+      WRITE_64BIT(_mov_i);                                                     \
+    }                                                                          \
+  } while (0)
 /* @asm: movabs {rm}, {i:i64} */
 #define MOV_R_UI(rm, i)                                                        \
   BASE_ENCODING(true, 0, 0, 0, 0, 0xB8, 0, rm);                                \
