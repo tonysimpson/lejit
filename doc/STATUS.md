@@ -3,7 +3,7 @@
 ## 2026-11-16: 3.7 baseline (branch `baseline-3.7`, D18)
 
 Ni builds and runs on CPython 3.7.17 (pyenv, gcc 14). Test suites, all passing (`tools/check.sh` runs them all):
-- `tests/run.py`: 216 behaviour cases, each run with and without Ni, required to compile, and leak-checked. No expected failures. Two cases correctly fall back to the interpreter because of unsupported opcodes.
+- `tests/run.py`: 228 behaviour cases, each run with and without Ni, required to compile, and leak-checked. No expected failures. Two cases correctly fall back to the interpreter because of unsupported opcodes.
 - `tests/encoding/check.py`: 56 `@asm`-annotated emitters, about 192k operand combinations, compared with GNU `as`.
 - `tests/encoding/run_v_mem_mov.sh`: about 90k executed loads and stores through `v_mem_mov`.
 - `tests/compile_bounds.py` (how much warm code compiles) and `tests/cpython_tests.py` (50 of CPython's own test modules, with and without Ni).
@@ -35,6 +35,8 @@ Then the rest of the baseline: D15 dead-local deletion (`458ef80`), inlining aga
 | fib(27) | 0.025s | 0.012s (2.1×) | 0.010s (2.5×) | 0.009s (2.8×) |
 
 **First generated code** (`64f88e7`, QUESTIONS 26 steps 2–3): `tools/metac/gen_long.py` reads `Objects/longobject.c`. It generates + - * unary - and ~ (5 of 22 int slots), with the same calls as the hand-written versions it replaces. It logs why it skips the rest (`METACOMPILER.md`). Then the floats (`749985f`): `tools/metac/gen_float.py` generates + - * / % unary - abs and bool (8 of 14 slots) by copying the double-only C into helpers. `%` and `bool` are new.
+
+**Builtin metas** (`0feefaf`, after the NeedForSpeed branch's, translated from 3.7's `bltinmodule.c`): `hash`, `min`/`max` (two or more arguments) and `pow`. They needed METH_FASTCALL dispatch (F23: in 3.7 `divmod`, `pow`, `round`, `sum`, `isinstance` and `next` are FASTCALL, so no meta for them could run) and F24.
 
 ## 2026-11-16: first indexing pass (at `e1fd808`)
 
