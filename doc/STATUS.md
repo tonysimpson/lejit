@@ -40,6 +40,8 @@ Then the rest of the baseline: D15 dead-local deletion (`458ef80`), inlining aga
 
 **Benchmarks** (`tools/bench.py`, release build, best of 3, fresh process per mode, results checked equal) [run], 2026-11-16 at `0fc9420`: count_primes 3.4×, sieve 3.5×, collatz 3.2×, digit_sums (divmod) 2.0×, mandel 9.7×, quantise (int/float/round) 2.8×, stats (min/max/sum/round/abs) 2.7×, shapes (isinstance dispatch) 1.0×, the same with builtins in locals 4.6×, hashing 1.6×, nqueens 2.5×, nbody 2.4×, word_counts 1.2×; total 2.6×. The gap between shapes and shapes_locals is global lookups: every LOAD_GLOBAL is a run-time dict lookup (`cimpl_load_global`, D23), and in an `isinstance(x, int)` loop they cost about 20 times the work they guard. [run]
 
+**Cached globals** (`7a3a109`, D25): LOAD_GLOBAL is a constant behind a version-tag guard. [run] Release build, `tools/bench.py`: total 2.6× → 3.5×; shapes 1.0× → 5.9× (it now beats shapes_locals, 5.0×), quantise 2.8× → 7.0×, stats 2.7× → 6.8×, digit_sums 2.0× → 3.7×, hashing 1.6× → 2.2×, nbody 2.4× → 2.8×. word_counts stays 1.2× (str methods and dicts are residual calls).
+
 ## 2026-11-16: first indexing pass (at `e1fd808`)
 
 Done:

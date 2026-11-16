@@ -7,6 +7,9 @@
  *    emitted, and the *same opcode is re-run from the start* once the value is
  *    known. So an opcode must do nothing irreversible before the last point
  *    where it can fail or promote (use TOP(), and POP() only at the end).
+ *  - LOAD_GLOBAL is a constant behind a dict-version guard whose failure
+ *    respawns (load_global_cached, D25); the block is split after each such
+ *    site so that a respawn replay never re-decides one.
  *  - After the switch come the merge-point checks, then the handling of
  *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
  *    exceptions) with ceval-style unwinding of the block stack.
