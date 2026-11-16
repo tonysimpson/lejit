@@ -126,9 +126,9 @@ Example: `pstringobject.c` (Py2), `ptupleobject.c:PsycoTuple_Concat` (empty oper
 `PsycoTuple_Load`/`PsycoList_Load` gets a compile-time length and the item vinfos, so the code can specialise on arity. Returns -1 if unknown. Compile-time tuples longer than `CT_TUPLE_LOAD_SIZE_LIMIT` (15) are refused.
 Example: `pmethodobject.c:PsycoCFunction_Call` (METH_O/NOARGS), `pclassobject.c`, `pmath.c`, `psyfunc.c:psyco_call_pyfunc`.
 
-**P23 bool-select** (J; not implemented)
-Condition code → `Py_True`/`Py_False` without a call (or a virtual bool). Upstream had a virtual bool. Ni does a residual `PyBool_FromLong`.
-Example: `ni/Objects/pboolobject.h:PsycoBool_FromCondition`.
+**P23 bool-select** (J)
+Condition code → a virtual bool: a virtual int of type bool whose word is the condition. It is boxed with `PyBool_FromLong` only if it escapes; a jump on it uses the flags directly. Upstream had the same.
+Example: `ni/Objects/pboolobject.h:PsycoBool_FromCondition` (`3702e3f`).
 
 ## F. Protocols and errors
 

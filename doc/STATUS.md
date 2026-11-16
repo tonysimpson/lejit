@@ -3,7 +3,7 @@
 ## 2026-11-16: 3.7 baseline (branch `baseline-3.7`, D18)
 
 Ni builds and runs on CPython 3.7.17 (pyenv, gcc 14). Test suites, all passing (`tools/check.sh` runs them all):
-- `tests/run.py`: 208 behaviour cases, each run with and without Ni, required to compile, and leak-checked. No expected failures. Two cases correctly fall back to the interpreter because of unsupported opcodes.
+- `tests/run.py`: 209 behaviour cases, each run with and without Ni, required to compile, and leak-checked. No expected failures. Two cases correctly fall back to the interpreter because of unsupported opcodes.
 - `tests/encoding/check.py`: 56 `@asm`-annotated emitters, about 192k operand combinations, compared with GNU `as`.
 - `tests/encoding/run_v_mem_mov.sh`: about 90k executed loads and stores through `v_mem_mov`.
 - `tests/compile_bounds.py` (how much warm code compiles) and `tests/cpython_tests.py` (50 of CPython's own test modules, with and without Ni).
@@ -33,6 +33,8 @@ Then the rest of the baseline: D15 dead-local deletion (`458ef80`), inlining aga
 | collatz_longest | 0.991s | 0.496s (2.0×) | 0.383s (2.6×) | 0.324s (3.1×) |
 | mandel_art | 0.200s | 0.045s (4.4×) | 0.023s (8.7×) | 0.020s (10×) |
 | fib(27) | 0.025s | 0.012s (2.1×) | 0.010s (2.5×) | 0.009s (2.8×) |
+
+**First generated code** (`64f88e7`, QUESTIONS 26 steps 2–3): `tools/metac/gen_long.py` reads `Objects/longobject.c`. It generates + - * unary - and ~ (5 of 22 int slots), with the same calls as the hand-written versions it replaces. It logs why it skips the rest (`METACOMPILER.md`).
 
 ## 2026-11-16: first indexing pass (at `e1fd808`)
 
