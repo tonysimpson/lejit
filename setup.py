@@ -77,6 +77,12 @@ if NI_TRACE:
     extra_compile_args = ['-O0', '-g3', '-Wall', '-fno-stack-protector']
 else:
     extra_compile_args = ['-O3']
+# pyenv's CFLAGS demote these to warnings; a missing prototype makes a
+# pointer result an int, truncated (a segfault, found adding
+# psyco_current_frame), so keep them errors
+extra_compile_args += ['-Werror=implicit-function-declaration',
+                       '-Werror=int-conversion',
+                       '-Werror=incompatible-pointer-types']
 extra_link_args = []
 sources = find_sources(PROCESSOR, ALL_STATIC==1)
 # distutils rebuilds only when a file listed here or in sources is newer
