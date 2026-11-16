@@ -102,9 +102,10 @@ void ni_trace_unify(PsycoObject *po, CodeBufferObject *match) {}
 DEFINEVAR PyObject *PyExc_PsycoError;
 DEFINEVAR PyObject *CPsycoModule;
 
-/* A record dies with its code object. That only happens to code that
-   was never compiled: every PsycoObject keeps its code object forever, so
-   compiled code is never freed (KNOWN_BUGS C14). */
+/* A record dies with its code object, releasing its code buffers. Compiled
+   code holds its globals (a compile-time constant), so a code object whose
+   only globals are its own (exec into a new dict, namedtuple) still never
+   dies (KNOWN_BUGS C14). */
 static Py_ssize_t code_extra_index = -1;
 
 static void code_extra_free(void *p) {
@@ -145,7 +146,8 @@ const static char MODULE_NAME[] = "ni";
 /* counters for tests and measurements, e.g. that a loop is not compiled
    afresh on every back-edge */
 static PyObject *ni_stats(PyObject *self, PyObject *unused) {
-  return Py_BuildValue("{sl}", "code_buffers", psyco_stat_code_buffers);
+  return Py_BuildValue("{slsl}", "code_buffers", psyco_stat_code_buffers,
+                       "code_buffers_freed", psyco_stat_code_buffers_freed);
 }
 
 /* for tests and tools: what the eval hook did with a code object */

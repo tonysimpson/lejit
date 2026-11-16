@@ -33,6 +33,7 @@ EXTERNVAR PyTypeObject CodeBuffer_Type;
 #define CodeBuffer_Check(v) (Py_TYPE(v) == &CodeBuffer_Type)
 /* code buffers started so far (not proxies): ni._stats() */
 EXTERNVAR long psyco_stat_code_buffers;
+EXTERNVAR long psyco_stat_code_buffers_freed;
 
 
 /* starts a new code buffer. The limit is returned in the optional last argument.

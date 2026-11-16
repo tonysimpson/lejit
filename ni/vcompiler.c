@@ -11,7 +11,8 @@
  * objects in C and caches results in vinfo->array.
  *
  * References to compiled code buffers are mostly dropped ("XXX don't know
- * what to do with reference"): compiled code is never freed.
+ * what to do with reference"): those buffers, and machine code, are never
+ * freed. Only the buffers in a code object's fatlists die with it (C14).
  */
 #include "vcompiler.h"
 #include "Python/pycompiler.h"
@@ -1040,8 +1041,7 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
      initialized to NULL by PsycoObject_New() */
 
   /* store the code object */
-  po->pr.co = co;
-  Py_INCREF(co); /* XXX never freed */
+  po->pr.co = co; /* borrowed: see psyfunc.c:fncall_finish_store */
   pyc_data_build(po, merge_points);
 
   /* set up the CALL return address */

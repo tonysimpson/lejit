@@ -119,8 +119,12 @@ PSY_INLINE void fncall_finish_store(struct fncall_arg_s *fncall,
   array_release(fncall->inputvinfos);
 
   /* store the code object */
+  /* borrowed (C14): the code object's co_extra owns its compiled code, so
+     an owned reference here was a cycle that kept both forever. Whenever
+     this code can run, something else holds the code: the frame the eval
+     hook was given, or the caller's promotion cache, which keeps every
+     function it switched on */
   po->pr.co = fncall->co;
-  Py_INCREF(fncall->co); /* XXX never freed */
   pyc_data_build(po, fncall->merge_points);
 }
 
@@ -231,8 +235,7 @@ static vinfo_t *call_with_inline_frame(PsycoObject *po,
     vinfo_t *v = vinfo_new(SOURCE_NOT_IMPORTANT);
     v->array = array_new(TOTAL_LOC_INLINE + fncall->po_size);
     v->array->items[LOC_INLINE_CO] =
-        vinfo_new(CompileTime_New((long)fncall->co));
-    Py_INCREF(fncall->co); /* XXX never freed */
+        vinfo_new(CompileTime_New((long)fncall->co)); /* borrowed, as above */
     for (i = fncall->inputvinfos->count; i--;)
       if (pp[i] != NULL)
         vinfo_incref(pp[i]);

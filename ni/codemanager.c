@@ -211,7 +211,10 @@ static PyObject *codebuf_repr(CodeBufferObject *self) {
                                 self);
 }
 
+DEFINEVAR long psyco_stat_code_buffers_freed = 0;
+
 static void codebuf_dealloc(CodeBufferObject *self) {
+  psyco_stat_code_buffers_freed++;
   fpo_release(&self->snapshot);
   PyObject_Del(self);
 }

@@ -41,10 +41,16 @@ typedef struct {
     mergepoint_t mergepoints[1];
 } co_report_t;
 
+/* when the code object dies (ni.c:code_extra_free): its fatlists hold its
+   code buffers (C14) */
 static void
 report_destructor(PyObject *capsule)
 {
-    PyMem_Free(PyCapsule_GetPointer(capsule, NULL));
+    co_report_t *report = PyCapsule_GetPointer(capsule, NULL);
+    Py_ssize_t i;
+    for (i = 0; i < report->mergepoint_count; i++)
+        Py_XDECREF(report->mergepoints[i].entries.fatlist);
+    PyMem_Free(report);
 }
 
 #define NEXTOPARG()                      \
