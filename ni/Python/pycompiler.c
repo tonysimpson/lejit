@@ -11,7 +11,8 @@
  *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
  *    exceptions) with ceval-style unwinding of the block stack.
  * The block opcodes (SETUP_LOOP/EXCEPT/FINALLY) exist only up to 3.7. Some
- * cases keep Python 2 meanings (BUILD_MAP, CALL_FUNCTION's oparg;
+ * cases keep Python 2 meanings (CALL_FUNCTION's oparg, read as na | nk << 8,
+ * which is right only below 256 arguments;
  * doc/history/removed-mechanisms.md D2).
  * Exceptions: catching one follows 3.7 (an EXCEPT_HANDLER block over six
  * stack items, cimpl_push_exc_info). A finally block differs from ceval: it
@@ -1736,12 +1737,53 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(v);
         goto fine;
 
-      case BUILD_MAP:
+      case BUILD_MAP: {
+        /* 3.5+: oparg key/value pairs on the stack, first pair deepest */
+        int i;
         v = PsycoDict_NewPresized(po, oparg);
         if (v == NULL)
           break;
+        for (i = oparg; i > 0; i--)
+          if (!PsycoDict_SetItem(po, v, NTOP(2 * i), NTOP(2 * i - 1)))
+            break;
+        if (i > 0) {
+          vinfo_decref(v, po);
+          break;
+        }
+        for (i = 2 * oparg; i--;)
+          POP_DECREF();
         PUSH(v);
         goto fine;
+      }
+
+      case BUILD_CONST_KEY_MAP: {
+        /* oparg values, then a constant tuple of keys on top */
+        int i;
+        PyObject *keys;
+        if (!is_compiletime(TOP()->source) ||
+            !PyTuple_CheckExact(
+                keys = (PyObject *)CompileTime_Get(TOP()->source)->value) ||
+            PyTuple_GET_SIZE(keys) != oparg) {
+          PycException_SetString(po, PyExc_SystemError,
+                                 "bad BUILD_CONST_KEY_MAP keys argument");
+          break;
+        }
+        v = PsycoDict_NewPresized(po, oparg);
+        if (v == NULL)
+          break;
+        for (i = oparg; i > 0; i--)
+          if (!PsycoDict_SetItemC(po, v, PyTuple_GET_ITEM(keys, oparg - i),
+                                  NTOP(i + 1)))
+            break;
+        if (i > 0) {
+          vinfo_decref(v, po);
+          break;
+        }
+        for (i = oparg + 1; i--;)
+          POP_DECREF();
+        PUSH(v);
+        goto fine;
+      }
 
 #ifdef STORE_MAP
       case STORE_MAP:

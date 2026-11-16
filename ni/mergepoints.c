@@ -231,8 +231,11 @@ _build_merge_points(PyCodeObject *co, int module)
             case BUILD_TUPLE:
             case BUILD_LIST:
             case BUILD_MAP:
+            case BUILD_CONST_KEY_MAP:
             case MAP_ADD:
             case LOAD_ATTR:
+            case LOAD_METHOD:
+            case CALL_METHOD:
             case COMPARE_OP:
             case IMPORT_NAME:
             case IMPORT_STAR:

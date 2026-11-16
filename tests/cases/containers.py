@@ -74,10 +74,25 @@ CASES = [
     ('for_range', [(0,), (10,), (1000,)], {}),
     ('for_list', [([],), ([1, 2, 3],)], {}),
     ('for_tuple', [((),), ((1, 2, 3),)], {}),
-    ('list_append', [(0,), (5,)], {'interpreted': 'LOAD_METHOD/CALL_METHOD not in mergepoints.c whitelist'}),
+    ('list_append', [(0,), (5,)], {}),
     ('dict_get', [({'a': 1}, 'a'), ({'a': 1}, 'b')], {}),
-    ('make_dict', [(1,)], {'interpreted': 'BUILD_CONST_KEY_MAP not in whitelist'}),
+    ('make_dict', [(1,)], {}),
     ('slicing', [([1, 2, 3, 4],), ((1, 2, 3, 4),)], {}),
     ('contains', [([1, 2], 2), ([1, 2], 3)], {}),
     ('list_comp', [(0,), (4,)], {}),
+]
+
+def dict_literals(a, b):
+    one = {a: b}
+    two = {'x': a, 'y': b}
+    computed = {a: 1, b: 2}
+    comp = {k: k * 2 for k in range(3)}
+    return one, two, computed, comp
+
+def unhashable_key(a):
+    return {a: 1}
+
+CASES += [
+    ('dict_literals', [(1, 2), ('p', 'q')], {}),
+    ('unhashable_key', [([1],)], {}),
 ]
