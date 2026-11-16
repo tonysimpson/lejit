@@ -62,6 +62,26 @@ def endless_recursion():
             out.append(str(e))
     return out
 
+class GenHolder:
+    def gen(self):
+        yield 1
+
+
+def renamed_gen():
+    yield 2
+
+
+renamed_gen.__name__ = 'other_name'
+renamed_gen.__qualname__ = 'Other.qualname'
+
+
+# generator functions aren't compiled, so the call falls back to the
+# function object, whose name and qualname the generator takes
+def generator_names():
+    g = GenHolder().gen()
+    h = renamed_gen()
+    return g.__name__, g.__qualname__, h.__name__, h.__qualname__, list(h)
+
 CASES = [
     ('call_helper', [(1,), (-4,)], {}),
     ('call_in_loop', [(0,), (50,)], {}),
@@ -73,4 +93,5 @@ CASES = [
     ('call_builtin_len', [('abc',), ((1, 2),), ([],)], {}),
     ('call_builtin_abs', [(-3,), (4,), (-2.5,)], {}),
     ('endless_recursion', [()], {}),
+    ('generator_names', [()], {}),
 ]

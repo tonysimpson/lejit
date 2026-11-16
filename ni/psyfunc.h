@@ -9,7 +9,10 @@
 #include <compile.h> /* for PyCodeObject */
 
 /* Encode a call to the given Python function, compiling it as needed. */
-EXTERNFN vinfo_t *psyco_call_pyfunc(PsycoObject *po, PyCodeObject *co,
+/* 'vfunc' is the function object itself (compile-time or virtual), called
+   as such when the call can't be compiled */
+EXTERNFN vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc,
+                                    PyCodeObject *co,
                                     vinfo_t *vglobals, vinfo_t *vdefaults,
                                     vinfo_t *arg_tuple, int recursion);
 

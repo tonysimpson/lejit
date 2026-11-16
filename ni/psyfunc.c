@@ -5,7 +5,7 @@
  * pseudo-exception swaps po->vlocals) or compiled separately and called with
  * the Psyco calling convention (psyco_call_psyco). Anything else (keyword-only
  * arguments, closures, unknown arity, recursion depth used up) becomes a
- * residual call to cimpl_call_pyfunc. PsycoFunctionObject (the "proxy") is a
+ * residual call of the function object. PsycoFunctionObject (the "proxy") is a
  * leftover of psyco.bind() and is dead code under the eval-frame hook.
  */
 #include "psyfunc.h"
@@ -16,7 +16,6 @@
 #include "mergepoints.h"
 #include "vcompiler.h"
 
-#include <eval.h> /* for PyEval_EvalCodeEx() */
 
 /***************************************************************/
 /***   Frame and arguments building                            ***/
@@ -290,17 +289,6 @@ PsycoObject *psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a) {
   return po;
 }
 
-static PyObject *cimpl_call_pyfunc(PyCodeObject *co, PyObject *globals,
-                                   PyObject *defaults, PyObject *arg) {
-  /* simple wrapper around PyEval_EvalCodeEx, for the fail_to_default
-     case of psyco_call_pyfunc() */
-  int defcount = (defaults ? PyTuple_GET_SIZE(defaults) : 0);
-  PyObject **defs = (defcount ? &PyTuple_GET_ITEM(defaults, 0) : NULL);
-  return PyEval_EvalCodeEx((PyObject *)co, globals, (PyObject *)NULL,
-                           &PyTuple_GET_ITEM(arg, 0), PyTuple_GET_SIZE(arg),
-                           (PyObject **)NULL, 0, defs, defcount, NULL, NULL);
-}
-
 #define COMPUTE_DEFCOUNT()                                                     \
   do {                                                                         \
     /* is vdefaults!=NULL at run-time ? */                                     \
@@ -314,9 +302,9 @@ static PyObject *cimpl_call_pyfunc(PyCodeObject *co, PyObject *globals,
   } while (0)
 
 DEFINEFN
-vinfo_t *psyco_call_pyfunc(PsycoObject *po, PyCodeObject *co, vinfo_t *vglobals,
-                           vinfo_t *vdefaults, vinfo_t *arg_tuple,
-                           int recursion) {
+vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
+                           vinfo_t *vglobals, vinfo_t *vdefaults,
+                           vinfo_t *arg_tuple, int recursion) {
   CodeBufferObject *codebuf;
   PsycoObject *mypo;
   Source *sources;
@@ -339,7 +327,8 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, PyCodeObject *co, vinfo_t *vglobals,
     /* the recursion limit only applies to non-proxified functions */
     recursion++;
     result =
-        psyco_call_pyfunc(po, co, vglobals, vdefaults, arg_tuple, recursion);
+        psyco_call_pyfunc(po, vfunc, co, vglobals, vdefaults, arg_tuple,
+                          recursion);
     vinfo_decref(vdefaults, po);
     return result;
   }
@@ -413,8 +402,12 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, PyCodeObject *co, vinfo_t *vglobals,
   return result;
 
 fail_to_default:
-  return psyco_generic_call(po, cimpl_call_pyfunc, CfCommonNewRefPyObject,
-                            "lvvv", co, vglobals, vdefaults, arg_tuple);
+  /* call the function object itself: rebuilding the call from its code,
+     globals and defaults (upstream's cimpl_call_pyfunc) lost its name and
+     qualname (generators took co_name), closure and keyword-only defaults */
+  return psyco_generic_call(po, PyFunction_Type.tp_call,
+                            CfCommonNewRefPyObject, "vvl", vfunc, arg_tuple,
+                            0);
 
 pyerr:
   psyco_virtualize_exception(po);

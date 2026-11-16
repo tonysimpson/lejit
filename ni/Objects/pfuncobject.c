@@ -113,8 +113,8 @@ PsycoFunction_NewWithQualName(PsycoObject *po, vinfo_t *codeobj,
 
 DEFINEFN
 vinfo_t *
-pfunction_simple_call(PsycoObject *po, PyObject *f, vinfo_t *arg,
-                      bool allow_inline)
+pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
+                      vinfo_t *arg, bool allow_inline)
 {
     PyObject *glob;
     PyObject *defl;
@@ -148,7 +148,7 @@ pfunction_simple_call(PsycoObject *po, PyObject *f, vinfo_t *arg,
     saved_inlining = po->pr.is_inlining;
     if (!allow_inline)
         po->pr.is_inlining = true;
-    result = psyco_call_pyfunc(po, co, fglobals, fdefaults, arg,
+    result = psyco_call_pyfunc(po, func, co, fglobals, fdefaults, arg,
                                po->pr.auto_recursion);
     po->pr.is_inlining = saved_inlining;
     vinfo_decref(fdefaults, po);
@@ -173,7 +173,7 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         PyObject *f;
         switch (psyco_pyobj_atcompiletime_mega(po, func, &f)) {
             case 1: /* promotion ok */
-                return pfunction_simple_call(po, f, arg, true);
+                return pfunction_simple_call(po, func, f, arg, true);
 
             case 0:            /* megamorphic site */
                 goto fallback; /* XXX could do better */
@@ -206,7 +206,7 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         if (fdefaults == NULL)
             return NULL;
 
-        return psyco_call_pyfunc(po, co, fglobals, fdefaults, arg,
+        return psyco_call_pyfunc(po, func, co, fglobals, fdefaults, arg,
                                  po->pr.auto_recursion);
     }
 
