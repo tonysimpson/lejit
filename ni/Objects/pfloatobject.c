@@ -1,11 +1,16 @@
 /*
  * Virtual floats. Every arithmetic result is a new virtual float whose
  * [iFLOAT_OB_FVAL] holds the double, so 'a + b * c' is never boxed unless it
- * escapes. The operations are tiny C helpers (cimpl_fp_*) called with CfPure,
- * so they fold at compile time when both operands are constants.
- * Suspected bugs: direct_compute_float converts the stored 64-bit word
- * numerically instead of reinterpreting its bits; pfloat_div has no
- * ZeroDivisionError check.
+ * escapes. The backend has no floating-point instructions, so operations
+ * are tiny C helpers called with CfPure, which fold at compile time when
+ * the operands are constants.
+ *
+ * + - * / % unary - abs and bool are generated (pfloatobject_gen.h, by
+ * tools/metac/gen_float.py), helpers included. Hand-written here: the
+ * representation (psyco_convert_to_double for CONVERT_TO_DOUBLE, compute
+ * functions), unary + and comparisons.
+ * Suspected bug: direct_compute_float converts the stored 64-bit word
+ * numerically instead of reinterpreting its bits.
  */
 #include "pfloatobject.h"
 #include "pboolobject.h"
@@ -26,25 +31,6 @@ static int cimpl_fp_eq_fp(double a, double b) { return a == b; }
 static int cimpl_fp_ne_fp(double a, double b) { return a != b; }
 static int cimpl_fp_le_fp(double a, double b) { return a <= b; }
 static int cimpl_fp_lt_fp(double a, double b) { return a < b; }
-
-static double cimpl_fp_add(double a, double b) { return a + b; }
-
-static double cimpl_fp_sub(double a, double b) { return a - b; }
-
-static double cimpl_fp_mul(double a, double b) { return a * b; }
-
-/* float_div: dividing by zero raises, it doesn't give inf/nan */
-static double cimpl_fp_div(double a, double b) {
-  if (b == 0.0) {
-    PyErr_SetString(PyExc_ZeroDivisionError, "float division by zero");
-    return -1.0;
-  }
-  return a / b;
-}
-
-static double cimpl_fp_neg(double a) { return -a; }
-
-static double cimpl_fp_abs(double a) { return fabs(a); }
 
 DEFINEFN double cimpl_fp_from_long(long value) { return (double)value; }
 
@@ -146,20 +132,7 @@ DEFINEVAR source_virtual_t psyco_computed_float;
 #define CONVERT_TO_DOUBLE(vobj, v)                                             \
   CONVERT_TO_DOUBLE_CORE(vobj, v, return_null())
 
-#define CONVERT_TO_DOUBLE2(uobj, u, vobj, v)                                   \
-  CONVERT_TO_DOUBLE_CORE(uobj, u, return_null());                              \
-  CONVERT_TO_DOUBLE_CORE(vobj, v, release_double(po, u))
-
 #define RELEASE_DOUBLE(v) vinfo_decref(v, po);
-
-#define RELEASE_DOUBLE2(v, u)                                                  \
-  vinfo_decref(v, po);                                                         \
-  vinfo_decref(u, po);
-
-static vinfo_t *release_double(PsycoObject *po, vinfo_t *u) {
-  vinfo_decref(u, po);
-  return NULL;
-}
 
 static vinfo_t *return_null(void) { return NULL; }
 
@@ -254,71 +227,17 @@ static vinfo_t *pfloat_pos(PsycoObject *po, vinfo_t *v) {
   return x;
 }
 
-static vinfo_t *pfloat_neg(PsycoObject *po, vinfo_t *v) {
-  vinfo_t *a, *x;
-  CONVERT_TO_DOUBLE(v, a);
-  x = psyco_generic_call(po, cimpl_fp_neg, CfPure | CfReturnTypeDouble, "d", a);
-  RELEASE_DOUBLE(a);
-  return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;
-}
-
-static vinfo_t *pfloat_abs(PsycoObject *po, vinfo_t *v) {
-  vinfo_t *a, *x;
-  CONVERT_TO_DOUBLE(v, a);
-  x = psyco_generic_call(po, cimpl_fp_abs, CfPure | CfReturnTypeDouble, "d", a);
-  RELEASE_DOUBLE(a);
-  return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;
-}
-
-static vinfo_t *pfloat_add(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
-  vinfo_t *a, *b, *x;
-  CONVERT_TO_DOUBLE2(v, a, w, b);
-  x = psyco_generic_call(po, cimpl_fp_add, CfPure | CfReturnTypeDouble, "dd", a,
-                         b);
-  RELEASE_DOUBLE2(a, b);
-  return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;
-}
-
-static vinfo_t *pfloat_sub(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
-  vinfo_t *a, *b, *x;
-  CONVERT_TO_DOUBLE2(v, a, w, b);
-  x = psyco_generic_call(po, cimpl_fp_sub, CfPure | CfReturnTypeDouble, "dd", a,
-                         b);
-  RELEASE_DOUBLE2(a, b);
-  return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;
-}
-
-static vinfo_t *pfloat_mul(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
-  vinfo_t *a, *b, *x;
-  CONVERT_TO_DOUBLE2(v, a, w, b);
-  x = psyco_generic_call(po, cimpl_fp_mul, CfPure | CfReturnTypeDouble, "dd", a,
-                         b);
-  RELEASE_DOUBLE2(a, b);
-  return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;
-}
-
-static vinfo_t *pfloat_div(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
-  vinfo_t *a, *b, *x;
-  CONVERT_TO_DOUBLE2(v, a, w, b);
-  /* not CfPure: it can raise */
-  x = psyco_generic_call(po, cimpl_fp_div, CfPyErrCheck | CfReturnTypeDouble,
-                         "dd", a, b);
-  RELEASE_DOUBLE2(a, b);
-  return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;
-}
+/* + - * / % unary - abs bool, generated from Objects/floatobject.c */
+#include "pfloatobject_gen.h"
 
 INITIALIZATIONFN
 void psy_floatobject_init(void) {
   PyNumberMethods *m = PyFloat_Type.tp_as_number;
 
-  Psyco_DefineMeta(m->nb_positive, pfloat_pos);
-  Psyco_DefineMeta(m->nb_negative, pfloat_neg);
-  Psyco_DefineMeta(m->nb_absolute, pfloat_abs);
+  pfloat_generated_init(m);
 
-  Psyco_DefineMeta(m->nb_add, pfloat_add);
-  Psyco_DefineMeta(m->nb_subtract, pfloat_sub);
-  Psyco_DefineMeta(m->nb_multiply, pfloat_mul);
-  Psyco_DefineMeta(m->nb_true_divide, pfloat_div);
+  Psyco_DefineMeta(m->nb_positive, pfloat_pos);
+
 
   Psyco_DefineMeta(PyFloat_Type.tp_richcompare, pfloat_richcompare);
 

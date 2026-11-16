@@ -20,7 +20,10 @@ stale_sources() {   # sources newer than ni.so (find compares to the ns)
 }
 
 step "generated code is up to date (tools/metac)"
-python3 tools/metac/gen_long.py --check
+# each must say so: a generator that silently does nothing must fail too
+for g in gen_long gen_float; do
+    python3 tools/metac/$g.py --check | grep "up to date"
+done
 
 step "build (NI_TRACE=1 NI_ALL_CHECKS=1)"
 # distutils compares whole seconds: an edit in the same second as the last
