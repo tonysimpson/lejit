@@ -2,12 +2,6 @@
  * Compile-time copy of Objects/abstract.c (PyNumber_*, PySequence_*,
  * PyObject_Call/GetItem/...). Mostly a mechanical translation: promote the
  * type, then dispatch through the slot with Psyco_META*.
- *
- * WARNING: binary_op1 is still the Python 2 version. NEW_STYLE_NUMBER tests
- * Py_TPFLAGS_CHECKTYPES, which does not exist in Python 3, so it is always 0.
- * As a result the slots are only tried when both operands have the same type,
- * and mixed operations (int + float, subclass + base) end in a TypeError. The
- * fix is to re-translate binary_op1 from 3.7. (Found by reading; not run.)
  */
 #include "pabstract.h"
 #include "../compat2to3.h"
@@ -407,17 +401,13 @@ vinfo_t *PsycoNumber_Absolute(PsycoObject *po, vinfo_t *vi) {
   return type_error(po, "bad operand type for abs()");
 }
 
-#ifdef Py_TPFLAGS_CHECKTYPES
-#define NEW_STYLE_NUMBER(otp) PyType_HasFeature((otp), Py_TPFLAGS_CHECKTYPES)
-#else
-#define NEW_STYLE_NUMBER(otp) 0
-#endif
-
 #define NB_SLOT(x) offsetof(PyNumberMethods, x)
 #define NB_BINOP(nb_methods, slot) ((binaryfunc *)(&((char *)nb_methods)[slot]))
 #define NB_TERNOP(nb_methods, slot)                                            \
   ((ternaryfunc *)(&((char *)nb_methods)[slot]))
 
+/* 3.7 abstract.c binary_op1: try v's slot, then w's; w's first if w's type
+   is a subtype of v's. */
 static vinfo_t *binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w,
                            const int op_slot) {
   vinfo_t *x;
@@ -433,9 +423,9 @@ static vinfo_t *binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w,
   if (wtp == NULL)
     return NULL;
 
-  if (vtp->tp_as_number != NULL && NEW_STYLE_NUMBER(vtp))
+  if (vtp->tp_as_number != NULL)
     slotv = *NB_BINOP(vtp->tp_as_number, op_slot);
-  if (wtp != vtp && wtp->tp_as_number != NULL && NEW_STYLE_NUMBER(wtp)) {
+  if (wtp != vtp && wtp->tp_as_number != NULL) {
     slotw = *NB_BINOP(wtp->tp_as_number, op_slot);
     if (slotw == slotv)
       slotw = NULL;
@@ -458,21 +448,6 @@ static vinfo_t *binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w,
     if (IS_IMPLEMENTED(x))
       return x;
     vinfo_decref(x, po); /* can't do it */
-  }
-  if (!NEW_STYLE_NUMBER(vtp) || !NEW_STYLE_NUMBER(wtp)) {
-    /* inline a bit of PyNumber_CoerceEx */
-    if (vtp == wtp) {
-      /* PyNumber_CoerceEx returns 0 in this case */
-      PyNumberMethods *mv = vtp->tp_as_number;
-      if (mv) {
-        binaryfunc slot;
-        slot = *NB_BINOP(mv, op_slot);
-        if (slot) {
-          x = Psyco_META2(po, slot, CfCommonNewRefPyObject, "vv", v, w);
-          return x;
-        }
-      }
-    }
   }
   return psyco_vi_NotImplemented();
 }

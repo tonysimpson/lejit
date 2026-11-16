@@ -67,7 +67,7 @@ CASES = [
     ('try_except', [(5, 0)], {}),
     ('try_finally', [(3,)], {}),
     ('raise_it', [(0,)], {}),
-    ('raise_it', [(3,)], {'xfail': "F1: 'bad %d' % 3 is str % int, mixed types"}),
+    ('raise_it', [(3,)], {}),
     ('get_attr', '[(P(3),), (P("s"),)]', {}),
     ('set_attr', '[(P(3), 7)]', {}),
     ('is_none', [(None,), (0,)], {}),

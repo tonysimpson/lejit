@@ -32,11 +32,11 @@ CASES = [
     ('fadd', FL, {}),
     ('fmul', FL, {}),
     ('fdiv', FL, {}),
-    ('fdiv_zero', [(1.0, 0.0)], {'xfail': 'F5: pfloat_div has no ZeroDivisionError'}),
+    ('fdiv_zero', [(1.0, 0.0)], {}),
     ('fexpr', [(1.0, 2.0, 3.0), (-1.5, 0.25, 8.0)], {}),
     ('fcompare', [(1.0, 2.0), (2.0, 2.0), (float('nan'), 1.0)], {}),
     ('floop', [(0,), (10,), (1000,)], {}),
-    ('mixed', [(1, 2.5), (2.5, 1)], {'xfail': 'F1: binary_op1 is the Py2 version'}),
+    ('mixed', [(1, 2.5), (2.5, 1)], {}),
 ]
 
 def fdiv_zero(a, b):
