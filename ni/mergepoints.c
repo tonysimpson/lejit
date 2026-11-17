@@ -45,13 +45,18 @@ typedef struct {
 /* when the code object dies (ni.c:code_extra_free): its fatlists hold its
    code buffers (C14) */
 static void
-report_destructor(PyObject *capsule)
+report_free(co_report_t *report)
 {
-    co_report_t *report = PyCapsule_GetPointer(capsule, NULL);
     Py_ssize_t i;
     for (i = 0; i < report->mergepoint_count; i++)
         Py_XDECREF(report->mergepoints[i].entries.fatlist);
     PyMem_Free(report);
+}
+
+static void
+report_destructor(PyObject *capsule)
+{
+    report_free(PyCapsule_GetPointer(capsule, NULL));
 }
 
 #define NEXTOPARG()                      \
@@ -384,6 +389,8 @@ _find_merge_points(PyCodeObject *co)
 
     report = (co_report_t *)PyMem_Malloc(
         sizeof(co_report_t) + (sizeof(mergepoint_t) * mergepoint_count));
+    if (report == NULL)
+        return NULL;
     /* the single merge point means no loop and no join: after the call
        enters the inlined body (pycompiler.c, EInline) the next merge point
        looked for is past the start, so inlined state is never snapshotted */
@@ -399,6 +406,11 @@ _find_merge_points(PyCodeObject *co)
                 entry_count_index * 2;
             report->mergepoints[mergepoint_index].entries.fatlist =
                 PyList_New(0);
+            if (report->mergepoints[mergepoint_index].entries.fatlist == NULL) {
+                report->mergepoint_count = mergepoint_index;
+                report_free(report);
+                return NULL;
+            }
             mergepoint_index++;
         }
     }
@@ -595,8 +607,14 @@ _build_merge_points(PyCodeObject *co, int module)
     }
 
     report = _find_merge_points(co);
-
-    return PyCapsule_New(report, NULL, report_destructor);
+    if (report == NULL)
+        return NULL;
+    {
+        PyObject *capsule = PyCapsule_New(report, NULL, report_destructor);
+        if (capsule == NULL)
+            report_free(report);
+        return capsule;
+    }
 not_ok:
 
     /*printf("Unsupported bytecode %d for %s\n", opcode,
@@ -640,9 +658,17 @@ psyco_get_merge_points(PyCodeObject *co, int module)
         return Py_None;
     }
     if (x->merge_points == NULL) {
+        PyObject *mps;
         NI_COMPILE_BEGIN(NI_ENTER_ANALYSE);
-        x->merge_points = _build_merge_points(co, module);
+        mps = _build_merge_points(co, module);
         NI_COMPILE_END(NI_ENTER_ANALYSE);
+        if (mps == NULL) {
+            /* out of memory (KNOWN_BUGS F27): don't compile this time, and
+               leave nothing cached so that a later call tries again */
+            PyErr_Clear();
+            return Py_None;
+        }
+        x->merge_points = mps;
     }
     return x->merge_points;
 }

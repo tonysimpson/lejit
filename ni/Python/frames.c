@@ -66,18 +66,20 @@ frame_runtime_capsule_new(PyFrameObject *py_frame,
                           stack_frame_info_t ***psy_frames_start) {
   PyObject *capsule = NULL;
   FrameRuntime *fr = (FrameRuntime *)PyMem_Malloc(sizeof(FrameRuntime));
-  if (fr) {
-    fr->psy_frames_start = psy_frames_start;
-    fr->py_frame = py_frame;
-    fr->psy_code = py_frame->f_code;
-    fr->psy_globals = py_frame->f_globals;
-    capsule = PyCapsule_New((void *)fr, NULL, frame_runtime_capsule_dealloc);
-    if (capsule) {
-      Py_INCREF(py_frame);
-      Py_INCREF(py_frame->f_code);
-      Py_INCREF(py_frame->f_globals);
-    }
+  if (fr == NULL)
+    return PyErr_NoMemory();
+  fr->psy_frames_start = psy_frames_start;
+  fr->py_frame = py_frame;
+  fr->psy_code = py_frame->f_code;
+  fr->psy_globals = py_frame->f_globals;
+  capsule = PyCapsule_New((void *)fr, NULL, frame_runtime_capsule_dealloc);
+  if (capsule == NULL) {
+    PyMem_Free(fr);
+    return NULL;
   }
+  Py_INCREF(py_frame);
+  Py_INCREF(py_frame->f_code);
+  Py_INCREF(py_frame->f_globals);
   return capsule;
 }
 
