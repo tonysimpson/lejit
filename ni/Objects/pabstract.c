@@ -763,20 +763,40 @@ vinfo_t *PsycoNumber_InPlacePower(PsycoObject *po, vinfo_t *v1, vinfo_t *v2,
 DEFINEFN
 vinfo_t *PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi) {
   getiterfunc f;
+  ssizeargfunc item = NULL;
   PyTypeObject *t = Psyco_NeedType(po, vi);
   if (t == NULL)
     return NULL;
-  if (Psyco_SlotsMutable(t))
-    return psyco_generic_call(po, PyObject_GetIter, CfCommonNewRefPyObject,
-                              "v", vi);
-  f = t->tp_iter;
+  switch (Psyco_TypeSlot(po, t, &t->tp_iter, (void **)&f)) {
+  case 1:
+    break;
+  case 0:
+    goto generic;
+  default:
+    return NULL;
+  }
   if (f == NULL) {
-    if (PsycoSequence_Check(t))
+    if (t->tp_as_sequence != NULL)
+      switch (Psyco_TypeSlot(po, t, &t->tp_as_sequence->sq_item,
+                             (void **)&item)) {
+      case 1:
+        break;
+      case 0:
+        goto generic;
+      default:
+        return NULL;
+      }
+    if (item != NULL)
       return PsycoSeqIter_New(po, vi);
     return type_error_tp(po, "'%.200s' object is not iterable", t);
-  } else {
-    return Psyco_META1(po, f, CfCommonNewRefPyObject, "v", vi);
   }
+  /* a heap type's __iter__ may return a non-iterator, which
+     PyObject_GetIter checks */
+  if (!Psyco_SlotsMutable(t))
+    return Psyco_META1(po, f, CfCommonNewRefPyObject, "v", vi);
+generic:
+  return psyco_generic_call(po, PyObject_GetIter, CfCommonNewRefPyObject, "v",
+                            vi);
 }
 
 /* ceval.c's FOR_ITER: GET_ITER made sure the slot was there, but a heap
@@ -795,18 +815,25 @@ static PyObject *cimpl_iternext(PyObject *iter) {
 
 DEFINEFN
 vinfo_t *PsycoIter_Next(PsycoObject *po, vinfo_t *iter) {
+  iternextfunc f;
   PyTypeObject *tp = Psyco_NeedType(po, iter);
   if (tp == NULL)
     return NULL;
-  if (Psyco_SlotsMutable(tp))
+  switch (Psyco_TypeSlot(po, tp, &tp->tp_iternext, (void **)&f)) {
+  case 1:
+    break;
+  case 0:
     return psyco_generic_call(po, cimpl_iternext, CfCommonIterNext, "v",
                               iter);
-  if (!PsycoIter_Check(tp)) {
+  default:
+    return NULL;
+  }
+  if (f == NULL) {
     PycException_SetFormat(po, PyExc_TypeError,
                            "'%.100s' object is not an iterator", tp->tp_name);
     return NULL;
   }
-  return Psyco_META1(po, tp->tp_iternext, CfCommonIterNext, "v", iter);
+  return Psyco_META1(po, f, CfCommonIterNext, "v", iter);
 }
 
 DEFINEFN

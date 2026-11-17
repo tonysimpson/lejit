@@ -32,11 +32,26 @@
       (tp)->tp_iternext != &_PyObject_NextNotImplemented)
 
 /* A heap type's slots change whenever a class attribute that defines one
-   is set or deleted, so code compiled for the type must not fold them:
-   it calls what CPython calls, which reads the slot at run time
-   (KNOWN_BUGS F50). A static type's slots never change. */
+   is set or deleted (KNOWN_BUGS F50). A static type's never change. */
 PSY_INLINE bool Psyco_SlotsMutable(PyTypeObject* tp) {
 	return (tp->tp_flags & Py_TPFLAGS_HEAPTYPE) != 0;
+}
+
+/* A slot of a heap type, at 'slot' (an address inside the type), for code
+   specialised on it: *value is the slot as Ni first saw it, and compiled
+   code checks that it still is. 1 on that path, 0 on the path where it
+   changed (the caller then calls what CPython calls, which reads the slot
+   at run time), -1 on error. */
+EXTERNFN int Psyco_HeapSlot(PsycoObject* po, void* slot, void** value);
+
+/* the same for any type's slot: a static type's is read now */
+PSY_INLINE int Psyco_TypeSlot(PsycoObject* po, PyTypeObject* tp, void* slot,
+			      void** value) {
+	if (!Psyco_SlotsMutable(tp)) {
+		*value = *(void**)slot;
+		return 1;
+	}
+	return Psyco_HeapSlot(po, slot, value);
 }
 
 #define PsycoSequence_Check(tp) \

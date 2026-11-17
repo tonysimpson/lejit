@@ -45,6 +45,50 @@ PyTypeObject *Psyco_KnownType(vinfo_t *vi) {
   }
 }
 
+/* The value recorded for a slot never changes, so a respawn's replay
+   (dispatcher.h) decides as the original compile did whatever the slot is
+   then; a changed slot only fails the guard, for good. The types are held
+   by the code that promoted them, so a slot's address is never reused. */
+typedef struct {
+  void *p;
+} slot_word_t;
+#define SLOT_value FMUT(DEF_FIELD(slot_word_t, void *, p, NO_PREV_FIELD))
+
+DEFINEFN
+int Psyco_HeapSlot(PsycoObject *po, void *slot, void **value) {
+  static PyObject *seen = NULL; /* slot address -> value first seen */
+  PyObject *key, *v;
+  vinfo_t *vslot, *vnow, *vexp;
+  condition_code_t cc;
+  if (seen == NULL && (seen = PyDict_New()) == NULL)
+    OUT_OF_MEMORY();
+  key = PyLong_FromVoidPtr(slot);
+  if (key == NULL)
+    OUT_OF_MEMORY();
+  v = PyDict_GetItem(seen, key);
+  if (v == NULL) {
+    v = PyLong_FromVoidPtr(*(void **)slot);
+    if (v == NULL || PyDict_SetItem(seen, key, v) < 0)
+      OUT_OF_MEMORY();
+    Py_DECREF(v);
+  }
+  Py_DECREF(key);
+  *value = PyLong_AsVoidPtr(v);
+
+  vslot = vinfo_new(CompileTime_New((long)slot));
+  vnow = psyco_get_field(po, vslot, SLOT_value);
+  vinfo_decref(vslot, po);
+  if (vnow == NULL)
+    return -1;
+  vexp = vinfo_new(CompileTime_New((long)*value));
+  cc = integer_cmp(po, vnow, vexp, Py_NE);
+  vinfo_decref(vexp, po);
+  vinfo_decref(vnow, po);
+  if (cc == CC_ERROR)
+    return -1;
+  return !runtime_condition_f(po, cc);
+}
+
 DEFINEFN
 vinfo_t *PsycoObject_IsTrue(PsycoObject *po, vinfo_t *vi) {
   PyTypeObject *tp;
@@ -799,11 +843,25 @@ static vinfo_t* try_rich_compare(PsycoObject* po, vinfo_t* v, vinfo_t* w, int op
   if (vtp == NULL) return NULL;
   wtp = (PyTypeObject*) Psyco_NeedType(po, w);
   if (wtp == NULL) return NULL;
-  if (Psyco_SlotsMutable(vtp) || Psyco_SlotsMutable(wtp))
-    return psyco_generic_call(po, PyObject_RichCompare,
-                              CfCommonNewRefPyObject, "vvl", v, w, (long)op);
-  fv = vtp->tp_richcompare;
-  fw = wtp->tp_richcompare;
+  switch (Psyco_TypeSlot(po, vtp, &vtp->tp_richcompare, (void **)&fv)) {
+  case 1:
+    break;
+  case 0:
+    goto changed;
+  default:
+    return NULL;
+  }
+  if (wtp == vtp)
+    fw = fv;
+  else
+    switch (Psyco_TypeSlot(po, wtp, &wtp->tp_richcompare, (void **)&fw)) {
+    case 1:
+      break;
+    case 0:
+      goto changed;
+    default:
+      return NULL;
+    }
 
   swap = (vtp != wtp &&
           PyType_IsSubtype(wtp, vtp) &&
@@ -827,6 +885,10 @@ static vinfo_t* try_rich_compare(PsycoObject* po, vinfo_t* v, vinfo_t* w, int op
                               "vvl", w, v, swapped_op[op]);
   }
   return psyco_vi_NotImplemented();
+
+changed: /* a heap type's slot is not what was compiled (F50) */
+  return psyco_generic_call(po, PyObject_RichCompare, CfCommonNewRefPyObject,
+                            "vvl", v, w, (long)op);
 }
 
 static const char *const opstrings[] = {"<", "<=", "==", "!=", ">", ">="};
@@ -878,15 +940,22 @@ vinfo_t *PsycoObject_RichCompareBool(PsycoObject *po, vinfo_t *v, vinfo_t *w,
 DEFINEFN
 vinfo_t *PsycoObject_Hash(PsycoObject *po, vinfo_t *v) {
   /* -1 is never a hash: it means an error */
+  hashfunc f;
   PyTypeObject *tp = Psyco_NeedType(po, v);
   if (tp == NULL)
     return NULL;
-  /* tp_hash NULL: a type not yet ready, which CPython readies */
-  if (tp->tp_hash == NULL || Psyco_SlotsMutable(tp))
+  switch (Psyco_TypeSlot(po, tp, &tp->tp_hash, (void **)&f)) {
+  case 1:
+    /* NULL: a type not yet ready, which CPython readies */
+    if (f != NULL)
+      return Psyco_META1(po, f, CfReturnTypeLong | CfPyErrIfMinus1, "v", v);
+    /* fall through */
+  case 0:
     return psyco_generic_call(po, PyObject_Hash,
                               CfReturnTypeLong | CfPyErrIfMinus1, "v", v);
-  return Psyco_META1(po, tp->tp_hash, CfReturnTypeLong | CfPyErrIfMinus1, "v",
-                     v);
+  default:
+    return NULL;
+  }
 }
 
 static vinfo_t *collect_undeletable_vars(vinfo_t *vi, vinfo_t *link) {
