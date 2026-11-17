@@ -27,6 +27,11 @@ EXTERNFN vinfo_t* PsycoCFunction_CallFast(PsycoObject* po, PyCFunction meth,
                                           int flags, vinfo_t* vself,
                                           vinfo_t* vargs);
 
+/* compiled METH_FASTCALL calls with an argument array, and residual
+   PyCFunction_Call sites (ni._stats(), for tests) */
+EXTERNVAR long psyco_stat_cfunc_fast;
+EXTERNVAR long psyco_stat_cfunc_proxy;
+
 
  /***************************************************************/
   /***   Virtual-time object builder                           ***/

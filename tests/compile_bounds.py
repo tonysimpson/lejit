@@ -9,6 +9,7 @@ code buffers are started than a small allowance.
 """
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+import math
 import ni
 
 VERBOSE = '-v' in sys.argv
@@ -108,8 +109,37 @@ def check_metas_registered():
     return 1 if got else 0
 
 
+def fast_calls(xs, s):
+    # METH_FASTCALL with 0, 2 and 3 arguments, no meta
+    return xs.pop(), math.gcd(len(xs), 6), getattr(s, 'zz', None)
+
+
+def kw_call(xs):
+    return sorted(xs, reverse=True)
+
+
+def check_fastcall_direct():
+    # F13: a METH_FASTCALL builtin without keywords is called with an array,
+    # not through PyCFunction_Call; with keywords it still is. Called by eval,
+    # so they are compiled here, not inlined into this function earlier
+    s0 = ni._stats()
+    eval("fast_calls([1, 2], 'a')")
+    s1 = ni._stats()
+    eval('kw_call([1, 2])')
+    s2 = ni._stats()
+    got = (s1['cfunc_fast'] - s0['cfunc_fast'],
+           s1['cfunc_proxy'] - s0['cfunc_proxy'],
+           s2['cfunc_proxy'] - s1['cfunc_proxy'])
+    ok = got[0] >= 3 and got[1] == 0 and got[2] >= 1
+    if not ok or VERBOSE:
+        print('%-4s fastcall direct/residual, keyword residual: %r'
+              % ('ok' if ok else 'FAIL', got))
+    return 0 if ok else 1
+
+
 def main():
-    failed = check_dead_locals() + check_inlinable() + check_metas_registered()
+    failed = (check_dead_locals() + check_inlinable() +
+              check_metas_registered() + check_fastcall_direct())
     for name, fn, warm, more, allow in CHECKS:
         for args in warm:
             fn(*args)
@@ -122,7 +152,7 @@ def main():
         if bad or VERBOSE:
             print('%-4s %s: %d new code buffers after warm-up (allowed %d)'
                   % ('FAIL' if bad else 'ok', name, grew, allow))
-    print('%d compile-bound checks, %d failed' % (len(CHECKS) + 3, failed))
+    print('%d compile-bound checks, %d failed' % (len(CHECKS) + 4, failed))
     return 1 if failed else 0
 
 

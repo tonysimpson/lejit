@@ -122,9 +122,13 @@ vinfo_t *PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
 
   /* default, slow version */
 use_proxy:
+  psyco_stat_cfunc_proxy++;
   return psyco_generic_call(po, PyCFunction_Call, CfCommonNewRefPyObject, "vvv",
                             func, args, kwargs);
 }
+
+DEFINEVAR long psyco_stat_cfunc_fast = 0;
+DEFINEVAR long psyco_stat_cfunc_proxy = 0;
 
 /* call a METH_FASTCALL function with a tuple's items, no keywords */
 static PyObject *cimpl_call_fast(PyCFunction meth, PyObject *self,
@@ -183,6 +187,7 @@ vinfo_t *PsycoCFunction_CallFast(PsycoObject *po, PyCFunction meth, int flags,
   }
   for (i = 0; i < n; i++)
     a[i] = PsycoTuple_GET_ITEM(vargs, i);
+  psyco_stat_cfunc_fast++;
   /* fmt[n] stops before the unused (NULL) trailing arguments */
   return psyco_generic_call(po, cimpl_fast[kw][n], CfCommonNewRefPyObject,
                             fmt[n], (long)meth, vself, a[0], a[1], a[2], a[3],
