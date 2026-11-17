@@ -79,6 +79,16 @@ def everything(x, a, b, m):
     return target(x, *a, *b, **m, c=x, z=2)
 
 
+class Obj:
+    def meth(self, a=0, **kw):
+        return a, sorted(kw.items())
+
+
+def method_call(o, a):
+    # the messages name the method
+    return o.meth(**a, k=1), o.meth(*(), *a)
+
+
 def class_call(a):
     return Point(**a, y=5).p
 
@@ -175,6 +185,7 @@ CASES = [
     ('two_star_stars', "[({'a': 1}, {'b': 2}), ({}, Mapping(c=4)), "
                        "(Mapping(z=1), collections.OrderedDict(y=2))]", {}),
     ('everything', "[(1, (2,), [3, 4], {'q': 0}), (5, gen(2), iter(()), Mapping(w=1))]", {}),
+    ('method_call', "[(Obj(), {'a': 1}), (Obj(), {'k': 2}), (Obj(), 5)]", {}),
     ('class_call', "[({'x': 1},), ({'x': 1, 'q': 3},)]", {}),
     ('loop', [(50,)], {}),
     ('displays', "[((1, 2), [3]), ('ab', range(2)), (gen(3), iter([9]))]", {}),
