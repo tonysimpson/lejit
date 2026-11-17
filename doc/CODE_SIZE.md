@@ -54,7 +54,7 @@ The virtual ints also differ in whether their type field is fixed (promoted) or 
 ## Options
 
 1. **Small respawn stubs.** Done (`2f8d00f`, D32), results below. Each stub was its own code buffer: a call into `do_respawn` with its arguments, then a `respawn_t` (about 30 bytes of code and 32 of data, aligned). One `call` to a shared trampoline that finds its `respawn_t` by return address in a table would be 5 bytes of code. It changes nothing about what is compiled, so it is the safest large win: up to about 45% of all code, and less compile time spent creating buffers. [inferred]
-2. **One form for ints at merge points.** Before `psyco_compatible`, write a constant `int` object as a virtual int with a constant value, and treat a virtual int's type field the same whether it is fixed or not (it is always `int`). Then go's counters differ only in constants, which the existing partial match already generalises. Narrow and safe; the same applies to floats and bools. [inferred]
+2. **One form for ints at merge points.** Done (`675854f`, `cd1484d`, D33), results below. Before `psyco_compatible`, write a constant `int` object as a virtual int with a constant value, and treat a virtual int's type field the same whether it is fixed or not (it is always `int`). Then go's counters differ only in constants, which the existing partial match already generalises. Narrow and safe; the same applies to floats and bools. [inferred]
 3. **A cap per merge point.** After N blocks at one merge point, generalise the new state before matching: plain and fixed constants become run-time, and virtual values are computed. Forgetting facts is always safe; code after it may promote again. This is the general backstop for explosions the first two don't foresee. N is a policy choice, measured under D29. [inferred]
 4. **Copies per type with identical code** (richards' `Task` methods). These are real specialisation: the guards hold a different type and different shared keys. Sharing them needs a guard that accepts a set of types. That is research, and it is worth doing only after 1–3. [inferred]
 
@@ -91,4 +91,37 @@ A coding pause (a branch not compiled yet, a full buffer, too many locked buffer
 | pyflate | 295.8 → 277.0 | 2.7–2.9 → 2.7–2.9 | 145–148 → 149–154 (noise: see below) |
 
 In the `NI_CODESTATS` build, go's `coding_pause` row (942 buffers, 62 KB) goes and the `stubs` row grows by four chunks (164 → 180 KB); emitted code 1048 → 1002 KB, compiles per instruction unchanged (19,534). `perf stat -e instructions,branch-misses tools/profile_bench.py go 4`, two runs each: branch misses 47.78M, 47.81M before and 47.85M, 47.79M after; instructions 79.4G, 78.9G before and 77.4G, 78.4G after (noisy). pyflate, same way: branch misses 69.7M, 66.7M before and 68.4M, 65.3M after; elapsed 4.51, 4.56 s before and 4.60, 4.52 s after. A few instructions' byte counts move by about 0.1 KB: spans that cross a buffer switch are counted when the next buffer happens to lie above the last, and buffer placement changed (`pycompiler.c:codestats_flush`).
+
+## One form for ints at merge points (`675854f`, `cd1484d`, D33) [run]
+
+Two changes, both in `dispatcher.c`:
+
+- `canonical_int` (`675854f`): before `psyco_compatible` compares, and so before the snapshot is frozen, a local holding a constant small int (-5 to 256) or bool, not fixed, becomes a virtual int with that constant value. Computing it again gives the same object (`PyLong_FromLong`'s small ints, `PyBool_FromLong`), so identity is kept. Only locals: LOAD_CONST's constants carry no `SkFlagPyObj`, and the stack may hold other things.
+- `compatible_vinfo` (`cd1484d`): in the value word of a virtual int or bool, a constant against a run-time value in the snapshot is a partial match (the constant is un-promoted), as two different constants already were. The type field needed nothing: equal constants match whether fixed or not.
+
+The first alone was not enough: the forms became "virtual int, value known" and "virtual int, value run-time", and a known value never matched a run-time one, so each combination of "still 0" and "run-time" across go's seven counters was still its own block. The type field's fixed flag turned out not to matter. [run]
+
+`Board.useful` @310: 65 blocks → 52 (first change) → 13 (both). `NI_CODESTATS` build (`tools/codesize.py`):
+
+| benchmark | code KB | instructions compiled | blocks at merge points |
+|---|---|---|---|
+| go | 1048 → 718 → 422 | 19,534 → 12,754 → 7,183 | 119 → 107 → 67 |
+| richards | 114 → 114 → 114 | 2,006 → 2,005 → 2,005 | 57 → 57 → 57 |
+| deltablue | 426 → 433 → 433 | 6,142 → 6,224 → 6,224 | 106 → 107 → 107 |
+
+Release build, `tools/compilebench.py`, same session (timings indicative: other benchmarks ran on the machine):
+
+| benchmark | code KB | compile ms | Ni warm (ms) |
+|---|---|---|---|
+| go | 1057 → 426 | 13.1 → 3.0 | 75.2 → 74.7 |
+| hexiom | 631 → 423 | 5.98 → 3.45 | 2.31 → 2.19 |
+| pyflate | 296 → 232 | 2.65 → 1.77 | 145 → 145 |
+| deltablue | 430 → 433 | 2.42 → 2.46 | 1.66 → 1.63 |
+| richards | 116 → 116 | 0.59 → 0.60 | 12.1 → 12.2 |
+| raytrace | 267 → 267 | 1.65 → 1.60 | 186 → 190 |
+| chaos | 65 → 65 | 0.45 → 0.44 | 27.1 → 27.3 |
+
+`perf stat -e instructions`, whole process: go's first iteration 1.91 → 1.75 G (−8%); steady state richards −3%, go, deltablue, raytrace, chaos and hexiom within ±0.7%, pyflate +1.2% (5 iterations, repeated). A counter generalised to run-time loses facts the specialised copy folded, so warm code can be slightly slower; we judged smaller code and faster compiles worth it (D29).
+
+deltablue compiles 1.3% more (6,142 → 6,224 instructions) after the first change; not investigated (QUESTIONS).
 
