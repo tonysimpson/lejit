@@ -967,6 +967,16 @@ mergepoint_t *PsycoObject_Ready(PsycoObject *po) {
   return mp;
 }
 
+static bool is_cell_arg(PyCodeObject *co, int arg) {
+  Py_ssize_t i;
+  if (co->co_cell2arg == NULL)
+    return false;
+  for (i = 0; i < PyTuple_GET_SIZE(co->co_cellvars); i++)
+    if (co->co_cell2arg[i] == arg)
+      return true;
+  return false;
+}
+
 DEFINEFN
 PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
                                   PyObject *merge_points, int recursion) {
@@ -1048,9 +1058,13 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
   }
   /* initialize the regular arguments */
   while (i > 0) {
-    /* XXX do something more intelligent for cell and
-           free vars */
     po->stack_depth += sizeof(long);
+    if (is_cell_arg(co, i - 1)) {
+      /* CPython moved it into its cell and left NULL (ceval.c:
+         _PyEval_EvalCodeWithName); only LOAD_DEREF reads it now */
+      LOC_LOCALS_PLUS[--i] = psyco_vi_Zero();
+      continue;
+    }
     /* arguments get borrowed references */
     rsrc = RunTime_NewStack(po->stack_depth, false, false);
     v = vinfo_new(rsrc);

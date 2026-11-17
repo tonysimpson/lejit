@@ -132,6 +132,6 @@ CASES = [
     ('raises_inside', "[([],), ([7],)]", {}),
     ('frames_through_inlined', [()], {}),
     ('identity_kept', [(1,)], {}),
-    ('recursion_through_inlined', [(50,)], {'interpreted': 'closure (down)'}),
-    ('endless_through_inlined', [()], {'interpreted': 'closure (down)'}),
+    ('recursion_through_inlined', [(50,)], {}),
+    ('endless_through_inlined', [()], {}),
 ]

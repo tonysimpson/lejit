@@ -1030,6 +1030,32 @@ static void unbound_local_error(PsycoObject *po, PyCodeObject *co, int oparg) {
                          NiCompatStr_AsString(namev));
 }
 
+/* ceval.c:format_exc_unbound */
+#define UNBOUNDFREE_ERROR_MSG                                                  \
+  "free variable '%.200s' referenced before assignment in enclosing scope"
+
+static void unbound_deref_error(PsycoObject *po, PyCodeObject *co, int oparg) {
+  Py_ssize_t ncells = PyTuple_GET_SIZE(co->co_cellvars);
+  if (oparg < ncells)
+    PycException_SetFormat(
+        po, PyExc_UnboundLocalError, UNBOUNDLOCAL_ERROR_MSG,
+        NiCompatStr_AsString(PyTuple_GET_ITEM(co->co_cellvars, oparg)));
+  else
+    PycException_SetFormat(
+        po, PyExc_NameError, UNBOUNDFREE_ERROR_MSG,
+        NiCompatStr_AsString(PyTuple_GET_ITEM(co->co_freevars,
+                                              oparg - ncells)));
+}
+
+#define CELL_ob_ref FMUT(DEF_FIELD(PyCellObject, PyObject *, ob_ref, OB_type))
+
+static void cimpl_store_deref(PyObject *cell, PyObject *v) {
+  PyObject *old = PyCell_GET(cell);
+  Py_INCREF(v);
+  PyCell_SET(cell, v);
+  Py_XDECREF(old);
+}
+
 static PyObject *cimpl_load_global(PyObject *globals, PyObject *w) {
   PyObject *x;
   RECLIMIT_SAFE_ENTER();
@@ -1765,9 +1791,44 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         SETLOCAL(oparg, u);
         goto fine;
 
-        /*MISSING_OPCODE(LOAD_CLOSURE);
-          MISSING_OPCODE(LOAD_DEREF);
-          MISSING_OPCODE(STORE_DEREF);*/
+      /* Cells and free variables: the frame's own cells, which CPython made
+         before the frame reached Ni (PsycoObject_FromCode maps them as
+         borrowed words). Calls to closure code from compiled code are
+         still real calls (psyfunc.c:fncall_init), so no cell is ever made
+         here. A cell can change under any call (nonlocal in a callee), so
+         its contents are read each time (FMUT). */
+      case LOAD_CLOSURE:
+        x = GETLOCAL(co->co_nlocals + oparg);
+        vinfo_incref(x);
+        PUSH(x);
+        goto fine;
+
+      case LOAD_DEREF: {
+        condition_code_t cc;
+        x = psyco_get_field(po, GETLOCAL(co->co_nlocals + oparg), CELL_ob_ref);
+        if (x == NULL)
+          break;
+        cc = integer_cmp_i(po, x, 0, Py_NE);
+        if (cc == CC_ERROR) {
+          vinfo_decref(x, po);
+          break;
+        }
+        if (!runtime_condition_t(po, cc)) {
+          vinfo_decref(x, po);
+          unbound_deref_error(po, co, oparg);
+          break;
+        }
+        need_reference(po, x);
+        PUSH(x);
+        goto fine;
+      }
+
+      case STORE_DEREF:
+        if (!psyco_generic_call(po, cimpl_store_deref, CfNoReturnValue, "vv",
+                                GETLOCAL(co->co_nlocals + oparg), NTOP(1)))
+          break;
+        POP_DECREF();
+        goto fine;
 
       case BUILD_TUPLE:
         v = PsycoTuple_New(oparg, STACK_POINTER() - oparg);

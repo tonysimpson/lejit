@@ -354,7 +354,10 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   }
   if (--recursion < 0)
     goto fail_to_default;
-  extra_assert(PyCode_GetNumFree(co) == 0);
+  /* closure code runs through the real call, which supplies the cells
+     (fncall_init rejects it too) */
+  if (PyCode_GetNumFree(co) != 0)
+    goto fail_to_default;
 
   /* XXX tony: kw only args are a Py3 feature that we need to add support for */
   if (co->co_kwonlyargcount != 0) {

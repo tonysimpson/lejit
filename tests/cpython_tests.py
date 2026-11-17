@@ -25,9 +25,14 @@ MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
            'test_long', 'test_complex', 'test_builtin', 'test_richcmp',
            'test_userdict', 'test_userlist', 'test_userstring']
 
-# module -> reason it is expected to differ
+# module -> reason it is expected to differ, or (the expected result with
+# Ni, reason) when only that difference is accepted
 KNOWN = {
     'test_re': 'C11: warnings stacklevel skips compiled callees',
+    'test_exceptions': ('run=53 fail=2 err=0 skip=1 exit=0',
+                        'C18: tracebacks don\'t keep compiled locals alive'),
+    'test_generators': ('run=16 fail=1 err=0 skip=0 exit=0',
+                        'C19: getrefcount misses borrowed arguments'),
 }
 
 CHILD = r'''
@@ -61,6 +66,10 @@ def main():
         plain, with_ni = run('plain', name), run('ni', name)
         same = plain == with_ni
         known = KNOWN.get(name)
+        if isinstance(known, tuple):
+            expected, known = known
+            if not same and with_ni != expected:
+                known = None    # a difference other than the accepted one
         if same and not known:
             status = 'ok'
         elif not same and known:

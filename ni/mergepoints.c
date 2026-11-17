@@ -442,6 +442,7 @@ _build_merge_points(PyCodeObject *co, int module)
     const _Py_CODEUNIT *instr_end;
     co_report_t *report;
     int extended_arg = 0;
+    Py_ssize_t fv;
 
     /* XXX tony: all these not supported/buggy currently */
     if (module) {
@@ -453,11 +454,12 @@ _build_merge_points(PyCodeObject *co, int module)
     if (co->co_kwonlyargcount) {
         goto not_ok;
     }
-    /* closures aren't supported, and zero-argument super() reads the
-       __class__ cell from a real frame */
-    if (PyTuple_GET_SIZE(co->co_freevars) || PyTuple_GET_SIZE(co->co_cellvars)) {
-        goto not_ok;
-    }
+    /* zero-argument super() reads the __class__ cell and the first
+       argument from the real frame, where compiled code doesn't keep them */
+    for (fv = 0; fv < PyTuple_GET_SIZE(co->co_freevars); fv++)
+        if (PyUnicode_CompareWithASCIIString(
+                PyTuple_GET_ITEM(co->co_freevars, fv), "__class__") == 0)
+            goto not_ok;
 
     first_instr = (_Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
     next_instr = first_instr;
@@ -560,6 +562,9 @@ _build_merge_points(PyCodeObject *co, int module)
             case CALL_FUNCTION_KW:
             case CALL_FUNCTION_EX:
             case MAKE_FUNCTION:
+            case LOAD_CLOSURE:
+            case LOAD_DEREF:
+            case STORE_DEREF:
             case BUILD_SLICE:
             case EXTENDED_ARG:
                 continue;

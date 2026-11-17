@@ -171,6 +171,28 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         /* run-time or compile-time values: promote the
            function object as a whole into compile-time */
         PyObject *f;
+        /* a function made here (MAKE_FUNCTION) and since computed still
+           has its code: closure code takes the real call anyway, so don't
+           promote a function object that is new on every run (each
+           promotion is a specialisation that keeps the object alive) */
+        if (!is_compiletime(func->source)) {
+            /* the code first: closures and lambdas are new function objects
+               on every run, but their code is not. Closure code takes the
+               real call anyway, so promoting such a function would only add
+               a specialisation per object, each keeping it alive, until the
+               site went megamorphic. */
+            PyObject *c;
+            int r;
+            vinfo_t *fcode = psyco_get_const(po, func, FUNC_code);
+            if (fcode == NULL)
+                return NULL;
+            r = psyco_pyobj_atcompiletime_mega(po, fcode, &c);
+            if (r < 0)
+                return NULL;
+            if (r == 0 || PyCode_GetNumFree((PyCodeObject *)c) > 0 ||
+                ((PyCodeObject *)c)->co_kwonlyargcount > 0)
+                goto fallback;
+        }
         switch (psyco_pyobj_atcompiletime_mega(po, func, &f)) {
             case 1: /* promotion ok */
                 return pfunction_simple_call(po, func, f, arg, true);
