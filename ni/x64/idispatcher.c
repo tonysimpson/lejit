@@ -1,7 +1,10 @@
 /*
  * psyco_unify: given a compatible snapshot, emit the stack and register moves
  * (and reference fix-ups) that turn the current run-time layout into the
- * snapshot's, then jump to its code. If the moves overflow the current buffer
+ * snapshot's, then jump to its code. References are settled first: those
+ * the snapshot's values own are moved or made, and the values it doesn't
+ * have are decref'd from where they are, before any stack move can
+ * overwrite their slots (KNOWN_BUGS C27). If the moves overflow the current buffer
  * they are copied to a new one (data_new_buffer). The register-move phase was
  * rewritten for x86-64. A value wanted in several registers (shared in po,
  * distinct in the snapshot) is moved to one and copied to the others last
@@ -77,15 +80,12 @@ static void data_original_table(vinfo_t* a, RunTimeSource bsource,
     ORIGINAL_VINFO(RUNTIME_STACK(a)) = a;
 }
 
-static void data_update_stack(vinfo_t* a, RunTimeSource bsource,
+static void data_transfer_ref(vinfo_t* a, RunTimeSource bsource,
                               struct dmove_s* dm)
 {
   PsycoObject* po = dm->po;
   code_t* code = dm->code;
-  long dststack = getstack(bsource);
-  long srcstack = getstack(a->source);
-  char rg, rgb;
-  vinfo_t* overridden;
+  char rg;
   /* check for values passing from no-reference to reference */
   if (has_rtref(bsource)) {  /* destination has ref */
     if (has_rtref(a->source))   /* source has ref too */
@@ -114,6 +114,21 @@ static void data_update_stack(vinfo_t* a, RunTimeSource bsource,
      is forbidden by psyco_compatible() because decrefing 'a'
      would potentially leave a freed pointer in 'b'. */
   extra_assert(!has_rtref(a->source));
+  if (code > dm->code_limit)
+    /* oops, buffer overflow. Start a new buffer */
+    code = data_new_buffer(code, dm);
+  dm->code = code;
+}
+
+static void data_update_stack(vinfo_t* a, RunTimeSource bsource,
+                              struct dmove_s* dm)
+{
+  PsycoObject* po = dm->po;
+  code_t* code = dm->code;
+  long dststack = getstack(bsource);
+  long srcstack = getstack(a->source);
+  char rg, rgb;
+  vinfo_t* overridden;
 
   /* The operation below is: copy the value currently held by 'a'
      into the stack position 'dststack'. */
@@ -211,6 +226,24 @@ static code_t* data_free_unused(code_t* code, struct dmove_s* dm,
     }
   return code;
 }
+
+#if ALL_CHECKS
+/* nothing in 'po' owns a reference any more (data_transfer_ref,
+   data_free_unused): the stack moves may overwrite any slot that the
+   snapshot doesn't use (KNOWN_BUGS C27) */
+static void check_no_rtref(vinfo_array_t* aa)
+{
+  int i = aa->count;
+  while (i--)
+    if (aa->items[i] != NULL)
+      {
+        extra_assert(!is_runtime(aa->items[i]->source) ||
+                     !has_rtref(aa->items[i]->source));
+        if (aa->items[i]->array != NullArray)
+          check_no_rtref(aa->items[i]->array);
+      }
+}
+#endif
 
 DEFINEFN
 #if ALL_CHECKS
@@ -310,17 +343,30 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
       po->stack_depth = sdepth;
     }
 
+  /* the references the snapshot's values own: moved from the value in
+     'po', or new */
+  dm.code = code;
+  fz_find_runtimes(&po->vlocals, &target_codebuf->snapshot,
+                   (fz_find_fn) &data_transfer_ref,
+                   &dm, false);
+  code = dm.code;
+
+  /* decref any object that would be present in 'po' but not at all in
+     the snapshot (data_transfer_ref() has removed the 'ref' tag of all
+     vinfo_ts it actually used from 'po'). Before the stack moves: they
+     know only the values the snapshot has, and may overwrite the slot
+     of one it hasn't (KNOWN_BUGS C27). */
+  code = data_free_unused(code, &dm, &po->vlocals);
+#if ALL_CHECKS
+  check_no_rtref(&po->vlocals);
+#endif
+
   /* update the stack */
   dm.code = code;
   fz_find_runtimes(&po->vlocals, &target_codebuf->snapshot,
                    (fz_find_fn) &data_update_stack,
                    &dm, true);
   code = dm.code;
-
-  /* decref any object that would be present in 'po' but not at all in
-     the snapshot (data_update_stack() has removed the 'ref' tag of all
-     vinfo_ts it actually used from 'po') */
-  code = data_free_unused(code, &dm, &po->vlocals);
 
   /* update the registers (1): reg-to-reg moves and exchanges. A value
      can be wanted in several registers (shared in 'po', distinct in the
