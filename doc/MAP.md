@@ -128,7 +128,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/without_fix.sh` | tooling | Runs a command with some uncommitted changes stashed and a forced rebuild, to show a test fails without its fix (D21). | | `4a5a3e5` |
 | `tools/demo.py` | tooling | Demo: n-queens, n-body, ASCII Mandelbrot, word counts, timed with and without Ni. | | `e4f21aa` |
 | `tools/bench.py` | tooling | Benchmarks against plain CPython: ints, floats, builtin metas, isinstance dispatch (with and without global lookups), demo programs; fresh process per mode, best of 3, results compared. | | `29fe738` |
-| `tools/profile_bench.py` | tooling | — | Runs one pyperformance benchmark warm under Ni for a set time, for `perf record`. Results in `doc/PROFILE.md`. | | `HASH` |
+| `tools/profile_bench.py` | tooling | — | Runs one pyperformance benchmark warm under Ni for a set time, for `perf record`. Results in `doc/PROFILE.md`. | | `36a6939` |
 | `tools/pyperf37.py` | tooling | — | Runs the vendored pyperformance benchmarks under 3.7 with and without Ni, through a stand-in `pyperf` module; loops calibrated on CPython, best of five. | Doesn't check results. | `88b1fa1` |
 | `tools/benchmarks.sh` | tooling | — | Release build plus `bench.py`, `pyperf37.py` and `compilebench.py`, printed and saved in `build/bench/`. | | `18e971f` |
 | `tools/compilebench.py` | tooling | — | Compile cost against pay-off on the vendored pyperformance benchmarks: CPython and Ni first and warm iteration, Ni compile time by entry kind and code bytes (`ni._stats()`), break-even iterations. Results in `doc/COMPILE_COST.md`. | Compile time counts only the outermost entry from run time. | `f598d22` |
