@@ -16,7 +16,7 @@ Tags: **[read]** checked in code, **[run]** measured, **[inferred]** reasoned.
 - Each benchmark has one main kind of store: richards and deltablue overwrite existing keys of a shared-key (split) dict, go mostly overwrites keys of combined dicts (70%; the rest split), raytrace and chaos fill new objects in `__init__`. Growing a class's shared keys never happens in the timed loop. [run]
 - An inline store into an existing slot would save about 7.5 ns per store: about 22% of richards and 8% of deltablue. Extending it to fill new objects in order adds about 4% to raytrace and chaos, but only with a guard that doesn't hold the keys (option 4). [inferred]
 - Found on the way: compiled stores ignore a `__setattr__` added to the class after compiling (KNOWN_BUGS F37). Every option below except "do nothing" fixes it with the type guard. [run]
-- **Done:** options 1 and 2 (`4213823`, D39): richards −13%, go −8% instructions per iteration; see Results. Fixes F37.
+- **Done:** options 1 and 2 (`e86f8ae`, D39): richards −13%, go −8% instructions per iteration; see Results. Fixes F37.
 
 ## The path today
 
@@ -463,14 +463,14 @@ The last row is why the GC test looks at the value's type. Under Ni, go's `Board
 
 ## Results: options 1 and 2
 
-Done in `4213823` (D39). [read] `pobject.c:heap_setattr`, `store_kind`, `store_guard`.
+Done in `e86f8ae` (D39). [read] `pobject.c:heap_setattr`, `store_kind`, `store_guard`.
 
 - A store of a constant name on a heap type is behind A9's guard (`tp_flags`, `tp_version_tag`). Once it passes, the store calls what `store_kind` chose at compile time: `_PyObjectDict_SetItem` (through `cimpl_instance_dict_set`, which turns a `KeyError` into `AttributeError` as CPython does) when `tp_setattro` is `PyObject_GenericSetAttr`, `tp_dictoffset > 0`, and the name's class attribute is absent or a non-data descriptor of a static type; otherwise `tp_setattro`. A failed guard calls `PyObject_SetAttr` (F37 fixed). Deletes take the same path with `NULL`, so `__delattr__` added later is seen too.
 - Option 2: for a class without shared keys (`keys_inline` false), the store loads the dict at `tp_dictoffset`; if it exists and is combined, it calls `_PyDict_SetItem_KnownHash` with the hash computed at compile time. Split dicts and a missing dict go to option 1's helper.
 - Static types keep the old path (their `tp_setattro` can't change). A megamorphic site (more than `MEGAMORPHIC_MAX` types) calls `PyObject_SetAttr`, as loads do.
 - **Not in the plan: the guard repairs itself.** With one guard per site, raytrace ran 2% *more* instructions than before [run]. `Vector.__init__` is compiled by the first `Vector(...)`, at import, and `Vector.ZERO = ...` then changes the class, so every guard in `__init__` failed for good and every store took `PyObject_SetAttr`. Now the guard is shared by all sites of (type, name, kind) and holds only states of the type in which `store_kind` gives that kind. On a failed guard, `cimpl_store_type_changed` recomputes the kind and, if a guard exists for it, sets that guard to the type as it is now. A replay of a point after a passed guard sees a type of the compiled kind, and the failure branch needs no guard pointer, so the D21 rules hold without a static `respawn_guard`. [read], [run]
 
-Instructions per warm iteration, millions (`perf stat -e instructions:u`, ten iterations minus none, after three to compile), release builds of `f27cfcb` and `4213823` in the same session. [run]
+Instructions per warm iteration, millions (`perf stat -e instructions:u`, ten iterations minus none, after three to compile), release builds of `f27cfcb` and `e86f8ae` in the same session. [run]
 
 | | richards | deltablue | go | raytrace | chaos |
 |---|---|---|---|---|---|
