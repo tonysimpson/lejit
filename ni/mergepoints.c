@@ -30,6 +30,7 @@
 #include <Python.h>
 #include "Python/pycinternal.h"
 #include "vcompiler.h"
+#include "codemanager.h"
 
 typedef struct {
     int flags;
@@ -638,8 +639,11 @@ psyco_get_merge_points(PyCodeObject *co, int module)
         PyErr_Clear(); /* out of memory: just don't compile */
         return Py_None;
     }
-    if (x->merge_points == NULL)
+    if (x->merge_points == NULL) {
+        NI_COMPILE_BEGIN(NI_ENTER_ANALYSE);
         x->merge_points = _build_merge_points(co, module);
+        NI_COMPILE_END(NI_ENTER_ANALYSE);
+    }
     return x->merge_points;
 }
 

@@ -34,6 +34,27 @@ EXTERNVAR PyTypeObject CodeBuffer_Type;
 /* code buffers started so far (not proxies): ni._stats() */
 EXTERNVAR long psyco_stat_code_buffers;
 EXTERNVAR long psyco_stat_code_buffers_freed;
+/* bytes of code emitted, proxies included */
+EXTERNVAR long psyco_stat_code_bytes;
+
+/* Time spent compiling, by how the compiler was entered (ni._stats()).
+   NI_COMPILE_BEGIN/END bracket each way in from run time; only the
+   outermost counts, so a compile nested in another isn't counted twice. */
+enum { NI_ENTER_ANALYSE, NI_ENTER_CALL, NI_ENTER_PAUSE, NI_ENTER_RESPAWN, NI_ENTER_PROMOTION,
+       NI_ENTER_KINDS };
+EXTERNVAR long psyco_stat_compile_ns[NI_ENTER_KINDS];
+EXTERNVAR long psyco_stat_compile_count[NI_ENTER_KINDS];
+EXTERNVAR int psyco_stat_compile_depth;
+EXTERNFN long psyco_stat_now_ns(void);
+#define NI_COMPILE_BEGIN(kind)                                                 \
+  long _ni_t0 = psyco_stat_compile_depth++ ? 0 : psyco_stat_now_ns()
+#define NI_COMPILE_END(kind)                                                   \
+  do {                                                                         \
+    if (--psyco_stat_compile_depth == 0) {                                     \
+      psyco_stat_compile_ns[kind] += psyco_stat_now_ns() - _ni_t0;             \
+      psyco_stat_compile_count[kind]++;                                        \
+    }                                                                          \
+  } while (0)
 
 
 /* starts a new code buffer. The limit is returned in the optional last argument.

@@ -524,7 +524,16 @@ typedef struct respawn_s {
   CodeBufferObject *respawn_from;
 } respawn_t;
 
+static code_t *do_respawn_body(respawn_t *rs);
 static code_t *do_respawn(respawn_t *rs) {
+  code_t *r;
+  NI_COMPILE_BEGIN(NI_ENTER_RESPAWN);
+  r = do_respawn_body(rs);
+  NI_COMPILE_END(NI_ENTER_RESPAWN);
+  return r;
+}
+
+static code_t *do_respawn_body(respawn_t *rs) {
   /* called when entering a not-compiled branch requiring a respawn */
   code_t *code;
   CodeBufferObject *firstcodebuf;
@@ -1659,8 +1668,19 @@ PSY_INLINE int lookup_count_previous_values(rt_promotion_t *fs,
   return result;
 }
 
+static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
+                                          source_known_t *sk);
 static code_t *do_promotion_internal(rt_promotion_t *fs, long key,
                                      source_known_t *sk) {
+  code_t *r;
+  NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
+  r = do_promotion_internal_body(fs, key, sk);
+  NI_COMPILE_END(NI_ENTER_PROMOTION);
+  return r;
+}
+
+static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
+                                          source_known_t *sk) {
   CodeBufferObject *codebuf;
   code_t *result;
   vinfo_t *v;
@@ -1715,7 +1735,16 @@ static code_t *do_promotion_internal(rt_promotion_t *fs, long key,
   return result;
 }
 
+static code_t *detected_megamorphic_body(rt_promotion_t *fs);
 static code_t *detected_megamorphic_pyobj_site(rt_promotion_t *fs) {
+  code_t *r;
+  NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
+  r = detected_megamorphic_body(fs);
+  NI_COMPILE_END(NI_ENTER_PROMOTION);
+  return r;
+}
+
+static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
   CodeBufferObject *codebuf;
   code_t *result;
   vinfo_t *v;

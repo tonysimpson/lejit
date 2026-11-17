@@ -1,4 +1,5 @@
 #include "codemanager.h"
+#include <time.h>
 #include "compat2to3.h"
 #include "platform.h"
 #include <ipyencoding.h>
@@ -100,6 +101,7 @@ static void close_buffer_use(code_t *code) {
     if (b->position <= (char *)code && (char *)code <= (char *)b) {
       extra_assert(b->inuse);
       ALIGN_NO_FILL();
+      psyco_stat_code_bytes += (char *)code - b->position;
       /* unlock the buffer */
       b->position = (char *)code;
       b->inuse = false;
@@ -121,6 +123,16 @@ static void close_buffer_use(code_t *code) {
 }
 
 DEFINEVAR long psyco_stat_code_buffers = 0;
+DEFINEVAR long psyco_stat_code_bytes = 0;
+DEFINEVAR long psyco_stat_compile_ns[NI_ENTER_KINDS];
+DEFINEVAR long psyco_stat_compile_count[NI_ENTER_KINDS];
+DEFINEVAR int psyco_stat_compile_depth = 0;
+
+DEFINEFN long psyco_stat_now_ns(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return t.tv_sec * 1000000000L + t.tv_nsec;
+}
 
 static CodeBufferObject *new_code_buffer(PsycoObject *po, global_entries_t *ge,
                                          code_t *proxy_to, code_t **plimit) {

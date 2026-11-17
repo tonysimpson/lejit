@@ -700,7 +700,16 @@ typedef struct {
   void *jump_to_fix;
 } coding_pause_t;
 
+static code_t *do_resume_coding_body(coding_pause_t *cp);
 static code_t *do_resume_coding(coding_pause_t *cp) {
+  code_t *r;
+  NI_COMPILE_BEGIN(NI_ENTER_PAUSE);
+  r = do_resume_coding_body(cp);
+  NI_COMPILE_END(NI_ENTER_PAUSE);
+  return r;
+}
+
+static code_t *do_resume_coding_body(coding_pause_t *cp) {
   /* called when entering a coding_pause (described by 'cp') */
   code_t *target =
       (cp->resume_fn)(cp->po, cp + 1); /* resume compilation work */
