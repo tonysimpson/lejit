@@ -88,6 +88,35 @@ vinfo_t *PsycoLong_AsLong(PsycoObject *po, vinfo_t *v) {
                             CfReturnTypeLong | CfPyErrCheckMinus1, "v", v);
 }
 
+/* inline for a virtual or one-digit int, which always fits; a constant that
+   doesn't fit raises at run time */
+DEFINEFN
+vinfo_t *PsycoLong_AsIndex(PsycoObject *po, vinfo_t *v) {
+  vinfo_t *w;
+  if (PsycoLong_IsVirtual(v)) {
+    w = v->array->items[iLONG_VALUE];
+    vinfo_incref(w);
+    return w;
+  }
+  if (is_compiletime(v->source)) {
+    Py_ssize_t i = PyNumber_AsSsize_t(
+        (PyObject *)CompileTime_Get(v->source)->value, PyExc_IndexError);
+    if (i != -1 || !PyErr_Occurred())
+      return vinfo_new(CompileTime_New(i));
+    PyErr_Clear();
+  } else {
+    switch (plong_medium_value(po, v, &w)) {
+    case 1:
+      return w;
+    case -1:
+      return NULL;
+    }
+  }
+  return psyco_generic_call(po, PyNumber_AsSsize_t,
+                            CfReturnTypeNative | CfPyErrCheckMinus1, "vl", v,
+                            (long)PyExc_IndexError);
+}
+
 DEFINEFN
 bool PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v, vinfo_t **vd) {
   /* the backend has no int-to-double conversion: a C helper. A virtual

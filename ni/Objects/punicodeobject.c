@@ -1,6 +1,33 @@
+/*
+ * str (PEP 393). Compiled code reads a str only through the fields every
+ * kind shares (PyASCIIObject), and its characters inline only for a
+ * compact ASCII string, the common case, or for a constant whose kind is
+ * known now. Anything else (other kinds at run time; subclasses, which are
+ * never compact; strings not yet "ready", whose length field is 0) goes to
+ * a C call on a respawned branch. Strings are immutable, so constants fold.
+ * A one-character result below 256 is CPython's own cached string (latin1[]
+ * holds them, taken from CPython's cache at start-up), as unicode_char
+ * returns, so identities match CPython's.
+ */
 #include "pobject.h"
 #include "pboolobject.h"
+#include "plongobject.h"
 #include "../pycodegen.h"
+
+/* 'state' is read as its low byte: bit 7 ready, 6 ascii, 5 compact, 2-4
+   kind, 0-1 interned. Only 'interned' changes once a string is ready; the
+   rest of the word is padding that CPython never initialises. */
+#define UNICODE_length NONNEG_FIELD(PyASCIIObject, Py_ssize_t, length, OB_type)
+#define UNICODE_hash DEF_FIELD(PyASCIIObject, Py_hash_t, hash, UNICODE_length)
+#define UNICODE_state                                                          \
+  UNSIGNED_FIELD(PyASCIIObject, unsigned char, state, UNICODE_hash)
+#define STATE_READY 0x80
+#define STATE_COMPACT_ASCII 0xE0 /* ready, ascii and compact */
+
+static PyObject *latin1[256];
+static lenfunc unicode_length;
+static binaryfunc unicode_subscript;
+static objobjproc unicode_contains;
 
 /* unicode_richcompare compares any two str instances, subclasses included
    (an override in a subclass is its own slot, tried by the caller); anything
@@ -53,7 +80,161 @@ static vinfo_t *punicode_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
   return PsycoBool_FromCondition(po, cc);
 }
 
+/* the state byte is >= 'bits' at run time: a condition code */
+static condition_code_t state_at_least(PsycoObject *po, vinfo_t *v, int bits) {
+  vinfo_t *st = psyco_get_const(po, v, UNICODE_state);
+  if (st == NULL)
+    return CC_ERROR;
+  return integer_cmp_i(po, st, bits, Py_GE | COMPARE_UNSIGNED);
+}
+
+/* unicode_length */
+static vinfo_t *punicode_length(PsycoObject *po, vinfo_t *v) {
+  if (is_compiletime(v->source)) {
+    if (PyUnicode_IS_READY((PyObject *)CompileTime_Get(v->source)->value))
+      return psyco_get_field(po, v, UNICODE_length);
+  } else {
+    condition_code_t cc = state_at_least(po, v, STATE_READY);
+    if (cc == CC_ERROR)
+      return NULL;
+    if (runtime_condition_t(po, cc))
+      return psyco_get_field(po, v, UNICODE_length);
+  }
+  return psyco_generic_call(po, unicode_length, CfCommonPySSizeTResult, "v",
+                            v);
+}
+
+/* unicode_subscript's integer case, for any str */
+static PyObject *cimpl_unicode_item(PyObject *s, Py_ssize_t i) {
+  if (PyUnicode_READY(s) == -1)
+    return NULL;
+  if (i < 0)
+    i += PyUnicode_GET_LENGTH(s);
+  if (i < 0 || i >= PyUnicode_GET_LENGTH(s)) {
+    PyErr_SetString(PyExc_IndexError, "string index out of range");
+    return NULL;
+  }
+  return PyUnicode_FromOrdinal(PyUnicode_READ_CHAR(s, i));
+}
+
+/* unicode_subscript's integer case then unicode_getitem, inline when the
+   characters' place and size are known: 'data' bytes in, 'kind' bytes
+   each. Every 1-byte character is below 256, so in latin1[]. */
+static vinfo_t *punicode_item(PsycoObject *po, vinfo_t *v, vinfo_t *i) {
+  int kind = PyUnicode_1BYTE_KIND;
+  long data = sizeof(PyASCIIObject);
+  vinfo_t *vlen, *ch, *r, *release_me = NULL;
+  condition_code_t cc;
+  defield_t df;
+
+  if (is_compiletime(v->source)) {
+    PyObject *s = (PyObject *)CompileTime_Get(v->source)->value;
+    if (!PyUnicode_IS_READY(s) || !PyUnicode_IS_COMPACT(s))
+      goto helper;
+    kind = PyUnicode_KIND(s);
+    data = (char *)PyUnicode_DATA(s) - (char *)s;
+  } else {
+    cc = state_at_least(po, v, STATE_COMPACT_ASCII);
+    if (cc == CC_ERROR)
+      return NULL;
+    if (!runtime_condition_t(po, cc))
+      goto helper;
+  }
+
+  vlen = psyco_get_const(po, v, UNICODE_length);
+  if (vlen == NULL)
+    return NULL;
+  cc = integer_cmp_i(po, i, 0, Py_LT);
+  if (cc == CC_ERROR)
+    return NULL;
+  if (runtime_condition_f(po, cc)) {
+    release_me = i = integer_add(po, i, vlen, false);
+    if (i == NULL)
+      return NULL;
+  } else
+    assert_nonneg(i);
+  cc = integer_cmp(po, i, vlen, Py_GE | COMPARE_UNSIGNED);
+  if (cc == CC_ERROR || runtime_condition_f(po, cc)) {
+    if (cc != CC_ERROR)
+      PycException_SetString(po, PyExc_IndexError,
+                             "string index out of range");
+    vinfo_xdecref(release_me, po);
+    return NULL;
+  }
+
+  df = kind == PyUnicode_1BYTE_KIND   ? UNSIGNED_ARRAY(Py_UCS1, data)
+       : kind == PyUnicode_2BYTE_KIND ? UNSIGNED_ARRAY(Py_UCS2, data)
+                                      : UNSIGNED_ARRAY(Py_UCS4, data);
+  ch = psyco_get_field_array(po, v, df, i);
+  vinfo_xdecref(release_me, po);
+  if (ch == NULL)
+    return NULL;
+  if (kind == PyUnicode_1BYTE_KIND) {
+    vinfo_t *table = vinfo_new(CompileTime_New((long)latin1));
+    r = psyco_get_field_array(po, table, FPYREF(DEF_ARRAY(PyObject *, 0)), ch);
+    vinfo_decref(table, po);
+  } else
+    r = psyco_generic_call(po, PyUnicode_FromOrdinal,
+                           CfPure | CfCommonNewRefPyObject, "v", ch);
+  vinfo_decref(ch, po);
+  if (r != NULL && !is_compiletime(r->source))
+    Psyco_AssertType(po, r, &PyUnicode_Type);
+  return r;
+
+helper:
+  return psyco_generic_call(po, cimpl_unicode_item, CfCommonNewRefPyObject,
+                            "vv", v, i);
+}
+
+/* unicode_subscript: an int index here, anything else (slices) in C */
+static vinfo_t *punicode_subscript(PsycoObject *po, vinfo_t *v,
+                                   vinfo_t *key) {
+  vinfo_t *i, *r;
+  PyTypeObject *ktp = Psyco_NeedType(po, key);
+  if (ktp == NULL)
+    return NULL;
+  if (!PyType_IsSubtype(ktp, &PyLong_Type))
+    return psyco_generic_call(po, unicode_subscript, CfCommonNewRefPyObject,
+                              "vv", v, key);
+  i = PsycoLong_AsIndex(po, key);
+  if (i == NULL)
+    return NULL;
+  r = punicode_item(po, v, i);
+  vinfo_decref(i, po);
+  return r;
+}
+
+/* PyUnicode_Contains: two constants fold */
+static vinfo_t *punicode_contains(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
+  if (is_compiletime(v->source) && is_compiletime(w->source)) {
+    int r = unicode_contains((PyObject *)CompileTime_Get(v->source)->value,
+                             (PyObject *)CompileTime_Get(w->source)->value);
+    if (r >= 0)
+      return vinfo_new(CompileTime_New(r));
+    PyErr_Clear(); /* raised again at run time */
+  }
+  return psyco_generic_call(po, unicode_contains, CfCommonIntBoolOrError, "vv",
+                            v, w);
+}
+
 INITIALIZATIONFN
 void psy_unicodeobject_init(void) {
+  int c;
+  PyObject *a = PyUnicode_FromOrdinal('a');
+  if (a == NULL ||
+      (*(unsigned char *)&((PyASCIIObject *)a)->state & STATE_COMPACT_ASCII) !=
+          STATE_COMPACT_ASCII ||
+      PyUnicode_DATA(a) != (char *)a + sizeof(PyASCIIObject))
+    Py_FatalError("ni: str layout is not what punicodeobject.c expects");
+  Py_DECREF(a);
+  for (c = 0; c < 256; c++)
+    if ((latin1[c] = PyUnicode_FromOrdinal(c)) == NULL)
+      Py_FatalError("ni: no one-character strings");
+  unicode_length = PyUnicode_Type.tp_as_sequence->sq_length;
+  unicode_contains = PyUnicode_Type.tp_as_sequence->sq_contains;
+  unicode_subscript = PyUnicode_Type.tp_as_mapping->mp_subscript;
   Psyco_DefineMeta(PyUnicode_Type.tp_richcompare, punicode_richcompare);
+  Psyco_DefineMeta(unicode_length, punicode_length);
+  Psyco_DefineMeta(unicode_subscript, punicode_subscript);
+  Psyco_DefineMeta(unicode_contains, punicode_contains);
 }
