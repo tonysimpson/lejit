@@ -36,16 +36,92 @@ static vinfo_t* piter_getiter(PsycoObject* po, vinfo_t* v)
 	return v;
 }
 
+/* An exhausted iterator has dropped its sequence (it_seq = NULL). */
+static void cimpl_seqiter_drop_seq(seqiterobject* it)
+{
+	Py_CLEAR(it->it_seq);
+}
+
+static PyObject* cimpl_seqiter_exhausted(void)
+{
+	PyObject* empty = PyTuple_New(0);
+	seqiterobject* it;
+	if (empty == NULL)
+		return NULL;
+	it = (seqiterobject*) PySeqIter_New(empty);
+	Py_DECREF(empty);
+	if (it != NULL)
+		cimpl_seqiter_drop_seq(it);
+	return (PyObject*) it;
+}
+
+static vinfo_t* piter_stop(PsycoObject* po)
+{
+	PycException_SetVInfo(po, PyExc_StopIteration, psyco_vi_None());
+	return NULL;
+}
+
+/* An IndexError or StopIteration from the sequence ends the iteration:
+   true if the exception set in 'po' is one, false if not, -1 on error. */
+static int piter_ends(PsycoObject* po)
+{
+	/* runtime_NON_NULL_x consume the reference */
+	int r = runtime_NON_NULL_t(po,
+				   PycException_Matches(po, PyExc_IndexError));
+	if (r != false)
+		return r;
+	return runtime_NON_NULL_f(po,
+				  PycException_Matches(po, PyExc_StopIteration));
+}
+
+/* iterobject.c:iter_iternext. it_seq is cached in v->array as if it were
+   immutable, so that the sequence's type stays known. A virtual iterator
+   holds its sequence, or a compile-time NULL once exhausted (KNOWN_BUGS
+   F48). A run-time one may have been exhausted by anyone: a fresh load is
+   tested for NULL, and a cached one against memory, a mismatch going to
+   CPython's iter_iternext. Once NULL, it_seq never changes again. */
 static vinfo_t* piter_iternext(PsycoObject* po, vinfo_t* v)
 {
 	vinfo_t* seq;
 	vinfo_t* index;
 	vinfo_t* result;
 	PyTypeObject* tp;
+	bool cached = is_virtualtime(v->source) ||
+		vinfo_getitem(v, iSEQITER_IT_SEQ) != NULL;
 
 	seq = psyco_get_const(po, v, SEQITER_it_seq);
 	if (seq == NULL)
 		return NULL;
+	if (psyco_knowntobe(seq, 0))
+		return piter_stop(po);
+	if (!is_virtualtime(v->source) && is_runtime(seq->source)) {
+		condition_code_t cc;
+		if (cached) {
+			vinfo_t* now = psyco_get_field(po, v,
+						       FMUT(SEQITER_it_seq));
+			if (now == NULL)
+				return NULL;
+			cc = integer_cmp(po, now, seq, Py_NE);
+			vinfo_decref(now, po);
+		}
+		else
+			cc = integer_non_null(po, seq);
+		if (cc == CC_ERROR)
+			return NULL;
+		if (!cached)
+			cc = INVERT_CC(cc);
+		if (runtime_condition_f(po, cc)) {
+			if (!cached) {
+				vinfo_setitem(po, v, iSEQITER_IT_SEQ,
+					      psyco_vi_Zero());
+				return piter_stop(po);
+			}
+			psyco_forget_field(po, v, SEQITER_it_seq);
+			return psyco_generic_call(po,
+					PySeqIter_Type.tp_iternext,
+					CfCommonIterNext, "v", v);
+		}
+	}
 
 	tp = Psyco_NeedType(po, seq);
 	if (tp == NULL)
@@ -66,12 +142,23 @@ static vinfo_t* piter_iternext(PsycoObject* po, vinfo_t* v)
 	else {
 		result = PsycoSequence_GetItem(po, seq, index);
 	}
-	if (result == NULL) {
-		vinfo_t* matches = PycException_Matches(po, PyExc_IndexError);
-		if (runtime_NON_NULL_t(po, matches) == true) {
-			PycException_SetVInfo(po, PyExc_StopIteration,
-					      psyco_vi_None());
+	if (result == NULL && piter_ends(po) == true) {
+		/* as CPython: clear the error, then drop the sequence */
+		PycException_Clear(po);
+		if (is_virtualtime(v->source)) {
+			vinfo_t* zero = psyco_vi_Zero();
+			bool ok = psyco_put_field(po, v, SEQITER_it_seq, zero);
+			vinfo_decref(zero, po);
+			if (!ok)
+				goto fail;
 		}
+		else {
+			if (psyco_generic_call(po, cimpl_seqiter_drop_seq,
+					       CfNoReturnValue, "v", v) == NULL)
+				goto fail;
+			vinfo_setitem(po, v, iSEQITER_IT_SEQ, psyco_vi_Zero());
+		}
+		piter_stop(po);
 	}
 	else {
 		/* very remotely potential incompatibility: when exhausted,
@@ -91,6 +178,7 @@ static vinfo_t* piter_iternext(PsycoObject* po, vinfo_t* v)
 		}
 		vinfo_xdecref(index_plus_1, po);
 	}
+ fail:
 	vinfo_decref(index, po);
 	return result;
 }
@@ -109,6 +197,17 @@ static bool compute_seqiter(PsycoObject* po, vinfo_t* v)
 	seq = vinfo_getitem(v, iSEQITER_IT_SEQ);
 	if (seq == NULL)
 		return false;
+
+	if (psyco_knowntobe(seq, 0)) {
+		/* exhausted: its index is never read again */
+		newobj = psyco_generic_call(po, cimpl_seqiter_exhausted,
+					    CfCommonNewRefPyObject, "");
+		if (newobj == NULL)
+			return false;
+		psyco_forget_field(po, v, SEQITER_it_index);
+		vinfo_move(po, v, newobj);
+		return true;
+	}
 
 	newobj = psyco_generic_call(po, PySeqIter_New,
 				    CfCommonNewRefPyObject, "v", seq);

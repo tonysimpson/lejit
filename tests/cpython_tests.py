@@ -161,9 +161,8 @@ KNOWN = {
                        'with refcount 1'),
     'test_inspect': ('run=228 fail=2 err=0 skip=0 exit=0',
                      'C11: f_locals and line numbers of compiled frames'),
-    'test_iter': ('run=54 fail=1 err=1 skip=0 exit=0',
-                  'F48: an exhausted sequence iterator restarts; F50: a '
-                  'deleted __next__ is not seen'),
+    'test_iter': ('run=54 fail=0 err=1 skip=0 exit=0',
+                  'F50: a deleted __next__ is not seen'),
     'test_logging': ('run=183 fail=1 err=0 skip=1 exit=0',
                      'C11: line numbers in stack_info'),
     'test_module': ('run=30 fail=1 err=0 skip=0 exit=0',
