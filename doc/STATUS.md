@@ -74,3 +74,5 @@ Not done / next candidates:
 
 **Zero-argument `super()`** compiles: code reading `__class__` only runs compiled from its own frame, which holds the first argument and the cell, unless the code rebinds its first argument (then interpreted). [run] richards_super 0.90× → 1.37×; CPython's `test_super`, `test_class`, `test_scope` pass with Ni.
 
+**Keyword-only arguments** compile at the frame entry (CPython has filled them in); calls to such code from compiled code stay real calls. [run] CPython's test_keywordonlyarg, test_dataclasses, test_functools, test_enum, test_json unchanged with Ni.
+

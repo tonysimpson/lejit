@@ -452,9 +452,6 @@ _build_merge_points(PyCodeObject *co, int module)
     if (co->co_flags & (CO_COROUTINE | CO_GENERATOR)) {
         goto not_ok;
     }
-    if (co->co_kwonlyargcount) {
-        goto not_ok;
-    }
     /* zero-argument super() reads the __class__ cell and the first
        argument from the real frame (typeobject.c:super_init). Closure code
        only runs compiled from its own frame (never inlined: psyfunc.c),

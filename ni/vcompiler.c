@@ -1009,7 +1009,9 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
   sk = sk_new((long)globals, SkFlagPyObj);
   LOC_GLOBALS = vinfo_new(CompileTime_NewSk(sk));
 
-  argc = co->co_argcount;
+  /* keyword-only arguments follow the positional ones in the frame, filled
+     in by CPython (only frame entries get here with any: psyfunc.c) */
+  argc = co->co_argcount + co->co_kwonlyargcount;
   if (co->co_flags & CO_VARARGS)
     argc++;
   if (co->co_flags & CO_VARKEYWORDS)
