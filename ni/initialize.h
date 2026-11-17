@@ -19,6 +19,7 @@
 #include "Objects/plongobject.h"
 #include "Objects/pmethodobject.h"
 #include "Objects/pobject.h"
+#include "Objects/psliceobject.h"
 #include "Objects/pstructmember.h"
 #include "Objects/ptupleobject.h"
 
@@ -42,6 +43,7 @@
 #include "Objects/plongobject.c"
 #include "Objects/pmethodobject.c"
 #include "Objects/pobject.c"
+#include "Objects/psliceobject.c"
 #include "Objects/pstructmember.c"
 #include "Objects/ptupleobject.c"
 #include "Objects/punicodeobject.c"
@@ -73,6 +75,7 @@ EXTERNFN void psy_listobject_init(void);    /* Objects/plistobject.c */
 EXTERNFN void psy_longobject_init(void);    /* Objects/plongobject.c */
 EXTERNFN void psy_methodobject_init(void);  /* Objects/pmethodobject.c */
 EXTERNFN void psy_rangeobject_init(void);   /* Objects/prangeobject.c */
+EXTERNFN void psy_sliceobject_init(void);   /* Objects/psliceobject.c */
 EXTERNFN void psy_tupleobject_init(void);   /* Objects/ptupleobject.c */
 EXTERNFN void psy_unicodeobject_init(void); /* Objects/punicodeobject.c */
 EXTERNFN void psyco_initmath(void);         /* Modules/pmath.c */
@@ -101,6 +104,7 @@ PSY_INLINE void initialize_all_files(void) {
   psy_longobject_init();    /* Objects/plongobject.c */
   psy_methodobject_init();  /* Objects/pmethodobject.c */
   psy_rangeobject_init();   /* Objects/prangeobject.c */
+  psy_sliceobject_init();   /* Objects/psliceobject.c */
   psy_tupleobject_init();   /* Objects/ptupleobject.c */
   psy_unicodeobject_init(); /* Objects/punicodeobject.c */
   psyco_initmath();         /* Modules/pmath.c */

@@ -43,6 +43,7 @@
 #include "../Objects/plongobject.h"
 #include "../Objects/pboolobject.h"
 #include "../Objects/ptupleobject.h"
+#include "../Objects/psliceobject.h"
 
 #include "../compat2to3.h"
 
@@ -3264,17 +3265,11 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           v = NTOP(2);
           u = NTOP(3);
         } else {
-          w = psyco_vi_Zero();
+          w = NULL;
           v = NTOP(1);
           u = NTOP(2);
         }
-        x = psyco_generic_call(po, PySlice_New, CfCommonNewRefPyObject, "vvv",
-                               u, v, w);
-        if (oparg != 3)
-          vinfo_decref(w, po);
-        if (x == NULL)
-          break;
-        Psyco_AssertType(po, x, &PySlice_Type);
+        x = PsycoSlice_New(u, v, w);
         if (oparg == 3)
           POP_DECREF(); /* w */
         POP_DECREF();   /* v */

@@ -12,6 +12,7 @@
 #include "pobject.h"
 #include "pboolobject.h"
 #include "plongobject.h"
+#include "psliceobject.h"
 #include "../pycodegen.h"
 
 /* 'state' is read as its low byte: bit 7 ready, 6 ascii, 5 compact, 2-4
@@ -186,13 +187,45 @@ helper:
                             "vv", v, i);
 }
 
-/* unicode_subscript: an int index here, anything else (slices) in C */
+/* unicode_subscript's slice case with step 1, after PySlice_Unpack. The
+   empty string is CPython's shared one, and PyUnicode_Substring gives the
+   string itself for a full slice of an exact str (unicode_result_unchanged),
+   a copy for a subclass. */
+static PyObject *cimpl_unicode_slice(PyObject *self, Py_ssize_t start,
+                                     Py_ssize_t stop) {
+  if (PyUnicode_READY(self) == -1)
+    return NULL;
+  if (PySlice_AdjustIndices(PyUnicode_GET_LENGTH(self), &start, &stop, 1) <=
+      0)
+    return PyUnicode_New(0, 0);
+  return PyUnicode_Substring(self, start, stop);
+}
+
+/* unicode_subscript: an int index or a virtual slice here, anything else in
+   C. A slice of a constant exact str folds. */
 static vinfo_t *punicode_subscript(PsycoObject *po, vinfo_t *v,
                                    vinfo_t *key) {
-  vinfo_t *i, *r;
+  vinfo_t *i, *j, *r;
   PyTypeObject *ktp = Psyco_NeedType(po, key);
   if (ktp == NULL)
     return NULL;
+  if (ktp == &PySlice_Type) {
+    switch (PsycoSlice_Unpack(po, key, &i, &j)) {
+    case -1:
+      return NULL;
+    case 1:
+      r = psyco_generic_call(
+          po, cimpl_unicode_slice,
+          CfCommonNewRefPyObject |
+              (Psyco_KnownType(v) == &PyUnicode_Type ? CfPure : 0),
+          "vvv", v, i, j);
+      vinfo_decref(j, po);
+      vinfo_decref(i, po);
+      if (r != NULL && !is_compiletime(r->source))
+        Psyco_AssertType(po, r, &PyUnicode_Type);
+      return r;
+    }
+  }
   if (!PyType_IsSubtype(ktp, &PyLong_Type))
     return psyco_generic_call(po, unicode_subscript, CfCommonNewRefPyObject,
                               "vv", v, key);

@@ -1,19 +1,54 @@
 #include "pobject.h"
 #include "pabstract.h"
 #include "plongobject.h"
+#include "psliceobject.h"
 
 #define BYTES_sval UNSIGNED_ARRAY(unsigned char, offsetof(PyBytesObject, ob_sval))
 
 static binaryfunc bytes_subscript;
 
-/* bytes_subscript: an int index gives the byte as a virtual int; anything
-   else (slices) in C */
+/* bytes_subscript's slice case with step 1, after PySlice_Unpack */
+static PyObject *cimpl_bytes_slice(PyObject *self, Py_ssize_t start,
+                                   Py_ssize_t stop) {
+  Py_ssize_t slicelength =
+      PySlice_AdjustIndices(PyBytes_GET_SIZE(self), &start, &stop, 1);
+  if (slicelength <= 0)
+    return PyBytes_FromStringAndSize("", 0);
+  if (start == 0 && slicelength == PyBytes_GET_SIZE(self) &&
+      PyBytes_CheckExact(self)) {
+    Py_INCREF(self);
+    return self;
+  }
+  return PyBytes_FromStringAndSize(PyBytes_AS_STRING(self) + start,
+                                   slicelength);
+}
+
+/* bytes_subscript: an int index gives the byte as a virtual int, a virtual
+   slice is cimpl_bytes_slice (folding for a constant exact bytes); anything
+   else in C */
 static vinfo_t *pbytes_subscript(PsycoObject *po, vinfo_t *v, vinfo_t *key) {
-  vinfo_t *i, *vlen, *r;
+  vinfo_t *i, *j, *vlen, *r;
   condition_code_t cc;
   PyTypeObject *ktp = Psyco_NeedType(po, key);
   if (ktp == NULL)
     return NULL;
+  if (ktp == &PySlice_Type) {
+    switch (PsycoSlice_Unpack(po, key, &i, &j)) {
+    case -1:
+      return NULL;
+    case 1:
+      r = psyco_generic_call(
+          po, cimpl_bytes_slice,
+          CfCommonNewRefPyObject |
+              (Psyco_KnownType(v) == &PyBytes_Type ? CfPure : 0),
+          "vvv", v, i, j);
+      vinfo_decref(j, po);
+      vinfo_decref(i, po);
+      if (r != NULL && !is_compiletime(r->source))
+        Psyco_AssertType(po, r, &PyBytes_Type);
+      return r;
+    }
+  }
   if (!PyType_IsSubtype(ktp, &PyLong_Type))
     return psyco_generic_call(po, bytes_subscript, CfCommonNewRefPyObject,
                               "vv", v, key);

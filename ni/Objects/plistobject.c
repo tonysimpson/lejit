@@ -12,6 +12,7 @@
 #include "plistobject.h"
 #include "plongobject.h"
 #include "piterobject.h"
+#include "psliceobject.h"
 #include "../pycodegen.h"
 
 
@@ -304,6 +305,24 @@ bool PsycoList_Append(PsycoObject* po, vinfo_t* v, vinfo_t* vitem)
 }
 
 
+/* list_subscript's slice case with step 1, after PySlice_Unpack */
+static PyObject* cimpl_list_slice(PyObject* self, Py_ssize_t start,
+				  Py_ssize_t stop)
+{
+	if (PySlice_AdjustIndices(Py_SIZE(self), &start, &stop, 1) <= 0)
+		return PyList_New(0);
+	return PyList_GetSlice(self, start, stop);
+}
+
+/* list_ass_subscript's slice case with step 1: list_ass_slice, which
+   PyList_SetSlice is (value NULL deletes) */
+static int cimpl_list_ass_slice(PyObject* self, Py_ssize_t start,
+				Py_ssize_t stop, PyObject* value)
+{
+	PySlice_AdjustIndices(Py_SIZE(self), &start, &stop, 1);
+	return PyList_SetSlice(self, start, stop, value);
+}
+
 /* list_subscript is also list.__getitem__ (METH_COEXIST), so
    super().__getitem__(i) brings it a subclass instance whose own slots run
    Python code; the generic meta would dispatch on those (KNOWN_BUGS F41) */
@@ -338,7 +357,52 @@ static vinfo_t* plist_subscript(PsycoObject* po, vinfo_t* o, vinfo_t* key)
 			return NULL;
 		}
 	}
+	if (Psyco_KnownType(key) == &PySlice_Type) {
+		vinfo_t *i, *j, *r;
+		switch (PsycoSlice_Unpack(po, key, &i, &j)) {
+		case -1:
+			return NULL;
+		case 1:
+			r = psyco_generic_call(po, cimpl_list_slice,
+					       CfCommonNewRefPyObject,
+					       "vvv", o, i, j);
+			vinfo_decref(j, po);
+			vinfo_decref(i, po);
+			if (r != NULL)
+				Psyco_AssertType(po, r, &PyList_Type);
+			return r;
+		}
+	}
 	return psyco_generic_subscript(po, o, key);
+}
+
+/* list_ass_subscript: a virtual slice is cimpl_list_ass_slice */
+static bool plist_ass_subscript(PsycoObject* po, vinfo_t* o, vinfo_t* key,
+				vinfo_t* value)
+{
+	PyTypeObject* ktp = Psyco_NeedType(po, key);
+	if (ktp == NULL)
+		return false;
+	if (ktp == &PySlice_Type) {
+		vinfo_t *i, *j, *r;
+		switch (PsycoSlice_Unpack(po, key, &i, &j)) {
+		case -1:
+			return false;
+		case 1:
+			if (value != NULL)
+				r = psyco_generic_call(po, cimpl_list_ass_slice,
+						       CfCommonIntZeroOk,
+						       "vvvv", o, i, j, value);
+			else
+				r = psyco_generic_call(po, cimpl_list_ass_slice,
+						       CfCommonIntZeroOk,
+						       "vvvl", o, i, j, 0L);
+			vinfo_decref(j, po);
+			vinfo_decref(i, po);
+			return r != NULL;
+		}
+	}
+	return psyco_generic_ass_subscript(po, o, key, value);
 }
 
 
@@ -356,7 +420,7 @@ void psy_listobject_init(void)
 	if (mm) {  /* Python >= 2.3 */
 		Psyco_DefineMeta(mm->mp_subscript, plist_subscript);
 		Psyco_DefineMeta(mm->mp_ass_subscript,
-				 psyco_generic_ass_subscript);
+				 plist_ass_subscript);
 	}
 
 	/* In Python 2.3, lists have their own iterator type for
