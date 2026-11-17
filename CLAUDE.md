@@ -26,6 +26,7 @@ Ni is a fork of Armin Rigo's **Psyco** JIT for CPython, ported partway to x86-64
 | Porting the core to 3.12: what changes, the entry design, risks | `doc/PORT312.md` |
 | Known and suspected bugs (one list) | `doc/KNOWN_BUGS.md` |
 | Everything still open, bugs and ideas, with pointers | `doc/BACKLOG.md` |
+| One policy for specialisation: promotion sites and merge points | `doc/SPECIALISATION.md` |
 | Building and debugging (3.7 only, nianalyser) | `doc/BUILD.md` |
 | Per-function review evidence (point-in-time, not maintained) | `doc/reviews/` |
 

@@ -50,6 +50,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **M9:** negative constants in qword stores go through `MOV R10, imm64`; a sign-extended imm32 would do. Tiny.
 
 ### Code size and compile time
+- **The specialisation policy** (`doc/SPECIALISATION.md`) orders the items below that change how many copies are made: forgotten values, rejoining, matching across an unused fact, shared code after polymorphic sites, a megamorphic table, one budget per function.
 - **Shared code after polymorphic promotion sites** (option D, queued after forgotten values). Once a promotion site has seen K values, compile the code after it once with the value unknown, and make only the operation itself value-dependent (through a cache, as JavaScript inline caches do: they cache how to do the operation, not the rest of the function). Psyco today compiles a copy of the rest of the block per value. Builds on the forgotten-values mark. Design write-up first. A shared megamorphic table keyed on (type, operation), as in V8, is the follow-up if megamorphic sites still show in profiles.
 - **Forgotten values** (GLOSSARY): when the cap (D40) generalises a value, mark it so any later promotion of it goes straight to the generic path. Then the cap can generalise more than ints (a constant function made run-time is promoted again today, so meteor compiled 5% more). Queued after the two-form values work, which touches the same code.
 - **A cap on blocks per merge point** (CODE_SIZE option 3): the general backstop. Next, now D33 is in.

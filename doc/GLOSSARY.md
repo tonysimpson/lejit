@@ -35,6 +35,7 @@ Use these words in conversation, docs and commit messages. They name the two pla
 - **State**: what the compiler knows about every local and stack slot at one point, such as "`i` is the constant 0, `n` is in a register, `f` is a known function". Blocks are compiled from states.
 - **Promotion site**: a point where compiled code needs to know **one value** (which function is called, an object's type), so it switches on that value at run time and compiles a copy per value seen.
 - **Merge point**: a point (loop head, join) where the **whole state** is compared with the states existing blocks were compiled from. If none matches, a new block is compiled.
+- **Specialisation point**: a promotion site or a merge point; both follow one policy (`doc/SPECIALISATION.md`).
 - **Specialise**: compile a separate copy for a known value or state.
 - **Generic path**: the copy that accepts any value. At a promotion site it is the megamorphic path; at a merge point it is a block compiled from a state with the facts made run-time.
 - **Generalise** (not "forget"): turn a known fact in a state into "known only at run time", so the state can match a more general block. The cap per merge point (D40) does this to ints.
