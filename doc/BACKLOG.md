@@ -41,7 +41,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **Attribute stores** (`doc/STORES.md`, QUESTIONS 39; owner decides). Stores are 30–38% of richards, 13% of deltablue, 11% of go. Option 1 (type guard, then `_PyObjectDict_SetItem` directly; fixes F37) gains about 8% on richards; an inline store gains about 21–22%. Option 4 (a per-site check of the live keys, no reference held) works in constructors and avoids F36. The dict version tag must be settled first.
 - **Strings (D14).** **In flight:** measure, then `len`, indexing, iteration, `in`, constant folding. Later: concatenation buffers (old Psyco's design) if the measurement says so.
 - **Unshared-dict loads with a known hash.** Done (`0965d06`). Next step, if go still shows `lookdict`: an inline probe of a combined dict for a constant key (medium).
-- **Calls with `*args`/`**kw` and unpacking** (F19 remainder): done (`eae77b9`). Every BUILD_*_UNPACK opcode compiles; the map and set forms are residual helpers. No pyperformance benchmark used them. If one ever matters: a virtual dict for `**` of known dicts.
+- **Calls with `*args`/`**kw` and unpacking** (F19 remainder): done (`7fdf9a7`). Every BUILD_*_UNPACK opcode compiles; the map and set forms are residual helpers. No pyperformance benchmark used them. If one ever matters: a virtual dict for `**` of known dicts.
 - **Calls to closures** (F8): compile, but the call from compiled code is the generic one.
 - **Generators, option A** (GENERATORS.md): compiled resumable bodies. Deferred to the 3.12 entry design (QUESTIONS 33).
 - **Inlining:** measured and not taken (STATUS, "Inlining measured"): +1–2% speed for +5–10% code.
