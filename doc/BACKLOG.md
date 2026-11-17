@@ -53,7 +53,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 ## Improvement ideas
 
-- **Fewer `eval_breaker` tests (D45):** done (`570808a`, D53): after a call only if it made a C call that may block; code 2,381 → 2,322 KB over the 29, half of D45's cost. Left: `type_call` (668 of the 2,122 call compiles that keep a test in the seven benchmarks) could skip it for a class whose `__new__` and `__init__` are Python code, but only behind a guard, since `__init__` can be reassigned after the compile (CODE_SIZE.md, "Fewer eval_breaker tests after calls").
+- **Fewer `eval_breaker` tests (D45):** done (`889fce6`, D53): after a call only if it made a C call that may block; code 2,381 → 2,322 KB over the 29, half of D45's cost. Left: `type_call` (668 of the 2,122 call compiles that keep a test in the seven benchmarks) could skip it for a class whose `__new__` and `__init__` are Python code, but only behind a guard, since `__init__` can be reassigned after the compile (CODE_SIZE.md, "Fewer eval_breaker tests after calls").
 
 ### Speed
 - **F13, FASTCALL builtins.** **In flight.** Note: F23 already gave `PsycoCFunction_Call` a FASTCALL path for builtins with a meta; F13 is about the rest, and the agent should say what is left.

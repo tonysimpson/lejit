@@ -686,7 +686,7 @@ Speed is unchanged within noise on all eight. No kept drop was found to cost spe
 
 **Verdict:** kept, as a small code-size and compile-time win with no speed cost; it is not the large lever. Most of the remaining "an earlier, more general block existed" cases are promotions at a merge point, whose own compare must keep the fact (the guard). Dropping more than the type waits on C35.
 
-## Fewer eval_breaker tests after calls (`570808a`, D53) [run]
+## Fewer eval_breaker tests after calls (`889fce6`, D53) [run]
 
 D45 tested `eval_breaker` after every `CALL_*` (7-byte `cmp`, 6-byte `jne`, a 15-byte pooled respawn stub), which added 5% to code. Now the test is made only after a call that emitted a C call that may block: not after inlined, folded, virtual or directly compiled calls, nor after the C functions `psyfunc.c:psyco_cannot_block` lists (allocation, `list.append`, int and float compares, some str methods, `ord`, `chr`, `callable`, a Python function's `tp_call`). Release builds against `cdbddd4` (`baseline-3.7` with the inline stores), one session; instructions per warm iteration are `perf stat -e instructions:u` over `tools/profile_bench.py` 1 s and 4 s runs, the difference divided by the difference in iterations, one run each, `PYTHONHASHSEED=0`.
 
