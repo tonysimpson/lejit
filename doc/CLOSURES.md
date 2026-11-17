@@ -7,7 +7,7 @@ Compiled code calling a closure (a function with free variables) made the generi
 
 ## How often [run]
 
-`tools/closurecalls.py` runs each pyperformance benchmark under plain CPython with `sys.setprofile` and counts, per warm iteration, the calls a `CALL_*` makes straight to a Python function: no C function between (not `map`, `sorted(key=)`), not an operator slot, not `__init__`/`__new__` under a class call (`type_call` makes those). At `176e9ad`:
+`tools/closurecalls.py` runs each pyperformance benchmark under plain CPython with `sys.setprofile` and counts, per warm iteration, the calls a `CALL_*` makes straight to a Python function: no C function between (not `map`, `sorted(key=)`), not an operator slot, not `__init__`/`__new__` under a class call (`type_call` makes those). At `b11de13`:
 
 | benchmark | direct calls | to closures | of which not comprehensions | to code with cells of its own |
 |---|---|---|---|---|
@@ -25,7 +25,7 @@ Calls to code with cells of its own (a function containing a closure over its lo
 
 ## What a call cost [run]
 
-`tools/closure_micro.py CASE N`, release build at `176e9ad`, instructions per loop iteration (one call and an add) from `perf stat -e instructions:u` at N = 100,000 and 1,100,000:
+`tools/closure_micro.py CASE N`, release build at `b11de13`, instructions per loop iteration (one call and an add) from `perf stat -e instructions:u` at N = 100,000 and 1,100,000:
 
 | case | CPython 3.7 | Ni before | Ni after |
 |---|---|---|---|
@@ -50,7 +50,7 @@ Tests: `tests/cases/closure_calls.py` (constant and run-time closures, a decorat
 
 ## Results [run]
 
-Release builds, baseline `176e9ad` against `650372a`, PYTHONHASHSEED=0. Instructions per warm iteration: `perf stat -e instructions:u` over `tools/profile_bench.py` 1 s and 4 s runs, the difference divided by the difference in iterations.
+Release builds, baseline `b11de13` against `0b46284`, PYTHONHASHSEED=0. Instructions per warm iteration: `perf stat -e instructions:u` over `tools/profile_bench.py` 1 s and 4 s runs, the difference divided by the difference in iterations.
 
 | benchmark | before (M) | after (M) | |
 |---|---|---|---|
