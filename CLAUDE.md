@@ -21,6 +21,7 @@ Ni is a fork of Armin Rigo's **Psyco** JIT for CPython, ported partway to x86-64
 | Compile cost: compile time and code size per benchmark (`tools/compilebench.py`) | `doc/COMPILE_COST.md` |
 | Code size: where emitted code goes, identical copies (`tools/codesize.py`) | `doc/CODE_SIZE.md` |
 | Profiles: where compiled code spends its time (`tools/profile_bench.py`) | `doc/PROFILE.md` |
+| Attribute stores: what they cost, what they do to the dict, options (`tools/storeclasses.py`) | `doc/STORES.md` |
 | Generators: where time goes, options (resumable bodies, genexpr inlining) | `doc/GENERATORS.md` |
 | Porting the core to 3.12: what changes, the entry design, risks | `doc/PORT312.md` |
 | Known and suspected bugs (one list) | `doc/KNOWN_BUGS.md` |
