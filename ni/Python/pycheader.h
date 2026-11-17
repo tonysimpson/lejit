@@ -84,8 +84,10 @@ typedef struct {
   vinfo_t* val;         /* exception value */
   vinfo_t* tb;          /* traceback object */
   PyObject* f_builtins;
-  char split_after_global; /* a guarded LOAD_GLOBAL was just compiled: start a
-                              new block (pycompiler.c:load_global_cached) */
+  char split_after_global; /* a guarded LOAD_GLOBAL or attribute lookup was
+                              just compiled: start a new block
+                              (pycompiler.c:load_global_cached,
+                              pobject.c:generic_getattr) */
 } pyc_data_t;
 
 #define AUTO_RECURSION_MAX 200
