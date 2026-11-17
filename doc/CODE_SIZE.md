@@ -476,3 +476,62 @@ Compile time is unchanged.
 
 **A latent bug found on the way** (KNOWN_BUGS C26). The stub pool took 4 KB from `psyco_new_code_buffer`, but a reused code buffer may have only about 1 KB left (`BUFFER_MARGIN`). `psyco_assert(pool_end <= limit)` fired in CPython's `test_descr` once chains used the pool more. The pool now takes what the buffer has.
 
+
+## Forgotten values (`ea95a9a`, D43, SPECIALISATION.md step 1) [run]
+
+Past the cap (D40), `dispatcher.c:psyco_forget_values` now also un-promotes each non-fixed constant local that some block at the merge point doesn't hold (`varies_at` reads the snapshots' top-level sources), and **forgets** it: its run-time source gets `RunTime_Megamorphic`, the flag a megamorphic promotion site already puts on its value. Then:
+
+- **Promotions honour it.** `psyco_pyobj_atcompiletime_mega` (attribute lookup's type, calls to a function) and `psyco_atcompiletime_static_type` (`type_call`, `isinstance`) already returned "megamorphic" for a flagged value. `pfunction_call` and `PsycoCFunction_Call` now test the callable itself, before promoting a value read from it (`func_code`, `m_ml`), and take the generic call. `Psyco_NeedType` and `psyco_atcompiletime` have no generic path and still promote; the type of a forgotten value is not forgotten (below). [read]
+- **Merge points compare it.** It is in the source word, so snapshots keep it and a replay starts with it (D21). A forgotten value never matches an unmarked run-time one in a snapshot (that code may promote it again); an unmarked one may match a forgotten one; and, new, a non-fixed constant partially matches a forgotten one (or a megamorphic one), so it is un-promoted and joins it (`compatible_vinfo`). [read]
+
+### Method
+
+`NI_CODESTATS=1` release builds of `b60e8bb` (before) and the change, `tools/codesize.py <bench> -s` on all 23 pyperformance benchmarks, `PYTHONHASHSEED=0`; release builds for `tools/compilebench.py` (two runs each) and `perf stat -e instructions:u` (((3 + 12) − (3 + 2) iterations) / 10, two runs each). Variants were built with a temporary switch (not committed) and measured the same way. A synthetic case, `tests/cases/mp_forget.py`'s four functions through `orders` three times, counts code buffers and bytes from `ni._stats()`.
+
+### What was tried
+
+Instructions compiled (all 23 benchmarks; meteor_contest), and the synthetic case's code bytes (funcs / classes / default_const / mixed):
+
+| version | all 23 | meteor | synthetic bytes |
+|---|---|---|---|
+| before (ints only) | 57,298 | 1,448 | 23,273 / 36,556 / 14,904 / 29,071 |
+| every constant, no mark (D40's rejected version) | 57,363 | 1,524 (+5.2%) | 29,660 / 26,229 / 18,392 / 23,904 |
+| every constant, marked, constants join | 57,378 | 1,523 | 21,834 / 30,681 / 24,509 / 28,478 (hash seed not fixed) |
+| every constant, marked, type kept as a fixed fact | 57,383 | 1,522 | — |
+| **only constants that differ, marked, constants join** (kept) | 57,301 | 1,448 | 21,834 / 30,681 / 15,024 / 24,382 |
+| as kept, and a forgotten value may also enter an unmarked block | 57,285 | 1,448 | 21,834 / 30,681 / 12,328 / 24,382 |
+
+- **The mark alone did not fix meteor_contest.** Its +5% was not re-promotion now: `bisect` (a default argument) is the same constant in all 34 blocks at `solve` @66, so forgetting it gains nothing there, and the forgotten form spreads to every merge point after it (@82 11 → 12 blocks, @174 7 → 9), whose existing blocks hold the constant. Forgetting only a constant that some block doesn't share brings meteor back to 1,448.
+- **Keeping the type** (a fixed type in the forgotten value's array) changed nothing on pyperformance, and a forgotten value with a fixed type can't be joined by a run-time value without one [inferred]; dropped.
+- **Letting a forgotten value enter an unmarked block** was best on the synthetic case (default_const 59 → 42 buffers), but it also lets a megamorphic site's value back into code that promotes it: the megamorphic version would re-enter the old site and call the C dispatcher on each pass (deepcopy, which has 5 megamorphic sites, compiled 16 instructions fewer, probably that [inferred]). Not kept; it is the open question in SPECIALISATION.md, and safe only one way.
+
+### Results (the kept version)
+
+`codesize.py -s`, before → after: every benchmark compiles the same instructions and blocks except deltablue, 6,213 → 6,216 instructions, 283 → 285 blocks (`add_propagate` @18 forgets a `Planner`, `chain_test` @96 a `None`). Code KB differ by a pool chunk at most (mdp 161 → 157, deepcopy 64 → 65); all 23: 2,632 → 2,629 KB, 2,364 → 2,366 blocks.
+
+**The cap rarely meets a constant that varies.** Over all 23 runs (startup included) the cap forgot 2–20 constants per benchmark, nearly all in the stdlib at import (`sre_parse._parse`'s `_NamedIntConstant`s and `None`, `gettext._expand_lang`'s strings). In benchmark code: deltablue (above), richards and richards_super (`runTask` @56, a `None`), deepcopy (a `list` in `deepcopy` @12). What is left past the cap differs in fixed facts and forms of a value, as D40 found.
+
+`perf stat -e instructions:u` per warm iteration (M), two runs each:
+
+| benchmark | before | after |
+|---|---|---|
+| richards | 235.80, 235.80 | 235.34, 235.91 |
+| richards_super | 437.25, 437.63 | 437.56, 437.65 |
+| deltablue | 32.08, 32.08 | 32.10, 32.10 (+0.05%) |
+| deepcopy | 2.158, 2.177 | 2.171, 2.177 |
+| mdp | 30,578, 30,622 | 30,510, 30,498 (−0.3%) |
+| meteor_contest | 646.76, 646.76 | 646.70, 646.70 |
+| chaos | 487.11, 487.11 | 487.63, 487.01 |
+| go | 1,139.1, 1,139.1 | 1,139.1, 1,139.2 |
+| hexiom | 40.59, 40.59 | 40.59, 40.59 |
+| raytrace | 3,255, 3,251 | 3,248, 3,241 (−0.3%) |
+| pyflate | 2,438.7, 2,438.7 | 2,453.7, 2,453.7 (+0.6%) |
+
+- **pyflate +0.6% is real and repeatable, but not pyflate's own code.** Nothing in pyflate is forgotten; with forgetting switched off at run time in the same build it is 2,438.7 M again. The forgotten constants are in `sre_parse` at import, so the likely cause is the code before pyflate's taking different room in the buffers, which moves where coding pauses split pyflate's blocks [inferred]. deltablue's +0.05% is its two forgotten locals or the same.
+- No benchmark shows a loss from a generic call through a forgotten value: none is called in a warm loop.
+
+`tools/compilebench.py`, release, two runs each: all 29 benchmarks' code 2,590 → 2,590 KB, compile 20.2, 21.4 → 20.3, 21.7 ms; deltablue 406.4 → 405.7 KB, mdp 156.9 → 152.9 KB, deepcopy 35.9 → 39.9 KB (one pool chunk, same instructions compiled); warm times within noise (the second "after" run shared the machine: scimark_sor 61 → 89 ms in one run only).
+
+**Synthetic case** (`tests/cases/mp_forget.py`, code buffers / bytes, before → after): funcs (a local holding one of five functions and builtins, called in the loop) 77 / 23,273 → 74 / 21,834 (−6%); classes (one of four classes, instantiated) 81 / 36,556 → 70 / 30,681 (−16%); default_const 59 / 14,904 → 59 / 15,024 (+0.8%); mixed (a function, a class, a large int or `None`) 88 / 29,071 → 86 / 24,382 (−16%).
+
+**Verdict:** kept as a backstop, like the cap: it costs nothing measurable on pyperformance and stops the copying in loops whose locals hold changing functions or classes. It is not a code-size win on these benchmarks.

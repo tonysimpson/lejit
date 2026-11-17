@@ -53,7 +53,7 @@ All four are one problem: a fact gained in one place decides how many copies are
 
 In order, each measured on code size, compile time and speed (D29):
 
-1. **Forgotten values** (in flight): the mark, honoured by every promotion entry, set by the cap. Lets the cap generalise more than ints. Rules 2 and 3.
+1. **Forgotten values** (done, D43): the mark (`RunTime_Megamorphic`), honoured by every promotion entry that has a generic path, set by the cap. Lets the cap generalise more than ints. Rules 2 and 3, except that a forgotten value's type is still promoted (`Psyco_NeedType` has no generic path).
 2. **Respawned branches rejoin** (in flight, QUESTIONS 42): rule 5. Then inline stores (D38) merge on top.
 3. **Merge points match across an unused fact**: rule 1. A state that knows a promoted type nothing has used yet matches a block without it. A naive version that dropped the check made every benchmark hang (CODE_SIZE "Promotions"), so it needs the "used" information and a guard against promoting and generalising in a loop.
 4. **Shared code after polymorphic sites** (option D, BACKLOG): rule 4, built on the mark from step 1. Design first.

@@ -38,8 +38,8 @@ Use these words in conversation, docs and commit messages. They name the two pla
 - **Specialisation point**: a promotion site or a merge point; both follow one policy (`doc/SPECIALISATION.md`).
 - **Specialise**: compile a separate copy for a known value or state.
 - **Generic path**: the copy that accepts any value. At a promotion site it is the megamorphic path; at a merge point it is a block compiled from a state with the facts made run-time.
-- **Generalise** (not "forget"): turn a known fact in a state into "known only at run time", so the state can match a more general block. The cap per merge point (D40) does this to ints.
-- **Forgotten value** (planned, BACKLOG): a value generalised by the cap and marked so that any later promotion of it takes the generic path at once, instead of specialising again.
+- **Generalise** (not "forget"): turn a known fact in a state into "known only at run time", so the state can match a more general block. The cap per merge point (D40) does this to ints, and to constants that differ between its blocks (D43).
+- **Forgotten value** (D43): a constant the cap made run-time, marked so that any later promotion of it takes the generic path at once, instead of specialising again. The mark is `RunTime_Megamorphic` on its run-time source, the flag a megamorphic site already sets on its value, so either kind of point can set it; it is kept in snapshots and compared at merge points (a forgotten state never enters a block without the mark; a constant or unmarked value may join a forgotten one). Its type is not forgotten. [read] `dispatcher.c:psyco_forget_values`, `vcompiler.h:is_megamorphic`
 - **Cap**: the limit of blocks per merge point (6, D40). The promotion site's equivalent is the megamorphic limit (5).
 - **Two forms**: one value described in two ways that don't match, such as "the constant 0" and "a computed int that happens to be 0". D33 gives small ints one form.
 
