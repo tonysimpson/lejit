@@ -5,7 +5,8 @@
  * a function that is still virtual reads its code, globals and defaults
  * directly and never materialises it. A generator expression called from
  * here stays a pending generator (PsycoGenexpr_New) until a consumer fuses it
- * or it escapes.
+ * or it escapes. A promoted function's defaults are checked at run time
+ * (compiled_defaults, F52); its code is not.
  * Suspected bugs (from reading):
  *  - compute_function's SET_FIELD tests 'other != NULL ||
  *    !psyco_known_NULL(other)', which should be &&;
@@ -16,6 +17,7 @@
 #include "pfuncobject.h"
 #include "../psyfunc.h"
 #include "pclassobject.h"
+#include "ptupleobject.h"
 
 /***************************************************************/
 /***   Virtual functions                                     ***/
@@ -188,7 +190,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     vinfo_t *fglobals;
     vinfo_t *fdefaults;
     vinfo_t *result;
-    int saved_inlining;
+    int saved_inlining, tuple_size;
 
     /* XXX we capture the code object, so this breaks if someone
        changes the .func_code attribute of the function later */
@@ -199,9 +201,12 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     if (PyCode_GetNumFree(co) > 0 || co->co_kwonlyargcount > 0)
         goto fallback;
 
-    /* the defaults are those compiled while f still has them */
+    /* the defaults are those compiled while f still has them; a call that
+       gives every positional argument doesn't use them (keyword-only
+       ones went to the fallback) */
     defl = compiled_defaults(f);
-    {
+    tuple_size = PsycoTuple_Load(arg);
+    if (tuple_size < 0 || tuple_size < co->co_argcount) {
         vinfo_t *vf = vinfo_new(CompileTime_New((long)f));
         vinfo_t *vnow = psyco_get_field(po, vf, FUNC_defaults_now);
         vinfo_t *vexp;
