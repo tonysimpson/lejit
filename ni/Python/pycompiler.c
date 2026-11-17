@@ -1245,6 +1245,23 @@ static void unbound_deref_error(PsycoObject *po, PyCodeObject *co, int oparg) {
 
 #define CELL_ob_ref FMUT(DEF_FIELD(PyCellObject, PyObject *, ob_ref, OB_type))
 
+/* ceval.c:cmp_outcome, PyCmp_EXC_MATCH: -1 with a TypeError if w is not an
+   exception class or a tuple of them (F43) */
+static int cimpl_exc_match(PyObject *v, PyObject *w) {
+  Py_ssize_t i;
+  if (PyTuple_Check(w)) {
+    for (i = 0; i < PyTuple_GET_SIZE(w); i++)
+      if (!PyExceptionClass_Check(PyTuple_GET_ITEM(w, i)))
+        goto bad;
+  } else if (!PyExceptionClass_Check(w))
+    goto bad;
+  return PyErr_GivenExceptionMatches(v, w);
+bad:
+  PyErr_SetString(PyExc_TypeError, "catching classes that do not inherit "
+                                   "from BaseException is not allowed");
+  return -1;
+}
+
 static void cimpl_store_deref(PyObject *cell, PyObject *v) {
   PyObject *old = PyCell_GET(cell);
   Py_INCREF(v);
@@ -2824,8 +2841,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           break;
 
         case PyCmp_EXC_MATCH:
-          x = psyco_generic_call(po, PyErr_GivenExceptionMatches,
-                                 CfPure | CfReturnTypeInt, "vv", v, w);
+          x = psyco_generic_call(po, cimpl_exc_match,
+                                 CfCommonIntBoolOrError, "vv", v, w);
           cc = integer_NON_NULL(po, x);
           break;
 

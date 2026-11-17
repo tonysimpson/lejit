@@ -233,3 +233,25 @@ CASES = [
     ('reraise_from_finally', '[([1, 2],)]', {}),
     ('undefined_global', [(1,)], {}),
 ]
+
+
+# except with something that is not an exception class (or a tuple of
+# them) raises TypeError, as ceval.c:cmp_outcome (KNOWN_BUGS F43; Ni
+# matched or let the exception through, CPython's test_baseexception)
+def except_not_a_class(what):
+    try:
+        try:
+            raise ValueError
+        except what:
+            return 'caught'
+    except TypeError as e:
+        return 'TypeError: %s' % e
+    except ValueError:
+        return 'ValueError escaped'
+
+
+CASES += [
+    ('except_not_a_class',
+     "[('spam',), (int,), (BaseException(),), ((ValueError, 'x'),),"
+     " ((KeyError, ValueError),)]", {}),
+]
