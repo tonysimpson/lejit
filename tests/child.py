@@ -22,8 +22,17 @@ if use_ni:
     out.append('compiled: yes' if info == 'compiled' else
                'compiled: no (%s)' % info)
 # leak check: after warm-up, run the calls 100 more times and report how
-# many more memory blocks are allocated than before
+# many more memory blocks are allocated than before. The warm-up is a few
+# rounds, not one: compiling can go on for a few calls (a call site that
+# sees a new function each time specialises until it goes megamorphic),
+# and that bounded growth is tests/compile_bounds.py's business.
 import gc
+for _ in range(9):
+    for args in calls:
+        try:
+            fn(*args)
+        except Exception:
+            pass
 gc.collect()
 before = sys.getallocatedblocks()
 for _ in range(100):
