@@ -76,3 +76,5 @@ Not done / next candidates:
 
 **Keyword-only arguments** compile at the frame entry (CPython has filled them in); calls to such code from compiled code stay real calls. [run] CPython's test_keywordonlyarg, test_dataclasses, test_functools, test_enum, test_json unchanged with Ni.
 
+**F31 and generators** (`e657847`, `21ae5a3`): a respawn replay could make a different LOAD_GLOBAL decision from the original compile (`changing_globals` wasn't in snapshots), which crashed test_base64; found with `tools/nianalyser/crash_report.py` (D28). The hook now leaves generator frames at once: pyperformance generators 0.88× → 0.99×, coroutines 0.96× → 1.01× [run]. test_coroutines and test_asyncgen added to `tests/cpython_tests.py`. Options for compiling generators: `doc/GENERATORS.md`.
+

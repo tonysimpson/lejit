@@ -18,6 +18,7 @@ Ni is a fork of Armin Rigo's **Psyco** JIT for CPython, ported partway to x86-64
 | Settled decisions / open questions / progress | `doc/DECISIONS.md`, `doc/QUESTIONS.md`, `doc/STATUS.md` |
 | Meta-compiler plan, tooling options, failures log | `doc/METACOMPILER.md` |
 | CPython's own JIT: speed-ups, status, pyperformance on 3.7 | `doc/CPYTHON_JIT.md` |
+| Generators: where time goes, options (resumable bodies, genexpr inlining) | `doc/GENERATORS.md` |
 | Porting the core to 3.12: what changes, the entry design, risks | `doc/PORT312.md` |
 | Known and suspected bugs (one list) | `doc/KNOWN_BUGS.md` |
 | Building and debugging (3.7 only, nianalyser) | `doc/BUILD.md` |
