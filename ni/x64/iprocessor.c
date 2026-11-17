@@ -89,6 +89,40 @@ void write_psyco_int_mul_ovf(PsycoObject *po) {
   END_CODE
 }
 
+/* The shared half of every stub (idispatcher.h:psyco_write_stub). A stub
+   loads its record into R11 and jumps here; a 'call' would leave the CPU's
+   return-address predictor one entry off, and every later 'ret' would
+   mispredict (go lost 8% that way). Entered by a conditional jump from
+   compiled code, with the stack at any alignment: saves RAX (it may hold a
+   result with no tracked location yet), calls psyco_stub_enter(record) on
+   an aligned stack, and jumps to the code it returns with RSP as it was.
+   Other registers need no saving (only callee-saved ones are allocated);
+   the flags are not saved, as in psyco_call_code_builder. */
+DEFINEVAR code_t *psyco_stub_trampoline;
+
+static void write_stub_trampoline(PsycoObject *po) {
+  BEGIN_CODE
+  PUSH_R(REG_X64_RAX);
+  MOV_R_R(REG_X64_RDI, REG_X64_R11);        /* the record */
+  MOV_R_R(REG_X64_RAX, REG_X64_RSP);
+  AND_R_I8(REG_X64_RSP, -16);
+  PUSH_R(REG_X64_RAX);                      /* the unaligned RSP */
+  SUB_R_I8(REG_X64_RSP, 8);
+  CALL_I(psyco_stub_enter);
+  ADD_R_I8(REG_X64_RSP, 8);
+  POP_R(REG_X64_RSP);
+  MOV_R_R(REG_X64_R11, REG_X64_RAX);
+  POP_R(REG_X64_RAX);
+  JMP_R(REG_X64_R11);
+  END_CODE
+}
+
+DEFINEFN code_t *psyco_write_stub(code_t *code, void *record) {
+  MOV_R_I(REG_X64_R11, (long)record);
+  JUMP_TO(psyco_stub_trampoline);
+  return code;
+}
+
 DEFINEFN struct stack_frame_info_s **
 psyco_next_stack_frame(struct stack_frame_info_s **finfo) {
   /* Hack to pick directly from the machine stack the stored
@@ -110,6 +144,8 @@ void psyco_processor_init(void) {
   write_glue_run_code_fn(po, false);
   psyco_int_mul_ovf = (psyco_int_mul_ovf_fn)po->code;
   write_psyco_int_mul_ovf(po);
+  psyco_stub_trampoline = po->code;
+  write_stub_trampoline(po);
   SHRINK_CODE_BUFFER(codebuf, po->code, "glue");
   PsycoObject_Delete(po);
 }

@@ -112,6 +112,18 @@ PSY_INLINE void* ipromotion_finish(PsycoObject* po, vinfo_t* fix, void* do_promo
 
 
 /***************************************************************/
+ /***   Stubs                                                 ***/
+
+/* A stub is 15 bytes: 'mov r11, record; jmp psyco_stub_trampoline'
+   (iprocessor.c). The record's first word is the C function to run,
+   code_t *fn(void *closure), with the closure just after it.
+   psyco_write_stub writes one at 'code' and returns its end. */
+#define STUB_SIZE_MAX 15
+EXTERNVAR code_t *psyco_stub_trampoline;
+EXTERNFN code_t *psyco_write_stub(code_t *code, void *record);
+EXTERNFN code_t *psyco_stub_enter(void *record); /* dispatcher.c */
+
+/***************************************************************/
  /***   Misc.                                                 ***/
 
 PSY_INLINE void* conditional_jump_to(PsycoObject* po, code_t* target,

@@ -724,6 +724,10 @@ typedef enum {
 #define SUB_R_I32(rm, i)                                                       \
   DIRECT_ENCODING(true, 1, 0x81, 0, 0, 0x28, 0, rm);                           \
   WRITE_32BIT(i)
+/* @asm: and {rm}, {i:i8} */
+#define AND_R_I8(rm, i)                                                        \
+  DIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x20, 0, rm);                           \
+  WRITE_8BIT(i)
 /* @asm: add {rm}, {i:i8} */
 #define ADD_R_I8(rm, i)                                                        \
   DIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x0, 0, rm);                            \

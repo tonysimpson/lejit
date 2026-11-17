@@ -528,7 +528,7 @@ typedef struct {
 #endif
 
 typedef struct respawn_s {
-  CodeBufferObject *self;
+  void *record; /* the stub's record (psyco_new_stub), freed once compiled */
   void *write_jmp;
   int respawn_cnt;
   CodeBufferObject *respawn_from;
@@ -735,10 +735,8 @@ static code_t *do_respawn_body(respawn_t *rs) {
   /* fix the jump to point to 'codebuf->codestart' */
   change_cond_jump_target(rs->write_jmp, (code_t *)codebuf->codestart);
 
-  /* cannot Py_DECREF(cp->self) because the current function is returning into
-     that code now, but any time later is fine: use the trash of codemanager.c
-   */
-  psyco_trash_object((PyObject *)rs->self);
+  /* the stub is never entered again; its 13 bytes stay, unused */
+  PyMem_Free(rs->record);
   /* XXX don't know what to do with this reference to codebuf */
   return codebuf->codestart;
 }
@@ -785,6 +783,42 @@ void psyco_respawn_detected(PsycoObject *po) {
   INIT_CODE_EMISSION(po->code);
 }
 
+/* Stubs (idispatcher.h): records on the heap, code packed into pool chunks
+   of code buffer memory, taken whole and closed at once so that no buffer
+   stays locked. The chunks are never freed, like all code. */
+#define STUB_POOL_SIZE 4096
+
+typedef struct {
+  code_t *(*fn)(void *closure);
+  /* the closure follows, 8-aligned */
+} stub_record_t;
+
+DEFINEFN code_t *psyco_stub_enter(void *record) {
+  stub_record_t *r = (stub_record_t *)record;
+  return r->fn(r + 1);
+}
+
+/* a stub that calls 'fn' with a new closure of 'size' bytes; returns the
+   closure and sets *stub to the code to jump to */
+static void *psyco_new_stub(void *fn, size_t size, code_t **stub) {
+  static code_t *pool = NULL, *pool_end = NULL;
+  stub_record_t *r = PyMem_Malloc(sizeof(stub_record_t) + size);
+  if (r == NULL)
+    OUT_OF_MEMORY();
+  r->fn = (code_t * (*)(void *)) fn;
+  if (pool_end - pool < STUB_SIZE_MAX) {
+    code_t *limit;
+    CodeBufferObject *b = psyco_new_code_buffer(NULL, NULL, &limit);
+    pool = (code_t *)b->codestart;
+    pool_end = pool + STUB_POOL_SIZE;
+    psyco_assert(pool_end <= limit);
+    SHRINK_CODE_BUFFER(b, pool_end, "stubs"); /* held for good */
+  }
+  *stub = pool;
+  pool = psyco_write_stub(pool, r);
+  return r + 1;
+}
+
 DEFINEFN
 void *psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
                                void *fn, size_t extrasize) {
@@ -792,38 +826,25 @@ void *psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
   if (!is_respawning(po)) {
     char *closure;
     respawn_t *rs;
-    code_t *calling_code;
-    code_t *calling_limit;
-    code_t *limit;
-    CodeBufferObject *codebuf = psyco_new_code_buffer(NULL, NULL, &limit);
+    code_t *stub;
 
     extra_assert((int)jmpcondition < CC_TOTAL);
 
-    /* the proxy contains only a jump to do_respawn,
-       followed by a respawn_t structure */
-    calling_code = po->code;
-    calling_limit = po->codelimit;
-    po->code = insn_code_label(codebuf->codestart);
-    po->codelimit = limit;
-    closure = (char *)psyco_call_code_builder(po, fn, true, SOURCE_DUMMY,
-                                              extrasize + sizeof(respawn_t));
+    /* the stub calls 'fn' with the closure, followed by a respawn_t */
+    closure = (char *)psyco_new_stub(fn, extrasize + sizeof(respawn_t), &stub);
     rs = (respawn_t *)(closure + extrasize);
-    SHRINK_CODE_BUFFER(codebuf, po->code, "respawn");
     /* fill in the respawn_t structure */
     extra_assert(po->respawn_proxy != NULL);
-    rs->self = codebuf;
+    rs->record = ((stub_record_t *)closure) - 1;
     rs->respawn_cnt = po->respawn_cnt;
     rs->respawn_from = po->respawn_proxy;
 #if ALL_CHECKS
     respawn_check_fill(&rs->check, po);
 #endif
 
-    /* write the jump to the proxy */
-    po->code = calling_code;
-    po->codelimit = calling_limit;
+    /* write the jump to the stub */
     psyco_resolved_cc(po, INVERT_CC(jmpcondition)); /* no jump => cond false */
-    rs->write_jmp =
-        conditional_jump_to(po, (code_t *)codebuf->codestart, jmpcondition);
+    rs->write_jmp = conditional_jump_to(po, stub, jmpcondition);
     return closure;
   } else {
     /* respawning: come back at the
