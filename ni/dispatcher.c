@@ -23,6 +23,8 @@
  */
 #include "dispatcher.h"
 #include "Objects/pobject.h"   /* for Psyco_SafelyDeleteVar() */
+#include "Objects/pboolobject.h"
+#include "Objects/plongobject.h"
 #include "Python/pycompiler.h" /* for pyc_data_xxx() */
 #include "blockalloc.h"
 #include "codegen.h"
@@ -1527,6 +1529,47 @@ static void compare_return_address_in_a_stupid_way(vinfo_t *a,
   *alignment_match = (getstack(a->source) % 16) == (getstack(bsource) % 16);
 }
 
+/* One form for small ints and bools at merge points (CODE_SIZE.md option 2):
+   a local or stack slot holding a constant int object becomes a virtual int
+   with that constant value, the form arithmetic produces. Otherwise "still
+   the constant 0" and "a virtual int" never match, and every combination of
+   them starts a new block. Only small ints and bools, which PyLong_FromLong
+   and PyBool_FromLong return as the same object when computed, so identity
+   is kept; never a fixed (promoted) constant. Only locals: they always hold
+   an object (LOAD_CONST's constants have no SkFlagPyObj to tell). Rewrites
+   po in place, from the state alone, before both the comparison and the
+   snapshot: a respawn replay starts from the rewritten snapshot. */
+static void canonical_int(PsycoObject *po, vinfo_t *a) {
+  source_known_t *sk;
+  PyObject *o;
+  source_virtual_t *sv;
+  long value;
+  if (a == NULL || !is_compiletime(a->source))
+    return;
+  sk = CompileTime_Get(a->source);
+  /* fixed: promoted, or 0 for an unbound local */
+  if ((sk->refcount1_flags & SkFlagFixed) || sk->value == 0)
+    return;
+  o = (PyObject *)sk->value;
+  if (Py_TYPE(o) == &PyBool_Type) {
+    sv = &psyco_computed_bool;
+    value = o == Py_True;
+  } else if (Py_TYPE(o) == &PyLong_Type && -1 <= Py_SIZE(o) &&
+             Py_SIZE(o) <= 1) {
+    value = PyLong_AsLong(o);
+    if (value < -5 || value > 256) /* longobject.c's small_ints */
+      return;
+    sv = &psyco_computed_long;
+  } else
+    return;
+  vinfo_array_shrink(po, a, 0); /* cached fields of the object */
+  a->source = VirtualTime_New(sv);
+  a->array = array_new(LONG_TOTAL);
+  a->array->items[iOB_TYPE] = vinfo_new(CompileTime_New((long)Py_TYPE(o)));
+  a->array->items[iLONG_VALUE] = vinfo_new(CompileTime_New(value));
+  sk_decref(sk);
+}
+
 DEFINEFN
 vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
   static vcompatible_t result; /* argh, a global variable -- well, the rest of
@@ -1536,6 +1579,8 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
   int i;
   PyObject *plist = patterns->fatlist;
   extra_assert(PyList_Check(plist));
+  for (i = 0; i < po->pr.co->co_nlocals; i++)
+    canonical_int(po, LOC_LOCALS_PLUS[i]);
   i = PyList_GET_SIZE(plist);
   while (i--) /* the most dummy algorithm: step by step in the list, */
   {           /* checking for a match at each step.                  */
