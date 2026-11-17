@@ -123,11 +123,33 @@ static void close_buffer_use(code_t *code) {
 }
 
 DEFINEVAR unsigned long psyco_next_serial = 0;
+
+#if NI_CODESTATS
+DEFINEVAR PyObject *psyco_codestats_buffers = NULL; /* kind -> [count, bytes] */
+DEFINEFN void psyco_codestats_buffer(const char *kind, CodeBufferObject *obj,
+                                     code_t *nend) {
+  long n = (char *)nend - (char *)obj->codestart;
+  PyObject *e;
+  if (psyco_codestats_buffers == NULL &&
+      (psyco_codestats_buffers = PyDict_New()) == NULL)
+    OUT_OF_MEMORY();
+  e = PyDict_GetItemString(psyco_codestats_buffers, kind);
+  if (e == NULL) {
+    e = Py_BuildValue("[ll]", 0L, 0L);
+    if (e == NULL || PyDict_SetItemString(psyco_codestats_buffers, kind, e) < 0)
+      OUT_OF_MEMORY();
+    Py_DECREF(e);
+  }
+  PyList_SetItem(e, 0, PyLong_FromLong(PyLong_AsLong(PyList_GET_ITEM(e, 0)) + 1));
+  PyList_SetItem(e, 1, PyLong_FromLong(PyLong_AsLong(PyList_GET_ITEM(e, 1)) + n));
+}
+#endif
 DEFINEVAR long psyco_stat_code_buffers = 0;
 DEFINEVAR long psyco_stat_code_bytes = 0;
 DEFINEVAR long psyco_stat_compile_ns[NI_ENTER_KINDS];
 DEFINEVAR long psyco_stat_compile_count[NI_ENTER_KINDS];
 DEFINEVAR int psyco_stat_compile_depth = 0;
+DEFINEVAR int psyco_stat_compile_kind = 0;
 
 DEFINEFN long psyco_stat_now_ns(void) {
   struct timespec t;

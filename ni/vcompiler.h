@@ -682,6 +682,11 @@ struct PsycoObject_s {
       int respawn_cnt;             /* see psyco_prepare_respawn()           */
   CodeBufferObject *respawn_proxy; /* see psyco_prepare_respawn()           */
   pyc_data_t pr;                   /* private language-dependent data       */
+#if NI_CODESTATS
+  code_t *cs_mark;       /* where the current instruction's code began */
+  PyCodeObject *cs_co;   /* ... and the instruction (pycompiler.c) */
+  int cs_instr;
+#endif
 
   /* finally, the description of variable stages. This is the data against
      which state matches and synchronizations are performed. */

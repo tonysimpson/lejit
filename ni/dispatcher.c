@@ -1881,6 +1881,7 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
 
     po->code = insn_code_label(result);
     codeend = psyco_compile(po, mp, false);
+    psyco_codestats_buffer("promotion", codebuf, codeend);
     psyco_shrink_code_buffer(codebuf, codeend);
     /* XXX don't know what to do with reference to 'codebuf' */
   }
@@ -1937,6 +1938,7 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
 
     po->code = insn_code_label(result);
     codeend = psyco_compile(po, mp, false);
+    psyco_codestats_buffer("megamorphic", codebuf, codeend);
     psyco_shrink_code_buffer(codebuf, codeend);
     /* XXX don't know what to do with reference to 'codebuf' */
   }

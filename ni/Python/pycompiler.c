@@ -1514,6 +1514,66 @@ static code_t *exit_function(PsycoObject *po) {
 /***************************************************************/
 /***   the main loop of the interpreter/compiler.            ***/
 
+#if NI_CODESTATS
+/* Code size per instruction (tools/codesize.py, ni._codestats()): for each
+   (code object, instruction offset), [opcode, times compiled, bytes, the
+   copies as (address, bytes, how the compiler
+   was entered: codemanager.h NI_ENTER_*)]. The
+   bytes are those emitted from the start of one instruction to the start of
+   the next, so an instruction's error paths and the end of a block count
+   with it; replays and code written into other buffers in between
+   (respawn and promotion stubs) don't. */
+DEFINEVAR PyObject *psyco_codestats = NULL;
+DEFINEVAR long psyco_codestats_lost = 0; /* bytes in a jump to a new buffer */
+
+static void codestats_flush(PsycoObject *po) {
+  if (po->cs_mark != NULL) {
+    long n = (char *)po->code - (char *)po->cs_mark;
+    PyObject *key = Py_BuildValue("(Oi)", po->cs_co, po->cs_instr);
+    PyObject *e = key ? PyDict_GetItem(psyco_codestats, key) : NULL;
+    Py_XDECREF(key);
+    if (e != NULL && n >= 0 && n < 65536) {
+      PyObject *b = PyLong_FromLong(PyLong_AsLong(PyList_GET_ITEM(e, 2)) + n);
+      PyObject *copy = Py_BuildValue("(ky#i)", (unsigned long)po->cs_mark,
+                                     (char *)po->cs_mark, (Py_ssize_t)n,
+                                     psyco_stat_compile_kind);
+      if (b != NULL)
+        PyList_SetItem(e, 2, b);
+      if (copy != NULL) {
+        PyList_Append(PyList_GET_ITEM(e, 3), copy); /* (address, bytes) */
+        Py_DECREF(copy);
+      }
+    } else
+      psyco_codestats_lost++;
+    po->cs_mark = NULL;
+  }
+}
+
+static void codestats_begin(PsycoObject *po, int instr, int opcode) {
+  PyObject *key, *e;
+  codestats_flush(po);
+  if (is_respawning(po))
+    return;
+  if (psyco_codestats == NULL && (psyco_codestats = PyDict_New()) == NULL)
+    OUT_OF_MEMORY();
+  key = Py_BuildValue("(Oi)", po->pr.co, instr);
+  if (key == NULL)
+    OUT_OF_MEMORY();
+  e = PyDict_GetItem(psyco_codestats, key);
+  if (e == NULL) {
+    e = Py_BuildValue("[iii[]]", opcode, 0, 0);
+    if (e == NULL || PyDict_SetItem(psyco_codestats, key, e) < 0)
+      OUT_OF_MEMORY();
+    Py_DECREF(e);
+  }
+  Py_DECREF(key);
+  PyList_SetItem(e, 1, PyLong_FromLong(PyLong_AsLong(PyList_GET_ITEM(e, 1)) + 1));
+  po->cs_mark = po->code;
+  po->cs_co = po->pr.co;
+  po->cs_instr = instr;
+}
+#endif
+
 /* psyco_pycompiler_mainloop() compiles the function,
    writing function entry and exit points if needed, and destroys 'po' when
    it is done */
@@ -1591,6 +1651,9 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
                                       run-time conditions */
 
 
+#if NI_CODESTATS
+      codestats_begin(po, next_instr, bytecode[next_instr]);
+#endif
       opcode = bytecode[next_instr++];
       oparg = bytecode[next_instr++];
     dispatch_opcode:
@@ -2846,6 +2909,9 @@ finished:
   }
 #endif
 
+#if NI_CODESTATS
+  codestats_flush(po);
+#endif
   Py_SetRecursionLimit(saved_rec_limit);
 
   PyErr_Restore(old_py_exc, old_py_val, old_py_tb);

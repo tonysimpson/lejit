@@ -145,6 +145,23 @@ const static char MODULE_NAME[] = "ni";
 
 /* counters for tests and measurements, e.g. that a loop is not compiled
    afresh on every back-edge */
+#if NI_CODESTATS
+EXTERNVAR PyObject *psyco_codestats;
+EXTERNVAR long psyco_codestats_lost;
+EXTERNVAR PyObject *psyco_codestats_buffers;
+/* the code size counts (pycompiler.c), handed over and reset */
+static PyObject *ni_codestats(PyObject *self, PyObject *unused) {
+  PyObject *r = psyco_codestats ? psyco_codestats : PyDict_New();
+  PyObject *bufs = psyco_codestats_buffers ? psyco_codestats_buffers
+                                            : PyDict_New();
+  PyObject *t = Py_BuildValue("(NlN)", r, psyco_codestats_lost, bufs);
+  psyco_codestats = NULL;
+  psyco_codestats_buffers = NULL;
+  psyco_codestats_lost = 0;
+  return t;
+}
+#endif
+
 static PyObject *ni_stats(PyObject *self, PyObject *unused) {
   static const char *kinds[NI_ENTER_KINDS] = {"analyse", "call", "pause",
                                               "respawn", "promotion"};
@@ -263,6 +280,9 @@ static PyObject *ni_entry_point(PyObject *self, PyObject *co) {
 
 static PyMethodDef module_methods[] = {
     {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
+#if NI_CODESTATS
+    {"_codestats", ni_codestats, METH_NOARGS, "Code size per instruction."},
+#endif
     {"_code_info", ni_code_info, METH_O,
      "'not seen', 'unsupported', 'no entry point' or 'compiled'."},
     {"_dead_locals", ni_dead_locals, METH_O,

@@ -65,3 +65,8 @@ Upstream Psyco's test suite (`test/`) and the Ni regression pack were removed (s
 **Showing a new test fails without the fix (D21):** `tools/without_fix.sh <changed files> -- <command>`, e.g. `tools/without_fix.sh ni/mergepoints.c -- python3.7 tests/run.py -k framelocals`. It stashes those files' uncommitted changes, removes `ni.so` and rebuilds, runs the command, then restores everything. Stashing by hand just after a build can leave the fixed `ni.so` in place (same-second timestamps). [run]
 
 **Rebuilds.** `setup.py` lists every `.c` and `.h` as a dependency, and removes `ni.so` when the build options change (`build/ni_config.stamp`), so header edits and switching between debug and optimised builds rebuild. distutils compares whole seconds, so an edit in the same second as the last build can still be missed; `tools/check.sh`'s staleness check catches that. [run]
+
+### Code size counters
+
+`NI_CODESTATS=1 python3.7 setup.py build_ext --inplace` builds in per-instruction and per-buffer code size counters (`ni._codestats()`); `tools/codesize.py <benchmark> [-d]` reports them (`doc/CODE_SIZE.md`). `-d` needs capstone: `python3.7 -m pip install --target <dir> capstone`, then `PYTHONPATH=<dir>`.
+

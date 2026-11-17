@@ -33,6 +33,11 @@ typedef int64_t qword_t;
 #define NI_TRACE 0
 #endif
 
+/* define to 1 to count code size per instruction (tools/codesize.py) */
+#ifndef NI_CODESTATS
+#define NI_CODESTATS 0
+#endif
+
 /* define to 1 for extra assert()'s */
 #ifndef ALL_CHECKS
 #define ALL_CHECKS 0

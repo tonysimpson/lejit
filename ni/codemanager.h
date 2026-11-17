@@ -62,8 +62,11 @@ EXTERNVAR long psyco_stat_compile_ns[NI_ENTER_KINDS];
 EXTERNVAR long psyco_stat_compile_count[NI_ENTER_KINDS];
 EXTERNVAR int psyco_stat_compile_depth;
 EXTERNFN long psyco_stat_now_ns(void);
+EXTERNVAR int psyco_stat_compile_kind; /* the outermost entry's kind */
 #define NI_COMPILE_BEGIN(kind)                                                 \
-  long _ni_t0 = psyco_stat_compile_depth++ ? 0 : psyco_stat_now_ns()
+  long _ni_t0 = psyco_stat_compile_depth++                                     \
+                    ? 0                                                        \
+                    : (psyco_stat_compile_kind = (kind), psyco_stat_now_ns())
 #define NI_COMPILE_END(kind)                                                   \
   do {                                                                         \
     if (--psyco_stat_compile_depth == 0) {                                     \
@@ -96,7 +99,16 @@ void psyco_emergency_enlarge_buffer(code_t** pcode, code_t** pcodelimit);
 EXTERNFN
 int psyco_locked_buffers(void);
 
+#if NI_CODESTATS
+/* bytes and count of the code buffers closed, by kind (tools/codesize.py) */
+EXTERNFN void psyco_codestats_buffer(const char *kind, CodeBufferObject *obj,
+                                     code_t *nend);
+#else
+#define psyco_codestats_buffer(kind, obj, nend) do { } while (0)
+#endif
+
 #define SHRINK_CODE_BUFFER(obj, nend, mode)    do {    \
+      psyco_codestats_buffer(mode, obj, nend);         \
       psyco_shrink_code_buffer(obj, nend);             \
       SET_CODEMODE(obj, mode);                         \
 } while (0)

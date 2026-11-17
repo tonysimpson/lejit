@@ -941,6 +941,7 @@ CodeBufferObject *psyco_compile_code(PsycoObject *po, mergepoint_t *mp) {
 
   /* we have written some code into a new codebuf, now shrink it to
      its actual size */
+  psyco_codestats_buffer("block", codebuf, code1);
   psyco_shrink_code_buffer(codebuf, code1);
   return codebuf;
 }

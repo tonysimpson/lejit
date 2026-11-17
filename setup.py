@@ -34,12 +34,16 @@ NI_TRACE = int(os.environ.get('NI_TRACE', 0))
 # Extra checks enable with 1
 ALL_CHECKS = int(os.environ.get('NI_ALL_CHECKS', 0))
 
+# Code size per instruction, ni._codestats() (tools/codesize.py)
+NI_CODESTATS = int(os.environ.get('NI_CODESTATS', 0))
+
 ####################################################################
 
 macros = [
     ('ALL_STATIC', str(ALL_STATIC)),
     ('NI_TRACE', str(NI_TRACE)),
     ('ALL_CHECKS', str(ALL_CHECKS)),
+    ('NI_CODESTATS', str(NI_CODESTATS)),
 ]
 
 class ProcessorAutodetectError(Exception):
