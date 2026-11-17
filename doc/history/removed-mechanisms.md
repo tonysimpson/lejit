@@ -59,7 +59,7 @@ The two biggest commits:
 | B4 | `locals()/eval/vars/dir` safety (`NoControlFlowIfBuiltin`, ppsyco metas) | B | gone, with no replacement guard | 58aff23, a880444 | core |
 | B5 | Proxy functions / `psyco.bind` | B | dead code | 58aff23, 7441415 | obsolete |
 | B6 | Code-object filter hook, memory accounting, `_psyco` API | B | gone | 58aff23 | translated/core |
-| B7 | Kw-only args, closures, module code, generators | B | rejected; **closures compile at the frame entry** (this commit) | e1fd808, a880444 | translated |
+| B7 | Kw-only args, closures, module code, generators | B | rejected; **closures compile at the frame entry** (`1780ba5`) | e1fd808, a880444 | translated |
 | B8 | METH_FASTCALL C calls | B | residual generic call | 04826fb (stated) | translated |
 | B9 | `psyco_call_var` asm glue → libffi | B | replaced | 04826fb | backend |
 | C | Debug machinery (PSYCO_DEBUG, CODE_DUMP, TRACE_EXECUTION, BREAK_ON, ...) | C | removed for nianalyser | Feb 2019 | obsolete |
