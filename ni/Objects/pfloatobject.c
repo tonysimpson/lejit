@@ -9,8 +9,8 @@
  * tools/metac/gen_float.py), helpers included. Hand-written here: the
  * representation (psyco_convert_to_double for CONVERT_TO_DOUBLE, compute
  * functions), unary + and comparisons.
- * Suspected bug: direct_compute_float converts the stored 64-bit word
- * numerically instead of reinterpreting its bits.
+ * The double is one word holding its bits, at run time (a stack slot) and
+ * at compile time (source_known_t.value); upstream (32-bit) used two words.
  */
 #include "pfloatobject.h"
 #include "pboolobject.h"
@@ -158,11 +158,15 @@ static bool compute_float(PsycoObject *po, vinfo_t *floatobj) {
   return true;
 }
 
+/* unreachable in Ni: nothing calls direct_xobj_vinfo from outside the
+   direct_compute functions since upstream's compactobject.c went
+   (KNOWN_BUGS F6) */
 static PyObject *direct_compute_float(vinfo_t *floatobj, char *data) {
   double value;
-  value = direct_read_vinfo(vinfo_getitem(floatobj, iFLOAT_OB_FVAL), data);
+  long bits = direct_read_vinfo(vinfo_getitem(floatobj, iFLOAT_OB_FVAL), data);
   if (PyErr_Occurred())
     return NULL;
+  memcpy(&value, &bits, sizeof(value));
   return PyFloat_FromDouble(value);
 }
 
