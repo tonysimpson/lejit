@@ -477,7 +477,7 @@ Compile time is unchanged.
 **A latent bug found on the way** (KNOWN_BUGS C26). The stub pool took 4 KB from `psyco_new_code_buffer`, but a reused code buffer may have only about 1 KB left (`BUFFER_MARGIN`). `psyco_assert(pool_end <= limit)` fired in CPython's `test_descr` once chains used the pool more. The pool now takes what the buffer has.
 
 
-## Forgotten values (`ea95a9a`, D43, SPECIALISATION.md step 1) [run]
+## Forgotten values (`61db667`, D43, SPECIALISATION.md step 1) [run]
 
 Past the cap (D40), `dispatcher.c:psyco_forget_values` now also un-promotes each non-fixed constant local that some block at the merge point doesn't hold (`varies_at` reads the snapshots' top-level sources), and **forgets** it: its run-time source gets `RunTime_Megamorphic`, the flag a megamorphic promotion site already puts on its value. Then:
 
