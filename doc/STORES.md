@@ -1,7 +1,7 @@
 ---
 written: 2026-11-17
-head_ref: 3cd02f7
-status: research; options for the owner, nothing implemented
+head_ref: 3cd02f7 (measurements); 819da55 (option 4 design)
+status: research; options for the owner; option 4 designed (section "Option 4: design"), nothing implemented
 ---
 # Instance attribute stores: measurements and options
 
@@ -237,8 +237,233 @@ For the owner to decide.
 - Options 5 and 6 aren't worth doing on these measurements.
 - Before choosing between 3 and 4, it would be worth settling rule 3 (the version-tag counter), which both need: a recorded decision would do.
 
+## Option 4: design
+
+Written 2026-11-17 at `819da55`, to be implemented once option 1 has merged. It builds on option 1's type guard and helper, and keeps D21 (replay determinism), D29 (compile speed), D31 (`keys_inline`) and D35 (Ni's version counter). Nothing here is implemented.
+
+### Scope
+
+- **Inline:** kind A (overwrite a set value of a split dict) and kind B (fill the empty slot at `ix == ma_used`, the constructor case). B is worth having: it is 63% of raytrace's stores, 64% of chaos's and 11% of deltablue's, and every B store in the simulation below hits. [run]
+- **Not inline:** creating the dict (G), appending a key to the shared keys (C: no store in the five benchmarks does it after warm-up [run]), combined dicts, deletes. These take option 1's helper, or option 2's known-hash call for combined dicts (see "Miss paths").
+
+### The cache
+
+One cache per (class, name), not per site. It holds no reference to any keys object, and its contents affect neither soundness nor the emitted code.
+
+```
+typedef struct {
+  Py_ssize_t dk_size;   /* keys size this entry was computed for; 0 = empty */
+  Py_ssize_t koff;      /* byte offset of entries[ix].me_key in keys of that size */
+  Py_ssize_t ix;        /* the name's index in such keys */
+  PyObject *name;       /* the interned name (owned by the table's key) */
+  uint64_t *version;    /* &ni_dict_version (D35), so the code needs no imm64 for it */
+} store_cache_t;        /* 40 bytes, PyMem_Malloc'd, never freed */
+```
+
+- `koff = 40 + dk_size * ixsize(dk_size) + 24 * ix + 8`, with `ixsize` 1, 2, 4 or 8 as in `new_keys_object`. Any size works, and the emitted code computes no offsets. [read] (`Objects/dictobject.c:new_keys_object`, `DK_ENTRIES`)
+- The table is a C dict from `(type address, name)` to the cache's address, kept for the life of the process. At compile time Ni looks a cache up, or makes one and fills it from the class's `ht_cached_keys` if the name is there (else `dk_size = 0`).
+- **Why per (class, name) and not per site.** A respawn replays compilation, and a miss branch is compiled during a replay. D31's per-site guard is a static dummy in a replay, so a miss branch compiled then would refresh the dummy, and the real cache would never be refreshed. A table lookup returns the same cache in the original compile and in every replay. The promoted class is held by the compiled code (`need_type_mega`), so its address can't be reused while the code lives. A dead class's address reused by a new class only gives that class a useless hint. [read] (`pobject.c:instance_dict_get`, `generic_getattr`), [inferred]
+- Sharing one cache between all sites that store a name on one class is right: they all see the same keys. Two classes at one site are two promoted types, so two caches.
+
+### The check, and why it is sound without a reference
+
+At run time, after option 1's type guard:
+
+1. `D = *(obj + tp_dictoffset)` is non-NULL.
+2. `V = D->ma_values` is non-NULL (D is split).
+3. `K = D->ma_keys`, and `K->dk_size == c->dk_size`.
+4. `*(PyObject **)((char *)K + c->koff) == c->name`.
+
+Then `ix = c->ix` is the name's index in D, and `V[ix]` is its value slot.
+
+Facts it rests on:
+
+- **S1.** A dict is split iff `ma_values != NULL`. Its keys are then either `Py_EMPTY_KEYS` (after `PyDict_Clear`: `dk_size` 1, no entries) or a keys object from `new_keys_object` (`dk_size >= 8`) shared through `ht_cached_keys`, `make_keys_shared` or `PyDict_Copy`'s split copy. Split keys hold only exact `str` keys. [read] (`empty_keys_struct`, `PyDict_Clear`, `insertdict`, `make_keys_shared`)
+- **S2.** In a split dict's keys, `entries[i]` for `i < dk_nentries` is never rewritten. Entries are only appended, at `dk_nentries` (`insertdict`, `PyDict_SetDefault`). Every other write to `me_key` (`delitem_common`, `_PyDict_Pop`, `dict_popitem`) first converts a split dict to combined with `dictresize`, which gives that dict new keys. [read] (every `me_key =` in `dictobject.c`)
+- **S3.** `new_keys_object` zeroes all `USABLE_FRACTION(size)` entries, so `me_key` is NULL at and past `dk_nentries`. `make_keys_shared` removes dummies first. [read]; [run]: 207 unused entries in 29 classes' keys, all zero.
+- **S4.** A split dict's values array has `USABLE_FRACTION(dk_size)` slots, so any `ix < dk_nentries` is in bounds. [read] (`new_dict_with_shared_keys`, `make_keys_shared`, `PyDict_Copy`)
+- **S5.** A dict's keys are unique. For an exact `str` key, `lookdict_split` returns the index whose `me_key` is identical (or equal, which an identical key also is). [read]
+- **S6.** The frame holds `obj`, `obj` holds D, and D holds K. Between the loads and the writes nothing runs Python code, so all three stay alive and unchanged. [inferred]
+
+Argument:
+
+- **The read in step 4 is in bounds.** Only the miss helper writes a cache. It computes `koff` from a real keys object of size `c->dk_size` with `ix < dk_nentries <= USABLE_FRACTION(size)`. Every keys object of that size has the same layout, so once step 3 has passed, `K + koff` is inside K. The initial `dk_size = 0` matches no keys object (S1). The fields are written together by C code that runs no Python code in between, so no reader sees a half-written cache.
+- **Step 4 proves the index.** If `ix >= K->dk_nentries`, the entry is zero (S3) and can't equal the name. So `ix < dk_nentries`, the entry is the name's (S5), and it can't change while D is split (S2).
+- **So the store is CPython's.** `insertdict` would find the same `ix` with `old_value = V[ix]`. For A it does `V[ix] = value`, a new tag, then the old value's decref. For B it requires `ix == ma_used` (otherwise it converts the dict), then does `V[ix] = value`, `ma_used++` and a new tag. `_PyObjectDict_SetItem`'s extra steps don't apply: D exists, and the keys don't change, so the re-share rule does nothing. `_PyObject_GenericSetAttrWithDict`'s descriptor lookup is settled at compile time behind the type guard (rule 1). [read]
+- **Address reuse can't fool it.** The check never compares a keys address. It reads the live keys through the dict that holds them, so a keys object at a reused address is judged by its own contents. [run]: 2,000 classes were made and dropped, with attributes set in random orders. 1,998 got keys at the address of an earlier class's freed keys, and in 1,341 of those `y` was at a different index. A pointer check would have passed all 1,341; the entry check at the old index passed none.
+- **A wrong cache only costs speed.** A stale or wrong cache fails step 3 or 4 and goes to the helper.
+
+A variant checks `dk_size <= 0xff` and `ix < dk_nentries` instead of equal sizes, so keys of other sizes with the name at the same index also hit. It needs one more compare and only helps a class whose instances use keys of two sizes. The simulation saw no size misses, so it isn't worth it. [run]
+
+### Filling the cache
+
+- **At compile time,** only when the cache is made: from `ht_cached_keys` if the name is in it. The emitted code never depends on the contents (D21).
+- **At run time,** the miss helper `cimpl_store_attr_miss(obj, name, value, cache)`:
+  1. does option 1's store (`_PyObjectDict_SetItem` on `obj`'s dict pointer, with `KeyError` turned into `AttributeError`);
+  2. on success, re-reads `*dictptr` (a `__del__` run by the store may have replaced the dict). If the dict is split and the name is in its keys (identity scan of `entries[0 .. dk_nentries)`), it writes `dk_size`, `koff` and `ix`. Otherwise it leaves the cache alone.
+- **In `__init__`,** compiled while the class's keys don't yet hold the names: on the first instance every store misses. The first creates the dict, the others append to the shared keys (C), and each refreshes its cache. From the second instance on, the first store still creates the dict (G, helper) and the rest are B hits. [run] (simulation: chaos 140,002 B hits, 70,001 dict creations, no other misses)
+- **No thrash limit is needed so far.** The simulation saw no size or entry misses after warm-up in any of the five benchmarks. A class whose instances alternate between two key sets would miss and refresh every time (a scan of a few entries). If that shows up, the helper can stop refreshing after N misses. [run]
+
+### Emitted code
+
+In `PsycoObject_SetAttr`, after option 1's guard and compile-time checks, when `keys_inline(po, tp)` (D31, based on the block serial) is true and `tp_dictoffset > 0`. If `keys_inline` is false (the class has lost its keys), only option 1 or 2 is emitted. `po->pr.split_after_global = 1`, as for every guarded site.
+
+Written as x86-64; registers are illustrative, Ni allocates them. `PyDictObject`: `ma_used` +16, `ma_version_tag` +24, `ma_keys` +32, `ma_values` +40. Keys: `dk_size` +8, `dk_nentries` +32. `PyTypeObject.tp_flags` +168. [read] (`dictobject.h`, `dict-common.h`, `object.h`; the dict offsets `tools/storeclasses.py` already uses)
+
+```
+  mov  rD, [obj + tp_dictoffset]        ; 4
+  test rD, rD ; jz  miss_nodict         ; 3 + 6   condition 1
+  mov  rV, [rD + 40]                    ; 4       ma_values
+  test rV, rV ; jz  miss_combined       ; 3 + 6   condition 2
+  mov  rK, [rD + 32]                    ; 4       ma_keys
+  mov  rC, imm64 cache                  ; 10
+  mov  rX, [rK + 8]                     ; 4       dk_size
+  cmp  rX, [rC + 0]  ; jne miss         ; 3 + 6   condition 3
+  mov  rX, [rC + 8]                     ; 4       koff
+  mov  rX, [rK + rX]                    ; 4
+  cmp  rX, [rC + 24] ; jne miss         ; 4 + 6   condition 4
+  mov  rI, [rC + 16]                    ; 4       ix
+  ; GC tracking (rule 5), only if the value's type isn't known to be non-GC:
+  mov  rX, [value + 8] ; mov rX, [rX + 168]   ; ob_type->tp_flags
+  shr  rX, 14 ; and rX, 1                     ; Py_TPFLAGS_HAVE_GC
+  mov  rY, [rD - 16] ; sar rY, 1 ; cmp rY, -2 ; sete ; movzx   ; dict untracked
+  and  rX, rY ; jnz miss                ; ~30 bytes  condition 5
+  mov  rO, [rV + 8*rI]                  ; 4       old value
+  test rO, rO ; jz  fill                ; 3 + 6   condition 6 (B is the rare side)
+  ; A: overwrite
+  inc  qword [value]                    ; 3       unless Ni hands over a reference it owns
+  mov  [rV + 8*rI], value               ; 4
+  mov  rP, [rC + 32]                    ; 4       &ni_dict_version
+  mov  rT, [rP] ; inc rT ; mov [rP], rT ; 10
+  mov  [rD + 24], rT                    ; 4       ma_version_tag (D35)
+  dec  qword [rO] ; jz dealloc          ; 3 + 6   last: may run __del__
+  ; end of block (split_after_global)
+
+fill:                                   ; B, compiled when first reached
+  cmp  rI, [rD + 16] ; jne miss         ;         ma_used; condition 7
+  inc  qword [value] ; mov [rV + 8*rI], value
+  inc  qword [rD + 16]                  ;         ma_used++
+  ; version tag as above; no decref
+```
+
+- **Order.** All conditions (1–7) come before the first write. The only thing that can run Python code is the old value's decref, and it is last. So a respawn from any condition replays the same code with the type as the guard saw it (rule 2). The incref, store, tag and decref follow `insertdict`'s order; nothing can observe where the incref sits relative to the checks. [read]
+- **`ma_used`** is unchanged for A and incremented for B. **`dk_usable`, `dk_nentries` and the keys** are never written.
+- **GC tracking.** The condition is "the value's type has `Py_TPFLAGS_HAVE_GC` and the dict is untracked". It covers `_PyObject_GC_MAY_BE_TRACKED(value)` conservatively: an untracked tuple goes to the helper, which decides exactly. The key is a `str` and never needs tracking. In 3.7 `gc_refs` is at `dict - 16`, and an untracked object's `gc_refs >> 1` is -2 ([run]: -4 untracked, -6 tracked). Compare for equality with -2: during a collection (a `__del__` or weakref callback run by the collector) a tracked object's value can be anything else. When Ni knows the value's type at compile time, the condition is dropped (not GC) or reduced to the untracked test (GC). Testing only "dict untracked" would not do: in raytrace 57% and in chaos 68% of stores go to an untracked dict holding only floats. [read] (`Include/objimpl.h`, `MAINTAIN_TRACKING`), [run]
+- **Built from Ni's primitives,** as `plistobject.c`'s list store is: `psyco_get_field` and `psyco_get_field_offset` for the loads, `integer_cmp` and `runtime_condition_f` for each condition, `psyco_vinfo_condition` for the branch-free GC test, `psyco_put_field_array` with `FPYREF` for the store (it increfs or hands over the reference), and `psyco_decref_v` for the old value. New field definitions: `DICT_ma_used`, `DICT_ma_version_tag`, `KEYS_dk_size`, and the cache's five fields (all `FMUT`, so run-time loads).
+- **Likely sides.** A is the likely side of condition 6, fixed at compile time (never taken from the cache). B is compiled by a respawn the first time a constructor reaches it, and then runs as straight code.
+
+**Count and size, A path:** about 19 instructions for the checks without the GC test (28 with it), plus 9 for the store: **28–37 instructions on a hit.** About 125 bytes without the GC test and 155 with it, plus a 15-byte pooled stub (D32) for each of the 6 conditions on the A path (90 bytes). B adds about 30 bytes and one stub at sites that reach it. Option 1 alone is the type guard (about 50 bytes), a call with four arguments (about 30) and its stubs. **So option 4 adds about 150–190 bytes per compiled copy of a site,** not the 80–90 estimated in "Options" above. Scaled from D31 (about 500 bytes of growth per static load site in richards, because sites are compiled several times), richards could grow by 20–25%, deltablue by 10–15%, the others by 3–6%. Compile time perhaps +8–12% on richards (D31 added 12%). [inferred]
+
+### Miss paths
+
+Each failed condition is a separate respawned branch that compiles a call and the end of the block.
+
+| condition failed | the branch calls |
+|---|---|
+| 1. no dict yet | `cimpl_store_attr_miss` (creates the dict, refreshes the cache) |
+| 2. combined dict | `_PyDict_SetItem_KnownHash(D, name, value, hash)` (option 2). Sound: a combined dict's keys are never the class's, so `_PyObjectDict_SetItem` does exactly `PyDict_SetItem`. No cache refresh. |
+| 3, 4. other keys, or the name not at `ix` | `cimpl_store_attr_miss` |
+| 5. untracked dict, GC value | `cimpl_store_attr_miss` (CPython tracks the dict) |
+| 7. empty slot out of order | `cimpl_store_attr_miss` (CPython converts the dict) |
+
+All of them return `int` (`CfCommonIntZeroOk`).
+
+### Loads (D31): move to the same check?
+
+A recommendation only; the owner decides.
+
+- **Names in the keys:** sound, by the argument above, with the value read instead of written (an empty slot means "not in the instance"). Two more loads and a compare than D31's pointer check, about one cycle. It shares the (class, name) cache with stores. It also makes inline the loads compiled before the class's keys held the name; today those call `cimpl_dict_get_known` for good. [read] (`instance_dict_get`, the `n >= 0` case), [inferred]
+- **Names absent from the keys** (every method call on `self`, every class attribute read through an instance): no cheap check without a reference exists. Proving absence needs the whole key set, and a keys address with an entry count is not an identity. A class's keys can be replaced by re-shared keys with *fewer* entries, so a later keys object at a freed address can have the same `dk_nentries` and different keys. [run]: class keys with 5 entries; the instance that filled them freed; a 2-attribute instance stores a third name; the class gets new keys with 3 entries. A probe of the index table with the compile-time hash is sound (check `me_hash`, then `me_key`, at each slot until an empty one), but costs 10–20 instructions per load against D31's 6. [read] (`_PyObjectDict_SetItem`), [inferred]
+- **Effect on F36.** F36 comes from any held reference. Almost every class has absent-name loads (its methods), so moving only the present-name loads leaves F36 as it is in practice, go's `Board` included. Removing F36 needs the probe for absent names as well.
+- **Recommendation:** move present-name loads to the shared cache when option 4 lands. It is cheap, sound and simpler (no reference, no `dk_refcnt >= 2` rule for them). Keep D31's held keys for absent names unless F36's cost (go: about 3%, plus memory) is worth the probe. Measure before deciding.
+
+### Interactions
+
+- **Type guard (option 1, F37).** Inline code runs only after the guard passes, and the compile-time checks behind the guard decide everything about the class: `tp_setattro == PyObject_GenericSetAttr`, `tp_dictoffset > 0`, no data descriptor, and any class attribute of that name is an instance of a static type without `tp_descr_set` (rule 1). A class that gains `__setattr__`, a property or a slot changes its version tag, so the guard fails and the store goes through `PyObject_SetAttr`. [read] (`type_setattro` calls `PyType_Modified`)
+- **Data descriptors and `__slots__`** take the generic path, decided behind the guard. A class with only `__slots__` has `tp_dictoffset == 0`: option 1's generic call.
+- **Dict subclasses.** `obj.__dict__` may be set to a dict subclass (`subtype_setdict` only checks `PyDict_Check`). A subclass's dict is combined (`dict_new`), or split on `Py_EMPTY_KEYS` after `clear()`; `make_keys_shared` and the split copy make only exact dicts. So the check never passes for a subclass. If it did, it would still match CPython, which calls `PyDict_SetItem` and ignores an overriding `__setitem__`. [read]
+- **`obj.__dict__ = {...}`.** The new dict is combined (a literal or `dict()`: [run]), so condition 2 sends it to option 2. After `obj.__dict__.clear()` it is split on `Py_EMPTY_KEYS`, and condition 3 fails. `obj.__dict__ = other.__dict__` can share one split dict between instances of two classes; the check judges that dict as it is, which is right.
+- **Combined dicts:** condition 2, option 2's known-hash call.
+- **Deletion** stays on the generic path (rule 8). It converts that dict to combined (condition 2 afterwards) and drops the class's keys. Instances still on the old keys stay split and keep hitting, which is right: CPython overwrites their slots too. [run] (`e1.a = 5` after `del e3.a`: `e1` stays split.) New instances get combined dicts, and `keys_inline` stops new compiles from emitting the inline path.
+- **Out-of-order stores** fail condition 7 (or 4), and the helper converts the dict as CPython does.
+- **Version tags (D35).** One counter, Ni's, from 2^63. CPython's counter was at 25,489 in the experiment. Tags from the two counters never meet, so no dict sees a tag twice. D25's cached `LOAD_GLOBAL` compares tags of globals dicts, so an instance `__dict__` used as a function's globals sees its tag change on an inline store. [run], [read]
+- **Threads.** The GIL is held through the sequence, and nothing in it releases the GIL, so the counter needs no atomic increment. The helper writes the cache after the store and runs no Python code while writing, so neither a thread switch nor a `__del__` sees a half-written cache. [inferred]
+- **Respawn.** Every compile-time decision depends on inputs a replay sees the same: the promoted type (behind the guard), `keys_inline` (block serial, D31), the cache pointer (from the table, which never shrinks) and the value's known type (`vinfo` state). The cache's contents are read only at run time. [inferred]
+- **D31's loads.** Nothing to do: stores never hold keys. Loads that still hold keys keep F36; stores add no new F36 case.
+- **3.12 port.** 3.11 and later keep instance values inline in the object, and `ma_version_tag` is deprecated (PEP 699). This design is 3.7-only, like D31. [read] (PORT312.md)
+
+### Tests
+
+A new file `tests/cases/stores.py`, compared with plain CPython as `tests/run.py` does, and run under an `ALL_CHECKS` build so that the replay check (`respawn_check`) covers every condition:
+
+1. `overwrite_loop`: one instance; ints and objects stored to existing attributes many times; final `vars(o)`.
+2. `init_fills`: `__init__` compiled on the first instance; 50 instances; `list(vars(o))` order and values. Under `NI_TRACE`, helper calls should be about one per instance after the first.
+3. `out_of_order`: instances setting the same attributes in different orders (the dict converts); `list(vars(o))`.
+4. `same_object`: `o.x = o.x`; `sys.getrefcount(v)` unchanged.
+5. `old_value_freed`: the replaced value has a `__del__` that records `o.x`; it must see the new value.
+6. `del_changes_class`: that `__del__` adds `__setattr__` (and, in a second case, a property `x`) to the class; the next store must use it.
+7. `del_replaces_dict`: that `__del__` sets `o.__dict__ = {}`, or deletes another attribute; later stores and loads are right.
+8. `gc_tracking`: a dict of floats, untracked after `gc.collect()`; store a list (tracked), a float (stays untracked), a tuple, the dict itself; `gc.is_tracked(o.__dict__)` after each must match CPython.
+9. `globals_is_instance_dict`: `types.FunctionType(code, o.__dict__)` reading a global through the cached `LOAD_GLOBAL`; store to `o.x` inline, then call; it must see the new value.
+10. `dict_replaced`: `o.__dict__ = {...}`, `o.__dict__.clear()`, `o.__dict__ = other.__dict__` (an instance of another class), a dict subclass with `__setitem__`; then stores.
+11. `after_delete`: `del a.x` on one instance; stores on instances on the old keys and on instances created afterwards.
+12. `reshare`: the first instance grows the keys from 8 to 16 slots; stores on old-keys and new-keys instances in one loop (size misses).
+13. `name_joins_keys`: a store site compiled before any instance had the name.
+14. `equal_not_identical_key`: `o.__dict__[''.join(['x', 'y'])] = 1` before the first `o.xy = 2`; one key `xy` afterwards.
+15. `type_guard`: `__setattr__` added later (F37), a property added later, a class attribute whose heap class gains `__set__`, a `__slots__` member, an object without `__dict__` (error text).
+16. `two_classes_one_site` and `class_address_reuse`: classes made and dropped in a loop, stored to through one compiled function.
+17. `wide_keys`: a class with 200 attributes (2-byte indices, so `koff` is past them).
+18. `self_cycle`: `o.x = o` on a dict holding only ints (tracking, cycle collected).
+
+`tests/compile_bounds.py` must still pass (no compile loops from repeated misses).
+
+### How to measure
+
+- `tools/store_micro.py ni`: ns per store for split, combined and constructor, before and after. Expect about 2–3 ns for split (10.5 today). [inferred]
+- `perf stat -e instructions:u` and time on `tools/profile_bench.py <bench> N` for richards, deltablue, raytrace, go and chaos; instructions per iteration from the difference between two values of N (which removes compiling).
+- `tools/compilebench.py`: compile ms and code size per benchmark (D29). `tools/codesize.py` for where the new bytes go (stubs or code).
+- A counter in `cimpl_store_attr_miss` under `NI_TRACE` (reported by `ni._stats()`), compared with `tools/store_cache_sim.py`'s prediction.
+- The cache simulated on the five benchmarks (`tools/store_cache_sim.py <bench>`: plain CPython, one traced iteration after one untraced, each cache made when first used): [run]
+
+| % of stores | richards | deltablue | raytrace | go | chaos |
+|---|---|---|---|---|---|
+| hit, overwrite (A) | 99.97 | 84.0 | 1.9 | 29.8 | 4.6 |
+| hit, fill in order (B) | 0.02 | 11.3 | 63.4 | 0.2 | 63.6 |
+| miss: no dict yet | 0.01 | 2.9 | 34.7 | 0.1 | 31.8 |
+| miss: combined dict | – | – | – | 69.8 | – |
+| miss: untracked dict, GC value | 0.00 | 1.9 | 0.00 | 0.03 | – |
+| miss: size or entry | 0 | 0 | 0 | 0 | 0 |
+| (of the hits: untracked dict, non-GC value) | 8.6 | 2.9 | 57.2 | 0.1 | 68.2 |
+
+The last row is why the GC test looks at the value's type. Under Ni, go's `Board` loses its keys (F36), which moves about 2.8% of go's stores from A to combined.
+
+### Gain and cost
+
+- **Per store:** about 10.5 ns today, about 7.5 ns with option 1, about 2–3 ns inline. [run], [inferred]
+- **Per benchmark,** over option 1 alone (from "Gains side by side"): richards about 13%, deltablue 5.5%, raytrace 2.4%, chaos 2.4%, go 1.4% (plus about 1% from option 2 on the combined branch). Against today: richards 21%, deltablue 9%, raytrace and chaos 4.7%, go 5.3%. [inferred]
+- **Per site:** about 150–190 bytes more than option 1, 28–37 instructions on a hit, 6–7 conditions, and up to 7 respawns over its life (one for each condition that ever fails). Memory: one 40-byte cache per (class, name) stored to, never freed.
+
+### Risks
+
+- **Code size.** Richards +20–25% is about what D31 cost. Six stubs per site are much of it (see question 5).
+- **A wrong GC test.** A missed track only leaks a cycle, but the `gc_refs` encoding and offset are 3.7-specific. An `ALL_CHECKS` assertion after the store (the dict is tracked if the value may be) would catch a mistake.
+- **A decref placed before a condition** breaks replay determinism. The replay check catches it if a test reaches that condition.
+- **Respawns on first misses** in constructors: each failing condition compiles once per site copy.
+- **Layout constants** (`koff`, field offsets) duplicate 3.7's private structs, as D31 does (`ni_dictkeys_t`).
+
+### Open questions for the owner
+
+1. A cache per (class, name), as proposed, or per site with a key a replay sees the same (block serial and bytecode position)? Per site would also give per-site miss counts.
+2. Include B? The simulation says yes (constructors); it costs one more branch at sites that reach it.
+3. Option 2's known-hash call on the combined branch: take it with option 4 (go about +1%)?
+4. Loads: move present-name loads to the shared cache now? Is F36 worth a probe for absent names?
+5. Code size: is +20–25% on richards acceptable for about 13%? If not, a backend feature that lets several conditions share one respawn stub (they all lead to the same helper call) would remove most of the stub bytes. The replay would then have to stop at the first of them.
+6. Should the miss helper stop refreshing a cache after many misses, before any thrash has been seen?
+
 ## Reproduce
 
 - `perf record -m 16 -F 4999 -g -o X.data python3.7 tools/profile_bench.py richards 4`, then `perf report -i X.data --no-children --sort sym -g none`. (`-m 16` because the locked-memory limit is shared with other perf users.)
 - `python3.7 tools/storeclasses.py richards` (plain CPython; tracing makes it about 50 times slower).
 - `python3.7 tools/store_micro.py ni`, then `plain`.
+- `python3.7 tools/store_cache_sim.py raytrace` (plain CPython; option 4's cache, simulated).
+- The other [run] facts in "Option 4: design" (unused entries zeroed, keys address reuse, re-share with fewer entries, `gc_refs` values, conversions) come from short ctypes scripts under plain CPython 3.7.17, not kept.
