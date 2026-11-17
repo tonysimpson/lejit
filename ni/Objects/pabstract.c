@@ -135,6 +135,11 @@ vinfo_t *PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
     return false;
   }
 
+  /* PEP 560: a class subscripted calls its __class_getitem__ (Generic[T]) */
+  if (PyType_FastSubclass(tp, Py_TPFLAGS_TYPE_SUBCLASS))
+    return psyco_generic_call(po, PyObject_GetItem, CfCommonNewRefPyObject,
+                              "vv", o, key);
+
   type_error_tp(po, "'%.200s' object is not subscriptable", tp);
   return false;
 }

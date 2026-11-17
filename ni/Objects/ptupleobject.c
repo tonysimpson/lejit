@@ -184,13 +184,15 @@ vinfo_t* PsycoTuple_Concat(PsycoObject* po, vinfo_t* v1, vinfo_t* v2)
 	}
 	
 	/* XXX a "virtual tuple concatenation" would be cool */
+	/* as tupleconcat, an empty operand gives the other one only if that is
+	   an exact tuple: a subclass instance gives a new tuple */
 	len1 = PsycoTuple_Load(v1);  /* -1 if unknown */
-	if (len1 == 0) {
+	if (len1 == 0 && Psyco_FastType(v2) == &PyTuple_Type) {
 		vinfo_incref(v2);
 		return v2;
 	}
 	len2 = PsycoTuple_Load(v2);  /* -1 if unknown */
-	if (len2 == 0) {
+	if (len2 == 0 && Psyco_FastType(v1) == &PyTuple_Type) {
 		vinfo_incref(v1);
 		return v1;
 	}
