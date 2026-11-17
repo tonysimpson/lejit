@@ -138,7 +138,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/nianalyser/` | tooling | Trace analyser: breakpoints on the `ni_trace_*` hooks via `pointbreak`, disassembly via `distorm3`. | See `BUILD.md`. | `e1fd808` |
 | `tools/test_harness` | tooling | Counts `NiEval_EvalFrame` against `NiCode_Run` hits under `pointbreak`. | | `e1fd808` |
 | `tools/nianalyser/dump_function.py` | tooling | Prints the annotated machine code generated for one function (BUILD.md, Debug). | Added 2026-11-16. | `28f3bae` |
-| `tools/nianalyser/crash_report.py` | tooling | Explains a crash in emitted code: fault, chunk, stack words into emitted code, registers; `--step-from K` single-steps to the crash (BUILD.md, Debug). | Added 2026-11-17 for F31. | `HEAD` |
+| `tools/nianalyser/crash_report.py` | tooling | Explains a crash in emitted code: fault, chunk, stack words into emitted code, registers; `--step-from K` single-steps to the crash (BUILD.md, Debug). | Added 2026-11-17 for F31. | `2f23846` |
 | `tools/test_runner` | tooling | unittest main; imports `ni` if `NI_ENABLED` is set. | | `e1fd808` |
 | `tools/asm`, `tools/test_asm`, `tools/asm_test_cases.txt` | tooling | Compare encoder-macro bytes with gas output. | Uses distutils; expected output encodes the 32-bit `CMP_I8_O` bug. | `e1fd808` |
 | `tools/test_c_encoding` | tooling | Expand one macro and disassemble it. | Python 2; stale `../c/` path. | `e1fd808` |
