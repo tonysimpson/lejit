@@ -206,14 +206,61 @@ generic:
    Known gap: an instance __dict__ key with a Python __eq__ that changes the
    class during the lookup (KNOWN_BUGS F34). */
 typedef struct {
-  unsigned int tag;
-  int valid;
+  unsigned long flags; /* tp_flags as compiled; 0 (never valid) if unusable */
+  unsigned long tag;
 } attr_guard_t;
 
-static int cimpl_type_unchanged(PyTypeObject *tp, attr_guard_t *g) {
-  return g->valid && PyType_HasFeature(tp, Py_TPFLAGS_VALID_VERSION_TAG) &&
-         tp->tp_version_tag == g->tag;
+/* The guard is inline: the type changed if tp_flags (which include
+   Py_TPFLAGS_VALID_VERSION_TAG) or tp_version_tag differ from the guard's.
+   All four are run-time loads, so a replay with an unset guard emits the
+   same conditions. */
+#define TYPE_flags                                                             \
+  FMUT(UNSIGNED_FIELD(PyTypeObject, unsigned long, tp_flags, NO_PREV_FIELD))
+#define TYPE_version_tag                                                       \
+  FMUT(UNSIGNED_FIELD(PyTypeObject, unsigned int, tp_version_tag,              \
+                      NO_PREV_FIELD))
+#define AGUARD_flags                                                           \
+  FMUT(UNSIGNED_FIELD(attr_guard_t, unsigned long, flags, NO_PREV_FIELD))
+#define AGUARD_tag                                                             \
+  FMUT(UNSIGNED_FIELD(attr_guard_t, unsigned long, tag, NO_PREV_FIELD))
+
+static vinfo_t *field_xor(PsycoObject *po, vinfo_t *a, defield_t fa,
+                          vinfo_t *b, defield_t fb) {
+  vinfo_t *x, *y, *r;
+  x = psyco_get_field(po, a, fa);
+  if (x == NULL)
+    return NULL;
+  y = psyco_get_field(po, b, fb);
+  if (y == NULL) {
+    vinfo_decref(x, po);
+    return NULL;
+  }
+  r = integer_xor(po, x, y);
+  vinfo_decref(y, po);
+  vinfo_decref(x, po);
+  return r;
 }
+
+/* the type differs from the guard's: a condition code, or CC_ERROR */
+static condition_code_t type_changed(PsycoObject *po, PyTypeObject *tp,
+                                     attr_guard_t *guard) {
+  vinfo_t *vtp = vinfo_new(CompileTime_New((long)tp));
+  vinfo_t *vg = vinfo_new(CompileTime_New((long)guard));
+  vinfo_t *x, *y = NULL, *z = NULL;
+  x = field_xor(po, vtp, TYPE_flags, vg, AGUARD_flags);
+  if (x != NULL)
+    y = field_xor(po, vtp, TYPE_version_tag, vg, AGUARD_tag);
+  if (y != NULL)
+    z = integer_or(po, x, y);
+  vinfo_xdecref(y, po);
+  vinfo_xdecref(x, po);
+  vinfo_decref(vg, po);
+  vinfo_decref(vtp, po);
+  if (z == NULL)
+    return CC_ERROR;
+  return integer_NON_NULL(po, z); /* consumes z */
+}
+
 
 /* borrowed, or NULL with no exception set (PyDict_GetItem) */
 static PyObject *cimpl_instance_dict_get(PyObject *obj, PyObject *name) {
@@ -271,24 +318,17 @@ static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
     if (tp->tp_dict != NULL)
       _PyType_Lookup(tp, name); /* assigns the version tag */
     guard->tag = tp->tp_version_tag;
-    guard->valid = PyType_HasFeature(tp, Py_TPFLAGS_VALID_VERSION_TAG) &&
-                   tp->tp_getattro == PyObject_GenericGetAttr;
+    guard->flags = PyType_HasFeature(tp, Py_TPFLAGS_VALID_VERSION_TAG) &&
+                           tp->tp_getattro == PyObject_GenericGetAttr
+                       ? tp->tp_flags
+                       : 0;
   }
-  v = psyco_generic_call(po, cimpl_type_unchanged, CfReturnTypeInt, "ll",
-                         (long)tp, (long)guard);
-  if (v == NULL)
+  cc = type_changed(po, tp, guard);
+  if (cc == CC_ERROR)
     return NULL;
-  cc = integer_non_null(po, v);
-  if (cc == CC_ERROR) {
-    vinfo_decref(v, po);
-    return NULL;
-  }
   po->pr.split_after_global = 1;
-  if (!runtime_condition_t(po, cc)) {
-    vinfo_decref(v, po);
+  if (runtime_condition_f(po, cc))
     goto generic;
-  }
-  vinfo_decref(v, po);
 
   /* the type is as the guard saw it */
   if (tp->tp_getattro != PyObject_GenericGetAttr || tp->tp_dict == NULL)

@@ -34,5 +34,5 @@ Instance attributes and dicts take about 60% of richards, 50% of deltablue and 3
 
 ## What follows
 
-1. **Inline A9's guard.** Compare the type's `tp_version_tag` and flags in emitted code instead of calling `cimpl_type_unchanged`. Worth 2–3.5%.
+1. **Inline A9's guard.** Done: `pobject.c:type_changed` compares `tp_flags` and `tp_version_tag` in emitted code instead of calling `cimpl_type_unchanged`. Same session, before and after: richards 19.4–20.2 → 18.5–18.9 ms (about 5%), go 82.1 → 79.1 ms, others within noise; code 2–4% larger, compile time unchanged. [run]
 2. **Shared-key instance attributes.** CPython 3.7 instances of a class share one keys table (PEP 412), and in a shared table a name's index never changes. So a load can be: the dict pointer at `tp_dictoffset`, a check that its `ma_keys` is the expected table, then `ma_values[index]`, with a fallback when any of these fails. That replaces `PyDict_GetItem` and `lookdict_split`, worth up to about 35%. Stores are harder: a store must give the dict a new `ma_version_tag`, whose counter is static in `dictobject.c`. [read] (`Objects/dictobject.c`, `Objects/dict-common.h`), [inferred]
