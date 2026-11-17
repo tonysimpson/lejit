@@ -20,10 +20,10 @@ Today each value a promotion site sees compiles its own copy of the code after t
 
 ### Method
 
-`NI_CODESTATS=1` release build at `6b9d7c2`, `PYTHONHASHSEED=0`, `tools/codesize.py <bench> -D`, each benchmark run until it compiles nothing new (as `-p`). Two instrumentation changes, both `NI_CODESTATS` only (the preprocessed release and checked `pycompiler.c` differ only in `__FILE__`/`__LINE__` strings): [read]
+`NI_CODESTATS=1` release build at `8081f96`, `PYTHONHASHSEED=0`, `tools/codesize.py <bench> -D`, each benchmark run until it compiles nothing new (as `-p`). Two instrumentation changes, both `NI_CODESTATS` only (the preprocessed release and checked `pycompiler.c` differ only in `__FILE__`/`__LINE__` strings): [read]
 
-- Each per-instruction copy in `ni._codestats()` records the index of the promotion site's value it was compiled for (`pycompiler.c:codestats_flush`, `cs_promo_vidx`, `c28d86c`).
-- Each site in `ni._promostats()` records its parent's value index as well as its parent site, so a value's code can include the sites its code emitted and their values, down the tree (`6b9d7c2`).
+- Each per-instruction copy in `ni._codestats()` records the index of the promotion site's value it was compiled for (`pycompiler.c:codestats_flush`, `cs_promo_vidx`, `c3a0e22`).
+- Each site in `ni._promostats()` records its parent's value index as well as its parent site, so a value's code can include the sites its code emitted and their values, down the tree (`8081f96`).
 
 `promostats.py:shared_after` then reports, for each site that compiled code for two or more values (megamorphic versions left out):
 
@@ -77,7 +77,7 @@ Savings use the tree, as a share of all code emitted. With own blocks only: K=1 
 
 ### What a generic operation costs [run]
 
-A micro-benchmark: one loop per case with its own code objects; 24 objects cycling through k classes; per operation, the best of 7 runs of 20,000 × 24. Release build at `6b9d7c2`, load average 3–4.
+A micro-benchmark: one loop per case with its own code objects; 24 objects cycling through k classes; per operation, the best of 7 runs of 20,000 × 24. Release build at `8081f96`, load average 3–4.
 
 | k classes | method call `o.m()` | attribute `o.x` | CPython 3.7 |
 |---|---|---|---|
@@ -168,7 +168,7 @@ A micro-benchmark: one loop per case with its own code objects; 24 objects cycli
 
 Each step is measured as above and can stop the plan.
 
-1. **Done: measurement** (`c28d86c`, `6b9d7c2`). `codesize.py -D`.
+1. **Done: measurement** (`c3a0e22`, `8081f96`). `codesize.py -D`.
 2. **Smallest useful step: a cached operation in the megamorphic version of attribute and method sites, its result forgotten.**
    - At K = 5 (unchanged), `generic_getattr` with `r == 0` makes a residual call to a helper with a per-site table, instead of `PyObject_GetAttr`. For a method of kind "plain function" it pushes (function, self).
    - The result is flagged `RunTime_Megamorphic`, so `pfunction_call` takes its generic call instead of promoting the function.
