@@ -12,6 +12,13 @@ One list of what is still open, swept from every doc on 2026-11-17. Each line po
 From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 **Wrong results or crashes, reachable today**
+- **C24:** compiled code never drops the GIL or runs signal handlers: another thread waiting on a compiled busy loop starves, Ctrl-C can't stop a compiled loop, and a handler's exception surfaces outside its `try`. Found by the CPython test survey (2026-11-17); `test_signal`, `test_threading`, `test_io`, `test_unittest`, `test_sys`, `test_asyncio` excluded for it. Medium (core: an `eval_breaker` test at loop heads). The most serious open item.
+- **C23:** `sys.settrace`/`setprofile` don't see compiled code; a debugger's jump out of a loop never happens (`test_sys_settrace` ran to 20 GB). Small fix (interpret while tracing), but it is a decision (QUESTIONS 32; `tools/interpreted.py` relies on the current behaviour).
+- **F10:** a user `__eq__`/`__ne__` runs twice (now seen: CPython's `test_compare`). Small to medium (`pobject.c`).
+- **F48:** an exhausted sequence iterator restarts when the sequence grows (`piterobject.c`). Medium.
+- **F49, F50:** builtins read from `globals()['__builtins__']` at each lookup; a slot deleted after compiling (`del C.__next__`) not seen. Small to medium; rare.
+- **C25:** C functions called directly skip `_Py_CheckFunctionResult` (a buggy extension returning NULL without an exception segfaults). Small.
+- **F51:** checked build only: a respawn replay aborts on a forced constant tuple (`test_subclassinit`). Small (the replay check).
 - **F9:** a `T_STRING_INPLACE` struct member gives `bytes`, not `str`. Small. **In flight** (strings agent).
 - **C9:** reference counts are lower than ceval's, so C code testing `Py_REFCNT(x) == 1` can behave differently. Fixed where seen; others may exist.
 - **C11, C18:** compiled frames are only partly visible (`warnings` stacklevel, `f_lineno`, `f_back`), and a traceback doesn't keep a compiled function's locals alive. C11 now reaches more code: with `with` and class statements compiling, unittest's `case.run` is compiled, so every test method is a compiled callee (`type()` takes `__module__` from `unittest.case`; CPython's `test_builtin`). Worth doing next among the frame bugs: the hook behind `PyEval_GetFrame` (`globals()`, `type()`'s `__module__`), then `f_lineno`.
@@ -19,9 +26,10 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C17 remainder:** identity of virtual floats, ints and bound methods across calls (`f(x) is x` is False).
 
 - **F37:** fixed (`e86f8ae`, STORES.md option 1).
+- **C22, F41–F47:** fixed by the CPython test survey (2026-11-17; KNOWN_BUGS), including two crashes (C22, F45).
 
 **Possible, not shown to happen**
-- **F10:** a user `__eq__` may run twice. **F11:** a C-NULL `kw` on the `use_proxy` path. Both from reading; each needs a test first.
+- **F11:** a C-NULL `kw` on the `use_proxy` path. From reading; needs a test first.
 - **F18:** exception details (a bare `raise` adds a traceback entry; dead Py2 frame-exception code).
 
 **Latent or by design**
