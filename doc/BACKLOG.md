@@ -12,9 +12,7 @@ One list of what is still open, swept from every doc on 2026-11-17. Each line po
 From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 **Wrong results or crashes, reachable today**
-- **F27:** failing an allocation early in a first compile segfaults (found with `_testcapi.set_nomemory`). Where hasn't been looked at. Small to medium.
 - **F9:** a `T_STRING_INPLACE` struct member gives `bytes`, not `str`. Small. **In flight** (strings agent).
-- **F6:** `direct_compute_float` converts a float's bits numerically; wrong when a frame is rebuilt from compiled state. Small; needs a test that rebuilds a frame.
 - **C9:** reference counts are lower than ceval's, so C code testing `Py_REFCNT(x) == 1` can behave differently. Fixed where seen; others may exist.
 - **C11, C18:** compiled frames are only partly visible (`warnings` stacklevel, `f_lineno`, `f_back`), and a traceback doesn't keep a compiled function's locals alive.
 - **C15 remainder:** `locals()`, `eval()` and friends reached indirectly (`f = locals; f()`) see only the arguments.
@@ -28,6 +26,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 **Latent or by design**
 - **F12, F35, M10, M11, M7:** documented, harmless today.
+- **F27 remainder:** running out of memory in the middle of a compile aborts the process on purpose ("psyco: out of memory"), as upstream; the merge-point analysis and frame registration now fail cleanly. Raising MemoryError instead would mean unwinding a half-built compilation. Medium.
 - **F36:** holding a class's shared keys stops CPython re-sharing them (go's `Board`). Parked: the fixes tried cost more than the bug (KNOWN_BUGS F36).
 - **C3/C14:** compiled code, promotion caches and the stub pool are rarely freed. Matters for long-running programs that keep creating code.
 - **C19, C20:** `getrefcount` one lower; one GC object per compile.

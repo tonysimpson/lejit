@@ -46,7 +46,7 @@ Each term gives its definition and where it lives (`file:symbol`). **[read]** me
 
 ## Virtual objects
 
-- **Virtual object**: a Python object represented as `VirtualTime` with its fields in `vinfo->array` (for example a tuple whose items are known `vinfo_t`s). It is never allocated unless it **escapes**: stored somewhere, passed to an unknown C function, or returned. On escape, `compute_fn` emits the allocation (or makes a compile-time constant if every part is known). `direct_compute_fn` builds the real object from raw data in a frame, for frame/traceback reconstruction. [read] `ni/vcompiler.h`, e.g. `ni/Objects/ptupleobject.c:compute_tuple`
+- **Virtual object**: a Python object represented as `VirtualTime` with its fields in `vinfo->array` (for example a tuple whose items are known `vinfo_t`s). It is never allocated unless it **escapes**: stored somewhere, passed to an unknown C function, or returned. On escape, `compute_fn` emits the allocation (or makes a compile-time constant if every part is known). `direct_compute_fn` builds the real object from raw data in a frame; upstream used it only for `psyco.compact`, and nothing reaches it in Ni (KNOWN_BUGS F6). [read] `ni/vcompiler.h`, e.g. `ni/Objects/ptupleobject.c:compute_tuple`
 - **`vinfo_move`**: replaces a virtual value's source with its computed (run-time or compile-time) result, in place. [read] `ni/vcompiler.c`
 
 ## Talking to CPython
