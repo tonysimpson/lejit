@@ -231,17 +231,23 @@ _set_async_exc = ctypes.pythonapi.PyThreadState_SetAsyncExc
 _set_async_exc.argtypes = [ctypes.c_ulong, ctypes.py_object]
 
 
-def _fire(tid):
-    time.sleep(0.001)
+def _fire(tid, box):
+    # only once the target is inside its try: a fixed delay let the
+    # exception arrive before it on a loaded machine (KNOWN_BUGS C39)
+    while not box.ready:
+        time.sleep(0.0005)
     _set_async_exc(tid, AsyncStop)
 
 
 # PyThreadState_SetAsyncExc from another thread, while this one spins
 def async_exc_from_thread():
-    t = threading.Thread(target=_fire, args=(threading.get_ident(),))
+    box = Box()
+    box.ready = False
+    t = threading.Thread(target=_fire, args=(threading.get_ident(), box))
     t.start()
     n = 0
     try:
+        box.ready = True
         while True:
             n += 1
     except AsyncStop:
