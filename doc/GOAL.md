@@ -53,6 +53,7 @@ The owner accepts this is a very high bar. Without it the code stays unmaintaina
 ## Out of scope — do not propose these
 
 - Tracing JITs, meta-tracing (PyPy/RPython), method JITs built on a new IR (Cinder, Pyston), copy-and-patch (CPython 3.13+ `_Py_JIT`), or "just use Numba/Cython". These are known alternatives; the owner has deliberately chosen Psyco's approach. Mention them only where a specific technique helps the Psyco-style design.
+- LLVM IR, or any compiler IR, as the meta-compiler's input or as a stage of Ni's code generation. The translated layer is generated from CPython's C source (D19, D26). LLVM is used only as an assembler (`llvm-mc`), at generation time, to turn hand-written machine-code templates into bytes and fixups (QUESTIONS 37, D65); Ni neither links nor runs it.
 - Modifying CPython itself. Psyco is a plug-in; Ni uses the PEP 523 frame-eval hook. That constraint stays.
 - Rewriting the core before the classification work is done.
 
