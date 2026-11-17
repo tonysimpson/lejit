@@ -195,7 +195,7 @@ Others are within a stub chunk (4 KB) of the same code; meteor_contest 61 → 65
 `codesize.py -s` also counts the blocks started although a snapshot matched (exactly or partially) apart from `compare_return_address_in_a_stupid_way`. With the cap off: 45 of 2,543 blocks (1.8%): deltablue 19 of 284 (6.7%), meteor_contest 8 of 116, go 6 of 255, deepcopy 4, hexiom 4, pyflate 2, raytrace 1, richards 1; none in the other 15. Unchanged with N = 6. Each is an upper bound on a block the test caused: without it the state would have joined existing code, though a partial match might still have compiled again. In deltablue 10 of the 19 are at one loop head (`add_constraints_consuming_to` @18, which has 10 blocks in all), states that differ from an existing block only in the return-address slot's alignment, presumably because the function is entered from callers at different stack depths [inferred]. Generalising more (the first version above) made it worse, 19 → 43 in deltablue, with whole copies of `remove_propagate_from`. Not changed, as asked.
 
 
-## Promotions (`f3548c7`, `9daad64`) [run]
+## Promotions (`914d08e`, `8aadadf`) [run]
 
 What promotions cost after D32 and D33, which values they promote, and what would shrink them. `NI_CODESTATS=1` build on `3232c0c`, `tools/codesize.py <bench> -p -d`; compile-time shares from a release build. Each benchmark runs until it compiles nothing new.
 
