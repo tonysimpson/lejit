@@ -271,6 +271,17 @@ static PyObject *cimpl_instance_dict_get(PyObject *obj, PyObject *name) {
   return PyDict_GetItem(*dictptr, name);
 }
 
+/* the instance dict's entry for 'name', whose hash is known: borrowed, or
+   NULL. Like PyDict_GetItem, errors from a key's __eq__ are dropped; the
+   compiled code has no exception pending here, so nothing is saved. */
+static PyObject *cimpl_dict_get_known(PyObject *dict, PyObject *name,
+                                      Py_hash_t hash) {
+  PyObject *v = _PyDict_GetItem_KnownHash(dict, name, hash);
+  if (v == NULL && PyErr_Occurred())
+    PyErr_Clear();
+  return v;
+}
+
 /* 3.7's struct _dictkeysobject (Objects/dict-common.h), which isn't in the
    installed headers; the entries follow the indices. */
 typedef struct {
@@ -414,7 +425,8 @@ static vinfo_t *keys_mismatch(PsycoObject *po, vinfo_t *vk, vinfo_t *vg) {
    dict at tp_dictoffset, one check that it uses the keys compiled in (and,
    for a name not in them, that they have no new entries), then the value
    at shared_key_slot's index (a dict using shared keys is always split).
-   Otherwise, or when a check fails, the C helper. As for the type guard, a
+   Otherwise, or when a check fails, a lookup with the name's hash computed
+   now (cimpl_dict_get_known); no dict at all is "not found". As for the type guard, a
    replay may find different keys, so the code emitted must not depend on
    them: the expected values are run-time loads from a per-site
    keys_guard_t (never freed), and without usable keys it expects an
@@ -428,10 +440,11 @@ static vinfo_t *instance_dict_get(PsycoObject *po, vinfo_t *obj,
   Py_ssize_t ix = 0, n;
   vinfo_t *vd, *vk, *vg, *vv, *v, *x;
   condition_code_t cc;
-  if (!(tp->tp_flags & Py_TPFLAGS_HEAPTYPE) || tp->tp_dictoffset <= 0 ||
-      !keys_inline(po, tp))
+  bool shared;
+  if (!(tp->tp_flags & Py_TPFLAGS_HEAPTYPE) || tp->tp_dictoffset <= 0)
     goto helper;
-  if (!is_respawning(po)) {
+  shared = keys_inline(po, tp);
+  if (shared && !is_respawning(po)) {
     guard = PyMem_Malloc(sizeof(keys_guard_t));
     if (guard == NULL)
       OUT_OF_MEMORY();
@@ -452,8 +465,10 @@ static vinfo_t *instance_dict_get(PsycoObject *po, vinfo_t *obj,
     vinfo_decref(vd, po);
     if (cc == CC_ERROR)
       return NULL;
-    goto helper;
+    return psyco_vi_Zero(); /* no dict yet: not found */
   }
+  if (!shared)
+    goto known_hash;
   vk = psyco_get_field(po, vd, DICT_ma_keys);
   if (vk == NULL) {
     vinfo_decref(vd, po);
@@ -468,18 +483,24 @@ static vinfo_t *instance_dict_get(PsycoObject *po, vinfo_t *obj,
     return NULL;
   }
   cc = integer_NON_NULL(po, x); /* consumes x */
-  if (cc == CC_ERROR || runtime_condition_f(po, cc)) {
+  if (cc == CC_ERROR) {
     vinfo_decref(vd, po);
-    if (cc == CC_ERROR)
-      return NULL;
-    goto helper;
+    return NULL;
   }
+  if (runtime_condition_f(po, cc))
+    goto known_hash;
   vv = psyco_get_field(po, vd, DICT_ma_values);
   vinfo_decref(vd, po);
   if (vv == NULL)
     return NULL;
   v = psyco_get_field_offset(po, vv, VALUES_item, ix * sizeof(PyObject *));
   vinfo_decref(vv, po);
+  return v;
+
+known_hash:
+  v = psyco_generic_call(po, cimpl_dict_get_known, CfReturnTypePtr, "vll", vd,
+                         (long)name, (long)PyObject_Hash(name));
+  vinfo_decref(vd, po);
   return v;
 
 helper:
