@@ -39,10 +39,10 @@ The two biggest commits:
 | A5 | Virtual int, inline int arithmetic, int compare | A | gone; generic `PyLong` slot calls | a880444 | core |
 | A6 | Virtual bool from condition code | A | gone; `PyBool_FromLong` call | a880444 | core |
 | A7 | Virtual strings and string metas | A | compiled out on Py3; init not called | 7441415, a880444 | translated |
-| A8 | Virtual range / `for i in range` | A | gone | a880444, ee1161b | core |
+| A8 | Virtual range / `for i in range` | A | **restored** (`da1539f`, `prangeobject.c`) | a880444, ee1161b | core |
 | A9 | Compile-time attribute lookup (MRO/descriptor) | A | stubbed to generic call | a880444 | core |
 | A10 | Instance creation / `type_call` / `__init__` inlining | A | gone (ptypeobject.c deleted) | a880444 | core/translated |
-| A11 | Compact objects | A | gone | a880444 | core |
+| A11 | Compact objects | A | gone; V2 history in `compact-objects.md` | a880444 | core |
 | A12 | Float specialisation | A | disabled then "hacked" back; partial | d57d3c8, 04023e1, 04826fb | core |
 | A13 | Builtin metas (len, abs, id, chr, ord, range...) | A | all silently dead (`"__builtin__"` import fails) | a880444, ee1161b | translated |
 | A14 | Run-time type switches / fixed switches | A | gone (already disabled upstream) | a880444 | obsolete |

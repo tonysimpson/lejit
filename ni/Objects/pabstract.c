@@ -17,11 +17,6 @@
 
 /* Shorthand to return certain errors */
 
-static vinfo_t *type_error(PsycoObject *po, const char *msg) {
-  PycException_SetString(po, PyExc_TypeError, msg);
-  return NULL;
-}
-
 /* abstract.c's type_error: msg has one %.200s for the type's name */
 static vinfo_t *type_error_tp(PsycoObject *po, const char *msg,
                               PyTypeObject *tp) {
