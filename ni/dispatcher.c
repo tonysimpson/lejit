@@ -1645,6 +1645,34 @@ bool psyco_forget_int_values(PsycoObject *po) {
   return changed;
 }
 
+/* A second form at a merge point (vcompiler.c:psyco_compile): each constant
+   int object in a local that canonical_int left alone (outside -5..256)
+   becomes run-time, unless fixed. An int local otherwise takes three forms
+   that never match each other: a small int as a virtual int, a large one as
+   a constant object, and a run-time object once two large constants meet
+   (deltablue's change(v, 17 / 1050 / 5 / 2000)). Un-promoting keeps the
+   very object, so identity is kept; writing it as a virtual int would not
+   (computing it makes a new object). The run-time copy is a load of the
+   constant, no respawn point. Returns whether anything changed. */
+DEFINEFN
+bool psyco_unpromote_large_ints(PsycoObject *po) {
+  bool changed = false;
+  int i;
+  for (i = 0; i < po->pr.co->co_nlocals; i++) {
+    vinfo_t *a = LOC_LOCALS_PLUS[i];
+    source_known_t *sk;
+    if (a == NULL || !is_compiletime(a->source))
+      continue;
+    sk = CompileTime_Get(a->source);
+    if ((sk->refcount1_flags & SkFlagFixed) || sk->value == 0 ||
+        Py_TYPE((PyObject *)sk->value) != &PyLong_Type)
+      continue;
+    psyco_unfix(po, a);
+    changed = true;
+  }
+  return changed;
+}
+
 #if NI_CODESTATS
 /* candidates the last psyco_compatible() rejected only for the alignment
    test (tools/codesize.py -s; KNOWN_BUGS C1) */

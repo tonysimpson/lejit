@@ -905,6 +905,12 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
       return psyco_compile(po, mp, continue_compilation);
     }
 
+    /* a second block at this merge point: large int constants become
+       run-time objects first (QUESTIONS 38). Replay-safe for the same
+       reasons as the cap. */
+    if (mp != NULL && mp->blocks > 0 && psyco_unpromote_large_ints(po))
+      return psyco_compile(po, mp, continue_compilation);
+
     if (mp_capped(mp) && psyco_forget_int_values(po))
       return psyco_compile(po, mp, continue_compilation);
 
@@ -983,7 +989,10 @@ CodeBufferObject *psyco_compile_code(PsycoObject *po, mergepoint_t *mp) {
                                   &po->codelimit);
   po->code = insn_code_label(codebuf->codestart);
 
-  if (compile_now && mp_capped(mp) && psyco_forget_int_values(po))
+  if (compile_now && mp != NULL && mp->blocks > 0 &&
+      psyco_unpromote_large_ints(po))
+    code1 = psyco_compile(po, mp, false);
+  else if (compile_now && mp_capped(mp) && psyco_forget_int_values(po))
     code1 = psyco_compile(po, mp, false);
   else if (compile_now) {
     /* call the entry point function which performs the actual compilation
