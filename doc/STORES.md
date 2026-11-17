@@ -18,7 +18,7 @@ Tags: **[read]** checked in code, **[run]** measured, **[inferred]** reasoned.
 - Found on the way: compiled stores ignore a `__setattr__` added to the class after compiling (KNOWN_BUGS F37). Every option below except "do nothing" fixes it with the type guard. [run]
 - **Done:** options 1 and 2 (`e86f8ae`, D39): richards −13%, go −8% instructions per iteration; see Results. Fixes F37.
 - **Done:** option 4 (`80a60ce`, D38, D47): a further richards −31%, deltablue −10%, chaos −5.6%, go −5.0%, raytrace −4.1%, pyflate −3.5% instructions per iteration, about twice the estimates. Code grew much more than estimated on richards (+85%, estimate +20–25%): a failed check compiles its own copy of the rest of the code (see "Option 4: results"). [run]
-- **Done:** the store sites shrunk (`506a916`, `0590a3c`, `bd5361a`, D47; "Shrinking the store sites"): with D44's joins, richards' code is +10% over the baseline's 116 KB (budget +20–25%), at 161 M instructions per iteration against option 4's 177 M; all 29 benchmarks 0.8% smaller than base. [run]
+- **Done:** the store sites shrunk (`4398496`, `035ef12`, `2606291`, D47; "Shrinking the store sites"): with D44's joins, richards' code is +10% over the baseline's 116 KB (budget +20–25%), at 161 M instructions per iteration against option 4's 177 M; all 29 benchmarks 0.8% smaller than base. [run]
 
 ## The path today
 
@@ -517,7 +517,7 @@ Done in `80a60ce` (D38, D47), on `baseline-3.7` at `59b334b`. [read] `pobject.c:
 ### Not in the design
 
 - **A virtual value is computed before the type guard** (`heap_setattr`). Building it (a tuple, say) can collect garbage and run a `__del__` that changes the class, which would make the guard's compile-time decisions stale. This applied to option 1 too (KNOWN_BUGS F54). [inferred]
-- **Blocks compiled before a cache is first filled call the helper.** `__init__` is compiled by the first instance, while the class's keys don't yet hold the names, so every inline check missed on that instance, and each miss is a respawn that compiles its own copy of the rest of `__init__`. Now the cache records the first block serial that may see it filled (`ready`, one-way: 0 if filled from the class's keys when made, else `psyco_next_serial` at the first refresh). A block older than that calls `cimpl_store_attr_miss` behind a test of the cache's `dk_size`, which respawns into the inline store once the cache is filled. A replay shares its block's serial, so it decides the same, as `keys_inline` does (D31). (D47) [read] Removed in `506a916`: misses no longer respawn, so such a block just calls the helper until the cache is filled ("Shrinking the store sites").
+- **Blocks compiled before a cache is first filled call the helper.** `__init__` is compiled by the first instance, while the class's keys don't yet hold the names, so every inline check missed on that instance, and each miss is a respawn that compiles its own copy of the rest of `__init__`. Now the cache records the first block serial that may see it filled (`ready`, one-way: 0 if filled from the class's keys when made, else `psyco_next_serial` at the first refresh). A block older than that calls `cimpl_store_attr_miss` behind a test of the cache's `dk_size`, which respawns into the inline store once the cache is filled. A replay shares its block's serial, so it decides the same, as `keys_inline` does (D31). (D47) [read] Removed in `4398496`: misses no longer respawn, so such a block just calls the helper until the cache is filled ("Shrinking the store sites").
 - **Stores to `self` in `__init__` predict B** (`init_store`: the first argument, in a code object named `__init__`). Otherwise the second instance took a B respawn at every site in turn, again one copy of the rest each. It depends only on the code, so a replay predicts the same. (D47) [read]
 
 Together these two took richards' code from 320 KB to 246 KB (`Task.__init__` 103 → 54 KB) without changing its instruction count (134 → 133 M). [run]
@@ -566,7 +566,7 @@ Release builds of `59b334b` (options 1 and 2) and `80a60ce`, in the same session
 - **Per compiled site,** the inline store adds about 160 bytes (117 → 277), as the design estimated (150–190). [run]
 - **The rest is copies.** Each check that fails is a respawn, and a respawned branch compiles the rest of the code after the site as a new block, up to the next merge point, because the block ends at the site (`split_after_global`) and nothing joins the branch's continuation to the hit path's. Straight-line code with several store sites (a constructor) that misses at successive sites gets one copy per miss. Richards' `Task.__init__` is specialised for four classes, each with a different `link` and `input` per instance (a GC value into an untracked dict is a miss), so it takes several such chains. The design counted stubs and sites, not these copies. [read] (`pycompiler.c`, the `split_after_global` branch), [run]
 - **Stubs per site:** 6 on the A path (type guard, dict, split, size, entry, old value), 7 with the GC test, one more for B (order) and one more in a block compiled before its cache was filled. About 15 bytes each (D32): 90–135 bytes per compiled copy. Size, entry, GC and order all lead to the same helper call, so one shared stub would serve them. It needs a dispatcher feature: several jumps into one respawn point whose replay stops at the first of them, with the same registers live at each. Not trivial; a follow-up (BACKLOG). [read], [inferred]
-- **Joining the copies** would remove most of the growth: at the end of a respawned branch at a split site, look for the hit path's continuation at the same instruction and unify with its snapshot, as a merge point does. That is a `pycompiler.c` change, out of this change's scope (QUESTIONS 42). [inferred] Done since in `f229d14` (D44); and since `506a916` a failed check calls a helper instead of respawning.
+- **Joining the copies** would remove most of the growth: at the end of a respawned branch at a split site, look for the hit path's continuation at the same instruction and unify with its snapshot, as a merge point does. That is a `pycompiler.c` change, out of this change's scope (QUESTIONS 42). [inferred] Done since in `f229d14` (D44); and since `4398496` a failed check calls a helper instead of respawning.
 
 ### Tests
 
@@ -578,13 +578,13 @@ Checked build (`NI_TRACE=1 NI_ALL_CHECKS=1`): `tests/run.py` 478 passed; richard
 
 ## Shrinking the store sites
 
-Branch `store-shrink`: `baseline-3.7` at `e4b3a5f` (with D44's joins), option 4 cherry-picked (`c6f447f`), then `506a916` (step 1), `0590a3c` (step 3a), `bd5361a` (step 3b), `5d1feae` (tests). The owner's budget is +20–25% code on richards over the baseline's 116 KB (D38). With joins, option 4 alone was +38% there, mostly the store's own size: 208 bytes per compiled site against option 1's 105. [run]
+Branch `store-shrink`: `baseline-3.7` at `e4b3a5f` (with D44's joins), option 4 cherry-picked (`269bfaf`), then `4398496` (step 1), `035ef12` (step 3a), `2606291` (step 3b), `2b49c1c` (tests). The owner's budget is +20–25% code on richards over the baseline's 116 KB (D38). With joins, option 4 alone was +38% there, mostly the store's own size: 208 bytes per compiled site against option 1's 105. [run]
 
 ### What a site was
 
 One richards site, disassembled from `ni._codestats()` (store branch): 275–286 bytes. About 69 bytes of type guard built from vinfo primitives, with copies between registers. Then the checks, each a respawn point with its own 15-byte stub (six or seven per site, D32), and each taken respawn a replayed buffer. Then an inline call to the old value's `tp_dealloc` of about 26 bytes. Spills where the allocator ran short of callee-saved registers, and a constant value loaded twice with a 10-byte `movabs`. [run]
 
-### Step 1: one emitter, rare paths out of line (`506a916`)
+### Step 1: one emitter, rare paths out of line (`4398496`)
 
 - **The store is one hand-allocated emitter** (`x64/ipyencoding.c:psyco_inline_store_begin`, `_end`). It works in caller-saved registers only (RAX, RCX, RDX, RSI, RDI, R8–R11), which never hold a tracked value, so the compiler's state is the same on every path through the site. The only respawn point left is the miss call's error check. [read]
 - **Every failed check jumps to one miss call**: `call` of `pobject.c:cimpl_store_miss` through a glue that aligns the stack (`x64/iprocessor.c:psyco_aligned_call_glue`), then `test eax, eax` and the error exit. The helper stores as CPython would: a combined dict takes the known-hash store (option 2), anything else `cimpl_store_attr_miss`, which also refreshes the cache. The jumps are short where they reach. The body is emitted twice, once with near jumps to find the distances and once for real, and the second pass can only be shorter. [read]
@@ -595,7 +595,7 @@ One richards site, disassembled from `ni._codestats()` (store branch): 275–286
 
 The site now: load the object, the value and the cache; dict present, split, `dk_size` equal, the name at `kword`, GC (one or two tests); the old value present; store, incref, version tag, old value's decref; FILL (B only); MISS. 191 bytes per compiled site on richards with the old type guard; respawned buffers 90 → 15, stub chunks 10 → 6, as on base. [run]
 
-### Step 3: shorter encodings (`0590a3c`, `bd5361a`)
+### Step 3: shorter encodings (`035ef12`, `2606291`)
 
 - **3a, the type guard in 47 bytes instead of 75** (`x64/ipyencoding.c:psyco_type_guard`, used by `pobject.c:type_changed`): load `tp_flags` and `tp_version_tag` into R10/R11, XOR each with the guard's word (RIP-relative when in reach, else through RAX, freed either way so that the compiler's state doesn't depend on where the code is), OR the two. Loads (`generic_getattr`, A9, D30) use the same guard, so 3a shrinks code without stores too: on richards about 3.6 of its 8.1 KB comes from the store sites. [read], [run], [inferred]
 - **3b, operands**: the cache, a constant object or value, and the two glues are reached with a 7-byte RIP-relative `lea` and rel32 calls when in reach. Each choice is made once, before the two passes, from where the site starts, with a margin. The cache is on the C heap, usually more than 2 GB from the code, so the `lea` rarely applies. 170 → 166 bytes per site. [read], [run]
@@ -613,7 +613,7 @@ The budget is met without it. If it is wanted later, the tests are there: `store
 
 Release builds of each commit, one session, `tools/compilebench.py` (one run each; compile ms are indicative, other agents shared the machine). Code KB: [run]
 
-| | base `e4b3a5f` | store `c6f447f` | step 1 | + 3a | + 3b |
+| | base `e4b3a5f` | store `269bfaf` | step 1 | + 3a | + 3b |
 |---|---|---|---|---|---|
 | richards | 121.7 | 162.0 | 136.4 | 128.3 | **127.6** |
 | deltablue | 391.0 | 419.3 | 402.3 | 383.5 | 383.0 |
@@ -652,7 +652,7 @@ Instructions per warm iteration, millions (`perf stat -e instructions:u`, ten it
 
 ### Tests
 
-Checked build (`NI_TRACE=1 NI_ALL_CHECKS=1`) at `5d1feae`: `tests/run.py` 597 passed, 4 xfail (C23's three, F55); `tests/cases/stores.py` 45 cases and the F55 xfail; `tests/compile_bounds.py` 7 checks passed; `tests/encoding/check.py` 69 macros, 275,191 cases, no mismatch; `run_v_mem_mov.sh` 90,144 cases; the smoke test gives the same output with and without Ni; the metac outputs are up to date; richards, deltablue, raytrace, go, hexiom, chaos and pyflate ran under `tools/profile_bench.py` without a replay divergence. CPython's tests (`tests/cpython_tests.py -j 2`): 281 modules, none unexpected. [run]
+Checked build (`NI_TRACE=1 NI_ALL_CHECKS=1`) at `2b49c1c`: `tests/run.py` 597 passed, 4 xfail (C23's three, F55); `tests/cases/stores.py` 45 cases and the F55 xfail; `tests/compile_bounds.py` 7 checks passed; `tests/encoding/check.py` 69 macros, 275,191 cases, no mismatch; `run_v_mem_mov.sh` 90,144 cases; the smoke test gives the same output with and without Ni; the metac outputs are up to date; richards, deltablue, raytrace, go, hexiom, chaos and pyflate ran under `tools/profile_bench.py` without a replay divergence. CPython's tests (`tests/cpython_tests.py -j 2`): 281 modules, none unexpected. [run]
 
 Found on the way: Ni keeps a promoted type after a call assigns `__class__`, with or without stores (KNOWN_BUGS F55). [run]
 

@@ -611,7 +611,7 @@ With C27 (`a4b946e`) and C28 (`261fd83`) fixed, the join points' own restriction
 - **Instructions per warm iteration** are `perf stat -e instructions:u`, ((3 + 10) − (3 + 0) iterations) / 10, one run each; raytrace and chaos differ by about 1%, which is noise for identical code.
 - **What it buys is simpler code** (`droppable()` and the `canonical_int` and inlined-frame exceptions are gone) and two live bugs found: C28 asserted at merge points too.
 
-## Inline store sites shrunk (`506a916`, `0590a3c`, `bd5361a`, D47; STORES.md "Shrinking the store sites") [run]
+## Inline store sites shrunk (`4398496`, `035ef12`, `2606291`, D47; STORES.md "Shrinking the store sites") [run]
 
 On top of store+J. Each failed check of an inline store used to be a respawn point: a stub per check and, when taken, a respawned buffer. Now every failed check calls one helper out of line, and the old value's dealloc goes through one shared glue. The type guard is a 47-byte emitter, used by loads too. Release builds, `tools/compilebench.py`, one session (base is `e4b3a5f`, base+J):
 
