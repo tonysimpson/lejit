@@ -49,3 +49,4 @@ Instance attributes and dicts take about 60% of richards, 50% of deltablue and 3
 | chaos | 32.3 → 28.1 | 90 → 98 | 0.44 → 0.46 |
 
 A first version that sent classes without usable keys to a check that always fails respawned once per site: go then made 1,896 respawns (491 before) and 2.4 MB of code for no gain. `keys_inline` now sends a class whose keys CPython has dropped straight to the C helper.
+3. **Unshared instance dicts with a compile-time hash.** Done (`0965d06`): when a class has no usable shared keys, or the keys check fails, `pobject.c:instance_dict_get` loads the dict at `tp_dictoffset` and calls `_PyDict_GetItem_KnownHash` with the name's hash computed at compile time, instead of `_PyObject_GetDictPtr` plus `PyDict_GetItem`. No dict is "not found" without a call. go: 1,535 → 1,364 million instructions per iteration (11% fewer); richards unchanged (its classes share keys). Timings to follow on a quiet machine. [run] (`perf stat -e instructions`)
