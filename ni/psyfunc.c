@@ -427,6 +427,25 @@ bool psyco_leave_recursive_call(PsycoObject *po) {
   return true;
 }
 
+/* ceval's test of eval_breaker before an instruction (KNOWN_BUGS C24, D45):
+   an inline compare of the word with 0, and only when it is set a call to
+   the C helper that does what ceval does then (pending calls and signal
+   handlers, a GIL drop for other threads, an async exception). The helper
+   can run any Python code, as any residual call can. Its branch is a
+   runtime_condition_f respawn point, compiled when first taken. */
+EXTERNFN void *ni_eval_breaker_address(void); /* Python/pyruntime.c */
+EXTERNFN int ni_eval_breaker_handler(void);
+static void *eval_breaker;
+
+DEFINEFN
+bool psyco_check_eval_breaker(PsycoObject *po) {
+  condition_code_t cc = psyco_int32_nonzero_at(po, eval_breaker);
+  if (runtime_condition_f(po, cc))
+    return psyco_generic_call(po, ni_eval_breaker_handler, CfCommonIntZeroOk,
+                              "") != NULL;
+  return true;
+}
+
 #define COMPUTE_DEFCOUNT()                                                     \
   do {                                                                         \
     /* is vdefaults!=NULL at run-time ? */                                     \
@@ -968,4 +987,6 @@ void psycofunction_init() {
   PyType_Ready(&PsycoFunction_Type);
   tstate_current = ni_tstate_current_address();
   psyco_assert(tstate_current->ts == PyThreadState_GET());
+  eval_breaker = ni_eval_breaker_address();
+  psyco_assert(eval_breaker != NULL);
 }

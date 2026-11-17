@@ -127,6 +127,12 @@ EXTERNFN vinfo_t* psyco_generic_call(PsycoObject* po, void* c_function,
 /* Py_LeaveRecursiveCall after a compiled call (psyfunc.c); false with an
    exception set */
 EXTERNFN bool psyco_leave_recursive_call(PsycoObject* po);
+/* tests the 32-bit int at 'address' at run time: CC_NE if it isn't 0 */
+EXTERNFN condition_code_t psyco_int32_nonzero_at(PsycoObject* po,
+                                                 void* address);
+/* ceval's eval_breaker test at a loop head or after a call (psyfunc.c,
+   KNOWN_BUGS C24); false with an exception set */
+EXTERNFN bool psyco_check_eval_breaker(PsycoObject* po);
 EXTERNFN vinfo_t* psyco_call_psyco(PsycoObject* po, CodeBufferObject* codebuf,
 				   Source argsources[], int argcount,
 				   struct stack_frame_info_s* finfo);

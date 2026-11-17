@@ -2112,6 +2112,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 #endif
       opcode = bytecode[next_instr++];
       oparg = bytecode[next_instr++];
+      /* at loop heads and after calls (KNOWN_BUGS C24) */
+      if (psyco_breaker_check_at(po->pr.merge_points, po->pr.next_instr) &&
+          !psyco_check_eval_breaker(po))
+        break;
     dispatch_opcode:
 
       /* Main switch on opcode */

@@ -88,7 +88,8 @@ MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
            'test_traceback', 'test_tracemalloc', 'test_typechecks',
            'test_typing', 'test_ucn', 'test_unary', 'test_unicode',
            'test_unicode_file', 'test_unicode_file_functions',
-           'test_unicode_identifiers', 'test_unicodedata', 'test_univnewlines',
+           'test_unicode_identifiers', 'test_unicodedata', 'test_unittest',
+           'test_univnewlines',
            'test_unpack', 'test_unpack_ex', 'test_urllib', 'test_urllib2',
            'test_urllib_response', 'test_urlparse', 'test_utf8source',
            'test_uu', 'test_warnings', 'test_wave', 'test_weakset',
@@ -98,24 +99,27 @@ MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
 
 # --all adds these: slower, or using subprocesses, sockets, threads or
 # timing, so more exposed to a loaded machine
-EXTENDED = ['test_asynchat', 'test_asyncore', 'test_buffer',
+EXTENDED = ['test_asynchat', 'test_asyncio', 'test_asyncore', 'test_buffer',
             'test_c_locale_coercion', 'test_cmd_line', 'test_cmd_line_script',
             'test_compileall', 'test_crypt', 'test_distutils',
             'test_docxmlrpc', 'test_dtrace', 'test_dummy_threading',
             'test_eintr', 'test_email', 'test_embed', 'test_ensurepip',
             'test_epoll', 'test_faulthandler', 'test_fork1', 'test_ftplib',
             'test_getpass', 'test_httplib', 'test_httpservers', 'test_imaplib',
-            'test_import', 'test_importlib', 'test_ioctl', 'test_lib2to3',
+            'test_import', 'test_importlib', 'test_io', 'test_ioctl',
+            'test_lib2to3',
             'test_logging', 'test_lzma', 'test_mailbox', 'test_openpty',
             'test_os', 'test_pickle', 'test_pipes', 'test_platform',
             'test_poll', 'test_popen', 'test_poplib', 'test_pty', 'test_pydoc',
             'test_queue', 'test_readline', 'test_repl', 'test_runpy',
-            'test_select', 'test_selectors', 'test_shutil', 'test_site',
+            'test_select', 'test_selectors', 'test_shutil', 'test_signal',
+            'test_site',
             'test_smtpd', 'test_smtplib', 'test_socketserver',
             'test_subprocess', 'test_sysconfig', 'test_tarfile',
             'test_telnetlib', 'test_tempfile', 'test_thread',
             'test_threaded_import', 'test_threadedtempfile',
-            'test_threading_local', 'test_threadsignals', 'test_time',
+            'test_threading', 'test_threading_local', 'test_threadsignals',
+            'test_time',
             'test_timeit', 'test_tokenize', 'test_tools',
             'test_urllib2_localnet', 'test_utf8_mode', 'test_uuid',
             'test_venv', 'test_wait3', 'test_wait4', 'test_weakref',
@@ -180,6 +184,12 @@ KNOWN = {
     'test_subclassinit': ('(no output) exit=-6',
                           'F51: checked build only, a respawn replay sees a '
                           'new constant tuple'),
+    'test_unittest': ('run=798 fail=5 err=0 skip=3 exit=0',
+                      'C11: warnings line numbers; F50: __hash__ and __ne__ '
+                      'set on a class after compiling; F52: __defaults__ '
+                      'changed after compiling'),
+    'test_asyncio': ('run=2055 fail=18 err=0 skip=35 exit=0',
+                     'C11: line numbers and stacks in source tracebacks'),
     'test_weakref': ('run=124 fail=3 err=0 skip=0 exit=0',
                      'C14: compiled code keeps objects alive (classes, '
                      'bound methods)'),
@@ -208,10 +218,10 @@ EXCLUDED = {
     'C23: tracing and profiling don\'t see compiled code (one runs out of '
     'memory)': ['test_sys_settrace', 'test_sys_setprofile', 'test_bdb',
         'test_pdb', 'test_profile', 'test_cprofile', 'test_trace'],
-    'C24: compiled code never drops the GIL or runs signal handlers '
-    '(hangs or aborts)': ['test_signal', 'test_threading', 'test_io',
-        'test_unittest', 'test_sys', 'test_asyncio'],
-    'C25 (segfault) and C24 (pending calls hang)': ['test_capi'],
+    'C11: test_current_frames fails on a line number and leaves its '
+    'thread waiting, so the run never exits': ['test_sys'],
+    'C25: return_null_without_error segfaults (an assertion in the checked '
+    'build)': ['test_capi'],
     'skips vary with the environment; F51 aborts it in the checked build':
         ['test_socket'],
 }

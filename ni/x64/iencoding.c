@@ -917,3 +917,12 @@ vinfo_t* integer_seqindex(PsycoObject* po, vinfo_t* vi, vinfo_t* vn, bool ovf)
     }
 }
 #endif /* 0 */
+
+DEFINEFN
+condition_code_t psyco_int32_nonzero_at(PsycoObject *po, void *address) {
+    BEGIN_CODE
+    NEED_CC();
+    CMP_I8_DABS(0, address);
+    END_CODE
+    return CC_NE;
+}

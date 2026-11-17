@@ -640,8 +640,32 @@ typedef enum {
 #define CMP_I8_A(i, rm)                                                        \
   INDIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x38, 0, rm);                        \
   WRITE_8BIT(i)
+/* @asm: cmp dword ptr [{rm}], {i:i8} */
+#define CMP_I8_DA(i, rm)                                                       \
+  INDIRECT_ENCODING(false, 1, 0x83, 0, 0, 0x38, 0, rm);                       \
+  WRITE_8BIT(i)
+/* @asm: cmp dword ptr [rip{o:d32}], {i:i8} */
+#define CMP_I8_DRIP(i, o)                                                      \
+  do {                                                                         \
+    WRITE_1(0x83);                                                             \
+    WRITE_1(0x3D);                                                             \
+    WRITE_32BIT(o);                                                            \
+    WRITE_8BIT(i);                                                             \
+  } while (0)
+/* cmp dword ptr [address], i: RIP-relative when in reach (7 bytes), else
+   through REG_TRANSIENT_2 */
+#define CMP_I8_DABS(i, address)                                                \
+  do {                                                                         \
+    long _rip_off = (long)(address) - ((long)code + 7);                        \
+    if (FITS_IN_32BITS(_rip_off)) {                                            \
+      CMP_I8_DRIP(i, _rip_off);                                                \
+    } else {                                                                   \
+      MOV_R_I(REG_TRANSIENT_2, (long)(address));                               \
+      CMP_I8_DA(i, REG_TRANSIENT_2);                                           \
+    }                                                                          \
+  } while (0)
 /* @asm: cmp {rm}, {i:i8} */
-#define CMP_I8_R(i, rm)                                                        \
+#define CMP_I8_R(i, rm)                                                      \
   DIRECT_ENCODING(true, 1, 0x83, 0, 0, 0xF8, 0, rm);                           \
   WRITE_8BIT(i)
 /* @asm: cmp {rm:d}, {i:i8} */

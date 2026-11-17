@@ -37,6 +37,9 @@ typedef struct {
     Py_ssize_t mergepoint_count;
     Py_ssize_t unit_count;      /* code units in co_code */
     global_entries_t *joins;    /* per code unit, or NULL: psyco_join_point */
+    /* one per code unit: compiled code tests eval_breaker before that
+       instruction (KNOWN_BUGS C24). Allocated after the merge points. */
+    unsigned char *breaker_checks;
     /*
     NULL terminated.
     on allocation we extend this array to count(mergepoints) + 1.
@@ -91,9 +94,10 @@ report_destructor(PyObject *capsule)
 #define ENTER_JUMP_TO(target)                       \
     do {                                            \
         Py_ssize_t _t = (target) / 2;               \
-        if (_t <= entry_count_index)                \
+        if (_t <= entry_count_index) {              \
             entry_count[_t] = 8;                    \
-        else                                        \
+            BREAKER_CHECK(_t);                      \
+        } else                                      \
             _ENTER_INC(_t);                         \
     } while (0)
 
@@ -116,6 +120,23 @@ report_destructor(PyObject *capsule)
      (op) == JUMP_ABSOLUTE || (op) == POP_JUMP_IF_FALSE ||                   \
      (op) == POP_JUMP_IF_TRUE || (op) == JUMP_IF_FALSE_OR_POP ||             \
      (op) == JUMP_IF_TRUE_OR_POP || (op) == EXTENDED_ARG)
+
+/* ceval tests eval_breaker before every instruction it reaches through
+   DISPATCH(): after most opcodes, and at a frame's start. Compiled code
+   tests it at the target of every backward jump and after every call
+   (and NiCode_Run at the start), unless the instruction is one of these;
+   then the test is before the next one, as these go on with DISPATCH().
+   YIELD_FROM is never compiled. */
+#define BREAKER_SKIPS(op)                                                    \
+    ((op) == SETUP_FINALLY || (op) == SETUP_WITH ||                          \
+     (op) == BEFORE_ASYNC_WITH || (op) == YIELD_FROM)
+#define BREAKER_CHECK(unit)                                                  \
+    do {                                                                     \
+        Py_ssize_t _u = (unit);                                              \
+        if (BREAKER_SKIPS(_Py_OPCODE(first_instr[_u])))                      \
+            _u++;                                                            \
+        breaker_check[_u] = 1;                                               \
+    } while (0)
 
 #define MP_HERE()                           \
     do {                                    \
@@ -302,8 +323,10 @@ _find_merge_points(PyCodeObject *co)
         (PyBytes_Size(co->co_code) / sizeof(_Py_CODEUNIT)) + 1;
     unsigned char entry_count[entry_count_len];
     unsigned char is_start[entry_count_len];
+    unsigned char breaker_check[entry_count_len];
     memset(entry_count, 0, entry_count_len);
     memset(is_start, 0, entry_count_len);
+    memset(breaker_check, 0, entry_count_len);
 
     first_instr = (_Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
     next_instr = first_instr;
@@ -327,6 +350,10 @@ _find_merge_points(PyCodeObject *co)
             weight++;
         if (opcode == LOAD_GLOBAL)
             loads_global = 1;
+        if ((opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
+             opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD) &&
+            next_instr < instr_end)
+            BREAKER_CHECK(next_instr - first_instr);
         switch (opcode) {
             /* no successor in this code */
             case RETURN_VALUE:
@@ -398,9 +425,13 @@ _find_merge_points(PyCodeObject *co)
     }
 
     report = (co_report_t *)PyMem_Malloc(
-        sizeof(co_report_t) + (sizeof(mergepoint_t) * mergepoint_count));
+        sizeof(co_report_t) + (sizeof(mergepoint_t) * mergepoint_count) +
+        entry_count_len);
     if (report == NULL)
         return NULL;
+    report->breaker_checks =
+        (unsigned char *)&report->mergepoints[mergepoint_count + 1];
+    memcpy(report->breaker_checks, breaker_check, entry_count_len);
     /* the single merge point means no loop and no join: after the call
        enters the inlined body (pycompiler.c, EInline) the next merge point
        looked for is past the start, so inlined state is never snapshotted */
@@ -757,4 +788,11 @@ psyco_mp_flags(PyObject *mergepoints)
 {
     co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
     return report->flags;
+}
+
+DEFINEFN int
+psyco_breaker_check_at(PyObject *mergepoints, int position)
+{
+    co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
+    return report->breaker_checks[position / 2];
 }

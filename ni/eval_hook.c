@@ -11,6 +11,8 @@ static _PyFrameEvalFunction original_eval_frame = NULL;
    which profiles to find what Ni didn't compile. */
 DEFINEVAR int ni_trace_fallback = 1;
 
+EXTERNFN int ni_eval_breaker_at_entry(PyFrameObject *f); /* pyruntime.c */
+
 static PyObject *NiCode_Run(PyObject *codebuf, PyFrameObject *f) {
   stack_frame_info_t **finfo;
   PyObject *result;
@@ -32,9 +34,13 @@ static PyObject *NiCode_Run(PyObject *codebuf, PyFrameObject *f) {
      assertRaises) must refuse to clear it, since the compiled code borrows
      the cells and arguments in f_localsplus */
   f->f_executing = 1;
-  /* tdict arg is NULL here as it is not used - not sure why */
-  result = psyco_processor_run((CodeBufferObject *)codebuf,
-                               (long *)f->f_localsplus, &finfo);
+  /* ceval's eval_breaker test at the start (KNOWN_BUGS C24) */
+  if (ni_eval_breaker_at_entry(f) < 0)
+    result = NULL;
+  else
+    /* tdict arg is NULL here as it is not used - not sure why */
+    result = psyco_processor_run((CodeBufferObject *)codebuf,
+                                 (long *)f->f_localsplus, &finfo);
   f->f_executing = 0;
   tstate->frame = f->f_back;
   Py_LeaveRecursiveCall();

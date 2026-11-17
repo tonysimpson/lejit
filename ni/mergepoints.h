@@ -58,4 +58,7 @@ EXTERNFN global_entries_t* psyco_join_point(PyObject* mergepoints,
 #define MP_FLAGS_EXTRA       (-256)
 
 EXTERNFN int psyco_mp_flags(PyObject* mergepoints);
+/* whether compiled code tests eval_breaker before the instruction at
+   position (a byte offset; KNOWN_BUGS C24) */
+EXTERNFN int psyco_breaker_check_at(PyObject* mergepoints, int position);
 #endif /* _MERGEPOINTS_H */
