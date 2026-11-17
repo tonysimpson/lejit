@@ -760,3 +760,34 @@ Promotion continuations fall by 28–40% and buffers by 15–27%. Code falls exc
 `compilebench.py`, all 29, two runs each: compile 20.7 / 21.1 → 20.5 / 20.4 ms (−2.5%), code 2,325 → 2,307 KB. D59 had cost +5% (19.8–20.2 → 20.7–21.3 ms on its base), so about half of it is recovered. Per benchmark (mean of two): go 2.77 → 2.51 ms, raytrace 1.62 → 1.50, chaos 0.56 → 0.51, deepcopy 0.54 → 0.46; deltablue 2.37 → 2.41, hexiom 2.81 → 2.88, mdp 1.50 → 1.58; the scimark ones move ±20–40% in both directions on 0.1–1 ms, which is noise.
 
 Instructions per warm iteration (`perf stat -e instructions:u`, (12 − 2 iterations) / 10, M): richards 165.5–172.2 (four runs) → 165.4–167.0 (five), deltablue 25.02 → 25.02–25.03, raytrace 3,101.5 → 3,102.8–3,105.9, go 1,070–1,105 → 1,071–1,169 (run-to-run spread larger than any difference), hexiom 41.07–41.50 → 40.64–40.65 (−1.1%), chaos 456.3–457.6 → 460.7–465.3 (+1.5%), pyflate 2,022.4 → 2,026.3–2,026.4 (+0.2%). Chaos's +1.5% was not explained. [run]
+
+## Promotion caches and the cut-off (`27ef981`, D66, KNOWN_BUGS C54) [run]
+
+`tools/bench.py`'s `shapes` kernel (an `isinstance` chain over `int`, `float`, `str`, two classes, `int`, `bytes`, `None` in a list loop) went from 708 to 969 M instructions at `f229d14`, the rejoin (D44), and was 977 M on `ed323c7`. `shapes_locals`, the other kernels and pyperformance did not move.
+
+### Cause
+
+- **Not lost facts.** In the standalone kernel the rejoin joins once, exactly (`ni._stats()['joins']` = (1, 0, 0, 1)): the block the inner loop head gets from the outer loop's respawned exit (`x` still alive there) reaches the split after `LOAD_GLOBAL isinstance` in the same state as the main block, and jumps into it (nianalyser `dump_function.py` on `f229d14^` and `f229d14`). Nothing is dropped or un-promoted. [run]
+- **Two promotion sites became one.** Before, that block had its own copy of the loop body, with its own `isinstance(x, int)` site, and the items split between the two sites by which block their back-edge matched: site A saw float, str, bytes, int and the generic version, site B int, `None` and the generic version, so only the two classes ran the generic chain. After, one site sees all eight types (`codesize.py shapes -p`, `NI_CODESTATS`, a scratch `bm_shapes.py` running `bench.shapes(20)`). [run]
+- **The shared site ran out of room.** `isinstance`'s site promotes only static types (`do_promotion_static_type`) and sends a heap type to its megamorphic version. `lookup_count_previous_values` counted that version as one of the `MEGAMORPHIC_MAX` (5) values, so the site compiled float, str, int and bytes and then sent `None` to the generic version for good: five run-time `isinstance` calls for each `None`, each failing one looking up `__class__` (`PyObject_IsInstance`, `recursive_isinstance`, `_PyObject_GenericGetAttrWithDict` were 60–70% of the profile). And the cache entries that go to the generic version (one per class seen) filled the five slots, so a full cache's newest value replaced the last slot, evicting a compiled value; once the chain ended in the generic version (D42), the evicted value ran it too. The site's runs after: `MEGA` 19,997, `int` 1. [run]
+
+### The change
+
+- The megamorphic version is not counted as a value (`dispatcher.c:lookup_count_previous_values`). Only `do_promotion_static_type` can make it before the cut-off, so only those sites change: they hold five static types besides the classes.
+- A full cache gives a slot that goes to the megamorphic version to a value with code of its own, and never takes a slot from one for an entry that goes there (`promotion_cache_add`).
+- At the cut-off the cache is refilled with the site's compiled values, most recently used inline (`promotion_cache_fallback`; at most `MEGAMORPHIC_MAX`, which the inline entry and the chain of four hold). From then on no compiled value runs the generic version.
+- The rejoin is unchanged, so its saving (D29) is kept whole.
+
+### Measurements
+
+Release builds, `ed323c7` against the change; `perf stat -e instructions:u $PY tools/bench.py --child ni <kernel>` (three calls each):
+
+| kernel | `f229d14^` | `f229d14` | base | the uncounted marker only | the cache only | both |
+|---|---|---|---|---|---|---|
+| shapes | 708 M | 970 M | 977 M | 740 M | 969 M | **720 M** (−26%) |
+| shapes_locals | 606 M | 606 M | 612 M | 612 M | 612 M | 611 M |
+
+- Either half alone: the uncounted marker gets `None` its own code (most of the cost), but a full cache still evicts `int` or `bytes`, which then enter C at each run (until the cut-off, which nothing reaches); the cache alone refills at the cut-off, but `None` is still past it. After both, the site holds float, str, int (7,998 runs), bytes and `None`, and only the two classes (`MEGA` 8,000) run the generic version, as before the rejoin. shapes is still 12 M (1.7%) above `f229d14^`'s; not looked into.
+- The other kernels: within ±0.6% (word_counts 3,309/3,345 → 3,324/3,326, points 3,003–3,010 → 3,003, the rest within 1 M).
+- **Instructions per warm iteration** (`perf stat -e instructions:u`, `PYTHONHASHSEED=0`, `tools/profile_bench.py <bench> 3` less `<bench> 0`, two runs each), M: richards 168.77/168.79 → 168.77/168.79, deltablue 26.86–26.87 → 26.86, raytrace 3,105/3,119 → 3,113/3,121, go 1,071.5/1,073.1 → 1,073.2/1,074.0, hexiom 41.11–41.12 → 41.11, chaos 464.4/465.0 → 464.3/464.5, pyflate 2,018.2 both. Unchanged.
+- **Code and compile time.** `codesize.py -s` (`NI_CODESTATS`): the seven benchmarks identical (code KB and times instructions were compiled: richards 131/1,790, deltablue 344/4,117, raytrace 198/2,746, go 288/4,503, hexiom 262/4,901, chaos 62/958, pyflate 184/3,735); shapes 10 → 11 KB, 230 → 251 instructions compiled (`None`'s code). `compilebench.py` all 29, two runs: code 2,317 KB in both, every benchmark's code identical; compile 21.5/21.4 → 21.8/21.2 ms (noise).
