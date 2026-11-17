@@ -50,3 +50,13 @@ Instance attributes and dicts take about 60% of richards, 50% of deltablue and 3
 
 A first version that sent classes without usable keys to a check that always fails respawned once per site: go then made 1,896 respawns (491 before) and 2.4 MB of code for no gain. `keys_inline` now sends a class whose keys CPython has dropped straight to the C helper.
 3. **Unshared instance dicts with a compile-time hash.** Done (`0965d06`): when a class has no usable shared keys, or the keys check fails, `pobject.c:instance_dict_get` loads the dict at `tp_dictoffset` and calls `_PyDict_GetItem_KnownHash` with the name's hash computed at compile time, instead of `_PyObject_GetDictPtr` plus `PyDict_GetItem`. No dict is "not found" without a call. go: 1,535 → 1,364 million instructions per iteration (11% fewer); richards unchanged (its classes share keys). Timings to follow on a quiet machine. [run] (`perf stat -e instructions`)
+4. **Recursion depth inline** (`5409970`, C12): `cimpl_enter/leave_recursive_call` (2.6% of richards, 1.0% of deltablue) are gone. The enter is 7 instructions (thread state, depth load, add, store, limit load, compare, branch); the leave is 7 too, testing `overflowed`. Only an overflow, or a leave while `overflowed` is set, calls C. Release build, instructions per warm iteration (`perf stat -e instructions:u`, ten iterations less none, two runs each) and `tools/compilebench.py`, before (`3cd02f7`) and after: [run]
+
+| benchmark | instructions/iter (M) | code KB | compile ms |
+|---|---|---|---|
+| richards | 233–235 → 220–221 (−6%) | 115 → 113 | 0.59 → 0.58 |
+| deltablue | 34.4–34.8 → 33.1–33.2 (−4%) | 417 → 432 | 2.36 → 2.46 |
+| go | 1,253–1,266 → 1,225–1,232 (−2%) | 1,071 → 1,083 | 13.6 → 13.3 |
+| all of compilebench | | 3,787 → 3,880 (+2.5%) | 35.4 → 34.6 |
+
+Each call site grows by about 40 bytes (two inline sequences of about 34 bytes instead of two C calls). Timings, indicative only (other jobs were running): richards warm 12.3 → 10.9 ms, deltablue 1.64 → 1.53 ms, go 70.7 → 67.2 ms.
