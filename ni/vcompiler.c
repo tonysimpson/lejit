@@ -702,7 +702,8 @@ typedef struct {
 } coding_pause_t;
 
 static code_t *do_resume_coding_body(coding_pause_t *cp);
-static code_t *do_resume_coding(coding_pause_t *cp) {
+/* a stub function: 'value' (RSI) is used only by promotions */
+static code_t *do_resume_coding(coding_pause_t *cp, long value) {
   code_t *r;
   NI_COMPILE_BEGIN(NI_ENTER_PAUSE);
   r = do_resume_coding_body(cp);

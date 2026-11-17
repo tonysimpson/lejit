@@ -679,7 +679,8 @@ static void respawn_check(respawn_t *rs, PsycoObject *po) {
 #endif
 
 static code_t *do_respawn_body(respawn_t *rs);
-static code_t *do_respawn(respawn_t *rs) {
+/* a stub function: 'value' (RSI) is used only by promotions */
+static code_t *do_respawn(respawn_t *rs, long value) {
   code_t *r;
   NI_COMPILE_BEGIN(NI_ENTER_RESPAWN);
   r = do_respawn_body(rs);
@@ -905,7 +906,7 @@ bool psyco_prepare_respawn(PsycoObject *po, condition_code_t jmpcondition) {
 DEFINEFN
 code_t *psyco_do_respawn(void *arg, int extrasize) {
   respawn_t *rs = (respawn_t *)(((char *)arg) + extrasize);
-  return do_respawn(rs);
+  return do_respawn(rs, 0);
 }
 
 DEFINEFN
