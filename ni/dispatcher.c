@@ -2291,6 +2291,9 @@ static int quick_lookup_counter = 0;
   } while (0)
 #endif
 
+/* the values compiled at the site; the megamorphic version (marker -1) is
+   not one: at a static-type site it is made for the first heap type, and
+   counting it would leave room for one static type fewer */
 PSY_INLINE int lookup_count_previous_values(rt_promotion_t *fs,
                                             rt_local_buf_t **megabuf) {
   int result = 0;
@@ -2298,7 +2301,8 @@ PSY_INLINE int lookup_count_previous_values(rt_promotion_t *fs,
   while (buf) {
     if (buf->key == -1) /* use (PyObject*)(-1) as a marker */
       *megabuf = buf;
-    result++;
+    else
+      result++;
     buf = buf->next;
   }
   return result;
@@ -2491,7 +2495,21 @@ static void promotion_need_chain(rt_promotion_t *fs, int n) {
   ipromotion_write_jump(fs->jump_if_equal_code + PROMOTION_ENTRY_SIZE, chain);
 }
 
-/* the site jumps to 'target' when it sees 'value' */
+/* the site's megamorphic version, or NULL */
+static code_t *promotion_mega_target(rt_promotion_t *fs) {
+  rt_local_buf_t *buf;
+  for (buf = fs->local_chained_list; buf != NULL; buf = buf->next)
+    if (buf->key == -1)
+      return (code_t *)(buf + 1);
+  return NULL;
+}
+
+/* the site jumps to 'target' when it sees 'value'. A full cache gives the
+   slot of a value sent to the megamorphic version (a heap type at a
+   static-type site) to a value with code of its own, and never the
+   reverse: the evicted value would otherwise enter C at each run, or, once
+   the chain ends in the megamorphic version, run that instead of its code
+   (the shapes kernel, CODE_SIZE.md "Promotion caches and the cut-off"). */
 static void promotion_cache_add(rt_promotion_t *fs, long value,
                                 code_t *target) {
   if (fs->ncached == 0) {
@@ -2504,17 +2522,47 @@ static void promotion_cache_add(rt_promotion_t *fs, long value,
     fs->ncached++;
     promotion_chain_end(fs);
   } else {
-    /* full: the last entry takes the newest value */
-    ipromotion_update_entry(CHAIN_ENTRY(fs, PROMOTION_CHAIN_MAX - 1), value,
-                            target);
+    /* full */
+    code_t *mega = promotion_mega_target(fs);
+    code_t *slot = NULL;
+    int i;
+    for (i = -1; mega != NULL && slot == NULL && i < PROMOTION_CHAIN_MAX; i++) {
+      code_t *entry = i < 0 ? fs->jump_if_equal_code : CHAIN_ENTRY(fs, i);
+      long v;
+      code_t *t;
+      ipromotion_read_entry(entry, &v, &t);
+      if (t == mega)
+        slot = entry;
+    }
+    if (slot == NULL) {
+      if (target == mega)
+        return; /* every slot holds a value with code of its own */
+      slot = CHAIN_ENTRY(fs, PROMOTION_CHAIN_MAX - 1);
+    }
+    ipromotion_update_entry(slot, value, target);
   }
 }
 
 /* the site will compile no more values: every value the cache doesn't hold
-   goes to 'mega' without entering C */
+   goes to 'mega' without entering C. The cache is first refilled with the
+   values compiled here (at most MEGAMORPHIC_MAX, which it has room for),
+   the most recently used inline, so that none of them runs the megamorphic
+   version because a full cache had evicted it. */
 static void promotion_cache_fallback(rt_promotion_t *fs, code_t *mega) {
   if (fs->fallback == NULL) {
+    rt_local_buf_t *bufs[1 + PROMOTION_CHAIN_MAX];
+    rt_local_buf_t *buf;
+    int i, n = 0;
     fs->fallback = mega;
+    for (buf = fs->local_chained_list; buf != NULL; buf = buf->next)
+      if (buf->key != -1) {
+        extra_assert(n < 1 + PROMOTION_CHAIN_MAX);
+        if (n < 1 + PROMOTION_CHAIN_MAX)
+          bufs[n++] = buf;
+      }
+    fs->ncached = 0;
+    for (i = 0; i < n; i++)
+      promotion_cache_add(fs, bufs[i]->key, (code_t *)(bufs[i] + 1));
     if (fs->chain == NULL)
       promotion_need_chain(fs, 0);
     else

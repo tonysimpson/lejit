@@ -1,7 +1,9 @@
 # Promotion sites that see several values in turn: the polymorphic inline
 # cache (x64/idispatcher.h). Up to 5 values are held at the site; after that
 # a megamorphic site jumps to its generic version, and any other site
-# replaces the cache's last entry.
+# replaces the cache's last entry. A full cache gives an entry that goes to
+# the generic version (a heap type at isinstance's site) to a value with
+# code of its own.
 
 class A:
     k = 1
@@ -108,6 +110,31 @@ def isinstance_many(rounds):
                     n += 1
     return n
 
+def isinstance_chain(items, rounds):
+    # the shapes kernel (tools/bench.py): an isinstance chain over eight
+    # types, two of them heap types, which the site sends to its generic
+    # version. The heap types must not use up the room for static types,
+    # nor evict them from a full cache.
+    t = 0.0
+    for r in range(rounds):
+        for x in items:
+            if isinstance(x, int):
+                t = t + x
+            elif isinstance(x, float):
+                t = t + x * 2.0
+            elif isinstance(x, (str, bytes)):
+                t = t + len(x)
+            elif isinstance(x, A):
+                t = t + 3.0 * x.k
+            elif isinstance(x, B):
+                t = t + x.k
+    return t
+
+MIXED = [3, 2.5, 'abc', A(), B(), 7, b'xy', None]
+# heap types first: the inline compare and the first chain entries go to
+# the generic version, then six static types, then all of them again
+HEAP_FIRST = [A(), B(), C(), D(), 1, 2.0, 's', b'b', None, (), 5, A()]
+
 def shift_amounts(rounds):
     t = 0
     for r in range(rounds):
@@ -121,5 +148,7 @@ CASES = [
     ('attr_phases', [(1,), (20,)], {}),
     ('add_many_types', '[(VALUES, 3), (VALUES, 30), (VALUES[::-1], 10)]', {}),
     ('isinstance_many', [(1,), (10,)], {}),
+    ('isinstance_chain', '[(MIXED * 3, 1), (MIXED * 10, 20), (MIXED[::-1], 5)]', {}),
+    ('isinstance_chain', '[(HEAP_FIRST, 1), (HEAP_FIRST, 20), (MIXED, 10)]', {}),
     ('shift_amounts', [(1,), (30,)], {}),
 ]

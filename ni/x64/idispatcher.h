@@ -48,7 +48,10 @@ EXTERNFN void fz_find_runtimes(vinfo_array_t* aa, FrozenPsycoObject* fpo,
    more values, a jump to its megamorphic version. Most chains hold one
    entry, so a chain starts with room for one and is copied to a chain with
    room for all when it needs more; the old one is left unused. With the
-   chain full, a new value replaces the last entry. Code is only patched from
+   chain full, a new value replaces an entry that goes to the megamorphic
+   version, or else the last one; at the cut-off the cache is refilled with
+   the site's values (dispatcher.c:promotion_cache_add,
+   promotion_cache_fallback). Code is only patched from
    the C dispatcher, which the trampoline entered from this site's miss path
    (or its chain's); it returns through 'jmp rax' to a target, never back
    into the bytes it changed. */
