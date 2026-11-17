@@ -6,9 +6,12 @@
  * locals can be dropped without a run-time decref, using a hard-coded list of
  * types that have no __del__. GenericGetAttr is specialised on the type
  * (see its comment); it is what reaches the tp_descr_get metas in
- * pdescrobject.c and pfuncobject.c. SetAttr on a heap type is specialised
- * behind the same kind of guard (heap_setattr), but its guards are shared
- * and repaired at run time (store_guard); the instance dict store is then
+ * pdescrobject.c and pfuncobject.c. Its guards are shared per (type, name,
+ * what the load does) and repaired at run time (load_guard, D60). SetAttr
+ * on a heap type is specialised behind the same kind of guard
+ * (heap_setattr), shared and repaired too (store_guard); a class with a
+ * metaclass, which CPython 3.7 never gives a version tag, is given one
+ * first (enable_version_tag). The instance dict store is then
  * inline (inline_store), checked against a (class, name) cache that holds
  * no keys (store_cache); its failed checks call one C helper out of line
  * instead of respawning (cimpl_store_miss).
@@ -234,7 +237,10 @@ generic:
    which a run-time check of its version tag guards (every change to a type
    or a base, including a new __getattr__, clears
    Py_TPFLAGS_VALID_VERSION_TAG; a new tag is assigned at the next lookup).
-   A failed guard takes the generic path. Then, at run time: a data
+   What the load does once the guard passes is load_kind's result, and the
+   guard is shared by every site of (type, name, kind) (load_guard). A
+   failed guard calls load_type_changed, which re-arms the guard of the
+   kind the type now gives, then the generic load. Then, at run time: a data
    descriptor's __get__; else the instance __dict__; else a descriptor's
    __get__ (a function gives a virtual bound method, so a method call
    becomes a direct call); else the attribute itself.
@@ -242,11 +248,13 @@ generic:
    Respawns (dispatcher.h) replay compilation with the type as it is then,
    so, as for load_global_cached:
    - nothing before the guard depends on the type's mutable state (the
-     expected tag is read from a per-site attr_guard_t, never freed);
+     expected tag is read from the guard record, which only the guard's
+     address depends on);
    - the block ends right after the site (split_after_global), so the only
      replays through it are for its own conditions: the guard (the type
-     changed: generic), or one just after a passed guard, with the type as
-     the guard saw it. For that, only descriptors whose __get__ runs no
+     changed: generic), or one just after a passed guard, with the type in
+     a state of the kind compiled, which the replay recomputes (as D39's
+     stores). For that, only descriptors whose __get__ runs no
      Python code are specialised (a property getter could change the
      class and then raise, which is a respawn).
    - Only descriptors of built-in types: a heap descriptor type could gain
@@ -552,63 +560,167 @@ static PyObject *load_kind(PyTypeObject *tp, PyObject *name) {
   return descr;
 }
 
+/* CPython 3.7 never gives a version tag to a class whose metaclass isn't
+   type: type_mro_modified compares two bound methods of type.mro, which are
+   never the same object, so it always clears Py_TPFLAGS_HAVE_VERSION_TAG
+   (3.12 keeps it). A guard on such a class (an ABC, an Enum, Fraction)
+   never passes. Set the flag where type_mro_modified means to keep it:
+   the metaclass doesn't override mro, and every other class in the MRO
+   and the bases is a heap type that has it (set first) and a supertype.
+   Static types are left alone: an extension may change one's dict without
+   PyType_Modified. CPython clears the flag again, with PyType_Modified,
+   if the MRO is recomputed (__bases__ assigned). */
+static void enable_version_tag(PyTypeObject *tp) {
+  static PyObject *mro_name = NULL, *type_mro;
+  PyObject *seq[2];
+  Py_ssize_t i, k;
+  if (PyType_HasFeature(tp, Py_TPFLAGS_HAVE_VERSION_TAG) ||
+      !PyType_HasFeature(tp, Py_TPFLAGS_HEAPTYPE) ||
+      !PyType_HasFeature(tp, Py_TPFLAGS_READY) || tp->tp_mro == NULL ||
+      tp->tp_bases == NULL)
+    return;
+  if (mro_name == NULL) {
+    mro_name = PyUnicode_InternFromString("mro");
+    if (mro_name == NULL)
+      OUT_OF_MEMORY();
+    type_mro = _PyType_Lookup(&PyType_Type, mro_name);
+  }
+  if (type_mro == NULL || _PyType_Lookup(Py_TYPE(tp), mro_name) != type_mro)
+    return;
+  seq[0] = tp->tp_mro;
+  seq[1] = tp->tp_bases;
+  for (k = 0; k < 2; k++)
+    for (i = 0; i < PyTuple_GET_SIZE(seq[k]); i++) {
+      PyTypeObject *b = (PyTypeObject *)PyTuple_GET_ITEM(seq[k], i);
+      if (b == tp)
+        continue;
+      if (!PyType_Check(b))
+        return;
+      enable_version_tag(b);
+      if (!PyType_HasFeature(b, Py_TPFLAGS_HAVE_VERSION_TAG) ||
+          !PyType_IsSubtype(tp, b))
+        return;
+    }
+  tp->tp_flags |= Py_TPFLAGS_HAVE_VERSION_TAG;
+}
+
+/* The guards of loads (D60), as store_guard's for stores: one per (type,
+   name, kind), which only ever holds a state of the type in which
+   load_kind gives that kind, so any site may set it to such a state, and a
+   failed guard re-arms the sites of the kind the type now gives
+   (load_type_changed). A table of pointers to records that are never
+   freed (the sites hold the type, the name and the kind's descriptor). */
+typedef struct {
+  attr_guard_t guard;
+  PyTypeObject *tp;
+  PyObject *name, *kind;
+} load_guard_t;
+
+static load_guard_t **load_guards = NULL;
+static size_t load_guards_mask = 0, load_guards_count = 0;
+
+static size_t load_guard_slot(PyTypeObject *tp, PyObject *name,
+                              PyObject *kind) {
+  size_t h = (size_t)tp * 0x9E3779B97F4A7C15UL ^
+             (size_t)name * 0xC2B2AE3D27D4EB4FUL ^ (size_t)kind;
+  return (h ^ (h >> 31)) & load_guards_mask;
+}
+
+static load_guard_t *load_guard(PyTypeObject *tp, PyObject *name,
+                                PyObject *kind, bool create) {
+  load_guard_t *g;
+  size_t i;
+  if (load_guards != NULL)
+    for (i = load_guard_slot(tp, name, kind); (g = load_guards[i]) != NULL;
+         i = (i + 1) & load_guards_mask)
+      if (g->tp == tp && g->name == name && g->kind == kind)
+        return g;
+  if (!create)
+    return NULL;
+  if (2 * (load_guards_count + 1) > load_guards_mask) { /* grow */
+    load_guard_t **old = load_guards;
+    size_t n = old == NULL ? 0 : load_guards_mask + 1;
+    load_guards_mask = n == 0 ? 255 : 2 * n - 1;
+    load_guards = PyMem_Calloc(load_guards_mask + 1, sizeof(load_guard_t *));
+    if (load_guards == NULL)
+      OUT_OF_MEMORY();
+    for (i = 0; i < n; i++)
+      if (old[i] != NULL) {
+        size_t j = load_guard_slot(old[i]->tp, old[i]->name, old[i]->kind);
+        while (load_guards[j] != NULL)
+          j = (j + 1) & load_guards_mask;
+        load_guards[j] = old[i];
+      }
+    PyMem_Free(old);
+  }
+  g = PyMem_Malloc(sizeof(load_guard_t));
+  if (g == NULL)
+    OUT_OF_MEMORY();
+  g->tp = tp;
+  g->name = name;
+  g->kind = kind;
+  for (i = load_guard_slot(tp, name, kind); load_guards[i] != NULL;
+       i = (i + 1) & load_guards_mask)
+    ;
+  load_guards[i] = g;
+  load_guards_count++;
+  return g;
+}
+
+/* the guard takes the type as it is now (load_kind assigned the tag) */
+static void load_guard_set(attr_guard_t *guard, PyTypeObject *tp) {
+  guard->tag = tp->tp_version_tag;
+  guard->flags = PyType_HasFeature(tp, Py_TPFLAGS_VALID_VERSION_TAG)
+                     ? tp->tp_flags
+                     : 0;
+}
+
+DEFINEVAR long psyco_stat_load_type_changes = 0;
+DEFINEVAR long psyco_stat_load_repairs = 0;
 #if NI_CODESTATS
-/* Load guards (QUESTIONS 41): sites compiled, guards failed at run time,
-   failures after which the lookup gives what some site of (type, name) was
-   compiled for (a repair would re-arm them), failure branches compiled,
-   their compile ns and bytes (dispatcher.c:do_respawn), failures on a
-   type that can't have a version tag (no Py_TPFLAGS_HAVE_VERSION_TAG), and
-   on one whose tp_getattro isn't generic (its sites never specialise). */
 DEFINEVAR long psyco_cs_load[8];
 DEFINEVAR bool psyco_cs_load_respawn = false;
-static PyObject *cs_load_kinds; /* {(type, name, kind)} compiled */
+#endif
 
-static PyObject *cs_load_key(PyTypeObject *tp, PyObject *name,
-                             PyObject *kind) {
-  return Py_BuildValue("(kOk)", (unsigned long)tp, name, (unsigned long)kind);
-}
-static void cs_load_compiled(PyTypeObject *tp, PyObject *name) {
-  PyObject *key = cs_load_key(tp, name, load_kind(tp, name));
-  if (cs_load_kinds == NULL)
-    cs_load_kinds = PySet_New(NULL);
-  if (key == NULL || cs_load_kinds == NULL || PySet_Add(cs_load_kinds, key))
-    OUT_OF_MEMORY();
-  Py_DECREF(key);
-  psyco_cs_load[0]++;
-}
-static void cs_load_failed(PyObject *obj, PyObject *name) {
+/* A load whose type guard failed. If some sites were compiled for what
+   the type now gives, their guard takes the type as it is now, so they
+   pass again; then the generic load. */
+static void load_type_changed(PyObject *obj, PyObject *name) {
   PyTypeObject *tp = Py_TYPE(obj);
-  PyObject *key = cs_load_key(tp, name, load_kind(tp, name));
-  psyco_cs_load[1]++;
+  load_guard_t *g;
+  psyco_stat_load_type_changes++;
+  enable_version_tag(tp);
+  g = load_guard(tp, name, load_kind(tp, name), false);
+  if (g != NULL) {
+    load_guard_set(&g->guard, tp);
+    psyco_stat_load_repairs++;
+  }
+#if NI_CODESTATS
   if (tp->tp_getattro != PyObject_GenericGetAttr)
     psyco_cs_load[7]++;
   else if (!PyType_HasFeature(tp, Py_TPFLAGS_HAVE_VERSION_TAG))
     psyco_cs_load[6]++;
-  if (key != NULL && PySet_Contains(cs_load_kinds, key) == 1)
-    psyco_cs_load[2]++;
-  Py_XDECREF(key);
-  PyErr_Clear();
+#endif
 }
-static PyObject *cimpl_cs_getattr(PyObject *obj, PyObject *name) {
-  cs_load_failed(obj, name);
+static PyObject *cimpl_load_type_changed(PyObject *obj, PyObject *name) {
+  load_type_changed(obj, name);
   return PyObject_GetAttr(obj, name);
 }
-static PyObject *cimpl_cs_generic_getattr(PyObject *obj, PyObject *name) {
-  cs_load_failed(obj, name);
+static PyObject *cimpl_generic_load_type_changed(PyObject *obj,
+                                                 PyObject *name) {
+  load_type_changed(obj, name);
   return PyObject_GenericGetAttr(obj, name);
 }
-#endif
 
 /* 'generic' is the function the compiled code calls when the type has
    changed: PyObject_GetAttr from PsycoObject_GetAttr, because the change
    may have given the type a __getattr__ or __getattribute__. */
 static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
                                 void *generic) {
-  static attr_guard_t respawn_guard;
   PyTypeObject *tp;
   PyObject *name, *descr;
   descrgetfunc f = NULL;
-  attr_guard_t *guard;
+  load_guard_t *guard;
   vinfo_t *v;
   condition_code_t cc;
   int r;
@@ -627,24 +739,15 @@ static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
                  tp->tp_getattro != PyObject_GenericGetAttr))
     goto generic;
 
-  if (is_respawning(po))
-    guard = &respawn_guard;
-  else {
-    guard = PyMem_Malloc(sizeof(attr_guard_t));
-    if (guard == NULL)
-      OUT_OF_MEMORY();
-    if (tp->tp_dict != NULL)
-      _PyType_Lookup(tp, name); /* assigns the version tag */
-    guard->tag = tp->tp_version_tag;
-    guard->flags = PyType_HasFeature(tp, Py_TPFLAGS_VALID_VERSION_TAG) &&
-                           tp->tp_getattro == PyObject_GenericGetAttr
-                       ? tp->tp_flags
-                       : 0;
+  enable_version_tag(tp);
+  descr = load_kind(tp, name);
+  guard = load_guard(tp, name, descr, true);
+  load_guard_set(&guard->guard, tp);
 #if NI_CODESTATS
-    cs_load_compiled(tp, name);
+  if (!is_respawning(po))
+    psyco_cs_load[0]++;
 #endif
-  }
-  cc = type_changed(po, tp, guard);
+  cc = type_changed(po, tp, &guard->guard);
   if (cc == CC_ERROR)
     return NULL;
   po->pr.split_after_global = 1;
@@ -654,23 +757,18 @@ static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
       psyco_cs_load[3]++;
       psyco_cs_load_respawn = true;
     }
-    generic = generic == (void *)PyObject_GetAttr ? (void *)cimpl_cs_getattr
-                                                  : (void *)cimpl_cs_generic_getattr;
 #endif
+    generic = generic == (void *)PyObject_GetAttr
+                  ? (void *)cimpl_load_type_changed
+                  : (void *)cimpl_generic_load_type_changed;
     goto generic;
   }
 
-  /* the type is as the guard saw it */
-  if (tp->tp_getattro != PyObject_GenericGetAttr || tp->tp_dict == NULL)
+  /* the type is in a state that gives the kind compiled */
+  if (descr == LOAD_GENERIC)
     goto generic;
-  descr = _PyType_Lookup(tp, name); /* borrowed */
   if (descr != NULL) {
-    PyTypeObject *dtp = Py_TYPE(descr);
-    if ((dtp->tp_flags & Py_TPFLAGS_HEAPTYPE) || !safe_descriptor(dtp))
-      goto generic;
-    if (c_descriptor(dtp) && !PyType_IsSubtype(tp, PyDescr_TYPE(descr)))
-      goto generic;
-    f = dtp->tp_descr_get;
+    f = Py_TYPE(descr)->tp_descr_get;
     Py_INCREF(descr); /* held by the compiled code */
   }
 
@@ -897,7 +995,9 @@ static void store_guard_set(attr_guard_t *guard, PyTypeObject *tp) {
 static int cimpl_store_type_changed(PyObject *obj, PyObject *name,
                                     PyObject *value) {
   PyTypeObject *tp = Py_TYPE(obj);
-  attr_guard_t *guard = store_guard(tp, name, store_kind(tp, name), false);
+  attr_guard_t *guard;
+  enable_version_tag(tp);
+  guard = store_guard(tp, name, store_kind(tp, name), false);
   psyco_stat_store_type_changes++;
   if (guard != NULL)
     store_guard_set(guard, tp);
@@ -957,17 +1057,21 @@ static bool inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
    (split_after_global); no Python code runs before the call. */
 static bool heap_setattr(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
                          PyObject *name, vinfo_t *v) {
-  void *kind = store_kind(tp, name);
-  attr_guard_t *guard = store_guard(tp, name, kind, true);
+  void *kind;
+  attr_guard_t *guard;
   vinfo_t *vd, *vv, *r;
   condition_code_t cc;
+  enable_version_tag(tp);
+  kind = store_kind(tp, name);
+  guard = store_guard(tp, name, kind, true);
   if (guard == NULL)
     OUT_OF_MEMORY();
+  /* the guard takes the state store_kind saw (C53) */
+  store_guard_set(guard, tp);
   /* making a virtual value can collect garbage and so run any code: do it
      before the guard, and before the inline store's checks */
   if (v != NULL && !compute_vinfo(v, po))
     return false;
-  store_guard_set(guard, tp);
   cc = type_changed(po, tp, guard);
   if (cc == CC_ERROR)
     return false;

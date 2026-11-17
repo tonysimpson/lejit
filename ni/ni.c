@@ -182,12 +182,14 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
   static const char *kinds[NI_ENTER_KINDS] = {"analyse", "call", "pause",
                                               "respawn", "promotion"};
   PyObject *d = Py_BuildValue(
-      "{slslslslslslslsl}", "code_buffers", psyco_stat_code_buffers,
+      "{slslslslslslslslslsl}", "code_buffers", psyco_stat_code_buffers,
       "code_buffers_freed", psyco_stat_code_buffers_freed, "code_bytes",
       psyco_stat_code_bytes, "cfunc_fast", psyco_stat_cfunc_fast,
       "cfunc_proxy", psyco_stat_cfunc_proxy, "store_misses",
       psyco_stat_store_misses, "store_refreshes", psyco_stat_store_refreshes,
-      "store_type_changes", psyco_stat_store_type_changes);
+      "store_type_changes", psyco_stat_store_type_changes,
+      "load_type_changes", psyco_stat_load_type_changes, "load_repairs",
+      psyco_stat_load_repairs);
   int i;
   for (i = 0; d != NULL && i < NI_ENTER_KINDS; i++) {
     PyObject *t = Py_BuildValue("(ld)", psyco_stat_compile_count[i],
@@ -216,8 +218,9 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
 #if NI_CODESTATS
   if (d != NULL) {
     long *c = psyco_cs_load;
-    PyObject *t = Py_BuildValue("(llllllll)", c[0], c[1], c[2], c[3], c[4],
-                                c[5], c[6], c[7]);
+    PyObject *t = Py_BuildValue(
+        "(llllllll)", c[0], psyco_stat_load_type_changes,
+        psyco_stat_load_repairs, c[3], c[4], c[5], c[6], c[7]);
     if (t == NULL || PyDict_SetItemString(d, "load_guards", t) < 0)
       Py_CLEAR(d);
     Py_XDECREF(t);

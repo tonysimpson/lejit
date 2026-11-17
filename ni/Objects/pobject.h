@@ -129,6 +129,9 @@ EXTERNFN bool PsycoObject_SetAttr(PsycoObject* po, vinfo_t* o,
 EXTERNVAR long psyco_stat_store_misses;
 EXTERNVAR long psyco_stat_store_type_changes;
 EXTERNVAR long psyco_stat_store_refreshes;
+/* failed load guards, and those that re-armed some sites (D60) */
+EXTERNVAR long psyco_stat_load_type_changes;
+EXTERNVAR long psyco_stat_load_repairs;
 #if NI_CODESTATS
 /* load guards (QUESTIONS 41, tools/loadguards.py): see pobject.c */
 EXTERNVAR long psyco_cs_load[8];

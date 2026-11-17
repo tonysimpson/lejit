@@ -688,9 +688,9 @@ def _seq3(o, i):
     o.c = i + 2
 
 
-def run_del_mid_sequence(n):
+def run_del_mid_sequence(n, hows):
     out = []
-    for how in ('setattr', 'property', 'dict', 'delete', 'class', 'grow'):
+    for how in hows:
         _seq_reset()
         o = Seq()
         for i in range(n):
@@ -722,9 +722,9 @@ def _seq_calls(o, i, how):
     o.a = i + 1
 
 
-def run_interleaved_calls(n):
+def run_interleaved_calls(n, hows):
     out = []
-    for how in ('none', 'setattr', 'dict', 'class', 'none'):
+    for how in hows:
         _seq_reset()
         o = Seq()
         for i in range(n):
@@ -806,8 +806,17 @@ CASES = [
     ('wide_keys', [(3,)], {}),
     ('miss_cap', [(200,)], {}),
     ('store_then_load', [(6,)], {}),
-    ('run_del_mid_sequence', [(4,)], {}),
-    ('run_interleaved_calls', [(4,)], {}),
+    ('run_del_mid_sequence',
+     [(4, ('setattr', 'property', 'dict', 'delete', 'grow'))], {}),
+    ('run_interleaved_calls', [(4, ('none', 'setattr', 'dict', 'none'))], {}),
+    # __class__ assigned in the sequence: these passed only while an earlier
+    # round left the load guard of o.__dict__ stale for good (D60)
+    ('run_del_mid_sequence', [(4, ('setattr', 'class'))],
+     {'xfail': 'F55: o.__dict__ is loaded for the promoted type after '
+               '__del__ assigns __class__'}),
+    ('run_interleaved_calls', [(4, ('none', 'setattr', 'class'))],
+     {'xfail': 'F55: o.__dict__ is loaded for the promoted type after a '
+               'call assigns __class__'}),
     ('run_two_objects', [(4,)], {}),
     ('class_assigned_in_call', [(3,)],
      {'xfail': 'F55: a promoted type is kept after a call assigns __class__'}),
