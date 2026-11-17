@@ -625,3 +625,63 @@ On top of store+J. Each failed check of an inline store used to be a respawn poi
 
 - **Richards is +10% over the baseline's 116 KB** (the budget was +20–25%). STORE_ATTR is 208 → 166 bytes per compiled site. Respawned buffers are 90 → 15 and stub chunks 10 → 6, the same as base (`tools/codesize.py richards -s`).
 - **The removed respawns did more than the smaller sites.** Step 1 alone took richards from 162 to 136 KB; the sites themselves account for only 3 KB of that (172 compiles, 208 → 191 bytes each).
+
+## Unused facts at merge points (`a36bea1`, D50, SPECIALISATION.md step 3) [run]
+
+Rule 1: a state that knows a run-time value's type, where nothing since the last merge point has relied on the type, matches a block compiled without it. Before, `dispatcher.c:compatible_array` (`CHECK_FOR_NULL`) refused any state with an extra known item at `recdepth <= 2`, so such a state started a new block, a copy of the rest of the loop or function.
+
+### The design
+
+- **The "used" bit isn't `SkFlagFixed`.** A promotion makes its value fixed at birth (`do_promotion_internal_body`), and every `psyco_atcompiletime` sets it again, so a promoted type is always fixed; the flag says "may never be un-promoted", not "used since here". [read]
+- **A stamp per fact.** `source_known_t` gets `used`, the serial of the last block that relied on it. `codemanager.h:sk_mark_used` (which replaces the four `|= SkFlagFixed` in `pycompiler.h`/`pycompiler.c` and is called on a promoted value) fixes it and stamps it. `PsycoObject.mp_serial` is the serial of the block started at the last merge point (`vcompiler.c:mp_new_block`). It is 0 in a new compiler state: a call's entry, a respawned branch, a resumed pause, so these drop nothing fixed. [read]
+- **What is dropped** (`compatible_unused_fact`): the `iOB_TYPE` field of a run-time value, compile-time, non-fixed or stamped before `mp_serial`. Not at join points (D44's rule there), and not elsewhere in the array. [read]
+- **Exact first.** `psyco_compatible` takes a match that drops only when no snapshot matches exactly: exact > drop-only > partial. It then compares the drop match again, so the `tmp` fields `psyco_unify` reads are that snapshot's. `ni._stats()['fact_drops']` counts them. [read]
+- **The guard against looping.** A promotion's continuation is compiled with `psyco_compile(po, mp)` at the promoting instruction, with no instruction run since. If that compare dropped the type just promoted, it would match the block that promoted: the code jumps there, promotes, hits its own inline cache and jumps back, forever. `psyco_compatible_keep_facts` is set around that `psyco_compile` call (`do_promotion_internal_body`, `detected_megamorphic_body`) and cleared in `psyco_compile` once its compare is over (before `mp_new_block` and before the buffer-full pause), so the continuation's own later merge points drop as usual. Every other compare follows at least one compiled instruction. So a chain of jumps that runs no instruction compares only the promotion's state, and it enters a block only if the block knows everything that state knows. Facts only grow along such a chain, and it ends. [read], [inferred]
+- **D21.** The stamp and `mp_serial` are written while compiling and read only at merge points, which a replay never reaches; a replay's `sk_mark_used` stamps with its block's serial, as the first compile did. Nothing compiled inside a block changes. [read]
+
+### What was tried
+
+| version | instructions compiled, 23 benchmarks | blocks | result |
+|---|---|---|---|
+| base (`e4b3a5f`) | 50,905 | 2,360 | |
+| naive: `recdepth <= 2` clause removed (CODE_SIZE "Promotions") | | | go, raytrace, chaos, hexiom, mdp hang; argparse hangs in `parse_args` |
+| any field, no stamp (drop even used facts), no guard | | | every `tests/cases/unused_facts.py` case hangs |
+| any field, no stamp, with the guard | 50,007 | 2,279 | raytrace +1.5% instructions per iteration, mdp +0.6% |
+| any field, stamp against the current block's serial | 50,069 | 2,288 | `test_pprint` segfault, checked build only (KNOWN_BUGS C35) |
+| type only, stamp against the current block's serial | 50,104 | 2,289 | hexiom +3% instructions per iteration |
+| **type only, stamp against `mp_serial` (kept)** | **50,400 (−1.0%)** | **2,316 (−1.9%)** | |
+
+- **Either the guard or the stamp stops the loop on these tests; both are kept.** With the stamp and no guard, everything passed: the promoted fact is stamped at birth, so the zero-progress compare keeps it. With neither, all six new test cases hang. The guard is the argument that holds whatever the stamp does; the stamp is what keeps speed (next point). [run]
+- **The stamp pays for itself in speed.** Dropping facts the block had used made the next block promote them again: raytrace +1.5% and mdp +0.6% instructions per warm iteration, for 0.2% fewer instructions compiled than the kept version.
+- **Against the current block's serial, hexiom lost 3%.** A promotion in mid-stretch starts a new code buffer with a new serial, so facts relied on earlier in the stretch looked unused at the next merge point. Two sites: `already_done` @0 (a call entry dropping its argument's type; the promoted site `already_done:64 @8` ran 76,704 → 79,616 times), and `constraint_pass` @328 (skipping that drop alone gave back the whole 3%). `mp_serial` fixes both: facts are used if stamped since the last merge point, and call entries keep their fixed facts. [run] (scratch build with a per-site switch, `perf stat`)
+
+### Measurements
+
+`NI_CODESTATS=1` builds, `tools/codesize.py <bench> -s -p`, `PYTHONHASHSEED=0`: code KB / instructions compiled / blocks. [run]
+
+| | base | kept |
+|---|---|---|
+| richards | 118 / 1,969 / 94 | 122 / 1,969 / 94 |
+| deltablue | 392 / 5,372 / 285 | 396 / 5,364 / 283 |
+| go | 287 / 4,634 / 235 | 281 / 4,599 / 233 |
+| raytrace | 199 / 2,956 / 101 | 200 / 2,892 / 96 |
+| chaos | 57 / 960 / 49 | 57 / 938 / 47 |
+| hexiom | 269 / 5,051 / 361 | 264 / 4,964 / 356 |
+| mdp | 156 / 3,023 / 167 | 155 / 3,004 / 166 |
+| meteor_contest | 54 / 1,287 / 116 | 41 / 1,020 / 90 |
+| all 23 | 2,366 / 50,905 / 2,360 | 2,362 / 50,400 / 2,316 |
+
+KB moves in 4 KB pool chunks (richards' +4 is one chunk, same instructions compiled). meteor_contest is the one large change (−21% instructions, −24% KB); the others are 0–3%.
+
+`tools/compilebench.py`, release builds, all 29 benchmarks, two runs each: base 21.4 / 21.9 ms and 2,363 KB; kept 20.2 / 19.8 ms and 2,320 KB (−1.8%). meteor_contest 0.83 → 0.56–0.66 ms, 52.6 → 40.6 KB; hexiom 264.2 → 255.9 KB; deltablue 391.0 → 386.9 KB; raytrace 199.6 → 196.8 KB. [run]
+
+Instructions per warm iteration, millions (release, `perf stat -e instructions:u`, (12 − 2 iterations) / 10; base three runs, kept two): [run]
+
+| | richards | deltablue | go | raytrace | chaos | hexiom | mdp | meteor_contest |
+|---|---|---|---|---|---|---|---|---|
+| base | 233.7–234.4 | 32.35 | 1,144.2 | 3,271–3,279 | 492.5–492.8 | 41.2–41.4 | 30,601–30,662 | 651.3–651.4 |
+| kept | 234.4 | 32.36–32.38 | 1,142–1,145 | 3,266–3,272 | 492.3–493.0 | 41.20 | 30,597–30,650 | 650.0 |
+
+Speed is unchanged within noise on all eight. No kept drop was found to cost speed; the versions that did are in the table above.
+
+**Verdict:** kept, as a small code-size and compile-time win with no speed cost; it is not the large lever. Most of the remaining "an earlier, more general block existed" cases are promotions at a merge point, whose own compare must keep the fact (the guard). Dropping more than the type waits on C35.
