@@ -65,6 +65,18 @@ All times are in ms. In total, compiling took 35 ms for 5.4 MB of code, about **
 - **Code size is the cost to watch, more than time.** go emits 1.6 MB and hexiom 1 MB. hexiom's first iteration is 1.6× slower than CPython's: 7 ms of compiling, then 2× faster warm. Memory and the instruction cache are the likely limits, not compile speed. The counters can't see the instruction cache; `perf stat` with icache events could.
 - **Not measured:** time spent in merge-point lookup (`psyco_compatible`) while running and on the promotion cache-hit path. Both are run-time dispatch, not compiling.
 
-## A9 (`a9-getattr`)
+## A9 (`a9-getattr` `aaea91d`, rebased on `b020746`) [run]
 
-To be added: the same table on the A9 branch, to see what specialising attribute lookup costs in compile time and code size.
+A9 specialises attribute lookup on the type. Overall it doesn't make compiling dearer: 32.9 ms against 35.3 ms in total, and 5.3 MB of code against 5.4 MB, at 162 KB per ms. Rows that changed by more than noise:
+
+| benchmark | Ni warm, base → A9 (ms) | compile ms, base → A9 | code KB, base → A9 |
+|---|---|---|---|
+| deltablue | 2.83 → 2.26 | 1.51 → 2.01 | 355 → 507 |
+| deepcopy_reduce | 0.00 → 0.00 | 0.11 → 0.18 | 21 → 36 |
+| go | 103 → 82 | 13.95 → 12.92 | 1597 → 1448 |
+| hexiom | 3.30 → 2.92 | 7.02 → 5.98 | 984 → 859 |
+| pyflate | 210 → 180 | 3.03 → 2.57 | 532 → 463 |
+| raytrace | 265 → 234 | 1.82 → 1.47 | 361 → 348 |
+| richards | 25.4 → 20.8 | 0.62 → 0.52 | 153 → 144 |
+
+Where a method call becomes a direct compiled call, less generic code is emitted. deltablue grows instead: more of it is now specialised per type.
