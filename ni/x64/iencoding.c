@@ -461,6 +461,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     vinfo_t *vresult;
     condition_code_t cc;
 
+    po->pr.class_unchecked = 1; /* KNOWN_BUGS F55 */
     BEGIN_CODE
     /* cannot use NEED_CC(): it might clobber one of the registers
        mentioned in argsources */

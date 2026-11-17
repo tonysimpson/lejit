@@ -129,6 +129,10 @@ PSY_INLINE void psyco_incref_nv(PsycoObject *po, vinfo_t *v) {
 PSY_INLINE void psyco_decref_rt(PsycoObject *po, vinfo_t *v) {
   PyTypeObject *tp = Psyco_KnownType(v);
   reg_t rg;
+  /* a dealloc can run a __del__ (KNOWN_BUGS F55), except these types' */
+  if (!(tp == &PyUnicode_Type || tp == &PyBool_Type || tp == &PyFloat_Type ||
+        tp == &PyLong_Type || tp == Py_None->ob_type || tp == &PyRange_Type))
+    po->pr.class_unchecked = 1;
   BEGIN_CODE
   RTVINFO_IN_REG(v);
   rg = RUNTIME_REG(v);

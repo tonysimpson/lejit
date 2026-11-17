@@ -53,6 +53,44 @@ PyTypeObject *Psyco_KnownType(vinfo_t *vi) {
   }
 }
 
+/* KNOWN_BUGS F55. A promoted type is a known field of a run-time value
+   (iOB_TYPE), kept while the value lives, but assigning __class__ changes
+   it. So after an instruction that emitted a call that may run Python
+   code (po->pr.class_unchecked), the known types that can change are
+   forgotten, and their next use promotes again (D59). A decref that may
+   dealloc counts as such a call (a __del__). Depends only on the
+   compile-time state, so a replay forgets the same. Not seen: a finaliser
+   run by a collection that a CfPure function's allocation starts.
+   Item iOB_TYPE of a run-time value is its type, as
+   dispatcher.c:compatible_unused_fact assumes; a promoted one is an object
+   (SkFlagPyObj), and only builtin types are asserted without the flag. */
+static void forget_mutable_types(PsycoObject *po, vinfo_array_t *a) {
+  int i;
+  for (i = a->count; i--;) {
+    vinfo_t *v = a->items[i];
+    if (v == NULL || v->array == NullArray || is_compiletime(v->source))
+      continue; /* a constant's items are constants */
+    if (is_runtime(v->source) && v->array->count > iOB_TYPE) {
+      vinfo_t *vt = v->array->items[iOB_TYPE];
+      PyObject *t;
+      if (vt != NULL && is_compiletime(vt->source) &&
+          (CompileTime_Get(vt->source)->refcount1_flags & SkFlagPyObj) &&
+          (t = (PyObject *)CompileTime_Get(vt->source)->value) != NULL &&
+          PyType_Check(t) && Psyco_ClassMutable((PyTypeObject *)t))
+        psyco_forget_field(po, v, OB_type);
+    }
+    forget_mutable_types(po, v->array);
+  }
+}
+
+DEFINEFN
+void Psyco_ForgetClasses(PsycoObject *po) {
+  if (!po->pr.class_unchecked)
+    return;
+  po->pr.class_unchecked = 0;
+  forget_mutable_types(po, &po->vlocals);
+}
+
 /* The value recorded for a slot never changes, so a respawn's replay
    (dispatcher.h) decides as the original compile did whatever the slot is
    then; a changed slot only fails the guard, for good. The types are held
@@ -518,13 +556,15 @@ static vinfo_t *instance_dict_get(PsycoObject *po, vinfo_t *obj,
   return v;
 
 known_hash:
-  v = psyco_generic_call(po, cimpl_dict_get_known, CfReturnTypePtr, "vll", vd,
+  v = psyco_generic_call(po, cimpl_dict_get_known,
+                         CfReturnTypePtr | CfNoPython, "vll", vd,
                          (long)name, (long)PyObject_Hash(name));
   vinfo_decref(vd, po);
   return v;
 
 helper:
-  return psyco_generic_call(po, cimpl_instance_dict_get, CfReturnTypePtr, "vl",
+  return psyco_generic_call(po, cimpl_instance_dict_get,
+                            CfReturnTypePtr | CfNoPython, "vl",
                             obj, (long)name);
 }
 
@@ -1034,6 +1074,7 @@ static bool inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
                      : PyType_IS_GC(vtp) ? STORE_GC_DICT : STORE_GC_NONE;
   s.fill = init_store(po, obj);
   s.miss_glue = store_miss_glue;
+  po->pr.class_unchecked = 1; /* the old value's dealloc (F55) */
   psyco_inline_store_begin(po, &s);
   if (runtime_condition_f(po, CC_NE)) {
     PycException_Raise(po, vinfo_new(VirtualTime_New(&ERtPython)), NULL);

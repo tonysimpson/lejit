@@ -19,6 +19,9 @@
 /* the call needs no eval_breaker test after it, as for a function
    psyco_cannot_block() accepts: for a helper that calls one (D53) */
 #define CfNoBlock           0x1000
+/* the C function runs no Python code, so the known types stay (KNOWN_BUGS
+   F55): an instance dict lookup by name, whose key __eq__ F34 accepts */
+#define CfNoPython          0x2000
 
 #define VINFO_OK ((vinfo_t*)1)
 

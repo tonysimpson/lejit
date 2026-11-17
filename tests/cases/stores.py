@@ -809,15 +809,10 @@ CASES = [
     ('run_del_mid_sequence',
      [(4, ('setattr', 'property', 'dict', 'delete', 'grow'))], {}),
     ('run_interleaved_calls', [(4, ('none', 'setattr', 'dict', 'none'))], {}),
-    # __class__ assigned in the sequence: these passed only while an earlier
-    # round left the load guard of o.__dict__ stale for good (D60)
-    ('run_del_mid_sequence', [(4, ('setattr', 'class'))],
-     {'xfail': 'F55: o.__dict__ is loaded for the promoted type after '
-               '__del__ assigns __class__'}),
-    ('run_interleaved_calls', [(4, ('none', 'setattr', 'class'))],
-     {'xfail': 'F55: o.__dict__ is loaded for the promoted type after a '
-               'call assigns __class__'}),
+    # __class__ assigned in the sequence (F55, D59): these passed only while
+    # an earlier round left the load guard of o.__dict__ stale for good (D60)
+    ('run_del_mid_sequence', [(4, ('setattr', 'class'))], {}),
+    ('run_interleaved_calls', [(4, ('none', 'setattr', 'class'))], {}),
     ('run_two_objects', [(4,)], {}),
-    ('class_assigned_in_call', [(3,)],
-     {'xfail': 'F55: a promoted type is kept after a call assigns __class__'}),
+    ('class_assigned_in_call', [(3,)], {}),
 ]

@@ -148,6 +148,9 @@ KNOWN = {
                    'C11: a compiled frame\'s f_locals is empty (cgitb.html)'),
     'test_ctypes': ('run=485 fail=6 err=0 skip=89 exit=0',
                     'C19: getrefcount around calls into C'),
+    'test_memoryio': ('run=166 fail=3 err=0 skip=0 exit=0',
+                      'C19: getrefcount of a constant counts the references '
+                      'compiled code holds (test_cow_*)'),
     'test_email': ('run=1631 fail=0 err=1 skip=1 exit=0',
                    'environment: test_make_msgid_collisions makes ids for '
                    '3 s; faster under Ni, it reaches the memory limit'),

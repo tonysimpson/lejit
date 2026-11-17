@@ -3049,6 +3049,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           JUMPBY(oparg);
 #endif
           SAVE_NEXT_INSTR(next_instr);
+          Psyco_ForgetClasses(po); /* IsTrue may have run code (F55) */
           psyco_compile_cond(
               po, psyco_exact_merge_point(po->pr.merge_points, next_instr), cc);
           next_instr = current_instr;
@@ -3294,6 +3295,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
     fine:
       extra_assert(!PycException_Occurred(po));
+      /* before the next merge point compares known types (F55) */
+      Psyco_ForgetClasses(po);
       extra_assert(mp ==
                    psyco_next_merge_point(po->pr.merge_points, next_instr));
 
@@ -3387,6 +3390,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       po->pr.is_inlining = true;
       /* mark this point as an inline frame entry */
       psyco_inline_enter(po);
+      Psyco_ForgetClasses(po); /* the arguments' types (F55) */
       /* go on with compilation */
       clear_pseudo_exception(po);
       continue;
@@ -3533,6 +3537,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
     if (PycException_Occurred(po)) {
       break;
     }
+    /* a handler is reached without passing 'fine' (F55). Not at the top
+       of the main loop: an instruction restarted after a promotion would
+       forget the promoted type again, for ever */
+    Psyco_ForgetClasses(po);
   }
 
   /* function return (either by RETURN or by exception). */

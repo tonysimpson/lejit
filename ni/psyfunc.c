@@ -776,7 +776,9 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     /* inlining call */
     result = call_with_inline_frame(po, &fncall, recursion);
   } else {
-    /* non-inlining call */
+    /* non-inlining call: the callee's entry compares the arguments' known
+       types, after what this instruction called so far (F55) */
+    Psyco_ForgetClasses(po);
     mypo = psyco_build_frame(&fncall, recursion, &sources);
     if (mypo == NULL) {
       psyco_leave_recursive_call(po);
@@ -899,6 +901,7 @@ vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
   if (vts != NULL && enter_recursive_call(po, vts)) {
     vinfo_decref(vts, po);
     vts = NULL;
+    Psyco_ForgetClasses(po);
     mypo = psyco_build_frame(&fncall, po->pr.auto_recursion, &sources);
     if (mypo == NULL) {
       psyco_leave_recursive_call(po);

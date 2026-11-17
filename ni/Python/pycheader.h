@@ -83,6 +83,9 @@ typedef struct {
   short auto_recursion; /* # levels to auto-compile calls to Python functions */
   char is_inlining;     /* true when compiling a code inlined in a parent */
   unsigned char iblock; /* index in blockstack */
+  char class_unchecked; /* a call that may assign __class__ was emitted
+                           since the known types were last forgotten
+                           (pobject.c:Psyco_ForgetClasses) */
   PyObject* changing_globals;  /* names of globals detected to change: saved
                                   in snapshots, so a respawn replays the same
                                   LOAD_GLOBAL decisions; shared, so never
