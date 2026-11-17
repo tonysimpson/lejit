@@ -799,6 +799,9 @@ static vinfo_t* try_rich_compare(PsycoObject* po, vinfo_t* v, vinfo_t* w, int op
   if (vtp == NULL) return NULL;
   wtp = (PyTypeObject*) Psyco_NeedType(po, w);
   if (wtp == NULL) return NULL;
+  if (Psyco_SlotsMutable(vtp) || Psyco_SlotsMutable(wtp))
+    return psyco_generic_call(po, PyObject_RichCompare,
+                              CfCommonNewRefPyObject, "vvl", v, w, (long)op);
   fv = vtp->tp_richcompare;
   fw = wtp->tp_richcompare;
 
@@ -878,7 +881,8 @@ vinfo_t *PsycoObject_Hash(PsycoObject *po, vinfo_t *v) {
   PyTypeObject *tp = Psyco_NeedType(po, v);
   if (tp == NULL)
     return NULL;
-  if (tp->tp_hash == NULL) /* a type not yet ready: CPython readies it */
+  /* tp_hash NULL: a type not yet ready, which CPython readies */
+  if (tp->tp_hash == NULL || Psyco_SlotsMutable(tp))
     return psyco_generic_call(po, PyObject_Hash,
                               CfReturnTypeLong | CfPyErrIfMinus1, "v", v);
   return Psyco_META1(po, tp->tp_hash, CfReturnTypeLong | CfPyErrIfMinus1, "v",

@@ -28,7 +28,16 @@
 	((tp1) == (tp) || PyType_IsSubtype((tp1), (tp)))
 
 #define PsycoIter_Check(tp) \
-     ((tp)->tp_iternext != NULL)
+     ((tp)->tp_iternext != NULL && \
+      (tp)->tp_iternext != &_PyObject_NextNotImplemented)
+
+/* A heap type's slots change whenever a class attribute that defines one
+   is set or deleted, so code compiled for the type must not fold them:
+   it calls what CPython calls, which reads the slot at run time
+   (KNOWN_BUGS F50). A static type's slots never change. */
+PSY_INLINE bool Psyco_SlotsMutable(PyTypeObject* tp) {
+	return (tp->tp_flags & Py_TPFLAGS_HEAPTYPE) != 0;
+}
 
 #define PsycoSequence_Check(tp) \
 	((tp)->tp_as_sequence && (tp)->tp_as_sequence->sq_item != NULL)

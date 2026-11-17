@@ -766,6 +766,9 @@ vinfo_t *PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi) {
   PyTypeObject *t = Psyco_NeedType(po, vi);
   if (t == NULL)
     return NULL;
+  if (Psyco_SlotsMutable(t))
+    return psyco_generic_call(po, PyObject_GetIter, CfCommonNewRefPyObject,
+                              "v", vi);
   f = t->tp_iter;
   if (f == NULL) {
     if (PsycoSequence_Check(t))
@@ -776,11 +779,28 @@ vinfo_t *PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi) {
   }
 }
 
+/* ceval.c's FOR_ITER: GET_ITER made sure the slot was there, but a heap
+   type's can have gone since (CPython leaves _PyObject_NextNotImplemented,
+   which raises TypeError); NULL is tested only in case Ni's GET_ITER was
+   bypassed. */
+static PyObject *cimpl_iternext(PyObject *iter) {
+  iternextfunc f = Py_TYPE(iter)->tp_iternext;
+  if (f == NULL) {
+    PyErr_Format(PyExc_TypeError, "'%.100s' object is not an iterator",
+                 Py_TYPE(iter)->tp_name);
+    return NULL;
+  }
+  return f(iter);
+}
+
 DEFINEFN
 vinfo_t *PsycoIter_Next(PsycoObject *po, vinfo_t *iter) {
   PyTypeObject *tp = Psyco_NeedType(po, iter);
   if (tp == NULL)
     return NULL;
+  if (Psyco_SlotsMutable(tp))
+    return psyco_generic_call(po, cimpl_iternext, CfCommonIterNext, "v",
+                              iter);
   if (!PsycoIter_Check(tp)) {
     PycException_SetFormat(po, PyExc_TypeError,
                            "'%.100s' object is not an iterator", tp->tp_name);

@@ -161,8 +161,6 @@ KNOWN = {
                        'with refcount 1'),
     'test_inspect': ('run=228 fail=2 err=0 skip=0 exit=0',
                      'C11: f_locals and line numbers of compiled frames'),
-    'test_iter': ('run=54 fail=0 err=1 skip=0 exit=0',
-                  'F50: a deleted __next__ is not seen'),
     'test_logging': ('run=183 fail=1 err=0 skip=1 exit=0',
                      'C11: line numbers in stack_info'),
     'test_module': ('run=30 fail=1 err=0 skip=0 exit=0',
@@ -180,9 +178,8 @@ KNOWN = {
     'test_socket': 'C19: getrefcount around calls into C '
                    '(testRefCountGetNameInfo); counts vary with the '
                    'environment, so no expected result',
-    'test_unittest': ('run=798 fail=5 err=0 skip=3 exit=0',
-                      'C11: warnings line numbers; F50: __hash__ and __ne__ '
-                      'set on a class after compiling; F52: __defaults__ '
+    'test_unittest': ('run=798 fail=3 err=0 skip=3 exit=0',
+                      'C11: warnings line numbers; F52: __defaults__ '
                       'changed after compiling'),
     'test_asyncio': ('run=2055 fail=18 err=0 skip=35 exit=0',
                      'C11: line numbers and stacks in source tracebacks'),
