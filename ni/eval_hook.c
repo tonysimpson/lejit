@@ -39,6 +39,11 @@ static PyObject *NiCode_Run(PyObject *codebuf, PyFrameObject *f) {
 #define DEFAULT_RECURSION 10
 
 static PyObject *NiEval_EvalFrame(PyFrameObject *frame, int throwflag) {
+  /* generators are never compiled (mergepoints.c), and every resume comes
+     through here: leave before any lookup */
+  if (frame->f_code->co_flags &
+      (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR))
+    return original_eval_frame(frame, throwflag);
   /* Don't compile modules - buggy */
   if (frame->f_globals != frame->f_locals) {
     PyCodeObject *co;
