@@ -293,7 +293,7 @@ All 17 benchmarks together (stub plus code after, 2.5 MB):
 
 Gains are against the code and compile time above. "Code" means all emitted code.
 
-1. **Promotion stubs on D32-style stubs.** Keep the 19-byte inline cache. On a miss, run `mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline` (18 bytes), with the `rt_promotion_t` in the heap record.
+1. **Promotion stubs on D32-style stubs.** Done (`5d71361`, D32); results in "Promotion stubs made small" below. Keep the 19-byte inline cache. On a miss, run `mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline` (18 bytes), with the `rt_promotion_t` in the heap record.
    - **How the stub carries the value:** the run-time value is already in a register at the site (`ipromotion_finish` calls `RTVINFO_IN_REG(fix)`), so the stub copies it into RSI, the second SysV argument. RSI is never allocated, and the trampoline (`x64/iprocessor.c:write_stub_trampoline`) touches only RDI, RAX (saved), RSP and R11. `psyco_stub_enter(record, value)` passes it on as `fn(closure, value)`; the respawn and pause functions ignore it.
    - Promotion records are never freed (the site stays live), so the stub can sit inline at the site rather than in the pool.
    - **Code:** about 85 → 37 bytes per site, −48 B. The records (about 40 bytes each) move to the heap. [inferred from the measured 84–86 B]
@@ -370,3 +370,43 @@ Each of the other pairs has one direction that loses identity and one that needs
 - **Computing the virtual** (`PyLong_FromLong`, `PyFloat_FromDouble`, `PyList_New`) keeps identity, since nothing has seen a virtual yet, but the call's error check is a respawn point. After `psyco_compatible`'s verdict, which depends on the blocks compiled so far, a replay from the block's snapshot restarts the bytecode compiler at the merge point and never reaches it (D40). Before the snapshot, in the block that flows into the merge point, a replay does pass that point (`psyco_limit_nested_weight` already computes there, against `pycompiler.c`'s `extra_assert(!is_respawning(po))` just above it), but then the decision may only depend on the state, not on the blocks: computing every virtual int or float at every merge point would box loop counters and accumulators on each iteration. `psyco_compile_cond` also compares a copy of the state where no code can be emitted.
 
 To see whether a replay-safe way (a snapshot that records "compute these locals first", replayed from the main loop's entry like `NEXT_INSTR_POP`) would be worth building, an experiment computed the virtual when a snapshot held a run-time object there (value already run-time; release build only, replays not handled; not committed): all 23 benchmarks 57,211 → 57,156 instructions compiled (−0.1%), 2,358 → 2,350 blocks: hexiom −75 instructions, raytrace −34, comprehensions −12, go +66. The list pair alone dropped (16 → 3 blocks differing only in it); the int pair barely moved (24 → 21), because the virtual usually comes first and the run-time object second, the direction that would need virtualising. Not worth a change to replay, and computing at merge points boxes values that stayed unboxed before. [run]
+
+## Promotion stubs made small (`5d71361`, D32) [run]
+
+A promotion site is now the 19-byte inline cache, then `mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline`: 37 bytes in all, written in place at the site (`x64/idispatcher.h:ipromotion_finish`, `dispatcher.c:psyco_new_stub_at`). Before, the miss path jumped over an inline `rt_promotion_t` and called `do_promotion_*` through `psyco_call_code_builder` (85–87 bytes). [read]
+
+- **The value.** `ipromotion_finish` already put it in a register (`RTVINFO_IN_REG`, which loads it if it was on the stack), and the inline compare uses that register. RSI is never allocated, and the trampoline touches only RAX (saved), RDI, RSP and R11 before its call, so RSI arrives as `psyco_stub_enter(record, value)`'s second argument and goes on as `fn(closure, value)`. Respawn and pause functions take only the closure and ignore it. [read]
+- **The cache rewrite** (`fix_fast_common_case`) patches the `mov r10, imm64` and the `je` target at `jump_if_equal_code`, as before; the stub after them is never patched. [read]
+- **Lifetime.** A promotion record is entered again for every value the cache misses, so it is never freed, as the inline `rt_promotion_t` never was. Records are carved from 64 KB chunks of the C heap. A first version took them from `PyMem_Malloc`: scattered through pymalloc's pools, they changed hexiom's allocation pattern enough to cost 0.5% more instructions per iteration (40.70 → 40.87–40.95 M; 40.58 M from the C heap). [run]
+- **Replays** (D21). A promotion ends the block, so a respawn replay never reaches one; `psyco_finish_promotion` asserts it under `ALL_CHECKS`, since a record made in a replay would leak. [read]
+- **D32's rule** holds: the stub enters the trampoline with `jmp`.
+
+`NI_CODESTATS` build, `tools/codesize.py <bench> -p`, before (`59b334b`) and after. Instructions compiled, sites and values are identical in every benchmark, so nothing compiled changed:
+
+| benchmark | code emitted (KB) | promotion stubs (KB) | bytes per site |
+|---|---|---|---|
+| richards | 131 → 123 (−6%) | 12.3 → 5.3 | 86 → 37 |
+| deltablue | 457 → 413 (−10%) | 66.2 → 28.5 | 86 → 37 |
+| raytrace | 285 → 255 (−11%) | 45.6 → 19.6 | 85 → 36 |
+| go | 459 → 413 (−10%) | 70.5 → 30.3 | 86 → 37 |
+| hexiom | 359 → 317 (−12%) | 62.9 → 26.8 | 87 → 37 |
+| chaos | 68 → 58 (−15%) | 14.7 → 6.4 | 56 → 24 (codesize's average) |
+| nbody | 42 → 33 (−21%) | 12.6 → 5.4 | 86 → 37 |
+| pyflate | 205 → 189 (−8%) | 23.5 → 10.0 | 87 → 37 |
+
+Release build, `tools/compilebench.py`, all 29 benchmarks: code 2,887 → 2,615 KB (−9.4%); total compile 19.9–20.4 ms (three runs) → 19.6–20.3 ms (two runs). Eight alternating runs of the first four iterations: hexiom 2.78 → 2.80 ms, deltablue 2.61 → 2.59 ms (medians). Other agents shared the machine (load 5–7).
+
+Instructions and branch misses per warm iteration (`perf stat -e instructions:u,branch-misses:u`, `PYTHONHASHSEED=0`, (12 − 2 iterations) / 10, two runs each):
+
+| benchmark | instructions (M) | branch misses (M) |
+|---|---|---|
+| richards | 199.96, 199.96 → 200.81, 200.81 (+0.4%) | 0.092, 0.099 → 0.097, 0.090 |
+| raytrace | 3,252, 3,253 → 3,283, 3,270 | 1.63, 1.64 → 1.65, 1.69 |
+| go | 1,141.0, 1,141.1 → 1,141.1, 1,141.1 | 0.77, 0.80 → 0.80, 0.74 |
+| deltablue | 32.06, 32.07 → 32.08, 32.06 | 0.003, 0.006 → 0.004, 0.002 |
+| hexiom | 40.70, 40.70 → 40.58, 40.58 | 0.030, 0.032 → 0.031, 0.031 |
+
+- **A miss costs about 11 more instructions.** richards misses 77.7k times per iteration and gains 0.85 M instructions. The trampoline aligns the stack at run time and goes through `psyco_stub_enter`, where the old call knew the alignment at compile time. Cycles per richards iteration didn't move (52.7–53.4 M before, 52.0–52.5 M after).
+- **raytrace** misses more often (1.2 M misses over the codesize run). Its instruction count varies by ±20 M between runs of one build; five more runs gave medians of 3,252 before and 3,270 M after (+0.5%), and cycles were within noise.
+- Branch misses are within run-to-run noise everywhere: the trampoline's one `jmp r11` now serves every promotion miss, where each site had its own `jmp r10`, and richards' misses didn't rise.
+- A polymorphic inline cache (option 3) would remove most misses, and this cost with them.
