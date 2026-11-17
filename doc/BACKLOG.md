@@ -13,7 +13,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 **Wrong results or crashes, reachable today**
 - **C29:** a frame already running compiled when tracing starts gets no events: `pdb.set_trace()`/`breakpoint()` in a compiled function stops only in its callees, a tracer that sets `f_trace` on running frames sees nothing from them, and a profiler misses their `c_call`/`return` events. Needs a way out of compiled code mid-frame (large).
-- **F96:** a constant object's type (a global that is never rebound, a module) is read when code compiles: `G.__class__ = B` isn't seen by code using `G`. Needs a guard per use of a constant of a mutable type (D48's shape). Small to medium; rare.
+- **F96:** fixed (`3116d30`, D62): a constant whose class can be assigned has its type checked at run time (a chain of checks per object), no measurable cost. Left: the chain is unbounded for an object given ever new classes (pathological).
 - **F9:** a `T_STRING_INPLACE` struct member gives `bytes`, not `str`. Small. **In flight** (strings agent).
 - **C9:** reference counts are lower than ceval's, so C code testing `Py_REFCNT(x) == 1` can behave differently. Fixed where seen; others may exist.
 - **C11, C18:** compiled frames are only partly visible (`warnings` stacklevel, `f_lineno`, `f_back`), and a traceback doesn't keep a compiled function's locals alive. C11 now reaches more code: with `with` and class statements compiling, unittest's `case.run` is compiled, so every test method is a compiled callee (`type()` takes `__module__` from `unittest.case`; CPython's `test_builtin`). Worth doing next among the frame bugs: the hook behind `PyEval_GetFrame` (`globals()`, `type()`'s `__module__`), then `f_lineno`.
