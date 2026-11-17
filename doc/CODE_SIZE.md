@@ -535,3 +535,58 @@ Instructions compiled (all 23 benchmarks; meteor_contest), and the synthetic cas
 **Synthetic case** (`tests/cases/mp_forget.py`, code buffers / bytes, before → after): funcs (a local holding one of five functions and builtins, called in the loop) 77 / 23,273 → 74 / 21,834 (−6%); classes (one of four classes, instantiated) 81 / 36,556 → 70 / 30,681 (−16%); default_const 59 / 14,904 → 59 / 15,024 (+0.8%); mixed (a function, a class, a large int or `None`) 88 / 29,071 → 86 / 24,382 (−16%).
 
 **Verdict:** kept as a backstop, like the cap: it costs nothing measurable on pyperformance and stops the copying in loops whose locals hold changing functions or classes. It is not a code-size win on these benchmarks.
+## Respawned branches rejoin (`f229d14`, D44, QUESTIONS 42) [run]
+
+Every run-time condition whose rare side isn't compiled is a respawn point. When the rare side is first taken, the branch is compiled (`dispatcher.c:do_respawn`) and runs on to the next merge point on its own: a copy of everything after the site. With many checks in a row (D31's loads, D39's type guards, D38's inline stores) the copies piled up: richards' `Task.__init__` went from 10 to 54 KB with inline stores. [run]
+
+### The design
+
+- **The main path already had a block there.** Every guarded site sets `split_after_global` (`load_global_cached`, `pobject.c:generic_getattr`, `heap_setattr`, the store checks), and the main loop ends the block after the instruction with a new block and its snapshot. That block had no list, so nothing could find it. [read] (`pycompiler.c`, the `split_after_global` branch)
+- **Join points.** The blocks started after a split are now kept per instruction (`mergepoints.c:psyco_join_point`, a fatlist per code unit, made on first use, freed with the code object like the merge points'). `vcompiler.c:psyco_compile_join` compares the state with them. [read]
+- **A respawned branch** (its block is a respawned one: `fz_respawned_from` set) is compared as at a merge point: it jumps into a compatible block (`psyco_unify`), with differing non-fixed constants made run-time. [read]
+- **It may drop known fields of run-time values that the block doesn't have** (`dispatcher.c:psyco_compatible_join`). `compatible_array` refused a state with extra known items in the first two levels ("you get better results this way", Psyco's own guess) and dropped them below. A branch rather joins: most failures to join were the branch knowing *more*, such as the instance dict pointer the inline path's checks loaded on the way to the miss. Such a field is a cached load of an immutable field (`FMUT` fields are never cached), so the joined code reloads it. Only fields that are not virtual and hold no reference are dropped: unify decrefs what it drops after moving what it keeps, maybe over the dropped value's slot (KNOWN_BUGS C27; dropping more crashed `test_enum`). [read], [run]
+- **Neither path rewrites small ints first** (`canonical_int`, D33): at a split the local is often shared with a known field of a constant, which must stay constant (KNOWN_BUGS C28; `test_math`, `test_grammar`, `test_aifc` asserted). [run]
+- **The main path** (any other path) only jumps into an exact match, with no dropping and no un-promotion, so it keeps every fact it compiled with. **No block boundary is added**: the split was already there, so option (a)'s cost (a block boundary that loses facts) does not arise, and option (b) (recording the main path's state without a merge point) is what the split already did. [read]
+- **Not in an inlined frame**: a branch there takes exact matches only. The caller's code object and position are non-fixed constants in the state (`psyco_save_inline_po`), and making them run-time crashed the return (`rejoin.inlined_two_sites`, `stores.dict_replaced`). Merge points are never inside an inlined frame; join points can be. [run]
+- **Replays (D21).** A replay never reaches the end of its block (the split is skipped while respawning, and the block ends at the split); a joined block's respawn points replay from that block's own snapshot; unification and un-promotion emit no respawn point. The checked build ran the suites and seven benchmarks without a replay divergence. [read], [run]
+- **Counters:** `ni._stats()['joins']` = (branch exact, branch partial, branch none, main path exact). [read]
+
+### Measurements
+
+`NI_CODESTATS=1` builds, `tools/codesize.py <bench>`: code emitted (KB) and instructions compiled. "base" is `b60e8bb`, "store" is `b60e8bb` with the inline stores (`80a60ce`, cherry-picked), "+J" adds this change. [run]
+
+| | base | base+J | store | store+J |
+|---|---|---|---|---|
+| richards | 119 / 2,012 | 117 / 1,977 | 222 / 2,714 | **161** / 1,977 |
+| deltablue | 412 / 6,213 | 372 / 5,365 | 463 / 6,458 | 404 / 5,374 |
+| raytrace | 251 / 3,954 | 191 / 2,956 | 284 / 4,260 | 205 / 2,962 |
+| go | 416 / 6,822 | 276 / 4,634 | 466 / 7,246 | 302 / 4,634 |
+| chaos | 58 / 995 | 56 / 960 | 60 / 995 | 58 / 960 |
+| hexiom | 317 / 6,102 | 254 / 5,051 | 325 / 6,208 | 262 / 5,051 |
+| pyflate | 187 / 4,092 | 168 / 3,735 | 210 / 4,166 | 183 / 3,735 |
+
+- **Richards with inline stores: +87% code over base before, +35% now** (`Task.__init__` 51.5 → 10.8 KB, its copies 39 → 12, as before the stores). The owner's budget was +20–25%. What is left is the inline store's own size per compiled site (STORE_ATTR 108 → 208 bytes per compile), more stub chunks (6 → 9) and more promotion-compiled code (65 → 77 KB). Instructions compiled are back to base's. [run]
+- **Without inline stores it helps more than expected**: go −34% code and −32% instructions compiled, raytrace −24%, hexiom −20%, deltablue −10%. The copies were D31's loads and D39's guards all along. [run]
+- **How often a branch joins** (branch exact / partial / none, then main path exact): richards 6/0/3, 1 (store+J 81/0/3, 1); deltablue 93/1/0, 38; go 65/2/18, 57; raytrace 24/5/11, 31; hexiom 29/2/12, 40. The rest of the respawns end before a split (an error path, a merge point). A branch that doesn't join mostly has a run-time value where the block has a constant or a different virtual (a generic attribute lookup against a virtual bound method); that is right. Before dropping was allowed, store+J richards was 195 KB. [run]
+
+`tools/compilebench.py`, release builds, all 29 benchmarks (one run of base and store, two of each +J: before and after the C27 and C28 restrictions, which changed nothing compiled in these benchmarks; machine shared with other agents): [run]
+
+| | base | base+J | store | store+J |
+|---|---|---|---|---|
+| code, all 29 | 2,590 KB | 2,246 KB (−13%) | 3,021 KB | 2,454–2,458 KB (−19%) |
+| compile, all 29 | 23.2 ms | 19.0–19.8 ms | 25.5 ms | 20.0–20.5 ms |
+| richards code / compile | 118 KB / 0.69 ms | 116 / 0.73 | 221 / 1.03 | 160 / 0.95 |
+| go code / compile | 406 / 3.12 | 271 / 2.47 | 463 / 4.68 | 298 / 2.60 |
+
+Store+J against base: +9.5% code and −12 to −14% compile time over all 29, richards +36% code and +38% compile time.
+
+Instructions per warm iteration, millions (`perf stat -e instructions:u`, (13 − 3 iterations) / 10; go and raytrace four to six runs, the others one or two): [run]
+
+| | richards | deltablue | raytrace | go | chaos | hexiom | pyflate |
+|---|---|---|---|---|---|---|---|
+| base | 231 | 31 | 3,262–3,295 | 1,139–1,164 | 489 | 41 | 2,436 |
+| base+J | 230–231 | 31 | 3,252–3,272 | 1,132–1,177 | 486–493 | 40 | 2,445–2,455 |
+| store | 179 | 28 | 3,108–3,174 | 1,115–1,151 | 473 | 40 | 2,345 |
+| store+J | 178–180 | 28 | 3,109–3,136 | 1,103–1,166 | 471–477 | 40 | 2,338–2,344 |
+
+Speed is unchanged within noise: a branch that joins runs the main path's code, which is what it would have compiled anyway. go's ranges overlap (base 1,139–1,164, base+J 1,132–1,177); worth a quieter rerun. Inline stores keep their gain (richards −23% against base).

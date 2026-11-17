@@ -28,7 +28,7 @@ The difference in **when** is fundamental. A merge point knows the incoming stat
 1. **A promotion adds a fact that splits the next merge point.** Code after a promotion knows "this is a `Task`". At the next merge point it can't match a block compiled without that fact, nor the reverse (`compatible_array`), so it compiles a new block. Code entered from coding pauses and respawns re-promotes the same types this way: 953 KB across 9 benchmarks, against 23 KB from a site seeing several values (CODE_SIZE "Promotions"). [run] deltablue's `change` keeps a fourth block for the same reason (D41). [run]
 2. **The cap generalises a value, and the next promotion specialises it again.** The cap made a constant function run-time; the next call promoted it, one block per function: meteor compiled 5% more (D40). That is why the cap generalises only ints today. [run]
 3. **A polymorphic site splits everything after it.** Each value gets its own copy of the rest of the block, so a site with 3 types costs 3 copies as well as the misses. JavaScript inline caches cache how to do the operation and share the code after it. [read] (V8, SpiderMonkey CacheIR, JavaScriptCore), [inferred] for Ni
-4. **Nothing joins a respawned branch back.** Each respawned branch runs to the next merge point, which is a specialisation decision by default (QUESTIONS 42; richards' `Task.__init__` 10 → 54 KB with inline stores). [run]
+4. **Nothing joined a respawned branch back.** Each respawned branch ran to the next merge point, which is a specialisation decision by default (QUESTIONS 42; richards' `Task.__init__` 10 → 54 KB with inline stores). Fixed at split sites by D44. [run]
 
 All four are one problem: a fact gained in one place decides how many copies are made somewhere else, and neither place knows about the other.
 
@@ -54,7 +54,7 @@ All four are one problem: a fact gained in one place decides how many copies are
 In order, each measured on code size, compile time and speed (D29):
 
 1. **Forgotten values** (done, D43): the mark (`RunTime_Megamorphic`), honoured by every promotion entry that has a generic path, set by the cap. Lets the cap generalise more than ints. Rules 2 and 3, except that a forgotten value's type is still promoted (`Psyco_NeedType` has no generic path).
-2. **Respawned branches rejoin** (in flight, QUESTIONS 42): rule 5. Then inline stores (D38) merge on top.
+2. **Respawned branches rejoin** (done at split sites, `f229d14`, D44): rule 5. Inline stores (D38) can merge on top: measured, richards +35% code over base with both. Branches from coding pauses already meet merge points; respawn points that aren't split sites are left.
 3. **Merge points match across an unused fact**: rule 1. A state that knows a promoted type nothing has used yet matches a block without it. A naive version that dropped the check made every benchmark hang (CODE_SIZE "Promotions"), so it needs the "used" information and a guard against promoting and generalising in a loop.
 4. **Shared code after polymorphic sites** (option D, BACKLOG): rule 4, built on the mark from step 1. Design first.
 5. **A shared megamorphic table**, keyed on (type, operation), if megamorphic sites still show in profiles.
