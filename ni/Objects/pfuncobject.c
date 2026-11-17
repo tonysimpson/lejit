@@ -119,7 +119,7 @@ static bool compute_genexpr(PsycoObject *po, vinfo_t *v) {
     if (f == NULL || a == NULL)
         return false;
     g = psyco_generic_call(po, PyFunction_Type.tp_call,
-                           CfCommonNewRefPyObject, "vvl", f, a, 0);
+                           CfCommonNewRefPyObject, "vvl", f, a, 0L);
     if (g == NULL)
         return false;
     vinfo_move(po, v, g);

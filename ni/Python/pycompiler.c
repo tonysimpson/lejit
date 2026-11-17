@@ -1655,7 +1655,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             v = psyco_generic_call(po, cimpl_minmax_result,
                                    CfCommonNewRefPyObject, "vl",
                                    po->vlocals.items[slot + 1],
-                                   mode == GENEXPR_MIN);
+                                   (long)(mode == GENEXPR_MIN));
             if (v == NULL)
               break;
           } else {
@@ -1696,7 +1696,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         } else if (mode == GENEXPR_MIN || mode == GENEXPR_MAX) {
           x = psyco_generic_call(po, cimpl_minmax_step, CfCommonNewRefPyObject,
                                  "vvl", acc, v,
-                                 mode == GENEXPR_MIN ? Py_LT : Py_GT);
+                                 (long)(mode == GENEXPR_MIN ? Py_LT : Py_GT));
           if (x == NULL)
             break;
           po->vlocals.items[slot + 1] = x;

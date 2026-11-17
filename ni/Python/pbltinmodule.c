@@ -33,9 +33,9 @@ static vinfo_t *genexpr_consume(PsycoObject *po, vinfo_t *vgen, int mode,
                                 PyTypeObject *tp, vinfo_t *start) {
   vinfo_t *acc, *result, *t;
   if (mode == GENEXPR_LIST)
-    acc = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l", 0);
+    acc = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l", 0L);
   else if (mode == GENEXPR_SET)
-    acc = psyco_generic_call(po, PySet_New, CfCommonNewRefPyObject, "l", 0);
+    acc = psyco_generic_call(po, PySet_New, CfCommonNewRefPyObject, "l", 0L);
   else if (mode == GENEXPR_SUM) {
     if (start != NULL) {
       vinfo_incref(start);
