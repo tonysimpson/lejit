@@ -1,7 +1,7 @@
 ---
 written: 2026-11-17
 head_ref: 3cd02f7 (measurements); 819da55 (option 4 design)
-status: options 1 and 2 implemented (D39); option 4 implemented (D38, D47; sections "Option 4: results" and "Shrinking the store sites")
+status: options 1 and 2 implemented (D39); option 4 implemented (D38, D47; sections "Option 4: results" and "Shrinking the store sites"); load guards repaired (D60, "Load guards")
 ---
 # Instance attribute stores: measurements and options
 
@@ -19,6 +19,7 @@ Tags: **[read]** checked in code, **[run]** measured, **[inferred]** reasoned.
 - **Done:** options 1 and 2 (`e86f8ae`, D39): richards −13%, go −8% instructions per iteration; see Results. Fixes F37.
 - **Done:** option 4 (`80a60ce`, D38, D47): a further richards −31%, deltablue −10%, chaos −5.6%, go −5.0%, raytrace −4.1%, pyflate −3.5% instructions per iteration, about twice the estimates. Code grew much more than estimated on richards (+85%, estimate +20–25%): a failed check compiles its own copy of the rest of the code (see "Option 4: results"). [run]
 - **Done:** the store sites shrunk (`4398496`, `035ef12`, `2606291`, D47; "Shrinking the store sites"): with D44's joins, richards' code is +10% over the baseline's 116 KB (budget +20–25%), at 161 M instructions per iteration against option 4's 177 M; all 29 benchmarks 0.8% smaller than base. [run]
+- **Done:** load guards shared and repaired like the store guards (`7c573ac`, D60; "Load guards"). No benchmark changes a class after warm-up; the failures measured were classes with a metaclass, which CPython 3.7 never gives a version tag (mdp: 3.2 M generic loads per iteration on `Fraction`). Ni now gives them one: mdp −10.8% instructions per iteration, the others unchanged. [run]
 
 ## The path today
 
@@ -662,6 +663,69 @@ Found on the way: Ni keeps a promoted type after a call assigns `__class__`, wit
 - **The miss helper runs arbitrary code** (a combined dict's `__eq__` on a key, `__del__` of an old value), as the respawned C call did before. Its error check is the site's only respawn point. [read]
 - **The dealloc glue is called with the stack misaligned by the site** and aligns it itself. Under `Py_TRACE_REFS` it calls `_Py_Dealloc`, which hasn't been built here. [read]
 
+## Load guards (QUESTIONS 41)
+
+Should a load's type guard repair itself as a store's does (D39)? Measured first, then built (`7c573ac`, D60). [run] unless marked.
+
+### Method
+
+- `NI_CODESTATS=1` build: `ni._stats()['load_guards']` counts load guard sites compiled, failed guards at run time, failures after which the type gave what some site of (type, name) was compiled for (so a repair would re-arm it), failures on a class without `Py_TPFLAGS_HAVE_VERSION_TAG` and on a type whose `tp_getattro` isn't generic, and the failure branches compiled (respawns) with their bytes and compile time (`dispatcher.c:do_respawn`). `tools/loadguards.py` prints them per benchmark: three iterations, then until compiling stops, then ten counted (`9dea8c9`).
+- `tools/load_micro.py`: one loop with three loads per iteration (an instance attribute, a method call, a class constant), on a class that never changes (`stable`), gets one new class attribute after the first run compiled the loop (`late`, raytrace's `Vector.ZERO`), has a class attribute bumped as a counter every iteration (`bump`) or every 100th (`bump100`), or has a metaclass (`abc`, `abc.ABCMeta`).
+- Instructions per warm iteration: `perf stat -e instructions:u` on `timed(3)` then `timed(10)` against `timed(3)` alone, divided by ten; release builds of `9dea8c9` and `7c573ac` in the same session. For the micro-benchmark, one run is 200,000 iterations.
+
+### What fails, before the change
+
+Warm failures per iteration, all 23 benchmarks (`9dea8c9`):
+
+| | failed per iteration | repairable | class without version tag | `tp_getattro` not generic |
+|---|---|---|---|---|
+| mdp | 3,175,437 | all | all (`Fraction`) | 0 |
+| comprehensions | 27 | all | 0 | 27 (`EnumMeta`) |
+| deepcopy | 1 | 1 | 0 | 0 |
+| the other 20, the seven included | 0 | | | |
+
+- **No benchmark mutates a class after warm-up.** The question's case, a class constant set after its methods compiled, never fails a load guard in warm code on the 23.
+- **mdp's failures are a CPython 3.7 bug, not a class change.** `fractions.Fraction` derives from `numbers.Rational`, whose metaclass is `ABCMeta`. 3.7's `typeobject.c:type_mro_modified` clears `Py_TPFLAGS_HAVE_VERSION_TAG` on every class whose metaclass isn't `type`: it compares `lookup_maybe_method(type, "mro")` with the same for `type`, and both bind `type.mro` to a different object, so the two never compare equal. [read] (3.7.17 source). Such a class never has a valid version tag, so Ni's guard (flags 0) never passes and every load of `Fraction._numerator`, `.numerator`, `._denominator` and `.denominator` took the generic call. CPython's own method cache skips these classes too. ABCs, `Enum` classes and every class with a metaclass are affected: `class C(metaclass=M)` with an empty `M` has no tag. 3.12 gives such classes a tag (`VALID_VERSION_TAG` set after a lookup). [run]
+- **comprehensions' are loads from Enum classes** (`EnumMeta`, a Python metaclass: `tp_getattro` is `type_getattro`), whose guard was 0 by design, so every such load paid the guard and the respawned generic branch.
+- **Compile cost of failure branches**: 27 failure branches (1,250 bytes, 0.05 ms) in every benchmark while warming, the same in each, from the harness and the standard library (`re.RegexFlag`, an `Enum`); mdp 50 (2.5 KB), comprehensions 105 (4.6 KB, 0.2 ms). Against 3–5 ms of respawn compiling per benchmark: negligible.
+
+The micro-benchmark (failures per 10,000 iterations, after warm-up): `stable` 0; `late` 20,000 for good (two of the three loads); `bump` and `bump100` 30,000 (every guard fails for good after the first bump); `abc` 30,000. Ni was slower than plain CPython in four of the five:
+
+| ms per run | stable | late | bump | bump100 | abc |
+|---|---|---|---|---|---|
+| plain CPython | 19.7 | 20.5 | 42.6 | 23.8 | 25.4 |
+| Ni before | 1.01 | 4.43 | 20.5 | 6.42 | 9.87 |
+| Ni after | 1.01 | 1.01 | 24.4 | 1.40 | 1.01 |
+
+(Ni before is faster than plain here only because the loop's other code is compiled; each failed load costs more than CPython's own load.)
+
+### What was built (`7c573ac`, D60)
+
+1. **Shared, repaired load guards** (`pobject.c:load_guard`, `load_kind`, `load_type_changed`). What a load does once its guard passes is a function of the type, `load_kind`: the generic call, the instance dict only (no class attribute), or the descriptor or class attribute it specialises on. The guard record is found by (type, name, kind) in an open-addressing table of pointers (no Python objects are built), so every site of one kind shares it. Each compile sets it to the type's state, and a failed guard calls `cimpl_load_type_changed` (or the `PyObject_GenericGetAttr` variant), which finds the record of the kind the type now gives and re-arms it before the generic load. As for stores (D39), a record only ever holds a state of its kind, so a replay just after a passed guard recomputes the same kind, and the failure branch needs no record pointer (D21). The failure path is still a respawn, compiled once per site; the gain is that its guard passes again.
+2. **Version tags for classes with a metaclass** (`pobject.c:enable_version_tag`). Before a load or store guard on a heap type reads the tag, Ni sets `Py_TPFLAGS_HAVE_VERSION_TAG` where `type_mro_modified` means to keep it: the metaclass's `mro` is `type.mro`'s descriptor, and every other class in the MRO and the bases is a heap type that has the flag (set first) and is a supertype. Static types are left alone (an extension may change one's dict without `PyType_Modified`). CPython's own `_PyType_Lookup` then assigns a tag and its method cache covers the class too; every change to the class or a base clears the tag as for any class, and a recomputed MRO (`__bases__` assigned) clears the flag again. [read]
+3. Guards on types whose `tp_getattro` isn't generic hold the type's state too (their kind is the generic call), so a load from an Enum class passes the guard and calls `PyObject_GetAttr` without a respawned branch.
+4. On the way: `heap_setattr` set its guard after `compute_vinfo`, which can run a `__del__` that changes the class (KNOWN_BUGS C53); it now sets it first.
+
+### Results
+
+Failures per warm iteration (`7c573ac`): 0 on all 23 benchmarks, mdp included; during warm-up, 0 on 21 (comprehensions 8, deepcopy 6), and no failure branches are compiled for the harness any more.
+
+Instructions per warm iteration, millions (release builds, same session):
+
+| | richards | deltablue | raytrace | go | hexiom | chaos | pyflate | mdp |
+|---|---|---|---|---|---|---|---|---|
+| before (`9dea8c9`) | 162 | 27 | 3,090 | 1,059–1,108 | 40 | 462–469 | 2,007 | 30,701 |
+| after (`7c573ac`) | 162–165 | 27 | 3,089 | 1,061–1,147 | 40 | 460–461 | 2,007 | 27,396 |
+
+- mdp −10.8%; the seven unchanged within run-to-run noise (go varies by ±4% between runs on both builds: seven runs each, means 1,084 and 1,097; richards 165, 162, 162 against 162 three times).
+- Micro-benchmark, instructions per run: `late` 142 → 36 M, `bump100` 203 → 48 M, `abc` 295 → 36 M (the same as `stable`); `bump` 616 → 660 M (+7%): its guards fail on every iteration, and each failure now also looks the name up and probes the table before the generic load. Still twice as fast as plain CPython.
+- `tools/compilebench.py`, all 29: code 2,362 → 2,367 KB, compile 20.5 → 19.8 ms (noise); mdp warm 1,836 → 1,627 ms (CPython 2,177).
+- `tools/codesize.py -s` (`NI_CODESTATS`): the seven unchanged (richards 131 KB, deltablue 404, raytrace 200, go 281, chaos 56, pyflate 180; hexiom 250 → 254, one more 4 KB stub chunk [inferred]); mdp 156 → 153 KB, respawned buffers 79 → 50.
+
+### Tests
+
+`tests/cases/load_guards.py`, 10 cases: a class attribute set again to the same object, and to different values and back (the guards hold again afterwards: 0 failures in a further run, checked through `ni._stats()['load_type_changes']`); an unrelated class attribute; a data descriptor, a property over a method and `__getattribute__` added and removed later; a class attribute used as a counter; 12 subclasses changing; classes with an empty metaclass and with `ABCMeta`, their guards holding and their own and their base's changes seen; `__bases__` assigned on a metaclass class; a metaclass that overrides `mro` (no tag, generic path); Enum members. Shown failing without each part (checked build): with the helper re-arming nothing, `different_value` and `unrelated_attribute` fail (`same_value` still passes: compiling the failure branch also sets the shared guard); with `enable_version_tag` disabled, `metaclass_classes` fails. Two `stores.py` cases passed only because an earlier round of the same case left `o.__dict__`'s load guard stale for good: with the guard repaired they meet F55 (a `__class__` assigned in a call), so their `__class__` rounds are now separate xfail cases.
+
 ## Reproduce
 
 - `perf record -m 16 -F 4999 -g -o X.data python3.7 tools/profile_bench.py richards 4`, then `perf report -i X.data --no-children --sort sym -g none`. (`-m 16` because the locked-memory limit is shared with other perf users.)
@@ -670,4 +734,5 @@ Found on the way: Ni keeps a promoted type after a call assigns `__class__`, wit
 - `python3.7 tools/store_cache_sim.py raytrace` (plain CPython; option 4's cache, simulated).
 - Option 4's instruction counts: `perf stat -x, -e instructions:u` on a script that loads the benchmark with `pyperf37.load`, runs `timed(3)`, then `timed(10)` or nothing; the difference over ten. Helper calls and refreshes: `ni._stats()['store_misses']`, `['store_refreshes']`; failed store type guards: `['store_type_changes']`.
 - "Shrinking the store sites": for each commit, `git checkout <commit> -- ni`, a `NI_CODESTATS=1` build for `tools/codesize.py <bench> -s`, then a release build for `tools/compilebench.py` and the instruction counts above. One site's code: `ni._codestats()` gives each copy's address and length, disassembled with capstone.
+- "Load guards": an `NI_CODESTATS=1` build, `python3.7 tools/loadguards.py tools/load_micro.py richards ...` (all 23: the names in `tools/pyperformance/`); `python3.7 tools/load_micro.py ni`, then `plain`; instruction counts as above.
 - The other [run] facts in "Option 4: design" (unused entries zeroed, keys address reuse, re-share with fewer entries, `gc_refs` values, conversions) come from short ctypes scripts under plain CPython 3.7.17, not kept.
