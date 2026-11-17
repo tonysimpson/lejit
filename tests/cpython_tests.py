@@ -150,8 +150,6 @@ KNOWN = {
                      'F10: a user __eq__/__ne__ runs twice'),
     'test_ctypes': ('run=485 fail=6 err=0 skip=89 exit=0',
                     'C19: getrefcount around calls into C'),
-    'test_dynamic': ('run=9 fail=1 err=1 skip=0 exit=0',
-                     'F49: builtins come from globals at each lookup'),
     'test_email': ('run=1631 fail=0 err=1 skip=1 exit=0',
                    'environment: test_make_msgid_collisions makes ids for '
                    '3 s; faster under Ni, it reaches the memory limit'),

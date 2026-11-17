@@ -170,6 +170,8 @@ typedef struct {
   PyObject* entry_globals; /* the globals it was compiled for: borrowed, so
                               maybe dead and reused (vcompiler.c says why
                               that is safe) */
+  PyObject* entry_builtins; /* and its f_builtins (KNOWN_BUGS F49): borrowed,
+                               the compiled code owns it */
 } ni_code_extra_t;
 /* the record for 'co', made on first use; NULL with an exception set */
 EXTERNFN ni_code_extra_t* ni_code_extra(PyCodeObject* co);

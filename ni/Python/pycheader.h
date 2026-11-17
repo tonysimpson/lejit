@@ -38,7 +38,11 @@
 #define INDEX_LOC_CONTINUATION  0   /* return address in the stack */
 #define INDEX_LOC_GLOBALS       1   /* globals() dict object */
 #define INDEX_LOC_INLINING      2   /* for function inlining */
-#define INDEX_LOC_LOCALS_PLUS   3   /* start of local variables + stack */
+#define INDEX_LOC_BUILTINS      3   /* the frame's builtins dict: fixed when
+                                       the frame starts, as f_builtins
+                                       (KNOWN_BUGS F49), so a vlocal and not
+                                       a 'pr' field (the note above) */
+#define INDEX_LOC_LOCALS_PLUS   4   /* start of local variables + stack */
 
 /* A generator expression compiled into its consumer
    (psyfunc.c:psyco_call_genexpr) has two more slots, after its free
@@ -61,6 +65,7 @@
 #define LOC_CONTINUATION    (po->vlocals.items[INDEX_LOC_CONTINUATION])
 #define LOC_GLOBALS         (po->vlocals.items[INDEX_LOC_GLOBALS])
 #define LOC_INLINING        (po->vlocals.items[INDEX_LOC_INLINING])
+#define LOC_BUILTINS        (po->vlocals.items[INDEX_LOC_BUILTINS])
 #define LOC_LOCALS_PLUS     (po->vlocals.items + INDEX_LOC_LOCALS_PLUS)
 
 
@@ -83,7 +88,6 @@ typedef struct {
   vinfo_t* exc;         /* current compile-time (pseudo) exception, see below */
   vinfo_t* val;         /* exception value */
   vinfo_t* tb;          /* traceback object */
-  PyObject* f_builtins;
   char split_after_global; /* a guarded LOAD_GLOBAL or attribute lookup was
                               just compiled: start a new block
                               (pycompiler.c:load_global_cached,

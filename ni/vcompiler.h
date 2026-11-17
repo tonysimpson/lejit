@@ -798,6 +798,7 @@ PSY_INLINE PsycoObject *PsycoObject_Resize(PsycoObject *po, int nvlocalscnt) {
 
 EXTERNFN mergepoint_t *PsycoObject_Ready(PsycoObject *po);
 EXTERNFN PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
+                                           PyObject *builtins,
                                            PyObject *mergepoints,
                                            int recursion);
 #endif /* _VCOMPILER_H */

@@ -80,7 +80,8 @@ static bool fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co,
 }
 
 static bool fncall_collect_arguments(struct fncall_arg_s *fncall,
-                                     vinfo_t *vglobals, vinfo_t **argarray,
+                                     vinfo_t *vglobals, vinfo_t *vbuiltins,
+                                     vinfo_t **argarray,
                                      int argcount, vinfo_t **defarray,
                                      int defcount, vinfo_t **frees) {
   PyCodeObject *co = fncall->co;
@@ -113,6 +114,7 @@ static bool fncall_collect_arguments(struct fncall_arg_s *fncall,
      into a new array that mimics the PsycoObject's vlocals. */
   inputvinfos = array_new(INDEX_LOC_LOCALS_PLUS + inputargs + fncall->nfrees);
   inputvinfos->items[INDEX_LOC_GLOBALS] = vglobals;
+  inputvinfos->items[INDEX_LOC_BUILTINS] = vbuiltins;
   for (i = 0; i < argcount; i++)
     inputvinfos->items[INDEX_LOC_LOCALS_PLUS + i] = argarray[i];
   for (; i < inputargs; i++)
@@ -151,6 +153,7 @@ static void fncall_store_arguments(struct fncall_arg_s *fncall,
 
   /* initialize po->vlocals */
   vlocals[INDEX_LOC_GLOBALS] = arraycopy->items[INDEX_LOC_GLOBALS];
+  vlocals[INDEX_LOC_BUILTINS] = arraycopy->items[INDEX_LOC_BUILTINS];
 
   /* move the arguments into their target place,
      excluding the ones that map to the '*' parameter */
@@ -314,7 +317,6 @@ PsycoObject *psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a) {
   array_release(array);
 
   pyc_data_build(po, psyco_get_merge_points(po->pr.co, -1));
-  po->pr.f_builtins = NULL; /* because the globals might have changed */
 
   /* leaving an inlined frame restores its (never inlining) parent; on
      entry the old locals were already moved out (psyco_save_inline_po) */
@@ -498,6 +500,28 @@ static int psyco_tracing_on(PsycoObject *po) {
       defcount = 0; /* vdefaults==NULL at run-time */                          \
   } while (0)
 
+/* The callee frame's builtins, as frameobject.c:_PyFrame_New_NoTrack picks
+   them: the caller's when the globals are the same, else the globals'
+   __builtins__ (KNOWN_BUGS F49). A new reference, or NULL if the globals
+   aren't known now. The second case is read at compile time, so a module's
+   __builtins__ replaced after a call site compiled is not seen there. */
+static vinfo_t *callee_builtins(PsycoObject *po, vinfo_t *vglobals) {
+  PyObject *b;
+  if (vglobals == LOC_GLOBALS ||
+      (is_compiletime(vglobals->source) &&
+       is_compiletime(LOC_GLOBALS->source) &&
+       CompileTime_Get(vglobals->source)->value ==
+           CompileTime_Get(LOC_GLOBALS->source)->value)) {
+    vinfo_incref(LOC_BUILTINS);
+    return LOC_BUILTINS;
+  }
+  if (!is_compiletime(vglobals->source))
+    return NULL;
+  b = psy_get_builtins((PyObject *)CompileTime_Get(vglobals->source)->value);
+  Py_INCREF(b); /* owned by the constant, as in PsycoObject_FromCode */
+  return vinfo_new(CompileTime_NewSk(sk_new((long)b, SkFlagPyObj)));
+}
+
 DEFINEFN
 vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
                            vinfo_t *vglobals, vinfo_t *vdefaults,
@@ -510,6 +534,7 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   int tuple_size, argcount, defcount = -2;
   int nfrees;
   bool inlining;
+  vinfo_t *vbuiltins;
   vinfo_t **frees = NULL;
   struct fncall_arg_s fncall;
 
@@ -584,11 +609,16 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   /* prepare a frame */
   if (!fncall_init(&fncall, co, nfrees))
     goto fail_to_default; /* unsupported bytecode features */
-  if (!fncall_collect_arguments(&fncall, vglobals,
+  vbuiltins = callee_builtins(po, vglobals);
+  if (vbuiltins == NULL)
+    goto fail_to_default;
+  if (!fncall_collect_arguments(&fncall, vglobals, vbuiltins,
                                 &PsycoTuple_GET_ITEM(arg_tuple, 0), tuple_size,
                                 &PsycoTuple_GET_ITEM(vdefaults, 0), defcount,
-                                frees))
+                                frees)) {
+    vinfo_decref(vbuiltins, po);
     goto pyerr; /* Python exception (wrong # of arguments) */
+  }
 
   inlining = !po->pr.is_inlining &&
              (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE);
@@ -599,6 +629,7 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     vinfo_t *vts = load_tstate(po);
     if (vts == NULL) {
       array_release(fncall.inputvinfos);
+      vinfo_decref(vbuiltins, po);
       return NULL;
     }
     traced = tracing_on(po, vts);
@@ -611,6 +642,7 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     vinfo_decref(vts, po);
     if (traced || !entered) {
       array_release(fncall.inputvinfos);
+      vinfo_decref(vbuiltins, po);
       if (!entered)
         return NULL;
       goto fail_to_default;
@@ -639,6 +671,7 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     result = psyco_call_psyco(po, codebuf, sources, argcount, finfo);
     PyMem_FREE(sources);
   }
+  vinfo_decref(vbuiltins, po);
   return result;
 
 fail_to_default:
@@ -663,7 +696,7 @@ vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
                             vinfo_t *acc) {
   vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
   vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
-  vinfo_t *vcode, *vglobals, *closure, *vmode, *result, *vts;
+  vinfo_t *vcode, *vglobals, *vbuiltins, *closure, *vmode, *result, *vts;
   vinfo_t *extra[64];
   PyCodeObject *co;
   CodeBufferObject *codebuf;
@@ -693,7 +726,10 @@ vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
   if (!psyco_forking(po, args->array) || !fncall_init(&fncall, co, nfrees))
     psyco_fatal_msg("genexpr call"); /* checked by the consumer */
   fncall.nfrees = nfrees + GENEXPR_SLOTS;
-  if (!fncall_collect_arguments(&fncall, vglobals,
+  /* made by MAKE_FUNCTION here, so with this frame's globals and builtins */
+  vbuiltins = callee_builtins(po, vglobals);
+  if (vbuiltins == NULL ||
+      !fncall_collect_arguments(&fncall, vglobals, vbuiltins,
                                 &PsycoTuple_GET_ITEM(args, 0), 1, NULL, 0,
                                 extra))
     psyco_fatal_msg("genexpr arguments");
@@ -718,6 +754,7 @@ vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
   }
   vinfo_xdecref(vts, po);
   vinfo_decref(vmode, po);
+  vinfo_decref(vbuiltins, po);
   return result;
 }
 
@@ -835,7 +872,7 @@ static PyObject *psycofunction_call(PsycoFunctionObject *self, PyObject *arg,
 
   if (codebuf == NULL) {
     /* not already seen with this number of arguments */
-    vinfo_t *vglobals;
+    vinfo_t *vglobals, *vbuiltins;
     vinfo_array_t *vdefaults;
     vinfo_array_t *arginfo;
     PsycoObject *po = NULL;
@@ -871,12 +908,17 @@ static PyObject *psycofunction_call(PsycoFunctionObject *self, PyObject *arg,
 
     /* make a "frame" */
     support = fncall_init(&fncall, self->psy_code, 0);
-    if (support && fncall_collect_arguments(&fncall, vglobals, arginfo->items,
-                                            arginfo->count, vdefaults->items,
-                                            vdefaults->count, NULL)) {
+    vbuiltins = vinfo_new(CompileTime_NewSk(
+        sk_new((long)psy_get_builtins(self->psy_globals), SkFlagPyObj)));
+    Py_INCREF((PyObject *)CompileTime_Get(vbuiltins->source)->value);
+    if (support && fncall_collect_arguments(&fncall, vglobals, vbuiltins,
+                                            arginfo->items, arginfo->count,
+                                            vdefaults->items, vdefaults->count,
+                                            NULL)) {
       po = psyco_build_frame(&fncall, self->psy_recursion, NULL);
     }
     array_delete(vdefaults, NULL);
+    vinfo_decref(vbuiltins, NULL);
     vinfo_decref(vglobals, NULL);
     array_delete(arginfo, NULL);
 

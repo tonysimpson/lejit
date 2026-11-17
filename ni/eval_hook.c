@@ -77,15 +77,17 @@ static PyObject *NiEval_EvalFrame(PyFrameObject *frame, int throwflag) {
         PsycoObject *po;
         CodeBufferObject *codebuf;
         NI_COMPILE_BEGIN(NI_ENTER_CALL);
-        po = PsycoObject_FromCode(co, frame->f_globals, mergepoints,
-                                  DEFAULT_RECURSION);
+        po = PsycoObject_FromCode(co, frame->f_globals, frame->f_builtins,
+                                  mergepoints, DEFAULT_RECURSION);
         codebuf = psyco_compile_code(po, PsycoObject_Ready(po));
         NI_COMPILE_END(NI_ENTER_CALL);
         entry_point = (PyObject *)codebuf;
         x->entry_point = entry_point;
         x->entry_globals = frame->f_globals;
+        x->entry_builtins = frame->f_builtins;
       }
-      if (entry_point != Py_None && x->entry_globals == frame->f_globals) {
+      if (entry_point != Py_None && x->entry_globals == frame->f_globals &&
+          x->entry_builtins == frame->f_builtins) {
         return NiCode_Run(entry_point, frame);
       }
     }

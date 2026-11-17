@@ -1125,7 +1125,8 @@ static bool is_cell_arg(PyCodeObject *co, int arg) {
 
 DEFINEFN
 PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
-                                  PyObject *merge_points, int recursion) {
+                                  PyObject *builtins, PyObject *merge_points,
+                                  int recursion) {
   int i, argc, ncells, nfrees, extras;
   PsycoObject *po;
   Source rsrc;
@@ -1154,6 +1155,11 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
      must take its own reference (DECISIONS D23). */
   sk = sk_new((long)globals, SkFlagPyObj);
   LOC_GLOBALS = vinfo_new(CompileTime_NewSk(sk));
+  /* the frame's f_builtins, owned: lookups read it at compile time, and a
+     dict swapped in for a while (KNOWN_BUGS F49) may not outlive the code */
+  Py_INCREF(builtins);
+  LOC_BUILTINS = vinfo_new(CompileTime_NewSk(sk_new((long)builtins,
+                                                    SkFlagPyObj)));
 
   /* keyword-only arguments follow the positional ones in the frame, filled
      in by CPython (only frame entries get here with any: psyfunc.c) */

@@ -67,6 +67,10 @@ PSY_INLINE bool PycException_Occurred(PsycoObject *po) {
 
 /* raise an arbitrary pseudo-exception (consumes the references) */
 EXTERNFN void PycException_Clear(PsycoObject *po);
+
+/* globals['__builtins__'] as a dict, as frameobject.c finds a new frame's
+   builtins; borrowed */
+EXTERNFN PyObject *psy_get_builtins(PyObject *globals);
 PSY_INLINE void PycException_Raise(PsycoObject *po, vinfo_t *exc,
                                    vinfo_t *val) {
   if (PycException_Occurred(po))

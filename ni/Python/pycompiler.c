@@ -895,6 +895,7 @@ static void mark_varying(PsycoObject *po, PyObject *key) {
 /* 				  "opcode '" #opcode "' not implemented"); */
 /* 		break */
 
+DEFINEFN
 PyObject *psy_get_builtins(PyObject *globals) {
   static PyObject *minimal_builtins = NULL;
   PyObject *builtins;
@@ -954,18 +955,15 @@ typedef struct {
   PyObject *name;     /* owned */
   PyObject *value;    /* owned: the value compiled in, or NULL */
   PyObject *globals;  /* borrowed (D23) */
-  PyObject *builtins; /* owned */
+  PyObject *builtins; /* owned: the frame's (LOC_BUILTINS), which a new
+                         globals['__builtins__'] doesn't change (F49) */
   global_guard_t *guard;
 } changed_global_t;
 
 static code_t *do_changed_global(changed_global_t *cg) {
   PyObject *x = PyDict_GetItem(cg->globals, cg->name);
-  if (x == NULL) {
-    PyObject *b = psy_get_builtins(cg->globals);
-    if (b != cg->builtins)
-      return psyco_do_respawn(cg, sizeof(*cg));
-    x = PyDict_GetItem(b, cg->name);
-  }
+  if (x == NULL)
+    x = PyDict_GetItem(cg->builtins, cg->name);
   if (x != cg->value)
     return psyco_do_respawn(cg, sizeof(*cg));
   /* no real change */
@@ -1005,13 +1003,14 @@ static bool load_global_cached(PsycoObject *po, PyObject *name,
   changed_global_t *cg;
 
   *result = NULL;
-  if (!is_compiletime(LOC_GLOBALS->source))
+  if (!is_compiletime(LOC_GLOBALS->source) ||
+      !is_compiletime(LOC_BUILTINS->source))
     return true;
   if (po->pr.changing_globals != NULL &&
       PyDict_GetItem(po->pr.changing_globals, name) != NULL)
     return true; /* known to change */
   globals = (PyObject *)CompileTime_Get(LOC_GLOBALS->source)->value;
-  builtins = psy_get_builtins(globals);
+  builtins = (PyObject *)CompileTime_Get(LOC_BUILTINS->source)->value;
   if (!PyDict_CheckExact(globals) || !PyDict_CheckExact(builtins))
     return true;
 
@@ -1467,10 +1466,10 @@ static PyObject *cimpl_call_exit(PyObject *exit_func, PyObject *exc,
   return _PyObject_FastCall(exit_func, stack, 3);
 }
 
-/* ceval.c LOAD_BUILD_CLASS, with the frame's builtins as Ni finds them */
-static PyObject *cimpl_load_build_class(PyObject *globals) {
+/* ceval.c LOAD_BUILD_CLASS */
+static PyObject *cimpl_load_build_class(PyObject *builtins) {
   _Py_IDENTIFIER(__build_class__);
-  PyObject *builtins = psy_get_builtins(globals), *bc;
+  PyObject *bc;
   if (PyDict_CheckExact(builtins)) {
     bc = _PyDict_GetItemId(builtins, &PyId___build_class__);
     if (bc == NULL) {
@@ -1503,12 +1502,13 @@ static int cimpl_delete_deref(PyObject *cell) {
   return 0;
 }
 
-static PyObject *cimpl_load_global(PyObject *globals, PyObject *w) {
+static PyObject *cimpl_load_global(PyObject *globals, PyObject *builtins,
+                                   PyObject *w) {
   PyObject *x;
   RECLIMIT_SAFE_ENTER();
   x = PyDict_GetItem(globals, w);
   if (x == NULL) {
-    x = PyDict_GetItem(psy_get_builtins(globals), w);
+    x = PyDict_GetItem(builtins, w);
     if (x == NULL) {
       const char *obj_str = NiCompatStr_AsString(w);
       if (obj_str)
@@ -1719,15 +1719,15 @@ raise_error:
   Py_XDECREF(cause);
 }
 
-static PyObject *cimpl_import_name(PyObject *globals, PyObject *name,
-                                   PyObject *fromlist
+static PyObject *cimpl_import_name(PyObject *globals, PyObject *builtins,
+                                   PyObject *name, PyObject *fromlist
 #if VERYCONVOLUTED_IMPORT_NAME
                                    ,
                                    PyObject *fitharg
 #endif
 ) {
   PyObject *w;
-  PyObject *x = PyDict_GetItemString(psy_get_builtins(globals), "__import__");
+  PyObject *x = PyDict_GetItemString(builtins, "__import__");
   if (x == NULL) {
     PyErr_SetString(PyExc_ImportError, "__import__ not found");
     return NULL;
@@ -2570,7 +2570,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         }
         /* not cached: globals unknown, the name varying or not found */
         v = psyco_generic_call(po, cimpl_load_global, CfCommonNewRefPyObject,
-                               "vl", LOC_GLOBALS, namev);
+                               "vvl", LOC_GLOBALS, LOC_BUILTINS, namev);
         if (v == NULL)
           break;
         PUSH(v);
@@ -2647,7 +2647,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
          function are a rare, slow path anyway) */
       case LOAD_BUILD_CLASS:
         v = psyco_generic_call(po, cimpl_load_build_class,
-                               CfCommonNewRefPyObject, "v", LOC_GLOBALS);
+                               CfCommonNewRefPyObject, "v", LOC_BUILTINS);
         if (v == NULL)
           break;
         PUSH(v);
@@ -2927,7 +2927,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PyObject *w = GETNAMEV(oparg);
 #if !VERYCONVOLUTED_IMPORT_NAME /* Python < 2.5 */
         x = psyco_generic_call(po, cimpl_import_name, CfCommonNewRefPyObject,
-                               "vlv", LOC_GLOBALS, w, TOP());
+                               "vvlv", LOC_GLOBALS, LOC_BUILTINS, w, TOP());
         if (x == NULL)
           break;
         POP_DECREF();
@@ -2935,7 +2935,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         v = TOP();
         u = NTOP(2);
         x = psyco_generic_call(po, cimpl_import_name, CfCommonNewRefPyObject,
-                               "vlvv", LOC_GLOBALS, w, v, u);
+                               "vvlvv", LOC_GLOBALS, LOC_BUILTINS, w, v, u);
         if (x == NULL)
           break;
         POP_DECREF();
