@@ -126,9 +126,12 @@ def main():
             if ni_res is None:
                 print('%-26s %8.3fs   Ni failed: %s' % (name, tp, err[:60]))
                 continue
-            tn = ni_res[name][1]
+            nn, tn = ni_res[name]
+            if nn != n:
+                print('%-26s loop counts differ: %d, %d' % (name, n, nn))
+                continue
             ratios.append(tp / tn)
-            print('%-26s %8.3fs %8.3fs %7.2fx' % (name, tp, tn, tp / tn))
+            print('%-26s %8.3fs %8.3fs %7.2fx %6d' % (name, tp, tn, tp / tn, n))
     if ratios:
         g = 1.0
         for r in ratios:
