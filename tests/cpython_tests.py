@@ -182,9 +182,6 @@ KNOWN = {
                       'C11: warnings line numbers'),
     'test_asyncio': ('run=2055 fail=18 err=0 skip=35 exit=0',
                      'C11: line numbers and stacks in source tracebacks'),
-    'test_timeit': 'C30: crashes in test_timeit_few_iters after the '
-                   'other TestTimeit tests (since e26c2a3)',
-    'test_shutil': 'C31: segfaults after test_tarfile_vs_tar',
     'test_sys_settrace': ('run=136 fail=6 err=0 skip=0 exit=0',
                           'C29: f_trace set on a frame already running '
                           'compiled gets no events (settrace_and_return, '
