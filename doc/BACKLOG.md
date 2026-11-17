@@ -13,7 +13,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 **Wrong results or crashes, reachable today**
 - **C24:** compiled code never drops the GIL or runs signal handlers: another thread waiting on a compiled busy loop starves, Ctrl-C can't stop a compiled loop, and a handler's exception surfaces outside its `try`. Found by the CPython test survey (2026-11-17); `test_signal`, `test_threading`, `test_io`, `test_unittest`, `test_sys`, `test_asyncio` excluded for it. Medium (core: an `eval_breaker` test at loop heads). The most serious open item.
-- **C23:** `sys.settrace`/`setprofile` don't see compiled code; a debugger's jump out of a loop never happens (`test_sys_settrace` ran to 20 GB). Small fix (interpret while tracing), but it is a decision (QUESTIONS 32; `tools/interpreted.py` relies on the current behaviour).
+- **C23 (partly fixed, `5f1dbf6`; calls from compiled code remain):** `sys.settrace`/`setprofile` don't see compiled code; a debugger's jump out of a loop never happens (`test_sys_settrace` ran to 20 GB). Small fix (interpret while tracing), but it is a decision (QUESTIONS 32; `tools/interpreted.py` relies on the current behaviour).
 - **F10:** a user `__eq__`/`__ne__` runs twice (now seen: CPython's `test_compare`). Small to medium (`pobject.c`).
 - **F48:** an exhausted sequence iterator restarts when the sequence grows (`piterobject.c`). Medium.
 - **F49, F50:** builtins read from `globals()['__builtins__']` at each lookup; a slot deleted after compiling (`del C.__next__`) not seen. Small to medium; rare.
