@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: design note; only the hook change (`21ae5a3`) is done
+status: design note; the hook change (`21ae5a3`) and option B are done
 ---
 # Generators: design note
 
@@ -46,7 +46,14 @@ This is the same shape as inlining a listcomp's code (history A4: the machinery 
 - a genexpr that escapes (stored, passed on, partly consumed) keeps today's path;
 - exceptions inside it need the right traceback entry (`<genexpr>`), which frames.c's emulation can give.
 
-Work: about 1 day for `sum`/`any`/`all`/`list`/`tuple`/`set`, after listcomp inlining works (performance list item 4). [inferred]
+**Done** (2026-11-17), as a separate compiled callee rather than inlined, which needs no change to inlining:
+- MAKE_FUNCTION plus the call of a genexpr gives a *pending generator* (`pfuncobject.c:PsycoGenexpr_New`): a virtual object whose compute makes the real call. Delaying it is safe because creating a generator runs no code.
+- `sum`, `any`, `all` (`pbltinmodule.c` metas) and `list`, `tuple`, `set` (`ptype_call`) run a pending one through `psyfunc.c:psyco_call_genexpr`. That compiles the genexpr's code with two hidden slots after its free variables: the mode, a compile-time value so that versions never mix at merge points, and the accumulator. YIELD_VALUE does the step (append, add, `+`, or test and return), RETURN_VALUE returns the result (`pycheader.h` GENEXPR_*).
+- **Only a temporary is fused** (vinfo refcount ≤ 2: the stack and the argument tuple; a dead local is already released). A generator that something can still use must stay one object: after a partial run (`any`) or an exception it keeps its position, inner loops included. Anything else, such as `next(g)`, passing it on, or a live local, makes the real generator.
+- PEP 479: StopIteration leaving the fused code becomes RuntimeError, chained as `gen_send_ex` does (`pycompiler.c:cimpl_generator_stop`).
+- Tests: `tests/cases/genexprs.py`.
+- Results [run], release build: 40,000 calls over 50 items, `sum` 4.3×, `any` 2.9×, `tuple` 2.6×, `set` 2.6× against CPython. pyperformance comprehensions 1.40× → 1.81×, hexiom 1.67× → 1.98×, mdp 1.11× → 1.20×; bench.py generators 1.1× → 2.1×. nqueens is unchanged (1.00×): its genexprs are inside generator functions, which still run interpreted (option A).
+- Not done: `min`/`max` (their key and default arguments), `str.join`, `sorted`, `dict`.
 
 ### C. Fuse a generator with a compiled `for` loop
 
@@ -55,5 +62,5 @@ Work: about 1 day for `sum`/`any`/`all`/`list`/`tuple`/`set`, after listcomp inl
 ## Recommendation
 
 1. Done: the hook exit (`21ae5a3`).
-2. **B** next, after listcomp inlining, since it shares that machinery: it targets the common case and carries to 3.12.
-3. **A** only if a benchmark shows generator bodies doing real work between yields. Decide it together with the 3.12 entry design (QUESTIONS 33).
+2. Done: **B**.
+3. **A** only if a benchmark shows generator bodies doing real work between yields. nqueens does (`permutations` and `n_queens` are generator functions holding the genexprs B would fuse). Decide it together with the 3.12 entry design (QUESTIONS 33).

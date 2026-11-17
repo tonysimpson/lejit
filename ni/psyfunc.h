@@ -16,6 +16,11 @@ EXTERNFN vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc,
                                     vinfo_t *vglobals, vinfo_t *vdefaults,
                                     vinfo_t *arg_tuple, int recursion);
 
+/* generator expressions fused with their consumer (pycheader.h GENEXPR_*) */
+EXTERNFN bool psyco_genexpr_fusable(vinfo_t *v);
+EXTERNFN vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
+                                     vinfo_t *acc);
+
 /* for pycompiler.c */
 EXTERNFN vinfo_t *psyco_save_inline_po(PsycoObject *po);
 EXTERNFN PsycoObject *psyco_restore_inline_po(PsycoObject *po,

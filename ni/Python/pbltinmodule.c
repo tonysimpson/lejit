@@ -7,6 +7,7 @@
 #include "../Objects/prangeobject.h"
 #include "../Objects/pstringobject.h"
 #include "../Objects/ptupleobject.h"
+#include "../psyfunc.h"
 
 static PyCFunction cimpl_range;
 static PyCFunction cimpl_id;
@@ -21,6 +22,56 @@ static PyCFunction cimpl_pow;
 static PyCFunction cimpl_isinstance;
 static PyCFunction cimpl_round;
 static PyCFunction cimpl_sum;
+static PyCFunction cimpl_any;
+static PyCFunction cimpl_all;
+
+/* a pending generator expression (pfuncobject.h) consumed whole by a
+   builtin: run its code fused with the consumer's step, so neither the
+   generator nor its frame exists (psyfunc.c:psyco_call_genexpr). 'start'
+   is sum()'s, or NULL. */
+static vinfo_t *genexpr_consume(PsycoObject *po, vinfo_t *vgen, int mode,
+                                PyTypeObject *tp, vinfo_t *start) {
+  vinfo_t *acc, *result, *t;
+  if (mode == GENEXPR_LIST)
+    acc = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l", 0);
+  else if (mode == GENEXPR_SET)
+    acc = psyco_generic_call(po, PySet_New, CfCommonNewRefPyObject, "l", 0);
+  else if (mode == GENEXPR_SUM) {
+    if (start != NULL) {
+      vinfo_incref(start);
+      acc = start;
+    } else
+      acc = PsycoLong_FROM_LONG(po, psyco_vi_Zero());
+  } else
+    acc = psyco_vi_Zero();
+  if (acc == NULL)
+    return NULL;
+  result = psyco_call_genexpr(po, vgen, mode, acc);
+  vinfo_decref(acc, po);
+  if (result != NULL && tp == &PyTuple_Type) {
+    t = psyco_generic_call(po, PyList_AsTuple, CfCommonNewRefPyObject, "v",
+                           result);
+    vinfo_decref(result, po);
+    result = t;
+  }
+  if (result != NULL && tp != NULL)
+    Psyco_AssertType(po, result, tp);
+  return result;
+}
+
+static vinfo_t *pbuiltin_any(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
+  if (psyco_genexpr_fusable(vobj))
+    return genexpr_consume(po, vobj, GENEXPR_ANY, &PyBool_Type, NULL);
+  return psyco_generic_call(po, cimpl_any, CfCommonNewRefPyObject, "vv",
+                            vself, vobj);
+}
+
+static vinfo_t *pbuiltin_all(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
+  if (psyco_genexpr_fusable(vobj))
+    return genexpr_consume(po, vobj, GENEXPR_ALL, &PyBool_Type, NULL);
+  return psyco_generic_call(po, cimpl_all, CfCommonNewRefPyObject, "vv",
+                            vself, vobj);
+}
 static ternaryfunc type_call;
 static PyObject *object_class_descr; /* object.__class__ */
 static PyObject *str___class__;
@@ -333,6 +384,19 @@ static vinfo_t *pbuiltin_sum(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs) {
   if (n != 1 && n != 2)
     goto fallback;
   vit = PsycoTuple_GET_ITEM(vargs, 0);
+  if (psyco_genexpr_fusable(vit)) {
+    if (n == 2) {
+      tp = Psyco_NeedType(po, PsycoTuple_GET_ITEM(vargs, 1));
+      if (tp == NULL)
+        return NULL;
+      if (PyType_IsSubtype(tp, &PyUnicode_Type) ||
+          PyType_IsSubtype(tp, &PyBytes_Type) ||
+          PyType_IsSubtype(tp, &PyByteArray_Type))
+        goto fallback; /* sum() raises its own TypeError */
+    }
+    return genexpr_consume(po, vit, GENEXPR_SUM, NULL,
+                           n == 2 ? PsycoTuple_GET_ITEM(vargs, 1) : NULL);
+  }
   if (is_compiletime(vit->source)) {
     if (!PyTuple_CheckExact((PyObject *)CompileTime_Get(vit->source)->value))
       goto fallback;
@@ -451,6 +515,14 @@ static vinfo_t *ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg,
     }
     goto fallback;
   }
+  if (m != 0 && psyco_knowntobe(vkw, 0) && PsycoTuple_Load(varg) == 1 &&
+      (t == (PyObject *)&PyList_Type || t == (PyObject *)&PyTuple_Type ||
+       t == (PyObject *)&PySet_Type) &&
+      psyco_genexpr_fusable(PsycoTuple_GET_ITEM(varg, 0)))
+    return genexpr_consume(po, PsycoTuple_GET_ITEM(varg, 0),
+                           t == (PyObject *)&PySet_Type ? GENEXPR_SET
+                                                        : GENEXPR_LIST,
+                           (PyTypeObject *)t, NULL);
   if (m == 0 || !psyco_knowntobe(vkw, 0) || PsycoTuple_Load(varg) != 1 ||
       (t != (PyObject *)&PyType_Type && t != (PyObject *)&PyLong_Type &&
        t != (PyObject *)&PyFloat_Type))
@@ -506,6 +578,8 @@ void psyco_bltinmodule_init(void) {
   DEFMETA(isinstance, METH_FASTCALL);
   DEFMETA(round, METH_FASTCALL | METH_KEYWORDS);
   DEFMETA(sum, METH_FASTCALL);
+  DEFMETA(any, METH_O);
+  DEFMETA(all, METH_O);
   type_call = PyType_Type.tp_call;
   Psyco_DefineMeta(type_call, ptype_call);
   str___class__ = PyUnicode_InternFromString("__class__");

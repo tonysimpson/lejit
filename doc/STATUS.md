@@ -78,3 +78,5 @@ Not done / next candidates:
 
 **F31 and generators** (`e657847`, `21ae5a3`): a respawn replay could make a different LOAD_GLOBAL decision from the original compile (`changing_globals` wasn't in snapshots), which crashed test_base64; found with `tools/nianalyser/crash_report.py` (D28). The hook now leaves generator frames at once: pyperformance generators 0.88× → 0.99×, coroutines 0.96× → 1.01× [run]. test_coroutines and test_asyncgen added to `tests/cpython_tests.py`. Options for compiling generators: `doc/GENERATORS.md`.
 
+**Comprehension calls and generator expressions** (`3ccd317` and the next commit): calls to comprehensions and local lambdas with free variables are compiled calls with the cells passed in; generator expressions consumed by sum/any/all/list/tuple/set run fused, with no generator (GENERATORS.md option B). [run] pyperformance comprehensions 1.09× → 1.81×, hexiom 1.59× → 1.98×, mdp 1.06× → 1.20×.
+

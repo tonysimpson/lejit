@@ -3,7 +3,9 @@
  * meta. The callee is promoted to a constant (with a megamorphic cut-off) and
  * the call goes to psyfunc.c:psyco_call_pyfunc, which may inline it. A call to
  * a function that is still virtual reads its code, globals and defaults
- * directly and never materialises it.
+ * directly and never materialises it. A generator expression called from
+ * here stays a pending generator (PsycoGenexpr_New) until a consumer fuses it
+ * or it escapes.
  * Suspected bugs (from reading):
  *  - compute_function's SET_FIELD tests 'other != NULL ||
  *    !psyco_known_NULL(other)', which should be &&;
@@ -106,6 +108,41 @@ PsycoFunction_NewWithQualName(PsycoObject *po, vinfo_t *codeobj,
     r->array->items[iFUNC_KWDEFAULTS] = psyco_vi_Zero();
     r->array->items[iFUNC_DEFAULTS] = psyco_vi_Zero();
     return r;
+}
+
+static source_virtual_t psyco_pending_genexpr;
+
+static bool compute_genexpr(PsycoObject *po, vinfo_t *v) {
+    vinfo_t *f, *a, *g;
+    f = vinfo_getitem(v, iGENEXPR_FUNC);
+    a = vinfo_getitem(v, iGENEXPR_ARGS);
+    if (f == NULL || a == NULL)
+        return false;
+    g = psyco_generic_call(po, PyFunction_Type.tp_call,
+                           CfCommonNewRefPyObject, "vvl", f, a, 0);
+    if (g == NULL)
+        return false;
+    vinfo_move(po, v, g);
+    return true;
+}
+
+DEFINEFN
+vinfo_t *PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple) {
+    vinfo_t *r = vinfo_new(VirtualTime_New(&psyco_pending_genexpr));
+    r->array = array_new(iGENEXPR_ARGS + 1);
+    r->array->items[iOB_TYPE] =
+        vinfo_new(CompileTime_New((long)(&PyGen_Type)));
+    vinfo_incref(vfunc);
+    r->array->items[iGENEXPR_FUNC] = vfunc;
+    vinfo_incref(arg_tuple);
+    r->array->items[iGENEXPR_ARGS] = arg_tuple;
+    return r;
+}
+
+DEFINEFN
+bool PsycoGenexpr_Check(vinfo_t *v) {
+    return is_virtualtime(v->source) &&
+           VirtualTime_Get(v->source) == &psyco_pending_genexpr;
 }
 
 /***************************************************************/
@@ -259,4 +296,6 @@ psy_funcobject_init(void)
     /* function object are mutable;
        they must be forced out of virtual-time across function calls */
     INIT_SVIRTUAL_NOCALL(psyco_computed_function, compute_function, 1);
+    /* a generator has an identity: made real before any call */
+    INIT_SVIRTUAL_NOCALL(psyco_pending_genexpr, compute_genexpr, 1);
 }

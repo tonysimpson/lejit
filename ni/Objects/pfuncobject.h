@@ -44,4 +44,14 @@ EXTERNFN vinfo_t *
 PsycoFunction_NewWithQualName(PsycoObject *po, vinfo_t *codeobj,
                               vinfo_t *globals, vinfo_t *qualname);
 
+/* A generator expression called but not yet run: the virtual function and
+   its argument tuple. A consumer that knows it (sum, any, all, list, tuple,
+   set) runs its code fused (psyfunc.c:psyco_call_genexpr); anything else
+   makes the real generator. Delaying is safe because creating a generator
+   runs no code. */
+#define iGENEXPR_FUNC (iOB_TYPE + 1)
+#define iGENEXPR_ARGS (iOB_TYPE + 2)
+EXTERNFN vinfo_t *PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple);
+EXTERNFN bool PsycoGenexpr_Check(vinfo_t *v);
+
 #endif /* _PSY_FUNCOBJECT_H */

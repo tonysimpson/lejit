@@ -1377,6 +1377,29 @@ static bool compute_and_raise_exception(PsycoObject *po) {
     return true;
 }
 
+static void cimpl_generator_stop(void) {
+  PyObject *exc, *val, *tb;
+  if (!PyErr_ExceptionMatches(PyExc_StopIteration))
+    return;
+  PyErr_Fetch(&exc, &val, &tb);
+  PyErr_NormalizeException(&exc, &val, &tb);
+  if (tb != NULL)
+    PyException_SetTraceback(val, tb);
+  Py_DECREF(exc);
+  Py_XDECREF(tb);
+  PyErr_SetString(PyExc_RuntimeError, "generator raised StopIteration");
+  /* as _PyErr_ChainExceptions: the new exception's cause and context */
+  {
+    PyObject *e2, *v2, *t2;
+    PyErr_Fetch(&e2, &v2, &t2);
+    PyErr_NormalizeException(&e2, &v2, &t2);
+    Py_INCREF(val);
+    PyException_SetCause(v2, val);
+    PyException_SetContext(v2, val);
+    PyErr_Restore(e2, v2, t2);
+  }
+}
+
 static code_t *exit_function(PsycoObject *po) {
   vinfo_t **locals_plus;
   vinfo_t **pp;
@@ -1406,6 +1429,11 @@ static code_t *exit_function(PsycoObject *po) {
     retsource = retval->source;
   } else {
     if (!compute_and_raise_exception(po))
+      return NULL;
+    /* PEP 479, as gen_send_ex: StopIteration leaving a generator (a fused
+       generator expression) becomes RuntimeError */
+    if ((po->pr.co->co_flags & CO_GENERATOR) &&
+        !psyco_generic_call(po, cimpl_generator_stop, CfNoReturnValue, ""))
       return NULL;
     clear_pseudo_exception(po);
     sk_incref(&psyco_skZero);
@@ -1589,8 +1617,67 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
       case RETURN_VALUE:
         POP(v);
+        if (co->co_flags & CO_GENERATOR) {
+          /* a fused generator expression: return the consumer's result */
+          int slot = GENEXPR_SLOT_MODE(co);
+          long mode = CompileTime_Get(po->vlocals.items[slot]->source)->value;
+          vinfo_decref(v, po);
+          if (mode == GENEXPR_ANY)
+            v = psyco_vi_Py_False();
+          else if (mode == GENEXPR_ALL)
+            v = psyco_vi_Py_True();
+          else {
+            v = po->vlocals.items[slot + 1];
+            vinfo_incref(v);
+          }
+        }
         PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
         break;
+
+      case YIELD_VALUE: {
+        /* only in a generator expression fused with its consumer
+           (GENEXPR_*): do the consumer's step, then push the value send()
+           would have, for the POP_TOP that follows */
+        int slot = GENEXPR_SLOT_MODE(co);
+        long mode = CompileTime_Get(po->vlocals.items[slot]->source)->value;
+        vinfo_t *acc = po->vlocals.items[slot + 1];
+        v = TOP();
+        if (mode == GENEXPR_LIST) {
+          if (!PsycoList_Append(po, acc, v))
+            break;
+        } else if (mode == GENEXPR_SET) {
+          if (!psyco_generic_call(po, PySet_Add, CfCommonIntZeroOk, "vv", acc,
+                                  v))
+            break;
+        } else if (mode == GENEXPR_SUM) {
+          /* as builtin_sum's generic loop (its fast paths give the same
+             results as + on ints and floats) */
+          if (Psyco_KnownType(acc) != NULL)
+            x = PsycoNumber_Add(po, acc, v);
+          else
+            x = psyco_generic_call(po, PyNumber_Add, CfCommonNewRefPyObject,
+                                   "vv", acc, v);
+          if (x == NULL)
+            break;
+          po->vlocals.items[slot + 1] = x;
+          vinfo_decref(acc, po);
+        } else {
+          cc = integer_NON_NULL(po, PsycoObject_IsTrue(po, v));
+          if (cc == CC_ERROR)
+            break;
+          if (mode == GENEXPR_ALL)
+            cc = INVERT_CC(cc);
+          if (runtime_condition_f(po, cc)) {
+            PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)),
+                               mode == GENEXPR_ANY ? psyco_vi_Py_True()
+                                                   : psyco_vi_Py_False());
+            break;
+          }
+        }
+        POP_DECREF();
+        PUSH(psyco_vi_None());
+        goto fine;
+      }
 
 #ifdef RETURN_NONE
         /* This opcode was temporarily added to the Python 2.3 CVS.

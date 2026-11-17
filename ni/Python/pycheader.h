@@ -40,6 +40,22 @@
 #define INDEX_LOC_INLINING      2   /* for function inlining */
 #define INDEX_LOC_LOCALS_PLUS   3   /* start of local variables + stack */
 
+/* A generator expression compiled into its consumer
+   (psyfunc.c:psyco_call_genexpr) has two more slots, after its free
+   variables and before the stack: what YIELD_VALUE does (GENEXPR_*, a
+   compile-time value, so versions for different consumers never match at
+   a merge point) and the accumulator. Its RETURN_VALUE returns the
+   result. */
+#define GENEXPR_LIST 1  /* list(), tuple(): acc is a list, append */
+#define GENEXPR_SET  2  /* set(): acc is a set, add */
+#define GENEXPR_SUM  3  /* sum(): acc = acc + value */
+#define GENEXPR_ANY  4  /* any(): return True on a true value */
+#define GENEXPR_ALL  5  /* all(): return False on a false value */
+#define GENEXPR_SLOTS 2
+#define GENEXPR_SLOT_MODE(co) (INDEX_LOC_LOCALS_PLUS + (co)->co_nlocals +     \
+                               PyTuple_GET_SIZE((co)->co_freevars))
+#define GENEXPR_SLOT_ACC(co) (GENEXPR_SLOT_MODE(co) + 1)
+
 #define LOC_CONTINUATION    (po->vlocals.items[INDEX_LOC_CONTINUATION])
 #define LOC_GLOBALS         (po->vlocals.items[INDEX_LOC_GLOBALS])
 #define LOC_INLINING        (po->vlocals.items[INDEX_LOC_INLINING])

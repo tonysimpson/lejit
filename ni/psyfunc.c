@@ -371,6 +371,14 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   }
   if (--recursion < 0)
     goto fail_to_default;
+  /* a generator expression is run only by a consumer that knows it
+     (psyco_call_genexpr); until then it is a pending generator */
+  if (co->co_flags & CO_GENERATOR) {
+    if (vfunc != NULL && is_virtualtime(vfunc->source) &&
+        psyco_is_genexpr(co) && PsycoTuple_Load(arg_tuple) == 1)
+      return PsycoGenexpr_New(vfunc, arg_tuple);
+    goto fail_to_default;
+  }
   /* closure code: the cells are known when the function is still the
      virtual one MAKE_FUNCTION made (a comprehension, say); otherwise the
      real call supplies them */
@@ -462,6 +470,102 @@ fail_to_default:
 pyerr:
   psyco_virtualize_exception(po);
   return NULL;
+}
+
+/* Run a pending generator expression (PsycoGenexpr_New) for its consumer:
+   its code compiled with 'mode' and 'acc' in the two GENEXPR slots
+   (pycheader.h), called like a function of its iterator, returning the
+   consumer's result as a new reference. */
+DEFINEFN
+vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
+                            vinfo_t *acc) {
+  vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
+  vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
+  vinfo_t *vcode, *vglobals, *closure, *vmode, *result;
+  vinfo_t *extra[64];
+  PyCodeObject *co;
+  CodeBufferObject *codebuf;
+  PsycoObject *mypo;
+  Source *sources;
+  stack_frame_info_t *finfo;
+  int i, nfrees, argcount;
+  struct fncall_arg_s fncall;
+
+  vcode = vinfo_getitem(vfunc, iFUNC_CODE);
+  vglobals = vinfo_getitem(vfunc, iFUNC_GLOBALS);
+  extra_assert(vcode != NULL && is_compiletime(vcode->source));
+  co = (PyCodeObject *)CompileTime_Get(vcode->source)->value;
+  nfrees = PyCode_GetNumFree(co);
+  if (vglobals == NULL || nfrees + GENEXPR_SLOTS > 64)
+    return NULL; /* XXX */
+  for (i = 0; i < nfrees; i++) {
+    closure = vinfo_getitem(vfunc, iFUNC_CLOSURE);
+    if (closure == NULL || PsycoTuple_Load(closure) != nfrees)
+      psyco_fatal_msg("genexpr closure"); /* checked by the consumer */
+    extra[i] = PsycoTuple_GET_ITEM(closure, i);
+  }
+  vmode = vinfo_new(CompileTime_New(mode));
+  extra[nfrees] = vmode;
+  extra[nfrees + 1] = acc;
+
+  if (!psyco_forking(po, args->array) || !fncall_init(&fncall, co, nfrees))
+    psyco_fatal_msg("genexpr call"); /* checked by the consumer */
+  fncall.nfrees = nfrees + GENEXPR_SLOTS;
+  if (!fncall_collect_arguments(&fncall, vglobals,
+                                &PsycoTuple_GET_ITEM(args, 0), 1, NULL, 0,
+                                extra))
+    psyco_fatal_msg("genexpr arguments");
+
+  /* as psyco_call_pyfunc's non-inlining call */
+  result = NULL;
+  if (psyco_generic_call(po, cimpl_enter_recursive_call,
+                         CfNoReturnValue | CfPyErrIfNonNull, "") != NULL) {
+    mypo = psyco_build_frame(&fncall, po->pr.auto_recursion, &sources);
+    if (mypo == NULL) {
+      psyco_generic_call(po, cimpl_leave_recursive_call, CfNoReturnValue, "");
+      psyco_virtualize_exception(po);
+    } else {
+      argcount = get_arguments_count(&mypo->vlocals);
+      finfo = psyco_finfo(po, mypo);
+      codebuf = psyco_compile_code(mypo, PsycoObject_Ready(mypo));
+      result = psyco_call_psyco(po, codebuf, sources, argcount, finfo);
+      PyMem_FREE(sources);
+    }
+  }
+  vinfo_decref(vmode, po);
+  return result;
+}
+
+/* whether psyco_call_genexpr can run 'v' */
+DEFINEFN
+bool psyco_genexpr_fusable(vinfo_t *v) {
+  vinfo_t *vfunc, *vcode, *closure, *args;
+  PyCodeObject *co;
+  if (!PsycoGenexpr_Check(v))
+    return false;
+  /* only a temporary: the stack and the argument tuple hold it. A
+     generator something else can still use must stay one object, which
+     after a partial run (any, all, an exception) keeps its position, inner
+     loops included */
+  if (v->refcount > 2)
+    return false;
+  vfunc = v->array->items[iGENEXPR_FUNC];
+  args = v->array->items[iGENEXPR_ARGS];
+  if (args == NULL || PsycoTuple_Load(args) != 1)
+    return false;
+  vcode = vinfo_getitem(vfunc, iFUNC_CODE);
+  if (vcode == NULL || !is_compiletime(vcode->source))
+    return false;
+  co = (PyCodeObject *)CompileTime_Get(vcode->source)->value;
+  if (!psyco_is_genexpr(co) || psyco_get_merge_points(co, 0) == Py_None ||
+      PyCode_GetNumFree(co) + GENEXPR_SLOTS > 64)
+    return false;
+  if (PyCode_GetNumFree(co) > 0) {
+    closure = vinfo_getitem(vfunc, iFUNC_CLOSURE);
+    if (closure == NULL || PsycoTuple_Load(closure) != PyCode_GetNumFree(co))
+      return false;
+  }
+  return true;
 }
 
 /***************************************************************/

@@ -449,7 +449,10 @@ _build_merge_points(PyCodeObject *co, int module)
     if (module) {
         goto not_ok;
     }
-    if (co->co_flags & (CO_COROUTINE | CO_GENERATOR)) {
+    /* a generator expression compiles only into its consumer
+       (psyfunc.c:psyco_call_genexpr): the eval hook never runs generator
+       code, and psyco_call_pyfunc makes a pending generator of it */
+    if (co->co_flags & (CO_COROUTINE | CO_GENERATOR) && !psyco_is_genexpr(co)) {
         goto not_ok;
     }
     /* zero-argument super() reads the __class__ cell and the first
@@ -576,6 +579,10 @@ _build_merge_points(PyCodeObject *co, int module)
             case BUILD_SLICE:
             case EXTENDED_ARG:
                 continue;
+            case YIELD_VALUE:
+                if (co->co_flags & CO_GENERATOR)
+                    continue;
+                goto not_ok;
             default:
                 //printf("Not ok %s %d\n", PyUnicode_AsUTF8(co->co_name), opcode);
                 goto not_ok;
@@ -590,6 +597,32 @@ not_ok:
     /*printf("Unsupported bytecode %d for %s\n", opcode,
            PyUnicode_AsUTF8(co->co_name));*/
     Py_RETURN_NONE;
+}
+
+/* the code of a generator expression: one argument (the iterator), no
+   cells, one yield (3.7 still allows a yield expression inside one) */
+DEFINEFN int
+psyco_is_genexpr(PyCodeObject *co)
+{
+    const _Py_CODEUNIT *p, *end;
+    int yields = 0;
+    if ((co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR |
+                         CO_ITERABLE_COROUTINE)) != CO_GENERATOR ||
+        co->co_argcount != 1 || co->co_kwonlyargcount != 0 ||
+        (co->co_flags & (CO_VARARGS | CO_VARKEYWORDS)) ||
+        PyTuple_GET_SIZE(co->co_cellvars) != 0 ||
+        PyUnicode_CompareWithASCIIString(co->co_name, "<genexpr>") != 0)
+        return 0;
+    p = (const _Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
+    end = p + PyBytes_GET_SIZE(co->co_code) / sizeof(_Py_CODEUNIT);
+    for (; p < end; p++) {
+        int op = _Py_OPCODE(*p);
+        if (op == YIELD_VALUE)
+            yields++;
+        else if (op == YIELD_FROM || op == GET_YIELD_FROM_ITER)
+            return 0;
+    }
+    return yields == 1;
 }
 
 DEFINEFN PyObject *
