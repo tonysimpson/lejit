@@ -15,6 +15,10 @@
 /*** This file is translated from the original 'abstract.c', see comments
      in the original file for the general ideas about the algorithms. ***/
 
+/* PyNumber_AsSsize_t: -1 may be a valid result, and any result may be
+   negative */
+#define CF_AS_SSIZE_T (CfReturnTypeNative | CfPyErrCheckMinus1)
+
 /* Shorthand to return certain errors */
 
 /* abstract.c's type_error: msg has one %.200s for the type's name */
@@ -119,7 +123,7 @@ vinfo_t *PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
       vinfo_t *result;
       vinfo_t *key_value;
       key_value =
-          psyco_generic_call(po, PyNumber_AsSsize_t, CfCommonPySSizeTResult,
+          psyco_generic_call(po, PyNumber_AsSsize_t, CF_AS_SSIZE_T,
                              "vl", key, (long)PyExc_IndexError);
       if (key_value == NULL)
         return NULL;
@@ -169,7 +173,7 @@ bool PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key,
       bool result;
       vinfo_t *key_value;
       key_value =
-          psyco_generic_call(po, PyNumber_AsSsize_t, CfCommonPySSizeTResult,
+          psyco_generic_call(po, PyNumber_AsSsize_t, CF_AS_SSIZE_T,
                              "vl", key, (long)PyExc_IndexError);
       if (key_value == NULL)
         return false;
@@ -527,7 +531,7 @@ static vinfo_t *psequence_repeat(PsycoObject *po, void *repeatfunc,
   if (PyType_TypeCheck(tp, &PyLong_Type)) {
     vcount = PsycoLong_AsLong(po, vn);
   } else if (PsycoIndex_Check(tp)) {
-    vcount = psyco_generic_call(po, PyNumber_AsSsize_t, CfCommonPySSizeTResult,
+    vcount = psyco_generic_call(po, PyNumber_AsSsize_t, CF_AS_SSIZE_T,
                                 "vl", vn, (long)PyExc_OverflowError);
   } else {
     return type_error_tp(po, "can't multiply sequence by non-int of type '%.200s'",
