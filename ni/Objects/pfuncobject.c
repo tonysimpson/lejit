@@ -5,8 +5,8 @@
  * a function that is still virtual reads its code, globals and defaults
  * directly and never materialises it. A generator expression called from
  * here stays a pending generator (PsycoGenexpr_New) until a consumer fuses it
- * or it escapes. A promoted function's defaults are checked at run time
- * (compiled_defaults, F52); its code is not.
+ * or it escapes. A promoted function's code and defaults are checked at run
+ * time (compiled_code, compiled_defaults: F57, F52).
  * Suspected bugs (from reading):
  *  - compute_function's SET_FIELD tests 'other != NULL ||
  *    !psyco_known_NULL(other)', which should be &&;
@@ -177,6 +177,48 @@ static PyObject *compiled_defaults(PyObject *f)
     return d == Py_None ? NULL : d;
 }
 
+/* The same for f's code (KNOWN_BUGS F57): a call compiled for one code
+   object checks that f still has it. */
+static PyCodeObject *compiled_code(PyObject *f)
+{
+    static PyObject *seen = NULL; /* function address -> code */
+    PyObject *key, *c;
+    if (seen == NULL && (seen = PyDict_New()) == NULL)
+        OUT_OF_MEMORY();
+    key = PyLong_FromVoidPtr(f);
+    if (key == NULL)
+        OUT_OF_MEMORY();
+    c = PyDict_GetItem(seen, key);
+    if (c == NULL) {
+        c = PyFunction_GET_CODE(f);
+        if (PyDict_SetItem(seen, key, c) < 0)
+            OUT_OF_MEMORY();
+    }
+    Py_DECREF(key);
+    return (PyCodeObject *)c;
+}
+
+/* emits 'f's field != expected' and says if it is true at run time */
+static int field_changed(PsycoObject *po, PyObject *f, defield_t df,
+                         PyObject *expected)
+{
+    vinfo_t *vf = vinfo_new(CompileTime_New((long)f));
+    vinfo_t *vnow = psyco_get_field(po, vf, df);
+    vinfo_t *vexp;
+    condition_code_t cc;
+    vinfo_decref(vf, po);
+    if (vnow == NULL)
+        return -1;
+    vexp = vinfo_new(CompileTime_New((long)expected));
+    cc = integer_cmp(po, vnow, vexp, Py_NE);
+    vinfo_decref(vexp, po);
+    vinfo_decref(vnow, po);
+    if (cc == CC_ERROR)
+        return -1;
+    return runtime_condition_f(po, cc);
+}
+
+#define FUNC_code_now FMUT(FUNC_code)
 #define FUNC_defaults_now FMUT(FUNC_defaults)
 
 DEFINEFN
@@ -192,37 +234,36 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     vinfo_t *result;
     int saved_inlining, tuple_size;
 
-    /* XXX we capture the code object, so this breaks if someone
-       changes the .func_code attribute of the function later */
-    co = (PyCodeObject *)PyFunction_GET_CODE(f);
+    /* the code and the defaults are those compiled while f still has
+       them */
+    co = compiled_code(f);
     /* psyco_call_pyfunc's own fallback rebuilds the function from code,
        globals and defaults, losing keyword-only defaults: call the real
        function instead */
     if (PyCode_GetNumFree(co) > 0 || co->co_kwonlyargcount > 0)
         goto fallback;
+    switch (field_changed(po, f, FUNC_code_now, (PyObject *)co)) {
+    case 0:
+        break;
+    case 1:
+        goto fallback;
+    default:
+        return NULL;
+    }
 
-    /* the defaults are those compiled while f still has them; a call that
-       gives every positional argument doesn't use them (keyword-only
-       ones went to the fallback) */
+    /* a call that gives every positional argument doesn't use the
+       defaults (keyword-only ones went to the fallback) */
     defl = compiled_defaults(f);
     tuple_size = PsycoTuple_Load(arg);
-    if (tuple_size < 0 || tuple_size < co->co_argcount) {
-        vinfo_t *vf = vinfo_new(CompileTime_New((long)f));
-        vinfo_t *vnow = psyco_get_field(po, vf, FUNC_defaults_now);
-        vinfo_t *vexp;
-        condition_code_t cc;
-        vinfo_decref(vf, po);
-        if (vnow == NULL)
-            return NULL;
-        vexp = vinfo_new(CompileTime_New((long)defl));
-        cc = integer_cmp(po, vnow, vexp, Py_NE);
-        vinfo_decref(vexp, po);
-        vinfo_decref(vnow, po);
-        if (cc == CC_ERROR)
-            return NULL;
-        if (runtime_condition_f(po, cc))
+    if (tuple_size < 0 || tuple_size < co->co_argcount)
+        switch (field_changed(po, f, FUNC_defaults_now, defl)) {
+        case 0:
+            break;
+        case 1:
             goto fallback;
-    }
+        default:
+            return NULL;
+        }
 
     glob = PyFunction_GET_GLOBALS(f);
     Py_INCREF(glob);
