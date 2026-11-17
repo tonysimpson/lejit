@@ -936,11 +936,13 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
    (psyco_compatible_join), instead of compiling its own copy of the code
    up to the next merge point. Any other path only jumps into an exact
    match: un-promoting or dropping there would make the main path lose
-   facts. Neither rewrites the state's small ints first (canonical_int). Merge points are never inside an
-   inlined frame, join points can be. Replay-safe as merge points are: a
-   replay never reaches the end of its block, a joined block's respawn
-   points replay from its own snapshot, and un-promotion and unification
-   emit no respawn point. */
+   facts. Both rewrite the state's small ints first (canonical_int), as at
+   a merge point. Merge points are never inside an inlined frame, join
+   points can be: the caller's code object and position there are fixed
+   constants (psyfunc.c:psyco_save_inline_po), never made run-time.
+   Replay-safe as merge points are: a replay never reaches the end of its
+   block, a joined block's respawn points replay from its own snapshot,
+   and un-promotion and unification emit no respawn point. */
 DEFINEFN long psyco_stat_joins[4];
 
 static code_t *compile_join(PsycoObject *po, global_entries_t *ge,
@@ -955,9 +957,7 @@ static code_t *compile_join(PsycoObject *po, global_entries_t *ge,
       psyco_stat_joins[branch ? 0 : 3]++;
     return psyco_unify(po, cmp, &oldcodebuf);
   }
-  if (cmp != NULL && (!branch || po->pr.is_inlining)) {
-    /* not in an inlined frame either: the caller's code object and
-       position (psyco_save_inline_po) are constants that must stay */
+  if (cmp != NULL && !branch) {
     psyco_stabilize(cmp);
     cmp = NULL;
   }

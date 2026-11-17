@@ -273,9 +273,12 @@ vinfo_t *psyco_save_inline_po(PsycoObject *po) {
   vinfo_t **pp = po->vlocals.items;
   vinfo_t *v = vinfo_new(VirtualTime_New(&EInline));
   v->array = array_new(TOTAL_LOC_INLINE + i);
-  v->array->items[LOC_INLINE_CO] = vinfo_new(CompileTime_New((long)po->pr.co));
+  /* fixed: the return reads them at compile time, so a match must never
+     make them run-time (a join point in the inlined frame, D44) */
+  v->array->items[LOC_INLINE_CO] =
+      vinfo_new(CompileTime_NewSk(sk_new((long)po->pr.co, SkFlagFixed)));
   v->array->items[LOC_INLINE_NEXT_INSTR] =
-      vinfo_new(CompileTime_New(po->pr.next_instr));
+      vinfo_new(CompileTime_NewSk(sk_new(po->pr.next_instr, SkFlagFixed)));
   while (i--) {
     v->array->items[TOTAL_LOC_INLINE + i] = pp[i];
     pp[i] = NULL;

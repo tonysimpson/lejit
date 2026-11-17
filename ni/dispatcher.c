@@ -1179,32 +1179,16 @@ PSY_INLINE bool fz_compatible_array(vinfo_array_t *aa, FrozenPsycoObject *fpo,
 
 /* forward */
 /* psyco_compatible_join: the known fields of a run-time value that the
-   snapshot doesn't have are dropped at any depth. They are loads of
-   immutable fields (FMUT ones are never cached), so the code they join
-   reloads them. Not other values: a virtual object's fields are its
-   contents (and see droppable()). compatible_rt_parent passes "aa belongs to a run-time value"
+   snapshot doesn't have are dropped at any depth, as compatible_array
+   drops anything below the first two levels. A run-time object's known
+   fields are loads of immutable fields (FMUT ones are never cached) or
+   what it was computed from (a computed tuple's items), so the code they
+   join reloads them; psyco_unify releases what they hold (KNOWN_BUGS C27).
+   Not the fields of other values: a virtual object's fields are its
+   contents. compatible_rt_parent passes "aa belongs to a run-time value"
    into the next compatible_array() call. */
 static bool compatible_drop_extra = false;
 static bool compatible_rt_parent = false;
-/* at a join point the state is not rewritten (canonical_int): there it is
-   often shared with a known field of a constant, which must stay constant
-   (test_math's testFrexp, test_grammar, test_aifc) */
-static bool compatible_at_join = false;
-
-/* what psyco_compatible_join may drop: no virtual value, and no reference
-   to release. psyco_unify decrefs what it drops only after moving the
-   values it keeps (x64/idispatcher.c:data_free_unused), by then possibly
-   over the dropped value's slot: upstream dropped only below the first two
-   levels, where it was rare (test_enum crashed). */
-static bool droppable(vinfo_t *a) {
-  int i;
-  if (is_virtualtime(a->source) || has_rtref(a->source))
-    return false;
-  for (i = 0; i < a->array->count; i++)
-    if (a->array->items[i] != NULL && !droppable(a->array->items[i]))
-      return false;
-  return true;
-}
 
 static bool compatible_array(vinfo_array_t *aa, int count,
                              vinfo_array_t **result, vinfo_array_t *reference,
@@ -1400,8 +1384,7 @@ static bool compatible_array(vinfo_array_t *aa, int count,
       return false;                                                            \
     /* if we are not too deep in the array, then we might as                   \
        well try compiling with this extra information */                       \
-    if (recdepth <= 2 && !(compatible_drop_extra && rt_parent &&             \
-                           droppable(a)))                                      \
+    if (recdepth <= 2 && !(compatible_drop_extra && rt_parent))               \
       return false;                                                            \
   }
 
@@ -1865,9 +1848,8 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
   int i;
   PyObject *plist = patterns->fatlist;
   extra_assert(PyList_Check(plist));
-  if (!compatible_at_join)
-    for (i = 0; i < po->pr.co->co_nlocals; i++)
-      canonical_int(po, i);
+  for (i = 0; i < po->pr.co->co_nlocals; i++)
+    canonical_int(po, i);
 #if NI_CODESTATS
   psyco_cs_align_rejects = 0;
 #endif
@@ -1937,11 +1919,9 @@ vcompatible_t *psyco_compatible_join(PsycoObject *po,
                                      global_entries_t *patterns,
                                      bool drop_fields) {
   vcompatible_t *r;
-  compatible_at_join = true;
   compatible_drop_extra = drop_fields;
   r = psyco_compatible(po, patterns);
   compatible_drop_extra = false;
-  compatible_at_join = false;
   return r;
 }
 

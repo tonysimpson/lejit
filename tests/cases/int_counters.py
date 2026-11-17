@@ -81,16 +81,15 @@ def unpacked_from_constant(n):
 
 
 def _check_pair(result, expected):
+    # as test_math's testFrexp: loop-free, so it is inlined, and 'abs' is a
+    # split site whose block starts at a join point (D44)
     (m, e), (em, ee) = result, expected
-    total = 0
-    for x in (m, e, em, ee):
-        total += x
-    return abs(m - em) < 1e-9 and e == ee, total
+    return abs(m - em) < 1e-9 and e == ee, m + e + em + ee
 
 
 def inlined_constant_arg(n):
     # the inlined call's constant argument (0, 0) is unpacked into locals
-    # that share its items, then a loop head is reached in the inlined frame
+    # that share its items; then a join point in the inlined frame
     out = []
     for i in range(n):
         out.append(_check_pair((0.0, 0), (0, 0)))
