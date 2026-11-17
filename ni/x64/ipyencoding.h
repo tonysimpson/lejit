@@ -265,6 +265,12 @@ typedef struct {
 EXTERNFN void psyco_inline_store_begin(PsycoObject *po, inline_store_t *s);
 EXTERNFN void psyco_inline_store_end(PsycoObject *po, inline_store_t *s);
 
+/* a type guard: the condition code for "tp's tp_flags or tp_version_tag
+   differs from *flags or *tag" */
+EXTERNFN condition_code_t psyco_type_guard(PsycoObject *po, PyTypeObject *tp,
+                                           unsigned long *flags,
+                                           unsigned long *tag);
+
 /* implemented in pycompiler.c */
 EXTERNFN void cimpl_finalize_frame_locals(PyObject *, PyObject *, PyObject *);
 

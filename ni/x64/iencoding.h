@@ -591,6 +591,32 @@ typedef enum {
 /* @asm: lea {r}, [{rm}{o}] */
 #define LEA_R_O(r, rm, o)                                                      \
   OFFSET_ENCODING(false, true, 1, 0x8D, 0, 0, 0, 0, r, rm, o)
+/* @asm: mov {r:d}, dword ptr [{rm}{o}] */
+#define MOV_DR_O(r, rm, o)                                                     \
+  OFFSET_ENCODING(false, false, 1, 0x8B, 0, 0, 0, 0, r, rm, o)
+/* RIP-relative: 'o' is from the end of the instruction, which is 7 bytes.
+   It is evaluated before anything is written, so it may use 'code'. */
+/* @asm: lea {r}, [rip{o:d32}] */
+#define LEA_R_RIP(r, o)                                                        \
+  do {                                                                         \
+    long _rip_o = (o);                                                         \
+    REX_ENCODING(true, r, 0, 0);                                               \
+    WRITE_1(0x8D);                                                             \
+    MODRM_ENCODING(0, r, 5);                                                   \
+    WRITE_32BIT(_rip_o);                                                       \
+  } while (0)
+/* @asm: xor {r}, qword ptr [rip{o:d32}] */
+#define XOR_R_RIP(r, o)                                                        \
+  do {                                                                         \
+    long _rip_o = (o);                                                         \
+    REX_ENCODING(true, r, 0, 0);                                               \
+    WRITE_1(0x33);                                                             \
+    MODRM_ENCODING(0, r, 5);                                                   \
+    WRITE_32BIT(_rip_o);                                                       \
+  } while (0)
+/* @asm: xor {r}, qword ptr [{rm}{o}] */
+#define XOR_R_O(r, rm, o)                                                      \
+  OFFSET_ENCODING(false, true, 1, 0x33, 0, 0, 0, 0, r, rm, o)
 /* @asm: mov {r}, qword ptr [{base}+{index}*{scale}{offset:d8}] */
 #define MOV_R_X8(r, base, offset, index, scale)                                \
   SIB_ENCODING(false, true, 1, 0x8B, 0, 0, 0, 8, r, base, offset, index, scale)
@@ -758,6 +784,8 @@ typedef enum {
 #define ADD_R_R(r, rm) DIRECT_ENCODING(true, 1, 0x03, 0, 0, 0, r, rm);
 /* @asm: xor {r}, {rm} */
 #define XOR_R_R(r, rm) DIRECT_ENCODING(true, 1, 0x33, 0, 0, 0, r, rm);
+/* @asm: or {r}, {rm} */
+#define OR_R_R(r, rm) DIRECT_ENCODING(true, 1, 0x0B, 0, 0, 0, r, rm)
 
 /* @asm: sub {rm}, {i:i8} */
 #define SUB_R_I8(rm, i)                                                        \

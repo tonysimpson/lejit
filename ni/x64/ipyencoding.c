@@ -283,3 +283,34 @@ void psyco_inline_store_end(PsycoObject *po, inline_store_t *s) {
     ni_trace_jump(s->done[i], po->code);
   }
 }
+
+/* A type guard (pobject.c:type_changed): tp's tp_flags and tp_version_tag
+   compared with a guard's two words, which are read at run time. The
+   expected words are reached RIP-relative when in reach; otherwise
+   through RAX, which is freed either way, so that the compiler's state
+   doesn't depend on where the code is (a replay runs elsewhere). */
+DEFINEFN
+condition_code_t psyco_type_guard(PsycoObject *po, PyTypeObject *tp,
+                                  unsigned long *flags, unsigned long *tag) {
+  long off;
+  BEGIN_CODE
+  NEED_CC();
+  NEED_REGISTER(REG_X64_RAX);
+  MOV_R_I(REG_TRANSIENT_1, (long)tp);
+  MOV_R_O(REG_TRANSIENT_2, REG_TRANSIENT_1, offsetof(PyTypeObject, tp_flags));
+  MOV_DR_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
+           offsetof(PyTypeObject, tp_version_tag));
+  off = (long)flags - ((long)code + 7);
+  if (FITS_IN_32BITS(off) && FITS_IN_32BITS((long)tag - ((long)code + 14))) {
+    XOR_R_RIP(REG_TRANSIENT_2, off);
+    XOR_R_RIP(REG_TRANSIENT_1, (long)tag - ((long)code + 7));
+  } else {
+    MOV_R_I(REG_X64_RAX, (long)flags);
+    XOR_R_O(REG_TRANSIENT_2, REG_X64_RAX, 0);
+    off = (char *)tag - (char *)flags;
+    XOR_R_O(REG_TRANSIENT_1, REG_X64_RAX, off);
+  }
+  OR_R_R(REG_TRANSIENT_1, REG_TRANSIENT_2);
+  END_CODE
+  return CC_NE;
+}

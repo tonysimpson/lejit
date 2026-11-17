@@ -205,19 +205,10 @@ typedef struct {
   unsigned long tag;
 } attr_guard_t;
 
-/* The guard is inline: the type changed if tp_flags (which include
-   Py_TPFLAGS_VALID_VERSION_TAG) or tp_version_tag differ from the guard's.
-   All four are run-time loads, so a replay with an unset guard emits the
-   same conditions. */
-#define TYPE_flags                                                             \
-  FMUT(UNSIGNED_FIELD(PyTypeObject, unsigned long, tp_flags, NO_PREV_FIELD))
-#define TYPE_version_tag                                                       \
-  FMUT(UNSIGNED_FIELD(PyTypeObject, unsigned int, tp_version_tag,              \
-                      NO_PREV_FIELD))
-#define AGUARD_flags                                                           \
-  FMUT(UNSIGNED_FIELD(attr_guard_t, unsigned long, flags, NO_PREV_FIELD))
-#define AGUARD_tag                                                             \
-  FMUT(UNSIGNED_FIELD(attr_guard_t, unsigned long, tag, NO_PREV_FIELD))
+/* The guard is inline (x64/ipyencoding.c:psyco_type_guard): the type
+   changed if tp_flags (which include Py_TPFLAGS_VALID_VERSION_TAG) or
+   tp_version_tag differ from the guard's. All four are run-time loads, so
+   a replay with an unset guard emits the same conditions. */
 
 static vinfo_t *field_xor(PsycoObject *po, vinfo_t *a, defield_t fa,
                           vinfo_t *b, defield_t fb) {
@@ -236,26 +227,11 @@ static vinfo_t *field_xor(PsycoObject *po, vinfo_t *a, defield_t fa,
   return r;
 }
 
-/* the type differs from the guard's: a condition code, or CC_ERROR */
+/* the type differs from the guard's: a condition code */
 static condition_code_t type_changed(PsycoObject *po, PyTypeObject *tp,
                                      attr_guard_t *guard) {
-  vinfo_t *vtp = vinfo_new(CompileTime_New((long)tp));
-  vinfo_t *vg = vinfo_new(CompileTime_New((long)guard));
-  vinfo_t *x, *y = NULL, *z = NULL;
-  x = field_xor(po, vtp, TYPE_flags, vg, AGUARD_flags);
-  if (x != NULL)
-    y = field_xor(po, vtp, TYPE_version_tag, vg, AGUARD_tag);
-  if (y != NULL)
-    z = integer_or(po, x, y);
-  vinfo_xdecref(y, po);
-  vinfo_xdecref(x, po);
-  vinfo_decref(vg, po);
-  vinfo_decref(vtp, po);
-  if (z == NULL)
-    return CC_ERROR;
-  return integer_NON_NULL(po, z); /* consumes z */
+  return psyco_type_guard(po, tp, &guard->flags, &guard->tag);
 }
-
 
 /* borrowed, or NULL with no exception set (PyDict_GetItem) */
 static PyObject *cimpl_instance_dict_get(PyObject *obj, PyObject *name) {
