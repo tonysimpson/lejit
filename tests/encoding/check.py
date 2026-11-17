@@ -253,6 +253,59 @@ def normalise(t):
     return '; '.join(parts)
 
 
+JUMP_DECODER = r'''
+#include <Python.h>
+#include "psyco.h"
+#include "vcompiler.h"
+#include <iencoding.h>
+#include <stdio.h>
+static code_t buf[1 << 18];
+int main(void) {
+  static const long disps[] = {0, 1, -1, 0xE9, -0x17, 0xE9E9, 0x12E9,
+                               -0x1000, 0x10000, -0x1FF17};
+  int bad = 0;
+  unsigned i;
+  for (i = 0; i < sizeof(disps) / sizeof(disps[0]); i++) {
+    code_t *start = buf + (1 << 17), *code = start, *target;
+    code_t *want = start + SIZE_OF_FAR_JUMP + disps[i];
+    JUMP_TO(want);
+    if (!IS_A_SINGLE_JUMP(start, code, target) || target != want) {
+      printf("JMP with displacement %ld not decoded\n", disps[i]);
+      bad++;
+    }
+  }
+  {
+    code_t *start = buf, *target; /* mov eax, 0xe9e9e9e9 */
+    start[0] = 0xB8;
+    start[1] = start[2] = start[3] = start[4] = 0xE9;
+    if (IS_A_SINGLE_JUMP(start, start + 5, target)) {
+      printf("mov eax, imm32 taken for a JMP\n");
+      bad++;
+    }
+  }
+  return bad != 0;
+}
+'''
+
+
+def check_jump_decoder(workdir):
+    """IS_A_SINGLE_JUMP (x64/idispatcher.h:make_code_conditional) decodes
+    rather than emits, so it has no @asm annotation: check that it recognises
+    what JUMP_TO writes, with its target, and nothing else of that length.
+    It read the JMP one byte late (KNOWN_BUGS C35)."""
+    cfile = os.path.join(workdir, 'jumps.c')
+    open(cfile, 'w').write(JUMP_DECODER)
+    inc = subprocess.check_output([PY37, '-c', "import sysconfig;print(sysconfig.get_paths()['include'])"]).decode().strip()
+    exe = os.path.join(workdir, 'jumps')
+    subprocess.check_call(['gcc', '-w', '-O0', '-DALL_CHECKS=0', '-DNI_TRACE=0', '-DALL_STATIC=0',
+                           '-I' + inc, '-I' + os.path.join(ROOT, 'ni'), '-I' + os.path.join(ROOT, 'ni', 'x64'),
+                           cfile, '-o', exe])
+    p = subprocess.run([exe], stdout=subprocess.PIPE)
+    for line in p.stdout.decode().splitlines():
+        print('IS_A_SINGLE_JUMP: ' + line)
+    return p.returncode != 0
+
+
 def main():
     args = sys.argv[1:]
     filt = args[args.index('-k') + 1] if '-k' in args else None
@@ -264,6 +317,7 @@ def main():
         idata, ibounds = build_intended(case_list, wd)
         etext = disassemble(edata, ebounds, wd, 'e')
         itext = disassemble(idata, ibounds, wd, 'i')
+        jumps_bad = check_jump_decoder(wd)
     bad = {}
     for i, (name, params, combo, intent) in enumerate(case_list):
         e, it = normalise(etext[i]), normalise(itext[i])
@@ -282,7 +336,7 @@ def main():
             print('    ' + line)
     print('%d macros, %d cases, %d mismatches in %d macros' % (
         len({c[0] for c in case_list}), total, nbad, len(bad)))
-    return 1 if nbad else 0
+    return 1 if nbad or jumps_bad else 0
 
 
 if __name__ == '__main__':

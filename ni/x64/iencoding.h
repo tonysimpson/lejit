@@ -1519,9 +1519,12 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
     code += 4;                                                                 \
   } while (0)
 
+/* decodes what JUMP_TO wrote (checked by tests/encoding/check.py: it used to
+   read one byte late, and then misread a JMP whose displacement's low byte
+   was 0xE9, KNOWN_BUGS C35) */
 #define IS_A_JUMP(code, targetaddr)                                            \
-  (code[1] == (code_t)0xE9 &&                                                  \
-   (targetaddr = code + 6 + *(dword_t *)(code + 2), 1))
+  (code[0] == (code_t)0xE9 &&                                                  \
+   (targetaddr = code + 5 + *(dword_t *)(code + 1), 1))
 
 #define IS_A_SINGLE_JUMP(code, codeend, targetaddr)                            \
   ((codeend) - (code) == SIZE_OF_FAR_JUMP && IS_A_JUMP(code, targetaddr))
