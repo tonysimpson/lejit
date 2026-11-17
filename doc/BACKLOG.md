@@ -70,7 +70,3 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **Meta-compiler** (METACOMPILER.md, GOAL.md): next slices after ints, floats and the bytecode slice; the stage-order question (QUESTIONS 26); per-slot signatures, `Cf*` flags, restart safety, virtual-object annotations (QUESTIONS 7–10). Today's hand-written work (shared keys, D31–D33, strings) adds to what the generator must reproduce: worth recording each as a pattern in PATTERNS.md.
 - **Decoupling the core** (QUESTIONS 21–25, D16).
 - **3.12 port** (PORT312.md; QUESTIONS 29–33).
-
-## For the owner
-
-- **GOAL.md's "current phase" says research and classification, not new code.** Since 2026-11-16 the work has been mostly performance code on the 3.7 baseline. Either GOAL.md should say so, or the next step should be back to the meta-compiler.

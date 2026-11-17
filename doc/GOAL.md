@@ -1,6 +1,6 @@
 ---
 written: 2026-11-16
-head_ref: e1fd808
+updated: 2026-11-17
 ---
 # Goal and scope
 
@@ -18,7 +18,11 @@ He went further on the mailing list. On 2002-11-18 he wrote: "I'm currently desi
 
 ## What the current phase is
 
-Research and classification, not new code. For everything in this repo, decide which of these it is:
+**A robust 3.7 baseline with worthwhile performance (from 2026-11-17).** The classification work below is done (`doc/MAP.md`, `doc/PATTERNS.md`, `doc/history/`). The phase now is making the 3.7 baseline correct and fast enough to be worth generating: fixing open bugs, and taking the performance improvements that measurement shows are worthwhile (D29: compile time and code size count too). The open items are in `doc/BACKLOG.md`. Then come the 3.12 port (`doc/PORT312.md`) and the meta-compiler, with this baseline as the specification and test oracle.
+
+Hand-written improvements in this phase are translated-layer code too: each one is something the generator must later reproduce. Record the pattern behind each in `doc/PATTERNS.md`.
+
+The classification still applies to everything in the repo:
 
 | Class | Meaning | What happens to it |
 |---|---|---|
@@ -45,6 +49,10 @@ The owner accepts this is a very high bar. Without it the code stays unmaintaina
 - Rewriting the core before the classification work is done.
 
 ## Success looks like
+
+For this phase: the backlog's bugs fixed or knowingly accepted, CPython's tests and pyperformance passing under Ni, and each performance change measured against speed, compile time and code size.
+
+For the classification phase (done):
 
 1. Every file and every significant function in this repo is classified (`doc/MAP.md`).
 2. The translation patterns are catalogued with examples (`doc/PATTERNS.md`).
