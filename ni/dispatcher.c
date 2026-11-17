@@ -517,6 +517,16 @@ PsycoObject *fpo_unfreeze(FrozenPsycoObject *fpo) {
  * (generally uncompiled) branch.
  *****/
 
+#if ALL_CHECKS
+typedef struct {
+  unsigned long x;  /* what is compared (replay check, below) */
+  long value;       /* a constant's value, else 0 */
+  PyTypeObject *tp; /* a constant object's type, for the report */
+  short index;      /* in its array, */
+  short depth;      /* and that array's nesting depth */
+} respawn_item_t;
+#endif
+
 typedef struct respawn_s {
   CodeBufferObject *self;
   void *write_jmp;
@@ -528,7 +538,8 @@ typedef struct respawn_s {
     int line;
     int next_instr;
     int stack_depth;
-    unsigned long state; /* respawn_fingerprint() of po->vlocals */
+    int count;
+    respawn_item_t *items; /* po->vlocals, flattened */
   } check;
 #endif
 } respawn_t;
@@ -536,45 +547,54 @@ typedef struct respawn_s {
 #if ALL_CHECKS
 /* Replay check. A replay must reach its respawn point in exactly the state
    the first compile was in there (see the warning in dispatcher.h). Each
-   respawn point records where it was made and a fingerprint of the state;
-   the replay compares them when it detects the point, and stops at the
-   first difference instead of compiling a branch for the wrong state.
+   respawn point records where it was made and a flattened copy of the
+   state; the replay compares them when it detects the point, and stops at
+   the first difference instead of compiling a branch for the wrong state.
    Fields known about run-time values are left out (see below).
    Only the final point of a chain of respawned buffers is checked. */
 DEFINEVAR const char *psyco_respawn_file = NULL;
 DEFINEVAR int psyco_respawn_line = 0;
 
-static unsigned long respawn_fingerprint(vinfo_array_t *a, unsigned long h) {
+static int respawn_flatten(vinfo_array_t *a, int depth, respawn_item_t *out,
+                           int n) {
   int i;
   for (i = 0; i < a->count; i++) {
     vinfo_t *v = a->items[i];
-    unsigned long x;
+    respawn_item_t it = {1, 0, NULL, (short)i, (short)depth};
     if (v == NULL)
-      x = 1;
+      ;
     else if (is_compiletime(v->source)) {
       /* folding can build an immutable value afresh on each compile (a
          constant tuple): compare those by type. Any other object, such as
-         a class or a function, by identity. */
+         a class or a function, by identity, but see respawn_same_constant */
       source_known_t *sk = CompileTime_Get(v->source);
       PyObject *o = (PyObject *)sk->value;
-      if ((sk->refcount1_flags & SkFlagPyObj) &&
+      it.value = sk->value;
+      if (sk->refcount1_flags & SkFlagPyObj)
+        it.tp = Py_TYPE(o);
+      if (it.tp != NULL &&
           (PyTuple_CheckExact(o) || PyUnicode_CheckExact(o) ||
            PyBytes_CheckExact(o) || PyLong_CheckExact(o) ||
            PyFloat_CheckExact(o) || PyFrozenSet_CheckExact(o)))
-        x = (unsigned long)Py_TYPE(o) * 4 + 3;
+        it.x = (unsigned long)it.tp * 4 + 3;
+      else if (it.tp == &PyCFunction_Type)
+        /* a built-in bound method, made by folding an attribute lookup on
+           a constant: compare which C function it wraps */
+        it.x = (unsigned long)((PyCFunctionObject *)o)->m_ml * 4 + 3;
       else
-        x = (unsigned long)sk->value * 4 + 2;
-    }
-    else
-      x = (unsigned long)v->source; /* a location, or a virtual type */
-    h = (h ^ x) * 1099511628211UL;
+        it.x = (unsigned long)sk->value * 4 + 2;
+    } else
+      it.x = (unsigned long)v->source; /* a location, or a virtual type */
+    if (out != NULL)
+      out[n] = it;
+    n++;
     /* a virtual object's fields are part of the state; under a run-time or
        compile-time value they are only known fields, which a snapshot may
        drop, so a replay can legitimately know less */
     if (v != NULL && is_virtualtime(v->source) && v->array != NullArray)
-      h = respawn_fingerprint(v->array, h ^ 0x9e37);
+      n = respawn_flatten(v->array, depth + 1, out, n);
   }
-  return h;
+  return n;
 }
 
 static void respawn_check_fill(struct respawn_check_s *c, PsycoObject *po) {
@@ -582,30 +602,72 @@ static void respawn_check_fill(struct respawn_check_s *c, PsycoObject *po) {
   c->line = psyco_respawn_line;
   c->next_instr = po->pr.next_instr;
   c->stack_depth = po->stack_depth;
-  c->state = respawn_fingerprint(&po->vlocals, 14695981039346656037UL);
+  c->count = respawn_flatten(&po->vlocals, 0, NULL, 0);
+  c->items = PyMem_Malloc(c->count * sizeof(respawn_item_t) + 1);
+  if (c->items == NULL)
+    OUT_OF_MEMORY();
+  respawn_flatten(&po->vlocals, 0, c->items, 0);
+}
+
+static const char *respawn_item_kind(respawn_item_t *it) {
+  switch (it->x & 3) {
+  case 1: return "null";
+  case 2: return it->tp ? "constant object" : "constant";
+  case 3: return "constant immutable value";
+  default: return "run-time or virtual source";
+  }
+}
+
+/* the same constant, whatever its flags: psyco_unfix() clears SkFlagPyObj
+   on a source_known_t that a snapshot may share (KNOWN_BUGS F35) */
+static bool respawn_same_constant(respawn_item_t *a, respawn_item_t *b) {
+  return (a->x & 2) && (b->x & 2) && a->value == b->value;
 }
 
 static void respawn_check(respawn_t *rs, PsycoObject *po) {
   struct respawn_check_s now;
+  int i, diff = -1;
   respawn_check_fill(&now, po);
+  for (i = 0; i < now.count && i < rs->check.count; i++)
+    if ((now.items[i].x != rs->check.items[i].x &&
+         !respawn_same_constant(&now.items[i], &rs->check.items[i])) ||
+        now.items[i].depth != rs->check.items[i].depth) {
+      diff = i;
+      break;
+    }
+  if (diff < 0 && now.count != rs->check.count)
+    diff = i;
   if (now.file != rs->check.file || now.line != rs->check.line ||
       now.next_instr != rs->check.next_instr ||
-      now.stack_depth != rs->check.stack_depth ||
-      now.state != rs->check.state) {
+      now.stack_depth != rs->check.stack_depth || diff >= 0) {
     fprintf(stderr,
             "psyco: replay reached respawn point %d in a different state\n"
             "  code %s, first compile / replay:\n"
             "  made at: %s:%d / %s:%d\n"
             "  next_instr: %d / %d\n"
             "  stack_depth: %d / %d\n"
-            "  state fingerprint: %#lx / %#lx\n",
+            "  state items: %d / %d\n",
             rs->respawn_cnt, PyUnicode_AsUTF8(po->pr.co->co_name),
             rs->check.file ? rs->check.file : "?", rs->check.line,
             now.file ? now.file : "?", now.line, rs->check.next_instr,
             now.next_instr, rs->check.stack_depth, now.stack_depth,
-            rs->check.state, now.state);
+            rs->check.count, now.count);
+    if (diff >= 0) {
+      respawn_item_t *a = diff < rs->check.count ? &rs->check.items[diff] : NULL;
+      respawn_item_t *b = diff < now.count ? &now.items[diff] : NULL;
+      fprintf(stderr, "  first difference at flattened item %d:\n", diff);
+      if (a)
+        fprintf(stderr, "    first compile: [%d] at depth %d, %s %#lx%s%s\n",
+                a->index, a->depth, respawn_item_kind(a), a->x,
+                a->tp ? ", type " : "", a->tp ? a->tp->tp_name : "");
+      if (b)
+        fprintf(stderr, "    replay:        [%d] at depth %d, %s %#lx%s%s\n",
+                b->index, b->depth, respawn_item_kind(b), b->x,
+                b->tp ? ", type " : "", b->tp ? b->tp->tp_name : "");
+    }
     Py_FatalError("psyco: respawn replay diverged");
   }
+  PyMem_Free(now.items);
 }
 #endif
 
