@@ -798,9 +798,11 @@ DEFINEFN code_t *psyco_stub_enter(void *record) {
   return r->fn(r + 1);
 }
 
-/* a stub that calls 'fn' with a new closure of 'size' bytes; returns the
-   closure and sets *stub to the code to jump to */
-static void *psyco_new_stub(void *fn, size_t size, code_t **stub) {
+DEFINEFN void psyco_free_stub(void *closure) {
+  PyMem_Free(((stub_record_t *)closure) - 1);
+}
+
+DEFINEFN void *psyco_new_stub(void *fn, size_t size, code_t **stub) {
   static code_t *pool = NULL, *pool_end = NULL;
   stub_record_t *r = PyMem_Malloc(sizeof(stub_record_t) + size);
   if (r == NULL)

@@ -694,7 +694,6 @@ void psyco_assert_field(PsycoObject *po, vinfo_t *vi, defield_t df,
 /*****************************************************************/
 
 typedef struct {
-  CodeBufferObject *self;
   PsycoObject *po;
   resume_fn_t resume_fn;
   void *jump_to_fix;
@@ -717,32 +716,27 @@ static code_t *do_resume_coding_body(coding_pause_t *cp) {
   /* then fix the jump to point to 'target' */
   change_cond_jump_target(cp->jump_to_fix, target);
 
-  /* cannot Py_DECREF(cp->self) because the current function is returning into
-     that code now, but any time later is fine: use the trash of codemanager.c
-   */
-  psyco_trash_object((PyObject *)cp->self);
+  /* the only way in was that jump: the stub is never entered again */
+  psyco_free_stub(cp);
   return target;
 }
 
-/* Prepare a 'coding pause', i.e. a short amount of code (proxy) that will be
-   called only if the execution actually reaches it to go on with compilation.
-   'po' is the PsycoObject corresponding to the proxy.
+/* Prepare a 'coding pause', i.e. a stub (idispatcher.h) that will be
+   entered only if the execution actually reaches it to go on with
+   compilation.
+   'po' is the PsycoObject corresponding to the stub.
    'jmpcondition' should not be CC_ALWAYS_FALSE.
-   The (possibly conditional) jump to the proxy is encoded in 'calling_code'.
-   When the execution reaches the proxy, 'resume_fn' is called and the proxy
-   destroys itself and replaces the original jump to it by a jump to the newly
-   compiled code. */
+   The (possibly conditional) jump to the stub is written at 'po->code'.
+   When the execution reaches the stub, 'resume_fn' is called, the original
+   jump is repointed to the newly compiled code and the record is freed. */
 DEFINEFN
 void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
                         resume_fn_t resume_fn, void *extra, size_t extrasize) {
   coding_pause_t *cp;
-  code_t *calling_code;
-  code_t *calling_limit;
-  code_t *limit;
-  CodeBufferObject *codebuf;
+  code_t *stub;
 
-  /* the proxy's call clobbers the flags (KNOWN_BUGS B8): a condition still
-     live in them, such as a virtual bool just compared, is saved in a
+  /* the trampoline's call clobbers the flags (KNOWN_BUGS B8): a condition
+     still live in them, such as a virtual bool just compared, is saved in a
      register first, in the calling code. A conditional pause jumps on the
      flags, so there the only live condition must be the one it jumps on. */
   if (jmpcondition == CC_ALWAYS_TRUE) {
@@ -750,35 +744,19 @@ void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
     NEED_CC();
     po->code = code;
   }
-  codebuf = psyco_new_code_buffer(NULL, NULL, &limit);
 
-  /* the proxy contains only a jump to do_resume_coding,
-     followed by a coding_pause_t structure, itself followed by the
-     'extra' data. */
-  calling_code = po->code;
-  calling_limit = po->codelimit;
-  po->code = insn_code_label(codebuf->codestart);
-  po->codelimit = limit;
-  cp = (coding_pause_t *)psyco_call_code_builder(
-      po, &do_resume_coding, true, SOURCE_DUMMY,
-      sizeof(coding_pause_t) + extrasize);
-  SHRINK_CODE_BUFFER(codebuf, po->code, "coding_pause");
-  /* fill in the coding_pause_t structure and the following 'extra' data */
+  /* the stub's record holds a coding_pause_t, then the 'extra' data */
+  cp = (coding_pause_t *)psyco_new_stub(
+      &do_resume_coding, sizeof(coding_pause_t) + extrasize, &stub);
   psyco_resolved_cc(po, jmpcondition); /* jmpcondition is true if we follow
                                           the branch */
-  /* the proxy's call clobbers the flags (upstream saved them; the x64
-     builder does not, KNOWN_BUGS B8): no other condition may still be live */
   extra_assert(!HAS_CCREG(po));
-  cp->self = codebuf;
   cp->po = po;
   cp->resume_fn = resume_fn;
   memcpy(cp + 1, extra, extrasize);
 
-  /* write the jump to the proxy */
-  po->code = calling_code;
-  po->codelimit = calling_limit;
-  cp->jump_to_fix =
-      conditional_jump_to(po, (code_t *)codebuf->codestart, jmpcondition);
+  /* write the jump to the stub */
+  cp->jump_to_fix = conditional_jump_to(po, stub, jmpcondition);
 }
 
 /* for psyco_coding_pause(): a resume function that simply resumes compilation.

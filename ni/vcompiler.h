@@ -740,14 +740,13 @@ EXTERNFN void psyco_compile_cond(PsycoObject *po, mergepoint_t *mp,
 EXTERNFN CodeBufferObject *psyco_compile_code(PsycoObject *po,
                                               mergepoint_t *mp);
 
-/* Prepare a 'coding pause', i.e. a short amount of code (proxy) that will be
-   called only if the execution actually reaches it to go on with compilation.
-   'po' is the PsycoObject corresponding to the proxy.
+/* Prepare a 'coding pause', i.e. a stub (idispatcher.h) that will be entered
+   only if the execution actually reaches it to go on with compilation.
+   'po' is the PsycoObject corresponding to the stub.
    'condition' may not be CC_ALWAYS_FALSE.
-   The (possibly conditional) jump to the proxy is encoded in 'calling_code'.
-   When the execution reaches the proxy, 'resume_fn' is called and the proxy
-   destroys itself and replaces the original jump to it by a jump to the newly
-   compiled code. */
+   The (possibly conditional) jump to the stub is written at 'po->code'.
+   When the execution reaches the stub, 'resume_fn' is called, the original
+   jump is repointed to the newly compiled code and the record is freed. */
 typedef code_t *(*resume_fn_t)(PsycoObject *po, void *extra);
 EXTERNFN void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
                                  resume_fn_t resume_fn, void *extra,

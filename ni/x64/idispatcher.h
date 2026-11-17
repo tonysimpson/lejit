@@ -122,6 +122,11 @@ PSY_INLINE void* ipromotion_finish(PsycoObject* po, vinfo_t* fix, void* do_promo
 EXTERNVAR code_t *psyco_stub_trampoline;
 EXTERNFN code_t *psyco_write_stub(code_t *code, void *record);
 EXTERNFN code_t *psyco_stub_enter(void *record); /* dispatcher.c */
+/* dispatcher.c: a stub that calls 'fn' with a new closure of 'size' bytes;
+   returns the closure and sets *stub to the code to jump to. Once the stub
+   can no longer be entered, psyco_free_stub(closure) frees the record. */
+EXTERNFN void *psyco_new_stub(void *fn, size_t size, code_t **stub);
+EXTERNFN void psyco_free_stub(void *closure);
 
 /***************************************************************/
  /***   Misc.                                                 ***/
