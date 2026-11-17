@@ -5,7 +5,10 @@
  *    (fz_compress) and compared without being decompressed (compatible_array).
  *  - psyco_compatible: a linear scan of the snapshots. Fixed constants
  *    (SkFlagFixed) must match exactly; other differing constants are returned
- *    in 'diff' to be un-promoted. Ni added a 16-byte stack-alignment test
+ *    in 'diff' to be un-promoted, and so is a virtual int's known value where
+ *    the snapshot's is run-time (D33). Before comparing, canonical_int writes
+ *    a constant small int or bool in a local as a virtual int, so the two
+ *    forms of a counter compare. Ni added a 16-byte stack-alignment test
  *    (compare_return_address_in_a_stupid_way) that rejects otherwise good
  *    matches: a kludge for x86-64 call alignment.
  *  - Respawn: the rare branch of a run-time condition keeps no snapshot. When
@@ -1131,14 +1134,26 @@ PSY_INLINE bool fz_compatible_array(vinfo_array_t *aa, FrozenPsycoObject *fpo,
 /* forward */
 static bool compatible_array(vinfo_array_t *aa, int count,
                              vinfo_array_t **result, vinfo_array_t *reference,
-                             int recdepth);
+                             int recdepth, bool vint);
 #if COMPRESS_COMPILETIME_SUBITEMS
 static void skip_compatible_array(int count);
 #endif
 
+/* approximative match: 'a' may be un-promoted from compile-time to run-time */
+static void compatible_diff(vinfo_array_t **result, vinfo_t *a) {
+  int i, ocount = (*result)->count;
+  /* do not add several time the same value to the array */
+  for (i = 0; i < ocount; i++)
+    if ((*result)->items[i] == a)
+      return;
+  *result = array_grow1(*result, ocount + 1);
+  (*result)->items[ocount] = a;
+}
+
+/* 'vint_value': 'a' is the value word of a virtual int or bool */
 static bool compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
                              vinfo_array_t **result, vinfo_t *aref,
-                             int recdepth) {
+                             int recdepth, bool vint_value) {
   /* Check if 'a' matches 'bsource'. */
   long diff;
   /*bool skip_subarray = false;*/
@@ -1170,8 +1185,23 @@ static bool compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
     return false; /* NULL not compatible with non-NULL */
   diff = ((long)a->source) ^ ((long)bsource);
   if (diff != 0) {
-    if ((diff & TimeMask) != 0)
-      return false; /* not the same TIME_MASK */
+    if ((diff & TimeMask) != 0) {
+      /* a virtual int's value, known here and run-time in 'b': the same
+         family, so a partial match like two different constants (CODE_SIZE.md
+         option 2); otherwise counters that are still 0 on some paths start
+         a block per combination. Not a fixed value: code after it relies on
+         it, and promotion would loop. */
+      source_known_t *sk;
+      if (!vint_value || !is_compiletime(a->source) || !is_runtime(bsource))
+        return false; /* not the same TIME_MASK */
+      sk = CompileTime_Get(a->source);
+      if ((sk->refcount1_flags & SkFlagFixed) != 0 ||
+          (bsource & RunTime_NoRef) == 0 ||
+          (sk->value < 0 && (bsource & RunTime_NonNeg) != 0))
+        return false;
+      compatible_diff(result, a);
+      return bcount == 0 && a->array == NullArray;
+    }
 
     switch (gettime(a->source)) {
 
@@ -1210,19 +1240,8 @@ static bool compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
            variables. These must *never* be un-promoted
            to run-time, because we will get a NULL
            pointer and a segfault. Argh. */
-        else {
-          /* approximative match, might un-promote 'a' from
-             compile-time to run-time. */
-          int i, ocount = (*result)->count;
-          /* do not add several time the same value to the array */
-          for (i = 0; i < ocount; i++)
-            if ((*result)->items[i] == a)
-              break;
-          if (i == ocount) {
-            *result = array_grow1(*result, ocount + 1);
-            (*result)->items[ocount] = a;
-          }
-        }
+        else
+          compatible_diff(result, a);
       }
       /*else
         skip_subarray = true;*/
@@ -1264,7 +1283,8 @@ static bool compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
   }
 #endif /* COMPRESS_COMPILETIME_SUBITEMS */
 
-  return compatible_array(a->array, bcount, result, aref->array, recdepth + 1);
+  return compatible_array(a->array, bcount, result, aref->array, recdepth + 1,
+                          PsycoLong_IsVirtual(a));
 }
 
 /* The following function is the composition of fz_uncompress() and
@@ -1272,7 +1292,7 @@ static bool compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
    a whole uncompressed copy of the pseudo-code. */
 static bool compatible_array(vinfo_array_t *aa, int count,
                              vinfo_array_t **result, vinfo_array_t *reference,
-                             int recdepth) {
+                             int recdepth, bool vint) {
   /* In the following comments, 'bb' refers to the implicit intermediate
      array that would be created by fz_uncompress(). */
   /* 'reference' is a either 'aa', or another array of items that already
@@ -1358,7 +1378,7 @@ static bool compatible_array(vinfo_array_t *aa, int count,
       /* Compare 'a' and 'bsource'. */
       extra_assert(i < reference->count);
       if (!compatible_vinfo(a, bsource, opc, result, reference->items[i],
-                            recdepth))
+                            recdepth, vint && i == iLONG_VALUE))
         return false;
 
       /* Only after the above call we know if any link previously pending
@@ -1408,7 +1428,8 @@ static bool compatible_array(vinfo_array_t *aa, int count,
             cmpinternal.tmp_counter = saved_tmp_counter;
             cmpinternal.buf_args = saved_buf_args;
             cmpinternal.buf_opc = saved_buf_opc;
-            ok = compatible_vinfo(preva, bsource, opc, result, a, recdepth);
+            ok = compatible_vinfo(preva, bsource, opc, result, a, recdepth,
+                                  vint && i == iLONG_VALUE);
 #if ALL_CHECKS
             if (ok) {
               extra_assert(buf_opc1 == cmpinternal.buf_opc);
@@ -1471,7 +1492,7 @@ PSY_INLINE bool fz_compatible_array(vinfo_array_t *aa, FrozenPsycoObject *fpo,
                                     vcompatible_t *result) {
   bool ok;
   fz_load_fpo_stack(fpo);
-  ok = compatible_array(aa, fz_getopc(), &result->diff, aa, 0);
+  ok = compatible_array(aa, fz_getopc(), &result->diff, aa, 0, false);
 
   /* free the linked list (it should already be free if 'ok') */
   while (cmpinternal.vcilink != &cmpinternal.sentinel) {
@@ -1526,6 +1547,8 @@ void psyco_delete_unused_vars(PsycoObject *po, global_entries_t *ge) {
 static void compare_return_address_in_a_stupid_way(vinfo_t *a,
                                                    RunTimeSource bsource,
                                                    int *alignment_match) {
+  if (!is_runtime(a->source)) /* a constant 'a' still to be un-promoted */
+    return;
   *alignment_match = (getstack(a->source) % 16) == (getstack(bsource) % 16);
 }
 
