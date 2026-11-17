@@ -13,8 +13,6 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 **Wrong results or crashes, reachable today**
 - **C29:** a frame already running compiled when tracing starts gets no events: `pdb.set_trace()`/`breakpoint()` in a compiled function stops only in its callees, a tracer that sets `f_trace` on running frames sees nothing from them, and a profiler misses their `c_call`/`return` events. Needs a way out of compiled code mid-frame (large).
-- **F56:** a heap type's other slots are still folded (a `__bool__` or `__len__` added later, the number slots, `__bases__`); the rest of F50. `Psyco_HeapSlot` covers them; IsTrue's fold is worth keeping. Small to medium; rare.
-- **F57:** a function's `__code__` changed after a compiled call to it isn't seen. Small (F52's shape).
 - **F9:** a `T_STRING_INPLACE` struct member gives `bytes`, not `str`. Small. **In flight** (strings agent).
 - **C9:** reference counts are lower than ceval's, so C code testing `Py_REFCNT(x) == 1` can behave differently. Fixed where seen; others may exist.
 - **C11, C18:** compiled frames are only partly visible (`warnings` stacklevel, `f_lineno`, `f_back`), and a traceback doesn't keep a compiled function's locals alive. C11 now reaches more code: with `with` and class statements compiling, unittest's `case.run` is compiled, so every test method is a compiled callee (`type()` takes `__module__` from `unittest.case`; CPython's `test_builtin`). Worth doing next among the frame bugs: the hook behind `PyEval_GetFrame` (`globals()`, `type()`'s `__module__`), then `f_lineno`.
@@ -22,6 +20,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C17 remainder:** identity of virtual floats, ints and bound methods across calls (`f(x) is x` is False).
 
 - **F37:** fixed (`e86f8ae`, STORES.md option 1).
+- **F56, F57, F80:** fixed (`48e1ad0`..`22154c0`; KNOWN_BUGS, D54): every slot compiled code folds for a heap type (truth, number, subscript, `len`, `in`, call, `__index__`, operand order after `__bases__`) and a function's `__code__` are guarded; `%=`'s message. F57's guard costs up to 1.2% (below).
 - **F10, F48, F50, F52, C25:** fixed (`0e191a3`..`9217bdb`; KNOWN_BUGS): compare slots run once, exhausted sequence iterators stay exhausted, a heap type's compare, hash and iteration slots and a function's defaults are guarded, C function results are checked. Rest of F50 is F56.
 - **C30, C31, C39:** fixed (`63b4f95`, `5a39986`, `6192ed6`; KNOWN_BUGS): an inlined frame names its caller by a serial as well as its code object (a dead caller's address was reused at a join point), the call alignment test compares only the return-address slot, and the async-exception case waits for its target.
 - **C24:** fixed (D45): compiled code tests `eval_breaker` at loop heads and after calls (since D53, only calls that may block).
@@ -36,6 +35,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C19, C20** (`getrefcount` one lower; one GC object per compile; `test_generators`, `test_ctypes`, `test_socket`, `test_descr`, `test_tracemalloc`). By design. Proposal: accept.
 - **F72** (new): a module's `__builtins__` replaced for good after a call into it from another module compiled isn't seen at that call site. Exact needs a guard per cross-module call. Proposal: accept.
 - **F27 remainder** (running out of memory mid-compile aborts on purpose): seen 2026-11-17 in `test_queue` (`--all`) when the run's address-space limit was 4.0e9 bytes instead of `MEMORY_LIMIT`'s 4 GiB: 100 thread stacks leave no room and a compile allocation fails (`vcompiler.h` OUT_OF_MEMORY). `baseline-3.7` the same. Proposal: move to 3.12 (unwinding a half-built compile), and keep the test limit at 4 GiB.
+- **F57** (fixed in `f7a4814`, at a cost): the `__code__` guard is a load and a compare at every call of a promoted function, +0.3% to +1.2% instructions per warm iteration (hexiom +1.2%, richards +0.9%). Assigning `__code__` to a function already called from compiled code is rare (code reloaders, some test tools). Proposal: the owner chooses between keeping it and accepting F57 (drop `f7a4814`, which is self-contained).
 
 **Possible, not shown to happen**
 - **F11:** dormant: the function has no caller.
