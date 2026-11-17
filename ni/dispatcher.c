@@ -796,25 +796,55 @@ void psyco_respawn_detected(PsycoObject *po) {
 #define STUB_POOL_SIZE 4096
 
 typedef struct {
-  code_t *(*fn)(void *closure);
+  code_t *(*fn)(void *closure, long value);
   /* the closure follows, 8-aligned */
 } stub_record_t;
 
-DEFINEFN code_t *psyco_stub_enter(void *record) {
+/* 'value' is RSI as the stub left it: a promotion's run-time value (the
+   stub copies it there). Respawn and pause functions take only the closure;
+   under SysV the extra argument is harmless. */
+DEFINEFN code_t *psyco_stub_enter(void *record, long value) {
   stub_record_t *r = (stub_record_t *)record;
-  return r->fn(r + 1);
+  return r->fn(r + 1, value);
 }
 
 DEFINEFN void psyco_free_stub(void *closure) {
   PyMem_Free(((stub_record_t *)closure) - 1);
 }
 
+static void *write_stub(stub_record_t *r, void *fn, code_t **at) {
+  if (r == NULL)
+    OUT_OF_MEMORY();
+  r->fn = (code_t * (*)(void *, long)) fn;
+  *at = psyco_write_stub(*at, r);
+  return r + 1;
+}
+
+/* Used by promotions only, whose records are never freed: carved from
+   64 KB chunks of the C heap, which is cheaper than a malloc each and keeps
+   them out of pymalloc's pools (scattered there, they changed hexiom's
+   allocation pattern enough to cost 0.5% more instructions). */
+#define STUB_RECORD_CHUNK 65536
+
+DEFINEFN void *psyco_new_stub_at(void *fn, size_t size, code_t **at) {
+  static char *next = NULL, *end = NULL;
+  size_t n = (sizeof(stub_record_t) + size + 7) & ~(size_t)7;
+  stub_record_t *r;
+  psyco_assert(n <= STUB_RECORD_CHUNK);
+  if ((size_t)(end - next) < n) {
+    next = PyMem_RawMalloc(STUB_RECORD_CHUNK);
+    if (next == NULL)
+      OUT_OF_MEMORY();
+    end = next + STUB_RECORD_CHUNK;
+  }
+  r = (stub_record_t *)next;
+  next += n;
+  return write_stub(r, fn, at);
+}
+
 DEFINEFN void *psyco_new_stub(void *fn, size_t size, code_t **stub) {
   static code_t *pool = NULL, *pool_end = NULL;
   stub_record_t *r = PyMem_Malloc(sizeof(stub_record_t) + size);
-  if (r == NULL)
-    OUT_OF_MEMORY();
-  r->fn = (code_t * (*)(void *)) fn;
   if (pool_end - pool < STUB_SIZE_MAX) {
     code_t *limit;
     CodeBufferObject *b = psyco_new_code_buffer(NULL, NULL, &limit);
@@ -824,8 +854,7 @@ DEFINEFN void *psyco_new_stub(void *fn, size_t size, code_t **stub) {
     SHRINK_CODE_BUFFER(b, pool_end, "stubs"); /* held for good */
   }
   *stub = pool;
-  pool = psyco_write_stub(pool, r);
-  return r + 1;
+  return write_stub(r, fn, &pool);
 }
 
 DEFINEFN
@@ -2249,6 +2278,9 @@ code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
   rt_promotion_t *fs;
   void *do_promotion;
 
+  /* a promotion ends the block, so a replay stops before one; were it not
+     so, the record (on the heap, never freed) would leak */
+  extra_assert(!is_respawning(po));
   /* we remove the non-compile-time array values from 'fix' */
   if (fix->array != NullArray)
     remove_non_compiletime(fix, po);
@@ -2277,9 +2309,7 @@ code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
   fs = (rt_promotion_t *)ipromotion_finish(po, fix, do_promotion,
                                            sizeof(rt_promotion_t));
 #if NI_CODESTATS
-  /* the stub's bytes as a release build has them (without cs_site) */
-  fs->cs_site = psyco_cs_promo_site(po, pflags, (po->code - cs_start) -
-                                                    (long)sizeof(long));
+  fs->cs_site = psyco_cs_promo_site(po, pflags, po->code - cs_start);
 #endif
 
   /* fill in the constant structure that 'do_promotion' will get as parameter */

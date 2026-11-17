@@ -236,19 +236,6 @@ EXTERNFN void psyco_emit_header(PsycoObject* po, int nframelocal);
    'retval' may not be virtual-time in the current implementation. */
 EXTERNFN code_t* psyco_finish_return(PsycoObject* po, Source retval);
 
-/* write codes that calls the C function 'fn' and jumps to its
-   return value.
-   Set 'restore' to 1 to save and restore all used registers across call,
-   or 0 to just unload the used registers into the stack.
-   This function returns a pointer to the end of the jumping code, where
-   you can store closure data for 'fn'.
-   The arguments that will be passed to 'fn' are:
-   1) the same pointer to the closure data
-   2) the run-time value described by 'extraarg' if != SOURCE_DUMMY. */
-EXTERNFN
-void* psyco_call_code_builder(PsycoObject* po, void* fn, int restore,
-                              RunTimeSource extraarg, size_t block_size);
-
 #if 0   /* disabled */
 /* emergency code for out-of-memory conditions in which do not
    have a code buffer available for psyco_finish_err_xxx().

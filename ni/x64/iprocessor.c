@@ -92,12 +92,15 @@ void write_psyco_int_mul_ovf(PsycoObject *po) {
 /* The shared half of every stub (idispatcher.h:psyco_write_stub). A stub
    loads its record into R11 and jumps here; a 'call' would leave the CPU's
    return-address predictor one entry off, and every later 'ret' would
-   mispredict (go lost 8% that way). Entered by a conditional jump from
-   compiled code, with the stack at any alignment: saves RAX (it may hold a
-   result with no tracked location yet), calls psyco_stub_enter(record) on
-   an aligned stack, and jumps to the code it returns with RSP as it was.
+   mispredict (go lost 8% that way). Entered from compiled code (a
+   conditional jump, or a promotion site's miss path), with the stack at any
+   alignment: saves RAX (it may hold a result with no tracked location yet),
+   calls psyco_stub_enter(record, RSI) on an aligned stack, and jumps to the
+   code it returns with RSP as it was. RSI must stay untouched until the
+   call: a promotion stub passes its run-time value there.
    Other registers need no saving (only callee-saved ones are allocated);
-   the flags are not saved, as in psyco_call_code_builder. */
+   the flags are not saved: promotion spills them first (NEED_CC) and
+   psyco_coding_pause asserts none is left (KNOWN_BUGS B8). */
 DEFINEVAR code_t *psyco_stub_trampoline;
 
 static void write_stub_trampoline(PsycoObject *po) {

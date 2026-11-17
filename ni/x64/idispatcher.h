@@ -77,40 +77,6 @@ PSY_INLINE code_t* fix_fast_common_case(void* fs, long value,
 }
 
 
-PSY_INLINE void* ipromotion_finish(PsycoObject* po, vinfo_t* fix, void* do_promotion, size_t block_size)
-{
-  long xsource;
-  struct ipromotion_s* fs;
-
-#if PROMOTION_FAST_COMMON_CASE
-  code_t *start_jump, *end_jump;
-  BEGIN_CODE
-  NEED_CC();
-  RTVINFO_IN_REG(fix);
-  xsource = fix->source;
-  start_jump = code;
-  UPDATABLE_JUMP_IF_EQUALS(getreg(xsource), 0, code);
-  end_jump = code;
-#undef ONLY_UPDATING
-#define ONLY_UPDATING 1
-  code = start_jump;
-  UPDATABLE_JUMP_IF_EQUALS(0, 0, end_jump); /* rewrite with jump to end of jump */
-#undef ONLY_UPDATING
-#define ONLY_UPDATING 0
-  END_CODE
-#else
-  xsource = fix->source;
-#endif
-  fs = (struct ipromotion_s*) psyco_call_code_builder(po, do_promotion,
-                                                      PROMOTION_FAST_COMMON_CASE,
-                                                      xsource, block_size);
-#if PROMOTION_FAST_COMMON_CASE
-  fs->jump_if_equal_code = start_jump;
-#endif
-  return fs;
-}
-
-
 /***************************************************************/
  /***   Stubs                                                 ***/
 
@@ -121,12 +87,51 @@ PSY_INLINE void* ipromotion_finish(PsycoObject* po, vinfo_t* fix, void* do_promo
 #define STUB_SIZE_MAX 15
 EXTERNVAR code_t *psyco_stub_trampoline;
 EXTERNFN code_t *psyco_write_stub(code_t *code, void *record);
-EXTERNFN code_t *psyco_stub_enter(void *record); /* dispatcher.c */
+EXTERNFN code_t *psyco_stub_enter(void *record, long value); /* dispatcher.c */
 /* dispatcher.c: a stub that calls 'fn' with a new closure of 'size' bytes;
    returns the closure and sets *stub to the code to jump to. Once the stub
-   can no longer be entered, psyco_free_stub(closure) frees the record. */
+   can no longer be entered, psyco_free_stub(closure) frees the record.
+   psyco_new_stub_at writes the stub at *at instead of in the pool, and
+   advances *at past it. */
 EXTERNFN void *psyco_new_stub(void *fn, size_t size, code_t **stub);
+EXTERNFN void *psyco_new_stub_at(void *fn, size_t size, code_t **at);
 EXTERNFN void psyco_free_stub(void *closure);
+
+/* A promotion site: the inline cache, then on a miss
+   'mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline', which calls
+   do_promotion(fs, value) (37 bytes in all). The value is always in a
+   register here; the trampoline leaves RSI alone. The record holds the
+   rt_promotion_t, whose head is ipromotion_s, and is never freed: the site
+   is entered again for every value the cache doesn't hold. */
+PSY_INLINE void* ipromotion_finish(PsycoObject* po, vinfo_t* fix, void* do_promotion, size_t block_size)
+{
+  struct ipromotion_s* fs;
+#if PROMOTION_FAST_COMMON_CASE
+  code_t *start_jump, *end_jump;
+#endif
+  BEGIN_CODE
+  NEED_CC();
+  RTVINFO_IN_REG(fix);
+#if PROMOTION_FAST_COMMON_CASE
+  start_jump = code;
+  UPDATABLE_JUMP_IF_EQUALS(getreg(fix->source), 0, code);
+  end_jump = code;
+#undef ONLY_UPDATING
+#define ONLY_UPDATING 1
+  code = start_jump;
+  UPDATABLE_JUMP_IF_EQUALS(0, 0, end_jump); /* rewrite with jump to end of jump */
+#undef ONLY_UPDATING
+#define ONLY_UPDATING 0
+  code = end_jump;
+#endif
+  MOV_R_R(REG_X64_RSI, getreg(fix->source));
+  fs = (struct ipromotion_s*) psyco_new_stub_at(do_promotion, block_size, &code);
+  END_CODE
+#if PROMOTION_FAST_COMMON_CASE
+  fs->jump_if_equal_code = start_jump;
+#endif
+  return fs;
+}
 
 /***************************************************************/
  /***   Misc.                                                 ***/

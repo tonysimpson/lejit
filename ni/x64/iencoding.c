@@ -1,6 +1,5 @@
 /*
  * Backend functions:
- *  - proxy stubs (psyco_call_code_builder);
  *  - C calls at run time (run_time_call: SysV registers and 16-byte alignment,
  *    then run_time_result_check applies the CfPyErr* convention);
  *  - C calls at compile time (compile_time_call: libffi, for CfPure folding);
@@ -38,38 +37,6 @@ DEFINEVAR reg_t RegistersLoop[REG_TOTAL] = {
     /* R13 > */ REG_X64_R14,
     /* R14 > */ REG_X64_R15,
     /* R15 > */ REG_X64_RBX};
-
-DEFINEFN void *
-psyco_call_code_builder(PsycoObject *po, void *fn, int restore,
-                        RunTimeSource extraarg, size_t block_size)
-{
-    code_t *block_start;
-    int mark;
-
-    BEGIN_CODE
-    BEGIN_SHORT_JUMP(0);
-    block_start = (code_t *)(((long)code + 7) & (~7)); /* alignment */
-    code = block_start;
-    code += block_size;
-    END_SHORT_JUMP(0);
-    TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
-    /* RAX is saved: we can be here from run_time_result_check, before the
-       result has a tracked location. Other registers need no saving (only
-       callee-saved ones are allocated). The flags are not saved, whatever
-       'restore' says: promotion spills them first (NEED_CC) and
-       psyco_coding_pause asserts none is left (KNOWN_BUGS B8). */
-    BEGIN_CALL(extraarg != SOURCE_DUMMY ? 2 : 1);
-    if (extraarg != SOURCE_DUMMY) {
-        CALL_SET_ARG_FROM_RT(extraarg, 1);
-    }
-    CALL_SET_ARG_IMMED(block_start, 0);
-    END_CALL_I(fn);
-    MOV_R_R(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN);
-    TEMP_POP_R(REG_FUNCTIONS_RETURN, mark); /* Restore RAX */
-    JMP_R(REG_TRANSIENT_1);
-    END_CODE
-    return (void *)block_start;
-}
 
 static vinfo_t *
 compile_time_check(PsycoObject *po, long result, int flags)
