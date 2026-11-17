@@ -388,7 +388,10 @@ def main():
         if rp != rn:
             note += ' RESULTS DIFFER: %s vs %s' % (rp, rn)
         print('%-14s %8.3fs %8.3fs %7.1fx  %s' % (name, p, n, p / n, note))
-    print('%-14s %8.3fs %8.3fs %7.1fx' % ('total', tp, tn, tp / tn))
+    if tn:
+        print('%-14s %8.3fs %8.3fs %7.1fx' % ('total', tp, tn, tp / tn))
+    else:
+        print('(no benchmark matches)')
 
 
 if __name__ == '__main__':

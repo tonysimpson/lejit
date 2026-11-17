@@ -23,6 +23,9 @@ pip install .                                   # release: -O3
 ## Run
 `import ni` installs the frame-eval hook immediately (`ni/eval_hook.c`). From then on, every non-module function whose opcodes are all in `ni/mergepoints.c` is compiled on its first call. There's no Python-level API (`module_methods` is empty). The README says only very simple functions work, for example integer loops and `a + b`.
 
+## Benchmarks
+`tools/benchmarks.sh` builds for release and runs the three suites: `tools/bench.py` (small kernels), `tools/pyperf37.py` (pyperformance) and `tools/compilebench.py` (compile time, code size, break-even). Name suites to run only those (`tools/benchmarks.sh pyperf`) and use `-k name` to filter. Each run is kept in `build/bench/<date>-<commit>.txt`, marked `-dirty` with uncommitted changes. All three suites take about 15 minutes. A release build is left behind; `tools/check.sh` rebuilds for debugging.
+
 ## Debug
 - **nianalyser** (`tools/nianalyser`): runs the target under `pointbreak`, sets breakpoints on the empty `ni_trace_*` functions in `ni/ni.c`, and records emitted code, jumps, calls and unifications, disassembled with `distorm3`. Needs `pointbreak` (`~/work/pointbreak`, which needs `libunwind-dev` to build), `distorm3` and `intervaltree`. Setup (2026-11-16): `sudo apt install libunwind-dev`, then make a venv outside both repos and install pointbreak from a copy (pip builds in-tree, and pointbreak is maintained separately):
   ```
