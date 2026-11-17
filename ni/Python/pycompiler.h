@@ -124,6 +124,23 @@ EXTERNFN void PycException_Fetch(PsycoObject *po);
 EXTERNFN void PycException_Promote(PsycoObject *po, vinfo_t *vi,
                                    c_promotion_t *promotion);
 
+#if NI_CODESTATS
+/* Promotion sites, for ni._promostats() (tools/codesize.py -p): the site
+   (code object, instruction, who asked: a backtrace), the bytes of its stub,
+   each value seen with the code and time its compile took, how often its
+   code ran (a counter at the start of each promoted block, this build only)
+   and how often the C dispatcher was entered (inline cache misses). */
+EXTERNVAR int psyco_cs_promo_cur; /* site being compiled from, or -1 */
+EXTERNFN int psyco_cs_promo_site(PsycoObject *po, int pflags, long stub_bytes);
+EXTERNFN void psyco_cs_promo_begin(int site, long key, int kind);
+EXTERNFN void psyco_cs_promo_end(void);
+EXTERNFN code_t *psyco_cs_promo_counter(code_t *code);
+EXTERNFN void psyco_cs_promo_miss(int site);
+#define NI_CS_PROMO_COUNTER(code) psyco_cs_promo_counter(code)
+#else
+#define NI_CS_PROMO_COUNTER(code) (code)
+#endif
+
 /* A powerful function: it appears to return the value of the
    variable 'vi', even if it is a run-time variable. Implemented
    by raising a EPromotion exception if needed. Returns -1 in

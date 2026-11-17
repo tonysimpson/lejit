@@ -1880,6 +1880,9 @@ typedef struct { /* produced at compile time and read by the dispatcher */
   vinfo_t *fix;    /* variable to promote */
 
   rt_local_buf_t *local_chained_list;
+#if NI_CODESTATS
+  int cs_site; /* pycompiler.c, psyco_cs_promo_site */
+#endif
 } rt_promotion_t;
 
 /* this macro might be redefined below */
@@ -1981,9 +1984,16 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
 static code_t *do_promotion_internal(rt_promotion_t *fs, long key,
                                      source_known_t *sk) {
   code_t *r;
+#if NI_CODESTATS
+  psyco_cs_promo_begin(fs->cs_site, key,
+                       (sk->refcount1_flags & SkFlagPyObj) != 0);
+#endif
   NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
   r = do_promotion_internal_body(fs, key, sk);
   NI_COMPILE_END(NI_ENTER_PROMOTION);
+#if NI_CODESTATS
+  psyco_cs_promo_end();
+#endif
   return r;
 }
 
@@ -2034,7 +2044,7 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
     buf->key = key;
     fs->local_chained_list = buf;
 
-    po->code = insn_code_label(result);
+    po->code = insn_code_label(NI_CS_PROMO_COUNTER(result));
     codeend = psyco_compile(po, mp, false);
     psyco_codestats_buffer("promotion", codebuf, codeend);
     psyco_shrink_code_buffer(codebuf, codeend);
@@ -2047,9 +2057,15 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
 static code_t *detected_megamorphic_body(rt_promotion_t *fs);
 static code_t *detected_megamorphic_pyobj_site(rt_promotion_t *fs) {
   code_t *r;
+#if NI_CODESTATS
+  psyco_cs_promo_begin(fs->cs_site, -1, -1);
+#endif
   NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
   r = detected_megamorphic_body(fs);
   NI_COMPILE_END(NI_ENTER_PROMOTION);
+#if NI_CODESTATS
+  psyco_cs_promo_end();
+#endif
   return r;
 }
 
@@ -2091,7 +2107,7 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
     buf->key = -1; /* use (PyObject*)(-1) as a marker */
     fs->local_chained_list = buf;
 
-    po->code = insn_code_label(result);
+    po->code = insn_code_label(NI_CS_PROMO_COUNTER(result));
     codeend = psyco_compile(po, mp, false);
     psyco_codestats_buffer("megamorphic", codebuf, codeend);
     psyco_shrink_code_buffer(codebuf, codeend);
@@ -2105,6 +2121,9 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
    they are called from the run-time code even during normal (non-compiling)
    execution. */
 static code_t *do_promotion_long(rt_promotion_t *fs, long value) {
+#if NI_CODESTATS
+  psyco_cs_promo_miss(fs->cs_site);
+#endif
   /* need a PyObject* key for the local cache dictionary */
   code_t *result;
   long key1 = value;
@@ -2120,6 +2139,9 @@ static code_t *do_promotion_long(rt_promotion_t *fs, long value) {
 }
 
 static code_t *do_promotion_pyobj(rt_promotion_t *fs, PyObject *key) {
+#if NI_CODESTATS
+  psyco_cs_promo_miss(fs->cs_site);
+#endif
   code_t *result;
   long key1 = (long)key;
 
@@ -2136,6 +2158,9 @@ static code_t *do_promotion_pyobj(rt_promotion_t *fs, PyObject *key) {
 }
 
 static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
+#if NI_CODESTATS
+  psyco_cs_promo_miss(fs->cs_site);
+#endif
   code_t *result;
   long key1 = (long)key;
 
@@ -2165,6 +2190,9 @@ static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
    That version is valid for any value, so the inline fast case may point
    to it even if the object dies and its address is reused. */
 static code_t *do_promotion_static_type(rt_promotion_t *fs, PyObject *key) {
+#if NI_CODESTATS
+  psyco_cs_promo_miss(fs->cs_site);
+#endif
   code_t *result;
   long key1 = (long)key;
 
@@ -2215,8 +2243,16 @@ code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
     psyco_fatal_msg("bad pflags");
     return NULL;
   }
+#if NI_CODESTATS
+  code_t *cs_start = po->code;
+#endif
   fs = (rt_promotion_t *)ipromotion_finish(po, fix, do_promotion,
                                            sizeof(rt_promotion_t));
+#if NI_CODESTATS
+  /* the stub's bytes as a release build has them (without cs_site) */
+  fs->cs_site = psyco_cs_promo_site(po, pflags, (po->code - cs_start) -
+                                                    (long)sizeof(long));
+#endif
 
   /* fill in the constant structure that 'do_promotion' will get as parameter */
   clear_tmp_marks(&po->vlocals);

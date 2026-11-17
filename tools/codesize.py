@@ -9,6 +9,9 @@ Needs a build with the counters:
                                                   # (needs capstone)
     python3.7 tools/codesize.py richards -s       # also what differs between
                                                   # blocks at one merge point
+    python3.7 tools/codesize.py richards -p       # also promotion sites
+                                                  # (with -d: their copies;
+                                                  # -j FILE: also as JSON)
 
 Runs the benchmark until compiling stops, then prints the code emitted per
 opcode, how many times instructions were compiled (each promotion, respawn
@@ -36,9 +39,15 @@ def main():
         i = args.index('-n')
         top = int(args[i + 1])
         del args[i:i + 2]
+    jsonfile = None
+    if '-j' in args:
+        i = args.index('-j')
+        jsonfile = args[i + 1]
+        del args[i:i + 2]
     want_dups = '-d' in args
     want_states = '-s' in args
-    args = [a for a in args if a not in ('-d', '-s')]
+    want_promos = '-p' in args
+    args = [a for a in args if a not in ('-d', '-s', '-p')]
     name = args[0]
     import pyperf37
     import ni
@@ -47,6 +56,8 @@ def main():
     benches = pyperf37.load(os.path.join(ROOT, 'tools', 'pyperformance',
                                          'bm_%s.py' % name))
     ni._codestats()
+    stats0 = ni._stats()
+    promos0 = ni._promostats() if want_promos else None
     for _, timed in benches:
         last = -1
         for _ in range(50):          # until a run compiles nothing new
@@ -56,6 +67,8 @@ def main():
                 break
             last = now
     stats, lost, bufs, states = ni._codestats()
+    promos1 = ni._promostats() if want_promos else None
+    stats1 = ni._stats()
     total = sum(b for n, b in bufs.values())
     print('%-14s %8s %8s %6s %8s' % ('buffer kind', 'count', 'KB', '%', 'B/each'))
     for k, (n, b) in sorted(bufs.items(), key=lambda x: -x[1][1]):
@@ -63,10 +76,16 @@ def main():
                                                  pct(b, total), b / max(n, 1)))
     print()
     report(stats, lost, total, top)
+    dupsites = None
     if want_dups:
-        duplicates(stats, top)
+        dupsites = duplicates(stats, top)
     if want_states:
         state_diffs(states, top)
+    if want_promos:
+        import promostats
+        promostats.report(ni, stats0, stats1, promos0, promos1, bufs,
+                          dupsites, top,
+                          jsonfile)
 
 
 def normalise(addr, code, pointers):
@@ -95,23 +114,30 @@ def duplicates(stats, top):
     tot = dup1 = dup2 = 0
     byop = collections.Counter()
     bykind = collections.Counter()
+    bysite1 = collections.Counter()  # dup bytes by promotion site (or -1)
+    bysite = collections.Counter()   # the same, 64-bit constants aside
+    bysame = collections.Counter()   # ... of which a copy from the same site
     rows = []
     for (co, i), (op, n, b, copies) in stats.items():
-        tot += sum(len(c) for _, c, _ in copies)
+        tot += sum(len(c[1]) for c in copies)
         if len(copies) < 2:
             continue
-        seen1, seen2 = set(), set()
+        seen1, seen2 = set(), {}
         d2 = 0
-        for addr, code, kind in copies:
+        for addr, code, kind, site in copies:
             k1 = normalise(addr, code, False)
             k2 = normalise(addr, code, True)
             if k1 in seen1:
                 dup1 += len(code)
                 bykind[KINDS[kind]] += len(code)
+                bysite1[site] += len(code)
             if k2 in seen2:
                 d2 += len(code)
+                bysite[site] += len(code)
+                if site >= 0 and site in seen2[k2]:
+                    bysame[site] += len(code)
             seen1.add(k1)
-            seen2.add(k2)
+            seen2.setdefault(k2, set()).add(site)
         dup2 += d2
         byop[op] += d2
         rows.append((d2, co, i, op, len(copies), len(seen1), len(seen2)))
@@ -133,6 +159,7 @@ def duplicates(stats, top):
         print('%-34s %-18s %6d %8d %8d %6.1f' % (
             '%s:%d @%d' % (co.co_name, co.co_firstlineno, i),
             dis.opname[op], n, k1, k2, d2 / 1024))
+    return bysite1, bysite, bysame
 
 
 def slot_name(co, i):

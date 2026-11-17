@@ -165,6 +165,10 @@ static PyObject *ni_codestats(PyObject *self, PyObject *unused) {
   psyco_codestats_lost = 0;
   return t;
 }
+EXTERNFN PyObject *psyco_cs_promo_stats(void); /* pycompiler.c */
+static PyObject *ni_promostats(PyObject *self, PyObject *unused) {
+  return psyco_cs_promo_stats();
+}
 #endif
 
 static PyObject *ni_stats(PyObject *self, PyObject *unused) {
@@ -295,6 +299,7 @@ static PyMethodDef module_methods[] = {
     {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
 #if NI_CODESTATS
     {"_codestats", ni_codestats, METH_NOARGS, "Code size per instruction."},
+    {"_promostats", ni_promostats, METH_NOARGS, "Promotion sites."},
 #endif
     {"_code_info", ni_code_info, METH_O,
      "'not seen', 'unsupported', 'no entry point' or 'compiled'."},

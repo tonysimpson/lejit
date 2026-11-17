@@ -50,6 +50,168 @@
 #include <eval.h>
 #include <ipyencoding.h>
 
+#if NI_CODESTATS
+#include <dlfcn.h>
+#include <execinfo.h>
+/* Promotion sites (pycompiler.h). Each site is a list
+   [code, instr, opcode, pflags, stub bytes, (backtrace offsets in ni.so),
+    entry kind, [values], parent] and each value [description, ns, bytes,
+   counter]; the parent is the site whose value was being compiled when this
+   site was emitted, or -1,
+   the counter being a long the promoted block increments each time it runs.
+   Never reset: a site's id indexes this list for as long as its code lives. */
+#define CS_PROMO_BT 8
+static void *cs_promo_bt[CS_PROMO_BT];
+static int cs_promo_nbt = 0;
+static PyObject *cs_promo_sites = NULL;
+static long *cs_promo_misses = NULL;
+static PyObject *cs_promo_pending = NULL; /* the value being compiled */
+static long cs_promo_t0, cs_promo_b0;
+static long *cs_promo_last_counter = NULL;
+DEFINEVAR int psyco_cs_promo_cur = -1;
+
+DEFINEFN int psyco_cs_promo_site(PsycoObject *po, int pflags,
+                                 long stub_bytes) {
+  PyObject *bt, *rec;
+  Py_ssize_t n;
+  int i;
+  Dl_info info;
+  if (cs_promo_sites == NULL && (cs_promo_sites = PyList_New(0)) == NULL)
+    OUT_OF_MEMORY();
+  bt = PyTuple_New(cs_promo_nbt);
+  for (i = 0; i < cs_promo_nbt; i++) {
+    long off = -1;
+    if (dladdr(cs_promo_bt[i], &info) && info.dli_fbase != NULL)
+      off = (char *)cs_promo_bt[i] - (char *)info.dli_fbase;
+    PyTuple_SET_ITEM(bt, i, PyLong_FromLong(off));
+  }
+  rec = Py_BuildValue("[OiiilNi[]i]", po->pr.co, po->pr.next_instr,
+                      (unsigned char)PyBytes_AS_STRING(
+                          po->pr.co->co_code)[po->pr.next_instr],
+                      pflags, stub_bytes, bt, psyco_stat_compile_kind,
+                      psyco_cs_promo_cur);
+  if (rec == NULL || PyList_Append(cs_promo_sites, rec) < 0)
+    OUT_OF_MEMORY();
+  Py_DECREF(rec);
+  n = PyList_GET_SIZE(cs_promo_sites);
+  cs_promo_misses = PyMem_Realloc(cs_promo_misses, n * sizeof(long));
+  cs_promo_misses[n - 1] = 0;
+  cs_promo_nbt = 0;
+  return (int)(n - 1);
+}
+
+/* kind: 1 a PyObject*, 0 a raw word, -1 the megamorphic version */
+DEFINEFN void psyco_cs_promo_begin(int site, long key, int kind) {
+  PyObject *et, *ev, *tb, *d;
+  PyErr_Fetch(&et, &ev, &tb);
+  if (kind < 0)
+    d = Py_BuildValue("(ss)", "MEGA", "");
+  else if (kind == 0)
+    d = Py_BuildValue("(sl)", "word", key);
+  else {
+    PyObject *o = (PyObject *)key;
+    const char *detail = "";
+    char buf[64];
+    if (PyType_Check(o))
+      detail = ((PyTypeObject *)o)->tp_name;
+    else if (PyFunction_Check(o)) {
+      PyObject *q = ((PyFunctionObject *)o)->func_qualname;
+      detail = q && PyUnicode_Check(q) ? PyUnicode_AsUTF8(q) : "?";
+    } else if (PyCode_Check(o))
+      detail = PyUnicode_AsUTF8(((PyCodeObject *)o)->co_name);
+    else if (PyCFunction_Check(o))
+      detail = ((PyCFunctionObject *)o)->m_ml->ml_name;
+    else if (PyBool_Check(o))
+      detail = o == Py_True ? "True" : "False";
+    else if (PyLong_CheckExact(o)) {
+      snprintf(buf, sizeof(buf), "%ld", PyLong_AsLong(o));
+      detail = buf;
+    } else if (PyUnicode_CheckExact(o) && PyUnicode_GET_LENGTH(o) < 30)
+      detail = PyUnicode_AsUTF8(o);
+    else if (PyModule_Check(o))
+      detail = PyModule_GetName(o);
+    if (detail == NULL)
+      detail = "?";
+    d = Py_BuildValue("(ss)", Py_TYPE(o)->tp_name, detail);
+  }
+  PyErr_Clear();
+  PyErr_Restore(et, ev, tb);
+  Py_XDECREF(cs_promo_pending);
+  cs_promo_pending = Py_BuildValue("[Nll]", d, (long)site, 0L);
+  cs_promo_last_counter = NULL;
+  cs_promo_t0 = psyco_stat_now_ns();
+  cs_promo_b0 = psyco_stat_code_bytes;
+  psyco_cs_promo_cur = site;
+}
+
+DEFINEFN void psyco_cs_promo_end(void) {
+  long site;
+  PyObject *v = cs_promo_pending, *rec;
+  psyco_cs_promo_cur = -1;
+  if (v == NULL)
+    return;
+  cs_promo_pending = NULL;
+  site = PyLong_AsLong(PyList_GET_ITEM(v, 1));
+  PyList_SetItem(v, 1, PyLong_FromLong(psyco_stat_now_ns() - cs_promo_t0));
+  PyList_SetItem(v, 2, PyLong_FromLong(psyco_stat_code_bytes - cs_promo_b0));
+  PyList_Append(v, PyLong_FromVoidPtr(cs_promo_last_counter));
+  Py_DECREF(PyList_GET_ITEM(v, 3)); /* PyList_Append took its own */
+  rec = PyList_GET_ITEM(cs_promo_sites, site);
+  PyList_Append(PyList_GET_ITEM(rec, 7), v);
+  Py_DECREF(v);
+}
+
+/* 'mov r11, &counter; inc qword [r11]' (13 bytes). Flags are dead here:
+   ipromotion_finish spilled them before its compare, and R11 is never
+   allocated. */
+DEFINEFN code_t *psyco_cs_promo_counter(code_t *code) {
+  long *c = PyMem_Malloc(sizeof(long));
+  *c = 0;
+  cs_promo_last_counter = c;
+  code[0] = 0x49;
+  code[1] = 0xBB;
+  *(long *)(code + 2) = (long)c;
+  code[10] = 0x49;
+  code[11] = 0xFF;
+  code[12] = 0x03;
+  return code + 13;
+}
+
+DEFINEFN void psyco_cs_promo_miss(int site) { cs_promo_misses[site]++; }
+
+/* ni._promostats(): the sites, each with its misses and its values' run
+   counts filled in (copies; the counters keep counting) */
+DEFINEFN PyObject *psyco_cs_promo_stats(void) {
+  Py_ssize_t i, j;
+  PyObject *r = PyList_New(0);
+  if (cs_promo_sites == NULL)
+    return r;
+  for (i = 0; i < PyList_GET_SIZE(cs_promo_sites); i++) {
+    PyObject *s = PyList_GET_ITEM(cs_promo_sites, i);
+    PyObject *vals = PyList_GET_ITEM(s, 7);
+    PyObject *nv = PyList_New(0);
+    PyObject *ns;
+    for (j = 0; j < PyList_GET_SIZE(vals); j++) {
+      PyObject *v = PyList_GET_ITEM(vals, j);
+      long *c = PyLong_AsVoidPtr(PyList_GET_ITEM(v, 3));
+      PyObject *t = Py_BuildValue("(OOOl)", PyList_GET_ITEM(v, 0),
+                                  PyList_GET_ITEM(v, 1), PyList_GET_ITEM(v, 2),
+                                  c ? *c : -1L);
+      PyList_Append(nv, t);
+      Py_DECREF(t);
+    }
+    ns = Py_BuildValue("(OOOOOOONlO)", PyList_GET_ITEM(s, 0),
+                       PyList_GET_ITEM(s, 1), PyList_GET_ITEM(s, 2),
+                       PyList_GET_ITEM(s, 3), PyList_GET_ITEM(s, 4),
+                       PyList_GET_ITEM(s, 5), PyList_GET_ITEM(s, 6), nv,
+                       cs_promo_misses[i], PyList_GET_ITEM(s, 8));
+    PyList_Append(r, ns);
+    Py_DECREF(ns);
+  }
+  return r;
+}
+#endif
+
 #define KNOWN_VAR(type, varname, loc)                                          \
   type varname = (type)(CompileTime_Get(loc->source)->value)
 
@@ -306,6 +468,9 @@ void PycException_SetVInfo(PsycoObject *po, PyObject *e, vinfo_t *v) {
 DEFINEFN
 void PycException_Promote(PsycoObject *po, vinfo_t *vi,
                           c_promotion_t *promotion) {
+#if NI_CODESTATS
+  cs_promo_nbt = backtrace(cs_promo_bt, CS_PROMO_BT);
+#endif
   vinfo_incref(vi);
   PycException_Raise(po, vinfo_new(VirtualTime_New(&promotion->header)), vi);
 }
@@ -1613,7 +1778,7 @@ static code_t *exit_function(PsycoObject *po) {
 /* Code size per instruction (tools/codesize.py, ni._codestats()): for each
    (code object, instruction offset), [opcode, times compiled, bytes, the
    copies as (address, bytes, how the compiler
-   was entered: codemanager.h NI_ENTER_*)]. The
+   was entered: codemanager.h NI_ENTER_*, the promotion site or -1)]. The
    bytes are those emitted from the start of one instruction to the start of
    the next, so an instruction's error paths and the end of a block count
    with it; replays and code written into other buffers in between
@@ -1629,9 +1794,10 @@ static void codestats_flush(PsycoObject *po) {
     Py_XDECREF(key);
     if (e != NULL && n >= 0 && n < 65536) {
       PyObject *b = PyLong_FromLong(PyLong_AsLong(PyList_GET_ITEM(e, 2)) + n);
-      PyObject *copy = Py_BuildValue("(ky#i)", (unsigned long)po->cs_mark,
+      PyObject *copy = Py_BuildValue("(ky#ii)", (unsigned long)po->cs_mark,
                                      (char *)po->cs_mark, (Py_ssize_t)n,
-                                     psyco_stat_compile_kind);
+                                     psyco_stat_compile_kind,
+                                     psyco_cs_promo_cur);
       if (b != NULL)
         PyList_SetItem(e, 2, b);
       if (copy != NULL) {
