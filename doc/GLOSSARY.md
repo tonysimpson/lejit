@@ -27,6 +27,21 @@ Each term gives its definition and where it lives (`file:symbol`). **[read]** me
 
 ## Specialisation mechanics
 
+### Shared plain words (owner and Claude, 2026-11-17)
+
+Use these words in conversation, docs and commit messages. They name the two places code is specialised, which are easy to confuse.
+
+- **Block**: one piece of compiled code, compiled from one state. Several blocks can exist for one bytecode position.
+- **State**: what the compiler knows about every local and stack slot at one point, such as "`i` is the constant 0, `n` is in a register, `f` is a known function". Blocks are compiled from states.
+- **Promotion site**: a point where compiled code needs to know **one value** (which function is called, an object's type), so it switches on that value at run time and compiles a copy per value seen.
+- **Merge point**: a point (loop head, join) where the **whole state** is compared with the states existing blocks were compiled from. If none matches, a new block is compiled.
+- **Specialise**: compile a separate copy for a known value or state.
+- **Generic path**: the copy that accepts any value. At a promotion site it is the megamorphic path; at a merge point it is a block compiled from a state with the facts made run-time.
+- **Generalise** (not "forget"): turn a known fact in a state into "known only at run time", so the state can match a more general block. The cap per merge point (D40) does this to ints.
+- **Forgotten value** (planned, BACKLOG): a value generalised by the cap and marked so that any later promotion of it takes the generic path at once, instead of specialising again.
+- **Cap**: the limit of blocks per merge point (6, D40). The promotion site's equivalent is the megamorphic limit (5).
+- **Two forms**: one value described in two ways that don't match, such as "the constant 0" and "a computed int that happens to be 0". D33 gives small ints one form.
+
 - **Merge point**: a bytecode position where the current compiler state is compared against previously compiled states (and a snapshot is stored). Upstream Psyco placed them only where control paths join (with delays and a 170-instruction maximum gap). **Ni currently marks almost every instruction** (`default: MP_HERE()`), which multiplies snapshots and disables inlining (see `doc/history/removed-mechanisms.md` A2). [read] `ni/mergepoints.h`, `ni/mergepoints.c:_find_merge_points`
 - **Snapshot / `FrozenPsycoObject` (fpo)**: a compact, frozen copy of `po->vlocals` (plus part of `pr`), stored with each code buffer at a merge point. With `VLOCALS_OPC` it is stored as a compressed pseudo-code (`fz_compress`) rather than a copied array. [read] `ni/dispatcher.h`, `ni/dispatcher.c`
 - **Compatibility (`psyco_compatible`)**: compares the current `po` with each snapshot at a merge point.

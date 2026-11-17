@@ -49,6 +49,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **M9:** negative constants in qword stores go through `MOV R10, imm64`; a sign-extended imm32 would do. Tiny.
 
 ### Code size and compile time
+- **Forgotten values** (GLOSSARY): when the cap (D40) generalises a value, mark it so any later promotion of it goes straight to the generic path. Then the cap can generalise more than ints (a constant function made run-time is promoted again today, so meteor compiled 5% more). Queued after the two-form values work, which touches the same code.
 - **A cap on blocks per merge point** (CODE_SIZE option 3): the general backstop. Next, now D33 is in.
 - **Promotion code** is the largest remaining share (about a third before D33). Not analysed yet: which values, how many distinct each, which sites should go megamorphic sooner. Analysis first, then a fix.
 - **Other two-form values at merge points** (QUESTIONS 38): ints outside -5..256, floats, stack slots; deltablue's +1.3% compiles after D33 is unexplained.
