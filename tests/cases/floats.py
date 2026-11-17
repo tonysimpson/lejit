@@ -82,6 +82,16 @@ def subclasses():
     return (a + 1.0, type(a + 1.0), -a, type(-a), abs(-a), a % 2.0, bool(a))
 
 
+def unary_plus_identity(x):
+    # float_float returns an exact float itself (F22); a subclass gets a
+    # new exact float
+    y = +x
+    m = MyFloat(x)
+    w = x * 2.0              # a float computed here
+    z = +w
+    return y is x, y == x, z is w, type(+m).__name__, +m is m
+
+
 CASES = [
     ('arith_edges', [()], {}),
     ('div_edges', [()], {}),
@@ -90,4 +100,5 @@ CASES = [
     ('bool_in_jumps', [(10,)], {}),
     ('float_loop', [(20.0,)], {}),
     ('subclasses', [()], {}),
+    ('unary_plus_identity', [(2.5,), (-0.0,)], {}),
 ]

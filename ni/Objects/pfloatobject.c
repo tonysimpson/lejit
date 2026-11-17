@@ -283,6 +283,14 @@ static vinfo_t *pfloat_hash(PsycoObject *po, vinfo_t *v) {
 
 static vinfo_t *pfloat_pos(PsycoObject *po, vinfo_t *v) {
   vinfo_t *a, *x;
+  /* float_float: an exact float is returned itself (F22) */
+  PyTypeObject *tp = Psyco_NeedType(po, v);
+  if (tp == NULL)
+    return NULL;
+  if (tp == &PyFloat_Type) {
+    vinfo_incref(v);
+    return v;
+  }
   CONVERT_TO_DOUBLE(v, a);
   x = PsycoFloat_FromDouble(a);
   RELEASE_DOUBLE(a);
