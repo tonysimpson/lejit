@@ -49,6 +49,18 @@ def init_fills(n):
             m <= n + 8)
 
 
+def guard_holds(n):
+    # a class that doesn't change: once compiled, the stores' type guards
+    # pass (a guard that always failed would still give the right result)
+    o = Ov()
+    overwrite_loop(n)
+    t = _stats('store_type_changes')
+    for i in range(n):
+        o.a = i
+        o.b = i
+    return o.a, o.b, _stats('store_type_changes') - t
+
+
 class Many:
     def __init__(self, i):
         self.a = i
@@ -626,9 +638,150 @@ def store_then_load(n):
     return out
 
 
+# Stores in sequence to one object, in one function: what a check shared
+# between them (STORES.md, "Shrinking the store sites") would have to get
+# right. The old value of the first store frees an object whose __del__
+# changes what the next stores must do.
+class Seq:
+    def __init__(self):
+        self.a = 0
+        self.b = 0
+        self.c = 0
+
+
+class SeqOther:
+    pass
+
+
+class SeqDel:
+    def __init__(self, o, how):
+        self.o = o
+        self.how = how
+
+    def __del__(self):
+        o, how = self.o, self.how
+        if how == 'setattr':
+            Seq.__setattr__ = lambda self, k, v: object.__setattr__(
+                self, k, ('hooked', v))
+        elif how == 'property':
+            Seq.b = property(lambda self: 'prop', lambda self, v: None)
+        elif how == 'dict':
+            o.__dict__ = {'fresh': 1}
+        elif how == 'delete':
+            del o.b
+        elif how == 'class':
+            o.__class__ = SeqOther
+        elif how == 'grow':
+            for k in range(20):
+                setattr(o, 'g%d' % k, k)
+
+
+def _seq_reset():
+    for k in ('__setattr__', 'b'):
+        if k in Seq.__dict__:
+            delattr(Seq, k)
+
+
+def _seq3(o, i):
+    o.a = i
+    o.b = i + 1
+    o.c = i + 2
+
+
+def run_del_mid_sequence(n):
+    out = []
+    for how in ('setattr', 'property', 'dict', 'delete', 'class', 'grow'):
+        _seq_reset()
+        o = Seq()
+        for i in range(n):
+            _seq3(o, i)
+        o.a = SeqDel(o, how)
+        _seq3(o, 100)           # o.a's old value runs __del__ first
+        _seq3(o, 200)
+        out.append((how, sorted(o.__dict__.items())))
+    _seq_reset()
+    return out
+
+
+def _seq_poke(o, how):
+    if how == 'setattr':
+        Seq.__setattr__ = lambda self, k, v: object.__setattr__(
+            self, k, ('hooked', v))
+    elif how == 'dict':
+        o.__dict__ = {}
+    elif how == 'class':
+        o.__class__ = SeqOther
+    return 1
+
+
+def _seq_calls(o, i, how):
+    o.a = i
+    o.b = _seq_poke(o, how)
+    o.c = i
+    len(o.__dict__)
+    o.a = i + 1
+
+
+def run_interleaved_calls(n):
+    out = []
+    for how in ('none', 'setattr', 'dict', 'class', 'none'):
+        _seq_reset()
+        o = Seq()
+        for i in range(n):
+            _seq_calls(o, i, 'none')
+        _seq_calls(o, 50, how)
+        _seq_calls(o, 60, 'none')
+        out.append((how, sorted(o.__dict__.items())))
+    _seq_reset()
+    return out
+
+
+def _seq_two(p, q, i):
+    p.a = i
+    q.a = i * 10
+    p.b = q.a
+    q.b = p.a
+    p.c = (i,)
+    q.c = None
+
+
+def run_two_objects(n):
+    out = []
+    p, q = Seq(), Seq()
+    for i in range(n):
+        _seq_two(p, q, i)
+    out.append((sorted(p.__dict__.items()), sorted(q.__dict__.items())))
+    _seq_two(p, p, 7)           # the same object twice
+    out.append(sorted(p.__dict__.items()))
+    r = Seq()
+    r.__dict__ = {'a': 1}       # a combined dict beside a split one
+    _seq_two(p, r, 8)
+    out.append((sorted(p.__dict__.items()), sorted(r.__dict__.items())))
+    q.a = SeqDel(p, 'dict')     # q's store frees it: p's dict is replaced
+    _seq_two(p, q, 9)
+    out.append((sorted(p.__dict__.items()), sorted(q.__dict__.items())))
+    return out
+
+
+def _to_other(o):
+    o.__class__ = SeqOther
+
+
+def class_assigned_in_call(n):
+    # F55: a promoted type is kept after a call assigns __class__
+    out = []
+    for i in range(n):
+        o = Seq()
+        len(o.__dict__)
+        _to_other(o)
+        out.append(type(o).__name__)
+    return out
+
+
 CASES = [
     ('overwrite_loop', [(20,)], {}),
     ('init_fills', [(50,)], {}),
+    ('guard_holds', [(50,)], {}),
     ('many_instances', [(500,)], {}),
     ('out_of_order', [(9,)], {}),
     ('skip_a_slot', [(3,)], {'leaks': 'C14 (2): a class per call, held by compiled code'}),
@@ -653,4 +806,9 @@ CASES = [
     ('wide_keys', [(3,)], {}),
     ('miss_cap', [(200,)], {}),
     ('store_then_load', [(6,)], {}),
+    ('run_del_mid_sequence', [(4,)], {}),
+    ('run_interleaved_calls', [(4,)], {}),
+    ('run_two_objects', [(4,)], {}),
+    ('class_assigned_in_call', [(3,)],
+     {'xfail': 'F55: a promoted type is kept after a call assigns __class__'}),
 ]

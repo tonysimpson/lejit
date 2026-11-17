@@ -120,6 +120,7 @@ EXTERNFN bool PsycoObject_SetAttr(PsycoObject* po, vinfo_t* o,
 /* inline attribute stores that missed (called the C helper), and misses
    that changed their (class, name) cache: ni._stats() */
 EXTERNVAR long psyco_stat_store_misses;
+EXTERNVAR long psyco_stat_store_type_changes;
 EXTERNVAR long psyco_stat_store_refreshes;
 EXTERNFN vinfo_t* PsycoObject_GenericGetAttr(PsycoObject* po, vinfo_t* obj,
                                              vinfo_t* vname);

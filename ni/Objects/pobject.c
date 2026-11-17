@@ -609,6 +609,7 @@ static int cimpl_dict_set_known(PyObject *dict, PyObject *name,
 static uint64_t ni_dict_version = (uint64_t)1 << 63;
 
 DEFINEVAR long psyco_stat_store_misses = 0;
+DEFINEVAR long psyco_stat_store_type_changes = 0;
 DEFINEVAR long psyco_stat_store_refreshes = 0;
 
 /* point 'c' at its name in keys 'k' if they hold it: true if 'c' changed */
@@ -759,6 +760,7 @@ static int cimpl_store_type_changed(PyObject *obj, PyObject *name,
                                     PyObject *value) {
   PyTypeObject *tp = Py_TYPE(obj);
   attr_guard_t *guard = store_guard(tp, name, store_kind(tp, name), false);
+  psyco_stat_store_type_changes++;
   if (guard != NULL)
     store_guard_set(guard, tp);
   else if (PyErr_Occurred())
