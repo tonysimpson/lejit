@@ -14,7 +14,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 **Wrong results or crashes, reachable today**
 - **F9:** a `T_STRING_INPLACE` struct member gives `bytes`, not `str`. Small. **In flight** (strings agent).
 - **C9:** reference counts are lower than ceval's, so C code testing `Py_REFCNT(x) == 1` can behave differently. Fixed where seen; others may exist.
-- **C11, C18:** compiled frames are only partly visible (`warnings` stacklevel, `f_lineno`, `f_back`), and a traceback doesn't keep a compiled function's locals alive.
+- **C11, C18:** compiled frames are only partly visible (`warnings` stacklevel, `f_lineno`, `f_back`), and a traceback doesn't keep a compiled function's locals alive. C11 now reaches more code: with `with` and class statements compiling, unittest's `case.run` is compiled, so every test method is a compiled callee (`type()` takes `__module__` from `unittest.case`; CPython's `test_builtin`). Worth doing next among the frame bugs: the hook behind `PyEval_GetFrame` (`globals()`, `type()`'s `__module__`), then `f_lineno`.
 - **C15 remainder:** `locals()`, `eval()` and friends reached indirectly (`f = locals; f()`) see only the arguments.
 - **C17 remainder:** identity of virtual floats, ints and bound methods across calls (`f(x) is x` is False).
 
@@ -41,6 +41,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **Attribute stores** (`doc/STORES.md`, QUESTIONS 39). Options 1 and 2 done (`e86f8ae`, D39): richards 13%, go 8% fewer instructions. Before them, stores were 30–38% of richards, 13% of deltablue, 11% of go. Next: an inline store, estimated at a further 13–14% of richards. Option 4 (a per-site check of the live keys, no reference held) works in constructors and avoids F36. The dict version tag must be settled first.
 - **Strings (D14).** **In flight:** measure, then `len`, indexing, iteration, `in`, constant folding. Later: concatenation buffers (old Psyco's design) if the measurement says so.
 - **Unshared-dict loads with a known hash.** Done (`0965d06`). Next step, if go still shows `lookdict`: an inline probe of a combined dict for a constant key (medium).
+- **Opcode coverage:** done for functions (`353dc79`, `41542aa`, `93b201f`): `with`, `a, *b = x`, class statements, `del` of a cell and `@` compile, and no stdlib function outside `test/` and `idlelib` is held back by an opcode (was 408 of 14,269). Still interpreted: generators other than generator expressions, class bodies (LOAD_NAME/STORE_NAME, and LOAD_CLASSDEREF with them), module code, and functions calling `locals()`/`eval()` and friends (C15). `with` is a residual call per `__enter__`/`__exit__`; nothing measured uses it in a hot loop.
 - **Calls with `*args`/`**kw` and unpacking** (F19 remainder): done (`7fdf9a7`). Every BUILD_*_UNPACK opcode compiles; the map and set forms are residual helpers. No pyperformance benchmark used them. If one ever matters: a virtual dict for `**` of known dicts.
 - **Calls to closures** (F8): compile, but the call from compiled code is the generic one.
 - **Generators, option A** (GENERATORS.md): compiled resumable bodies. Deferred to the 3.12 entry design (QUESTIONS 33).

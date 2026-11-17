@@ -76,6 +76,7 @@ Example: `ni/Objects/plistobject.c:psy_listobject_init` registers `PyList_Type.t
 No translation available → `psyco_generic_call(po, c_fn, Cf…, "fmt", args…)`. It emits a real call. Argument tags are `v` vinfo, `l` raw, `d` double, `r` by-reference, and `a`/`A` output array. The `Cf*` flags give the return type and error convention (`ni/cf_flags.h`).
 Example: `pabstract.c:PsycoSequence_GetSlice`, `pdictobject.c`, and every fallback path.
 An opcode with `oparg` stack items (BUILD_*_UNPACK) passes them as one virtual tuple (`PsycoTuple_New` over the stack), and the helper is ceval's case body looping over the tuple instead of `PEEK(i)`; `pycompiler.c:cimpl_build_unpack`, `cimpl_build_map_unpack`, `cimpl_build_set_unpack`.
+An opcode that makes several new references returns them through an `A` output array from one helper, and the opcode then rearranges the stack with no failure point left (restart rule): `cimpl_unpack_ex` (ceval's `unpack_iterable` writing upwards instead of `*--sp`), `cimpl_setup_with` (the bound `__exit__` and `__enter__`'s result). The block opcodes are not mechanical: `with` runs on Ni's finally states (KNOWN_BUGS F18), so `WITH_CLEANUP_START` decides from the block stack which of ceval's cases it is in, and `WITH_CLEANUP_FINISH` unwinds a silenced exception itself instead of pushing `WHY_SILENCED` (`pycompiler.c`). 3.11 replaced these opcodes with `BEFORE_WITH` and exception tables, so this part is not worth generating.
 
 **P13 pure-helper-call** (M)
 Express an operation as a tiny static C helper called with `CfPure | CfReturnType…`. With compile-time arguments it's evaluated at compile time (via libffi in `ni/x64/iencoding.c:compile_time_call`); otherwise it's a plain call.
@@ -121,7 +122,7 @@ Example: `pstringobject.c:pstring_slice`, `cimpl_cb_grow` (Py2 only).
 
 **P21 identity-shortcut** (J)
 `a + ''` → `a`, `a[0:len]` → `a`, `vinfo_known_equal` in compares. Needs exact-type checks so it doesn't return a subclass instance.
-Example: `pstringobject.c` (Py2), `ptupleobject.c:PsycoTuple_Concat` (empty operand; missing the `CheckExact` test). [inferred]
+Example: `pstringobject.c` (Py2), `ptupleobject.c:PsycoTuple_Concat` (empty operand; the `CheckExact` test was missing, KNOWN_BUGS F40, found by CPython's `test_descr`). [run]
 
 **P22 load-sequence** (J)
 `PsycoTuple_Load`/`PsycoList_Load` gets a compile-time length and the item vinfos, so the code can specialise on arity. Returns -1 if unknown. Compile-time tuples longer than `CT_TUPLE_LOAD_SIZE_LIMIT` (15) are refused.
