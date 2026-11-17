@@ -9,8 +9,8 @@
  *    the snapshot's is run-time (D33). Before comparing, canonical_int writes
  *    a constant small int or bool in a local as a virtual int, so the two
  *    forms of a counter compare. Ni added a 16-byte stack-alignment test
- *    (compare_return_address_in_a_stupid_way) that rejects otherwise good
- *    matches: a kludge for x86-64 call alignment (KNOWN_BUGS C1).
+ *    (compare_return_address) that rejects otherwise good matches whose
+ *    return-address slot differs mod 16: x86-64 call alignment (C1, C31).
  *    A run-time value's known type that the snapshot lacks is dropped if
  *    nothing since the last merge point relied on it (rule 1, D50,
  *    compatible_unused_fact), except in the compare a promotion's
@@ -1652,25 +1652,29 @@ void psyco_delete_unused_vars(PsycoObject *po, global_entries_t *ge) {
   }
 }
 
-/*
- XXX tony: Fix this
- This function is used to find the vinfo_t and frozen source corresponding to
- the return addess on the stack and compare there locations for 16 byte
- alignment
+/* Call alignment (KNOWN_BUGS C1, C31). Compiled code aligns its C calls
+   from the position of the return-address slot (STACK_DEPTH_SINCE_CALL),
+   and unification can't move that slot, so a state may only jump into a
+   block whose return address is at the same position mod 16. Only that
+   slot is compared: the frame locals stored under it (codegen.c) are
+   visited after it, and they used to decide the test, so a call with more
+   run-time arguments took a block compiled for one with fewer (C31). */
+typedef struct {
+  vinfo_t *ret; /* the live state's return-address slot */
+  int match;    /* -1 until it is visited */
+} alignment_test_t;
 
- fz_find_runtimes walks the arrays in reverse order so the return value is the
- last thing to be visited so its of to do this test and just overwrite the
- previous none-return address results.
+static vinfo_t *return_address_slot(PsycoObject *po) {
+  if (po->pr.is_inlining && LOC_INLINING != NULL)
+    return LOC_INLINING->array
+        ->items[TOTAL_LOC_INLINE + INDEX_LOC_CONTINUATION];
+  return LOC_CONTINUATION;
+}
 
- This is a kludge until I understand the freezing code and find a better way to
- handle call alignement
- */
-static void compare_return_address_in_a_stupid_way(vinfo_t *a,
-                                                   RunTimeSource bsource,
-                                                   int *alignment_match) {
-  if (!is_runtime(a->source)) /* a constant 'a' still to be un-promoted */
-    return;
-  *alignment_match = (getstack(a->source) % 16) == (getstack(bsource) % 16);
+static void compare_return_address(vinfo_t *a, RunTimeSource bsource,
+                                   alignment_test_t *t) {
+  if (a == t->ret)
+    t->match = (getstack(a->source) % 16) == (getstack(bsource) % 16);
 }
 
 /* One form for small ints and bools at merge points (CODE_SIZE.md option 2):
@@ -1919,15 +1923,15 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
     compatible_drops = 0;
     fz_check_invariant(&codebuf->snapshot);
     if (fz_compatible_array(&po->vlocals, &codebuf->snapshot, &result)) {
-      int alignment_match = -1;
+      alignment_test_t alignment = {return_address_slot(po), -1};
       fz_find_runtimes(&po->vlocals, &codebuf->snapshot,
-                       (fz_find_fn)&compare_return_address_in_a_stupid_way,
-                       &alignment_match, false);
+                       (fz_find_fn)&compare_return_address, &alignment,
+                       false);
       /*
        * compatible_array() leaves data in the 'tmp' fields. It must be
        * cleared unless it is the final result of psyco_compatible() itself.
        */
-      if (alignment_match != 1) {
+      if (alignment.match != 1) {
 #if NI_CODESTATS
         psyco_cs_align_rejects++;
 #endif
