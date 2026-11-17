@@ -8,6 +8,7 @@
 #include "../Objects/pstringobject.h"
 #include "../Objects/ptupleobject.h"
 #include "../psyfunc.h"
+#include "../mergepoints.h"
 
 static PyCFunction cimpl_range;
 static PyCFunction cimpl_id;
@@ -484,6 +485,67 @@ static vinfo_t *pbuiltin_round(PsycoObject *po, vinfo_t *vself,
                                  vself, vargs);
 }
 
+/* super() with no arguments: typeobject.c:super_init's frame lookup, with
+   the frame being the compiled one, which a direct call (psyfunc.c) never
+   makes real. 'argc' is the code's co_argcount, 'obj' its first local and
+   'objcell' the cell holding the first argument instead, if any. */
+static PyObject *cimpl_super_noargs(long argc, PyObject *obj,
+                                    PyObject *objcell, PyObject *classcell) {
+  PyObject *type;
+  if (argc == 0) {
+    PyErr_SetString(PyExc_RuntimeError, "super(): no arguments");
+    return NULL;
+  }
+  if (obj == NULL && objcell != NULL)
+    obj = PyCell_GET(objcell);
+  if (obj == NULL) {
+    PyErr_SetString(PyExc_RuntimeError, "super(): arg[0] deleted");
+    return NULL;
+  }
+  if (classcell == NULL) {
+    PyErr_SetString(PyExc_RuntimeError, "super(): __class__ cell not found");
+    return NULL;
+  }
+  if (!PyCell_Check(classcell)) {
+    PyErr_SetString(PyExc_RuntimeError, "super(): bad __class__ cell");
+    return NULL;
+  }
+  type = PyCell_GET(classcell);
+  if (type == NULL) {
+    PyErr_SetString(PyExc_RuntimeError, "super(): empty __class__ cell");
+    return NULL;
+  }
+  if (!PyType_Check(type)) {
+    PyErr_Format(PyExc_RuntimeError, "super(): __class__ is not a type (%s)",
+                 Py_TYPE(type)->tp_name);
+    return NULL;
+  }
+  return PyObject_CallFunctionObjArgs((PyObject *)&PySuper_Type, type, obj,
+                                      NULL);
+}
+
+static vinfo_t *psuper_noargs(PsycoObject *po) {
+  PyCodeObject *co = po->pr.co;
+  Py_ssize_t i, ncells = PyTuple_GET_SIZE(co->co_cellvars);
+  int fv = psyco_class_cell(co);
+  vinfo_t *obj, *objcell = NULL, *classcell = NULL, *zero, *r;
+  zero = psyco_vi_Zero();
+  obj = co->co_argcount > 0 ? LOC_LOCALS_PLUS[0] : zero;
+  if (obj == NULL)
+    obj = zero;
+  for (i = 0; co->co_cell2arg != NULL && i < ncells; i++)
+    if (co->co_cell2arg[i] == 0)
+      objcell = LOC_LOCALS_PLUS[co->co_nlocals + i];
+  if (fv >= 0)
+    classcell = LOC_LOCALS_PLUS[co->co_nlocals + ncells + fv];
+  r = psyco_generic_call(po, cimpl_super_noargs, CfCommonNewRefPyObject,
+                         "lvvv", (long)co->co_argcount, obj,
+                         objcell ? objcell : zero,
+                         classcell ? classcell : zero);
+  vinfo_decref(zero, po);
+  return r;
+}
+
 /* type_call (Objects/typeobject.c) for type(x), int(x) and float(x) with
    one positional argument of an exact type; everything else, including
    every class instantiation, is the residual type_call as before.
@@ -503,6 +565,20 @@ static vinfo_t *ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg,
   int m = psyco_atcompiletime_static_type(po, vtype, &t);
   if (m < 0)
     return NULL;
+  /* super(): also when the callee isn't known, if this code has the
+     __class__ cell super() would look for */
+  if (psyco_knowntobe(vkw, 0) && PsycoTuple_Load(varg) == 0) {
+    if (m != 0 && t == (PyObject *)&PySuper_Type)
+      return psuper_noargs(po);
+    if (m == 0 && psyco_class_cell(po->pr.co) >= 0) {
+      condition_code_t cc =
+          integer_cmp_i(po, vtype, (long)&PySuper_Type, Py_EQ);
+      if (cc == CC_ERROR)
+        return NULL;
+      if (runtime_condition_f(po, cc))
+        return psuper_noargs(po);
+    }
+  }
   if (m != 0 && t == (PyObject *)&PyRange_Type && psyco_knowntobe(vkw, 0)) {
     int n = PsycoTuple_Load(varg);
     if (n >= 1 && n <= 3) {

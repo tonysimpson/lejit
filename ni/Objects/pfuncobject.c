@@ -7,6 +7,8 @@
  * here stays a pending generator (PsycoGenexpr_New) until a consumer fuses it
  * or it escapes. A promoted function's code and defaults are checked at run
  * time (compiled_code, compiled_defaults: F57, F52).
+ * A closure only known at run time is not promoted, only its code
+ * (psyfunc.c:psyco_call_closure).
  * Suspected bugs (from reading):
  *  - compute_function's SET_FIELD tests 'other != NULL ||
  *    !psyco_known_NULL(other)', which should be &&;
@@ -240,7 +242,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     /* psyco_call_pyfunc's own fallback rebuilds the function from code,
        globals and defaults, losing keyword-only defaults: call the real
        function instead */
-    if (PyCode_GetNumFree(co) > 0 || co->co_kwonlyargcount > 0)
+    if (co->co_kwonlyargcount > 0)
         goto fallback;
     switch (field_changed(po, f, FUNC_code_now, (PyObject *)co)) {
     case 0:
@@ -304,16 +306,12 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         PyObject *f;
         if (is_megamorphic(func->source)) /* forgotten (D43) */
             goto fallback;
-        /* a function made here (MAKE_FUNCTION) and since computed still
-           has its code: closure code takes the real call anyway, so don't
-           promote a function object that is new on every run (each
-           promotion is a specialisation that keeps the object alive) */
         if (!is_compiletime(func->source)) {
             /* the code first: closures and lambdas are new function objects
-               on every run, but their code is not. Closure code takes the
-               real call anyway, so promoting such a function would only add
-               a specialisation per object, each keeping it alive, until the
-               site went megamorphic. */
+               on every run, but their code is not. Promoting a closure
+               would only add a specialisation per object, each keeping it
+               alive, until the site went megamorphic: it is called with
+               its cells read at run time instead. */
             PyObject *c;
             int r;
             vinfo_t *fcode = psyco_get_const(po, func, FUNC_code);
@@ -322,9 +320,10 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
             r = psyco_pyobj_atcompiletime_mega(po, fcode, &c);
             if (r < 0)
                 return NULL;
-            if (r == 0 || PyCode_GetNumFree((PyCodeObject *)c) > 0 ||
-                ((PyCodeObject *)c)->co_kwonlyargcount > 0)
+            if (r == 0 || ((PyCodeObject *)c)->co_kwonlyargcount > 0)
                 goto fallback;
+            if (PyCode_GetNumFree((PyCodeObject *)c) > 0)
+                return psyco_call_closure(po, func, (PyCodeObject *)c, arg);
         }
         switch (psyco_pyobj_atcompiletime_mega(po, func, &f)) {
             case 1: /* promotion ok */

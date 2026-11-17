@@ -32,6 +32,8 @@ struct mergepoint_s {
 /* Get merge points (cached) */
 EXTERNFN PyObject* psyco_get_merge_points(PyCodeObject* co, int module);
 EXTERNFN int psyco_is_genexpr(PyCodeObject* co);
+/* the index in co_freevars of '__class__', or -1 */
+EXTERNFN int psyco_class_cell(PyCodeObject* co);
 
 /* Get a pointer to the first mergepoint_t structure in the array whose
    'bytecode_ptr' is >= position. */

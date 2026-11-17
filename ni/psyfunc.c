@@ -4,12 +4,16 @@
  * The callee is then either inlined into the caller (the EInline
  * pseudo-exception swaps po->vlocals) or compiled separately and called with
  * the Psyco calling convention (psyco_call_psyco). Closure code is called this
- * way only while the function is still the virtual one MAKE_FUNCTION made
- * (comprehensions, local lambdas): its cells are passed as extra inputs into
- * the free-variable slots. Anything else (keyword-only arguments, other
- * closures, code with cells of its own, unknown arity, recursion depth used
- * up) becomes a residual call of the function object, as does a call made
- * while a trace or profile function is set (tested at run time: tracing_on).
+ * way too: the closure's cells are passed as extra inputs into the
+ * free-variable slots, where LOAD_DEREF reads them as the borrowed cells of
+ * a frame. They are the virtual closure tuple's items while the function is
+ * still the one MAKE_FUNCTION made (comprehensions, local lambdas),
+ * constants read now for a constant function (a method, a decorated
+ * global), or loaded at run time from func_closure (psyco_call_closure).
+ * Anything else (keyword-only arguments, code with cells of its own,
+ * unknown arity, recursion depth used up) becomes a residual call of the
+ * function object, as does a call made while a trace or profile function is
+ * set (tested at run time: tracing_on).
  * PsycoFunctionObject (the "proxy") is a
  * leftover of psyco.bind() and is dead code under the eval-frame hook.
  */
@@ -94,18 +98,8 @@ static bool fncall_collect_arguments(struct fncall_arg_s *fncall,
     if (inputargs > co->co_argcount && (co->co_flags & CO_VARARGS))
       /* ok, extra args will be collected below */;
     else {
-      if (inputargs < minargcnt || inputargs > co->co_argcount) {
-        int n = co->co_argcount < minargcnt ? minargcnt : co->co_argcount;
-        PyErr_Format(
-            PyExc_TypeError, "%.200s() takes %s %d %sargument%s (%d given)",
-            PyCodeObject_NAME(co),
-            minargcnt == co->co_argcount
-                ? "exactly"
-                : (inputargs < n ? "at least" : "at most"),
-            n,
-            /*kwcount ? "non-keyword " :*/ "", n == 1 ? "" : "s", inputargs);
-        return false;
-      }
+      if (inputargs < minargcnt || inputargs > co->co_argcount)
+        return false; /* the caller makes the real call, which raises */
       inputargs = co->co_argcount; /* add default arguments */
     }
   }
@@ -609,6 +603,8 @@ static vinfo_t *callee_builtins(PsycoObject *po, vinfo_t *vglobals) {
   return vinfo_new(CompileTime_NewSk(sk_new((long)b, SkFlagPyObj)));
 }
 
+#define MAX_CALL_FREES 64
+
 DEFINEFN
 vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
                            vinfo_t *vglobals, vinfo_t *vdefaults,
@@ -623,6 +619,7 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   bool inlining;
   vinfo_t *vbuiltins;
   vinfo_t **frees = NULL;
+  vinfo_t *freebuf[MAX_CALL_FREES];
   struct fncall_arg_s fncall;
 
   if (is_proxycode(co)) {
@@ -654,18 +651,20 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
       return PsycoGenexpr_New(vfunc, arg_tuple);
     goto fail_to_default;
   }
-  /* closure code: the cells are known when the function is still the
-     virtual one MAKE_FUNCTION made (a comprehension, say); otherwise the
-     real call supplies them */
+  /* closure code: the cells of a function still virtual (MAKE_FUNCTION
+     here: a comprehension, say) are its closure tuple's items; those of
+     any other are read from func_closure below */
   nfrees = PyCode_GetNumFree(co);
   if (nfrees != 0) {
     vinfo_t *closure;
-    if (vfunc == NULL || !is_virtualtime(vfunc->source))
+    if (vfunc == NULL || nfrees > MAX_CALL_FREES)
       goto fail_to_default;
-    closure = vinfo_getitem(vfunc, iFUNC_CLOSURE);
-    if (closure == NULL || PsycoTuple_Load(closure) != nfrees)
-      goto fail_to_default;
-    frees = &PsycoTuple_GET_ITEM(closure, 0);
+    if (is_virtualtime(vfunc->source)) {
+      closure = vinfo_getitem(vfunc, iFUNC_CLOSURE);
+      if (closure == NULL || PsycoTuple_Load(closure) != nfrees)
+        goto fail_to_default;
+      frees = &PsycoTuple_GET_ITEM(closure, 0);
+    }
   }
 
   /* XXX tony: kw only args are a Py3 feature that we need to add support for */
@@ -699,16 +698,40 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   vbuiltins = callee_builtins(po, vglobals);
   if (vbuiltins == NULL)
     goto fail_to_default;
+  if (nfrees != 0 && frees == NULL) {
+    /* func_closure can't be set from Python, and its length is the code's
+       number of free variables (funcobject.c:func_set_code checks it), as
+       ceval assumes. A constant function's cells are constants read now:
+       borrowed, since code compiled for a cell only ever uses its address,
+       which a new cell at the same address may as well share. */
+    int i;
+    vinfo_t *closure = psyco_get_const(po, vfunc, FUNC_closure);
+    for (i = 0; closure != NULL && i < nfrees; i++)
+      if ((freebuf[i] = psyco_get_nth_const(po, closure, TUPLE_ob_item, i)) ==
+          NULL)
+        closure = NULL;
+    if (closure == NULL) {
+      vinfo_decref(vbuiltins, po);
+      return NULL;
+    }
+    frees = freebuf;
+  }
   if (!fncall_collect_arguments(&fncall, vglobals, vbuiltins,
                                 &PsycoTuple_GET_ITEM(arg_tuple, 0), tuple_size,
                                 &PsycoTuple_GET_ITEM(vdefaults, 0), defcount,
                                 frees)) {
+    /* the wrong number of arguments: the real call raises CPython's
+       TypeError, whose wording depends on the defaults and keyword-only
+       arguments (ceval.c:too_many_positional, missing_arguments; F92) */
     vinfo_decref(vbuiltins, po);
-    goto pyerr; /* Python exception (wrong # of arguments) */
+    goto fail_to_default;
   }
 
+  /* not with cells loaded at run time: inlining such a closure crashed
+     (KNOWN_BUGS C49) */
   inlining = !po->pr.is_inlining &&
-             (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE);
+             (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE) &&
+             !(frees == freebuf && is_runtime(vfunc->source));
   /* a traced call goes through the eval hook (tracing_on). Not again when
      the instruction restarts after the inlined body with its result. */
   if (!inlining || LOC_INLINING == NULL) {
@@ -772,6 +795,43 @@ fail_to_default:
 pyerr:
   psyco_virtualize_exception(po);
   return NULL;
+}
+
+/* A closure known only at run time, with its code 'co' promoted (closures
+   are new function objects on every run of the code that makes them, but
+   their code is not). Neither the function nor anything it holds is made a
+   constant, which would keep each one alive and specialise per object:
+   its cells are loaded from func_closure at each call. The globals must
+   be this frame's (a run-time test), as for a closure made here, so that
+   they and the builtins stay constants that no promotion holds. Defaults
+   are per function object, so a call that would use them is the real one;
+   keyword-only arguments never come here (pfunction_call). */
+DEFINEFN
+vinfo_t *psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
+                            vinfo_t *arg_tuple) {
+  vinfo_t *vglobals, *vnodefaults, *result;
+  condition_code_t cc;
+  int n = PsycoTuple_Load(arg_tuple);
+  if (n < co->co_argcount)
+    goto fallback; /* unknown count, or defaults wanted */
+  vglobals = psyco_get_const(po, vfunc, FUNC_globals);
+  if (vglobals == NULL)
+    return NULL;
+  cc = integer_cmp(po, vglobals, LOC_GLOBALS, Py_NE);
+  if (cc == CC_ERROR)
+    return NULL;
+  if (runtime_condition_f(po, cc))
+    goto fallback;
+  vnodefaults = psyco_vi_Zero();
+  result = psyco_call_pyfunc(po, vfunc, co, LOC_GLOBALS, vnodefaults,
+                             arg_tuple, po->pr.auto_recursion);
+  vinfo_decref(vnodefaults, po);
+  return result;
+
+fallback:
+  return psyco_generic_call(po, PyFunction_Type.tp_call,
+                            CfCommonNewRefPyObject, "vvl", vfunc, arg_tuple,
+                            (long)0);
 }
 
 /* Run a pending generator expression (PsycoGenexpr_New) for its consumer:

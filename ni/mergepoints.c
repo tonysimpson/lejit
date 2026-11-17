@@ -155,8 +155,21 @@ _live_union(uint64_t *dst, const uint64_t *src, int words)
     return changed;
 }
 
+DEFINEFN int
+psyco_class_cell(PyCodeObject *co)
+{
+    Py_ssize_t fv;
+    for (fv = 0; fv < PyTuple_GET_SIZE(co->co_freevars); fv++)
+        if (PyUnicode_CompareWithASCIIString(
+                PyTuple_GET_ITEM(co->co_freevars, fv), "__class__") == 0)
+            return (int)fv;
+    return -1;
+}
+
 /* write the dead locals at each merge point into its fatlist (before any
-   code buffer is added). Returns 0 on memory error, with nothing set. */
+   code buffer is added). Returns 0 on memory error, with nothing set.
+   The first argument of code with a __class__ cell is never dead: a
+   zero-argument super() reads it (psuper_noargs). */
 static int
 _find_dead_locals(PyCodeObject *co, co_report_t *report)
 {
@@ -169,6 +182,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     uint64_t *live, *tmp;
     unsigned char *jump_targets; /* 1: loop exit, 2: continue target */
     int changed, ok = 0;
+    int keep_first = co->co_argcount > 0 && psyco_class_cell(co) >= 0;
 
     if (nlocals == 0)
         return 1;
@@ -278,7 +292,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
         mergepoint_t *mp = &report->mergepoints[m];
         uint64_t *in = live + (mp->bytecode_position / 2) * words;
         int v;
-        for (v = 0; v < nlocals; v++)
+        for (v = keep_first; v < nlocals; v++)
             if (!LIVE_TEST(in, v)) {
                 PyObject *o = PyLong_FromLong(v);
                 if (o == NULL || PyList_Append(mp->entries.fatlist, o) < 0) {
@@ -500,7 +514,6 @@ _build_merge_points(PyCodeObject *co, int module)
     const _Py_CODEUNIT *instr_end;
     co_report_t *report;
     int extended_arg = 0;
-    Py_ssize_t fv;
     int reads_class;
 
     /* XXX tony: all these not supported/buggy currently */
@@ -514,15 +527,12 @@ _build_merge_points(PyCodeObject *co, int module)
         goto not_ok;
     }
     /* zero-argument super() reads the __class__ cell and the first
-       argument from the real frame (typeobject.c:super_init). Closure code
-       only runs compiled from its own frame (never inlined: psyfunc.c),
-       where CPython put both; compiled code doesn't write locals back, so
-       the frame's first argument is right unless the code rebinds it */
-    reads_class = 0;
-    for (fv = 0; fv < PyTuple_GET_SIZE(co->co_freevars); fv++)
-        if (PyUnicode_CompareWithASCIIString(
-                PyTuple_GET_ITEM(co->co_freevars, fv), "__class__") == 0)
-            reads_class = 1;
+       argument from the real frame (typeobject.c:super_init), which a
+       compiled callee hasn't: pbltinmodule.c:psuper_noargs passes both
+       from the compiled frame instead. Code that rebinds its first
+       argument stays interpreted, in case a super() call that meta doesn't
+       see reaches a real frame, whose locals compiled code doesn't write */
+    reads_class = psyco_class_cell(co) >= 0;
 
     first_instr = (_Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
     next_instr = first_instr;

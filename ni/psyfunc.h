@@ -15,6 +15,9 @@ EXTERNFN vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc,
                                     PyCodeObject *co,
                                     vinfo_t *vglobals, vinfo_t *vdefaults,
                                     vinfo_t *arg_tuple, int recursion);
+/* the same for a run-time function whose closure code 'co' is known */
+EXTERNFN vinfo_t *psyco_call_closure(PsycoObject *po, vinfo_t *vfunc,
+                                     PyCodeObject *co, vinfo_t *arg_tuple);
 
 /* generator expressions fused with their consumer (pycheader.h GENEXPR_*) */
 EXTERNFN bool psyco_genexpr_fusable(vinfo_t *v);
