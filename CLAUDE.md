@@ -38,4 +38,5 @@ The code is the source of truth. The complex files (core, virtual objects, backe
 - Docs are local Markdown in `doc/`. Mark claims **[read]** (checked in code) or **[inferred]**. Anchor to `file:function` and commit hashes, not line numbers.
 - Layers: `core` | `translated` | `backend` | `glue` | `tooling` | `obsolete` (definitions in `doc/GOAL.md`).
 - Comment only where the code is complex, written for that file, never a template (`doc/DECISIONS.md` D9). When you change or re-review a file, update its row in `doc/MAP.md` (including the `reviewed` commit). Record new decisions in `doc/DECISIONS.md` and unknowns in `doc/QUESTIONS.md`.
+- Agents running commands: never `rm` an unguarded variable path (write literal paths or `"${S:?}"/x`), no `git stash`, run tools from your own worktree, cap Python at `prlimit --as=4000000000`.
 - Don't assume the code builds or runs. It needs CPython 3.7 and hasn't been built recently (see `doc/BUILD.md`).
