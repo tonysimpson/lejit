@@ -18,7 +18,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C15 remainder:** `locals()`, `eval()` and friends reached indirectly (`f = locals; f()`) see only the arguments.
 - **C17 remainder:** identity of virtual floats, ints and bound methods across calls (`f(x) is x` is False).
 
-- **F37:** a `__setattr__` added to a class after a store was compiled is ignored (confirmed). Fixed by any store option except doing nothing (STORES.md option 1). Small.
+- **F37:** fixed (`4213823`, STORES.md option 1).
 
 **Possible, not shown to happen**
 - **F10:** a user `__eq__` may run twice. **F11:** a C-NULL `kw` on the `use_proxy` path. Both from reading; each needs a test first.
@@ -38,7 +38,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 ### Speed
 - **F13, FASTCALL builtins.** **In flight.** Note: F23 already gave `PsycoCFunction_Call` a FASTCALL path for builtins with a meta; F13 is about the rest, and the agent should say what is left.
 - **Inline recursion-depth count (C12).** **In flight.** About 2.6% of richards.
-- **Attribute stores** (`doc/STORES.md`, QUESTIONS 39; owner decides). Stores are 30–38% of richards, 13% of deltablue, 11% of go. Option 1 (type guard, then `_PyObjectDict_SetItem` directly; fixes F37) gains about 8% on richards; an inline store gains about 21–22%. Option 4 (a per-site check of the live keys, no reference held) works in constructors and avoids F36. The dict version tag must be settled first. Option 4 is designed in STORES.md "Option 4: design" (a per-(class, name) cache, A and B stores inline, about 13% on richards over option 1, code +20–25%), to implement after option 1.
+- **Attribute stores** (`doc/STORES.md`, QUESTIONS 39). Options 1 and 2 done (`4213823`, D39): richards 13%, go 8% fewer instructions. Before them, stores were 30–38% of richards, 13% of deltablue, 11% of go. Next: an inline store, estimated at a further 13–14% of richards. Option 4 (a per-site check of the live keys, no reference held) works in constructors and avoids F36. The dict version tag must be settled first.
 - **Strings (D14).** **In flight:** measure, then `len`, indexing, iteration, `in`, constant folding. Later: concatenation buffers (old Psyco's design) if the measurement says so.
 - **Unshared-dict loads with a known hash.** Done (`0965d06`). Next step, if go still shows `lookdict`: an inline probe of a combined dict for a constant key (medium).
 - **Calls with `*args`/`**kw` and unpacking** (F19 remainder): done (`7fdf9a7`). Every BUILD_*_UNPACK opcode compiles; the map and set forms are residual helpers. No pyperformance benchmark used them. If one ever matters: a virtual dict for `**` of known dicts.

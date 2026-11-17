@@ -1,7 +1,7 @@
 ---
 written: 2026-11-17
 head_ref: 3cd02f7 (measurements); 819da55 (option 4 design)
-status: research; options for the owner; option 4 designed (section "Option 4: design"), nothing implemented
+status: options 1 and 2 implemented (D39); option 4 designed (section "Option 4: design", D38), not yet implemented
 ---
 # Instance attribute stores: measurements and options
 
@@ -16,6 +16,7 @@ Tags: **[read]** checked in code, **[run]** measured, **[inferred]** reasoned.
 - Each benchmark has one main kind of store: richards and deltablue overwrite existing keys of a shared-key (split) dict, go mostly overwrites keys of combined dicts (70%; the rest split), raytrace and chaos fill new objects in `__init__`. Growing a class's shared keys never happens in the timed loop. [run]
 - An inline store into an existing slot would save about 7.5 ns per store: about 22% of richards and 8% of deltablue. Extending it to fill new objects in order adds about 4% to raytrace and chaos, but only with a guard that doesn't hold the keys (option 4). [inferred]
 - Found on the way: compiled stores ignore a `__setattr__` added to the class after compiling (KNOWN_BUGS F37). Every option below except "do nothing" fixes it with the type guard. [run]
+- **Done:** options 1 and 2 (`4213823`, D39): richards −13%, go −8% instructions per iteration; see Results. Fixes F37.
 
 ## The path today
 
@@ -459,6 +460,43 @@ The last row is why the GC test looks at the value's type. Under Ni, go's `Board
 4. Loads: move present-name loads to the shared cache now? Is F36 worth a probe for absent names?
 5. Code size: is +20–25% on richards acceptable for about 13%? If not, a backend feature that lets several conditions share one respawn stub (they all lead to the same helper call) would remove most of the stub bytes. The replay would then have to stop at the first of them.
 6. Should the miss helper stop refreshing a cache after many misses, before any thrash has been seen?
+
+## Results: options 1 and 2
+
+Done in `4213823` (D39). [read] `pobject.c:heap_setattr`, `store_kind`, `store_guard`.
+
+- A store of a constant name on a heap type is behind A9's guard (`tp_flags`, `tp_version_tag`). Once it passes, the store calls what `store_kind` chose at compile time: `_PyObjectDict_SetItem` (through `cimpl_instance_dict_set`, which turns a `KeyError` into `AttributeError` as CPython does) when `tp_setattro` is `PyObject_GenericSetAttr`, `tp_dictoffset > 0`, and the name's class attribute is absent or a non-data descriptor of a static type; otherwise `tp_setattro`. A failed guard calls `PyObject_SetAttr` (F37 fixed). Deletes take the same path with `NULL`, so `__delattr__` added later is seen too.
+- Option 2: for a class without shared keys (`keys_inline` false), the store loads the dict at `tp_dictoffset`; if it exists and is combined, it calls `_PyDict_SetItem_KnownHash` with the hash computed at compile time. Split dicts and a missing dict go to option 1's helper.
+- Static types keep the old path (their `tp_setattro` can't change). A megamorphic site (more than `MEGAMORPHIC_MAX` types) calls `PyObject_SetAttr`, as loads do.
+- **Not in the plan: the guard repairs itself.** With one guard per site, raytrace ran 2% *more* instructions than before [run]. `Vector.__init__` is compiled by the first `Vector(...)`, at import, and `Vector.ZERO = ...` then changes the class, so every guard in `__init__` failed for good and every store took `PyObject_SetAttr`. Now the guard is shared by all sites of (type, name, kind) and holds only states of the type in which `store_kind` gives that kind. On a failed guard, `cimpl_store_type_changed` recomputes the kind and, if a guard exists for it, sets that guard to the type as it is now. A replay of a point after a passed guard sees a type of the compiled kind, and the failure branch needs no guard pointer, so the D21 rules hold without a static `respawn_guard`. [read], [run]
+
+Instructions per warm iteration, millions (`perf stat -e instructions:u`, ten iterations minus none, after three to compile), release builds of `f27cfcb` and `4213823` in the same session. [run]
+
+| | richards | deltablue | go | raytrace | chaos |
+|---|---|---|---|---|---|
+| before | 223 | 33 | 1,251 | 3,347 | 511 |
+| option 1 only (2 disabled) | 194 | – | 1,176–1,192 | – | – |
+| options 1 and 2 | 194 | 31 | 1,150 | 3,264 | 485 |
+| change | −13% | −6% | −8% | −2.5% | −5% |
+
+- Larger gains than estimated for richards (8%) and go (3–4%), in instructions; the warm times below fall by about 10% and 7%. Option 2 is worth about 3% of go and nothing elsewhere, as expected. [run]
+- raytrace's count moves by about 1% between runs; the others by under 1%. [run]
+
+`tools/compilebench.py`, release build (code KB, compile ms; timings indicative, others were benchmarking). [run]
+
+| | richards | deltablue | go | raytrace | chaos | all 29 |
+|---|---|---|---|---|---|---|
+| code before | 117.2 | 439.2 | 440.8 | 270.8 | 65.6 | 2,960 |
+| code after | 133.3 | 448.2 | 474.4 | 273.3 | 66.1 | 3,037 |
+| compile ms before | 0.60 | 2.45 | 3.14 | 1.71 | 0.46 | 21.1 |
+| compile ms after | 0.67 | 2.89 | 3.28 | 1.77 | 0.46 | 21.9 |
+| warm ms before | 10.81 | 1.55 | 68.72 | 190.87 | 26.99 | |
+| warm ms after | 9.69 | 1.53 | 64.06 | 183.02 | 26.24 | |
+
+- Code grew more than estimated: richards +14%, go +7.6%, all benchmarks +2.6%. Each compiled store site gains the guard and its respawn stub, about 50 bytes, and richards compiles each store site once per class it sees. Ending the block after the site (`split_after_global`) costs nothing measurable (richards and go unchanged without it). Option 2 adds about 10 KB to go. [run], [inferred]
+- Compile time: within the run-to-run noise (deltablue's 2.45 → 2.89 ms came back as 2.52 ms in the option-1-only run). [run]
+
+Tests: `tests/cases/attr_stores.py`, 16 cases: `__setattr__` and `__delattr__` added after compiling (both failed before), a property added later, a class attribute whose heap type gains `__set__`, a guard repaired after an unrelated class change and failing again after a relevant one, shared-key and combined dicts, `__dict__` replaced (dict subclass, non-`str` key), a key whose `__eq__` raises `KeyError`, no dict yet, `__slots__` (with and without `__dict__`), subclasses of `list`, `int` and `str`, a read-only property, deleting a missing attribute, an old value freed by the store. Checked build (`NI_TRACE=1 NI_ALL_CHECKS=1`): `tests/run.py` 385 passed; richards, deltablue, raytrace, go, hexiom, chaos and pyflate ran under `tools/profile_bench.py` without a replay divergence; `tools/check.sh`: all checks passed. [run]
 
 ## Reproduce
 

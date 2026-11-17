@@ -149,6 +149,7 @@ Example: `pabstract.c:PsycoNumber_Power` (int/float only), `pfloatobject.c:pfloa
 
 - **inline-cache-patch**: a promotion site is a self-patching `CMP imm64; JE` for the last value seen, in front of the C dispatcher. `ni/x64/idispatcher.h:ipromotion_finish`, `fix_fast_common_case`.
 - **lazy-branch-proxy**: a branch to code not yet compiled goes through a stub that compiles it and then repoints the jump. Coding pauses and respawn use the pooled 15-byte stubs (`dispatcher.c:psyco_new_stub`, D32); promotion still uses `ni/x64/iencoding.c:psyco_call_code_builder`. Jumps: `idispatcher.h:conditional_jump_to`/`change_cond_jump_target`.
+- **repairable-shared-guard**: a guard whose expected values live in a struct shared by every site compiled to the same decision, keyed by what the decision depends on, so the failure path can recompute the decision and, if unchanged, reset the guard; the sites need no recompile and a replay needs no guard pointer. `ni/Objects/pobject.c:store_guard` (D39).
 - **cc-virtual**: processor flags are held as virtual values in `po->ccregs` and materialised only when about to be clobbered. `ni/codegen.c:psyco_vinfo_condition`, `ni/x64/iencoding.c:psyco_compute_cc`.
 
 ## Rules any generator must respect
