@@ -1121,6 +1121,72 @@ static PyObject *cimpl_build_unpack(PyObject *parts, PyObject *func,
   return r;
 }
 
+/* ceval.c BUILD_MAP_UNPACK (func == NULL) and BUILD_MAP_UNPACK_WITH_CALL,
+   on a tuple of the parts */
+static PyObject *cimpl_build_map_unpack(PyObject *parts, PyObject *func) {
+  Py_ssize_t i;
+  PyObject *sum = PyDict_New();
+  if (sum == NULL)
+    return NULL;
+  for (i = 0; i < PyTuple_GET_SIZE(parts); i++) {
+    PyObject *arg = PyTuple_GET_ITEM(parts, i);
+    if (func == NULL) {
+      if (PyDict_Update(sum, arg) < 0) {
+        if (PyErr_ExceptionMatches(PyExc_AttributeError))
+          PyErr_Format(PyExc_TypeError, "'%.200s' object is not a mapping",
+                       arg->ob_type->tp_name);
+        Py_DECREF(sum);
+        return NULL;
+      }
+    } else if (_PyDict_MergeEx(sum, arg, 2) < 0) {
+      if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        PyErr_Format(PyExc_TypeError,
+                     "%.200s%.200s argument after ** "
+                     "must be a mapping, not %.200s",
+                     PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
+                     arg->ob_type->tp_name);
+      } else if (PyErr_ExceptionMatches(PyExc_KeyError)) {
+        PyObject *exc, *val, *tb;
+        PyErr_Fetch(&exc, &val, &tb);
+        if (val && PyTuple_Check(val) && PyTuple_GET_SIZE(val) == 1) {
+          PyObject *key = PyTuple_GET_ITEM(val, 0);
+          if (!PyUnicode_Check(key))
+            PyErr_Format(PyExc_TypeError,
+                         "%.200s%.200s keywords must be strings",
+                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func));
+          else
+            PyErr_Format(PyExc_TypeError,
+                         "%.200s%.200s got multiple "
+                         "values for keyword argument '%U'",
+                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
+                         key);
+          Py_XDECREF(exc);
+          Py_XDECREF(val);
+          Py_XDECREF(tb);
+        } else
+          PyErr_Restore(exc, val, tb);
+      }
+      Py_DECREF(sum);
+      return NULL;
+    }
+  }
+  return sum;
+}
+
+/* ceval.c BUILD_SET_UNPACK, on a tuple of the parts */
+static PyObject *cimpl_build_set_unpack(PyObject *parts) {
+  Py_ssize_t i;
+  PyObject *sum = PySet_New(NULL);
+  if (sum == NULL)
+    return NULL;
+  for (i = 0; i < PyTuple_GET_SIZE(parts); i++)
+    if (_PySet_Update(sum, PyTuple_GET_ITEM(parts, i)) < 0) {
+      Py_DECREF(sum);
+      return NULL;
+    }
+  return sum;
+}
+
 static PyObject *cimpl_load_global(PyObject *globals, PyObject *w) {
   PyObject *x;
   RECLIMIT_SAFE_ENTER();
@@ -2296,6 +2362,36 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(v);
         goto fine;
       }
+
+      /* {**a, **b}, f(**a, k=1), {*a, *b}: ceval's code at run time */
+      case BUILD_MAP_UNPACK:
+      case BUILD_MAP_UNPACK_WITH_CALL:
+      case BUILD_SET_UNPACK:
+        w = PsycoTuple_New(oparg, STACK_POINTER() - oparg);
+        if (opcode == BUILD_SET_UNPACK) {
+          v = psyco_generic_call(po, cimpl_build_set_unpack,
+                                 CfCommonNewRefPyObject, "v", w);
+        } else {
+          /* the function being called is under the positional tuple */
+          vinfo_t *fn = opcode == BUILD_MAP_UNPACK_WITH_CALL
+                            ? NTOP(oparg + 2) : NULL;
+          if (fn == NULL)
+            fn = psyco_vi_Zero();
+          else
+            vinfo_incref(fn);
+          v = psyco_generic_call(po, cimpl_build_map_unpack,
+                                 CfCommonNewRefPyObject, "vv", w, fn);
+          vinfo_decref(fn, po);
+        }
+        vinfo_decref(w, po);
+        if (v == NULL)
+          break;
+        Psyco_AssertType(po, v, opcode == BUILD_SET_UNPACK ? &PySet_Type
+                                                            : &PyDict_Type);
+        while (oparg--)
+          POP_DECREF();
+        PUSH(v);
+        goto fine;
 
 #ifdef STORE_MAP
       case STORE_MAP:
