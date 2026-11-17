@@ -233,7 +233,7 @@ Option 1 is assumed to cover what the others leave to the helper. go's figures i
 
 ## Recommendation
 
-For the owner to decide.
+Decided: option 4, then its sites shrunk (DECISIONS D38, D47).
 
 - Option 1 is cheap, safe and fixes F37. It is also the fallback every inline option needs, so it would come first whichever way.
 - Most of the gain is in an inline store to an existing slot. Option 3 is the smallest step from D31. Option 4 costs slightly more per site but also speeds up constructors and avoids F36, and its check could later replace D31's held reference for loads. If one inline option is chosen, option 4 looks the better long-term choice.
