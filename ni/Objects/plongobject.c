@@ -17,6 +17,7 @@
 #include "plongobject.h"
 #include "pboolobject.h"
 #include "pfloatobject.h"
+#include "ptupleobject.h"
 
 /* MEDIUM_VALUE(v) of an int that is one digit at run time, as a new
    reference in *pval. Returns 1; 0 if it isn't one digit (the caller falls
@@ -282,19 +283,195 @@ static vinfo_t *plong_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
                                           : (CfCommonCheckNotImplemented),     \
                              &PyFloat_Type)
 
-RETLONG(2, plong_mod, nb_remainder)
 RETLONG(1, plong_pos, nb_positive)
 RETLONG(1, plong_abs, nb_absolute)
-RETLONG(2, plong_lshift, nb_lshift)
-RETLONG(2, plong_rshift, nb_rshift)
-RETLONG(2, plong_and, nb_and)
-RETLONG(2, plong_xor, nb_xor)
-RETLONG(2, plong_or, nb_or)
-RETLONG(2, plong_div, nb_floor_divide)
 RETFLOAT(2, plong_true_divide, nb_true_divide)
 
 #undef RETLONG
 #undef RETFLOAT
+
+/* & | ^ << >> on one-digit ints as word operations. Hand-written: 3.7's
+   long_and etc. work on digit arrays with no one-digit fast path, but
+   3.12's long_and/long_or/long_xor have one (_PyLong_IsCompact), which
+   gen_long.py can translate there. A word shift has Python's meaning for
+   >> (a count of 64 or more gives the sign, a negative one raises
+   ValueError, as integer_rshift does); for << the count must be at most
+   32, which keeps a one-digit value inside a word. */
+enum { OP_AND, OP_OR, OP_XOR, OP_LSHIFT, OP_RSHIFT };
+
+static vinfo_t *plong_bitop(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op,
+                            void *slot) {
+  vinfo_t *a, *b, *x = NULL;
+  int r = both_longs(po, v, w);
+  if (r <= 0)
+    return r < 0 ? NULL : psyco_vi_NotImplemented();
+  r = plong_medium_value(po, v, &a);
+  if (r <= 0)
+    return r < 0 ? NULL : plong_fallback2(po, slot, v, w);
+  r = plong_medium_value(po, w, &b);
+  if (r <= 0) {
+    vinfo_decref(a, po);
+    return r < 0 ? NULL : plong_fallback2(po, slot, v, w);
+  }
+  if (op == OP_LSHIFT) {
+    condition_code_t cc = integer_cmp_i(po, b, 32, Py_LE | COMPARE_UNSIGNED);
+    if (cc == CC_ERROR)
+      goto done;
+    if (!runtime_condition_t(po, cc)) {
+      x = plong_fallback2(po, slot, v, w);
+      goto done;
+    }
+  }
+  switch (op) {
+  case OP_AND: x = integer_and(po, a, b); break;
+  case OP_OR: x = integer_or(po, a, b); break;
+  case OP_XOR: x = integer_xor(po, a, b); break;
+  case OP_LSHIFT: x = integer_lshift(po, a, b); break;
+  default: x = integer_rshift(po, a, b); break;
+  }
+  if (x != NULL)
+    x = PsycoLong_FROM_WORD(x);
+done:
+  vinfo_decref(a, po);
+  vinfo_decref(b, po);
+  return x;
+}
+
+#define BITOP(name, op, slotname)                                              \
+  static vinfo_t *name(PsycoObject *po, vinfo_t *v, vinfo_t *w) {              \
+    return plong_bitop(po, v, w, op, PyLong_Type.tp_as_number->slotname);      \
+  }
+BITOP(plong_and, OP_AND, nb_and)
+BITOP(plong_or, OP_OR, nb_or)
+BITOP(plong_xor, OP_XOR, nb_xor)
+BITOP(plong_lshift, OP_LSHIFT, nb_lshift)
+BITOP(plong_rshift, OP_RSHIFT, nb_rshift)
+#undef BITOP
+
+/* // and % on one-digit ints with Python's floor rounding (l_divmod).
+   The backend has no divide, so they are pure C helpers on words (they
+   fold on constants), except that a constant positive power-of-two
+   divisor is a mask or an arithmetic shift. A zero divisor is the real
+   slot, which raises. 3.7's fast_floor_div and fast_mod need exactly one
+   digit each and so are the same thing. */
+static long cimpl_floor_div(long a, long b) {
+  long q = a / b;
+  if (a % b != 0 && (a < 0) != (b < 0))
+    q--;
+  return q;
+}
+
+static long cimpl_floor_mod(long a, long b) {
+  long m = a % b;
+  if (m != 0 && (m < 0) != (b < 0))
+    m += b;
+  return m;
+}
+
+/* the quotient and/or remainder of two one-digit words (*pq, *pm may be
+   NULL when not wanted): 1, 0 if the divisor is zero (the caller takes the
+   real slot, which raises), -1 on error */
+static int floor_divmod_words(PsycoObject *po, vinfo_t *a, vinfo_t *b,
+                              vinfo_t **pq, vinfo_t **pm) {
+  condition_code_t cc;
+  if (is_compiletime(b->source) && CompileTime_Get(b->source)->value > 0 &&
+      (CompileTime_Get(b->source)->value &
+       (CompileTime_Get(b->source)->value - 1)) == 0) {
+    long d = CompileTime_Get(b->source)->value;
+    int k = 0;
+    while ((1L << k) != d)
+      k++;
+    if (pq != NULL && (*pq = integer_rshift_i(po, a, k)) == NULL)
+      return -1;
+    if (pm != NULL) {
+      vinfo_t *mask = vinfo_new(CompileTime_New(d - 1));
+      *pm = integer_and(po, a, mask);
+      vinfo_decref(mask, po);
+      if (*pm == NULL) {
+        if (pq != NULL)
+          vinfo_decref(*pq, po);
+        return -1;
+      }
+    }
+    return 1;
+  }
+  cc = integer_cmp_i(po, b, 0, Py_NE);
+  if (cc == CC_ERROR)
+    return -1;
+  if (!runtime_condition_t(po, cc))
+    return 0;
+  if (pq != NULL &&
+      (*pq = psyco_generic_call(po, cimpl_floor_div, CfPure | CfReturnTypeLong,
+                                "vv", a, b)) == NULL)
+    return -1;
+  if (pm != NULL &&
+      (*pm = psyco_generic_call(po, cimpl_floor_mod, CfPure | CfReturnTypeLong,
+                                "vv", a, b)) == NULL) {
+    if (pq != NULL)
+      vinfo_decref(*pq, po);
+    return -1;
+  }
+  return 1;
+}
+
+/* the real slot; divmod's returns a tuple, not an int */
+static vinfo_t *divmod_fallback(PsycoObject *po, int which, void *slot,
+                                vinfo_t *v, vinfo_t *w) {
+  if (which == 2)
+    return psyco_generic_call(po, slot, CfCommonNewRefPyObject, "vv", v, w);
+  return plong_fallback2(po, slot, v, w);
+}
+
+/* which: 0 //, 1 %, 2 divmod() */
+static vinfo_t *plong_divmod_op(PsycoObject *po, vinfo_t *v, vinfo_t *w,
+                                int which, void *slot) {
+  vinfo_t *a, *b, *q = NULL, *m = NULL, *x = NULL;
+  int r = both_longs(po, v, w);
+  if (r <= 0)
+    return r < 0 ? NULL : psyco_vi_NotImplemented();
+  r = plong_medium_value(po, v, &a);
+  if (r <= 0)
+    return r < 0 ? NULL : divmod_fallback(po, which, slot, v, w);
+  r = plong_medium_value(po, w, &b);
+  if (r <= 0) {
+    vinfo_decref(a, po);
+    return r < 0 ? NULL : divmod_fallback(po, which, slot, v, w);
+  }
+  r = floor_divmod_words(po, a, b, which != 1 ? &q : NULL,
+                         which != 0 ? &m : NULL);
+  if (r == 0)
+    x = divmod_fallback(po, which, slot, v, w);
+  else if (r > 0) {
+    if (which == 0)
+      x = PsycoLong_FROM_WORD(q);
+    else if (which == 1)
+      x = PsycoLong_FROM_WORD(m);
+    else {
+      vinfo_t *items[2];
+      items[0] = PsycoLong_FROM_WORD(q);
+      items[1] = PsycoLong_FROM_WORD(m);
+      x = PsycoTuple_New(2, items);
+      vinfo_decref(items[0], po);
+      vinfo_decref(items[1], po);
+    }
+  }
+  vinfo_decref(a, po);
+  vinfo_decref(b, po);
+  return x;
+}
+
+static vinfo_t *plong_div(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
+  return plong_divmod_op(po, v, w, 0,
+                         PyLong_Type.tp_as_number->nb_floor_divide);
+}
+
+static vinfo_t *plong_mod(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
+  return plong_divmod_op(po, v, w, 1, PyLong_Type.tp_as_number->nb_remainder);
+}
+
+static vinfo_t *plong_divmod(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
+  return plong_divmod_op(po, v, w, 2, PyLong_Type.tp_as_number->nb_divmod);
+}
 
 static vinfo_t *plong_pow(PsycoObject *po, vinfo_t *v1, vinfo_t *v2,
                           vinfo_t *v3) {
@@ -320,6 +497,7 @@ void psy_longobject_init(void) {
   Psyco_DefineMeta(m->nb_xor, plong_xor);
   Psyco_DefineMeta(m->nb_or, plong_or);
   Psyco_DefineMeta(m->nb_floor_divide, plong_div);
+  Psyco_DefineMeta(m->nb_divmod, plong_divmod);
   Psyco_DefineMeta(m->nb_bool, plong_bool);
   Psyco_DefineMeta(PyLong_Type.tp_richcompare, plong_richcompare);
   Psyco_DefineMeta(PyLong_Type.tp_hash, plong_hash);

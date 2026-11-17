@@ -58,6 +58,106 @@ def cmp_edges():
     return table(op_cmp)
 
 
+def op_bits(a, b):
+    return (a & b, a | b, a ^ b)
+
+
+def bits_edges():
+    # & | ^ on one-digit ints are word operations (plong_bitop)
+    return table(op_bits)
+
+
+SHIFTS = [0, 1, 5, 29, 30, 31, 32, 33, 63, 64, 65, 200, -1, -40, 2 ** 40]
+
+
+def op_shifts(a, k):
+    out = []
+    for f in (shl, shr):
+        try:
+            out.append(f(a, k))
+        except (ValueError, OverflowError, MemoryError) as e:
+            out.append(type(e).__name__ + ': ' + str(e))
+    return out
+
+
+def shl(a, k):
+    return a << k
+
+
+def shr(a, k):
+    return a >> k
+
+
+def shift_edges():
+    return [op_shifts(a, k) for a in EDGES for k in SHIFTS]
+
+
+DIVISORS = [1, 2, 3, 4, 7, 8, -1, -2, -3, -8, 1024, M, -M, M + 1, 2 ** 40, 0]
+
+
+def op_divmod(a, b):
+    out = []
+    for f in (fdiv, fmod, fdiv2, fmod2, fdiv8, fmod8, fdivmod, fdivmod4):
+        try:
+            out.append(f(a, b))
+        except ZeroDivisionError as e:
+            out.append(str(e))
+    return out
+
+
+def fdiv(a, b):
+    return a // b
+
+
+def fmod(a, b):
+    return a % b
+
+
+def fdiv2(a, b):
+    return a // 2   # constant power of two: a shift
+
+
+def fmod2(a, b):
+    return a % 2    # a mask
+
+
+def fdiv8(a, b):
+    return a // -8
+
+
+def fmod8(a, b):
+    return a % 8
+
+
+def fdivmod(a, b):
+    return divmod(a, b)
+
+
+def fdivmod4(a, b):
+    q, r = divmod(a, 4)
+    return q * 10 + r
+
+
+def divmod_edges():
+    return [op_divmod(a, b) for a in EDGES for b in DIVISORS]
+
+
+def collatz_steps(n):
+    steps = 0
+    while n != 1:
+        n = n // 2 if n % 2 == 0 else 3 * n + 1
+        steps = steps + 1
+    return steps
+
+
+def bits_loop(n):
+    # results stay virtual through a loop
+    h = 0
+    for i in range(n):
+        h = ((h << 5) ^ (h >> 2) ^ i) & 0xfffff
+    return h
+
+
 # the operations inline in one function, so results stay virtual and feed
 # each other: the range test on virtual operands decides each step
 def chain(a, b):
@@ -189,6 +289,11 @@ CASES = [
     ('mul_edges', [()], {}),
     ('invert_edges', [()], {}),
     ('cmp_edges', [()], {}),
+    ('bits_edges', [()], {}),
+    ('shift_edges', [()], {}),
+    ('bits_loop', [(1000,)], {}),
+    ('divmod_edges', [()], {}),
+    ('collatz_steps', [(27,), (97,)], {}),
     ('chain_edges', [()], {}),
     ('grow_past_one_digit', [(40,)], {}),
     ('shrink_back', [(0,)], {}),

@@ -63,3 +63,5 @@ Not done / next candidates:
 - Diff each translated file against the CPython 3.7 source it mirrors, to measure drift precisely.
 - Owner answered Q1–6 (DECISIONS D10–D15).
 - Start the meta-compiler design: the per-slot signature table (Q7) and the `Cf*` derivation (Q8).
+
+**Int bit operations and division** (A1-adjacent): `& | ^ << >> // % divmod` on one-digit ints are word operations (`plongobject.c:plong_bitop`, `plong_divmod_op`; a constant power-of-two divisor is a shift or mask, other divisors a pure C helper; `divmod` gives a virtual tuple). [run] Release build: total 3.4× → 3.9×; digit_sums 4.1× → 20.6×, collatz 3.1× → 5.7×, hashing 2.7× → 3.9×, quantise 7.5× → 11.3×.
