@@ -68,7 +68,8 @@ Dependencies point downward in principle. In practice the translated files also 
    - If the argument count and defaults are known at compile time, it binds arguments at compile time.
    - Small loop-free callees can be **inlined** (`MP_FLAGS_INLINABLE`, the `EInline` pseudo-exception). In practice this almost never fires now, because nearly every instruction is a merge point (`doc/history/removed-mechanisms.md` A2/A4).
    - Others are compiled separately and called directly (`psyco_call_psyco`), passing a `stack_frame_info_t` for frame reconstruction.
-   - Anything unsupported (keyword-only args, closures, unknown arity, recursion depth used up) becomes a residual call to `cimpl_call_pyfunc`.
+   - Closures get their cells as extra inputs in the free-variable slots: from a virtual function's closure tuple, read at compile time for a constant function, or loaded from `func_closure` for a run-time one (`psyco_call_closure`; D58).
+   - Anything unsupported (keyword-only args, `**kwargs`, code with cells of its own, unknown arity, recursion depth used up) becomes a residual call of the function object.
 
 ## The mixed files, by section
 

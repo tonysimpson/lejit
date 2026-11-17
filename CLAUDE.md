@@ -23,6 +23,7 @@ Ni is a fork of Armin Rigo's **Psyco** JIT for CPython, ported partway to x86-64
 | Profiles: where compiled code spends its time (`tools/profile_bench.py`) | `doc/PROFILE.md` |
 | Attribute stores: what they cost, what they do to the dict, options (`tools/storeclasses.py`) | `doc/STORES.md` |
 | Generators: where time goes, options (resumable bodies, genexpr inlining) | `doc/GENERATORS.md` |
+| Calls to closures: how common, what they cost, what was done (`tools/closurecalls.py`) | `doc/CLOSURES.md` |
 | Porting the core to 3.12: what changes, the entry design, risks | `doc/PORT312.md` |
 | Known and suspected bugs (one list) | `doc/KNOWN_BUGS.md` |
 | Everything still open, bugs and ideas, with pointers | `doc/BACKLOG.md` |

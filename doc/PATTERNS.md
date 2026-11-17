@@ -166,6 +166,10 @@ Example: `pycompiler.c:cimpl_reraise` (the RuntimeError path records its own tra
 A frame field that CPython fixes when the frame starts and the case bodies read (`f->f_builtins`, set in `_PyFrame_New_NoTrack` from the caller or the globals) → a compile-time slot in `po->vlocals`, set where Ni builds a frame (eval-hook entry, direct calls), not recomputed from other fields at each use. Judgement: which fields are fixed per frame, and the rule for frames Ni builds itself. A field in `pr` would be wrong, since only `vlocals` is compared at merge points.
 Example: `LOC_BUILTINS` (`pycheader.h`, `psyfunc.c:callee_builtins`; KNOWN_BUGS F49, D52).
 
+**P30 frame-read-to-compiled-frame** (J)
+C code that reads the running frame (`PyThreadState_GET()->frame`: its code, locals or cells) → a meta that passes those values from the compiled frame's `po->vlocals` and `po->pr.co` to a residual helper doing the rest of the C function, because a directly called compiled function has no real frame. The liveness pass must keep any local the C code reads implicitly. Which builtins read the frame is knowledge the C source shows only through the `tstate->frame` read.
+Example: `pbltinmodule.c:psuper_noargs` and `cimpl_super_noargs` (typeobject.c:super_init without arguments; D58), `mergepoints.c:_find_dead_locals` keeping the first argument of code with a `__class__` cell; `pbltinmodule.c:pbuiltin_globals` (F47).
+
 ## Core and backend mechanisms (not translations, but named for reference)
 
 - **inline-cache-patch**: a promotion site is a self-patching `CMP imm64; JE` for the last value seen, in front of the C dispatcher. `ni/x64/idispatcher.h:ipromotion_finish`, `fix_fast_common_case`.
