@@ -1,5 +1,15 @@
 # Status
 
+## 2026-11-17: re-baseline at `6c82b5b` (GOAL.md "When the phase is done", points 3 and 4)
+
+Quiet machine (no agents running; load average under 1). [run]
+- `tools/check.sh`: **ALL CHECKS PASSED**. `tests/run.py` 729 pass, 1 xfail (F96); compile bounds; CPython's default set 285 modules, 0 unexpected (`--all`, 371 modules, 0 unexpected, run just before); encoder, `v_mem_mov`, smoke, metac up to date.
+- `tools/benchmarks.sh`, release build (`build/bench/2026-11-17-2025-6c82b5b.txt`):
+  - **pyperformance geometric mean 2.18×** over 29 benchmarks (1.93× before this day's work, CODE_SIZE.md). Best: spectral_norm 8.6×, deepcopy_memo 4.7×, richards 4.4×, deltablue 4.0×, scimark_monte_carlo 3.7×, richards_super 3.6×, pyflate 3.6×, nbody 3.4×. Slower than CPython: create_gc_cycles 0.85×, generators 0.92×, gc_traversal 0.97×, coroutines 0.98×, nqueens 0.98× (generators and coroutines run interpreted, GENERATORS.md).
+  - Small kernels (`tools/bench.py`): 5.1× in total.
+  - Compile cost (`tools/compilebench.py`): 20.5 ms compiling 2,325 KB over all 29 (114 KB/ms); Ni is ahead of CPython from the first iteration on 21 of them.
+- Single runs; earlier runs varied by up to about 0.4× on single benchmarks, so per-benchmark figures are indicative.
+
 ## 2026-11-16: 3.7 baseline (branch `baseline-3.7`, D18)
 
 Ni builds and runs on CPython 3.7.17 (pyenv, gcc 14). Test suites, all passing (`tools/check.sh` runs them all):
