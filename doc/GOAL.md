@@ -18,17 +18,31 @@ He went further on the mailing list. On 2002-11-18 he wrote: "I'm currently desi
 
 ## What the current phase is
 
-**A robust 3.7 baseline with worthwhile performance (from 2026-11-17).** The classification work below is done (`doc/MAP.md`, `doc/PATTERNS.md`, `doc/history/`). The phase now is making the 3.7 baseline correct and fast enough to be worth generating: fixing open bugs, and taking the performance improvements that measurement shows are worthwhile (D29: compile time and code size count too). The open items are in `doc/BACKLOG.md`. Then come the 3.12 port (`doc/PORT312.md`) and the meta-compiler, with this baseline as the specification and test oracle.
+**Generate the translated layer on 3.7 (from 2026-11-17).** Everything in Ni that mirrors CPython is to be generated from CPython's own source, then the same generator is taken to 3.8, 3.9 and on, one version at a time, with every version kept (DECISIONS D67). This phase does the first step on 3.7, where the hand translations exist to check against. The plan of work is in `doc/METACOMPILER.md` ("Versions", stages, failures log).
 
-**When the phase is done** (owner, 2026-11-17). All of:
-1. The work in flight is merged or dropped with a reason: inline stores within budget, the correctness batch (F10, F48, F50, F52, C25), C27/C28, specialisation step 3, C30/C31.
-2. No known bug gives a wrong result or a crash in the default test runs (`tests/run.py`, `tests/cpython_tests.py`). Accepted differences are only frame visibility and tracing of already-running frames (C11, C29), each cited in `doc/KNOWN_BUGS.md`.
-3. `tools/check.sh` prints ALL CHECKS PASSED on a quiet machine.
-4. A re-baseline is recorded with no agents running: pyperformance against CPython 3.7, `tools/compilebench.py`, `tools/codesize.py`, in `doc/STATUS.md`.
+What it builds:
+- A reader for `ceval.c`'s cases that produces the same form CPython's parser gives for 3.12's `bytecodes.c`, replacing the hand-written `tools/metac/bytecodes37.c` (D67 revises D26).
+- The generator's rules, kept in Ni and never in CPython's source (which is only read): the policy table (what to promote, make virtual, guard), representation rules, and effect rules (`CfPure`, `CfNoPython`, error conventions), computed from the source where possible.
+- Generation at build time from the target version's source; generated output is not checked in (D67 replaces D24).
+- Detectors and snippets for the mechanisms Ni must choose between (entry, tracing, frames), chosen by what the source offers, never by a version number.
 
-Anything else open then (option D, the megamorphic table, strings, C11) moves to the 3.12 backlog unless it blocks one of these.
+Rules for the phase:
+- No `#if` on CPython versions in hand-written code. Hand-written code is the core, the backend (with `llvm-mc` templates, D65) and the rules.
+- A hand translation is replaced only when generated code does the same: the same calls in the same order, or a recorded reason why not (as for `gen_long.py` against `3702e3f`).
+- A new JIT feature goes into the core or the rules, never into generated output, so it reaches every version.
+- Each failure of the generator goes in METACOMPILER's failures log with the CPython construct that caused it, before a heavier tool is tried.
 
-Hand-written improvements in this phase are translated-layer code too: each one is something the generator must later reproduce. Record the pattern behind each in `doc/PATTERNS.md`.
+**When the phase is done.** All of:
+1. Every `translated` and `core + translated` file in `doc/MAP.md` is generated, or the parts left are named in MAP as core with a reason.
+2. Nothing in the build is hand-translated from CPython; `bytecodes37.c` is gone.
+3. `tools/check.sh` passes, and the behaviour tests and CPython's tests give the same results as the hand-written baseline (`19fa1df`, STATUS "final 3.7 baseline").
+4. A re-baseline shows no loss against that baseline: pyperformance, `tools/compilebench.py` and `tools/codesize.py`, in `doc/STATUS.md`.
+
+Then 3.8 (positional-only arguments, CPython's own vectorcall, a few opcodes) is the first test that versions differ only in the input.
+
+**Previous phase, done 2026-11-17:** a robust 3.7 baseline with worthwhile performance. All four of its points were met (STATUS "final 3.7 baseline at `cdd8a94`": pyperformance 2.19×, `tools/check.sh` passing, no expected failures). Its open items are in `doc/BACKLOG.md`; those moved to later versions are marked there (D64).
+
+Hand-written improvements are translated-layer code too: each one is something the generator must reproduce. Record the pattern behind each in `doc/PATTERNS.md`.
 
 The classification still applies to everything in the repo:
 
@@ -45,7 +59,7 @@ The key output for the translated layer is **`doc/PATTERNS.md`**: the catalogue 
 ## Long-term aim (the bar every design choice is measured against)
 
 - **A version-independent core.** The specialiser core (values and binding times, snapshots and merge points, promotion, virtual objects, code buffers, backend) knows nothing about Python. It doesn't change when CPython changes.
-- **A meta-compiler that consumes CPython's source.** It reads the source of whichever CPython 3.8+ is targeted (3.7 tolerated for now), including the interpreter loop and the object implementations, and generates the whole Python-specific layer: the bytecode compiler, the compile-time object protocol, field descriptors, object layouts, refcount and error conventions.
+- **A meta-compiler that consumes CPython's source.** It reads the source of each supported CPython from 3.7 on, one Ni source for all of them (D67), including the interpreter loop and the object implementations, and generates the whole Python-specific layer: the bytecode compiler, the compile-time object protocol, field descriptors, object layouts, refcount and error conventions.
 - **Breaks loudly.** When a new CPython makes an incompatible change, generation or the build fails with a message that names the CPython construct and the assumption it broke. Generated code mustn't silently compile to something wrong. For example, it must check every struct offset and size it relies on (`static_assert` against the real headers), and refuse a C construct it doesn't understand rather than guessing.
 
 The owner accepts this is a very high bar. Without it the code stays unmaintainable (DECISIONS D16).
