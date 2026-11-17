@@ -567,13 +567,13 @@ PSY_INLINE void PsycoTraceBack_Here(PsycoObject *po, int lasti) {
   if (PycException_Is(po, &ERtPython)) {
     /* Python exception is actually set at run-time */
     psyco_generic_call(po, cimpl_rt_traceback, CfNoReturnValue, "lvll",
-                       (long)po->pr.co, LOC_GLOBALS, lasti, lineno);
+                       (long)po->pr.co, LOC_GLOBALS, (long)lasti, (long)lineno);
   } else {
     /* We only have a virtual-time exception (not set in Python),
        so we build po->pr.tb without actually setting it either */
     vinfo_t *tb = psyco_generic_call(
         po, cimpl_vt_traceback, CfCommonNewRefPyObjectNoError, "lvll",
-        (long)po->pr.co, LOC_GLOBALS, lasti, lineno);
+        (long)po->pr.co, LOC_GLOBALS, (long)lasti, (long)lineno);
     vinfo_xdecref(po->pr.tb, po);
     po->pr.tb = tb;
   }
@@ -2011,7 +2011,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         {
           vinfo_array_t *array = array_new(oparg);
           if (!psyco_generic_call(po, cimpl_unpack, CfCommonIntZeroOk, "vlA", v,
-                                  oparg, array)) {
+                                  (long)oparg, array)) {
             array_release(array);
             break;
           }

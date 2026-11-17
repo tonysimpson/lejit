@@ -262,7 +262,7 @@ static vinfo_t *plong_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
   }
   if (r == 0)
     return psyco_generic_call(po, PyLong_Type.tp_richcompare,
-                              CfCommonNewRefPyObject, "vvl", v, w, op);
+                              CfCommonNewRefPyObject, "vvl", v, w, (long)op);
   cc = integer_cmp(po, a, b, op);
   vinfo_decref(b, po);
   vinfo_decref(a, po);

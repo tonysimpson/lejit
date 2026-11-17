@@ -229,7 +229,7 @@ static vinfo_t *pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
     /* fall back */
     return psyco_generic_call(po, PyFloat_Type.tp_richcompare,
                               CfCommonNewRefPyObjectNoError | CfPure, "vvl", v,
-                              w, op);
+                              w, (long)op);
   }
   if (PyType_TypeCheck(wtp, &PyFloat_Type)) {
     b = PsycoFloat_AS_DOUBLE(po, w);

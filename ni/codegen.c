@@ -215,7 +215,7 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
 
 DEFINEFN
 vinfo_t *
-psyco_generic_call(PsycoObject *po, void *c_function, int flags,
+(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
                    const char *arguments, ...)
 {
     char argtags[MAX_ARGUMENTS_COUNT];

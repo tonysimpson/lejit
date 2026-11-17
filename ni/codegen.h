@@ -85,6 +85,40 @@ PSY_INLINE long reference_from_code(PsycoObject* po, CompileTimeSource source)
 EXTERNFN vinfo_t* psyco_generic_call(PsycoObject* po, void* c_function,
                                      int flags, const char* arguments, ...);
 
+/* psyco_generic_call reads every argument with va_arg(long), but a vararg
+   narrower than a word (an int, an enum, 0) arrives with its upper 32 bits
+   unspecified (KNOWN_BUGS F32). This wrapper makes such an argument a compile
+   error ("size of unnamed array is negative"): cast it to (long). _Generic
+   and sizeof don't evaluate 'x', so each argument is still evaluated once. */
+#define NI_WORD_VARG(x)                                                    \
+    ((void)sizeof(char[_Generic((x),                                       \
+        _Bool: -1, char: -1, signed char: -1, unsigned char: -1,          \
+        short: -1, unsigned short: -1, int: -1, unsigned int: -1,         \
+        float: -1, double: -1, default: 1)]), (x))
+#define NI_WORD_VARGS1(a) NI_WORD_VARG(a)
+#define NI_WORD_VARGS2(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS1(__VA_ARGS__)
+#define NI_WORD_VARGS3(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS2(__VA_ARGS__)
+#define NI_WORD_VARGS4(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS3(__VA_ARGS__)
+#define NI_WORD_VARGS5(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS4(__VA_ARGS__)
+#define NI_WORD_VARGS6(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS5(__VA_ARGS__)
+#define NI_WORD_VARGS7(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS6(__VA_ARGS__)
+#define NI_GC_FIXED(po, fn, fl, args) po, fn, fl, args
+#define NI_GC_VARGS(n, po, fn, fl, args, ...)                              \
+    po, fn, fl, args, NI_WORD_VARGS##n(__VA_ARGS__)
+#define NI_GC4(...) NI_GC_FIXED(__VA_ARGS__)
+#define NI_GC5(...) NI_GC_VARGS(1, __VA_ARGS__)
+#define NI_GC6(...) NI_GC_VARGS(2, __VA_ARGS__)
+#define NI_GC7(...) NI_GC_VARGS(3, __VA_ARGS__)
+#define NI_GC8(...) NI_GC_VARGS(4, __VA_ARGS__)
+#define NI_GC9(...) NI_GC_VARGS(5, __VA_ARGS__)
+#define NI_GC10(...) NI_GC_VARGS(6, __VA_ARGS__)
+#define NI_GC11(...) NI_GC_VARGS(7, __VA_ARGS__)
+#define NI_GC_PICK(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, N, ...) N
+#define psyco_generic_call(...)                                            \
+    (psyco_generic_call)(NI_GC_PICK(__VA_ARGS__, NI_GC11, NI_GC10, NI_GC9, \
+                                    NI_GC8, NI_GC7, NI_GC6, NI_GC5,        \
+                                    NI_GC4, , , )(__VA_ARGS__))
+
 #include "cf_flags.h"
 
 /* To emit the call to other code blocks emitted by Psyco. 'argsources' gives

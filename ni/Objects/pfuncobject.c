@@ -194,7 +194,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
 
 fallback:
     return psyco_generic_call(po, PyFunction_Type.tp_call,
-                              CfCommonNewRefPyObject, "lvl", (long)f, arg, 0);
+                              CfCommonNewRefPyObject, "lvl", (long)f, arg, (long)0);
 }
 
 DEFINEFN

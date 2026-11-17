@@ -465,7 +465,7 @@ fail_to_default:
      qualname (generators took co_name), closure and keyword-only defaults */
   return psyco_generic_call(po, PyFunction_Type.tp_call,
                             CfCommonNewRefPyObject, "vvl", vfunc, arg_tuple,
-                            0);
+                            (long)0);
 
 pyerr:
   psyco_virtualize_exception(po);

@@ -62,7 +62,7 @@ static bool compute_tuple(PsycoObject* po, vinfo_t* v)
 		int tuple_len = tuple_end - iTUPLE_OB_ITEM;
 		vinfo_t* tuple = psyco_generic_call(po, PyTuple_New,
                                                     CfCommonNewRefPyObject,
-                                                    "l", tuple_len);
+                                                    "l", (long)tuple_len);
 		if (tuple == NULL)
 			return false;
 

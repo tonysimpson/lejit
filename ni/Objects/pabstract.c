@@ -341,7 +341,7 @@ vinfo_t *PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob) {
 
   /* XXX implement me */
   return psyco_generic_call(po, _PySequence_IterSearch, CfCommonIntBoolOrError,
-                            "vvl", seq, ob, PY_ITERSEARCH_CONTAINS);
+                            "vvl", seq, ob, (long)PY_ITERSEARCH_CONTAINS);
 }
 
 DEFINEFN
