@@ -1397,6 +1397,42 @@ static PyObject *cimpl_call_exit(PyObject *exit_func, PyObject *exc,
   return _PyObject_FastCall(exit_func, stack, 3);
 }
 
+/* ceval.c LOAD_BUILD_CLASS, with the frame's builtins as Ni finds them */
+static PyObject *cimpl_load_build_class(PyObject *globals) {
+  _Py_IDENTIFIER(__build_class__);
+  PyObject *builtins = psy_get_builtins(globals), *bc;
+  if (PyDict_CheckExact(builtins)) {
+    bc = _PyDict_GetItemId(builtins, &PyId___build_class__);
+    if (bc == NULL) {
+      PyErr_SetString(PyExc_NameError, "__build_class__ not found");
+      return NULL;
+    }
+    Py_INCREF(bc);
+  } else {
+    PyObject *build_class_str = _PyUnicode_FromId(&PyId___build_class__);
+    if (build_class_str == NULL)
+      return NULL;
+    bc = PyObject_GetItem(builtins, build_class_str);
+    if (bc == NULL) {
+      if (PyErr_ExceptionMatches(PyExc_KeyError))
+        PyErr_SetString(PyExc_NameError, "__build_class__ not found");
+      return NULL;
+    }
+  }
+  return bc;
+}
+
+/* ceval.c DELETE_DEREF: 1 if the cell was already empty (the caller
+   raises ceval's error) */
+static int cimpl_delete_deref(PyObject *cell) {
+  PyObject *oldobj = PyCell_GET(cell);
+  if (oldobj == NULL)
+    return 1;
+  PyCell_SET(cell, NULL);
+  Py_DECREF(oldobj);
+  return 0;
+}
+
 static PyObject *cimpl_load_global(PyObject *globals, PyObject *w) {
   PyObject *x;
   RECLIMIT_SAFE_ENTER();
@@ -2518,6 +2554,29 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
                                 GETLOCAL(co->co_nlocals + oparg), NTOP(1)))
           break;
         POP_DECREF();
+        goto fine;
+
+      case DELETE_DEREF: {
+        int r = runtime_NON_NULL_f(
+            po, psyco_generic_call(po, cimpl_delete_deref, CfReturnTypeInt,
+                                   "v", GETLOCAL(co->co_nlocals + oparg)));
+        if (r < 0)
+          break;
+        if (r) {
+          unbound_deref_error(po, co, oparg);
+          break;
+        }
+        goto fine;
+      }
+
+      /* class statements: a run-time load each time (classes made in a
+         function are a rare, slow path anyway) */
+      case LOAD_BUILD_CLASS:
+        v = psyco_generic_call(po, cimpl_load_build_class,
+                               CfCommonNewRefPyObject, "v", LOC_GLOBALS);
+        if (v == NULL)
+          break;
+        PUSH(v);
         goto fine;
 
       case BUILD_TUPLE:

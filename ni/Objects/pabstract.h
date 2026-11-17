@@ -61,6 +61,11 @@ EXTERNFN
 vinfo_t* PsycoNumber_InPlaceFloorDivide(PsycoObject* po, vinfo_t* v, vinfo_t* w);
 EXTERNFN
 vinfo_t* PsycoNumber_InPlaceTrueDivide(PsycoObject* po, vinfo_t* v, vinfo_t* w);
+EXTERNFN
+vinfo_t* PsycoNumber_MatrixMultiply(PsycoObject* po, vinfo_t* v, vinfo_t* w);
+EXTERNFN
+vinfo_t* PsycoNumber_InPlaceMatrixMultiply(PsycoObject* po, vinfo_t* v,
+                                          vinfo_t* w);
 
 EXTERNFN
 vinfo_t* PsycoNumber_InPlaceAdd(PsycoObject* po, vinfo_t* v, vinfo_t* w);

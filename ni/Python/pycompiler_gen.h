@@ -160,6 +160,21 @@
         goto fine;
       }
 
+      case BINARY_MATRIX_MULTIPLY: {
+        vinfo_t *left = NTOP(2);
+        vinfo_t *right = NTOP(1);
+        vinfo_t *res;
+        res = PsycoNumber_MatrixMultiply(po, left, right);
+        if (res == NULL)
+          break;
+        POP(right);
+        POP(left);
+        vinfo_decref(right, po);
+        vinfo_decref(left, po);
+        PUSH(res);
+        goto fine;
+      }
+
       case BINARY_MODULO: {
         vinfo_t *left = NTOP(2);
         vinfo_t *right = NTOP(1);
@@ -358,6 +373,21 @@
         goto fine;
       }
 
+      case INPLACE_MATRIX_MULTIPLY: {
+        vinfo_t *left = NTOP(2);
+        vinfo_t *right = NTOP(1);
+        vinfo_t *res;
+        res = PsycoNumber_InPlaceMatrixMultiply(po, left, right);
+        if (res == NULL)
+          break;
+        POP(right);
+        POP(left);
+        vinfo_decref(right, po);
+        vinfo_decref(left, po);
+        PUSH(res);
+        goto fine;
+      }
+
       case INPLACE_TRUE_DIVIDE: {
         vinfo_t *left = NTOP(2);
         vinfo_t *right = NTOP(1);
@@ -539,7 +569,5 @@
 
 /* not generated (hand-written in pycompiler.c, or unsupported):
    UNARY_NOT: control flow (if)
-   BINARY_MATRIX_MULTIPLY: PyNumber_MatrixMultiply: no Psyco counterpart PsycoNumber_MatrixMultiply
-   INPLACE_MATRIX_MULTIPLY: PyNumber_InPlaceMatrixMultiply: no Psyco counterpart PsycoNumber_InPlaceMatrixMultiply
    DELETE_SUBSCR: PyObject_DelItem: no Psyco counterpart PsycoObject_DelItem
 */

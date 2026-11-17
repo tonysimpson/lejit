@@ -509,6 +509,7 @@ BINARY_FUNC(PsycoNumber_Divmod, nb_divmod, "divmod()")
 /* XXX tp_flags test -- not done in Python either, check future releases */
 BINARY_FUNC(PsycoNumber_FloorDivide, nb_floor_divide, "//")
 BINARY_FUNC(PsycoNumber_TrueDivide, nb_true_divide, "/")
+BINARY_FUNC(PsycoNumber_MatrixMultiply, nb_matrix_multiply, "@")
 
 DEFINEFN
 vinfo_t *PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
@@ -666,6 +667,8 @@ INPLACE_BINOP(PsycoNumber_InPlaceFloorDivide, nb_inplace_floor_divide,
               nb_floor_divide, "//=")
 INPLACE_BINOP(PsycoNumber_InPlaceTrueDivide, nb_inplace_true_divide,
               nb_true_divide, "/=")
+INPLACE_BINOP(PsycoNumber_InPlaceMatrixMultiply, nb_inplace_matrix_multiply,
+              nb_matrix_multiply, "@=")
 
 DEFINEFN
 vinfo_t *PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w) {

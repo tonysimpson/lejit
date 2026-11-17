@@ -588,6 +588,10 @@ _build_merge_points(PyCodeObject *co, int module)
             case WITH_CLEANUP_START:
             case WITH_CLEANUP_FINISH:
             case UNPACK_EX:
+            case LOAD_BUILD_CLASS:
+            case DELETE_DEREF:
+            case BINARY_MATRIX_MULTIPLY:
+            case INPLACE_MATRIX_MULTIPLY:
             case CALL_FUNCTION:
             case CALL_FUNCTION_KW:
             case CALL_FUNCTION_EX:

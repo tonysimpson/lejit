@@ -30,8 +30,12 @@ MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
 # Ni, reason) when only that difference is accepted
 KNOWN = {
     'test_re': 'C11: warnings stacklevel skips compiled callees',
-    'test_exceptions': ('run=53 fail=2 err=0 skip=1 exit=0',
-                        'C18: tracebacks don\'t keep compiled locals alive'),
+    'test_exceptions': ('run=53 fail=3 err=0 skip=1 exit=0',
+                        'C18: tracebacks don\'t keep compiled locals alive; '
+                        'C11: f_back of a traceback frame'),
+    'test_builtin': ('run=92 fail=1 err=0 skip=3 exit=0',
+                     'C11: type() in a compiled callee takes __module__ from '
+                     'the caller\'s globals'),
     'test_generators': ('run=16 fail=1 err=0 skip=0 exit=0',
                         'C19: getrefcount misses borrowed arguments'),
     'test_descr': ('run=138 fail=1 err=0 skip=2 exit=0',
