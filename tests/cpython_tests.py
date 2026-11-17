@@ -115,7 +115,7 @@ EXTENDED = ['test_pdb', 'test_cprofile', 'test_trace', 'test_asynchat', 'test_as
             'test_queue', 'test_readline', 'test_repl', 'test_runpy',
             'test_select', 'test_selectors', 'test_shutil', 'test_signal',
             'test_site',
-            'test_smtpd', 'test_smtplib', 'test_socketserver',
+            'test_smtpd', 'test_smtplib', 'test_socket', 'test_socketserver',
             'test_subprocess', 'test_sysconfig', 'test_tarfile',
             'test_telnetlib', 'test_tempfile', 'test_thread',
             'test_threaded_import', 'test_threadedtempfile',
@@ -180,9 +180,9 @@ KNOWN = {
                          'compiling allocates'),
     'test_warnings': ('run=121 fail=5 err=0 skip=0 exit=0',
                       'C11: warnings stacklevel skips compiled callees'),
-    'test_subclassinit': ('(no output) exit=-6',
-                          'F51: checked build only, a respawn replay sees a '
-                          'new constant tuple'),
+    'test_socket': 'C19: getrefcount around calls into C '
+                   '(testRefCountGetNameInfo); counts vary with the '
+                   'environment, so no expected result',
     'test_unittest': ('run=798 fail=5 err=0 skip=3 exit=0',
                       'C11: warnings line numbers; F50: __hash__ and __ne__ '
                       'set on a class after compiling; F52: __defaults__ '
@@ -229,8 +229,6 @@ EXCLUDED = {
     'thread waiting, so the run never exits': ['test_sys'],
     'C25: return_null_without_error segfaults (an assertion in the checked '
     'build)': ['test_capi'],
-    'skips vary with the environment; F51 aborts it in the checked build':
-        ['test_socket'],
 }
 
 CHILD = r'''

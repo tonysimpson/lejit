@@ -628,8 +628,8 @@ static const char *respawn_item_kind(respawn_item_t *it) {
   }
 }
 
-/* the same constant, whatever its flags: psyco_unfix() clears SkFlagPyObj
-   on a source_known_t that a snapshot may share (KNOWN_BUGS F35) */
+/* the same constant, whatever its flags (a constant object made without
+   SkFlagPyObj, such as LOAD_CONST's, and the same object with it) */
 static bool respawn_same_constant(respawn_item_t *a, respawn_item_t *b) {
   return (a->x & 2) && (b->x & 2) && a->value == b->value;
 }
@@ -2612,16 +2612,12 @@ void psyco_unfix(PsycoObject *po, vinfo_t *vi) {
   /* make_runtime_copy() never fails for compile-time sources */
   extra_assert(newvi != NULL);
 
-  /* release 'vi->source' and move 'newvi->source' into it */
+  /* release 'vi->source' and move 'newvi->source' into it. SkFlagPyObj
+     stays: the object is never released (code holds its address and
+     sk_release keeps constants forever), and the source_known_t may be
+     shared with a snapshot or a callee's frame, whose constant it still is
+     (KNOWN_BUGS F35, F51: a replay saw the flag gone and aborted) */
   sk = CompileTime_Get(vi->source);
-  if (sk->refcount1_flags & SkFlagPyObj) {
-    /* XXX can't release the PyObject anywhere, because we
-       write a pointer to it in the code itself. We should
-       somehow transfer the ownership of this reference to
-       the CodeBufferObject. Fix me when implementing
-       memory releasing! */
-    sk->refcount1_flags &= ~SkFlagPyObj;
-  }
   sk_decref(sk);
   vinfo_move(po, vi, newvi);
 }
