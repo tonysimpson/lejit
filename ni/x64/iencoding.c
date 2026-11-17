@@ -436,7 +436,13 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
                     array->items[--j] = vinfo_new(
                         RunTime_NewStack(stackbase, with_reference, false));
                 }
-                CALL_SET_ARG_FROM_STACK_REF(array->items[0]->source, int_arg_i);
+                if (array->count == 0)
+                    /* nothing to point at (an empty array is NullArray,
+                       whose items[0] isn't a vinfo) */
+                    CALL_SET_ARG_IMMED(0, int_arg_i);
+                else
+                    CALL_SET_ARG_FROM_STACK_REF(array->items[0]->source,
+                                                int_arg_i);
                 break;
             }
             case 'd':

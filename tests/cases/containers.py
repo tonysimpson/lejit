@@ -96,3 +96,16 @@ CASES += [
     ('dict_literals', [(1, 2), ('p', 'q')], {}),
     ('unhashable_key', [([1],)], {}),
 ]
+
+
+def unpack_empty(x):
+    # UNPACK_SEQUENCE 0: the helper's output array is empty (a run-time
+    # call with an empty 'A' array read a vinfo that isn't there)
+    [] = x
+    [] = iter(x)
+    return 'ok'
+
+
+CASES += [
+    ('unpack_empty', [([],), ((),), ('',)], {}),
+]
