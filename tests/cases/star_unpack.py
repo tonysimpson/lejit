@@ -32,10 +32,22 @@ def deep(d):
     return copy.deepcopy(d)
 
 
+# a global list is a compile-time constant (D25), and PsycoTuple_Load read
+# it as a tuple: f(x, *LIST) crashed the compiler (KNOWN_BUGS F45, CPython's
+# test_cmd_line_script)
+LIST = ['b', 'c']
+STR = 'yz'
+
+
+def star_constant_list(x):
+    return add3(x, *LIST), (x, *LIST), [x, *LIST], add3(x, *STR)
+
+
 CASES = [
     ('call_known', [(5,), (1.5,)], {}),
     ('call_unknown', [([1, 2, 3],), ((4, 5, 6),)], {}),
     ('literals', [((1, 2), [3]), ('ab', range(2))], {}),
     ('bad_star', [(5,), (None,), ((2, 3),)], {}),
     ('deep', [({'a': [1, (2, 3)], 'b': {'c': 1.5}},)], {}),
+    ('star_constant_list', [('a',)], {}),
 ]

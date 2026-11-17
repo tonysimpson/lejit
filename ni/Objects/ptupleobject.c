@@ -139,7 +139,10 @@ int PsycoTuple_Load(vinfo_t* tuple)
 		/* a constant tuple means constant tuple items */
 		int i;
 		PyObject* o = (PyObject*)(CompileTime_Get(tuple->source)->value);
-		extra_assert(PyTuple_Check(o));
+		/* BUILD_*_UNPACK asks about any constant, such as a global
+		   list (F45) */
+		if (!PyTuple_Check(o))
+			return -1;
 		size = PyTuple_GET_SIZE(o);
 		if (tuple->array->count < iTUPLE_OB_ITEM + size) {
 			if (/*not_too_much &&*/ size > CT_TUPLE_LOAD_SIZE_LIMIT)
