@@ -32,7 +32,10 @@ PyTypeObject *Psyco_NeedType(PsycoObject *po, vinfo_t *vi) {
     PyObject *o = (PyObject *)CompileTime_Get(vi->source)->value;
     return o->ob_type;
   } else {
-    vinfo_t *vtp = psyco_get_const(po, vi, OB_type);
+    vinfo_t *vtp;
+    if (!Psyco_TypeHintGuard(po, vi))
+      return NULL;
+    vtp = psyco_get_const(po, vi, OB_type);
     if (vtp == NULL)
       return NULL;
     return (PyTypeObject *)psyco_pyobj_atcompiletime(po, vtp);
@@ -63,7 +66,8 @@ PyTypeObject *Psyco_KnownType(vinfo_t *vi) {
    run by a collection that a CfPure function's allocation starts.
    Item iOB_TYPE of a run-time value is its type, as
    dispatcher.c:compatible_unused_fact assumes; a promoted one is an object
-   (SkFlagPyObj), and only builtin types are asserted without the flag. */
+   (SkFlagPyObj), and only builtin types are asserted without the flag.
+   The forgotten type stays as the value's type_hint (D63). */
 static void forget_mutable_types(PsycoObject *po, vinfo_array_t *a) {
   int i;
   for (i = a->count; i--;) {
@@ -76,11 +80,55 @@ static void forget_mutable_types(PsycoObject *po, vinfo_array_t *a) {
       if (vt != NULL && is_compiletime(vt->source) &&
           (CompileTime_Get(vt->source)->refcount1_flags & SkFlagPyObj) &&
           (t = (PyObject *)CompileTime_Get(vt->source)->value) != NULL &&
-          PyType_Check(t) && Psyco_ClassMutable((PyTypeObject *)t))
+          PyType_Check(t) && Psyco_ClassMutable((PyTypeObject *)t)) {
+        source_known_t *sk = CompileTime_Get(vt->source);
+        sk_incref(sk);
+        if (v->type_hint != NULL)
+          sk_decref(v->type_hint);
+        v->type_hint = sk;
         psyco_forget_field(po, v, OB_type);
+      }
     }
     forget_mutable_types(po, v->array);
   }
+}
+
+/* D63. A type forgotten by forget_mutable_types is usually still the
+   object's type when it is next needed, so instead of a promotion, which
+   ends the block, the code compares ob_type with it and goes on with the
+   type known; the other branch is a respawn, which promotes as before.
+   The hint is part of the state a replay starts from (it is kept in
+   snapshots), so a replay emits the same guards; states are compared
+   without it, since a block that guards or promotes is right for any
+   type. The type is held by the hint's source_known_t (sk_release keeps
+   objects for good), so its address can't be reused while code compares
+   with it. */
+DEFINEFN
+bool Psyco_TypeHintGuard(PsycoObject *po, vinfo_t *vi) {
+  source_known_t *sk = vi->type_hint;
+  vinfo_t *vtp;
+  condition_code_t cc;
+  if (sk == NULL || !is_runtime(vi->source) ||
+      vinfo_getitem(vi, iOB_TYPE) != NULL)
+    return true;
+  vi->type_hint = NULL; /* the reference is now sk's */
+  vtp = psyco_get_const(po, vi, OB_type);
+  if (vtp == NULL) {
+    sk_decref(sk);
+    return false;
+  }
+  cc = integer_cmp_i(po, vtp, sk->value, Py_NE);
+  if (cc == CC_ERROR) {
+    sk_decref(sk);
+    return false;
+  }
+  if (runtime_condition_f(po, cc)) {
+    sk_decref(sk); /* the type changed: the caller promotes vtp */
+    return true;
+  }
+  sk_mark_used(po, sk);
+  vinfo_setitem(po, vi, iOB_TYPE, vinfo_new(CompileTime_NewSk(sk)));
+  return true;
 }
 
 DEFINEFN
@@ -241,6 +289,8 @@ static int need_type_mega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp) {
     *tp = Py_TYPE((PyObject *)CompileTime_Get(obj->source)->value);
     return 1;
   }
+  if (!Psyco_TypeHintGuard(po, obj))
+    return -1;
   vtp = psyco_get_const(po, obj, OB_type);
   if (vtp == NULL)
     return -1;

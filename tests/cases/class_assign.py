@@ -290,6 +290,95 @@ def global_rebound(n):
     return out
 
 
+# D63: a type forgotten after a call is learnt again by a guard against
+# the type it had (pobject.c:Psyco_TypeHintGuard). The cases below run the
+# guard both ways: passing for a while, then failing once the class
+# changes, in the same compiled code.
+def _keep(o):
+    return o.x
+
+
+def _flip_from(o, i, k):
+    if i >= k:
+        o.__class__ = B if type(o) is A else A
+
+
+def hint_kept(n):
+    out = []
+    for i in range(n):
+        o = A(i)
+        a = o.who()
+        _keep(o)
+        out.append((a, o.who(), o.kind, type(o).__name__))
+        _keep(o)
+        out.append(o.kind)
+    return out
+
+
+def hint_fails_later(n):
+    out = []
+    for i in range(n):
+        o = A(i)
+        a = o.who()
+        _flip_from(o, i, 5)     # the guard passes for i < 5, then fails
+        out.append((a, o.who(), o.kind, type(o).__name__))
+        _keep(o)
+        out.append((o.who(), o.kind))
+    return out
+
+
+def hint_across_loop(n):
+    # the type is forgotten at the end of one iteration and needed at the
+    # start of the next, past the loop head's merge point
+    o = A(0)
+    out = []
+    for i in range(n):
+        out.append((o.kind, o.who()))
+        _flip_from(o, i, 6)
+    return out
+
+
+class D(A):
+    kind = 'D'
+
+    def who(self):
+        return 'D' + str(self.x)
+
+
+def _cycle(o, i):
+    if i >= 4:
+        o.__class__ = (A, B, D)[i % 3]
+
+
+def hint_many_classes(n):
+    # once the guard fails, each later class goes to the promotion after it
+    out = []
+    o = A(0)
+    for i in range(n):
+        o.x = i
+        a = o.who()
+        _cycle(o, i)
+        out.append((a, o.who(), o.kind, isinstance(o, A)))
+    return out
+
+
+def _flip_two(p, q, i):
+    if i == 3:
+        q.__class__ = B
+
+
+def hint_two_values(n):
+    # two values with hints; only one changes
+    out = []
+    for i in range(n):
+        p = A(i)
+        q = A(-i)
+        p.who(), q.who()
+        _flip_two(p, q, i)
+        out.append((p.who(), q.who(), p.kind, q.kind))
+    return out
+
+
 CASES = [
     ('in_called_function', [(4,)], {}),
     ('in_own_method', [(4,)], {}),
@@ -307,4 +396,9 @@ CASES = [
     ('global_instance', [(6,)],
      {'xfail': 'F96: a constant object\'s type is read when code compiles'}),
     ('global_rebound', [(4,)], {}),
+    ('hint_kept', [(6,)], {}),
+    ('hint_fails_later', [(10,)], {}),
+    ('hint_across_loop', [(12,)], {}),
+    ('hint_many_classes', [(12,)], {}),
+    ('hint_two_values', [(6,)], {}),
 ]

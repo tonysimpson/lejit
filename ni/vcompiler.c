@@ -108,6 +108,8 @@ void sk_release(source_known_t *sk) {
 DEFINEFN
 vinfo_t *vinfo_copy(vinfo_t *vi) {
   vinfo_t *result = vinfo_new_skref(vi->source);
+  if ((result->type_hint = vi->type_hint) != NULL)
+    sk_incref(result->type_hint);
   result->array = vi->array;
   if (result->array->count > 0) {
     result->array = array_new(result->array->count);
@@ -151,6 +153,8 @@ void vinfo_release(vinfo_t *vi, PsycoObject *po) {
      array to extract any available type information to speed up Py_DECREF(). */
   if (vi->array != NullArray)
     array_delete(vi->array, po);
+  if (vi->type_hint != NULL)
+    sk_decref(vi->type_hint);
 
 #if HAVE_CCREG && ALL_CHECKS
   /* only virtual-time vinfos are allowed in po->ccreg */
@@ -183,6 +187,8 @@ void vinfo_move(PsycoObject *po, vinfo_t *vtarget, vinfo_t *vsource) {
   if (is_runtime(src))
     RTVINFO_MOVE(src, vtarget);
   extra_assert(vsource->refcount == 1);
+  if (vsource->type_hint != NULL)
+    sk_decref(vsource->type_hint);
   psyco_llfree_vinfo(vsource);
   clear_tmp_marks(vtarget->array);
   psyco_simplify_array(vtarget->array, po);

@@ -50,6 +50,11 @@ PSY_INLINE bool Psyco_ClassMutable(PyTypeObject* tp) {
    instructions and before a direct call. */
 EXTERNFN void Psyco_ForgetClasses(PsycoObject* po);
 
+/* Before a run-time value's type is promoted: if it was forgotten and
+   vi->type_hint holds it, a guard against it, which leaves the type known
+   on the likely path (D63). False on error. */
+EXTERNFN bool Psyco_TypeHintGuard(PsycoObject* po, vinfo_t* vi);
+
 /* A slot of a heap type, at 'slot' (an address inside the type), for code
    specialised on it: *value is the slot as Ni first saw it, and compiled
    code checks that it still is. 1 on that path, 0 on the path where it

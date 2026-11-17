@@ -122,6 +122,7 @@ vinfo_t = types.struct_type(
     ('source', types.uint64),
     ('array', types.pointer_type(vinfo_array_t)),
     ('tmp', vinfo_t_pointer),
+    ('type_hint', types.uint64),
 )
 vinfo_t_pointer.referenced_type = vinfo_t
 PyTryBlock = types.struct_type(

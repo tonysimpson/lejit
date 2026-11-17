@@ -356,6 +356,10 @@ struct vinfo_s {
   Source source;
   vinfo_array_t *array; /* substructure variables or a NullArray */
   vinfo_t *tmp;         /* internal use of the dispatcher */
+  /* a run-time object's type as it was when last known, held, or NULL: a
+     hint, not a fact (pobject.c:Psyco_TypeHintGuard, D63). Kept in
+     snapshots, ignored when states are compared */
+  source_known_t *type_hint;
 };
 
 /* construction */
@@ -366,6 +370,7 @@ PSY_INLINE vinfo_t *vinfo_new(Source src) {
   vi->refcount = 1;
   vi->source = src;
   vi->array = NullArray;
+  vi->type_hint = NULL;
   return vi;
 }
 PSY_INLINE vinfo_t *vinfo_new_skref(Source src) {

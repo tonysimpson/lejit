@@ -151,6 +151,7 @@ typedef struct {
   long tmp_counter;          /* for links */
   struct vcilink_s *vcilink; /* pending links during decompression */
   struct vcilink_s sentinel;
+  Source hint; /* the type hint read with the last opcode, or 0 */
 } vcompat_internal_t;
 
 /* XXX Argh, a global variable -- this is (just) tolerable because the
@@ -188,7 +189,11 @@ static void fz_internal_expand(void) {
 
 #define FZ_OPC_EXT (-1)
 #define FZ_OPC_NULL (-2)
-#define FZ_OPC_LINK (-3) /* and the following negative numbers */
+/* an item's type_hint (D63), read before the item's own opcode by
+   fz_getopc, which leaves it in cmpinternal.hint: only fz_uncompress and
+   fz_parse look at it, so states are compared without it */
+#define FZ_OPC_HINT (-3)
+#define FZ_OPC_LINK (-4) /* and the following negative numbers */
 
 /* Note: the pseudo-code is built in left-to-right array order,
    but it is intended to be read backwards, thus uncompression creates
@@ -269,6 +274,11 @@ static void fz_compress(vinfo_array_t *aa) {
       }
       fz_putarg(a->source); /* store the 'source' field */
       fz_putopc(length);    /* store the length of the subarray */
+      if (a->type_hint != NULL) {
+        sk_incref(a->type_hint);
+        fz_putarg(CompileTime_NewSk(a->type_hint));
+        fz_putopc(FZ_OPC_HINT);
+      }
     }
   }
 }
@@ -282,6 +292,11 @@ PSY_INLINE Source fz_getarg(void) { return *--cmpinternal.buf_args; }
 
 PSY_INLINE int fz_getopc(void) {
   int result = *cmpinternal.buf_opc++;
+  cmpinternal.hint = 0;
+  if (result == FZ_OPC_HINT) {
+    cmpinternal.hint = fz_getarg();
+    result = *cmpinternal.buf_opc++;
+  }
   if (result == FZ_OPC_EXT)
     result = (int)fz_getarg();
   return result;
@@ -311,7 +326,12 @@ static void fz_uncompress(vinfo_array_t *result) {
     vinfo_t *a;
     int opc = fz_getopc();
     if (opc >= 0) { /* new item, potentially with its sub-array */
+      Source hint = cmpinternal.hint;
       a = vinfo_new_skref(fz_getarg());
+      if (hint != 0) {
+        a->type_hint = CompileTime_Get(hint);
+        sk_incref(a->type_hint);
+      }
       if (opc != 0) { /* test to make the common path (opc==0) faster */
         a->array = array_new(opc);
         fz_uncompress(a->array);
@@ -344,10 +364,13 @@ static void fz_parse(int length,
   while (length--) {
     int opc = fz_getopc();
     if (opc >= 0) {
+      Source hint = cmpinternal.hint;
       Source arg = fz_getarg();
       fz_parse(opc, clear);
       if (clear && is_compiletime(arg))
         sk_decref(CompileTime_Get(arg));
+      if (clear && hint != 0)
+        sk_decref(CompileTime_Get(hint));
     }
   }
 }
@@ -602,6 +625,14 @@ static int respawn_flatten(vinfo_array_t *a, int depth, respawn_item_t *out,
     if (out != NULL)
       out[n] = it;
     n++;
+    /* a type hint decides whether a guard is emitted (D63) */
+    if (v != NULL && v->type_hint != NULL) {
+      respawn_item_t h = {(unsigned long)v->type_hint->value * 4 + 2,
+                          v->type_hint->value, NULL, -1, (short)(depth + 1)};
+      if (out != NULL)
+        out[n] = h;
+      n++;
+    }
     /* a virtual object's fields are part of the state; under a run-time or
        compile-time value they are only known fields, which a snapshot may
        drop, so a replay can legitimately know less */
