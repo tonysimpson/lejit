@@ -27,69 +27,78 @@
 
 DEFINEFN
 PyTypeObject *Psyco_NeedType(PsycoObject *po, vinfo_t *vi) {
-  if (is_compiletime(vi->source)) {
+  vinfo_t *vtp;
+  if (is_compiletime(vi->source) && !Psyco_ConstantClassMutable(vi)) {
     /* optimization for the type of a known object */
     PyObject *o = (PyObject *)CompileTime_Get(vi->source)->value;
     return o->ob_type;
-  } else {
-    vinfo_t *vtp;
-    if (!Psyco_TypeHintGuard(po, vi))
-      return NULL;
-    vtp = psyco_get_const(po, vi, OB_type);
-    if (vtp == NULL)
-      return NULL;
-    return (PyTypeObject *)psyco_pyobj_atcompiletime(po, vtp);
   }
+  /* a constant whose class can be assigned has its type checked
+     (Psyco_ConstantType); it has no hint */
+  if (!Psyco_TypeHintGuard(po, vi))
+    return NULL;
+  vtp = psyco_get_const(po, vi, OB_type);
+  if (vtp == NULL)
+    return NULL;
+  return (PyTypeObject *)psyco_pyobj_atcompiletime(po, vtp);
 }
 
 DEFINEFN
 PyTypeObject *Psyco_KnownType(vinfo_t *vi) {
-  if (is_compiletime(vi->source)) {
+  vinfo_t *vtp;
+  if (is_compiletime(vi->source) && !Psyco_ConstantClassMutable(vi)) {
     PyObject *o = (PyObject *)CompileTime_Get(vi->source)->value;
     return o->ob_type;
-  } else {
-    vinfo_t *vtp = vinfo_getitem(vi, iOB_TYPE);
-    if (vtp != NULL && is_compiletime(vtp->source))
-      return (PyTypeObject *)CompileTime_Get(vtp->source)->value;
-    else
-      return NULL;
   }
+  vtp = vinfo_getitem(vi, iOB_TYPE);
+  if (vtp != NULL && is_compiletime(vtp->source))
+    return (PyTypeObject *)CompileTime_Get(vtp->source)->value;
+  else
+    return NULL;
 }
 
 /* KNOWN_BUGS F55. A promoted type is a known field of a run-time value
    (iOB_TYPE), kept while the value lives, but assigning __class__ changes
    it. So after an instruction that emitted a call that may run Python
    code (po->pr.class_unchecked), the known types that can change are
-   forgotten, and their next use promotes again (D59). A decref that may
+   forgotten, and their next use promotes again (D59), as are the
+   constants' checked types (F96, Psyco_ConstantType). A decref that may
    dealloc counts as such a call (a __del__). Depends only on the
    compile-time state, so a replay forgets the same. Not seen: a finaliser
    run by a collection that a CfPure function's allocation starts.
    Item iOB_TYPE of a run-time value is its type, as
    dispatcher.c:compatible_unused_fact assumes; a promoted one is an object
    (SkFlagPyObj), and only builtin types are asserted without the flag.
-   The forgotten type stays as the value's type_hint (D63). */
-static void forget_mutable_types(PsycoObject *po, vinfo_array_t *a) {
+   A run-time value's forgotten type stays as its type_hint (D63); a
+   constant needs none, its next use checks again. */
+static void forget_mutable_types(PsycoObject *po, vinfo_array_t *a,
+                                 bool runtime) {
   int i;
   for (i = a->count; i--;) {
     vinfo_t *v = a->items[i];
-    if (v == NULL || v->array == NullArray || is_compiletime(v->source))
-      continue; /* a constant's items are constants */
-    if (is_runtime(v->source) && v->array->count > iOB_TYPE) {
+    if (v == NULL || v->array == NullArray)
+      continue;
+    /* a constant's known type is one Psyco_ConstantType checked; any
+       other item of a constant is a constant read when compiling */
+    if (((runtime && is_runtime(v->source)) || is_compiletime(v->source)) &&
+        v->array->count > iOB_TYPE) {
       vinfo_t *vt = v->array->items[iOB_TYPE];
       PyObject *t;
       if (vt != NULL && is_compiletime(vt->source) &&
           (CompileTime_Get(vt->source)->refcount1_flags & SkFlagPyObj) &&
           (t = (PyObject *)CompileTime_Get(vt->source)->value) != NULL &&
           PyType_Check(t) && Psyco_ClassMutable((PyTypeObject *)t)) {
-        source_known_t *sk = CompileTime_Get(vt->source);
-        sk_incref(sk);
-        if (v->type_hint != NULL)
-          sk_decref(v->type_hint);
-        v->type_hint = sk;
+        if (is_runtime(v->source)) {
+          source_known_t *sk = CompileTime_Get(vt->source);
+          sk_incref(sk);
+          if (v->type_hint != NULL)
+            sk_decref(v->type_hint);
+          v->type_hint = sk;
+        }
         psyco_forget_field(po, v, OB_type);
       }
     }
-    forget_mutable_types(po, v->array);
+    forget_mutable_types(po, v->array, runtime);
   }
 }
 
@@ -136,7 +145,68 @@ void Psyco_ForgetClasses(PsycoObject *po) {
   if (!po->pr.class_unchecked)
     return;
   po->pr.class_unchecked = 0;
-  forget_mutable_types(po, &po->vlocals);
+  forget_mutable_types(po, &po->vlocals, true);
+}
+
+DEFINEFN
+void Psyco_ForgetConstantClasses(PsycoObject *po) {
+  forget_mutable_types(po, &po->vlocals, false);
+}
+
+/* KNOWN_BUGS F96 (D62). A constant object (a global never rebound, a
+   class attribute, a default argument, a promoted value) used to have its
+   type read when compiling, and assigning its __class__ wasn't seen. Its
+   type is now known only behind a run-time check, a fact of the constant
+   that is forgotten as a run-time value's type is (Psyco_ForgetClasses)
+   and at the start of each block (Psyco_ForgetConstantClasses). Only
+   classes that object_set_class can change are checked.
+   The checks form a chain: the k-th compares ob_type with the k-th type
+   recorded for the object, and its failure branch, compiled when it first
+   fails, is the (k+1)-th check. A type is recorded when a chain first
+   reaches past the last one, as the object's type then, which differs
+   from all before it (they failed in that same run), so a chain is at
+   most as long as the classes the object has had. Records never change,
+   so a respawn's replay emits the same checks (D21). Records are kept by
+   address and hold their types; the object itself is held by the code
+   that uses it as a constant. */
+DEFINEFN
+int Psyco_ConstantType(PsycoObject *po, vinfo_t *vi, PyTypeObject **tp) {
+  static PyObject *records = NULL; /* object address -> list of types */
+  PyObject *o = (PyObject *)CompileTime_Get(vi->source)->value;
+  PyObject *key, *types;
+  Py_ssize_t k;
+  if (records == NULL && (records = PyDict_New()) == NULL)
+    OUT_OF_MEMORY();
+  key = PyLong_FromVoidPtr(o);
+  if (key == NULL)
+    OUT_OF_MEMORY();
+  types = PyDict_GetItem(records, key);
+  if (types == NULL) {
+    types = PyList_New(0);
+    if (types == NULL || PyDict_SetItem(records, key, types) < 0)
+      OUT_OF_MEMORY();
+    Py_DECREF(types);
+  }
+  Py_DECREF(key);
+  for (k = 0;; k++) {
+    vinfo_t *vnow, *vexp;
+    condition_code_t cc;
+    if (k == PyList_GET_SIZE(types) &&
+        PyList_Append(types, (PyObject *)Py_TYPE(o)) < 0)
+      OUT_OF_MEMORY();
+    *tp = (PyTypeObject *)PyList_GET_ITEM(types, k);
+    vnow = psyco_get_field(po, vi, FMUT(OB_type));
+    if (vnow == NULL)
+      return -1;
+    vexp = vinfo_new(CompileTime_New((long)*tp));
+    cc = integer_cmp(po, vnow, vexp, Py_NE);
+    vinfo_decref(vexp, po);
+    vinfo_decref(vnow, po);
+    if (cc == CC_ERROR)
+      return -1;
+    if (!runtime_condition_f(po, cc))
+      return 1;
+  }
 }
 
 /* The value recorded for a slot never changes, so a respawn's replay
@@ -286,8 +356,15 @@ static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
 static int need_type_mega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp) {
   vinfo_t *vtp;
   if (is_compiletime(obj->source)) {
-    *tp = Py_TYPE((PyObject *)CompileTime_Get(obj->source)->value);
-    return 1;
+    PyObject *o = (PyObject *)CompileTime_Get(obj->source)->value;
+    /* a module stays a module (object_set_class), and what is called for
+       one is right whatever its class becomes: no check (F96) */
+    if (PyModule_Check(o))
+      return 0;
+    if (!Psyco_ConstantClassMutable(obj)) {
+      *tp = Py_TYPE(o);
+      return 1;
+    }
   }
   if (!Psyco_TypeHintGuard(po, obj))
     return -1;

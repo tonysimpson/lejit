@@ -46,14 +46,33 @@ PSY_INLINE bool Psyco_ClassMutable(PyTypeObject* tp) {
 }
 
 /* After code that may assign __class__ (po->pr.class_unchecked), forgets
-   the run-time values' known types that can change. Called between
-   instructions and before a direct call. */
+   the run-time values' known types that can change, and the constants'
+   (F96). Called between instructions and before a direct call. */
 EXTERNFN void Psyco_ForgetClasses(PsycoObject* po);
 
 /* Before a run-time value's type is promoted: if it was forgotten and
    vi->type_hint holds it, a guard against it, which leaves the type known
    on the likely path (D63). False on error. */
 EXTERNFN bool Psyco_TypeHintGuard(PsycoObject* po, vinfo_t* vi);
+
+/* A constant object whose class can be assigned (KNOWN_BUGS F96): its
+   type is not read when compiling, but checked at run time
+   (Psyco_ConstantType). */
+PSY_INLINE bool Psyco_ConstantClassMutable(vinfo_t* vi) {
+	PyObject* o = (PyObject*) CompileTime_Get(vi->source)->value;
+	return o != NULL && Psyco_ClassMutable(Py_TYPE(o));
+}
+
+/* The type of such a constant, as psyco_get_field(OB_type) returns it:
+   emits the run-time checks and sets *tp to the type they passed for.
+   1, or -1 on error. */
+EXTERNFN int Psyco_ConstantType(PsycoObject* po, vinfo_t* vi,
+				PyTypeObject** tp);
+
+/* At the start of a block (dispatcher.c:fpo_build): a snapshot keeps no
+   constant's known fields, so the constants' checked types are dropped
+   from the state that compiles the block too. */
+EXTERNFN void Psyco_ForgetConstantClasses(PsycoObject* po);
 
 /* A slot of a heap type, at 'slot' (an address inside the type), for code
    specialised on it: *value is the slot as Ni first saw it, and compiled
@@ -93,6 +112,7 @@ PSY_INLINE PyTypeObject* Psyco_FastType(vinfo_t* vi) {
 	vinfo_t* vtp = vinfo_getitem(vi, iOB_TYPE);
 	if (vtp == NULL) {
 		PyObject* o = (PyObject*) CompileTime_Get(vi->source)->value;
+		extra_assert(!Psyco_ClassMutable(o->ob_type)); /* F96 */
 		return o->ob_type;
 	}
 	else {

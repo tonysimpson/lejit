@@ -1,6 +1,8 @@
 # __class__ assigned while compiled code knows the object's type
-# (KNOWN_BUGS F55, pobject.c:Psyco_ForgetClasses): every use after the
+# (KNOWN_BUGS F55, pobject.c:Psyco_ForgetClasses; F96 for constants,
+# pobject.c:Psyco_ConstantType): every use after the
 # assignment must see the new class, wherever the assignment ran.
+import enum
 import types
 
 
@@ -379,6 +381,177 @@ def hint_two_values(n):
     return out
 
 
+def _use_g():
+    return G.kind, G.who(), type(G).__name__, isinstance(G, B)
+
+
+def global_instance_elsewhere(n):
+    # the code using G is compiled and warm before another function, not
+    # called from it, assigns the class
+    out = []
+    for i in range(n):
+        for j in range(3):
+            out.append(_use_g())
+        _flip_global()
+    if G.__class__ is B:
+        _flip_global()
+    return out
+
+
+class C3:
+    kind = 'C3'
+
+    def __init__(self, x):
+        self.x = x
+
+    def who(self):
+        return 'C' + str(self.x)
+
+
+H = A(8)
+_CYCLE = {A: B, B: C3, C3: A}
+
+
+def _cycle_h():
+    H.__class__ = _CYCLE[H.__class__]
+
+
+def global_three_classes(n):
+    # each class the object takes past the first adds a check to the chain
+    out = []
+    for i in range(n):
+        out.append((H.kind, H.who()))
+        _cycle_h()
+    while H.__class__ is not A:
+        _cycle_h()
+    return out
+
+
+def global_in_local(n):
+    # the constant kept in a local: its checked type is forgotten after
+    # the call, as a run-time value's is
+    g = G
+    out = []
+    for i in range(n):
+        out.append(g.kind)
+        _flip_global()
+        out.append((g.kind, g.who()))
+    if G.__class__ is B:
+        _flip_global()
+    return out
+
+
+class Holder:
+    inst = A(9)
+
+
+def _flip_held():
+    o = Holder.inst
+    o.__class__ = B if o.__class__ is A else A
+
+
+def class_attribute(n):
+    # an instance held by a class attribute: a constant of the load
+    out = []
+    for i in range(n):
+        out.append((Holder.inst.kind, Holder.inst.who()))
+        _flip_held()
+    if Holder.inst.__class__ is B:
+        _flip_held()
+    return out
+
+
+_DEFAULT = A(10)
+
+
+def _with_default(o=_DEFAULT):
+    return o.kind, o.who()
+
+
+def _flip_default():
+    _DEFAULT.__class__ = B if _DEFAULT.__class__ is A else A
+
+
+def default_argument(n):
+    out = []
+    for i in range(n):
+        out.append(_with_default())
+        _flip_default()
+    if _DEFAULT.__class__ is B:
+        _flip_default()
+    return out
+
+
+T = (A(11), 'x')
+
+
+def in_constant_tuple(n):
+    # an item of a constant tuple: a constant inside a constant
+    out = []
+    for i in range(n):
+        out.append((T[0].kind, T[0].who()))
+        T[0].__class__ = B if T[0].__class__ is A else A
+    if T[0].__class__ is B:
+        T[0].__class__ = A
+    return out
+
+
+M = types.ModuleType('mconst')
+M.answer = 'attr'
+
+
+def module_constant(n):
+    # a module global that is never rebound becomes a ModuleType subclass
+    out = []
+    for i in range(n):
+        out.append((M.answer, type(M).__name__))
+        if i == 1:
+            _mod_class(M)
+    M.__class__ = types.ModuleType
+    return out
+
+
+class _Kind(enum.IntEnum):
+    FIRST = 0
+    SECOND = 1
+    THIRD = 2
+
+
+_FIRST = _Kind.FIRST
+_SECOND = _Kind.SECOND
+
+
+class _Param:
+    def __init__(self, kind, default):
+        self.kind = kind
+        self.default = default
+
+
+def enum_constants(n):
+    # inspect.Signature.__init__'s loop: constants of a heap type (IntEnum
+    # members) in a local, compared, with respawned branches whose replay
+    # crosses a block boundary (a respawn replay must forget the checked
+    # types where the original's block began; test_types aborted)
+    out = []
+    for i in range(n):
+        params = [_Param(_Kind(j % 3), None if j % 2 else _FIRST)
+                  for j in range(i + 3)]
+        top = _FIRST
+        seen = False
+        for p in params:
+            kind = p.kind
+            if kind < top:
+                out.append('lower')
+            elif kind > top:
+                seen = False
+                top = kind
+            if kind in (_FIRST, _SECOND):
+                if p.default is _FIRST:
+                    seen = True
+            out.append((int(top), seen))
+    return out
+
+
 CASES = [
     ('in_called_function', [(4,)], {}),
     ('in_own_method', [(4,)], {}),
@@ -393,12 +566,19 @@ CASES = [
     ('module_class', [(3,)], {}),
     ('held_in_tuple', [(4,)], {}),
     ('by_finaliser', [(4,)], {}),
-    ('global_instance', [(6,)],
-     {'xfail': 'F96: a constant object\'s type is read when code compiles'}),
+    ('global_instance', [(6,)], {}),
     ('global_rebound', [(4,)], {}),
     ('hint_kept', [(6,)], {}),
     ('hint_fails_later', [(10,)], {}),
     ('hint_across_loop', [(12,)], {}),
     ('hint_many_classes', [(12,)], {}),
     ('hint_two_values', [(6,)], {}),
+    ('global_instance_elsewhere', [(4,)], {}),
+    ('global_three_classes', [(10,)], {}),
+    ('global_in_local', [(4,)], {}),
+    ('class_attribute', [(6,)], {}),
+    ('default_argument', [(6,)], {}),
+    ('in_constant_tuple', [(6,)], {}),
+    ('module_constant', [(4,)], {}),
+    ('enum_constants', [(6,)], {}),
 ]

@@ -11,7 +11,8 @@
  * first reaches it.
  *
  * Field access (psyco_internal_getfld/putfld) folds loads from compile-time
- * objects in C and caches results in vinfo->array.
+ * objects in C and caches results in vinfo->array, except the type of a
+ * constant whose class can be assigned, which is checked (F96).
  *
  * References to compiled code buffers are mostly dropped ("XXX don't know
  * what to do with reference"): those buffers, and machine code, are never
@@ -19,6 +20,7 @@
  */
 #include "vcompiler.h"
 #include "Python/pycompiler.h"
+#include "Objects/pobject.h"
 #include "codemanager.h"
 #include "dispatcher.h"
 #include "mergepoints.h"
@@ -536,6 +538,15 @@ vinfo_t *psyco_internal_getfld(PsycoObject *po, int findex, defield_t df,
 
   if (is_runtime(vi->source)) {
     vf = field_read(po, vi, offset, NULL, df, newref);
+  } else if (findex == iOB_TYPE && offset == FIELD_C_OFFSET(OB_type) &&
+             !((long)df & FIELD_ARRAY) && Psyco_ConstantClassMutable(vi)) {
+    /* the type of a constant whose class can be assigned: checked at run
+       time, not read (KNOWN_BUGS F96) */
+    PyTypeObject *tp;
+    if (Psyco_ConstantType(po, vi, &tp) < 0)
+      return NULL;
+    Py_INCREF(tp);
+    vf = vinfo_new(CompileTime_NewSk(sk_new((long)tp, SkFlagPyObj)));
   } else {
     long result;
     long sk_flag = 0;

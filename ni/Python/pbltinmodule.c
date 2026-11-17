@@ -337,7 +337,7 @@ static vinfo_t *pbuiltin_isinstance(PsycoObject *po, vinfo_t *vself,
   /* isinstance_known never folds for a heap type, so only a static type is
      promoted: a constant heap type would keep the class alive, and a class
      made per call would compile a new path each time */
-  if (is_compiletime(vobj->source)) {
+  if (is_compiletime(vobj->source) && !Psyco_ConstantClassMutable(vobj)) {
     tp = Py_TYPE((PyObject *)CompileTime_Get(vobj->source)->value);
     r = 1;
   } else {

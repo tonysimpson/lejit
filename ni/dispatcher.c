@@ -481,6 +481,7 @@ DEFINEFN int psyco_top_array_count(FrozenPsycoObject *fpo) /*for psyco.c*/
 
 DEFINEFN
 void fpo_build(FrozenPsycoObject *fpo, PsycoObject *po) {
+  Psyco_ForgetConstantClasses(po); /* not in the snapshot (F96) */
   psyco_assert_coherent1(po, false);
   clear_tmp_marks(&po->vlocals);
   fz_build(fpo, &po->vlocals);
@@ -833,6 +834,8 @@ void psyco_respawn_detected(PsycoObject *po) {
       respawn_cnt = nextblock->snapshot.fz_respawned_cnt;
     codebuf->snapshot.fz_respawned_from = nextblock;
     po->respawn_cnt = -respawn_cnt;
+    /* where that block's compile built its snapshot (F96) */
+    Psyco_ForgetConstantClasses(po);
   }
   /* restart at the beginning of the buffer, overriding the code written
      so far. XXX when implementing freeing of code, be careful that this
