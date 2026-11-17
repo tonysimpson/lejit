@@ -63,7 +63,7 @@ Example: `ni/Objects/pobject.c:PsycoObject_Repr`, `plongobject.c` (`RETLONG`/`RE
 Example: `ni/Objects/pobject.c:PsycoObject_IsTrue` (`nb_bool`, `mp_length`, `sq_length`), `ni/Python/pycompiler.c:Psyco_Meta1x/2x/3x`.
 
 **P10 module-fn-meta** (M)
-A builtin module function's meta is registered on its C pointer with `Psyco_DefineMetaModule(name)` + `Psyco_DefineModuleFn(md, name, ml_flags, meta)`. The registration silently does nothing if `ml_flags` don't match exactly, for example after Argument Clinic changed a function to `METH_FASTCALL`.
+A builtin module function's meta is registered on its C pointer with `Psyco_DefineMetaModule(name)` + `Psyco_DefineModuleFn(md, name, ml_flags, meta)`. The registration does nothing if `ml_flags` don't match exactly, for example after Argument Clinic changed a function to `METH_FASTCALL`, because the meta's arguments and its residual fallback follow the convention it was written for; it is then listed by `ni._unregistered_metas()` (printed in checked builds, and `tests/compile_bounds.py` fails). A `METH_FASTCALL` meta takes its arguments as a tuple and falls back through `PsycoCFunction_CallFast` (D36).
 Example: `ni/Modules/pmath.c` (the `PMATH_FUNC1/2` macros are themselves a small hand-written meta-compiler). `ni/Python/pbltinmodule.c` uses it too, but imports `"__builtin__"` and so registers nothing on Py3.
 
 **P11 slot-redirect** (J)
