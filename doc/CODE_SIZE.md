@@ -685,3 +685,23 @@ Instructions per warm iteration, millions (release, `perf stat -e instructions:u
 Speed is unchanged within noise on all eight. No kept drop was found to cost speed; the versions that did are in the table above.
 
 **Verdict:** kept, as a small code-size and compile-time win with no speed cost; it is not the large lever. Most of the remaining "an earlier, more general block existed" cases are promotions at a merge point, whose own compare must keep the fact (the guard). Dropping more than the type waits on C35.
+
+## Fewer eval_breaker tests after calls (`570808a`, D53) [run]
+
+D45 tested `eval_breaker` after every `CALL_*` (7-byte `cmp`, 6-byte `jne`, a 15-byte pooled respawn stub), which added 5% to code. Now the test is made only after a call that emitted a C call that may block: not after inlined, folded, virtual or directly compiled calls, nor after the C functions `psyfunc.c:psyco_cannot_block` lists (allocation, `list.append`, int and float compares, some str methods, `ord`, `chr`, `callable`, a Python function's `tp_call`). Release builds against `cdbddd4` (`baseline-3.7` with the inline stores), one session; instructions per warm iteration are `perf stat -e instructions:u` over `tools/profile_bench.py` 1 s and 4 s runs, the difference divided by the difference in iterations, one run each, `PYTHONHASHSEED=0`.
+
+| | richards | go | raytrace | deltablue | hexiom | chaos | spectral_norm | all 29 |
+|---|---|---|---|---|---|---|---|---|
+| code KB, `codesize.py -s` (NI_CODESTATS), before | 129 | 281 | 201 | 398 | 269 | 57 | 18 | |
+| after | 128 | 275 | 198 | 387 | 257 | 56 | 18 | |
+| stub-pool chunks (4 KB), before → after | 7 → 7 | 16 → 15 | 11 → 11 | 24 → 23 | 16 → 14 | 3 → 3 | 1 → 1 | |
+| code KB, `compilebench.py`, before | 128.8 | 276.6 | 197.7 | 392.4 | 260.8 | 55.8 | 18.4 | 2,381 |
+| after | 127.5 | 270.6 | 194.9 | 377.7 | 253.5 | 55.3 | 18.2 | 2,322 |
+| compile ms, before → after | 0.74 → 0.73 | 2.55 → 2.66 | 1.47 → 1.43 | 2.65 → 2.65 | 2.94 → 2.84 | 0.50 → 0.47 | 0.18 → 0.19 | 20.6 → 20.7 |
+| instructions per warm iteration, M, before | 163.95 | 1,058.9 | 3,095.9 | 27.68 | 41.11 | 460.1 | 238.98 | |
+| after | 162.65 | 1,056.8 | 3,066.2 | 27.49 | 40.85 | 460.1 | 237.61 | |
+| change | −0.8% | −0.2% | −1.0% | −0.7% | −0.6% | 0.0% | −0.6% | |
+
+- **Half of D45's code is gone** (2,381 → 2,322 KB, −59 KB of its +114). The same instructions are compiled the same number of times (`codesize.py -s`); the bytes leave the instruction after a call and the stub pool.
+- **What keeps its test.** A temporary log of the C functions emitted by each call that kept a test, over the seven benchmarks on `5e37ecf`: 3,501 call compiles with the flag and no list, 2,122 with it. `list.append` alone was 909 of the 3,501. Of the 2,122 left, `type_call` (instantiating a class) is 668, then `cimpl_fastN` for dict `get`/`setdefault` and `hasattr` (about 500), `PyObject_IsTrue` 165, `PyDict_SetItem` 110 (keyword dicts), `list.extend` 73, `slot_sq_length` 70. All of them can run code of an arbitrary object, which may be C that blocks, so they stay (D53).
+- **Instructions** fall by up to 1% (raytrace's ±1% is within its noise); chaos is unchanged, [inferred] because its hot calls keep their test.

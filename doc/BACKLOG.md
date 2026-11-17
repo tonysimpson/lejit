@@ -24,7 +24,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 - **F37:** fixed (`e86f8ae`, STORES.md option 1).
 - **F10, F48, F50, F52, C25:** fixed (`0e191a3`..`9217bdb`; KNOWN_BUGS): compare slots run once, exhausted sequence iterators stay exhausted, a heap type's compare, hash and iteration slots and a function's defaults are guarded, C function results are checked. Rest of F50 is F56.
-- **C24:** fixed (D45): compiled code tests `eval_breaker` at loop heads and after calls.
+- **C24:** fixed (D45): compiled code tests `eval_breaker` at loop heads and after calls (since D53, only calls that may block).
 - **C22, F41–F47:** fixed by the CPython test survey (2026-11-17; KNOWN_BUGS), including two crashes (C22, F45).
 
 **Left for the owner: accept, or move to the 3.12 backlog** (point-2 sweep of GOAL.md, 2026-11-17; F49, F51/F35 and F18 (1) fixed then. Proposals only; not decided.)
@@ -53,7 +53,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 ## Improvement ideas
 
-- **Fewer `eval_breaker` tests (D45):** they add 5% to code, [inferred] mostly after calls, which outnumber loop heads. A call that compiles to no residual call (folded, or a virtual such as `range()`) needs no test after it. Small; measure code size and instructions.
+- **Fewer `eval_breaker` tests (D45):** done (`570808a`, D53): after a call only if it made a C call that may block; code 2,381 → 2,322 KB over the 29, half of D45's cost. Left: `type_call` (668 of the 2,122 call compiles that keep a test in the seven benchmarks) could skip it for a class whose `__new__` and `__init__` are Python code, but only behind a guard, since `__init__` can be reassigned after the compile (CODE_SIZE.md, "Fewer eval_breaker tests after calls").
 
 ### Speed
 - **F13, FASTCALL builtins.** **In flight.** Note: F23 already gave `PsycoCFunction_Call` a FASTCALL path for builtins with a meta; F13 is about the rest, and the agent should say what is left.
