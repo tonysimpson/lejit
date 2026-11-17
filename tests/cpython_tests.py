@@ -71,7 +71,9 @@ def main():
         known = KNOWN.get(name)
         if isinstance(known, tuple):
             expected, known = known
-            if not same and with_ni != expected:
+            if same:
+                known = None    # the accepted difference may come and go
+            elif with_ni != expected:
                 known = None    # a difference other than the accepted one
         if same and not known:
             status = 'ok'
