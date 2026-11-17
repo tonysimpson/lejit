@@ -102,7 +102,7 @@ def since(sites, before):
             misses = s[8] - before[i][8]
             if not vals and not misses:
                 continue
-            s = s[:4] + (0,) + s[5:7] + (vals, misses, s[9])  # stub: older
+            s = s[:4] + (0,) + s[5:7] + (vals, misses) + s[9:]  # stub: older
         out.append((i, s))
     return out
 
@@ -116,7 +116,7 @@ def report(ni, stats0, stats1, before, after, bufs, dupsites, top,
     names = resolve(sofile, [o for _, s in sites for o in s[5]])
     rows = []
     for sid, (co, instr, op, pflags, stub, bt, entry, vals, misses,
-              parent) in sites:
+              parent, *_) in sites:
         vals = [(d, ns, max(b - COUNTER, 0), runs) for d, ns, b, runs in vals]
         rows.append(dict(
             id=sid, where=where(co, instr), opcode=dis.opname[op],
@@ -322,7 +322,9 @@ def shared_after(ni, stats, sites, total, top, normalise, iterations=1):
     an instruction compiled for some values only is 'differs'. The
     saving at K is the code of the K-th and later values less the largest
     of them (one shared copy kept; the generic copy taken as no larger),
-    an upper bound. Runs: how often the blocks of the K-th and later values
+    an upper bound. The same is given with each value's tree: the sites
+    its code emitted (parent, parent's value) and their values' code, down
+    the tree, summed over the outermost sites only. Runs: how often the blocks of the K-th and later values
     ran per iteration of the benchmark (counted from the first, so
     compiling runs count too): what would take the shared copy."""
     per = collections.defaultdict(lambda: collections.defaultdict(
@@ -339,6 +341,26 @@ def shared_after(ni, stats, sites, total, top, normalise, iterations=1):
                 continue
             per[site][vidx][(co, i)].append((addr, code))
     names = resolve(ni.__file__, [o for s in per for o in sites[s][5]])
+    # a value's code includes the sites its code emitted and their values,
+    # down the tree (parent, parent's value)
+    allbytes = collections.Counter()
+    for (co, i), (op, n, b, copies) in stats.items():
+        for c in copies:
+            if c[3] >= 0:
+                allbytes[c[3]] += len(c[1])
+    children = collections.defaultdict(list)
+    for sid, s in enumerate(sites):
+        if len(s) > 10 and s[9] >= 0:
+            children[(s[9], s[10])].append(sid)
+    memo = {}
+
+    def subtree(sid):
+        if sid not in memo:
+            memo[sid] = 0
+            memo[sid] = allbytes[sid] + sum(
+                subtree(c) for v in range(len(sites[sid][7]))
+                for c in children.get((sid, v), ()))
+        return memo[sid]
     rows = []
     for sid, vals in per.items():
         if len(vals) < 2:
@@ -347,6 +369,8 @@ def shared_after(ni, stats, sites, total, top, normalise, iterations=1):
         order = sorted(vals)
         size = [sum(len(c) for cs in vals[v].values() for _, c in cs)
                 for v in order]
+        deep = [size[j] + sum(subtree(c) for c in children.get((sid, v), ()))
+                for j, v in enumerate(order)]
         instrs = set(k for v in order for k in vals[v])
         cls = collections.Counter()
         opbytes = 0
@@ -372,9 +396,15 @@ def shared_after(ni, stats, sites, total, top, normalise, iterations=1):
             tail = size[K - 1:]
             save[K] = sum(tail) - max(tail) if len(tail) > 1 else 0
         save[1] = sum(size) - max(size)
+        dsave = {}
+        for K in (2, 3, 5):
+            tail = deep[K - 1:]
+            dsave[K] = sum(tail) - max(tail) if len(tail) > 1 else 0
+        dsave[1] = sum(deep) - max(deep)
         rows.append(dict(id=sid, where=where(co, instr),
                          opcode=dis.opname[op], n=len(order), size=size,
                          total=sum(size), cls=cls, op=opbytes, save=save,
+                         deep=deep, dsave=dsave,
                          who=requester(sites[sid][5], names),
                          vals=[sites[sid][7][v][0] for v in order],
                          runs=[sites[sid][7][v][3] for v in order]))
@@ -399,6 +429,25 @@ def shared_after(ni, stats, sites, total, top, normalise, iterations=1):
               K, sum(r['save'][K] for r in rows) / 1024,
               pct(sum(r['save'][K] for r in rows), total))
                       for K in (1, 2, 3, 5)))
+    # a polymorphic site inside another's tree is counted in that tree
+    poly = {r['id'] for r in rows}
+
+    def nested(sid):
+        p = sites[sid][9] if len(sites[sid]) > 10 else -1
+        while p >= 0:
+            if p in poly:
+                return True
+            p = sites[p][9] if len(sites[p]) > 10 else -1
+        return False
+    outer = [r for r in rows if not nested(r['id'])]
+    print('  with the sites each value\'s code emitted, and theirs (%d '
+          'outermost sites; %d inside another\'s tree): %.1f KB; upper bound '
+          'saved ' % (len(outer), len(rows) - len(outer),
+                      sum(sum(r['deep']) for r in outer) / 1024)
+          + ', '.join('K=%d %.1f KB (%.1f%%)' % (
+              K, sum(r['dsave'][K] for r in outer) / 1024,
+              pct(sum(r['dsave'][K] for r in outer), total))
+                      for K in (1, 2, 3, 5)))
     print('  runs per iteration (%d iterations) of the blocks of the K-th '
           'and later values: ' % iterations + ', '.join(
               'K=%d %.0f' % (K, sum(sum(max(x, 0) for x in r['runs'][K - 1:])
@@ -414,13 +463,13 @@ def shared_after(ni, stats, sites, total, top, normalise, iterations=1):
     for k, (n, b, s) in sorted(byw.items(), key=lambda x: -x[1][1])[:top]:
         print('    %4d %7.1f %7.1f  %s' % (n, b / 1024, s / 1024, k[:70]))
     print('\n%-34s %-16s %4s %20s %6s %6s %6s %6s  %s' % (
-        'site', 'opcode', 'vals', 'B per value', 'same', 'consts', 'differs',
-        'K=2', 'who / values (runs)'))
-    for r in sorted(rows, key=lambda r: -r['total'])[:top]:
+        'site', 'opcode', 'vals', 'B per value+tree', 'same', 'consts',
+        'differs', 'K=2', 'who / values (runs)'))
+    for r in sorted(rows, key=lambda r: -sum(r['deep']))[:top]:
         print('%-34s %-16s %4d %20s %6d %6d %6d %6d  %s' % (
             r['where'][:34], r['opcode'][:16], r['n'],
-            ','.join(str(x) for x in r['size'])[:20], r['cls']['same'],
-            r['cls']['consts'], r['cls']['differs'], r['save'][2],
+            ','.join(str(x) for x in r['deep'])[:20], r['cls']['same'],
+            r['cls']['consts'], r['cls']['differs'], r['dsave'][2],
             r['who'][:60]))
         print('%95s %s' % ('', ', '.join(
             '%s:%s (%d)' % (d[0], str(d[1])[:20], n)

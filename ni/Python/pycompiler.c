@@ -55,9 +55,10 @@
 #include <execinfo.h>
 /* Promotion sites (pycompiler.h). Each site is a list
    [code, instr, opcode, pflags, stub bytes, (backtrace offsets in ni.so),
-    entry kind, [values], parent] and each value [description, ns, bytes,
-   counter]; the parent is the site whose value was being compiled when this
-   site was emitted, or -1,
+    entry kind, [values], parent, parent's value] and each value
+   [description, ns, bytes, counter]; the parent is the site whose value was
+   being compiled when this site was emitted, or -1, and the parent's value
+   the index of that value in its [values], or -1,
    the counter being a long the promoted block increments each time it runs.
    Never reset: a site's id indexes this list for as long as its code lives. */
 #define CS_PROMO_BT 8
@@ -87,11 +88,11 @@ DEFINEFN int psyco_cs_promo_site(PsycoObject *po, int pflags,
       off = (char *)cs_promo_bt[i] - (char *)info.dli_fbase;
     PyTuple_SET_ITEM(bt, i, PyLong_FromLong(off));
   }
-  rec = Py_BuildValue("[OiiilNi[]i]", po->pr.co, po->pr.next_instr,
+  rec = Py_BuildValue("[OiiilNi[]ii]", po->pr.co, po->pr.next_instr,
                       (unsigned char)PyBytes_AS_STRING(
                           po->pr.co->co_code)[po->pr.next_instr],
                       pflags, stub_bytes, bt, psyco_stat_compile_kind,
-                      psyco_cs_promo_cur);
+                      psyco_cs_promo_cur, cs_promo_vidx);
   if (rec == NULL || PyList_Append(cs_promo_sites, rec) < 0)
     OUT_OF_MEMORY();
   Py_DECREF(rec);
@@ -205,11 +206,12 @@ DEFINEFN PyObject *psyco_cs_promo_stats(void) {
       PyList_Append(nv, t);
       Py_DECREF(t);
     }
-    ns = Py_BuildValue("(OOOOOOONlO)", PyList_GET_ITEM(s, 0),
+    ns = Py_BuildValue("(OOOOOOONlOO)", PyList_GET_ITEM(s, 0),
                        PyList_GET_ITEM(s, 1), PyList_GET_ITEM(s, 2),
                        PyList_GET_ITEM(s, 3), PyList_GET_ITEM(s, 4),
                        PyList_GET_ITEM(s, 5), PyList_GET_ITEM(s, 6), nv,
-                       cs_promo_misses[i], PyList_GET_ITEM(s, 8));
+                       cs_promo_misses[i], PyList_GET_ITEM(s, 8),
+                       PyList_GET_ITEM(s, 9));
     PyList_Append(r, ns);
     Py_DECREF(ns);
   }
