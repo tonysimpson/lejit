@@ -334,7 +334,7 @@ Gains are against the code and compile time above. "Code" means all emitted code
 5. **A lower cut-off, or sharing a site's copies.** The most it could save is the code for a site's extra values: 0–12 KB (0–3%; deepcopy 17%). Each value lost is a type no longer known downstream. Not recommended.
 6. **Promoting fewer kinds of value.** Types are 93.5% of promotion code, and they are the specialisation Ni exists for. Functions, code objects, words and other objects together are about 5%. Not recommended.
 
-## Two forms of one value (`1b88dff`, D41, QUESTIONS 38) [run]
+## Two forms of one value (`e823ee8`, D41, QUESTIONS 38) [run]
 
 The four pairs QUESTIONS 38 listed, measured with a tally of `codesize.py -s`'s states over all 23 pyperformance benchmarks (`NI_CODESTATS=1` release build at `ce81596`, cap on). Each local's state is classed as a constant (`C:int-large`: an int object outside -5..256), a virtual int with a known or a run-time value (`Vlong:known`, `Vlong:R`), a run-time object with a promoted type (`R:int`, `R:list`), a virtual float or empty list. "Only" counts the blocks whose state differs from an earlier block at the same merge point in that one local and nothing else: the blocks a single form would save directly. In all: 2,848 KB, 57,313 instructions compiled, 2,367 blocks.
 
