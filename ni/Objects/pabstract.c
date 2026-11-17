@@ -104,7 +104,8 @@ vinfo_t *PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
     return Psyco_META2(po, m->mp_subscript, CfCommonNewRefPyObject, "vv", o,
                        key);
 
-  if (tp->tp_as_sequence) {
+  /* sq_item too, as 3.7: every heap type has a tp_as_sequence (F42) */
+  if (tp->tp_as_sequence && tp->tp_as_sequence->sq_item) {
     /* TypeSwitch */
     PyTypeObject *ktp = Psyco_NeedType(po, key);
     if (ktp == NULL)

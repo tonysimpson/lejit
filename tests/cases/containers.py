@@ -170,3 +170,34 @@ CASES += [
     ('super_getitem', [(0,), (-1,), (slice(1, None),)], {}),
     ('list_getitem_on_subclass', [(1,), (-1,), (slice(None, 2),)], {}),
 ]
+
+
+# PEP 560 (F39) with a heap metaclass: every heap type has a
+# tp_as_sequence, with no sq_item, so Ni took the sequence path and raised
+# "'Meta' object does not support indexing" (KNOWN_BUGS F42)
+class WithClassGetitem:
+    def __class_getitem__(cls, item):
+        return (cls.__name__, item)
+
+
+class Meta(type):
+    pass
+
+
+class MetaClassGetitem(metaclass=Meta):
+    def __class_getitem__(cls, item):
+        return ('meta', item)
+
+
+def class_getitem(k):
+    return WithClassGetitem[k], MetaClassGetitem[k]
+
+
+def class_not_subscriptable(k):
+    return int[k]
+
+
+CASES += [
+    ('class_getitem', '[(1,), (str,)]', {}),
+    ('class_not_subscriptable', [(1,)], {}),
+]
