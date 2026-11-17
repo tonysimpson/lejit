@@ -86,8 +86,27 @@ def stop_iteration_inside(xs):
 
 
 def shadowed_builtin(xs):
-    sum = len
-    return sum(x for x in xs) if False else sum([x for x in xs])
+    sum = len               # not the builtin: no fusing, len(generator) fails
+    try:
+        return sum(x for x in xs)
+    except TypeError as e:
+        return str(e)
+
+
+def min_max(xs, d):
+    out = [max(d[x] for x in xs), min(x * 2 for x in xs),
+           max((x, -x) for x in xs), max(x for x in [2, 2.0]),
+           min(x for x in [2.0, 2])]
+    for empty in ((), [0]):
+        try:
+            out.append(max(x for x in empty if x))
+        except ValueError as e:
+            out.append(str(e))
+    try:
+        out.append(min(x for x in [1, 'a']))
+    except TypeError as e:
+        out.append(str(e))
+    return out
 
 
 CASES = [
@@ -105,4 +124,5 @@ CASES = [
     ('raises_in_temporary', [([5, 0, 2],), ([1, 2],)], {}),
     ('stop_iteration_inside', [([1],), ([],)], {}),
     ('shadowed_builtin', [([1, 2],)], {}),
+    ('min_max', [([1, 5, 3], {1: 9, 5: 2, 3: 4})], {}),
 ]

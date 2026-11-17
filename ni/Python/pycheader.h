@@ -51,6 +51,8 @@
 #define GENEXPR_SUM  3  /* sum(): acc = acc + value */
 #define GENEXPR_ANY  4  /* any(): return True on a true value */
 #define GENEXPR_ALL  5  /* all(): return False on a false value */
+#define GENEXPR_MIN  6  /* min(), max(): acc is the best so far, or NULL */
+#define GENEXPR_MAX  7
 #define GENEXPR_SLOTS 2
 #define GENEXPR_SLOT_MODE(co) (INDEX_LOC_LOCALS_PLUS + (co)->co_nlocals +     \
                                PyTuple_GET_SIZE((co)->co_freevars))

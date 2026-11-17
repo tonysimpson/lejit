@@ -1377,6 +1377,31 @@ static bool compute_and_raise_exception(PsycoObject *po) {
     return true;
 }
 
+/* min_max (bltinmodule.c) without key or default, one item at a time */
+static PyObject *cimpl_minmax_step(PyObject *best, PyObject *item, long op) {
+  if (best != NULL) {
+    int c = PyObject_RichCompareBool(item, best, (int)op);
+    if (c < 0)
+      return NULL;
+    if (c == 0) {
+      Py_INCREF(best);
+      return best;
+    }
+  }
+  Py_INCREF(item);
+  return item;
+}
+
+static PyObject *cimpl_minmax_result(PyObject *best, long is_min) {
+  if (best == NULL) {
+    PyErr_Format(PyExc_ValueError, "%s() arg is an empty sequence",
+                 is_min ? "min" : "max");
+    return NULL;
+  }
+  Py_INCREF(best);
+  return best;
+}
+
 static void cimpl_generator_stop(void) {
   PyObject *exc, *val, *tb;
   if (!PyErr_ExceptionMatches(PyExc_StopIteration))
@@ -1626,7 +1651,14 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             v = psyco_vi_Py_False();
           else if (mode == GENEXPR_ALL)
             v = psyco_vi_Py_True();
-          else {
+          else if (mode == GENEXPR_MIN || mode == GENEXPR_MAX) {
+            v = psyco_generic_call(po, cimpl_minmax_result,
+                                   CfCommonNewRefPyObject, "vl",
+                                   po->vlocals.items[slot + 1],
+                                   mode == GENEXPR_MIN);
+            if (v == NULL)
+              break;
+          } else {
             v = po->vlocals.items[slot + 1];
             vinfo_incref(v);
           }
@@ -1657,6 +1689,14 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           else
             x = psyco_generic_call(po, PyNumber_Add, CfCommonNewRefPyObject,
                                    "vv", acc, v);
+          if (x == NULL)
+            break;
+          po->vlocals.items[slot + 1] = x;
+          vinfo_decref(acc, po);
+        } else if (mode == GENEXPR_MIN || mode == GENEXPR_MAX) {
+          x = psyco_generic_call(po, cimpl_minmax_step, CfCommonNewRefPyObject,
+                                 "vvl", acc, v,
+                                 mode == GENEXPR_MIN ? Py_LT : Py_GT);
           if (x == NULL)
             break;
           po->vlocals.items[slot + 1] = x;

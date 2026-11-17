@@ -48,12 +48,13 @@ This is the same shape as inlining a listcomp's code (history A4: the machinery 
 
 **Done** (2026-11-17), as a separate compiled callee rather than inlined, which needs no change to inlining:
 - MAKE_FUNCTION plus the call of a genexpr gives a *pending generator* (`pfuncobject.c:PsycoGenexpr_New`): a virtual object whose compute makes the real call. Delaying it is safe because creating a generator runs no code.
-- `sum`, `any`, `all` (`pbltinmodule.c` metas) and `list`, `tuple`, `set` (`ptype_call`) run a pending one through `psyfunc.c:psyco_call_genexpr`. That compiles the genexpr's code with two hidden slots after its free variables: the mode, a compile-time value so that versions never mix at merge points, and the accumulator. YIELD_VALUE does the step (append, add, `+`, or test and return), RETURN_VALUE returns the result (`pycheader.h` GENEXPR_*).
+- `sum`, `any`, `all`, `min`, `max` without key or default (`pbltinmodule.c` metas) and `list`, `tuple`, `set` (`ptype_call`) run a pending one through `psyfunc.c:psyco_call_genexpr`. That compiles the genexpr's code with two hidden slots after its free variables: the mode, a compile-time value so that versions never mix at merge points, and the accumulator. YIELD_VALUE does the step (append, add, `+`, or test and return), RETURN_VALUE returns the result (`pycheader.h` GENEXPR_*).
 - **Only a temporary is fused** (vinfo refcount ≤ 2: the stack and the argument tuple; a dead local is already released). A generator that something can still use must stay one object: after a partial run (`any`) or an exception it keeps its position, inner loops included. Anything else, such as `next(g)`, passing it on, or a live local, makes the real generator.
 - PEP 479: StopIteration leaving the fused code becomes RuntimeError, chained as `gen_send_ex` does (`pycompiler.c:cimpl_generator_stop`).
 - Tests: `tests/cases/genexprs.py`.
 - Results [run], release build: 40,000 calls over 50 items, `sum` 4.3×, `any` 2.9×, `tuple` 2.6×, `set` 2.6× against CPython. pyperformance comprehensions 1.40× → 1.81×, hexiom 1.67× → 1.98×, mdp 1.11× → 1.20×; bench.py generators 1.1× → 2.1×. nqueens is unchanged (1.00×): its genexprs are inside generator functions, which still run interpreted (option A).
-- Not done: `min`/`max` (their key and default arguments), `str.join`, `sorted`, `dict`.
+- `min`/`max` (2.1× on `max` over 50 items) took mdp from 1.20× to 1.28×.
+- Not done: `min`/`max` with key or default, `str.join`, `sorted`, `dict`.
 
 ### C. Fuse a generator with a compiled `for` loop
 

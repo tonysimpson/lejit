@@ -230,6 +230,11 @@ static vinfo_t *pbuiltin_min_max(PsycoObject *po, vinfo_t *vargs,
                                  vinfo_t *vkw, int op, PyCFunction cimpl) {
   int i, n = PsycoTuple_Load(vargs);
   vinfo_t *best, *item, *cmp;
+  if (n == 1 && psyco_knowntobe(vkw, (long)NULL) &&
+      psyco_genexpr_fusable(PsycoTuple_GET_ITEM(vargs, 0)))
+    return genexpr_consume(po, PsycoTuple_GET_ITEM(vargs, 0),
+                           op == Py_LT ? GENEXPR_MIN : GENEXPR_MAX, NULL,
+                           NULL);
   if (n < 2 || !psyco_knowntobe(vkw, (long)NULL))
     return psyco_generic_call(po, cimpl, CfCommonNewRefPyObject, "lvv", NULL,
                               vargs, vkw);
