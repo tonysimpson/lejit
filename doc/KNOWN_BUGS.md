@@ -46,7 +46,7 @@ M1–M5 and M9 were confirmed by executing the emitted code (`tests/encoding/run
 | F9 | `pstructmember.c` `T_STRING_INPLACE` builds bytes where CPython 3 builds str. | Live | [read] |
 | F10 | `pobject.c:PsycoObject_RichCompare` can run a user `__eq__` twice: a residual slot returns NotImplemented, then there's a residual `PyObject_RichCompare`. | Possible | [inferred] |
 | F11 | `pabstract.c:PsycoEval_CallObjectWithKeywords` passes a C-NULL `kw` as `'v'` on the `use_proxy` path, and `psyco_generic_call` dereferences it. | Possible | [inferred] |
-| F12 | `PsycoObject_IsTrue` doesn't normalise lengths to 0/1, and `PsycoObject_RichCompareBool` returns the raw value. | Live, latent | [read] |
+| F12 | `PsycoObject_IsTrue` doesn't normalise lengths to 0/1, and `PsycoObject_RichCompareBool` returns the raw value. Checked 2026-11-17: every caller (`UNARY_NOT`, `POP_JUMP_IF_*`, the fused `any`/`all`, `min`/`max` of several arguments) only tests the result against zero (`integer_NON_NULL`, `runtime_NON_NULL_f`), so nothing is wrong today. A new caller that uses the value as 0/1 must normalise it. | Latent | [read] |
 | F13 | `METH_FASTCALL` builtins are never specialised (`pmethodobject.c`), and `pmath` metas are silently not registered when `ml_flags` differ. | Live (perf) | [read] |
 | F14 | `int` is passed to `"l"` (`va_arg(long)`) in `compute_tuple` and `pfloat_richcompare`. This is undefined behaviour, benign in practice. | Live | [inferred] |
 | F15 | ~~`plongobject.c:PsycoLong_FROM_LONG` leaks on error.~~ No longer applies: it now wraps `PsycoLong_FROM_WORD`, which builds a virtual int and can't fail. | Closed (2026-11-17) | [read] |
