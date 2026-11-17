@@ -761,7 +761,7 @@ Promotion continuations fall by 28–40% and buffers by 15–27%. Code falls exc
 
 Instructions per warm iteration (`perf stat -e instructions:u`, (12 − 2 iterations) / 10, M): richards 165.5–172.2 (four runs) → 165.4–167.0 (five), deltablue 25.02 → 25.02–25.03, raytrace 3,101.5 → 3,102.8–3,105.9, go 1,070–1,105 → 1,071–1,169 (run-to-run spread larger than any difference), hexiom 41.07–41.50 → 40.64–40.65 (−1.1%), chaos 456.3–457.6 → 460.7–465.3 (+1.5%), pyflate 2,022.4 → 2,026.3–2,026.4 (+0.2%). Chaos's +1.5% was not explained. [run]
 
-## Promotion caches and the cut-off (`27ef981`, D66, KNOWN_BUGS C54) [run]
+## Promotion caches and the cut-off (`a599bd2`, D66, KNOWN_BUGS C54) [run]
 
 `tools/bench.py`'s `shapes` kernel (an `isinstance` chain over `int`, `float`, `str`, two classes, `int`, `bytes`, `None` in a list loop) went from 708 to 969 M instructions at `f229d14`, the rejoin (D44), and was 977 M on `ed323c7`. `shapes_locals`, the other kernels and pyperformance did not move.
 
