@@ -610,3 +610,18 @@ With C27 (`a4b946e`) and C28 (`261fd83`) fixed, the join points' own restriction
 - **Nothing compiled changes.** `codesize.py -s` differs only in addresses and buffer-switch counts, the joins are the same, and over all 29 benchmarks only mdp's code moves (151.7 → 151.5 KB). The restrictions never met a case in pyperformance: no unify at a join point or merge point freed anything there (a temporary counter, checked build, the seven benchmarks), and `tests/cases`' rejoin, attr_stores, inlining and int_counters join the same number of times.
 - **Instructions per warm iteration** are `perf stat -e instructions:u`, ((3 + 10) − (3 + 0) iterations) / 10, one run each; raytrace and chaos differ by about 1%, which is noise for identical code.
 - **What it buys is simpler code** (`droppable()` and the `canonical_int` and inlined-frame exceptions are gone) and two live bugs found: C28 asserted at merge points too.
+
+## Inline store sites shrunk (`506a916`, `0590a3c`, `bd5361a`, D47; STORES.md "Shrinking the store sites") [run]
+
+On top of store+J. Each failed check of an inline store used to be a respawn point: a stub per check and, when taken, a respawned buffer. Now every failed check calls one helper out of line, and the old value's dealloc goes through one shared glue. The type guard is a 47-byte emitter, used by loads too. Release builds, `tools/compilebench.py`, one session (base is `e4b3a5f`, base+J):
+
+| | base | store+J | shrunk |
+|---|---|---|---|
+| code, all 29 | 2,363 KB | 2,548 KB | 2,344 KB (−0.8% against base) |
+| compile, all 29 | 19.8 ms | 21.7 ms | 19.2 ms |
+| richards code / compile | 121.7 KB / 0.74 ms | 162.0 / 0.99 | **127.6** / 0.72 |
+| go code / compile | 279.0 / 2.55 | 305.6 / 2.85 | 270.0 / 2.32 |
+| richards instructions per iteration | 227 M | 177 M | 161 M |
+
+- **Richards is +10% over the baseline's 116 KB** (the budget was +20–25%). STORE_ATTR is 208 → 166 bytes per compiled site. Respawned buffers are 90 → 15 and stub chunks 10 → 6, the same as base (`tools/codesize.py richards -s`).
+- **The removed respawns did more than the smaller sites.** Step 1 alone took richards from 162 to 136 KB; the sites themselves account for only 3 KB of that (172 compiles, 208 → 191 bytes each).
