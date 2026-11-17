@@ -208,6 +208,8 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         /* run-time or compile-time values: promote the
            function object as a whole into compile-time */
         PyObject *f;
+        if (is_megamorphic(func->source)) /* forgotten (D43) */
+            goto fallback;
         /* a function made here (MAKE_FUNCTION) and since computed still
            has its code: closure code takes the real call anyway, so don't
            promote a function object that is new on every run (each

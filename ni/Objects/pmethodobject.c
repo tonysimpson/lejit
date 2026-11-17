@@ -67,7 +67,10 @@ DEFINEFN
 vinfo_t *PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
                              vinfo_t *kwargs) {
   long mllong;
-  vinfo_t *vml = psyco_get_const(po, func, CFUNC_m_ml);
+  vinfo_t *vml;
+  if (is_megamorphic(func->source)) /* forgotten (D43): m_ml too */
+    goto use_proxy;
+  vml = psyco_get_const(po, func, CFUNC_m_ml);
   if (vml == NULL)
     return NULL;
 

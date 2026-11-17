@@ -123,6 +123,12 @@ PSY_INLINE bool is_rtnonneg(RunTimeSource s) {
   return s & RunTime_NonNeg;
 }
 
+/* a run-time value whose promotions take the generic path: a megamorphic
+   site's, or a forgotten value (dispatcher.c:psyco_forget_values) */
+PSY_INLINE bool is_megamorphic(Source s) {
+  return is_runtime(s) && (s & RunTime_Megamorphic) != 0;
+}
+
 /* mutation */
 PSY_INLINE RunTimeSource remove_rtref(RunTimeSource s) {
   CHKTIME(s, RunTime);

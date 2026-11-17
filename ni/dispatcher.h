@@ -86,7 +86,7 @@ EXTERNFN vcompatible_t* psyco_compatible(PsycoObject* po,
                                          global_entries_t* pattern);
 
 EXTERNFN void psyco_stabilize(vcompatible_t* lastmatch);
-EXTERNFN bool psyco_forget_int_values(PsycoObject* po);
+EXTERNFN bool psyco_forget_values(PsycoObject* po, global_entries_t* ge);
 EXTERNFN bool psyco_unpromote_large_ints(PsycoObject* po);
 #if NI_CODESTATS
 EXTERNVAR int psyco_cs_align_rejects;

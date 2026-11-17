@@ -11,8 +11,10 @@
  *    forms of a counter compare. Ni added a 16-byte stack-alignment test
  *    (compare_return_address_in_a_stupid_way) that rejects otherwise good
  *    matches: a kludge for x86-64 call alignment (KNOWN_BUGS C1).
- *  - psyco_forget_int_values: the cap per merge point's generalisation
- *    (vcompiler.c:mp_capped, D40).
+ *  - psyco_forget_values: the cap per merge point's generalisation
+ *    (vcompiler.c:mp_capped, D40). A constant it makes run-time is a
+ *    forgotten value: flagged RunTime_Megamorphic, as a megamorphic site's
+ *    value is, so its promotions take the generic path (D43).
  *  - Respawn: the rare branch of a run-time condition keeps no snapshot. When
  *    it is first taken, compilation is replayed from the previous snapshot into
  *    a throw-away buffer until the same point is reached (do_respawn).
@@ -1236,6 +1238,19 @@ static bool compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
          a block per combination. Not a fixed value: code after it relies on
          it, and promotion would loop. */
       source_known_t *sk;
+      if (is_compiletime(a->source) && is_megamorphic(bsource)) {
+        /* forgotten (psyco_forget_values) or megamorphic in 'b': a
+           constant joins it, un-promoted, as two constants do; otherwise
+           the cap's forgotten form and the constant one would each start
+           a block at the merge points after it. Not a fixed value, nor
+           when 'b' knows more (a promoted type). */
+        sk = CompileTime_Get(a->source);
+        if ((sk->refcount1_flags & SkFlagFixed) != 0 || sk->value == 0 ||
+            bcount != 0)
+          return false;
+        compatible_diff(result, a);
+        return true;
+      }
       if (!vint_value || !is_compiletime(a->source) || !is_runtime(bsource))
         return false; /* not the same TIME_MASK */
       sk = CompileTime_Get(a->source);
@@ -1263,8 +1278,9 @@ static bool compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
         if ((a->source & RunTime_NonNeg) == 0 &&
             (bsource & RunTime_NonNeg) != 0)
           return false;
-        /* a source in 'a' which is flagged as megamorphic should
-           not fall back to a source in 'b' which is not */
+        /* a source in 'a' which is flagged as megamorphic (or
+           forgotten) should not fall back to a source in 'b' which is
+           not: that code may promote it again */
         if ((a->source & RunTime_Megamorphic) != 0 &&
             (bsource & RunTime_Megamorphic) == 0)
           return false;
@@ -1637,12 +1653,50 @@ static void canonical_int(PsycoObject *po, vinfo_t *a) {
   sk_decref(sk);
 }
 
-/* The cap's generalisation (vcompiler.c:mp_capped): the value of each
-   virtual int or bool in a local becomes run-time unless fixed, so the
-   counters' many combinations of known values collapse into one block.
-   - Not other constants: a constant function or class would be promoted
-     again by the next call, a new form that splits the merge point
-     further (meteor_contest +5% compiled).
+/* whether a block at this merge point holds anything but the constant
+   'value' in vlocals item 'index' (a link to a shared item counts) */
+static bool varies_at(global_entries_t *ge, int index, long value) {
+  PyObject *plist = ge->fatlist;
+  int i = PyList_GET_SIZE(plist);
+  while (i--) {
+    PyObject *o1 = PyList_GET_ITEM(plist, i);
+    int n;
+    if (!CodeBuffer_Check(o1))
+      break;
+    fz_load_fpo(&((CodeBufferObject *)o1)->snapshot);
+    n = fz_getopc();
+    while (n--) {
+      int opc = fz_getopc();
+      Source s = 0;
+      if (opc >= 0) {
+        s = fz_getarg();
+        fz_parse(opc, false);
+      }
+      if (n == index) {
+        if (!is_compiletime(s) || CompileTime_Get(s)->value != value)
+          return true;
+        break;
+      }
+    }
+  }
+  return false;
+}
+
+/* The cap's generalisation (vcompiler.c:mp_capped, D40, D43), in the
+   locals only.
+   - The value of each virtual int or bool becomes run-time, so the
+     counters' many combinations of known values collapse into one block.
+   - Each other constant that some block at this merge point doesn't share
+     becomes run-time and forgotten (RunTime_Megamorphic): its promotions
+     take the generic path (psyco_pyobj_atcompiletime_mega, the static-type
+     one, and the calls in pfunction_call and PsycoCFunction_Call), so a
+     constant function or class is not promoted again by the next call,
+     which would be one more fixed form here (meteor_contest +5% compiled
+     without the mark). A constant arriving later joins a forgotten value
+     (compatible_vinfo). One that every block shares stays: forgetting it
+     only spreads a second form to the merge points after this one
+     (meteor_contest's bisect=bisect, +5% again). Its type is not kept:
+     Psyco_NeedType promotes it once, the same type for any function.
    - Fixed values stay: something relies on them, and a promotion compiled
      from this merge point would match the state it was promoted from and
      loop.
@@ -1652,12 +1706,13 @@ static void canonical_int(PsycoObject *po, vinfo_t *a) {
    - The result must be as general as the states that will arrive, which
      have no sharing and no sign known: a run-time value shared in a
      snapshot never matches two separate ones (compatible_vinfo). So a
-     local whose virtual int is shared (a = b = 0) gets its own; only for
+     local whose value is shared (a = b = 0) gets its own; for ints only
      small ints and bools, which computing gives back as the same object,
-     so identity is kept (canonical_int).
+     so identity is kept (canonical_int); a constant object is loaded as
+     the same object either way.
    Returns whether anything changed. */
 DEFINEFN
-bool psyco_forget_int_values(PsycoObject *po) {
+bool psyco_forget_values(PsycoObject *po, global_entries_t *ge) {
   bool changed = false;
   int i;
   for (i = 0; i < po->pr.co->co_nlocals; i++) {
@@ -1682,6 +1737,29 @@ bool psyco_forget_int_values(PsycoObject *po) {
     }
     psyco_unfix(po, w);
     w->source &= ~RunTime_NonNeg;
+    changed = true;
+  }
+  for (i = 0; i < po->pr.co->co_nlocals; i++) {
+    vinfo_t *a = LOC_LOCALS_PLUS[i];
+    source_known_t *sk;
+    if (a == NULL || !is_compiletime(a->source))
+      continue;
+    sk = CompileTime_Get(a->source);
+    if ((sk->refcount1_flags & SkFlagFixed) || sk->value == 0 ||
+        !varies_at(ge, INDEX_LOC_LOCALS_PLUS + i, sk->value))
+      continue;
+    if (a->refcount > 1) {
+      vinfo_t *b;
+      if (sk->refcount1_flags & SkFlagPyObj)
+        Py_INCREF((PyObject *)sk->value);
+      b = vinfo_new(CompileTime_NewSk(
+          sk_new(sk->value, sk->refcount1_flags & SkFlagPyObj)));
+      LOC_LOCALS_PLUS[i] = b;
+      vinfo_decref(a, po);
+      a = b;
+    }
+    psyco_unfix(po, a);
+    a->source = (a->source | RunTime_Megamorphic) & ~RunTime_NonNeg;
     changed = true;
   }
   return changed;
