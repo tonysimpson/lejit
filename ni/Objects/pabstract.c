@@ -956,7 +956,7 @@ vinfo_t *PsycoNumber_InPlaceMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
 DEFINEFN
 vinfo_t *PsycoNumber_InPlaceRemainder(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
   return binary_iop(po, v, w, NB_SLOT(nb_inplace_remainder),
-                    NB_SLOT(nb_remainder), "%");
+                    NB_SLOT(nb_remainder), "%=");
 }
 
 DEFINEFN

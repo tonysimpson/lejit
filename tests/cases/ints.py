@@ -269,6 +269,33 @@ def mixed_errors():
     return out
 
 
+def _inplace(x, y, op):
+    if op == 0:
+        x %= y
+    elif op == 1:
+        x += y
+    elif op == 2:
+        x //= y
+    elif op == 3:
+        x <<= y
+    elif op == 4:
+        x @= y
+    else:
+        x **= y
+    return x
+
+
+# each in-place operator's own name in the error (KNOWN_BUGS F80)
+def inplace_messages():
+    out = []
+    for op in range(6):
+        try:
+            out.append(_inplace(1, None, op))
+        except TypeError as e:
+            out.append(str(e))
+    return out
+
+
 # comparison results are virtual bools (pboolobject.h): used in jumps,
 # stored, compared by identity, and used as ints
 def bool_results(n):
@@ -305,5 +332,6 @@ CASES = [
     ('escapes', [(12,)], {}),
     ('loop_counter', [(100,), (0,)], {}),
     ('mixed_errors', [()], {}),
+    ('inplace_messages', [()], {}),
     ('bool_results', [(4,)], {}),
 ]
