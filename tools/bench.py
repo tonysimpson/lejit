@@ -247,6 +247,79 @@ def word_counts(repeat):
     return sorted(counts.items(), key=by_count)[:3]
 
 
+# ---- targets: range, comprehensions, strings, generators, instances -------
+
+def range_loops(n):
+    """Nested range loops with steps (virtual range, A8)."""
+    t = 0
+    for i in range(n):
+        for j in range(0, 100, 3):
+            t = t + (i ^ j)
+    return t
+
+
+def comprehensions(n):
+    """List comprehensions and sum over them (listcomp calls, A4)."""
+    t = 0
+    for k in range(n):
+        xs = [i * i for i in range(50)]
+        ys = [x + 1 for x in xs if x % 3]
+        t = t + len(ys) + xs[-1]
+    return t
+
+
+def short_strings(n):
+    """Short string building, comparison and indexing (A7)."""
+    t = 0
+    for i in range(n):
+        s = 'ab' + str(i % 10)
+        if s == 'ab3':
+            t = t + 1
+        t = t + len(s) + (s[0] == 'a')
+    return t
+
+
+def char_scan(repeat):
+    """Character loop over a str (str iteration, == on one-char strings)."""
+    text = TEXT * 4
+    vowels = 0
+    for r in range(repeat):
+        for ch in text:
+            if ch == 'a' or ch == 'e' or ch == 'i' or ch == 'o' or ch == 'u':
+                vowels = vowels + 1
+    return vowels
+
+
+def gen_squares(n):
+    for i in range(n):
+        yield i * i
+
+
+def generators(n):
+    """A generator and a generator expression (B7)."""
+    t = 0
+    for k in range(n):
+        t = t + sum(gen_squares(30)) + sum(x for x in range(30) if x & 1)
+    return t
+
+
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+def points(n):
+    """Instances: creation and attribute access (A9, A10, A11)."""
+    t = 0.0
+    p = Point(1.0, 2.0)
+    for i in range(n):
+        q = Point(p.y, p.x + 0.5)
+        t = t + q.x * q.y
+        p = q
+    return round(t, 3)
+
+
 BENCHMARKS = [
     ('count_primes', count_primes, (60000,)),
     ('sieve', sieve, (1000000,)),
@@ -261,6 +334,12 @@ BENCHMARKS = [
     ('nqueens', nqueens, (10,)),
     ('nbody', nbody, (100000,)),
     ('word_counts', word_counts, (20000,)),
+    ('range_loops', range_loops, (20000,)),
+    ('comprehensions', comprehensions, (20000,)),
+    ('short_strings', short_strings, (300000,)),
+    ('char_scan', char_scan, (3000,)),
+    ('generators', generators, (20000,)),
+    ('points', points, (300000,)),
 ]
 
 
