@@ -16,7 +16,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C29:** a frame already running compiled when tracing starts gets no events: `pdb.set_trace()`/`breakpoint()` in a compiled function stops only in its callees, a tracer that sets `f_trace` on running frames sees nothing from them, and a profiler misses their `c_call`/`return` events. Needs a way out of compiled code mid-frame (large).
 - **F10:** a user `__eq__`/`__ne__` runs twice (now seen: CPython's `test_compare`). Small to medium (`pobject.c`).
 - **F48:** an exhausted sequence iterator restarts when the sequence grows (`piterobject.c`). Medium.
-- **F50:** a slot deleted after compiling (`del C.__next__`) not seen. Small to medium; rare. (F49 fixed, `d2637bc`; its remainder is F72, below.)
+- **F50:** a slot deleted after compiling (`del C.__next__`) not seen. Small to medium; rare. (F49 fixed, `5f8b506`; its remainder is F72, below.)
 - **F52:** a function's `__defaults__` changed after a compiled call to it isn't seen (`unittest.mock.patch.object(f, '__defaults__')`; CPython's `test_unittest`). Small (a guard on the defaults at the call).
 - **C25:** C functions called directly skip `_Py_CheckFunctionResult` (a buggy extension returning NULL without an exception segfaults). Small.
 - **F9:** a `T_STRING_INPLACE` struct member gives `bytes`, not `str`. Small. **In flight** (strings agent).
@@ -42,7 +42,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 **Possible, not shown to happen**
 - **F11:** dormant: the function has no caller.
-- **F18 (3):** dead Py2 frame-exception code (the bare-`raise` traceback entry is fixed, `e3e1b15`).
+- **F18 (3):** dead Py2 frame-exception code (the bare-`raise` traceback entry is fixed, `fafd71e`).
 
 **Latent or by design**
 - **F12, F35, M10, M11, M7:** documented, harmless today.
