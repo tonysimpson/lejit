@@ -587,6 +587,7 @@ _build_merge_points(PyCodeObject *co, int module)
             case SETUP_WITH:
             case WITH_CLEANUP_START:
             case WITH_CLEANUP_FINISH:
+            case UNPACK_EX:
             case CALL_FUNCTION:
             case CALL_FUNCTION_KW:
             case CALL_FUNCTION_EX:

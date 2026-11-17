@@ -1416,12 +1416,16 @@ static PyObject *cimpl_load_global(PyObject *globals, PyObject *w) {
   return x;
 }
 
-/* ceval.c:unpack_iterable without the starred target (UNPACK_EX isn't
-   compiled), with its messages */
-static int cimpl_unpack_iterable(PyObject *v, int argcnt, PyObject **sp) {
-  int i = 0;
+/* ceval.c:unpack_iterable (argcntafter -1: no starred target), returning
+   0 or -1 and filling sp[] upwards: the first item in sp[0], which the
+   caller pushes last, so that it is on top as in ceval */
+static int unpack_iterable(PyObject *v, int argcnt, int argcntafter,
+                           PyObject **sp) {
+  int i = 0, j = 0;
+  Py_ssize_t ll = 0;
   PyObject *it; /* iter(v) */
   PyObject *w;
+  PyObject *l = NULL; /* variable list */
 
   extra_assert(v != NULL);
 
@@ -1431,44 +1435,84 @@ static int cimpl_unpack_iterable(PyObject *v, int argcnt, PyObject **sp) {
         v->ob_type->tp_iter == NULL && !PySequence_Check(v))
       PyErr_Format(PyExc_TypeError, "cannot unpack non-iterable %.200s object",
                    v->ob_type->tp_name);
-    goto Error;
+    return -1;
   }
 
   for (; i < argcnt; i++) {
     w = PyIter_Next(it);
     if (w == NULL) {
       /* Iterator done, via error or exhaustion. */
-      if (!PyErr_Occurred())
-        PyErr_Format(PyExc_ValueError,
-                     "not enough values to unpack (expected %d, got %d)",
-                     argcnt, i);
+      if (!PyErr_Occurred()) {
+        if (argcntafter == -1)
+          PyErr_Format(PyExc_ValueError,
+                       "not enough values to unpack (expected %d, got %d)",
+                       argcnt, i);
+        else
+          PyErr_Format(PyExc_ValueError,
+                       "not enough values to unpack "
+                       "(expected at least %d, got %d)",
+                       argcnt + argcntafter, i);
+      }
       goto Error;
     }
     *sp++ = w;
   }
 
-  /* We better have exhausted the iterator now. */
-  w = PyIter_Next(it);
-  if (w == NULL) {
-    if (PyErr_Occurred())
-      goto Error;
-    Py_DECREF(it);
-    return 0;
+  if (argcntafter == -1) {
+    /* We better have exhausted the iterator now. */
+    w = PyIter_Next(it);
+    if (w == NULL) {
+      if (PyErr_Occurred())
+        goto Error;
+      Py_DECREF(it);
+      return 0;
+    }
+    Py_DECREF(w);
+    PyErr_Format(PyExc_ValueError, "too many values to unpack (expected %d)",
+                 argcnt);
+    goto Error;
   }
-  PyErr_Format(PyExc_ValueError, "too many values to unpack (expected %d)",
-               argcnt);
-  Py_DECREF(w);
-  /* fall through */
+
+  l = PySequence_List(it);
+  if (l == NULL)
+    goto Error;
+  *sp++ = l;
+  i++;
+
+  ll = PyList_GET_SIZE(l);
+  if (ll < argcntafter) {
+    PyErr_Format(PyExc_ValueError,
+                 "not enough values to unpack (expected at least %d, got %zd)",
+                 argcnt + argcntafter, argcnt + ll);
+    goto Error;
+  }
+
+  /* Pop the "after-variable" args off the list. */
+  for (j = argcntafter; j > 0; j--, i++)
+    *sp++ = PyList_GET_ITEM(l, ll - j);
+  /* Resize the list. */
+  Py_SIZE(l) = ll - argcntafter;
+  Py_DECREF(it);
+  return 0;
+
 Error:
-  for (; i > 0; i--) {
-    --sp;
-    Py_DECREF(*sp);
-  }
+  for (; i > 0; i--)
+    Py_DECREF(*--sp);
   Py_XDECREF(it);
   return -1;
 }
 
-static int cimpl_unpack_list(PyObject *listobject, int argcnt, PyObject **sp) {
+static int cimpl_unpack_iterable(PyObject *v, long argcnt, PyObject **sp) {
+  return unpack_iterable(v, (int)argcnt, -1, sp);
+}
+
+/* UNPACK_EX's oparg: the targets before the star, and after it << 8 */
+static int cimpl_unpack_ex(PyObject *v, long oparg, PyObject **sp) {
+  return unpack_iterable(v, (int)(oparg & 0xFF), (int)(oparg >> 8), sp);
+}
+
+static int cimpl_unpack_list(PyObject *listobject, long argcnt,
+                             PyObject **sp) {
   int i;
   extra_assert(PyList_Check(listobject));
 
@@ -2329,6 +2373,22 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         }
       }
 
+      case UNPACK_EX: {
+        int i, before = oparg & 0xFF, total = 1 + (oparg & 0xFF) + (oparg >> 8);
+        vinfo_array_t *array = array_new(total);
+        if (!psyco_generic_call(po, cimpl_unpack_ex, CfCommonIntZeroOk, "vlA",
+                                TOP(), (long)oparg, array)) {
+          array_release(array);
+          break;
+        }
+        Psyco_AssertType(po, array->items[before], &PyList_Type);
+        POP_DECREF();
+        for (i = total; i--;)
+          PUSH(array->items[i]);
+        array_release(array);
+        goto fine;
+      }
+
       case STORE_ATTR: {
         bool ok;
         w = vinfo_new(CompileTime_New(((long)GETNAMEV(oparg))));
@@ -2968,7 +3028,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         POP_DECREF();
         POP_DECREF();
         goto fine;
-
 
       case CALL_METHOD: {
         /* always the (NULL, attribute) form, see LOAD_METHOD */
