@@ -311,6 +311,7 @@ PSY_INLINE size_t frozen_size(pyc_data_t *pyc) {
 }
 PSY_INLINE void frozen_copy(pyc_data_t *target, pyc_data_t *source) {
   memcpy(target, source, frozen_size(source));
+  Py_XINCREF(target->changing_globals);
 }
 PSY_INLINE pyc_data_t *pyc_data_new(pyc_data_t *original) {
   pyc_data_t *pyc = (pyc_data_t *)PyMem_MALLOC(frozen_size(original));
@@ -319,6 +320,9 @@ PSY_INLINE pyc_data_t *pyc_data_new(pyc_data_t *original) {
   frozen_copy(pyc, original);
   return pyc;
 }
-PSY_INLINE void pyc_data_delete(pyc_data_t *pyc) { PyMem_FREE(pyc); }
+PSY_INLINE void pyc_data_delete(pyc_data_t *pyc) {
+  Py_XDECREF(pyc->changing_globals);
+  PyMem_FREE(pyc);
+}
 
 #endif /* _PYCOMPILER_H */

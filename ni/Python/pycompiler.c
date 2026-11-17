@@ -682,15 +682,17 @@ static void unwind_except_handler(PsycoObject *po, PyTryBlock *b) {
  /***   LOAD_GLOBAL tricks                                    ***/
 
 
-static void mark_varying(PsycoObject* po, PyObject* key)
-{
-        if (po->pr.changing_globals == NULL) {
-                po->pr.changing_globals = PyDict_New();
-                if (po->pr.changing_globals == NULL)
-                        OUT_OF_MEMORY();
-        }
-        if (PyDict_SetItem(po->pr.changing_globals, key, Py_True))
-                OUT_OF_MEMORY();
+/* copy-on-write: snapshots and forked branches share the dict */
+static void mark_varying(PsycoObject *po, PyObject *key) {
+  PyObject *old = po->pr.changing_globals;
+  PyObject *d;
+  if (old != NULL && PyDict_GetItem(old, key) != NULL)
+    return;
+  d = old == NULL ? PyDict_New() : PyDict_Copy(old);
+  if (d == NULL || PyDict_SetItem(d, key, Py_True))
+    OUT_OF_MEMORY();
+  Py_XDECREF(old);
+  po->pr.changing_globals = d;
 }
 
 /* #define MISSING_OPCODE(opcode)					 */

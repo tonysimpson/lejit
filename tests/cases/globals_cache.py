@@ -236,6 +236,36 @@ def replay_after_rebind():
 
 _helper = helper
 
+R = None
+
+
+def raising_closure(b, x):
+    return [x for w in b]   # closure code: a real call, which can raise
+
+
+MODE = 'normal'
+
+
+def store_in_untaken_branch(b):
+    # STORE_GLOBAL marks R as changing; the error path after the call is
+    # compiled by a respawn, which must see the same mark (signal -11
+    # without the fix: changing_globals wasn't in snapshots)
+    global R
+    if MODE == 'never':
+        R = 1
+    return raising_closure(b, R)
+
+
+def store_then_respawn():
+    out = [store_in_untaken_branch(b'ab')]
+    try:
+        store_in_untaken_branch(5)
+    except TypeError as e:
+        out.append(str(e))
+    out.append(store_in_untaken_branch(b'ab'))
+    return out
+
+
 CASES = [
     ('rebind_between_calls', [()], {}),
     ('rebind_in_loop', [(10,), (11,)], {}),
@@ -250,4 +280,5 @@ CASES = [
     ('global_class_isinstance', '[([1, Value(), "s", 2.5, True],)]', {}),
     ('megamorphic_global', [(30,)], {}),
     ('replay_after_rebind', [()], {}),
+    ('store_then_respawn', [()], {}),
 ]

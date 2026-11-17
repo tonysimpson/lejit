@@ -52,6 +52,10 @@ typedef struct {
   short auto_recursion; /* # levels to auto-compile calls to Python functions */
   char is_inlining;     /* true when compiling a code inlined in a parent */
   unsigned char iblock; /* index in blockstack */
+  PyObject* changing_globals;  /* names of globals detected to change: saved
+                                  in snapshots, so a respawn replays the same
+                                  LOAD_GLOBAL decisions; shared, so never
+                                  changed in place (mark_varying) */
   PyTryBlock blockstack[CO_MAXBLOCKS]; /* for try and loop blocks */
   
   /* fields after 'blockstack' are not saved in a FrozenPsycoObject */
@@ -62,8 +66,6 @@ typedef struct {
   vinfo_t* val;         /* exception value */
   vinfo_t* tb;          /* traceback object */
   PyObject* f_builtins;
-  PyObject* changing_globals;  /* dict of names of globals that are detected to
-                                  change */
   char split_after_global; /* a guarded LOAD_GLOBAL was just compiled: start a
                               new block (pycompiler.c:load_global_cached) */
 } pyc_data_t;
