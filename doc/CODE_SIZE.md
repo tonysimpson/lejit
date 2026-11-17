@@ -320,7 +320,7 @@ Gains are against the code and compile time above. "Code" means all emitted code
    - **Run-time risk:** the first form loses a known type on some paths (an extra inline-cache compare); the second adds a guard.
    - **D21:** safe if the decision depends only on the state and the snapshots, as D33's does: a respawn replay starts from a snapshot and never crosses a merge point.
    - Overlaps with the cap on blocks per merge point (option 3, in flight) and with type-set guards (option 4). Research; measure it under the cap first.
-3. **A polymorphic inline cache, or one that stops rewriting.** Today each miss rewrites the cached value in the code. A short chain of compares (one per value, up to the cut-off), or keeping the first value, would turn richards' 74k misses per iteration into compares.
+3. **A polymorphic inline cache, or one that stops rewriting.** Done (`1413b63`, D42); results in "Polymorphic inline cache" below. Before, each miss rewrote the cached value in the code. A short chain of compares (one per value, up to the cut-off), or keeping the first value, would turn richards' 74k misses per iteration into compares.
    - **Code:** about +19 B per extra value, at the 1–20% of sites with more than one.
    - **Compile time:** no change.
    - **Run time:** a gain, not a risk: at least the 2.5% of richards spent in `do_promotion_pyobj_mega`, plus whatever rewriting code costs (raytrace misses 3.9%). Measure with `perf`.
@@ -409,4 +409,70 @@ Instructions and branch misses per warm iteration (`perf stat -e instructions:u,
 - **A miss costs about 11 more instructions.** richards misses 77.7k times per iteration and gains 0.85 M instructions. The trampoline aligns the stack at run time and goes through `psyco_stub_enter`, where the old call knew the alignment at compile time. Cycles per richards iteration didn't move (52.7–53.4 M before, 52.0–52.5 M after).
 - **raytrace** misses more often (1.2 M misses over the codesize run). Its instruction count varies by ±20 M between runs of one build; five more runs gave medians of 3,252 before and 3,270 M after (+0.5%), and cycles were within noise.
 - Branch misses are within run-to-run noise everywhere: the trampoline's one `jmp r11` now serves every promotion miss, where each site had its own `jmp r10`, and richards' misses didn't rise.
-- A polymorphic inline cache (option 3) would remove most misses, and this cost with them.
+- A polymorphic inline cache (option 3) would remove most misses, and this cost with them. Done: see the next section.
+
+## Polymorphic inline cache (`1413b63`, D42) [run]
+
+A promotion site's inline compare now keeps the first value it saw. The next four values go in a chain of the same `mov r10, imm64; cmp reg, r10; je` entries (19 bytes each), out of line in the D32 stub pool. Hits on any of them never enter the trampoline or C. [read] (`x64/idispatcher.h`, `dispatcher.c:promotion_cache_add`)
+
+- **Entering the chain.** On the second value, `jmp chain` is written over the start of the site's own miss path (`mov rsi, reg; ...`). So the chain ends with its own copy of the miss stub (`mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline`, 18 bytes).
+- **Size.** A chain starts with room for one entry (37 bytes). Most chains hold one. When it needs more, it is copied to a chain with room for four (94 bytes), and the old one is left unused. Entries are read back for the copy (`ipromotion_read_entry`), and under `ALL_CHECKS` the copy is checked against the original.
+- **The cut-off.** Once a site can compile no more values, the chain ends in `jmp` to the megamorphic version instead of the miss stub. That is `do_promotion_pyobj_mega` after `MEGAMORPHIC_MAX` values, or `do_promotion_static_type` once its count reaches it. Before, every new value at a megamorphic site entered C.
+- **Sites with no cut-off** (`Psyco_NeedType`, words). When the chain is full, a new value replaces the last entry. The move-to-front list in C and its 1-in-23 slow path are unchanged.
+- **Patching safety.** Code is only patched from the C dispatcher. The trampoline reached it from this site's miss path, or from its chain's. It returns through `jmp rax` to a target, never back into the bytes it changed. Ni is single-threaded under the GIL, and x86 keeps the instruction stream coherent with stores made by the same thread, so no instruction is ever seen half-written. [read], [inferred] for the coherence.
+- **D32's rule holds:** the chain uses only `je` and `jmp`.
+- **D21: nothing compiled changes.** Promotions end the block, and `psyco_finish_promotion` asserts that no replay reaches one. The cache is written only by `do_promotion_*` at run time, after the value's code is compiled, and no compile decision reads it. Instructions compiled are identical in every benchmark below.
+- **Why the first value stays inline**, not the most frequent:
+  - Counting frequencies would need a counter in emitted code.
+  - At the polymorphic sites the values are close in frequency. richards `schedule` @34: first value `DeviceTask` 104k runs, the most frequent `HandlerTask` 141k. raytrace `__sub__`: `int` 357k, `float` 477k.
+  - A value further down the chain costs one more compare and a not-taken `je` (about 3 instructions).
+  - Rewriting the inline value was what made misses expensive. Each rewrite patched code that was about to run, and went through an indirect `jmp`.
+
+Misses (entries into C), `NI_CODESTATS` build, `tools/codesize.py <bench> -p`, over the whole run, before (`b60e8bb`) and after:
+
+| benchmark | promoted blocks run | misses before | misses after | chains (bytes, from counts) |
+|---|---|---|---|---|
+| richards | 3.33 M | 233,056 (7.0%) | 158 | 36 (about 1.5 KB) |
+| raytrace | 30.6 M | 1,206,108 (3.9%) | 524 | 69 (about 2.6 KB) |
+| deltablue | 0.50 M | 1,857 (0.37%) | 688 | 60 (about 3.0 KB) |
+| go | 11.7 M | 22,567 (0.19%) | 765 | 44 (about 2.0 KB) |
+| hexiom | 0.55 M | 654 | 654 | 38 (about 1.5 KB) |
+| chaos | 4.67 M | 171 | 171 | 42 (about 1.9 KB) |
+| pyflate | 26.0 M | 251 | 249 | — |
+
+- **Misses now equal the values compiled.** Each value enters C once, to compile its code. Every miss in these benchmarks was at a site with at most four values, so nothing was left for the cut-off or a full chain to catch.
+- **Chains.** "Chains" counts those made over the whole run, including imports and setup, so it is more than the sites with two or more values in `-p`'s measured window. Bytes are 37 per chain plus 94 per grown chain [inferred from counts in a scratch build].
+- **Code emitted** (`codesize.py`) moved by at most one 4 KB pool chunk: richards 117.2 → 117.2 KB, raytrace 244.9 → 244.9, deltablue 404.1 → 408.1, go 407.2 → 407.2, hexiom 309.5 → 309.5, chaos 56.6 → 52.6, pyflate 184.6 → 184.6.
+- **A first version** gave every chain room for four from the start: 94 bytes for a chain that usually holds one, or 3.4–6.5 KB per benchmark.
+
+Release build, per warm iteration, `perf stat -e instructions:u,branch-misses:u,cycles:u`, `PYTHONHASHSEED=0`, (12 − 2 iterations) / 10. Four runs of each, alternating before and after; load average 4–5 from other agents:
+
+| benchmark | instructions (M) | branch misses (M) | cycles (M) |
+|---|---|---|---|
+| richards | 235.80 → 232.43 (−1.4%) | 0.093–0.096 → 0.061–0.070 (−33%) | 60.3–62.3 → 59.1–60.3 (−3%) |
+| raytrace | 3,242–3,273 → 3,229–3,250 (−0.6%) | 1.51–1.70 → 1.21–1.25 (−25%) | 1,083–1,123 → 933–949 (−14%) |
+| deltablue | 32.05–32.07 → 32.05–32.06 | 0.004–0.007, same | 8.0–8.5 → 7.9–8.4 |
+| go | 1,139.0 → 1,138.7 | 0.76–0.81 → 0.76–0.79 | 337–352 → 336–343 |
+| hexiom | 40.58 → 40.60–40.62 (+0.07%) | 0.029–0.033 → 0.027–0.038 | 11.7–15.2 → 11.1–11.6 |
+| chaos | 486.85 → 486.82–487.06 | 0.130–0.147 → 0.136–0.156 | 145–152 → 135–139 |
+
+- **richards and raytrace gain mostly in cycles and branch misses, not instructions.** The miss path was short (about 40 instructions). What it cost was rewriting code just before running it, and the shared trampoline's indirect jumps.
+- An earlier build (fixed four-entry chains, otherwise the same) gave richards 55.5–62.0 M cycles and 0.033–0.048 M branch misses. The chain's placement in the pool seems to matter at richards' four-way `schedule` site. Unexplained.
+- **hexiom** has no polymorphic misses in the warm loop. Its +0.07% instructions is the extra compare at sites whose second value is now always in the chain.
+- **chaos's** fewer cycles (also seen in `compilebench` below) are not explained by misses (there are none). Probably code placement, since the stub pool now takes chunks differently.
+
+`tools/compilebench.py -k <bench>`, release build, two runs each:
+
+| benchmark | Ni warm (ms) | compile (ms) | code (KB) |
+|---|---|---|---|
+| richards | 11.58, 11.70 → 10.88, 10.66 | 0.69, 0.69 → 0.67, 0.67 | 118.0 → 118.0 |
+| raytrace | 201.8, 201.6 → 182.9, 181.5 | 1.78, 1.64 → 1.71, 1.65 | 250.3 → 246.3 |
+| deltablue | 1.52, 1.52 → 1.47, 1.48 | 2.53, 2.56 → 2.68, 2.50 | 406.4 → 406.4 |
+| go | 64.3, 66.1 → 63.0, 64.0 | 3.16, 3.05 → 3.16, 3.12 | 405.6 → 409.6 |
+| hexiom | 2.24, 2.27 → 2.12, 2.08 | 2.84, 2.66 → 2.81, 2.81 | 311.9 → 311.9 |
+| chaos | 29.35, 28.99 → 26.79, 26.64 | 0.45, 0.48 → 0.48, 0.47 | 57.3 → 57.3 |
+
+Compile time is unchanged.
+
+**A latent bug found on the way** (KNOWN_BUGS C26). The stub pool took 4 KB from `psyco_new_code_buffer`, but a reused code buffer may have only about 1 KB left (`BUFFER_MARGIN`). `psyco_assert(pool_end <= limit)` fired in CPython's `test_descr` once chains used the pool more. The pool now takes what the buffer has.
+
