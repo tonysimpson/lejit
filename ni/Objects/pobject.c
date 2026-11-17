@@ -6,7 +6,9 @@
  * locals can be dropped without a run-time decref, using a hard-coded list of
  * types that have no __del__. GenericGetAttr is specialised on the type
  * (see its comment); it is what reaches the tp_descr_get metas in
- * pdescrobject.c and pfuncobject.c.
+ * pdescrobject.c and pfuncobject.c. SetAttr on a heap type is specialised
+ * behind the same kind of guard (heap_setattr), but its guards are shared
+ * and repaired at run time (store_guard).
  */
 #include "pobject.h"
 #include "../compat2to3.h"
@@ -117,63 +119,6 @@ vinfo_t *PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name) {
 generic:
   return psyco_generic_call(po, PyObject_GetAttr, CfCommonNewRefPyObject, "vv",
                             o, attr_name);
-}
-
-DEFINEFN
-bool PsycoObject_SetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *vattrname,
-                         vinfo_t *v) {
-  PyObject *name;
-  PyTypeObject *tp;
-  vinfo_t *vresult;
-  /* as in PsycoObject_GenericGetAttr() we don't try to analyse
-     a non-constant vattrname */
-  if (!is_compiletime(vattrname->source))
-    goto generic;
-
-  tp = (PyTypeObject *)Psyco_NeedType(po, o);
-  if (tp == NULL)
-    return false;
-
-  name = (PyObject *)CompileTime_Get(vattrname->source)->value;
-  if (!NiCompatStr_Check(name)) {
-#ifdef IS_PY3K
-    /* The Unicode to string conversion is done here because the
-       existing tp_setattro slots expect a string object as name
-       and we wouldn't want to break those. */
-    if (PyUnicode_Check(name)) {
-      goto generic;
-    } else {
-#endif
-      PycException_SetFormat(po, PyExc_TypeError,
-                             "attribute name must be string, not '%.200s'",
-                             Py_TYPE(name)->tp_name);
-      return false;
-#ifdef IS_PY3K
-    }
-#endif
-  } else
-    Py_INCREF(name);
-
-  NiCompatStr_InternInPlace(&name);
-  if (tp->tp_setattro != NULL) {
-    vresult = Psyco_META3(po, tp->tp_setattro, CfCommonIntZeroOk,
-                          v ? "vlv" : "vll", o, name, v);
-    Py_DECREF(name);
-    return vresult != NULL;
-  }
-  if (tp->tp_setattr != NULL) {
-    vresult =
-        Psyco_META3(po, tp->tp_setattr, CfCommonIntZeroOk, v ? "vlv" : "vll", o,
-                    (long)NiCompatStr_AS_STRING(name), v);
-    Py_DECREF(name);
-    return vresult != NULL;
-  }
-  Py_DECREF(name);
-
-generic:
-  /* fall-back implementation */
-  return psyco_generic_call(po, PyObject_SetAttr, CfCommonIntZeroOk,
-                            v ? "vvv" : "vvl", o, vattrname, v) != NULL;
 }
 
 /* PyObject_GenericGetAttr specialised on the type (A9). The steps are
@@ -622,6 +567,220 @@ DEFINEFN
 vinfo_t *PsycoObject_GenericGetAttr(PsycoObject *po, vinfo_t *obj,
                                     vinfo_t *vname) {
   return generic_getattr(po, obj, vname, PyObject_GenericGetAttr);
+}
+
+/* The instance dict part of 3.7's _PyObject_GenericSetAttrWithDict:
+   _PyObjectDict_SetItem creates the dict if there is none, keeps the
+   class's shared keys as CPython does, and deletes if value is NULL. */
+static int cimpl_instance_dict_set(PyObject *obj, PyObject *name,
+                                   PyObject *value) {
+  PyTypeObject *tp = Py_TYPE(obj);
+  int r = _PyObjectDict_SetItem(
+      tp, (PyObject **)((char *)obj + tp->tp_dictoffset), name, value);
+  if (r < 0 && PyErr_ExceptionMatches(PyExc_KeyError))
+    PyErr_SetObject(PyExc_AttributeError, name);
+  return r;
+}
+
+/* the same for an existing combined dict, for which _PyObjectDict_SetItem
+   is PyDict_SetItem; the name's hash is known */
+static int cimpl_dict_set_known(PyObject *dict, PyObject *name,
+                                PyObject *value, Py_hash_t hash) {
+  int r = _PyDict_SetItem_KnownHash(dict, name, value, hash);
+  if (r < 0 && PyErr_ExceptionMatches(PyExc_KeyError))
+    PyErr_SetObject(PyExc_AttributeError, name);
+  return r;
+}
+
+/* What a compiled store does once its type guard passes: the function it
+   calls. cimpl_instance_dict_set where 3.7's
+   _PyObject_GenericSetAttrWithDict would go to the instance dict (no data
+   descriptor for the name), else tp_setattro. A class attribute whose type
+   is a heap type counts as a data descriptor: that type may gain __set__
+   without the class's guard seeing it. Assigns the version tag first. */
+static void *store_kind(PyTypeObject *tp, PyObject *name) {
+  PyObject *descr = NULL;
+  if (tp->tp_dict != NULL)
+    descr = _PyType_Lookup(tp, name); /* borrowed */
+  if (tp->tp_setattro != PyObject_GenericSetAttr || tp->tp_dictoffset <= 0 ||
+      tp->tp_dict == NULL)
+    return tp->tp_setattro;
+  if (descr != NULL && ((Py_TYPE(descr)->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
+                        Py_TYPE(descr)->tp_descr_set != NULL))
+    return tp->tp_setattro;
+  return (void *)cimpl_instance_dict_set;
+}
+
+/* The guard of every store site of 'name' on 'tp' compiled to do 'kind'
+   (NULL if there is none and 'create' is false, or on an error). It only
+   ever holds a state of the type in which store_kind gives 'kind', so any
+   of those sites may set it to such a state. Never freed: the sites hold
+   the type, so its address isn't reused. */
+static attr_guard_t *store_guard(PyTypeObject *tp, PyObject *name, void *kind,
+                                 bool create) {
+  static PyObject *guards = NULL; /* (type, name, kind) -> guard address */
+  PyObject *key, *g;
+  attr_guard_t *guard = NULL;
+  if (guards == NULL && (guards = PyDict_New()) == NULL)
+    return NULL;
+  key = Py_BuildValue("(kOk)", (unsigned long)tp, name, (unsigned long)kind);
+  if (key == NULL)
+    return NULL;
+  g = PyDict_GetItem(guards, key);
+  if (g != NULL)
+    guard = PyLong_AsVoidPtr(g);
+  else if (create && (guard = PyMem_Malloc(sizeof(attr_guard_t))) != NULL) {
+    g = PyLong_FromVoidPtr(guard);
+    if (g == NULL || PyDict_SetItem(guards, key, g) < 0) {
+      PyMem_Free(guard);
+      guard = NULL;
+    }
+    Py_XDECREF(g);
+  }
+  Py_DECREF(key);
+  return guard;
+}
+
+static void store_guard_set(attr_guard_t *guard, PyTypeObject *tp) {
+  guard->tag = tp->tp_version_tag;
+  guard->flags = PyType_HasFeature(tp, Py_TPFLAGS_VALID_VERSION_TAG)
+                     ? tp->tp_flags
+                     : 0;
+}
+
+/* A store whose type guard failed: the class changed, often only by a new
+   class attribute (a constant set after the class body, when __init__ was
+   compiled by the first instance). If the store still does what some
+   sites were compiled to do, their guard takes the type as it is now, so
+   they pass again. */
+static int cimpl_store_type_changed(PyObject *obj, PyObject *name,
+                                    PyObject *value) {
+  PyTypeObject *tp = Py_TYPE(obj);
+  attr_guard_t *guard = store_guard(tp, name, store_kind(tp, name), false);
+  if (guard != NULL)
+    store_guard_set(guard, tp);
+  else if (PyErr_Occurred())
+    return -1;
+  return PyObject_SetAttr(obj, name, value);
+}
+
+/* PyObject_SetAttr on a heap type, specialised on the type behind a guard
+   like generic_getattr's: store_kind chooses now what the store calls,
+   valid while the type is unchanged. A changed type calls
+   cimpl_store_type_changed, which reads tp_setattro again (a __setattr__
+   added later, F37). An instance dict store calls _PyObjectDict_SetItem
+   directly; for a class without shared keys (keys_inline, which a replay
+   repeats), a store into an existing combined dict uses the name's hash
+   computed now.
+   Respawns: the guard is found by (type, name, kind), so a replay of a
+   point after a passed guard sees a type of the kind compiled, and the
+   failure branch needs no guard. The block ends after the site
+   (split_after_global); no Python code runs before the call. */
+static bool heap_setattr(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
+                         PyObject *name, vinfo_t *v) {
+  void *kind = store_kind(tp, name);
+  attr_guard_t *guard = store_guard(tp, name, kind, true);
+  vinfo_t *vd, *vv, *r;
+  condition_code_t cc;
+  if (guard == NULL)
+    OUT_OF_MEMORY();
+  store_guard_set(guard, tp);
+  cc = type_changed(po, tp, guard);
+  if (cc == CC_ERROR)
+    return false;
+  po->pr.split_after_global = 1;
+  if (runtime_condition_f(po, cc)) {
+    r = psyco_generic_call(po, cimpl_store_type_changed, CfCommonIntZeroOk,
+                           v ? "vlv" : "vll", obj, (long)name, v);
+    return r != NULL;
+  }
+  if (kind != (void *)cimpl_instance_dict_set) {
+    r = Psyco_META3(po, kind, CfCommonIntZeroOk, v ? "vlv" : "vll", obj,
+                    (long)name, v);
+    return r != NULL;
+  }
+
+  if (v != NULL && !keys_inline(po, tp)) {
+    vd = psyco_get_field_offset(po, obj, INSTANCE_dict, tp->tp_dictoffset);
+    if (vd == NULL)
+      return false;
+    cc = integer_non_null(po, vd);
+    if (cc == CC_ERROR || !runtime_condition_t(po, cc)) {
+      vinfo_decref(vd, po);
+      if (cc == CC_ERROR)
+        return false;
+      goto dict_set; /* no dict yet */
+    }
+    vv = psyco_get_field(po, vd, DICT_ma_values);
+    if (vv == NULL) {
+      vinfo_decref(vd, po);
+      return false;
+    }
+    cc = integer_NON_NULL(po, vv); /* consumes vv */
+    if (cc == CC_ERROR || runtime_condition_f(po, cc)) {
+      vinfo_decref(vd, po);
+      if (cc == CC_ERROR)
+        return false;
+      goto dict_set; /* a split dict on old keys */
+    }
+    r = psyco_generic_call(po, cimpl_dict_set_known, CfCommonIntZeroOk, "vlvl",
+                           vd, (long)name, v, (long)PyObject_Hash(name));
+    vinfo_decref(vd, po);
+    return r != NULL;
+  }
+dict_set:
+  r = psyco_generic_call(po, cimpl_instance_dict_set, CfCommonIntZeroOk,
+                         v ? "vlv" : "vll", obj, (long)name, v);
+  return r != NULL;
+}
+
+DEFINEFN
+bool PsycoObject_SetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *vattrname,
+                         vinfo_t *v) {
+  PyObject *name;
+  PyTypeObject *tp;
+  vinfo_t *vresult;
+  int r;
+  /* as in PsycoObject_GenericGetAttr() we don't try to analyse
+     a non-constant vattrname */
+  if (!is_compiletime(vattrname->source))
+    goto generic;
+  name = (PyObject *)CompileTime_Get(vattrname->source)->value;
+  if (!PyUnicode_CheckExact(name))
+    goto generic; /* PyObject_SetAttr raises TypeError for a non-str */
+
+  r = need_type_mega(po, o, &tp);
+  if (r < 0)
+    return false;
+  if (r == 0)
+    goto generic;
+  Py_INCREF(name);
+  NiCompatStr_InternInPlace(&name);
+  /* a heap type's tp_setattro can change: read it only behind a guard */
+  if ((tp->tp_flags & Py_TPFLAGS_HEAPTYPE) && tp->tp_setattro != NULL) {
+    bool ok = heap_setattr(po, o, tp, name, v);
+    Py_DECREF(name);
+    return ok;
+  }
+  if (tp->tp_setattro != NULL) {
+    vresult = Psyco_META3(po, tp->tp_setattro, CfCommonIntZeroOk,
+                          v ? "vlv" : "vll", o, name, v);
+    Py_DECREF(name);
+    return vresult != NULL;
+  }
+  if (tp->tp_setattr != NULL) {
+    vresult =
+        Psyco_META3(po, tp->tp_setattr, CfCommonIntZeroOk, v ? "vlv" : "vll", o,
+                    (long)NiCompatStr_AS_STRING(name), v);
+    Py_DECREF(name);
+    return vresult != NULL;
+  }
+  Py_DECREF(name);
+
+generic:
+  /* fall-back implementation */
+  return psyco_generic_call(po, PyObject_SetAttr, CfCommonIntZeroOk,
+                            v ? "vvv" : "vvl", o, vattrname, v) != NULL;
 }
 
 /* Map rich comparison operators to their swapped version, e.g. LT --> GT */
