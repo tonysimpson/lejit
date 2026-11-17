@@ -276,3 +276,50 @@ CASES += [
     ('print_rshift', '[(sys.stderr,), (1,)]', {}),
     ('other_rshift', '[(sys.stderr,)]', {}),
 ]
+
+
+# a bare raise adds no traceback entry for its own frame (ceval goes to
+# exception_unwind); with no active exception the RuntimeError gets one
+# (KNOWN_BUGS F18)
+def tb_lines(e):
+    out = []
+    tb = e.__traceback__
+    while tb is not None:
+        out.append((tb.tb_frame.f_code.co_name, tb.tb_lineno))
+        tb = tb.tb_next
+    return out
+
+
+def _fail():
+    raise ValueError(1)
+
+
+def _reraise_in_except():
+    try:
+        _fail()
+    except ValueError:
+        raise
+
+
+def _reraise_outside():
+    raise
+
+
+def _reraise_from_callee():
+    try:
+        _fail()
+    except ValueError:
+        _reraise_outside()
+
+
+def bare_raise_traceback(which):
+    f = [_reraise_in_except, _reraise_outside, _reraise_from_callee][which]
+    try:
+        f()
+    except (ValueError, RuntimeError) as e:
+        return type(e).__name__, tb_lines(e)
+
+
+CASES += [
+    ('bare_raise_traceback', [(0,), (1,), (2,)], {}),
+]

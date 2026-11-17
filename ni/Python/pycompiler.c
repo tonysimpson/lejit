@@ -1635,33 +1635,38 @@ static int cimpl_unpack_list(PyObject *listobject, long argcnt,
    XXX a meta-implementation would be nice (e.g. to know at compile-time
    which exception class we got, so that we can know at compile-time which
    except: statements match) */
-/* 3.7 ceval.c do_raise, except that it doesn't consume references to its
-   arguments (psyco_generic_call can't express that), so it takes its own
-   first. The reraise case doesn't return ceval's "don't add a traceback
-   entry" flag, so Ni records one extra traceback entry for a bare raise. */
+/* 3.7 ceval.c do_raise's reraise, with ceval's traceback rule: a reraised
+   exception gets no entry for this frame (ceval goes to exception_unwind),
+   so the unwind loop records none (KNOWN_BUGS F18), and the RuntimeError
+   for no active exception gets its entry here instead (ceval's error:) */
+static void cimpl_reraise(PyCodeObject *code, PyObject *globals, int lasti,
+                          int lineno) {
+  /* _PyErr_GetTopmostException isn't exported in 3.7 */
+  _PyErr_StackItem *exc_info = PyThreadState_GET()->exc_info;
+  PyObject *type, *value, *tb;
+  while ((exc_info->exc_type == NULL || exc_info->exc_type == Py_None) &&
+         exc_info->previous_item != NULL)
+    exc_info = exc_info->previous_item;
+  type = exc_info->exc_type;
+  value = exc_info->exc_value;
+  tb = exc_info->exc_traceback;
+  if (type == Py_None || type == NULL) {
+    PyErr_SetString(PyExc_RuntimeError, "No active exception to reraise");
+    cimpl_rt_traceback(code, globals, lasti, lineno);
+    return;
+  }
+  Py_XINCREF(type);
+  Py_XINCREF(value);
+  Py_XINCREF(tb);
+  PyErr_Restore(type, value, tb);
+}
+
+/* 3.7 ceval.c do_raise with an exception (the reraise is cimpl_reraise),
+   except that it doesn't consume references to its arguments
+   (psyco_generic_call can't express that), so it takes its own first */
 static void cimpl_do_raise(PyObject *exc, PyObject *cause) {
   PyObject *type = NULL, *value = NULL;
 
-  if (exc == NULL) {
-    /* Reraise: _PyErr_GetTopmostException isn't exported in 3.7 */
-    _PyErr_StackItem *exc_info = PyThreadState_GET()->exc_info;
-    PyObject *tb;
-    while ((exc_info->exc_type == NULL || exc_info->exc_type == Py_None) &&
-           exc_info->previous_item != NULL)
-      exc_info = exc_info->previous_item;
-    type = exc_info->exc_type;
-    value = exc_info->exc_value;
-    tb = exc_info->exc_traceback;
-    if (type == Py_None || type == NULL) {
-      PyErr_SetString(PyExc_RuntimeError, "No active exception to reraise");
-      return;
-    }
-    Py_XINCREF(type);
-    Py_XINCREF(value);
-    Py_XINCREF(tb);
-    PyErr_Restore(type, value, tb);
-    return;
-  }
   Py_INCREF(exc);
   Py_XINCREF(cause);
 
@@ -2192,9 +2197,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           break;
         case 1:
           w = NTOP(1); /* exc */
-          /* Fallthrough */
-        case 0:
           psyco_generic_call(po, cimpl_do_raise, CfPyErrAlways, "vv", w, v);
+          break;
+        case 0:
+          psyco_generic_call(po, cimpl_reraise, CfPyErrAlways, "lvll",
+                             (long)co, LOC_GLOBALS, (long)po->pr.next_instr,
+                             (long)PyCode_Addr2Line(co, po->pr.next_instr));
           break;
         default:
           PycException_SetString(po, PyExc_SystemError,
@@ -3355,9 +3363,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
     /* At this point, we got a real pseudo-exception. */
 
-    if (PycException_IsPython(po) && opcode != END_FINALLY) {
-      /* log traceback info for real Python exceptions,
-         unless re-raised by END_FINALLY */
+    if (PycException_IsPython(po) && opcode != END_FINALLY &&
+        !(opcode == RAISE_VARARGS && oparg == 0)) {
+      /* log traceback info for real Python exceptions, unless re-raised
+         by END_FINALLY or a bare raise (cimpl_reraise) */
       PsycoTraceBack_Here(po, po->pr.next_instr);
     }
 
