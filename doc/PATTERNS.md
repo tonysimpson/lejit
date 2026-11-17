@@ -92,6 +92,10 @@ Example: `ni/Objects/ptupleobject.c:compute_tuple` (all items constant → build
 `o->field` / `Py_SIZE(o)` / `ob_item[i]` → `psyco_get_field(po, o, DESC)`, `psyco_get_const` (immutable, cached, borrowed), `psyco_get_field_array`, `psyco_put_field[_array]`. Descriptors (`DEF_FIELD(struct, ctype, field, prev)` + `FMUT`/`FPYREF`/`FARRAY`) can be generated from struct definitions. **Whether a field is mutable is judgement** (e.g. `FIX_size` vs `VAR_size`).
 Example: `pabstract.c:psyco_generic_immut_ob_size`, `pstructmember.c:PsycoMember_GetOne` (maps each `T_*` to a descriptor).
 
+**P15a inline-split-store** (J)
+A store into a container whose layout is shared and only appended to (3.7's split dict on a class's keys) is done inline after checking the live layout against a cache, with the C function's order kept: incref, store, bookkeeping (`ma_used`, version tag), the old value's decref last. Which cases stay inline (the existing slot, the next slot in order) is derived from the C source (`insertdict`'s split-table branch); the cache, the GC-tracking shortcut and the version counter are judgement.
+Example: `pobject.c:inline_store` (D38).
+
 **P16 forget-mutable-field** (M)
 After a virtual object is materialised, drop cached knowledge of its mutable fields (`psyco_forget_field`), because others may now mutate them.
 Example: `piterobject.c:compute_seqiter`, `plistobject.c:compute_vlist`.
@@ -160,6 +164,8 @@ Example: `LOC_BUILTINS` (`pycheader.h`, `psyfunc.c:callee_builtins`; KNOWN_BUGS 
 - **lazy-branch-proxy**: a branch to code not yet compiled goes through a stub that compiles it and then repoints the jump. Coding pauses and respawn use the pooled 15-byte stubs (`dispatcher.c:psyco_new_stub`, D32); a promotion site's miss path is the same stub written in place after `mov rsi, reg` (`x64/idispatcher.h:ipromotion_finish`, `dispatcher.c:psyco_new_stub_at`). Jumps: `idispatcher.h:conditional_jump_to`/`change_cond_jump_target`.
 - **repairable-shared-guard**: a guard whose expected values live in a struct shared by every site compiled to the same decision, keyed by what the decision depends on, so the failure path can recompute the decision and, if unchanged, reset the guard; the sites need no recompile and a replay needs no guard pointer. `ni/Objects/pobject.c:store_guard` (D39).
 - **runtime-poll**: a check of interpreter state that ceval makes between instructions, emitted as an inline compare of a word read through a fixed address (RIP-relative), with a respawn point to a residual call into a C copy of ceval's handling only when it is set. A generator must find where ceval polls (`DISPATCH()` against `FAST_DISPATCH()`, the skip list at the loop top) and choose the subset compiled code keeps: loop heads and after calls. `ni/Python/pyruntime.c:ni_eval_breaker_handler`, `ni/psyfunc.c:psyco_check_eval_breaker`, `ni/mergepoints.c:BREAKER_CHECK` (D45). The recursion depth (C12) is the same shape.
+- **serial-gated-decision**: a compile-time choice that depends on run-time state which changes one way only is made a function of that state and the block serial (`codemanager.h:psyco_block_serial`), which a replay shares with its original compile, so the replay decides the same. `pobject.c:keys_inline` (D31), `heap_setattr`'s use of `store_cache_t.ready` (D47).
+- **content-checked-cache**: a run-time cache that holds no reference and is checked against the live structure it describes, so a stale or reused address only costs a miss; the code reads the cache at run time and never depends on its contents. `pobject.c:store_cache`, `inline_store` (D38).
 - **cc-virtual**: processor flags are held as virtual values in `po->ccregs` and materialised only when about to be clobbered. `ni/codegen.c:psyco_vinfo_condition`, `ni/x64/iencoding.c:psyco_compute_cc`.
 
 ## Rules any generator must respect

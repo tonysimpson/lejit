@@ -1,7 +1,7 @@
 ---
 written: 2026-11-17
 head_ref: 3cd02f7 (measurements); 819da55 (option 4 design)
-status: options 1 and 2 implemented (D39); option 4 designed (section "Option 4: design", D38), not yet implemented
+status: options 1 and 2 implemented (D39); option 4 implemented (D38, D47; section "Option 4: results")
 ---
 # Instance attribute stores: measurements and options
 
@@ -17,6 +17,7 @@ Tags: **[read]** checked in code, **[run]** measured, **[inferred]** reasoned.
 - An inline store into an existing slot would save about 7.5 ns per store: about 22% of richards and 8% of deltablue. Extending it to fill new objects in order adds about 4% to raytrace and chaos, but only with a guard that doesn't hold the keys (option 4). [inferred]
 - Found on the way: compiled stores ignore a `__setattr__` added to the class after compiling (KNOWN_BUGS F37). Every option below except "do nothing" fixes it with the type guard. [run]
 - **Done:** options 1 and 2 (`e86f8ae`, D39): richards −13%, go −8% instructions per iteration; see Results. Fixes F37.
+- **Done:** option 4 (`80a60ce`, D38, D47): a further richards −31%, deltablue −10%, chaos −5.6%, go −5.0%, raytrace −4.1%, pyflate −3.5% instructions per iteration, about twice the estimates. Code grew much more than estimated on richards (+85%, estimate +20–25%): a failed check compiles its own copy of the rest of the code (see "Option 4: results"). [run]
 
 ## The path today
 
@@ -240,7 +241,7 @@ For the owner to decide.
 
 ## Option 4: design
 
-Written 2026-11-17 at `819da55`, to be implemented once option 1 has merged. It builds on option 1's type guard and helper, and keeps D21 (replay determinism), D29 (compile speed), D31 (`keys_inline`) and D35 (Ni's version counter). Nothing here is implemented.
+Written 2026-11-17 at `819da55`. It builds on option 1's type guard and helper, and keeps D21 (replay determinism), D29 (compile speed), D31 (`keys_inline`) and D35 (Ni's version counter). Implemented in `80a60ce`, with the additions in "Option 4: results".
 
 ### Scope
 
@@ -498,10 +499,87 @@ Instructions per warm iteration, millions (`perf stat -e instructions:u`, ten it
 
 Tests: `tests/cases/attr_stores.py`, 16 cases: `__setattr__` and `__delattr__` added after compiling (both failed before), a property added later, a class attribute whose heap type gains `__set__`, a guard repaired after an unrelated class change and failing again after a relevant one, shared-key and combined dicts, `__dict__` replaced (dict subclass, non-`str` key), a key whose `__eq__` raises `KeyError`, no dict yet, `__slots__` (with and without `__dict__`), subclasses of `list`, `int` and `str`, a read-only property, deleting a missing attribute, an old value freed by the store. Checked build (`NI_TRACE=1 NI_ALL_CHECKS=1`): `tests/run.py` 385 passed; richards, deltablue, raytrace, go, hexiom, chaos and pyflate ran under `tools/profile_bench.py` without a replay divergence; `tools/check.sh`: all checks passed. [run]
 
+## Option 4: results
+
+Done in `80a60ce` (D38, D47), on `baseline-3.7` at `59b334b`. [read] `pobject.c:inline_store`, `store_cache`, `cimpl_store_attr_miss`, `store_needs_track`, `heap_setattr`.
+
+### What was built
+
+- **As designed.** After option 1's type guard, when the kind is the instance dict store and `keys_inline` is true: dict present (1), split (2), keys of the cache's `dk_size` (3), the cache's entry holds the name (4), no GC tracking to do (5), then a set value (A) or the empty slot at `ix == ma_used` (B, conditions 6 and 7). The store follows `insertdict`: the value (increfed, or its reference handed over), `ma_used + 1` for B, a tag from Ni's counter, the old value's decref last. A failed condition 1, 3, 4, 5 or 7 calls `cimpl_store_attr_miss` (option 1's store, then the cache follows the dict the store used); a combined dict (2) keeps option 2's `_PyDict_SetItem_KnownHash`. Deletes and classes without shared keys are unchanged. [read]
+- **The cache** is a 56-byte struct per (class, name), found through a dict keyed by `(type address, name)`, never freed, holding no keys. `kword` is the entry's key offset in words (always a multiple of 8, so the emitted read is `[keys + 8*kword]`). The cache's address is loaded once into a register per site (`make_runtime_copy`). [read]
+- **Version tag (D35):** `static uint64_t ni_dict_version = 1 << 63` in `pobject.c`, reached through the cache's `version` field, incremented and stored by the emitted code. D25's cached `LOAD_GLOBAL` compares tags for equality only (`pycompiler.c:load_global_cached`, `do_changed_global`), so it needs nothing; `stores.globals_is_instance_dict` checks that an inline store into a dict used as globals is seen. [read], [run]
+- **GC test:** as designed (`(tp_flags >> 14 & 1) > (gc_refs >> 1) + 2`, unsigned, in one compare), dropped for a value of a known non-GC type, reduced to "dict untracked" for a known GC type. `_Static_assert`s pin 3.7's `PyGC_Head` (32 bytes, `gc_refs` at 16, shift 1, untracked -2, `HAVE_GC` bit 14) and the keys layout. [read]
+- **Miss cap:** a cache stops being refreshed after 64 refreshes that *changed* it. Misses that leave it as it is (no dict yet, GC tracking, out of order) don't count: every constructor's first store is a miss, so counting them would freeze a class's caches after 64 instances, and a cache frozen before a later keys change would miss for good. (D47) [read]
+- **Soundness, re-derived from 3.7's `dictobject.c`.** `insertdict` on a split dict with an exact `str` key converts only when `ix >= 0 && old_value == NULL && ma_used != ix` (or the key is new), so A (old value set) and B (`ix == ma_used`) are exactly the cases it leaves split; `MAINTAIN_TRACKING` comes before, and `_PyObjectDict_SetItem`'s re-share step does nothing when the keys are unchanged. Every `me_key =` in `dictobject.c` is an append at `dk_nentries` (`insertdict`, `PyDict_SetDefault`), `dictresize`'s copy into new keys, or a delete (`delitem_common`, `_PyDict_Pop_KnownHash`, `dict_popitem`), and every delete path converts a split dict first. `make_keys_shared` converts a combined dict in place only after `dictresize` has removed dummies, so its values fill `[0, ma_used)`. No hole found. [read]
+- **The size check is load-bearing, not only a bounds check.** With 1-byte indices, entry `ix`'s key in 32-slot keys is at the same word as entry `ix + 1`'s in 8-slot keys (word 10 + 3·ix). An instance sharing an 8-slot dict where the name is at `ix + 1` would pass the entry check with a 32-slot cache. `stores.size_mismatch` builds that case; without the size check it stores into the wrong slot. [read], [run]
+
+### Not in the design
+
+- **A virtual value is computed before the type guard** (`heap_setattr`). Building it (a tuple, say) can collect garbage and run a `__del__` that changes the class, which would make the guard's compile-time decisions stale. This applied to option 1 too (KNOWN_BUGS F54). [inferred]
+- **Blocks compiled before a cache is first filled call the helper.** `__init__` is compiled by the first instance, while the class's keys don't yet hold the names, so every inline check missed on that instance, and each miss is a respawn that compiles its own copy of the rest of `__init__`. Now the cache records the first block serial that may see it filled (`ready`, one-way: 0 if filled from the class's keys when made, else `psyco_next_serial` at the first refresh). A block older than that calls `cimpl_store_attr_miss` behind a test of the cache's `dk_size`, which respawns into the inline store once the cache is filled. A replay shares its block's serial, so it decides the same, as `keys_inline` does (D31). (D47) [read]
+- **Stores to `self` in `__init__` predict B** (`init_store`: the first argument, in a code object named `__init__`). Otherwise the second instance took a B respawn at every site in turn, again one copy of the rest each. It depends only on the code, so a replay predicts the same. (D47) [read]
+
+Together these two took richards' code from 320 KB to 246 KB (`Task.__init__` 103 → 54 KB) without changing its instruction count (134 → 133 M). [run]
+
+### Measurements
+
+Release builds of `59b334b` (options 1 and 2) and `80a60ce`, in the same session. Instructions per warm iteration, millions (`perf stat -e instructions:u`, ten iterations minus none, after three to compile; the method of "Results: options 1 and 2"). [run]
+
+| | richards | deltablue | raytrace | go | chaos | hexiom | pyflate |
+|---|---|---|---|---|---|---|---|
+| options 1 and 2 | 193 | 31 | 3,245 | 1,185 | 500 | 40 | 2,442 |
+| + option 4 | 133 | 28 | 3,113 | 1,126 | 472 | 40 | 2,357 |
+| change | **−31%** | **−10%** | **−4.1%** | **−5.0%** | **−5.6%** | 0 | **−3.5%** |
+| estimate (Gain and cost) | −13% | −5.5% | −2.4% | −1.4% | −2.4% | – | – |
+
+`tools/compilebench.py` (code KB is exact; compile and warm ms are the mean of two runs each, alternated, on a machine others were using). [run]
+
+| | richards | deltablue | raytrace | go | chaos | hexiom | pyflate | all 29 |
+|---|---|---|---|---|---|---|---|---|
+| code before | 133.3 | 449.9 | 273.0 | 447.0 | 66.1 | 348.8 | 201.4 | 2,887 |
+| code after | 246.3 | 501.4 | 306.7 | 504.2 | 67.5 | 360.8 | 228.4 | 3,355 |
+| change | **+85%** | +11% | +12% | +13% | +2% | +3% | +13% | +16% |
+| estimate | +20–25% | +10–15% | +3–6% | +3–6% | +3–6% | – | – | |
+| compile ms before | 0.70 | 2.52 | 1.91 | 3.09 | 0.50 | 2.75 | 1.66 | 21.2 |
+| compile ms after | 1.02 | 2.76 | 1.99 | 3.31 | 0.47 | 2.80 | 1.70 | 22.2 |
+| warm ms before | 9.75 | 1.50 | 181.4 | 65.0 | 27.1 | 2.13 | 136.9 | |
+| warm ms after | 7.55 | 1.37 | 178.3 | 63.5 | 25.5 | 2.13 | 128.9 | |
+
+`tools/store_micro.py ni` (ns per store, same session): split dict, existing key 8.7 → 3.1; constructor, three stores 38.0 → 27.6 (dict creation included); combined dict 7.2 → 7.7 (unchanged path; noise). [run]
+
+- **Speed is well above the estimate**: richards −31% instructions (−23% warm time) against −13%; deltablue, raytrace, chaos and go about twice the estimate. pyflate, not in the estimate, gains 3.5%. [run]
+- **Code size is well above the estimate for richards** (+85% against +20–25%) and above it for raytrace, go and pyflate (+12–13% against +3–6%). Compile time: richards +46% against +8–12%; the others +2–10% or within noise (chaos, hexiom). [run]
+
+### Where the code goes
+
+`tools/codesize.py richards` (`NI_CODESTATS=1`): [run]
+
+| | before | after |
+|---|---|---|
+| total | 132 KB | 241 KB |
+| STORE_ATTR compiles × bytes each | 178 × 117 B | 292 × 277 B |
+| respawned buffers | 15, 6.3 KB | 54, 41.5 KB |
+| stub chunks | 7 (28 KB) | 13 (52 KB) |
+| `Task.__init__` | 10 KB, 12 copies of its last instruction | 54 KB, 39 copies |
+
+- **Per compiled site,** the inline store adds about 160 bytes (117 → 277), as the design estimated (150–190). [run]
+- **The rest is copies.** Each check that fails is a respawn, and a respawned branch compiles the rest of the code after the site as a new block, up to the next merge point, because the block ends at the site (`split_after_global`) and nothing joins the branch's continuation to the hit path's. Straight-line code with several store sites (a constructor) that misses at successive sites gets one copy per miss. Richards' `Task.__init__` is specialised for four classes, each with a different `link` and `input` per instance (a GC value into an untracked dict is a miss), so it takes several such chains. The design counted stubs and sites, not these copies. [read] (`pycompiler.c`, the `split_after_global` branch), [run]
+- **Stubs per site:** 6 on the A path (type guard, dict, split, size, entry, old value), 7 with the GC test, one more for B (order) and one more in a block compiled before its cache was filled. About 15 bytes each (D32): 90–135 bytes per compiled copy. Size, entry, GC and order all lead to the same helper call, so one shared stub would serve them. It needs a dispatcher feature: several jumps into one respawn point whose replay stops at the first of them, with the same registers live at each. Not trivial; a follow-up (BACKLOG). [read], [inferred]
+- **Joining the copies** would remove most of the growth: at the end of a respawned branch at a split site, look for the hit path's continuation at the same instruction and unify with its snapshot, as a merge point does. That is a `pycompiler.c` change, out of this change's scope (QUESTIONS 42). [inferred]
+
+### Tests
+
+`tests/cases/stores.py`, 25 cases: the design's 18 (19 functions: `overwrite_loop`, `init_fills` with the helper-call count under Ni, `out_of_order`, `same_object`, `old_value_freed`, `del_changes_class`, `del_replaces_dict`, `gc_tracking`, `globals_is_instance_dict`, `dict_replaced`, `after_delete`, `reshare`, `name_joins_keys`, `equal_not_identical_key`, `type_guard`, `two_classes_one_site`, `class_address_reuse`, `wide_keys`, `self_cycle`) plus `many_instances`, `skip_a_slot` (a split dict missing a middle value), `size_mismatch`, `miss_cap` (one class's stores alternate between two key sets; refreshes stay within the cap), `module_instance` and `store_then_load`. Each check was removed in turn and the suite rerun: every removal failed at least one case (no version tag: `globals_is_instance_dict`; no GC test: `gc_tracking`, `self_cycle`; no order check: `skip_a_slot`; no `ma_used + 1`: 11 cases, two crashes; no entry check: `dict_replaced`, `miss_cap`; no size check: `size_mismatch`; no split check: two crashes). `out_of_order` alone didn't catch the order check: the first conversion drops the class's keys, so later instances are combined. [run]
+
+Three cases make a class per call, which the compiled code keeps (C14 (2)), so they skip the leak check, as other such cases do. Functions calling `vars()` aren't compiled (C15), so the cases read `__dict__`. [run]
+
+Checked build (`NI_TRACE=1 NI_ALL_CHECKS=1`): `tests/run.py` 478 passed; richards, deltablue, raytrace, go, hexiom, chaos and pyflate ran under `tools/profile_bench.py` without a replay divergence; `tools/check.sh`: all checks passed. [run]
+
 ## Reproduce
 
 - `perf record -m 16 -F 4999 -g -o X.data python3.7 tools/profile_bench.py richards 4`, then `perf report -i X.data --no-children --sort sym -g none`. (`-m 16` because the locked-memory limit is shared with other perf users.)
 - `python3.7 tools/storeclasses.py richards` (plain CPython; tracing makes it about 50 times slower).
 - `python3.7 tools/store_micro.py ni`, then `plain`.
 - `python3.7 tools/store_cache_sim.py raytrace` (plain CPython; option 4's cache, simulated).
+- Option 4's instruction counts: `perf stat -x, -e instructions:u` on a script that loads the benchmark with `pyperf37.load`, runs `timed(3)`, then `timed(10)` or nothing; the difference over ten. Helper calls and refreshes: `ni._stats()['store_misses']`, `['store_refreshes']`.
 - The other [run] facts in "Option 4: design" (unused entries zeroed, keys address reuse, re-share with fewer entries, `gc_refs` values, conversions) come from short ctypes scripts under plain CPython 3.7.17, not kept.
