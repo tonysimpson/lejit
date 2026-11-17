@@ -1377,6 +1377,49 @@ static bool compute_and_raise_exception(PsycoObject *po) {
     return true;
 }
 
+/* FORMAT_VALUE as ceval: 'which' is oparg & FVC_MASK, spec may be NULL */
+static PyObject *cimpl_format_value(PyObject *value, PyObject *spec,
+                                    long which) {
+  PyObject *conv = NULL, *result;
+  switch (which) {
+  case FVC_STR:
+    conv = PyObject_Str(value);
+    break;
+  case FVC_REPR:
+    conv = PyObject_Repr(value);
+    break;
+  case FVC_ASCII:
+    conv = PyObject_ASCII(value);
+    break;
+  default:
+    Py_INCREF(value);
+    conv = value;
+  }
+  if (conv == NULL)
+    return NULL;
+  if (PyUnicode_CheckExact(conv) && spec == NULL)
+    return conv;
+  result = PyObject_Format(conv, spec);
+  Py_DECREF(conv);
+  return result;
+}
+
+/* BUILD_STRING as ceval, for up to four parts or a tuple of them (n < 0) */
+static PyObject *cimpl_build_string(long n, PyObject *a, PyObject *b,
+                                    PyObject *c, PyObject *d) {
+  PyObject *items[4] = {a, b, c, d};
+  PyObject *empty = PyUnicode_New(0, 0), *str;
+  if (empty == NULL)
+    return NULL;
+  if (n < 0)
+    str = _PyUnicode_JoinArray(empty, &PyTuple_GET_ITEM(a, 0),
+                               PyTuple_GET_SIZE(a));
+  else
+    str = _PyUnicode_JoinArray(empty, items, n);
+  Py_DECREF(empty);
+  return str;
+}
+
 /* min_max (bltinmodule.c) without key or default, one item at a time */
 static PyObject *cimpl_minmax_step(PyObject *best, PyObject *item, long op) {
   if (best != NULL) {
@@ -1665,6 +1708,57 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         }
         PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
         break;
+
+      case FORMAT_VALUE: {
+        /* f-strings: the value (and spec) stay on the stack until done */
+        int which = oparg & FVC_MASK;
+        int spec = (oparg & FVS_MASK) == FVS_HAVE_SPEC;
+        u = spec ? NTOP(1) : NULL;
+        v = spec ? NTOP(2) : NTOP(1);
+        if (which == FVC_NONE && !spec &&
+            Psyco_KnownType(v) == &PyUnicode_Type) {
+          goto fine; /* the value itself, as ceval */
+        }
+        w = psyco_vi_Zero();
+        x = psyco_generic_call(po, cimpl_format_value, CfCommonNewRefPyObject,
+                               "vvl", v, spec ? u : w, (long)which);
+        vinfo_decref(w, po);
+        if (x == NULL)
+          break;
+        Psyco_AssertType(po, x, &PyUnicode_Type);
+        if (spec)
+          POP_DECREF();
+        POP_DECREF();
+        PUSH(x);
+        goto fine;
+      }
+
+      case BUILD_STRING: {
+        int i;
+        vinfo_t *parts[4], *t = NULL;
+        if (oparg <= 4) {
+          w = psyco_vi_Zero();
+          for (i = 0; i < 4; i++)
+            parts[i] = i < oparg ? NTOP(oparg - i) : w;
+          x = psyco_generic_call(po, cimpl_build_string,
+                                 CfCommonNewRefPyObject, "lvvvv", (long)oparg,
+                                 parts[0], parts[1], parts[2], parts[3]);
+          vinfo_decref(w, po);
+        } else {
+          t = PsycoTuple_New(oparg, STACK_POINTER() - oparg);
+          x = psyco_generic_call(po, cimpl_build_string,
+                                 CfCommonNewRefPyObject, "lvlll", -1L, t, 0L, 0L,
+                                 0L);
+          vinfo_decref(t, po);
+        }
+        if (x == NULL)
+          break;
+        Psyco_AssertType(po, x, &PyUnicode_Type);
+        while (oparg--)
+          POP_DECREF();
+        PUSH(x);
+        goto fine;
+      }
 
       case YIELD_VALUE: {
         /* only in a generator expression fused with its consumer
