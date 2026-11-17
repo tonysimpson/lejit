@@ -2,9 +2,13 @@
  * Virtual builtin-method objects ([iCFUNC_M_ML] = PyMethodDef*,
  * [iCFUNC_M_SELF]) and the PyCFunction tp_call meta. The meta promotes m_ml,
  * switches on ml_flags exactly as CPython does, and dispatches to a meta for
- * ml_meth if one is registered. METH_FASTCALL (very common in 3.7) reaches
- * a meta only if one is registered: there is no residual call of the C
- * function with a tuple, so otherwise it is a residual PyCFunction_Call.
+ * ml_meth if one is registered. Without a meta, a METH_FASTCALL call with
+ * no keywords and up to FAST_MAX arguments calls the C function directly
+ * through a cimpl_fastN helper that puts the arguments in a C array, so no
+ * tuple is built (KNOWN_BUGS F13). Like the METH_O and METH_VARARGS cases,
+ * these direct calls skip PyCFunction_Call's Py_EnterRecursiveCall and
+ * _Py_CheckFunctionResult. Keywords, or more arguments, take the residual
+ * PyCFunction_Call / tuple paths.
  */
 #include "pmethodobject.h"
 #include "ptupleobject.h"
@@ -110,7 +114,7 @@ vinfo_t *PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
       vinfo_t *(*meta)(PsycoObject *, vinfo_t *, vinfo_t *) =
           Psyco_Lookup(ml->ml_meth);
       if (meta == NULL)
-        goto use_proxy;
+        return PsycoCFunction_CallFast(po, ml->ml_meth, flags, vself, args);
       return meta(po, vself, args); /* no keywords here */
     }
     }
@@ -135,13 +139,54 @@ static PyObject *cimpl_call_fast_kw(PyCFunction meth, PyObject *self,
       self, &PyTuple_GET_ITEM(args, 0), PyTuple_GET_SIZE(args), NULL);
 }
 
+/* the same with n arguments passed one by one (psyco_generic_call takes
+   at most 7: meth, self and FAST_MAX arguments) */
+#define FAST_MAX 5
+#define FAST_FN(n, params, ...)                                                \
+  static PyObject *cimpl_fast##n(PyCFunction meth, PyObject *self params) {    \
+    PyObject *a[] = {__VA_ARGS__};                                             \
+    return ((_PyCFunctionFast)meth)(self, a, n);                               \
+  }                                                                            \
+  static PyObject *cimpl_fastkw##n(PyCFunction meth, PyObject *self params) {  \
+    PyObject *a[] = {__VA_ARGS__};                                             \
+    return ((_PyCFunctionFastWithKeywords)meth)(self, a, n, NULL);             \
+  }
+#define P(x) , PyObject *x
+FAST_FN(0, , NULL)
+FAST_FN(1, P(a0), a0)
+FAST_FN(2, P(a0) P(a1), a0, a1)
+FAST_FN(3, P(a0) P(a1) P(a2), a0, a1, a2)
+FAST_FN(4, P(a0) P(a1) P(a2) P(a3), a0, a1, a2, a3)
+FAST_FN(5, P(a0) P(a1) P(a2) P(a3) P(a4), a0, a1, a2, a3, a4)
+#undef P
+#undef FAST_FN
+
+static void *const cimpl_fast[2][FAST_MAX + 1] = {
+    {cimpl_fast0, cimpl_fast1, cimpl_fast2, cimpl_fast3, cimpl_fast4,
+     cimpl_fast5},
+    {cimpl_fastkw0, cimpl_fastkw1, cimpl_fastkw2, cimpl_fastkw3,
+     cimpl_fastkw4, cimpl_fastkw5}};
+
 DEFINEFN
 vinfo_t *PsycoCFunction_CallFast(PsycoObject *po, PyCFunction meth, int flags,
                                  vinfo_t *vself, vinfo_t *vargs) {
-  void *fn = (flags & METH_KEYWORDS) ? (void *)cimpl_call_fast_kw
-                                     : (void *)cimpl_call_fast;
-  return psyco_generic_call(po, fn, CfCommonNewRefPyObject, "lvv",
-                            (long)meth, vself, vargs);
+  static const char *const fmt[FAST_MAX + 1] = {"lv",    "lvv",    "lvvv",
+                                                "lvvvv", "lvvvvv", "lvvvvvv"};
+  int kw = (flags & METH_KEYWORDS) != 0;
+  int n = PsycoTuple_Load(vargs);
+  vinfo_t *a[FAST_MAX] = {NULL};
+  int i;
+  if (n < 0 || n > FAST_MAX) {
+    void *fn = kw ? (void *)cimpl_call_fast_kw : (void *)cimpl_call_fast;
+    return psyco_generic_call(po, fn, CfCommonNewRefPyObject, "lvv",
+                              (long)meth, vself, vargs);
+  }
+  for (i = 0; i < n; i++)
+    a[i] = PsycoTuple_GET_ITEM(vargs, i);
+  /* fmt[n] stops before the unused (NULL) trailing arguments */
+  return psyco_generic_call(po, cimpl_fast[kw][n], CfCommonNewRefPyObject,
+                            fmt[n], (long)meth, vself, a[0], a[1], a[2], a[3],
+                            a[4]);
 }
 
 INITIALIZATIONFN
