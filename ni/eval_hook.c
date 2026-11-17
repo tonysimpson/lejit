@@ -23,9 +23,14 @@ static PyObject *NiCode_Run(PyObject *codebuf, PyFrameObject *f) {
      sys._getframe, frames made by calls from here (their f_back) and
      pvisitframes() see it */
   tstate->frame = f;
+  /* also as ceval: frame.clear() (traceback.clear_frames, unittest's
+     assertRaises) must refuse to clear it, since the compiled code borrows
+     the cells and arguments in f_localsplus */
+  f->f_executing = 1;
   /* tdict arg is NULL here as it is not used - not sure why */
   result = psyco_processor_run((CodeBufferObject *)codebuf,
                                (long *)f->f_localsplus, &finfo);
+  f->f_executing = 0;
   tstate->frame = f->f_back;
   Py_LeaveRecursiveCall();
   psyco_trash_object(NULL); /* free any trashed object now */
