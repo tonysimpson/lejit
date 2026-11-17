@@ -1,5 +1,13 @@
 # Status
 
+## 2026-11-17: final 3.7 baseline at `cdd8a94`: the phase is done
+
+GOAL.md "When the phase is done": all four points met. [run]
+- In-flight work merged since the re-baseline below: C49, F55 (D59), type hints (D63), F96 (D62), C54 (D66, the shapes regression). Owner's decisions on everything open: D64, D65.
+- No known wrong-result or crash bug in the default runs; known differences are the accepted ones (C11, C29, and those D64 accepted).
+- `tools/check.sh` on a quiet machine: **ALL CHECKS PASSED**; `tests/run.py` 745 pass, 0 xfail; CPython's default set 285 modules, 0 unexpected (`--all`: 371, 0 unexpected).
+- `tools/benchmarks.sh`, release build (`build/bench/2026-11-17-2337-cdd8a94.txt`): **pyperformance 2.19×** (29 benchmarks; 1.74× at the day's first full run, `74cb296`); kernels 5.1× (shapes 7.7×); compile 21.6 ms for 2,317 KB over all 29.
+
 ## 2026-11-17: re-baseline at `6c82b5b` (GOAL.md "When the phase is done", points 3 and 4)
 
 Quiet machine (no agents running; load average under 1). [run]
