@@ -27,6 +27,7 @@ Ni is a fork of Armin Rigo's **Psyco** JIT for CPython, ported partway to x86-64
 | Known and suspected bugs (one list) | `doc/KNOWN_BUGS.md` |
 | Everything still open, bugs and ideas, with pointers | `doc/BACKLOG.md` |
 | One policy for specialisation: promotion sites and merge points | `doc/SPECIALISATION.md` |
+| Shared code after polymorphic promotion sites (option D): measurements, design, plan (`tools/codesize.py -D`) | `doc/OPTION_D.md` |
 | Building and debugging (3.7 only, nianalyser) | `doc/BUILD.md` |
 | Per-function review evidence (point-in-time, not maintained) | `doc/reviews/` |
 

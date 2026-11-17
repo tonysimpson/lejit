@@ -331,7 +331,7 @@ Gains are against the code and compile time above. "Code" means all emitted code
    - **Run-time risk:** the megamorphic version is generic, so slower where it applies.
    - **D21:** no concern. The count lives in the site at run time, and the result is a `RunTime_Megamorphic` flag in the state, which a replay reads from the snapshot, as with the existing cut-off.
    - Small.
-5. **A lower cut-off, or sharing a site's copies.** The most it could save is the code for a site's extra values: 0–12 KB (0–3%; deepcopy 17%). Each value lost is a type no longer known downstream. Not recommended.
+5. **A lower cut-off, or sharing a site's copies.** The most it could save is the code for a site's extra values: 0–12 KB (0–3%; deepcopy 17%). Each value lost is a type no longer known downstream. Not recommended. Measured again at `6b9d7c2` with each value's tree of later sites in `doc/OPTION_D.md` (option D): 5.6 KB over all 23 benchmarks at K = 3. [run]
 6. **Promoting fewer kinds of value.** Types are 93.5% of promotion code, and they are the specialisation Ni exists for. Functions, code objects, words and other objects together are about 5%. Not recommended.
 
 ## Two forms of one value (`e823ee8`, D41, QUESTIONS 38) [run]

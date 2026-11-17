@@ -56,7 +56,7 @@ In order, each measured on code size, compile time and speed (D29):
 1. **Forgotten values** (done, D43): the mark (`RunTime_Megamorphic`), honoured by every promotion entry that has a generic path, set by the cap. Lets the cap generalise more than ints. Rules 2 and 3, except that a forgotten value's type is still promoted (`Psyco_NeedType` has no generic path).
 2. **Respawned branches rejoin** (done at split sites, `f229d14`, D44): rule 5. Inline stores (D38) can merge on top: measured, richards +35% code over base with both, +10% once the store sites were shrunk (D47). Branches from coding pauses already meet merge points; respawn points that aren't split sites are left.
 3. **Merge points match across an unused fact**: rule 1. A state that knows a promoted type nothing has used yet matches a block without it. A naive version that dropped the check made every benchmark hang (CODE_SIZE "Promotions"), so it needs the "used" information and a guard against promoting and generalising in a loop.
-4. **Shared code after polymorphic sites** (option D, BACKLOG): rule 4, built on the mark from step 1. Design first.
+4. **Shared code after polymorphic sites** (option D): rule 4, built on the mark from step 1. Designed and measured in `doc/OPTION_D.md`: the upper bound is small (over all 23 benchmarks, K = 2: 18.1 KB, 0.75%; K = 3: 5.6 KB, 0.2%), and the copies it would remove run often, so it is not worth building on 3.7. If it is built, the first step is a cached operation in the megamorphic version of attribute and method sites, with its result forgotten (rule 3), at the existing limit. [run]
 5. **A shared megamorphic table**, keyed on (type, operation), if megamorphic sites still show in profiles.
 6. **One budget per function**: rule 6, once 1–4 show how much is left.
 
@@ -66,5 +66,5 @@ The out-of-line chain of cases at promotion sites (in flight, option B) is a mec
 
 - **Where a fact's "used" bit lives.** `SkFlagFixed` exists for constants only. A promoted type is a constant once promoted, so the bit may already be there; whether it is set early enough to be useful at the next merge point is unmeasured. [inferred]
 - **Whether two states that differ only in the forgotten mark should match.** Matching is safe if the forgotten one is the more general; the reverse would let specialisation back in.
-- **K for rule 4**, and whether it should be the megamorphic limit.
+- **K for rule 4**: measured (`doc/OPTION_D.md`). Keep the megamorphic limit: K = 2 saves 0.75% and K = 3 0.2%, each for a speed cost, and K = 2 slows every two-value site for nothing.
 - **How this maps onto 3.12** (PORT312.md): 3.12's specialising interpreter has its own per-instruction caches; whether Ni reads them as hints is QUESTIONS 30.
