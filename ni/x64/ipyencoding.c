@@ -137,9 +137,48 @@ _Static_assert(offsetof(store_cache_t, dk_size) == 0,
   ((long)offsetof(PyGC_Head, gc.gc_refs) - (long)sizeof(PyGC_Head))
 #define STORE_MAX_MISS_JUMPS 8
 
+/* Which encodings reach: decided once from where the site starts, with a
+   margin, so that both passes emit the same lengths. */
+static bool rip_near(code_t *at, void *addr) {
+  long d = (long)addr - (long)at;
+  return -0x7f000000L < d && d < 0x7f000000L;
+}
+/* the address of a constant in a register: 5 bytes below 4 GB, else 7
+   (RIP-relative) or 10 */
+#define LOAD_ADDRESS(rg, addr, near)                                           \
+  do {                                                                         \
+    if ((unsigned long)(addr) > 0xFFFFFFFFUL && (near))                        \
+      LEA_R_RIP(rg, (long)(addr) - ((long)code + 7));                          \
+    else                                                                       \
+      MOV_R_I(rg, (long)(addr));                                               \
+  } while (0)
+#define CALL_GLUE(fn, near)                                                    \
+  do {                                                                         \
+    if (near) {                                                                \
+      ni_trace_call((code_t *)code, (code_t *)(fn));                           \
+      WRITE_1(0xE8);                                                           \
+      WRITE_32BIT((long)(fn) - ((long)code + 4));                              \
+    } else {                                                                   \
+      MOV_R_I(REG_TRANSIENT_1, (long)(fn));                                    \
+      CALL_R(REG_TRANSIENT_1);                                                 \
+    }                                                                          \
+  } while (0)
+static void load_operand(PsycoObject *po, code_t **pcode, Source src,
+                         reg_t rg, code_t *start) {
+  code_t *code = *pcode;
+  if (is_compiletime(src)) {
+    long k = KSOURCE_SOURCE(src)->value;
+    LOAD_ADDRESS(rg, k, rip_near(start, (void *)k));
+  } else {
+    LOAD_REG_FROM(src, rg);
+  }
+  *pcode = code;
+}
+
 static code_t *inline_store_body(PsycoObject *po, code_t *code,
                                  inline_store_t *s, const bool *near,
                                  code_t **jat, int *pnj, code_t **pmiss) {
+  code_t *start = code;
   int nj = 0;
   code_t *fill_jz = NULL, *gc_ok = NULL, *store;
 #define JCC_MISS(cc)                                                           \
@@ -153,9 +192,9 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
     }                                                                          \
     nj++;                                                                      \
   } while (0)
-  LOAD_REG_FROM(s->obj->source, REG_X64_RDI);
-  LOAD_REG_FROM(s->value->source, REG_X64_RSI);
-  MOV_R_I(REG_X64_RDX, (long)s->cache);
+  load_operand(po, &code, s->obj->source, REG_X64_RDI, start);
+  load_operand(po, &code, s->value->source, REG_X64_RSI, start);
+  LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
   MOV_R_O(REG_X64_RCX, REG_X64_RDI, s->dictoffset);
   TEST_R_R(REG_X64_RCX, REG_X64_RCX);
   JCC_MISS(CC_E); /* no dict yet */
@@ -206,7 +245,7 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
   DEC_A(REG_X64_RAX); /* last: may run any code */
   s->done[0] = code;
   WRITE_2(0x70 | CC_NE, 0);
-  CALL_I(psyco_dealloc_rax_glue);
+  CALL_GLUE(psyco_dealloc_rax_glue, rip_near(start, psyco_dealloc_rax_glue));
   s->done[1] = code;
   WRITE_2(0xEB, 0);
   if (!s->fill)
@@ -224,7 +263,7 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
   ni_trace_jump(code - 2, store);
 miss:
   *pmiss = code;
-  CALL_I(s->miss_glue);
+  CALL_GLUE(s->miss_glue, rip_near(start, s->miss_glue));
   TEST_DR_DR(REG_X64_RAX, REG_X64_RAX);
   extra_assert(nj <= STORE_MAX_MISS_JUMPS);
   *pnj = nj;
