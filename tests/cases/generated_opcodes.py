@@ -3,6 +3,7 @@
 # where it has one. An error exit leaves the inputs on the stack for the
 # unwinding code, so the exceptions here also check that nothing is
 # released twice or leaked.
+import collections
 
 
 def arith(a, b):
@@ -76,9 +77,44 @@ def errors(k):
     return catch((err_add, err_subscr, err_store, err_pow, err_inplace), k)
 
 
-def py2_messages(k):
-    # the same, where Ni's message is still Python 2's
-    return catch((err_neg, err_iter), k)
+def messages(k):
+    # TypeError texts from Ni's abstract layer must be 3.7's (F28)
+    return catch((err_neg, err_pos, err_inv, err_iter, err_not_subscr,
+                  err_seq_index, err_no_assign, err_seq_assign, err_no_del,
+                  err_repeat), k)
+
+
+def err_pos(k):
+    return +'s' if k else k
+
+
+def err_inv(k):
+    return ~'s' if k else k
+
+
+def err_not_subscr(k):
+    return k[0]
+
+
+def err_seq_index(k):
+    return collections.deque([1])['a']
+
+
+def err_no_assign(k):
+    k[0] = 1
+
+
+def err_seq_assign(k):
+    d = collections.deque([1])
+    d['a'] = 1
+
+
+def err_no_del(k):
+    del k[0]
+
+
+def err_repeat(k):
+    return [1] * 'a'
 
 
 def err_add(k):
@@ -133,6 +169,6 @@ CASES = [
     ('subscripts', [([1, 2, 3], {}), ([5, 6, 7], {'z': 0})], {}),
     ('iterate', [([1, 2, 3],), ((4.5, 1),)], {}),
     ('errors', [(0,), (1,)], {}),
-    ('py2_messages', [(0,), (1,)], {'xfail': 'F28: Python 2 TypeError messages in pabstract.c'}),
+    ('messages', [(0,), (1,)], {}),
     ('unbound', [(True,), (False,)], {}),
 ]

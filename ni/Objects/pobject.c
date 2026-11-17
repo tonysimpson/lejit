@@ -109,8 +109,9 @@ bool PsycoObject_SetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *vattrname,
       goto generic;
     } else {
 #endif
-      PycException_SetString(po, PyExc_TypeError,
-                             "attribute name must be string");
+      PycException_SetFormat(po, PyExc_TypeError,
+                             "attribute name must be string, not '%.200s'",
+                             Py_TYPE(name)->tp_name);
       return false;
 #ifdef IS_PY3K
     }

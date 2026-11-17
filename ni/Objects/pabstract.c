@@ -22,6 +22,13 @@ static vinfo_t *type_error(PsycoObject *po, const char *msg) {
   return NULL;
 }
 
+/* abstract.c's type_error: msg has one %.200s for the type's name */
+static vinfo_t *type_error_tp(PsycoObject *po, const char *msg,
+                              PyTypeObject *tp) {
+  PycException_SetFormat(po, PyExc_TypeError, msg, tp->tp_name);
+  return NULL;
+}
+
 DEFINEFN
 vinfo_t *PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object,
                           vinfo_t *args,
@@ -125,11 +132,11 @@ vinfo_t *PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
       vinfo_decref(key_value, po);
       return result;
     }
-    type_error(po, "sequence index must be integer");
+    type_error_tp(po, "sequence index must be integer, not '%.200s'", ktp);
     return false;
   }
 
-  type_error(po, "unsubscriptable object");
+  type_error_tp(po, "'%.200s' object is not subscriptable", tp);
   return false;
 }
 
@@ -176,13 +183,15 @@ bool PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key,
       return result;
     }
     if (tp->tp_as_sequence->sq_ass_item) {
-      type_error(po, "sequence index must be integer");
+      type_error_tp(po, "sequence index must be integer, not '%.200s'", ktp);
       return false;
     }
   }
 
-  type_error(po, (value != NULL) ? "object does not support item assignment"
-                                 : "object does not support item deletion");
+  type_error_tp(po, (value != NULL)
+                        ? "'%.200s' object does not support item assignment"
+                        : "'%.200s' object does not support item deletion",
+                tp);
   return false;
 }
 
@@ -255,7 +264,7 @@ vinfo_t *PsycoSequence_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *i) {
     return result;
   }
 
-  return type_error(po, "unindexable object");
+  return type_error_tp(po, "'%.200s' object does not support indexing", tp);
 }
 
 DEFINEFN
@@ -294,8 +303,11 @@ bool PsycoSequence_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *i,
     return result;
   }
 
-  type_error(po, (value != NULL) ? "object doesn't support item assignment"
-                                 : "object doesn't support item deletion");
+  /* PySequence_SetItem / PySequence_DelItem (their wording differs) */
+  type_error_tp(po, (value != NULL)
+                        ? "'%.200s' object does not support item assignment"
+                        : "'%.200s' object doesn't support item deletion",
+                tp);
   return false;
 }
 
@@ -361,7 +373,7 @@ vinfo_t *PsycoNumber_Positive(PsycoObject *po, vinfo_t *vi) {
   if (m && m->nb_positive)
     return Psyco_META1(po, m->nb_positive, CfCommonNewRefPyObject, "v", vi);
 
-  return type_error(po, "bad operand type for unary +");
+  return type_error_tp(po, "bad operand type for unary +: '%.200s'", tp);
 }
 
 DEFINEFN
@@ -375,7 +387,7 @@ vinfo_t *PsycoNumber_Negative(PsycoObject *po, vinfo_t *vi) {
   if (m && m->nb_negative)
     return Psyco_META1(po, m->nb_negative, CfCommonNewRefPyObject, "v", vi);
 
-  return type_error(po, "bad operand type for unary -");
+  return type_error_tp(po, "bad operand type for unary -: '%.200s'", tp);
 }
 
 DEFINEFN
@@ -389,7 +401,7 @@ vinfo_t *PsycoNumber_Invert(PsycoObject *po, vinfo_t *vi) {
   if (m && m->nb_invert)
     return Psyco_META1(po, m->nb_invert, CfCommonNewRefPyObject, "v", vi);
 
-  return type_error(po, "bad operand type for unary ~");
+  return type_error_tp(po, "bad operand type for unary ~: '%.200s'", tp);
 }
 
 DEFINEFN
@@ -523,7 +535,8 @@ static vinfo_t *psequence_repeat(PsycoObject *po, void *repeatfunc,
     vcount = psyco_generic_call(po, PyNumber_AsSsize_t, CfCommonPySSizeTResult,
                                 "vl", vn, (long)PyExc_OverflowError);
   } else {
-    return type_error(po, "can't multiply sequence to non-int");
+    return type_error_tp(po, "can't multiply sequence by non-int of type '%.200s'",
+                         tp);
   }
   if (vcount == NULL)
     return NULL;
@@ -723,8 +736,7 @@ vinfo_t *PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi) {
   if (f == NULL) {
     if (PsycoSequence_Check(t))
       return PsycoSeqIter_New(po, vi);
-    PycException_SetString(po, PyExc_TypeError, "iteration over non-sequence");
-    return NULL;
+    return type_error_tp(po, "'%.200s' object is not iterable", t);
   } else {
     return Psyco_META1(po, f, CfCommonNewRefPyObject, "v", vi);
   }
