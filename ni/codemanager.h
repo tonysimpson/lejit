@@ -25,7 +25,23 @@ struct CodeBufferObject_s {
 	PyObject_HEAD
 	void* codestart;
 	FrozenPsycoObject snapshot;
+	unsigned long serial;  /* order of creation: psyco_block_serial() */
 };
+
+/* code buffers created so far; the next one's serial */
+EXTERNVAR unsigned long psyco_next_serial;
+
+/* The serial of the block that the current compile started from. A replay
+   (dispatcher.c:do_respawn) starts from the snapshot at the head of its
+   chain of respawned buffers, so it has the same serial as the original
+   compile, and a decision that depends only on this serial and state that
+   changes one way can be repeated exactly in the replay. */
+PSY_INLINE unsigned long psyco_block_serial(PsycoObject *po) {
+  CodeBufferObject *b = po->respawn_proxy;
+  while (b->snapshot.fz_respawned_from != NULL)
+    b = b->snapshot.fz_respawned_from;
+  return b->serial;
+}
 
 #define SET_CODEMODE(b, mode)   do { } while (0)   /* nothing */
 

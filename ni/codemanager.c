@@ -122,6 +122,7 @@ static void close_buffer_use(code_t *code) {
   Py_FatalError("psyco: code buffer allocator corruption");
 }
 
+DEFINEVAR unsigned long psyco_next_serial = 0;
 DEFINEVAR long psyco_stat_code_buffers = 0;
 DEFINEVAR long psyco_stat_code_bytes = 0;
 DEFINEVAR long psyco_stat_compile_ns[NI_ENTER_KINDS];
@@ -145,6 +146,7 @@ static CodeBufferObject *new_code_buffer(PsycoObject *po, global_entries_t *ge,
   b = PyObject_New(CodeBufferObject, &CodeBuffer_Type);
   if (b == NULL)
     OUT_OF_MEMORY();
+  b->serial = psyco_next_serial++;
   if (proxy_to != NULL) {
     *plimit = NULL;
     b->codestart = proxy_to; /* points inside another code buffer */

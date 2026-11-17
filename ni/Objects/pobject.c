@@ -11,6 +11,7 @@
 #include "pobject.h"
 #include "../compat2to3.h"
 #include "../pycodegen.h"
+#include "../codemanager.h"
 #include "pboolobject.h"
 #include "pstringobject.h"
 
@@ -270,6 +271,222 @@ static PyObject *cimpl_instance_dict_get(PyObject *obj, PyObject *name) {
   return PyDict_GetItem(*dictptr, name);
 }
 
+/* 3.7's struct _dictkeysobject (Objects/dict-common.h), which isn't in the
+   installed headers; the entries follow the indices. */
+typedef struct {
+  Py_ssize_t dk_refcnt;
+  Py_ssize_t dk_size;
+  void *dk_lookup;
+  Py_ssize_t dk_usable;
+  Py_ssize_t dk_nentries;
+  char dk_indices[];
+} ni_dictkeys_t;
+typedef struct {
+  Py_hash_t me_hash;
+  PyObject *me_key;
+  PyObject *me_value;
+} ni_dictentry_t;
+
+/* Where to find 'name' in an instance dict that uses the class's shared
+   keys (PEP 412): at *ix, while the dict uses *keys and, if *n >= 0, the
+   keys still hold *n entries. A name not in the keys is NULL at the next
+   free index, since a dict's values array covers all usable entries and a
+   shared table only grows. Takes a reference to the keys. Only when some
+   dict uses them (dk_refcnt > 1): before that, the first instance may still
+   grow them, and CPython re-shares the grown keys only if the class holds
+   the sole reference. */
+static bool shared_key_slot(PyTypeObject *tp, PyObject *name,
+                            ni_dictkeys_t **keys, Py_ssize_t *ix,
+                            Py_ssize_t *n) {
+  ni_dictkeys_t *k = (ni_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys;
+  Py_ssize_t i, ixsize;
+  ni_dictentry_t *entries;
+  if (k == NULL || k->dk_refcnt < 2)
+    return false;
+  ixsize = k->dk_size <= 0xff ? 1 : k->dk_size <= 0xffff ? 2
+                                  : k->dk_size <= 0xffffffff ? 4 : 8;
+  entries = (ni_dictentry_t *)(k->dk_indices + k->dk_size * ixsize);
+  for (i = 0; i < k->dk_nentries; i++)
+    if (entries[i].me_key == name)
+      break;
+  if (i < k->dk_nentries)
+    *n = -1;
+  else if (k->dk_usable > 0)
+    *n = i;
+  else
+    return false;
+  *ix = i;
+  *keys = k;
+  k->dk_refcnt++; /* held by the compiled code */
+  return true;
+}
+
+/* the expected keys, compared at run time: a dict matches if it uses
+   'keys' and (nentries ^ n) & mask is 0 */
+typedef struct {
+  ni_dictkeys_t *keys;
+  Py_ssize_t n;
+  Py_ssize_t mask;
+} keys_guard_t;
+
+#define KGUARD_keys                                                            \
+  FMUT(DEF_FIELD(keys_guard_t, ni_dictkeys_t *, keys, NO_PREV_FIELD))
+#define KGUARD_n FMUT(DEF_FIELD(keys_guard_t, Py_ssize_t, n, NO_PREV_FIELD))
+#define KGUARD_mask                                                            \
+  FMUT(DEF_FIELD(keys_guard_t, Py_ssize_t, mask, NO_PREV_FIELD))
+
+#define INSTANCE_dict FMUT(DEF_ARRAY(PyObject *, 0))
+#define DICT_ma_keys                                                           \
+  FMUT(DEF_FIELD(PyDictObject, PyDictKeysObject *, ma_keys, NO_PREV_FIELD))
+#define DICT_ma_values                                                         \
+  FMUT(DEF_FIELD(PyDictObject, PyObject **, ma_values, NO_PREV_FIELD))
+#define VALUES_item FMUT(DEF_ARRAY(PyObject *, 0))
+#define KEYS_nentries                                                          \
+  FMUT(DEF_FIELD(ni_dictkeys_t, Py_ssize_t, dk_nentries, NO_PREV_FIELD))
+
+/* Whether to emit the inline path for 'tp', in a way that a replay repeats
+   (see psyco_block_serial). CPython never gives a class shared keys again
+   once it drops them. So: yes while it has them; no if Ni never saw it with
+   them; otherwise yes only in blocks older than the moment Ni first saw
+   them gone, which includes every block compiled while it had them. A dead
+   type's address reused by a new class only costs a needless inline path
+   (or misses one). */
+static bool keys_inline(PsycoObject *po, PyTypeObject *tp) {
+  /* type address -> None while it has shared keys, then the first block
+     serial after Ni saw them gone */
+  static PyObject *seen = NULL;
+  PyObject *key, *d;
+  bool r;
+  if (seen == NULL && (seen = PyDict_New()) == NULL)
+    OUT_OF_MEMORY();
+  key = PyLong_FromVoidPtr(tp);
+  if (key == NULL)
+    OUT_OF_MEMORY();
+  d = PyDict_GetItem(seen, key);
+  if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) {
+    if (d != Py_None && PyDict_SetItem(seen, key, Py_None) < 0)
+      OUT_OF_MEMORY();
+    r = true;
+  } else if (d == NULL) {
+    r = false;
+  } else {
+    if (d == Py_None) {
+      d = PyLong_FromUnsignedLong(psyco_next_serial);
+      if (d == NULL || PyDict_SetItem(seen, key, d) < 0)
+        OUT_OF_MEMORY();
+      Py_DECREF(d);
+    }
+    r = psyco_block_serial(po) < PyLong_AsUnsignedLong(d);
+  }
+  Py_DECREF(key);
+  return r;
+}
+
+/* (keys ^ g->keys) | ((keys->dk_nentries ^ g->n) & g->mask) */
+static vinfo_t *keys_mismatch(PsycoObject *po, vinfo_t *vk, vinfo_t *vg) {
+  vinfo_t *a, *b, *c, *r = NULL;
+  c = psyco_get_field(po, vg, KGUARD_keys);
+  if (c == NULL)
+    return NULL;
+  a = integer_xor(po, vk, c);
+  vinfo_decref(c, po);
+  if (a == NULL)
+    return NULL;
+  b = field_xor(po, vk, KEYS_nentries, vg, KGUARD_n);
+  if (b != NULL) {
+    c = psyco_get_field(po, vg, KGUARD_mask);
+    if (c != NULL) {
+      vinfo_t *m = integer_and(po, b, c);
+      vinfo_decref(c, po);
+      if (m != NULL) {
+        r = integer_or(po, a, m);
+        vinfo_decref(m, po);
+      }
+    }
+    vinfo_decref(b, po);
+  }
+  vinfo_decref(a, po);
+  return r;
+}
+
+/* The instance's __dict__ entry for 'name': a borrowed pointer or NULL.
+   For a heap type whose instances share keys (PEP 412) this is inline: the
+   dict at tp_dictoffset, one check that it uses the keys compiled in (and,
+   for a name not in them, that they have no new entries), then the value
+   at shared_key_slot's index (a dict using shared keys is always split).
+   Otherwise, or when a check fails, the C helper. As for the type guard, a
+   replay may find different keys, so the code emitted must not depend on
+   them: the expected values are run-time loads from a per-site
+   keys_guard_t (never freed), and without usable keys it expects an
+   impossible pointer and fails into the helper. The keys are held for
+   good, like descriptors (D30). */
+static vinfo_t *instance_dict_get(PsycoObject *po, vinfo_t *obj,
+                                  PyTypeObject *tp, PyObject *name) {
+  static keys_guard_t respawn_guard; /* read by trashed code only */
+  keys_guard_t *guard = &respawn_guard;
+  ni_dictkeys_t *keys;
+  Py_ssize_t ix = 0, n;
+  vinfo_t *vd, *vk, *vg, *vv, *v, *x;
+  condition_code_t cc;
+  if (!(tp->tp_flags & Py_TPFLAGS_HEAPTYPE) || tp->tp_dictoffset <= 0 ||
+      !keys_inline(po, tp))
+    goto helper;
+  if (!is_respawning(po)) {
+    guard = PyMem_Malloc(sizeof(keys_guard_t));
+    if (guard == NULL)
+      OUT_OF_MEMORY();
+    if (shared_key_slot(tp, name, &keys, &ix, &n)) {
+      guard->keys = keys;
+      guard->n = n < 0 ? 0 : n;
+      guard->mask = n < 0 ? 0 : -1;
+    } else {
+      guard->keys = (ni_dictkeys_t *)1; /* matches no dict */
+      guard->n = guard->mask = 0;
+    }
+  }
+  vd = psyco_get_field_offset(po, obj, INSTANCE_dict, tp->tp_dictoffset);
+  if (vd == NULL)
+    return NULL;
+  cc = integer_non_null(po, vd);
+  if (cc == CC_ERROR || !runtime_condition_t(po, cc)) {
+    vinfo_decref(vd, po);
+    if (cc == CC_ERROR)
+      return NULL;
+    goto helper;
+  }
+  vk = psyco_get_field(po, vd, DICT_ma_keys);
+  if (vk == NULL) {
+    vinfo_decref(vd, po);
+    return NULL;
+  }
+  vg = vinfo_new(CompileTime_New((long)guard));
+  x = keys_mismatch(po, vk, vg);
+  vinfo_decref(vg, po);
+  vinfo_decref(vk, po);
+  if (x == NULL) {
+    vinfo_decref(vd, po);
+    return NULL;
+  }
+  cc = integer_NON_NULL(po, x); /* consumes x */
+  if (cc == CC_ERROR || runtime_condition_f(po, cc)) {
+    vinfo_decref(vd, po);
+    if (cc == CC_ERROR)
+      return NULL;
+    goto helper;
+  }
+  vv = psyco_get_field(po, vd, DICT_ma_values);
+  vinfo_decref(vd, po);
+  if (vv == NULL)
+    return NULL;
+  v = psyco_get_field_offset(po, vv, VALUES_item, ix * sizeof(PyObject *));
+  vinfo_decref(vv, po);
+  return v;
+
+helper:
+  return psyco_generic_call(po, cimpl_instance_dict_get, CfReturnTypePtr, "vl",
+                            obj, (long)name);
+}
+
 /* descriptor types whose __get__ is C code that runs no Python code */
 static bool c_descriptor(PyTypeObject *dtp) {
   return dtp == &PyMemberDescr_Type || dtp == &PyMethodDescr_Type ||
@@ -349,8 +566,7 @@ static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
 
   if (tp->tp_dictoffset != 0) {
     bool found;
-    v = psyco_generic_call(po, cimpl_instance_dict_get, CfReturnTypePtr, "vl",
-                           obj, (long)name);
+    v = instance_dict_get(po, obj, tp, name);
     if (v == NULL)
       return NULL;
     cc = integer_non_null(po, v);

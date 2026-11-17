@@ -35,4 +35,17 @@ Instance attributes and dicts take about 60% of richards, 50% of deltablue and 3
 ## What follows
 
 1. **Inline A9's guard.** Done: `pobject.c:type_changed` compares `tp_flags` and `tp_version_tag` in emitted code instead of calling `cimpl_type_unchanged`. Same session, before and after: richards 19.4–20.2 → 18.5–18.9 ms (about 5%), go 82.1 → 79.1 ms, others within noise; code 2–4% larger, compile time unchanged. [run]
-2. **Shared-key instance attributes.** CPython 3.7 instances of a class share one keys table (PEP 412), and in a shared table a name's index never changes. So a load can be: the dict pointer at `tp_dictoffset`, a check that its `ma_keys` is the expected table, then `ma_values[index]`, with a fallback when any of these fails. That replaces `PyDict_GetItem` and `lookdict_split`, worth up to about 35%. Stores are harder: a store must give the dict a new `ma_version_tag`, whose counter is static in `dictobject.c`. [read] (`Objects/dictobject.c`, `Objects/dict-common.h`), [inferred]
+2. **Shared-key instance attributes.** Done (D31): `pobject.c:instance_dict_get` loads an instance attribute inline when the class's instances share keys (PEP 412): the dict at `tp_dictoffset`, one check that it uses the keys compiled in, then the value at the name's index. A name not in the keys reads the empty slot after the last entry, guarded by the keys' entry count. Stores still go through C. Same session, release build, before (`614ea60`) and after: [run]
+
+| benchmark | Ni warm (ms) | code KB | compile ms |
+|---|---|---|---|
+| richards | 19.0 → 12.0 | 150 → 200 | 0.57 → 0.64 |
+| richards_super | 32.2 → 25.5 | 152 → 198 | 0.57 → 0.72 |
+| deltablue | 2.20 → 1.64 | 529 → 700 | 2.11 → 2.56 |
+| raytrace | 222 → 194 | 359 → 438 | 1.97 → 1.78 |
+| go | 80.3 → 75.0 | 1509 → 1650 | 13.0 → 13.7 |
+| hexiom | 2.71 → 2.27 | 870 → 1007 | 6.04 → 6.29 |
+| pyflate | 173 → 144 | 466 → 516 | 2.56 → 2.75 |
+| chaos | 32.3 → 28.1 | 90 → 98 | 0.44 → 0.46 |
+
+A first version that sent classes without usable keys to a check that always fails respawned once per site: go then made 1,896 respawns (491 before) and 2.4 MB of code for no gain. `keys_inline` now sends a class whose keys CPython has dropped straight to the C helper.
