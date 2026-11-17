@@ -109,3 +109,35 @@ def unpack_empty(x):
 CASES += [
     ('unpack_empty', [([],), ((),), ('',)], {}),
 ]
+
+
+def unpack_errors(x):
+    # ceval's unpack_iterable messages (KNOWN_BUGS F30), for tuples, lists,
+    # iterators and non-iterables, too few and too many
+    out = []
+    for f in (unpack0, unpack2):
+        for v in (x, list(x), tuple(x), iter(x)):
+            try:
+                out.append(f(v))
+            except (ValueError, TypeError) as e:
+                out.append((type(e).__name__, str(e)))
+    try:
+        unpack2(5)
+    except TypeError as e:
+        out.append(str(e))
+    return out
+
+
+def unpack0(v):
+    [] = v
+    return 0
+
+
+def unpack2(v):
+    a, b = v
+    return a, b
+
+
+CASES += [
+    ('unpack_errors', [((),), ((1,),), ((1, 2),), ((1, 2, 3),)], {}),
+]

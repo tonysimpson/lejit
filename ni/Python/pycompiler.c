@@ -1075,6 +1075,8 @@ static PyObject *cimpl_load_global(PyObject *globals, PyObject *w) {
   return x;
 }
 
+/* ceval.c:unpack_iterable without the starred target (UNPACK_EX isn't
+   compiled), with its messages */
 static int cimpl_unpack_iterable(PyObject *v, int argcnt, PyObject **sp) {
   int i = 0;
   PyObject *it; /* iter(v) */
@@ -1083,17 +1085,22 @@ static int cimpl_unpack_iterable(PyObject *v, int argcnt, PyObject **sp) {
   extra_assert(v != NULL);
 
   it = PyObject_GetIter(v);
-  if (it == NULL)
+  if (it == NULL) {
+    if (PyErr_ExceptionMatches(PyExc_TypeError) &&
+        v->ob_type->tp_iter == NULL && !PySequence_Check(v))
+      PyErr_Format(PyExc_TypeError, "cannot unpack non-iterable %.200s object",
+                   v->ob_type->tp_name);
     goto Error;
+  }
 
   for (; i < argcnt; i++) {
     w = PyIter_Next(it);
     if (w == NULL) {
       /* Iterator done, via error or exhaustion. */
-      if (!PyErr_Occurred()) {
-        PyErr_Format(PyExc_ValueError, "need more than %d value%s to unpack", i,
-                     i == 1 ? "" : "s");
-      }
+      if (!PyErr_Occurred())
+        PyErr_Format(PyExc_ValueError,
+                     "not enough values to unpack (expected %d, got %d)",
+                     argcnt, i);
       goto Error;
     }
     *sp++ = w;
@@ -1107,7 +1114,8 @@ static int cimpl_unpack_iterable(PyObject *v, int argcnt, PyObject **sp) {
     Py_DECREF(it);
     return 0;
   }
-  PyErr_SetString(PyExc_ValueError, "too many values to unpack");
+  PyErr_Format(PyExc_ValueError, "too many values to unpack (expected %d)",
+               argcnt);
   Py_DECREF(w);
   /* fall through */
 Error:
@@ -1123,10 +1131,8 @@ static int cimpl_unpack_list(PyObject *listobject, int argcnt, PyObject **sp) {
   int i;
   extra_assert(PyList_Check(listobject));
 
-  if (PyList_GET_SIZE(listobject) != argcnt) {
-    PyErr_SetString(PyExc_ValueError, "unpack list of wrong size");
-    return -1;
-  }
+  if (PyList_GET_SIZE(listobject) != argcnt)
+    return cimpl_unpack_iterable(listobject, argcnt, sp); /* the error */
   for (i = argcnt; i--;) {
     PyObject *v = sp[i] = PyList_GET_ITEM(listobject, i);
     Py_INCREF(v);
@@ -1650,11 +1656,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             cc = integer_cmp_i(po, vsize, oparg, Py_NE);
             if (cc == CC_ERROR)
               break;
-            if (runtime_condition_f(po, cc)) {
-              PycException_SetString(po, PyExc_ValueError,
-                                     "unpack tuple of wrong size");
-              break;
-            }
+            if (runtime_condition_f(po, cc))
+              goto unpack_generic; /* which raises ceval's error */
 
             /* make sure the tuple data is loaded */
             for (i = oparg; i--;) {
@@ -1682,6 +1685,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         if (PyType_TypeCheck(vtp, &PyList_Type))
           cimpl_unpack = cimpl_unpack_list;
         else
+        unpack_generic:
           cimpl_unpack = cimpl_unpack_iterable;
 
         {
