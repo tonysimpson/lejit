@@ -15,7 +15,7 @@ Why Ni emits so much code, and how much of it is the same code emitted more than
   - `respawn`: the stub behind every run-time condition, which compiles the rare branch if it is ever taken;
   - `respawned`: code compiled when a stub fires;
   - `stubs`: 4 KB pool chunks holding the 15-byte respawn and pause stubs (D32), counted whole when taken;
-  - `coding_pause` (until `342810b`), `unify`, `glue`: pause stubs, state-matching code at merge points, start-up code.
+  - `coding_pause` (until `d51860c`), `unify`, `glue`: pause stubs, state-matching code at merge points, start-up code.
 - **By instruction** (`pycompiler.c:codestats_begin`): the bytes from the start of one bytecode instruction to the start of the next, per copy, and the copy itself. An instruction's error paths and the end of a block count with it; stubs and replays don't.
 - **Identical copies** (`tools/codesize.py -d`, needs capstone): copies of the same instruction that disassemble the same once branch and call targets are replaced; a second level also ignores 64-bit constants (per-site guard structs, shared keys, type pointers).
 
@@ -78,7 +78,7 @@ pyperformance geometric mean: 1.93×.
 
 A first version entered the trampoline with `call` and popped the return address instead of returning. go was 8% slower (75 → 81 ms): branch mispredictions rose 19% per iteration, because the unmatched `call` leaves the return-address predictor one entry off, and `ret`s mispredict after it. In go, a stub fires on every `Board.useful` call (the guard on the `TIMESTAMP` global, which `do_changed_global` resumes). Entering by `jmp` with the record in R11 fixed it. [run] (`perf stat`)
 
-## Coding pauses on the same stubs (`342810b`, D32) [run]
+## Coding pauses on the same stubs (`d51860c`, D32) [run]
 
 A coding pause (a branch not compiled yet, a full buffer, too many locked buffers) had its own code buffer with an inline call into `do_resume_coding`: 67–68 bytes each, and go has 942 of them. It now takes a stub from `dispatcher.c:psyco_new_stub` like respawn, and `vcompiler.c:do_resume_coding_body` frees the record once the continuation is compiled (the only way in is the one jump it then repoints). Pauses never pass a run-time argument (`extraarg` is `SOURCE_DUMMY`), so the trampoline needs nothing new. Same session, release build, before (`9771e71`) and after; timings indicative only, other benchmarks ran on the machine at the same time:
 
