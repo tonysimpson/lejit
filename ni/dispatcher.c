@@ -11,8 +11,8 @@
  *    forms of a counter compare. Ni added a 16-byte stack-alignment test
  *    (compare_return_address) that rejects otherwise good matches whose
  *    return-address slot differs mod 16: x86-64 call alignment (C1, C31).
- *    A run-time value's known type that the snapshot lacks is dropped if
- *    nothing since the last merge point relied on it (rule 1, D50,
+ *    A run-time value's known field that the snapshot lacks is dropped if
+ *    nothing since the last merge point relied on it (rule 1, D50, D57,
  *    compatible_unused_fact), except in the compare a promotion's
  *    continuation makes at its own instruction, where it would loop.
  *  - psyco_forget_values: the cap per merge point's generalisation
@@ -1196,15 +1196,14 @@ static bool compatible_rt_parent = false;
 /* set by psyco_compatible_join: rule 1 does not apply at join points */
 static bool compatible_at_join = false;
 
-/* Rule 1 (SPECIALISATION.md, D50): at a merge point, the known type of a
-   run-time value that the snapshot lacks is dropped if nothing since the
-   last merge point relied on it (sk->used, stamped by sk_mark_used, against
-   po->mp_serial), instead of starting a new block: the block was compiled
-   without the fact and promotes the type itself if it needs it. A match
-   that drops is taken only if no block matches without dropping. Only the
-   type: dropping other known fields (a dict's keys, D31's guards) crashed
-   test_pprint in the checked build (KNOWN_BUGS C35). Not at join points
-   (D44 has its own rule there).
+/* Rule 1 (SPECIALISATION.md, D50, D57): at a merge point, a known field of
+   a run-time value (its type, mostly) that the snapshot lacks is dropped if
+   nothing since the last merge point relied on it (sk->used, stamped by
+   sk_mark_used, against po->mp_serial), instead of starting a new block:
+   the block was compiled without the fact and loads or promotes it itself
+   if it needs it. A match that drops is taken only if no block matches
+   without dropping. Not at join points (D44 has its own rule there), and
+   not a virtual value's fields, which are its contents.
    Never in the compare that a promotion's continuation makes at its own
    instruction (psyco_compatible_keep_facts, cleared in vcompiler.c once
    that compare is over): the state there is the state before the
@@ -1221,10 +1220,9 @@ static unsigned long compatible_serial;
 static int compatible_drops;
 
 
-static bool compatible_unused_fact(vinfo_t *a, bool rt_parent, int index) {
+static bool compatible_unused_fact(vinfo_t *a, bool rt_parent) {
   source_known_t *sk;
-  if (!compatible_drop_unused || !rt_parent || index != iOB_TYPE ||
-      !is_compiletime(a->source))
+  if (!compatible_drop_unused || !rt_parent || !is_compiletime(a->source))
     return false;
   sk = CompileTime_Get(a->source);
   return (sk->refcount1_flags & SkFlagFixed) == 0 ||
@@ -1417,7 +1415,7 @@ static bool compatible_array(vinfo_array_t *aa, int count,
   /* special-case test. See comments below. */
 #define CHECK_FOR_NULL(a)                                                      \
   if (a != NULL) {                                                             \
-    if (compatible_unused_fact(a, rt_parent, i))                               \
+    if (compatible_unused_fact(a, rt_parent))                                  \
       compatible_drops++;                                                      \
     else {                                                                     \
       /* if there is no proved progress, and 'a'                               \

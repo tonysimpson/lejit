@@ -45,9 +45,9 @@ PSY_INLINE unsigned long psyco_block_serial(PsycoObject *po) {
 
 /* A compile-time value that code is being compiled to rely on: fixed (it
    may never be un-promoted), and stamped with the current block's serial.
-   A merge point may drop a run-time value's known type that no block
+   A merge point may drop a run-time value's known field that no block
    since the last merge point has stamped (po->mp_serial,
-   dispatcher.c:compatible_unused_fact, D50).
+   dispatcher.c:compatible_unused_fact, D50, D57).
    The stamp is only a guess about what code after the merge point needs;
    being wrong costs speed, never correctness. */
 PSY_INLINE void sk_mark_used(PsycoObject *po, source_known_t *sk) {
