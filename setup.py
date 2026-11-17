@@ -68,7 +68,8 @@ PROCESSOR = autodetect()
 
 def find_sources(processor, all_static):
     if all_static:
-        return ['./ni/ni.c']
+        # Python/pyruntime.c is built with Py_BUILD_CORE, on its own
+        return ['./ni/ni.c', './ni/Python/pyruntime.c']
     else:
         result = glob.glob('./ni/*.c')
         result += glob.glob('./ni/Python/*.c')

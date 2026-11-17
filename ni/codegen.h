@@ -124,9 +124,9 @@ EXTERNFN vinfo_t* psyco_generic_call(PsycoObject* po, void* c_function,
 /* To emit the call to other code blocks emitted by Psyco. 'argsources' gives
    the run-time sources for the arguments, as specified by
    psyco_build_frame(). */
-/* Py_EnterRecursiveCall/Py_LeaveRecursiveCall around compiled calls */
-EXTERNFN long cimpl_enter_recursive_call(void);
-EXTERNFN void cimpl_leave_recursive_call(void);
+/* Py_LeaveRecursiveCall after a compiled call (psyfunc.c); false with an
+   exception set */
+EXTERNFN bool psyco_leave_recursive_call(PsycoObject* po);
 EXTERNFN vinfo_t* psyco_call_psyco(PsycoObject* po, CodeBufferObject* codebuf,
 				   Source argsources[], int argcount,
 				   struct stack_frame_info_s* finfo);

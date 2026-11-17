@@ -479,18 +479,6 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
     return run_time_result(po, flags);
 }
 
-DEFINEFN long
-cimpl_enter_recursive_call(void)
-{
-    return Py_EnterRecursiveCall("");
-}
-
-DEFINEFN void
-cimpl_leave_recursive_call(void)
-{
-    Py_LeaveRecursiveCall();
-}
-
 DEFINEFN
 vinfo_t *
 psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
@@ -504,6 +492,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     int initial_stack_depth;
     int stack_correction;
     vinfo_t *vresult;
+    condition_code_t cc;
 
     BEGIN_CODE
     /* cannot use NEED_CC(): it might clobber one of the registers
@@ -574,25 +563,28 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
         }
     }
 
-    /* the depth counted by the caller (psyco_call_pyfunc): the result is
-       only in RAX, so no register allocation until it is back */
-    {
-        int mark;
-        TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
-        BEGIN_CALL(0);
-        END_CALL_I(cimpl_leave_recursive_call);
-        TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
-    }
-
     if (ccflags)
         POP_CC();
 
     END_CODE
-    vresult = run_time_result_check(po, CfCommonNewRefPyObject);
-    if (vresult != VINFO_OK) {
-        return vresult;
+    /* leave the depth counted by the caller (psyco_call_pyfunc) before the
+       error check, with the result in a register and no reference yet, so
+       that the error path doesn't release it */
+    vresult = run_time_result(po, CfReturnTypePtr);
+    if (!psyco_leave_recursive_call(po)) {
+        vinfo_decref(vresult, po);
+        return NULL;
     }
-    return run_time_result(po, CfCommonNewRefPyObject);
+    cc = integer_non_null(po, vresult);
+    if (cc == CC_ERROR || !runtime_condition_t(po, cc)) {
+        vinfo_decref(vresult, po);
+        if (cc != CC_ERROR)
+            PycException_Raise(po, vinfo_new(VirtualTime_New(&ERtPython)),
+                               NULL);
+        return NULL;
+    }
+    vresult->source = add_rtref(vresult->source);
+    return vresult;
 }
 
 /* internal, see NEED_CC() */
