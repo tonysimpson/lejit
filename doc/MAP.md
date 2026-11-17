@@ -130,8 +130,8 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/demo.py` | tooling | Demo: n-queens, n-body, ASCII Mandelbrot, word counts, timed with and without Ni. | | `e4f21aa` |
 | `tools/bench.py` | tooling | Benchmarks against plain CPython: ints, floats, builtin metas, isinstance dispatch (with and without global lookups), demo programs; fresh process per mode, best of 3, results compared. | | `29fe738` |
 | `tools/profile_bench.py` | tooling | — | Runs one pyperformance benchmark warm under Ni for a set time, for `perf record`. Results in `doc/PROFILE.md`. | | `36a6939` |
-| `tools/storeclasses.py` | tooling | — | Under plain CPython 3.7, classifies every `STORE_ATTR` of a vendored pyperformance benchmark by what it does to the instance dict (opcode tracing, owner read with ctypes; 3.7 x86-64 layouts). Results in `doc/STORES.md`. | | (this commit) |
-| `tools/store_micro.py` | tooling | — | Cost of one attribute store (split, combined, constructor) with or without Ni. Results in `doc/STORES.md`. | | (this commit) |
+| `tools/storeclasses.py` | tooling | — | Under plain CPython 3.7, classifies every `STORE_ATTR` of a vendored pyperformance benchmark by what it does to the instance dict (opcode tracing, owner read with ctypes; 3.7 x86-64 layouts). Results in `doc/STORES.md`. | | `884a6b2` |
+| `tools/store_micro.py` | tooling | — | Cost of one attribute store (split, combined, constructor) with or without Ni. Results in `doc/STORES.md`. | | `884a6b2` |
 | `tools/pyperf37.py` | tooling | — | Runs the vendored pyperformance benchmarks under 3.7 with and without Ni, through a stand-in `pyperf` module; loops calibrated on CPython, best of five. | Doesn't check results. | `88b1fa1` |
 | `tools/benchmarks.sh` | tooling | — | Release build plus `bench.py`, `pyperf37.py` and `compilebench.py`, printed and saved in `build/bench/`. | | `18e971f` |
 | `tools/codesize.py` | tooling | — | Code emitted per buffer kind, opcode, function and instruction, and identical copies (`-d`, capstone); needs a `NI_CODESTATS=1` build. Results in `doc/CODE_SIZE.md`. | | `4bdb7e1` |
