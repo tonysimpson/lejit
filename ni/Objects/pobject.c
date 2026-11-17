@@ -826,13 +826,31 @@ static vinfo_t* try_rich_compare(PsycoObject* po, vinfo_t* v, vinfo_t* w, int op
   return psyco_vi_NotImplemented();
 }
 
+static const char *const opstrings[] = {"<", "<=", "==", "!=", ">", ">="};
+
+/* object.c:do_richcompare. The slots have run; their default must not run
+   them again (KNOWN_BUGS F10). */
 DEFINEFN vinfo_t *PsycoObject_RichCompare(PsycoObject *po, vinfo_t *v,
                                           vinfo_t *w, int op) {
+  condition_code_t cc;
   vinfo_t *res = try_rich_compare(po, v, w, op);
-  if (IS_IMPLEMENTED(res)) return res;
-        vinfo_decref(res, po);
-  return psyco_generic_call(po, PyObject_RichCompare, CfCommonNewRefPyObject,
-                            "vvl", v, w, (long)op);
+  if (IS_IMPLEMENTED(res))
+    return res;
+  vinfo_decref(res, po);
+  switch (op) {
+  case Py_EQ:
+  case Py_NE:
+    cc = integer_cmp(po, v, w, op);
+    if (cc == CC_ERROR)
+      return NULL;
+    return PsycoBool_FromCondition(po, cc);
+  default:
+    PycException_SetFormat(
+        po, PyExc_TypeError,
+        "'%s' not supported between instances of '%.100s' and '%.100s'",
+        opstrings[op], Psyco_FastType(v)->tp_name, Psyco_FastType(w)->tp_name);
+    return NULL;
+  }
 }
 
 DEFINEFN

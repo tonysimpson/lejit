@@ -146,8 +146,6 @@ KNOWN = {
                         '(also in coroutine origins and warning locations)'),
     'test_cgitb': ('run=6 fail=0 err=1 skip=0 exit=0',
                    'C11: a compiled frame\'s f_locals is empty (cgitb.html)'),
-    'test_compare': ('run=7 fail=2 err=0 skip=0 exit=0',
-                     'F10: a user __eq__/__ne__ runs twice'),
     'test_ctypes': ('run=485 fail=6 err=0 skip=89 exit=0',
                     'C19: getrefcount around calls into C'),
     'test_email': ('run=1631 fail=0 err=1 skip=1 exit=0',
