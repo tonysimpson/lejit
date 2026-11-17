@@ -127,6 +127,8 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/without_fix.sh` | tooling | Runs a command with some uncommitted changes stashed and a forced rebuild, to show a test fails without its fix (D21). | | `4a5a3e5` |
 | `tools/demo.py` | tooling | Demo: n-queens, n-body, ASCII Mandelbrot, word counts, timed with and without Ni. | | `e4f21aa` |
 | `tools/bench.py` | tooling | Benchmarks against plain CPython: ints, floats, builtin metas, isinstance dispatch (with and without global lookups), demo programs; fresh process per mode, best of 3, results compared. | | `29fe738` |
+| `tools/pyperf37.py` | tooling | — | Runs the vendored pyperformance benchmarks under 3.7 with and without Ni, through a stand-in `pyperf` module; loops calibrated on CPython, best of five. | Doesn't check results. | (this commit) |
+| `tools/pyperformance/` | tooling | — | 23 pure-Python benchmark scripts from pyperformance 1.11.0 (MIT, `COPYING`), unchanged except bm_pyflate's data path (`pyflate_data/`). | | (this commit) |
 | `tests/encoding/v_mem_mov_test.c`, `run_v_mem_mov.sh` | tooling | Executes `v_mem_mov`'s code and checks the loads and stores. | | `de820e8` |
 | `setup.cfg`, `MANIFEST` | glue | Packaging metadata. | `MANIFEST` still lists upstream `c/` paths: stale. | `e1fd808` |
 | `.clang-format` | tooling | PEP 7-style formatting (commit `341dde6`). | Only some files have been reformatted, so files mix tabs and 2-space style. | `e1fd808` |

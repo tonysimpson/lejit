@@ -65,3 +65,6 @@ Not done / next candidates:
 - Start the meta-compiler design: the per-slot signature table (Q7) and the `Cf*` derivation (Q8).
 
 **Int bit operations and division** (A1-adjacent): `& | ^ << >> // % divmod` on one-digit ints are word operations (`plongobject.c:plong_bitop`, `plong_divmod_op`; a constant power-of-two divisor is a shift or mask, other divisors a pure C helper; `divmod` gives a virtual tuple). [run] Release build: total 3.4× → 3.9×; digit_sums 4.1× → 20.6×, collatz 3.1× → 5.7×, hashing 2.7× → 3.9×, quantise 7.5× → 11.3×.
+
+**pyperformance** (`tools/pyperf37.py`): 29 benchmarks from pyperformance 1.11.0's pure-Python set, run directly on 3.7. [run] Release build, after `b782b2b`: geometric mean **1.26×** (CPython 3.15's JIT: about 1.07× on x86-64, `doc/CPYTHON_JIT.md`). Best: spectral_norm 6.3×, scimark_fft 2.6×, scimark_monte_carlo 2.2×, pyflate 1.9×, fannkuch 1.7×, richards 1.6×. Slower than CPython (0.8–0.95×): comprehensions, deepcopy (3), generators, richards_super, nbody, mdp, hexiom. Their nbody (0.92×) differs from `tools/bench.py`'s (4×), which needs looking at.
+
