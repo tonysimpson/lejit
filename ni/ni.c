@@ -149,12 +149,16 @@ const static char MODULE_NAME[] = "ni";
 EXTERNVAR PyObject *psyco_codestats;
 EXTERNVAR long psyco_codestats_lost;
 EXTERNVAR PyObject *psyco_codestats_buffers;
+EXTERNVAR PyObject *psyco_codestats_states;
 /* the code size counts (pycompiler.c), handed over and reset */
 static PyObject *ni_codestats(PyObject *self, PyObject *unused) {
   PyObject *r = psyco_codestats ? psyco_codestats : PyDict_New();
   PyObject *bufs = psyco_codestats_buffers ? psyco_codestats_buffers
                                             : PyDict_New();
-  PyObject *t = Py_BuildValue("(NlN)", r, psyco_codestats_lost, bufs);
+  PyObject *states = psyco_codestats_states ? psyco_codestats_states
+                                              : PyList_New(0);
+  PyObject *t = Py_BuildValue("(NlNN)", r, psyco_codestats_lost, bufs, states);
+  psyco_codestats_states = NULL;
   psyco_codestats = NULL;
   psyco_codestats_buffers = NULL;
   psyco_codestats_lost = 0;

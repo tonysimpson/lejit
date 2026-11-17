@@ -7,6 +7,8 @@ Needs a build with the counters:
     python3.7 tools/codesize.py richards -n 30    # longer top lists
     python3.7 tools/codesize.py richards -d       # also identical copies
                                                   # (needs capstone)
+    python3.7 tools/codesize.py richards -s       # also what differs between
+                                                  # blocks at one merge point
 
 Runs the benchmark until compiling stops, then prints the code emitted per
 opcode, how many times instructions were compiled (each promotion, respawn
@@ -35,7 +37,8 @@ def main():
         top = int(args[i + 1])
         del args[i:i + 2]
     want_dups = '-d' in args
-    args = [a for a in args if a != '-d']
+    want_states = '-s' in args
+    args = [a for a in args if a not in ('-d', '-s')]
     name = args[0]
     import pyperf37
     import ni
@@ -52,7 +55,7 @@ def main():
             if now == last:
                 break
             last = now
-    stats, lost, bufs = ni._codestats()
+    stats, lost, bufs, states = ni._codestats()
     total = sum(b for n, b in bufs.values())
     print('%-14s %8s %8s %6s %8s' % ('buffer kind', 'count', 'KB', '%', 'B/each'))
     for k, (n, b) in sorted(bufs.items(), key=lambda x: -x[1][1]):
@@ -62,6 +65,8 @@ def main():
     report(stats, lost, total, top)
     if want_dups:
         duplicates(stats, top)
+    if want_states:
+        state_diffs(states, top)
 
 
 def normalise(addr, code, pointers):
@@ -128,6 +133,49 @@ def duplicates(stats, top):
         print('%-34s %-18s %6d %8d %8d %6.1f' % (
             '%s:%d @%d' % (co.co_name, co.co_firstlineno, i),
             dis.opname[op], n, k1, k2, d2 / 1024))
+
+
+def slot_name(co, i):
+    if i < 3:
+        return ('continuation', 'globals', 'inlining')[i]
+    i -= 3
+    names = co.co_varnames + co.co_cellvars + co.co_freevars
+    return names[i] if i < len(names) else 'stack%d' % (i - len(names))
+
+
+def state_diffs(states, top):
+    """For each merge point that started more than one block, the vlocals
+    slots whose state differed between those blocks."""
+    bymp = collections.defaultdict(list)
+    for co, instr, slots in states:
+        bymp[(co, instr)].append(slots)
+    blame = collections.Counter()
+    rows = []
+    for (co, instr), sigs in bymp.items():
+        if len(sigs) < 2:
+            continue
+        width = max(len(s) for s in sigs)
+        varying = []
+        for i in range(width):
+            vals = collections.Counter(s[i] if i < len(s) else '<none>'
+                                       for s in sigs)
+            if len(vals) > 1:
+                varying.append((slot_name(co, i), vals))
+                blame[slot_name(co, i) + ' in ' + co.co_name] += len(sigs) - 1
+        rows.append((len(sigs), co, instr, varying))
+    print('\n%d merge points started %d blocks; %d started more than one' % (
+        len(bymp), len(states), len(rows)))
+    print('\nslots that differ most often (extra blocks they appear in):')
+    for k, n in blame.most_common(top):
+        print('  %5d  %s' % (n, k))
+    print()
+    for n, co, instr, varying in sorted(rows, key=lambda r: -r[0])[:top]:
+        print('%s:%d @%d: %d blocks' % (co.co_name, co.co_firstlineno,
+                                        instr, n))
+        for name, vals in varying[:8]:
+            shown = ', '.join('%s x%d' % (v[:60], c)
+                              for v, c in vals.most_common(4))
+            print('    %-14s %s' % (name, shown))
 
 
 def pct(a, b):

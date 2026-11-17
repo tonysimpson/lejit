@@ -793,6 +793,63 @@ static code_t *psyco_resume_compile(PsycoObject *po, void *extra) {
      XXX psyco_compile_code() */
 }
 
+#if NI_CODESTATS
+/* The state each new block at a merge point starts from (tools/codesize.py
+   -s): (code object, instruction, one string per vlocals slot). R is a
+   run-time value, C/F a constant (F: fixed, i.e. promoted), V a virtual
+   one by its computer, with the known fields in brackets. */
+DEFINEVAR PyObject *psyco_codestats_states = NULL;
+
+static void cs_sig(char **p, char *end, vinfo_t *vi, int depth) {
+  int i;
+  if (*p >= end - 64)
+    return;
+  if (vi == NULL) {
+    *p += sprintf(*p, "-");
+    return;
+  }
+  if (is_runtime(vi->source))
+    *p += sprintf(*p, "R");
+  else if (is_compiletime(vi->source)) {
+    source_known_t *sk = CompileTime_Get(vi->source);
+    *p += sprintf(*p, "%c%lx", (sk->refcount1_flags & SkFlagFixed) ? 'F' : 'C',
+                  (unsigned long)sk->value);
+  } else
+    *p += sprintf(*p, "V%lx",
+                  (unsigned long)VirtualTime_Get(vi->source)->compute_fn);
+  if (vi->array != NullArray && depth < 4) {
+    *p += sprintf(*p, "[");
+    for (i = 0; i < vi->array->count; i++) {
+      if (i)
+        *p += sprintf(*p, ",");
+      cs_sig(p, end, vi->array->items[i], depth + 1);
+    }
+    *p += sprintf(*p, "]");
+  }
+}
+
+static void cs_state(PsycoObject *po) {
+  PyObject *slots, *t;
+  int i;
+  char buf[4096];
+  if (psyco_codestats_states == NULL &&
+      (psyco_codestats_states = PyList_New(0)) == NULL)
+    OUT_OF_MEMORY();
+  slots = PyList_New(po->vlocals.count);
+  if (slots == NULL)
+    OUT_OF_MEMORY();
+  for (i = 0; i < po->vlocals.count; i++) {
+    char *p = buf;
+    cs_sig(&p, buf + sizeof(buf), po->vlocals.items[i], 0);
+    PyList_SET_ITEM(slots, i, PyUnicode_FromStringAndSize(buf, p - buf));
+  }
+  t = Py_BuildValue("(OiN)", po->pr.co, po->pr.next_instr, slots);
+  if (t == NULL || PyList_Append(psyco_codestats_states, t) < 0)
+    OUT_OF_MEMORY();
+  Py_DECREF(t);
+}
+#endif
+
 /* Main compiling function. Emit machine code corresponding to the state
    'po'. The compiler produces its code into 'code' and the return value is
    the end of the written code. 'po' is freed. */
@@ -847,6 +904,10 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
     if (continue_compilation)
       return NULL; /* I won't actually compile myself, let the caller know */
 
+#if NI_CODESTATS
+    if (mp != NULL)
+      cs_state(po);
+#endif
     /* call the entry point function which performs the actual compilation */
     return GLOBAL_ENTRY_POINT(po);
   }
@@ -921,6 +982,10 @@ CodeBufferObject *psyco_compile_code(PsycoObject *po, mergepoint_t *mp) {
   if (compile_now) {
     /* call the entry point function which performs the actual compilation
        (this is the usual case) */
+#if NI_CODESTATS
+    if (mp != NULL)
+      cs_state(po);
+#endif
     code1 = GLOBAL_ENTRY_POINT(po);
   } else if (cmp != NULL) /* partial match */
   {
