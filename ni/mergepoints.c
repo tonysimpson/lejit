@@ -577,6 +577,8 @@ _build_merge_points(PyCodeObject *co, int module)
             case LOAD_DEREF:
             case STORE_DEREF:
             case BUILD_SLICE:
+            case BUILD_SET:
+            case SET_ADD:
             case FORMAT_VALUE:
             case BUILD_STRING:
             case EXTENDED_ARG:

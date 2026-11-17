@@ -2229,8 +2229,35 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
 #endif
 
-        /*MISSING_OPCODE(BUILD_SET);
-          MISSING_OPCODE(SET_ADD);*/
+      case BUILD_SET: {
+        /* as ceval: a new set, the items added deepest first */
+        int i;
+        v = psyco_generic_call(po, PySet_New, CfCommonNewRefPyObject, "l",
+                               0L);
+        if (v == NULL)
+          break;
+        Psyco_AssertType(po, v, &PySet_Type);
+        for (i = oparg; i > 0; i--)
+          if (!psyco_generic_call(po, PySet_Add, CfCommonIntZeroOk, "vv", v,
+                                  NTOP(i)))
+            break;
+        if (i > 0) {
+          vinfo_decref(v, po);
+          break;
+        }
+        while (oparg--)
+          POP_DECREF();
+        PUSH(v);
+        goto fine;
+      }
+
+      case SET_ADD:
+        w = NTOP(1);
+        v = NTOP(oparg + 1);
+        if (!psyco_generic_call(po, PySet_Add, CfCommonIntZeroOk, "vv", v, w))
+          break;
+        POP_DECREF();
+        goto fine;
 
       case LOAD_ATTR:
         w = vinfo_new(CompileTime_New(((long)GETNAMEV(oparg))));
