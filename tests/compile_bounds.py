@@ -50,7 +50,7 @@ def while_continue(n):
 
 # Eight counters, each still its first constant or run-time depending on
 # the paths taken: every combination is a new state at the loop head. The
-# cap per merge point (vcompiler.c:mp_capped, D35) bounds the copies: about
+# cap per merge point (vcompiler.c:mp_capped, D40) bounds the copies: about
 # 75 buffers with it, 440 without.
 def counters8(items):
     a = b = c = d = 0

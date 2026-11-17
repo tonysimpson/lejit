@@ -12,7 +12,7 @@
  *    (compare_return_address_in_a_stupid_way) that rejects otherwise good
  *    matches: a kludge for x86-64 call alignment (KNOWN_BUGS C1).
  *  - psyco_forget_int_values: the cap per merge point's generalisation
- *    (vcompiler.c:mp_capped, D35).
+ *    (vcompiler.c:mp_capped, D40).
  *  - Respawn: the rare branch of a run-time condition keeps no snapshot. When
  *    it is first taken, compilation is replayed from the previous snapshot into
  *    a throw-away buffer until the same point is reached (do_respawn).

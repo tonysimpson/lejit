@@ -5,7 +5,7 @@
  *   - partial match: un-promote the differing constants to run-time and retry;
  *   - no match:      start new code (or a coding pause if the buffer is full),
  *                    unless the merge point already has MP_BLOCK_CAP blocks:
- *                    then forget the ints' known values and retry (D35).
+ *                    then forget the ints' known values and retry (D40).
  * A coding pause is a stub that compiles the continuation only when execution
  * first reaches it.
  *
@@ -831,7 +831,7 @@ static void cs_state(PsycoObject *po) {
 }
 #endif
 
-/* The cap per merge point (CODE_SIZE.md option 3, D35): once this many
+/* The cap per merge point (CODE_SIZE.md option 3, D40): once this many
    blocks have been compiled at a merge point, a state that matches none of
    them is generalised (dispatcher.c:psyco_forget_int_values) and compared
    again, so it joins a general block instead of starting one more. The
