@@ -1245,6 +1245,59 @@ static void unbound_deref_error(PsycoObject *po, PyCodeObject *co, int oparg) {
 
 #define CELL_ob_ref FMUT(DEF_FIELD(PyCellObject, PyObject *, ob_ref, OB_type))
 
+/* ceval.c:import_from, as 3.7: the sys.modules fallback for circular
+   relative imports, and an ImportError with name and path (F44) */
+static PyObject *cimpl_import_from(PyObject *v, PyObject *name) {
+  _Py_IDENTIFIER(__name__);
+  PyObject *x, *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
+
+  if (_PyObject_LookupAttr(v, name, &x) != 0)
+    return x;
+  pkgname = _PyObject_GetAttrId(v, &PyId___name__);
+  if (pkgname == NULL)
+    goto error;
+  if (!PyUnicode_Check(pkgname)) {
+    Py_CLEAR(pkgname);
+    goto error;
+  }
+  fullmodname = PyUnicode_FromFormat("%U.%U", pkgname, name);
+  if (fullmodname == NULL) {
+    Py_DECREF(pkgname);
+    return NULL;
+  }
+  x = PyImport_GetModule(fullmodname);
+  Py_DECREF(fullmodname);
+  if (x == NULL && !PyErr_Occurred())
+    goto error;
+  Py_DECREF(pkgname);
+  return x;
+error:
+  pkgpath = PyModule_GetFilenameObject(v);
+  if (pkgname == NULL) {
+    pkgname_or_unknown = PyUnicode_FromString("<unknown module name>");
+    if (pkgname_or_unknown == NULL) {
+      Py_XDECREF(pkgpath);
+      return NULL;
+    }
+  } else
+    pkgname_or_unknown = pkgname;
+  if (pkgpath == NULL || !PyUnicode_Check(pkgpath)) {
+    PyErr_Clear();
+    errmsg = PyUnicode_FromFormat(
+        "cannot import name %R from %R (unknown location)", name,
+        pkgname_or_unknown);
+    PyErr_SetImportError(errmsg, pkgname, NULL);
+  } else {
+    errmsg = PyUnicode_FromFormat("cannot import name %R from %R (%S)", name,
+                                  pkgname_or_unknown, pkgpath);
+    PyErr_SetImportError(errmsg, pkgname, pkgpath);
+  }
+  Py_XDECREF(errmsg);
+  Py_XDECREF(pkgname_or_unknown);
+  Py_XDECREF(pkgpath);
+  return NULL;
+}
+
 /* ceval.c:cmp_outcome, PyCmp_EXC_MATCH: -1 with a TypeError if w is not an
    exception class or a tuple of them (F43) */
 static int cimpl_exc_match(PyObject *v, PyObject *w) {
@@ -2903,23 +2956,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case IMPORT_FROM: {
-        PyObject *name = GETNAMEV(oparg);
-        w = vinfo_new(CompileTime_New(((long)name)));
-        v = TOP();
-        x = PsycoObject_GetAttr(po, v, w);
-        vinfo_decref(w, po);
-        if (x == NULL) {
-          extra_assert(PycException_Occurred(po));
-
-          /* catch PyExc_AttributeError */
-          v = PycException_Matches(po, PyExc_AttributeError);
-          if (runtime_NON_NULL_t(po, v) == true) {
-            PycException_SetFormat(po, PyExc_ImportError,
-                                   "cannot import name %.230s",
-                                   NiCompatStr_AsString(name));
-          }
+        x = psyco_generic_call(po, cimpl_import_from, CfCommonNewRefPyObject,
+                               "vl", TOP(), (long)GETNAMEV(oparg));
+        if (x == NULL)
           break;
-        }
         PUSH(x);
         goto fine;
       }
