@@ -75,6 +75,7 @@ Example: `ni/Objects/plistobject.c:psy_listobject_init` registers `PyList_Type.t
 **P12 residual-call** (M; the default)
 No translation available → `psyco_generic_call(po, c_fn, Cf…, "fmt", args…)`. It emits a real call. Argument tags are `v` vinfo, `l` raw, `d` double, `r` by-reference, and `a`/`A` output array. The `Cf*` flags give the return type and error convention (`ni/cf_flags.h`).
 Example: `pabstract.c:PsycoSequence_GetSlice`, `pdictobject.c`, and every fallback path.
+An opcode with `oparg` stack items (BUILD_*_UNPACK) passes them as one virtual tuple (`PsycoTuple_New` over the stack), and the helper is ceval's case body looping over the tuple instead of `PEEK(i)`; `pycompiler.c:cimpl_build_unpack`, `cimpl_build_map_unpack`, `cimpl_build_set_unpack`.
 
 **P13 pure-helper-call** (M)
 Express an operation as a tiny static C helper called with `CfPure | CfReturnType…`. With compile-time arguments it's evaluated at compile time (via libffi in `ni/x64/iencoding.c:compile_time_call`); otherwise it's a plain call.
