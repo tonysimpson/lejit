@@ -1212,7 +1212,9 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
                          getstack(LOC_CONTINUATION->source)) +                 \
                         sizeof(long)))                                         \
               : ((po->stack_depth -                                            \
-                  getstack(LOC_INLINING->array->items[2]->source)) +           \
+                  getstack(LOC_INLINING->array->items[TOTAL_LOC_INLINE +       \
+                                                INDEX_LOC_CONTINUATION]       \
+                               ->source)) +                                   \
                  sizeof(long)))                                                \
        : ((po->stack_depth - getstack(LOC_CONTINUATION->source)) +             \
           sizeof(long)))

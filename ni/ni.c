@@ -123,6 +123,7 @@ static void code_extra_free(void *p) {
 
 DEFINEFN
 ni_code_extra_t *ni_code_extra(PyCodeObject *co) {
+  static long next_serial = 0;
   void *x;
   if (_PyCode_GetExtra((PyObject *)co, code_extra_index, &x) < 0)
     return NULL;
@@ -136,6 +137,7 @@ ni_code_extra_t *ni_code_extra(PyCodeObject *co) {
       PyMem_Free(x);
       return NULL;
     }
+    ((ni_code_extra_t *)x)->serial = ++next_serial;
   }
   return (ni_code_extra_t *)x;
 }

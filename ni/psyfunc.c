@@ -231,11 +231,6 @@ static PsycoObject *psyco_build_frame(struct fncall_arg_s *fncall,
   return po;
 }
 
-/* extra data that must be saved about a parent frame when a child
-   frame is about to be run in-line in the same PsycoObject */
-#define LOC_INLINE_CO 0
-#define LOC_INLINE_NEXT_INSTR 1
-#define TOTAL_LOC_INLINE 2
 
 static vinfo_t *call_with_inline_frame(PsycoObject *po,
                                        struct fncall_arg_s *fncall,
@@ -269,6 +264,7 @@ static vinfo_t *call_with_inline_frame(PsycoObject *po,
 
 DEFINEFN
 vinfo_t *psyco_save_inline_po(PsycoObject *po) {
+  ni_code_extra_t *x;
   int i = po->vlocals.count;
   vinfo_t **pp = po->vlocals.items;
   vinfo_t *v = vinfo_new(VirtualTime_New(&EInline));
@@ -279,6 +275,15 @@ vinfo_t *psyco_save_inline_po(PsycoObject *po) {
       vinfo_new(CompileTime_NewSk(sk_new((long)po->pr.co, SkFlagFixed)));
   v->array->items[LOC_INLINE_NEXT_INSTR] =
       vinfo_new(CompileTime_NewSk(sk_new(po->pr.next_instr, SkFlagFixed)));
+  /* The caller's code object is borrowed, so once it dies another can take
+     its address. Blocks compiled inside the inlined frame stay in the
+     callee's join points (vcompiler.c:psyco_compile_join), and their code
+     goes on in the dead caller's: the serial keeps a new caller from
+     matching them (KNOWN_BUGS C30). */
+  x = ni_code_extra(po->pr.co);
+  psyco_assert(x != NULL); /* made with the merge points */
+  v->array->items[LOC_INLINE_SERIAL] =
+      vinfo_new(CompileTime_NewSk(sk_new(x->serial, SkFlagFixed)));
   while (i--) {
     v->array->items[TOTAL_LOC_INLINE + i] = pp[i];
     pp[i] = NULL;
@@ -317,6 +322,7 @@ PsycoObject *psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a) {
   v = array->items[LOC_INLINE_NEXT_INSTR];
   po->pr.next_instr = v ? CompileTime_Get(v->source)->value : 0;
   vinfo_xdecref(v, NULL);
+  vinfo_xdecref(array->items[LOC_INLINE_SERIAL], NULL);
   array_release(array);
 
   pyc_data_build(po, psyco_get_merge_points(po->pr.co, -1));

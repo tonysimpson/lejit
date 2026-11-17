@@ -172,6 +172,8 @@ typedef struct {
                               that is safe) */
   PyObject* entry_builtins; /* and its f_builtins (KNOWN_BUGS F49): borrowed,
                                the compiled code owns it */
+  long serial;             /* never reused, unlike the code object's
+                              address (psyfunc.c:psyco_save_inline_po) */
 } ni_code_extra_t;
 /* the record for 'co', made on first use; NULL with an exception set */
 EXTERNFN ni_code_extra_t* ni_code_extra(PyCodeObject* co);
