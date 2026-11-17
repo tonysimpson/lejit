@@ -146,6 +146,14 @@ Example: `pobject.c:try_rich_compare`, `pabstract.c:binary_op1`.
 Specialise only for a hand-picked set of types and make everything else residual.
 Example: `pabstract.c:PsycoNumber_Power` (int/float only), `pfloatobject.c:pfloat_richcompare` (float/float only), `pobject.c:Psyco_SafelyDeleteVar` (types known to have no `__del__`).
 
+**P27 control-flow-flag-to-site** (M)
+A ceval case that leaves by a different label on some outcomes (`do_raise` returning 1 sends RAISE_VARARGS to `exception_unwind`, past `error:`'s `PyTraceBack_Here`) → a residual helper per outcome that does the work of the label it skips, and a compile-time test at the shared unwind code for the opcode that took the other exit. The generator must read which label each return value of a helper reaches. [read]
+Example: `pycompiler.c:cimpl_reraise` (the RuntimeError path records its own traceback entry) and the unwind loop's `RAISE_VARARGS && oparg == 0` test (KNOWN_BUGS F18).
+
+**P28 frame-field-as-slot** (J)
+A frame field that CPython fixes when the frame starts and the case bodies read (`f->f_builtins`, set in `_PyFrame_New_NoTrack` from the caller or the globals) → a compile-time slot in `po->vlocals`, set where Ni builds a frame (eval-hook entry, direct calls), not recomputed from other fields at each use. Judgement: which fields are fixed per frame, and the rule for frames Ni builds itself. A field in `pr` would be wrong, since only `vlocals` is compared at merge points.
+Example: `LOC_BUILTINS` (`pycheader.h`, `psyfunc.c:callee_builtins`; KNOWN_BUGS F49, D52).
+
 ## Core and backend mechanisms (not translations, but named for reference)
 
 - **inline-cache-patch**: a promotion site is a self-patching `CMP imm64; JE` for the last value seen, in front of the C dispatcher. `ni/x64/idispatcher.h:ipromotion_finish`, `fix_fast_common_case`.

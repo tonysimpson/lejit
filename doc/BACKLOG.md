@@ -16,10 +16,9 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C29:** a frame already running compiled when tracing starts gets no events: `pdb.set_trace()`/`breakpoint()` in a compiled function stops only in its callees, a tracer that sets `f_trace` on running frames sees nothing from them, and a profiler misses their `c_call`/`return` events. Needs a way out of compiled code mid-frame (large).
 - **F10:** a user `__eq__`/`__ne__` runs twice (now seen: CPython's `test_compare`). Small to medium (`pobject.c`).
 - **F48:** an exhausted sequence iterator restarts when the sequence grows (`piterobject.c`). Medium.
-- **F49, F50:** builtins read from `globals()['__builtins__']` at each lookup; a slot deleted after compiling (`del C.__next__`) not seen. Small to medium; rare.
+- **F50:** a slot deleted after compiling (`del C.__next__`) not seen. Small to medium; rare. (F49 fixed, `d2637bc`; its remainder is F72, below.)
 - **F52:** a function's `__defaults__` changed after a compiled call to it isn't seen (`unittest.mock.patch.object(f, '__defaults__')`; CPython's `test_unittest`). Small (a guard on the defaults at the call).
 - **C25:** C functions called directly skip `_Py_CheckFunctionResult` (a buggy extension returning NULL without an exception segfaults). Small.
-- **F51:** checked build only: a respawn replay aborts on a forced constant tuple (`test_subclassinit`). Small (the replay check).
 - **F9:** a `T_STRING_INPLACE` struct member gives `bytes`, not `str`. Small. **In flight** (strings agent).
 - **C9:** reference counts are lower than ceval's, so C code testing `Py_REFCNT(x) == 1` can behave differently. Fixed where seen; others may exist.
 - **C11, C18:** compiled frames are only partly visible (`warnings` stacklevel, `f_lineno`, `f_back`), and a traceback doesn't keep a compiled function's locals alive. C11 now reaches more code: with `with` and class statements compiling, unittest's `case.run` is compiled, so every test method is a compiled callee (`type()` takes `__module__` from `unittest.case`; CPython's `test_builtin`). Worth doing next among the frame bugs: the hook behind `PyEval_GetFrame` (`globals()`, `type()`'s `__module__`), then `f_lineno`.
@@ -30,9 +29,20 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C24:** fixed (D45): compiled code tests `eval_breaker` at loop heads and after calls.
 - **C22, F41–F47:** fixed by the CPython test survey (2026-11-17; KNOWN_BUGS), including two crashes (C22, F45).
 
+**Left for the owner: accept, or move to the 3.12 backlog** (point-2 sweep of GOAL.md, 2026-11-17; F49, F51/F35 and F18 (1) fixed then. Proposals only; not decided.)
+- **C9** (reference counts lower than ceval's; accepted in `test_importlib`: marshal writes no FLAG_REF for a code object with refcount 1, so `.pyc` bytes differ, loads equal). Fixed where seen; a general fix owns a reference per stack slot, a cost on every push. Proposal: accept for 3.7, look again in 3.12.
+- **C14** (compiled code keeps classes, bound methods and module dicts alive; `test_gc`, `test_module`, `test_weakref`). Needs code freeing. Proposal: move to 3.12 (the entry design decides what owns compiled code).
+- **C15 remainder** (`f = locals; f()` sees only the arguments). Needs the locals in the frame, as C11 does. Proposal: move to 3.12 with C11.
+- **C17 remainder** (`f(x) is x` False for virtual ints, floats, bound methods). The language promises no identity for new numbers; forcing them costs the main speed-up. Proposal: accept.
+- **C18** (a traceback doesn't keep a compiled function's locals alive; `test_exceptions`). Same root as C11 (locals not in the frame). Proposal: move to 3.12 with C11.
+- **C19, C20** (`getrefcount` one lower; one GC object per compile; `test_generators`, `test_ctypes`, `test_socket`, `test_descr`, `test_tracemalloc`). By design. Proposal: accept.
+- **F72** (new): a module's `__builtins__` replaced for good after a call into it from another module compiled isn't seen at that call site. Exact needs a guard per cross-module call. Proposal: accept.
+- **F27 remainder** (running out of memory mid-compile aborts on purpose): seen 2026-11-17 in `test_queue` (`--all`) when the run's address-space limit was 4.0e9 bytes instead of `MEMORY_LIMIT`'s 4 GiB: 100 thread stacks leave no room and a compile allocation fails (`vcompiler.h` OUT_OF_MEMORY). `baseline-3.7` the same. Proposal: move to 3.12 (unwinding a half-built compile), and keep the test limit at 4 GiB.
+- **C39** (new): `eval_breaker.async_exc_from_thread` is flaky on `baseline-3.7` too (timing). Proposal: make the case robust to a late async exception, or mark it; owner of the C30/C31 work, since it touches the same paths.
+
 **Possible, not shown to happen**
-- **F11:** a C-NULL `kw` on the `use_proxy` path. From reading; needs a test first.
-- **F18:** exception details (a bare `raise` adds a traceback entry; dead Py2 frame-exception code).
+- **F11:** dormant: the function has no caller.
+- **F18 (3):** dead Py2 frame-exception code (the bare-`raise` traceback entry is fixed, `e3e1b15`).
 
 **Latent or by design**
 - **F12, F35, M10, M11, M7:** documented, harmless today.
