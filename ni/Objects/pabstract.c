@@ -367,68 +367,104 @@ vinfo_t *PsycoSequence_Tuple(PsycoObject *po, vinfo_t *seq) {
   return v;
 }
 
-DEFINEFN
-vinfo_t *PsycoNumber_Positive(PsycoObject *po, vinfo_t *vi) {
-  PyNumberMethods *m;
-  PyTypeObject *tp = Psyco_NeedType(po, vi);
-  if (tp == NULL)
-    return NULL;
-
-  m = tp->tp_as_number;
-  if (m && m->nb_positive)
-    return Psyco_META1(po, m->nb_positive, CfCommonNewRefPyObject, "v", vi);
-
-  return type_error_tp(po, "bad operand type for unary +: '%.200s'", tp);
-}
-
-DEFINEFN
-vinfo_t *PsycoNumber_Negative(PsycoObject *po, vinfo_t *vi) {
-  PyNumberMethods *m;
-  PyTypeObject *tp = Psyco_NeedType(po, vi);
-  if (tp == NULL)
-    return NULL;
-
-  m = tp->tp_as_number;
-  if (m && m->nb_negative)
-    return Psyco_META1(po, m->nb_negative, CfCommonNewRefPyObject, "v", vi);
-
-  return type_error_tp(po, "bad operand type for unary -: '%.200s'", tp);
-}
-
-DEFINEFN
-vinfo_t *PsycoNumber_Invert(PsycoObject *po, vinfo_t *vi) {
-  PyNumberMethods *m;
-  PyTypeObject *tp = Psyco_NeedType(po, vi);
-  if (tp == NULL)
-    return NULL;
-
-  m = tp->tp_as_number;
-  if (m && m->nb_invert)
-    return Psyco_META1(po, m->nb_invert, CfCommonNewRefPyObject, "v", vi);
-
-  return type_error_tp(po, "bad operand type for unary ~: '%.200s'", tp);
-}
-
-DEFINEFN
-vinfo_t *PsycoNumber_Absolute(PsycoObject *po, vinfo_t *vi) {
-  PyNumberMethods *m;
-  PyTypeObject *tp = Psyco_NeedType(po, vi);
-  if (tp == NULL)
-    return NULL;
-
-  m = tp->tp_as_number;
-  if (m && m->nb_absolute)
-    return Psyco_META1(po, m->nb_absolute, CfCommonNewRefPyObject, "v", vi);
-
-  PycException_SetFormat(po, PyExc_TypeError,
-                         "bad operand type for abs(): '%.200s'", tp->tp_name);
-  return NULL;
-}
-
 #define NB_SLOT(x) offsetof(PyNumberMethods, x)
 #define NB_BINOP(nb_methods, slot) ((binaryfunc *)(&((char *)nb_methods)[slot]))
 #define NB_TERNOP(nb_methods, slot)                                            \
   ((ternaryfunc *)(&((char *)nb_methods)[slot]))
+
+/* The slot at 'offset' in one of tp's tables (NULL if tp has no such
+   table), as Psyco_TypeSlot reads it: 1, 0 if a heap type's slot has
+   changed since it was first seen, -1 on error. */
+static int table_slot(PsycoObject *po, PyTypeObject *tp, void *table,
+                      size_t offset, void **f) {
+  if (table == NULL) {
+    *f = NULL;
+    return 1;
+  }
+  return Psyco_TypeSlot(po, tp, (char *)table + offset, f);
+}
+#define NB_SLOT_OF(tp, offset, f)                                              \
+  table_slot(po, tp, (tp)->tp_as_number, offset, (void **)(f))
+#define SQ_SLOT_OF(tp, name, f)                                                \
+  table_slot(po, tp, (tp)->tp_as_sequence, offsetof(PySequenceMethods, name),  \
+             (void **)(f))
+
+/* abstract.c's PyNumber_Positive etc.: 'generic' is what compiled code
+   calls once a heap type's slot has changed */
+static vinfo_t *unary_op(PsycoObject *po, vinfo_t *vi, size_t offset,
+                         void *generic, const char *msg) {
+  unaryfunc f;
+  PyTypeObject *tp = Psyco_NeedType(po, vi);
+  if (tp == NULL)
+    return NULL;
+
+  switch (NB_SLOT_OF(tp, offset, &f)) {
+  case 1:
+    break;
+  case 0:
+    return psyco_generic_call(po, generic, CfCommonNewRefPyObject, "v", vi);
+  default:
+    return NULL;
+  }
+  if (f != NULL)
+    return Psyco_META1(po, f, CfCommonNewRefPyObject, "v", vi);
+  return type_error_tp(po, msg, tp);
+}
+
+DEFINEFN
+vinfo_t *PsycoNumber_Positive(PsycoObject *po, vinfo_t *vi) {
+  return unary_op(po, vi, NB_SLOT(nb_positive), PyNumber_Positive,
+                  "bad operand type for unary +: '%.200s'");
+}
+
+DEFINEFN
+vinfo_t *PsycoNumber_Negative(PsycoObject *po, vinfo_t *vi) {
+  return unary_op(po, vi, NB_SLOT(nb_negative), PyNumber_Negative,
+                  "bad operand type for unary -: '%.200s'");
+}
+
+DEFINEFN
+vinfo_t *PsycoNumber_Invert(PsycoObject *po, vinfo_t *vi) {
+  return unary_op(po, vi, NB_SLOT(nb_invert), PyNumber_Invert,
+                  "bad operand type for unary ~: '%.200s'");
+}
+
+DEFINEFN
+vinfo_t *PsycoNumber_Absolute(PsycoObject *po, vinfo_t *vi) {
+  return unary_op(po, vi, NB_SLOT(nb_absolute), PyNumber_Absolute,
+                  "bad operand type for abs(): '%.200s'");
+}
+
+/* abstract.c's binary_op1, at run time: what compiled code calls once a
+   heap type's slot has changed (KNOWN_BUGS F56) */
+static PyObject *cimpl_binary_op1(PyObject *v, PyObject *w, long op_slot) {
+  PyObject *x;
+  binaryfunc slotv = NULL;
+  binaryfunc slotw = NULL;
+  if (Py_TYPE(v)->tp_as_number != NULL)
+    slotv = *NB_BINOP(Py_TYPE(v)->tp_as_number, op_slot);
+  if (Py_TYPE(w) != Py_TYPE(v) && Py_TYPE(w)->tp_as_number != NULL) {
+    slotw = *NB_BINOP(Py_TYPE(w)->tp_as_number, op_slot);
+    if (slotw == slotv)
+      slotw = NULL;
+  }
+  if (slotv) {
+    if (slotw && PyType_IsSubtype(Py_TYPE(w), Py_TYPE(v))) {
+      x = slotw(v, w);
+      if (x != Py_NotImplemented)
+        return x;
+      Py_DECREF(x);
+      slotw = NULL;
+    }
+    x = slotv(v, w);
+    if (x != Py_NotImplemented)
+      return x;
+    Py_DECREF(x);
+  }
+  if (slotw)
+    return slotw(v, w);
+  Py_RETURN_NOTIMPLEMENTED;
+}
 
 /* 3.7 abstract.c binary_op1: try v's slot, then w's; w's first if w's type
    is a subtype of v's. */
@@ -447,10 +483,23 @@ static vinfo_t *binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w,
   if (wtp == NULL)
     return NULL;
 
-  if (vtp->tp_as_number != NULL)
-    slotv = *NB_BINOP(vtp->tp_as_number, op_slot);
-  if (wtp != vtp && wtp->tp_as_number != NULL) {
-    slotw = *NB_BINOP(wtp->tp_as_number, op_slot);
+  switch (NB_SLOT_OF(vtp, op_slot, &slotv)) {
+  case 1:
+    break;
+  case 0:
+    goto changed;
+  default:
+    return NULL;
+  }
+  if (wtp != vtp) {
+    switch (NB_SLOT_OF(wtp, op_slot, &slotw)) {
+    case 1:
+      break;
+    case 0:
+      goto changed;
+    default:
+      return NULL;
+    }
     if (slotw == slotv)
       slotw = NULL;
   }
@@ -474,6 +523,10 @@ static vinfo_t *binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w,
     vinfo_decref(x, po); /* can't do it */
   }
   return psyco_vi_NotImplemented();
+
+changed:
+  return psyco_generic_call(po, cimpl_binary_op1, CfCommonCheckNotImplemented,
+                            "vvl", v, w, (long)op_slot);
 }
 
 static vinfo_t *binop_type_error(PsycoObject *po, vinfo_t *v, vinfo_t *w,
@@ -538,16 +591,90 @@ BINARY_FUNC(PsycoNumber_FloorDivide, nb_floor_divide, "//")
 BINARY_FUNC(PsycoNumber_TrueDivide, nb_true_divide, "/")
 BINARY_FUNC(PsycoNumber_MatrixMultiply, nb_matrix_multiply, "@")
 
+/* the sequence part of PyNumber_Add, _Multiply, _InPlaceAdd and
+   _InPlaceMultiply, after the number slots gave NotImplemented, at run
+   time: what compiled code calls once a heap type's sequence slot has
+   changed */
+enum { SEQ_ADD, SEQ_MUL, SEQ_IADD, SEQ_IMUL };
+
+static PyObject *cimpl_sequence_repeat(ssizeargfunc f, PyObject *seq,
+                                       PyObject *n) {
+  Py_ssize_t count;
+  if (!PyIndex_Check(n)) {
+    PyErr_Format(PyExc_TypeError,
+                 "can't multiply sequence by non-int of type '%.200s'",
+                 Py_TYPE(n)->tp_name);
+    return NULL;
+  }
+  count = PyNumber_AsSsize_t(n, PyExc_OverflowError);
+  if (count == -1 && PyErr_Occurred())
+    return NULL;
+  return f(seq, count);
+}
+
+static PyObject *cimpl_sequence_op(PyObject *v, PyObject *w, long op) {
+  PySequenceMethods *mv = Py_TYPE(v)->tp_as_sequence;
+  PySequenceMethods *mw = Py_TYPE(w)->tp_as_sequence;
+  static const char *const names[] = {"+", "*", "+=", "*="};
+  switch (op) {
+  case SEQ_ADD:
+    if (mv && mv->sq_concat)
+      return mv->sq_concat(v, w);
+    break;
+  case SEQ_IADD:
+    if (mv && (mv->sq_inplace_concat || mv->sq_concat))
+      return (mv->sq_inplace_concat ? mv->sq_inplace_concat
+                                    : mv->sq_concat)(v, w);
+    break;
+  case SEQ_MUL:
+    if (mv && mv->sq_repeat)
+      return cimpl_sequence_repeat(mv->sq_repeat, v, w);
+    if (mw && mw->sq_repeat)
+      return cimpl_sequence_repeat(mw->sq_repeat, w, v);
+    break;
+  default: /* SEQ_IMUL */
+    if (mv != NULL) {
+      if (mv->sq_inplace_repeat || mv->sq_repeat)
+        return cimpl_sequence_repeat(mv->sq_inplace_repeat
+                                         ? mv->sq_inplace_repeat
+                                         : mv->sq_repeat,
+                                     v, w);
+    } else if (mw && mw->sq_repeat)
+      return cimpl_sequence_repeat(mw->sq_repeat, w, v);
+    break;
+  }
+  PyErr_Format(PyExc_TypeError,
+               "unsupported operand type(s) for %.100s: '%.100s' and '%.100s'",
+               names[op], Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
+  return NULL;
+}
+
+static vinfo_t *sequence_op_changed(PsycoObject *po, vinfo_t *v, vinfo_t *w,
+                                    long op) {
+  return psyco_generic_call(po, cimpl_sequence_op, CfCommonNewRefPyObject,
+                            "vvl", v, w, op);
+}
+
+/* each sequence slot below: 1 (read), 0 (changed), -1 */
+#define SQ_SLOT_OR(tp, name, f, changed_op)                                    \
+  switch (SQ_SLOT_OF(tp, name, f)) {                                           \
+  case 1:                                                                      \
+    break;                                                                     \
+  case 0:                                                                      \
+    return sequence_op_changed(po, v, w, changed_op);                          \
+  default:                                                                     \
+    return NULL;                                                               \
+  }
+
 DEFINEFN
 vinfo_t *PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
   vinfo_t *result = binary_op1(po, v, w, NB_SLOT(nb_add));
   if (!IS_IMPLEMENTED(result)) {
-    PySequenceMethods *m;
+    binaryfunc f;
     vinfo_decref(result, po);
-    m = Psyco_FastType(v)->tp_as_sequence;
-    if (m && m->sq_concat) {
-      result =
-          Psyco_META2(po, m->sq_concat, CfCommonNewRefPyObject, "vv", v, w);
+    SQ_SLOT_OR(Psyco_FastType(v), sq_concat, &f, SEQ_ADD);
+    if (f != NULL) {
+      result = Psyco_META2(po, f, CfCommonNewRefPyObject, "vv", v, w);
     } else {
       return binop_type_error(po, v, w, "+");
     }
@@ -592,14 +719,14 @@ vinfo_t *PsycoNumber_Multiply(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
 
   vinfo_t *result = binary_op1(po, v, w, NB_SLOT(nb_multiply));
   if (!IS_IMPLEMENTED(result)) {
-    PySequenceMethods *mv = Psyco_FastType(v)->tp_as_sequence;
-    PySequenceMethods *mw = Psyco_FastType(w)->tp_as_sequence;
+    ssizeargfunc f;
     vinfo_decref(result, po);
-    if (mv && mv->sq_repeat) {
-      return psequence_repeat(po, mv->sq_repeat, v, w);
-    } else if (mw && mw->sq_repeat) {
-      return psequence_repeat(po, mw->sq_repeat, w, v);
-    }
+    SQ_SLOT_OR(Psyco_FastType(v), sq_repeat, &f, SEQ_MUL);
+    if (f != NULL)
+      return psequence_repeat(po, f, v, w);
+    SQ_SLOT_OR(Psyco_FastType(w), sq_repeat, &f, SEQ_MUL);
+    if (f != NULL)
+      return psequence_repeat(po, f, w, v);
     result = binop_type_error(po, v, w, "*");
   }
   return result;
@@ -646,23 +773,44 @@ fallback:
                             v1, v2, v3);
 }
 
+/* abstract.c's binary_iop1 at run time, as cimpl_binary_op1 */
+static PyObject *cimpl_binary_iop1(PyObject *v, PyObject *w, long iop_slot,
+                                   long op_slot) {
+  PyNumberMethods *mv = Py_TYPE(v)->tp_as_number;
+  if (mv != NULL) {
+    binaryfunc slot = *NB_BINOP(mv, iop_slot);
+    if (slot) {
+      PyObject *x = slot(v, w);
+      if (x != Py_NotImplemented)
+        return x;
+      Py_DECREF(x);
+    }
+  }
+  return cimpl_binary_op1(v, w, op_slot);
+}
+
 static vinfo_t *binary_iop1(PsycoObject *po, vinfo_t *v, vinfo_t *w,
                             const int iop_slot, const int op_slot) {
-  PyNumberMethods *mv;
+  binaryfunc slot;
   PyTypeObject *vtp = Psyco_NeedType(po, v);
   if (vtp == NULL)
     return NULL;
 
-  mv = vtp->tp_as_number;
-  if (mv != NULL) {
-    binaryfunc slot = *NB_BINOP(mv, iop_slot);
-    if (slot) {
-      vinfo_t *x =
-          Psyco_META2(po, slot, CfCommonCheckNotImplemented, "vv", v, w);
-      if (IS_IMPLEMENTED(x))
-        return x;
-      vinfo_decref(x, po);
-    }
+  switch (NB_SLOT_OF(vtp, iop_slot, &slot)) {
+  case 1:
+    break;
+  case 0:
+    return psyco_generic_call(po, cimpl_binary_iop1,
+                              CfCommonCheckNotImplemented, "vvll", v, w,
+                              (long)iop_slot, (long)op_slot);
+  default:
+    return NULL;
+  }
+  if (slot) {
+    vinfo_t *x = Psyco_META2(po, slot, CfCommonCheckNotImplemented, "vv", v, w);
+    if (IS_IMPLEMENTED(x))
+      return x;
+    vinfo_decref(x, po);
   }
   return binary_op1(po, v, w, op_slot);
 }
@@ -703,15 +851,13 @@ vinfo_t *PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
       binary_iop1(po, v, w, NB_SLOT(nb_inplace_add), NB_SLOT(nb_add));
   if (!IS_IMPLEMENTED(result)) {
     PyTypeObject *vtp = Psyco_FastType(v);
-    PySequenceMethods *m = vtp->tp_as_sequence;
+    binaryfunc f;
     vinfo_decref(result, po);
-    if (m != NULL) {
-      binaryfunc f = m->sq_inplace_concat;
-      if (f == NULL)
-        f = m->sq_concat;
-      if (f != NULL)
-        return Psyco_META2(po, f, CfCommonNewRefPyObject, "vv", v, w);
-    }
+    SQ_SLOT_OR(vtp, sq_inplace_concat, &f, SEQ_IADD);
+    if (f == NULL)
+      SQ_SLOT_OR(vtp, sq_concat, &f, SEQ_IADD);
+    if (f != NULL)
+      return Psyco_META2(po, f, CfCommonNewRefPyObject, "vv", v, w);
     result = binop_type_error(po, v, w, "+=");
   }
   return result;
@@ -724,22 +870,21 @@ vinfo_t *PsycoNumber_InPlaceMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
   if (!IS_IMPLEMENTED(result)) {
     PyTypeObject *vtp = Psyco_FastType(v);
     PyTypeObject *wtp = Psyco_FastType(w);
-    PySequenceMethods *mv = vtp->tp_as_sequence;
-    PySequenceMethods *mw = wtp->tp_as_sequence;
+    ssizeargfunc f;
     vinfo_decref(result, po);
-    if (mv != NULL) {
-      void *f = NULL;
-      f = mv->sq_inplace_repeat;
+    if (vtp->tp_as_sequence != NULL) {
+      SQ_SLOT_OR(vtp, sq_inplace_repeat, &f, SEQ_IMUL);
       if (f == NULL)
-        f = mv->sq_repeat;
+        SQ_SLOT_OR(vtp, sq_repeat, &f, SEQ_IMUL);
       if (f != NULL)
         return psequence_repeat(po, f, v, w);
-    } else if (mw != NULL) {
+    } else {
       /* Note that the right hand operand should not be
        * mutated in this case so sq_inplace_repeat is not
        * used. */
-      if (mw->sq_repeat)
-        return psequence_repeat(po, mw->sq_repeat, w, v);
+      SQ_SLOT_OR(wtp, sq_repeat, &f, SEQ_IMUL);
+      if (f != NULL)
+        return psequence_repeat(po, f, w, v);
     }
     result = binop_type_error(po, v, w, "*=");
   }
