@@ -23,7 +23,8 @@ MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
            'test_exceptions', 'test_with', 'test_keywordonlyarg',
            'test_grammar', 'test_types', 'test_bool', 'test_int', 'test_float',
            'test_long', 'test_complex', 'test_builtin', 'test_richcmp',
-           'test_userdict', 'test_userlist', 'test_userstring']
+           'test_userdict', 'test_userlist', 'test_userstring', 'test_super',
+           'test_descr']
 
 # module -> reason it is expected to differ, or (the expected result with
 # Ni, reason) when only that difference is accepted
@@ -33,6 +34,8 @@ KNOWN = {
                         'C18: tracebacks don\'t keep compiled locals alive'),
     'test_generators': ('run=16 fail=1 err=0 skip=0 exit=0',
                         'C19: getrefcount misses borrowed arguments'),
+    'test_descr': ('run=138 fail=1 err=0 skip=2 exit=0',
+                   'C20: compiling allocates a GC object test_slots counts'),
 }
 
 CHILD = r'''

@@ -443,6 +443,7 @@ _build_merge_points(PyCodeObject *co, int module)
     co_report_t *report;
     int extended_arg = 0;
     Py_ssize_t fv;
+    int reads_class;
 
     /* XXX tony: all these not supported/buggy currently */
     if (module) {
@@ -455,11 +456,15 @@ _build_merge_points(PyCodeObject *co, int module)
         goto not_ok;
     }
     /* zero-argument super() reads the __class__ cell and the first
-       argument from the real frame, where compiled code doesn't keep them */
+       argument from the real frame (typeobject.c:super_init). Closure code
+       only runs compiled from its own frame (never inlined: psyfunc.c),
+       where CPython put both; compiled code doesn't write locals back, so
+       the frame's first argument is right unless the code rebinds it */
+    reads_class = 0;
     for (fv = 0; fv < PyTuple_GET_SIZE(co->co_freevars); fv++)
         if (PyUnicode_CompareWithASCIIString(
                 PyTuple_GET_ITEM(co->co_freevars, fv), "__class__") == 0)
-            goto not_ok;
+            reads_class = 1;
 
     first_instr = (_Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
     next_instr = first_instr;
@@ -471,6 +476,9 @@ _build_merge_points(PyCodeObject *co, int module)
         oparg |= extended_arg;
         extended_arg = opcode == EXTENDED_ARG ? oparg << 8 : 0;
         if (opcode == LOAD_GLOBAL && loads_frame_locals_builtin(co, oparg))
+            goto not_ok;
+        if (reads_class && oparg == 0 &&
+            (opcode == STORE_FAST || opcode == DELETE_FAST))
             goto not_ok;
 
         switch (opcode) {

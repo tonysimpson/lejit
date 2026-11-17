@@ -72,3 +72,5 @@ Not done / next candidates:
 
 **`*` unpacking** (`f(a, *b)`, `(*a, *b)`, `[*a, *b]`): BUILD_TUPLE_UNPACK_WITH_CALL, BUILD_TUPLE_UNPACK and BUILD_LIST_UNPACK compile (a virtual tuple when every part is a known tuple). It was the only opcode keeping `copy.deepcopy` interpreted. [run] pyperformance deepcopy 0.84× → 1.94×, deepcopy_memo 0.84× → 2.41×, deepcopy_reduce 0.86× → 1.52×.
 
+**Zero-argument `super()`** compiles: code reading `__class__` only runs compiled from its own frame, which holds the first argument and the cell, unless the code rebinds its first argument (then interpreted). [run] richards_super 0.90× → 1.37×; CPython's `test_super`, `test_class`, `test_scope` pass with Ni.
+

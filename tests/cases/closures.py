@@ -87,13 +87,38 @@ def make_adders(n):
     return [(lambda x, i=i: x + i)(10) for i in range(n)]
 
 
-class WithSuper(list):
+class Base:
+    def __init__(self, v):
+        self.v = v
+
+    def get(self, k):
+        return self.v + k
+
+
+class WithSuper(Base):
+    def __init__(self, v):
+        super().__init__(v * 2)     # __class__ and the frame's self
+
+    def get(self, k):
+        t = 0
+        for i in range(k):
+            t += super().get(i)
+        return t
+
+    def rebinds(self, k):
+        x = super().get(k)
+        self = None                 # rebinds the first argument: interpreted
+        return x, self
+
+
+class SuperOfList(list):
     def size(self):
-        return super().__len__()   # __class__ cell: stays interpreted
+        return super().__len__()
 
 
 def super_call(n):
-    return WithSuper(range(n)).size()
+    w = WithSuper(n)
+    return w.get(5), w.rebinds(3), SuperOfList(range(n)).size()
 
 
 CASES = [
