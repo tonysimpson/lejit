@@ -333,3 +333,40 @@ Gains are against the code and compile time above. "Code" means all emitted code
    - Small.
 5. **A lower cut-off, or sharing a site's copies.** The most it could save is the code for a site's extra values: 0–12 KB (0–3%; deepcopy 17%). Each value lost is a type no longer known downstream. Not recommended.
 6. **Promoting fewer kinds of value.** Types are 93.5% of promotion code, and they are the specialisation Ni exists for. Functions, code objects, words and other objects together are about 5%. Not recommended.
+
+## Two forms of one value (`1b88dff`, D41, QUESTIONS 38) [run]
+
+The four pairs QUESTIONS 38 listed, measured with a tally of `codesize.py -s`'s states over all 23 pyperformance benchmarks (`NI_CODESTATS=1` release build at `ce81596`, cap on). Each local's state is classed as a constant (`C:int-large`: an int object outside -5..256), a virtual int with a known or a run-time value (`Vlong:known`, `Vlong:R`), a run-time object with a promoted type (`R:int`, `R:list`), a virtual float or empty list. "Only" counts the blocks whose state differs from an earlier block at the same merge point in that one local and nothing else: the blocks a single form would save directly. In all: 2,848 KB, 57,313 instructions compiled, 2,367 blocks.
+
+| pair | extra blocks it co-varies with | blocks differing only in it | where |
+|---|---|---|---|
+| large int constant / virtual int | 87 | 14 | deltablue `change`, go `randrange`, `_randbelow` |
+| large int constant / run-time int | 9 | 2 | go `_randbelow` |
+| virtual int / run-time int object | about 250 | 46 | hexiom, chaos, comprehensions, go `score` |
+| virtual float / run-time float | 33 | 6 | go `score` (an int or a float: a real difference) |
+| virtual empty list / run-time list | 169 | 30 | hexiom `unknown`, pyflate, gc_traversal |
+
+For comparison, a virtual int with a known value against one with a run-time value (a first iteration, then the general one) differs alone in 105 blocks, and an unbound local against a bound one in 95.
+
+### Kept: a large int constant becomes a run-time object from the second block
+
+`dispatcher.c:psyco_unpromote_large_ints`, called from `vcompiler.c:psyco_compile` and `psyco_compile_code` when a state matches no block at a merge point that already has one: each non-fixed constant int object in a local (small ones are virtual ints already, D33) is made run-time, and the state is compared again. It is the same object, so `x is CONST` still holds; writing it as a virtual int would lose that, since computing one makes a new object. The first block keeps the constant, so a function always called with the same constant is still specialised on it. Only loads of constants are emitted, so it is replay-safe for the cap's reasons (D40).
+
+| benchmark | instructions compiled | blocks |
+|---|---|---|
+| pyflate | 4,183 → 4,092 (−2.2%) | 218 → 210 |
+| deltablue | 6,224 → 6,213 | 284 → 283 |
+| all 23 | 57,313 → 57,211 (−0.2%) | 2,367 → 2,358 |
+
+The others are unchanged. deltablue's `change` @0 still has 4 blocks: with 1050 and 2000 now run-time, the extra block differs in `v` (a run-time object with and without a promoted type), a fixed fact. The pair's remaining co-variation (2 blocks) is first blocks that keep their constant.
+
+Release build, `tools/compilebench.py`, two runs each, before (`ce81596`) and after, same session (timings indicative: other agents benchmark on the machine): all 29 benchmarks' code 2,887 → 2,884 KB, compile 20.7, 21.4 → 19.9, 21.5 ms; pyflate 201.4 → 199.8 KB, compile 1.81, 1.60 → 1.55, 1.61 ms, warm 141, 135 → 135, 138 ms; deltablue 449.9 → 449.3 KB; others the same code. `perf stat -e instructions:u`, ((3 + 12) − (3 + 2) iterations) / 10, two runs each: pyflate 2,435.5 → 2,428.0 M (−0.3%), deltablue 31.65 → 31.43 M, richards 194.1 → 194.8 M, go 1,143 → 1,169 M (go compiles the same code either way; its 12-iteration runs alone spread by 220 M, so this is noise).
+
+### Not done: the pairs that need a virtual computed
+
+Each of the other pairs has one direction that loses identity and one that needs a call:
+
+- **Writing the run-time object as a virtual** (read its value, drop the object) makes a new object when it is next needed: `x is lst[0]` changes for an int outside -5..256, a float or a list. It also needs a run-time check that an int fits a word. Unsound.
+- **Computing the virtual** (`PyLong_FromLong`, `PyFloat_FromDouble`, `PyList_New`) keeps identity, since nothing has seen a virtual yet, but the call's error check is a respawn point. After `psyco_compatible`'s verdict, which depends on the blocks compiled so far, a replay from the block's snapshot restarts the bytecode compiler at the merge point and never reaches it (D40). Before the snapshot, in the block that flows into the merge point, a replay does pass that point (`psyco_limit_nested_weight` already computes there, against `pycompiler.c`'s `extra_assert(!is_respawning(po))` just above it), but then the decision may only depend on the state, not on the blocks: computing every virtual int or float at every merge point would box loop counters and accumulators on each iteration. `psyco_compile_cond` also compares a copy of the state where no code can be emitted.
+
+To see whether a replay-safe way (a snapshot that records "compute these locals first", replayed from the main loop's entry like `NEXT_INSTR_POP`) would be worth building, an experiment computed the virtual when a snapshot held a run-time object there (value already run-time; release build only, replays not handled; not committed): all 23 benchmarks 57,211 → 57,156 instructions compiled (−0.1%), 2,358 → 2,350 blocks: hexiom −75 instructions, raytrace −34, comprehensions −12, go +66. The list pair alone dropped (16 → 3 blocks differing only in it); the int pair barely moved (24 → 21), because the virtual usually comes first and the run-time object second, the direction that would need virtualising. Not worth a change to replay, and computing at merge points boxes values that stayed unboxed before. [run]
