@@ -21,7 +21,7 @@ stale_sources() {   # sources newer than ni.so (find compares to the ns)
 
 step "generated code is up to date (tools/metac)"
 # each must say so: a generator that silently does nothing must fail too
-for g in gen_long gen_float; do
+for g in gen_long gen_float gen_ceval; do
     python3 tools/metac/$g.py --check | grep "up to date"
 done
 

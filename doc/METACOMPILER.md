@@ -1,6 +1,6 @@
 ---
 written: 2026-11-16
-status: stage 1 started (`64f88e7` ints, `749985f` floats); 3.12 bytecode desk read done
+status: stage 1 started (`64f88e7` ints, `749985f` floats); bytecode stage started (gen_ceval.py, D26)
 ---
 # Meta-compiler: approach and tooling options
 
@@ -92,8 +92,48 @@ Read from the 3.12.9 source tarball (`Python/bytecodes.c`, `Tools/cases_generato
 1. On 3.12 the bytecode stage is closer to stage 1 than to a new problem. The stack effects, error exits and restartability are given. The generic instructions mostly reduce to "call the meta for this C function", which is what the slot generators already produce.
 2. The specialised families answer a question this project hasn't asked yet: *which* type cases to specialise. They could steer the generated code (which metas to call, which promotions to emit) without being translated themselves.
 3. The hard parts are the same on both versions and are core, not translation: calls and frames, exceptions (a new model on 3.11+), generators.
-4. For the 3.7 slice next: the useful lesson is to give the 3.7 generator a symbolic stack, so that it derives a declared-effect form `(inputs -- outputs)` first and then emits the body. That intermediate form is what 3.12 provides, so the second half of a 3.7 generator should carry over.
+4. For 3.7: rather than a 3.7 front end that derives the declared-effect form from `ceval.c`, write that form directly in 3.12's DSL and generate from it (D26, next section). That way the generator's back half is the part that carries over.
 5. 3.12's own globals guard (`LOAD_GLOBAL_MODULE`/`BUILTIN`) uses the dict *keys* version (`ma_keys->dk_version`) plus an entry index, not `ma_version_tag`. That's relevant to QUESTIONS 29.
+
+## Bytecode slice: simple opcodes from the DSL (D26)
+
+`tools/metac/gen_ceval.py` reads `tools/metac/bytecodes37.c` (3.7's opcodes in 3.12's DSL) with CPython's own parser (`tools/metac/cases_generator/`, vendored from 3.12.9) and writes `ni/Python/pycompiler_gen.h`, which `pycompiler.c` includes in its opcode switch. [run]
+
+- **Result:** 39 of the 43 described opcodes are generated, and their hand-written cases are gone from `pycompiler.c` (165 lines):
+  - `NOP`, `POP_TOP`, `ROT_TWO`, `ROT_THREE`, `DUP_TOP`, `DUP_TOP_TWO`;
+  - `LOAD_CONST`, `LOAD_FAST`, `STORE_FAST`;
+  - `UNARY_POSITIVE`/`NEGATIVE`/`INVERT`, every `BINARY_*` and `INPLACE_*` except the matrix ones, `STORE_SUBSCR`, `GET_ITER`.
+- **Shape of a case:** the inputs are read with `NTOP` and left on the stack, then the body. Nothing is popped or released until the end, so an error exit is `break`, which leaves the inputs for the unwinding code as the hand-written cases did. `DECREF_INPUTS()` therefore becomes the releases at the end.
+- **Vocabulary** (all in `translate()`; anything else is skipped with the reason):
+  - `GETLOCAL`/`SETLOCAL(oparg, x)`, `GETITEM(consts, oparg)`, `Py_INCREF`, `Py_DECREF` of an input, `X = Py_NewRef(Y)`;
+  - `DECREF_INPUTS()`, `ERROR_IF(cond, error | unbound_local_error)`;
+  - `[int|PyObject *] X = F(args)` for a C-API `F`. `assert` and `STAT_INC` are dropped. The `#if ENABLE_SPECIALIZATION` part is dropped and its `#else` part kept.
+- **C-API calls are paired by declaration, not by a table.** `F` must be declared in 3.7's `Include/abstract.h` or `object.h`, and `Psyco` + `F[2:]` must be declared in `ni/Objects/pabstract.h` with one more parameter (`po`). The returns must pair up: `PyObject *` with `vinfo_t *` (NULL means error), or `int` with `bool` (false means error).
+- **Representation facts, hand-written in the generator:**
+  - A local is unbound only if its value is a known NULL (`psyco_knowntobe(x, 0)`), the same rule as `DELETE_FAST`.
+  - A constant from the code object is a new compile-time vinfo, which `Py_INCREF` turns into `vinfo_new(CompileTime_New(...))`.
+  - `Py_None` as an argument is a `psyco_vi_None()` temporary, released after the call.
+- **Restart rule, checked:** the DSL's rule (no INCREF before the last `ERROR_IF`) is extended to Psyco's. No irreversible statement (incref, `SETLOCAL`) may come before the last call or `ERROR_IF`, and no owned temporary may be live at an error exit.
+- **Checks against 3.7**, run by `--check` and so by `tools/check.sh`:
+  - `ceval.c` has the `TARGET`;
+  - the `ceval.c` case calls every C-API function the description calls;
+  - the declared stack effect equals `dis.stack_effect()`, run in python3.7. `NOP` is unknown to it.
+- **Mutation test** [run]: five wrong descriptions were tried, and each one makes `--check` fail.
+  - A wrong stack effect, a wrong function, and an opcode 3.7 doesn't have are reported as mismatches with 3.7.
+  - An incref moved before the error exit, and an input that is never released, are refused by the generator ("restart rule", "neither released nor stored").
+- **Compared with the hand-written cases:**
+  - The generated cases make the same meta calls with the same operands in the same order. `STORE_SUBSCR` is `(container, sub, v)`, and `BINARY_POWER` passes `psyco_vi_None()`.
+  - They release in the same order (top first).
+  - `STORE_FAST` stores before it pops, where the hand-written case popped first; the effect is the same.
+  - `NOP` lost an `#ifdef NOP` it didn't need. The unbound-local error is now one helper (`unbound_local_error`), shared with `DELETE_FAST`.
+- **Tests:** `tests/cases/generated_opcodes.py` runs every generated opcode, and every error exit through the unwinding code. It found F28: Ni still raises Python 2's TypeError messages. The generated code isn't the cause; it calls the same metas.
+
+**The same generator on 3.12's own `bytecodes.c`** (`gen_ceval.py --try`, 3.12.9, no change to the generator) [run]: 13 of 186 instructions translate.
+- They are `NOP`, `LOAD_CLOSURE`, `LOAD_FAST_CHECK`, `LOAD_FAST`, `LOAD_CONST`, `STORE_FAST`, `POP_TOP`, `END_SEND`, `UNARY_NEGATIVE`, `UNARY_INVERT`, `BINARY_SUBSCR`, `STORE_SUBSCR` and `GET_ITER`.
+- `BINARY_SUBSCR` and `STORE_SUBSCR` are the specialising versions; their adaptive-counter code is dropped.
+- 58 of the rest declare arrays, conditional outputs or types in their stack effects (`args[oparg]`, `null if (oparg & 1)`). 55 have control flow, and 53 use statements outside the vocabulary.
+- `KW_NAMES` was refused only after a rule was added: assigning a variable that isn't an output (3.12's `kwnames` is interpreter state).
+- The next vocabulary to add follows from that: array inputs (calls, `BUILD_*`), conditional outputs, and a branch on a run-time truth value (below).
 
 ## Failures log
 
@@ -112,3 +152,6 @@ Record here each case where the current approach failed: the CPython file and fu
 | `float_pow` | Uses `int` locals and many early returns of objects. | Residual. |
 | `float___trunc___impl` (nb_int) | Returns an int (`PyLong_FromDouble`), and the backend can't convert a double to a word. | Residual. |
 | `floatobject.c:float_richcompare` | Not in the number table. Switches on the type of `w`, with an exact int/float comparison. | Hand-written (P26 whitelist: float/float only). |
+| `bytecodes37.c:UNARY_NOT` | `if (err == 0) res = Py_True; else res = Py_False;` is a branch on a run-time value. Ni turns it into a condition code and a virtual bool (`integer_NON_NULL`, `PsycoBool_FromCondition`), and `PsycoObject_IsTrue` returns a vinfo, not an int. | Hand-written. Candidate rule: `int x = F(...)` where F's Psyco counterpart returns a vinfo, then `if (x == 0) A else B` becomes a condition code when A and B are constants. 3.12's `POP_JUMP_IF_*` need the same. |
+| `BINARY_MATRIX_MULTIPLY`, `INPLACE_MATRIX_MULTIPLY` | No `PsycoNumber_MatrixMultiply`. | Unsupported, as before (not in `mergepoints.c`). |
+| `bytecodes37.c:DELETE_SUBSCR` | No `PsycoObject_DelItem`. The hand-written case calls `PsycoObject_SetItem(po, o, key, NULL)`, which is a fact about Ni's API, not about the C. | Hand-written. Fix: give pabstract a `PsycoObject_DelItem`. |

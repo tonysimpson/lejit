@@ -10,6 +10,9 @@
  *  - LOAD_GLOBAL is a constant behind a dict-version guard whose failure
  *    respawns (load_global_cached, D25); the block is split after each such
  *    site so that a respawn replay never re-decides one.
+ *  - The simple opcodes (stack shuffles, LOAD_CONST/LOAD_FAST/STORE_FAST,
+ *    unary, binary and in-place arithmetic, STORE_SUBSCR, GET_ITER) are
+ *    generated into pycompiler_gen.h from tools/metac/bytecodes37.c (D26).
  *  - After the switch come the merge-point checks, then the handling of
  *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
  *    exceptions) with ceval-style unwinding of the block stack.
@@ -1021,6 +1024,12 @@ done:
 #define UNBOUNDLOCAL_ERROR_MSG                                                 \
   "local variable '%.200s' referenced before assignment"
 
+static void unbound_local_error(PsycoObject *po, PyCodeObject *co, int oparg) {
+  PyObject *namev = PyTuple_GetItem(co->co_varnames, oparg);
+  PycException_SetFormat(po, PyExc_UnboundLocalError, UNBOUNDLOCAL_ERROR_MSG,
+                         NiCompatStr_AsString(namev));
+}
+
 static PyObject *cimpl_load_global(PyObject *globals, PyObject *w) {
   PyObject *x;
   RECLIMIT_SAFE_ENTER();
@@ -1442,56 +1451,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
         /* case STOP_CODE: this is an error! */
 
-      case POP_TOP:
-        POP_DECREF();
-        goto fine;
-
-      case ROT_TWO:
-        POP(v);
-        POP(w);
-        PUSH(v);
-        PUSH(w);
-        goto fine;
-
-      case ROT_THREE:
-        POP(v);
-        POP(w);
-        POP(x);
-        PUSH(v);
-        PUSH(x);
-        PUSH(w);
-        goto fine;
-
-      case DUP_TOP:
-        v = TOP();
-        vinfo_incref(v);
-        PUSH(v);
-        goto fine;
-
-      case DUP_TOP_TWO:
-        v = NTOP(2);
-        w = TOP();
-        vinfo_incref(v);
-        vinfo_incref(w);
-        PUSH(v);
-        PUSH(w);
-        goto fine;
-
-      case UNARY_POSITIVE:
-        x = PsycoNumber_Positive(po, TOP());
-        if (x == NULL)
-          break;
-        POP_DECREF();
-        PUSH(x);
-        goto fine;
-
-      case UNARY_NEGATIVE:
-        x = PsycoNumber_Negative(po, TOP());
-        if (x == NULL)
-          break;
-        POP_DECREF();
-        PUSH(x);
-        goto fine;
+      /* the simple opcodes, generated from tools/metac/bytecodes37.c (D26) */
+#include "pycompiler_gen.h"
 
       case UNARY_NOT:
         v = PsycoObject_IsTrue(po, TOP());
@@ -1506,88 +1467,11 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(x); /* consumes ref on 'x' */
         goto fine;
 
-      case UNARY_INVERT:
-        x = PsycoNumber_Invert(po, TOP());
-        if (x == NULL)
-          break;
-        POP_DECREF();
-        PUSH(x);
-        goto fine;
-
-      case BINARY_POWER:
-        u = psyco_vi_None();
-        x = PsycoNumber_Power(po, NTOP(2), NTOP(1), u);
-        vinfo_decref(u, po);
-        if (x == NULL)
-          break;
-        POP_DECREF();
-        POP_DECREF();
-        PUSH(x);
-        goto fine;
-
-#define BINARY_OPCODE(opcode, psycofn)                                         \
-  case opcode:                                                                 \
-    x = psycofn(po, NTOP(2), NTOP(1));                                         \
-    if (x == NULL)                                                             \
-      break;                                                                   \
-    POP_DECREF();                                                              \
-    POP_DECREF();                                                              \
-    PUSH(x);                                                                   \
-    goto fine
-
-      BINARY_OPCODE(BINARY_MULTIPLY, PsycoNumber_Multiply);
-      BINARY_OPCODE(BINARY_MODULO, PsycoNumber_Remainder);
-      BINARY_OPCODE(BINARY_ADD, PsycoNumber_Add);
-      BINARY_OPCODE(BINARY_SUBTRACT, PsycoNumber_Subtract);
-      BINARY_OPCODE(BINARY_SUBSCR, PsycoObject_GetItem);
-      BINARY_OPCODE(BINARY_LSHIFT, PsycoNumber_Lshift);
-      BINARY_OPCODE(BINARY_RSHIFT, PsycoNumber_Rshift);
-      BINARY_OPCODE(BINARY_AND, PsycoNumber_And);
-      BINARY_OPCODE(BINARY_XOR, PsycoNumber_Xor);
-      BINARY_OPCODE(BINARY_OR, PsycoNumber_Or);
-      BINARY_OPCODE(BINARY_TRUE_DIVIDE, PsycoNumber_TrueDivide);
-      BINARY_OPCODE(BINARY_FLOOR_DIVIDE, PsycoNumber_FloorDivide);
-      BINARY_OPCODE(INPLACE_TRUE_DIVIDE, PsycoNumber_InPlaceTrueDivide);
-      BINARY_OPCODE(INPLACE_FLOOR_DIVIDE, PsycoNumber_InPlaceFloorDivide);
-
       case LIST_APPEND:
         w = NTOP(1);
         v = NTOP(oparg + 1);
         if (!PsycoList_Append(po, v, w))
           break;
-        POP_DECREF();
-        goto fine;
-
-      case INPLACE_POWER:
-        u = psyco_vi_None();
-        x = PsycoNumber_InPlacePower(po, NTOP(2), NTOP(1), u);
-        vinfo_decref(u, po);
-        if (x == NULL)
-          break;
-        POP_DECREF();
-        POP_DECREF();
-        PUSH(x);
-        goto fine;
-
-      BINARY_OPCODE(INPLACE_MULTIPLY, PsycoNumber_InPlaceMultiply);
-      BINARY_OPCODE(INPLACE_MODULO, PsycoNumber_InPlaceRemainder);
-      BINARY_OPCODE(INPLACE_ADD, PsycoNumber_InPlaceAdd);
-      BINARY_OPCODE(INPLACE_SUBTRACT, PsycoNumber_InPlaceSubtract);
-      BINARY_OPCODE(INPLACE_LSHIFT, PsycoNumber_InPlaceLshift);
-      BINARY_OPCODE(INPLACE_RSHIFT, PsycoNumber_InPlaceRshift);
-      BINARY_OPCODE(INPLACE_AND, PsycoNumber_InPlaceAnd);
-      BINARY_OPCODE(INPLACE_XOR, PsycoNumber_InPlaceXor);
-      BINARY_OPCODE(INPLACE_OR, PsycoNumber_InPlaceOr);
-
-      case STORE_SUBSCR:
-        w = NTOP(1);
-        v = NTOP(2);
-        u = NTOP(3);
-        /* v[w] = u */
-        if (!PsycoObject_SetItem(po, v, w, u))
-          break;
-        POP_DECREF();
-        POP_DECREF();
         POP_DECREF();
         goto fine;
 
@@ -1648,11 +1532,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         v = psyco_vi_None();
         PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
         break;
-#endif
-
-#ifdef NOP
-      case NOP:
-        goto fine;
 #endif
 
         /*MISSING_OPCODE(YIELD_VALUE);*/
@@ -1850,12 +1729,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-      case LOAD_CONST:
-        /* reference borrowed from the code object */
-        v = vinfo_new(CompileTime_New((long)GETCONST(oparg)));
-        PUSH(v);
-        goto fine;
-
       case LOAD_NAME:
         /* only for modules: we can only reach this point
            for code objects compiled from frames where
@@ -1878,39 +1751,13 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-      case LOAD_FAST:
-        x = GETLOCAL(oparg);
-        /* a local variable can only be unbound if its
-           value is known to be (PyObject*)NULL. A run-time
-           or virtual value is always non-NULL. */
-        if (psyco_knowntobe(x, 0)) {
-          PyObject *namev;
-          namev = PyTuple_GetItem(co->co_varnames, oparg);
-          PycException_SetFormat(po, PyExc_UnboundLocalError,
-                                 UNBOUNDLOCAL_ERROR_MSG,
-                                 NiCompatStr_AsString(namev));
-          break;
-        }
-        vinfo_incref(x);
-        PUSH(x);
-        goto fine;
-
-      case STORE_FAST:
-        POP(v);
-        SETLOCAL(oparg, v);
-        goto fine;
-
       case DELETE_FAST:
         x = GETLOCAL(oparg);
         /* a local variable can only be unbound if its
            value is known to be (PyObject*)NULL. A run-time
            or virtual value is always non-NULL. */
         if (psyco_knowntobe(x, 0)) {
-          PyObject *namev;
-          namev = PyTuple_GetItem(co->co_varnames, oparg);
-          PycException_SetFormat(po, PyExc_UnboundLocalError,
-                                 UNBOUNDLOCAL_ERROR_MSG,
-                                 NiCompatStr_AsString(namev));
+          unbound_local_error(po, co, oparg);
           break;
         }
 
@@ -2208,14 +2055,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       case JUMP_ABSOLUTE:
         JUMPTO(oparg);
         mp = psyco_next_merge_point(po->pr.merge_points, next_instr);
-        goto fine;
-
-      case GET_ITER:
-        x = PsycoObject_GetIter(po, TOP());
-        if (x == NULL)
-          break;
-        POP_DECREF();
-        PUSH(x);
         goto fine;
 
       case FOR_ITER:
