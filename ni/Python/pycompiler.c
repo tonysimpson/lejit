@@ -1352,6 +1352,51 @@ static PyObject *cimpl_build_set_unpack(PyObject *parts) {
   return sum;
 }
 
+/* ceval.c:special_lookup */
+static PyObject *special_lookup(PyObject *o, _Py_Identifier *id) {
+  PyObject *res = _PyObject_LookupSpecial(o, id);
+  if (res == NULL && !PyErr_Occurred()) {
+    PyErr_SetObject(PyExc_AttributeError, id->object);
+    return NULL;
+  }
+  return res;
+}
+
+/* ceval.c SETUP_WITH up to the block setup: out[0] gets the bound
+   __exit__, out[1] __enter__'s result. Unlike ceval, mgr stays on the stack
+   (one reference more) while __enter__ runs. */
+static int cimpl_setup_with(PyObject *mgr, PyObject *out[]) {
+  _Py_IDENTIFIER(__exit__);
+  _Py_IDENTIFIER(__enter__);
+  PyObject *enter = special_lookup(mgr, &PyId___enter__), *exit, *res;
+  if (enter == NULL)
+    return -1;
+  exit = special_lookup(mgr, &PyId___exit__);
+  if (exit == NULL) {
+    Py_DECREF(enter);
+    return -1;
+  }
+  res = _PyObject_CallNoArg(enter);
+  Py_DECREF(enter);
+  if (res == NULL) {
+    Py_DECREF(exit);
+    return -1;
+  }
+  out[0] = exit;
+  out[1] = res;
+  return 0;
+}
+
+/* WITH_CLEANUP_START's call */
+static PyObject *cimpl_call_exit(PyObject *exit_func, PyObject *exc,
+                                 PyObject *val, PyObject *tb) {
+  PyObject *stack[3];
+  stack[0] = exc;
+  stack[1] = val;
+  stack[2] = tb;
+  return _PyObject_FastCall(exit_func, stack, 3);
+}
+
 static PyObject *cimpl_load_global(PyObject *globals, PyObject *w) {
   PyObject *x;
   RECLIMIT_SAFE_ENTER();
@@ -2838,7 +2883,92 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         block_setup(po, opcode, INSTR_OFFSET() + oparg, STACK_LEVEL());
         goto fine;
 
-        /*MISSING_OPCODE(SETUP_WITH);*/
+      /* with: as 3.7 ceval, a SETUP_FINALLY block over the bound __exit__.
+         Its handler starts with WITH_CLEANUP_START, entered in one of
+         Ni's three finally states (see the unwind loop): None on top (the
+         body ended), a 3-tuple (EReturn, EBreak, EContinue), or an
+         exception's six items under an EXCEPT_HANDLER block. */
+      case SETUP_WITH: {
+        vinfo_array_t *array = array_new(2);
+        if (!psyco_generic_call(po, cimpl_setup_with, CfCommonIntZeroOk, "vA",
+                                TOP(), array)) {
+          array_release(array);
+          break;
+        }
+        POP_DECREF();
+        PUSH(array->items[0]);
+        block_setup(po, SETUP_FINALLY, INSTR_OFFSET() + oparg, STACK_LEVEL());
+        PUSH(array->items[1]);
+        array_release(array);
+        goto fine;
+      }
+
+      case WITH_CLEANUP_START: {
+        PyTryBlock *b = po->pr.iblock > 0
+                            ? &po->pr.blockstack[(int)po->pr.iblock - 1]
+                            : NULL;
+        vinfo_t **sp = STACK_POINTER();
+        if (b != NULL && b->b_type == EXCEPT_HANDLER &&
+            STACK_LEVEL() == b->b_level + 6) {
+          /* an exception: exit(type, value, tb), then ceval's shift of
+             the saved exception down over __exit__'s slot, with NULL
+             where the type was */
+          x = psyco_generic_call(po, cimpl_call_exit, CfCommonNewRefPyObject,
+                                 "vvvv", sp[-7], sp[-1], sp[-2], sp[-3]);
+          if (x == NULL)
+            break;
+          vinfo_decref(sp[-7], po);
+          sp[-7] = sp[-6];
+          sp[-6] = sp[-5];
+          sp[-5] = sp[-4];
+          sp[-4] = psyco_vi_Zero();
+          b->b_level--;
+          u = sp[-1];
+          vinfo_incref(u);
+          PUSH(u);
+          PUSH(x);
+          goto fine;
+        }
+        /* None or a pseudo-exception's 3-tuple: exit(None, None, None),
+           and __exit__'s slot is dropped */
+        extra_assert(psyco_knowntobe(TOP(), (long)Py_None) ||
+                     Psyco_KnownType(TOP()) == &PyTuple_Type);
+        x = psyco_generic_call(po, cimpl_call_exit, CfCommonNewRefPyObject,
+                               "vlll", NTOP(2), (long)Py_None, (long)Py_None,
+                               (long)Py_None);
+        if (x == NULL)
+          break;
+        POP(v);
+        POP_DECREF();
+        PUSH(v);
+        PUSH(psyco_vi_None());
+        PUSH(x);
+        goto fine;
+      }
+
+      case WITH_CLEANUP_FINISH:
+        /* TOP is __exit__'s result, SECOND the exception type or None */
+        if (!psyco_knowntobe(NTOP(2), (long)Py_None)) {
+          cc = integer_NON_NULL(po, PsycoObject_IsTrue(po, TOP()));
+          if (cc == CC_ERROR)
+            break;
+          if (runtime_condition_f(po, cc)) {
+            /* a true result silences the exception: what END_FINALLY
+               does in ceval for WHY_SILENCED, after which it sees None */
+            PyTryBlock *b;
+            POP_DECREF();
+            POP_DECREF();
+            b = block_pop(po);
+            extra_assert(b->b_type == EXCEPT_HANDLER);
+            unwind_except_handler(po, b);
+            PUSH(psyco_vi_None());
+            goto fine;
+          }
+        }
+        POP_DECREF();
+        POP_DECREF();
+        goto fine;
+
 
       case CALL_METHOD: {
         /* always the (NULL, attribute) form, see LOAD_METHOD */

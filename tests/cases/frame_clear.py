@@ -3,6 +3,7 @@
 # f_executing makes it; it cleared the cells and arguments the compiled code
 # borrows, and the next use crashed.
 import traceback
+import unittest
 
 
 def clear_in_except(x):
@@ -37,7 +38,26 @@ def clear_own_frame(x):
     return msg, g()
 
 
+class TC(unittest.TestCase):
+    def runTest(self):
+        pass
+
+
+def assert_raises(x):
+    tc = TC()
+
+    def check(v):
+        tc.assertEqual(v, x)
+    for v in (0.0, -1.0):
+        with tc.assertRaises(ValueError):
+            import math
+            math.sqrt(v - 1)
+        check(x)
+    return x
+
+
 CASES = [
     ('clear_in_except', [(1,), (2,)], {}),
     ('clear_own_frame', [(1,)], {}),
+    ('assert_raises', [(3,)], {}),
 ]

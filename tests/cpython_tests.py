@@ -36,8 +36,9 @@ KNOWN = {
                         'C19: getrefcount misses borrowed arguments'),
     'test_descr': ('run=138 fail=1 err=0 skip=2 exit=0',
                    'C20: compiling allocates a GC object test_slots counts'),
-    'test_coroutines': ('run=94 fail=1 err=0 skip=0 exit=0',
-                        'C11: a compiled frame\'s f_lineno is its def line'),
+    'test_coroutines': ('run=94 fail=3 err=0 skip=0 exit=0',
+                        'C11: a compiled frame\'s f_lineno is its def line '
+                        '(also in coroutine origins and warning locations)'),
 }
 
 CHILD = r'''

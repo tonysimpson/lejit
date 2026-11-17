@@ -19,7 +19,7 @@
  *     and psyco_delete_unused_vars drops them before the state is compared,
  *     so states differing only in dead locals share code. Successors are
  *     those of 2, made conservative where 3.7 bytecode doesn't say: an
- *     instruction may reach the handler of every SETUP_EXCEPT/SETUP_FINALLY
+ *     instruction may reach the handler of every SETUP_EXCEPT/FINALLY/WITH
  *     whose body contains it (the compiler lays the body out between the
  *     SETUP and its handler), BREAK_LOOP every loop exit, END_FINALLY those
  *     and every CONTINUE_LOOP target. Functions
@@ -185,6 +185,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
             break;
         case SETUP_EXCEPT:
         case SETUP_FINALLY:
+        case SETUP_WITH:
             setup_at[nsetups] = (int)i;
             handler_at[nsetups++] = (int)(i + a / 2);
             break;
@@ -225,6 +226,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
             case SETUP_LOOP:
             case SETUP_EXCEPT:
             case SETUP_FINALLY:
+            case SETUP_WITH:
                 _live_union(tmp, live + (nxt[i] + a / 2) * words, words);
                 _live_union(tmp, live + nxt[i] * words, words);
                 break;
@@ -353,6 +355,7 @@ _find_merge_points(PyCodeObject *co)
                 ENTER_NEXT();
                 break;
             case SETUP_FINALLY:
+            case SETUP_WITH:
                 flags |= MP_FLAGS_HAS_FINALLY;
                 MP_HERE();
                 entry_count[(NEXT_OFFSET() + oparg) / 2] = 8;
@@ -581,6 +584,9 @@ _build_merge_points(PyCodeObject *co, int module)
             case INPLACE_OR:
             case SETUP_EXCEPT:
             case SETUP_FINALLY:
+            case SETUP_WITH:
+            case WITH_CLEANUP_START:
+            case WITH_CLEANUP_FINISH:
             case CALL_FUNCTION:
             case CALL_FUNCTION_KW:
             case CALL_FUNCTION_EX:
