@@ -55,7 +55,7 @@ The virtual ints also differ in whether their type field is fixed (promoted) or 
 
 1. **Small respawn stubs.** Done (`2f8d00f`, D32), results below. Each stub was its own code buffer: a call into `do_respawn` with its arguments, then a `respawn_t` (about 30 bytes of code and 32 of data, aligned). One `call` to a shared trampoline that finds its `respawn_t` by return address in a table would be 5 bytes of code. It changes nothing about what is compiled, so it is the safest large win: up to about 45% of all code, and less compile time spent creating buffers. [inferred]
 2. **One form for ints at merge points.** Done (`1c61916`, `5e37663`, D33), results below. Before `psyco_compatible`, write a constant `int` object as a virtual int with a constant value, and treat a virtual int's type field the same whether it is fixed or not (it is always `int`). Then go's counters differ only in constants, which the existing partial match already generalises. Narrow and safe; the same applies to floats and bools. [inferred]
-3. **A cap per merge point.** Done for ints (`ba8262a`, D40), results below. After N blocks at one merge point, generalise the new state before matching: plain and fixed constants become run-time, and virtual values are computed. Forgetting facts is always safe; code after it may promote again. This is the general backstop for explosions the first two don't foresee. N is a policy choice, measured under D29. [inferred]
+3. **A cap per merge point.** Done for ints (`932f416`, D40), results below. After N blocks at one merge point, generalise the new state before matching: plain and fixed constants become run-time, and virtual values are computed. Forgetting facts is always safe; code after it may promote again. This is the general backstop for explosions the first two don't foresee. N is a policy choice, measured under D29. [inferred]
 4. **Copies per type with identical code** (richards' `Task` methods). These are real specialisation: the guards hold a different type and different shared keys. Sharing them needs a guard that accepts a set of types. That is research, and it is worth doing only after 1–3. [inferred]
 
 The general principle behind 2 and 3: states should be compared by what code after them can exploit, not by how a value happens to be represented. Psyco's "fixed" flag (a promoted value something already depends on) is a step towards that; 2 removes differences of representation, and 3 bounds the rest.
@@ -125,7 +125,7 @@ Release build, `tools/compilebench.py`, same session (timings indicative: other 
 
 deltablue compiles 1.3% more (6,142 → 6,224 instructions) after the first change; not investigated (QUESTIONS).
 
-## A cap per merge point (`ba8262a`, D40) [run]
+## A cap per merge point (`932f416`, D40) [run]
 
 ### How many blocks each merge point gets
 
