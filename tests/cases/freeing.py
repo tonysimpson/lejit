@@ -4,6 +4,7 @@
 # held its globals, so code with globals of its own (exec into a new dict,
 # namedtuple) stayed alive with them; the globals are now borrowed.
 import collections
+import ctypes
 import gc
 import types
 import weakref
@@ -104,6 +105,28 @@ def borrowed_globals_reused():
     return out
 
 
+# Another user of co_extra (PEP 523): CPython calls every registered free
+# function for every slot, NULL included, so Ni's must accept NULL for a code
+# object it never saw (CPython's test_code CoExtra segfaulted). The free
+# function is C (PyMem_RawFree): a Python callback would run at exit too.
+_api = ctypes.pythonapi
+_api._PyEval_RequestCodeExtraIndex.argtypes = (ctypes.c_void_p,)
+_api._PyEval_RequestCodeExtraIndex.restype = ctypes.c_ssize_t
+_api._PyCode_SetExtra.argtypes = (ctypes.py_object, ctypes.c_ssize_t,
+                                  ctypes.c_void_p)
+_api._PyCode_SetExtra.restype = ctypes.c_int
+_api.PyMem_RawMalloc.argtypes = (ctypes.c_size_t,)
+_api.PyMem_RawMalloc.restype = ctypes.c_void_p
+EXTRA_INDEX = _api._PyEval_RequestCodeExtraIndex(
+    ctypes.cast(_api.PyMem_RawFree, ctypes.c_void_p))
+
+
+def other_code_extra_user():
+    c = compile('42', 'extra', 'eval')
+    r = _api._PyCode_SetExtra(c, EXTRA_INDEX, _api.PyMem_RawMalloc(8))
+    del c
+    return r
+
 CASES = [
     ('code_dies_with_shared_globals', [()], {'interpreted': 'calls exec (C15)'}),
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec (C15)'}),
@@ -111,4 +134,5 @@ CASES = [
     ('isinstance_class_dies', [()], {'leaks': 'C14 (2): state referenced from machine code'}),
     ('isinstance_instance_class_dies', [()], {'leaks': 'C14 (2): state referenced from machine code'}),
     ('borrowed_globals_reused', [()], {'leaks': 'C14 (2): a snapshot per new dict'}),
+    ('other_code_extra_user', [()], {}),
 ]

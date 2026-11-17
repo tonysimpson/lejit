@@ -110,7 +110,11 @@ DEFINEVAR PyObject *CPsycoModule;
 static Py_ssize_t code_extra_index = -1;
 
 static void code_extra_free(void *p) {
+  /* code_dealloc calls every user's free function for every slot, so a
+     code object only another co_extra user touched gives NULL here */
   ni_code_extra_t *x = (ni_code_extra_t *)p;
+  if (x == NULL)
+    return;
   Py_XDECREF(x->merge_points);
   Py_XDECREF(x->entry_point);
   PyMem_Free(x);
