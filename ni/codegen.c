@@ -1021,6 +1021,15 @@ DEFINEFN
 condition_code_t
 integer_cmp_i(PsycoObject *po, vinfo_t *v1, long value2, int py_op)
 {
+    /* a condition still in the flags is 0 or 1: compared with 0 it is the
+       condition itself, as in integer_non_null(). Without this, testing a
+       bool made by a comparison (plong_bool) wrote the flags into a
+       register with SETcc and compared that again. */
+    if (value2 == 0 && (py_op == Py_NE || py_op == Py_EQ)) {
+        condition_code_t cc = psyco_vsource_cc(v1->source);
+        if (cc != CC_ALWAYS_FALSE)
+            return py_op == Py_NE ? cc : INVERT_CC(cc);
+    }
     if (!compute_vinfo(v1, po))
         return CC_ERROR;
 

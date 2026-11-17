@@ -47,7 +47,33 @@ def joined_compares():
     return out
 
 
+# A comparison tested at once (if, while, not, and/or) uses the flags it
+# set, with no SETcc and second compare (codegen.c:integer_cmp_i); the same
+# bool kept, counted or compared with True must still be 0 or 1.
+def tested_compares(xs, k):
+    out = []
+    for x in xs:
+        if x < k:
+            out.append('lt')
+        if not (x == k):
+            out.append('ne')
+        if (x > k) == True:
+            out.append('gt')
+        if (x >= k) != False:
+            out.append('ge')
+        b = x <= k
+        out.append((b, b + 1, int(b), b is True))
+        out.append((x < k) + (x > k) + (x == k))
+        out.append(x < k and x != 0 or x > k * 2)
+    n = 0
+    while n < k:
+        n += 1
+    out.append(n)
+    return out
+
+
 CASES = [
     ('long_compare_run', [()], {}),
     ('joined_compares', [()], {}),
+    ('tested_compares', [([0, 3, 5, 7, -2], 3), ([], 0)], {}),
 ]
