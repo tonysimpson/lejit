@@ -122,19 +122,15 @@ The backend is chosen at build time: `setup.py` puts `ni/x64` on the include pat
 - **Patching:** proxies are `JMP over data; PUSH RAX; CALL fn(data); JMP RAX-result`. Jumps are rel32 and get repointed once their target is compiled. A promotion site is a self-patching `CMP imm64; JE` inline cache (PATTERNS: inline-cache-patch).
 - **Assumptions:** LP64 and SysV only (no Win64). Every code buffer must be within ±2 GB of every other, with no guarantee (rel32 jumps; mmap without a hint). Memory is mapped RWX (no W^X).
 
-### Suspected backend bugs (from reading, not tested)
-- `CMP_I8_O`/`CMP_I8_A` compare 32 bits.
-- `run_time_result_check` pushes RAX without counting it in `stack_depth`, so stack alignment is off inside the inlined `PyErr_Occurred`.
-- `v_mem_mov` mis-encodes some byte and word stores (REX handling).
-- `run_time_call` puts integer arguments in the wrong register if a double comes first.
-- Several asserts are wrong but compiled out by `-DNDEBUG`.
+### Suspected backend bugs (from reading, 2026-11-16)
+All five have since been confirmed and fixed: KNOWN_BUGS B1 (`CMP_I8_*` compared 32 bits), B2 (`run_time_result_check` and `stack_depth`), M2/M3 (`v_mem_mov` byte and word stores), B3 (`run_time_call` after a double) and B9 (wrong asserts hidden by `-DNDEBUG`).
 
 Details and evidence: `doc/history/removed-mechanisms.md` (A17–A21, D4–D8) the comments at the top of the `ni/x64/*` files, and `doc/KNOWN_BUGS.md`.
 
 ## Design observations (for the tidy-up)
 
 - **Global, non-re-entrant state**: `dispatcher.c:cmpinternal`, the static result in `psyco_compatible`, and `frames.c:psyco_finfo` statics. [read]
-- **Compiled code is never freed.** There are many "XXX don't know what to do with reference" comments (`vcompiler.c`, `dispatcher.c`). [read]
+- **Compiled code is rarely freed** (KNOWN_BUGS C14). Two "XXX don't know what to do with reference" comments remain, both on promotion caches in `dispatcher.c`. [read]
 - **Merge-point lookup is a linear scan** over snapshots (the code itself calls it "the most dummy algorithm"). [read] `psyco_compatible`
 - **Encoding a `Source` in a tagged `long`** is compact but ties the core to the word size; the 64-bit masks in `vcompiler.h` were re-derived by hand. [read]
 - **`pr` vs `vlocals` contract**: two states that differ only in `pr` must produce interchangeable code (`pycheader.h` comment). Any tidied design has to keep this invariant explicit. [read]

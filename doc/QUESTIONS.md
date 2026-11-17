@@ -30,16 +30,10 @@ Questions 1–6 were answered on 2026-11-16: see `DECISIONS.md` D10–D15.
 23. **Refcounting and object layout in the backend** (`x64/ipyencoding.h`): these should become generated "runtime-model" operations that the backend only emits. What is the minimal set (incref, decref plus dealloc call, type load, ...)?
 25. **Psyco runtime helpers in translated files** (`psyfunc.c` has ~100 CPython API uses): which parts are core calling machinery and which are translated `call_function`/`_PyFunction_FastCall` logic?
 
-## Correctness questions found by reading (unverified: no build)
-12. Is mixed-type arithmetic (int + float) a compile-time TypeError? `pabstract.c:binary_op1` depends on Py2's `Py_TPFLAGS_CHECKTYPES`. Does any caller avoid it?
-13. `PsycoObject_RichCompare`: can a user `__eq__` run twice (residual slot returns NotImplemented, then residual `PyObject_RichCompare`)?
-14. How are compile-time doubles stored in `source_known_t.value`? This decides the fix for `pfloatobject.c:direct_compute_float` (numeric conversion vs bit-cast).
-15. `pfuncobject.c:compute_function`: `SET_FIELD` uses `||` instead of `&&`, and stores without `FMUT|FPYREF`. Is that a refcount bug?
-16. `run_time_result_check` pushes RAX without updating `stack_depth`. Is that the cause of known alignment problems (see `compare_return_address_in_a_stupid_way`)?
-17. Is the ±2 GB proximity of code buffers guaranteed anywhere?
-18. R12 is left out of `RegistersLoop`. Deliberate?
+## Correctness questions found by reading
+12–18 (swept 2026-11-17): 12 was F1, 15 was F7, 16 was B2, 17 was B5, all fixed; 13 is KNOWN_BUGS F10 and 14 is F6, both still open there; 18 is answered in B13 (R12 isn't allocated, and its encoding is now right).
 27. ~~How should compiled code stop holding its globals?~~ Answered by D23 (borrowed, `32f4c3a`). On 3.12+, dict watchers could also drop the code of dead globals.
 
 ## Housekeeping
-19. Should `tools/` scripts be fixed (stale `../c/` paths, Py2 `test_c_encoding`) or removed?
+19. Should `tools/` scripts be fixed (stale `../c/` paths, Py2 `test_c_encoding`) or removed? Still open (2026-11-17): `tools/gen_opcodes_h.py`, `tools/test_mcg_template.c` and `tools/asm_microbenchmarks/benchmark.h` have them.
 20. `MANIFEST` lists upstream paths. Delete or regenerate?

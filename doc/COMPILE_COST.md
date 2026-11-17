@@ -62,7 +62,7 @@ All times are in ms. In total, compiling took 35 ms for 5.4 MB of code, about **
 
 - **Compiling is cheap.** Ni pays for itself within 1–3 iterations on almost everything, including the first iteration of most benchmarks. That supports D29. The exceptions are iterations well under a millisecond: comprehensions, deepcopy_reduce, unpack_sequence. Even there, Ni pays back in under 0.3 ms.
 - **Promotion dominates.** It accounts for about 70% of compile time and most entries (go: 3,277 promotions, 625 pauses, 500 respawns).
-- **Code size is the cost to watch, more than time.** go emits 1.6 MB and hexiom 1 MB. hexiom's first iteration is 1.6× slower than CPython's: 7 ms of compiling, then 2× faster warm. Memory and the instruction cache are the likely limits, not compile speed. The counters can't see the instruction cache; `perf stat` with icache events could.
+- **Code size is the cost to watch, more than time.** go emitted 1.6 MB and hexiom 1 MB (since D32 and D33: 0.43 and 0.42 MB, CODE_SIZE.md). hexiom's first iteration is 1.6× slower than CPython's: 7 ms of compiling, then 2× faster warm. Memory and the instruction cache are the likely limits, not compile speed. The counters can't see the instruction cache; `perf stat` with icache events could.
 - **Not measured:** time spent in merge-point lookup (`psyco_compatible`) while running and on the promotion cache-hit path. Both are run-time dispatch, not compiling.
 
 ## A9 (`a9-getattr` `aaea91d`, rebased on `b020746`) [run]
