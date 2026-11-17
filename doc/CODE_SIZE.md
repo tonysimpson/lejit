@@ -293,7 +293,7 @@ All 17 benchmarks together (stub plus code after, 2.5 MB):
 
 Gains are against the code and compile time above. "Code" means all emitted code.
 
-1. **Promotion stubs on D32-style stubs.** Done (`5d71361`, D32); results in "Promotion stubs made small" below. Keep the 19-byte inline cache. On a miss, run `mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline` (18 bytes), with the `rt_promotion_t` in the heap record.
+1. **Promotion stubs on D32-style stubs.** Done (`85aabc2`, D32); results in "Promotion stubs made small" below. Keep the 19-byte inline cache. On a miss, run `mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline` (18 bytes), with the `rt_promotion_t` in the heap record.
    - **How the stub carries the value:** the run-time value is already in a register at the site (`ipromotion_finish` calls `RTVINFO_IN_REG(fix)`), so the stub copies it into RSI, the second SysV argument. RSI is never allocated, and the trampoline (`x64/iprocessor.c:write_stub_trampoline`) touches only RDI, RAX (saved), RSP and R11. `psyco_stub_enter(record, value)` passes it on as `fn(closure, value)`; the respawn and pause functions ignore it.
    - Promotion records are never freed (the site stays live), so the stub can sit inline at the site rather than in the pool.
    - **Code:** about 85 → 37 bytes per site, −48 B. The records (about 40 bytes each) move to the heap. [inferred from the measured 84–86 B]
@@ -371,7 +371,7 @@ Each of the other pairs has one direction that loses identity and one that needs
 
 To see whether a replay-safe way (a snapshot that records "compute these locals first", replayed from the main loop's entry like `NEXT_INSTR_POP`) would be worth building, an experiment computed the virtual when a snapshot held a run-time object there (value already run-time; release build only, replays not handled; not committed): all 23 benchmarks 57,211 → 57,156 instructions compiled (−0.1%), 2,358 → 2,350 blocks: hexiom −75 instructions, raytrace −34, comprehensions −12, go +66. The list pair alone dropped (16 → 3 blocks differing only in it); the int pair barely moved (24 → 21), because the virtual usually comes first and the run-time object second, the direction that would need virtualising. Not worth a change to replay, and computing at merge points boxes values that stayed unboxed before. [run]
 
-## Promotion stubs made small (`5d71361`, D32) [run]
+## Promotion stubs made small (`85aabc2`, D32) [run]
 
 A promotion site is now the 19-byte inline cache, then `mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline`: 37 bytes in all, written in place at the site (`x64/idispatcher.h:ipromotion_finish`, `dispatcher.c:psyco_new_stub_at`). Before, the miss path jumped over an inline `rt_promotion_t` and called `do_promotion_*` through `psyco_call_code_builder` (85–87 bytes). [read]
 
