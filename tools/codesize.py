@@ -147,8 +147,20 @@ def state_diffs(states, top):
     """For each merge point that started more than one block, the vlocals
     slots whose state differed between those blocks."""
     bymp = collections.defaultdict(list)
-    for co, instr, slots in states:
+    aligned = 0
+    for co, instr, slots, align_rejects in states:
         bymp[(co, instr)].append(slots)
+        aligned += align_rejects > 0
+    hist = collections.Counter()
+    for sigs in bymp.values():
+        n = len(sigs)
+        hist[n if n < 4 else 4 if n < 8 else 8 if n < 16 else 16] += 1
+    print('\nblocks per merge point: ' + ', '.join(
+        '%s: %d' % ({4: '4-7', 8: '8-15', 16: '16+'}.get(k, str(k)), hist[k])
+        for k in sorted(hist)) + '; max %d' % max(
+            [len(s) for s in bymp.values()] or [0]))
+    print('blocks started where a snapshot matched but for the 16-byte '
+          'alignment test (KNOWN_BUGS C1): %d' % aligned)
     blame = collections.Counter()
     rows = []
     for (co, instr), sigs in bymp.items():

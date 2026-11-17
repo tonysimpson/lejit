@@ -18,6 +18,7 @@
 */
 struct mergepoint_s {
   int bytecode_position;
+  int blocks; /* blocks compiled from here (vcompiler.c, the cap) */
   global_entries_t entries;
 };
 

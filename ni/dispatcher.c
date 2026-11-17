@@ -10,7 +10,9 @@
  *    a constant small int or bool in a local as a virtual int, so the two
  *    forms of a counter compare. Ni added a 16-byte stack-alignment test
  *    (compare_return_address_in_a_stupid_way) that rejects otherwise good
- *    matches: a kludge for x86-64 call alignment.
+ *    matches: a kludge for x86-64 call alignment (KNOWN_BUGS C1).
+ *  - psyco_forget_int_values: the cap per merge point's generalisation
+ *    (vcompiler.c:mp_capped, D35).
  *  - Respawn: the rare branch of a run-time condition keeps no snapshot. When
  *    it is first taken, compilation is replayed from the previous snapshot into
  *    a throw-away buffer until the same point is reached (do_respawn).
@@ -1593,6 +1595,62 @@ static void canonical_int(PsycoObject *po, vinfo_t *a) {
   sk_decref(sk);
 }
 
+/* The cap's generalisation (vcompiler.c:mp_capped): the value of each
+   virtual int or bool in a local becomes run-time unless fixed, so the
+   counters' many combinations of known values collapse into one block.
+   - Not other constants: a constant function or class would be promoted
+     again by the next call, a new form that splits the merge point
+     further (meteor_contest +5% compiled).
+   - Fixed values stay: something relies on them, and a promotion compiled
+     from this merge point would match the state it was promoted from and
+     loop.
+   - Virtual values stay virtual: computing one emits a call with an error
+     check, a respawn point that a replay from this block's snapshot could
+     never reach. Only loads of constants are emitted.
+   - The result must be as general as the states that will arrive, which
+     have no sharing and no sign known: a run-time value shared in a
+     snapshot never matches two separate ones (compatible_vinfo). So a
+     local whose virtual int is shared (a = b = 0) gets its own; only for
+     small ints and bools, which computing gives back as the same object,
+     so identity is kept (canonical_int).
+   Returns whether anything changed. */
+DEFINEFN
+bool psyco_forget_int_values(PsycoObject *po) {
+  bool changed = false;
+  int i;
+  for (i = 0; i < po->pr.co->co_nlocals; i++) {
+    vinfo_t *a = LOC_LOCALS_PLUS[i];
+    vinfo_t *w;
+    long value;
+    if (a == NULL || !PsycoLong_IsVirtual(a) || a->array->count <= iLONG_VALUE)
+      continue;
+    w = a->array->items[iLONG_VALUE];
+    if (w == NULL || !is_compiletime(w->source) ||
+        (CompileTime_Get(w->source)->refcount1_flags & SkFlagFixed))
+      continue;
+    value = CompileTime_Get(w->source)->value;
+    if ((a->refcount > 1 || w->refcount > 1) && -5 <= value && value <= 256) {
+      vinfo_t *b = vinfo_new(a->source);
+      b->array = array_new(LONG_TOTAL);
+      if ((b->array->items[iOB_TYPE] = a->array->items[iOB_TYPE]) != NULL)
+        vinfo_incref(b->array->items[iOB_TYPE]);
+      b->array->items[iLONG_VALUE] = w = vinfo_new(CompileTime_New(value));
+      LOC_LOCALS_PLUS[i] = b;
+      vinfo_decref(a, po);
+    }
+    psyco_unfix(po, w);
+    w->source &= ~RunTime_NonNeg;
+    changed = true;
+  }
+  return changed;
+}
+
+#if NI_CODESTATS
+/* candidates the last psyco_compatible() rejected only for the alignment
+   test (tools/codesize.py -s; KNOWN_BUGS C1) */
+DEFINEVAR int psyco_cs_align_rejects = 0;
+#endif
+
 DEFINEFN
 vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
   static vcompatible_t result; /* argh, a global variable -- well, the rest of
@@ -1604,6 +1662,9 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
   extra_assert(PyList_Check(plist));
   for (i = 0; i < po->pr.co->co_nlocals; i++)
     canonical_int(po, LOC_LOCALS_PLUS[i]);
+#if NI_CODESTATS
+  psyco_cs_align_rejects = 0;
+#endif
   i = PyList_GET_SIZE(plist);
   while (i--) /* the most dummy algorithm: step by step in the list, */
   {           /* checking for a match at each step.                  */
@@ -1626,6 +1687,9 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
        * cleared unless it is the final result of psyco_compatible() itself.
        */
       if (alignment_match != 1) {
+#if NI_CODESTATS
+        psyco_cs_align_rejects++;
+#endif
         fz_restore_invariant(&codebuf->snapshot);
         continue;
       }

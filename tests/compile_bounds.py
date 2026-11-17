@@ -48,12 +48,49 @@ def while_continue(n):
     return t
 
 
+# Eight counters, each still its first constant or run-time depending on
+# the paths taken: every combination is a new state at the loop head. The
+# cap per merge point (vcompiler.c:mp_capped, D35) bounds the copies: about
+# 75 buffers with it, 440 without.
+def counters8(items):
+    a = b = c = d = 0
+    e = f = g = h = 1
+    for x in items:
+        if x == 1:
+            a += x
+        elif x == 2:
+            b += x
+        elif x == 3:
+            c += x
+        elif x == 4:
+            d += x
+        elif x == 5:
+            e *= x
+        elif x == 6:
+            f -= x
+        elif x == 7:
+            g = x
+        elif x == 8:
+            h = -x
+        else:
+            a, h = h, a
+    return a + b + c + d + e + f + g + h
+
+
+def counter_orders(n):
+    for i in range(1, 10):
+        for j in range(1, 10):
+            counters8([i, j] * n)
+    counters8(list(range(10)) * n)
+
+
 CHECKS = [
     # name, function, warm-up arguments, then arguments that must add at
     # most 'allow' code buffers in total. New argument values may compile a
     # little (about 10 here); the bug these guard against gave 150000.
     ('popping back-edges', nqueens, [(6,), (7,)], [(8,), (9,), (10,)], 50),
     ('while/continue', while_continue, [(100,)], [(1000,), (10000,)], 50),
+    ('merge-point cap', counter_orders, [], [(1,), (2,), (3,)], 150),
 ]
 
 

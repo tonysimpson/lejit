@@ -411,11 +411,13 @@ _find_merge_points(PyCodeObject *co)
                 report_free(report);
                 return NULL;
             }
+            report->mergepoints[mergepoint_index].blocks = 0;
             mergepoint_index++;
         }
     }
     report->mergepoints[mergepoint_count].bytecode_position = -1;
     report->mergepoints[mergepoint_count].entries.fatlist = NULL;
+    report->mergepoints[mergepoint_count].blocks = 0;
     if (!_find_dead_locals(co, report)) {
         /* out of memory: keep every local (the lists may hold some) */
         PyErr_Clear();

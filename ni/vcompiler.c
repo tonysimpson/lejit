@@ -3,7 +3,9 @@
  * with the snapshots stored at this merge point (dispatcher.c:psyco_compatible):
  *   - exact match:   emit unification moves and jump to the existing code;
  *   - partial match: un-promote the differing constants to run-time and retry;
- *   - no match:      start new code (or a coding pause if the buffer is full).
+ *   - no match:      start new code (or a coding pause if the buffer is full),
+ *                    unless the merge point already has MP_BLOCK_CAP blocks:
+ *                    then forget the ints' known values and retry (D35).
  * A coding pause is a stub that compiles the continuation only when execution
  * first reaches it.
  *
@@ -821,12 +823,36 @@ static void cs_state(PsycoObject *po) {
     cs_sig(&p, buf + sizeof(buf), po->vlocals.items[i], 0);
     PyList_SET_ITEM(slots, i, PyUnicode_FromStringAndSize(buf, p - buf));
   }
-  t = Py_BuildValue("(OiN)", po->pr.co, po->pr.next_instr, slots);
+  t = Py_BuildValue("(OiNi)", po->pr.co, po->pr.next_instr, slots,
+                    psyco_cs_align_rejects);
   if (t == NULL || PyList_Append(psyco_codestats_states, t) < 0)
     OUT_OF_MEMORY();
   Py_DECREF(t);
 }
 #endif
+
+/* The cap per merge point (CODE_SIZE.md option 3, D35): once this many
+   blocks have been compiled at a merge point, a state that matches none of
+   them is generalised (dispatcher.c:psyco_forget_int_values) and compared
+   again, so it joins a general block instead of starting one more. The
+   count changes over time, but a respawn replay never passes a merge
+   point: it starts from the snapshot of the block, taken after this
+   decision, and the generalisation emits no respawn point. 0 disables. */
+#ifndef MP_BLOCK_CAP
+#define MP_BLOCK_CAP 6
+#endif
+static bool mp_capped(mergepoint_t *mp) {
+  return MP_BLOCK_CAP > 0 && mp != NULL && mp->blocks >= MP_BLOCK_CAP;
+}
+
+static void mp_new_block(PsycoObject *po, mergepoint_t *mp) {
+  if (mp == NULL)
+    return;
+  mp->blocks++;
+#if NI_CODESTATS
+  cs_state(po);
+#endif
+}
 
 /* Main compiling function. Emit machine code corresponding to the state
    'po'. The compiler produces its code into 'code' and the return value is
@@ -879,13 +905,13 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
       return psyco_compile(po, mp, continue_compilation);
     }
 
+    if (mp_capped(mp) && psyco_forget_int_values(po))
+      return psyco_compile(po, mp, continue_compilation);
+
+    mp_new_block(po, mp);
     if (continue_compilation)
       return NULL; /* I won't actually compile myself, let the caller know */
 
-#if NI_CODESTATS
-    if (mp != NULL)
-      cs_state(po);
-#endif
     /* call the entry point function which performs the actual compilation */
     return GLOBAL_ENTRY_POINT(po);
   }
@@ -957,13 +983,12 @@ CodeBufferObject *psyco_compile_code(PsycoObject *po, mergepoint_t *mp) {
                                   &po->codelimit);
   po->code = insn_code_label(codebuf->codestart);
 
-  if (compile_now) {
+  if (compile_now && mp_capped(mp) && psyco_forget_int_values(po))
+    code1 = psyco_compile(po, mp, false);
+  else if (compile_now) {
     /* call the entry point function which performs the actual compilation
        (this is the usual case) */
-#if NI_CODESTATS
-    if (mp != NULL)
-      cs_state(po);
-#endif
+    mp_new_block(po, mp);
     code1 = GLOBAL_ENTRY_POINT(po);
   } else if (cmp != NULL) /* partial match */
   {
