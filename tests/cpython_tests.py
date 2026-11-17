@@ -89,7 +89,8 @@ MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
            'test_typing', 'test_ucn', 'test_unary', 'test_unicode',
            'test_unicode_file', 'test_unicode_file_functions',
            'test_unicode_identifiers', 'test_unicodedata', 'test_unittest',
-           'test_univnewlines',
+           'test_univnewlines', 'test_sys_settrace', 'test_sys_setprofile',
+           'test_bdb', 'test_profile',
            'test_unpack', 'test_unpack_ex', 'test_urllib', 'test_urllib2',
            'test_urllib_response', 'test_urlparse', 'test_utf8source',
            'test_uu', 'test_warnings', 'test_wave', 'test_weakset',
@@ -99,7 +100,7 @@ MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
 
 # --all adds these: slower, or using subprocesses, sockets, threads or
 # timing, so more exposed to a loaded machine
-EXTENDED = ['test_asynchat', 'test_asyncio', 'test_asyncore', 'test_buffer',
+EXTENDED = ['test_pdb', 'test_cprofile', 'test_trace', 'test_asynchat', 'test_asyncio', 'test_asyncore', 'test_buffer',
             'test_c_locale_coercion', 'test_cmd_line', 'test_cmd_line_script',
             'test_compileall', 'test_crypt', 'test_distutils',
             'test_docxmlrpc', 'test_dtrace', 'test_dummy_threading',
@@ -190,6 +191,14 @@ KNOWN = {
                       'changed after compiling'),
     'test_asyncio': ('run=2055 fail=18 err=0 skip=35 exit=0',
                      'C11: line numbers and stacks in source tracebacks'),
+    'test_sys_settrace': ('run=136 fail=6 err=0 skip=0 exit=0',
+                          'C29: f_trace set on a frame already running '
+                          'compiled gets no events (settrace_and_return, '
+                          'settrace_and_raise)'),
+    'test_pdb': ('run=39 fail=15 err=0 skip=0 exit=0',
+                 'C29: set_trace() in a compiled frame stops only in '
+                 'its callees, not on its own next line; C11: line '
+                 'numbers of compiled frames'),
     'test_weakref': ('run=124 fail=3 err=0 skip=0 exit=0',
                      'C14: compiled code keeps objects alive (classes, '
                      'bound methods)'),
@@ -215,9 +224,6 @@ EXCLUDED = {
         'test_multiprocessing_main_handling', 'test_concurrent_futures'],
     'test infrastructure, empty, or needs gdb (D28)': ['test_support',
         'test_script_helper', 'test_regrtest', 'test_crashers', 'test_gdb'],
-    'C23: tracing and profiling don\'t see compiled code (one runs out of '
-    'memory)': ['test_sys_settrace', 'test_sys_setprofile', 'test_bdb',
-        'test_pdb', 'test_profile', 'test_cprofile', 'test_trace'],
     'C11: test_current_frames fails on a line number and leaves its '
     'thread waiting, so the run never exits': ['test_sys'],
     'C25: return_null_without_error segfaults (an assertion in the checked '

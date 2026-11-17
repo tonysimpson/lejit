@@ -18,6 +18,9 @@ EXTERNFN vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc,
 
 /* generator expressions fused with their consumer (pycheader.h GENEXPR_*) */
 EXTERNFN bool psyco_genexpr_fusable(vinfo_t *v);
+/* psyco_genexpr_fusable, and not while tracing (emits that test, KNOWN_BUGS
+   C23): 1 to fuse, 0 for the consumer's own call, -1 with an exception */
+EXTERNFN int psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
                                      vinfo_t *acc);
 

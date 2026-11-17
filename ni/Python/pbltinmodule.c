@@ -60,15 +60,23 @@ static vinfo_t *genexpr_consume(PsycoObject *po, vinfo_t *vgen, int mode,
 }
 
 static vinfo_t *pbuiltin_any(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
-  if (psyco_genexpr_fusable(vobj))
+  switch (psyco_genexpr_fuse(po, vobj)) {
+  case 1:
     return genexpr_consume(po, vobj, GENEXPR_ANY, &PyBool_Type, NULL);
+  case -1:
+    return NULL;
+  }
   return psyco_generic_call(po, cimpl_any, CfCommonNewRefPyObject, "vv",
                             vself, vobj);
 }
 
 static vinfo_t *pbuiltin_all(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
-  if (psyco_genexpr_fusable(vobj))
+  switch (psyco_genexpr_fuse(po, vobj)) {
+  case 1:
     return genexpr_consume(po, vobj, GENEXPR_ALL, &PyBool_Type, NULL);
+  case -1:
+    return NULL;
+  }
   return psyco_generic_call(po, cimpl_all, CfCommonNewRefPyObject, "vv",
                             vself, vobj);
 }
@@ -193,8 +201,11 @@ static vinfo_t *pbuiltin_min_max(PsycoObject *po, vinfo_t *vargs,
                                  vinfo_t *vkw, int op, PyCFunction cimpl) {
   int i, n = PsycoTuple_Load(vargs);
   vinfo_t *best, *item, *cmp;
+  int fuse = 0;
   if (n == 1 && psyco_knowntobe(vkw, (long)NULL) &&
-      psyco_genexpr_fusable(PsycoTuple_GET_ITEM(vargs, 0)))
+      (fuse = psyco_genexpr_fuse(po, PsycoTuple_GET_ITEM(vargs, 0))) < 0)
+    return NULL;
+  if (fuse)
     return genexpr_consume(po, PsycoTuple_GET_ITEM(vargs, 0),
                            op == Py_LT ? GENEXPR_MIN : GENEXPR_MAX, NULL,
                            NULL);
@@ -375,6 +386,12 @@ static vinfo_t *pbuiltin_sum(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs) {
           PyType_IsSubtype(tp, &PyByteArray_Type))
         goto fallback; /* sum() raises its own TypeError */
     }
+    switch (psyco_genexpr_fuse(po, vit)) {
+    case 0:
+      goto fallback;
+    case -1:
+      return NULL;
+    }
     return genexpr_consume(po, vit, GENEXPR_SUM, NULL,
                            n == 2 ? PsycoTuple_GET_ITEM(vargs, 1) : NULL);
   }
@@ -482,6 +499,7 @@ static vinfo_t *ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg,
   PyObject *t;
   PyTypeObject *tp;
   vinfo_t *v, *x;
+  int fuse;
   int m = psyco_atcompiletime_static_type(po, vtype, &t);
   if (m < 0)
     return NULL;
@@ -499,11 +517,14 @@ static vinfo_t *ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg,
   if (m != 0 && psyco_knowntobe(vkw, 0) && PsycoTuple_Load(varg) == 1 &&
       (t == (PyObject *)&PyList_Type || t == (PyObject *)&PyTuple_Type ||
        t == (PyObject *)&PySet_Type) &&
-      psyco_genexpr_fusable(PsycoTuple_GET_ITEM(varg, 0)))
+      (fuse = psyco_genexpr_fuse(po, PsycoTuple_GET_ITEM(varg, 0))) != 0) {
+    if (fuse < 0)
+      return NULL;
     return genexpr_consume(po, PsycoTuple_GET_ITEM(varg, 0),
                            t == (PyObject *)&PySet_Type ? GENEXPR_SET
                                                         : GENEXPR_LIST,
                            (PyTypeObject *)t, NULL);
+  }
   if (m == 0 || !psyco_knowntobe(vkw, 0) || PsycoTuple_Load(varg) != 1 ||
       (t != (PyObject *)&PyType_Type && t != (PyObject *)&PyLong_Type &&
        t != (PyObject *)&PyFloat_Type))

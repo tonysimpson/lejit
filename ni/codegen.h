@@ -130,6 +130,10 @@ EXTERNFN bool psyco_leave_recursive_call(PsycoObject* po);
 /* tests the 32-bit int at 'address' at run time: CC_NE if it isn't 0 */
 EXTERNFN condition_code_t psyco_int32_nonzero_at(PsycoObject* po,
                                                  void* address);
+/* tests the 32-bit int at 'offset' in the run-time pointer 'vbase': CC_NE
+   if it isn't 0 */
+EXTERNFN condition_code_t psyco_int32_nonzero_in(PsycoObject* po,
+                                                 vinfo_t* vbase, long offset);
 /* ceval's eval_breaker test at a loop head or after a call (psyfunc.c,
    KNOWN_BUGS C24); false with an exception set */
 EXTERNFN bool psyco_check_eval_breaker(PsycoObject* po);

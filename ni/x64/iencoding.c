@@ -926,3 +926,14 @@ condition_code_t psyco_int32_nonzero_at(PsycoObject *po, void *address) {
     END_CODE
     return CC_NE;
 }
+
+DEFINEFN
+condition_code_t psyco_int32_nonzero_in(PsycoObject *po, vinfo_t *vbase,
+                                        long offset) {
+    BEGIN_CODE
+    NEED_CC();
+    RTVINFO_IN_REG(vbase);
+    CMP_I8_DO(0, getreg(vbase->source), offset);
+    END_CODE
+    return CC_NE;
+}

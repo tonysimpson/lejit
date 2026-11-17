@@ -8,7 +8,9 @@
  * (comprehensions, local lambdas): its cells are passed as extra inputs into
  * the free-variable slots. Anything else (keyword-only arguments, other
  * closures, code with cells of its own, unknown arity, recursion depth used
- * up) becomes a residual call of the function object. PsycoFunctionObject (the "proxy") is a
+ * up) becomes a residual call of the function object, as does a call made
+ * while a trace or profile function is set (tested at run time: tracing_on).
+ * PsycoFunctionObject (the "proxy") is a
  * leftover of psyco.bind() and is dead code under the eval-frame hook.
  */
 #include "psyfunc.h"
@@ -361,37 +363,37 @@ static void cimpl_leave_overflowed(void) {
     ts->overflowed = 0;
 }
 
-/* adds 'delta' to the depth: the new depth, and the thread state in *vts */
-static vinfo_t *add_to_depth(PsycoObject *po, long delta, vinfo_t **vts) {
+/* the running thread's state, read at run time */
+static vinfo_t *load_tstate(PsycoObject *po) {
   vinfo_t *vslot = vinfo_new(CompileTime_New((long)tstate_current));
-  vinfo_t *vdepth, *vnew;
-  *vts = psyco_get_field(po, vslot, TSTATE_current);
+  vinfo_t *vts = psyco_get_field(po, vslot, TSTATE_current);
   vinfo_decref(vslot, po);
-  if (*vts == NULL)
-    return NULL;
-  vdepth = psyco_get_field(po, *vts, TSTATE_depth);
+  return vts;
+}
+
+/* adds 'delta' to the depth of thread state 'vts': the new depth */
+static vinfo_t *add_to_depth(PsycoObject *po, long delta, vinfo_t *vts) {
+  vinfo_t *vdepth, *vnew;
+  vdepth = psyco_get_field(po, vts, TSTATE_depth);
   if (vdepth == NULL)
-    goto fail;
+    return NULL;
   vnew = integer_add_i(po, vdepth, delta, true);
   vinfo_decref(vdepth, po);
   if (vnew == NULL)
-    goto fail;
-  if (psyco_put_field(po, *vts, TSTATE_depth, vnew))
+    return NULL;
+  if (psyco_put_field(po, vts, TSTATE_depth, vnew))
     return vnew;
   vinfo_decref(vnew, po);
-fail:
-  vinfo_decref(*vts, po);
   return NULL;
 }
 
 /* false with an exception set in 'po' */
-static bool enter_recursive_call(PsycoObject *po) {
-  vinfo_t *vts, *vlimit, *vslot;
+static bool enter_recursive_call(PsycoObject *po, vinfo_t *vts) {
+  vinfo_t *vlimit, *vslot;
   condition_code_t cc = CC_ERROR;
-  vinfo_t *vdepth = add_to_depth(po, 1, &vts);
+  vinfo_t *vdepth = add_to_depth(po, 1, vts);
   if (vdepth == NULL)
     return false;
-  vinfo_decref(vts, po);
   vslot = vinfo_new(CompileTime_New((long)&_Py_CheckRecursionLimit));
   vlimit = psyco_get_field(po, vslot, INT_value);
   vinfo_decref(vslot, po);
@@ -410,11 +412,16 @@ static bool enter_recursive_call(PsycoObject *po) {
 
 DEFINEFN
 bool psyco_leave_recursive_call(PsycoObject *po) {
-  vinfo_t *vts, *vover;
+  vinfo_t *vover, *vdepth;
   condition_code_t cc;
-  vinfo_t *vdepth = add_to_depth(po, -1, &vts);
-  if (vdepth == NULL)
+  vinfo_t *vts = load_tstate(po);
+  if (vts == NULL)
     return false;
+  vdepth = add_to_depth(po, -1, vts);
+  if (vdepth == NULL) {
+    vinfo_decref(vts, po);
+    return false;
+  }
   vinfo_decref(vdepth, po);
   vover = psyco_get_field(po, vts, TSTATE_overflowed);
   vinfo_decref(vts, po);
@@ -446,6 +453,39 @@ bool psyco_check_eval_breaker(PsycoObject *po) {
   return true;
 }
 
+/* Whether a trace or profile function is set in this thread (KNOWN_BUGS
+   C23, D46): a compiled call or inlined frame skips the eval hook, which
+   runs frames interpreted while tstate->use_tracing is set, so each one
+   tests that int first. When set, the caller makes the real call instead
+   (rare path: a runtime_condition_f respawn point, compiled when first
+   taken). Only the callee's entry is tested: a frame already running
+   compiled when tracing starts has f_trace None, so CPython gives it no
+   trace events either; its profile events are missed (KNOWN_BUGS C29).
+   use_tracing is per thread and set by every way in, C ones too
+   (PyEval_SetTrace and PyEval_SetProfile, as cProfile uses). */
+EXTERNVAR int ni_trace_fallback; /* eval_hook.c */
+static bool tracing_on(PsycoObject *po, vinfo_t *vts) {
+  /* off only for tools/interpreted.py, before anything is compiled */
+  if (!ni_trace_fallback)
+    return false;
+  return runtime_condition_f(
+      po, psyco_int32_nonzero_in(po, vts, offsetof(PyThreadState, use_tracing)));
+}
+
+/* the same test on its own; -1 with an exception set in 'po' */
+static int psyco_tracing_on(PsycoObject *po) {
+  bool on;
+  vinfo_t *vts;
+  if (!ni_trace_fallback)
+    return 0;
+  vts = load_tstate(po);
+  if (vts == NULL)
+    return -1;
+  on = tracing_on(po, vts);
+  vinfo_decref(vts, po);
+  return on;
+}
+
 #define COMPUTE_DEFCOUNT()                                                     \
   do {                                                                         \
     /* is vdefaults!=NULL at run-time ? */                                     \
@@ -469,6 +509,7 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   stack_frame_info_t *finfo;
   int tuple_size, argcount, defcount = -2;
   int nfrees;
+  bool inlining;
   vinfo_t **frees = NULL;
   struct fncall_arg_s fncall;
 
@@ -549,19 +590,39 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
                                 frees))
     goto pyerr; /* Python exception (wrong # of arguments) */
 
-  /* try to inline the call */
-  if (!po->pr.is_inlining &&
-      (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE)) {
-    /* inlining call */
-    result = call_with_inline_frame(po, &fncall, recursion);
-  } else {
-    /* non-inlining call */
+  inlining = !po->pr.is_inlining &&
+             (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE);
+  /* a traced call goes through the eval hook (tracing_on). Not again when
+     the instruction restarts after the inlined body with its result. */
+  if (!inlining || LOC_INLINING == NULL) {
+    bool traced, entered = true;
+    vinfo_t *vts = load_tstate(po);
+    if (vts == NULL) {
+      array_release(fncall.inputvinfos);
+      return NULL;
+    }
+    traced = tracing_on(po, vts);
     /* count the call's depth, as ceval does on entering a frame, so that
        deep recursion raises RecursionError instead of overflowing the C
        stack (KNOWN_BUGS C12); psyco_call_psyco leaves it after the call.
        Emitted before the frame is built, so no argument source moves. */
-    if (!enter_recursive_call(po))
-      return NULL;
+    if (!traced && !inlining)
+      entered = enter_recursive_call(po, vts);
+    vinfo_decref(vts, po);
+    if (traced || !entered) {
+      array_release(fncall.inputvinfos);
+      if (!entered)
+        return NULL;
+      goto fail_to_default;
+    }
+  }
+
+  /* try to inline the call */
+  if (inlining) {
+    /* inlining call */
+    result = call_with_inline_frame(po, &fncall, recursion);
+  } else {
+    /* non-inlining call */
     mypo = psyco_build_frame(&fncall, recursion, &sources);
     if (mypo == NULL) {
       psyco_leave_recursive_call(po);
@@ -602,7 +663,7 @@ vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
                             vinfo_t *acc) {
   vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
   vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
-  vinfo_t *vcode, *vglobals, *closure, *vmode, *result;
+  vinfo_t *vcode, *vglobals, *closure, *vmode, *result, *vts;
   vinfo_t *extra[64];
   PyCodeObject *co;
   CodeBufferObject *codebuf;
@@ -639,7 +700,10 @@ vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
 
   /* as psyco_call_pyfunc's non-inlining call */
   result = NULL;
-  if (enter_recursive_call(po)) {
+  vts = load_tstate(po);
+  if (vts != NULL && enter_recursive_call(po, vts)) {
+    vinfo_decref(vts, po);
+    vts = NULL;
     mypo = psyco_build_frame(&fncall, po->pr.auto_recursion, &sources);
     if (mypo == NULL) {
       psyco_leave_recursive_call(po);
@@ -652,6 +716,7 @@ vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
       PyMem_FREE(sources);
     }
   }
+  vinfo_xdecref(vts, po);
   vinfo_decref(vmode, po);
   return result;
 }
@@ -686,6 +751,16 @@ bool psyco_genexpr_fusable(vinfo_t *v) {
       return false;
   }
   return true;
+}
+
+/* the fused body is the generator's frame: a tracer must see it */
+DEFINEFN
+int psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v) {
+  int on;
+  if (!psyco_genexpr_fusable(v))
+    return 0;
+  on = psyco_tracing_on(po);
+  return on < 0 ? -1 : !on;
 }
 
 /***************************************************************/

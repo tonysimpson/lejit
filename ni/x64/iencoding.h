@@ -644,6 +644,10 @@ typedef enum {
 #define CMP_I8_DA(i, rm)                                                       \
   INDIRECT_ENCODING(false, 1, 0x83, 0, 0, 0x38, 0, rm);                       \
   WRITE_8BIT(i)
+/* @asm: cmp dword ptr [{rm}{o}], {i:i8} */
+#define CMP_I8_DO(i, rm, o)                                                    \
+  OFFSET_ENCODING(false, false, 1, 0x83, 0, 0, 0x38, 0, 0, rm, o);            \
+  WRITE_8BIT(i)
 /* @asm: cmp dword ptr [rip{o:d32}], {i:i8} */
 #define CMP_I8_DRIP(i, o)                                                      \
   do {                                                                         \
