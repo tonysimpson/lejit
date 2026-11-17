@@ -227,6 +227,57 @@ def added_call():
     return r
 
 
+# a __bases__ assignment changes which operand's slot goes first; the
+# slots themselves stay the same
+class P:
+    def __eq__(self, o):
+        return 'P'
+
+
+class R:
+    pass
+
+
+class V(P):
+    def __eq__(self, o):
+        return 'V'
+
+
+def eq(a, b):
+    return a == b
+
+
+def changed_bases():
+    p, v = P(), V()
+    r = [eq(p, v)]
+    V.__bases__ = (R,)
+    r.append(eq(p, v))
+    V.__bases__ = (P,)
+    return r
+
+
+class F(float):
+    pass
+
+
+class F2(float):
+    pass
+
+
+class FG(F):
+    def __radd__(self, o):
+        return 'FG'
+
+
+def changed_bases_add():
+    f, g = F(1.0), FG(2.0)
+    r = [add(f, g)]
+    FG.__bases__ = (F2,)
+    r.append(add(f, g))
+    FG.__bases__ = (F,)
+    return r
+
+
 CASES = [
     ('added_bool', [()], {}),
     ('deleted_len', [()], {}),
@@ -237,4 +288,6 @@ CASES = [
     ('overridden_containers', [()], {}),
     ('list_len_only', [()], {}),
     ('added_call', [()], {}),
+    ('changed_bases', [()], {}),
+    ('changed_bases_add', [()], {}),
 ]

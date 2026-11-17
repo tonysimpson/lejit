@@ -54,6 +54,13 @@ PSY_INLINE int Psyco_TypeSlot(PsycoObject* po, PyTypeObject* tp, void* slot,
 	return Psyco_HeapSlot(po, slot, value);
 }
 
+/* PyType_IsSubtype(a, b) as Psyco_TypeSlot reads a slot: a heap type's
+   mro changes with a __bases__ assignment, so a's tp_mro is recorded as
+   first seen (and held), *result comes from it, and compiled code checks
+   that it is still a's: 1, 0 on the path where it changed, -1. */
+EXTERNFN int Psyco_TypeIsSubtype(PsycoObject* po, PyTypeObject* a,
+				 PyTypeObject* b, bool* result);
+
 #define PsycoSequence_Check(tp) \
 	((tp)->tp_as_sequence && (tp)->tp_as_sequence->sq_item != NULL)
 

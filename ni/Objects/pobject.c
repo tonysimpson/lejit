@@ -59,8 +59,9 @@ typedef struct {
 } slot_word_t;
 #define SLOT_value FMUT(DEF_FIELD(slot_word_t, void *, p, NO_PREV_FIELD))
 
-DEFINEFN
-int Psyco_HeapSlot(PsycoObject *po, void *slot, void **value) {
+/* 'hold': the value is an object, held for good once recorded, so that
+   a new object at the same address can't pass the guard */
+static int heap_word(PsycoObject *po, void *slot, void **value, bool hold) {
   static PyObject *seen = NULL; /* slot address -> value first seen */
   PyObject *key, *v;
   vinfo_t *vslot, *vnow, *vexp;
@@ -76,6 +77,8 @@ int Psyco_HeapSlot(PsycoObject *po, void *slot, void **value) {
     if (v == NULL || PyDict_SetItem(seen, key, v) < 0)
       OUT_OF_MEMORY();
     Py_DECREF(v);
+    if (hold)
+      Py_XINCREF(*(PyObject **)slot);
   }
   Py_DECREF(key);
   *value = PyLong_AsVoidPtr(v);
@@ -92,6 +95,34 @@ int Psyco_HeapSlot(PsycoObject *po, void *slot, void **value) {
   if (cc == CC_ERROR)
     return -1;
   return !runtime_condition_f(po, cc);
+}
+
+DEFINEFN
+int Psyco_HeapSlot(PsycoObject *po, void *slot, void **value) {
+  return heap_word(po, slot, value, false);
+}
+
+DEFINEFN
+int Psyco_TypeIsSubtype(PsycoObject *po, PyTypeObject *a, PyTypeObject *b,
+                        bool *result) {
+  PyObject *mro;
+  Py_ssize_t i;
+  int r;
+  if (!Psyco_SlotsMutable(a)) {
+    *result = PyType_IsSubtype(a, b);
+    return 1;
+  }
+  r = heap_word(po, &a->tp_mro, (void **)&mro, true);
+  if (r <= 0)
+    return r;
+  *result = false;
+  if (mro == NULL) /* not ready: PyType_IsSubtype's base chain */
+    *result = PyType_IsSubtype(a, b);
+  else
+    for (i = 0; i < PyTuple_GET_SIZE(mro); i++)
+      if (PyTuple_GET_ITEM(mro, i) == (PyObject *)b)
+        *result = true;
+  return 1;
 }
 
 DEFINEFN
@@ -993,9 +1024,16 @@ static vinfo_t* try_rich_compare(PsycoObject* po, vinfo_t* v, vinfo_t* w, int op
       return NULL;
     }
 
-  swap = (vtp != wtp &&
-          PyType_IsSubtype(wtp, vtp) &&
-          fw != NULL);
+  swap = false;
+  if (vtp != wtp && fw != NULL)
+    switch (Psyco_TypeIsSubtype(po, wtp, vtp, &swap)) {
+    case 1:
+      break;
+    case 0:
+      goto changed;
+    default:
+      return NULL;
+    }
   if (swap) {
           res = Psyco_META3(po, fw, CfCommonCheckNotImplemented,
                             "vvl", w, v, swapped_op[op]);

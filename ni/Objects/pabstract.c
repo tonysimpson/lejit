@@ -549,7 +549,10 @@ static vinfo_t *binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w,
       slotw = NULL;
   }
   if (slotv) {
-    if (slotw && PyType_IsSubtype(wtp, vtp)) {
+    bool w_first = false;
+    if (slotw)
+      SLOT_OR_GOTO(Psyco_TypeIsSubtype(po, wtp, vtp, &w_first), changed, NULL);
+    if (w_first) {
       x = Psyco_META2(po, slotw, CfCommonCheckNotImplemented, "vv", v, w);
       if (IS_IMPLEMENTED(x))
         return x;          /* may be NULL */
