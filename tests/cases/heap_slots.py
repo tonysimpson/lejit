@@ -209,6 +209,24 @@ def overridden_containers():
     return r
 
 
+def call(f, x):
+    return f(x)
+
+
+class K:
+    pass
+
+
+def added_call():
+    k = K()
+    r = [attempt(call, k, 1)]
+    K.__call__ = lambda self, x: ('call', x)
+    r.append(call(k, 2))
+    del K.__call__
+    r.append(attempt(call, k, 3))
+    return r
+
+
 CASES = [
     ('added_bool', [()], {}),
     ('deleted_len', [()], {}),
@@ -218,4 +236,5 @@ CASES = [
     ('added_items', [()], {}),
     ('overridden_containers', [()], {}),
     ('list_len_only', [()], {}),
+    ('added_call', [()], {}),
 ]

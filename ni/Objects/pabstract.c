@@ -67,14 +67,20 @@ vinfo_t *PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object,
   if (tp == NULL)
     return NULL;
 
-  if ((call = tp->tp_call) != NULL) {
+  switch (Psyco_TypeSlot(po, tp, &tp->tp_call, (void **)&call)) {
+  case 1:
+    break;
+  case 0: /* a heap type's tp_call changed; kw is 0 for none */
+    return psyco_generic_call(po, PyObject_Call, CfCommonNewRefPyObject,
+                              "vvv", callable_object, args, kw);
+  default:
+    return NULL;
+  }
+  if (call != NULL) {
     return Psyco_META3(po, call, CfCommonNewRefPyObject, "vvv", callable_object,
                        args, kw);
   }
-  PycException_SetFormat(po, PyExc_TypeError,
-                         "object of type '%.100s' is not callable",
-                         tp->tp_name);
-  return NULL;
+  return type_error_tp(po, "'%.200s' object is not callable", tp);
 }
 
 DEFINEFN
