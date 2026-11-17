@@ -38,12 +38,16 @@ vinfo_t *PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l) {
     rdf = FMUT(UNSIGNED_ARRAY(unsigned short, 0));
     break;
   case T_INT:
+    rdf = FMUT(DEF_ARRAY(int, 0));
+    break;
   case T_UINT:
+    rdf = FMUT(UNSIGNED_ARRAY(unsigned int, 0));
+    break;
   case T_LONG:
-  case T_ULONG: /* read a long */
-    /* XXX assumes sizeof(int) == sizeof(long) */
     rdf = FMUT(DEF_ARRAY(long, 0));
     break;
+  case T_ULONG: /* may not fit a signed long */
+    goto fallback;
   case T_FLOAT: /* read a long, turn it into a float */
     rdf = FMUT(DEF_ARRAY(float, 0));
     w = psyco_get_field_offset(po, addr, rdf, l->offset);
