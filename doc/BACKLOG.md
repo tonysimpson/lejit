@@ -12,7 +12,8 @@ One list of what is still open, swept from every doc on 2026-11-17. Each line po
 From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 **Wrong results or crashes, reachable today**
-- **C23 (partly fixed, `5f1dbf6`; calls from compiled code remain):** `sys.settrace`/`setprofile` don't see compiled code; a debugger's jump out of a loop never happens (`test_sys_settrace` ran to 20 GB). Small fix (interpret while tracing), but it is a decision (QUESTIONS 32; `tools/interpreted.py` relies on the current behaviour).
+- **C30, C31:** CPython's `test_timeit` (since `e26c2a3`) and `test_shutil` segfault under Ni after a run of earlier tests; not reduced. Reduce first (`tools/nianalyser/crash_report.py`), then fix.
+- **C29:** a frame already running compiled when tracing starts gets no events: `pdb.set_trace()`/`breakpoint()` in a compiled function stops only in its callees, a tracer that sets `f_trace` on running frames sees nothing from them, and a profiler misses their `c_call`/`return` events. Needs a way out of compiled code mid-frame (large).
 - **F10:** a user `__eq__`/`__ne__` runs twice (now seen: CPython's `test_compare`). Small to medium (`pobject.c`).
 - **F48:** an exhausted sequence iterator restarts when the sequence grows (`piterobject.c`). Medium.
 - **F49, F50:** builtins read from `globals()['__builtins__']` at each lookup; a slot deleted after compiling (`del C.__next__`) not seen. Small to medium; rare.

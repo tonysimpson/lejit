@@ -26,7 +26,7 @@ The question (agreed after the bytecode desk read, METACOMPILER.md): the meta-co
 - **Tracebacks work** as Ni builds them now (`pycompiler.c:cimpl_rt_traceback`): `PyFrame_New`, then `PyTraceBack_Here`. The frame's `f_frame->prev_instr` (an internal field) must point at the failing instruction. The traceback then shows `f`, line 5.
 - **Specialisation rewrites the bytecode in place.** The first prototype found its `BINARY_OP` gone once the interpreter had run `f`: it had become `BINARY_OP_ADD_INT` inside the code object. Ni must read bytecode with `PyCode_GetCode`, which returns it unspecialised at the same offsets. It must never read `co_code_adaptive`.
 - **Changing `__code__` kept the old compiled body** (7 instead of 12). An exported function watcher (`PyFunction_AddWatcher`, on any event except creation) fixes that: it restores `_PyFunction_Vectorcall`. The `PyFunction_EVENT_CREATE` event could also install Ni's vectorcall on every new function. That would replace the 3.7 hook's "see every call" without touching the interpreter.
-- **Tracing:** `sys.setprofile` doesn't see compiled functions. Ni on 3.7 is the same today (checked: neither a compiled function nor its inlined callee shows), so this is no regression. `sys.monitoring` (PEP 669) will need a decision: run interpreted while monitoring is on? (QUESTIONS 31)
+- **Tracing:** `sys.setprofile` doesn't see compiled functions. On 3.7 Ni now runs interpreted while tracing: the eval hook, and a `use_tracing` test at each compiled call and inlined frame (D46, KNOWN_BUGS C23). On 3.12 the same applies to `sys.monitoring` (PEP 669; QUESTIONS 32).
 
 ## The rest of the core, area by area
 
