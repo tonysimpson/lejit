@@ -31,6 +31,7 @@
 #if ALL_STATIC
 #include "Modules/pmath.c"
 #include "Objects/pabstract.c"
+#include "Objects/pbytesobject.c"
 #include "Objects/pclassobject.c"
 #include "Objects/pdescrobject.c"
 #include "Objects/pdictobject.c"
@@ -61,6 +62,7 @@ EXTERNFN void psyco_pycompiler_init(void);  /* Python/pycompiler.c */
 EXTERNFN void psyco_frames_init(void);      /* Python/frames.c */
 EXTERNFN void psyco_bltinmodule_init(void); /* Python/pbltinmodule.c */
 EXTERNFN void psy_object_init(void);        /* Objects/pobject.c */
+EXTERNFN void psy_bytesobject_init(void);   /* Objects/pbytesobject.c */
 EXTERNFN void psy_classobject_init(void);   /* Objects/pclassobject.c */
 EXTERNFN void psy_descrobject_init(void);   /* Objects/pdescrobject.c */
 EXTERNFN void psy_dictobject_init(void);    /* Objects/pdictobject.c */
@@ -87,6 +89,7 @@ PSY_INLINE void initialize_all_files(void) {
   psyco_frames_init();      /* Python/frames.c */
   psyco_bltinmodule_init(); /* Python/pbltinmodule.c */
   psy_object_init();        /* Objects/pobject.c */
+  psy_bytesobject_init();   /* Objects/pbytesobject.c */
   psy_classobject_init();   /* Objects/pclassobject.c */
   psy_descrobject_init();   /* Objects/pdescrobject.c */
   psy_dictobject_init();    /* Objects/pdictobject.c */
