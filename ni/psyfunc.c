@@ -24,6 +24,7 @@
 #include "Python/pycompiler.h"
 #include "codemanager.h"
 #include "mergepoints.h"
+#include "pycodegen.h"
 #include "vcompiler.h"
 
 
@@ -732,6 +733,17 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   inlining = !po->pr.is_inlining &&
              (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE) &&
              !(frees == freebuf && is_runtime(vfunc->source));
+  if (inlining && frees == freebuf && is_runtime(vfunc->source)) {
+    /* Cells loaded from a run-time function are borrowed from it, which is
+       enough for a call: the caller holds the function until it returns a
+       real object. An inlined body's result can still be virtual and hold
+       a cell (a closure it made), and the caller drops the function before
+       computing it: the cell could be freed first (KNOWN_BUGS C49). So each
+       cell gets a reference of its own, dropped with its last vinfo_t. */
+    int i;
+    for (i = 0; i < nfrees; i++)
+      need_reference(po, freebuf[i]);
+  }
   /* a traced call goes through the eval hook (tracing_on). Not again when
      the instruction restarts after the inlined body with its result. */
   if (!inlining || LOC_INLINING == NULL) {

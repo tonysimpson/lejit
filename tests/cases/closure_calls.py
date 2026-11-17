@@ -284,18 +284,37 @@ class Checker:
         return a == b
 
     def small_closure(self, f):
-        # an inlinable closure known at run time, its result an argument of
-        # a method call: inlining it crashed (C49), so it is called
         return self.check(f(), 2, "x")
 
 
 def inlinable_runtime(n):
+    # callnum(k) is a temporary, and deco, inlined with its cell loaded from
+    # it, returns a closure over that cell, still virtual when the caller
+    # drops deco: the cell was freed before the closure took it (C49)
     c = Checker()
     return [c.small_closure(callnum(k)(None)) for k in range(n)]
 
 
+def pair_maker(num):
+    def deco(func):
+        return (lambda: num + 1, func)
+    return deco
+
+
+def inlined_factory(n):
+    # the same, the closure inside a virtual tuple, kept and called after
+    # the factory and its maker are gone
+    fs = []
+    for k in range(n):
+        f, g = pair_maker(k)(k * 2)
+        fs.append((f, g))
+    fs.append((callnum(n)(None), 0))
+    return [f() + g for f, g in fs]
+
+
 CASES = [
     ('inlinable_runtime', [(4,)], {}),
+    ('inlined_factory', [(30,)], {}),
     ('wrong_counts', [(2,)], {}),
     ('const_closure', [(50,)], {}),
     ('runtime_closures', [(20,)], {}),
