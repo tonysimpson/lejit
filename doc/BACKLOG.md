@@ -12,11 +12,11 @@ One list of what is still open, swept from every doc on 2026-11-17. Each line po
 From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 **Wrong results or crashes, reachable today**
-- **C24:** compiled code never drops the GIL or runs signal handlers: another thread waiting on a compiled busy loop starves, Ctrl-C can't stop a compiled loop, and a handler's exception surfaces outside its `try`. Found by the CPython test survey (2026-11-17); `test_signal`, `test_threading`, `test_io`, `test_unittest`, `test_sys`, `test_asyncio` excluded for it. Medium (core: an `eval_breaker` test at loop heads). The most serious open item.
 - **C23 (partly fixed, `5f1dbf6`; calls from compiled code remain):** `sys.settrace`/`setprofile` don't see compiled code; a debugger's jump out of a loop never happens (`test_sys_settrace` ran to 20 GB). Small fix (interpret while tracing), but it is a decision (QUESTIONS 32; `tools/interpreted.py` relies on the current behaviour).
 - **F10:** a user `__eq__`/`__ne__` runs twice (now seen: CPython's `test_compare`). Small to medium (`pobject.c`).
 - **F48:** an exhausted sequence iterator restarts when the sequence grows (`piterobject.c`). Medium.
 - **F49, F50:** builtins read from `globals()['__builtins__']` at each lookup; a slot deleted after compiling (`del C.__next__`) not seen. Small to medium; rare.
+- **F52:** a function's `__defaults__` changed after a compiled call to it isn't seen (`unittest.mock.patch.object(f, '__defaults__')`; CPython's `test_unittest`). Small (a guard on the defaults at the call).
 - **C25:** C functions called directly skip `_Py_CheckFunctionResult` (a buggy extension returning NULL without an exception segfaults). Small.
 - **F51:** checked build only: a respawn replay aborts on a forced constant tuple (`test_subclassinit`). Small (the replay check).
 - **F9:** a `T_STRING_INPLACE` struct member gives `bytes`, not `str`. Small. **In flight** (strings agent).
@@ -26,6 +26,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C17 remainder:** identity of virtual floats, ints and bound methods across calls (`f(x) is x` is False).
 
 - **F37:** fixed (`e86f8ae`, STORES.md option 1).
+- **C24:** fixed (D45): compiled code tests `eval_breaker` at loop heads and after calls.
 - **C22, F41–F47:** fixed by the CPython test survey (2026-11-17; KNOWN_BUGS), including two crashes (C22, F45).
 
 **Possible, not shown to happen**
@@ -42,6 +43,8 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C1:** the stack-alignment test at merge points is needed but badly named, and it causes some duplicate blocks (see ideas).
 
 ## Improvement ideas
+
+- **Fewer `eval_breaker` tests (D45):** they add 5% to code, [inferred] mostly after calls, which outnumber loop heads. A call that compiles to no residual call (folded, or a virtual such as `range()`) needs no test after it. Small; measure code size and instructions.
 
 ### Speed
 - **F13, FASTCALL builtins.** **In flight.** Note: F23 already gave `PsycoCFunction_Call` a FASTCALL path for builtins with a meta; F13 is about the rest, and the agent should say what is left.
