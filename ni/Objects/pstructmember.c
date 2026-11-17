@@ -1,10 +1,7 @@
 /*
  * Compile-time PyMember_GetOne: maps each T_* member type onto a field
- * descriptor and emits a load. Unreachable for now (pdescrobject.c: nothing
- * dispatches to the member-descriptor meta). Known problems on x86-64:
- *  - T_INT/T_UINT share the 'long' case, so a 4-byte field is read as 8
- *    bytes (KNOWN_BUGS M10);
- *  - T_STRING_INPLACE builds bytes where CPython 3 builds str.
+ * descriptor and emits a load. Reached through the member-descriptor meta
+ * (pdescrobject.c) when pobject.c:generic_getattr specialises on the type.
  */
 #include "pstructmember.h"
 #include "../Python/pyver.h"
@@ -89,10 +86,10 @@ vinfo_t *PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l) {
     w = integer_add_i(po, addr, l->offset, false);
     if (w == NULL)
       return NULL;
-    v = psyco_generic_call(po, PyBytes_FromString, CfCommonNewRefPyObject, "v",
-                           w);
+    v = psyco_generic_call(po, PyUnicode_FromString, CfCommonNewRefPyObject,
+                           "v", w);
     if (v != NULL)
-      Psyco_AssertType(po, v, &PyBytes_Type);
+      Psyco_AssertType(po, v, &PyUnicode_Type);
     vinfo_decref(w, po);
     return v;
   case T_OBJECT: /* read a long, turn it into a PyObject with reference */
