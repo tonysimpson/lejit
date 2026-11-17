@@ -121,6 +121,48 @@ def super_call(n):
     return w.get(5), w.rebinds(3), SuperOfList(range(n)).size()
 
 
+# Comprehensions and lambdas whose function is still the one MAKE_FUNCTION
+# made: the call is compiled (or inlined) with the cells passed in
+# (psyfunc.c:psyco_call_pyfunc) instead of a real call.
+
+def comp_reads_cells(xs, k, d):
+    t = [x + k for x in xs]
+    m = {x: d.get(x, k) for x in xs}
+    s = {x * k for x in xs}
+    return t, sorted(m.items()), sorted(s)
+
+
+def comp_cell_changes(n):
+    out = []
+    k = 0
+    for i in range(n):
+        out.append([x * k for x in range(3)])
+        k = k + i            # the cell changes between comprehensions
+    return out
+
+
+def comp_raises(xs, k):
+    try:
+        return [x / k for x in xs]
+    except ZeroDivisionError as e:
+        return 'caught', str(e)
+
+
+def local_lambda(n, k):
+    add = lambda x: x + k   # kept in a local, still virtual
+    t = 0
+    for i in range(n):
+        t = add(t)
+        if i == 3:
+            k = 100          # read through the cell on the next call
+    return t
+
+
+def nested_comps(rows, k):
+    # the outer comprehension passes k on to the inner one as a free variable
+    return [[c + k for c in row] for row in rows]
+
+
 CASES = [
     ('genexpr_over_local', [(200,)], {}),
     ('genexpr_over_arg', [([1, 2, 3], 4), ((1.5,), 2)], {}),
@@ -133,4 +175,9 @@ CASES = [
     ('nqueens_like', [(5,), (8,)], {}),
     ('make_adders', [(6,)], {}),
     ('super_call', [(7,)], {}),
+    ('comp_reads_cells', [([1, 2, 3], 5, {1: 'a'}), ((2.5,), 1, {})], {}),
+    ('comp_cell_changes', [(6,)], {}),
+    ('comp_raises', [([1, 2], 2), ([1, 2], 0)], {}),
+    ('local_lambda', [(10, 1), (3, 2.5)], {}),
+    ('nested_comps', [([[1, 2], [3]], 10)], {}),
 ]

@@ -3,12 +3,16 @@
  * its argument count are known at compile time, the arguments are bound now.
  * The callee is then either inlined into the caller (the EInline
  * pseudo-exception swaps po->vlocals) or compiled separately and called with
- * the Psyco calling convention (psyco_call_psyco). Anything else (keyword-only
- * arguments, closures, unknown arity, recursion depth used up) becomes a
- * residual call of the function object. PsycoFunctionObject (the "proxy") is a
+ * the Psyco calling convention (psyco_call_psyco). Closure code is called this
+ * way only while the function is still the virtual one MAKE_FUNCTION made
+ * (comprehensions, local lambdas): its cells are passed as extra inputs into
+ * the free-variable slots. Anything else (keyword-only arguments, other
+ * closures, code with cells of its own, unknown arity, recursion depth used
+ * up) becomes a residual call of the function object. PsycoFunctionObject (the "proxy") is a
  * leftover of psyco.bind() and is dead code under the eval-frame hook.
  */
 #include "psyfunc.h"
+#include "Objects/pfuncobject.h"
 #include "Objects/ptupleobject.h"
 #include "Python/frames.h"
 #include "Python/pycompiler.h"
@@ -51,20 +55,24 @@ static void fix_run_time_args(PsycoObject *po, vinfo_array_t *target,
 struct fncall_arg_s {
   PyCodeObject *co;
   PyObject *merge_points;
-  vinfo_array_t *inputvinfos;
+  vinfo_array_t *inputvinfos; /* globals, arguments, then the free cells */
+  int nfrees;
   int po_size;
 };
 
-static bool fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co) {
-  int ncells = PyTuple_GET_SIZE(co->co_cellvars);
-  int nfrees = PyTuple_GET_SIZE(co->co_freevars);
+/* free variables only when the caller has the cells (psyco_call_pyfunc);
+   code with cells of its own needs them made at entry: not done */
+static bool fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co,
+                        int nfrees) {
   if (co->co_flags & CO_VARKEYWORDS) {
     return false;
   }
-  if (ncells != 0 || nfrees != 0) {
+  if (PyTuple_GET_SIZE(co->co_cellvars) != 0 ||
+      PyTuple_GET_SIZE(co->co_freevars) != nfrees) {
     return false;
   }
   fncall->co = co;
+  fncall->nfrees = nfrees;
   fncall->merge_points = psyco_get_merge_points(co, 0);
   return fncall->merge_points != Py_None;
 }
@@ -72,7 +80,7 @@ static bool fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co) {
 static bool fncall_collect_arguments(struct fncall_arg_s *fncall,
                                      vinfo_t *vglobals, vinfo_t **argarray,
                                      int argcount, vinfo_t **defarray,
-                                     int defcount) {
+                                     int defcount, vinfo_t **frees) {
   PyCodeObject *co = fncall->co;
   vinfo_array_t *inputvinfos;
   int i, minargcnt, inputargs, extras;
@@ -101,14 +109,16 @@ static bool fncall_collect_arguments(struct fncall_arg_s *fncall,
 
   /* Collect all input vinfo_t's (globals, arguments, needed default values)
      into a new array that mimics the PsycoObject's vlocals. */
-  inputvinfos = array_new(INDEX_LOC_LOCALS_PLUS + inputargs);
+  inputvinfos = array_new(INDEX_LOC_LOCALS_PLUS + inputargs + fncall->nfrees);
   inputvinfos->items[INDEX_LOC_GLOBALS] = vglobals;
   for (i = 0; i < argcount; i++)
     inputvinfos->items[INDEX_LOC_LOCALS_PLUS + i] = argarray[i];
   for (; i < inputargs; i++)
     inputvinfos->items[INDEX_LOC_LOCALS_PLUS + i] = defarray[i - minargcnt];
+  for (i = 0; i < fncall->nfrees; i++)
+    inputvinfos->items[INDEX_LOC_LOCALS_PLUS + inputargs + i] = frees[i];
 
-  extras = co->co_stacksize + co->co_nlocals; /*+ncells+nfrees, both 0 now */
+  extras = co->co_stacksize + co->co_nlocals + fncall->nfrees; /* no cells */
   fncall->inputvinfos = inputvinfos;
   fncall->po_size = INDEX_LOC_LOCALS_PLUS + extras;
   return true;
@@ -134,7 +144,8 @@ static void fncall_store_arguments(struct fncall_arg_s *fncall,
   vinfo_array_t *arraycopy = fncall->inputvinfos;
   vinfo_t **pp;
   int i;
-  int inputargs = arraycopy->count - INDEX_LOC_LOCALS_PLUS;
+  int inputargs = arraycopy->count - INDEX_LOC_LOCALS_PLUS - fncall->nfrees;
+  int j;
 
   /* initialize po->vlocals */
   vlocals[INDEX_LOC_GLOBALS] = arraycopy->items[INDEX_LOC_GLOBALS];
@@ -156,6 +167,10 @@ static void fncall_store_arguments(struct fncall_arg_s *fncall,
   /* the rest of locals is uninitialized */
   for (; i < co->co_nlocals; i++)
     vlocals[INDEX_LOC_LOCALS_PLUS + i] = psyco_vi_Zero();
+  /* the free cells follow the locals, as in a frame */
+  pp = arraycopy->items + arraycopy->count - fncall->nfrees;
+  for (j = 0; j < fncall->nfrees; j++)
+    vlocals[INDEX_LOC_LOCALS_PLUS + co->co_nlocals + j] = *pp++;
   /* the rest of the array is the currently empty stack,
      set to NULL by array_new(). */
 }
@@ -331,6 +346,8 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   vinfo_t *result;
   stack_frame_info_t *finfo;
   int tuple_size, argcount, defcount = -2;
+  int nfrees;
+  vinfo_t **frees = NULL;
   struct fncall_arg_s fncall;
 
   if (is_proxycode(co)) {
@@ -354,10 +371,19 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   }
   if (--recursion < 0)
     goto fail_to_default;
-  /* closure code runs through the real call, which supplies the cells
-     (fncall_init rejects it too) */
-  if (PyCode_GetNumFree(co) != 0)
-    goto fail_to_default;
+  /* closure code: the cells are known when the function is still the
+     virtual one MAKE_FUNCTION made (a comprehension, say); otherwise the
+     real call supplies them */
+  nfrees = PyCode_GetNumFree(co);
+  if (nfrees != 0) {
+    vinfo_t *closure;
+    if (vfunc == NULL || !is_virtualtime(vfunc->source))
+      goto fail_to_default;
+    closure = vinfo_getitem(vfunc, iFUNC_CLOSURE);
+    if (closure == NULL || PsycoTuple_Load(closure) != nfrees)
+      goto fail_to_default;
+    frees = &PsycoTuple_GET_ITEM(closure, 0);
+  }
 
   /* XXX tony: kw only args are a Py3 feature that we need to add support for */
   if (co->co_kwonlyargcount != 0) {
@@ -385,11 +411,12 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     return NULL;
 
   /* prepare a frame */
-  if (!fncall_init(&fncall, co))
+  if (!fncall_init(&fncall, co, nfrees))
     goto fail_to_default; /* unsupported bytecode features */
   if (!fncall_collect_arguments(&fncall, vglobals,
                                 &PsycoTuple_GET_ITEM(arg_tuple, 0), tuple_size,
-                                &PsycoTuple_GET_ITEM(vdefaults, 0), defcount))
+                                &PsycoTuple_GET_ITEM(vdefaults, 0), defcount,
+                                frees))
     goto pyerr; /* Python exception (wrong # of arguments) */
 
   /* try to inline the call */
@@ -544,10 +571,10 @@ static PyObject *psycofunction_call(PsycoFunctionObject *self, PyObject *arg,
     }
 
     /* make a "frame" */
-    support = fncall_init(&fncall, self->psy_code);
+    support = fncall_init(&fncall, self->psy_code, 0);
     if (support && fncall_collect_arguments(&fncall, vglobals, arginfo->items,
                                             arginfo->count, vdefaults->items,
-                                            vdefaults->count)) {
+                                            vdefaults->count, NULL)) {
       po = psyco_build_frame(&fncall, self->psy_recursion, NULL);
     }
     array_delete(vdefaults, NULL);
