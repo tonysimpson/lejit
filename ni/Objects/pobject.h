@@ -129,6 +129,11 @@ EXTERNFN bool PsycoObject_SetAttr(PsycoObject* po, vinfo_t* o,
 EXTERNVAR long psyco_stat_store_misses;
 EXTERNVAR long psyco_stat_store_type_changes;
 EXTERNVAR long psyco_stat_store_refreshes;
+#if NI_CODESTATS
+/* load guards (QUESTIONS 41, tools/loadguards.py): see pobject.c */
+EXTERNVAR long psyco_cs_load[8];
+EXTERNVAR bool psyco_cs_load_respawn;
+#endif
 EXTERNFN vinfo_t* PsycoObject_GenericGetAttr(PsycoObject* po, vinfo_t* obj,
                                              vinfo_t* vname);
 

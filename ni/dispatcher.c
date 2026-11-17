@@ -689,9 +689,19 @@ static code_t *do_respawn_body(respawn_t *rs);
 /* a stub function: 'value' (RSI) is used only by promotions */
 static code_t *do_respawn(respawn_t *rs, long value) {
   code_t *r;
+#if NI_CODESTATS
+  long t0 = psyco_stat_now_ns();
+  psyco_cs_load_respawn = false;
+#endif
   NI_COMPILE_BEGIN(NI_ENTER_RESPAWN);
   r = do_respawn_body(rs);
   NI_COMPILE_END(NI_ENTER_RESPAWN);
+#if NI_CODESTATS
+  if (psyco_cs_load_respawn) { /* a load guard's failure branch */
+    psyco_cs_load[4] += psyco_stat_now_ns() - t0;
+    psyco_cs_load_respawn = false;
+  }
+#endif
   return r;
 }
 
@@ -744,6 +754,10 @@ static code_t *do_respawn_body(respawn_t *rs) {
   code = GLOBAL_ENTRY_POINT(po);
 
   SHRINK_CODE_BUFFER(codebuf, code, "respawned");
+#if NI_CODESTATS
+  if (psyco_cs_load_respawn)
+    psyco_cs_load[5] += code - (code_t *)codebuf->codestart;
+#endif
   /* make sure detect_respawn() succeeded */
   psyco_assert(codebuf->snapshot.fz_respawned_from == rs->respawn_from);
 

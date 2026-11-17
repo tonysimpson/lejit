@@ -531,6 +531,74 @@ static bool safe_descriptor(PyTypeObject *dtp) {
          dtp->tp_descr_get == NULL;
 }
 
+/* What a load compiled after a passed guard does, as a function of the
+   type: LOAD_GENERIC (the generic call), NULL (no class attribute: the
+   instance dict only) or the descriptor or class attribute it specialises
+   on. Assigns the version tag. */
+#define LOAD_GENERIC ((PyObject *)1)
+static PyObject *load_kind(PyTypeObject *tp, PyObject *name) {
+  PyObject *descr;
+  PyTypeObject *dtp;
+  if (tp->tp_getattro != PyObject_GenericGetAttr || tp->tp_dict == NULL)
+    return LOAD_GENERIC;
+  descr = _PyType_Lookup(tp, name); /* borrowed */
+  if (descr == NULL)
+    return NULL;
+  dtp = Py_TYPE(descr);
+  if ((dtp->tp_flags & Py_TPFLAGS_HEAPTYPE) || !safe_descriptor(dtp))
+    return LOAD_GENERIC;
+  if (c_descriptor(dtp) && !PyType_IsSubtype(tp, PyDescr_TYPE(descr)))
+    return LOAD_GENERIC;
+  return descr;
+}
+
+#if NI_CODESTATS
+/* Load guards (QUESTIONS 41): sites compiled, guards failed at run time,
+   failures after which the lookup gives what some site of (type, name) was
+   compiled for (a repair would re-arm them), failure branches compiled,
+   their compile ns and bytes (dispatcher.c:do_respawn), failures on a
+   type that can't have a version tag (no Py_TPFLAGS_HAVE_VERSION_TAG), and
+   on one whose tp_getattro isn't generic (its sites never specialise). */
+DEFINEVAR long psyco_cs_load[8];
+DEFINEVAR bool psyco_cs_load_respawn = false;
+static PyObject *cs_load_kinds; /* {(type, name, kind)} compiled */
+
+static PyObject *cs_load_key(PyTypeObject *tp, PyObject *name,
+                             PyObject *kind) {
+  return Py_BuildValue("(kOk)", (unsigned long)tp, name, (unsigned long)kind);
+}
+static void cs_load_compiled(PyTypeObject *tp, PyObject *name) {
+  PyObject *key = cs_load_key(tp, name, load_kind(tp, name));
+  if (cs_load_kinds == NULL)
+    cs_load_kinds = PySet_New(NULL);
+  if (key == NULL || cs_load_kinds == NULL || PySet_Add(cs_load_kinds, key))
+    OUT_OF_MEMORY();
+  Py_DECREF(key);
+  psyco_cs_load[0]++;
+}
+static void cs_load_failed(PyObject *obj, PyObject *name) {
+  PyTypeObject *tp = Py_TYPE(obj);
+  PyObject *key = cs_load_key(tp, name, load_kind(tp, name));
+  psyco_cs_load[1]++;
+  if (tp->tp_getattro != PyObject_GenericGetAttr)
+    psyco_cs_load[7]++;
+  else if (!PyType_HasFeature(tp, Py_TPFLAGS_HAVE_VERSION_TAG))
+    psyco_cs_load[6]++;
+  if (key != NULL && PySet_Contains(cs_load_kinds, key) == 1)
+    psyco_cs_load[2]++;
+  Py_XDECREF(key);
+  PyErr_Clear();
+}
+static PyObject *cimpl_cs_getattr(PyObject *obj, PyObject *name) {
+  cs_load_failed(obj, name);
+  return PyObject_GetAttr(obj, name);
+}
+static PyObject *cimpl_cs_generic_getattr(PyObject *obj, PyObject *name) {
+  cs_load_failed(obj, name);
+  return PyObject_GenericGetAttr(obj, name);
+}
+#endif
+
 /* 'generic' is the function the compiled code calls when the type has
    changed: PyObject_GetAttr from PsycoObject_GetAttr, because the change
    may have given the type a __getattr__ or __getattribute__. */
@@ -572,13 +640,25 @@ static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
                            tp->tp_getattro == PyObject_GenericGetAttr
                        ? tp->tp_flags
                        : 0;
+#if NI_CODESTATS
+    cs_load_compiled(tp, name);
+#endif
   }
   cc = type_changed(po, tp, guard);
   if (cc == CC_ERROR)
     return NULL;
   po->pr.split_after_global = 1;
-  if (runtime_condition_f(po, cc))
+  if (runtime_condition_f(po, cc)) {
+#if NI_CODESTATS
+    if (!is_respawning(po)) {
+      psyco_cs_load[3]++;
+      psyco_cs_load_respawn = true;
+    }
+    generic = generic == (void *)PyObject_GetAttr ? (void *)cimpl_cs_getattr
+                                                  : (void *)cimpl_cs_generic_getattr;
+#endif
     goto generic;
+  }
 
   /* the type is as the guard saw it */
   if (tp->tp_getattro != PyObject_GenericGetAttr || tp->tp_dict == NULL)

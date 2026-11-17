@@ -213,6 +213,16 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
       Py_CLEAR(d);
     Py_XDECREF(t);
   }
+#if NI_CODESTATS
+  if (d != NULL) {
+    long *c = psyco_cs_load;
+    PyObject *t = Py_BuildValue("(llllllll)", c[0], c[1], c[2], c[3], c[4],
+                                c[5], c[6], c[7]);
+    if (t == NULL || PyDict_SetItemString(d, "load_guards", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+#endif
   return d;
 }
 
