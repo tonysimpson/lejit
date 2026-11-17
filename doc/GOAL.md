@@ -18,7 +18,7 @@ He went further on the mailing list. On 2002-11-18 he wrote: "I'm currently desi
 
 ## What the current phase is
 
-**Generate the translated layer on 3.7 (from 2026-11-17).** Everything in Ni that mirrors CPython is to be generated from CPython's own source, then the same generator is taken to 3.8, 3.9 and on, one version at a time, with every version kept (DECISIONS D67). This phase does the first step on 3.7, where the hand translations exist to check against. The plan of work is in `doc/METACOMPILER.md` ("Versions", stages, failures log).
+**Generate the translated layer on 3.7 (from 2026-11-17).** Everything in Ni that mirrors CPython is to be generated from CPython's own source, then the same generator is taken to 3.8, 3.9 and on, one version at a time, with every version kept (DECISIONS D67). This phase does the first step on 3.7, where the hand translations exist to check against. The plan of work is `doc/GENERATION.md`; the method is in `doc/METACOMPILER.md` ("Versions", stages, failures log).
 
 What it builds:
 - A reader for `ceval.c`'s cases that produces the same form CPython's parser gives for 3.12's `bytecodes.c`, replacing the hand-written `tools/metac/bytecodes37.c` (D67 revises D26).
