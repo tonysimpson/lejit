@@ -66,7 +66,41 @@ def nested_branches(n):
     return hits, misses
 
 
+# KNOWN_BUGS C28: a local holding a small int that is also a known field
+# of a constant (an item of the constant tuple it was unpacked from) must
+# not be rewritten in place at the loop head: the tuple's item would become
+# a virtual int under a constant (vcompiler.c:coherent_array asserted).
+def unpacked_from_constant(n):
+    t = (0, 1)
+    a, b = t
+    s = 0
+    for i in range(n):
+        s += a + b + t[0] + t[1]
+        a = b
+    return s, a, t
+
+
+def _check_pair(result, expected):
+    (m, e), (em, ee) = result, expected
+    total = 0
+    for x in (m, e, em, ee):
+        total += x
+    return abs(m - em) < 1e-9 and e == ee, total
+
+
+def inlined_constant_arg(n):
+    # the inlined call's constant argument (0, 0) is unpacked into locals
+    # that share its items, then a loop head is reached in the inlined frame
+    out = []
+    for i in range(n):
+        out.append(_check_pair((0.0, 0), (0, 0)))
+        out.append(_check_pair((0.5, i), (0.5, 1)))
+    return out
+
+
 CASES = [
+    ('unpacked_from_constant', [(0,), (1,), (5,)], {}),
+    ('inlined_constant_arg', [(0,), (1,), (3,)], {}),
     ('counters', [([],), ([1],), ([2, 2],), ([3, 2],), ([1, 2, 3, 4],),
                   ([5, 3, 3, 2, 1, 1, 9],)], {}),
     ('flags', [([],), ([1, 2],), ([-1],), ([200, -3, 150],)], {}),

@@ -1652,14 +1652,22 @@ static void compare_return_address_in_a_stupid_way(vinfo_t *a,
    them starts a new block. Only small ints and bools, which PyLong_FromLong
    and PyBool_FromLong return as the same object when computed, so identity
    is kept; never a fixed (promoted) constant. Only locals: they always hold
-   an object (LOAD_CONST's constants have no SkFlagPyObj to tell). Rewrites
-   po in place, from the state alone, before both the comparison and the
-   snapshot: a respawn replay starts from the rewritten snapshot. */
-static void canonical_int(PsycoObject *po, vinfo_t *a) {
+   an object (LOAD_CONST's constants have no SkFlagPyObj to tell). Done
+   from the state alone, before both the comparison and the snapshot: a
+   respawn replay starts from the rewritten snapshot.
+   The vinfo is rewritten in place only if locals are all that hold it.
+   Otherwise it is also a known field of something, often of a constant
+   ('a, b = t' with a constant tuple t, an inlined call's constant
+   argument), which must stay constant there (vcompiler.c:coherent_array):
+   the locals holding it get a new virtual int instead (KNOWN_BUGS C28). */
+static void canonical_int(PsycoObject *po, int index) {
+  vinfo_t *a = LOC_LOCALS_PLUS[index];
+  vinfo_t *v;
   source_known_t *sk;
   PyObject *o;
   source_virtual_t *sv;
   long value;
+  int i, in_locals, nlocals = po->pr.co->co_nlocals;
   if (a == NULL || !is_compiletime(a->source))
     return;
   sk = CompileTime_Get(a->source);
@@ -1678,12 +1686,28 @@ static void canonical_int(PsycoObject *po, vinfo_t *a) {
     sv = &psyco_computed_long;
   } else
     return;
-  vinfo_array_shrink(po, a, 0); /* cached fields of the object */
-  a->source = VirtualTime_New(sv);
-  a->array = array_new(LONG_TOTAL);
-  a->array->items[iOB_TYPE] = vinfo_new(CompileTime_New((long)Py_TYPE(o)));
-  a->array->items[iLONG_VALUE] = vinfo_new(CompileTime_New(value));
-  sk_decref(sk);
+  /* the locals before 'index' hold no constant small int any more */
+  in_locals = 0;
+  for (i = index; i < nlocals; i++)
+    in_locals += LOC_LOCALS_PLUS[i] == a;
+  if (a->refcount == in_locals) {
+    vinfo_array_shrink(po, a, 0); /* cached fields of the object */
+    a->source = VirtualTime_New(sv);
+    sk_decref(sk);
+    v = a;
+  } else
+    v = vinfo_new(VirtualTime_New(sv));
+  v->array = array_new(LONG_TOTAL);
+  v->array->items[iOB_TYPE] = vinfo_new(CompileTime_New((long)Py_TYPE(o)));
+  v->array->items[iLONG_VALUE] = vinfo_new(CompileTime_New(value));
+  if (v != a)
+    for (i = index; i < nlocals; i++)
+      if (LOC_LOCALS_PLUS[i] == a) {
+        if (--in_locals > 0)
+          vinfo_incref(v);
+        LOC_LOCALS_PLUS[i] = v;
+        vinfo_decref(a, po);
+      }
 }
 
 /* whether a block at this merge point holds anything but the constant
@@ -1843,7 +1867,7 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
   extra_assert(PyList_Check(plist));
   if (!compatible_at_join)
     for (i = 0; i < po->pr.co->co_nlocals; i++)
-      canonical_int(po, LOC_LOCALS_PLUS[i]);
+      canonical_int(po, i);
 #if NI_CODESTATS
   psyco_cs_align_rejects = 0;
 #endif
