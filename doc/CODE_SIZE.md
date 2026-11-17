@@ -593,9 +593,9 @@ Speed is unchanged within noise: a branch that joins runs the main path's code, 
 
 ### Lifting the restrictions (D49) [run]
 
-With C27 (`a0dc8c0`) and C28 (`370c574`) fixed, the join points' own restrictions were lifted (`542eaff`): any known field of a run-time value may be dropped, `canonical_int` runs at join points, and a branch in an inlined frame may un-promote (the caller's code object and position are now fixed constants). Each was also measured alone with a temporary switch; none changed anything.
+With C27 (`a4b946e`) and C28 (`261fd83`) fixed, the join points' own restrictions were lifted (`6f2c227`): any known field of a run-time value may be dropped, `canonical_int` runs at join points, and a branch in an inlined frame may un-promote (the caller's code object and position are now fixed constants). Each was also measured alone with a temporary switch; none changed anything.
 
-"Before" is `a0dc8c0` (the fixes, restrictions in place), "after" is `542eaff`'s code; same session, `PYTHONHASHSEED=0`, machine shared with other agents.
+"Before" is `a4b946e` (the fixes, restrictions in place), "after" is `6f2c227`'s code; same session, `PYTHONHASHSEED=0`, machine shared with other agents.
 
 | | richards | go | raytrace | deltablue | hexiom | chaos | all 29 |
 |---|---|---|---|---|---|---|---|
