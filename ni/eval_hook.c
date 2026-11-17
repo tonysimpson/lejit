@@ -6,6 +6,11 @@
 
 static _PyFrameEvalFunction original_eval_frame = NULL;
 
+/* run interpreted while a trace or profile function is set (KNOWN_BUGS C23):
+   compiled code is invisible to them. Off only for tools/interpreted.py,
+   which profiles to find what Ni didn't compile. */
+DEFINEVAR int ni_trace_fallback = 1;
+
 static PyObject *NiCode_Run(PyObject *codebuf, PyFrameObject *f) {
   stack_frame_info_t **finfo;
   PyObject *result;
@@ -48,6 +53,8 @@ static PyObject *NiEval_EvalFrame(PyFrameObject *frame, int throwflag) {
      through here: leave before any lookup */
   if (frame->f_code->co_flags &
       (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR))
+    return original_eval_frame(frame, throwflag);
+  if (ni_trace_fallback && PyThreadState_GET()->use_tracing)
     return original_eval_frame(frame, throwflag);
   /* Don't compile modules - buggy */
   if (frame->f_globals != frame->f_locals) {

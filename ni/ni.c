@@ -292,6 +292,16 @@ static PyObject *ni_entry_point(PyObject *self, PyObject *co) {
                        (Py_ssize_t)((ni_code_extra_t *)x)->entry_globals);
 }
 
+/* tools/interpreted.py profiles compiled code's callers, so it turns off
+   the fallback to the interpreter while tracing (eval_hook.c) */
+static PyObject *ni_set_trace_fallback(PyObject *self, PyObject *on) {
+  int r = PyObject_IsTrue(on);
+  if (r < 0)
+    return NULL;
+  ni_trace_fallback = r;
+  Py_RETURN_NONE;
+}
+
 /* for tests: the metas Psyco_DefineModuleFn couldn't register */
 static PyObject *ni_unregistered_metas(PyObject *self, PyObject *unused) {
   if (Psyco_Unregistered_Metas == NULL)
@@ -313,6 +323,8 @@ static PyMethodDef module_methods[] = {
      "True if calls to this code object are inlined."},
     {"_unregistered_metas", ni_unregistered_metas, METH_NOARGS,
      "['module.name: why'] for each meta that wasn't registered."},
+    {"_set_trace_fallback", ni_set_trace_fallback, METH_O,
+     "Whether code runs interpreted while sys.settrace/setprofile is set."},
     {"_entry_point", ni_entry_point, METH_O,
      "(codebuf, globals) run for a code object, or None."},
     {NULL, NULL, 0, NULL}};

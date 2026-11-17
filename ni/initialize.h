@@ -77,6 +77,7 @@ EXTERNFN void psy_tupleobject_init(void);   /* Objects/ptupleobject.c */
 EXTERNFN void psy_unicodeobject_init(void); /* Objects/punicodeobject.c */
 EXTERNFN void psyco_initmath(void);         /* Modules/pmath.c */
 EXTERNFN int ni_eval_hook_init(void);       /* eval_hook.c */
+EXTERNVAR int ni_trace_fallback;            /* eval_hook.c */
 EXTERNFN void codemanager_init();           /* codemanager.c */
 EXTERNFN void psycofunction_init();         /* psyfunc.c */
 #endif /* !ALL_STATIC */

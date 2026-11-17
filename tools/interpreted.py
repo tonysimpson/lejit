@@ -22,6 +22,7 @@ def child(script):
     sys.path.insert(0, ROOT)
     import ni
     import pyperf37
+    ni._set_trace_fallback(False)     # else everything runs interpreted
     for name, timed in pyperf37.load(script):
         timed(2)                      # compile
         counts = collections.Counter()
