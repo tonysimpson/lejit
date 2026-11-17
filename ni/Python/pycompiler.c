@@ -384,7 +384,7 @@ int psyco_pyobj_atcompiletime_mega(PsycoObject *po, vinfo_t *vi,
     return -1;
   } else {
     source_known_t *sk = CompileTime_Get(vi->source);
-    sk->refcount1_flags |= SkFlagFixed;
+    sk_mark_used(po, sk);
     *out = (PyObject *)sk->value;
     return 1;
   }
@@ -402,7 +402,7 @@ int psyco_atcompiletime_static_type(PsycoObject *po, vinfo_t *vi,
     return -1;
   } else {
     source_known_t *sk = CompileTime_Get(vi->source);
-    sk->refcount1_flags |= SkFlagFixed;
+    sk_mark_used(po, sk);
     *out = (PyObject *)sk->value;
     return 1;
   }

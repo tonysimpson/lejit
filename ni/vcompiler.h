@@ -171,6 +171,8 @@ PSY_INLINE RunTimeSource set_rtnonneg(RunTimeSource s) {
 typedef struct {
   long refcount1_flags; /* flags and reference counter */
   long value;           /* compile-time known value */
+  unsigned long used;   /* serial of the last block that relied on it
+                           (codemanager.h:sk_mark_used) */
 } source_known_t;
 
 /* flags for source_known_t::refcount1_flags: */
@@ -203,6 +205,7 @@ PSY_INLINE source_known_t *sk_new(long v, long flags) {
   source_known_t *sk = psyco_llalloc_sk();
   sk->refcount1_flags = flags;
   sk->value = v;
+  sk->used = 0;
   return sk;
 }
 PSY_INLINE void sk_delete(source_known_t *sk) { psyco_llfree_sk(sk); }
@@ -687,6 +690,9 @@ struct PsycoObject_s {
   PROCESSOR_PSYCOOBJECT_FIELDS     /* processor state                       */
       int respawn_cnt;             /* see psyco_prepare_respawn()           */
   CodeBufferObject *respawn_proxy; /* see psyco_prepare_respawn()           */
+  unsigned long mp_serial; /* serial of the block started at the last merge
+                              point: the facts stamped since then are in use
+                              (dispatcher.c:compatible_unused_fact, D50) */
   pyc_data_t pr;                   /* private language-dependent data       */
 #if NI_CODESTATS
   code_t *cs_mark;       /* where the current instruction's code began */

@@ -399,6 +399,7 @@ PsycoObject *psyco_duplicate(PsycoObject *po) {
   /* the rest of the data is copied with no change */
   result->respawn_cnt = po->respawn_cnt;
   result->respawn_proxy = po->respawn_proxy;
+  result->mp_serial = po->mp_serial;
   result->code = po->code;
   result->codelimit = po->codelimit;
   pyc_data_duplicate(&result->pr, &po->pr);
@@ -851,6 +852,7 @@ static void mp_new_block(PsycoObject *po, mergepoint_t *mp) {
   if (mp == NULL)
     return;
   mp->blocks++;
+  po->mp_serial = po->respawn_proxy->serial;
 #if NI_CODESTATS
   cs_state(po);
 #endif
@@ -884,6 +886,7 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
          while the user sees no progression in the execution of
          her program.
        */
+      psyco_compatible_keep_facts = false;
       psyco_coding_pause(po, CC_ALWAYS_TRUE, &psyco_resume_compile, NULL, 0);
       return po->code;
     }
@@ -916,6 +919,9 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
     if (mp_capped(mp) && psyco_forget_values(po, &mp->entries))
       return psyco_compile(po, mp, continue_compilation);
 
+    /* a promotion's compare at its own instruction ends here: what is
+       compiled next runs instructions (dispatcher.c, D50) */
+    psyco_compatible_keep_facts = false;
     mp_new_block(po, mp);
     if (continue_compilation)
       return NULL; /* I won't actually compile myself, let the caller know */

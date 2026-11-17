@@ -5,6 +5,7 @@
 #ifndef _PYCOMPILER_H
 #define _PYCOMPILER_H
 
+#include "../codemanager.h"
 #include "../dispatcher.h"
 #include "../processor.h"
 #include "../vcompiler.h"
@@ -158,7 +159,7 @@ PSY_INLINE long psyco_atcompiletime(PsycoObject *po, vinfo_t *vi) {
     return -1;
   } else {
     source_known_t *sk = CompileTime_Get(vi->source);
-    sk->refcount1_flags |= SkFlagFixed;
+    sk_mark_used(po, sk);
     return sk->value;
   }
 }
@@ -172,7 +173,7 @@ PSY_INLINE PyObject *psyco_pyobj_atcompiletime(PsycoObject *po, vinfo_t *vi) {
     return NULL;
   } else {
     source_known_t *sk = CompileTime_Get(vi->source);
-    sk->refcount1_flags |= SkFlagFixed;
+    sk_mark_used(po, sk);
     return (PyObject *)sk->value;
   }
 }

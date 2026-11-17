@@ -205,6 +205,12 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
       Py_CLEAR(d);
     Py_XDECREF(t);
   }
+  if (d != NULL) {
+    PyObject *t = PyLong_FromLong(psyco_stat_fact_drops);
+    if (t == NULL || PyDict_SetItemString(d, "fact_drops", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
   return d;
 }
 

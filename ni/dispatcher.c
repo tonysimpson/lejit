@@ -11,6 +11,10 @@
  *    forms of a counter compare. Ni added a 16-byte stack-alignment test
  *    (compare_return_address_in_a_stupid_way) that rejects otherwise good
  *    matches: a kludge for x86-64 call alignment (KNOWN_BUGS C1).
+ *    A run-time value's known type that the snapshot lacks is dropped if
+ *    nothing since the last merge point relied on it (rule 1, D50,
+ *    compatible_unused_fact), except in the compare a promotion's
+ *    continuation makes at its own instruction, where it would loop.
  *  - psyco_forget_values: the cap per merge point's generalisation
  *    (vcompiler.c:mp_capped, D40). A constant it makes run-time is a
  *    forgotten value: flagged RunTime_Megamorphic, as a megamorphic site's
@@ -1189,6 +1193,43 @@ PSY_INLINE bool fz_compatible_array(vinfo_array_t *aa, FrozenPsycoObject *fpo,
    into the next compatible_array() call. */
 static bool compatible_drop_extra = false;
 static bool compatible_rt_parent = false;
+/* set by psyco_compatible_join: rule 1 does not apply at join points */
+static bool compatible_at_join = false;
+
+/* Rule 1 (SPECIALISATION.md, D50): at a merge point, the known type of a
+   run-time value that the snapshot lacks is dropped if nothing since the
+   last merge point relied on it (sk->used, stamped by sk_mark_used, against
+   po->mp_serial), instead of starting a new block: the block was compiled
+   without the fact and promotes the type itself if it needs it. A match
+   that drops is taken only if no block matches without dropping. Only the
+   type: dropping other known fields (a dict's keys, D31's guards) crashed
+   test_pprint in the checked build (KNOWN_BUGS C35). Not at join points
+   (D44 has its own rule there).
+   Never in the compare that a promotion's continuation makes at its own
+   instruction (psyco_compatible_keep_facts, cleared in vcompiler.c once
+   that compare is over): the state there is the state before the
+   promotion plus the promoted fact, and dropping it would jump back into
+   the block that promoted, which promotes again, hits its own cache and
+   jumps back, forever, without running an instruction (the naive version
+   in CODE_SIZE.md, Promotions, hung so). Every other compare comes after
+   an instruction was compiled, so a chain of jumps between blocks without
+   progress can only enter blocks that know more and more. */
+DEFINEVAR bool psyco_compatible_keep_facts = false;
+DEFINEVAR long psyco_stat_fact_drops = 0;
+static bool compatible_drop_unused = false;
+static unsigned long compatible_serial;
+static int compatible_drops;
+
+
+static bool compatible_unused_fact(vinfo_t *a, bool rt_parent, int index) {
+  source_known_t *sk;
+  if (!compatible_drop_unused || !rt_parent || index != iOB_TYPE ||
+      !is_compiletime(a->source))
+    return false;
+  sk = CompileTime_Get(a->source);
+  return (sk->refcount1_flags & SkFlagFixed) == 0 ||
+         sk->used < compatible_serial;
+}
 
 static bool compatible_array(vinfo_array_t *aa, int count,
                              vinfo_array_t **result, vinfo_array_t *reference,
@@ -1376,16 +1417,20 @@ static bool compatible_array(vinfo_array_t *aa, int count,
   /* special-case test. See comments below. */
 #define CHECK_FOR_NULL(a)                                                      \
   if (a != NULL) {                                                             \
-    /* if there is no proved progress, and 'a'                                 \
-       might just have been promoted,                                          \
-       then we have to let compilation go on */                                \
-    if (*result == NullArray && is_compiletime(a->source) &&                   \
-        ((CompileTime_Get(a->source)->refcount1_flags & SkFlagFixed) != 0))    \
-      return false;                                                            \
-    /* if we are not too deep in the array, then we might as                   \
-       well try compiling with this extra information */                       \
-    if (recdepth <= 2 && !(compatible_drop_extra && rt_parent))               \
-      return false;                                                            \
+    if (compatible_unused_fact(a, rt_parent, i))                               \
+      compatible_drops++;                                                      \
+    else {                                                                     \
+      /* if there is no proved progress, and 'a'                               \
+         might just have been promoted,                                        \
+         then we have to let compilation go on */                              \
+      if (*result == NullArray && is_compiletime(a->source) &&                 \
+          ((CompileTime_Get(a->source)->refcount1_flags & SkFlagFixed) != 0))  \
+        return false;                                                          \
+      /* if we are not too deep in the array, then we might as                 \
+         well try compiling with this extra information */                     \
+      if (recdepth <= 2 && !(compatible_drop_extra && rt_parent))                \
+        return false;                                                          \
+    }                                                                          \
   }
 
   bool rt_parent = compatible_rt_parent;
@@ -1845,11 +1890,18 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
                                   the implementation is not re-entrant anyway */
   vinfo_array_t *bestresult = NULL; /* best result so far */
   CodeBufferObject *bestbuf = NULL;
+  CodeBufferObject *dropbuf = NULL; /* first match that drops facts */
   int i;
   PyObject *plist = patterns->fatlist;
   extra_assert(PyList_Check(plist));
   for (i = 0; i < po->pr.co->co_nlocals; i++)
     canonical_int(po, i);
+  compatible_drop_unused = !compatible_at_join && !psyco_compatible_keep_facts;
+  /* facts stamped since the last merge point are in use. 0 (all kept)
+     at a call's entry, where the caller's facts about the arguments are
+     what the callee specialises on, and in a respawned branch, which
+     starts from a snapshot that doesn't keep the serial */
+  compatible_serial = po->mp_serial;
 #if NI_CODESTATS
   psyco_cs_align_rejects = 0;
 #endif
@@ -1864,6 +1916,7 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
     codebuf = (CodeBufferObject *)o1;
     result.matching = codebuf;
     result.diff = NullArray;
+    compatible_drops = 0;
     fz_check_invariant(&codebuf->snapshot);
     if (fz_compatible_array(&po->vlocals, &codebuf->snapshot, &result)) {
       int alignment_match = -1;
@@ -1881,10 +1934,17 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
         fz_restore_invariant(&codebuf->snapshot);
         continue;
       }
-      if (result.diff == NullArray) {
+      if (result.diff == NullArray && compatible_drops > 0) {
+        /* a match that drops unused facts: taken only if no block
+           matches without dropping */
+        fz_restore_invariant(&codebuf->snapshot);
+        if (dropbuf == NULL)
+          dropbuf = codebuf;
+      } else if (result.diff == NullArray) {
         /* Total match */
         if (bestresult != NULL)
           array_release(bestresult);
+        compatible_drop_unused = false;
         return &result;
       } else {
         /* Partial match, clear 'tmp' fields */
@@ -1905,6 +1965,20 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
       fz_check_invariant(&codebuf->snapshot);
     }
   }
+  if (dropbuf != NULL) {
+    /* compare again, to leave the 'tmp' fields that psyco_unify reads */
+    bool ok;
+    if (bestresult != NULL)
+      array_release(bestresult);
+    result.matching = dropbuf;
+    result.diff = NullArray;
+    ok = fz_compatible_array(&po->vlocals, &dropbuf->snapshot, &result);
+    psyco_assert(ok && result.diff == NullArray);
+    compatible_drop_unused = false;
+    psyco_stat_fact_drops++;
+    return &result;
+  }
+  compatible_drop_unused = false;
   if (bestresult == NULL)
     return NULL;
   else {
@@ -1920,7 +1994,9 @@ vcompatible_t *psyco_compatible_join(PsycoObject *po,
                                      bool drop_fields) {
   vcompatible_t *r;
   compatible_drop_extra = drop_fields;
+  compatible_at_join = true;
   r = psyco_compatible(po, patterns);
+  compatible_at_join = false;
   compatible_drop_extra = false;
   return r;
 }
@@ -2226,6 +2302,7 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
   }
 #endif
   v->source = CompileTime_NewSk(sk);
+  sk_mark_used(po, sk);
   /* compile from this new state, in which 'v' has been promoted to
      compile-time. */
   mp = psyco_exact_merge_point(po->pr.merge_points, po->pr.next_instr);
@@ -2244,7 +2321,9 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
     fs->local_chained_list = buf;
 
     po->code = insn_code_label(NI_CS_PROMO_COUNTER(result));
+    psyco_compatible_keep_facts = true;
     codeend = psyco_compile(po, mp, false);
+    psyco_compatible_keep_facts = false;
     psyco_codestats_buffer("promotion", codebuf, codeend);
     psyco_shrink_code_buffer(codebuf, codeend);
     /* XXX don't know what to do with reference to 'codebuf' */
@@ -2307,7 +2386,9 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
     fs->local_chained_list = buf;
 
     po->code = insn_code_label(NI_CS_PROMO_COUNTER(result));
+    psyco_compatible_keep_facts = true;
     codeend = psyco_compile(po, mp, false);
+    psyco_compatible_keep_facts = false;
     psyco_codestats_buffer("megamorphic", codebuf, codeend);
     psyco_shrink_code_buffer(codebuf, codeend);
     /* XXX don't know what to do with reference to 'codebuf' */

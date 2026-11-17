@@ -43,6 +43,19 @@ PSY_INLINE unsigned long psyco_block_serial(PsycoObject *po) {
   return b->serial;
 }
 
+/* A compile-time value that code is being compiled to rely on: fixed (it
+   may never be un-promoted), and stamped with the current block's serial.
+   A merge point may drop a run-time value's known type that no block
+   since the last merge point has stamped (po->mp_serial,
+   dispatcher.c:compatible_unused_fact, D50).
+   The stamp is only a guess about what code after the merge point needs;
+   being wrong costs speed, never correctness. */
+PSY_INLINE void sk_mark_used(PsycoObject *po, source_known_t *sk) {
+  sk->refcount1_flags |= SkFlagFixed;
+  if (po->respawn_proxy != NULL)
+    sk->used = po->respawn_proxy->serial;
+}
+
 #define SET_CODEMODE(b, mode)   do { } while (0)   /* nothing */
 
 EXTERNVAR PyTypeObject CodeBuffer_Type;

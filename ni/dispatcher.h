@@ -84,6 +84,11 @@ typedef struct {
 } vcompatible_t;
 EXTERNFN vcompatible_t* psyco_compatible(PsycoObject* po,
                                          global_entries_t* pattern);
+/* set while a promotion's continuation is compared at its own instruction:
+   no known fact is dropped there (dispatcher.c, compatible_unused_fact) */
+EXTERNVAR bool psyco_compatible_keep_facts;
+/* merge-point matches that dropped unused facts (ni._stats()['fact_drops']) */
+EXTERNVAR long psyco_stat_fact_drops;
 /* the same, at a join point (vcompiler.c:psyco_compile_join): with
    'drop_fields' the known fields of a run-time value that the snapshot
    hasn't are dropped at any depth, not only below the first two
