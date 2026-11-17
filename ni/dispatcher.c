@@ -522,7 +522,92 @@ typedef struct respawn_s {
   void *write_jmp;
   int respawn_cnt;
   CodeBufferObject *respawn_from;
+#if ALL_CHECKS
+  struct respawn_check_s {
+    const char *file; /* where the point was made (NI_RESPAWN_SITE), or NULL */
+    int line;
+    int next_instr;
+    int stack_depth;
+    unsigned long state; /* respawn_fingerprint() of po->vlocals */
+  } check;
+#endif
 } respawn_t;
+
+#if ALL_CHECKS
+/* Replay check. A replay must reach its respawn point in exactly the state
+   the first compile was in there (see the warning in dispatcher.h). Each
+   respawn point records where it was made and a fingerprint of the state;
+   the replay compares them when it detects the point, and stops at the
+   first difference instead of compiling a branch for the wrong state.
+   Fields known about run-time values are left out (see below).
+   Only the final point of a chain of respawned buffers is checked. */
+DEFINEVAR const char *psyco_respawn_file = NULL;
+DEFINEVAR int psyco_respawn_line = 0;
+
+static unsigned long respawn_fingerprint(vinfo_array_t *a, unsigned long h) {
+  int i;
+  for (i = 0; i < a->count; i++) {
+    vinfo_t *v = a->items[i];
+    unsigned long x;
+    if (v == NULL)
+      x = 1;
+    else if (is_compiletime(v->source)) {
+      /* folding can build an immutable value afresh on each compile (a
+         constant tuple): compare those by type. Any other object, such as
+         a class or a function, by identity. */
+      source_known_t *sk = CompileTime_Get(v->source);
+      PyObject *o = (PyObject *)sk->value;
+      if ((sk->refcount1_flags & SkFlagPyObj) &&
+          (PyTuple_CheckExact(o) || PyUnicode_CheckExact(o) ||
+           PyBytes_CheckExact(o) || PyLong_CheckExact(o) ||
+           PyFloat_CheckExact(o) || PyFrozenSet_CheckExact(o)))
+        x = (unsigned long)Py_TYPE(o) * 4 + 3;
+      else
+        x = (unsigned long)sk->value * 4 + 2;
+    }
+    else
+      x = (unsigned long)v->source; /* a location, or a virtual type */
+    h = (h ^ x) * 1099511628211UL;
+    /* a virtual object's fields are part of the state; under a run-time or
+       compile-time value they are only known fields, which a snapshot may
+       drop, so a replay can legitimately know less */
+    if (v != NULL && is_virtualtime(v->source) && v->array != NullArray)
+      h = respawn_fingerprint(v->array, h ^ 0x9e37);
+  }
+  return h;
+}
+
+static void respawn_check_fill(struct respawn_check_s *c, PsycoObject *po) {
+  c->file = psyco_respawn_file;
+  c->line = psyco_respawn_line;
+  c->next_instr = po->pr.next_instr;
+  c->stack_depth = po->stack_depth;
+  c->state = respawn_fingerprint(&po->vlocals, 14695981039346656037UL);
+}
+
+static void respawn_check(respawn_t *rs, PsycoObject *po) {
+  struct respawn_check_s now;
+  respawn_check_fill(&now, po);
+  if (now.file != rs->check.file || now.line != rs->check.line ||
+      now.next_instr != rs->check.next_instr ||
+      now.stack_depth != rs->check.stack_depth ||
+      now.state != rs->check.state) {
+    fprintf(stderr,
+            "psyco: replay reached respawn point %d in a different state\n"
+            "  code %s, first compile / replay:\n"
+            "  made at: %s:%d / %s:%d\n"
+            "  next_instr: %d / %d\n"
+            "  stack_depth: %d / %d\n"
+            "  state fingerprint: %#lx / %#lx\n",
+            rs->respawn_cnt, PyUnicode_AsUTF8(po->pr.co->co_name),
+            rs->check.file ? rs->check.file : "?", rs->check.line,
+            now.file ? now.file : "?", now.line, rs->check.next_instr,
+            now.next_instr, rs->check.stack_depth, now.stack_depth,
+            rs->check.state, now.state);
+    Py_FatalError("psyco: respawn replay diverged");
+  }
+}
+#endif
 
 static code_t *do_respawn_body(respawn_t *rs);
 static code_t *do_respawn(respawn_t *rs) {
@@ -613,6 +698,9 @@ void psyco_respawn_detected(PsycoObject *po) {
         do_respawn(). */
   if (current == rs->respawn_from) {
     /* respawn finished */
+#if ALL_CHECKS
+    respawn_check(rs, po);
+#endif
     extra_assert(fz_top_array_count(&codebuf->snapshot) == 0);
     fpo_build(&codebuf->snapshot, po);
   } else {
@@ -664,6 +752,9 @@ void *psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
     rs->self = codebuf;
     rs->respawn_cnt = po->respawn_cnt;
     rs->respawn_from = po->respawn_proxy;
+#if ALL_CHECKS
+    respawn_check_fill(&rs->check, po);
+#endif
 
     /* write the jump to the proxy */
     po->code = calling_code;
@@ -703,19 +794,19 @@ code_t *psyco_dont_respawn(void *arg, int extrasize) {
 }
 
 DEFINEFN
-int runtime_NON_NULL_f(PsycoObject *po, vinfo_t *vi) {
+int(runtime_NON_NULL_f)(PsycoObject *po, vinfo_t *vi) {
   condition_code_t cc = integer_NON_NULL(po, vi);
   return cc == CC_ERROR ? -1 : runtime_condition_f(po, cc);
 }
 
 DEFINEFN
-int runtime_NON_NULL_t(PsycoObject *po, vinfo_t *vi) {
+int(runtime_NON_NULL_t)(PsycoObject *po, vinfo_t *vi) {
   condition_code_t cc = integer_NON_NULL(po, vi);
   return cc == CC_ERROR ? -1 : runtime_condition_t(po, cc);
 }
 
 DEFINEFN
-int runtime_in_bounds(PsycoObject *po, vinfo_t *vi, long lowbound,
+int(runtime_in_bounds)(PsycoObject *po, vinfo_t *vi, long lowbound,
                       long highbound) {
   condition_code_t cc;
   if (highbound == LONG_MAX) {

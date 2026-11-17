@@ -266,5 +266,30 @@ EXTERNFN int runtime_NON_NULL_t(PsycoObject* po, vinfo_t* vi);
 EXTERNFN int runtime_in_bounds(PsycoObject* po, vinfo_t* vi,
                                long lowbound, long highbound);
 
+#if ALL_CHECKS
+/* the replay check (dispatcher.c) records where each respawn point was made:
+   the outermost of these calls, as file and line */
+EXTERNVAR const char* psyco_respawn_file;
+EXTERNVAR int psyco_respawn_line;
+#define NI_RESPAWN_SITE(call) ({                                    \
+        const char* _f = psyco_respawn_file;                        \
+        int _l = psyco_respawn_line;                                \
+        __typeof__(call) _r;                                        \
+        if (_f == NULL) {                                           \
+                psyco_respawn_file = __FILE__;                      \
+                psyco_respawn_line = __LINE__;                      \
+        }                                                           \
+        _r = (call);                                                \
+        psyco_respawn_file = _f;                                    \
+        psyco_respawn_line = _l;                                    \
+        _r; })
+#define runtime_condition_f(po, c) NI_RESPAWN_SITE(runtime_condition_f(po, c))
+#define runtime_condition_t(po, c) NI_RESPAWN_SITE(runtime_condition_t(po, c))
+#define runtime_NON_NULL_f(po, v)  NI_RESPAWN_SITE(runtime_NON_NULL_f(po, v))
+#define runtime_NON_NULL_t(po, v)  NI_RESPAWN_SITE(runtime_NON_NULL_t(po, v))
+#define runtime_in_bounds(po, v, lo, hi)                                  \
+        NI_RESPAWN_SITE(runtime_in_bounds(po, v, lo, hi))
+#endif
+
 
 #endif /* _DISPATCHER_H */
