@@ -69,6 +69,21 @@ def isinstance_class_dies():
     return out, [r() is None for r in refs]
 
 
+def isinstance_instance_class_dies():
+    # nor of the instance's type: a new class each iteration kept every
+    # one alive and compiled a new path for each
+    refs = []
+    out = []
+    for k in range(20):
+        C = type('C%d' % k, (), {})
+        c = C()
+        out.append(isinstance(c, C))
+        refs.append(weakref.ref(C))
+    del C, c
+    gc.collect()
+    return out, [r() is None for r in refs]
+
+
 GSRC = compile('''
 def g(a):
     t = 0
@@ -94,5 +109,6 @@ CASES = [
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec (C15)'}),
     ('namedtuple_code_dies', [()], {'leaks': 'C14 (2): state referenced from machine code'}),
     ('isinstance_class_dies', [()], {'leaks': 'C14 (2): state referenced from machine code'}),
+    ('isinstance_instance_class_dies', [()], {'leaks': 'C14 (2): state referenced from machine code'}),
     ('borrowed_globals_reused', [()], {'leaks': 'C14 (2): a snapshot per new dict'}),
 ]

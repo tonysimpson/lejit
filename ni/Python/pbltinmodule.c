@@ -313,10 +313,23 @@ static vinfo_t *pbuiltin_isinstance(PsycoObject *po, vinfo_t *vself,
                                    vargs);
   vobj = PsycoTuple_GET_ITEM(vargs, 0);
   vcls = PsycoTuple_GET_ITEM(vargs, 1);
-  tp = Psyco_NeedType(po, vobj);
-  if (tp == NULL)
-    return NULL;
-  if (!isinstance_known_v(po, tp, vcls, 0, &r))
+  /* isinstance_known never folds for a heap type, so only a static type is
+     promoted: a constant heap type would keep the class alive, and a class
+     made per call would compile a new path each time */
+  if (is_compiletime(vobj->source)) {
+    tp = Py_TYPE((PyObject *)CompileTime_Get(vobj->source)->value);
+    r = 1;
+  } else {
+    x = psyco_get_const(po, vobj, OB_type);
+    if (x == NULL)
+      return NULL;
+    r = psyco_atcompiletime_static_type(po, x, (PyObject **)&tp);
+    if (r < 0)
+      return NULL;
+  }
+  if (r == 0)
+    r = -1;
+  else if (!isinstance_known_v(po, tp, vcls, 0, &r))
     return NULL;
   if (r == 1)
     return psyco_vi_Py_True();
