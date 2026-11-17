@@ -8,7 +8,8 @@
  * (see its comment); it is what reaches the tp_descr_get metas in
  * pdescrobject.c and pfuncobject.c. SetAttr on a heap type is specialised
  * behind the same kind of guard (heap_setattr), but its guards are shared
- * and repaired at run time (store_guard).
+ * and repaired at run time (store_guard). Other slots of a heap type are
+ * read through Psyco_HeapSlot, a guard against the value first seen (F50).
  */
 #include "pobject.h"
 #include "../compat2to3.h"

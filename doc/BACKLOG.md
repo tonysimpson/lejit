@@ -14,11 +14,8 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 **Wrong results or crashes, reachable today**
 - **C30, C31:** CPython's `test_timeit` (since `e26c2a3`) and `test_shutil` segfault under Ni after a run of earlier tests; not reduced. Reduce first (`tools/nianalyser/crash_report.py`), then fix.
 - **C29:** a frame already running compiled when tracing starts gets no events: `pdb.set_trace()`/`breakpoint()` in a compiled function stops only in its callees, a tracer that sets `f_trace` on running frames sees nothing from them, and a profiler misses their `c_call`/`return` events. Needs a way out of compiled code mid-frame (large).
-- **F10:** a user `__eq__`/`__ne__` runs twice (now seen: CPython's `test_compare`). Small to medium (`pobject.c`).
-- **F48:** an exhausted sequence iterator restarts when the sequence grows (`piterobject.c`). Medium.
-- **F50:** a slot deleted after compiling (`del C.__next__`) not seen. Small to medium; rare. (F49 fixed, `5f8b506`; its remainder is F72, below.)
-- **F52:** a function's `__defaults__` changed after a compiled call to it isn't seen (`unittest.mock.patch.object(f, '__defaults__')`; CPython's `test_unittest`). Small (a guard on the defaults at the call).
-- **C25:** C functions called directly skip `_Py_CheckFunctionResult` (a buggy extension returning NULL without an exception segfaults). Small.
+- **F56:** a heap type's other slots are still folded (a `__bool__` or `__len__` added later, the number slots, `__bases__`); the rest of F50. `Psyco_HeapSlot` covers them; IsTrue's fold is worth keeping. Small to medium; rare.
+- **F57:** a function's `__code__` changed after a compiled call to it isn't seen. Small (F52's shape).
 - **F9:** a `T_STRING_INPLACE` struct member gives `bytes`, not `str`. Small. **In flight** (strings agent).
 - **C9:** reference counts are lower than ceval's, so C code testing `Py_REFCNT(x) == 1` can behave differently. Fixed where seen; others may exist.
 - **C11, C18:** compiled frames are only partly visible (`warnings` stacklevel, `f_lineno`, `f_back`), and a traceback doesn't keep a compiled function's locals alive. C11 now reaches more code: with `with` and class statements compiling, unittest's `case.run` is compiled, so every test method is a compiled callee (`type()` takes `__module__` from `unittest.case`; CPython's `test_builtin`). Worth doing next among the frame bugs: the hook behind `PyEval_GetFrame` (`globals()`, `type()`'s `__module__`), then `f_lineno`.
@@ -26,6 +23,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C17 remainder:** identity of virtual floats, ints and bound methods across calls (`f(x) is x` is False).
 
 - **F37:** fixed (`e86f8ae`, STORES.md option 1).
+- **F10, F48, F50, F52, C25:** fixed (`f54a32c`..`900da56`; KNOWN_BUGS): compare slots run once, exhausted sequence iterators stay exhausted, a heap type's compare, hash and iteration slots and a function's defaults are guarded, C function results are checked. Rest of F50 is F56.
 - **C24:** fixed (D45): compiled code tests `eval_breaker` at loop heads and after calls.
 - **C22, F41–F47:** fixed by the CPython test survey (2026-11-17; KNOWN_BUGS), including two crashes (C22, F45).
 
