@@ -1,6 +1,7 @@
 #include "Python/frames.h"
 #include "Python/pycompiler.h"
 #include "Objects/pmethodobject.h"
+#include "Objects/pobject.h"
 #include "codemanager.h"
 #include "compat2to3.h"
 #include "dispatcher.h"
@@ -179,10 +180,11 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
   static const char *kinds[NI_ENTER_KINDS] = {"analyse", "call", "pause",
                                               "respawn", "promotion"};
   PyObject *d = Py_BuildValue(
-      "{slslslslsl}", "code_buffers", psyco_stat_code_buffers,
+      "{slslslslslslsl}", "code_buffers", psyco_stat_code_buffers,
       "code_buffers_freed", psyco_stat_code_buffers_freed, "code_bytes",
       psyco_stat_code_bytes, "cfunc_fast", psyco_stat_cfunc_fast,
-      "cfunc_proxy", psyco_stat_cfunc_proxy);
+      "cfunc_proxy", psyco_stat_cfunc_proxy, "store_misses",
+      psyco_stat_store_misses, "store_refreshes", psyco_stat_store_refreshes);
   int i;
   for (i = 0; d != NULL && i < NI_ENTER_KINDS; i++) {
     PyObject *t = Py_BuildValue("(ld)", psyco_stat_compile_count[i],
