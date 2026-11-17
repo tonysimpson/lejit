@@ -23,7 +23,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C17 remainder:** identity of virtual floats, ints and bound methods across calls (`f(x) is x` is False).
 
 - **F37:** fixed (`e86f8ae`, STORES.md option 1).
-- **F10, F48, F50, F52, C25:** fixed (`f54a32c`..`900da56`; KNOWN_BUGS): compare slots run once, exhausted sequence iterators stay exhausted, a heap type's compare, hash and iteration slots and a function's defaults are guarded, C function results are checked. Rest of F50 is F56.
+- **F10, F48, F50, F52, C25:** fixed (`0e191a3`..`9217bdb`; KNOWN_BUGS): compare slots run once, exhausted sequence iterators stay exhausted, a heap type's compare, hash and iteration slots and a function's defaults are guarded, C function results are checked. Rest of F50 is F56.
 - **C24:** fixed (D45): compiled code tests `eval_breaker` at loop heads and after calls.
 - **C22, F41–F47:** fixed by the CPython test survey (2026-11-17; KNOWN_BUGS), including two crashes (C22, F45).
 

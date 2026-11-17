@@ -35,7 +35,7 @@ Questions 1–6 were answered on 2026-11-16: see `DECISIONS.md` D10–D15.
 25. **Psyco runtime helpers in translated files** (`psyfunc.c` has ~100 CPython API uses): which parts are core calling machinery and which are translated `call_function`/`_PyFunction_FastCall` logic?
 
 ## Correctness questions found by reading
-12–18 (swept 2026-11-17): 12 was F1, 15 was F7, 16 was B2, 17 was B5, all fixed; 13 is KNOWN_BUGS F10, fixed (`f54a32c`), and 14 is F6, fixed by reading (unreachable); 18 is answered in B13 (R12 isn't allocated, and its encoding is now right).
+12–18 (swept 2026-11-17): 12 was F1, 15 was F7, 16 was B2, 17 was B5, all fixed; 13 is KNOWN_BUGS F10, fixed (`0e191a3`), and 14 is F6, fixed by reading (unreachable); 18 is answered in B13 (R12 isn't allocated, and its encoding is now right).
 27. ~~How should compiled code stop holding its globals?~~ Answered by D23 (borrowed, `32f4c3a`). On 3.12+, dict watchers could also drop the code of dead globals.
 
 ## Housekeeping
