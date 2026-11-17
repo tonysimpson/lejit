@@ -20,6 +20,14 @@ He went further on the mailing list. On 2002-11-18 he wrote: "I'm currently desi
 
 **A robust 3.7 baseline with worthwhile performance (from 2026-11-17).** The classification work below is done (`doc/MAP.md`, `doc/PATTERNS.md`, `doc/history/`). The phase now is making the 3.7 baseline correct and fast enough to be worth generating: fixing open bugs, and taking the performance improvements that measurement shows are worthwhile (D29: compile time and code size count too). The open items are in `doc/BACKLOG.md`. Then come the 3.12 port (`doc/PORT312.md`) and the meta-compiler, with this baseline as the specification and test oracle.
 
+**When the phase is done** (owner, 2026-11-17). All of:
+1. The work in flight is merged or dropped with a reason: inline stores within budget, the correctness batch (F10, F48, F50, F52, C25), C27/C28, specialisation step 3, C30/C31.
+2. No known bug gives a wrong result or a crash in the default test runs (`tests/run.py`, `tests/cpython_tests.py`). Accepted differences are only frame visibility and tracing of already-running frames (C11, C29), each cited in `doc/KNOWN_BUGS.md`.
+3. `tools/check.sh` prints ALL CHECKS PASSED on a quiet machine.
+4. A re-baseline is recorded with no agents running: pyperformance against CPython 3.7, `tools/compilebench.py`, `tools/codesize.py`, in `doc/STATUS.md`.
+
+Anything else open then (option D, the megamorphic table, strings, C11) moves to the 3.12 backlog unless it blocks one of these.
+
 Hand-written improvements in this phase are translated-layer code too: each one is something the generator must later reproduce. Record the pattern behind each in `doc/PATTERNS.md`.
 
 The classification still applies to everything in the repo:
