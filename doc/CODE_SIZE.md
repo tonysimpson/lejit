@@ -544,10 +544,10 @@ Every run-time condition whose rare side isn't compiled is a respawn point. When
 - **The main path already had a block there.** Every guarded site sets `split_after_global` (`load_global_cached`, `pobject.c:generic_getattr`, `heap_setattr`, the store checks), and the main loop ends the block after the instruction with a new block and its snapshot. That block had no list, so nothing could find it. [read] (`pycompiler.c`, the `split_after_global` branch)
 - **Join points.** The blocks started after a split are now kept per instruction (`mergepoints.c:psyco_join_point`, a fatlist per code unit, made on first use, freed with the code object like the merge points'). `vcompiler.c:psyco_compile_join` compares the state with them. [read]
 - **A respawned branch** (its block is a respawned one: `fz_respawned_from` set) is compared as at a merge point: it jumps into a compatible block (`psyco_unify`), with differing non-fixed constants made run-time. [read]
-- **It may drop known fields of run-time values that the block doesn't have** (`dispatcher.c:psyco_compatible_join`). `compatible_array` refused a state with extra known items in the first two levels ("you get better results this way", Psyco's own guess) and dropped them below. A branch rather joins: most failures to join were the branch knowing *more*, such as the instance dict pointer the inline path's checks loaded on the way to the miss. Such a field is a cached load of an immutable field (`FMUT` fields are never cached), so the joined code reloads it. Only fields that are not virtual and hold no reference are dropped: unify decrefs what it drops after moving what it keeps, maybe over the dropped value's slot (KNOWN_BUGS C27; dropping more crashed `test_enum`). [read], [run]
-- **Neither path rewrites small ints first** (`canonical_int`, D33): at a split the local is often shared with a known field of a constant, which must stay constant (KNOWN_BUGS C28; `test_math`, `test_grammar`, `test_aifc` asserted). [run]
+- **It may drop known fields of run-time values that the block doesn't have** (`dispatcher.c:psyco_compatible_join`). `compatible_array` refused a state with extra known items in the first two levels ("you get better results this way", Psyco's own guess) and dropped them below. A branch rather joins: most failures to join were the branch knowing *more*, such as the instance dict pointer the inline path's checks loaded on the way to the miss. Such a field is a cached load of an immutable field (`FMUT` fields are never cached), so the joined code reloads it. At first only fields that were not virtual and held no reference were dropped: unify decref'd what it drops after moving what it keeps, maybe over the dropped value's slot (KNOWN_BUGS C27, `test_enum` crashed); since D49 any field of a run-time value is. [read], [run]
+- **Both paths rewrite small ints first** (`canonical_int`, D33) since D49. At first they didn't: at a split a local is often shared with a known field of a constant, which must stay constant, and `canonical_int` rewrote it in place (KNOWN_BUGS C28; `test_math`, `test_grammar`, `test_aifc` asserted; it was live at merge points too). [run]
 - **The main path** (any other path) only jumps into an exact match, with no dropping and no un-promotion, so it keeps every fact it compiled with. **No block boundary is added**: the split was already there, so option (a)'s cost (a block boundary that loses facts) does not arise, and option (b) (recording the main path's state without a merge point) is what the split already did. [read]
-- **Not in an inlined frame**: a branch there takes exact matches only. The caller's code object and position are non-fixed constants in the state (`psyco_save_inline_po`), and making them run-time crashed the return (`rejoin.inlined_two_sites`, `stores.dict_replaced`). Merge points are never inside an inlined frame; join points can be. [run]
+- **In an inlined frame**: at first a branch there took exact matches only. The caller's code object and position were non-fixed constants in the state (`psyco_save_inline_po`), and making them run-time crashed the return (`rejoin.inlined_two_sites`). Since D49 they are fixed constants, which a match never un-promotes, and the branch matches as anywhere else. Merge points are never inside an inlined frame; join points can be. [run]
 - **Replays (D21).** A replay never reaches the end of its block (the split is skipped while respawning, and the block ends at the split); a joined block's respawn points replay from that block's own snapshot; unification and un-promotion emit no respawn point. The checked build ran the suites and seven benchmarks without a replay divergence. [read], [run]
 - **Counters:** `ni._stats()['joins']` = (branch exact, branch partial, branch none, main path exact). [read]
 
@@ -590,3 +590,23 @@ Instructions per warm iteration, millions (`perf stat -e instructions:u`, (13 �
 | store+J | 178–180 | 28 | 3,109–3,136 | 1,103–1,166 | 471–477 | 40 | 2,338–2,344 |
 
 Speed is unchanged within noise: a branch that joins runs the main path's code, which is what it would have compiled anyway. go's ranges overlap (base 1,139–1,164, base+J 1,132–1,177); worth a quieter rerun. Inline stores keep their gain (richards −23% against base).
+
+### Lifting the restrictions (D49) [run]
+
+With C27 (`a0dc8c0`) and C28 (`370c574`) fixed, the join points' own restrictions were lifted (`542eaff`): any known field of a run-time value may be dropped, `canonical_int` runs at join points, and a branch in an inlined frame may un-promote (the caller's code object and position are now fixed constants). Each was also measured alone with a temporary switch; none changed anything.
+
+"Before" is `a0dc8c0` (the fixes, restrictions in place), "after" is `542eaff`'s code; same session, `PYTHONHASHSEED=0`, machine shared with other agents.
+
+| | richards | go | raytrace | deltablue | hexiom | chaos | all 29 |
+|---|---|---|---|---|---|---|---|
+| code KB, `codesize.py -s` (NI_CODESTATS), before = after | 118 | 287 | 199 | 392 | 269 | 57 | |
+| instructions compiled, before = after | 1,969 | 4,634 | 2,956 | 5,372 | 5,051 | 960 | |
+| code KB, `compilebench.py` (release), before = after | 121.7 | 279.0 | 199.6 | 391.0 | 264.2 | 56.5 | 2,363 |
+| compile ms, before (two runs) | 0.76, 0.72 | 2.46, 2.60 | 1.48, 2.04 | 2.79, 2.74 | 3.92, 2.57 | 0.50, 0.49 | 22.6, 21.3 |
+| compile ms, after (two runs) | 0.81, 1.05 | 2.61, 2.43 | 1.49, 2.00 | 2.69, 2.65 | 2.60, 2.76 | 0.52, 0.48 | 21.4, 21.6 |
+| instructions per warm iteration, M, before | 234.4 | 1,144.2 | 3,314.6 | 32.4 | 41.2 | 496.7 | |
+| instructions per warm iteration, M, after | 234.4 | 1,144.2 | 3,286.1 | 32.4 | 41.2 | 492.5 | |
+
+- **Nothing compiled changes.** `codesize.py -s` differs only in addresses and buffer-switch counts, the joins are the same, and over all 29 benchmarks only mdp's code moves (151.7 → 151.5 KB). The restrictions never met a case in pyperformance: no unify at a join point or merge point freed anything there (a temporary counter, checked build, the seven benchmarks), and `tests/cases`' rejoin, attr_stores, inlining and int_counters join the same number of times.
+- **Instructions per warm iteration** are `perf stat -e instructions:u`, ((3 + 10) − (3 + 0) iterations) / 10, one run each; raytrace and chaos differ by about 1%, which is noise for identical code.
+- **What it buys is simpler code** (`droppable()` and the `canonical_int` and inlined-frame exceptions are gone) and two live bugs found: C28 asserted at merge points too.
