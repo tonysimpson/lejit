@@ -731,6 +731,13 @@ EXTERNFN void vinfo_move(PsycoObject *po, vinfo_t *vtarget, vinfo_t *vsource);
 EXTERNFN code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
                                bool continue_compilation);
 
+/* The end of a block at a split site: start a new block registered in 'ge'
+   (or jump into a block there, see vcompiler.c). Returns NULL to continue
+   compiling 'po'. */
+EXTERNFN code_t *psyco_compile_join(PsycoObject *po, global_entries_t *ge);
+/* joins of a respawned branch: exact, partial, none; of a main path: exact */
+EXTERNVAR long psyco_stat_joins[4];
+
 /* Conditional compilation: the state 'po' is compiled to be executed only if
    'condition' holds. In general this creates a coding pause for it to be
    compiled later. It always makes a copy of 'po' so that the original can be

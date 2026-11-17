@@ -35,6 +35,8 @@
 typedef struct {
     int flags;
     Py_ssize_t mergepoint_count;
+    Py_ssize_t unit_count;      /* code units in co_code */
+    global_entries_t *joins;    /* per code unit, or NULL: psyco_join_point */
     /*
     NULL terminated.
     on allocation we extend this array to count(mergepoints) + 1.
@@ -50,6 +52,11 @@ report_free(co_report_t *report)
     Py_ssize_t i;
     for (i = 0; i < report->mergepoint_count; i++)
         Py_XDECREF(report->mergepoints[i].entries.fatlist);
+    if (report->joins != NULL) {
+        for (i = 0; i < report->unit_count; i++)
+            Py_XDECREF(report->joins[i].fatlist);
+        PyMem_Free(report->joins);
+    }
     PyMem_Free(report);
 }
 
@@ -402,6 +409,8 @@ _find_merge_points(PyCodeObject *co)
         flags |= MP_FLAGS_INLINABLE;
     report->flags = flags;
     report->mergepoint_count = mergepoint_count;
+    report->unit_count = entry_count_len - 1;
+    report->joins = NULL;
     for (entry_count_index = 0; entry_count_index < entry_count_len;
          entry_count_index++) {
         if (entry_count[entry_count_index] > 1) {
@@ -716,6 +725,31 @@ psyco_exact_merge_point(PyObject *mergepoints, int position)
         return mp;
     }
     return NULL;
+}
+
+/* The blocks started after a split site at 'position' (pycompiler.c, the
+   split_after_global branch), made on first use; NULL if out of memory. */
+DEFINEFN global_entries_t *
+psyco_join_point(PyObject *mergepoints, int position)
+{
+    co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
+    global_entries_t *ge;
+    psyco_assert(position >= 0 && position / 2 < report->unit_count);
+    if (report->joins == NULL) {
+        report->joins = PyMem_Calloc(report->unit_count,
+                                     sizeof(global_entries_t));
+        if (report->joins == NULL)
+            return NULL;
+    }
+    ge = &report->joins[position / 2];
+    if (ge->fatlist == NULL) {
+        ge->fatlist = PyList_New(0);
+        if (ge->fatlist == NULL) {
+            PyErr_Clear();
+            return NULL;
+        }
+    }
+    return ge;
 }
 
 DEFINEFN int

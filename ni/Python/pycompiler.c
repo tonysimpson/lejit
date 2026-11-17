@@ -3274,13 +3274,16 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         }
       }
 
-      /* end the block after a guarded LOAD_GLOBAL (load_global_cached):
-         a new buffer, contiguous, with its own snapshot */
+      /* end the block after a guarded site (load_global_cached,
+         pobject.c): a new buffer, contiguous, with its own snapshot, kept
+         at this instruction so that a branch respawned from the site's
+         checks can join it (vcompiler.c:psyco_compile_join) */
       if (po->pr.split_after_global) {
         po->pr.split_after_global = 0;
         if (!is_respawning(po) && mp->bytecode_position != next_instr) {
           SAVE_NEXT_INSTR(next_instr);
-          code1 = psyco_compile(po, NULL, true);
+          code1 = psyco_compile_join(
+              po, psyco_join_point(po->pr.merge_points, next_instr));
           if (code1 != NULL)
             goto finished;
         }

@@ -925,6 +925,63 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
   }
 }
 
+/* Join points (CODE_SIZE.md, "Respawned branches rejoin"). A split site
+   (pycompiler.c, split_after_global) ends its block, and the blocks started
+   after it at one instruction are listed like a merge point's ('ge',
+   mergepoints.c:psyco_join_point). A branch respawned from the site's
+   checks (its block is a respawned one) usually ends in the state the main
+   path had there, so it is compared as at a merge point: it jumps into a
+   compatible block, constants that differ made run-time, and the known
+   fields of run-time values that the block doesn't have are dropped
+   (psyco_compatible_join), instead of compiling its own copy of the code
+   up to the next merge point. Any other path only jumps into an exact
+   match: un-promoting or dropping there would make the main path lose
+   facts. Neither rewrites the state's small ints first (canonical_int). Merge points are never inside an
+   inlined frame, join points can be. Replay-safe as merge points are: a
+   replay never reaches the end of its block, a joined block's respawn
+   points replay from its own snapshot, and un-promotion and unification
+   emit no respawn point. */
+DEFINEFN long psyco_stat_joins[4];
+
+static code_t *compile_join(PsycoObject *po, global_entries_t *ge,
+                            bool branch, bool first) {
+  vcompatible_t *cmp =
+      ge == NULL ? NULL : psyco_compatible_join(po, ge, branch);
+  CodeBufferObject *codebuf;
+
+  if (cmp != NULL && cmp->diff == NullArray) {
+    CodeBufferObject *oldcodebuf;
+    if (first)
+      psyco_stat_joins[branch ? 0 : 3]++;
+    return psyco_unify(po, cmp, &oldcodebuf);
+  }
+  if (cmp != NULL && (!branch || po->pr.is_inlining)) {
+    /* not in an inlined frame either: the caller's code object and
+       position (psyco_save_inline_po) are constants that must stay */
+    psyco_stabilize(cmp);
+    cmp = NULL;
+  }
+  if (branch && first)
+    psyco_stat_joins[cmp != NULL ? 1 : 2]++;
+  codebuf = psyco_proxy_code_buffer(po, ge);
+  po->code = insn_code_label(codebuf->codestart);
+  if (cmp != NULL) {
+    int i;
+    for (i = cmp->diff->count; i--;)
+      psyco_unfix(po, cmp->diff->items[i]);
+    psyco_stabilize(cmp);
+    return compile_join(po, ge, branch, false);
+  }
+  return NULL;
+}
+
+DEFINEFN
+code_t *psyco_compile_join(PsycoObject *po, global_entries_t *ge) {
+  bool branch = po->respawn_proxy != NULL &&
+                po->respawn_proxy->snapshot.fz_respawned_from != NULL;
+  return compile_join(po, ge, branch, true);
+}
+
 DEFINEFN
 void psyco_compile_cond(PsycoObject *po, mergepoint_t *mp,
                         condition_code_t condition) {

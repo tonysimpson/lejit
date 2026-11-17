@@ -194,6 +194,14 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
     }
     Py_DECREF(t);
   }
+  if (d != NULL) {
+    PyObject *t = Py_BuildValue("(llll)", psyco_stat_joins[0],
+                                psyco_stat_joins[1], psyco_stat_joins[2],
+                                psyco_stat_joins[3]);
+    if (t == NULL || PyDict_SetItemString(d, "joins", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
   return d;
 }
 

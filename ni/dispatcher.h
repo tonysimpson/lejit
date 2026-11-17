@@ -84,6 +84,14 @@ typedef struct {
 } vcompatible_t;
 EXTERNFN vcompatible_t* psyco_compatible(PsycoObject* po,
                                          global_entries_t* pattern);
+/* the same, at a join point (vcompiler.c:psyco_compile_join): the state
+   is not rewritten first (canonical_int), and with 'drop_fields' the
+   known fields of a run-time value that the snapshot hasn't are dropped
+   at any depth, not only below the first two (compatible_array,
+   CHECK_FOR_NULL) */
+EXTERNFN vcompatible_t* psyco_compatible_join(PsycoObject* po,
+                                              global_entries_t* pattern,
+                                              bool drop_fields);
 
 EXTERNFN void psyco_stabilize(vcompatible_t* lastmatch);
 EXTERNFN bool psyco_forget_values(PsycoObject* po, global_entries_t* ge);
