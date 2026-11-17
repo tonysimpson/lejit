@@ -101,7 +101,7 @@ MODULES = ['test_bisect', 'test_heapq', 'test_textwrap', 'test_fractions',
 # --all adds these: slower, or using subprocesses, sockets, threads or
 # timing, so more exposed to a loaded machine
 EXTENDED = ['test_pdb', 'test_cprofile', 'test_trace', 'test_asynchat', 'test_asyncio', 'test_asyncore', 'test_buffer',
-            'test_c_locale_coercion', 'test_cmd_line', 'test_cmd_line_script',
+            'test_c_locale_coercion', 'test_capi', 'test_cmd_line', 'test_cmd_line_script',
             'test_compileall', 'test_crypt', 'test_distutils',
             'test_docxmlrpc', 'test_dtrace', 'test_dummy_threading',
             'test_eintr', 'test_email', 'test_embed', 'test_ensurepip',
@@ -221,8 +221,6 @@ EXCLUDED = {
         'test_script_helper', 'test_regrtest', 'test_crashers', 'test_gdb'],
     'C11: test_current_frames fails on a line number and leaves its '
     'thread waiting, so the run never exits': ['test_sys'],
-    'C25: return_null_without_error segfaults (an assertion in the checked '
-    'build)': ['test_capi'],
 }
 
 CHILD = r'''

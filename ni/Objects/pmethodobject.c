@@ -6,9 +6,9 @@
  * no keywords and up to FAST_MAX arguments calls the C function directly
  * through a cimpl_fastN helper that puts the arguments in a C array, so no
  * tuple is built (KNOWN_BUGS F13). Like the METH_O and METH_VARARGS cases,
- * these direct calls skip PyCFunction_Call's Py_EnterRecursiveCall and
- * _Py_CheckFunctionResult. Keywords, or more arguments, take the residual
- * PyCFunction_Call / tuple paths.
+ * these direct calls skip PyCFunction_Call's Py_EnterRecursiveCall, but do
+ * _Py_CheckFunctionResult's checks (check_result, C25). Keywords, or more
+ * arguments, take the residual PyCFunction_Call / tuple paths.
  */
 #include "pmethodobject.h"
 #include "ptupleobject.h"
@@ -63,6 +63,84 @@ DEFINEVAR source_virtual_t psyco_computed_cfunction;
 /***************************************************************/
 /*** C method objects meta-implementation                    ***/
 
+/* call.c:_Py_CheckFunctionResult, for a C function that compiled code
+   calls itself (KNOWN_BUGS C25): a NULL result must come with an
+   exception, and any other result without one. 3.7 checks both in
+   release builds. The test of the exception is inline (curexc_type of the
+   current thread state, as PyErr_Occurred reads it); the SystemError is
+   made by CPython's own function, in branches compiled only if a C
+   function breaks the rule. A meta's result is not checked. */
+typedef struct {
+  PyThreadState *ts;
+} cf_tstate_slot_t;
+#define CF_TSTATE_current                                                      \
+  FMUT(DEF_FIELD(cf_tstate_slot_t, PyThreadState *, ts, NO_PREV_FIELD))
+#define CF_TSTATE_curexc_type                                                  \
+  FMUT(DEF_FIELD(PyThreadState, PyObject *, curexc_type, NO_PREV_FIELD))
+#define CF_UNCHECKED (CfReturnTypePtr | CfNewRef)
+
+EXTERNFN void *ni_tstate_current_address(void); /* Python/pyruntime.c */
+
+static PyObject *cimpl_null_result(PyObject *func) {
+  return _Py_CheckFunctionResult(func, NULL, NULL);
+}
+
+/* the result has been released already: None stands for it */
+static PyObject *cimpl_result_with_error(PyObject *func) {
+  Py_INCREF(Py_None);
+  return _Py_CheckFunctionResult(func, Py_None, NULL);
+}
+
+/* consumes 'r', the result of a CF_UNCHECKED call */
+static vinfo_t *check_result(PsycoObject *po, vinfo_t *r, vinfo_t *vfunc) {
+  condition_code_t cc;
+  vinfo_t *vslot, *vts, *vexc;
+  if (r == NULL)
+    return NULL;
+  cc = integer_non_null(po, r);
+  if (cc == CC_ERROR)
+    goto fail;
+  if (!runtime_condition_t(po, cc)) {
+    r->source = remove_rtref(r->source); /* NULL holds nothing */
+    vinfo_decref(r, po);
+    psyco_generic_call(po, cimpl_null_result, CfNoReturnValue | CfPyErrAlways,
+                       "v", vfunc);
+    return NULL;
+  }
+  vslot = vinfo_new(CompileTime_New((long)ni_tstate_current_address()));
+  vts = psyco_get_field(po, vslot, CF_TSTATE_current);
+  vinfo_decref(vslot, po);
+  if (vts == NULL)
+    goto fail;
+  vexc = psyco_get_field(po, vts, CF_TSTATE_curexc_type);
+  vinfo_decref(vts, po);
+  cc = integer_NON_NULL(po, vexc); /* consumes vexc */
+  if (cc == CC_ERROR)
+    goto fail;
+  if (runtime_condition_f(po, cc)) {
+    vinfo_decref(r, po);
+    psyco_generic_call(po, cimpl_result_with_error,
+                       CfNoReturnValue | CfPyErrAlways, "v", vfunc);
+    return NULL;
+  }
+  return r;
+fail:
+  vinfo_decref(r, po);
+  return NULL;
+}
+
+static vinfo_t *call_fast(PsycoObject *po, PyCFunction meth, int flags,
+                          vinfo_t *vself, vinfo_t *vargs, vinfo_t *vfunc);
+
+/* ml_meth through its meta, or called directly and checked */
+#define CALL_METH(META, fmt, ...)                                              \
+  (meta != NULL                                                                \
+       ? META(po, ml->ml_meth, CfCommonNewRefPyObject, fmt, __VA_ARGS__)       \
+       : check_result(po,                                                      \
+                      psyco_generic_call(po, ml->ml_meth, CF_UNCHECKED, fmt,   \
+                                         __VA_ARGS__),                         \
+                      func))
+
 DEFINEFN
 vinfo_t *PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
                              vinfo_t *kwargs) {
@@ -90,36 +168,32 @@ vinfo_t *PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
     if (vself == NULL)
       return NULL;
 
+    vinfo_t *(*meta)(PsycoObject *, vinfo_t *, vinfo_t *);
+
     if (!psyco_knowntobe(kwargs, (long)NULL))
       goto use_proxy;
 
+    meta = Psyco_Lookup(ml->ml_meth);
     switch (flags) {
     case METH_O:
       tuplesize = PsycoTuple_Load(args);
       if (tuplesize != 1)
         goto use_proxy;
-      return Psyco_META2(po, ml->ml_meth, CfCommonNewRefPyObject, "vv", vself,
-                  PsycoTuple_GET_ITEM(args, 0));
+      return CALL_METH(Psyco_META2, "vv", vself, PsycoTuple_GET_ITEM(args, 0));
     case METH_VARARGS:
-      return Psyco_META2(po, ml->ml_meth, CfCommonNewRefPyObject, "vv", vself,
-                         args);
+      return CALL_METH(Psyco_META2, "vv", vself, args);
     case METH_VARARGS | METH_KEYWORDS:
-      return Psyco_META3(po, ml->ml_meth, CfCommonNewRefPyObject, "vvv", vself,
-                         args, kwargs);
+      return CALL_METH(Psyco_META3, "vvv", vself, args, kwargs);
     case METH_NOARGS:
       tuplesize = PsycoTuple_Load(args);
       if (tuplesize != 0)
         goto use_proxy;
-      return Psyco_META2(po, ml->ml_meth, CfCommonNewRefPyObject, "vl", vself,
-                         NULL);
+      return CALL_METH(Psyco_META2, "vl", vself, NULL);
     case METH_FASTCALL:
-    case METH_FASTCALL | METH_KEYWORDS: {
-      vinfo_t *(*meta)(PsycoObject *, vinfo_t *, vinfo_t *) =
-          Psyco_Lookup(ml->ml_meth);
+    case METH_FASTCALL | METH_KEYWORDS:
       if (meta == NULL)
-        return PsycoCFunction_CallFast(po, ml->ml_meth, flags, vself, args);
+        return call_fast(po, ml->ml_meth, flags, vself, args, func);
       return meta(po, vself, args); /* no keywords here */
-    }
     }
   }
 
@@ -174,27 +248,36 @@ static void *const cimpl_fast[2][FAST_MAX + 1] = {
     {cimpl_fastkw0, cimpl_fastkw1, cimpl_fastkw2, cimpl_fastkw3,
      cimpl_fastkw4, cimpl_fastkw5}};
 
-DEFINEFN
-vinfo_t *PsycoCFunction_CallFast(PsycoObject *po, PyCFunction meth, int flags,
-                                 vinfo_t *vself, vinfo_t *vargs) {
+/* the result is checked when 'vfunc' is the function object, not for
+   Ni's own C functions (vfunc NULL) */
+static vinfo_t *call_fast(PsycoObject *po, PyCFunction meth, int flags,
+                          vinfo_t *vself, vinfo_t *vargs, vinfo_t *vfunc) {
   static const char *const fmt[FAST_MAX + 1] = {"lv",    "lvv",    "lvvv",
                                                 "lvvvv", "lvvvvv", "lvvvvvv"};
   int kw = (flags & METH_KEYWORDS) != 0;
   int n = PsycoTuple_Load(vargs);
   vinfo_t *a[FAST_MAX] = {NULL};
+  int cf = vfunc != NULL ? CF_UNCHECKED : CfCommonNewRefPyObject;
+  vinfo_t *r;
   int i;
   if (n < 0 || n > FAST_MAX) {
     void *fn = kw ? (void *)cimpl_call_fast_kw : (void *)cimpl_call_fast;
-    return psyco_generic_call(po, fn, CfCommonNewRefPyObject, "lvv",
-                              (long)meth, vself, vargs);
+    r = psyco_generic_call(po, fn, cf, "lvv", (long)meth, vself, vargs);
+  } else {
+    for (i = 0; i < n; i++)
+      a[i] = PsycoTuple_GET_ITEM(vargs, i);
+    psyco_stat_cfunc_fast++;
+    /* fmt[n] stops before the unused (NULL) trailing arguments */
+    r = psyco_generic_call(po, cimpl_fast[kw][n], cf, fmt[n], (long)meth,
+                           vself, a[0], a[1], a[2], a[3], a[4]);
   }
-  for (i = 0; i < n; i++)
-    a[i] = PsycoTuple_GET_ITEM(vargs, i);
-  psyco_stat_cfunc_fast++;
-  /* fmt[n] stops before the unused (NULL) trailing arguments */
-  return psyco_generic_call(po, cimpl_fast[kw][n], CfCommonNewRefPyObject,
-                            fmt[n], (long)meth, vself, a[0], a[1], a[2], a[3],
-                            a[4]);
+  return vfunc != NULL ? check_result(po, r, vfunc) : r;
+}
+
+DEFINEFN
+vinfo_t *PsycoCFunction_CallFast(PsycoObject *po, PyCFunction meth, int flags,
+                                 vinfo_t *vself, vinfo_t *vargs) {
+  return call_fast(po, meth, flags, vself, vargs, NULL);
 }
 
 INITIALIZATIONFN
