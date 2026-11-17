@@ -626,7 +626,7 @@ On top of store+J. Each failed check of an inline store used to be a respawn poi
 - **Richards is +10% over the baseline's 116 KB** (the budget was +20–25%). STORE_ATTR is 208 → 166 bytes per compiled site. Respawned buffers are 90 → 15 and stub chunks 10 → 6, the same as base (`tools/codesize.py richards -s`).
 - **The removed respawns did more than the smaller sites.** Step 1 alone took richards from 162 to 136 KB; the sites themselves account for only 3 KB of that (172 compiles, 208 → 191 bytes each).
 
-## Unused facts at merge points (`96b9777`, D50, SPECIALISATION.md step 3) [run]
+## Unused facts at merge points (`96b9777`, `1e32841`, D50, D57, SPECIALISATION.md step 3) [run]
 
 Rule 1: a state that knows a run-time value's type, where nothing since the last merge point has relied on the type, matches a block compiled without it. Before, `dispatcher.c:compatible_array` (`CHECK_FOR_NULL`) refused any state with an extra known item at `recdepth <= 2`, so such a state started a new block, a copy of the rest of the loop or function.
 
@@ -705,3 +705,30 @@ D45 tested `eval_breaker` after every `CALL_*` (7-byte `cmp`, 6-byte `jne`, a 15
 - **Half of D45's code is gone** (2,381 → 2,322 KB, −59 KB of its +114). The same instructions are compiled the same number of times (`codesize.py -s`); the bytes leave the instruction after a call and the stub pool.
 - **What keeps its test.** A temporary log of the C functions emitted by each call that kept a test, over the seven benchmarks on `5e37ecf`: 3,501 call compiles with the flag and no list, 2,122 with it. `list.append` alone was 909 of the 3,501. Of the 2,122 left, `type_call` (instantiating a class) is 668, then `cimpl_fastN` for dict `get`/`setdefault` and `hasattr` (about 500), `PyObject_IsTrue` 165, `PyDict_SetItem` 110 (keyword dicts), `list.extend` 73, `slot_sq_length` 70. All of them can run code of an arbitrary object, which may be C that blocks, so they stay (D53).
 - **Instructions** fall by up to 1% (raytrace's ±1% is within its noise); chaos is unchanged, [inferred] because its hot calls keep their test.
+
+**Verdict:** kept, as a small code-size and compile-time win with no speed cost; it is not the large lever. Most of the remaining "an earlier, more general block existed" cases are promotions at a merge point, whose own compare must keep the fact (the guard). Dropping more than the type waited on C35; done below.
+
+### Every unused field, after C35 (`79cdd46`, `1e32841`, D57) [run]
+
+**C35 was not the drop.** `x64/iencoding.h:IS_A_JUMP` read a `JMP` one byte late, so `make_code_conditional`'s rewrite of a lone `JMP` into a `Jcc` ran only when the JMP's displacement had 0xE9 as its low byte, and then jumped outside the address space (KNOWN_BUGS C35). The wider drop made a few more conditional jumps match an existing block exactly; one in `pprint._safe_repr` drew the byte. The reproduction needed the original experiment exactly: at `a36bea1`, any field, the stamp against `psyco_block_serial`, every fact dropped at a call entry, and `test_pprint` run as `cpython_tests.py` runs it. On `baseline-3.7` the same switches pass by layout luck. Exact matches at a conditional jump are rare: one in all of `test_pprint`.
+
+**The widening.** `compatible_unused_fact` drops any known field of a run-time value that nothing since the last merge point stamped, not only `iOB_TYPE`, as join points already do (D49). Measured against the fixed type-only version, same binary with an environment switch (since removed), `PYTHONHASHSEED=0`:
+
+| | type only | every field |
+|---|---|---|
+| code KB / instructions compiled / blocks, `codesize.py -s -p`, 23 benchmarks | 2,374 / 50,374 / 2,321 | 2,377 / 50,339 / 2,320 |
+| mdp, the one benchmark that changes | 158 / 3,000 / 166 | 157 / 2,965 / 165 |
+| `compilebench.py`, 29 benchmarks, two runs | 19.5 / 19.7 ms, 2,370 KB | 19.9 / 19.7 ms, 2,348 KB |
+
+The other 22 compile identically. In `compilebench`, mdp goes from 153.9 to 148.6 KB; float, generators, meteor_contest and scimark_fft each lose one 4 KB pool chunk with the same code (as richards' +4 KB above). `codesize`'s KB moves the other way by a chunk (meteor_contest).
+
+Instructions per warm iteration, millions (release, `perf stat -e instructions:u`, (12 − 2 iterations) / 10):
+
+| | richards | deltablue | go | raytrace | chaos | hexiom | mdp | meteor_contest |
+|---|---|---|---|---|---|---|---|---|
+| type only | 163.61 | 27.62 | 1,058.97 | 3,091–3,093 | 459.80–459.91 | 40.82–41.03 | 30,610.7 | 651.71 |
+| every field | 163.53 | 27.60 | 1,059.03 | 3,084–3,108 | 460.01–460.43 | 40.92–42.07 | 30,630.0 | 651.71 |
+
+All within the noise of repeated runs (hexiom, whose code is identical, spans 40.8–42.1 on one build). richards, deltablue, go and chaos are lower than in the table above because of the commits between (`e4b3a5f` to `29eaf2f`; [inferred] mostly the inline stores, D47).
+
+**Verdict:** kept, for a simpler rule rather than for its size: −0.07% instructions compiled, all in mdp, no speed cost. Known fields other than the type are rare at the first two levels of a merge point's state, and deeper ones were already dropped (`recdepth > 2`).
