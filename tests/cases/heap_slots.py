@@ -122,10 +122,100 @@ def overridden_list():
     return r
 
 
+def getitem(a, i):
+    return a[i]
+
+
+def setitem(a, i, x):
+    a[i] = x
+    return a
+
+
+def contains(a, x):
+    return x in a
+
+
+def length(a):
+    return len(a)
+
+
+def attempt_any(f, *args):
+    try:
+        return f(*args)
+    except (TypeError, IndexError, KeyError) as e:
+        return '%s: %s' % (type(e).__name__, e)
+
+
+class G:
+    def __iter__(self):
+        return iter([1, 2])
+
+
+def added_items():
+    g = G()
+    r = [attempt_any(getitem, g, 0), attempt_any(setitem, g, 0, 5),
+         contains(g, 3), attempt_any(length, g)]
+    G.__getitem__ = lambda self, i: ('get', i)
+    G.__setitem__ = lambda self, i, x: None
+    G.__contains__ = lambda self, x: True
+    G.__len__ = lambda self: 7
+    r += [getitem(g, 0), setitem(g, 0, 5) is g, contains(g, 3), length(g)]
+    del G.__getitem__, G.__setitem__, G.__contains__, G.__len__
+    r += [attempt_any(getitem, g, 0), attempt_any(setitem, g, 0, 5),
+          contains(g, 3), attempt_any(length, g)]
+    return r
+
+
+class D(dict):
+    pass
+
+
+class LL(list):
+    pass
+
+
+class LL2(list):
+    pass
+
+
+def list_len_only():
+    # list.__getitem__ uses the list's own length, not a subclass's
+    l = LL2([1, 2])
+    r = [getitem(l, -1), getitem(l, 0)]
+    LL2.__len__ = lambda self: 1
+    r += [getitem(l, -1), getitem(l, 0), length(l)]
+    del LL2.__len__
+    r += [getitem(l, -1), length(l)]
+    return r
+
+
+def overridden_containers():
+    d = D(a=1)
+    l = LL([1, 2])
+    r = [getitem(d, 'a'), contains(d, 'b'), length(d), getitem(l, -1),
+         setitem(l, 0, 9)[:], length(l)]
+    D.__getitem__ = lambda self, k: 'get'
+    D.__contains__ = lambda self, k: 'yes'
+    D.__len__ = lambda self: 99
+    LL.__getitem__ = lambda self, i: 'get'
+    LL.__setitem__ = lambda self, i, x: None
+    LL.__len__ = lambda self: 99
+    r += [getitem(d, 'a'), contains(d, 'b'), length(d), getitem(l, -1),
+          setitem(l, 0, 8)[:], length(l)]
+    del D.__getitem__, D.__contains__, D.__len__
+    del LL.__getitem__, LL.__setitem__, LL.__len__
+    r += [getitem(d, 'a'), contains(d, 'b'), length(d), getitem(l, -1),
+          setitem(l, 0, 7)[:], length(l)]
+    return r
+
+
 CASES = [
     ('added_bool', [()], {}),
     ('deleted_len', [()], {}),
     ('added_add', [()], {}),
     ('overridden_int', [()], {}),
     ('overridden_list', [()], {}),
+    ('added_items', [()], {}),
+    ('overridden_containers', [()], {}),
+    ('list_len_only', [()], {}),
 ]

@@ -309,17 +309,35 @@ bool PsycoList_Append(PsycoObject* po, vinfo_t* v, vinfo_t* vitem)
    Python code; the generic meta would dispatch on those (KNOWN_BUGS F41) */
 static vinfo_t* plist_subscript(PsycoObject* po, vinfo_t* o, vinfo_t* key)
 {
+	/* a subclass's slots behind guards (F56), as the generic meta
+	   reads them */
+	void* slots[3];
+	void* list_slots[3];
+	int i;
 	PyTypeObject* tp = Psyco_NeedType(po, o);
 	if (tp == NULL)
 		return NULL;
-	if (tp->tp_as_mapping->mp_subscript !=
-	    PyList_Type.tp_as_mapping->mp_subscript ||
-	    tp->tp_as_sequence->sq_item != PyList_Type.tp_as_sequence->sq_item ||
-	    tp->tp_as_sequence->sq_length !=
-	    PyList_Type.tp_as_sequence->sq_length)
-		return psyco_generic_call(po,
-					  PyList_Type.tp_as_mapping->mp_subscript,
-					  CfCommonNewRefPyObject, "vv", o, key);
+	slots[0] = &tp->tp_as_mapping->mp_subscript;
+	slots[1] = &tp->tp_as_sequence->sq_item;
+	slots[2] = &tp->tp_as_sequence->sq_length;
+	list_slots[0] = PyList_Type.tp_as_mapping->mp_subscript;
+	list_slots[1] = PyList_Type.tp_as_sequence->sq_item;
+	list_slots[2] = PyList_Type.tp_as_sequence->sq_length;
+	for (i = 0; i < 3; i++) {
+		void* f;
+		switch (Psyco_TypeSlot(po, tp, slots[i], &f)) {
+		case 1:
+			if (f == list_slots[i])
+				break;
+			/* fall through */
+		case 0:
+			return psyco_generic_call(po,
+					PyList_Type.tp_as_mapping->mp_subscript,
+					CfCommonNewRefPyObject, "vv", o, key);
+		default:
+			return NULL;
+		}
+	}
 	return psyco_generic_subscript(po, o, key);
 }
 

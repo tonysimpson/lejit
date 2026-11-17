@@ -28,6 +28,36 @@ static vinfo_t *type_error_tp(PsycoObject *po, const char *msg,
   return NULL;
 }
 
+/* The slot at 'offset' in one of tp's tables (NULL if tp has no such
+   table), as Psyco_TypeSlot reads it: 1, 0 if a heap type's slot has
+   changed since it was first seen, -1 on error. */
+static int table_slot(PsycoObject *po, PyTypeObject *tp, void *table,
+                      size_t offset, void **f) {
+  if (table == NULL) {
+    *f = NULL;
+    return 1;
+  }
+  return Psyco_TypeSlot(po, tp, (char *)table + offset, f);
+}
+#define NB_SLOT_OF(tp, offset, f)                                              \
+  table_slot(po, tp, (tp)->tp_as_number, offset, (void **)(f))
+#define SQ_SLOT_OF(tp, name, f)                                                \
+  table_slot(po, tp, (tp)->tp_as_sequence, offsetof(PySequenceMethods, name),  \
+             (void **)(f))
+#define MP_SLOT_OF(tp, name, f)                                                \
+  table_slot(po, tp, (tp)->tp_as_mapping, offsetof(PyMappingMethods, name),    \
+             (void **)(f))
+/* 'read' is one of the above: go to 'changed' if the slot has changed */
+#define SLOT_OR_GOTO(read, changed, err)                                       \
+  switch (read) {                                                              \
+  case 1:                                                                      \
+    break;                                                                     \
+  case 0:                                                                      \
+    goto changed;                                                              \
+  default:                                                                     \
+    return err;                                                                \
+  }
+
 DEFINEFN
 vinfo_t *PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object,
                           vinfo_t *args,
@@ -94,18 +124,19 @@ use_proxy:
 
 DEFINEFN
 vinfo_t *PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
-  PyMappingMethods *m;
+  binaryfunc subscript;
+  ssizeargfunc item;
   PyTypeObject *tp = Psyco_NeedType(po, o);
   if (tp == NULL)
     return NULL;
 
-  m = tp->tp_as_mapping;
-  if (m && m->mp_subscript)
-    return Psyco_META2(po, m->mp_subscript, CfCommonNewRefPyObject, "vv", o,
-                       key);
+  SLOT_OR_GOTO(MP_SLOT_OF(tp, mp_subscript, &subscript), changed, NULL);
+  if (subscript != NULL)
+    return Psyco_META2(po, subscript, CfCommonNewRefPyObject, "vv", o, key);
 
   /* sq_item too, as 3.7: every heap type has a tp_as_sequence (F42) */
-  if (tp->tp_as_sequence && tp->tp_as_sequence->sq_item) {
+  SLOT_OR_GOTO(SQ_SLOT_OF(tp, sq_item, &item), changed, NULL);
+  if (item != NULL) {
     /* TypeSwitch */
     PyTypeObject *ktp = Psyco_NeedType(po, key);
     if (ktp == NULL)
@@ -138,26 +169,31 @@ vinfo_t *PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
 
   /* PEP 560: a class subscripted calls its __class_getitem__ (Generic[T]) */
   if (PyType_FastSubclass(tp, Py_TPFLAGS_TYPE_SUBCLASS))
-    return psyco_generic_call(po, PyObject_GetItem, CfCommonNewRefPyObject,
-                              "vv", o, key);
+    goto changed;
 
   type_error_tp(po, "'%.200s' object is not subscriptable", tp);
   return false;
+
+changed:
+  return psyco_generic_call(po, PyObject_GetItem, CfCommonNewRefPyObject, "vv",
+                            o, key);
 }
 
 DEFINEFN
 bool PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key,
                          vinfo_t *value) {
-  PyMappingMethods *m;
+  objobjargproc ass_subscript;
+  ssizeobjargproc ass_item;
   PyTypeObject *tp = Psyco_NeedType(po, o);
   if (tp == NULL)
     return false;
 
-  m = tp->tp_as_mapping;
-  if (m && m->mp_ass_subscript) {
+  SLOT_OR_GOTO(MP_SLOT_OF(tp, mp_ass_subscript, &ass_subscript), changed,
+               false);
+  if (ass_subscript != NULL) {
     char *vargs = (value != NULL) ? "vvv" : "vvl";
-    return Psyco_META3(po, m->mp_ass_subscript, CfCommonIntZeroOk, vargs, o,
-                       key, value) != NULL;
+    return Psyco_META3(po, ass_subscript, CfCommonIntZeroOk, vargs, o, key,
+                       value) != NULL;
   }
 
   if (tp->tp_as_sequence) {
@@ -187,7 +223,8 @@ bool PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key,
       vinfo_decref(key_value, po);
       return result;
     }
-    if (tp->tp_as_sequence->sq_ass_item) {
+    SLOT_OR_GOTO(SQ_SLOT_OF(tp, sq_ass_item, &ass_item), changed, false);
+    if (ass_item != NULL) {
       type_error_tp(po, "sequence index must be integer, not '%.200s'", ktp);
       return false;
     }
@@ -198,33 +235,36 @@ bool PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key,
                         : "'%.200s' object does not support item deletion",
                 tp);
   return false;
+
+changed:
+  if (value != NULL)
+    return psyco_generic_call(po, PyObject_SetItem, CfCommonIntZeroOk, "vvv",
+                              o, key, value) != NULL;
+  return psyco_generic_call(po, PyObject_DelItem, CfCommonIntZeroOk, "vv", o,
+                            key) != NULL;
 }
 
 DEFINEFN
 vinfo_t *PsycoObject_Size(PsycoObject *po, vinfo_t *vi) {
-  PySequenceMethods *m;
-  void *f;
+  lenfunc f;
   PyTypeObject *tp = Psyco_NeedType(po, vi);
   if (tp == NULL)
     return NULL;
 
-  m = tp->tp_as_sequence;
-  if (m && m->sq_length)
-    f = m->sq_length;
-  else {
-    PyMappingMethods *m2 = tp->tp_as_mapping;
-    if (m2 && m2->mp_length)
-      f = m2->mp_length;
-    else
-    {
-      PycException_SetFormat(po, PyExc_TypeError,
-                             "object of type '%.200s' has no len()",
-                             tp->tp_name);
-      return NULL;
-    }
+  SLOT_OR_GOTO(SQ_SLOT_OF(tp, sq_length, &f), changed, NULL);
+  if (f == NULL)
+    SLOT_OR_GOTO(MP_SLOT_OF(tp, mp_length, &f), changed, NULL);
+  if (f == NULL) {
+    PycException_SetFormat(po, PyExc_TypeError,
+                           "object of type '%.200s' has no len()",
+                           tp->tp_name);
+    return NULL;
   }
-
   return Psyco_META1(po, f, CfCommonPySSizeTResult, "v", vi);
+
+changed:
+  return psyco_generic_call(po, PyObject_Size, CfCommonPySSizeTResult, "v",
+                            vi);
 }
 
 DEFINEFN
@@ -239,22 +279,23 @@ vinfo_t *psyco_generic_mut_ob_size(PsycoObject *po, vinfo_t *vi) {
 
 DEFINEFN
 vinfo_t *PsycoSequence_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *i) {
-  PySequenceMethods *m;
+  ssizeargfunc item;
+  lenfunc length;
   PyTypeObject *tp = Psyco_NeedType(po, o);
   if (tp == NULL)
     return NULL;
 
-  m = tp->tp_as_sequence;
-  if (m && m->sq_item) {
+  SLOT_OR_GOTO(SQ_SLOT_OF(tp, sq_item, &item), changed, NULL);
+  if (item != NULL) {
     vinfo_t *result;
     vinfo_t *release_me = NULL;
-    if (m->sq_length) {
+    SLOT_OR_GOTO(SQ_SLOT_OF(tp, sq_length, &length), changed, NULL);
+    if (length != NULL) {
       condition_code_t cc = integer_cmp_i(po, i, 0, Py_LT);
       if (cc == CC_ERROR)
         return NULL;
       if (runtime_condition_f(po, cc)) {
-        vinfo_t *l =
-            Psyco_META1(po, m->sq_length, CfCommonPySSizeTResult, "v", o);
+        vinfo_t *l = Psyco_META1(po, length, CfCommonPySSizeTResult, "v", o);
         if (l == NULL)
           return NULL;
         release_me = i = integer_add(po, i, l, false);
@@ -264,34 +305,39 @@ vinfo_t *PsycoSequence_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *i) {
       } else
         assert_nonneg(i);
     }
-    result = Psyco_META2(po, m->sq_item, CfCommonNewRefPyObject, "vv", o, i);
+    result = Psyco_META2(po, item, CfCommonNewRefPyObject, "vv", o, i);
     vinfo_xdecref(release_me, po);
     return result;
   }
 
   return type_error_tp(po, "'%.200s' object does not support indexing", tp);
+
+changed:
+  return psyco_generic_call(po, PySequence_GetItem, CfCommonNewRefPyObject,
+                            "vv", o, i);
 }
 
 DEFINEFN
 bool PsycoSequence_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *i,
                            vinfo_t *value) {
-  PySequenceMethods *m;
+  ssizeobjargproc ass_item;
+  lenfunc length;
   PyTypeObject *tp = Psyco_NeedType(po, o);
   if (tp == NULL)
     return false;
 
-  m = tp->tp_as_sequence;
-  if (m && m->sq_ass_item) {
+  SLOT_OR_GOTO(SQ_SLOT_OF(tp, sq_ass_item, &ass_item), changed, false);
+  if (ass_item != NULL) {
     bool result;
     char *vargs;
     vinfo_t *release_me = NULL;
-    if (m->sq_length) {
+    SLOT_OR_GOTO(SQ_SLOT_OF(tp, sq_length, &length), changed, false);
+    if (length != NULL) {
       condition_code_t cc = integer_cmp_i(po, i, 0, Py_LT);
       if (cc == CC_ERROR)
         return false;
       if (runtime_condition_f(po, cc)) {
-        vinfo_t *l =
-            Psyco_META1(po, m->sq_length, CfCommonPySSizeTResult, "v", o);
+        vinfo_t *l = Psyco_META1(po, length, CfCommonPySSizeTResult, "v", o);
         if (l == NULL)
           return false;
         release_me = i = integer_add(po, i, l, false);
@@ -302,7 +348,7 @@ bool PsycoSequence_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *i,
         assert_nonneg(i);
     }
     vargs = (value != NULL) ? "vvv" : "vvl";
-    result = Psyco_META3(po, m->sq_ass_item, CfCommonIntZeroOk, vargs, o, i,
+    result = Psyco_META3(po, ass_item, CfCommonIntZeroOk, vargs, o, i,
                          value) != NULL;
     vinfo_xdecref(release_me, po);
     return result;
@@ -314,6 +360,13 @@ bool PsycoSequence_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *i,
                         : "'%.200s' object doesn't support item deletion",
                 tp);
   return false;
+
+changed:
+  if (value != NULL)
+    return psyco_generic_call(po, PySequence_SetItem, CfCommonIntZeroOk, "vvv",
+                              o, i, value) != NULL;
+  return psyco_generic_call(po, PySequence_DelItem, CfCommonIntZeroOk, "vv", o,
+                            i) != NULL;
 }
 
 DEFINEFN
@@ -339,19 +392,22 @@ bool PsycoSequence_SetSlice(PsycoObject *po, vinfo_t *o, vinfo_t *ilow,
 
 DEFINEFN
 vinfo_t *PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob) {
-  PySequenceMethods *sqm;
+  objobjproc f;
   PyTypeObject *tp = Psyco_NeedType(po, seq);
   if (tp == NULL)
-    return false;
+    return NULL;
 
-  sqm = tp->tp_as_sequence;
-  if (sqm != NULL && sqm->sq_contains != NULL)
-    return Psyco_META2(po, sqm->sq_contains, CfCommonIntBoolOrError, "vv", seq,
-                       ob);
+  SLOT_OR_GOTO(SQ_SLOT_OF(tp, sq_contains, &f), changed, NULL);
+  if (f != NULL)
+    return Psyco_META2(po, f, CfCommonIntBoolOrError, "vv", seq, ob);
 
   /* XXX implement me */
   return psyco_generic_call(po, _PySequence_IterSearch, CfCommonIntBoolOrError,
                             "vvl", seq, ob, (long)PY_ITERSEARCH_CONTAINS);
+
+changed:
+  return psyco_generic_call(po, PySequence_Contains, CfCommonIntBoolOrError,
+                            "vv", seq, ob);
 }
 
 DEFINEFN
@@ -371,23 +427,6 @@ vinfo_t *PsycoSequence_Tuple(PsycoObject *po, vinfo_t *seq) {
 #define NB_BINOP(nb_methods, slot) ((binaryfunc *)(&((char *)nb_methods)[slot]))
 #define NB_TERNOP(nb_methods, slot)                                            \
   ((ternaryfunc *)(&((char *)nb_methods)[slot]))
-
-/* The slot at 'offset' in one of tp's tables (NULL if tp has no such
-   table), as Psyco_TypeSlot reads it: 1, 0 if a heap type's slot has
-   changed since it was first seen, -1 on error. */
-static int table_slot(PsycoObject *po, PyTypeObject *tp, void *table,
-                      size_t offset, void **f) {
-  if (table == NULL) {
-    *f = NULL;
-    return 1;
-  }
-  return Psyco_TypeSlot(po, tp, (char *)table + offset, f);
-}
-#define NB_SLOT_OF(tp, offset, f)                                              \
-  table_slot(po, tp, (tp)->tp_as_number, offset, (void **)(f))
-#define SQ_SLOT_OF(tp, name, f)                                                \
-  table_slot(po, tp, (tp)->tp_as_sequence, offsetof(PySequenceMethods, name),  \
-             (void **)(f))
 
 /* abstract.c's PyNumber_Positive etc.: 'generic' is what compiled code
    calls once a heap type's slot has changed */
