@@ -51,10 +51,10 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 ### Code size and compile time
 - **Forgotten values** (GLOSSARY): when the cap (D40) generalises a value, mark it so any later promotion of it goes straight to the generic path. Then the cap can generalise more than ints (a constant function made run-time is promoted again today, so meteor compiled 5% more). Queued after the two-form values work, which touches the same code.
 - **A cap on blocks per merge point** (CODE_SIZE option 3): the general backstop. Next, now D33 is in.
-- **Promotion code** is the largest remaining share (about a third before D33). Not analysed yet: which values, how many distinct each, which sites should go megamorphic sooner. Analysis first, then a fix.
+- **Promotion code** (CODE_SIZE.md, "Promotions"): 61–96% of code is compiled after a promotion, and promotions are 57–88% of compile time. 94% of what is promoted is types, and 79–100% of sites see one value, so cut-offs and promoting fewer kinds gain little. The copies come from many sites at one instruction, on paths entered from pauses and respawns that don't match at merge points: option 2 there (matching across promoted knowledge), research, after the cap. A polymorphic inline cache (option 3) is a speed idea: richards misses 7.4%.
 - **Other two-form values at merge points** (QUESTIONS 38): ints outside -5..256, floats, stack slots; deltablue's +1.3% compiles after D33 is unexplained.
 - **Type-set guards** (CODE_SIZE option 4): one copy of a base-class method for several subclasses (richards' `Task`). Research.
-- **Promotion stubs** still use `psyco_call_code_builder` (about 70 bytes each); the D32 stubs could serve them too, but the promotion path passes a run-time value (`extraarg`), which the trampoline would have to carry.
+- **Promotion stubs** still use `psyco_call_code_builder`: 84–86 bytes each, 10–31% of code. On D32-style stubs, the value would go in RSI (`mov rsi, reg`), which the trampoline leaves alone: about 37 bytes, −6 to −19% code (CODE_SIZE.md, "Promotions", option 1). Small to medium; next.
 - **The alignment test at merge points** (C1) rejects matches that differ only in stack alignment mod 16. Measuring how many blocks it causes is cheap; removing it means aligning at calls instead.
 - **Merge-point lookup is a linear scan**, and meta lookup allocates a `PyLong` key per lookup (ARCHITECTURE, design observations). Compile-time costs; not measured.
 - **Compile-time C calls through libffi** call `ffi_prep_cif` every time (QUESTIONS 36).

@@ -17,6 +17,7 @@ Why Ni emits so much code, and how much of it is the same code emitted more than
   - `stubs`: 4 KB pool chunks holding the 15-byte respawn and pause stubs (D32), counted whole when taken;
   - `coding_pause` (until `d51860c`), `unify`, `glue`: pause stubs, state-matching code at merge points, start-up code.
 - **By instruction** (`pycompiler.c:codestats_begin`): the bytes from the start of one bytecode instruction to the start of the next, per copy, and the copy itself. An instruction's error paths and the end of a block count with it; stubs and replays don't.
+- **Promotion sites** (`tools/codesize.py -p`, `ni._promostats()`): see "Promotions" below.
 - **Identical copies** (`tools/codesize.py -d`, needs capstone): copies of the same instruction that disassemble the same once branch and call targets are replaced; a second level also ignores 64-bit constants (per-site guard structs, shared keys, type pointers).
 
 ## Results
@@ -192,3 +193,143 @@ Others are within a stub chunk (4 KB) of the same code; meteor_contest 61 → 65
 ### The 16-byte alignment test (KNOWN_BUGS C1)
 
 `codesize.py -s` also counts the blocks started although a snapshot matched (exactly or partially) apart from `compare_return_address_in_a_stupid_way`. With the cap off: 45 of 2,543 blocks (1.8%): deltablue 19 of 284 (6.7%), meteor_contest 8 of 116, go 6 of 255, deepcopy 4, hexiom 4, pyflate 2, raytrace 1, richards 1; none in the other 15. Unchanged with N = 6. Each is an upper bound on a block the test caused: without it the state would have joined existing code, though a partial match might still have compiled again. In deltablue 10 of the 19 are at one loop head (`add_constraints_consuming_to` @18, which has 10 blocks in all), states that differ from an existing block only in the return-address slot's alignment, presumably because the function is entered from callers at different stack depths [inferred]. Generalising more (the first version above) made it worse, 19 → 43 in deltablue, with whole copies of `remove_propagate_from`. Not changed, as asked.
+
+
+## Promotions (`f3548c7`, `9daad64`) [run]
+
+What promotions cost after D32 and D33, which values they promote, and what would shrink them. `NI_CODESTATS=1` build on `3232c0c`, `tools/codesize.py <bench> -p -d`; compile-time shares from a release build. Each benchmark runs until it compiles nothing new.
+
+### Method
+
+- `ni._promostats()` (`pycompiler.c`, `NI_CODESTATS` only) records each site when `dispatcher.c:psyco_finish_promotion` emits it: code object, instruction, opcode, flavour (`pflags`), stub bytes, the site whose value was being compiled at the time (its parent), and a backtrace taken in `PycException_Promote`. `tools/promostats.py` resolves the backtrace with `addr2line` into "who asked" (e.g. `Psyco_NeedType < try_rich_compare`). For each value it records what the value is, the bytes closed and the time spent compiling after it (`do_promotion_internal`, `detected_megamorphic_pyobj_site`), and how often its block ran. [read]
+- Run counts come from a 13-byte `mov r11, &counter; inc qword [r11]` at the start of each promoted block, in this build only. The flags are dead there, because `ipromotion_finish` spills them before its compare. The byte counts below leave the counter out, but the buffer-kind table in `codesize.py` includes it (about 1–2%). A miss is an entry into the C dispatcher (`do_promotion_*`): the inline cache held another value.
+- "Code after a value" is everything compiled from a promotion entry, including the stubs of later sites. Code reached later through a coding pause counts as a pause.
+- "Why an instruction has extra sites" walks up each site's parents to where two sites at one instruction meet (`promostats.py:forks`).
+
+### How much [run]
+
+| benchmark | code KB | promotion stubs | code after a value | promotion share of compile time (release) | sites | never entered | values | sites with one value |
+|---|---|---|---|---|---|---|---|---|
+| richards | 117 | 12.3 KB (10%) | 82.5 KB (70%) | 71% (0.50 of 0.71 ms) | 147 | 5 | 148 | 95% |
+| deltablue | 440 | 66.3 KB (15%) | 312 KB (71%) | 69% | 790 | 138 | 688 | 79% |
+| raytrace | 273 | 45.7 KB (17%) | 229 KB (84%) | 77% | 551 | 50 | 524 | 85% |
+| go | 444 | 73.7 KB (17%) | 329 KB (74%) | 64% (2.12 of 3.31 ms) | 880 | 83 | 805 | 89% |
+| hexiom | 417 | 76.0 KB (18%) | 302 KB (72%) | 64% | 896 | 104 | 792 | 88% |
+| chaos | 66 | 14.8 KB (22%) | 61.9 KB (94%) | 81% | 268 | 6 | 171 | 64% |
+| pyflate | 218 | 25.0 KB (11%) | 133 KB (61%) | 57% | 296 | 33 | 264 | 89% |
+| scimark | 200 | 36.0 KB (18%) | 157 KB (79%) | 66% | 429 | 34 | 399 | 91% |
+| mdp | 179 | 42.0 KB (24%) | 143 KB (80%) | 72% | 497 | 48 | 452 | 89% |
+| deepcopy | 70 | 15.3 KB (22%) | 60.0 KB (85%) | 76% | 183 | 17 | 237 | 86% |
+| nbody | 40 | 12.6 KB (31%) | 38.7 KB (96%) | 88% | 150 | 0 | 150 | 100% |
+
+- **Most code is compiled after a promotion, but most of that isn't waste.** A promotion ends the block, so the rest of the function is compiled from it. With one value per site (79–100% of sites), that code would exist anyway. The waste is the stubs, the extra values at a site, and the extra sites at one instruction (below).
+- **A promotion stub costs 84–86 bytes per site (measured), 10–31% of all code.** 2–15% of sites never run (deltablue: 138 stubs, 11.7 KB). [run]
+  - From the code, about 19 bytes are the inline cache (`mov r10, imm64; cmp reg, r10; je`), 32–40 are the `rt_promotion_t` written into the code buffer, and about 30 are the call into the code builder (`x64/iencoding.c:psyco_call_code_builder`). [inferred]
+- **Compile time:** promotion entries are still 57–88% of compile time (release, `ni._stats()`), about 2.6 µs each. COMPILE_COST.md's 70% still holds.
+
+### What is promoted, and who asks [run]
+
+All 17 benchmarks together (stub plus code after, 2.5 MB):
+
+| kind of value | share | identical copies (constants aside) |
+|---|---|---|
+| a type (`Psyco_NeedType`, `need_type_mega`) | 93.5% | 186 KB |
+| a function (calls) | 1.9% | 3 KB |
+| megamorphic versions | 1.8% | 0 |
+| a machine word (`psyco_atcompiletime`) | 1.4% | 1 KB |
+| a code object | 0.7% | 0 |
+| another object (e.g. a class with a metaclass) | 0.7% | 0 |
+
+- **Who asks**, by share of promotion code:
+  - attribute lookup (`need_type_mega < PsycoObject_GetAttr`, LOAD_ATTR/LOAD_METHOD): 22%;
+  - `binary_op1`: 16%;
+  - `try_rich_compare`: 14%;
+  - `PsycoObject_IsTrue`: 7%;
+  - UNPACK_SEQUENCE: 7%;
+  - `binary_iop1`: 6%;
+  - `PsycoObject_GetItem`: 5%;
+  - then a long tail.
+- The types promoted are mostly `int`, `float`, `bool`, `list` and user classes. A value loaded from an attribute, a list item or a call result has an unknown type, and each operation on it promotes the type. Promotion already takes the type, not the value, wherever only the type is used. [run], [read] (`Psyco_NeedType`)
+- **The cut-off.** `MEGAMORPHIC_MAX` is 5 (`codegen.h`). It applies only to `need_type_mega` (attribute lookup) and `psyco_static_type_promotion` (calls to a type, `isinstance`); every other `Psyco_NeedType` site has none. [read]
+  - In these benchmarks only 9 sites went megamorphic (scimark 1, mdp 3, deepcopy 5).
+  - The import of `pkg_resources`/`pyparsing` (when capstone loads) has 36 sites with 5 or more values, and one `STORE_ATTR` with 23 types. [run]
+- **How often values run.** The code for a value usually runs hundreds to millions of times per site. deltablue and go each have about 22 KB compiled for values whose block ran at most once in the measured run.
+- **Misses are rare except at polymorphic attribute and arithmetic sites.** Each miss calls the C dispatcher, walks the list, and rewrites the inline cache's immediate in the code.
+  - richards: one warm iteration enters promoted blocks 1.05 M times and misses 77,676 times (7.4%). 74k of the misses are at one `LOAD_METHOD` in `schedule`, which sees four `Task` subclasses in turn.
+  - raytrace misses 3.9% (`Vector.__sub__` with `int` and `float`); the other benchmarks 0.1–0.3%.
+  - `do_promotion_pyobj_mega` alone is 2.5% of richards' profile (`perf record`, release). The profile can't show the cost of rewriting code that is about to run. [run]
+
+### Where the extra copies come from [run]
+
+| benchmark | identical copies from promotions (jump targets aside / constants too) | ... same site, another value | code for a site's extra values | extra sites at an instruction that already has one |
+|---|---|---|---|---|
+| richards | 11.2 / 19.9 KB | 2.7 KB | 3.8 KB | 81 sites, 45 KB |
+| deltablue | 44.2 / 56.8 KB | 2.8 KB | 11.5 KB | 586, 223 KB |
+| raytrace | 12.9 / 14.4 KB | 1.7 KB | 8.4 KB | 391, 161 KB |
+| go | 40.4 / 42.0 KB | 0.1 KB | 1.1 KB | 679, 252 KB |
+| hexiom | 20.9 / 21.0 KB | 0 | 0 | 691, 231 KB |
+| pyflate | 5.8 / 5.9 KB | 0 | 0.1 KB | 189, 83 KB |
+| deepcopy | 8.6 / 11.7 KB | 6.4 KB | 11.8 KB | 121, 22 KB |
+
+- **Sites that see several values make few copies.** The code compiled for a site's second and later values is 0–12 KB per benchmark. Identical copies from the same site are 0–3 KB (deepcopy 6 KB).
+- **The copies come from one instruction having many sites.** go's `Board.useful` @126 `COMPARE_OP` has 32 sites, each promoting the type `int`; deltablue's `add_constraints_consuming_to` @28 has 63, each promoting `bool`. Each copy of the code before the instruction emits its own site, and each site compiles the rest of the function again.
+- **Why the code before was copied.** Over 9 benchmarks, where two sites at one instruction meet:
+
+| where the two sites meet | KB compiled after them |
+|---|---|
+| never: separate compiles entered by coding pauses or respawns | 825 |
+| never: one compile entered by a call, the other by a pause or respawn | 128 |
+| within one value's compile (a loop that reaches a merge point in a new state) | 202 |
+| at an earlier site, with different values | 23 |
+
+  So the duplication is a merge-point matter. Code entered from a pause or a respawn reaches a merge point in a state that doesn't match an existing block. It compiles a new block and promotes the same types again.
+- **Why states with the same types don't match.** [read]
+  - `dispatcher.c:compatible_array` rejects a match when the current state knows a fixed (promoted) value that the snapshot doesn't (`CHECK_FOR_NULL`). It has two reasons: "might just have been promoted", and, for `recdepth <= 2`, "we might as well try compiling with this extra information". Upstream's comment on the second: "XXX This assumption should be tested".
+  - The other way round, a fixed value in the snapshot must be known in the current state.
+  - So two paths that promoted a type in a different order or place never share code.
+- **Experiment:** in a scratch build, I dropped the `recdepth <= 2` clause and kept the promotion-loop guard. All ten benchmarks hung, with no output after four minutes. Matching on less knowledge needs more care than deleting the test. [run]
+
+### Options, ranked
+
+Gains are against the code and compile time above. "Code" means all emitted code.
+
+1. **Promotion stubs on D32-style stubs.** Keep the 19-byte inline cache. On a miss, run `mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline` (18 bytes), with the `rt_promotion_t` in the heap record.
+   - **How the stub carries the value:** the run-time value is already in a register at the site (`ipromotion_finish` calls `RTVINFO_IN_REG(fix)`), so the stub copies it into RSI, the second SysV argument. RSI is never allocated, and the trampoline (`x64/iprocessor.c:write_stub_trampoline`) touches only RDI, RAX (saved), RSP and R11. `psyco_stub_enter(record, value)` passes it on as `fn(closure, value)`; the respawn and pause functions ignore it.
+   - Promotion records are never freed (the site stays live), so the stub can sit inline at the site rather than in the pool.
+   - **Code:** about 85 → 37 bytes per site, −48 B. The records (about 40 bytes each) move to the heap. [inferred from the measured 84–86 B]
+
+     | benchmark | code saved |
+     |---|---|
+     | richards | −7 KB (−6%) |
+     | deltablue | −37 KB (−8%) |
+     | raytrace | −26 KB (−9%) |
+     | go | −41 KB (−9%) |
+     | hexiom | −42 KB (−10%) |
+     | chaos | −13 KB (−19%) |
+     | nbody | −7 KB (−18%) |
+
+   - **Compile time:** slightly less, since less code is written; too small to measure.
+   - **Run-time risk:** none expected. The miss path is the same C call, entered by `jmp` rather than an unmatched `call` (D32's rule).
+   - **D21:** no concern; nothing compiled changes.
+   - Small to medium.
+2. **Matching across promoted knowledge at merge points.** This is the largest pool. Identical copies made by promotions are 5–10% of code (deltablue 44 KB, go 40 KB, richards 11 KB). Extra sites at an instruction that already has one hold 30–75% of the code after values, and most of that is the same types promoted again on a path entered from a pause or a respawn. Two forms:
+   - Let a state that knows more (a fixed type the snapshot lacks) match, dropping the fact, as upstream's XXX suggests. The snapshot's code already has its own promotion site for that type. The experiment above shows the loop guard must be designed first: a state just after a promotion must not match the snapshot just before it.
+   - When the snapshot knows a fixed type the state lacks, emit a type guard (the promotion's compare) and jump into the existing block, with a stub for when the guard fails.
+   - **Code:** up to 5–10% from identical copies, and more if near-identical copies also merge.
+   - **Compile time:** falls with the code, since promotions are most of it.
+   - **Run-time risk:** the first form loses a known type on some paths (an extra inline-cache compare); the second adds a guard.
+   - **D21:** safe if the decision depends only on the state and the snapshots, as D33's does: a respawn replay starts from a snapshot and never crosses a merge point.
+   - Overlaps with the cap on blocks per merge point (option 3, in flight) and with type-set guards (option 4). Research; measure it under the cap first.
+3. **A polymorphic inline cache, or one that stops rewriting.** Today each miss rewrites the cached value in the code. A short chain of compares (one per value, up to the cut-off), or keeping the first value, would turn richards' 74k misses per iteration into compares.
+   - **Code:** about +19 B per extra value, at the 1–20% of sites with more than one.
+   - **Compile time:** no change.
+   - **Run time:** a gain, not a risk: at least the 2.5% of richards spent in `do_promotion_pyobj_mega`, plus whatever rewriting code costs (raytrace misses 3.9%). Measure with `perf`.
+   - **D21:** no concern; it is run-time dispatch only.
+   - Medium.
+4. **A cut-off for every `Psyco_NeedType` site.** Today only attribute lookup and type calls have one.
+   - **Code and compile time:** no change on these benchmarks, where no such site sees more than 4 types. It is a backstop for programs like `pyparsing`, with 23 types at one `STORE_ATTR`.
+   - **Run-time risk:** the megamorphic version is generic, so slower where it applies.
+   - **D21:** no concern. The count lives in the site at run time, and the result is a `RunTime_Megamorphic` flag in the state, which a replay reads from the snapshot, as with the existing cut-off.
+   - Small.
+5. **A lower cut-off, or sharing a site's copies.** The most it could save is the code for a site's extra values: 0–12 KB (0–3%; deepcopy 17%). Each value lost is a type no longer known downstream. Not recommended.
+6. **Promoting fewer kinds of value.** Types are 93.5% of promotion code, and they are the specialisation Ni exists for. Functions, code objects, words and other objects together are about 5%. Not recommended.
