@@ -736,3 +736,27 @@ All within the noise of repeated runs (hexiom, whose code is identical, spans 40
 ## Load guards repaired (`6cd0c26`, D60; STORES.md "Load guards") [run]
 
 A failed load guard is still a respawn, compiled once per site, so repairing the guards saves run time, not code. What changed in code: guards on classes with a metaclass (now given a version tag) and on types whose `tp_getattro` isn't generic now pass, so their failure branches are no longer compiled. `tools/loadguards.py` (`NI_CODESTATS`): before (`373136f`), every benchmark compiled 27 failure branches while warming (1,250 bytes, 0.05 ms, from the harness and `re`'s `Enum` flags), mdp 50 (2.5 KB), comprehensions 105 (4.6 KB, 0.2 ms); after, none, except comprehensions 6 and deepcopy 4. `codesize.py -s`: richards 131 KB, deltablue 404, raytrace 200, go 281, chaos 56, pyflate 180, unchanged; hexiom 250 → 254 (one more 4 KB stub chunk, [inferred]); mdp 156 → 153, respawned buffers 79 → 50. `compilebench.py`, all 29: 2,362 → 2,367 KB, compile 20.5 → 19.8 ms (noise).
+
+## Forgotten types learnt again by a guard (`17c3ed8`, D63) [run]
+
+D59 forgets a known heap type after code that may assign `__class__`, and the next use promoted it again: a promotion ends the block, so every call between two uses of `self` cost a block and a compile of the code after it. Now the forgotten type stays on the value as a hint (`vinfo_t.type_hint`), and `Psyco_NeedType` and `need_type_mega` first compare `ob_type` with it (`pobject.c:Psyco_TypeHintGuard`). If it matches, the type is known again and the block goes on; the other branch is a respawn, which promotes as before. The hint is kept in snapshots and ignored when states are compared (D63).
+
+Release builds, base `69936c0`, quiet machine.
+
+`codesize.py -s` (`NI_CODESTATS`): code KB, times instructions were compiled, buffers other than stub chunks (of which promotion continuations / respawned branches):
+
+| benchmark | code KB | compiled | buffers | promotion | respawned |
+|---|---|---|---|---|---|
+| richards | 137 → 131 | 1,886 → 1,790 | 428 → 331 | 304 → 184 | 15 → 38 |
+| deltablue | 331 → 344 | 4,201 → 4,117 | 1,119 → 947 | 795 → 576 | 162 → 208 |
+| raytrace | 209 → 194 | 3,032 → 2,746 | 718 → 535 | 587 → 397 | 69 → 76 |
+| go | 301 → 284 | 5,021 → 4,503 | 1,179 → 868 | 798 → 508 | 182 → 174 |
+| hexiom | 265 → 262 | 5,115 → 4,901 | 1,007 → 793 | 703 → 489 | 123 → 123 |
+| chaos | 63 → 62 | 1,008 → 958 | 278 → 212 | 224 → 162 | 17 → 13 |
+| pyflate | 182 → 184 | 3,813 → 3,735 | 530 → 433 | 313 → 216 | 94 → 94 |
+
+Promotion continuations fall by 28–40% and buffers by 15–27%. Code falls except in deltablue (+4%) and pyflate (+1%): where the hint is wrong, as at deltablue's polymorphic constraint calls, the guard's failure branch is a respawned block holding the promotion that used to be inline, so a wrong hint costs a block more than before. [inferred from the respawned counts]
+
+`compilebench.py`, all 29, two runs each: compile 20.7 / 21.1 → 20.5 / 20.4 ms (−2.5%), code 2,325 → 2,307 KB. D59 had cost +5% (19.8–20.2 → 20.7–21.3 ms on its base), so about half of it is recovered. Per benchmark (mean of two): go 2.77 → 2.51 ms, raytrace 1.62 → 1.50, chaos 0.56 → 0.51, deepcopy 0.54 → 0.46; deltablue 2.37 → 2.41, hexiom 2.81 → 2.88, mdp 1.50 → 1.58; the scimark ones move ±20–40% in both directions on 0.1–1 ms, which is noise.
+
+Instructions per warm iteration (`perf stat -e instructions:u`, (12 − 2 iterations) / 10, M): richards 165.5–172.2 (four runs) → 165.4–167.0 (five), deltablue 25.02 → 25.02–25.03, raytrace 3,101.5 → 3,102.8–3,105.9, go 1,070–1,105 → 1,071–1,169 (run-to-run spread larger than any difference), hexiom 41.07–41.50 → 40.64–40.65 (−1.1%), chaos 456.3–457.6 → 460.7–465.3 (+1.5%), pyflate 2,022.4 → 2,026.3–2,026.4 (+0.2%). Chaos's +1.5% was not explained. [run]

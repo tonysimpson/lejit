@@ -47,6 +47,7 @@ All four are one problem: a fact gained in one place decides how many copies are
 
 - **Fixed facts are never dropped.** Something emitted relies on them, and un-promoting one that a promotion compiled from would loop (D40). [read]
 - **Identity is kept.** Generalising may make a value run-time, never recompute an object that `is` could see (D33, D41). [read]
+- **A hint is not a fact.** A value can carry a hint, such as the type it had before D59 forgot it (`vinfo_t.type_hint`, D63): it decides what code is emitted (a guard instead of a promotion), so it is kept in snapshots for replays, but states are compared without it, since a block that guards before relying on the hint is right whatever the hint. [read]
 - **Replays are deterministic.** A decision may depend on the state, the snapshots and one-way state read through `psyco_block_serial` (D21, D31), never on counts that a replay would see differently. Merge-point decisions are safe because a replay never passes a merge point (D40). [read]
 
 ## Steps

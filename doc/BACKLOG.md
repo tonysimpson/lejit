@@ -20,7 +20,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **C15 remainder:** `locals()`, `eval()` and friends reached indirectly (`f = locals; f()`) see only the arguments.
 - **C17 remainder:** identity of virtual floats, ints and bound methods across calls (`f(x) is x` is False).
 
-- **F55:** fixed (`56e5faf`, D59): known heap types are forgotten after code that may assign `__class__`. Follow-up: a forgotten type is learnt again by a promotion, which starts a block (compile +5%); a guard against the type forgotten would keep one block. Small to medium.
+- **F55:** fixed (`56e5faf`, D59): known heap types are forgotten after code that may assign `__class__`. Follow-up done (`17c3ed8`, D63): a forgotten type is learnt again by a guard against its old type, which keeps the block (compile −2.5%, about half of D59's cost). Left: a wrong hint (a polymorphic call site) pays a respawned block before its promotion (deltablue +4% code); the guard could be skipped where the promotion site after it has already seen several types, if that can be decided the same way in a replay (D21).
 - **F37:** fixed (`e86f8ae`, STORES.md option 1).
 - **F56, F57, F80:** fixed (`d16ab6b`..`8e32559`; KNOWN_BUGS, D54): every slot compiled code folds for a heap type (truth, number, subscript, `len`, `in`, call, `__index__`, operand order after `__bases__`) and a function's `__code__` are guarded; `%=`'s message. F57's guard costs up to 1.2% (below).
 - **F10, F48, F50, F52, C25:** fixed (`0e191a3`..`9217bdb`; KNOWN_BUGS): compare slots run once, exhausted sequence iterators stay exhausted, a heap type's compare, hash and iteration slots and a function's defaults are guarded, C function results are checked. Rest of F50 is F56.
