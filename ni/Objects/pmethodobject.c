@@ -260,6 +260,8 @@ static vinfo_t *call_fast(PsycoObject *po, PyCFunction meth, int flags,
   int cf = vfunc != NULL ? CF_UNCHECKED : CfCommonNewRefPyObject;
   vinfo_t *r;
   int i;
+  if (psyco_cannot_block(meth)) /* meth's, not cimpl_fastN's (D53) */
+    cf |= CfNoBlock;
   if (n < 0 || n > FAST_MAX) {
     void *fn = kw ? (void *)cimpl_call_fast_kw : (void *)cimpl_call_fast;
     r = psyco_generic_call(po, fn, cf, "lvv", (long)meth, vself, vargs);

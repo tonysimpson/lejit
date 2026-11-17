@@ -694,6 +694,10 @@ struct PsycoObject_s {
                               point: the facts stamped since then are in use
                               (dispatcher.c:compatible_unused_fact, D50) */
   pyc_data_t pr;                   /* private language-dependent data       */
+  /* set when a C call that may block is emitted (psyco_generic_call);
+     pycompiler.c clears it before each instruction and tests eval_breaker
+     after a CALL_* that set it (breaker_after_call, D53) */
+  char blocking_call;
 #if NI_CODESTATS
   code_t *cs_mark;       /* where the current instruction's code began */
   PyCodeObject *cs_co;   /* ... and the instruction (pycompiler.c) */

@@ -123,13 +123,9 @@ report_destructor(PyObject *capsule)
 
 /* ceval tests eval_breaker before every instruction it reaches through
    DISPATCH(): after most opcodes, and at a frame's start. Compiled code
-   tests it at the target of every backward jump and after every call
-   (and NiCode_Run at the start), unless the instruction is one of these;
-   then the test is before the next one, as these go on with DISPATCH().
-   YIELD_FROM is never compiled. */
-#define BREAKER_SKIPS(op)                                                    \
-    ((op) == SETUP_FINALLY || (op) == SETUP_WITH ||                          \
-     (op) == BEFORE_ASYNC_WITH || (op) == YIELD_FROM)
+   tests it at the target of every backward jump, after calls (below) and
+   NiCode_Run at the start; before one of BREAKER_SKIPS, the test is before
+   the next instruction instead. */
 #define BREAKER_CHECK(unit)                                                  \
     do {                                                                     \
         Py_ssize_t _u = (unit);                                              \
@@ -350,9 +346,13 @@ _find_merge_points(PyCodeObject *co)
             weight++;
         if (opcode == LOAD_GLOBAL)
             loads_global = 1;
+        /* after a call pycompiler.c tests at the end of the call itself,
+           if it emitted a call that may block (D53), except before an
+           instruction ceval skips: then always, after that one */
         if ((opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
              opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD) &&
-            next_instr < instr_end)
+            next_instr < instr_end &&
+            BREAKER_SKIPS(_Py_OPCODE(*next_instr)))
             BREAKER_CHECK(next_instr - first_instr);
         switch (opcode) {
             /* no successor in this code */

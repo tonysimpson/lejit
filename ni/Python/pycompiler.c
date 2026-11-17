@@ -2043,6 +2043,29 @@ static void codestats_begin(PsycoObject *po, int instr, int opcode) {
 }
 #endif
 
+/* The eval_breaker test after a call (KNOWN_BUGS C24, D45, D53), once its
+   result is pushed: only if the call emitted a C call that isn't known to
+   be brief and non-blocking (po->blocking_call, set by psyco_generic_call
+   unless psyfunc.c:psyco_cannot_block accepts the function). A call that
+   was inlined, folded, made virtual or made directly into compiled code
+   emits none: that code tests at its own loop heads and after its own
+   calls. The test is part of the CALL_*, not of the next instruction: a
+   merge point there is matched before the next instruction is compiled,
+   and code compiled after a call that needed no test would then serve one
+   that did. None when the next instruction tests anyway (a loop head), or
+   is one ceval skips, after which mergepoints.c marks a test that is
+   always made. False with an exception set. */
+static bool breaker_after_call(PsycoObject *po, int next_instr) {
+  PyObject *code = po->pr.co->co_code;
+  if (!po->blocking_call)
+    return true;
+  if (next_instr >= PyBytes_GET_SIZE(code) ||
+      BREAKER_SKIPS((unsigned char)PyBytes_AS_STRING(code)[next_instr]) ||
+      psyco_breaker_check_at(po->pr.merge_points, next_instr))
+    return true;
+  return psyco_check_eval_breaker(po);
+}
+
 /* psyco_pycompiler_mainloop() compiles the function,
    writing function entry and exit points if needed, and destroys 'po' when
    it is done */
@@ -2129,6 +2152,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       if (psyco_breaker_check_at(po->pr.merge_points, po->pr.next_instr) &&
           !psyco_check_eval_breaker(po))
         break;
+      po->blocking_call = 0;
     dispatch_opcode:
 
       /* Main switch on opcode */
@@ -3176,6 +3200,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         for (i = stack_to_pop + 1; i--;) /* args, callable and the NULL */
           POP_DECREF();
         PUSH(x);
+        if (!breaker_after_call(po, next_instr))
+          break;
         goto fine;
       }
 
@@ -3195,6 +3221,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         for (i = stack_to_pop; i--;)
           POP_DECREF();
         PUSH(x);
+        if (!breaker_after_call(po, next_instr))
+          break;
         goto fine;
       }
 

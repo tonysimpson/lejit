@@ -16,6 +16,9 @@
 #define CfNoReturnValue     0x40
 /* If the c function result after error checking is always positive */
 #define CfNotNegative       0x80
+/* the call needs no eval_breaker test after it, as for a function
+   psyco_cannot_block() accepts: for a helper that calls one (D53) */
+#define CfNoBlock           0x1000
 
 #define VINFO_OK ((vinfo_t*)1)
 

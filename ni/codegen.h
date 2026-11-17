@@ -137,6 +137,9 @@ EXTERNFN condition_code_t psyco_int32_nonzero_in(PsycoObject* po,
 /* ceval's eval_breaker test at a loop head or after a call (psyfunc.c,
    KNOWN_BUGS C24); false with an exception set */
 EXTERNFN bool psyco_check_eval_breaker(PsycoObject* po);
+/* whether a C function is one after which a call needs no eval_breaker
+   test (psyfunc.c, D53) */
+EXTERNFN bool psyco_cannot_block(void* c_function);
 EXTERNFN vinfo_t* psyco_call_psyco(PsycoObject* po, CodeBufferObject* codebuf,
 				   Source argsources[], int argcount,
 				   struct stack_frame_info_s* finfo);

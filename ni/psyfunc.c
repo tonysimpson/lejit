@@ -458,6 +458,84 @@ bool psyco_check_eval_breaker(PsycoObject *po) {
   return true;
 }
 
+/* The C functions after which a CALL_* needs no eval_breaker test (D53,
+   pycompiler.c:breaker_after_call). Each runs briefly, can't block or
+   release the GIL, and runs only CPython's own code for builtin types, so
+   what arrives during it waits only until the next test, as it would
+   during any other instruction. Allocation can collect garbage and so run
+   finalisers, as at any allocation in compiled code; the str methods can
+   call an argument's __index__. A Python function's tp_call runs Python
+   code, which tests eval_breaker itself (ceval, or compiled code entered
+   through NiCode_Run), as an inlined or directly compiled callee does.
+   Left out, though common at call sites: whatever can call back into
+   arbitrary objects (dict lookups, PyObject_IsTrue, getattr, isinstance,
+   a class's tp_call, list.extend, str.join), since that may be C code
+   that blocks. Filled at start-up. */
+#define CANNOT_BLOCK_MAX 40
+static void *cannot_block[CANNOT_BLOCK_MAX];
+static int cannot_block_count = 0;
+
+DEFINEFN
+bool psyco_cannot_block(void *c_function) {
+  int i;
+  for (i = 0; i < cannot_block_count; i++)
+    if (cannot_block[i] == c_function)
+      return true;
+  return false;
+}
+
+static void add_cannot_block(void *c_function) {
+  psyco_assert(c_function != NULL && cannot_block_count < CANNOT_BLOCK_MAX);
+  cannot_block[cannot_block_count++] = c_function;
+}
+
+/* by ml_meth: a builtin type's method, or a builtin function (below) */
+static void add_method(PyTypeObject *tp, const char *name) {
+  PyObject *d = PyDict_GetItemString(tp->tp_dict, name);
+  psyco_assert(d != NULL && Py_TYPE(d) == &PyMethodDescr_Type);
+  add_cannot_block(((PyMethodDescrObject *)d)->d_method->ml_meth);
+}
+
+static void add_builtin(PyObject *builtins, const char *name) {
+  PyObject *f = PyObject_GetAttrString(builtins, name);
+  psyco_assert(f != NULL && PyCFunction_Check(f));
+  add_cannot_block(((PyCFunctionObject *)f)->m_ml->ml_meth);
+  Py_DECREF(f);
+}
+
+static void cannot_block_init(void) {
+  static const char *const str_methods[] = {
+      "find", "rfind", "index", "rindex", "startswith", "endswith",
+      "partition", "rpartition", "lower", "upper", "strip", "lstrip",
+      "rstrip", "replace", "split", "isdigit", "isalpha", "isspace", NULL};
+  const char *const *m;
+  PyObject *builtins = PyImport_ImportModule("builtins");
+  psyco_assert(builtins != NULL);
+  add_cannot_block(PyTuple_New);
+  add_cannot_block(PyList_New);
+  add_cannot_block(PyDict_New);
+  add_cannot_block(_PyDict_NewPresized);
+  add_cannot_block(PyLong_FromLong);
+  add_cannot_block(PyFloat_FromDouble);
+  add_cannot_block(PyFunction_NewWithQualName);
+  add_cannot_block(PyMethod_New);
+  add_cannot_block(PyThreadState_Get);
+  add_cannot_block(PyLong_Type.tp_richcompare);
+  add_cannot_block(PyFloat_Type.tp_richcompare);
+  add_cannot_block(PyFunction_Type.tp_call);
+  add_method(&PyList_Type, "append");
+  add_method(&PyList_Type, "reverse");
+  add_method(&PyDict_Type, "keys");
+  add_method(&PyDict_Type, "items");
+  add_method(&PyDict_Type, "values");
+  for (m = str_methods; *m != NULL; m++)
+    add_method(&PyUnicode_Type, *m);
+  add_builtin(builtins, "ord");
+  add_builtin(builtins, "chr");
+  add_builtin(builtins, "callable");
+  Py_DECREF(builtins);
+}
+
 /* Whether a trace or profile function is set in this thread (KNOWN_BUGS
    C23, D46): a compiled call or inlined frame skips the eval hook, which
    runs frames interpreted while tstate->use_tracing is set, so each one
@@ -1109,4 +1187,5 @@ void psycofunction_init() {
   psyco_assert(tstate_current->ts == PyThreadState_GET());
   eval_breaker = ni_eval_breaker_address();
   psyco_assert(eval_breaker != NULL);
+  cannot_block_init();
 }

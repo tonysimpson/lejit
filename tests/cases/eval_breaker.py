@@ -2,7 +2,7 @@
 # and on entry from the interpreter (KNOWN_BUGS C24): other threads get the
 # GIL, signal handlers run and async exceptions arrive while a compiled loop
 # spins. Without the test these loops never end (the harness's timeout).
-import ctypes, itertools, os, signal, sys, threading, time
+import ctypes, itertools, os, signal, sys, threading, time, zlib
 
 
 class Box:
@@ -175,6 +175,58 @@ def signal_in_c_loop():
         signal.signal(signal.SIGALRM, old)
 
 
+_DATA = bytes(64 << 20)
+
+
+def _crc_then_count(box):
+    zlib.crc32(_DATA)
+    box.after += 1
+    return 0
+
+
+# a signal that arrives during a long C call (zlib.crc32 of 64 MB, which
+# releases the GIL and doesn't look at signals) in a function with no loop
+# called from a C loop: the test after that call raises before the next
+# line, as ceval's does; without it the exception would come only on the
+# next entry, after box.after was counted (D53)
+def signal_in_c_call_from_c_loop():
+    old = signal.signal(signal.SIGALRM, _raise_alarm)
+    box = Box()
+    box.after = 0
+    try:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0.002)
+            sum(map(_crc_then_count, [box] * 4))
+        except Alarm:
+            return ('caught', box.after)
+        return ('not caught', box.after)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def _inc(box):
+    box.n += 1
+
+
+# Ctrl-C in a loop whose body is only a call that is inlined: no test after
+# the call (it makes no C call), the loop head's test stops it (D53)
+def keyboard_interrupt_inlined_body():
+    old = signal.signal(signal.SIGALRM, signal.default_int_handler)
+    box = Box()
+    box.n = 0
+    try:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0.001)
+            while True:
+                _inc(box)
+        except KeyboardInterrupt:
+            return 'interrupted'
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
 _set_async_exc = ctypes.pythonapi.PyThreadState_SetAsyncExc
 _set_async_exc.argtypes = [ctypes.c_ulong, ctypes.py_object]
 
@@ -244,6 +296,8 @@ CASES = [
     ('keyboard_interrupt_from_timer', [()], {}),
     ('signal_at_entry', [()], {}),
     ('signal_in_c_loop', [()], {}),
+    ('signal_in_c_call_from_c_loop', [()], {}),
+    ('keyboard_interrupt_inlined_body', [()], {}),
     ('async_exc_from_thread', [()], {}),
     ('async_exc_on_self', [()], {}),
     ('switch_interval', [()], {}),
