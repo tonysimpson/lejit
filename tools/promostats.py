@@ -195,6 +195,7 @@ def report(ni, stats0, stats1, before, after, bufs, dupsites, top,
         same_val += sum(n - 1 for n in seen.values())
     print('values promoted again at an instruction where another site '
           'already promoted the same value: %d' % same_val)
+    forks(rows, perinstr)
     hist = collections.Counter()
     for r in rows:
         n = r['nvalues']
@@ -264,6 +265,46 @@ def report(ni, stats0, stats1, before, after, bufs, dupsites, top,
                            dups1=(dupsites and {str(k): v for k, v in
                                                 dupsites[0].items()})),
                       f)
+
+
+def forks(rows, perinstr):
+    """Why an instruction has more than one site: walk each extra site's
+    parents (the site whose value was being compiled when it was emitted)
+    and the first site's, to where they meet. Meeting at an earlier site
+    means its values forked the code; meeting at one of the two means both
+    came from one value's compile (a loop reaching a merge point in a new
+    state); not meeting means two compiles entered separately (pause,
+    respawn, call) reached the instruction."""
+    byid = {r['id']: r for r in rows}
+
+    def chain(r):
+        out = [r['id']]
+        while r['parent'] in byid:
+            r = byid[r['parent']]
+            out.append(r['id'])
+        return out
+    cause = collections.Counter()
+    nb = collections.Counter()
+    for rs in perinstr.values():
+        if len(rs) < 2:
+            continue
+        ca = chain(rs[0])
+        for r in rs[1:]:
+            cb = chain(r)
+            meet = next((x for x in cb if x in ca), None)
+            if meet is None:
+                k = 'separate compiles, entered by %s and %s' % tuple(sorted(
+                    (byid[ca[-1]]['entry'], byid[cb[-1]]['entry'])))
+            elif meet in (r['id'], rs[0]['id']):
+                k = 'within one value\'s compile'
+            else:
+                k = 'values at an earlier site'
+            cause[k] += r['bytes']
+            nb[k] += 1
+    print('why an instruction has extra sites (sites, KB compiled after '
+          'their values):')
+    for k, v in cause.most_common():
+        print('  %5d %7.1f KB  %s' % (nb[k], v / 1024, k))
 
 
 def pct(a, b):
