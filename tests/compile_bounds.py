@@ -100,8 +100,16 @@ def check_inlinable():
     return 0 if ok else 1
 
 
+def check_metas_registered():
+    # a meta written for other ml_flags isn't registered (KNOWN_BUGS F13)
+    got = ni._unregistered_metas()
+    if got or VERBOSE:
+        print('%-4s unregistered metas: %r' % ('FAIL' if got else 'ok', got))
+    return 1 if got else 0
+
+
 def main():
-    failed = check_dead_locals() + check_inlinable()
+    failed = check_dead_locals() + check_inlinable() + check_metas_registered()
     for name, fn, warm, more, allow in CHECKS:
         for args in warm:
             fn(*args)
@@ -114,7 +122,7 @@ def main():
         if bad or VERBOSE:
             print('%-4s %s: %d new code buffers after warm-up (allowed %d)'
                   % ('FAIL' if bad else 'ok', name, grew, allow))
-    print('%d compile-bound checks, %d failed' % (len(CHECKS) + 2, failed))
+    print('%d compile-bound checks, %d failed' % (len(CHECKS) + 3, failed))
     return 1 if failed else 0
 
 

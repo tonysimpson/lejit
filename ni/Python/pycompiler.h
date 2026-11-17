@@ -247,7 +247,11 @@ EXTERNFN PyObject *Psyco_DefineMetaModule(char *modulename);
 EXTERNFN PyObject *Psyco_GetModuleObject(PyObject *module, char *name,
                                          PyTypeObject *expected_type);
 /* Maps a built-in function object from a module to a meta-implementation.
-   Returns a pointer to the C function itself. */
+   Returns a pointer to the C function itself, or NULL if the module has no
+   such builtin or its ml_flags aren't meth_flags; then nothing is
+   registered, and "module.name: why" goes in Psyco_Unregistered_Metas
+   (ni._unregistered_metas(); printed in checked builds). */
+EXTERNVAR PyObject *Psyco_Unregistered_Metas;
 EXTERNFN PyCFunction Psyco_DefineModuleFn(PyObject *module, char *meth_name,
                                           int meth_flags, void *meta_fn);
 /* Same as above, but also alternatively accepts a callable type object

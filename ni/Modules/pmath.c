@@ -6,8 +6,8 @@
  * return an int, as 3.7 does for a float (it has no __floor__ there); other
  * types go to the real function. atan2, fmod, hypot and pow have special
  * cases in mathmodule.c and get no meta: the real function is called.
- * A meta is silently not registered when the function's ml_flags differ
- * from those expected (e.g. METH_FASTCALL).
+ * A meta is not registered when the function's ml_flags differ from those
+ * expected (all METH_O in 3.7); ni._unregistered_metas() then lists it.
  */
 /* 
  * Psyco version of python math module, mathmodule.c 

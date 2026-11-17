@@ -282,6 +282,13 @@ static PyObject *ni_entry_point(PyObject *self, PyObject *co) {
                        (Py_ssize_t)((ni_code_extra_t *)x)->entry_globals);
 }
 
+/* for tests: the metas Psyco_DefineModuleFn couldn't register */
+static PyObject *ni_unregistered_metas(PyObject *self, PyObject *unused) {
+  if (Psyco_Unregistered_Metas == NULL)
+    return PyList_New(0);
+  return PyList_GetSlice(Psyco_Unregistered_Metas, 0, PY_SSIZE_T_MAX);
+}
+
 static PyMethodDef module_methods[] = {
     {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
 #if NI_CODESTATS
@@ -293,6 +300,8 @@ static PyMethodDef module_methods[] = {
      "{offset: [dead local names]} at each merge point, or None."},
     {"_inlinable", ni_inlinable, METH_O,
      "True if calls to this code object are inlined."},
+    {"_unregistered_metas", ni_unregistered_metas, METH_NOARGS,
+     "['module.name: why'] for each meta that wasn't registered."},
     {"_entry_point", ni_entry_point, METH_O,
      "(codebuf, globals) run for a code object, or None."},
     {NULL, NULL, 0, NULL}};

@@ -110,15 +110,44 @@ PyObject *Psyco_GetModuleObject(PyObject *module, char *name,
   return fobj;
 }
 
+DEFINEVAR PyObject *Psyco_Unregistered_Metas = NULL;
+
+static void meta_not_registered(PyObject *module, char *meth_name,
+                                const char *why) {
+  PyObject *s = PyUnicode_FromFormat(
+      "%s.%s: %s", module ? PyModule_GetName(module) : "?", meth_name, why);
+  if (s == NULL) {
+    PyErr_Clear();
+    return;
+  }
+  if (Psyco_Unregistered_Metas == NULL)
+    Psyco_Unregistered_Metas = PyList_New(0);
+  if (Psyco_Unregistered_Metas == NULL ||
+      PyList_Append(Psyco_Unregistered_Metas, s) < 0)
+    PyErr_Clear();
+#if ALL_CHECKS
+  fprintf(stderr, "ni: no meta for %s\n", PyUnicode_AsUTF8(s));
+#endif
+  Py_DECREF(s);
+}
+
 DEFINEFN
 PyCFunction Psyco_DefineModuleFn(PyObject *module, char *meth_name,
                                  int meth_flags, void *meta_fn) {
   PyCFunction f;
   PyObject *fobj = Psyco_GetModuleObject(module, meth_name, &PyCFunction_Type);
-  if (fobj == NULL)
+  if (fobj == NULL) {
+    meta_not_registered(module, meth_name, "not a builtin function");
     return NULL;
+  }
 
   if (PyCFunction_GET_FLAGS(fobj) != meth_flags) {
+    /* the meta's arguments and its fallback follow meth_flags' convention,
+       so it can't stand in for a function with another one */
+    char why[64];
+    snprintf(why, sizeof(why), "ml_flags are 0x%x, the meta's are 0x%x",
+             PyCFunction_GET_FLAGS(fobj), meth_flags);
+    meta_not_registered(module, meth_name, why);
     f = NULL;
   } else {
     f = PyCFunction_GET_FUNCTION(fobj);

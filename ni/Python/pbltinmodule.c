@@ -13,7 +13,6 @@ static PyCFunction cimpl_range;
 static PyCFunction cimpl_id;
 static PyCFunction cimpl_len;
 static PyCFunction cimpl_abs;
-static PyCFunction cimpl_apply;
 static PyCFunction cimpl_divmod;
 static PyCFunction cimpl_hash;
 static PyCFunction cimpl_min;
@@ -153,51 +152,6 @@ static vinfo_t *pbuiltin_len(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
 
 static vinfo_t *pbuiltin_abs(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
   return PsycoNumber_Absolute(po, vobj);
-}
-
-static vinfo_t *pbuiltin_apply(PsycoObject *po, vinfo_t *vself,
-                               vinfo_t *vargs) {
-  vinfo_t *alist = NULL;
-  vinfo_t *kwdict = NULL;
-  vinfo_t *retval;
-  int tuplesize = PsycoTuple_Load(vargs); /* -1 if unknown */
-  PyTypeObject *argt;
-  vinfo_t *t = NULL;
-
-  switch (tuplesize) {
-  case 3:
-    kwdict = PsycoTuple_GET_ITEM(vargs, 2);
-    if (Psyco_VerifyType(po, kwdict, &PyDict_Type) != true) {
-      /* 'kwdict' is not a dictionary */
-      break;
-    }
-    /* fall through */
-  case 2:
-    alist = PsycoTuple_GET_ITEM(vargs, 1);
-    argt = Psyco_NeedType(po, alist);
-    if (argt == NULL)
-      return NULL;
-    if (!PyType_TypeCheck(argt, &PyTuple_Type)) {
-      /* 'alist' is not a tuple */
-      if (!PsycoSequence_Check(argt))
-        break; /* give up */
-      t = PsycoSequence_Tuple(po, alist);
-      if (t == NULL)
-        break; /* give up */
-      alist = t;
-    }
-    /* fall through */
-  case 1:
-    retval = PsycoEval_CallObjectWithKeywords(po, PsycoTuple_GET_ITEM(vargs, 0),
-                                              alist, kwdict);
-    vinfo_xdecref(t, po);
-    return retval;
-  }
-
-  if (PycException_Occurred(po))
-    return NULL;
-  return psyco_generic_call(po, cimpl_apply, CfCommonNewRefPyObject, "lv", NULL,
-                            vargs);
 }
 
 static vinfo_t *pbuiltin_divmod(PsycoObject *po, vinfo_t *vself,
@@ -563,8 +517,9 @@ fallback:
 INITIALIZATIONFN
 void psyco_bltinmodule_init(void) {
   /* a meta is registered only if the builtin's ml_flags match (3.7's,
-     from Python/bltinmodule.c and its clinic header); apply no longer
-     exists. A METH_FASTCALL meta takes a tuple (pmethodobject.h). No meta
+     from Python/bltinmodule.c and its clinic header), otherwise
+     ni._unregistered_metas() lists it. A METH_FASTCALL meta takes a tuple
+     (pmethodobject.h). No meta
      for iter(): PsycoObject_GetIter gives lists a virtual seq-iterator,
      right for a for loop but the wrong type for iter() to hand out. */
   PyObject *md = Psyco_DefineMetaModule("builtins");
@@ -574,7 +529,6 @@ void psyco_bltinmodule_init(void) {
   DEFMETA(id, METH_O);
   DEFMETA(len, METH_O);
   DEFMETA(abs, METH_O);
-  DEFMETA(apply, METH_VARARGS);
   DEFMETA(divmod, METH_FASTCALL);
   DEFMETA(hash, METH_O);
   DEFMETA(min, METH_VARARGS | METH_KEYWORDS);
