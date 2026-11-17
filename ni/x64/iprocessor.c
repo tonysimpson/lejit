@@ -120,6 +120,53 @@ static void write_stub_trampoline(PsycoObject *po) {
   END_CODE
 }
 
+/* Out-of-line slow paths that compiled code calls with its arguments
+   already in the SysV registers and the stack at any alignment (the
+   inline attribute store's miss and dealloc paths). Each is a matched
+   call and ret, so the return-address predictor stays in step (D32). RBP
+   is saved here and holds the unaligned RSP; compiled code keeps its
+   values only in callee-saved registers, which the C callee preserves. */
+static void write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax) {
+  BEGIN_CODE
+  PUSH_R(REG_X64_RBP);
+  MOV_R_R(REG_X64_RBP, REG_X64_RSP);
+  AND_R_I8(REG_X64_RSP, -16);
+  if (dealloc_rax) { /* tp_dealloc of the object in RAX */
+    MOV_R_R(REG_X64_RDI, REG_X64_RAX);
+#ifdef Py_TRACE_REFS
+    CALL_I(_Py_Dealloc);
+#else
+    MOV_R_O8(REG_X64_RAX, REG_X64_RDI, offsetof(PyObject, ob_type));
+    MOV_R_O8(REG_X64_RAX, REG_X64_RAX, offsetof(PyTypeObject, tp_dealloc));
+    CALL_R(REG_X64_RAX);
+#endif
+  } else {
+    CALL_I(fn);
+  }
+  MOV_R_R(REG_X64_RSP, REG_X64_RBP);
+  POP_R(REG_X64_RBP);
+  RET();
+  END_CODE
+}
+
+static code_t *new_aligned_call(void *fn, bool dealloc_rax) {
+  code_t *limit, *start;
+  CodeBufferObject *codebuf = psyco_new_code_buffer(NULL, NULL, &limit);
+  PsycoObject *po = PsycoObject_New(0);
+  po->code = start = codebuf->codestart;
+  po->codelimit = limit;
+  write_aligned_call(po, fn, dealloc_rax);
+  SHRINK_CODE_BUFFER(codebuf, po->code, "glue");
+  PsycoObject_Delete(po);
+  return start;
+}
+
+DEFINEVAR code_t *psyco_dealloc_rax_glue;
+
+DEFINEFN code_t *psyco_aligned_call_glue(void *fn) {
+  return new_aligned_call(fn, false);
+}
+
 DEFINEFN code_t *psyco_write_stub(code_t *code, void *record) {
   MOV_R_I(REG_X64_R11, (long)record);
   JUMP_TO(psyco_stub_trampoline);
@@ -151,4 +198,5 @@ void psyco_processor_init(void) {
   write_stub_trampoline(po);
   SHRINK_CODE_BUFFER(codebuf, po->code, "glue");
   PsycoObject_Delete(po);
+  psyco_dealloc_rax_glue = new_aligned_call(NULL, true);
 }

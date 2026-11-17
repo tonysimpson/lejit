@@ -597,6 +597,9 @@ typedef enum {
 /* @asm: mov {r}, qword ptr [{base}+{index}*{scale}{offset:d32}] */
 #define MOV_R_X32(r, base, offset, index, scale)                               \
   SIB_ENCODING(false, true, 1, 0x8B, 0, 0, 0, 32, r, base, offset, index, scale)
+/* @asm: mov qword ptr [{base}+{index}*{scale}{offset:d8}], {r} */
+#define MOV_X8_R(base, offset, index, scale, r)                                \
+  SIB_ENCODING(false, true, 1, 0x89, 0, 0, 0, 8, r, base, offset, index, scale)
 /* @asm: movabs r10, {i:i64}; mov qword ptr [{rm}{o}], r10 */
 #define MOV_O_I(rm, o, i)                                                      \
   do {                                                                         \
@@ -738,6 +741,18 @@ typedef enum {
 /* @asm: sub qword ptr [{rm}], {i:i8} */
 #define SUB_A_I8(rm, i)                                                        \
   INDIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x28, 0, rm);                         \
+  WRITE_8BIT(i)
+/* inc and dec leave CF alone, so only ZF/SF/OF tests may follow */
+/* @asm: inc qword ptr [{rm}] */
+#define INC_A(rm) INDIRECT_ENCODING(true, 1, 0xFF, 0, 0, 0, 0, rm)
+/* @asm: dec qword ptr [{rm}] */
+#define DEC_A(rm) INDIRECT_ENCODING(true, 1, 0xFF, 0, 0, 0x08, 0, rm)
+/* @asm: inc qword ptr [{rm}{o:d8}] */
+#define INC_O8(rm, o)                                                          \
+  OFFSET_ENCODING(false, true, 1, 0xFF, 0, 0, 0, 8, 0, rm, o)
+/* @asm: test byte ptr [{rm}{o}], {i:i8} */
+#define TEST_I8_BO(rm, o, i)                                                   \
+  OFFSET_ENCODING(false, false, 1, 0xF6, 0, 0, 0, 0, 0, rm, o);                \
   WRITE_8BIT(i)
 /* @asm: add {r}, {rm} */
 #define ADD_R_R(r, rm) DIRECT_ENCODING(true, 1, 0x03, 0, 0, 0, r, rm);

@@ -238,6 +238,33 @@ EXTERNFN bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
     po->stack_depth = 0;                                                       \
   } while (0)
 
+/* The inline attribute store into a split instance dict (D38, D47;
+   STORES.md "Shrinking the store sites"), behind a type guard emitted
+   before it. Hand-allocated in the caller-saved registers, which hold no
+   tracked values, so the compiler's state is the same on every path
+   through it. psyco_inline_store_begin emits the checks and the store,
+   then the miss path: 'call miss_glue' (miss_glue(obj, value, cache)
+   in RDI, RSI, RDX, returning an int, nonzero on error) and 'test eax,
+   eax'; the caller then emits the error check (runtime_condition_f with
+   CC_NE) and calls psyco_inline_store_end, which points the store's
+   exits past that check. */
+typedef enum {
+  STORE_GC_NONE, /* the value's type is known and not GC */
+  STORE_GC_DICT, /* it is known and GC: miss if the dict is untracked */
+  STORE_GC_FULL, /* unknown: miss if the dict is untracked and it is GC */
+} store_gc_t;
+typedef struct {
+  vinfo_t *obj, *value; /* run-time or compile-time */
+  long dictoffset;      /* the type's tp_dictoffset, > 0 */
+  store_cache_t *cache;
+  store_gc_t gc;
+  bool fill;            /* inline the store into the next empty slot */
+  code_t *miss_glue;
+  code_t *done[2]; /* jumps for psyco_inline_store_end to point */
+} inline_store_t;
+EXTERNFN void psyco_inline_store_begin(PsycoObject *po, inline_store_t *s);
+EXTERNFN void psyco_inline_store_end(PsycoObject *po, inline_store_t *s);
+
 /* implemented in pycompiler.c */
 EXTERNFN void cimpl_finalize_frame_locals(PyObject *, PyObject *, PyObject *);
 

@@ -10,13 +10,8 @@
  * behind the same kind of guard (heap_setattr), but its guards are shared
  * and repaired at run time (store_guard); the instance dict store is then
  * inline (inline_store), checked against a (class, name) cache that holds
- * no keys (store_cache).
- *
- * Known cost: each check of an inline store that fails is a respawn, and a
- * respawned branch compiles its own copy of the code after the site, up to
- * the next merge point. A constructor whose first instances miss at
- * several sites one after the other gets a copy per miss (richards'
- * Task.__init__: STORES.md, Option 4: results).
+ * no keys (store_cache); its failed checks call one C helper out of line
+ * instead of respawning (cimpl_store_miss).
  * Other slots of a heap type are read through Psyco_HeapSlot, a guard
  * against the value first seen (F50).
  */
@@ -280,22 +275,6 @@ static PyObject *cimpl_dict_get_known(PyObject *dict, PyObject *name,
     PyErr_Clear();
   return v;
 }
-
-/* 3.7's struct _dictkeysobject (Objects/dict-common.h), which isn't in the
-   installed headers; the entries follow the indices. */
-typedef struct {
-  Py_ssize_t dk_refcnt;
-  Py_ssize_t dk_size;
-  void *dk_lookup;
-  Py_ssize_t dk_usable;
-  Py_ssize_t dk_nentries;
-  char dk_indices[];
-} ni_dictkeys_t;
-typedef struct {
-  Py_hash_t me_hash;
-  PyObject *me_key;
-  PyObject *me_value;
-} ni_dictentry_t;
 
 /* Where to find 'name' in an instance dict that uses the class's shared
    keys (PEP 412): at *ix, while the dict uses *keys and, if *n >= 0, the
@@ -646,20 +625,7 @@ static int cimpl_dict_set_known(PyObject *dict, PyObject *name,
   return r;
 }
 
-/* Inline stores (D38, STORES.md "Option 4: design"). A cache per (class,
-   name) says where the name sits in keys of one size; it holds no
-   reference to any keys. The emitted code checks it against the live keys
-   of the dict it stores into, so a wrong cache only costs a miss. */
-typedef struct {
-  Py_ssize_t dk_size; /* size of the keys this was computed for; 0: none */
-  Py_ssize_t kword;   /* entries[ix].me_key in such keys, in words */
-  Py_ssize_t ix;      /* the name's index in them */
-  PyObject *name;     /* interned; held by the table's key */
-  uint64_t *version;  /* &ni_dict_version */
-  long refreshes;     /* misses that changed the cache */
-  unsigned long ready; /* first block serial that sees it filled */
-} store_cache_t;
-
+/* Inline stores (D38, D47; store_cache_t in pobject.h). */
 #define STORE_CACHE_MAX_REFRESHES 64
 
 /* ma_version_tag for inline stores (D35): CPython's own counter is static
@@ -714,11 +680,9 @@ static store_cache_t *store_cache(PyTypeObject *tp, PyObject *name) {
   c->name = name;
   c->version = &ni_dict_version;
   c->refreshes = 0;
-  c->ready = ULONG_MAX;
-  if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL && /* a first hint */
-      store_cache_set(c,
-                      (ni_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys))
-    c->ready = 0;
+  if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) /* a first hint */
+    store_cache_set(c,
+                    (ni_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys);
   return c;
 }
 
@@ -737,11 +701,22 @@ static int cimpl_store_attr_miss(PyObject *obj, PyObject *name,
       store_cache_set(c, (ni_dictkeys_t *)((PyDictObject *)d)->ma_keys)) {
     c->refreshes++;
     psyco_stat_store_refreshes++;
-    if (c->ready == ULONG_MAX)
-      c->ready = psyco_next_serial;
   }
   return r;
 }
+
+/* The miss path of every inline store, reached through store_miss_glue
+   (psyco_aligned_call_glue) with the type guard passed: a combined dict
+   takes option 2's known-hash store, which is what _PyObjectDict_SetItem
+   does for it; anything else cimpl_store_attr_miss. */
+static int cimpl_store_miss(PyObject *obj, PyObject *value,
+                            store_cache_t *c) {
+  PyObject *d = *(PyObject **)((char *)obj + Py_TYPE(obj)->tp_dictoffset);
+  if (d != NULL && PyDict_Check(d) && ((PyDictObject *)d)->ma_values == NULL)
+    return cimpl_dict_set_known(d, c->name, value, PyObject_Hash(c->name));
+  return cimpl_store_attr_miss(obj, c->name, value, c);
+}
+static code_t *store_miss_glue;
 
 /* What a compiled store does once its type guard passes: the function it
    calls. cimpl_instance_dict_set where 3.7's
@@ -815,231 +790,41 @@ static int cimpl_store_type_changed(PyObject *obj, PyObject *name,
   return PyObject_SetAttr(obj, name, value);
 }
 
-#define DICT_ma_used                                                           \
-  FMUT(DEF_FIELD(PyDictObject, Py_ssize_t, ma_used, NO_PREV_FIELD))
-#define DICT_ma_version_tag                                                    \
-  FMUT(UNSIGNED_FIELD(PyDictObject, uint64_t, ma_version_tag, NO_PREV_FIELD))
-#define KEYS_dk_size                                                           \
-  FMUT(DEF_FIELD(ni_dictkeys_t, Py_ssize_t, dk_size, NO_PREV_FIELD))
-#define KEYS_word FMUT(DEF_ARRAY(PyObject *, 0))
-#define GC_refs FMUT(DEF_ARRAY(Py_ssize_t, 0)) /* at GC_REFS_OFFSET */
-#define GC_REFS_OFFSET                                                         \
-  ((long)offsetof(PyGC_Head, gc.gc_refs) - (long)sizeof(PyGC_Head))
-_Static_assert(sizeof(PyGC_Head) == 32 &&
-                   offsetof(PyGC_Head, gc.gc_refs) == 16 &&
-                   _PyGC_REFS_SHIFT == 1 && _PyGC_REFS_UNTRACKED == -2 &&
-                   Py_TPFLAGS_HAVE_GC == 1UL << 14,
-               "3.7's PyGC_Head, as the inline GC test reads it");
-_Static_assert(offsetof(ni_dictkeys_t, dk_indices) == 40 &&
-                   sizeof(ni_dictentry_t) == 24,
-               "3.7's dict keys layout (Objects/dict-common.h)");
-#define SCACHE_dk_size                                                         \
-  FMUT(DEF_FIELD(store_cache_t, Py_ssize_t, dk_size, NO_PREV_FIELD))
-#define SCACHE_kword                                                           \
-  FMUT(DEF_FIELD(store_cache_t, Py_ssize_t, kword, NO_PREV_FIELD))
-#define SCACHE_ix FMUT(DEF_FIELD(store_cache_t, Py_ssize_t, ix, NO_PREV_FIELD))
-#define SCACHE_name                                                            \
-  FMUT(DEF_FIELD(store_cache_t, PyObject *, name, NO_PREV_FIELD))
-#define SCACHE_version                                                         \
-  FMUT(DEF_FIELD(store_cache_t, uint64_t *, version, NO_PREV_FIELD))
-#define COUNTER_value FMUT(UNSIGNED_ARRAY(uint64_t, 0))
-
-/* the store goes to the helper because of GC tracking (MAINTAIN_TRACKING):
-   the dict is untracked and the value may be tracked. Conservative: any
-   value of a GC type counts (an untracked tuple too). gc_refs >> 1 is -2
-   only for an untracked object, whatever a running collection does to
-   the others' (3.7's PyGC_Head, 32 bytes before the object). With the
-   value's type unknown: (tp_flags >> 14 & 1) > (gc_refs >> 1) + 2,
-   unsigned, is that in one compare. */
-static condition_code_t store_needs_track(PsycoObject *po, vinfo_t *vd,
-                                          vinfo_t *v) {
-  PyTypeObject *vtp = Psyco_KnownType(v);
-  vinfo_t *g, *u, *t, *f, *m;
-  condition_code_t cc;
-  if (vtp != NULL && !PyType_IS_GC(vtp))
-    return CC_ALWAYS_FALSE;
-  g = psyco_get_field_offset(po, vd, GC_refs, GC_REFS_OFFSET);
-  if (g == NULL)
-    return CC_ERROR;
-  u = integer_rshift_i(po, g, 1);
-  vinfo_decref(g, po);
-  if (u == NULL)
-    return CC_ERROR;
-  if (vtp != NULL) {
-    cc = integer_cmp_i(po, u, -2, Py_EQ);
-    vinfo_decref(u, po);
-    return cc;
-  }
-  g = integer_add_i(po, u, 2, true);
-  vinfo_decref(u, po);
-  if (g == NULL)
-    return CC_ERROR;
-  cc = CC_ERROR;
-  t = psyco_get_const(po, v, OB_type); /* borrowed */
-  f = t == NULL ? NULL : psyco_get_field(po, t, TYPE_flags);
-  m = f == NULL ? NULL : integer_urshift_i(po, f, 14);
-  vinfo_xdecref(f, po);
-  if (m != NULL) {
-    f = vinfo_new(CompileTime_New(1));
-    t = integer_and(po, m, f);
-    vinfo_decref(f, po);
-    if (t != NULL) {
-      cc = integer_cmp(po, t, g, Py_GT | COMPARE_UNSIGNED);
-      vinfo_decref(t, po);
-    }
-    vinfo_decref(m, po);
-  }
-  vinfo_decref(g, po);
-  return cc;
-}
-
 /* a store to the first argument of an __init__: likely the next empty slot.
-   Depends only on the code, so a replay predicts the same. */
+   Depends only on the code, so a replay decides the same. */
 static bool init_store(PsycoObject *po, vinfo_t *obj) {
   return po->pr.co->co_argcount > 0 && obj == LOC_LOCALS_PLUS[0] &&
          PyUnicode_CompareWithASCIIString(po->pr.co->co_name, "__init__") == 0;
 }
 
-/* The store into the instance dict, inline (STORES.md "Option 4: design").
-   The checks, all before any write: a dict; split; its keys of the
-   cache's size, with the name at the cache's entry; no GC tracking to do;
-   then a set value (A, overwritten) or the empty slot at ma_used (B, the
-   next attribute in order: __init__, where it is the likely side). Each
-   failure is a respawned branch
-   calling the helper (cimpl_store_attr_miss), or option 2's known-hash
-   store for a combined dict. Then, as insertdict: the value, ma_used for
-   B, a new version tag from Ni's counter, and the old value's decref last,
-   since it may run any code. The emitted code depends only on constants
-   (the cache's address comes from the (class, name) table), never on the
-   cache's contents, so replays emit the same. */
+/* The store into the instance dict, inline (STORES.md "Option 4: design",
+   "Shrinking the store sites"): x64/ipyencoding.c:psyco_inline_store_begin
+   checks the dict against the cache and stores, with every failed check
+   calling cimpl_store_miss out of line, then the error check of that call
+   here. No check is a respawn point, so the emitted code depends only on
+   constants and on what is known of the value's type, never on the
+   cache's contents, and a replay emits the same. */
 static bool inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
-                         PyObject *name, vinfo_t *v, store_cache_t *c) {
-  vinfo_t *vd, *vv = NULL, *vk = NULL, *vc = NULL, *vix = NULL, *vo = NULL;
-  vinfo_t *x, *y, *vp, *vt;
-  condition_code_t cc;
-  bool ok = false, fill;
-
-  vd = psyco_get_field_offset(po, obj, INSTANCE_dict, tp->tp_dictoffset);
-  if (vd == NULL)
+                         vinfo_t *v, store_cache_t *c) {
+  PyTypeObject *vtp = Psyco_KnownType(v);
+  inline_store_t s;
+  if (!compute_vinfo(obj, po))
     return false;
-  cc = integer_non_null(po, vd);
-  if (cc == CC_ERROR)
-    goto done;
-  if (!runtime_condition_t(po, cc))
-    goto miss; /* no dict yet */
-  vv = psyco_get_field(po, vd, DICT_ma_values);
-  if (vv == NULL)
-    goto done;
-  cc = integer_non_null(po, vv);
-  if (cc == CC_ERROR)
-    goto done;
-  if (!runtime_condition_t(po, cc)) { /* combined: option 2 */
-    ok = psyco_generic_call(po, cimpl_dict_set_known, CfCommonIntZeroOk,
-                            "vlvl", vd, (long)name, v,
-                            (long)PyObject_Hash(name)) != NULL;
-    goto done;
+  s.obj = obj;
+  s.value = v;
+  s.dictoffset = tp->tp_dictoffset;
+  s.cache = c;
+  s.gc = vtp == NULL ? STORE_GC_FULL
+                     : PyType_IS_GC(vtp) ? STORE_GC_DICT : STORE_GC_NONE;
+  s.fill = init_store(po, obj);
+  s.miss_glue = store_miss_glue;
+  psyco_inline_store_begin(po, &s);
+  if (runtime_condition_f(po, CC_NE)) {
+    PycException_Raise(po, vinfo_new(VirtualTime_New(&ERtPython)), NULL);
+    return false;
   }
-  vk = psyco_get_field(po, vd, DICT_ma_keys);
-  if (vk == NULL)
-    goto done;
-  x = vinfo_new(CompileTime_New((long)c));
-  vc = make_runtime_copy(po, x);
-  vinfo_decref(x, po);
-  if (vc == NULL)
-    goto done;
-  x = field_xor(po, vk, KEYS_dk_size, vc, SCACHE_dk_size);
-  cc = integer_NON_NULL(po, x); /* consumes x */
-  if (cc == CC_ERROR)
-    goto done;
-  if (runtime_condition_f(po, cc))
-    goto miss; /* other keys */
-  y = psyco_get_field(po, vc, SCACHE_kword);
-  if (y == NULL)
-    goto done;
-  x = psyco_get_field_array(po, vk, KEYS_word, y);
-  vinfo_decref(y, po);
-  if (x == NULL)
-    goto done;
-  y = psyco_get_field(po, vc, SCACHE_name);
-  if (y == NULL) {
-    vinfo_decref(x, po);
-    goto done;
-  }
-  cc = integer_cmp(po, x, y, Py_NE);
-  vinfo_decref(y, po);
-  vinfo_decref(x, po);
-  if (cc == CC_ERROR)
-    goto done;
-  if (runtime_condition_f(po, cc))
-    goto miss; /* the name isn't at the cached entry */
-  vix = psyco_get_field(po, vc, SCACHE_ix);
-  if (vix == NULL)
-    goto done;
-  cc = store_needs_track(po, vd, v);
-  if (cc == CC_ERROR)
-    goto done;
-  if (runtime_condition_f(po, cc))
-    goto miss;
-  vo = psyco_get_field_array(po, vv, VALUES_item, vix);
-  if (vo == NULL)
-    goto done;
-  cc = integer_non_null(po, vo);
-  if (cc == CC_ERROR)
-    goto done;
-  /* a constructor fills its slots in order */
-  if (init_store(po, obj))
-    fill = !runtime_condition_f(po, cc);
-  else
-    fill = !runtime_condition_t(po, cc);
-  if (fill) {
-    x = psyco_get_field(po, vd, DICT_ma_used);
-    if (x == NULL)
-      goto done;
-    cc = integer_cmp(po, vix, x, Py_NE);
-    vinfo_decref(x, po);
-    if (cc == CC_ERROR)
-      goto done;
-    if (runtime_condition_f(po, cc))
-      goto miss; /* out of order: CPython converts the dict */
-  }
-
-  if (!psyco_put_field_array(po, vv, FPYREF(VALUES_item), vix, v))
-    goto done;
-  if (fill) {
-    x = psyco_get_field(po, vd, DICT_ma_used);
-    y = x == NULL ? NULL : integer_add_i(po, x, 1, true);
-    vinfo_xdecref(x, po);
-    if (y == NULL || !psyco_put_field(po, vd, DICT_ma_used, y)) {
-      vinfo_xdecref(y, po);
-      goto done;
-    }
-    vinfo_decref(y, po);
-  }
-  vp = psyco_get_field(po, vc, SCACHE_version);
-  if (vp == NULL)
-    goto done;
-  x = psyco_get_field(po, vp, COUNTER_value);
-  vt = x == NULL ? NULL : integer_add_i(po, x, 1, true);
-  vinfo_xdecref(x, po);
-  ok = vt != NULL && psyco_put_field(po, vp, COUNTER_value, vt) &&
-       psyco_put_field(po, vd, DICT_ma_version_tag, vt);
-  vinfo_xdecref(vt, po);
-  vinfo_decref(vp, po);
-  if (ok && !fill)
-    psyco_decref_v(po, vo);
-  goto done;
-
-miss:
-  ok = psyco_generic_call(po, cimpl_store_attr_miss, CfCommonIntZeroOk, "vlvl",
-                          obj, (long)name, v, (long)c) != NULL;
-done:
-  vinfo_xdecref(vo, po);
-  vinfo_xdecref(vix, po);
-  vinfo_xdecref(vc, po);
-  vinfo_xdecref(vk, po);
-  vinfo_xdecref(vv, po);
-  vinfo_decref(vd, po);
-  return ok;
+  psyco_inline_store_end(po, &s);
+  return true;
 }
 
 /* PyObject_SetAttr on a heap type, specialised on the type behind a guard
@@ -1047,14 +832,9 @@ done:
    valid while the type is unchanged. A changed type calls
    cimpl_store_type_changed, which reads tp_setattro again (a __setattr__
    added later, F37). An instance dict store on a class with shared keys
-   (keys_inline, which a replay repeats) is inline_store. A block compiled
-   before the (class, name) cache was first filled calls the helper
-   instead, behind a check that respawns into inline_store once the cache
-   is filled: otherwise a constructor compiled by its first instance would
-   miss at every site, each miss compiling its own copy of the rest. Like
-   keys_inline, the choice depends only on the block serial and one-way
-   state (c->ready). For a class without shared keys, a store into an
-   existing combined dict uses the name's hash computed now.
+   (keys_inline, which a replay repeats) is inline_store. For a class
+   without shared keys, a store into an existing combined dict uses the
+   name's hash computed now.
    Respawns: the guard is found by (type, name, kind), so a replay of a
    point after a passed guard sees a type of the kind compiled, and the
    failure branch needs no guard. The block ends after the site
@@ -1087,25 +867,8 @@ static bool heap_setattr(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
     return r != NULL;
   }
 
-  if (v != NULL && keys_inline(po, tp)) {
-    store_cache_t *c = store_cache(tp, name);
-    if (psyco_block_serial(po) < c->ready) {
-      /* compiled before the cache was first filled (a constructor compiled
-         by its first instance): the helper, until the cache is filled */
-      vv = vinfo_new(CompileTime_New((long)c));
-      vd = psyco_get_field(po, vv, SCACHE_dk_size);
-      vinfo_decref(vv, po);
-      cc = integer_NON_NULL(po, vd); /* consumes vd */
-      if (cc == CC_ERROR)
-        return false;
-      if (!runtime_condition_f(po, cc)) {
-        r = psyco_generic_call(po, cimpl_store_attr_miss, CfCommonIntZeroOk,
-                               "vlvl", obj, (long)name, v, (long)c);
-        return r != NULL;
-      }
-    }
-    return inline_store(po, obj, tp, name, v, c);
-  }
+  if (v != NULL && keys_inline(po, tp))
+    return inline_store(po, obj, tp, v, store_cache(tp, name));
   if (v != NULL) {
     vd = psyco_get_field_offset(po, obj, INSTANCE_dict, tp->tp_dictoffset);
     if (vd == NULL)
@@ -1390,4 +1153,5 @@ void psy_object_init(void) {
   /* associate the Python implementation of some functions with
      the one from Psyco */
   Psyco_DefineMeta(PyObject_GenericGetAttr, PsycoObject_GenericGetAttr);
+  store_miss_glue = psyco_aligned_call_glue(cimpl_store_miss);
 }
