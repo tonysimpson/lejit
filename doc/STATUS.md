@@ -80,3 +80,5 @@ Not done / next candidates:
 
 **Comprehension calls and generator expressions** (`3ccd317` and the next commit): calls to comprehensions and local lambdas with free variables are compiled calls with the cells passed in; generator expressions consumed by sum/any/all/list/tuple/set run fused, with no generator (GENERATORS.md option B). [run] pyperformance comprehensions 1.09× → 1.81×, hexiom 1.59× → 1.98×, mdp 1.06× → 1.20×.
 
+**f-strings, sets, F22; benchmarks at `235e085`** [run], release build: f-strings (FORMAT_VALUE, BUILD_STRING; namedtuple's `_make`/`_replace` hold them), set displays and comprehensions, and genexprs fused with `min`/`max` now compile. `tools/interpreted.py` lists what still runs interpreted per benchmark: only generator functions are left in the hot paths (nqueens, scimark_lu, generators, coroutines; GENERATORS.md option A, QUESTIONS 33). pyperformance geometric mean **1.64×** (29 benchmarks; 1.56× before today's comprehension and genexpr work), bench.py total 4.2×. Run-to-run noise on this machine is about ±7% per benchmark (richards 1.63–1.81× across six runs of two builds).
+
