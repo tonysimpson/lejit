@@ -309,3 +309,119 @@ def forks(rows, perinstr):
 
 def pct(a, b):
     return 100.0 * a / b if b else 0.0
+
+
+def shared_after(ni, stats, sites, total, top, normalise, iterations=1):
+    """doc/OPTION_D.md: for each site whose code was compiled for two or
+    more values in this run, how much each value's copy costs and how much
+    of it depends on the value. Uses the copies of ni._codestats() (site
+    and value index per copy); code compiled for a value after a coding
+    pause is not attributed to it. Each instruction compiled for every
+    value is 'same' if its copies are identical, 'consts' if identical once
+    64-bit constants (type and guard pointers) are aside, else 'differs';
+    an instruction compiled for some values only is 'differs'. The
+    saving at K is the code of the K-th and later values less the largest
+    of them (one shared copy kept; the generic copy taken as no larger),
+    an upper bound. Runs: how often the blocks of the K-th and later values
+    ran per iteration of the benchmark (counted from the first, so
+    compiling runs count too): what would take the shared copy."""
+    per = collections.defaultdict(lambda: collections.defaultdict(
+        lambda: collections.defaultdict(list)))
+    for (co, i), (op, n, b, copies) in stats.items():
+        for c in copies:
+            addr, code, kind, site = c[:4]
+            vidx = c[4] if len(c) > 4 else -1
+            if site < 0 or vidx < 0:
+                continue
+            desc = sites[site][7][vidx][0] if vidx < len(sites[site][7]) \
+                else ('?', '')
+            if desc[0] == 'MEGA':
+                continue
+            per[site][vidx][(co, i)].append((addr, code))
+    names = resolve(ni.__file__, [o for s in per for o in sites[s][5]])
+    rows = []
+    for sid, vals in per.items():
+        if len(vals) < 2:
+            continue
+        co, instr, op = sites[sid][0], sites[sid][1], sites[sid][2]
+        order = sorted(vals)
+        size = [sum(len(c) for cs in vals[v].values() for _, c in cs)
+                for v in order]
+        instrs = set(k for v in order for k in vals[v])
+        cls = collections.Counter()
+        opbytes = 0
+        for k in instrs:
+            b = sum(len(c) for v in order for _, c in vals[v].get(k, ()))
+            if k == (co, instr):
+                opbytes += b
+            if any(k not in vals[v] for v in order):
+                cls['differs'] += b
+                continue
+            full = [tuple(sorted(normalise(a, c, False) for a, c in vals[v][k]))
+                    for v in order]
+            noptr = [tuple(sorted(normalise(a, c, True) for a, c in vals[v][k]))
+                     for v in order]
+            if len(set(full)) == 1:
+                cls['same'] += b
+            elif len(set(noptr)) == 1:
+                cls['consts'] += b
+            else:
+                cls['differs'] += b
+        save = {}
+        for K in (2, 3, 5):
+            tail = size[K - 1:]
+            save[K] = sum(tail) - max(tail) if len(tail) > 1 else 0
+        save[1] = sum(size) - max(size)
+        rows.append(dict(id=sid, where=where(co, instr),
+                         opcode=dis.opname[op], n=len(order), size=size,
+                         total=sum(size), cls=cls, op=opbytes, save=save,
+                         who=requester(sites[sid][5], names),
+                         vals=[sites[sid][7][v][0] for v in order],
+                         runs=[sites[sid][7][v][3] for v in order]))
+    T = sum(r['total'] for r in rows)
+    print('\n== code after sites with two or more values (OPTION_D.md) ==')
+    print('code emitted %.1f KB; %d sites with 2+ values compiled in the run '
+          '(%s); their values\' code %.1f KB (%.1f%%)' % (
+              total / 1024, len(rows), ', '.join(
+                  '%d values: %d' % (k, v) for k, v in sorted(
+                      collections.Counter(min(r['n'], 5) for r in rows)
+                      .items())), T / 1024, pct(T, total)))
+    cls = collections.Counter()
+    for r in rows:
+        cls.update(r['cls'])
+    print('  of which: identical in every value %.1f KB, identical but for '
+          '64-bit constants %.1f KB, differs or only in some values %.1f KB;'
+          ' the site\'s own instruction %.1f KB' % (
+              cls['same'] / 1024, cls['consts'] / 1024,
+              cls['differs'] / 1024, sum(r['op'] for r in rows) / 1024))
+    print('  upper bound saved, one shared copy from the K-th value: '
+          + ', '.join('K=%d %.1f KB (%.1f%%)' % (
+              K, sum(r['save'][K] for r in rows) / 1024,
+              pct(sum(r['save'][K] for r in rows), total))
+                      for K in (1, 2, 3, 5)))
+    print('  runs per iteration (%d iterations) of the blocks of the K-th '
+          'and later values: ' % iterations + ', '.join(
+              'K=%d %.0f' % (K, sum(sum(max(x, 0) for x in r['runs'][K - 1:])
+                                    for r in rows) / max(iterations, 1))
+              for K in (1, 2, 3, 5)))
+    byw = collections.defaultdict(lambda: [0, 0, 0])
+    for r in rows:
+        w = byw[r['who']]
+        w[0] += 1
+        w[1] += r['total']
+        w[2] += r['save'][2]
+    print('  by who asked (sites, KB, saved at K=2 KB):')
+    for k, (n, b, s) in sorted(byw.items(), key=lambda x: -x[1][1])[:top]:
+        print('    %4d %7.1f %7.1f  %s' % (n, b / 1024, s / 1024, k[:70]))
+    print('\n%-34s %-16s %4s %20s %6s %6s %6s %6s  %s' % (
+        'site', 'opcode', 'vals', 'B per value', 'same', 'consts', 'differs',
+        'K=2', 'who / values (runs)'))
+    for r in sorted(rows, key=lambda r: -r['total'])[:top]:
+        print('%-34s %-16s %4d %20s %6d %6d %6d %6d  %s' % (
+            r['where'][:34], r['opcode'][:16], r['n'],
+            ','.join(str(x) for x in r['size'])[:20], r['cls']['same'],
+            r['cls']['consts'], r['cls']['differs'], r['save'][2],
+            r['who'][:60]))
+        print('%95s %s' % ('', ', '.join(
+            '%s:%s (%d)' % (d[0], str(d[1])[:20], n)
+            for d, n in zip(r['vals'][:6], r['runs'][:6]))))

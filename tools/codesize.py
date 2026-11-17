@@ -12,6 +12,9 @@ Needs a build with the counters:
     python3.7 tools/codesize.py richards -p       # also promotion sites
                                                   # (with -d: their copies;
                                                   # -j FILE: also as JSON)
+    python3.7 tools/codesize.py richards -D       # also the code after
+                                                  # sites with several values
+                                                  # (doc/OPTION_D.md; capstone)
 
 Runs the benchmark until compiling stops, then prints the code emitted per
 opcode, how many times instructions were compiled (each promotion, respawn
@@ -46,8 +49,10 @@ def main():
         del args[i:i + 2]
     want_dups = '-d' in args
     want_states = '-s' in args
-    want_promos = '-p' in args
-    args = [a for a in args if a not in ('-d', '-s', '-p')]
+    want_shared = '-D' in args
+    want_report = '-p' in args
+    want_promos = want_report or want_shared
+    args = [a for a in args if a not in ('-d', '-s', '-p', '-D')]
     name = args[0]
     import pyperf37
     import ni
@@ -58,10 +63,12 @@ def main():
     ni._codestats()
     stats0 = ni._stats()
     promos0 = ni._promostats() if want_promos else None
+    iterations = 0
     for _, timed in benches:
         last = -1
         for _ in range(50):          # until a run compiles nothing new
             timed(1)
+            iterations += 1
             now = ni._stats()['code_bytes']
             if now == last:
                 break
@@ -81,11 +88,16 @@ def main():
         dupsites = duplicates(stats, top)
     if want_states:
         state_diffs(states, top)
-    if want_promos:
+    if want_report:
         import promostats
         promostats.report(ni, stats0, stats1, promos0, promos1, bufs,
                           dupsites, top,
                           jsonfile)
+    if want_shared:
+        import promostats
+        promostats.shared_after(ni, stats, promos1, total, top,
+                                lambda a, c, p: normalise(a, c, p),
+                                iterations)
 
 
 def normalise(addr, code, pointers):
@@ -124,7 +136,7 @@ def duplicates(stats, top):
             continue
         seen1, seen2 = set(), {}
         d2 = 0
-        for addr, code, kind, site in copies:
+        for addr, code, kind, site, *_ in copies:
             k1 = normalise(addr, code, False)
             k2 = normalise(addr, code, True)
             if k1 in seen1:

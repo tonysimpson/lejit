@@ -69,6 +69,8 @@ static PyObject *cs_promo_pending = NULL; /* the value being compiled */
 static long cs_promo_t0, cs_promo_b0;
 static long *cs_promo_last_counter = NULL;
 DEFINEVAR int psyco_cs_promo_cur = -1;
+static int cs_promo_vidx = -1; /* index of the value being compiled in its
+                                  site's [values], for the copies */
 
 DEFINEFN int psyco_cs_promo_site(PsycoObject *po, int pflags,
                                  long stub_bytes) {
@@ -142,12 +144,15 @@ DEFINEFN void psyco_cs_promo_begin(int site, long key, int kind) {
   cs_promo_t0 = psyco_stat_now_ns();
   cs_promo_b0 = psyco_stat_code_bytes;
   psyco_cs_promo_cur = site;
+  cs_promo_vidx =
+      (int)PyList_GET_SIZE(PyList_GET_ITEM(PyList_GET_ITEM(cs_promo_sites, site), 7));
 }
 
 DEFINEFN void psyco_cs_promo_end(void) {
   long site;
   PyObject *v = cs_promo_pending, *rec;
   psyco_cs_promo_cur = -1;
+  cs_promo_vidx = -1;
   if (v == NULL)
     return;
   cs_promo_pending = NULL;
@@ -1978,7 +1983,8 @@ static code_t *exit_function(PsycoObject *po) {
 /* Code size per instruction (tools/codesize.py, ni._codestats()): for each
    (code object, instruction offset), [opcode, times compiled, bytes, the
    copies as (address, bytes, how the compiler
-   was entered: codemanager.h NI_ENTER_*, the promotion site or -1)]. The
+   was entered: codemanager.h NI_ENTER_*, the promotion site or -1, the
+   index of that site's value or -1)]. The
    bytes are those emitted from the start of one instruction to the start of
    the next, so an instruction's error paths and the end of a block count
    with it; replays and code written into other buffers in between
@@ -1994,10 +2000,10 @@ static void codestats_flush(PsycoObject *po) {
     Py_XDECREF(key);
     if (e != NULL && n >= 0 && n < 65536) {
       PyObject *b = PyLong_FromLong(PyLong_AsLong(PyList_GET_ITEM(e, 2)) + n);
-      PyObject *copy = Py_BuildValue("(ky#ii)", (unsigned long)po->cs_mark,
+      PyObject *copy = Py_BuildValue("(ky#iii)", (unsigned long)po->cs_mark,
                                      (char *)po->cs_mark, (Py_ssize_t)n,
                                      psyco_stat_compile_kind,
-                                     psyco_cs_promo_cur);
+                                     psyco_cs_promo_cur, cs_promo_vidx);
       if (b != NULL)
         PyList_SetItem(e, 2, b);
       if (copy != NULL) {
