@@ -2,9 +2,9 @@
  * Code patching used by the dispatcher. conditional_jump_to emits a rel32 jump
  * and returns a tag; change_cond_jump_target later repoints it once the target
  * has been compiled (coding pauses, respawn). A promotion site starts with a
- * patchable 'MOV R10, imm64; CMP reg, R10; JE target', which
- * fix_fast_common_case rewrites to the last value seen: an inline cache in
- * front of the C dispatcher. All jumps are rel32, so every code buffer must be
+ * patchable 'MOV R10, imm64; CMP reg, R10; JE target' holding the first
+ * value seen, and a chain of more out of line (below): a polymorphic inline
+ * cache in front of the C dispatcher. All jumps are rel32, so every code buffer must be
  * within +-2 GB of every other, and nothing guarantees this.
  */
  /***************************************************************/
@@ -37,13 +37,35 @@ EXTERNFN void fz_find_runtimes(vinfo_array_t* aa, FrozenPsycoObject* fpo,
  /***   Promotion                                             ***/
 
 /* Define to 1 to emit a "compare/jump-if-equal" pair of instructions
-   that checks for the most common case (actually the last seen one). */
+   that checks for the first value seen, followed by a chain of more. */
 #define PROMOTION_FAST_COMMON_CASE   1
 
+/* A site's inline cache holds the first value seen. The next
+   PROMOTION_CHAIN_MAX values go in a chain of the same compare/je entries,
+   out of line in the stub pool, which the site's miss path is repointed to
+   (the 'jmp chain' overwrites the start of the site's own stub). The chain
+   ends with its own copy of the miss stub, or, once a site can compile no
+   more values, a jump to its megamorphic version. Most chains hold one
+   entry, so a chain starts with room for one and is copied to a chain with
+   room for all when it needs more; the old one is left unused. With the
+   chain full, a new value replaces the last entry. Code is only patched from
+   the C dispatcher, which the trampoline entered from this site's miss path
+   (or its chain's); it returns through 'jmp rax' to a target, never back
+   into the bytes it changed. */
+#define PROMOTION_CHAIN_MAX     4        /* MEGAMORPHIC_MAX - 1 */
+#define PROMOTION_ENTRY_SIZE    19       /* mov r10, imm64; cmp; je rel32 */
+#define PROMOTION_MISS_SIZE_MAX (3 + STUB_SIZE_MAX)  /* mov rsi, reg; stub */
+#define PROMOTION_CHAIN_SIZE(n) ((n) * PROMOTION_ENTRY_SIZE + \
+                                 PROMOTION_MISS_SIZE_MAX)
 
 #if PROMOTION_FAST_COMMON_CASE
-                                       /* for FIX_JUMP_IF_EQUAL() */
-#  define INTERNAL_PROMOTION_FIELDS    code_t* jump_if_equal_code;
+#  define INTERNAL_PROMOTION_FIELDS                                     \
+    code_t* jump_if_equal_code;  /* the inline entry */                 \
+    code_t* chain;               /* NULL until the second value */      \
+    unsigned char reg;           /* the register compared */            \
+    unsigned char ncached;       /* values inline and in the chain */   \
+    unsigned char chaincap;      /* entries the chain has room for */   \
+    code_t* fallback;            /* NULL, or where the chain ends */
 #else
 #  define INTERNAL_PROMOTION_FIELDS    /* nothing */
 #endif
@@ -61,19 +83,38 @@ struct ipromotion_s {
     JMP_CC_UI32(CC_E, (long)(target));\
 } while (0)
 
-
-PSY_INLINE code_t* fix_fast_common_case(void* fs, long value,
-                                    code_t* codeptr)
+/* write one chain entry at 'code'; returns its end */
+PSY_INLINE code_t* ipromotion_write_entry(code_t* code, int rg, long value,
+                                          code_t* target)
 {
-#if PROMOTION_FAST_COMMON_CASE
+  UPDATABLE_JUMP_IF_EQUALS(rg, value, target);
+  return code;
+}
+
+PSY_INLINE code_t* ipromotion_write_jump(code_t* code, code_t* target)
+{
+  JUMP_TO(target);
+  return code;
+}
+
+/* read back an entry written by ipromotion_write_entry */
+PSY_INLINE void ipromotion_read_entry(code_t* code, long* value,
+                                      code_t** target)
+{
+  *value = *(long*)(code + 2);                   /* REX, B8+r, imm64 */
+  *target = code + PROMOTION_ENTRY_SIZE +
+            *(dword_t*)(code + PROMOTION_ENTRY_SIZE - 4);   /* je rel32 */
+}
+
+/* repoint an existing entry (inline or in the chain) at 'code' */
+PSY_INLINE void ipromotion_update_entry(code_t* code, long value,
+                                        code_t* target)
+{
 #undef ONLY_UPDATING
 #define ONLY_UPDATING 1
-  code_t *code = ((struct ipromotion_s*)fs)->jump_if_equal_code;
-  UPDATABLE_JUMP_IF_EQUALS(0, value, codeptr);
+  UPDATABLE_JUMP_IF_EQUALS(0, value, target);
 #undef ONLY_UPDATING
 #define ONLY_UPDATING 0
-#endif
-  return codeptr;
 }
 
 
@@ -97,6 +138,13 @@ EXTERNFN void *psyco_new_stub(void *fn, size_t size, code_t **stub);
 EXTERNFN void *psyco_new_stub_at(void *fn, size_t size, code_t **at);
 EXTERNFN void psyco_free_stub(void *closure);
 
+/* write the miss path 'mov rsi, reg; mov r11, record; jmp trampoline' */
+PSY_INLINE code_t* ipromotion_write_miss(code_t* code, int rg, void* record)
+{
+  MOV_R_R(REG_X64_RSI, rg);
+  return psyco_write_stub(code, record);
+}
+
 /* A promotion site: the inline cache, then on a miss
    'mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline', which calls
    do_promotion(fs, value) (37 bytes in all). The value is always in a
@@ -116,19 +164,18 @@ PSY_INLINE void* ipromotion_finish(PsycoObject* po, vinfo_t* fix, void* do_promo
   start_jump = code;
   UPDATABLE_JUMP_IF_EQUALS(getreg(fix->source), 0, code);
   end_jump = code;
-#undef ONLY_UPDATING
-#define ONLY_UPDATING 1
-  code = start_jump;
-  UPDATABLE_JUMP_IF_EQUALS(0, 0, end_jump); /* rewrite with jump to end of jump */
-#undef ONLY_UPDATING
-#define ONLY_UPDATING 0
-  code = end_jump;
+  ipromotion_update_entry(start_jump, 0, end_jump); /* jump to end of jump */
 #endif
   MOV_R_R(REG_X64_RSI, getreg(fix->source));
   fs = (struct ipromotion_s*) psyco_new_stub_at(do_promotion, block_size, &code);
   END_CODE
 #if PROMOTION_FAST_COMMON_CASE
   fs->jump_if_equal_code = start_jump;
+  fs->chain = NULL;
+  fs->reg = getreg(fix->source);
+  fs->ncached = 0;
+  fs->chaincap = 0;
+  fs->fallback = NULL;
 #endif
   return fs;
 }

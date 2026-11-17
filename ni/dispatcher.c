@@ -17,8 +17,9 @@
  *    it is first taken, compilation is replayed from the previous snapshot into
  *    a throw-away buffer until the same point is reached (do_respawn).
  *  - Promotion: a run-time value is switched on at run time. Each new value
- *    compiles a specialised continuation, cached in a move-to-front list, with
- *    a megamorphic cut-off after MEGAMORPHIC_MAX values. A promoted value is
+ *    compiles a specialised continuation, kept in a move-to-front list and
+ *    in the site's polymorphic inline cache (idispatcher.h), with a
+ *    megamorphic cut-off after MEGAMORPHIC_MAX values. A promoted value is
  *    held by the code for good; do_promotion_static_type only specialises on
  *    static types and sends anything else to the megamorphic version.
  * psyco_delete_unused_vars drops the dead locals that mergepoints.c lists
@@ -843,19 +844,30 @@ DEFINEFN void *psyco_new_stub_at(void *fn, size_t size, code_t **at) {
   return write_stub(r, fn, at);
 }
 
-DEFINEFN void *psyco_new_stub(void *fn, size_t size, code_t **stub) {
-  static code_t *pool = NULL, *pool_end = NULL;
-  stub_record_t *r = PyMem_Malloc(sizeof(stub_record_t) + size);
-  if (pool_end - pool < STUB_SIZE_MAX) {
+/* The stub pool also holds promotion chains. stub_pool_reserve makes room
+   for 'n' bytes at stub_pool; the caller moves stub_pool past what it wrote. */
+static code_t *stub_pool = NULL, *stub_pool_end = NULL;
+
+static code_t *stub_pool_reserve(size_t n) {
+  if ((size_t)(stub_pool_end - stub_pool) < n) {
     code_t *limit;
     CodeBufferObject *b = psyco_new_code_buffer(NULL, NULL, &limit);
-    pool = (code_t *)b->codestart;
-    pool_end = pool + STUB_POOL_SIZE;
-    psyco_assert(pool_end <= limit);
-    SHRINK_CODE_BUFFER(b, pool_end, "stubs"); /* held for good */
+    stub_pool = (code_t *)b->codestart;
+    /* a reused buffer may have less than STUB_POOL_SIZE left (only
+       BUFFER_MARGIN is certain) */
+    stub_pool_end = stub_pool + STUB_POOL_SIZE;
+    if (stub_pool_end > limit)
+      stub_pool_end = limit;
+    psyco_assert((size_t)(stub_pool_end - stub_pool) >= n);
+    SHRINK_CODE_BUFFER(b, stub_pool_end, "stubs"); /* held for good */
   }
-  *stub = pool;
-  return write_stub(r, fn, &pool);
+  return stub_pool;
+}
+
+DEFINEFN void *psyco_new_stub(void *fn, size_t size, code_t **stub) {
+  stub_record_t *r = PyMem_Malloc(sizeof(stub_record_t) + size);
+  *stub = stub_pool_reserve(STUB_SIZE_MAX);
+  return write_stub(r, fn, &stub_pool);
 }
 
 DEFINEFN
@@ -2175,6 +2187,85 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
   return result;
 }
 
+#if PROMOTION_FAST_COMMON_CASE
+/* The polymorphic inline cache (idispatcher.h). */
+#define CHAIN_ENTRY(fs, i) ((fs)->chain + (i) * PROMOTION_ENTRY_SIZE)
+#define CHAIN_COUNT(fs) ((fs)->ncached > 0 ? (fs)->ncached - 1 : 0)
+
+static void promotion_chain_end(rt_promotion_t *fs) {
+  code_t *end = CHAIN_ENTRY(fs, CHAIN_COUNT(fs));
+  if (fs->fallback != NULL)
+    ipromotion_write_jump(end, fs->fallback);
+  else
+    ipromotion_write_miss(end, fs->reg, ((stub_record_t *)fs) - 1);
+}
+
+/* a chain with room for 'n' entries, holding the current ones */
+static void promotion_need_chain(rt_promotion_t *fs, int n) {
+  int i, cap;
+  code_t *chain;
+  if (fs->chain != NULL && fs->chaincap >= n)
+    return;
+  cap = fs->chain == NULL && n <= 1 ? 1 : PROMOTION_CHAIN_MAX;
+  chain = stub_pool_reserve(PROMOTION_CHAIN_SIZE(cap));
+  stub_pool += PROMOTION_CHAIN_SIZE(cap);
+  for (i = 0; i < CHAIN_COUNT(fs); i++) {
+    long value;
+    code_t *target;
+    ipromotion_read_entry(CHAIN_ENTRY(fs, i), &value, &target);
+    ipromotion_write_entry(chain + i * PROMOTION_ENTRY_SIZE, fs->reg, value,
+                           target);
+#if ALL_CHECKS
+    {
+      long v2;
+      code_t *t2;
+      ipromotion_read_entry(chain + i * PROMOTION_ENTRY_SIZE, &v2, &t2);
+      extra_assert(v2 == value && t2 == target);
+    }
+#endif
+  }
+  fs->chain = chain;
+  fs->chaincap = cap;
+  promotion_chain_end(fs);
+  /* overwrites the start of the site's own miss path */
+  ipromotion_write_jump(fs->jump_if_equal_code + PROMOTION_ENTRY_SIZE, chain);
+}
+
+/* the site jumps to 'target' when it sees 'value' */
+static void promotion_cache_add(rt_promotion_t *fs, long value,
+                                code_t *target) {
+  if (fs->ncached == 0) {
+    ipromotion_update_entry(fs->jump_if_equal_code, value, target);
+    fs->ncached = 1;
+  } else if (fs->ncached <= PROMOTION_CHAIN_MAX) {
+    promotion_need_chain(fs, fs->ncached);
+    ipromotion_write_entry(CHAIN_ENTRY(fs, fs->ncached - 1), fs->reg, value,
+                           target);
+    fs->ncached++;
+    promotion_chain_end(fs);
+  } else {
+    /* full: the last entry takes the newest value */
+    ipromotion_update_entry(CHAIN_ENTRY(fs, PROMOTION_CHAIN_MAX - 1), value,
+                            target);
+  }
+}
+
+/* the site will compile no more values: every value the cache doesn't hold
+   goes to 'mega' without entering C */
+static void promotion_cache_fallback(rt_promotion_t *fs, code_t *mega) {
+  if (fs->fallback == NULL) {
+    fs->fallback = mega;
+    if (fs->chain == NULL)
+      promotion_need_chain(fs, 0);
+    else
+      promotion_chain_end(fs);
+  }
+}
+#else
+#define promotion_cache_add(fs, value, target) do {} while (0)
+#define promotion_cache_fallback(fs, mega) do {} while (0)
+#endif
+
 /* NOTE: the following two functions must be as fast as possible, because
    they are called from the run-time code even during normal (non-compiling)
    execution. */
@@ -2193,7 +2284,8 @@ static code_t *do_promotion_long(rt_promotion_t *fs, long value) {
     result = do_promotion_internal(fs, key1, sk_new(value, SkFlagFixed));
   }
   /* done -> jump to the codebuf */
-  return fix_fast_common_case(fs, value, result);
+  promotion_cache_add(fs, value, result);
+  return result;
 }
 
 static code_t *do_promotion_pyobj(rt_promotion_t *fs, PyObject *key) {
@@ -2212,7 +2304,8 @@ static code_t *do_promotion_pyobj(rt_promotion_t *fs, PyObject *key) {
         fs, key1, sk_new((long)key, SkFlagFixed | SkFlagPyObj));
   }
   /* done -> jump to the codebuf */
-  return fix_fast_common_case(fs, (long)key, result);
+  promotion_cache_add(fs, key1, result);
+  return result;
 }
 
 static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
@@ -2230,9 +2323,11 @@ static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
     if (lookup_count_previous_values(fs, &megabuf) >= MEGAMORPHIC_MAX) {
       /* yes -> stop specializing */
       if (megabuf == NULL)
-        return detected_megamorphic_pyobj_site(fs);
+        result = detected_megamorphic_pyobj_site(fs);
       else
-        return (code_t *)(megabuf + 1); /* mega version already compiled */
+        result = (code_t *)(megabuf + 1); /* mega version already compiled */
+      promotion_cache_fallback(fs, result);
+      return result;
     }
     /* no -> we must build new code */
     Py_INCREF(key);
@@ -2240,7 +2335,8 @@ static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
         fs, key1, sk_new((long)key, SkFlagFixed | SkFlagPyObj));
   }
   /* done -> jump to the codebuf */
-  return fix_fast_common_case(fs, (long)key, result);
+  promotion_cache_add(fs, key1, result);
+  return result;
 }
 
 /* psyco_static_type_promotion: as above, but a value that is not a static
@@ -2265,13 +2361,19 @@ static code_t *do_promotion_static_type(rt_promotion_t *fs, PyObject *key) {
         result = detected_megamorphic_pyobj_site(fs);
       else
         result = (code_t *)(megabuf + 1);
+      if (count >= MEGAMORPHIC_MAX) {
+        /* from now on every new value goes there */
+        promotion_cache_fallback(fs, result);
+        return result;
+      }
     } else {
       Py_INCREF(key);
       result = do_promotion_internal(
           fs, key1, sk_new((long)key, SkFlagFixed | SkFlagPyObj));
     }
   }
-  return fix_fast_common_case(fs, key1, result);
+  promotion_cache_add(fs, key1, result);
+  return result;
 }
 
 DEFINEFN
