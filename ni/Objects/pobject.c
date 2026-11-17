@@ -104,6 +104,33 @@ vinfo_t *PsycoObject_IsTrue(PsycoObject *po, vinfo_t *vi) {
   /* XXX tony: Should make sure result is 0 or 1 like cPython */
   if (tp == Py_None->ob_type)
     return psyco_vi_Zero();
+  else if (Psyco_SlotsMutable(tp)) {
+    /* PyObject_IsTrue's order, each slot behind its own guard: a class
+       with none of them is true only while it still has none (a heap
+       type has all three tables) */
+    void *slots[3];
+    int i;
+    slots[0] = &tp->tp_as_number->nb_bool;
+    slots[1] = &tp->tp_as_mapping->mp_length;
+    slots[2] = &tp->tp_as_sequence->sq_length;
+    for (i = 0; i < 3; i++) {
+      void *f;
+      switch (Psyco_HeapSlot(po, slots[i], &f)) {
+      case 1:
+        break;
+      case 0:
+        return psyco_generic_call(po, PyObject_IsTrue, CfCommonInquiry, "v",
+                                  vi);
+      default:
+        return NULL;
+      }
+      if (f != NULL)
+        return Psyco_META1(po, f, i == 0 ? CfCommonInquiry
+                                         : CfCommonPySSizeTResult,
+                           "v", vi);
+    }
+    return psyco_vi_One();
+  }
   else if (tp->tp_as_number != NULL && tp->tp_as_number->nb_bool != NULL)
     return Psyco_META1(po, tp->tp_as_number->nb_bool, CfCommonInquiry, "v", vi);
   else if (tp->tp_as_mapping != NULL && tp->tp_as_mapping->mp_length != NULL)
