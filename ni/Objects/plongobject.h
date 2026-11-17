@@ -43,6 +43,9 @@ PSY_INLINE vinfo_t *PsycoLong_FROM_WORD(vinfo_t *vlong) {
   return result;
 }
 
+/* MEDIUM_VALUE of an int that is one digit at run time, as a new reference
+   in *pval: 1; 0 if it isn't one digit; -1 on error or promotion */
+EXTERNFN int PsycoLong_MediumValue(PsycoObject *po, vinfo_t *v, vinfo_t **pval);
 EXTERNFN vinfo_t *PsycoLong_AsLong(PsycoObject *po, vinfo_t *v);
 EXTERNFN bool PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v, vinfo_t **vd);
 EXTERNFN vinfo_t *PsycoLong_FromUnsignedLong(PsycoObject *po, vinfo_t *v);

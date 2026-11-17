@@ -4,6 +4,7 @@
 #include "../Objects/plistobject.h"
 #include "../Objects/plongobject.h"
 #include "../Objects/pmethodobject.h"
+#include "../Objects/prangeobject.h"
 #include "../Objects/pstringobject.h"
 #include "../Objects/ptupleobject.h"
 
@@ -439,6 +440,17 @@ static vinfo_t *ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg,
   int m = psyco_atcompiletime_static_type(po, vtype, &t);
   if (m < 0)
     return NULL;
+  if (m != 0 && t == (PyObject *)&PyRange_Type && psyco_knowntobe(vkw, 0)) {
+    int n = PsycoTuple_Load(varg);
+    if (n >= 1 && n <= 3) {
+      int r = PsycoRange_New(po, &PsycoTuple_GET_ITEM(varg, 0), n, &x);
+      if (r < 0)
+        return NULL;
+      if (r > 0)
+        return x;
+    }
+    goto fallback;
+  }
   if (m == 0 || !psyco_knowntobe(vkw, 0) || PsycoTuple_Load(varg) != 1 ||
       (t != (PyObject *)&PyType_Type && t != (PyObject *)&PyLong_Type &&
        t != (PyObject *)&PyFloat_Type))

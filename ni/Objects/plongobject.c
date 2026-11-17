@@ -71,6 +71,11 @@ static int plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval) {
   return *pval != NULL ? 1 : -1;
 }
 
+DEFINEFN int PsycoLong_MediumValue(PsycoObject *po, vinfo_t *v,
+                               vinfo_t **pval) {
+  return plong_medium_value(po, v, pval);
+}
+
 DEFINEFN
 vinfo_t *PsycoLong_AsLong(PsycoObject *po, vinfo_t *v) {
   if (PsycoLong_IsVirtual(v)) {
