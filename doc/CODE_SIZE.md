@@ -320,7 +320,7 @@ Gains are against the code and compile time above. "Code" means all emitted code
    - **Run-time risk:** the first form loses a known type on some paths (an extra inline-cache compare); the second adds a guard.
    - **D21:** safe if the decision depends only on the state and the snapshots, as D33's does: a respawn replay starts from a snapshot and never crosses a merge point.
    - Overlaps with the cap on blocks per merge point (option 3, in flight) and with type-set guards (option 4). Research; measure it under the cap first.
-3. **A polymorphic inline cache, or one that stops rewriting.** Done (`1413b63`, D42); results in "Polymorphic inline cache" below. Before, each miss rewrote the cached value in the code. A short chain of compares (one per value, up to the cut-off), or keeping the first value, would turn richards' 74k misses per iteration into compares.
+3. **A polymorphic inline cache, or one that stops rewriting.** Done (`ff1bce8`, D42); results in "Polymorphic inline cache" below. Before, each miss rewrote the cached value in the code. A short chain of compares (one per value, up to the cut-off), or keeping the first value, would turn richards' 74k misses per iteration into compares.
    - **Code:** about +19 B per extra value, at the 1–20% of sites with more than one.
    - **Compile time:** no change.
    - **Run time:** a gain, not a risk: at least the 2.5% of richards spent in `do_promotion_pyobj_mega`, plus whatever rewriting code costs (raytrace misses 3.9%). Measure with `perf`.
@@ -411,7 +411,7 @@ Instructions and branch misses per warm iteration (`perf stat -e instructions:u,
 - Branch misses are within run-to-run noise everywhere: the trampoline's one `jmp r11` now serves every promotion miss, where each site had its own `jmp r10`, and richards' misses didn't rise.
 - A polymorphic inline cache (option 3) would remove most misses, and this cost with them. Done: see the next section.
 
-## Polymorphic inline cache (`1413b63`, D42) [run]
+## Polymorphic inline cache (`ff1bce8`, D42) [run]
 
 A promotion site's inline compare now keeps the first value it saw. The next four values go in a chain of the same `mov r10, imm64; cmp reg, r10; je` entries (19 bytes each), out of line in the D32 stub pool. Hits on any of them never enter the trampoline or C. [read] (`x64/idispatcher.h`, `dispatcher.c:promotion_cache_add`)
 
