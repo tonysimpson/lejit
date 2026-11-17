@@ -562,6 +562,9 @@ _build_merge_points(PyCodeObject *co, int module)
             case CALL_FUNCTION_KW:
             case CALL_FUNCTION_EX:
             case MAKE_FUNCTION:
+            case BUILD_TUPLE_UNPACK_WITH_CALL:
+            case BUILD_TUPLE_UNPACK:
+            case BUILD_LIST_UNPACK:
             case LOAD_CLOSURE:
             case LOAD_DEREF:
             case STORE_DEREF:

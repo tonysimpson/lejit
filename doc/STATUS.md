@@ -70,3 +70,5 @@ Not done / next candidates:
 
 **Closures** (B7, partly): code with cell or free variables compiles when entered from its own frame (LOAD_CLOSURE, LOAD_DEREF, STORE_DEREF; cell arguments). Calls to closure code from compiled code stay real calls, and a call site on run-time functions promotes the code object before the function, so new lambdas don't each make a specialisation. `__class__` (zero-argument `super()`) stays interpreted. [run] pyperformance 1.35× → 1.40× (chaos 1.05× → 1.81×, hexiom 0.91× → 1.52×, comprehensions 0.88× → 1.08×); `tools/bench.py` 4.0×. Visible differences accepted: C18, C19.
 
+**`*` unpacking** (`f(a, *b)`, `(*a, *b)`, `[*a, *b]`): BUILD_TUPLE_UNPACK_WITH_CALL, BUILD_TUPLE_UNPACK and BUILD_LIST_UNPACK compile (a virtual tuple when every part is a known tuple). It was the only opcode keeping `copy.deepcopy` interpreted. [run] pyperformance deepcopy 0.84× → 1.94×, deepcopy_memo 0.84× → 2.41×, deepcopy_reduce 0.86× → 1.52×.
+

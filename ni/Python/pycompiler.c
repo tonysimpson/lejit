@@ -1056,6 +1056,40 @@ static void cimpl_store_deref(PyObject *cell, PyObject *v) {
   Py_XDECREF(old);
 }
 
+/* ceval.c BUILD_TUPLE_UNPACK_WITH_CALL, BUILD_TUPLE_UNPACK and
+   BUILD_LIST_UNPACK, on a tuple of the parts; func is the function being
+   called (for the WITH_CALL message, ceval.c:check_args_iterable) */
+static PyObject *cimpl_build_unpack(PyObject *parts, PyObject *func,
+                                    long opcode) {
+  Py_ssize_t i;
+  PyObject *sum = PyList_New(0), *r;
+  if (sum == NULL)
+    return NULL;
+  for (i = 0; i < PyTuple_GET_SIZE(parts); i++) {
+    PyObject *part = PyTuple_GET_ITEM(parts, i);
+    PyObject *none_val = _PyList_Extend((PyListObject *)sum, part);
+    if (none_val == NULL) {
+      if (opcode == BUILD_TUPLE_UNPACK_WITH_CALL &&
+          PyErr_ExceptionMatches(PyExc_TypeError) &&
+          part->ob_type->tp_iter == NULL && !PySequence_Check(part)) {
+        PyErr_Format(PyExc_TypeError,
+                     "%.200s%.200s argument after * must be an iterable, "
+                     "not %.200s",
+                     PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
+                     part->ob_type->tp_name);
+      }
+      Py_DECREF(sum);
+      return NULL;
+    }
+    Py_DECREF(none_val);
+  }
+  if (opcode == BUILD_LIST_UNPACK)
+    return sum;
+  r = PyList_AsTuple(sum);
+  Py_DECREF(sum);
+  return r;
+}
+
 static PyObject *cimpl_load_global(PyObject *globals, PyObject *w) {
   PyObject *x;
   RECLIMIT_SAFE_ENTER();
@@ -1840,6 +1874,56 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           POP_DECREF();
         PUSH(v);
         goto fine;
+
+      /* f(a, *b), (*a, *b), [*a, *b]: parts that are tuples with known
+         items make a virtual tuple; anything else is ceval's code */
+      case BUILD_TUPLE_UNPACK_WITH_CALL:
+      case BUILD_TUPLE_UNPACK:
+      case BUILD_LIST_UNPACK: {
+        int i, n = 0, known = opcode != BUILD_LIST_UNPACK;
+        for (i = oparg; known && i > 0; i--) {
+          int k = PsycoTuple_Load(NTOP(i));
+          if (k < 0)
+            known = 0;
+          n += k;
+        }
+        if (known) {
+          vinfo_t **items = (vinfo_t **)PyMem_Malloc((n + 1) * sizeof(*items));
+          int m = 0;
+          if (items == NULL) {
+            PycException_SetString(po, PyExc_MemoryError, "");
+            break;
+          }
+          for (i = oparg; i > 0; i--) {
+            int j, k = PsycoTuple_Load(NTOP(i));
+            for (j = 0; j < k; j++)
+              items[m++] = PsycoTuple_GET_ITEM(NTOP(i), j);
+          }
+          v = PsycoTuple_New(n, items);
+          PyMem_Free(items);
+        } else {
+          vinfo_t *fn = opcode == BUILD_TUPLE_UNPACK_WITH_CALL
+                            ? NTOP(oparg + 1) : NULL;
+          w = PsycoTuple_New(oparg, STACK_POINTER() - oparg);
+          if (fn == NULL)
+            fn = psyco_vi_Zero();
+          else
+            vinfo_incref(fn);
+          v = psyco_generic_call(po, cimpl_build_unpack,
+                                 CfCommonNewRefPyObject, "vvl", w, fn,
+                                 (long)opcode);
+          vinfo_decref(fn, po);
+          vinfo_decref(w, po);
+          if (v == NULL)
+            break;
+          Psyco_AssertType(po, v, opcode == BUILD_LIST_UNPACK ? &PyList_Type
+                                                               : &PyTuple_Type);
+        }
+        while (oparg--)
+          POP_DECREF();
+        PUSH(v);
+        goto fine;
+      }
 
       case BUILD_LIST:
         v = PsycoList_New(po, oparg, STACK_POINTER() - oparg);
