@@ -8,6 +8,17 @@ The aim is in `GOAL.md` (long-term aim) and `DECISIONS.md` D16–D20. The patter
 
 **Rule: use the simplest thing that works.** Move to a heavier tool only when the current one demonstrably fails on real input. When that happens, record the failure here, with the CPython construct that caused it, before you switch.
 
+## Versions (D67)
+
+One Ni source serves every CPython version from 3.7 on; none is dropped.
+
+- **Hand-written, version-free:** the core, the backend (with `llvm-mc` templates, D65), and the generator's rules: the policy table (what to promote, make virtual, guard), representation rules, effect rules. No `#if` on versions anywhere.
+- **Generated, per build:** everything that mirrors CPython, from the source of the version being built for (its release tarball): bytecode cases, slots, `abstract.c`, builtins, the call path, layouts, virtual objects' constructors. Not checked in.
+- **Bytecode input:** `bytecodes.c` through CPython's parser for 3.12+; for 3.7–3.11 a reader of `ceval.c`'s `TARGET` cases that produces the same form, so everything after it is shared.
+- **Mechanisms:** where Ni itself must work differently (entry: frame hook or `PyFunction_SetVectorcall`; perhaps tracing and frames), a small detector looks in that version's source for the mechanism, and the matching snippet goes into the generated source.
+- **New features** go into the core or the rules, never into one version's output, so regenerating carries them to every version. Each version's tests run on every change.
+- **Order:** generate everything possible on 3.7 first, compared with the hand translations, then 3.8, 3.9 and on.
+
 ## Stages (D19)
 
 | Stage | Output | Simplest approach |
