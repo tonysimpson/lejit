@@ -626,7 +626,7 @@ On top of store+J. Each failed check of an inline store used to be a respawn poi
 - **Richards is +10% over the baseline's 116 KB** (the budget was +20–25%). STORE_ATTR is 208 → 166 bytes per compiled site. Respawned buffers are 90 → 15 and stub chunks 10 → 6, the same as base (`tools/codesize.py richards -s`).
 - **The removed respawns did more than the smaller sites.** Step 1 alone took richards from 162 to 136 KB; the sites themselves account for only 3 KB of that (172 compiles, 208 → 191 bytes each).
 
-## Unused facts at merge points (`96b9777`, `1e32841`, D50, D57, SPECIALISATION.md step 3) [run]
+## Unused facts at merge points (`96b9777`, `0b808fa`, D50, D57, SPECIALISATION.md step 3) [run]
 
 Rule 1: a state that knows a run-time value's type, where nothing since the last merge point has relied on the type, matches a block compiled without it. Before, `dispatcher.c:compatible_array` (`CHECK_FOR_NULL`) refused any state with an extra known item at `recdepth <= 2`, so such a state started a new block, a copy of the rest of the loop or function.
 
@@ -708,7 +708,7 @@ D45 tested `eval_breaker` after every `CALL_*` (7-byte `cmp`, 6-byte `jne`, a 15
 
 **Verdict:** kept, as a small code-size and compile-time win with no speed cost; it is not the large lever. Most of the remaining "an earlier, more general block existed" cases are promotions at a merge point, whose own compare must keep the fact (the guard). Dropping more than the type waited on C35; done below.
 
-### Every unused field, after C35 (`79cdd46`, `1e32841`, D57) [run]
+### Every unused field, after C35 (`2063657`, `0b808fa`, D57) [run]
 
 **C35 was not the drop.** `x64/iencoding.h:IS_A_JUMP` read a `JMP` one byte late, so `make_code_conditional`'s rewrite of a lone `JMP` into a `Jcc` ran only when the JMP's displacement had 0xE9 as its low byte, and then jumped outside the address space (KNOWN_BUGS C35). The wider drop made a few more conditional jumps match an existing block exactly; one in `pprint._safe_repr` drew the byte. The reproduction needed the original experiment exactly: at `a36bea1`, any field, the stamp against `psyco_block_serial`, every fact dropped at a call entry, and `test_pprint` run as `cpython_tests.py` runs it. On `baseline-3.7` the same switches pass by layout luck. Exact matches at a conditional jump are rare: one in all of `test_pprint`.
 
