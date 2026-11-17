@@ -503,7 +503,33 @@ BINARY_FUNC(PsycoNumber_Or, nb_or, "|")
 BINARY_FUNC(PsycoNumber_Xor, nb_xor, "^")
 BINARY_FUNC(PsycoNumber_And, nb_and, "&")
 BINARY_FUNC(PsycoNumber_Lshift, nb_lshift, "<<")
-BINARY_FUNC(PsycoNumber_Rshift, nb_rshift, ">>")
+/* abstract.c:PyNumber_Rshift's hint for Python 2's 'print >> f' (F46) */
+static PyObject *cimpl_rshift_error(PyObject *v, PyObject *w) {
+  if (PyCFunction_Check(v) &&
+      strcmp(((PyCFunctionObject *)v)->m_ml->ml_name, "print") == 0)
+    PyErr_Format(PyExc_TypeError,
+                 "unsupported operand type(s) for >>: '%.100s' and '%.100s'. "
+                 "Did you mean \"print(<message>, file=<output_stream>)\"?",
+                 v->ob_type->tp_name, w->ob_type->tp_name);
+  else
+    PyErr_Format(PyExc_TypeError,
+                 "unsupported operand type(s) for >>: '%.100s' and '%.100s'",
+                 v->ob_type->tp_name, w->ob_type->tp_name);
+  return NULL;
+}
+
+DEFINEFN
+vinfo_t *PsycoNumber_Rshift(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
+  vinfo_t *result = binary_op1(po, v, w, NB_SLOT(nb_rshift));
+  if (!IS_IMPLEMENTED(result)) {
+    vinfo_decref(result, po);
+    if (Psyco_FastType(v) == &PyCFunction_Type)
+      return psyco_generic_call(po, cimpl_rshift_error,
+                                CfCommonNewRefPyObject, "vv", v, w);
+    return binop_type_error(po, v, w, ">>");
+  }
+  return result;
+}
 BINARY_FUNC(PsycoNumber_Subtract, nb_subtract, "-")
 BINARY_FUNC(PsycoNumber_Divmod, nb_divmod, "divmod()")
 

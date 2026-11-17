@@ -255,3 +255,24 @@ CASES += [
      "[('spam',), (int,), (BaseException(),), ((ValueError, 'x'),),"
      " ((KeyError, ValueError),)]", {}),
 ]
+
+
+# 'print >> f' gets 3.7's hint (KNOWN_BUGS F46, CPython's test_print)
+def print_rshift(f):
+    try:
+        print >> f
+    except TypeError as e:
+        return str(e)
+
+
+def other_rshift(f):
+    try:
+        len >> f
+    except TypeError as e:
+        return str(e)
+
+
+CASES += [
+    ('print_rshift', '[(sys.stderr,), (1,)]', {}),
+    ('other_rshift', '[(sys.stderr,)]', {}),
+]
