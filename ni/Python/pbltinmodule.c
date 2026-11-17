@@ -12,6 +12,7 @@
 static PyCFunction cimpl_range;
 static PyCFunction cimpl_id;
 static PyCFunction cimpl_len;
+static PyCFunction cimpl_globals;
 static PyCFunction cimpl_abs;
 static PyCFunction cimpl_divmod;
 static PyCFunction cimpl_hash;
@@ -140,6 +141,14 @@ static bool parse_range_args(PsycoObject *po, vinfo_t *vargs, vinfo_t **iistart,
 static vinfo_t *pbuiltin_id(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
   return psyco_generic_call(po, PyLong_FromVoidPtr, CfCommonNewRefPyObject, "v",
                             vobj);
+}
+
+/* globals() is the compiled function's own globals: the real builtin reads
+   the nearest interpreted frame's (F47) */
+static vinfo_t *pbuiltin_globals(PsycoObject *po, vinfo_t *vself,
+                                 vinfo_t *vnull) {
+  vinfo_incref(LOC_GLOBALS);
+  return LOC_GLOBALS;
 }
 
 static vinfo_t *pbuiltin_len(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
@@ -541,6 +550,7 @@ void psyco_bltinmodule_init(void) {
   cimpl_##name = Psyco_DefineModuleFn(md, #name, flags, &pbuiltin_##name)
   DEFMETA(id, METH_O);
   DEFMETA(len, METH_O);
+  DEFMETA(globals, METH_NOARGS);
   DEFMETA(abs, METH_O);
   DEFMETA(divmod, METH_FASTCALL);
   DEFMETA(hash, METH_O);
