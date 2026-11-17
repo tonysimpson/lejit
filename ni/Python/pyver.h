@@ -31,9 +31,6 @@
 #define PY_LONG_LONG LONG_LONG /* Python < 2.3 */
 #endif
 
-#define PsycoIndex_Check(tp)                                                   \
-  ((tp)->tp_as_number != NULL && (tp)->tp_as_number->nb_index != NULL)
-
 /* for extra fun points, let's try to emulate Python's ever-changing behavior
    (but not too hard; you can still tell the difference in Python < 2.5 if
    you use -sys.maxint-1 as the lower bound of a slice, provided you inspect

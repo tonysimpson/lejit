@@ -47,6 +47,10 @@ static int table_slot(PsycoObject *po, PyTypeObject *tp, void *table,
 #define MP_SLOT_OF(tp, name, f)                                                \
   table_slot(po, tp, (tp)->tp_as_mapping, offsetof(PyMappingMethods, name),    \
              (void **)(f))
+/* PyIndex_Check as the above: *f is nb_index */
+#define INDEX_SLOT_OF(tp, f)                                                   \
+  table_slot(po, tp, (tp)->tp_as_number, offsetof(PyNumberMethods, nb_index),  \
+             (void **)(f))
 /* 'read' is one of the above: go to 'changed' if the slot has changed */
 #define SLOT_OR_GOTO(read, changed, err)                                       \
   switch (read) {                                                              \
@@ -132,6 +136,7 @@ DEFINEFN
 vinfo_t *PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
   binaryfunc subscript;
   ssizeargfunc item;
+  unaryfunc index;
   PyTypeObject *tp = Psyco_NeedType(po, o);
   if (tp == NULL)
     return NULL;
@@ -157,7 +162,8 @@ vinfo_t *PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
       vinfo_decref(key_value, po);
       return result;
     }
-    if (PsycoIndex_Check(ktp)) {
+    SLOT_OR_GOTO(INDEX_SLOT_OF(ktp, &index), changed, NULL);
+    if (index != NULL) {
       vinfo_t *result;
       vinfo_t *key_value;
       key_value =
@@ -190,6 +196,7 @@ bool PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key,
                          vinfo_t *value) {
   objobjargproc ass_subscript;
   ssizeobjargproc ass_item;
+  unaryfunc index;
   PyTypeObject *tp = Psyco_NeedType(po, o);
   if (tp == NULL)
     return false;
@@ -217,7 +224,8 @@ bool PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key,
       vinfo_decref(key_value, po);
       return result;
     }
-    if (PsycoIndex_Check(ktp)) {
+    SLOT_OR_GOTO(INDEX_SLOT_OF(ktp, &index), changed, false);
+    if (index != NULL) {
       bool result;
       vinfo_t *key_value;
       key_value =
@@ -735,15 +743,17 @@ static vinfo_t *psequence_repeat(PsycoObject *po, void *repeatfunc,
   PyTypeObject *tp = Psyco_FastType(vn);
   vinfo_t *vcount;
   vinfo_t *result;
+  unaryfunc index;
 
   if (PyType_TypeCheck(tp, &PyLong_Type)) {
     vcount = PsycoLong_AsLong(po, vn);
-  } else if (PsycoIndex_Check(tp)) {
+  } else {
+    SLOT_OR_GOTO(INDEX_SLOT_OF(tp, &index), changed, NULL);
+    if (index == NULL)
+      return type_error_tp(
+          po, "can't multiply sequence by non-int of type '%.200s'", tp);
     vcount = psyco_generic_call(po, PyNumber_AsSsize_t, CF_AS_SSIZE_T,
                                 "vl", vn, (long)PyExc_OverflowError);
-  } else {
-    return type_error_tp(po, "can't multiply sequence by non-int of type '%.200s'",
-                         tp);
   }
   if (vcount == NULL)
     return NULL;
@@ -752,6 +762,10 @@ static vinfo_t *psequence_repeat(PsycoObject *po, void *repeatfunc,
       Psyco_META2(po, repeatfunc, CfCommonNewRefPyObject, "vv", vseq, vcount);
   vinfo_decref(vcount, po);
   return result;
+
+changed:
+  return psyco_generic_call(po, cimpl_sequence_repeat, CfCommonNewRefPyObject,
+                            "lvv", (long)repeatfunc, vseq, vn);
 }
 
 DEFINEFN

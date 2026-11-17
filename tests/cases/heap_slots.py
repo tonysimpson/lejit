@@ -278,6 +278,24 @@ def changed_bases_add():
     return r
 
 
+class Ix:
+    pass
+
+
+def added_index():
+    import collections
+    d = collections.deque([1, 2])
+    i = Ix()
+    r = [attempt(getitem, d, i), attempt(setitem, d, i, 5),
+         attempt(mul, [1], i)]
+    Ix.__index__ = lambda self: 1
+    r += [getitem(d, i), list(setitem(d, i, 5)), mul([1], i)]
+    del Ix.__index__
+    r += [attempt(getitem, d, i), attempt(setitem, d, i, 5),
+          attempt(mul, [1], i)]
+    return r
+
+
 CASES = [
     ('added_bool', [()], {}),
     ('deleted_len', [()], {}),
@@ -290,4 +308,5 @@ CASES = [
     ('added_call', [()], {}),
     ('changed_bases', [()], {}),
     ('changed_bases_add', [()], {}),
+    ('added_index', [()], {}),
 ]
