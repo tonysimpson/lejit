@@ -13,12 +13,14 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 **Wrong results or crashes, reachable today**
 - **C29:** a frame already running compiled when tracing starts gets no events: `pdb.set_trace()`/`breakpoint()` in a compiled function stops only in its callees, a tracer that sets `f_trace` on running frames sees nothing from them, and a profiler misses their `c_call`/`return` events. Needs a way out of compiled code mid-frame (large).
+- **F96:** a constant object's type (a global that is never rebound, a module) is read when code compiles: `G.__class__ = B` isn't seen by code using `G`. Needs a guard per use of a constant of a mutable type (D48's shape). Small to medium; rare.
 - **F9:** a `T_STRING_INPLACE` struct member gives `bytes`, not `str`. Small. **In flight** (strings agent).
 - **C9:** reference counts are lower than ceval's, so C code testing `Py_REFCNT(x) == 1` can behave differently. Fixed where seen; others may exist.
 - **C11, C18:** compiled frames are only partly visible (`warnings` stacklevel, `f_lineno`, `f_back`), and a traceback doesn't keep a compiled function's locals alive. C11 now reaches more code: with `with` and class statements compiling, unittest's `case.run` is compiled, so every test method is a compiled callee (`type()` takes `__module__` from `unittest.case`; CPython's `test_builtin`). Worth doing next among the frame bugs: the hook behind `PyEval_GetFrame` (`globals()`, `type()`'s `__module__`), then `f_lineno`.
 - **C15 remainder:** `locals()`, `eval()` and friends reached indirectly (`f = locals; f()`) see only the arguments.
 - **C17 remainder:** identity of virtual floats, ints and bound methods across calls (`f(x) is x` is False).
 
+- **F55:** fixed (`eed7f8b`, D59): known heap types are forgotten after code that may assign `__class__`. Follow-up: a forgotten type is learnt again by a promotion, which starts a block (compile +5%); a guard against the type forgotten would keep one block. Small to medium.
 - **F37:** fixed (`e86f8ae`, STORES.md option 1).
 - **F56, F57, F80:** fixed (`d16ab6b`..`8e32559`; KNOWN_BUGS, D54): every slot compiled code folds for a heap type (truth, number, subscript, `len`, `in`, call, `__index__`, operand order after `__bases__`) and a function's `__code__` are guarded; `%=`'s message. F57's guard costs up to 1.2% (below).
 - **F10, F48, F50, F52, C25:** fixed (`0e191a3`..`9217bdb`; KNOWN_BUGS): compare slots run once, exhausted sequence iterators stay exhausted, a heap type's compare, hash and iteration slots and a function's defaults are guarded, C function results are checked. Rest of F50 is F56.

@@ -170,6 +170,10 @@ Example: `LOC_BUILTINS` (`pycheader.h`, `psyfunc.c:callee_builtins`; KNOWN_BUGS 
 C code that reads the running frame (`PyThreadState_GET()->frame`: its code, locals or cells) → a meta that passes those values from the compiled frame's `po->vlocals` and `po->pr.co` to a residual helper doing the rest of the C function, because a directly called compiled function has no real frame. The liveness pass must keep any local the C code reads implicitly. Which builtins read the frame is knowledge the C source shows only through the `tstate->frame` read.
 Example: `pbltinmodule.c:psuper_noargs` and `cimpl_super_noargs` (typeobject.c:super_init without arguments; D58), `mergepoints.c:_find_dead_locals` keeping the first argument of code with a `__class__` cell; `pbltinmodule.c:pbuiltin_globals` (F47).
 
+**P31 assignable-type-fact** (J)
+C code that can change an object's type (`typeobject.c:object_set_class`: only between heap types, or ModuleType subtypes) → a known type is a fact that any call running Python code may falsify, so the specialiser drops it after such a call and learns it again on use; a static type's fact is kept. The generator must know which C functions run no Python code (CfPure, CfNoPython) and which types a dealloc can't reach Python from: neither is in the signatures.
+Example: `pobject.c:Psyco_ForgetClasses`, `Psyco_ClassMutable` (KNOWN_BUGS F55, D59).
+
 ## Core and backend mechanisms (not translations, but named for reference)
 
 - **inline-cache-patch**: a promotion site is a self-patching `CMP imm64; JE` for the last value seen, in front of the C dispatcher. `ni/x64/idispatcher.h:ipromotion_finish`, `fix_fast_common_case`.
