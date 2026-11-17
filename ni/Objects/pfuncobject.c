@@ -148,6 +148,35 @@ bool PsycoGenexpr_Check(vinfo_t *v) {
 /***************************************************************/
 /*** function objects meta-implementation                    ***/
 
+/* The defaults a call to 'f' is compiled with (KNOWN_BUGS F52): those Ni
+   first saw on f, held for good, never changed, so a respawn's replay
+   decides as the original compile did and a guard comparing f's
+   func_defaults with them can't be fooled by a new tuple at a reused
+   address. Py_None stands for NULL. f is held by the code that promoted
+   it, so its address isn't reused either. */
+static PyObject *compiled_defaults(PyObject *f)
+{
+    static PyObject *seen = NULL; /* function address -> defaults */
+    PyObject *key, *d;
+    if (seen == NULL && (seen = PyDict_New()) == NULL)
+        OUT_OF_MEMORY();
+    key = PyLong_FromVoidPtr(f);
+    if (key == NULL)
+        OUT_OF_MEMORY();
+    d = PyDict_GetItem(seen, key);
+    if (d == NULL) {
+        d = PyFunction_GET_DEFAULTS(f);
+        if (d == NULL)
+            d = Py_None;
+        if (PyDict_SetItem(seen, key, d) < 0)
+            OUT_OF_MEMORY();
+    }
+    Py_DECREF(key);
+    return d == Py_None ? NULL : d;
+}
+
+#define FUNC_defaults_now FMUT(FUNC_defaults)
+
 DEFINEFN
 vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
@@ -170,8 +199,27 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     if (PyCode_GetNumFree(co) > 0 || co->co_kwonlyargcount > 0)
         goto fallback;
 
+    /* the defaults are those compiled while f still has them */
+    defl = compiled_defaults(f);
+    {
+        vinfo_t *vf = vinfo_new(CompileTime_New((long)f));
+        vinfo_t *vnow = psyco_get_field(po, vf, FUNC_defaults_now);
+        vinfo_t *vexp;
+        condition_code_t cc;
+        vinfo_decref(vf, po);
+        if (vnow == NULL)
+            return NULL;
+        vexp = vinfo_new(CompileTime_New((long)defl));
+        cc = integer_cmp(po, vnow, vexp, Py_NE);
+        vinfo_decref(vexp, po);
+        vinfo_decref(vnow, po);
+        if (cc == CC_ERROR)
+            return NULL;
+        if (runtime_condition_f(po, cc))
+            goto fallback;
+    }
+
     glob = PyFunction_GET_GLOBALS(f);
-    defl = PyFunction_GET_DEFAULTS(f);
     Py_INCREF(glob);
     fglobals = vinfo_new(CompileTime_NewSk(sk_new((long)glob, SkFlagPyObj)));
     if (defl == NULL)

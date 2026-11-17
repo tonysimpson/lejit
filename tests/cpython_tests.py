@@ -178,9 +178,8 @@ KNOWN = {
     'test_socket': 'C19: getrefcount around calls into C '
                    '(testRefCountGetNameInfo); counts vary with the '
                    'environment, so no expected result',
-    'test_unittest': ('run=798 fail=3 err=0 skip=3 exit=0',
-                      'C11: warnings line numbers; F52: __defaults__ '
-                      'changed after compiling'),
+    'test_unittest': ('run=798 fail=2 err=0 skip=3 exit=0',
+                      'C11: warnings line numbers'),
     'test_asyncio': ('run=2055 fail=18 err=0 skip=35 exit=0',
                      'C11: line numbers and stacks in source tracebacks'),
     'test_timeit': 'C30: crashes in test_timeit_few_iters after the '
