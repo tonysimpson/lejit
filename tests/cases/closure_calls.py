@@ -135,6 +135,23 @@ def deep_closure(n):
         return 'RecursionError'
 
 
+def self_recursive_depth(n):
+    # a small closure calling itself through its cell: inlined into itself,
+    # half its frames went uncounted and RecursionError came at twice
+    # CPython's depth (test_traceback's test_recursive_traceback_*)
+    def f():
+        f()
+    out = []
+    for i in range(n):
+        try:
+            f()
+        except RecursionError:
+            depth = len(traceback.extract_tb(sys.exc_info()[2]))
+            out.append(sys.getrecursionlimit() - 60 < depth
+                       <= sys.getrecursionlimit() + 1)
+    return out
+
+
 def make_raiser(d):
     def raiser(x):
         return x / d
@@ -324,6 +341,7 @@ CASES = [
     ('cell_changes', [(6,)], {}),
     ('recursion_through_closure', [(8,)], {}),
     ('deep_closure', [(50,), (100000,)], {}),
+    ('self_recursive_depth', [(3,)], {}),
     ('tracebacks', [(1,)], {}),
     ('traced', [(3,)], {}),
     ('defaults', [(4,)], {}),

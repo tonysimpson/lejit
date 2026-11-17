@@ -728,11 +728,11 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     goto fail_to_default;
   }
 
-  /* not with cells loaded at run time: inlining such a closure crashed
-     (KNOWN_BUGS C49) */
-  inlining = !po->pr.is_inlining &&
-             (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE) &&
-             !(frees == freebuf && is_runtime(vfunc->source));
+  /* not into itself: inlined calls aren't counted in the recursion depth
+     (KNOWN_BUGS C12), and a closure calling itself through its cell would
+     reach RecursionError at twice CPython's depth */
+  inlining = !po->pr.is_inlining && co != po->pr.co &&
+             (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE);
   if (inlining && frees == freebuf && is_runtime(vfunc->source)) {
     /* Cells loaded from a run-time function are borrowed from it, which is
        enough for a call: the caller holds the function until it returns a
