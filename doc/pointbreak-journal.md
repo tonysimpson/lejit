@@ -79,3 +79,10 @@ that mattered. Further notes from the reduction:
     `NI_ALL_CHECKS=1` build, and a release build without `NI_TRACE` gave
     zero recorded chunks. `crash_report.py` now says so; nothing for
     pointbreak here.
+
+## 2026-11-17: a failed guard landing in the wrong respawned code (A9 branch)
+
+- **Trying to:** find why a failed `tp_version_tag` guard jumped into code already compiled for another respawn point.
+- **Worked:** `crash_report.py --step-from` showed the proxy, then `JMP RDX` into the already-emitted exception chunk. That was enough to see that no new compile had happened.
+- **In the way:** nothing could tell me *who last wrote* the guard's `Jcc` target (`change_cond_jump_target`) or the proxy's return value. I fell back to `fprintf` in the compiler.
+- **Would have helped:** a write watchpoint on an address in emitted code, reporting the writer's backtrace. Also a cheap way to break when a C function returns, and print its return value (`do_respawn`'s code address).
