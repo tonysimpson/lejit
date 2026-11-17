@@ -626,7 +626,7 @@ On top of store+J. Each failed check of an inline store used to be a respawn poi
 - **Richards is +10% over the baseline's 116 KB** (the budget was +20–25%). STORE_ATTR is 208 → 166 bytes per compiled site. Respawned buffers are 90 → 15 and stub chunks 10 → 6, the same as base (`tools/codesize.py richards -s`).
 - **The removed respawns did more than the smaller sites.** Step 1 alone took richards from 162 to 136 KB; the sites themselves account for only 3 KB of that (172 compiles, 208 → 191 bytes each).
 
-## Unused facts at merge points (`a36bea1`, D50, SPECIALISATION.md step 3) [run]
+## Unused facts at merge points (`96b9777`, D50, SPECIALISATION.md step 3) [run]
 
 Rule 1: a state that knows a run-time value's type, where nothing since the last merge point has relied on the type, matches a block compiled without it. Before, `dispatcher.c:compatible_array` (`CHECK_FOR_NULL`) refused any state with an extra known item at `recdepth <= 2`, so such a state started a new block, a copy of the rest of the loop or function.
 
