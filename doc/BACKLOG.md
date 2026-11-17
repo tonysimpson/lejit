@@ -23,7 +23,7 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 
 - **F37:** fixed (`e86f8ae`, STORES.md option 1).
 - **F10, F48, F50, F52, C25:** fixed (`0e191a3`..`9217bdb`; KNOWN_BUGS): compare slots run once, exhausted sequence iterators stay exhausted, a heap type's compare, hash and iteration slots and a function's defaults are guarded, C function results are checked. Rest of F50 is F56.
-- **C30, C31, C39:** fixed (`8039e51`, `4f9ed87`, `7cf6519`; KNOWN_BUGS): an inlined frame names its caller by a serial as well as its code object (a dead caller's address was reused at a join point), the call alignment test compares only the return-address slot, and the async-exception case waits for its target.
+- **C30, C31, C39:** fixed (`63b4f95`, `5a39986`, `6192ed6`; KNOWN_BUGS): an inlined frame names its caller by a serial as well as its code object (a dead caller's address was reused at a join point), the call alignment test compares only the return-address slot, and the async-exception case waits for its target.
 - **C24:** fixed (D45): compiled code tests `eval_breaker` at loop heads and after calls (since D53, only calls that may block).
 - **C22, F41–F47:** fixed by the CPython test survey (2026-11-17; KNOWN_BUGS), including two crashes (C22, F45).
 
