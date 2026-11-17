@@ -141,3 +141,32 @@ def unpack2(v):
 CASES += [
     ('unpack_errors', [((),), ((1,),), ((1, 2),), ((1, 2, 3),)], {}),
 ]
+
+
+# list.__getitem__ is a C method as well as list's mp_subscript slot, so it
+# can receive a subclass instance whose own __getitem__ is Python code: the
+# meta must not dispatch on the instance's type (KNOWN_BUGS F41; it recursed
+# into the override, CPython's test_code test_closure_injection)
+class OwnGetitem(list):
+    def __getitem__(self, i):
+        return ('own', super().__getitem__(i))
+
+
+class OwnLen(list):
+    def __len__(self):
+        return 100
+
+
+def super_getitem(i):
+    return OwnGetitem([5, 6, 7])[i]
+
+
+def list_getitem_on_subclass(i):
+    return (list.__getitem__(OwnGetitem([5, 6, 7]), i),
+            list.__getitem__(OwnLen([5, 6, 7]), i))
+
+
+CASES += [
+    ('super_getitem', [(0,), (-1,), (slice(1, None),)], {}),
+    ('list_getitem_on_subclass', [(1,), (-1,), (slice(None, 2),)], {}),
+]
