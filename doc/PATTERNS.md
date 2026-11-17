@@ -118,7 +118,11 @@ Example: `plistobject.c:plist_ass_item` mirrors `list_ass_item`'s old-item decre
 
 Choosing what to virtualise, and the weights, are judgement. The compute functions themselves are close to mechanical once the layout is chosen.
 
-Live examples: tuple, short list (`VLIST_LENGTH_MAX` 3), seq-iterator, function, C method, bound method, float (`doc/history/removed-mechanisms.md` lists removed ones: int, bool, range, strings, compact objects). Layouts are in each `ni/Objects/p*.h`.
+Live examples: tuple, short list (`VLIST_LENGTH_MAX` 3), seq-iterator, function, C method, bound method, float, int, bool, range and range iterator, slice (`doc/history/removed-mechanisms.md` lists those removed in the port: int, bool, range, strings, compact objects; int, bool and range came back since). Layouts are in each `ni/Objects/p*.h`.
+
+**P18a virtual-argument** (helper M; choosing J)
+An object built only to be unpacked by its consumer (a slice for `mp_subscript`) is virtual, and each consumer's meta unpacks its fields into words and calls a helper that is the consumer's C code from just after the unpack. The helper is mechanical: the C function's branch for the handled case (step 1), with the unpacked locals as parameters; the unpack itself (`PySlice_Unpack`, `_PyEval_SliceIndex`) becomes compile-time reads of the virtual's fields, done only for the field types it can read without side effects (None and ints, not `__index__`). Which objects are worth it, and which cases, are judgement; anything not handled computes the real object, so the generic path stays CPython's.
+Example: `psliceobject.c:PsycoSlice_Unpack`, used by `punicodeobject.c:cimpl_unicode_slice`, `pbytesobject.c:cimpl_bytes_slice`, `plistobject.c:cimpl_list_slice` and `cimpl_list_ass_slice` (D56). With constant inputs and an immutable exact type the helper is CfPure and folds (P14).
 
 **P19 virtual-fast-path** (J)
 Inside a translated function: if the argument is a known virtual of this type and the index is compile-time, operate on the vinfo array directly instead of emitting loads and stores.

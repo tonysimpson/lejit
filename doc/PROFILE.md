@@ -91,3 +91,36 @@ Done (`9abd6a3`, `f1612c5`): `len()` and `s[i]` with an int index for str (`puni
 go's instruction count varies by ±3% between runs of the same build (A/B: 1,214 and 1,256 before, 1,264 and 1,247 after). Over all 29 benchmarks compile time is 35.0 → 34.4 ms and code 3,787 → 3,793 KB. In pyflate `bytes_length` is gone and `bytes_subscript` falls from 1.2% to 0.5% (what is left is slicing, `nt[i:i + 1]`). [run]
 
 Left as C calls, with what the measurement says about them: run-time `in` for str (no hot site; a constant needle could use a one-character search helper), iteration over str and bytes, slices, `bytes.join`, `%` formatting (deltablue, 0.7%), and `x[i] == 'c'`, which is still a `cimpl_unicode_eq` call although both sides are usually CPython's cached one-character strings (Py2's virtual characters, `pstringobject.c`, would make it a byte compare; QUESTIONS).
+
+## 2026-11-17: slices, join and % (D56)
+
+What is left of the strings item after `len`, indexing and `in`: slices, `str.join` and `%` formatting. Measured first, release build at `59b72aa`. [run]
+
+**Where the benchmarks spend it.** `perf record -F 2999 -g` on `tools/profile_bench.py <bench> 3` for pyflate, deltablue, chaos, go, hexiom, unpack_sequence, richards and raytrace (the set has no json, regex, genshi or mako benchmark). Self time:
+
+| benchmark | slices | join | % |
+|---|---|---|---|
+| pyflate | the slice object: `slice_dealloc` 1.1%, `_PyEval_SliceIndex` 0.7%, `PySlice_Unpack` 0.7%, `PySlice_New` 0.7%, `PySlice_AdjustIndices` 0.4% (3.7% together); the slicing itself: `list_ass_slice` 6.5%, `list_slice` 3.2%, `bytes_subscript` 0.6% | `stringlib_bytes_join` 1.1%, `_PyBytes_FromList` 0.4% | — |
+| hexiom | `list_slice` 0.3%, `PySlice_Unpack` 0.2%, `PySlice_New` 0.2%, `slice_dealloc` 0.1%, `list_ass_slice` 0.1% | — | 0.03% |
+| deltablue | `list_ass_slice` 0.3% | — | `PyUnicode_Format` 0.4% and the writer, about 0.8% in all (`"v%s" % i` in set-up, `'%s' % (a, b)` in `__repr__`) |
+| the others | ≤ 0.01% | — | ≤ 0.1% |
+
+pyflate's hot slices are lists (`move_to_front`: `l[:] = l[c:c + 1] + l[0:c] + l[c + 1:]`) and one-byte bytes slices (`nt[i:i + 1]`); str slices run in no timed loop. So the slice object, which every slice pays for whatever its type, is the cost worth removing, and list must be covered with str and bytes.
+
+**Per call** (a loop of 10⁶, `perf stat -e instructions:u`, minus the empty loop; a scratch micro-benchmark, not committed): `s[i:i + 3]` on a str 679 instructions, `b[i:i + 1]` 437, `l[i:i + 3]` 717, `','.join(three strs)` 634, `b''.join(three bytes)` 528, `"v%s" % k` 1,397, `"<%s - %d>" % (a, k)` 2,201. For join, compiled code already calls `PyUnicode_Join` directly (the method lookup folds): its profile is `_PyUnicode_JoinArray`, allocation and memcpy, with 1% in `PySequence_Fast`. For `%`, `unicode_mod` and `PyMapping_Check` are 3% of the call; the rest is `PyUnicode_Format` itself, the writer's over-allocation and resize (about 20%) and the int's decimal conversion. Splitting a constant format into concatenation could save perhaps a third of a `%` call, about 0.3% of deltablue, for a translation of `PyUnicode_Format`'s parser that every format directive would need; a direct call would save 3% of the call. **Neither join nor `%` is worth doing on this set.** [run]
+
+**Done** (`2f1153e`, D56): virtual slices (`psliceobject.c`). BUILD_SLICE makes one; the str, bytes and list subscript metas and list's `mp_ass_subscript` unpack a step-None slice of None or int bounds into words and call one helper, the type's step-1 case after `PySlice_Unpack`. Per call: str 679 → 320 instructions, bytes 437 → 88, list 717 → 373. Release build, before (`59b72aa`) and after, same session; instructions per warm iteration with `perf stat -e instructions:u`, `PYTHONHASHSEED=0`, ((3 + 12) − (3 + 2) iterations) / 10, two runs each, identical to the M; code, compile time and warm time from `tools/compilebench.py` (warm times indicative, other agents shared the machine):
+
+| benchmark | instructions (M) | code KB | compile ms | warm ms |
+|---|---|---|---|---|
+| pyflate | 2,309 → 2,032 (−12.0%) | 180.6 → 178.1 | 1.69 → 1.54 | 134.0 → 112.3 |
+| hexiom | 41 → 40 | 260.8 → 249.9 | 2.76 → 2.67 | 2.16 → 2.13 |
+| chaos | 459 → 460 | 55.8 → 59.8 | 0.48 → 0.46 | 25.7 → 26.0 |
+| richards | 163 → 163 | 128.8 → 128.8 | 0.76 → 0.76 | 8.46 → 8.37 |
+| deltablue | 27 → 27 | 392.4 → 392.4 | 2.86 → 2.65 | 1.35 → 1.37 |
+| raytrace | 3,071, 3,080 → 3,061, 3,058 | 197.7 → 197.7 | 1.46 → 1.44 | 175 → 183 |
+| go | 1,058 → 1,058 | 276.6 → 276.6 | 2.37 → 2.42 | 60.9 → 60.6 |
+
+All 29 benchmarks: code 2,381 → 2,369 KB, compile 20.1 → 19.4 ms. compilebench's code column moves in whole 4 KB respawn-stub chunks (`dispatcher.c:psyco_new_stub`, 15 bytes a stub): an int bound's one-digit test adds a respawn point, and a benchmark whose last chunk fills takes a new one (chaos, nbody and scimark_monte_carlo +4.0 KB; scimark_sor and meteor_contest −4 to −5 KB the other way). The code itself: `tools/codesize.py` (an `NI_CODESTATS` build) gives chaos 57 → 57 KB, pyflate 182 → 180 KB (BUILD_SLICE's 1.3 KB gone, BINARY_SUBSCR 3.1 → 2.9 KB), hexiom 269 → 254 KB with 5,051 → 4,841 compiles (the helpers' results have a known type, so the code after them needs no promotion of it; [inferred]). In pyflate's profile `PySlice_New`, `slice_dealloc`, `PySlice_Unpack` and `_PyEval_SliceIndex` are gone; `list_ass_slice` and `list_slice` are what is left, the slicing itself. [run]
+
+Left: tuple slices (the generic path; no hot site), a step (`x[::-1]`), bounds with `__index__`, `str.join`, `bytes.join` and `%` (above), and the `bytes.join` of pyflate (1.1%), which is the join's own work.
