@@ -5,6 +5,7 @@
 import io
 import logging
 import sys
+import traceback
 import warnings
 
 
@@ -84,6 +85,74 @@ def lineno_middle():
 
 def lineno_chain():
     return lineno_middle()
+
+
+def caller_seen():
+    f = sys._getframe(1)
+    return f.f_code.co_name, f.f_lineno - f.f_code.co_firstlineno
+
+
+def seen_kw(k):
+    return caller_seen()
+
+
+class Seen:
+    def __init__(self):
+        self.seen = caller_seen()
+
+
+def seen_gen():
+    yield caller_seen()
+
+
+# what sys._getframe(1) gives a callee of a function reached by a keyword
+# call, of an __init__ and of a generator
+def getframe_through():
+    return seen_kw(k=1), Seen().seen, next(seen_gen())
+
+
+# pyparsing's _trim_arity: call a parse action with fewer arguments until
+# one fits, telling a wrong arity from a TypeError inside it by the line
+# of the traceback's last frame
+def trim_arity(func, max_limit=3):
+    limit = [0]
+
+    def wrapper(*args):
+        while 1:
+            try:
+                return func(*args[limit[0]:])
+            except TypeError as te:
+                if limit[0] < max_limit:
+                    tb = te.__traceback__
+                    frames = traceback.extract_tb(tb, limit=2)
+                    if frames[-1][:2] == called_at:
+                        limit[0] += 1
+                        continue
+                raise
+    here = traceback.extract_stack(limit=1)[-1]
+    called_at = (here[0], here[1] - (trim_arity_line - wrapper_call_line))
+    return wrapper
+
+
+trim_arity_line = trim_arity.__code__.co_firstlineno + 15
+wrapper_call_line = trim_arity.__code__.co_firstlineno + 6
+
+
+def one_arg_action(toks):
+    return [t.upper() for t in toks]
+
+
+def raising_action(toks):
+    raise TypeError('inside')
+
+
+def trim_arity_case():
+    out = [trim_arity(one_arg_action)('s', 0, ['a', 'b'])]
+    try:
+        trim_arity(raising_action)('s', 0, ['a'])
+    except TypeError as e:
+        out.append(str(e))
+    return out
 
 
 def logged():
@@ -227,4 +296,6 @@ CASES = [
     ('raised_middle', "[()]", {}),
     ('caught_middle', "[()]", {}),
     ('lineno_chain', "[()]", {}),
+    ('getframe_through', "[()]", {}),
+    ('trim_arity_case', "[()]", {}),
 ]
