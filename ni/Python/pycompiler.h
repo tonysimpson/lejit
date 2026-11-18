@@ -139,6 +139,7 @@ EXTERNFN void PycException_Promote(PsycoObject *po, vinfo_t *vi,
    code ran (a counter at the start of each promoted block, this build only)
    and how often the C dispatcher was entered (inline cache misses). */
 EXTERNVAR int psyco_cs_promo_cur; /* site being compiled from, or -1 */
+EXTERNFN void psyco_codestats_delete(PsycoObject *po); /* PsycoObject_Delete */
 EXTERNFN int psyco_cs_promo_site(PsycoObject *po, int pflags, long stub_bytes);
 EXTERNFN void psyco_cs_promo_begin(int site, long key, int kind);
 EXTERNFN void psyco_cs_promo_end(void);

@@ -35,7 +35,5 @@ EXTERNFN vinfo_t* PsycoTuple_New(int count, vinfo_t** source);
    Never sets a PycException. */
 EXTERNFN int PsycoTuple_Load(vinfo_t* tuple);
 
-EXTERNFN vinfo_t* PsycoTuple_Concat(PsycoObject* po, vinfo_t* v1, vinfo_t* v2);
-
 
 #endif /* _PSY_TUPLEOBJECT_H */

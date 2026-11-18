@@ -158,7 +158,7 @@ RULES = {
 # (gen_<file>_init). Ni's choice of what to translate, as Ni's declarations
 # are for abstract.c.
 TRANSLATED_SLOTS = {
-    'Objects/tupleobject.c': {'type': 'PyTuple_Type', 'slots': ['sq_contains']},
+    'Objects/tupleobject.c': {'type': 'PyTuple_Type', 'slots': ['sq_contains', 'sq_concat', 'sq_repeat']},
 }
 
 # ---- limits: numbers in Ni's code, checked to be the same -------------------
@@ -1173,11 +1173,15 @@ ENTRIES = {
     'Objects/listobject.c:PyList_Append': {'shape': '5a78f1bd8020', 'ni': ['ni/Objects/plistobject.c:PsycoList_Append']},
     'Objects/tupleobject.c:tupleconcat': {
         'shape': '0d7660e5e007',
-        'ni': ['ni/Objects/ptupleobject.c:PsycoTuple_Concat'],
+        'ni': ['tools/metac/gen_abstract.py:generate'],
         'policy': [
-            ('promote', 'verify_type', 'a and bb'),
-            ('shortcut', 'identity', 'an empty operand, the other an exact tuple'),
-            ('virtual', 'concat', 'operands of known length'),
+            ('restype', 'PyTuple_Type'),
+        ]},
+    'Objects/tupleobject.c:tuplerepeat': {
+        'shape': '0be624cdcd95',
+        'ni': ['tools/metac/gen_abstract.py:generate'],
+        'policy': [
+            ('shortcut', 'if_known', 'n'),
             ('restype', 'PyTuple_Type'),
         ]},
     'Objects/tupleobject.c:tupleitem': {'shape': 'e61481faa2e9', 'ni': ['ni/Objects/ptupleobject.c:ptuple_item']},

@@ -2030,6 +2030,18 @@ static void codestats_flush(PsycoObject *po) {
   }
 }
 
+/* the PsycoObject the innermost main loop compiles: every way out of the
+   loop frees it (psyco_finish_return, psyco_compile...), so its last
+   instruction is flushed as it is freed, not read after (F107) */
+static PsycoObject *cs_owner = NULL;
+
+DEFINEFN void psyco_codestats_delete(PsycoObject *po) {
+  if (po == cs_owner) {
+    codestats_flush(po);
+    cs_owner = NULL;
+  }
+}
+
 static void codestats_begin(PsycoObject *po, int instr, int opcode) {
   PyObject *key, *e;
   codestats_flush(po);
@@ -2089,6 +2101,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
   int oparg = 0;  /* Current opcode argument, if any */
   code_t *code1;
   int saved_rec_limit;
+#if NI_CODESTATS
+  PsycoObject *cs_saved_owner = cs_owner;
+  cs_owner = po;
+#endif
 
   /* save and restore the current Python exception throughout compilation */
   PyObject *old_py_exc, *old_py_val, *old_py_tb;
@@ -3318,7 +3334,9 @@ finished:
 #endif
 
 #if NI_CODESTATS
-  codestats_flush(po);
+  if (cs_owner == po)
+    codestats_flush(po);
+  cs_owner = cs_saved_owner;
 #endif
   Py_SetRecursionLimit(saved_rec_limit);
 

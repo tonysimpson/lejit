@@ -83,6 +83,8 @@ VOCABULARY = {
         'specialise_only': 'specialised only in the case named, else the generic call',
         'compile_time_unpack': 'a virtual sequence unpacked at compile time',
         'direct_meta': "a known type's meta called instead of the generic path",
+        'if_known': 'an integer parameter used as its value when that is a'
+                    ' constant, else CPython\'s function (D80)',
     },
     'likely': {
         'true': 'the condition in the note is expected true (runtime_condition_t)',

@@ -418,6 +418,9 @@ PsycoObject *psyco_duplicate(PsycoObject *po) {
 }
 
 DEFINEFN void PsycoObject_Delete(PsycoObject *po) {
+#if NI_CODESTATS
+  psyco_codestats_delete(po);
+#endif
   pyc_data_release(&po->pr);
   deallocate_array(&po->vlocals, NULL);
   PyMem_FREE(po);
