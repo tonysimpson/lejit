@@ -441,7 +441,7 @@ def build(target):
     import effects
     import gen_abstract
     try:
-        g = effects.analyse(target.src)
+        g = effects.analyse(target.python, target.src)
     except Exception as e:  # noqa: BLE001 - the build must say why
         raise cslots.GenError('effects.py: %s' % e)
     return generate(target.src, target.pyconfig,
@@ -454,8 +454,9 @@ def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--src', required=True)
     ap.add_argument('--pyconfig', required=True)
+    ap.add_argument('--python', required=True)
     args = ap.parse_args(argv)
-    g = effects.analyse(args.src)
+    g = effects.analyse(args.python, args.src)
     for name, text, report in generate(args.src, args.pyconfig,
                                        ['Py_BUILD_CORE', 'NDEBUG'], g):
         print('/* ==== %s */' % name)

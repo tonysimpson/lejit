@@ -25,6 +25,9 @@ stale_sources() {   # sources newer than ni.so (find compares to the ns)
 step "parse gate: every mirrored CPython file parses, on 3.7 and 3.8 (tests/parse_gate.py)"
 "$GEN_PY" tests/parse_gate.py
 
+step "effect snippets: small C in, the effect flags out (tests/effect_snippets.py)"
+"$GEN_PY" tests/effect_snippets.py
+
 step "generators run, twice, with the same output (tools/metac/generate.py)"
 # the cross-checks (gen_ceval against ceval.c and dis.stack_effect) run in
 # each; the build below generates again and must get the same headers

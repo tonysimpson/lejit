@@ -2879,7 +2879,7 @@ def generated(target):
             % (target.version, '\n'.join('  ' + p for p in problems)))
     try:
         import effects
-        g = effects.analyse(target.src)
+        g = effects.analyse(target.python, target.src)
     except Exception as e:  # noqa: BLE001 - the build must say why
         raise cslots.GenError('effects.py: %s' % e)
     ctx = Context(target.src, target.pyconfig, gen_abstract.target_defines(target.python))

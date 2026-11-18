@@ -661,7 +661,7 @@ class Translator:
         self.s = source
         self.ni = ni              # {name: NiDecl}
         self.policy = policy      # {function: [items]}
-        self.effects = effects    # effects.Graph, or None
+        self.effects = effects    # effects.Effects, or None
         self.sums = {}
         self.metas = {}           # name -> meta text
         self.copies = {}          # copy name -> C text
@@ -1044,28 +1044,13 @@ class Translator:
         return out + ''.join(' | ' + x for x in extra)
 
     def effect_flags(self, key):
-        """CfPure, CfNoPython, CfNoBlock as the effect rules prove them (rule
-        effects); a function that may run Python may block."""
-        g = self.effects
-        if g is None or key is None or key not in g.nodes:
-            return []
-        if key in g.python:
-            return []
-        out = []
-        if key not in g.impure and key not in g.raises:
-            out.append('CfPure')
-        else:
-            out.append('CfNoPython')
-        if key not in g.blocks:
-            out.append('CfNoBlock')
-        return out
+        """CfPure, CfNoPython, CfNoBlock as effects.py proves them."""
+        return self.effects.cf_flags(key) if self.effects is not None else []
 
     def cannot_raise(self, key):
-        """The effect rules prove the function neither raises nor runs
-        Python (PyCallable_Check)."""
-        g = self.effects
-        return g is not None and key is not None and key in g.nodes \
-            and key not in g.python and key not in g.raises
+        """effects.py proves the function neither raises nor runs Python
+        (PyCallable_Check)."""
+        return self.effects is not None and self.effects.cannot_raise(key)
 
     def effects_key(self, name):
         g = self.effects
@@ -4656,7 +4641,7 @@ def build_float(target):
 def build(target, unit=None):
     try:
         import effects
-        g = effects.analyse(target.src)
+        g = effects.analyse(target.python, target.src)
     except Exception as e:  # noqa: BLE001 - the build must say why
         raise cslots.GenError('effects.py: %s' % e)
     try:
@@ -4677,9 +4662,9 @@ def main(argv):
     ap.add_argument('--unit', default='abstract', choices=sorted(UNITS))
     args = ap.parse_args(argv)
     g = None
-    if not args.no_effects:
+    if args.python and not args.no_effects:
         import effects
-        g = effects.analyse(args.src)
+        g = effects.analyse(args.python, args.src)
     defines = target_defines(args.python) if args.python else ['Py_BUILD_CORE', 'NDEBUG']
     text, report = generate(args.src, args.pyconfig, defines, effects=g,
                             unit=UNITS[args.unit])

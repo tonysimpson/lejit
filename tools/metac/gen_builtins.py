@@ -671,7 +671,7 @@ def build_math(target):
 def build(target, unit=None):
     try:
         import effects
-        g = effects.analyse(target.src)
+        g = effects.analyse(target.python, target.src)
     except Exception as e:  # noqa: BLE001 - the build must say why
         raise cslots.GenError('effects.py: %s' % e)
     try:
@@ -691,9 +691,9 @@ def main(argv):
     ap.add_argument('--unit', default='bltin', choices=sorted(UNITS))
     args = ap.parse_args(argv)
     g = None
-    if not args.no_effects:
+    if args.python and not args.no_effects:
         import effects
-        g = effects.analyse(args.src)
+        g = effects.analyse(args.python, args.src)
     defines = ga.target_defines(args.python) if args.python else ['Py_BUILD_CORE', 'NDEBUG']
     text, report = generate(args.src, args.pyconfig, defines, effects=g,
                             unit=UNITS[args.unit])

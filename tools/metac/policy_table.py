@@ -730,7 +730,6 @@ SEEDS = {
     'Include/object.h:Py_SETREF': {'shape': '21234fb92350', 'reason': 'decref'},
     'Include/object.h:Py_XSETREF': {'shape': '9ec695f01240', 'reason': 'decref'},
     'Modules/gcmodule.c:collect_generations': {'shape': '78142109d4cb', 'reason': 'gc'},
-    'Include/ceval.h:Py_BEGIN_ALLOW_THREADS': {'shape': 'a919b9e72151', 'reason': 'blocks'},
     'Python/ceval.c:PyEval_SaveThread': {'shape': 'c54c983679f6', 'reason': 'blocks'},
     'Python/errors.c:PyErr_SetObject': {'shape': 'a2d4e569f670', 'reason': 'sets_error'},
     'Python/errors.c:PyErr_FormatV': {'shape': 'b0ede5d10755', 'reason': 'sets_error'},
@@ -748,13 +747,14 @@ SEEDS = {
     'Objects/obmalloc.c:PyMem_RawRealloc': {'shape': 'dda74da5262c', 'reason': 'alloc'},
     'Objects/obmalloc.c:PyMem_RawFree': {'shape': 'd104e15ea9ac', 'reason': 'alloc'},
     'Python/pylifecycle.c:Py_FatalError': {'shape': 'ad435365cd05', 'reason': 'fatal'},
-    'Include/pymacro.h:Py_UNREACHABLE': {'shape': '45fb1e8945ba', 'reason': 'fatal'},
 }
 
-# functions outside CPython's source (libc, libm), which no call graph sees:
-# pure (no side effect: can run at compile time), no_python, blocks. A
-# blocking system call in CPython is inside Py_BEGIN_ALLOW_THREADS (SEEDS),
-# so none is listed as blocks; any other is taken as no_python, not pure
+# functions outside CPython's source (libc, libm, gcc), which no call graph
+# sees: pure (no side effect: can run at compile time; effects.py counts one
+# taking a pointer as reading memory), no_python, blocks. A blocking system
+# call in CPython is inside Py_BEGIN_ALLOW_THREADS, which calls
+# PyEval_SaveThread (SEEDS), so none is listed as blocks; any other is taken
+# as no_python, not pure
 EXTERNAL = {
     'fmod': 'pure', 'copysign': 'pure', 'fabs': 'pure', 'floor': 'pure',
     'ceil': 'pure', 'sqrt': 'pure', 'exp': 'pure', 'log': 'pure', 'pow': 'pure',
@@ -763,6 +763,9 @@ EXTERNAL = {
     'tanh': 'pure', 'modf': 'pure', 'frexp': 'pure', 'ldexp': 'pure',
     'hypot': 'pure', 'round': 'pure',
     'memcmp': 'pure', 'strlen': 'pure', 'strcmp': 'pure', 'strncmp': 'pure',
+    # glibc's isfinite, isnan and isinf, compiled by gcc
+    '__builtin_isfinite': 'pure', '__builtin_isnan': 'pure',
+    '__builtin_isinf_sign': 'pure',
 }
 
 # effects Ni assumes that the analysis can't prove, each with its reason
