@@ -549,6 +549,37 @@ def cpp(src, pyconfig, cfile, defines=('Py_BUILD_CORE',)):
     return macros, toks
 
 
+def undefined_later(src, pyconfig, cfile, macros, defines=('Py_BUILD_CORE',)):
+    """{name: (line, macro)} for each macro the file #undefs that the
+    compiled file's -dM (macros) no longer lists: its definition where the
+    #undef is, from 'gcc -E -dM' of the file cut there. A function before
+    that line sees the macro, one after it the name (a function the file
+    defines, as 3.8's abstract.c does for PyIndex_Check)."""
+    import re
+    full = os.path.join(src, cfile)
+    with open(full, encoding='latin-1') as f:
+        lines = f.read().split('\n')
+    cmd = ['gcc', '-E', '-dM', '-I', os.path.dirname(full)] \
+        + [w for d in include_dirs(src) for w in ('-I', d)] \
+        + ['-I', os.path.dirname(pyconfig)] + ['-D' + d for d in defines]
+    out = {}
+    for i, text in enumerate(lines):
+        m = re.match(r'\s*#\s*undef\s+(\w+)', text)
+        if not m or m.group(1) in macros or m.group(1) in out:
+            continue
+        name = m.group(1)
+        dm = subprocess.run(cmd + ['-x', 'c', '-'], input='\n'.join(lines[:i]) + '\n',
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            universal_newlines=True, timeout=120)
+        if dm.returncode != 0:
+            raise ParseError('gcc -E -dM %s up to line %d: %s'
+                             % (cfile, i + 1, dm.stderr[:400]))
+        before = ctokens.tokenize(dm.stdout, cfile + ' (macros)')[1]
+        if name in before:
+            out[name] = (i + 1, before[name])
+    return out
+
+
 class Decls:
     """Top-level declarations of a preprocessed file: typedef names, the
     return type of each function-pointer typedef, struct fields with their

@@ -167,6 +167,9 @@ class Source:
         self.src = src
         self.cfile = CFILE = cfile
         self.macros, pptoks = cparse.cpp(src, pyconfig, CFILE, defines)
+        # macros the file #undefs: in force for the functions before
+        self.undefined = cparse.undefined_later(src, pyconfig, CFILE,
+                                                self.macros, defines)
         self.decls = cparse.Decls(pptoks)
         with open(os.path.join(src, CFILE), encoding='latin-1') as f:
             text = f.read()
@@ -210,7 +213,10 @@ class Source:
         ret = ctype_of(d.ret)
         params = split_params(d.params)
         lines = (d.body[0].line, d.body[-1].line) if d.body else (0, 0)
-        body = cparse.expand(d.body, self.local_macros, keep_local)
+        in_force = dict(self.local_macros)
+        in_force.update((n, m) for n, (ln, m) in self.undefined.items()
+                        if lines[0] < ln)
+        body = cparse.expand(d.body, in_force, keep_local)
         f = Func(name, ret, params, body, static)
         if any(lines[0] <= ln <= lines[1] for ln in self.pp_lines):
             f.why = 'a preprocessor conditional inside the body'
