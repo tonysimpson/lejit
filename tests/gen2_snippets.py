@@ -352,6 +352,46 @@ PyObject *PySnip_Once2(PyFloatObject *v) {
 }''', ['PySnip_Once2'], file='float',
          want=['PsycoFloat_AS_DOUBLE(po, v);', 'PsycoFloat_FROM_DOUBLE('],
          copy=['snip_once_a = v_ob_fval;', 'x = snip_once_a * snip_once_a;']),
+    Case('field read: a field TYPES gives a descriptor of, for the struct the C casts to', '''
+PyObject *PySnip_Field(PyObject *o) {
+    Py_ssize_t n = Py_SIZE((PyTupleObject *)o);
+    return PyLong_FromSsize_t(n);
+}''', ['PySnip_Field'], want=['_t1 = psyco_get_field(po, o, FIX_size);', 'if (_t1 == NULL)',
+                             'n = _t1;']),
+    Case('field read: a cast to the struct an object begins with reads as its own', '''
+PyObject *PySnip_Field2(PyListObject *a) {
+    Py_ssize_t n = Py_SIZE(a);
+    return PyLong_FromSsize_t(n);
+}''', ['PySnip_Field2'], want=['psyco_get_field(po, a, VAR_size);']),
+    Case('field read: a field with no descriptor resumes', '''
+PyObject *PySnip_Field3(PyObject *o) {
+    Py_ssize_t n = ((PyListObject *)o)->allocated;
+    return PyLong_FromSsize_t(n);
+}''', ['PySnip_Field3'], absent=['psyco_get_field'],
+         report='the field allocated of a run-time value'),
+    Case('bit test: a one-bit field read through its descriptor, the top bit compared', '''
+PyObject *PySnip_Ready(PyObject *s) {
+    if (PyUnicode_IS_READY(s)) return PyObject_Repr(s);
+    return PyObject_Str(s);
+}''', ['PySnip_Ready'], items={'PySnip_Ready': [Likely('PyUnicode_IS_READY(s)', True)]},
+         want=['psyco_get_field(po, s, UNICODE_state);',
+               'NI_BIT_PyASCIIObject__state__ready, Py_GE | COMPARE_UNSIGNED);',
+               'runtime_condition_t(po,', 'PyObject_Repr,']),
+    Case('bit test: with no likely item before any call, CPython\'s function runs (D111)', '''
+PyObject *PySnip_Ready2(PyObject *s) {
+    if (PyUnicode_IS_READY(s)) return PyObject_Repr(s);
+    return PyObject_Str(s);
+}''', ['PySnip_Ready2'], want=['return psyco_generic_call(po, PySnip_Ready2,'],
+         absent=['UNICODE_state'], report="no 'likely' item for the run-time test"),
+    Case('run-time choice: the likely arm, and CPython resumes where the other is taken', '''
+PyObject *PySnip_Choice(PyObject *s) {
+    if ((PyUnicode_IS_READY(s) ? 0 : PyObject_Size(s)) == -1)
+        return NULL;
+    return PyObject_Repr(s);
+}''', ['PySnip_Choice'], items={'PySnip_Choice': [Likely('PyUnicode_IS_READY(s)', True)]},
+         want=['_t3 = runtime_condition_t(po, _t2);', 'if (!_t3) {',
+               'return psyco_generic_call(po, PySnip_Choice,', 'PyObject_Repr,'],
+         absent=['PsycoObject_Size', 'PyObject_Size,'], report='the unlikely arm of'),
     Case('G11: a compare\'s operand is evaluated once', '''
 PyObject *PySnip_G11(PyObject *o) {
     if (PyObject_Size(o) < 0) return NULL;
@@ -458,6 +498,33 @@ def builtins():
     return not missing, "missing %s in %s" % (missing, report)
 
 
+def fold_may_fail():
+    """FoldMayFail: the str slots' contains, called while compiling when both
+    strings are constants, its error left to run time."""
+    import cslots
+    import cpython_src
+    import generate
+    src = cpython_src.find_source('3.7.17')
+    version, pyconfig = generate.target_info(PY37)
+    text, report = abstract.generate(cslots.Target(src, version, PY37, pyconfig),
+                                     scope.FAMILIES['unicode'])
+    i = text.find('vinfo_t * PsycoUnicode_Contains(PsycoObject *po, vinfo_t *str, '
+                  'vinfo_t *substr) {')
+    want = ['if (is_compiletime(str->source) && is_compiletime(substr->source)) {',
+            'int r = PyUnicode_Contains((PyObject *)CompileTime_Get(str->source)->value,'
+            ' (PyObject *)CompileTime_Get(substr->source)->value);',
+            'if (r >= 0)', 'return vinfo_new(CompileTime_New(r));', 'PyErr_Clear();',
+            'psyco_generic_call(po, PyUnicode_Contains, CfCommonIntBoolOrError']
+    at, missing = i, [] if i >= 0 else ['the meta']
+    for w in want:
+        k = text.find(w, at)
+        if k < 0:
+            missing.append(w)
+            break
+        at = k
+    return not missing, 'missing (in order) %s' % missing
+
+
 FILES = {'abstract': ('Objects/abstract.c', ()), 'long': ('Objects/longobject.c', ('word', 'double')),
          'float': ('Objects/floatobject.c', ('double',))}
 
@@ -527,13 +594,16 @@ def run(cases):
     ok2, msg = builtins()
     print('%s builtins: from the method table, registered under their flags%s' % (
         'ok  ' if ok2 else 'FAIL', '' if ok2 else ': ' + msg))
-    return fails + (not ok) + (not ok2)
+    ok3, msg = fold_may_fail()
+    print('%s fold-may-fail: called while compiling on constants, its error left%s' % (
+        'ok  ' if ok3 else 'FAIL', '' if ok3 else ': ' + msg))
+    return fails + (not ok) + (not ok2) + (not ok3)
 
 
 def main(argv):
     cases = [c for c in CASES if not argv or any(a in c.name for a in argv)]
     fails = run(cases)
-    print('%d of %d snippets pass' % (len(cases) + 2 - fails, len(cases) + 2))
+    print('%d of %d snippets pass' % (len(cases) + 3 - fails, len(cases) + 3))
     return 1 if fails else 0
 
 

@@ -61,6 +61,18 @@ def double_spec():
             'constructors': tuple(c.split(':')[1] for c in d['constructors'])}
 
 
+def descriptors():
+    """{struct: {field: Ni's descriptor}}: the fields of TYPES' structs
+    that Ni reads through a descriptor, by the struct's name as TYPES
+    keys it (a typedef or a tag)."""
+    import policy_table
+    out = {}
+    for key, t in policy_table.TYPES.items():
+        if 'descriptors' in t:
+            out[key.split(':')[1]] = {f: d.split(':')[1] for f, d in t['descriptors'].items()}
+    return out
+
+
 Rep = collections.namedtuple('Rep', 'name spec exprs bound')
 TEXTS = ('test', 'value', 'sign', 'bound')
 

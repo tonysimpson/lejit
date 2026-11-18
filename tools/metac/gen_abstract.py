@@ -2,7 +2,8 @@
 """General translation of CPython C functions into Psyco metas (GENERATION
 step 4, D19 stage 2, DECISIONS D74), for the files UNITS names, each
 written into its header (ptupleobject_gen.h, ...).
-Objects/abstract.c, longobject.c and floatobject.c are no longer units:
+Objects/abstract.c, longobject.c, floatobject.c, listobject.c,
+dictobject.c, bytesobject.c and unicodeobject.c are no longer units:
 tools/metac/gen2/abstract.py translates them (doc/GENERATOR_DESIGN.md,
 Migration step 3).
 
@@ -3805,10 +3806,6 @@ class Unit:
 
 UNITS = {
     'tuple': Unit('Objects/tupleobject.c', None, 'ptupleobject.c'),
-    'list': Unit('Objects/listobject.c', None, 'plistobject.c'),
-    'dict': Unit('Objects/dictobject.c', None, 'pdictobject.c'),
-    'bytes': Unit('Objects/bytesobject.c', None, 'pbytesobject.c'),
-    'unicode': Unit('Objects/unicodeobject.c', None, 'punicodeobject.c'),
     'structmember': Unit('Python/structmember.c', 'ni/Objects/pstructmember.h', 'pstructmember.c'),
     'descr': Unit('Objects/descrobject.c', None, 'pdescrobject.c'),
     'object': Unit('Objects/object.c', None, 'pobject.c'),
@@ -4097,26 +4094,6 @@ def target_defines(python):
 def build_tuple(target):
     """ptupleobject_gen.h: the tuple slots the translator generates."""
     return build(target, UNITS['tuple'])
-
-
-def build_list(target):
-    """plistobject_gen.h: the list slots the translator generates."""
-    return build(target, UNITS['list'])
-
-
-def build_dict(target):
-    """pdictobject_gen.h: the dict slots the translator generates."""
-    return build(target, UNITS['dict'])
-
-
-def build_bytes(target):
-    """pbytesobject_gen.h: the bytes slots the translator generates."""
-    return build(target, UNITS['bytes'])
-
-
-def build_unicode(target):
-    """punicodeobject_gen.h: the str slots the translator generates (D89)."""
-    return build(target, UNITS['unicode'])
 
 
 def build_structmember(target):

@@ -7,6 +7,7 @@ is resume.py's.
   residual      psyco_generic_call of CPython's function (or a static's copy)
   meta call     a call of another function of the family, translated
   guard         a type's slot or mro read through Ni (a heap type's may change)
+  field read    an object's field through Ni's descriptor (TYPES 'descriptors')
   promote       an object parameter's type, by Psyco_NeedType
   raise         PyErr_Format and PyErr_SetString, at compile time
 Inline, scalar helper, build virtual and restart have no use in this
@@ -102,6 +103,83 @@ def subtype(w, p, out, frames, args):
     guard(w, p, out, frames, 'Psyco_TypeIsSubtype(po, %s, %s, &%s)' % (a.c, b.c, r),
           'the mro of a heap type changed')
     return Val('meta', r, INT)
+
+
+# ---- field reads ----
+
+def struct_of(w, t):
+    """The TYPES struct a pointer type points to (its typedef or tag), or
+    None."""
+    from .types import descriptors
+    pt = w.u.pointee(t)
+    if pt is None:
+        return None
+    tag = w.u.struct_name(pt)
+    for name in descriptors():
+        named = c_ast.TypeDecl(None, [], None, c_ast.IdentifierType([name]))
+        if name in (text(pt).replace('const ', '').strip(), tag) \
+                or (tag is not None and w.u.struct_name(named) == tag):
+            return name
+    return None
+
+
+def structs_of(w, x, b):
+    """The TYPES structs the object x is read as, outermost cast first,
+    then its variable's own type."""
+    out = []
+    while isinstance(x, c_ast.Cast):
+        out.append(struct_of(w, x.to_type.type))
+        x = x.expr
+    out.append(struct_of(w, b.var.ctype))
+    return out
+
+
+def field_read(w, e, b, p, out):
+    """x->f of an object, f a field TYPES gives Ni's descriptor of: the
+    struct is the outermost the C casts x to that TYPES names, else x's
+    own (a cast to PyVarObject or PyObject, which every object begins
+    with, says nothing). None if no rule."""
+    from .types import descriptors
+    if b.bt != 'dynamic' or b.var is None:
+        return None
+    field = e.field.name
+    for st in structs_of(w, e.name, b):
+        d = descriptors().get(st, {}).get(field) if st else None
+        if d is None:
+            continue
+        t = w.new_tmp('vinfo_t *')
+        out.line('%s = psyco_get_field(po, %s, %s);' % (t, b.var.cname, d))
+        w.error_exit(p, out, '%s == NULL' % t)
+        ftype = w.type_of(e)
+        return Val('dynamic', t, ftype, owned=True)
+    return None
+
+
+# ---- fold-may-fail ----
+
+def fold_may_fail(w, p, out):
+    """The function called while compiling when its object parameters
+    are all constants (policy FoldMayFail); its C int result, if no
+    error, is the meta's constant."""
+    if w.sm.kind != 'val' or not w.u.is_int(w.fn.decl.type.type):
+        raise Refuse('fold_may_fail of a function not returning a C int')
+    if 'static' in w.fn.decl.storage:
+        raise Refuse('fold_may_fail of a static function, which Ni cannot call')
+    objs = [n for n, t in w.params if w.u.is_object(t)]
+    args = []
+    for n, t in w.params:
+        v = p.vars[n]
+        if v.bt != 'dynamic':
+            args.append(v.cname)
+        elif w.u.is_object(t):
+            args.append('(PyObject *)CompileTime_Get(%s->source)->value' % v.cname)
+        else:
+            raise Refuse('fold_may_fail with the run-time integer %s' % n)
+    sub = out.sub()
+    sub.line('%s r = %s(%s);' % (text(w.fn.decl.type.type), w.name, ', '.join(args)))
+    sub.unbraced_if('r >= 0', 'return vinfo_new(CompileTime_New(r));')
+    sub.line('PyErr_Clear(); /* raised again at run time */')
+    out.if_(' && '.join('is_compiletime(%s->source)' % p.vars[n].cname for n in objs), sub)
 
 
 # ---- raise ----
@@ -223,16 +301,73 @@ def runtime_compare(w, p, out, e, op, va, vb, facts_t, facts_f, value=False):
             # nothing run yet: CPython's code runs whole, its branches its own
             raise ResumeHere("no 'likely' item for the run-time branch %s" % cprint.expr(e))
         raise Refuse("no 'likely' item for the run-time branch %s" % cprint.expr(e))
-    if item.text not in w.rec.used_likely:
-        w.rec.used_likely.append(item.text)
-    t = w.new_tmp('int')
-    out.line('%s = runtime_condition_%s(po, %s);' % (t, 't' if item.how else 'f', cc))
+    t = likely_branch(w, item, cc, out)
     if ct and vb.c == '0' and va.var is not None and facts_f is not None:
         if op == '<':
             facts_f.append('assert_nonneg(%s);' % va.c)
         elif op == '>=':
             facts_t.append('assert_nonneg(%s);' % va.c)
     return t
+
+
+def likely_branch(w, item, cc, out):
+    """The meta's C truth of condition code cc, the branch item favours
+    assumed (the other is compiled when it is taken)."""
+    if item.text not in w.rec.used_likely:
+        w.rec.used_likely.append(item.text)
+    t = w.new_tmp('int')
+    out.line('%s = runtime_condition_%s(po, %s);' % (t, 't' if item.how else 'f', cc))
+    w.chosen[t] = item.how
+    return t
+
+
+def bit_test(w, e, p, out, frames):
+    """X->F.B as a test, B a one-bit field of F, where LAYOUTS lists F's
+    bits and TYPES a descriptor of F: F read through it, and B, the top
+    bit of the bytes Ni reads, tested as 'F >= B's mask', unsigned. None
+    if e is no such read."""
+    import policy_table
+    from .types import descriptors
+    if not (isinstance(e, c_ast.StructRef) and e.type == '.'
+            and isinstance(e.name, c_ast.StructRef) and e.name.type == '->'):
+        return None
+    b = w.ev(e.name.name, p, out, frames)
+    if b.bt != 'dynamic' or b.var is None:
+        return None
+    field, bit = e.name.field.name, e.field.name
+    for st in structs_of(w, e.name.name, b):
+        lay = policy_table.LAYOUTS.get(st or '', {})
+        bits = lay.get('bits', {}).get(field)
+        desc = descriptors().get(st or '', {}).get(field)
+        if bits and desc:
+            break
+    else:
+        return None
+    read = {n: r for n, _, r in lay.get('fields', ())}.get(field)
+    pos = 0
+    for spec in bits:
+        name, width = spec.split(':')
+        if name == bit:
+            break
+        pos += int(width)
+    else:
+        raise ResumeHere('no bit %s in %s.%s' % (bit, st, field))
+    if read is None or int(width) != 1 or pos + 1 != int(read.split('/')[0][1:]):
+        raise ResumeHere('the bit-field %s.%s is not the top bit Ni reads' % (field, bit))
+    item = next((i for i in w.likely if same(i.expr, e)), None)
+    if item is None:
+        if not p.called:
+            raise ResumeHere("no 'likely' item for the run-time test %s" % cprint.expr(e))
+        raise Refuse("no 'likely' item for the run-time test %s" % cprint.expr(e))
+    fv = w.new_tmp('vinfo_t *')
+    out.line('%s = psyco_get_field(po, %s, %s);' % (fv, b.var.cname, desc))
+    w.error_exit(p, out, '%s == NULL' % fv)
+    cc = w.new_tmp('condition_code_t')
+    out.line('%s = integer_cmp_i(po, %s, NI_BIT_%s__%s__%s, Py_GE | COMPARE_UNSIGNED);'
+             % (cc, fv, st, field, bit))
+    out.line('vinfo_decref(%s, po);' % fv)
+    w.error_exit(p, out, '%s == CC_ERROR' % cc)
+    return likely_branch(w, item, cc, out)
 
 
 COMPARE = {'<': 'Py_LT', '<=': 'Py_LE', '==': 'Py_EQ', '!=': 'Py_NE', '>': 'Py_GT',

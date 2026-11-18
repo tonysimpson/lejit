@@ -13,6 +13,14 @@ names the item.
                       function; the function is not generated
   HandOnly(what)      an item only Ni's hand translation implements: the
                       function is left to it (a transitional reason)
+  Whole(why)          the meta calls the function whole, with its effect
+                      flags: what compiling it would gain is not worth
+                      the guards it costs
+  FoldMayFail(why)    when every object argument is a constant, the meta
+                      calls CPython's function while compiling; an error
+                      is cleared and left to the run-time code (the
+                      arguments are immutable, so a respawn's replay of
+                      the call is safe)
 
 Where these are, and where a generic rule decides instead, is the design's
 "Rules" table; each item here has the source's own reason as its note.
@@ -79,6 +87,32 @@ class HandOnly:
         return None
 
 
+class Whole:
+    def __init__(self, why):
+        self.why, self.text, self.expr = why, None, None
+
+    def __repr__(self):
+        return 'whole'
+
+    def check(self, fn, unit):
+        return None
+
+
+class FoldMayFail:
+    def __init__(self, why):
+        self.why, self.text, self.expr = why, None, None
+
+    def __repr__(self):
+        return 'fold_may_fail'
+
+    def check(self, fn, unit):
+        params = fn.decl.type.args.params if fn.decl.type.args else ()
+        if not any(unit.is_object(getattr(p, 'type', None)) for p in params
+                   if getattr(p, 'name', None)):
+            return '%r: %s takes no object' % (self, fn.decl.name)
+        return None
+
+
 ITEMS = {
     'abstract': {
         'PySequence_GetItem': [Likely('i < 0', False)],
@@ -99,6 +133,16 @@ ITEMS['long'] = {f: [Restype('PyLong_Type')] for f in (
 ITEMS['long']['long_abs'].append(Likely('Py_SIZE(v) < 0', False))
 ITEMS['long']['long_true_divide'] = [Restype('PyFloat_Type')]
 ITEMS['float'] = {'float_float': [Restype('PyFloat_Type')]}
+ITEMS['unicode'] = {
+    # a legacy string (not ready) is rare
+    'unicode_length': [Likely('PyUnicode_IS_READY(self)', True)],
+    # strings are immutable
+    'PyUnicode_Contains': [FoldMayFail('two constant strings')],
+    # it builds a new string: compiled, it would test both strings' readiness
+    # and types only to call CPython's copy of the rest
+    'PyUnicode_Concat': [Whole('a new string built in C')],
+    'PyUnicode_RichCompare': [HandOnly('promote known_only'), HandOnly('virtual result')],
+}
 
 # The translator's budgets: past one, the function (or the call) is left to
 # the run-time code, and the report names the budget.
@@ -108,7 +152,7 @@ BUDGETS = {
     'inline_statements': 40,    # a callee's statements, to inline it
 }
 
-KINDS = (Likely, Restype, NotTranslation, HandOnly)
+KINDS = (Likely, Restype, NotTranslation, HandOnly, FoldMayFail, Whole)
 
 
 def load(target, family, items=None, extra=''):

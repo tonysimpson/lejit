@@ -288,13 +288,15 @@ RULES = {
                 " branch on it needs a 'likely' item naming the macro the C"
                 " wrote (PyUnicode_IS_READY).",
         'decisions': ['D89'],
-        'applied_by': ['tools/metac/conditions.py:ConditionRules'],
+        'applied_by': ['tools/metac/conditions.py:ConditionRules',
+                       'tools/metac/gen2/actions.py:bit_test'],
     },
     'runtime_choice': {
         'what': "'c ? A : B' on a run-time test takes the arm c's 'likely' item"
                 " favours; on the other, CPython resumes from the statement.",
         'decisions': ['D89'],
-        'applied_by': ['tools/metac/conditions.py:ConditionRules'],
+        'applied_by': ['tools/metac/conditions.py:ConditionRules',
+                       'tools/metac/gen2/walk.py:Walk'],
     },
     'raw_pointer': {
         'what': "A 'char *' pointer into an object (an object cast to char *)"
@@ -331,11 +333,6 @@ RULES = {
 # tp_descr_get); a file defining several types has one spec per type.
 TRANSLATED_SLOTS = {
     'Objects/tupleobject.c': {'type': 'PyTuple_Type', 'slots': ['sq_length', 'sq_item', 'sq_contains', 'sq_concat', 'sq_repeat', 'tp_richcompare']},
-    'Objects/listobject.c': {'type': 'PyList_Type', 'slots': ['sq_length']},
-    'Objects/dictobject.c': {'type': 'PyDict_Type', 'slots': ['mp_length']},
-    'Objects/bytesobject.c': {'type': 'PyBytes_Type', 'slots': ['sq_length']},
-    'Objects/unicodeobject.c': {'type': 'PyUnicode_Type', 'slots': [
-        'sq_length', 'sq_concat', 'sq_contains', 'tp_richcompare']},
     # member and method descriptors' __get__ (SLOT_ARGS' 'lvl')
     'Objects/descrobject.c': [{'type': 'PyMemberDescr_Type', 'slots': ['tp_descr_get']},
                               {'type': 'PyMethodDescr_Type', 'slots': ['tp_descr_get']}],
@@ -1124,8 +1121,8 @@ ENTRIES = {
     'Objects/abstract.c:PyObject_Size': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:PyMapping_Size': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/tupleobject.c:tuplelength': {'shape': 'c26701baea26', 'ni': ['tools/metac/gen_abstract.py:generate']},
-    'Objects/listobject.c:list_length': {'shape': '03a5f134f09c', 'ni': ['tools/metac/gen_abstract.py:generate']},
-    'Objects/bytesobject.c:bytes_length': {'shape': '0179586bdd2f', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/listobject.c:list_length': {'ni': ['tools/metac/gen2/abstract.py:generate']},
+    'Objects/bytesobject.c:bytes_length': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:PySequence_GetItem': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:PySequence_SetItem': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:PySequence_DelItem': {'ni': ['tools/metac/gen2/abstract.py:generate']},
@@ -1545,7 +1542,7 @@ ENTRIES = {
             ('restype', 'PyDict_Type'),
         ]},
     'Objects/dictobject.c:PyDict_SetItem': {'shape': '5a5b634a6f8b', 'ni': ['ni/Objects/pdictobject.c:PsycoDict_SetItemC']},
-    'Objects/dictobject.c:dict_length': {'shape': 'e490f691ac9c', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/dictobject.c:dict_length': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/bytesobject.c:bytes_subscript': {
         'shape': '5c4dee939553',
         'ni': ['ni/Objects/pbytesobject.c:cimpl_bytes_slice', 'ni/Objects/pbytesobject.c:pbytes_subscript'],
@@ -1564,12 +1561,7 @@ ENTRIES = {
             ('shortcut', 'const_fold', 'two constants'),
             ('virtual', 'result', 'PyBool_Type (condition code)'),
         ]},
-    'Objects/unicodeobject.c:unicode_length': {
-        'shape': '26b64b51971a',
-        'ni': ['tools/metac/gen_abstract.py:generate'],
-        'policy': [
-            ('likely', 'true', 'PyUnicode_IS_READY'),
-        ]},
+    'Objects/unicodeobject.c:unicode_length': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/unicodeobject.c:unicode_subscript': {
         'shape': '0ed1cb52e969',
         'ni': ['ni/Objects/punicodeobject.c:cimpl_unicode_item', 'ni/Objects/punicodeobject.c:cimpl_unicode_slice', 'ni/Objects/punicodeobject.c:punicode_subscript'],
@@ -1587,12 +1579,7 @@ ENTRIES = {
             ('likely', 'false', 'index < 0'),
             ('restype', 'PyUnicode_Type'),
         ]},
-    'Objects/unicodeobject.c:PyUnicode_Contains': {
-        'shape': '500a01f02f96',
-        'ni': ['tools/metac/gen_abstract.py:generate'],
-        'policy': [
-            ('shortcut', 'const_fold', 'two constants'),
-        ]},
+    'Objects/unicodeobject.c:PyUnicode_Contains': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Python/ceval.c:_PyEval_SliceIndex': {
         'shape': '2e166f506279',
         'ni': ['ni/Objects/psliceobject.c:slice_index'],

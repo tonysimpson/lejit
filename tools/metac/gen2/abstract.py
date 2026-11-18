@@ -221,10 +221,10 @@ class Translator:
             if decl.ret == 'vinfo_t *':
                 return 'val'
             raise Refuse('Ni declares %s returning %s' % (decl.name, decl.ret))
-        if 'static' in fn.decl.storage:
-            return 'val'
+        if 'static' in fn.decl.storage or fn.decl.name in self.slot_roots:
+            return 'val'        # a slot's meta gives a vinfo of its C result
         raise Refuse('an int result needs its convention: declare %s in %s'
-                     % (self.meta_name(fn), self.family.decls))
+                     % (self.meta_name(fn), self.family.decls or 'a header of Ni'))
 
     def translate(self, name):
         fn = self.funcs[name]
@@ -610,3 +610,19 @@ def build_float(target):
 
 def build_math(target):
     return build(target, 'math')
+
+
+def build_list(target):
+    return build(target, 'list')
+
+
+def build_dict(target):
+    return build(target, 'dict')
+
+
+def build_bytes(target):
+    return build(target, 'bytes')
+
+
+def build_unicode(target):
+    return build(target, 'unicode')

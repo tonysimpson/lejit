@@ -1,4 +1,4 @@
-# 3.7.17 fd50161bc2a04f4c22a0971ff0f3856d98b4bf294f89740a9f06b520aae63b49 3c6c6999176cef69992eee75cc1e7c9020a889f4+ad95167fcebf
+# 3.7.17 fd50161bc2a04f4c22a0971ff0f3856d98b4bf294f89740a9f06b520aae63b49 5a22f248e5d16351a3b24569a73aae12e5d96706+6eb9a5e5c1c0
 BEFORE_ASYNC_WITH	refused	stack: error exit with exit on the stack	Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)
 BINARY_ADD	generated		Python/ceval.c:TARGET(BINARY_ADD)
 BINARY_AND	generated		Python/ceval.c:TARGET(BINARY_AND)
@@ -176,11 +176,10 @@ PyTuple_Type.sq_item	generated		Objects/tupleobject.c:tupleitem
 PyTuple_Type.sq_length	generated		Objects/tupleobject.c:tuplelength
 PyTuple_Type.sq_repeat	resumed	n is not known at compile time: Py_ssize_t i, j;; the length of a is not known at compile time: if (Py_SIZE(a) == 0 || n == 1) { if (PyTuple_CheckExact(a)) { Py_INCRE; a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT items: np = (PyTupleObject *) PyTuple_New(size);	Objects/tupleobject.c:tuplerepeat
 PyTuple_Type.tp_richcompare	resumed	the length of v is not known at compile time: vlen = Py_SIZE(vt);; the length of w is not known at compile time: wlen = Py_SIZE(wt);	Objects/tupleobject.c:tuplerichcompare
-PyUnicode_Concat	restarted	a local of type Py_UCS4: Py_UCS4 maxchar, maxchar2;	Objects/unicodeobject.c:PyUnicode_Concat
+PyUnicode_Concat	restarted	policy whole: a new string built in C: PyObject *result;	Objects/unicodeobject.c:PyUnicode_Concat
 PyUnicode_Contains	restarted	a local of type void *: void *buf1, *buf2;	Objects/unicodeobject.c:PyUnicode_Contains
-PyUnicode_FromObject	refused	no 'likely' item in the policy table for the run-time test of the bit-field ((PyASCIIObject *)obj)->state.ready	Objects/unicodeobject.c:PyUnicode_FromObject
-PyUnicode_RichCompare	refused	policy items left to the hand translation: virtual result	Objects/unicodeobject.c:PyUnicode_RichCompare
-PyUnicode_Type.sq_length	resumed	the unlikely arm of (PyUnicode_IS_READY(self) ? 0 : _PyUnicode_Ready(self)): if ((assert(PyUnicode_Check(self)), (PyUnicode_IS_READY(self) ? 0 : _P	Objects/unicodeobject.c:unicode_length
+PyUnicode_RichCompare	refused	policy items left to the hand translation: promote known_only, virtual result	Objects/unicodeobject.c:PyUnicode_RichCompare
+PyUnicode_Type.sq_length	resumed	the unlikely arm of (((PyASCIIObject *) self)->state.ready) ? (0) : (_PyUnicode_Ready(self)): if (PyUnicode_READY(self) == -1) return -1;	Objects/unicodeobject.c:unicode_length
 RAISE_VARARGS	refused	shared code: why = WHY_EXCEPTION	Python/ceval.c:TARGET(RAISE_VARARGS)
 RETURN_VALUE	refused	shared code: goto fast_block_end	Python/ceval.c:TARGET(RETURN_VALUE)
 ROT_THREE	generated		Python/ceval.c:TARGET(ROT_THREE)
@@ -214,9 +213,9 @@ _PyLong_Negate	refused	returns void	Objects/longobject.c:_PyLong_Negate
 _PyObject_HasLen	refused	an int result needs its convention: declare _PsycoObject_HasLen in ni/Objects/pabstract.h	Objects/abstract.c:_PyObject_HasLen
 _PySequence_IterSearch	restarted	every path from here runs a loop with a run-time bound: if (seq == NULL || obj == NULL) { null_error(); return -1; }	Objects/abstract.c:_PySequence_IterSearch
 _PyUnicode_AsKind	refused	returns void *	Objects/unicodeobject.c:_PyUnicode_AsKind
-_PyUnicode_Copy	refused	no 'likely' item in the policy table for the run-time test of the bit-field ((PyASCIIObject *)unicode)->state.ready	Objects/unicodeobject.c:_PyUnicode_Copy
+_PyUnicode_Copy	refused	a call returning void	Objects/unicodeobject.c:_PyUnicode_Copy
 _PyUnicode_FastCopyCharacters	refused	returns void	Objects/unicodeobject.c:_PyUnicode_FastCopyCharacters
-_PyUnicode_Ready	refused	an int result needs its convention: declare _PsycoUnicode_Ready in ni/Objects/pabstract.h	Objects/unicodeobject.c:_PyUnicode_Ready
+_PyUnicode_Ready	refused	an int result needs its convention: declare _PsycoUnicode_Ready in a header of Ni	Objects/unicodeobject.c:_PyUnicode_Ready
 binary_iop	generated		Objects/abstract.c:binary_iop
 binary_iop1	resumed	a slot of a heap type changed: binaryfunc slot = NB_BINOP(mv, iop_slot);	Objects/abstract.c:binary_iop1
 binary_op	resumed	the field m_ml of a run-time value: if (op_slot == NB_SLOT(nb_rshift) && PyCFunction_Check(v) && strcmp(((	Objects/abstract.c:binary_op
@@ -242,7 +241,6 @@ builtins.issubclass	resumed	a count of arguments outside 2..2: if (!_PyArg_Unpac
 builtins.len	generated		Python/bltinmodule.c:builtin_len
 builtins.pow	resumed	a count of arguments outside 2..3: if (!_PyArg_UnpackStack(args, nargs, "pow", 2, 3, &x, &y, &z)) { goto 	Python/clinic/bltinmodule.c.h:builtin_pow
 builtins.setattr	resumed	a count of arguments outside 3..3: if (!_PyArg_UnpackStack(args, nargs, "setattr", 3, 3, &obj, &name, &va	Python/clinic/bltinmodule.c.h:builtin_setattr
-ensure_unicode	refused	no 'likely' item in the policy table for the run-time test of the bit-field ((PyASCIIObject *)obj)->state.ready	Objects/unicodeobject.c:ensure_unicode
 inplace_divrem1	refused	returns digit	Objects/longobject.c:inplace_divrem1
 k_lopsided_mul	refused	copy: k_lopsided_mul calls itself	Objects/longobject.c:k_lopsided_mul
 k_mul	refused	recursive	Objects/longobject.c:k_mul

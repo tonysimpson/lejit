@@ -17,6 +17,7 @@ from .ctyping import INT, LONG, VOID_P, strip_casts, text
 from .errors import Refuse, ResumeHere
 from .liveness import body
 from .types import NOT_IMPLEMENTED, SINGLETONS, SINGLETON_NAMES
+from .policy import FoldMayFail, Whole
 from .values import Conv, Path, Val, Var
 
 COMPARE = actions.COMPARE
@@ -69,6 +70,7 @@ class Walk:
         self.stmt_frames = None
         self.incref_return = None
         self.word_counts = {}     # (statement, x) -> [reads so far, reads]
+        self.chosen = {}          # a likely branch's C truth -> the arm assumed
 
     # ---- the walk's record ----
 
@@ -103,6 +105,13 @@ class Walk:
                 self.meta_params.append((text(unconst(t)), name))
         out = Code()
         self.out = out
+        if any(isinstance(i, FoldMayFail) for i in self.items):
+            actions.fold_may_fail(self, p, out)
+        whole = next((i for i in self.items if isinstance(i, Whole)), None)
+        if whole is not None:
+            self.body_start = len(out.items)
+            resume.resume(self, p, out, [(body(self.fn.body), 0)], 'policy whole: ' + whole.why)
+            return
         for name in self.hoist:
             actions.promote(self, p, out, name, entry=True)
         self.body_start = len(out.items)
@@ -593,6 +602,9 @@ class Walk:
         x = strip_casts(e)
         if reps.test(self, x, p, out, frames):
             return True
+        t = actions.bit_test(self, x, p, out, frames)
+        if t is not None:
+            return t
         if isinstance(x, c_ast.UnaryOp) and x.op == '!':
             if self.is_obj_param(x.expr, p):
                 return False
@@ -823,14 +835,31 @@ class Walk:
             c = self.cond(e.cond, p, out, frames)
             if isinstance(c, bool):
                 return self.ev(e.iftrue if c else e.iffalse, p, out, frames, dest)
+            if c in self.chosen:
+                return self.choice(e, c, p, out, frames, dest)
             va = self.ev(e.iftrue, p, out, frames)
             vb = self.ev(e.iffalse, p, out, frames)
             if va.bt == 'meta' and vb.bt == 'meta':
                 return Val('meta', '(%s ? %s : %s)' % (c, va.c, vb.c), va.ctype)
             raise ResumeHere('a run-time choice %s' % cprint.expr(e))
+        if isinstance(e, c_ast.ExprList):
+            for x in e.exprs[:-1]:
+                self.expr_stmt(x, p, out, frames)
+            return self.ev(e.exprs[-1], p, out, frames, dest)
         if isinstance(e, c_ast.ArrayRef):
             raise ResumeHere('an item %s' % cprint.expr(e))
         raise ResumeHere('expression %s' % type(e).__name__)
+
+    def choice(self, e, t, p, out, frames, dest):
+        """c ? A : B on a run-time test its likely item decides: the arm
+        it favours; where the other is taken, CPython's code resumes from
+        the statement."""
+        how = self.chosen[t]
+        back = out.sub()
+        resume.resume(self, p.copy(), back, frames, 'the unlikely arm of %s' % cprint.expr(e),
+                      inside=True)
+        out.if_(('!%s' if how else '%s') % t, back)
+        return self.ev(e.iftrue if how else e.iffalse, p, out, frames, dest)
 
     def ev_id(self, name, p, out):
         if name in p.vars:
@@ -875,6 +904,9 @@ class Walk:
             if self.u.is_object(b.ctype) and field == 'ob_type' and b.var is not None:
                 tpv = actions.promote(self, p, out, b.var.name)
                 return Val('meta', tpv, self.u.field(self.u.pointee(b.ctype), field), tp=tpv)
+            r = actions.field_read(self, e, b, p, out)
+            if r is not None:
+                return r
             raise ResumeHere('the field %s of a run-time value' % field)
         if b.bt != 'meta':
             raise ResumeHere('a field of %s' % cprint.expr(e.name))
