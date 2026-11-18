@@ -61,8 +61,8 @@ Generator bodies are never compiled. The eval hook leaves at once for generator 
 ## Differential fuzzing (`tools/fuzz/`)
 
 Random programs (BUILD.md, Fuzzing; what they cover is in `gen.py`'s docstring) run plain and with Ni, compared exactly. About 299,000 programs have run (about 240,000 on the checked build, 59,000 on a release build), each calling its functions over several rounds with arguments of varying types: 41 mismatches, all below. About 91% of the generated functions compile; the rest are generator functions, which Ni never compiles (Generators, above). Mismatches, by cause [run]:
-- **B18** (fixed, `025b394`): `integer_cmp` folded an unsigned compare of a value with itself to false, so `s[len(s)]` returned `'\x00'`. Once, in the first 1000 seeds.
-- **M12** (fixed, `b638701`): a constant index of 2**28 or more into a large array read the wrong address (a 2 GB list crashed). Once (seed 320), seen as `iencoding.h`'s range warning on stderr, which `run.py` counts.
+- **B18** (fixed, `0b53f42`): `integer_cmp` folded an unsigned compare of a value with itself to false, so `s[len(s)]` returned `'\x00'`. Once, in the first 1000 seeds.
+- **M12** (fixed, `99b81d7`): a constant index of 2**28 or more into a large array read the wrong address (a 2 GB list crashed). Once (seed 320), seen as `iencoding.h`'s range warning on stderr, which `run.py` counts.
 - **G21** (fixed on baseline, `9d72c8c`): a known tuple times a constant of 2**31 or more items crashed, the generated `tuplerepeat` keeping the size in an `int`. Four times (three checked, one release), each a lambda made in a loop multiplying its tuple default by 2**31 or 2**32.
 - **F117** (filed): a float folded from constants is one object for every run of its code, so `{NAN + 1.5 for ...}` has one NaN. Six times, always a NaN in a set or dict built in a loop.
 - **C18 and C56** (known): a generator's `finally` printing when the generator is freed, which Ni does at return (CPython keeps the frame until the handler that caught the exception ends) and in another order: 29 in seeds 100000..129999. The generator no longer prints from finalisers.

@@ -30,7 +30,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 |---|---|---|---|---|
 | `ni/blockalloc.h` | core | Fixed-size block allocator macros for vinfo_t and source_known_t; under ASan each item is its own `PyMem_MALLOC` block. | none | `e1fd808`; `ebc2296` (ASan) |
 | `ni/cf_flags.h` | core | Cf* flags describing a C function for residual calls: purity, new ref, return type, errors. | none (CPython C API conventions) | `56e5faf` |
-| `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding), integer emitters, rich compare, a frame's call-site note. | Objects/object.c | `025b394` |
+| `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding), integer emitters, rich compare, a frame's call-site note. | Objects/object.c | `0b53f42` |
 | `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions, the call-site note. | none | `fa3dae7` |
 | `ni/codemanager.c` | core | Executable memory as free extents (poisoned under ASan, a LeakSanitizer root region); owners (D102): what a code object's compiled code holds, released with it; per-address records; the owner scan for cycles through code objects, as a pending call or at a full collection (D122); compile guards (D103). | none | `55c5b5e` |
 | `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner, record and compile guard APIs. | none | `9b9dcef` |
@@ -60,7 +60,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/psyfunc.c` | core + translated | Python calls at compile time: build the callee frame, inline small functions or compile and call. | Python/ceval.c, Objects/call.c, Include/ceval.h | `95b1e61` |
 | `ni/psyfunc.h` | glue | Declarations for psyfunc.c and the generated binder (D85). | none | `e11f2a3` |
 | `ni/pycodegen.h` | core | Emits Py_INCREF/Py_DECREF and reference-ownership helpers on vinfo_t. | Include/object.h | `fa3dae7` |
-| `ni/vcompiler.c` | core | vinfo lifetime, field get/put with load folding (a constant array index only when small), coding pauses, the psyco_compile*() entry points. | none | `b638701` |
+| `ni/vcompiler.c` | core | vinfo lifetime, field get/put with load folding (a constant array index only when small), coding pauses, the psyco_compile*() entry points. | none | `99b81d7` |
 | `ni/vcompiler.h` | core | Central data model: Source, vinfo_t, field descriptors, PsycoObject (compiler state). Start here. | none | `95b1e61` |
 | `ni/Modules/pmath.c` | translated + glue | ceil and floor of an exact float; registers the generated math functions. | Modules/mathmodule.c | `cddaf8d` |
 | `ni/Objects/pabstract.c` | translated + core | The hand-written rest of the abstract protocol (`**`, `iter()`, next, int subscripts). | Objects/call.c, Objects/abstract.c, Objects/tupleobject.c, Objects/listobject.c | `351a4d5`, `935df0b` |
@@ -131,7 +131,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/x64/iprocessor.c` | backend | Run-time entry glue, the stub trampoline, stack frame walking, aligned-call glues. | none | `ee76274` |
 | `ni/x64/ipyencoding.c` | backend | function_return(), decref emitters, the inline attribute store (D47), the type guard. | Include/object.h, Objects/dictobject.c | `0d378fb` |
 | `ni/x64/ipyencoding.h` | backend (CPython object layout leaks in: ob_refcnt, ob_type->tp_dealloc) | Py_INCREF/Py_DECREF emitters, frame prologue/epilogue macros, store and guard prototypes. | Include/object.h | `0d378fb` |
-| `ni/x64/v_mem_mov.h` | backend | v_mem_mov(): one sized load/store, for field get/put on run-time objects; a constant index too large for the displacement goes in R11. | none | `b638701` |
+| `ni/x64/v_mem_mov.h` | backend | v_mem_mov(): one sized load/store, for field get/put on run-time objects; a constant index too large for the displacement goes in R11. | none | `99b81d7` |
 | `tools/test_mcg_template.c` | tooling | Template: expands one iencoding.h macro and prints its bytes, for test_asm. | none | `e1fd808` |
 | `tools/asm_microbenchmarks/bench_baseline.c` | tooling | Micro-benchmark: empty loop (baseline). | none | `e1fd808` |
 | `tools/asm_microbenchmarks/bench_compile_time_immed.c` | tooling | Micro-benchmark: MOV reg, imm64 in loop. | none | `e1fd808` |
@@ -144,7 +144,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | file | layer | what it is | reviewed |
 |---|---|---|---|
 | `setup.py` | glue | distutils build of the `ni` extension; runs `generate.py` first, with `PYTHONHASHSEED=0` (D68); `NI_SANITIZE` builds into `--build-lib` with its own config stamp. | `ebc2296` |
-| `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests); `fuzzed.py` holds what `tools/fuzz/` found, `big_arrays.py` makes a 2 GB list. | `b638701` |
+| `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests); `fuzzed.py` holds what `tools/fuzz/` found, `big_arrays.py` makes a 2 GB list. | `99b81d7` |
 | `tests/testenv.py` | tooling | What the runners share with `tools/sanitize.sh`: `NI_MODULE_DIR`, `NI_SANITIZE_LOGS` (per-child logs, longer timeouts, no address-space limit), the modules skipped under the sanitizers. | `4896477` |
 | `tests/encoding/check.py` | tooling | Checks `@asm`-annotated emitters in `iencoding.h` against GNU `as`; the cases compile in parts of 15000. | `974f1ea` |
 | `tests/smoke.py` | tooling | Stdlib smoke test: about 30 modules, output must match with and without Ni. | `6ca580a`; `ebc2296` (`NI_MODULE_DIR`) |
@@ -208,9 +208,9 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/realworld/reqs/*` | tooling | Per environment: `.in` pins the releases profiled, `.txt` the universal lock for Python 3.12+ with hashes (`uv pip compile`). | `a27ae13` |
 | `tools/realworld/wl/*` | tooling | The 12 workloads and 3 controls (apps, request lists, playbook, scripts), each printing deterministic output; written blind. | `a27ae13` |
 | `tools/adversarial/*.py` | tooling | One benchmark per file aimed at a Ni weakness (its docstring names it and what variant 1 changes), `main(n, variant=0)` and `N` for running it alone; written blind, not to be tuned on Ni's results. | `49763c9` |
-| `tools/fuzz/gen.py` | tooling | The fuzzer's generator: one random, valid, deterministic 3.7 program per seed, expressions generated by kind, growth bounded (BUILD.md, Fuzzing). | `58efe08` |
-| `tools/fuzz/run.py`, `launch.py` | tooling | Runs seeds plain and with Ni and compares output, exit status and Ni's stderr diagnostics; keeps mismatches. | `ac5e69d` |
-| `tools/fuzz/minimise.py` | tooling | Shrinks a mismatching program on its AST while the kind of mismatch stays the same. | `9572222` |
+| `tools/fuzz/gen.py` | tooling | The fuzzer's generator: one random, valid, deterministic 3.7 program per seed, expressions generated by kind, growth bounded (BUILD.md, Fuzzing). | `4fdeda4` |
+| `tools/fuzz/run.py`, `launch.py` | tooling | Runs seeds plain and with Ni and compares output, exit status and Ni's stderr diagnostics; keeps mismatches. | `32bc4d0` |
+| `tools/fuzz/minimise.py` | tooling | Shrinks a mismatching program on its AST while the kind of mismatch stays the same. | `344019a` |
 | `tools/closurecalls.py` | tooling | Counts calls straight to closures per benchmark iteration (`FINDINGS.md "Calls to closures"`). | `b11de13` |
 | `tools/closure_micro.py` | tooling | One loop calling a function or each kind of closure, for `perf stat` (`FINDINGS.md "Calls to closures"`). | `b11de13` |
 | `tools/interpreted.py` | tooling | Per benchmark, the most-called functions still interpreted under Ni, with the reason. | `5f1dbf6` |
