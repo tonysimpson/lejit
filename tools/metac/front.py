@@ -188,6 +188,7 @@ def mirrored_files():
     files |= set(policy_table.TRANSLATED_SLOTS)
     from gen2 import scope
     files |= {f.cfile for f in scope.FAMILIES.values()}
+    files |= {s[2] for f in scope.FAMILIES.values() for s in f.slots if len(s) > 2}
     for path in glob.glob(os.path.join(HERE, 'gen_*.py')):
         with open(path) as f:
             files |= set(re.findall(r"'((?:Objects|Python|Modules)/[\w/-]+\.c)'",

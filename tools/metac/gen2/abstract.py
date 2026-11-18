@@ -54,17 +54,19 @@ class Summary:
 
 
 class Translator:
-    def __init__(self, family, ast, ni, declared, items, effects, own=None):
+    def __init__(self, family, ast, ni, declared, items, effects, own=None, slot_asts=None):
         """own: the file whose functions are translated, if not the
-        family's (a test's C after it)."""
+        family's (a test's C after it); slot_asts: {file: its AST} of the
+        files defining types whose slots the family fills."""
         self.family = family
         self.unit = Unit(ast)
         self.reps = types.load(ast, family.reps)
         self.budgets = dict(policy.BUDGETS)
         self.slot_roots = {}      # function -> [(slot reference, slot)]
         self.slot_types = {}      # function -> its type
-        for tp, names in family.slots:
-            for f, refs in slots.slot_functions(ast, self.unit, tp, names).items():
+        for tp, names, *where in family.slots:
+            a, u = (slot_asts[where[0]], Unit(slot_asts[where[0]])) if where else (ast, self.unit)
+            for f, refs in slots.slot_functions(a, u, tp, names).items():
                 self.slot_roots.setdefault(f, []).extend(refs)
                 self.slot_types.setdefault(f, tp)
         # function -> (Python name, flag names, METH_ARGS spec)
@@ -83,6 +85,7 @@ class Translator:
         self.resumes = []
         self.local_bts, self.liveness, self.expanded = {}, {}, {}
         self.reps_used, self.budgets_hit = set(), []
+        self.header_asserts = set()   # assertions the header makes (address.py)
         self.loop_hoists = {}     # function -> {loop: [promotions at its entry]}
         self.copies = resume.Copies(self)
         self._expansions = {}
@@ -545,7 +548,8 @@ def generate(target, family, effects=None):
     ni = conventions.ni_decls(ROOT, scope.NI_HEADERS)
     declared = set(conventions.ni_decls(ROOT, [family.decls])) if family.decls else set()
     items = policy.load(ft, family)
-    tr = Translator(family, ast, ni, declared, items, effects)
+    slot_asts = {s[2]: front.parse(ft, s[2]) for s in family.slots if len(s) > 2}
+    tr = Translator(family, ast, ni, declared, items, effects, slot_asts=slot_asts)
     order = tr.run()
     # keep what Ni's declarations reach
     by_meta = {tr.sums[n].meta: n for n in order if n in tr.metas}
@@ -578,6 +582,8 @@ def generate(target, family, effects=None):
                 '_Static_assert(sizeof(int) * 8 == 32, "C ints are 32 bits");',
                 '_Static_assert(%s == %d, "the word range of %s");' % (
                     r.spec['bound'], r.bound, r.spec['struct']), '']
+    if tr.header_asserts:
+        out += sorted(tr.header_asserts) + ['']
     if copies:
         out.append('/* run-time copies: where a heap type\'s slot changed, or'
                    ' where the meta has no compile-time form, CPython\'s'
@@ -686,3 +692,15 @@ def build_bytes(target):
 
 def build_unicode(target):
     return build(target, 'unicode')
+
+
+def build_structmember(target):
+    return build(target, 'structmember')
+
+
+def build_descr(target):
+    return build(target, 'descr')
+
+
+def build_object(target):
+    return build(target, 'object')

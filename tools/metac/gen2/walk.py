@@ -11,7 +11,7 @@ import copy
 
 from pycparser import c_ast
 
-from . import actions, cprint, items, loops, reps, resume, scalar
+from . import actions, address, cprint, items, loops, reps, resume, scalar
 from .cbuild import Code
 from .ctyping import INT, LONG, VOID_P, strip_casts, text
 from .errors import Refuse, ResumeHere
@@ -65,12 +65,14 @@ class Walk:
         self.live = tr.liveness[self.name]
         self.items = tr.policy.get(self.name, [])
         self.likely = [i for i in self.items if type(i).__name__ == 'Likely']
+        self.holds = [i for i in self.items if type(i).__name__ == 'Holds']
         self.restype = [i.tp for i in self.items if type(i).__name__ == 'Restype']
         self.rec = Record()
         self.switch_depth = 0
         self.goto_depth = 0
         self.stmt_ncalls = 0
         self.stmt_frames = None
+        self.stmt_called = True   # a call before the statement being walked
         self.incref_return = None
         self.word_counts = {}     # (statement, x) -> [reads so far, reads]
         self.chosen = {}          # a likely branch's C truth -> the arm assumed
@@ -167,6 +169,9 @@ class Walk:
         for item in self.likely:
             if item.text not in self.rec.used_likely:
                 raise Refuse('policy %r matches no run-time branch' % item)
+        for item in self.holds:
+            if item.text not in self.rec.used_likely:
+                raise Refuse('policy %r matches no test walked' % item)
 
     def if_known(self, p, out, name):
         """Policy IfKnown: the integer parameter is its compile-time value
@@ -293,8 +298,9 @@ class Walk:
     def statement(self, s, p, out, frames):
         mark = len(out.items)
         saved_p, saved_r = p.copy(), self.rec.snapshot()
-        outer = self.stmt_ncalls, self.stmt_frames
+        outer = self.stmt_ncalls, self.stmt_frames, self.stmt_called
         self.stmt_ncalls, self.stmt_frames = self.rec.ncalls, frames
+        self.stmt_called = saved_p.called
         try:
             self.stmt(s, p, out, frames)
         except ResumeHere as e:
@@ -304,7 +310,7 @@ class Walk:
             self.stmt_ncalls = self.rec.ncalls
             resume.resume(self, p, out, frames, str(e))
         finally:
-            self.stmt_ncalls, self.stmt_frames = outer
+            self.stmt_ncalls, self.stmt_frames, self.stmt_called = outer
 
     # ---- ownership ----
 
@@ -430,6 +436,8 @@ class Walk:
                 if val.bt != 'meta':
                     raise Refuse('%s is meta, given a dynamic value' % name)
                 out.line('%s %s %s;' % (v.cname, e.op, val.c))
+            elif address.step(self, p, out, name, e.op, e.rvalue, frames):
+                pass
             elif e.op in ('+=', '-=') and v is not None and v.bt == 'dynamic':
                 self.assign(p, out, name, c_ast.BinaryOp(e.op[0], lv, e.rvalue, e.coord), frames)
             else:
@@ -516,6 +524,7 @@ class Walk:
         else:
             out.line('%s = %s;' % (v.cname, val.c))
         v.own = 'new' if val.owned else 'borrowed'
+        v.noref = val.noref
         v.alias = param_alias(val.var) if not val.owned else None
         v.conv = val.conv
         v.virt = val.virt
@@ -625,6 +634,8 @@ class Walk:
 
     def ret_value(self, p, out, cexpr, as_ok=False, notimpl=False):
         """Return a value the meta owns, after releasing the rest."""
+        if p.failed:
+            raise Refuse('returns a value where an error is pending')
         expr = '%s != NULL' % cexpr if as_ok else cexpr
         owned = [v for v in p.vars.values() if v.bt == 'dynamic' and v.owned()]
         if self.restype and not as_ok:
@@ -644,6 +655,8 @@ class Walk:
         self.rec.returns.append('value')
 
     def ret_value_owned(self, p, out, val):
+        if p.failed:
+            raise Refuse('returns a value where an error is pending')
         keep = val.var.name if val.var is not None else None
         if self.restype and val.var is None and val.made not in self.restype:
             r = val.c
@@ -680,7 +693,7 @@ class Walk:
     # ---- if ----
 
     def if_stmt(self, s, p, out, frames):
-        facts_t, facts_f = [], []
+        facts_t, facts_f, pre = [], [], []
         self.sc_slots = None
         self.status_err = None
         c = s.cond
@@ -692,6 +705,7 @@ class Walk:
                 self.block(body(branch), p, out, frames)
             return
         pt, pf = p.copy(), p.copy()
+        out_t, out_f = out.sub(), out.sub()
         nt = self.null_test(c, p)
         if nt is not None:
             # where the error test held, the value is NULL: nothing to release
@@ -703,6 +717,13 @@ class Walk:
         st = self.status_test(c)
         if st is not None:
             (pt if st else pf).failed = True
+        nr = self.noref_null_test(c, p)
+        if nr is not None:
+            # read from memory and NULL there: no object, its vinfo released
+            name, when = nr
+            q, o = (pt, out_t) if when else (pf, out_f)
+            x = q.vars[name]
+            pre.append((o, x))
         it = self.impl_test(c, p)
         if it is not None:
             name, when = it
@@ -711,7 +732,9 @@ class Walk:
                 x.conv = x.conv.but(notimpl=False)
         if sc is not None and sc[0] == strip_casts(c).op:
             (pt if sc[0] == '&&' else pf).slots.update(sc[1])
-        out_t, out_f = out.sub(), out.sub()
+        for o, x in pre:
+            self.release(x, o)
+            x.own, x.known_null, x.noref = 'none', True, False
         for line in facts_t:
             out_t.line(line)
         for line in facts_f:
@@ -723,8 +746,51 @@ class Walk:
             self.block(body(s.iffalse), pf, out_f, frames)
         else:
             self.release_dead(pf, out_f, self.live.after[id(s)])
+        for q, o, r in ((pt, out_t, pf), (pf, out_f, pt)):
+            if q.failed and not q.ended and not r.failed:
+                # an error is pending on this arm only: the rest of the
+                # function on its own, as if copied here
+                self.finish(frames, q, o)
         self.merge(p, pt, pf, out_t, out_f)
         out.if_(cexpr, out_t, out_f)
+
+    def noref_null_test(self, c, p):
+        """(variable, True if NULL where c holds) when c tests an object
+        read from memory (address.py) against NULL."""
+        c, neg = strip_casts(c), False
+        while isinstance(c, c_ast.UnaryOp) and c.op == '!':
+            c, neg = strip_casts(c.expr), not neg
+        x, when = c, False
+        if isinstance(c, c_ast.BinaryOp) and c.op in ('==', '!=') and cprint.is_null(c.right):
+            x, when = strip_casts(c.left), c.op == '=='
+        if isinstance(x, c_ast.ID) and x.name in p.vars and p.vars[x.name].noref:
+            return x.name, when != neg
+        return None
+
+    def finish(self, frames, p, out):
+        """The rest of the function after the statement at frames, walked
+        on path p alone: each enclosing block's rest, outwards; a break
+        leaves a switch's case for the statement after the switch. It
+        must end."""
+        if self.loops:
+            raise Refuse('an error pending on one arm inside a meta loop')
+        k = len(frames) - 1
+        while k >= 0 and not p.ended:
+            stmts, j = frames[k]
+            for i in range(j + 1, len(stmts)):
+                if p.ended:
+                    break
+                x = stmts[i]
+                if isinstance(x, c_ast.Break) and self.switch_depth:
+                    break
+                if isinstance(x, (c_ast.Label, c_ast.Break, c_ast.Continue)):
+                    raise Refuse('an error pending on one arm, then a %s' % type(x).__name__)
+                self.statement(x, p, out, frames[:k] + [(stmts, i)])
+                if not p.ended:
+                    self.release_dead(p, out, self.live.after[id(x)])
+            k -= 1
+        if not p.ended:
+            raise Refuse('an error pending on one arm, and the function does not end')
 
     def merge(self, p, a, b, out_a, out_b):
         if a.ended and b.ended:
@@ -753,8 +819,14 @@ class Walk:
                 raise Refuse('the pointer %s points into two objects' % name)
             if va.virt is not vb.virt and va.owned() and vb.owned():
                 raise Refuse('%s holds a virtual on one path only' % name)
+            for x, y, o in ((va, vb, out_a), (vb, va, out_b)):
+                if x.singleton is not None and y.singleton != x.singleton and y.own != 'none':
+                    # an immortal object meets a value: Ni's constant, held
+                    o.line('%s = %s();' % (x.cname, SINGLETONS[x.singleton]))
+                    x.own, x.constant, x.singleton = 'new', x.singleton, None
             v = va
             v.within = va.within and vb.within
+            v.noref = va.noref or vb.noref
             if va.bt == 'dynamic' and va.own != vb.own:
                 states = {va.own, vb.own}
                 if states <= {'borrowed', 'new', 'mixed'}:
@@ -781,6 +853,11 @@ class Walk:
 
     def cond(self, e, p, out, frames, facts_t=None, facts_f=None, value=False):
         x = strip_casts(e)
+        for item in self.holds:
+            if actions.same(x, item.expr):
+                if item.text not in self.rec.used_likely:
+                    self.rec.used_likely.append(item.text)
+                return True             # the caller has tested it
         if reps.test(self, x, p, out, frames):
             return True
         t = actions.bit_test(self, x, p, out, frames)
@@ -920,7 +997,11 @@ class Walk:
         if va.bt == 'dynamic' and vb.c == 'NULL' and op in ('==', '!=') \
                 and self.u.pointee(va.ctype) is not None and not self.u.is_object(va.ctype):
             vb = Val('meta', '0', LONG)     # a C pointer: a word
-        if self.u.is_object(va.ctype) or (vb.bt == 'dynamic' and self.u.is_object(vb.ctype)):
+        if va.bt == 'dynamic' and vb.c == 'NULL' and op in ('==', '!=') \
+                and va.var is not None and va.var.noref:
+            vb = Val('meta', '0', LONG)     # read from memory: a word, maybe NULL
+        elif self.u.is_object(va.ctype) or (vb.bt == 'dynamic'
+                                            and self.u.is_object(vb.ctype)):
             raise ResumeHere('a compare of the object %s' % cprint.expr(a))
         if va.bt != 'dynamic' or vb.bt not in ('meta', 'dynamic'):
             raise ResumeHere('a compare of %s' % cprint.expr(e))
@@ -1038,6 +1119,9 @@ class Walk:
         v = items.length(self, e, p, out, frames)
         if v is not None:
             return v
+        v = address.load(self, e, p, out, frames)
+        if v is not None:
+            return v
         if isinstance(e, (c_ast.ArrayRef, c_ast.UnaryOp)):
             v = items.read(self, e, p, out, frames)
             if v is not None:
@@ -1121,6 +1205,8 @@ class Walk:
             if v.bt == 'dynamic':
                 if v.own == 'none' and not v.isparam:
                     raise Refuse('%s read with no value' % name)
+                if v.offset is not None:
+                    return address.value(self, v, out)
                 r = Val('dynamic', v.cname, v.ctype, var=v, conv=v.conv, rng=v.rng)
                 r.virt = v.virt
                 return r
@@ -1150,6 +1236,10 @@ class Walk:
                 return r
             if self.u.is_int(t) and self.u.is_int(v.ctype):
                 return v
+            if self.u.is_char_ptr(t) and (self.u.is_object(v.ctype)
+                                          or self.u.is_char_ptr(v.ctype)):
+                # an object's address as a 'char *' into it: the same word
+                return Val('dynamic', v.c, t, owned=v.owned, conv=v.conv, var=v.var)
             raise ResumeHere('a cast of a run-time value to %s' % text(t))
         return v
 

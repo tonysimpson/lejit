@@ -326,7 +326,7 @@ def bounds_test(w, e, p, out, frames):
     n = length(w, hi.right, p, out, frames, as_value=True)
     item = next((i for i in w.likely if actions.same(i.expr, x)), None)
     if item is None:
-        if not p.called:
+        if not p.called or not w.stmt_called:
             raise ResumeHere("no 'likely' item for the run-time branch %s" % cprint.expr(x))
         raise Refuse("no 'likely' item for the run-time branch %s" % cprint.expr(x))
     cc = w.new_tmp('condition_code_t')

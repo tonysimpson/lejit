@@ -120,7 +120,7 @@ PyLong_Type.nb_power	resumed	an array table: PyLongObject *table[32] = {0,0,0,0,
 PyLong_Type.nb_subtract	resumed	a is not one word (Py_ABS(Py_SIZE(x)) <= 1): if (Py_ABS(Py_SIZE(a)) <= 1 && Py_ABS(Py_SIZE(b)) <= 1) { return PyLon; b is not one word (Py_ABS(Py_SIZE(x)) <= 1): if (Py_ABS(Py_SIZE(a)) <= 1 && Py_ABS(Py_SIZE(b)) <= 1) { return PyLon	Objects/longobject.c:long_sub
 PyLong_Type.nb_true_divide	resumed	no 'likely' item for the run-time branch ((PyVarObject *) a)->ob_size < 0: a_size = Py_ABS(Py_SIZE(a));	Objects/longobject.c:long_true_divide
 PyMapping_Size	resumed	a slot of a heap type changed: if (m && m->mp_length) { Py_ssize_t len = m->mp_length(o); assert(len ; a slot of a heap type changed: if (o->ob_type->tp_as_sequence && o->ob_type->tp_as_sequence->sq_lengt	Objects/abstract.c:PyMapping_Size
-PyMemberDescr_Type.tp_descr_get	resumed	the object Py_None as a value: if (PySys_Audit("object.__getattr__", "Os", obj ? obj : Py_None, descr	Objects/descrobject.c:member_get
+PyMemberDescr_Type.tp_descr_get	resumed	no 'likely' item for the run-time branch PySys_Audit("object.__getattr__", "Os", (obj) ? (obj) : (&_Py_NoneStruct), descr->d_member->name) < 0: if (PySys_Audit("object.__getattr__", "Os", obj ? obj : Py_None, descr	Objects/descrobject.c:member_get
 PyMember_GetOne	resumed	a read of a float through addr: v = PyFloat_FromDouble((double)*(float*)addr);	Python/structmember.c:PyMember_GetOne
 PyMethodDescr_Type.tp_descr_get	refused	policy items left to the hand translation: virtual result	Objects/descrobject.c:method_get
 PyNumber_Absolute	resumed	a slot of a heap type changed: if (m && m->nb_absolute) return m->nb_absolute(o);	Objects/abstract.c:PyNumber_Absolute

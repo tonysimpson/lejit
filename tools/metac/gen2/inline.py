@@ -4,9 +4,11 @@ out-parameter) or a function's name is the function's body in its place,
 by value: each parameter is a fresh local holding its argument, evaluated
 once, and a parameter given '&x' is the caller's x itself where the body
 reads or writes '*p' (the address is known when generating; any other use
-of it refuses the inline). A parameter given a constant or a function's
-name, and never assigned in the body, is that constant or function where
-the body reads it (nothing to evaluate). The callee's locals are renamed.
+of it refuses the inline). A parameter given a constant, a function's
+name, or (a cast of) a parameter of the caller that neither function
+assigns or addresses, and never assigned in the body, is that argument
+where the body reads it (nothing to evaluate, and a policy item on the
+caller names it as the caller does). The callee's locals are renamed.
 
 The call is the statement's: 'return f(...)' (the body's returns are the
 caller's), or 'if (f(...) OP K) S1 else S2' and 'if (f(...))', where
@@ -83,6 +85,9 @@ class Expander:
         self.taken = names_in(fn.body) | {p.name for p in params(fn)}
         self.local = {d.name for d in walk(fn.body) if isinstance(d, c_ast.Decl)} \
             | {p.name for p in params(fn)}
+        decls = {d.name for d in walk(fn.body) if isinstance(d, c_ast.Decl)}
+        self.steady = {p.name for p in params(fn) if p.name not in decls
+                       and not changed(fn.body, p.name)}
 
     def stmt(self, s):
         """s, or a copy of it with its calls expanded (orig: s)."""
@@ -169,21 +174,16 @@ class Expander:
             and a.name not in self.local
 
     def fixed(self, g, p, a):
-        """The parameter p may be replaced by its argument a: a constant or
-        a function's name, and p never assigned or addressed in g."""
+        """The parameter p may be replaced by its argument a: a constant, a
+        function's name or a steady parameter of the caller, and p never
+        assigned or addressed in g."""
+        x = strip_casts(a)
         if not (self.designator(a) or const_value(a) is not None
-                or (isinstance(strip_casts(a), c_ast.Constant)
-                    and strip_casts(a).type != 'string')):
+                or (isinstance(x, c_ast.Constant) and x.type != 'string')
+                or (isinstance(x, c_ast.ID) and x.name in self.steady
+                    and not changed(g.body, x.name))):
             return False
-        for x in walk(g.body):
-            if isinstance(x, c_ast.Assignment) and isinstance(strip_casts(x.lvalue), c_ast.ID) \
-                    and strip_casts(x.lvalue).name == p.name:
-                return False
-            if isinstance(x, c_ast.UnaryOp) and x.op in ('&', '++', '--', 'p++', 'p--') \
-                    and isinstance(strip_casts(x.expr), c_ast.ID) \
-                    and strip_casts(x.expr).name == p.name:
-                return False
-        return True
+        return not changed(g.body, p.name)
 
     def fresh(self, g, name):
         n = '%s_%s' % (g.decl.name, name)
@@ -221,6 +221,19 @@ class Expander:
         if test is not None:
             items = choose(items, test, True)
         return c_ast.Compound(head + items, at.coord)
+
+
+def changed(body, name):
+    """The variable `name` is assigned, stepped or addressed in body."""
+    for x in walk(body):
+        if isinstance(x, c_ast.Assignment) and isinstance(strip_casts(x.lvalue), c_ast.ID) \
+                and strip_casts(x.lvalue).name == name:
+            return True
+        if isinstance(x, c_ast.UnaryOp) and x.op in ('&', '++', '--', 'p++', 'p--') \
+                and isinstance(strip_casts(x.expr), c_ast.ID) \
+                and strip_casts(x.expr).name == name:
+            return True
+    return False
 
 
 STATEMENTS = {'Decl', 'Assignment', 'FuncCall', 'If', 'Return', 'Compound', 'UnaryOp'}

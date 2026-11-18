@@ -4,8 +4,9 @@ the scope of the function's file (load), and its precondition is checked
 against the function's AST before translating it (check); a failure
 names the item.
 
-  Likely(cond, how)   the run-time branch on cond is taken (how True) or
-                      not; it must match exactly one run-time branch
+  Likely(cond, how[, branches])
+                      the run-time branch on cond is taken (how True) or
+                      not; it must match exactly `branches` (1) branches
   Restype(T)          every result is of type T (Psyco_AssertType); no
                       return path may contradict it (a parameter returned
                       unchanged must be tested exactly a T on its path)
@@ -21,6 +22,9 @@ names the item.
                       is cleared and left to the run-time code (the
                       arguments are immutable, so a respawn's replay of
                       the call is safe)
+  Holds(cond, why)    the caller has made the test cond already (why): it
+                      holds wherever the function, or a static it inlines,
+                      tests it; it must match exactly one branch there
   IfKnown(n)          the integer parameter n is its value where Ni knows
                       it when compiling; any other value runs CPython's
                       function whole (no promotion: a count is rarely
@@ -39,16 +43,18 @@ class PolicyError(Exception):
 
 
 class Likely:
-    def __init__(self, cond, how):
+    def __init__(self, cond, how, branches=1):
         self.text, self.how, self.expr = cond, how, None
+        self.branches = branches
 
     def __repr__(self):
         return 'likely(%r, %s)' % (self.text, self.how)
 
     def check(self, fn, unit):
         n = sum(1 for c in branch_conditions(fn.body) if same(c, self.expr))
-        if n != 1:
-            return '%r matches %d branches of %s, not one' % (self, n, fn.decl.name)
+        if n != self.branches:
+            return '%r matches %d branches of %s, not %d' % (self, n, fn.decl.name,
+                                                             self.branches)
         return None
 
 
@@ -99,6 +105,23 @@ class Whole:
         return 'whole'
 
     def check(self, fn, unit):
+        return None
+
+
+class Holds:
+    def __init__(self, cond, why):
+        self.text, self.why, self.expr = cond, why, None
+
+    def __repr__(self):
+        return 'holds(%r)' % self.text
+
+    def check(self, fn, unit):
+        bodies = [fn.body] + [unit.defs[n].body for n in called(fn.body)
+                              if n in unit.defs and n != fn.decl.name]
+        n = sum(1 for b in bodies for c in branch_conditions(b) if same(c, self.expr))
+        if n != 1:
+            return '%r matches %d branches of %s and its callees, not one' % (
+                self, n, fn.decl.name)
         return None
 
 
@@ -172,6 +195,15 @@ ITEMS['unicode'] = {
     'PyUnicode_Concat': [Whole('a new string built in C')],
     'PyUnicode_RichCompare': [HandOnly('promote known_only'), HandOnly('virtual result')],
 }
+ITEMS['structmember'] = {
+    # a member holding NULL is rare
+    'PyMember_GetOne': [Likely('*(char**)addr == NULL', False), Likely('v == NULL', False, branches=2)],
+}
+ITEMS['descr'] = {
+    'member_get': [Holds('PyObject_TypeCheck(obj, descr->d_type)',
+                         'pobject.c:generic_getattr calls it only on an instance of d_type')],
+    'method_get': [HandOnly('virtual result')],
+}
 
 # The translator's budgets: past one, the function (or the call) is left to
 # the run-time code, and the report names the budget.
@@ -187,7 +219,7 @@ BUDGETS = {
     'polyvariance': 5,          # counts of a builtin's arguments, each its own path
 }
 
-KINDS = (Likely, Restype, NotTranslation, HandOnly, FoldMayFail, Whole, IfKnown)
+KINDS = (Likely, Restype, NotTranslation, HandOnly, FoldMayFail, Whole, IfKnown, Holds)
 
 
 def load(target, family, items=None, extra=''):
@@ -217,6 +249,17 @@ def load(target, family, items=None, extra=''):
                 if i.text:
                     i.expr = exprs[i.text]
     return items
+
+
+def called(n):
+    """The names of the functions n calls directly."""
+    out, stack = [], [n]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, c_ast.FuncCall) and isinstance(x.name, c_ast.ID):
+            out.append(x.name.name)
+        stack.extend(c for _, c in x.children())
+    return out
 
 
 def same(a, b):

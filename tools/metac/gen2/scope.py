@@ -13,7 +13,8 @@ function each is, and its ml_flags, come from the module's method table
 meta under those flags.
 
 Slots, as (type, [slot]): a field of one of the type's method tables, or a
-function-pointer field of the type itself.
+function-pointer field of the type itself; (type, [slot], file) for a type
+another file defines, whose slots this file's functions fill.
 """
 import collections
 
@@ -55,6 +56,16 @@ FAMILIES = {
                    reps=('double',),
                    builtins=('acos', 'asin', 'atan', 'cos', 'cosh', 'exp', 'fabs', 'sin',
                              'sinh', 'sqrt', 'tan', 'tanh')),
+    # PyMember_GetOne, which member_get calls (declared in pstructmember.h)
+    'structmember': Family('structmember', 'Python/structmember.c', 'ni/Objects/pstructmember.h',
+                           'pstructmember.c', 'pstructmember_gen.h', reps=('double',)),
+    'descr': Family('descr', 'Objects/descrobject.c', None, 'pdescrobject.c',
+                    'pdescrobject_gen.h', [('PyMemberDescr_Type', ['tp_descr_get']),
+                                           ('PyMethodDescr_Type', ['tp_descr_get'])]),
+    # object.c's functions in the slots of types other files define
+    'object': Family('object', 'Objects/object.c', None, 'pobject.c', 'pobject_gen.h',
+                     [('PySeqIter_Type', ['tp_iter'], 'Objects/iterobject.c'),
+                      ('PyRangeIter_Type', ['tp_iter'], 'Objects/rangeobject.c')]),
     # iter, next, chr and ord stay C calls (METACOMPILER failures log)
     'bltin': Family('bltin', 'Python/bltinmodule.c', None, 'pbltinmodule.c',
                     'pbltinmodule_gen.h',

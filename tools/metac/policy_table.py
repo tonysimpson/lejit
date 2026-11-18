@@ -1269,15 +1269,7 @@ ENTRIES = {
             ('shortcut', 'type_whitelist', 'PyFloat_Type with PyFloat_Type'),
             ('restype', 'PyBool_Type'),
         ]},
-    'Python/structmember.c:PyMember_GetOne': {
-        'shape': '81f3827c0062',
-        'ni': ['tools/metac/gen_abstract.py:generate'],
-        'policy': [
-            ('ref', 'need_reference', 'T_OBJECT, T_OBJECT_EX'),
-            ('likely', 'false', '*(char**)addr == NULL'),
-            ('likely', 'false', 'v == NULL'),
-            ('other', 'mutable_fields', 'every struct member read as mutable'),
-        ]},
+    'Python/structmember.c:PyMember_GetOne': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/floatobject.c:float___trunc___impl': {
         'shape': 'd5089ab6cb91',
         'ni': ['ni/Objects/pfloatobject.c:cimpl_fp_fits_long', 'ni/Objects/pfloatobject.c:cimpl_fp_to_long', 'ni/Objects/pfloatobject.c:cimpl_fp_trunc', 'ni/Objects/pfloatobject.c:PsycoFloat_Trunc', 'ni/Objects/pfloatobject.c:PsycoFloat_WholeToLong', 'ni/Python/pbltinmodule.c:float_whole_to_int'],
@@ -1409,7 +1401,7 @@ ENTRIES = {
     'Objects/tupleobject.c:tuplerichcompare': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/tupleobject.c:tupleitem': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/iterobject.c:seqiterobject': {'shape': '24ea9b846c56', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
-    'Objects/object.c:PyObject_SelfIter': {'shape': 'ba0edf658c0b', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/object.c:PyObject_SelfIter': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/iterobject.c:iter_iternext': {
         'shape': 'f4f8c9902f51',
         'ni': ['ni/Objects/piterobject.c:cimpl_seqiter_drop_seq', 'ni/Objects/piterobject.c:piter_ends', 'ni/Objects/piterobject.c:piter_iternext'],
@@ -1464,13 +1456,7 @@ ENTRIES = {
             ('likely', 'true', 'im_self != NULL'),
             ('virtual', 'args_tuple', 'self prepended'),
         ]},
-    'Objects/descrobject.c:member_get': {
-        'shape': '1e4827b8796b',
-        'ni': ['tools/metac/gen_abstract.py:generate'],
-        'policy': [
-            # pobject.c:generic_getattr calls it only on an instance of d_type
-            ('shortcut', 'skip_check', 'PyObject_TypeCheck(obj, descr->d_type)'),
-        ]},
+    'Objects/descrobject.c:member_get': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/descrobject.c:method_get': {
         'shape': '234c927d374d',
         'ni': ['ni/Objects/pdescrobject.c:pmethod_get'],

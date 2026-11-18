@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools', 'metac'))
 import front  # noqa: E402
 from gen2 import abstract, conventions, policy, scope, types  # noqa: E402
-from gen2.policy import IfKnown, Likely, Restype  # noqa: E402
+from gen2.policy import Holds, IfKnown, Likely, Restype  # noqa: E402
 
 PY37 = os.environ.get('NI_PY37', os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
 
@@ -274,7 +274,7 @@ static PyObject *snip_fp(PyFloatObject *v, double (*func)(double)) {
 }
 PyObject *PySnip_Fp(PyFloatObject *v) { return snip_fp(v, fabs); }''', ['PySnip_Fp'],
          file='float', want=['CfPure | CfReturnTypeDouble | CfNoPython | CfNoBlock, "d",'],
-         absent=['snip_fp(po', '(long)(func)'], copy=['return fabs(snip_fp_v_ob_fval);']),
+         absent=['snip_fp(po', '(long)(func)'], copy=['return fabs(v_ob_fval);']),
     Case('inline: a constant and a function given through two levels, (*f)(x) called', '''
 static PyObject *snip_lvl2(PyObject *o, double (*f)(double), int k) {
     double x = PyFloat_AsDouble(o);
@@ -297,7 +297,7 @@ static PyObject *snip_set(PyFloatObject *v, double (*f)(double), int k) {
     return PyFloat_FromDouble(f(v->ob_fval) + k);
 }
 PyObject *PySnip_Set(PyFloatObject *v) { return snip_set(v, fabs, 2); }''', ['PySnip_Set'],
-         file='float', copy=['int snip_set_k = 2;', 'fabs(snip_set_v_ob_fval) + snip_set_k'], absent=['snip_set(po']),
+         file='float', copy=['int snip_set_k = 2;', 'fabs(v_ob_fval) + snip_set_k'], absent=['snip_set(po']),
     Case('double: a static function on scalars is called in the helper as its copy', '''
 static int snip_big(double x) {
     if (x > 1.0) {
@@ -820,6 +820,126 @@ static PyObject *snip_sw(PyObject *o, int k) {
 }
 PyObject *PySnip_G15(PyObject *o) { return snip_sw(o, 1); }''', ['PySnip_G15'], fn='snip_sw',
          refused='runs on into the next'),
+    # ---- raw addresses (gen2/address.py), errors on one arm, Holds ----
+    Case('address: moved by a meta offset, the bytes there read as a signed int', '''
+static PyObject *snip_ad(const char *addr, Py_ssize_t off) {
+    addr += off;
+    return PyLong_FromLong(*(int *)addr);
+}
+PyObject *PySnip_Ad(PyObject *o) { return snip_ad((char *)o, 16); }''', ['PySnip_Ad'],
+         fn='snip_ad',
+         want=['_t1 = psyco_get_field_offset(po, addr, FMUT(DEF_ARRAY(int, 0)), 0 + (off));',
+               'if (_t1 == NULL)', 'PsycoLong_FromLong(po, _t1);', 'vinfo_decref(_t1, po);'],
+         absent=['integer_add']),
+    Case('address: an unsigned read is UNSIGNED_ARRAY', '''
+static PyObject *snip_au(const char *addr, Py_ssize_t off) {
+    addr += off;
+    return PyLong_FromUnsignedLong(*(unsigned short *)addr);
+}
+PyObject *PySnip_Au(PyObject *o) { return snip_au((char *)o, 16); }''', ['PySnip_Au'],
+         fn='snip_au', want=['FMUT(UNSIGNED_ARRAY(unsigned short, 0)), 0 + (off))',
+                             'PsycoLong_FromUnsignedLong(po,']),
+    Case('address: the address as a value is the object\'s plus the offset', '''
+static PyObject *snip_av(const char *addr, Py_ssize_t off) {
+    addr += off;
+    return PyUnicode_FromString((char *)addr);
+}
+PyObject *PySnip_Av(PyObject *o) { return snip_av((char *)o, 16); }''', ['PySnip_Av'],
+         fn='snip_av', want=['_t1 = integer_add_i(po, addr, 0 + (off), false);',
+                             'PyUnicode_FromString,', '"v", _t1);', 'vinfo_decref(_t1, po);']),
+    Case('address: a float is no word Ni reads: it resumes', '''
+static PyObject *snip_af(const char *addr, Py_ssize_t off) {
+    addr += off;
+    return PyFloat_FromDouble(*(float *)addr);
+}
+PyObject *PySnip_Af(PyObject *o) { return snip_af((char *)o, 16); }''', ['PySnip_Af'],
+         fn='snip_af', report='a read of a float through addr'),
+    Case('address: moved by a run-time amount, it resumes', '''
+static PyObject *snip_ar(const char *addr, Py_ssize_t n) {
+    addr += n;
+    return PyLong_FromLong(*(int *)addr);
+}
+PyObject *PySnip_Ar(PyObject *o, Py_ssize_t n) { return snip_ar((char *)o, n); }''',
+         ['PySnip_Ar'], fn='snip_ar', report='addr moved by a run-time amount'),
+    Case('address: an object read holds no reference: its incref is need_reference, '
+         'its NULL a run-time test, released there', '''
+static PyObject *snip_ao(const char *addr, Py_ssize_t off) {
+    PyObject *v;
+    addr += off;
+    v = *(PyObject **)addr;
+    if (v == NULL) v = Py_None;
+    Py_INCREF(v);
+    return v;
+}
+PyObject *PySnip_Ao(PyObject *o) { return snip_ao((char *)o, 16); }''', ['PySnip_Ao'],
+         fn='snip_ao', items={'snip_ao': [Likely('v == NULL', False)]},
+         want=['FMUT(DEF_ARRAY(PyObject *, 0))', 'v = _t1;', 'integer_non_null(po, v);',
+               'runtime_condition_f(po,', 'vinfo_decref(v, po);', 'v = psyco_vi_None();',
+               'need_reference(po, v);', 'return v;'], absent=['vinfo_incref']),
+    Case('likely: an item naming two branches says so', '''
+static PyObject *snip_a2(const char *addr, Py_ssize_t off, int k) {
+    PyObject *v;
+    addr += off;
+    v = *(PyObject **)addr;
+    if (k) { if (v == NULL) v = Py_None; }
+    else { if (v == NULL) v = Py_True; }
+    Py_INCREF(v);
+    return v;
+}
+PyObject *PySnip_A2(PyObject *o) { return snip_a2((char *)o, 16, 1); }''', ['PySnip_A2'],
+         fn='snip_a2', items={'snip_a2': [Likely('v == NULL', False)]},
+         refused='matches 2 branches of snip_a2, not 1'),
+    Case('G8: an error raised on one arm: the rest of the function on that arm alone', '''
+static PyObject *snip_ae(const char *addr, Py_ssize_t off) {
+    PyObject *v;
+    addr += off;
+    v = *(PyObject **)addr;
+    if (v == NULL) PyErr_SetString(PyExc_AttributeError, "x");
+    Py_XINCREF(v);
+    return v;
+}
+PyObject *PySnip_Ae(PyObject *o) { return snip_ae((char *)o, 16); }''', ['PySnip_Ae'],
+         fn='snip_ae', items={'snip_ae': [Likely('v == NULL', False)]},
+         want=['if (_t3) {', 'vinfo_decref(v, po);',
+               'PycException_SetString(po, PyExc_AttributeError, "x");', 'return NULL;', '}',
+               'need_reference(po, v);', 'return v;']),
+    Case('G8: an error raised on one arm does not merge into the other', '''
+static PyObject *snip_g8m(PyObject *o, int k) {
+    if (k) PyErr_SetString(PyExc_TypeError, "x");
+    return PyObject_Repr(o);
+}
+PyObject *PySnip_G8m(PyObject *o) { return snip_g8m(o, 1); }''', ['PySnip_G8m'],
+         fn='snip_g8m', refused='a run-time call where an error is pending'),
+    Case('G8: a value returned where an error is pending is refused', '''
+PyObject *PySnip_G8r(PyObject *o) {
+    PyErr_SetString(PyExc_TypeError, "x");
+    Py_INCREF(o);
+    return o;
+}''', ['PySnip_G8r'], refused='returns a value where an error is pending'),
+    Case('holds: a test the caller made, in a static it inlines, holds; the caller\'s '
+         'parameter is the static\'s (no copy)', '''
+static int snip_hchk(PyObject *o, PyObject **pres) {
+    if (!PyLong_Check(o)) { PyErr_SetString(PyExc_TypeError, "x"); *pres = NULL; return 1; }
+    return 0;
+}
+PyObject *PySnip_Holds(PyLongObject *o) {
+    PyObject *res;
+    if (snip_hchk((PyObject *)o, &res)) return res;
+    return PyObject_Repr((PyObject *)o);
+}''', ['PySnip_Holds'],
+         items={'PySnip_Holds': [Holds('PyLong_Check(o)', 'the caller checks')]},
+         want=['PyObject_Repr,'], absent=['PycException_SetString', 'snip_hchk_o', 'tp_o']),
+    Case('holds: an item matching no branch is refused', '''
+PyObject *PySnip_Holds0(PyObject *o) { return PyObject_Repr(o); }''', ['PySnip_Holds0'],
+         items={'PySnip_Holds0': [Holds('PyLong_Check(o)', 'the caller checks')]},
+         refused='matches 0 branches of PySnip_Holds0'),
+    Case('likely: a run-time branch with no item on the statement\'s own call resumes '
+         'from the statement', '''
+PyObject *PySnip_SameStmt(PyObject *o) {
+    if (PyObject_Hash(o) == 7) return PyObject_Repr(o);
+    return PyObject_Str(o);
+}''', ['PySnip_SameStmt'], want=['return psyco_generic_call(po, PySnip_SameStmt,'],
+         absent=['Hash(po', 'PyObject_Hash,'], report="no 'likely' item for the run-time branch"),
 ]
 
 

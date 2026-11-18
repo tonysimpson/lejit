@@ -63,6 +63,8 @@ class Var:
         self.base = None          # pointer: the variable whose items it points into
         self.within = False       # meta: at most the unroll budget (a loaded length)
         self.virt = None          # dynamic: a virtual array this meta built (its spec)
+        self.offset = None        # dynamic 'char *': an address, this offset past it (address.py)
+        self.noref = False        # dynamic object read from memory: no reference held
 
     def clone(self):
         v = Var.__new__(Var)
@@ -92,6 +94,7 @@ class Val:
         self.item_of = None       # an item of this object variable's loaded items
         self.within = within      # meta: at most the unroll budget
         self.virt = None          # a virtual array being built: its spec
+        self.noref = False        # an object read from memory: no reference held
 
 
 class Path:

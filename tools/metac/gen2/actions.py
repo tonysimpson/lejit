@@ -223,6 +223,13 @@ def refcount(w, p, out, fn, args, frames):
         v = var_of(w, p, x)
         if refs == 'x+1' and v.known_null:
             return True
+        if v.singleton is not None:
+            return True     # Ni's constant, the variable's reference, is made at its use
+        if v.noref:
+            # read from memory: the vinfo now holds a reference
+            out.line('need_reference(po, %s);' % v.cname)
+            v.noref = False
+            return True
         if v.own != 'borrowed':
             raise Refuse('an incref of %s, which the meta owns' % v.name)
         out.line('vinfo_incref(%s);' % v.cname)
@@ -305,7 +312,7 @@ def runtime_compare(w, p, out, e, op, va, vb, facts_t, facts_f, value=False):
     item = next((i for i in w.likely if same(i.expr, e) or (
         op == '!=' and vb.c == '0' and same(i.expr, e.left))), None)
     if item is None:
-        if not p.called:
+        if not p.called or not w.stmt_called:
             # nothing run yet: CPython's code runs whole, its branches its own
             raise ResumeHere("no 'likely' item for the run-time branch %s" % cprint.expr(e))
         raise Refuse("no 'likely' item for the run-time branch %s" % cprint.expr(e))
@@ -364,7 +371,7 @@ def bit_test(w, e, p, out, frames):
         raise ResumeHere('the bit-field %s.%s is not the top bit Ni reads' % (field, bit))
     item = next((i for i in w.likely if same(i.expr, e)), None)
     if item is None:
-        if not p.called:
+        if not p.called or not w.stmt_called:
             raise ResumeHere("no 'likely' item for the run-time test %s" % cprint.expr(e))
         raise Refuse("no 'likely' item for the run-time test %s" % cprint.expr(e))
     fv = w.new_tmp('vinfo_t *')
