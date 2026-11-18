@@ -33,7 +33,7 @@ Everything in the per-file tables was checked in code **[read]** unless the cell
 | `ni/Objects/pfloatobject.c` | 326 | 157 | 83 | 35 | 51 |
 | `ni/Objects/pfloatobject.h` | 88 | 12 | 0 | 23 | 53 |
 | `ni/Modules/pmath.c` | 188 | 84 | 22 | 0 | 82 |
-| `ni/Python/pbltinmodule.c` | 668 | 174 | 333 | 84 | 77 |
+| `ni/Python/pbltinmodule.c` (after D86: 546 lines) | 668 | 174 | 333 | 84 | 77 |
 | `ni/Objects/pstringobject.c` (compiled out) | 1,233 | 11 | 455 | 696 | 71 |
 | `ni/Objects/pstringobject.h` (compiled out) | 73 | 18 | 0 | 36 | 19 |
 | `ni/Objects/plistobject.c` | 439 | 28 | 237 | 119 | 55 |
@@ -118,7 +118,7 @@ The main ones, by where they must go:
 | `listobject.c:list_item` | `plistobject.c:plist_item`, used for list `sq_item` and by `piterobject.c:piter_iternext` | shortcut |
 | `longobject.c:long_long` | generated (D83; was `plong_pos`), and again inside `pbltinmodule.c:pbuiltin_round`, `ptype_call` | |
 | `floatobject.c:float___trunc___impl`, `float___round___impl` | split into `pfloatobject.c` helpers, put together again in `pbltinmodule.c` (`float_whole_to_int`, `pbuiltin_round`) | float's `nb_int` has no meta |
-| `rangeobject.c:get_len_of_range` | `prangeobject.c:cimpl_range_len` (live), `pbltinmodule.c:get_len_of_range` (dead) | |
+| `rangeobject.c:get_len_of_range` | `prangeobject.c:cimpl_range_len` (the dead copy in `pbltinmodule.c` removed, D86) | |
 | `floatobject.c:PyFloat_AsDouble` | `pfloatobject.c:PsycoFloat_AsDouble` (dead), `pmath.c:PMATH_CONVERT_TO_DOUBLE` (an approximation, F99) | |
 | `bltinmodule.c:min_max` | `pbltinmodule.c:pbuiltin_min_max`, and `pycompiler.c:cimpl_minmax_step`/`cimpl_minmax_result` (genexpr fusion) | |
 | index normalisation and the step-1 slice case | per type in `pbytes_subscript`, `punicode_item`, `cimpl_bytes_slice`, `cimpl_unicode_slice`, `cimpl_list_slice` | P18a |
@@ -620,37 +620,28 @@ One-argument `math` functions as macros that mirror `FUNC1`/`math_1_to_whatever`
 
 ### `ni/Python/pbltinmodule.c`
 
-Metas for 14 builtins and for `type_call`. It imports `builtins`, not `__builtin__`, so the claim in PATTERNS P10 and rule 5 that it registers nothing on Py3 is out of date **[read]**. MAP calls it `translated`, but most of the code is core or policy: genexpr fusion, zero-argument `super()` on the compiled frame, the virtual `range`, and the static-type-only promotion used in `isinstance` and `type_call` **[read]**. The Py2 range helpers (`get_len_of_range`, `longobj_as_long`, `parse_range_args`, `cimpl_range`) are dead **[read]**.
+Hand metas for 7 builtins and for `type_call`; 10 more are generated into `pbltinmodule_gen.h` (D86, `58e52de`). It imports `builtins`, not `__builtin__`, so the claim in PATTERNS P10 and rule 5 that it registers nothing on Py3 is out of date **[read]**. MAP calls it `translated`, but most of the code is core or policy: genexpr fusion, zero-argument `super()` on the compiled frame, the virtual `range`, and the static-type-only promotion used in `isinstance` and `type_call` **[read]**. The Py2 range helpers (`get_len_of_range`, `longobj_as_long`, `parse_range_args`, `cimpl_range`) are dead **[read]**.
 
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
-| includes, cimpl_* fallback pointers | 28 | glue | none |  |  | cimpl_range is never assigned [read]: dead |
+| includes, cimpl_* fallback pointers | 27 | glue | none |  |  | Includes `pbltinmodule_gen.h` (D86); the pointers of the generated builtins are the header's `cfunc_*` |
 | genexpr_consume | 34 | core | none |  | RESTYPE: list/set/tuple/bool per consumer; EFFECT: CfCommonNewRefPyObject on PyList_New/PySet_New/PyList_AsTuple | Genexpr fusion (D46, psyfunc.c:psyco_call_genexpr) |
 | pbuiltin_any | 11 | mixed | Python/bltinmodule.c:builtin_any | P10,P12 | OTHER: genexpr fused only while untraced (D46) | Core part: genexpr fusion; otherwise residual |
 | pbuiltin_all | 10 | mixed | Python/bltinmodule.c:builtin_all | P10,P12 | OTHER: genexpr fused only while untraced (D46) | Core part: genexpr fusion; otherwise residual |
 | statics type_call, object_class_descr, str___class__ | 4 | glue | none |  |  |  |
-| get_len_of_range | 14 | translated | partial: Objects/rangeobject.c:get_len_of_range (step 1) | P05,P06 |  | Dead (no callers) [read]; prangeobject.c:cimpl_range_len is the live copy |
-| longobj_as_long | 7 | translated | none (PyLong_AsLong with a type test) | P02 |  | Dead, only used by parse_range_args |
-| parse_range_args | 41 | translated | (Py2) Python/bltinmodule.c:builtin_range argument parsing [inferred] | P22 |  | Dead [read]; range() is ptype_call + PsycoRange_New |
-| pbuiltin_id | 5 | translated | Python/bltinmodule.c:builtin_id | P12 |  | Residual PyLong_FromVoidPtr; no RESTYPE asserted |
 | pbuiltin_globals | 8 | mixed | Python/bltinmodule.c:builtin_globals_impl | P30,P28 |  | Core part: LOC_GLOBALS of the compiled frame instead of PyEval_GetGlobals (F47) |
-| pbuiltin_len | 8 | translated | Python/bltinmodule.c:builtin_len | P18 | VIRTUAL: virtual int result |  |
-| pbuiltin_abs | 4 | translated | Python/bltinmodule.c:builtin_abs |  |  |  |
-| pbuiltin_divmod | 12 | translated | Python/bltinmodule.c:builtin_divmod_impl (clinic builtin_divmod) | P22,P10 |  | Otherwise PsycoCFunction_CallFast |
-| pbuiltin_hash | 6 | translated | Python/bltinmodule.c:builtin_hash | P18 | VIRTUAL: virtual int result |  |
 | pbuiltin_min_max | 46 | mixed | partial: Python/bltinmodule.c:min_max (two or more positional, no keywords) | P22,P01,P05,P12 | PROMOTE: every argument's type before the first compare (restart rule, 0feefaf); SHORTCUT: compiled only for a known tuple of 2+; LIKELY: runtime_NON_NULL_f (keep current best) | Core part: genexpr fusion for one argument |
 | pbuiltin_min, pbuiltin_max | 10 | glue | none |  |  | Wrappers (builtin_min, builtin_max) |
-| pbuiltin_pow | 18 | translated | Python/bltinmodule.c:builtin_pow_impl (clinic builtin_pow) | P22 |  |  |
 | isinstance_known | 32 | mixed | partial: Objects/abstract.c:PyObject_IsInstance, recursive_isinstance | P14 | SHORTCUT: compile-time answer for an exact-type cls and a static obj type only; OTHER: tuple depth > 8 gives up (CPython counts recursion); GUARD: heap types never folded (__bases__ can change) | False needs obj.__class__ to be object.__class__ with generic getattr. Tuple tested before PyType_CheckExact (disjoint, no difference) |
 | isinstance_known_v | 28 | core | none | P22,P03 | PROMOTE: psyco_atcompiletime_static_type on the class (F25); VIRTUAL: walks a virtual tuple item by item |  |
-| pbuiltin_isinstance | 37 | mixed | Python/bltinmodule.c:builtin_isinstance_impl | P03,P15,P12,P23 | PROMOTE: static type of obj only (F25); GUARD: Psyco_ConstantClassMutable for a constant (D62, F96); EFFECT: CfCommonIntBoolOrError on PyObject_IsInstance; RESTYPE: bool | Folds to True/False or calls PyObject_IsInstance |
+| PsycoObject_IsInstance | 31 | mixed | Objects/abstract.c:PyObject_IsInstance | P03,P15,P12,P23 | PROMOTE: static type of obj only (F25); GUARD: Psyco_ConstantClassMutable for a constant (D62, F96); EFFECT: CfCommonIntBoolOrError on PyObject_IsInstance; SHORTCUT: zero_or_one | Was `pbuiltin_isinstance`'s body; the generated `builtin_isinstance_impl` calls it (D86). Returns 1/0 or the residual word |
 | pbuiltin_sum | 76 | mixed | partial: Python/bltinmodule.c:builtin_sum_impl | P22,P01,P12 | PROMOTE: every item's type before the first add (restart rule, d487bbb); SHORTCUT: known-length tuple only; OTHER: a result of unknown type uses the residual PyNumber_Add (temporaries can't be promoted, F24) | Core part: genexpr fusion. CPython's int/float fast paths are not mirrored; results are the same [inferred] |
 | float_whole_to_int | 20 | translated | partial: Objects/floatobject.c:float___trunc___impl, float___round___impl | P13,P15 |  | Helper composing the pfloatobject.c helpers |
 | pbuiltin_round | 28 | mixed | partial: Python/bltinmodule.c:builtin_round_impl (with Objects/longobject.c:long_round, Objects/floatobject.c:float___round___impl) | P01,P26,P10 | SHORTCUT: exact int returns itself, exact float rounds inline (P26); skips _PyObject_LookupSpecial(__round__) | Otherwise PsycoCFunction_CallFast |
 | cimpl_super_noargs | 39 | translated | partial: Objects/typeobject.c:super_init (no-argument branch) | P30,P24 |  | Same RuntimeError messages as 3.7 [read: names]; the frame values come as arguments |
 | psuper_noargs | 22 | core | none | P30 |  | Maps co_cell2arg / __class__ cell to po->vlocals (D58) |
 | ptype_call | 85 | mixed | partial: Objects/typeobject.c:type_call (with Objects/longobject.c:long_new_impl, Objects/floatobject.c:float_new_impl, Objects/abstract.c:PyNumber_Long, PyNumber_Float) | P03,P01,P05,P15,P18,P26,P12 | PROMOTE: static-type callee only (F25); SHORTCUT: type(x), int(x), float(x) for exact int/float (P26); LIKELY: super test on an unknown callee is _f; VIRTUAL: range(...) as a virtual range | Core part: zero-arg super, virtual range, genexpr fusion into list/tuple/set |
-| psyco_bltinmodule_init | 35 | glue | none | P10 |  | Imports 'builtins' and registers 14 module metas and type_call |
+| psyco_bltinmodule_init | 27 | glue | none | P10 |  | Imports 'builtins', calls `gen_bltinmodule_init` (10 generated metas, D86) and registers globals, min, max, round, sum, any, all and type_call |
 
 ### `ni/Objects/pstringobject.c`
 

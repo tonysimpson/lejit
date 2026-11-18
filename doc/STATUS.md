@@ -1,5 +1,16 @@
 # Status
 
+## 2026-11-18: builtins from the general translator (GENERATION.md step 5, builtins; `58e52de`, `a8a9038`, D86)
+
+`tools/metac/gen_builtins.py` finds each builtin's C function and `ml_flags` in `bltinmodule.c`'s method table, takes the meta's parameters and fallback from `policy_table.METH_ARGS`, and unpacks arguments per count by `_PyArg_UnpackStack`'s policy item; Argument Clinic's wrappers need no rule.
+- **Generated:** `abs`, `len`, `hash`, `id`, `divmod`, `pow`, `isinstance`, and new metas for `issubclass`, `getattr`, `setattr` (`pbltinmodule_gen.h`, 15 functions). 143 hand lines removed from `pbltinmodule.c`; added to Ni: `PsycoBool_FromLong`, `PsycoBool_FromZeroOrOne`, `PsycoLong_FromSsize_t`.
+- **Same code:** `tools/samecode.py 12bffa1 58e52de`: 44 units same, 46 differ (4,132 of 4,383 code objects same); every first difference is a new meta (`getattr`, `setattr`, `issubclass`), `id` with no check after its call, or promotion data and register renamings after them.
+- Release builds, instructions per warm iteration, `12bffa1` → `58e52de`: richards 168.29 → 168.29 M, deltablue 27.18 → 27.19, raytrace 3,125.0 → 3,104.3, go 1,064.9 → 1,064.5, hexiom 39.70 → 39.74 (+0.1%: promotion data only; the baseline with a heap shift alone gives 39.66–39.86), chaos 461.94 → 461.85, pyflate 2,003.0 → 1,956.4 (−2.3%).
+- Checked build: generation twice, same output; `tests/run.py` 872 pass (17 new in `gen_builtins.py`: subclasses, errors and messages, keywords, wrong and star counts, shadowed and rebound builtins); `compile_bounds.py` 7 checks; `ni._unregistered_metas()` empty; `cpython_tests.py -j 2` 285 modules, 0 unexpected; `--all` 371 modules, 1 unexpected: `test_queue` (6 errors with Ni, 5 plain; rerun alone three times, the plain run itself gave 6 once: timing, not Ni).
+- **3.8.20** (not built): 12 generated; `id` resumes (`PySys_Audit` inside `&&`), `pow` skipped (`METH_FASTCALL | METH_KEYWORDS`); 3.8's `_PyArg_CheckPositional` needs a policy entry the table can't hold yet (QUESTIONS 49).
+- **Left, and why:** `min`/`max`, `sum`, `any`/`all` (fusion, known tuples), `round` (whitelist), `globals` (F47), `type_call`, `PsycoObject_IsInstance` (its policy items); `iter`, `next`, `hasattr`, `chr`, `ord`, `callable`, `delattr` not translated (METACOMPILER failures log).
+- **Risks:** a generated builtin's fallback is whatever `METH_ARGS` says, so a change to `PsycoCFunction_Call`'s convention must change the table (`policy.py` checks only that the flag is tested); per-count translation multiplies a function's code by its arity range (bounded at five); `getattr` now promotes the type of a non-constant name.
+
 ## 2026-11-18: number families from the general translator (GENERATION.md step 5, numbers; `a0c8ea9`, `28ff76f`, D83)
 
 An int's one-word form is a representation rule in `policy_table.TYPES`; `gen_abstract.py` reads it, and `gen_long.py` is gone. Generated: `+ - *`, unary `-`, `~`, unary `+`, `abs()`, `bool`, `/`, `**` on ints and unary `+` on floats; seven hand metas and their macros removed.
