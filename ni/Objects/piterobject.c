@@ -2,7 +2,7 @@
  * Virtual sequence iterators. Layout: [iOB_TYPE], [iSEQITER_IT_INDEX] (made
  * run-time at once, so the compiler does not specialise on the loop counter),
  * [iSEQITER_IT_SEQ]. piter_iternext is a translation of iter_iternext
- * (IndexError or StopIteration ends it and drops it_seq, F48) with a
+ * (IndexError or StopIteration ends it and drops it_seq) with a
  * shortcut for lists. it_seq is cached like an immutable field, so a
  * run-time iterator's is checked against memory (see piter_iternext). List iteration
  * also comes here, because plistobject.c redirects tp_iter. seqiterobject is
@@ -72,8 +72,8 @@ static int piter_ends(PsycoObject* po)
 
 /* iterobject.c:iter_iternext. it_seq is cached in v->array as if it were
    immutable, so that the sequence's type stays known. A virtual iterator
-   holds its sequence, or a compile-time NULL once exhausted (KNOWN_BUGS
-   F48). A run-time one may have been exhausted by anyone: a fresh load is
+   holds its sequence, or a compile-time NULL once exhausted. A
+   run-time one may have been exhausted by anyone: a fresh load is
    tested for NULL, and a cached one against memory, a mismatch going to
    CPython's iter_iternext. Once NULL, it_seq never changes again. */
 static vinfo_t* piter_iternext(PsycoObject* po, vinfo_t* v)
@@ -130,9 +130,8 @@ static vinfo_t* piter_iternext(PsycoObject* po, vinfo_t* v)
 
 	if (PyType_IsSubtype(tp, &PyList_Type)) {
 		/* If the sequence is a list, explicitly ignore a
-		   user-overridden __getitem__ slot.  This is what both
-		   Python 2.2 and >=2.3 do (although they use a
-		   different trick to reach that effect). */
+		   user-overridden __getitem__ slot, as CPython's
+		   list iterator does. */
 		result = plist_item(po, seq, index);
 	}
 	else {
@@ -157,15 +156,6 @@ static vinfo_t* piter_iternext(PsycoObject* po, vinfo_t* v)
 		piter_stop(po);
 	}
 	else {
-		/* very remotely potential incompatibility: when exhausted,
-		   the internal iterator index is not incremented. Python
-		   is not consistent in this respect. This could be an
-		   issue if an iterator of a mutable object is not
-		   immediately deleted when exhausted. Well, I guess that
-		   muting an object we iterate over is generally considered
-		   as DDIWWY (Don't Do It -- We Warned You.)
-		   (Update: Python 2.5 is consistent, and does the same
-		   as Psyco.) */
 		vinfo_t* index_plus_1 = integer_add_i(po, index, 1, true);
 		if (index_plus_1 == NULL ||
 		    !psyco_put_field(po, v, SEQITER_it_index, index_plus_1)) {

@@ -1,9 +1,9 @@
 /* A thread counts the Python calls it is in up, in recursion_depth, and
    compares the count with the exported _Py_CheckRecursionLimit, which
    sys.setrecursionlimit changes; overflowed, set by RecursionError, allows
-   50 more calls until the depth is below the low-water mark (KNOWN_BUGS
-   C12, D77). Included by psyfunc.c, eval_hook.c, frames.c and pycompiler.c
-   after codegen.h and dispatcher.h.
+   50 more calls until the depth is below the low-water mark. Included by
+   psyfunc.c, eval_hook.c, frames.c and pycompiler.c after codegen.h and
+   dispatcher.h.
 
    At run time: ni_recursion_enter and ni_recursion_leave count a frame
    entered from C (eval_hook.c:NiCode_Run), as ceval counts every frame;

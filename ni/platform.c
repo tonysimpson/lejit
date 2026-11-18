@@ -47,7 +47,7 @@ long psyco_allocate_executable_buffer(long basicsize, char **result)
    successful, so that when another allocation fails, Psyco correctly
    signals the OUT_OF_MEMORY. */
   /* x64: jumps between code buffers are rel32, so every buffer must lie
-     within 2 GB of every other (KNOWN_BUGS B5). Ask for each new region
+     within 2 GB of every other. Ask for each new region
      just after the previous one, and refuse one that lands too far from
      the first. */
   static char *first = NULL, *next_hint = NULL;

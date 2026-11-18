@@ -21,7 +21,7 @@ static source_virtual_t psyco_computed_slice;
 
 /* SLICE_* descriptors: virtual_fields_gen.h; PsycoSlice_New, compute_slice
    and direct_compute_slice, generated from PySlice_New and
-   policy_table.TYPES (D80) */
+   policy_table.TYPES */
 #include "psliceobject_virtual_gen.h"
 
 static bool is_none(vinfo_t *v) {

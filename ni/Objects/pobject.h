@@ -21,7 +21,7 @@
 #define iVAR_SIZE  FIELD_INDEX(VAR_size)
 
 /* the field descriptors of the virtual types tools/metac/gen_virtual.py
-   writes from policy_table.TYPES (D80): TUPLE_ob_item, SLICE_*, METHOD_* */
+   writes from policy_table.TYPES: TUPLE_ob_item, SLICE_*, METHOD_* */
 #include "virtual_fields_gen.h"
 
 
@@ -32,30 +32,30 @@
 	((tp1) == (tp) || PyType_IsSubtype((tp1), (tp)))
 
 /* A heap type's slots change whenever a class attribute that defines one
-   is set or deleted (KNOWN_BUGS F50). A static type's never change. */
+   is set or deleted. A static type's never change. */
 PSY_INLINE bool Psyco_SlotsMutable(PyTypeObject* tp) {
 	return (tp->tp_flags & Py_TPFLAGS_HEAPTYPE) != 0;
 }
 
 /* object_set_class (3.7 typeobject.c) changes an object's type only
    between heap types, or between subtypes of ModuleType (which is static):
-   only such a known type can go stale (KNOWN_BUGS F55). */
+   only such a known type can go stale. */
 PSY_INLINE bool Psyco_ClassMutable(PyTypeObject* tp) {
 	return (tp->tp_flags & Py_TPFLAGS_HEAPTYPE) != 0 ||
 	       PyType_IsSubtype(tp, &PyModule_Type);
 }
 
 /* After code that may assign __class__ (po->pr.class_unchecked), forgets
-   the run-time values' known types that can change, and the constants'
-   (F96). Called between instructions and before a direct call. */
+   the run-time values' known types that can change, and the constants'.
+   Called between instructions and before a direct call. */
 EXTERNFN void Psyco_ForgetClasses(PsycoObject* po);
 
 /* Before a run-time value's type is promoted: if it was forgotten and
    vi->type_hint holds it, a guard against it, which leaves the type known
-   on the likely path (D63). False on error. */
+   on the likely path. False on error. */
 EXTERNFN bool Psyco_TypeHintGuard(PsycoObject* po, vinfo_t* vi);
 
-/* A constant object whose class can be assigned (KNOWN_BUGS F96): its
+/* A constant object whose class can be assigned: its
    type is not read when compiling, but checked at run time
    (Psyco_ConstantType). */
 PSY_INLINE bool Psyco_ConstantClassMutable(vinfo_t* vi) {
@@ -112,7 +112,7 @@ PSY_INLINE PyTypeObject* Psyco_FastType(vinfo_t* vi) {
 	vinfo_t* vtp = vinfo_getitem(vi, iOB_TYPE);
 	if (vtp == NULL) {
 		PyObject* o = (PyObject*) CompileTime_Get(vi->source)->value;
-		extra_assert(!Psyco_ClassMutable(o->ob_type)); /* F96 */
+		extra_assert(!Psyco_ClassMutable(o->ob_type));
 		return o->ob_type;
 	}
 	else {
@@ -166,11 +166,11 @@ EXTERNFN bool PsycoObject_SetAttr(PsycoObject* po, vinfo_t* o,
 EXTERNVAR long psyco_stat_store_misses;
 EXTERNVAR long psyco_stat_store_type_changes;
 EXTERNVAR long psyco_stat_store_refreshes;
-/* failed load guards, and those that re-armed some sites (D60) */
+/* failed load guards, and those that re-armed some sites */
 EXTERNVAR long psyco_stat_load_type_changes;
 EXTERNVAR long psyco_stat_load_repairs;
 #if NI_CODESTATS
-/* load guards (QUESTIONS 41, tools/loadguards.py): see pobject.c */
+/* load guards (tools/loadguards.py): see pobject.c */
 EXTERNVAR long psyco_cs_load[8];
 EXTERNVAR bool psyco_cs_load_respawn;
 #endif
@@ -235,7 +235,7 @@ EXTERNFN vinfo_t* Psyco_SafelyDeleteVar(PsycoObject* po, vinfo_t* vi);
    in the installed headers, are copied from the source into layouts_gen.h
    (policy_table.LAYOUTS); the entries follow the indices. */
 
-/* Inline attribute stores (D38): a cache per (class, name) says where the
+/* Inline attribute stores: a cache per (class, name) says where the
    name sits in keys of one size; it holds no reference to any keys. The
    store emitted by x64/ipyencoding.c:psyco_inline_store_begin reads it at
    run time and checks it against the live keys of the dict it stores
@@ -245,7 +245,7 @@ typedef struct {
   Py_ssize_t kword;   /* entries[ix].me_key in such keys, in words */
   Py_ssize_t ix;      /* the name's index in them */
   PyObject *name;     /* interned; held by the table's key */
-  uint64_t *version;  /* &ni_dict_version (D35) */
+  uint64_t *version;  /* &ni_dict_version */
   long refreshes;     /* misses that changed the cache */
 } store_cache_t;
 

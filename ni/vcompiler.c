@@ -6,13 +6,13 @@
  *   - no match:      start new code (or a coding pause if the buffer is full),
  *                    unless the merge point already has MP_BLOCK_CAP blocks:
  *                    then forget the ints' known values and the constants
- *                    that differ between its blocks, and retry (D40, D43).
+ *                    that differ between its blocks, and retry.
  * A coding pause is a stub that compiles the continuation only when execution
  * first reaches it.
  *
  * Field access (psyco_internal_getfld/putfld) folds loads from compile-time
  * objects in C and caches results in vinfo->array, except the type of a
- * constant whose class can be assigned, which is checked (F96).
+ * constant whose class can be assigned, which is checked.
  *
  * References to compiled code buffers are mostly dropped ("XXX don't know
  * what to do with reference"): those buffers, and machine code, are never
@@ -544,7 +544,7 @@ vinfo_t *psyco_internal_getfld(PsycoObject *po, int findex, defield_t df,
   } else if (findex == iOB_TYPE && offset == FIELD_C_OFFSET(OB_type) &&
              !((long)df & FIELD_ARRAY) && Psyco_ConstantClassMutable(vi)) {
     /* the type of a constant whose class can be assigned: checked at run
-       time, not read (KNOWN_BUGS F96) */
+       time, not read */
     PyTypeObject *tp;
     if (Psyco_ConstantType(po, vi, &tp) < 0)
       return NULL;
@@ -760,7 +760,7 @@ void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
   coding_pause_t *cp;
   code_t *stub;
 
-  /* the trampoline's call clobbers the flags (KNOWN_BUGS B8): a condition
+  /* the trampoline's call clobbers the flags: a condition
      still live in them, such as a virtual bool just compared, is saved in a
      register first, in the calling code. A conditional pause jumps on the
      flags, so there the only live condition must be the one it jumps on. */
@@ -854,7 +854,7 @@ static void cs_state(PsycoObject *po) {
 }
 #endif
 
-/* The cap per merge point (D40, FINDINGS.md): once this many
+/* The cap per merge point (FINDINGS.md): once this many
    blocks have been compiled at a merge point, a state that matches none of
    them is generalised (dispatcher.c:psyco_forget_values) and compared
    again, so it joins a general block instead of starting one more. The
@@ -931,7 +931,7 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
     }
 
     /* a second block at this merge point: large int constants become
-       run-time objects first (QUESTIONS 38). Replay-safe for the same
+       run-time objects first. Replay-safe for the same
        reasons as the cap. */
     if (mp != NULL && mp->blocks > 0 && psyco_unpromote_large_ints(po))
       return psyco_compile(po, mp, continue_compilation);
@@ -940,7 +940,7 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
       return psyco_compile(po, mp, continue_compilation);
 
     /* a promotion's compare at its own instruction ends here: what is
-       compiled next runs instructions (dispatcher.c, D50) */
+       compiled next runs instructions (dispatcher.c) */
     psyco_compatible_keep_facts = false;
     mp_new_block(po, mp);
     if (continue_compilation)
@@ -951,7 +951,7 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
   }
 }
 
-/* Join points (D44, FINDINGS.md). A split site
+/* Join points (FINDINGS.md). A split site
    (pycompiler.c, split_after_global) ends its block, and the blocks started
    after it at one instruction are listed like a merge point's ('ge',
    mergepoints.c:psyco_join_point). A branch respawned from the site's
@@ -1170,19 +1170,20 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
   po->pr.auto_recursion = AUTO_RECURSION(recursion);
 
   /* initialize po->vlocals. The globals are borrowed (C14): compiled code
-     keeps its constants forever (sk_release), and here that closed a cycle
-     the GC can't see, globals -> function -> code -> co_extra -> buffers ->
-     globals, so code with globals of its own (exec, namedtuple) never died.
+     keeps its constants forever (sk_release), and owning the globals would
+     close a cycle the GC can't see, globals -> function -> code -> co_extra
+     -> buffers -> globals, so code with globals of its own (exec,
+     namedtuple) would never die.
      Borrowing is safe because compiled code uses the dict only as an
      argument to run-time calls, never its contents at compile time: it
      runs only in a frame that holds the dict, and if a new dict later gets
      a dead one's address, the old code does for it what new code would.
      Code that reads globals at compile time (say a cached LOAD_GLOBAL)
-     must take its own reference (DECISIONS D23). */
+     must take its own reference. */
   sk = sk_new((long)globals, SkFlagPyObj);
   LOC_GLOBALS = vinfo_new(CompileTime_NewSk(sk));
   /* the frame's f_builtins, owned: lookups read it at compile time, and a
-     dict swapped in for a while (KNOWN_BUGS F49) may not outlive the code */
+     dict swapped in for a while may not outlive the code */
   Py_INCREF(builtins);
   LOC_BUILTINS = vinfo_new(CompileTime_NewSk(sk_new((long)builtins,
                                                     SkFlagPyObj)));

@@ -4,7 +4,7 @@
  * locals. This is CPython object layout and C-API policy living in the
  * backend; in a tidied design it belongs in a generated Python layer.
  * The frame locals are the words of Python 2's per-frame exception state
- * (f_exc_*), which nothing sets or reads now.
+ * (f_exc_*), which nothing sets or reads.
  */
 /***************************************************************/
 /***     Processor- and language-dependent code producers      ***/
@@ -124,7 +124,7 @@ PSY_INLINE void psyco_incref_nv(PsycoObject *po, vinfo_t *v) {
   }
 }
 
-/* a dealloc can run a __del__ (KNOWN_BUGS F55), except these types' */
+/* a dealloc can run a __del__, except these types' */
 PSY_INLINE void decref_may_run_python(PsycoObject *po, PyTypeObject *tp) {
   if (!(tp == &PyUnicode_Type || tp == &PyBool_Type || tp == &PyFloat_Type ||
         tp == &PyLong_Type || tp == Py_None->ob_type || tp == &PyRange_Type))
@@ -254,8 +254,8 @@ EXTERNFN bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
     po->stack_depth = 0;                                                       \
   } while (0)
 
-/* The inline attribute store into a split instance dict (D38, D47;
-   FINDINGS.md), behind a type guard emitted
+/* The inline attribute store into a split instance dict
+   (FINDINGS.md), behind a type guard emitted
    before it. Hand-allocated in the caller-saved registers, which hold no
    tracked values, so the compiler's state is the same on every path
    through it. psyco_inline_store_begin emits the checks and the store,

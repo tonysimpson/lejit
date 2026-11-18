@@ -9,10 +9,10 @@
  * holds them, taken from CPython's cache at start-up), as unicode_char
  * returns, so identities match CPython's.
  *
- * Length, + and 'in' are generated (punicodeobject_gen.h, D89, D92) from
+ * Length, + and 'in' are generated (punicodeobject_gen.h) from
  * the C with the descriptors below (policy_table.TYPES); what stays here is
  * the representation the C doesn't state: the inline character read, the
- * slices (D56) and compare's constant fold and one-call equality.
+ * slices and compare's constant fold and one-call equality.
  */
 #include "pobject.h"
 #include "pboolobject.h"
@@ -36,7 +36,7 @@
 static PyObject *latin1[256];
 static binaryfunc unicode_subscript;
 
-/* unicode_length, PyUnicode_Concat, PyUnicode_Contains (D89, D92) */
+/* unicode_length, PyUnicode_Concat, PyUnicode_Contains */
 #include "punicodeobject_gen.h"
 
 /* unicode_richcompare compares any two str instances, subclasses included

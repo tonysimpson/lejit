@@ -10,7 +10,7 @@
  *
  * + - * unary - ~ + abs(), bool, / and ** are generated (plongobject_gen.h,
  * by tools/metac/gen_abstract.py's long unit with the word representation
- * of policy_table.TYPES, D83). Hand-written here: the representation
+ * of policy_table.TYPES). Hand-written here: the representation
  * itself (plong_medium_value, MEDIUM_VALUE and its guard on a virtual int,
  * which has no ob_size; PsycoLong_Sign), and what 3.7's C has no word
  * form of: long_richcompare (long_compare is a digit loop), long_hash's
@@ -283,7 +283,7 @@ static vinfo_t *plong_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
 /* & | ^ << >> on one-digit ints as word operations. Hand-written: 3.7's
    long_and etc. work on digit arrays with no one-digit fast path, but
    3.12's long_and/long_or/long_xor have one (_PyLong_IsCompact), which
-   the word representation (D83) could translate there. A word shift has
+   the word representation could translate there. A word shift has
    Python's meaning for >> (a count of 64 or more gives the sign, a
    negative one raises ValueError, as integer_rshift does); for << the
    count must be at most 32, which keeps a one-digit value inside a word. */

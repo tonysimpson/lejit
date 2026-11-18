@@ -2,7 +2,7 @@
    (_PyRuntime, in the internal headers) holds, which the extension headers
    don't describe. Where the current thread state and eval_breaker are,
    and the copy of what ceval does when eval_breaker is set, are
-   mechanisms chosen from the target's source (D75, D77): this file is only
+   mechanisms chosen from the target's source: this file is only
    their home. Not #included into ni.c under ALL_STATIC: setup.py always
    builds it on its own. */
 #define Py_BUILD_CORE

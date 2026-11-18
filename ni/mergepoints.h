@@ -61,7 +61,7 @@ EXTERNFN global_entries_t* psyco_join_point(PyObject* mergepoints,
 
 EXTERNFN int psyco_mp_flags(PyObject* mergepoints);
 /* whether compiled code tests eval_breaker before the instruction at
-   position (a byte offset; KNOWN_BUGS C24) */
+   position (a byte offset) */
 EXTERNFN int psyco_breaker_check_at(PyObject* mergepoints, int position);
 /* the instructions before which ceval doesn't test eval_breaker: it tests
    before the next one, as these go on with DISPATCH(). YIELD_FROM is

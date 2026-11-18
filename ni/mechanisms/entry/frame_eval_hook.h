@@ -1,5 +1,5 @@
 /* Entry by the PEP 523 frame-evaluation hook, which is given a
-   PyFrameObject (D75). Every frame CPython evaluates comes here first: one
+   PyFrameObject. Every frame CPython evaluates comes here first: one
    whose code Ni has compiled (eval_hook.c:ni_entry_point) runs on the
    frame's argument words (eval_hook.c:NiCode_Run), anything else goes to
    the evaluator installed before. Included by eval_hook.c after those two. */

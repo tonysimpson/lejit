@@ -17,14 +17,14 @@ EXTERNFN vinfo_t *psyco_call_closure(PsycoObject *po, vinfo_t *vfunc,
 
 /* generator expressions fused with their consumer (pycheader.h GENEXPR_*) */
 EXTERNFN bool psyco_genexpr_fusable(vinfo_t *v);
-/* psyco_genexpr_fusable, and not while tracing (emits that test, KNOWN_BUGS
-   C23): 1 to fuse, 0 for the consumer's own call, -1 with an exception */
+/* psyco_genexpr_fusable, and not while tracing (emits that test): 1 to
+   fuse, 0 for the consumer's own call, -1 with an exception */
 EXTERNFN int psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
                                      vinfo_t *acc);
 
 /* The argument binding of ceval.c:_PyEval_EvalCodeWithName, generated
-   into psyfunc_gen.h (tools/metac/gen_call.py, D85): run while compiling a
+   into psyfunc_gen.h (tools/metac/gen_call.py): run while compiling a
    call, it binds the values in 'args', 'kwargs' (named by 'kwnames'),
    'defs' and 'closure' into the frame's locals, 'f_localsplus' (all NULL
    on entry), taking a reference for each. -1 where CPython's binding needs

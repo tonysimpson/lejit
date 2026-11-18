@@ -20,8 +20,7 @@ EXTERNFN vinfo_t *pinstancemethod_call(PsycoObject *po, vinfo_t *methobj,
    but if it needs be, will call PyMethod_New(). */
 EXTERNVAR source_virtual_t psyco_computed_method;
 
-/* PyMethod_New(func, self), virtual; new references to both (generated,
-   D80) */
+/* PyMethod_New(func, self), virtual; new references to both (generated) */
 EXTERNFN
 vinfo_t *PsycoMethod_New(vinfo_t *func, vinfo_t *self);
 

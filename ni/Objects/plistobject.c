@@ -325,10 +325,10 @@ static int cimpl_list_ass_slice(PyObject* self, Py_ssize_t start,
 
 /* list_subscript is also list.__getitem__ (METH_COEXIST), so
    super().__getitem__(i) brings it a subclass instance whose own slots run
-   Python code; the generic meta would dispatch on those (KNOWN_BUGS F41) */
+   Python code; the generic meta would dispatch on those */
 static vinfo_t* plist_subscript(PsycoObject* po, vinfo_t* o, vinfo_t* key)
 {
-	/* a subclass's slots behind guards (F56), as the generic meta
+	/* a subclass's slots behind guards, as the generic meta
 	   reads them */
 	void* slots[3];
 	void* list_slots[3];
@@ -406,7 +406,7 @@ static bool plist_ass_subscript(PsycoObject* po, vinfo_t* o, vinfo_t* key,
 }
 
 
-/* the list slots generated from listobject.c (sq_length, D84) */
+/* the list slots generated from listobject.c (sq_length) */
 #include "plistobject_gen.h"
 
 INITIALIZATIONFN
@@ -420,18 +420,16 @@ void psy_listobject_init(void)
 	Psyco_DefineMeta(m->sq_concat, psyco_plist_concat);
 
 	mm = PyList_Type.tp_as_mapping;
-	if (mm) {  /* Python >= 2.3 */
+	if (mm) {
 		Psyco_DefineMeta(mm->mp_subscript, plist_subscript);
 		Psyco_DefineMeta(mm->mp_ass_subscript,
 				 plist_ass_subscript);
 	}
 
-	/* In Python 2.3, lists have their own iterator type for
-	   performance, because generic sequence iterators have an
-	   extra overhead -- which is however completely removed by
-	   Psyco. So we redirect list iterators to generic iterators.
-	   (thus in Psyco, iter(l) never returns a listiterator) */
-	if (PyList_Type.tp_iter != NULL)  /* Python >= 2.3 */
+	/* CPython gives lists their own iterator type for speed; a
+	   virtual sequence iterator costs compiled code nothing, so
+	   iter(l) is one here, never a listiterator */
+	if (PyList_Type.tp_iter != NULL)
 		Psyco_DefineMeta(PyList_Type.tp_iter, &PsycoSeqIter_New);
 
         /* list object are mutable;

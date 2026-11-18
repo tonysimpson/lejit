@@ -9,10 +9,8 @@
 #include <opcode.h>
 
 
-/* Post-2.2 versions of Python introduced the following more explicit names.
-   XXX We should map the new names to the old ones if the new names do not
-   XXX exist but how can we detect if this is needed?
-   XXX Hacked by completely overriding the enum values with #defines. */
+/* COMPARE_OP's opargs after the rich comparisons, as macros with the
+   values of opcode.h's enum cmp_op */
 
 #define  PyCmp_IN		6
 #define  PyCmp_NOT_IN		7

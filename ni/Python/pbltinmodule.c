@@ -14,7 +14,7 @@
    (policy_table.TRANSLATED_FUNCTIONS): abs, len, hash, id, divmod, pow,
    isinstance, issubclass, getattr, setattr; gen_bltinmodule_init
    registers them. The rest of this file is what stays by hand, each with
-   its reason (DECISIONS D86). */
+   its reason. */
 #include "pbltinmodule_gen.h"
 
 static PyCFunction cimpl_globals;
@@ -85,7 +85,7 @@ static PyObject *object_class_descr; /* object.__class__ */
 static PyObject *str___class__;
 
 /* globals() is the compiled function's own globals: the real builtin reads
-   the nearest interpreted frame's (F47) */
+   the nearest interpreted frame's */
 static vinfo_t *pbuiltin_globals(PsycoObject *po, vinfo_t *vself,
                                  vinfo_t *vnull) {
   vinfo_incref(LOC_GLOBALS);

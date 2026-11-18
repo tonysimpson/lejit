@@ -1,7 +1,7 @@
 /* The exception being raised is the thread state's curexc_type,
    curexc_value and curexc_traceback; the one being handled
    (sys.exc_info()) is the type, value and traceback of the top entry of
-   tstate->exc_info, a stack linked by previous_item (D77). Ni reaches them
+   tstate->exc_info, a stack linked by previous_item. Ni reaches them
    only through this. Included by Python/pycompiler.h after vcompiler.h.
 
    Compiled code's PyErr_Occurred() tests one pointer at

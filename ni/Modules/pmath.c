@@ -1,8 +1,8 @@
 /*
  * The math module's metas. The one-argument functions on doubles (acos,
- * sqrt, exp...) are generated from Modules/mathmodule.c (pmathmodule_gen.h,
- * D87): PyFloat_AsDouble's meta for the argument, so an int or a type with
- * __float__ converts as CPython does (KNOWN_BUGS F99), then math_1's double
+ * sqrt, exp...) are generated from Modules/mathmodule.c (pmathmodule_gen.h):
+ * PyFloat_AsDouble's meta for the argument, so an int or a type with
+ * __float__ converts as CPython does, then math_1's double
  * code copied into a helper per function (the libm call, errno and the
  * ValueError/OverflowError tests).
  * Hand-written here: ceil and floor, which take exact floats only and

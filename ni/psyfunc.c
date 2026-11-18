@@ -1,7 +1,7 @@
 /*
  * Compile-time Python-to-Python calls (psyco_call_pyfunc). When the callee and
  * its argument count are known at compile time, the arguments are bound now,
- * by the binder generated from ceval.c (psyfunc_gen.h, D85), which owns a
+ * by the binder generated from ceval.c (psyfunc_gen.h), which owns a
  * reference to each value it binds; a binding it can't do is the real call.
  * The callee is then either inlined into the caller (the EInline
  * pseudo-exception swaps po->vlocals) or compiled separately and called with
@@ -26,9 +26,9 @@
 #include "mergepoints.h"
 #include "pycodegen.h"
 #include "vcompiler.h"
-/* ni_tracing_test (D75) */
+/* ni_tracing_test */
 #include "mechanism_tracing_gen.h"
-/* ni_tstate_load, the recursion count, ni_eval_breaker_test (D77) */
+/* ni_tstate_load, the recursion count, ni_eval_breaker_test */
 #include "mechanism_tstate_gen.h"
 #include "mechanism_recursion_gen.h"
 #include "mechanism_eval_breaker_gen.h"
@@ -96,14 +96,14 @@ static bool fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co,
   return fncall->merge_points != Py_None;
 }
 
-/* _PsycoEval_EvalCodeWithName, generated from ceval.c (D85) */
+/* _PsycoEval_EvalCodeWithName, generated from ceval.c */
 #include "psyfunc_gen.h"
 
 /* The callee frame's locals: the call's arguments, defaults and cells
    bound as _PyEval_EvalCodeWithName binds them (the generated binder), and
    the 'nextra' values of 'extra' after the cells. False when that binding
    needs the real call: a wrong count (whose TypeError's wording CPython's
-   own call gives, F92), or more extra positional arguments than a virtual
+   own call gives), or more extra positional arguments than a virtual
    tuple holds. */
 static bool fncall_bind(struct fncall_arg_s *fncall, PsycoObject *po,
                         vinfo_t *vglobals, vinfo_t *vbuiltins,
@@ -149,10 +149,10 @@ PSY_INLINE void fncall_finish_store(struct fncall_arg_s *fncall,
 
   /* store the code object */
   /* borrowed (C14): the code object's co_extra owns its compiled code, so
-     an owned reference here was a cycle that kept both forever. Whenever
-     this code can run, something else holds the code: the frame the eval
-     hook was given, or the caller's promotion cache, which keeps every
-     function it switched on */
+     an owned reference here would be a cycle that keeps both forever.
+     Whenever this code can run, something else holds the code: the frame
+     the eval hook was given, or the caller's promotion cache, which keeps
+     every function it switched on */
   po->pr.co = fncall->co;
   pyc_data_build(po, fncall->merge_points);
 }
@@ -254,7 +254,7 @@ vinfo_t *psyco_save_inline_po(PsycoObject *po) {
   vinfo_t *v = vinfo_new(VirtualTime_New(&EInline));
   v->array = array_new(TOTAL_LOC_INLINE + i);
   /* fixed: the return reads them at compile time, so a match must never
-     make them run-time (a join point in the inlined frame, D44) */
+     make them run-time (a join point in the inlined frame) */
   v->array->items[LOC_INLINE_CO] =
       vinfo_new(CompileTime_NewSk(sk_new((long)po->pr.co, SkFlagFixed)));
   v->array->items[LOC_INLINE_NEXT_INSTR] =
@@ -263,7 +263,7 @@ vinfo_t *psyco_save_inline_po(PsycoObject *po) {
      its address. Blocks compiled inside the inlined frame stay in the
      callee's join points (vcompiler.c:psyco_compile_join), and their code
      goes on in the dead caller's: the serial keeps a new caller from
-     matching them (KNOWN_BUGS C30). */
+     matching them. */
   x = ni_code_extra(po->pr.co);
   psyco_assert(x != NULL); /* made with the merge points */
   v->array->items[LOC_INLINE_SERIAL] =
@@ -287,7 +287,7 @@ PsycoObject *psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a) {
   /* the current locals are dropped only once the restored frame is in
      place: a decref may call a dealloc, and C calls are aligned from the
      current frame's return address (STACK_DEPTH_SINCE_CALL), which the
-     inlined frame being left doesn't have (KNOWN_BUGS B6) */
+     inlined frame being left doesn't have */
   old = PyMem_Malloc((oldcount + 1) * sizeof(vinfo_t *));
   if (old == NULL)
     OUT_OF_MEMORY();
@@ -328,7 +328,7 @@ PsycoObject *psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a) {
 /* the running thread's state, read at run time (the tstate mechanism) */
 static vinfo_t *load_tstate(PsycoObject *po) { return ni_tstate_load(po); }
 
-/* Py_LeaveRecursiveCall after a compiled call (KNOWN_BUGS C12); entering
+/* Py_LeaveRecursiveCall after a compiled call; entering
    is the recursion mechanism's enter_recursive_call, on a thread state the
    caller has loaded */
 DEFINEFN
@@ -339,7 +339,7 @@ bool psyco_leave_recursive_call(PsycoObject *po) {
   return leave_recursive_call(po, vts);
 }
 
-/* ceval's test of eval_breaker before an instruction (KNOWN_BUGS C24, D45):
+/* ceval's test of eval_breaker before an instruction:
    the eval_breaker mechanism's inline test, and only when it is set a call
    to the C helper that does what ceval does then (pending calls and signal
    handlers, a GIL drop for other threads, an async exception). The helper
@@ -354,8 +354,8 @@ bool psyco_check_eval_breaker(PsycoObject *po) {
   return true;
 }
 
-/* The C functions after which a CALL_* needs no eval_breaker test (D53,
-   pycompiler.c:breaker_after_call). Each runs briefly, can't block or
+/* The C functions after which a CALL_* needs no eval_breaker test
+   (pycompiler.c:breaker_after_call). Each runs briefly, can't block or
    release the GIL, and runs only CPython's own code for builtin types, so
    what arrives during it waits only until the next test, as it would
    during any other instruction. Allocation can collect garbage and so run
@@ -432,13 +432,13 @@ static void cannot_block_init(void) {
   Py_DECREF(builtins);
 }
 
-/* Whether a trace or profile function is set in this thread (KNOWN_BUGS
-   C23, D46): a compiled call or inlined frame skips the eval hook, which
-   runs frames interpreted while the thread is tracing, so each one tests
-   that first (ni_tracing_test, from the tracing mechanism's snippet). When
-   set, the caller makes the real call instead (rare path: a
-   runtime_condition_f respawn point, compiled when first taken). Only the callee's entry is tested: a frame already running
-   compiled when tracing starts has f_trace None, so CPython gives it no
+/* Whether a trace or profile function is set in this thread: a
+   compiled call or inlined frame skips the eval hook, which runs frames
+   interpreted while the thread is tracing, so each one tests that first
+   (ni_tracing_test, from the tracing mechanism's snippet). When set, the
+   caller makes the real call instead (rare path: a runtime_condition_f
+   respawn point, compiled when first taken). Only the callee's entry is
+   tested: a frame already running compiled when tracing starts has f_trace None, so CPython gives it no
    trace events either; its profile events are missed (KNOWN_BUGS C29).
    use_tracing is per thread and set by every way in, C ones too
    (PyEval_SetTrace and PyEval_SetProfile, as cProfile uses). */
@@ -478,7 +478,7 @@ static int psyco_tracing_on(PsycoObject *po) {
 
 /* The callee frame's builtins, as frameobject.c:_PyFrame_New_NoTrack picks
    them: the caller's when the globals are the same, else the globals'
-   __builtins__ (KNOWN_BUGS F49). A new reference, or NULL if the globals
+   __builtins__. A new reference, or NULL if the globals
    aren't known now. The second case is read at compile time, so a module's
    __builtins__ replaced after a call site compiled is not seen there. */
 static vinfo_t *callee_builtins(PsycoObject *po, vinfo_t *vglobals) {
@@ -598,13 +598,13 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
                    NULL)) {
     /* the wrong number of arguments: the real call raises CPython's
        TypeError, whose wording depends on the defaults and keyword-only
-       arguments (ceval.c:too_many_positional, missing_arguments; F92) */
+       arguments (ceval.c:too_many_positional, missing_arguments) */
     vinfo_decref(vbuiltins, po);
     goto fail_to_default;
   }
 
-  /* not into itself: inlined calls aren't counted in the recursion depth
-     (KNOWN_BUGS C12), and a closure calling itself through its cell would
+  /* not into itself: inlined calls aren't counted in the recursion depth,
+     and a closure calling itself through its cell would
      reach RecursionError at twice CPython's depth */
   inlining = !po->pr.is_inlining && co != po->pr.co &&
              (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE);
@@ -613,7 +613,7 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
        enough for a call: the caller holds the function until it returns a
        real object. An inlined body's result can still be virtual and hold
        a cell (a closure it made), and the caller drops the function before
-       computing it: the cell could be freed first (KNOWN_BUGS C49). So each
+       computing it: the cell could be freed first. So each
        cell gets a reference of its own, dropped with its last vinfo_t. */
     int i;
     for (i = 0; i < nfrees; i++)
@@ -632,7 +632,7 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     traced = tracing_on(po, vts);
     /* count the call's depth, as ceval does on entering a frame, so that
        deep recursion raises RecursionError instead of overflowing the C
-       stack (KNOWN_BUGS C12); psyco_call_psyco leaves it after the call.
+       stack; psyco_call_psyco leaves it after the call.
        Emitted before the frame is built, so no argument source moves. */
     if (!traced && !inlining)
       entered = enter_recursive_call(po, vts);
@@ -652,7 +652,7 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     result = call_with_inline_frame(po, &fncall, recursion);
   } else {
     /* non-inlining call: the callee's entry compares the arguments' known
-       types, after what this instruction called so far (F55) */
+       types, after what this instruction called so far */
     Psyco_ForgetClasses(po);
     mypo = psyco_build_frame(po, &fncall, recursion, &sources);
     if (mypo == NULL) {
@@ -675,8 +675,9 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
 
 fail_to_default:
   /* call the function object itself: rebuilding the call from its code,
-     globals and defaults (upstream's cimpl_call_pyfunc) lost its name and
-     qualname (generators took co_name), closure and keyword-only defaults */
+     globals and defaults, as upstream's cimpl_call_pyfunc did, would lose its
+     name and qualname (generators take co_name), closure and keyword-only
+     defaults */
   return psyco_generic_call(po, PyFunction_Type.tp_call,
                             CfCommonNewRefPyObject, "vvl", vfunc, arg_tuple,
                             (long)0);

@@ -87,7 +87,7 @@ fail:
   return NULL;
 }
 
-/* the bytes slots generated from bytesobject.c (sq_length, D84) */
+/* the bytes slots generated from bytesobject.c (sq_length) */
 #include "pbytesobject_gen.h"
 
 INITIALIZATIONFN

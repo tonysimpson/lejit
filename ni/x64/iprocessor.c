@@ -100,7 +100,7 @@ void write_psyco_int_mul_ovf(PsycoObject *po) {
    call: a promotion stub passes its run-time value there.
    Other registers need no saving (only callee-saved ones are allocated);
    the flags are not saved: promotion spills them first (NEED_CC) and
-   psyco_coding_pause asserts none is left (KNOWN_BUGS B8). */
+   psyco_coding_pause asserts none is left. */
 DEFINEVAR code_t *psyco_stub_trampoline;
 
 static void write_stub_trampoline(PsycoObject *po) {
@@ -123,7 +123,7 @@ static void write_stub_trampoline(PsycoObject *po) {
 /* Out-of-line slow paths that compiled code calls with its arguments
    already in the SysV registers and the stack at any alignment (the
    inline attribute store's miss and dealloc paths). Each is a matched
-   call and ret, so the return-address predictor stays in step (D32). RBP
+   call and ret, so the return-address predictor stays in step. RBP
    is saved here and holds the unaligned RSP; compiled code keeps its
    values only in callee-saved registers, which the C callee preserves. */
 static void write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax) {

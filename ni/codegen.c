@@ -172,7 +172,7 @@ psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true)
 
 #else /* if !HAVE_CCREG */
 
-#error "this was meant for ivm, but now ivm also defines HAVE_CCREG."
+#error "codegen.c needs HAVE_CCREG, which the x64 backend defines"
 
 #endif /* HAVE_CCREG */
 
@@ -347,7 +347,7 @@ vinfo_t *
         if (!(flags & CfNoBlock) && !psyco_cannot_block(c_function))
             po->blocking_call = 1;
         if (!(flags & (CfPure | CfNoPython)))
-            po->pr.class_unchecked = 1; /* KNOWN_BUGS F55 */
+            po->pr.class_unchecked = 1; /* it may assign __class__ */
         vresult = run_time_call(po, c_function, flags, count, argtags, args,
                                 totalstackspace);
         if (vresult == NULL && has_refs) {

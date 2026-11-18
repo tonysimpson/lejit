@@ -249,7 +249,7 @@ static PyObject *ni_code_info(PyObject *self, PyObject *co) {
   return PyUnicode_FromString("compiled");
 }
 
-/* for tests (D15): {bytecode offset: [dead local names]} at each merge
+/* for tests: {bytecode offset: [dead local names]} at each merge
    point, or None if the code isn't compiled */
 static PyObject *ni_dead_locals(PyObject *self, PyObject *co) {
   PyObject *mps, *result;
@@ -294,7 +294,7 @@ fail:
   return NULL;
 }
 
-/* for tests (B6): would calls to this code be inlined? */
+/* for tests: would calls to this code be inlined? */
 static PyObject *ni_inlinable(PyObject *self, PyObject *co) {
   PyObject *mps;
   if (!PyCode_Check(co)) {

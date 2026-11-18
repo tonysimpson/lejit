@@ -1,6 +1,6 @@
 /*
  * Virtual ranges and range iterators, so that 'for i in range(...)' is a
- * register loop (upstream's virtual xrange, removed in the port: A8).
+ * register loop, after Psyco's virtual xrange.
  *
  * A virtual range holds start, stop and step as machine words, at indices
  * past the real rangeobject's fields (which are PyObject *), so that any

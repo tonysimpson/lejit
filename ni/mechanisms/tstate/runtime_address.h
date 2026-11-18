@@ -1,7 +1,7 @@
 /* The running thread's state is the word at an address fixed for the
    process (ni_tstate_current_address, the tstate_runtime mechanism's, in
    Python/pyruntime.c): compiled code loads it with one move, a mutable
-   field since another thread may run between two loads (D77). Included
+   field since another thread may run between two loads. Included
    after vcompiler.h. */
 typedef struct {
   PyThreadState *ts;

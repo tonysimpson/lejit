@@ -87,7 +87,7 @@ EXTERNFN vinfo_t* psyco_generic_call(PsycoObject* po, void* c_function,
 
 /* psyco_generic_call reads every argument with va_arg(long), but a vararg
    narrower than a word (an int, an enum, 0) arrives with its upper 32 bits
-   unspecified (KNOWN_BUGS F32). This wrapper makes such an argument a compile
+   unspecified. This wrapper makes such an argument a compile
    error ("size of unnamed array is negative"): cast it to (long). _Generic
    and sizeof don't evaluate 'x', so each argument is still evaluated once. */
 #define NI_WORD_VARG(x)                                                    \
@@ -134,11 +134,11 @@ EXTERNFN condition_code_t psyco_int32_nonzero_at(PsycoObject* po,
    if it isn't 0 */
 EXTERNFN condition_code_t psyco_int32_nonzero_in(PsycoObject* po,
                                                  vinfo_t* vbase, long offset);
-/* ceval's eval_breaker test at a loop head or after a call (psyfunc.c,
-   KNOWN_BUGS C24); false with an exception set */
+/* ceval's eval_breaker test at a loop head or after a call (psyfunc.c);
+   false with an exception set */
 EXTERNFN bool psyco_check_eval_breaker(PsycoObject* po);
 /* whether a C function is one after which a call needs no eval_breaker
-   test (psyfunc.c, D53) */
+   test (psyfunc.c) */
 EXTERNFN bool psyco_cannot_block(void* c_function);
 EXTERNFN vinfo_t* psyco_call_psyco(PsycoObject* po, CodeBufferObject* codebuf,
 				   Source argsources[], int argcount,

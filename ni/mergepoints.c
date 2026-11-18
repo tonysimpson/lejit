@@ -5,16 +5,15 @@
  *  2. It marks merge points: bytecode positions where the state is compared
  *     with already-compiled code, and where a new code buffer (and the
  *     snapshot a respawn replays from) starts. As upstream, they go only
- *     where control flow needs them (D10): the start, every position
+ *     where control flow needs them: the start, every position
  *     entered from two or more places, every backward-jump target (loop
  *     heads), every exception or finally handler, and at least every
  *     MAX_MP_DISTANCE instructions so that respawn replays stay short.
  *     Entries are counted per instruction from its successors; an
  *     instruction with EXTENDED_ARG prefixes counts as one, starting at
  *     the first prefix. Placement only affects how much code is compiled
- *     and shared: any instruction boundary may be a merge point, which is
- *     what the earlier stop-gap did everywhere.
- *  3. Liveness of locals (D15, upstream's FULL_CONTROL_FLOW): at each merge
+ *     and shared: any instruction boundary may be a merge point.
+ *  3. Liveness of locals (as upstream's FULL_CONTROL_FLOW): at each merge
  *     point, the locals never read again are listed first in its fatlist,
  *     and psyco_delete_unused_vars drops them before the state is compared,
  *     so states differing only in dead locals share code. Successors are
@@ -38,7 +37,7 @@ typedef struct {
     Py_ssize_t unit_count;      /* code units in co_code */
     global_entries_t *joins;    /* per code unit, or NULL: psyco_join_point */
     /* one per code unit: compiled code tests eval_breaker before that
-       instruction (KNOWN_BUGS C24). Allocated after the merge points. */
+       instruction. Allocated after the merge points. */
     unsigned char *breaker_checks;
     /*
     NULL terminated.
@@ -107,8 +106,8 @@ report_destructor(PyObject *capsule)
 #define MAX_MP_DISTANCE 170
 
 /* inlining (upstream's rule): one merge point (the start), no block, no
-   LOAD_GLOBAL (upstream forced a merge point after it), and at most this
-   many instructions that are not "light" (produce little or no code) */
+   LOAD_GLOBAL, and at most this many instructions that are not "light"
+   (produce little or no code) */
 #define INLINE_MAXIMUM_WEIGHT 6
 #define IS_LIGHT_INSTR(op)                                                   \
     ((op) == NOP || (op) == POP_TOP || (op) == ROT_TWO ||                    \
@@ -361,7 +360,7 @@ _find_merge_points(PyCodeObject *co)
         if (opcode == LOAD_GLOBAL)
             loads_global = 1;
         /* after a call pycompiler.c tests at the end of the call itself,
-           if it emitted a call that may block (D53), except before an
+           if it emitted a call that may block, except before an
            instruction ceval skips: then always, after that one */
         if ((opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
              opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD) &&
@@ -488,8 +487,8 @@ _find_merge_points(PyCodeObject *co)
 }
 
 /* builtins that read the calling frame's locals, which compiled code keeps
-   in registers and on the machine stack (KNOWN_BUGS C15); upstream had the
-   same list (NoControlFlowIfBuiltin) but only warned at run time */
+   in registers and on the machine stack (KNOWN_BUGS C15); the list is
+   upstream's NoControlFlowIfBuiltin */
 static const char *const frame_locals_builtins[] = {
     "locals", "vars", "dir", "eval", "exec", NULL};
 

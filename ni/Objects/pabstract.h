@@ -106,7 +106,7 @@ EXTERNFN vinfo_t* PsycoObject_GetIter(PsycoObject* po, vinfo_t* vi);
 
 
 /* generic implementations of len() that reads the object's ob_size field
-   and the tp_subscript of all sequences in Python 2.3.
+   and the tp_subscript of all sequences.
    See e.g. plistobject.c */
 EXTERNFN vinfo_t* psyco_generic_subscript(PsycoObject* po, vinfo_t* o,
 					  vinfo_t* key);

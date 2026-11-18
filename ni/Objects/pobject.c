@@ -7,7 +7,7 @@
  * types that have no __del__. GenericGetAttr is specialised on the type
  * (see its comment); it is what reaches the tp_descr_get metas in
  * pdescrobject.c and pfuncobject.c. Its guards are shared per (type, name,
- * what the load does) and repaired at run time (load_guard, D60). SetAttr
+ * what the load does) and repaired at run time (load_guard). SetAttr
  * on a heap type is specialised behind the same kind of guard
  * (heap_setattr), shared and repaired too (store_guard); a class with a
  * metaclass, which CPython 3.7 never gives a version tag, is given one
@@ -16,7 +16,7 @@
  * no keys (store_cache); its failed checks call one C helper out of line
  * instead of respawning (cimpl_store_miss).
  * Other slots of a heap type are read through Psyco_HeapSlot, a guard
- * against the value first seen (F50).
+ * against the value first seen.
  */
 #include "pobject.h"
 #include "../compat2to3.h"
@@ -57,19 +57,19 @@ PyTypeObject *Psyco_KnownType(vinfo_t *vi) {
     return NULL;
 }
 
-/* KNOWN_BUGS F55. A promoted type is a known field of a run-time value
+/* A promoted type is a known field of a run-time value
    (iOB_TYPE), kept while the value lives, but assigning __class__ changes
    it. So after an instruction that emitted a call that may run Python
    code (po->pr.class_unchecked), the known types that can change are
-   forgotten, and their next use promotes again (D59), as are the
-   constants' checked types (F96, Psyco_ConstantType). A decref that may
+   forgotten, and their next use promotes again, as are the
+   constants' checked types (Psyco_ConstantType). A decref that may
    dealloc counts as such a call (a __del__). Depends only on the
    compile-time state, so a replay forgets the same. Not seen: a finaliser
    run by a collection that a CfPure function's allocation starts.
    Item iOB_TYPE of a run-time value is its type, as
    dispatcher.c:compatible_unused_fact assumes; a promoted one is an object
    (SkFlagPyObj), and only builtin types are asserted without the flag.
-   A run-time value's forgotten type stays as its type_hint (D63); a
+   A run-time value's forgotten type stays as its type_hint; a
    constant needs none, its next use checks again. */
 static void forget_mutable_types(PsycoObject *po, vinfo_array_t *a,
                                  bool runtime) {
@@ -102,7 +102,7 @@ static void forget_mutable_types(PsycoObject *po, vinfo_array_t *a,
   }
 }
 
-/* D63. A type forgotten by forget_mutable_types is usually still the
+/* A type forgotten by forget_mutable_types is usually still the
    object's type when it is next needed, so instead of a promotion, which
    ends the block, the code compares ob_type with it and goes on with the
    type known; the other branch is a respawn, which promotes as before.
@@ -153,10 +153,9 @@ void Psyco_ForgetConstantClasses(PsycoObject *po) {
   forget_mutable_types(po, &po->vlocals, false);
 }
 
-/* KNOWN_BUGS F96 (D62). A constant object (a global never rebound, a
-   class attribute, a default argument, a promoted value) used to have its
-   type read when compiling, and assigning its __class__ wasn't seen. Its
-   type is now known only behind a run-time check, a fact of the constant
+/* A constant object (a global never rebound, a class attribute, a
+   default argument, a promoted value) may have its __class__ assigned, so
+   its type is known only behind a run-time check, a fact of the constant
    that is forgotten as a run-time value's type is (Psyco_ForgetClasses)
    and at the start of each block (Psyco_ForgetConstantClasses). Only
    classes that object_set_class can change are checked.
@@ -166,7 +165,7 @@ void Psyco_ForgetConstantClasses(PsycoObject *po) {
    reaches past the last one, as the object's type then, which differs
    from all before it (they failed in that same run), so a chain is at
    most as long as the classes the object has had. Records never change,
-   so a respawn's replay emits the same checks (D21). Records are kept by
+   so a respawn's replay emits the same checks. Records are kept by
    address and hold their types; the object itself is held by the code
    that uses it as a constant. */
 DEFINEFN
@@ -345,7 +344,7 @@ static int need_type_mega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp) {
   if (is_compiletime(obj->source)) {
     PyObject *o = (PyObject *)CompileTime_Get(obj->source)->value;
     /* a module stays a module (object_set_class), and what is called for
-       one is right whatever its class becomes: no check (F96) */
+       one is right whatever its class becomes: no check */
     if (PyModule_Check(o))
       return 0;
     if (!Psyco_ConstantClassMutable(obj)) {
@@ -383,7 +382,7 @@ generic:
                             o, attr_name);
 }
 
-/* PyObject_GenericGetAttr specialised on the type (A9). The steps are
+/* PyObject_GenericGetAttr specialised on the type. The steps are
    those of 3.7's _PyObject_GenericGetAttrWithDict: the type's attribute
    (descr) is looked up now, and is only valid while the type is unchanged,
    which a run-time check of its version tag guards (every change to a type
@@ -405,8 +404,8 @@ generic:
    - the block ends right after the site (split_after_global), so the only
      replays through it are for its own conditions: the guard (the type
      changed: generic), or one just after a passed guard, with the type in
-     a state of the kind compiled, which the replay recomputes (as D39's
-     stores). For that, only descriptors whose __get__ runs no
+     a state of the kind compiled, which the replay recomputes (as
+     heap_setattr's stores). For that, only descriptors whose __get__ runs no
      Python code are specialised (a property getter could change the
      class and then raise, which is a respawn).
    - Only descriptors of built-in types: a heap descriptor type could gain
@@ -603,7 +602,7 @@ static vinfo_t *keys_mismatch(PsycoObject *po, vinfo_t *vk, vinfo_t *vg) {
    them: the expected values are run-time loads from a per-site
    keys_guard_t (never freed), and without usable keys it expects an
    impossible pointer and fails into the helper. The keys are held for
-   good, like descriptors (D30). */
+   good, like descriptors. */
 static vinfo_t *instance_dict_get(PsycoObject *po, vinfo_t *obj,
                                   PyTypeObject *tp, PyObject *name) {
   static keys_guard_t respawn_guard; /* read by trashed code only */
@@ -758,7 +757,7 @@ static void enable_version_tag(PyTypeObject *tp) {
   tp->tp_flags |= Py_TPFLAGS_HAVE_VERSION_TAG;
 }
 
-/* The guards of loads (D60), as store_guard's for stores: one per (type,
+/* The guards of loads, as store_guard's for stores: one per (type,
    name, kind), which only ever holds a state of the type in which
    load_kind gives that kind, so any site may set it to such a state, and a
    failed guard re-arms the sites of the kind the type now gives
@@ -991,10 +990,10 @@ static int cimpl_dict_set_known(PyObject *dict, PyObject *name,
   return r;
 }
 
-/* Inline stores (D38, D47; store_cache_t in pobject.h). */
+/* Inline stores (store_cache_t in pobject.h). */
 #define STORE_CACHE_MAX_REFRESHES 64
 
-/* ma_version_tag for inline stores (D35): CPython's own counter is static
+/* ma_version_tag for inline stores: CPython's own counter is static
    in dictobject.c and never reaches 2^63, so tags from the two never meet */
 static uint64_t ni_dict_version = (uint64_t)1 << 63;
 
@@ -1167,8 +1166,8 @@ static bool init_store(PsycoObject *po, vinfo_t *obj) {
          PyUnicode_CompareWithASCIIString(po->pr.co->co_name, "__init__") == 0;
 }
 
-/* The store into the instance dict, inline (D38, D47,
-   FINDINGS.md): x64/ipyencoding.c:psyco_inline_store_begin
+/* The store into the instance dict, inline
+   (FINDINGS.md): x64/ipyencoding.c:psyco_inline_store_begin
    checks the dict against the cache and stores, with every failed check
    calling cimpl_store_miss out of line, then the error check of that call
    here. No check is a respawn point, so the emitted code depends only on
@@ -1188,7 +1187,7 @@ static bool inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
                      : PyType_IS_GC(vtp) ? STORE_GC_DICT : STORE_GC_NONE;
   s.fill = init_store(po, obj);
   s.miss_glue = store_miss_glue;
-  po->pr.class_unchecked = 1; /* the old value's dealloc (F55) */
+  po->pr.class_unchecked = 1; /* the old value's dealloc may run Python */
   psyco_inline_store_begin(po, &s);
   if (runtime_condition_f(po, CC_NE)) {
     PycException_Raise(po, vinfo_new(VirtualTime_New(&ERtPython)), NULL);
@@ -1202,7 +1201,7 @@ static bool inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
    like generic_getattr's: store_kind chooses now what the store calls,
    valid while the type is unchanged. A changed type calls
    cimpl_store_type_changed, which reads tp_setattro again (a __setattr__
-   added later, F37). An instance dict store on a class with shared keys
+   added later). An instance dict store on a class with shared keys
    (keys_inline, which a replay repeats) is inline_store. For a class
    without shared keys, a store into an existing combined dict uses the
    name's hash computed now.
@@ -1221,7 +1220,7 @@ static bool heap_setattr(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
   guard = store_guard(tp, name, kind, true);
   if (guard == NULL)
     OUT_OF_MEMORY();
-  /* the guard takes the state store_kind saw (C53) */
+  /* the guard takes the state store_kind saw */
   store_guard_set(guard, tp);
   /* making a virtual value can collect garbage and so run any code: do it
      before the guard, and before the inline store's checks */
@@ -1393,7 +1392,7 @@ static vinfo_t* try_rich_compare(PsycoObject* po, vinfo_t* v, vinfo_t* w, int op
   }
   return psyco_vi_NotImplemented();
 
-changed: /* a heap type's slot is not what was compiled (F50) */
+changed: /* a heap type's slot is not what was compiled */
   return psyco_generic_call(po, PyObject_RichCompare, CfCommonNewRefPyObject,
                             "vvl", v, w, (long)op);
 }
@@ -1401,7 +1400,7 @@ changed: /* a heap type's slot is not what was compiled (F50) */
 static const char *const opstrings[] = {"<", "<=", "==", "!=", ">", ">="};
 
 /* object.c:do_richcompare. The slots have run; their default must not run
-   them again (KNOWN_BUGS F10). */
+   them again. */
 DEFINEFN vinfo_t *PsycoObject_RichCompare(PsycoObject *po, vinfo_t *v,
                                           vinfo_t *w, int op) {
   condition_code_t cc;
@@ -1430,7 +1429,7 @@ vinfo_t *PsycoObject_RichCompareBool(PsycoObject *po, vinfo_t *v, vinfo_t *w,
                                      int op) {
   /* The result is a temporary, and only values in the frame can be
      promoted, so if its type isn't known its truth is a run-time call.
-     CPython's identity shortcut for Py_EQ/Py_NE (F109): the same object
+     CPython's identity shortcut for Py_EQ/Py_NE: the same object
      gives 1 for Py_EQ, 0 for Py_NE without calling __eq__ (nan == nan is
      False, (nan,) == (nan,) True). A virtual object is a new one, so it
      is identical only to itself; two run-time values are compared as

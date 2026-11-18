@@ -1,7 +1,7 @@
 /*
  * The hand-written part of the compile-time abstract.c. Most of it is
  * generated from CPython's Objects/abstract.c into pabstract_gen.h by
- * tools/metac/gen_abstract.py (D74), included below. What stays here is
+ * tools/metac/gen_abstract.py, included below. What stays here is
  * what the translator leaves out: PyObject_Call (call.c), PyNumber_Power
  * (a type whitelist), PyObject_GetIter (a virtual iterator), PyIter_Next
  * (FOR_ITER's call, not a translation of it), and the subscripts of
@@ -49,7 +49,7 @@ vinfo_t *PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object,
   return type_error_tp(po, "'%.200s' object is not callable", tp);
 }
 
-/* the metas generated from abstract.c (D74) */
+/* the metas generated from abstract.c */
 #include "pabstract_gen.h"
 
 DEFINEFN
@@ -180,7 +180,7 @@ vinfo_t *psyco_generic_subscript(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
   if (PyType_TypeCheck(ktp, &PyLong_Type)) {
     vinfo_t *result;
     /* as list_subscript and tuplesubscript: PyNumber_AsSsize_t(item,
-       PyExc_IndexError) (KNOWN_BUGS F102) */
+       PyExc_IndexError) */
     vinfo_t *key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
     if (key_value == NULL)
       return NULL;

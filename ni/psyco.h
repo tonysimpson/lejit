@@ -11,7 +11,7 @@
 #include <stdint.h>
 #include "compat2to3.h"
 /* offsets, sizes and private structs of the CPython fields Ni relies on,
-   generated from the target's headers (vcompiler.h:CPY_FIELD, D76) */
+   generated from the target's headers (vcompiler.h:CPY_FIELD) */
 #include "layouts_gen.h"
 
 typedef int8_t byte_t;
@@ -55,8 +55,8 @@ typedef int64_t qword_t;
 /*****************************************************************/
 /* Size of buffer to allocate when emitting code.
    Can be as large as you like (most OSes will not actually allocate
-   RAM pages before they are actually used). We no longer perform
-   any realloc() on this; a single allocated code region is reused
+   RAM pages before they are actually used). Nothing is ever
+   realloc()ed: a single allocated code region is reused
    for all code buffers until it is exhausted. There are BUFFER_MARGIN
    unused bytes at the end, so BIG_BUFFER_SIZE has better be large to
    minimize this effect.
@@ -161,7 +161,7 @@ EXTERNVAR PyObject* PyExc_PsycoError;
 EXTERNVAR PyObject* CPsycoModule;
 /* What Ni keeps per code object, in its co_extra slot (PEP 523): found by
    identity, not by value as a dict keyed by code objects would be (equal
-   code objects compare co_consts recursively; KNOWN_BUGS C13). */
+   code objects compare co_consts recursively). */
 typedef struct {
   PyObject* merge_points;  /* capsule, Py_None if unsupported, NULL if not
                               built yet; owned */
@@ -170,7 +170,7 @@ typedef struct {
   PyObject* entry_globals; /* the globals it was compiled for: borrowed, so
                               maybe dead and reused (vcompiler.c says why
                               that is safe) */
-  PyObject* entry_builtins; /* and its f_builtins (KNOWN_BUGS F49): borrowed,
+  PyObject* entry_builtins; /* and its f_builtins: borrowed,
                                the compiled code owns it */
   long serial;             /* never reused, unlike the code object's
                               address (psyfunc.c:psyco_save_inline_po) */

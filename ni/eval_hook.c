@@ -5,12 +5,12 @@
 #include "mergepoints.h"
 #include <Python.h>
 /* the version-specific mechanisms, chosen from CPython's source by
-   tools/metac/mechanisms.py (D75) */
+   tools/metac/mechanisms.py */
 #include "mechanism_frames_gen.h"
 #include "mechanism_tracing_gen.h"
 #include "mechanism_recursion_gen.h"
 
-/* run interpreted while a trace or profile function is set (KNOWN_BUGS C23):
+/* run interpreted while a trace or profile function is set:
    compiled code is invisible to them. Off only for tools/interpreted.py,
    which profiles to find what Ni didn't compile. */
 DEFINEVAR int ni_trace_fallback = 1;
@@ -23,7 +23,7 @@ static PyObject *NiCode_Run(PyObject *codebuf, ni_frame_t *f) {
 
   PyThreadState *tstate = PyThreadState_GET();
 
-  /* ceval counts the depth on entering every frame (KNOWN_BUGS C12) */
+  /* ceval counts the depth on entering every frame */
   if (ni_recursion_enter())
     return NULL;
   if (!psyco_frame_start_register(ni_frame_object(f), &finfo)) {
@@ -38,7 +38,7 @@ static PyObject *NiCode_Run(PyObject *codebuf, ni_frame_t *f) {
      assertRaises) must refuse to clear it, since the compiled code borrows
      the cells and arguments in f_localsplus */
   ni_frame_set_executing(f, 1);
-  /* ceval's eval_breaker test at the start (KNOWN_BUGS C24) */
+  /* ceval's eval_breaker test at the start */
   if (ni_eval_breaker_at_entry(ni_frame_object(f)) < 0)
     result = NULL;
   else

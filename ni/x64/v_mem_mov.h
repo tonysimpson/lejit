@@ -2,10 +2,9 @@
  * v_mem_mov emits one sized load or store, [base + index*size + offset], where
  * the base, index and value may each be run-time or compile-time (constants
  * are folded into the displacement or the immediate). It is the code behind
- * every psyco_get_field/psyco_put_field on a run-time object. It was written
- * for Ni in 5e0f435 (2018) to replace i386's psyco_memory_read/write.
+ * every psyco_get_field/psyco_put_field on a run-time object.
  *
- * x86-64 traps handled here (each was a bug, KNOWN_BUGS M1-M5, M9):
+ * x86-64 traps handled here:
  *  - MOVSX needs REX.W to sign-extend to 64 bits;
  *  - the 0x66 operand-size prefix must come before REX, so it is written
  *    separately, after anything (R11 address loads) emitted ahead of it;
@@ -14,7 +13,7 @@
  *  - a RIP-relative displacement is relative to the end of the instruction,
  *    including a trailing immediate (ADDRESS_ENCODING's imm_len).
  * Tested by executing the emitted code: tests/encoding/run_v_mem_mov.sh.
- * Callers must compute a virtual base or index first (M8, checked by
+ * Callers must compute a virtual base or index first (checked by
  * extra_assert): a virtual one would be treated as compile-time.
  */
 #ifndef _V_MEM_MOV_H
@@ -42,7 +41,7 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
     bool read = false;
 
     /* a virtual base or index would be read as a compile-time value
-       (V_CT_GET_VALUE); callers must compute it first (KNOWN_BUGS M8) */
+       (V_CT_GET_VALUE); callers must compute it first */
     extra_assert(base == NULL || !is_virtualtime(base->source));
     extra_assert(index == NULL || !is_virtualtime(index->source));
     if (v != NULL) {

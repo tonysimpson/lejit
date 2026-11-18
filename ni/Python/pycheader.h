@@ -39,9 +39,9 @@
 #define INDEX_LOC_GLOBALS       1   /* globals() dict object */
 #define INDEX_LOC_INLINING      2   /* for function inlining */
 #define INDEX_LOC_BUILTINS      3   /* the frame's builtins dict: fixed when
-                                       the frame starts, as f_builtins
-                                       (KNOWN_BUGS F49), so a vlocal and not
-                                       a 'pr' field (the note above) */
+                                       the frame starts, as f_builtins, so a
+                                       vlocal and not a 'pr' field (the
+                                       note above) */
 #define INDEX_LOC_LOCALS_PLUS   4   /* start of local variables + stack */
 
 /* LOC_INLINING's array, while a frame is inlined: the parent's code

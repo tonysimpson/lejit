@@ -8,14 +8,14 @@
  *    known. So an opcode must do nothing irreversible before the last point
  *    where it can fail or promote (use TOP(), and POP() only at the end).
  *  - LOAD_GLOBAL is a constant behind a dict-version guard whose failure
- *    respawns (load_global_cached, D25); the block is split after each such
+ *    respawns (load_global_cached); the block is split after each such
  *    site so that a respawn replay never re-decides one.
  *  - The simple opcodes (stack shuffles, LOAD_CONST/LOAD_FAST/STORE_FAST,
  *    unary, binary and in-place arithmetic, STORE_SUBSCR, DELETE_SUBSCR,
  *    GET_ITER, LOAD_ATTR/STORE_ATTR/DELETE_ATTR, BUILD_TUPLE/BUILD_LIST/BUILD_SLICE,
  *    LIST_APPEND, MAP_ADD, BUILD_SET, BUILD_MAP, BUILD_LIST_UNPACK,
  *    BUILD_SET_UNPACK, LOAD_CLOSURE) are generated into pycompiler_gen.h
- *    from CPython's ceval.c by tools/metac/gen_ceval.py (D26, D67).
+ *    from CPython's ceval.c by tools/metac/gen_ceval.py.
  *  - After the switch come the merge-point checks, then the handling of
  *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
  *    exceptions) with ceval-style unwinding of the block stack.
@@ -25,8 +25,9 @@
  * exception gets the same. A finally block entered by a pseudo-exception
  * (EReturn, EBreak, EContinue) differs from ceval: it gets a single 3-tuple,
  * which END_FINALLY tells apart from an exception type. The three words
- * psyco_emit_header reserves for a function with handlers were Py2's
- * per-frame saved exception (f_exc_*); nothing reads or sets them now.
+ * psyco_emit_header reserves for a function with handlers are a
+ * per-frame saved exception (f_exc_*) that nothing reads or sets (KNOWN_BUGS
+ * B17).
  */
 #include "pycompiler.h"
 #include "../codemanager.h"
@@ -35,9 +36,9 @@
 #include "../processor.h"
 #include "../psyfunc.h"
 #include "frames.h"
-/* ni_frame_current, ni_frame_set_current (D75) */
+/* ni_frame_current, ni_frame_set_current */
 #include "mechanism_frames_gen.h"
-/* ni_recursion_suspend and ni_recursion_resume (D77) */
+/* ni_recursion_suspend and ni_recursion_resume */
 #include "mechanism_recursion_gen.h"
 #include "../pycodegen.h"
 
@@ -561,7 +562,7 @@ void psyco_virtualize_exception(PsycoObject *po) {
   extra_assert(exc != NULL);
 
   vexc = vinfo_new(CompileTime_NewSk(sk_new((long)exc, SkFlagPyObj)));
-  /* val is NULL for PyErr_SetNone, e.g. MemoryError (Tismer, hg 643589a) */
+  /* val is NULL for PyErr_SetNone, e.g. MemoryError */
   vval = val == NULL
              ? NULL
              : vinfo_new(CompileTime_NewSk(sk_new((long)val, SkFlagPyObj)));
@@ -857,7 +858,7 @@ static void unwind_except_handler(PsycoObject *po, PyTryBlock *b) {
 
 #define SAVE_NEXT_INSTR(nextinstr1) (po->pr.next_instr = (nextinstr1))
 
-/* Jumps, for the generated cases (pycompiler_gen.h, D79). A case that
+/* Jumps, for the generated cases (pycompiler_gen.h). A case that
    jumped ends with JUMPED(): the next merge point is the target's.
    JUMP_IF_CC(cc, JUMP, npop, forget) jumps where cc holds. A run-time cc
    is a branch to the target's merge point, compiled later from there
@@ -946,7 +947,7 @@ done:
   return builtins;
 }
 
-/* Cached LOAD_GLOBAL (D25). The name is looked up now, as
+/* Cached LOAD_GLOBAL. The name is looked up now, as
    cimpl_load_global does at run time, and the value becomes a
    compile-time constant, guarded by the dicts' version tags (PEP 509:
    every change to a dict gives it a new tag, unique in the process). The
@@ -958,8 +959,9 @@ done:
    anything else respawns into a version where the name is varying and
    loaded at run time; a name not found is loaded at run time behind the
    same guard. The closure owns the value, so a constant that outlives a
-   rebinding stays valid, and owns builtins, whose tag the guard reads; globals stays borrowed (D23): a new dict at its address
-   has a new tag and is looked up. The guard slots are never freed. */
+   rebinding stays valid, and owns builtins, whose tag the guard reads;
+   globals stays borrowed: a new dict at its address has a new tag and is
+   looked up. The guard slots are never freed. */
 typedef struct {
   uint64_t globals_tag;
   uint64_t builtins_tag;
@@ -975,9 +977,9 @@ typedef struct {
 typedef struct {
   PyObject *name;     /* owned */
   PyObject *value;    /* owned: the value compiled in, or NULL */
-  PyObject *globals;  /* borrowed (D23) */
+  PyObject *globals;  /* borrowed */
   PyObject *builtins; /* owned: the frame's (LOC_BUILTINS), which a new
-                         globals['__builtins__'] doesn't change (F49) */
+                         globals['__builtins__'] doesn't change */
   global_guard_t *guard;
 } changed_global_t;
 
@@ -1245,7 +1247,7 @@ done:
 #define CELL_ob_ref FMUT(CPY_FIELD(PyCellObject, ob_ref, OB_type))
 
 /* the run-time copies of ceval.c helpers' arms that generated cases call
-   (cmp_outcome's PyCmp_EXC_MATCH, D82) */
+   (cmp_outcome's PyCmp_EXC_MATCH) */
 #include "pycompiler_copies_gen.h"
 
 /* ceval.c:special_lookup */
@@ -1779,7 +1781,7 @@ static void codestats_flush(PsycoObject *po) {
 
 /* the PsycoObject the innermost main loop compiles: every way out of the
    loop frees it (psyco_finish_return, psyco_compile...), so its last
-   instruction is flushed as it is freed, not read after (F107) */
+   instruction is flushed as it is freed, not read after */
 static PsycoObject *cs_owner = NULL;
 
 DEFINEFN void psyco_codestats_delete(PsycoObject *po) {
@@ -1814,7 +1816,7 @@ static void codestats_begin(PsycoObject *po, int instr, int opcode) {
 }
 #endif
 
-/* The eval_breaker test after a call (KNOWN_BUGS C24, D45, D53), once its
+/* The eval_breaker test after a call, once its
    result is pushed: only if the call emitted a C call that isn't known to
    be brief and non-blocking (po->blocking_call, set by psyco_generic_call
    unless psyfunc.c:psyco_cannot_block accepts the function). A call that
@@ -1923,7 +1925,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 #endif
       opcode = bytecode[next_instr++];
       oparg = bytecode[next_instr++];
-      /* at loop heads and after calls (KNOWN_BUGS C24) */
+      /* at loop heads and after calls */
       if (psyco_breaker_check_at(po->pr.merge_points, po->pr.next_instr) &&
           !psyco_check_eval_breaker(po))
         break;
@@ -1950,7 +1952,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
         /* case STOP_CODE: this is an error! */
 
-      /* the opcodes generated from ceval.c (D26, D67, D79) */
+      /* the opcodes generated from ceval.c */
 #include "pycompiler_gen.h"
 
       case BREAK_LOOP:
@@ -2070,9 +2072,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
 #ifdef RETURN_NONE
-        /* This opcode was temporarily added to the Python 2.3 CVS.
-           Now it is gone again, so the following will probably
-           never be compiled into Psyco anyway. */
+        /* no CPython 3 defines this opcode */
       case RETURN_NONE:
         v = psyco_vi_None();
         PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
@@ -2576,7 +2576,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
     fine:
       extra_assert(!PycException_Occurred(po));
-      /* before the next merge point compares known types (F55) */
+      /* before the next merge point compares known types */
       Psyco_ForgetClasses(po);
       extra_assert(mp ==
                    psyco_next_merge_point(po->pr.merge_points, next_instr));
@@ -2671,7 +2671,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       po->pr.is_inlining = true;
       /* mark this point as an inline frame entry */
       psyco_inline_enter(po);
-      Psyco_ForgetClasses(po); /* the arguments' types (F55) */
+      Psyco_ForgetClasses(po); /* the arguments' types */
       /* go on with compilation */
       clear_pseudo_exception(po);
       continue;
@@ -2770,7 +2770,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           PycException_IsPython(po)) {
         /* as 3.7 ceval: an EXCEPT_HANDLER block over six stack items (see
            cimpl_push_exc_info), for a finally block too, so that the
-           exception is the handled one inside it (KNOWN_BUGS F20);
+           exception is the handled one inside it;
            END_FINALLY re-raises it from the top three. A virtual exception
            is raised for real first, so that the run-time code can fetch
            it. */
@@ -2818,7 +2818,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
     if (PycException_Occurred(po)) {
       break;
     }
-    /* a handler is reached without passing 'fine' (F55). Not at the top
+    /* a handler is reached without passing 'fine'. Not at the top
        of the main loop: an instruction restarted after a promotion would
        forget the promoted type again, for ever */
     Psyco_ForgetClasses(po);

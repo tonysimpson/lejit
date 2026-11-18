@@ -6,7 +6,7 @@
  * directly and never materialises it. A generator expression called from
  * here stays a pending generator (PsycoGenexpr_New) until a consumer fuses it
  * or it escapes. A promoted function's code and defaults are checked at run
- * time (compiled_code, compiled_defaults: F57, F52).
+ * time (compiled_code, compiled_defaults).
  * A closure only known at run time is not promoted, only its code
  * (psyfunc.c:psyco_call_closure).
  */
@@ -58,8 +58,7 @@ compute_function(PsycoObject *po, vinfo_t *v)
         return false;
 
     /* the optional fields go through CPython's setters, which take their
-       own references (KNOWN_BUGS F7: these were raw stores, with || for &&,
-       into fields not declared mutable or reference-holding) */
+       own references */
 #define SET_FIELD(def, which)                                                \
     do {                                                                     \
         other = vinfo_getitem(v, FIELD_INDEX(def));                          \
@@ -146,7 +145,7 @@ bool PsycoGenexpr_Check(vinfo_t *v) {
 /***************************************************************/
 /*** function objects meta-implementation                    ***/
 
-/* The defaults a call to 'f' is compiled with (KNOWN_BUGS F52): those Ni
+/* The defaults a call to 'f' is compiled with: those Ni
    first saw on f, held for good, never changed, so a respawn's replay
    decides as the original compile did and a guard comparing f's
    func_defaults with them can't be fooled by a new tuple at a reused
@@ -173,7 +172,7 @@ static PyObject *compiled_defaults(PyObject *f)
     return d == Py_None ? NULL : d;
 }
 
-/* The same for f's code (KNOWN_BUGS F57): a call compiled for one code
+/* The same for f's code: a call compiled for one code
    object checks that f still has it. */
 static PyCodeObject *compiled_code(PyObject *f)
 {
@@ -298,7 +297,8 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         /* run-time or compile-time values: promote the
            function object as a whole into compile-time */
         PyObject *f;
-        if (is_megamorphic(func->source)) /* forgotten (D43) */
+        /* made run-time at a capped merge point: never promoted again */
+        if (is_megamorphic(func->source))
             goto fallback;
         if (!is_compiletime(func->source)) {
             /* the code first: closures and lambdas are new function objects

@@ -1,7 +1,7 @@
 /*
  * Virtual bound methods ([iMETHOD_IM_FUNC] constant, [iMETHOD_IM_SELF]). The
  * tp_call meta prepends self as a virtual tuple and re-dispatches the call.
- * The unbound-method branch is a Python 2 leftover.
+ * The branch for a NULL im_self can't run: Python 3 has no unbound methods.
  */
 #include "pclassobject.h"
 #include "ptupleobject.h"
@@ -9,7 +9,7 @@
 DEFINEVAR source_virtual_t psyco_computed_method;
 
 /* PsycoMethod_New, compute_method and direct_compute_method, generated
-   from PyMethod_New and policy_table.TYPES (D80) */
+   from PyMethod_New and policy_table.TYPES */
 #include "pclassobject_virtual_gen.h"
 
 /***************************************************************/

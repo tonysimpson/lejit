@@ -47,7 +47,7 @@ bool PsycoDict_SetItemC(PsycoObject* po, vinfo_t* vdict,
 				  "vlv", vdict, (long) key, vvalue) != NULL;
 }
 
-/* the dict slots generated from dictobject.c (mp_length, D84) */
+/* the dict slots generated from dictobject.c (mp_length) */
 #include "pdictobject_gen.h"
 
 INITIALIZATIONFN

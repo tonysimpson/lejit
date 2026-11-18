@@ -357,7 +357,7 @@ struct vinfo_s {
   vinfo_array_t *array; /* substructure variables or a NullArray */
   vinfo_t *tmp;         /* internal use of the dispatcher */
   /* a run-time object's type as it was when last known, held, or NULL: a
-     hint, not a fact (pobject.c:Psyco_TypeHintGuard, D63). Kept in
+     hint, not a fact (pobject.c:Psyco_TypeHintGuard). Kept in
      snapshots, ignored when states are compared */
   source_known_t *type_hint;
 };
@@ -561,7 +561,7 @@ EXTERNFN bool psyco_internal_putfld(PsycoObject *po, int findex, defield_t df,
 
 /* a field of a CPython struct: its offset, the size Ni reads and whether
    unsigned come from layouts_gen.h, generated from the target's headers
-   (tools/metac/gen_layouts.py, policy_table.LAYOUTS, D76); a field not
+   (tools/metac/gen_layouts.py, policy_table.LAYOUTS); a field not
    listed there doesn't compile. DEF_FIELD and the others above are for
    Ni's own structs. */
 #define CPY_FIELD_BUILD(cstruct, cfield, prevf, flags)                         \
@@ -709,8 +709,6 @@ PSY_INLINE int field_next_index(defield_t df, bool ovf) {
 /***   PsycoObject: state of the compiler                      ***/
 
 struct PsycoObject_s {
-  /* used to be a Python object, hence the name */
-
   /* assembly code */
   code_t *code;      /* where the emitted code goes                */
   code_t *codelimit; /* do not write code past this limit          */
@@ -721,11 +719,11 @@ struct PsycoObject_s {
   CodeBufferObject *respawn_proxy; /* see psyco_prepare_respawn()           */
   unsigned long mp_serial; /* serial of the block started at the last merge
                               point: the facts stamped since then are in use
-                              (dispatcher.c:compatible_unused_fact, D50) */
+                              (dispatcher.c:compatible_unused_fact) */
   pyc_data_t pr;                   /* private language-dependent data       */
   /* set when a C call that may block is emitted (psyco_generic_call);
      pycompiler.c clears it before each instruction and tests eval_breaker
-     after a CALL_* that set it (breaker_after_call, D53) */
+     after a CALL_* that set it (breaker_after_call) */
   char blocking_call;
 #if NI_CODESTATS
   code_t *cs_mark;       /* where the current instruction's code began */

@@ -298,7 +298,7 @@ test_condition_and_pyerr_occured:
        around the call to PyThreadState_Get. Nothing between the PUSH and
        the POP may go through the register allocator, which can spill with
        a PUSH of its own, so that the POP restores the wrong value and the
-       spilled vinfo is left above the top of the stack (KNOWN_BUGS B14).
+       spilled vinfo is left above the top of the stack.
        The exception word (NI_EXC_OCCURRED_OFFSET) is read into the
        scratch register instead. */
     BEGIN_CODE
@@ -462,7 +462,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     vinfo_t *vresult;
     condition_code_t cc;
 
-    po->pr.class_unchecked = 1; /* KNOWN_BUGS F55 */
+    po->pr.class_unchecked = 1; /* the callee may assign __class__ */
     BEGIN_CODE
     /* cannot use NEED_CC(): it might clobber one of the registers
        mentioned in argsources */

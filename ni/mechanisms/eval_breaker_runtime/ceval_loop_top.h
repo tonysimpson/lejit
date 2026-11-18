@@ -1,6 +1,6 @@
 /* eval_breaker in _PyRuntime.ceval, and what ceval does when it is set:
    inline at the top of _PyEval_EvalFrameDefault's loop, a signal coming as
-   a pending call (D45, D77). Included by Python/pyruntime.c (Py_BUILD_CORE)
+   a pending call. Included by Python/pyruntime.c (Py_BUILD_CORE)
    after internal/pystate.h, frameobject.h and opcode.h.
    ni_eval_breaker_handler is a copy of that loop top (3.7 Python/ceval.c):
    PyEval_SaveThread and PyEval_RestoreThread are its GIL drop and take
@@ -11,7 +11,7 @@ _Static_assert(__builtin_types_compatible_p(
                "Ni: _PyRuntime.ceval.eval_breaker is tested as a 32-bit int");
 
 /* compiled code compares it with 0 as a 32-bit int, at loop heads and
-   after calls (KNOWN_BUGS C24) */
+   after calls */
 void *ni_eval_breaker_address(void) { return &_PyRuntime.ceval.eval_breaker; }
 
 /* -1 with an exception set */

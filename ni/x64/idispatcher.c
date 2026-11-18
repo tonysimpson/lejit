@@ -4,14 +4,13 @@
  * snapshot's, then jump to its code. References are settled first: those
  * the snapshot's values own are moved or made, and the values it doesn't
  * have are decref'd from where they are, before any stack move can
- * overwrite their slots (KNOWN_BUGS C27). If the moves overflow the current buffer
- * they are copied to a new one (data_new_buffer). The register-move phase was
- * rewritten for x86-64. A value wanted in several registers (shared in po,
- * distinct in the snapshot) is moved to one and copied to the others last
- * (KNOWN_BUGS B7). With ALL_CHECKS the generated code verifies every target
- * register after the moves and traps (UD2, SIGILL) on a mismatch; whether
- * a given loop reaches the case depends on register allocation, and
- * tests/cases/loops.py alternating_share is the one seen to.
+ * overwrite their slots. If the moves overflow the current buffer they are
+ * copied to a new one (data_new_buffer). A value wanted in several
+ * registers (shared in po, distinct in the snapshot) is moved to one and
+ * copied to the others last. With ALL_CHECKS the generated code verifies
+ * every target register after the moves and traps (UD2, SIGILL) on a
+ * mismatch; whether a given loop reaches the case depends on register
+ * allocation, and tests/cases/loops.py alternating_share is the one seen to.
  */
 #include "idispatcher.h"
 #include "../dispatcher.h"
@@ -230,7 +229,7 @@ static code_t* data_free_unused(code_t* code, struct dmove_s* dm,
 #if ALL_CHECKS
 /* nothing in 'po' owns a reference any more (data_transfer_ref,
    data_free_unused): the stack moves may overwrite any slot that the
-   snapshot doesn't use (KNOWN_BUGS C27) */
+   snapshot doesn't use */
 static void check_no_rtref(vinfo_array_t* aa)
 {
   int i = aa->count;
@@ -246,7 +245,7 @@ static void check_no_rtref(vinfo_array_t* aa)
 #endif
 
 #if ALL_CHECKS
-/* Debug check of the register moves below (KNOWN_BUGS B7): before them,
+/* Debug check of the register moves below: before them,
    each value wanted in a register is copied from where it is now to
    unify_check_buf; after them, the generated code compares every target
    register with its copy and traps (UD2) on a mismatch. Each piece is
@@ -355,7 +354,7 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
      the snapshot (data_transfer_ref() has removed the 'ref' tag of all
      vinfo_ts it actually used from 'po'). Before the stack moves: they
      know only the values the snapshot has, and may overwrite the slot
-     of one it hasn't (KNOWN_BUGS C27). */
+     of one it hasn't. */
   code = data_free_unused(code, &dm, &po->vlocals);
 #if ALL_CHECKS
   check_no_rtref(&po->vlocals);
@@ -371,7 +370,7 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
   /* update the registers (1): reg-to-reg moves and exchanges. A value
      can be wanted in several registers (shared in 'po', distinct in the
      snapshot): it is moved to one target, and copied to the others in
-     (1b), once every register holds its final value (KNOWN_BUGS B7). */
+     (1b), once every register holds its final value. */
     memcpy(wanted, dm.copy_regs, sizeof(wanted));
     for (i=0; i<REG_TOTAL; i++)
         copy_from[i] = REG_NONE;
@@ -463,7 +462,7 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
   backpointer = code;
   /* psyco_unify_code() passes a throwaway stack buffer with no room
      (codelimit NULL): if nothing needed a new buffer, the jump would be
-     discarded, and it can't reach the code from the stack anyway (B5) */
+     discarded, and it can't reach the code from the stack anyway */
   if (po->codelimit != NULL || dm.private_codebuf != NULL) {
     ni_trace_begin_simple_code(code);
     JUMP_TO((code_t*) target_codebuf->codestart);

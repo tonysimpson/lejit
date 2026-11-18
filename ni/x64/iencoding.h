@@ -550,7 +550,7 @@ typedef enum {
 #define MOV_R_A(r, rm) INDIRECT_ENCODING(true, 1, 0x8B, 0, 0, 0, r, rm)
 /* @asm: mov qword ptr [{rm}], {r} */
 #define MOV_A_R(rm, r) INDIRECT_ENCODING(true, 1, 0x89, 0, 0, 0, r, rm)
-/* the shortest form (history A19): a 32-bit MOV zero-extends, C7 /0
+/* the shortest form: a 32-bit MOV zero-extends, C7 /0
    sign-extends an imm32; otherwise the 10-byte movabs. Not for code that
    is patched later: that is MOV_R_UI. */
 /* @asm: mov {rm}, {i:i64} */
@@ -831,7 +831,7 @@ typedef enum {
 /* A counted PUSH that a later TEMP_POP_R must undo. 'mark' (an int) records
    the depth: nothing else may change it in between, e.g. a register spill
    by the allocator, which would make the POP restore the spilled value
-   instead (KNOWN_BUGS B14). Calls in between are fine: END_CALL restores
+   instead. Calls in between are fine: END_CALL restores
    the depth. */
 #define TEMP_PUSH_R(r, mark)                                                   \
   do {                                                                         \
@@ -1207,7 +1207,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
   (po->pr.is_inlining                                                          \
        ? (LOC_INLINING == NULL                                                 \
               ? (LOC_CONTINUATION == NULL                                      \
-                     ? (extra_assert(!"no frame to align from (B6)"), -1)      \
+                     ? (extra_assert(!"no frame to align from"), -1)           \
                      : ((po->stack_depth -                                     \
                          getstack(LOC_CONTINUATION->source)) +                 \
                         sizeof(long)))                                         \
@@ -1514,14 +1514,12 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
   do {                                                                         \
     ni_trace_jump((code_t *)(code), (code_t *)(addr));                         \
     *code++ = 0xE9; /* JMP rel32 */                                            \
-    extra_assert(FITS_IN_32BITS((code_t *)(addr) - (code + 4))); /* B5 */  \
+    extra_assert(FITS_IN_32BITS((code_t *)(addr) - (code + 4)));           \
     *(dword_t *)(code) = (addr) - (code + 4);                                  \
     code += 4;                                                                 \
   } while (0)
 
-/* decodes what JUMP_TO wrote (checked by tests/encoding/check.py: it used to
-   read one byte late, and then misread a JMP whose displacement's low byte
-   was 0xE9, KNOWN_BUGS C35) */
+/* decodes what JUMP_TO wrote (checked by tests/encoding/check.py) */
 #define IS_A_JUMP(code, targetaddr)                                            \
   (code[0] == (code_t)0xE9 &&                                                  \
    (targetaddr = code + 5 + *(dword_t *)(code + 1), 1))
@@ -1534,7 +1532,7 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
     CAPTURE_CODE_LOCATION                                                      \
     *code++ = 0x0F;                                                            \
     *code++ = 0x80 | (code_t)(condition);                                      \
-    extra_assert(FITS_IN_32BITS((code_t *)(addr) - (code + 4))); /* B5 */  \
+    extra_assert(FITS_IN_32BITS((code_t *)(addr) - (code + 4)));           \
     *(dword_t *)(code) = (addr) - (code + 4);                                  \
     code += 4;                                                                 \
     ni_trace_jump_cond((code_t *)(location), (code_t *)(code),                 \
@@ -1545,7 +1543,7 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
   do {                                                                         \
     ni_trace_jump_cond_update((code_t *)(code - 6), (code_t *)(code),          \
                               (code_t *)(addr));                               \
-    extra_assert(FITS_IN_32BITS((code_t *)(addr) - code)); /* B5 */           \
+    extra_assert(FITS_IN_32BITS((code_t *)(addr) - code));                    \
     *(dword_t *)(code - 4) = (addr)-code;                                      \
   } while (0)
 
@@ -1609,8 +1607,7 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
   } while (0)
 
 /* correct the stack pointer. With a condition live in the flags this must
-   not touch them, so it is a LEA (upstream's rule; a SUB here broke a
-   virtual bool reaching a join, KNOWN_BUGS B16) */
+   not touch them, so it is a LEA, as in Psyco */
 #define STACK_CORRECTION(stack_correction)                                     \
   do {                                                                         \
     long _sc = (stack_correction); /* > 0 grows the stack */                  \

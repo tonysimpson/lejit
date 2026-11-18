@@ -5,14 +5,14 @@
  * ml_meth if one is registered. Without a meta, a METH_FASTCALL call with
  * no keywords and up to FAST_MAX arguments calls the C function directly
  * through a cimpl_fastN helper that puts the arguments in a C array, so no
- * tuple is built (KNOWN_BUGS F13). Like the METH_O and METH_VARARGS cases,
+ * tuple is built. Like the METH_O and METH_VARARGS cases,
  * these direct calls skip PyCFunction_Call's Py_EnterRecursiveCall, but do
- * _Py_CheckFunctionResult's checks (check_result, C25). Keywords, or more
+ * _Py_CheckFunctionResult's checks (check_result). Keywords, or more
  * arguments, take the residual PyCFunction_Call / tuple paths.
  */
 #include "pmethodobject.h"
 #include "ptupleobject.h"
-/* ni_tstate_load (D77) */
+/* ni_tstate_load */
 #include "mechanism_tstate_gen.h"
 
 static bool compute_cfunction(PsycoObject *po, vinfo_t *methobj) {
@@ -66,11 +66,11 @@ DEFINEVAR source_virtual_t psyco_computed_cfunction;
 /*** C method objects meta-implementation                    ***/
 
 /* call.c:_Py_CheckFunctionResult, for a C function that compiled code
-   calls itself (KNOWN_BUGS C25): a NULL result must come with an
+   calls itself: a NULL result must come with an
    exception, and any other result without one. 3.7 checks both in
    release builds. The test of the exception is inline (the exception
    word of the current thread state, as PyErr_Occurred reads it: the tstate
-   and exceptions mechanisms, D77); the SystemError is made by CPython's
+   and exceptions mechanisms); the SystemError is made by CPython's
    own function, in branches compiled only if a C function breaks the
    rule. A meta's result is not checked. */
 #define CF_UNCHECKED (CfReturnTypePtr | CfNewRef)
@@ -138,7 +138,8 @@ vinfo_t *PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
                              vinfo_t *kwargs) {
   long mllong;
   vinfo_t *vml;
-  if (is_megamorphic(func->source)) /* forgotten (D43): m_ml too */
+  /* made run-time at a capped merge point: m_ml isn't promoted either */
+  if (is_megamorphic(func->source))
     goto use_proxy;
   vml = psyco_get_const(po, func, CFUNC_m_ml);
   if (vml == NULL)
@@ -252,7 +253,7 @@ static vinfo_t *call_fast(PsycoObject *po, PyCFunction meth, int flags,
   int cf = vfunc != NULL ? CF_UNCHECKED : CfCommonNewRefPyObject;
   vinfo_t *r;
   int i;
-  if (psyco_cannot_block(meth)) /* meth's, not cimpl_fastN's (D53) */
+  if (psyco_cannot_block(meth)) /* meth's, not cimpl_fastN's */
     cf |= CfNoBlock;
   if (n < 0 || n > FAST_MAX) {
     void *fn = kw ? (void *)cimpl_call_fast_kw : (void *)cimpl_call_fast;

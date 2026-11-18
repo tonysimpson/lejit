@@ -13,9 +13,9 @@
 #include "../codemanager.h"
 #include "../vcompiler.h"
 #include "pyver.h"
-/* ni_frame_t and its accessors (D75) */
+/* ni_frame_t and its accessors */
 #include "mechanism_frames_gen.h"
-/* ni_recursion_suspend and ni_recursion_resume (D77) */
+/* ni_recursion_suspend and ni_recursion_resume */
 #include "../codegen.h"
 #include "../dispatcher.h"
 #include "mechanism_recursion_gen.h"
@@ -306,7 +306,7 @@ PyObject *psyco_get_globals(void) {
 
 /* sys._getframe, replaced (as upstream's support.py did) by a version that
    also counts compiled frames, which have no real frame object: they are
-   emulated, with f_lasti == -1 and empty locals (KNOWN_BUGS C11; history B2). */
+   emulated, with f_lasti == -1 and empty locals (KNOWN_BUGS C11). */
 
 static PyObject *visit_nth_frame(PyObject *o, void *n) {
   if ((*(int *)n)-- == 0)

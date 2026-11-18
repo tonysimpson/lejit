@@ -1,6 +1,6 @@
 /* Tracing is on in a thread while its PyThreadState.use_tracing is set: by
    sys.settrace, sys.setprofile and their C forms PyEval_SetTrace and
-   PyEval_SetProfile (D46, D75). ni_tracing_now tests it at run time (the
+   PyEval_SetProfile. ni_tracing_now tests it at run time (the
    eval hook); ni_tracing_test emits the same test in compiled code, on the
    thread state 'vts' (psyfunc.c:tracing_on). Included after vcompiler.h and
    codegen.h. */

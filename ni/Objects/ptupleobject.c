@@ -17,7 +17,7 @@
 static source_virtual_t psyco_computed_tuple;
 
 /* PsycoTuple_New, compute_tuple and direct_compute_tuple, generated from
-   PyTuple_New and policy_table.TYPES (D80) */
+   PyTuple_New and policy_table.TYPES */
 #include "ptupleobject_virtual_gen.h"
 
 
@@ -37,7 +37,7 @@ int PsycoTuple_Load(vinfo_t* tuple)
 		int i;
 		PyObject* o = (PyObject*)(CompileTime_Get(tuple->source)->value);
 		/* BUILD_*_UNPACK asks about any constant, such as a global
-		   list (F45) */
+		   list */
 		if (!PyTuple_Check(o))
 			return -1;
 		size = PyTuple_GET_SIZE(o);
@@ -63,7 +63,7 @@ int PsycoTuple_Load(vinfo_t* tuple)
 	return size;
 }
 
-/* the slots generated from tupleobject.c (D78, D80, D84): sq_length,
+/* the slots generated from tupleobject.c: sq_length,
    sq_item, sq_contains, sq_concat, sq_repeat, tp_richcompare */
 #include "ptupleobject_gen.h"
 

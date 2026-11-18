@@ -6,19 +6,19 @@
  *  - psyco_compatible: a linear scan of the snapshots. Fixed constants
  *    (SkFlagFixed) must match exactly; other differing constants are returned
  *    in 'diff' to be un-promoted, and so is a virtual int's known value where
- *    the snapshot's is run-time (D33). Before comparing, canonical_int writes
+ *    the snapshot's is run-time. Before comparing, canonical_int writes
  *    a constant small int or bool in a local as a virtual int, so the two
- *    forms of a counter compare. Ni added a 16-byte stack-alignment test
- *    (compare_return_address) that rejects otherwise good matches whose
- *    return-address slot differs mod 16: x86-64 call alignment (C1, C31).
+ *    forms of a counter compare. A 16-byte stack-alignment test
+ *    (compare_return_address) rejects otherwise good matches whose
+ *    return-address slot differs mod 16: x86-64 call alignment (C1).
  *    A run-time value's known field that the snapshot lacks is dropped if
- *    nothing since the last merge point relied on it (rule 1, D50, D57,
+ *    nothing since the last merge point relied on it (rule 1,
  *    compatible_unused_fact), except in the compare a promotion's
  *    continuation makes at its own instruction, where it would loop.
  *  - psyco_forget_values: the cap per merge point's generalisation
- *    (vcompiler.c:mp_capped, D40). A constant it makes run-time is a
+ *    (vcompiler.c:mp_capped). A constant it makes run-time is a
  *    forgotten value: flagged RunTime_Megamorphic, as a megamorphic site's
- *    value is, so its promotions take the generic path (D43).
+ *    value is, so its promotions take the generic path.
  *  - Respawn: the rare branch of a run-time condition keeps no snapshot. When
  *    it is first taken, compilation is replayed from the previous snapshot into
  *    a throw-away buffer until the same point is reached (do_respawn).
@@ -29,9 +29,8 @@
  *    held by the code for good; do_promotion_static_type only specialises on
  *    static types and sends anything else to the megamorphic version.
  * psyco_delete_unused_vars drops the dead locals that mergepoints.c lists
- * first in each fatlist (D15; upstream's analysis was removed in a880444,
- * history A3, and is rewritten there for 3.7). State is global and
- * non-re-entrant (cmpinternal, the static result in psyco_compatible).
+ * first in each fatlist. State is global and non-re-entrant (cmpinternal,
+ * the static result in psyco_compatible).
  */
 #include "dispatcher.h"
 #include "Objects/pobject.h"   /* for Psyco_SafelyDeleteVar() */
@@ -189,7 +188,7 @@ static void fz_internal_expand(void) {
 
 #define FZ_OPC_EXT (-1)
 #define FZ_OPC_NULL (-2)
-/* an item's type_hint (D63), read before the item's own opcode by
+/* an item's type_hint, read before the item's own opcode by
    fz_getopc, which leaves it in cmpinternal.hint: only fz_uncompress and
    fz_parse look at it, so states are compared without it */
 #define FZ_OPC_HINT (-3)
@@ -481,7 +480,7 @@ DEFINEFN int psyco_top_array_count(FrozenPsycoObject *fpo) /*for psyco.c*/
 
 DEFINEFN
 void fpo_build(FrozenPsycoObject *fpo, PsycoObject *po) {
-  Psyco_ForgetConstantClasses(po); /* not in the snapshot (F96) */
+  Psyco_ForgetConstantClasses(po); /* not in the snapshot */
   psyco_assert_coherent1(po, false);
   clear_tmp_marks(&po->vlocals);
   fz_build(fpo, &po->vlocals);
@@ -603,7 +602,7 @@ static int respawn_flatten(vinfo_array_t *a, int depth, respawn_item_t *out,
       ;
     else if (is_compiletime(v->source)) {
       /* folding can build an immutable value afresh on each compile (a
-         constant tuple, or a slice of constants forced, D80): compare those
+         constant tuple, or a slice of constants forced): compare those
          by type. Any other object, such as a class or a function, by
          identity, but see respawn_same_constant */
       source_known_t *sk = CompileTime_Get(v->source);
@@ -628,7 +627,7 @@ static int respawn_flatten(vinfo_array_t *a, int depth, respawn_item_t *out,
     if (out != NULL)
       out[n] = it;
     n++;
-    /* a type hint decides whether a guard is emitted (D63) */
+    /* a type hint decides whether a guard is emitted */
     if (v != NULL && v->type_hint != NULL) {
       respawn_item_t h = {(unsigned long)v->type_hint->value * 4 + 2,
                           v->type_hint->value, NULL, -1, (short)(depth + 1)};
@@ -836,7 +835,7 @@ void psyco_respawn_detected(PsycoObject *po) {
       respawn_cnt = nextblock->snapshot.fz_respawned_cnt;
     codebuf->snapshot.fz_respawned_from = nextblock;
     po->respawn_cnt = -respawn_cnt;
-    /* where that block's compile built its snapshot (F96) */
+    /* where that block's compile built its snapshot */
     Psyco_ForgetConstantClasses(po);
   }
   /* restart at the beginning of the buffer, overriding the code written
@@ -958,7 +957,7 @@ void *psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
        beginning of the trash memory for
        the next instructions. The replay takes the no-jump path, as the
        first compile did, so a condition held in the flags is resolved the
-       same way (KNOWN_BUGS F106) */
+       same way */
     psyco_resolved_cc(po, INVERT_CC(jmpcondition));
     po->code = (code_t *)po->respawn_proxy->codestart;
     INIT_CODE_EMISSION(po->code);
@@ -971,7 +970,7 @@ bool psyco_prepare_respawn(PsycoObject *po, condition_code_t jmpcondition) {
   if (detect_respawn(po)) {
     /* the branch taken: the condition held. A value still held in the
        flags can't be read from them, since the stub's call clobbered them
-       on the first run (KNOWN_BUGS F106) */
+       on the first run */
     psyco_resolved_cc(po, jmpcondition);
     return true;
   }
@@ -1245,7 +1244,7 @@ PSY_INLINE bool fz_compatible_array(vinfo_array_t *aa, FrozenPsycoObject *fpo,
    drops anything below the first two levels. A run-time object's known
    fields are loads of immutable fields (FMUT ones are never cached) or
    what it was computed from (a computed tuple's items), so the code they
-   join reloads them; psyco_unify releases what they hold (KNOWN_BUGS C27).
+   join reloads them; psyco_unify releases what they hold.
    Not the fields of other values: a virtual object's fields are its
    contents. compatible_rt_parent passes "aa belongs to a run-time value"
    into the next compatible_array() call. */
@@ -1254,21 +1253,20 @@ static bool compatible_rt_parent = false;
 /* set by psyco_compatible_join: rule 1 does not apply at join points */
 static bool compatible_at_join = false;
 
-/* Rule 1 (SPECIALISATION.md, D50, D57): at a merge point, a known field of
+/* Rule 1 (SPECIALISATION.md): at a merge point, a known field of
    a run-time value (its type, mostly) that the snapshot lacks is dropped if
    nothing since the last merge point relied on it (sk->used, stamped by
    sk_mark_used, against po->mp_serial), instead of starting a new block:
    the block was compiled without the fact and loads or promotes it itself
    if it needs it. A match that drops is taken only if no block matches
-   without dropping. Not at join points (D44 has its own rule there), and
+   without dropping. Not at join points (they have their own rule), and
    not a virtual value's fields, which are its contents.
    Never in the compare that a promotion's continuation makes at its own
    instruction (psyco_compatible_keep_facts, cleared in vcompiler.c once
    that compare is over): the state there is the state before the
    promotion plus the promoted fact, and dropping it would jump back into
    the block that promoted, which promotes again, hits its own cache and
-   jumps back, forever, without running an instruction (the naive version
-   hung so: e404100:doc/CODE_SIZE.md, Promotions). Every other compare
+   jumps back, forever, without running an instruction. Every other compare
    comes after an instruction was compiled, so a chain of jumps between
    blocks without progress can only enter blocks that know more and
    more. */
@@ -1343,8 +1341,8 @@ static bool compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
   if (diff != 0) {
     if ((diff & TimeMask) != 0) {
       /* a virtual int's value, known here and run-time in 'b': the same
-         family, so a partial match like two different constants (D33,
-         FINDINGS.md); otherwise counters that are still 0 on some paths start
+         family, so a partial match like two different constants
+         (FINDINGS.md); otherwise counters that are still 0 on some paths start
          a block per combination. Not a fixed value: code after it relies on
          it, and promotion would loop. */
       source_known_t *sk;
@@ -1510,9 +1508,8 @@ static bool compatible_array(vinfo_array_t *aa, int count,
          XXX This assumption should be tested. */
 
       /* This potentially allows for unbounded array depth,
-         so we disable it after a given depth and revert to the
-         old behavior: all extra items are matched against b == NULL
-         life below. */
+         so we disable it after a given depth: all extra items
+         are then matched against b == NULL, as below. */
       for (i = aa->count; i > count;) {
         vinfo_t *a = aa->items[--i];
         CHECK_FOR_NULL(a)
@@ -1709,13 +1706,13 @@ void psyco_delete_unused_vars(PsycoObject *po, global_entries_t *ge) {
   }
 }
 
-/* Call alignment (KNOWN_BUGS C1, C31). Compiled code aligns its C calls
+/* Call alignment (KNOWN_BUGS C1). Compiled code aligns its C calls
    from the position of the return-address slot (STACK_DEPTH_SINCE_CALL),
    and unification can't move that slot, so a state may only jump into a
    block whose return address is at the same position mod 16. Only that
    slot is compared: the frame locals stored under it (codegen.c) are
-   visited after it, and they used to decide the test, so a call with more
-   run-time arguments took a block compiled for one with fewer (C31). */
+   visited after it and must not decide the test, or a call with more
+   run-time arguments would take a block compiled for one with fewer. */
 typedef struct {
   vinfo_t *ret; /* the live state's return-address slot */
   int match;    /* -1 until it is visited */
@@ -1734,7 +1731,7 @@ static void compare_return_address(vinfo_t *a, RunTimeSource bsource,
     t->match = (getstack(a->source) % 16) == (getstack(bsource) % 16);
 }
 
-/* One form for small ints and bools at merge points (D33, FINDINGS.md):
+/* One form for small ints and bools at merge points (FINDINGS.md):
    a local or stack slot holding a constant int object becomes a virtual int
    with that constant value, the form arithmetic produces. Otherwise "still
    the constant 0" and "a virtual int" never match, and every combination of
@@ -1748,7 +1745,7 @@ static void compare_return_address(vinfo_t *a, RunTimeSource bsource,
    Otherwise it is also a known field of something, often of a constant
    ('a, b = t' with a constant tuple t, an inlined call's constant
    argument), which must stay constant there (vcompiler.c:coherent_array):
-   the locals holding it get a new virtual int instead (KNOWN_BUGS C28). */
+   the locals holding it get a new virtual int instead. */
 static void canonical_int(PsycoObject *po, int index) {
   vinfo_t *a = LOC_LOCALS_PLUS[index];
   vinfo_t *v;
@@ -1828,7 +1825,7 @@ static bool varies_at(global_entries_t *ge, int index, long value) {
   return false;
 }
 
-/* The cap's generalisation (vcompiler.c:mp_capped, D40, D43), in the
+/* The cap's generalisation (vcompiler.c:mp_capped), in the
    locals only.
    - The value of each virtual int or bool becomes run-time, so the
      counters' many combinations of known values collapse into one block.
@@ -1971,7 +1968,7 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
   {           /* checking for a match at each step.                  */
     CodeBufferObject *codebuf;
     PyObject *o1 = PyList_GET_ITEM(plist, i);
-    /* the dead locals' numbers come first (mergepoints.c, D15) */
+    /* the dead locals' numbers come first (mergepoints.c) */
     if (!CodeBuffer_Check(o1))
       break;
     codebuf = (CodeBufferObject *)o1;
@@ -2191,17 +2188,9 @@ static void remove_non_compiletime(vinfo_t *v, PsycoObject *po) {
 /* Implementation tactics */
 
 /*
- There used to be 2 different promotion algorythems implemented here
- but I removed [0] in order to make the code simpler - see VC history
- if you want to reimplment it. [2] was not implemented but looks
- interesting. Original notes:
-
-   0 -- use a plain Python dictionary whose keys
-        are the value to promote and values the code objects.
-   1 -- put code buffers in a chained list,
-        with the most used items moving forward in the list.
-   2 -- order the code buffers as a binary search tree,
-        with the most used nodes moving up in the tree (not implemented)
+ A promotion's code buffers are in a chained list, with the most used
+ items moving forward in the list. Ordering them as a binary search tree,
+ the most used nodes moving up, is not implemented.
 */
 
 typedef struct rt_local_buf_s {
@@ -2520,7 +2509,7 @@ static code_t *promotion_mega_target(rt_promotion_t *fs) {
    static-type site) to a value with code of its own, and never the
    reverse: the evicted value would otherwise enter C at each run, or, once
    the chain ends in the megamorphic version, run that instead of its code
-   (the shapes kernel, D66, FINDINGS.md). */
+   (the shapes kernel, FINDINGS.md). */
 static void promotion_cache_add(rt_promotion_t *fs, long value,
                                 code_t *target) {
   if (fs->ncached == 0) {
@@ -2809,8 +2798,7 @@ void psyco_unfix(PsycoObject *po, vinfo_t *vi) {
   /* release 'vi->source' and move 'newvi->source' into it. SkFlagPyObj
      stays: the object is never released (code holds its address and
      sk_release keeps constants forever), and the source_known_t may be
-     shared with a snapshot or a callee's frame, whose constant it still is
-     (KNOWN_BUGS F35, F51: a replay saw the flag gone and aborted) */
+     shared with a snapshot or a callee's frame, whose constant it still is */
   sk = CompileTime_Get(vi->source);
   sk_decref(sk);
   vinfo_move(po, vi, newvi);

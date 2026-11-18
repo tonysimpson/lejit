@@ -1,4 +1,4 @@
-/* Frames as Python sees them are PyFrameObjects (D75): the thread's
+/* Frames as Python sees them are PyFrameObjects: the thread's
    innermost is tstate->frame, each links to its caller by f_back, and a
    running frame's arguments and locals are its f_localsplus. ni_frame_t is
    the frame entry hands to eval_hook.c:NiCode_Run and frames.c walks; here

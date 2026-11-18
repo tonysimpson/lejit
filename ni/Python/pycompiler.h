@@ -12,8 +12,7 @@
 #include "pycheader.h"
 #include "pyver.h"
 #include "v_mem_mov.h"
-/* the exception state: NI_EXC_OCCURRED_OFFSET and the C helpers' access
-   (D77) */
+/* the exception state: NI_EXC_OCCURRED_OFFSET and the C helpers' access */
 #include "mechanism_exceptions_gen.h"
 
 /*#define MAX3(a,b,c)  ((a)>(b)?((a)>(c)?(a):(c)):(b)>(c)?(b):(c))*/

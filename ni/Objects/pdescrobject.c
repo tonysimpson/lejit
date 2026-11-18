@@ -12,7 +12,7 @@
 #include "pmethodobject.h"
 
 
-/* member_get (D89) */
+/* member_get */
 #include "pdescrobject_gen.h"
 
 static vinfo_t* pmethod_get(PsycoObject* po, PyMethodDescrObject* descr,
