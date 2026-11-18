@@ -1,7 +1,7 @@
 /*
  * The bytecode compiler: a compile-time copy of ceval.c's main loop. Each
  * opcode case works on a stack of vinfo_t and calls the compile-time object
- * protocol (Objects/p*.c). Two things differ from ceval:
+ * protocol (Objects/p*.c). What differs from ceval, and where cases come from:
  *  - Restart. If an opcode needs a run-time value as a constant it raises the
  *    promotion pseudo-exception: compilation stops, a run-time switch is
  *    emitted, and the *same opcode is re-run from the start* once the value is
@@ -18,10 +18,7 @@
  *  - After the switch come the merge-point checks, then the handling of
  *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
  *    exceptions) with ceval-style unwinding of the block stack.
- * The block opcodes (SETUP_LOOP/EXCEPT/FINALLY) exist only up to 3.7. Some
- * cases keep Python 2 meanings (CALL_FUNCTION's oparg, read as na | nk << 8,
- * which is right only below 256 arguments;
- * doc/history/removed-mechanisms.md D2).
+ * The block opcodes (SETUP_LOOP/EXCEPT/FINALLY) exist only up to 3.7.
  * Exceptions: catching one follows 3.7 (an EXCEPT_HANDLER block over six
  * stack items, cimpl_push_exc_info), and a finally block entered by an
  * exception gets the same. A finally block entered by a pseudo-exception

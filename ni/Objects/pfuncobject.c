@@ -9,12 +9,6 @@
  * time (compiled_code, compiled_defaults: F57, F52).
  * A closure only known at run time is not promoted, only its code
  * (psyfunc.c:psyco_call_closure).
- * Suspected bugs (from reading):
- *  - compute_function's SET_FIELD tests 'other != NULL ||
- *    !psyco_known_NULL(other)', which should be &&;
- *  - it stores without FMUT/FPYREF, so the new function holds no references
- *    to its closure or defaults;
- *  - the virtual-call path ignores closures and keyword-only defaults.
  */
 #include "pfuncobject.h"
 #include "../psyfunc.h"

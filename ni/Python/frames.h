@@ -11,14 +11,9 @@
 #include <frameobject.h>
 #include <idispatcher.h>
 
-/*
-  Find a frame. If 'o' is an integer, it is the 'o'th frame (0=top).
-  If 'o' was returned by a previous call to psyco_get_frame(), find
-  the previous frame (as reading f_back does).
-  The return value is either a normal Python frame object, or
-  a tuple (code, globals, tag). tag is only used for the next call
-  to psyco_get_frame().
-*/
+/* A frame object for one item pvisitframes() visits: a real frame, the
+   real frame of a (code, globals, frame) tuple, or a new emulated frame for
+   a compiled frame's (code, globals, tag) (f_lasti -1). New reference. */
 EXTERNFN PyFrameObject *psyco_emulate_frame(PyObject *o);
 /* the real frame, if the compiled code 'co' making the current C call is
    the one NiCode_Run runs (not a compiled callee); borrowed, or NULL */
