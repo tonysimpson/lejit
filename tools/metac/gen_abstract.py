@@ -1011,6 +1011,11 @@ class Translator:
         non-negative otherwise), 'minus1', 'zero_ok'."""
         if conv == 'zero_ok':
             parts = ['CfNoReturnValue', 'CfReturnTypeInt', 'CfPyErrIfNonNull']
+        elif conv == 'never':
+            r = RET_FLAG.get(ctype.replace('const ', ''))
+            if r is None or r == 'CfReturnTypePtr':
+                raise Refuse('a call returning %s that cannot fail' % ctype)
+            parts = [r]
         else:
             r = RET_FLAG.get(ctype.replace('const ', ''))
             if r is None and self.s is not None:
@@ -1054,6 +1059,13 @@ class Translator:
         if key not in g.blocks:
             out.append('CfNoBlock')
         return out
+
+    def cannot_raise(self, key):
+        """The effect rules prove the function neither raises nor runs
+        Python (PyCallable_Check)."""
+        g = self.effects
+        return g is not None and key is not None and key in g.nodes \
+            and key not in g.python and key not in g.raises
 
     def effects_key(self, name):
         g = self.effects
@@ -3301,11 +3313,22 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
             v = self.ev(a, st, out, frames)
             if v.bt == 'g':
                 v = Val('ct', '1' if v.const else '0', 'int')
-            if v.bt == 'rt' and v.owned:
+            if v.bt == 'rt' and v.owned and not self.held_scalar(v):
                 # a nested call's result: hold it for the statement
                 raise ResumeHere('a call as an argument')
             vals.append(v)
         return vals
+
+    def held_scalar(self, v):
+        """Rule nested_scalar_call: the result of a call that cannot fail
+        and returns a C scalar (no reference) may be another call's
+        argument; it is released after that call."""
+        return v.conv is not None and v.conv.get('never') and not self.s.is_obj(v.ctype)
+
+    def release_held(self, vals, out):
+        for v in vals:
+            if v.bt == 'rt' and v.owned and self.held_scalar(v):
+                out('vinfo_decref(%s, po);' % v.c)
 
     def fmt(self, vals):
         f, a = '', []
@@ -3470,7 +3493,7 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
                 raise ResumeHere('%s: a compile-time argument' % decl.name)
             if ptype != 'vinfo_t *' and v.bt != 'ct':
                 raise ResumeHere('%s: a run-time argument' % decl.name)
-            if v.bt == 'rt' and v.owned:
+            if v.bt == 'rt' and v.owned and not self.held_scalar(v):
                 raise ResumeHere('a call as an argument')
             if v.bt == 'rt' and self.s.is_obj(v.ctype):
                 if v.item_of is not None:
@@ -3484,12 +3507,14 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
             vals.append(v)
         self.note_call(st)
         call = '%s(po%s)' % (decl.name, ''.join(', ' + v.c for v in vals))
-        if decl.ret == 'bool':
+        held = any(v.bt == 'rt' and v.owned for v in vals)
+        if decl.ret == 'bool' and not held:
             return Val('okv', call, 'int', conv={'zero_ok': True})
         if decl.ret != 'vinfo_t *':
             raise ResumeHere('%s returns %s' % (decl.name, decl.ret))
         r = self.new_tmp('vinfo_t *')
         out('%s = %s;' % (r, call))
+        self.release_held(vals, out)
         ctype = self.s.decls.protos.get(name, 'PyObject *')
         return Val('rt', r, ctype, owned=True,
                    conv={'checkable': True, 'notimpl': False})
@@ -3499,7 +3524,11 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
         if rtype is None:
             rtype = ctype_of(ctokens.tokenize(self.s.decls.protos[name])[0])
         conv, checkable = self.convention(dest, frames, rtype)
-        flags = self.tr.flags(rtype, conv, self.tr.effects_key(name))
+        key = self.tr.effects_key(name)
+        if dest is None and cname is None and not self.s.is_obj(rtype) \
+                and self.tr.cannot_raise(key):
+            conv = 'never'      # its result is an argument (nested_scalar_call)
+        flags = self.tr.flags(rtype, conv, key)
         f, a = self.fmt(vals)
         self.note_call(st)
         call = 'psyco_generic_call(po, %s, %s, "%s"%s)' % (
@@ -3508,8 +3537,10 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
             return Val('rt', call, 'int', conv={'zero_ok': True})
         r = self.new_tmp('vinfo_t *')
         out('%s = %s;' % (r, call))
+        self.release_held(vals, out)
         return Val('rt', r, rtype, owned=True,
-                   conv={'notimpl': conv == 'notimpl', 'checkable': checkable})
+                   conv={'notimpl': conv == 'notimpl', 'checkable': checkable,
+                         'never': conv == 'never'})
 
     def raise_(self, name, args, st, out, frames):
         vals = [self.ev(a, st, out, frames) for a in args]

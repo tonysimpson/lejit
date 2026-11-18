@@ -354,9 +354,10 @@ TRANSLATED_SLOTS = {
 # Ni's choice of what to translate; a builtin not listed keeps its hand
 # meta, or has none (the C function called directly, D36).
 TRANSLATED_FUNCTIONS = {
+    # iter, next, chr and ord stay C calls (METACOMPILER failures log)
     'Python/bltinmodule.c': ['abs', 'len', 'hash', 'id', 'divmod', 'pow',
                              'isinstance', 'issubclass', 'getattr', 'setattr',
-                             'delattr'],
+                             'delattr', 'callable', 'hasattr'],
     # D87: ceil and floor stay hand-written (pmath.c: an int result)
     'Modules/mathmodule.c': ['acos', 'asin', 'atan', 'cos', 'cosh', 'exp', 'fabs',
                              'sin', 'sinh', 'sqrt', 'tan', 'tanh'],
