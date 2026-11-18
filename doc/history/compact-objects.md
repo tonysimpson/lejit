@@ -30,7 +30,7 @@ Sources: `../psyco-history` (mail archive, the hg mirror, wayback material) and 
   - The symptom: the tests pass but Psyco crashes; V2's `setup.py` says "compact objects are not yet reliable".
   - "Say good-bye to 'The Bug (TM)'" (`2009-05-25_22535656.md`) gives no mechanism. The fix was in V2's lost core.
 - **Likely causes in the surviving code** [inferred]:
-  - `bc4b130` (2006, Armin) added a hack to `pcompact_getimpl`. To promote `k_impl` on a compile-time object, it turns the vinfo's CompileTime source into a VirtualTime one in place, using `compute_stv_never`, which calls `psyco_fatal_msg`. It also stores the run-time impl in the vinfo's array, and relies on that mutated state surviving into the snapshot for the restarted instruction.
+  - `bc4b130` (2006, Armin) changed `pcompact_getimpl`. To promote `k_impl` on a compile-time object, it turns the vinfo's CompileTime source into a VirtualTime one in place, using `compute_stv_never`, which calls `psyco_fatal_msg`. It also stores the run-time impl in the vinfo's array, and relies on that mutated state surviving into the snapshot for the restarted instruction.
   - So anything that computes, compares or merges that state first can hit the fatal error or mismatch: merge points, `psyco_forking`, or a respawn replay through several such promotions.
   - It also rebuilds the constant without `SkFlagPyObj` after an `sk_decref`, so compiled code may hold a pointer it doesn't own.
 - **Heap overflow, never fixed** [read]: `malloc_stv` allocates `64 * sizeof(struct source_tmp_virtual_s*)`, which sizes the block for pointers, not structs. It holds about 12 entries before it overruns: after about 12 distinct constant compact objects, the heap is corrupted.
@@ -49,7 +49,7 @@ Sources: `../psyco-history` (mail archive, the hg mirror, wayback material) and 
   2. Meta dispatch in `PsycoObject_GetAttr`/`SetAttr`.
   3. A read-only getattr meta.
   4. Setattr and instance creation.
-- **Don't port the CompileTime-to-VirtualTime hack.** For a compile-time object, read `k_impl` at compile time behind a guard, or promote a separate run-time load of it.
+- **Don't port the in-place CompileTime-to-VirtualTime conversion.** For a compile-time object, read `k_impl` at compile time behind a guard, or promote a separate run-time load of it.
 - **Tests to write:**
   - many promotions in one function and in loops, with a rarely taken branch so that respawn replays across them;
   - cycles and long chains;

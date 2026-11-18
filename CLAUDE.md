@@ -41,6 +41,7 @@ The code is the source of truth. The complex files (core, virtual objects, backe
 ## Conventions
 
 - British English.
+- Psyco's authors went on to build PyPy; write about them and their work with respect. Credit ideas to them, describe Psyco's costs as engineering facts, and never characterise why anyone moved on or judge their code ("hack", "died", "failed").
 - Docs are local Markdown in `doc/`. Mark claims **[read]** (checked in code) or **[inferred]**. Anchor to `file:function` and commit hashes, not line numbers.
 - Layers: `core` | `translated` | `backend` | `glue` | `tooling` | `obsolete` (definitions in `doc/GOAL.md`).
 - Comment only where the code is complex, written for that file, never a template (`doc/DECISIONS.md` D9). When you change or re-review a file, update its row in `doc/MAP.md` (including the `reviewed` commit). Record new decisions in `doc/DECISIONS.md` and unknowns in `doc/QUESTIONS.md`.

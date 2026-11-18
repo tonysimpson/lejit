@@ -6,15 +6,15 @@ updated: 2026-11-17
 
 ## Thesis
 
-Psyco (Armin Rigo et al., 2001–2010) was a proven, working JIT for CPython 2.x: a plug-in extension module, no interpreter changes, real speed-ups on real code. It died because it was **unmaintainable**, not because the design was wrong. Every CPython C function it optimised had to be re-written by hand in a "compile-time" form (`ni/Objects/p*.c`, `ni/Python/pycompiler.c`), and those copies drifted with every CPython release.
+Psyco (Armin Rigo et al., 2001–2010) was a proven, working JIT for CPython 2.x: a plug-in extension module, no interpreter changes, real speed-ups on real code. Its cost was maintenance: every CPython C function it optimised had to be written again by hand in a "compile-time" form (`ni/Objects/p*.c`, `ni/Python/pycompiler.c`), and those copies had to follow every CPython release.
 
-Ni (this repo) is a fork that ported Psyco to x86-64 and part-way to CPython 3.7. It confirmed the maintenance problem first-hand.
+Ni (this repo) is a fork that ported Psyco to x86-64 and part-way to CPython 3.7, and met that cost first-hand.
 
-The Psyco authors' answer was PyPy (write the interpreter in RPython and derive the JIT from it). **Ours is different:** keep Psyco's design, and treat **CPython's own C source as the input to a meta-compiler** that generates the compile-time versions automatically. Armin anticipated this in `ni/Python/pycompiler.h` (Meta functions section):
+Psyco's authors went on to build PyPy, which derives its JIT from an interpreter written in RPython. Ni explores a different route: keep Psyco's design, and treat **CPython's own C source as the input to a meta-compiler** that generates the compile-time versions automatically. The idea is Armin's; he describes it in `ni/Python/pycompiler.h` (Meta functions section):
 
 > The code of the meta function typically ressembles that of the original function enough that we might dream about a language in which we never have to write the two versions (where Psyco's version could be derived automatically from the standard version).
 
-He went further on the mailing list. On 2002-11-18 he wrote: "I'm currently designing a simple C parser that can turn selected portions of the C core of the regular Python interpreter into a high-level Python version. Yes, that's a kind of C-to-Python translator!" By 2003-10-10 he had moved to PyPy, because the `Objects` files "could be generated automatically if CPython were written in a higher level language than C". The list never says why he dropped the parser. Ni's bet is that today's C tooling (doc/METACOMPILER.md) makes his first route workable. [read] (`../psyco-history/archive/psyco-devel/2002/2002-11-18_999647.md`, `2003/2003-10-10_999800.md`)
+Ni's bet is that today's C tooling (doc/METACOMPILER.md) makes that route workable.
 
 ## What the current phase is
 

@@ -5,7 +5,7 @@ Settled choices, with reasons. Don't reopen these without new evidence; add new 
 | # | Date | Decision | Reason |
 |---|---|---|---|
 | D1 | 2026-11-16 | Keep Psyco's design (run/compile/virtual time, promotion, merge points, virtual objects) as the template for the JIT. | It was a proven JIT for CPython. The failure was maintainability, not the design. |
-| D2 | 2026-11-16 | Fix maintainability by **generating** the compile-time CPython layer from CPython's C source with a meta-compiler. Don't follow PyPy, a tracing JIT or copy-and-patch. | Owner's thesis (see `GOAL.md`). Armin anticipated it in `ni/Python/pycompiler.h`. |
+| D2 | 2026-11-16 | Fix maintainability by **generating** the compile-time CPython layer from CPython's C source with a meta-compiler. Keep Psyco's design rather than take another route (PyPy's meta-tracing, a tracing JIT, copy-and-patch). | Owner's thesis (see `GOAL.md`); the idea is Armin's, in `ni/Python/pycompiler.h`. |
 | D3 | 2026-11-16 | The current phase is research and classification, not new code. | We need to know what is core, translated, backend and obsolete before designing. |
 | D4 | 2026-11-16 | **The source files are the source of truth.** Docs hold only what code can't say: goal, cross-file mechanisms, classification and judgement, history, references. There are no per-file prose summaries. | Summaries duplicate code and go out of date; an AI reads C quickly. |
 | D5 | 2026-11-16 | ~~Every source file gets a templated header comment.~~ Superseded by D9. | |
