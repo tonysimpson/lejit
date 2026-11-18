@@ -212,7 +212,7 @@ These share the front end, the rules loader and the C builder:
 4. **When all have moved, delete** `gen_abstract.py`, `gen_ceval.py`, `ceval_reader.py`, `ceval_inline.py`, `cparse.py`, `conditions.py`, `pointers.py`, `scalars.py`, `csource.py`, the old `policy_table.py` and the dead code in `cslots.py` (delete that now).
 5. **Then extend.** `float_richcompare` and the other `type_whitelist` functions should each come from one `specialise` policy line.
 
-## Decided (owner, 2026-11-18)
+## Decided (Tony, 2026-11-18)
 
 1. pycparser plus `gcc -E`, not libclang.
 2. The annotated AST is not a "compiler IR" in GOAL's sense; that rule is about Ni's JIT compiler.

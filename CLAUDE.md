@@ -9,7 +9,7 @@ Ni is a fork of Armin Rigo's **Psyco** JIT for CPython, ported to x86-64 and CPy
 | You want… | Read |
 |---|---|
 | Why this exists, what's in and out of scope, the done test | `doc/GOAL.md` |
-| Where things stand, and what's waiting on the owner | `doc/STATUS.md` |
+| Where things stand, and what's waiting on Tony | `doc/STATUS.md` |
 | The generator's new design and its migration (current work) | `doc/GENERATOR_DESIGN.md` |
 | The current generator's rules, and the failures log | `doc/METACOMPILER.md` |
 | The plan of work for the phase, step by step | `doc/GENERATION.md` |

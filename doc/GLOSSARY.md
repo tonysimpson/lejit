@@ -27,7 +27,7 @@ Each term gives its definition and where it lives (`file:symbol`). **[read]** me
 
 ## Specialisation mechanics
 
-### Shared plain words (owner and Claude, 2026-11-17)
+### Shared plain words (Tony and Claude, 2026-11-17)
 
 Use these words in conversation, docs and commit messages. They name the two places code is specialised, which are easy to confuse.
 

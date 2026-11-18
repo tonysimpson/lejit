@@ -28,7 +28,7 @@ written: 2026-11-16
 
 ## Related local repositories
 
-- `~/work/pointbreak`: the owner's Python debugger library, used by `tools/nianalyser` and `tools/test_harness`.
+- `~/work/pointbreak`: Tony's Python debugger library, used by `tools/nianalyser` and `tools/test_harness`.
 
 ## Other in-repo history docs
 
