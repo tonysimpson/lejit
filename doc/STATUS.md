@@ -1,5 +1,12 @@
 # Status
 
+## 2026-11-18: `in` on str generated; QUESTIONS 51 answered (`7cdd95d`, D92)
+
+The pyflate cost of the generated `in` (1.5% more instructions, from its `CfNoPython`) was glibc malloc's state, not the code: the flag keeps known classes across the call, which improves only start-up code that uses `in` on a str (`argparse`, `sre_parse`), and that leaves malloc's bins in another state for pyflate's 2 KB lists. callgrind counts the same emitted-code instructions with either build; the extra ones are all in `_int_malloc`/`unlink_chunk`; one kept `malloc` block or Python object reverses the sign (METACOMPILER.md "str and descriptors", PROFILE.md "Heap state").
+- **Generated:** `PyUnicode_Contains`; `punicode_contains` removed. donecheck: generated 198 (6,007 lines), reasoned 223 (4,829), no reason 22 (331, unchanged).
+- **No core change:** the effect rules' `CfNoPython` is right, and stays on every generated meta.
+- **Checks:** generation deterministic; checked build, `tests/run.py` 925; `compile_bounds` OK; `cpython_tests.py -j 2` 285 modules, 0 unexpected; same code with a reason for every difference; release instructions: the seven within noise once heap state is controlled (D92).
+
 ## 2026-11-18: the done test's 22 settled but two (GENERATION.md step 10; `351a4d5` … `08c702e`)
 
 `donecheck.py` (D90) listed 22 hand-written mirrors with no reason; 20 are now deleted, generated or reasoned, and the two left (`piter_getiter`, `prangeiter_getiter`) are the iterator work's.
@@ -15,7 +22,7 @@
 
 Conditional compilation is evaluated against the target's pyconfig.h (`cparse.conditionals`), so `unicodeobject.c` reads; new rules for bit-fields, run-time `?:`, pointers into an object and switch breaks (`tools/metac/conditions.py`, `pointers.py`).
 - **Generated:** str's length and `+`, `PyMember_GetOne` (every `T_*`), `member_get`, `delattr`; 201 hand lines removed (`pstructmember.c` is includes only). donecheck at `ccb5735`: generated 197 (5,998 lines), reasoned 224 (4,840), no reason 22 (331, unchanged).
-- **Kept:** `in` on str (the generated one costs pyflate 1.5% instructions through `CfNoPython`, QUESTIONS 51), str compare and subscript, `method_get`, `ord`, `chr`, `callable`, `iter`, `next`, `hasattr` (METACOMPILER failures log).
+- **Kept:** str compare (`in` was generated later, D92), and subscript, `method_get`, `ord`, `chr`, `callable`, `iter`, `next`, `hasattr` (METACOMPILER failures log).
 - **Checks:** generation deterministic; checked build, `tests/run.py` 925; `compile_bounds` OK; `cpython_tests.py -j 2` 285 modules and `--all` 371, 0 unexpected; same code with a reason for every difference; release instructions unchanged within noise on all seven benchmarks; 3.8 generates the same str and member functions (not built).
 
 ## 2026-11-18: GOAL's done test, point 1, as a tool (GENERATION.md step 10; `88d850c`, D90)
