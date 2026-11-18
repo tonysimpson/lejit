@@ -485,6 +485,39 @@ Release builds, instructions per warm iteration (`perf stat -e instructions:u`, 
 
 **Bugs found.** KNOWN_BUGS F107 (an `NI_CODESTATS` build read freed memory; samecode crashed) and F108 (the hand concat in a loop ran the compiler out of memory).
 
+## Container slots (D84)
+
+GENERATION step 5, the container and string families. Four general rules in `gen_abstract.py`, each in its own function, and representation as data in `policy_table.py`; no per-function code. [run]
+
+**Type-field slots.** A slot that is a field of `PyTypeObject` itself (`tp_richcompare`, `tp_iternext`, `tp_descr_get`), not of a slot table, is found by its position in the type's initialiser, macro-expanded first (`PyVarObject_HEAD_INIT` holds its own comma): `type_field_slot`, `expanded_initializer`, `slot_ref`. A `TRANSLATED_SLOTS` value may list several types for one file. How Ni calls such a meta is data, `policy_table.SLOT_ARGS` (`tp_richcompare` `"vvl"`, `tp_descr_get` `"lvl"`): an `l` parameter is known at compile time (`slot_binding`). `policy.py` checks that each Ni caller named in `applied_by` passes that format. Without it `op` was a vinfo and the meta would have been called with a C long.
+
+**Switches and statement macros.** `cparse` with `switches=True` (gen_abstract only; gen_ceval's output is unchanged) reads `switch`/`case`/`default`, and a `do { ... } while (0)` with no break of its own as the block it is. A header macro whose body is such a statement (`Py_RETURN_RICHCOMPARE`) is expanded in the body (`Source.statement_macros`). A switch on a compile-time value is a C switch in the meta (`switch_stmt`); each case must end, a fall-through or a break out of a switch is refused, and a resume inside a switch after a call is refused. `Py_RETURN_TRUE`/`FALSE`/`NONE` return Ni's constants; `abort()`/`Py_UNREACHABLE()` is `abort()`.
+
+**Local aliases.** `vt = (PyTupleObject *)v` is `v`: `Var.alias`, followed by `known_length` (with the local's type as one more cast) and by the field rule. A run-time int tested for truth is `!= 0`.
+
+**Fields of run-time objects.** `p->f` and `Py_SIZE(p)` on a run-time object whose struct `TYPES` lists with a `descriptors` entry for `f` is `psyco_get_field` with Ni's descriptor (`object_field`, `field_descriptor`). The descriptor's `FMUT` decides whether the field is re-read after calls; `policy.py` checks the descriptor is a `#define` of Ni's and that `FMUT` matches the field being listed mutable. Entries: list `ob_size` → `VAR_size`, bytes `ob_size` → `FIX_size` (new `TYPES` entry), dict `ma_used` → `DICT_ma_used` (new `TYPES` entry).
+
+**A reader bug fixed.** `cparse.Decls.read` took any `{` whose head named `struct` for a struct definition, so a function with a `struct ...` parameter overwrote the struct of its return type: `PyDictObject`'s fields in `dictobject.c` were a function's statements. A head with `(` or `=` is no longer a struct. The generated headers of the other units are byte-for-byte the same.
+
+**Generated.**
+- `tupleobject.c:tuplerichcompare` (new: Ni called the slot). Tuples of known length compare item by item at compile time with run-time tests between; the length test and the op switch fold. Unknown lengths resume CPython's function (D78).
+- `listobject.c:list_length`, `bytesobject.c:bytes_length`, `dictobject.c:dict_length`, replacing `psyco_generic_mut_ob_size`/`psyco_generic_immut_ob_size` as those types' registrations and the hand `psyco_dict_length`. The same reads; the generated ones test the read for NULL (a harmless difference).
+
+**Bugs found.** KNOWN_BUGS F109 (`PsycoObject_RichCompareBool` had no identity shortcut: `nan in (nan,)` was False since D78, and the generated `tuplerichcompare` made `(nan,) == (nan,)` False, CPython's `test_float`); fixed in `772a4d3`.
+
+**Same code.** `tools/samecode.py baseline-3.7 772a4d3` (`0a38681` → this work): 51 units same, 36 differ, 4,167 of 4,259 code objects same. First differences by opcode: `COMPARE_OP` 44, the rest (`BINARY_ADD` 12, `LOAD_METHOD` 9, …) are promotion-stub bytes and addresses only [read: by eye in samecode's output]. The `COMPARE_OP` ones are the generated `tuplerichcompare` (an inline item compare where Ni called the slot; `(a, 1) == [a, 1]` is NotImplemented at compile time, so the tuple stays virtual) and F109's word compare before each item of an `in` on a tuple (`posixpath.normpath`'s `comp in ('', '.')`). `len()` of a list, dict and bytes emits the same code as the hand metas. Each difference is the new meta or the F109 fix.
+
+Release builds, instructions per warm iteration (as D80), `0a38681` → `772a4d3`: richards 168.29 → 168.29 M, deltablue 26.83 → 27.09 (run alternately A, B three times: 26.57, 26.55, 26.61 → 26.58, 26.55, 26.52), raytrace 3,102.3 → 3,085.2, go 1,066.0 → 1,065.0, hexiom 39.69 → 39.67, chaos 461.59 → 461.61, pyflate 2,003.0 → 2,002.9. deltablue's compiled code is the same in both builds except promotion-stub bytes (samecode), and run alternately the two builds agree, so the first figure was noise: nothing slower [run].
+
+**Kept hand-written, with the reason** (all in the failures log):
+- `punicodeobject.c` (richcompare, length, subscript, contains): the unit doesn't read (below); and PEP 393's READY/kind bit-fields and D37's constant `in` and `==` are representation the C doesn't state.
+- `pbytesobject.c:pbytes_subscript`: D56's virtual slices and the inline byte load; `bytes_item` needs a `likely` item and returns `PyLong_FromLong` of a byte, which is the hand inline load anyway.
+- `plistobject.c` item, ass_item, concat, subscript, ass_subscript, `PsycoList_Append`: D80's virtual lists (mutable, hand force function) and D56's slices.
+- `prangeobject.c` (`range_iter`, `prangeiter_next`, `PsycoRange_New`): a virtual range and iterator of words; the C works on int objects.
+- `piterobject.c:piter_iternext`: F48's guard on `it_seq`.
+- `pstructmember.c:PyMember_GetOne`, `pdescrobject.c`: not attempted. `member_get`'s `descr_check` and the `T_*` switch on a run-time member type; `method_get`'s virtual `PyCFunction`. `SLOT_ARGS` has `tp_descr_get`'s format for when they are.
+- `pdictobject.c:PsycoDict_New`/`Copy`/`SetItem*`: residual-call wrappers that `gen_ceval` and the hand code call by name.
+
 ## Failures log
 
 Record here each case where the current approach failed: the CPython file and function, what it couldn't do, and what we did.
@@ -547,3 +580,11 @@ Record here each case where the current approach failed: the CPython file and fu
 | (reading headers) | ctokens keeps the last `#define` of a name whatever `#if` it is under; `object.h` and `abstract.h` define names twice. | `cparse.cpp`: the preprocessor's own `-dM` list, with the target's `pyconfig.h` and CFLAGS. |
 | `abstract.c:sequence_repeat`, `PyObject_GetItem`, `SetItem`, `DelItem` (3.8.20) | 3.8 `#undef`s `PyIndex_Check` and `PyIter_Check` late in the file to define functions of those names; `-dM` gives the end-of-file state, so earlier uses read as calls of the function, a run-time test, and the four resume whole. | Not fixed (PORT38.md item 3). Candidate rule: a macro's definition is the one in force where it is used. |
 | (effects, 3.8.20) `_PyObject_ASSERT*`, `_PyErr_*(tstate, …)` | The call graph reads both `#ifdef NDEBUG` branches of 3.8's assertion macros (paths into `_PyObject_Dump`, which blocks), and the seeds and assumptions name `PyErr_SetObject`, `PyErr_Restore`, `PyErr_SetString`, which 3.8's paths go round through the `_PyErr_*` internals. 25 `cannot_block` disagreements instead of 1. | Not fixed (PORT38.md item 4; needs QUESTIONS 49 for keys 3.7 lacks). |
+| `tupleobject.c:tuplerichcompare` (D78) | A type field (`tp_richcompare`), not a table slot; `Py_RETURN_RICHCOMPARE` is a statement macro holding a `switch`; `op` must be a compile-time C long. | Generated (D84): type-field slots, `SLOT_ARGS`, statement macros and compile-time switches. |
+| `listobject.c:list_contains`, `list_richcompare` | `ob_size` is mutable: the loop's bound is a run-time field read, so the loop resumes the whole function (D78), which is the slot call Ni already makes. | Not listed in `TRANSLATED_SLOTS` (nothing gained). |
+| `bytesobject.c:bytes_contains`, `bytes_item`, `bytes_richcompare` | `PyBytes_AS_STRING` holds a comma operator (resumes at the start); `bytes_item` needs a `likely` item for `i < 0` and builds `PyLong_FromLong` of a byte, which the hand inline load already is; `bytes_richcompare` needs `likely` items and calls `memcmp`. | Hand `pbytesobject.c:pbytes_subscript` kept (D56); the rest are slot calls. |
+| `dictobject.c:PyDict_Contains` | An `int` result's convention needs a Ni declaration (`PsycoDict_Contains`). | Not listed; `in` on a dict is the slot call. |
+| `rangeobject.c:range_length`, `compute_range_item`, `get_len_of_range`, `range_iter`, `rangeiter_next` | `length` has no descriptor in `TYPES` (Ni's range is a virtual of words, hand descriptors); `PyObject_RichCompareBool(arg, _PyLong_Zero, ...)` passes a compile-time object where Ni's meta wants a vinfo; `get_len_of_range` returns `unsigned long`; the iterator's results are virtual (`virtual result`, left to the hand code). | Hand `prangeobject.c` kept. Candidate rules: an object constant as a vinfo argument; unsigned results. |
+| `unicodeobject.c` (the whole unit) | `cparse.undefined_later` fails: `gcc -E -dM` of the file cut at line 7815 stops inside an `#ifdef` opened at 7080. | Hand `punicodeobject.c` kept (also D37, PEP 393 bit-fields). Candidate fix: cut at a line outside any conditional. |
+| `iterobject.c:iter_iternext`, `descrobject.c:member_get`, `method_get`, `structmember.c:PyMember_GetOne` | Not attempted: F48's guard on `it_seq`; `descr_check` and a `switch` on the member's run-time type code; `method_get` builds a `PyCFunction`, whose virtual is hand-written. | Hand-written. `SLOT_ARGS` has `tp_descr_get`'s format ready. |
+| (reading declarations) `cparse.Decls.read` | A function head naming `struct` was read as a struct definition and overwrote the struct of its return type (`PyDictObject` in `dictobject.c`). | Fixed (D84): a head with `(` or `=` is not a struct. |

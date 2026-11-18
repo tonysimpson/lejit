@@ -398,7 +398,7 @@ Mirrors `Objects/object.c`'s generic protocol: `PyObject_IsTrue`, `PyObject_GetA
 | try_rich_compare | 68 | translated | partial: Objects/object.c:do_richcompare (the three slot calls) | P01, P29, P09, P25 | GUARD: tp_richcompare of a heap type, operand order via Psyco_TypeIsSubtype; EFFECT: CfCommonCheckNotImplemented | Changed path calls PyObject_RichCompare (no slot run yet). |
 | opstrings | 2 | translated | Objects/object.c:opstrings |  |  |  |
 | PsycoObject_RichCompare | 25 | translated | Objects/object.c:PyObject_RichCompare; partial: Objects/object.c:do_richcompare (default part) | P24, P23, P25 | VIRTUAL: identity result as a condition-code bool (P23); DRIFT: no Py_EnterRecursiveCall(' in comparison') |  |
-| PsycoObject_RichCompareBool | 19 | translated | Objects/object.c:PyObject_RichCompareBool | P12 | PROMOTE: an unknown-type result's truth is a residual PyObject_IsTrue (temporaries can't be promoted); EFFECT: CfCommonInquiry; DRIFT: no v == w shortcut for Py_EQ/Py_NE; no PyBool_Check fast path |  |
+| PsycoObject_RichCompareBool | 35 | translated | Objects/object.c:PyObject_RichCompareBool | P12 | PROMOTE: an unknown-type result's truth is a residual PyObject_IsTrue (temporaries can't be promoted); EFFECT: CfCommonInquiry; SHORTCUT: v == w for Py_EQ/Py_NE (same vinfo, else a run-time word compare unless one is virtual; F109, D84); DRIFT: no PyBool_Check fast path |  |
 | PsycoObject_Hash | 21 | translated | Objects/object.c:PyObject_Hash | P01, P29, P09 | GUARD: tp_hash of a heap type; EFFECT: CfReturnTypeLong \| CfPyErrIfMinus1 | NULL slot (type not ready) goes residual, as CPython readies it. |
 | collect_undeletable_vars | 30 | core | none | P26 | SHORTCUT: whitelist str, bool, float, int, None, range have no __del__ |  |
 | Psyco_SafelyDeleteVar | 35 | core | none |  |  | For dispatcher.c. |
@@ -453,8 +453,8 @@ Mirrors `Objects/abstract.c` (with `PyObject_Call` and `PyEval_CallObjectWithKey
 | PsycoObject_GetItem | 59 | translated | Objects/abstract.c:PyObject_GetItem | P01, P29, P09, P12, P24 | GUARD: mp_subscript, sq_item, key's nb_index; SHORTCUT: int key converted inline (PsycoLong_AsLong); DRIFT: int key too big raises OverflowError (PyLong_AsLong) where 3.7 raises IndexError (PyNumber_AsSsize_t(key, PyExc_IndexError)); __class_getitem__ path is residual PyObject_GetItem | KNOWN_BUGS F102. |
 | PsycoObject_SetItem | 67 | translated | Objects/abstract.c:PyObject_SetItem; Objects/abstract.c:PyObject_DelItem | P01, P29, P09, P12, P24 | GUARD: mp_ass_subscript, key's nb_index, sq_ass_item; SHORTCUT: int key via PsycoLong_AsLong; DRIFT: same OverflowError-for-IndexError as GetItem | value NULL is DelItem. KNOWN_BUGS F102. |
 | PsycoObject_Size | 23 | translated | Objects/abstract.c:PyObject_Size; Objects/abstract.c:PyMapping_Size | P01, P29, P09, P24 | GUARD: sq_length, mp_length; EFFECT: CfCommonPySSizeTResult |  |
-| psyco_generic_immut_ob_size | 5 | translated | Objects/tupleobject.c:tuplelength (and bytes/str length) | P15 | OTHER: ob_size chosen immutable (FIX_size) | Registered on tuple's and bytes' sq_length. |
-| psyco_generic_mut_ob_size | 5 | translated | Objects/listobject.c:list_length | P15 | OTHER: ob_size chosen mutable (VAR_size) | Registered on list's sq_length. |
+| psyco_generic_immut_ob_size | 5 | translated | Objects/tupleobject.c:tuplelength (and bytes/str length) | P15 | OTHER: ob_size chosen immutable (FIX_size) | Registered on tuple's sq_length; bytes' is generated (D84). |
+| psyco_generic_mut_ob_size | 5 | translated | Objects/listobject.c:list_length | P15 | OTHER: ob_size chosen mutable (VAR_size) | No longer registered: list's sq_length is the generated `list_length` (D84, same read). |
 | PsycoSequence_GetItem | 40 | translated | Objects/abstract.c:PySequence_GetItem | P01, P29, P05, P06, P09, P24 | GUARD: sq_item, sq_length; LIKELY: negative index unlikely (_f) |  |
 | PsycoSequence_SetItem | 52 | translated | Objects/abstract.c:PySequence_SetItem; Objects/abstract.c:PySequence_DelItem | P01, P29, P05, P06, P09, P24 | GUARD: sq_ass_item, sq_length; LIKELY: negative index unlikely | value NULL is DelItem, with its own message. |
 | PsycoSequence_GetSlice | 9 | translated | Objects/abstract.c:PySequence_GetSlice | P12 |  | Residual only. No callers [read]. |
@@ -726,7 +726,7 @@ Virtual short lists (core) plus metas for `list_item`, `list_ass_item`, `list_co
 | cimpl_list_ass_slice | 9 | translated | partial: Objects/listobject.c:list_ass_subscript | P18a |  | step-1 case; PyList_SetSlice is list_ass_slice behind a PyList_Check |
 | plist_subscript | 53 | mixed | Objects/listobject.c:list_subscript | P01, P29, P18a, P12, P08 | GUARD: mp_subscript, sq_item, sq_length of o's type through Psyco_TypeSlot (F56); a subclass with its own slot gets residual list_subscript (F41); PROMOTE: o's type; RESTYPE: list for the slice helper | core = virtual-slice unpack and the slot check (list_subscript is also list.__getitem__, METH_COEXIST). Int keys go to pabstract.c:psyco_generic_subscript, not list_subscript's own index code |
 | plist_ass_subscript | 30 | mixed | Objects/listobject.c:list_ass_subscript | P01, P18a, P12 | PROMOTE: key's type; EFFECT: helper CfCommonIntZeroOk | no slot guards (no __setitem__ METH_COEXIST on list, so a subclass slot never lands here [inferred]); non-slice keys go to psyco_generic_ass_subscript |
-| psy_listobject_init | 31 | glue | none | P11 | OTHER: list tp_iter redirected to PsycoSeqIter_New (P11), so iter(list) is 'iterator' not 'list_iterator'; VIRTUAL: INIT_SVIRTUAL_NOCALL (forced at calls), weight NW_VLISTS | sq_length is psyco_generic_mut_ob_size; the 'Python >= 2.3' tests are dead |
+| psy_listobject_init | 31 | glue | none | P11 | OTHER: list tp_iter redirected to PsycoSeqIter_New (P11), so iter(list) is 'iterator' not 'list_iterator'; VIRTUAL: INIT_SVIRTUAL_NOCALL (forced at calls), weight NW_VLISTS | sq_length is the generated `list_length` (`plistobject_gen.h`, D84); the 'Python >= 2.3' tests are dead |
 
 ### `ni/Objects/ptupleobject.h`
 
@@ -741,7 +741,7 @@ Tuple item descriptor and vinfo-array access macros **[read]**.
 
 ### `ni/Objects/ptupleobject.c`
 
-Mostly core: virtual tuples, constant folding of all-constant tuples, `PsycoTuple_Load`. `ptuple_item` is a straight `tupleitem` translation; tuple `mp_subscript` is the generic meta, not `tuplesubscript` **[read]**. Since D78 `tuplecontains` (`sq_contains`) is generated into `ptupleobject_gen.h`, which this file includes; `psy_tupleobject_init` calls its `gen_tupleobject_init()` **[run]**.
+Mostly core: virtual tuples, constant folding of all-constant tuples, `PsycoTuple_Load`. `ptuple_item` is a straight `tupleitem` translation; tuple `mp_subscript` is the generic meta, not `tuplesubscript` **[read]**. Since D78 `tuplecontains` (`sq_contains`) is generated into `ptupleobject_gen.h`, which this file includes; `psy_tupleobject_init` calls its `gen_tupleobject_init()` **[run]**. Since D84 `tuplerichcompare` (`tp_richcompare`, a field of the type) is generated there too; Ni called the slot before **[run]**.
 
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
@@ -925,7 +925,7 @@ Declarations only.
 
 ### `ni/Objects/pdictobject.c`
 
-Residual-call wrappers with a known result type, plus `dict_length` as a field read of `ma_used` (read as `int`) **[read]**. `PsycoDict_Copy` and `PsycoDict_SetItem` have no callers **[read]**.
+Residual-call wrappers with a known result type, plus `gen_dictobject_init` registering the generated `dict_length`, a field read of `ma_used` (read as `int`, M11) (D84) **[read]**. `PsycoDict_Copy` and `PsycoDict_SetItem` have no callers **[read]**.
 
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
@@ -936,7 +936,7 @@ Residual-call wrappers with a known result type, plus `dict_length` as a field r
 | PsycoDict_Copy | 14 | translated | Objects/dictobject.c:PyDict_Copy | P12, P08 | RESTYPE: dict | no callers in the repo |
 | PsycoDict_SetItem | 9 | translated | Objects/dictobject.c:PyDict_SetItem | P12 | EFFECT: CfCommonIntZeroOk | no callers in the repo |
 | PsycoDict_SetItemC | 9 | translated | Objects/dictobject.c:PyDict_SetItem | P12 | EFFECT: CfCommonIntZeroOk | key a raw constant ('l') |
-| psyco_dict_length | 6 | translated | Objects/dictobject.c:dict_length | P15 | DRIFT: 32-bit read of ma_used |  |
+| psyco_dict_length | – | removed | Objects/dictobject.c:dict_length | P15 | DRIFT: 32-bit read of ma_used (M11, unchanged: the descriptor is the same) | **Removed** (D84): `dict_length` is generated into `pdictobject_gen.h` through `TYPES`' descriptor `DICT_ma_used`. |
 | psy_dictobject_init | 6 | glue | none |  |  |  |
 
 ### `ni/Objects/pbytesobject.c`
@@ -950,7 +950,7 @@ Residual-call wrappers with a known result type, plus `dict_length` as a field r
 | bytes_subscript (static) | 2 | glue | none |  |  |  |
 | cimpl_bytes_slice | 16 | translated | partial: Objects/bytesobject.c:bytes_subscript | P18a |  | step-1 slice case after PySlice_Unpack, identities as CPython |
 | pbytes_subscript | 64 | mixed | Objects/bytesobject.c:bytes_subscript | P01, P18a, P13, P14, P05, P06, P07, P15, P24, P12, P08 | PROMOTE: key type; SHORTCUT: slice of a constant exact bytes folds (CfPure, D56); RESTYPE: bytes for a run-time slice; VIRTUAL: the byte as a virtual int (PsycoLong_FROM_LONG); LIKELY: negative and out-of-range unlikely (_f) | core = virtual-slice unpack. Only int subtypes inline; other __index__ keys residual |
-| psy_bytesobject_init | 7 | glue | none |  |  | sq_length is psyco_generic_immut_ob_size (bytes_length) |
+| psy_bytesobject_init | 7 | glue | none |  |  | sq_length is the generated `bytes_length` (`pbytesobject_gen.h`, D84) |
 
 ### `ni/Objects/punicodeobject.c`
 
