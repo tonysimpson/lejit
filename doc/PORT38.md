@@ -61,6 +61,23 @@ Most first; "blocks" counts definitions lost from the generated headers, or degr
 
 Order: 8, 7, 6 and 9 for a compile; 1 (with 2) for generation; then 11 and 12 for same behaviour; 4 and 5 before step 5's families or computing D53's list. Roughly 3–5 days, most of it item 9.
 
+## Differences detected as features
+
+`tools/metac/features.py` (D136) detects these from the source; each is an `NI_HAS_` macro in `ni_features_gen.h` and a line in `report.txt`, 0 on 3.7.17 and 1 on 3.8.20 unless said. None is tested in `ni/` yet. [run]
+- Opcodes (`opcode.h`): `OPCODE_ROT_FOUR`, `OPCODE_BEGIN_FINALLY`, `OPCODE_CALL_FINALLY`, `OPCODE_POP_FINALLY`, `OPCODE_END_ASYNC_FOR`; and `OPCODE_SETUP_LOOP`, `OPCODE_SETUP_EXCEPT`, `OPCODE_BREAK_LOOP`, `OPCODE_CONTINUE_LOOP` (1 on 3.7, 0 on 3.8): item 9.
+- `MAP_ADD_VALUE_ON_TOP` (ceval's `MAP_ADD`): the key-before-value change.
+- `TSTATE_ERRORS` (`_PyErr_SetObject` takes the thread state): causes 2 and 3.
+- `ARG_CHECK_POSITIONAL` (clinic's `_PyArg_CheckPositional`): item 14's builtins.
+- `AUDIT_HOOKS` (`PySys_Audit`): cause 5 and `member_get`.
+- `VECTORCALL` (`tp_vectorcall_offset`): cause 9, item 11.
+- `POSONLYARGS` (`co_posonlyargcount`): cause 10.
+- `PYCORE_PYSTATE_H` (`internal/pycore_pystate.h`): item 8.
+- `DICT_NEW_EMPTY_KEYS` (`PyDict_New` shares `Py_EMPTY_KEYS`): item 10.
+- `FLOAT_ASDOUBLE_INDEX` (`PyFloat_AsDouble` reads `nb_index`): the numbers row.
+- 1 on both: `PYDICT_NEWPRESIZED` (tested by `pdictobject.*`), `INT_MAX_STR_DIGITS`.
+
+The mechanisms' differences (`signals_pending`, `store_gc`) stay `mechanisms.py`'s answers.
+
 ## Rerunning
 
 `generate.py --python ~/.local/share/uv/python/cpython-3.8.20-linux-x86_64-gnu/bin/python3.8 --src ~/.cache/ni/cpython/Python-3.8.20 --out DIR --past-policy -v`, and the same for 3.7.17 without `--src`/`--past-policy`. Compare per header with the version string masked, `gen_ceval`'s output case by case (`      case X: {` starts a case), and the `-v` reports entry by entry. `donecheck.py --gen DIR` runs the done test on that run's report. `python3 tools/metac/ceval_reader.py SRC` and `policy.py --src SRC` run alone.

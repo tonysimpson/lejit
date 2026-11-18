@@ -34,7 +34,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions (with their megamorphic kinds), the call-site note. | none | `fa3dae7` |
 | `ni/codemanager.c` | core | Executable memory as free extents (poisoned under ASan, a LeakSanitizer root region); owners (D102): what a code object's compiled code holds, released with it; compile guards (D103). | none | `bc3c590` |
 | `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner, record and compile guard APIs. | none | `9b9dcef` |
-| `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
+| `ni/compat2to3.h` | glue | NiCompat* macros naming Py3's PyUnicode/PyLong functions by Psyco's Py2 names (PyString/PyInt); `IS_PY3K` always. | Include/ | `c8312e9` |
 | `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, parked compiler states (live, then frozen), promotion dispatch and inline-cache chains (megamorphic versions, generic or going on in ceval), stubs and their records, per owner. | none | `a7cb8e9` |
 | `ni/dispatcher.h` | core | Snapshots (FrozenPsycoObject), parked states, compatibility and join API, respawn and promotion helpers. | none | `a7cb8e9` |
 | `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles a function frame (no locals mapping) on its first call (interpreted if memory runs out), `NiCode_Run` runs it. | Python/ceval.c | `8347596` |
@@ -52,7 +52,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/mechanisms/entry/{frame_eval_hook_interp,vectorcall}.h`, `ni/mechanisms/tracing/{cframe_use_tracing,monitoring}.h`, `ni/mechanisms/frames/{interpreter_frame_cframe,interpreter_frame}.h` | glue (stubs) | One `#error "... not written yet"` each, saying what the variant must do. | 3.11–3.13 | `36b5beb` |
 | `ni/mergepoints.c` | core | Finds merge points, dead locals, join points and eval_breaker tests in a code object; the opcode whitelist. | none (copies `NEXTOPARG` from Python/ceval.c) | `b36a1ac` |
 | `ni/mergepoints.h` | core | Merge point tables: where control paths join and compiled states are cached. | none | `e26c2a3` |
-| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code records (weak references on the code object, D128), `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `a7cb8e9` |
+| `ni/ni.c` | glue | Module entry (PyInit_ni), `build_info` (from `ni_buildinfo_gen.h`), per-code records (weak references on the code object, D128), `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `c8312e9` |
 | `ni/platform.c` | glue | Allocates executable (RWX) memory: mmap on Unix, VirtualAlloc on Windows. | none | `1e65d32` |
 | `ni/platform.h` | glue | Prototype for psyco_allocate_executable_buffer(). | none | `e1fd808` |
 | `ni/processor.h` | backend (interface) | Prototypes for running compiled code: psyco_processor_run, RUN_ARGC, aligned-call glues. | none | `4398496` |
@@ -79,8 +79,8 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/pclassobject.h` | core | Declarations: `PsycoMethod_New(func, self)`, the generated vinfos, the tp_call meta. | Include/classobject.h | `a6a687b` |
 | `ni/Objects/pdescrobject.c` | translated + glue | The method descriptor `__get__` meta; includes the generated member_get. | Objects/descrobject.c | `ccb5735` |
 | `ni/Objects/pdescrobject.h` | glue | Placeholder header for descriptor metas; declares nothing. | Include/descrobject.h | `e1fd808` |
-| `ni/Objects/pdictobject.c` | translated | Residual-call wrappers for dict creation; registers the generated `dict_length`. | Objects/dictobject.c | `351a4d5`, `0f88313` |
-| `ni/Objects/pdictobject.h` | glue | API for (non-virtual) dict creation through residual calls. | Include/dictobject.h | `351a4d5`, `0f88313` |
+| `ni/Objects/pdictobject.c` | translated | Residual-call wrappers for dict creation; registers the generated `dict_length`. | Objects/dictobject.c | `351a4d5`, `0f88313`, `c8312e9` |
+| `ni/Objects/pdictobject.h` | glue | API for (non-virtual) dict creation through residual calls. | Include/dictobject.h | `351a4d5`, `0f88313`, `c8312e9` |
 | `ni/Objects/pfloatobject.c` | translated + core | Virtual floats: representation, float/float comparisons, helpers; includes the generated slots. | Objects/floatobject.c | `87b5ff5` |
 | `ni/Objects/pfloatobject.h` | core + translated | Field descriptor and virtual-float builder (one vinfo holds the double). | Include/floatobject.h | `ccb5735` |
 | `ni/Objects/pfuncobject.c` | core | Virtual function objects and tp_call/tp_descr_get metas that inline Python calls. | Objects/funcobject.c | `95b1e61` |
@@ -115,14 +115,16 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Python/pbltinmodule.h` | glue | Declares `PsycoObject_IsInstance`. | Python/bltinmodule.c | `58e52de` |
 | `ni/Python/pycheader.h` | core | pyc_data_t (language-specific compiler state, with the flags that send a frame on to ceval) and the LOC_* slots in po->vlocals. | Include/frameobject.h | `56e5faf` |
 | `ni/Python/pycinternal.h` | glue | Includes CPython internal headers and opcode names. | Include/opcode.h | `e1fd808` |
-| `ni/Python/pycompiler.c` | translated + core | The bytecode compiler: ceval's main loop at compile time, block unwinding, exceptions and their tracebacks' locals and frame links, calls, the way out to ceval when tracing starts or a type-promotion site is past its limit. | Python/ceval.c | `ab0f53b` |
+| `ni/Python/pycompiler.c` | translated + core | The bytecode compiler: ceval's main loop at compile time, block unwinding, exceptions and their tracebacks' locals and frame links, calls, the way out to ceval when tracing starts or a type-promotion site is past its limit. | Python/ceval.c | `ab0f53b`, `c8312e9` |
 | `pycompiler_gen.h` | translated (generated) | 81 opcode cases included in `pycompiler.c`'s switch: 49 by `gen2/opcodes.py` (its `MOVED`, D137–D139), the rest by `tools/metac/gen_ceval.py`. | Python/ceval.c | `dcdf898` |
 | `pycompiler_copies_gen.h` | translated (generated) | Copies of the ceval helpers and arms the generated cases call (`gen_ceval:build_copies`). | Python/ceval.c | `e17f6fc` |
 | `mechanism_<name>_gen.h`: entry, tracing, frames, eval_breaker_runtime, eval_breaker, tstate_runtime, tstate, recursion, exceptions, store_gc | glue (generated) | One per mechanism, by `mechanisms.py`: detector answers and the snippet `VARIANTS` chose. | the definitions the detectors read | `f254b5d` |
+| `ni_features_gen.h` | glue (generated) | One `NI_HAS_<NAME> 0|1` per feature, by `features.py`. | the definitions the detectors read | `c8312e9` |
+| `ni_buildinfo_gen.h` | glue (generated) | What `ni.build_info` reports, by `buildinfo.py`. | none | `c8312e9` |
 | `layouts_gen.h`, `runtime_layouts_gen.h` | translated (generated) | Offsets, sizes and `_Static_assert`s for each CPython field Ni relies on (D76). | Include/** (the structs `LAYOUTS` and `RUNTIME` name) | `f254b5d` |
 | `ni/Python/pycompiler.h` | core | Pseudo-exceptions, promotion helpers (and whether a frame can go on in ceval), the meta registry (Psyco_META*), pyc_data_t snapshots. | Python/errors.c | `f254b5d` |
 | `ni/Python/pyruntime.c` | glue | The only file built with Py_BUILD_CORE: home of two mechanisms' snippets (D77). | none itself | `f254b5d` |
-| `ni/Python/pyver.h` | glue | Python-version feature switches. | none | `4a0d275` |
+| `ni/Python/pyver.h` | glue | Includes `ni_features_gen.h` (the `NI_HAS_` features); `NEXT_INSTR_POP`. | none | `c8312e9` |
 | `ni/x64/idispatcher.c` | backend + core | psyco_unify(): emits moves and refcounts to match a snapshot, then jumps to it. | none | `a4b946e` |
 | `ni/x64/idispatcher.h` | backend | Dispatcher hooks: promotion inline cache and chain, jumps and patching, unify blocks, stubs. | none | `a599bd2` |
 | `ni/x64/iencoding.c` | backend + glue | C calls (SysV at run time, libffi at compile time), psyco_call_psyco (with the caller's locals map), cc and ALU emitters. | none (encodes CPython error conventions) | `f254b5d` |
@@ -143,7 +145,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 
 | file | layer | what it is | reviewed |
 |---|---|---|---|
-| `setup.py` | glue | distutils build of the `ni` extension (linking libffi and libunwind); runs `generate.py` first, with `PYTHONHASHSEED=0` (D68); `NI_SANITIZE` builds into `--build-lib` with its own config stamp. | `ebc2296` |
+| `setup.py` | glue | distutils build of the `ni` extension (linking libffi and libunwind); runs `generate.py` first, with `PYTHONHASHSEED=0` (D68); `NI_SANITIZE` builds into `--build-lib` with its own config stamp, and is a macro for `ni.build_info`. | `c8312e9` |
 | `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests); `fuzzed.py` holds what `tools/fuzz/` found, `fresh_objects.py` that folded results are new objects per run (D130), `big_arrays.py` makes a 2 GB list. | `979be8b` |
 | `tests/testenv.py` | tooling | What the runners share with `tools/sanitize.sh`: `NI_MODULE_DIR`, `NI_SANITIZE_LOGS` (per-child logs, longer timeouts, no address-space limit), the modules skipped under the sanitizers. | `4896477` |
 | `tests/encoding/check.py` | tooling | Checks `@asm`-annotated emitters in `iencoding.h` against GNU `as`; the cases compile in parts of 15000. | `974f1ea` |
@@ -151,11 +153,13 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tests/compile_bounds.py` | tooling | Fails if warm code keeps starting code buffers (`ni._stats()`); run by check.sh. | `932f416`; `ebc2296` (`NI_MODULE_DIR`) |
 | `tests/cpython_tests.py` | tooling | Runs CPython's test modules with and without Ni and compares counts and exit status. | `95b1e61` |
 | `tests/mechanisms.py` | tooling | Checks the mechanism detectors' answers on five CPython versions (D75). | `f254b5d` |
+| `tests/features.py` | tooling | Checks the feature detectors on 3.7.13, 3.7.17 (they differ in the int-to-str digit limit) and 3.8.20 (D136); run by check.sh. | `c8312e9` |
+| `tests/build_info.py` | tooling | `ni.build_info`'s keys, read-only, features as the built header's; run by check.sh. | `c8312e9` |
 | `tests/parse_gate.py` | tooling | Migration step 1: every mirrored CPython `.c` file preprocesses and parses on 3.7 and 3.8, with right line numbers; run by check.sh. | `7f2955a` |
 | `tests/effect_snippets.py` | tooling | Snippet tests of `effects.py` (G1–G4, each flag, the `Cf*` mapping), no build; run by check.sh. | `041bbd1` |
 | `tests/gen2_snippets.py` | tooling | Snippet tests of the new translator: C read after abstract.c (or longobject.c, floatobject.c, tupleobject.c with the representations), the meta or refusal out, for each pass and action and G6–G15, G19–G21, with builtins (a module table of the cases' own, `METH_O` and `METH_FASTCALL`), math's builtins and str's fold-may-fail; raw addresses, `Holds`, an error on one arm (G8); argument binding (C read after ceval.c, the binder or refusal out, with G5, G7, G8, G14); opcode cases (a switch on the opcode read after ceval.c, the case or refusal out, with its stack effect); no build; run by check.sh. | `dcdf898` |
 | `tools/sanitize.sh`, `tools/sanitize_report.py` | tooling | Builds Ni with ASan and UBSan in `build/asan` and runs the suites under it; the report deduplicates ASan, LSan and UBSan reports by stack (BUILD.md, Sanitizers). | `4896477` |
-| `tools/check.sh` | tooling | Runs the parse gate, the effect and translator snippets, the generators (seeds 1, 2 and 1 again, and the 3.8 dry run, in parallel) against the baselines, `donecheck.py`, a checked build and every suite; with step names or `--changed [REF]`, only the steps chosen or affected. | `ab24e2f` |
+| `tools/check.sh` | tooling | Fails on a CPython version test in `ni/` (`versions`), runs the parse gate, the effect and translator snippets, the generators (seeds 1, 2 and 1 again, and the 3.8 dry run, in parallel) against the baselines, `tests/features.py`, `donecheck.py`, a checked build and every suite; with step names or `--changed [REF]`, only the steps chosen or affected. | `c8312e9` |
 | `tools/metac/ctokens.py`, `cslots.py` | tooling | A C tokeniser, and the shared slot driver (`Target`, `GenError`, `text`). | `7b21dea` (ctokens), `9eae61d`, `2a71def` (cslots: `PyNumberMethods` from any `Include/**/*.h`) |
 | `tools/metac/gen_ceval.py` | tooling | Writes `pycompiler_gen.h` from instruction definitions, checked against `dis` (D69); its conditions, flags and loops rule from `cread.py`. | `ffb3326` |
 | `tools/metac/ceval_inline.py` | tooling | Inlines a static function of `ceval.c` into the case that calls it (D82). | `fa3dae7` |
@@ -163,18 +167,20 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/metac/cread.py` | tooling | What `gen_ceval.py` and `gen_virtual.py` share of the first translator: a file's functions as tokens (`Source`), the Cf flags, `int_condition`, the loops rule, the target's defines (D133). | `ffb3326` |
 | `tools/metac/gen2/` | tooling | The new translator (GENERATOR_DESIGN), on the front end's AST: rules (`vocabulary`, `types`, `conventions`, `scope`, `policy`), C typing and printing (`ctyping`, `cprint`), analyses (`liveness`, `bta`), path state (`values`), the walk and its actions (`walk`, `actions`, `resume`; the representations `reps`, the known-length one `items`, meta loops `loops`, the scalar helper `scalar`, `inline`, raw addresses `address`), slot roots (`slots`, a type's own file or another's), the C builder (`cbuild`); `abstract.py` writes `pabstract_gen.h`, `plongobject_gen.h`, `pfloatslots_gen.h`, `pmathmodule_gen.h`, `pbltinmodule_gen.h`, the tuple, list, dict, bytes and str headers, `pstructmember_gen.h`, `pdescrobject_gen.h` and `pobject_gen.h` (D104–D107, D110–D116, D124–D126, D133, D134); `binding.py`, an entry of its own, writes `psyfunc_gen.h` (D132); `opcodes.py`, the walk's subclass for opcode cases, writes the moved cases of `pycompiler_gen.h` (D137–D139). | `dcdf898` |
 | `tools/metac/ceval_reader.py` | tooling | Reads `ceval.c`'s `TARGET` cases as `bytecodes.c` definitions (D69). | `96eeba2` |
-| `tools/metac/generate.py` | tooling | The one entry point for generation (D68): checks, runs every generator (gen2's included), writes headers and `report.txt`, compares it with `expected/` (D98); `--no-cache`. | `dcdf898` |
+| `tools/metac/generate.py` | tooling | The one entry point for generation (D68): checks, runs every generator (gen2's included), writes headers (`ni_features_gen.h`, `ni_buildinfo_gen.h` among them) and `report.txt` (features first), compares it with `expected/` (D98); `--no-cache`. | `c8312e9` |
 | `tools/metac/gen_virtual.py` | tooling | Virtual objects (D80): from each immutable `TYPES` virtual's constructor, read with `cread.Source`. | `ffb3326` |
 | `pbltinmodule_gen.h` | translated (generated) | The builtins' metas and their registration (Python/bltinmodule.c), by `gen2/abstract.py`, a path per count of a `METH_FASTCALL` function's arguments (D86, D126). | `127d4d6` |
 | `tools/metac/csource.py` | tooling | Names definitions in a C source tree, for the policy table's keys (D71); a lookup in a file it can't balance raises. | `ac8f978` |
 | `tools/metac/policy.py` | tooling | The policy table's vocabulary and checks against the source and Ni (D71); a gen2 row has no shape (D106). | `ffb3326` |
 | `tools/metac/policy_table.py` | tooling (data) | The policy table (D71): entries keyed by CPython definitions, rules, limits, types, layouts; the generated rows of abstract.c, the numbers, math, the builtins, tuple, list, dict, bytes, str, structmember, descr and object only name gen2 (D106, D110, D115, D116, D125, D126, D133); the binder's row names `gen2/binding.py` (D132). | `dcdf898` |
 | `tools/metac/effects.py` | tooling | Effect rules (D71, D96): per C function of libpython and the mirrored files, on the front end's AST, pure, readonly, no Python, no blocking, no raise; mapped onto `Cf*` flags; the vocabulary's effects from `gen2/vocabulary.py`; the result is cached (`cache.py`). | `7bb33ec` |
-| `tools/metac/cpython_src.py`, `cpython_sha256.txt` | tooling | The CPython source for a version, local or a sha256-checked tarball. | `ac8f978` |
-| `tools/metac/mechanisms.py` | tooling | Mechanism detectors (D75); `VARIANTS` maps answers to snippets. | `f254b5d` |
+| `tools/metac/cpython_src.py`, `cpython_sha256.txt` | tooling | The CPython source for a version, local or a sha256-checked tarball. | `ac8f978`; `c8312e9` (3.7.13's hash) |
+| `tools/metac/mechanisms.py` | tooling | Mechanism detectors (D75); `VARIANTS` maps answers to snippets. | `f254b5d`, `c8312e9` |
+| `tools/metac/features.py` | tooling | Feature detectors (D136): `NI_HAS_` values from the source, `ni_features_gen.h` and the report's feature lines. | `c8312e9` |
+| `tools/metac/buildinfo.py` | tooling | Writes `ni_buildinfo_gen.h`: the source's origin, the interpreters, Ni's commit, the feature list. | `c8312e9` |
 | `tools/metac/gen_layouts.py` | tooling | Stage 0 (D76): finds and checks each `LAYOUTS` struct, writes the layout headers. | `9869ad9` |
-| `tools/metac/donecheck.py` | tooling | GOAL's done test (D90, D97): each Ni mirror of CPython, generated or hand-written and why, from `report.txt`. | `ac8f978` |
-| `tools/metac/expected/*.txt` | tooling | Each version's expected `report.txt`, which `generate.py` compares (D98). | `ffb3326` |
+| `tools/metac/donecheck.py` | tooling | GOAL's done test (D90, D97): each Ni mirror of CPython, generated or hand-written and why, from `report.txt` (its feature lines left out). | `c8312e9` |
+| `tools/metac/expected/*.txt` | tooling | Each version's expected `report.txt`, which `generate.py` compares (D98). | `c8312e9` |
 | `tools/metac/status_diff.py` | tooling | Compares two versions' status files key by key, for a port review (D98). | `ac8f978` |
 | `tools/metac/hand_table.py` | tooling (data) | Why each hand-written mirror is still hand-written (D90). | `18c250d` |
 | `tools/metac/cases_generator/` | tooling (vendored) | CPython 3.12.9's DSL lexer and parser, unchanged. | `69900ac` |
