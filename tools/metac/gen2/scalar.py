@@ -541,7 +541,7 @@ def emit(w, scan, stmts, r, p, out, frames, tail, outs=()):
         if arr:
             sub.line('array_release(%s);' % arr)
         w.release_all(p, sub)
-        sub.line('return %s;' % w.err())
+        sub.line(w.fail_line(p))
         out.if_('%s == NULL' % t, sub)
         if arr is None:
             return

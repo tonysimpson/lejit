@@ -1165,6 +1165,147 @@ def bindings(cases):
     return fails
 
 
+class Op:
+    """An opcode case (gen2/opcodes.py): BODY as a case of a switch on the
+    opcode like the eval loop's, read after Python/ceval.c (its stack and
+    dispatch macros); `effect` the stack effect dis would give, checked
+    when set."""
+
+    def __init__(self, name, c, want=(), absent=(), refused=None, effect=None):
+        self.name, self.c = name, c
+        self.want, self.absent, self.refused, self.effect = want, absent, refused, effect
+
+    @staticmethod
+    def text(cases):
+        body = ''.join('case %d: {\n%s\n}\n' % (1000 + k, c.c) for k, c in enumerate(cases))
+        return '''
+void snip_eval(PyFrameObject *f, PyThreadState *tstate) {
+    PyObject **stack_pointer, **fastlocals, **freevars, *consts, *names;
+    PyCodeObject *co;
+    const _Py_CODEUNIT *first_instr, *next_instr;
+    int opcode, oparg;
+    for (;;) {
+    fast_next_opcode:
+        switch (opcode) {
+%s
+        }
+    error:
+        ;
+    }
+}
+''' % body
+
+
+OPS = [
+    Op('opcodes: a rotation pops the inputs and pushes them back, releasing none', '''
+PyObject *top = TOP(); PyObject *second = SECOND();
+SET_TOP(second); SET_SECOND(top); FAST_DISPATCH();''',
+       want=['top = NTOP(1);', 'second = NTOP(2);', 'POP(top);', 'POP(second);',
+             'PUSH(top);', 'PUSH(second);', 'goto fine;'], absent=['vinfo_decref'], effect=0),
+    Op("opcodes: a meta's result replaces the inputs; the error leaves them on the stack", '''
+PyObject *right = POP(); PyObject *left = TOP();
+PyObject *res = PyNumber_Multiply(left, right);
+Py_DECREF(left); Py_DECREF(right);
+SET_TOP(res); if (res == NULL) goto error; DISPATCH();''',
+       want=['PsycoNumber_Multiply(po, left, right);', 'if (res == NULL) {', 'break;',
+             'POP(right);', 'POP(left);', 'vinfo_decref(right, po);',
+             'vinfo_decref(left, po);', 'PUSH(res);'],
+       absent=['vinfo_decref(res'], effect=-1),
+    Op('opcodes: an incref of an input pushes a new reference, the input stays', '''
+PyObject *top = TOP(); Py_INCREF(top); PUSH(top); FAST_DISPATCH();''',
+       want=['vinfo_incref(top);', 'PUSH(top);'], absent=['POP('], effect=1),
+    Op('opcodes: SETLOCAL takes the input, which is then popped', '''
+PyObject *value = POP(); SETLOCAL(oparg, value); FAST_DISPATCH();''',
+       want=['SETLOCAL(oparg, value);', 'POP(value);'], absent=['vinfo_decref'], effect=-1),
+    Op("opcodes: an item of co_consts is Ni's constant, made where it is used", '''
+PyObject *value = GETITEM(consts, oparg); Py_INCREF(value); PUSH(value); FAST_DISPATCH();''',
+       want=['value = vinfo_new(CompileTime_New((long)GETCONST(oparg)));', 'PUSH(value);'],
+       absent=['vinfo_incref'], effect=1),
+    Op("opcodes: a name and None as arguments, each released after the call", '''
+PyObject *owner = TOP();
+PyObject *res = PyNumber_Power(owner, GETITEM(names, oparg), Py_None);
+Py_DECREF(owner); SET_TOP(res); if (res == NULL) goto error; DISPATCH();''',
+       want=['= vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));', '= psyco_vi_None();',
+             'PsycoNumber_Power(po, owner, _t1, _t2);', 'vinfo_decref(_t1, po);',
+             'vinfo_decref(_t2, po);', 'if (res == NULL)', 'POP(owner);'], effect=0),
+    Op("opcodes: a meta's status kept in an int is its bool", '''
+PyObject *v = POP(); PyObject *list = PEEK(oparg);
+int err = PyList_Append(list, v); Py_DECREF(v);
+if (err != 0) goto error; PREDICT(JUMP_ABSOLUTE); DISPATCH();''',
+       want=['list = NTOP(oparg + 1);', 'err = PsycoList_Append(po, list, v);', 'if (!(err)) {',
+             'break;', 'POP(v);', 'vinfo_decref(v, po);'],
+       absent=['PRED_', 'vinfo_t *err'], effect=-1),
+    Op('opcodes: an error after an input was stored elsewhere is refused', '''
+PyObject *value = POP(); PyObject *x = PyNumber_Negative(value); SETLOCAL(oparg, value);
+if (x == NULL) goto error; PUSH(x); DISPATCH();''', refused='was moved'),
+    Op("opcodes: a case reading the frame is the interpreter's", '''
+PyObject *x = f->f_locals; Py_INCREF(x); PUSH(x); DISPATCH();''', refused='core'),
+    Op("opcodes: the stack pointer handed to a call is the interpreter's", '''
+PyObject *res = call_function(&stack_pointer, oparg, NULL); PUSH(res); DISPATCH();''',
+       refused='core'),
+    Op("opcodes: a pushed value read back from the stack is refused", '''
+PyObject *x = PyNumber_Negative(TOP()); if (x == NULL) goto error; PUSH(x);
+PyObject *y = TOP(); Py_INCREF(y); PUSH(y); DISPATCH();''', refused='read back'),
+    Op('opcodes: an input both released and pushed is consumed twice, refused', '''
+PyObject *top = TOP(); Py_DECREF(top); STACKADJ(-1); PUSH(top); DISPATCH();''',
+       refused='read with no value'),
+    Op('opcodes: the stack effect is checked against dis.stack_effect', '''
+PyObject *top = TOP(); Py_INCREF(top); PUSH(top); FAST_DISPATCH();''', effect=0,
+       refused='dis.stack_effect says'),
+]
+
+
+def ops(cases):
+    """The Op cases: failures."""
+    from gen2 import opcodes
+    t = front.target(PY37)
+    ast = front.parse(t, 'Python/ceval.c', Op.text(cases))
+    ni = conventions.ni_decls(abstract.ROOT, scope.NI_HEADERS)
+    tr = abstract.Translator(scope.CEVAL, ast, ni, set(), {}, None)
+    names = {'SNIP_%d' % k: 1000 + k for k in range(len(cases))}
+    bodies = dict(opcodes.cases(ast, names, 'snip_eval'))
+    fails = 0
+    for k, c in enumerate(cases):
+        name = 'SNIP_%d' % k
+        try:
+            meta, effects = opcodes.translate(tr, name, opcodes.case_function(name,
+                                                                              bodies[name]))
+            why = None
+            if c.effect is not None:
+                why = opcodes.check_effect(name, effects, {name: [c.effect] * len(
+                    opcodes.OPARGS)})
+                if why is None and c.refused is not None:
+                    why = 'no problem: effects %s' % effects
+                meta = None if why else meta
+        except opcodes.Refuse as e:
+            meta, why = None, str(e)
+        problem = None
+        if c.refused is not None:
+            if why is None or c.refused not in why:
+                problem = 'want refused %r, got %s' % (c.refused, why or 'a case')
+        elif meta is None:
+            problem = 'refused: %s' % why
+        else:
+            at = 0
+            for w in c.want:
+                j = meta.find(w, at)
+                if j < 0:
+                    problem = 'missing (in order) %r' % w
+                    break
+                at = j + len(w)
+            for a in c.absent:
+                if a in meta:
+                    problem = 'has %r' % a
+        if problem:
+            fails += 1
+            print('FAIL %s: %s' % (c.name, problem))
+            if meta:
+                print(meta)
+        else:
+            print('ok   %s' % c.name)
+    return fails
+
+
 FILES = {'abstract': ('Objects/abstract.c', ()), 'bltin': ('Objects/abstract.c', ()),
          'long': ('Objects/longobject.c', ('word', 'double')),
          'float': ('Objects/floatobject.c', ('double',)),
@@ -1254,9 +1395,11 @@ def run(cases):
 def main(argv):
     cases = [c for c in CASES if not argv or any(a in c.name for a in argv)]
     binds = [c for c in BINDS if not argv or any(a in 'binding: ' + c.name for a in argv)]
-    fails = run(cases) if cases or not binds else 0
+    opcs = [c for c in OPS if not argv or any(a in c.name for a in argv)]
+    fails = run(cases) if cases or not (binds or opcs) else 0
     fails += bindings(binds) if binds else 0
-    n = (len(cases) + 3 if cases or not binds else 0) + len(binds)
+    fails += ops(opcs) if opcs else 0
+    n = (len(cases) + 3 if cases or not (binds or opcs) else 0) + len(binds) + len(opcs)
     print('%d of %d snippets pass' % (n - fails, n))
     return 1 if fails else 0
 

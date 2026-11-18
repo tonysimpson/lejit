@@ -95,7 +95,7 @@ def test(w, e, p, out, frames):
                   % (x, r.spec['test']), inside=True)
     fail = out.sub()
     w.release_all(p, fail)
-    fail.line('return %s;' % w.err())
+    fail.line(w.fail_line(p))
     out.switch('%s(po, %s, &%s)' % (r.spec['load'], xv.cname, cname),
                [('case 1', stay), ('case 0', back), ('default', fail)])
     v = Var(wname, LONG, 'dynamic', cname)

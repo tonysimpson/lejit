@@ -111,6 +111,7 @@ class Path:
         self.loaded = {}          # object variable -> the meta variable of its length
         self.budgeted = set()     # loops whose bound was checked against the budget
         self.nargs = None         # a METH_FASTCALL root's count of arguments, once split
+        self.stack = None         # an opcode case's stack (opcodes.Stack)
 
     def copy(self):
         p = Path()
@@ -120,6 +121,7 @@ class Path:
         p.failed = self.failed
         p.loaded, p.budgeted = dict(self.loaded), set(self.budgeted)
         p.nargs = self.nargs
+        p.stack = self.stack.copy() if self.stack is not None else None
         return p
 
     def take(self, other):

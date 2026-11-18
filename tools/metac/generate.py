@@ -54,7 +54,7 @@ sys.path.insert(0, HERE)
 
 # generator module -> the header it writes
 GENERATORS = [('gen2.abstract:build_long', 'plongobject_gen.h'),
-              ('gen_ceval', 'pycompiler_gen.h'),
+              ('gen2.opcodes', 'pycompiler_gen.h'),
               ('gen_ceval:build_copies', 'pycompiler_copies_gen.h'),
               ('gen_layouts', 'layouts_gen.h'),
               ('gen_layouts:build_runtime', 'runtime_layouts_gen.h'),

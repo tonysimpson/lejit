@@ -116,6 +116,21 @@ class Walk:
     def err(self):
         return {'obj': 'NULL', 'val': 'NULL', 'ok': 'false', 'ct': '-1'}[self.sm.kind]
 
+    def fail_line(self, p):
+        """The statement leaving the meta with an error, its values
+        released."""
+        return 'return %s;' % self.err()
+
+    def held_outside(self, v):
+        """v's value is one the meta's caller holds: a parameter, or Ni's
+        constant."""
+        return v.isparam or bool(v.constant)
+
+    def constant_text(self, key):
+        """The C making Ni's constant of an immortal object (a key of
+        types.SINGLETONS)."""
+        return SINGLETONS[key] + '()'
+
     def new_tmp(self, ctext):
         self.rec.tmp += 1
         n = '_t%d' % self.rec.tmp
@@ -337,7 +352,7 @@ class Walk:
     def error_exit(self, p, out, test):
         sub = out.sub()
         self.release_all(p, sub)
-        sub.line('return %s;' % self.err())
+        sub.line(self.fail_line(p))
         out.if_(test, sub)
 
     # ---- statements ----
@@ -628,7 +643,7 @@ class Walk:
 
     def ret_error(self, p, out):
         self.release_all(p, out)
-        out.line('return %s;' % self.err())
+        out.line(self.fail_line(p))
         p.ended = True
         self.rec.returns.append('error')
 
@@ -803,6 +818,9 @@ class Walk:
             return
         p.known = a.known & b.known
         p.called = a.called or b.called
+        if a.stack != b.stack:
+            raise Refuse('the stack differs where two paths meet')
+        p.stack = a.stack
         p.early = a.early or b.early
         p.failed = a.failed and b.failed
         p.slots = {k: v for k, v in a.slots.items() if b.slots.get(k) == v}
@@ -822,7 +840,7 @@ class Walk:
             for x, y, o in ((va, vb, out_a), (vb, va, out_b)):
                 if x.singleton is not None and y.singleton != x.singleton and y.own != 'none':
                     # an immortal object meets a value: Ni's constant, held
-                    o.line('%s = %s();' % (x.cname, SINGLETONS[x.singleton]))
+                    o.line('%s = %s;' % (x.cname, self.constant_text(x.singleton)))
                     x.own, x.constant, x.singleton = 'new', x.singleton, None
             v = va
             v.within = va.within and vb.within
@@ -1200,7 +1218,7 @@ class Walk:
             if v.singleton is not None:
                 # an immortal object as a value: Ni's constant, the
                 # variable's own reference
-                out.line('%s = %s();' % (v.cname, SINGLETONS[v.singleton]))
+                out.line('%s = %s;' % (v.cname, self.constant_text(v.singleton)))
                 v.own, v.constant, v.singleton = 'new', v.singleton, None
             if v.bt == 'dynamic':
                 if v.own == 'none' and not v.isparam:

@@ -82,7 +82,7 @@ def guard(w, p, out, frames, read, why):
     resume.resume(w, p.copy(), back, frames, why, inside=True)
     fail = out.sub()
     w.release_all(p, fail)
-    fail.line('return %s;' % w.err())
+    fail.line(w.fail_line(p))
     out.switch(read, [('case 1', stay), ('case 0', back), ('default', fail)])
 
 
@@ -637,7 +637,7 @@ def ni_call(w, decl, name, args, p, out, frames, dest=None):
             pv = v.var
             if pv is not None and not pv.isparam and pv.alias and pv.own == 'borrowed':
                 pv = p.vars.get(pv.alias, pv)       # a copy of a parameter
-            if pv is None or not (pv.isparam or pv.constant):
+            if pv is None or not w.held_outside(pv):
                 raise ResumeHere('%s of a value that is not a parameter' % decl.name)
             if pv.name not in p.known and p.called and not pv.constant:
                 w.late(p, pv.name)

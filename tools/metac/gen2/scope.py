@@ -88,3 +88,8 @@ NI_HEADERS = ['ni/Objects/pabstract.h', 'ni/Objects/pobject.h', 'ni/Objects/pflo
 Binding = collections.namedtuple('Binding', 'cfile function decls includer header')
 BINDING = Binding('Python/ceval.c', '_PyEval_EvalCodeWithName', 'ni/psyfunc.h', 'psyfunc.c',
                   'psyfunc_gen.h')
+
+# The opcode cases (opcodes.py): the cases of CEVAL_FUNCTION's switch on
+# the opcode become cases of pycompiler.c's opcode switch.
+CEVAL = Family('ceval', 'Python/ceval.c', None, 'pycompiler.c', 'pycompiler_gen.h')
+CEVAL_FUNCTION = '_PyEval_EvalFrameDefault'
