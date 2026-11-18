@@ -80,7 +80,7 @@ NI_HEADERS = ['ni/Objects/pabstract.h', 'ni/Objects/pobject.h',
               'ni/Objects/pdictobject.h']
 # policy items the translator implements; any other item on a function's
 # entry leaves it to its hand translation
-IMPLEMENTED = {'likely'}
+IMPLEMENTED = {'likely', 'restype'}
 # the C names that are vocabulary, never expanded as macros
 KEEP = {'Py_INCREF', 'Py_DECREF', 'Py_XINCREF', 'Py_XDECREF', 'assert',
         'NULL', 'Py_None', 'Py_NotImplemented', 'Py_True', 'Py_False',
@@ -113,6 +113,11 @@ class Resume(Exception):
     """No compile-time form here: resume CPython's algorithm at run time."""
 
 
+class Rewalk(Exception):
+    """The walk learnt something it needs from the start: an integer
+    that is run-time around a loop, or a promotion due at a loop's entry."""
+
+
 # ---- reading the source ------------------------------------------------------
 
 class Func:
@@ -134,17 +139,22 @@ def ctype_of(toks):
 
 def split_params(toks):
     out = []
-    for p in ctokens.split_top(toks, ','):
+    for k, p in enumerate(ctokens.split_top(toks, ',')):
         if [t.text for t in p] == ['void']:
             continue
-        name = [t.text for t in p if t.kind == 'id'][-1]
+        ids = [t.text for t in p if t.kind == 'id']
+        if not ids:         # a declaration with no parameter name
+            out.append((ctype_of(p), '_arg%d' % k))
+            continue
+        name = ids[-1]
         out.append((ctype_of([t for t in p if t.text != name]), name))
     return out
 
 
 class Source:
-    def __init__(self, src, pyconfig, defines):
+    def __init__(self, src, pyconfig, defines, cfile=CFILE):
         self.src = src
+        self.cfile = CFILE = cfile
         self.macros, pptoks = cparse.cpp(src, pyconfig, CFILE, defines)
         self.decls = cparse.Decls(pptoks)
         with open(os.path.join(src, CFILE), encoding='latin-1') as f:
@@ -155,6 +165,8 @@ class Source:
         keep_local = KEEP | {n for n, m in self.local_macros.items()
                              if m.params is None}
         self.funcs = {}
+        self.toks = toks
+        self.obj_structs = self.object_structs()
         defs = csource.scan(toks, {}, CFILE)
         for name, d in defs.items():
             if d.kind == 'function':
@@ -175,7 +187,7 @@ class Source:
                 close = ctokens.match_close(toks, i + 1)
                 exp = cparse.expand(toks[i:close + 1], self.local_macros,
                                     keep_local)
-                for name, d in csource.scan(exp, {}, CFILE).items():
+                for name, d in csource.scan(exp, {}, self.cfile).items():
                     if d.kind == 'function':
                         self.add_func(name, d, keep_local)
                 i = close + 1
@@ -192,8 +204,38 @@ class Source:
         if any(lines[0] <= ln <= lines[1] for ln in self.pp_lines):
             f.why = 'a preprocessor conditional inside the body'
         else:
-            f.ast = cparse.parse_body(body, self.decls.types)
+            f.ast = cparse.parse_body(body, self.decls.types, loops=True)
         self.funcs[name] = f
+
+    def object_structs(self):
+        """Struct names (tags and typedefs) whose first member is a
+        PyObject or PyVarObject header, directly or through another such
+        struct: a pointer to one is an object (a run-time value). Types
+        are not: the translator holds them at compile time."""
+        out = {'PyObject', 'PyVarObject', '_object'}
+        types = {'_typeobject', 'PyTypeObject'}
+        changed = True
+        while changed:
+            changed = False
+            for name, fields in self.decls.structs.items():
+                if name in out or name in types or not fields:
+                    continue
+                first = next(iter(fields.items()))
+                base = first[1].replace('struct ', '')
+                if first[0] == 'ob_base' and base in types:
+                    types.add(name)
+                    changed = True
+                elif first[0] == 'ob_base' and base in out:
+                    out.add(name)
+                    changed = True
+        return out
+
+    def is_obj(self, ctype):
+        ctype = ctype.replace('const ', '').strip()
+        if not ctype.endswith('*') or ctype.endswith('**'):
+            return False
+        base = ctype[:-1].strip().replace('struct ', '')
+        return base in self.obj_structs
 
     def expand_call(self, name, args):
         """A header macro call with these argument expressions, expanded
@@ -252,7 +294,8 @@ def ni_decls(ni_root, headers):
             if t.text in (';', '}', '{'):
                 start = i + 1
                 continue
-            if (t.kind == 'id' and t.text.startswith('Psyco') and i + 1 < len(toks)
+            if (t.kind == 'id' and t.text.lstrip('_').startswith('Psyco')
+                    and i + 1 < len(toks)
                     and toks[i + 1].text == '('):
                 close = ctokens.match_close(toks, i + 1)
                 if close + 1 < len(toks) and toks[close + 1].text == ';':
@@ -272,22 +315,71 @@ def uses_defs(e):
         if e[1] != '=':
             reads = [e[2][1]] + reads
         return reads, e[2][1]
+    if e[0] in ('pre', 'post') and e[2][0] == 'id':
+        return [e[2][1]], None      # read, then written: still live before
     return cparse.names_in(e), None
+
+
+def expr_live(e, after):
+    """Live before an expression (a comma list read left to right)."""
+    if e[0] == 'comma':
+        live = after
+        for x in reversed(e[1]):
+            live = expr_live(x, live)
+        return live
+    reads, d = uses_defs(e)
+    return (after - {d}) | set(reads)
 
 
 class Liveness:
     """live_after[id(stmt)]: the variables read after the statement before
-    being assigned again, on some path; live_before likewise."""
+    being assigned again, on some path; live_before likewise. Loops are
+    iterated to a fixed point; a goto is live as its label is (a label
+    after it: forward gotos only, which are all the translator follows)."""
 
     def __init__(self, ast):
         self.after, self.before = {}, {}
-        self.block(ast, frozenset())
+        self.labels = {}
+        self.loops = []           # (live at break, live at continue)
+        for _ in range(2):        # labels found on the first pass
+            self.block(ast, frozenset())
 
     def block(self, stmts, after):
         live = after
         for s in reversed(stmts):
             live = self.stmt(s, live)
         return live
+
+    def loop(self, s, after):
+        k = s[0]
+        if k == 'for':
+            _, init, cond, step, body = s[:5]
+        elif k == 'while':
+            _, cond, body = s[:3]
+            init, step = None, []
+        else:
+            _, body, cond = s[:3]
+            init, step = None, []
+        cnames = set(cparse.names_in(cond)) if cond is not None else set()
+        head = frozenset(after | cnames)
+        for _ in range(20):
+            cont = head
+            for x in reversed(step):
+                cont = expr_live(x, cont)
+            self.loops.append((after, cont))
+            b = self.stmt(body, cont)
+            self.loops.pop()
+            new = frozenset(head | b) if k != 'do' else frozenset(after | cnames | b)
+            if new == head:
+                break
+            head = new
+        top = head if k != 'do' else b
+        if init is not None:
+            if init[0] == 'expr':
+                top = expr_live(init[1], top)
+            else:
+                top = self.stmt(init, top)
+        return frozenset(top)
 
     def stmt(self, s, after):
         k = s[0]
@@ -302,8 +394,7 @@ class Liveness:
                     live |= set(cparse.names_in(init))
             live = frozenset(live)
         elif k == 'expr':
-            reads, d = uses_defs(s[1])
-            live = (after - {d}) | set(reads)
+            live = frozenset(expr_live(s[1], after))
         elif k == 'if':
             t = self.stmt(s[2], after)
             e = self.stmt(s[3], after) if s[3] is not None else after
@@ -312,8 +403,19 @@ class Liveness:
             live = frozenset(cparse.names_in(s[1])) if s[1] is not None else frozenset()
         elif k == 'label':
             live = self.stmt(s[2], after)
-        else:   # goto, unsupported: everything may be read
+            self.labels[s[1]] = live
+        elif k in ('for', 'while', 'do'):
+            live = self.loop(s, after)
+        elif k == 'break' and self.loops:
+            live = self.loops[-1][0]
+        elif k == 'continue' and self.loops:
+            live = self.loops[-1][1]
+        elif k == 'goto' and s[1] in self.labels:
+            live = self.labels[s[1]]
+        else:   # unsupported: everything may be read
             live = after | frozenset(cparse.names_in(list(s[1:-1])))
+            if k == 'goto':
+                live = live | frozenset().union(*self.labels.values())
         self.before[id(s)] = live
         return live
 
@@ -352,6 +454,8 @@ class State:
         self.slots = {}           # slot address text -> meta variable
         self.ended = False        # the path returned
         self.early = False        # a path may have returned before here
+        self.loaded = {}          # object variable -> meta variable of its known length
+        self.failed = False       # a call's error test held: the meta has an error
 
     def copy(self):
         s = State()
@@ -362,13 +466,16 @@ class State:
             s.vars[k] = w
         s.known, s.called = set(self.known), self.called
         s.slots, s.ended, s.early = dict(self.slots), self.ended, self.early
+        s.loaded = dict(self.loaded)
+        s.failed = self.failed
         return s
 
 
 class Val:
     def __init__(self, bt, c, ctype, tp=None, lv=False, owned=False, conv=None,
-                 var=None, const=None):
+                 var=None, const=None, item_of=None):
         self.bt, self.c, self.ctype = bt, c, ctype
+        self.item_of = item_of    # rt: an item of this loaded object (frame value)
         self.tp = tp              # ct: meta variable of the type it points into
         self.lv = lv              # ct: an address inside a type (a slot's)
         self.owned = owned        # rt: a new value the statement must release
@@ -404,14 +511,21 @@ class Translator:
         self.report = []
         self.resumes = []         # (function, statement text, reason)
         self.fails = {}
+        # learnt by one walk for the next (Rewalk), per function: integer
+        # locals that are run-time because a loop makes them so, and the
+        # promotions due at a loop's entry ({id(loop): [name or ('items', name)]})
+        self.force_rt = {}
+        self.loop_promos = {}
+        self.slot_roots = {}      # function -> (type field, table, slot) to register
 
     # ---- which functions, in what order ----
 
     def roots(self):
         out = []
         for name, f in sorted(self.s.funcs.items()):
-            meta = 'Psyco' + name[2:] if name.startswith('Py') else None
-            if meta and meta in self.ni and self.ni[meta].name in self.declared:
+            meta = psyco_name(name)
+            if (meta and meta in self.ni and self.ni[meta].name in self.declared) \
+                    or name in self.slot_roots:
                 out.append(name)
         return out
 
@@ -445,7 +559,7 @@ class Translator:
         return order
 
     def policy_items(self, name):
-        return self.policy.get('%s:%s' % (CFILE, name), [])
+        return self.policy.get('%s:%s' % (self.s.cfile, name), [])
 
     # ---- binding time of parameters ----
 
@@ -460,7 +574,7 @@ class Translator:
             decl = self.ni.get(meta)
             pbt = []
             for k, (ctype, pname) in enumerate(f.params):
-                if ctype in OBJ_TYPES:
+                if self.s.is_obj(ctype):
                     pbt.append('rt')
                 elif decl is not None and k + 1 < len(decl.params):
                     pbt.append('rt' if decl.params[k + 1][0] == 'vinfo_t *' else 'ct')
@@ -541,8 +655,8 @@ class Translator:
         return out
 
     def meta_name(self, f):
-        if f.name.startswith('Py') and not f.static:
-            return 'Psyco' + f.name[2:]
+        if psyco_name(f.name) and not f.static:
+            return psyco_name(f.name)
         return f.name
 
     # ---- one function ----
@@ -566,15 +680,22 @@ class Translator:
             sm.kind = self.kind_of(f)
             self.live = Liveness(f.ast)
             hoist = []
-            for _ in range(4):
+            self.force_rt[name] = set()
+            self.loop_promos[name] = {}
+            rounds = 0
+            while True:
+                rounds += 1
+                if rounds > 16:
+                    raise Refuse('promotions after calls remain: %s' % w.late)
                 w = Walk(self, f, sm, hoist)
-                w.run()
+                try:
+                    w.run()
+                except Rewalk:
+                    continue
                 new = [p for p in w.must + w.late if p not in hoist]
                 if not new:
                     break
                 hoist = hoist + [p for i, p in enumerate(new) if p not in new[:i]]
-            else:
-                raise Refuse('promotions after calls remain: %s' % w.late)
             if [p for p in w.late if p not in hoist]:
                 raise Refuse('promotions after calls remain')
             sm.entry = hoist
@@ -588,7 +709,7 @@ class Translator:
             self.fails[name] = str(e)
 
     def kind_of(self, f):
-        if f.ret in OBJ_TYPES:
+        if self.s.is_obj(f.ret):
             return 'obj'
         if f.ret not in INT_TYPES:
             raise Refuse('returns %s' % f.ret)
@@ -603,6 +724,100 @@ class Translator:
             return 'val'
         raise Refuse('an int result needs its convention: declare %s in %s'
                      % (self.meta_name(f), NI_DECLS))
+
+    # ---- loops: which are counted, which paths run one (rule loops) ----
+
+    def counted(self, s):
+        return counted_loop(s)
+
+    def every_path_loops(self, f, frames):
+        """Does every path from the statement frames name run a loop with a
+        run-time bound, or fail, before it returns a value?"""
+        def outer(level):
+            if level < 0:
+                return lambda: False
+            stmts, j = frames[level]
+            return lambda: self.seq_loops(f, stmts, j + 1, outer(level - 1), 0)
+        stmts, i = frames[-1]
+        return self.seq_loops(f, stmts, i, outer(len(frames) - 2), 0) == 'loop'
+
+    def seq_loops(self, f, stmts, i, cont, depth):
+        """'loop' when every path runs a run-time loop or fails and one
+        runs a loop, 'error' when every path fails, else False."""
+        if depth > 8:
+            return False
+        for k in range(i, len(stmts)):
+            s = stmts[k]
+            kind = s[0]
+
+            def rest(k=k):
+                return self.seq_loops(f, stmts, k + 1, cont, depth)
+            if kind in ('for', 'while', 'do'):
+                return 'loop' if self.counted(s) is None else False
+            if kind == 'return':
+                return 'error' if self.error_value(f, s[1]) else False
+            if kind == 'if':
+                a = self.seq_loops(f, block_of(s[2]), 0, rest, depth)
+                if not a:
+                    return False
+                b = (self.seq_loops(f, block_of(s[3]), 0, rest, depth)
+                     if s[3] is not None else rest())
+                if not b:
+                    return False
+                return 'loop' if 'loop' in (a, b) else 'error'
+            if kind == 'block':
+                return self.seq_loops(f, s[1], 0, rest, depth)
+            if kind == 'label':
+                return self.seq_loops(f, [s[2]], 0, rest, depth)
+            if kind == 'goto':
+                j = next((n for n, x in enumerate(f.ast)
+                          if x[0] == 'label' and x[1] == s[1]), None)
+                if j is None:
+                    return False
+                return self.seq_loops(f, f.ast, j, lambda: False, depth + 1)
+            if kind in ('unsupported', 'break', 'continue'):
+                return False
+        return cont()
+
+    def error_value(self, f, e):
+        """Is 'return e' the function's error return?"""
+        if e is None:
+            return False
+        while e[0] == 'cast':
+            e = e[2]
+        if e == ('id', 'NULL') and self.s.is_obj(f.ret):
+            return True
+        if e == ('un', '-', ('num', '1')) and f.ret in INT_TYPES:
+            return True
+        if e[0] == 'call' and e[1][0] == 'id' and e[1][1] in self.s.funcs:
+            g = self.s.funcs[e[1][1]]
+            rets = []
+
+            def walk(n):
+                if isinstance(n, tuple) and n:
+                    if n[0] == 'return':
+                        rets.append(n[1])
+                    for x in n[1:]:
+                        if isinstance(x, (tuple, list)):
+                            walk(x)
+                elif isinstance(n, list):
+                    for x in n:
+                        walk(x)
+            walk(g.ast or [])
+            return bool(rets) and g is not f and all(
+                r is not None and r[0] != 'call' and self.error_value(g, r) for r in rets)
+        return False
+
+    def find_any_call(self, node):
+        if isinstance(node, tuple) and node:
+            if node[0] == 'call' and not (node[1][0] == 'id' and node[1][1] in (
+                    'assert', 'Py_INCREF', 'Py_XINCREF')):
+                return True
+            return any(self.find_any_call(x) for x in node[1:]
+                       if isinstance(x, (tuple, list)))
+        if isinstance(node, list):
+            return any(self.find_any_call(x) for x in node)
+        return False
 
     # ---- residual calls' flags ----
 
@@ -655,7 +870,7 @@ class Translator:
         g = self.effects
         if g is None:
             return None
-        return g.by_file.get(CFILE, {}).get(name) or g.globals.get(name)
+        return g.by_file.get(self.s.cfile, {}).get(name) or g.globals.get(name)
 
     # ---- run-time copies ----
 
@@ -774,6 +989,9 @@ class Walk:
             if item[0] == 'likely':
                 self.likely[' '.join(item[2].split())] = item[1]
         self.used_likely = set()
+        self.loop_ctx = []        # LoopCtx of the loops being translated, outermost first
+        self.goto_depth = 0
+        self.restype = [i[1] for i in tr.policy_items(f.name) if i[0] == 'restype']
 
     @property
     def always_error(self):
@@ -825,8 +1043,10 @@ class Walk:
             'static ' if f.static or sm.meta not in self.tr.declared else 'DEFINEFN ',
             ret, sm.meta, ''.join(', %s%s%s' % (t, '' if t.endswith('*') else ' ', p)
                                   for t, p in self.params))
-        lines = ['/* %s:%s */' % (CFILE, f.name), head + ' {']
-        lines += ['  ' + d for _, d in sorted(self.decls.items())]
+        lines = ['/* %s:%s */' % (self.s.cfile, f.name), head + ' {']
+        used = set(t.text for t in ctokens.tokenize('\n'.join(self.out.lines))[0]
+                   if t.kind == 'id')
+        lines += ['  ' + d for n, d in sorted(self.decls.items()) if n in used]
         lines += self.out.lines
         lines.append('}')
         return '\n'.join(lines) + '\n'
@@ -835,7 +1055,16 @@ class Walk:
         for i, s in enumerate(stmts):
             if st.ended:
                 break
-            self.statement(s, st, out, frames + [(stmts, i)])
+            here = frames + [(stmts, i)]
+            if (not st.called and not self.loop_ctx and self.sm.kind != 'ct'
+                    and s[0] not in ('decl', 'empty')
+                    and self.tr.every_path_loops(self.f, here)):
+                # rule loops: every path from here runs a loop with a
+                # run-time bound (or fails): CPython's function does it all
+                self.resume(st, out, here, 'every path from here runs a loop'
+                            ' with a run-time bound')
+                break
+            self.statement(s, st, out, here)
             if not st.ended:
                 self.release_dead(st, out, self.tr.live.after[id(s)])
 
@@ -885,6 +1114,10 @@ class Walk:
         except Resume as e:
             if k in ('block', 'if') and not isinstance(e, ResumeHere):
                 raise
+            if self.loop_ctx:
+                # no copy can start inside a loop's body: the meta resumes
+                # at the outermost loop being translated
+                raise Resume(str(e))
             del out.lines[mark:]
             self.decls = saved_decls
             self.must, self.late, self.returns, self.resumed = saved_lists
@@ -907,10 +1140,19 @@ class Walk:
         name: the whole function if nothing has run yet."""
         f, sm = self.f, self.sm
         stmt = frames[-1][0][frames[-1][1]]
+        if st.failed:
+            # the meta's error is raised at compile time or run time: the
+            # C's handling of it can't run as a copy
+            raise Refuse('resuming where a call has failed: %s' % why)
         self.resumed.append((f.name, self.tr.stmt_text(f, stmt)[:70], why))
         if not st.called:
             if not f.static:
                 name, params = f.name, f.params
+            elif f.name in self.tr.slot_roots:
+                # a static type's slot: CPython's function through it
+                tfield, _, slot = self.tr.slot_roots[f.name]
+                name = '%s.%s->%s' % (self.tr.slot_type, tfield, slot)
+                params = f.params
             else:
                 name, params = self.tr.copy(f, [(f.ast, 0)], set())
         else:
@@ -921,7 +1163,7 @@ class Walk:
             for vname in live:
                 v = st.vars.get(vname)
                 if v is not None and v.bt == 'rt' and v.owned in ('yes', 'shadow') \
-                        and v.ctype in OBJ_TYPES:
+                        and self.s.is_obj(v.ctype):
                     if v.owned == 'shadow':
                         raise Refuse('resuming with %s owned on some paths' % vname)
                     owned.add(vname)
@@ -978,7 +1220,13 @@ class Walk:
         """return a run-time value the meta owns, after releasing the rest"""
         expr = '%s != NULL' % cexpr if as_ok else cexpr
         owned = [v for v in st.vars.values() if v.bt == 'rt' and v.owned in ('yes', 'shadow')]
-        if owned:
+        if self.restype and not as_ok:
+            r = self.new_tmp('vinfo_t *')
+            out('%s = %s;' % (r, expr))
+            self.assert_restype(out, r)
+            self.release_all(st, out)
+            out('return %s;' % r)
+        elif owned:
             r = self.new_tmp('bool' if self.sm.kind == 'ok' else 'vinfo_t *')
             out('%s = %s;' % (r, expr))
             self.release_all(st, out)
@@ -997,8 +1245,18 @@ class Walk:
             return
         if k == 'unsupported':
             raise ResumeHere(s[1])
-        if k in ('goto', 'label'):
-            raise Refuse('goto')
+        if k in ('for', 'while', 'do'):
+            self.loop_stmt(s, st, out, frames)
+            return
+        if k in ('break', 'continue'):
+            self.jump(k, st, out)
+            return
+        if k == 'goto':
+            self.goto(s, st, out, frames)
+            return
+        if k == 'label':
+            self.stmt(s[2], st, out, frames)
+            return
         if k == 'decl':
             for ctype, name, init, dims in s[1]:
                 if dims:
@@ -1023,12 +1281,13 @@ class Walk:
             old = st.vars[name]
             if old.ctype != ctype:
                 raise Refuse('%s declared twice with different types' % name)
-        if ctype in OBJ_TYPES:
+        if self.s.is_obj(ctype):
             bt = 'rt'
         elif self.tr.ct_ctype(ctype) or ctype in ('const char *',):
             bt = 'ct'
         elif ctype in INT_TYPES:
-            bt = None             # by its first assignment
+            # by its first assignment, unless a loop makes it run-time
+            bt = 'rt' if name in self.tr.force_rt.get(self.f.name, ()) else None
         else:
             raise ResumeHere('a local of type %s' % ctype)
         v = Var(name, ctype, bt, name)
@@ -1051,12 +1310,25 @@ class Walk:
             st.ended = True
             self.returns.append('value')
             return
+        if e[0] == 'comma':
+            for x in e[1]:
+                self.expr_stmt(x, st, out, frames)
+            return
+        if e[0] in ('pre', 'post'):
+            out('%s;' % self.ev(e, st, out, frames).c)
+            return
         if e[0] == 'assign':
             if e[2][0] != 'id':
                 raise ResumeHere('a store into %s' % cparse.c_expr(e[2]))
             name = e[2][1]
             if e[1] == '=':
                 self.assign(st, out, name, e[3], frames)
+            elif e[1] in ('+=', '-=') and st.vars.get(name) is not None \
+                    and st.vars[name].bt == 'ct':
+                val = self.ev(e[3], st, out, frames)
+                if val.bt != 'ct':
+                    self.force_rt(name)
+                out('%s %s %s;' % (st.vars[name].cname, e[1], val.c))
             elif e[1] in ('+=', '-='):
                 v = st.vars.get(name)
                 if v is None or v.bt != 'rt':
@@ -1078,6 +1350,8 @@ class Walk:
                 return
             if fn in ('Py_DECREF', 'Py_XDECREF'):
                 v = self.var_of(st, e[2][0])
+                if fn == 'Py_XDECREF' and v.owned == 'dead':
+                    return        # NULL on this path: nothing to release
                 if v.owned not in ('yes', 'shadow'):
                     raise Refuse('a decref of %s, which the meta does not own' % v.name)
                 self.release(v, out)
@@ -1112,6 +1386,8 @@ class Walk:
             val = Val('ct', '1' if val.const else '0', 'int')
         if v.bt == 'ct':
             if val.bt != 'ct':
+                if v.ctype in INT_TYPES and not v.isparam:
+                    self.force_rt(name)
                 raise ResumeHere('%s is compile-time, assigned a run-time value' % name)
             out('%s = %s;' % (v.cname, val.c))
             v.tp = val.tp
@@ -1123,7 +1399,13 @@ class Walk:
                     self.release(v, out)
                 v.owned = 'dead'
                 return
-            raise ResumeHere('%s assigned a compile-time value' % name)
+            if v.ctype in INT_TYPES and val.bt == 'ct':
+                # an integer that is run-time around a loop: its first
+                # value as a compile-time vinfo
+                val = Val('rt', 'vinfo_new(CompileTime_New((long)(%s)))' % val.c,
+                          v.ctype, owned=True)
+            else:
+                raise ResumeHere('%s assigned a compile-time value' % name)
         if val.var is v:
             return
         old_owned = v.owned
@@ -1144,6 +1426,9 @@ class Walk:
         else:
             v.owned = 'no'
         v.conv = val.conv
+        if val.conv and val.conv.get('checkable') and not val.conv.get('check') \
+                and self.loop_ctx and self.errors_leave_loop(name, frames):
+            val.conv = dict(val.conv, check='now')
         if val.conv and val.conv.get('check'):
             out_check = val.conv.get('check')
             if out_check == 'now':
@@ -1209,8 +1494,20 @@ class Walk:
             return
         raise Refuse('kind %s' % kind)
 
+    def assert_restype(self, out, r):
+        for t in self.restype:
+            out('if (%s != NULL)' % r)
+            out('  Psyco_AssertType(po, %s, &%s);' % (r, t))
+
     def ret_value_owned(self, st, out, val):
         keep = val.var.name if val.var is not None else None
+        if self.restype and val.var is None:
+            r = val.c
+            if not (r.startswith('_t') and r[2:].isdigit()):
+                r = self.new_tmp('vinfo_t *')
+                out('%s = %s;' % (r, val.c))
+            self.assert_restype(out, r)
+            val = Val('rt', r, val.ctype, owned=True, conv=val.conv)
         owned = [v for v in st.vars.values() if v.bt == 'rt'
                  and v.owned in ('yes', 'shadow') and v.name != keep]
         if val.var is not None and val.var.owned == 'shadow':
@@ -1250,6 +1547,7 @@ class Walk:
             name, when = nt
             x = (st_t if when else st_f).vars[name]
             x.owned = 'dead' if not x.isparam else 'no'
+            (st_t if when else st_f).failed = True
             (st_f if when else st_t).vars[name].conv = None
         it = self.impl_test(c, st)
         if it is not None:
@@ -1303,12 +1601,15 @@ class Walk:
         st.called = a.called or b.called
         st.early = a.early or b.early
         st.slots = {k: v for k, v in a.slots.items() if b.slots.get(k) == v}
+        st.loaded = {k: v for k, v in a.loaded.items() if b.loaded.get(k) == v}
         for name in set(a.vars) | set(b.vars):
             va, vb = a.vars.get(name), b.vars.get(name)
             if va is None or vb is None:
                 st.vars.pop(name, None)
                 continue
             if va.bt != vb.bt:
+                if va.ctype in INT_TYPES and not va.isparam and None not in (va.bt, vb.bt):
+                    self.force_rt(name)
                 raise Refuse('%s has a different binding time on two paths' % name)
             v = va
             if va.bt == 'rt' and va.owned != vb.owned:
@@ -1447,7 +1748,7 @@ class Walk:
         if va.bt == 'ct':
             va, vb, op = vb, va, FLIP[op]
             a, b = b, a
-        if va.ctype in OBJ_TYPES or vb.ctype in OBJ_TYPES:
+        if self.s.is_obj(va.ctype) or self.s.is_obj(vb.ctype):
             raise ResumeHere('a compare of the object %s' % cparse.c_expr(a))
         cc = self.new_tmp('condition_code_t')
         call, inverted = int_condition(op, va.c, vb.c, vb.bt == 'ct')
@@ -1516,7 +1817,7 @@ class Walk:
         if x[0] != 'id' or x[1] not in st.vars:
             return False
         v = st.vars[x[1]]
-        return v.isparam and v.bt == 'rt' and v.ctype in OBJ_TYPES and v.owned != 'dead'
+        return v.isparam and v.bt == 'rt' and self.s.is_obj(v.ctype) and v.owned != 'dead'
 
     def error_test(self, e, st):
         """The C's test of a call's error result: in the meta, the vinfo
@@ -1561,7 +1862,10 @@ class Walk:
             if v.bt == 'ct':
                 return Val('ct', '((%s)%s)' % (t, v.c), ctype, tp=v.tp, lv=False)
             if v.bt == 'rt':
-                if ctype in OBJ_TYPES or ctype in INT_TYPES:
+                if self.s.is_obj(ctype) and self.s.is_obj(v.ctype):
+                    return Val('rt', v.c, ctype, owned=v.owned, conv=v.conv,
+                               var=v.var, item_of=v.item_of)
+                if self.s.is_obj(ctype) or ctype in INT_TYPES:
                     return v
                 raise ResumeHere('a cast of a run-time value to %s' % t)
             return v
@@ -1570,7 +1874,17 @@ class Walk:
         if k == 'un':
             return self.ev_unary(e, st, out, frames)
         if k == 'index':
-            raise ResumeHere('an index %s' % cparse.c_expr(e))
+            return self.ev_index(e, st, out, frames)
+        if k in ('pre', 'post'):
+            x = e[2]
+            if x[0] == 'id' and x[1] in st.vars and st.vars[x[1]].bt == 'ct':
+                v = st.vars[x[1]]
+                return Val('ct', ('%s%s' if k == 'pre' else '%s%s')
+                           % ((e[1], v.cname) if k == 'pre' else (v.cname, e[1])), v.ctype)
+            if x[0] == 'id' and x[1] in st.vars and st.vars[x[1]].ctype in INT_TYPES \
+                    and not st.vars[x[1]].isparam and st.vars[x[1]].bt is None:
+                raise Refuse('%s read before it is assigned' % x[1])
+            raise ResumeHere('%s of a run-time value' % e[1])
         if k == 'call':
             return self.ev_call(e, st, out, frames, dest)
         if k == 'bin':
@@ -1648,9 +1962,13 @@ class Walk:
         base, field = e[1], e[2]
         b = self.ev(base, st, out, frames)
         if b.bt == 'rt':
-            if b.ctype in OBJ_TYPES and field == 'ob_type' and b.var is not None:
+            if self.s.is_obj(b.ctype) and field == 'ob_type' and b.var is not None:
                 tpv = self.promote(st, out, b.var.name)
                 return Val('ct', tpv, 'PyTypeObject *', tp=tpv)
+            kl = self.known_length(base, st)
+            if kl is not None and field == kl[1]['size'] and kl[0] in st.loaded:
+                # the length a loop counts to, loaded at the loop's entry
+                return Val('ct', st.loaded[kl[0]], 'Py_ssize_t')
             raise ResumeHere('the field %s of a run-time value' % field)
         if b.bt != 'ct':
             raise ResumeHere('a field of %s' % cparse.c_expr(base))
@@ -1745,7 +2063,7 @@ class Walk:
             if name in self.s.macros and self.s.macros[name].params is not None \
                     and name not in KEEP:
                 return self.ev(self.s.expand_call(name, args), st, out, frames, dest)
-            pname = 'Psyco' + name[2:] if name.startswith('Py') else None
+            pname = psyco_name(name)
             if pname in self.tr.ni and pname not in self.tr.declared_generated:
                 return self.ni_call(self.tr.ni[pname], name, args, st, out, frames, dest)
             if name in self.s.funcs:
@@ -1804,11 +2122,11 @@ class Walk:
                 return 'zero_ok', False
             if kind == 'val':
                 return 'neg', False
-            if ctype in OBJ_TYPES:
+            if self.s.is_obj(ctype):
                 return 'null', False
             raise Refuse('returns a call of type %s' % ctype)
         if dest is None:
-            return ('null' if ctype in OBJ_TYPES else 'neg'), False
+            return ('null' if self.s.is_obj(ctype) else 'neg'), False
         nxt = self.next_use(dest, frames)
         if nxt is None:
             raise Refuse('the result in %s is never read' % dest)
@@ -1899,12 +2217,11 @@ class Walk:
             v = vals[k]
             if v.var is not None and v.var.isparam and v.var.name not in st.known:
                 if st.called:
-                    if v.var.name not in self.late:
-                        self.late.append(v.var.name)
+                    self.late_promo(v.var.name)
                 elif gf.params[k][1] in g.entry and out.depth == 1 and not st.early \
                         and v.var.name not in self.must:
                     self.must.append(v.var.name)
-            elif v.var is not None and not v.var.isparam and v.ctype in OBJ_TYPES:
+            elif v.var is not None and not v.var.isparam and self.s.is_obj(v.ctype):
                 raise Refuse('%s reads the type of %s, which is not a parameter (F24)'
                              % (name, v.var.name))
         for k, v in enumerate(vals):
@@ -1941,12 +2258,15 @@ class Walk:
                 raise ResumeHere('%s: a run-time argument' % decl.name)
             if v.bt == 'rt' and v.owned:
                 raise ResumeHere('a call as an argument')
-            if v.bt == 'rt' and v.ctype in OBJ_TYPES:
-                if v.var is None or not v.var.isparam:
+            if v.bt == 'rt' and self.s.is_obj(v.ctype):
+                if v.item_of is not None:
+                    # an item of a loaded object is in the frame (F24)
+                    if 'items:' + v.item_of not in st.known and st.called:
+                        self.late_promo(('items', v.item_of))
+                elif v.var is None or not v.var.isparam:
                     raise ResumeHere('%s of a value that is not a parameter' % decl.name)
-                if v.var.name not in st.known and st.called:
-                    if v.var.name not in self.late:
-                        self.late.append(v.var.name)
+                elif v.var.name not in st.known and st.called:
+                    self.late_promo(v.var.name)
             vals.append(v)
         self.note_call(st)
         call = '%s(po%s)' % (decl.name, ''.join(', ' + v.c for v in vals))
@@ -2006,6 +2326,456 @@ class Walk:
         out('}')
         return Val('ct', r, 'int')
 
+    # ---- loops (rule loops, D78) ----
+
+    def force_rt(self, name):
+        """An integer local that a loop makes run-time: from the start."""
+        fr = self.tr.force_rt.setdefault(self.f.name, set())
+        if name in fr:
+            raise Refuse('%s is compile-time and run-time at once' % name)
+        fr.add(name)
+        raise Rewalk()
+
+    def late_promo(self, p):
+        """A promotion needed after a call: at the entry of the outermost
+        loop being translated if nothing was called before it, else at the
+        function's entry (rule 1). p is a parameter, or ('items', name)."""
+        if self.loop_ctx and not self.loop_ctx[0].entry_called:
+            lp = self.tr.loop_promos.setdefault(self.f.name, {}).setdefault(
+                self.loop_ctx[0].sid, [])
+            if p not in lp:
+                lp.append(p)
+                raise Rewalk()
+            return
+        if isinstance(p, tuple):
+            raise Refuse('the types of the items of %s are needed after a call' % p[1])
+        if p not in self.late:
+            self.late.append(p)
+
+    def known_length(self, e, st):
+        """(variable, representation) when e is a parameter (through casts)
+        of an object type whose length and items Ni can know at compile
+        time (policy_table.TYPES 'known_length')."""
+        casts = []
+        while e[0] == 'cast':
+            casts.append(ctype_of(ctokens.tokenize(e[1])[0]))
+            e = e[2]
+        if e[0] != 'id' or e[1] not in st.vars:
+            return None
+        v = st.vars[e[1]]
+        if not v.isparam or v.bt != 'rt':
+            return None
+        for ctype in casts + [v.ctype]:
+            r = known_length_of(ctype)
+            if r is not None:
+                return v.name, r
+        return None
+
+    def loads_in(self, e, st, out=None):
+        """The objects whose length the expression e reads (the size field
+        of a type with a known length), macros expanded."""
+        if out is None:
+            out = []
+        if isinstance(e, tuple) and e:
+            if e[0] == 'call' and e[1][0] == 'id' and e[1][1] in self.s.macros \
+                    and e[1][1] not in KEEP and self.s.macros[e[1][1]].params is not None:
+                try:
+                    return self.loads_in(self.s.expand_call(e[1][1], e[2]), st, out)
+                except Resume:
+                    return out
+            if e[0] == 'arrow':
+                kl = self.known_length(e[1], st)
+                if kl is not None and e[2] == kl[1]['size'] and \
+                        kl[0] not in [n for n, _ in out]:
+                    out.append(kl)
+            for x in e[1:]:
+                self.loads_in(x, st, out)
+        elif isinstance(e, list):
+            for x in e:
+                self.loads_in(x, st, out)
+        return out
+
+    def ev_index(self, e, st, out, frames):
+        arr, idx = e[1], e[2]
+        if arr[0] == 'arrow':
+            kl = self.known_length(arr[1], st)
+            if kl is not None and arr[2] == kl[1]['items'] and kl[0] in st.loaded:
+                i = self.ev(idx, st, out, frames)
+                if i.bt == 'ct':
+                    # an item of an object of known length: its vinfo,
+                    # borrowed, in the frame (the object's array)
+                    return Val('rt', '%s(%s, %s)' % (ni_short(kl[1]['item']),
+                                                     st.vars[kl[0]].cname, i.c),
+                               'PyObject *', item_of=kl[0])
+        raise ResumeHere('an index %s' % cparse.c_expr(e))
+
+    def loop_stmt(self, s, st, out, frames):
+        """A loop with a compile-time bound is a loop of the meta: it runs
+        at compile time, emitting its body once per turn (unrolled). Any
+        other loop is CPython's: the meta resumes at it."""
+        k = s[0]
+        if k == 'for':
+            init, cond, step, body = s[1], s[2], s[3], s[4]
+        elif k == 'while':
+            init, cond, step, body = None, s[1], [], s[2]
+        else:
+            init, cond, step, body = None, None, [], s[1]
+        counted = self.tr.counted(s)
+        if counted is None:
+            raise ResumeHere('a loop with a run-time bound')
+        # a length the bound reads: known at compile time, or the loop is
+        # CPython's (rule loops, the known case and the fallback)
+        for name, kl in self.loads_in(counted[1], st):
+            if name in st.loaded:
+                continue
+            n = self.new_tmp('int')
+            out('%s = %s(%s);' % (n, ni_short(kl['load']), st.vars[name].cname))
+            out('if (%s < 0) {' % n)
+            sub = Out(out.depth + 1)
+            self.resume(st.copy(), sub, frames,
+                        'the length of %s is not known at compile time' % name)
+            out.extend(sub)
+            out('}')
+            st.loaded[name] = n
+        if init is not None:
+            if init[0] == 'expr':
+                self.expr_stmt(init[1], st, out, frames)
+            else:
+                self.stmt(init, st, out, frames)
+        if not self.loop_ctx:
+            for p in self.tr.loop_promos.get(self.f.name, {}).get(id(s), []):
+                self.loop_promote(st, out, p)
+        entry_called = st.called if not self.loop_ctx else self.loop_ctx[0].entry_called
+        head = st.copy()
+        saved = (dict(self.decls), [list(x) for x in (self.must, self.late, self.returns,
+                                                      self.resumed)],
+                 set(self.used_likely), self.notimpl, self.any_call, self.ncalls)
+        for _ in range(6):
+            self.decls = dict(saved[0])
+            self.must, self.late, self.returns, self.resumed = [list(x) for x in saved[1]]
+            self.used_likely = set(saved[2])
+            self.notimpl, self.any_call, self.ncalls = saved[3:]
+            ctx = LoopCtx(id(s), entry_called, step, cond, frames)
+            self.loop_ctx.append(ctx)
+            exit_st = None
+            try:
+                bo = Out(out.depth + 1)
+                sb = head.copy()
+                c = True
+                if cond is not None:
+                    c = self.cond(cond, sb, bo, frames)
+                if c is False:
+                    return            # the loop never runs
+                if c is not True:
+                    bo('if (!(%s)) break;' % c)
+                    exit_st = sb.copy()
+                self.branch(body, sb, bo, frames)
+                if not sb.ended:
+                    self.walk_step(sb, bo, step, frames)
+                    ctx.backs.append(sb)
+            finally:
+                self.loop_ctx.pop()
+            new = self.loop_head(head, ctx.backs)
+            if new is None:
+                break
+            head = new
+        else:
+            raise Refuse('the loop has no fixed point')
+        out('for (;;) {')
+        out.extend(bo)
+        out('}')
+        exits = ([exit_st] if exit_st is not None else []) + ctx.breaks
+        if not exits:
+            raise Refuse('a loop that only returns')
+        final = exits[0]
+        for x in exits[1:]:
+            for name, v in final.vars.items():
+                w = x.vars.get(name)
+                if w is not None and v.bt == 'rt' and w.owned != v.owned and \
+                        {v.owned, w.owned} != {'dead', 'no'}:
+                    raise Refuse('%s is owned differently where the loop ends' % name)
+            final.called = final.called or x.called
+            final.known &= x.known
+            final.slots = {a: b for a, b in final.slots.items() if x.slots.get(a) == b}
+        st.__dict__.update(final.copy().__dict__)
+        st.ended = False
+
+    def loop_promote(self, st, out, p):
+        if isinstance(p, tuple):
+            name = p[1]
+            kl = self.known_length(('id', name), st)
+            if name not in st.loaded or kl is None:
+                raise Refuse('the items of %s are needed before their length' % name)
+            j = self.new_tmp('int')
+            out('for (%s = 0; %s < %s; %s++) {' % (j, j, st.loaded[name], j))
+            sub = Out(out.depth + 1)
+            self.error_exit(st, sub, 'Psyco_NeedType(po, %s(%s, %s)) == NULL' % (
+                ni_short(kl[1]['item']), st.vars[name].cname, j))
+            out.extend(sub)
+            out('}')
+            st.known.add('items:' + name)
+        else:
+            self.promote(st, out, p, entry=True)
+
+    def walk_step(self, st, out, step, frames):
+        for x in step:
+            self.expr_stmt(x, st, out, frames)
+
+    def loop_head(self, head, backs):
+        """The loop's entry state merged with its back edges; None when
+        that is the entry state (the fixed point)."""
+        new = head.copy()
+        changed = False
+        for b in backs:
+            if b.called and not new.called:
+                new.called = changed = True
+            if not new.known <= b.known:
+                new.known &= b.known
+                changed = True
+            sl = {a: c for a, c in new.slots.items() if b.slots.get(a) == c}
+            if sl != new.slots:
+                new.slots, changed = sl, True
+            ld = {a: c for a, c in new.loaded.items() if b.loaded.get(a) == c}
+            if ld != new.loaded:
+                new.loaded, changed = ld, True
+            for name, v in new.vars.items():
+                w = b.vars.get(name)
+                if w is None:
+                    continue
+                if v.bt != w.bt:
+                    if v.ctype in INT_TYPES and not v.isparam:
+                        self.force_rt(name)
+                    raise Refuse('%s has another binding time after the loop body' % name)
+                if v.bt == 'rt' and v.owned != w.owned and \
+                        {v.owned, w.owned} != {'dead', 'no'}:
+                    raise Refuse('%s is owned differently around the loop' % name)
+                if v.conv != w.conv and v.conv is not None:
+                    v.conv, changed = None, True
+                if v.bt == 'ct' and v.tp != w.tp and v.tp is not None:
+                    v.tp, changed = None, True
+        return new if changed else None
+
+    def jump(self, k, st, out):
+        if not self.loop_ctx:
+            raise Refuse('%s outside a loop' % k)
+        ctx = self.loop_ctx[-1]
+        if k == 'break':
+            self.release_dead(st, out, self.tr.live.after[ctx.sid])
+            ctx.breaks.append(st.copy())
+            out('break;')
+        else:
+            self.walk_step(st, out, ctx.step, ctx.frames)
+            ctx.backs.append(st.copy())
+            out('continue;')
+        st.ended = True
+
+    def errors_leave_loop(self, name, frames):
+        """A call's result in name, read next by the loop's condition with
+        no error test: does the C's error value (-1) end the loop and reach
+        'return name' with nothing run in between? Then the meta returns
+        its error at once."""
+        ctx = self.loop_ctx[-1]
+        if self.sm.kind not in ('val', 'obj'):
+            return False
+        for stmts, i in frames[len(ctx.frames):]:
+            for x in stmts[i + 1:]:
+                if name in cparse.names_in(list(x[1:-1])):
+                    return False
+        if ctx.cond is None or not false_at(ctx.cond, name, -1):
+            return False
+        stmts, i = ctx.frames[-1]
+        for x in stmts[i + 1:]:
+            if name in cparse.names_in(list(x[1:-1])):
+                return x[0] == 'return' and x[1] == ('id', name)
+            if self.tr.find_any_call(x):
+                return False
+        return False
+
+    def goto(self, s, st, out, frames):
+        """A forward goto to a label of the function's top level: the meta
+        goes on with the statements from the label (each goto gets its own
+        copy of them, as a meta path does)."""
+        if self.loop_ctx:
+            raise Refuse('goto inside a loop')
+        top = self.f.ast
+        j = next((k for k, x in enumerate(top) if x[0] == 'label' and x[1] == s[1]), None)
+        if j is None or frames[0][0] is not top or j <= frames[0][1]:
+            raise Refuse('goto %s: not a forward jump to the top level' % s[1])
+        if self.goto_depth > 8:
+            raise Refuse('gotos nest too deep')
+        self.release_dead(st, out, self.tr.live.before[id(top[j])])
+        self.goto_depth += 1
+        try:
+            for idx in range(j, len(top)):
+                if st.ended:
+                    break
+                self.statement(top[idx], st, out, [(top, idx)])
+                if not st.ended:
+                    self.release_dead(st, out, self.tr.live.after[id(top[idx])])
+        finally:
+            self.goto_depth -= 1
+        if not st.ended:
+            raise Refuse('the statements at %s do not return' % s[1])
+
+
+def psyco_name(name):
+    """Ni's name for the meta of a CPython function: PyX -> PsycoX,
+    _PyX -> _PsycoX; None for other names."""
+    if name.startswith('Py'):
+        return 'Psyco' + name[2:]
+    if name.startswith('_Py'):
+        return '_Psyco' + name[3:]
+    return None
+
+
+def block_of(s):
+    return s[1] if s[0] == 'block' else [s]
+
+
+def assigned_in(node, out=None):
+    """Names a statement or expression assigns (=, op=, ++, --, a
+    declaration)."""
+    if out is None:
+        out = set()
+    if isinstance(node, tuple) and node:
+        if node[0] == 'assign' and node[2][0] == 'id':
+            out.add(node[2][1])
+        elif node[0] in ('pre', 'post') and node[2][0] == 'id':
+            out.add(node[2][1])
+        elif node[0] == 'decl':
+            out.update(n for _, n, _, _ in node[1])
+        for x in node[1:]:
+            if isinstance(x, (tuple, list)):
+                assigned_in(x, out)
+    elif isinstance(node, list):
+        for x in node:
+            assigned_in(x, out)
+    return out
+
+
+def counted_loop(s):
+    """(variable, bound, start) when the cparse loop s (parsed with
+    loops=True) has a bound fixed by the C: a 'for' whose condition has a conjunct
+    'V < E', 'V <= E' or 'V != E' with V stepped up by one in the loop's
+    head, or 'V > E', 'V >= E' or 'V != E' with V stepped down by one, V
+    assigned nowhere else in the loop and E assigned nowhere in it. Any
+    other loop runs as long as run-time values say: None. start is what
+    the loop's head assigns V, or None. Whether E and the start are known
+    at compile time is the caller's to find (loop_rule)."""
+    if s[0] != 'for' or s[2] is None:
+        return None
+    steps = {}
+    for x in s[3]:
+        if x[0] in ('pre', 'post') and x[1] in ('++', '--') and x[2][0] == 'id':
+            steps[x[2][1]] = x[1]
+        elif x[0] == 'assign' and x[1] in ('+=', '-=') and x[2][0] == 'id' \
+                and x[3] == ('num', '1'):
+            steps[x[2][1]] = x[1][0] * 2
+    body_assigned = assigned_in(s[4])
+    conj = []
+
+    def chain(e):
+        if e[0] == 'bin' and e[1] == '&&':
+            chain(e[2])
+            chain(e[3])
+        else:
+            conj.append(e)
+    chain(s[2])
+    ops = {'++': ('<', '<=', '!='), '--': ('>', '>=', '!=')}
+    for c in conj:
+        if c[0] == 'bin' and c[2][0] == 'id' and c[2][1] in steps \
+                and c[1] in ops[steps[c[2][1]]] \
+                and c[2][1] not in body_assigned \
+                and not set(cparse.names_in(c[3])) & (body_assigned | set(steps)):
+            return c[2][1], c[3], loop_start(s[1], c[2][1])
+    return None
+
+
+def loop_start(init, name):
+    """The expression a for loop's head (cparse init) assigns name."""
+    if init is None:
+        return None
+    items = []
+    if init[0] == 'expr':
+        e = init[1]
+        items = e[1] if e[0] == 'comma' else [e]
+        for x in items:
+            if x[0] == 'assign' and x[1] == '=' and x[2] == ('id', name):
+                return x[3]
+    elif init[0] == 'decl':
+        for d in init[1]:
+            if d[1] == name:
+                return d[2]
+    return None
+
+
+def loop_rule(s, bound_known):
+    """The loops rule (D78, policy_table.RULES['loops']) for the cparse
+    loop s, shared with gen_ceval.py. bound_known(e) says whether the C
+    expression e is known at compile time. Returns ('unroll', variable,
+    bound, start), when the bound and the start (if the head sets one)
+    are known: the meta runs the loop at compile time and emits its body once
+    per turn; or ('residual', why): the loop is CPython's, run by a call
+    to the function or a cimpl_ copy of the rest of it, after any known
+    case the meta handles first. A bound that reads the length of an
+    object of a TYPES known_length type is known when that object's
+    length is (the walk loads it, and falls back when it isn't)."""
+    c = counted_loop(s)
+    if c is None:
+        return ('residual', 'a loop with a run-time bound')
+    for e in (c[1], c[2]):
+        if e is not None and not bound_known(e):
+            return ('residual', '%s is not known at compile time'
+                    % cparse.c_expr(e))
+    return ('unroll',) + c
+
+
+class LoopCtx:
+    """A loop the meta is translating."""
+
+    def __init__(self, sid, entry_called, step, cond, frames):
+        self.sid = sid                    # id() of the loop statement
+        self.entry_called = entry_called  # a call was made before the outermost loop
+        self.step, self.cond, self.frames = step, cond, frames
+        self.breaks = []                  # states at a break
+        self.backs = []                   # states at the end of the body or a continue
+
+
+def known_length_of(ctype):
+    """policy_table.TYPES' 'known_length' of an object struct pointer."""
+    struct = ctype.replace('const ', '').rstrip(' *').replace('struct ', '').strip()
+    for key, t in policy_table.TYPES.items():
+        if key.split(':')[1] == struct and 'known_length' in t:
+            kl = t['known_length']
+            if kl['size'] in t.get('immutable', ()) and kl['items'] in t.get('immutable', ()):
+                return kl
+    return None
+
+
+def ni_short(path_name):
+    """'ni/Objects/x.h:Name' -> 'Name'."""
+    return path_name.rpartition(':')[2]
+
+
+def false_at(e, name, value):
+    """Is the condition e false when name holds value? (an && chain with a
+    conjunct comparing name with an integer constant)"""
+    if e[0] == 'bin' and e[1] == '&&':
+        return false_at(e[2], name, value) or false_at(e[3], name, value)
+    if e[0] == 'bin' and e[1] in PY_OPS and e[2] == ('id', name):
+        b = e[3]
+        neg = b[0] == 'un' and b[1] == '-'
+        if neg:
+            b = b[2]
+        if b[0] != 'num' or not b[1].isdigit():
+            return False
+        n = -int(b[1]) if neg else int(b[1])
+        return not {'<': value < n, '<=': value <= n, '==': value == n,
+                    '!=': value != n, '>': value > n, '>=': value >= n}[e[1]]
+    if e[0] == 'un' and e[1] == '!' and e[2] == ('id', name):
+        return value != 0
+    return False
+
 
 class ResumeHere(Resume):
     """Resume at the statement being translated."""
@@ -2037,12 +2807,68 @@ def paren(c):
 
 # ---- the header -----------------------------------------------------------------
 
-def generate(src, pyconfig, defines, ni_root=ROOT, effects=None):
-    source = Source(src, pyconfig, defines)
+class Unit:
+    """One C file the translator reads: its metas are those Ni declares
+    in 'decls' ('Psyco' + the name), and the functions filling the slots
+    policy_table.TRANSLATED_SLOTS names for the file, which the header
+    registers in gen_<file>_init()."""
+
+    def __init__(self, cfile, decls, includer):
+        self.cfile, self.decls, self.includer = cfile, decls, includer
+
+
+UNITS = {
+    'abstract': Unit(CFILE, NI_DECLS, 'pabstract.c'),
+    'tuple': Unit('Objects/tupleobject.c', None, 'ptupleobject.c'),
+}
+
+
+def slot_functions(source, spec):
+    """{function: (type field, table struct, slot)} for the slots spec
+    names ({'type': 'PyTuple_Type', 'slots': [...]}): the file's table of
+    that struct which the type's initialiser points to, read in the
+    struct's field order."""
+    tfields = source.decls.structs['_typeobject']
+    entries = ctokens.initializer(source.toks, spec['type'])
+    toks = source.toks
+    out = {}
+    for slot in spec['slots']:
+        found = None
+        for tfield, ftype in tfields.items():
+            if ftype not in TABLE_TYPES:
+                continue
+            struct = ftype.rstrip(' *')
+            sfields = list(source.decls.structs.get(struct, {}))
+            if slot not in sfields:
+                continue
+            tables = [toks[i + 1].text for i in range(len(toks) - 2)
+                      if toks[i].text == struct and toks[i + 2].text == '='
+                      and '& ' + toks[i + 1].text in entries]
+            if len(tables) != 1:
+                raise cparse.ParseError('%s: %d %s tables in %s' % (
+                    spec['type'], len(tables), struct, source.cfile))
+            table = ctokens.initializer(toks, tables[0])
+            j = sfields.index(slot)
+            if j >= len(table) or table[j] not in source.funcs:
+                raise cparse.ParseError('%s->%s is not a function of %s'
+                                        % (tables[0], slot, source.cfile))
+            found = (table[j], (tfield, struct, slot))
+        if found is None:
+            raise cparse.ParseError("no slot %s in PyTypeObject's tables" % slot)
+        out[found[0]] = found[1]
+    return out
+
+
+def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
+    unit = unit or UNITS['abstract']
+    source = Source(src, pyconfig, defines, unit.cfile)
     ni = ni_decls(ni_root, NI_HEADERS)
-    declared = set(ni_decls(ni_root, [NI_DECLS]))
+    declared = set(ni_decls(ni_root, [unit.decls])) if unit.decls else set()
     policy = {k: e.get('policy', []) for k, e in policy_table.ENTRIES.items()}
     tr = Translator(source, ni, policy, effects)
+    spec = policy_table.TRANSLATED_SLOTS.get(unit.cfile)
+    tr.slot_roots = slot_functions(source, spec) if spec else {}
+    tr.slot_type = spec and spec['type']
     tr.copy_keys = {}
     # functions whose entry says Ni's meta of that name is not a translation
     for k, items in policy.items():
@@ -2070,7 +2896,7 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None):
     by_meta = {tr.sums[n].meta: n for n in order if n in tr.metas}
     texts = dict((m, tr.metas[n]) for m, n in by_meta.items())
     texts.update(tr.copies)
-    used = {m for m in by_meta if m in declared}
+    used = {m for m in by_meta if m in declared or by_meta[m] in tr.slot_roots}
     work = list(used)
     while work:
         names = set(t.text for t in ctokens.tokenize(texts[work.pop()])[0]
@@ -2085,7 +2911,7 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None):
     tr.resumes = [r for r in tr.resumes if r[0] in tr.metas]
     head = ['/* GENERATED by tools/metac/gen_abstract.py from CPython %s\'s'
             % cpython_src.source_version(src),
-            '   %s: do not edit. Included by pabstract.c. */' % CFILE, '']
+            '   %s: do not edit. Included by %s. */' % (unit.cfile, unit.includer), '']
     body = []
     if tr.copy_order:
         body.append('/* run-time copies: where a heap type\'s slot changed, or'
@@ -2106,6 +2932,15 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None):
     for n in order:
         if n in tr.metas:
             body.append(tr.metas[n])
+    if tr.slot_roots:
+        init = os.path.splitext(os.path.basename(unit.cfile))[0]
+        body.append('/* the metas of the slots policy_table.TRANSLATED_SLOTS names */')
+        body.append('static void gen_%s_init(void) {' % init)
+        for n, (tfield, struct, slot) in sorted(tr.slot_roots.items()):
+            if n in tr.metas:
+                body.append('  Psyco_DefineMeta(%s.%s->%s, %s);'
+                            % (spec['type'], tfield, slot, tr.sums[n].meta))
+        body.append('}')
     report = []
     for n in order:
         if n in tr.metas:
@@ -2132,7 +2967,12 @@ def target_defines(python):
     return out
 
 
-def build(target):
+def build_tuple(target):
+    """ptupleobject_gen.h: the tuple slots the translator generates."""
+    return build(target, UNITS['tuple'])
+
+
+def build(target, unit=None):
     try:
         import effects
         g = effects.analyse(target.src)
@@ -2140,7 +2980,7 @@ def build(target):
         raise cslots.GenError('effects.py: %s' % e)
     try:
         text, report = generate(target.src, target.pyconfig,
-                                target_defines(target.python), effects=g)
+                                target_defines(target.python), effects=g, unit=unit)
     except cparse.ParseError as e:
         raise cslots.GenError(str(e))
     return text, report
@@ -2153,13 +2993,15 @@ def main(argv):
     ap.add_argument('--python', default=None)
     ap.add_argument('--no-effects', action='store_true')
     ap.add_argument('--report', action='store_true')
+    ap.add_argument('--unit', default='abstract', choices=sorted(UNITS))
     args = ap.parse_args(argv)
     g = None
     if not args.no_effects:
         import effects
         g = effects.analyse(args.src)
     defines = target_defines(args.python) if args.python else ['Py_BUILD_CORE', 'NDEBUG']
-    text, report = generate(args.src, args.pyconfig, defines, effects=g)
+    text, report = generate(args.src, args.pyconfig, defines, effects=g,
+                            unit=UNITS[args.unit])
     if args.report:
         print('\n'.join(report))
     else:

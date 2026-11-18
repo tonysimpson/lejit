@@ -954,7 +954,10 @@ void *psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
   } else {
     /* respawning: come back at the
        beginning of the trash memory for
-       the next instructions */
+       the next instructions. The replay takes the no-jump path, as the
+       first compile did, so a condition held in the flags is resolved the
+       same way (KNOWN_BUGS F106) */
+    psyco_resolved_cc(po, INVERT_CC(jmpcondition));
     po->code = (code_t *)po->respawn_proxy->codestart;
     INIT_CODE_EMISSION(po->code);
     return NULL;
@@ -963,8 +966,13 @@ void *psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
 
 DEFINEFN
 bool psyco_prepare_respawn(PsycoObject *po, condition_code_t jmpcondition) {
-  if (detect_respawn(po))
+  if (detect_respawn(po)) {
+    /* the branch taken: the condition held. A value still held in the
+       flags can't be read from them, since the stub's call clobbered them
+       on the first run (KNOWN_BUGS F106) */
+    psyco_resolved_cc(po, jmpcondition);
     return true;
+  }
   psyco_prepare_respawn_ex(po, jmpcondition, &do_respawn, 0);
   return false;
 }

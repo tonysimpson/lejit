@@ -256,6 +256,10 @@ static vinfo_t* ptuple_item(PsycoObject* po, vinfo_t* a, vinfo_t* i)
 }
 
 
+/* the slots generated from tupleobject.c (D78): sq_contains */
+#include "ptupleobject_gen.h"
+
+
 INITIALIZATIONFN
 void psy_tupleobject_init(void)
 {
@@ -264,6 +268,7 @@ void psy_tupleobject_init(void)
 	Psyco_DefineMeta(m->sq_length, psyco_generic_immut_ob_size);
 	Psyco_DefineMeta(m->sq_item, ptuple_item);
         Psyco_DefineMeta(m->sq_concat, PsycoTuple_Concat);
+	gen_tupleobject_init();
 
 	mm = PyTuple_Type.tp_as_mapping;
 	if (mm) {  /* Python >= 2.3 */

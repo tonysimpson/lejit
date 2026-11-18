@@ -238,7 +238,15 @@ class Checker:
         for key, e in t.TYPES.items():
             where = 'TYPES ' + key
             self.fields(where, e, ('shape', 'type', 'mutable', 'immutable',
-                                   'virtual', 'slot_result', 'ni'))
+                                   'virtual', 'slot_result', 'ni', 'known_length'))
+            kl = e.get('known_length')
+            if kl is not None:
+                self.fields(where + ' known_length', kl, ('size', 'items', 'load', 'item'))
+                for f in (kl.get('size'), kl.get('items')):
+                    if f not in e.get('immutable', ()):
+                        self.bad(where, 'known_length reads %s, which is not immutable' % f)
+                for n in (kl.get('load'), kl.get('item')):
+                    self.ni_name(where, n)
             d = self.shape(where, key, e)
             if 'type' in e:
                 self.type_object(where, e['type'])
@@ -389,6 +397,12 @@ class Checker:
         self.light_opcodes(t)
         self.types(t)
         self.cannot_block(t)
+        for path, spec in t.TRANSLATED_SLOTS.items():
+            where = 'TRANSLATED_SLOTS ' + path
+            self.fields(where, spec, ('type', 'slots'))
+            if self.src.file(path) is None:
+                self.bad(where, 'not in the source')
+            self.type_object(where, spec['type'])
         self.type_list('NO_DEL_TYPES', t.NO_DEL_TYPES,
                        [['ni/Objects/pobject.c:collect_undeletable_vars'],
                         ['ni/x64/ipyencoding.h:psyco_decref_rt']])

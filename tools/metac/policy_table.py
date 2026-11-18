@@ -129,12 +129,36 @@ RULES = {
                 " object, which only identity can tell apart.",
         'decisions': ['D71', 'D64 (C17)'],
     },
+    'loops': {
+        'what': "A C loop with a compile-time bound (a 'for' counting a variable by"
+                " one to a bound the body doesn't change, the bound known when the"
+                " meta runs) is a loop of the meta: unrolled at compile time, its"
+                " body emitted once per turn. A bound that is the length of an"
+                " object whose type has a 'known_length' in TYPES is asked of Ni's"
+                " representation (PsycoTuple_Load: a virtual tuple, or a constant"
+                " one within CT_TUPLE_LOAD_SIZE_LIMIT); unknown, the meta resumes"
+                " CPython's function. Any other loop is CPython's: the meta resumes"
+                " at it, or, where every path from a point with nothing called"
+                " yet runs such a loop or fails, calls the function from the start."
+                " Promotions a loop's body needs after its first call are made at"
+                " the loop's entry when nothing was called before it (rule 1).",
+        'decisions': ['D78', 'D74', 'PATTERNS rule 1'],
+        'applied_by': ['tools/metac/gen_abstract.py:generate'],
+    },
     'virtual_types': {
         'what': "What is virtual, its weights and its fields' mutability are per"
                 " type (TYPES), not per function; 'virtual' items say where a"
                 " function makes or consumes one.",
         'decisions': ['P15', 'P18'],
     },
+}
+
+# The slots whose functions the general translator generates, per C file
+# besides abstract.c (rule loops, D78): the header registers each meta
+# (gen_<file>_init). Ni's choice of what to translate, as Ni's declarations
+# are for abstract.c.
+TRANSLATED_SLOTS = {
+    'Objects/tupleobject.c': {'type': 'PyTuple_Type', 'slots': ['sq_contains']},
 }
 
 # ---- limits: numbers in Ni's code, checked to be the same -------------------
@@ -168,6 +192,11 @@ LIGHT_OPCODES = [
 TYPES = {
     'Include/tupleobject.h:PyTupleObject': {
         'shape': 'ecfd13dd0064', 'type': 'PyTuple_Type', 'immutable': ['ob_size', 'ob_item'],
+        # a loop over ob_item to ob_size unrolls when Ni knows the length
+        # (rule loops): PsycoTuple_Load gives it or -1, and fills the items
+        'known_length': {'size': 'ob_size', 'items': 'ob_item',
+                         'load': 'ni/Objects/ptupleobject.c:PsycoTuple_Load',
+                         'item': 'ni/Objects/ptupleobject.h:PsycoTuple_GET_ITEM'},
         'virtual': {'ni': 'ni/Objects/ptupleobject.c:psyco_computed_tuple',
                     'weight': 'NW_TUPLES_NORMAL', 'weight_at_calls': 'NW_TUPLES_FUNCALL'}},
     'Include/listobject.h:PyListObject': {
@@ -816,6 +845,25 @@ ENTRIES = {
             ('likely', 'false', 'i < 0'),
         ]},
     'Objects/abstract.c:PySequence_Contains': {'shape': 'd2be1c0b60b5', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:_PySequence_IterSearch': {'shape': '85839b7e7d20', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PySequence_Tuple': {
+        'shape': 'b0b47f97a0b1',
+        'ni': ['tools/metac/gen_abstract.py:generate'],
+        'policy': [
+            ('restype', 'PyTuple_Type'),
+        ]},
+    'Objects/abstract.c:PySequence_List': {
+        'shape': '9a4514bee4c6',
+        'ni': ['tools/metac/gen_abstract.py:generate'],
+        'policy': [
+            ('restype', 'PyList_Type'),
+        ]},
+    'Objects/tupleobject.c:tuplecontains': {
+        'shape': '9840edeba42d',
+        'ni': ['tools/metac/gen_abstract.py:generate'],
+        'policy': [
+            ('likely', 'true', 'cmp == 0'),
+        ]},
     'Objects/abstract.c:NB_SLOT': {'shape': '3a266ba2f176', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/abstract.c:NB_BINOP': {'shape': '2160f98ee50a', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/abstract.c:NB_TERNOP': {'shape': 'af1401f8c92c', 'ni': ['tools/metac/gen_abstract.py:generate']},

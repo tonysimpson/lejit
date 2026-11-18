@@ -4,8 +4,8 @@
  * tools/metac/gen_abstract.py (D74), included below. What stays here is
  * what the translator leaves out: PyObject_Call (call.c), PyNumber_Power
  * (a type whitelist), PyObject_GetIter (a virtual iterator), PyIter_Next
- * (FOR_ITER's call, not a translation of it), PySequence_Tuple, and the
- * subscripts of tuples and lists.
+ * (FOR_ITER's call, not a translation of it), and the subscripts of
+ * tuples and lists.
  */
 #include "pabstract.h"
 #include "../compat2to3.h"
@@ -102,19 +102,6 @@ vinfo_t *psyco_generic_immut_ob_size(PsycoObject *po, vinfo_t *vi) {
 DEFINEFN
 vinfo_t *psyco_generic_mut_ob_size(PsycoObject *po, vinfo_t *vi) {
   return psyco_get_field(po, vi, VAR_size);
-}
-
-DEFINEFN
-vinfo_t *PsycoSequence_Tuple(PsycoObject *po, vinfo_t *seq) {
-  /* XXX implement me */
-  vinfo_t *v = psyco_generic_call(po, PySequence_Tuple, CfCommonNewRefPyObject,
-                                  "v", seq);
-  if (v == NULL)
-    return NULL;
-
-  /* the result is a tuple */
-  Psyco_AssertType(po, v, &PyTuple_Type);
-  return v;
 }
 
 /* the metas generated from abstract.c (D74) */
@@ -247,7 +234,9 @@ vinfo_t *psyco_generic_subscript(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
 
   if (PyType_TypeCheck(ktp, &PyLong_Type)) {
     vinfo_t *result;
-    vinfo_t *key_value = PsycoLong_AsLong(po, key);
+    /* as list_subscript and tuplesubscript: PyNumber_AsSsize_t(item,
+       PyExc_IndexError) (KNOWN_BUGS F102) */
+    vinfo_t *key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
     if (key_value == NULL)
       return NULL;
     result = PsycoSequence_GetItem(po, o, key_value);
@@ -276,7 +265,7 @@ bool psyco_generic_ass_subscript(PsycoObject *po, vinfo_t *o, vinfo_t *key,
 
   if (PyType_TypeCheck(ktp, &PyLong_Type)) {
     bool result;
-    vinfo_t *key_value = PsycoLong_AsLong(po, key);
+    vinfo_t *key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
     if (key_value == NULL)
       return false;
     result = (value != NULL)

@@ -7,7 +7,9 @@ reads it, still from ctokens' tokens and with no dependency: a statement
 reader (blocks, declarations, if/else, return, goto, labels) and an
 operator-precedence expression reader. Anything else (loops, switch, the
 comma operator, ++) becomes an 'unsupported' node that keeps its tokens,
-so a caller can refuse it, or copy the C as it is.
+so a caller can refuse it, or copy the C as it is. With loops=True (the
+general translator's reading, D78) loops, break, continue, ++ and -- and
+the commas of a for-loop's head are read too.
 
 What it needs from outside is which identifiers name types (a declaration
 and a cast look like expressions otherwise); Decls.read gets them, with
@@ -25,6 +27,11 @@ Nodes are tuples whose first item is the kind:
     ('expr', e, span) ('if', cond, then, else_or_None, span)
     ('return', e_or_None, span) ('goto', label, span)
     ('label', name, stmt, span) ('empty', span) ('unsupported', why, span)
+  with loops=True, also: ('for', init, cond_or_None, [step exprs], body,
+    span), init being a 'decl' or 'expr' statement, or None, with a
+    comma list read as ('comma', [exprs]); ('while', cond, body, span)
+    ('do', body, cond, span) ('break', span) ('continue', span); and the
+    expressions ('pre', op, e) and ('post', op, e) for ++ and --.
 """
 import os
 import re
@@ -46,9 +53,10 @@ class ParseError(Exception):
 
 
 class Parser:
-    def __init__(self, toks, types):
+    def __init__(self, toks, types, loops=False):
         self.toks = toks
         self.types = types          # identifiers that name types
+        self.loops = loops          # read loops, break, continue, ++, --
         self.i = 0
 
     # ---- helpers ----
@@ -116,6 +124,8 @@ class Parser:
             if t == ';':
                 self.take(';')
                 return ('empty', (lo, self.i))
+            if self.loops and t in ('for', 'while', 'do', 'break', 'continue'):
+                return self.loop(lo, t)
             if t in ('while', 'for', 'do', 'switch', 'break', 'continue',
                      'case', 'default'):
                 return self.skip(lo, t)
@@ -134,6 +144,53 @@ class Parser:
         except ParseError as err:
             self.i = lo
             return self.skip(lo, str(err))
+
+    def loop(self, lo, t):
+        self.take(t)
+        if t in ('break', 'continue'):
+            self.take(';')
+            return (t, (lo, self.i))
+        if t == 'while':
+            self.take('(')
+            c = self.expr()
+            self.take(')')
+            body = self.statement()
+            return ('while', c, body, (lo, self.i))
+        if t == 'do':
+            body = self.statement()
+            self.take('while')
+            self.take('(')
+            c = self.expr()
+            self.take(')')
+            self.take(';')
+            return ('do', body, c, (lo, self.i))
+        self.take('(')
+        ilo = self.i
+        if self.peek() == ';':
+            self.take(';')
+            init = None
+        elif self.is_type_start() and not (
+                self.peek(1) in ('(', '.', '->', '=', ')', ',', ';', '[')
+                and self.peek() not in TYPE_WORDS):
+            init = self.declaration(ilo)
+        else:
+            init = ('expr', self.comma_list(';'), (ilo, self.i))
+            self.take(';')
+        c = None if self.peek() == ';' else self.expr()
+        self.take(';')
+        step = [] if self.peek() == ')' else self.comma_list(')')[1]
+        self.take(')')
+        body = self.statement()
+        return ('for', init, c, step, body, (lo, self.i))
+
+    def comma_list(self, end):
+        items = [self.assignment()]
+        while self.peek() == ',':
+            self.take(',')
+            items.append(self.assignment())
+        if self.peek() != end:
+            raise ParseError('expected %r' % end)
+        return ('comma', items) if len(items) > 1 or end == ')' else items[0]
 
     def skip(self, lo, why):
         """An unsupported statement: its tokens up to the end of the
@@ -258,7 +315,10 @@ class Parser:
             self.take()
             return ('un', t, self.unary())
         if t in ('++', '--'):
-            raise ParseError('%s' % t)
+            if not self.loops:
+                raise ParseError('%s' % t)
+            self.take()
+            return ('pre', t, self.unary())
         if t == 'sizeof':
             self.take()
             lo = self.i
@@ -301,7 +361,10 @@ class Parser:
                 self.take('.')
                 e = ('dot', e, self.take().text)
             elif t in ('++', '--'):
-                raise ParseError('%s' % t)
+                if not self.loops:
+                    raise ParseError('%s' % t)
+                self.take()
+                e = ('post', t, e)
             else:
                 return e
 
@@ -323,13 +386,13 @@ class Parser:
         raise ParseError('line %d: unexpected %r' % (tok.line, tok.text))
 
 
-def parse_body(toks, types):
+def parse_body(toks, types, loops=False):
     """The statements of a function body (the tokens inside its braces)."""
-    return Parser(toks, types).statements()
+    return Parser(toks, types, loops).statements()
 
 
-def parse_expr(toks, types):
-    p = Parser(toks, types)
+def parse_expr(toks, types, loops=False):
+    p = Parser(toks, types, loops)
     e = p.expr()
     if p.i != len(toks):
         raise ParseError('trailing tokens in %r' % ' '.join(t.text for t in toks))
@@ -364,6 +427,12 @@ def c_expr(e):
         return '%s %s %s' % (c_expr(e[2]), e[1], c_expr(e[3]))
     if k == 'sizeof':
         return e[1]
+    if k == 'pre':
+        return '%s%s' % (e[1], c_expr(e[2]))
+    if k == 'post':
+        return '%s%s' % (c_expr(e[2]), e[1])
+    if k == 'comma':
+        return ', '.join(c_expr(x) for x in e[1])
     raise ValueError(k)
 
 
