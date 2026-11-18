@@ -139,6 +139,16 @@ The back half translates C `for` loops by `gen_abstract.loop_rule` and keeps C i
 - **3.8.20** (PORT38 "Rerunning", not built): 65 generated; the five new cases' text is identical to 3.7's.
 - **Left:** `COMPARE_OP`, `BUILD_CONST_KEY_MAP`, `BUILD_MAP_UNPACK*`, `LOAD_DEREF`, `STORE_DEREF`, `DELETE_DEREF`, `BUILD_STRING`, `FORMAT_VALUE`, `BUILD_TUPLE_UNPACK*` (P22's shortcut); reasons in the failures log.
 
+## Step 8, helpers and cells: `COMPARE_OP`, `LOAD_DEREF` (`4c57d97`, D82) [run]
+
+`ceval.c`'s static helpers are inlined by `ceval_inline.py`; type tests use only what Ni knows and resume in a generated run-time copy of the arm; cell fields are read through Ni's descriptors (METACOMPILER.md "`ceval.c` reader", failures log).
+- **Generated: 2 more, 66 of 119** (`COMPARE_OP`, `LOAD_DEREF`); their hand cases and `cimpl_exc_match` left `pycompiler.c`, which now includes `pycompiler_copies_gen.h` (`cimpl_cmp_outcome_PyCmp_EXC_MATCH`). Read still 82.
+- **Same code:** `tools/samecode.py baseline-3.7 4c57d97`, in two steps: COMPARE_OP alone, 1 unit same, 85 differ, 3,766 of 4,241 code objects same; every first difference has a reason: 421 an `except K:` on a known class calling `PyErr_GivenExceptionMatches` after the compile-time check (was `cimpl_exc_match`), the run-time copy's new name where Ni knows too little, `except 42:` raising at compile time (`compare_ops.py`), and the rest shifted jump offsets and inline data after shorter code. Then LOAD_DEREF on top: 3,905 of 4,241 same, 330 first differences each `test r, r` for `cmp r, 0` in the unbound test, the rest knock-ons.
+- **Instructions per warm iteration** (release): `77bde48` → `4c57d97`: richards 168.31 → 168.29 M, deltablue 26.69 → 26.59, raytrace 3,094.5 → 3,103.1 (four runs each: 3,087–3,094 → 3,090–3,103, +0.1% on the means, within raytrace's spread; its emitted code differs only in addresses and `test` for `cmp`, the same instructions), go 1,064.7 → 1,063.6, hexiom 39.67 → 39.67, chaos 461.07 → 460.71, pyflate 2,003.05 → 2,003.05: nothing slower beyond noise.
+- **Checked build:** generators twice, same output, the build used it; `tests/run.py` 825 pass (`compare_ops.py`, 19 cases); `compile_bounds.py` 7 checks; `tests/cpython_tests.py -j 2` 285 modules, 0 unexpected; the seven `profile_bench.py` runs.
+- **3.8.20** (not built): 67 generated; the two new cases are 3.7's text but one effect flag (PORT38 item 4).
+- **Left:** `STORE_DEREF`, `DELETE_DEREF`, `IMPORT_NAME`, `IMPORT_FROM`, `BUILD_CONST_KEY_MAP`, `BUILD_MAP_UNPACK*`, `BUILD_STRING`, `FORMAT_VALUE`, `BUILD_TUPLE_UNPACK*`; reasons in the failures log.
+
 ## Step 9: mechanism detectors (`36b5beb`, D75) [run]
 
 `tools/metac/mechanisms.py` answers capability questions from the target's source and maps the answers to one snippet per mechanism in `ni/mechanisms/`; `generate.py` writes `mechanism_{entry,tracing,frames}_gen.h`. Details, the interfaces and the detector table: METACOMPILER.md "Mechanisms".
