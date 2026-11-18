@@ -57,6 +57,7 @@ class Var:
         self.alias = None         # dynamic: the parameter it copies
         self.known_null = False   # assigned NULL: returned, it is the error
         self.singleton = None     # assigned an immortal object (types.SINGLETONS)
+        self.constant = None      # holds Ni's constant of that object, made at its use
         self.rng = None           # an integer's (lo, hi), where known
         self.word_of = None       # the object variable whose word it holds
         self.base = None          # pointer: the variable whose items it points into
@@ -106,6 +107,7 @@ class Path:
         self.failed = False       # the error state: an error is pending
         self.loaded = {}          # object variable -> the meta variable of its length
         self.budgeted = set()     # loops whose bound was checked against the budget
+        self.nargs = None         # a METH_FASTCALL root's count of arguments, once split
 
     def copy(self):
         p = Path()
@@ -114,6 +116,7 @@ class Path:
         p.slots, p.ended, p.early = dict(self.slots), self.ended, self.early
         p.failed = self.failed
         p.loaded, p.budgeted = dict(self.loaded), set(self.budgeted)
+        p.nargs = self.nargs
         return p
 
     def take(self, other):

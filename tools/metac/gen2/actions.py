@@ -10,6 +10,9 @@ is resume.py's.
   field read    an object's field through Ni's descriptor (TYPES 'descriptors')
   promote       an object parameter's type, by Psyco_NeedType
   raise         PyErr_Format and PyErr_SetString, at compile time
+  arguments     a check of a builtin's count (conventions.ARGUMENT_CHECKS)
+                on a path where the count is known: it succeeds, its
+                outputs the tuple's items
 Inline, scalar helper, build virtual and restart have no use in this
 family; a construct needing one is refused by the walk.
 """
@@ -36,8 +39,9 @@ def promote(w, p, out, name, entry=False):
         return known_type(w, p, out, v)
     if v is None or not v.isparam:
         raise ResumeHere('the type of %s, which is not a parameter' % name)
-    pidx = [n for n, _ in w.params].index(name)
-    w.rec.needs.add(pidx)
+    pnames = [n for n, _ in w.params]
+    if name in pnames:
+        w.rec.needs.add(pnames.index(name))     # (an item of a builtin's arguments has no caller)
     if not entry:
         if p.called:
             w.late(p, name)
@@ -400,6 +404,8 @@ def call(w, e, p, out, frames, dest):
             raise ResumeHere('a call through %s' % name)
         if name in ('PyErr_Format', 'PyErr_SetString'):
             return raise_(w, p, out, frames, name, args)
+        if name in conventions.ARGUMENT_CHECKS:
+            return check_arguments(w, e, args, p, out)
         if name == 'PyType_IsSubtype':
             return subtype(w, p, out, frames, args)
         if name in tr.metas:
@@ -413,6 +419,14 @@ def call(w, e, p, out, frames, dest):
         if r is not None:
             return r
         pname = conventions.psyco_name(name)
+        word = conventions.bool_word(name)
+        if word is not None and len(args) == 1:
+            a = strip_casts(args[0])
+            v = p.vars.get(a.name) if isinstance(a, c_ast.ID) else None
+            if v is not None and v.rng is not None and 0 <= v.rng[0] and v.rng[1] <= 1:
+                if word not in tr.ni:
+                    raise Refuse("policy bool_word: Ni declares no %s" % word)
+                return ni_call(w, tr.ni[word], name, args, p, out, frames, dest)
         if pname in tr.ni and pname not in tr.declared:
             return ni_call(w, tr.ni[pname], name, args, p, out, frames, dest)
         if name in tr.funcs:
@@ -434,6 +448,29 @@ def call(w, e, p, out, frames, dest):
     if callee.bt == 'meta' and w.u.is_fnptr(callee.ctype):
         return slot_call(w, callee, args, p, out, frames, dest)
     raise ResumeHere('a call through %s' % cprint.expr(e.name))
+
+
+def check_arguments(w, e, args, p, out):
+    """A check of the count of a builtin's arguments, on a path where the
+    count is known: within its bounds (the path's split made sure), it
+    succeeds, its outputs bound to the items."""
+    from .walk import argument_check
+    rule, lo, hi = argument_check(w, e)
+    k = p.nargs
+    if k is None:
+        raise ResumeHere('the count of arguments before it is checked')
+    if not lo <= k <= hi:
+        raise Refuse('%s of a count outside its bounds' % e.name.name)
+    if rule['outputs'] is not None:
+        outs = [strip_casts(a) for a in args[rule['outputs']:]]
+        if len(outs) < hi or not all(
+                isinstance(a, c_ast.UnaryOp) and a.op == '&' and isinstance(a.expr, c_ast.ID)
+                and a.expr.name in p.vars and w.u.is_object(p.vars[a.expr.name].ctype)
+                for a in outs):
+            raise Refuse('%s with outputs that are not object variables' % e.name.name)
+        for m, a in enumerate(outs[:k]):
+            w.bind_item(p, out, a.expr.name, m)
+    return Val('gen', None, INT, const=True)
 
 
 def args_of(w, args, p, out, frames):
@@ -572,10 +609,14 @@ def ni_call(w, decl, name, args, p, out, frames, dest=None):
         raise ResumeHere('%s has %d parameters' % (decl.name, len(decl.params)))
     no_error_pending(p)
     vals = []
+    nulls = conventions.null_args(name)
     for (ptype, pname), a in zip(decl.params[1:], args):
         v = w.ev(a, p, out, frames)
         if v.bt == 'gen':
             v = Val('meta', '1' if v.const else '0', INT)
+        if ptype == 'vinfo_t *' and v.bt == 'meta' and cprint.is_null(a) and pname in nulls:
+            vals.append(Val('meta', 'NULL', VOID_P))    # Ni's meta takes a NULL vinfo
+            continue
         if ptype == 'vinfo_t *' and v.bt != 'dynamic':
             raise ResumeHere('%s: a compile-time argument' % decl.name)
         if ptype != 'vinfo_t *' and v.bt != 'meta':
@@ -589,9 +630,9 @@ def ni_call(w, decl, name, args, p, out, frames, dest=None):
             pv = v.var
             if pv is not None and not pv.isparam and pv.alias and pv.own == 'borrowed':
                 pv = p.vars.get(pv.alias, pv)       # a copy of a parameter
-            if pv is None or not pv.isparam:
+            if pv is None or not (pv.isparam or pv.constant):
                 raise ResumeHere('%s of a value that is not a parameter' % decl.name)
-            if pv.name not in p.known and p.called:
+            if pv.name not in p.known and p.called and not pv.constant:
                 w.late(p, pv.name)
             if pv is not v.var:
                 v = Val('dynamic', pv.cname, v.ctype, var=pv, conv=v.conv)
@@ -607,11 +648,12 @@ def ni_call(w, decl, name, args, p, out, frames, dest=None):
     out.line('%s = %s;' % (r, c))
     release_held(w, vals, out)
     ctype = w.u.funcs[name].type if name in w.u.funcs else None
+    rng = (0, 1) if conventions.zero_or_one(name) else None
     if dest not in (None, '<return>') and ctype is not None and w.u.is_int(ctype) \
             and not error_tested(w, dest, frames):
         # the meta's NULL is the C's -1: tested now, as nothing else would
-        return Val('dynamic', r, ctype, owned=True, conv=Conv('null', check_now=True))
-    return Val('dynamic', r, ctype, owned=True, conv=Conv('null', checkable=True))
+        return Val('dynamic', r, ctype, owned=True, conv=Conv('null', check_now=True), rng=rng)
+    return Val('dynamic', r, ctype, owned=True, conv=Conv('null', checkable=True), rng=rng)
 
 
 def error_tested(w, dest, frames):
@@ -650,7 +692,8 @@ def residual(w, name, args, p, out, frames, dest, cname=None, rtype=None):
     release_held(w, vals, out)
     return Val('dynamic', r, rtype, owned=True,
                conv=Conv(conv, checkable=checkable, notimpl=conv == 'notimpl',
-                         never=conv == 'never'))
+                         never=conv == 'never'),
+               rng=(0, 1) if conventions.zero_or_one(name) and checkable else None)
 
 
 # ---- how the C tests a call's result ----
@@ -700,6 +743,9 @@ def test_kind(c, dest):
             and isinstance(strip_casts(c.right), c_ast.Constant) \
             and strip_casts(c.right).value == '0':
         return 'neg', True
+    if isinstance(c, c_ast.BinaryOp) and c.op == '==' and is_dest(c.left) \
+            and minus_one(c.right):
+        return 'minus1', True       # -1 is never a value: the error alone
     if isinstance(c, c_ast.BinaryOp) and c.op == '&&':
         x = strip_casts(c.left)
         if isinstance(x, c_ast.BinaryOp) and x.op == '==' and is_dest(x.left) \

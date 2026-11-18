@@ -55,10 +55,17 @@ FAMILIES = {
                    reps=('double',),
                    builtins=('acos', 'asin', 'atan', 'cos', 'cosh', 'exp', 'fabs', 'sin',
                              'sinh', 'sqrt', 'tan', 'tanh')),
+    # iter, next, chr and ord stay C calls (METACOMPILER failures log)
+    'bltin': Family('bltin', 'Python/bltinmodule.c', None, 'pbltinmodule.c',
+                    'pbltinmodule_gen.h',
+                    builtins=('abs', 'callable', 'delattr', 'divmod', 'getattr', 'hasattr',
+                              'hash', 'id', 'isinstance', 'issubclass', 'len', 'pow',
+                              'setattr')),
 }
 
 NI_HEADERS = ['ni/Objects/pabstract.h', 'ni/Objects/pobject.h', 'ni/Objects/pfloatobject.h',
               'ni/Objects/plongobject.h', 'ni/Objects/piterobject.h',
               'ni/Objects/ptupleobject.h', 'ni/Objects/plistobject.h',
               'ni/Objects/pdictobject.h', 'ni/Objects/pboolobject.h',
-              'ni/Objects/pstructmember.h', 'ni/Objects/pmethodobject.h']
+              'ni/Objects/pstructmember.h', 'ni/Objects/pmethodobject.h',
+              'ni/Python/pbltinmodule.h']

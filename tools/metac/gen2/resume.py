@@ -38,7 +38,7 @@ def resume(w, p, out, frames, why, inside=False):
         from .abstract import fallback
         p.called = True
         w.rec.any_call = True
-        return w.ret_value(p, out, fallback(tr, w.name, [n for n, _ in w.params]))
+        return w.ret_value(p, out, fallback(tr, w.name, [n for _, n in w.meta_params]))
     if not p.called:
         params = [(n, t) for n, t in w.params]
         if 'static' not in fn.decl.storage:
@@ -54,8 +54,8 @@ def resume(w, p, out, frames, why, inside=False):
         owned = set()
         for vname in sorted(live):
             v = p.vars.get(vname)
-            if v is not None and v.bt == 'pointer':
-                raise Refuse('resuming with the pointer %s live: %s' % (vname, why))
+            if v is not None and v.bt in ('pointer', 'array'):
+                raise Refuse('resuming with the %s %s live: %s' % (v.bt, vname, why))
             if v is not None and v.virt is not None and v.owned():
                 raise Refuse('resuming while the virtual %s is being built: %s' % (vname, why))
             if v is not None and v.bt == 'dynamic' and v.owned() and w.u.is_object(v.ctype):

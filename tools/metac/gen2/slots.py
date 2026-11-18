@@ -72,17 +72,25 @@ def flag_names(key):
     return tuple(sorted(w.strip() for w in key.split('|') if w.strip()))
 
 
-def meth_text():
-    """C naming the value of each ml_flags name policy_table.METH_ARGS uses,
-    to be parsed after the file (the preprocessor knows the values)."""
+# the ml_flags names (Include/methodobject.h), to name a function's flags
+METH_NAMES = ('METH_VARARGS', 'METH_KEYWORDS', 'METH_NOARGS', 'METH_O', 'METH_CLASS',
+              'METH_STATIC', 'METH_COEXIST', 'METH_FASTCALL')
+
+
+def meth_names():
     import policy_table
-    names = sorted({n for k in policy_table.METH_ARGS for n in flag_names(k)})
-    return 'enum { %s };\n' % ', '.join('__ni_meth_%s = %s' % (n, n) for n in names)
+    return sorted(set(METH_NAMES) | {n for k in policy_table.METH_ARGS for n in flag_names(k)})
+
+
+def meth_text():
+    """C naming the value of each ml_flags name, to be parsed after the
+    file (the preprocessor knows the values)."""
+    return 'enum { %s };\n' % ', '.join('__ni_meth_%s = %s' % (n, n) for n in meth_names())
 
 
 def builtin_functions(ast, unit, names):
     """(module name, {C function: (Python name, flag names, METH_ARGS
-    spec)}, {C function: why not}) for the module functions named by
+    spec)}, {C function: (Python name, why not)}) for the module functions named by
     their Python names, from the file's PyModuleDef and the method table
     it names. A function whose ml_flags have no METH_ARGS entry is not
     attempted."""
@@ -101,8 +109,7 @@ def builtin_functions(ast, unit, names):
             and table.name in inits):
         raise Refuse('the PyModuleDef names no module or no method table of the file')
     tfields = [n for n, _ in unit.fields('PyMethodDef')]
-    value = {n: const_value(unit.enums['__ni_meth_' + n].value)
-             for k in policy_table.METH_ARGS for n in flag_names(k)}
+    value = {n: const_value(unit.enums['__ni_meth_' + n].value) for n in meth_names()}
     specs = []
     for key, spec in policy_table.METH_ARGS.items():
         bits = 0
@@ -125,7 +132,10 @@ def builtin_functions(ast, unit, names):
         c, bits = by_py[py]
         match = [(fl, spec) for b, fl, spec in specs if b == bits]
         if not match:
-            skipped[c] = 'ml_flags %s: no METH_ARGS entry' % bits
+            named = [n for n in sorted(value) if bits & value[n]]
+            if sum(value[n] for n in named) != bits:
+                named.append(str(bits & ~sum(value[n] for n in named)))
+            skipped[c] = (py, 'ml_flags %s: no METH_ARGS entry' % ' | '.join(named))
             continue
         out[c] = (py, match[0][0], match[0][1])
     return name.value.strip('"'), out, skipped

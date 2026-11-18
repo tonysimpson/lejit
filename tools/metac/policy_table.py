@@ -338,18 +338,6 @@ TRANSLATED_SLOTS = {
                          {'type': 'PyRangeIter_Type', 'slots': ['tp_iter']}],
 }
 
-# The functions of a module whose metas the general translator generates
-# (gen_builtins.py), per C file, by their Python names: which C
-# function each is and its ml_flags come from the module's method table.
-# Ni's choice of what to translate; a builtin not listed keeps its hand
-# meta, or has none (the C function called directly).
-TRANSLATED_FUNCTIONS = {
-    # iter, next, chr and ord stay C calls (METACOMPILER failures log)
-    'Python/bltinmodule.c': ['abs', 'len', 'hash', 'id', 'divmod', 'pow',
-                             'isinstance', 'issubclass', 'getattr', 'setattr',
-                             'delattr', 'callable', 'hasattr'],
-}
-
 # How Ni calls the meta of a builtin function, by its ml_flags
 # (pmethodobject.c:PsycoCFunction_Call): 'c' is each C parameter's part,
 # 'self' and 'arg' a vinfo each, 'array' and 'count' the one tuple Ni
@@ -1335,23 +1323,14 @@ ENTRIES = {
         'policy': [
             ('other', 'untraced_only', 'generator-expression fusion (D46)'),
         ]},
-    'Python/getargs.c:_PyArg_UnpackStack': {
-        'shape': '51abbe8f7bdf',
-        'ni': ['tools/metac/gen_builtins.py:unpackers'],
-        'policy': [
-            ('other', 'unpack_arguments', 'the outputs are the items of (args, nargs) when min <= nargs <= max'),
-        ]},
-    'Python/bltinmodule.c:builtin_id': {'shape': '6cb6d3e675c7', 'ni': ['tools/metac/gen_builtins.py:generate']},
+    'Python/getargs.c:_PyArg_UnpackStack': {'ni': ['tools/metac/gen2/conventions.py:ARGUMENT_CHECKS']},
+    'Python/bltinmodule.c:builtin_id': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Python/bltinmodule.c:builtin_globals_impl': {'shape': 'c7657d4e0e53', 'ni': ['ni/Python/pbltinmodule.c:pbuiltin_globals']},
-    'Python/bltinmodule.c:builtin_len': {
-        'shape': 'ed1073a2df2e',
-        'ni': ['tools/metac/gen_builtins.py:generate']},
-    'Python/bltinmodule.c:builtin_abs': {'shape': 'ce718b61be96', 'ni': ['tools/metac/gen_builtins.py:generate']},
-    'Python/bltinmodule.c:builtin_divmod_impl': {'shape': 'd4ee89bf5868', 'ni': ['tools/metac/gen_builtins.py:generate']},
-    'Python/bltinmodule.c:builtin_hash': {
-        'shape': 'beec34eaba7f',
-        'ni': ['tools/metac/gen_builtins.py:generate']},
-    'Python/bltinmodule.c:builtin_pow_impl': {'shape': '602fb145c78e', 'ni': ['tools/metac/gen_builtins.py:generate']},
+    'Python/bltinmodule.c:builtin_len': {'ni': ['tools/metac/gen2/abstract.py:generate']},
+    'Python/bltinmodule.c:builtin_abs': {'ni': ['tools/metac/gen2/abstract.py:generate']},
+    'Python/bltinmodule.c:builtin_divmod_impl': {'ni': ['tools/metac/gen2/abstract.py:generate']},
+    'Python/bltinmodule.c:builtin_hash': {'ni': ['tools/metac/gen2/abstract.py:generate']},
+    'Python/bltinmodule.c:builtin_pow_impl': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:PyObject_IsInstance': {
         'shape': '3b2b3063c680',
         'ni': ['ni/Python/pbltinmodule.c:PsycoObject_IsInstance', 'ni/Python/pbltinmodule.c:isinstance_known'],
@@ -1363,9 +1342,9 @@ ENTRIES = {
             ('guard', 'no_fold_heap', 'cls or the object type a heap type: __bases__ can change'),
             ('shortcut', 'zero_or_one', 'returns 1, 0, or -1 with an error'),
         ]},
+    # read by tools/metac/gen2/conventions.py:zero_or_one
     'Objects/abstract.c:PyObject_IsSubclass': {
         'shape': '593e76e6c81c',
-        'ni': ['tools/metac/gen_builtins.py:shortcut'],
         'policy': [
             ('shortcut', 'zero_or_one', 'returns 1, 0, or -1 with an error'),
         ]},
@@ -1376,9 +1355,7 @@ ENTRIES = {
             ('shortcut', 'bool_word', 'PsycoBool_FromZeroOrOne'),
         ]},
     'Objects/abstract.c:recursive_isinstance': {'shape': '8505e1a6833c', 'ni': ['ni/Python/pbltinmodule.c:isinstance_known']},
-    'Python/bltinmodule.c:builtin_isinstance_impl': {
-        'shape': 'b53e4c00e3ee',
-        'ni': ['tools/metac/gen_builtins.py:generate']},
+    'Python/bltinmodule.c:builtin_isinstance_impl': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Python/bltinmodule.c:builtin_sum_impl': {
         'shape': '6adf2ab71762',
         'ni': ['ni/Python/pbltinmodule.c:pbuiltin_sum'],

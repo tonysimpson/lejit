@@ -10,10 +10,10 @@
 #include "../psyfunc.h"
 #include "../mergepoints.h"
 
-/* the metas tools/metac/gen_builtins.py writes from Python/bltinmodule.c
-   (policy_table.TRANSLATED_FUNCTIONS): abs, len, hash, id, divmod, pow,
-   isinstance, issubclass, getattr, setattr; gen_bltinmodule_init
-   registers them. The rest of this file is what stays by hand, each with
+/* the metas tools/metac/gen2 writes from Python/bltinmodule.c (the
+   builtins its scope.py names: abs, callable, delattr, divmod, getattr,
+   hasattr, hash, id, isinstance, issubclass, len, pow, setattr);
+   gen_bltinmodule_init registers them. The rest of this file is what stays by hand, each with
    its reason. */
 #include "pbltinmodule_gen.h"
 

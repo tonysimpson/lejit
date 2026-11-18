@@ -184,6 +184,7 @@ BUDGETS = {
     # Ni compiles (beyond it, CPython's code from the loop or the load);
     # above CT_TUPLE_LOAD_SIZE_LIMIT, so no constant tuple Ni loads hits it
     'unroll': 16,
+    'polyvariance': 5,          # counts of a builtin's arguments, each its own path
 }
 
 KINDS = (Likely, Restype, NotTranslation, HandOnly, FoldMayFail, Whole, IfKnown)

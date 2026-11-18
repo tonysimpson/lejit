@@ -1,4 +1,4 @@
-# 3.8.20 9f2d5962c2583e67ef75924cd56d0c1af78bf45ec57035cf8a2cc09f74f4bf78 67ddc05e95eb50c9b3136caeb457eb929a1cb11b+52543ace5159
+# 3.8.20 9f2d5962c2583e67ef75924cd56d0c1af78bf45ec57035cf8a2cc09f74f4bf78 166364e6bfd7af597ea53c11a2c3d93682a11bc1+08e1d34683af
 BEFORE_ASYNC_WITH	refused	stack: error exit with exit on the stack	Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)
 BEGIN_FINALLY	refused	stack: pushes NULL, not a variable	Python/ceval.c:TARGET(BEGIN_FINALLY)
 BINARY_ADD	generated		Python/ceval.c:TARGET(BINARY_ADD)
@@ -221,19 +221,25 @@ binary_iop1	resumed	a slot of a heap type changed: binaryfunc slot = NB_BINOP(mv
 binary_op	resumed	the field m_ml of a run-time value: if (op_slot == NB_SLOT(nb_rshift) && PyCFunction_Check(v) && strcmp(((	Objects/abstract.c:binary_op
 binary_op1	resumed	a slot of a heap type changed: slotv = NB_BINOP(v->ob_type->tp_as_number, op_slot);; a slot of a heap type changed: slotw = NB_BINOP(w->ob_type->tp_as_number, op_slot);; the mro of a heap type changed: if (slotw && PyType_IsSubtype(w->ob_type, v->ob_type)) { x = slotw(v, 	Objects/abstract.c:binary_op1
 binop_type_error	generated		Objects/abstract.c:binop_type_error
+builtin_delattr_impl	generated		Python/bltinmodule.c:builtin_delattr_impl
+builtin_divmod_impl	generated		Python/bltinmodule.c:builtin_divmod_impl
+builtin_hasattr_impl	resumed	an address &v: if (_PyObject_LookupAttr(obj, name, &v) < 0) { return NULL; }	Python/bltinmodule.c:builtin_hasattr_impl
+builtin_isinstance_impl	generated		Python/bltinmodule.c:builtin_isinstance_impl
+builtin_issubclass_impl	generated		Python/bltinmodule.c:builtin_issubclass_impl
+builtin_setattr_impl	generated		Python/bltinmodule.c:builtin_setattr_impl
 builtins.abs	generated		Python/bltinmodule.c:builtin_abs
 builtins.callable	generated		Python/bltinmodule.c:builtin_callable
-builtins.delattr	restarted	the count of arguments before it is checked: if (!_PyArg_CheckPositional("delattr", nargs, 2, 2)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_delattr
-builtins.divmod	restarted	the count of arguments before it is checked: if (!_PyArg_CheckPositional("divmod", nargs, 2, 2)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_divmod
-builtins.getattr	restarted	the count of arguments before it is checked: if (!_PyArg_CheckPositional("getattr", nargs, 2, 3)) return NULL;	Python/bltinmodule.c:builtin_getattr
-builtins.hasattr	restarted	the count of arguments before it is checked: if (!_PyArg_CheckPositional("hasattr", nargs, 2, 2)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_hasattr
+builtins.delattr	resumed	a count of arguments outside 2..2: if (!_PyArg_CheckPositional("delattr", nargs, 2, 2)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_delattr
+builtins.divmod	resumed	a count of arguments outside 2..2: if (!_PyArg_CheckPositional("divmod", nargs, 2, 2)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_divmod
+builtins.getattr	resumed	a count of arguments outside 2..3: if (!_PyArg_CheckPositional("getattr", nargs, 2, 3)) return NULL;; an address &result: if (_PyObject_LookupAttr(v, name, &result) == 0) { PyObject *dflt = ar	Python/bltinmodule.c:builtin_getattr
+builtins.hasattr	resumed	a count of arguments outside 2..2: if (!_PyArg_CheckPositional("hasattr", nargs, 2, 2)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_hasattr
 builtins.hash	generated		Python/bltinmodule.c:builtin_hash
-builtins.id	refused	cannot tell how the C checks id for an error ((id && (PySys_Audit("builtins.id", "O", id) < 0)))	Python/bltinmodule.c:builtin_id
-builtins.isinstance	restarted	the count of arguments before it is checked: if (!_PyArg_CheckPositional("isinstance", nargs, 2, 2)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_isinstance
-builtins.issubclass	restarted	the count of arguments before it is checked: if (!_PyArg_CheckPositional("issubclass", nargs, 2, 2)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_issubclass
+builtins.id	refused	cannot tell how the C checks id for an error (id && (PySys_Audit("builtins.id", "O", id) < 0))	Python/bltinmodule.c:builtin_id
+builtins.isinstance	resumed	a count of arguments outside 2..2: if (!_PyArg_CheckPositional("isinstance", nargs, 2, 2)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_isinstance
+builtins.issubclass	resumed	a count of arguments outside 2..2: if (!_PyArg_CheckPositional("issubclass", nargs, 2, 2)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_issubclass
 builtins.len	generated		Python/bltinmodule.c:builtin_len
 builtins.pow	refused	ml_flags METH_FASTCALL | METH_KEYWORDS: no METH_ARGS entry	Python/clinic/bltinmodule.c.h:builtin_pow
-builtins.setattr	restarted	the count of arguments before it is checked: if (!_PyArg_CheckPositional("setattr", nargs, 3, 3)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_setattr
+builtins.setattr	resumed	a count of arguments outside 3..3: if (!_PyArg_CheckPositional("setattr", nargs, 3, 3)) { goto exit; }	Python/clinic/bltinmodule.c.h:builtin_setattr
 inplace_divrem1	refused	returns digit	Objects/longobject.c:inplace_divrem1
 k_lopsided_mul	refused	copy: k_lopsided_mul calls itself	Objects/longobject.c:k_lopsided_mul
 k_mul	refused	recursive	Objects/longobject.c:k_mul

@@ -31,9 +31,11 @@ class Case:
     resume lines, `copy` in its run-time copies (`absent_copy` not)."""
 
     def __init__(self, name, c, roots, fn=None, items=None, want=(), absent=(),
-                 refused=None, report=None, copy=(), file='abstract', absent_copy=()):
+                 refused=None, report=None, copy=(), file='abstract', absent_copy=(),
+                 methods=()):
         self.name, self.c, self.roots = name, c, roots
-        self.file = file
+        self.file = 'bltin' if methods else file
+        self.methods = methods      # builtins: [(Python name, C function, ml_flags)]
         self.fn = fn or roots[0]
         self.items = items or {}
         self.want, self.absent, self.refused, self.report = want, absent, refused, report
@@ -679,6 +681,134 @@ PyObject *PySnip_G9(PyObject *o, Py_ssize_t i) {
     return PyLong_FromSsize_t(j);
 }''', ['PySnip_G9'], items={'PySnip_G9': [Likely('i < 0', False)]},
          refused="likely('i < 0', False) matches no run-time branch"),
+    # ---- builtins: METH_FASTCALL arguments, the count's polyvariance ----
+    Case("fastcall: the count checked is Ni's tuple length; outside its bounds, the C function",
+         '''
+static PyObject *snip_f1(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    PyObject *a, *b;
+    if (!_PyArg_UnpackStack(args, nargs, "f1", 2, 2, &a, &b)) return NULL;
+    return PyNumber_Add(a, b);
+}''', ['snip_f1'], methods=[('f1', 'snip_f1', 'METH_FASTCALL')],
+         want=['snip_f1(PsycoObject *po, vinfo_t *m, vinfo_t *vargs)',
+               '_t1 = PsycoTuple_Load(vargs);', 'if (_t1 < 2 || _t1 > 2) {',
+               'return PsycoCFunction_CallFast(po, cfunc_snip_f1, METH_FASTCALL, m, vargs);',
+               'a = PsycoTuple_GET_ITEM(vargs, 0);', 'b = PsycoTuple_GET_ITEM(vargs, 1);',
+               'PsycoNumber_Add(po, a, b)'],
+         report='a count of arguments outside 2..2'),
+    Case('fastcall: each count is its own path; outputs past it keep their value', '''
+static PyObject *snip_f2(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    PyObject *a, *b = Py_None;
+    if (!_PyArg_UnpackStack(args, nargs, "f2", 1, 2, &a, &b)) return NULL;
+    return PyNumber_Add(a, b);
+}''', ['snip_f2'], methods=[('f2', 'snip_f2', 'METH_FASTCALL')],
+         want=['if (_t1 < 1 || _t1 > 2) {', 'if (_t1 == 1) {', 'a = PsycoTuple_GET_ITEM(vargs, 0);',
+               'b = psyco_vi_None();', 'PsycoNumber_Add(po, a, b)', 'vinfo_decref(b, po);',
+               'else {', 'b = PsycoTuple_GET_ITEM(vargs, 1);', 'PsycoNumber_Add(po, a, b)'],
+         absent=['vinfo_decref(b, po);\n    return PsycoCFunction_CallFast']),
+    Case("fastcall: 3.8's bounds test folds for each count; args[k] is the tuple's item", '''
+static PyObject *snip_f3(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    PyObject *a, *b;
+    if (!((1 <= nargs && nargs <= 2) || _PyArg_CheckPositional("f3", nargs, 1, 2)))
+        return NULL;
+    a = args[0];
+    if (nargs > 1) { b = args[1]; return PyNumber_Add(a, b); }
+    return PyNumber_Negative(a);
+}''', ['snip_f3'], methods=[('f3', 'snip_f3', 'METH_FASTCALL')],
+         want=['if (_t1 < 1 || _t1 > 2) {', 'if (_t1 == 1) {', 'a = PsycoTuple_GET_ITEM(vargs, 0);',
+               'PsycoNumber_Negative(po, a)', 'else {', 'b = PsycoTuple_GET_ITEM(vargs, 1);',
+               'PsycoNumber_Add(po, a, b)'],
+         absent=['_PyArg_CheckPositional', 'nargs']),
+    Case('fastcall: the count read before it is checked runs the C function', '''
+static PyObject *snip_f4(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    if (nargs != 1) return NULL;
+    return PyNumber_Negative(args[0]);
+}''', ['snip_f4'], methods=[('f4', 'snip_f4', 'METH_FASTCALL')],
+         want=['return PsycoCFunction_CallFast(po, cfunc_snip_f4, METH_FASTCALL, m, vargs);'],
+         report='the count of arguments before it is checked'),
+    Case('fastcall: an item read past the checked count is refused', '''
+static PyObject *snip_f5(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    PyObject *a;
+    if (!((1 <= nargs && nargs <= 1) || _PyArg_CheckPositional("f5", nargs, 1, 1)))
+        return NULL;
+    a = args[1];
+    return PyNumber_Negative(a);
+}''', ['snip_f5'], methods=[('f5', 'snip_f5', 'METH_FASTCALL')],
+         refused='read outside the checked count'),
+    Case('fastcall: more counts than the polyvariance budget run the C function', '''
+static PyObject *snip_f6(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    PyObject *a, *b, *c, *d, *e, *f;
+    if (!_PyArg_UnpackStack(args, nargs, "f6", 0, 6, &a, &b, &c, &d, &e, &f)) return NULL;
+    return PyNumber_Negative(a);
+}''', ['snip_f6'], methods=[('f6', 'snip_f6', 'METH_FASTCALL')],
+         want=['return PsycoCFunction_CallFast(po, cfunc_snip_f6, METH_FASTCALL, m, vargs);'],
+         absent=['PsycoTuple_Load'], report='budget polyvariance'),
+    Case("fastcall: an item's type is promoted as a parameter's, where its callee needs it", '''
+static PyObject *snip_f7_impl(PyObject *m, PyObject *o) {
+    if (o->ob_type->tp_as_number == NULL) return NULL;
+    return PyNumber_Negative(o);
+}
+static PyObject *snip_f7(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    PyObject *o;
+    if (!_PyArg_UnpackStack(args, nargs, "f7", 1, 1, &o)) return NULL;
+    return snip_f7_impl(m, o);
+}''', ['snip_f7'], methods=[('f7', 'snip_f7', 'METH_FASTCALL')],
+         want=['o = PsycoTuple_GET_ITEM(vargs, 0);', 'tp_o = Psyco_NeedType(po, o);',
+               'snip_f7_impl(po, m, o)']),
+    Case("METH_O: a 0-or-1 result's bool is Ni's of that word", '''
+static PyObject *snip_b1(PyObject *m, PyObject *o) {
+    int r = PyObject_IsInstance(o, o);
+    if (r < 0) return NULL;
+    return PyBool_FromLong(r);
+}''', ['snip_b1'], methods=[('b1', 'snip_b1', 'METH_O')],
+         want=['PsycoObject_IsInstance(po, o, o)', 'if (r == NULL)',
+               'PsycoBool_FromZeroOrOne(po, r)'], absent=['PsycoBool_FromLong']),
+    Case("METH_O: a bool of an int not known to be 0 or 1 is Ni's general one", '''
+static PyObject *snip_b3(PyObject *m, PyObject *o) {
+    int r = PyObject_IsTrue(o);
+    if (r < 0) return NULL;
+    return PyBool_FromLong(r);
+}''', ['snip_b3'], methods=[('b3', 'snip_b3', 'METH_O')],
+         want=['PsycoBool_FromLong(po, r)'], absent=['FromZeroOrOne']),
+    Case('error test: x == -1 alone is the error of a result that is never -1', '''
+static PyObject *snip_h(PyObject *m, PyObject *o) {
+    Py_hash_t x = PyObject_Hash(o);
+    if (x == -1) return NULL;
+    return PyLong_FromSsize_t(x);
+}''', ['snip_h'], methods=[('h', 'snip_h', 'METH_O')],
+         want=['x = _t1;', 'if (x == NULL) {', 'return NULL;', 'PsycoLong_FromSsize_t(po, x)'],
+         absent=['integer_cmp']),
+    Case("status: Ni's bool tested as the C tests 0/-1; NULL where Ni's meta takes it", '''
+static PyObject *snip_s1(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    PyObject *o, *k;
+    if (!_PyArg_UnpackStack(args, nargs, "s1", 2, 2, &o, &k)) return NULL;
+    if (PyObject_SetAttr(o, k, (PyObject *)NULL) != 0) return NULL;
+    Py_RETURN_NONE;
+}''', ['snip_s1'], methods=[('s1', 'snip_s1', 'METH_FASTCALL')],
+         want=['if (!(PsycoObject_SetAttr(po, o, k, NULL))) {', 'return NULL;',
+               'return psyco_vi_None();']),
+    Case('fold: a variable known to hold NULL compared with NULL is known', '''
+static PyObject *snip_n(PyObject *m, PyObject *o) {
+    PyObject *d = NULL;
+    if (d != NULL) return PyNumber_Negative(d);
+    return PyNumber_Positive(o);
+}''', ['snip_n'], methods=[('n', 'snip_n', 'METH_O')],
+         want=['PsycoNumber_Positive(po, o)'], absent=['Negative', 'd != NULL']),
+    Case("G11: a status compare's call is made once", '''
+static PyObject *snip_g11(PyObject *m, PyObject *const *args, Py_ssize_t nargs) {
+    PyObject *o, *k;
+    if (!_PyArg_UnpackStack(args, nargs, "g11", 2, 2, &o, &k)) return NULL;
+    if (!PyUnicode_Check(k)) return NULL;
+    if (PyObject_SetAttr(o, k, k) != 0) return NULL;
+    Py_RETURN_NONE;
+}''', ['snip_g11'], methods=[('g11', 'snip_g11', 'METH_FASTCALL')],
+         want=['tp_k = Psyco_NeedType(po, k);', 'if (!(PsycoObject_SetAttr(po, o, k, k))) {'],
+         absent=['PsycoObject_SetAttr(po, o, k, k);']),
+    Case("G8: where a status test found the error, no run-time call is made", '''
+static PyObject *snip_g8(PyObject *m, PyObject *o) {
+    if (PyObject_SetAttr(o, o, o) != 0) { PyObject_Repr(o); return NULL; }
+    Py_RETURN_NONE;
+}''', ['snip_g8'], methods=[('g8', 'snip_g8', 'METH_O')],
+         refused='a run-time call where an error is pending'),
     Case('G15: a switch case falling into the next is refused', '''
 static PyObject *snip_sw(PyObject *o, int k) {
     int n = 0;
@@ -705,8 +835,9 @@ def g10():
 
 def builtins():
     """A module's builtins: which C function and flags from its method
-    table, registered under those flags; flags Ni has no convention for,
-    or passes otherwise, are not attempted."""
+    table, registered under those flags; flags Ni has no convention for
+    are not attempted, and a METH_FASTCALL function whose arguments are
+    not checked by a rule runs its C function."""
     import cslots
     import cpython_src
     fam = scope.Family('snipmath', 'Modules/mathmodule.c', None, 'pmath.c', 'snip_gen.h',
@@ -719,9 +850,12 @@ def builtins():
     want = ['static PyCFunction cfunc_math_acos;',
             'static vinfo_t * math_acos(PsycoObject *po, vinfo_t *self, vinfo_t *args) {',
             'static void gen_mathmodule_init(PyObject *md) {',
-            'cfunc_math_acos = Psyco_DefineModuleFn(md, "acos", METH_O, &math_acos);']
-    lines = ['generated  math.acos', 'skipped    math_atan2', 'ml_flags 1: no METH_ARGS entry',
-             'skipped    math.pow', 'ml_flags METH_FASTCALL: Ni passes self, array, count']
+            'cfunc_math_acos = Psyco_DefineModuleFn(md, "acos", METH_O, &math_acos);',
+            'static vinfo_t * math_pow(PsycoObject *po, vinfo_t *module, vinfo_t *vargs) {',
+            'return PsycoCFunction_CallFast(po, cfunc_math_pow, METH_FASTCALL, module, vargs);']
+    lines = ['generated  math.acos', 'skipped    math.atan2',
+             'ml_flags METH_VARARGS: no METH_ARGS entry', 'generated  math.pow',
+             'restarts   math.pow', 'the argument array args as a value']
     missing = [w for w in want if w not in text] + [w for w in lines
                                                      if not any(w in r for r in report)]
     return not missing, "missing %s in %s" % (missing, report)
@@ -754,7 +888,8 @@ def fold_may_fail():
     return not missing, 'missing (in order) %s' % missing
 
 
-FILES = {'abstract': ('Objects/abstract.c', ()), 'long': ('Objects/longobject.c', ('word', 'double')),
+FILES = {'abstract': ('Objects/abstract.c', ()), 'bltin': ('Objects/abstract.c', ()),
+         'long': ('Objects/longobject.c', ('word', 'double')),
          'float': ('Objects/floatobject.c', ('double',)),
          'tuple': ('Objects/tupleobject.c', ('known_length',))}
 
@@ -768,8 +903,17 @@ def run(cases):
         mine = [c for c in cases if c.file == f]
         if not mine:
             continue
-        fam = scope.Family('snip', cfile, 'snip.h', None, None, (), reps)
+        methods = [m for c in mine for m in c.methods]
+        fam = scope.Family('snip', cfile, 'snip.h', None, None, (), reps,
+                           tuple(py for py, _, _ in methods))
         extra = types.rule_text(reps) + '\n'.join(c.c for c in mine)
+        if methods:
+            # the builtins' module: one method table for every case's
+            from gen2 import slots
+            extra += '\nstatic PyMethodDef snip_methods[] = {%s {NULL, NULL}};\n' % ''.join(
+                '{"%s", (PyCFunction)%s, %s, NULL},' % m for m in methods)
+            extra += ('static struct PyModuleDef snipmodule = {PyModuleDef_HEAD_INIT, "snip",'
+                      ' NULL, -1, snip_methods};\n' + slots.meth_text())
         items = {k: v for c in mine for k, v in c.items.items()}
         parsed[f] = (fam, front.parse(t, cfile, extra), policy.load(t, fam, items, extra))
     for c in cases:

@@ -111,6 +111,52 @@ def slot_format(refs):
     return None
 
 
+# A METH_FASTCALL builtin's C array and count are the one tuple Ni passes
+# (METH_ARGS 'array', 'count'). These calls check the count: each
+# succeeds exactly when min <= count <= max, the first also setting its
+# outputs (the '...', one per item) to the array's items. By parameter
+# position; where the declaration names its parameters, the names must
+# be these. 3.8's _PyArg_CheckPositional is a macro testing the bounds
+# before it calls the function, so only its bounds are read.
+ARGUMENT_CHECKS = {
+    '_PyArg_UnpackStack': {'array': (0, 'args'), 'count': (1, 'nargs'), 'min': (3, 'min'),
+                           'max': (4, 'max'), 'outputs': 5},
+    '_PyArg_CheckPositional': {'array': None, 'count': (1, 'nargs'), 'min': (2, 'min'),
+                               'max': (3, 'max'), 'outputs': None},
+}
+
+def shortcut(name, kind):
+    """The notes of policy_table's ('shortcut', kind, note) items on the
+    CPython function `name`, whatever file defines it."""
+    import policy_table
+    return [i[2] if len(i) > 2 else '' for key, e in policy_table.ENTRIES.items()
+            if key.endswith(':' + name) for i in e.get('policy', ())
+            if tuple(i[:2]) == ('shortcut', kind)]
+
+
+def zero_or_one(name):
+    """The int result of `name` is 0 or 1 when it is no error (-1 with an
+    exception set; 'zero_or_one'): a meta's vinfo of it, never NULL but
+    for the error, is 0 or 1."""
+    return bool(shortcut(name, 'zero_or_one'))
+
+
+def bool_word(name):
+    """Ni's meta of `name` for an argument known to be 0 or 1 (the note of
+    its 'bool_word' item), or None."""
+    notes = shortcut(name, 'bool_word')
+    return notes[0] if notes else None
+
+
+def null_args(name):
+    """The parameters of Ni's meta of CPython's function `name` that take
+    a NULL vinfo for the C's NULL (policy_table's ('ref', 'null_arg', P)
+    items, P named as Ni's declaration names it)."""
+    import policy_table
+    return {i[2] for key, e in policy_table.ENTRIES.items() if key.endswith(':' + name)
+            for i in e.get('policy', ()) if tuple(i[:2]) == ('ref', 'null_arg')}
+
+
 def resume_conv(kind, notimpl):
     """How a run-time copy's result is described, by the meta's kind."""
     if kind == 'obj':

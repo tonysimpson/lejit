@@ -17,7 +17,7 @@ object's vinfo plus an offset known now:
 """
 GA = None       # gen_abstract, set by it
 
-# Ni's constant of each singleton, a new reference (as gen_builtins.py's)
+# Ni's constant of each singleton, a new reference (as gen2/types.py's)
 SINGLETONS = {'Py_None': 'psyco_vi_None', 'Py_True': 'psyco_vi_Py_True',
               'Py_False': 'psyco_vi_Py_False'}
 

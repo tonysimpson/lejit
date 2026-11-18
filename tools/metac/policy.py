@@ -122,9 +122,6 @@ VOCABULARY = {
         'trace_fallback': 'while tracing, the real call',
         'mutable_fields': 'every field read is mutable',
         'not_translation': "Ni's function of this name does another job (not generated)",
-        'unpack_arguments': 'binds its outputs to the items of an argument array'
-                            ' whose count is within its bounds, else fails'
-                            ' (gen_builtins.py)',
         'frame_binding': 'the argument binding, between making the frame and'
                          ' running it, is generated as a binder the compiler'
                          ' runs (gen_call.py)',
@@ -522,15 +519,8 @@ class Checker:
                     self.bad(where, '%s does not call with "%s"' % (n, spec['format']))
 
     def builtins(self, t):
-        """TRANSLATED_FUNCTIONS names files of the source; METH_ARGS'
-        keys are ml_flags, its parts a closed set, and each function it
-        names is Ni's caller of the metas it describes."""
-        for path, names in getattr(t, 'TRANSLATED_FUNCTIONS', {}).items():
-            where = 'TRANSLATED_FUNCTIONS ' + path
-            if self.src.file(path) is None:
-                self.bad(where, 'not in the source')
-            if len(set(names)) != len(names):
-                self.bad(where, 'a name listed twice')
+        """METH_ARGS' keys are ml_flags, its parts a closed set, and each
+        function it names is Ni's caller of the metas it describes."""
         for key, spec in getattr(t, 'METH_ARGS', {}).items():
             where = 'METH_ARGS ' + key
             self.fields(where, spec, ('c', 'fallback', 'applied_by'))

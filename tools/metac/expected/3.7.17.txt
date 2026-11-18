@@ -1,4 +1,4 @@
-# 3.7.17 fd50161bc2a04f4c22a0971ff0f3856d98b4bf294f89740a9f06b520aae63b49 67ddc05e95eb50c9b3136caeb457eb929a1cb11b+3f1a23662711
+# 3.7.17 fd50161bc2a04f4c22a0971ff0f3856d98b4bf294f89740a9f06b520aae63b49 166364e6bfd7af597ea53c11a2c3d93682a11bc1+08e1d34683af
 BEFORE_ASYNC_WITH	refused	stack: error exit with exit on the stack	Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)
 BINARY_ADD	generated		Python/ceval.c:TARGET(BINARY_ADD)
 BINARY_AND	generated		Python/ceval.c:TARGET(BINARY_AND)
@@ -222,7 +222,7 @@ binary_op1	resumed	a slot of a heap type changed: slotv = NB_BINOP(v->ob_type->t
 binop_type_error	generated		Objects/abstract.c:binop_type_error
 builtin_delattr_impl	generated		Python/bltinmodule.c:builtin_delattr_impl
 builtin_divmod_impl	generated		Python/bltinmodule.c:builtin_divmod_impl
-builtin_hasattr_impl	resumed	an address &(v): if (_PyObject_LookupAttr(obj, name, &v) < 0) { return NULL; }	Python/bltinmodule.c:builtin_hasattr_impl
+builtin_hasattr_impl	resumed	an address &v: if (_PyObject_LookupAttr(obj, name, &v) < 0) { return NULL; }	Python/bltinmodule.c:builtin_hasattr_impl
 builtin_isinstance_impl	generated		Python/bltinmodule.c:builtin_isinstance_impl
 builtin_issubclass_impl	generated		Python/bltinmodule.c:builtin_issubclass_impl
 builtin_pow_impl	generated		Python/bltinmodule.c:builtin_pow_impl
@@ -231,7 +231,7 @@ builtins.abs	generated		Python/bltinmodule.c:builtin_abs
 builtins.callable	generated		Python/bltinmodule.c:builtin_callable
 builtins.delattr	resumed	a count of arguments outside 2..2: if (!_PyArg_UnpackStack(args, nargs, "delattr", 2, 2, &obj, &name)) { 	Python/clinic/bltinmodule.c.h:builtin_delattr
 builtins.divmod	resumed	a count of arguments outside 2..2: if (!_PyArg_UnpackStack(args, nargs, "divmod", 2, 2, &x, &y)) { goto e	Python/clinic/bltinmodule.c.h:builtin_divmod
-builtins.getattr	resumed	a count of arguments outside 2..3: if (!_PyArg_UnpackStack(args, nargs, "getattr", 2, 3, &v, &name, &dflt; an address &(result): if (_PyObject_LookupAttr(v, name, &result) == 0) { Py_INCREF(dflt); re	Python/bltinmodule.c:builtin_getattr
+builtins.getattr	resumed	a count of arguments outside 2..3: if (!_PyArg_UnpackStack(args, nargs, "getattr", 2, 3, &v, &name, &dflt; an address &result: if (_PyObject_LookupAttr(v, name, &result) == 0) { Py_INCREF(dflt); re	Python/bltinmodule.c:builtin_getattr
 builtins.hasattr	resumed	a count of arguments outside 2..2: if (!_PyArg_UnpackStack(args, nargs, "hasattr", 2, 2, &obj, &name)) { 	Python/clinic/bltinmodule.c.h:builtin_hasattr
 builtins.hash	generated		Python/bltinmodule.c:builtin_hash
 builtins.id	generated		Python/bltinmodule.c:builtin_id

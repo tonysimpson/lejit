@@ -185,7 +185,7 @@ def mirrored_files():
     generators read, and ceval.c."""
     import policy_table
     files = {k.split(':')[0] for k in policy_table.ENTRIES}
-    files |= set(policy_table.TRANSLATED_SLOTS) | set(policy_table.TRANSLATED_FUNCTIONS)
+    files |= set(policy_table.TRANSLATED_SLOTS)
     from gen2 import scope
     files |= {f.cfile for f in scope.FAMILIES.values()}
     for path in glob.glob(os.path.join(HERE, 'gen_*.py')):

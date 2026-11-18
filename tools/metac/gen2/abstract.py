@@ -4,9 +4,11 @@ of Objects/abstract.c's functions that Ni declares in
 ni/Objects/pabstract.h; plongobject_gen.h and pfloatslots_gen.h, the
 metas of the int and float slots scope.py names (registered by the
 header's gen_FILE_init) and of floatobject.c's functions Ni declares;
-pmathmodule_gen.h, the metas of the math functions scope.py names
-(registered under their method table's flags by gen_mathmodule_init);
-and the metas of the file's functions those call.
+pmathmodule_gen.h and pbltinmodule_gen.h, the metas of the math functions
+and builtins scope.py names (registered under their method table's flags
+by gen_FILE_init: a METH_FASTCALL function's C array and count are the
+one tuple Ni passes, walked once per count its check allows); and the
+metas of the file's functions those call.
 
 A function's meta is found by walking it (walk.py) until the promotions it
 needs before any call are all at its entry; a callee is translated before
@@ -31,6 +33,8 @@ from .walk import Walk, new_reference, once_do, singleton, unconst
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 RET = {'obj': 'vinfo_t *', 'val': 'vinfo_t *', 'ok': 'bool', 'ct': 'int'}
+# a builtin's parameter binding times, by its part (policy_table.METH_ARGS)
+ROLE_BT = {'self': 'dynamic', 'arg': 'dynamic', 'array': 'array', 'count': 'count'}
 
 
 class Summary:
@@ -185,10 +189,14 @@ class Translator:
             sm = self.sums.setdefault(n, Summary(self.funcs[n]))
             sm.pbt = [b or 'dynamic' for b in pbt[n]]
             if n in self.builtins:
+                # Ni's arguments by their parts (METH_ARGS 'c'): a vinfo
+                # each, or the one tuple of an array and its count
                 spec = self.builtins[n][2]
-                if len(spec['c']) != len(sm.params) or spec['c'] != ['self', 'arg']:
+                if len(spec['c']) != len(sm.params) or not set(spec['c']) <= set(ROLE_BT):
                     self.fails[n] = 'ml_flags %s: Ni passes %s' % (
                         ' | '.join(self.builtins[n][1]), ', '.join(spec['c']))
+                else:
+                    sm.pbt = [ROLE_BT[r] for r in spec['c']]
 
     def call_sites(self, name):
         for cname, fn in self.funcs.items():
@@ -315,8 +323,8 @@ class Translator:
     def slot_key(self, n):
         """A static slot function's key in the report: its type and slot;
         a builtin's: its module and Python name."""
-        if n in self.builtins:
-            return '%s.%s' % (self.module, self.builtins[n][0])
+        if n in self.builtins or n in self.builtins_skipped:
+            return '%s.%s' % (self.module, (self.builtins.get(n) or self.builtins_skipped[n])[0])
         if n in self.slot_roots and 'static' in self.funcs[n].decl.storage:
             return '%s.%s' % (self.slot_types[n], self.slot_roots[n][0][1])
         return n
@@ -334,8 +342,8 @@ class Translator:
     def forward(self, name):
         sm = self.sums[name]
         fn = self.funcs[name]
-        types = ['vinfo_t *' if b == 'dynamic' else text(unconst(p.type))
-                 for p, b in zip(resume.params_of(fn), sm.pbt)]
+        types = ['vinfo_t *' if b in ('dynamic', 'array') else text(unconst(p.type))
+                 for p, b in zip(resume.params_of(fn), sm.pbt) if b != 'count']
         return 'static %s %s(PsycoObject *po%s);' % (RET[sm.kind], sm.meta,
                                                      ''.join(', ' + t for t in types))
 
@@ -598,13 +606,15 @@ def generate(target, family, effects=None):
     report = []
 
     def loc(n):
-        return '%s %s:%s' % (tr.slot_key(n), family.cfile, n)
+        f = tr.funcs[n].coord.file if n in tr.funcs else ''
+        return '%s %s:%s' % (tr.slot_key(n), clinic_file(family.cfile)
+                             if f.endswith(clinic_file(family.cfile)) else family.cfile, n)
     for n in order:
         if n in metas:
             report.append('generated  %-32s %s' % (loc(n), tr.sums[n].meta))
     for n in sorted(set(tr.fails) | set(tr.builtins_skipped)):
         report.append('skipped    %-32s %s' % (loc(n), tr.fails.get(n)
-                                                or tr.builtins_skipped[n]))
+                                                or tr.builtins_skipped[n][1]))
     notes = []
     for n, b in tr.budgets_hit:
         notes.append('budget     %-32s %s' % (loc(n), b))
@@ -652,6 +662,10 @@ def build_float(target):
 
 def build_math(target):
     return build(target, 'math')
+
+
+def build_bltin(target):
+    return build(target, 'bltin')
 
 
 def build_tuple(target):

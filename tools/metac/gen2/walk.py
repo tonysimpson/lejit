@@ -22,6 +22,8 @@ from .values import Conv, Path, Val, Var
 
 COMPARE = actions.COMPARE
 FLIP = {'<': '>', '>': '<', '<=': '>=', '>=': '<=', '==': '==', '!=': '!='}
+FOLD = {'<': int.__lt__, '>': int.__gt__, '<=': int.__le__, '>=': int.__ge__,
+        '==': int.__eq__, '!=': int.__ne__}
 
 
 class Record:
@@ -78,6 +80,8 @@ class Walk:
         self.pending_store = None     # an item stored borrowed, to be increfed next
         self.sc_slots = None
         self.kl_specs = {}        # an object variable whose length is loaded -> its spec
+        self.array = self.count = None    # a METH_FASTCALL root's C array and count
+        self.status_err = None    # (the compare, True if its truth is the error)
 
     # ---- the walk's record ----
 
@@ -128,7 +132,14 @@ class Walk:
             bt = self.sm.pbt[k]
             v = Var(name, t, bt, name, isparam=True)
             p.vars[name] = v
-            if bt == 'dynamic':
+            if bt == 'array':
+                # the C array and its count are the one tuple Ni passes
+                v.cname = ARGS_TUPLE
+                self.array = name
+                self.meta_params.append(('vinfo_t *', ARGS_TUPLE))
+            elif bt == 'count':
+                self.count = name
+            elif bt == 'dynamic':
                 self.meta_params.append(('vinfo_t *', name))
             else:
                 self.meta_params.append((text(unconst(t)), name))
@@ -145,7 +156,8 @@ class Walk:
             if isinstance(i, IfKnown):
                 self.if_known(p, out, i.name)
         for name in self.hoist:
-            actions.promote(self, p, out, name, entry=True)
+            if name in dict(self.params):
+                actions.promote(self, p, out, name, entry=True)
         self.body_start = len(out.items)
         self.block(body(self.fn.body), p, out, [])
         if not p.ended:
@@ -171,11 +183,93 @@ class Walk:
                  % (k.cname, text(unconst(v.ctype)), v.cname))
         p.vars[name] = k
 
-    def block(self, stmts, p, out, frames):
-        i = 0
+    # ---- a METH_FASTCALL root's arguments ----
+
+    def count_split(self, stmts, i, p, out):
+        """At the top-level statement that checks the count of arguments
+        (conventions.ARGUMENT_CHECKS): Ni's length of the tuple, CPython's
+        function where it is outside the check's bounds, and the rest of
+        the function walked once per count within them (polyvariance),
+        the count a constant on each path. False if the statement holds
+        no check (the count is then read before it is known)."""
+        bounds = set()
+        for x in walk_nodes(stmts[i]):
+            c = argument_check(self, x)
+            if c is not None:
+                bounds.add(c[1:3])
+        if not bounds:
+            return False
+        if len(bounds) > 1:
+            raise Refuse('the count of arguments checked against %s' % sorted(bounds))
+        lo, hi = bounds.pop()
+        here = [(stmts, i)]
+        if hi - lo + 1 > self.tr.budgets['polyvariance']:
+            self.rec.budgets.append('polyvariance')
+            resume.resume(self, p, out, here, 'budget polyvariance: counts %d..%d' % (lo, hi))
+            return True
+        n = self.new_tmp('int')
+        out.line('%s = %s(%s);' % (n, tuple_spec()['load'], ARGS_TUPLE))
+        back = out.sub()
+        resume.resume(self, p.copy(), back, here, 'a count of arguments outside %d..%d'
+                      % (lo, hi), inside=True)
+        out.if_('%s < %d || %s > %d' % (n, max(lo, 0), n, hi), back)
+        paths = []
+        for k in range(lo, hi + 1):
+            pk = p.copy()
+            pk.nargs = k
+            code = out if lo == hi else out.sub()
+            self.block(stmts, pk, code, [], start=i)
+            if not pk.ended:
+                raise Refuse('the end of the function is reachable without a return')
+            paths.append((k, pk, code))
+        if lo != hi:
+            rest = paths[-1][2]
+            for k, _, code in reversed(paths[:-1]):
+                outer = out.sub()
+                outer.if_('%s == %d' % (n, k), code, rest)
+                rest = outer
+            out.extend(rest)
+        p.take(paths[-1][1])
+        p.ended = p.early = True
+        return True
+
+    def bind_item(self, p, out, name, k):
+        """The C variable `name` is item k of the root's arguments: a
+        frame value, borrowed, its type promotable as a parameter's."""
+        v = p.vars[name]
+        if v.owned():
+            self.release(v, out)
+        out.line('%s = %s(%s, %d);' % (v.cname, tuple_spec()['item'], ARGS_TUPLE, k))
+        v.own, v.isparam, v.conv, v.virt, v.alias = 'borrowed', True, None, None, None
+        v.singleton, v.constant, v.known_null, v.rng = None, None, False, None
+        p.known.discard(name)
+        if name in self.hoist:
+            if p.called:
+                raise Refuse('the type of the argument %s is needed after a call' % name)
+            actions.promote(self, p, out, name, entry=True)
+
+    def args_item(self, e, p, out, frames):
+        """The index of args[k], an item of the root's arguments read
+        once their count is known; None if e is none."""
+        if self.array is None or not isinstance(e, c_ast.ArrayRef):
+            return None
+        a = strip_casts(e.name)
+        if not (isinstance(a, c_ast.ID) and a.name == self.array):
+            return None
+        k = self.ev(e.subscript, p, out, frames)
+        j = int(k.c) if k.bt == 'meta' and k.c.isdigit() else None
+        if p.nargs is None or j is None or not 0 <= j < p.nargs:
+            raise Refuse('the argument %s read outside the checked count' % cprint.expr(e))
+        return j
+
+    def block(self, stmts, p, out, frames, start=0):
+        i = start
         while i < len(stmts) and not p.ended:
             s = stmts[i]
             here = frames + [(stmts, i)]
+            if self.count is not None and p.nargs is None and not frames \
+                    and self.count in names_in(s) and self.count_split(stmts, i, p, out):
+                break
             if (not p.called and self.sm.kind != 'ct'
                     and not isinstance(s, (c_ast.Decl, c_ast.EmptyStatement))
                     and self.tr.every_path_loops(self.fn, here)):
@@ -361,17 +455,21 @@ class Walk:
             out.line('%s = %s;' % (v.cname, val.c))
             v.base = val.base
             return
+        k = self.args_item(strip_casts(e), p, out, frames)
+        if k is not None and v.bt == 'dynamic' and self.u.is_object(v.ctype):
+            self.bind_item(p, out, name, k)
+            return
         st = singleton(e)
         if st is not None and v.bt == 'dynamic' and self.u.is_object(v.ctype):
             # an immortal object: Ni's constant, made where it is used
             if v.owned():
                 self.release(v, out)
-            v.own, v.singleton, v.known_null, v.conv = 'none', st, False, None
+            v.own, v.singleton, v.constant, v.known_null, v.conv = 'none', st, None, False, None
             p.known.discard(name)
             return
         val = self.ev(e, p, out, frames, dest=name)
         v.known_null = False
-        v.singleton = None
+        v.singleton = v.constant = None
         if not v.isparam:
             p.known.discard(name)       # a known type was the old value's
         if val.bt == 'gen':
@@ -584,6 +682,7 @@ class Walk:
     def if_stmt(self, s, p, out, frames):
         facts_t, facts_f = [], []
         self.sc_slots = None
+        self.status_err = None
         c = s.cond
         cexpr = self.cond(c, p, out, frames, facts_t, facts_f)
         sc = self.sc_slots if is_logic(c) else None
@@ -601,6 +700,9 @@ class Walk:
             x.own = 'borrowed' if x.isparam else 'none'
             (pt if when else pf).failed = True
             (pf if when else pt).vars[name].conv = None
+        st = self.status_test(c)
+        if st is not None:
+            (pt if st else pf).failed = True
         it = self.impl_test(c, p)
         if it is not None:
             name, when = it
@@ -786,6 +888,8 @@ class Walk:
             if cprint.is_null(y) and op in ('==', '!=') and (self.is_obj_param(x, p)
                                                            or self.is_virtual(x, p)):
                 return op == '!='       # a meta's object parameter is never NULL, nor a virtual
+            if cprint.is_null(y) and op in ('==', '!=') and self.known_null(x, p):
+                return op == '=='
         va = vb = None
         if reps.is_zero(b):
             va = reps.sign(self, a, p, out)
@@ -800,11 +904,15 @@ class Walk:
             vb = items.length(self, b, p, out, frames, as_value=va.bt == 'dynamic')
         va = va or self.ev(a, p, out, frames)
         vb = vb or self.ev(b, p, out, frames)
+        if va.bt == 'call' or vb.bt == 'call':
+            return self.status_compare(e, op, va, vb)
         if va.bt == 'gen' or vb.bt == 'gen':
             if va.bt == 'gen' and vb.bt == 'gen':
                 return (va.const == vb.const) == (op == '==')
             return None
         if va.bt == 'meta' and vb.bt == 'meta':
+            if va.c.isdigit() and vb.c.isdigit():
+                return FOLD[op](int(va.c), int(vb.c))     # two constants: folded
             return '%s %s %s' % (paren(va.c), op, paren(vb.c))
         if va.bt == 'meta':
             va, vb, op = vb, va, FLIP[op]
@@ -819,6 +927,31 @@ class Walk:
         if self.u.is_double(va.ctype) or (vb.bt == 'dynamic' and self.u.is_double(vb.ctype)):
             raise ResumeHere('a compare of a double %s' % cprint.expr(e))
         return actions.runtime_compare(self, p, out, e, op, va, vb, facts_t, facts_f, value)
+
+    def status_compare(self, e, op, va, vb):
+        """A C status (0, or -1 with an exception set) compared as the C
+        tests it for its error: the meta's test of Ni's result (a bool's
+        false, a residual call's NULL)."""
+        if vb.bt == 'call':
+            va, vb, op = vb, va, FLIP[op]
+        k = vb.c.strip('()') if vb.bt == 'meta' else None
+        err = {('!=', '0'): True, ('<', '0'): True, ('==', '-1'): True,
+               ('==', '0'): False, ('>=', '0'): False}.get((op, k))
+        if err is None:
+            raise ResumeHere('a compare of %s' % cprint.expr(e))
+        test = '!(%s)' % va.c if va.conv.kind == 'ok' else '%s == NULL' % va.c
+        self.status_err = (id(e), err)
+        return test if err else ('(%s) != NULL' % va.c if va.conv.kind != 'ok' else va.c)
+
+    def status_test(self, c):
+        """True if an error is pending where c holds, False where it fails,
+        when c is just a status_compare (or its negation); else None."""
+        x, neg = strip_casts(c), False
+        while isinstance(x, c_ast.UnaryOp) and x.op == '!':
+            x, neg = strip_casts(x.expr), not neg
+        if self.status_err is None or self.status_err[0] != id(x):
+            return None
+        return self.status_err[1] != neg
 
     def null_test(self, c, p):
         """(variable, True if NULL where c holds) when c is just the error
@@ -858,6 +991,12 @@ class Walk:
             if v.bt == 'dynamic' and v.conv and v.conv.checkable:
                 return v
         return None
+
+    def known_null(self, x, p):
+        """x is an object variable assigned NULL on this path."""
+        x = strip_casts(x)
+        return isinstance(x, c_ast.ID) and x.name in p.vars and p.vars[x.name].known_null \
+            and p.vars[x.name].own == 'none' and not p.vars[x.name].isparam
 
     def is_virtual(self, x, p):
         x = strip_casts(x)
@@ -968,8 +1107,17 @@ class Walk:
     def ev_id(self, name, p, out):
         if name in p.vars:
             v = p.vars[name]
+            if v.bt == 'count':
+                if p.nargs is None:
+                    raise ResumeHere('the count of arguments before it is checked')
+                return Val('meta', str(p.nargs), v.ctype)
+            if v.bt == 'array':
+                raise ResumeHere('the argument array %s as a value' % name)
             if v.singleton is not None:
-                raise ResumeHere('the object %s as a value' % SINGLETON_NAMES[v.singleton])
+                # an immortal object as a value: Ni's constant, the
+                # variable's own reference
+                out.line('%s = %s();' % (v.cname, SINGLETONS[v.singleton]))
+                v.own, v.constant, v.singleton = 'new', v.singleton, None
             if v.bt == 'dynamic':
                 if v.own == 'none' and not v.isparam:
                     raise Refuse('%s read with no value' % name)
@@ -1180,6 +1328,46 @@ class Walk:
 
 # ---- helpers on the AST ----
 
+# the meta's name for the one tuple of a METH_FASTCALL root's arguments
+ARGS_TUPLE = 'vargs'
+
+
+def tuple_spec():
+    """The tuple's known-length spec (types.length_spec): how Ni loads
+    its length and reads its items."""
+    from .types import length_spec
+    return next(s for s in length_spec().values() if s['type'] == 'PyTuple_Type')
+
+
+def argument_check(w, x):
+    """(the rule, min, max) when x is a call of a conventions.ARGUMENT_CHECKS
+    function on the root's arguments with constant bounds; else None."""
+    from . import conventions
+    from .types import const_value
+    if not (isinstance(x, c_ast.FuncCall) and isinstance(x.name, c_ast.ID)
+            and x.name.name in conventions.ARGUMENT_CHECKS):
+        return None
+    rule = conventions.ARGUMENT_CHECKS[x.name.name]
+    args = x.args.exprs if x.args else []
+    decl = w.u.funcs.get(x.name.name)
+    pnames = [getattr(q, 'name', None) for q in (decl.args.params if decl is not None
+                                                 and decl.args else ())]
+    for part in ('array', 'count', 'min', 'max'):
+        if rule[part] is None:
+            continue
+        k, pname = rule[part]
+        if k >= len(args) or (k < len(pnames) and pnames[k] not in (None, pname)):
+            raise Refuse('%s: its parameter %d is not %s' % (x.name.name, k + 1, pname))
+    for part, var in (('array', w.array), ('count', w.count)):
+        if rule[part] is not None:
+            a = strip_casts(args[rule[part][0]])
+            if not (isinstance(a, c_ast.ID) and a.name == var):
+                raise Refuse("%s of something other than the root's arguments" % x.name.name)
+    lo, hi = (const_value(args[rule[b][0]]) for b in ('min', 'max'))
+    if lo is None or hi is None or lo > hi:
+        raise Refuse('%s with bounds not constants' % x.name.name)
+    return rule, lo, hi
+
 def param_decls(fn):
     args = fn.decl.type.args
     if args is None:
@@ -1197,6 +1385,10 @@ def walk_nodes(n):
     yield n
     for _, c in n.children():
         yield from walk_nodes(c)
+
+
+def names_in(s):
+    return {x.name for x in walk_nodes(s) if isinstance(x, c_ast.ID)}
 
 
 def unconst(t):
