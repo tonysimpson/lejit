@@ -177,19 +177,19 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/demo.py` | tooling | Demo: n-queens, n-body, ASCII Mandelbrot, word counts, timed with and without Ni. | `e4f21aa` |
 | `tools/bench.py` | tooling | Benchmarks against plain CPython: ints, floats, builtins, isinstance, demos. | `29fe738` |
 | `tools/profile_bench.py` | tooling | Runs one pyperformance benchmark warm under Ni for `perf record` (`PROFILE.md`). | `36a6939` |
-| `tools/storeclasses.py` | tooling | Classifies benchmark `STORE_ATTR`s by effect on the dict (`STORES.md`). | `730d24a` |
-| `tools/store_micro.py` | tooling | Cost of one attribute store with or without Ni (`STORES.md`). | `730d24a` |
-| `tools/loadguards.py` | tooling | How often load guards fail in warm code, and why (`STORES.md`). | `6cd0c26` |
-| `tools/load_micro.py` | tooling | Loads on a changing class or one with a metaclass (`STORES.md`). | `6cd0c26` |
-| `tools/store_cache_sim.py` | tooling | Simulates STORES.md option 4's per-(class, name) store cache over benchmark stores. | `074d210` |
+| `tools/storeclasses.py` | tooling | Classifies benchmark `STORE_ATTR`s by effect on the dict (`FINDINGS.md "Attribute stores"`). | `730d24a` |
+| `tools/store_micro.py` | tooling | Cost of one attribute store with or without Ni (`FINDINGS.md "Attribute stores"`). | `730d24a` |
+| `tools/loadguards.py` | tooling | How often load guards fail in warm code, and why (`FINDINGS.md "Attribute stores"`). | `6cd0c26` |
+| `tools/load_micro.py` | tooling | Loads on a changing class or one with a metaclass (`FINDINGS.md "Attribute stores"`). | `6cd0c26` |
+| `tools/store_cache_sim.py` | tooling | Simulates FINDINGS.md "Attribute stores" option 4's per-(class, name) store cache over benchmark stores. | `074d210` |
 | `tools/pyperf37.py` | tooling | Runs the vendored pyperformance benchmarks under 3.7 with and without Ni. | `88b1fa1` |
 | `tools/benchmarks.sh` | tooling | Release build plus the benchmark tools, saved in `build/bench/`. | `18e971f` |
-| `tools/codesize.py` | tooling | Code emitted by kind, opcode, function, instruction; promotion sites (`CODE_SIZE.md`). | `8081f96` |
-| `tools/samecode.py` | tooling | Whether two builds emit the same machine code, per instruction (D70; `CODE_SIZE.md`). | `8b8ffea` |
+| `tools/codesize.py` | tooling | Code emitted by kind, opcode, function, instruction; promotion sites (`FINDINGS.md "Code size"`). | `8081f96` |
+| `tools/samecode.py` | tooling | Whether two builds emit the same machine code, per instruction (D70; `FINDINGS.md "Code size"`). | `8b8ffea` |
 | `tools/promostats.py` | tooling | The promotion-site reports for `codesize.py` (`-p`, `-D`), from `ni._promostats()`. | `8081f96` |
-| `tools/compilebench.py` | tooling | Compile cost against pay-off per benchmark (`COMPILE_COST.md`). | `f598d22` |
-| `tools/closurecalls.py` | tooling | Counts calls straight to closures per benchmark iteration (`CLOSURES.md`). | `b11de13` |
-| `tools/closure_micro.py` | tooling | One loop calling a function or each kind of closure, for `perf stat` (`CLOSURES.md`). | `b11de13` |
+| `tools/compilebench.py` | tooling | Compile cost against pay-off per benchmark (`FINDINGS.md "Compile cost"`). | `f598d22` |
+| `tools/closurecalls.py` | tooling | Counts calls straight to closures per benchmark iteration (`FINDINGS.md "Calls to closures"`). | `b11de13` |
+| `tools/closure_micro.py` | tooling | One loop calling a function or each kind of closure, for `perf stat` (`FINDINGS.md "Calls to closures"`). | `b11de13` |
 | `tools/interpreted.py` | tooling | Per benchmark, the most-called functions still interpreted under Ni, with the reason. | `5f1dbf6` |
 | `tools/pyperformance/` | tooling | 23 pure-Python benchmarks from pyperformance 1.11.0 (MIT). | `88b1fa1` |
 | `tests/encoding/v_mem_mov_test.c`, `run_v_mem_mov.sh` | tooling | Executes `v_mem_mov`'s code and checks the loads and stores. | `de820e8` |

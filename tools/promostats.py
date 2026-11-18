@@ -409,7 +409,7 @@ def shared_after(ni, stats, sites, total, top, normalise, iterations=1):
                          vals=[sites[sid][7][v][0] for v in order],
                          runs=[sites[sid][7][v][3] for v in order]))
     T = sum(r['total'] for r in rows)
-    print('\n== code after sites with two or more values (OPTION_D.md) ==')
+    print('\n== code after sites with two or more values (FINDINGS.md "Option D") ==')
     print('code emitted %.1f KB; %d sites with 2+ values compiled in the run '
           '(%s); their values\' code %.1f KB (%.1f%%)' % (
               total / 1024, len(rows), ', '.join(

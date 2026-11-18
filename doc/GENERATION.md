@@ -4,7 +4,7 @@ The phase is in `GOAL.md` ("What the current phase is") and its design in DECISI
 
 ## The check for every step
 
-**Same code.** A generated function replaces a hand-written one only when Ni emits the same machine code with it, or the difference is recorded with a reason (`tools/samecode.py`, CODE_SIZE.md "Same code"). The behaviour tests and CPython's tests then run as usual.
+**Same code.** A generated function replaces a hand-written one only when Ni emits the same machine code with it, or the difference is recorded with a reason (`tools/samecode.py`, FINDINGS.md "Same code"). The behaviour tests and CPython's tests then run as usual.
 
 ## Steps
 

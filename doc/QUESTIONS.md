@@ -25,15 +25,15 @@ Unknowns still open. When one is answered, record the answer where it belongs (u
 ## Specialisation and code size
 35. **Compile time:** measured by `ni._stats()` and `tools/compilebench.py`. Still open: the share of compiled-to-compiled call sequences in richards and deltablue (decides a register calling convention), and instruction-cache effects.
 43. Answered by D64: option D not on 3.7; on the 3.12 backlog.
-44. **Should a megamorphic version forget what it derives from the forgotten value** (a bound method, a function), or key a cache on the descriptor? OPTION_D.md.
-45. **Can a callee be compiled at run time for a call cache** keyed on the code object (finfo, recursion depth, D46's test, argument state)? OPTION_D.md.
+44. **Should a megamorphic version forget what it derives from the forgotten value** (a bound method, a function), or key a cache on the descriptor? FINDINGS.md "Option D".
+45. **Can a callee be compiled at run time for a call cache** keyed on the code object (finfo, recursion depth, D46's test, argument state)? FINDINGS.md "Option D".
 46. **Should `codesize.py -D` attribute code compiled through pauses and respawns to the promotion value it came from?** Matters only if option D is pursued.
 
 ## 3.12 and later versions
 29. **Cached globals on 3.12+:** D25's `ma_version_tag` is deprecated (PEP 699); dict watchers or 3.12's keys version plus index instead? And should cached values stop living for ever?
 31. **Enter compiled code on 3.12 through `PyFunction_SetVectorcall`** (PORT312.md): on every function through a creation watcher, or only on hot ones?
 32. **Tracing on 3.12:** on 3.7 Ni falls back to the interpreter (D46). Should it do the same while `sys.monitoring` is active?
-33. **Compiled generator bodies and the 3.12 hook:** GENERATORS.md option A needs the PEP 523 hook for generator frames on 3.12. Acceptable, or generators interpreted there with only genexpr inlining?
+33. **Compiled generator bodies and the 3.12 hook:** FINDINGS.md "Generators" option A needs the PEP 523 hook for generator frames on 3.12. Acceptable, or generators interpreted there with only genexpr inlining?
 48. **3.8's finally opcodes without `#if`:** the core names `SETUP_LOOP`, `SETUP_EXCEPT`, `BREAK_LOOP`, `CONTINUE_LOOP`, which 3.8 lacks, and 3.8 adds `BEGIN_FINALLY` and others. A `block_stack` mechanism (D75), or a generated header of which opcodes exist? Needed to build 3.8. PORT38.md item 9.
 
 ## Decoupling the core (D16)
