@@ -490,8 +490,14 @@ static vinfo_t *ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg,
        t != (PyObject *)&PyFloat_Type))
     goto fallback;
   v = PsycoTuple_GET_ITEM(varg, 0);
-  if (t == (PyObject *)&PyType_Type)
+  if (t == (PyObject *)&PyType_Type) {
+    vinfo_t *vt = is_runtime(v->source) ? vinfo_getitem(v, iOB_TYPE) : NULL;
+    /* a run-time type already loaded (a megamorphic site's) is not
+       forgotten after a call that may assign __class__: read it again */
+    if (vt != NULL && is_runtime(vt->source))
+      return psyco_get_field(po, v, FMUT(OB_type));
     return psyco_get_field(po, v, OB_type);
+  }
   tp = Psyco_NeedType(po, v);
   if (tp == NULL)
     return NULL;

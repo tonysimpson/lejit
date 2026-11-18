@@ -552,6 +552,24 @@ def enum_constants(n):
     return out
 
 
+def megamorphic_type(n, swap):
+    # new classes on every call: the site of view's type goes megamorphic
+    # before the assignment is first compiled, and type() must read the
+    # type again after it
+    a = type('A', (A,), {})
+    b = type('B', (A,), {})
+    out = []
+    for k in range(n):
+        cls = a if k % 2 else b
+        if swap and k % 3 == 1:
+            view = cls(k)
+            view.__class__ = b if cls is a else a
+            out.append((k, cls.__name__, type(view).__name__))
+            continue
+        out.append(cls(k).x)
+    return out
+
+
 CASES = [
     ('in_called_function', [(4,)], {}),
     ('in_own_method', [(4,)], {}),
@@ -581,4 +599,5 @@ CASES = [
     ('in_constant_tuple', [(6,)], {}),
     ('module_constant', [(4,)], {}),
     ('enum_constants', [(6,)], {}),
+    ('megamorphic_type', [(10, False)] * 5 + [(10, True)] * 6, {}),
 ]
