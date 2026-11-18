@@ -471,18 +471,40 @@ static PyObject *cimpl_dict_get_known(PyObject *dict, PyObject *name,
    shared table only grows. Takes a reference to the keys. Only when some
    dict uses them (dk_refcnt > 1): before that, the first instance may still
    grow them, and CPython re-shares the grown keys only if the class holds
-   the sole reference. */
+   the sole reference. The reference is the current owner's (keys_release),
+   so the keys' address isn't reused while the code compares with it. */
+static PyObject *shared_record(void *p, PyCapsule_Destructor d);
+
+static ni_dictentry_t *keys_entries(ni_dictkeys_t *k) {
+  Py_ssize_t ixsize = k->dk_size <= 0xff ? 1 : k->dk_size <= 0xffff ? 2
+                      : k->dk_size <= 0xffffffff ? 4 : 8;
+  return (ni_dictentry_t *)(k->dk_indices + k->dk_size * ixsize);
+}
+
+/* the owner's reference to shared keys goes: the last one frees them as
+   dictobject.c:free_keys_object does (its free list aside) */
+static void keys_release(PyObject *c) {
+  ni_dictkeys_t *k = PyCapsule_GetPointer(c, NULL);
+  ni_dictentry_t *entries = keys_entries(k);
+  Py_ssize_t i;
+  if (--k->dk_refcnt > 0)
+    return;
+  for (i = 0; i < k->dk_nentries; i++) {
+    Py_XDECREF(entries[i].me_key);
+    Py_XDECREF(entries[i].me_value);
+  }
+  PyObject_FREE(k);
+}
+
 static bool shared_key_slot(PyTypeObject *tp, PyObject *name,
                             ni_dictkeys_t **keys, Py_ssize_t *ix,
                             Py_ssize_t *n) {
   ni_dictkeys_t *k = (ni_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys;
-  Py_ssize_t i, ixsize;
+  Py_ssize_t i;
   ni_dictentry_t *entries;
   if (k == NULL || k->dk_refcnt < 2)
     return false;
-  ixsize = k->dk_size <= 0xff ? 1 : k->dk_size <= 0xffff ? 2
-                                  : k->dk_size <= 0xffffffff ? 4 : 8;
-  entries = (ni_dictentry_t *)(k->dk_indices + k->dk_size * ixsize);
+  entries = keys_entries(k);
   for (i = 0; i < k->dk_nentries; i++)
     if (entries[i].me_key == name)
       break;
@@ -494,7 +516,8 @@ static bool shared_key_slot(PyTypeObject *tp, PyObject *name,
     return false;
   *ix = i;
   *keys = k;
-  k->dk_refcnt++; /* held by the compiled code */
+  k->dk_refcnt++;
+  shared_record(k, keys_release);
   return true;
 }
 
@@ -525,38 +548,30 @@ typedef struct {
    (see psyco_block_serial). CPython never gives a class shared keys again
    once it drops them. So: yes while it has them; no if Ni never saw it with
    them; otherwise yes only in blocks older than the moment Ni first saw
-   them gone, which includes every block compiled while it had them. A dead
-   type's address reused by a new class only costs a needless inline path
-   (or misses one). */
+   them gone, which includes every block compiled while it had them. What
+   Ni saw is a record (psyco_record), held by the code that relied on it:
+   a new class at a dead one's address starts unseen. */
 static bool keys_inline(PsycoObject *po, PyTypeObject *tp) {
-  /* type address -> None while it has shared keys, then the first block
-     serial after Ni saw them gone */
-  static PyObject *seen = NULL;
-  PyObject *key, *d;
-  bool r;
-  if (seen == NULL && (seen = PyDict_New()) == NULL)
-    OUT_OF_MEMORY();
-  key = PyLong_FromVoidPtr(tp);
-  if (key == NULL)
-    OUT_OF_MEMORY();
-  d = PyDict_GetItem(seen, key);
+  /* type -> None while it has shared keys, then the first block serial
+     after Ni saw them gone */
+  static ni_addrmap_t seen;
+  PyObject **slot = psyco_record(&seen, tp), *d = *slot;
   if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) {
-    if (d != Py_None && PyDict_SetItem(seen, key, Py_None) < 0)
-      OUT_OF_MEMORY();
-    r = true;
-  } else if (d == NULL) {
-    r = false;
-  } else {
-    if (d == Py_None) {
-      d = PyLong_FromUnsignedLong(psyco_next_serial);
-      if (d == NULL || PyDict_SetItem(seen, key, d) < 0)
-        OUT_OF_MEMORY();
-      Py_DECREF(d);
+    if (d != Py_None) {
+      Py_INCREF(Py_None);
+      Py_XSETREF(*slot, Py_None);
     }
-    r = psyco_block_serial(po) < PyLong_AsUnsignedLong(d);
+    return true;
   }
-  Py_DECREF(key);
-  return r;
+  if (d == NULL)
+    return false;
+  if (d == Py_None) {
+    d = PyLong_FromUnsignedLong(psyco_next_serial);
+    if (d == NULL)
+      OUT_OF_MEMORY();
+    Py_SETREF(*slot, d);
+  }
+  return psyco_block_serial(po) < PyLong_AsUnsignedLong(d);
 }
 
 /* (keys ^ g->keys) | ((keys->dk_nentries ^ g->n) & g->mask) */
@@ -596,8 +611,8 @@ static vinfo_t *keys_mismatch(PsycoObject *po, vinfo_t *vk, vinfo_t *vg) {
    replay may find different keys, so the code emitted must not depend on
    them: the expected values are run-time loads from a per-site
    keys_guard_t (freed with the code), and without usable keys it expects an
-   impossible pointer and fails into the helper. The keys are held for
-   good, like descriptors. */
+   impossible pointer and fails into the helper. The keys are held while
+   the code lives (shared_key_slot). */
 static vinfo_t *instance_dict_get(PsycoObject *po, vinfo_t *obj,
                                   PyTypeObject *tp, PyObject *name) {
   static keys_guard_t respawn_guard; /* read by trashed code only */
@@ -750,16 +765,74 @@ static void enable_version_tag(PyTypeObject *tp) {
   tp->tp_flags |= Py_TPFLAGS_HAVE_VERSION_TAG;
 }
 
+/* The guards and caches that attribute sites share, found by (type,
+   name, ...) at compile time and from the C helpers their failures call.
+   Each lives in a capsule that every owner whose code points at it holds
+   (psyco_owner_pin), and leaves its table when the last such owner dies:
+   the sites also hold the type, so its address isn't reused while the
+   entry is found. Classes made per call or reloaded would otherwise leave
+   theirs for good. */
+static PyObject *shared_record(void *p, PyCapsule_Destructor d) {
+  PyObject *c = PyCapsule_New(p, NULL, d);
+  if (c == NULL)
+    OUT_OF_MEMORY();
+  psyco_owner_keep(c); /* the owner's is the only reference */
+  return c;
+}
+
+/* a record in a dict, at a key: the dict holds its address, not a
+   reference; the capsule's context is (dict, key) */
+static void dict_record_dealloc(PyObject *c) {
+  PyObject *t, *v, *tb, *ctx = PyCapsule_GetContext(c);
+  PyErr_Fetch(&t, &v, &tb);
+  if (ctx != NULL && PyDict_DelItem(PyTuple_GET_ITEM(ctx, 0),
+                                    PyTuple_GET_ITEM(ctx, 1)) < 0)
+    PyErr_Clear();
+  Py_XDECREF(ctx);
+  PyMem_Free(PyCapsule_GetPointer(c, NULL));
+  PyErr_Restore(t, v, tb);
+}
+
+/* the record of 'key' in 'dict', made of 'size' bytes if there is none
+   and 'create' (else NULL); *made says which. Pinned by the current owner
+   when 'create'. */
+static void *dict_record(PyObject *dict, PyObject *key, size_t size,
+                         bool create, bool *made) {
+  PyObject *g = PyDict_GetItem(dict, key), *c, *ctx, *addr;
+  void *p;
+  *made = false;
+  if (g != NULL) {
+    c = PyLong_AsVoidPtr(g);
+    if (create)
+      psyco_owner_pin(c);
+    return PyCapsule_GetPointer(c, NULL);
+  }
+  if (!create)
+    return NULL;
+  if ((p = PyMem_Malloc(size)) == NULL)
+    OUT_OF_MEMORY();
+  c = shared_record(p, dict_record_dealloc);
+  ctx = PyTuple_Pack(2, dict, key);
+  addr = PyLong_FromVoidPtr(c);
+  if (ctx == NULL || addr == NULL || PyCapsule_SetContext(c, ctx) < 0 ||
+      PyDict_SetItem(dict, key, addr) < 0)
+    OUT_OF_MEMORY();
+  Py_DECREF(addr);
+  *made = true;
+  return p;
+}
+
 /* The guards of loads, as store_guard's for stores: one per (type,
    name, kind), which only ever holds a state of the type in which
    load_kind gives that kind, so any site may set it to such a state, and a
    failed guard re-arms the sites of the kind the type now gives
-   (load_type_changed). A table of pointers to records that are never
-   freed (the sites hold the type, the name and the kind's descriptor). */
+   (load_type_changed). A table of pointers to the records (shared_record;
+   the sites also hold the name and the kind's descriptor). */
 typedef struct {
   attr_guard_t guard;
   PyTypeObject *tp;
   PyObject *name, *kind;
+  PyObject *capsule;
 } load_guard_t;
 
 static load_guard_t **load_guards = NULL;
@@ -772,6 +845,29 @@ static size_t load_guard_slot(PyTypeObject *tp, PyObject *name,
   return (h ^ (h >> 31)) & load_guards_mask;
 }
 
+/* the capsule's destructor: out of the table, by backward shift */
+static void load_guard_dealloc(PyObject *c) {
+  load_guard_t *g = PyCapsule_GetPointer(c, NULL);
+  size_t i, j;
+  for (i = load_guard_slot(g->tp, g->name, g->kind); load_guards[i] != g;
+       i = (i + 1) & load_guards_mask)
+    ;
+  load_guards[i] = NULL;
+  load_guards_count--;
+  for (j = (i + 1) & load_guards_mask; load_guards[j] != NULL;
+       j = (j + 1) & load_guards_mask) {
+    load_guard_t *o = load_guards[j];
+    size_t h = load_guard_slot(o->tp, o->name, o->kind);
+    if (i < j ? (h <= i || h > j) : (h <= i && h > j)) {
+      load_guards[i] = o;
+      load_guards[j] = NULL;
+      i = j;
+    }
+  }
+  PyMem_Free(g);
+}
+
+/* pinned by the current owner when 'create' */
 static load_guard_t *load_guard(PyTypeObject *tp, PyObject *name,
                                 PyObject *kind, bool create) {
   load_guard_t *g;
@@ -779,8 +875,11 @@ static load_guard_t *load_guard(PyTypeObject *tp, PyObject *name,
   if (load_guards != NULL)
     for (i = load_guard_slot(tp, name, kind); (g = load_guards[i]) != NULL;
          i = (i + 1) & load_guards_mask)
-      if (g->tp == tp && g->name == name && g->kind == kind)
+      if (g->tp == tp && g->name == name && g->kind == kind) {
+        if (create)
+          psyco_owner_pin(g->capsule);
         return g;
+      }
   if (!create)
     return NULL;
   if (2 * (load_guards_count + 1) > load_guards_mask) { /* grow */
@@ -810,6 +909,7 @@ static load_guard_t *load_guard(PyTypeObject *tp, PyObject *name,
     ;
   load_guards[i] = g;
   load_guards_count++;
+  g->capsule = shared_record(g, load_guard_dealloc);
   return g;
 }
 
@@ -1013,28 +1113,21 @@ static bool store_cache_set(store_cache_t *c, ni_dictkeys_t *k) {
 }
 
 /* the cache of 'name' on 'tp': the same one in a compile and its
-   replays. Never freed; a dead class's address reused by a new one only
-   gives it a useless first hint. */
+   replays (a record, dict_record) */
 static store_cache_t *store_cache(PyTypeObject *tp, PyObject *name) {
-  static PyObject *caches = NULL; /* (type, name) -> cache address */
-  PyObject *key, *g;
+  static PyObject *caches = NULL; /* (type, name) -> capsule address */
+  PyObject *key;
   store_cache_t *c;
+  bool made;
   if (caches == NULL && (caches = PyDict_New()) == NULL)
     OUT_OF_MEMORY();
   key = Py_BuildValue("(kO)", (unsigned long)tp, name);
   if (key == NULL)
     OUT_OF_MEMORY();
-  g = PyDict_GetItem(caches, key);
-  if (g != NULL) {
-    Py_DECREF(key);
-    return PyLong_AsVoidPtr(g);
-  }
-  c = PyMem_Malloc(sizeof(store_cache_t));
-  if (c == NULL || (g = PyLong_FromVoidPtr(c)) == NULL ||
-      PyDict_SetItem(caches, key, g) < 0)
-    OUT_OF_MEMORY();
-  Py_DECREF(g);
+  c = dict_record(caches, key, sizeof(store_cache_t), true, &made);
   Py_DECREF(key);
+  if (!made)
+    return c;
   c->dk_size = c->kword = c->ix = 0;
   c->name = name;
   c->version = &ni_dict_version;
@@ -1099,29 +1192,19 @@ static void *store_kind(PyTypeObject *tp, PyObject *name) {
 /* The guard of every store site of 'name' on 'tp' compiled to do 'kind'
    (NULL if there is none and 'create' is false, or on an error). It only
    ever holds a state of the type in which store_kind gives 'kind', so any
-   of those sites may set it to such a state. Never freed: the sites hold
-   the type, so its address isn't reused. */
+   of those sites may set it to such a state. A record (dict_record). */
 static attr_guard_t *store_guard(PyTypeObject *tp, PyObject *name, void *kind,
                                  bool create) {
-  static PyObject *guards = NULL; /* (type, name, kind) -> guard address */
-  PyObject *key, *g;
-  attr_guard_t *guard = NULL;
+  static PyObject *guards = NULL; /* (type, name, kind) -> capsule address */
+  PyObject *key;
+  attr_guard_t *guard;
+  bool made;
   if (guards == NULL && (guards = PyDict_New()) == NULL)
     return NULL;
   key = Py_BuildValue("(kOk)", (unsigned long)tp, name, (unsigned long)kind);
   if (key == NULL)
     return NULL;
-  g = PyDict_GetItem(guards, key);
-  if (g != NULL)
-    guard = PyLong_AsVoidPtr(g);
-  else if (create && (guard = PyMem_Malloc(sizeof(attr_guard_t))) != NULL) {
-    g = PyLong_FromVoidPtr(guard);
-    if (g == NULL || PyDict_SetItem(guards, key, g) < 0) {
-      PyMem_Free(guard);
-      guard = NULL;
-    }
-    Py_XDECREF(g);
-  }
+  guard = dict_record(guards, key, sizeof(attr_guard_t), create, &made);
   Py_DECREF(key);
   return guard;
 }

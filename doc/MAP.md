@@ -99,7 +99,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/prangeobject.c`, `.h` | core + translated | Virtual ranges (words) and range iterators. | Objects/rangeobject.c | `9e58f97` |
 | `ni/Objects/psliceobject.c` | core + translated | Virtual slices (D56); `PsycoSlice_Unpack` gives step-1 bounds as words. | Objects/sliceobject.c, Python/ceval.c | `a6a687b` |
 | `ni/Objects/psliceobject.h` | glue | Declarations of `PsycoSlice_New` and `PsycoSlice_Unpack`. | Include/sliceobject.h | `b36a1ac` |
-| `ni/Objects/pobject.c` | core + translated | Generic object protocol metas (truth, attributes, hash, compare); attribute loads and stores behind type guards. | Objects/object.c | `95b1e61` |
+| `ni/Objects/pobject.c` | core + translated | Generic object protocol metas (truth, attributes, hash, compare); attribute loads and stores behind type guards, which with their caches and held keys live as long as the code that uses them. | Objects/object.c | `95b1e61` |
 | `ni/Objects/pobject.h` | core + translated | Compile-time PyObject API: ob_type/ob_size descriptors, type promotion (`Psyco_NeedType`, cut off past `MEGAMORPHIC_MAX` types, etc.). | Include/object.h | `351a4d5`, `935df0b` |
 | `ni/Objects/pbytesobject.c` | translated + core | `bytes` metas: `len()`, inline `b[i]`, `b[i:j]` of a virtual slice. | Objects/bytesobject.c | `ee76274`, `5169c24` |
 | `ni/Objects/pstringobject.c` | core + translated | Py2 str metas with virtual strings; compiled out on Py3. | Objects/stringobject.c (Py2) | `b36a1ac` |
