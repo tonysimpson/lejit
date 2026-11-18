@@ -35,21 +35,36 @@ step "effect snippets: small C in, the effect flags out (tests/effect_snippets.p
 step "translator snippets: small C in, the meta or refusal out (tests/gen2_snippets.py)"
 NI_PY37="$PY37" "$GEN_PY" tests/gen2_snippets.py
 
-step "generators run under two hash seeds, with the same output and the baseline's statuses (tools/metac/generate.py)"
+step "generators: seeds 1 and 2, seed 1 again, and the 3.8 dry run, in parallel (tools/metac/generate.py)"
 # the cross-checks (gen_ceval against ceval.c and dis.stack_effect) and the
-# comparison with tools/metac/expected/3.7.17.txt run in each; the build
+# comparison with tools/metac/expected/3.7.17.txt run in each; the 3.8 dry
+# run (--past-policy) compares with expected/3.8.20.txt. A second seed-1 run
+# catches what the hash seed doesn't fix (id() reuse, file order). The build
 # below generates again (seed 0) and must get the same headers
 rm -rf build/gen-check
-for n in 1 2; do
-    PYTHONHASHSEED=$n "$GEN_PY" tools/metac/generate.py --python "$PY37" --out build/gen-check/$n
+mkdir -p build/gen-check
+declare -A GEN_PIDS
+for n in 1 2 1-again; do
+    PYTHONHASHSEED=${n%-again} "$GEN_PY" tools/metac/generate.py --python "$PY37" \
+        --out build/gen-check/$n > build/gen-check/$n.log 2>&1 &
+    GEN_PIDS[$n]=$!
 done
+NI_CPYTHON_SRC= "$GEN_PY" tools/metac/generate.py --python "$PY38" --past-policy \
+    --out build/gen-check/3.8 > build/gen-check/3.8.log 2>&1 &
+GEN_PIDS[3.8]=$!
+GEN_FAILED=
+for n in 1 2 1-again 3.8; do
+    if ! wait "${GEN_PIDS[$n]}"; then
+        printf '\n-- %s FAILED (build/gen-check/%s.log):\n' "$n" "$n"
+        tail -40 "build/gen-check/$n.log"
+        GEN_FAILED=1
+    fi
+done
+[ -n "$GEN_FAILED" ] && exit 1
+cat build/gen-check/1.log
 diff -r build/gen-check/1 build/gen-check/2
-echo "same output"
-
-step "3.8 dry run against its baseline (generate.py --past-policy, tools/metac/expected/3.8.20.txt)"
-NI_CPYTHON_SRC= "$GEN_PY" tools/metac/generate.py --python "$PY38" --past-policy --out build/gen-check/3.8 > build/gen-check/3.8.log \
-    || { tail -40 build/gen-check/3.8.log; exit 1; }
-echo "same statuses"
+diff -r build/gen-check/1 build/gen-check/1-again
+echo "same output under seeds 1, 2 and 1 again; 3.8: same statuses"
 
 step "done test, point 1: what mirrors CPython and is still hand-written (tools/metac/donecheck.py)"
 # a definition with no reason (exit 1), a stale report or hand_table.py
