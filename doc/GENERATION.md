@@ -86,6 +86,15 @@ The policy table is `tools/metac/policy_table.py`, checked by `policy.py` in eve
 - **Step 8:** the `ceval.c` entries' `guard`, `promote` and `other` items (`LOAD_GLOBAL`'s dict-version guard, `ends_block`), and `LIGHT_OPCODES`.
 - When code moves from hand-written to generated, the checks that compare the table with Ni's code (limits, `cannot_block_init`, whitelists) should be replaced by the generator reading the table.
 
+## Step 4: done (`a8c06a9`, D74) [run]
+
+General translation works on `abstract.c`: `tools/metac/gen_abstract.py` (with `tools/metac/cparse.py`) writes `pabstract_gen.h`. METACOMPILER.md "General translation" has the method, what was generated and why each difference in the code is there.
+- **Generated:** 49 functions (every `abstract.c` function Ni declares a meta for, but four kept by policy items and `PySequence_Tuple`, plus their static helpers), with 9 run-time copies. `pabstract.c` lost 52 definitions, 1,106 → 297 lines. `DELETE_SUBSCR` is now a generated opcode.
+- **Same code:** `tools/samecode.py d71b0f6 a8c06a9`: 59 units same, 24 differ (3,991 of 4,075 code objects). Every difference is recorded with a reason: two bug fixes (F101; F102 for `seq * int` and the item functions), the C's own order in `PySequence_GetItem`/`SetItem`, `**=` translated instead of residual, a different run-time copy for `>>`'s hint, `_PySequence_IterSearch`'s real return type, register names, and a respawn count. Release instructions per warm iteration on the seven benchmarks: no change (within 0.2%).
+- **Token rules didn't stop here.** A statement reader over ctokens plus the preprocessor's macro list and declarations was enough; pycparser was not needed.
+- **Limits for step 5:** no loops (`PySequence_Tuple`, `long_compare`), an `int` result's convention needs a Ni declaration, only parameters are promoted, a resume inside a statement that already called is refused, `#`/`##` macros aren't expanded. Each refuses with a reason rather than guessing.
+- **Verdict:** the method holds for dispatch code. The policy table carried only `likely` and `not_translation`; everything else came from the C, Ni's declarations and the effect rules. Step 5's families have loops and representation (virtual objects), which this translator doesn't do yet: loops are the first thing to add.
+
 ## Step 8, front end: oparg-dependent stack effects (`99d9b26`, D73) [run]
 
 The reader expresses stack effects that depend on oparg as 3.12's DSL does (`values[oparg]`, `step if (oparg == 3)`, `unused[oparg - 1]`), derived from the C; METACOMPILER.md "`ceval.c` reader".

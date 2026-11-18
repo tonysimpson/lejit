@@ -1,5 +1,14 @@
 # Status
 
+## 2026-11-18: general translation of `abstract.c` (GENERATION.md step 4, `a8c06a9`, D74)
+
+`tools/metac/gen_abstract.py` translates `abstract.c`'s functions into metas by binding times and fixed rules (D74, METACOMPILER.md "General translation"); the build writes `pabstract_gen.h`. [run]
+- **Generated:** 49 functions and 9 run-time copies; `pabstract.c` 1,106 → 297 lines. `PsycoLong_AsIndex` is now `PsycoNumber_AsSsize_t(po, v, err)`. `DELETE_SUBSCR` generated. KNOWN_BUGS F101 fixed, F102 fixed except for list and tuple `[int]`.
+- **Same code:** `tools/samecode.py d71b0f6 a8c06a9`: 59 units same, 24 differ, each difference recorded (METACOMPILER "General translation", eight reasons). Release builds, instructions per warm iteration, `924ead0` against this code: richards 168.93/168.92 M, deltablue 26.54/26.52, raytrace 3,102.7/3,097.7, go 1,072.3/1,070.6, hexiom 40.64/40.65, chaos 464.5/464.8, pyflate 2,012.04/2,012.05.
+- Checked build: generators twice, same output, and the build used it; `tests/run.py` 749 pass; `tests/compile_bounds.py` 7 checks; the seven `profile_bench.py` runs complete; `tests/cpython_tests.py -j 2` default set 285 modules, 0 unexpected; `tests/smoke.py` same output.
+- `tests/cpython_tests.py -j 2 --all`: 371 modules, 0 unexpected. Not run: `v_mem_mov`, the encoding check.
+- **Risks:** the generated metas follow the C's order, so a later CPython that reorders a function changes Ni's code with no review (samecode is the check); the error convention is inferred from the next test of a result, so a C function that tests it later or not at all is refused, not guessed; the run-time copies are C copied from CPython's source and compiled into Ni, so they call CPython's static helpers by copy (`cimpl_type_error`), which must stay equal to the originals.
+
 ## 2026-11-18: layouts generated from the target's headers (D19 stage 0, `ee76274`, `9869ad9`, D76)
 
 The CPython fields Ni relies on are a list in the policy table (`LAYOUTS`, `RUNTIME`); `tools/metac/gen_layouts.py` checks each against the target's headers and writes `layouts_gen.h` and `runtime_layouts_gen.h`: offsets by `offsetof`, read sizes, and a `_Static_assert` per assumption (type, size, kind, sign). METACOMPILER.md "Stage 0: layouts".
