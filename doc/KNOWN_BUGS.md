@@ -52,7 +52,6 @@ From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent:
 - **G13** (latent): `scalars` and `ceval_inline` inline by substituting names or argument text, not values: a local copied from `*p` sees a later `*p = …`, and an argument with a call is evaluated once per use. [read]
 - **G14** (latent): `gen_virtual` treats a store under a condition as unconditional, and misses a NULL default written another way (`if (!step)`). [read]
 - **G15** (latent): `ceval_inline.Inliner.switch` loses a switch arm's fall-through when another arm returns. gen2 refuses an arm that falls into the next (`tests/gen2_snippets.py`). [read] [run]
-- **G19**: `gen_abstract` can number its run-time copies differently between runs under the same `PYTHONHASHSEED` (`pabstract_gen.h`: the same `cimpl_PyNumber_InPlaceMultiply` copy named `_3` in one run, `_5` in another), so `tools/check.sh`'s two-seed comparison fails now and then. [run] The copy cache's key holds `id()`s of statement lists (`Translator.copy`), which can be reused once a list is freed, so a lookup may hit another position's copy. [inferred] Seen before `pabstract_gen.h` moved to gen2; the old units that remain may still do it. [run]
 
 ## Fixed, still cited
 

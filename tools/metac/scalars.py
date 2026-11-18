@@ -31,6 +31,23 @@ import cparse
 import ctokens
 import policy_table
 
+
+class Same:
+    """An object in a cache key, equal only to itself. It holds the object,
+    so its id can't be reused while the key lives: a key of a bare id() can
+    match a temporary made later at the same address, which changes the
+    copies a run makes and the names they get."""
+    __slots__ = ('obj',)
+
+    def __init__(self, obj):
+        self.obj = obj
+
+    def __eq__(self, other):
+        return isinstance(other, Same) and other.obj is self.obj
+
+    def __hash__(self):
+        return id(self.obj)
+
 STMT_HEADS = {'block', 'if', 'return', 'goto', 'empty', 'expr', 'decl',
               'label', 'unsupported', 'for', 'while', 'do', 'switch', 'case',
               'default', 'break', 'continue'}
@@ -877,7 +894,7 @@ class ScalarRules:
         return expr
 
     def add_helper(self, rtype, params, lines, run, key):
-        key = ('scalar', self.f.name, key)
+        key = ('scalar', self.f.name, Same(key))
         name = next((n for n, (k, _) in self.tr.copy_keys.items() if k == key), None)
         if name is not None:
             self.tr.copy_order.remove(name)
@@ -937,7 +954,7 @@ class ScalarRules:
             lines += c_stmt(fix(s), expr, 1)
         if not tail:
             lines.append('  return %s;' % (outs[0] if outs else '0'))
-        name = self.add_helper(rtype, params, lines, run, id(stmts[0]))
+        name = self.add_helper(rtype, params, lines, run, stmts[0])
         t = self.call_helper(name, run, rtype, fmt, args, loads, st, out)
         if tail:
             if self.sm.kind == 'obj':
@@ -993,7 +1010,7 @@ class ScalarRules:
         text = self.helper_expr(st)(e)
         name = self.direct_callee(e, params, text, run)
         if name is None:
-            name = self.add_helper(ctype, params, ['  return %s;' % text], run, id(e))
+            name = self.add_helper(ctype, params, ['  return %s;' % text], run, e)
         t = self.call_helper(name, run, ctype, fmt, args, loads, st, out)
         return GA.Val('rt', t, ctype, owned=True)
 

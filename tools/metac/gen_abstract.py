@@ -1070,7 +1070,8 @@ class Translator:
         the end: (its name, its parameters). frames: [(stmts, index)] from
         the function's top level inwards."""
         whole = len(frames) == 1 and frames[0][1] == 0
-        key = (f.name, tuple((id(s), i) for s, i in frames), tuple(sorted(owned)))
+        key = (f.name, tuple((scalars.Same(s), i) for s, i in frames),
+               tuple(sorted(owned)))
         for name, (k, params) in self.copy_keys.items():
             if k == key:
                 return name, params

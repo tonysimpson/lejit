@@ -86,6 +86,9 @@ class Copies:
     def __init__(self, tr):
         self.tr = tr
         self.keys = {}            # key -> (name, params)
+        # the statement lists keys name by id(), kept so that no later
+        # list (a branch's [stmt]) can take one's id and match its key
+        self._pinned = []
         self.texts = {}           # name -> C
         self.order = []
         self.making = set()
@@ -145,6 +148,7 @@ class Copies:
             ret, name,
             ', '.join(text(t, pn) for pn, t in params) or 'void', ' '.join(decls), body)
         self.keys[key] = (name, params)
+        self._pinned.extend(s for s, _ in frames)
         self.texts[name] = c
         self.order.append(name)
         return name, params
