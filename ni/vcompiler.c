@@ -1187,7 +1187,7 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
   /* initialize po->vlocals. The globals are borrowed: compiled code holds
      its constants until its code object dies (sk_new), and here that
      would close a cycle the GC can't see, globals -> function -> code ->
-     co_extra -> owner -> globals, in all code with globals of its own
+     record -> owner -> globals, in all code with globals of its own
      (exec, namedtuple), which only the owner scan (codemanager.c) would
      find. Borrowing is safe because compiled code
      uses the dict only as an argument to run-time calls, never its

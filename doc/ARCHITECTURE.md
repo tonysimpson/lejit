@@ -38,7 +38,7 @@ Dependencies point downward in principle. In practice the translated files also 
 2. **First call of a function.** `NiEval_EvalFrame` [read]:
    - It skips module-level code (globals are the locals), generator and coroutine code, and frames run while tracing falls back to CPython (D46).
    - `psyco_get_merge_points(co)` returns `Py_None` if the code uses any opcode not supported in `ni/mergepoints.c`. The frame then runs in CPython as normal.
-   - Otherwise, if the code object has no entry point yet (its `co_extra` record, `ni/ni.c:ni_code_extra`), it builds a `PsycoObject` with `ni/vcompiler.c:PsycoObject_FromCode`: arguments become run-time stack slots, globals become a compile-time constant, unbound locals become compile-time zero, and `*args`/`**kw` are run-time with a known type.
+   - Otherwise, if the code object has no entry point yet (its record, `ni/ni.c:ni_code_extra`), it builds a `PsycoObject` with `ni/vcompiler.c:PsycoObject_FromCode`: arguments become run-time stack slots, globals become a compile-time constant, unbound locals become compile-time zero, and `*args`/`**kw` are run-time with a known type.
    - It then calls `PsycoObject_Ready` (first merge point, drop dead vars) and `psyco_compile_code`, and caches `(codebuf, globals)`.
    - **There's no hotness check: every eligible function is compiled on its first call**, with auto-recursion depth `DEFAULT_RECURSION` = 10.
 3. **Running.** `NiCode_Run` registers the frame (`ni/Python/frames.c:psyco_frame_start_register`) and jumps into the machine code via `psyco_processor_run(codebuf, f_localsplus, finfo)` (backend). [read]

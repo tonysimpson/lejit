@@ -698,8 +698,7 @@ static void owners_scan(void) {
     n = 0;
   }
   /* all records are taken off their code objects before any reference is
-     dropped, so that code a finaliser runs is compiled afresh, and freed
-     here, in the main interpreter (ni.c:ni_code_extra_detach says why) */
+     dropped, so that code a finaliser runs is compiled afresh */
   for (i = 0; i < n; i++)
     dead[i] = ni_code_extra_detach(dead_co[i]);
   for (i = 0; i < n; i++)

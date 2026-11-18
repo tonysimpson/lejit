@@ -193,7 +193,7 @@ typedef struct ni_owner_s {
   size_t stub_chunk;
 } ni_owner_t;
 
-/* What Ni keeps per code object, in its co_extra slot (PEP 523): found by
+/* What Ni keeps per code object, on its weak references (ni.c): found by
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
 typedef struct ni_code_extra_s {
@@ -215,9 +215,9 @@ typedef struct ni_code_extra_s {
 EXTERNFN ni_code_extra_t* ni_code_extra(PyCodeObject* co);
 /* the record for 'co' if it has one, never raising */
 EXTERNFN ni_code_extra_t* ni_code_extra_get(PyCodeObject* co);
-/* co_extra's free function: releases the record's compiled code */
-EXTERNFN void ni_code_extra_free(void* p);
-/* takes the record off 'co' and returns it (ni.c says why) */
+/* releases the record and its compiled code; its code object is dead */
+EXTERNFN void ni_code_extra_free(ni_code_extra_t* x);
+/* takes the record off 'co', unfreed, and returns it */
 EXTERNFN ni_code_extra_t* ni_code_extra_detach(PyCodeObject* co);
 
 /* moved here from vcompiler.h because needed by numerous header files.

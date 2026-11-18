@@ -1,4 +1,4 @@
-# Compiled code objects must be able to die. The code object's co_extra
+# Compiled code objects must be able to die. The code object's record
 # holds its snapshots, so a snapshot holding the code object would make it
 # immortal. Compiled code borrows its globals, so code with globals of its
 # own (exec into a new dict, namedtuple) dies with them, and a cycle back
@@ -120,8 +120,8 @@ def own_namespace_recursion():
 
 def freed_in_subinterpreter():
     # a cycle through compiled code, old by the time it is garbage, found
-    # by a scan, then freed by a subinterpreter's collection: that
-    # interpreter has no free function for Ni's co_extra
+    # by a scan, then freed by a subinterpreter's collection, whose
+    # co_extra free functions are junk on 3.7 (ni.c)
     import _testcapi
     cycles = []
     for k in range(20):
@@ -141,6 +141,51 @@ def freed_in_subinterpreter():
     keep.clear()
     gc.collect()
     return total, r, [x() is None for x in refs]
+
+
+def unscanned_freed_in_subinterpreter():
+    # compiled code in plain cycles (the namespace and its function) that
+    # become garbage with no scan since: the subinterpreter's collection
+    # frees them (ni.c: why Ni's records aren't in co_extra)
+    import _testcapi
+    gc.collect()
+    gc.disable()
+    try:
+        refs = []
+        for k in range(50):
+            ns = {}
+            _exec(SRC, ns)
+            sum(map(ns['f'], (k,)))  # from C: no call site holds f
+            refs.append(weakref.ref(ns['f'].__code__))
+        del ns
+        r = _testcapi.run_in_subinterp('import gc; gc.collect()')
+    finally:
+        gc.enable()
+    if not _perturbed:
+        _perturbed.append(_run_perturbed())
+    return r, _perturbed[0], [x() is None for x in refs]
+
+
+_perturbed = []
+
+
+def _run_perturbed():
+    # the same in a child whose fresh memory malloc fills with junk, so
+    # that the subinterpreter's free functions aren't NULL by luck: only
+    # once, not on every round of the leak check
+    import os
+    import subprocess
+    import sys
+    src = ('import sys\nif sys.argv[1] == "1":\n    import ni\n'
+           'import freeing\nfreeing._perturbed.append(None)\n'
+           'print(freeing.unscanned_freed_in_subinterpreter'
+           '()[0::2] == (0, [True] * 50))\n')
+    env = dict(os.environ, MALLOC_PERTURB_='165',
+               PYTHONPATH=os.pathsep.join(sys.path))
+    p = subprocess.run([sys.executable, '-c', src,
+                        '1' if 'ni' in sys.modules else '0'],
+                       env=env, stdout=subprocess.PIPE, timeout=120)
+    return p.returncode, p.stdout.decode().strip()
 
 
 def namedtuple_code_dies():
@@ -265,6 +310,7 @@ CASES = [
     ('own_namespace_calls', [()], {'interpreted': 'calls exec (C15)'}),
     ('own_namespace_recursion', [()], {'interpreted': 'calls exec (C15)'}),
     ('freed_in_subinterpreter', [()], {'interpreted': 'calls exec (C15)'}),
+    ('unscanned_freed_in_subinterpreter', [()], {}),
     ('namedtuple_code_dies', [()], {}),
     ('isinstance_class_dies', [()], {}),
     ('isinstance_instance_class_dies', [()], {}),

@@ -52,11 +52,11 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/mechanisms/entry/{frame_eval_hook_interp,vectorcall}.h`, `ni/mechanisms/tracing/{cframe_use_tracing,monitoring}.h`, `ni/mechanisms/frames/{interpreter_frame_cframe,interpreter_frame}.h` | glue (stubs) | One `#error "... not written yet"` each, saying what the variant must do. | 3.11–3.13 | `36b5beb` |
 | `ni/mergepoints.c` | core | Finds merge points, dead locals, join points and eval_breaker tests in a code object; the opcode whitelist. | none (copies `NEXTOPARG` from Python/ceval.c) | `b36a1ac` |
 | `ni/mergepoints.h` | core | Merge point tables: where control paths join and compiled states are cached. | none | `e26c2a3` |
-| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code `co_extra` records, `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `9b9dcef` |
+| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code records (weak references on the code object, D124), `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `9b9dcef` |
 | `ni/platform.c` | glue | Allocates executable (RWX) memory: mmap on Unix, VirtualAlloc on Windows. | none | `1e65d32` |
 | `ni/platform.h` | glue | Prototype for psyco_allocate_executable_buffer(). | none | `e1fd808` |
 | `ni/processor.h` | backend (interface) | Prototypes for running compiled code: psyco_processor_run, RUN_ARGC, aligned-call glues. | none | `4398496` |
-| `ni/psyco.h` | glue | Global definitions: build switches, sizes, assertions, linkage macros, the sanitizer hooks (`NI_POISON`, `NI_LSAN_ROOT`), the `co_extra` record and its owner; includes `layouts_gen.h`. | none | `9b9dcef` |
+| `ni/psyco.h` | glue | Global definitions: build switches, sizes, assertions, linkage macros, the sanitizer hooks (`NI_POISON`, `NI_LSAN_ROOT`), the per-code record and its owner; includes `layouts_gen.h`. | none | `9b9dcef` |
 | `ni/psyfunc.c` | core + translated | Python calls at compile time: build the callee frame, inline small functions or compile and call. | Python/ceval.c, Objects/call.c, Include/ceval.h | `95b1e61` |
 | `ni/psyfunc.h` | glue | Declarations for psyfunc.c and the generated binder (D85). | none | `e11f2a3` |
 | `ni/pycodegen.h` | core | Emits Py_INCREF/Py_DECREF and reference-ownership helpers on vinfo_t. | Include/object.h | `fa3dae7` |

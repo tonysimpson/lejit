@@ -106,78 +106,101 @@ void ni_trace_unify(PsycoObject *po, CodeBufferObject *match) {}
 DEFINEVAR PyObject *PyExc_PsycoError;
 DEFINEVAR PyObject *CPsycoModule;
 
-/* A record dies with its code object, and its owner releases the compiled
-   code (codemanager.c). */
-static Py_ssize_t code_extra_index = -1;
+/* A record hangs off its code object as a weak reference of Ni's own
+   type rather than in co_extra: code_dealloc calls the co_extra free
+   functions of whichever interpreter is current, and on 3.7 a
+   subinterpreter's table is never initialised (PyInterpreterState_New),
+   so main-interpreter garbage that a subinterpreter's collection frees
+   would call junk. A weak reference's callback runs in any interpreter.
+   The record lives inside the reference, which the GC doesn't track; Ni
+   holds one reference to it while it is attached (or being freed), and
+   its owner releases the compiled code (codemanager.c). It is visible
+   only to weakref.getweakrefs on the code object. */
+typedef struct {
+  PyWeakReference wr;
+  char attached;
+  ni_code_extra_t x;
+} code_record_t;
 
-DEFINEFN void ni_code_extra_free(void *p) {
-  /* code_dealloc calls every user's free function for every slot, so a
-     code object only another co_extra user touched gives NULL here */
-  ni_code_extra_t *x = (ni_code_extra_t *)p;
-  if (x == NULL)
-    return;
+static PyTypeObject CodeRecord_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "ni.code_record",
+    .tp_basicsize = sizeof(code_record_t),
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+};
+static PyObject *record_died_fn = NULL;
+
+#define RECORD_OF(px)                                                          \
+  ((code_record_t *)((char *)(px)-offsetof(code_record_t, x)))
+
+DEFINEFN void ni_code_extra_free(ni_code_extra_t *x) {
   psyco_owner_release(&x->owner, x->merge_points, x->entry_point);
   psyco_owner_untrack(x); /* after: releasing can keep into the owner */
-  PyMem_Free(x);
+  Py_DECREF(RECORD_OF(x));
 }
+
+/* the weak reference's callback; anyone can fetch it from a live
+   reference (__callback__) and call it */
+static PyObject *record_died(PyObject *self, PyObject *ref) {
+  code_record_t *r = (code_record_t *)ref;
+  if (Py_TYPE(ref) == &CodeRecord_Type && r->attached &&
+      PyWeakref_GET_OBJECT(ref) == Py_None) {
+    r->attached = 0;
+    ni_code_extra_free(&r->x);
+  }
+  Py_RETURN_NONE;
+}
+
+static PyMethodDef record_died_def = {"ni_record_died", record_died, METH_O,
+                                      NULL};
 
 DEFINEFN
 ni_code_extra_t *ni_code_extra_get(PyCodeObject *co) {
-  void *x;
-  /* fails only for an object that isn't code */
-  if (_PyCode_GetExtra((PyObject *)co, code_extra_index, &x) < 0)
-    return NULL;
-  return (ni_code_extra_t *)x;
+  PyWeakReference *r = (PyWeakReference *)co->co_weakreflist;
+  for (; r != NULL; r = r->wr_next)
+    if (Py_TYPE(r) == &CodeRecord_Type)
+      return &((code_record_t *)r)->x;
+  return NULL;
 }
 
-/* Objects/codeobject.c's private layout of co_extra */
-typedef struct {
-  Py_ssize_t ce_size;
-  void *ce_extras[1];
-} code_extra_array_t;
-
-/* code_dealloc calls the free functions of the interpreter current then.
-   A subinterpreter has no Ni free function, and on 3.7 its table isn't
-   even initialised (PyInterpreterState_New), so a code object that has
-   co_extra must not die under one: the owner scan, which runs in the
-   main interpreter, takes the record off and, when no other user has a
-   slot, frees the array too */
+/* unlinked without its callback; freeing it is the caller's */
 DEFINEFN
 ni_code_extra_t *ni_code_extra_detach(PyCodeObject *co) {
-  code_extra_array_t *e = co->co_extra;
-  ni_code_extra_t *x;
-  Py_ssize_t i;
-  if (e == NULL || e->ce_size <= code_extra_index)
-    return NULL;
-  x = e->ce_extras[code_extra_index];
-  e->ce_extras[code_extra_index] = NULL;
-  for (i = 0; i < e->ce_size; i++)
-    if (e->ce_extras[i] != NULL)
-      return x;
-  PyMem_Free(e);
-  co->co_extra = NULL;
+  ni_code_extra_t *x = ni_code_extra_get(co);
+  if (x != NULL) {
+    RECORD_OF(x)->attached = 0;
+    _PyWeakref_ClearRef(&RECORD_OF(x)->wr);
+  }
   return x;
 }
 
 DEFINEFN
 ni_code_extra_t *ni_code_extra(PyCodeObject *co) {
   static long next_serial = 0;
-  void *x;
-  if (_PyCode_GetExtra((PyObject *)co, code_extra_index, &x) < 0)
+  ni_code_extra_t *x = ni_code_extra_get(co);
+  PyObject *args;
+  code_record_t *r;
+  if (x != NULL)
+    return x;
+  args = PyTuple_Pack(2, (PyObject *)co, record_died_fn);
+  if (args == NULL)
     return NULL;
-  if (x == NULL) {
-    x = PyMem_Calloc(1, sizeof(ni_code_extra_t));
-    if (x == NULL) {
-      PyErr_NoMemory();
-      return NULL;
-    }
-    if (_PyCode_SetExtra((PyObject *)co, code_extra_index, x) < 0) {
-      PyMem_Free(x);
-      return NULL;
-    }
-    ((ni_code_extra_t *)x)->serial = ++next_serial;
-  }
-  return (ni_code_extra_t *)x;
+  /* zeroed, and tracked by the GC, which has nothing to find in it */
+  r = (code_record_t *)_PyWeakref_RefType.tp_new(&CodeRecord_Type, args, NULL);
+  Py_DECREF(args);
+  if (r == NULL)
+    return NULL;
+  PyObject_GC_UnTrack(r);
+  r->attached = 1;
+  r->x.serial = ++next_serial;
+  return &r->x;
+}
+
+static int code_records_init(void) {
+  CodeRecord_Type.tp_base = &_PyWeakref_RefType;
+  if (PyType_Ready(&CodeRecord_Type) < 0)
+    return -1;
+  record_died_fn = PyCFunction_New(&record_died_def, NULL);
+  return record_died_fn == NULL ? -1 : 0;
 }
 
 DEFINEFN
@@ -287,15 +310,12 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
 
 /* for tests and tools: what the eval hook did with a code object */
 static PyObject *ni_code_info(PyObject *self, PyObject *co) {
-  void *x;
   ni_code_extra_t *e;
   if (!PyCode_Check(co)) {
     PyErr_SetString(PyExc_TypeError, "_code_info() needs a code object");
     return NULL;
   }
-  if (_PyCode_GetExtra(co, code_extra_index, &x) < 0)
-    return NULL;
-  e = (ni_code_extra_t *)x;
+  e = ni_code_extra_get((PyCodeObject *)co);
   if (e == NULL || e->merge_points == NULL)
     return PyUnicode_FromString("not seen");
   if (e->merge_points == Py_None)
@@ -365,19 +385,18 @@ static PyObject *ni_inlinable(PyObject *self, PyObject *co) {
 /* for debugging (doc/BUILD.md): (codebuf, address of the globals) the eval
    hook runs; the address, since the globals are borrowed and may be dead */
 static PyObject *ni_py_entry_point(PyObject *self, PyObject *co) {
-  void *x;
+  ni_code_extra_t *x;
   PyObject *e;
   if (!PyCode_Check(co)) {
     PyErr_SetString(PyExc_TypeError, "_entry_point() needs a code object");
     return NULL;
   }
-  if (_PyCode_GetExtra(co, code_extra_index, &x) < 0)
-    return NULL;
-  e = x ? ((ni_code_extra_t *)x)->entry_point : NULL;
+  x = ni_code_extra_get((PyCodeObject *)co);
+  e = x ? x->entry_point : NULL;
   if (e == NULL || e == Py_None)
     Py_RETURN_NONE;
   return Py_BuildValue("(On)", e,
-                       (Py_ssize_t)((ni_code_extra_t *)x)->entry_globals);
+                       (Py_ssize_t)x->entry_globals);
 }
 
 /* tools/interpreted.py profiles compiled code's callers, so it turns off
@@ -456,8 +475,7 @@ PyMODINIT_FUNC PyInit_ni(void) {
   module = PyModule_Create(&ni_module);
   /* XXX tony: make this code handle errors properly */
   if (module) {
-    code_extra_index = _PyEval_RequestCodeExtraIndex(ni_code_extra_free);
-    if (code_extra_index < 0) {
+    if (code_records_init() < 0) {
       Py_DECREF(module);
       return NULL;
     }
