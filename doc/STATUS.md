@@ -1,5 +1,14 @@
 # Status
 
+## 2026-11-18: builders generated (GENERATION.md step 8, builders; `5c8a4fb`, D81)
+
+`BUILD_SET`, `BUILD_MAP`, `BUILD_LIST_UNPACK`, `BUILD_SET_UNPACK` and `LOAD_CLOSURE` are generated from `ceval.c`: loops unrolled in the compiler by `gen_abstract.loop_rule`, with error exits; C ints of the compiler; `restype` asserted. Generated 64 of 119. [run]
+- **Same code:** `tools/samecode.py baseline-3.7 5c8a4fb`: 80 units same, 4 differ (4,136 of 4,150 code objects); every first difference is a `BUILD_LIST_UNPACK` (8) or `BUILD_SET_UNPACK` (6), one residual call per part where the hand case made one call of `cimpl_build_unpack`/`cimpl_build_set_unpack` over a virtual tuple of the parts. All seven benchmarks are the same code.
+- Instructions per warm iteration: not measured (same machine code on all seven benchmarks).
+- Checked build: generators twice, same output; `tests/run.py` 772 pass (2 new); `tests/compile_bounds.py` 7 checks; the seven `profile_bench.py` runs; `tests/cpython_tests.py -j 2` 285 modules, 0 unexpected.
+- **Left, and why:** `COMPARE_OP` (inlining the static `cmp_outcome`; its exc-match arm needs type tests and a run-time helper), `BUILD_CONST_KEY_MAP` (type test on `keys`), `BUILD_MAP_UNPACK*` (error exits reformatting the exception), cells other than `LOAD_CLOSURE` (cell field reads/stores), `BUILD_STRING`, `FORMAT_VALUE`.
+- **Risks:** `[*a, *b]` and `{*a, *b}` now make one C call per part (was one helper call); an unrolled builder emits code per item (oparg items, no limit of its own beyond the bytecode's); `_PsycoDict_NewPresized` renamed (only Ni's own callers).
+
 ## 2026-11-18: loops in the general translator; `in` on a tuple generated (GENERATION.md step 5, `83131e1`, D78)
 
 A counted C loop with a compile-time bound is unrolled by the meta; a tuple's length comes from `PsycoTuple_Load` (virtual, or constant within 15 items), with CPython's function as the fallback; any other loop is CPython's (METACOMPILER.md "Loops"). [run]

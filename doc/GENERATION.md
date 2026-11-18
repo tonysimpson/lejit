@@ -120,6 +120,16 @@ The control-flow cases are generated with step 4's rules: METACOMPILER.md "`ceva
 - **Same code:** `tools/samecode.py baseline-3.7 a907150`: 83 units same, 0 differ (4,107 code objects). Release instructions per warm iteration on the seven benchmarks: no change (within 0.4%, the same machine code).
 - **Left:** `COMPARE_OP` (needs `cmp_outcome` translated: a compile-time `switch`, an object identity compare, a loop), `BUILD_SET`, `BUILD_MAP`, `BUILD_CONST_KEY_MAP`, the four `BUILD_*_UNPACK` (loops with error exits: the loop rule being added to gen_abstract), `BUILD_STRING` (an array argument to a residual call), `FORMAT_VALUE` (the hand case is one residual call, judgement), `UNPACK_*` (`unpack_iterable`), cells (`LOAD_CLOSURE`, `LOAD_DEREF`, `STORE_DEREF`, `DELETE_DEREF`), imports.
 
+## Step 8, builders: loops with error exits (`5c8a4fb`, D81) [run]
+
+The back half translates C `for` loops by `gen_abstract.loop_rule` and keeps C ints of the compiler (METACOMPILER.md "`ceval.c` reader", failures log).
+- **Generated: 5 more, 64 of 119** (`BUILD_SET`, `BUILD_MAP`, `BUILD_LIST_UNPACK`, `BUILD_SET_UNPACK`, `LOAD_CLOSURE`); their hand cases and `cimpl_build_set_unpack` left `pycompiler.c`. Read still 82.
+- **Same code:** `tools/samecode.py baseline-3.7 5c8a4fb`: 80 units same, 4 differ (4,136 of 4,150 code objects); every first difference is a `BUILD_LIST_UNPACK` (8) or `BUILD_SET_UNPACK` (6), one residual call per part where the hand case made one call of `cimpl_build_unpack`/`cimpl_build_set_unpack` over a virtual tuple of the parts. All seven benchmarks are the same code.
+- **Instructions per warm iteration:** not measured; the seven benchmarks emit the same machine code (samecode above), so they can't have changed.
+- **Checked build:** generators twice, same output, and the build used it; `tests/run.py` 772 pass (two new cases in `generated_opcodes.py`: each builder at several opargs with result types, and error exits at the first, middle and last item); `tests/compile_bounds.py` 7 checks; the seven `profile_bench.py` runs; `tests/cpython_tests.py -j 2` 285 modules, 0 unexpected.
+- **3.8.20** (PORT38 "Rerunning", not built): 65 generated; the five new cases' text is identical to 3.7's.
+- **Left:** `COMPARE_OP`, `BUILD_CONST_KEY_MAP`, `BUILD_MAP_UNPACK*`, `LOAD_DEREF`, `STORE_DEREF`, `DELETE_DEREF`, `BUILD_STRING`, `FORMAT_VALUE`, `BUILD_TUPLE_UNPACK*` (P22's shortcut); reasons in the failures log.
+
 ## Step 9: mechanism detectors (`36b5beb`, D75) [run]
 
 `tools/metac/mechanisms.py` answers capability questions from the target's source and maps the answers to one snippet per mechanism in `ni/mechanisms/`; `generate.py` writes `mechanism_{entry,tracing,frames}_gen.h`. Details, the interfaces and the detector table: METACOMPILER.md "Mechanisms".
