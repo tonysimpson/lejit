@@ -85,6 +85,12 @@ def loop(n):
 
 EDGES = "[(a, b) for a in (0.0, -0.0, 1.5, -2.25, 1e308, INF, -INF, NAN) for b in (0.0, -0.0, 3.0, -1e-308, INF, NAN)]"
 
+def hashes(x):
+    # float_hash generated (tp_hash): _Py_HashDouble of the double, called
+    # directly; a dict lookup by a float key hashes it too
+    return hash(x), hash(-x), {x: 1}.get(x), hash(x * 2.0)
+
+
 CASES = [
     ('arith', EDGES, {}),
     ('arith', "[(F(2.5), 2.0), (2.0, F(0.5)), (True, 0.5)]", {}),
@@ -93,4 +99,5 @@ CASES = [
     ('as_float', "[(I(1),), (HasFloat(),), (BadFloat(),), (SubFloat(),), ('s',), (F(4.0),), (7,)]", {}),
     ('int_float', "[(3,), (-0,), (2 ** 60 + 1,), (10 ** 400,), (True,), (I(5),)]", {}),
     ('loop', "[(200,)]", {}),
+    ('hashes', "[(0.0,), (-0.0,), (1.5,), (2.0 ** 70,), (INF,), (NAN,), (F(3.25),)]", {}),
 ]

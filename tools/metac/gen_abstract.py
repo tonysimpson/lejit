@@ -890,7 +890,7 @@ class Translator:
             return 'obj'
         if scalars.scalar_result(self, f):
             return 'val'
-        if f.ret not in INT_TYPES:
+        if int_typedef(self.s, f.ret) not in INT_TYPES:
             raise Refuse('returns %s' % f.ret)
         decl = self.ni.get(self.meta_name(f))
         if decl is not None:
@@ -1013,6 +1013,8 @@ class Translator:
             parts = ['CfNoReturnValue', 'CfReturnTypeInt', 'CfPyErrIfNonNull']
         else:
             r = RET_FLAG.get(ctype.replace('const ', ''))
+            if r is None and self.s is not None:
+                r = RET_FLAG.get(int_typedef(self.s, ctype.replace('const ', '')))
             if r is None:
                 raise Refuse('a call returning %s' % ctype)
             parts = [r]
@@ -1274,6 +1276,19 @@ def int_bits(source, ctype):
             return None
         ctype = nxt.replace('const ', '').strip()
     return None
+
+
+def int_typedef(source, ctype):
+    """An integer typedef (Py_hash_t) as the INT_TYPES name it stands for,
+    through the file's typedefs; any other type unchanged."""
+    for _ in range(4):
+        if ctype in INT_TYPES:
+            break
+        base = source.decls.aliases.get(ctype)
+        if base is None:
+            break
+        ctype = base
+    return ctype
 
 
 def rule_macros():

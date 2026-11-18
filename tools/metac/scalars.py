@@ -657,7 +657,7 @@ class ScalarRules:
                 run.ins[name] = ('ct', v)
                 run.order.append(name)
             return all(self.scalar_expr(a, st, run, local) for a in args)
-        if name in PURE or name.startswith('__builtin_'):
+        if name in PURE or name.startswith('__builtin_') or self.proven_pure(name):
             return all(self.scalar_expr(a, st, run, local) for a in args)
         if name in self.s.macros and name not in GA.KEEP \
                 and self.s.macros[name].params is not None:
@@ -679,6 +679,16 @@ class ScalarRules:
             run.statics |= sub.statics | {name}
             return all(self.scalar_expr(a, st, run, local) for a in args)
         return False
+
+    def proven_pure(self, name):
+        """A function of another file of CPython's that the effect rules
+        prove pure (_Py_HashDouble): scalar code may call it as EXTERNAL's
+        pure functions."""
+        if name in self.s.funcs or name in self.s.macros:
+            return False
+        tr = self.tr
+        return tr.effects is not None and name in tr.effects.globals and \
+            'CfPure' in tr.effect_flags(tr.effects.globals[name])
 
     def scalar_stmt(self, s, st, run, ctx, local=frozenset()):
         """Is statement s scalar code? ctx: 'run' (no return), 'tail' (each
@@ -807,7 +817,7 @@ class ScalarRules:
             rtype = st.vars[outs[0]].ctype
         else:
             rtype = 'int'
-        rtype = rtype.replace('const ', '')
+        rtype = GA.int_typedef(self.s, rtype.replace('const ', ''))
         return (outs, rtype) if rtype in RET_FLAGS else None
 
     def helper_args(self, run, st, out):
@@ -968,16 +978,36 @@ class ScalarRules:
         representation's."""
         if (e[0] == 'bin' and e[1] in CMP) or (e[0] == 'un' and e[1] == '!'):
             return 'int'
+        if e[0] == 'call' and e[1][0] == 'id' and e[1][1] in self.s.decls.protos:
+            # a function's result: its prototype's type (_Py_HashDouble's
+            # Py_hash_t)
+            r = GA.int_typedef(self.s, self.s.decls.protos[e[1][1]].replace('const ', '').strip())
+            if r in RET_FLAGS:
+                return r
         return sorted(self.scalar_ctypes())[0]
 
     def emit_expr(self, e, run, st, out, ctype=None):
         """A scalar expression's value, from a helper of its own."""
         ctype = ctype or self.expr_ctype(e)
         params, fmt, args, loads = self.helper_args(run, st, out)
-        name = self.add_helper(ctype, params, ['  return %s;' % self.helper_expr(st)(e)],
-                               run, id(e))
+        text = self.helper_expr(st)(e)
+        name = self.direct_callee(e, params, text, run)
+        if name is None:
+            name = self.add_helper(ctype, params, ['  return %s;' % text], run, id(e))
         t = self.call_helper(name, run, ctype, fmt, args, loads, st, out)
         return GA.Val('rt', t, ctype, owned=True)
+
+    def direct_callee(self, e, params, text, run):
+        """A helper that would only pass its parameters, in order, to one
+        function of CPython's that no rule renames (a pure function of
+        another file, _Py_HashDouble): that function, called directly."""
+        if e[0] != 'call' or e[1][0] != 'id' or run.statics or run.raises:
+            return None
+        fn = e[1][1]
+        names = [p.split()[-1].lstrip('*') for p in params]
+        if text != '%s(%s)' % (fn, ', '.join(names)) or not self.proven_pure(fn):
+            return None
+        return fn
 
 
 def trivial(stmts, walk, st):

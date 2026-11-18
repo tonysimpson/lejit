@@ -330,7 +330,7 @@ TRANSLATED_SLOTS = {
     # D87: with the double representation of TYPES' PyFloatObject
     'Objects/floatobject.c': {'type': 'PyFloat_Type', 'slots': [
         'nb_add', 'nb_subtract', 'nb_multiply', 'nb_remainder', 'nb_negative',
-        'nb_positive', 'nb_absolute', 'nb_bool', 'nb_true_divide']},
+        'nb_positive', 'nb_absolute', 'nb_bool', 'nb_true_divide', 'tp_hash']},
 }
 
 # The functions of a module whose metas the general translator generates
@@ -1344,7 +1344,7 @@ ENTRIES = {
     # D87: inlined where float_add and the others use it (rule inline_static)
     'Objects/floatobject.c:CONVERT_TO_DOUBLE': {'shape': 'a29ca6d6c073', 'ni': ['tools/metac/gen_abstract.py:build_float']},
     'Objects/floatobject.c:convert_to_double': {'shape': '8ba659cc76fe', 'ni': ['tools/metac/gen_abstract.py:build_float']},
-    'Objects/floatobject.c:float_hash': {'shape': 'ee5774f0b8dd', 'ni': ['ni/Objects/pfloatobject.c:pfloat_hash']},
+    'Objects/floatobject.c:float_hash': {'shape': 'ee5774f0b8dd', 'ni': ['tools/metac/gen_abstract.py:build_float']},
     # D83: the general translator's float unit; a subclass resumes into
     # CPython's float_float (the hand pfloat_pos boxed its double instead)
     'Objects/floatobject.c:float_float': {

@@ -189,23 +189,13 @@ static vinfo_t *pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
   return psyco_vi_NotImplemented();
 }
 
-/* float_hash: _Py_HashDouble(ob_fval), which never returns -1 */
-static vinfo_t *pfloat_hash(PsycoObject *po, vinfo_t *v) {
-  vinfo_t *d = PsycoFloat_AS_DOUBLE(po, v);
-  if (d == NULL)
-    return NULL;
-  return psyco_generic_call(po, _Py_HashDouble, CfPure | CfReturnTypeLong, "d",
-                            d);
-}
-
-/* + - * / % unary + - abs bool, generated from Objects/floatobject.c */
+/* + - * / % unary + - abs bool hash, generated from Objects/floatobject.c */
 #include "pfloatslots_gen.h"
 
 INITIALIZATIONFN
 void psy_floatobject_init(void) {
   gen_floatobject_init();
   Psyco_DefineMeta(PyFloat_Type.tp_richcompare, pfloat_richcompare);
-  Psyco_DefineMeta(PyFloat_Type.tp_hash, pfloat_hash);
 
   INIT_SVIRTUAL(psyco_computed_float, compute_float, direct_compute_float, 0, 0,
                 0);
