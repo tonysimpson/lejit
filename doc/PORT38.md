@@ -30,7 +30,6 @@ Most first; "blocks" counts definitions lost from the generated headers, or degr
 
 | # | Cause | Blocks on 3.8 | What would fix it |
 |---|---|---|---|
-| 1 | **`_PyArg_CheckPositional` has no policy entry** (D100: the table can't name a definition 3.7 lacks); 3.8's clinic wrappers use it where 3.7 called `_PyArg_UnpackStack`. | 13: 7 wrappers resume at once, 6 `_impl`s unreached | need 5, then `('other', 'unpack_arguments')` on it |
 | 2 | **`tstate` parameters in helper copies**: `helper_copy` (D88) copies only helpers that take objects. | 8: `BUILD_TUPLE_UNPACK_WITH_CALL`, `BUILD_MAP_UNPACK_WITH_CALL`, `IMPORT_FROM` and 5 copies | a `tstate` parameter as the running thread's; `import_from` also needs its `goto` |
 | 3 | **Effect rules on 3.8**: the walk goes round `SEEDS`/`ASSUMPTIONS` through `_PyErr_*`, and follows `_PyObject_ASSERT`'s `NDEBUG`-off branch. | 0 refused; at least 35 calls lose `CfNoPython \| CfNoBlock`, so known classes are dropped across them (F55) | need 4 |
 | 4 | **Keyword calling convention**: `pow` is `METH_FASTCALL \| METH_KEYWORDS`. | 2: `builtin_pow`, `builtin_pow_impl` | a `METH_ARGS` entry with the positional count only |
@@ -56,7 +55,7 @@ Most first; "blocks" counts definitions lost from the generated headers, or degr
 | 10 | **Dicts' shared empty keys:** check the inline store, keys guards and `PsycoDict_*` against 3.8's empty dicts [inferred risk]. | core |
 | 11 | **Re-read the hand metas whose C changed:** `PsycoObject_Call` and the call path (vectorcall), `pfloat_richcompare` (F104), list item and subscript, `PyDict_New`/`SetItem`. | translated |
 | 12 | **3.8 build and tests:** an interpreter to build against, `cpython_tests.py`'s 3.8 module lists, `check.sh` for a second version, tests that depend on 3.7 bytecode. | tooling |
-| 14 | **The refusal causes above:** 1, 2, 4, 5, 6. | generator, rules |
+| 14 | **The refusal causes above:** 2, 4, 5, 6 (1, `_PyArg_CheckPositional`, is gen2's `ARGUMENT_CHECKS`). | generator, rules |
 
 (3, macros as in force where used, and 13, `--past-policy`, are done.) Not needed [inferred]: another entry mechanism (the PEP 523 hook still sees every call), anything for positional-only parameters, new layouts.
 
