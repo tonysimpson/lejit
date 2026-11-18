@@ -472,6 +472,21 @@ def fields_of(toks, typedef_name):
     raise LookupError('no struct ' + typedef_name)
 
 
+def header_tokens(g, typedef_name):
+    """Tokens of the Include/**/*.h that declares 'typedef struct {...}
+    typedef_name;' (object.h until 3.7, cpython/object.h from 3.8), object.h
+    first; the type slot tables are declared with it."""
+    inc = os.path.join(g.tree.root, 'Include')
+    paths = sorted(os.path.relpath(os.path.join(d, f), g.tree.root)
+                   for d, _, fs in os.walk(inc) for f in fs if f.endswith('.h'))
+    for p in ['Include/object.h'] + [p for p in paths if p != 'Include/object.h']:
+        toks = g.tree.file(p)[0]
+        if any(t.text == '}' and k + 1 < len(toks) and toks[k + 1].text == typedef_name
+               for k, t in enumerate(toks)):
+            return toks
+    raise LookupError('no struct %s in Include/' % typedef_name)
+
+
 def slot_function(g, words):
     """'PyList_Type . tp_as_sequence -> sq_concat' -> the C function key."""
     alias = {'PyString_Type': 'PyUnicode_Type', 'NiCompatStr_Type': 'PyUnicode_Type'}
@@ -487,7 +502,7 @@ def slot_function(g, words):
     if var is None:
         return None
     path, name = var
-    otoks = g.tree.file('Include/object.h')[0]
+    otoks = header_tokens(g, 'PyTypeObject')
     structs = {'PyTypeObject': None, 'tp_as_number': 'PyNumberMethods',
                'tp_as_sequence': 'PySequenceMethods',
                'tp_as_mapping': 'PyMappingMethods'}

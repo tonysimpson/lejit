@@ -88,15 +88,30 @@ def expand(stmt, macros):
     return [stmt]
 
 
+def number_methods(src):
+    """PyNumberMethods' field names, from whichever Include/**/*.h declares
+    it (object.h until 3.7, cpython/object.h from 3.8)."""
+    paths = []
+    for d, _, files in os.walk(os.path.join(src, 'Include')):
+        paths += [os.path.join(d, f) for f in files if f.endswith('.h')]
+    first = os.path.join(src, 'Include', 'object.h')
+    for p in [first] + sorted(set(paths) - {first}):
+        with open(p) as f:
+            try:
+                return ctokens.struct_fields(ctokens.tokenize(f.read())[0],
+                                             'PyNumberMethods')
+            except LookupError:
+                continue
+    raise LookupError('no struct PyNumberMethods in Include/')
+
+
 def generate(src, cfile, table_name, tool, includer, provides, init_name,
              translate, head):
     """Try translate(cname, slot, params, body, macros) on every slot in
     table_name; return (header text, done, skipped)."""
     with open(os.path.join(src, 'Objects', cfile)) as f:
         toks, macros = ctokens.tokenize(f.read(), cfile)
-    with open(os.path.join(src, 'Include', 'object.h')) as f:
-        fields = ctokens.struct_fields(ctokens.tokenize(f.read())[0],
-                                       'PyNumberMethods')
+    fields = number_methods(src)
     funcs = ctokens.functions(toks)
     table = ctokens.initializer(toks, table_name)
     done, skipped, seen = [], [], set()

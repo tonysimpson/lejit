@@ -27,6 +27,7 @@ Nodes are tuples whose first item is the kind:
     ('label', name, stmt, span) ('empty', span) ('unsupported', why, span)
 """
 import os
+import re
 import subprocess
 
 import ctokens
@@ -438,13 +439,31 @@ def expand(toks, macros, keep, active=frozenset()):
 
 # ---- what the compiler sees: cpp and the declarations ----------------------
 
+def include_dirs(src):
+    """The source directories CPython's own Makefile puts on the include
+    path of the core, in its order: the -I$(srcdir)/... of PY_CFLAGS_NODIST
+    (Include/internal from 3.8), then PY_CPPFLAGS' (Include)."""
+    try:
+        with open(os.path.join(src, 'Makefile.pre.in')) as f:
+            text = f.read()
+    except OSError:
+        return [os.path.join(src, 'Include')]
+    out = []
+    for var in ('PY_CFLAGS_NODIST', 'PY_CPPFLAGS'):
+        m = re.search(r'^%s=(.*)$' % var, text, re.M)
+        for d in re.findall(r'-I\$\(srcdir\)/(\S+)', m.group(1) if m else ''):
+            if os.path.join(src, d) not in out:
+                out.append(os.path.join(src, d))
+    return out or [os.path.join(src, 'Include')]
+
+
 def cpp(src, pyconfig, cfile, defines=('Py_BUILD_CORE',)):
     """(macros, preprocessed tokens) of a CPython source file as it is
     compiled: every #define after the #if branches are resolved, from
     'gcc -E -dM', and the preprocessed text. The configuration is the
     target's installed pyconfig.h."""
-    cmd = ['gcc', '-E', '-I', os.path.join(src, 'Include'),
-           '-I', os.path.dirname(pyconfig)] + ['-D' + d for d in defines]
+    cmd = ['gcc', '-E'] + [w for d in include_dirs(src) for w in ('-I', d)] \
+        + ['-I', os.path.dirname(pyconfig)] + ['-D' + d for d in defines]
     full = os.path.join(src, cfile)
     dm = subprocess.run(cmd + ['-dM', full], stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE, universal_newlines=True,

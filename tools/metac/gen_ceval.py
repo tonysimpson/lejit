@@ -273,12 +273,16 @@ def call_args(stmt, i):
 
 def c_signatures(src):
     """{name: (return kind, arity)} for PyAPI_FUNC declarations in the source's
-    Include/*.h."""
+    Include/**/*.h (from 3.8 many are in Include/cpython/), Include/*.h
+    first."""
     sigs = {}
     inc = os.path.join(src, 'Include')
-    for h in sorted(os.listdir(inc)):
-        if not h.endswith('.h'):
-            continue
+    paths = [h for h in sorted(os.listdir(inc)) if h.endswith('.h')]
+    for d in sorted(os.listdir(inc)):
+        if os.path.isdir(os.path.join(inc, d)):
+            paths += [os.path.join(d, h) for h in sorted(os.listdir(os.path.join(inc, d)))
+                      if h.endswith('.h')]
+    for h in paths:
         with open(os.path.join(inc, h), errors='replace') as f:
             toks = ctokens.tokenize(f.read(), h)[0]
         for i, t in enumerate(toks):
@@ -292,7 +296,11 @@ def c_signatures(src):
             pclose = ctokens.match_close(toks, close + 2)
             params = ctokens.split_top(toks[close + 3:pclose], ',')
             arity = 0 if [u.text for u in toks[close + 3:pclose]] == ['void'] else len(params)
-            sigs[name] = ({'PyObject *': 'object', 'int': 'int'}.get(ret, ret), arity)
+            sig = ({'PyObject *': 'object', 'int': 'int'}.get(ret, ret), arity)
+            if os.sep in h:
+                sigs.setdefault(name, sig)
+            else:
+                sigs[name] = sig
     return sigs
 
 
@@ -963,15 +971,26 @@ def run(insts, src, effects=None):
             if any(w[k] == '&' and w[k + 1] in copies for k in range(len(w) - 1)):
                 # calls: a copy of the stack pointer handed to the call
                 # path, which moves it; that is core
+                k = next(k for k in range(2, len(w))
+                         if w[k] == '&' and w[k + 1] in copies)
                 raise Skip('a copy of the stack pointer handed to %s'
-                           % next(w[k - 2] for k in range(2, len(w))
-                                  if w[k] == '&' and w[k + 1] in copies), 'core')
+                           % called_at(w, k), 'core')
             code, _ = translate(inst, csigs, psigs, consts, effects)
         except Skip as e:
             skipped.append((inst.name, e.kind, str(e)))
             continue
         done.append((inst.name, code))
     return done, skipped
+
+
+def called_at(w, k):
+    """The function whose argument list w[k] is in."""
+    depth = 0
+    for j in range(k - 1, 0, -1):
+        depth += (w[j] == ')') - (w[j] == '(')
+        if depth < 0:
+            return w[j - 1]
+    return '?'
 
 
 def header(done, skipped):

@@ -306,8 +306,13 @@ class Checker:
                     toks = toks + d.toks
             for i, x in enumerate(toks):
                 if x.text == '"%s"' % pyname and toks[i - 1].text == '{':
-                    names = [y.text for y in toks[i + 1:i + 7] if y.kind == 'id']
-                    if fn in names:
+                    # the entry's function: the last name before the next
+                    # ',' (after casts: '(PyCFunction)(void(*)(void))f' in
+                    # 3.8's clinic headers)
+                    end = next((j for j in range(i + 2, len(toks))
+                                if toks[j].text in (',', '}')), len(toks))
+                    names = [y.text for y in toks[i + 2:end] if y.kind == 'id']
+                    if names and names[-1] == fn:
                         return
         self.bad(where, 'no method table entry "%s" for %s' % (pyname, fn))
 

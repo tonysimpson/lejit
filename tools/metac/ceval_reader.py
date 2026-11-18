@@ -104,6 +104,20 @@ STACK_MACROS = set(READS) | set(WRITES) | set(MOVES) | {
     'BASIC_STACKADJ'}
 DISPATCHES = {'DISPATCH', 'FAST_DISPATCH'}
 DROPPED = {'PREDICT'}
+
+
+def _pop_count(w):
+    """n for a statement that only pops n slots, 'STACKADJ(-n)' (3.7) or
+    'STACK_SHRINK(n)' (3.8), else 0."""
+    if w and w[0] in MOVES and w[-1] == ')' and w[1] == '(':
+        arg = w[2:-1]
+        if MOVES[w[0]] == 1 and len(arg) == 2 and arg[0] == '-' and arg[1].isdigit():
+            return int(arg[1])
+        if MOVES[w[0]] == -1 and len(arg) == 1 and arg[0].isdigit():
+            return int(arg[0])
+    return 0
+
+
 # identifiers that mean the case works on the interpreter itself
 CORE_NAMES = {
     'tstate': 'thread state',
@@ -408,14 +422,24 @@ def cases(src):
     for i, t in enumerate(toks):
         if t.text != 'TARGET' or toks[i + 1].text != '(':
             continue
-        name, nxt = toks[i + 2].text, toks[i + 4]
+        # the label is TARGET(op) or, where TARGET gives only the name,
+        # case TARGET(op): (3.8); the case is what follows it
+        k = i + 5 if toks[i + 4].text == ':' else i + 4
+        if toks[k].text == 'case' and toks[k + 1].text == 'TARGET':
+            k += 1
+        name, nxt = toks[i + 2].text, toks[k]
         if nxt.text == '{':
-            out.append((name, toks[i + 5:ctokens.match_close(toks, i + 4)], None))
+            body = toks[k + 1:ctokens.match_close(toks, k)]
+            # PREDICTED(op) as the first statement (3.8; 3.7 puts it before
+            # the TARGET) is the label PREDICT jumps to: the case's start
+            if [x.text for x in body[:5]] == ['PREDICTED', '(', name, ')', ';']:
+                body = body[5:]
+            out.append((name, body, None))
         elif nxt.text == 'TARGET':
-            out.append((name, None, 'falls into TARGET(%s)' % toks[i + 6].text))
+            out.append((name, None, 'falls into TARGET(%s)' % toks[k + 2].text))
         else:   # TARGET(NOP) FAST_DISPATCH();
-            end = next(j for j in range(i + 4, len(toks)) if toks[j].text == ';')
-            out.append((name, toks[i + 4:end + 1], None))
+            end = next(j for j in range(k, len(toks)) if toks[j].text == ';')
+            out.append((name, toks[k:end + 1], None))
     return out
 
 
@@ -1309,11 +1333,12 @@ class Case:
                     and all(w[2] in s.bound for s in states):
                 dead.append(w[2])
                 continue
-            if w and len(w) == 5 and w[0] in MOVES and w[1:3] == ['(', '-'] \
-                    and w[4] == ')' and w[3].isdigit() and MOVES[w[0]] == 1:
-                moves.append(Lin(-int(w[3])))   # pops: the exit pops anyway
+            n = _pop_count(w)
+            if n:
+                moves.append(Lin(-n))   # pops: the exit pops anyway
                 continue
-            form = next((lab for f, lab in ERROR_FORMS if w and w[:len(f)] == f), None)
+            u = w[:2] + w[4:] if w and w[2:4] == ['tstate', ','] else w
+            form = next((lab for f, lab in ERROR_FORMS if u and u[:len(f)] == f), None)
             if form and label == 'error':
                 label = form
                 continue
@@ -2019,8 +2044,21 @@ def precheck(nodes, toks):
     for k, t in enumerate(w):
         if t == 'f' and k + 1 < len(w) and w[k + 1] == '->':
             raise Refuse('core', 'frame state (f->%s)' % w[k + 2])
-        if t in CORE_NAMES:
+        if t in CORE_NAMES and not (t == 'tstate' and _is_argument(w, k)):
             raise Refuse('core', CORE_NAMES[t])
+
+
+def _is_argument(w, k):
+    """w[k] is a whole argument of a call: 3.8 hands the running thread's
+    state to the error functions and ceval.c's helpers ('_PyErr_Format(tstate,
+    ...)', 'format_exc_check_arg(tstate, ...)'), as 3.7 reads it inside them.
+    Its fields (tstate->c_tracefunc) are the interpreter's, so still core."""
+    if not (1 < k < len(w) - 1 and w[k + 1] in (',', ')')):
+        return False
+    if w[k - 1] == '(':      # the first argument: '(' after a function's name
+        return re.fullmatch(r'[A-Za-z_]\w*', w[k - 2]) is not None and \
+            w[k - 2] not in ('if', 'while', 'for', 'switch', 'return', 'sizeof')
+    return w[k - 1] == ','
 
 
 # ---- driver -------------------------------------------------------------------

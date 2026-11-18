@@ -132,14 +132,19 @@ def _function_name(head):
 
 
 def _targets(toks, lo, hi, path):
-    """TARGET(X) cases of ceval's loop: each from its TARGET to the next."""
+    """TARGET(X) cases of ceval's loop: each from its TARGET to the next.
+    Where the label is written 'case TARGET(X):' (3.8) the 'case' and ':'
+    are the label's, not the case's, so they don't count in its shape."""
     at = [j for j in range(lo, hi) if toks[j].text == 'TARGET'
           and toks[j + 1].text == '(' and toks[j + 3].text == ')']
     out = {}
     for k, j in enumerate(at):
         end = at[k + 1] if k + 1 < len(at) else hi
+        if k + 1 < len(at) and toks[end - 1].text == 'case':
+            end -= 1
+        body = toks[j:j + 4] + toks[j + 4 + (toks[j + 4].text == ':'):end]
         name = 'TARGET(%s)' % toks[j + 2].text
-        out[name] = Def('target', name, toks[j:end], path=path)
+        out[name] = Def('target', name, body, path=path)
     return out
 
 
@@ -182,7 +187,26 @@ class Tree:
         return self.files[path]
 
     def find(self, key):
-        """The Def named 'path:name', or None."""
+        """The Def named 'path:name', or None. A header's definition is
+        looked for in every Include/**/*.h when its own header doesn't have
+        it, as the mechanisms and layouts do: from 3.8 many moved into
+        Include/cpython/ (PyTupleObject, Py_SETREF), so the key keeps naming
+        the header Ni was written against."""
         path, _, name = key.partition(':')
         f = self.file(path)
-        return f[1].get(name) if f else None
+        d = f[1].get(name) if f else None
+        if d is None and path.startswith('Include/'):
+            for h in self.headers():
+                g = self.file(h)
+                if g and name in g[1]:
+                    return g[1][name]
+        return d
+
+    def headers(self):
+        """Every Include/**/*.h of the tree, relative, sorted."""
+        if not hasattr(self, '_headers'):
+            inc = os.path.join(self.root, 'Include')
+            self._headers = sorted(
+                os.path.relpath(os.path.join(d, f), self.root)
+                for d, _, fs in os.walk(inc) for f in fs if f.endswith('.h'))
+        return self._headers
