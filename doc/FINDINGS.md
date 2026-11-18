@@ -69,7 +69,7 @@ Random programs (BUILD.md, Fuzzing; what they cover is in `gen.py`'s docstring) 
 
 Nothing else: no wrong arithmetic at the 2**31, 2**63 or float edges, no unpacking, slicing, closure, exception-handling or class-protocol difference. Not generated: frames, tracing and finaliser order (C11, C15, C18, C29, C56), threads, imports, I/O, subclasses of builtins, metaclasses, descriptors other than `property`, `async`.
 
-## Memory per code buffer (`tools/memrepro.py`, C61, D125)
+## Memory per code buffer (`tools/memrepro.py`, C61, D129)
 
 `tools/memrepro.py DIR N` compiles N distinct small functions and reports the RSS growth per code buffer; run under heaptrack with `PYTHONMALLOC=malloc`, its leaked allocations say where the memory goes. At 2000 functions (113,782 buffers, 232 bytes of code each), release build [run]:
 
