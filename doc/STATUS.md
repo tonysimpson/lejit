@@ -1,5 +1,15 @@
 # Status
 
+## 2026-11-18: mechanism detectors and snippets (GENERATION.md step 9, `36b5beb`, D75)
+
+Ni's own mechanisms (entry, tracing, frames) are chosen from what the target's source offers, never a version: `tools/metac/mechanisms.py` detectors, its `VARIANTS` table, and one snippet per mechanism in `ni/mechanisms/`, written by `generate.py` into `mechanism_*_gen.h`. METACOMPILER.md "Mechanisms". [run]
+- **3.7:** the eval hook and its installation, the `use_tracing` test (run time and emitted) and the frame-chain accesses moved into snippets behind narrow interfaces (`ni_entry_point`/`NiCode_Run`, `ni_tracing_now`/`ni_tracing_test`, `ni_frame_t` and accessors).
+- **Detectors on 3.8.20, 3.11.11, 3.12.9, 3.13.2** (tarballs fetched; hashes from pyenv's definitions, matched by the downloads): 3.8 as 3.7; 3.11 hook given `_PyInterpreterFrame` (specialised calls would bypass a vectorcall), CFrame tracing and frames; 3.12 vectorcall with watchers, `sys.monitoring`, CFrame frames; 3.13 as 3.12 but `tstate->current_frame`. Their snippets are stubs that `#error` "not written yet".
+- **Same code:** `tools/samecode.py 2d2d3d5 36b5beb`: 83 units same, 0 differ (4,089 code objects).
+- Checked build: generators twice, same output, and the build used it; `tests/run.py` 749 pass (`tracing` 9 of 9); `tests/compile_bounds.py` 7 checks; `tests/cpython_tests.py -j 2` default set 285 modules, 0 unexpected; `tests/smoke.py` same output; `v_mem_mov` 90,144 cases; `tests/mechanisms.py` (detector table, snippet files, unmapped answers fail generation) 0 failed.
+- **Found:** `NI_ALL_STATIC=1` doesn't compile (`psyco.h`'s `staticforward`; KNOWN_BUGS C55), unrelated to this change.
+- **Risks:** the detectors are token-level reads of a few definitions, so a later version could keep a name and change its meaning (a `use_tracing` that no longer means "trace or profile set"); the answer tables are literal tuples so that such a version fails rather than guesses. `pyruntime.c`'s `_PyRuntime` reads and the exception state are version-specific too but outside these three mechanisms.
+
 ## 2026-11-18: oparg-dependent stack effects (GENERATION.md step 8, front end; `99d9b26`, D73)
 
 The `ceval.c` reader writes array and conditional stack effects as 3.12's DSL does, derived from the C; METACOMPILER.md "`ceval.c` reader". [run]

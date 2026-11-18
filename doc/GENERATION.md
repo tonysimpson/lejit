@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`) and 3 (`e7fd745`) done; step 8 begun (front end, `99d9b26`)
+status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`), 3 (`e7fd745`) and 9 (`36b5beb`) done; step 8 begun (front end, `99d9b26`)
 ---
 # Plan of work: generate the translated layer on 3.7
 
@@ -94,6 +94,14 @@ The reader expresses stack effects that depend on oparg as 3.12's DSL does (`val
 - **Totals:** read 74 of 119 (was 51), generated 49 (was 44); refused 45: core 18, control flow 9, shared code 8, stack 5, falls through 4, preprocessor 1.
 - **Policy table:** the five entries' `ni` now name `gen_ceval.py:translate` (`policy.py` fails the build while they name the removed hand cases). Their `virtual` items (`BUILD_TUPLE`, `BUILD_LIST`, `BUILD_SLICE`) are not read: the generator finds the constructor by PATTERNS E's rule, and `BUILD_LIST`'s length limit is inside `PsycoList_New`. Step 6 should read those items or drop them, so the table and the rule can't disagree unnoticed.
 - **Left for step 8's back half:** branches on run-time values as condition codes (`UNARY_NOT`, `POP_JUMP_IF_*`), loops with error exits, `cmp_outcome`'s switch, jumps.
+
+## Step 9: mechanism detectors (`36b5beb`, D75) [run]
+
+`tools/metac/mechanisms.py` answers capability questions from the target's source and maps the answers to one snippet per mechanism in `ni/mechanisms/`; `generate.py` writes `mechanism_{entry,tracing,frames}_gen.h`. Details, the interfaces and the detector table: METACOMPILER.md "Mechanisms".
+- **3.7:** entry `frame_eval_hook`, tracing `tstate_use_tracing`, frames `frame_object`. Each needed a snippet: the hook and its installation; the `use_tracing` test at run time and in emitted code; `ni_frame_t` and eight accessors for the frame chain (field accesses on 3.7, a different structure on 3.11+). The core (`eval_hook.c:ni_entry_point`, `NiCode_Run`, `frames.c`, `pycompiler.c:cimpl_new_frame`, `psyfunc.c:tracing_on`) calls only those.
+- **Other versions, detectors only** (`tests/mechanisms.py`): 3.8.20 gives 3.7's answers; 3.11.11 a hook given `_PyInterpreterFrame` (vectorcall unusable: specialised calls would bypass it), CFrame tracing, CFrame frames; 3.12.9 vectorcall with watchers, `sys.monitoring`, CFrame frames; 3.13.2 the same but the innermost frame in `tstate->current_frame`. Those snippets are stubs that `#error` "not written yet".
+- **Checks:** generation twice, same output, and the build used it; answers not in `VARIANTS` fail generation and remove the headers (`tests/mechanisms.py`); `tools/samecode.py 2d2d3d5 36b5beb` 83 units same, 0 differ (4,089 code objects); checked build `tests/run.py` 749 pass (`tracing` 9), `compile_bounds.py` 7, `cpython_tests.py -j 2` 285 modules 0 unexpected, `smoke.py` same, `v_mem_mov` 90,144 cases.
+- **For 3.8:** no mechanism work. What will stop a 3.8 build is elsewhere, for example `pyruntime.c`'s `_PyRuntime` fields and the policy table's shapes [inferred, not built].
 
 ## Risks
 

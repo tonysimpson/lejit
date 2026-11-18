@@ -15,7 +15,7 @@ One Ni source serves every CPython version from 3.7 on; none is dropped.
 - **Hand-written, version-free:** the core, the backend (with `llvm-mc` templates, D65), and the generator's rules: the policy table (what to promote, make virtual, guard), representation rules, effect rules. No `#if` on versions anywhere.
 - **Generated, per build:** everything that mirrors CPython, from the source of the version being built for (its release tarball): bytecode cases, slots, `abstract.c`, builtins, the call path, layouts, virtual objects' constructors. Not checked in.
 - **Bytecode input:** `bytecodes.c` through CPython's parser for 3.12+; for 3.7–3.11 a reader of `ceval.c`'s `TARGET` cases that produces the same form, so everything after it is shared.
-- **Mechanisms:** where Ni itself must work differently (entry: frame hook or `PyFunction_SetVectorcall`; perhaps tracing and frames), a small detector looks in that version's source for the mechanism, and the matching snippet goes into the generated source.
+- **Mechanisms:** where Ni itself must work differently (entry: frame hook or `PyFunction_SetVectorcall`; tracing; frames), a small detector looks in that version's source for the mechanism, and the matching snippet goes into the generated source (`36b5beb`, D75, "Mechanisms" below).
 - **New features** go into the core or the rules, never into one version's output, so regenerating carries them to every version. Each version's tests run on every change.
 - **Order:** generate everything possible on 3.7 first, compared with the hand translations, then 3.8, 3.9 and on.
 - **At build time** (`9eae61d`, D68) [run]: `setup.py` runs `tools/metac/generate.py --python EXE --out DIR`, which finds the source for EXE's version (`NI_CPYTHON_SRC` or the cached, checksum-checked tarball, `cpython_src.py`) and runs each generator in its `GENERATORS` list. A generator is a module with `build(target)` returning `(header text, report lines)`, or raising `cslots.GenError` to stop the build; `target` is `cslots.Target(src, version, python, pyconfig)`. A new generator is one entry in that list. The headers go to the build directory, never into `ni/`.
@@ -257,6 +257,42 @@ A site whose result the caller tests itself (`runtime_NON_NULL_f(po, psyco_gener
 **The 13 disagreements, classified:**
 - **Bugs in Ni's flags:** `float_richcompare` (error, `pfloatobject.c:pfloat_richcompare`) is KNOWN_BUGS F104 already; `pycompiler.c:cimpl_vt_traceback` (NoError, but leaves a MemoryError set when it returns None) is new, F105.
 - **Limits of the analysis** (failures log): `float_richcompare`'s no-Python (a decref of an int temporary declared `PyObject *`) and pure (it reads `_PyLong_One`, a variable set once at start-up); the pointer `fn` at `pfloatobject.c:pfloat_richcompare` (one of the `cimpl_fp_*_fp` compare helpers, chosen in a switch); `cimpl_unicode_eq` (`PyUnicode_READY` of a legacy string); `PyErr_ExceptionMatches`, `PyErr_GivenExceptionMatches`, `cimpl_generator_stop` (`PyTuple_Size`'s bad-call error, under a `PyTuple_Check`); `cimpl_push_exc_info` (`PyErr_NormalizeException` replaces the exception, as `ceval.c` lets it); `cimpl_rt_traceback` (a failure replaces the exception being unwound, by design); `PyFunction_NewWithQualName` blocks and is in D53's list (only through a UTF-8 error handler for an ASCII name).
+
+## Mechanisms (D75)
+
+Where Ni's own mechanism must differ between versions (D67 (4)), `tools/metac/mechanisms.py` asks the target's source what it offers and picks a snippet; `generate.py` writes it into the build directory. GENERATION.md step 9. [run] unless marked.
+
+**The machinery.**
+- **Detectors** are small functions in `mechanisms.py`, each answering one question from the source with the definition it read. Header questions search every `Include/**/*.h`, so a definition moving between `pystate.h`, `cpython/pystate.h` and `internal/` doesn't change the answer. Structs are found by tag or typedef name, fields by the last name in each declaration (both `#if` branches count).
+- **`VARIANTS`** (same file) is the one place answers become snippets: per mechanism, its detectors in order and a table from the tuple of answers to a variant, the file `ni/mechanisms/<mechanism>/<variant>.h`. Answers not in the table stop generation (and so the build) with the answers found; `generate.py` then removes the old headers.
+- **Output:** `mechanism_entry_gen.h`, `mechanism_tracing_gen.h`, `mechanism_frames_gen.h`, each with the answers and their evidence in a comment, an include guard, `#line` back to the snippet file (compiler errors point there), and the snippet.
+- **Stubs:** a variant not written yet is one `#error "... is not written yet (file; D75)"`, so a build that selects it stops in the compiler with that message.
+- `python3 tools/metac/mechanisms.py SRC...` prints the answers for source trees; `python3 tests/mechanisms.py` checks the table below and that unmapped answers fail generation (a copy of 3.7's source with a `Python/instrumentation.c` added gives `tracing_flag=tstate, monitoring=yes`).
+
+**Detector answers** (`tests/mechanisms.py`, tarballs from python.org, hashes from pyenv's python-build definitions and matched by the downloads):
+
+| Question | 3.7.17 | 3.8.20 | 3.11.11 | 3.12.9 | 3.13.2 |
+|---|---|---|---|---|---|
+| `eval_hook_frame`: what the PEP 523 hook is given | `frame_object` | `frame_object` | `interpreter_frame` | `interpreter_frame` | `interpreter_frame` |
+| `function_vectorcall`: `PyFunction_SetVectorcall` declared | no | no | no | yes | yes |
+| `function_watchers`: `PyFunction_AddWatcher` declared | no | no | no | yes | yes |
+| `calls_bypass_vectorcall`: specialised calls skip a replaced vectorcall | none (no specialiser) | none | **yes** (`_PyFunction_GetVersionForCurrentState` versions any function) | no (it refuses a non-default vectorcall) | no (`PyFunction_SetVectorcall` clears the version) |
+| **entry** | `frame_eval_hook` | `frame_eval_hook` | `frame_eval_hook_interp` (stub) | `vectorcall` (stub) | `vectorcall` (stub) |
+| `tracing_flag`: where `use_tracing` is | `_ts` | `_ts` | `_PyCFrame` | none | none |
+| `monitoring`: `Python/instrumentation.c` (PEP 669) | no | no | no | yes | yes |
+| **tracing** | `tstate_use_tracing` | `tstate_use_tracing` | `cframe_use_tracing` (stub) | `monitoring` (stub) | `monitoring` (stub) |
+| `frame_locals`: where arguments and locals are | `_frame.f_localsplus` | `_frame.f_localsplus` | `_PyInterpreterFrame.localsplus` | same | same |
+| `current_frame`: the innermost frame | `_ts.frame` | `_ts.frame` | `_PyCFrame.current_frame` | `_PyCFrame.current_frame` | `_ts.current_frame` |
+| **frames** | `frame_object` | `frame_object` | `interpreter_frame_cframe` (stub) | `interpreter_frame_cframe` (stub) | `interpreter_frame` (stub) |
+
+On 3.11 the hook stays usable although vectorcall isn't: the specialiser refuses Python calls while a hook is set (`specialize.c:specialize_py_call`, `SPEC_FAIL_CALL_PEP_523`), and `CALL` inlines a Python call only when `eval_frame == NULL` (`ceval.c`). [read] 3.8 needs no new snippet: its answers are 3.7's.
+
+**What moved into snippets on 3.7** (`36b5beb`; `tools/samecode.py 2d2d3d5 36b5beb`: 83 units same, 0 differ):
+- **Entry** (`frame_eval_hook.h`): `NiEval_EvalFrame` and its installation (`ni_entry_install`), reading `f_code`, `f_globals`, `f_locals`, `f_builtins` from the frame. The rest of the old hook is the core's `eval_hook.c:ni_entry_point(co, globals, locals, builtins)` (generator, tracing and module checks, merge points, first-call compile, globals and builtins check), returning the code to run or NULL; `NiCode_Run` runs it on a `ni_frame_t`.
+- **Tracing** (`tstate_use_tracing.h`): `ni_tracing_now(tstate)`, the hook's test, and `ni_tracing_test(po, vts)`, the same test emitted by `psyfunc.c:tracing_on` (`psyco_int32_nonzero_in` at `offsetof(PyThreadState, use_tracing)`). Loading the thread state stays core (`load_tstate`).
+- **Frames** (`frame_object.h`): `ni_frame_t` (here `PyFrameObject`) and accessors for the frame chain and entry: `ni_frame_current`, `ni_frame_set_current`, `ni_frame_back`, `ni_frame_object`, `ni_frame_code`, `ni_frame_globals`, `ni_frame_args`, `ni_frame_set_executing`. Used by `NiCode_Run`, `frames.c` (`pvisitframes`, `psyco_build_pyframe`, `psyco_running_real_frame`) and `pycompiler.c:cimpl_new_frame`. On 3.7 every one is a field access; the snippet exists because on 3.11+ the chain is a different structure (interpreter frames, frame objects made on demand), not different offsets.
+
+**Not covered** [read]: fields of frame *objects* (`f_lasti`, `f_lineno`, emulated frames' `f_back`, `PyFrame_New`) stay in `frames.c` and `pycompiler.c`; `pyruntime.c`'s `_PyRuntime` addresses (the thread state, `eval_breaker`) and `ni_eval_breaker_at_entry` are 3.7 internals outside the three mechanisms, and will need their own detector or generated layout; so will the exception state (PORT312.md). An `NI_ALL_STATIC=1` build fails in `psyco.h` (`staticforward`, KNOWN_BUGS C55), so the one-unit build wasn't checked; the generated headers have include guards for it.
 
 ## Failures log
 
