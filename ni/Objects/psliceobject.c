@@ -5,9 +5,10 @@
  * a virtual int first) and slice_dealloc.
  *
  * BUILD_SLICE always makes one. Its start, stop and step sit at the real
- * PySliceObject's field indices; compute_slice emits PySlice_New when the
- * slice escapes (any meta that doesn't know it, or a call) and then drops
- * them, so nothing reads them as fields of the real object. A type's meta
+ * PySliceObject's field indices; the generated compute_slice emits
+ * PySlice_New when the slice escapes (any meta that doesn't know it, or a
+ * call) and then drops them (TYPES 'forced'), so nothing reads them as
+ * fields of the real object; with constant bounds the slice is a constant. A type's meta
  * calls PsycoSlice_Unpack and, if that gives the bounds, its own C helper,
  * which does PySlice_AdjustIndices and the type's step-1 case exactly as
  * its mp_subscript does. Only step None is handled, and only bounds that
@@ -16,44 +17,12 @@
 #include "psliceobject.h"
 #include "plongobject.h"
 
-#define SLICE_start CPY_FIELD(PySliceObject, start, OB_type)
-#define SLICE_stop CPY_FIELD(PySliceObject, stop, SLICE_start)
-#define SLICE_step CPY_FIELD(PySliceObject, step, SLICE_stop)
-#define iSLICE_START FIELD_INDEX(SLICE_start)
-#define iSLICE_STOP FIELD_INDEX(SLICE_stop)
-#define iSLICE_STEP FIELD_INDEX(SLICE_step)
-#define SLICE_TOTAL FIELDS_TOTAL(SLICE_step)
-
 static source_virtual_t psyco_computed_slice;
 
-static bool compute_slice(PsycoObject *po, vinfo_t *v) {
-  vinfo_t *newobj = psyco_generic_call(
-      po, PySlice_New, CfCommonNewRefPyObject, "vvv",
-      v->array->items[iSLICE_START], v->array->items[iSLICE_STOP],
-      v->array->items[iSLICE_STEP]);
-  if (newobj == NULL)
-    return false;
-  vinfo_array_shrink(po, v, iSLICE_START);
-  vinfo_move(po, v, newobj);
-  return true;
-}
-
-DEFINEFN
-vinfo_t *PsycoSlice_New(vinfo_t *start, vinfo_t *stop, vinfo_t *step) {
-  vinfo_t *r = vinfo_new(VirtualTime_New(&psyco_computed_slice));
-  r->array = array_new(SLICE_TOTAL);
-  r->array->items[iOB_TYPE] = vinfo_new(CompileTime_New((long)&PySlice_Type));
-  vinfo_incref(start);
-  r->array->items[iSLICE_START] = start;
-  vinfo_incref(stop);
-  r->array->items[iSLICE_STOP] = stop;
-  if (step != NULL)
-    vinfo_incref(step);
-  else
-    step = psyco_vi_None();
-  r->array->items[iSLICE_STEP] = step;
-  return r;
-}
+/* SLICE_* descriptors: virtual_fields_gen.h; PsycoSlice_New, compute_slice
+   and direct_compute_slice, generated from PySlice_New and
+   policy_table.TYPES (D80) */
+#include "psliceobject_virtual_gen.h"
 
 static bool is_none(vinfo_t *v) {
   return is_compiletime(v->source) &&
@@ -122,6 +91,7 @@ int PsycoSlice_Unpack(PsycoObject *po, vinfo_t *slice, vinfo_t **pstart,
 
 INITIALIZATIONFN
 void psy_sliceobject_init(void) {
-  /* immutable, but forced across calls like ranges (identity, C17) */
-  INIT_SVIRTUAL_NOCALL(psyco_computed_slice, compute_slice, 4);
+  /* immutable, but forced across calls like ranges (identity, C17):
+     policy_table.TYPES' weights */
+  gen_virtual_slice_init();
 }

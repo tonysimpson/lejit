@@ -194,6 +194,13 @@ class Checker:
                 self.ni_name(key, n)
             for item in e.get('policy', ()):
                 self.item(key, item)
+                # a generated function's virtual result comes from TYPES'
+                # constructors (D80): an item saying so would be a second
+                # copy that could disagree
+                if item[:2] == ('virtual', 'result') and any(
+                        n.startswith('tools/') for n in e.get('ni', ())):
+                    self.bad(key, "a generated function with a 'virtual result'"
+                             " item: the constructor rule reads TYPES")
 
     def item(self, where, item):
         if not isinstance(item, tuple) or len(item) not in (2, 3):
@@ -263,10 +270,34 @@ class Checker:
             for n in e.get('ni', ()):
                 self.ni_name(where, n)
             if 'virtual' in e:
-                self.virtual(where, e['virtual'])
+                self.virtual(where, e['virtual'], bool(e.get('mutable')))
 
-    def virtual(self, where, v):
-        """The weights as INIT_SVIRTUAL(_NOCALL) in Ni registers them."""
+    def virtual(self, where, v, mutable=False):
+        """The weights as INIT_SVIRTUAL(_NOCALL) in Ni registers them; for
+        a type gen_virtual.py generates (a constructor, no mutable field),
+        the constructor exists and Ni declares the virtual one."""
+        self.fields(where + ' virtual', v, ('ni', 'weight', 'weight_at_calls',
+                                             'constructor', 'new', 'max_items',
+                                             'forced'))
+        if 'constructor' in v:
+            if self.src.find(v['constructor']) is None:
+                self.bad(where, 'no constructor %s in the source' % v['constructor'])
+            # declared in Ni's header, defined by gen_virtual.py (or by Ni
+            # for a mutable type)
+            path, _, name = v.get('new', ':').partition(':')
+            f = self.ni.file(path)
+            if f is None or not any(t.text == name for t in f[0]):
+                self.bad(where, '%s does not declare %s' % (path, name))
+        if v.get('forced') not in (None, 'drop_fields'):
+            self.bad(where, "'forced' is %r, not 'drop_fields'" % v['forced'])
+        if 'max_items' in v and v['max_items'] not in table().LIMITS:
+            self.bad(where, 'max_items %s is not in LIMITS' % v['max_items'])
+        if 'constructor' in v and not mutable:
+            # gen_virtual.py registers the weights itself
+            path, _, sv = v['ni'].partition(':')
+            if self.ni.file(path) is None:
+                self.bad(where, 'no file %s' % path)
+            return
         path, _, sv = v['ni'].partition(':')
         f = self.ni.file(path)
         toks = f[0] if f else []

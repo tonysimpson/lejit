@@ -372,7 +372,12 @@ pfunc_descr_get(PsycoObject *po, PyObject *func, vinfo_t *obj, PyObject *type)
     /* XXX obj is never Py_None here in the current implementation,
        but could be if called by other routines than
        PsycoObject_GenericGetAttr(). */
-    return PsycoMethod_New(func, obj);
+    vinfo_t *vfunc, *result;
+    Py_INCREF(func);
+    vfunc = vinfo_new(CompileTime_NewSk(sk_new((long)func, SkFlagPyObj)));
+    result = PsycoMethod_New(vfunc, obj);
+    vinfo_decref(vfunc, po);
+    return result;
 }
 
 INITIALIZATIONFN

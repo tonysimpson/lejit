@@ -20,6 +20,10 @@
 #define iFIX_SIZE  FIELD_INDEX(FIX_size)
 #define iVAR_SIZE  FIELD_INDEX(VAR_size)
 
+/* the field descriptors of the virtual types tools/metac/gen_virtual.py
+   writes from policy_table.TYPES (D80): TUPLE_ob_item, SLICE_*, METHOD_* */
+#include "virtual_fields_gen.h"
+
 
 /* common type checkers, rewritten because in Psyco we manipulate type
    objects directly and Python's usual macros insist on taking a regular

@@ -10,8 +10,7 @@
 #include "pabstract.h"
 
 
-#define TUPLE_ob_item   FARRAY(CPY_FIELD(PyTupleObject, ob_item, FIX_size))
-#define iTUPLE_OB_ITEM  FIELD_INDEX(TUPLE_ob_item)
+/* TUPLE_ob_item and iTUPLE_OB_ITEM: virtual_fields_gen.h (pobject.h) */
 
 /* The following macro reads an item from a Psyco tuple without any
    checks. Be sure the item has already been loaded in the array of
@@ -25,7 +24,7 @@
 } while (0)
 
 /***************************************************************/
-/* virtual tuples.
+/* virtual tuples (generated, ptupleobject_virtual_gen.h).
    If 'source' is not NULL it gives the content of the tuple.
    If 'source' is NULL you have to initialize it yourself. */
 EXTERNFN vinfo_t* PsycoTuple_New(int count, vinfo_t** source);

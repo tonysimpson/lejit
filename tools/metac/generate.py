@@ -33,7 +33,9 @@ GENERATORS = [('gen_long', 'plongobject_gen.h'),
               ('gen_abstract:build_tuple', 'ptupleobject_gen.h')]
 # (a 'module:function' entry calls that function instead of build)
 # and mechanisms.py writes mechanisms.HEADERS: the snippet for each of Ni's
-# own mechanisms that the source's answers choose (D75)
+# own mechanisms that the source's answers choose (D75); gen_virtual.py
+# writes gen_virtual.headers(): the field descriptors and, per virtual type
+# policy_table.TYPES generates, its constructor and force function (D80)
 
 
 def target_info(python):
@@ -53,8 +55,9 @@ def main(argv):
     if err:
         out = argv[argv.index('--out') + 1] if '--out' in argv else None
         import mechanisms
+        import gen_virtual
         for filename in [f for _, f in GENERATORS] + mechanisms.HEADERS \
-                if out else ():
+                + gen_virtual.headers() if out else ():
             path = os.path.join(out, filename)
             if os.path.exists(path):
                 os.remove(path)
@@ -103,6 +106,16 @@ def generate(argv):
         done = sum(1 for line in report if line.startswith('generated'))
         print('%-20s %d generated, %d not (CPython %s)'
               % (filename, done, len(report) - done, version))
+        if args.verbose:
+            print('\n'.join('  ' + line for line in report))
+    import gen_virtual
+    try:
+        virtual = gen_virtual.build(target)
+    except cslots.GenError as e:
+        return 'generate.py: gen_virtual: %s' % e
+    for filename, text, report in virtual:
+        outputs.append((filename, text))
+        print('%-20s %d generated (CPython %s)' % (filename, len(report), version))
         if args.verbose:
             print('\n'.join('  ' + line for line in report))
     import mechanisms

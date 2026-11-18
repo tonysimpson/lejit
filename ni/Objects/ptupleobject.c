@@ -16,112 +16,9 @@
 
 static source_virtual_t psyco_computed_tuple;
 
-#if ALL_CHECKS
-static void check_ituple(vinfo_t* v)
-{
-	int tuple_end = v->array->count;
-	int l1 = CompileTime_Get(v->array->items[iFIX_SIZE]->source)->value;
-	psyco_assert(tuple_end == iTUPLE_OB_ITEM + l1);
-}
-#else
-# define check_ituple(v)    ;
-#endif
-
-static bool compute_tuple(PsycoObject* po, vinfo_t* v)
-{
-	int i, tuple_end;
-	check_ituple(v);
-	tuple_end = v->array->count;
-	
-	/* check whether all tuple objects are constant */
-	for (i=iTUPLE_OB_ITEM; i<tuple_end; i++) {
-		vinfo_t* vi = v->array->items[i];
-		if (!is_compiletime(vi->source))
-			break;  /* no */
-	}
-	if (i == tuple_end) {
-		/* yes -- let's build a constant compile-time tuple */
-		source_known_t* sk;
-		PyObject* constant = PyTuple_New(tuple_end - iTUPLE_OB_ITEM);
-		if (constant == NULL)
-			OUT_OF_MEMORY();
-		for (i=iTUPLE_OB_ITEM; i<tuple_end; i++) {
-			PyObject* obj;
-			sk = CompileTime_Get(v->array->items[i]->source);
-			obj = (PyObject*) sk->value;
-			Py_INCREF(obj);
-			PyTuple_SET_ITEM(constant, i-iTUPLE_OB_ITEM, obj);
-		}
-		
-		/* move the resulting non-virtual Python object back into 'v' */
-		sk = sk_new((long) constant, SkFlagPyObj);
-		v->source = CompileTime_NewSk(sk);
-	}
-	else {
-		/* no -- code a call to PyTuple_New() */
-		int tuple_len = tuple_end - iTUPLE_OB_ITEM;
-		vinfo_t* tuple = psyco_generic_call(po, PyTuple_New,
-                                                    CfCommonNewRefPyObject,
-                                                    "l", (long)tuple_len);
-		if (tuple == NULL)
-			return false;
-
-		/* write the storing of the objects in the tuple */
-		for (i=0; i<tuple_len; i++) {
-			vinfo_t* vi = PsycoTuple_GET_ITEM(v, i);
-			if (!psyco_put_nth_field(po, tuple,
-						 FMUT(FPYREF(TUPLE_ob_item)),
-						 i, vi)) {
-				vinfo_decref(tuple, po);
-				return false;
-			}
-			/* new references are made by psyco_put_nth_field() */
-		}
-		/* move the resulting non-virtual Python object back into 'v' */
-		vinfo_move(po, v, tuple);
-	}
-	return true;
-}
-
-static PyObject* direct_compute_tuple(vinfo_t* v, char* data)
-{
-	int i, tuple_end;
-	PyObject* result;
-
-	check_ituple(v);
-	tuple_end = v->array->count;
-
-	result = PyTuple_New(tuple_end - iTUPLE_OB_ITEM);
-	if (result == NULL)
-		return NULL;
-	
-	for (i=iTUPLE_OB_ITEM; i<tuple_end; i++) {
-		PyObject* obj = direct_xobj_vinfo(v->array->items[i], data);
-		if (obj == NULL) {
-			Py_DECREF(result);
-			return NULL;
-		}
-		PyTuple_SET_ITEM(result, i-iTUPLE_OB_ITEM, obj);
-	}
-	return result;
-}
-
-DEFINEFN
-vinfo_t* PsycoTuple_New(int count, vinfo_t** source)
-{
-	int i;
-	vinfo_t* r = vinfo_new(VirtualTime_New(&psyco_computed_tuple));
-	r->array = array_new(iTUPLE_OB_ITEM + count);
-	r->array->items[iOB_TYPE] =
-		vinfo_new(CompileTime_New((long)(&PyTuple_Type)));
-	r->array->items[iFIX_SIZE] = vinfo_new(CompileTime_New(count));
-	if (source != NULL)
-		for (i=0; i<count; i++) {
-			vinfo_incref(source[i]);
-			PsycoTuple_GET_ITEM(r, i) = source[i];
-		}
-	return r;
-}
+/* PsycoTuple_New, compute_tuple and direct_compute_tuple, generated from
+   PyTuple_New and policy_table.TYPES (D80) */
+#include "ptupleobject_virtual_gen.h"
 
 
 /* do not load a constant tuple into a vinfo_array_t if longer than: */
@@ -275,9 +172,5 @@ void psy_tupleobject_init(void)
 		Psyco_DefineMeta(mm->mp_subscript, psyco_generic_subscript);
 	}
 
-        INIT_SVIRTUAL(psyco_computed_tuple, compute_tuple,
-		      direct_compute_tuple,
-                      (-1 << iTUPLE_OB_ITEM),  /* sign bit of bitfield will
-                                                  be extended indefinitely */
-                      NW_TUPLES_NORMAL, NW_TUPLES_FUNCALL);
+	gen_virtual_tuple_init();
 }

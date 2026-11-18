@@ -198,11 +198,23 @@ TYPES = {
                          'load': 'ni/Objects/ptupleobject.c:PsycoTuple_Load',
                          'item': 'ni/Objects/ptupleobject.h:PsycoTuple_GET_ITEM'},
         'virtual': {'ni': 'ni/Objects/ptupleobject.c:psyco_computed_tuple',
-                    'weight': 'NW_TUPLES_NORMAL', 'weight_at_calls': 'NW_TUPLES_FUNCALL'}},
+                    'weight': 'NW_TUPLES_NORMAL', 'weight_at_calls': 'NW_TUPLES_FUNCALL',
+                    # D80: the C constructor a virtual stands for, and Ni's
+                    # virtual constructor; gen_virtual.py writes both, the
+                    # force function and the field descriptors
+                    'constructor': 'Objects/tupleobject.c:PyTuple_New',
+                    'new': 'ni/Objects/ptupleobject.h:PsycoTuple_New',
+                    # a tuple whose size a meta computes is virtual up to the
+                    # size Ni loads from a constant one (gen_abstract.py)
+                    'max_items': 'CT_TUPLE_LOAD_SIZE_LIMIT'}},
     'Include/listobject.h:PyListObject': {
         'shape': '1e17e786b756', 'type': 'PyList_Type', 'mutable': ['ob_size', 'ob_item'],
+        # mutable: only its construction is the rule's (BUILD_LIST, D73),
+        # its force function and fields are hand-written
         'virtual': {'ni': 'ni/Objects/plistobject.c:psyco_computed_vlist',
-                    'weight': 'NW_VLISTS', 'weight_at_calls': 'NW_FORCE'}},
+                    'weight': 'NW_VLISTS', 'weight_at_calls': 'NW_FORCE',
+                    'constructor': 'Objects/listobject.c:PyList_New',
+                    'new': 'ni/Objects/plistobject.h:PsycoList_New'}},
     'Include/longintrepr.h:_longobject': {
         'shape': '8ccf94d3f22e', 'type': 'PyLong_Type', 'immutable': ['ob_size', 'ob_digit'],
         # the residual call of an int slot on two ints gives an int
@@ -233,7 +245,12 @@ TYPES = {
     'Include/sliceobject.h:PySliceObject': {
         'shape': '9fa2823d7f91', 'type': 'PySlice_Type', 'immutable': ['start', 'stop', 'step'],
         'virtual': {'ni': 'ni/Objects/psliceobject.c:psyco_computed_slice',
-                    'weight': 4, 'weight_at_calls': 'NW_FORCE'}},
+                    'weight': 4, 'weight_at_calls': 'NW_FORCE',
+                    'constructor': 'Objects/sliceobject.c:PySlice_New',
+                    'new': 'ni/Objects/psliceobject.h:PsycoSlice_New',
+                    # once real, its bounds are dropped from the vinfo, not
+                    # kept as known fields (D56)
+                    'forced': 'drop_fields'}},
     'Include/funcobject.h:PyFunctionObject': {
         # func_code, func_defaults: held as first seen and guarded (F52, F57)
         'shape': 'b4e965472ecd', 'type': 'PyFunction_Type',
@@ -247,7 +264,9 @@ TYPES = {
     'Include/classobject.h:PyMethodObject': {
         'shape': '87c9708df70e', 'type': 'PyMethod_Type', 'immutable': ['im_func', 'im_self'],
         'virtual': {'ni': 'ni/Objects/pclassobject.c:psyco_computed_method',
-                    'weight': 0, 'weight_at_calls': 0}},
+                    'weight': 0, 'weight_at_calls': 0,
+                    'constructor': 'Objects/classobject.c:PyMethod_New',
+                    'new': 'ni/Objects/pclassobject.h:PsycoMethod_New'}},
     'Include/cellobject.h:PyCellObject': {
         # a cell can change under any call
         'shape': '666fb76e2c4d', 'type': 'PyCell_Type', 'mutable': ['ob_ref']},
@@ -659,18 +678,8 @@ ENTRIES = {
         'policy': [
             ('ref', 'need_reference', 'the cell content'),
         ]},
-    'Python/ceval.c:TARGET(BUILD_TUPLE)': {
-        'shape': '0db52e5ab2d9',
-        'ni': ['tools/metac/gen_ceval.py:translate'],
-        'policy': [
-            ('virtual', 'result', 'PyTuple_Type'),
-        ]},
-    'Python/ceval.c:TARGET(BUILD_LIST)': {
-        'shape': '60183638719d',
-        'ni': ['tools/metac/gen_ceval.py:translate'],
-        'policy': [
-            ('virtual', 'result', 'PyList_Type, up to VLIST_LENGTH_MAX items'),
-        ]},
+    'Python/ceval.c:TARGET(BUILD_TUPLE)': {'shape': '0db52e5ab2d9', 'ni': ['tools/metac/gen_ceval.py:translate']},
+    'Python/ceval.c:TARGET(BUILD_LIST)': {'shape': '60183638719d', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(BUILD_MAP)': {'shape': '2a0606f6f2ba', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(BUILD_CONST_KEY_MAP)': {'shape': '3f6a652605b8', 'ni': ['ni/Python/pycompiler.c:case BUILD_CONST_KEY_MAP']},
     'Python/ceval.c:TARGET(MAP_ADD)': {'shape': '97181b1620fd', 'ni': ['tools/metac/gen_ceval.py:translate']},
@@ -736,12 +745,7 @@ ENTRIES = {
             ('virtual', 'result', 'PyFunction_Type'),
             ('limit', 'nested_weight', 'closure, annotations and defaults'),
         ]},
-    'Python/ceval.c:TARGET(BUILD_SLICE)': {
-        'shape': '4f7d2d7b815b',
-        'ni': ['tools/metac/gen_ceval.py:translate'],
-        'policy': [
-            ('virtual', 'result', 'PySlice_Type'),
-        ]},
+    'Python/ceval.c:TARGET(BUILD_SLICE)': {'shape': '4f7d2d7b815b', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(EXTENDED_ARG)': {'shape': '9bb225918986', 'ni': ['ni/Python/pycompiler.c:case EXTENDED_ARG']},
     'Objects/typeobject.c:PyType_IsSubtype': {'shape': '68f9fd0d8e28', 'ni': ['ni/Objects/pobject.c:Psyco_TypeIsSubtype']},
     'Objects/object.c:PyObject_IsTrue': {

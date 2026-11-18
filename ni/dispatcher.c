@@ -603,8 +603,9 @@ static int respawn_flatten(vinfo_array_t *a, int depth, respawn_item_t *out,
       ;
     else if (is_compiletime(v->source)) {
       /* folding can build an immutable value afresh on each compile (a
-         constant tuple): compare those by type. Any other object, such as
-         a class or a function, by identity, but see respawn_same_constant */
+         constant tuple, or a slice of constants forced, D80): compare those
+         by type. Any other object, such as a class or a function, by
+         identity, but see respawn_same_constant */
       source_known_t *sk = CompileTime_Get(v->source);
       PyObject *o = (PyObject *)sk->value;
       it.value = sk->value;
@@ -613,7 +614,8 @@ static int respawn_flatten(vinfo_array_t *a, int depth, respawn_item_t *out,
       if (it.tp != NULL &&
           (PyTuple_CheckExact(o) || PyUnicode_CheckExact(o) ||
            PyBytes_CheckExact(o) || PyLong_CheckExact(o) ||
-           PyFloat_CheckExact(o) || PyFrozenSet_CheckExact(o)))
+           PyFloat_CheckExact(o) || PyFrozenSet_CheckExact(o) ||
+           PySlice_Check(o)))
         it.x = (unsigned long)it.tp * 4 + 3;
       else if (it.tp == &PyCFunction_Type)
         /* a built-in bound method, made by folding an attribute lookup on
