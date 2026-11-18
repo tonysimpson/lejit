@@ -23,7 +23,7 @@ In KNOWN_BUGS.md. Worth doing first among them: C29 (no events for a frame alrea
 - Register calling convention between compiled functions (QUESTIONS 35 first).
 
 ## Code size and compile time
-- Shared code after polymorphic promotion sites, option D: 3.12 (D64, FINDINGS.md "Option D", QUESTIONS 43–46).
+- Shared code after polymorphic promotion sites, option D: on 3.7 (D64, FINDINGS.md "Option D", QUESTIONS 43–46).
 - Forgotten values (D43): forget a forgotten value's type too (needs a generic path for `Psyco_NeedType`); mark values that partial matches un-promote before the cap (SPECIALISATION.md).
 - Unused facts (D50, D57): promotions at a merge point, whose own compare must keep the fact.
 - Rejoining (D44): respawn points that are not split sites (error paths, overflow); a small case for C27.
