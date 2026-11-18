@@ -1,13 +1,13 @@
 # Status
 
-## 2026-11-18: the `ceval.c` reader (GENERATION.md step 2, `20689cd`, D69)
+## 2026-11-18: the `ceval.c` reader (GENERATION.md step 2, `7b21dea`, D69)
 
 The bytecode generator reads 3.7's `ceval.c` itself; `tools/metac/bytecodes37.c` is gone (GOAL "when the phase is done", point 2, for that file). [run]
 - **Read 51 of 119 cases, generated 44** (the 41 of before, and `LOAD_ATTR`, `STORE_ATTR`, `DELETE_ATTR`, whose hand-written cases left `pycompiler.c`); 68 refused with a kind (core 21, oparg 18, control flow 15, shared code 8, falls through 4, preprocessor 1, stack 1). METACOMPILER.md "`ceval.c` reader".
 - **The 41 regenerate the same**, but for ceval.c's variable names in 10 cases and the incref order in `DUP_TOP_TWO`.
 - **Every derived effect equals `dis.stack_effect`** for nine opargs, checked in each generation; the mutation test (three wrong readers, six edits to `ceval.c`) stops generation or drops the opcode every time.
 - Checked build: `tests/run.py` 747 pass (two new cases: the attribute opcodes and their error exits), `tests/compile_bounds.py` 7 checks, the seven `tools/profile_bench.py` runs, `tests/cpython_tests.py -j 2` default set 285 modules, 0 unexpected. Generators run twice with the same output, and the build used it.
-- Release build, instructions per warm iteration (`perf stat -e instructions:u`, `profile_bench.py` 1 s and 4 s, PYTHONHASHSEED=0), `b36a1ac` → `20689cd`: richards 168.94 → 168.94 M, deltablue 26.62 → 26.63, raytrace 3,120.6 → 3,120.7 (2 s and 8 s runs; the 1/4 s pair was too noisy), go 1,072.0 → 1,072.4, hexiom 40.76 → 40.77, chaos 465.4 → 465.6, pyflate 2,012.4 → 2,012.1: no change.
+- Release build, instructions per warm iteration (`perf stat -e instructions:u`, `profile_bench.py` 1 s and 4 s, PYTHONHASHSEED=0), `b36a1ac` → `7b21dea`: richards 168.94 → 168.94 M, deltablue 26.62 → 26.63, raytrace 3,120.6 → 3,120.7 (2 s and 8 s runs; the 1/4 s pair was too noisy), go 1,072.0 → 1,072.4, hexiom 40.76 → 40.77, chaos 465.4 → 465.6, pyflate 2,012.4 → 2,012.1: no change.
 - Not run: `gen_ceval.py --try` on 3.12's `bytecodes.c` (no 3.12 source on this machine); the reader's 3.12 path is the unchanged parser.
 
 ## 2026-11-18: generation at build time (GENERATION.md step 1, `9eae61d`, D68)
