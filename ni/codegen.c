@@ -1010,8 +1010,8 @@ integer_cmp(PsycoObject *po, vinfo_t *v1, vinfo_t *v2, int py_op)
 
     if (vinfo_known_equal(v1, v2)) {
     same_source:
-        /* comparing equal sources */
-        switch (base_py_op) {
+        /* comparing equal sources, signed or unsigned */
+        switch (py_op & COMPARE_BASE_MASK) {
             case Py_LE:
             case Py_EQ:
             case Py_GE:
