@@ -1,7 +1,7 @@
 # A class's slots can change after code using them is compiled: deleting
 # __next__ makes tp_iternext _PyObject_NextNotImplemented (TypeError),
 # and setting __hash__, __eq__, __ne__ or __iter__ on the class changes
-# tp_hash, tp_richcompare or tp_iter (KNOWN_BUGS F50). Compiled code reads
+# tp_hash, tp_richcompare or tp_iter. Compiled code reads
 # a heap type's slots at run time, as CPython does.
 
 

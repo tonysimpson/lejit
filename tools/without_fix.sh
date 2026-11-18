@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run a command with some uncommitted changes taken out, to show that a new
-# test fails without the fix (D21). The build is forced: distutils compares
-# whole seconds, so stashing just after a build can leave the fixed ni.so in
-# place and make the check pass by mistake (it happened twice).
+# test fails without the fix. The build is forced: distutils compares whole
+# seconds, so stashing just after a build can leave the fixed ni.so in place
+# and make the check pass by mistake.
 #
 #   tools/without_fix.sh <file>... -- <command>
 #   e.g. tools/without_fix.sh ni/mergepoints.c -- python3.7 tests/run.py -k framelocals

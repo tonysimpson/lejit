@@ -51,7 +51,7 @@ def down(n):
     return down(n + 1) + 1
 
 # endless recursion in compiled code must raise RecursionError, not
-# overflow the C stack (KNOWN_BUGS C12); twice, to check the depth is
+# overflow the C stack; twice, to check the depth is
 # given back
 def endless_recursion():
     out = []

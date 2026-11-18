@@ -1,4 +1,4 @@
-# str slots generated from unicodeobject.c (punicodeobject_gen.h, D89):
+# str slots generated from unicodeobject.c (punicodeobject_gen.h):
 # len (the ready bit, then the length field), 'in' (constants fold, else
 # PyUnicode_Contains), + (PyUnicode_Concat); for each PEP 393 kind (ASCII,
 # latin-1, UCS-2, UCS-4), subclasses, empty strings. With them the builtins

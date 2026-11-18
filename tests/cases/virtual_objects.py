@@ -1,4 +1,4 @@
-# Virtual objects generated from CPython's constructors (D80): tuples,
+# Virtual objects generated from CPython's constructors: tuples,
 # slices and bound methods built by gen_virtual.py, and tupleconcat and
 # tuplerepeat translated from tupleobject.c with the constructor rule (a
 # PyTuple_New of a size known now is a virtual tuple whose items the C's

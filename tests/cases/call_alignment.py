@@ -1,12 +1,12 @@
 # A state may only jump into a block whose return-address slot is at the
-# same position mod 16 (KNOWN_BUGS C1, C31, CPython's test_shutil):
-# compiled code aligns its C calls from that slot, and unification can't
-# move it. The test compared the frame locals stored under the slot
-# instead, so a compiled call of make_archive with three run-time arguments
-# took, at the join point after LOAD_GLOBAL os, the block compiled for a
-# call with none ('test', 'tar'), and os.chdir ran with RSP 8 off: its SSE
-# stores faulted. The calls are those of test_shutil's tests that the crash
-# needs; each is in its own function, so each is a compiled call.
+# same position mod 16 (KNOWN_BUGS C1; CPython's test_shutil): compiled
+# code aligns its C calls from that slot, and unification can't move it.
+# Comparing only the frame locals stored under the slot is not enough: a
+# compiled call of make_archive with three run-time arguments would take, at
+# the join point after LOAD_GLOBAL os, the block compiled for a call with
+# none ('test', 'tar'), and os.chdir would run with RSP 8 off and fault in
+# its SSE stores. The calls are those of test_shutil's tests that reach it;
+# each is in its own function, so each is a compiled call.
 import os
 import shutil
 import tempfile

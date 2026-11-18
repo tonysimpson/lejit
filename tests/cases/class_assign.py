@@ -1,6 +1,6 @@
 # __class__ assigned while compiled code knows the object's type
-# (KNOWN_BUGS F55, pobject.c:Psyco_ForgetClasses; F96 for constants,
-# pobject.c:Psyco_ConstantType): every use after the
+# (pobject.c:Psyco_ForgetClasses; for constants, pobject.c:Psyco_ConstantType):
+# every use after the
 # assignment must see the new class, wherever the assignment ran.
 import enum
 import types
@@ -292,7 +292,7 @@ def global_rebound(n):
     return out
 
 
-# D63: a type forgotten after a call is learnt again by a guard against
+# A type forgotten after a call is learnt again by a guard against
 # the type it had (pobject.c:Psyco_TypeHintGuard). The cases below run the
 # guard both ways: passing for a while, then failing once the class
 # changes, in the same compiled code.

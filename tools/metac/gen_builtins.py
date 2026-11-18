@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Metas of a module's builtin functions, by the general translator
-(GENERATION step 5, DECISIONS D86); first on Python/bltinmodule.c,
-written into pbltinmodule_gen.h, which pbltinmodule.c includes.
+"""Metas of a module's builtin functions, by the general translator; first
+on Python/bltinmodule.c, written into pbltinmodule_gen.h, which
+pbltinmodule.c includes.
 
 What is translated: the functions policy_table.TRANSLATED_FUNCTIONS names
 for the file, by their Python names. Which C function each name stands
@@ -11,7 +11,7 @@ PyModuleDef names its method table, whose entries (Argument Clinic's
 ml_flags. The generated gen_<file>_init(md) registers each meta under
 those flags (Psyco_DefineModuleFn).
 
-How: gen_abstract.py's translator (D74, D78, D80, D84), with these rules
+How: gen_abstract.py's translator, with these rules
 on top, each general:
   - a root's parameters follow how Ni calls a meta for its ml_flags
     (policy_table.METH_ARGS): METH_O's (self, arg) are vinfos; a
@@ -674,7 +674,7 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
 
 
 def build_math(target):
-    """pmathmodule_gen.h: the math functions (D87)."""
+    """pmathmodule_gen.h: the math functions."""
     return build(target, UNITS['math'])
 
 

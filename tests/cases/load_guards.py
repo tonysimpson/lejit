@@ -1,5 +1,5 @@
 # Load guards shared per (type, name, kind) and repaired at run time
-# (pobject.c:load_guard, load_type_changed; D60): a class change that
+# (pobject.c:load_guard, load_type_changed): a class change that
 # leaves a load's lookup as compiled re-arms the guard, one that doesn't
 # must be seen. Classes with a metaclass get a version tag
 # (enable_version_tag), so their guards hold, and their changes must be

@@ -1,4 +1,4 @@
-"""Definitions in C source by name, and their shapes (GENERATION step 3).
+"""Definitions in C source by name, and their shapes.
 
 A definition is named 'path:name', path relative to the tree it is in:
 'Objects/abstract.c:PyNumber_Add' (a function), 'Include/object.h:Py_DECREF'

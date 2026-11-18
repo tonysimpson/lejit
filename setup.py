@@ -119,7 +119,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 class build_ext_generated(build_ext):
     """Generate the translated headers from the source of the CPython being
-    built for (D67), into the build directory, before compiling."""
+    built for, into the build directory, before compiling."""
 
     def run(self):
         # "file.h" looks next to the includer first: an old copy there

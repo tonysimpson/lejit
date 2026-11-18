@@ -1,11 +1,11 @@
-# A caller dies and a new one takes its code object's address (KNOWN_BUGS
-# C30, CPython's test_timeit). A method inlined into the caller leaves the
-# blocks compiled inside it in the method's own join points, and their code
-# goes on in the caller's. The saved caller state named the caller only by
-# its code object, borrowed, so a new caller at the same address with the
-# same globals matched those blocks and jumped into the dead caller's code:
-# here the 'B' caller's return value for an 'A' caller; in timeit, a
-# promotion whose merge points had been freed, a segfault.
+# A caller dies and a new one takes its code object's address (CPython's
+# test_timeit). A method inlined into the caller leaves the blocks compiled
+# inside it in the method's own join points, and their code goes on in the
+# caller's. If the saved caller state named the caller only by its borrowed
+# code object, a new caller at the same address with the same globals would
+# match those blocks and jump into the dead caller's code: here the 'B'
+# caller's return value for an 'A' caller; in timeit, a promotion whose
+# merge points had been freed, a segfault.
 
 class Counter:
     def __init__(self):

@@ -1,4 +1,4 @@
-# Slots generated from the container files (D84): tuple's tp_richcompare
+# Slots generated from the container files: tuple's tp_richcompare
 # (a field of the type, not of a slot table) unrolled for tuples of known
 # length, CPython's slot otherwise; len() of a list, dict, bytes and tuple
 # read as a field through policy_table.TYPES' descriptors; a tuple's item
@@ -84,7 +84,7 @@ NEVER = NeverEq()
 
 
 def identity(x):
-    # CPython's PyObject_RichCompareBool: the same object is equal (F109)
+    # CPython's PyObject_RichCompareBool: the same object is equal
     return [(x,) == (x,), (x, 1) != (x, 1), x in (x,), x in (1, x),
             x not in (x,), (x,) == (float('nan'),)]
 

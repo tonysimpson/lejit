@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The argument binding of a Python call, generated from the C function
-that makes and runs a frame (GENERATION step 7, DECISIONS D85).
+that makes and runs a frame.
 
 A policy entry with ('other', 'frame_binding') names such a function
 (3.7 and 3.8: ceval.c:_PyEval_EvalCodeWithName). What is generated is the
@@ -24,7 +24,7 @@ values assigned to it. Rules, none about one function:
     a keyword name, counts) is C in the binder, and so is a test of
     whether a slot of the locals holds a value (GETLOCAL(i) == NULL);
   - Py_INCREF/Py_DECREF of a value are vinfo_incref/vinfo_decref; a call
-    of a virtual type's constructor (policy_table.TYPES, D80) is Ni's
+    of a virtual type's constructor (policy_table.TYPES) is Ni's
     virtual object, within its item limit, its items stored by the C's
     stores into the items field;
   - anything with no form in the compiler (a call that needs the objects,
@@ -32,7 +32,7 @@ values assigned to it. Rules, none about one function:
     being set) ends the binding there: the binder returns -1 and the
     caller makes the real call, which does the rest (or raises CPython's
     own message). Nothing has been emitted, so stopping anywhere is safe
-    (D74's resume, the whole function). A goto to a label outside the
+    (a resume of the whole function). A goto to a label outside the
     binding (the C's 'fail') is the same;
   - a C parameter Ni's declaration leaves out may not be read.
 Anything else is refused, with the construct, and the build stops.
@@ -689,7 +689,7 @@ class Binder:
         return None
 
     def construct(self, name, args, infer):
-        """A virtual type's constructor (D80): Ni's 'new', for an array
+        """A virtual type's constructor: Ni's 'new', for an array
         type of a size the compiler knows and within the type's limit (else
         the binding stops: the real call builds it)."""
         spec = self.vspecs[name]

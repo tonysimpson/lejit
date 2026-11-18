@@ -1,5 +1,5 @@
 # Calls from compiled code to closures that are not the virtual function
-# MAKE_FUNCTION made in the caller (KNOWN_BUGS F8): a constant function
+# MAKE_FUNCTION made in the caller: a constant function
 # (a decorated global, a method) has its cells read now as constants; one
 # known only at run time has its code promoted and its cells loaded from
 # func_closure at each call (psyfunc.c:psyco_call_closure). Zero-argument
@@ -272,7 +272,7 @@ def plain_one(a):
 
 
 def wrong_counts(n):
-    # CPython's TypeError wording, from the real call (F92)
+    # CPython's TypeError wording, from the real call
     out = []
     for f in (plain_one, adder, make_adder(n), make_with_default(n)):
         for k in range(4):
@@ -307,7 +307,7 @@ class Checker:
 def inlinable_runtime(n):
     # callnum(k) is a temporary, and deco, inlined with its cell loaded from
     # it, returns a closure over that cell, still virtual when the caller
-    # drops deco: the cell was freed before the closure took it (C49)
+    # drops deco: the cell must not be freed before the closure takes it
     c = Checker()
     return [c.small_closure(callnum(k)(None)) for k in range(n)]
 

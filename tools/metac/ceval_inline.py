@@ -1,5 +1,5 @@
-"""ceval.c's static helpers inlined into the opcode cases (DECISIONS D82,
-doc/METACOMPILER.md "`ceval.c` reader").
+"""ceval.c's static helpers inlined into the opcode cases
+(doc/METACOMPILER.md "`ceval.c` reader").
 
 A case that calls a static function of ceval.c ('res = cmp_outcome(oparg,
 left, right);') gets the function's body in place of the call, rewritten

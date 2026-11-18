@@ -1,5 +1,6 @@
-"""Simulate option 4's store cache (D38) over one iteration of a vendored
-pyperformance benchmark. Plain CPython 3.7 only:
+"""Simulate option 4's store cache (doc/FINDINGS.md "Attribute stores")
+over one iteration of a vendored pyperformance benchmark. Plain CPython 3.7
+only:
 
     python3.7 tools/store_cache_sim.py richards [iterations]
 

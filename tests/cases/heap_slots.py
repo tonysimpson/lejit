@@ -1,5 +1,5 @@
 # A class's slots change when a special method is set or deleted on it,
-# after code using them is compiled (KNOWN_BUGS F56, the rest of F50):
+# after code using them is compiled:
 # __bool__ or __len__ in a truth test, the number slots, __contains__,
 # __getitem__/__setitem__, len() and __call__. Compiled code must see
 # the class as it is when it runs.

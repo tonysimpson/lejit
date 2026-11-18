@@ -14,7 +14,8 @@ prefix, whose headers must not shadow the source's. The build directory is
 the source tree; pyconfig.h's directory is searched after it (-idirafter),
 so only what the source lacks comes from there.
 
-One departure from CPython's flags: -DUSE_COMPUTED_GOTOS=0 (D95).
+One departure from CPython's flags: -DUSE_COMPUTED_GOTOS=0, since computed
+gotos don't parse; with them off ceval.c's TARGETs are cases of one switch.
 """
 import collections
 import functools

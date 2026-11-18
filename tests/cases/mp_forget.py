@@ -1,6 +1,6 @@
 # Locals that hold a constant function, builtin or class on some paths and
 # another on others, with counters, so the loop head passes the cap per
-# merge point (D40). Results and identity must not change.
+# merge point. Results and identity must not change.
 
 def twice(x):
     return 2 * x

@@ -1,4 +1,4 @@
-# Virtual ranges and range iterators (ni/Objects/prangeobject.c, A8):
+# Virtual ranges and range iterators (ni/Objects/prangeobject.c):
 # every argument shape, empty and negative ranges, steps, the one-digit
 # boundary where the real call takes over, escapes of the range and of the
 # iterator, and mutation of the loop variable.

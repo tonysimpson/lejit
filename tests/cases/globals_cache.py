@@ -1,4 +1,4 @@
-# Cached LOAD_GLOBAL (D25, pycompiler.c:load_global_cached): a global or
+# Cached LOAD_GLOBAL (pycompiler.c:load_global_cached): a global or
 # builtin is a compile-time constant behind a guard on the dicts' version
 # tags. Every way the cached value can go stale must give CPython's result.
 import builtins

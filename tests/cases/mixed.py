@@ -1,4 +1,4 @@
-# Mixed-type binary operations (KNOWN_BUGS F1): 3.7's binary_op1 tries both
+# Mixed-type binary operations: 3.7's binary_op1 tries both
 # operands' slots, the right one first if its type is a subclass.
 
 def arith(a, b):

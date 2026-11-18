@@ -1,6 +1,6 @@
 # A function's __code__ can change after a compiled call to it (as
 # unittest.mock and code reloaders do): the call must run the code the
-# function has then (KNOWN_BUGS F57).
+# function has then.
 
 
 def foo(x):

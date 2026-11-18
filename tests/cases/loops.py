@@ -1,6 +1,6 @@
 # Loops whose body needs a respawn (here: the index-is-negative guard) and
-# carries a variable that changes between iterations. They hit KNOWN_BUGS
-# B14 (the -1 check after PyLong_AsLong(-1) corrupted the stack).
+# carries a variable that changes between iterations; the -1 check after
+# PyLong_AsLong(-1) must leave the stack as it was.
 
 def neg_index_loop(c):
     k = 0
@@ -40,7 +40,7 @@ def straight_line(c):
 
 
 # At the loop head x and y are distinct the first time round and one value
-# afterwards: psyco_unify must put that value in two registers (KNOWN_BUGS B7).
+# afterwards: psyco_unify must put that value in two registers.
 def shared_after_loop(n):
     x = n * 3
     y = n * 5

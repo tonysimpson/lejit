@@ -3,7 +3,7 @@
 
 import random
 
-# KNOWN_BUGS B8: when a code buffer fills up, compilation pauses behind a
+# When a code buffer fills up, compilation pauses behind a
 # proxy call that clobbers the flags; a live comparison must be saved first.
 # A long run of comparisons ends a buffer right after one.
 _rnd = random.Random(1)
@@ -22,9 +22,9 @@ def long_compare_run():
             many_compares(0, 0, 0, 0, 0, 0)]
 
 
-# KNOWN_BUGS B16: where paths join, the stack is lined up before the jump;
-# with a SUB that clobbered a live comparison (the zero path of an int
-# operand joins the others right after comparing)
+# Where paths join, the stack is lined up before the jump, which must not
+# be a SUB if a comparison is live (the zero path of an int operand joins
+# the others right after comparing)
 def ident(x):
     return x
 

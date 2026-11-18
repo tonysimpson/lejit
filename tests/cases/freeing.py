@@ -1,8 +1,7 @@
-# Compiled code objects must be able to die (KNOWN_BUGS C14). Ni's
-# snapshots held their code object, and the code object's co_extra held the
-# snapshots, so a compiled code object was immortal. Compiled code also
-# held its globals, so code with globals of its own (exec into a new dict,
-# namedtuple) stayed alive with them; the globals are now borrowed.
+# Compiled code objects must be able to die (KNOWN_BUGS C14). The code
+# object's co_extra holds its snapshots, so a snapshot holding the code
+# object would make it immortal. Compiled code borrows its globals, so code
+# with globals of its own (exec into a new dict, namedtuple) dies with them.
 import collections
 import ctypes
 import gc
@@ -57,8 +56,8 @@ def namedtuple_code_dies():
 
 def isinstance_class_dies():
     # isinstance's meta must not make a constant of a heap class: the
-    # compiled code would keep it alive (the type-call meta had the same
-    # problem with namedtuple_code_dies)
+    # compiled code would keep it alive (namedtuple_code_dies checks the
+    # same for the type-call meta)
     refs = []
     out = []
     for k in range(4):

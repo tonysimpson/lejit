@@ -1,4 +1,4 @@
-# COMPARE_OP, generated from ceval.c's cmp_outcome (D82): every compare
+# COMPARE_OP, generated from ceval.c's cmp_outcome: every compare
 # op on ints, floats, strings and mixed types; is / is not; in / not in on
 # tuples, lists, dicts and strings; exception matching against classes,
 # tuples, subclasses and non-classes (known at compile time, and only at

@@ -71,7 +71,7 @@ def make_and_store(i):
 def classes_die_after_cutoff(make, n):
     # an attribute site on an instance promotes its type, and the code then
     # holds that class, but only for the first MEGAMORPHIC_MAX (5) types per
-    # site (F25, D30): after a first batch, no class may stay alive
+    # site: after a first batch, no class may stay alive
     out = []
     for i in range(n):
         out.append(make(i)[0])

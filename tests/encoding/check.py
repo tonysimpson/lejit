@@ -28,7 +28,7 @@ import itertools, json, os, re, subprocess, sys, sysconfig, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HEADER = os.path.join(ROOT, 'ni', 'x64', 'iencoding.h')
 PY37 = os.environ.get('NI_PY37', os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
-# the headers the build generates (D68): psyco.h includes layouts_gen.h
+# the headers the build generates: psyco.h includes layouts_gen.h
 _gen = sorted(__import__('glob').glob(os.path.join(ROOT, 'build', 'temp.*', 'gen')))
 GEN = _gen[0] if _gen else os.path.join(ROOT, 'build', 'gen-missing')
 
@@ -294,8 +294,8 @@ int main(void) {
 def check_jump_decoder(workdir):
     """IS_A_SINGLE_JUMP (x64/idispatcher.h:make_code_conditional) decodes
     rather than emits, so it has no @asm annotation: check that it recognises
-    what JUMP_TO writes, with its target, and nothing else of that length.
-    It read the JMP one byte late (KNOWN_BUGS C35)."""
+    what JUMP_TO writes, with its target, and nothing else of that length,
+    reading the JMP from its first byte."""
     cfile = os.path.join(workdir, 'jumps.c')
     open(cfile, 'w').write(JUMP_DECODER)
     inc = subprocess.check_output([PY37, '-c', "import sysconfig;print(sysconfig.get_paths()['include'])"]).decode().strip()

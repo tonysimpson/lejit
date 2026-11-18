@@ -1,6 +1,6 @@
 """Read Python/ceval.c's TARGET cases into instruction definitions in the
-form CPython's own parser gives for Python/bytecodes.c (DECISIONS D67 (5),
-D73, doc/METACOMPILER.md "ceval.c reader"), so that everything after the
+form CPython's own parser gives for Python/bytecodes.c (doc/METACOMPILER.md
+"ceval.c reader"), so that everything after the
 front end of gen_ceval.py is shared by every version.
 
 A case is run symbolically over C tokens (ctokens.py). Stack positions are
@@ -42,7 +42,7 @@ Rules (each general, none per opcode):
     value is run on both arms, as two paths; the paths must agree on the
     stack where they meet. A branch on 'opcode' is folded: in a case
     reached by its own TARGET, opcode is that case.
-  - Arms that end the case (D79). 'if (C) { A; DISPATCH(); } REST' is
+  - Arms that end the case. 'if (C) { A; DISPATCH(); } REST' is
     'if (C) A else { REST }'. An if-chain on one int compared with
     constants whose last arm is an error exit tests that exit first, on
     the values no arm takes. 'if (x == K) { A; DISPATCH(); }', K one of

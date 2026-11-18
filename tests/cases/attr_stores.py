@@ -1,7 +1,7 @@
 # Attribute stores (pobject.c:PsycoObject_SetAttr): on a heap type with an
 # instance dict the store is guarded by the type's version tag and calls
 # _PyObjectDict_SetItem directly (or a known-hash store for an unshared
-# dict). A class changed after compiling must be seen (KNOWN_BUGS F37), and
+# dict). A class changed after compiling must be seen, and
 # data descriptors, missing dicts and errors must behave as in CPython.
 
 
@@ -10,7 +10,7 @@ class Hooked:
 
 
 def setattr_added_later(n):
-    # F37: a __setattr__ added to the class after compiling must be called
+    # a __setattr__ added to the class after compiling must be called
     C = Hooked
     if '__setattr__' in C.__dict__:
         del C.__setattr__

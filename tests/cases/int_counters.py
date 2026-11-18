@@ -1,7 +1,7 @@
 # Counters that start as the constant 0 and are updated only on some paths
 # through a loop, as in go's Board.useful: at the loop head each counter is
 # a constant int object, a virtual int with a known value or one with a
-# run-time value (D33, FINDINGS.md, dispatcher.c:canonical_int).
+# run-time value (FINDINGS.md, dispatcher.c:canonical_int).
 
 def counters(items):
     a = b = c = d = e = 0
@@ -66,10 +66,10 @@ def nested_branches(n):
     return hits, misses
 
 
-# KNOWN_BUGS C28: a local holding a small int that is also a known field
-# of a constant (an item of the constant tuple it was unpacked from) must
-# not be rewritten in place at the loop head: the tuple's item would become
-# a virtual int under a constant (vcompiler.c:coherent_array asserted).
+# A local holding a small int that is also a known field of a constant (an
+# item of the constant tuple it was unpacked from) must not be rewritten in
+# place at the loop head: the tuple's item would become a virtual int under
+# a constant (vcompiler.c:coherent_array asserts).
 def unpacked_from_constant(n):
     t = (0, 1)
     a, b = t
@@ -82,7 +82,7 @@ def unpacked_from_constant(n):
 
 def _check_pair(result, expected):
     # as test_math's testFrexp: loop-free, so it is inlined, and 'abs' is a
-    # split site whose block starts at a join point (D44)
+    # split site whose block starts at a join point
     (m, e), (em, ee) = result, expected
     return abs(m - em) < 1e-9 and e == ee, m + e + em + ee
 

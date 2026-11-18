@@ -1,10 +1,10 @@
-"""Choose Ni's own mechanisms from what a CPython source offers (D67 (4), D75).
+"""Choose Ni's own mechanisms from what a CPython source offers.
 
 Where Ni's own mechanism must differ between CPython versions (how compiled
 code is entered, how a thread says it is tracing, how frames are shown to
-Python, D75; where eval_breaker and the current thread state are and what
+Python; where eval_breaker and the current thread state are and what
 ceval does on eval_breaker, how calls are counted, how the exception state
-is held, how the GC tells a tracked object, D77), it is chosen here, never
+is held, how the GC tells a tracked object), it is chosen here, never
 by a version number:
 
 - a *detector* is a small function over the target's source (headers or C)

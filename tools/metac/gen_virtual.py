@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Virtual objects' support, generated from CPython's struct declarations,
-its constructors and policy_table.TYPES (GENERATION step 6, DECISIONS D80).
+its constructors and policy_table.TYPES.
 
 Input: each TYPES entry whose 'virtual' names a 'constructor' (a CPython
 function) and whose fields are all immutable. A mutable type (a list) keeps

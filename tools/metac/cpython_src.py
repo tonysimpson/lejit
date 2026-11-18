@@ -1,4 +1,4 @@
-"""Find the CPython source tree for the version Ni is being built for (D67).
+"""Find the CPython source tree for the version Ni is being built for.
 
 NI_CPYTHON_SRC, if set, is used as it is. Otherwise the release tarball for
 that exact version is fetched from python.org once, checked against

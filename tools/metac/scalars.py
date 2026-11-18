@@ -1,5 +1,5 @@
-"""Scalar code in the general translator (DECISIONS D87, doc/METACOMPILER.md
-"Scalar code").
+"""Scalar code in the general translator (doc/METACOMPILER.md "Scalar
+code").
 
 Ni's backend has no floating-point instructions, so a C double is a word
 holding its bits: a vinfo the meta passes to C helpers. Three rules, used by
@@ -10,7 +10,7 @@ one function:
     that struct holds a scalar in a field; a read of the field is Ni's
     'load', a call of one of the 'constructors' given a scalar is Ni's
     'new' (a virtual object holding it);
-  - copy-through (D19's pattern as a rule): a maximal run of statements
+  - copy-through: a maximal run of statements
     that read and write only C scalars (locals of the representation's C
     type, integers, constants, the pure functions of
     policy_table.EXTERNAL, raising an exception) becomes one C helper the
@@ -462,7 +462,7 @@ class Run:
 
 
 class ScalarRules:
-    """Walk's rules for C scalars (D87). Each hook answers None (or 0)
+    """Walk's rules for C scalars. Each hook answers None (or 0)
     when the code is not scalar, and the walk goes on as before."""
 
     def sreps(self):

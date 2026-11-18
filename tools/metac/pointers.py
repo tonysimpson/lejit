@@ -1,5 +1,5 @@
 """Rules of the general translator for a run-time 'char *' into an object
-(rule raw_pointer, D89; METACOMPILER.md "str and descriptors"). Mixed into
+(rule raw_pointer; METACOMPILER.md "str and descriptors"). Mixed into
 gen_abstract.Walk; each hook answers None when it doesn't apply.
 
 PyMember_GetOne(addr, l) is given an object as 'const char *' and moves it

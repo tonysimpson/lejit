@@ -1,6 +1,6 @@
-# from-imports inside functions: IMPORT_FROM is ceval.c:import_from
-# (KNOWN_BUGS F44: Ni raised Python 2's "cannot import name x", without the
-# name and path attributes, and had no sys.modules fallback)
+# from-imports inside functions: IMPORT_FROM is ceval.c:import_from, with
+# 3.7's message, the ImportError's name and path attributes, and the
+# sys.modules fallback
 import sys
 import types
 

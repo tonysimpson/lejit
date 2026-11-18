@@ -1,5 +1,5 @@
 # Argument binding of compiled calls, generated from ceval.c's
-# _PyEval_EvalCodeWithName (psyfunc_gen.h, D85): positional arguments,
+# _PyEval_EvalCodeWithName (psyfunc_gen.h): positional arguments,
 # defaults (some, all, none used), *args (empty, a few, more than a virtual
 # tuple holds), keyword-only parameters and their defaults, and calls the
 # binder leaves to the real call, whose TypeError must be CPython's own

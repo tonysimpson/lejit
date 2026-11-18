@@ -1,5 +1,5 @@
 # A C function called directly from compiled code gets CPython's result
-# checks (Objects/call.c:_Py_CheckFunctionResult, KNOWN_BUGS C25): NULL
+# checks (Objects/call.c:_Py_CheckFunctionResult): NULL
 # without an exception, or a result with one set, is a SystemError.
 # _testcapi has a function of each kind (CPython's test_capi).
 import _testcapi

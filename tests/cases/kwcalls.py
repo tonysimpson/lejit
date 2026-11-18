@@ -1,5 +1,5 @@
 # Calls with keyword arguments (CALL_FUNCTION_KW) and with *args/**kwargs
-# (CALL_FUNCTION_EX): KNOWN_BUGS F19, and more than 255 arguments (F3).
+# (CALL_FUNCTION_EX), and more than 255 arguments.
 
 def target(a, b=2, *rest, c=3, **kw):
     return (a, b, rest, c, sorted(kw.items()))
@@ -53,7 +53,7 @@ def count_args(*a, **k):
     return len(a), sum(a), len(k)
 
 # 300 positional arguments: CALL_FUNCTION's oparg is the plain count in
-# Python 3 (KNOWN_BUGS F3: it used to be masked to 8 bits)
+# Python 3, not masked to 8 bits
 exec('def call_300(x):\n    return count_args(%s)\n'
      % ', '.join('x + %d' % i for i in range(300)))
 exec('def call_300_kw(x):\n    return count_args(%s)\n'

@@ -1,7 +1,7 @@
 # Indexing with an object that has __index__ (pabstract.c: PsycoObject_GetItem
 # and SetItem on types with sq_item but no mp_subscript, e.g. deque).
-# PyNumber_AsSsize_t's result was flagged non-negative, so a negative index
-# skipped the "add the length" step and raised IndexError.
+# PyNumber_AsSsize_t's result may be negative, so a negative index must
+# still get the "add the length" step.
 from collections import deque
 
 

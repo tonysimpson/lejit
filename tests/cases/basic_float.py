@@ -1,4 +1,4 @@
-# Float arithmetic on matching types (mixed int/float is KNOWN_BUGS F1).
+# Float arithmetic on matching types (mixed int/float is mixed.py).
 
 def fadd(a, b):
     return a + b

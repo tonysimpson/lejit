@@ -285,7 +285,7 @@ def _inplace(x, y, op):
     return x
 
 
-# each in-place operator's own name in the error (KNOWN_BUGS F80)
+# each in-place operator's own name in the error
 def inplace_messages():
     out = []
     for op in range(6):

@@ -1,5 +1,5 @@
-# The opcodes generated from ceval.c by tools/metac/gen_ceval.py (D26, D67,
-# ni/Python/pycompiler_gen.h): each one at least once, with its error exit
+# The opcodes generated from ceval.c by tools/metac/gen_ceval.py
+# (ni/Python/pycompiler_gen.h): each one at least once, with its error exit
 # where it has one. An error exit leaves the inputs on the stack for the
 # unwinding code, so the exceptions here also check that nothing is
 # released twice or leaked.
@@ -108,7 +108,7 @@ def errors(k):
 
 
 def messages(k):
-    # TypeError texts from Ni's abstract layer must be 3.7's (F28)
+    # TypeError texts from Ni's abstract layer must be 3.7's
     return catch((err_neg, err_pos, err_inv, err_iter, err_not_subscr,
                   err_seq_index, err_no_assign, err_seq_assign, err_no_del,
                   err_repeat), k)

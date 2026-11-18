@@ -1,5 +1,5 @@
 # The int slots generated from Objects/longobject.c with the word
-# representation (D83): + - * unary - ~ (one word, else CPython's slot),
+# representation: + - * unary - ~ (one word, else CPython's slot),
 # unary +, abs() (sign test, then long_neg or long_long), bool (the sign
 # against 0), / and ** (CPython's slot with the result type). Both sides of
 # the one-digit boundary, signs, zero, subclasses and errors.
@@ -114,7 +114,7 @@ class F(float):
 
 
 # float_float, generated in the float unit: an exact float is itself, a
-# subclass a new exact float; and float against a big int (F104's call)
+# subclass a new exact float; and float against a big int
 def float_plus(n):
     out = []
     for i in range(n):

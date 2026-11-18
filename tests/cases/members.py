@@ -2,8 +2,8 @@
 # residual call, so this checks nothing in ni/Objects/pstructmember.c yet;
 # it will once lookups are specialised. In
 # 3.7's code objects co_argcount and co_kwonlyargcount are adjacent C
-# ints (T_INT): an 8-byte read of the first gave argcount + (kwonly << 32)
-# (KNOWN_BUGS M10).
+# ints (T_INT): an 8-byte read of the first would give argcount +
+# (kwonly << 32).
 
 
 def with_kwonly(a, b, *, c, d, e):

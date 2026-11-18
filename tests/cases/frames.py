@@ -1,5 +1,5 @@
 # sys._getframe from compiled code: compiled callers have no real frame
-# and are emulated (KNOWN_BUGS C11; history B2). Only names and globals are compared;
+# and are emulated (KNOWN_BUGS C11). Only names and globals are compared;
 # emulated frames have no locals and report the first line.
 import collections
 import sys
@@ -63,7 +63,7 @@ def tb_middle(a):
 
 
 # traceback frames are the compiled frames, linked to their callers
-# (tb_frame.f_back was None; CPython's test_exceptions)
+# (tb_frame.f_back is not None; CPython's test_exceptions)
 def traceback_frames(a):
     try:
         tb_middle(a)

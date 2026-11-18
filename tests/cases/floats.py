@@ -1,4 +1,4 @@
-# Float slots generated from Objects/floatobject.c (pfloatslots_gen.h, D87):
+# Float slots generated from Objects/floatobject.c (pfloatslots_gen.h):
 # + - * / % unary - abs bool. Results, signs of zeros, NaN and infinities,
 # errors and mixed int operands must be CPython's.
 
@@ -83,7 +83,7 @@ def subclasses():
 
 
 def unary_plus_identity(x):
-    # float_float returns an exact float itself (F22); a subclass gets a
+    # float_float returns an exact float itself; a subclass gets a
     # new exact float
     y = +x
     m = MyFloat(x)

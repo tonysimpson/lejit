@@ -1,9 +1,9 @@
 # Equal but distinct code objects, as when a module is imported twice
-# (test_json imports json with and without _json). Ni looked code objects
-# up by value, so near the recursion limit the comparison of their nested
-# co_consts raised RecursionError inside the lookup, which was swallowed,
-# and the recursion ran on to a fatal "Cannot recover from stack overflow"
-# (KNOWN_BUGS C13). A twin with other globals was also never compiled.
+# (test_json imports json with and without _json). Code objects must be
+# looked up by identity: by value, near the recursion limit the comparison
+# of their nested co_consts raises RecursionError inside the lookup, which
+# is swallowed, and the recursion runs on to a fatal "Cannot recover from
+# stack overflow". A twin with other globals must be compiled too.
 
 SRC = '''
 def gen(n):

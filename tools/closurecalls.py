@@ -1,6 +1,6 @@
 """How often each pyperformance benchmark calls a closure (a function with
 free variables) straight from Python code, per warm iteration, measured
-under plain CPython with sys.setprofile (KNOWN_BUGS F8, doc/FINDINGS.md).
+under plain CPython with sys.setprofile (doc/FINDINGS.md).
 
 A call counts as direct when the caller has no C function running (no
 'c_call' without its 'c_return'), so map(), sorted(key=) and the like don't

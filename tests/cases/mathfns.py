@@ -1,5 +1,5 @@
 # The math module metas (ni/Modules/pmath.c): results, the int result of
-# floor/ceil, and the errors of 3.7's math_1 (KNOWN_BUGS F5).
+# floor/ceil, and the errors of 3.7's math_1.
 import math
 from fractions import Fraction
 

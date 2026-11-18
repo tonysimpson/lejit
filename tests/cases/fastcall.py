@@ -1,4 +1,4 @@
-# METH_FASTCALL builtins without a meta (KNOWN_BUGS F13): with no keywords
+# METH_FASTCALL builtins without a meta: with no keywords
 # and up to five arguments the C function is called directly with an array
 # (pmethodobject.c:PsycoCFunction_CallFast); keywords, star arguments and
 # more arguments take the other paths, which must give the same results.

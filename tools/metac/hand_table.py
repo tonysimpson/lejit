@@ -1,5 +1,5 @@
 """Why each hand-written definition that mirrors CPython is still
-hand-written (D90): the one place such reasons are kept as data.
+hand-written: the one place such reasons are kept as data.
 donecheck.py reads it; a definition with no reason here, no policy item in
 policy_table.ENTRIES and no refusal from a generator fails GOAL's done test.
 

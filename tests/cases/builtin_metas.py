@@ -1,4 +1,4 @@
-# Builtins with Psyco metas (KNOWN_BUGS F2): len, abs, id, and the
+# Builtins with Psyco metas: len, abs, id, and the
 # METH_FASTCALL ones (divmod, pow), whose metas take a tuple
 # (pmethodobject.h); hash, min, max, isinstance, round, sum; and calls of the
 # types int, float and type (a meta for type_call).

@@ -1,19 +1,18 @@
-"""The policy table: the generator's judgement, as data (GENERATION step 3,
-DECISIONS D71). Vocabulary and checks: policy.py; doc/METACOMPILER.md
-"Policy table".
+"""The policy table: the generator's judgement, as data. Vocabulary and
+checks: policy.py; doc/METACOMPILER.md "Policy table".
 
 Keys name definitions in CPython's source (csource.py): 'path:name', path
 relative to the source tree. 'shape' is the token hash of the definition
 the entry was written for (a tuple when it has been checked against more
 than one source); 'ni' names the hand-written code that carries the item
-today. Nothing in the build reads the entries yet except policy.py's checks;
-the generators of GENERATION steps 4 to 8 will.
+today. policy.py checks the entries on every build, and the generators
+read their items.
 
-What is a general rule is in RULES, not repeated per function: the D54 slot
-guard, the restart rule, error branches unlikely, effects, forgetting,
-megamorphic sites, the eval-breaker test. The DRIFT items of the
-hand-written inventory (git show e404100:doc/INVENTORY.md) are not here:
-they are differences a generated function loses.
+What is a general rule is in RULES, not repeated per function: the
+heap-type slot guard, the restart rule, error branches unlikely, effects,
+forgetting, megamorphic sites, the eval-breaker test. Where a hand
+translation differs from CPython's C (drift), that is not here: a
+generated function loses the difference.
 """
 
 # ---- general rules ----------------------------------------------------------
@@ -320,11 +319,11 @@ RULES = {
 }
 
 # The slots whose functions the general translator generates, per C file
-# besides abstract.c (rule loops, D78): the header registers each meta
+# besides abstract.c (rule loops): the header registers each meta
 # (gen_<file>_init). Ni's choice of what to translate, as Ni's declarations
 # are for abstract.c. A slot is a field of one of the type's tables or a
 # function-pointer field of the type itself (tp_richcompare, tp_iternext,
-# tp_descr_get: D84); a file defining several types has one spec per type.
+# tp_descr_get); a file defining several types has one spec per type.
 TRANSLATED_SLOTS = {
     'Objects/tupleobject.c': {'type': 'PyTuple_Type', 'slots': ['sq_length', 'sq_item', 'sq_contains', 'sq_concat', 'sq_repeat', 'tp_richcompare']},
     'Objects/listobject.c': {'type': 'PyList_Type', 'slots': ['sq_length']},
@@ -332,15 +331,15 @@ TRANSLATED_SLOTS = {
     'Objects/bytesobject.c': {'type': 'PyBytes_Type', 'slots': ['sq_length']},
     'Objects/unicodeobject.c': {'type': 'PyUnicode_Type', 'slots': [
         'sq_length', 'sq_concat', 'sq_contains', 'tp_richcompare']},
-    # D89: member and method descriptors' __get__ (SLOT_ARGS' 'lvl')
+    # member and method descriptors' __get__ (SLOT_ARGS' 'lvl')
     'Objects/descrobject.c': [{'type': 'PyMemberDescr_Type', 'slots': ['tp_descr_get']},
                               {'type': 'PyMethodDescr_Type', 'slots': ['tp_descr_get']}],
-    # D83: with the word representation of TYPES' _longobject
+    # with the word representation of TYPES' _longobject
     'Objects/longobject.c': {'type': 'PyLong_Type', 'slots': [
         'nb_add', 'nb_subtract', 'nb_multiply', 'nb_negative', 'nb_invert',
         'nb_bool', 'nb_positive', 'nb_absolute', 'nb_true_divide', 'nb_power',
         'nb_float']},
-    # D87: with the double representation of TYPES' PyFloatObject
+    # with the double representation of TYPES' PyFloatObject
     'Objects/floatobject.c': {'type': 'PyFloat_Type', 'slots': [
         'nb_add', 'nb_subtract', 'nb_multiply', 'nb_remainder', 'nb_negative',
         'nb_positive', 'nb_absolute', 'nb_bool', 'nb_true_divide', 'tp_hash']},
@@ -350,16 +349,16 @@ TRANSLATED_SLOTS = {
 }
 
 # The functions of a module whose metas the general translator generates
-# (gen_builtins.py, D86), per C file, by their Python names: which C
+# (gen_builtins.py), per C file, by their Python names: which C
 # function each is and its ml_flags come from the module's method table.
 # Ni's choice of what to translate; a builtin not listed keeps its hand
-# meta, or has none (the C function called directly, D36).
+# meta, or has none (the C function called directly).
 TRANSLATED_FUNCTIONS = {
     # iter, next, chr and ord stay C calls (METACOMPILER failures log)
     'Python/bltinmodule.c': ['abs', 'len', 'hash', 'id', 'divmod', 'pow',
                              'isinstance', 'issubclass', 'getattr', 'setattr',
                              'delattr', 'callable', 'hasattr'],
-    # D87: ceil and floor stay hand-written (pmath.c: an int result)
+    # ceil and floor stay hand-written (pmath.c: an int result)
     'Modules/mathmodule.c': ['acos', 'asin', 'atan', 'cos', 'cosh', 'exp', 'fabs',
                              'sin', 'sinh', 'sqrt', 'tan', 'tanh'],
 }
@@ -382,7 +381,7 @@ METH_ARGS = {
 
 # How Ni calls a slot's meta: the argument format Psyco_META* is given,
 # 'v' a vinfo, 'l' a C value known when compiling. A translated slot
-# function's parameters take these binding times (D84); a slot not listed
+# function's parameters take these binding times; a slot not listed
 # is called with vinfos only. policy.py checks that each Ni caller passes
 # this format.
 SLOT_ARGS = {
@@ -392,7 +391,7 @@ SLOT_ARGS = {
                      'applied_by': ['ni/Objects/pobject.c:generic_getattr']},
 }
 
-# What scalar code copied into a C helper (rule copy_through, D87) may use
+# What scalar code copied into a C helper (rule copy_through) may use
 # besides its scalar locals, constants, compiler built-ins and the pure
 # functions of EXTERNAL: functions that only raise an exception of a
 # built-in class, given constants; and variables of the C library, each
@@ -428,7 +427,7 @@ LIGHT_OPCODES = [
     'JUMP_IF_FALSE_OR_POP', 'JUMP_IF_TRUE_OR_POP', 'EXTENDED_ARG',
 ]
 
-# ---- representation per type (GENERATION step 6) ----------------------------
+# ---- representation per type ----------------------------------------------
 # Fields Ni treats as mutable or not (P15: FMUT, FIX_size/VAR_size) and the
 # virtual form: its weight normally and at calls (NW_FORCE: forced at every
 # call), as ni (its source_virtual_t) registers it.
@@ -436,7 +435,7 @@ LIGHT_OPCODES = [
 TYPES = {
     'Include/tupleobject.h:PyTupleObject': {
         'shape': 'ecfd13dd0064', 'type': 'PyTuple_Type', 'immutable': ['ob_size', 'ob_item'],
-        # Ni's descriptor of a field a translated function reads (D84)
+        # Ni's descriptor of a field a translated function reads
         'descriptors': {'ob_size': 'ni/Objects/pobject.h:FIX_size'},
         # a loop over ob_item to ob_size unrolls when Ni knows the length
         # (rule loops): PsycoTuple_Load gives it or -1, and fills the items
@@ -445,7 +444,7 @@ TYPES = {
                          'item': 'ni/Objects/ptupleobject.h:PsycoTuple_GET_ITEM'},
         'virtual': {'ni': 'ni/Objects/ptupleobject.c:psyco_computed_tuple',
                     'weight': 'NW_TUPLES_NORMAL', 'weight_at_calls': 'NW_TUPLES_FUNCALL',
-                    # D80: the C constructor a virtual stands for, and Ni's
+                    # the C constructor a virtual stands for, and Ni's
                     # virtual constructor; gen_virtual.py writes both, the
                     # force function and the field descriptors
                     'constructor': 'Objects/tupleobject.c:PyTuple_New',
@@ -455,9 +454,9 @@ TYPES = {
                     'max_items': 'CT_TUPLE_LOAD_SIZE_LIMIT'}},
     'Include/listobject.h:PyListObject': {
         'shape': '1e17e786b756', 'type': 'PyList_Type', 'mutable': ['ob_size', 'ob_item'],
-        # Ni's descriptor of a field a translated function reads (D84)
+        # Ni's descriptor of a field a translated function reads
         'descriptors': {'ob_size': 'ni/Objects/pobject.h:VAR_size'},
-        # mutable: only its construction is the rule's (BUILD_LIST, D73),
+        # mutable: only its construction is the rule's (BUILD_LIST),
         # its force function and fields are hand-written
         'virtual': {'ni': 'ni/Objects/plistobject.c:psyco_computed_vlist',
                     'weight': 'NW_VLISTS', 'weight_at_calls': 'NW_FORCE',
@@ -468,7 +467,7 @@ TYPES = {
         # the residual call of an int slot on two ints gives an int
         # (divmod_fallback)
         'slot_result': 'PyLong_Type',
-        # D83: where 'test' holds, an int is one machine word, its 'value'
+        # where 'test' holds, an int is one machine word, its 'value'
         # in [-bound, bound] (C type value_ctype): Ni's virtual int holds it
         # (iLONG_VALUE), 'load' reads it from a real one (1, or 0 where the
         # test fails: CPython's function then), 'constructors' given it
@@ -486,7 +485,7 @@ TYPES = {
                     'weight': 0, 'weight_at_calls': 0}},
     'Include/floatobject.h:PyFloatObject': {
         'shape': '1458f11765b5', 'type': 'PyFloat_Type', 'immutable': ['ob_fval'],
-        # D87: a float holds a C double (value_ctype) in 'field': a read of
+        # a float holds a C double (value_ctype) in 'field': a read of
         # it is 'load' (a borrowed vinfo: Ni's virtual float holds it at
         # iFLOAT_OB_FVAL), a 'constructors' call given a double is 'new',
         # which takes the reference. A double is a word holding its bits;
@@ -498,7 +497,7 @@ TYPES = {
         'virtual': {'ni': 'ni/Objects/pfloatobject.c:psyco_computed_float',
                     'weight': 0, 'weight_at_calls': 0}},
     'Objects/iterobject.c:seqiterobject': {
-        # it_seq: cached, and compared with memory for a run-time iterator (F48)
+        # it_seq: cached, and compared with memory for a run-time iterator
         'shape': '24ea9b846c56', 'type': 'PySeqIter_Type', 'mutable': ['it_index'],
         'immutable': ['it_seq'],
         'virtual': {'ni': 'ni/Objects/piterobject.c:psyco_computed_seqiter',
@@ -520,10 +519,10 @@ TYPES = {
                     'constructor': 'Objects/sliceobject.c:PySlice_New',
                     'new': 'ni/Objects/psliceobject.h:PsycoSlice_New',
                     # once real, its bounds are dropped from the vinfo, not
-                    # kept as known fields (D56)
+                    # kept as known fields
                     'forced': 'drop_fields'}},
     'Include/funcobject.h:PyFunctionObject': {
-        # func_code, func_defaults: held as first seen and guarded (F52, F57)
+        # func_code, func_defaults: held as first seen and guarded
         'shape': 'b4e965472ecd', 'type': 'PyFunction_Type',
         'mutable': ['func_code', 'func_defaults'],
         'virtual': {'ni': 'ni/Objects/pfuncobject.c:psyco_computed_function',
@@ -545,7 +544,7 @@ TYPES = {
         'shape': '125dec0484fa', 'type': 'PyDict_Type', 'mutable': ['ma_used'],
         'descriptors': {'ma_used': 'ni/Objects/pdictobject.c:DICT_ma_used'}},
     'Include/unicodeobject.h:PyASCIIObject': {
-        # PEP 393 (D37, D89): every str starts with these fields. 'state' is
+        # PEP 393: every str starts with these fields. 'state' is
         # read as its low byte, whose bits (LAYOUTS) are fixed once a string
         # is ready but for 'interned', which Ni doesn't test
         'shape': '9601b2dd71df', 'type': 'PyUnicode_Type', 'immutable': ['length', 'state'],
@@ -556,7 +555,7 @@ TYPES = {
         'shape': '666fb76e2c4d', 'type': 'PyCell_Type', 'mutable': ['ob_ref']},
 }
 
-# ---- layouts: the CPython fields Ni relies on (stage 0, D19, D76) ----------
+# ---- layouts: the CPython fields Ni relies on ------------------------------
 
 # Every struct field whose offset, size or representation Ni builds into
 # emitted code or a field descriptor. gen_layouts.py finds each struct by
@@ -580,7 +579,7 @@ LAYOUTS = {
                                 ('tp_flags', 'unsigned long', 'u64'),
                                 ('tp_version_tag', 'unsigned int', 'u32')]},
     # (PyGC_Head's gc_refs, the inline store's GC test: the store_gc
-    # mechanism, ni/mechanisms/store_gc/, D77)
+    # mechanism, ni/mechanisms/store_gc/)
     'PyFloatObject': {'fields': [('ob_fval', 'double', 'f64')]},
     'PyLongObject': {'fields': [('ob_digit', 'digit[1]', 'u32')]},
     'PyListObject': {'fields': [('ob_item', 'PyObject **', 'ptr')]},
@@ -614,7 +613,7 @@ LAYOUTS = {
                                      ('m_self', 'PyObject *', 'ptr')]},
     'PyCellObject': {'fields': [('ob_ref', 'PyObject *', 'ptr')]},
     # (PyThreadState's recursion_depth and overflowed, and curexc_type for
-    # PyErr_Occurred inline: the recursion and exceptions mechanisms, D77)
+    # PyErr_Occurred inline: the recursion and exceptions mechanisms)
     # private to a C file: copied under Ni's name
     'seqiterobject': {'from': ('Objects/iterobject.c',), 'copy': 'seqiterobject',
                       'fields': [('it_index', 'Py_ssize_t', 'i64'),
@@ -649,14 +648,14 @@ LAYOUTS = {
 # Py_BUILD_CORE): name -> (variable, field path, declared type, read).
 # runtime_layouts_gen.h gives NI_RUNTIME_<name>, the field as an lvalue.
 RUNTIME = {
-    # (gilstate.tstate_current and ceval.eval_breaker moved to the
-    # tstate_runtime and eval_breaker_runtime mechanisms: where they are
-    # changes between versions, D77)
+    # (the current thread state and eval_breaker are the tstate_runtime and
+    # eval_breaker_runtime mechanisms: where they are changes between
+    # versions)
 }
 
 # ---- what Ni accepts without proof ------------------------------------------
 
-# C functions after which no eval_breaker test is needed (D53): they run
+# C functions after which no eval_breaker test is needed: they run
 # briefly, can't block or release the GIL. 'ni': how psyfunc.c's
 # cannot_block_init names them, checked to be the same list.
 CANNOT_BLOCK = {
@@ -797,8 +796,6 @@ ASSUMPTIONS = {
 }
 
 # ---- entries: one per CPython definition a hand translation mirrors ---------
-# From the translated and mixed rows of doc/INVENTORY.md at e404100 (dead
-# code left out).
 
 ENTRIES = {
     'Objects/frameobject.c:PyFrame_BlockSetup': {'shape': '2808be75881d', 'ni': ['ni/Python/pycompiler.c:block_setup']},
@@ -1270,8 +1267,8 @@ ENTRIES = {
         'policy': [
             ('shortcut', 'one_digit', 'cases -1, 0, 1'),
         ]},
-    # D83: generated by gen_abstract.py's long unit, with TYPES' word
-    # representation; the restype items are what plong_fallback1/2 asserted
+    # generated by gen_abstract.py's long unit, with TYPES' word
+    # representation
     'Objects/longobject.c:long_add': {
         'shape': '954a672b5840', 'ni': ['tools/metac/gen_abstract.py:build_long'],
         'policy': [('restype', 'PyLong_Type')]},
@@ -1368,19 +1365,19 @@ ENTRIES = {
             ('likely', 'true', 'the double fits a long'),
         ]},
     'Objects/floatobject.c:float___round___impl': {'shape': '76fa6887b4b3', 'ni': ['ni/Objects/pfloatobject.c:cimpl_fp_round_even', 'ni/Objects/pfloatobject.c:PsycoFloat_RoundEven', 'ni/Python/pbltinmodule.c:float_whole_to_int']},
-    # D87: inlined where float_add and the others use it (rule inline_static)
+    # inlined where float_add and the others use it (rule inline_static)
     'Objects/floatobject.c:CONVERT_TO_DOUBLE': {'shape': 'a29ca6d6c073', 'ni': ['tools/metac/gen_abstract.py:build_float']},
     'Objects/floatobject.c:convert_to_double': {'shape': '8ba659cc76fe', 'ni': ['tools/metac/gen_abstract.py:build_float']},
     'Objects/floatobject.c:float_hash': {'shape': 'ee5774f0b8dd', 'ni': ['tools/metac/gen_abstract.py:build_float']},
-    # D83: the general translator's float unit; a subclass resumes into
-    # CPython's float_float (the hand pfloat_pos boxed its double instead)
+    # the general translator's float unit; a subclass resumes into
+    # CPython's float_float
     'Objects/floatobject.c:float_float': {
         'shape': '7e1c71fb5f26', 'ni': ['tools/metac/gen_abstract.py:build_float'],
         'policy': [('restype', 'PyFloat_Type')]},
     'Include/floatobject.h:PyFloatObject': {'shape': '1458f11765b5', 'ni': ['ni/Objects/pfloatobject.h:FLOAT_ob_fval', 'ni/Objects/pfloatobject.h:iFLOAT_OB_FVAL', 'ni/Objects/pfloatobject.h:FLOAT_TOTAL', 'ni/Objects/pfloatobject.h:PsycoFloat_Check']},
     'Include/floatobject.h:PyFloat_Check': {'shape': 'c550f09007dc', 'ni': ['ni/Objects/pfloatobject.h:FLOAT_ob_fval', 'ni/Objects/pfloatobject.h:iFLOAT_OB_FVAL', 'ni/Objects/pfloatobject.h:FLOAT_TOTAL', 'ni/Objects/pfloatobject.h:PsycoFloat_Check']},
     'Include/floatobject.h:PyFloat_AS_DOUBLE': {'shape': '1c13bbe6b768', 'ni': ['ni/Objects/pfloatobject.h:PsycoFloat_AS_DOUBLE']},
-    # D87: generated (pfloatslots_gen.h); math's functions call it (F99)
+    # generated (pfloatslots_gen.h); math's functions call it
     'Objects/floatobject.c:PyFloat_AsDouble': {'shape': '0a58f1bcb013', 'ni': ['tools/metac/gen_abstract.py:build_float']},
     'Modules/mathmodule.c:math_1_to_whatever': {'shape': 'cd6f59f052aa', 'ni': ['tools/metac/gen_builtins.py:build_math']},
     'Modules/mathmodule.c:is_error': {'shape': '4134a5ed9548', 'ni': ['tools/metac/gen_builtins.py:build_math']},

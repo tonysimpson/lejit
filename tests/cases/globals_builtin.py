@@ -1,8 +1,8 @@
-# globals() in compiled code is the function's own globals (KNOWN_BUGS F47:
-# the real builtin reads the nearest frame, and a compiled function called
-# straight from compiled code has none, so a method called from another
-# module's compiled code got that module's globals; CPython's test_typing
-# and test_funcattrs, whose test methods unittest now calls compiled)
+# globals() in compiled code is the function's own globals: the real
+# builtin reads the nearest frame, and a compiled function called straight
+# from compiled code has none, so a method called from another module's
+# compiled code would get that module's globals (CPython's test_typing and
+# test_funcattrs, whose test methods unittest calls compiled)
 import sys
 import types
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate bytecode-compiler cases from instruction definitions in the
-form of CPython's Python/bytecodes.c (doc/DECISIONS.md D26 as revised by
-D67, doc/METACOMPILER.md "Bytecode stage" and "ceval.c reader").
+form of CPython's Python/bytecodes.c (doc/METACOMPILER.md "Bytecode stage"
+and "ceval.c reader").
 
 Input: the CPython source being built for. If it has Python/bytecodes.c,
 that file through CPython's own parser (tools/metac/cases_generator,
@@ -31,16 +31,17 @@ F(args) is translated only if PSYCO_HEADERS declare Psyco's counterpart
 matching return kind: PyObject * -> vinfo_t * (NULL: error), int -> bool
 (false: error). Anything else is skipped with the reason.
 
-Control flow (D79): 'if (x OP N)' on a run-time int (a counterpart's int
-result, NULL for C's negative error values) is a condition code by step
-4's rule (gen_abstract.int_condition); arms that only choose Py_True or
-Py_False are the object built from the condition (SELECTS, rule
-bool_select); a jump on one arm, as the case's last statement, is
+Control flow: 'if (x OP N)' on a run-time int (a counterpart's int
+result, NULL for C's negative error values) is a condition code by the
+general translator's rule (gen_abstract.int_condition); arms that only
+choose Py_True or Py_False are the object built from the condition
+(SELECTS, rule bool_select); a jump on one arm, as the case's last statement, is
 pycompiler.c's JUMP_IF_CC, with the policy's ('forget', 'before_branch'),
 and an unconditional jump ends with JUMPED(). A C-API function without a
-counterpart is a residual call with step 4's flags (Translator.flags).
+counterpart is a residual call with the general translator's flags
+(Translator.flags).
 
-D88 (policy_table RULES): a cell's field written (field_store) and its old
+Rules (policy_table RULES): a cell's field written (field_store) and its old
 value released with psyco_xdecref_v; a ceval.c helper the Inliner refuses
 called as a run-time copy (helper_copy); an error block's handler moved
 into a wrapper of the call it follows (error_handler); an input array and
@@ -72,8 +73,8 @@ import cparse  # noqa: E402
 import ctokens  # noqa: E402
 import cslots  # noqa: E402
 import parser as dsl  # noqa: E402  (CPython's Tools/cases_generator/parser.py)
-import gen_abstract  # noqa: E402  (step 4's rules: conditions, residual flags)
-import gen_virtual  # noqa: E402  (the virtual constructors, D80)
+import gen_abstract  # noqa: E402  (its rules: conditions, residual flags)
+import gen_virtual  # noqa: E402  (the virtual constructors)
 import policy_table  # noqa: E402
 
 ROOT = cslots.ROOT
@@ -389,7 +390,7 @@ def counterpart(fn, csigs, psigs):
         return pname, 'intval'      # a run-time int; NULL is C's error value
     if pret == 'virtual':
         # a virtual object only for a constructor policy_table.TYPES names,
-        # whose 'new' is this counterpart (D80)
+        # whose 'new' is this counterpart
         if gen_virtual.constructors().get(fn) != pname:
             raise Skip('%s: not a virtual constructor in policy_table.TYPES' % fn)
         return pname, 'virtual'
@@ -423,7 +424,7 @@ def residual_convention(x, stmts):
 
 def constructor(fn, psigs):
     """Psyco's counterpart of PyT_New(n) filled from an array: the 'new' of
-    the policy_table.TYPES entry whose virtual constructor is fn (D80),
+    the policy_table.TYPES entry whose virtual constructor is fn,
     taking (int, vinfo_t **) after po if it has one. The items are new
     references to it (the fact about Ni's constructors this relies on), so
     the array C stole is released after."""
@@ -605,7 +606,7 @@ def stack_layout(effects, consts):
 
 def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=None):
     """C text for one case, the C-API functions it calls, and the run-time
-    copies of inlined helpers' arms it calls (D82). ctx: the source's
+    copies of inlined helpers' arms it calls. ctx: the source's
     Context, for inlining and type tests."""
     if inst.kind != 'inst':
         raise Skip('legacy definition without a stack effect')
@@ -787,7 +788,8 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
 
     def residual(x, fn, args, ret=None, key=None):
         """A C-API function with no Psyco counterpart: a call at run time
-        (P12), with the flags step 4's rules give (gen_abstract.Translator:
+        (P12), with the flags the general translator's rules give
+        (gen_abstract.Translator:
         return type, error convention, effects.py's proofs). ret, key: the
         return type and effects key of a function not in csigs (a ceval.c
         helper's run-time copy)."""
@@ -1107,7 +1109,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     var[x] = 'consumed'
         return True
 
-    # ---- conditions held as condition codes, and type tests (D82) ----
+    # ---- conditions held as condition codes, and type tests ----
 
     def new_cc():
         cc = 'cc%d' % sum(1 for d in decls if d.startswith('condition_code_t'))
@@ -1983,7 +1985,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     residual(x, w[2], args, ret=wrappers[w[2]], key=None)
                     continue
                 if len(w) > 3 and w[2] in ctx.helpers and w[3] == '(' and not ctype:
-                    # a static helper of ceval.c: its body in place (D82)
+                    # a static helper of ceval.c: its body in place
                     args, end = call_args(stmt, 3)
                     if end != len(stmt):
                         raise Skip(s)
@@ -2006,7 +2008,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                 fr = not ctype or ctype == 'PyObject *'
                 fr = fr and x not in var and ctx.field_read(rhs, var)
                 if fr:
-                    # a field of an object: Ni's descriptor of it (D76)
+                    # a field of an object: Ni's descriptor of it
                     y, desc = fr[:2]
                     declare(x, 'vinfo_t *')
                     body.append('%s = psyco_get_field(po, %s, %s);' % (x, y, desc))
@@ -2535,7 +2537,7 @@ def header(done, skipped):
 
 
 class Context:
-    """What the back half reads from the source besides the cases (D82):
+    """What the back half reads from the source besides the cases:
     ceval.c's static helpers and string macros (ceval_inline), the macros
     as ceval.c is compiled (for type tests), and the checked accessors of
     Objects/ (PyTuple_Size). Empty without a target (gen_ceval.py --try)."""

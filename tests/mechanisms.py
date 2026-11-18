@@ -1,4 +1,4 @@
-"""Mechanism detectors (tools/metac/mechanisms.py, D75): run under the
+"""Mechanism detectors (tools/metac/mechanisms.py): run under the
 generators' Python (3.10 or later, NI_GEN_PYTHON), not the one Ni is built
 for.
 

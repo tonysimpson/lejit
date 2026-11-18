@@ -1,4 +1,4 @@
-# Builtins whose metas are generated from Python/bltinmodule.c (D86):
+# Builtins whose metas are generated from Python/bltinmodule.c:
 # abs, len, hash, id, divmod, pow, isinstance, issubclass, getattr,
 # setattr. Each with subclasses, errors and their messages, keyword
 # arguments (CPython's own refusal), wrong counts (the C function's

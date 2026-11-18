@@ -154,7 +154,7 @@ def shapes(n):
 
 def shapes_locals(n):
     """shapes with the builtins and classes copied into locals: no global
-    lookups in the loop (each LOAD_GLOBAL is a run-time dict lookup, D23)."""
+    lookups in the loop (each LOAD_GLOBAL is a run-time dict lookup)."""
     isi, I, F, S, B, C, Q = isinstance, int, float, str, bytes, Circle, Square
     L = len
     items = [3, 2.5, 'abc', Circle(1.0), Square(2.0), 7, b'xy', None] * 100
@@ -250,7 +250,7 @@ def word_counts(repeat):
 # ---- targets: range, comprehensions, strings, generators, instances -------
 
 def range_loops(n):
-    """Nested range loops with steps (virtual range, A8)."""
+    """Nested range loops with steps (virtual range)."""
     t = 0
     for i in range(n):
         for j in range(0, 100, 3):
@@ -259,7 +259,7 @@ def range_loops(n):
 
 
 def comprehensions(n):
-    """List comprehensions and sum over them (listcomp calls, A4)."""
+    """List comprehensions and sum over them (listcomp calls)."""
     t = 0
     for k in range(n):
         xs = [i * i for i in range(50)]
@@ -269,7 +269,7 @@ def comprehensions(n):
 
 
 def short_strings(n):
-    """Short string building, comparison and indexing (A7)."""
+    """Short string building, comparison and indexing."""
     t = 0
     for i in range(n):
         s = 'ab' + str(i % 10)
@@ -296,7 +296,7 @@ def gen_squares(n):
 
 
 def generators(n):
-    """A generator and a generator expression (B7)."""
+    """A generator and a generator expression."""
     t = 0
     for k in range(n):
         t = t + sum(gen_squares(30)) + sum(x for x in range(30) if x & 1)
@@ -310,7 +310,7 @@ class Point:
 
 
 def points(n):
-    """Instances: creation and attribute access (A9, A10, A11)."""
+    """Instances: creation and attribute access."""
     t = 0.0
     p = Point(1.0, 2.0)
     for i in range(n):

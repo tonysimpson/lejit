@@ -1,7 +1,7 @@
-# Doubles from the general translator (D87): float slots, PyFloat_AsDouble,
+# Doubles from the general translator: float slots, PyFloat_AsDouble,
 # int's nb_float and the math functions generated from mathmodule.c. Signs
 # of zeros, NaN, infinities, division by zero, overflow, domain errors,
-# ints and types with __float__ (KNOWN_BUGS F99) must be CPython's.
+# ints and types with __float__ must be CPython's.
 import math
 
 INF = float('inf')

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Field descriptors and layouts from the target's headers (stage 0, D19, D76).
+"""Field descriptors and layouts from the target's headers.
 
 The fields Ni relies on are data: policy_table.LAYOUTS (struct fields) and
 policy_table.RUNTIME (fields reached from a global variable). This reads

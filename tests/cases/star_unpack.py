@@ -32,9 +32,8 @@ def deep(d):
     return copy.deepcopy(d)
 
 
-# a global list is a compile-time constant (D25), and PsycoTuple_Load read
-# it as a tuple: f(x, *LIST) crashed the compiler (KNOWN_BUGS F45, CPython's
-# test_cmd_line_script)
+# a global list is a compile-time constant, which PsycoTuple_Load must not
+# read as a tuple (f(x, *LIST); CPython's test_cmd_line_script)
 LIST = ['b', 'c']
 STR = 'yz'
 

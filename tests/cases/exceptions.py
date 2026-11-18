@@ -133,7 +133,7 @@ def context_kept(a):
         return type(e.__context__).__name__
 
 # a finally block entered by an exception has it as the handled one, as
-# ceval does (KNOWN_BUGS F20; CPython's test_contextlib)
+# ceval does (CPython's test_contextlib)
 def raise_nested(inner, outer):
     try:
         raise inner
@@ -198,7 +198,7 @@ def reraise_from_finally(a):
 
 L = [1, 2]
 
-# F21: the message had Python 2's wording ("global name ...")
+# 3.7's NameError message ("name ... is not defined")
 def undefined_global(a):
     try:
         return a + not_defined_anywhere
@@ -236,8 +236,8 @@ CASES = [
 
 
 # except with something that is not an exception class (or a tuple of
-# them) raises TypeError, as ceval.c:cmp_outcome (KNOWN_BUGS F43; Ni
-# matched or let the exception through, CPython's test_baseexception)
+# them) raises TypeError, as ceval.c:cmp_outcome, rather than matching or
+# letting the exception through (CPython's test_baseexception)
 def except_not_a_class(what):
     try:
         try:
@@ -257,7 +257,7 @@ CASES += [
 ]
 
 
-# 'print >> f' gets 3.7's hint (KNOWN_BUGS F46, CPython's test_print)
+# 'print >> f' gets 3.7's hint (CPython's test_print)
 def print_rshift(f):
     try:
         print >> f

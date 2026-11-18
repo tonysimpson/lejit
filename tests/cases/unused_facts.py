@@ -1,5 +1,5 @@
 # Loops whose paths reach a merge point knowing promoted types that the
-# block already there was compiled without (SPECIALISATION.md rule 1, D50):
+# block already there was compiled without (SPECIALISATION.md rule 1):
 # branches compiled late (coding pauses, respawns) and joins in the middle
 # of an expression, where the instruction at the merge point itself promotes.
 # Dropping facts that the current block used, without the guard on a

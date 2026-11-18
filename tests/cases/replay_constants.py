@@ -1,9 +1,9 @@
 # The respawn replay check (ALL_CHECKS, dispatcher.c:respawn_check) must see
 # the state the first compile saw. A virtual tuple of constants forced at a
 # compiled call is a new constant tuple on every compile, and the callee's
-# frame shares its source_known_t: psyco_unfix in the callee cleared its
-# SkFlagPyObj, so the replay saw a plain constant and aborted (KNOWN_BUGS
-# F51, F35; CPython's test_subclassinit test_errors). Checked build only.
+# frame shares its source_known_t: if psyco_unfix in the callee cleared its
+# SkFlagPyObj, the replay would see a plain constant and abort (CPython's
+# test_subclassinit test_errors). Checked build only.
 import types
 
 

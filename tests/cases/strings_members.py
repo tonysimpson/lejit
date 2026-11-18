@@ -1,5 +1,5 @@
-# A T_STRING_INPLACE struct member is a str in CPython 3; Ni built bytes
-# (KNOWN_BUGS F9, Objects/pstructmember.c). CPython 3.7 has no such member
+# A T_STRING_INPLACE struct member is a str in CPython 3, not bytes
+# (Objects/pstructmember.c). CPython 3.7 has no such member
 # that compiled code reaches (_testcapi's type has no version tag, so its
 # attributes stay generic), so this builds a heap type with one through
 # ctypes and PyType_FromSpec.

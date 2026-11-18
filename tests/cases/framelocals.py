@@ -1,6 +1,6 @@
 # Builtins that read the calling frame's locals can't see a compiled
 # function's locals, so such functions are left to the interpreter
-# (KNOWN_BUGS C15; CPython's test_collections used eval('p.z', locals())).
+# (KNOWN_BUGS C15; as CPython's test_collections' eval('p.z', locals())).
 
 
 def uses_locals(x):

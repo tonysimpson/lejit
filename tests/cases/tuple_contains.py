@@ -1,9 +1,9 @@
 # `in` on a tuple goes through the meta generated from tupleobject.c's
-# tuplecontains (D78): a tuple of known length (constant or virtual) is
+# tuplecontains: a tuple of known length (constant or virtual) is
 # unrolled, one comparison per item with a run-time test between them;
 # any other tuple calls CPython's slot. Also PySequence_Tuple/List and
 # _PySequence_IterSearch, generated from abstract.c, and the int index of
-# list and tuple subscripts (KNOWN_BUGS F102).
+# list and tuple subscripts.
 
 
 def in_const(x):

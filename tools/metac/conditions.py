@@ -1,5 +1,5 @@
 """Rules of the general translator for bit-fields, run-time choices and two
-policy items (D89; METACOMPILER.md "str and descriptors"). Mixed into
+policy items (METACOMPILER.md "str and descriptors"). Mixed into
 gen_abstract.Walk, which calls each hook with a line; each answers None
 when the expression is not one it knows.
 
@@ -15,7 +15,7 @@ when the expression is not one it knows.
     _PyUnicode_Ready runs only on a legacy string).
   - ('shortcut', 'const_fold'): when every object parameter is a
     constant, the meta calls CPython's function at compile time; an error
-    is left to run time (D37: strings are immutable).
+    is left to run time (strings are immutable).
   - ('promote', 'known_only'): a parameter's type is the one Ni knows
     (Psyco_KnownType); where it knows none, CPython's function runs.
   - ('shortcut', 'skip_check', C): a test the caller has made already

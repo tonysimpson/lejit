@@ -1,4 +1,4 @@
-# Dead locals are dropped at merge points (D15, ni/mergepoints.c liveness).
+# Dead locals are dropped at merge points (ni/mergepoints.c liveness).
 # Results must not change: locals read later, on any path (loops,
 # handlers, finally, break/continue), must survive, and objects with
 # __del__ must die when CPython kills them, not earlier.

@@ -1,7 +1,7 @@
-# Star and double-star unpacking in calls and displays (KNOWN_BUGS F19):
-# BUILD_MAP_UNPACK_WITH_CALL, BUILD_MAP_UNPACK and BUILD_SET_UNPACK (now
-# compiled), with BUILD_TUPLE_UNPACK(_WITH_CALL) and BUILD_LIST_UNPACK fed
-# generators, iterators, dicts and other mappings, and every ceval message.
+# Star and double-star unpacking in calls and displays:
+# BUILD_MAP_UNPACK_WITH_CALL, BUILD_MAP_UNPACK and BUILD_SET_UNPACK, with
+# BUILD_TUPLE_UNPACK(_WITH_CALL) and BUILD_LIST_UNPACK fed generators,
+# iterators, dicts and other mappings, and every ceval message.
 import collections
 
 

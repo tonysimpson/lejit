@@ -1,6 +1,6 @@
-"""C statements and expressions over ctokens' tokens (GENERATION step 4).
+"""C statements and expressions over ctokens' tokens.
 
-The token rules of the earlier generators match fixed shapes; general
+Token rules match fixed shapes; general
 translation (gen_abstract.py) needs the structure of a function body: which
 statement is inside which 'if', and the operands of each operator. This
 reads it, still from ctokens' tokens and with no dependency: a statement
@@ -8,7 +8,7 @@ reader (blocks, declarations, if/else, return, goto, labels) and an
 operator-precedence expression reader. Anything else (loops, switch, the
 comma operator, ++) becomes an 'unsupported' node that keeps its tokens,
 so a caller can refuse it, or copy the C as it is. With loops=True (the
-general translator's reading, D78) loops, break, continue, ++ and -- and
+general translator's reading) loops, break, continue, ++ and -- and
 the commas of a for-loop's head are read too.
 
 What it needs from outside is which identifiers name types (a declaration
@@ -32,7 +32,7 @@ Nodes are tuples whose first item is the kind:
     comma list read as ('comma', [exprs]); ('while', cond, body, span)
     ('do', body, cond, span) ('break', span) ('continue', span); and the
     expressions ('pre', op, e) and ('post', op, e) for ++ and --.
-  with switches=True as well (the general translator's reading, D84):
+  with switches=True as well (the general translator's reading):
     ('switch', cond, body, span), whose body holds ('case', e, span) and
     ('default', span) labels among its statements; a 'do ... while (0)'
     with no break of its own is the ('block', [body], span) it stands for
@@ -828,7 +828,7 @@ class Decls:
                 words = [x.text for x in head]
                 tail_end = i
                 # a function's head or an initialised variable's may name
-                # a struct too (dict_length's PyDictObject was a function's)
+                # a struct too (dict_length's head names PyDictObject)
                 if ('struct' in words or 'union' in words) and \
                         '(' not in words and '=' not in words:
                     semi = next(j for j in range(end, len(toks)) if toks[j].text == ';')

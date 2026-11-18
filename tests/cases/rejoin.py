@@ -1,5 +1,5 @@
 # Respawned branches rejoin the main path (vcompiler.c:psyco_compile_join,
-# D44, FINDINGS.md): many checks in a row, failing
+# FINDINGS.md): many checks in a row, failing
 # one at a time, each branch then joining the main path's block after its
 # site. The results must be right whichever block a branch ends in.
 import sys

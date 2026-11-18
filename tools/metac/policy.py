@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The policy table's vocabulary and its checks (GENERATION step 3, D71).
+"""The policy table's vocabulary and its checks.
 
 The table (policy_table.py) is the generator's judgement, as data: what to
 promote, guard, make virtual, which shortcuts and likelihoods to use, what
@@ -13,9 +13,9 @@ for. check() runs on every build (generate.py) and fails on:
     for each source the entry has been checked against);
   - a kind or value outside VOCABULARY, or a field the section doesn't have;
   - a Ni name ('ni/...:name') that doesn't exist in Ni's source;
-  - data that copies Ni's code (limits, the D53 list, the type whitelists)
-    and no longer says what the code does: until a generator emits that
-    code from the table, the two must agree.
+  - data that copies Ni's code (limits, the no-block list, the type
+    whitelists) and doesn't say what the code does: until a generator
+    emits that code from the table, the two must agree.
 
   policy.py --src DIR           run the checks, print the problems
   policy.py --src DIR --shape KEY...   print each key's current shape
@@ -38,7 +38,7 @@ VOCABULARY = {
     'promote': {
         'type': "the operand's type is promoted before it is used (P01)",
         'verify_type': 'tested against one type; promoted only if unknown (P02)',
-        'static_type': 'only a static type is promoted; a heap type stays run-time (F25)',
+        'static_type': 'only a static type is promoted; a heap type stays run-time',
         'value': 'a C value that chooses the path is promoted (P03)',
         'constant': 'the value found becomes a compile-time constant, behind a guard',
         'known_only': 'uses types already known; never promotes',
@@ -46,16 +46,16 @@ VOCABULARY = {
     'mega': {
         'type': 'type promotion with a megamorphic cut-off (P04, need_type_mega)',
         'value': 'value promotion with a megamorphic cut-off (P04)',
-        'residual': 'a forgotten or megamorphic value takes the residual call (D43)',
+        'residual': 'a forgotten or megamorphic value takes the residual call',
     },
     'guard': {
-        'version_tag': 'type version-tag guard, shared per (type, name, kind) (D30, D60)',
-        'store_guard': 'store guard shared per (type, name, kind) (D39)',
-        'dict_version': "dict ma_version_tag guard (PEP 509, D25)",
-        'first_seen': 'the field first seen, held, compared at run time (D48, F52, F57)',
-        'memory': 'a cached field compared with memory at run time (F48)',
+        'version_tag': 'type version-tag guard, shared per (type, name, kind)',
+        'store_guard': 'store guard shared per (type, name, kind)',
+        'dict_version': "dict ma_version_tag guard (PEP 509)",
+        'first_seen': 'the field first seen, held, compared at run time',
+        'memory': 'a cached field compared with memory at run time',
         'identity': 'compared with an expected object at run time',
-        'constant_class': "a class-assignable constant's type behind a check (D62)",
+        'constant_class': "a class-assignable constant's type behind a check",
         'no_fold_heap': 'a heap type is never folded at compile time',
         'generic_for_heap': 'a heap-type case takes the generic path',
     },
@@ -64,7 +64,7 @@ VOCABULARY = {
         'argument': 'a virtual argument is unpacked by this consumer (P18a)',
         'fast_path': 'a virtual operand is read or written in its vinfo array (P19)',
         'concat': 'virtual operands give a virtual result',
-        'fuse': 'a generator expression is fused with its consumer (D46)',
+        'fuse': 'a generator expression is fused with its consumer',
         'args_tuple': 'call arguments as a virtual tuple',
     },
     'shortcut': {
@@ -73,7 +73,7 @@ VOCABULARY = {
         'type_whitelist': 'specialised only for the types named (P26)',
         'inline_index': 'an int index converted inline',
         'inline_read': 'a field read inline instead of a call',
-        'no_tuple_call': 'arguments passed without a tuple (F13)',
+        'no_tuple_call': 'arguments passed without a tuple',
         'known_length': 'specialised only for a tuple of known length (P22)',
         'identity': 'an operand returned as the result (P21)',
         'power_of_two': 'a constant power-of-two divisor as shift and mask',
@@ -84,7 +84,7 @@ VOCABULARY = {
         'compile_time_unpack': 'a virtual sequence unpacked at compile time',
         'direct_meta': "a known type's meta called instead of the generic path",
         'if_known': 'an integer parameter used as its value when that is a'
-                    ' constant, else CPython\'s function (D80)',
+                    ' constant, else CPython\'s function',
         'zero_or_one': 'the int result is 0 or 1 when it is not an error',
         'bool_word': "an argument known to be 0 or 1 is the bool's word"
                      " (note: Ni's function of that word)",
@@ -101,13 +101,13 @@ VOCABULARY = {
         'incref': 'the helper increfs what the C steals',
         'keep_alive': 'a reference kept for the duration of a call',
         'null_arg': "a NULL argument is a NULL vinfo, which Ni's function takes"
-                    ' (note: the parameter, D89)',
+                    ' (note: the parameter)',
     },
     'forget': {
-        'before_branch': 'known types forgotten before a branch to a merge point (D59)',
-        'direct_call': 'before a direct call (D59)',
-        'handler': 'after unwinding to a handler (D59)',
-        'store': "an inline store whose old value's dealloc may run Python (F55)",
+        'before_branch': 'known types forgotten before a branch to a merge point',
+        'direct_call': 'before a direct call',
+        'handler': 'after unwinding to a handler',
+        'store': "an inline store whose old value's dealloc may run Python",
     },
     'limit': {
         'nested_weight': 'nested weight of virtual operands limited (psyco_forking)',
@@ -118,16 +118,16 @@ VOCABULARY = {
     'other': {
         'compile_time_hash': 'a string hash computed at compile time',
         'ends_block': 'the block ends after the guard (split_after_global)',
-        'untraced_only': 'done only while no trace function is set (D46)',
-        'trace_fallback': 'while tracing, the real call (C23, D46)',
+        'untraced_only': 'done only while no trace function is set',
+        'trace_fallback': 'while tracing, the real call',
         'mutable_fields': 'every field read is mutable',
         'not_translation': "Ni's function of this name does another job (not generated)",
         'unpack_arguments': 'binds its outputs to the items of an argument array'
                             ' whose count is within its bounds, else fails'
-                            ' (gen_builtins.py, D86)',
+                            ' (gen_builtins.py)',
         'frame_binding': 'the argument binding, between making the frame and'
                          ' running it, is generated as a binder the compiler'
-                         ' runs (gen_call.py, D85)',
+                         ' runs (gen_call.py)',
     },
 }
 
@@ -208,7 +208,7 @@ class Checker:
             for item in e.get('policy', ()):
                 self.item(key, item)
                 # a generated function's virtual result comes from TYPES'
-                # constructors (D80): an item saying so would be a second
+                # constructors: an item saying so would be a second
                 # copy that could disagree
                 if item[:2] == ('virtual', 'result') and any(
                         n.startswith('tools/') for n in e.get('ni', ())):
@@ -292,7 +292,7 @@ class Checker:
                 self.double(where, e['double'], names if d else None)
 
     def word(self, where, w):
-        """A word representation (D83): its Ni functions are declared and
+        """A word representation: its Ni functions are declared and
         its constructors are in the source."""
         where += ' word'
         self.fields(where, w, ('test', 'value', 'value_ctype', 'bound', 'load',
@@ -311,7 +311,7 @@ class Checker:
                 self.bad(where, 'no constructor %s in the source' % c)
 
     def double(self, where, w, fields):
-        """A scalar representation (D87): its field is the struct's, its Ni
+        """A scalar representation: its field is the struct's, its Ni
         functions are declared, its constructors are in the source."""
         where += ' double'
         self.fields(where, w, ('field', 'value_ctype', 'load', 'constructors', 'new'))

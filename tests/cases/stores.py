@@ -1,6 +1,5 @@
-# Inline attribute stores (pobject.c:inline_store, D38,
-# FINDINGS.md): a set value overwritten, or the next empty slot filled in order,
-# checked against a (class, name) cache that holds no keys. Every way the
+# Inline attribute stores (pobject.c:inline_store, FINDINGS.md): a set
+# value overwritten, or the next empty slot filled in order, checked against a (class, name) cache that holds no keys. Every way the
 # dict, its keys, the class or GC tracking can differ from the cache must
 # give CPython's result. Run under a checked build, the replay check covers
 # each condition's respawn.
@@ -768,7 +767,7 @@ def _to_other(o):
 
 
 def class_assigned_in_call(n):
-    # F55: a promoted type is kept after a call assigns __class__
+    # a promoted type is kept after a call assigns __class__
     out = []
     for i in range(n):
         o = Seq()
@@ -809,8 +808,8 @@ CASES = [
     ('run_del_mid_sequence',
      [(4, ('setattr', 'property', 'dict', 'delete', 'grow'))], {}),
     ('run_interleaved_calls', [(4, ('none', 'setattr', 'dict', 'none'))], {}),
-    # __class__ assigned in the sequence (F55, D59): these passed only while
-    # an earlier round left the load guard of o.__dict__ stale for good (D60)
+    # __class__ assigned in the sequence: these must pass with a load guard
+    # of o.__dict__ that is repaired, not only with one left stale for good
     ('run_del_mid_sequence', [(4, ('setattr', 'class'))], {}),
     ('run_interleaved_calls', [(4, ('none', 'setattr', 'class'))], {}),
     ('run_two_objects', [(4,)], {}),

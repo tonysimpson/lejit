@@ -272,8 +272,8 @@ def generate(argv):
         with open(path + '.tmp', 'w') as f:
             f.write(text)
         os.replace(path + '.tmp', path)
-    # a header no generator writes any more (its generator was retired) would
-    # otherwise stay in a reused build directory and could still be included
+    # a header no generator writes would otherwise stay in a reused build
+    # directory and could still be included
     written = {filename for filename, _ in outputs}
     for filename in os.listdir(args.out):
         if filename.endswith('_gen.h') and filename not in written:

@@ -1,7 +1,7 @@
 # Rich comparison follows Objects/object.c:do_richcompare: each slot runs
 # at most once (the reflected one first for a subclass), and when every
 # slot says NotImplemented, == and != fall back to identity and ordering
-# raises TypeError, without calling the slots again (KNOWN_BUGS F10).
+# raises TypeError, without calling the slots again.
 
 
 class Left:

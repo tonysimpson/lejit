@@ -1,5 +1,5 @@
 # Member descriptors through the generated member_get and PyMember_GetOne
-# (pdescrobject_gen.h, pstructmember_gen.h, D89): one heap type, made with
+# (pdescrobject_gen.h, pstructmember_gen.h): one heap type, made with
 # ctypes and PyType_FromSpec, with a member of every T_* type, each in its
 # own 8-byte slot; READONLY ones; T_OBJECT and T_OBJECT_EX holding NULL
 # (None, and AttributeError); __slots__ (T_OBJECT_EX) on a class and on a

@@ -21,7 +21,7 @@ def buffers():
 
 # A loop whose condition is a chain of popping jumps back to the loop head
 # (POP_JUMP_IF_TRUE to FOR_ITER): the target's merge point must be used, or
-# every back-edge compiles a new copy of the body (found while doing D10).
+# every back-edge compiles a new copy of the body.
 def place(n, row, cols, d1, d2):
     if row == n:
         return 1
@@ -50,7 +50,7 @@ def while_continue(n):
 
 # Eight counters, each still its first constant or run-time depending on
 # the paths taken: every combination is a new state at the loop head. The
-# cap per merge point (vcompiler.c:mp_capped, D40) bounds the copies: about
+# cap per merge point (vcompiler.c:mp_capped) bounds the copies: about
 # 75 buffers with it, 440 without.
 def counters8(items):
     a = b = c = d = 0
@@ -94,7 +94,7 @@ CHECKS = [
 ]
 
 
-# the liveness analysis itself (D15): what is dead at each merge point
+# the liveness analysis itself: what is dead at each merge point
 def dead_before_loop(n, flag):
     y = 1.5 if flag else 'abc'
     z = len(str(y))
@@ -114,7 +114,7 @@ def check_dead_locals():
     return 0 if ok else 1
 
 
-# which code is inlined (B6): small straight-line code without globals
+# which code is inlined: small straight-line code without globals
 def small(a, b):
     return a + b
 
@@ -139,7 +139,7 @@ def check_inlinable():
 
 
 def check_metas_registered():
-    # a meta written for other ml_flags isn't registered (KNOWN_BUGS F13)
+    # a meta written for other ml_flags isn't registered
     got = ni._unregistered_metas()
     if got or VERBOSE:
         print('%-4s unregistered metas: %r' % ('FAIL' if got else 'ok', got))
@@ -156,7 +156,7 @@ def kw_call(xs):
 
 
 def check_fastcall_direct():
-    # F13: a METH_FASTCALL builtin without keywords is called with an array,
+    # a METH_FASTCALL builtin without keywords is called with an array,
     # not through PyCFunction_Call; with keywords it still is. Called by eval,
     # so they are compiled here, not inlined into this function earlier
     s0 = ni._stats()

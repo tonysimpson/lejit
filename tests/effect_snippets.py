@@ -53,9 +53,9 @@ LIBC_CALL = ALL - {'pure', 'readonly'}
 CASES = [
     ('pure', 'add', 'int add(int a, int b) { int x = a; x++; return x + b; }', ALL),
     ('pure: const data', 'k', 'static const int t[2] = {1, 2}; int k(int i) { return t[i]; }', ALL),
-    ('G3: a read through a pointer is not pure', 'size',
+    ('a read through a pointer is not pure', 'size',
      'long size(PyListObject *o) { return o->ob_size; }', NOT_PURE),
-    ('G3: a read of a mutable global is not pure', 'get',
+    ('a read of a mutable global is not pure', 'get',
      'static int counter; int get(void) { return counter; }', NOT_PURE),
     ('readonly: a write through a pointer', 'set', 'void set(int *p) { *p = 1; }',
      ALL - {'readonly'}),
@@ -73,16 +73,16 @@ CASES = [
     ('no_raise: setting an exception', 'fail',
      'void fail(PyObject *e) { PyErr_SetObject(e); }', {'no_python', 'no_block'}),
     ('an assumption holds whatever the body does', 'lookup', '', {'no_python'}),
-    ('G1: a global hook', 'g1a', 'void g1a(void) { hook(); }', NONE),
-    ('G1: a typedef\'d local', 'g1b',
+    ('a global hook', 'g1a', 'void g1a(void) { hook(); }', NONE),
+    ('a typedef\'d local', 'g1b',
      'typedef int (*binaryfunc)(int); int g1b(binaryfunc slot) { return slot(1); }', NONE),
-    ('G1: (f)()', 'g1c', 'int g1c(int (*f)(void)) { return (f)(); }', NONE),
-    ('G1: a struct slot', 'g1d', 'void g1d(Slots *s) { s->call(); }', NONE),
+    ('(f)()', 'g1c', 'int g1c(int (*f)(void)) { return (f)(); }', NONE),
+    ('a struct slot', 'g1d', 'void g1d(Slots *s) { s->call(); }', NONE),
     ('a function\'s own name through *', 'two',
      'static int one(void) { return 1; } int two(void) { return (*one)(); }', ALL),
     ('a function named without a call is a callee', 'giver',
      'static void bad(void) { hook(); } void (*giver(void))(void) { return bad; }', NONE),
-    ('G1: a callee in no file read', 'u', 'int ext(int); int u(void) { return ext(1); }',
+    ('a callee in no file read', 'u', 'int ext(int); int u(void) { return ext(1); }',
      NONE),
     ('libc runs no Python', 'clear', LIBC + 'void clear(char *p) { memset(p, 0, 4); }',
      LIBC_CALL),
@@ -94,14 +94,14 @@ CASES = [
 
 # through gcc -E: macro aliases are expanded, only the compiled #if arm counts
 GCC_CASES = [
-    ('G2: a macro alias is the function it names', 'caller',
+    ('a macro alias is the function it names', 'caller',
      '#define PyObject_Length PyObject_Size\n'
      'int PyObject_Size(void) { hook(); return 0; }\n'
      'int caller(void) { return PyObject_Length(); }\n', NONE),
-    ('G4: the compiled #if arm, whatever the file order', 'pick',
+    ('the compiled #if arm, whatever the file order', 'pick',
      '#ifdef NOT_DEFINED\nint pick(void) { return 1; }\n'
      '#else\nint pick(void) { hook(); return 0; }\n#endif\n', NONE),
-    ('G4: the other way round', 'pick',
+    ('the other way round', 'pick',
      '#ifndef NOT_DEFINED\nint pick(void) { return 1; }\n'
      '#else\nint pick(void) { hook(); return 0; }\n#endif\n', ALL),
 ]

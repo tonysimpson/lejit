@@ -1,4 +1,4 @@
-# The opcodes step 8 generates from ceval.c (D88): STORE_DEREF and
+# More opcodes generated from ceval.c: STORE_DEREF and
 # DELETE_DEREF (the cell's old value released at run time), IMPORT_FROM,
 # BUILD_MAP_UNPACK(_WITH_CALL), BUILD_STRING and FORMAT_VALUE, with their
 # error exits and messages; and the hand BUILD_TUPLE_UNPACK* and
@@ -248,7 +248,7 @@ def fstrings(v, w):
 
 
 def fstring_types(v):
-    # a single part is FORMAT_VALUE's result itself (KNOWN_BUGS F98, F110)
+    # a single part is FORMAT_VALUE's result itself
     return [type(f'{v}').__name__, type(f'{v!r}').__name__,
             type(f'{v!s}').__name__, type(f'{v:>3}').__name__,
             type(f'{v!a}').__name__]

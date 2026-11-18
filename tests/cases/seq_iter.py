@@ -1,6 +1,6 @@
 # Sequence iterators (Objects/iterobject.c:iter_iternext, piterobject.c): an
 # exhausted iterator drops its sequence (it_seq = NULL), so it stays
-# exhausted when the sequence grows (KNOWN_BUGS F48), whether it is still
+# exhausted when the sequence grows, whether it is still
 # virtual, materialised by a call, or a run-time iterator passed in.
 # IndexError and StopIteration from __getitem__ both end the iteration.
 

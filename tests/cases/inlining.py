@@ -1,4 +1,4 @@
-# Small functions called from compiled code are inlined (B6, D10 step 2;
+# Small functions called from compiled code are inlined (Psyco's rule;
 # mergepoints.c: one merge point, no block, no LOAD_GLOBAL, weight <= 6).
 # Everything observable must be as if they were called: results,
 # exceptions and their tracebacks, frames seen by callees, defaults,
@@ -37,7 +37,7 @@ def drop_temp(o):
 
 # leaving the inlined drop_temp frees the bound method in m: that decref
 # calls method_dealloc, a C call aligned from the frame being restored
-# (KNOWN_BUGS B6: it had no frame to align from)
+# (the restored frame must be there to align from)
 def inlined_frees_local(n):
     out = []
     t = 0

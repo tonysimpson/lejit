@@ -1,4 +1,4 @@
-"""How often attribute load guards fail (QUESTIONS 41), per pyperformance
+"""How often attribute load guards fail, per pyperformance
 benchmark, or for a script that defines main():
 
     NI_CODESTATS=1 python3.7 setup.py build_ext --inplace

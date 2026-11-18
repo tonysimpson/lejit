@@ -112,7 +112,7 @@ CASES += [
 
 
 def unpack_errors(x):
-    # ceval's unpack_iterable messages (KNOWN_BUGS F30), for tuples, lists,
+    # ceval's unpack_iterable messages, for tuples, lists,
     # iterators and non-iterables, too few and too many
     out = []
     for f in (unpack0, unpack2):
@@ -145,8 +145,8 @@ CASES += [
 
 # list.__getitem__ is a C method as well as list's mp_subscript slot, so it
 # can receive a subclass instance whose own __getitem__ is Python code: the
-# meta must not dispatch on the instance's type (KNOWN_BUGS F41; it recursed
-# into the override, CPython's test_code test_closure_injection)
+# meta must not dispatch on the instance's type, or it recurses into the
+# override (CPython's test_code test_closure_injection)
 class OwnGetitem(list):
     def __getitem__(self, i):
         return ('own', super().__getitem__(i))
@@ -172,9 +172,9 @@ CASES += [
 ]
 
 
-# PEP 560 (F39) with a heap metaclass: every heap type has a
-# tp_as_sequence, with no sq_item, so Ni took the sequence path and raised
-# "'Meta' object does not support indexing" (KNOWN_BUGS F42)
+# PEP 560 with a heap metaclass: every heap type has a tp_as_sequence,
+# with no sq_item, so taking the sequence path raises "'Meta' object does
+# not support indexing"
 class WithClassGetitem:
     def __class_getitem__(cls, item):
         return (cls.__name__, item)

@@ -1,21 +1,20 @@
-# Compile-time MemoryError (KNOWN_BUGS F26). A pure call folded during
-# compilation (compute_long's PyLong_FromLong for a constant virtual int)
-# that fails to allocate raises with PyErr_SetNone, so PyErr_Fetch gives
-# val == NULL; psyco_virtualize_exception made a NULL constant of it and the
-# re-raise crashed. Each child fails exactly one allocation (n) during g's
-# first call, via _testcapi.set_nomemory, with a fixed hash seed so the
-# count is reproducible. Children import Ni only when the parent has it,
+# Compile-time MemoryError. A pure call folded during compilation
+# (compute_long's PyLong_FromLong for a constant virtual int) that fails to
+# allocate raises with PyErr_SetNone, so PyErr_Fetch gives val == NULL, which
+# psyco_virtualize_exception must not make a NULL constant of. Each child
+# fails exactly one allocation (n) during g's first call, via
+# _testcapi.set_nomemory, with a fixed hash seed so the count is
+# reproducible. Children import Ni only when the parent has it,
 # so the plain run is the oracle. The windows are fragile: if this build's
 # counts move, re-find them with the same child and a wider range.
 #
-# Early allocations (F27). With Ni, 0-12 are the merge-point analysis
+# Early allocations. With Ni, 0-12 are the merge-point analysis
 # (mergepoints.c: the code's extra record, the report, the liveness
-# arrays, the fatlists, the capsule); 2 (the report) and 12 (the capsule)
-# segfaulted. A failure there now leaves the code uncompiled for this call.
-# 13-23 abort on purpose ("psyco: out of memory" or "cannot recover from
-# the error above"), upstream's design, so no window covers them. 24-26
-# register the frame at run time (frames.c); 25 returned NULL without an
-# exception (SystemError).
+# arrays, the fatlists, the capsule); a failure there leaves the code
+# uncompiled for this call. 13-23 abort on purpose ("psyco: out of memory"
+# or "cannot recover from the error above"; KNOWN_BUGS F27), so no window
+# covers them. 24-26 register the frame at run time (frames.c), and must
+# not return NULL without an exception.
 import os
 import subprocess
 import sys
@@ -70,6 +69,6 @@ def early_allocation(lo, hi):
 
 
 CASES = [
-    ('compile_time_memory_error', [(24, 40)], {'leaks': 'F26: runs child processes'}),
+    ('compile_time_memory_error', [(24, 40)], {'leaks': 'runs child processes'}),
     ('early_allocation', [(0, 13), (24, 27)], {'leaks': 'F27: runs child processes'}),
 ]

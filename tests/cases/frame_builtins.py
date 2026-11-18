@@ -1,7 +1,7 @@
 # A frame's builtins are fixed when it starts (frameobject.c: the caller's
 # f_builtins when the globals are the same, else globals['__builtins__']),
 # so replacing __builtins__ in the module's globals doesn't change what a
-# running function, or a same-module callee, sees (KNOWN_BUGS F49; CPython's
+# running function, or a same-module callee, sees (CPython's
 # test_dynamic test_cannot_replace_builtins_dict_*).
 import types
 
@@ -11,8 +11,8 @@ def foo():
 
 
 def swap_mid_call():
-    # under Ni the restoring line raised NameError: globals() was looked up
-    # in the temporary dict
+    # the restoring line must find globals in the frame's builtins, not in
+    # the temporary dict, or it raises NameError
     g = globals()
     old = g['__builtins__']
     g['__builtins__'] = {'len': lambda x: 7}

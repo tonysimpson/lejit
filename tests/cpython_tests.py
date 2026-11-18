@@ -216,7 +216,7 @@ EXCLUDED = {
         'test_zipfile64', 'test_multiprocessing_fork',
         'test_multiprocessing_forkserver', 'test_multiprocessing_spawn',
         'test_multiprocessing_main_handling', 'test_concurrent_futures'],
-    'test infrastructure, empty, or needs gdb (D28)': ['test_support',
+    'test infrastructure, empty, or needs gdb': ['test_support',
         'test_script_helper', 'test_regrtest', 'test_crashers', 'test_gdb'],
     'C11: test_current_frames fails on a line number and leaves its '
     'thread waiting, so the run never exits': ['test_sys'],
@@ -236,8 +236,8 @@ sys.stdout.flush()
 
 
 def limit_memory():
-    # a module that runs away under Ni (KNOWN_BUGS C23 reached 20 GB) gets
-    # MemoryError instead of taking the machine
+    # a module that runs away under Ni gets MemoryError instead of taking
+    # the machine
     resource.setrlimit(resource.RLIMIT_AS, (MEMORY_LIMIT, MEMORY_LIMIT))
 
 

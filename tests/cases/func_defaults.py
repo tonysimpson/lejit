@@ -1,6 +1,6 @@
 # A function's __defaults__ can change after a compiled call to it (as
 # unittest.mock's patch.object(f, '__defaults__', ...) does): the call
-# must use the defaults the function has then (KNOWN_BUGS F52).
+# must use the defaults the function has then.
 
 
 def foo(x=0):
