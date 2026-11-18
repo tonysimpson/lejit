@@ -18,13 +18,16 @@ EXTERNFN vinfo_t* PsycoEval_CallObjectWithKeywords(PsycoObject* po,
 						   vinfo_t* args, vinfo_t* kw);
 
 EXTERNFN vinfo_t* PsycoObject_Size(PsycoObject* po, vinfo_t* vi);
+EXTERNFN vinfo_t* PsycoMapping_Size(PsycoObject* po, vinfo_t* vi);
 EXTERNFN vinfo_t* PsycoObject_GetItem(PsycoObject* po, vinfo_t* o, vinfo_t* key);
 EXTERNFN bool PsycoObject_SetItem(PsycoObject* po, vinfo_t* o, vinfo_t* key,
                                   vinfo_t* value);
+EXTERNFN bool PsycoObject_DelItem(PsycoObject* po, vinfo_t* o, vinfo_t* key);
 
 EXTERNFN vinfo_t* PsycoSequence_GetItem(PsycoObject* po, vinfo_t* o, vinfo_t* i);
 EXTERNFN bool     PsycoSequence_SetItem(PsycoObject* po, vinfo_t* o, vinfo_t* i,
                                         vinfo_t* value);
+EXTERNFN bool     PsycoSequence_DelItem(PsycoObject* po, vinfo_t* o, vinfo_t* i);
 EXTERNFN vinfo_t* PsycoSequence_GetSlice(PsycoObject* po, vinfo_t* o,
                                          vinfo_t* i1, vinfo_t* i2);
 EXTERNFN bool     PsycoSequence_SetSlice(PsycoObject* po, vinfo_t* o,

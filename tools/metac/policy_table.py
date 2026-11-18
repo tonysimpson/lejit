@@ -24,8 +24,7 @@ RULES = {
                 " heap type's first value is held and compared at run time. Where"
                 " it changed, the code resumes CPython's algorithm at that point:"
                 " the whole function if no slot has run yet, else a run-time C copy"
-                " of the rest (cimpl_binary_op1, cimpl_binary_iop1,"
-                " cimpl_sequence_op). PyType_IsSubtype on a heap type holds tp_mro"
+                " of the rest (gen_abstract.py's cimpl_ copies). PyType_IsSubtype on a heap type holds tp_mro"
                 " the same way.",
         'decisions': ['D48', 'D54', 'P29', 'F56'],
         'replaces': "INVENTORY's GUARD items on slot reads: 22 in translated and"
@@ -33,7 +32,7 @@ RULES = {
         'applied_by': ['ni/Objects/pobject.h:Psyco_TypeSlot',
                        'ni/Objects/pobject.c:Psyco_HeapSlot',
                        'ni/Objects/pobject.c:Psyco_TypeIsSubtype',
-                       'ni/Objects/pabstract.c:SLOT_OR_GOTO'],
+                       'tools/metac/gen_abstract.py:generate'],
     },
     'restart': {
         'what': "Every promotion an instruction or meta needs comes before its"
@@ -582,7 +581,7 @@ ENTRIES = {
     'Python/errors.c:_PyErr_ChainExceptions': {'shape': '8624abd89f50', 'ni': ['ni/Python/pycompiler.c:cimpl_generator_stop']},
     'Python/ceval.c:TARGET(UNARY_NOT)': {'shape': '1186f933f995', 'ni': ['ni/Python/pycompiler.c:case UNARY_NOT']},
     'Python/ceval.c:TARGET(LIST_APPEND)': {'shape': 'd2b86bdd5af1', 'ni': ['tools/metac/gen_ceval.py:translate']},
-    'Python/ceval.c:TARGET(DELETE_SUBSCR)': {'shape': 'b1a468b9cda7', 'ni': ['ni/Python/pycompiler.c:case DELETE_SUBSCR']},
+    'Python/ceval.c:TARGET(DELETE_SUBSCR)': {'shape': 'b1a468b9cda7', 'ni': ['tools/metac/gen_ceval.py:build']},
     'Python/ceval.c:TARGET(RETURN_VALUE)': {
         'shape': '6e2836ffbc99',
         'ni': ['ni/Python/pycompiler.c:case RETURN_VALUE'],
@@ -765,76 +764,66 @@ ENTRIES = {
     'Objects/dict-common.h:PyDictKeyEntry': {'shape': 'a42b235499c6', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
     'Objects/abstract.c:type_error': {'shape': '121037b863a2', 'ni': ['ni/Objects/pabstract.c:type_error_tp']},
     'Objects/call.c:PyObject_Call': {'shape': '61774182df72', 'ni': ['ni/Objects/pabstract.c:PsycoObject_Call']},
-    'Objects/abstract.c:PyObject_GetItem': {
-        'shape': '636cdcd5389b',
-        'ni': ['ni/Objects/pabstract.c:PsycoObject_GetItem'],
-        'policy': [
-            ('shortcut', 'inline_index', 'an int key'),
-        ]},
-    'Objects/abstract.c:PyObject_SetItem': {
-        'shape': '2c0fb58c9dd6',
-        'ni': ['ni/Objects/pabstract.c:PsycoObject_SetItem'],
-        'policy': [
-            ('shortcut', 'inline_index', 'an int key'),
-        ]},
-    'Objects/abstract.c:PyObject_DelItem': {'shape': '922ec42abbdc', 'ni': ['ni/Objects/pabstract.c:PsycoObject_SetItem']},
-    'Objects/abstract.c:PyObject_Size': {'shape': '9861cd31b9b8', 'ni': ['ni/Objects/pabstract.c:PsycoObject_Size']},
-    'Objects/abstract.c:PyMapping_Size': {'shape': '2f44f1295dd8', 'ni': ['ni/Objects/pabstract.c:PsycoObject_Size']},
+    'Objects/abstract.c:PyObject_GetItem': {'shape': '636cdcd5389b', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyObject_SetItem': {'shape': '2c0fb58c9dd6', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyObject_DelItem': {'shape': '922ec42abbdc', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyObject_Size': {'shape': '9861cd31b9b8', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyMapping_Size': {'shape': '2f44f1295dd8', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/tupleobject.c:tuplelength': {'shape': 'c26701baea26', 'ni': ['ni/Objects/pabstract.c:psyco_generic_immut_ob_size']},
     'Objects/listobject.c:list_length': {'shape': '03a5f134f09c', 'ni': ['ni/Objects/pabstract.c:psyco_generic_mut_ob_size']},
     'Objects/abstract.c:PySequence_GetItem': {
         'shape': 'dd19d399aba4',
-        'ni': ['ni/Objects/pabstract.c:PsycoSequence_GetItem'],
+        'ni': ['tools/metac/gen_abstract.py:generate'],
         'policy': [
             ('likely', 'false', 'i < 0'),
         ]},
     'Objects/abstract.c:PySequence_SetItem': {
         'shape': 'cb88b0595847',
-        'ni': ['ni/Objects/pabstract.c:PsycoSequence_SetItem'],
+        'ni': ['tools/metac/gen_abstract.py:generate'],
         'policy': [
             ('likely', 'false', 'i < 0'),
         ]},
-    'Objects/abstract.c:PySequence_DelItem': {'shape': '8156fc551476', 'ni': ['ni/Objects/pabstract.c:PsycoSequence_SetItem']},
-    'Objects/abstract.c:PySequence_Contains': {'shape': 'd2be1c0b60b5', 'ni': ['ni/Objects/pabstract.c:PsycoSequence_Contains']},
-    'Objects/abstract.c:NB_SLOT': {'shape': '3a266ba2f176', 'ni': ['ni/Objects/pabstract.c:NB_SLOT', 'ni/Objects/pabstract.c:NB_BINOP', 'ni/Objects/pabstract.c:NB_TERNOP']},
-    'Objects/abstract.c:NB_BINOP': {'shape': '2160f98ee50a', 'ni': ['ni/Objects/pabstract.c:NB_SLOT', 'ni/Objects/pabstract.c:NB_BINOP', 'ni/Objects/pabstract.c:NB_TERNOP']},
-    'Objects/abstract.c:NB_TERNOP': {'shape': 'af1401f8c92c', 'ni': ['ni/Objects/pabstract.c:NB_SLOT', 'ni/Objects/pabstract.c:NB_BINOP', 'ni/Objects/pabstract.c:NB_TERNOP']},
-    'Objects/abstract.c:PyNumber_Negative': {'shape': '4c145ae574c3', 'ni': ['ni/Objects/pabstract.c:unary_op', 'ni/Objects/pabstract.c:PsycoNumber_Negative']},
-    'Objects/abstract.c:PyNumber_Positive': {'shape': 'df1058d91efa', 'ni': ['ni/Objects/pabstract.c:PsycoNumber_Positive']},
-    'Objects/abstract.c:PyNumber_Invert': {'shape': '2e18fefefdfd', 'ni': ['ni/Objects/pabstract.c:PsycoNumber_Invert']},
-    'Objects/abstract.c:PyNumber_Absolute': {'shape': 'd80c1819acf3', 'ni': ['ni/Objects/pabstract.c:PsycoNumber_Absolute']},
-    'Objects/abstract.c:binary_op1': {'shape': 'b07641ef2bfc', 'ni': ['ni/Objects/pabstract.c:cimpl_binary_op1', 'ni/Objects/pabstract.c:binary_op1']},
-    'Objects/abstract.c:binop_type_error': {'shape': '9c406ff3be15', 'ni': ['ni/Objects/pabstract.c:binop_type_error']},
-    'Objects/abstract.c:binary_op': {'shape': '88c3557958f7', 'ni': ['ni/Objects/pabstract.c:binary_op', 'ni/Objects/pabstract.c:cimpl_rshift_error', 'ni/Objects/pabstract.c:PsycoNumber_Rshift']},
-    'Objects/abstract.c:BINARY_FUNC': {'shape': 'fb844d89a981', 'ni': ['ni/Objects/pabstract.c:BINARY_FUNC', 'ni/Objects/pabstract.c:PsycoNumber_Rshift']},
-    'Objects/abstract.c:PyNumber_FloorDivide': {'shape': 'b67662baeda7', 'ni': ['ni/Objects/pabstract.c:BINARY_FUNC']},
-    'Objects/abstract.c:PyNumber_TrueDivide': {'shape': 'fb6fc71946f1', 'ni': ['ni/Objects/pabstract.c:BINARY_FUNC']},
-    'Objects/abstract.c:PyNumber_MatrixMultiply': {'shape': 'c51ff682c16f', 'ni': ['ni/Objects/pabstract.c:BINARY_FUNC']},
-    'Objects/abstract.c:sequence_repeat': {
-        'shape': 'd5d1ee582f2c',
-        'ni': ['ni/Objects/pabstract.c:cimpl_sequence_repeat', 'ni/Objects/pabstract.c:psequence_repeat'],
+    'Objects/abstract.c:PySequence_DelItem': {
+        'shape': '8156fc551476',
+        'ni': ['tools/metac/gen_abstract.py:generate'],
         'policy': [
-            ('shortcut', 'inline_index', 'the count'),
+            ('likely', 'false', 'i < 0'),
         ]},
-    'Objects/abstract.c:PyNumber_Add': {'shape': '773b92704612', 'ni': ['ni/Objects/pabstract.c:cimpl_sequence_op', 'ni/Objects/pabstract.c:PsycoNumber_Add']},
-    'Objects/abstract.c:PyNumber_Multiply': {'shape': '90bb8f103f3b', 'ni': ['ni/Objects/pabstract.c:cimpl_sequence_op', 'ni/Objects/pabstract.c:PsycoNumber_Multiply']},
-    'Objects/abstract.c:PyNumber_InPlaceAdd': {'shape': '351ed3fd1169', 'ni': ['ni/Objects/pabstract.c:cimpl_sequence_op', 'ni/Objects/pabstract.c:PsycoNumber_InPlaceAdd']},
-    'Objects/abstract.c:PyNumber_InPlaceMultiply': {'shape': '07b2f46558e8', 'ni': ['ni/Objects/pabstract.c:cimpl_sequence_op', 'ni/Objects/pabstract.c:PsycoNumber_InPlaceMultiply']},
-    'Objects/abstract.c:PyNumber_Remainder': {'shape': '41c76f5e308e', 'ni': ['ni/Objects/pabstract.c:PsycoNumber_Remainder']},
+    'Objects/abstract.c:PySequence_Contains': {'shape': 'd2be1c0b60b5', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:NB_SLOT': {'shape': '3a266ba2f176', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:NB_BINOP': {'shape': '2160f98ee50a', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:NB_TERNOP': {'shape': 'af1401f8c92c', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_Negative': {'shape': '4c145ae574c3', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_Positive': {'shape': 'df1058d91efa', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_Invert': {'shape': '2e18fefefdfd', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_Absolute': {'shape': 'd80c1819acf3', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:binary_op1': {'shape': 'b07641ef2bfc', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:binop_type_error': {'shape': '9c406ff3be15', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:binary_op': {'shape': '88c3557958f7', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:BINARY_FUNC': {'shape': 'fb844d89a981', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_FloorDivide': {'shape': 'b67662baeda7', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_TrueDivide': {'shape': 'fb6fc71946f1', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_MatrixMultiply': {'shape': 'c51ff682c16f', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:sequence_repeat': {'shape': 'd5d1ee582f2c', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_Add': {'shape': '773b92704612', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_Multiply': {'shape': '90bb8f103f3b', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_InPlaceAdd': {'shape': '351ed3fd1169', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_InPlaceMultiply': {'shape': '07b2f46558e8', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_Remainder': {'shape': '41c76f5e308e', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/abstract.c:PyNumber_Power': {
         'shape': 'eddf18a1e93c',
         'ni': ['ni/Objects/pabstract.c:PsycoNumber_Power'],
         'policy': [
             ('shortcut', 'type_whitelist', 'PyLong_Type, PyFloat_Type'),
         ]},
-    'Objects/abstract.c:binary_iop1': {'shape': 'cf96db8f5466', 'ni': ['ni/Objects/pabstract.c:cimpl_binary_iop1', 'ni/Objects/pabstract.c:binary_iop1']},
-    'Objects/abstract.c:binary_iop': {'shape': 'f391f933fafa', 'ni': ['ni/Objects/pabstract.c:binary_iop']},
-    'Objects/abstract.c:INPLACE_BINOP': {'shape': 'f15df2cac8ff', 'ni': ['ni/Objects/pabstract.c:INPLACE_BINOP']},
-    'Objects/abstract.c:PyNumber_InPlaceFloorDivide': {'shape': '28595b299826', 'ni': ['ni/Objects/pabstract.c:INPLACE_BINOP']},
-    'Objects/abstract.c:PyNumber_InPlaceTrueDivide': {'shape': 'ff0e0a722368', 'ni': ['ni/Objects/pabstract.c:INPLACE_BINOP']},
-    'Objects/abstract.c:PyNumber_InPlaceMatrixMultiply': {'shape': '48a649cec7c9', 'ni': ['ni/Objects/pabstract.c:INPLACE_BINOP']},
-    'Objects/abstract.c:PyNumber_InPlaceRemainder': {'shape': '8bcb42cad4e7', 'ni': ['ni/Objects/pabstract.c:PsycoNumber_InPlaceRemainder']},
-    'Objects/abstract.c:PyNumber_InPlacePower': {'shape': '337da8595b87', 'ni': ['ni/Objects/pabstract.c:PsycoNumber_InPlacePower']},
+    'Objects/abstract.c:binary_iop1': {'shape': 'cf96db8f5466', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:binary_iop': {'shape': 'f391f933fafa', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:INPLACE_BINOP': {'shape': 'f15df2cac8ff', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_InPlaceFloorDivide': {'shape': '28595b299826', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_InPlaceTrueDivide': {'shape': 'ff0e0a722368', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_InPlaceMatrixMultiply': {'shape': '48a649cec7c9', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_InPlaceRemainder': {'shape': '8bcb42cad4e7', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/abstract.c:PyNumber_InPlacePower': {'shape': '337da8595b87', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/abstract.c:PyObject_GetIter': {
         'shape': 'f2cd675205cb',
         'ni': ['ni/Objects/pabstract.c:PsycoObject_GetIter'],
@@ -842,7 +831,12 @@ ENTRIES = {
             ('shortcut', 'skip_check', "PyIter_Check of a static type's tp_iter result"),
             ('virtual', 'result', 'PySeqIter_Type'),
         ]},
-    'Objects/abstract.c:PyIter_Next': {'shape': '47b86b4f3ac6', 'ni': ['ni/Objects/pabstract.c:PsycoIter_Next']},
+    'Objects/abstract.c:PyIter_Next': {
+        'shape': '47b86b4f3ac6',
+        'ni': ['ni/Objects/pabstract.c:PsycoIter_Next'],
+        'policy': [
+            ('other', 'not_translation', "FOR_ITER's call: StopIteration is left set"),
+        ]},
     'Objects/tupleobject.c:tuplesubscript': {
         'shape': '45d0b3343d67',
         'ni': ['ni/Objects/pabstract.c:psyco_generic_subscript'],
@@ -874,7 +868,7 @@ ENTRIES = {
     'Objects/longobject.c:PyLong_AsLong': {'shape': '519d736695d6', 'ni': ['ni/Objects/plongobject.c:PsycoLong_AsLong']},
     'Objects/abstract.c:PyNumber_AsSsize_t': {
         'shape': '07bc4ee19b50',
-        'ni': ['ni/Objects/plongobject.c:PsycoLong_AsIndex'],
+        'ni': ['ni/Objects/plongobject.c:PsycoNumber_AsSsize_t'],
         'policy': [
             ('shortcut', 'const_fold', 'a constant'),
             ('shortcut', 'one_digit', 'a virtual or one-digit int'),

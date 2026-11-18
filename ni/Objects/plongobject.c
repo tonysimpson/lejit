@@ -88,11 +88,13 @@ vinfo_t *PsycoLong_AsLong(PsycoObject *po, vinfo_t *v) {
                             CfReturnTypeLong | CfPyErrCheckMinus1, "v", v);
 }
 
-/* inline for a virtual or one-digit int, which always fits; a constant that
-   doesn't fit raises at run time */
+/* PyNumber_AsSsize_t: an int whose type is known (or a subclass) inline
+   when virtual or one digit, which always fits, and a constant at compile
+   time; anything else, and a constant that doesn't fit, is the call */
 DEFINEFN
-vinfo_t *PsycoLong_AsIndex(PsycoObject *po, vinfo_t *v) {
+vinfo_t *PsycoNumber_AsSsize_t(PsycoObject *po, vinfo_t *v, PyObject *err) {
   vinfo_t *w;
+  PyTypeObject *tp;
   if (PsycoLong_IsVirtual(v)) {
     w = v->array->items[iLONG_VALUE];
     vinfo_incref(w);
@@ -100,11 +102,12 @@ vinfo_t *PsycoLong_AsIndex(PsycoObject *po, vinfo_t *v) {
   }
   if (is_compiletime(v->source)) {
     Py_ssize_t i = PyNumber_AsSsize_t(
-        (PyObject *)CompileTime_Get(v->source)->value, PyExc_IndexError);
+        (PyObject *)CompileTime_Get(v->source)->value, err);
     if (i != -1 || !PyErr_Occurred())
       return vinfo_new(CompileTime_New(i));
     PyErr_Clear();
-  } else {
+  } else if ((tp = Psyco_KnownType(v)) != NULL &&
+             PyType_TypeCheck(tp, &PyLong_Type)) {
     switch (plong_medium_value(po, v, &w)) {
     case 1:
       return w;
@@ -114,7 +117,7 @@ vinfo_t *PsycoLong_AsIndex(PsycoObject *po, vinfo_t *v) {
   }
   return psyco_generic_call(po, PyNumber_AsSsize_t,
                             CfReturnTypeNative | CfPyErrCheckMinus1, "vl", v,
-                            (long)PyExc_IndexError);
+                            (long)err);
 }
 
 DEFINEFN

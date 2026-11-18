@@ -46,8 +46,8 @@ PSY_INLINE vinfo_t *PsycoLong_FROM_WORD(vinfo_t *vlong) {
    in *pval: 1; 0 if it isn't one digit; -1 on error or promotion */
 EXTERNFN int PsycoLong_MediumValue(PsycoObject *po, vinfo_t *v, vinfo_t **pval);
 EXTERNFN vinfo_t *PsycoLong_AsLong(PsycoObject *po, vinfo_t *v);
-/* PyNumber_AsSsize_t(v, PyExc_IndexError) for an int v (or a subclass) */
-EXTERNFN vinfo_t *PsycoLong_AsIndex(PsycoObject *po, vinfo_t *v);
+EXTERNFN vinfo_t *PsycoNumber_AsSsize_t(PsycoObject *po, vinfo_t *v,
+                                       PyObject *err);
 EXTERNFN bool PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v, vinfo_t **vd);
 EXTERNFN vinfo_t *PsycoLong_FromUnsignedLong(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *PsycoLong_FromLong(PsycoObject *po, vinfo_t *v);

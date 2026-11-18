@@ -11,8 +11,8 @@
  *    respawns (load_global_cached, D25); the block is split after each such
  *    site so that a respawn replay never re-decides one.
  *  - The simple opcodes (stack shuffles, LOAD_CONST/LOAD_FAST/STORE_FAST,
- *    unary, binary and in-place arithmetic, STORE_SUBSCR, GET_ITER,
- *    LOAD_ATTR/STORE_ATTR/DELETE_ATTR, BUILD_TUPLE/BUILD_LIST/BUILD_SLICE,
+ *    unary, binary and in-place arithmetic, STORE_SUBSCR, DELETE_SUBSCR,
+ *    GET_ITER, LOAD_ATTR/STORE_ATTR/DELETE_ATTR, BUILD_TUPLE/BUILD_LIST/BUILD_SLICE,
  *    LIST_APPEND, MAP_ADD) are generated into pycompiler_gen.h
  *    from CPython's ceval.c by tools/metac/gen_ceval.py (D26, D67).
  *  - After the switch come the merge-point checks, then the handling of
@@ -2191,16 +2191,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         x = PsycoBool_FromCondition(po, cc);
         POP_DECREF();
         PUSH(x); /* consumes ref on 'x' */
-        goto fine;
-
-      case DELETE_SUBSCR:
-        w = NTOP(1);
-        v = NTOP(2);
-        /* del v[w] */
-        if (!PsycoObject_SetItem(po, v, w, NULL))
-          break;
-        POP_DECREF();
-        POP_DECREF();
         goto fine;
 
       case BREAK_LOOP:

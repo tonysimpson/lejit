@@ -114,6 +114,7 @@ VOCABULARY = {
         'untraced_only': 'done only while no trace function is set (D46)',
         'trace_fallback': 'while tracing, the real call (C23, D46)',
         'mutable_fields': 'every field read is mutable',
+        'not_translation': "Ni's function of this name does another job (not generated)",
     },
 }
 

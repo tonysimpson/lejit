@@ -233,7 +233,7 @@ static vinfo_t *punicode_subscript(PsycoObject *po, vinfo_t *v,
   if (!PyType_IsSubtype(ktp, &PyLong_Type))
     return psyco_generic_call(po, unicode_subscript, CfCommonNewRefPyObject,
                               "vv", v, key);
-  i = PsycoLong_AsIndex(po, key);
+  i = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
   if (i == NULL)
     return NULL;
   r = punicode_item(po, v, i);
