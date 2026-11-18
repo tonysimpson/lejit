@@ -19,7 +19,7 @@ turn, unrolled. Any other loop is CPython's (ResumeHere).
             types of every item of a loaded object
 
 Nothing resumes inside a meta loop: a resume there would lose the turns
-still to run (KNOWN_BUGS G6), so CPython's code runs from the outermost
+still to run, so CPython's code runs from the outermost
 loop instead (resume.resume raises again until the loop is left).
 """
 from pycparser import c_ast

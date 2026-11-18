@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """General translation of CPython C functions into Psyco metas (GENERATION
 step 4, D19 stage 2, DECISIONS D74), for the files UNITS names, each
-written into its header (ptupleobject_gen.h, ...).
+written into its header (pstructmember_gen.h, ...).
 Objects/abstract.c, longobject.c, floatobject.c, listobject.c,
-dictobject.c, bytesobject.c and unicodeobject.c are no longer units:
+dictobject.c, bytesobject.c, unicodeobject.c and tupleobject.c are no
+longer units:
 tools/metac/gen2/abstract.py translates them (doc/GENERATOR_DESIGN.md,
 Migration step 3).
 
@@ -55,26 +56,14 @@ The rules, none of them about one function:
   - a construct with no compile-time form (a field of an object, an array,
     an out-parameter) resumes CPython's algorithm at run time from its
     statement, as for a changed slot. Each is listed in the report;
-  - loops (D78, rule loops; loop_rule and counted_loop, shared with
-    gen_ceval.py): a for counting a variable by one to a bound neither
-    changes, the bound and start known at compile time, runs in the meta,
-    which emits its body once per turn; a bound that is the length of a
-    type with a known_length (policy_table.TYPES) is asked of Ni's
-    representation (PsycoTuple_Load), CPython's function where unknown;
-    any other loop is CPython's, resumed at it;
-  - constructors (D80): a call of a virtual type's constructor
-    (policy_table.TYPES, gen_virtual.py) is Ni's virtual object; an
-    array type's size must be known now and within its item limit, and
-    'P[i] = x' or '*P = x' through a pointer into its items stores x's
-    vinfo (a PyObject ** local is an offset in the meta). Such a virtual
-    is never NULL. A length read outside a loop is loaded as a loop's is;
-  - ('shortcut', 'if_known', n): the integer parameter n is used as its
-    value when its vinfo is a constant, else CPython's function runs.
+  - loops are CPython's, resumed at them (loop_rule and counted_loop are
+    gen_ceval.py's, D78); where every path from a point with nothing
+    called runs one, the whole function is called there.
 Anything else stops that function (refused, with the reason).
 
-Units: --unit tuple translates the slots policy_table.TRANSLATED_SLOTS
-names for tupleobject.c into ptupleobject_gen.h, with
-gen_tupleobject_init() registering them; and so for the others.
+Units: --unit descr translates the slots policy_table.TRANSLATED_SLOTS
+names for descrobject.c into pdescrobject_gen.h, with
+gen_descrobject_init() registering them; and so for the others.
 
 Run by generate.py; 'python3 gen_abstract.py --src DIR --pyconfig H
 --unit U' prints the header and the report.
@@ -108,7 +97,7 @@ NI_HEADERS = ['ni/Objects/pabstract.h', 'ni/Objects/pobject.h', 'ni/Objects/pflo
               'ni/Objects/pstructmember.h', 'ni/Objects/pmethodobject.h']
 # policy items the translator implements; any other item on a function's
 # entry leaves it to its hand translation
-IMPLEMENTED = {'likely', 'restype', ('shortcut', 'skip_check'), ('shortcut', 'if_known'),
+IMPLEMENTED = {'likely', 'restype', ('shortcut', 'skip_check'),
                ('promote', 'known_only'),
                ('ref', 'need_reference'), ('other', 'mutable_fields')}
 # the C names that are vocabulary, never expanded as macros
@@ -150,11 +139,6 @@ class Refuse(Exception):
 
 class Resume(Exception):
     """No compile-time form here: resume CPython's algorithm at run time."""
-
-
-class Rewalk(Exception):
-    """The walk learnt something it needs from the start: an integer
-    that is run-time around a loop, or a promotion due at a loop's entry."""
 
 
 # ---- reading the source ------------------------------------------------------
@@ -595,7 +579,6 @@ class Var:
         self.tp = None            # ct table: the meta variable of its type
         self.isparam = False
         self.virt = None          # rt: a virtual object the meta builds (D80)
-        self.base = None          # ptr: the object whose items it points into
         self.alias = None         # rt: the parameter it is a copy of (a cast of it)
         self.rng = None           # rt integer: (lo, hi, bits) its value is in (D83)
 
@@ -608,7 +591,6 @@ class State:
         self.slots = {}           # slot address text -> meta variable
         self.ended = False        # the path returned
         self.early = False        # a path may have returned before here
-        self.loaded = {}          # object variable -> meta variable of its known length
         self.failed = False       # a call's error test held: the meta has an error
         self.pending = None       # (lvalue, variable): a borrowed value stored
         #                           into a new object, owing its incref
@@ -622,7 +604,6 @@ class State:
             s.vars[k] = w
         s.known, s.called = set(self.known), self.called
         s.slots, s.ended, s.early = dict(self.slots), self.ended, self.early
-        s.loaded = dict(self.loaded)
         s.failed = self.failed
         s.pending = self.pending
         return s
@@ -630,11 +611,9 @@ class State:
 
 class Val:
     def __init__(self, bt, c, ctype, tp=None, lv=False, owned=False, conv=None,
-                 var=None, const=None, item_of=None, virt=None, base=None):
+                 var=None, const=None, virt=None):
         self.bt, self.c, self.ctype = bt, c, ctype
         self.virt = virt          # rt: a virtual object being built (Var.virt)
-        self.base = base          # ptr: the variable whose items it points into
-        self.item_of = item_of    # rt: an item of this loaded object (frame value)
         self.tp = tp              # ct: meta variable of the type it points into
         self.lv = lv              # ct: an address inside a type (a slot's)
         self.owned = owned        # rt: a new value the statement must release
@@ -670,13 +649,7 @@ class Translator:
         self.report = []
         self.resumes = []         # (function, statement text, reason)
         self.fails = {}
-        # learnt by one walk for the next (Rewalk), per function: integer
-        # locals that are run-time because a loop makes them so, and the
-        # promotions due at a loop's entry ({id(loop): [name or ('items', name)]})
-        self.force_rt = {}
-        self.loop_promos = {}
         self.slot_roots = {}      # function -> (type field, table, slot) to register
-        self.vspecs = virtual_specs()   # constructor -> what a call of it builds
 
     # ---- which functions, in what order ----
 
@@ -855,18 +828,13 @@ class Translator:
             sm.kind = self.kind_of(f)
             self.live = Liveness(f.ast)
             hoist = []
-            self.force_rt[name] = set()
-            self.loop_promos[name] = {}
             rounds = 0
             while True:
                 rounds += 1
                 if rounds > 16:
                     raise Refuse('promotions after calls remain: %s' % w.late)
                 w = self.new_walk(f, sm, hoist)
-                try:
-                    w.run()
-                except Rewalk:
-                    continue
+                w.run()
                 new = [p for p in w.must + w.late if p not in hoist]
                 if not new:
                     break
@@ -1269,8 +1237,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             if item[0] == 'likely':
                 self.likely[' '.join(item[2].split())] = item[1]
         self.used_likely = set()
-        self.loop_ctx = []        # LoopCtx of the loops being translated, outermost first
-        self.kl_rep = {}          # parameter -> its known_length representation
         self.goto_depth = 0
         self.restype = [i[1] for i in tr.policy_items(f.name) if i[0] == 'restype']
         self.switch_depth = 0     # switches being translated (switch_stmt)
@@ -1309,9 +1275,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         self.out = out
         for p in self.hoist:
             self.promote(st, out, p, entry=True)
-        for item in self.tr.policy_items(f.name):
-            if tuple(item[:2]) == ('shortcut', 'if_known'):
-                self.if_known(st, out, item[2])
         self.body_start = len(out.lines)
         self.block(f.ast, st, out, [])
         if st.pending is not None:
@@ -1324,25 +1287,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         for name, how in self.likely.items():
             if name not in self.used_likely:
                 raise Refuse("policy 'likely' %r matches no run-time branch" % name)
-
-    def if_known(self, st, out, name):
-        """Policy ('shortcut', 'if_known', name): the integer parameter is
-        used as its compile-time value when its vinfo is a constant; any
-        other value runs CPython's function (no promotion)."""
-        v = st.vars.get(name)
-        if v is None or not v.isparam or v.bt != 'rt' or v.ctype not in INT_TYPES:
-            raise Refuse("'if_known' %s is not an integer parameter" % name)
-        out('if (!is_compiletime(%s->source)) {' % v.cname)
-        sub = Out(out.depth + 1)
-        self.resume(st.copy(), sub, [(self.f.ast, 0)],
-                    '%s is not known at compile time' % name)
-        out.extend(sub)
-        out('}')
-        k = Var(name, v.ctype, 'ct', name + '_k')
-        k.isparam = True
-        self.decls[k.cname] = '%s %s;' % (v.ctype, k.cname)
-        out('%s = (%s)CompileTime_Get(%s->source)->value;' % (k.cname, v.ctype, v.cname))
-        st.vars[name] = k
 
     def text(self):
         f, sm = self.f, self.sm
@@ -1375,7 +1319,7 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
                 if not st.ended:
                     self.release_dead(st, out, self.tr.live.after[id(stmts[i + took - 1])])
                 continue
-            if (not st.called and not self.loop_ctx and self.sm.kind != 'ct'
+            if (not st.called and self.sm.kind != 'ct'
                     and s[0] not in ('decl', 'empty')
                     and self.tr.every_path_loops(self.f, here)):
                 # rule loops: every path from here runs a loop with a
@@ -1438,10 +1382,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         except Resume as e:
             if k in ('block', 'if') and not isinstance(e, ResumeHere):
                 raise
-            if self.loop_ctx:
-                # no copy can start inside a loop's body: the meta resumes
-                # at the outermost loop being translated
-                raise Resume(str(e))
             del out.lines[mark:]
             self.decls = saved_decls
             self.must, self.late, self.returns, self.resumed = saved_lists
@@ -1477,10 +1417,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         if self.switch_depth and st.called:
             # a copy of the rest would start among a switch's case labels
             raise Refuse('resuming inside a switch: %s' % why)
-        for v in st.vars.values():
-            if v.bt == 'rt' and v.virt is not None and v.owned == 'yes':
-                # its items may not all be stored yet
-                raise Refuse('resuming while %s is being built: %s' % (v.name, why))
         self.resumed.append((f.name, self.tr.stmt_text(f, stmt)[:70], why,
                              self.at_once(st, out)))
         if not st.called:
@@ -1510,8 +1446,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             v = st.vars.get(p)
             if v is None or v.owned == 'dead':
                 raise Refuse('resuming needs %s, which has no value here' % p)
-            if v.bt == 'ptr':
-                raise Refuse('resuming needs %s, a pointer the meta holds as an offset' % p)
             if v.bt == 'rt':
                 fmt += 'v'
                 args.append(v.cname)
@@ -1588,8 +1522,7 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             self.stmt(s[1], st, out, frames)     # do S while (0)
             return
         if k in ('for', 'while', 'do'):
-            self.loop_stmt(s, st, out, frames)
-            return
+            raise ResumeHere('a loop')
         if k == 'switch':
             self.switch_stmt(s, st, out, frames)
             return
@@ -1635,20 +1568,13 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         elif self.tr.ct_ctype(ctype) or ctype in ('const char *',):
             bt = 'ct'
         elif ctype in INT_TYPES:
-            # by its first assignment, unless a loop makes it run-time
-            bt = 'rt' if name in self.tr.force_rt.get(self.f.name, ()) else None
-        elif ctype == 'PyObject **':
-            # a pointer into an object's items (D80): the object, and an
-            # offset the meta holds
-            bt = 'ptr'
+            bt = None       # by its first assignment
         else:
             raise ResumeHere('a local of type %s' % ctype)
         v = Var(name, ctype, bt, name)
         v.owned = 'dead' if bt == 'rt' else 'no'
         st.vars[name] = v
-        if bt == 'ptr':
-            self.decls[name] = 'Py_ssize_t %s;' % name
-        elif bt == 'ct':
+        if bt == 'ct':
             self.decls[name] = '%s%s%s;' % (ctype, '' if ctype.endswith('*') else ' ', name)
         elif bt == 'rt':
             self.decls[name] = 'vinfo_t *%s;' % name
@@ -1682,9 +1608,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             out('%s;' % self.ev(e, st, out, frames).c)
             return
         if e[0] == 'assign':
-            if e[1] == '=' and (e[2][0] == 'index' or e[2][:2] == ('un', '*')):
-                self.store_item(e[2], e[3], st, out, frames)
-                return
             if e[2][0] != 'id':
                 raise ResumeHere('a store into %s' % cparse.c_expr(e[2]))
             name = e[2][1]
@@ -1696,7 +1619,7 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
                     and st.vars[name].bt == 'ct':
                 val = self.ev(e[3], st, out, frames)
                 if val.bt != 'ct':
-                    self.force_rt(name)
+                    raise ResumeHere('%s is compile-time, given a run-time value' % name)
                 out('%s %s %s;' % (st.vars[name].cname, e[1], val.c))
             elif e[1] in ('+=', '-='):
                 v = st.vars.get(name)
@@ -1788,14 +1711,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         singleton = getattr(val, 'singleton', False)
         if not v.isparam:
             st.known.discard(name)      # a known type (known_type) is the old value's
-        if v.bt == 'ptr':
-            if val.bt != 'ptr':
-                raise ResumeHere('%s assigned a pointer the meta cannot follow' % name)
-            out('%s = %s;' % (v.cname, val.c))
-            v.base = val.base
-            return
-        if val.bt == 'ptr':
-            raise ResumeHere('a pointer into items assigned to %s' % name)
         if v.bt is None:
             v.bt = val.bt if val.bt != 'g' else 'ct'
             if v.bt == 'rt':
@@ -1807,8 +1722,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             val = Val('ct', '1' if val.const else '0', 'int')
         if v.bt == 'ct':
             if val.bt != 'ct':
-                if v.ctype in INT_TYPES and not v.isparam:
-                    self.force_rt(name)
                 raise ResumeHere('%s is compile-time, assigned a run-time value' % name)
             out('%s = %s;' % (v.cname, val.c))
             v.tp = val.tp
@@ -1851,9 +1764,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         v.conv = val.conv
         v.noref, v.singleton = noref, singleton
         v.virt = val.virt
-        if val.conv and val.conv.get('checkable') and not val.conv.get('check') \
-                and self.loop_ctx and self.errors_leave_loop(name, frames):
-            val.conv = dict(val.conv, check='now')
         if val.conv and val.conv.get('check'):
             out_check = val.conv.get('check')
             if out_check == 'now':
@@ -1871,8 +1781,7 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         if e[0] == 'id' and getattr(st.vars.get(e[1]), 'known_null', False) \
                 and st.vars[e[1]].owned == 'dead':
             e = ('id', 'NULL')      # 'v = NULL; ... return v;'
-        val = self.returned_length(e, st, out, frames) \
-            or self.ev(e, st, out, frames, dest='<return>')
+        val = self.ev(e, st, out, frames, dest='<return>')
         x = e
         while x[0] == 'cast':
             x = x[2]
@@ -1937,92 +1846,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             self.ret_value(st, out, val.c, as_ok=True)
             return
         raise Refuse('kind %s' % kind)
-
-    def returned_length(self, e, st, out, frames):
-        """Rule known_length, for a length that is only returned
-        (tuplelength): the field read through its TYPES descriptor, which
-        is the constant where Ni knows the length, so the meta needs no
-        compile-time length and nothing resumes. None otherwise."""
-        return self.length_value(e, st, out, frames)
-
-    def length_value(self, e, st, out, frames):
-        """e, the length of a parameter whose type has a known_length, read
-        as a run-time value through the size field's TYPES descriptor
-        (psyco_get_field: the constant where Ni knows it), when it is not
-        loaded yet; None for anything else. For a length that is only a
-        value (returned, or a bound tested: rules returned_length,
-        bounds_test), not one a loop or a virtual needs now."""
-        while e[0] == 'call' and e[1][0] == 'id' and e[1][1] in self.s.macros \
-                and e[1][1] not in KEEP and self.s.macros[e[1][1]].params is not None:
-            try:
-                e = self.s.expand_call(e[1][1], e[2])
-            except Resume:
-                return None
-        if e[0] != 'arrow':
-            return None
-        kl = self.known_length(e[1], st)
-        if kl is None or e[2] != kl[1]['size'] or kl[0] in st.loaded:
-            return None
-        b = self.ev(e[1], st, out, frames)
-        return self.object_field(b, e[2], st, out)
-
-    def bounds_test(self, e, st, out, frames, facts_t, facts_f):
-        """'x < 0 || x >= n', x a run-time integer and n a length (never
-        negative): one unsigned compare, as C compilers make it. The
-        branch's likelihood is a 'likely' item, as for any run-time
-        branch. None for anything else."""
-        if not (e[0] == 'bin' and e[1] == '||' and e[2][0] == 'bin' and e[2][1] == '<'
-                and e[2][3] == ('num', '0') and e[3][0] == 'bin' and e[3][1] == '>='
-                and e[2][2] == e[3][2] and e[2][2][0] == 'id'):
-            return None
-        v = st.vars.get(e[2][2][1])
-        if v is None or v.bt != 'rt' or v.ctype not in INT_TYPES:
-            return None
-        n = self.length_value(e[3][3], st, out, frames)
-        if n is None:
-            return None
-        cc = self.new_tmp('condition_code_t')
-        out('%s = integer_cmp(po, %s, %s, Py_GE|COMPARE_UNSIGNED);' % (cc, v.cname, n.c))
-        out('vinfo_decref(%s, po);' % n.c)
-        self.error_exit(st, out, '%s == CC_ERROR' % cc)
-        text = ' '.join(cparse.c_expr(e).replace('(', '').replace(')', '').split())
-        how = self.likely.get(text)
-        if how is None:
-            raise Refuse("no 'likely' item in the policy table for the run-time"
-                         " branch %r" % text)
-        self.used_likely.add(text)
-        t = self.new_tmp('int')
-        out('%s = runtime_condition_%s(po, %s);' % (t, 't' if how == 'true' else 'f', cc))
-        return t
-
-    def field_array_read(self, e, st, out, frames):
-        """'p->f[i]', i a run-time integer and f an array of objects that
-        policy_table.TYPES gives a descriptor for (or the items of a
-        known_length type, whose descriptor gen_virtual.py writes): the
-        item read at run time (psyco_get_field_array), a new vinfo. None
-        for anything else."""
-        arr, idx = e[1], e[2]
-        if arr[0] != 'arrow' or idx[0] != 'id':
-            return None
-        v = st.vars.get(idx[1])
-        if v is None or v.bt != 'rt' or v.ctype not in INT_TYPES:
-            return None
-        b = self.ev(arr[1], st, out, frames)
-        if b.var is None or not self.s.is_obj(b.ctype):
-            return None
-        bv = b.var
-        if bv.alias is not None and bv.alias in st.vars:
-            bv = st.vars[bv.alias]
-        desc = field_descriptor(bv.ctype, arr[2]) or items_descriptor(bv.ctype, arr[2])
-        ftype = self.s.field_type(bv.ctype, arr[2])
-        # (an indexed field of object type is an array of them: cparse
-        # keeps the element type, ob_item[1] is 'PyObject *')
-        if desc is None or ftype is None or not self.s.is_obj(ftype):
-            return None
-        r = self.new_tmp('vinfo_t *')
-        out('%s = psyco_get_field_array(po, %s, FPYREF(%s), %s);' % (r, bv.cname, desc, v.cname))
-        self.error_exit(st, out, '%s == NULL' % r)
-        return Val('rt', r, 'PyObject *', owned=True)
 
     def assert_restype(self, out, r, notimpl=False):
         for t in self.restype:
@@ -2146,15 +1969,12 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         st.called = a.called or b.called
         st.early = a.early or b.early
         st.slots = {k: v for k, v in a.slots.items() if b.slots.get(k) == v}
-        st.loaded = {k: v for k, v in a.loaded.items() if b.loaded.get(k) == v}
         for name in sorted(set(a.vars) | set(b.vars)):
             va, vb = a.vars.get(name), b.vars.get(name)
             if va is None or vb is None:
                 st.vars.pop(name, None)
                 continue
             if va.bt != vb.bt:
-                if va.ctype in INT_TYPES and not va.isparam and None not in (va.bt, vb.bt):
-                    self.force_rt(name)
                 raise Refuse('%s has a different binding time on two paths' % name)
             v = va
             if va.bt == 'rt' and va.owned != vb.owned:
@@ -2189,8 +2009,7 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         if r is not None:
             return r
         k = e[0]
-        if k == 'un' and e[1] == '!' and (self.is_obj_param(e[2], st)
-                                          or self.is_virtual(e[2], st)):
+        if k == 'un' and e[1] == '!' and self.is_obj_param(e[2], st):
             return False
         if k == 'un' and e[1] == '!' and self.checkable(e[2], st):
             return '%s == NULL' % self.checkable(e[2], st).cname
@@ -2205,10 +2024,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         if k == 'un' and e[1] == '!':
             r = self.cond(e[2], st, out, frames, facts_f, facts_t)
             return (not r) if isinstance(r, bool) else '!(%s)' % r
-        if k == 'bin' and e[1] == '||':
-            r = self.bounds_test(e, st, out, frames, facts_t, facts_f)
-            if r is not None:
-                return r
         if k == 'bin' and e[1] in ('&&', '||'):
             return self.short_circuit(e, st, out, frames)
         if k == 'bin' and e[1] in PY_OPS:
@@ -2294,8 +2109,7 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
                 return ('IS_IMPLEMENTED(%s)' if op == '!=' else '!IS_IMPLEMENTED(%s)') % v.c
         # a meta's object parameter is never NULL (known now)
         for x, y in ((a, b), (b, a)):
-            if y == ('id', 'NULL') and op in ('==', '!=') and (
-                    self.is_obj_param(x, st) or self.is_virtual(x, st)):
+            if y == ('id', 'NULL') and op in ('==', '!=') and self.is_obj_param(x, st):
                 return op == '!='
         va = self.ev(a, st, out, frames)
         vb = self.ev(b, st, out, frames)
@@ -2442,7 +2256,7 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             if v.bt == 'rt':
                 if self.s.is_obj(ctype) and self.s.is_obj(v.ctype):
                     return Val('rt', v.c, ctype, owned=v.owned, conv=v.conv,
-                               var=v.var, item_of=v.item_of, virt=v.virt)
+                               var=v.var, virt=v.virt)
                 if self.s.is_obj(ctype) or ctype in INT_TYPES:
                     return v
                 if ctype in pointers.RAW_TYPES and self.s.is_obj(v.ctype) and \
@@ -2456,14 +2270,13 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         if k == 'un':
             return self.ev_unary(e, st, out, frames)
         if k == 'index':
-            return self.ev_index(e, st, out, frames)
+            raise ResumeHere('an item %s' % cparse.c_expr(e))
         if k in ('pre', 'post'):
             x = e[2]
-            if x[0] == 'id' and x[1] in st.vars and st.vars[x[1]].bt in ('ct', 'ptr'):
+            if x[0] == 'id' and x[1] in st.vars and st.vars[x[1]].bt == 'ct':
                 v = st.vars[x[1]]
                 return Val(v.bt, ('%s%s' if k == 'pre' else '%s%s')
-                           % ((e[1], v.cname) if k == 'pre' else (v.cname, e[1])), v.ctype,
-                           base=v.base)
+                           % ((e[1], v.cname) if k == 'pre' else (v.cname, e[1])), v.ctype)
             if x[0] == 'id' and x[1] in st.vars and st.vars[x[1]].ctype in INT_TYPES \
                     and not st.vars[x[1]].isparam and st.vars[x[1]].bt is None:
                 raise Refuse('%s read before it is assigned' % x[1])
@@ -2480,8 +2293,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             vb = self.ev(e[3], st, out, frames)
             if va.bt == 'ct' and vb.bt == 'ct':
                 return Val('ct', '(%s %s %s)' % (va.c, e[1], vb.c), va.ctype)
-            if va.bt == 'ptr' and vb.bt == 'ct' and e[1] in ('+', '-'):
-                return Val('ptr', '(%s %s %s)' % (va.c, e[1], vb.c), va.ctype, base=va.base)
             if e[1] == '+' and va.bt == 'rt' and vb.bt == 'rt':
                 r = self.new_tmp('vinfo_t *')
                 out('%s = integer_add(po, %s, %s, false);' % (r, va.c, vb.c))
@@ -2504,10 +2315,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
     def ev_id(self, name, st, out):
         if name in st.vars:
             v = st.vars[name]
-            if v.bt == 'ptr':
-                if v.base is None:
-                    raise Refuse('%s read before it is assigned' % name)
-                return Val('ptr', v.cname, v.ctype, base=v.base)
             if v.bt == 'rt':
                 if v.owned == 'dead' and not v.isparam:
                     raise Refuse('%s read with no value' % name)
@@ -2575,22 +2382,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             if self.s.is_obj(b.ctype) and field == 'ob_type' and b.var is not None:
                 tpv = self.promote(st, out, b.var.name)
                 return Val('ct', tpv, 'PyTypeObject *', tp=tpv)
-            virt = b.virt if b.var is not None else None
-            if virt is not None and virt['array']:
-                # a virtual the meta builds: its size and items are its own
-                if field == virt['size']:
-                    return Val('ct', virt['size_c'], 'Py_ssize_t')
-                if field == virt['items']:
-                    return Val('ptr', '0', 'PyObject **', base=b.var.name)
-            kl = self.known_length(base, st)
-            if kl is not None and field in (kl[1]['size'], kl[1]['items']):
-                # a length or the items of an object of known length: asked
-                # of Ni's representation, CPython's function where unknown
-                # (rules loops and virtual_types)
-                self.ensure_loaded(kl, st, out, frames)
-                if field == kl[1]['size']:
-                    return Val('ct', st.loaded[kl[0]], 'Py_ssize_t')
-                return Val('ptr', '0', 'PyObject **', base=kl[0])
             fv = self.object_field(b, field, st, out)
             if fv is not None:
                 return fv
@@ -2662,8 +2453,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
                 ctype = ctype_of(ctokens.tokenize(p[1])[0])
                 p = p[2]
             a = self.ev(p, st, out, frames)
-            if a.bt == 'ptr' and ctype is None:
-                return self.item_val(st, a, '0')
             if a.bt == 'ct' and a.lv and a.tp is not None and ctype and ctype.endswith('*'):
                 ftype = ctype[:-1].strip()
                 if self.s.is_fnptr(ftype):
@@ -2722,8 +2511,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
                            'size_t')
             if name == 'Py_SAFE_DOWNCAST':
                 return self.ev(args[0], st, out, frames, dest)
-            if name in self.tr.vspecs:
-                return self.construct(name, args, st, out, frames)
             if name in self.tr.sums and name not in self.tr.fails and name in self.tr.metas:
                 return self.meta_call(name, args, st, out, frames, dest)
             if name in self.s.macros and self.s.macros[name].params is not None \
@@ -2755,41 +2542,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         if callee.bt == 'ct' and self.s.is_fnptr(callee.ctype):
             return self.slot_call(callee, args, st, out, frames, dest)
         raise ResumeHere('a call through %s' % cparse.c_expr(fn))
-
-    def construct(self, name, args, st, out, frames):
-        """A call of a virtual type's constructor (policy_table.TYPES,
-        D80): the virtual object instead, built by Ni's 'new'. An array
-        type's size must be known now and within the type's item limit,
-        else CPython's function resumes here; its items are stored by the
-        statements that follow (store_item)."""
-        spec = self.tr.vspecs[name]
-        vals = [self.ev(a, st, out, frames) for a in args]
-        if spec['array']:
-            if len(vals) != 1 or vals[0].bt != 'ct':
-                raise ResumeHere('%s of a size not known now' % name)
-            n = self.new_tmp('int')
-            out('%s = %s;' % (n, vals[0].c))
-            if spec['max_items'] and not vals[0].c.isdigit():
-                out('if (%s > %s) {' % (n, spec['max_items']))
-                sub = Out(out.depth + 1)
-                self.resume(st.copy(), sub, frames,
-                            'a %s of more than %s items' % (spec['type'], spec['max_items']))
-                out.extend(sub)
-                out('}')
-            r = self.new_tmp('vinfo_t *')
-            out('%s = %s(%s, NULL);' % (r, spec['new'], n))
-            return Val('rt', r, 'PyObject *', owned=True, virt=dict(spec, size_c=n))
-        if any(v.bt != 'rt' or v.owned for v in vals):
-            raise ResumeHere('%s of a value that is not an object variable' % name)
-        r = self.new_tmp('vinfo_t *')
-        out('%s = %s(%s);' % (r, spec['new'], ', '.join(v.c for v in vals)))
-        return Val('rt', r, 'PyObject *', owned=True, virt=dict(spec))
-
-    def is_virtual(self, x, st):
-        while x[0] == 'cast':
-            x = x[2]
-        return x[0] == 'id' and x[1] in st.vars and st.vars[x[1]].bt == 'rt' \
-            and st.vars[x[1]].virt is not None and st.vars[x[1]].owned == 'yes'
 
     def args_of(self, args, st, out, frames):
         vals = []
@@ -2980,11 +2732,7 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             if v.bt == 'rt' and v.owned and not self.held_scalar(v):
                 raise ResumeHere('a call as an argument')
             if v.bt == 'rt' and self.s.is_obj(v.ctype):
-                if v.item_of is not None:
-                    # an item of a loaded object is in the frame (F24)
-                    if 'items:' + v.item_of not in st.known and st.called:
-                        self.late_promo(('items', v.item_of))
-                elif v.var is None or not v.var.isparam:
+                if v.var is None or not v.var.isparam:
                     raise ResumeHere('%s of a value that is not a parameter' % decl.name)
                 elif v.var.name not in st.known and st.called:
                     self.late_promo(v.var.name)
@@ -3055,315 +2803,13 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         out('}')
         return Val('ct', r, 'int')
 
-    # ---- loops (rule loops, D78) ----
-
-    def force_rt(self, name):
-        """An integer local that a loop makes run-time: from the start."""
-        fr = self.tr.force_rt.setdefault(self.f.name, set())
-        if name in fr:
-            raise Refuse('%s is compile-time and run-time at once' % name)
-        fr.add(name)
-        raise Rewalk()
+    # ---- promotions and constants ----
 
     def late_promo(self, p):
-        """A promotion needed after a call: at the entry of the outermost
-        loop being translated if nothing was called before it, else at the
-        function's entry (rule 1). p is a parameter, or ('items', name)."""
-        if self.loop_ctx and not self.loop_ctx[0].entry_called:
-            lp = self.tr.loop_promos.setdefault(self.f.name, {}).setdefault(
-                self.loop_ctx[0].sid, [])
-            if p not in lp:
-                lp.append(p)
-                raise Rewalk()
-            return
-        if isinstance(p, tuple):
-            raise Refuse('the types of the items of %s are needed after a call' % p[1])
+        """A promotion needed after a call: at the function's entry
+        (rule 1)."""
         if p not in self.late:
             self.late.append(p)
-
-    def known_length(self, e, st):
-        """(variable, representation) when e is a parameter (through casts)
-        of an object type whose length and items Ni can know at compile
-        time (policy_table.TYPES 'known_length')."""
-        casts = []
-        while e[0] == 'cast':
-            casts.append(ctype_of(ctokens.tokenize(e[1])[0]))
-            e = e[2]
-        if e[0] != 'id' or e[1] not in st.vars:
-            return None
-        v = st.vars[e[1]]
-        if v.alias is not None and v.alias in st.vars:
-            casts.append(v.ctype)
-            v = st.vars[v.alias]      # a local copy of a parameter is it
-        if not v.isparam or v.bt != 'rt':
-            return None
-        for ctype in casts + [v.ctype]:
-            r = known_length_of(ctype)
-            if r is not None:
-                self.kl_rep[v.name] = r
-                return v.name, r
-        return None
-
-    def loads_in(self, e, st, out=None):
-        """The objects whose length the expression e reads (the size field
-        of a type with a known length), macros expanded."""
-        if out is None:
-            out = []
-        if isinstance(e, tuple) and e:
-            if e[0] == 'call' and e[1][0] == 'id' and e[1][1] in self.s.macros \
-                    and e[1][1] not in KEEP and self.s.macros[e[1][1]].params is not None:
-                try:
-                    return self.loads_in(self.s.expand_call(e[1][1], e[2]), st, out)
-                except Resume:
-                    return out
-            if e[0] == 'arrow':
-                kl = self.known_length(e[1], st)
-                if kl is not None and e[2] == kl[1]['size'] and \
-                        kl[0] not in [n for n, _ in out]:
-                    out.append(kl)
-            for x in e[1:]:
-                self.loads_in(x, st, out)
-        elif isinstance(e, list):
-            for x in e:
-                self.loads_in(x, st, out)
-        return out
-
-    def ev_index(self, e, st, out, frames):
-        arr, idx = e[1], e[2]
-        r = self.field_array_read(e, st, out, frames)
-        if r is not None:
-            return r
-        a = self.ev(arr, st, out, frames)
-        if a.bt == 'ptr':
-            i = self.ev(idx, st, out, frames)
-            if i.bt == 'ct':
-                return self.item_val(st, a, i.c)
-        raise ResumeHere('an index %s' % cparse.c_expr(e))
-
-    def item_access(self, st, a, off):
-        """The C lvalue of item off (a meta expression) of the object the
-        pointer a points into: its vinfo in the object's array."""
-        v = st.vars[a.base]
-        if v.virt is not None:
-            acc = v.virt['item']
-        else:
-            if a.base not in self.kl_rep or a.base not in st.loaded:
-                raise ResumeHere('the items of %s' % a.base)
-            acc = ni_short(self.kl_rep[a.base]['item'])
-        if off == '0':
-            o = a.c
-        elif a.c == '0':
-            o = off
-        else:
-            o = '%s + %s' % (paren(a.c), paren(off))
-        return '%s(%s, %s)' % (acc, v.cname, o)
-
-    def item_val(self, st, a, off):
-        """An item read through a pointer: its vinfo, borrowed. An item
-        of a loaded parameter is in the frame (the object's array)."""
-        v = st.vars[a.base]
-        return Val('rt', self.item_access(st, a, off), 'PyObject *',
-                   item_of=None if v.virt is not None else a.base)
-
-    def store_item(self, lhs, rhs, st, out, frames):
-        """'P[i] = x' or '*P = x' into a virtual the meta builds (D80):
-        the item's vinfo is x. The object takes the reference x owns; a
-        borrowed x is increfed now, and the C must incref it in its next
-        statement (the reference it stores)."""
-        if lhs[0] == 'index':
-            a = self.ev(lhs[1], st, out, frames)
-            i = self.ev(lhs[2], st, out, frames)
-            off = i.c if i.bt == 'ct' else None
-        else:
-            a = self.ev(lhs[2], st, out, frames)
-            off = '0'
-        if a.bt != 'ptr' or off is None or st.vars[a.base].virt is None:
-            raise ResumeHere('a store into %s' % cparse.c_expr(lhs))
-        val = self.ev(rhs, st, out, frames)
-        if val.bt != 'rt' or not self.s.is_obj(val.ctype):
-            raise ResumeHere('a store of %s' % cparse.c_expr(rhs))
-        item = self.item_access(st, a, off)
-        out('%s = %s;' % (item, val.c))
-        if val.owned:
-            return
-        if val.var is not None and val.var.owned == 'yes':
-            val.var.owned = 'no'          # the object holds it now
-            return
-        if val.var is not None and val.var.owned == 'shadow':
-            raise Refuse('%s stored while owned on some paths only' % val.var.name)
-        out('vinfo_incref(%s);' % item)
-        st.pending = (cparse.c_expr(lhs), val.var.name if val.var is not None else None)
-
-    def ensure_loaded(self, kl, st, out, frames):
-        """The length of the object kl names, from Ni's representation
-        (PsycoTuple_Load): where it is unknown the meta resumes CPython's
-        algorithm at the statement that reads it."""
-        name, how = kl
-        if name in st.loaded:
-            return
-        if self.loop_ctx:
-            raise ResumeHere('the length of %s read first inside a loop' % name)
-        if self.ncalls > self.stmt_calls:
-            raise Refuse('the length of %s read after a call in its statement' % name)
-        n = self.new_tmp('int')
-        out('%s = %s(%s);' % (n, ni_short(how['load']), st.vars[name].cname))
-        out('if (%s < 0) {' % n)
-        sub = Out(out.depth + 1)
-        self.resume(st.copy(), sub, frames,
-                    'the length of %s is not known at compile time' % name)
-        out.extend(sub)
-        out('}')
-        st.loaded[name] = n
-
-    def loop_stmt(self, s, st, out, frames):
-        """A loop with a compile-time bound is a loop of the meta: it runs
-        at compile time, emitting its body once per turn (unrolled). Any
-        other loop is CPython's: the meta resumes at it."""
-        k = s[0]
-        if k == 'for':
-            init, cond, step, body = s[1], s[2], s[3], s[4]
-        elif k == 'while':
-            init, cond, step, body = None, s[1], [], s[2]
-        else:
-            init, cond, step, body = None, None, [], s[1]
-        counted = self.tr.counted(s)
-        if counted is None:
-            raise ResumeHere('a loop with a run-time bound')
-        # a length the bound reads: known at compile time, or the loop is
-        # CPython's (rule loops, the known case and the fallback)
-        for name, kl in self.loads_in(counted[1], st):
-            if name in st.loaded:
-                continue
-            n = self.new_tmp('int')
-            out('%s = %s(%s);' % (n, ni_short(kl['load']), st.vars[name].cname))
-            out('if (%s < 0) {' % n)
-            sub = Out(out.depth + 1)
-            self.resume(st.copy(), sub, frames,
-                        'the length of %s is not known at compile time' % name)
-            out.extend(sub)
-            out('}')
-            st.loaded[name] = n
-        if init is not None:
-            if init[0] == 'expr':
-                self.expr_stmt(init[1], st, out, frames)
-            else:
-                self.stmt(init, st, out, frames)
-        if not self.loop_ctx:
-            for p in self.tr.loop_promos.get(self.f.name, {}).get(id(s), []):
-                self.loop_promote(st, out, p)
-        entry_called = st.called if not self.loop_ctx else self.loop_ctx[0].entry_called
-        head = st.copy()
-        saved = (dict(self.decls), [list(x) for x in (self.must, self.late, self.returns,
-                                                      self.resumed)],
-                 set(self.used_likely), self.notimpl, self.any_call, self.ncalls)
-        for _ in range(6):
-            self.decls = dict(saved[0])
-            self.must, self.late, self.returns, self.resumed = [list(x) for x in saved[1]]
-            self.used_likely = set(saved[2])
-            self.notimpl, self.any_call, self.ncalls = saved[3:]
-            ctx = LoopCtx(id(s), entry_called, step, cond, frames)
-            self.loop_ctx.append(ctx)
-            exit_st = None
-            try:
-                bo = Out(out.depth + 1)
-                sb = head.copy()
-                c = True
-                if cond is not None:
-                    c = self.cond(cond, sb, bo, frames)
-                if c is False:
-                    return            # the loop never runs
-                if c is not True:
-                    bo('if (!(%s)) break;' % c)
-                    exit_st = sb.copy()
-                self.branch(body, sb, bo, frames)
-                if not sb.ended:
-                    self.walk_step(sb, bo, step, frames)
-                    ctx.backs.append(sb)
-            finally:
-                self.loop_ctx.pop()
-            new = self.loop_head(head, ctx.backs)
-            if new is None:
-                break
-            head = new
-        else:
-            raise Refuse('the loop has no fixed point')
-        out('for (;;) {')
-        out.extend(bo)
-        out('}')
-        exits = ([exit_st] if exit_st is not None else []) + ctx.breaks
-        if not exits:
-            raise Refuse('a loop that only returns')
-        final = exits[0]
-        for x in exits[1:]:
-            for name, v in final.vars.items():
-                w = x.vars.get(name)
-                if w is not None and v.bt == 'rt' and w.owned != v.owned and \
-                        {v.owned, w.owned} != {'dead', 'no'}:
-                    raise Refuse('%s is owned differently where the loop ends' % name)
-            final.called = final.called or x.called
-            final.known &= x.known
-            final.slots = {a: b for a, b in final.slots.items() if x.slots.get(a) == b}
-        st.__dict__.update(final.copy().__dict__)
-        st.ended = False
-
-    def loop_promote(self, st, out, p):
-        if isinstance(p, tuple):
-            name = p[1]
-            kl = self.known_length(('id', name), st)
-            if kl is None and name in self.kl_rep:
-                kl = (name, self.kl_rep[name])     # loaded through a local copy
-            if name not in st.loaded or kl is None:
-                raise Refuse('the items of %s are needed before their length' % name)
-            j = self.new_tmp('int')
-            out('for (%s = 0; %s < %s; %s++) {' % (j, j, st.loaded[name], j))
-            sub = Out(out.depth + 1)
-            self.error_exit(st, sub, 'Psyco_NeedType(po, %s(%s, %s)) == NULL' % (
-                ni_short(kl[1]['item']), st.vars[name].cname, j))
-            out.extend(sub)
-            out('}')
-            st.known.add('items:' + name)
-        else:
-            self.promote(st, out, p, entry=True)
-
-    def walk_step(self, st, out, step, frames):
-        for x in step:
-            self.expr_stmt(x, st, out, frames)
-
-    def loop_head(self, head, backs):
-        """The loop's entry state merged with its back edges; None when
-        that is the entry state (the fixed point)."""
-        new = head.copy()
-        changed = False
-        for b in backs:
-            if b.called and not new.called:
-                new.called = changed = True
-            if not new.known <= b.known:
-                new.known &= b.known
-                changed = True
-            sl = {a: c for a, c in new.slots.items() if b.slots.get(a) == c}
-            if sl != new.slots:
-                new.slots, changed = sl, True
-            ld = {a: c for a, c in new.loaded.items() if b.loaded.get(a) == c}
-            if ld != new.loaded:
-                new.loaded, changed = ld, True
-            for name, v in new.vars.items():
-                w = b.vars.get(name)
-                if w is None:
-                    continue
-                if v.bt is None:
-                    continue      # unassigned at the head: the body assigns it first
-                if v.bt != w.bt:
-                    if v.ctype in INT_TYPES and not v.isparam:
-                        self.force_rt(name)
-                    raise Refuse('%s has another binding time after the loop body' % name)
-                if v.bt == 'rt' and v.owned != w.owned and \
-                        {v.owned, w.owned} != {'dead', 'no'}:
-                    raise Refuse('%s is owned differently around the loop' % name)
-                if v.conv != w.conv and v.conv is not None:
-                    v.conv, changed = None, True
-                if v.bt == 'ct' and v.tp != w.tp and v.tp is not None:
-                    v.tp, changed = None, True
-        return new if changed else None
 
     def const_return(self, st, out, name):
         """Py_RETURN_TRUE, Py_RETURN_FALSE, Py_RETURN_NONE: the object,
@@ -3453,8 +2899,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
     def rest_of_path(self, st, out, frames):
         """The statements after the current one up to the function's end,
         translated on this path; a 'break' leaves the switch it is in."""
-        if self.loop_ctx:
-            raise Refuse('a path translated to its end inside a loop')
         fr = list(frames)
         while fr and not st.ended:
             outer, j = fr.pop()
@@ -3495,47 +2939,12 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             raise Refuse('a break out of a switch that does not end the function')
 
     def jump(self, k, st, out):
-        if not self.loop_ctx:
-            raise Refuse('%s outside a loop' % k)
-        ctx = self.loop_ctx[-1]
-        if k == 'break':
-            self.release_dead(st, out, self.tr.live.after[ctx.sid])
-            ctx.breaks.append(st.copy())
-            out('break;')
-        else:
-            self.walk_step(st, out, ctx.step, ctx.frames)
-            ctx.backs.append(st.copy())
-            out('continue;')
-        st.ended = True
-
-    def errors_leave_loop(self, name, frames):
-        """A call's result in name, read next by the loop's condition with
-        no error test: does the C's error value (-1) end the loop and reach
-        'return name' with nothing run in between? Then the meta returns
-        its error at once."""
-        ctx = self.loop_ctx[-1]
-        if self.sm.kind not in ('val', 'obj'):
-            return False
-        for stmts, i in frames[len(ctx.frames):]:
-            for x in stmts[i + 1:]:
-                if name in cparse.names_in(list(x[1:-1])):
-                    return False
-        if ctx.cond is None or not false_at(ctx.cond, name, -1):
-            return False
-        stmts, i = ctx.frames[-1]
-        for x in stmts[i + 1:]:
-            if name in cparse.names_in(list(x[1:-1])):
-                return x[0] == 'return' and x[1] == ('id', name)
-            if self.tr.find_any_call(x):
-                return False
-        return False
+        raise Refuse('%s outside a switch' % k)
 
     def goto(self, s, st, out, frames):
         """A forward goto to a label of the function's top level: the meta
         goes on with the statements from the label (each goto gets its own
         copy of them, as a meta path does)."""
-        if self.loop_ctx:
-            raise Refuse('goto inside a loop')
         top = self.f.ast
         j = next((k for k, x in enumerate(top) if x[0] == 'label' and x[1] == s[1]), None)
         if j is None or frames[0][0] is not top or j <= frames[0][1]:
@@ -3669,17 +3078,6 @@ def loop_rule(s, bound_known):
     return ('unroll',) + c
 
 
-class LoopCtx:
-    """A loop the meta is translating."""
-
-    def __init__(self, sid, entry_called, step, cond, frames):
-        self.sid = sid                    # id() of the loop statement
-        self.entry_called = entry_called  # a call was made before the outermost loop
-        self.step, self.cond, self.frames = step, cond, frames
-        self.breaks = []                  # states at a break
-        self.backs = []                   # states at the end of the body or a continue
-
-
 def virtual_specs():
     """{CPython constructor: spec} for the virtual types gen_virtual.py
     generates (policy_table.TYPES, D80): a call of one in a meta builds the
@@ -3719,41 +3117,9 @@ def field_descriptor(ctype, field):
     return None
 
 
-def items_descriptor(ctype, field):
-    """The descriptor gen_virtual.py writes for the items of a virtual
-    type with a known_length (TUPLE_ob_item), when field is them; None
-    otherwise."""
-    import gen_virtual
-    struct = ctype.replace('const ', '').rstrip(' *').replace('struct ', '').strip()
-    for vt in gen_virtual.virtual_types():
-        if vt.struct == struct and vt.array and vt.items == field:
-            return vt.field(field)
-    return None
-
-
 def ni_short(path_name):
     """'ni/Objects/x.h:Name' -> 'Name'."""
     return path_name.rpartition(':')[2]
-
-
-def false_at(e, name, value):
-    """Is the condition e false when name holds value? (an && chain with a
-    conjunct comparing name with an integer constant)"""
-    if e[0] == 'bin' and e[1] == '&&':
-        return false_at(e[2], name, value) or false_at(e[3], name, value)
-    if e[0] == 'bin' and e[1] in PY_OPS and e[2] == ('id', name):
-        b = e[3]
-        neg = b[0] == 'un' and b[1] == '-'
-        if neg:
-            b = b[2]
-        if b[0] != 'num' or not b[1].isdigit():
-            return False
-        n = -int(b[1]) if neg else int(b[1])
-        return not {'<': value < n, '<=': value <= n, '==': value == n,
-                    '!=': value != n, '>': value > n, '>=': value >= n}[e[1]]
-    if e[0] == 'un' and e[1] == '!' and e[2] == ('id', name):
-        return value != 0
-    return False
 
 
 class ResumeHere(Resume):
@@ -3797,7 +3163,6 @@ class Unit:
 
 
 UNITS = {
-    'tuple': Unit('Objects/tupleobject.c', None, 'ptupleobject.c'),
     'structmember': Unit('Python/structmember.c', 'ni/Objects/pstructmember.h', 'pstructmember.c'),
     'descr': Unit('Objects/descrobject.c', None, 'pdescrobject.c'),
     'object': Unit('Objects/object.c', None, 'pobject.c'),
@@ -4081,11 +3446,6 @@ def target_defines(python):
         if w.startswith('-D'):
             out.append(w[2:])
     return out
-
-
-def build_tuple(target):
-    """ptupleobject_gen.h: the tuple slots the translator generates."""
-    return build(target, UNITS['tuple'])
 
 
 def build_structmember(target):

@@ -786,7 +786,7 @@ class ScalarRules:
     def scalar_run(self, stmts, i, st, out, frames):
         """Rule copy_through at statement i of a block: the number of
         statements a helper took (0: none)."""
-        if not self.sreps() or self.loop_ctx:
+        if not self.sreps():
             return 0
         s = stmts[i]
         if s[0] == 'empty' or (s[0] == 'decl' and all(d[2] is None for d in s[1])):
@@ -971,7 +971,7 @@ class ScalarRules:
             return
         v = st.vars[outs[0]]
         if v.bt == 'ct' and not v.isparam:
-            self.force_rt(v.name)
+            raise GA.Refuse("%s is compile-time, given a helper's result" % v.name)
         if v.bt is None:
             v.bt = 'rt'
             self.decls[v.cname] = 'vinfo_t *%s;' % v.cname

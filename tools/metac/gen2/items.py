@@ -273,13 +273,15 @@ def construct(w, name, args, p, out, frames):
     if size.bt != 'meta':
         raise ResumeHere('%s of a size not known at compile time' % name)
     from . import resume
-    n = w.new_tmp('int')
+    # the C's Py_ssize_t up to the test: an int would wrap a huge
+    # size into the limit; a negative one is CPython's error to raise
+    n = w.new_tmp('Py_ssize_t')
     out.line('%s = %s;' % (n, size.c))
     if not size.c.isdigit():
         back = out.sub()
         resume.resume(w, p.copy(), back, frames, 'a %s of more than %s items'
                       % (s['type'], s['max_items']), inside=True)
-        out.if_('%s > %s' % (n, s['max_items']), back)
+        out.if_('%s < 0 || %s > %s' % (n, n, s['max_items']), back)
     t = w.new_tmp('vinfo_t *')
     out.line('%s = %s(%s, NULL);' % (t, s['new'], n))
     v = Val('dynamic', t, w.u.funcs[name].type if name in w.u.funcs else None, owned=True)

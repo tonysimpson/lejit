@@ -330,7 +330,6 @@ RULES = {
 # function-pointer field of the type itself (tp_richcompare, tp_iternext,
 # tp_descr_get); a file defining several types has one spec per type.
 TRANSLATED_SLOTS = {
-    'Objects/tupleobject.c': {'type': 'PyTuple_Type', 'slots': ['sq_length', 'sq_item', 'sq_contains', 'sq_concat', 'sq_repeat', 'tp_richcompare']},
     # member and method descriptors' __get__ (SLOT_ARGS' 'lvl')
     'Objects/descrobject.c': [{'type': 'PyMemberDescr_Type', 'slots': ['tp_descr_get']},
                               {'type': 'PyMethodDescr_Type', 'slots': ['tp_descr_get']}],
@@ -1118,7 +1117,7 @@ ENTRIES = {
     'Objects/abstract.c:PyObject_DelItem': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:PyObject_Size': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:PyMapping_Size': {'ni': ['tools/metac/gen2/abstract.py:generate']},
-    'Objects/tupleobject.c:tuplelength': {'shape': 'c26701baea26', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/tupleobject.c:tuplelength': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/listobject.c:list_length': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/bytesobject.c:bytes_length': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:PySequence_GetItem': {'ni': ['tools/metac/gen2/abstract.py:generate']},
@@ -1128,12 +1127,7 @@ ENTRIES = {
     'Objects/abstract.c:_PySequence_IterSearch': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:PySequence_Tuple': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:PySequence_List': {'ni': ['tools/metac/gen2/abstract.py:generate']},
-    'Objects/tupleobject.c:tuplecontains': {
-        'shape': '9840edeba42d',
-        'ni': ['tools/metac/gen_abstract.py:generate'],
-        'policy': [
-            ('likely', 'true', 'cmp == 0'),
-        ]},
+    'Objects/tupleobject.c:tuplecontains': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:NB_SLOT': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:NB_BINOP': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/abstract.c:NB_TERNOP': {'ni': ['tools/metac/gen2/abstract.py:generate']},
@@ -1431,32 +1425,10 @@ ENTRIES = {
             ('restype', 'PyList_Type'),
         ]},
     'Objects/listobject.c:PyList_Append': {'shape': '5a78f1bd8020', 'ni': ['ni/Objects/plistobject.c:PsycoList_Append']},
-    'Objects/tupleobject.c:tupleconcat': {
-        'shape': '0d7660e5e007',
-        'ni': ['tools/metac/gen_abstract.py:generate'],
-        'policy': [
-            ('restype', 'PyTuple_Type'),
-        ]},
-    'Objects/tupleobject.c:tuplerepeat': {
-        'shape': '0be624cdcd95',
-        'ni': ['tools/metac/gen_abstract.py:generate'],
-        'policy': [
-            ('shortcut', 'if_known', 'n'),
-            ('restype', 'PyTuple_Type'),
-        ]},
-    'Objects/tupleobject.c:tuplerichcompare': {
-        'shape': '0567abd826b6',
-        'ni': ['tools/metac/gen_abstract.py:generate'],
-        'policy': [
-            # the items compared are expected equal: the loop goes on
-            ('likely', 'true', 'k != 0'),
-        ]},
-    'Objects/tupleobject.c:tupleitem': {
-        'shape': 'e61481faa2e9',
-        'ni': ['tools/metac/gen_abstract.py:generate'],
-        'policy': [
-            ('likely', 'false', 'i < 0 || i >= Py_SIZEa'),
-        ]},
+    'Objects/tupleobject.c:tupleconcat': {'ni': ['tools/metac/gen2/abstract.py:generate']},
+    'Objects/tupleobject.c:tuplerepeat': {'ni': ['tools/metac/gen2/abstract.py:generate']},
+    'Objects/tupleobject.c:tuplerichcompare': {'ni': ['tools/metac/gen2/abstract.py:generate']},
+    'Objects/tupleobject.c:tupleitem': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Objects/iterobject.c:seqiterobject': {'shape': '24ea9b846c56', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
     'Objects/object.c:PyObject_SelfIter': {'shape': 'ba0edf658c0b', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/iterobject.c:iter_iternext': {

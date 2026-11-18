@@ -611,6 +611,24 @@ PyObject *PySnip_TG19(PyTupleObject *a, PyTupleObject *b, PyObject *o) {
                'PsycoObject_RichCompareBool(', 'PsycoTuple_Load(b);', 'for (;;) {',
                'psyco_generic_call(po, PyObject_Dir,'],
          absent=['Psyco_NeedType(po, PsycoTuple_GET_ITEM(b,']),
+    Case('G21: a virtual\'s size stays Py_ssize_t up to its limit test', '''
+PyObject *PySnip_TG21(PyTupleObject *a, Py_ssize_t n) {
+    Py_ssize_t i, j, size;
+    PyObject **p;
+    PyTupleObject *np;
+    if (n < 0) n = 0;
+    if (Py_SIZE(a) == 0 || n > PY_SSIZE_T_MAX / Py_SIZE(a)) return PyErr_NoMemory();
+    size = Py_SIZE(a) * n;
+    np = (PyTupleObject *)PyTuple_New(size);
+    if (np == NULL) return NULL;
+    p = np->ob_item;
+    for (i = 0; i < n; i++)
+        for (j = 0; j < Py_SIZE(a); j++) { *p = a->ob_item[j]; Py_INCREF(*p); p++; }
+    return (PyObject *)np;
+}''', ['PySnip_TG21'], file='tuple', items={'PySnip_TG21': [IfKnown('n')]},
+         want=['Py_ssize_t _t3;', '_t3 = size;',
+               'if (_t3 < 0 || _t3 > CT_TUPLE_LOAD_SIZE_LIMIT) {', 'PsycoTuple_New(_t3, NULL);'],
+         absent=['int _t3;']),
     # ---- the old generator's bugs, the correct behaviour ----
     Case('G6: no resume starts inside a loop the meta runs (the meta runs none)', '''
 PyObject *PySnip_G6(PyObject *o, Py_ssize_t n) {
