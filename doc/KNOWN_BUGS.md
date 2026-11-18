@@ -1,6 +1,6 @@
 # Known bugs
 
-Open bugs only. IDs: **M** memory access (`ni/x64/v_mem_mov.h`, field functions in `ni/vcompiler.c`), **F** front end (translated CPython), **B** backend (`ni/x64`), **C** core. IDs are never reused. A fixed bug leaves this list; its story is in git (`git log --grep F42`). Fixed bugs still cited from code, tools or other docs keep one line at the end so the reference resolves.
+Open bugs only. IDs: **M** memory access (`ni/x64/v_mem_mov.h`, field functions in `ni/vcompiler.c`), **F** front end (translated CPython), **B** backend (`ni/x64`), **C** core, **G** generator (`tools/metac`). IDs are never reused. A fixed bug leaves this list; its story is in git (`git log --grep F42`). Fixed bugs still cited from code, tools or other docs keep one line at the end so the reference resolves.
 
 **Live** means current Python 3 code can reach it; **dormant** means no current caller triggers it. Evidence: **[read]** seen in code, **[inferred]** reasoned, **[run]** observed.
 
@@ -39,6 +39,27 @@ Open bugs only. IDs: **M** memory access (`ni/x64/v_mem_mov.h`, field functions 
 - **C19** (accepted, by design, D64): `sys.getrefcount` sees one reference fewer for an argument compiled code passes to C (borrowed); a constant's count includes one reference per block that uses it. [run]
 - **C20** (accepted, D64): `len(gc.get_objects())` can grow by one around code compiled at that moment (a GC-tracked object per compile; not a leak). [run]
 - **C29** (open): a frame already running compiled when tracing or profiling starts gets no events (C23, D46 test only at entry): a tracer setting `f_trace` on running frames, `pdb.set_trace()`/`breakpoint()` on its own next line, a profiler's `c_call`/`return`. Needs a way out of compiled code mid-frame. [run]
+
+### Generator
+From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent: no generated header shows them today. The redesign removes them by construction; until then, a change that reaches one must fix it.
+- **G1** (live risk): `effects.py` doesn't see calls through function pointers (a global hook, a typedef'd local such as `binaryfunc slot`, `(f)()`), so such a caller can be marked `CfPure` or `CfNoPython`. [run]
+- **G2** (live risk): `effects.py` drops the effects of a macro that renames a function (`#define PyObject_Length PyObject_Size`); `effect_flags` would give it `CfPure`. [run]
+- **G3** (live risk): `CfPure` ignores reads of mutable memory (`list_length`, `PyList_Size`, `PyDict_Size`), and Ni folds a pure call with compile-time arguments, so `len()` of a promoted list could fold. [inferred]
+- **G4**: `effects.py` reads every `#if` branch and keeps the first definition by file order (`PyThread_acquire_lock` resolves to `thread_nt.h`). [run]
+- **G5**: `ceval_reader.cvalue` evaluates C with Python's semantics: `oparg && 4` gives 4, `!oparg + 1` gives 0 at `oparg = 0`, `1 < oparg < 3` chains. It feeds stack-effect sizes. [run]
+- **G6** (latent): a resume inside a meta loop loses the remaining iterations; only `Walk.statement` checks `loop_ctx`, not `slot`, `subtype`, `known_type`, `load_word`, `short_circuit`, `construct` or `choice`. [read]
+- **G7** (latent): `Walk.expr_stmt` never emits a discarded `okv` (bool-returning call) result, and leaks an owned `rt` temporary with no convention; `compare` never releases owned operands. [read]
+- **G8** (latent): `Walk.raise_` doesn't set `st.failed`, so residual calls on an error path aren't refused. [read]
+- **G9** (latent): `Walk.statement`'s rollback doesn't restore `used_likely`, `needs`, `kl_rep`, `any_call` or `_wcount`. [read]
+- **G10**: `('other', 'mutable_fields')` is in `gen_abstract.IMPLEMENTED`, but nothing implements it. [read]
+- **G11** (latent): `gen_builtins.Walk.compare` evaluates its operand twice and doesn't undo state from the first (a deleted `Psyco_NeedType` line leaves its variable unset). [read]
+- **G12**: scalar helpers (`scalars.call_helper`) never get `CfNoBlock`, and raising ones not `CfNoPython`; a known function pointer in a run is accepted unchecked; errno is assumed to stay within one helper. [read]
+- **G13** (latent): `scalars` and `ceval_inline` inline by substituting names or argument text, not values: a local copied from `*p` sees a later `*p = …`, and an argument with a call is evaluated once per use. [read]
+- **G14** (latent): `gen_virtual` treats a store under a condition as unconditional, and misses a NULL default written another way (`if (!step)`). [read]
+- **G15** (latent): `ceval_inline.Inliner.switch` loses a switch arm's fall-through when another arm returns. [read]
+- **G16**: generation doesn't fix `PYTHONHASHSEED`; merges iterate sets, so "same output twice" isn't shown across seeds. [inferred]
+- **G17**: `donecheck.py` counts a refusal or an unimplemented policy item as a reason, so adding an item both stops generation and passes the done test, and a function moving from generated to refused is silent (3.8: 212 to 195, still "0 with no reason"). [run]
+- **G18**: `csource.Tree.file` keeps only a file's macros when `#if` leaves its braces unbalanced, so every function in it becomes "not found" without an error. [read]
 
 ## Fixed, still cited
 
