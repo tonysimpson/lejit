@@ -24,6 +24,7 @@ Settled choices. Don't reopen one without new evidence. Each is what was decided
 - **D29** Compile speed comes first and there is no IR: every backend change is measured against compile time as well as run time, and when in doubt compile speed wins.
 - **D34** Phase before generation: a robust 3.7 baseline with worthwhile performance work, each change measured against speed, compile time and code size, its pattern recorded in PATTERNS.md.
 - **D64** The owner took every recommendation of GOAL.md's point-2 sweep. Accepted for 3.7: C9, C17 remainder, C19, C20, F72. C14, C15 remainder, C18, F27 remainder and option D are done on 3.7 (owner, 2026-11-18, reversing their move to 3.12). Kept: F57's `__code__` guard, D60's version tag, D63's type hints.
+- **D104** (owner agreed) The adversarial suite measures honestly rather than flatteringly: every call timed with no best-of, several fresh processes, three run lengths calibrated on CPython, training on one input and timing another, outputs compared in full, and losses counted before any mean, with failures scored as losses.
 
 ## Compilation strategy
 - **D10** Merge points by control flow, not on every instruction (`27f066d`), and inlining by upstream's rule (`085392a`, with B6).
