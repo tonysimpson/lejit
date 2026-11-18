@@ -1,7 +1,7 @@
 # Eight counters, each still the constant it started as or run-time
 # depending on the paths taken so far: at the loop head every combination
 # is a different state, so without a cap the loop is compiled again for
-# each one (CODE_SIZE.md option 3, vcompiler.c:mp_capped). Past the cap the
+# each one (D40, FINDINGS.md, vcompiler.c:mp_capped). Past the cap the
 # known values are forgotten, and the results must not change.
 
 def counters8(items):

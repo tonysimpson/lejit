@@ -1,5 +1,5 @@
 """Per-call cost of calling a closure from compiled code, against a plain
-function (doc/CLOSURES.md). Run under perf twice with different counts and
+function (doc/FINDINGS.md). Run under perf twice with different counts and
 take the difference per call:
 
     perf stat -e instructions:u python3.7 tools/closure_micro.py CASE N

@@ -1167,8 +1167,8 @@ static bool init_store(PsycoObject *po, vinfo_t *obj) {
          PyUnicode_CompareWithASCIIString(po->pr.co->co_name, "__init__") == 0;
 }
 
-/* The store into the instance dict, inline (STORES.md "Option 4: design",
-   "Shrinking the store sites"): x64/ipyencoding.c:psyco_inline_store_begin
+/* The store into the instance dict, inline (D38, D47,
+   FINDINGS.md): x64/ipyencoding.c:psyco_inline_store_begin
    checks the dict against the cache and stores, with every failed check
    calling cimpl_store_miss out of line, then the error check of that call
    here. No check is a respawn point, so the emitted code depends only on

@@ -312,7 +312,7 @@ def pct(a, b):
 
 
 def shared_after(ni, stats, sites, total, top, normalise, iterations=1):
-    """doc/OPTION_D.md: for each site whose code was compiled for two or
+    """Option D (doc/FINDINGS.md): for each site whose code was compiled for two or
     more values in this run, how much each value's copy costs and how much
     of it depends on the value. Uses the copies of ni._codestats() (site
     and value index per copy); code compiled for a value after a coding

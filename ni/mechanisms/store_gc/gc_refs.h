@@ -2,7 +2,7 @@
    it: gc.gc_refs shifted right by _PyGC_REFS_SHIFT is _PyGC_REFS_UNTRACKED
    for an untracked one (_PyObject_GC_IS_TRACKED). The inline attribute
    store (x64/ipyencoding.c) tests the dict with it (MAINTAIN_TRACKING,
-   STORES.md; D77). Included by ipyencoding.c after iencoding.h. */
+   FINDINGS.md; D77). Included by ipyencoding.c after iencoding.h. */
 _Static_assert(sizeof(PyGC_Head) == 32 &&
                    offsetof(PyGC_Head, gc.gc_refs) == 16 &&
                    __builtin_types_compatible_p(

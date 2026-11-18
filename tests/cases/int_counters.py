@@ -1,7 +1,7 @@
 # Counters that start as the constant 0 and are updated only on some paths
 # through a loop, as in go's Board.useful: at the loop head each counter is
 # a constant int object, a virtual int with a known value or one with a
-# run-time value (CODE_SIZE.md option 2, dispatcher.c:canonical_int).
+# run-time value (D33, FINDINGS.md, dispatcher.c:canonical_int).
 
 def counters(items):
     a = b = c = d = e = 0

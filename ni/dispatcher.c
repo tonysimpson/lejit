@@ -1268,9 +1268,10 @@ static bool compatible_at_join = false;
    promotion plus the promoted fact, and dropping it would jump back into
    the block that promoted, which promotes again, hits its own cache and
    jumps back, forever, without running an instruction (the naive version
-   in CODE_SIZE.md, Promotions, hung so). Every other compare comes after
-   an instruction was compiled, so a chain of jumps between blocks without
-   progress can only enter blocks that know more and more. */
+   hung so: e404100:doc/CODE_SIZE.md, Promotions). Every other compare
+   comes after an instruction was compiled, so a chain of jumps between
+   blocks without progress can only enter blocks that know more and
+   more. */
 DEFINEVAR bool psyco_compatible_keep_facts = false;
 DEFINEVAR long psyco_stat_fact_drops = 0;
 static bool compatible_drop_unused = false;
@@ -1342,8 +1343,8 @@ static bool compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
   if (diff != 0) {
     if ((diff & TimeMask) != 0) {
       /* a virtual int's value, known here and run-time in 'b': the same
-         family, so a partial match like two different constants (CODE_SIZE.md
-         option 2); otherwise counters that are still 0 on some paths start
+         family, so a partial match like two different constants (D33,
+         FINDINGS.md); otherwise counters that are still 0 on some paths start
          a block per combination. Not a fixed value: code after it relies on
          it, and promotion would loop. */
       source_known_t *sk;
@@ -1733,7 +1734,7 @@ static void compare_return_address(vinfo_t *a, RunTimeSource bsource,
     t->match = (getstack(a->source) % 16) == (getstack(bsource) % 16);
 }
 
-/* One form for small ints and bools at merge points (CODE_SIZE.md option 2):
+/* One form for small ints and bools at merge points (D33, FINDINGS.md):
    a local or stack slot holding a constant int object becomes a virtual int
    with that constant value, the form arithmetic produces. Otherwise "still
    the constant 0" and "a virtual int" never match, and every combination of
@@ -2519,7 +2520,7 @@ static code_t *promotion_mega_target(rt_promotion_t *fs) {
    static-type site) to a value with code of its own, and never the
    reverse: the evicted value would otherwise enter C at each run, or, once
    the chain ends in the megamorphic version, run that instead of its code
-   (the shapes kernel, CODE_SIZE.md "Promotion caches and the cut-off"). */
+   (the shapes kernel, D66, FINDINGS.md). */
 static void promotion_cache_add(rt_promotion_t *fs, long value,
                                 code_t *target) {
   if (fs->ncached == 0) {

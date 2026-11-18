@@ -1,4 +1,4 @@
-"""Does Ni emit the same machine code with two builds? (doc/CODE_SIZE.md,
+"""Does Ni emit the same machine code with two builds? (doc/FINDINGS.md,
 "Same code"; doc/GENERATION.md step 0)
 
     python3.7 tools/samecode.py A B               # tests and the seven

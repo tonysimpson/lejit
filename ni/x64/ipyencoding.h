@@ -255,7 +255,7 @@ EXTERNFN bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
   } while (0)
 
 /* The inline attribute store into a split instance dict (D38, D47;
-   STORES.md "Shrinking the store sites"), behind a type guard emitted
+   FINDINGS.md), behind a type guard emitted
    before it. Hand-allocated in the caller-saved registers, which hold no
    tracked values, so the compiler's state is the same on every path
    through it. psyco_inline_store_begin emits the checks and the store,

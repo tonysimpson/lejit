@@ -105,8 +105,8 @@ bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w) {
   return could_eat;
 }
 
-/* Inline attribute store (ipyencoding.h; STORES.md "Shrinking the store
-   sites"). Registers: RDI the object, RSI the value, RDX the cache, RCX
+/* Inline attribute store (ipyencoding.h; D47,
+   FINDINGS.md). Registers: RDI the object, RSI the value, RDX the cache, RCX
    the dict, R8 its values, R9 its keys then the index, RAX scratch then
    the old value, R10 scratch. Laid out as
 

@@ -1,5 +1,5 @@
-# Inline attribute stores (pobject.c:inline_store, STORES.md "Option 4:
-# design"): a set value overwritten, or the next empty slot filled in order,
+# Inline attribute stores (pobject.c:inline_store, D38,
+# FINDINGS.md): a set value overwritten, or the next empty slot filled in order,
 # checked against a (class, name) cache that holds no keys. Every way the
 # dict, its keys, the class or GC tracking can differ from the cache must
 # give CPython's result. Run under a checked build, the replay check covers
@@ -639,7 +639,7 @@ def store_then_load(n):
 
 
 # Stores in sequence to one object, in one function: what a check shared
-# between them (STORES.md, "Shrinking the store sites") would have to get
+# between them (FINDINGS.md, attribute stores, open) would have to get
 # right. The old value of the first store frees an object whose __del__
 # changes what the next stores must do.
 class Seq:

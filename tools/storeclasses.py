@@ -1,5 +1,5 @@
 """Classify every STORE_ATTR of a vendored pyperformance benchmark by what
-the store does to the instance dict (doc/STORES.md). Plain CPython 3.7 only:
+the store does to the instance dict (doc/FINDINGS.md). Plain CPython 3.7 only:
 
     python3.7 tools/storeclasses.py richards [iterations]
 

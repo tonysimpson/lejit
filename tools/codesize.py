@@ -14,7 +14,7 @@ Needs a build with the counters:
                                                   # -j FILE: also as JSON)
     python3.7 tools/codesize.py richards -D       # also the code after
                                                   # sites with several values
-                                                  # (doc/OPTION_D.md; capstone)
+                                                  # (doc/FINDINGS.md; capstone)
 
 Runs the benchmark until compiling stops, then prints the code emitted per
 opcode, how many times instructions were compiled (each promotion, respawn

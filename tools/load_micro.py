@@ -1,5 +1,5 @@
 """Attribute loads on classes that change after their code compiled
-(QUESTIONS 41, doc/STORES.md "Load guards"):
+(QUESTIONS 41, D60, doc/FINDINGS.md):
 
     python3.7 tools/load_micro.py ni|plain [mode ...]
 

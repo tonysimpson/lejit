@@ -854,7 +854,7 @@ static void cs_state(PsycoObject *po) {
 }
 #endif
 
-/* The cap per merge point (CODE_SIZE.md option 3, D40): once this many
+/* The cap per merge point (D40, FINDINGS.md): once this many
    blocks have been compiled at a merge point, a state that matches none of
    them is generalised (dispatcher.c:psyco_forget_values) and compared
    again, so it joins a general block instead of starting one more. The
@@ -951,7 +951,7 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
   }
 }
 
-/* Join points (CODE_SIZE.md, "Respawned branches rejoin"). A split site
+/* Join points (D44, FINDINGS.md). A split site
    (pycompiler.c, split_after_global) ends its block, and the blocks started
    after it at one instruction are listed like a merge point's ('ge',
    mergepoints.c:psyco_join_point). A branch respawned from the site's

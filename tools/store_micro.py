@@ -1,4 +1,4 @@
-"""Cost of one attribute store, with or without Ni (doc/STORES.md):
+"""Cost of one attribute store, with or without Ni (doc/FINDINGS.md):
 
     python3.7 tools/store_micro.py ni|plain
 
