@@ -192,14 +192,14 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/load_micro.py` | tooling | Loads on a changing class or one with a metaclass (`FINDINGS.md "Attribute stores"`). | `6cd0c26` |
 | `tools/store_cache_sim.py` | tooling | Simulates FINDINGS.md "Attribute stores" option 4's per-(class, name) store cache over benchmark stores. | `074d210` |
 | `tools/pyperf37.py` | tooling | Runs the vendored pyperformance benchmarks under 3.7 with and without Ni. | `88b1fa1` |
-| `tools/benchmarks.sh` | tooling | Release build plus the benchmark tools, saved in `build/bench/`; `adversarial` only when named (`--long` passed on), with its data file beside the table. | `a86aeef` |
+| `tools/benchmarks.sh` | tooling | Release build plus the benchmark tools, saved in `build/bench/`; `adversarial` only when named (`--long` passed on), with its data file beside the table. | `49763c9` |
 | `tools/codesize.py` | tooling | Code emitted by kind, opcode, function, instruction; promotion sites (`FINDINGS.md "Code size"`). | `8081f96` |
 | `tools/samecode.py` | tooling | Whether two builds emit the same machine code, per instruction (D70; `FINDINGS.md "Code size"`). | `8b8ffea` |
 | `tools/promostats.py` | tooling | The promotion-site reports for `codesize.py` (`-p`, `-D`), from `ni._promostats()`. | `8081f96` |
 | `tools/compilebench.py` | tooling | Compile cost against pay-off per benchmark (`FINDINGS.md "Compile cost"`). | `f598d22` |
-| `tools/adversarial/run.py` | tooling | Runs the adversarial benchmarks with and without Ni, many fresh processes per mode and run length: every call timed (total, first, median, worst, spreads, warm-up shape), trained on variant 0 and timed on variant 1, outputs compared call by call, losses first; `--calibrate` writes `sizes.txt`; `--data` writes one line per benchmark and measure. | `a86aeef` |
-| `tools/adversarial/sizes.txt` | tooling | n per run length for each benchmark, calibrated on plain CPython by `run.py --calibrate`. | `a86aeef` |
-| `tools/adversarial/*.py` | tooling | One benchmark per file aimed at a Ni weakness (its docstring names it and what variant 1 changes), `main(n, variant=0)` and `N` for running it alone; written blind, not to be tuned on Ni's results. | `a86aeef` |
+| `tools/adversarial/run.py` | tooling | Runs the adversarial benchmarks with and without Ni, many fresh processes per mode and run length: every call timed (total, first, median, worst, spreads, warm-up shape), trained on variant 0 and timed on variant 1, outputs compared call by call, losses first; `--calibrate` writes `sizes.txt`; `--data` writes one line per benchmark and measure. | `49763c9` |
+| `tools/adversarial/sizes.txt` | tooling | n per run length for each benchmark, calibrated on plain CPython by `run.py --calibrate`. | `49763c9` |
+| `tools/adversarial/*.py` | tooling | One benchmark per file aimed at a Ni weakness (its docstring names it and what variant 1 changes), `main(n, variant=0)` and `N` for running it alone; written blind, not to be tuned on Ni's results. | `49763c9` |
 | `tools/closurecalls.py` | tooling | Counts calls straight to closures per benchmark iteration (`FINDINGS.md "Calls to closures"`). | `b11de13` |
 | `tools/closure_micro.py` | tooling | One loop calling a function or each kind of closure, for `perf stat` (`FINDINGS.md "Calls to closures"`). | `b11de13` |
 | `tools/interpreted.py` | tooling | Per benchmark, the most-called functions still interpreted under Ni, with the reason. | `5f1dbf6` |
