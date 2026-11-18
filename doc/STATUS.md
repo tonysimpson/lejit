@@ -1,5 +1,14 @@
 # Status
 
+## 2026-11-18: iterators, `callable`, `hasattr`, `BUILD_TUPLE_UNPACK*` generated; none left with no reason (`9e58f97` … `18c250d`, D93)
+
+Five general rules and one policy item (D93): a type's initialiser read from the file that defines it (object.c's `PyObject_SelfIter` as the iterators' `tp_iter`), a call that cannot fail as another's argument (`callable`), a `TARGET` that falls into the next read with its body (`BUILD_TUPLE_UNPACK*`), `error_handler` for an assigned call, and P22's virtual tuple as policy `('virtual', 'concat')`.
+- **Generated:** 75 of 119 opcodes; donecheck: generated 212 (6,228 lines), reasoned 228 (4,909), **no reason 0**. `iter`, `next`, `chr`, `ord` stay C calls and `BUILD_CONST_KEY_MAP` hand-written, each with its reason (failures log, `hand_table.py`).
+- **Checks:** generation twice, same output; `tests/run.py` 939 pass (10 new in `gen_iters.py`, `tuple_unpack.py`); `compile_bounds.py` 7; encoder, `v_mem_mov`, smoke; the eight `profile_bench.py` runs; `cpython_tests.py -j 2` 285 modules, 0 unexpected; `--all` 371 modules, 1 unexpected: `test_queue` (6 errors with Ni, 5 plain; rerun alone three times, the plain run gave 6 in two: timing, as D86 found).
+- **Instructions** (release, per warm iteration): none slower beyond heap state (pyflate +0.9%, gone or reversed under D92's controls; chaos −1.1%, hexiom −0.4%).
+- **3.8.20:** `gen_ceval` stops at its label copies at `631c0dd` too (F112, new, open).
+
+
 ## 2026-11-18: `in` on str generated; QUESTIONS 51 answered (`03ce514`, D92)
 
 The pyflate cost of the generated `in` (1.5% more instructions, from its `CfNoPython`) was glibc malloc's state, not the code: the flag keeps known classes across the call, which improves only start-up code that uses `in` on a str (`argparse`, `sre_parse`), and that leaves malloc's bins in another state for pyflate's 2 KB lists. callgrind counts the same emitted-code instructions with either build; the extra ones are all in `_int_malloc`/`unlink_chunk`; one kept `malloc` block or Python object reverses the sign (METACOMPILER.md "str and descriptors", PROFILE.md "Heap state").
@@ -9,7 +18,7 @@ The pyflate cost of the generated `in` (1.5% more instructions, from its `CfNoPy
 
 ## 2026-11-18: the done test's 22 settled but two (GENERATION.md step 10; `351a4d5` … `08c702e`)
 
-`donecheck.py` (D90) listed 22 hand-written mirrors with no reason; 20 are now deleted, generated or reasoned, and the two left (`piter_getiter`, `prangeiter_getiter`) are the iterator work's.
+`donecheck.py` (D90) listed 22 hand-written mirrors with no reason; 20 are now deleted, generated or reasoned, and the two left (`piter_getiter`, `prangeiter_getiter`) are the iterator work's (generated since D93).
 - **Done test at `08c702e`, on D89, 3.7.17:** generated 203 definitions (6,055 lines); with a reason 232 (4,997); with none 2 (9).
 - **Deleted:** `PsycoEval_CallObjectWithKeywords` (F11 gone), `PsycoDict_Copy`, `PsycoIter_Check`, `PsycoLong_AsLong`, `PsycoDict_SetItem`, `PsycoObject_Repr` (the generated cases make the residual calls), and Py2's frame finaliser (`cimpl_finalize_frame_locals`, `FINALIZE_FRAME_LOCALS`; its three reserved words stay, B17).
 - **Generated:** tuple's `sq_length` and `sq_item`; float's `tp_hash`; the unbound-variable errors (rule `compile_time_copy`: `ceval.c`'s helper body run in the compiler).

@@ -158,7 +158,7 @@ The main ones, by where they must go:
 | `ceval.c` `fast_block_end` | `cimpl_push_exc_info`, `unwind_except_handler`/`cimpl_pop_exc_info`, the unwind loop | Ni's finally states |
 | `ceval.c` eval_breaker block and its skip list | `ni_eval_breaker_handler`, `ni_eval_breaker_at_entry` (since D77 in `mechanisms/eval_breaker_runtime/ceval_loop_top.h`); skip list in `mergepoints.h:BREAKER_SKIPS` and again inline in `ni_eval_breaker_at_entry` | runtime-poll; the skip list is copied twice |
 | `frameobject.c:_PyFrame_New_NoTrack` (the builtins choice) | `psyfunc.c:callee_builtins` and `pycompiler.c:psy_get_builtins` (also called from `psycofunction_call`) | P28 |
-| `object.c:PyObject_SelfIter` | `piterobject.c:piter_getiter` and `prangeobject.c:prangeiter_getiter`, registered on the same C pointer | identical; the later registration wins for every iterator type |
+| `object.c:PyObject_SelfIter` | generated (`pobject_gen.h`, D93, `9e58f97`) | the hand `piter_getiter` and `prangeiter_getiter` are gone; registered for both types' tp_iter, the same C pointer |
 | `listobject.c:list_item` | `plistobject.c:plist_item`, used for list `sq_item` and by `piterobject.c:piter_iternext` | shortcut |
 | `longobject.c:long_long` | generated (D83; was `plong_pos`), and again inside `pbltinmodule.c:pbuiltin_round`, `ptype_call` | |
 | `floatobject.c:float___trunc___impl`, `float___round___impl` | split into `pfloatobject.c` helpers, put together again in `pbltinmodule.c` (`float_whole_to_int`, `pbuiltin_round`) | float's `nb_int` has no meta |
@@ -280,7 +280,7 @@ Ni's compile-time copy of `ceval.c`'s main loop, the `cimpl_*` run-time copies o
 | cimpl_import_from | 53 | translated | Python/ceval.c:import_from | P12 |  | **Removed, generated (D88, `fa3dae7`)**: `ceval_import_from`, a run-time copy of the C (rule `helper_copy`); was: Copy (F44) |
 | cimpl_exc_match | 17 | translated | partial: Python/ceval.c:cmp_outcome (PyCmp_EXC_MATCH) | P12 |  | F43 |
 | cimpl_store_deref | 7 | translated | Python/ceval.c:TARGET(STORE_DEREF) | P12 | REF: increfs v (ceval steals it) | **Removed, generated (D88, `fa3dae7`)**: the case stores the cell inline (`field_store`) |
-| cimpl_build_unpack | 34 | translated | Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK_WITH_CALL)/(BUILD_TUPLE_UNPACK)/(BUILD_LIST_UNPACK), check_args_iterable | P12 |  | Loops over a tuple of parts instead of PEEK(i) |
+| cimpl_build_unpack | 0 | generated | Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK_WITH_CALL)/(BUILD_TUPLE_UNPACK), check_args_iterable | P12 |  | Gone (D93, `ab0f53b`): the generated cases make one `_PyList_Extend` per part and `PyList_AsTuple`; check_args_iterable is a copy in the handler's wrapper |
 | cimpl_build_map_unpack | 52 | translated | Python/ceval.c:TARGET(BUILD_MAP_UNPACK)/(BUILD_MAP_UNPACK_WITH_CALL), format_kwargs_mapping_error | P12 |  | **Removed, generated (D88, `fa3dae7`)**: one wrapper call per part (`error_handler`); was: Over a tuple of parts |
 | cimpl_build_set_unpack | 14 | translated | Python/ceval.c:TARGET(BUILD_SET_UNPACK) | P12 |  |  |
 | special_lookup | 10 | translated | Python/ceval.c:special_lookup |  |  | Copy |
@@ -338,7 +338,7 @@ Ni's compile-time copy of `ceval.c`'s main loop, the `cimpl_*` run-time copies o
 | case DELETE_DEREF | 13 | translated | Python/ceval.c:TARGET(DELETE_DEREF) | P12,P05,P24 |  | **Removed, generated (D88, `fa3dae7`)**; was: Hand-written |
 | case LOAD_BUILD_CLASS | 10 | translated | Python/ceval.c:TARGET(LOAD_BUILD_CLASS) | P12 |  | Hand-written |
 | case BUILD_TUPLE | 7 | translated | Python/ceval.c:TARGET(BUILD_TUPLE) | P18 | VIRTUAL: virtual tuple | Hand-written |
-| case BUILD_TUPLE_UNPACK_WITH_CALL, BUILD_TUPLE_UNPACK, BUILD_LIST_UNPACK | 50 | mixed | Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK_WITH_CALL)/(BUILD_TUPLE_UNPACK)/(BUILD_LIST_UNPACK) | P22,P18,P12,P08 | VIRTUAL: parts that are tuples with known items make a virtual tuple; RESTYPE: list or tuple | Hand-written; core part the virtual concatenation |
+| case BUILD_TUPLE_UNPACK_WITH_CALL, BUILD_TUPLE_UNPACK, BUILD_LIST_UNPACK | 0 | generated | Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK_WITH_CALL)/(BUILD_TUPLE_UNPACK)/(BUILD_LIST_UNPACK) | P22,P18,P12,P08 | VIRTUAL: policy ('virtual', 'concat') on the two tuple cases; RESTYPE: list or tuple | Generated (D81 `BUILD_LIST_UNPACK`; D93 `ab0f53b` the tuple ones, rule fall_through) |
 | case BUILD_LIST | 9 | translated | Python/ceval.c:TARGET(BUILD_LIST) | P18 | VIRTUAL: PsycoList_New (VLIST_LENGTH_MAX) | Hand-written |
 | case BUILD_MAP | 19 | translated | Python/ceval.c:TARGET(BUILD_MAP) | P09 |  | Hand-written |
 | case BUILD_CONST_KEY_MAP | 29 | translated | Python/ceval.c:TARGET(BUILD_CONST_KEY_MAP) | P24 |  | Hand-written (D88: a negative type check of `keys`, no resumable arm; METACOMPILER failures log) |
@@ -803,7 +803,7 @@ A hand copy of CPython's private `seqiterobject` (with `long` for `Py_ssize_t`) 
 |---|---|---|---|---|---|---|
 | file comment, includes | 15 | glue | none |  |  |  |
 | PsycoSeqIter_NEW | 19 | core | none | P18 | VIRTUAL: it_index made run-time at once (no specialisation on the loop counter) |  |
-| piter_getiter | 6 | translated | Objects/object.c:PyObject_SelfIter |  |  | same C pointer as prangeiter_getiter (every iterator's tp_iter); the later registration wins, both identical |
+| piter_getiter | 0 | generated | Objects/object.c:PyObject_SelfIter |  |  | Gone: generated `PsycoObject_SelfIter` (D93, `9e58f97`) |
 | cimpl_seqiter_drop_seq | 6 | translated | partial: Objects/iterobject.c:iter_iternext |  |  | the 'it_seq = NULL; Py_DECREF(seq)' step |
 | cimpl_seqiter_exhausted | 13 | core | none |  |  | materialises an exhausted virtual iterator |
 | piter_stop | 6 | core | none | P24 |  | StopIteration at the meta level |
@@ -838,7 +838,7 @@ Virtual ranges and range iterators (core) with near-verbatim helpers for `get_le
 | PsycoRange_New | 52 | core | none | P01, P05, P18 | SHORTCUT: only 1-3 exact ints of one digit (PsycoLong_MediumValue) and a non-zero step, else the real call; PROMOTE: argument types; LIKELY: step non-zero (_t) | replaces range_new for the handled case; called from pbltinmodule.c:ptype_call |
 | prange_iter | 28 | mixed | Objects/rangeobject.c:range_iter | P18, P13, P12 | VIRTUAL: virtual range iterator, index run-time at once; EFFECT: real range is residual range_iter CfCommonNewRefPyObject | core = virtual iterator; fields as fast_range_iter (len by cimpl_range_len) |
 | prangeiter_next | 44 | translated | Objects/rangeobject.c:rangeiter_next | P15, P05, P24 | VIRTUAL: result a virtual int (PsycoLong_FROM_WORD); LIKELY: index < len (_t); OTHER: sets StopIteration, not a bare NULL (meta convention) | unsigned wrap kept by word arithmetic |
-| prangeiter_getiter | 5 | translated | Objects/object.c:PyObject_SelfIter |  |  | duplicate of piter_getiter on the same C pointer |
+| prangeiter_getiter | 0 | generated | Objects/object.c:PyObject_SelfIter |  |  | Gone: as piter_getiter (D93) |
 | psy_rangeobject_init | 15 | glue | none |  | OTHER: layout check fails silently (no metas registered, unlike punicodeobject.c); VIRTUAL: both INIT_SVIRTUAL_NOCALL (identity, C17), weights 4 and 1 |  |
 
 ### `ni/Objects/pmethodobject.h`

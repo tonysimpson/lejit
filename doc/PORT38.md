@@ -71,7 +71,7 @@ Crashed (`IndexError` in `_statement`): 3.8 writes `case TARGET(op): {` (`TARGET
 - **Gone:** `SETUP_LOOP`, `SETUP_EXCEPT`, `BREAK_LOOP`, `CONTINUE_LOOP`.
 - **Refused for another reason, both versions:** `FORMAT_VALUE` (3.8 adds a `FVC_NONE` case and a `default:` raising SystemError: control flow, a `switch` with `goto error`; it was read on 3.7 and stopped in the back half), `RAISE_VARARGS` (a `switch` on oparg; was `why = WHY_EXCEPTION`), `RETURN_VALUE`, `YIELD_VALUE`, `YIELD_FROM`, `END_FINALLY` (other labels: `exit_returning`, `exit_yielding`, `exception_unwind`), `WITH_CLEANUP_START`, `WITH_CLEANUP_FINISH` (block stack).
 
-Refusals by kind on 3.8: core 20, shared code 6, stack 6, control flow 3, falls through 2 (`BUILD_TUPLE_UNPACK_WITH_CALL`, `BUILD_TUPLE_UNPACK`).
+Refusals by kind on 3.8: core 20, shared code 6, stack 6, control flow 3, falls through 2 (`BUILD_TUPLE_UNPACK_WITH_CALL`, `BUILD_TUPLE_UNPACK`). Since D93 the reader reads a case that falls into the next with that body, so 3.8 has none falling through; `BUILD_TUPLE_UNPACK` generates (3.7's text but one call's effect flags) and `BUILD_TUPLE_UNPACK_WITH_CALL` is refused in the back half (`check_args_iterable` takes `tstate`). At `631c0dd` and since, 3.8's `gen_ceval` stops at its label copies (`unbound_local_error`; GENERATION step 10, iterators).
 
 ### `gen_ceval`: the back half
 
