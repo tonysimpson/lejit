@@ -46,3 +46,4 @@ In KNOWN_BUGS.md. Worth doing first among them: C11's `PyEval_GetFrame` hook, `f
 ## Research
 - Decoupling the core (D16, QUESTIONS 21–23, 25).
 - 3.12 port (PORT312.md, QUESTIONS 29–33).
+- **A strict and a fast mode** (Tony's idea): strict matches CPython wherever behaviour is visible, including identity CPython happens to give (F117, C17); fast may differ where Python doesn't promise behaviour (identity, finaliser timing). Needs the list of such places and their measured cost first.
