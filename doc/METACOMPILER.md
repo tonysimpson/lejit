@@ -182,8 +182,8 @@ A virtual type's support is generated from CPython's constructor and its `TYPES`
 - **Type-field slots** (`tp_richcompare`, `tp_iternext`, `tp_descr_get`) are found by position in the macro-expanded initialiser (`type_field_slot`); how Ni calls such a meta is `SLOT_ARGS` (`tp_richcompare` `"vvl"`, an `l` known at compile time), checked against each caller.
 - **Switches and statement macros:** with `switches=True` `cparse` reads `switch` and `do { } while (0)`; a header macro that is such a statement is expanded (`Source.statement_macros`). A compile-time switch is a C switch in the meta; a fall-through, or a resume inside after a call, is refused. `Py_RETURN_TRUE`/`FALSE`/`NONE` are Ni's constants.
 - **Aliases:** `vt = (PyTupleObject *)v` is `v` (`Var.alias`). A run-time int tested for truth is `!= 0`.
-- **Fields of run-time objects:** `p->f`, `Py_SIZE(p)` with a `TYPES` `descriptors` entry is `psyco_get_field` (`object_field`); `FMUT` decides re-reading after calls.
-- **Tuple slots:** `returned_length`, `bounds_test` (`x < 0 || x >= n` as one unsigned compare), `field_array_read` (`TUPLE_ob_item` from the layout), `incref_returned`.
+- **Fields of run-time objects:** `p->f`, `Py_SIZE(p)` with a `TYPES` `descriptors` entry is `psyco_get_field` (`object_field`; gen2's `actions.field_read` for list, dict and bytes, D116); `FMUT` decides re-reading after calls.
+- **Tuple slots** (still gen_abstract's): `returned_length`, `bounds_test` (`x < 0 || x >= n` as one unsigned compare), `field_array_read` (`TUPLE_ob_item` from the layout), `incref_returned`.
 
 ## Argument binding (D85)
 
@@ -199,14 +199,14 @@ How Ni represents a value is data in `TYPES`, its rules written as C, parsed aft
 
 ## Builtins (D86)
 
-`tools/metac/gen_builtins.py` translates what `TRANSLATED_FUNCTIONS` names in `Python/bltinmodule.c` (clinic header spliced in) into `pbltinmodule_gen.h`, and math into `pmathmodule_gen.h`; the `PyModuleDef`'s method table gives each C function and `ml_flags`, and flags with no `METH_ARGS` entry are skipped.
+`tools/metac/gen_builtins.py` translates what `TRANSLATED_FUNCTIONS` names in `Python/bltinmodule.c` (clinic header spliced in) into `pbltinmodule_gen.h` (math is gen2's, D115); the `PyModuleDef`'s method table gives each C function and `ml_flags`, and flags with no `METH_ARGS` entry are skipped.
 - A root's parameters follow `METH_ARGS[flags]['c']` (`METH_FASTCALL`'s array and count are the one tuple Ni passes, `vargs`). A root that resumes before any call is `METH_ARGS[flags]['fallback']`, so wrong counts, star arguments and keywords keep CPython's messages.
 - `('other', 'unpack_arguments')` on a callee (3.7: `_PyArg_UnpackStack`) tests the count, the fallback outside, and translates the rest once per count, each output a borrowed `PsycoTuple_GET_ITEM(vargs, i)` that promotes like a parameter.
 - A variable assigned and tested against `NULL` folds; a `bool` Ni function's result tested as `< 0`, `!= 0`, `== -1` is `!(call)`; `zero_or_one` marks a result 0 or 1 after its error test, `bool_word` makes it the bool's word. `nested_scalar_call`: a call that cannot fail, returning a scalar, as another's argument.
 
 ## Scalar code (D87)
 
-Float slots, `PyFloat_AsDouble` and int's `nb_float` come from gen2 (`gen2/scalar.py`, `gen2/inline.py`; D113, D114, GENERATOR_DESIGN "The scalar helper"); math still from the general translator, rules in `tools/metac/scalars.py` (`ScalarRules`), as below.
+Float slots, `PyFloat_AsDouble`, int's `nb_float` and math come from gen2 (`gen2/scalar.py`, `gen2/inline.py`; D113–D115, GENERATOR_DESIGN "The scalar helper"). gen_abstract's remaining units read doubles through `tools/metac/scalars.py` (`ScalarRules`), whose rules are below; none of them now makes a helper.
 - **Representation** (`TYPES['Include/floatobject.h:PyFloatObject']['double']`): reading `ob_fval` (directly, through a cast or `PyFloat_AS_DOUBLE`) is `PsycoFloat_AS_DOUBLE`; `PyFloat_FromDouble` of a double is `PsycoFloat_FROM_DOUBLE`, a virtual float.
 - **Copy-through** (`copy_through`, D19): the backend has no floating point, so the longest run of statements on C scalars only (the representation's locals, integers, constants, compiler built-ins, `EXTERNAL`'s pure functions, `SCALAR_CODE`'s raising functions and variables such as `errno`, static scalar functions copied as `cimpl_*`, another file's functions `proven_pure`) becomes a C helper the meta calls. A run must read a double; its inputs are the helper's arguments, its one live result the return. A tail (every path an error or a scalar's constructor) returns the scalar, `return NULL` as `return -1`. Flags `CfPure`, and `CfPyErrCheck` where it can raise.
 - **`inline_static`:** a static function called with a local's address or a function's name is its body at the call (`convert_to_double(&v, &a)`, `math_1(args, acos, 0)`), for `return f(...)` and `if (f(...) OP K)` (or `if (f(...))`).
@@ -214,7 +214,7 @@ Float slots, `PyFloat_AsDouble` and int's `nb_float` come from gen2 (`gen2/scala
 
 ## str and descriptors (D89)
 
-Rules in `cparse.py`, `tools/metac/conditions.py` and `tools/metac/pointers.py`.
+str's slots are gen2's (D116): `bit_field` is `actions.bit_test`, `runtime_choice` `Walk.choice`, `const_fold` the `FoldMayFail` item, and `PyUnicode_Concat` a `Whole` item. The descriptor rules are in `cparse.py`, `tools/metac/conditions.py` and `tools/metac/pointers.py`.
 - **`preprocess_conditionals`:** the file's directives, with marker lines, through `gcc -E -dD -P` with the target's configuration: inactive lines blanked, each obeyed `#undef` back with the definition in force before it, so a macro is the one in force where used. A function that calls itself is refused. `(assert(X), E)` is E.
 - **`bit_field`:** `((PyASCIIObject *)s)->state.ready`, with the bits in `LAYOUTS` and a descriptor in `TYPES`, is one unsigned compare against `NI_BIT_PyASCIIObject__state__ready`; the `likely` item names the macro as written.
 - **`runtime_choice`:** `PyUnicode_READY(s)` is `(IS_READY ? 0 : _PyUnicode_Ready(s))`, the `likely` arm leaving the legacy path to CPython.

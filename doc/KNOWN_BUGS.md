@@ -48,11 +48,10 @@ From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent:
 - **G9** (latent): `Walk.statement`'s rollback doesn't restore `used_likely`, `needs`, `kl_rep`, `any_call` or `_wcount`. The abstract family, now on gen2, doesn't have it (`tests/gen2_snippets.py`). [read] [run]
 - **G10**: `('other', 'mutable_fields')` is in `gen_abstract.IMPLEMENTED`, but nothing implements it. The abstract family, now on gen2, doesn't have it (`tests/gen2_snippets.py`). [read] [run]
 - **G11** (latent): `gen_builtins.Walk.compare` evaluates its operand twice and doesn't undo state from the first (a deleted `Psyco_NeedType` line leaves its variable unset). gen2 evaluates it once (`tests/gen2_snippets.py`). [read] [run]
-- **G12**: scalar helpers (`scalars.call_helper`) never get `CfNoBlock`, and raising ones not `CfNoPython`; a known function pointer in a run is accepted unchecked; errno is assumed to stay within one helper. Math's helpers still come from `scalars`; gen2's (`gen2/scalar.py`, the float slots) have none of these (`tests/gen2_snippets.py`). [read] [run]
+- **G12** (latent): scalar helpers (`scalars.call_helper`) never get `CfNoBlock`, and raising ones not `CfNoPython`; a known function pointer in a run is accepted unchecked; errno is assumed to stay within one helper. No unit makes a helper through `scalars` now (gen_abstract's units read doubles but copy no run); gen2's (`gen2/scalar.py`: the float slots and math) have none of these (`tests/gen2_snippets.py`). [read] [run]
 - **G13** (latent): `scalars` and `ceval_inline` inline by substituting names or argument text, not values: a local copied from `*p` sees a later `*p = …`, and an argument with a call is evaluated once per use. gen2's `inline.py` inlines by value (`tests/gen2_snippets.py`). [read] [run]
 - **G14** (latent): `gen_virtual` treats a store under a condition as unconditional, and misses a NULL default written another way (`if (!step)`). [read]
 - **G15** (latent): `ceval_inline.Inliner.switch` loses a switch arm's fall-through when another arm returns. gen2 refuses an arm that falls into the next (`tests/gen2_snippets.py`). [read] [run]
-- **G20** (latent): on 3.8 the old generator's run-time copy `cimpl_PyFloat_AsDouble_1` names `op` and `nb` without taking them as parameters; the text is after a return and never compiled, so nothing breaks. Goes when the math unit moves to gen2. [read]
 
 ## Fixed, still cited
 
