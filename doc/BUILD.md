@@ -1,7 +1,7 @@
 ---
 written: 2026-11-16
-head_ref: e1fd808
-verified: true    # built and tested on 2026-11-16 (Debian 13, gcc 14, CPython 3.7.17); see STATUS.md
+head_ref: 9eae61d
+verified: true    # built and tested on 2026-11-18 (Debian 13, gcc 14, CPython 3.7.17); see STATUS.md
 ---
 # Building, running, debugging
 
@@ -16,9 +16,18 @@ verified: true    # built and tested on 2026-11-16 (Debian 13, gcc 14, CPython 3
 ```
 NI_TRACE=1 NI_ALL_CHECKS=1 pip install -e .     # debug: -O0 -g3, extra asserts
 pip install .                                   # release: -O3
+python3.7 setup.py build_ext --inplace          # what tools/check.sh does
 ```
 - `NI_ALL_STATIC=1` puts every `.c` file into one unit (`ni/ni.c`, `ni/initialize.h`).
 - `setup.py:autodetect` accepts only `x86_64`, and adds `ni/x64` to the include path, so backend headers are included as `<iencoding.h>`.
+
+**Generated code (D67, D68).** Before compiling, `build_ext` runs `tools/metac/generate.py`, which writes `plongobject_gen.h`, `pfloatobject_gen.h` and `pycompiler_gen.h` into `build/temp.<platform>-<X.Y>/gen/` (on the include path). Nothing generated is in git. What it needs:
+- **A second Python, 3.10 or later, for the generators** (the vendored `cases_generator` needs it): `NI_GEN_PYTHON`, default `python3` on `PATH`. In a 3.7 virtualenv `python3` is 3.7, so set it (`NI_GEN_PYTHON=/usr/bin/python3`).
+- **CPython's source for exactly the version being built for** (`sys.version`, e.g. `3.7.17`):
+  - `NI_CPYTHON_SRC=DIR`: a source tree (unpacked tarball or checkout; a pyenv build keeps one in `~/.pyenv/sources/3.7.17/Python-3.7.17`). Its `Include/patchlevel.h` must name the same version.
+  - Otherwise the release tarball: the first build fetches `https://www.python.org/ftp/python/X.Y.Z/Python-X.Y.Z.tgz` (about 24 MB), checks its sha256 against `tools/metac/cpython_sha256.txt`, and unpacks it into `~/.cache/ni/cpython/Python-X.Y.Z/` (`NI_CACHE_DIR`, else `$XDG_CACHE_HOME/ni`). Later builds use the cache. A version without a recorded sha256 fails: add the line, with the hash from a source other than the download (pyenv's `python-build` definitions have them), or use `NI_CPYTHON_SRC`.
+- A wrong version, a missing tree, a failed download, a bad checksum or a generator error (for example `gen_ceval`'s checks against `ceval.c` and `dis.stack_effect`) fails the build with the reason, and removes the old generated headers. An old `ni/**/*_gen.h` left in a checkout also fails the build: `"x.h"` would find it first.
+- To run the generators alone: `python3 tools/metac/generate.py --python ~/.pyenv/versions/3.7.17/bin/python3.7 --out DIR [--src DIR] [-v]` (`-v` lists what each generated and skipped, with the reason).
 
 ## Run
 `import ni` installs the frame-eval hook immediately (`ni/eval_hook.c`). From then on, every non-module function whose opcodes are all in `ni/mergepoints.c` is compiled on its first call. There's no Python-level API (`module_methods` is empty). The README says only very simple functions work, for example integer loops and `a + b`.
@@ -60,7 +69,7 @@ Upstream Psyco's test suite (`test/`) and the Ni regression pack were removed (s
 - To prove an edit is comment-only without building, strip comments and compare against git:
   `gcc -fpreprocessed -E -P -x c FILE | tr -d ' \t\n' | md5sum`, compared with the same for `git show HEAD:FILE`.
 
-**Check everything with one command:** `tools/check.sh`. It builds with `NI_TRACE=1 NI_ALL_CHECKS=1`, stops if the build fails or `ni.so` is older than any source, then runs `tests/run.py`, `tests/encoding/check.py`, the `v_mem_mov` execution tests, `tests/compile_bounds.py` (fails if warm code keeps compiling, via `ni._stats()`), `tests/cpython_tests.py` (285 of CPython's own test modules, counts and exit status must match; below) and `tests/smoke.py` (stdlib output with and without Ni). About two minutes. [run]
+**Check everything with one command:** `tools/check.sh`. It runs the generators twice into `build/gen-check/` and requires the same output, then builds with `NI_TRACE=1 NI_ALL_CHECKS=1`, stops if the build fails or `ni.so` is older than any source, checks the build compiled the same generated headers, then runs `tests/run.py`, `tests/encoding/check.py`, the `v_mem_mov` execution tests, `tests/compile_bounds.py` (fails if warm code keeps compiling, via `ni._stats()`), `tests/cpython_tests.py` (285 of CPython's own test modules, counts and exit status must match; below) and `tests/smoke.py` (stdlib output with and without Ni). About two minutes. [run]
 
 **CPython's own tests (`tests/cpython_tests.py`).** All 416 modules in `lib/python3.7/test/` are in one of three lists. `MODULES` (285, the default, run by `tools/check.sh`): fast modules, mostly pure Python. `EXTENDED` (86, added by `--all`): slower ones, or ones using subprocesses, sockets, threads or timing, which a loaded machine can upset. `EXCLUDED` (45), with a reason each: GUI or terminal, network or downloads, other platforms, very slow or resource-hungry, test infrastructure, and one Ni class: `test_sys` (a C11 failure in `test_current_frames` leaves its thread waiting, so the run never exits). The C24 modules came back when compiled code began testing `eval_breaker` (D45): `test_unittest` to the default set, `test_signal`, `test_threading`, `test_io` and `test_asyncio` to `--all` (`test_unittest` and `test_asyncio` with accepted C11 differences; F50 and F52 are fixed). The C23 modules came back when compiled calls began testing for tracing (D46): `test_sys_settrace`, `test_sys_setprofile`, `test_bdb` and `test_profile` to the default set, `test_pdb`, `test_cprofile` and `test_trace` to `--all` (`test_sys_settrace` and `test_pdb` with accepted C29 differences: a frame already running compiled gets no events). Two crashes `--all` found then, `test_timeit` (C30) and `test_shutil` (C31), are fixed (`63b4f95`, `5a39986`) and both modules match plain. `test_dynamic` (F49) and `test_subclassinit` (F51) match since `5f8b506` and `125cf3d`; `test_socket`, excluded while F51 aborted it, is in `--all` since `125cf3d`, accepted as differing (C19 in `testRefCountGetNameInfo`) with no expected counts, since its skips and errors depend on the network. Each module runs plain and with Ni in fresh interpreters, three at a time (`-j N`), each in a temporary directory with a 600 s timeout and a 4 GB address-space limit (`MEMORY_LIMIT`), so a runaway gets MemoryError instead of the machine. `KNOWN` accepts a module's exact result under Ni with the KNOWN_BUGS id that explains it. Timings on 2026-11-17, checked build, with other agents' jobs on the machine: the default set about 50 s (the old 55-module set took about 20 s of process time, run one after another), `--all` about 3 minutes more. Usage: `python3.7 tests/cpython_tests.py [-j N] [--all | module ...]`. [run]. `test_capi` joined `--all` when C25 was fixed; `test_compare` and `test_iter` match plain since F10, F48 and F50.
 

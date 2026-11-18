@@ -18,6 +18,7 @@ One Ni source serves every CPython version from 3.7 on; none is dropped.
 - **Mechanisms:** where Ni itself must work differently (entry: frame hook or `PyFunction_SetVectorcall`; perhaps tracing and frames), a small detector looks in that version's source for the mechanism, and the matching snippet goes into the generated source.
 - **New features** go into the core or the rules, never into one version's output, so regenerating carries them to every version. Each version's tests run on every change.
 - **Order:** generate everything possible on 3.7 first, compared with the hand translations, then 3.8, 3.9 and on.
+- **At build time** (`9eae61d`, D68) [run]: `setup.py` runs `tools/metac/generate.py --python EXE --out DIR`, which finds the source for EXE's version (`NI_CPYTHON_SRC` or the cached, checksum-checked tarball, `cpython_src.py`) and runs each generator in its `GENERATORS` list. A generator is a module with `build(target)` returning `(header text, report lines)`, or raising `cslots.GenError` to stop the build; `target` is `cslots.Target(src, version, python, pyconfig)`. A new generator is one entry in that list. The headers go to the build directory, never into `ni/`.
 
 ## Stages (D19)
 
@@ -42,7 +43,7 @@ Token rewriting means working on C tokens (skipping comments, strings and prepro
 
 ## First slice: ints (`64f88e7`, QUESTIONS 26)
 
-`tools/metac/gen_long.py` reads 3.7's `Objects/longobject.c` and writes `ni/Objects/plongobject_gen.h` (checked in; `tools/check.sh` fails if it is out of date, D24). Plain token rewriting was enough. [run]
+`tools/metac/gen_long.py` reads 3.7's `Objects/longobject.c` and writes `plongobject_gen.h` (at first checked in, D24; generated at build time since `9eae61d`, D67). Plain token rewriting was enough. [run]
 
 - **Tokens:** `tools/metac/ctokens.py`. It skips comments, keeps literals whole, takes out preprocessor lines and keeps `#define` bodies, so macros such as `CHECK_BINOP` are expanded only where a rule asks.
 - **Slot table:** `long_as_number` is mapped by position against `PyNumberMethods` in `Include/object.h`. The comments in the table can't be trusted (`/*tp_bool*/`).
@@ -58,7 +59,7 @@ Still hand-written: the representation of a virtual int. That is `plong_medium_v
 
 ## Second slice: floats (`749985f`)
 
-`tools/metac/gen_float.py` reads `Objects/floatobject.c` and writes `ni/Objects/pfloatobject_gen.h`. The shared parts live in `tools/metac/cslots.py`. [run]
+`tools/metac/gen_float.py` reads `Objects/floatobject.c` and writes `pfloatobject_gen.h`. The shared parts live in `tools/metac/cslots.py`. [run]
 
 - **Shape matched:**
   - `double` locals, then `CONVERT_TO_DOUBLE(param, x);` for each operand, or reads of `param->ob_fval`.
@@ -108,7 +109,7 @@ Read from the 3.12.9 source tarball (`Python/bytecodes.c`, `Tools/cases_generato
 
 ## Bytecode slice: simple opcodes from the DSL (D26)
 
-`tools/metac/gen_ceval.py` reads `tools/metac/bytecodes37.c` (3.7's opcodes in 3.12's DSL) with CPython's own parser (`tools/metac/cases_generator/`, vendored from 3.12.9) and writes `ni/Python/pycompiler_gen.h`, which `pycompiler.c` includes in its opcode switch. [run]
+`tools/metac/gen_ceval.py` reads `tools/metac/bytecodes37.c` (3.7's opcodes in 3.12's DSL) with CPython's own parser (`tools/metac/cases_generator/`, vendored from 3.12.9) and writes `pycompiler_gen.h`, which `pycompiler.c` includes in its opcode switch. [run]
 
 - **Result:** 39 of the 43 described opcodes are generated, and their hand-written cases are gone from `pycompiler.c` (165 lines):
   - `NOP`, `POP_TOP`, `ROT_TWO`, `ROT_THREE`, `DUP_TOP`, `DUP_TOP_TWO`;
@@ -125,11 +126,11 @@ Read from the 3.12.9 source tarball (`Python/bytecodes.c`, `Tools/cases_generato
   - A constant from the code object is a new compile-time vinfo, which `Py_INCREF` turns into `vinfo_new(CompileTime_New(...))`.
   - `Py_None` as an argument is a `psyco_vi_None()` temporary, released after the call.
 - **Restart rule, checked:** the DSL's rule (no INCREF before the last `ERROR_IF`) is extended to Psyco's. No irreversible statement (incref, `SETLOCAL`) may come before the last call or `ERROR_IF`, and no owned temporary may be live at an error exit.
-- **Checks against 3.7**, run by `--check` and so by `tools/check.sh`:
+- **Checks against 3.7**, run every time it generates, so in every build and twice in `tools/check.sh`; a mismatch fails the build:
   - `ceval.c` has the `TARGET`;
   - the `ceval.c` case calls every C-API function the description calls;
-  - the declared stack effect equals `dis.stack_effect()`, run in python3.7. `NOP` is unknown to it.
-- **Mutation test** [run]: five wrong descriptions were tried, and each one makes `--check` fail.
+  - the declared stack effect equals `dis.stack_effect()`, run in the interpreter being built for. `NOP` is unknown to it.
+- **Mutation test** [run]: five wrong descriptions were tried, and each one made the old `--check` fail.
   - A wrong stack effect, a wrong function, and an opcode 3.7 doesn't have are reported as mismatches with 3.7.
   - An incref moved before the error exit, and an input that is never released, are refused by the generator ("restart rule", "neither released nor stored").
 - **Compared with the hand-written cases:**

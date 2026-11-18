@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: plan; nothing started
+status: plan; step 1 done (`9eae61d`)
 ---
 # Plan of work: generate the translated layer on 3.7
 
@@ -33,6 +33,19 @@ The phase is in `GOAL.md` ("What the current phase is") and its design in DECISI
 | 10 | **Done check.** Quiet machine: `check.sh`, same code against the hand-written baseline (`19fa1df`), re-baseline (pyperformance, `compilebench.py`, `codesize.py`) in STATUS. | all | GOAL points 3 and 4 | 2 h |
 
 Order: 0, 1 and 2 can run at once; then 3; then 4 alone; then 5, 6, 7 and 8 in parallel; 9 any time after 1. Total, if step 4 goes as hoped: about 4–7 days elapsed.
+
+## Step 1: done (`9eae61d`, D68) [run]
+
+`setup.py`'s `build_ext` runs `tools/metac/generate.py --python sys.executable --out build/temp.*/gen` before compiling; the three `*_gen.h` files are gone from git. How to build, the cache and `NI_CPYTHON_SRC` are in BUILD.md "Build".
+
+**Interface, for the steps that add or change generators:**
+- `generate.py` holds the list `GENERATORS`: (module, header it writes). Each module in `tools/metac/` provides `build(target) -> (text, report)`, where `report` is lines starting `generated` or `skipped`, and raises `cslots.GenError(reason)` when the source doesn't match what it relies on. Nothing else is called.
+- `target` is `cslots.Target(src, version, python, pyconfig)`: the source tree (already version-checked), its `PY_VERSION`, the interpreter being built for (run it for anything only it knows, as `gen_ceval.stack_effects` does with `dis.stack_effect`) and its installed `pyconfig.h`.
+- No generator writes files or reads `NI_*` variables; `generate.py` writes all headers, and only after every generator succeeded.
+- Hand-written code names no version (D67): the version comes from `target.version`, the source from `target.src`. The only version-keyed data is `tools/metac/cpython_sha256.txt`.
+- For step 2: `gen_ceval.py`'s internals (`read_defs`, `translate`, `run`, `check_37`, `header`) are unchanged except that `check_37` and `stack_effects` take the interpreter as an argument. Its `main` is now only `--try BYTECODES_C CPYTHON_SRC`, and `build(target)` is the entry: replacing `run(DEFS, target.src)` with the `ceval.c` reader is the whole change there.
+
+**Checks** (`tools/check.sh`): the generators run twice and must give identical output; the build must then have compiled the same headers. The cross-checks of `gen_ceval` run in every generation, so in every build.
 
 ## Risks
 

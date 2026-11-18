@@ -1,5 +1,13 @@
 # Status
 
+## 2026-11-18: generation at build time (GENERATION.md step 1, `9eae61d`, D68)
+
+Nothing generated from CPython is in git any more (D67 (2), replacing D24). `setup.py` runs `tools/metac/generate.py` against the source of the interpreter it builds for and writes the headers into the build directory; BUILD.md "Build". [run]
+- From nothing (an exported tree, empty `~/.cache/ni`): the build fetched `Python-3.7.17.tgz`, checked its sha256, unpacked it and built; the second build used the cache. The headers from the tarball equal those from the pyenv tree (`NI_CPYTHON_SRC`), and the old checked-in ones but for the version now named in two first lines.
+- Fails with the reason, and removes the old headers: `NI_CPYTHON_SRC` of another version (3.7.16) or not a source tree; a version with no recorded hash (3.12.9); a bad checksum; a generator Python older than 3.10 or missing.
+- Release build: machine code, `.rodata` and `.data` identical to `6c6d305`'s (`objdump -d`, `objcopy`).
+- Checked build, `tools/check.sh` (now: generators twice, same output; the build used the same headers): **ALL CHECKS PASSED**; `tests/run.py` 745 pass, 0 xfail; compile bounds 7 checks; CPython's default set 285 modules, 0 unexpected; encoder, `v_mem_mov`, smoke.
+
 ## 2026-11-17: final 3.7 baseline at `cdd8a94`: the phase is done
 
 GOAL.md "When the phase is done": all four points met. [run]
