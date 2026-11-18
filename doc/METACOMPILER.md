@@ -160,12 +160,12 @@ The CPython fields Ni relies on are data, `policy_table.LAYOUTS` and `RUNTIME`; 
 
 ## Loops (D78)
 
-A known count is unrolled; otherwise the run-time function runs, after any case the meta knows (Psyco's practice). Text: `RULES['loops']`. `cparse.Parser(loops=True)` reads loops, `break`, `continue`, `++`/`--` and the comma operator; liveness runs to a fixed point. `gen_abstract.loop_rule`, shared with `gen_ceval.py`:
-1. **Counted loop, known bound: unrolled.** A `for` with a conjunct `V < E` (or `<=`, `!=`, the downward forms), V stepped by one in the head and assigned nowhere else, E unassigned in the body, both known at compile time; the body is emitted per turn, run-time tests as condition codes. An integer compile-time on entry and run-time after a turn is made run-time from its declaration (at most six rounds).
-2. **Known length:** a bound reading a `known_length` size field (immutable) asks `PsycoTuple_Load`: a virtual tuple's length or a constant one's up to `CT_TUPLE_LOAD_SIZE_LIMIT`, items through `PsycoTuple_GET_ITEM`; at -1 CPython's function resumes there.
-3. **Any other loop is CPython's:** the meta resumes at it; where every path from a point with nothing called loops or fails, the whole function is called there (`every_path_loops`).
-4. **Promotions inside a loop** needed after its first call are made at its entry if nothing was called before, else refused (PATTERNS rule 1).
-5. **Errors:** a call's error in a loop is tested at once when the error value ends the loop and is returned (`errors_leave_loop`); resuming where an error test held is refused.
+A known count is unrolled; otherwise the run-time function runs, after any case the meta knows (Psyco's practice). Text: `RULES['loops']`. `cparse.Parser(loops=True)` reads loops, `break`, `continue`, `++`/`--` and the comma operator; liveness runs to a fixed point. `gen_ceval.py` applies `gen_abstract.loop_rule` to opcode cases; `gen_abstract.py`'s own walk runs no loop (CPython's, resumed at it, or the whole function where every path from a point with nothing called runs one: `every_path_loops`). gen2's families have their own meta loops, `gen2/loops.py` (D124).
+1. **Counted loop, known bound: unrolled.** A `for` with a conjunct `V < E` (or `<=`, `!=`, the downward forms), V stepped by one in the head and assigned nowhere else, E unassigned in the body, both known at compile time; the body is emitted per turn, run-time tests as condition codes.
+2. **Known length:** a bound reading a `known_length` size field (immutable) asks `PsycoTuple_Load`: a virtual tuple's length or a constant one's up to `CT_TUPLE_LOAD_SIZE_LIMIT`, items through `PsycoTuple_GET_ITEM`; at -1 CPython's code runs from there. gen2 also counts a length over its unroll budget (16) as unknown, and checks any other bound against it before the loop.
+3. **Any other loop is CPython's.**
+4. **Promotions inside a loop** needed after a call in a turn are made at the outermost loop's entry if nothing was called before it, else refused (PATTERNS rule 1); gen2 promotes a loaded tuple's items there too.
+5. **No resume inside a loop:** CPython's code runs from the outermost loop instead.
 
 **Object units.** `gen_abstract.py --unit X` translates the slots `TRANSLATED_SLOTS` names for a file, found from the type's initialiser and tables (`slot_functions`), into `p<file>_gen.h`, registered with `Psyco_DefineMeta`; a static slot function resumes through the type's slot. A type's initialiser is read from the file that defines it (`type_tokens`), so `object.c:PyObject_SelfIter` is the iterators' `tp_iter`. gen2's families name their slots in `gen2/scope.py` instead (`gen2/slots.py`, D110).
 
