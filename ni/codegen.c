@@ -194,6 +194,7 @@ DEFINEVAR c_promotion_t psyco_nonfixed_pyobj_promotion;
 /*DEFINEVAR c_promotion_t psyco_nonfixed_promotion_mega;*/
 DEFINEVAR c_promotion_t psyco_nonfixed_pyobj_promotion_mega;
 DEFINEVAR c_promotion_t psyco_static_type_promotion;
+DEFINEVAR c_promotion_t psyco_interp_pyobj_promotion;
 
 DEFINEFN
 bool
@@ -1241,4 +1242,8 @@ psyco_codegen_init(void)
     psyco_static_type_promotion.header.compute_fn = &computed_promotion;
     psyco_static_type_promotion.pflags =
         PFlagPyObj | PFlagMegamorphic | PFlagStaticType;
+
+    psyco_interp_pyobj_promotion.header.compute_fn = &computed_promotion;
+    psyco_interp_pyobj_promotion.pflags =
+        PFlagPyObj | PFlagMegamorphic | PFlagInterpret;
 }

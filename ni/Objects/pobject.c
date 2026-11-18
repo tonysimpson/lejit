@@ -40,6 +40,10 @@ PyTypeObject *Psyco_NeedType(PsycoObject *po, vinfo_t *vi) {
   vtp = psyco_get_const(po, vi, OB_type);
   if (vtp == NULL)
     return NULL;
+  /* the callers need a type, so a site past its limit can't go generic:
+     the frame goes on interpreted from here (SPECIALISATION.md) */
+  if (psyco_can_go_interpreted(po))
+    return (PyTypeObject *)psyco_pyobj_atcompiletime_interp(po, vtp);
   return (PyTypeObject *)psyco_pyobj_atcompiletime(po, vtp);
 }
 

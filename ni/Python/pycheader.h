@@ -91,6 +91,9 @@ typedef struct {
                            (pycompiler.c:resume_if_tracing) */
   char resume_pending;  /* test for tracing at the next instruction: after
                            an inlined frame's return, or at a handler */
+  char go_interpreted;  /* the frame goes on in ceval from the next
+                           instruction: a type-promotion site's
+                           megamorphic version (Psyco_NeedType) */
   int call_site;        /* 1 + the CALL_* instruction being compiled, or 0 */
   struct locals_map_s *pending_map; /* noted for the C call being emitted,
                                        which gives it its return address */

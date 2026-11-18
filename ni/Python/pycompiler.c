@@ -2001,23 +2001,41 @@ static bool is_pseudo_exception_tuple(vinfo_t *v) {
    fused generator expression, nor while a finally block entered by a
    pseudo-exception holds its 3-tuple. 1 to go on, 0 with a
    pseudo-exception set. */
+static int resume_in_ceval(PsycoObject *po, int next_instr, int *unwound);
+
 static int resume_if_tracing(PsycoObject *po, int next_instr, int *unwound) {
+  int on;
+  if (!psyco_can_go_interpreted(po))
+    return 1;
+  on = psyco_tracing_on(po);
+  if (on <= 0)
+    return on == 0;
+  return resume_in_ceval(po, next_instr, unwound);
+}
+
+DEFINEFN
+bool psyco_can_go_interpreted(PsycoObject *po) {
+  vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+  int i, nstack = STACK_LEVEL();
+  if (po->pr.co->co_flags & (CO_GENERATOR | CO_COROUTINE |
+                             CO_ITERABLE_COROUTINE | CO_ASYNC_GENERATOR))
+    return false;
+  for (i = 0; i < nstack; i++)
+    if (is_pseudo_exception_tuple(stack_a[i]))
+      return false;
+  return true;
+}
+
+/* The rare path itself: ceval runs the frame from 'next_instr' and this
+   frame ends with its result. 0, with EReturn or an exception set. */
+static int resume_in_ceval(PsycoObject *po, int next_instr, int *unwound) {
   PyCodeObject *co = po->pr.co;
   vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
   int nlocals = co->co_nlocals + PyTuple_GET_SIZE(co->co_cellvars) +
                 PyTuple_GET_SIZE(co->co_freevars);
   int nstack = STACK_LEVEL();
-  int i, on;
+  int i;
   vinfo_t *st, *result;
-
-  if (co->co_flags & CO_GENERATOR)
-    return 1;
-  for (i = 0; i < nstack; i++)
-    if (is_pseudo_exception_tuple(stack_a[i]))
-      return 1;
-  on = psyco_tracing_on(po);
-  if (on <= 0)
-    return on == 0;
 
   st = psyco_generic_call(po, psyco_resume_begin,
                           CfReturnTypePtr | CfPyErrIfNull, "lvvl", co,
@@ -2144,6 +2162,16 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       SAVE_NEXT_INSTR(next_instr); /* could be optimized, not needed in the
                                       case of an opcode that cannot set
                                       run-time conditions */
+
+      /* a type-promotion site's megamorphic version: ceval runs the
+         frame from this instruction, which the promotion restarted
+         (Psyco_NeedType). A replay from a snapshot taken here does the
+         same, as the flag is part of the snapshot. */
+      if (po->pr.go_interpreted) {
+        po->pr.go_interpreted = 0;
+        if (!resume_in_ceval(po, next_instr, &unwound))
+          break;
+      }
 
 
 #if NI_CODESTATS

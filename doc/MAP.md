@@ -31,11 +31,11 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/blockalloc.h` | core | Fixed-size block allocator macros for vinfo_t and source_known_t; under ASan each item is its own `PyMem_MALLOC` block. | none | `e1fd808`; `ebc2296` (ASan) |
 | `ni/cf_flags.h` | core | Cf* flags describing a C function for residual calls: purity, new ref, return type, errors. | none (CPython C API conventions) | `56e5faf` |
 | `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding, a fresh object emitted instead), integer emitters, rich compare, a frame's call-site note and the map of its locals there. | Objects/object.c | `979be8b` |
-| `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions, the call-site note. | none | `fa3dae7` |
+| `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions (with their megamorphic kinds), the call-site note. | none | `fa3dae7` |
 | `ni/codemanager.c` | core | Executable memory as free extents (poisoned under ASan, a LeakSanitizer root region); owners (D102): what a code object's compiled code holds, released with it; compile guards (D103). | none | `bc3c590` |
 | `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner, record and compile guard APIs. | none | `9b9dcef` |
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
-| `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, parked compiler states (live, then frozen), promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `a7cb8e9` |
+| `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, parked compiler states (live, then frozen), promotion dispatch and inline-cache chains (megamorphic versions, generic or going on in ceval), stubs and their records, per owner. | none | `a7cb8e9` |
 | `ni/dispatcher.h` | core | Snapshots (FrozenPsycoObject), parked states, compatibility and join API, respawn and promotion helpers. | none | `a7cb8e9` |
 | `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles a function frame (no locals mapping) on its first call (interpreted if memory runs out), `NiCode_Run` runs it. | Python/ceval.c | `8347596` |
 | `ni/initialize.h` | glue | Calls every file's init; with ALL_STATIC=1 includes all .c files into one unit. | none | `b251646` |
@@ -100,7 +100,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/psliceobject.c` | core + translated | Virtual slices (D56); `PsycoSlice_Unpack` gives step-1 bounds as words. | Objects/sliceobject.c, Python/ceval.c | `a6a687b` |
 | `ni/Objects/psliceobject.h` | glue | Declarations of `PsycoSlice_New` and `PsycoSlice_Unpack`. | Include/sliceobject.h | `b36a1ac` |
 | `ni/Objects/pobject.c` | core + translated | Generic object protocol metas (truth, attributes, hash, compare); attribute loads and stores behind type guards. | Objects/object.c | `95b1e61` |
-| `ni/Objects/pobject.h` | core + translated | Compile-time PyObject API: ob_type/ob_size descriptors, type promotion (`Psyco_NeedType` etc.). | Include/object.h | `351a4d5`, `935df0b` |
+| `ni/Objects/pobject.h` | core + translated | Compile-time PyObject API: ob_type/ob_size descriptors, type promotion (`Psyco_NeedType`, cut off past `MEGAMORPHIC_MAX` types, etc.). | Include/object.h | `351a4d5`, `935df0b` |
 | `ni/Objects/pbytesobject.c` | translated + core | `bytes` metas: `len()`, inline `b[i]`, `b[i:j]` of a virtual slice. | Objects/bytesobject.c | `ee76274`, `5169c24` |
 | `ni/Objects/pstringobject.c` | core + translated | Py2 str metas with virtual strings; compiled out on Py3. | Objects/stringobject.c (Py2) | `b36a1ac` |
 | `ni/Objects/pstringobject.h` | core + translated | Py2 virtual-string API (char, slice, bufstr layouts); empty on Py3. | Include/stringobject.h (Py2) | `b36a1ac` |
@@ -113,14 +113,14 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Python/frames.h` | core | Stack frame info (stack_frame_info_t) and the locals map of a call site, frame registration API, writing locals into a frame and linking traceback frames. | none | `6f8009a` |
 | `ni/Python/pbltinmodule.c` | translated + core | Registers the generated builtins; hand metas for min, max, sum, round etc. and type_call (`range`, `super`, and `type(x)`, which reads a run-time type again). | Python/bltinmodule.c, Objects/abstract.c, Objects/typeobject.c | `cddaf8d` |
 | `ni/Python/pbltinmodule.h` | glue | Declares `PsycoObject_IsInstance`. | Python/bltinmodule.c | `58e52de` |
-| `ni/Python/pycheader.h` | core | pyc_data_t (language-specific compiler state) and the LOC_* slots in po->vlocals. | Include/frameobject.h | `56e5faf` |
+| `ni/Python/pycheader.h` | core | pyc_data_t (language-specific compiler state, with the flags that send a frame on to ceval) and the LOC_* slots in po->vlocals. | Include/frameobject.h | `56e5faf` |
 | `ni/Python/pycinternal.h` | glue | Includes CPython internal headers and opcode names. | Include/opcode.h | `e1fd808` |
-| `ni/Python/pycompiler.c` | translated + core | The bytecode compiler: ceval's main loop at compile time, block unwinding, exceptions and their tracebacks' locals and frame links, calls, the way out to ceval when tracing starts. | Python/ceval.c | `ab0f53b` |
+| `ni/Python/pycompiler.c` | translated + core | The bytecode compiler: ceval's main loop at compile time, block unwinding, exceptions and their tracebacks' locals and frame links, calls, the way out to ceval when tracing starts or a type-promotion site is past its limit. | Python/ceval.c | `ab0f53b` |
 | `pycompiler_gen.h` | translated (generated) | 81 opcode cases included in `pycompiler.c`'s switch: 49 by `gen2/opcodes.py` (its `MOVED`, D137–D139), the rest by `tools/metac/gen_ceval.py`. | Python/ceval.c | `dcdf898` |
 | `pycompiler_copies_gen.h` | translated (generated) | Copies of the ceval helpers and arms the generated cases call (`gen_ceval:build_copies`). | Python/ceval.c | `e17f6fc` |
 | `mechanism_<name>_gen.h`: entry, tracing, frames, eval_breaker_runtime, eval_breaker, tstate_runtime, tstate, recursion, exceptions, store_gc | glue (generated) | One per mechanism, by `mechanisms.py`: detector answers and the snippet `VARIANTS` chose. | the definitions the detectors read | `f254b5d` |
 | `layouts_gen.h`, `runtime_layouts_gen.h` | translated (generated) | Offsets, sizes and `_Static_assert`s for each CPython field Ni relies on (D76). | Include/** (the structs `LAYOUTS` and `RUNTIME` name) | `f254b5d` |
-| `ni/Python/pycompiler.h` | core | Pseudo-exceptions, promotion helpers, the meta registry (Psyco_META*), pyc_data_t snapshots. | Python/errors.c | `f254b5d` |
+| `ni/Python/pycompiler.h` | core | Pseudo-exceptions, promotion helpers (and whether a frame can go on in ceval), the meta registry (Psyco_META*), pyc_data_t snapshots. | Python/errors.c | `f254b5d` |
 | `ni/Python/pyruntime.c` | glue | The only file built with Py_BUILD_CORE: home of two mechanisms' snippets (D77). | none itself | `f254b5d` |
 | `ni/Python/pyver.h` | glue | Python-version feature switches. | none | `4a0d275` |
 | `ni/x64/idispatcher.c` | backend + core | psyco_unify(): emits moves and refcounts to match a snapshot, then jumps to it. | none | `a4b946e` |

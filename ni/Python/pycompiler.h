@@ -180,6 +180,27 @@ PSY_INLINE PyObject *psyco_pyobj_atcompiletime(PsycoObject *po, vinfo_t *vi) {
     return (PyObject *)sk->value;
   }
 }
+/* the same, for a site with no generic path: past MEGAMORPHIC_MAX values
+   its version goes on in ceval from the promoting instruction
+   (psyco_interp_pyobj_promotion). Only where that is possible
+   (psyco_can_go_interpreted). */
+PSY_INLINE PyObject *psyco_pyobj_atcompiletime_interp(PsycoObject *po,
+                                                      vinfo_t *vi) {
+  if (!compute_vinfo(vi, po))
+    return NULL;
+  if (is_runtime(vi->source)) {
+    PycException_Promote(po, vi, &psyco_interp_pyobj_promotion);
+    return NULL;
+  } else {
+    source_known_t *sk = CompileTime_Get(vi->source);
+    sk_mark_used(po, sk);
+    return (PyObject *)sk->value;
+  }
+}
+/* whether the frame being compiled can go on in ceval
+   (pycompiler.c:resume_in_ceval): not a generator or coroutine, nor
+   while a finally block holds a pseudo-exception's 3-tuple */
+EXTERNFN bool psyco_can_go_interpreted(PsycoObject *po);
 /* the same again, detecting megamorphic sites: if many different run-time
    values keep showing up, return 0.  If successfully promoted, return 1.
    In case of exception, return -1. */

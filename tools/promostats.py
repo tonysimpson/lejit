@@ -24,7 +24,7 @@ GENERIC = {
     'psyco_pyobj_atcompiletime_mega', 'psyco_atcompiletime_static_type',
     'backtrace', '??',
 }
-PFLAGS = {0: 'word', 1: 'pyobj', 3: 'pyobj_mega', 7: 'static_type'}
+PFLAGS = {0: 'word', 1: 'pyobj', 3: 'pyobj_mega', 7: 'static_type', 11: 'type_interp'}
 
 
 def resolve(sofile, offsets):

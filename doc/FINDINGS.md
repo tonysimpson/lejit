@@ -32,7 +32,7 @@ At the start, respawn stubs were about half of all code and promotion code about
 - **Unused facts at merge points (D50, D57):** a known field that nothing since the last merge point relied on is dropped when no block matches exactly: −1.8% code, speed unchanged. A promotion's own compare at its instruction keeps the fact, or it would loop.
 - **eval_breaker after calls (D53)** is tested only after a C call that may block: half of D45's code cost gone.
 - **A forgotten type is learnt again by a guard (D63)** against its hint, not a promotion: about half of D59's compile-time cost recovered.
-- **Open** (BACKLOG, QUESTIONS): matching across promoted knowledge at merge points (the largest pool left; research); a cut-off for every `Psyco_NeedType` site; type-set guards, for one copy of a base-class method across subclasses (richards' `Task`); why chain placement moves richards' cycles and branch misses; the 16-byte alignment test (KNOWN_BUGS C1) starts up to 1.8% of blocks.
+- **Open** (BACKLOG, QUESTIONS): matching across promoted knowledge at merge points (the largest pool left; research); a generic path after `Psyco_NeedType`'s cut-off, which goes to ceval (D135); type-set guards, for one copy of a base-class method across subclasses (richards' `Task`); why chain placement moves richards' cycles and branch misses; the 16-byte alignment test (KNOWN_BUGS C1) starts up to 1.8% of blocks.
 
 ## Same code (`tools/samecode.py`, D70)
 

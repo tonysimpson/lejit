@@ -274,6 +274,7 @@ typedef struct c_promotion_s {
 #define PFlagPyObj		1
 #define PFlagMegamorphic	2
 #define PFlagStaticType		4  /* with PFlagPyObj|PFlagMegamorphic */
+#define PFlagInterpret		8  /* with PFlagPyObj|PFlagMegamorphic */
 
 
 
@@ -294,6 +295,12 @@ EXTERNVAR c_promotion_t psyco_nonfixed_pyobj_promotion_mega;
    referenced by the compiled code for good, which is free for a static type
    and keeps anything else alive. */
 EXTERNVAR c_promotion_t psyco_static_type_promotion;
+
+/* The same, but the megamorphic version has no generic path: from the
+   instruction that promotes, the frame goes on in ceval
+   (pycompiler.c:psyco_go_interpreted). Psyco_NeedType's, whose callers
+   need a type. */
+EXTERNVAR c_promotion_t psyco_interp_pyobj_promotion;
 
 #define MEGAMORPHIC_MAX    5
 

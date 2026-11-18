@@ -2560,9 +2560,9 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
   return result;
 }
 
-static code_t *detected_megamorphic_body(rt_promotion_t *fs);
+static code_t *detected_megamorphic_body(rt_promotion_t *fs, bool interpret);
 static __attribute__((noinline)) code_t *
-detected_megamorphic_pyobj_site(rt_promotion_t *fs) {
+detected_megamorphic_pyobj_site(rt_promotion_t *fs, bool interpret) {
   code_t *r;
   ni_compile_guard_t g;
 #if NI_CODESTATS
@@ -2572,7 +2572,7 @@ detected_megamorphic_pyobj_site(rt_promotion_t *fs) {
   psyco_guard_push(&g);
   if (sigsetjmp(g.env, 0) != 0)
     psyco_guard_retry(&g);
-  r = detected_megamorphic_body(fs);
+  r = detected_megamorphic_body(fs, interpret);
   psyco_guard_pop(&g);
   NI_COMPILE_END(NI_ENTER_PROMOTION);
 #if NI_CODESTATS
@@ -2581,7 +2581,9 @@ detected_megamorphic_pyobj_site(rt_promotion_t *fs) {
   return r;
 }
 
-static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
+/* 'interpret': the site has no generic path, so the version goes on in
+   ceval from the promoting instruction (psyco_interp_pyobj_promotion) */
+static code_t *detected_megamorphic_body(rt_promotion_t *fs, bool interpret) {
   CodeBufferObject *codebuf;
   code_t *result;
   vinfo_t *v;
@@ -2591,6 +2593,7 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
   /* mark 'v' as megamorphic */
   CHKTIME(v->source, RunTime);
   v->source |= RunTime_Megamorphic;
+  po->pr.go_interpreted = interpret;
   /* compile from this new state, in which 'v' has been flagged */
   mp = psyco_exact_merge_point(po->pr.merge_points, po->pr.next_instr);
 
@@ -2781,7 +2784,8 @@ static code_t *do_promotion_pyobj(rt_promotion_t *fs, PyObject *key) {
   return result;
 }
 
-static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
+PSY_INLINE code_t *promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key,
+                                        bool interpret) {
 #if NI_CODESTATS
   psyco_cs_promo_miss(fs->cs_site);
 #endif
@@ -2796,7 +2800,7 @@ static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
     if (lookup_count_previous_values(fs, &megabuf) >= MEGAMORPHIC_MAX) {
       /* yes -> stop specializing */
       if (megabuf == NULL)
-        result = detected_megamorphic_pyobj_site(fs);
+        result = detected_megamorphic_pyobj_site(fs, interpret);
       else
         result = (code_t *)(megabuf + 1); /* mega version already compiled */
       promotion_cache_fallback(fs, result);
@@ -2808,6 +2812,14 @@ static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
   /* done -> jump to the codebuf */
   promotion_cache_add(fs, key1, result);
   return result;
+}
+
+static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
+  return promotion_pyobj_mega(fs, key, false);
+}
+
+static code_t *do_promotion_pyobj_interp(rt_promotion_t *fs, PyObject *key) {
+  return promotion_pyobj_mega(fs, key, true);
 }
 
 /* psyco_static_type_promotion: as above, but a value that is not a static
@@ -2829,7 +2841,7 @@ static code_t *do_promotion_static_type(rt_promotion_t *fs, PyObject *key) {
         (((PyTypeObject *)key)->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
         count >= MEGAMORPHIC_MAX) {
       if (megabuf == NULL)
-        result = detected_megamorphic_pyobj_site(fs);
+        result = detected_megamorphic_pyobj_site(fs, false);
       else
         result = (code_t *)(megabuf + 1);
       if (count >= MEGAMORPHIC_MAX) {
@@ -2876,6 +2888,9 @@ code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
     break;
   case PFlagPyObj | PFlagMegamorphic | PFlagStaticType:
     do_promotion = &do_promotion_static_type;
+    break;
+  case PFlagPyObj | PFlagMegamorphic | PFlagInterpret:
+    do_promotion = &do_promotion_pyobj_interp;
     break;
   default:
     psyco_fatal_msg("bad pflags");
