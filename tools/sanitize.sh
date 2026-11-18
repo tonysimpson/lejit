@@ -41,13 +41,21 @@ export NI_MODULE_DIR=$PWD/$OUT NI_SANITIZE_LOGS=$PWD/$LOGS PYTHONMALLOC=malloc
 preload=$(gcc -print-file-name=libasan.so)
 case $SAN in *undefined*) preload+=" $(gcc -print-file-name=libubsan.so)";; esac
 export LD_PRELOAD=$preload
-leaks=0; [ "${NI_SANITIZE_LEAKS:-0}" = 1 ] && leaks=1
 # tests that ask for huge allocations expect MemoryError, not an abort
-ASAN_BASE="detect_leaks=$leaks:allocator_may_return_null=1:handle_abort=1:detect_odr_violation=0"
+ASAN_BASE="allocator_may_return_null=1:detect_odr_violation=0"
+if [ "${NI_SANITIZE_LEAKS:-0}" = 1 ]; then
+    # a leak is listed, not a failure of the test that had it. The exit
+    # code is shared by every report, so an abort is left to the signal
+    # (CPython's tests check a fatal error's status) and an ASan error
+    # exits 0: only the reports count in this mode
+    ASAN_BASE+=":detect_leaks=1:handle_abort=0"
+    export LSAN_OPTIONS=exitcode=0
+else
+    # handle_abort: the stack of a psyco_fatal_error
+    ASAN_BASE+=":detect_leaks=0:handle_abort=1"
+fi
 ASAN_BASE+=${NI_ASAN_OPTIONS:+:$NI_ASAN_OPTIONS}    # more, e.g. detect_stack_use_after_return=1
 export UBSAN_OPTIONS=print_stacktrace=1
-# a leak is reported, not a failure of the test that had it
-export LSAN_OPTIONS=exitcode=0
 
 if systemd-run --user --scope -q -p MemoryMax=1G true 2>/dev/null; then
     GUARD=(systemd-run --user --scope -q -p "MemoryMax=$MEM" -p MemorySwapMax=0 --)
