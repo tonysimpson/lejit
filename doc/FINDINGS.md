@@ -69,6 +69,22 @@ Random programs (BUILD.md, Fuzzing; what they cover is in `gen.py`'s docstring) 
 
 Nothing else: no wrong arithmetic at the 2**31, 2**63 or float edges, no unpacking, slicing, closure, exception-handling or class-protocol difference. Not generated: frames, tracing and finaliser order (C11, C15, C18, C29, C56), threads, imports, I/O, subclasses of builtins, metaclasses, descriptors other than `property`, `async`.
 
+## Memory per code buffer (`tools/memrepro.py`, C61, D125)
+
+`tools/memrepro.py DIR N` compiles N distinct small functions and reports the RSS growth per code buffer; run under heaptrack with `PYTHONMALLOC=malloc`, its leaked allocations say where the memory goes. At 2000 functions (113,782 buffers, 232 bytes of code each), release build [run]:
+
+| Per buffer | before (`cbd536d`) | after (`5cfa974`) |
+|---|---|---|
+| Live compiler states kept by pauses and promotion sites (vinfo blocks, PsycoObjects, arrays) | 1204 B | 0 (frozen: 170 B) |
+| Snapshots at merge points (`fz` pseudo-code, `pyc` data) | 434 B | 432 B |
+| Owner records and stub records (with the parked state in them, after) | 322 B | 411 B |
+| Executable extents: code, then slack | 233 + 143 B | 232 + 142 B |
+| CodeBufferObjects, proxies included | 200 B | 200 B |
+| GC objects, sk blocks, owner buffer arrays | 177 B | 150 B |
+| **RSS growth** | **2832 B** | **1940 B (−31%)** |
+
+Parking cost no pyperformance benchmark more than 0.4% cold or warm, as none parks more than 4096 states (mdp 2667). A program that is all compiling, as the reproducer is, runs 5% more instructions, freezing. sympy's simplify tests peak at 1584 MB against 2682 MB (plainly 144 MB). What is left, largest first, with what it would take [inferred]: snapshots (a varint encoding of each `Source`, about 150 B, but in the hot compare path); slack in the executable extents (143 B); the parked state embedded in each record, though most records have none (a separate allocation, about 90 B); a CodeBufferObject per proxy; an arena for owner records (about 12 B each).
+
 ## Adversarial suite (`tools/adversarial/`)
 
 Programs written blind to make Ni look bad, each aimed at one weakness, never tuned on Ni's results. `run.py` runs each in 5 fresh processes per mode at two run lengths, n calibrated on CPython (`sizes.txt`, rewritten only by `--calibrate`) for about 10 ms and 1 s of work per run (`--long` adds about 2 minutes). A process trains with 5 calls of `main(n, 0)` and times 15 of `main(n, 1)`, whose data and often types differ. It reports total process time, the first call, the median and worst timed call, spreads between and within processes, and each process's warm-up shape (flat, warm-up, slowdown, no steady state, by thirds after Barrett et al. 2017). Each call's result or exception and traceback, output, warnings, finaliser order (`finalisers`) and, with `--trace-midway`, trace events must match CPython's. The score leads with the count of losses, failures and wrong answers and the worst five; failures enter the geometric means as 10×.
@@ -98,7 +114,7 @@ Twelve pure-Python projects' own suites, each at its last release for 3.7 (`tool
 | MarkupSafe 2.1.5, pure | 53 | 0.2 | 0.4 | 0 |
 | docutils 0.20.1 | 375 | 2.0 | 2.5 | 0 |
 | networkx 2.6.3 | 4086 | 42 | 41 | 0 |
-| sympy 1.10.1, 9 packages | 4529 | 599 | 438 | 7: 6 (C11), 1 crash (C61, F27) |
+| sympy 1.10.1, 9 packages (run at `5cfa974`) | 4529 | 586 | 448 | 0 |
 | python-dateutil 2.9.0.post0 | 2095 | 2.8 | 2.9 | 0 |
 | toolz 0.12.1 | 180 | 0.5 | 0.8 | 0 |
 | sortedcontainers 2.4.0 | 300 | 4.7 | 1.7 | 1 (C20) |
@@ -106,6 +122,6 @@ Twelve pure-Python projects' own suites, each at its last release for 3.7 (`tool
 
 No test fails plainly and passes with Ni.
 - **Wrong answers fixed:** code run by `exec` with its own locals mapping was compiled and its `from m import *` and `del x` used the globals (`8347596`; sympy's `lambdify` and `Sum.evalf`, 9 tests); the inline attribute store never made an untracked instance dict tracked when it stored a GC value of unknown type, so cycles through it were never collected (`edfcdcd`; sympy reached the 4 GB limit).
-- **C11:** pyparsing's parse actions with fewer than three arguments raise TypeError, because `_trim_arity` compares line numbers from `traceback.extract_stack`; with that worked round, 37 failures are left, all C11 (`f_locals` read by `autoname_elements` and `ParseException.explain`, a warning keyed on the caller's line). Django's debug page and `sensitive_variables` read traceback frames' locals; Django's and sympy's warning stack-level tests fail.
-- **Memory (C61):** the sympy run aborts at the 4 GB limit once it has compiled about 630,000 code buffers (3 GB of RSS, 250 MB plainly).
-- **Time:** pyparsing's Ni time is its failing parse actions (13.7 s with them worked round). Django, many short tests over much code, is 1.3× slower; sympy is 1.4× faster and sortedcontainers 2.8×.
+- **C11:** pyparsing's parse actions with fewer than three arguments raise TypeError, because `_trim_arity` compares line numbers from `traceback.extract_stack`; with that worked round, 37 failures are left, all C11 (`f_locals` read by `autoname_elements` and `ParseException.explain`, a warning keyed on the caller's line). Django's debug page and `sensitive_variables` read traceback frames' locals; Django's warning stack-level tests fail (sympy's pass at `5cfa974`).
+- **Memory (C61):** the sympy run aborted at the 4 GB limit after about 630,000 code buffers (3 GB of RSS) until compiler states were parked; it now completes with 1,036,438 ("Memory per code buffer" above).
+- **Time:** pyparsing's Ni time is its failing parse actions (13.7 s with them worked round). Django, many short tests over much code, is 1.3× slower; sympy is 1.3× faster and sortedcontainers 2.8×.
