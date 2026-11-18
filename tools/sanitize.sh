@@ -4,12 +4,12 @@
 # CPython's own tests and the smoke test under it, then list the reports,
 # deduplicated by stack (tools/sanitize_report.py). doc/BUILD.md.
 #
-#   tools/sanitize.sh [run] [bounds] [cpython] [smoke]    (default: all)
+#   tools/sanitize.sh [run] [bounds] [cpython | cpython-all] [smoke]   (default: all but cpython-all)
 #
 # NI_SANITIZE picks the sanitizers (default address,undefined);
 # NI_SANITIZE_LEAKS=1 turns LeakSanitizer on (only leaks allocated from Ni
-# are listed). CPython isn't instrumented: libasan is preloaded, and
-# PYTHONMALLOC=malloc sends its objects through ASan's allocator. Without an
+# are listed); NI_ASAN_OPTIONS adds ASan options. CPython isn't
+# instrumented: libasan is preloaded, and PYTHONMALLOC=malloc sends its objects through ASan's allocator. Without an
 # address-space limit (ASan reserves terabytes), resident memory is capped
 # by a systemd scope (NI_SANITIZE_MEM, default 6G) where there is one.
 set -uo pipefail
@@ -44,7 +44,10 @@ export LD_PRELOAD=$preload
 leaks=0; [ "${NI_SANITIZE_LEAKS:-0}" = 1 ] && leaks=1
 # tests that ask for huge allocations expect MemoryError, not an abort
 ASAN_BASE="detect_leaks=$leaks:allocator_may_return_null=1:handle_abort=1:detect_odr_violation=0"
+ASAN_BASE+=${NI_ASAN_OPTIONS:+:$NI_ASAN_OPTIONS}    # more, e.g. detect_stack_use_after_return=1
 export UBSAN_OPTIONS=print_stacktrace=1
+# a leak is reported, not a failure of the test that had it
+export LSAN_OPTIONS=exitcode=0
 
 if systemd-run --user --scope -q -p MemoryMax=1G true 2>/dev/null; then
     GUARD=(systemd-run --user --scope -q -p "MemoryMax=$MEM" -p MemorySwapMax=0 --)
@@ -69,13 +72,14 @@ for s in $STEPS; do
     run) step behaviour "$PY37" tests/run.py ;;
     bounds) step bounds "$PY37" tests/compile_bounds.py ;;
     cpython) step cpython "$PY37" tests/cpython_tests.py -j 2 ;;
+    cpython-all) step cpython "$PY37" tests/cpython_tests.py -j 2 --all ;;
     smoke) step smoke bash -c 'diff <("$0" tests/smoke.py plain) <("$0" tests/smoke.py ni) && echo "same output"' "$PY37" ;;
-    *) echo "unknown step $s (run, bounds, cpython, smoke)"; exit 2 ;;
+    *) echo "unknown step $s (run, bounds, cpython, cpython-all, smoke)"; exit 2 ;;
     esac
 done
 
 printf '\n== reports (%s)\n' "$LOGS"
-python3 tools/sanitize_report.py "$LOGS"
+env -u LD_PRELOAD python3 tools/sanitize_report.py "$LOGS"
 rc=$?
 [ -n "$FAILED" ] && echo "steps that failed:$FAILED"
 [ $rc -eq 0 ] && [ -z "$FAILED" ]

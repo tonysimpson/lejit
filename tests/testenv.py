@@ -15,6 +15,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NI_DIR = os.environ.get('NI_MODULE_DIR') or ROOT
 SANITIZE_LOGS = os.environ.get('NI_SANITIZE_LOGS')
 SLOWDOWN = 4 if SANITIZE_LOGS else 1
+# CPython test modules tests/cpython_tests.py leaves out under the sanitizers
+SANITIZE_SKIP = {
+    'test_threading': 'with Ni, test_is_alive_after_fork\'s child can wait'
+                      ' for good on a lock of ASan\'s allocator (BUILD.md)',
+}
 
 
 def _base(tag):

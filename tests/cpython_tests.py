@@ -12,7 +12,8 @@ with a timeout and a memory limit, in a temporary directory.
 """
 import os, resource, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
-from testenv import NI_DIR, SANITIZE_LOGS, SLOWDOWN, child_env, save_stderr
+from testenv import (NI_DIR, SANITIZE_LOGS, SANITIZE_SKIP, SLOWDOWN,
+                     child_env, save_stderr)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TIMEOUT = 600 * SLOWDOWN        # seconds per run
@@ -287,6 +288,10 @@ def main():
     every = '--all' in args
     args = [a for a in args if a != '--all']
     names = args or (MODULES + EXTENDED if every else MODULES)
+    if SANITIZE_LOGS:
+        for name in sorted(SANITIZE_SKIP.keys() & set(names)):
+            print('skip   %-24s under the sanitizers: %s' % (name, SANITIZE_SKIP[name]))
+        names = [n for n in names if n not in SANITIZE_SKIP]
     bad = 0
     with ThreadPoolExecutor(jobs) as ex:
         for status, line in ex.map(check, names):

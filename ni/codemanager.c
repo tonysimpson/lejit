@@ -98,6 +98,7 @@ static void allocate_more_buffers(void) {
       OUT_OF_MEMORY();
     allocated = BIG_BUFFER_SIZE;
   }
+  NI_LSAN_ROOT(p, allocated);
   free_insert((code_t *)p, (code_t *)p + allocated);
 }
 

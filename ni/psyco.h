@@ -127,14 +127,19 @@ EXTERNFN int psyco_fatal_error(char* msg, char* filename, int lineno);
 
 /* Under AddressSanitizer (setup.py NI_SANITIZE), Ni's own allocators mark
    what they hold free as unaddressable, so that an access through a stale
-   pointer is reported as malloc'd memory would be */
+   pointer is reported as malloc'd memory would be; and LeakSanitizer is
+   told to scan executable memory, where stub and pause records point to
+   what they hold (NI_LSAN_ROOT) */
 #if defined(__SANITIZE_ADDRESS__)
 # include <sanitizer/asan_interface.h>
+# include <sanitizer/lsan_interface.h>
 # define NI_POISON(p, n)    ASAN_POISON_MEMORY_REGION(p, n)
 # define NI_UNPOISON(p, n)  ASAN_UNPOISON_MEMORY_REGION(p, n)
+# define NI_LSAN_ROOT(p, n) __lsan_register_root_region(p, n)
 #else
 # define NI_POISON(p, n)    ((void)0)
 # define NI_UNPOISON(p, n)  ((void)0)
+# define NI_LSAN_ROOT(p, n) ((void)0)
 #endif
 
 #if INLINE_COMMON_FUNCTIONS
