@@ -27,6 +27,7 @@ Ni is a fork of Armin Rigo's **Psyco** JIT for CPython, ported partway to x86-64
 | Generators: where time goes, options (resumable bodies, genexpr inlining) | `doc/GENERATORS.md` |
 | Calls to closures: how common, what they cost, what was done (`tools/closurecalls.py`) | `doc/CLOSURES.md` |
 | Plan of work for the current phase (generating the translated layer on 3.7) | `doc/GENERATION.md` |
+| Porting to 3.8: a dry run of generation, what generates the same, what 3.8 needs | `doc/PORT38.md` |
 | Porting the core to 3.12: what changes, the entry design, risks | `doc/PORT312.md` |
 | Known and suspected bugs (one list) | `doc/KNOWN_BUGS.md` |
 | Everything still open, bugs and ideas, with pointers | `doc/BACKLOG.md` |
