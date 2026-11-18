@@ -52,7 +52,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/mechanisms/entry/{frame_eval_hook_interp,vectorcall}.h`, `ni/mechanisms/tracing/{cframe_use_tracing,monitoring}.h`, `ni/mechanisms/frames/{interpreter_frame_cframe,interpreter_frame}.h` | glue (stubs) | One `#error "... not written yet"` each, saying what the variant must do. | 3.11–3.13 | `36b5beb` |
 | `ni/mergepoints.c` | core | Finds merge points, dead locals, join points and eval_breaker tests in a code object; the opcode whitelist. | none (copies `NEXTOPARG` from Python/ceval.c) | `b36a1ac` |
 | `ni/mergepoints.h` | core | Merge point tables: where control paths join and compiled states are cached. | none | `e26c2a3` |
-| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code `co_extra` records, `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `6cd0c26` |
+| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code `co_extra` records, `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `b5c73b0` |
 | `ni/platform.c` | glue | Allocates executable (RWX) memory: mmap on Unix, VirtualAlloc on Windows. | none | `1e65d32` |
 | `ni/platform.h` | glue | Prototype for psyco_allocate_executable_buffer(). | none | `e1fd808` |
 | `ni/processor.h` | backend (interface) | Prototypes for running compiled code: psyco_processor_run, RUN_ARGC, aligned-call glues. | none | `4398496` |
@@ -83,7 +83,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/pdictobject.h` | glue | API for (non-virtual) dict creation through residual calls. | Include/dictobject.h | `351a4d5`, `0f88313` |
 | `ni/Objects/pfloatobject.c` | translated + core | Virtual floats: representation, float/float comparisons, helpers; includes the generated slots. | Objects/floatobject.c | `87b5ff5` |
 | `ni/Objects/pfloatobject.h` | core + translated | Field descriptor and virtual-float builder (one vinfo holds the double). | Include/floatobject.h | `ccb5735` |
-| `ni/Objects/pfuncobject.c` | core | Virtual function objects and tp_call/tp_descr_get metas that inline Python calls. | Objects/funcobject.c | `a6a687b` |
+| `ni/Objects/pfuncobject.c` | core | Virtual function objects and tp_call/tp_descr_get metas that inline Python calls. | Objects/funcobject.c | `b5c73b0` |
 | `ni/Objects/pfuncobject.h` | core | PyFunctionObject field descriptors and the virtual-function and call API. | Include/funcobject.h | `ee76274` |
 | `ni/Objects/piterobject.c` | core + translated | Virtual sequence iterators and their tp_iternext meta. | Objects/iterobject.c | `9e58f97` |
 | `ni/Objects/piterobject.h` | core + translated | seqiterobject descriptors (private struct re-declared) and virtual iterator constructor. | Objects/iterobject.c | `ee76274` |
@@ -99,7 +99,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/prangeobject.c`, `.h` | core + translated | Virtual ranges (words) and range iterators. | Objects/rangeobject.c | `9e58f97` |
 | `ni/Objects/psliceobject.c` | core + translated | Virtual slices (D56); `PsycoSlice_Unpack` gives step-1 bounds as words. | Objects/sliceobject.c, Python/ceval.c | `a6a687b` |
 | `ni/Objects/psliceobject.h` | glue | Declarations of `PsycoSlice_New` and `PsycoSlice_Unpack`. | Include/sliceobject.h | `b36a1ac` |
-| `ni/Objects/pobject.c` | core + translated | Generic object protocol metas (truth, attributes, hash, compare); attribute loads and stores behind type guards. | Objects/object.c | `9e58f97` |
+| `ni/Objects/pobject.c` | core + translated | Generic object protocol metas (truth, attributes, hash, compare); attribute loads and stores behind type guards. | Objects/object.c | `b5c73b0` |
 | `ni/Objects/pobject.h` | core + translated | Compile-time PyObject API: ob_type/ob_size descriptors, type promotion (`Psyco_NeedType` etc.). | Include/object.h | `351a4d5`, `935df0b` |
 | `ni/Objects/pbytesobject.c` | translated + core | `bytes` metas: `len()`, inline `b[i]`, `b[i:j]` of a virtual slice. | Objects/bytesobject.c | `ee76274`, `5169c24` |
 | `ni/Objects/pstringobject.c` | core + translated | Py2 str metas with virtual strings; compiled out on Py3. | Objects/stringobject.c (Py2) | `b36a1ac` |
@@ -107,7 +107,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/punicodeobject.c` | translated + core | `str` metas (D14): `==`/`!=`, inline `s[i]` for compact ASCII, slices; includes generated slots. | Objects/unicodeobject.c, Include/unicodeobject.h | `03ce514` |
 | `ni/Objects/pstructmember.c` | translated (generated) | Includes the generated `PyMember_GetOne` (`pstructmember_gen.h`). | Python/structmember.c | `ccb5735` |
 | `ni/Objects/pstructmember.h` | glue | Declaration of PsycoMember_GetOne. | Include/structmember.h | `b36a1ac` |
-| `ni/Objects/ptupleobject.c` | core + translated | PsycoTuple_Load; includes the generated virtual tuple and slots. | Objects/tupleobject.c | `935df0b` |
+| `ni/Objects/ptupleobject.c` | core + translated | PsycoTuple_Load; includes the generated virtual tuple and slots. | Objects/tupleobject.c | `b5c73b0` |
 | `ni/Objects/ptupleobject.h` | core | API for virtual and compile-time tuples (descriptors generated, D80). | Include/tupleobject.h | `603363c` |
 | `ni/Python/frames.c` | core | Maps machine-code stack frames to Python frames for `sys._getframe`, tracebacks and `warnings`, with their lines; writes a compiled frame's locals into a traceback frame; resumes a compiled frame in ceval when tracing starts. | none (but `ni_getframe`: Python/sysmodule.c) | `f254b5d` |
 | `ni/Python/frames.h` | core | Stack frame info (stack_frame_info_t), frame registration API and writing locals into a frame. | none | `6f8009a` |
