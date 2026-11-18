@@ -175,6 +175,18 @@ REASONS = {
         'mechanism', ['D77'], "tstate: runtime_address"),
 
     # ---- generator limits, each a failures-log row ----
+    'ni/Python/pycompiler.c:case BUILD_CONST_KEY_MAP': (
+        'limit', ['failures:BUILD_CONST_KEY_MAP'],
+        "the keys check folds where Ni knows keys (type_test, ct_if); where"
+        " it doesn't, a run-time check would leave the loop reading the items"
+        " of a tuple Ni has not loaded (PyTuple_GET_ITEM of a run-time"
+        " tuple), which has no form without a whole-case run-time copy;"
+        " LOAD_CONST always gives Ni the constant, the only case the hand"
+        " code takes"),
+    'ni/Python/pycompiler.c:case IMPORT_NAME': (
+        'core', ['failures:IMPORT_NAME'],
+        "import_name takes the frame (f_builtins, f_globals, f_locals):"
+        " frame state, as LOAD_GLOBAL"),
     'ni/Objects/pdictobject.c:PsycoDict_SetItemC': (
         'limit', ['failures:BUILD_CONST_KEY_MAP'],
         "the hand BUILD_CONST_KEY_MAP's store of a compile-time key"),
