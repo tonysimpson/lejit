@@ -1,0 +1,5 @@
+pytest==9.2.0
+packaging==26.3
+pretend==1.0.9
+tomli_w==1.2.0
+hypothesis==6.170.15

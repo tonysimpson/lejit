@@ -1,0 +1,65 @@
+# Ansible on localhost: templated action-plugin loops in the controller, then module tasks,
+# each of which Ansible runs as its own Python process. `target` is passed with -e.
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    users: "{{ range(0, 400) | map('string') | map('regex_replace', '^', 'user') | list }}"
+    cfg: {a: 1, b: [1, 2, 3], c: {d: e}}
+  tasks:
+    - name: build facts
+      set_fact:
+        entry: "{{ item | upper }}-{{ cfg.b | sum }}-{{ (item ~ 'x') | hash('sha1') }}"
+      loop: "{{ users }}"
+    - name: assert things
+      assert:
+        that: ["item | length > 4", "cfg.c.d == 'e'"]
+        quiet: true
+      loop: "{{ users }}"
+    - name: debug templated
+      debug:
+        msg: "{{ users | select('match', 'user1.*') | map('upper') | join(',') | hash('sha1') }} {{ cfg | to_json }}"
+      loop: "{{ range(0, 200) | list }}"
+
+    - name: make directories
+      tags: modules
+      file:
+        path: "{{ target }}/etc/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [app, db, web]
+    - name: render configuration
+      tags: modules
+      template:
+        src: service.conf.j2
+        dest: "{{ target }}/etc/{{ item }}/service.conf"
+        mode: "0644"
+      loop: [app, db, web]
+    - name: write a file
+      tags: modules
+      copy:
+        content: "{{ users[:50] | join('\n') }}\n"
+        dest: "{{ target }}/etc/app/users.txt"
+        mode: "0644"
+    - name: edit a line
+      tags: modules
+      lineinfile:
+        path: "{{ target }}/etc/app/service.conf"
+        regexp: '^workers='
+        line: workers=8
+    - name: run a command
+      tags: modules
+      command: "sort -r {{ target }}/etc/app/users.txt"
+      register: sorted_users
+      changed_when: false
+    - name: stat the results
+      tags: modules
+      stat:
+        path: "{{ target }}/etc/{{ item }}/service.conf"
+        checksum_algorithm: sha256
+      loop: [app, db, web]
+      register: confs
+    - name: report
+      tags: modules
+      debug:
+        msg: "{{ sorted_users.stdout_lines[:3] }} {{ confs.results | map(attribute='stat.checksum') | list }}"

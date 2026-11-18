@@ -1,0 +1,7 @@
+# {{ item }} service
+name={{ item }}
+workers=4
+{% for u in users[:20] %}
+allow={{ u }}@{{ item }}.internal
+{% endfor %}
+options={{ cfg | to_json }}

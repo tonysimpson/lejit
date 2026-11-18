@@ -1,0 +1,4 @@
+GET /items
+GET /items/3?q=a
+POST /items {"id": 1, "name": "n", "price": 2.5, "tags": ["a"]}
+GET /items/19
