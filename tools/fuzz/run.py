@@ -8,7 +8,8 @@ PYTHONHASHSEED=0 and a 4 GB address-space limit. Stdout (every call's
 result or exception, prints, final globals) and the exit status must match;
 hex addresses are masked. A program that fails or times out plain is a
 generator problem, counted as invalid and kept in DIR/invalid/. A mismatch
-keeps its program and both outputs in DIR/mismatch/SEED.*.
+keeps its program and both outputs in DIR/mismatch/SEED.*. Ni's own
+diagnostics on stderr (DIAG) count as a mismatch even when the output agrees.
 """
 import argparse, concurrent.futures, difflib, os, re, subprocess, sys, time
 
@@ -20,6 +21,10 @@ import gen  # noqa: E402
 PY37 = os.environ.get('NI_PY37', os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
 LIMIT = ['prlimit', '--as=4000000000']
 ADDR = re.compile(r'0x[0-9a-fA-F]+')
+# what Ni itself writes to stderr when something is wrong (iencoding.h's
+# immediate range checks, psyco_fatal_msg, extra_assert, missing metas)
+DIAG = re.compile(r'Bad value for|psyco: |ni: no |nonnull_refcount|XXX opcode|'
+                  r'Fatal Python error|\.[ch]:\d+: ')
 
 
 def run_one(path, mode, timeout):
@@ -38,13 +43,15 @@ def run_one(path, mode, timeout):
 
 def compare(plain, ni):
     """None if the runs agree, else the kind of mismatch:
-    'timeout', 'crash STATUS' or 'output'"""
+    'timeout', 'crash STATUS', 'output' or 'diagnostic' (DIAG on Ni's stderr)"""
     if ni[0] == 'timeout' and plain[0] != 'timeout':
         return 'timeout'
     if ni[0] != plain[0]:
         return 'crash %s' % ni[0]
     if ni[1] != plain[1]:
         return 'output'
+    if DIAG.search(ni[2]) and not DIAG.search(plain[2]):
+        return 'diagnostic'
     return None
 
 
