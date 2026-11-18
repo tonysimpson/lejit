@@ -3858,6 +3858,7 @@ UNITS = {
     'dict': Unit('Objects/dictobject.c', None, 'pdictobject.c'),
     'bytes': Unit('Objects/bytesobject.c', None, 'pbytesobject.c'),
     'long': Unit('Objects/longobject.c', None, 'plongobject.c'),
+    'float': Unit('Objects/floatobject.c', None, 'pfloatobject.c'),
 }
 
 
@@ -4125,6 +4126,11 @@ def build_bytes(target):
 def build_long(target):
     """plongobject_gen.h: the int slots the translator generates (D83)."""
     return build(target, UNITS['long'])
+
+
+def build_float(target):
+    """pfloatslots_gen.h: the float slots the translator generates (D83)."""
+    return build(target, UNITS['float'])
 
 
 def build(target, unit=None):

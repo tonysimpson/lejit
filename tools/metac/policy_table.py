@@ -188,6 +188,8 @@ TRANSLATED_SLOTS = {
     'Objects/longobject.c': {'type': 'PyLong_Type', 'slots': [
         'nb_add', 'nb_subtract', 'nb_multiply', 'nb_negative', 'nb_invert',
         'nb_bool', 'nb_positive', 'nb_absolute', 'nb_true_divide', 'nb_power']},
+    # gen_float.py writes the others (copy-through of their double code)
+    'Objects/floatobject.c': {'type': 'PyFloat_Type', 'slots': ['nb_positive']},
 }
 
 # How Ni calls a slot's meta: the argument format Psyco_META* is given,
@@ -1139,7 +1141,11 @@ ENTRIES = {
     'Objects/floatobject.c:CONVERT_TO_DOUBLE': {'shape': 'a29ca6d6c073', 'ni': ['ni/Objects/pfloatobject.c:CONVERT_TO_DOUBLE_CORE', 'ni/Objects/pfloatobject.c:CONVERT_TO_DOUBLE', 'ni/Objects/pfloatobject.c:RELEASE_DOUBLE', 'ni/Objects/pfloatobject.c:return_null', 'ni/Objects/pfloatobject.c:psyco_convert_to_double']},
     'Objects/floatobject.c:convert_to_double': {'shape': '8ba659cc76fe', 'ni': ['ni/Objects/pfloatobject.c:psyco_convert_to_double']},
     'Objects/floatobject.c:float_hash': {'shape': 'ee5774f0b8dd', 'ni': ['ni/Objects/pfloatobject.c:pfloat_hash']},
-    'Objects/floatobject.c:float_float': {'shape': '7e1c71fb5f26', 'ni': ['ni/Objects/pfloatobject.c:pfloat_pos']},
+    # D83: the general translator's float unit; a subclass resumes into
+    # CPython's float_float (the hand pfloat_pos boxed its double instead)
+    'Objects/floatobject.c:float_float': {
+        'shape': '7e1c71fb5f26', 'ni': ['tools/metac/gen_abstract.py:build_float'],
+        'policy': [('restype', 'PyFloat_Type')]},
     'Include/floatobject.h:PyFloatObject': {'shape': '1458f11765b5', 'ni': ['ni/Objects/pfloatobject.h:FLOAT_ob_fval', 'ni/Objects/pfloatobject.h:iFLOAT_OB_FVAL', 'ni/Objects/pfloatobject.h:FLOAT_TOTAL', 'ni/Objects/pfloatobject.h:PsycoFloat_Check']},
     'Include/floatobject.h:PyFloat_Check': {'shape': 'c550f09007dc', 'ni': ['ni/Objects/pfloatobject.h:FLOAT_ob_fval', 'ni/Objects/pfloatobject.h:iFLOAT_OB_FVAL', 'ni/Objects/pfloatobject.h:FLOAT_TOTAL', 'ni/Objects/pfloatobject.h:PsycoFloat_Check']},
     'Include/floatobject.h:PyFloat_AS_DOUBLE': {'shape': '1c13bbe6b768', 'ni': ['ni/Objects/pfloatobject.h:PsycoFloat_AS_DOUBLE']},

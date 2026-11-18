@@ -35,7 +35,8 @@ GENERATORS = [('gen_abstract:build_long', 'plongobject_gen.h'),
               ('gen_abstract:build_list', 'plistobject_gen.h'),
               ('gen_abstract:build_dict', 'pdictobject_gen.h'),
               ('gen_abstract:build_bytes', 'pbytesobject_gen.h'),
-              ('gen_call', 'psyfunc_gen.h')]
+              ('gen_call', 'psyfunc_gen.h'),
+              ('gen_abstract:build_float', 'pfloatslots_gen.h')]
 # (a 'module:function' entry calls that function instead of build)
 # and mechanisms.py writes mechanisms.HEADERS: the snippet for each of Ni's
 # own mechanisms that the source's answers choose (D75); gen_virtual.py

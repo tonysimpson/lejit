@@ -6,9 +6,10 @@
  * the operands are constants.
  *
  * + - * / % unary - abs and bool are generated (pfloatobject_gen.h, by
- * tools/metac/gen_float.py), helpers included. Hand-written here: the
+ * tools/metac/gen_float.py), helpers included; unary + by the general
+ * translator (pfloatslots_gen.h, D83). Hand-written here: the
  * representation (psyco_convert_to_double for CONVERT_TO_DOUBLE, compute
- * functions), unary + and comparisons.
+ * functions) and comparisons.
  * The double is one word holding its bits, at run time (a stack slot) and
  * at compile time (source_known_t.value); upstream (32-bit) used two words.
  */
@@ -230,10 +231,10 @@ static vinfo_t *pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
     return NULL;
 
   if (PyType_TypeCheck(wtp, &PyLong_Type)) {
-    /* fall back */
+    /* fall back; NULL on MemoryError (F104) */
     return psyco_generic_call(po, PyFloat_Type.tp_richcompare,
-                              CfCommonNewRefPyObjectNoError | CfPure, "vvl", v,
-                              w, (long)op);
+                              CfCommonNewRefPyObject | CfPure, "vvl", v, w,
+                              (long)op);
   }
   if (PyType_TypeCheck(wtp, &PyFloat_Type)) {
     b = PsycoFloat_AS_DOUBLE(po, w);
@@ -285,32 +286,17 @@ static vinfo_t *pfloat_hash(PsycoObject *po, vinfo_t *v) {
                             d);
 }
 
-static vinfo_t *pfloat_pos(PsycoObject *po, vinfo_t *v) {
-  vinfo_t *a, *x;
-  /* float_float: an exact float is returned itself (F22) */
-  PyTypeObject *tp = Psyco_NeedType(po, v);
-  if (tp == NULL)
-    return NULL;
-  if (tp == &PyFloat_Type) {
-    vinfo_incref(v);
-    return v;
-  }
-  CONVERT_TO_DOUBLE(v, a);
-  x = PsycoFloat_FromDouble(a);
-  RELEASE_DOUBLE(a);
-  return x;
-}
-
 /* + - * / % unary - abs bool, generated from Objects/floatobject.c */
 #include "pfloatobject_gen.h"
+/* unary + (float_float: an exact float is returned itself, F22) */
+#include "pfloatslots_gen.h"
 
 INITIALIZATIONFN
 void psy_floatobject_init(void) {
   PyNumberMethods *m = PyFloat_Type.tp_as_number;
 
   pfloat_generated_init(m);
-
-  Psyco_DefineMeta(m->nb_positive, pfloat_pos);
+  gen_floatobject_init();
 
 
   Psyco_DefineMeta(PyFloat_Type.tp_richcompare, pfloat_richcompare);
