@@ -81,6 +81,14 @@ REASONS = {
         'core', ['C11'], "the emulated frame chain on an error"),
     'ni/Python/pycompiler.c:cimpl_vt_traceback': (
         'core', ['C11'], "a traceback for a virtual exception"),
+    'ni/Python/pycompiler.c:cimpl_tb_locals': (
+        'core', ['C18'], "a compiled frame's locals into its traceback frame"),
+    'ni/Python/pycompiler.c:cimpl_exc_hold': (
+        'core', ['C18'], "sets the pending exception aside for cimpl_tb_locals"),
+    'ni/Python/pycompiler.c:cimpl_exc_restore': (
+        'core', ['C18'], "puts back what cimpl_exc_hold set aside"),
+    'ni/Python/pycompiler.c:cimpl_held_tb_locals': (
+        'core', ['C18'], "cimpl_tb_locals with the exception set aside"),
     'ni/Python/pycompiler.c:PsycoTraceBack_Here': (
         'core', ['C11'], "chooses cimpl_rt_traceback or cimpl_vt_traceback"),
     'ni/Python/frames.c:ni_getframe': (

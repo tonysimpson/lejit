@@ -712,6 +712,19 @@ static void cimpl_rt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
   }
 }
 
+/* five of a compiled frame's locals, from 'start', into the frame of its
+   traceback entry: 'tb', or the raised exception's when NULL */
+static void cimpl_tb_locals(PyObject *tb, long start, PyObject *v0,
+                            PyObject *v1, PyObject *v2, PyObject *v3,
+                            PyObject *v4) {
+  PyObject *values[5] = {v0, v1, v2, v3, v4};
+  if (tb == NULL)
+    tb = ni_exc_traceback(PyThreadState_GET());
+  if (tb != NULL && PyTraceBack_Check(tb))
+    psyco_frame_write_locals(((PyTracebackObject *)tb)->tb_frame, (int)start,
+                             values, 5);
+}
+
 static PyObject *cimpl_vt_traceback(PyCodeObject *code, PyObject *globals,
                                     int lasti, int lineno) {
   /* This is a hack around the limited interface to tracebacks.
@@ -742,14 +755,123 @@ static PyObject *cimpl_vt_traceback(PyCodeObject *code, PyObject *globals,
   return newtb;
 }
 
+/* The pending exception, set aside while a traceback's locals are made
+   real (traceback_locals): the code that makes a virtual local real may
+   test for an error, and would take the pending one for its own. NULL if
+   out of memory: the exception then stays pending. */
+static PyObject **cimpl_exc_hold(void) {
+  PyObject **held = PyMem_Malloc(3 * sizeof(PyObject *));
+  if (held != NULL)
+    PyErr_Fetch(&held[0], &held[1], &held[2]);
+  return held;
+}
+
+static void cimpl_exc_restore(PyObject **held) {
+  if (held != NULL) {
+    PyErr_Restore(held[0], held[1], held[2]);
+    PyMem_Free(held);
+  }
+}
+
+/* as cimpl_tb_locals, for the exception set aside by cimpl_exc_hold */
+static void cimpl_held_tb_locals(PyObject **held, long start, PyObject *v0,
+                                 PyObject *v1, PyObject *v2, PyObject *v3,
+                                 PyObject *v4) {
+  cimpl_tb_locals(held != NULL ? held[2] : NULL, start, v0, v1, v2, v3, v4);
+}
+
+/* The frame's locals go into its traceback entry's frame, as a frame
+   holds them: they show in tb_frame.f_locals and live as long as the
+   traceback. Locals the liveness analysis dropped are missing (KNOWN_BUGS
+   C18). 'tb' is the entry, or NULL for the raised exception's, which is
+   still pending and is set aside meanwhile. Virtual locals are made
+   real. */
+static void traceback_locals(PsycoObject *po, vinfo_t *tb) {
+  PyCodeObject *co = po->pr.co;
+  int n = co->co_nlocals + PyTuple_GET_SIZE(co->co_cellvars) +
+          PyTuple_GET_SIZE(co->co_freevars);
+  int i, j;
+  bool failed = false;
+  void *fn = (void *)cimpl_tb_locals;
+  vinfo_t *held = NULL;
+  if (tb == NULL) {
+    held = psyco_generic_call(po, cimpl_exc_hold,
+                              CfReturnTypePtr | CfNoPython, "");
+    if (held == NULL)
+      return;
+    tb = held;
+    fn = (void *)cimpl_held_tb_locals;
+  }
+  for (i = 0; i < n; i += 5) {
+    char tags[8] = "vlvvvvv";
+    long args[5];
+    for (j = 0; j < 5; j++) {
+      vinfo_t *v = i + j < n ? LOC_LOCALS_PLUS[i + j] : NULL;
+      if (v == NULL || v->source == SOURCE_NOT_IMPORTANT) {
+        tags[2 + j] = 'l';
+        args[j] = 0;
+      } else
+        args[j] = (long)v;
+    }
+    if (psyco_generic_call(po, fn, CfNoReturnValue, tags, (long)tb, (long)i,
+                           args[0], args[1], args[2], args[3],
+                           args[4]) == NULL) {
+      failed = true;
+      break;
+    }
+  }
+  if (held != NULL) {
+    if (!failed)
+      psyco_generic_call(po, cimpl_exc_restore, CfNoReturnValue | CfNoPython,
+                         "v", held);
+    vinfo_decref(held, po);
+  }
+}
+
+/* Whether the handler at 'handler' drops the exception unseen
+   ('except E: pass' or 'except: pass', with E a name): then nothing can
+   reach the traceback's frame. If E doesn't match, END_FINALLY re-raises
+   it and puts the locals in then. */
+static bool handler_drops_exception(PyCodeObject *co, int handler) {
+  const unsigned char *c =
+      (const unsigned char *)PyBytes_AS_STRING(co->co_code) + handler;
+  Py_ssize_t left = PyBytes_GET_SIZE(co->co_code) - handler;
+  if (left >= 16 && c[0] == DUP_TOP &&
+      (c[2] == LOAD_GLOBAL || c[2] == LOAD_NAME || c[2] == LOAD_FAST ||
+       c[2] == LOAD_DEREF) &&
+      c[4] == COMPARE_OP && c[5] == PyCmp_EXC_MATCH &&
+      c[6] == POP_JUMP_IF_FALSE) {
+    c += 8;
+    left -= 8;
+  }
+  return left >= 8 && c[0] == POP_TOP && c[2] == POP_TOP && c[4] == POP_TOP &&
+         c[6] == POP_EXCEPT;
+}
+
+/* the innermost block an exception raised now goes to drops it unseen */
+static bool exception_dropped_here(PsycoObject *po) {
+  int i;
+  for (i = po->pr.iblock; i-- > 0;) {
+    PyTryBlock *b = &po->pr.blockstack[i];
+    if (b->b_type == SETUP_LOOP)
+      continue;
+    return b->b_type == SETUP_EXCEPT &&
+           handler_drops_exception(po->pr.co, b->b_handler);
+  }
+  return false;
+}
+
 /* record a traceback entry for the current virtual Python exception */
 PSY_INLINE void PsycoTraceBack_Here(PsycoObject *po, int lasti) {
   int lineno = PyCode_Addr2Line(po->pr.co, lasti);
 
   if (PycException_Is(po, &ERtPython)) {
     /* Python exception is actually set at run-time */
-    psyco_generic_call(po, cimpl_rt_traceback, CfNoReturnValue, "lvll",
-                       (long)po->pr.co, LOC_GLOBALS, (long)lasti, (long)lineno);
+    if (psyco_generic_call(po, cimpl_rt_traceback, CfNoReturnValue, "lvll",
+                           (long)po->pr.co, LOC_GLOBALS, (long)lasti,
+                           (long)lineno) != NULL &&
+        !exception_dropped_here(po))
+      traceback_locals(po, NULL);
   } else {
     /* We only have a virtual-time exception (not set in Python),
        so we build po->pr.tb without actually setting it either */
@@ -758,6 +880,8 @@ PSY_INLINE void PsycoTraceBack_Here(PsycoObject *po, int lasti) {
         (long)po->pr.co, LOC_GLOBALS, (long)lasti, (long)lineno);
     vinfo_xdecref(po->pr.tb, po);
     po->pr.tb = tb;
+    if (tb != NULL && !exception_dropped_here(po))
+      traceback_locals(po, tb);
   }
 }
 
@@ -2244,6 +2368,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           po->pr.exc = v;
           POP(po->pr.val);
           POP(po->pr.tb);
+          traceback_locals(po, po->pr.tb);
           break;
         }
 

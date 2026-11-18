@@ -131,8 +131,7 @@ EXTENDED = ['test_pdb', 'test_cprofile', 'test_trace', 'test_asynchat', 'test_as
 # Ni, reason) when only that difference is accepted
 KNOWN = {
     'test_re': 'C11: warnings stacklevel skips compiled callees',
-    'test_exceptions': ('run=53 fail=3 err=0 skip=1 exit=0',
-                        'C18: tracebacks don\'t keep compiled locals alive; '
+    'test_exceptions': ('run=53 fail=1 err=0 skip=1 exit=0',
                         'C11: f_back of a traceback frame'),
     'test_builtin': ('run=92 fail=1 err=0 skip=3 exit=0',
                      'C11: type() in a compiled callee takes __module__ from '
@@ -144,8 +143,6 @@ KNOWN = {
     'test_coroutines': ('run=94 fail=3 err=0 skip=0 exit=0',
                         'C11: a compiled frame\'s f_lineno is its def line '
                         '(also in coroutine origins and warning locations)'),
-    'test_cgitb': ('run=6 fail=0 err=1 skip=0 exit=0',
-                   'C11: a compiled frame\'s f_locals is empty (cgitb.html)'),
     'test_ctypes': ('run=485 fail=6 err=0 skip=89 exit=0',
                     'C19: getrefcount around calls into C'),
     'test_memoryio': ('run=166 fail=3 err=0 skip=0 exit=0',
@@ -154,8 +151,8 @@ KNOWN = {
     'test_email': ('run=1631 fail=0 err=1 skip=1 exit=0',
                    'environment: test_make_msgid_collisions makes ids for '
                    '3 s; faster under Ni, it reaches the memory limit'),
-    'test_frame': ('run=10 fail=2 err=1 skip=0 exit=0',
-                   'C11: f_locals, f_lineno and f_back of compiled frames'),
+    'test_frame': ('run=10 fail=2 err=0 skip=0 exit=0',
+                   'C11: f_lineno and f_executing of compiled frames'),
     'test_gc': ('run=39 fail=2 err=0 skip=0 exit=0',
                 'C11: locals not in the frame, so no cycle; C14: compiled '
                 'code keeps classes alive'),
@@ -171,7 +168,7 @@ KNOWN = {
                     'alive'),
     'test_raise': ('run=35 fail=1 err=0 skip=0 exit=0',
                    'C11: tb_frame is an emulated frame'),
-    'test_traceback': ('run=63 fail=6 err=0 skip=0 exit=0',
+    'test_traceback': ('run=63 fail=5 err=0 skip=0 exit=0',
                        'C11: frames, locals and line numbers in stacks'),
     'test_tracemalloc': ('run=43 fail=8 err=0 skip=0 exit=0',
                          'C11: allocation tracebacks miss compiled frames; '

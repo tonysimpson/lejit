@@ -60,11 +60,19 @@ typedef struct {
   stack_frame_info_t ***psy_frames_start;
   PyCodeObject *psy_code;
   PyObject *psy_globals;
+  PyObject **entry_locals; /* see psyco_frame_write_locals, or NULL */
+  int n_entry_locals;
 } FrameRuntime;
 
 EXTERNFN int psyco_frame_start_register(PyFrameObject *f,
                                         stack_frame_info_t ***psy_frames_start);
 EXTERNFN int psyco_frame_start_unregister(PyFrameObject *f);
 EXTERNFN FrameRuntime *psyco_frame_start_get(PyFrameObject *f);
+
+/* f_localsplus[start...] = values (up to count, within the frame's
+   locals), each with a new reference: the locals of a compiled frame, put
+   into the frame of its traceback entry */
+EXTERNFN void psyco_frame_write_locals(PyFrameObject *f, int start,
+                                       PyObject **values, int count);
 
 #endif /* _FRAMES_H */

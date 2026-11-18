@@ -3,7 +3,9 @@
  * globals) for each compiled call, and the machine stack is walked through the
  * finfo slot that each Psyco frame keeps (x64/iprocessor.c). sys._getframe
  * is replaced by ni_getframe, which counts compiled frames and emulates
- * them (no locals, first line only). Not yet done: upstream's hook of the
+ * them (no locals, first line only). A traceback's frame does get the
+ * locals, written when the exception passes (psyco_frame_write_locals).
+ * Not yet done: upstream's hook of the
  * frame getter behind PyEval_GetFrame, and C code that walks
  * tstate->frame itself (warnings) still skips compiled frames. Real
  * frames running compiled code are never updated (f_lasti/f_lineno).
@@ -54,6 +56,10 @@ stack_frame_info_t *psyco_finfo(PsycoObject *caller, PsycoObject *callee) {
 
 static void frame_runtime_capsule_dealloc(PyObject *capsule) {
   FrameRuntime *fr = (FrameRuntime *)PyCapsule_GetPointer(capsule, NULL);
+  int i;
+  for (i = 0; i < fr->n_entry_locals; i++)
+    Py_XDECREF(fr->entry_locals[i]);
+  PyMem_Free(fr->entry_locals);
   /* release the references taken in frame_runtime_capsule_new */
   Py_DECREF(fr->py_frame);
   Py_DECREF(fr->psy_code);
@@ -72,6 +78,8 @@ frame_runtime_capsule_new(PyFrameObject *py_frame,
   fr->py_frame = py_frame;
   fr->psy_code = py_frame->f_code;
   fr->psy_globals = py_frame->f_globals;
+  fr->entry_locals = NULL;
+  fr->n_entry_locals = 0;
   capsule = PyCapsule_New((void *)fr, NULL, frame_runtime_capsule_dealloc);
   if (capsule == NULL) {
     PyMem_Free(fr);
@@ -128,6 +136,40 @@ DEFINEFN int psyco_frame_start_unregister(PyFrameObject *f) {
     return 0;
   }
   return 1;
+}
+
+/* The real frame's f_localsplus holds what compiled code was started
+   with, which it borrows (arguments, cells) until it returns: the first
+   write keeps those alive in its FrameRuntime, released with it. */
+DEFINEFN
+void psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
+                              int count) {
+  PyCodeObject *co = f->f_code;
+  int n = co->co_nlocals + PyTuple_GET_SIZE(co->co_cellvars) +
+          PyTuple_GET_SIZE(co->co_freevars);
+  int i;
+  /* an emulated frame isn't executing, and the first write is from 0 */
+  FrameRuntime *fr =
+      start == 0 && f->f_executing ? psyco_frame_start_get(f) : NULL;
+  if (fr != NULL && fr->entry_locals == NULL) {
+    PyObject **keep = PyMem_Malloc(n * sizeof(PyObject *) + 1);
+    if (keep == NULL)
+      return; /* the locals stay as they were */
+    for (i = 0; i < n; i++) {
+      keep[i] = f->f_localsplus[i];
+      Py_XINCREF(keep[i]);
+    }
+    fr->entry_locals = keep;
+    fr->n_entry_locals = n;
+  }
+  for (i = 0; i < count && start + i < n; i++) {
+    PyObject *old = f->f_localsplus[start + i];
+    if (values[i] == NULL)
+      continue; /* unbound, or dropped as dead: an argument stays */
+    Py_INCREF(values[i]);
+    f->f_localsplus[start + i] = values[i];
+    Py_XDECREF(old);
+  }
 }
 
 PSY_INLINE PyFrameObject *psyco_build_pyframe(PyObject *co, PyObject *globals,
