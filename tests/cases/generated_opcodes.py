@@ -218,6 +218,141 @@ def unbound(flag):
         return str(e)
 
 
+class Truth:
+    # __bool__ or __len__ run Python inside PyObject_IsTrue; a raising
+    # one takes the error exit
+    def __init__(self, v):
+        self.v = v
+
+    def __repr__(self):
+        return 'Truth(%r)' % self.v
+
+    def __bool__(self):
+        if self.v is None:
+            raise ValueError('no truth')
+        return self.v
+
+
+class Sized:
+    def __init__(self, n):
+        self.n = n
+
+    def __repr__(self):
+        return 'Sized(%d)' % self.n
+
+    def __len__(self):
+        return self.n
+
+
+def objects(xs):
+    # literals, and the classes above for 'T1'/'T0'/'TE' and 'S<n>'
+    out = []
+    for x in xs:
+        if isinstance(x, str) and x[:1] == 'T' and len(x) == 2:
+            out.append(Truth({'1': True, '0': False, 'E': None}[x[1]]))
+        elif isinstance(x, str) and x[:1] == 'S' and x[1:].isdigit():
+            out.append(Sized(int(x[1:])))
+        else:
+            out.append(x)
+    return out
+
+
+def truths(xs):
+    # UNARY_NOT, POP_JUMP_IF_FALSE/TRUE, JUMP_IF_FALSE/TRUE_OR_POP on
+    # run-time values, and JUMP_FORWARD and JUMP_ABSOLUTE around them
+    xs = objects(xs)
+    out = []
+    i = 0
+    while i < len(xs):          # JUMP_ABSOLUTE
+        x = xs[i]
+        i += 1
+        if x:                   # POP_JUMP_IF_FALSE, JUMP_FORWARD
+            a = 'yes'
+        else:
+            a = 'no'
+        if not x:               # UNARY_NOT folded into POP_JUMP_IF_TRUE
+            b = 1
+        else:
+            b = 2
+        out.append((a, b, not x, x and 'and', x or 'or', (not x) == (not not x)))
+    return out
+
+
+def known_truths(k):
+    # conditions known at compile time: the jumps go one way, no code
+    t, f, n = True, False, None
+    r = []
+    if t:
+        r.append(1)
+    if f:
+        r.append(2)
+    if not n:
+        r.append(3)
+    r.append(t and k)
+    r.append(f or k)
+    r.append(not t)
+    return r
+
+
+def err_not(k):
+    return not k
+
+
+def err_if(k):
+    if k:
+        return 1
+    return 2
+
+
+def err_if_not(k):
+    if not k:
+        return 1
+    return 2
+
+
+def err_and(k):
+    return k and 1
+
+
+def err_or(k):
+    return k or 1
+
+
+def deletes(a):
+    # DELETE_FAST, then its unbound-local error exit
+    x = a
+    y = x + 1
+    del x
+    try:
+        return y, x
+    except UnboundLocalError as e:
+        return y, str(e)
+
+
+def err_delete(flag):
+    if flag:
+        x = 1
+    try:
+        del x
+        return 'deleted'
+    except UnboundLocalError as e:
+        return str(e)
+
+
+def set_adds(xs):
+    # SET_ADD, and its error exit: an unhashable item part-way through
+    s = {x * 2 for x in xs}
+    try:
+        t = {(x if x < 2 else [x]) for x in xs}
+    except TypeError as e:
+        t = str(e)
+    return sorted(s), t
+
+
+def truth_errors(k):
+    return catch((err_not, err_if, err_if_not, err_and, err_or), objects([k])[0])
+
+
 CASES = [
     ('arith', [(7, 3), (-12, 5), (2 ** 40, 7)], {}),
     ('arith_float', [(7.5, 2.0), (-1.25, 0.5)], {}),
@@ -233,4 +368,11 @@ CASES = [
     ('attr_errors', [(0,), (None,)], {}),
     ('builds', [(1, 3, [5, 6, 7, 8]), (0, 2, (1, 2, 3))], {}),
     ('build_errors', [(0,), (1,)], {}),
+    ('truths', [([0, 1, '', 'a', None, [], [0], 2.5, 0.0, 'T1', 'T0', 'S0',
+                  'S3'],)], {}),
+    ('known_truths', [(0,), (5,)], {}),
+    ('truth_errors', [('TE',), ('T1',), (0,)], {}),
+    ('deletes', [(1,), (2.5,)], {}),
+    ('err_delete', [(True,), (False,)], {}),
+    ('set_adds', [([0, 1, 2, 3],), ([1, 0],)], {}),
 ]

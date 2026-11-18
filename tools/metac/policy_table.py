@@ -99,6 +99,23 @@ RULES = {
         'decisions': ['D69'],
         'applied_by': ['tools/metac/ceval_reader.py:_is_type_test'],
     },
+    'singleton_test_generic_path': {
+        'what': "In a ceval case, 'if (x == K) { A; DISPATCH(); }' for K Py_True,"
+                " Py_False or Py_None is dropped when the rest of the case calls a"
+                " function on x whose body answers K first ('if (v == K) return"
+                " r;', PyObject_IsTrue) and, with that r, does A (checked"
+                " statement by statement): the fast path gives the generic path's"
+                " result. Otherwise the case is refused.",
+        'decisions': ['D79'],
+        'applied_by': ['tools/metac/ceval_reader.py:_answer'],
+    },
+    'bool_select': {
+        'what': "A run-time branch whose arms only make one output Py_True and"
+                " Py_False is that object chosen by the condition: a virtual bool"
+                " of the condition code (PATTERNS P23), never a branch.",
+        'decisions': ['D79'],
+        'applied_by': ['tools/metac/gen_ceval.py:translate'],
+    },
     'gc_ignored': {
         'what': "What a garbage collection may run (finalizers, weakref"
                 " callbacks), reachable from any allocation, is not counted as"
@@ -573,7 +590,7 @@ ENTRIES = {
         ]},
     'Objects/genobject.c:gen_send_ex': {'shape': 'dbfa5af99336', 'ni': ['ni/Python/pycompiler.c:cimpl_generator_stop']},
     'Python/errors.c:_PyErr_ChainExceptions': {'shape': '8624abd89f50', 'ni': ['ni/Python/pycompiler.c:cimpl_generator_stop']},
-    'Python/ceval.c:TARGET(UNARY_NOT)': {'shape': '1186f933f995', 'ni': ['ni/Python/pycompiler.c:case UNARY_NOT']},
+    'Python/ceval.c:TARGET(UNARY_NOT)': {'shape': '1186f933f995', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(LIST_APPEND)': {'shape': 'd2b86bdd5af1', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(DELETE_SUBSCR)': {'shape': 'b1a468b9cda7', 'ni': ['tools/metac/gen_ceval.py:build']},
     'Python/ceval.c:TARGET(RETURN_VALUE)': {
@@ -597,7 +614,7 @@ ENTRIES = {
     'Python/ceval.c:TARGET(DELETE_GLOBAL)': {'shape': '52ffe7abb0dc', 'ni': ['ni/Python/pycompiler.c:case DELETE_NAME', 'ni/Python/pycompiler.c:case DELETE_GLOBAL']},
     'Python/ceval.c:TARGET(DELETE_NAME)': {'shape': '4c9a396fff41', 'ni': ['ni/Python/pycompiler.c:case DELETE_NAME', 'ni/Python/pycompiler.c:case DELETE_GLOBAL']},
     'Python/ceval.c:TARGET(LOAD_NAME)': {'shape': '169ba7986f56', 'ni': ['ni/Python/pycompiler.c:case LOAD_NAME', 'ni/Python/pycompiler.c:case LOAD_GLOBAL']},
-    'Python/ceval.c:TARGET(DELETE_FAST)': {'shape': '88625a6a9a19', 'ni': ['ni/Python/pycompiler.c:case DELETE_FAST']},
+    'Python/ceval.c:TARGET(DELETE_FAST)': {'shape': '88625a6a9a19', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(LOAD_CLOSURE)': {'shape': '11f8250608e3', 'ni': ['ni/Python/pycompiler.c:case LOAD_CLOSURE']},
     'Python/ceval.c:TARGET(LOAD_DEREF)': {
         'shape': '2e6c9f5e9bed',
@@ -626,7 +643,7 @@ ENTRIES = {
         'policy': [
             ('restype', 'PySet_Type'),
         ]},
-    'Python/ceval.c:TARGET(SET_ADD)': {'shape': 'c0396bf8b3b0', 'ni': ['ni/Python/pycompiler.c:case SET_ADD']},
+    'Python/ceval.c:TARGET(SET_ADD)': {'shape': 'c0396bf8b3b0', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(LOAD_ATTR)': {'shape': '6249c7dcf5e3', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(LOAD_METHOD)': {
         'shape': '559aa5079123',
@@ -643,17 +660,32 @@ ENTRIES = {
     'Python/ceval.c:TARGET(IMPORT_NAME)': {'shape': 'b192173e7a57', 'ni': ['ni/Python/pycompiler.c:case IMPORT_NAME']},
     'Python/ceval.c:TARGET(IMPORT_STAR)': {'shape': '66ad65b82d90', 'ni': ['ni/Python/pycompiler.c:case IMPORT_STAR']},
     'Python/ceval.c:TARGET(IMPORT_FROM)': {'shape': 'cc9c45f8467c', 'ni': ['ni/Python/pycompiler.c:case IMPORT_FROM']},
-    'Python/ceval.c:TARGET(JUMP_FORWARD)': {'shape': '6d28fc612e60', 'ni': ['ni/Python/pycompiler.c:case JUMP_FORWARD']},
+    'Python/ceval.c:TARGET(JUMP_FORWARD)': {'shape': '6d28fc612e60', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(POP_JUMP_IF_FALSE)': {
         'shape': '71362d8c5285',
-        'ni': ['ni/Python/pycompiler.c:case POP_JUMP_IF_FALSE', 'ni/Python/pycompiler.c:case POP_JUMP_IF_TRUE', 'ni/Python/pycompiler.c:case JUMP_IF_FALSE_OR_POP', 'ni/Python/pycompiler.c:case JUMP_IF_TRUE_OR_POP'],
+        'ni': ['tools/metac/gen_ceval.py:translate'],
         'policy': [
-            ('forget', 'before_branch'),
+            ('forget', 'before_branch', 'PyObject_IsTrue may have run code (F55): the branch forgets what it knew of classes'),
         ]},
-    'Python/ceval.c:TARGET(POP_JUMP_IF_TRUE)': {'shape': '3d67d69a303c', 'ni': ['ni/Python/pycompiler.c:case POP_JUMP_IF_FALSE', 'ni/Python/pycompiler.c:case POP_JUMP_IF_TRUE', 'ni/Python/pycompiler.c:case JUMP_IF_FALSE_OR_POP', 'ni/Python/pycompiler.c:case JUMP_IF_TRUE_OR_POP']},
-    'Python/ceval.c:TARGET(JUMP_IF_FALSE_OR_POP)': {'shape': '9d16f541b99d', 'ni': ['ni/Python/pycompiler.c:case POP_JUMP_IF_FALSE', 'ni/Python/pycompiler.c:case POP_JUMP_IF_TRUE', 'ni/Python/pycompiler.c:case JUMP_IF_FALSE_OR_POP', 'ni/Python/pycompiler.c:case JUMP_IF_TRUE_OR_POP']},
-    'Python/ceval.c:TARGET(JUMP_IF_TRUE_OR_POP)': {'shape': 'a933d0612595', 'ni': ['ni/Python/pycompiler.c:case POP_JUMP_IF_FALSE', 'ni/Python/pycompiler.c:case POP_JUMP_IF_TRUE', 'ni/Python/pycompiler.c:case JUMP_IF_FALSE_OR_POP', 'ni/Python/pycompiler.c:case JUMP_IF_TRUE_OR_POP']},
-    'Python/ceval.c:TARGET(JUMP_ABSOLUTE)': {'shape': '88c405bbfbc1', 'ni': ['ni/Python/pycompiler.c:case JUMP_ABSOLUTE']},
+    'Python/ceval.c:TARGET(POP_JUMP_IF_TRUE)': {
+        'shape': '3d67d69a303c',
+        'ni': ['tools/metac/gen_ceval.py:translate'],
+        'policy': [
+            ('forget', 'before_branch', 'PyObject_IsTrue may have run code (F55): the branch forgets what it knew of classes'),
+        ]},
+    'Python/ceval.c:TARGET(JUMP_IF_FALSE_OR_POP)': {
+        'shape': '9d16f541b99d',
+        'ni': ['tools/metac/gen_ceval.py:translate'],
+        'policy': [
+            ('forget', 'before_branch', 'PyObject_IsTrue may have run code (F55): the branch forgets what it knew of classes'),
+        ]},
+    'Python/ceval.c:TARGET(JUMP_IF_TRUE_OR_POP)': {
+        'shape': 'a933d0612595',
+        'ni': ['tools/metac/gen_ceval.py:translate'],
+        'policy': [
+            ('forget', 'before_branch', 'PyObject_IsTrue may have run code (F55): the branch forgets what it knew of classes'),
+        ]},
+    'Python/ceval.c:TARGET(JUMP_ABSOLUTE)': {'shape': '88c405bbfbc1', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(FOR_ITER)': {
         'shape': '579975832e35',
         'ni': ['ni/Python/pycompiler.c:case FOR_ITER', 'ni/Objects/pabstract.c:cimpl_iternext', 'ni/Objects/pabstract.c:PsycoIter_Next'],

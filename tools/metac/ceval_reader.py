@@ -115,6 +115,10 @@ CASTS = ('Py_ssize_t', 'int', 'long', 'size_t')
 # ones, and both sides of the byte boundaries EXTENDED_ARG and UNPACK_EX's
 # 'oparg >> 8' make
 SAMPLES = (1, 2, 3, 4, 5, 6, 7, 8, 9, 255, 256, 257, 258, 511, 513, 65535)
+JUMPS = {'JUMPTO', 'JUMPBY'}
+# the objects a fast path tests for by identity (rule singleton_test_generic_path)
+SINGLETONS = ('Py_True', 'Py_False', 'Py_None')
+NEGATE = {'==': '!=', '!=': '==', '<': '>=', '>=': '<', '>': '<=', '<=': '>'}
 
 
 class Refuse(Exception):
@@ -414,6 +418,8 @@ class Context:
             toks = ctokens.tokenize(f.read(), 'ceval.c')[0]
         self.functions = ctokens.functions(toks)
         self.helpers = {}
+        self.src = src
+        self.answers = {}
 
     def helper(self, name):
         if name not in self.helpers:
@@ -425,6 +431,63 @@ class Context:
         if isinstance(h, Refuse):
             raise h
         return h
+
+
+    def answer(self, fn, k):
+        """The value fn returns for the object k, if its body starts by
+        testing its first parameter for identity with k ('if (v == Py_True)
+        return 1;', as PyObject_IsTrue does), else None."""
+        if (fn, k) not in self.answers:
+            self.answers[fn, k] = _answer(self.src, fn, k)
+        return self.answers[fn, k]
+
+
+def _definition(src, fn):
+    """(params, body) tokens of the function fn, defined in Objects/ or
+    Python/ (CPython puts a definition's name at the start of a line)."""
+    import csource
+    pat = re.compile(r'^%s\(' % re.escape(fn), re.M)
+    tree = csource.Tree(src)
+    for d in ('Objects', 'Python'):
+        for name in sorted(os.listdir(os.path.join(src, d))):
+            if not name.endswith('.c'):
+                continue
+            with open(os.path.join(src, d, name), encoding='latin-1') as f:
+                if not pat.search(f.read()):
+                    continue
+            df = tree.find('%s/%s:%s' % (d, name, fn))
+            if df is not None and df.kind == 'function':
+                return df.params, df.body
+    return None
+
+
+def _answer(src, fn, k):
+    d = _definition(src, fn)
+    if d is None:
+        return None
+    params, body = d
+    first = ctokens.split_top(params, ',')
+    if not first or not first[0]:
+        return None
+    p = first[0][-1].text
+    nodes = parse(body)
+    while nodes:
+        n = nodes.pop(0)
+        if n.kind == 'stmt' and len(_texts(n.w)) >= 2 and '=' not in _texts(n.w) \
+                and all(t.isidentifier() or t == '*' for t in _texts(n.w)):
+            continue        # a declaration
+        if n.kind != 'if':
+            return None
+        w = _texts(n.cond)
+        ret = _texts(n.then.w) if n.then.kind == 'stmt' else []
+        if len(w) != 3 or w[:2] != [p, '=='] or w[2] not in SINGLETONS or \
+                len(ret) != 2 or ret[0] != 'return' or not re.fullmatch(r'-?\d+', ret[1]):
+            return None
+        if w[2] == k:
+            return int(ret[1])
+        if n.other is not None:
+            nodes.insert(0, n.other)
+    return None
 
 
 def helper_effect(name, functions, consts):
@@ -618,6 +681,132 @@ def _is_type_test(cond):
     return bool(calls) and any(TYPE_TEST.fullmatch(c) for c in calls)
 
 
+# ---- restructuring: arms that end the case, if-chains, fast paths ------------
+
+class _Tok:
+    """A token made for a node the reader builds."""
+    kind = 'op'
+
+    def __init__(self, text):
+        self.text = text
+
+
+def _is_dispatch(n):
+    w = _texts(n.w) if n.kind == 'stmt' else []
+    return len(w) == 3 and w[0] in DISPATCHES and w[1:] == ['(', ')']
+
+
+def _is_error(n):
+    return n.kind == 'goto' and n.label == 'error'
+
+
+def _ends(node, test):
+    b = _block(node) if node is not None else []
+    return bool(b) and test(b[-1])
+
+
+def _mk_block(nodes):
+    toks = [_Tok('{')] + [t for n in nodes for t in n.toks] + [_Tok('}')]
+    return Node('block', toks, nodes=list(nodes))
+
+
+def _mk_if(cond, then, other):
+    toks = [_Tok('if'), _Tok('(')] + list(cond) + [_Tok(')')] + list(then.toks)
+    if other is not None:
+        toks += [_Tok('else')] + list(other.toks)
+    return Node('if', toks, cond=list(cond), then=then, other=other)
+
+
+def _cond_toks(text):
+    return [_Tok(t) for t in text.split(' ')]
+
+
+def _negate(c):
+    """'! ( c )', or c with its operator turned round if it is one compare."""
+    w = c.split(' ')
+    if len(w) == 3 and w[1] in NEGATE:
+        return '%s %s %s' % (w[0], NEGATE[w[1]], w[2])
+    return '! ( %s )' % c
+
+
+def _int_compare(cond):
+    """(variable, op, value) for 'x OP N', N an integer literal."""
+    w = _texts(cond)
+    if len(w) == 4 and w[2] == '-':
+        w = [w[0], w[1], '-' + w[3]]
+    if len(w) == 3 and w[0].isidentifier() and w[1] in NEGATE and \
+            re.fullmatch(r'-?\d+', w[2]):
+        return w[0], w[1], int(w[2])
+    return None
+
+
+# sets of integers: sorted disjoint [lo, hi] (None: unbounded)
+def _iset(op, n):
+    return {'==': [(n, n)], '!=': [(None, n - 1), (n + 1, None)],
+            '<': [(None, n - 1)], '<=': [(None, n)], '>': [(n + 1, None)],
+            '>=': [(n, None)]}[op]
+
+
+def _ikey(v, side):
+    return (float('-inf') if side == 0 else float('inf')) if v is None else v
+
+
+def _iunion(a, b):
+    out = []
+    for lo, hi in sorted(a + b, key=lambda x: _ikey(x[0], 0)):
+        if out and (out[-1][1] is None or (lo is not None and lo <= out[-1][1] + 1)):
+            if out[-1][1] is not None and (hi is None or hi > out[-1][1]):
+                out[-1] = (out[-1][0], hi)
+        else:
+            out.append((lo, hi))
+    return out
+
+
+def _icomplement(a):
+    out, at = [], None      # at: first value not yet covered (None: -inf)
+    for lo, hi in a:
+        if lo is not None and (at is None or lo > at):
+            out.append((at, lo - 1))
+        if hi is None:
+            return out
+        at = hi + 1
+    out.append((at, None))
+    return out
+
+
+def _icond(x, a):
+    """C text testing x in a, for a ray; None otherwise."""
+    if len(a) == 1:
+        lo, hi = a[0]
+        if lo is None and hi is not None:
+            return '%s < %d' % (x, hi + 1)
+        if hi is None and lo is not None:
+            return '%s > %d' % (x, lo - 1)
+    return None
+
+
+def _ihas(a, v):
+    return any(_ikey(lo, 0) <= v <= _ikey(hi, 1) for lo, hi in a)
+
+
+def _flat_stmts(nodes):
+    """Statement texts of nodes, blocks flattened, empty statements
+    dropped; None if there is anything else."""
+    out = []
+    for n in nodes:
+        if n.kind == 'block':
+            sub = _flat_stmts(n.nodes)
+            if sub is None:
+                return None
+            out += sub
+        elif n.kind == 'stmt':
+            if _texts(n.w) and not _is_dispatch(n):
+                out.append(_texts(n.w))
+        else:
+            return None
+    return out
+
+
 # ---- references to the stack, resolved once the layout is known --------------
 
 class Ref:
@@ -626,6 +815,13 @@ class Ref:
 
     def __init__(self, lo, index=None, base=False):
         self.lo, self.index, self.base = lo, index, base
+
+
+class WriteMark:
+    """A write of var into the slot at pos, in the body's text."""
+
+    def __init__(self, pos, var):
+        self.pos, self.var = pos, var
 
 
 class Interval:
@@ -652,10 +848,11 @@ class State:
         self.pending = None  # Interval a call was given to fill
         self.alias = {}     # local copies of the stack pointer -> position
         self.env = {'oparg': Lin.atom('oparg')}
+        self.jumped = False  # JUMPTO/JUMPBY on this path
 
     def copy(self):
         s = State.__new__(State)
-        s.sp, s.pending = self.sp, self.pending
+        s.sp, s.pending, s.jumped = self.sp, self.pending, self.jumped
         s.writes, s.gone, s.released = list(self.writes), list(self.gone), list(self.released)
         s.bound, s.alias, s.env = dict(self.bound), dict(self.alias), dict(self.env)
         return s
@@ -824,13 +1021,163 @@ class Case:
         bound = set().union(*(s.bound for s in states)) | set().union(
             *(s.alias for s in states))
         for k, t in enumerate(w):
-            if t in STACK_MACROS or t in DISPATCHES or t in (
+            if t in STACK_MACROS or t in DISPATCHES or t in JUMPS or t in (
                     'stack_pointer', 'goto', 'SETLOCAL', 'return'):
                 return True
             if t in bound and (w[k + 1:k + 2] == ['='] or w[k - 2:k] in (
                     ['Py_DECREF', '('], ['Py_XDECREF', '('], ['Py_CLEAR', '('])):
                 return True
         return False
+
+    # -- restructuring, before the run (rules in the module's docstring)
+    def restructure(self, nodes):
+        nodes = list(nodes)
+        k = 0
+        while k < len(nodes):
+            n = nodes[k]
+            if n.kind == 'if' and _ends(n.then, _is_dispatch):
+                rest = nodes[k + 1:]
+                if self.singleton_arm(n, rest):
+                    del nodes[k]
+                    continue
+                end = next(x for x in reversed(_block(n.then)) if _is_dispatch(x))
+                return nodes[:k] + self.chain(self.absorb(n, rest)) + [end]
+            if n.kind == 'if':
+                c = self.chain(n)
+                nodes[k:k + 1] = c
+                k += len(c)
+                continue
+            k += 1
+        return nodes
+
+    def absorb(self, n, rest):
+        """'if (C) { A; DISPATCH(); } else B; REST' is 'if (C) A else { B;
+        REST }': the rest of the case is the other arm."""
+        then = _mk_block(_block(n.then)[:-1])
+        o = n.other
+        if o is None:
+            other = _mk_block(self.tail(rest))
+        elif o.kind == 'if' and _ends(o.then, _is_dispatch):
+            other = self.absorb(o, rest)
+        elif _ends(o, _is_dispatch) or _ends(o, _is_error):
+            if rest:
+                raise Refuse('control flow', 'code after DISPATCH')
+            other = _mk_block(_block(o)[:-1]) if _ends(o, _is_dispatch) else o
+        else:
+            other = _mk_block(_block(o) + self.tail(rest))
+        return _mk_if(n.cond, then, other)
+
+    def tail(self, rest):
+        r = self.restructure(rest)
+        if r and _is_dispatch(r[-1]):
+            return r[:-1]
+        if r and _is_error(r[-1]):
+            return r
+        raise Refuse('control flow', 'does not end with DISPATCH')
+
+    def chain(self, n):
+        """'if (x == 0) A else if (x > 0) B else { ...; goto error; }', x an
+        int compared with constants: the error arm is taken for the values
+        no other arm takes, so it is tested first, as its own exit; an arm
+        left with only the values it tests becomes the else."""
+        arms, x = [], n
+        while True:
+            c = _int_compare(x.cond) if x.kind == 'if' else None
+            if c is None or x.other is None or (arms and c[0] != arms[0][0][0]):
+                return [n]
+            if x is n and x.other.kind != 'if':
+                return [n]      # one test and an error arm: the rule below
+            arms.append((c, x.then))
+            if x.other.kind != 'if':
+                final = x.other
+                break
+            x = x.other
+        if not _ends(final, _is_error):
+            return [n]
+        var = arms[0][0][0]
+        covered = []
+        for (_, op, v), _ in arms:
+            covered = _iunion(covered, _iset(op, v))
+        err = _icond(var, _icomplement(covered))
+        if err is None:
+            raise Refuse('control flow', 'the error arm of a chain on %s is no ray' % var)
+        exit_ = _mk_if(_cond_toks(err), final, None)
+        # the chain without its error arm; the last arm's test is implied
+        # if every value reaching it passes it
+        before = []
+        for (_, op, v), _ in arms[:-1]:
+            before = _iunion(before, _iset(op, v))
+        (_, op, v), body = arms[-1]
+        reach = _icomplement(_iunion(_icomplement(covered), before))
+        if _iunion(_iset(op, v), reach) == _iunion(_iset(op, v), []):
+            other = body
+        else:
+            other = _mk_if(_cond_toks('%s %s %d' % (var, op, v)), body, None)
+        for (_, op, v), body in reversed(arms[:-1]):
+            other = _mk_if(_cond_toks('%s %s %d' % (var, op, v)), body, other)
+        return [exit_, other]
+
+    def singleton_arm(self, n, rest):
+        """Rule singleton_test_generic_path: 'if (x == K) { A; DISPATCH(); }'
+        for K one of SINGLETONS is CPython's fast path, dropped, when the rest
+        of the case calls a function on x that answers K itself first (its
+        body starts 'if (v == K) return r;') and, with that r, does A."""
+        w = _texts(n.cond)
+        if n.other is not None or len(w) != 3 or w[1] != '==' or w[2] not in SINGLETONS:
+            return False
+        x, k = w[0], w[2]
+        arm = _flat_stmts(_block(n.then))
+        gen, var, r = [], None, None
+        for m in rest:
+            if m.kind == 'if' and var is None:
+                c = _texts(m.cond)
+                if len(c) == 3 and c[:2] == [x, '=='] and c[2] in SINGLETONS and c[2] != k:
+                    continue        # not taken when x is k
+            if m.kind == 'stmt':
+                if _is_dispatch(m):
+                    break
+                d = _texts(m.w)
+                while d and d[0] in DECL_TYPES:
+                    d = d[1:]
+                if len(d) == 6 and d[1] == '=' and d[3] == '(' and d[4:] == [x, ')'] \
+                        and var is None:
+                    var, r = d[0], self.ctx.answer(d[2], k)
+                    if r is None:
+                        return False
+                    continue
+                if len(d) == 1:
+                    continue        # a declaration
+                if d:
+                    gen.append(_texts(m.w))
+                continue
+            if m.kind == 'if' and var is not None:
+                picked = self.fold_chain(m, var, r)
+                if picked is None:
+                    return False
+                sub = _flat_stmts(picked)
+                if sub is None:
+                    return False
+                gen += sub
+                continue
+            return False
+        return var is not None and arm is not None and arm == gen
+
+    def fold_chain(self, m, var, r):
+        """The nodes the if-chain m runs when var is r; None for an error."""
+        while m is not None and m.kind == 'if':
+            c = _int_compare(m.cond)
+            if c is None or c[0] != var:
+                return None
+            if _ihas(_iset(c[1], c[2]), r):
+                m = m.then
+                break
+            m = m.other
+        if m is None:
+            return []
+        b = _block(m)
+        if b and _is_error(b[-1]):
+            return None
+        return b
 
     # -- branches
     def branch(self, node, states):
@@ -852,7 +1199,9 @@ class Case:
             obody = _block(other)
             if obody and obody[-1].kind == 'goto' and obody[-1].label == 'error' \
                     and not self.ends_in_error(then):
-                states = self.error_exit('! ( %s )' % c, obody[:-1], states,
+                neg = _negate(c)
+                states = self.error_exit(neg, obody[:-1], states,
+                                         neg.split(' ') if ci == [c] else
                                          ['!', '('] + ci + [')'])
                 return self.run(body, states, top=False)
         ct = to_lin(_texts(cond), states[0].env, self.ctx.consts)
@@ -943,12 +1292,16 @@ class Case:
         return a + states
 
     def error_exit(self, c, body, states, ci):
-        label, simple, dead = 'error', True, []
+        label, simple, dead, moves = 'error', True, [], []
         for node in body:
             w = _texts(node.w) if node.kind == 'stmt' else None
             if w and len(w) == 4 and w[0] in ('Py_DECREF', 'Py_XDECREF') \
                     and all(w[2] in s.bound for s in states):
                 dead.append(w[2])
+                continue
+            if w and len(w) == 5 and w[0] in MOVES and w[1:3] == ['(', '-'] \
+                    and w[4] == ')' and w[3].isdigit() and MOVES[w[0]] == 1:
+                moves.append(Lin(-int(w[3])))   # pops: the exit pops anyway
                 continue
             form = next((lab for f, lab in ERROR_FORMS if w and w[:len(f)] == f), None)
             if form and label == 'error':
@@ -962,6 +1315,8 @@ class Case:
                 s2 = s.copy()
                 for v in dead:
                     self.release(s2, v)
+                for n in moves:
+                    self.move(s2, n)
                 self.snaps.append((s2, null))
             self.emit(['ERROR_IF', '('] + ci + [',', label, ')', ';'])
             return states
@@ -977,6 +1332,8 @@ class Case:
                 continue
             copies = self.node(node, copies, False)
         for s in copies:
+            for n in moves:
+                self.move(s, n)
             self.snaps.append((s, null))
         self.emit(['ERROR_IF', '(', 'true', ',', 'error', ')', ';'])
         self.depth -= 1
@@ -1178,14 +1535,17 @@ class Case:
                 for s in states:
                     self.move(s, Lin(1))
                     self.write(s, Lin(1), _var(args[0]))
+                self.mark(states, Lin(1), args[0])
                 return states
             if head in WRITES and len(args) == 1:
                 for s in states:
                     self.write(s, Lin(WRITES[head]), _var(args[0]))
+                self.mark(states, Lin(WRITES[head]), args[0])
                 return states
             if head == 'SET_VALUE' and len(args) == 2:
                 for s in states:
                     self.write(s, self.lin(args[0], s), _var(args[1]))
+                self.mark(states, self.lin(args[0], states[0]), args[1])
                 return states
             if head in MOVES and len(args) == 1:
                 for s in states:
@@ -1214,6 +1574,9 @@ class Case:
             self.same(refs)
             self.emit(['Py_DECREF', '(', Ref(refs[0]), ')', ';'])
             return states
+        if head in JUMPS:
+            for s in states:
+                s.jumped = True
         if 'POP' in w:
             raise Refuse('stack', 'pop inside %s' % ' '.join(w))
         if any(t in WRITES or t in MOVES or t in ('PUSH', 'SET_VALUE') for t in w):
@@ -1236,6 +1599,11 @@ class Case:
                         s.env[lhs[0]] = v
         self.emit(items + [';'])
         return states
+
+    def mark(self, states, depth, var):
+        """Where the write goes, for definition(): if paths write different
+        variables into one output, it is named and each write assigns it."""
+        self.emit([WriteMark(self.same([s.sp - depth for s in states]), _var(var))])
 
     def same(self, values):
         if any(v != values[0] for v in values):
@@ -1363,12 +1731,37 @@ class Case:
     def definition(self):
         if not self.ended or not self.final:
             raise Refuse('control flow', 'does not end with DISPATCH')
-        ends = self.final
+        # paths that jump may keep more of the stack than those that don't
+        # (JUMP_IF_FALSE_OR_POP): those slots are outputs 'x if (jump)'
+        fall = [s for s in self.final if not s.jumped]
+        jumps = [s for s in self.final if s.jumped]
+        ends = fall or jumps
         sp = ends[0].sp
-        for s in ends[1:]:
-            if s.sp != sp or sorted((x[0].lo.key(), x[1] or '') for x in s.writes) \
-                    != sorted((x[0].lo.key(), x[1] or '') for x in ends[0].writes):
-                raise Refuse('stack', 'paths end with different stacks')
+        for group in (ends, jumps if fall else []):
+            for s in group[1:]:
+                if s.sp != group[0].sp or sorted(x[0].lo.key() for x in s.writes) \
+                        != sorted(x[0].lo.key() for x in group[0].writes):
+                    raise Refuse('stack', 'paths end with different stacks')
+        if fall and jumps and (
+                sorted(x[0].lo.key() for x in jumps[0].writes)
+                != sorted(x[0].lo.key() for x in fall[0].writes)
+                or self.cmp(jumps[0].sp, sp) < 0):
+            raise Refuse('stack', 'paths end with different stacks')
+        # a slot paths write different variables into is named (res)
+        names = {}
+        for s in self.final:
+            for iv, v in s.writes:
+                names.setdefault(iv.lo.key(), set()).add(v)
+        taken = {v for j, v, k in self.reads if v} | {v for n in names.values()
+                                                      for v in n if v}
+        w0 = []
+        for iv, v in ends[0].writes:
+            if len(names[iv.lo.key()]) > 1:
+                if None in names[iv.lo.key()]:
+                    raise Refuse('stack', 'paths end with different stacks')
+                v = next(n for n in ('res', 'res2', 'res3') if n not in taken)
+                taken.add(v)
+            w0.append((iv, v))
         ipts = {Lin(0)}
         for j, _, _ in self.reads:
             ipts |= {j.lo, j.hi}
@@ -1378,7 +1771,6 @@ class Case:
         ins = [c for c in self.cuts(ipts) if self.cmp(c.hi, Lin(0)) <= 0]
         named = self.name_inputs(ins)
         # outputs: what each slot below the final pointer holds
-        w0 = ends[0].writes
         opts = {sp}
         for x in w0:
             opts |= {x[0].lo, x[0].hi}
@@ -1397,12 +1789,32 @@ class Case:
                 outs.append((named[c.lo][0], c))
                 continue
             raise Refuse('stack', 'pushes a slot it never set')
+        conds = [None] * len(outs)
+        if fall and jumps and self.cmp(jumps[0].sp, sp) > 0:
+            at = sp
+            for c in ins:
+                if self.cmp(c.lo, at) != 0 or self.cmp(c.hi, jumps[0].sp) > 0:
+                    continue
+                if any(self.covers(g, c) for s in jumps for g in s.gone):
+                    raise Refuse('stack', 'a jump keeps a slot it popped')
+                outs.append((named[c.lo][0], c))
+                conds.append('jump')
+                at = c.hi
+            if self.cmp(at, jumps[0].sp) != 0:
+                raise Refuse('stack', 'a jump keeps slots that are not inputs')
         self.check_exits(ins, named)
         in_names = [named[c.lo][0] for c in ins]
         out_names = self.rename(in_names, [n for n, _ in outs])
         lines = []
         for ln in self.lines:
             items = []
+            mark = next((t for t in ln if isinstance(t, WriteMark)), None)
+            if mark is not None:
+                name = next((n for n, c in outs if self.cmp(c.lo, mark.pos) == 0), None)
+                if name is not None and name != mark.var:
+                    lines.append([t for t in ln if isinstance(t, str)] +
+                                 [name, '=', mark.var, ';'])
+                continue
             for t in ln:
                 if isinstance(t, Ref):
                     name, kind = named.get(t.lo, (None, None))
@@ -1444,8 +1856,8 @@ class Case:
         return ('inst(%s, (%s -- %s)) {\n%s}\n'
                 % (self.name, ', '.join(self.effect(n, c, named) for n, c in
                                          zip(in_names, ins)),
-                   ', '.join(self.effect(n, c, named) for n, (_, c) in
-                             zip(out_names, outs)),
+                   ', '.join(self.effect(n, c, named, j) for n, (_, c), j in
+                             zip(out_names, outs, conds)),
                    ''.join('    %s\n' % s for s in stmts)))
 
     def cuts(self, pts):
@@ -1457,7 +1869,9 @@ class Case:
                 uniq.append(p)
         return [Interval(a, b - a) for a, b in zip(uniq, uniq[1:])]
 
-    def effect(self, name, c, named):
+    def effect(self, name, c, named, cond=None):
+        if cond:
+            return '%s if (%s)' % (name, cond)
         if c.size.const() == 1:
             return name
         if not c.size.c and len(c.size.t) == 1:
@@ -1548,6 +1962,39 @@ class _T:
 
 # ---- refusals before the run --------------------------------------------------
 
+def fold_pp(nodes):
+    """'#if X' A '#else' B '#endif' where A and B are each one dispatch:
+    both arms do the same to the generator (JUMP_ABSOLUTE's FAST_LOOPS
+    choice between FAST_DISPATCH and DISPATCH), so it is a dispatch."""
+    out, k = [], 0
+    while k < len(nodes):
+        n = nodes[k]
+        if n.kind == 'pp' and n.text.replace(' ', '').startswith('#if'):
+            arms, cur, j = [], [], k + 1
+            while j < len(nodes):
+                m = nodes[j]
+                t = m.text.replace(' ', '') if m.kind == 'pp' else ''
+                if t.startswith('#if'):
+                    break
+                if t.startswith(('#else', '#elif', '#endif')):
+                    arms.append(cur)
+                    cur = []
+                    if t.startswith('#endif'):
+                        break
+                else:
+                    cur.append(m)
+                j += 1
+            if j < len(nodes) and nodes[j].kind == 'pp' and \
+                    nodes[j].text.replace(' ', '').startswith('#endif') and \
+                    len(arms) >= 2 and all(len(a) == 1 and _is_dispatch(a[0]) for a in arms):
+                out.append(arms[0][0])
+                k = j + 1
+                continue
+        out.append(n)
+        k += 1
+    return out
+
+
 def precheck(nodes, toks):
     for n in flat(nodes):
         if n.kind == 'pp':
@@ -1578,10 +2025,10 @@ def read(src):
             refused.append((name, 'falls through', problem))
             continue
         try:
-            nodes = parse(toks)
+            nodes = fold_pp(parse(toks))
             precheck(nodes, toks)
             c = Case(name, ctx)
-            c.run(nodes, [State()])
+            c.run(c.restructure(nodes), [State()])
             texts.append(c.definition())
         except Refuse as e:
             refused.append((name, e.kind, str(e)))
@@ -1599,7 +2046,11 @@ def parse_defs(text):
 
 
 def effect_size(e, oparg, consts):
-    """How many slots a parsed StackEffect takes at this oparg."""
+    """How many slots a parsed StackEffect takes at this oparg. 'jump' is
+    whether the instruction jumped: dis.stack_effect gives the larger of
+    the two effects, which is the jump's for the slots a jump keeps."""
+    if e.cond and e.cond.strip() == 'jump':
+        return 1
     if e.cond:
         return 1 if cvalue(e.cond, oparg, consts) else 0
     if e.size:

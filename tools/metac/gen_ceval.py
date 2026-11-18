@@ -51,6 +51,8 @@ import ceval_reader  # noqa: E402
 import ctokens  # noqa: E402
 import cslots  # noqa: E402
 import parser as dsl  # noqa: E402  (CPython's Tools/cases_generator/parser.py)
+import gen_abstract  # noqa: E402  (step 4's rules: conditions, residual flags)
+import policy_table  # noqa: E402
 
 ROOT = cslots.ROOT
 # Psyco's counterparts: the compile-time protocol and the object families
@@ -68,7 +70,14 @@ LABELS = {
 # statements with no effect at compile time
 DROPPED = {'assert', 'STAT_INC'}
 # C constants that have a compile-time vinfo: (make, release)
-CONSTANTS = {'Py_None': 'psyco_vi_None()'}
+CONSTANTS = {'Py_None': 'psyco_vi_None()', 'NULL': 'psyco_vi_Zero()'}
+# the objects a run-time branch may choose between, and Psyco's
+# constructor of the one the condition picks (PATTERNS P23, rule
+# bool_select): {(when true, when false): constructor}
+SELECTS = {('Py_True', 'Py_False'): 'PsycoBool_FromCondition'}
+# how a jump is written in the cases (pycompiler.c's macros): the jump
+# statements, the conditional jump, and the end of a case that jumped
+JUMPS = {'JUMPTO', 'JUMPBY'}
 # GETITEM(tuple, oparg) of the code object's constants or names: Ni's macro
 # for the borrowed object (ceval.c names the tuples; bytecodes.c reaches them
 # through the frame)
@@ -160,6 +169,11 @@ def split_statements(toks):
             out.append(toks[k:j + 1])
             k = j + 1
             continue
+        if t.text == 'if' and depth == 0 and not cur:
+            j = if_end(toks, k)
+            out.append(toks[k:j])
+            k = j
+            continue
         k += 1
         if t.text in ('{', 'if', 'else', 'for', 'while', 'switch') and depth == 0:
             raise Skip('control flow (%s)' % t.text)
@@ -175,6 +189,48 @@ def split_statements(toks):
     if cur:
         raise Skip('statement without ;')
     return out
+
+
+def if_end(toks, k):
+    """toks[k] is 'if': the index after its statement (the reader writes
+    every arm in braces)."""
+    def block_end(j):
+        if toks[j].text != '{':
+            raise Skip('if without braces')
+        level = 0
+        while True:
+            level += toks[j].text == '{'
+            level -= toks[j].text == '}'
+            if level == 0:
+                return j + 1
+            j += 1
+    _, j = call_args(toks, k + 1)
+    j = block_end(j)
+    if j < len(toks) and toks[j].text == 'else':
+        j = if_end(toks, j + 1) if toks[j + 1].text == 'if' else block_end(j + 1)
+    return j
+
+
+def if_parts(stmt):
+    """(condition text, then statements, else statements) of an if."""
+    args, j = call_args(stmt, 1)
+    if len(args) != 1:
+        raise Skip('if condition')
+    e = if_end(stmt, 0)
+    k = j
+    level = 0
+    while True:
+        level += stmt[k].text == '{'
+        level -= stmt[k].text == '}'
+        if level == 0:
+            break
+        k += 1
+    then = split_statements(stmt[j + 1:k])
+    other = []
+    if k + 1 < e:
+        rest = stmt[k + 2:e]
+        other = [rest] if rest[0].text == 'if' else split_statements(rest[1:-1])
+    return args[0], then, other
 
 
 def words(stmt):
@@ -271,9 +327,29 @@ def counterpart(fn, csigs, psigs):
     pret, parity, _ = psigs[pname]
     if carity != parity:
         raise Skip('%s: %d arguments, %s takes %d' % (fn, carity, pname, parity))
-    if (cret, pret) not in (('object', 'vinfo'), ('int', 'bool'), ('object', 'virtual')):
+    if (cret, pret) not in (('object', 'vinfo'), ('int', 'bool'), ('object', 'virtual'),
+                            ('int', 'vinfo')):
         raise Skip('%s returns %s, %s returns %s' % (fn, cret, pname, pret))
+    if (cret, pret) == ('int', 'vinfo'):
+        return pname, 'intval'      # a run-time int; NULL is C's error value
     return pname, 'virtual' if pret == 'virtual' else cret
+
+
+def residual_convention(x, stmts):
+    """How the C tests x, a call's result, for an error: from the next
+    ERROR_IF that reads it (the same conventions as gen_abstract's)."""
+    for st in stmts:
+        w = [t.text for t in st]
+        if w[:2] == ['ERROR_IF', '('] and x in w:
+            cond = call_args(st, 1)[0][0]
+            if cond in (x, '%s != 0' % x):
+                return 'zero_ok'
+            if cond == '%s < 0' % x:
+                return 'neg'
+            if cond == '%s == NULL' % x:
+                return 'null'
+            raise Skip('cannot tell how the C checks %s for an error (%s)' % (x, cond))
+    raise Skip('the result in %s is never checked' % x)
 
 
 def constructor(fn, psigs):
@@ -300,7 +376,9 @@ def stack_layout(effects, consts):
     for e in effects:
         if e.type and not e.size:
             raise Skip('stack effect %s has a type' % e.name)
-        if e.cond:
+        if e.cond and e.cond.strip() == 'jump':
+            out.append((e.name, 'jump', None))
+        elif e.cond:
             v = ceval_reader.to_lin(ceval_reader._CTOK.findall(e.cond), env, consts)
             if v is None:
                 raise Skip('condition %s' % e.cond)
@@ -315,7 +393,7 @@ def stack_layout(effects, consts):
     return out
 
 
-def translate(inst, csigs, psigs, consts=None):
+def translate(inst, csigs, psigs, consts=None, effects=None):
     """C text for one case, and the C-API functions it calls."""
     if inst.kind != 'inst':
         raise Skip('legacy definition without a stack effect')
@@ -330,7 +408,7 @@ def translate(inst, csigs, psigs, consts=None):
            and inputs[keep][1:] == outputs[keep][1:]):
         keep += 1
     for n, kind, _ in outputs[keep:]:
-        if kind != 'scalar' or n == 'unused':
+        if (kind != 'scalar' and kind != 'jump') or n == 'unused':
             raise Skip('output %s is an array or conditional' % n)
     for n, kind, _ in inputs[keep:]:
         if n == 'unused':
@@ -361,6 +439,11 @@ def translate(inst, csigs, psigs, consts=None):
     first_commit = None       # index into body of the first irreversible act
     temps = []                # constants made for a call: released after it
     const_of = {}             # 'const' variable -> Ni's expression for it
+    nonneg = set()            # 'int' variables known not negative
+    jump = None               # the conditional jump, the case's last statement
+    jump_all = None           # an unconditional jump, the case's last statement
+    entry = policy_table.ENTRIES.get('Python/ceval.c:TARGET(%s)' % inst.name, {})
+    forget = ('forget', 'before_branch') in [tuple(i[:2]) for i in entry.get('policy', [])]
 
     def commit():
         nonlocal first_commit
@@ -392,6 +475,108 @@ def translate(inst, csigs, psigs, consts=None):
         if text in CONSTANTS:
             return temp(CONSTANTS[text])
         raise Skip('operand %r' % text)
+
+    def residual(x, fn, args):
+        """A C-API function with no Psyco counterpart: a call at run time
+        (P12), with the flags step 4's rules give (gen_abstract.Translator:
+        return type, error convention, effects.py's proofs)."""
+        nonlocal last_fail
+        ctype = {'object': 'PyObject *', 'int': 'int'}.get(csigs[fn][0])
+        if ctype is None:
+            raise Skip('%s returns %s' % (fn, csigs[fn][0]))
+        conv = residual_convention(x, stmts)
+        ops = [operand(a) for a in args]
+        if 'NULL' in ops:
+            raise Skip('%s: a NULL argument' % fn)
+        key = effects.globals.get(fn) if effects is not None else None
+        flags = gen_abstract.Translator(None, {}, {}, effects).flags(ctype, conv, key)
+        call = 'psyco_generic_call(po, %s, %s, "%s"%s)' % (
+            fn, flags, 'v' * len(ops), ''.join(', ' + o for o in ops))
+        calls.append(fn)
+        if conv == 'zero_ok':
+            declare(x + '_ok', 'bool ')
+            var[x] = 'bool'
+            body.append('%s_ok = %s != NULL;' % (x, call))
+        else:
+            declare(x, 'vinfo_t *')
+            var[x] = 'int' if conv == 'neg' else 'object'
+            body.append('%s = %s;' % (x, call))
+        for t in temps:
+            body.append('vinfo_decref(%s, po);' % t)
+        temps.clear()
+        last_fail = len(body)
+        if first_commit is not None:
+            raise Skip('call after an irreversible statement')
+
+    def branch(stmt):
+        """'if (x OP N) A else B' on a run-time int: its condition code (P05,
+        gen_abstract.int_condition), then either the object the arms choose
+        (rule bool_select) or a jump on one arm (pycompiler.c:JUMP_IF_CC)."""
+        nonlocal last_fail
+        cond, then, other = if_parts(stmt)
+        m = re.fullmatch(r'(\w+) (==|!=|<|<=|>|>=) (-?\d+)', cond)
+        if not m or var.get(m.group(1)) != 'int':
+            raise Skip('a branch on %s' % cond)
+        x = m.group(1)
+        if any(x in [t.text for t in st] for st in stmts):
+            raise Skip('%s is read after its test' % x)
+        call, inv = gen_abstract.int_condition(m.group(2), x, m.group(3), True, x in nonneg)
+        cc = 'cc%d' % sum(1 for d in decls if d.startswith('condition_code_t'))
+        decls.append('condition_code_t %s;' % cc)
+        if first_commit is not None:
+            raise Skip('a branch after an irreversible statement (restart rule)')
+        body.append('%s = %s;' % (cc, call))
+        body.append('vinfo_decref(%s, po);' % x)       # its last use
+        var[x] = 'consumed'
+        body.append('if (%s == CC_ERROR)' % cc)
+        body.append('  break;')
+        last_fail = len(body)
+
+        def invert(flip):
+            if inv != flip:
+                body.append('%s = INVERT_CC(%s);' % (cc, cc))
+
+        def chosen(arm):
+            ws = [words(st) for st in arm]
+            inc = [re.fullmatch(r'Py_INCREF \( (\w+) \)', x_) for x_ in ws]
+            rest = [x_ for x_, i in zip(ws, inc) if not i]
+            a = re.fullmatch(r'(\w+) = (\w+)', rest[0]) if len(rest) == 1 else None
+            if a is None or any(i and i.group(1) != a.group(2) for i in inc) \
+                    or len(ws) - len(rest) > 1:
+                return None
+            return a.group(1), a.group(2)
+        st, sf = chosen(then), chosen(other)
+        if st and sf and st[0] == sf[0]:
+            for pair, flip in (((st[1], sf[1]), False), ((sf[1], st[1]), True)):
+                if pair in SELECTS:
+                    invert(flip)
+                    declare(st[0], 'vinfo_t *')
+                    var[st[0]] = 'virtual'
+                    body.append('%s = %s(po, %s);' % (st[0], SELECTS[pair], cc))
+                    return None
+            raise Skip('a choice between %s and %s' % (st[1], sf[1]))
+
+        def jumps(arm):
+            ws = [words(st) for st in arm]
+            j = None
+            if ws and re.fullmatch(r'(JUMPTO|JUMPBY) \( .* \)', ws[-1]):
+                j = ws.pop().replace(' ', '')
+            rel = set()
+            for x_ in ws:
+                r = re.fullmatch(r'Py_DECREF \( (\w+) \)', x_)
+                if not r or in_kind.get(r.group(1)) != 'scalar':
+                    raise Skip('a jump arm doing %s' % x_)
+                rel.add(r.group(1))
+            return j, rel
+        (jt, rt), (jf, rf) = jumps(then), jumps(other)
+        if (jt is None) == (jf is None):
+            raise Skip('a branch with %s' % ('a jump on both arms' if jt else 'no jump'))
+        if stmts:
+            raise Skip('code after a conditional jump')
+        invert(jf is not None)
+        commit()
+        return {'stmt': jt or jf, 'rel': rt if jt else rf, 'fall_rel': rf if jt else rt,
+                'cc': cc}
 
     stmts = split_statements(body_tokens(inst))
     while stmts:
@@ -432,6 +617,23 @@ def translate(inst, csigs, psigs, consts=None):
             body.append('%s = %s;' % (x, y))
             var[x] = 'owned'
             continue
+        if w == ['SETLOCAL', '(', 'oparg', ',', 'NULL', ')']:
+            # a deleted local is a known NULL (the same rule as GETLOCAL's)
+            commit()
+            t = 'tmp%d' % len(decls)
+            decls.append('vinfo_t *%s;' % t)
+            body.append('%s = %s;' % (t, CONSTANTS['NULL']))
+            body.append('SETLOCAL(oparg, %s);' % t)
+            continue
+        if w[0] in JUMPS and len(w) > 1 and w[1] == '(':
+            if stmts:
+                raise Skip('code after a jump')
+            commit()
+            jump_all = s.replace(' ', '')
+            continue
+        if w[0] == 'if':
+            jump = branch(stmt)
+            continue
         if w[:4] == ['SETLOCAL', '(', 'oparg', ','] and len(w) == 6:
             x = w[4]
             if var.get(x) not in ('input', 'owned', 'object', 'virtual') or \
@@ -451,8 +653,11 @@ def translate(inst, csigs, psigs, consts=None):
             cond = error_condition(args[0], var)
             if cond is None:
                 continue        # a virtual object: it can't fail
+            for x in cond[1]:
+                if var.get(x) == 'int':
+                    nonneg.add(x)   # the C's error values are the negative ones
             live = [t for t, o in var.items()
-                    if o in ('object', 'owned', 'virtual') and t not in cond[1]]
+                    if o in ('object', 'owned', 'virtual', 'int') and t not in cond[1]]
             if live:
                 raise Skip('ERROR_IF with %s owned' % ', '.join(live))
             body.append('if (%s)' % cond[0])
@@ -505,10 +710,20 @@ def translate(inst, csigs, psigs, consts=None):
                 args, end = call_args(stmt, 3)
                 if end != len(stmt):
                     raise Skip(s)
-                pname, ret = counterpart(fn, csigs, psigs)
+                try:
+                    pname, ret = counterpart(fn, csigs, psigs)
+                except Skip as e:
+                    if fn not in csigs or 'no Psyco counterpart' not in str(e):
+                        raise
+                    residual(x, fn, args)
+                    continue
                 ops = [operand(a) for a in args]
                 calls.append(fn)
-                if ret == 'virtual':
+                if ret == 'intval':
+                    declare(x, 'vinfo_t *')
+                    var[x] = 'int'
+                    body.append('%s = %s(po, %s);' % (x, pname, ', '.join(ops)))
+                elif ret == 'virtual':
                     declare(x, 'vinfo_t *')
                     var[x] = 'virtual'
                     body.append('%s = %s(%s);' % (x, pname, ', '.join(ops)))
@@ -531,9 +746,30 @@ def translate(inst, csigs, psigs, consts=None):
                 continue
         raise Skip('statement %r' % s)
 
-    # epilogue: inputs not moved to an output are released or stolen
+    # epilogue: inputs not moved to an output are released or stolen; with
+    # a conditional jump this is the path that doesn't jump, and outputs
+    # 'x if (jump)' are kept only by the one that does
+    jout = {n for n, k, _ in outputs if k == 'jump'}
+    if jout - set(in_names):
+        raise Skip('a jump keeps %s, not an input' % ', '.join(sorted(jout - set(in_names))))
+    if jout and jump is None:
+        raise Skip('outputs on a jump with no conditional jump')
+    out_names = [n for n in out_names if n not in jout]
     if decref_all:
         released |= set(in_names) - set(out_names) - stolen
+    jump_line = None
+    if jump is not None:
+        rel_jump = released | jump['rel']
+        popped = [(n, k) for n, k, _ in inputs[keep:] if n not in jout]
+        if any(n in rel_jump for n in jout):
+            raise Skip('a jump keeps an input it released')
+        if out_names or len(popped) > 1 or (popped and (
+                popped[0][1] != 'scalar' or popped[0][0] != inputs[-1][0]
+                or popped[0][0] not in rel_jump)):
+            raise Skip('a jump that pops other than its top input')
+        jump_line = 'JUMP_IF_CC(%s, %s, %d, %d);' % (jump['cc'], jump['stmt'],
+                                                    len(popped), int(forget))
+        released = released | jump['fall_rel']
     for n in in_names:
         if n in kept:
             if n in released or n in stolen:
@@ -544,7 +780,8 @@ def translate(inst, csigs, psigs, consts=None):
         if n not in out_names and n not in released | stolen:
             raise Skip('input %s is neither released nor stored' % n)
     for n, origin in var.items():
-        if n not in in_names and n not in out_names and origin not in ('bool', 'const'):
+        if n not in in_names and n not in out_names and n not in jout and \
+                origin not in ('bool', 'const', 'local', 'consumed'):
             # not a stack value: a result dropped, or interpreter state
             # (3.12's kwnames)
             raise Skip('%s is assigned but is not an output' % n)
@@ -568,6 +805,8 @@ def translate(inst, csigs, psigs, consts=None):
             lines.append('  vinfo_t **%s = STACK_POINTER() - (%s);' % (n, at))
     lines += ['  ' + d for d in decls]
     lines += ['  ' + b for b in body]
+    if jump_line:
+        lines.append('  ' + jump_line)
     late = []           # releases, after the pops above them
     for n, kind, size in reversed(inputs[keep:]):
         if kind == 'array':
@@ -586,8 +825,11 @@ def translate(inst, csigs, psigs, consts=None):
                 late.append('vinfo_decref(%s, po);' % n)
     lines += ['  ' + x for x in late]
     for n, _, _ in outputs[keep:]:
-        lines.append('  PUSH(%s);' % n)
-    lines += ['  goto fine;', '}']
+        if n not in jout:
+            lines.append('  PUSH(%s);' % n)
+    if jump_all:
+        lines.append('  %s;' % jump_all)
+    lines += ['  %s' % ('JUMPED();' if jump_all else 'goto fine;'), '}']
     return '\n'.join(lines), calls
 
 
@@ -624,6 +866,10 @@ def error_condition(cond, var):
         # a local is unbound only if its value is known to be NULL; a
         # run-time or virtual value never is (the same rule as DELETE_FAST)
         return 'psyco_knowntobe(%s, 0)' % m.group(1), set()
+    m = re.fullmatch(r'(\w+) < 0', cond)
+    if m and var.get(m.group(1)) == 'int':
+        # a meta's int result: NULL where the C's is negative
+        return '%s == NULL' % m.group(1), {m.group(1)}
     m = re.fullmatch(r'(\w+)(?: != 0| < 0)?', cond)
     if m and var.get(m.group(1)) == 'bool':
         return '!%s_ok' % m.group(1), {m.group(1)}
@@ -696,7 +942,7 @@ def definitions(src):
     return ceval_reader.read(src)
 
 
-def run(insts, src):
+def run(insts, src, effects=None):
     csigs, psigs = c_signatures(src), psyco_signatures()
     consts = ceval_reader.constants(src)
     done, skipped = [], []
@@ -711,7 +957,7 @@ def run(insts, src):
                 raise Skip('a copy of the stack pointer handed to %s'
                            % next(w[k - 2] for k in range(2, len(w))
                                   if w[k] == '&' and w[k + 1] in copies), 'core')
-            code, _ = translate(inst, csigs, psigs, consts)
+            code, _ = translate(inst, csigs, psigs, consts, effects)
         except Skip as e:
             skipped.append((inst.name, e.kind, str(e)))
             continue
@@ -749,7 +995,12 @@ def build(target):
             'the definitions read from CPython %s do not match'
             ' dis.stack_effect:\n%s'
             % (target.version, '\n'.join('  ' + p for p in problems)))
-    done, skipped = run(insts, target.src)
+    try:
+        import effects
+        g = effects.analyse(target.src)
+    except Exception as e:  # noqa: BLE001 - the build must say why
+        raise cslots.GenError('effects.py: %s' % e)
+    done, skipped = run(insts, target.src, g)
     skipped += refused
     return header(done, skipped), (
         ['generated  %s' % name for name, _ in done] +

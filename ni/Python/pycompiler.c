@@ -877,6 +877,42 @@ static void unwind_except_handler(PsycoObject *po, PyTryBlock *b) {
 
 #define SAVE_NEXT_INSTR(nextinstr1) (po->pr.next_instr = (nextinstr1))
 
+/* Jumps, for the generated cases (pycompiler_gen.h, D79). A case that
+   jumped ends with JUMPED(): the next merge point is the target's.
+   JUMP_IF_CC(cc, JUMP, npop, forget) jumps where cc holds. A run-time cc
+   is a branch to the target's merge point, compiled later from there
+   (psyco_compile_cond); the top npop (0 or 1) values are popped on that
+   path at the target (NEXT_INSTR_POP), because they must still be on the
+   stack when the branch saves its state. forget is the policy's
+   ('forget', 'before_branch'). A cc known now jumps or falls through
+   without code. Where cc doesn't hold, the case goes on. */
+#define JUMPED()                                                               \
+  do {                                                                         \
+    mp = psyco_next_merge_point(po->pr.merge_points, next_instr);              \
+    goto fine;                                                                 \
+  } while (0)
+#define JUMP_IF_CC(cc, JUMP, npop, forget)                                     \
+  do {                                                                         \
+    extra_assert((npop) == 0 || (npop) == 1);                                  \
+    if ((int)(cc) < CC_TOTAL) {                                                \
+      int current_instr = next_instr;                                          \
+      JUMP;                                                                    \
+      if (npop)                                                                \
+        next_instr |= NEXT_INSTR_POP;                                          \
+      SAVE_NEXT_INSTR(next_instr);                                             \
+      if (forget)                                                              \
+        Psyco_ForgetClasses(po);                                               \
+      psyco_compile_cond(                                                      \
+          po, psyco_exact_merge_point(po->pr.merge_points, next_instr), (cc)); \
+      next_instr = current_instr;                                              \
+    } else if ((cc) == CC_ALWAYS_TRUE) {                                       \
+      JUMP;                                                                    \
+      if (npop)                                                                \
+        POP_DECREF();                                                          \
+      JUMPED();                                                                \
+    }                                                                          \
+  } while (0)
+
 /***************************************************************/
  /***   LOAD_GLOBAL tricks                                    ***/
 
@@ -2166,21 +2202,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
         /* case STOP_CODE: this is an error! */
 
-      /* the simple opcodes, generated from ceval.c (D26, D67) */
+      /* the opcodes generated from ceval.c (D26, D67, D79) */
 #include "pycompiler_gen.h"
-
-      case UNARY_NOT:
-        v = PsycoObject_IsTrue(po, TOP());
-        cc = integer_NON_NULL(po, v);
-        if (cc == CC_ERROR)
-          break;
-
-        cc = INVERT_CC(cc);
-        /* turns 'cc' into a virtual Python boolean object */
-        x = PsycoBool_FromCondition(po, cc);
-        POP_DECREF();
-        PUSH(x); /* consumes ref on 'x' */
-        goto fine;
 
       case BREAK_LOOP:
         PycException_Raise(po, vinfo_new(VirtualTime_New(&EBreak)), NULL);
@@ -2567,20 +2590,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-      case DELETE_FAST:
-        x = GETLOCAL(oparg);
-        /* a local variable can only be unbound if its
-           value is known to be (PyObject*)NULL. A run-time
-           or virtual value is always non-NULL. */
-        if (psyco_knowntobe(x, 0)) {
-          unbound_local_error(po, co, oparg);
-          break;
-        }
-
-        u = psyco_vi_Zero();
-        SETLOCAL(oparg, u);
-        goto fine;
-
       /* Cells and free variables: the frame's own cells, which CPython made
          before the frame reached Ni (PsycoObject_FromCode maps them as
          borrowed words). Calls to closure code from compiled code are
@@ -2805,14 +2814,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-      case SET_ADD:
-        w = NTOP(1);
-        v = NTOP(oparg + 1);
-        if (!psyco_generic_call(po, PySet_Add, CfCommonIntZeroOk, "vv", v, w))
-          break;
-        POP_DECREF();
-        goto fine;
-
       case LOAD_METHOD:
         /* ceval pushes either (method, self) or (NULL, attribute). Ni always
            does the latter, with a compile-time NULL; the attribute is
@@ -2919,74 +2920,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(x);
         goto fine;
       }
-
-      case JUMP_FORWARD:
-        JUMPBY(oparg);
-        mp = psyco_next_merge_point(po->pr.merge_points, next_instr);
-        goto fine;
-
-#if HAVE_NEXT_INSTR_POP /* Python >= 2.7 */
-      case JUMP_IF_TRUE_OR_POP:
-      case JUMP_IF_FALSE_OR_POP:
-      case POP_JUMP_IF_FALSE:
-      case POP_JUMP_IF_TRUE:
-#else
-      case JUMP_IF_TRUE:
-      case JUMP_IF_FALSE:
-#endif
-        /* This code is very different from the original
-           interpreter's, because we generally do not know the
-           outcome of PyObject_IsTrue(). In the case of JUMP_IF_xxx
-           we must be prepared to have to compile the two possible
-           paths. */
-        cc = integer_NON_NULL(po, PsycoObject_IsTrue(po, TOP()));
-        if (cc == CC_ERROR)
-          break;
-#if HAVE_NEXT_INSTR_POP
-        if (opcode == JUMP_IF_FALSE_OR_POP || opcode == POP_JUMP_IF_FALSE)
-#else
-        if (opcode == JUMP_IF_FALSE)
-#endif
-          cc = INVERT_CC(cc);
-        if ((int)cc < CC_TOTAL) {
-          /* compile the beginning of the "if true" path */
-          int current_instr = next_instr;
-#if HAVE_NEXT_INSTR_POP
-          JUMPTO(oparg);
-          /* this is the case where we jump */
-          if (opcode == POP_JUMP_IF_FALSE || opcode == POP_JUMP_IF_TRUE)
-            next_instr |= NEXT_INSTR_POP;
-#else
-          JUMPBY(oparg);
-#endif
-          SAVE_NEXT_INSTR(next_instr);
-          Psyco_ForgetClasses(po); /* IsTrue may have run code (F55) */
-          psyco_compile_cond(
-              po, psyco_exact_merge_point(po->pr.merge_points, next_instr), cc);
-          next_instr = current_instr;
-        } else if (cc == CC_ALWAYS_TRUE) {
-#if HAVE_NEXT_INSTR_POP
-          JUMPTO(oparg); /* always jump */
-          /* this is the case where we jump */
-          if (opcode == POP_JUMP_IF_FALSE || opcode == POP_JUMP_IF_TRUE)
-            POP_DECREF();
-#else
-          JUMPBY(oparg); /* always jump */
-#endif
-          mp = psyco_next_merge_point(po->pr.merge_points, next_instr);
-          goto fine;
-        } else
-          ; /* never jump */
-#if HAVE_NEXT_INSTR_POP
-        /* this is the case where we don't jump */
-        POP_DECREF();
-#endif
-        goto fine;
-
-      case JUMP_ABSOLUTE:
-        JUMPTO(oparg);
-        mp = psyco_next_merge_point(po->pr.merge_points, next_instr);
-        goto fine;
 
       case FOR_ITER:
         v = PsycoIter_Next(po, TOP());

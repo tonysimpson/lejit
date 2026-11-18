@@ -1450,11 +1450,11 @@ class Walk:
         if va.ctype in OBJ_TYPES or vb.ctype in OBJ_TYPES:
             raise ResumeHere('a compare of the object %s' % cparse.c_expr(a))
         cc = self.new_tmp('condition_code_t')
-        if vb.bt == 'ct':
-            out('%s = integer_cmp_i(po, %s, %s, %s);' % (cc, va.c, vb.c, PY_OPS[op]))
-        else:
-            out('%s = integer_cmp(po, %s, %s, %s);' % (cc, va.c, vb.c, PY_OPS[op]))
+        call, inverted = int_condition(op, va.c, vb.c, vb.bt == 'ct')
+        out('%s = %s;' % (cc, call))
         self.error_exit(st, out, '%s == CC_ERROR' % cc)
+        if inverted:
+            out('%s = INVERT_CC(%s);' % (cc, cc))
         text = ' '.join(cparse.c_expr(e).replace('(', '').replace(')', '').split())
         how = self.likely.get(text)
         if how is None:
@@ -2009,6 +2009,23 @@ class Walk:
 
 class ResumeHere(Resume):
     """Resume at the statement being translated."""
+
+
+def int_condition(op, a, b, b_ct, nonneg=False):
+    """P05: the call giving the condition code of 'a op b', a a run-time
+    integer (a vinfo_t * expression), b a compile-time C value (b_ct) or
+    another run-time integer, and whether the code must be inverted. A
+    test of equality with 0 is the nonzero test (integer_non_null, as for
+    a NULL test); with a known non-negative, '> 0' is '!= 0' and '<= 0'
+    is '== 0'. Shared with gen_ceval.py."""
+    if b_ct and b == '0':
+        if nonneg and op in ('>', '<='):
+            op = '!=' if op == '>' else '=='
+        if op in ('!=', '=='):
+            return 'integer_non_null(po, %s)' % a, op == '=='
+    if b_ct:
+        return 'integer_cmp_i(po, %s, %s, %s)' % (a, b, PY_OPS[op]), False
+    return 'integer_cmp(po, %s, %s, %s)' % (a, b, PY_OPS[op]), False
 
 
 def paren(c):
