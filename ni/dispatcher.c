@@ -29,6 +29,9 @@
  *    held until the code's owner dies; do_promotion_static_type only
  *    specialises on static types and sends anything else to the
  *    megamorphic version.
+ *  - Parked states: the state a coding pause or a promotion site compiles
+ *    from stays live for the PARK_LIVE_MAX newest, and is frozen after,
+ *    with what a snapshot leaves out kept beside it (psyco_park).
  * psyco_delete_unused_vars drops the dead locals that mergepoints.c lists
  * first in each fatlist. State is global and non-re-entrant (cmpinternal,
  * the static result in psyco_compatible).
@@ -539,6 +542,150 @@ PsycoObject *fpo_unfreeze(FrozenPsycoObject *fpo) {
   pyc_data_build(po, psyco_get_merge_points(po->pr.co, -1));
   psyco_assert_coherent(po);
   return po;
+}
+
+DEFINEVAR long psyco_stat_parked_live = 0;
+DEFINEVAR long psyco_stat_parked_frozen = 0;
+static parked_state_t *live_oldest = NULL, *live_newest = NULL;
+
+static void live_unlink(parked_state_t *ps) {
+  if (ps->older != NULL)
+    ps->older->newer = ps->newer;
+  else if (live_oldest == ps)
+    live_oldest = ps->newer;
+  else
+    return; /* not listed */
+  if (ps->newer != NULL)
+    ps->newer->older = ps->older;
+  else
+    live_newest = ps->older;
+  ps->older = ps->newer = NULL;
+  psyco_stat_parked_live--;
+}
+
+static void live_append(parked_state_t *ps) {
+  ps->older = live_newest;
+  ps->newer = NULL;
+  if (live_newest != NULL)
+    live_newest->newer = ps;
+  else
+    live_oldest = ps;
+  live_newest = ps;
+  psyco_stat_parked_live++;
+}
+
+/* the indices from 'a' to 'v' at exactly 'depth' more levels, not under
+   a constant (fz_compress drops what is known under one) */
+static bool fixpath_at(vinfo_array_t *a, vinfo_t *v, short *path,
+                       int depth) {
+  int i;
+  for (i = 0; i < a->count; i++) {
+    vinfo_t *x = a->items[i];
+    if (x == NULL)
+      continue;
+    *path = i;
+    if (depth == 0 ? x == v
+                   : x->array != NullArray && !is_compiletime(x->source) &&
+                         fixpath_at(x->array, v, path + 1, depth - 1))
+      return true;
+  }
+  return false;
+}
+
+/* the shortest such path, ended by -1 if shorter than FIXPATH_MAX: the
+   variable is nearly always a local or on the stack */
+static bool fixpath_find(vinfo_array_t *a, vinfo_t *v, short *path) {
+  int depth;
+  for (depth = 0; depth < FIXPATH_MAX; depth++)
+    if (fixpath_at(a, v, path, depth)) {
+      if (depth + 1 < FIXPATH_MAX)
+        path[depth + 1] = -1;
+      return true;
+    }
+  return false;
+}
+
+/* the oldest live state, frozen, or left live for good */
+static void park_freeze(parked_state_t *ps) {
+  PsycoObject *po = ps->live;
+  FrozenPsycoObject fz;
+  live_unlink(ps);
+  ps->fixpath[0] = -1;
+  if (ps->fix != NULL && !fixpath_find(&po->vlocals, ps->fix, ps->fixpath))
+    return;
+  psyco_assert_coherent(po);
+  fpo_mark_new(&fz);
+  fz.fz_pyc_data = pyc_data_new(&po->pr);
+  fz_build(&fz, &po->vlocals);
+  fz.fz_stuff.fz_stack_depth = po->stack_depth;
+  SAVE_PROCESSOR_FROZENOBJECT((&fz), po);
+  ps->fz = fz;
+  ps->respawn_proxy = po->respawn_proxy;
+  ps->merge_points = po->pr.merge_points;
+  ps->mp_serial = po->mp_serial;
+  ps->respawn_cnt = po->respawn_cnt;
+  ps->stack_base = po->pr.stack_base;
+  ps->stack_level = po->pr.stack_level;
+  ps->split_after_global = po->pr.split_after_global;
+  ps->live = NULL;
+  ps->fix = NULL;
+  psyco_stat_parked_frozen++;
+  PsycoObject_Delete(po);
+}
+
+DEFINEFN void psyco_park(parked_state_t *ps, PsycoObject *po, vinfo_t *fix) {
+  fpo_mark_unused(&ps->fz);
+  ps->live = po;
+  ps->fix = fix;
+  if (po->pr.exc != NULL || po->pr.val != NULL || po->pr.tb != NULL)
+    return;
+  live_append(ps);
+  if (psyco_stat_parked_live > PARK_LIVE_MAX)
+    park_freeze(live_oldest);
+}
+
+DEFINEFN PsycoObject *psyco_unpark(parked_state_t *ps, vinfo_t **fix) {
+  PsycoObject *po = ps->live;
+  if (po != NULL) {
+    /* the copy has the 'tmp' marks of 'po' pointing into it */
+    PsycoObject *copy = PsycoObject_Duplicate(po);
+    *fix = ps->fix;
+    ps->live = copy;
+    if (ps->fix != NULL)
+      ps->fix = ps->fix->tmp;
+    return po;
+  } else {
+    vinfo_t *v = NULL;
+    vinfo_array_t *a;
+    int i;
+    po = fpo_unfreeze(&ps->fz);
+    po->respawn_proxy = ps->respawn_proxy;
+    po->pr.merge_points = ps->merge_points;
+    po->mp_serial = ps->mp_serial;
+    po->respawn_cnt = ps->respawn_cnt;
+    po->pr.stack_base = ps->stack_base;
+    po->pr.stack_level = ps->stack_level;
+    po->pr.split_after_global = ps->split_after_global;
+    psyco_assert_coherent(po);
+    a = &po->vlocals;
+    for (i = 0; i < FIXPATH_MAX && ps->fixpath[i] >= 0; i++) {
+      v = a->items[ps->fixpath[i]];
+      a = v->array;
+    }
+    *fix = v;
+    return po;
+  }
+}
+
+DEFINEFN void psyco_park_release(parked_state_t *ps) {
+  live_unlink(ps);
+  if (ps->live != NULL)
+    PsycoObject_Delete(ps->live);
+  ps->live = NULL;
+  if (ps->fz.fz_vlocals_opc != NULL || ps->fz.fz_pyc_data != NULL)
+    psyco_stat_parked_frozen--;
+  fpo_release(&ps->fz);
+  fpo_mark_unused(&ps->fz);
 }
 
 /*****************************************************************
@@ -2233,8 +2380,7 @@ typedef struct rt_local_buf_s {
 typedef struct { /* produced at compile time and read by the dispatcher */
   INTERNAL_PROMOTION_FIELDS
 
-  PsycoObject *po; /* state before promotion */
-  vinfo_t *fix;    /* variable to promote */
+  parked_state_t state; /* before promotion, and the variable to promote */
 
   rt_local_buf_t *local_chained_list;
 #if NI_CODESTATS
@@ -2354,7 +2500,7 @@ static __attribute__((noinline)) code_t *do_promotion_internal(rt_promotion_t *f
   NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
   psyco_guard_push(&g);
   if (sigsetjmp(g.env, 0) != 0)
-    psyco_guard_retry(&g); /* fs->po is still a whole state */
+    psyco_guard_retry(&g); /* the parked state is still whole */
   if (flags & SkFlagPyObj)
     Py_INCREF((PyObject *)key);
   r = do_promotion_internal_body(fs, key, sk_new(key, flags));
@@ -2371,20 +2517,8 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
   CodeBufferObject *codebuf;
   code_t *result;
   vinfo_t *v;
-  PsycoObject *newpo;
-  PsycoObject *po = fs->po;
+  PsycoObject *po = psyco_unpark(&fs->state, &v);
   mergepoint_t *mp;
-
-  /* get a copy of the compiler state */
-  newpo = PsycoObject_Duplicate(po);
-  if (newpo == NULL)
-    OUT_OF_MEMORY();
-  /* store the copy back into 'fs' and use the old 'po' to compile.
-     We do so because in 'newpo' all 'tmp' fields are now NULL,
-     but no longer in 'po'. */
-  fs->po = newpo;
-  v = fs->fix;      /* get the variable we will promote to compile-time... */
-  fs->fix = v->tmp; /*     ...and update 'fs' with its copy in 'newpo'     */
 
   /* fix the value of 'v' */
   CHKTIME(v->source, RunTime); /* from run-time to compile-time */
@@ -2451,20 +2585,8 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
   CodeBufferObject *codebuf;
   code_t *result;
   vinfo_t *v;
-  PsycoObject *newpo;
-  PsycoObject *po = fs->po;
+  PsycoObject *po = psyco_unpark(&fs->state, &v);
   mergepoint_t *mp;
-
-  /* get a copy of the compiler state */
-  newpo = PsycoObject_Duplicate(po);
-  if (newpo == NULL)
-    OUT_OF_MEMORY();
-  /* store the copy back into 'fs' and use the old 'po' to compile.
-     We do so because in 'newpo' all 'tmp' fields are now NULL,
-     but no longer in 'po'. */
-  fs->po = newpo;
-  v = fs->fix;      /* get the variable we will mark as megamorphic... */
-  fs->fix = v->tmp; /*     ...and update 'fs' with its copy in 'newpo'     */
 
   /* mark 'v' as megamorphic */
   CHKTIME(v->source, RunTime);
@@ -2725,13 +2847,14 @@ static code_t *do_promotion_static_type(rt_promotion_t *fs, PyObject *key) {
 
 /* the site's state, when its owner dies */
 static void promotion_release(void *closure) {
-  PsycoObject_Delete(((rt_promotion_t *)closure)->po);
+  psyco_park_release(&((rt_promotion_t *)closure)->state);
 }
 
 DEFINEFN
 code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
   rt_promotion_t *fs;
   void *do_promotion;
+  code_t *code;
 
   /* a promotion ends the block, so a replay stops before one; were it not
      so, its record would outlive the replay */
@@ -2770,11 +2893,11 @@ code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
   /* fill in the constant structure that 'do_promotion' will get as parameter */
   clear_tmp_marks(&po->vlocals);
   psyco_assert_coherent(po);
-  fs->po = po; /* don't release 'po' */
-  fs->fix = fix;
   fs->local_chained_list = NULL;
   psyco_stub_set_release(fs, &promotion_release);
-  return po->code;
+  code = po->code;
+  psyco_park(&fs->state, po, fix);
+  return code;
 }
 
 /*****************************************************************/

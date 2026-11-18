@@ -285,6 +285,14 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
     Py_XDECREF(t);
   }
   if (d != NULL) {
+    /* compiler states kept for pauses and promotions (dispatcher.h) */
+    PyObject *t = Py_BuildValue("(ll)", psyco_stat_parked_live,
+                                psyco_stat_parked_frozen);
+    if (t == NULL || PyDict_SetItemString(d, "parked", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+  if (d != NULL) {
     /* cycle scans run, the owners they freed, and the records counted
        now (codemanager.c) */
     PyObject *t = Py_BuildValue("(lll)", psyco_stat_owner_scans,

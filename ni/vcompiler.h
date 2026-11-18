@@ -800,15 +800,17 @@ EXTERNFN CodeBufferObject *psyco_compile_code(PsycoObject *po,
 
 /* Prepare a 'coding pause', i.e. a stub (idispatcher.h) that will be entered
    only if the execution actually reaches it to go on with compilation.
-   'po' is the PsycoObject corresponding to the stub.
-   'condition' may not be CC_ALWAYS_FALSE.
-   The (possibly conditional) jump to the stub is written at 'po->code'.
+   'po' is the PsycoObject corresponding to the stub, which it takes
+   (parked, dispatcher.h). 'condition' may not be CC_ALWAYS_FALSE.
+   The (possibly conditional) jump to the stub is written at 'po->code';
+   the end of the jump is returned.
    When the execution reaches the stub, 'resume_fn' is called, the original
    jump is repointed to the newly compiled code and the record is freed. */
 typedef code_t *(*resume_fn_t)(PsycoObject *po, void *extra);
-EXTERNFN void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
-                                 resume_fn_t resume_fn, void *extra,
-                                 size_t extrasize);
+EXTERNFN code_t *psyco_coding_pause(PsycoObject *po,
+                                    condition_code_t jmpcondition,
+                                    resume_fn_t resume_fn, void *extra,
+                                    size_t extrasize);
 
 /* management functions; see comments in compiler.c */
 #if ALL_CHECKS

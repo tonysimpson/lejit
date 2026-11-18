@@ -62,6 +62,46 @@ EXTERNFN void fpo_release(FrozenPsycoObject* fpo);
 /* build a 'live' PsycoObject from frozen snapshot */
 EXTERNFN PsycoObject* fpo_unfreeze(FrozenPsycoObject* fpo);
 
+/* A compiler state kept until run time reaches it: a coding pause's, or a
+   promotion site's for each new value, with a variable in it ('fix', the
+   promoted one). Most are never used, and a live PsycoObject is about four
+   times the size of its frozen form, but freezing one and unfreezing it
+   costs more than copying it. So a parked state stays live until
+   PARK_LIVE_MAX newer ones are, then is frozen: a short program never
+   freezes one. A frozen state has the fields a snapshot rebuilds or
+   leaves out saved as they were, and 'fix' as the indices leading to it;
+   unlike fpo_build, freezing keeps what is known of constants' classes,
+   since the code compiled from it runs only after the checks before it.
+   A state with a pending pseudo-exception, or whose 'fix' is too deep or
+   under a constant, stays live. */
+#ifndef PARK_LIVE_MAX
+#define PARK_LIVE_MAX 4096
+#endif
+#define FIXPATH_MAX 6
+typedef struct parked_state_s {
+  PsycoObject* live;   /* the live state, or NULL once frozen */
+  vinfo_t* fix;        /* in it */
+  struct parked_state_s *older, *newer;  /* the live ones not frozen yet */
+  FrozenPsycoObject fz;
+  CodeBufferObject* respawn_proxy;
+  PyObject* merge_points;
+  unsigned long mp_serial;
+  int respawn_cnt, stack_base, stack_level;
+  short fixpath[FIXPATH_MAX];   /* ended by -1 if shorter */
+  char split_after_global;
+} parked_state_t;
+/* parks 'po', which it takes; 'fix' may be NULL. 'ps' is zeroed */
+EXTERNFN void psyco_park(parked_state_t* ps, PsycoObject* po, vinfo_t* fix);
+/* a state to compile from, and 'fix' in it. The parked one stays, for a
+   compile that runs out of memory to start again from: a frozen one is
+   unfrozen afresh, a live one is returned and replaced by a copy
+   (psyco_duplicate) */
+EXTERNFN PsycoObject* psyco_unpark(parked_state_t* ps, vinfo_t** fix);
+/* releases the parked state; it may be released again */
+EXTERNFN void psyco_park_release(parked_state_t* ps);
+/* states parked live and frozen: ni._stats()['parked'] */
+EXTERNVAR long psyco_stat_parked_live, psyco_stat_parked_frozen;
+
 /* inspection */
 PSY_INLINE int get_stack_depth(FrozenPsycoObject* fpo) {
 	return fpo->fz_stuff.fz_stack_depth;

@@ -716,7 +716,7 @@ void psyco_assert_field(PsycoObject *po, vinfo_t *vi, defield_t df,
 /*****************************************************************/
 
 typedef struct {
-  PsycoObject *po;
+  parked_state_t state;
   resume_fn_t resume_fn;
   void *jump_to_fix;
 } coding_pause_t;
@@ -738,31 +738,23 @@ static code_t *do_resume_coding(coding_pause_t *cp, long value) {
 
 static code_t *do_resume_coding_body(coding_pause_t *cp) {
   /* called when entering a coding_pause (described by 'cp'). The compile
-     consumes the state, so the record keeps a copy until it is done, for
-     a compile that runs out of memory to start again from. */
-  PsycoObject *po = cp->po;
-  code_t *target;
-  cp->po = PsycoObject_Duplicate(po);
-  if (cp->po == NULL) {
-    cp->po = po;
-    OUT_OF_MEMORY();
-  }
-  target = (cp->resume_fn)(po, cp + 1); /* resume compilation work */
+     consumes the state, so it starts from a copy, and the parked one is
+     kept until it is done, for a compile that runs out of memory to start
+     again from. */
+  vinfo_t *unused;
+  code_t *target = (cp->resume_fn)(psyco_unpark(&cp->state, &unused), cp + 1);
 
   /* then fix the jump to point to 'target' */
   change_cond_jump_target(cp->jump_to_fix, target);
 
   /* the only way in was that jump: the stub is never entered again */
-  PsycoObject_Delete(cp->po);
-  cp->po = NULL;
+  psyco_park_release(&cp->state);
   return target;
 }
 
 /* a pause never reached when its owner dies */
 static void coding_pause_release(void *closure) {
-  coding_pause_t *cp = (coding_pause_t *)closure;
-  if (cp->po != NULL)
-    PsycoObject_Delete(cp->po);
+  psyco_park_release(&((coding_pause_t *)closure)->state);
 }
 
 /* Prepare a 'coding pause', i.e. a stub (idispatcher.h) that will be
@@ -774,10 +766,11 @@ static void coding_pause_release(void *closure) {
    When the execution reaches the stub, 'resume_fn' is called, the original
    jump is repointed to the newly compiled code and the record is freed. */
 DEFINEFN
-void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
-                        resume_fn_t resume_fn, void *extra, size_t extrasize) {
+code_t *psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
+                           resume_fn_t resume_fn, void *extra,
+                           size_t extrasize) {
   coding_pause_t *cp;
-  code_t *stub;
+  code_t *stub, *end;
 
   /* the trampoline's call clobbers the flags: a condition
      still live in them, such as a virtual bool just compared, is saved in a
@@ -795,7 +788,6 @@ void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
   psyco_resolved_cc(po, jmpcondition); /* jmpcondition is true if we follow
                                           the branch */
   extra_assert(!HAS_CCREG(po));
-  cp->po = po;
   cp->resume_fn = resume_fn;
   if (extrasize > 0) /* 'extra' may be NULL */
     memcpy(cp + 1, extra, extrasize);
@@ -803,6 +795,9 @@ void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
 
   /* write the jump to the stub */
   cp->jump_to_fix = conditional_jump_to(po, stub, jmpcondition);
+  end = po->code;
+  psyco_park(&cp->state, po, NULL);
+  return end;
 }
 
 /* for psyco_coding_pause(): a resume function that simply resumes compilation.
@@ -924,8 +919,8 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
          her program.
        */
       psyco_compatible_keep_facts = false;
-      psyco_coding_pause(po, CC_ALWAYS_TRUE, &psyco_resume_compile, NULL, 0);
-      return po->code;
+      return psyco_coding_pause(po, CC_ALWAYS_TRUE, &psyco_resume_compile,
+                                NULL, 0);
     }
 
     /* Enough space left, continue in the same buffer. */
@@ -1057,8 +1052,8 @@ void psyco_compile_cond(PsycoObject *po, mergepoint_t *mp,
     */
     if (cmp != NULL)
       psyco_stabilize(cmp);
-    psyco_coding_pause(po2, condition, &psyco_resume_compile, NULL, 0);
-    po->code = po2->code;
+    po->code =
+        psyco_coding_pause(po2, condition, &psyco_resume_compile, NULL, 0);
   }
 }
 
@@ -1112,8 +1107,8 @@ CodeBufferObject *psyco_compile_code(PsycoObject *po, mergepoint_t *mp) {
        function that calls a function that needs compiling, recursively.
        Delay compilation until run-time, when psyco_locked_buffers() will
        be much smaller. */
-    psyco_coding_pause(po, CC_ALWAYS_TRUE, &psyco_resume_compile, NULL, 0);
-    code1 = po->code;
+    code1 =
+        psyco_coding_pause(po, CC_ALWAYS_TRUE, &psyco_resume_compile, NULL, 0);
   }
 
   /* we have written some code into a new codebuf, now shrink it to
