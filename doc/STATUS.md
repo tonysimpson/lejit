@@ -1,5 +1,14 @@
 # Status
 
+## 2026-11-18: oparg-dependent stack effects (GENERATION.md step 8, front end; `0f5af55`, D73)
+
+The `ceval.c` reader writes array and conditional stack effects as 3.12's DSL does, derived from the C; METACOMPILER.md "`ceval.c` reader". [run]
+- **Of the 18 refused for oparg: 17 read, 5 generated** (`LIST_APPEND`, `MAP_ADD`, `BUILD_TUPLE`, `BUILD_LIST`, `BUILD_SLICE`; hand-written cases removed from `pycompiler.c`, same calls in the same order). `CALL_FUNCTION_EX` is refused: CPython 3.7.17 leaks `kwargs` when `PyDict_New` fails. The calls are read (effects from `call_function`'s body) and skipped as core. In all: read 74 of 119 (was 51), generated 49 (was 44).
+- **Effects:** every one read equals `dis.stack_effect` at 13 opargs, in every generation. Mutation test (four wrong readers, eight `ceval.c` edits, one back-half change): each stops generation or drops the opcode; none generates a different case.
+- **Same code:** `tools/samecode.py 4a88d79 0f5af55`: 83 units the same, 0 differ (4,075 code objects).
+- Checked build: generators twice, same output, and the build used it; `tests/run.py` 749 pass (two new cases, `builds` and `build_errors`: the five opcodes, 0/1/n items, and `MAP_ADD`'s error exit); `tests/compile_bounds.py` 7 checks; the seven `tools/profile_bench.py` runs; `tests/cpython_tests.py -j 2` default set 285 modules, 0 unexpected.
+- Release build, instructions per warm iteration (`perf stat -e instructions:u`, `profile_bench.py` 1 s and 4 s, raytrace 2 s and 8 s, PYTHONHASHSEED=0), `c795ca4` → this code before its rebase onto `4a88d79` (the rebase changed no emitted code: same code above): richards 168.93 → 168.93 M, deltablue 27.17 → 27.19, raytrace 3,138.7 → 3,118.6, go 1,074.6 → 1,072.7, hexiom 40.68 → 40.68, chaos 469.3 → 468.7, pyflate 2,012.06 → 2,012.07: no change (the machine code is the same; raytrace and go move by noise).
+- **Risks:** an input kept in place and read at the wrong depth leaves the effect unchanged, so only the behaviour tests would see it (shown by mutation: `PEEK(oparg + 1)` in `LIST_APPEND` generates a different case). The reader is now about 1,600 lines; a refusal's kind can change as rules are added (`LOAD_METHOD` and `GET_AITER` moved from control flow to stack). The fill-loop rule relies on Ni's constructors taking new references.
 ## 2026-11-18: policy table and effect rules (GENERATION.md step 3, `e7fd745`, D71)
 
 The generator's judgement is data, checked on every build; call effects are computed from CPython's source. [run]

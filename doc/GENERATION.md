@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`) and 3 (`e7fd745`) done
+status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`) and 3 (`e7fd745`) done; step 8 begun (front end, `0f5af55`)
 ---
 # Plan of work: generate the translated layer on 3.7
 
@@ -85,6 +85,15 @@ The policy table is `tools/metac/policy_table.py`, checked by `policy.py` in eve
 - **Step 7:** the `limit` items (`max_args`, `depth`, `max_frees`) and `LIMITS`; `forget` items at the call sites.
 - **Step 8:** the `ceval.c` entries' `guard`, `promote` and `other` items (`LOAD_GLOBAL`'s dict-version guard, `ends_block`), and `LIGHT_OPCODES`.
 - When code moves from hand-written to generated, the checks that compare the table with Ni's code (limits, `cannot_block_init`, whitelists) should be replaced by the generator reading the table.
+
+## Step 8, front end: oparg-dependent stack effects (`0f5af55`, D73) [run]
+
+The reader expresses stack effects that depend on oparg as 3.12's DSL does (`values[oparg]`, `step if (oparg == 3)`, `unused[oparg - 1]`), derived from the C; METACOMPILER.md "`ceval.c` reader".
+- **Of the 18 opcodes step 2 refused for oparg: 17 read, 5 generated** (`LIST_APPEND`, `MAP_ADD`, `BUILD_TUPLE`, `BUILD_LIST`, `BUILD_SLICE`; their hand-written cases left `pycompiler.c`, same calls in the same order, and `tools/samecode.py` finds the same machine code everywhere). `CALL_FUNCTION_EX` is refused: CPython 3.7 leaks `kwargs` on one error path. The 12 read but not generated need a residual-call rule with effect flags (step 3: `SET_ADD`, `BUILD_SET`, `BUILD_STRING`), loops with error exits in the back half (`BUILD_MAP`, `BUILD_CONST_KEY_MAP`, the four `BUILD_*_UNPACK`), `ceval.c` helpers translated (`UNPACK_*`'s `unpack_iterable`), or a `switch` on oparg folded (`FORMAT_VALUE`); each is in the failures log.
+- **Calls read, not generated:** `CALL_FUNCTION`, `CALL_FUNCTION_KW`, `CALL_METHOD`, their effects from `call_function`'s own body. They are core (step 7).
+- **Totals:** read 74 of 119 (was 51), generated 49 (was 44); refused 45: core 18, control flow 9, shared code 8, stack 5, falls through 4, preprocessor 1.
+- **Policy table:** the five entries' `ni` now name `gen_ceval.py:translate` (`policy.py` fails the build while they name the removed hand cases). Their `virtual` items (`BUILD_TUPLE`, `BUILD_LIST`, `BUILD_SLICE`) are not read: the generator finds the constructor by PATTERNS E's rule, and `BUILD_LIST`'s length limit is inside `PsycoList_New`. Step 6 should read those items or drop them, so the table and the rule can't disagree unnoticed.
+- **Left for step 8's back half:** branches on run-time values as condition codes (`UNARY_NOT`, `POP_JUMP_IF_*`), loops with error exits, `cmp_outcome`'s switch, jumps.
 
 ## Risks
 
