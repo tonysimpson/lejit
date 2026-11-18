@@ -53,8 +53,10 @@ import cslots  # noqa: E402
 import parser as dsl  # noqa: E402  (CPython's Tools/cases_generator/parser.py)
 
 ROOT = cslots.ROOT
-PSYCO_HEADERS = [os.path.join(ROOT, 'ni', 'Objects', h)
-                 for h in ('pabstract.h', 'pobject.h')]
+# Psyco's counterparts: the compile-time protocol and the object families
+PSYCO_DIR = os.path.join(ROOT, 'ni', 'Objects')
+PSYCO_HEADERS = sorted(os.path.join(PSYCO_DIR, h) for h in os.listdir(PSYCO_DIR)
+                       if h.startswith('p') and h.endswith('.h'))
 BEGIN, END = '// BEGIN BYTECODES //', '// END BYTECODES //'
 
 # ERROR_IF labels: what a failed instruction does in Ni. 'error' is a
@@ -76,7 +78,9 @@ CODE_TUPLES = {'consts': 'GETCONST(oparg)', 'names': 'GETNAMEV(oparg)',
 
 
 class Skip(Exception):
-    pass
+    def __init__(self, why, kind='vocabulary'):
+        super().__init__(why)
+        self.kind = kind
 
 
 # ---- reading definitions -------------------------------------------------
@@ -138,8 +142,25 @@ def body_tokens(inst):
 
 
 def split_statements(toks):
+    """Statements; a 'for (...) {...}' is one, its tokens kept whole (only
+    the PATTERNS E fill loop is translated, by translate())."""
     out, cur, depth = [], [], 0
-    for t in toks:
+    k = 0
+    while k < len(toks):
+        t = toks[k]
+        if t.text == 'for' and depth == 0 and not cur:
+            j = k + 1
+            level = 0
+            while True:
+                level += toks[j].text in ('(', '{')
+                level -= toks[j].text in (')', '}')
+                if level == 0 and toks[j].text == '}':
+                    break
+                j += 1
+            out.append(toks[k:j + 1])
+            k = j + 1
+            continue
+        k += 1
         if t.text in ('{', 'if', 'else', 'for', 'while', 'switch') and depth == 0:
             raise Skip('control flow (%s)' % t.text)
         if t.text in '([':
@@ -187,10 +208,13 @@ def call_args(stmt, i):
 
 def c_signatures(src):
     """{name: (return kind, arity)} for PyAPI_FUNC declarations in the source's
-    Include/abstract.h and object.h."""
+    Include/*.h."""
     sigs = {}
-    for h in ('abstract.h', 'object.h'):
-        with open(os.path.join(src, 'Include', h)) as f:
+    inc = os.path.join(src, 'Include')
+    for h in sorted(os.listdir(inc)):
+        if not h.endswith('.h'):
+            continue
+        with open(os.path.join(inc, h), errors='replace') as f:
             toks = ctokens.tokenize(f.read(), h)[0]
         for i, t in enumerate(toks):
             if t.text != 'PyAPI_FUNC' or toks[i + 1].text != '(':
@@ -208,7 +232,10 @@ def c_signatures(src):
 
 
 def psyco_signatures():
-    """{name: (return kind, arity without po)} for Psyco* functions."""
+    """{name: (return kind, arity without po, parameter types)} for Psyco*
+    functions. Kind 'vinfo' (NULL: error) and 'bool' (false: error) take po
+    first; 'virtual' doesn't, so it can't raise: it builds a virtual object
+    (PATTERNS E)."""
     sigs = {}
     for h in PSYCO_HEADERS:
         with open(h) as f:
@@ -223,43 +250,103 @@ def psyco_signatures():
             if kind is None:
                 continue
             close = ctokens.match_close(toks, i + 1)
-            params = ctokens.split_top(toks[i + 2:close], ',')
-            if not params or [u.text for u in params[0]][:1] != ['PsycoObject']:
+            params = [' '.join(u.text for u in p[:-1]) if len(p) > 1 else p[0].text
+                      for p in ctokens.split_top(toks[i + 2:close], ',')]
+            if not params:
                 continue
-            sigs[t.text] = (kind, len(params) - 1)
+            if params[0].split(' ')[:1] == ['PsycoObject']:
+                sigs[t.text] = (kind, len(params) - 1, params[1:])
+            elif kind == 'vinfo' and toks[close + 1].text == ';':
+                sigs[t.text] = ('virtual', len(params), params)
     return sigs
 
 
 def counterpart(fn, csigs, psigs):
     if fn not in csigs:
-        raise Skip('%s: no declaration in Include/abstract.h' % fn)
+        raise Skip('%s: no declaration in Include/' % fn)
     pname = 'Psyco' + fn[2:]
     if pname not in psigs:
         raise Skip('%s: no Psyco counterpart %s' % (fn, pname))
     cret, carity = csigs[fn]
-    pret, parity = psigs[pname]
+    pret, parity, _ = psigs[pname]
     if carity != parity:
         raise Skip('%s: %d arguments, %s takes %d' % (fn, carity, pname, parity))
-    if (cret, pret) not in (('object', 'vinfo'), ('int', 'bool')):
+    if (cret, pret) not in (('object', 'vinfo'), ('int', 'bool'), ('object', 'virtual')):
         raise Skip('%s returns %s, %s returns %s' % (fn, cret, pname, pret))
-    return pname, cret
+    return pname, 'virtual' if pret == 'virtual' else cret
+
+
+def constructor(fn, psigs):
+    """Psyco's counterpart of PyT_New(n) filled from an array: PsycoT_New
+    taking (int, vinfo_t **) after po if it has one. The items are new
+    references to it (the fact about Ni's constructors this relies on), so
+    the array C stole is released after."""
+    pname = 'Psyco' + fn[2:]
+    if pname not in psigs:
+        raise Skip('%s: no Psyco counterpart %s' % (fn, pname))
+    kind, _, params = psigs[pname]
+    if [p.replace(' ', '') for p in params] != ['int', 'vinfo_t**']:
+        raise Skip('%s: %s does not take (count, items)' % (fn, pname))
+    return pname, kind
 
 
 # ---- translation -----------------------------------------------------------
 
-def translate(inst, csigs, psigs):
+def stack_layout(effects, consts):
+    """[(name, kind, size)] for stack effects: kind scalar, cond (size: its
+    0/1 atom) or array (size: a Lin in oparg)."""
+    env = {'oparg': ceval_reader.Lin.atom('oparg')}
+    out = []
+    for e in effects:
+        if e.type and not e.size:
+            raise Skip('stack effect %s has a type' % e.name)
+        if e.cond:
+            v = ceval_reader.to_lin(ceval_reader._CTOK.findall(e.cond), env, consts)
+            if v is None:
+                raise Skip('condition %s' % e.cond)
+            out.append((e.name, 'cond', ceval_reader.as_bool(v)))
+        elif e.size:
+            v = ceval_reader.to_lin(ceval_reader._CTOK.findall(e.size), env, consts)
+            if v is None:
+                raise Skip('array size %s' % e.size)
+            out.append((e.name, 'array', v))
+        else:
+            out.append((e.name, 'scalar', ceval_reader.Lin(1)))
+    return out
+
+
+def translate(inst, csigs, psigs, consts=None):
     """C text for one case, and the C-API functions it calls."""
     if inst.kind != 'inst':
         raise Skip('legacy definition without a stack effect')
-    inputs = [e for e in inst.inputs if isinstance(e, dsl.StackEffect)]
-    outputs = list(inst.outputs)
-    for e in inputs + outputs:
-        if e.size or e.cond or e.type:
-            raise Skip('stack effect %s needs arrays, conditions or types' % e.name)
-    in_names = [e.name for e in inputs]
-    out_names = [e.name for e in outputs]
+    inputs = stack_layout([e for e in inst.inputs if isinstance(e, dsl.StackEffect)],
+                          consts or {})
+    outputs = stack_layout(inst.outputs, consts or {})
+    # the bottom slots an instruction leaves as they are (3.12's
+    # 'list, unused[oparg-1], v -- list, unused[oparg-1]')
+    keep = 0
+    while (keep < min(len(inputs), len(outputs))
+           and inputs[keep][0] == outputs[keep][0]
+           and inputs[keep][1:] == outputs[keep][1:]):
+        keep += 1
+    for n, kind, _ in outputs[keep:]:
+        if kind != 'scalar' or n == 'unused':
+            raise Skip('output %s is an array or conditional' % n)
+    for n, kind, _ in inputs[keep:]:
+        if n == 'unused':
+            raise Skip('unused input popped')
+    in_kind = {n: k for n, k, _ in inputs}
+    in_names = [n for n, _, _ in inputs if n != 'unused']
+    out_names = [n for n, _, _ in outputs if n != 'unused']
     if len(set(in_names)) != len(in_names) or len(set(out_names)) != len(out_names):
         raise Skip('repeated stack name')
+    kept = [n for n, _, _ in inputs[:keep]]
+    # depth of each input below the top, as C
+    depth = {}
+    d = ceval_reader.Lin(0)
+    for n, kind, size in reversed(inputs):
+        d = d + size
+        depth[n] = d
 
     # variable -> origin: 'input', 'local', 'const', 'object' (a meta's
     # result, owned), 'bool' (a meta's int result), 'owned' (incref'd)
@@ -306,7 +393,9 @@ def translate(inst, csigs, psigs):
             return temp(CONSTANTS[text])
         raise Skip('operand %r' % text)
 
-    for stmt in split_statements(body_tokens(inst)):
+    stmts = split_statements(body_tokens(inst))
+    while stmts:
+        stmt = stmts.pop(0)
         w = [t.text for t in stmt]
         s = words(stmt)
         if w[0] in DROPPED or (len(w) == 4 and w[:3] == ['(', 'void', ')']):
@@ -314,9 +403,12 @@ def translate(inst, csigs, psigs):
         if s == 'DECREF_INPUTS ( )':
             decref_all = True
             continue
-        if len(w) == 4 and w[0] == 'Py_DECREF' and w[2] in in_names:
+        if len(w) == 4 and w[0] in ('Py_DECREF', 'Py_XDECREF') and w[2] in in_names \
+                and (w[0] == 'Py_DECREF') == (in_kind[w[2]] == 'scalar'):
             released.add(w[2])
             continue
+        if w[0] == 'for':
+            raise Skip('loop %s' % s)
         if len(w) == 4 and w[0] == 'Py_INCREF':
             x = w[2]
             if var.get(x) == 'local':
@@ -342,13 +434,14 @@ def translate(inst, csigs, psigs):
             continue
         if w[:4] == ['SETLOCAL', '(', 'oparg', ','] and len(w) == 6:
             x = w[4]
-            if var.get(x) not in ('input', 'owned', 'object'):
+            if var.get(x) not in ('input', 'owned', 'object', 'virtual') or \
+                    in_kind.get(x, 'scalar') != 'scalar':
                 raise Skip('SETLOCAL of %s' % x)
             commit()
             body.append('SETLOCAL(oparg, %s);' % x)
             stolen.add(x)
             continue
-        if w[:3] == ['ERROR_IF', '(', w[2]]:
+        if len(w) > 2 and w[:2] == ['ERROR_IF', '(']:
             args, _ = call_args(stmt, 1)
             if len(args) != 2 or args[1] not in LABELS:
                 raise Skip('ERROR_IF %s' % s)
@@ -356,8 +449,10 @@ def translate(inst, csigs, psigs):
                 raise Skip('ERROR_IF after an irreversible statement'
                            ' (restart rule)')
             cond = error_condition(args[0], var)
+            if cond is None:
+                continue        # a virtual object: it can't fail
             live = [t for t, o in var.items()
-                    if o in ('object', 'owned') and t not in cond[1]]
+                    if o in ('object', 'owned', 'virtual') and t not in cond[1]]
             if live:
                 raise Skip('ERROR_IF with %s owned' % ', '.join(live))
             body.append('if (%s)' % cond[0])
@@ -388,6 +483,23 @@ def translate(inst, csigs, psigs):
                 var[x] = 'const'
                 const_of[x] = CODE_TUPLES[m.group(1)]   # borrowed
                 continue
+            m = re.fullmatch(r'(Py[A-Z][a-z]+)_New \( (.+) \)', rhs)
+            fill = m and fill_loop(stmts, x, m.group(1), m.group(2), inputs)
+            if fill:
+                # PATTERNS E: a new container filled from an input array is
+                # Psyco's constructor taking the items
+                pname, kind = constructor(m.group(1) + '_New', psigs)
+                calls.append(m.group(1) + '_New')
+                declare(x, 'vinfo_t *')
+                var[x] = 'virtual' if kind == 'virtual' else 'object'
+                body.append('%s = %s(%s%s, %s);' % (
+                    x, pname, '' if kind == 'virtual' else 'po, ',
+                    m.group(2), fill))
+                released.add(fill)
+                last_fail = len(body)
+                if first_commit is not None:
+                    raise Skip('call after an irreversible statement')
+                continue
             if len(w) > 3 and re.fullmatch(r'Py[A-Z][A-Za-z]*_[A-Za-z]+', w[2]) and w[3] == '(':
                 fn = w[2]
                 args, end = call_args(stmt, 3)
@@ -396,7 +508,11 @@ def translate(inst, csigs, psigs):
                 pname, ret = counterpart(fn, csigs, psigs)
                 ops = [operand(a) for a in args]
                 calls.append(fn)
-                if ret == 'object':
+                if ret == 'virtual':
+                    declare(x, 'vinfo_t *')
+                    var[x] = 'virtual'
+                    body.append('%s = %s(%s);' % (x, pname, ', '.join(ops)))
+                elif ret == 'object':
                     declare(x, 'vinfo_t *')
                     var[x] = 'object'
                     body.append('%s = %s(po, %s);' % (x, pname, ', '.join(ops)))
@@ -419,6 +535,10 @@ def translate(inst, csigs, psigs):
     if decref_all:
         released |= set(in_names) - set(out_names) - stolen
     for n in in_names:
+        if n in kept:
+            if n in released or n in stolen:
+                raise Skip('input %s is released and also kept' % n)
+            continue
         if n in out_names and (n in released or n in stolen):
             raise Skip('input %s is released and also an output' % n)
         if n not in out_names and n not in released | stolen:
@@ -429,23 +549,70 @@ def translate(inst, csigs, psigs):
             # (3.12's kwnames)
             raise Skip('%s is assigned but is not an output' % n)
     for n in out_names:
-        if n not in var or var[n] not in ('input', 'owned', 'object'):
+        if n in kept:
+            continue
+        if n not in var or var[n] not in ('input', 'owned', 'object', 'virtual'):
             raise Skip('output %s has no owned value (%s)' % (n, var.get(n)))
     assert first_commit is None or first_commit >= last_fail
     lines = ['case %s: {' % inst.name]
-    for k, n in enumerate(in_names):
-        lines.append('  vinfo_t *%s = NTOP(%d);' % (n, len(in_names) - k))
+    for n, kind, size in inputs:
+        if n == 'unused':
+            continue
+        at = depth[n].text()
+        if kind == 'scalar':
+            lines.append('  vinfo_t *%s = NTOP(%s);' % (n, at))
+        elif kind == 'cond':
+            lines.append('  vinfo_t *%s = %s ? NTOP(%s) : NULL;'
+                         % (n, size.text(), at))
+        else:
+            lines.append('  vinfo_t **%s = STACK_POINTER() - (%s);' % (n, at))
     lines += ['  ' + d for d in decls]
     lines += ['  ' + b for b in body]
-    for n in reversed(in_names):
-        lines.append('  POP(%s);' % n)
-    for n in reversed(in_names):
-        if n in released:
-            lines.append('  vinfo_decref(%s, po);' % n)
-    for n in out_names:
+    late = []           # releases, after the pops above them
+    for n, kind, size in reversed(inputs[keep:]):
+        if kind == 'array':
+            lines += ['  ' + x for x in late]
+            late = []
+            if n not in released:
+                raise Skip('array %s popped but not released' % n)
+            lines.append('  { int n = %s; while (n--) POP_DECREF(); }' % size.text())
+        elif kind == 'cond':
+            lines.append('  if %s POP(%s);' % (size.text(), n))
+            if n in released:
+                late.append('vinfo_xdecref(%s, po);' % n)
+        else:
+            lines.append('  POP(%s);' % n)
+            if n in released:
+                late.append('vinfo_decref(%s, po);' % n)
+    lines += ['  ' + x for x in late]
+    for n, _, _ in outputs[keep:]:
         lines.append('  PUSH(%s);' % n)
     lines += ['  goto fine;', '}']
     return '\n'.join(lines), calls
+
+
+def fill_loop(stmts, x, typ, count, inputs):
+    """The array name if stmts start (after ERROR_IF(x == NULL, error))
+    with the loop that moves every item of an input array of size count
+    into x: 'for (int i = N; --i >= 0; ) { PyObject *v = A[i];
+    T_SET_ITEM(x, i, v); }'. The loop is taken out of stmts."""
+    k = 0
+    if k < len(stmts) and words(stmts[k]).replace(' ', '') == \
+            'ERROR_IF(%s==NULL,error)' % x:
+        k += 1
+    if k >= len(stmts):
+        return None
+    m = re.fullmatch(r'for \( int (\w+) = (.+) ; -- \1 >= 0 ; \) \{ '
+                     r'PyObject \* (\w+) = (\w+) \[ \1 \] ; '
+                     r'%s_SET_ITEM \( %s , \1 , \3 \) ; \}' % (typ, x),
+                     words(stmts[k]))
+    if not m or m.group(2) != count:
+        return None
+    arr = next(((n, sz) for n, kind, sz in inputs if n == m.group(4) and kind == 'array'), None)
+    if arr is None or arr[1].text() != count:
+        return None
+    del stmts[k]
+    return arr[0]
 
 
 def error_condition(cond, var):
@@ -460,13 +627,16 @@ def error_condition(cond, var):
     m = re.fullmatch(r'(\w+)(?: != 0| < 0)?', cond)
     if m and var.get(m.group(1)) == 'bool':
         return '!%s_ok' % m.group(1), {m.group(1)}
+    m = re.fullmatch(r'(\w+) == NULL', cond)
+    if m and var.get(m.group(1)) == 'virtual':
+        return None
     raise Skip('ERROR_IF condition %r' % cond)
 
 
 # ---- checks against the target's dis --------------------------------------
 
 # opargs tried: an effect that differs between them depends on oparg
-OPARGS = (0, 1, 2, 3, 4, 5, 7, 8, 255)
+OPARGS = (0, 1, 2, 3, 4, 5, 7, 8, 255, 256, 257, 258, 513)
 
 
 def stack_effects(names, python):
@@ -491,23 +661,27 @@ def stack_effects(names, python):
     return json.loads(r.stdout)
 
 
-def check_effects(insts, effects):
-    """Problems found comparing each definition's effect with dis."""
+def check_effects(insts, effects, consts):
+    """Problems found comparing each definition's effect, at each of
+    OPARGS, with dis."""
     problems = []
     for inst in insts:
-        declared = len(inst.outputs) - len(
-            [e for e in inst.inputs if isinstance(e, dsl.StackEffect)])
         eff = effects.get(inst.name)
         if eff is None:
             if inst.name not in effects:
                 problems.append('%s: not an opcode' % inst.name)
             continue
-        if len(set(eff)) > 1:
-            problems.append('%s: dis.stack_effect depends on oparg (%s), the'
-                            ' definition says %d' % (inst.name, eff, declared))
-        elif declared != eff[0]:
-            problems.append('%s: stack effect %d, dis.stack_effect says %d'
-                            % (inst.name, declared, eff[0]))
+        try:
+            declared = [sum(ceval_reader.effect_size(e, o, consts) for e in inst.outputs)
+                        - sum(ceval_reader.effect_size(e, o, consts) for e in inst.inputs
+                              if isinstance(e, dsl.StackEffect))
+                        for o in OPARGS]
+        except ceval_reader.Refuse as e:
+            problems.append('%s: stack effect %s' % (inst.name, e))
+            continue
+        if declared != eff:
+            problems.append('%s: stack effect %s, dis.stack_effect says %s (opargs %s)'
+                            % (inst.name, declared, eff, list(OPARGS)))
     return problems
 
 
@@ -524,12 +698,22 @@ def definitions(src):
 
 def run(insts, src):
     csigs, psigs = c_signatures(src), psyco_signatures()
+    consts = ceval_reader.constants(src)
     done, skipped = [], []
     for inst in insts:
         try:
-            code, _ = translate(inst, csigs, psigs)
+            w = [t.text for t in inst.block.tokens]
+            copies = {w[k - 1] for k in range(1, len(w) - 1)
+                      if w[k] == '=' and w[k + 1] == 'stack_pointer'}
+            if any(w[k] == '&' and w[k + 1] in copies for k in range(len(w) - 1)):
+                # calls: a copy of the stack pointer handed to the call
+                # path, which moves it; that is core
+                raise Skip('a copy of the stack pointer handed to %s'
+                           % next(w[k - 2] for k in range(2, len(w))
+                                  if w[k] == '&' and w[k + 1] in copies), 'core')
+            code, _ = translate(inst, csigs, psigs, consts)
         except Skip as e:
-            skipped.append((inst.name, 'vocabulary', str(e)))
+            skipped.append((inst.name, e.kind, str(e)))
             continue
         done.append((inst.name, code))
     return done, skipped
@@ -539,7 +723,8 @@ def header(done, skipped):
     out = ['/* GENERATED by tools/metac/gen_ceval.py from the opcode cases of',
            '   the CPython source built for: do not edit.',
            '   Included in the opcode switch of pycompiler.c, which provides',
-           '   NTOP, POP, PUSH, GETLOCAL, SETLOCAL, GETCONST, GETNAMEV,',
+           '   NTOP, POP, POP_DECREF, PUSH, STACK_POINTER, GETLOCAL, SETLOCAL,',
+           '   GETCONST, GETNAMEV,',
            '   unbound_local_error and the label fine. */', '']
     for _, code in done:
         out += ['      ' + l if l else '' for l in code.split('\n')] + ['']
@@ -558,17 +743,12 @@ def build(target):
     insts, refused = definitions(target.src)
     effects = stack_effects([i.name for i in insts] + [n for n, _, _ in refused],
                             target.python)
-    problems = check_effects(insts, effects)
+    problems = check_effects(insts, effects, ceval_reader.constants(target.src))
     if problems:
         raise cslots.GenError(
             'the definitions read from CPython %s do not match'
             ' dis.stack_effect:\n%s'
             % (target.version, '\n'.join('  ' + p for p in problems)))
-    # a refusal whose effect dis says depends on oparg is of that kind,
-    # whatever stopped the reader first
-    refused = [(n, 'oparg' if k in ('control flow', 'stack')
-                and effects.get(n) and len(set(effects[n])) > 1 else k, why)
-               for n, k, why in refused]
     done, skipped = run(insts, target.src)
     skipped += refused
     return header(done, skipped), (

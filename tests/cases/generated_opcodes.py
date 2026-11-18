@@ -180,6 +180,34 @@ def err_inplace(k):
     return x
 
 
+def builds(a, b, xs):
+    # BUILD_TUPLE, BUILD_LIST (0, 1 and several items), BUILD_SLICE (2 and
+    # 3 items), LIST_APPEND and MAP_ADD (comprehensions)
+    t0, t1, t3 = (), (a,), (a, b, a + b)
+    l0, l1, l3 = [], [a], [a, b, a * b]
+    s2, s3 = xs[a:b], xs[a:b:2]
+    s4 = xs[::-1]
+    sl = slice(a, b), slice(a, b, 2)
+    sq = [x * x for x in xs]
+    d = {x: x + a for x in xs}
+    nested = [[y for y in range(x)] for x in range(a)]
+    return t0, t1, t3, l0, l1, l3, s2, s3, s4, sl, sq, d, nested
+
+
+def err_map_add(k):
+    # MAP_ADD's error exit: an unhashable key, part-way through
+    return {(x if x < 2 else [x]): x for x in range(k + 3)}
+
+
+def err_slice(k):
+    # the slice built by BUILD_SLICE is used, and fails, in the subscript
+    return [1, 2, 3][k:'a':2]
+
+
+def build_errors(k):
+    return catch((err_map_add, err_slice), k)
+
+
 def unbound(flag):
     # LOAD_FAST's error exit: the local is NULL on one path
     if flag:
@@ -203,4 +231,6 @@ CASES = [
     ('unbound', [(True,), (False,)], {}),
     ('attributes', [(1,), (2.5,)], {}),
     ('attr_errors', [(0,), (None,)], {}),
+    ('builds', [(1, 3, [5, 6, 7, 8]), (0, 2, (1, 2, 3))], {}),
+    ('build_errors', [(0,), (1,)], {}),
 ]

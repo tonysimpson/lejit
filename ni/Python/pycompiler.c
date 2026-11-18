@@ -12,7 +12,8 @@
  *    site so that a respawn replay never re-decides one.
  *  - The simple opcodes (stack shuffles, LOAD_CONST/LOAD_FAST/STORE_FAST,
  *    unary, binary and in-place arithmetic, STORE_SUBSCR, GET_ITER,
- *    LOAD_ATTR/STORE_ATTR/DELETE_ATTR) are generated into pycompiler_gen.h
+ *    LOAD_ATTR/STORE_ATTR/DELETE_ATTR, BUILD_TUPLE/BUILD_LIST/BUILD_SLICE,
+ *    LIST_APPEND, MAP_ADD) are generated into pycompiler_gen.h
  *    from CPython's ceval.c by tools/metac/gen_ceval.py (D26, D67).
  *  - After the switch come the merge-point checks, then the handling of
  *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
@@ -2193,14 +2194,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(x); /* consumes ref on 'x' */
         goto fine;
 
-      case LIST_APPEND:
-        w = NTOP(1);
-        v = NTOP(oparg + 1);
-        if (!PsycoList_Append(po, v, w))
-          break;
-        POP_DECREF();
-        goto fine;
-
       case DELETE_SUBSCR:
         w = NTOP(1);
         v = NTOP(2);
@@ -2672,13 +2665,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(v);
         goto fine;
 
-      case BUILD_TUPLE:
-        v = PsycoTuple_New(oparg, STACK_POINTER() - oparg);
-        while (oparg--)
-          POP_DECREF();
-        PUSH(v);
-        goto fine;
-
       /* f(a, *b), (*a, *b), [*a, *b]: parts that are tuples with known
          items make a virtual tuple; anything else is ceval's code */
       case BUILD_TUPLE_UNPACK_WITH_CALL:
@@ -2728,15 +2714,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(v);
         goto fine;
       }
-
-      case BUILD_LIST:
-        v = PsycoList_New(po, oparg, STACK_POINTER() - oparg);
-        if (v == NULL)
-          break;
-        while (oparg--)
-          POP_DECREF();
-        PUSH(v);
-        goto fine;
 
       case BUILD_MAP: {
         /* 3.5+: oparg key/value pairs on the stack, first pair deepest */
@@ -2821,18 +2798,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         w = NTOP(1);                         /* key */
         u = NTOP(2);                         /* value */
         v = NTOP(3);                         /* dict */
-        if (!PsycoDict_SetItem(po, v, w, u)) /* v[w] = u */
-          break;
-        POP_DECREF();
-        POP_DECREF();
-        goto fine;
-#endif
-
-#ifdef MAP_ADD
-      case MAP_ADD:
-        w = NTOP(1);                         /* key */
-        u = NTOP(2);                         /* value */
-        v = NTOP(2 + oparg);                 /* dict */
         if (!PsycoDict_SetItem(po, v, w, u)) /* v[w] = u */
           break;
         POP_DECREF();
@@ -3225,24 +3190,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             break;
         }
 
-        PUSH(x);
-        goto fine;
-
-      case BUILD_SLICE:
-        if (oparg == 3) {
-          w = NTOP(1);
-          v = NTOP(2);
-          u = NTOP(3);
-        } else {
-          w = NULL;
-          v = NTOP(1);
-          u = NTOP(2);
-        }
-        x = PsycoSlice_New(u, v, w);
-        if (oparg == 3)
-          POP_DECREF(); /* w */
-        POP_DECREF();   /* v */
-        POP_DECREF();   /* u */
         PUSH(x);
         goto fine;
 

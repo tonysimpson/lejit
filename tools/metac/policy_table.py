@@ -477,7 +477,7 @@ ENTRIES = {
     'Objects/genobject.c:gen_send_ex': {'shape': 'dbfa5af99336', 'ni': ['ni/Python/pycompiler.c:cimpl_generator_stop']},
     'Python/errors.c:_PyErr_ChainExceptions': {'shape': '8624abd89f50', 'ni': ['ni/Python/pycompiler.c:cimpl_generator_stop']},
     'Python/ceval.c:TARGET(UNARY_NOT)': {'shape': '1186f933f995', 'ni': ['ni/Python/pycompiler.c:case UNARY_NOT']},
-    'Python/ceval.c:TARGET(LIST_APPEND)': {'shape': 'd2b86bdd5af1', 'ni': ['ni/Python/pycompiler.c:case LIST_APPEND']},
+    'Python/ceval.c:TARGET(LIST_APPEND)': {'shape': 'd2b86bdd5af1', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(DELETE_SUBSCR)': {'shape': 'b1a468b9cda7', 'ni': ['ni/Python/pycompiler.c:case DELETE_SUBSCR']},
     'Python/ceval.c:TARGET(RETURN_VALUE)': {
         'shape': '6e2836ffbc99',
@@ -510,19 +510,19 @@ ENTRIES = {
         ]},
     'Python/ceval.c:TARGET(BUILD_TUPLE)': {
         'shape': '0db52e5ab2d9',
-        'ni': ['ni/Python/pycompiler.c:case BUILD_TUPLE'],
+        'ni': ['tools/metac/gen_ceval.py:translate'],
         'policy': [
             ('virtual', 'result', 'PyTuple_Type'),
         ]},
     'Python/ceval.c:TARGET(BUILD_LIST)': {
         'shape': '60183638719d',
-        'ni': ['ni/Python/pycompiler.c:case BUILD_LIST'],
+        'ni': ['tools/metac/gen_ceval.py:translate'],
         'policy': [
             ('virtual', 'result', 'PyList_Type, up to VLIST_LENGTH_MAX items'),
         ]},
     'Python/ceval.c:TARGET(BUILD_MAP)': {'shape': '2a0606f6f2ba', 'ni': ['ni/Python/pycompiler.c:case BUILD_MAP']},
     'Python/ceval.c:TARGET(BUILD_CONST_KEY_MAP)': {'shape': '3f6a652605b8', 'ni': ['ni/Python/pycompiler.c:case BUILD_CONST_KEY_MAP']},
-    'Python/ceval.c:TARGET(MAP_ADD)': {'shape': '97181b1620fd', 'ni': ['ni/Python/pycompiler.c:case MAP_ADD']},
+    'Python/ceval.c:TARGET(MAP_ADD)': {'shape': '97181b1620fd', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(BUILD_SET)': {
         'shape': 'f137fb543930',
         'ni': ['ni/Python/pycompiler.c:case BUILD_SET'],
@@ -572,7 +572,7 @@ ENTRIES = {
         ]},
     'Python/ceval.c:TARGET(BUILD_SLICE)': {
         'shape': '4f7d2d7b815b',
-        'ni': ['ni/Python/pycompiler.c:case BUILD_SLICE'],
+        'ni': ['tools/metac/gen_ceval.py:translate'],
         'policy': [
             ('virtual', 'result', 'PySlice_Type'),
         ]},
