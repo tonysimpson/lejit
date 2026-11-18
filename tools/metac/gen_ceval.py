@@ -2752,7 +2752,8 @@ class Context:
         """[(name, C text)] for the error labels the reader makes of a
         statement (ceval_reader.ERROR_FORMS): the function LABELS calls,
         taking what the case has at compile time (po, co, oparg), whose
-        body is that statement of the eval loop, every occurrence the same,
+        body is that statement of the eval loop, every occurrence the same
+        once a thread-state argument is left out (ceval_reader.error_form),
         with its helper's compile-time copy (rule compile_time_copy)."""
         out = []
         with open(os.path.join(self.src, 'Python', 'ceval.c'), encoding='latin-1') as f:
@@ -2763,9 +2764,10 @@ class Context:
         for form, label in ceval_reader.ERROR_FORMS:
             found = set()
             for k in range(len(texts) - len(form)):
-                if texts[k:k + len(form)] == form and texts[k - 1] in (';', '{', '}'):
-                    end = texts.index(';', k)
-                    found.add(tuple(texts[k:end + 1]))
+                if texts[k] == form[0] and texts[k - 1] in (';', '{', '}'):
+                    lab, stmt = ceval_reader.error_form(texts[k:texts.index(';', k) + 1])
+                    if lab == label:
+                        found.add(tuple(stmt))
             if len(found) != 1:
                 raise Skip('label %s: %d forms of its statement' % (label, len(found)))
             stmt = list(found.pop())

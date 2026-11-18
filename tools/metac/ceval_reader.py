@@ -131,6 +131,18 @@ ERROR_FORMS = [
     (['format_exc_check_arg', '(', 'PyExc_UnboundLocalError', ',',
       'UNBOUNDLOCAL_ERROR_MSG', ','], 'unbound_local_error'),
 ]
+
+
+def error_form(w):
+    """(label, w without the thread state) when the statement w is one of
+    ERROR_FORMS, else (None, w). 3.8 hands the running thread's state to
+    the helper first ('format_exc_check_arg(tstate, ...)'), as 3.7 reads it
+    inside: it is not part of the form."""
+    u = w[:2] + w[4:] if w and w[2:4] == ['tstate', ','] else w
+    label = next((lab for f, lab in ERROR_FORMS if u and u[:len(f)] == f), None)
+    return label, u if label else w
+
+
 TYPE_TEST = re.compile(r'Py[A-Za-z]+_Check(Exact)?')
 SIZE_TEST = re.compile(r'Py[A-Za-z]+_GET_SIZE')
 DECL_TYPES = ('PyObject', 'int', 'Py_ssize_t')
@@ -1390,8 +1402,7 @@ class Case:
             if n:
                 moves.append(Lin(-n))   # pops: the exit pops anyway
                 continue
-            u = w[:2] + w[4:] if w and w[2:4] == ['tstate', ','] else w
-            form = next((lab for f, lab in ERROR_FORMS if u and u[:len(f)] == f), None)
+            form = error_form(w)[0]
             if form and label == 'error':
                 label = form
                 continue
