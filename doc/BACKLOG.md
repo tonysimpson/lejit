@@ -23,7 +23,7 @@ In KNOWN_BUGS.md. Worth doing first among them: C29 (no events for a frame alrea
 - Opcode coverage: generators other than genexprs (FINDINGS.md "Generators" option A, QUESTIONS 33), class bodies, module code, C15's functions.
 - Register calling convention between compiled functions (QUESTIONS 35 first).
 
-- Real-world suite: research which applications (REALWORLD.md); it runs once Ni works on 3.10 or later.
+- Real-world suite: applications chosen (REALWORLD.md); commit the workloads and harness blind, then run once Ni works on 3.10 or later.
 
 ## Code size and compile time
 - Shared code after polymorphic promotion sites, option D: on 3.7 (D64, FINDINGS.md "Option D", QUESTIONS 43–46).
