@@ -23,6 +23,23 @@ EXTERNFN int psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
                                      vinfo_t *acc);
 
+/* The argument binding of ceval.c:_PyEval_EvalCodeWithName, generated
+   into psyfunc_gen.h (tools/metac/gen_call.py, D85): run while compiling a
+   call, it binds the values in 'args', 'kwargs' (named by 'kwnames'),
+   'defs' and 'closure' into the frame's locals, 'f_localsplus' (all NULL
+   on entry), taking a reference for each. -1 where CPython's binding needs
+   what the compiler can't do (a wrong count, **kwargs, cells): the caller
+   releases the locals and makes the real call. The vinfo_t ** parameters
+   are the values bound; the others are the compiler's own. */
+EXTERNFN int _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
+                                     vinfo_t **f_localsplus, vinfo_t **args,
+                                     Py_ssize_t argcount,
+                                     PyObject **kwnames,
+                                     vinfo_t **kwargs, Py_ssize_t kwcount,
+                                     int kwstep, vinfo_t **defs,
+                                     Py_ssize_t defcount, PyObject *kwdefs,
+                                     vinfo_t **closure);
+
 /* for pycompiler.c */
 EXTERNFN vinfo_t *psyco_save_inline_po(PsycoObject *po);
 EXTERNFN PsycoObject *psyco_restore_inline_po(PsycoObject *po,
