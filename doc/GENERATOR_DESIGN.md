@@ -29,7 +29,7 @@ One front end serves everything: the translator, effects, layouts, mechanisms, t
 
 **Preprocessing.** `gcc -E` with the target's include paths and `pyconfig.h`, and CPython's own build flags from its Makefile: `-DNDEBUG`, `Py_BUILD_CORE`, and `Py_BUILD_CORE_BUILTIN` for modules. One deliberate departure: `-DUSE_COMPUTED_GOTOS=0`, because computed gotos (`&&label`, `goto *`) don't parse, and Ni doesn't need them.
 
-**Two shims** (a working prototype is in `tools/metac/prototype/`; with it pycparser parses `abstract.c`, `ceval.c`, `unicodeobject.c`, `dictobject.c`, `typeobject.c` and eight more, at 0.4–1.7 s each):
+**Two shims** (`tools/metac/shim/`, used by `front.py`):
 1. **A GNU prelude** (`-include`) that neutralises what pycparser can't parse: `__attribute__`, `__asm__`, `__extension__`, `__restrict`, `_Float128`, `__builtin_va_arg`, `__builtin_offsetof`, `__auto_type`, `__typeof__`, `__builtin_types_compatible_p`. Because this drops `packed` and `aligned`, **the AST is never trusted for sizes, offsets or bit positions**: those come from the real compiler (Layouts).
 2. **A vocabulary shim** spliced into the text just before each function being translated, after every header and every `.c`-file definition (ceval.c defines `TARGET`, `POP` and the rest after its includes, and 3.8's internal headers redefine the atomics late). It `#undef`s each vocabulary macro and redefines it as a call to a marker, so the name survives. `gcc -dD` checks that nothing redefines a vocabulary name after the shim; if something does, generation stops (owner: fix the shim when this breaks).
 
