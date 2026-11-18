@@ -12,6 +12,9 @@
 #include "pycheader.h"
 #include "pyver.h"
 #include "v_mem_mov.h"
+/* the exception state: NI_EXC_OCCURRED_OFFSET and the C helpers' access
+   (D77) */
+#include "mechanism_exceptions_gen.h"
 
 /*#define MAX3(a,b,c)  ((a)>(b)?((a)>(c)?(a):(c)):(b)>(c)?(b):(c))*/
 
@@ -221,7 +224,7 @@ PSY_INLINE vinfo_t *psyco_PyErr_Occurred(PsycoObject *po) {
     /* XXX Can we get _PyThreadState_Current to make this quicker ? */
     vtstate = psyco_generic_call(po, PyThreadState_Get, CfReturnTypePtr, "");
     vcurexc =
-        v_mem_mov(po, NULL, vtstate, NULL, CPY_OFFSET(PyThreadState, curexc_type),
+        v_mem_mov(po, NULL, vtstate, NULL, NI_EXC_OCCURRED_OFFSET,
                   V_MEM_MOV_SCALE_POINTER, false);
     vinfo_decref(vtstate, po);
     return vcurexc;

@@ -26,6 +26,10 @@
 #include "vcompiler.h"
 /* ni_tracing_test (D75) */
 #include "mechanism_tracing_gen.h"
+/* ni_tstate_load, the recursion count, ni_eval_breaker_test (D77) */
+#include "mechanism_tstate_gen.h"
+#include "mechanism_recursion_gen.h"
+#include "mechanism_eval_breaker_gen.h"
 
 
 /***************************************************************/
@@ -336,123 +340,29 @@ PsycoObject *psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a) {
 /***   Recursion depth of compiled calls                       ***/
 /***************************************************************/
 
-/* Py_EnterRecursiveCall and Py_LeaveRecursiveCall (Include/ceval.h) as
-   emitted code (KNOWN_BUGS C12). The current thread state's recursion_depth
-   is counted in place and compared with _Py_CheckRecursionLimit, read at
-   run time (sys.setrecursionlimit changes it). Only an overflow calls
-   _Py_CheckRecursiveCall, which knows recursion_critical and overflowed and
-   raises RecursionError. A leave calls C only while overflowed is set, to
-   clear it below the low-water mark. Both rare paths are runtime_condition_f
-   branches, compiled when first taken. */
-typedef struct {
-  PyThreadState *ts;
-} tstate_slot_t;
-typedef struct {
-  int value;
-} int_slot_t;
-#define TSTATE_current                                                         \
-  FMUT(DEF_FIELD(tstate_slot_t, PyThreadState *, ts, NO_PREV_FIELD))
-#define TSTATE_depth                                                           \
-  FMUT(CPY_FIELD(PyThreadState, recursion_depth, NO_PREV_FIELD))
-#define TSTATE_overflowed                                                      \
-  FMUT(CPY_FIELD(PyThreadState, overflowed, NO_PREV_FIELD))
-#define INT_value FMUT(DEF_FIELD(int_slot_t, int, value, NO_PREV_FIELD))
+/* the running thread's state, read at run time (the tstate mechanism) */
+static vinfo_t *load_tstate(PsycoObject *po) { return ni_tstate_load(po); }
 
-extern void *ni_tstate_current_address(void); /* Python/pyruntime.c */
-static tstate_slot_t *tstate_current;
-
-/* Py_LeaveRecursiveCall after the decrement */
-static void cimpl_leave_overflowed(void) {
-  PyThreadState *ts = PyThreadState_GET();
-  if (ts->recursion_depth <
-      _Py_RecursionLimitLowerWaterMark(_Py_CheckRecursionLimit))
-    ts->overflowed = 0;
-}
-
-/* the running thread's state, read at run time */
-static vinfo_t *load_tstate(PsycoObject *po) {
-  vinfo_t *vslot = vinfo_new(CompileTime_New((long)tstate_current));
-  vinfo_t *vts = psyco_get_field(po, vslot, TSTATE_current);
-  vinfo_decref(vslot, po);
-  return vts;
-}
-
-/* adds 'delta' to the depth of thread state 'vts': the new depth */
-static vinfo_t *add_to_depth(PsycoObject *po, long delta, vinfo_t *vts) {
-  vinfo_t *vdepth, *vnew;
-  vdepth = psyco_get_field(po, vts, TSTATE_depth);
-  if (vdepth == NULL)
-    return NULL;
-  vnew = integer_add_i(po, vdepth, delta, true);
-  vinfo_decref(vdepth, po);
-  if (vnew == NULL)
-    return NULL;
-  if (psyco_put_field(po, vts, TSTATE_depth, vnew))
-    return vnew;
-  vinfo_decref(vnew, po);
-  return NULL;
-}
-
-/* false with an exception set in 'po' */
-static bool enter_recursive_call(PsycoObject *po, vinfo_t *vts) {
-  vinfo_t *vlimit, *vslot;
-  condition_code_t cc = CC_ERROR;
-  vinfo_t *vdepth = add_to_depth(po, 1, vts);
-  if (vdepth == NULL)
-    return false;
-  vslot = vinfo_new(CompileTime_New((long)&_Py_CheckRecursionLimit));
-  vlimit = psyco_get_field(po, vslot, INT_value);
-  vinfo_decref(vslot, po);
-  if (vlimit != NULL) {
-    cc = integer_cmp(po, vdepth, vlimit, Py_GT);
-    vinfo_decref(vlimit, po);
-  }
-  vinfo_decref(vdepth, po);
-  if (cc == CC_ERROR)
-    return false;
-  if (runtime_condition_f(po, cc))
-    return psyco_generic_call(po, _Py_CheckRecursiveCall, CfCommonIntZeroOk,
-                              "l", (long)"") != NULL;
-  return true;
-}
-
+/* Py_LeaveRecursiveCall after a compiled call (KNOWN_BUGS C12); entering
+   is the recursion mechanism's enter_recursive_call, on a thread state the
+   caller has loaded */
 DEFINEFN
 bool psyco_leave_recursive_call(PsycoObject *po) {
-  vinfo_t *vover, *vdepth;
-  condition_code_t cc;
   vinfo_t *vts = load_tstate(po);
   if (vts == NULL)
     return false;
-  vdepth = add_to_depth(po, -1, vts);
-  if (vdepth == NULL) {
-    vinfo_decref(vts, po);
-    return false;
-  }
-  vinfo_decref(vdepth, po);
-  vover = psyco_get_field(po, vts, TSTATE_overflowed);
-  vinfo_decref(vts, po);
-  cc = integer_NON_NULL(po, vover); /* consumes vover */
-  if (cc == CC_ERROR)
-    return false;
-  if (runtime_condition_f(po, cc))
-    return psyco_generic_call(po, cimpl_leave_overflowed, CfNoReturnValue,
-                              "") != NULL;
-  return true;
+  return leave_recursive_call(po, vts);
 }
 
 /* ceval's test of eval_breaker before an instruction (KNOWN_BUGS C24, D45):
-   an inline compare of the word with 0, and only when it is set a call to
-   the C helper that does what ceval does then (pending calls and signal
+   the eval_breaker mechanism's inline test, and only when it is set a call
+   to the C helper that does what ceval does then (pending calls and signal
    handlers, a GIL drop for other threads, an async exception). The helper
    can run any Python code, as any residual call can. Its branch is a
    runtime_condition_f respawn point, compiled when first taken. */
-extern void *ni_eval_breaker_address(void); /* Python/pyruntime.c */
-extern int ni_eval_breaker_handler(void);
-static void *eval_breaker;
-
 DEFINEFN
 bool psyco_check_eval_breaker(PsycoObject *po) {
-  condition_code_t cc = psyco_int32_nonzero_at(po, eval_breaker);
+  condition_code_t cc = ni_eval_breaker_test(po);
   if (runtime_condition_f(po, cc))
     return psyco_generic_call(po, ni_eval_breaker_handler, CfCommonIntZeroOk,
                               "") != NULL;
@@ -944,9 +854,7 @@ int psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v) {
 
 DEFINEFN
 void psycofunction_init() {
-  tstate_current = ni_tstate_current_address();
-  psyco_assert(tstate_current->ts == PyThreadState_GET());
-  eval_breaker = ni_eval_breaker_address();
-  psyco_assert(eval_breaker != NULL);
+  psyco_assert(ni_tstate_check());
+  psyco_assert(ni_eval_breaker_address() != NULL);
   cannot_block_init();
 }

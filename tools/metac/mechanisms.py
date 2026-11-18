@@ -2,7 +2,10 @@
 
 Where Ni's own mechanism must differ between CPython versions (how compiled
 code is entered, how a thread says it is tracing, how frames are shown to
-Python), it is chosen here, never by a version number:
+Python, D75; where eval_breaker and the current thread state are and what
+ceval does on eval_breaker, how calls are counted, how the exception state
+is held, how the GC tells a tracked object, D77), it is chosen here, never
+by a version number:
 
 - a *detector* is a small function over the target's source (headers or C)
   that answers one capability question, with the definition it read;
@@ -98,6 +101,63 @@ class Source:
                 if t.text == name and toks[i + 1].text == '(':
                     return path
         return None
+
+    def macros(self, path):
+        """{name: Macro} of one file's #defines, or None."""
+        key = (path, 'macros')
+        if key not in self.toks:
+            full = os.path.join(self.src, path)
+            if not os.path.isfile(full):
+                self.toks[key] = None
+            else:
+                with open(full, encoding='latin-1') as f:
+                    self.toks[key] = ctokens.tokenize(f.read(), path)[1]
+        return self.toks[key]
+
+    @staticmethod
+    def body_of(toks, name):
+        """Body tokens of the first definition NAME ( ... ) { ... } in
+        `toks`, found where it is: unlike ctokens.functions, braces split
+        by #if branches elsewhere in the file don't hide it. None if there
+        is none, or its own braces don't match."""
+        for i, t in enumerate(toks[:-1]):
+            if t.text != name or toks[i + 1].text != '(':
+                continue
+            try:
+                close = ctokens.match_close(toks, i + 1)
+                if close + 1 < len(toks) and toks[close + 1].text == '{':
+                    return toks[close + 2:ctokens.match_close(toks, close + 1)]
+            except SyntaxError:
+                return None
+        return None
+
+    def definitions(self, name):
+        """[(path, tokens)] of every header definition of `name`: a macro's
+        body, a function's body (both #if branches count)."""
+        out = []
+        for path, toks in self.headers_with(name):
+            m = self.macros(path).get(name)
+            if m is not None:
+                out.append((path, m.body))
+            body = self.body_of(toks, name)
+            if body is not None:
+                out.append((path, body))
+        return out
+
+    def declaration(self, name):
+        """(path, tokens) of the header statement declaring function or
+        variable `name` (from the previous ';', '}' or '{'), or (None,
+        None)."""
+        for path, toks in self.headers_with(name):
+            for i, t in enumerate(toks[:-1]):
+                if t.text == name and toks[i + 1].text in ('(', ';'):
+                    j = i
+                    while j > 0 and toks[j - 1].text not in (';', '}', '{'):
+                        j -= 1
+                    if toks[j].text in ('define', 'return'):
+                        continue
+                    return path, toks[j:i + 1]
+        return None, None
 
     def function(self, path, name):
         """Body tokens of the C function `name` in `path`, or None."""
@@ -245,6 +305,173 @@ def current_frame(s):
     return 'unknown', path + ':_ts'
 
 
+def _texts(toks):
+    return [t.text for t in toks] if toks else []
+
+
+def _field_of(s, structs, field):
+    """(struct, path) of the first struct in `structs` (tags or typedef
+    names) declaring `field`, or (None, None)."""
+    for name in structs:
+        path, fields = s.struct(name)
+        if fields is not None and field in fields:
+            return name, path
+    return None, None
+
+
+def eval_breaker_home(s):
+    """Where the word that tells the evaluator to break off (eval_breaker)
+    is: 'runtime' (_PyRuntime.ceval), 'interpreter' (the interpreter's
+    ceval state), 'thread' (the thread state) or 'unknown'."""
+    for struct, answer in (('_ts', 'thread'), ('_ceval_state', 'interpreter'),
+                           ('_ceval_runtime_state', 'runtime')):
+        name, path = _field_of(s, (struct,), 'eval_breaker')
+        if name:
+            return answer, '%s:%s.eval_breaker' % (path, name)
+    return 'unknown', 'Include, every header: eval_breaker'
+
+
+def pending_handler(s):
+    """What ceval does when eval_breaker is set, as Ni can reach it:
+    'api_function' (_Py_HandlePending, exported: Ni can call it),
+    'internal_function' (_Py_HandlePending, not exported), 'static_function'
+    (ceval.c's static eval_frame_handle_pending), 'loop_top' (inline at the
+    top of _PyEval_EvalFrameDefault's loop) or 'unknown'. Anything but the
+    first means Ni holds a copy."""
+    path, decl = s.declaration('_Py_HandlePending')
+    if decl:
+        api = 'PyAPI_FUNC' in _texts(decl)
+        return ('api_function' if api else 'internal_function'), \
+            path + ':_Py_HandlePending'
+    ce = 'Python/ceval.c'
+    toks = s.tokens(ce) or []
+    if s.body_of(toks, 'eval_frame_handle_pending') is not None:
+        return 'static_function', ce + ':eval_frame_handle_pending'
+    if 'eval_breaker' in _texts(s.body_of(toks, '_PyEval_EvalFrameDefault')):
+        return 'loop_top', ce + ':_PyEval_EvalFrameDefault'
+    return 'unknown', ce
+
+
+def signals_pending(s):
+    """Whether a signal sets a flag of its own (signals_pending) that the
+    handler tests before the pending calls: 'yes', or 'no' (a signal comes
+    as a pending call)."""
+    name, path = _field_of(s, ('_ceval_runtime_state', '_ceval_state'),
+                           'signals_pending')
+    if name:
+        return 'yes', '%s:%s.signals_pending' % (path, name)
+    return 'no', 'Include, every header: _ceval_runtime_state, _ceval_state'
+
+
+def tstate_current(s):
+    """Where the running thread's state is: 'runtime_gilstate' (a word in
+    _PyRuntime, gilstate.tstate_current, at a fixed address),
+    'thread_local' (a C thread-local, _Py_tss_tstate) or 'unknown'."""
+    name, path = _field_of(s, ('_gilstate_runtime_state',), 'tstate_current')
+    if name:
+        return 'runtime_gilstate', '%s:%s.tstate_current' % (path, name)
+    path, decl = s.declaration('_Py_tss_tstate')
+    if decl and '_Py_thread_local' in _texts(decl):
+        return 'thread_local', path + ':_Py_tss_tstate'
+    return 'unknown', 'Include, every header: tstate_current, _Py_tss_tstate'
+
+
+def recursion_counter(s):
+    """How a thread counts the Python calls it is in: 'depth_up'
+    (recursion_depth, incremented), 'remaining_down' (recursion_remaining,
+    decremented), 'py_remaining_down' (py_recursion_remaining, Python calls
+    only, beside a C counter) or 'unknown'."""
+    path, ts = s.struct('_ts')
+    if ts is None:
+        return 'unknown', 'Include, every header: _ts'
+    for field, answer in (('py_recursion_remaining', 'py_remaining_down'),
+                          ('recursion_remaining', 'remaining_down'),
+                          ('recursion_depth', 'depth_up')):
+        if field in ts:
+            return answer, '%s:_ts.%s' % (path, field)
+    return 'unknown', path + ':_ts'
+
+
+def recursion_limit(s):
+    """Where the limit the counter is compared with is: 'global'
+    (_Py_CheckRecursionLimit, an exported int), 'tstate' (a field of the
+    thread state) or 'unknown'."""
+    path, decl = s.declaration('_Py_CheckRecursionLimit')
+    if decl and 'PyAPI_DATA' in _texts(decl):
+        return 'global', path + ':_Py_CheckRecursionLimit'
+    path, ts = s.struct('_ts')
+    for field in ('py_recursion_limit', 'recursion_limit'):
+        if ts is not None and field in ts:
+            return 'tstate', '%s:_ts.%s' % (path, field)
+    return 'unknown', 'Include, every header: _Py_CheckRecursionLimit, _ts'
+
+
+def recursion_overflow(s):
+    """How a thread allows the calls that handle a RecursionError:
+    'overflowed' (a flag, cleared below a low-water mark), 'headroom' (a
+    count of extra calls) or 'none'."""
+    path, ts = s.struct('_ts')
+    if ts is None:
+        return 'unknown', 'Include, every header: _ts'
+    for field, answer in (('overflowed', 'overflowed'),
+                          ('recursion_headroom', 'headroom')):
+        if field in ts:
+            return answer, '%s:_ts.%s' % (path, field)
+    return 'none', path + ':_ts'
+
+
+def exc_current(s):
+    """How the thread state holds the exception being raised: 'triple'
+    (curexc_type, curexc_value, curexc_traceback), 'one'
+    (current_exception, its traceback on the object) or 'unknown'."""
+    path, ts = s.struct('_ts')
+    if ts is None:
+        return 'unknown', 'Include, every header: _ts'
+    if 'curexc_type' in ts:
+        return 'triple', path + ':_ts.curexc_type'
+    if 'current_exception' in ts:
+        return 'one', path + ':_ts.current_exception'
+    return 'unknown', path + ':_ts'
+
+
+def exc_info(s):
+    """How an entry of the handled-exception stack (sys.exc_info(),
+    tstate->exc_info) holds its exception: 'triple' (exc_type, exc_value,
+    exc_traceback), 'value' (exc_value alone) or 'unknown'."""
+    path, item = s.struct('_PyErr_StackItem')
+    if item is None:
+        return 'unknown', 'Include, every header: _PyErr_StackItem'
+    # 'PyObject *exc_type, *exc_value, *exc_traceback;' is one declaration:
+    # its earlier names are in the type text
+    names = set(item) | {w for v in item.values() for w in v.split()}
+    if 'exc_type' in names:
+        return 'triple', path + ':_PyErr_StackItem.exc_type'
+    if 'exc_value' in names:
+        return 'value', path + ':_PyErr_StackItem.exc_value'
+    return 'unknown', path + ':_PyErr_StackItem'
+
+
+def gc_tracked_test(s):
+    """How _PyObject_GC_IS_TRACKED tells a tracked object, from its header
+    definitions (both #if branches): 'gc_refs' (PyGC_Head's gc_refs isn't
+    _PyGC_REFS_UNTRACKED), 'gc_next' (_gc_next isn't 0), 'ob_gc_bits' (a
+    bit in the object header, free-threaded builds); several joined by '+',
+    or 'unknown'."""
+    found, where = set(), set()
+    for path, toks in s.definitions('_PyObject_GC_IS_TRACKED'):
+        texts = _texts(toks)
+        for marker, answer in (('_PyGC_REFS_UNTRACKED', 'gc_refs'),
+                               ('_gc_next', 'gc_next'),
+                               ('_PyGC_BITS_TRACKED', 'ob_gc_bits')):
+            if marker in texts:
+                found.add(answer)
+                where.add(path)
+    if not found:
+        return 'unknown', 'Include, every header: _PyObject_GC_IS_TRACKED'
+    return '+'.join(sorted(found)), \
+        ', '.join(sorted(where)) + ':_PyObject_GC_IS_TRACKED'
+
+
 # --- the one place answers become snippets --------------------------------
 
 # mechanism -> (its detectors in order, {answers: variant}). A variant is
@@ -267,6 +494,52 @@ VARIANTS = {
         {('frame_object', 'tstate.frame'): 'frame_object',
          ('interpreter_frame', 'cframe.current_frame'): 'interpreter_frame_cframe',
          ('interpreter_frame', 'tstate.current_frame'): 'interpreter_frame'}),
+    # Python/pyruntime.c (Py_BUILD_CORE): where eval_breaker is, and what
+    # ceval does when it is set
+    'eval_breaker_runtime': (
+        (eval_breaker_home, pending_handler, signals_pending),
+        {('runtime', 'loop_top', 'no'): 'ceval_loop_top',
+         ('runtime', 'loop_top', 'yes'): 'ceval_loop_top_signals',
+         ('interpreter', 'static_function', 'yes'): 'static_handler_copy',
+         ('interpreter', 'internal_function', 'yes'): 'internal_handler_copy',
+         ('thread', 'api_function', 'no'): 'handler_call'}),
+    # compiled code's test of it (psyfunc.c)
+    'eval_breaker': (
+        (eval_breaker_home,),
+        {('runtime',): 'int32_address',
+         ('interpreter',): 'int32_address',
+         ('thread',): 'tstate_word'}),
+    # Python/pyruntime.c: where the current thread state is
+    'tstate_runtime': (
+        (tstate_current,),
+        {('runtime_gilstate',): 'runtime_address',
+         ('thread_local',): 'thread_local'}),
+    # compiled code's load of it (psyfunc.c, pmethodobject.c)
+    'tstate': (
+        (tstate_current,),
+        {('runtime_gilstate',): 'runtime_address',
+         ('thread_local',): 'thread_local'}),
+    # the recursion count of compiled calls and entries (psyfunc.c,
+    # eval_hook.c, frames.c, pycompiler.c)
+    'recursion': (
+        (recursion_counter, recursion_limit, recursion_overflow),
+        {('depth_up', 'global', 'overflowed'): 'depth_up',
+         ('remaining_down', 'tstate', 'headroom'): 'remaining_down',
+         ('py_remaining_down', 'tstate', 'headroom'): 'py_remaining_down'}),
+    # the exception being raised and the one being handled (pycompiler.h,
+    # pycompiler.c, pmethodobject.c, x64/iencoding.c)
+    'exceptions': (
+        (exc_current, exc_info),
+        {('triple', 'triple'): 'curexc_triple',
+         ('triple', 'value'): 'curexc_triple_info_value',
+         ('one', 'value'): 'current_exception'}),
+    # the inline attribute store's test that the dict is tracked by the GC
+    # (x64/ipyencoding.c)
+    'store_gc': (
+        (gc_tracked_test,),
+        {('gc_refs',): 'gc_refs',
+         ('gc_next',): 'gc_next',
+         ('gc_next+ob_gc_bits',): 'gc_next'}),
 }
 
 

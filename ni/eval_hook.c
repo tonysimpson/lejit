@@ -8,6 +8,7 @@
    tools/metac/mechanisms.py (D75) */
 #include "mechanism_frames_gen.h"
 #include "mechanism_tracing_gen.h"
+#include "mechanism_recursion_gen.h"
 
 /* run interpreted while a trace or profile function is set (KNOWN_BUGS C23):
    compiled code is invisible to them. Off only for tools/interpreted.py,
@@ -23,10 +24,10 @@ static PyObject *NiCode_Run(PyObject *codebuf, ni_frame_t *f) {
   PyThreadState *tstate = PyThreadState_GET();
 
   /* ceval counts the depth on entering every frame (KNOWN_BUGS C12) */
-  if (Py_EnterRecursiveCall(""))
+  if (ni_recursion_enter())
     return NULL;
   if (!psyco_frame_start_register(ni_frame_object(f), &finfo)) {
-    Py_LeaveRecursiveCall();
+    ni_recursion_leave();
     return NULL;
   }
   /* as ceval: the frame is the current one while its code runs, so that
@@ -46,7 +47,7 @@ static PyObject *NiCode_Run(PyObject *codebuf, ni_frame_t *f) {
                                  (long *)ni_frame_args(f), &finfo);
   ni_frame_set_executing(f, 0);
   ni_frame_set_current(tstate, ni_frame_back(f));
-  Py_LeaveRecursiveCall();
+  ni_recursion_leave();
   psyco_trash_object(NULL); /* free any trashed object now */
   if (!psyco_frame_start_unregister(ni_frame_object(f))) {
     Py_XDECREF(result);

@@ -125,9 +125,6 @@ EXTERNFN int psyco_fatal_error(char* msg, char* filename, int lineno);
 # define extra_assert(x)  (void)0  /* nothing */
 #endif
 
-#define RECLIMIT_SAFE_ENTER()  PyThreadState_GET()->recursion_depth--
-#define RECLIMIT_SAFE_LEAVE()  PyThreadState_GET()->recursion_depth++
-
 #if INLINE_COMMON_FUNCTIONS
 # define PSY_INLINE	__inline static
 #else

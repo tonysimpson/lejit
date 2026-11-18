@@ -1,5 +1,7 @@
 #include "ipyencoding.h"
 #include "../pycodegen.h"
+/* NI_GC_UNTRACKED_TEST (D77) */
+#include "mechanism_store_gc_gen.h"
 
 DEFINEFN void function_return(PsycoObject *po, Source retval, int nframelocal,
                               long retpos) {
@@ -126,15 +128,10 @@ bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w) {
    before the old value's decref runs Python code. The jumps to MISS are
    short where they reach: the body is emitted twice, first with every
    one near, which gives an upper bound on each distance. */
-_Static_assert(sizeof(PyGC_Head) == 32 &&
-                   NI_OFS_PyGC_Head__gc__gc_refs == 16 &&
-                   _PyGC_REFS_SHIFT == 1 && _PyGC_REFS_UNTRACKED == -2 &&
-                   Py_TPFLAGS_HAVE_GC == 1UL << 14,
-               "PyGC_Head with gc.gc_refs, as the inline GC test reads it");
+_Static_assert(Py_TPFLAGS_HAVE_GC == 1UL << 14,
+               "the value's GC flag is tested in tp_flags' second byte");
 _Static_assert(offsetof(store_cache_t, dk_size) == 0,
                "the size check compares [cache] directly");
-#define GC_REFS_OFFSET                                                         \
-  ((long)NI_OFS_PyGC_Head__gc__gc_refs - (long)sizeof(PyGC_Head))
 #define STORE_MAX_MISS_JUMPS 8
 
 /* Which encodings reach: decided once from where the site starts, with a
@@ -211,9 +208,7 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
   JCC_MISS(CC_NE); /* the name isn't at the cached entry */
   MOV_R_O(REG_X64_R9, REG_X64_RDX, offsetof(store_cache_t, ix));
   if (s->gc != STORE_GC_NONE) { /* MAINTAIN_TRACKING */
-    MOV_R_O(REG_TRANSIENT_1, REG_X64_RCX, GC_REFS_OFFSET);
-    SHIFT_SIGNED_RIGHT_BY(REG_TRANSIENT_1, _PyGC_REFS_SHIFT);
-    CMP_I8_R(_PyGC_REFS_UNTRACKED, REG_TRANSIENT_1);
+    NI_GC_UNTRACKED_TEST(REG_X64_RCX); /* the store_gc mechanism */
     if (s->gc == STORE_GC_DICT) {
       JCC_MISS(CC_E);
     } else {

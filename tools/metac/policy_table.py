@@ -230,8 +230,8 @@ LAYOUTS = {
     'PyTypeObject': {'fields': [('tp_dealloc', 'destructor', 'ptr'),
                                 ('tp_flags', 'unsigned long', 'u64'),
                                 ('tp_version_tag', 'unsigned int', 'u32')]},
-    # the inline store's GC test (ipyencoding.c:GC_REFS_OFFSET)
-    'PyGC_Head': {'fields': [('gc.gc_refs', 'Py_ssize_t', 'i64')]},
+    # (PyGC_Head's gc_refs, the inline store's GC test: the store_gc
+    # mechanism, ni/mechanisms/store_gc/, D77)
     'PyFloatObject': {'fields': [('ob_fval', 'double', 'f64')]},
     'PyLongObject': {'fields': [('ob_digit', 'digit[1]', 'u32')]},
     'PyListObject': {'fields': [('ob_item', 'PyObject **', 'ptr')]},
@@ -264,11 +264,8 @@ LAYOUTS = {
     'PyCFunctionObject': {'fields': [('m_ml', 'PyMethodDef *', 'ptr'),
                                      ('m_self', 'PyObject *', 'ptr')]},
     'PyCellObject': {'fields': [('ob_ref', 'PyObject *', 'ptr')]},
-    # the recursion count (psyfunc.c) and PyErr_Occurred inline
-    # (pmethodobject.c, pycompiler.h, x64/iencoding.c)
-    'PyThreadState': {'fields': [('recursion_depth', 'int', 'i32'),
-                                 ('overflowed', 'char', 'i8'),
-                                 ('curexc_type', 'PyObject *', 'ptr')]},
+    # (PyThreadState's recursion_depth and overflowed, and curexc_type for
+    # PyErr_Occurred inline: the recursion and exceptions mechanisms, D77)
     # private to a C file: copied under Ni's name
     'seqiterobject': {'from': ('Objects/iterobject.c',), 'copy': 'seqiterobject',
                       'fields': [('it_index', 'Py_ssize_t', 'i64'),
@@ -303,12 +300,9 @@ LAYOUTS = {
 # Py_BUILD_CORE): name -> (variable, field path, declared type, read).
 # runtime_layouts_gen.h gives NI_RUNTIME_<name>, the field as an lvalue.
 RUNTIME = {
-    # where PyThreadState_GET() reads the current thread state: a plain load
-    'tstate_current': ('_PyRuntime', 'gilstate.tstate_current',
-                       '_Py_atomic_address', 'ptr/bits'),
-    # compared with 0 as a 32-bit int (KNOWN_BUGS C24)
-    'eval_breaker': ('_PyRuntime', 'ceval.eval_breaker', '_Py_atomic_int',
-                     'i32/bits'),
+    # (gilstate.tstate_current and ceval.eval_breaker moved to the
+    # tstate_runtime and eval_breaker_runtime mechanisms: where they are
+    # changes between versions, D77)
 }
 
 # ---- what Ni accepts without proof ------------------------------------------
@@ -459,7 +453,7 @@ ENTRIES = {
     'Python/errors.c:PyErr_Fetch': {'shape': 'dafca4286947', 'ni': ['ni/Python/pycompiler.c:cimpl_pyerr_fetch']},
     'Python/ceval.c:_PyEval_EvalFrameDefault': {
         'shape': '8fbb1f607b64',
-        'ni': ['ni/Python/pycompiler.c:cimpl_push_exc_info', 'ni/Python/pycompiler.c:psyco_pycompiler_mainloop', 'ni/psyfunc.c:psyco_check_eval_breaker', 'ni/psyfunc.c:tracing_on', 'ni/mergepoints.c:BREAKER_CHECK', 'ni/Python/pyruntime.c:ni_eval_breaker_handler', 'ni/Python/pyruntime.c:ni_eval_breaker_at_entry'],
+        'ni': ['ni/Python/pycompiler.c:cimpl_push_exc_info', 'ni/Python/pycompiler.c:psyco_pycompiler_mainloop', 'ni/psyfunc.c:psyco_check_eval_breaker', 'ni/psyfunc.c:tracing_on', 'ni/mergepoints.c:BREAKER_CHECK', 'ni/mechanisms/eval_breaker_runtime/ceval_loop_top.h:ni_eval_breaker_handler', 'ni/mechanisms/eval_breaker_runtime/ceval_loop_top.h:ni_eval_breaker_at_entry'],
         'policy': [
             ('forget', 'handler'),
             ('likely', 'false', 'eval_breaker set'),
@@ -552,7 +546,7 @@ ENTRIES = {
         'policy': [
             ('ref', 'no_steal', 'exc and cause'),
         ]},
-    'Python/errors.c:_PyErr_GetTopmostException': {'shape': '87bdd1a8224e', 'ni': ['ni/Python/pycompiler.c:cimpl_reraise']},
+    'Python/errors.c:_PyErr_GetTopmostException': {'shape': '87bdd1a8224e', 'ni': ['ni/mechanisms/exceptions/curexc_triple.h:ni_exc_info_topmost']},
     'Python/ceval.c:import_name': {'shape': '83a19cc303d9', 'ni': ['ni/Python/pycompiler.c:cimpl_import_name']},
     'Python/ceval.c:import_all_from': {'shape': 'e643326dceb4', 'ni': ['ni/Python/pycompiler.c:cimpl_import_all_from']},
     'Python/ceval.c:TARGET(FORMAT_VALUE)': {
@@ -1240,10 +1234,10 @@ ENTRIES = {
         'policy': [
             ('virtual', 'args_tuple', '*args'),
         ]},
-    'Include/ceval.h:Py_LeaveRecursiveCall': {'shape': '96958779c1fd', 'ni': ['ni/psyfunc.c:cimpl_leave_overflowed', 'ni/psyfunc.c:psyco_leave_recursive_call']},
-    'Include/pystate.h:PyThreadState_GET': {'shape': '95c63709fb9d', 'ni': ['ni/psyfunc.c:load_tstate']},
-    'Include/ceval.h:_Py_MakeRecCheck': {'shape': 'bafb6442b39b', 'ni': ['ni/psyfunc.c:add_to_depth']},
-    'Include/ceval.h:Py_EnterRecursiveCall': {'shape': '6ad7744f89dc', 'ni': ['ni/psyfunc.c:enter_recursive_call']},
+    'Include/ceval.h:Py_LeaveRecursiveCall': {'shape': '96958779c1fd', 'ni': ['ni/mechanisms/recursion/depth_up.h:cimpl_leave_overflowed', 'ni/mechanisms/recursion/depth_up.h:leave_recursive_call', 'ni/mechanisms/recursion/depth_up.h:ni_recursion_leave']},
+    'Include/pystate.h:PyThreadState_GET': {'shape': '95c63709fb9d', 'ni': ['ni/mechanisms/tstate/runtime_address.h:ni_tstate_load']},
+    'Include/ceval.h:_Py_MakeRecCheck': {'shape': 'bafb6442b39b', 'ni': ['ni/mechanisms/recursion/depth_up.h:add_to_depth']},
+    'Include/ceval.h:Py_EnterRecursiveCall': {'shape': '6ad7744f89dc', 'ni': ['ni/mechanisms/recursion/depth_up.h:enter_recursive_call', 'ni/mechanisms/recursion/depth_up.h:ni_recursion_enter']},
     'Objects/call.c:_PyFunction_FastCallDict': {
         'shape': '4b4a040692f0',
         'ni': ['ni/psyfunc.c:COMPUTE_DEFCOUNT', 'ni/psyfunc.c:psyco_call_pyfunc', 'ni/psyfunc.c:MAX_CALL_FREES'],

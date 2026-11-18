@@ -15,6 +15,10 @@
 #include "pyver.h"
 /* ni_frame_t and its accessors (D75) */
 #include "mechanism_frames_gen.h"
+/* ni_recursion_suspend and ni_recursion_resume (D77) */
+#include "../codegen.h"
+#include "../dispatcher.h"
+#include "mechanism_recursion_gen.h"
 
 /***************************************************************/
 #define FRAME_STACK_ALLOC_BY 83 /* about 1KB */
@@ -194,7 +198,7 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
   PyObject *result = NULL;
   FrameRuntime *fstart;
   ni_frame_t *f = ni_frame_current(PyThreadState_Get());
-  RECLIMIT_SAFE_ENTER();
+  ni_recursion_suspend();
   while (f != NULL) {
     /* is this Python frame the starting point of a chained
        list of Psyco frames ? */
@@ -281,7 +285,7 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
       break;
     f = ni_frame_back(f);
   }
-  RECLIMIT_SAFE_LEAVE();
+  ni_recursion_resume();
   return result;
 }
 

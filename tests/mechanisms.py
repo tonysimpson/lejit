@@ -6,6 +6,7 @@ for.
 
 1. The detectors give the expected answers on each CPython source in
    EXPECTED, fetched into the cache like a build's (cpython_src.py).
+   Every mechanism VARIANTS names must have an expected row.
 2. Answers that VARIANTS doesn't map fail generation, through the build's
    own entry point, and remove the headers of the last good generation: a
    copy of the 3.7 source given a Python/instrumentation.c says tracing is
@@ -31,33 +32,72 @@ EXPECTED = {
     '3.7.17': {
         'entry': ('frame_eval_hook', ('frame_object', 'no', 'no', 'none')),
         'tracing': ('tstate_use_tracing', ('tstate', 'no')),
-        'frames': ('frame_object', ('frame_object', 'tstate.frame'))},
+        'frames': ('frame_object', ('frame_object', 'tstate.frame')),
+        'eval_breaker_runtime': ('ceval_loop_top', ('runtime', 'loop_top', 'no')),
+        'eval_breaker': ('int32_address', ('runtime',)),
+        'tstate_runtime': ('runtime_address', ('runtime_gilstate',)),
+        'tstate': ('runtime_address', ('runtime_gilstate',)),
+        'recursion': ('depth_up', ('depth_up', 'global', 'overflowed')),
+        'exceptions': ('curexc_triple', ('triple', 'triple')),
+        'store_gc': ('gc_refs', ('gc_refs',))},
     '3.8.20': {
         'entry': ('frame_eval_hook', ('frame_object', 'no', 'no', 'none')),
         'tracing': ('tstate_use_tracing', ('tstate', 'no')),
-        'frames': ('frame_object', ('frame_object', 'tstate.frame'))},
+        'frames': ('frame_object', ('frame_object', 'tstate.frame')),
+        'eval_breaker_runtime': ('ceval_loop_top_signals', ('runtime', 'loop_top', 'yes')),
+        'eval_breaker': ('int32_address', ('runtime',)),
+        'tstate_runtime': ('runtime_address', ('runtime_gilstate',)),
+        'tstate': ('runtime_address', ('runtime_gilstate',)),
+        'recursion': ('depth_up', ('depth_up', 'global', 'overflowed')),
+        'exceptions': ('curexc_triple', ('triple', 'triple')),
+        'store_gc': ('gc_next', ('gc_next',))},
     '3.11.11': {
         'entry': ('frame_eval_hook_interp',
                   ('interpreter_frame', 'no', 'no', 'yes')),
         'tracing': ('cframe_use_tracing', ('cframe', 'no')),
         'frames': ('interpreter_frame_cframe',
-                   ('interpreter_frame', 'cframe.current_frame'))},
+                   ('interpreter_frame', 'cframe.current_frame')),
+        'eval_breaker_runtime': ('static_handler_copy', ('interpreter', 'static_function', 'yes')),
+        'eval_breaker': ('int32_address', ('interpreter',)),
+        'tstate_runtime': ('runtime_address', ('runtime_gilstate',)),
+        'tstate': ('runtime_address', ('runtime_gilstate',)),
+        'recursion': ('remaining_down', ('remaining_down', 'tstate', 'headroom')),
+        'exceptions': ('curexc_triple_info_value', ('triple', 'value')),
+        'store_gc': ('gc_next', ('gc_next',))},
     '3.12.9': {
         'entry': ('vectorcall', ('interpreter_frame', 'yes', 'yes', 'no')),
         'tracing': ('monitoring', ('none', 'yes')),
         'frames': ('interpreter_frame_cframe',
-                   ('interpreter_frame', 'cframe.current_frame'))},
+                   ('interpreter_frame', 'cframe.current_frame')),
+        'eval_breaker_runtime': ('internal_handler_copy', ('interpreter', 'internal_function', 'yes')),
+        'eval_breaker': ('int32_address', ('interpreter',)),
+        'tstate_runtime': ('thread_local', ('thread_local',)),
+        'tstate': ('thread_local', ('thread_local',)),
+        'recursion': ('py_remaining_down', ('py_remaining_down', 'tstate', 'headroom')),
+        'exceptions': ('current_exception', ('one', 'value')),
+        'store_gc': ('gc_next', ('gc_next',))},
     '3.13.2': {
         'entry': ('vectorcall', ('interpreter_frame', 'yes', 'yes', 'no')),
         'tracing': ('monitoring', ('none', 'yes')),
         'frames': ('interpreter_frame',
-                   ('interpreter_frame', 'tstate.current_frame'))},
+                   ('interpreter_frame', 'tstate.current_frame')),
+        'eval_breaker_runtime': ('handler_call', ('thread', 'api_function', 'no')),
+        'eval_breaker': ('tstate_word', ('thread',)),
+        'tstate_runtime': ('thread_local', ('thread_local',)),
+        'tstate': ('thread_local', ('thread_local',)),
+        'recursion': ('py_remaining_down', ('py_remaining_down', 'tstate', 'headroom')),
+        'exceptions': ('current_exception', ('one', 'value')),
+        'store_gc': ('gc_next', ('gc_next+ob_gc_bits',))},
 }
 
 
 def check_answers():
     bad = 0
     for version, expected in EXPECTED.items():
+        missing = sorted(set(mechanisms.VARIANTS) - set(expected))
+        if missing:
+            print('FAIL %-8s no expected answers for %s' % (version, missing))
+            bad += 1
         got = mechanisms.detect(cpython_src.find_source(version))
         for mech, (variant, answers) in expected.items():
             found = (got[mech][1], tuple(a for _, a, _ in got[mech][0]))

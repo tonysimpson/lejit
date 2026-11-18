@@ -12,6 +12,8 @@
  */
 #include "pmethodobject.h"
 #include "ptupleobject.h"
+/* ni_tstate_load (D77) */
+#include "mechanism_tstate_gen.h"
 
 static bool compute_cfunction(PsycoObject *po, vinfo_t *methobj) {
   vinfo_t *newobj;
@@ -66,20 +68,12 @@ DEFINEVAR source_virtual_t psyco_computed_cfunction;
 /* call.c:_Py_CheckFunctionResult, for a C function that compiled code
    calls itself (KNOWN_BUGS C25): a NULL result must come with an
    exception, and any other result without one. 3.7 checks both in
-   release builds. The test of the exception is inline (curexc_type of the
-   current thread state, as PyErr_Occurred reads it); the SystemError is
-   made by CPython's own function, in branches compiled only if a C
-   function breaks the rule. A meta's result is not checked. */
-typedef struct {
-  PyThreadState *ts;
-} cf_tstate_slot_t;
-#define CF_TSTATE_current                                                      \
-  FMUT(DEF_FIELD(cf_tstate_slot_t, PyThreadState *, ts, NO_PREV_FIELD))
-#define CF_TSTATE_curexc_type                                                  \
-  FMUT(CPY_FIELD(PyThreadState, curexc_type, NO_PREV_FIELD))
+   release builds. The test of the exception is inline (the exception
+   word of the current thread state, as PyErr_Occurred reads it: the tstate
+   and exceptions mechanisms, D77); the SystemError is made by CPython's
+   own function, in branches compiled only if a C function breaks the
+   rule. A meta's result is not checked. */
 #define CF_UNCHECKED (CfReturnTypePtr | CfNewRef)
-
-extern void *ni_tstate_current_address(void); /* Python/pyruntime.c */
 
 static PyObject *cimpl_null_result(PyObject *func) {
   return _Py_CheckFunctionResult(func, NULL, NULL);
@@ -94,7 +88,7 @@ static PyObject *cimpl_result_with_error(PyObject *func) {
 /* consumes 'r', the result of a CF_UNCHECKED call */
 static vinfo_t *check_result(PsycoObject *po, vinfo_t *r, vinfo_t *vfunc) {
   condition_code_t cc;
-  vinfo_t *vslot, *vts, *vexc;
+  vinfo_t *vts, *vexc;
   if (r == NULL)
     return NULL;
   cc = integer_non_null(po, r);
@@ -107,12 +101,10 @@ static vinfo_t *check_result(PsycoObject *po, vinfo_t *r, vinfo_t *vfunc) {
                        "v", vfunc);
     return NULL;
   }
-  vslot = vinfo_new(CompileTime_New((long)ni_tstate_current_address()));
-  vts = psyco_get_field(po, vslot, CF_TSTATE_current);
-  vinfo_decref(vslot, po);
+  vts = ni_tstate_load(po);
   if (vts == NULL)
     goto fail;
-  vexc = psyco_get_field(po, vts, CF_TSTATE_curexc_type);
+  vexc = psyco_get_field(po, vts, NI_TSTATE_exc_occurred);
   vinfo_decref(vts, po);
   cc = integer_NON_NULL(po, vexc); /* consumes vexc */
   if (cc == CC_ERROR)

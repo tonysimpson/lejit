@@ -35,6 +35,8 @@
 #include "frames.h"
 /* ni_frame_current, ni_frame_set_current (D75) */
 #include "mechanism_frames_gen.h"
+/* ni_recursion_suspend and ni_recursion_resume (D77) */
+#include "mechanism_recursion_gen.h"
 #include "../pycodegen.h"
 
 #include "../Objects/pabstract.h"
@@ -594,12 +596,9 @@ void cimpl_finalize_frame_locals(PyObject *f_exc_type, PyObject *f_exc_value,
   PyObject *tmp_type, *tmp_value, *tmp_tb;
 
   /* This frame caught an exception */
-  tmp_type = tstate->curexc_type;
-  tmp_value = tstate->curexc_value;
-  tmp_tb = tstate->curexc_traceback;
-  tstate->curexc_type = f_exc_type; /* references are transferred */
-  tstate->curexc_value = f_exc_value;
-  tstate->curexc_traceback = f_exc_traceback;
+  ni_exc_get_current(tstate, &tmp_type, &tmp_value, &tmp_tb);
+  /* references are transferred */
+  ni_exc_put_current(tstate, f_exc_type, f_exc_value, f_exc_traceback);
   Py_XDECREF(tmp_type);
   Py_XDECREF(tmp_value);
   Py_XDECREF(tmp_tb);
@@ -618,24 +617,23 @@ void cimpl_finalize_frame_locals(PyObject *f_exc_type, PyObject *f_exc_value,
    to exc_info readers. */
 static void cimpl_push_exc_info(PyObject *target[]) {
   PyThreadState *tstate = PyThreadState_GET();
-  _PyErr_StackItem *exc_info = tstate->exc_info;
+  PyObject *otype, *ovalue, *otb;
   PyObject *exc, *val, *tb;
   extra_assert(PyErr_Occurred());
-  target[0] = exc_info->exc_traceback ? exc_info->exc_traceback : Py_None;
-  target[1] = exc_info->exc_value ? exc_info->exc_value : Py_None;
-  target[2] = exc_info->exc_type ? exc_info->exc_type : Py_None;
+  ni_exc_info_get(tstate, &otype, &ovalue, &otb);
+  target[0] = otb ? otb : Py_None;
+  target[1] = ovalue ? ovalue : Py_None;
+  target[2] = otype ? otype : Py_None;
   /* the old references move to target[]; borrowed Nones need one */
-  if (exc_info->exc_traceback == NULL) Py_INCREF(Py_None);
-  if (exc_info->exc_value == NULL) Py_INCREF(Py_None);
-  if (exc_info->exc_type == NULL) Py_INCREF(Py_None);
+  if (otb == NULL) Py_INCREF(Py_None);
+  if (ovalue == NULL) Py_INCREF(Py_None);
+  if (otype == NULL) Py_INCREF(Py_None);
   PyErr_Fetch(&exc, &val, &tb);
   PyErr_NormalizeException(&exc, &val, &tb);
   PyException_SetTraceback(val, tb != NULL ? tb : Py_None);
   Py_INCREF(exc);
-  exc_info->exc_type = exc;
   Py_INCREF(val);
-  exc_info->exc_value = val;
-  exc_info->exc_traceback = tb;
+  ni_exc_info_put(tstate, exc, val, tb);
   if (tb == NULL)
     tb = Py_None;
   Py_INCREF(tb);
@@ -649,15 +647,13 @@ static void cimpl_push_exc_info(PyObject *target[]) {
    (psyco_generic_call can't express that); the caller decrefs them. */
 static void cimpl_pop_exc_info(PyObject *type, PyObject *value,
                                PyObject *tb) {
-  _PyErr_StackItem *exc_info = PyThreadState_GET()->exc_info;
-  PyObject *otype = exc_info->exc_type, *ovalue = exc_info->exc_value,
-           *otb = exc_info->exc_traceback;
+  PyThreadState *tstate = PyThreadState_GET();
+  PyObject *otype, *ovalue, *otb;
+  ni_exc_info_get(tstate, &otype, &ovalue, &otb);
   Py_INCREF(type);
   Py_INCREF(value);
   Py_INCREF(tb);
-  exc_info->exc_type = type;
-  exc_info->exc_value = value;
-  exc_info->exc_traceback = tb;
+  ni_exc_info_put(tstate, type, value, tb);
   Py_XDECREF(otype);
   Py_XDECREF(ovalue);
   Py_XDECREF(otb);
@@ -720,7 +716,7 @@ static void cimpl_rt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
     /* the exception came out of the frame of the last entry: if that is an
        emulated one (a compiled callee), this frame is its f_back; an
        entry is recorded in every frame the exception passes through */
-    PyObject *last = tstate->curexc_traceback;
+    PyObject *last = ni_exc_traceback(tstate);
     if (last != NULL && PyTraceBack_Check(last)) {
       PyFrameObject *callee = ((PyTracebackObject *)last)->tb_frame;
       if (callee->f_back == NULL && callee != f) {
@@ -747,7 +743,7 @@ static PyObject *cimpl_vt_traceback(PyCodeObject *code, PyObject *globals,
     Py_INCREF(Py_None);
     return Py_None;
   }
-  oldtb = tstate->curexc_traceback; /* might be NULL */
+  oldtb = ni_exc_traceback(tstate); /* might be NULL */
   Py_XINCREF(oldtb);
   if (PyTraceBack_Here(f)) {
     /* out-of-memory error */
@@ -756,9 +752,9 @@ static PyObject *cimpl_vt_traceback(PyCodeObject *code, PyObject *globals,
     Py_INCREF(Py_None);
     return Py_None;
   }
-  /* the new traceback is now in curexc_traceback */
-  newtb = tstate->curexc_traceback; /* extracts the reference */
-  tstate->curexc_traceback = oldtb; /* consumes the reference */
+  /* the new traceback is now the current exception's */
+  newtb = ni_exc_traceback(tstate);   /* extracts the reference */
+  ni_exc_put_traceback(tstate, oldtb); /* consumes the reference */
   Py_DECREF(f);
   return newtb;
 }
@@ -1514,7 +1510,7 @@ static int cimpl_delete_deref(PyObject *cell) {
 static PyObject *cimpl_load_global(PyObject *globals, PyObject *builtins,
                                    PyObject *w) {
   PyObject *x;
-  RECLIMIT_SAFE_ENTER();
+  ni_recursion_suspend();
   x = PyDict_GetItem(globals, w);
   if (x == NULL) {
     x = PyDict_GetItem(builtins, w);
@@ -1522,11 +1518,11 @@ static PyObject *cimpl_load_global(PyObject *globals, PyObject *builtins,
       const char *obj_str = NiCompatStr_AsString(w);
       if (obj_str)
         PyErr_Format(PyExc_NameError, GLOBAL_NAME_ERROR_MSG, obj_str);
-      RECLIMIT_SAFE_LEAVE();
+      ni_recursion_resume();
       return NULL;
     }
   }
-  RECLIMIT_SAFE_LEAVE();
+  ni_recursion_resume();
   Py_INCREF(x);
   return x;
 }
@@ -1650,15 +1646,8 @@ static int cimpl_unpack_list(PyObject *listobject, long argcnt,
    for no active exception gets its entry here instead (ceval's error:) */
 static void cimpl_reraise(PyCodeObject *code, PyObject *globals, int lasti,
                           int lineno) {
-  /* _PyErr_GetTopmostException isn't exported in 3.7 */
-  _PyErr_StackItem *exc_info = PyThreadState_GET()->exc_info;
   PyObject *type, *value, *tb;
-  while ((exc_info->exc_type == NULL || exc_info->exc_type == Py_None) &&
-         exc_info->previous_item != NULL)
-    exc_info = exc_info->previous_item;
-  type = exc_info->exc_type;
-  value = exc_info->exc_value;
-  tb = exc_info->exc_traceback;
+  ni_exc_info_topmost(PyThreadState_GET(), &type, &value, &tb);
   if (type == Py_None || type == NULL) {
     PyErr_SetString(PyExc_RuntimeError, "No active exception to reraise");
     cimpl_rt_traceback(code, globals, lasti, lineno);
