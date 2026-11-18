@@ -99,8 +99,8 @@ def _arrays(toks):
 
 class Source:
     """The headers (every Include/**/*.h) and named C files of a CPython
-    tree, with the object-like macros the headers define (PyObject_HEAD),
-    expanded inside struct bodies."""
+    tree, with the macros the headers define, expanded inside struct bodies
+    (PyObject_HEAD; a field list such as COMMON_FIELDS(func_), with ##)."""
 
     def __init__(self, src):
         self.src = src
@@ -109,9 +109,7 @@ class Source:
             os.path.join(src, 'Include', '**', '*.h'), recursive=True))
         self.macros = {}
         for path in self.headers:
-            for name, m in self.tokens(path)[1].items():
-                if m.params is None:
-                    self.macros[name] = m
+            self.macros.update(self.tokens(path)[1])
 
     def tokens(self, path):
         if path not in self.toks:
@@ -124,13 +122,24 @@ class Source:
         return self.toks[path]
 
     def expand(self, toks, depth=0):
-        out = []
-        for t in toks:
+        out, i = [], 0
+        while i < len(toks):
+            t = toks[i]
             m = self.macros.get(t.text) if t.kind == 'id' else None
-            if m is not None and depth < 8:
+            if m is None or depth >= 8:
+                out.append(t)
+                i += 1
+            elif m.params is None:
                 out += self.expand(m.body, depth + 1)
+                i += 1
+            elif i + 1 < len(toks) and toks[i + 1].text == '(':
+                close = ctokens.match_close(toks, i + 1)
+                args = ctokens.split_top(toks[i + 2:close], ',')
+                out += self.expand(_substitute(m, args), depth + 1)
+                i = close + 1
             else:
                 out.append(t)
+                i += 1
         return out
 
     def struct(self, name, files=()):
@@ -196,25 +205,88 @@ class Source:
         return None
 
     def fields(self, body):
-        return parse_fields(self.expand(body))
+        return parse_fields(_strip_annotations(self.expand(body)))
+
+    def canonical(self, ctype):
+        """A type's text with each typedef of a struct tag written as the
+        tag ('PyTypeObject *' -> 'struct _typeobject *'), so that two
+        spellings of one type compare equal."""
+        if not hasattr(self, 'tags'):
+            self.tags = {}
+            for path in self.headers:
+                toks = self.tokens(path)[0]
+                for i in range(len(toks) - 4):
+                    if (toks[i].text == 'typedef'
+                            and toks[i + 1].text in ('struct', 'union')
+                            and toks[i + 4].text == ';'):
+                        self.tags[toks[i + 3].text] = '%s %s' % (
+                            toks[i + 1].text, toks[i + 2].text)
+        return ' '.join(self.tags.get(w, w) for w in ctype.split(' '))
+
+
+# compiler annotations a header may put between members
+ANNOTATIONS = {'__extension__', '__pragma'}
+
+
+def _strip_annotations(toks):
+    out, i = [], 0
+    while i < len(toks):
+        if toks[i].text in ANNOTATIONS:
+            if toks[i].text != '__extension__' and i + 1 < len(toks) \
+                    and toks[i + 1].text == '(':
+                i = ctokens.match_close(toks, i + 1) + 1
+            else:
+                i += 1
+            continue
+        out.append(toks[i])
+        i += 1
+    return out
+
+
+def _substitute(m, args):
+    """A function-like macro's body with its arguments in, ## pasted."""
+    params = dict(zip(m.params, args))
+    out = []
+    for t in m.body:
+        if t.kind == 'id' and t.text in params:
+            out += params[t.text]
+        else:
+            out.append(t)
+    pasted = []
+    k = 0
+    while k < len(out):
+        if out[k].text == '##' and pasted and k + 1 < len(out):
+            a = pasted.pop()
+            pasted.append(ctokens.Tok('id', a.text + out[k + 1].text,
+                                      a.line, a.sp))
+            k += 2
+        else:
+            pasted.append(out[k])
+            k += 1
+    return pasted
 
 
 def parse_fields(toks):
-    """{name: Field} of a struct body's members, nested aggregates kept."""
+    """{name: Field} of a struct body's members, nested aggregates kept; an
+    anonymous struct or union's members are the parent's, as in C."""
     out = {}
     for decl in ctokens.split_top(toks, ';'):
         if not decl:
             continue
-        if decl[0].text in ('struct', 'union') and any(
-                t.text == '{' for t in decl):
+        agg = next((k for k, t in enumerate(decl)
+                    if t.text in ('struct', 'union')), None)
+        if agg == 0 and any(t.text == '{' for t in decl):
             o = next(k for k, t in enumerate(decl) if t.text == '{')
             c = ctokens.match_close(decl, o)
             inner = parse_fields(decl[o + 1:c])
-            for d in ctokens.split_top(decl[c + 1:], ','):
+            names = [d for d in ctokens.split_top(decl[c + 1:], ',')
+                     if any(t.kind == 'id' for t in d)]
+            if not names:
+                out.update(inner)
+            for d in names:
                 ids = [t.text for t in d if t.kind == 'id']
-                if ids:
-                    out[ids[0]] = Field(ids[0], decl[0].text + ' {...}', 0,
-                                        _arrays(d), None, inner)
+                out[ids[0]] = Field(ids[0], decl[0].text + ' {...}', 0,
+                                    _arrays(d), None, inner)
             continue
         if any(t.text == '(' for t in decl):        # pointer to function
             o = next(k for k, t in enumerate(decl) if t.text == '(')
@@ -314,7 +386,7 @@ def check(s, entries=None, runtime=None):
             if f is None:
                 problems.append('%s.%s (%s): %s' % (name, fpath, path, why))
                 continue
-            if f.ctype() != normalise(ctype) and not (
+            if s.canonical(f.ctype()) != s.canonical(normalise(ctype)) and not (
                     f.inner is not None and ctype == f.base):
                 problems.append('%s.%s (%s): declared %r, Ni assumes %r'
                                 % (name, fpath, path, f.ctype(), ctype))
@@ -347,7 +419,7 @@ def check(s, entries=None, runtime=None):
             problems.append('RUNTIME %s: %s.%s (%s): %s'
                             % (name, var, fpath, found[0], why))
             continue
-        if f.ctype() != normalise(ctype):
+        if s.canonical(f.ctype()) != s.canonical(normalise(ctype)):
             problems.append('RUNTIME %s: %s.%s (%s): declared %r, Ni assumes'
                             ' %r' % (name, var, fpath, found[0], f.ctype(),
                                      ctype))
@@ -502,8 +574,8 @@ def main(argv):
         layouts, rt, problems = check(s)
         n = sum(len(e['fields']) for e in policy_table.LAYOUTS.values()) + \
             len(policy_table.RUNTIME)
-        print('%s: %d of %d fields as Ni assumes'
-              % (src, n - len(problems), n))
+        ok = sum(len(got) for _, _, _, got in layouts) + len(rt)
+        print('%s: %d of %d fields as Ni assumes' % (src, ok, n))
         for p in problems:
             print('  ' + p)
         status |= bool(problems)
