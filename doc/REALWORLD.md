@@ -2,7 +2,7 @@
 
 **Aim:** show that software people widely use today gets faster with Ni, measured as they use it. pyperformance and the adversarial suite (`tools/adversarial/`) are for us; this suite is for everyone else, so the list below was chosen from usage data and plain-CPython profiles only, before Ni ran on any of it.
 
-**When:** the suite runs once Ni works on a CPython these packages support; today's versions no longer support 3.7. The choice is made (steps 1–4) and the workloads are committed (`tools/realworld/`, `10d65cb`), both blind: Ni has not run on any of them.
+**When:** the suite runs once Ni works on a CPython these packages support; today's versions no longer support 3.7. The choice is made (steps 1–4) and the workloads are committed (`tools/realworld/`, `a27ae13`), both blind: Ni has not run on any of them.
 
 ## Criteria
 
@@ -122,7 +122,7 @@ Notes on the choices:
 
 ## The workloads (`tools/realworld/`)
 
-Step 5's workloads are committed (`10d65cb`), written blind.
+Step 5's workloads are committed (`a27ae13`), written blind.
 
 **Running them:**
 - `setup.sh PYTHON` builds one venv per environment under `build/realworld/envs/<tag>/`, then fetches the inputs. It is the only step that uses the network.
