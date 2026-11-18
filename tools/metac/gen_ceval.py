@@ -1542,7 +1542,15 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     local.add(ws[j + 1])
         text = []
         for st in handler:
-            ws = [t_.text for t_ in ctokens.tokenize(words(st))[0]]
+            # 3.8's _PyErr_X(tstate, ...) is PyErr_X(...) at run time; any
+            # other tstate is the interpreter's, which the copy doesn't have
+            # (a helper's is helper_copy's to refuse)
+            ws = [t_.text for t_ in ceval_inline.untstate(
+                ctokens.tokenize(words(st))[0], csigs)]
+            if any(x_ == 'tstate' and not (j > 1 and ws[j - 1] == '('
+                                           and ws[j - 2] in ctx.helpers)
+                   for j, x_ in enumerate(ws)):
+                raise Skip('an error handler reading tstate')
             for j, x_ in enumerate(ws):
                 prev = ws[j - 1] if j else ''
                 if not re.fullmatch(r'[A-Za-z_]\w*', x_) or prev in ('.', '->'):
