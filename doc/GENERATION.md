@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: plan; steps 1 (`9eae61d`) and 2 (`7b21dea`) done
+status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`) and 3 (`e7fd745`) done
 ---
 # Plan of work: generate the translated layer on 3.7
 
@@ -68,6 +68,23 @@ Order: 0, 1 and 2 can run at once; then 3; then 4 alone; then 5, 6, 7 and 8 in p
 - **The 41 regenerate the same** but for variable names (10 cases) and `DUP_TOP_TWO`'s incref order; case order is `ceval.c`'s. New: `LOAD_ATTR`, `STORE_ATTR`, `DELETE_ATTR`, with the same calls as the hand-written cases they replace (removed from `pycompiler.c`).
 - **Checks:** every derived effect against `dis.stack_effect` (nine opargs) in every generation; a mutation test (wrong readers, wrong `ceval.c`) fails or refuses each time. Checked build: `tests/run.py` 747 pass, compile bounds, the seven `profile_bench.py` runs, CPython's default set 285 modules, 0 unexpected. Release build, instructions per warm iteration on the seven benchmarks against `b36a1ac`: within ±0.05% (STATUS).
 - **For step 8:** the reader already gives definitions for the compares, imports, closures and jumps; what stops them is back-half vocabulary (failures log). The refused kinds core, shared code and falls through stay hand-written by design; oparg and control flow need array inputs and branches on run-time values.
+
+## Step 3: done (`e7fd745`, D71) [run]
+
+The policy table is `tools/metac/policy_table.py`, checked by `policy.py` in every generation; the effect rules are `tools/metac/effects.py`. Details: METACOMPILER.md "Policy table" and "Effect rules".
+- **Table:** 250 entries keyed by CPython definitions (55 `ceval.c` cases, 44 in `abstract.c`, 22 in `longobject.c`…), 93 with policy items (186 items), 11 rules, 9 limits, 22 light opcodes, 12 types, 38 cannot-block functions, the two type whitelists, and the effect rules' 25 seeds, 28 external functions and 6 assumptions.
+- **Moved:** `gen_float.py`'s `LIBM` and `ERRORS` come from the table; the generated headers are byte-identical. Nothing else in the generators is policy.
+- **Effects against Ni's 225 call sites:** no Python 182 agree, 28 cautious, 2 disagree; pure 197, 6, 2, plus 7 allocators; error checking 143, 6, 8; `CfNewRef` 33 of 33; `CfNoBlock` 74, 82, 1; D53's list 37 of 38. Of the 13 disagreements, two are flag bugs (F104, known; F105, new), eleven are limits (failures log).
+- **Checks:** a changed function in a copy of the source fails generation and names it; an unknown key, value, Ni name, limit or field fails. Checked build: `tests/run.py` 747 pass, compile bounds 7, CPython's default set 285 modules, 0 unexpected.
+
+**For the steps that follow:**
+- **Reading the table:** `import policy_table`; `ENTRIES[key]['policy']` is a list of `(kind, value[, note])`; `RULES[name]` says what is one rule. `generate.py` runs `policy.check` before any generator, so a generator can trust every key and shape.
+- **Step 4** needs the `promote`, `mega`, `likely`, `restype` and `ref` items of `abstract.c`'s 44 entries, the `slot_guard` and `restart` rules, and flags from `effects.py`: make it a library call (`effects.analyse(src)`) from the generator rather than a table, and add per-site assumptions to `ASSUMPTIONS`.
+- **Step 5:** `shortcut`/`extra` items per family (`one_digit`, `power_of_two`, `small_presized`, `type_whitelist`); an `extra` item is code the generator must write from the table, as there is no C for it.
+- **Step 6:** `TYPES` (fields, mutability, weights) and the `virtual` items.
+- **Step 7:** the `limit` items (`max_args`, `depth`, `max_frees`) and `LIMITS`; `forget` items at the call sites.
+- **Step 8:** the `ceval.c` entries' `guard`, `promote` and `other` items (`LOAD_GLOBAL`'s dict-version guard, `ends_block`), and `LIGHT_OPCODES`.
+- When code moves from hand-written to generated, the checks that compare the table with Ni's code (limits, `cannot_block_init`, whitelists) should be replaced by the generator reading the table.
 
 ## Risks
 

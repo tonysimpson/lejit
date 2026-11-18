@@ -1,5 +1,15 @@
 # Status
 
+## 2026-11-18: policy table and effect rules (GENERATION.md step 3, `e7fd745`, D71)
+
+The generator's judgement is data, checked on every build; call effects are computed from CPython's source. [run]
+- **Table** (`tools/metac/policy_table.py`): 250 entries keyed by CPython definitions with token shapes, 93 with policy items (186), 11 rules in place of per-function guards, effects, forgetting and likelihoods, plus limits, light opcodes, types, D53's list and the type whitelists. METACOMPILER.md "Policy table".
+- **Checks** (`tools/metac/policy.py`, run by `generate.py`): a changed function in a copy of the source, an unknown key, value, Ni name, limit or field each fail by name.
+- **Generated headers byte-identical** with `gen_float.py` reading its library and error functions from the table.
+- **Effect rules** (`tools/metac/effects.py`) against Ni's 225 call sites: no Python 182 agree, 28 cautious, 2 disagree; pure 197, 6, 2 (plus 7 allocators); error checking 143, 6, 8; `CfNewRef` 33 of 33; `CfNoBlock` 74, 82, 1; D53's list 37 of 38. Two flag bugs: F104 (known) and F105 (new, out of memory only); eleven limits in the failures log.
+- Checked build: `tests/run.py` 747 pass, `tests/compile_bounds.py` 7 checks, `tests/cpython_tests.py` default set 285 modules, 0 unexpected. Generators run twice with the same output; the build used it.
+- Not done: no generator reads the entries yet (steps 4 to 8); no release-build measurement, since no C changed.
+
 ## 2026-11-18: the `ceval.c` reader (GENERATION.md step 2, `7b21dea`, D69)
 
 The bytecode generator reads 3.7's `ceval.c` itself; `tools/metac/bytecodes37.c` is gone (GOAL "when the phase is done", point 2, for that file). [run]

@@ -180,6 +180,71 @@ Read from the 3.12.9 source tarball (`Python/bytecodes.c`, `Tools/cases_generato
 
 **Mutation test** [run]: three wrong readers (a `STACKADJ` that doesn't move, a `PUSH` that doesn't move, an output dropped from two-input cases) each stop generation with `dis.stack_effect` mismatches. Six edits to a copy of `ceval.c`: `STORE_FAST` with `TOP()` for `POP()` is a mismatch (effect 0, dis −1); `STACKADJ(-2)` in `STORE_SUBSCR`, `BINARY_POWER` without `SET_TOP`, `BINARY_ADD` reading `SECOND()`, `BINARY_SUBSCR` not releasing `sub`, and `LOAD_FAST` increfing before its error exit are each refused (the error-exit check, or the restart rule), so the opcode drops out of the output and is left to the hand-written code, never generated wrong.
 
+## Policy table (D71)
+
+The generator's judgement is data: `tools/metac/policy_table.py`, checked by `tools/metac/policy.py`, which `generate.py` runs before any generator, so a mismatch fails the build. `python3 tools/metac/policy.py --src SRC` runs the checks alone; `--shape KEY…` prints a definition's current shape. [run]
+
+**Keys and shapes.** Every key names a definition in CPython's source, found by `tools/metac/csource.py`: `path:name` for a function, a macro, a struct (by tag or typedef) or an initialised variable; `Python/ceval.c:TARGET(OP)` for an opcode case. An entry carries `shape`, the first 12 hex digits of a sha256 of the definition's tokens (comments and spacing don't count). A shape that differs means the C changed: the check names the key and both shapes, and someone reads the entry again against the new C and adds the new shape. `shape` may be a tuple, one per source checked, so no version number is written anywhere (D67). Ni's side is named the same way (`ni/Objects/pabstract.c:PsycoNumber_Add`, `ni/Python/pycompiler.c:case LOAD_GLOBAL`, or a generator `tools/metac/gen_ceval.py:translate`) and must exist.
+
+**Sections.**
+
+| Section | What it holds | Size |
+|---|---|---|
+| `ENTRIES` | One per CPython definition a hand translation mirrors (INVENTORY's translated and mixed rows, dead code left out): its shape, the Ni code that carries it today, and policy items `(kind, value[, note])` | 250 entries, 93 with items, 186 items |
+| `RULES` | What is one rule, not per-function entries, with its decisions and where Ni applies it | 11 |
+| `LIMITS` | Numbers in Ni's code (`MEGAMORPHIC_MAX` 5, `MP_BLOCK_CAP` 6, `MAX_MP_DISTANCE` 170, `INLINE_MAXIMUM_WEIGHT` 6, `VLIST_LENGTH_MAX` 3, `CT_TUPLE_LOAD_SIZE_LIMIT` 15, `FAST_MAX` 5, `MAX_CALL_FREES` 64, `STORE_CACHE_MAX_REFRESHES` 64) | 9 |
+| `LIGHT_OPCODES` | Opcodes that don't count towards the inlining weight | 22 |
+| `TYPES` | Per type struct: its type object, mutable and immutable fields, the virtual form's weights (P15, step 6) | 12 |
+| `CANNOT_BLOCK` | D53's list, as the CPython functions behind it | 38 |
+| `NO_DEL_TYPES`, `SAFE_DESCRIPTORS` | The type whitelists of F55's decref rule and of attribute specialisation | 6, 7 |
+| `SEEDS`, `EXTERNAL`, `ASSUMPTIONS` | The effect rules' starting points (below) | 25, 28, 6 |
+
+**Vocabulary** (`policy.VOCABULARY`; every item's kind and value must be in it):
+- `promote`: `type`, `verify_type`, `static_type`, `value`, `constant`, `known_only`. `mega`: `type`, `value`, `residual`.
+- `guard`: `version_tag`, `store_guard`, `dict_version`, `first_seen`, `memory`, `identity`, `constant_class`, `no_fold_heap`, `generic_for_heap`.
+- `virtual`: `result`, `argument`, `fast_path`, `concat`, `fuse`, `args_tuple`.
+- `shortcut` (in this C) and `extra` (no C behind it in this source: the generator must emit it from the table, or same code shows a loss): `one_digit`, `const_fold`, `type_whitelist`, `inline_index`, `inline_read`, `no_tuple_call`, `known_length`, `identity`, `power_of_two`, `small_presized`, `word_compare`, `skip_check`, `specialise_only`, `compile_time_unpack`, `direct_meta`.
+- `likely`: `true`, `false` (the note names the condition). `restype`: a type object of the source.
+- `ref`: `need_reference`, `held`, `no_steal`, `incref`, `keep_alive`. `forget`: `before_branch`, `direct_call`, `handler`, `store`.
+- `limit`: `nested_weight`, `max_args`, `depth`, `max_frees`. `other`: `compile_time_hash`, `ends_block`, `untraced_only`, `trace_fallback`, `mutable_fields`.
+
+Items by kind: shortcut 41, virtual 31, likely 28, restype 24, promote 17, ref 11, other 9, guard 8, extra 5, forget 4, limit 4, mega 4.
+
+**Rules instead of entries** (`RULES`): `slot_guard` (D54: every slot read on a possibly-heap type through `Psyco_TypeSlot`, resuming CPython's algorithm where it changed; replaces 22 guard items and the core rows' slot macros), `restart` (PATTERNS rule 1, F24, F25), `error_unlikely` (P05: 7 items), `effects` (computed, below: 48 items in translated and mixed rows, 72 in all), `forget` (D59, D62, D63, F55), `megamorphic` (P04, D43, D66), `eval_breaker` (D45, D53), `type_test_generic_path` (D69: the reader's one judgement rule, now named here), `gc_ignored`, `allocator_pure`, `virtual_types`. INVENTORY's DRIFT items (51) are not policy: they are differences a faithful translation loses.
+
+**Checks against Ni's code.** Where the table copies something Ni still hard-codes, the two must agree until a generator emits the code from the table: `LIMITS` against the `#define`s; `LIGHT_OPCODES` against `mergepoints.c:IS_LIGHT_INSTR`, and each against `Include/opcode.h`; `CANNOT_BLOCK` against `psyfunc.c:cannot_block_init` (methods and builtins resolved through the source's `PyMethodDef` tables, clinic headers included); `NO_DEL_TYPES` against both copies (`pobject.c:collect_undeletable_vars`, `ipyencoding.h:psyco_decref_rt`); `SAFE_DESCRIPTORS` against `pobject.c:c_descriptor`/`safe_descriptor`; `TYPES` fields against the struct, weights against the `INIT_SVIRTUAL` calls.
+
+**What moved.** `gen_float.py`'s `LIBM` (the C functions copied code may call) is now `EXTERNAL`'s pure functions, and `ERRORS` the `ASSUMPTIONS` marked `raises`. Generated headers are byte-identical before and after (`plongobject_gen.h`, `pfloatobject_gen.h`, `pycompiler_gen.h`) [run]. `gen_long`'s and `gen_ceval`'s tables (`CTORS`, `INT_TYPES`, `OPS`, `LABELS`, `DROPPED`, `CONSTANTS`, `CODE_TUPLES`) say how to write the output, not what to choose, so they stay.
+
+**Mutation test** [run]: a copy of the source with one token changed in `abstract.c:PyNumber_Add` fails generation: `Objects/abstract.c:PyNumber_Add: shape 6cb97b65d5ef, the entry was written for 773b92704612`, and no header is written. An unknown key, an unknown value, a Ni name that doesn't exist, a wrong limit and a field not in its struct each fail, by name.
+
+## Effect rules (D71)
+
+`tools/metac/effects.py --src SRC [-v] [--why NAME…]` (a tool, not run by the build). It builds a call graph over the source's `Include`, `Objects`, `Python`, `Modules` and `Parser`, 19,137 nodes, functions and macros alike, plus Ni's own helpers read the same way, and finds for each node [run]:
+- **python** (may run Python): a call through a function pointer (`->f(`, `(*f)(`, a parameter), or a decref of anything but a singleton or a local declared with a `NO_DEL_TYPES` struct; else a callee that may. 6,803 nodes.
+- **blocks** (may release the GIL): `Py_BEGIN_ALLOW_THREADS`, `PyEval_SaveThread`. 4,474.
+- **pure**: no write through a pointer or to a file-scope variable (refcounts don't count), no read of a mutable file-scope variable (type objects and `PyExc_*` taken as constant), no python, every callee pure. An allocator is impure; `allocs` records who reaches one (rule `allocator_pure`).
+- **raises**: a call through a pointer, `PyErr_SetObject`/`PyErr_Format(V)`, or an assumption `raises`. A decref doesn't raise (an error in `__del__` is printed).
+
+The walk stops at `SEEDS` (decref, gc, blocks, sets_error, alloc, fatal: `Py_FatalError` and `Py_UNREACHABLE` end the process) and at `ASSUMPTIONS`, which say what Ni accepts without proof: `PyErr_SetString` (no Python, no blocking, raises: a built-in class and an ASCII message), `PyDict_GetItem` and `_PyDict_GetItem_KnownHash` (F34: an exact str key), `PyErr_Restore` (an old exception's dealloc runs no Python), `function_call` (no blocking: D53, the body tests `eval_breaker`), `PyNumber_Index` (D53's str methods). A header's macro shadows a function of the same name (the default configuration's `_Py_ForgetReference` is a macro).
+
+**Compared with every hand-written flag** [run]. The 225 residual call sites in the built sources (`psyco_generic_call`, `Psyco_META1`…`4`): 13 have flags built at run time (unproven), 157 resolve to a C function (by name, through Ni's compat macros or a one-call header macro, or through a type's slot initialisers such as `PyList_Type.tp_as_sequence->sq_concat`), 55 call a pointer. *Agree* means the flag says what the analysis finds; *cautious*, that Ni assumes less than is proven (safe, but a lost optimisation); *disagree*, that Ni assumes more.
+
+| Flag | Agree | Cautious | Disagree | Other |
+|---|---|---|---|---|
+| `CfNoPython`/`CfPure` (no Python), 212 sites | 182 | 28 | 2 | |
+| `CfPure`, 212 | 197 | 6 | 2 | 7 allocators (rule `allocator_pure`) |
+| error convention (checks what it may raise), 157 | 143 | 6 | 8 | |
+| `CfNewRef` against `refcounts.dat`, 33 | 33 | | | |
+| `CfNoBlock` or D53's list, 157 | 74 | 82 | 1 | |
+| D53's list itself, 38 | 37 | | 1 | |
+
+A site whose result the caller tests itself (`runtime_NON_NULL_f(po, psyco_generic_call(...))`) counts as checked. The 82 cautious `CfNoBlock` sites are the measure of what computing D53's list would gain: calls after which no `eval_breaker` test is needed.
+
+**The 13 disagreements, classified:**
+- **Bugs in Ni's flags:** `float_richcompare` (error, `pfloatobject.c:pfloat_richcompare`) is KNOWN_BUGS F104 already; `pycompiler.c:cimpl_vt_traceback` (NoError, but leaves a MemoryError set when it returns None) is new, F105.
+- **Limits of the analysis** (failures log): `float_richcompare`'s no-Python (a decref of an int temporary declared `PyObject *`) and pure (it reads `_PyLong_One`, a variable set once at start-up); the pointer `fn` at `pfloatobject.c:pfloat_richcompare` (one of the `cimpl_fp_*_fp` compare helpers, chosen in a switch); `cimpl_unicode_eq` (`PyUnicode_READY` of a legacy string); `PyErr_ExceptionMatches`, `PyErr_GivenExceptionMatches`, `cimpl_generator_stop` (`PyTuple_Size`'s bad-call error, under a `PyTuple_Check`); `cimpl_push_exc_info` (`PyErr_NormalizeException` replaces the exception, as `ceval.c` lets it); `cimpl_rt_traceback` (a failure replaces the exception being unwound, by design); `PyFunction_NewWithQualName` blocks and is in D53's list (only through a UTF-8 error handler for an ASCII name).
+
 ## Failures log
 
 Record here each case where the current approach failed: the CPython file and function, what it couldn't do, and what we did.
@@ -200,10 +265,19 @@ Record here each case where the current approach failed: the CPython file and fu
 | `ceval.c:UNARY_NOT` (was `bytecodes37.c`) | `if (err == 0) { …SET_TOP(Py_True); DISPATCH(); } else if (err > 0) …`: a branch on a run-time value, with a dispatch in each arm. Ni turns it into a condition code and a virtual bool (`integer_NON_NULL`, `PsycoBool_FromCondition`), and `PsycoObject_IsTrue` returns a vinfo, not an int. | Hand-written. Candidate rule: `int x = F(...)` where F's Psyco counterpart returns a vinfo, then `if (x == 0) A else B` becomes a condition code when A and B are constants. 3.12's `POP_JUMP_IF_*` need the same. |
 | `BINARY_MATRIX_MULTIPLY`, `INPLACE_MATRIX_MULTIPLY` | No `PsycoNumber_MatrixMultiply` (until `93b201f`). | `pabstract.c` got both (abstract.c's `binary_op`/`binary_iop` on `nb_matrix_multiply`), and the generator now writes the cases: 41 of 43. |
 | `ceval.c:DELETE_SUBSCR` | Read; no `PsycoObject_DelItem`. The hand-written case calls `PsycoObject_SetItem(po, o, key, NULL)`, which is a fact about Ni's API, not about the C. | Hand-written. Fix: give pabstract a `PsycoObject_DelItem`. |
-| `ceval.c:BINARY_ADD`, `INPLACE_ADD`, `BINARY_MODULO` | A fast path under an exact-type test (`unicode_concatenate`, `PyUnicode_Format`). Not a failure, but the reader's one judgement rule. | The reader keeps the generic `else` branch (D69). If a later version's fast path gives a different result from the generic call, the rule is wrong there and belongs in the policy table (GENERATION step 3). |
+| `ceval.c:BINARY_ADD`, `INPLACE_ADD`, `BINARY_MODULO` | A fast path under an exact-type test (`unicode_concatenate`, `PyUnicode_Format`). Not a failure, but the reader's one judgement rule. | The reader keeps the generic `else` branch (D69). If a later version's fast path gives a different result from the generic call, the rule is wrong there. It is now named in the policy table (`RULES` `type_test_generic_path`, D71); an exception for one case would be an entry keyed by its `TARGET`. |
 | `ceval.c:LOAD_CLOSURE`, `STORE_DEREF` | Read; `freevars[oparg]` and `PyCell_GET`/`PyCell_SET` aren't in the back half's vocabulary. | Hand-written. Candidate: `freevars[oparg]` as a representation rule (Ni's cells), as `GETLOCAL` is. |
 | `ceval.c:COMPARE_OP` | Read; `cmp_outcome(oparg, left, right)` is a static function of `ceval.c` that switches on `oparg`. | Hand-written (condition codes). Needs `cmp_outcome` translated, with the switch on a compile-time `oparg` folded. |
 | `ceval.c:IMPORT_NAME`, `IMPORT_FROM` | Read; `import_name(f, …)` and `import_from` are `ceval.c` helpers, and `import_name` takes the frame. | Hand-written. |
 | `ceval.c:JUMP_FORWARD` | Read; `JUMPBY(oparg)` is a jump, not in the vocabulary. | Hand-written. Jumps are a small vocabulary for step 8. |
 | `ceval.c:PRINT_EXPR`, `LOAD_DEREF`, `BUILD_CONST_KEY_MAP` | An error exit that sets its own exception (`PyErr_SetString`, `format_exc_unbound`). The reader knows one error statement, the one 3.12 names as a label. | Refused. Candidate: an error exit whose statement only sets an exception becomes a labelled `ERROR_IF` carrying that call, if the back half can emit it. |
 | `ceval.c:BEFORE_ASYNC_WITH` | An error exit with a value it pushed still on the stack. | Refused (coroutines, core in any case). |
+| effects: `floatobject.c:float_richcompare` (no Python) | A decref of `ww`, an int made in the function, but declared `PyObject *`: the analysis knows a local's type only from its declaration. | Accepted (F104 is the real error). Candidate: a local assigned only from `PyLong_*` constructors has their type. |
+| effects: `float_richcompare` (pure) | Reads `_PyLong_One`, a file-scope variable set once at start-up; the analysis takes every non-`const` one as mutable. | Accepted. Candidate: an `ASSUMPTIONS` list of variables constant after start-up. |
+| effects: the pointer `fn` in `pfloatobject.c:pfloat_richcompare` | A call through a local function pointer chosen in a switch from Ni's pure compare helpers. | Unresolved; the flags are right. Candidate: resolve a pointer to every function assigned to it. |
+| effects: `cimpl_unicode_eq` (`_PyUnicode_EQ`) | `PyUnicode_READY` can raise and writes the string, but only for a legacy (not ready) string, which Python code never makes in 3.7. | Accepted; the analysis is path-insensitive. |
+| effects: `PyErr_ExceptionMatches`, `PyErr_GivenExceptionMatches`, `cimpl_generator_stop` | `PyTuple_Size`'s bad-call error, on a path guarded by `PyTuple_Check`. | Accepted (path-insensitive). |
+| effects: `cimpl_push_exc_info` | `PyErr_NormalizeException` may replace the exception; it returns nothing, and `ceval.c` ignores the failure too. | Accepted: there is nothing to check. |
+| effects: `cimpl_rt_traceback` | `PyFrame_New` may fail; the helper then leaves the new error in place of the one being unwound, by design (its comment). | Accepted. |
+| effects: `funcobject.c:PyFunction_NewWithQualName` (blocks, in D53's list) | `PyUnicode_InternFromString` reaches the UTF-8 decoder's error handler, which can import the codec registry; the name is ASCII, so it never does. | Accepted (path-insensitive). |
+| effects: 13 call sites | Flags built at run time (`cf` variables, `CF_UNCHECKED`). | Unproven. |
