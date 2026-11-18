@@ -30,9 +30,9 @@ One row per file. **Every file has been read in full at least once.** The "revie
 |---|---|---|---|---|
 | `ni/blockalloc.h` | core | Fixed-size block allocator macros for vinfo_t and source_known_t; under ASan each item is its own `PyMem_MALLOC` block. | none | `e1fd808`; `ebc2296` (ASan) |
 | `ni/cf_flags.h` | core | Cf* flags describing a C function for residual calls: purity, new ref, return type, errors. | none (CPython C API conventions) | `56e5faf` |
-| `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding, a fresh object emitted instead), integer emitters, rich compare, a frame's call-site note. | Objects/object.c | `979be8b` |
-| `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions, the call-site note. | none | `979be8b` |
-| `ni/codemanager.c` | core | Executable memory as free extents (poisoned under ASan, a LeakSanitizer root region); owners (D102): what a code object's compiled code holds, released with it; per-address records; the owner scan for cycles through code objects, as a pending call or at a full collection (D122); compile guards (D103). | none | `55c5b5e` |
+| `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding, a fresh object emitted instead), integer emitters, rich compare, a frame's call-site note and the map of its locals there. | Objects/object.c | `979be8b` |
+| `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions, the call-site note. | none | `fa3dae7` |
+| `ni/codemanager.c` | core | Executable memory as free extents (poisoned under ASan, a LeakSanitizer root region); owners (D102): what a code object's compiled code holds, released with it; compile guards (D103). | none | `bc3c590` |
 | `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner, record and compile guard APIs. | none | `9b9dcef` |
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
 | `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, parked compiler states (live, then frozen), promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `a7cb8e9` |
@@ -109,9 +109,9 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/pstructmember.h` | glue | Declaration of PsycoMember_GetOne. | Include/structmember.h | `b36a1ac` |
 | `ni/Objects/ptupleobject.c` | core + translated | PsycoTuple_Load; includes the generated virtual tuple and slots. | Objects/tupleobject.c | `95b1e61` |
 | `ni/Objects/ptupleobject.h` | core | API for virtual and compile-time tuples (descriptors generated, D80). | Include/tupleobject.h | `603363c` |
-| `ni/Python/frames.c` | core | Maps machine-code stack frames to Python frames for `sys._getframe`, tracebacks, `warnings` and the `f_back`/`f_lineno` getters it puts in `PyFrame_Type`, with their lines; writes a compiled frame's locals into a traceback frame; resumes a compiled frame in ceval when tracing starts. | none (but `ni_getframe`: Python/sysmodule.c) | `f254b5d` |
-| `ni/Python/frames.h` | core | Stack frame info (stack_frame_info_t), frame registration API, writing locals into a frame and linking traceback frames. | none | `6f8009a` |
-| `ni/Python/pbltinmodule.c` | translated + core | Registers the generated builtins; hand metas for min, max, sum, round etc. and type_call (`range`, `super`). | Python/bltinmodule.c, Objects/abstract.c, Objects/typeobject.c | `127d4d6` |
+| `ni/Python/frames.c` | core | Maps machine-code stack frames to Python frames for `sys._getframe`, tracebacks, `warnings` and the `f_back`/`f_lineno`/`f_locals` getters it puts in `PyFrame_Type`, with their lines and locals (registers found with libunwind); runs `locals`, `vars`, `dir`, `eval` and `exec` with the compiled caller's frame; writes a compiled frame's locals into a traceback frame; resumes a compiled frame in ceval when tracing starts. | none (but `ni_getframe`: Python/sysmodule.c) | `f254b5d` |
+| `ni/Python/frames.h` | core | Stack frame info (stack_frame_info_t) and the locals map of a call site, frame registration API, writing locals into a frame and linking traceback frames. | none | `6f8009a` |
+| `ni/Python/pbltinmodule.c` | translated + core | Registers the generated builtins; hand metas for min, max, sum, round etc. and type_call (`range`, `super`). | Python/bltinmodule.c, Objects/abstract.c, Objects/typeobject.c | `cddaf8d` |
 | `ni/Python/pbltinmodule.h` | glue | Declares `PsycoObject_IsInstance`. | Python/bltinmodule.c | `58e52de` |
 | `ni/Python/pycheader.h` | core | pyc_data_t (language-specific compiler state) and the LOC_* slots in po->vlocals. | Include/frameobject.h | `56e5faf` |
 | `ni/Python/pycinternal.h` | glue | Includes CPython internal headers and opcode names. | Include/opcode.h | `e1fd808` |
@@ -125,10 +125,10 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Python/pyver.h` | glue | Python-version feature switches. | none | `4a0d275` |
 | `ni/x64/idispatcher.c` | backend + core | psyco_unify(): emits moves and refcounts to match a snapshot, then jumps to it. | none | `a4b946e` |
 | `ni/x64/idispatcher.h` | backend | Dispatcher hooks: promotion inline cache and chain, jumps and patching, unify blocks, stubs. | none | `a599bd2` |
-| `ni/x64/iencoding.c` | backend + glue | C calls (SysV at run time, libffi at compile time), psyco_call_psyco, cc and ALU emitters. | none (encodes CPython error conventions) | `979be8b` |
+| `ni/x64/iencoding.c` | backend + glue | C calls (SysV at run time, libffi at compile time), psyco_call_psyco (with the caller's locals map), cc and ALU emitters. | none (encodes CPython error conventions) | `f254b5d` |
 | `ni/x64/iencoding.h` | backend | x86-64 encoders, register and cc model, call macros, jumps: the main core-to-backend API. | none | `edfcdcd` |
 | `ni/x64/iinitialize.h` | glue | Runs psyco_processor_init(); under ALL_STATIC includes the x64 `.c` files. | none | `e1fd808` |
-| `ni/x64/iprocessor.c` | backend | Run-time entry glue, the stub trampoline, stack frame walking, aligned-call glues. | none | `ee76274` |
+| `ni/x64/iprocessor.c` | backend | Run-time entry glue (with a fixed save area above the finfo slot), the stub trampoline, stack frame walking, aligned-call glues. | none | `ee76274` |
 | `ni/x64/ipyencoding.c` | backend | function_return(), decref emitters, the inline attribute store (D47), the type guard. | Include/object.h, Objects/dictobject.c | `0d378fb` |
 | `ni/x64/ipyencoding.h` | backend (CPython object layout leaks in: ob_refcnt, ob_type->tp_dealloc) | Py_INCREF/Py_DECREF emitters, frame prologue/epilogue macros, store and guard prototypes. | Include/object.h | `0d378fb` |
 | `ni/x64/v_mem_mov.h` | backend | v_mem_mov(): one sized load/store, for field get/put on run-time objects; a constant index too large for the displacement goes in R11. | none | `99b81d7` |
@@ -143,7 +143,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 
 | file | layer | what it is | reviewed |
 |---|---|---|---|
-| `setup.py` | glue | distutils build of the `ni` extension; runs `generate.py` first, with `PYTHONHASHSEED=0` (D68); `NI_SANITIZE` builds into `--build-lib` with its own config stamp. | `ebc2296` |
+| `setup.py` | glue | distutils build of the `ni` extension (linking libffi and libunwind); runs `generate.py` first, with `PYTHONHASHSEED=0` (D68); `NI_SANITIZE` builds into `--build-lib` with its own config stamp. | `ebc2296` |
 | `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests); `fuzzed.py` holds what `tools/fuzz/` found, `fresh_objects.py` that folded results are new objects per run (D130), `big_arrays.py` makes a 2 GB list. | `979be8b` |
 | `tests/testenv.py` | tooling | What the runners share with `tools/sanitize.sh`: `NI_MODULE_DIR`, `NI_SANITIZE_LOGS` (per-child logs, longer timeouts, no address-space limit), the modules skipped under the sanitizers. | `4896477` |
 | `tests/encoding/check.py` | tooling | Checks `@asm`-annotated emitters in `iencoding.h` against GNU `as`; the cases compile in parts of 15000. | `974f1ea` |

@@ -40,6 +40,27 @@ EXTERNFN PyObject *psyco_resume_run(struct resume_s *st, long lasti,
                                     long nstack);
 /* PyObject* psyco_get_locals(void); this one implemented in psyco.c */
 
+/* Where a compiled frame's locals (co_nlocals, then cells and frees)
+   are during a call it makes that may run Python: in its slot, as a note
+   ((index in psyco_locals_maps << 1) | 1) for a C call, or as the
+   callee's record's back_locals for a compiled one. A note stays after
+   its call (no store to clear it): its return address tells. Each value is three longs, (LM_STACK,
+   offset from data, 0), (LM_REG, register, 0) for a callee-saved register
+   at a C call, (LM_CONST, value, 0), (LM_NONE, 0, 0) or (LM_VIRTUAL,
+   source_virtual_t *, n) followed by its n items; data is the slot's
+   address minus 'below' (frames.c:slot_locals). */
+enum { LM_NONE, LM_STACK, LM_REG, LM_CONST, LM_VIRTUAL };
+struct locals_map_s {
+  code_t *retaddr; /* a C call's return address, to tell a stale note */
+  int lasti;       /* the call's instruction */
+  int nvalues;
+  long below;
+  long items[1];
+};
+
+/* what the glue from C into compiled code pushes to align the stack */
+#define NI_GLUE_PAD 0x4e49474cL
+
 /* to keep a trace of the Psyco stack frames */
 struct stack_frame_info_s {
   long link_stack_depth; /* -1 if there is an inline frame following */
@@ -47,7 +68,19 @@ struct stack_frame_info_s {
   PyObject *globals; /* NULL if not compile-time */
   int back_lasti;    /* the instruction of the next frame out that called
                         this one, or -1 */
+  struct locals_map_s *back_locals; /* that frame's locals then, or NULL */
 };
+
+/* the map of po's locals now, with lasti, or NULL while inlining. A
+   local only in a register is found there (LM_REG), or with reg_pos at
+   the position its register is pushed at for this call
+   (psyco_call_psyco). Nothing is emitted. */
+EXTERNFN struct locals_map_s *psyco_locals_map(PsycoObject *po, int lasti,
+                                               const long *reg_pos);
+EXTERNVAR struct locals_map_s **psyco_locals_maps;
+PSY_INLINE struct locals_map_s *psyco_note_map(long note) {
+  return psyco_locals_maps[note >> 1];
+}
 
 PSY_INLINE stack_frame_info_t *finfo_last(stack_frame_info_t *finfo) {
   if (finfo->link_stack_depth < 0) {

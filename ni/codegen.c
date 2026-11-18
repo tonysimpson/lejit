@@ -355,13 +355,13 @@ vinfo_t *
         if (!(flags & (CfPure | CfNoPython))) {
             po->pr.class_unchecked = 1; /* it may assign __class__ */
             po->pr.python_call = 1;
-            if (po->pr.call_site && !po->pr.is_inlining) {
-                psyco_note_call_site(po, po->pr.call_site - 1);
-                po->pr.call_site_noted = 1;
-            }
+            psyco_note_call_site(po, po->pr.call_site
+                                         ? po->pr.call_site - 1
+                                         : po->pr.next_instr & ~NEXT_INSTR_POP);
         }
         vresult = run_time_call(po, c_function, flags, count, argtags, args,
                                 totalstackspace);
+        po->pr.pending_map = NULL;
         if (vresult == NULL && has_refs) {
             /* error - we should free the vinfo_ts we created */
             for (i = 0; i < count; i++) {
@@ -395,15 +395,139 @@ psyco_inline_enter(PsycoObject *po)
    that may go through C, (lasti << 1) | 1, for f_lineno of its emulated
    frame (frames.c:pvisitframes); a direct call to compiled code needs no
    note. An inlined frame's slot holds its record. */
+/* every map a note names, by index: (index << 1) | 1 fits the 32-bit
+   immediate of one store */
+DEFINEVAR struct locals_map_s **psyco_locals_maps = NULL;
+static long n_locals_maps = 0;
+
 DEFINEFN
 void
 psyco_note_call_site(PsycoObject *po, int lasti)
 {
-    if (po->pr.is_inlining)
+    struct locals_map_s *map;
+    if (po->pr.is_inlining || lasti < 0)
         return;
+    map = psyco_locals_map(po, lasti, NULL);
+    if ((n_locals_maps & (n_locals_maps - 1)) == 0) {
+        void *p = PyMem_Realloc(psyco_locals_maps,
+                                2 * (n_locals_maps + 1) * sizeof(map));
+        if (p == NULL || n_locals_maps >= (1L << 30))
+            OUT_OF_MEMORY();
+        psyco_locals_maps = p;
+    }
+    psyco_locals_maps[n_locals_maps] = map;
+    po->pr.pending_map = map;
     BEGIN_CODE
-    SAVE_IMMED_TO_EBP_BASE(((long)lasti << 1) | 1, INITIAL_STACK_DEPTH);
+    SAVE_IMMED_TO_EBP_BASE((n_locals_maps << 1) | 1, INITIAL_STACK_DEPTH);
     END_CODE
+    n_locals_maps++;
+}
+
+struct lm_build {
+    long *items;
+    int count, size;
+};
+
+static void lm_add(struct lm_build *b, long kind, long value, long n)
+{
+    if (b->count + 3 > b->size) {
+        b->size = b->size * 2 + 48;
+        b->items = PyMem_Realloc(b->items, b->size * sizeof(long));
+        if (b->items == NULL)
+            OUT_OF_MEMORY();
+    }
+    b->items[b->count++] = kind;
+    b->items[b->count++] = value;
+    b->items[b->count++] = n;
+}
+
+/* Virtual values are kept only if they can be computed from their items
+   at run time (direct_compute_fn), up to a few levels deep. */
+static void lm_value(PsycoObject *po, struct lm_build *b, vinfo_t *vi,
+                     const long *reg_pos, int level)
+{
+    if (vi == NULL) {
+        lm_add(b, LM_NONE, 0, 0);
+        return;
+    }
+    switch (gettime(vi->source)) {
+    case RunTime: {
+        long pos = getstack(vi->source);
+        if (pos == RUNTIME_STACK_NONE) {
+            reg_t rg = getreg(vi->source);
+            if (rg == REG_NONE) {
+                lm_add(b, LM_NONE, 0, 0);
+                return;
+            }
+            if (reg_pos != NULL) {
+                pos = reg_pos[rg];
+            }
+            else if (callee_saved_reg_table[rg]) {
+                /* the C callee keeps it: frames.c finds where */
+                lm_add(b, LM_REG, rg, 0);
+                return;
+            }
+            else {
+                /* the call will move it (RAX, from a call just made) */
+                BEGIN_CODE
+                SAVE_REG_VINFO(vi, rg);
+                END_CODE
+                pos = getstack(vi->source);
+            }
+        }
+        lm_add(b, LM_STACK, pos, 0);
+        return;
+    }
+    case CompileTime: {
+        source_known_t *sk = CompileTime_Get(vi->source);
+        if (sk->refcount1_flags & SkFlagPyObj)
+            psyco_owner_pin((PyObject *)sk->value);
+        lm_add(b, LM_CONST, sk->value, 0);
+        return;
+    }
+    default: {
+        source_virtual_t *sv = VirtualTime_Get(vi->source);
+        int i, n = vi->array->count;
+        if (sv->direct_compute_fn == NULL || level > 3) {
+            lm_add(b, LM_NONE, 0, 0);
+            return;
+        }
+        lm_add(b, LM_VIRTUAL, (long)sv, n);
+        for (i = 0; i < n; i++)
+            lm_value(po, b, vi->array->items[i], reg_pos, level + 1);
+        return;
+    }
+    }
+}
+
+DEFINEFN
+struct locals_map_s *
+psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos)
+{
+    PyCodeObject *co = po->pr.co;
+    int i, n = co->co_nlocals + (int)PyTuple_GET_SIZE(co->co_cellvars) +
+               (int)PyTuple_GET_SIZE(co->co_freevars);
+    struct lm_build b = {NULL, 0, 0};
+    struct locals_map_s *map;
+    if (po->pr.is_inlining)
+        return NULL;
+    for (i = 0; i < n; i++)
+        lm_value(po, &b, LOC_LOCALS_PLUS[i], reg_pos, 0);
+    map = psyco_owner_alloc(offsetof(struct locals_map_s, items) +
+                            (b.count + 1) * sizeof(long));
+    map->lasti = lasti;
+    map->nvalues = n;
+    /* after the pushes: positions are offsets down from the stack top */
+    map->below = po->stack_depth - INITIAL_STACK_DEPTH;
+    for (i = 0; i < b.count; i += 3) {
+        map->items[i] = b.items[i];
+        map->items[i + 1] = b.items[i] == LM_STACK
+                                ? po->stack_depth - b.items[i + 1]
+                                : b.items[i + 1];
+        map->items[i + 2] = b.items[i + 2];
+    }
+    PyMem_Free(b.items);
+    return map;
 }
 
 DEFINEFN

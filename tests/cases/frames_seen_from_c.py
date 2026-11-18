@@ -87,6 +87,23 @@ def lineno_chain():
     return lineno_middle()
 
 
+class Where:
+    @property
+    def line(self):
+        return sys._getframe(1).f_lineno
+
+
+# the line of a frame in an attribute's Python method, not a call
+def attr_middle(w):
+    x = 1
+    y = w.line - attr_middle.__code__.co_firstlineno
+    return y + x
+
+
+def attr_line():
+    return attr_middle(Where())
+
+
 def caller_seen():
     f = sys._getframe(1)
     return f.f_code.co_name, f.f_lineno - f.f_code.co_firstlineno
@@ -296,6 +313,7 @@ CASES = [
     ('raised_middle', "[()]", {}),
     ('caught_middle', "[()]", {}),
     ('lineno_chain', "[()]", {}),
+    ('attr_line', "[()]", {}),
     ('getframe_through', "[()]", {}),
     ('trim_arity_case', "[()]", {}),
 ]

@@ -435,6 +435,10 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
     }
     END_CALL_I(c_function);
     END_CODE
+    if (po->pr.pending_map != NULL) {
+        po->pr.pending_map->retaddr = po->call_end;
+        po->pr.pending_map = NULL;
+    }
     vresult = run_time_result_check(po, flags);
     if (vresult != VINFO_OK) {
         return vresult;
@@ -462,6 +466,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     bool ccflags;
     int initial_stack_depth;
     int stack_correction;
+    long reg_pos[REG_TOTAL];
     vinfo_t *vresult;
     condition_code_t cc;
 
@@ -477,11 +482,16 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     /* PUSH RTs with reg set */
     for (i = 0; i < REG_TOTAL; i++) {
         vinfo_t *content = REG_NUMBER(po, i);
+        reg_pos[i] = RUNTIME_STACK_NONE;
         if (content != NULL) {
             PUSH_R(i);
             psyco_inc_stackdepth(po);
+            reg_pos[i] = po->stack_depth;
         }
     }
+    END_CODE
+    finfo->back_locals = psyco_locals_map(po, po->pr.next_instr - 2, reg_pos);
+    BEGIN_CODE
 
     /* add 16 byte aligned stack */
     do {

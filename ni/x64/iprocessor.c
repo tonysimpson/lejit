@@ -19,8 +19,14 @@ static glue_run_code_fn glue_run_code_aligned;
 
 static glue_run_code_fn glue_run_code_unaligned;
 
+/* The layout above the finfo slot is fixed, for frames.c:slot_registers:
+   the saved R15, R14, R13, R12, RBX and RBP, then NI_GLUE_PAD if the stack
+   needed aligning, then the return address. */
 static void write_glue_run_code_fn(PsycoObject *po, bool aligned) {
   BEGIN_CODE
+  if (!aligned) {
+    PUSH_I(NI_GLUE_PAD);
+  }
   PUSH_R(REG_X64_RBP);
 #if RBP_IS_RESERVED
   MOV_R_R(REG_X64_RBP, REG_X64_RSP);
@@ -30,9 +36,6 @@ static void write_glue_run_code_fn(PsycoObject *po, bool aligned) {
   PUSH_R(REG_X64_R13);
   PUSH_R(REG_X64_R14);
   PUSH_R(REG_X64_R15);
-  if (!aligned) {
-    SUB_R_I8(REG_X64_RSP, 8);
-  }
   PUSH_I(-1); /* finfo */
   MOV_A_R(REG_X64_RCX, REG_X64_RSP);
   BEGIN_SHORT_JUMP(0);
@@ -43,13 +46,16 @@ static void write_glue_run_code_fn(PsycoObject *po, bool aligned) {
   CMP_R_R(REG_X64_RDX, REG_X64_RSI);
   END_REVERSE_SHORT_COND_JUMP(1, CC_NE);
   CALL_R(REG_X64_RDI);
-  ADD_R_I8(REG_X64_RSP, (1 + (aligned ? 0 : 1)) * sizeof(long));
+  ADD_R_I8(REG_X64_RSP, sizeof(long));
   POP_R(REG_X64_R15);
   POP_R(REG_X64_R14);
   POP_R(REG_X64_R13);
   POP_R(REG_X64_R12);
   POP_R(REG_X64_RBX);
   POP_R(REG_X64_RBP);
+  if (!aligned) {
+    ADD_R_I8(REG_X64_RSP, 8);
+  }
   RET();
   END_CODE
 }

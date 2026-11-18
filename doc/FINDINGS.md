@@ -109,7 +109,7 @@ Twelve pure-Python projects' own suites, each at its last release for 3.7 (`tool
 |---|---|---|---|---|
 | attrs 23.2.0 | 1299 | 6.7 | 7.5 | 0 |
 | more-itertools 9.1.0 | 572 | 1.3 | 1.7 | 1 (C60) |
-| pyparsing 3.1.4 | 1717 | 20 | 23 | 13: 12 (C11 `f_locals`), 1 diagram |
+| pyparsing 3.1.4 | 1717 | 20 | 16 | 0 |
 | Jinja2 3.1.6 | 908 | 1.7 | 2.0 | 0 |
 | MarkupSafe 2.1.5, pure | 53 | 0.2 | 0.4 | 0 |
 | docutils 0.20.1 | 375 | 2.0 | 2.5 | 0 |
@@ -118,10 +118,10 @@ Twelve pure-Python projects' own suites, each at its last release for 3.7 (`tool
 | python-dateutil 2.9.0.post0 | 2095 | 2.8 | 2.9 | 0 |
 | toolz 0.12.1 | 180 | 0.5 | 0.8 | 0 |
 | sortedcontainers 2.4.0 | 300 | 4.7 | 1.7 | 1 (C20) |
-| Django 3.2.25, all, sqlite | 14684 | 276 | 359 | 2 (C11 `f_locals`) |
+| Django 3.2.25, all, sqlite | 14684 | 276 | 335 | 0 |
 
 No test fails plainly and passes with Ni.
 - **Wrong answers fixed:** code run by `exec` with its own locals mapping was compiled and its `from m import *` and `del x` used the globals (`8347596`; sympy's `lambdify` and `Sum.evalf`, 9 tests); the inline attribute store never made an untracked instance dict tracked when it stored a GC value of unknown type, so cycles through it were never collected (`edfcdcd`; sympy reached the 4 GB limit).
-- **C11:** the line numbers, `f_back` through C and warning stack levels that failed pyparsing's parse actions (`_trim_arity` compares lines from `traceback.extract_stack`), and Django's and sympy's stack-level tests, are fixed (D119). Left: `f_locals` of compiled frames, read by pyparsing's `autoname_elements` (6 classes × 2 tests) and by Django's debug page and a test's `inspect.currentframe().f_back.f_locals`; pyparsing's railroad diagram for `OneOrMore(stopOn=)` differs.
+- **C11, C15:** the line numbers, `f_back` through C and warning stack levels that failed pyparsing's parse actions (`_trim_arity` compares lines from `traceback.extract_stack`), and Django's and sympy's stack-level tests, are fixed (D119); so are compiled frames' `f_locals`, read by pyparsing's `autoname_elements` and by Django's debug page and a test's `inspect.currentframe().f_back.f_locals` (D131).
 - **Memory (C61):** the sympy run aborted at the 4 GB limit after about 630,000 code buffers (3 GB of RSS) until compiler states were parked; it now completes with 1,036,438 ("Memory per code buffer" above).
-- **Time:** pyparsing takes 23 s with Ni, 20 s plainly. Django, many short tests over much code, is 1.3× slower; sympy is 1.4× faster and sortedcontainers 2.8×.
+- **Time:** pyparsing takes 16 s with Ni, 20 s plainly. Django, many short tests over much code, is 1.2× slower; sympy is 1.4× faster and sortedcontainers 2.8×.

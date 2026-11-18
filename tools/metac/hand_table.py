@@ -93,6 +93,10 @@ REASONS = {
         'core', ['C11'], "chooses cimpl_rt_traceback or cimpl_vt_traceback"),
     'ni/Python/frames.c:ni_getframe': (
         'core', ['C11'], "counts compiled frames for sys._getframe"),
+    'ni/Python/frames.c:cimpl_with_frame': (
+        'core', ['C15', 'D124'],
+        "runs locals, vars, dir, eval or exec with the compiled caller's"
+        " frame emulated and current"),
     'ni/Objects/pabstract.c:PsycoObject_Call': (
         'core', ['D85', 'D77'],
         "the call path (D85 (5)): tp_call's meta behind the slot guard, with"

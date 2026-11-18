@@ -1237,13 +1237,7 @@ static bool load_global_cached(PsycoObject *po, PyObject *name,
    *stack_to_pop counts everything including the callable. Keyword
    arguments go in a fresh dict: duplicates are impossible here (the
    bytecode compiler rejects them) and the callee checks the rest. */
-/* after a CALL_*: the slot no longer says where the frame is */
-static void end_call_site(PsycoObject *po) {
-  if (po->pr.call_site_noted)
-    psyco_note_call_site(po, -1);
-  po->pr.call_site = 0;
-  po->pr.call_site_noted = 0;
-}
+static void end_call_site(PsycoObject *po) { po->pr.call_site = 0; }
 
 static vinfo_t *psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg,
                                    vinfo_t **stack_top, int *stack_to_pop) {

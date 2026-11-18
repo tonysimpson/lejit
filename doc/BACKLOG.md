@@ -9,8 +9,8 @@ What is still open, one line each, with where the detail is. Done items leave th
 - Mechanism snippets for 3.11+ (D75): the stubs in `ni/mechanisms/*` that `#error` "not written yet".
 
 ## Open bugs
-In KNOWN_BUGS.md. Worth doing first among them: C11's `PyEval_GetFrame` hook, `f_locals` and emulated frames that keep their identity (also C29's rest). C15 and C18 are to be done on 3.7 (D64).
-- From other projects' suites (FINDINGS.md, `tools/thirdparty`): C11's `f_locals` of compiled frames fails 12 pyparsing tests and 2 Django ones; C61, memory per code buffer (1.9 kB of RSS each, FINDINGS.md "Memory per code buffer").
+In KNOWN_BUGS.md. Worth doing first among them: C11's `PyEval_GetFrame` hook and emulated frames that keep their identity (also C29's rest). C15's and C18's rests are to be done on 3.7 (D64).
+- From other projects' suites (FINDINGS.md, `tools/thirdparty`): C61, memory per code buffer (1.9 kB of RSS each, FINDINGS.md "Memory per code buffer").
 
 ## Speed
 - From the adversarial suite (FINDINGS.md): compile speed itself (`import_heavy` 4.4× cold, `many_functions` 13× on the first call: D12 keeps compiling everything, so compiling must get cheaper); Python dunder methods (`operator_overloading` 1.27× slower); the fixed 9 MB of RSS; recompiling fresh code (`exec_templates`, `lambdas_in_loops`); a guard broken by a class attribute bumped every call (`class_counter`).

@@ -7,6 +7,7 @@ verified: true    # built and tested on 2026-11-18 (Debian 13, gcc 14, CPython 3
 ## Requirements
 - **CPython 3.7, x86-64 Linux.** The code depends on 3.7 internals (see `REFERENCES.md`), so it won't compile against 3.8+ without porting.
 - `libffi` (headers and library). `setup.py` links `-lffi`, and the backend uses it for C calls.
+- `libunwind` (`libunwind-dev`). `setup.py` links `-lunwind`: reading a compiled frame's locals unwinds the C frames above it to find the callee-saved registers they hold (`frames.c:slot_registers`, D131).
 - `setup.py` uses `distutils`, which was removed in Python 3.12. That's fine under 3.7.
 - CPython 3.7.17 via `pyenv install 3.7.17` (`uv` offers 3.8 at the earliest). libffi headers are present (`/usr/include/x86_64-linux-gnu/ffi.h`).
 - Builds with gcc 10+ defaults (`-fno-common`): headers declare globals with `EXTERNVAR`, which is `extern` (KNOWN_BUGS C5).

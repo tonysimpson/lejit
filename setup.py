@@ -201,7 +201,7 @@ setup(
                            define_macros = macros,
                            debug = True,
                            include_dirs = [processor_dir],
-                           libraries = ['ffi'],
+                           libraries = ['ffi', 'unwind'],
     )],
     classifiers=CLASSIFIERS,
     cmdclass={'build_ext': build_ext_generated},

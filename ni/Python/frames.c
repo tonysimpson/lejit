@@ -3,13 +3,22 @@
  * globals) for each compiled call, and the machine stack is walked through the
  * finfo slot that each Psyco frame keeps (x64/iprocessor.c). sys._getframe
  * is replaced by ni_getframe, which counts compiled frames and emulates
- * them (no locals). An emulated frame's f_lasti is the call it is in:
- * each record says where the frame out of it called (back_lasti), and the
- * innermost frame notes its place in its slot before a residual call in
- * a CALL_* (codegen.c:psyco_note_call_site); otherwise f_lineno is the
- * first line. A traceback's frame does get the locals, written when the
- * exception passes (psyco_frame_write_locals). frame.f_back and
- * frame.f_lineno are replaced in PyFrame_Type's dict: a real frame entered
+ * them. An emulated frame's f_lasti is the call it is in: each record says
+ * where the frame out of it called (back_lasti), and the innermost frame
+ * notes its place in its slot before a residual call that may run Python
+ * (codegen.c:psyco_note_call_site); before its first, f_lineno is the
+ * first line. The note and the record also name a map of where the
+ * frame's locals are during that call (struct locals_map_s), read when
+ * f_locals is asked for (slot_locals): a stack slot, a constant, a
+ * virtual value's parts, or a callee-saved register, which the C frames
+ * in between keep or saved; those are found by unwinding them with
+ * libunwind (slot_registers). Code naming locals, vars, dir, eval or exec
+ * is not compiled; reached by another name, they run with the frame
+ * emulated and current (cimpl_with_frame). A traceback's frame gets the
+ * locals when the exception passes (psyco_frame_write_locals). Known gaps:
+ * dead locals (dropped, D15), virtual lists, inlined frames' locals.
+ * frame.f_back, frame.f_lineno and frame.f_locals are replaced in
+ * PyFrame_Type's dict: a real frame entered
  * through C from compiled code keeps the f_back ceval gave it, which the
  * evaluators put tstate->frame back to, and the getter gives the compiled
  * frames it skips (frame_get_back); a real frame NiCode_Run runs gets its
@@ -18,7 +27,8 @@
  * (psyco_frame_link_callee, psyco_frame_caller). C code reading f_back or
  * f_lasti itself bypasses the getters: _warnings.warn runs with every
  * frame linked and placed (ni_warn); other such C code (PyEval_GetFrame,
- * a freshly imported _warnings) still skips compiled frames.
+ * a freshly imported _warnings) still skips compiled frames, and reads
+ * the locals a real frame NiCode_Run runs started with.
  * When tracing starts, a compiled frame goes on in ceval
  * (psyco_resume_run); pvisitframes then hides its compiled record, since
  * the real frame now stands for it.
@@ -33,8 +43,13 @@
 #include "mechanism_frames_gen.h"
 /* ni_recursion_suspend and ni_recursion_resume */
 #include "../codegen.h"
+#include "pycompiler.h"
 #include "../dispatcher.h"
 #include "mechanism_recursion_gen.h"
+/* after Python.h, for _GNU_SOURCE: ucontext_t's REG_* */
+#define UNW_LOCAL_ONLY
+#include <dlfcn.h>
+#include <libunwind.h>
 
 /***************************************************************/
 
@@ -197,6 +212,206 @@ void psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
   }
 }
 
+/* The callee-saved registers of the compiled frame whose slot is
+   'slot', as it called C, which keeps them or saves them in its frame:
+   found by unwinding the C frames from here down to it. Ni's code has no
+   unwind information, so each run of compiled code nearer here (from the
+   real frame NiCode_Run runs, innermost first) is stepped over from
+   where its glue saved the registers of the C code that called it
+   (iprocessor.c:write_glue_run_code_fn). False if that frame isn't the
+   innermost of a run, or the walk doesn't come out where expected. */
+#define MAX_RUNS 64
+static bool slot_registers(stack_frame_info_t **slot, long regs[REG_TOTAL],
+                           code_t **ret_ip) {
+  stack_frame_info_t **roots[MAX_RUNS], **inners[MAX_RUNS], **f1;
+  ni_frame_t *f = ni_frame_current(PyThreadState_GET());
+  unw_context_t uc;
+  unw_cursor_t c;
+  int i, n = 0, steps;
+  for (; f != NULL && n < MAX_RUNS; f = ni_frame_back(f)) {
+    FrameRuntime *fr = psyco_frame_start_get(ni_frame_object(f));
+    if (fr == NULL || !ni_frame_object(f)->f_executing)
+      continue;
+    roots[n] = *fr->psy_frames_start;
+    for (f1 = roots[n]; (((long)(*f1)) & 1) == 0;
+         f1 = psyco_next_stack_frame(f1))
+      if ((*f1)->link_stack_depth == 0)
+        break;
+    inners[n] = f1;
+    if (inners[n++] == slot)
+      break;
+  }
+  if (n == 0 || inners[n - 1] != slot)
+    return false;
+  if (unw_getcontext(&uc) < 0 || unw_init_local(&c, &uc) < 0)
+    return false;
+  for (i = 0; i < n; i++) {
+    unw_word_t sp, ip, v;
+    long *saved = (long *)roots[i], *ret;
+    /* the first frame outside every loaded object is compiled code */
+    for (steps = 0;; steps++) {
+      Dl_info info;
+      if (unw_get_reg(&c, UNW_REG_IP, &ip) < 0)
+        return false;
+      if (dladdr((void *)ip, &info) == 0)
+        break;
+      if (steps > 4096 || unw_step(&c) <= 0)
+        return false;
+    }
+    if (unw_get_reg(&c, UNW_X86_64_RSP, &sp) < 0 ||
+        sp >= (unw_word_t)inners[i] || (unw_word_t)inners[i] - sp > 65536)
+      return false;
+    if (i == n - 1) {
+      static const int nums[] = {UNW_X86_64_RBX, UNW_X86_64_RBP,
+                                 UNW_X86_64_R12, UNW_X86_64_R13,
+                                 UNW_X86_64_R14, UNW_X86_64_R15};
+      static const int regnums[] = {REG_X64_RBX, REG_X64_RBP, REG_X64_R12,
+                                    REG_X64_R13, REG_X64_R14, REG_X64_R15};
+      int k;
+      *ret_ip = (code_t *)ip;
+      for (k = 0; k < REG_TOTAL; k++)
+        regs[k] = 0;
+      for (k = 0; k < 6; k++) {
+        if (unw_get_reg(&c, nums[k], &v) < 0)
+          return false;
+        regs[regnums[k]] = (long)v;
+      }
+      return true;
+    }
+    /* above the slot: R15, R14, R13, R12, RBX, RBP, [pad,] return */
+    ret = saved + 7;
+    if (*ret == NI_GLUE_PAD)
+      ret++;
+    uc.uc_mcontext.gregs[REG_R15] = saved[1];
+    uc.uc_mcontext.gregs[REG_R14] = saved[2];
+    uc.uc_mcontext.gregs[REG_R13] = saved[3];
+    uc.uc_mcontext.gregs[REG_R12] = saved[4];
+    uc.uc_mcontext.gregs[REG_RBX] = saved[5];
+    uc.uc_mcontext.gregs[REG_RBP] = saved[6];
+    uc.uc_mcontext.gregs[REG_RIP] = *ret;
+    uc.uc_mcontext.gregs[REG_RSP] = (long)(ret + 1);
+    if (unw_init_local2(&c, &uc, 0) < 0)
+      return false;
+  }
+  return false;
+}
+
+static vinfo_t *lm_vinfo(long **p, const long *regs) {
+  long *it = *p;
+  vinfo_t *vi;
+  int i;
+  *p += 3;
+  switch (it[0]) {
+  case LM_STACK:
+    return vinfo_new(RunTime_NewStack((int)it[1], false, false));
+  case LM_REG:
+    if (regs == NULL || it[1] < 0 || it[1] >= REG_TOTAL)
+      return NULL;
+    return vinfo_new(CompileTime_New(regs[it[1]]));
+  case LM_CONST:
+    return vinfo_new(CompileTime_New(it[1]));
+  case LM_VIRTUAL:
+    vi = vinfo_new(VirtualTime_New((source_virtual_t *)it[1]));
+    vi->array = array_new((int)it[2]);
+    for (i = 0; i < it[2]; i++)
+      vi->array->items[i] = lm_vinfo(p, regs);
+    return vi;
+  default:
+    return NULL;
+  }
+}
+
+static int n_locals_plus(PyCodeObject *co) {
+  return co->co_nlocals + (int)PyTuple_GET_SIZE(co->co_cellvars) +
+         (int)PyTuple_GET_SIZE(co->co_freevars);
+}
+
+/* The locals of the compiled frame of code 'co' whose stack slot is
+   'slot', as new references in values[n_locals_plus(co)], NULL where
+   unknown (unbound, dead, or a virtual value not computable here). False
+   if the slot doesn't say: the frame is between calls that may run
+   Python, or is inlined. Read while the frame is in that call. */
+static bool slot_locals(stack_frame_info_t **slot, PyCodeObject *co,
+                        PyObject **values) {
+  long v = (long)*slot;
+  struct locals_map_s *map;
+  PyObject *t, *val, *tb;
+  long *p, regs[REG_TOTAL], *pregs = NULL;
+  char *data;
+  int i, n = n_locals_plus(co);
+  if (v == -1)
+    return false;
+  if ((v & 1) != 0) {
+    /* a note is for the call the frame is in only if that call returns
+       where the note's did */
+    code_t *ip;
+    map = psyco_note_map(v);
+    if (map->nvalues != n || !slot_registers(slot, regs, &ip) ||
+        ip != map->retaddr)
+      return false;
+    pregs = regs;
+  } else {
+    map = ((stack_frame_info_t *)v)->back_locals;
+    if (map == NULL || map->nvalues != n)
+      return false;
+  }
+  data = (char *)slot - map->below;
+  p = map->items;
+  PyErr_Fetch(&t, &val, &tb);
+  for (i = 0; i < n; i++) {
+    vinfo_t *vi = lm_vinfo(&p, pregs);
+    values[i] = NULL;
+    if (vi == NULL)
+      continue;
+    values[i] = direct_xobj_vinfo(vi, data);
+    vinfo_decref(vi, NULL);
+    if (values[i] == NULL)
+      PyErr_Clear();
+    else if (i >= co->co_nlocals && !PyCell_Check(values[i]))
+      Py_CLEAR(values[i]);
+  }
+  PyErr_Restore(t, val, tb);
+  return true;
+}
+
+/* An emulated frame's locals are read from its compiled frame when first
+   asked for (frame_get_locals), not made with it: most emulated frames
+   are walked over for their code and line. Its empty value stack holds
+   LOCALS_NOTE and its tag meanwhile. A frame no longer running by then
+   (no tuple of its code and tag in Ni's chain) has none. */
+static char locals_note;
+#define LOCALS_NOTE ((PyObject *)&locals_note)
+
+static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
+                              void *data);
+
+static PyObject *visit_tag(PyObject *o, void *f) {
+  PyFrameObject *frame = (PyFrameObject *)f;
+  if (PyTuple_Check(o) && !PyFrame_Check(PyTuple_GET_ITEM(o, 2)) &&
+      PyTuple_GET_ITEM(o, 0) == (PyObject *)frame->f_code &&
+      PyLong_AsLong(PyTuple_GET_ITEM(o, 2)) == (long)frame->f_valuestack[1]) {
+    Py_INCREF(Py_True);
+    return Py_True;
+  }
+  return NULL;
+}
+
+static void fill_noted_locals(PyFrameObject *f) {
+  PyObject *found;
+  long tag;
+  if (f->f_executing || f->f_stacktop != f->f_valuestack ||
+      f->f_code->co_stacksize < 2 || f->f_valuestack[0] != LOCALS_NOTE)
+    return;
+  tag = (long)f->f_valuestack[1];
+  found = pvisitframes(visit_tag, f);
+  f->f_valuestack[0] = f->f_valuestack[1] = NULL;
+  if (found != NULL) {
+    Py_DECREF(found);
+    slot_locals(psyco_next_stack_frame((stack_frame_info_t **)tag),
+                f->f_code, f->f_localsplus);
+  }
+}
+
 PSY_INLINE PyFrameObject *psyco_build_pyframe(PyObject *co, PyObject *globals,
                                               PyThreadState *tstate) {
   ni_frame_t *back;
@@ -234,8 +449,20 @@ PyFrameObject *psyco_emulate_frame(PyObject *o) {
     PyFrameObject *result;
     extra_assert(co != NULL);
     extra_assert(globals != NULL);
+    long tag = PyLong_AsLong(PyTuple_GET_ITEM(o, 2));
     result = psyco_build_pyframe(co, globals, PyThreadState_GET());
     result->f_lasti = (int)PyLong_AsLong(PyTuple_GET_ITEM(o, 3));
+    /* the tag is the slot holding the frame's record, or less one per
+       inlined frame before it */
+    if ((tag & (sizeof(long) - 1)) == 0) {
+      if (((PyCodeObject *)co)->co_stacksize >= 2) {
+        result->f_valuestack[0] = LOCALS_NOTE;
+        result->f_valuestack[1] = (PyObject *)tag;
+      } else {
+        slot_locals(psyco_next_stack_frame((stack_frame_info_t **)tag),
+                    (PyCodeObject *)co, result->f_localsplus);
+      }
+    }
     return result;
   }
 }
@@ -325,7 +552,7 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
       }
       /* the innermost frame's place, if it noted one */
       if ((((long)*f1) & 1) != 0 && (long)*f1 != -1)
-        lasti = (int)((long)*f1 >> 1);
+        lasti = psyco_note_map((long)*f1)->lasti;
 
       /* now actually visit them in the correct order */
       while (revlist) {
@@ -405,7 +632,7 @@ PyObject *psyco_get_globals(void) {
 
 /* sys._getframe, replaced (as upstream's support.py did) by a version that
    also counts compiled frames, which have no real frame object: they are
-   emulated, new objects each time, with empty locals (KNOWN_BUGS C11). */
+   emulated, new objects each time (KNOWN_BUGS C11). */
 
 /* the frame 'depth' calls below the top, or NULL (no exception set),
    with the emulated frames from it out (new, so with no f_back yet)
@@ -627,6 +854,47 @@ static int frame_set_lineno(PyFrameObject *frame, PyObject *v, void *c) {
 static PyGetSetDef lineno_getset = {"f_lineno", (getter)frame_get_lineno,
                                     (setter)frame_set_lineno, NULL, NULL};
 
+/* frame.f_locals, replaced in PyFrame_Type's dict: a real frame that
+   NiCode_Run runs has in f_localsplus what it started with; its locals
+   now are in its slot while it is in a call (slot_locals). */
+static PyObject *locals_descr = NULL;
+
+static PyObject *frame_get_locals(PyFrameObject *frame, void *closure) {
+  PyObject *result;
+  fill_noted_locals(frame);
+  if (runs_compiled(frame)) {
+    FrameRuntime *fr = psyco_frame_start_get(frame);
+    int i, n = n_locals_plus(frame->f_code);
+    PyObject **values = PyMem_Malloc(2 * n * sizeof(PyObject *) + 1);
+    if (values == NULL)
+      return PyErr_NoMemory();
+    if (fr->psy_code == frame->f_code &&
+        slot_locals(*fr->psy_frames_start, frame->f_code, values)) {
+      /* PyFrame_FastToLocals reads them from f_localsplus */
+      for (i = 0; i < n; i++) {
+        values[n + i] = frame->f_localsplus[i];
+        frame->f_localsplus[i] = values[i];
+      }
+      result = Py_TYPE(locals_descr)
+                   ->tp_descr_get(locals_descr, (PyObject *)frame,
+                                  (PyObject *)&PyFrame_Type);
+      for (i = 0; i < n; i++) {
+        frame->f_localsplus[i] = values[n + i];
+        Py_XDECREF(values[i]);
+      }
+      PyMem_Free(values);
+      return result;
+    }
+    PyMem_Free(values);
+  }
+  return Py_TYPE(locals_descr)
+      ->tp_descr_get(locals_descr, (PyObject *)frame,
+                     (PyObject *)&PyFrame_Type);
+}
+
+static PyGetSetDef locals_getset = {"f_locals", (getter)frame_get_locals,
+                                    NULL, NULL, NULL};
+
 /* A traceback entry for a compiled frame, 'f', is being added over
    'callee''s, the frame the exception came out of: that frame, if it has
    returned, gets 'f' as f_back. It is an emulated frame, whose f_back is
@@ -728,6 +996,142 @@ static PyObject *ni_warn(PyObject *self, PyObject *args, PyObject *kwds) {
   return result;
 }
 
+/* locals, vars, dir, eval and exec read their caller's frame through
+   PyEval_GetFrame, which is tstate->frame. Called from compiled code
+   (through a meta of each: code naming them is left to the interpreter,
+   mergepoints.c, but they are reached by other names), they run as warn
+   does, with the calling frame emulated, its locals in, and current. A
+   real frame NiCode_Run runs stands in as a copy with its locals now. */
+#define N_FRAME_BUILTINS 5
+static const char *const frame_builtin_names[N_FRAME_BUILTINS] = {
+    "locals", "vars", "dir", "eval", "exec"};
+static PyMethodDef *frame_builtins[N_FRAME_BUILTINS];
+
+static PyObject *visit_root_lasti(PyObject *o, void *frame);
+static PyObject *frame_get_back(PyFrameObject *frame, void *closure);
+
+static PyFrameObject *root_copy(PyFrameObject *f) {
+  FrameRuntime *fr = psyco_frame_start_get(f);
+  PyFrameObject *c;
+  PyObject *o;
+  if (fr->psy_code != f->f_code)
+    return f;
+  c = psyco_build_pyframe((PyObject *)f->f_code, f->f_globals,
+                          PyThreadState_GET());
+  if (!slot_locals(*fr->psy_frames_start, f->f_code, c->f_localsplus)) {
+    Py_DECREF(c);
+    return f;
+  }
+  o = pvisitframes(visit_root_lasti, f);
+  c->f_lasti = o == NULL ? -1 : (int)PyLong_AsLong(o);
+  Py_XDECREF(o);
+  c->f_back = (PyFrameObject *)frame_get_back(f, NULL);
+  if (c->f_back == NULL) {
+    PyErr_Clear();
+  } else if ((PyObject *)c->f_back == Py_None) {
+    Py_DECREF(Py_None);
+    c->f_back = NULL;
+  }
+  Py_DECREF(f);
+  return c;
+}
+
+static PyObject *cimpl_with_frame(long which, PyObject *self,
+                                  PyObject *args) {
+  PyMethodDef *ml = frame_builtins[which];
+  int flags = ml->ml_flags & ~(METH_CLASS | METH_STATIC | METH_COEXIST);
+  Py_ssize_t n = args == NULL ? 0 : PyTuple_GET_SIZE(args);
+  PyThreadState *ts = PyThreadState_GET();
+  PyFrameObject *saved = ts->frame, *top = NULL;
+  PyObject *result, *undo = NULL;
+  /* locals always reads the frame; vars and dir with no argument, eval
+     and exec with no globals */
+  if (which == 0 || n < (which >= 3 ? 2 : 1)) {
+    undo = PyList_New(0);
+    if (undo == NULL)
+      return NULL;
+    top = linked_frame(0, undo);
+    if (top != NULL && runs_compiled(top))
+      top = root_copy(top);
+    else if (top != NULL)
+      fill_noted_locals(top);
+    if (top != NULL && top != saved)
+      ts->frame = top;
+  }
+  switch (flags) {
+  case METH_NOARGS:
+    result = ml->ml_meth(self, NULL);
+    break;
+  case METH_VARARGS:
+    result = ml->ml_meth(self, args);
+    break;
+  case METH_FASTCALL:
+    result = ((_PyCFunctionFast)ml->ml_meth)(self, &PyTuple_GET_ITEM(args, 0),
+                                             n);
+    break;
+  case METH_FASTCALL | METH_KEYWORDS:
+    result = ((_PyCFunctionFastWithKeywords)ml->ml_meth)(
+        self, &PyTuple_GET_ITEM(args, 0), n, NULL);
+    break;
+  default:
+    PyErr_SetString(PyExc_SystemError, "Ni: unexpected builtin form");
+    result = NULL;
+  }
+  ts->frame = saved;
+  if (undo != NULL) {
+    restore_links(undo);
+    Py_DECREF(undo);
+  }
+  Py_XDECREF(top);
+  return result;
+}
+
+/* exec can change a mutable local (a virtual list, say) through the
+   locals mapping, so each virtual local is made a real object first */
+static bool locals_made_real(PsycoObject *po) {
+  int i, n = n_locals_plus(po->pr.co);
+  for (i = 0; i < n; i++) {
+    vinfo_t *v = LOC_LOCALS_PLUS[i];
+    if (v != NULL && is_virtualtime(v->source) && !compute_vinfo(v, po))
+      return false;
+  }
+  return true;
+}
+
+#define FRAME_META(i)                                                          \
+  static vinfo_t *meta_with_frame##i(PsycoObject *po, vinfo_t *vself,         \
+                                     vinfo_t *vargs) {                         \
+    if (!po->pr.is_inlining && !locals_made_real(po))                          \
+      return NULL;                                                             \
+    if (vargs == NULL)                                                         \
+      return psyco_generic_call(po, cimpl_with_frame, CfCommonNewRefPyObject, \
+                                "lvl", (long)(i), vself, 0L);                  \
+    return psyco_generic_call(po, cimpl_with_frame, CfCommonNewRefPyObject,   \
+                              "lvv", (long)(i), vself, vargs);                 \
+  }
+FRAME_META(0)
+FRAME_META(1)
+FRAME_META(2)
+FRAME_META(3)
+FRAME_META(4)
+#undef FRAME_META
+static void *const frame_metas[N_FRAME_BUILTINS] = {
+    meta_with_frame0, meta_with_frame1, meta_with_frame2, meta_with_frame3,
+    meta_with_frame4};
+
+static void frame_builtins_init(void) {
+  PyObject *b = PyEval_GetBuiltins();
+  int i;
+  for (i = 0; i < N_FRAME_BUILTINS; i++) {
+    PyObject *fn = b == NULL ? NULL
+                             : PyDict_GetItemString(b, frame_builtin_names[i]);
+    if (fn == NULL || !PyCFunction_Check(fn))
+      continue;
+    frame_builtins[i] = ((PyCFunctionObject *)fn)->m_ml;
+    Psyco_DefineMeta(frame_builtins[i]->ml_meth, frame_metas[i]);
+  }
+}
+
 static PyMethodDef ni_warn_def = {
     "warn", (PyCFunction)ni_warn, METH_VARARGS | METH_KEYWORDS,
     "warn(message, category=None, stacklevel=1)\n\n"
@@ -762,7 +1166,7 @@ static PyMethodDef ni_getframe_def = {
     "_getframe", ni_getframe, METH_VARARGS,
     "_getframe([depth]) -> frameobject\n\n"
     "Return a frame object from the call stack, counting frames of code\n"
-    "compiled by Ni (emulated: no locals)."};
+    "compiled by Ni (emulated)."};
 
 INITIALIZATIONFN
 void psyco_frames_init(void) {
@@ -776,6 +1180,7 @@ void psyco_frames_init(void) {
   Py_XDECREF(fn);
   Py_XDECREF(sysmod);
   warn_init();
+  frame_builtins_init();
   fn = PyDescr_NewGetSet(&PyFrame_Type, &back_getset);
   if (fn == NULL ||
       PyDict_SetItemString(PyFrame_Type.tp_dict, "f_back", fn) < 0)
@@ -787,6 +1192,14 @@ void psyco_frames_init(void) {
                             : PyDescr_NewGetSet(&PyFrame_Type, &lineno_getset);
   if (fn == NULL ||
       PyDict_SetItemString(PyFrame_Type.tp_dict, "f_lineno", fn) < 0)
+    PyErr_Print();
+  Py_XDECREF(fn);
+  locals_descr = PyDict_GetItemString(PyFrame_Type.tp_dict, "f_locals");
+  Py_XINCREF(locals_descr);
+  fn = locals_descr == NULL ? NULL
+                            : PyDescr_NewGetSet(&PyFrame_Type, &locals_getset);
+  if (fn == NULL ||
+      PyDict_SetItemString(PyFrame_Type.tp_dict, "f_locals", fn) < 0)
     PyErr_Print();
   Py_XDECREF(fn);
   PyType_Modified(&PyFrame_Type);

@@ -139,7 +139,8 @@ typedef enum {
   vinfo_t *ccregs[2];            /* processor condition codes (aka flags)  */  \
                                  /* ccregs[0] is for "positive" conditions */  \
                                  /* and ccregs[1] for "negative" ones      */  \
-  reg_t last_used_reg;           /* the most recently used register        */
+  reg_t last_used_reg;           /* the most recently used register        */ \
+  code_t *call_end;              /* just after the last END_CALL_I's call   */
 #define INIT_PROCESSOR_PSYCOOBJECT(po) (po->last_used_reg = REG_LOOP_START)
 
 #define PROCESSOR_FROZENOBJECT_FIELDS short fz_last_used_reg;
@@ -632,6 +633,12 @@ typedef enum {
     MOV_R_I(REG_TRANSIENT_1, i);                                               \
     MOV_O_R(rm, o, REG_TRANSIENT_1);                                           \
   } while (0)
+/* @asm: mov qword ptr [{rm}{o}], {i:i32} */
+#define MOV_O_I32(rm, o, i)                                                    \
+  do {                                                                         \
+    OFFSET_ENCODING(false, true, 1, 0xC7, 0, 0, 0, 0, 0, rm, o);               \
+    WRITE_32BIT(i);                                                            \
+  } while (0)
 /* @asm: xchg {rg1}, {rg2} */
 #define XCHG_R_R(rg1, rg2)                                                     \
   do {                                                                         \
@@ -1114,9 +1121,16 @@ EXTERNFN vinfo_t *bfunction_result(PsycoObject *po, bool ref);
 #define XCHG_REG_AND_EBP_BASE(src, stack_pos)                                  \
   XCHG_R_O(src, REG_X64_RSP, STACK_POS_OFFSET(stack_pos))
 #define SAVE_IMMED_TO_EBP_BASE(immed, stack_pos)                               \
-  MOV_O_I(REG_X64_RSP, (STACK_POS_OFFSET(stack_pos)), immed)
+  do {                                                                         \
+    long _sv_i = (long)(immed);                                                \
+    if (FITS_IN_32BITS(_sv_i)) {                                               \
+      MOV_O_I32(REG_X64_RSP, (STACK_POS_OFFSET(stack_pos)), _sv_i);            \
+    } else {                                                                   \
+      MOV_O_I(REG_X64_RSP, (STACK_POS_OFFSET(stack_pos)), _sv_i);              \
+    }                                                                          \
+  } while (0)
 #define SAVE_IMM8_TO_EBP_BASE(imm8, stack_pos)                                 \
-  MOV_O_I(REG_X64_RSP, (STACK_POS_OFFSET(stack_pos)), imm8)
+  MOV_O_I32(REG_X64_RSP, (STACK_POS_OFFSET(stack_pos)), imm8)
 #define SAVE_REG_TO_RT(source, src)                                            \
   DIRECT_OR_RSP_OFFSET_ENCODING(true, 1, 0x89, 0, 0, 0, src, source)
 #define PUSH_EBP_BASE(ofs) PUSH_O(REG_X64_RSP, STACK_POS_OFFSET(ofs))
@@ -1258,6 +1272,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
   do {                                                                         \
     extra_assert(_last_arg_index == 0); /* every argument was set */        \
     CALL_I(immed);                                                           \
+    po->call_end = code;                                                     \
     STACK_CORRECTION(_initial_stack_depth - po->stack_depth);                  \
     po->stack_depth = _initial_stack_depth;                                    \
     _last_arg_index = 0;   /* suppress warning */                              \
