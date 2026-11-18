@@ -387,6 +387,21 @@ PSY_INLINE vinfo_t *vinfo_new_skref(Source src) {
   return vinfo_new(src);
 }
 
+/* An object built at compile time from constants, as a constant. Every run
+   of the code then sees this one object, which is right only where CPython
+   shares it too: a result its constructor took from a cache (a small int, a
+   one-character str, the empty tuple, the operand itself) has other
+   references. A fresh object, which CPython makes anew on every run, is
+   released and the result is NULL: the caller builds it at run time, so
+   identity (is, id(), NaN in a set) stays as CPython has it. */
+PSY_INLINE vinfo_t *psyco_shared_constant(PyObject *o) {
+  if (Py_REFCNT(o) == 1) {
+    Py_DECREF(o);
+    return NULL;
+  }
+  return vinfo_new(CompileTime_NewSk(sk_new((long)o, SkFlagPyObj)));
+}
+
 /* copy constructor */
 EXTERNFN vinfo_t *vinfo_copy(vinfo_t *vi);
 

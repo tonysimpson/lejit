@@ -24,7 +24,8 @@ What is written:
     source_virtual_t ('ni'): the virtual constructor ('new': the C's
     arguments as vinfos, a NULL one its default), the force function
     (compute_*: every slot compile-time, the object is built now and is a
-    constant, rule allocator_pure; else CPython's constructor at run time,
+    constant if CPython would share it too, rule allocator_pure; else
+    CPython's constructor at run time,
     with the effect rules' flags, then the items stored), the direct form
     (direct_compute_*, the same constructor on raw values) and
     gen_virtual_<name>_init() registering them with TYPES' weights.
@@ -293,11 +294,12 @@ def code_text(vt, flags, version):
             '  }',
             '  return o;',
             '}', '',
-            '/* forced: built now if every item is a constant (rule allocator_pure),',
-            '   else %s(n) at run time and the items stored */' % vt.ctor,
+            '/* forced: a constant if every item is one and CPython would share the',
+            '   object (rule allocator_pure), else %s(n) at run time and the items' % vt.ctor,
+            '   stored */',
             'static bool compute_%s(PsycoObject *po, vinfo_t *v) {' % lo,
             '  int i, n = v->array->count - %s;' % it,
-            '  vinfo_t *newobj;',
+            '  vinfo_t *newobj = NULL;',
             '  extra_assert(n == CompileTime_Get(v->array->items[iFIX_SIZE]->source)->value);',
             '  for (i = 0; i < n; i++)',
             '    if (!is_compiletime(v->array->items[%s + i]->source))' % it,
@@ -306,9 +308,9 @@ def code_text(vt, flags, version):
             '    PyObject *o = direct_compute_%s(v, NULL);' % lo,
             '    if (o == NULL)',
             '      OUT_OF_MEMORY();',
-            '    newobj = vinfo_new(CompileTime_NewSk(sk_new((long)o, SkFlagPyObj)));',
+            '    newobj = psyco_shared_constant(o);',
             '  }',
-            '  else {',
+            '  if (newobj == NULL) {',
             '    newobj = psyco_generic_call(po, %s, %s, "l", (long)n);' % (vt.ctor, flags),
             '    if (newobj == NULL)',
             '      return false;',
@@ -356,18 +358,18 @@ def code_text(vt, flags, version):
         out.append('  return o;')
         out.append('}')
         out.append('')
-        out.append('/* forced: built now if every field is a constant (rule allocator_pure),')
-        out.append('   else %s at run time */' % vt.ctor)
+        out.append('/* forced: a constant if every field is one and CPython would share the')
+        out.append('   object (rule allocator_pure), else %s at run time */' % vt.ctor)
         out.append('static bool compute_%s(PsycoObject *po, vinfo_t *v) {' % lo)
-        out.append('  vinfo_t *newobj;')
+        out.append('  vinfo_t *newobj = NULL;')
         out.append('  if (%s) {' % ' &&\n      '.join(
             'is_compiletime(v->array->items[%s]->source)' % vt.index(f) for f, _ in vt.slots))
         out.append('    PyObject *o = direct_compute_%s(v, NULL);' % lo)
         out.append('    if (o == NULL)')
         out.append('      OUT_OF_MEMORY();')
-        out.append('    newobj = vinfo_new(CompileTime_NewSk(sk_new((long)o, SkFlagPyObj)));')
+        out.append('    newobj = psyco_shared_constant(o);')
         out.append('  }')
-        out.append('  else {')
+        out.append('  if (newobj == NULL) {')
         out.append('    newobj = psyco_generic_call(po, %s, %s, "%s", %s);' % (
             vt.ctor, flags, 'v' * len(params),
             ', '.join('v->array->items[%s]' % vt.index(by_param[p]) for p in params)))

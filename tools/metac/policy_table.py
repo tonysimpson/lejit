@@ -220,8 +220,10 @@ RULES = {
     },
     'allocator_pure': {
         'what': "An object constructor called with constant arguments may be"
-                " called at compile time (CfPure): every run then gets one shared"
-                " object, which only identity can tell apart.",
+                " called at compile time (CfPure), but its result stays a constant"
+                " only if CPython shares it too (it has other references: a cache,"
+                " the operand); a fresh object is thrown away and made at run time,"
+                " one per run as in CPython (vcompiler.h:psyco_shared_constant).",
         'decisions': ['D71', 'D64 (C17)'],
     },
     'loops': {

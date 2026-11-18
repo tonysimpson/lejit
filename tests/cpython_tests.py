@@ -139,7 +139,7 @@ KNOWN = {
     'test_coroutines': ('run=94 fail=3 err=0 skip=0 exit=0',
                         'C11: a compiled frame\'s f_lineno is its def line '
                         '(also in coroutine origins and warning locations)'),
-    'test_ctypes': ('run=485 fail=6 err=0 skip=89 exit=0',
+    'test_ctypes': ('run=485 fail=5 err=0 skip=89 exit=0',
                     'C19: getrefcount around calls into C'),
     'test_memoryio': ('run=166 fail=3 err=0 skip=0 exit=0',
                       'C19: getrefcount of a constant counts the references '

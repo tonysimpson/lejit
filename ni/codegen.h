@@ -85,6 +85,10 @@ PSY_INLINE long reference_from_code(PsycoObject* po, CompileTimeSource source)
 EXTERNFN vinfo_t* psyco_generic_call(PsycoObject* po, void* c_function,
                                      int flags, const char* arguments, ...);
 
+/* compile_time_call's result for a fresh object (psyco_shared_constant):
+   psyco_generic_call then emits the call */
+#define VINFO_FRESH ((vinfo_t*)2)
+
 /* psyco_generic_call reads every argument with va_arg(long), but a vararg
    narrower than a word (an int, an enum, 0) arrives with its upper 32 bits
    unspecified. This wrapper makes such an argument a compile

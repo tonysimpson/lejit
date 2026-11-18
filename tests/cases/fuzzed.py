@@ -20,8 +20,8 @@ NAN = float('nan')
 
 
 def folded_nan_in_set(n):
-    # NAN is a global, a constant to Ni: NAN + 1.5 is boxed once, so each
-    # iteration adds the same NaN object, where CPython makes a new one
+    # NAN is a global, a constant to Ni: NAN + 1.5 folds, but each
+    # iteration must still add a new NaN object, as CPython does
     return {NAN + 1.5 for _ in range(n)}, len({NAN * 2.0: 0 for _ in range(n)})
 
 
@@ -39,7 +39,6 @@ def tuple_repeat_huge():
 CASES = [
     ('str_index_len', [('a',), ('abc',), ('',), ('été',)], {}),
     ('str_index_len_neg', [('a',), ('xyz',)], {}),
-    ('folded_nan_in_set', [(2,), (3,)],
-     {'xfail': 'F117: a float folded from constants is one object for every run of its code'}),
+    ('folded_nan_in_set', [(2,), (3,)], {}),
     ('tuple_repeat_huge', [()], {}),
 ]

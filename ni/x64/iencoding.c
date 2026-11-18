@@ -193,7 +193,10 @@ compile_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
         return VINFO_OK;
     }
     else if (flags & CfNewRef) {
-        return vinfo_new(CompileTime_NewSk(sk_new(result, SkFlagPyObj)));
+        if (result == 0)
+            return vinfo_new(CompileTime_New(0));
+        vresult = psyco_shared_constant((PyObject *)result);
+        return vresult != NULL ? vresult : VINFO_FRESH;
     }
     else {
         return vinfo_new(CompileTime_New(result));

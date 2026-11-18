@@ -3,7 +3,9 @@
  *  - psyco_generic_call is the residual call. Argument tags (v/l/d/r/a/A) say
  *    how each argument is passed, and Cf* flags (cf_flags.h) give the return
  *    type and error convention. With CfPure and every argument compile-time,
- *    the C function is called now (via libffi) and its result is a constant.
+ *    the C function is called now (via libffi) and its result is a constant;
+ *    a fresh object, which CPython would make on every run, is thrown away
+ *    and the call emitted instead (vcompiler.h:psyco_shared_constant).
  *  - Condition codes are virtual values (cc_functions_table) until something
  *    needs them in a register.
  *  - The integer_* functions fold constants and otherwise call the x86-64 ALU
@@ -306,6 +308,7 @@ vinfo_t *
         argtags[count] = tag;
     }
     va_end(vargs);
+    vresult = VINFO_FRESH;
     if (flags & CfPure) {
         /* calling a pure function with no run-time argument now at compile
          * time */
@@ -320,10 +323,11 @@ vinfo_t *
         vresult =
             compile_time_call(po, c_function, flags, count, argtags, args);
         if (has_refs) {
-            if (vresult == NULL) {
+            if (vresult == NULL || vresult == VINFO_FRESH) {
                 for (i = 0; i < count; i++) {
                     if (argtags[i] == 'a' || argtags[i] == 'A') {
                         free((void *)args[i]);
+                        args[i] = raw_args[i];
                     }
                 }
             }
@@ -341,8 +345,10 @@ vinfo_t *
                 }
             }
         }
+        /* a fresh object is made at run time, by a call that cannot block */
+        flags |= CfNoBlock;
     }
-    else {
+    if (vresult == VINFO_FRESH) {
         /* compile the run time call */
         if (!(flags & CfNoBlock) && !psyco_cannot_block(c_function))
             po->blocking_call = 1;
