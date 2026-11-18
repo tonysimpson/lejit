@@ -109,6 +109,22 @@ def overflow(n):
     return out
 
 
+class F(float):
+    pass
+
+
+# float_float, generated in the float unit: an exact float is itself, a
+# subclass a new exact float; and float against a big int (F104's call)
+def float_plus(n):
+    out = []
+    for i in range(n):
+        x = i * 0.5 - 1.0
+        f = F(x)
+        out.append((+x, +x is x, +f, type(+f), +f is f, x < 10 ** 30,
+                    x == 2 ** 70, -x > -(10 ** 400)))
+    return out
+
+
 CASES = [
     ('unary_edges', [()], {}),
     ('binary_edges', [()], {}),
@@ -117,4 +133,5 @@ CASES = [
     ('subclasses', [()], {}),
     ('errors', [()], {}),
     ('overflow', [(30,)], {}),
+    ('float_plus', [(6,)], {}),
 ]
