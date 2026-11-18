@@ -31,6 +31,14 @@ done
 diff -r build/gen-check/1 build/gen-check/2
 echo "same output"
 
+step "done test, point 1: what mirrors CPython and is still hand-written (tools/metac/donecheck.py)"
+# report only while (c) is not empty (exit 1); a stale hand_table.py (exit 2)
+# fails the check
+rc=0
+"$GEN_PY" tools/metac/donecheck.py --python "$PY37" || rc=$?
+[ "$rc" -ge 2 ] && { echo "hand_table.py does not match Ni or the docs"; exit 1; }
+[ "$rc" -eq 1 ] && echo "(report only: definitions with no reason are listed above)"
+
 step "build (NI_TRACE=1 NI_ALL_CHECKS=1)"
 # distutils compares whole seconds: an edit in the same second as the last
 # build looks up to date to it, so remove the module ourselves
