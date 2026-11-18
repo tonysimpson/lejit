@@ -10,8 +10,6 @@
 #include "pabstract.h"
 
 EXTERNFN vinfo_t* PsycoDict_New(PsycoObject* po);
-EXTERNFN bool PsycoDict_SetItem(PsycoObject* po, vinfo_t* vdict,
-				vinfo_t* key, vinfo_t* vvalue);
 EXTERNFN bool PsycoDict_SetItemC(PsycoObject* po, vinfo_t* vdict,
                                  PyObject* key, vinfo_t* vvalue);
 

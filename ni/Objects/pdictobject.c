@@ -39,15 +39,6 @@ vinfo_t* _PsycoDict_NewPresized(PsycoObject* po, long minused)
 #endif
 
 DEFINEFN
-bool PsycoDict_SetItem(PsycoObject* po, vinfo_t* vdict,
-		       vinfo_t* key, vinfo_t* vvalue)
-{
-	return psyco_generic_call(po, PyDict_SetItem,
-				  CfCommonIntZeroOk,
-				  "vvv", vdict, key, vvalue) != NULL;
-}
-
-DEFINEFN
 bool PsycoDict_SetItemC(PsycoObject* po, vinfo_t* vdict,
 			PyObject* key, vinfo_t* vvalue)
 {

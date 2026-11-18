@@ -154,7 +154,6 @@ PSY_INLINE condition_code_t object_non_null(PsycoObject* po, vinfo_t* v) {
 /* The following functions are Psyco implementations of common functions
    of the standard interpreter. */
 EXTERNFN vinfo_t* PsycoObject_IsTrue(PsycoObject* po, vinfo_t* vi);
-EXTERNFN vinfo_t* PsycoObject_Repr(PsycoObject* po, vinfo_t* vi);
 
 /* Note: DelAttr() is SetAttr() with 'v' set to NULL (and not some vinfo_t
    that would happend to contain zero). */

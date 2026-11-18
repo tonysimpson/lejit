@@ -333,12 +333,6 @@ vinfo_t *PsycoObject_IsTrue(PsycoObject *po, vinfo_t *vi) {
     return psyco_vi_One();
 }
 
-DEFINEFN
-vinfo_t *PsycoObject_Repr(PsycoObject *po, vinfo_t *vi) {
-  /* a str, but a __repr__ may return a subclass: no type is known (F110) */
-  return psyco_generic_call(po, PyObject_Repr, CfCommonNewRefPyObject, "v", vi);
-}
-
 static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
                                 void *generic);
 

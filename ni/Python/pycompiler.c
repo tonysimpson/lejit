@@ -2453,18 +2453,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-#ifdef STORE_MAP
-      case STORE_MAP:
-        w = NTOP(1);                         /* key */
-        u = NTOP(2);                         /* value */
-        v = NTOP(3);                         /* dict */
-        if (!PsycoDict_SetItem(po, v, w, u)) /* v[w] = u */
-          break;
-        POP_DECREF();
-        POP_DECREF();
-        goto fine;
-#endif
-
       case LOAD_METHOD:
         /* ceval pushes either (method, self) or (NULL, attribute). Ni always
            does the latter, with a compile-time NULL; the attribute is
