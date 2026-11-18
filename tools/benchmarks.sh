@@ -16,6 +16,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY37=${NI_PY37:-$HOME/.pyenv/versions/3.7.17/bin/python3.7}
+unset NI_TRACE NI_ALL_CHECKS
 
 suites=()
 filter=()
