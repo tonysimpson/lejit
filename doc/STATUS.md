@@ -1,5 +1,13 @@
 # Status
 
+## 2026-11-18: GOAL's done test, point 1, as a tool (GENERATION.md step 10; `88d850c`, D90)
+
+`tools/metac/donecheck.py --python EXE` finds every definition in Ni that mirrors CPython from the code and classes it generated, hand-written with a reason, or hand-written with none (exit 1); written reasons are data in `tools/metac/hand_table.py`, checked against Ni and the docs. `tools/check.sh` runs it as a report.
+- **At `88d850c`, 3.7.17:** generated 191 definitions (5,645 lines); hand-written with a reason 229 (5,020): policy items 116, core 46, generator refusals 28, helpers 20, mechanisms 10, limits 8, judgement 1; with no reason 22 (331 lines).
+- **The 22** (GENERATION step 10 lists each with what would settle it): five with no callers, twelve translatable now or needing a reason (`ptuple_item`, tuple's length, `PyObject_SelfIter` twice, `PyLong_AsDouble` twice, `PyLong_AsLong`, `float_hash`, `PyObject_Hash`, `PyObject_RichCompareBool`, `do_richcompare`, `PyObject_Call`), the two unbound-error helpers the generated cases call, and three to name core or not (`PyType_TypeCheck`, `NEXTOPARG`, `cimpl_finalize_frame_locals`).
+- **Not done by this count:** a reason is not core; GOAL point 1 still needs the policy, limit and non-core refusal items generated or named core (QUESTIONS 50). Points 2 to 4 (`check.sh`, same code against `19fa1df`, re-baseline) are not part of this step.
+- Nothing built: no C changed.
+
 ## 2026-11-18: cells, imports, map unpacking and strings generated (GENERATION.md step 8; `fa3dae7`, `e33981f`, D88)
 
 A core primitive, `psyco_xdecref_v` (an emitted `Py_XDECREF` of a run-time value Ni holds no reference to), and six rules in `gen_ceval.py` (`field_store`, `helper_copy`, `error_handler`, `residual_wrapper`, `switch_arms`, `type_test_generic`).

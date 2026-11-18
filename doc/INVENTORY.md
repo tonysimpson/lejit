@@ -19,6 +19,51 @@ Everything in the per-file tables was checked in code **[read]** unless the cell
 
 ## Summary
 
+### Now, from the code: `tools/metac/donecheck.py` (D90) [run]
+
+The tables below are this inventory at `b36a1ac`, by hand, and are not kept up to date. What is generated and what is still hand-written, with or without a reason, is computed from the code by `tools/metac/donecheck.py --python EXE` (GENERATION step 10; reasons in `tools/metac/hand_table.py`, the policy table's items and the generators' refusals). At `88d850c`, CPython 3.7.17: 191 definitions generated (5,645 lines), 229 hand-written with a reason (5,020), 22 hand-written with none (331).
+
+| file | reasoned | lines | no reason | lines |
+|---|---:|---:|---:|---:|
+| `ni/Modules/pmath.c` | 3 | 18 |  |  |
+| `ni/Objects/pabstract.c` | 7 | 173 | 3 | 72 |
+| `ni/Objects/pboolobject.c` | 2 | 18 |  |  |
+| `ni/Objects/pbytesobject.c` | 2 | 74 |  |  |
+| `ni/Objects/pclassobject.c` | 1 | 53 |  |  |
+| `ni/Objects/pdescrobject.c` | 2 | 18 |  |  |
+| `ni/Objects/pdictobject.c` | 3 | 37 | 2 | 21 |
+| `ni/Objects/pfloatobject.c` | 14 | 121 | 2 | 8 |
+| `ni/Objects/pfloatobject.h` | 6 | 13 |  |  |
+| `ni/Objects/pfuncobject.c` | 4 | 124 |  |  |
+| `ni/Objects/piterobject.c` | 4 | 128 | 1 | 5 |
+| `ni/Objects/piterobject.h` | 1 | 5 |  |  |
+| `ni/Objects/plistobject.c` | 9 | 259 |  |  |
+| `ni/Objects/plongobject.c` | 17 | 282 | 2 | 21 |
+| `ni/Objects/plongobject.h` | 4 | 4 |  |  |
+| `ni/Objects/pmethodobject.c` | 6 | 113 |  |  |
+| `ni/Objects/pmethodobject.h` | 1 | 13 |  |  |
+| `ni/Objects/pobject.c` | 23 | 527 | 4 | 129 |
+| `ni/Objects/pobject.h` |  |  | 2 | 5 |
+| `ni/Objects/prangeobject.c` | 5 | 91 | 1 | 4 |
+| `ni/Objects/psliceobject.c` | 2 | 57 |  |  |
+| `ni/Objects/pstructmember.c` | 1 | 144 |  |  |
+| `ni/Objects/ptupleobject.c` |  |  | 1 | 21 |
+| `ni/Objects/ptupleobject.h` | 2 | 6 |  |  |
+| `ni/Objects/punicodeobject.c` | 9 | 185 |  |  |
+| `ni/Python/frames.c` | 1 | 12 |  |  |
+| `ni/Python/pbltinmodule.c` | 13 | 337 |  |  |
+| `ni/Python/pycompiler.c` | 68 | 1,803 | 3 | 38 |
+| `ni/Python/pycompiler.h` | 1 | 16 |  |  |
+| `ni/mechanisms/eval_breaker_runtime/ceval_loop_top.h` | 2 | 38 |  |  |
+| `ni/mechanisms/exceptions/curexc_triple.h` | 1 | 10 |  |  |
+| `ni/mechanisms/recursion/depth_up.h` | 6 | 63 |  |  |
+| `ni/mechanisms/tstate/runtime_address.h` | 1 | 7 |  |  |
+| `ni/mergepoints.c` | 1 | 7 | 1 | 7 |
+| `ni/psyfunc.c` | 7 | 264 |  |  |
+| **total** | **229** | **5,020** | **22** | **331** |
+
+The tool counts definitions that mirror CPython, not files: the core around them (promotion, merge points, the backend) is not in these lines, and neither are comments or glue, so the totals are not comparable with "Lines by class". Generated, by header: `pabstract_gen.h` 52 (1,921 lines), `pycompiler_gen.h` 73 cases (1,125), `pfloatslots_gen.h` 10 (789), `pmathmodule_gen.h` 12 (516), `ptupleobject_gen.h` 4 (370), `plongobject_gen.h` 12 (330), `pbltinmodule_gen.h` 15 (228), `psyfunc_gen.h` 1 (153), the three `*_virtual_gen.h` 3 (149), `pycompiler_copies_gen.h` 6 (40), the list, dict and bytes lengths 3 (24). The 22 with no reason, and what would settle each: GENERATION.md step 10.
+
 ### Lines by class [read]
 
 | file | lines | translated | mixed | core | glue |

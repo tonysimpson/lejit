@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`), 3 (`e7fd745`) and 9 (`36b5beb`) done, and D19's stage 0, layouts (`ee76274`, D76); step 8 begun (front end, `99d9b26`); 3.8 dry run (`2a71def`, PORT38.md)
+status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`), 3 (`e7fd745`) and 9 (`36b5beb`) done, and D19's stage 0, layouts (`ee76274`, D76); step 8 begun (front end, `99d9b26`); 3.8 dry run (`2a71def`, PORT38.md); step 10 point 1 as a tool (`88d850c`, D90)
 ---
 # Plan of work: generate the translated layer on 3.7
 
@@ -228,6 +228,28 @@ The CPython fields Ni relies on are a list in the policy table (`LAYOUTS`, `RUNT
 ## 3.8 dry run (`2a71def`, PORT38.md) [run]
 
 Every generator run against 3.8.20's source with a 3.8.20 interpreter (uv's), Ni not built. `generate.py` stops at the policy table, as designed: 128 shapes differ and 2 keys are gone. Past it, after seven general rules that read 3.8 (`2a71def`; 3.7's headers byte-identical, `tests/run.py` 755 pass): `gen_long`, `gen_float` and `gen_layouts` give 3.7's text; `gen_ceval` reads 83 of 120 cases, every effect equal to 3.8's `dis.stack_effect`, and generates 60, of which 58 are 3.7's text byte for byte, `MAP_ADD` takes key and value in 3.8's order and `ROT_FOUR` is new: the opcode changes reached Ni through the input alone. `gen_abstract` translates 3.8's new sequence and mapping checks, but loses four index paths to a late `#undef PyIndex_Check` (a generator limit). Mechanisms pick 3.7's snippets but two stubs. What a 3.8 build needs, with estimates (about 3–5 days, mostly the core's block stack for 3.8's finally opcodes): PORT38.md "What 3.8 needs".
+
+## Step 10, point 1: the done test as a tool (`88d850c`, D90) [run]
+
+`tools/metac/donecheck.py --python EXE` lists every definition in Ni that mirrors CPython, found from the code (D90 (1)), and classes each: (a) generated, from the generators' reports; (b) hand-written with a reason (`tools/metac/hand_table.py`, the entry's policy items, or the generator's refusal); (c) hand-written with none, on which it exits 1. It runs the generators itself (about a minute). `tools/check.sh` runs it after the generators, as a report (it fails only on a stale `hand_table.py`).
+
+At `88d850c`, CPython 3.7.17 (functions, macros and opcode cases; lines of each definition, a case's lines not counted again in the loop that holds it):
+
+| class | definitions | lines |
+|---|---:|---:|
+| (a) generated | 191 | 5,645 |
+| (b) hand-written, reasoned | 229 | 5,020 |
+| (c) hand-written, no reason | 22 | 331 |
+
+- **(b) by reason:** policy items 116 (3,043 lines), core 46 (1,203), generator refusals 28 (350: `gen_ceval` core 17, shared code 5, falls through 2, vocabulary 2, control flow 1, stack 1), helper 20 (163), mechanism 10 (118), limit 8 (138), judgement 1 (5). Not mirrors (name matches): 2. Not read: `pstringobject.*` (compiled out).
+- **Of the first run's 102 (c), 78 now have a reason and 2 are not mirrors**, each with references: INVENTORY's core rows (virtual objects, guard repair, frames, the block stack), D77's mechanism snippets, the representation of D83 and D87 (`TYPES` names Ni's load and constructors), D85 (5) for the call path, failures-log rows (`member_get`, `get_len_of_range`, `unpack_iterable`, `import_name`, `BUILD_CONST_KEY_MAP`, `float___trunc___impl`, `builtin_globals_impl`), and helpers of definitions that have their own.
+- **The 22 left**, with what would settle each:
+  - no callers, delete: `pabstract.c:PsycoEval_CallObjectWithKeywords`, `pdictobject.c:PsycoDict_Copy`, `PsycoDict_SetItem`, `pobject.c:PsycoObject_Repr`, `pobject.h:PsycoIter_Check`;
+  - translatable now, or say why not: `ptupleobject.c:ptuple_item` (tuple's `sq_item`, as `list_length`), `pabstract.c:psyco_generic_immut_ob_size` (tuple's `sq_length`), `piterobject.c:piter_getiter` and `prangeobject.c:prangeiter_getiter` (`PyObject_SelfIter`, one statement), `plongobject.c:PsycoLong_AsDouble` and `pfloatobject.c:cimpl_fp_from_long` (3.7's `PyLong_AsDouble` has the one-digit fast path the word rule reads), `PsycoLong_AsLong`, `pfloatobject.c:pfloat_hash` (METACOMPILER "Scalar code" says the failures log has it; it doesn't), `pobject.c:PsycoObject_Hash`, `PsycoObject_RichCompareBool`, `try_rich_compare` (`do_richcompare`'s slot calls; `tp_richcompare` has been a slot since D84), `pabstract.c:PsycoObject_Call` (`call.c`'s `tp_call` branch, or core by D85);
+  - the generated cases' vocabulary: `pycompiler.c:unbound_local_error`, `unbound_deref_error` (run-time copies of `format_exc_check_arg`/`format_exc_unbound`, D88's `helper_copy`, or core);
+  - core or not, to decide: `pobject.h:PyType_TypeCheck` (a type-level macro the core uses), `mergepoints.c:NEXTOPARG` (ceval's decoder, version-dependent: a snippet), `pycompiler.c:cimpl_finalize_frame_locals` (INVENTORY: Py2's `reset_exc_info`, still referenced by `x64/ipyencoding.h`).
+- **What the count does not say:** (b) is not done. GOAL point 1 wants what is left to be core with a reason; the 116 with policy items, the 8 limits and the 4 refusals that are generator limits (vocabulary, control flow, stack) are still the phase's work (QUESTIONS 50).
+- **Checks:** a hand_table key that names nothing, a definition the tool doesn't see as a mirror, an unknown kind, a reference not in the docs, an excluded file that is gone, or an `ENTRIES` Ni name the tool can't find each gives exit 2 (tried by mutation).
 
 ## Risks
 
