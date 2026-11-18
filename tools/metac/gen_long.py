@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate the compile-time int slots from CPython's Objects/longobject.c.
 
 First meta-compiler slice (doc/QUESTIONS.md 26, doc/METACOMPILER.md). Every
@@ -16,7 +15,7 @@ residual call of the slot itself (the code before the guard has no side
 effects, so rerunning it is the same). Anything else is skipped, with the
 reason printed: that list is the failures log.
 
-Usage: gen_long.py [--check] [CPYTHON_SRC]   (writes ni/Objects/plongobject_gen.h)
+Run by generate.py, which writes plongobject_gen.h.
 """
 import os
 import sys
@@ -26,7 +25,6 @@ import ctokens  # noqa: E402
 import cslots  # noqa: E402
 from cslots import Skip, text, is_seq, statements, expand  # noqa: E402,F401
 
-OUT = os.path.join(cslots.ROOT, 'ni', 'Objects', 'plongobject_gen.h')
 
 SHIFT = 30                      # PyLong_SHIFT; asserted in the output
 MEDIUM = (-(2 ** SHIFT - 1), 2 ** SHIFT - 1)
@@ -381,5 +379,6 @@ def generate(src):
         head())
 
 
-if __name__ == '__main__':
-    sys.exit(cslots.main(sys.argv[1:], generate, OUT, 'gen_long.py'))
+def build(target):
+    out, done, skipped = generate(target.src)
+    return out, cslots.report(done, skipped)

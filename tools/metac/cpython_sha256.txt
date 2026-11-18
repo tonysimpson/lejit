@@ -1,0 +1,5 @@
+# sha256 of CPython release tarballs, as fetched from
+# https://www.python.org/ftp/python/X.Y.Z/Python-X.Y.Z.tgz (cpython_src.py).
+# Take each from a source other than the download itself: 3.7.17's is
+# pyenv's python-build definition, and matched the download.
+Python-3.7.17.tgz  fd50161bc2a04f4c22a0971ff0f3856d98b4bf294f89740a9f06b520aae63b49

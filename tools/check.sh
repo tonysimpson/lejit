@@ -3,11 +3,13 @@
 # failure, so a broken build can never be followed by a test run against an
 # old ni.so. Run from anywhere:  tools/check.sh
 #
-# NI_PY37 overrides the CPython 3.7 interpreter, NI_CPYTHON_SRC its source
-# tree (for the generator check).
+# NI_PY37 overrides the CPython 3.7 interpreter, NI_GEN_PYTHON the Python
+# that runs the generators, NI_CPYTHON_SRC the source tree they read (else
+# the cached release tarball; doc/BUILD.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY37=${NI_PY37:-$HOME/.pyenv/versions/3.7.17/bin/python3.7}
+GEN_PY=${NI_GEN_PYTHON:-python3}
 LOG=build/check-build.log
 mkdir -p build
 
@@ -16,14 +18,18 @@ step() { printf '\n== %s\n' "$*"; }
 stale_sources() {   # sources newer than ni.so (find compares to the ns)
     local so; so=$(ls ni*.so 2>/dev/null | head -1)
     [ -z "$so" ] && { echo "(no ni.so)"; return; }
-    find ni setup.py -newer "$so" \( -name '*.c' -o -name '*.h' -o -name setup.py \) | head -5
+    find ni setup.py $(ls -d build/temp.*/gen 2>/dev/null) -newer "$so" \( -name '*.c' -o -name '*.h' -o -name setup.py \) | head -5
 }
 
-step "generated code is up to date (tools/metac)"
-# each must say so: a generator that silently does nothing must fail too
-for g in gen_long gen_float gen_ceval; do
-    python3 tools/metac/$g.py --check | grep "up to date"
+step "generators run, twice, with the same output (tools/metac/generate.py)"
+# the cross-checks (gen_ceval against ceval.c and dis.stack_effect) run in
+# each; the build below generates again and must get the same headers
+rm -rf build/gen-check
+for n in 1 2; do
+    "$GEN_PY" tools/metac/generate.py --python "$PY37" --out build/gen-check/$n
 done
+diff -r build/gen-check/1 build/gen-check/2
+echo "same output"
 
 step "build (NI_TRACE=1 NI_ALL_CHECKS=1)"
 # distutils compares whole seconds: an edit in the same second as the last
@@ -40,6 +46,8 @@ if [ -n "$STALE" ]; then
     exit 1
 fi
 echo "ok ($(ls ni*.so))"
+diff -r build/gen-check/1 build/temp.*/gen
+echo "built from the same generated headers"
 
 step "behaviour tests (tests/run.py)"
 "$PY37" tests/run.py

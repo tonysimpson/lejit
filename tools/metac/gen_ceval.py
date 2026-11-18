@@ -5,7 +5,7 @@ DSL (doc/DECISIONS.md D26, doc/METACOMPILER.md "Bytecode stage").
 Input: tools/metac/bytecodes37.c, CPython 3.7's simple opcodes described in
 3.12's Python/bytecodes.c syntax, parsed by CPython's own parser
 (tools/metac/cases_generator, vendored from 3.12.9). Output:
-ni/Python/pycompiler_gen.h, cases included in pycompiler.c's opcode switch.
+pycompiler_gen.h, cases included in pycompiler.c's opcode switch.
 
 Each instruction becomes:
 
@@ -31,10 +31,11 @@ bool (false: error). Anything else is skipped with the reason.
 
 Each 3.7 description is checked against 3.7 itself: ceval.c has the
 TARGET, calls every C-API function the description calls, and
-dis.stack_effect() (run in python3.7) equals the declared effect.
+dis.stack_effect() (run in the interpreter being built for) equals the
+declared effect. A mismatch stops generation, and so the build.
 
-Usage: gen_ceval.py [--check] [CPYTHON_37_SRC]
-       gen_ceval.py --try BYTECODES_C     report only, e.g. on 3.12's file
+Run by generate.py.  gen_ceval.py --try BYTECODES_C CPYTHON_SRC  reports
+only, e.g. on 3.12's file.
 """
 import json
 import os
@@ -51,10 +52,7 @@ import parser as dsl  # noqa: E402  (CPython's Tools/cases_generator/parser.py)
 
 ROOT = cslots.ROOT
 DEFS = os.path.join(HERE, 'bytecodes37.c')
-OUT = os.path.join(ROOT, 'ni', 'Python', 'pycompiler_gen.h')
 PSYCO_HEADERS = [os.path.join(ROOT, 'ni', 'Objects', 'pabstract.h')]
-PY37 = os.environ.get('NI_PY37', os.path.expanduser(
-    '~/.pyenv/versions/3.7.17/bin/python3.7'))
 BEGIN, END = '// BEGIN BYTECODES //', '// END BYTECODES //'
 
 # ERROR_IF labels: what a failed instruction does in Ni. 'error' is a
@@ -465,7 +463,7 @@ def ceval_cases(src37):
     return cases
 
 
-def stack_effects(names):
+def stack_effects(names, python):
     code = ('import dis, json, opcode, sys\n'
             'out = {}\n'
             'for n in sys.argv[1:]:\n'
@@ -478,15 +476,15 @@ def stack_effects(names):
             '    except ValueError:\n'
             '        out[n] = None  # unknown to compile.c (NOP)\n'
             'print(json.dumps(out))\n')
-    r = subprocess.run([PY37, '-I', '-c', code] + names, check=True,
+    r = subprocess.run([python, '-I', '-c', code] + names, check=True,
                        stdout=subprocess.PIPE, universal_newlines=True)
     return json.loads(r.stdout)
 
 
-def check_37(insts, translated, src37):
+def check_37(insts, translated, src37, python):
     """Problems found comparing the descriptions with 3.7."""
     cases = ceval_cases(src37)
-    effects = stack_effects([i.name for i in insts])
+    effects = stack_effects([i.name for i in insts], python)
     problems = []
     for inst in insts:
         if inst.name not in cases:
@@ -534,41 +532,28 @@ def header(done, skipped):
     return '\n'.join(out)
 
 
-def main(argv):
-    if argv[:1] == ['--try']:
-        insts, done, skipped, _ = run(argv[1], cslots.DEFAULT_SRC)
-        for name, _ in done:
-            print('translated %s' % name)
-        for name, why in skipped:
-            print('skipped    %-28s %s' % (name, why))
-        print('%d of %d translated' % (len(done), len(insts)))
-        return 0
-    check = '--check' in argv
-    args = [a for a in argv if a != '--check']
-    src37 = args[0] if args else os.environ.get('NI_CPYTHON_SRC', cslots.DEFAULT_SRC)
-    insts, done, skipped, calls = run(DEFS, src37)
-    problems = check_37(insts, calls, src37)
+def build(target):
+    insts, done, skipped, calls = run(DEFS, target.src)
+    problems = check_37(insts, calls, target.src, target.python)
     if problems:
-        print('bytecodes37.c does not match CPython 3.7:')
-        print('\n'.join('  ' + p for p in problems))
-        return 1
-    out = header(done, skipped)
-    rel = os.path.relpath(OUT, ROOT)
-    if check:
-        with open(OUT) as f:
-            if f.read() != out:
-                print('%s is out of date: run tools/metac/gen_ceval.py' % rel)
-                for name, why in skipped:
-                    print('  skipped %s: %s' % (name, why))
-                return 1
-        print('%s up to date (%d opcodes generated)' % (rel, len(done)))
-        return 0
-    with open(OUT, 'w') as f:
-        f.write(out)
+        raise cslots.GenError('bytecodes37.c does not match CPython %s:\n%s'
+                              % (target.version,
+                                 '\n'.join('  ' + p for p in problems)))
+    return header(done, skipped), (
+        ['generated  %s' % name for name, _ in done] +
+        ['skipped    %-24s %s' % x for x in skipped])
+
+
+def main(argv):
+    if len(argv) != 3 or argv[0] != '--try':
+        print('usage: gen_ceval.py --try BYTECODES_C CPYTHON_SRC')
+        return 2
+    insts, done, skipped, _ = run(argv[1], argv[2])
     for name, _ in done:
-        print('generated  %s' % name)
+        print('translated %s' % name)
     for name, why in skipped:
-        print('skipped    %-24s %s' % (name, why))
+        print('skipped    %-28s %s' % (name, why))
+    print('%d of %d translated' % (len(done), len(insts)))
     return 0
 
 

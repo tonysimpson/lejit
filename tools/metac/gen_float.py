@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate the compile-time float slots from CPython's Objects/floatobject.c.
 
 Second meta-compiler slice (doc/METACOMPILER.md). Every slot in
@@ -16,7 +15,7 @@ result is a virtual float. CONVERT_TO_DOUBLE and the ob_fval field are the
 representation, hand-written in pfloatobject.c/.h: psyco_convert_to_double
 and PsycoFloat_AS_DOUBLE. Anything else is skipped with the reason.
 
-Usage: gen_float.py [--check] [CPYTHON_SRC]  (writes ni/Objects/pfloatobject_gen.h)
+Run by generate.py, which writes pfloatobject_gen.h.
 """
 import os
 import sys
@@ -26,7 +25,6 @@ import ctokens  # noqa: E402
 import cslots  # noqa: E402
 from cslots import Skip, text, is_seq, statements  # noqa: E402
 
-OUT = os.path.join(cslots.ROOT, 'ni', 'Objects', 'pfloatobject_gen.h')
 
 # names the copied double-only code may use, besides its double locals
 LIBM = {'fmod', 'copysign', 'fabs', 'floor'}
@@ -221,11 +219,10 @@ def emit(cname, slot, params, converts, fields, args, locals_, middle,
     return '\n'.join(out)
 
 
-def generate(src):
-    cfg = os.path.join(src, 'pyconfig.h')
+def generate(src, cfg):
     with open(cfg) as f:
         if 'WANT_SIGFPE_HANDLER' in ctokens.tokenize(f.read())[1]:
-            raise SystemExit('%s defines WANT_SIGFPE_HANDLER: the PyFPE_*'
+            raise cslots.GenError('%s defines WANT_SIGFPE_HANDLER: the PyFPE_*'
                              ' macros are not no-ops' % cfg)
     head = ['#ifdef WANT_SIGFPE_HANDLER',
             '#error "generated assuming the PyFPE_* macros are no-ops"',
@@ -236,5 +233,6 @@ def generate(src):
         translate, head)
 
 
-if __name__ == '__main__':
-    sys.exit(cslots.main(sys.argv[1:], generate, OUT, 'gen_float.py'))
+def build(target):
+    out, done, skipped = generate(target.src, target.pyconfig)
+    return out, cslots.report(done, skipped)

@@ -11,8 +11,11 @@ from __future__ import print_function
 
 import os, sys
 import glob
+import subprocess
 from distutils.core import setup
 from distutils.extension import Extension
+from distutils.command.build_ext import build_ext
+from distutils.errors import DistutilsError
 
 ####################################################################
 # Override defaults using environment variables e.g. dev mode
@@ -36,6 +39,11 @@ ALL_CHECKS = int(os.environ.get('NI_ALL_CHECKS', 0))
 
 # Code size per instruction, ni._codestats() (tools/codesize.py)
 NI_CODESTATS = int(os.environ.get('NI_CODESTATS', 0))
+
+# The generators (tools/metac/generate.py) need a newer Python than the one
+# Ni is built for. NI_CPYTHON_SRC: the CPython source tree to generate from,
+# instead of the cached release tarball (doc/BUILD.md).
+NI_GEN_PYTHON = os.environ.get('NI_GEN_PYTHON', 'python3')
 
 ####################################################################
 
@@ -106,6 +114,40 @@ if not os.path.exists(stamp) or open(stamp).read() != config:
     with open(stamp, 'w') as f:
         f.write(config)
 processor_dir = os.path.join('./ni', PROCESSOR)
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+class build_ext_generated(build_ext):
+    """Generate the translated headers from the source of the CPython being
+    built for (D67), into the build directory, before compiling."""
+
+    def run(self):
+        # "file.h" looks next to the includer first: an old copy there
+        # would win over the fresh one
+        old = glob.glob(os.path.join(HERE, 'ni', '**', '*_gen.h'), recursive=True)
+        if old:
+            raise DistutilsError('remove %s: generated headers now live in'
+                                 ' the build directory' % ', '.join(old))
+        gen_dir = os.path.join(self.build_temp, 'gen')
+        cmd = [NI_GEN_PYTHON, os.path.join(HERE, 'tools', 'metac', 'generate.py'),
+               '--python', sys.executable, '--out', gen_dir]
+        print(' '.join(cmd))
+        sys.stdout.flush()
+        try:
+            ok = subprocess.call(cmd) == 0
+        except OSError as e:
+            raise DistutilsError('cannot run the generators with %s (%s): set'
+                                 ' NI_GEN_PYTHON to a Python 3.10 or later'
+                                 % (NI_GEN_PYTHON, e))
+        if not ok:
+            raise DistutilsError('generating from CPython\'s source failed'
+                                 ' (above); see doc/BUILD.md')
+        gen = sorted(glob.glob(os.path.join(gen_dir, '*.h')))
+        for ext in self.extensions:
+            ext.include_dirs.append(gen_dir)
+            ext.depends += gen
+        build_ext.run(self)
+
 
 CLASSIFIERS = [
     'Development Status :: 2 - Pre-Alpha',
@@ -139,4 +181,5 @@ setup(
                            libraries = ['ffi'],
     )],
     classifiers=CLASSIFIERS,
+    cmdclass={'build_ext': build_ext_generated},
 )

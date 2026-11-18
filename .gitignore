@@ -3,3 +3,5 @@ build
 *.py[cod]
 *.so
 *.egg-info
+# generated at build time (D67); setup.py writes them under build/
+ni/**/*_gen.h
