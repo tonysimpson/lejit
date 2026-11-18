@@ -252,7 +252,7 @@ Ni's compile-time copy of `ceval.c`'s main loop, the `cimpl_*` run-time copies o
 | PycException_Clear | 9 | core | none | P12 | EFFECT: PyErr_Clear CfNoReturnValue | Analogue of PyErr_Clear |
 | psyco_virtualize_exception | 21 | core | none |  |  | A compile-time Python error becomes a pseudo-exception |
 | cimpl_pyerr_fetch | 17 | mixed | partial: Python/errors.c:PyErr_Fetch | P12 | DRIFT: NULL becomes None | Core part: Ni's stack can't hold NULL |
-| cimpl_finalize_frame_locals | 25 | translated | (Py2) Python/ceval.c:reset_exc_info |  | DRIFT: Py2 semantics (restores curexc_* and sets sys.exc_type/exc_value/exc_traceback) | Obsolete: the header says the per-frame saved exception is never set; still referenced by x64/ipyencoding.h FINALIZE_FRAME_LOCALS [read] |
+| cimpl_finalize_frame_locals | 25 | translated | (Py2) Python/ceval.c:reset_exc_info |  | DRIFT: Py2 semantics (restores curexc_* and sets sys.exc_type/exc_value/exc_traceback) | Obsolete: the header says the per-frame saved exception is never set; still referenced by x64/ipyencoding.h FINALIZE_FRAME_LOCALS [read]. **Removed** with the macro (`39c11bc`) |
 | cimpl_push_exc_info | 35 | translated | partial: Python/ceval.c:_PyEval_EvalFrameDefault (fast_block_end, WHY_EXCEPTION into SETUP_EXCEPT/SETUP_FINALLY) | P12 | DRIFT: None where ceval pushes NULL for the old tb/value | Six objects through an A array |
 | cimpl_pop_exc_info | 19 | translated | Python/ceval.c:UNWIND_EXCEPT_HANDLER (restoring half) | P12 | REF: does not consume its arguments; the caller decrefs |  |
 | PycException_Fetch | 20 | core | none | P12 | EFFECT: cimpl_pyerr_fetch CfNoReturnValue | Run-time exception into three vinfos |
@@ -274,8 +274,8 @@ Ni's compile-time copy of `ceval.c`'s main loop, the `cimpl_*` run-time copies o
 | psyco_ext_do_calls | 51 | mixed | partial: Python/ceval.c:call_function | P18,P22 | VIRTUAL: positional arguments as a virtual tuple, keywords as a dict; DRIFT: keywords in a dict, not kwnames (same semantics) | Core part: the call goes to PsycoObject_Call (inlining, direct calls) |
 | cimpl_call_function_ex | 51 | translated | Python/ceval.c:TARGET(CALL_FUNCTION_EX) with check_args_iterable, format_kwargs_mapping_error | P12 | REF: holds a reference to kwargs during the call (ceval's stack holds one) |  |
 | psyco_ext_do_call_ex | 33 | mixed | partial: Python/ceval.c:TARGET(CALL_FUNCTION_EX) | P01,P12 | PROMOTE: the type of the * argument; SHORTCUT: an exact tuple without ** goes to PsycoObject_Call; EFFECT: cimpl_call_function_ex CfCommonNewRefPyObject | Core part: the specialised call |
-| error message macros, unbound_local_error | 15 | translated | Python/ceval.c:format_exc_check_arg (UNBOUNDLOCAL_ERROR_MSG, NAME_ERROR_MSG) | P24 |  |  |
-| unbound_deref_error | 17 | translated | Python/ceval.c:format_exc_unbound | P24 |  |  |
+| error message macros, unbound_local_error | 15 | translated | Python/ceval.c:format_exc_check_arg (UNBOUNDLOCAL_ERROR_MSG, NAME_ERROR_MSG) | P24 |  | **Generated** (`93b3b78`): `unbound_local_error` and `ct_format_exc_check_arg`, rule `compile_time_copy`; the macros used elsewhere stay |
+| unbound_deref_error | 17 | translated | Python/ceval.c:format_exc_unbound | P24 |  | **Generated** (`93b3b78`): `ct_format_exc_unbound`, rule `compile_time_copy` |
 | CELL_ob_ref descriptor | 2 | core | none | P15 | OTHER: FMUT (a cell can change under any call) | Field descriptor |
 | cimpl_import_from | 53 | translated | Python/ceval.c:import_from | P12 |  | **Removed, generated (D88, `fa3dae7`)**: `ceval_import_from`, a run-time copy of the C (rule `helper_copy`); was: Copy (F44) |
 | cimpl_exc_match | 17 | translated | partial: Python/ceval.c:cmp_outcome (PyCmp_EXC_MATCH) | P12 |  | F43 |
@@ -396,7 +396,7 @@ Mirrors `Objects/object.c`'s generic protocol: `PyObject_IsTrue`, `PyObject_GetA
 | Psyco_HeapSlot | 5 | core | none | P29 | GUARD: heap type slot guard (D54) |  |
 | Psyco_TypeIsSubtype | 23 | mixed | Objects/typeobject.c:PyType_IsSubtype | P29 | GUARD: tp_mro recorded and held, compared at run time (D54) | Core: the tp_mro guard; the mro scan is PyType_IsSubtype's. |
 | PsycoObject_IsTrue | 49 | translated | Objects/object.c:PyObject_IsTrue | P01, P09, P29 | GUARD: nb_bool, mp_length, sq_length of a heap type via Psyco_HeapSlot, changed -> PyObject_IsTrue; SHORTCUT: None folded to 0; EFFECT: CfCommonInquiry (nb_bool), CfCommonPySSizeTResult (lengths); DRIFT: a length is returned as is, not normalised to 0/1; no Py_True/Py_False identity tests (same result via long_bool) | Static types: slots folded at compile time. |
-| PsycoObject_Repr | 13 | translated | Objects/object.c:PyObject_Repr | P12, P08 | RESTYPE: exact str asserted; DRIFT: PyObject_Repr returns a str subclass unchanged (PyUnicode_Check), so the assert can be wrong | No callers [read]; residual only. |
+| PsycoObject_Repr | 13 | translated | Objects/object.c:PyObject_Repr | P12, P08 | RESTYPE: exact str asserted; DRIFT: PyObject_Repr returns a str subclass unchanged (PyUnicode_Check), so the assert can be wrong | No callers [read]; residual only. **Removed** (`52f2540`): `FORMAT_VALUE` makes the residual call itself |
 | generic_getattr forward declaration | 3 | glue | none |  |  |  |
 | need_type_mega | 25 | core | none | P04 | MEGA: type promoted for at most MEGAMORPHIC_MAX types per site; PROMOTE: module constants never specialised (F96); FORGET: hint guard first (D63) |  |
 | PsycoObject_GetAttr | 22 | mixed | Objects/object.c:PyObject_GetAttr | P04, P12 | MEGA: via need_type_mega; SHORTCUT: specialised only for a constant exact-str name and a heap type or PyObject_GenericGetAttr; DRIFT: a static type's own tp_getattro is never dispatched to its meta (residual PyObject_GetAttr; same behaviour, no speed-up) | Core: the choice of when to specialise; then generic_getattr. |
@@ -456,7 +456,7 @@ The compile-time `object.h`: `ob_type`/`ob_size` field descriptors, promote/veri
 |---|---|---|---|---|---|---|
 | file comment, include guard, includes | 11 | glue | none |  |  |  |
 | OB_type, FIX_size, VAR_size, FIX/VAR_signed_size, iOB_TYPE, iFIX_SIZE, iVAR_SIZE | 11 | core | none (from Include/object.h:PyObject, PyVarObject) | P15 | OTHER: ob_size mutability (FIX_ vs VAR_) and non-negativity chosen by hand | Field descriptors. |
-| PyType_TypeCheck, PsycoIter_Check | 10 | translated | Include/object.h:PyObject_TypeCheck; Include/abstract.h:PyIter_Check |  |  | Type-level forms of the macros. PsycoIter_Check has no users [read]. |
+| PyType_TypeCheck, PsycoIter_Check | 10 | translated | Include/object.h:PyObject_TypeCheck; Include/abstract.h:PyIter_Check |  |  | Type-level forms of the macros. PsycoIter_Check has no users [read]; **removed** (`3baa2da`). PyType_TypeCheck: a helper (`hand_table.py`) |
 | Psyco_SlotsMutable | 6 | core | none |  | GUARD: heap types' slots are guarded, static types' folded (F50) |  |
 | Psyco_ClassMutable | 8 | core | none (fact from Objects/typeobject.c:object_set_class) | P31 | FORGET: heap types and ModuleType subtypes can change (F55) |  |
 | Psyco_ForgetClasses, Psyco_TypeHintGuard declarations | 10 | glue | none |  |  |  |
@@ -493,12 +493,12 @@ Mirrors `Objects/abstract.c` (with `PyObject_Call` and `PyEval_CallObjectWithKey
 | type_error_tp | 8 | translated | Objects/abstract.c:type_error | P24 |  | Takes the type, not the object. |
 | table_slot, NB_SLOT_OF, SQ_SLOT_OF, MP_SLOT_OF, INDEX_SLOT_OF, SLOT_OR_GOTO | 35 | core | none | P29 | GUARD: every slot read of a possibly heap type (D54) |  |
 | PsycoObject_Call | 24 | translated | partial: Objects/call.c:PyObject_Call (tp_call branch) | P01, P29, P09, P24 | GUARD: tp_call of a heap type, changed -> PyObject_Call; EFFECT: CfCommonNewRefPyObject; DRIFT: no Py_EnterRecursiveCall and no _Py_CheckFunctionResult around tp_call; kw is 0 for none | PyFunction/PyCFunction branches reach the same metas via tp_call [inferred]. |
-| PsycoEval_CallObjectWithKeywords | 45 | translated | Objects/call.c:PyEval_CallObjectWithKeywords | P02, P12 |  | Wrong arg types go residual (CPython raises there). No callers [read]. |
+| PsycoEval_CallObjectWithKeywords | 45 | translated | Objects/call.c:PyEval_CallObjectWithKeywords | P02, P12 |  | Wrong arg types go residual (CPython raises there). No callers [read]. **Removed** (`3baa2da`, and F11 with it) |
 | PsycoObject_GetItem | 59 | translated | Objects/abstract.c:PyObject_GetItem | P01, P29, P09, P12, P24 | GUARD: mp_subscript, sq_item, key's nb_index; SHORTCUT: int key converted inline (PsycoLong_AsLong); DRIFT: int key too big raises OverflowError (PyLong_AsLong) where 3.7 raises IndexError (PyNumber_AsSsize_t(key, PyExc_IndexError)); __class_getitem__ path is residual PyObject_GetItem | KNOWN_BUGS F102. |
 | PsycoObject_SetItem | 67 | translated | Objects/abstract.c:PyObject_SetItem; Objects/abstract.c:PyObject_DelItem | P01, P29, P09, P12, P24 | GUARD: mp_ass_subscript, key's nb_index, sq_ass_item; SHORTCUT: int key via PsycoLong_AsLong; DRIFT: same OverflowError-for-IndexError as GetItem | value NULL is DelItem. KNOWN_BUGS F102. |
 | PsycoObject_Size | 23 | translated | Objects/abstract.c:PyObject_Size; Objects/abstract.c:PyMapping_Size | P01, P29, P09, P24 | GUARD: sq_length, mp_length; EFFECT: CfCommonPySSizeTResult |  |
-| psyco_generic_immut_ob_size | 5 | translated | Objects/tupleobject.c:tuplelength (and bytes/str length) | P15 | OTHER: ob_size chosen immutable (FIX_size) | Registered on tuple's sq_length; bytes' is generated (D84). |
-| psyco_generic_mut_ob_size | 5 | translated | Objects/listobject.c:list_length | P15 | OTHER: ob_size chosen mutable (VAR_size) | No longer registered: list's sq_length is the generated `list_length` (D84, same read). |
+| psyco_generic_immut_ob_size | 5 | translated | Objects/tupleobject.c:tuplelength (and bytes/str length) | P15 | OTHER: ob_size chosen immutable (FIX_size) | Registered on tuple's sq_length; bytes' is generated (D84). **Removed** (`571d4a9`): tuple's `sq_length` is generated |
+| psyco_generic_mut_ob_size | 5 | translated | Objects/listobject.c:list_length | P15 | OTHER: ob_size chosen mutable (VAR_size) | No longer registered: list's sq_length is the generated `list_length` (D84, same read). **Removed** (`571d4a9`) |
 | PsycoSequence_GetItem | 40 | translated | Objects/abstract.c:PySequence_GetItem | P01, P29, P05, P06, P09, P24 | GUARD: sq_item, sq_length; LIKELY: negative index unlikely (_f) |  |
 | PsycoSequence_SetItem | 52 | translated | Objects/abstract.c:PySequence_SetItem; Objects/abstract.c:PySequence_DelItem | P01, P29, P05, P06, P09, P24 | GUARD: sq_ass_item, sq_length; LIKELY: negative index unlikely | value NULL is DelItem, with its own message. |
 | PsycoSequence_GetSlice | 9 | translated | Objects/abstract.c:PySequence_GetSlice | P12 |  | Residual only. No callers [read]. |
@@ -550,7 +550,7 @@ Declarations only **[read]**. `PsycoNumber_Divide` and `PsycoNumber_InPlaceDivid
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
 | file comment, include guard, includes | 12 | glue | none |  |  |  |
-| PsycoObject_Call, PsycoEval_CallObjectWithKeywords declarations | 7 | glue | none |  |  |  |
+| PsycoObject_Call, PsycoEval_CallObjectWithKeywords declarations | 7 | glue | none |  |  | The second removed (`3baa2da`) |
 | PsycoObject_Size/GetItem/SetItem declarations | 5 | glue | none |  |  |  |
 | PsycoSequence_* declarations | 12 | glue | none |  |  |  |
 | PsycoNumber_* declarations | 57 | glue | none |  | DRIFT: PsycoNumber_Divide and PsycoNumber_InPlaceDivide declared, never defined (Py2 nb_divide) |  |
@@ -569,7 +569,7 @@ Virtual ints on the one-digit fast paths of 3.7's `longobject.c`. `plongobject_g
 | header comment and includes | 21 | glue | none |  |  | Header says which slots are generated and why the rest are hand-written |
 | plong_medium_value | 52 | mixed | Objects/longobject.c:MEDIUM_VALUE (with the Py_ABS(Py_SIZE(x)) <= 1 tests of long_add etc.) | P15,P05,P07 | SHORTCUT: -1 <= ob_size <= 1 and the virtual word range test each as one unsigned compare; LIKELY: one digit is _t, zero is _f | Core part: the virtual-int branch (a word range test, there is no ob_size). Used by plongobject_gen.h, psliceobject.c, prangeobject.c |
 | PsycoLong_MediumValue | 5 | glue | none |  |  | Exported wrapper of plong_medium_value |
-| PsycoLong_AsLong | 11 | mixed | Objects/longobject.c:PyLong_AsLong | P12 | EFFECT: CfReturnTypeLong\|CfPyErrCheckMinus1 | Core part: a virtual int's word is returned directly; otherwise residual |
+| PsycoLong_AsLong | 11 | mixed | Objects/longobject.c:PyLong_AsLong | P12 | EFFECT: CfReturnTypeLong\|CfPyErrCheckMinus1 | Core part: a virtual int's word is returned directly; otherwise residual. No callers [read]; **removed** (`3baa2da`) |
 | PsycoLong_AsIndex (since `1aa473c`: `PsycoNumber_AsSsize_t(po, v, err)`, also used by the generated `sequence_repeat` and item functions; a known int subclass goes through `plong_medium_value`) | 29 | mixed | Objects/abstract.c:PyNumber_AsSsize_t (err=IndexError) | P14,P12 | SHORTCUT: compile-time fold of a constant, inline for a virtual or one-digit int; EFFECT: CfReturnTypeNative\|CfPyErrCheckMinus1 | Core part: virtual word; a constant that overflows is left to raise at run time. Used by punicodeobject.c, pbytesobject.c |
 | PsycoLong_AsDouble | 18 | mixed | Objects/longobject.c:PyLong_AsDouble | P13,P12 | EFFECT: CfPure\|CfReturnTypeDouble on cimpl_fp_from_long, CfPyErrCheck\|CfReturnTypeDouble on PyLong_AsDouble | Core part: a virtual int's word converts by (double)long, the same rounding as PyLong_AsDouble [read] |
 | PsycoLong_FromUnsignedLong | 9 | translated | Objects/longobject.c:PyLong_FromUnsignedLong | P12,P08 | RESTYPE: int | Residual; used by pstructmember.c |
@@ -628,7 +628,7 @@ Virtual floats plus the helpers `pbltinmodule.c` uses for `int(x)` and `round(x)
 | direct_compute_float, psyco_computed_float | 14 | core | none | P18 |  | Unreachable (KNOWN_BUGS F6) |
 | psyco_convert_to_double | 20 | translated | Objects/floatobject.c:convert_to_double, CONVERT_TO_DOUBLE | P01,P15 | DRIFT: tests int before float (no observable difference) | Removed in D87: the generated slots inline `convert_to_double` (rule `inline_static`); pmath.c no longer uses it |
 | pfloat_richcompare | 63 | mixed | partial: Objects/floatobject.c:float_richcompare (float/float case) | P01,P13,P12,P26,P23,P25 | SHORTCUT: float/float only (P26), int is the residual slot; EFFECT: CfCommonNewRefPyObject\|CfPure on the residual float_richcompare (NoError until F104's fix); RESTYPE: bool (virtual) | Core part: GE/GT as swapped LE/LT. BUG [read]: float_richcompare with a big int can return NULL (its Error: label, MemoryError), but NoError means the NULL is not checked KNOWN_BUGS F104. |
-| pfloat_hash | 9 | translated | Objects/floatobject.c:float_hash | P15,P13 | EFFECT: CfPure\|CfReturnTypeLong on _Py_HashDouble |  |
+| pfloat_hash | 9 | translated | Objects/floatobject.c:float_hash | P15,P13 | EFFECT: CfPure\|CfReturnTypeLong on _Py_HashDouble | **Generated** (`3444d48`, `pfloatslots_gen.h`): the same call, `CfReturnTypeNative` (the same `long`) |
 | #include pfloatobject_gen.h | 3 | glue | none |  |  | Removed in D87: `pfloatslots_gen.h` has the slots |
 | psy_floatobject_init | 15 | glue | none |  |  | Registers the generated slots, then nb_positive, tp_richcompare, tp_hash |
 | #else psy_floatobject_init (no FP calls) | 5 | glue | none |  |  |  |
@@ -771,7 +771,7 @@ Tuple item descriptor and vinfo-array access macros **[read]**.
 
 ### `ni/Objects/ptupleobject.c`
 
-Mostly core: virtual tuples, constant folding of all-constant tuples, `PsycoTuple_Load`. `ptuple_item` is a straight `tupleitem` translation; tuple `mp_subscript` is the generic meta, not `tuplesubscript` **[read]**. Since D78 `tuplecontains` (`sq_contains`) is generated into `ptupleobject_gen.h`, which this file includes; `psy_tupleobject_init` calls its `gen_tupleobject_init()` **[run]**. Since D84 `tuplerichcompare` (`tp_richcompare`, a field of the type) is generated there too; Ni called the slot before **[run]**.
+Mostly core: virtual tuples, constant folding of all-constant tuples, `PsycoTuple_Load`. `ptuple_item` was a straight `tupleitem` translation (generated since `571d4a9`, with `tuplelength`); tuple `mp_subscript` is the generic meta, not `tuplesubscript` **[read]**. Since D78 `tuplecontains` (`sq_contains`) is generated into `ptupleobject_gen.h`, which this file includes; `psy_tupleobject_init` calls its `gen_tupleobject_init()` **[run]**. Since D84 `tuplerichcompare` (`tp_richcompare`, a field of the type) is generated there too; Ni called the slot before **[run]**.
 
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
@@ -779,7 +779,7 @@ Mostly core: virtual tuples, constant folding of all-constant tuples, `PsycoTupl
 | compute_tuple, direct_compute_tuple, PsycoTuple_New | – | generated | Objects/tupleobject.c:PyTuple_New | P18, P14, P12 | SHORTCUT: all-constant items built at compile time (rule allocator_pure); EFFECT: PyTuple_New from effects.py (CfNoPython, CfNoBlock) | **Generated** into `ptupleobject_virtual_gen.h` by `gen_virtual.py` (D80); the hand versions (97 lines) are gone |
 | CT_TUPLE_LOAD_SIZE_LIMIT, PsycoTuple_Load | 42 | core | none | P22 | VIRTUAL: constant tuples over 15 items are not loaded | -1 for a non-tuple constant (F45) |
 | PsycoTuple_Concat | – | removed | Objects/tupleobject.c:tupleconcat | P02, P22, P21, P12 | | **Removed** (D80): `tupleconcat` and `tuplerepeat` are generated into `ptupleobject_gen.h` by the constructor rule; see METACOMPILER "Virtual objects" for the differences |
-| ptuple_item | 26 | translated | Objects/tupleobject.c:tupleitem | P15, P07, P05, P24 | LIKELY: out of range unlikely (_f) | no assert_nonneg after the test, unlike plist_item |
+| ptuple_item | 26 | translated | Objects/tupleobject.c:tupleitem | P15, P07, P05, P24 | LIKELY: out of range unlikely (_f) | no assert_nonneg after the test, unlike plist_item. **Generated** (`571d4a9`) |
 | psy_tupleobject_init | 20 | glue | none |  | OTHER: tuple mp_subscript is the generic pabstract.c:psyco_generic_subscript, not a tuplesubscript translation; VIRTUAL: INIT_SVIRTUAL (stays virtual across calls), weights NW_TUPLES_NORMAL, NW_TUPLES_FUNCALL | sq_length is psyco_generic_immut_ob_size |
 
 ### `ni/Objects/piterobject.h`
@@ -963,8 +963,8 @@ Residual-call wrappers with a known result type, plus `gen_dictobject_init` regi
 | DICT_ma_used, iDICT_MA_USED | 4 | core | none | P15 | DRIFT: ma_used read as int, CPython Py_ssize_t (low 32 bits) |  |
 | PsycoDict_New | 14 | translated | Objects/dictobject.c:PyDict_New | P12, P08 | RESTYPE: dict | no virtual dicts |
 | PsycoDict_NewPresized | 19 | translated | Objects/dictobject.c:_PyDict_NewPresized | P12, P08 | SHORTCUT: minused <= 5 calls PyDict_New (3.7's _PyDict_NewPresized has no such branch; equivalent dict); RESTYPE: dict | BUILD_MAP, BUILD_CONST_KEY_MAP, keyword dicts |
-| PsycoDict_Copy | 14 | translated | Objects/dictobject.c:PyDict_Copy | P12, P08 | RESTYPE: dict | no callers in the repo |
-| PsycoDict_SetItem | 9 | translated | Objects/dictobject.c:PyDict_SetItem | P12 | EFFECT: CfCommonIntZeroOk | no callers in the repo |
+| PsycoDict_Copy | 14 | translated | Objects/dictobject.c:PyDict_Copy | P12, P08 | RESTYPE: dict | no callers in the repo; **removed** (`3baa2da`) |
+| PsycoDict_SetItem | 9 | translated | Objects/dictobject.c:PyDict_SetItem | P12 | EFFECT: CfCommonIntZeroOk | no callers in the repo; **removed** (`52f2540`) |
 | PsycoDict_SetItemC | 9 | translated | Objects/dictobject.c:PyDict_SetItem | P12 | EFFECT: CfCommonIntZeroOk | key a raw constant ('l') |
 | psyco_dict_length | – | removed | Objects/dictobject.c:dict_length | P15 | DRIFT: 32-bit read of ma_used (M11, unchanged: the descriptor is the same) | **Removed** (D84): `dict_length` is generated into `pdictobject_gen.h` through `TYPES`' descriptor `DICT_ma_used`. |
 | psy_dictobject_init | 6 | glue | none |  |  |  |

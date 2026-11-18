@@ -26,7 +26,7 @@ Example: `ni/Objects/pabstract.c:PsycoNumber_Add` and nearly every `PsycoNumber_
 
 **P02 verify-type** (M)
 `if (PyTuple_Check(x))` → `switch (Psyco_VerifyType(po, x, &PyTuple_Type)) { case true: …; case false: …; default: return NULL; }`. It's three-way: true, false, or error/promotion.
-Example: `ni/Objects/pabstract.c:PsycoEval_CallObjectWithKeywords`, `ptupleobject.c:PsycoTuple_Concat`.
+Example: `ni/Objects/ptupleobject.c:PsycoTuple_Concat`.
 
 **P03 promote-value** (M/J)
 Any C value used to choose a code path (a `PyMethodDef*`, a flag) → `psyco_atcompiletime(po, vi)` or `psyco_pyobj_atcompiletime`, where -1/NULL means promotion or error. Which values are worth promoting is the judgement.
@@ -46,11 +46,11 @@ Example: `ni/Objects/pabstract.c:PsycoSequence_GetItem`.
 
 **P07 unsigned-bounds** (M when it mirrors a `(size_t)` cast; J otherwise)
 `(size_t)i >= (size_t)n` → `integer_cmp(po, i, n, Py_GE | COMPARE_UNSIGNED)`. `CHEAT_MAXINT` (clamping slice bounds) is a Psyco-only trick.
-Example: `ni/Objects/ptupleobject.c:ptuple_item`, `pstringobject.c:pstring_slice` (Py2 only).
+Example: tuple's `sq_item`, generated into `ptupleobject_gen.h` (`gen_abstract.bounds_test`, `571d4a9`; was `ptupleobject.c:ptuple_item`), `pstringobject.c:pstring_slice` (Py2 only).
 
 **P08 assert-result-type** (J)
 A residual call whose result type is known → `Psyco_AssertType(po, r, &PyX_Type)`, or the `DEF_KNOWN_RET_TYPE_n` macros. The knowledge isn't in the callee's C signature; a generator could get some of it by analysing the callee's return statements.
-Example: `ni/Objects/pobject.c:PsycoObject_Repr`, `plongobject.c` (`RETLONG`/`RETFLOAT`), `pdictobject.c`.
+Example: `plongobject.c` (`RETLONG`/`RETFLOAT`), `pdictobject.c`.
 
 ## B. Dispatch
 
@@ -94,7 +94,7 @@ Example: `ni/Objects/ptupleobject.c:compute_tuple` (all items constant → build
 
 **P15 field-access** (M, given descriptors generated from CPython headers)
 `o->field` / `Py_SIZE(o)` / `ob_item[i]` → `psyco_get_field(po, o, DESC)`, `psyco_get_const` (immutable, cached, borrowed), `psyco_get_field_array`, `psyco_put_field[_array]`. Descriptors (`DEF_FIELD(struct, ctype, field, prev)` + `FMUT`/`FPYREF`/`FARRAY`) can be generated from struct definitions. **Whether a field is mutable is judgement** (e.g. `FIX_size` vs `VAR_size`).
-Example: `pabstract.c:psyco_generic_immut_ob_size`, `pstructmember.c:PsycoMember_GetOne` (maps each `T_*` to a descriptor).
+Example: tuple's generated `sq_length` and `sq_item` (`FIX_size`, `FPYREF(TUPLE_ob_item)`; was `pabstract.c:psyco_generic_immut_ob_size`), `pstructmember.c:PsycoMember_GetOne` (maps each `T_*` to a descriptor).
 
 **P15a inline-split-store** (J)
 A store into a container whose layout is shared and only appended to (3.7's split dict on a class's keys) is done inline after checking the live layout against a cache, with the C function's order kept: incref, store, bookkeeping (`ma_used`, version tag), the old value's decref last. Which cases stay inline (the existing slot, the next slot in order) is derived from the C source (`insertdict`'s split-table branch); the cache, the GC-tracking shortcut and the version counter are judgement.
@@ -148,7 +148,7 @@ Example: `ni/Objects/pboolobject.h:PsycoBool_FromCondition` (`3702e3f`).
 
 **P24 exception-set** (M)
 `PyErr_SetString(e, msg)` / `PyErr_Format` → `PycException_SetString(po, e, msg)` / `PycException_SetFormat`. It returns NULL (or `CC_ERROR`) exactly as the C does.
-Example: `pabstract.c:type_error`, `ptupleobject.c:ptuple_item`.
+Example: `pabstract.c:type_error`, tuple's generated `sq_item`.
 
 **P25 notimplemented-protocol** (M)
 `if (res != Py_NotImplemented) return res; Py_DECREF(res);` → `if (IS_IMPLEMENTED(res)) return res; vinfo_decref(res, po);`. This works on the residual path only if the call used `CfCommonCheckNotImplemented`, which maps a run-time NotImplemented to the unique `psyco_vi_NotImplemented()`.

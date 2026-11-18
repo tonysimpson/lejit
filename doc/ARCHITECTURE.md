@@ -78,7 +78,7 @@ Dependencies point downward in principle. In practice the translated files also 
 |---|---|---|
 | `Psyco_DefineMeta`, `Psyco_DefineMetaModule`, `Psyco_DefineModuleFn/C`, `Psyco_Meta1x/2x/3x` | core | Meta-function registry and dispatch. |
 | `PycException_*`, `psyco_virtualize_exception`, `clear_pseudo_exception` | core | Pseudo-exception machinery. |
-| `cimpl_pyerr_*`, `cimpl_set_exc_info`, `cimpl_finalize_frame_locals`, `PycException_Fetch*` | translated | Run-time helpers mirroring `ceval.c`/`errors.c` exception state; Py3 rework. |
+| `cimpl_pyerr_*`, `cimpl_set_exc_info`, `PycException_Fetch*` | translated | Run-time helpers mirroring `ceval.c`/`errors.c` exception state; Py3 rework. |
 | `cimpl_new_frame`, `cimpl_rt_traceback`, `cimpl_vt_traceback`, `PsycoTraceBack_Here` | translated + core | Traceback construction for compiled frames. |
 | `psyco_ext_do_calls`, `cimpl_load_global`, `cimpl_unpack_*`, `cimpl_do_raise`, `cimpl_import_*` | translated | Compile-time or residual copies of `ceval.c` helpers (`call_function`, `do_raise`, `import_name`, `unpack_iterable`). |
 | `psyco_pycompiler_mainloop`, the opcode `switch` | translated | Mechanical in shape: one case per `ceval.c` opcode. |
