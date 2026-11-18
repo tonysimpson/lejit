@@ -15,7 +15,10 @@ GEN_PY=${NI_GEN_PYTHON:-python3}
 LOG=build/check-build.log
 mkdir -p build
 
-step() { printf '\n== %s\n' "$*"; }
+STEP_T0=$SECONDS; STEP_NAME=; STEP_TIMES=
+step_done() { if [ -n "$STEP_NAME" ]; then STEP_TIMES+=$(printf '%5ds  %s\n' $((SECONDS - STEP_T0)) "${STEP_NAME%% (*}")$'\n'; fi; }
+step() { step_done; STEP_NAME=$*; STEP_T0=$SECONDS; printf '\n== %s\n' "$*"; }
+trap 'step_done; printf "\n== time per step\n%s" "$STEP_TIMES"' EXIT
 
 stale_sources() {   # sources newer than ni.so (find compares to the ns)
     local so; so=$(ls ni*.so 2>/dev/null | head -1)
