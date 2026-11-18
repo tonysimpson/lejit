@@ -1,5 +1,12 @@
 # Status
 
+## 2026-11-18: 3.8.20 generates to the end (`cfc162e` … `9265267`, F112, F113, F115)
+
+`generate.py --python <3.8.20> --src <3.8.20> --past-policy` writes all 32 headers, the same set as 3.7.17, and the same text twice. Three generator bugs, each fixed by a general rule: F112 (`gen_ceval`'s label copies matched 3.7's statement form, not 3.8's with `tstate` first), F113 (`gen_virtual` read `objimpl.h`'s static inline `_PyObject_INIT_VAR` without the macros of the file that calls it) and F115 (an error handler's run-time copy kept 3.8's `_PyErr_X(tstate, …)`, which wouldn't compile). `--past-policy` on `generate.py` and `donecheck.py` replaces PORT38's scratch driver.
+- **3.8.20 against 3.7.17:** opcodes 72 of 120 (75 of 119), 68 cases identical; abstract 52, containers 15, numbers 23, math 12, binding 1, virtuals 3, layouts 51 fields as 3.7 (real C changes translated); builtins 11 (20), 7 of them the fallback only; mechanisms 8 of 10 (2 stubs, as before); policy table 131 problems. donecheck: generated 195 (6,228 → 5,980 lines), reasoned 224, no reason 0.
+- **Causes, most first** (PORT38 "3.8 refusals by cause"): `_PyArg_CheckPositional` without a policy entry (QUESTIONS 49), 13; `tstate` parameters in run-time helper copies, 8; effect rules (`_PyErr_*`, `_PyObject_ASSERT`), no refusal but 35 calls lose `CfNoPython | CfNoBlock`; `pow`'s keywords, 2; `&&` with an error test, 1; a dead `switch` arm, 1. Vectorcall and positional-only block nothing generated. F114 (new, open): the 3.8 math metas don't test `PsycoFloat_AsDouble`'s result.
+- **Checks:** 3.7.17 headers and report byte-identical before and after each fix (so no build or test run was needed); 3.8.20 generation twice, same output. Ni not built for 3.8.
+
 ## 2026-11-18: iterators, `callable`, `hasattr`, `BUILD_TUPLE_UNPACK*` generated; none left with no reason (`9e58f97` … `18c250d`, D93)
 
 Five general rules and one policy item (D93): a type's initialiser read from the file that defines it (object.c's `PyObject_SelfIter` as the iterators' `tp_iter`), a call that cannot fail as another's argument (`callable`), a `TARGET` that falls into the next read with its body (`BUILD_TUPLE_UNPACK*`), `error_handler` for an assigned call, and P22's virtual tuple as policy `('virtual', 'concat')`.

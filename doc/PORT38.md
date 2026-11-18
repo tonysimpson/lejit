@@ -1,6 +1,6 @@
 ---
 written: 2026-11-18
-status: dry run of generation against CPython 3.8.20 at `2a71def`; Ni not built for 3.8
+status: dry run of generation against CPython 3.8.20 at `2a71def`, rerun at `5dc2ce9` ("Now"); Ni not built for 3.8
 ---
 # Porting to 3.8: a dry run of generation
 
@@ -12,7 +12,54 @@ GOAL.md says 3.8 is the first test that versions differ only in the input (D67).
 - **Interpreter:** none in pyenv, but uv already had one: `~/.local/share/uv/python/cpython-3.8.20-linux-x86_64-gnu/bin/python3.8` (python-build-standalone, built with Clang, CFLAGS with `-DNDEBUG`). Nothing was installed. It gave `dis.stack_effect`, `sysconfig`'s CFLAGS and the installed `pyconfig.h`, so nothing was blocked for want of an interpreter.
 - **`generate.py --python <3.8> --src <3.8>`** stops at the policy check, as designed (below). To see the generators past it, a scratch driver built the `cslots.Target` the same way and called each generator's `build(target)` on its own, catching `GenError` and exceptions. The baseline was `generate.py` on 3.7.17 at `7088760`. Outputs were compared header by header, and the ceval cases case by case.
 
-## Summary
+## Now (`9265267`, 2026-11-18)
+
+`generate.py --python <uv 3.8.20> --src ~/.cache/ni/cpython/Python-3.8.20 --out DIR --past-policy` runs to the end and writes all 32 headers (the same set as 3.7.17), twice with the same output. Two generator bugs stood in the way: F112 (`gen_ceval`'s label copies, `cfc162e`) and, behind it, F113 (`gen_virtual` reading `PyTuple_New`, `ec08641`). A third, found by reading the output, would have stopped a 3.8 compile: F115 (`ceval_BUILD_MAP_UNPACK_0` named `tstate`, `9265267`). `--past-policy` (`a13aa90`, item 13 below as a flag) prints the policy table's problems instead of stopping; `donecheck.py` has the same flag (`5dc2ce9`). No fix changes 3.7.17's output (byte-identical headers and report before and after each). [run]
+
+### What generates, 3.8.20 against 3.7.17
+
+Counted from each generator's report (`-v`); "same text" compares the headers with the version string masked. A "resume" is a path that calls CPython's C at run time.
+
+| Area (header) | 3.7.17 | 3.8.20 | Text against 3.7 |
+|---|---|---|---|
+| Opcodes (`pycompiler_gen.h`) | 75 of 119 | 72 of 120 | 68 cases identical; `BUILD_TUPLE_UNPACK`, `COMPARE_OP` differ only in effect flags; `MAP_ADD` differs (real: key before value); `ROT_FOUR` new; lost `BUILD_TUPLE_UNPACK_WITH_CALL`, `BUILD_MAP_UNPACK_WITH_CALL`, `IMPORT_FROM`, `FORMAT_VALUE` |
+| Opcode helper copies (`pycompiler_copies_gen.h`) | 11 | 6 | the 6 the same (`ct_format_exc_check_arg` and `unbound_local_error` included, F112; `ceval_BUILD_MAP_UNPACK_0` since F115); the 5 lost are the lost opcodes' copies |
+| Abstract (`pabstract_gen.h`) | 52 | 52 | real 3.8 C translated: `PyMapping_Size` and `PySequence_Get/Set/DelItem` refuse the other protocol (a slot read with a resume each); `sequence_repeat` and `PyObject_*Item` read `PyIndex_Check` expanded (D78 (8)), same meta; `PyIndex_Check` itself is a 3.8 function, skipped; 1 call loses effect flags |
+| Containers (tuple 6, list 1, dict 1, bytes 1, str 3, `structmember` 1, descriptors 1, object 1) | 15 | 15 | tuple, str, `PyMember_GetOne`: 13 residual calls lose `CfNoPython \| CfNoBlock`; `member_get` gains 3.8's `READ_RESTRICTED` arm and resumes at `PySys_Audit` |
+| Numbers (`plongobject_gen.h`, `pfloatslots_gen.h`) | 12 + 11 | 12 + 11 | real changes translated: `long_float` checks `-1.0` and an error (a scalar copy), `PyFloat_AsDouble` takes `nb_index`; 16 residual calls lose effect flags; `long_invmod` (3.8's `pow(x, -1, m)`) skipped (`k_mul` calls itself) |
+| Builtins (`pbltinmodule_gen.h`) | 20 (13 builtins, 7 `_impl`s) | 11 | the 7 clinic wrappers of `delattr`, `divmod`, `getattr`, `hasattr`, `isinstance`, `issubclass`, `setattr` are generated but resume at once (`_PyArg_CheckPositional`), so their 6 `_impl`s aren't reached; `id` refused (`&&`); `pow` and `pow_impl` skipped (`METH_FASTCALL \| METH_KEYWORDS`); `abs`, `callable`, `hash`, `len` the same text as 3.7 |
+| Math (`pmathmodule_gen.h`) | 12 | 12 | not a C change (`math_1_to_whatever` is the same): all 12 metas' scalar copies start at `if (x == -1.0 && PyErr_Occurred())`, and the metas no longer test `PsycoFloat_AsDouble`'s result for NULL (F114, open) |
+| Call binding (`psyfunc_gen.h`) | 1 | 1 | real changes translated: `co_posonlyargcount` in the keyword loops (positional-only names passed by keyword are the real call); `*args` is the real call (`_PyTuple_FromArray`, another file's function with no form) |
+| Virtuals (fields, tuple, slice, method) | 3 + 3 | 3 + 3 | the same but 3 constructor calls (`PyTuple_New`, `PySlice_New`, `PyMethod_New`) lose effect flags |
+| Mechanisms (10 headers) | 10 snippets | 8 snippets, 2 stubs | the 8 the same (but the header named in the comment); `eval_breaker_runtime: ceval_loop_top_signals` and `store_gc: gc_next` are `#error` stubs, as before (items 6, 7) |
+| Layouts (`layouts_gen.h`, `runtime_layouts_gen.h`) | 51 fields | 51 fields | the same but four comments naming `Include/cpython/` headers |
+| Policy table (`policy.check`) | 0 problems | 131 | 129 shapes differ, 2 keys missing (`format_kwargs_mapping_error`, `sys_getframe`); item 1 |
+| donecheck (`--past-policy`) | generated 212 (6,228 lines), reasoned 228, none | generated 195 (5,980), reasoned 224, none | reasoned: the 4 fewer are `pycompiler.c`'s `SETUP_LOOP`, `SETUP_EXCEPT`, `BREAK_LOOP`, `CONTINUE_LOOP`, which 3.8's `ceval.c` has no `TARGET` for (so they mirror nothing); generated: the 17 lost above |
+
+Effect flags in all: 35 lines differ only by `CfNoPython`/`CfNoBlock` (`CfPure` never), in 10 headers, plus the calls in 3.8's new code. The cause is the one found at `2a71def` (effect rules, below: the walk goes round the seeds through `_PyErr_*`, and reads `_PyObject_ASSERT`'s debug branch); since D92 the flags reach the generated code, so it now shows in the text.
+
+### 3.8 refusals by cause
+
+Each cause with what it blocks on 3.8 that 3.7 generates, most first. "Functions" counts definitions lost from the generated headers (`pycompiler_copies_gen.h`'s copies included), or degraded to a resume where noted.
+
+| # | Cause | Blocks on 3.8 | What would fix it |
+|---|---|---|---|
+| 1 | **`_PyArg_CheckPositional` has no policy entry** (QUESTIONS 49: the table can't name a definition 3.7 lacks). 3.8's clinic wrappers check the count with it and read `args[i]` themselves, where 3.7 called `_PyArg_UnpackStack`. | 13: 7 wrappers resume at once (`delattr`, `divmod`, `getattr`, `hasattr`, `isinstance`, `issubclass`, `setattr`), so 6 `_impl`s are never reached | QUESTIONS 49's absent-in-some-sources shape, then `('other', 'unpack_arguments')` on it (D86 (3) already reads that form) |
+| 2 | **Thread-state parameters in helper copies**: rule `helper_copy` (D88) copies a `ceval.c` helper for run time only if it takes objects; 3.8's take `PyThreadState *tstate` first. (`ct_copy`, the compile-time copy, already drops it.) | 8: `BUILD_TUPLE_UNPACK_WITH_CALL` (`check_args_iterable`), `BUILD_MAP_UNPACK_WITH_CALL` (`format_kwargs_error`), `IMPORT_FROM` (`import_from`, which also has a `goto`), and their 5 copies | a `tstate` parameter as the running thread's (`_PyThreadState_GET()` in the run-time copy, or `untstate`'s rule); `import_from` also needs its `goto` |
+| 3 | **Effect rules on 3.8** (item 4): the walk goes round `SEEDS`/`ASSUMPTIONS` through the `_PyErr_*` internals, and follows `_PyObject_ASSERT`'s `NDEBUG`-off branch. Needs QUESTIONS 49 for the seeds. | 0 refused; at least 35 residual calls in 10 headers lose `CfNoPython \| CfNoBlock` (tuple concat and repeat, `PyErr_NoMemory`, `PyUnicode_Concat`/`Contains`, the three virtual constructors, `PyLong_From*LongLong`…), so known classes are dropped across them (F55) | item 4 |
+| 4 | **Keyword calling convention**: `pow` became `METH_FASTCALL \| METH_KEYWORDS` (`_PyArg_UnpackKeywords`); `METH_ARGS` has no entry, as Ni passes no keyword names to a meta. | 2: `builtin_pow`, `builtin_pow_impl` | a `METH_ARGS` entry for it with no keywords (the positional count only), keyword calls the fallback |
+| 5 | **An error test inside `&&`** (3.8's audit hooks): `if (x && PySys_Audit(...) < 0)`. | 1: `builtin_id`; and `member_get` gains a resume at `PySys_Audit` on its restricted path | read `A && f() < 0` as `if (A) { if (f() < 0) error }` |
+| 6 | **A `switch` arm that can't be taken**: `FORMAT_VALUE` gained `case FVC_NONE` and a `default:` raising SystemError and jumping to `error`. | 1: `FORMAT_VALUE` | the reader reads a `switch` on a compile-time value's bits, an arm outside its range as dead (D88's note) |
+| 7 | **Another file's function with no form** in the binding: `_PyTuple_FromArray(args + n, argcount - n)` replaced `PyTuple_New` and the fill loop. | 0 refused; `*args` binding is the real call | inline a source function that is a `TYPES` constructor plus item stores (failures log) |
+| 8 | **Block stack and the finally model** (QUESTIONS 48, item 9). | 0 that 3.7 generates (they are core on both): `CALL_FINALLY`, `POP_FINALLY`, `BEGIN_FINALLY`, `END_ASYNC_FOR` refused, and Ni's core has no case for them; 4 core cases name opcodes 3.8 lacks. Stops a build, not generation | item 9 |
+| 9 | **Vectorcall** (PEP 590). | 0 generated functions; 5 policy entries (`PyObject_Call`, `PyCFunction_Call`, `_PyFunction_FastCallDict`, `PyFunction_NewWithQualName`, `PyMethod_New`) and 3 `TYPES` shapes to re-read, and hand code (items 1, 11) | items 1, 11 |
+| 10 | **Positional-only parameters** (PEP 570). | 0: the binding is generated with `co_posonlyargcount` read from the C | nothing |
+
+Not a refusal but a 3.8-only generator bug: F114 (math's error test, row above; cause not found).
+
+Also skipped on 3.8 only, with nothing lost: `PyIndex_Check` and `_PyUnicode_CheckConsistency` (3.8 defines them as functions; no Ni declaration), `long_invmod` (new).
+
+## Summary (at `2a71def`)
 
 | Stage | Before `2a71def` | After `2a71def` | Against 3.7.17 |
 |---|---|---|---|
@@ -71,7 +118,7 @@ Crashed (`IndexError` in `_statement`): 3.8 writes `case TARGET(op): {` (`TARGET
 - **Gone:** `SETUP_LOOP`, `SETUP_EXCEPT`, `BREAK_LOOP`, `CONTINUE_LOOP`.
 - **Refused for another reason, both versions:** `FORMAT_VALUE` (3.8 adds a `FVC_NONE` case and a `default:` raising SystemError: control flow, a `switch` with `goto error`; it was read on 3.7 and stopped in the back half), `RAISE_VARARGS` (a `switch` on oparg; was `why = WHY_EXCEPTION`), `RETURN_VALUE`, `YIELD_VALUE`, `YIELD_FROM`, `END_FINALLY` (other labels: `exit_returning`, `exit_yielding`, `exception_unwind`), `WITH_CLEANUP_START`, `WITH_CLEANUP_FINISH` (block stack).
 
-Refusals by kind on 3.8: core 20, shared code 6, stack 6, control flow 3, falls through 2 (`BUILD_TUPLE_UNPACK_WITH_CALL`, `BUILD_TUPLE_UNPACK`). Since D93 the reader reads a case that falls into the next with that body, so 3.8 has none falling through; `BUILD_TUPLE_UNPACK` generates (3.7's text but one call's effect flags) and `BUILD_TUPLE_UNPACK_WITH_CALL` is refused in the back half (`check_args_iterable` takes `tstate`). At `631c0dd` and since, 3.8's `gen_ceval` stops at its label copies (`unbound_local_error`; GENERATION step 10, iterators).
+Refusals by kind on 3.8: core 20, shared code 6, stack 6, control flow 3, falls through 2 (`BUILD_TUPLE_UNPACK_WITH_CALL`, `BUILD_TUPLE_UNPACK`). Since D93 the reader reads a case that falls into the next with that body, so 3.8 has none falling through; `BUILD_TUPLE_UNPACK` generates (3.7's text but one call's effect flags) and `BUILD_TUPLE_UNPACK_WITH_CALL` is refused in the back half (`check_args_iterable` takes `tstate`). From `631c0dd` to `cfc162e`, 3.8's `gen_ceval` stopped at its label copies (`unbound_local_error`, F112, fixed).
 
 ### `gen_ceval`: the back half
 
@@ -133,7 +180,8 @@ Estimates are AI elapsed time, rough.
 | 10 | **Dicts' shared empty keys:** check the inline store, keys guards and `PsycoDict_*` against 3.8's empty dicts (`Py_EMPTY_KEYS`, `empty_values`: a split-looking table with `dk_usable` 0) [inferred risk]. | core (STORES.md) | 2–4 h |
 | 11 | **Re-read the hand metas whose C changed:** `PsycoObject_Call` and the call path (vectorcall), `pfloat_richcompare` (F104), list item and subscript, `PyDict_New`/`SetItem`. Item 1 finds them; same code against the 3.8 hand version where it applies. | translated | 2–3 h |
 | 12 | **3.8 build and tests:** an interpreter to build against (pyenv 3.8.20, or the uv one if its headers and `libpython` suit `setup.py`), `cpython_tests.py`'s module lists for `lib/python3.8/test`, `check.sh` for a second version, behaviour tests whose expectations depend on 3.7 bytecode. | tooling | 3–5 h |
-| 13 | **Optional, `generate.py --dry-run`:** report the policy problems and run the generators past them, writing nothing, as the scratch driver did. Makes the next version's dry run one command. | tooling | 30 min |
+| 13 | **Done** (`a13aa90`, `5dc2ce9`): `generate.py --past-policy` reports the policy problems and runs the generators past them, writing every header (for reading, not a build); `donecheck.py --past-policy` likewise. | tooling | – |
+| 14 | **Since the rerun at `5dc2ce9`** ("3.8 refusals by cause"): `_PyArg_CheckPositional`'s entry once item 5 exists (13 builtin definitions); a `tstate` parameter in `helper_copy` (3 opcodes, 5 copies); `METH_FASTCALL \| METH_KEYWORDS` for `pow`; `A && f() < 0` as nested tests (`id`); a dead `switch` arm (`FORMAT_VALUE`); F114 (math's error test). | generator, rules | 4–6 h |
 
 Not needed for 3.8 [inferred]: an entry mechanism other than the frame hook (the detectors give `frame_eval_hook`; 3.8's functions still evaluate through `_PyEval_EvalFrame`, so the PEP 523 hook sees every Python call); anything for positional-only parameters (Ni binds positional arguments only); new layouts (Ni reads none of the changed fields).
 
@@ -143,4 +191,4 @@ Order: 8, 7, 6 and 9 are what a compile needs; 1 (with 2) is what generation nee
 
 ## Rerunning
 
-The scratch driver was a few lines: build `cslots.Target(src, version, python, pyconfig)` from `generate.target_info(python)`, then call each `GENERATORS` entry's `build` (or `module:function`) and `mechanisms.build` on its own, writing each header and its report. Compare with `generate.py` on 3.7.17 per header, and `gen_ceval`'s output case by case (`      case X: {` starts a case). `python3 tools/metac/ceval_reader.py SRC` and `policy.py --src SRC` run alone.
+`generate.py --python ~/.local/share/uv/python/cpython-3.8.20-linux-x86_64-gnu/bin/python3.8 --src ~/.cache/ni/cpython/Python-3.8.20 --out DIR --past-policy -v` (since `a13aa90`; the scratch driver of `2a71def` is no longer needed), and the same for 3.7.17 without `--src`/`--past-policy`. Compare per header with the version string masked, `gen_ceval`'s output case by case (`      case X: {` starts a case), and the `-v` reports entry by entry. `donecheck.py --python <3.8> --src <3.8> --past-policy` runs the done test. `python3 tools/metac/ceval_reader.py SRC` and `policy.py --src SRC` run alone.
