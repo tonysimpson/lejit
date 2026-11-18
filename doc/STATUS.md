@@ -1,6 +1,6 @@
 # Status
 
-## 2026-11-18: general translation of `abstract.c` (GENERATION.md step 4, `a8c06a9`, D74)
+## 2026-11-18: general translation of `abstract.c` (GENERATION.md step 4, `1aa473c`, D74)
 
 `tools/metac/gen_abstract.py` translates `abstract.c`'s functions into metas by binding times and fixed rules (D74, METACOMPILER.md "General translation"); the build writes `pabstract_gen.h`. [run]
 - **Generated:** 49 functions and 9 run-time copies; `pabstract.c` 1,106 → 297 lines. `PsycoLong_AsIndex` is now `PsycoNumber_AsSsize_t(po, v, err)`. `DELETE_SUBSCR` generated. KNOWN_BUGS F101 fixed, F102 fixed except for list and tuple `[int]`.

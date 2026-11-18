@@ -86,7 +86,7 @@ The policy table is `tools/metac/policy_table.py`, checked by `policy.py` in eve
 - **Step 8:** the `ceval.c` entries' `guard`, `promote` and `other` items (`LOAD_GLOBAL`'s dict-version guard, `ends_block`), and `LIGHT_OPCODES`.
 - When code moves from hand-written to generated, the checks that compare the table with Ni's code (limits, `cannot_block_init`, whitelists) should be replaced by the generator reading the table.
 
-## Step 4: done (`a8c06a9`, D74) [run]
+## Step 4: done (`1aa473c`, D74) [run]
 
 General translation works on `abstract.c`: `tools/metac/gen_abstract.py` (with `tools/metac/cparse.py`) writes `pabstract_gen.h`. METACOMPILER.md "General translation" has the method, what was generated and why each difference in the code is there.
 - **Generated:** 49 functions (every `abstract.c` function Ni declares a meta for, but four kept by policy items and `PySequence_Tuple`, plus their static helpers), with 9 run-time copies. `pabstract.c` lost 52 definitions, 1,106 → 297 lines. `DELETE_SUBSCR` is now a generated opcode.
