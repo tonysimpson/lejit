@@ -137,8 +137,8 @@ These stay separate, because they produce different things, but they share the f
 3. **Delete each family's old code as it moves.** When all have moved, `gen_abstract.py`, `gen_ceval.py`, `cparse.py`, `conditions.py`, `pointers.py`, `scalars.py` and the macro expander are gone.
 4. **Then extend.** `float_richcompare` and the other `type_whitelist` functions should come out of one `specialise` policy line each.
 
-## Open decisions (owner)
+## Decided (owner, 2026-11-18)
 
-1. **pycparser plus `gcc -E`, or libclang?** libclang gives types and macro locations for free, but is LLVM, which D65 limits to assembly. Proposed: pycparser.
-2. **Is a typed, annotated AST inside the generator a "compiler IR"** in GOAL's sense? Proposed reading: no. GOAL rules out an IR as the input or as a stage of Ni's code generation; this is the generator's own view of CPython's C, and Ni's output is unchanged.
-3. **Shim maintenance.** The vocabulary names in the shim are the generator's contract with CPython's headers. When a new CPython changes a macro into a static inline function, the shim must still capture the name. The detector should fail loudly when a vocabulary name doesn't survive preprocessing.
+1. **pycparser plus `gcc -E`**, not libclang.
+2. **The annotated AST is not a "compiler IR" in GOAL's sense.** That rule is about Ni's JIT compiler, not the generator's own view of CPython's C.
+3. **Shim maintenance is handled when it breaks.** The detector should still fail loudly when a vocabulary name doesn't survive preprocessing, so the break is visible.
