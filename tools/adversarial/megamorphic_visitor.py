@@ -1,4 +1,4 @@
-"""Megamorphic dispatch in an AST visitor: getattr-built method names over twenty-six node types."""
+"""Megamorphic dispatch in an AST visitor: getattr-built method names over twenty-six node types. Variant 1 evaluates other programs, with the variables' types swapped."""
 
 
 class Node:
@@ -72,8 +72,8 @@ class Let(Node):
 
 
 class Evaluator:
-    def __init__(self):
-        self.env = {'x': 3, 'y': 7, 's': 'hello'}
+    def __init__(self, env):
+        self.env = dict(env)
         self.steps = 0
 
     def visit(self, node):
@@ -151,14 +151,15 @@ class Gen:
         return BINARY[self.next(len(BINARY))](self.tree(depth - 1), self.tree(depth - 1))
 
 
-PROGRAMS = [Gen(i).tree(7) for i in range(60)]
+PROGRAMS = [[Gen(i).tree(7) for i in range(60)], [Gen(i).tree(7) for i in range(1000, 1060)]]
+ENVS = [{'x': 3, 'y': 7, 's': 'hello'}, {'x': 'xyzzy', 'y': True, 's': 11}]
 
 
-def main(n):
-    ev = Evaluator()
+def main(n, variant=0):
+    ev = Evaluator(ENVS[variant])
     acc = 0
     for i in range(n):
-        for p in PROGRAMS:
+        for p in PROGRAMS[variant]:
             r = ev.visit(p)
             acc = (acc * 7 + num(r) + (len(r) if isinstance(r, str) else 0)) % 1000000007
     return acc, ev.steps

@@ -1,13 +1,21 @@
-"""Character-level string work in Python: a tokeniser that iterates, slices and tests membership one character at a time."""
+"""Character-level string work in Python: a tokeniser that iterates, slices and tests membership one character at a time. Variant 1 tokenises other source."""
 
-SOURCE = '''
+SOURCES = ['''
 def area(shape, scale=1.5):
     # compute the area
     if shape.kind == "circle" and shape.r >= 0:
         return 3.14159 * shape.r ** 2 * scale
     return shape.w * shape.h + 0x1f - 0b101 + 1e-3
 names = ['alpha', "beta", 'gam\\'ma'] + [x for x in range(10) if x != 3]
-'''
+''', '''
+while queue and not done:   # drain
+    item = queue.pop(0)
+    if item.size <= 0x40 or item.flags != 0b11:
+        total = total + item.size * 2.5e2 / (item.count or 1)
+    else:
+        done = item.name == "end\\"" or len(seen) >= 10
+    for key in item.keys: seen[key] = [key, 'k', 7]
+''']
 
 KEYWORDS = {'def', 'if', 'and', 'return', 'for', 'in', 'not', 'or', 'else', 'while'}
 OPERATORS = ('**', '==', '!=', '>=', '<=', '+', '-', '*', '/', '=', '<', '>', '(', ')',
@@ -58,11 +66,11 @@ def tokenise(text):
     return tokens
 
 
-def main(n):
+def main(n, variant=0):
     counts = {}
     width = 0
     for k in range(n):
-        for kind, value in tokenise(SOURCE.replace('10', str(k % 50))):
+        for kind, value in tokenise(SOURCES[variant].replace('10', str(k % 50))):
             counts[kind] = counts.get(kind, 0) + 1
             width += len(value)
     return sorted(counts.items()), width

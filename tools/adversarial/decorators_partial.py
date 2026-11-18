@@ -1,4 +1,4 @@
-"""Calls through decorator layers, functools.partial, lru_cache, singledispatch, methodcaller and attrgetter."""
+"""Calls through decorator layers, functools.partial, lru_cache, singledispatch, methodcaller and attrgetter. Variant 1 has other prices, rates and zones, and dispatches on a tuple too."""
 import functools
 import operator
 
@@ -65,20 +65,24 @@ class Item:
         return self.price * (100 - pct) // 100
 
 
-VAT = functools.partial(tax, rate=20)
+RATES = [functools.partial(tax, rate=20), functools.partial(tax, rate=15)]
 by_price = operator.attrgetter('price')
 discount10 = operator.methodcaller('discounted', 10)
 
 
-def main(n):
+def main(n, variant=0):
     shipping.cache_clear()
     tax.calls = 0
-    items = [Item('i%d' % k, 100 + k * 37 % 900, k % 5) for k in range(60)]
+    vat = RATES[variant]
+    if variant == 0:
+        items = [Item('i%d' % k, 100 + k * 37 % 900, k % 5) for k in range(60)]
+    else:
+        items = [Item('item-%d' % k, 250 + k * 53 % 700, k % 7) for k in range(48)]
     total = 0
     for i in range(n):
         for it in items[i % 6::6]:
-            total += VAT(discount10(it)) + shipping(it.zone, i % 40)
-            total += describe([it.price, it.name, [i]])
+            total += vat(discount10(it)) + shipping(it.zone, i % 40)
+            total += describe([it.price, it.name, [i] if variant == 0 else (i, [i])])
         total += by_price(max(items, key=by_price))
     info = shipping.cache_info()
     return total, tax.calls, info.hits, info.misses

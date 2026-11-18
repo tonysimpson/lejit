@@ -1,9 +1,10 @@
-"""Generator expressions handed to consumers that are not fused: str.join, sorted, dict, Counter, and min and max with a key."""
+"""Generator expressions handed to consumers that are not fused: str.join, sorted, dict, Counter, and min and max with a key. Variant 1 has other products, with whole-number prices."""
 import collections
 import heapq
 
-PRODUCTS = [('p%04d' % i, (i * 37) % 101, round((i * 7919) % 1000 / 7.0, 2), 'cat%d' % (i % 9))
-            for i in range(1000)]
+PRODUCTS = [[('p%04d' % i, (i * 37) % 101, round((i * 7919) % 1000 / 7.0, 2), 'cat%d' % (i % 9))
+             for i in range(1000)],
+            [('p%04d' % i, (i * 53) % 97, (i * 6007) % 140, 'cat%d' % (i % 7)) for i in range(1200)]]
 
 
 def report(products, limit):
@@ -19,10 +20,10 @@ def report(products, limit):
             cheapest, dearest, top, len(names))
 
 
-def main(n):
+def main(n, variant=0):
     acc = []
     for i in range(n):
-        acc.append(report(PRODUCTS, 20 + i % 60))
+        acc.append(report(PRODUCTS[variant], 20 + i % 60 if variant == 0 else 15 + i * 7 % 70))
     return acc[-1], len(acc), sum(a[0] for a in acc)
 
 

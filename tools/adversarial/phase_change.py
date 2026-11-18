@@ -1,4 +1,4 @@
-"""Hot code whose types change between phases: one numeric kernel run on ints, then floats, Fractions, Decimals and complex numbers."""
+"""Hot code whose types change between phases: one numeric kernel run on ints, then floats, Fractions, Decimals and complex numbers. Variant 1 runs the phases in the opposite order."""
 import decimal
 import fractions
 
@@ -44,9 +44,9 @@ def show(v):
     return '%.6g' % v
 
 
-def main(n):
+def main(n, variant=0):
     out = []
-    for conv in PHASES:
+    for conv in PHASES if variant == 0 else PHASES[::-1]:
         out.append(show(kernel(conv, n)))
     return out
 

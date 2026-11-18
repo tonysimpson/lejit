@@ -1,4 +1,4 @@
-"""Code objects replaced: pure-Python modules reloaded and their fresh functions called a few times each."""
+"""Code objects replaced: pure-Python modules reloaded and their fresh functions called a few times each. Variant 1 reloads in the opposite order and uses other inputs."""
 import calendar
 import colorsys
 import difflib
@@ -29,12 +29,12 @@ def use(i):
     return zlib.crc32('\n'.join(parts).encode())
 
 
-def main(n):
+def main(n, variant=0):
     out = []
     for i in range(n):
-        for m in MODULES:
+        for m in MODULES if variant == 0 else MODULES[::-1]:
             importlib.reload(m)
-        out.append(sum(use(i * 3 + k) for k in range(3)))
+        out.append(sum(use(i * 3 + k + 101 * variant) for k in range(3)))
     return out
 
 

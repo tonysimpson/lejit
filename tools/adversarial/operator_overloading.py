@@ -1,4 +1,4 @@
-"""Special methods defined in Python (slot wrappers, never inlined): Vector and Matrix classes with arithmetic, indexing, equality, hashing and iteration."""
+"""Special methods defined in Python (slot wrappers, never inlined): Vector and Matrix classes with arithmetic, indexing, equality, hashing and iteration. Variant 1 rotates the other way with a whole-number matrix, from float points."""
 
 
 class Vector:
@@ -68,9 +68,13 @@ class Matrix:
         return any(value in row for row in self.rows)
 
 
-def main(n):
-    rot = Matrix([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-    pts = [Vector(i % 7 - 3, i % 5 - 2, i % 3 - 1) for i in range(50)]
+def main(n, variant=0):
+    if variant == 0:
+        rot = Matrix([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        pts = [Vector(i % 7 - 3, i % 5 - 2, i % 3 - 1) for i in range(50)]
+    else:
+        rot = Matrix([[1, 0, 0], [0, 0, 1], [0, -1, 0]])
+        pts = [Vector(i % 9 * 0.5 - 2, i % 4 - 1.5, i % 6 * 0.25) for i in range(50)]
     seen = set()
     acc = 0.0
     for step in range(n):

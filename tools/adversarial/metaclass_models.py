@@ -1,4 +1,4 @@
-"""Classes with metaclasses (no type version tag on 3.7), descriptors, properties and enums: an ORM-style model layer."""
+"""Classes with metaclasses (no type version tag on 3.7), descriptors, properties and enums: an ORM-style model layer. Variant 1 has other customers, lines and invoice states."""
 import enum
 
 
@@ -93,18 +93,23 @@ class Invoice(Model):
         self.status = order[(order.index(self.status) + 1) % len(order)]
 
 
-def main(n):
+def main(n, variant=0):
     for cls in ModelMeta.registry.values():
         cls.created = 0
     revenue = 0.0
     keys = 0
     paid = 0
     for i in range(n):
-        c = Customer(id=i, name='cust%d' % (i % 30), credit=float(i % 500))
-        lines = [Line(id=k, sku='sku%d' % k, qty=1 + (i + k) % 3, price=2.5 * (k + 1))
-                 for k in range(i % 4 + 1)]
+        if variant == 0:
+            c = Customer(id=i, name='cust%d' % (i % 30), credit=float(i % 500))
+            lines = [Line(id=k, sku='sku%d' % k, qty=1 + (i + k) % 3, price=2.5 * (k + 1))
+                     for k in range(i % 4 + 1)]
+        else:
+            c = Customer(id=i, name='client-%d' % (i % 45), city='Leeds', credit=i % 70 / 3)
+            lines = [Line(id=k, sku='SKU%03d' % (k * i % 200), qty=(i * k) % 5, price=0.99 * k)
+                     for k in range(i % 6 + 1)]
         inv = Invoice(id=i, customer=c.key, lines=lines)
-        for _ in range(i % 4):
+        for _ in range(i % (4 + variant)):
             inv.advance()
         if inv.status is Status.PAID:
             paid += 1

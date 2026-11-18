@@ -1,14 +1,14 @@
-"""Deep recursion past the inlining and recursion limits: a recursive-descent parser on deeply nested input, tree walks and mutual recursion."""
+"""Deep recursion past the inlining and recursion limits: a recursive-descent parser on deeply nested input, tree walks and mutual recursion. Variant 1 has other seeds, depths and operator order."""
 import sys
 
 sys.setrecursionlimit(20000)
 
 
-def nested(depth, seed):
+def nested(depth, seed, ops):
     if depth == 0:
         return str(seed % 10)
-    op = '+-*'[seed % 3]
-    return '(%d%s%s)' % (seed % 7, op, nested(depth - 1, seed * 31 % 1009))
+    op = ops[seed % 3]
+    return '(%d%s%s)' % (seed % 7, op, nested(depth - 1, seed * 31 % 1009, ops))
 
 
 class Parser:
@@ -74,13 +74,17 @@ def deep_list(d):
     return xs
 
 
-def main(n):
+SHAPES = [(600, 200, 1, '+-*', 900, 700, 500, 50), (500, 300, 7, '*+-', 1100, 600, 450, 70)]
+
+
+def main(n, variant=0):
+    d0, dk, seed, ops, even, odd, l0, lk = SHAPES[variant]
     total = 0
     for i in range(n):
-        tree = Parser(nested(600 + i % 200, i + 1)).expr()
+        tree = Parser(nested(d0 + i % dk, i * seed + 1, ops)).expr()
         total += evaluate(tree) + depth(tree)
-        total += is_even(900 + i % 3) + is_odd(700 + i % 5)
-        total += sum(flatten(deep_list(500 + i % 50), []))
+        total += is_even(even + i % 3) + is_odd(odd + i % 5)
+        total += sum(flatten(deep_list(l0 + i % lk), []))
     return total
 
 

@@ -1,4 +1,4 @@
-"""Frame introspection: logging with caller names and line numbers, warnings with stacklevel, tracebacks and sys._getframe."""
+"""Frame introspection: logging with caller names and line numbers, warnings with stacklevel, tracebacks and sys._getframe. Variant 1 has other orders, so other rejections."""
 import io
 import logging
 import sys
@@ -29,8 +29,12 @@ def check(order):
     return caller_name()
 
 
-def handle(i):
-    order = [i % 13, i % 17, i % 29, i % 41 * 2]
+MODULI = [(13, 17, 29, 41), (11, 19, 31, 47)]
+
+
+def handle(i, variant):
+    a, b, c, d = MODULI[variant]
+    order = [i % a, i % b, i % c, i % d * 2]
     log.info('order %d has %d lines', i, len(order))
     try:
         who = check(order)
@@ -41,7 +45,7 @@ def handle(i):
     return who, deprecated_total(order)
 
 
-def main(n):
+def main(n, variant=0):
     stream.seek(0)
     stream.truncate()
     names = {}
@@ -49,7 +53,7 @@ def main(n):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         for i in range(n):
-            who, t = handle(i)
+            who, t = handle(i, variant)
             names[who] = names.get(who, 0) + 1
             total += t
     lines = sorted(set((w.lineno, str(w.message)) for w in caught))

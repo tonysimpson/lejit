@@ -1,4 +1,4 @@
-"""One large function with many branches and a changing stack: the dispatch loop of a small stack-machine interpreter."""
+"""One large function with many branches and a changing stack: the dispatch loop of a small stack-machine interpreter. Variant 1 runs the program with other constants, so other branches and float sums."""
 
 PUSH, LOAD, STORE, ADD, SUB, MUL, DIV, MOD, NEG, DUP, SWAP, POP, JMP, JZ, JNZ, LT, EQ, \
     CALL, RET, PRINT, CAT, LEN, LIST, APPEND, INDEX, HALT, NOT, FLOAT, STR, GT = range(30)
@@ -94,8 +94,8 @@ def run(code, consts, nlocals):
             raise ValueError(op)
 
 
-def program(limit):
-    consts = [0, 1, limit, 3, 2.5, 'n=', 7, 2]
+def program(limit, variant):
+    consts = [[0, 1, limit, 3, 2.5, 'n=', 7, 2], [0, 1, limit, 5, 0.75, 'total=', 4, 3]][variant]
     code = [
         (PUSH, 0), (STORE, 0),
         (PUSH, 0), (STORE, 1),
@@ -114,8 +114,8 @@ def program(limit):
     return code, consts
 
 
-def main(n):
-    code, consts = program(n)
+def main(n, variant=0):
+    code, consts = program(n, variant)
     out, steps, stack = run(code, consts, 4)
     return out, steps, len(stack)
 

@@ -1,4 +1,4 @@
-"""Guards that keep failing: class attributes bumped on every call as id counters, statistics and caches."""
+"""Guards that keep failing: class attributes bumped on every call as id counters, statistics and caches. Variant 1 has other names and whole-number prices."""
 
 
 class Entity:
@@ -60,12 +60,15 @@ def reset():
     Cache.store = {}
 
 
-def main(n):
+def main(n, variant=0):
     reset()
     revenue = 0.0
     labels = 0
     for i in range(n):
-        o = Order('item%d' % (i % 40), 1.5 + i % 9, 1 + i % 4)
+        if variant == 0:
+            o = Order('item%d' % (i % 40), 1.5 + i % 9, 1 + i % 4)
+        else:
+            o = Order('sku-%d' % (i % 55), 2 + i % 7, 1 + i % 5)
         revenue += o.total()
         labels += len(o.label()) + Cache.lookup(o.name)
         if i % 3 == 0:

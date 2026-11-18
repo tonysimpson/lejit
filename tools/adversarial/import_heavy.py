@@ -1,4 +1,4 @@
-"""Start-up dominated by imports: a tool that imports much of the standard library and does a little with it."""
+"""Start-up dominated by imports: a tool that imports much of the standard library and does a little with it. Variant 1 feeds it other configuration, pages and numbers."""
 import argparse
 import collections
 import configparser
@@ -31,15 +31,23 @@ import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 
-CONFIG = """[server]
+CONFIGS = ["""[server]
 host = example.org
 port = 8080
 [paths]
 root = /srv/data
 logs = /var/log/app
-"""
+""", """[server]
+host = cache.example.net
+port = 3128
+timeout = 30
+[paths]
+root = /home/svc/files
+logs = /tmp/svc
+"""]
 
-PAGE = "<html><body><h1>Title</h1><p class='x'>One <a href='/a'>two</a></p></body></html>"
+PAGES = ["<html><body><h1>Title</h1><p class='x'>One <a href='/a'>two</a></p></body></html>",
+         "<ul><li><a href='/x?y=1'>x</a></li><li><a name='n'>n</a><a href='#top'>top</a></li></ul>"]
 
 
 @dataclasses.dataclass
@@ -59,17 +67,17 @@ class LinkParser(html.parser.HTMLParser):
             self.links.extend(v for k, v in attrs if k == 'href')
 
 
-def work(i):
+def work(i, variant):
     parser = argparse.ArgumentParser(prog='tool')
     parser.add_argument('--count', type=int, default=1)
     parser.add_argument('files', nargs='*')
     args = parser.parse_args(shlex.split('--count %d a.txt b.txt' % i))
     cfg = configparser.ConfigParser()
-    cfg.read_string(CONFIG)
+    cfg.read_string(CONFIGS[variant])
     rows = list(csv.reader(io.StringIO('a,b,c\n1,2,3\n%d,5,6\n' % i)))
     jobs = [Job('job%d' % k, k * i, ['x'] * k) for k in range(3)]
     lp = LinkParser()
-    lp.feed(PAGE)
+    lp.feed(PAGES[variant])
     root = ET.Element('jobs')
     for j in jobs:
         ET.SubElement(root, 'job', name=j.name, size=str(j.size))
@@ -97,8 +105,8 @@ def work(i):
     return zlib.crc32('\n'.join(parts).encode())
 
 
-def main(n):
-    return [work(i) for i in range(n)]
+def main(n, variant=0):
+    return [work(i + 977 * variant, variant) for i in range(n)]
 
 
 N = 1

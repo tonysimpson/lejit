@@ -1,4 +1,4 @@
-"""Profiling on: cProfile around ordinary application code, with the call counts checked."""
+"""Profiling on: cProfile around ordinary application code, with the call counts checked. Variant 1 has other accounts, amounts and interest."""
 import cProfile
 import pstats
 
@@ -23,22 +23,26 @@ def interest(acc, rate):
     return acc.deposit(acc.balance * rate // 100)
 
 
-def simulate(accounts, steps):
+def simulate(accounts, steps, a, b, every, rate):
     ok = 0
     for s in range(steps):
         for k, acc in enumerate(accounts):
-            acc.deposit((s * 7 + k) % 50)
-            ok += acc.withdraw((s * 13 + k) % 70)
-            if s % 10 == 0:
-                interest(acc, 2)
+            acc.deposit((s * 7 + k) % a)
+            ok += acc.withdraw((s * 13 + k) % b)
+            if s % every == 0:
+                interest(acc, rate)
     return ok
 
 
-def main(n):
-    accounts = [Account('o%d' % k, 100) for k in range(30)]
+VARIANTS = [(30, 100, 50, 70, 10, 2), (24, 250, 90, 85, 7, 3)]
+
+
+def main(n, variant=0):
+    count, start, a, b, every, rate = VARIANTS[variant]
+    accounts = [Account('o%d' % k, start) for k in range(count)]
     prof = cProfile.Profile()
     prof.enable()
-    ok = simulate(accounts, n)
+    ok = simulate(accounts, n, a, b, every, rate)
     prof.disable()
     stats = pstats.Stats(prof)
     counts = sorted((func[2], cc) for func, (cc, nc, tt, ct, callers) in stats.stats.items()

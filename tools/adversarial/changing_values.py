@@ -1,4 +1,4 @@
-"""Promotion points that see a new value on every call: handlers, classes, value types, argument counts and keyword sets."""
+"""Promotion points that see a new value on every call: handlers, classes, value types, argument counts and keyword sets. Variant 1 walks the tables with other strides."""
 import decimal
 import fractions
 
@@ -62,16 +62,21 @@ def unpack(t):
     return first + len(rest)
 
 
-def main(n):
+STRIDES = [(7, 200, 13, 10, 5, 1, 1, 3), (11, 170, 9, 8, 3, 5, 7, 4)]
+
+
+def main(n, variant=0):
+    sh, mod, na, nk, si, sc, sv, st = STRIDES[variant]
+    keys = KEYS if variant == 0 else KEYS[::-1]
     total = 0
     for i in range(n):
-        total += dispatch(HANDLERS[(i * 7) % len(HANDLERS)], i % 200)
-        args = tuple(range(i % 13))
-        kw = {k: i % 5 for k in KEYS[:i % 10]}
+        total += dispatch(HANDLERS[(i * sh) % len(HANDLERS)], i % mod)
+        args = tuple(range(i % na))
+        kw = {k: i % 5 for k in keys[:i % nk]}
         total += call_with(collect, args, kw)
-        total += check(INSTANCES[(i * 5) % len(INSTANCES)], CLASSES[i % len(CLASSES)])
-        total += size(VALUES[i % len(VALUES)])
-        total += unpack(TUPLES[(i * 3) % len(TUPLES)])
+        total += check(INSTANCES[(i * si) % len(INSTANCES)], CLASSES[(i * sc) % len(CLASSES)])
+        total += size(VALUES[(i * sv) % len(VALUES)])
+        total += unpack(TUPLES[(i * st) % len(TUPLES)])
     return total
 
 

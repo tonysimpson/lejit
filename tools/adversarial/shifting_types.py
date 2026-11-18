@@ -1,12 +1,11 @@
-"""Merge points whose locals change form as the loop runs: a spreadsheet column fold where accumulators turn from int to float to big int."""
+"""Merge points whose locals change form as the loop runs: a spreadsheet column fold where accumulators turn from int to float to big int. Variant 1 has another seed and mixes the types in another order."""
 
 
-def cells(n):
+def cells(n, seed, shift):
     out = []
-    seed = 99
     for i in range(n):
         seed = (seed * 48271) % 2147483647
-        k = seed % 8
+        k = (seed + shift) % 8
         if k == 0:
             out.append(None)
         elif k == 1:
@@ -66,14 +65,15 @@ def running(column):
     return best
 
 
-def main(n):
-    column = cells(n)
+def main(n, variant=0):
+    column = cells(n, *[(99, 0), (31337, 5)][variant])
     results = []
     for k in range(4):
         part = column[k::4]
         total, product, last, longest, count = fold(part)
+        best = running(part)
         results.append((round(total, 3), product % 1000003, repr(last), longest, count,
-                        round(running(part), 3)))
+                        None if best is None else round(best, 3)))
     return results
 
 

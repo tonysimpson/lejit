@@ -1,4 +1,4 @@
-"""Subclasses of built-in types whose overrides the fast paths must respect: a case-insensitive dict, a money int, a lazy list and a tuple record."""
+"""Subclasses of built-in types whose overrides the fast paths must respect: a case-insensitive dict, a money int, a lazy list and a tuple record. Variant 1 uses other headers and window sizes, and floats in the windows and points."""
 
 
 class CaseDict(dict):
@@ -58,26 +58,32 @@ class Point(tuple):
         return self[0]
 
 
-HEADERS = ['Content-Type', 'ACCEPT', 'user-agent', 'X-Request-Id', 'Cache-Control']
+HEADERS = [['Content-Type', 'ACCEPT', 'user-agent', 'X-Request-Id', 'Cache-Control'],
+           ['content-type', 'Accept', 'Authorization', 'x-request-id', 'ETag', 'If-None-Match']]
 
 
-def main(n):
+def main(n, variant=0):
     total = Pence(0)
     hits = 0
     swapped = 0
+    headers = HEADERS[variant]
     for i in range(n):
         h = CaseDict()
-        for k, name in enumerate(HEADERS):
+        for k, name in enumerate(headers):
             h[name] = k + i % 3
         hits += ('content-type' in h) + h['Accept'] + h.get('X-REQUEST-ID', 0)
-        price = Pence(199 + i % 50)
+        price = Pence(199 + i % 50 if variant == 0 else 1250 - i % 70)
         total = total + price * (1 + i % 3)
         total = 5 + total
-        w = Window(range(i % 20 + 5), 4)
+        if variant == 0:
+            w = Window(range(i % 20 + 5), 4)
+            p = Point(i % 7, i % 11)
+        else:
+            w = Window([k * 0.25 for k in range(i % 13 + 6)], 5)
+            p = Point(i % 9 * 1.5, i % 4 - 0.5)
         hits += sum(w) + len(w) + w[-1]
         a, b = w[-2:]
         hits += a - b
-        p = Point(i % 7, i % 11)
         x, y = p
         swapped += x - y + p.x + len(list(p))
     return str(total), hits, swapped, type(total).__name__

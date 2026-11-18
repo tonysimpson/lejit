@@ -7,13 +7,16 @@
 #                                      # or adversarial
 #   tools/benchmarks.sh pyperf bench   # several
 #   tools/benchmarks.sh -k richards    # only names containing 'richards'
+#   tools/benchmarks.sh adversarial --long   # adversarial with its long runs
 #
 # Suites: bench   tools/bench.py        small kernels, Ni against CPython
 #         pyperf  tools/pyperf37.py     pyperformance, Ni against CPython
 #         compile tools/compilebench.py compile time, code size, break-even
 #         adversarial tools/adversarial/run.py  programs aimed at Ni's
-#                 weaknesses: cold, first and warm time, memory (not run
-#                 unless named)
+#                 weaknesses: every call timed in 5 processes per mode at
+#                 two run lengths (--long adds a third), outputs compared,
+#                 losses first; also writes <saved name>-adversarial.txt,
+#                 one line per benchmark and measure (not run unless named)
 #
 # Leaves a release build behind; tools/check.sh rebuilds for debugging.
 # NI_PY37 overrides the CPython 3.7 interpreter.
@@ -24,11 +27,13 @@ unset NI_TRACE NI_ALL_CHECKS
 
 suites=()
 filter=()
+adv=()
 while [ $# -gt 0 ]; do
     case "$1" in
         bench|pyperf|compile|adversarial) suites+=("$1") ;;
         -k) filter=(-k "$2"); shift ;;
-        -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --long) adv+=(--long) ;;
+        -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1 (try --help)"; exit 2 ;;
     esac
     shift
@@ -65,7 +70,8 @@ out=build/bench/$(date +%Y-%m-%d-%H%M)-$commit${dirty:+-dirty}.txt
             compile) echo "== compile cost (tools/compilebench.py)"
                      "$PY37" tools/compilebench.py "${filter[@]}" || echo "(failed)" ;;
             adversarial) echo "== adversarial (tools/adversarial/run.py)"
-                     "$PY37" tools/adversarial/run.py "${filter[@]}" || echo "(failed)" ;;
+                     "$PY37" tools/adversarial/run.py "${filter[@]}" "${adv[@]}" \
+                         --data "${out%.txt}-adversarial.txt" || echo "(failed)" ;;
         esac
     done
 } 2>&1 | tee "$out"

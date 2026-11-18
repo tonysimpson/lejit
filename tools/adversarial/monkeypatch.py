@@ -1,4 +1,4 @@
-"""Guards that keep failing: methods, instance attributes and module globals swapped while running (mock patching, feature flags)."""
+"""Guards that keep failing: methods, instance attributes and module globals swapped while running (mock patching, feature flags). Variant 1 patches on another schedule, with other keys."""
 import types
 from unittest import mock
 
@@ -31,7 +31,8 @@ def scale_alt(v):
 
 ORIGINAL_FETCH = Service.fetch
 ORIGINAL_SCALE = scale
-KEYS = ['user:%d' % i for i in range(40)]
+KEYS = [['user:%d' % i for i in range(40)], ['session/%04x' % (i * 977) for i in range(36)]]
+SCHEDULES = [(3, 2, 5, 4, 25), (4, 3, 7, 5, 18)]
 
 
 def handle(svc, keys):
@@ -41,23 +42,26 @@ def handle(svc, keys):
     return t
 
 
-def main(n):
+def main(n, variant=0):
     g = globals()
     svc = Service()
+    keys = KEYS[variant]
+    fetches = (fast_fetch, slow_fetch, ORIGINAL_FETCH, fast_fetch)
+    nfetch, nscale, ntransform, nretries, nmock = SCHEDULES[variant]
     total = 0
     try:
         for i in range(n):
-            Service.fetch = (fast_fetch, slow_fetch, ORIGINAL_FETCH)[i % 3]
-            g['scale'] = scale_alt if i % 2 else ORIGINAL_SCALE
-            if i % 5 == 0:
+            Service.fetch = fetches[i % nfetch]
+            g['scale'] = scale_alt if i % nscale else ORIGINAL_SCALE
+            if i % ntransform == 0:
                 svc.transform = types.MethodType(lambda self, v: v - 1, svc)
             else:
                 svc.__dict__.pop('transform', None)
-            Service.retries = i % 4
-            total += handle(svc, KEYS)
-            if i % 25 == 0:
+            Service.retries = i % nretries
+            total += handle(svc, keys)
+            if i % nmock == 0:
                 with mock.patch.object(Service, 'fetch', lambda self, key: 7):
-                    total += handle(svc, KEYS[:5])
+                    total += handle(svc, keys[:5])
     finally:
         Service.fetch = ORIGINAL_FETCH
         g['scale'] = ORIGINAL_SCALE

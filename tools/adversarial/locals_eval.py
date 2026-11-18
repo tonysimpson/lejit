@@ -1,4 +1,4 @@
-"""Functions using locals(), vars(), eval or exec, which are left to the interpreter: reports, formulas and settings."""
+"""Functions using locals(), vars(), eval or exec, which are left to the interpreter: reports, formulas and settings. Variant 1 has other rows, formulas and settings."""
 
 
 def summarise(rows):
@@ -38,19 +38,27 @@ def checkpoint(a, b):
     return total + len(snapshot)
 
 
-EXPRS = ['x * y + 1', 'x ** 2 - y', '(x + y) % 7', 'max(x, y) - min(x, y)', 'x // (y + 1)']
+EXPRS = [['x * y + 1', 'x ** 2 - y', '(x + y) % 7', 'max(x, y) - min(x, y)', 'x // (y + 1)'],
+         ['abs(x - y) * 3', 'x * 0.5 + y', 'sum(range(y))', '(x or 1) % (y + 2)', 'divmod(x, 3)[0]',
+          'len(str(x)) + y']]
+SETTINGS = ['width = width + %d\ndepth = depth * 2',
+            'depth = depth + %d\nwidth = width // 2 + depth\nextra = 1']
 
 
-def main(n):
+def main(n, variant=0):
     out = 0
     text = ''
+    exprs = EXPRS[variant]
     for i in range(n):
-        rows = [(1 + (i + k) % 5, 1.25 * ((i * k) % 9)) for k in range(40)]
+        if variant == 0:
+            rows = [(1 + (i + k) % 5, 1.25 * ((i * k) % 9)) for k in range(40)]
+        else:
+            rows = [(1 + (i * k) % 7, 0.5 + (i + k) % 6) for k in range(33)]
         text = summarise(rows)
         out += len(text)
-        out += formula(EXPRS[i % len(EXPRS)], i % 17, i % 5)
+        out += formula(exprs[i % len(exprs)], i % 17, i % 5)
         s = Settings()
-        out += apply(s, 'width = width + %d\ndepth = depth * 2' % (i % 3))
+        out += apply(s, SETTINGS[variant] % (i % 3))
         out += checkpoint(i, i % 4)
     return out, text
 

@@ -1,0 +1,50 @@
+# n per call of main(n, variant) for each run length, written by
+# `run.py --calibrate` on plain CPython 3.7.17 (commit 3ab46e0, 2026-11-18).
+# n is chosen so that one call of variant 1 takes the run length / 20 on
+# CPython; long is extrapolated from medium and twice medium (time as n to a
+# power from 1 to 3). ms is that time per call (for long, extrapolated).
+# benchmark                short    medium      long    short ms medium ms   long ms
+async_crawler                  3       408     45956       0.457      49.4      6000
+attr_churn                    82      8173    977228       0.502      50.1      6000
+bignum_decimal                 7       731     58011       0.475      52.1      6000
+builtin_subclasses            84      8267    992684       0.502      50.0      6000
+bytecode_vm                  121     11964   1424741       0.510      49.9      6000
+changing_values              239     23364   2802856       0.509      50.0      6000
+class_bodies                   2       223     26790       0.437      49.9      6000
+class_counter                306     30322   3581934       0.500      50.8      6000
+class_switch                  72      7275    813847       0.506      52.2      6000
+classes_per_request            2       193     22259       0.475      50.0      6000
+closures_cells               721     73469   8669502       0.491      50.8      6000
+decorators_partial            21      2197    263392       0.490      50.0      6000
+deep_recursion                 1        50      4354       0.985      52.0      5999
+exceptions_flow              147     16145   1936456       0.478      50.0      6000
+exec_templates                 8       752     90073       0.531      50.1      6000
+finalisers                   127     12808   1527566       0.489      50.3      6000
+frames_logging                52      4864    552133       0.510      50.9      6000
+generator_pipeline           320     32356   3909936       0.500      49.7      6000
+genexpr_unfused                1        78      8531       0.445      52.8      6000
+import_heavy                   1        77      9239       0.653      49.5      6000
+json_docs                     33      3318    283546       0.458      54.9      6000
+kwargs_forwarding             61      6344    759784       0.492      49.7      6000
+lambdas_in_loops              22      2220    262555       0.496      50.1      6000
+locals_eval                   29      2903    340225       0.507      50.5      6000
+many_functions                 6       654     78508       0.460      50.0      6000
+megamorphic_shapes             3       360     43265       0.466      49.9      6000
+megamorphic_visitor            1        72      8564       0.694      50.3      6000
+metaclass_models              31      3079    364833       0.513      50.2      6000
+module_loop                  635     68741   8617100       0.493      47.9      6000
+monkeypatch                   58      5906    708083       0.500      50.0      6000
+operator_overloading           2       241     28800       0.421      50.2      6000
+phase_change                   1       130      1347       0.760      47.7      5996
+profiling_on                  45      4810    552828       0.475      50.4      6000
+regex_logs                   115     11365   1326051       0.498      51.4      6000
+reload_modules                 1        52      6116       1.002      51.0      6000
+shifting_types               918     97844  11556784       0.469      50.8      6000
+short_script                  12      1210    140552       0.497      50.2      6000
+sort_keys                    405     32191   3094433       0.514      54.6      6000
+str_methods                  139     14111   1623154       0.493      49.4      6000
+text_tokeniser                 8       803     95806       0.496      50.0      6000
+threads_cpu                   50      5645    659776       0.489      51.3      6000
+tracing_on                     1        38      4642       1.302      49.0      5999
+with_blocks                   82      8127    967829       0.502      50.1      6000
+yield_from                   397     25733   2036030       0.512      49.5      6000

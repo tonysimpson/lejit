@@ -1,4 +1,4 @@
-"""__class__ assignment: connections that change class as their state changes (the state pattern)."""
+"""__class__ assignment: connections that change class as their state changes (the state pattern). Variant 1 has another event sequence and number of connections."""
 
 
 class Connection:
@@ -62,15 +62,18 @@ class Closing(Connection):
         return 0
 
 
-EVENTS = ['open', 'ack', 'send', 'ack', 'send', 'error', 'close', 'ack', 'open', 'ack']
+EVENTS = [(['open', 'ack', 'send', 'ack', 'send', 'error', 'close', 'ack', 'open', 'ack'], 64, 3),
+          (['open', 'error', 'open', 'ack', 'send', 'send', 'ack', 'close', 'ack', 'send', 'ack'],
+           48, 5)]
 
 
-def main(n):
-    conns = [Closed(i) for i in range(64)]
+def main(n, variant=0):
+    events, count, stride = EVENTS[variant]
+    conns = [Closed(i) for i in range(count)]
     score = 0
     for step in range(n):
         for c in conns:
-            event = EVENTS[(step + c.ident * 3) % len(EVENTS)]
+            event = events[(step + c.ident * stride) % len(events)]
             score += c.handle(event)
     states = {}
     for c in conns:

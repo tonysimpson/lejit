@@ -1,4 +1,4 @@
-"""Megamorphic call and attribute sites: one drawing loop over twenty-four shape classes."""
+"""Megamorphic call and attribute sites: one drawing loop over twenty-four shape classes. Variant 1 draws another scene, with float sizes."""
 import math
 
 
@@ -47,8 +47,10 @@ CLASSES = [type(name, (Shape,), {'sides': sides, 'area': area, 'perimeter': peri
            for name, sides, area, perimeter in SPECS]
 
 
-def scene(count):
-    return [CLASSES[(i * 7) % len(CLASSES)](1 + i % 5, 2 + i % 3) for i in range(count)]
+def scene(count, variant):
+    if variant == 0:
+        return [CLASSES[(i * 7) % len(CLASSES)](1 + i % 5, 2 + i % 3) for i in range(count)]
+    return [CLASSES[(i * 5 + 3) % len(CLASSES)](0.5 + i % 4, 1.25 + i % 6 * 0.5) for i in range(count)]
 
 
 def draw(shapes):
@@ -64,8 +66,8 @@ def draw(shapes):
     return area, perimeter, corners, codes
 
 
-def main(n):
-    shapes = scene(240)
+def main(n, variant=0):
+    shapes = scene(240, variant)
     total = [0.0, 0.0, 0, 0]
     for i in range(n):
         r = draw(shapes)

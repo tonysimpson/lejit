@@ -1,4 +1,4 @@
-"""Tracing on: a coverage-style sys.settrace line tracer around ordinary application code."""
+"""Tracing on: a coverage-style sys.settrace line tracer around ordinary application code. Variant 1 processes other documents."""
 import sys
 
 
@@ -47,16 +47,18 @@ def process(docs):
     return sum(score(tokenize(d)) for d in docs)
 
 
-DOCS = ['The Quick brown fox, number %d, jumps over the Lazy dog.' % i for i in range(20)]
+DOCS = [['The Quick brown fox, number %d, jumps over the Lazy dog.' % i for i in range(20)],
+        ['%d: Pack my Box with five dozen liquor Jugs; sphinx of black quartz!' % (i * 7)
+         for i in range(17)]]
 
 
-def main(n):
+def main(n, variant=0):
     cov = Coverage()
     sys.settrace(cov.tracer)
     try:
         total = 0
         for i in range(n):
-            total += process(DOCS)
+            total += process(DOCS[variant])
     finally:
         sys.settrace(None)
     return total, sorted(cov.calls.items()), len(cov.lines), sum(cov.lines.values())

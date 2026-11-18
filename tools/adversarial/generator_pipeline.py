@@ -1,9 +1,8 @@
-"""Generator bodies doing real work between yields: a log-processing pipeline of chained generators."""
+"""Generator bodies doing real work between yields: a log-processing pipeline of chained generators. Variant 1 has another seed, filter and window size."""
 LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR')
 
 
-def make_lines(n):
-    seed = 12345
+def make_lines(n, seed):
     for i in range(n):
         seed = (seed * 1103515245 + 12345) & 0x7fffffff
         yield '%06d %s user=u%d path=/api/v%d/items/%d ms=%d' % (
@@ -57,10 +56,14 @@ def summarise(wins):
         yield len(w), total, slow, top
 
 
-def main(n):
+VARIANTS = [(12345, ('INFO', 'WARNING', 'ERROR'), 50), (987, ('DEBUG', 'WARNING'), 37)]
+
+
+def main(n, variant=0):
+    seed, levels, size = VARIANTS[variant]
     acc = 0
-    records = with_duration(only(parse(make_lines(n)), ('INFO', 'WARNING', 'ERROR')))
-    for count, total, slow, top in summarise(windows(records, 50)):
+    records = with_duration(only(parse(make_lines(n, seed)), levels))
+    for count, total, slow, top in summarise(windows(records, size)):
         acc = (acc * 31 + count + total * 7 + slow + int(top[1:])) % 1000000007
     return acc
 

@@ -1,4 +1,4 @@
-"""Delegating generators: yield from through recursive tree walks, and coroutine-style generators driven by send()."""
+"""Delegating generators: yield from through recursive tree walks, and coroutine-style generators driven by send(). Variant 1 has another seed and float keys."""
 
 
 class Node:
@@ -58,12 +58,12 @@ def grouper(results, key):
         results[key] = yield from averager()
 
 
-def main(n):
+def main(n, variant=0):
     root = None
-    seed = 7
+    seed = 7 if variant == 0 else 2024
     for _ in range(n):
         seed = (seed * 69069 + 1) & 0xffffffff
-        root = insert(root, seed % 100003)
+        root = insert(root, seed % 100003 if variant == 0 else seed % 99991 / 8)
     ordered = list(walk(root))
     depths = list(leaves(root))
     results = {}

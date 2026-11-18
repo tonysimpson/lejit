@@ -1,4 +1,4 @@
-"""Function objects made and dropped in loops: lambdas, nested defs and closures with defaults created per item."""
+"""Function objects made and dropped in loops: lambdas, nested defs and closures with defaults created per item. Variant 1 runs on floats with other constants."""
 
 
 def make_filters(thresholds):
@@ -19,11 +19,11 @@ def compose(*fs):
     return composed
 
 
-def main(n):
+def main(n, variant=0):
     total = 0
-    data = list(range(40))
+    data = list(range(40)) if variant == 0 else [k * 0.75 - 3 for k in range(36)]
     for i in range(n):
-        scale = i % 7 + 1
+        scale = i % 7 + 1 if variant == 0 else i % 5 + 0.5
         ops = [lambda x: x * scale, lambda x: x + i % 11, (lambda k: lambda x: x % k)(i % 13 + 2)]
 
         def keyfn(x, s=scale):

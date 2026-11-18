@@ -1,4 +1,4 @@
-"""Compile cost before pay-off: four hundred business rules, each a distinct function called a few times."""
+"""Compile cost before pay-off: four hundred business rules, each a distinct function called a few times. Variant 1 applies them to other records."""
 import random
 
 TEMPLATES = [
@@ -48,21 +48,24 @@ def build(count, seed):
 
 
 RULES = build(400, 1)
-NAMES = ['Ada Lovelace', 'Alan Turing', 'Grace Hopper', 'Edsger Dijkstra',
-         'Barbara Liskov', 'Donald Knuth', 'Frances Allen']
-CITIES = ['London', 'Cambridge', 'Edinburgh', 'Leeds', 'Bristol', 'Oxford']
+NAMES = [['Ada Lovelace', 'Alan Turing', 'Grace Hopper', 'Edsger Dijkstra',
+          'Barbara Liskov', 'Donald Knuth', 'Frances Allen'],
+         ['Tony Hoare', 'Karen Sparck Jones', 'Robin Milner', 'Sophie Wilson', 'Tim Berners-Lee']]
+CITIES = [['London', 'Cambridge', 'Edinburgh', 'Leeds', 'Bristol', 'Oxford'],
+          ['Manchester', 'York', 'Glasgow', 'Cardiff', 'Belfast', 'Norwich', 'Bath']]
 
 
-def record(i):
-    return {'age': 18 + i * 7 % 60, 'name': NAMES[i % len(NAMES)],
+def record(i, variant):
+    names, cities = NAMES[variant], CITIES[variant]
+    return {'age': 18 + i * 7 % 60, 'name': names[i % len(names)],
             'tags': ['t%d' % j for j in range(i % 4)], 'balance': i * 37 % 1000,
-            'score': i * 13 % 100, 'city': CITIES[i % len(CITIES)]}
+            'score': i * 13 % 100, 'city': cities[i % len(cities)]}
 
 
-def main(n):
+def main(n, variant=0):
     passed = []
     for i in range(n):
-        rec = record(i)
+        rec = record(i + 11 * variant, variant)
         passed.append(sum(1 for rule in RULES if rule(rec)))
     return passed
 

@@ -1,4 +1,4 @@
-"""**kwargs and *args forwarded through layers of wrappers into keyword-only parameters: an HTTP client's option plumbing."""
+"""**kwargs and *args forwarded through layers of wrappers into keyword-only parameters: an HTTP client's option plumbing. Variant 1 forwards other keyword sets."""
 import functools
 
 
@@ -53,15 +53,23 @@ class Session:
         return self.request('POST', url, params=data, **kwargs)
 
 
-def main(n):
+def main(n, variant=0):
     del send.calls[:]
-    s = Session(timeout=5, verify=False, trace_id='abc')
+    if variant == 0:
+        s = Session(timeout=5, verify=False, trace_id='abc')
+    else:
+        s = Session(retries=1, headers={'Accept': 'text/csv'}, user='svc', region='eu')
     total = 0
     for i in range(n):
         url = '/api/items/%d' % (i % 50)
-        total += s.get(url, params={'page': i % 7, 'size': 20})
-        total += s.post(url, data={'id': i}, timeout=i % 9, flag=i % 2 == 0)
-        total += send('DELETE', url, **{'retries': i % 4, 'extra%d' % (i % 3): 1})
+        if variant == 0:
+            total += s.get(url, params={'page': i % 7, 'size': 20})
+            total += s.post(url, data={'id': i}, timeout=i % 9, flag=i % 2 == 0)
+            total += send('DELETE', url, **{'retries': i % 4, 'extra%d' % (i % 3): 1})
+        else:
+            total += s.get(url, verify=i % 3 == 0)
+            total += s.post(url, data={'id': i, 'n': i % 4}, headers={}, cursor='c%d' % (i % 5))
+            total += send('PUT', url, timeout=i % 6, **{'tag%d' % (i % 4): i, 'params': {'v': 2}})
     return total, len(send.calls), sum(send.calls)
 
 

@@ -1,4 +1,4 @@
-"""Context managers on the hot path: with statements, contextlib.contextmanager generators, ExitStack, suppress and locks."""
+"""Context managers on the hot path: with statements, contextlib.contextmanager generators, ExitStack, suppress and locks. Variant 1 has other accounts, float balances and transfers."""
 import contextlib
 import threading
 
@@ -37,14 +37,19 @@ def transfer(db, src, dst, amount):
         return True
 
 
-def main(n):
-    db = {'a%d' % k: 100 for k in range(10)}
+def main(n, variant=0):
+    if variant == 0:
+        db = {'a%d' % k: 100 for k in range(10)}
+        names, count, step, unit = 'a%d', 10, 3, 1
+    else:
+        db = {'acct-%d' % k: 60.5 for k in range(13)}
+        names, count, step, unit = 'acct-%d', 13, 5, 0.75
     lock = threading.Lock()
     log = []
     ok = 0
     for i in range(n):
         with lock:
-            if transfer(db, 'a%d' % (i % 10), 'a%d' % ((i * 3 + 1) % 10), i % 37):
+            if transfer(db, names % (i % count), names % ((i * step + 1) % count), i % 37 * unit):
                 ok += 1
         with tagged(log, 'req') as depth:
             with contextlib.suppress(ZeroDivisionError):

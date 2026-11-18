@@ -1,4 +1,4 @@
-"""Work already in C: sorted and list.sort with key functions, itemgetter and attrgetter, bisect and heapq over records."""
+"""Work already in C: sorted and list.sort with key functions, itemgetter and attrgetter, bisect and heapq over records. Variant 1 has other departments and float salaries."""
 import bisect
 import heapq
 import operator
@@ -15,6 +15,7 @@ class Employee:
 
 
 DEPTS = ['eng', 'ops', 'sales', 'hr', 'legal']
+OTHER_DEPTS = ['research', 'support', 'finance', 'it', 'facilities', 'marketing', 'audit']
 
 
 def staff(n):
@@ -22,8 +23,14 @@ def staff(n):
             for i in range(n)]
 
 
-def main(n):
-    people = staff(n)
+def other_staff(n):
+    return [Employee('s%06d' % (i * 15485863 % 1000000), OTHER_DEPTS[i * 3 % 7],
+                     18500.0 + i * 7727 % 91000 * 1.01, 19 + i * 7 % 48)
+            for i in range(n)]
+
+
+def main(n, variant=0):
+    people = staff(n) if variant == 0 else other_staff(n)
     rows = [(p.name, p.dept, p.salary, p.age) for p in people]
     by_salary = sorted(people, key=operator.attrgetter('salary'))
     by_dept = sorted(rows, key=operator.itemgetter(1, 2))

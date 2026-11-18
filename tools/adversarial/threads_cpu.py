@@ -1,4 +1,4 @@
-"""CPU-bound threads: four workers contending for the GIL, each running a loop that compiles well on its own."""
+"""CPU-bound threads: four workers contending for the GIL, each running a loop that compiles well on its own. Variant 1 runs three workers with other seeds."""
 import threading
 
 
@@ -21,10 +21,11 @@ def worker(results, index, seed, chunks, steps):
     results[index] = acc
 
 
-def main(n):
-    results = [None] * 4
-    threads = [threading.Thread(target=worker, args=(results, k, 1000 * k + 1, 20, n))
-               for k in range(4)]
+def main(n, variant=0):
+    count, base, chunks = [(4, 1000, 20), (3, 7919, 27)][variant]
+    results = [None] * count
+    threads = [threading.Thread(target=worker, args=(results, k, base * k + 1, chunks, n))
+               for k in range(count)]
     for t in threads:
         t.start()
     for t in threads:

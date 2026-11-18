@@ -1,4 +1,4 @@
-"""Instance dicts that never settle: optional attributes set in varying order, deleted, read with getattr defaults and __getattr__ fallbacks."""
+"""Instance dicts that never settle: optional attributes set in varying order, deleted, read with getattr defaults and __getattr__ fallbacks. Variant 1 starts elsewhere in the bit patterns and stores bytes and floats instead of str and int."""
 
 FIELDS = ['email', 'phone', 'city', 'company', 'title', 'twitter', 'notes', 'score']
 
@@ -17,12 +17,12 @@ class Loose:
     pass
 
 
-def build(i):
+def build(i, variant):
     c = Contact('c%d' % i)
     order = FIELDS[i % len(FIELDS):] + FIELDS[:i % len(FIELDS)]
     for k, f in enumerate(order):
         if (i >> k) & 1:
-            setattr(c, f, '%s-%d' % (f, i))
+            setattr(c, f, ('%s-%d' % (f, i)) if variant == 0 else ('%s:%x' % (f, i)).encode())
     if i % 3 == 0:
         c.tmp = i
     if i % 7 == 0:
@@ -46,18 +46,19 @@ def score(c):
     return s
 
 
-def loose(i):
+def loose(i, variant):
     o = Loose()
     for k in range(i % 9):
-        setattr(o, 'k%d' % ((i * 7 + k) % 12), k)
+        setattr(o, 'k%d' % ((i * 7 + k) % 12), k if variant == 0 else k * 0.5)
     o.__dict__.pop('k3', None)
     return sum(o.__dict__.values()) + len(o.__dict__)
 
 
-def main(n):
+def main(n, variant=0):
     total = 0
-    for i in range(n):
-        total += score(build(i)) + loose(i)
+    start = 0 if variant == 0 else 4099
+    for i in range(start, start + n):
+        total += score(build(i, variant)) + loose(i, variant)
     return total
 
 

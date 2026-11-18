@@ -1,4 +1,4 @@
-"""Closures with cells of their own and nonlocal writes: event emitters, counters, memoisers and accumulators."""
+"""Closures with cells of their own and nonlocal writes: event emitters, counters, memoisers and accumulators. Variant 1 has other handlers, and float keys and means."""
 
 
 def make_counter():
@@ -62,22 +62,29 @@ def running_mean():
     return add
 
 
-def main(n):
+def main(n, variant=0):
     inc = make_counter()
     on, emit = make_emitter()
     clicks = make_counter()
     on(lambda v: clicks())
-    on(lambda v: v % 7)
-    scale = 3
-    on(lambda v: v * scale % 11)
+    scale = 3 if variant == 0 else 4
+    if variant == 0:
+        on(lambda v: v % 7)
+        on(lambda v: v * scale % 11)
+        keys, step, mod = 300, 1, 17
+    else:
+        on(lambda v: v * scale % 13)
+        on(lambda v: v // 5 % 3)
+        on(lambda v: clicks(0) % 2)
+        keys, step, mod = 250, 0.5, 23
     mean = running_mean()
     square = memoise(lambda k: k * k)
     acc = 0
     for i in range(n):
-        acc += inc() + emit(i) + square(i % 300)
-        m = mean(i % 100)
+        acc += inc() + emit(i) + square(i % keys * step)
+        m = mean(i % 100 * step)
         if i % 50 == 0:
-            acc += unique_count([j % 17 for j in range(i % 200)])
+            acc += unique_count([j % mod for j in range(i % 200)])
     return acc, inc(0), clicks(0), round(m, 6)
 
 
