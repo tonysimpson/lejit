@@ -21,7 +21,7 @@ vinfo_t* PsycoDict_New(PsycoObject* po)
 
 #if HAVE_DICT_NEWPRESIZED
 DEFINEFN
-vinfo_t* PsycoDict_NewPresized(PsycoObject* po, long minused)
+vinfo_t* _PsycoDict_NewPresized(PsycoObject* po, long minused)
 {
 	if (minused > 5) {
 		vinfo_t* v = psyco_generic_call(po, _PyDict_NewPresized,

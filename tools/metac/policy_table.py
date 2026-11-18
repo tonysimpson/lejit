@@ -543,23 +543,31 @@ ENTRIES = {
         ]},
     'Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK_WITH_CALL)': {
         'shape': '661922c6394b',
-        'ni': ['ni/Python/pycompiler.c:cimpl_build_unpack', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK', 'ni/Python/pycompiler.c:case BUILD_LIST_UNPACK'],
+        'ni': ['ni/Python/pycompiler.c:cimpl_build_unpack', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK'],
         'policy': [
             ('virtual', 'concat', 'parts that are tuples with known items'),
             ('restype', 'PyTuple_Type', 'BUILD_TUPLE_*'),
-            ('restype', 'PyList_Type', 'BUILD_LIST_UNPACK'),
         ]},
-    'Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK)': {'shape': 'b1abba726c4d', 'ni': ['ni/Python/pycompiler.c:cimpl_build_unpack', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK', 'ni/Python/pycompiler.c:case BUILD_LIST_UNPACK']},
-    'Python/ceval.c:TARGET(BUILD_LIST_UNPACK)': {'shape': 'c95697e345d5', 'ni': ['ni/Python/pycompiler.c:cimpl_build_unpack', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK', 'ni/Python/pycompiler.c:case BUILD_LIST_UNPACK']},
+    'Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK)': {'shape': 'b1abba726c4d', 'ni': ['ni/Python/pycompiler.c:cimpl_build_unpack', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK']},
+    'Python/ceval.c:TARGET(BUILD_LIST_UNPACK)': {
+        'shape': 'c95697e345d5',
+        'ni': ['tools/metac/gen_ceval.py:translate'],
+        'policy': [
+            ('restype', 'PyList_Type'),
+        ]},
     'Python/ceval.c:TARGET(BUILD_MAP_UNPACK)': {
         'shape': '84eba75c8103',
-        'ni': ['ni/Python/pycompiler.c:cimpl_build_map_unpack', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_SET_UNPACK'],
+        'ni': ['ni/Python/pycompiler.c:cimpl_build_map_unpack', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK_WITH_CALL'],
         'policy': [
             ('restype', 'PyDict_Type', 'BUILD_MAP_*'),
-            ('restype', 'PySet_Type', 'BUILD_SET_UNPACK'),
         ]},
-    'Python/ceval.c:TARGET(BUILD_MAP_UNPACK_WITH_CALL)': {'shape': '1304d703ab21', 'ni': ['ni/Python/pycompiler.c:cimpl_build_map_unpack', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_SET_UNPACK']},
-    'Python/ceval.c:TARGET(BUILD_SET_UNPACK)': {'shape': 'bce59f084ed5', 'ni': ['ni/Python/pycompiler.c:cimpl_build_set_unpack', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_SET_UNPACK']},
+    'Python/ceval.c:TARGET(BUILD_MAP_UNPACK_WITH_CALL)': {'shape': '1304d703ab21', 'ni': ['ni/Python/pycompiler.c:cimpl_build_map_unpack', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK_WITH_CALL']},
+    'Python/ceval.c:TARGET(BUILD_SET_UNPACK)': {
+        'shape': 'bce59f084ed5',
+        'ni': ['tools/metac/gen_ceval.py:translate'],
+        'policy': [
+            ('restype', 'PySet_Type'),
+        ]},
     'Python/ceval.c:special_lookup': {'shape': '733e627cd8eb', 'ni': ['ni/Python/pycompiler.c:special_lookup']},
     'Python/ceval.c:TARGET(SETUP_WITH)': {'shape': '5484de92c04f', 'ni': ['ni/Python/pycompiler.c:cimpl_setup_with']},
     'Python/ceval.c:TARGET(WITH_CLEANUP_START)': {'shape': 'a33864999e5e', 'ni': ['ni/Python/pycompiler.c:cimpl_call_exit']},
@@ -644,7 +652,7 @@ ENTRIES = {
     'Python/ceval.c:TARGET(DELETE_NAME)': {'shape': '4c9a396fff41', 'ni': ['ni/Python/pycompiler.c:case DELETE_NAME', 'ni/Python/pycompiler.c:case DELETE_GLOBAL']},
     'Python/ceval.c:TARGET(LOAD_NAME)': {'shape': '169ba7986f56', 'ni': ['ni/Python/pycompiler.c:case LOAD_NAME', 'ni/Python/pycompiler.c:case LOAD_GLOBAL']},
     'Python/ceval.c:TARGET(DELETE_FAST)': {'shape': '88625a6a9a19', 'ni': ['tools/metac/gen_ceval.py:translate']},
-    'Python/ceval.c:TARGET(LOAD_CLOSURE)': {'shape': '11f8250608e3', 'ni': ['ni/Python/pycompiler.c:case LOAD_CLOSURE']},
+    'Python/ceval.c:TARGET(LOAD_CLOSURE)': {'shape': '11f8250608e3', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(LOAD_DEREF)': {
         'shape': '2e6c9f5e9bed',
         'ni': ['ni/Python/pycompiler.c:case LOAD_DEREF'],
@@ -663,12 +671,12 @@ ENTRIES = {
         'policy': [
             ('virtual', 'result', 'PyList_Type, up to VLIST_LENGTH_MAX items'),
         ]},
-    'Python/ceval.c:TARGET(BUILD_MAP)': {'shape': '2a0606f6f2ba', 'ni': ['ni/Python/pycompiler.c:case BUILD_MAP']},
+    'Python/ceval.c:TARGET(BUILD_MAP)': {'shape': '2a0606f6f2ba', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(BUILD_CONST_KEY_MAP)': {'shape': '3f6a652605b8', 'ni': ['ni/Python/pycompiler.c:case BUILD_CONST_KEY_MAP']},
     'Python/ceval.c:TARGET(MAP_ADD)': {'shape': '97181b1620fd', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(BUILD_SET)': {
         'shape': 'f137fb543930',
-        'ni': ['ni/Python/pycompiler.c:case BUILD_SET'],
+        'ni': ['tools/metac/gen_ceval.py:translate'],
         'policy': [
             ('restype', 'PySet_Type'),
         ]},
@@ -1240,7 +1248,7 @@ ENTRIES = {
         ]},
     'Objects/dictobject.c:_PyDict_NewPresized': {
         'shape': '98e640685d57',
-        'ni': ['ni/Objects/pdictobject.c:PsycoDict_NewPresized'],
+        'ni': ['ni/Objects/pdictobject.c:_PsycoDict_NewPresized'],
         'policy': [
             ('extra', 'small_presized', 'minused <= 5'),
             ('restype', 'PyDict_Type'),

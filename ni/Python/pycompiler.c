@@ -13,7 +13,8 @@
  *  - The simple opcodes (stack shuffles, LOAD_CONST/LOAD_FAST/STORE_FAST,
  *    unary, binary and in-place arithmetic, STORE_SUBSCR, DELETE_SUBSCR,
  *    GET_ITER, LOAD_ATTR/STORE_ATTR/DELETE_ATTR, BUILD_TUPLE/BUILD_LIST/BUILD_SLICE,
- *    LIST_APPEND, MAP_ADD) are generated into pycompiler_gen.h
+ *    LIST_APPEND, MAP_ADD, BUILD_SET, BUILD_MAP, BUILD_LIST_UNPACK,
+ *    BUILD_SET_UNPACK, LOAD_CLOSURE) are generated into pycompiler_gen.h
  *    from CPython's ceval.c by tools/metac/gen_ceval.py (D26, D67).
  *  - After the switch come the merge-point checks, then the handling of
  *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
@@ -1151,7 +1152,7 @@ static vinfo_t *psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg,
   if (nk == 0)
     wdict = psyco_vi_Zero(); /* no keyword arguments */
   else {
-    wdict = PsycoDict_NewPresized(po, nk);
+    wdict = _PsycoDict_NewPresized(po, nk);
     if (wdict == NULL)
       goto fail;
     for (i = 0; i < nk; i++)
@@ -1362,9 +1363,9 @@ static void cimpl_store_deref(PyObject *cell, PyObject *v) {
   Py_XDECREF(old);
 }
 
-/* ceval.c BUILD_TUPLE_UNPACK_WITH_CALL, BUILD_TUPLE_UNPACK and
-   BUILD_LIST_UNPACK, on a tuple of the parts; func is the function being
-   called (for the WITH_CALL message, ceval.c:check_args_iterable) */
+/* ceval.c BUILD_TUPLE_UNPACK_WITH_CALL and BUILD_TUPLE_UNPACK, on a tuple
+   of the parts; func is the function being called (for the WITH_CALL
+   message, ceval.c:check_args_iterable) */
 static PyObject *cimpl_build_unpack(PyObject *parts, PyObject *func,
                                     long opcode) {
   Py_ssize_t i;
@@ -1389,8 +1390,6 @@ static PyObject *cimpl_build_unpack(PyObject *parts, PyObject *func,
     }
     Py_DECREF(none_val);
   }
-  if (opcode == BUILD_LIST_UNPACK)
-    return sum;
   r = PyList_AsTuple(sum);
   Py_DECREF(sum);
   return r;
@@ -1445,20 +1444,6 @@ static PyObject *cimpl_build_map_unpack(PyObject *parts, PyObject *func) {
       return NULL;
     }
   }
-  return sum;
-}
-
-/* ceval.c BUILD_SET_UNPACK, on a tuple of the parts */
-static PyObject *cimpl_build_set_unpack(PyObject *parts) {
-  Py_ssize_t i;
-  PyObject *sum = PySet_New(NULL);
-  if (sum == NULL)
-    return NULL;
-  for (i = 0; i < PyTuple_GET_SIZE(parts); i++)
-    if (_PySet_Update(sum, PyTuple_GET_ITEM(parts, i)) < 0) {
-      Py_DECREF(sum);
-      return NULL;
-    }
   return sum;
 }
 
@@ -2596,12 +2581,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
          still real calls (psyfunc.c:fncall_init), so no cell is ever made
          here. A cell can change under any call (nonlocal in a callee), so
          its contents are read each time (FMUT). */
-      case LOAD_CLOSURE:
-        x = GETLOCAL(co->co_nlocals + oparg);
-        vinfo_incref(x);
-        PUSH(x);
-        goto fine;
-
       case LOAD_DEREF: {
         condition_code_t cc;
         x = psyco_get_field(po, GETLOCAL(co->co_nlocals + oparg), CELL_ob_ref);
@@ -2652,12 +2631,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(v);
         goto fine;
 
-      /* f(a, *b), (*a, *b), [*a, *b]: parts that are tuples with known
-         items make a virtual tuple; anything else is ceval's code */
+      /* f(a, *b), (*a, *b): parts that are tuples with known items make
+         a virtual tuple; anything else is ceval's code ([*a, *b] is
+         generated) */
       case BUILD_TUPLE_UNPACK_WITH_CALL:
-      case BUILD_TUPLE_UNPACK:
-      case BUILD_LIST_UNPACK: {
-        int i, n = 0, known = opcode != BUILD_LIST_UNPACK;
+      case BUILD_TUPLE_UNPACK: {
+        int i, n = 0, known = 1;
         for (i = oparg; known && i > 0; i--) {
           int k = PsycoTuple_Load(NTOP(i));
           if (k < 0)
@@ -2693,29 +2672,9 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           vinfo_decref(w, po);
           if (v == NULL)
             break;
-          Psyco_AssertType(po, v, opcode == BUILD_LIST_UNPACK ? &PyList_Type
-                                                               : &PyTuple_Type);
+          Psyco_AssertType(po, v, &PyTuple_Type);
         }
         while (oparg--)
-          POP_DECREF();
-        PUSH(v);
-        goto fine;
-      }
-
-      case BUILD_MAP: {
-        /* 3.5+: oparg key/value pairs on the stack, first pair deepest */
-        int i;
-        v = PsycoDict_NewPresized(po, oparg);
-        if (v == NULL)
-          break;
-        for (i = oparg; i > 0; i--)
-          if (!PsycoDict_SetItem(po, v, NTOP(2 * i), NTOP(2 * i - 1)))
-            break;
-        if (i > 0) {
-          vinfo_decref(v, po);
-          break;
-        }
-        for (i = 2 * oparg; i--;)
           POP_DECREF();
         PUSH(v);
         goto fine;
@@ -2733,7 +2692,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
                                  "bad BUILD_CONST_KEY_MAP keys argument");
           break;
         }
-        v = PsycoDict_NewPresized(po, oparg);
+        v = _PsycoDict_NewPresized(po, oparg);
         if (v == NULL)
           break;
         for (i = oparg; i > 0; i--)
@@ -2750,35 +2709,29 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-      /* {**a, **b}, f(**a, k=1), {*a, *b}: ceval's code at run time */
+      /* {**a, **b}, f(**a, k=1): ceval's code at run time */
       case BUILD_MAP_UNPACK:
-      case BUILD_MAP_UNPACK_WITH_CALL:
-      case BUILD_SET_UNPACK:
+      case BUILD_MAP_UNPACK_WITH_CALL: {
+        /* the function being called is under the positional tuple */
+        vinfo_t *fn = opcode == BUILD_MAP_UNPACK_WITH_CALL
+                          ? NTOP(oparg + 2) : NULL;
         w = PsycoTuple_New(oparg, STACK_POINTER() - oparg);
-        if (opcode == BUILD_SET_UNPACK) {
-          v = psyco_generic_call(po, cimpl_build_set_unpack,
-                                 CfCommonNewRefPyObject, "v", w);
-        } else {
-          /* the function being called is under the positional tuple */
-          vinfo_t *fn = opcode == BUILD_MAP_UNPACK_WITH_CALL
-                            ? NTOP(oparg + 2) : NULL;
-          if (fn == NULL)
-            fn = psyco_vi_Zero();
-          else
-            vinfo_incref(fn);
-          v = psyco_generic_call(po, cimpl_build_map_unpack,
-                                 CfCommonNewRefPyObject, "vv", w, fn);
-          vinfo_decref(fn, po);
-        }
+        if (fn == NULL)
+          fn = psyco_vi_Zero();
+        else
+          vinfo_incref(fn);
+        v = psyco_generic_call(po, cimpl_build_map_unpack,
+                               CfCommonNewRefPyObject, "vv", w, fn);
+        vinfo_decref(fn, po);
         vinfo_decref(w, po);
         if (v == NULL)
           break;
-        Psyco_AssertType(po, v, opcode == BUILD_SET_UNPACK ? &PySet_Type
-                                                            : &PyDict_Type);
+        Psyco_AssertType(po, v, &PyDict_Type);
         while (oparg--)
           POP_DECREF();
         PUSH(v);
         goto fine;
+      }
 
 #ifdef STORE_MAP
       case STORE_MAP:
@@ -2791,28 +2744,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         POP_DECREF();
         goto fine;
 #endif
-
-      case BUILD_SET: {
-        /* as ceval: a new set, the items added deepest first */
-        int i;
-        v = psyco_generic_call(po, PySet_New, CfCommonNewRefPyObject, "l",
-                               0L);
-        if (v == NULL)
-          break;
-        Psyco_AssertType(po, v, &PySet_Type);
-        for (i = oparg; i > 0; i--)
-          if (!psyco_generic_call(po, PySet_Add, CfCommonIntZeroOk, "vv", v,
-                                  NTOP(i)))
-            break;
-        if (i > 0) {
-          vinfo_decref(v, po);
-          break;
-        }
-        while (oparg--)
-          POP_DECREF();
-        PUSH(v);
-        goto fine;
-      }
 
       case LOAD_METHOD:
         /* ceval pushes either (method, self) or (NULL, attribute). Ni always

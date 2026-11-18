@@ -17,9 +17,9 @@ EXTERNFN bool PsycoDict_SetItemC(PsycoObject* po, vinfo_t* vdict,
                                  PyObject* key, vinfo_t* vvalue);
 
 #if HAVE_DICT_NEWPRESIZED
-EXTERNFN vinfo_t* PsycoDict_NewPresized(PsycoObject* po, long minused);
+EXTERNFN vinfo_t* _PsycoDict_NewPresized(PsycoObject* po, long minused);
 #else
-#  define PsycoDict_NewPresized(po, minused)     PsycoDict_New(po)
+#  define _PsycoDict_NewPresized(po, minused)     PsycoDict_New(po)
 #endif
 
 

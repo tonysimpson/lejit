@@ -57,6 +57,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, 'cases_generator'))
 import ceval_reader  # noqa: E402
+import cparse  # noqa: E402
 import ctokens  # noqa: E402
 import cslots  # noqa: E402
 import parser as dsl  # noqa: E402  (CPython's Tools/cases_generator/parser.py)
@@ -200,23 +201,30 @@ def split_statements(toks):
     return out
 
 
+def arm_end(toks, j):
+    """toks[j] starts an if's arm: the index after it (a block in braces,
+    another if, or one statement up to its ';', as the reader passes
+    through a branch that touches nothing it tracks)."""
+    if toks[j].text == 'if':
+        return if_end(toks, j)
+    level = 0
+    while True:
+        if j >= len(toks):
+            raise Skip('an unended statement in an if')
+        level += toks[j].text in ('{', '(', '[')
+        level -= toks[j].text in ('}', ')', ']')
+        if level == 0 and (toks[j].text == ';' or (
+                toks[j].text == '}' and toks[j - 1].text != '=')):
+            return j + 1
+        j += 1
+
+
 def if_end(toks, k):
-    """toks[k] is 'if': the index after its statement (the reader writes
-    every arm in braces)."""
-    def block_end(j):
-        if toks[j].text != '{':
-            raise Skip('if without braces')
-        level = 0
-        while True:
-            level += toks[j].text == '{'
-            level -= toks[j].text == '}'
-            if level == 0:
-                return j + 1
-            j += 1
+    """toks[k] is 'if': the index after its statement."""
     _, j = call_args(toks, k + 1)
-    j = block_end(j)
+    j = arm_end(toks, j)
     if j < len(toks) and toks[j].text == 'else':
-        j = if_end(toks, j + 1) if toks[j + 1].text == 'if' else block_end(j + 1)
+        j = arm_end(toks, j + 1)
     return j
 
 
@@ -226,19 +234,18 @@ def if_parts(stmt):
     if len(args) != 1:
         raise Skip('if condition')
     e = if_end(stmt, 0)
-    k = j
-    level = 0
-    while True:
-        level += stmt[k].text == '{'
-        level -= stmt[k].text == '}'
-        if level == 0:
-            break
-        k += 1
-    then = split_statements(stmt[j + 1:k])
+    k = arm_end(stmt, j)
+
+    def arm(toks):
+        if toks[0].text == 'if':
+            return [toks]
+        if toks[0].text == '{':
+            return split_statements(toks[1:-1])
+        return split_statements(toks)
+    then = arm(stmt[j:k])
     other = []
-    if k + 1 < e:
-        rest = stmt[k + 2:e]
-        other = [rest] if rest[0].text == 'if' else split_statements(rest[1:-1])
+    if k < e:
+        other = arm(stmt[k + 1:e])
     return args[0], then, other
 
 
@@ -314,7 +321,7 @@ def psyco_signatures():
         with open(h) as f:
             toks = ctokens.tokenize(f.read(), h)[0]
         for i, t in enumerate(toks):
-            if (t.kind != 'id' or not t.text.startswith('Psyco')
+            if (t.kind != 'id' or not t.text.lstrip('_').startswith('Psyco')
                     or i + 1 >= len(toks) or toks[i + 1].text != '('):
                 continue
             ret = [u.text for u in toks[max(0, i - 2):i]]
@@ -334,16 +341,23 @@ def psyco_signatures():
     return sigs
 
 
+class NoCounterpart(Skip):
+    """No Psyco function does what this C-API function does, with its
+    arguments: the call is residual."""
+
+
 def counterpart(fn, csigs, psigs):
     if fn not in csigs:
         raise Skip('%s: no declaration in Include/' % fn)
-    pname = 'Psyco' + fn[2:]
+    pname = gen_abstract.psyco_name(fn)
     if pname not in psigs:
-        raise Skip('%s: no Psyco counterpart %s' % (fn, pname))
+        raise NoCounterpart('%s: no Psyco counterpart %s' % (fn, pname))
     cret, carity = csigs[fn]
     pret, parity, _ = psigs[pname]
     if carity != parity:
-        raise Skip('%s: %d arguments, %s takes %d' % (fn, carity, pname, parity))
+        # Ni's function of that name takes other arguments (PsycoList_New
+        # takes the items): not a counterpart of this call
+        raise NoCounterpart('%s: %d arguments, %s takes %d' % (fn, carity, pname, parity))
     if (cret, pret) not in (('object', 'vinfo'), ('int', 'bool'), ('object', 'virtual'),
                             ('int', 'vinfo')):
         raise Skip('%s returns %s, %s returns %s' % (fn, cret, pname, pret))
@@ -357,8 +371,16 @@ def residual_convention(x, stmts):
     ERROR_IF that reads it (the same conventions as gen_abstract's)."""
     for st in stmts:
         w = [t.text for t in st]
+        cond = None
         if w[:2] == ['ERROR_IF', '('] and x in w:
             cond = call_args(st, 1)[0][0]
+        elif w[:1] == ['if'] and x in w:
+            # 'if (C) { ...; ERROR_IF(true, label); }': the exit on C
+            c, then, other = if_parts(st)
+            if then and not other and x in c.split(' ') and \
+                    words(then[-1]).replace(' ', '').startswith('ERROR_IF(true,'):
+                cond = c
+        if cond is not None:
             if cond in (x, '%s != 0' % x):
                 return 'zero_ok'
             if cond == '%s < 0' % x:
@@ -374,7 +396,7 @@ def constructor(fn, psigs):
     taking (int, vinfo_t **) after po if it has one. The items are new
     references to it (the fact about Ni's constructors this relies on), so
     the array C stole is released after."""
-    pname = 'Psyco' + fn[2:]
+    pname = gen_abstract.psyco_name(fn)
     if pname not in psigs:
         raise Skip('%s: no Psyco counterpart %s' % (fn, pname))
     kind, _, params = psigs[pname]
@@ -384,6 +406,130 @@ def constructor(fn, psigs):
 
 
 # ---- translation -----------------------------------------------------------
+
+# C integer types of a case's locals: each is a C int of the compiler
+# (compile-time), as oparg is
+INT_DECLS = ('int', 'Py_ssize_t')
+# opargs at which a loop over an input array is run by the generator, to
+# check that it releases every item once
+SIM_OPARGS = (0, 1, 2, 3, 4, 7)
+# names of types in a case's text (casts and declarations, for cparse)
+TYPE_NAMES = {'Py_ssize_t', 'PyObject', 'PyListObject', 'PyTupleObject',
+              'PyDictObject', 'PySetObject', 'PyTypeObject', 'size_t'}
+
+
+def kinds_in(e, out=None):
+    """The kinds of the nodes of a cparse expression."""
+    if out is None:
+        out = set()
+    if isinstance(e, tuple) and e and isinstance(e[0], str):
+        out.add(e[0])
+        for x in e[1:]:
+            kinds_in(x, out)
+    elif isinstance(e, list):
+        for x in e:
+            kinds_in(x, out)
+    return out
+
+
+class Lines(list):
+    """The case's C lines; append() indents by the blocks open."""
+    indent = 0
+
+    def append(self, line):
+        super().append('  ' * self.indent + line)
+
+
+def tidy(text):
+    """Token texts joined by spaces, as C is written."""
+    s = re.sub(r'([(\[]) ', r'\1', text)
+    s = re.sub(r' ([)\],;])', r'\1', s)
+    s = re.sub(r'(\+\+|--) (?=\w)', r'\1', s)
+    return re.sub(r'(?<=\w) (\+\+|--)', r'\1', s)
+
+
+class _Unknown(Exception):
+    pass
+
+
+def ct_eval(e, env):
+    """The value of a cparse expression of compile-time ints in env (a
+    dict, updated by ++, -- and assignments); _Unknown if a name isn't."""
+    k = e[0]
+    if k == 'num':
+        return int(e[1].rstrip('uUlL'), 0)
+    if k == 'id':
+        if e[1] not in env:
+            raise _Unknown(e[1])
+        return env[e[1]]
+    if k == 'cast':
+        return ct_eval(e[2], env)
+    if k == 'un':
+        v = ct_eval(e[2], env)
+        return {'-': -v, '+': v, '!': int(not v), '~': ~v}[e[1]]
+    if k == 'bin':
+        op = e[1]
+        a = ct_eval(e[2], env)
+        if op == '&&':
+            return int(bool(a) and bool(ct_eval(e[3], env)))
+        if op == '||':
+            return int(bool(a) or bool(ct_eval(e[3], env)))
+        b = ct_eval(e[3], env)
+        if op == '/' or op == '%':
+            if b == 0:
+                raise _Unknown('division by 0')
+            q = abs(a) // abs(b) * (1 if (a < 0) == (b < 0) else -1)
+            return q if op == '/' else a - q * b
+        return {'+': a + b, '-': a - b, '*': a * b, '<<': a << b, '>>': a >> b,
+                '&': a & b, '|': a | b, '^': a ^ b, '<': int(a < b), '>': int(a > b),
+                '<=': int(a <= b), '>=': int(a >= b), '==': int(a == b),
+                '!=': int(a != b)}[op]
+    if k == 'cond':
+        return ct_eval(e[2] if ct_eval(e[1], env) else e[3], env)
+    if k in ('pre', 'post') and e[2][0] == 'id':
+        old = ct_eval(e[2], env)
+        env[e[2][1]] = old + (1 if e[1] == '++' else -1)
+        return env[e[2][1]] if k == 'pre' else old
+    if k == 'assign' and e[2][0] == 'id':
+        v = ct_eval(e[3], env)
+        if e[1] != '=':
+            v = ct_eval(('bin', e[1][:-1], e[2], ('num', str(v))), env)
+        env[e[2][1]] = v
+        return v
+    if k == 'comma':
+        v = None
+        for x in e[1]:
+            v = ct_eval(x, env)
+        return v
+    raise _Unknown(k)
+
+
+def loop_indices(loops, idx, env):
+    """The values idx takes in the innermost of the cparse loops (outermost
+    first), the loops run by ct_eval from env."""
+    out = []
+
+    def run(k):
+        if k == len(loops):
+            out.append(ct_eval(idx, env))
+            return
+        _, init, cond, step = loops[k][:4]
+        if init is not None and init[0] == 'decl':
+            for d in init[1]:
+                env[d[1]] = ct_eval(d[2], env) if d[2] is not None else 0
+        elif init is not None:
+            ct_eval(init[1], env)
+        turns = 0
+        while cond is None or ct_eval(cond, env):
+            run(k + 1)
+            for x in step:
+                ct_eval(x, env)
+            turns += 1
+            if turns > 4096:
+                raise _Unknown('a loop that does not end')
+    run(0)
+    return out
+
 
 def stack_layout(effects, consts):
     """[(name, kind, size)] for stack effects: kind scalar, cond (size: its
@@ -410,7 +556,7 @@ def stack_layout(effects, consts):
     return out
 
 
-def translate(inst, csigs, psigs, consts=None, effects=None):
+def translate(inst, csigs, psigs, consts=None, effects=None, frame=None):
     """C text for one case, and the C-API functions it calls."""
     if inst.kind != 'inst':
         raise Skip('legacy definition without a stack effect')
@@ -444,12 +590,28 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
         depth[n] = d
 
     # variable -> origin: 'input', 'local', 'const', 'object' (a meta's
-    # result, owned), 'bool' (a meta's int result), 'owned' (incref'd)
+    # result, owned), 'bool' (a meta's int result), 'owned' (incref'd),
+    # 'ctint' (a C int of the compiler), 'elem' (an item of an input array,
+    # borrowed from the stack)
     var = {n: 'input' for n in in_names}
     released = set()          # inputs Py_DECREF'd
     stolen = set()            # inputs stored (SETLOCAL takes the reference)
     decref_all = False
-    body = []                 # C lines
+    body = Lines()            # C lines
+    consts = consts or {}
+    ctint = {}                # 'ctint' variable -> its value if the generator knows it
+    elem_of = {}              # 'elem' variable -> (array, cparse index)
+    elem_rel = {}             # array input -> [(cparse index, loops)] Py_DECREF'd
+    loops = []                # the cparse loops being emitted, outermost first
+    rests = []                # the statements left in each block being read
+    pending = set()           # objects declared, not yet assigned
+    label = 'error_%s' % inst.name.lower()
+    label_used = []           # an error exit inside a loop jumps to the label
+    # the generator's values: opcode is the case's own (a case entered by
+    # its own TARGET), the constants are the source's
+    known_env = dict(consts)
+    if inst.name in consts:
+        known_env['opcode'] = consts[inst.name]
     decls = []
     calls = []
     last_fail = -1            # index into body of the last failure point
@@ -461,6 +623,11 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
     jump_all = None           # an unconditional jump, the case's last statement
     entry = policy_table.ENTRIES.get('Python/ceval.c:TARGET(%s)' % inst.name, {})
     forget = ('forget', 'before_branch') in [tuple(i[:2]) for i in entry.get('policy', [])]
+    # the type Ni asserts for the case's output (policy 'restype')
+    restype = [i[1] for i in entry.get('policy', []) if i[0] == 'restype']
+    if len(restype) > 1 or restype and len(
+            [n for n, k, _ in outputs[keep:] if k == 'scalar']) != 1:
+        raise Skip('result types %s for the outputs' % ', '.join(restype))
 
     def commit():
         nonlocal first_commit
@@ -470,7 +637,56 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
     def declare(name, ctype):
         if name in var:
             raise Skip('%s assigned twice' % name)
-        decls.append('%s%s;' % (ctype, name))
+        d = '%s%s;' % (ctype, name)
+        if d not in decls:          # the other arm of a branch declared it
+            decls.append(d)
+        pending.discard(name)
+
+    def following():
+        """The statements after the one being read, outwards."""
+        return [x for r in reversed(rests) for x in r]
+
+    def error_code(lab):
+        """What an error exit does: leave the opcode with the inputs on
+        the stack; inside a loop the C loop is left first."""
+        code = LABELS[lab]
+        if loops:
+            label_used.append(lab)
+            code = code.replace('break;', 'goto %s;' % label)
+        return code
+
+    def ct_node(text):
+        """The cparse expression for a C expression the compiler knows
+        (oparg, opcode, the case's C ints, the source's integer
+        constants), or None."""
+        toks = ctokens.tokenize(text)[0]
+        if not toks or any(t.text in ('true', 'false') for t in toks):
+            return None
+        try:
+            e = cparse.parse_expr(toks, TYPE_NAMES, loops=True)
+        except cparse.ParseError:
+            return None
+        if any(k in ('call', 'arrow', 'index', 'str', 'assign') for k in kinds_in(e)):
+            return None
+        for n in cparse.names_in(e):
+            if n not in ('oparg', 'opcode') and var.get(n) != 'ctint' and n not in consts:
+                return None
+        return e
+
+    def ct_value(e):
+        """The generator's value of a compile-time expression, or None."""
+        env = dict(known_env)
+        env.update((n, v) for n, v in ctint.items() if v is not None)
+        try:
+            return ct_eval(e, env)
+        except _Unknown:
+            return None
+
+    def ct_text(text):
+        e = ct_node(text)
+        if e is None:
+            raise Skip('%r is not known at compile time' % text)
+        return tidy(text)
 
     def temp(make):
         t = 'tmp%d' % len(temps)
@@ -479,8 +695,13 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
         body.append('%s = %s;' % (t, make))
         return t
 
-    def operand(text):
-        text = re.sub(r'^\( PyObject \* \) ', '', text)   # a cast changes nothing
+    def operand(text, ptype=None):
+        """A call's argument: a vinfo, or (ptype not a vinfo) a C value
+        the compiler knows."""
+        # a cast between object pointers changes nothing
+        text = re.sub(r'^\( (?!PyTypeObject)Py\w*Object \* \) ', '', text)
+        if ptype is not None and ptype.replace(' ', '') != 'vinfo_t*':
+            return ct_text(text)
         if text == 'NULL':
             return 'NULL'     # Psyco's counterparts take NULL where C does
         if text in var:
@@ -488,7 +709,12 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
                 # a borrowed constant passed to a call: a compile-time
                 # vinfo for the call's duration
                 return temp('vinfo_new(CompileTime_New((long)%s))' % const_of[text])
+            if var[text] == 'ctint':
+                raise Skip('the C int %s passed as an object' % text)
             return text
+        m = re.fullmatch(r'(\w+) \[ (.+) \]', text)
+        if m and in_kind.get(m.group(1)) == 'array' and ct_node(m.group(2)) is not None:
+            return '%s[%s]' % (m.group(1), tidy(m.group(2)))   # borrowed
         if text in CONSTANTS:
             return temp(CONSTANTS[text])
         raise Skip('operand %r' % text)
@@ -501,16 +727,28 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
         ctype = {'object': 'PyObject *', 'int': 'int'}.get(csigs[fn][0])
         if ctype is None:
             raise Skip('%s returns %s' % (fn, csigs[fn][0]))
-        conv = residual_convention(x, stmts)
-        ops = [operand(a) for a in args]
-        if 'NULL' in ops:
-            raise Skip('%s: a NULL argument' % fn)
+        conv = residual_convention(x, following())
+        fmt, ops = '', []
+        for a in args:
+            if a == 'NULL':
+                fmt, o = fmt + 'l', '0L'
+            elif ct_node(a) is not None:
+                fmt, o = fmt + 'l', '(long)(%s)' % tidy(a)
+            else:
+                fmt, o = fmt + 'v', operand(a)
+            ops.append(o)
         key = effects.globals.get(fn) if effects is not None else None
         flags = gen_abstract.Translator(None, {}, {}, effects).flags(ctype, conv, key)
         call = 'psyco_generic_call(po, %s, %s, "%s"%s)' % (
-            fn, flags, 'v' * len(ops), ''.join(', ' + o for o in ops))
+            fn, flags, fmt, ''.join(', ' + o for o in ops))
         calls.append(fn)
-        if conv == 'zero_ok':
+        if var.get(x) == 'ctint':
+            # into a C int: 0 or the C's error value, which the meta knows
+            if conv != 'zero_ok':
+                raise Skip('%s: a run-time int into the C int %s' % (fn, x))
+            ctint[x] = None
+            body.append('%s = %s != NULL ? 0 : -1;' % (x, call))
+        elif conv == 'zero_ok':
             declare(x + '_ok', 'bool ')
             var[x] = 'bool'
             body.append('%s_ok = %s != NULL;' % (x, call))
@@ -535,7 +773,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
         if not m or var.get(m.group(1)) != 'int':
             raise Skip('a branch on %s' % cond)
         x = m.group(1)
-        if any(x in [t.text for t in st] for st in stmts):
+        if any(x in [t.text for t in st] for st in following()):
             raise Skip('%s is read after its test' % x)
         call, inv = gen_abstract.int_condition(m.group(2), x, m.group(3), True, x in nonneg)
         cc = 'cc%d' % sum(1 for d in decls if d.startswith('condition_code_t'))
@@ -546,7 +784,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
         body.append('vinfo_decref(%s, po);' % x)       # its last use
         var[x] = 'consumed'
         body.append('if (%s == CC_ERROR)' % cc)
-        body.append('  break;')
+        body.append('  ' + error_code('error'))
         last_fail = len(body)
 
         def invert(flip):
@@ -588,180 +826,440 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
         (jt, rt), (jf, rf) = jumps(then), jumps(other)
         if (jt is None) == (jf is None):
             raise Skip('a branch with %s' % ('a jump on both arms' if jt else 'no jump'))
-        if stmts:
+        if following() or loops or len(rests) > 1:
             raise Skip('code after a conditional jump')
         invert(jf is not None)
         commit()
         return {'stmt': jt or jf, 'rel': rt if jt else rf, 'fall_rel': rf if jt else rt,
                 'cc': cc}
 
-    stmts = split_statements(body_tokens(inst))
-    while stmts:
-        stmt = stmts.pop(0)
-        w = [t.text for t in stmt]
-        s = words(stmt)
-        if w[0] in DROPPED or (len(w) == 4 and w[:3] == ['(', 'void', ')']):
-            continue
-        if s == 'DECREF_INPUTS ( )':
-            decref_all = True
-            continue
-        if len(w) == 4 and w[0] in ('Py_DECREF', 'Py_XDECREF') and w[2] in in_names \
-                and (w[0] == 'Py_DECREF') == (in_kind[w[2]] == 'scalar'):
-            released.add(w[2])
-            continue
-        if w[0] == 'for':
-            raise Skip('loop %s' % s)
-        if len(w) == 4 and w[0] == 'Py_INCREF':
-            x = w[2]
-            if var.get(x) == 'local':
-                commit()
-                body.append('vinfo_incref(%s);' % x)
-                var[x] = 'owned'
-            elif var.get(x) == 'const':
-                decls.append('vinfo_t *%s;' % x)
-                body.append('%s = vinfo_new(CompileTime_New((long)%s));'
-                            % (x, const_of[x]))
-                var[x] = 'owned'
-            else:
-                raise Skip('Py_INCREF of %s (%s)' % (x, var.get(x)))
-            continue
-        # X = Py_NewRef(Y)
-        if len(w) == 6 and w[1:4] == ['=', 'Py_NewRef', '('] and w[4] in var:
-            x, y = w[0], w[4]
-            declare(x, 'vinfo_t *')
-            commit()
-            body.append('vinfo_incref(%s);' % y)
-            body.append('%s = %s;' % (x, y))
-            var[x] = 'owned'
-            continue
-        if w == ['SETLOCAL', '(', 'oparg', ',', 'NULL', ')']:
-            # a deleted local is a known NULL (the same rule as GETLOCAL's)
-            commit()
-            t = 'tmp%d' % len(decls)
-            decls.append('vinfo_t *%s;' % t)
-            body.append('%s = %s;' % (t, CONSTANTS['NULL']))
-            body.append('SETLOCAL(oparg, %s);' % t)
-            continue
-        if w[0] in JUMPS and len(w) > 1 and w[1] == '(':
-            if stmts:
-                raise Skip('code after a jump')
-            commit()
-            jump_all = s.replace(' ', '')
-            continue
-        if w[0] == 'if':
-            jump = branch(stmt)
-            continue
-        if w[:4] == ['SETLOCAL', '(', 'oparg', ','] and len(w) == 6:
-            x = w[4]
-            if var.get(x) not in ('input', 'owned', 'object', 'virtual') or \
-                    in_kind.get(x, 'scalar') != 'scalar':
-                raise Skip('SETLOCAL of %s' % x)
-            commit()
-            body.append('SETLOCAL(oparg, %s);' % x)
-            stolen.add(x)
-            continue
-        if len(w) > 2 and w[:2] == ['ERROR_IF', '(']:
-            args, _ = call_args(stmt, 1)
-            if len(args) != 2 or args[1] not in LABELS:
-                raise Skip('ERROR_IF %s' % s)
-            if first_commit is not None:
-                raise Skip('ERROR_IF after an irreversible statement'
-                           ' (restart rule)')
-            cond = error_condition(args[0], var)
-            if cond is None:
-                continue        # a virtual object: it can't fail
-            for x in cond[1]:
-                if var.get(x) == 'int':
-                    nonneg.add(x)   # the C's error values are the negative ones
-            live = [t for t, o in var.items()
-                    if o in ('object', 'owned', 'virtual', 'int') and t not in cond[1]]
-            if live:
-                raise Skip('ERROR_IF with %s owned' % ', '.join(live))
-            body.append('if (%s)' % cond[0])
-            body.append('  ' + LABELS[args[1]])
-            last_fail = len(body)
-            continue
-        # [type] X = RHS
-        ctype = ''
-        if w[0] in ('int', 'PyObject') and len(w) > 2:
-            ctype = 'int' if w[0] == 'int' else 'PyObject *'
-            stmt, w = stmt[1:], w[1:]
-            if ctype == 'PyObject *':
-                if w[0] != '*':
-                    raise Skip(s)
-                stmt, w = stmt[1:], w[1:]
-        if len(w) >= 3 and w[1] == '=':
-            x = w[0]
-            rhs = ' '.join(w[2:])
-            if rhs == 'GETLOCAL ( oparg )':
-                declare(x, 'vinfo_t *')
-                body.append('%s = GETLOCAL(oparg);' % x)
-                var[x] = 'local'
+    def release_loop(node):
+        """A loop whose body only releases items of input arrays
+        (Py_DECREF(values[E])): the releases, recorded."""
+        stmts_ = node[4][1] if node[4][0] == 'block' else [node[4]]
+        found = []
+        for st in stmts_:
+            e = st[1] if st[0] == 'expr' else None
+            if not (e and e[0] == 'call' and e[1] in (('id', 'Py_DECREF'), ('id', 'Py_XDECREF'))
+                    and len(e[2]) == 1 and e[2][0][0] == 'index'
+                    and e[2][0][1][0] == 'id' and in_kind.get(e[2][0][1][1]) == 'array'):
+                return False
+            found.append((e[2][0][1][1], e[2][0][2]))
+        for arr, idx in found:
+            elem_rel.setdefault(arr, []).append((idx, loops + [node]))
+        return bool(found)
+
+    def bound_known(e):
+        return all(n in ('oparg', 'opcode') or var.get(n) == 'ctint' or n in consts
+                   for n in cparse.names_in(e))
+
+    def for_loop(stmt):
+        """A for loop with a bound the compiler knows runs in the compiler
+        (rule loops, gen_abstract.loop_rule): the case emits its body once
+        per turn."""
+        toks = ctokens.tokenize(words(stmt))[0]
+        try:
+            node = cparse.parse_body(toks, TYPE_NAMES, loops=True)
+        except cparse.ParseError as e:
+            raise Skip('a loop: %s' % e)
+        if len(node) != 1 or node[0][0] != 'for':
+            raise Skip('a loop %s' % words(stmt))
+        node = node[0]
+        if release_loop(node):
+            return
+        init = node[1]
+        if init is not None and init[0] == 'decl':
+            for ctype, name, _, dims in init[1]:
+                if ctype not in INT_DECLS or dims:
+                    raise Skip('a loop declaring %s %s' % (ctype, name))
+                declare(name, ctype + ' ')
+                var[name] = 'ctint'
+        rule = gen_abstract.loop_rule(node, bound_known)
+        if rule[0] != 'unroll':
+            raise Skip('a loop: %s' % rule[1])
+        if var.get(rule[1]) != 'ctint':
+            raise Skip('a loop on %s' % rule[1])
+        # what the body assigns is not known to the generator after a turn
+        for n in gen_abstract.assigned_in(node):
+            if n in ctint:
+                ctint[n] = None
+        _, j = call_args(stmt, 1)
+        head = [tidy(x) for x in ' '.join(t.text for t in stmt[2:j - 1]).split(' ; ')]
+        if len(head) != 3 or stmt[j].text != '{' or stmt[-1].text != '}':
+            raise Skip('a loop %s' % words(stmt))
+        if head[0].split(' ')[0] in INT_DECLS:
+            head[0] = head[0].split(' ', 1)[1]
+        body.append('for (%s; %s; %s) {' % tuple(head))
+        body.indent += 1
+        loops.append(node)
+        ended = run_block(split_statements(stmt[j + 1:-1]))
+        loops.pop()
+        body.indent -= 1
+        body.append('}')
+        if ended:
+            raise Skip('a loop whose body always fails')
+
+    def ct_if(stmt, node):
+        """'if (C) A else B' on a C value the compiler knows: a C if of the
+        case (or the arm the generator knows is taken). An arm that ends in
+        an error exit leaves the state as it was."""
+        cond, then, other = if_parts(stmt)
+        v = ct_value(node)
+        if v is not None:
+            return run_block(then if v else other)
+        before = (dict(var), {k: list(x) for k, x in elem_rel.items()})
+        outs = []
+        for k, arm in enumerate((then, other)):
+            if k == 1 and not arm:
+                outs.append((False, dict(var)))
+                break
+            body.append(('if (%s) {' % tidy(cond)) if k == 0 else 'else {')
+            body.indent += 1
+            ended = run_block(arm)
+            body.indent -= 1
+            body.append('}')
+            outs.append((ended, dict(var)))
+            if {k_: list(x) for k_, x in elem_rel.items()} != before[1]:
+                raise Skip('items released on one arm of %s' % cond)
+            var.clear()
+            var.update(before[0])
+        live = [o for e, o in outs if not e]
+        if not live:
+            return True
+        if any(o != live[0] for o in live):
+            raise Skip('the arms of %s leave different values' % cond)
+        var.update(live[0])
+        for n in gen_abstract.assigned_in(cparse.parse_body(
+                ctokens.tokenize(words(stmt))[0], TYPE_NAMES, loops=True)):
+            if n in ctint:
+                ctint[n] = None
+        return False
+
+    def error_block(stmt, cond):
+        """'if (C) { releases; ERROR_IF(true, L); }', C the error test of a
+        call's result: that exit, the releases on its path only."""
+        _, then, other = if_parts(stmt)
+        if other or not then:
+            return False
+        last = words(then[-1]).replace(' ', '')
+        m = re.fullmatch(r'ERROR_IF\(true,(\w+)\)', last)
+        if not m or m.group(1) not in LABELS:
+            return False
+        try:
+            c = error_condition(cond, var)
+        except Skip:
+            return False
+        if c is None:
+            return False
+        if first_commit is not None:
+            raise Skip('an error exit after an irreversible statement (restart rule)')
+        before = dict(var)
+        body.append('if (%s) {' % c[0])
+        body.indent += 1
+        for x in c[1]:
+            var[x] = 'consumed'          # NULL where the test holds
+        if not run_block(then):
+            raise Skip('an error block that does not end')
+        body.indent -= 1
+        body.append('}')
+        var.clear()
+        var.update(before)
+        for x in c[1]:
+            if var.get(x) == 'int':
+                nonneg.add(x)
+                if not any(x in [t.text for t in st] for st in following()):
+                    # a run-time int read only by its test
+                    body.append('vinfo_decref(%s, po);' % x)
+                    var[x] = 'consumed'
+        return True
+
+    def run_block(stmts):
+        """Translate a block's statements; True if it ends in an error exit."""
+        rests.append(stmts)
+        try:
+            return block_stmts(stmts)
+        finally:
+            rests.pop()
+
+    def block_stmts(stmts):
+        nonlocal decref_all, jump, jump_all, last_fail
+        while stmts:
+            stmt = stmts.pop(0)
+            w = [t.text for t in stmt]
+            s = words(stmt)
+            if w[0] in DROPPED or (len(w) == 4 and w[:3] == ['(', 'void', ')']):
                 continue
-            m = re.fullmatch(r'GETITEM \( (.*) , oparg \)', rhs)
-            if m and m.group(1) in CODE_TUPLES:
-                if x in var:
-                    raise Skip('%s assigned twice' % x)
-                var[x] = 'const'
-                const_of[x] = CODE_TUPLES[m.group(1)]   # borrowed
+            if s == 'DECREF_INPUTS ( )':
+                decref_all = True
                 continue
-            m = re.fullmatch(r'(Py[A-Z][a-z]+)_New \( (.+) \)', rhs)
-            fill = m and fill_loop(stmts, x, m.group(1), m.group(2), inputs)
-            if fill:
-                # PATTERNS E: a new container filled from an input array is
-                # Psyco's constructor taking the items
-                pname, kind = constructor(m.group(1) + '_New', psigs)
-                calls.append(m.group(1) + '_New')
-                declare(x, 'vinfo_t *')
-                var[x] = 'virtual' if kind == 'virtual' else 'object'
-                body.append('%s = %s(%s%s, %s);' % (
-                    x, pname, '' if kind == 'virtual' else 'po, ',
-                    m.group(2), fill))
-                released.add(fill)
-                last_fail = len(body)
-                if first_commit is not None:
-                    raise Skip('call after an irreversible statement')
+            if len(w) == 4 and w[0] in ('Py_DECREF', 'Py_XDECREF') and w[2] in in_names \
+                    and (w[0] == 'Py_DECREF') == (in_kind[w[2]] == 'scalar'):
+                released.add(w[2])
                 continue
-            if len(w) > 3 and re.fullmatch(r'Py[A-Z][A-Za-z]*_[A-Za-z]+', w[2]) and w[3] == '(':
-                fn = w[2]
-                args, end = call_args(stmt, 3)
-                if end != len(stmt):
-                    raise Skip(s)
-                try:
-                    pname, ret = counterpart(fn, csigs, psigs)
-                except Skip as e:
-                    if fn not in csigs or 'no Psyco counterpart' not in str(e):
-                        raise
-                    residual(x, fn, args)
-                    continue
-                ops = [operand(a) for a in args]
-                calls.append(fn)
-                if ret == 'intval':
-                    declare(x, 'vinfo_t *')
-                    var[x] = 'int'
-                    body.append('%s = %s(po, %s);' % (x, pname, ', '.join(ops)))
-                elif ret == 'virtual':
-                    declare(x, 'vinfo_t *')
-                    var[x] = 'virtual'
-                    body.append('%s = %s(%s);' % (x, pname, ', '.join(ops)))
-                elif ret == 'object':
-                    declare(x, 'vinfo_t *')
-                    var[x] = 'object'
-                    body.append('%s = %s(po, %s);' % (x, pname, ', '.join(ops)))
+            if len(w) == 4 and w[0] == 'Py_DECREF' and var.get(w[2]) in ('object', 'owned', 'int'):
+                # a value the case owns, released at the C's place
+                body.append('vinfo_decref(%s, po);' % w[2])
+                var[w[2]] = 'consumed'
+                continue
+            if len(w) == 4 and w[0] == 'Py_DECREF' and var.get(w[2]) == 'elem':
+                # an item of an input array: released with the array (the
+                # loops must release each item once)
+                arr, idx = elem_of[w[2]]
+                elem_rel.setdefault(arr, []).append((idx, list(loops)))
+                continue
+            if len(w) == 2 and w[0] in INT_DECLS:
+                declare(w[1], w[0] + ' ')
+                var[w[1]] = 'ctint'
+                ctint[w[1]] = None
+                continue
+            if w[:2] == ['PyObject', '*'] and len(w) == 3:
+                pending.add(w[2])
+                continue
+            if w[0] == 'for':
+                for_loop(stmt)
+                continue
+            if len(w) == 4 and w[0] == 'Py_INCREF':
+                x = w[2]
+                if var.get(x) == 'local':
+                    commit()
+                    body.append('vinfo_incref(%s);' % x)
+                    var[x] = 'owned'
+                elif var.get(x) == 'const':
+                    decls.append('vinfo_t *%s;' % x)
+                    body.append('%s = vinfo_new(CompileTime_New((long)%s));'
+                                % (x, const_of[x]))
+                    var[x] = 'owned'
                 else:
-                    # C's int (0: done) becomes Psyco's bool (true: done);
-                    # the name says which, ERROR_IF tests it as x_ok
-                    declare(x + '_ok', 'bool ')
-                    var[x] = 'bool'
-                    body.append('%s_ok = %s(po, %s);' % (x, pname, ', '.join(ops)))
-                for t in temps:
-                    body.append('vinfo_decref(%s, po);' % t)
-                temps.clear()
-                last_fail = len(body)
-                if first_commit is not None:
-                    raise Skip('call after an irreversible statement')
+                    raise Skip('Py_INCREF of %s (%s)' % (x, var.get(x)))
                 continue
-        raise Skip('statement %r' % s)
+            # X = Py_NewRef(Y)
+            if len(w) == 6 and w[1:4] == ['=', 'Py_NewRef', '('] and w[4] in var:
+                x, y = w[0], w[4]
+                declare(x, 'vinfo_t *')
+                commit()
+                body.append('vinfo_incref(%s);' % y)
+                body.append('%s = %s;' % (x, y))
+                var[x] = 'owned'
+                continue
+            if w == ['SETLOCAL', '(', 'oparg', ',', 'NULL', ')']:
+                # a deleted local is a known NULL (the same rule as GETLOCAL's)
+                commit()
+                t = 'tmp%d' % len(decls)
+                decls.append('vinfo_t *%s;' % t)
+                body.append('%s = %s;' % (t, CONSTANTS['NULL']))
+                body.append('SETLOCAL(oparg, %s);' % t)
+                continue
+            if w[0] in JUMPS and len(w) > 1 and w[1] == '(':
+                if stmts:
+                    raise Skip('code after a jump')
+                commit()
+                jump_all = s.replace(' ', '')
+                continue
+            if w[0] == 'if':
+                cond = call_args(stmt, 1)[0][0]
+                node = ct_node(cond)
+                if node is not None:
+                    if ct_if(stmt, node):
+                        if stmts:
+                            raise Skip('code after an error exit')
+                        return True
+                    continue
+                m = re.fullmatch(r'(_?Py[A-Z]\w*) (\( .* \)) (<|==|!=) (.+)', cond)
+                if m and m.group(1) in csigs:
+                    # the call in an error test is made first, into a
+                    # temporary the test then reads
+                    t = '_r%d' % len(decls)
+                    pre = ctokens.tokenize('int %s = %s %s ;' % (t, m.group(1), m.group(2)))[0]
+                    k = call_args(stmt, 1)[1]
+                    test = ctokens.tokenize('if ( %s %s %s )' % (t, m.group(3), m.group(4)))[0]
+                    stmts[:0] = [pre[:-1], test + stmt[k:]]
+                    continue
+                if error_block(stmt, cond):
+                    continue
+                if len(rests) > 1:
+                    raise Skip('a branch on %s inside a block' % cond)
+                jump = branch(stmt)
+                continue
+            if w[:4] == ['SETLOCAL', '(', 'oparg', ','] and len(w) == 6:
+                x = w[4]
+                if var.get(x) not in ('input', 'owned', 'object', 'virtual') or \
+                        in_kind.get(x, 'scalar') != 'scalar':
+                    raise Skip('SETLOCAL of %s' % x)
+                commit()
+                body.append('SETLOCAL(oparg, %s);' % x)
+                stolen.add(x)
+                continue
+            if len(w) > 2 and w[:2] == ['ERROR_IF', '(']:
+                args, _ = call_args(stmt, 1)
+                if len(args) != 2 or args[1] not in LABELS:
+                    raise Skip('ERROR_IF %s' % s)
+                if first_commit is not None:
+                    raise Skip('ERROR_IF after an irreversible statement'
+                               ' (restart rule)')
+                if args[0] == 'true':
+                    # an error exit on this path: the block's last statement
+                    if stmts:
+                        raise Skip('code after ERROR_IF(true)')
+                    live = [t for t, o in var.items()
+                            if o in ('object', 'owned', 'virtual', 'int')]
+                    if live:
+                        raise Skip('an error exit with %s owned' % ', '.join(live))
+                    body.append(error_code(args[1]))
+                    last_fail = len(body)
+                    return True
+                cond = error_condition(args[0], var)
+                if cond is None:
+                    continue        # a virtual object: it can't fail
+                for x in cond[1]:
+                    if var.get(x) == 'int':
+                        nonneg.add(x)   # the C's error values are the negative ones
+                live = [t for t, o in var.items()
+                        if o in ('object', 'owned', 'virtual', 'int') and t not in cond[1]]
+                if live:
+                    raise Skip('ERROR_IF with %s owned' % ', '.join(live))
+                body.append('if (%s)' % cond[0])
+                body.append('  ' + error_code(args[1]))
+                last_fail = len(body)
+                continue
+            # [type] X = RHS
+            ctype = ''
+            if (w[0] in INT_DECLS or w[0] == 'PyObject') and len(w) > 2:
+                ctype = w[0] if w[0] in INT_DECLS else 'PyObject *'
+                stmt, w = stmt[1:], w[1:]
+                if ctype == 'PyObject *':
+                    if w[0] != '*':
+                        raise Skip(s)
+                    stmt, w = stmt[1:], w[1:]
+            if len(w) >= 3 and w[1] == '=':
+                x = w[0]
+                rhs = ' '.join(w[2:])
+                node = ct_node(rhs)
+                if node is not None and (ctype in INT_DECLS or var.get(x) == 'ctint'):
+                    # a C int of the compiler
+                    if var.get(x) != 'ctint':
+                        declare(x, ctype + ' ')
+                        var[x] = 'ctint'
+                    ctint[x] = ct_value(node)
+                    body.append('%s = %s;' % (x, tidy(rhs)))
+                    continue
+                m = re.fullmatch(r'(\w+) \[ (.+) \]', rhs)
+                if m and in_kind.get(m.group(1)) == 'array' and ct_node(m.group(2)) is not None:
+                    # an item of an input array, borrowed from the stack
+                    declare(x, 'vinfo_t *')
+                    var[x] = 'elem'
+                    elem_of[x] = (m.group(1), cparse.parse_expr(
+                        ctokens.tokenize(m.group(2))[0], TYPE_NAMES, loops=True))
+                    body.append('%s = %s[%s];' % (x, m.group(1), tidy(m.group(2))))
+                    continue
+                if len(w) == 3 and var.get(w[2]) in ('object', 'owned') and not ctype:
+                    # the value moves to x (C's 'return_value = sum')
+                    declare(x, 'vinfo_t *')
+                    var[x], var[w[2]] = var[w[2]], 'consumed'
+                    body.append('%s = %s;' % (x, w[2]))
+                    continue
+                if rhs == 'GETLOCAL ( oparg )':
+                    declare(x, 'vinfo_t *')
+                    body.append('%s = GETLOCAL(oparg);' % x)
+                    var[x] = 'local'
+                    continue
+                m = re.fullmatch(r'(\w+) \[ (.+) \]', rhs)
+                if m and m.group(1) in (frame or {}) and ct_node(m.group(2)) is not None:
+                    # an item of the frame's locals-plus array (ceval's
+                    # freevars): a local of Ni's frame
+                    declare(x, 'vinfo_t *')
+                    off = frame[m.group(1)]
+                    body.append('%s = GETLOCAL(%s%s);' % (
+                        x, off + ' + ' if off else '', tidy(m.group(2))))
+                    var[x] = 'local'
+                    continue
+                m = re.fullmatch(r'GETITEM \( (.*) , oparg \)', rhs)
+                if m and m.group(1) in CODE_TUPLES:
+                    if x in var:
+                        raise Skip('%s assigned twice' % x)
+                    var[x] = 'const'
+                    const_of[x] = CODE_TUPLES[m.group(1)]   # borrowed
+                    continue
+                m = re.fullmatch(r'(Py[A-Z][a-z]+)_New \( (.+) \)', rhs)
+                fill = m and fill_loop(stmts, x, m.group(1), m.group(2), inputs)
+                if fill:
+                    # PATTERNS E: a new container filled from an input array is
+                    # Psyco's constructor taking the items
+                    pname, kind = constructor(m.group(1) + '_New', psigs)
+                    calls.append(m.group(1) + '_New')
+                    declare(x, 'vinfo_t *')
+                    var[x] = 'virtual' if kind == 'virtual' else 'object'
+                    body.append('%s = %s(%s%s, %s);' % (
+                        x, pname, '' if kind == 'virtual' else 'po, ',
+                        m.group(2), fill))
+                    released.add(fill)
+                    last_fail = len(body)
+                    if first_commit is not None:
+                        raise Skip('call after an irreversible statement')
+                    continue
+                if len(w) > 3 and re.fullmatch(r'_?Py[A-Z][A-Za-z]*_[A-Za-z]+', w[2]) and w[3] == '(':
+                    fn = w[2]
+                    args, end = call_args(stmt, 3)
+                    if end != len(stmt):
+                        raise Skip(s)
+                    try:
+                        pname, ret = counterpart(fn, csigs, psigs)
+                    except NoCounterpart:
+                        residual(x, fn, args)
+                        continue
+                    ops = [operand(a, p) for a, p in zip(args, psigs[pname][2])]
+                    calls.append(fn)
+                    if var.get(x) == 'ctint':
+                        # into a C int: 0 or the C's error value
+                        if ret != 'int':
+                            raise Skip('%s into the C int %s' % (fn, x))
+                        ctint[x] = None
+                        body.append('%s = %s(po, %s) ? 0 : -1;' % (x, pname, ', '.join(ops)))
+                    elif ret == 'intval':
+                        declare(x, 'vinfo_t *')
+                        var[x] = 'int'
+                        body.append('%s = %s(po, %s);' % (x, pname, ', '.join(ops)))
+                    elif ret == 'virtual':
+                        declare(x, 'vinfo_t *')
+                        var[x] = 'virtual'
+                        body.append('%s = %s(%s);' % (x, pname, ', '.join(ops)))
+                    elif ret == 'object':
+                        declare(x, 'vinfo_t *')
+                        var[x] = 'object'
+                        body.append('%s = %s(po, %s);' % (x, pname, ', '.join(ops)))
+                    else:
+                        # C's int (0: done) becomes Psyco's bool (true: done);
+                        # the name says which, ERROR_IF tests it as x_ok
+                        declare(x + '_ok', 'bool ')
+                        var[x] = 'bool'
+                        body.append('%s_ok = %s(po, %s);' % (x, pname, ', '.join(ops)))
+                    for t in temps:
+                        body.append('vinfo_decref(%s, po);' % t)
+                    temps.clear()
+                    last_fail = len(body)
+                    if first_commit is not None:
+                        raise Skip('call after an irreversible statement')
+                    continue
+            raise Skip('statement %r' % s)
+        return False
+
+    if run_block(split_statements(body_tokens(inst))):
+        raise Skip('every path fails')
+    # items of input arrays released in loops: each once, or the array
+    # isn't released
+    for arr, rels in elem_rel.items():
+        size = next(sz for n, k, sz in inputs if n == arr)
+        for o in SIM_OPARGS:
+            got = []
+            for idx, lps in rels:
+                env = dict(known_env)
+                env['oparg'] = o
+                try:
+                    got += loop_indices(lps, idx, env)
+                except _Unknown as e:
+                    raise Skip('the items of %s released: %s' % (arr, e))
+            if sorted(got) != list(range(size.value(o, consts))):
+                raise Skip('the items of %s are not each released once' % arr)
+        released.add(arr)
 
     # epilogue: inputs not moved to an output are released or stolen; with
     # a conditional jump this is the path that doesn't jump, and outputs
@@ -798,7 +1296,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
             raise Skip('input %s is neither released nor stored' % n)
     for n, origin in var.items():
         if n not in in_names and n not in out_names and n not in jout and \
-                origin not in ('bool', 'const', 'local', 'consumed'):
+                origin not in ('bool', 'const', 'local', 'consumed', 'ctint', 'elem'):
             # not a stack value: a result dropped, or interpreter state
             # (3.12's kwnames)
             raise Skip('%s is assigned but is not an output' % n)
@@ -820,6 +1318,13 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
                          % (n, size.text(), at))
         else:
             lines.append('  vinfo_t **%s = STACK_POINTER() - (%s);' % (n, at))
+    for n, v in ctint.items():
+        # a C int the generator folded wherever it is read: not emitted
+        own = re.compile(r'\s*%s = [^;]*;$' % n)
+        if v is not None and not any(re.search(r'\b%s\b' % n, b) and not own.match(b)
+                                     for b in body):
+            body = [b for b in body if not own.match(b)]
+            decls = [d for d in decls if not re.fullmatch(r'\w+ %s;' % n, d)]
     lines += ['  ' + d for d in decls]
     lines += ['  ' + b for b in body]
     if jump_line:
@@ -843,10 +1348,16 @@ def translate(inst, csigs, psigs, consts=None, effects=None):
     lines += ['  ' + x for x in late]
     for n, _, _ in outputs[keep:]:
         if n not in jout:
+            for t in restype:
+                # the policy's type of the output (rule restype)
+                lines.append('  Psyco_AssertType(po, %s, &%s);' % (n, t))
             lines.append('  PUSH(%s);' % n)
     if jump_all:
         lines.append('  %s;' % jump_all)
-    lines += ['  %s' % ('JUMPED();' if jump_all else 'goto fine;'), '}']
+    lines += ['  %s' % ('JUMPED();' if jump_all else 'goto fine;')]
+    if label_used:
+        lines += [' %s:' % label, '  break;']
+    lines += ['}']
     return '\n'.join(lines), calls
 
 
@@ -959,9 +1470,26 @@ def definitions(src):
     return ceval_reader.read(src)
 
 
+def frame_arrays(src):
+    """{name: offset} for the eval loop's pointers into the frame's
+    locals-plus array, from its assignments 'NAME = f->f_localsplus + E;'
+    in _PyEval_EvalFrameDefault: NAME[i] is Ni's GETLOCAL(E + i)."""
+    with open(os.path.join(src, 'Python', 'ceval.c')) as f:
+        toks = ctokens.tokenize(f.read(), 'ceval.c')[0]
+    fn = ctokens.functions(toks).get('_PyEval_EvalFrameDefault')
+    out = {}
+    if fn is None:
+        return out
+    text = ' '.join(t.text for t in fn[1])
+    for m in re.finditer(r'(?:^|(?<=[;{}] ))(\w+) = f -> f_localsplus (?:\+ ([^;]+) )?;', text):
+        out.setdefault(m.group(1), tidy(m.group(2)).replace(' -> ', '->') if m.group(2) else '')
+    return out
+
+
 def run(insts, src, effects=None):
     csigs, psigs = c_signatures(src), psyco_signatures()
     consts = ceval_reader.constants(src)
+    frame = frame_arrays(src)
     done, skipped = [], []
     for inst in insts:
         try:
@@ -975,7 +1503,7 @@ def run(insts, src, effects=None):
                          if w[k] == '&' and w[k + 1] in copies)
                 raise Skip('a copy of the stack pointer handed to %s'
                            % called_at(w, k), 'core')
-            code, _ = translate(inst, csigs, psigs, consts, effects)
+            code, _ = translate(inst, csigs, psigs, consts, effects, frame)
         except Skip as e:
             skipped.append((inst.name, e.kind, str(e)))
             continue

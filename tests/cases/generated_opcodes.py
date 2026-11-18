@@ -353,6 +353,40 @@ def truth_errors(k):
     return catch((err_not, err_if, err_if_not, err_and, err_or), objects([k])[0])
 
 
+class Unhashable:
+    __hash__ = None
+
+
+def build_errors(x):
+    # BUILD_SET, BUILD_MAP, BUILD_LIST_UNPACK and BUILD_SET_UNPACK (loops
+    # with an error exit): the error at the first, middle or last item
+    out = []
+    for f in (lambda: {x, 1, 2}, lambda: {1, x, 2}, lambda: {1, 2, x},
+              lambda: {x: 1, 2: 3}, lambda: {1: 2, x: 3}, lambda: {1: x, x: 1},
+              lambda: [*x, *(1,)], lambda: [*(1,), *x], lambda: [*x],
+              lambda: {*x, *(1,)}, lambda: {*(1,), *x}, lambda: {*x}):
+        try:
+            r = f()
+            out.append(sorted(r, key=repr) if isinstance(r, (set, dict)) else r)
+        except TypeError as e:
+            out.append(str(e))
+    return out
+
+
+def builders(a, b, c):
+    # the same opcodes without errors, at several opargs; the results' types
+    # (asserted by Ni after the call)
+    s = {a, b, c, a}
+    d = {a: b, b: c, c: a}
+    lst = [*(a,), *[b, c], *{a: 0}]
+    st = {*(a, b), *[c], *{a: 0}, *()}
+    one = {*[a]}
+    return (sorted(s, key=repr), sorted(d.items(), key=repr), lst,
+            sorted(st, key=repr), sorted(one, key=repr), [*()], {**{}},
+            type(s).__name__, type(d).__name__, type(lst).__name__,
+            type(st).__name__, len(s) + len(d) + len(lst) + len(st))
+
+
 CASES = [
     ('arith', [(7, 3), (-12, 5), (2 ** 40, 7)], {}),
     ('arith_float', [(7.5, 2.0), (-1.25, 0.5)], {}),
@@ -375,4 +409,6 @@ CASES = [
     ('deletes', [(1,), (2.5,)], {}),
     ('err_delete', [(True,), (False,)], {}),
     ('set_adds', [([0, 1, 2, 3],), ([1, 0],)], {}),
+    ('build_errors', "[([],), (Unhashable(),), (5,), ('ab',), ((1, [2]),)]", {}),
+    ('builders', [(1, 2, 3), ('x', 'y', 'x'), (1, 1.0, True)], {}),
 ]
