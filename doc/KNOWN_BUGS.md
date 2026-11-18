@@ -21,7 +21,6 @@ Open bugs only. IDs: **M** memory access (`ni/x64/v_mem_mov.h`, field functions 
 - **F100** (live): `sys._getframe(-1)` raises ValueError where CPython returns the top frame: `frames.c:visit_nth_frame` stops only when its counter reaches exactly 0. [read]
 - **F103** (live): a negative index on a tuple or list subclass defining `__len__` calls it: `pabstract.c:psyco_generic_subscript` and `psyco_generic_ass_subscript` go through `PsycoSequence_GetItem`/`SetItem` (`sq_length`), where 3.7 adds `Py_SIZE`. [read]
 - **F105** (out of memory only): `pycompiler.c:PsycoTraceBack_Here` calls `cimpl_vt_traceback` as `CfCommonNewRefPyObjectNoError`, but when `PyFrame_New` or `PyTraceBack_Here` fails it returns `Py_None` with a MemoryError still set. [read]
-- **F114** (3.8 only, not built): the 12 generated 3.8.20 math metas (`pmathmodule_gen.h`) don't test `PsycoFloat_AsDouble`'s result for NULL; on 3.7.17 the same C gives the test. Cause not found; [inferred] something the scalar rules (D87) consult differs on 3.8. [run]
 
 ### Backend
 - **B10** (environment): executable memory is mapped RWX (no W^X); hardened kernels may refuse it. [read]
@@ -42,10 +41,6 @@ Open bugs only. IDs: **M** memory access (`ni/x64/v_mem_mov.h`, field functions 
 
 ### Generator
 From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent: no generated header shows them today. The redesign removes them by construction; until then, a change that reaches one must fix it.
-- **G1** (live risk): `effects.py` doesn't see calls through function pointers (a global hook, a typedef'd local such as `binaryfunc slot`, `(f)()`), so such a caller can be marked `CfPure` or `CfNoPython`. [run]
-- **G2** (live risk): `effects.py` drops the effects of a macro that renames a function (`#define PyObject_Length PyObject_Size`); `effect_flags` would give it `CfPure`. [run]
-- **G3** (live risk): `CfPure` ignores reads of mutable memory (`list_length`, `PyList_Size`, `PyDict_Size`), and Ni folds a pure call with compile-time arguments, so `len()` of a promoted list could fold. [inferred]
-- **G4**: `effects.py` reads every `#if` branch and keeps the first definition by file order (`PyThread_acquire_lock` resolves to `thread_nt.h`). [run]
 - **G5**: `ceval_reader.cvalue` evaluates C with Python's semantics: `oparg && 4` gives 4, `!oparg + 1` gives 0 at `oparg = 0`, `1 < oparg < 3` chains. It feeds stack-effect sizes. [run]
 - **G6** (latent): a resume inside a meta loop loses the remaining iterations; only `Walk.statement` checks `loop_ctx`, not `slot`, `subtype`, `known_type`, `load_word`, `short_circuit`, `construct` or `choice`. [read]
 - **G7** (latent): `Walk.expr_stmt` never emits a discarded `okv` (bool-returning call) result, and leaks an owned `rt` temporary with no convention; `compare` never releases owned operands. [read]

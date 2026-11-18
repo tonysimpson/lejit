@@ -15,4 +15,4 @@ Waiting on the owner:
 
 Done: the docs were cut from 1.25 MB towards 150–200K as agreed (2026-11-18); docs hold current truth only, and history and measurements are in commit messages.
 
-Open bugs from the last run: F114 (3.8 only: generated math misses a NULL check, cause unknown). `test_queue` under `--all` fails on timing now and then, with and without Ni.
+Open bugs from the last run: `test_queue` under `--all` fails on timing now and then, with and without Ni.

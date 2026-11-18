@@ -4,7 +4,7 @@ What is still open, one line each, with where the detail is. Done items leave th
 
 ## Generation (this phase)
 - Steps 5 and 8 of GENERATION.md: what is left is reasoned in `tools/metac/hand_table.py` and the METACOMPILER.md failures log; QUESTIONS 50 asks whether policy-only reasons count.
-- 3.8: build it, which needs QUESTIONS 48 (block stack) and benefits most from QUESTIONS 49 (`_PyArg_CheckPositional`); F114 (PORT38.md).
+- 3.8: build it, which needs QUESTIONS 48 (block stack) and benefits most from QUESTIONS 49 (`_PyArg_CheckPositional`) (PORT38.md).
 - Generate the eval-breaker handler from `ceval.c` instead of copying it (D77 (6)).
 - Mechanism snippets for 3.11+ (D75): the stubs in `ni/mechanisms/*` that `#error` "not written yet".
 

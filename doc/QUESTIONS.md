@@ -17,7 +17,7 @@ Unknowns still open. When one is answered, record the answer where it belongs (u
 40. **Virtual characters for str?** `s[i] == 'c'` is still a `cimpl_unicode_eq` call (D37); Py2 kept a one-char string as a word. Worth it only with a string-heavy benchmark; the same for run-time `in` with a one-character needle.
 41. Answered by D60 (load guards repaired at run time).
 42. Answered by D44 (respawned branches rejoin).
-47. **Compute D53's cannot-block list?** `effects.py` finds 82 residual call sites that can't release the GIL but still get an `eval_breaker` test. Measure what those tests cost first.
+47. **Compute D53's cannot-block list?** 82 of Ni's hand-written residual call sites can't release the GIL but still get an `eval_breaker` test [run]. Measure what those tests cost first.
 49. **How does the policy table name a definition some sources lack?** `policy.py` fails a key not in the source and D67 allows no version, so 3.8-only functions (`_PyErr_SetObject`, `PyVectorcall_Call`, `_PyArg_CheckPositional`, the largest 3.8 unlock) have no entry. Candidate: `None` in a shape tuple meaning "absent here". PORT38.md.
 50. **Does a non-core reason satisfy GOAL's done test, point 1?** `donecheck.py` (D90) passes, but 108 definitions are reasoned only by policy items the translator doesn't implement, plus limits and refusals. Are those work left for this phase, should each name the item that stops it, and does point 1 count definitions or lines?
 51. Answered by D92 (glibc malloc's state, not the code).

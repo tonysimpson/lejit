@@ -12,9 +12,9 @@ GOAL.md says 3.8 is the first test that versions differ only in the input (D67).
 | Opcode helper copies | 11 | 6 | the 6 the same; the 5 lost are the lost opcodes' copies |
 | Abstract | 52 | 52 | real 3.8 C translated (`PyMapping_Size`, `PySequence_Get/Set/DelItem` refuse the other protocol, a resume each); 1 call loses effect flags |
 | Containers | 15 | 15 | 13 residual calls lose `CfNoPython \| CfNoBlock`; `member_get` gains `READ_RESTRICTED` and resumes at `PySys_Audit` |
-| Numbers (long, float slots) | 12 + 11 | 12 + 11 | real changes translated (`long_float`, `PyFloat_AsDouble` takes `nb_index`); 16 calls lose effect flags; `long_invmod` skipped |
+| Numbers (long, float slots) | 12 + 11 | 12 + 11 | real changes translated (`long_float`, `PyFloat_AsDouble` takes `nb_index`); 16 calls lose effect flags (3.8's `PyErr_NoMemory` and others reach `_PyErr_SetObject`, which the `PyErr_SetObject` seed doesn't cover, and its decref [run]); `long_invmod` skipped |
 | Builtins | 20 | 11 | 7 clinic wrappers resume at once (`_PyArg_CheckPositional`), so 6 `_impl`s aren't reached; `id` refused (`&&`); `pow`, `pow_impl` skipped (keywords) |
-| Math | 12 | 12 | the metas no longer test `PsycoFloat_AsDouble`'s result for NULL (F114, open) |
+| Math | 12 | 12 | same |
 | Call binding | 1 | 1 | `co_posonlyargcount` read from the C; `*args` is the real call (`_PyTuple_FromArray`) |
 | Virtuals | 3 + 3 | 3 + 3 | same but 3 constructor calls lose effect flags |
 | Mechanisms | 10 snippets | 8 snippets, 2 stubs | `ceval_loop_top_signals` and `store_gc: gc_next` are `#error` stubs (needs 6, 7) |
@@ -56,7 +56,7 @@ Most first; "blocks" counts definitions lost from the generated headers, or degr
 | 10 | **Dicts' shared empty keys:** check the inline store, keys guards and `PsycoDict_*` against 3.8's empty dicts [inferred risk]. | core |
 | 11 | **Re-read the hand metas whose C changed:** `PsycoObject_Call` and the call path (vectorcall), `pfloat_richcompare` (F104), list item and subscript, `PyDict_New`/`SetItem`. | translated |
 | 12 | **3.8 build and tests:** an interpreter to build against, `cpython_tests.py`'s 3.8 module lists, `check.sh` for a second version, tests that depend on 3.7 bytecode. | tooling |
-| 14 | **The refusal causes above:** 1, 2, 4, 5, 6, and F114. | generator, rules |
+| 14 | **The refusal causes above:** 1, 2, 4, 5, 6. | generator, rules |
 
 (3, macros as in force where used, and 13, `--past-policy`, are done.) Not needed [inferred]: another entry mechanism (the PEP 523 hook still sees every call), anything for positional-only parameters, new layouts.
 

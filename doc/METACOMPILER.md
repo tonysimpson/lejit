@@ -99,13 +99,16 @@ The generator's judgement is data: `tools/metac/policy_table.py`, checked by `to
 
 ## Effect rules (D71)
 
-`tools/metac/effects.py --src SRC [-v] [--why NAME…]`; the build calls `effects.analyse` for the flags of generated residual calls. A call graph over the source's `Include`, `Objects`, `Python`, `Modules` and `Parser` (functions and macros) and Ni's own helpers gives each node:
-- **python** (may run Python, so no `CfNoPython`): a call through a function pointer, or a decref of anything but a singleton or a local declared with a `NO_DEL_TYPES` struct, or such a callee.
-- **blocks** (may release the GIL, so no `CfNoBlock`): `Py_BEGIN_ALLOW_THREADS`, `PyEval_SaveThread`.
-- **pure** (`CfPure`): no write through a pointer or to a file-scope variable (refcounts aside), no read of a mutable file-scope variable (type objects and `PyExc_*` are constant), no python, callees pure. An allocator is impure; `allocs` records who reaches one (`allocator_pure`).
-- **raises**: a call through a pointer, `PyErr_SetObject`/`PyErr_Format(V)`, or an assumption. A decref doesn't raise.
+`tools/metac/effects.py --python PY NAME…` prints why each flag holds or not; the build calls `effects.analyse` for the flags of generated residual calls. It reads every file Makefile.pre.in links into libpython, Setup's built-in modules and every mirrored file through the front end (`front.py`), so only the compiled `#if` arms count and macros are expanded. Each function gets five flags [read]:
+- **pure:** its result depends only on its arguments' values; any read through a pointer or of a non-`const` file-scope or `static` variable breaks it.
+- **readonly:** it writes nothing but its own locals (refcounts aside).
+- **no_python**, **no_block** (doesn't release the GIL), **no_raise**.
 
-The walk stops at `SEEDS` (decref, gc, blocks, sets_error, alloc, fatal) and `ASSUMPTIONS`, what Ni accepts without proof: `PyErr_SetString`, `PyDict_GetItem` and `_PyDict_GetItem_KnownHash` (F34), `PyErr_Restore`, `function_call` (D53), `PyNumber_Index`. A header macro shadows a function of the same name. The analysis is path-insensitive and knows a local's type only from its declaration; its accepted limits are the failures log's "effects:" rows.
+A call through anything but a function's name, a callee declared in CPython's headers but defined in no file read, and GNU `asm` break every flag; a function named without a call is a callee. A function declared only by a system header is libc's: no Python, no blocking, pure only if `EXTERNAL` says so, and then it still reads (and, unless the pointer is to `const`, writes) what a pointer argument points to. A decref (vocabulary, so its argument keeps its type) breaks all but no_raise, unless the argument is a singleton or a local declared with a `NO_DEL_TYPES` struct (typedefs followed).
+
+The walk stops at `SEEDS` (decref, gc, blocks, sets_error, alloc, fatal) and holds the flags `ASSUMPTIONS` names: `PyErr_SetString`, `PyDict_GetItem` and `_PyDict_GetItem_KnownHash` (F34), `PyErr_Restore`, `function_call` (D53), `PyNumber_Index`. A file that isn't mirrored and doesn't preprocess for the target is left out, so its functions are the worst case.
+
+Onto Ni's flags (`Effects.cf_flags`): `CfPure` needs pure, readonly, no_python and no_raise (Ni calls it at compile time when every argument is known); otherwise `CfNoPython` from no_python; `CfNoBlock` from no_block. `cannot_raise` is no_python and no_raise. The analysis is path-insensitive and knows a local's type only from its declaration. Snippet tests: `tests/effect_snippets.py`.
 
 ## Mechanisms (D75)
 
@@ -239,8 +242,6 @@ What the generator can't do: the CPython construct and what was done. `tools/met
 | `ceval.c:BUILD_CONST_KEY_MAP` | Where Ni doesn't know `keys`, the loop reads items of a tuple Ni has not loaded (only `PsycoTuple_Load` gives items). | Hand-written, `limit`. |
 | `ceval.c:CALL_FUNCTION_EX` | `PyDict_New` failing leaks `kwargs`: CPython 3.7.17's own bug. | Refused; calls are core. |
 | `ceval.c:BEFORE_ASYNC_WITH` | An error exit with a pushed value. | Refused (core). |
-| effects: `float_richcompare`, the pointer `fn` in `pfloatobject.c:pfloat_richcompare` | A decref of an int temporary declared `PyObject *`; `_PyLong_One` read as mutable; a function pointer chosen in a switch. | Accepted (F104 is the real error). |
-| effects: `cimpl_unicode_eq`, `PyErr_ExceptionMatches`, `PyErr_GivenExceptionMatches`, `cimpl_generator_stop`, `PyFunction_NewWithQualName`, `cimpl_push_exc_info`, `cimpl_rt_traceback`; 13 call sites | Paths that can't be taken (path-insensitive); a failure replacing the exception, as `ceval.c` does; flags built at run time. | Accepted; the 13 unproven. |
 | `abstract.c:PyObject_Length`, `PyObject_LengthHint`, `PySequence_Check`, `_PyObject_HasLen`; `dictobject.c:PyDict_Contains` | An `int` result's convention is in no test the C makes. | Not generated; needs a Ni declaration. |
 | `abstract.c:PySequence_Fast` | Its error is replaced after a failed call. | Not generated; no caller. |
 | `abstract.c:PyIter_Next` | `PsycoIter_Next` is FOR_ITER's call and leaves StopIteration set. | `('other', 'not_translation')`. |
