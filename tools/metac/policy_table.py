@@ -11,8 +11,9 @@ the generators of GENERATION steps 4 to 8 will.
 
 What is a general rule is in RULES, not repeated per function: the D54 slot
 guard, the restart rule, error branches unlikely, effects, forgetting,
-megamorphic sites, the eval-breaker test. INVENTORY's DRIFT items are not
-here: they are differences a generated function loses.
+megamorphic sites, the eval-breaker test. The DRIFT items of the
+hand-written inventory (git show e404100:doc/INVENTORY.md) are not here:
+they are differences a generated function loses.
 """
 
 # ---- general rules ----------------------------------------------------------
@@ -793,7 +794,8 @@ ASSUMPTIONS = {
 }
 
 # ---- entries: one per CPython definition a hand translation mirrors ---------
-# From doc/INVENTORY.md's translated and mixed rows (dead code left out).
+# From the translated and mixed rows of doc/INVENTORY.md at e404100 (dead
+# code left out).
 
 ENTRIES = {
     'Objects/frameobject.c:PyFrame_BlockSetup': {'shape': '2808be75881d', 'ni': ['ni/Python/pycompiler.c:block_setup']},
