@@ -120,12 +120,8 @@ static bool fncall_bind(struct fncall_arg_s *fncall, PsycoObject *po,
   a->items[INDEX_LOC_GLOBALS] = vglobals;
   vinfo_incref(vbuiltins);
   a->items[INDEX_LOC_BUILTINS] = vbuiltins;
-  /* no keyword arguments: a call with them is the real one
-     (pfunction_call); and without kwdefs a keyword-only parameter is
-     left to the real call too, which has them */
   if (_PsycoEval_EvalCodeWithName(po, (PyObject *)co, locals, argarray, argcount,
-                              NULL, NULL, 0, 1, defarray, defcount, NULL,
-                              frees) < 0) {
+                              defarray, defcount, frees) < 0) {
     array_delete(a, po);
     return false;
   }

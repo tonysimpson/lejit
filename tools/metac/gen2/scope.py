@@ -69,3 +69,11 @@ NI_HEADERS = ['ni/Objects/pabstract.h', 'ni/Objects/pobject.h', 'ni/Objects/pflo
               'ni/Objects/pdictobject.h', 'ni/Objects/pboolobject.h',
               'ni/Objects/pstructmember.h', 'ni/Objects/pmethodobject.h',
               'ni/Python/pbltinmodule.h']
+
+# The argument binding (binding.py): the C function making and running a
+# frame whose binding of the arguments, between the two, is generated;
+# Ni declares the binder (conventions.psyco_name of the function) in
+# `decls`, and the header is included by `includer`.
+Binding = collections.namedtuple('Binding', 'cfile function decls includer header')
+BINDING = Binding('Python/ceval.c', '_PyEval_EvalCodeWithName', 'ni/psyfunc.h', 'psyfunc.c',
+                  'psyfunc_gen.h')

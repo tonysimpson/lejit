@@ -69,7 +69,7 @@ GENERATORS = [('gen2.abstract:build_long', 'plongobject_gen.h'),
               ('gen_abstract:build_object', 'pobject_gen.h'),
               ('gen2.abstract:build_bltin', 'pbltinmodule_gen.h'),
               ('gen2.abstract:build_math', 'pmathmodule_gen.h'),
-              ('gen_call', 'psyfunc_gen.h'),
+              ('gen2.binding', 'psyfunc_gen.h'),
               ('gen2.abstract:build_float', 'pfloatslots_gen.h')]
 # (a 'module:function' entry calls that function instead of build)
 # and mechanisms.py writes mechanisms.HEADERS: the snippet for each of Ni's

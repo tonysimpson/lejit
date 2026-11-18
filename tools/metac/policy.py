@@ -122,9 +122,6 @@ VOCABULARY = {
         'trace_fallback': 'while tracing, the real call',
         'mutable_fields': 'every field read is mutable',
         'not_translation': "Ni's function of this name does another job (not generated)",
-        'frame_binding': 'the argument binding, between making the frame and'
-                         ' running it, is generated as a binder the compiler'
-                         ' runs (gen_call.py)',
     },
 }
 

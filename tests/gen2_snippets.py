@@ -888,6 +888,163 @@ def fold_may_fail():
     return not missing, 'missing (in order) %s' % missing
 
 
+class Bind:
+    """An argument binding (gen2/binding.py): BODY between a frame made
+    and run, read after Python/ceval.c (its GETLOCAL and SETLOCAL); Ni's
+    binder takes the code, the frame's locals, the arguments and their
+    count, and a closure tuple's items; `absent` gives the C parameters it
+    leaves out their values (by default no keywords)."""
+    ABSENT = {'kwnames': 'NULL', 'kwcount': '0'}
+    NI = [('PsycoObject *', 'po'), ('PyObject *', '_co'), ('vinfo_t **', 'f_localsplus'),
+          ('vinfo_t **', 'args'), ('Py_ssize_t', 'argcount'), ('vinfo_t **', 'closure')]
+
+    def __init__(self, name, c, want=(), absent=(), refused=None, kw=None):
+        self.name, self.c = name, c
+        self.want, self.absent, self.refused = want, absent, refused
+        self.kw = dict(self.ABSENT, **(kw or {}))
+
+    def text(self, k):
+        return '''
+PyObject *snip_bind%d(PyObject *_co, PyObject *globals, PyObject *const *args,
+                     Py_ssize_t argcount, PyObject *const *kwnames, Py_ssize_t kwcount,
+                     PyObject *closure) {
+    PyCodeObject *co = (PyCodeObject *)_co;
+    PyFrameObject *f;
+    PyObject **fastlocals;
+    PyObject *x, *y;
+    Py_ssize_t i;
+    f = _PyFrame_New_NoTrack(PyThreadState_GET(), co, globals, NULL);
+    if (f == NULL) return NULL;
+    fastlocals = f->f_localsplus;
+%s
+    return PyEval_EvalFrameEx(f, 0);
+fail:
+    Py_DECREF(f);
+    return NULL;
+}
+''' % (k, self.c)
+
+
+SETARG = 'x = args[%d]; Py_INCREF(x); SETLOCAL(%d, x);'
+BINDS = [
+    Bind("the frame's locals are Ni's array, its arguments' items vinfos, C on counts the"
+         " binder's", 'for (i = 0; i < argcount; i++) { x = args[i]; Py_INCREF(x); SETLOCAL(i, x); }',
+         want=['fastlocals = f_localsplus;', 'for ((i = 0); (i < argcount); i++) {',
+               'x = args[i];', 'vinfo_incref(x);', 'tmp = fastlocals[i];', 'fastlocals[i] = x;',
+               'vinfo_xdecref(tmp, po);', 'return 0;']),
+    Bind('whether a slot holds a value is known when Ni compiles',
+         'if (GETLOCAL(0) == NULL) { %s }' % SETARG % (0, 0),
+         want=['if ((fastlocals[0] == NULL)) {', 'fastlocals[0] = x;']),
+    Bind('restart: a call with no form is the real call, and nothing after it runs',
+         'if (co->co_flags & CO_VARKEYWORDS) { y = PyDict_New(); if (y == NULL) goto fail;'
+         ' SETLOCAL(0, y); }',
+         want=['return -1; /* PyDict_New: the real call */'], absent=['y = ', 'fastlocals[0] = y']),
+    Bind('restart (G8): an error being set is the real call; nothing after it runs',
+         'if (argcount > 2) { PyErr_SetString(PyExc_TypeError, "no"); goto fail; }\n'
+         + SETARG % (0, 0),
+         want=['if ((argcount > 2)) {', 'return -1; /* PyErr_SetString: the real call */', '}',
+               'x = args[0];'], absent=['goto fail']),
+    Bind('restart: a goto out of the slice is the real call',
+         'if (argcount > 2) goto fail;',
+         want=['return -1; /* goto fail: the real call */']),
+    Bind("absent: a parameter Ni leaves out has its value; a loop it bounds to 0 isn't made",
+         'kwcount *= 2;\nfor (i = 0; i < kwcount; i++) { x = kwnames[i]; Py_INCREF(x);'
+         ' SETLOCAL(i, x); }',
+         want=['i = 0;', 'return 0;'], absent=['kwnames', 'kwcount', 'for (']),
+    Bind("absent: where it runs, a read of what Ni doesn't pass is refused",
+         'for (i = 0; i < kwcount; i++) { x = kwnames[i]; Py_INCREF(x); SETLOCAL(i, x); }',
+         kw={'kwcount': '1'}, refused="reads an item of kwnames, which Ni's"),
+    Bind("absent: a parameter Ni neither passes nor gives a value is refused where read",
+         'if (globals == NULL) goto fail;', refused="reads globals, which Ni's"),
+    Bind("G5: constants fold with C's semantics (logic gives 0 or 1, comparisons don't"
+         " chain, division truncates)",
+         'if (kwcount + 1 && 4 == 1) goto fail;\n'
+         'if (!kwcount + 1 == 2) { %s }\n'
+         'if ((kwcount - 7) / 2 == -3) { %s }\n'
+         'if (1 < kwcount < 3) goto fail;' % (SETARG % (0, 0), SETARG % (1, 1)),
+         want=['fastlocals[0] = x;', 'fastlocals[1] = x;',
+               'return -1; /* goto fail: the real call */'],
+         absent=['kwcount', 'if (']),
+    Bind("virtual: a tuple of a meta size is Ni's, behind its limit, never NULL; its items"
+         " stored", 'x = PyTuple_New(argcount); if (x == NULL) goto fail; SETLOCAL(0, x);\n'
+         'for (i = 0; i < argcount; i++) { y = args[i]; Py_INCREF(y);'
+         ' PyTuple_SET_ITEM(x, i, y); }',
+         want=['_t1 = argcount;', 'if (_t1 < 0 || _t1 > 15)',
+               'return -1; /* a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT items',
+               'x = PsycoTuple_New(_t1, NULL);', 'fastlocals[0] = x;',
+               'PsycoTuple_GET_ITEM(x, i) = y;'], absent=['x == NULL']),
+    Bind('G14: a store into a virtual under a condition stays under it',
+         'x = PyTuple_New(2); SETLOCAL(0, x);\n'
+         'if (argcount > 0) { y = args[0]; Py_INCREF(y); PyTuple_SET_ITEM(x, 0, y); }',
+         want=['x = PsycoTuple_New(2, NULL);', 'fastlocals[0] = x;', 'if ((argcount > 0)) {',
+               'PsycoTuple_GET_ITEM(x, 0) = y;', '}', 'return 0;'], absent=['_t1']),
+    Bind('a tuple the C reads through its items is the array of its items',
+         'for (i = 0; i < 2; i++) { x = PyTuple_GET_ITEM(closure, i); Py_INCREF(x);'
+         ' SETLOCAL(i, x); }', want=['x = closure[i];', 'vinfo_incref(x);']),
+    Bind('ownership (G7): a restart while a reference is held is refused',
+         'x = args[0]; Py_INCREF(x); if (PyObject_IsTrue(x)) goto fail; SETLOCAL(0, x);',
+         refused='a restart (PyObject_IsTrue) while x holds a reference'),
+    Bind('ownership: a store of a local holding no reference is refused',
+         'x = args[0]; SETLOCAL(0, x);', refused='stores x, which holds no reference'),
+    Bind('ownership: paths meeting with different references are refused',
+         'x = args[0]; if (argcount > 1) Py_INCREF(x); SETLOCAL(0, x);',
+         refused='holding different references'),
+    Bind('ownership: the end of the binding while a reference is held is refused',
+         'x = args[0]; Py_INCREF(x);', refused='the end of the binding while x holds'),
+    Bind('a local nothing reads is dropped with its assignments',
+         'PyObject *kwdict;\nif (co->co_flags & CO_VARKEYWORDS) goto fail; else kwdict = NULL;',
+         want=['return -1; /* goto fail', 'return 0;'], absent=['kwdict', 'else']),
+    Bind('a return inside the binding is refused', 'if (argcount > 3) return NULL;',
+         refused='a return inside the binding'),
+    Bind('a goto inside the slice goes to its label, the paths merged there',
+         'if (argcount == 0) goto done;\n%s\ndone: ;' % SETARG % (0, 0),
+         want=['if ((argcount == 0)) {', 'goto done;', 'fastlocals[0] = x;', 'done:;',
+               'return 0;']),
+]
+
+
+def bindings(cases):
+    """The Bind cases: (failures, how many)."""
+    from gen2 import binding
+    from gen2.ctyping import Unit
+    t = front.target(PY37)
+    ast = front.parse(t, 'Python/ceval.c', ''.join(c.text(k) for k, c in enumerate(cases)))
+    unit = Unit(ast)
+    fails = 0
+    for k, c in enumerate(cases):
+        decl = conventions.NiDecl('_PsycoSnip_Bind%d' % k, 'int', c.NI)
+        try:
+            meta, why = binding.Binder(unit, unit.defs['snip_bind%d' % k], decl, c.kw).run(), None
+        except binding.Refuse as e:
+            meta, why = None, str(e)
+        problem = None
+        if c.refused is not None:
+            if why is None or c.refused not in why:
+                problem = 'want refused %r, got %s' % (c.refused, why or 'a binder')
+        elif meta is None:
+            problem = 'refused: %s' % why
+        else:
+            at = 0
+            for w in c.want:
+                j = meta.find(w, at)
+                if j < 0:
+                    problem = 'missing (in order) %r' % w
+                    break
+                at = j + len(w)
+            body = meta.split('{', 1)[1]
+            for a in c.absent:
+                if a in body:
+                    problem = 'has %r' % a
+        if problem:
+            fails += 1
+            print('FAIL binding: %s: %s' % (c.name, problem))
+            if meta:
+                print(meta)
+        else:
+            print('ok   binding: %s' % c.name)
+    return fails
+
+
 FILES = {'abstract': ('Objects/abstract.c', ()), 'bltin': ('Objects/abstract.c', ()),
          'long': ('Objects/longobject.c', ('word', 'double')),
          'float': ('Objects/floatobject.c', ('double',)),
@@ -976,8 +1133,11 @@ def run(cases):
 
 def main(argv):
     cases = [c for c in CASES if not argv or any(a in c.name for a in argv)]
-    fails = run(cases)
-    print('%d of %d snippets pass' % (len(cases) + 3 - fails, len(cases) + 3))
+    binds = [c for c in BINDS if not argv or any(a in 'binding: ' + c.name for a in argv)]
+    fails = run(cases) if cases or not binds else 0
+    fails += bindings(binds) if binds else 0
+    n = (len(cases) + 3 if cases or not binds else 0) + len(binds)
+    print('%d of %d snippets pass' % (n - fails, n))
     return 1 if fails else 0
 
 

@@ -28,21 +28,20 @@ EXTERNFN vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
                                      vinfo_t *acc);
 
 /* The argument binding of ceval.c:_PyEval_EvalCodeWithName, generated
-   into psyfunc_gen.h (tools/metac/gen_call.py): run while compiling a
-   call, it binds the values in 'args', 'kwargs' (named by 'kwnames'),
-   'defs' and 'closure' into the frame's locals, 'f_localsplus' (all NULL
-   on entry), taking a reference for each. -1 where CPython's binding needs
-   what the compiler can't do (a wrong count, **kwargs, cells): the caller
-   releases the locals and makes the real call. The vinfo_t ** parameters
-   are the values bound; the others are the compiler's own. */
+   into psyfunc_gen.h (tools/metac/gen2/binding.py): run while compiling a
+   call, it binds the values in 'args', 'defs' and 'closure' into the
+   frame's locals, 'f_localsplus' (all NULL on entry), taking a reference
+   for each. -1 where CPython's binding needs what the compiler can't do
+   (a wrong count, **kwargs, cells): the caller releases the locals and
+   makes the real call. The vinfo_t ** parameters are the values bound;
+   the others are the compiler's own. The C function's keyword parameters
+   are left out: a call with keywords is the real one (pfunction_call),
+   and a keyword-only parameter with no argument is left to the real call,
+   which has the defaults (gen2/conventions.py BINDING). */
 EXTERNFN int _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
                                      vinfo_t **f_localsplus, vinfo_t **args,
-                                     Py_ssize_t argcount,
-                                     PyObject **kwnames,
-                                     vinfo_t **kwargs, Py_ssize_t kwcount,
-                                     int kwstep, vinfo_t **defs,
-                                     Py_ssize_t defcount, PyObject *kwdefs,
-                                     vinfo_t **closure);
+                                     Py_ssize_t argcount, vinfo_t **defs,
+                                     Py_ssize_t defcount, vinfo_t **closure);
 
 /* for pycompiler.c */
 EXTERNFN vinfo_t *psyco_save_inline_po(PsycoObject *po);

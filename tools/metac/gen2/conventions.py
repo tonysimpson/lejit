@@ -125,6 +125,15 @@ ARGUMENT_CHECKS = {
                                'max': (3, 'max'), 'outputs': None},
 }
 
+# The binder's C parameters that Ni's declaration of it (scope.BINDING)
+# leaves out, with the value Ni's one call (psyfunc.c:fncall_bind) would
+# pass: no keyword arguments (pfunction_call makes a call with them the
+# real one) and no keyword-only defaults (left to the real call, which has
+# them).
+BINDING = {'kwnames': 'NULL', 'kwargs': 'NULL', 'kwcount': '0', 'kwstep': '1',
+           'kwdefs': 'NULL'}
+
+
 def shortcut(name, kind):
     """The notes of policy_table's ('shortcut', kind, note) items on the
     CPython function `name`, whatever file defines it."""

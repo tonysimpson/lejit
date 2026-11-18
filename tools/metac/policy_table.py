@@ -1545,10 +1545,9 @@ ENTRIES = {
         ]},
     'Python/ceval.c:_PyEval_EvalCodeWithName': {
         'shape': 'bd852b791f75',
-        'ni': ['ni/psyfunc.c:fncall_bind', 'tools/metac/gen_call.py:generate'],
+        'ni': ['ni/psyfunc.c:fncall_bind', 'tools/metac/gen2/binding.py:generate'],
         'policy': [
             ('virtual', 'args_tuple', '*args'),
-            ('other', 'frame_binding', 'the binding between the frame made and run'),
         ]},
     'Include/ceval.h:Py_LeaveRecursiveCall': {'shape': '96958779c1fd', 'ni': ['ni/mechanisms/recursion/depth_up.h:cimpl_leave_overflowed', 'ni/mechanisms/recursion/depth_up.h:leave_recursive_call', 'ni/mechanisms/recursion/depth_up.h:ni_recursion_leave']},
     'Include/pystate.h:PyThreadState_GET': {'shape': '95c63709fb9d', 'ni': ['ni/mechanisms/tstate/runtime_address.h:ni_tstate_load']},
