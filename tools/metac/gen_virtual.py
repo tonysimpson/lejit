@@ -113,14 +113,18 @@ def headers():
     return [FIELDS_HEADER] + [t.header() for t in virtual_types()]
 
 
-def stores_through_call(source, f, param, field, effects, depth=0):
+def stores_through_call(source, f, param, field, effects, depth=0, outer=None):
     """Whether f, with the file's and the headers' macros expanded, stores
     its parameter 'param' in 'field' ('-> field ... = param'), itself or in
     a function it passes it to (found by effects.py's call graph, read the
     same way): PyTuple_New's size reaches ob_size through
-    PyObject_GC_NewVar's PyObject_INIT_VAR."""
+    PyObject_GC_NewVar's PyObject_INIT_VAR. A function defined in a header
+    (3.8's static inline _PyObject_INIT_VAR) is read with the macros of
+    the file that calls it as well (outer): a header alone doesn't include
+    the headers before it (objimpl.h's Py_SIZE is object.h's)."""
     import gen_abstract
-    macros = dict(source.macros)
+    macros = dict(outer or {})
+    macros.update(source.macros)
     macros.update(source.local_macros)
     for st in _statements(f.toks):
         toks = cparse.expand(st, macros, set())
@@ -153,7 +157,8 @@ def stores_through_call(source, f, param, field, effects, depth=0):
             if g is None or len(g.params) != len(args):
                 continue
             if stores_through_call(other, g, g.params[args.index([param])][1],
-                                   field, effects, depth + 1):
+                                   field, effects, depth + 1,
+                                   macros if path.startswith('Include/') else None):
                 return True
     return False
 
