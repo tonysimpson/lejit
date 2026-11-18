@@ -116,7 +116,7 @@ The main ones, by where they must go:
 | `frameobject.c:_PyFrame_New_NoTrack` (the builtins choice) | `psyfunc.c:callee_builtins` and `pycompiler.c:psy_get_builtins` (also called from `psycofunction_call`) | P28 |
 | `object.c:PyObject_SelfIter` | `piterobject.c:piter_getiter` and `prangeobject.c:prangeiter_getiter`, registered on the same C pointer | identical; the later registration wins for every iterator type |
 | `listobject.c:list_item` | `plistobject.c:plist_item`, used for list `sq_item` and by `piterobject.c:piter_iternext` | shortcut |
-| `longobject.c:long_long` | `plong_pos`, and again inside `pbltinmodule.c:pbuiltin_round`, `ptype_call` | |
+| `longobject.c:long_long` | generated (D83; was `plong_pos`), and again inside `pbltinmodule.c:pbuiltin_round`, `ptype_call` | |
 | `floatobject.c:float___trunc___impl`, `float___round___impl` | split into `pfloatobject.c` helpers, put together again in `pbltinmodule.c` (`float_whole_to_int`, `pbuiltin_round`) | float's `nb_int` has no meta |
 | `rangeobject.c:get_len_of_range` | `prangeobject.c:cimpl_range_len` (live), `pbltinmodule.c:get_len_of_range` (dead) | |
 | `floatobject.c:PyFloat_AsDouble` | `pfloatobject.c:PsycoFloat_AsDouble` (dead), `pmath.c:PMATH_CONVERT_TO_DOUBLE` (an approximation, F99) | |
@@ -518,7 +518,7 @@ Declarations only **[read]**. `PsycoNumber_Divide` and `PsycoNumber_InPlaceDivid
 
 ### `ni/Objects/plongobject.c`
 
-Virtual ints on the one-digit fast paths of 3.7's `longobject.c`. `plongobject_gen.h` (by `tools/metac/gen_long.py`) supplies `long_add`, `long_sub`, `long_mul`, `long_neg` and `long_invert`; no slot is both generated and hand-written here **[read]**. The hand-written `& | ^ << >>`, the `divmod()` fast path and the power-of-two divisor rewrite are Ni's own shortcuts with no 3.7 counterpart, so they are policy, not translation **[read]**.
+Virtual ints on the one-digit fast paths of 3.7's `longobject.c`. `plongobject_gen.h` (by `gen_abstract.py`'s long unit since D83, was `gen_long.py`) supplies `long_add`, `long_sub`, `long_mul`, `long_neg`, `long_invert`, `long_bool`, `long_long` (unary +), `long_abs`, `long_true_divide` and `long_pow`; no slot is both generated and hand-written here **[read]**. The hand-written `& | ^ << >>`, the `divmod()` fast path and the power-of-two divisor rewrite are Ni's own shortcuts with no 3.7 counterpart, so they are policy, not translation **[read]**.
 
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
@@ -534,12 +534,10 @@ Virtual ints on the one-digit fast paths of 3.7's `longobject.c`. `plongobject_g
 | compute_long, direct_compute_long, psyco_computed_long | 27 | core | none | P18 | EFFECT: CfPure on PyLong_FromLong | Virtual-int forcing |
 | compute_bool, direct_compute_bool, psyco_computed_bool | 22 | core | none | P18,P23 | EFFECT: CfPure on PyBool_FromLong | Virtual-bool forcing (pboolobject.h builds them) |
 | both_longs | 10 | translated | Objects/longobject.c:CHECK_BINOP | P02 |  | PyLong_Check on both |
-| plong_fallback2, plong_fallback1 | 17 | translated | none (residual call of the int slot itself) | P12,P08 | RESTYPE: int | The whole CPython slot is called (nothing has run yet), so no P29 resume point is needed |
-| #include plongobject_gen.h | 3 | glue | none |  |  | Generated: long_add, long_sub, long_mul, long_neg, long_invert |
+| plong_fallback2 (plong_fallback1 removed, D83) | 8 | translated | none (residual call of the int slot itself) | P12,P08 | RESTYPE: int | The whole CPython slot is called (nothing has run yet), so no P29 resume point is needed |
+| #include plongobject_gen.h | 3 | glue | none |  |  | Generated: long_add, long_sub, long_mul, long_neg, long_invert, long_bool, long_long, long_abs, long_true_divide, long_pow (D83) |
 | cimpl_long_hash1, plong_hash | 17 | translated | partial: Objects/longobject.c:long_hash (cases -1, 0, 1) | P13,P12 | SHORTCUT: one-digit path; EFFECT: CfPure\|CfReturnTypeLong on the helper, CfReturnTypeLong\|CfPyErrIfMinus1 on tp_hash | -1 hashes to -2 as in long_hash [read] |
-| plong_bool | 16 | mixed | Objects/longobject.c:long_bool | P15 |  | Core part: a virtual int tests its word instead of ob_size; result is a condition (cc-virtual) |
 | plong_richcompare | 33 | mixed | partial: Objects/longobject.c:long_richcompare (long_compare on one digit) | P02,P25,P05,P12,P23 | SHORTCUT: one-digit compare as a word compare; RESTYPE: bool (virtual); DRIFT: no self == other test (same result for ints) | Core part: medium values of virtual ints. Not one digit: residual tp_richcompare |
-| RETLONG/RETFLOAT: plong_pos, plong_abs, plong_true_divide | 20 | translated | Objects/longobject.c:long_long, long_abs, long_true_divide | P12,P08 | RESTYPE: int (pos, abs), float (true_divide); EFFECT: CfCommonCheckNotImplemented on true_divide | Residual calls with a known result type. The generator skips these slots (no fast path) [read: plongobject_gen.h tail] |
 | plong_bitop | 46 | mixed | partial: Objects/longobject.c:long_and, long_or, long_xor, long_lshift, long_rshift (CHECK_BINOP and the fallback only) | P02,P05,P07,P12 | SHORTCUT: one-digit & \| ^ << >> as word ops, not in 3.7's C (3.12 has it for & \| ^); LIKELY: << count <= 32 is _t | Policy, not translation: a generator from 3.7 can't produce the fast path |
 | BITOP: plong_and, plong_or, plong_xor, plong_lshift, plong_rshift | 12 | glue | none |  |  | Thin wrappers binding the slot |
 | cimpl_floor_div, cimpl_floor_mod | 20 | translated | Objects/longobject.c:fast_floor_div, fast_mod (on words) | P13 |  | Python floor rounding on C longs |
@@ -547,7 +545,6 @@ Virtual ints on the one-digit fast paths of 3.7's `longobject.c`. `plongobject_g
 | divmod_fallback | 8 | translated | none (residual call of the int slot) | P12,P08 | RESTYPE: int except for divmod (tuple, not asserted) |  |
 | plong_divmod_op | 38 | mixed | partial: Objects/longobject.c:long_div, long_mod, long_divmod | P02,P25,P12,P18 | SHORTCUT: one-digit path also when the dividend is 0, and for divmod(), which has no fast path in 3.7's long_divmod; VIRTUAL: divmod result is a virtual tuple of virtual ints | 3.7 long_div/long_mod need Py_ABS(Py_SIZE) == 1 on both [read] |
 | plong_div, plong_mod, plong_divmod | 13 | glue | none |  |  | Thin wrappers binding the slot |
-| plong_pow | 8 | translated | Objects/longobject.c:long_pow | P12 | EFFECT: CfCommonCheckNotImplemented | Residual; result type unknown (float for negative exponent) |
 | psy_longobject_init | 26 | glue | none |  |  | Registers the generated slots, then 15 hand-written metas |
 
 ### `ni/Objects/plongobject.h`
@@ -566,7 +563,7 @@ Field descriptors for `PyLongObject` plus the virtual int, whose `iLONG_VALUE` w
 
 ### `ni/Objects/pfloatobject.c`
 
-Virtual floats plus the helpers `pbltinmodule.c` uses for `int(x)` and `round(x)`. `pfloatobject_gen.h` (by `gen_float.py`) supplies `float_add`, `float_sub`, `float_mul`, `float_rem`, `float_neg`, `float_abs`, `float_bool` and `float_div`; the hand-written part is `float_float`, `float_richcompare` (float/float only) and `float_hash`, so nothing is done twice **[read]**. `PsycoFloat_AsDouble` has no callers **[read]**. `pfloat_richcompare`'s residual call to compare with an int is flagged NoError, but `float_richcompare` can return NULL there **[read]**.
+Virtual floats plus the helpers `pbltinmodule.c` uses for `int(x)` and `round(x)`. `pfloatobject_gen.h` (by `gen_float.py`) supplies `float_add`, `float_sub`, `float_mul`, `float_rem`, `float_neg`, `float_abs`, `float_bool` and `float_div`, and `pfloatslots_gen.h` (D83) `float_float`; the hand-written part is `float_richcompare` (float/float only) and `float_hash`, so nothing is done twice **[read]**. `PsycoFloat_AsDouble` has no callers **[read]**. `pfloat_richcompare`'s residual call to compare with an int was flagged NoError, but `float_richcompare` can return NULL there: fixed (F104, D83) **[read]**.
 
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
@@ -585,11 +582,9 @@ Virtual floats plus the helpers `pbltinmodule.c` uses for `int(x)` and `round(x)
 | PsycoFloat_AsDouble | 37 | translated | Objects/floatobject.c:PyFloat_AsDouble | P01,P09,P15,P24 | DRIFT: message 'a float is required' (3.7: 'must be real number, not %.50s'), __float__'s result not checked to be a float; GUARD: nb_float read without Psyco_TypeSlot | No callers [read]: dead |
 | compute_float | 21 | core | none | P18 | EFFECT: CfPure on PyFloat_FromDouble |  |
 | direct_compute_float, psyco_computed_float | 14 | core | none | P18 |  | Unreachable (KNOWN_BUGS F6) |
-| CONVERT_TO_DOUBLE_CORE, CONVERT_TO_DOUBLE, RELEASE_DOUBLE, return_null | 21 | translated | Objects/floatobject.c:CONVERT_TO_DOUBLE | P25 |  | Macro form; only pfloat_pos uses it now (the generated code calls psyco_convert_to_double directly) |
 | psyco_convert_to_double | 20 | translated | Objects/floatobject.c:convert_to_double, CONVERT_TO_DOUBLE | P01,P15 | DRIFT: tests int before float (no observable difference) | Returns -1 for NotImplemented. Also used by pmath.c, where it stands in for PyFloat_AsDouble (see there) |
-| pfloat_richcompare | 63 | mixed | partial: Objects/floatobject.c:float_richcompare (float/float case) | P01,P13,P12,P26,P23,P25 | SHORTCUT: float/float only (P26), int is the residual slot; EFFECT: CfCommonNewRefPyObjectNoError\|CfPure on the residual float_richcompare; RESTYPE: bool (virtual) | Core part: GE/GT as swapped LE/LT. BUG [read]: float_richcompare with a big int can return NULL (its Error: label, MemoryError), but NoError means the NULL is not checked KNOWN_BUGS F104. |
+| pfloat_richcompare | 63 | mixed | partial: Objects/floatobject.c:float_richcompare (float/float case) | P01,P13,P12,P26,P23,P25 | SHORTCUT: float/float only (P26), int is the residual slot; EFFECT: CfCommonNewRefPyObject\|CfPure on the residual float_richcompare (NoError until F104's fix); RESTYPE: bool (virtual) | Core part: GE/GT as swapped LE/LT. BUG [read]: float_richcompare with a big int can return NULL (its Error: label, MemoryError), but NoError means the NULL is not checked KNOWN_BUGS F104. |
 | pfloat_hash | 9 | translated | Objects/floatobject.c:float_hash | P15,P13 | EFFECT: CfPure\|CfReturnTypeLong on _Py_HashDouble |  |
-| pfloat_pos | 16 | translated | Objects/floatobject.c:float_float | P01,P18 |  | Exact float returns itself (F22) |
 | #include pfloatobject_gen.h | 3 | glue | none |  |  | Generated: float_add, float_sub, float_mul, float_rem, float_neg, float_abs, float_bool, float_div |
 | psy_floatobject_init | 15 | glue | none |  |  | Registers the generated slots, then nb_positive, tp_richcompare, tp_hash |
 | #else psy_floatobject_init (no FP calls) | 5 | glue | none |  |  |  |
