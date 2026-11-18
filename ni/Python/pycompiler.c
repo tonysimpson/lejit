@@ -1451,7 +1451,7 @@ static int cimpl_unpack_ex(PyObject *v, long oparg, PyObject **sp) {
 static int cimpl_unpack_list(PyObject *listobject, long argcnt,
                              PyObject **sp) {
   int i;
-  extra_assert(PyList_Check(listobject));
+  extra_assert(PyList_CheckExact(listobject));
 
   if (PyList_GET_SIZE(listobject) != argcnt)
     return cimpl_unpack_iterable(listobject, argcnt, sp); /* the error */
@@ -2164,7 +2164,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         if (vtp == NULL)
           break;
 
-        if (PyType_TypeCheck(vtp, &PyTuple_Type)) {
+        if (vtp == &PyTuple_Type) {
           /* shortcut: is this a virtual tuple?
                        of the correct length? */
           if (PsycoTuple_Load(v) != oparg) {
@@ -2208,7 +2208,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           goto fine;
         }
 
-        if (PyType_TypeCheck(vtp, &PyList_Type))
+        if (vtp == &PyList_Type)
           cimpl_unpack = cimpl_unpack_list;
         else
         unpack_generic:
