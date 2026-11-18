@@ -13,6 +13,8 @@ Waiting on the owner:
 3. QUESTIONS 49 (`_PyArg_CheckPositional` policy entry: the largest 3.8 unlock) and QUESTIONS 48 (block stack without `#if`, needed to build 3.8).
 4. D81: one call per part for `[*a, *b]`, `{**a, **b}`, and now `f(*a, *b)` with unknown parts (D93).
 
+Agreed next (owner, 2026-11-18): **cut the docs from 1.25 MB to about 150–200K**, as one reviewed change. STATUS to this handover; KNOWN_BUGS to open bugs; DECISIONS to one or two sentences each, superseded ones folded; INVENTORY replaced by a pointer to `donecheck.py`; METACOMPILER to its rules (failures-log rows only where `hand_table.py` and the policy table don't already say it); MAP to one short line per file; GENERATION to the plan and what's left; the finished studies (STORES, CODE_SIZE, OPTION_D, CLOSURES, GENERATORS, COMPILE_COST) to their findings in one `doc/FINDINGS.md`; delete `doc/reviews/` and `pointbreak-journal.md`. Then change the repo's CLAUDE.md conventions so it doesn't regrow: docs hold current truth only, measurements and reports go in commit messages, no per-step STATUS entries, rewrite rather than append. Git keeps everything removed.
+
 Open bugs from this run: F112–F115 are fixed except F114 (3.8 only: generated math misses a NULL check, cause unknown). `test_queue` under `--all` fails on timing now and then, with and without Ni.
 
 ## 2026-11-18: 3.8.20 generates to the end (`96eeba2` … `962af09`, F112, F113, F115)
