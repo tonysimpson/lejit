@@ -24,11 +24,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ctokens  # noqa: E402
 import cslots  # noqa: E402
 from cslots import Skip, text, is_seq, statements  # noqa: E402
+import policy_table  # noqa: E402
 
 
-# names the copied double-only code may use, besides its double locals
-LIBM = {'fmod', 'copysign', 'fabs', 'floor'}
-ERRORS = {'PyErr_SetString'}
+# names the copied double-only code may use, besides its double locals:
+# pure C library functions, and functions that only raise (the table)
+LIBM = {n for n, e in policy_table.EXTERNAL.items() if e == 'pure'}
+ERRORS = {k.split(':')[1] for k, a in policy_table.ASSUMPTIONS.items()
+          if 'raises' in a['assume']}
 KEYWORDS = {'if', 'else'}
 # fields of a float operand, and how a meta reads them (pfloatobject.h)
 FIELDS = {'ob_fval': 'PsycoFloat_AS_DOUBLE'}

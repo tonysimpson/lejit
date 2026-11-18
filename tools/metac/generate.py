@@ -77,6 +77,11 @@ def generate(argv):
         return 'generate.py: %s' % e
     target = cslots.Target(os.path.abspath(src), version, args.python,
                            pyconfig)
+    import policy
+    problems = policy.check(target.src)
+    if problems:
+        return 'generate.py: the policy table (policy_table.py) does not' \
+            ' match this source:\n  ' + '\n  '.join(problems)
     outputs = []
     for name, filename in GENERATORS:
         mod = __import__(name)
