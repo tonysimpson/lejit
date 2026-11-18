@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`), 3 (`e7fd745`) and 9 (`36b5beb`) done, and D19's stage 0, layouts (`ee76274`, D76); step 8 begun (front end, `99d9b26`)
+status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`), 3 (`e7fd745`) and 9 (`36b5beb`) done, and D19's stage 0, layouts (`ee76274`, D76); step 8 begun (front end, `99d9b26`); 3.8 dry run (`2a71def`, PORT38.md)
 ---
 # Plan of work: generate the translated layer on 3.7
 
@@ -134,6 +134,10 @@ The CPython fields Ni relies on are a list in the policy table (`LAYOUTS`, `RUNT
 - **3.7:** 57 fields (55 in 22 structs, 2 in `_PyRuntime`); 43 field descriptors (`CPY_FIELD`), one array, 22 backend offsets and `pyruntime.c`'s two runtime fields use them; five private struct copies left Ni's code. Hand-written: Ni's own structs, the index chain and flags, virtual-only slots, mechanism snippets, and two mechanisms (the eval-breaker handler, the inline store's GC test).
 - **Checks:** `tools/samecode.py baseline-3.7 ee76274`: 83 units same, 0 differ (4,089 code objects); generation twice, same output, and the build used it; mutation tests fail generation or the build naming the field.
 - **Other versions:** 3.8.20 one field changed (`PyGC_Head`), 3.11.11 six, 3.12.9 and 3.13.2 fourteen (thirteen fields and `PyASCIIObject.state`'s bits); the table in METACOMPILER.md is the input for those versions' work, and says which are mechanisms for D75's detectors.
+
+## 3.8 dry run (`2a71def`, PORT38.md) [run]
+
+Every generator run against 3.8.20's source with a 3.8.20 interpreter (uv's), Ni not built. `generate.py` stops at the policy table, as designed: 128 shapes differ and 2 keys are gone. Past it, after seven general rules that read 3.8 (`2a71def`; 3.7's headers byte-identical, `tests/run.py` 755 pass): `gen_long`, `gen_float` and `gen_layouts` give 3.7's text; `gen_ceval` reads 83 of 120 cases, every effect equal to 3.8's `dis.stack_effect`, and generates 60, of which 58 are 3.7's text byte for byte, `MAP_ADD` takes key and value in 3.8's order and `ROT_FOUR` is new: the opcode changes reached Ni through the input alone. `gen_abstract` translates 3.8's new sequence and mapping checks, but loses four index paths to a late `#undef PyIndex_Check` (a generator limit). Mechanisms pick 3.7's snippets but two stubs. What a 3.8 build needs, with estimates (about 3–5 days, mostly the core's block stack for 3.8's finally opcodes): PORT38.md "What 3.8 needs".
 
 ## Risks
 
