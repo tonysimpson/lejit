@@ -689,6 +689,8 @@ class Gen:
                 self.store(ind, 'num', in_loop=in_loop)
         elif c == 44:
             self.s_while_true(ind, depth)
+        elif c in (45, 46) and not in_loop:
+            self.s_edges(ind, c == 46)
         else:
             self.store(ind, self.pick(kinds), in_loop=in_loop)
 
@@ -789,6 +791,34 @@ class Gen:
             self.emit(ind + 1, '%s.append(lambda q, %s=%s: q * %s)' % (fs, i, i, i))
         self.emit(ind, '%s = [h(%s) for h in %s]' % (v, self.pick(NUM_LITS), fs))
         self.scope[v] = 'list'
+
+    def s_edges(self, ind, floats):
+        """one operator over pairs of machine-word (or float) edge values,
+        known only at run time: the loop reads them from a tuple"""
+        ints = ['0', '1', '-1', '2', '2**31-1', '2**31', '-2**31', '2**32-1', '2**32',
+                '2**62', '2**63-1', '-2**63', '-2**63+1', '2**63', '2**64-1', 'True', '-7']
+        fls = ['0.0', '-0.0', 'nan', 'inf', '-inf', '1e308', '5e-324', '2.0**53', '-1.5', '0.5']
+        xs = self.r.sample(ints + (fls if floats else []), self.r.randint(3, 6))
+        ys = self.r.sample(ints + (fls if floats else []), self.r.randint(2, 5))
+        x, y, out, e = self.fresh(), self.fresh(), self.fresh(), self.fresh('e')
+        ops = ['+', '-', '*', '//', '%', '&', '|', '^', '<', '<=', '==', '!=', '>=', '>']
+        if floats:
+            ops = ['+', '-', '*', '/', '//', '%', '<', '==', '!=', '>=']
+        op = self.pick(ops + ['<<', '>>', 'divmod', 'pow', 'neg', 'abs', 'float', 'hash'])
+        expr = {'divmod': 'divmod(X, Y)', 'pow': 'pow(X, Y % 4)', 'neg': '-X * Y',
+                'abs': 'abs(X) + abs(Y)', 'float': 'float(X) == Y', 'hash': 'hash(X) ^ hash(Y)',
+                '<<': 'X << (Y & 63)', '>>': 'X >> (Y & 127)'}.get(op, 'X %s Y' % op)
+        if floats and op in ('<<', '>>', 'pow', 'hash'):
+            expr = 'X * Y'
+        self.emit(ind, '%s = []' % out)
+        self.emit(ind, 'for %s in (%s,):' % (x, ', '.join(xs)))
+        self.emit(ind + 1, 'for %s in (%s,):' % (y, ', '.join(ys)))
+        self.emit(ind + 2, 'try:')
+        self.emit(ind + 3, '%s.append(%s)' % (out, expr.replace('X', x).replace('Y', y)))
+        self.emit(ind + 2, 'except Exception as %s:' % e)
+        self.emit(ind + 3, '%s.append(type(%s).__name__)' % (out, e))
+        self.emit(ind, 'print(%s)' % out)
+        self.scope[out] = 'list_any'
 
     def s_while_true(self, ind, depth):
         w = self.fresh('w')
