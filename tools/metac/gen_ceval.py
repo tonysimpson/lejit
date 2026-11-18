@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Generate bytecode-compiler cases from instruction definitions in 3.12's
-DSL (doc/DECISIONS.md D26, doc/METACOMPILER.md "Bytecode stage").
+"""Generate bytecode-compiler cases from instruction definitions in the
+form of CPython's Python/bytecodes.c (doc/DECISIONS.md D26 as revised by
+D67, doc/METACOMPILER.md "Bytecode stage" and "ceval.c reader").
 
-Input: tools/metac/bytecodes37.c, CPython 3.7's simple opcodes described in
-3.12's Python/bytecodes.c syntax, parsed by CPython's own parser
-(tools/metac/cases_generator, vendored from 3.12.9). Output:
+Input: the CPython source being built for. If it has Python/bytecodes.c,
+that file through CPython's own parser (tools/metac/cases_generator,
+vendored); otherwise its Python/ceval.c TARGET cases through
+ceval_reader.py, which gives the same definitions. Output:
 pycompiler_gen.h, cases included in pycompiler.c's opcode switch.
 
 Each instruction becomes:
@@ -24,15 +26,14 @@ restart rule: nothing irreversible (incref, SETLOCAL) before the last
 statement that can fail or promote.
 
 The vocabulary is small: the statement forms in translate(). A C-API call
-F(args) is translated only if ni/Objects/pabstract.h declares Psyco's
-counterpart (PyNumber_Add -> PsycoNumber_Add) with one more parameter (po)
-and a matching return kind: PyObject * -> vinfo_t * (NULL: error), int ->
-bool (false: error). Anything else is skipped with the reason.
+F(args) is translated only if PSYCO_HEADERS declare Psyco's counterpart
+(PyNumber_Add -> PsycoNumber_Add) with one more parameter (po) and a
+matching return kind: PyObject * -> vinfo_t * (NULL: error), int -> bool
+(false: error). Anything else is skipped with the reason.
 
-Each 3.7 description is checked against 3.7 itself: ceval.c has the
-TARGET, calls every C-API function the description calls, and
-dis.stack_effect() (run in the interpreter being built for) equals the
-declared effect. A mismatch stops generation, and so the build.
+Every stack effect read is checked against dis.stack_effect() run in the
+interpreter being built for, for several opargs: it must be the same. A
+mismatch stops generation, and so the build.
 
 Run by generate.py.  gen_ceval.py --try BYTECODES_C CPYTHON_SRC  reports
 only, e.g. on 3.12's file.
@@ -46,13 +47,14 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, 'cases_generator'))
+import ceval_reader  # noqa: E402
 import ctokens  # noqa: E402
 import cslots  # noqa: E402
 import parser as dsl  # noqa: E402  (CPython's Tools/cases_generator/parser.py)
 
 ROOT = cslots.ROOT
-DEFS = os.path.join(HERE, 'bytecodes37.c')
-PSYCO_HEADERS = [os.path.join(ROOT, 'ni', 'Objects', 'pabstract.h')]
+PSYCO_HEADERS = [os.path.join(ROOT, 'ni', 'Objects', h)
+                 for h in ('pabstract.h', 'pobject.h')]
 BEGIN, END = '// BEGIN BYTECODES //', '// END BYTECODES //'
 
 # ERROR_IF labels: what a failed instruction does in Ni. 'error' is a
@@ -65,8 +67,12 @@ LABELS = {
 DROPPED = {'assert', 'STAT_INC'}
 # C constants that have a compile-time vinfo: (make, release)
 CONSTANTS = {'Py_None': 'psyco_vi_None()'}
-# a const from the code object (3.7: consts; 3.12: frame->f_code->co_consts)
-CONSTS_TUPLES = ('consts', 'frame -> f_code -> co_consts')
+# GETITEM(tuple, oparg) of the code object's constants or names: Ni's macro
+# for the borrowed object (ceval.c names the tuples; bytecodes.c reaches them
+# through the frame)
+CODE_TUPLES = {'consts': 'GETCONST(oparg)', 'names': 'GETNAMEV(oparg)',
+               'frame -> f_code -> co_consts': 'GETCONST(oparg)',
+               'frame -> f_code -> co_names': 'GETNAMEV(oparg)'}
 
 
 class Skip(Exception):
@@ -179,12 +185,12 @@ def call_args(stmt, i):
 
 # ---- signatures ------------------------------------------------------------
 
-def c_signatures(src37):
-    """{name: (return kind, arity)} for PyAPI_FUNC declarations in 3.7's
+def c_signatures(src):
+    """{name: (return kind, arity)} for PyAPI_FUNC declarations in the source's
     Include/abstract.h and object.h."""
     sigs = {}
     for h in ('abstract.h', 'object.h'):
-        with open(os.path.join(src37, 'Include', h)) as f:
+        with open(os.path.join(src, 'Include', h)) as f:
             toks = ctokens.tokenize(f.read(), h)[0]
         for i, t in enumerate(toks):
             if t.text != 'PyAPI_FUNC' or toks[i + 1].text != '(':
@@ -267,6 +273,7 @@ def translate(inst, csigs, psigs):
     last_fail = -1            # index into body of the last failure point
     first_commit = None       # index into body of the first irreversible act
     temps = []                # constants made for a call: released after it
+    const_of = {}             # 'const' variable -> Ni's expression for it
 
     def commit():
         nonlocal first_commit
@@ -278,17 +285,25 @@ def translate(inst, csigs, psigs):
             raise Skip('%s assigned twice' % name)
         decls.append('%s%s;' % (ctype, name))
 
+    def temp(make):
+        t = 'tmp%d' % len(temps)
+        temps.append(t)
+        decls.append('vinfo_t *%s;' % t)
+        body.append('%s = %s;' % (t, make))
+        return t
+
     def operand(text):
+        text = re.sub(r'^\( PyObject \* \) ', '', text)   # a cast changes nothing
+        if text == 'NULL':
+            return 'NULL'     # Psyco's counterparts take NULL where C does
         if text in var:
             if var[text] == 'const':
-                raise Skip('%s: a borrowed constant used before Py_INCREF' % text)
+                # a borrowed constant passed to a call: a compile-time
+                # vinfo for the call's duration
+                return temp('vinfo_new(CompileTime_New((long)%s))' % const_of[text])
             return text
         if text in CONSTANTS:
-            t = 'tmp%d' % len(temps)
-            temps.append(t)
-            decls.append('vinfo_t *%s;' % t)
-            body.append('%s = %s;' % (t, CONSTANTS[text]))
-            return t
+            return temp(CONSTANTS[text])
         raise Skip('operand %r' % text)
 
     for stmt in split_statements(body_tokens(inst)):
@@ -309,8 +324,9 @@ def translate(inst, csigs, psigs):
                 body.append('vinfo_incref(%s);' % x)
                 var[x] = 'owned'
             elif var.get(x) == 'const':
+                decls.append('vinfo_t *%s;' % x)
                 body.append('%s = vinfo_new(CompileTime_New((long)%s));'
-                            % (x, const_expr))
+                            % (x, const_of[x]))
                 var[x] = 'owned'
             else:
                 raise Skip('Py_INCREF of %s (%s)' % (x, var.get(x)))
@@ -366,10 +382,11 @@ def translate(inst, csigs, psigs):
                 var[x] = 'local'
                 continue
             m = re.fullmatch(r'GETITEM \( (.*) , oparg \)', rhs)
-            if m and m.group(1) in CONSTS_TUPLES:
-                declare(x, 'vinfo_t *')
+            if m and m.group(1) in CODE_TUPLES:
+                if x in var:
+                    raise Skip('%s assigned twice' % x)
                 var[x] = 'const'
-                const_expr = 'GETCONST(oparg)'   # borrowed from the code object
+                const_of[x] = CODE_TUPLES[m.group(1)]   # borrowed
                 continue
             if len(w) > 3 and re.fullmatch(r'Py[A-Z][A-Za-z]*_[A-Za-z]+', w[2]) and w[3] == '(':
                 fn = w[2]
@@ -407,7 +424,7 @@ def translate(inst, csigs, psigs):
         if n not in out_names and n not in released | stolen:
             raise Skip('input %s is neither released nor stored' % n)
     for n, origin in var.items():
-        if n not in in_names and n not in out_names and origin != 'bool':
+        if n not in in_names and n not in out_names and origin not in ('bool', 'const'):
             # not a stack value: a result dropped, or interpreter state
             # (3.12's kwnames)
             raise Skip('%s is assigned but is not an output' % n)
@@ -446,112 +463,128 @@ def error_condition(cond, var):
     raise Skip('ERROR_IF condition %r' % cond)
 
 
-# ---- checks against 3.7 ----------------------------------------------------
+# ---- checks against the target's dis --------------------------------------
 
-def ceval_cases(src37):
-    with open(os.path.join(src37, 'Python', 'ceval.c')) as f:
-        toks = ctokens.tokenize(f.read(), 'ceval.c')[0]
-    cases = {}
-    for i, t in enumerate(toks):
-        if t.text != 'TARGET' or toks[i + 1].text != '(':
-            continue
-        if toks[i + 4].text == '{':
-            end = ctokens.match_close(toks, i + 4)
-        else:   # TARGET(NOP) FAST_DISPATCH();
-            end = next(j for j in range(i + 4, len(toks)) if toks[j].text == ';')
-        cases[toks[i + 2].text] = {u.text for u in toks[i + 4:end]}
-    return cases
+# opargs tried: an effect that differs between them depends on oparg
+OPARGS = (0, 1, 2, 3, 4, 5, 7, 8, 255)
 
 
 def stack_effects(names, python):
+    """{name: [effect for each of OPARGS] or None} from dis.stack_effect in
+    the target interpreter."""
     code = ('import dis, json, opcode, sys\n'
             'out = {}\n'
-            'for n in sys.argv[1:]:\n'
+            'for n in sys.argv[2:]:\n'
             '    op = opcode.opmap.get(n)\n'
             '    if op is None:\n'
-            '        out[n] = None  # not a 3.7 opcode: reported via ceval.c\n'
+            '        out[n] = None  # not an opcode of this version\n'
             '        continue\n'
             '    try:\n'
-            '        out[n] = dis.stack_effect(op, 0 if op >= opcode.HAVE_ARGUMENT else None)\n'
+            '        out[n] = [dis.stack_effect(op, a if op >= opcode.HAVE_ARGUMENT else None)\n'
+            '                  for a in json.loads(sys.argv[1])]\n'
             '    except ValueError:\n'
             '        out[n] = None  # unknown to compile.c (NOP)\n'
             'print(json.dumps(out))\n')
-    r = subprocess.run([python, '-I', '-c', code] + names, check=True,
-                       stdout=subprocess.PIPE, universal_newlines=True)
+    r = subprocess.run([python, '-I', '-c', code, json.dumps(OPARGS)] + names,
+                       check=True, stdout=subprocess.PIPE,
+                       universal_newlines=True)
     return json.loads(r.stdout)
 
 
-def check_37(insts, translated, src37, python):
-    """Problems found comparing the descriptions with 3.7."""
-    cases = ceval_cases(src37)
-    effects = stack_effects([i.name for i in insts], python)
+def check_effects(insts, effects):
+    """Problems found comparing each definition's effect with dis."""
     problems = []
     for inst in insts:
-        if inst.name not in cases:
-            problems.append('%s: no TARGET in ceval.c' % inst.name)
-            continue
         declared = len(inst.outputs) - len(
             [e for e in inst.inputs if isinstance(e, dsl.StackEffect)])
-        if effects[inst.name] is not None and declared != effects[inst.name]:
+        eff = effects.get(inst.name)
+        if eff is None:
+            if inst.name not in effects:
+                problems.append('%s: not an opcode' % inst.name)
+            continue
+        if len(set(eff)) > 1:
+            problems.append('%s: dis.stack_effect depends on oparg (%s), the'
+                            ' definition says %d' % (inst.name, eff, declared))
+        elif declared != eff[0]:
             problems.append('%s: stack effect %d, dis.stack_effect says %d'
-                            % (inst.name, declared, effects[inst.name]))
-        for fn in translated.get(inst.name, ()):
-            if fn not in cases[inst.name]:
-                problems.append('%s: ceval.c does not call %s' % (inst.name, fn))
+                            % (inst.name, declared, eff[0]))
     return problems
 
 
 # ---- driver ----------------------------------------------------------------
 
-def run(defs_path, src37):
-    insts = [d for d in read_defs(defs_path) if isinstance(d, dsl.InstDef)]
-    csigs, psigs = c_signatures(src37), psyco_signatures()
-    done, skipped, calls = [], [], {}
+def definitions(src):
+    """(definitions, refused) from the source: its bytecodes.c if it has
+    one, else its ceval.c through the reader. refused: [(name, kind, why)]."""
+    bytecodes = os.path.join(src, 'Python', 'bytecodes.c')
+    if os.path.exists(bytecodes):
+        return [d for d in read_defs(bytecodes) if isinstance(d, dsl.InstDef)], []
+    return ceval_reader.read(src)
+
+
+def run(insts, src):
+    csigs, psigs = c_signatures(src), psyco_signatures()
+    done, skipped = [], []
     for inst in insts:
         try:
-            code, fns = translate(inst, csigs, psigs)
+            code, _ = translate(inst, csigs, psigs)
         except Skip as e:
-            skipped.append((inst.name, str(e)))
+            skipped.append((inst.name, 'vocabulary', str(e)))
             continue
         done.append((inst.name, code))
-        calls[inst.name] = fns
-    return insts, done, skipped, calls
+    return done, skipped
 
 
 def header(done, skipped):
-    out = ['/* GENERATED by tools/metac/gen_ceval.py from tools/metac/bytecodes37.c',
-           '   (CPython 3.7\'s opcodes in 3.12\'s instruction DSL): do not edit.',
+    out = ['/* GENERATED by tools/metac/gen_ceval.py from the opcode cases of',
+           '   the CPython source built for: do not edit.',
            '   Included in the opcode switch of pycompiler.c, which provides',
-           '   NTOP, POP, PUSH, GETLOCAL, SETLOCAL, GETCONST, unbound_local_error',
-           '   and the label fine. */', '']
+           '   NTOP, POP, PUSH, GETLOCAL, SETLOCAL, GETCONST, GETNAMEV,',
+           '   unbound_local_error and the label fine. */', '']
     for _, code in done:
         out += ['      ' + l if l else '' for l in code.split('\n')] + ['']
-    out += ['/* not generated (hand-written in pycompiler.c, or unsupported):']
-    out += ['   %s: %s' % x for x in skipped]
+    out += ['/* not generated (hand-written in pycompiler.c, or unsupported),',
+            '   by kind:']
+    for kind in ['vocabulary'] + list(ceval_reader.KINDS):
+        group = [x for x in skipped if x[1] == kind]
+        if group:
+            out.append('   %s (%d):' % (kind, len(group)))
+            out += ['     %s: %s' % (n, why) for n, _, why in group]
     out += ['*/', '']
     return '\n'.join(out)
 
 
 def build(target):
-    insts, done, skipped, calls = run(DEFS, target.src)
-    problems = check_37(insts, calls, target.src, target.python)
+    insts, refused = definitions(target.src)
+    effects = stack_effects([i.name for i in insts] + [n for n, _, _ in refused],
+                            target.python)
+    problems = check_effects(insts, effects)
     if problems:
-        raise cslots.GenError('bytecodes37.c does not match CPython %s:\n%s'
-                              % (target.version,
-                                 '\n'.join('  ' + p for p in problems)))
+        raise cslots.GenError(
+            'the definitions read from CPython %s do not match'
+            ' dis.stack_effect:\n%s'
+            % (target.version, '\n'.join('  ' + p for p in problems)))
+    # a refusal whose effect dis says depends on oparg is of that kind,
+    # whatever stopped the reader first
+    refused = [(n, 'oparg' if k in ('control flow', 'stack')
+                and effects.get(n) and len(set(effects[n])) > 1 else k, why)
+               for n, k, why in refused]
+    done, skipped = run(insts, target.src)
+    skipped += refused
     return header(done, skipped), (
         ['generated  %s' % name for name, _ in done] +
-        ['skipped    %-24s %s' % x for x in skipped])
+        ['skipped    %-28s %-13s %s' % x for x in skipped])
 
 
 def main(argv):
     if len(argv) != 3 or argv[0] != '--try':
         print('usage: gen_ceval.py --try BYTECODES_C CPYTHON_SRC')
         return 2
-    insts, done, skipped, _ = run(argv[1], argv[2])
+    insts = [d for d in read_defs(argv[1]) if isinstance(d, dsl.InstDef)]
+    done, skipped = run(insts, argv[2])
     for name, _ in done:
         print('translated %s' % name)
-    for name, why in skipped:
+    for name, _, why in skipped:
         print('skipped    %-28s %s' % (name, why))
     print('%d of %d translated' % (len(done), len(insts)))
     return 0

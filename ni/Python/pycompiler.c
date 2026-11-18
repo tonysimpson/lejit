@@ -11,8 +11,9 @@
  *    respawns (load_global_cached, D25); the block is split after each such
  *    site so that a respawn replay never re-decides one.
  *  - The simple opcodes (stack shuffles, LOAD_CONST/LOAD_FAST/STORE_FAST,
- *    unary, binary and in-place arithmetic, STORE_SUBSCR, GET_ITER) are
- *    generated into pycompiler_gen.h from tools/metac/bytecodes37.c (D26).
+ *    unary, binary and in-place arithmetic, STORE_SUBSCR, GET_ITER,
+ *    LOAD_ATTR/STORE_ATTR/DELETE_ATTR) are generated into pycompiler_gen.h
+ *    from CPython's ceval.c by tools/metac/gen_ceval.py (D26, D67).
  *  - After the switch come the merge-point checks, then the handling of
  *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
  *    exceptions) with ceval-style unwinding of the block stack.
@@ -2176,7 +2177,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
         /* case STOP_CODE: this is an error! */
 
-      /* the simple opcodes, generated from tools/metac/bytecodes37.c (D26) */
+      /* the simple opcodes, generated from ceval.c (D26, D67) */
 #include "pycompiler_gen.h"
 
       case UNARY_NOT:
@@ -2540,29 +2541,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-      case STORE_ATTR: {
-        bool ok;
-        w = vinfo_new(CompileTime_New(((long)GETNAMEV(oparg))));
-        ok = PsycoObject_SetAttr(po, TOP(), w, NTOP(2)); /* v.w = u */
-        vinfo_decref(w, po);
-        if (!ok)
-          break;
-        POP_DECREF();
-        POP_DECREF();
-        goto fine;
-      }
-
-      case DELETE_ATTR: {
-        bool ok;
-        w = vinfo_new(CompileTime_New(((long)GETNAMEV(oparg))));
-        ok = PsycoObject_SetAttr(po, TOP(), w, NULL); /* del v.w */
-        vinfo_decref(w, po);
-        if (!ok)
-          break;
-        POP_DECREF();
-        goto fine;
-      }
-
       case STORE_NAME:
         /* only for modules: we can only reach this point
            for code objects compiled from frames where
@@ -2890,16 +2868,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         if (!psyco_generic_call(po, PySet_Add, CfCommonIntZeroOk, "vv", v, w))
           break;
         POP_DECREF();
-        goto fine;
-
-      case LOAD_ATTR:
-        w = vinfo_new(CompileTime_New(((long)GETNAMEV(oparg))));
-        x = PsycoObject_GetAttr(po, TOP(), w); /* v.w */
-        vinfo_decref(w, po);
-        if (x == NULL)
-          break;
-        POP_DECREF();
-        PUSH(x);
         goto fine;
 
       case LOAD_METHOD:

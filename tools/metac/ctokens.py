@@ -27,8 +27,11 @@ _TOKEN = re.compile(r'''
 ''', re.S | re.X)
 
 
-def tokenize(src, filename='<c>'):
-    """Return (tokens, macros) for C source text."""
+def tokenize(src, filename='<c>', directives=False):
+    """Return (tokens, macros) for C source text. With directives, every
+    preprocessor line except #define is also left in the stream as one
+    token of kind 'pp' (its text, '#if X'), so a reader can refuse code
+    that the preprocessor chooses between."""
     toks, macros = [], {}
     pos, line, at_bol, pp = 0, 1, True, None   # pp: tokens of a # line
     sp = True
@@ -43,6 +46,9 @@ def tokenize(src, filename='<c>'):
         if kind == 'nl':
             if pp is not None:
                 _directive(pp, macros)
+                if directives and pp and pp[0].text != 'define':
+                    toks.append(Tok('pp', '#' + ' '.join(t.text for t in pp),
+                                    pp[0].line, True))
                 pp = None
             at_bol = sp = True
         elif kind in ('ws', 'comment'):

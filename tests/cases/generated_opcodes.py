@@ -1,4 +1,4 @@
-# The opcodes generated from tools/metac/bytecodes37.c (D26,
+# The opcodes generated from ceval.c by tools/metac/gen_ceval.py (D26, D67,
 # ni/Python/pycompiler_gen.h): each one at least once, with its error exit
 # where it has one. An error exit leaves the inputs on the stack for the
 # unwinding code, so the exceptions here also check that nothing is
@@ -60,6 +60,36 @@ def iterate(xs):
     for x in xs:           # GET_ITER
         t = t + x
     return t
+
+
+class Obj:
+    pass
+
+
+def attributes(k):
+    # LOAD_ATTR, STORE_ATTR, DELETE_ATTR
+    o = Obj()
+    o.a = k
+    o.b = o.a + 1
+    del o.a
+    return o.b, hasattr(o, 'a')
+
+
+def attr_errors(k):
+    return catch((err_load_attr, err_store_attr, err_del_attr), k)
+
+
+def err_load_attr(k):
+    return k.missing
+
+
+def err_store_attr(k):
+    k.x = 1
+
+
+def err_del_attr(k):
+    o = Obj()
+    del o.missing
 
 
 def catch(fs, k):
@@ -171,4 +201,6 @@ CASES = [
     ('errors', [(0,), (1,)], {}),
     ('messages', [(0,), (1,)], {}),
     ('unbound', [(True,), (False,)], {}),
+    ('attributes', [(1,), (2.5,)], {}),
+    ('attr_errors', [(0,), (None,)], {}),
 ]
