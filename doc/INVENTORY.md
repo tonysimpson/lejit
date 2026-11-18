@@ -438,7 +438,7 @@ The compile-time `object.h`: `ob_type`/`ob_size` field descriptors, promote/veri
 
 ### `ni/Objects/pabstract.c`
 
-**Since `1aa473c` (D74)** all but `PsycoObject_Call`, `PsycoEval_CallObjectWithKeywords`, `type_error_tp`, the two `ob_size` lengths, `PsycoSequence_Tuple`, `PsycoNumber_Power`, `PsycoObject_GetIter`, `cimpl_iternext`, `PsycoIter_Next` and the two generic subscripts are generated (`pabstract_gen.h`, by `tools/metac/gen_abstract.py`); the file is 297 lines. The rows below are the file as inventoried at `b36a1ac`. The `binary_iop1` BUG note is KNOWN_BUGS F101 (fixed); the `PsycoLong_AsLong` shortcut and DRIFT notes of GetItem, SetItem and `psequence_repeat` are F102 (fixed there; the generic subscripts keep it). [read]
+**Since `1aa473c` (D74)** all but `PsycoObject_Call`, `PsycoEval_CallObjectWithKeywords`, `type_error_tp`, the two `ob_size` lengths, `PsycoNumber_Power`, `PsycoObject_GetIter`, `cimpl_iternext`, `PsycoIter_Next` and the two generic subscripts are generated (`pabstract_gen.h`, by `tools/metac/gen_abstract.py`); the file is 297 lines. The rows below are the file as inventoried at `b36a1ac`. The `binary_iop1` BUG note is KNOWN_BUGS F101 (fixed); the `PsycoLong_AsLong` shortcut and DRIFT notes of GetItem, SetItem and `psequence_repeat` are F102 (fixed there; the generic subscripts keep it). [read]
 
 Mirrors `Objects/abstract.c` (with `PyObject_Call` and `PyEval_CallObjectWithKeywords` from `Objects/call.c`) closely and almost mechanically: promote the type, read each slot through `Psyco_TypeSlot`, dispatch with `Psyco_META*` **[read]**. MAP's claim that `binary_op1` only dispatches when both types are the same (`NEW_STYLE_NUMBER`) is stale: the code is now 3.7's algorithm **[read]**. `binary_op1`, `binary_iop1` and `sequence_repeat` are each translated twice, once as a meta and once as a run-time `cimpl_` copy for the path where a slot changed **[read]**. `PsycoSequence_GetSlice`, `SetSlice`, `Tuple` and `PsycoEval_CallObjectWithKeywords` have no callers **[read]**.
 
@@ -460,7 +460,7 @@ Mirrors `Objects/abstract.c` (with `PyObject_Call` and `PyEval_CallObjectWithKey
 | PsycoSequence_GetSlice | 9 | translated | Objects/abstract.c:PySequence_GetSlice | P12 |  | Residual only. No callers [read]. |
 | PsycoSequence_SetSlice | 12 | translated | Objects/abstract.c:PySequence_SetSlice; Objects/abstract.c:PySequence_DelSlice | P12 |  | Residual only. No callers [read]. |
 | PsycoSequence_Contains | 20 | translated | Objects/abstract.c:PySequence_Contains | P01, P29, P09, P12 | GUARD: sq_contains; EFFECT: CfCommonIntBoolOrError | Fallback is residual _PySequence_IterSearch, as 3.7. |
-| PsycoSequence_Tuple | 13 | translated | Objects/abstract.c:PySequence_Tuple | P12, P08 | RESTYPE: exact tuple (correct: 3.7 never returns a subclass) | No callers [read]. |
+| PsycoSequence_Tuple | 13 | generated (D78) | Objects/abstract.c:PySequence_Tuple | P12, P08 | RESTYPE: exact tuple (policy `restype`) | Hand-written definition removed; the generated one keeps the C's exact-tuple and list tests and calls PySequence_Tuple otherwise. No callers [read]. |
 | NB_SLOT, NB_BINOP, NB_TERNOP | 5 | translated | Objects/abstract.c:NB_SLOT, NB_BINOP, NB_TERNOP |  |  | Same macros as CPython. |
 | unary_op | 22 | translated | Objects/abstract.c:PyNumber_Negative (shape of Positive, Negative, Invert, Absolute) | P01, P29, P09, P24 | GUARD: the nb_ slot of a heap type, changed -> the PyNumber_ function | Factors four CPython functions. |
 | PsycoNumber_Positive | 6 | translated | Objects/abstract.c:PyNumber_Positive |  |  |  |
@@ -496,8 +496,8 @@ Mirrors `Objects/abstract.c` (with `PyObject_Call` and `PyEval_CallObjectWithKey
 | PsycoObject_GetIter | 39 | translated | Objects/abstract.c:PyObject_GetIter | P01, P29, P09, P18 | GUARD: tp_iter, sq_item; SHORTCUT: a static type's tp_iter result is not checked with PyIter_Check; VIRTUAL: no tp_iter gives a virtual seq-iterator (PsycoSeqIter_New); DRIFT: PySequence_Check's dict exclusion omitted (unreachable for dicts, which have tp_iter) | A heap type's tp_iter is always the residual PyObject_GetIter. |
 | cimpl_iternext | 14 | translated | partial: Python/ceval.c:FOR_ITER (tp_iternext call) |  |  | Run-time helper. |
 | PsycoIter_Next | 23 | translated | partial: Objects/abstract.c:PyIter_Next (without the StopIteration clear); Python/ceval.c:FOR_ITER | P01, P29, P09 | GUARD: tp_iternext; EFFECT: CfCommonIterNext |  |
-| psyco_generic_subscript | 32 | translated | partial: Objects/tupleobject.c:tuplesubscript (index branch); Objects/listobject.c:list_subscript (index branch) | P01, P12 | SHORTCUT: int key via PsycoLong_AsLong; DRIFT: negative index adds sq_length of o's own type (a subclass's __len__ runs) where CPython adds Py_SIZE; OverflowError where 3.7 raises IndexError | Meta on tuple's mp_subscript; called by plist_subscript. KNOWN_BUGS F102, F103. |
-| psyco_generic_ass_subscript | 30 | translated | partial: Objects/listobject.c:list_ass_subscript (index branch) | P01, P12 | SHORTCUT: int key via PsycoLong_AsLong; DRIFT: as psyco_generic_subscript (subclass __len__, OverflowError for IndexError) | Called by plist_ass_subscript. KNOWN_BUGS F102, F103. |
+| psyco_generic_subscript | 32 | translated | partial: Objects/tupleobject.c:tuplesubscript (index branch); Objects/listobject.c:list_subscript (index branch) | P01, P12 | SHORTCUT: int key via PsycoNumber_AsSsize_t(key, PyExc_IndexError), as 3.7 (F102 fixed, D78); DRIFT: negative index adds sq_length of o's own type (a subclass's __len__ runs) where CPython adds Py_SIZE | Meta on tuple's mp_subscript; called by plist_subscript. KNOWN_BUGS F103. |
+| psyco_generic_ass_subscript | 30 | translated | partial: Objects/listobject.c:list_ass_subscript (index branch) | P01, P12 | SHORTCUT: int key via PsycoNumber_AsSsize_t (F102 fixed, D78); DRIFT: as psyco_generic_subscript (subclass __len__) | Called by plist_ass_subscript. KNOWN_BUGS F103. |
 
 ### `ni/Objects/pabstract.h`
 
@@ -741,7 +741,7 @@ Tuple item descriptor and vinfo-array access macros **[read]**.
 
 ### `ni/Objects/ptupleobject.c`
 
-Mostly core: virtual tuples, constant folding of all-constant tuples, `PsycoTuple_Load`. `ptuple_item` is a straight `tupleitem` translation; tuple `mp_subscript` is the generic meta, not `tuplesubscript` **[read]**.
+Mostly core: virtual tuples, constant folding of all-constant tuples, `PsycoTuple_Load`. `ptuple_item` is a straight `tupleitem` translation; tuple `mp_subscript` is the generic meta, not `tuplesubscript` **[read]**. Since D78 `tuplecontains` (`sq_contains`) is generated into `ptupleobject_gen.h`, which this file includes; `psy_tupleobject_init` calls its `gen_tupleobject_init()` **[run]**.
 
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|

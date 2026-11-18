@@ -95,6 +95,14 @@ General translation works on `abstract.c`: `tools/metac/gen_abstract.py` (with `
 - **Limits for step 5:** no loops (`PySequence_Tuple`, `long_compare`), an `int` result's convention needs a Ni declaration, only parameters are promoted, a resume inside a statement that already called is refused, `#`/`##` macros aren't expanded. Each refuses with a reason rather than guessing.
 - **Verdict:** the method holds for dispatch code. The policy table carried only `likely` and `not_translation`; everything else came from the C, Ni's declarations and the effect rules. Step 5's families have loops and representation (virtual objects), which this translator doesn't do yet: loops are the first thing to add.
 
+## Step 5, first part: loops, and the first object file (`83131e1`, D78) [run]
+
+The translator now has a loop rule (METACOMPILER.md "Loops"): a counted loop with a compile-time bound is unrolled by the meta, a tuple's length is asked of `PsycoTuple_Load` with CPython's function as the fallback, any other loop resumes CPython. `loop_rule` is shared with `gen_ceval.py` for the builder opcodes (`BUILD_SET`, `BUILD_MAP`, `BUILD_CONST_KEY_MAP`, `BUILD_*_UNPACK`), whose loops count `oparg` down.
+- **Generated:** `tupleobject.c:tuplecontains` into `ptupleobject_gen.h` (the first object-family file: `--unit tuple`, slots from `policy_table.TRANSLATED_SLOTS`); `abstract.c:PySequence_Tuple` (hand meta removed), `PySequence_List`, `_PySequence_IterSearch`. F102 fixed for list and tuple `[int]`.
+- **Found:** a core respawn bug, KNOWN_BUGS F106 (the flags' condition not resolved on a replay or on the branch taken), fixed in `dispatcher.c`.
+- **Same code:** `tools/samecode.py baseline-3.7 69a0bdd` (this code before its rebase onto `9ee0da7`, which changed only generator files whose 3.7 output is the same): 1 unit same, 83 differ (3,610 of 4,126 code objects same); each first difference is F102's folded index, the unrolled `in`, or follows from them. Release instructions per warm iteration: none slower (hexiom −2.1%, go −0.6%).
+- **Stopped, for step 6 or later:** `tupleconcat`/`tuplerepeat` (virtual objects), `tuplerichcompare` (a type field, not a table slot; returns a compare's object), `list_contains` (a list's length is mutable), `PySequence_Fast` (handles a failed call's error).
+
 ## Step 8, front end: oparg-dependent stack effects (`99d9b26`, D73) [run]
 
 The reader expresses stack effects that depend on oparg as 3.12's DSL does (`values[oparg]`, `step if (oparg == 3)`, `unused[oparg - 1]`), derived from the C; METACOMPILER.md "`ceval.c` reader".

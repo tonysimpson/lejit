@@ -1,5 +1,15 @@
 # Status
 
+## 2026-11-18: loops in the general translator; `in` on a tuple generated (GENERATION.md step 5, `83131e1`, D78)
+
+A counted C loop with a compile-time bound is unrolled by the meta; a tuple's length comes from `PsycoTuple_Load` (virtual, or constant within 15 items), with CPython's function as the fallback; any other loop is CPython's (METACOMPILER.md "Loops"). [run]
+- **Generated:** `tuplecontains` (`ptupleobject_gen.h`, new: `in` on a constant or virtual tuple is unrolled, one compare per item), `PySequence_Tuple` (hand definition gone), `PySequence_List`, `_PySequence_IterSearch`. KNOWN_BUGS F102 fixed (list/tuple `[int]` through `PsycoNumber_AsSsize_t`); F106 found and fixed (respawns and the flags).
+- **Same code:** `tools/samecode.py baseline-3.7 69a0bdd` (this code before its rebase onto `9ee0da7`, which changed only generator files whose 3.7 output is the same): 1 unit same, 83 differ (3,610 of 4,126 code objects); every first difference is F102's folded index (286 code objects), the unrolled `in` (20), or follows from them (METACOMPILER "Loops").
+- Release builds, instructions per warm iteration (`perf stat -e instructions:u`, `profile_bench.py` 1 s and 4 s, raytrace 2 s and 8 s, PYTHONHASHSEED=0), `7088760` → `69a0bdd`: richards 168.94 → 168.32 M, deltablue 26.52 → 26.51, raytrace 3,095.3 → 3,098.2, go 1,071.4 → 1,065.4, hexiom 40.65 → 39.78, chaos 464.85 → 463.61, pyflate 2,012.0 → 2,003.0.
+- Checked build: generators twice, same output, and the build used it; `tests/run.py` 770 pass (15 new in `tuple_contains.py`: constant, virtual, run-time and long tuples, a subclass, `__eq__` raising, one `__eq__` per item, `tuple()`/`list()`, `in` through an iterator, huge indexes); `tests/compile_bounds.py` 7 checks; the seven `profile_bench.py` runs; `tests/cpython_tests.py -j 2` 285 modules, 0 unexpected; `--all` 371 modules, 0 unexpected; `tests/encoding/check.py` 0 mismatches; `run_v_mem_mov.sh` 90,144 cases, 0 failures; `tests/smoke.py` same output.
+- **Left:** `tuplerichcompare`, `list_contains`, `PySequence_Fast`, `tupleconcat`/`tuplerepeat` (METACOMPILER failures log).
+- **Risks:** the unrolled `in` emits code per item (up to 15), so a long constant tuple of strings grows code where it was one call; it promotes the element's type at entry, one more promotion site per `in`; an unrolled loop's emitted size has no limit of its own beyond `PsycoTuple_Load`'s; F106's fix changes a respawned branch that starts with a condition still in the flags (now a constant); on `baseline-3.7` it changes no code (samecode, 84 units same).
+
 ## 2026-11-18: branches and jumps generated (GENERATION.md step 8, back half; `a907150`, D79)
 
 `UNARY_NOT`, the four conditional jumps, `JUMP_FORWARD`, `JUMP_ABSOLUTE`, `DELETE_FAST` and `SET_ADD` are generated from `ceval.c` with step 4's rules (condition codes, residual-call flags), the jumps through two core macros; nine hand cases left `pycompiler.c`. Read 82 of 119, generated 59. [run]
