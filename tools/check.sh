@@ -7,8 +7,8 @@
 #   tools/check.sh --changed [REF] the steps the files changed since REF
 #                                  (default HEAD; the working tree and
 #                                  untracked files count) can affect
-# Steps: parse effects snippets gen done build run bounds cpython encoder
-# vmem smoke. done needs gen; run, bounds, cpython, vmem and smoke need build.
+# Steps: versions parse effects snippets gen done build run bounds cpython
+# encoder vmem smoke. done needs gen; run, bounds, cpython, vmem and smoke need build.
 #
 # NI_PY37 overrides the CPython 3.7 interpreter (NI_PY38 the 3.8 one the
 # parse gate and the 3.8 dry run read), NI_GEN_PYTHON the Python
@@ -22,9 +22,9 @@ GEN_PY=${NI_GEN_PYTHON:-python3}
 LOG=build/check-build.log
 mkdir -p build
 
-ALL_STEPS="parse effects snippets gen done build run bounds cpython encoder vmem smoke"
+ALL_STEPS="versions parse effects snippets gen done build run bounds cpython encoder vmem smoke"
 GENERATOR="parse effects snippets gen done build run bounds cpython smoke"
-CORE="gen done build run bounds cpython smoke"
+CORE="versions gen done build run bounds cpython smoke"
 
 # the steps a changed path can affect; a path nothing here names gets every
 # step, so a new kind of file is checked until it is listed
@@ -32,11 +32,11 @@ steps_for() {
     case "$1" in
         doc/*|*.md|.gitignore|tools/adversarial/*|tools/fuzz/*|tools/realworld/*|\
         tools/thirdparty/*|tools/benchmarks.sh|tools/bench.py|tools/sanitize*|tools/memrepro.py) ;;
-        tools/metac/*|tests/parse_gate.py|tests/effect_snippets.py|tests/gen2_snippets.py) echo "$GENERATOR" ;;
+        tools/metac/*|tests/parse_gate.py|tests/effect_snippets.py|tests/gen2_snippets.py|tests/features.py) echo "$GENERATOR" ;;
         ni/x64/*) echo "$CORE encoder vmem" ;;
         ni/*|setup.py) echo "$CORE" ;;
         tests/encoding/*) echo "encoder vmem" ;;
-        tests/cases/*|tests/run.py|tests/testenv.py) echo "build run" ;;
+        tests/cases/*|tests/run.py|tests/testenv.py|tests/build_info.py) echo "build run" ;;
         tests/cpython_tests.py) echo "build cpython" ;;
         tests/compile_bounds.py) echo "build bounds" ;;
         tests/smoke.py) echo "build smoke" ;;
@@ -74,6 +74,16 @@ stale_sources() {   # sources newer than ni.so (find compares to the ns)
     [ -z "$so" ] && { echo "(no ni.so)"; return; }
     find ni setup.py $(ls -d build/temp.*/gen 2>/dev/null) -newer "$so" \( -name '*.c' -o -name '*.h' -o -name setup.py \) | head -5
 }
+
+if want versions; then
+    step "no version tests in ni/: features come from the source (NI_HAS_, D136)"
+    if grep -rnwE 'PY_(VERSION_HEX|MAJOR_VERSION|MINOR_VERSION|MICRO_VERSION|RELEASE_LEVEL|RELEASE_SERIAL)' \
+            ni/ --include='*.[ch]' --exclude='*_gen.h'; then
+        echo "a CPython version test in ni/ (above): detect the feature in tools/metac/features.py"
+        exit 1
+    fi
+    echo "none"
+fi
 
 if want parse; then
     step "parse gate: every mirrored CPython file parses, on 3.7 and 3.8 (tests/parse_gate.py)"
@@ -121,6 +131,7 @@ if want gen; then
     diff -r build/gen-check/1 build/gen-check/2
     diff -r build/gen-check/1 build/gen-check/1-again
     echo "same output under seeds 1, 2 and 1 again; 3.8: same statuses"
+    "$GEN_PY" tests/features.py
 fi
 
 if want done; then
@@ -158,8 +169,9 @@ if want build; then
 fi
 
 if want run; then
-    step "behaviour tests (tests/run.py)"
+    step "behaviour tests (tests/run.py, tests/build_info.py)"
     "$PY37" tests/run.py
+    "$PY37" tests/build_info.py
 fi
 
 if want bounds; then

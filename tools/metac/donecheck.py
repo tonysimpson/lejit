@@ -78,11 +78,12 @@ def def_lines(d):
 
 def read_report(gen):
     """(version, source sha, generator commit, [(key, status, reason,
-    location)])."""
+    location)]), without the features' lines (features.py)."""
     with open(os.path.join(gen, 'report.txt')) as f:
         head, *lines = f.read().split('\n')
     version, sha, commit = head.split()[1:]
-    return version, sha, commit, [tuple(ln.split('\t')) for ln in lines if ln]
+    return version, sha, commit, [tuple(ln.split('\t')) for ln in lines
+                                  if ln and not ln.startswith('NI_HAS_')]
 
 
 def stale(sha, commit, src):

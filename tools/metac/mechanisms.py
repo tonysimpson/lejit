@@ -89,6 +89,7 @@ class Source:
             for i in range(len(toks) - 3):
                 if (toks[i].text == 'typedef' and toks[i + 1].text == 'struct'
                         and toks[i + 3].text == name
+                        and toks[i + 2].text != name
                         and toks[i + 4].text == ';'):
                     return self.struct(toks[i + 2].text)
         return None, None

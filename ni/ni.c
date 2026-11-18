@@ -8,6 +8,7 @@
 #include "mergepoints.h"
 #include "psyco.h"
 #include "psyfunc.h"
+#include "ni_buildinfo_gen.h"
 
 #define PSYCO_INITIALIZATION
 #include "initialize.h"
@@ -471,6 +472,58 @@ static PyMethodDef module_methods[] = {
      "(codebuf, globals) run for a code object, or None."},
     {NULL, NULL, 0, NULL}};
 
+/* ni.build_info: what this build was generated from and how it was built
+   (tools/metac/buildinfo.py), read-only; nothing checks it */
+static int add_str(PyObject *d, const char *key, const char *value) {
+  PyObject *v = value ? PyUnicode_FromString(value) : (Py_INCREF(Py_None), Py_None);
+  int err = v == NULL || PyDict_SetItemString(d, key, v) < 0;
+  Py_XDECREF(v);
+  return err ? -1 : 0;
+}
+
+static int add_obj(PyObject *d, const char *key, PyObject *v) {
+  int err = v == NULL || PyDict_SetItemString(d, key, v) < 0;
+  Py_XDECREF(v);
+  return err ? -1 : 0;
+}
+
+static PyObject *build_info(void) {
+  PyObject *d = PyDict_New(), *features = PyDict_New();
+  if (d == NULL || features == NULL)
+    goto error;
+#define NI_FEATURE(name)                                                       \
+  if (add_obj(features, #name, PyLong_FromLong(name)) < 0)                     \
+    goto error;
+  NI_BUILDINFO_FEATURES(NI_FEATURE)
+#undef NI_FEATURE
+#ifdef NI_SANITIZE
+  const char *sanitizer = NI_SANITIZE;
+#else
+  const char *sanitizer = NULL;
+#endif
+  if (add_str(d, "source_version", NI_BUILDINFO_SOURCE_VERSION) < 0 ||
+      add_str(d, "source", NI_BUILDINFO_SOURCE) < 0 ||
+      add_str(d, "source_sha256", NI_BUILDINFO_SOURCE_SHA256[0] ? NI_BUILDINFO_SOURCE_SHA256 : NULL) < 0 ||
+      add_str(d, "source_git_commit", NI_BUILDINFO_SOURCE_GIT_COMMIT[0] ? NI_BUILDINFO_SOURCE_GIT_COMMIT : NULL) < 0 ||
+      add_str(d, "python", NI_BUILDINFO_PYTHON) < 0 ||
+      add_str(d, "generator_python", NI_BUILDINFO_GENERATOR_PYTHON) < 0 ||
+      add_str(d, "ni_commit", NI_BUILDINFO_NI_COMMIT) < 0 ||
+      add_str(d, "build", ALL_CHECKS ? "checked" : "release") < 0 ||
+      add_obj(d, "trace", PyBool_FromLong(NI_TRACE)) < 0 ||
+      add_obj(d, "codestats", PyBool_FromLong(NI_CODESTATS)) < 0 ||
+      add_str(d, "sanitizer", sanitizer) < 0 ||
+      add_obj(d, "features", PyDictProxy_New(features)) < 0)
+    goto error;
+  Py_DECREF(features);
+  PyObject *proxy = PyDictProxy_New(d);
+  Py_DECREF(d);
+  return proxy;
+error:
+  Py_XDECREF(features);
+  Py_XDECREF(d);
+  return NULL;
+}
+
 static struct PyModuleDef ni_module = {PyModuleDef_HEAD_INIT, MODULE_NAME, NULL,
                                        -1, module_methods};
 
@@ -499,6 +552,10 @@ PyMODINIT_FUNC PyInit_ni(void) {
     }
     /* so that timings can tell a debug build (tools/check.sh's) */
     if (PyModule_AddIntConstant(module, "_debug_build", NI_TRACE || ALL_CHECKS)) {
+      Py_DECREF(module);
+      return NULL;
+    }
+    if (PyModule_AddObject(module, "build_info", build_info())) {
       Py_DECREF(module);
       return NULL;
     }

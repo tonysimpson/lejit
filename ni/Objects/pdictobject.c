@@ -19,7 +19,7 @@ vinfo_t* PsycoDict_New(PsycoObject* po)
 	return v;
 }
 
-#if HAVE_DICT_NEWPRESIZED
+#if NI_HAS_PYDICT_NEWPRESIZED
 DEFINEFN
 vinfo_t* _PsycoDict_NewPresized(PsycoObject* po, long minused)
 {

@@ -22,7 +22,8 @@ virtual.NAME, and any other static's name, or its location where that name
 is ambiguous. The status is generated, resumed (in part; the reason lists
 each resume), restarted (the whole function, at once) or refused. The first
 line, '# VERSION SOURCE-SHA256 GENERATOR-COMMIT', says what it was made
-from. The key, status and reason of the other lines must equal those of the
+from; then a line per feature (features.py, ni_features_gen.h): its
+NI_HAS_ name, its value, an empty reason and what was read. The key, status and reason of the other lines must equal those of the
 checked-in baseline, expected/VERSION.txt: any difference is printed and
 fails, so that a function sliding from generated to refused can't pass
 silently. To accept the differences, copy the report over the baseline:
@@ -180,8 +181,11 @@ def main(argv):
         out = argv[argv.index('--out') + 1] if '--out' in argv else None
         import mechanisms
         import gen_virtual
+        import features
+        import buildinfo
         for filename in [f for _, f in GENERATORS] + mechanisms.HEADERS \
-                + gen_virtual.headers() if out else ():
+                + gen_virtual.headers() + [features.HEADER, buildinfo.HEADER] \
+                if out else ():
             path = os.path.join(out, filename)
             if os.path.exists(path):
                 os.remove(path)
@@ -257,12 +261,24 @@ def generate(argv):
     for filename, text, report in chosen:
         outputs.append((filename, text))
         print('%-26s %s' % (filename, report[0]))
+    import features
+    import buildinfo
+    try:
+        text, feature_lines, found = features.build(target)
+    except cslots.GenError as e:
+        return 'generate.py: features: %s' % e
+    outputs.append((features.HEADER, text))
+    outputs.append((buildinfo.HEADER, buildinfo.build(
+        target, cpython_src.source_sha(target.src), found)))
+    print('%-26s %d features, %d present' % (
+        features.HEADER, len(found), sum(v for _, v, _, _ in found)))
     try:
         lines = functions(reports)
     except cslots.GenError as e:
         return 'generate.py: %s' % e
     report = '\n'.join(['# %s %s %s' % (version, cpython_src.source_sha(target.src),
-                                         generator_commit())] + lines) + '\n'
+                                         generator_commit())]
+                       + feature_lines + lines) + '\n'
     outputs.append(('report.txt', report))
     counts = {}
     for ln in lines:

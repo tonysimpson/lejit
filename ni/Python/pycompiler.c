@@ -1671,23 +1671,17 @@ raise_error:
 }
 
 static PyObject *cimpl_import_name(PyObject *globals, PyObject *builtins,
-                                   PyObject *name, PyObject *fromlist
-#if VERYCONVOLUTED_IMPORT_NAME
-                                   ,
-                                   PyObject *fitharg
-#endif
-) {
+                                   PyObject *name, PyObject *fromlist,
+                                   PyObject *fitharg) {
   PyObject *w;
   PyObject *x = PyDict_GetItemString(builtins, "__import__");
   if (x == NULL) {
     PyErr_SetString(PyExc_ImportError, "__import__ not found");
     return NULL;
   }
-#if VERYCONVOLUTED_IMPORT_NAME
   if (NiCompatInt_AsLong(fitharg) != -1 || PyErr_Occurred())
     w = PyTuple_Pack(5, name, globals, Py_None, fromlist, fitharg);
   else
-#endif
     w = Py_BuildValue("(OOOO)", name, globals, Py_None, fromlist);
   if (w == NULL)
     return NULL;
@@ -2118,7 +2112,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
   }
 
   int at_jump_target = 0;
-#if HAVE_NEXT_INSTR_POP
   if (po->pr.next_instr < -1) {
     /* there is a pending POP operation to be done: this is the target of a
        POP_JUMP_IF_xxx. With the pop done the state is the target's, so its
@@ -2129,7 +2122,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
     po->pr.next_instr &= ~NEXT_INSTR_POP;
     at_jump_target = !is_respawning(po);
   }
-#endif
 
   while (1) {
     /* 'co' is the code object we are interpreting/compiling */
@@ -2598,13 +2590,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
       case IMPORT_NAME: {
         PyObject *w = GETNAMEV(oparg);
-#if !VERYCONVOLUTED_IMPORT_NAME /* Python < 2.5 */
-        x = psyco_generic_call(po, cimpl_import_name, CfCommonNewRefPyObject,
-                               "vvlv", LOC_GLOBALS, LOC_BUILTINS, w, TOP());
-        if (x == NULL)
-          break;
-        POP_DECREF();
-#else
         v = TOP();
         u = NTOP(2);
         x = psyco_generic_call(po, cimpl_import_name, CfCommonNewRefPyObject,
@@ -2613,7 +2598,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           break;
         POP_DECREF();
         POP_DECREF();
-#endif
         PUSH(x);
         goto fine;
       }

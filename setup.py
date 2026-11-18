@@ -57,6 +57,8 @@ macros = [
     ('ALL_CHECKS', str(ALL_CHECKS)),
     ('NI_CODESTATS', str(NI_CODESTATS)),
 ]
+if NI_SANITIZE:
+    macros.append(('NI_SANITIZE', '"%s"' % NI_SANITIZE))   # ni.build_info
 
 class ProcessorAutodetectError(Exception):
     pass

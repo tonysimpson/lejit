@@ -1,4 +1,24 @@
 # 3.7.17 fd50161bc2a04f4c22a0971ff0f3856d98b4bf294f89740a9f06b520aae63b49 166364e6bfd7af597ea53c11a2c3d93682a11bc1+08e1d34683af
+NI_HAS_ARG_CHECK_POSITIONAL	0		Include, every header: :_PyArg_CheckPositional
+NI_HAS_AUDIT_HOOKS	0		Include, every header: PySys_Audit
+NI_HAS_DICT_NEW_EMPTY_KEYS	0		Objects/dictobject.c:PyDict_New
+NI_HAS_FLOAT_ASDOUBLE_INDEX	0		Objects/floatobject.c:PyFloat_AsDouble
+NI_HAS_INT_MAX_STR_DIGITS	1		Include/internal/pycore_long.h:_PY_LONG_DEFAULT_MAX_STR_DIGITS
+NI_HAS_MAP_ADD_VALUE_ON_TOP	0		Python/ceval.c:TARGET(MAP_ADD)
+NI_HAS_OPCODE_BEGIN_FINALLY	0		Include/opcode.h:BEGIN_FINALLY
+NI_HAS_OPCODE_BREAK_LOOP	1		Include/opcode.h:BREAK_LOOP
+NI_HAS_OPCODE_CALL_FINALLY	0		Include/opcode.h:CALL_FINALLY
+NI_HAS_OPCODE_CONTINUE_LOOP	1		Include/opcode.h:CONTINUE_LOOP
+NI_HAS_OPCODE_END_ASYNC_FOR	0		Include/opcode.h:END_ASYNC_FOR
+NI_HAS_OPCODE_POP_FINALLY	0		Include/opcode.h:POP_FINALLY
+NI_HAS_OPCODE_ROT_FOUR	0		Include/opcode.h:ROT_FOUR
+NI_HAS_OPCODE_SETUP_EXCEPT	1		Include/opcode.h:SETUP_EXCEPT
+NI_HAS_OPCODE_SETUP_LOOP	1		Include/opcode.h:SETUP_LOOP
+NI_HAS_POSONLYARGS	0		Include, every header: co_posonlyargcount
+NI_HAS_PYCORE_PYSTATE_H	0		Include/internal/pycore_pystate.h
+NI_HAS_PYDICT_NEWPRESIZED	1		Include/dictobject.h:_PyDict_NewPresized
+NI_HAS_TSTATE_ERRORS	0		Include, every header: _PyErr_SetObject
+NI_HAS_VECTORCALL	0		Include/object.h:_typeobject.tp_vectorcall_offset
 BEFORE_ASYNC_WITH	refused	stack: error exit with exit on the stack	Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)
 BINARY_ADD	generated		Python/ceval.c:TARGET(BINARY_ADD)
 BINARY_AND	generated		Python/ceval.c:TARGET(BINARY_AND)
