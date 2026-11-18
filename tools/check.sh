@@ -3,7 +3,8 @@
 # failure, so a broken build can never be followed by a test run against an
 # old ni.so. Run from anywhere:  tools/check.sh
 #
-# NI_PY37 overrides the CPython 3.7 interpreter, NI_GEN_PYTHON the Python
+# NI_PY37 overrides the CPython 3.7 interpreter (NI_PY38 the 3.8 one the
+# parse gate also reads), NI_GEN_PYTHON the Python
 # that runs the generators, NI_CPYTHON_SRC the source tree they read (else
 # the cached release tarball; doc/BUILD.md).
 set -euo pipefail
@@ -20,6 +21,9 @@ stale_sources() {   # sources newer than ni.so (find compares to the ns)
     [ -z "$so" ] && { echo "(no ni.so)"; return; }
     find ni setup.py $(ls -d build/temp.*/gen 2>/dev/null) -newer "$so" \( -name '*.c' -o -name '*.h' -o -name setup.py \) | head -5
 }
+
+step "parse gate: every mirrored CPython file parses, on 3.7 and 3.8 (tests/parse_gate.py)"
+"$GEN_PY" tests/parse_gate.py
 
 step "generators run, twice, with the same output (tools/metac/generate.py)"
 # the cross-checks (gen_ceval against ceval.c and dis.stack_effect) run in
