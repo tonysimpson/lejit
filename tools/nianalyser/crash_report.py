@@ -33,7 +33,7 @@ FATAL = {signal.SIGSEGV, signal.SIGBUS, signal.SIGILL, signal.SIGFPE,
 
 def mapping(db, address):
     """the /proc/pid/maps region holding address, as 'name+offset (perms)'
-    (pointbreak has no public API for this: doc/pointbreak-journal.md)"""
+    (pointbreak has no public API for this)"""
     for m in proc_maps._maps(db._pid):
         if m.lower <= address < m.upper:
             perms = ('r' if m.r else '-') + ('w' if m.w else '-') + \
