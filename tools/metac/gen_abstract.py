@@ -2384,7 +2384,9 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
             raise Refuse('returns a constant known now')
         if kind in ('obj', 'val'):
             if val.bt == 'ct':
-                if val.c in ('NULL', '((void *)0)') or (kind == 'val' and val.c == '-1'):
+                if val.c in ('NULL', '((void *)0)') or (kind == 'val' and (
+                        val.c == '-1' or self.tr.error_value(self.f, e))):
+                    # (a double's error is -1.0, scalars.error_value)
                     self.release_all(st, out)
                     out('return NULL;')
                     st.ended = True
