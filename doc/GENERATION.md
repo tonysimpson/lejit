@@ -9,7 +9,7 @@ The phase is in `GOAL.md` ("What the current phase is") and its design in DECISI
 ## Where we start [read]
 
 - **Hand-translated:** MAP's `translated` files are 3,353 lines; the `core + translated` and `translated + core` files another 12,004, of which some part is core. Generated so far: 949 lines (`plongobject_gen.h`, `pfloatobject_gen.h`, `pycompiler_gen.h`).
-- **Generators:** `tools/metac/` (token reader, slot reader, `gen_long.py`, `gen_float.py`, `gen_ceval.py` with CPython's vendored `cases_generator`), 1,500 lines of Python; `bytecodes37.c` (282 lines, hand-written) describes 43 opcodes, 39 generated.
+- **Generators:** `tools/metac/` (token reader, slot reader, `gen_long.py`, `gen_float.py`, `gen_ceval.py` with CPython's vendored `cases_generator`), 1,500 lines of Python; `bytecodes37.c` (282 lines, hand-written) describes 43 opcodes, 41 generated (INVENTORY.md).
 - **Specification:** PATTERNS.md, 33 patterns: 12 mechanical, 13 judgement, the rest mixed. The judgement ones become entries in the policy table, not code.
 
 ## The check for every step
@@ -33,6 +33,16 @@ The phase is in `GOAL.md` ("What the current phase is") and its design in DECISI
 | 10 | **Done check.** Quiet machine: `check.sh`, same code against the hand-written baseline (`19fa1df`), re-baseline (pyperformance, `compilebench.py`, `codesize.py`) in STATUS. | all | GOAL points 3 and 4 | 2 h |
 
 Order: 0, 1 and 2 can run at once; then 3; then 4 alone; then 5, 6, 7 and 8 in parallel; 9 any time after 1. Total, if step 4 goes as hoped: about 4–7 days elapsed.
+
+## Step 0, the inventory: done (INVENTORY.md) [read]
+
+`doc/INVENTORY.md` splits every in-scope file function by function (and `pycompiler.c` opcode by opcode): class, CPython 3.7 counterpart, patterns, the policy each carries. The tool half (`tools/samecode.py`) is separate. What it changes here:
+- **Numbers.** 15,652 lines in scope, 14,346 without the compiled-out `pstringobject.*`: 3,811 translated, 3,298 mixed, 5,490 core, 1,747 glue. GOAL point 1 is about the first two; the core lines get named as core in MAP. `mergepoints.c`, `frames.c` and `pfuncobject.c` are almost all core; `pbltinmodule.c` (MAP: `translated`) is half mixed.
+- **Step 3** starts from the policy items in the per-file tables: 72 effect-flag sets, 59 guards (nearly all D54's one rule), 60 virtual-object choices, 53 shortcuts, 25 promotion choices, 17 forgetting sites, 14 ownership choices, 7 megamorphic cut-offs, and the judgement that is code today (D53's `cannot_block_init`, the inlining limits, the opcode whitelist, field mutability).
+- **Step 4** must give two outputs for some functions: the meta and the run-time copy D54 resumes in (`binary_op1`/`cimpl_binary_op1`, `binary_iop1`, `sequence_repeat`, the `PyNumber_*` sequence fallbacks).
+- **Step 7** is mostly core: only `psyfunc.c`'s `fncall_*` argument binding is translation, and `_PyFunction_FastCall*` are in `Objects/call.c` in 3.7. The PsycoFunction proxy (about 300 lines, no caller) can go first.
+- **Step 8**: 41 opcodes are generated today (not 39); the block-stack and `with` cases are core (Ni's finally states, not `WHY_*`); ten 3.7 opcodes are not compiled at all.
+- **Same code** will differ, with a reason, wherever a faithful translation fixes a hand-translation bug: KNOWN_BUGS F97–F104, all found by the inventory and not yet fixed. Shortcuts with no 3.7 C behind them (one-digit bit operations, `divmod()`'s fast path, power-of-two divisors, `PsycoDict_NewPresized`'s small case) must become policy entries or show as a loss.
 
 ## Step 1: done (`9eae61d`, D68) [run]
 

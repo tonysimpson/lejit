@@ -13,6 +13,7 @@ Ni is a fork of Armin Rigo's **Psyco** JIT for CPython, ported partway to x86-64
 | How compilation works end to end | `doc/ARCHITECTURE.md` |
 | Terms: vinfo_t, Source, promotion, merge point, respawn… | `doc/GLOSSARY.md` |
 | How a CPython C function becomes its compile-time form (the meta-compiler spec) | `doc/PATTERNS.md` |
+| Function-by-function inventory of everything that mirrors CPython: class (translated / core / mixed), 3.7 counterpart, patterns, embedded policy, line counts | `doc/INVENTORY.md` |
 | What was removed from Psyco during the port, and why | `doc/history/` |
 | Upstream refs, CPython version, papers | `doc/REFERENCES.md` |
 | Settled decisions / open questions / progress | `doc/DECISIONS.md`, `doc/QUESTIONS.md`, `doc/STATUS.md` |
