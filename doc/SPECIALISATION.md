@@ -1,71 +1,40 @@
----
-written: 2026-11-17
-head_ref: 0dca1a1
-status: design note; guides the queued specialisation work (BACKLOG)
----
 # One policy for specialisation
 
-Ni specialises code in two places: promotion sites and merge points (GLOSSARY, "Shared plain words"). Each grew its own limits and rules. This note says what the two have in common, where their separate decisions work against each other, and one policy for both. The mechanisms stay separate.
-
-## The two places
+Ni specialises code in two places, promotion sites and merge points (GLOSSARY, "Shared plain words"). The mechanisms stay separate; the policy (how many copies to keep, which facts are worth keeping, when to stop specialising) is one.
 
 | | promotion site | merge point |
 |---|---|---|
-| what it keys on | one value: a type, a function, an int | the whole state |
-| when it chooses | at run time: a compare chain on the actual value | at compile time: `psyco_compatible` picks a block, and the code jumps straight there |
+| keys on | one value: a type, a function, an int | the whole state |
+| chooses | at run time: a compare chain on the actual value (D42) | at compile time: `psyco_compatible` picks a block |
 | copies | one block per value seen | one block per state seen |
-| limit | megamorphic, 5 values (`MEGAMORPHIC_MAX`), not counting the megamorphic version itself (D66); only some sites have it (CODE_SIZE "Promotions") | the cap, 6 blocks (D40) |
-| generic copy | the megamorphic path: the value stays run-time | the block compiled from a generalised state |
-| sharing copies | none: each value's block runs to the next merge point | partial matches generalise differing constants (D33, D41) |
-| code | `dispatcher.c:psyco_finish_promotion`, `do_promotion`, `x64/idispatcher.h` | `dispatcher.c:psyco_compatible`, `vcompiler.c:psyco_compile` |
+| limit | megamorphic, `MEGAMORPHIC_MAX` (5) values, not counting the megamorphic version (D66); only some sites have one | the cap, 6 blocks (D40) |
+| generic copy | the megamorphic path: the value stays run-time | a block compiled from a generalised state |
+| code | `dispatcher.c:psyco_finish_promotion`, `do_promotion_*`, `x64/idispatcher.h` | `dispatcher.c:psyco_compatible`, `vcompiler.c:psyco_compile` |
 
-[read]
+Why one policy: a fact gained at one point decides how many copies are made at another. A promotion adds a fact that splits the next merge point; a value the cap generalises is specialised again by the next promotion; a polymorphic site copies everything after it; a respawned branch used to run on alone to the next merge point.
 
-The difference in **when** is fundamental. A merge point knows the incoming state while compiling, so it needs no run-time test. A promotion exists because the value is only known at run time. So the mechanisms stay apart. The **policy**, meaning how many copies to keep, which facts are worth keeping and when to stop specialising, is the same question in both, and today it is answered twice, independently.
+## The rules
 
-## Where the two work against each other
+**Specialisation point**: a promotion site or a merge point. Each keeps copies of the code after it, keyed on what it knows, up to a limit, then uses a generic copy.
 
-1. **A promotion adds a fact that splits the next merge point.** Code after a promotion knows "this is a `Task`". At the next merge point it can't match a block compiled without that fact, nor the reverse (`compatible_array`), so it compiles a new block. Code entered from coding pauses and respawns re-promotes the same types this way: 953 KB across 9 benchmarks, against 23 KB from a site seeing several values (CODE_SIZE "Promotions"). [run] deltablue's `change` keeps a fourth block for the same reason (D41). [run]
-2. **The cap generalises a value, and the next promotion specialises it again.** The cap made a constant function run-time; the next call promoted it, one block per function: meteor compiled 5% more (D40). That is why the cap generalises only ints today. [run]
-3. **A polymorphic site splits everything after it.** Each value gets its own copy of the rest of the block, so a site with 3 types costs 3 copies as well as the misses. JavaScript inline caches cache how to do the operation and share the code after it. [read] (V8, SpiderMonkey CacheIR, JavaScriptCore), [inferred] for Ni
-4. **Nothing joined a respawned branch back.** Each respawned branch ran to the next merge point, which is a specialisation decision by default (QUESTIONS 42; richards' `Task.__init__` 10 → 54 KB with inline stores). Fixed at split sites by D44. [run]
+1. **Every fact has a reason to be kept.** A fact is kept past the next specialisation point only if code after it relies on it. Done for merge points (D50, D57): a run-time value's known field that nothing since the last merge point relied on is dropped when no block matches exactly. "Used" is `source_known_t.used`, the serial of the last block that relied on the fact, compared with `PsycoObject.mp_serial`; not `SkFlagFixed`, which a promotion sets at birth. A promotion's own compare at its instruction never drops, or it would loop.
+2. **Each point has a limit, and the generic copy is final.** Past the limit, what was generalised is marked **forgotten** (`RunTime_Megamorphic`), and every promotion with a generic path takes it for a marked value (D43). Without the mark, generalising only moves the copying downstream.
+3. **The mark travels with the value.** It is kept in snapshots and compared at merge points, so a replay sees it (D21). Values derived from a forgotten one should be forgotten too; today a forgotten value's type is still promoted (`Psyco_NeedType` has no generic path; open, BACKLOG).
+4. **At a polymorphic site, share the code after it** (option D): once a site has seen K values, compile its continuation once with the value forgotten, the operation depending on it through a cache. Measured, small on pyperformance; not on 3.7 (FINDINGS.md, QUESTIONS 43–46). K stays `MEGAMORPHIC_MAX`.
+5. **A branch compiled late rejoins.** Done at split sites (D44, D49): a respawned branch joins the block the site already starts. Branches from coding pauses already meet merge points; respawn points that aren't split sites are left.
+6. **One budget, measured per function.** Limits judged against code size and compile time per function, not only per point (D29); a function that has compiled many copies should generalise sooner. Not yet measured.
 
-All four are one problem: a fact gained in one place decides how many copies are made somewhere else, and neither place knows about the other.
+## What stays as it is
 
-## The policy
+- **Fixed facts are never dropped.** Something emitted relies on them, and un-promoting one that a promotion compiled from would loop (D40).
+- **Identity is kept.** Generalising may make a value run-time, never recompute an object that `is` could see (D33, D41).
+- **A hint is not a fact.** A value can carry a hint, such as the type it had before D59 forgot it (`vinfo_t.type_hint`, D63): it decides what code is emitted (a guard instead of a promotion), so it is kept in snapshots for replays, but states are compared without it.
+- **Replays are deterministic.** A decision may depend on the state, the snapshots and one-way state read through `psyco_block_serial` (D21, D31), never on counts a replay would see differently. Merge-point decisions are safe because a replay never passes a merge point (D40).
+- **Joining can merge promotion sites.** Two blocks' sites become one that sees both sets of values; a site's room is fixed at the site, not by keeping copies (D66).
 
-**Specialisation point**: a promotion site or a merge point. Each one keeps copies of the code after it, keyed on what it knows, up to a limit, then uses a generic copy. The rules below apply to both.
+## Open
 
-1. **Every fact has a reason to be kept.** A fact is kept past the next specialisation point only if code after it relies on it. Psyco already marks this for constants (`SkFlagFixed`: something emitted depends on the value). The policy extends it: a promoted type that nothing after the merge point has used yet is not a reason to start a new block. [inferred]
-2. **Each point has a limit, and the generic copy is final.** Past the limit, the point compiles one generic copy, and what it generalised is marked **forgotten**: no later point may specialise on it again. Without the mark, generalising only moves the copying downstream (2 above). [inferred]
-3. **The mark travels with the value.** A forgotten value is part of the state, kept in snapshots and compared at merge points, so a respawn replay sees it (D21). Values derived from it, such as its type, are forgotten too, or promotion of the type undoes it. [inferred]
-4. **At a polymorphic site, share the code after it.** Once a promotion site has seen K values, its continuation is compiled once with the value forgotten, and only the operation itself depends on the value, through a cache keyed on the value (option D). [inferred]
-5. **A branch compiled late rejoins.** A respawned branch, or one entered from a coding pause, compares its state with existing blocks at the first point where they can match, instead of running to the next merge point on its own. [inferred]
-6. **One budget, measured per function.** Limits are measured against code size and compile time per function, not only per point (D29). A function that has already compiled many copies should generalise sooner. A policy choice, not yet measured. [inferred]
-
-### What stays as it is
-
-- **Fixed facts are never dropped.** Something emitted relies on them, and un-promoting one that a promotion compiled from would loop (D40). [read]
-- **Identity is kept.** Generalising may make a value run-time, never recompute an object that `is` could see (D33, D41). [read]
-- **A hint is not a fact.** A value can carry a hint, such as the type it had before D59 forgot it (`vinfo_t.type_hint`, D63): it decides what code is emitted (a guard instead of a promotion), so it is kept in snapshots for replays, but states are compared without it, since a block that guards before relying on the hint is right whatever the hint. [read]
-- **Replays are deterministic.** A decision may depend on the state, the snapshots and one-way state read through `psyco_block_serial` (D21, D31), never on counts that a replay would see differently. Merge-point decisions are safe because a replay never passes a merge point (D40). [read]
-
-## Steps
-
-In order, each measured on code size, compile time and speed (D29):
-
-1. **Forgotten values** (done, D43): the mark (`RunTime_Megamorphic`), honoured by every promotion entry that has a generic path, set by the cap. Lets the cap generalise more than ints. Rules 2 and 3, except that a forgotten value's type is still promoted (`Psyco_NeedType` has no generic path).
-2. **Respawned branches rejoin** (done at split sites, `f229d14`, D44): rule 5. Inline stores (D38) can merge on top: measured, richards +35% code over base with both, +10% once the store sites were shrunk (D47). Branches from coding pauses already meet merge points; respawn points that aren't split sites are left. Joining can merge two blocks' promotion sites into one, which then sees the values of both: it exposed C54 (heap types used up an `isinstance` site's room), fixed at the site, not by keeping the copy (D66).
-3. **Merge points match across an unused fact** (done, `96b9777`, `0b808fa`, D50, D57): rule 1. A state that knows a run-time value's type (or another known field) that nothing since the last merge point relied on matches a block without it, if no block matches exactly. "Used" is a stamp per fact against the block serial at the last merge point; the guard is that a promotion's own compare at its instruction never drops. −1.0% instructions compiled, −1.8% code, speed unchanged (CODE_SIZE "Unused facts at merge points"). Other known fields of run-time values are dropped the same way since C35 turned out to be a backend bug (`IS_A_JUMP`): only mdp changes, −0.07% instructions compiled in all, speed unchanged (CODE_SIZE "Every unused field, after C35").
-4. **Shared code after polymorphic sites** (option D): rule 4, built on the mark from step 1. Designed and measured in `doc/OPTION_D.md`: the upper bound is small (over all 23 benchmarks, K = 2: 18.1 KB, 0.75%; K = 3: 5.6 KB, 0.2%), and the copies it would remove run often, so it is not worth building on 3.7. If it is built, the first step is a cached operation in the megamorphic version of attribute and method sites, with its result forgotten (rule 3), at the existing limit. [run]
-5. **A shared megamorphic table**, keyed on (type, operation), if megamorphic sites still show in profiles.
-6. **One budget per function**: rule 6, once 1–4 show how much is left.
-
-The out-of-line chain of cases at promotion sites (in flight, option B) is a mechanism under this policy: it makes the run-time choice cheaper, and changes nothing about which copies exist.
-
-## Open questions
-
-- **Where a fact's "used" bit lives.** Answered (D50): not `SkFlagFixed`, which a promotion sets at birth, so every promoted type is fixed before anything uses it [read]. It is `source_known_t.used`, the serial of the last block that relied on the fact, compared with `PsycoObject.mp_serial` at the next merge point. A stamp per block rather than per merge-point stretch missed uses before a mid-stretch promotion and cost hexiom 3% [run].
-- **Whether two states that differ only in the forgotten mark should match.** Matching is safe if the forgotten one is the more general; the reverse would let specialisation back in.
-- **K for rule 4**: measured (`doc/OPTION_D.md`). Keep the megamorphic limit: K = 2 saves 0.75% and K = 3 0.2%, each for a speed cost, and K = 2 slows every two-value site for nothing.
-- **How this maps onto 3.12** (PORT312.md): 3.12's specialising interpreter has its own per-instruction caches; whether Ni reads them as hints is QUESTIONS 30.
+- A shared megamorphic table keyed on (type, operation), if megamorphic sites show in profiles.
+- Whether two states that differ only in the forgotten mark should match: safe if the forgotten one is the more general, never the reverse.
+- Rule 6, once the rest shows how much is left.
+- 3.12's specialising interpreter has its own per-instruction caches; whether Ni reads them as hints is QUESTIONS 30.
