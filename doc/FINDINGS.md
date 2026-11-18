@@ -64,7 +64,7 @@ Random programs (BUILD.md, Fuzzing; what they cover is in `gen.py`'s docstring) 
 - **B18** (fixed, `0b53f42`): `integer_cmp` folded an unsigned compare of a value with itself to false, so `s[len(s)]` returned `'\x00'`. Once, in the first 1000 seeds.
 - **M12** (fixed, `99b81d7`): a constant index of 2**28 or more into a large array read the wrong address (a 2 GB list crashed). Once (seed 320), seen as `iencoding.h`'s range warning on stderr, which `run.py` counts.
 - **G21** (fixed on baseline, `9d72c8c`): a known tuple times a constant of 2**31 or more items crashed, the generated `tuplerepeat` keeping the size in an `int`. Four times (three checked, one release), each a lambda made in a loop multiplying its tuple default by 2**31 or 2**32.
-- **F117** (fixed, `5d61f8d`): a float folded from constants was one object for every run of its code, so `{NAN + 1.5 for ...}` had one NaN. Six times, always a NaN in a set or dict built in a loop.
+- **F117** (fixed, `979be8b`): a float folded from constants was one object for every run of its code, so `{NAN + 1.5 for ...}` had one NaN. Six times, always a NaN in a set or dict built in a loop.
 - **C18 and C56** (known): a generator's `finally` printing when the generator is freed, which Ni does at return (CPython keeps the frame until the handler that caught the exception ends) and in another order: 29 in seeds 100000..129999. The generator no longer prints from finalisers.
 
 Nothing else: no wrong arithmetic at the 2**31, 2**63 or float edges, no unpacking, slicing, closure, exception-handling or class-protocol difference. Not generated: frames, tracing and finaliser order (C11, C15, C18, C29, C56), threads, imports, I/O, subclasses of builtins, metaclasses, descriptors other than `property`, `async`.

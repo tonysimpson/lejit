@@ -30,8 +30,8 @@ One row per file. **Every file has been read in full at least once.** The "revie
 |---|---|---|---|---|
 | `ni/blockalloc.h` | core | Fixed-size block allocator macros for vinfo_t and source_known_t; under ASan each item is its own `PyMem_MALLOC` block. | none | `e1fd808`; `ebc2296` (ASan) |
 | `ni/cf_flags.h` | core | Cf* flags describing a C function for residual calls: purity, new ref, return type, errors. | none (CPython C API conventions) | `56e5faf` |
-| `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding, a fresh object emitted instead), integer emitters, rich compare, a frame's call-site note. | Objects/object.c | `5d61f8d` |
-| `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions, the call-site note. | none | `5d61f8d` |
+| `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding, a fresh object emitted instead), integer emitters, rich compare, a frame's call-site note. | Objects/object.c | `979be8b` |
+| `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions, the call-site note. | none | `979be8b` |
 | `ni/codemanager.c` | core | Executable memory as free extents (poisoned under ASan, a LeakSanitizer root region); owners (D102): what a code object's compiled code holds, released with it; per-address records; the owner scan for cycles through code objects, as a pending call or at a full collection (D122); compile guards (D103). | none | `55c5b5e` |
 | `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner, record and compile guard APIs. | none | `9b9dcef` |
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
@@ -61,7 +61,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/psyfunc.h` | glue | Declarations for psyfunc.c and the generated binder (D85). | none | `e11f2a3` |
 | `ni/pycodegen.h` | core | Emits Py_INCREF/Py_DECREF and reference-ownership helpers on vinfo_t. | Include/object.h | `fa3dae7` |
 | `ni/vcompiler.c` | core | vinfo lifetime, field get/put with load folding (a constant array index only when small), coding pauses (their states parked), the psyco_compile*() entry points. | none | `a7cb8e9` |
-| `ni/vcompiler.h` | core | Central data model: Source, vinfo_t, field descriptors, PsycoObject (compiler state), which compile-time objects may be constants (psyco_shared_constant). Start here. | none | `5d61f8d` |
+| `ni/vcompiler.h` | core | Central data model: Source, vinfo_t, field descriptors, PsycoObject (compiler state), which compile-time objects may be constants (psyco_shared_constant). Start here. | none | `979be8b` |
 | `ni/Modules/pmath.c` | translated + glue | ceil and floor of an exact float; registers the generated math functions. | Modules/mathmodule.c | `cddaf8d` |
 | `ni/Objects/pabstract.c` | translated + core | The hand-written rest of the abstract protocol (`**`, `iter()`, next, int subscripts). | Objects/call.c, Objects/abstract.c, Objects/tupleobject.c, Objects/listobject.c | `351a4d5`, `935df0b` |
 | `pabstract_gen.h` | translated (generated) | The abstract protocol's metas and run-time copies, by `gen2/abstract.py` (D74, D104). | Objects/abstract.c | `df8385b` |
@@ -70,7 +70,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `punicodeobject_gen.h` | translated (generated) | Metas for str's length, `+`, `in` and their init, by `gen2/abstract.py` (D89, D116). | Objects/unicodeobject.c | `9bd4d22` |
 | `pstructmember_gen.h`, `pdescrobject_gen.h` | translated (generated) | Metas for PyMember_GetOne and member_get, by `gen_abstract.py` (D89). | Python/structmember.c, Objects/descrobject.c | `ccb5735`, `03ce514` |
 | `pobject_gen.h` | translated (generated) | object.c's functions in other types' slots, by `gen_abstract.py` (D93). | Objects/object.c | `9e58f97` |
-| `virtual_fields_gen.h`, `ptupleobject_virtual_gen.h`, `psliceobject_virtual_gen.h`, `pclassobject_virtual_gen.h` | translated (generated) | Virtual objects (D80) by `gen_virtual.py`: descriptors and, per type, force (a constant only if shared, D130) and constructor. | Objects/tupleobject.c, Objects/sliceobject.c, Objects/classobject.c | `5d61f8d` |
+| `virtual_fields_gen.h`, `ptupleobject_virtual_gen.h`, `psliceobject_virtual_gen.h`, `pclassobject_virtual_gen.h` | translated (generated) | Virtual objects (D80) by `gen_virtual.py`: descriptors and, per type, force (a constant only if shared, D130) and constructor. | Objects/tupleobject.c, Objects/sliceobject.c, Objects/classobject.c | `979be8b` |
 | `psyfunc_gen.h` | translated (generated) | `_PsycoEval_EvalCodeWithName`: argument binding at compile time (D85), by `gen_call.py`. | Python/ceval.c | `e11f2a3` |
 | `ni/Objects/pabstract.h` | glue | Declarations of the abstract protocol's metas (generated and hand-written). | Include/abstract.h | `351a4d5`, `935df0b` |
 | `ni/Objects/pboolobject.c` | translated | `PsycoBool_FromLong` and `PsycoBool_FromZeroOrOne`. | Objects/boolobject.c | `58e52de` |
@@ -125,7 +125,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Python/pyver.h` | glue | Python-version feature switches. | none | `4a0d275` |
 | `ni/x64/idispatcher.c` | backend + core | psyco_unify(): emits moves and refcounts to match a snapshot, then jumps to it. | none | `a4b946e` |
 | `ni/x64/idispatcher.h` | backend | Dispatcher hooks: promotion inline cache and chain, jumps and patching, unify blocks, stubs. | none | `a599bd2` |
-| `ni/x64/iencoding.c` | backend + glue | C calls (SysV at run time, libffi at compile time), psyco_call_psyco, cc and ALU emitters. | none (encodes CPython error conventions) | `5d61f8d` |
+| `ni/x64/iencoding.c` | backend + glue | C calls (SysV at run time, libffi at compile time), psyco_call_psyco, cc and ALU emitters. | none (encodes CPython error conventions) | `979be8b` |
 | `ni/x64/iencoding.h` | backend | x86-64 encoders, register and cc model, call macros, jumps: the main core-to-backend API. | none | `edfcdcd` |
 | `ni/x64/iinitialize.h` | glue | Runs psyco_processor_init(); under ALL_STATIC includes the x64 `.c` files. | none | `e1fd808` |
 | `ni/x64/iprocessor.c` | backend | Run-time entry glue, the stub trampoline, stack frame walking, aligned-call glues. | none | `ee76274` |
@@ -144,7 +144,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | file | layer | what it is | reviewed |
 |---|---|---|---|
 | `setup.py` | glue | distutils build of the `ni` extension; runs `generate.py` first, with `PYTHONHASHSEED=0` (D68); `NI_SANITIZE` builds into `--build-lib` with its own config stamp. | `ebc2296` |
-| `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests); `fuzzed.py` holds what `tools/fuzz/` found, `fresh_objects.py` that folded results are new objects per run (D130), `big_arrays.py` makes a 2 GB list. | `5d61f8d` |
+| `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests); `fuzzed.py` holds what `tools/fuzz/` found, `fresh_objects.py` that folded results are new objects per run (D130), `big_arrays.py` makes a 2 GB list. | `979be8b` |
 | `tests/testenv.py` | tooling | What the runners share with `tools/sanitize.sh`: `NI_MODULE_DIR`, `NI_SANITIZE_LOGS` (per-child logs, longer timeouts, no address-space limit), the modules skipped under the sanitizers. | `4896477` |
 | `tests/encoding/check.py` | tooling | Checks `@asm`-annotated emitters in `iencoding.h` against GNU `as`; the cases compile in parts of 15000. | `974f1ea` |
 | `tests/smoke.py` | tooling | Stdlib smoke test: about 30 modules, output must match with and without Ni. | `6ca580a`; `ebc2296` (`NI_MODULE_DIR`) |
@@ -165,12 +165,12 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/metac/conditions.py`, `pointers.py` | tooling | Translator rules (D89) for gen_abstract's units: `ConditionRules` (likely items, `known_only`, `skip_check`) and `PointerRules`. | `f9598d6` |
 | `tools/metac/ceval_reader.py` | tooling | Reads `ceval.c`'s `TARGET` cases as `bytecodes.c` definitions (D69). | `96eeba2` |
 | `tools/metac/generate.py` | tooling | The one entry point for generation (D68): checks, runs every generator (gen2's included), writes headers and `report.txt`, compares it with `expected/` (D98); `--no-cache`. | `127d4d6` |
-| `tools/metac/gen_virtual.py` | tooling | Virtual objects (D80): from each immutable `TYPES` virtual's constructor. | `5d61f8d` |
+| `tools/metac/gen_virtual.py` | tooling | Virtual objects (D80): from each immutable `TYPES` virtual's constructor. | `979be8b` |
 | `tools/metac/gen_call.py` | tooling | The call path (D85): argument binding as a C function the compiler runs. | `ac8f978` |
 | `pbltinmodule_gen.h` | translated (generated) | The builtins' metas and their registration (Python/bltinmodule.c), by `gen2/abstract.py`, a path per count of a `METH_FASTCALL` function's arguments (D86, D126). | `127d4d6` |
 | `tools/metac/csource.py` | tooling | Names definitions in a C source tree, for the policy table's keys (D71); a lookup in a file it can't balance raises. | `ac8f978` |
 | `tools/metac/policy.py` | tooling | The policy table's vocabulary and checks against the source and Ni (D71); a gen2 row has no shape (D106). | `127d4d6` |
-| `tools/metac/policy_table.py` | tooling (data) | The policy table (D71): entries keyed by CPython definitions, rules, limits, types, layouts; the generated rows of abstract.c, the numbers, math, the builtins, tuple, list, dict, bytes and str only name gen2 (D106, D110, D115, D116, D125, D126). | `5d61f8d` |
+| `tools/metac/policy_table.py` | tooling (data) | The policy table (D71): entries keyed by CPython definitions, rules, limits, types, layouts; the generated rows of abstract.c, the numbers, math, the builtins, tuple, list, dict, bytes and str only name gen2 (D106, D110, D115, D116, D125, D126). | `979be8b` |
 | `tools/metac/effects.py` | tooling | Effect rules (D71, D96): per C function of libpython and the mirrored files, on the front end's AST, pure, readonly, no Python, no blocking, no raise; mapped onto `Cf*` flags; the vocabulary's effects from `gen2/vocabulary.py`; the result is cached (`cache.py`). | `7bb33ec` |
 | `tools/metac/cpython_src.py`, `cpython_sha256.txt` | tooling | The CPython source for a version, local or a sha256-checked tarball. | `ac8f978` |
 | `tools/metac/mechanisms.py` | tooling | Mechanism detectors (D75); `VARIANTS` maps answers to snippets. | `f254b5d` |
