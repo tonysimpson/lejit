@@ -18,7 +18,7 @@ NI_TRACE=1 NI_ALL_CHECKS=1 pip install -e .     # debug: -O0 -g3, extra asserts
 pip install .                                   # release: -O3
 python3.7 setup.py build_ext --inplace          # what tools/check.sh does
 ```
-- `NI_ALL_STATIC=1` puts every `.c` file into one unit (`ni/ni.c`, `ni/initialize.h`).
+- `NI_ALL_STATIC=1` puts every `.c` file into one unit (`ni/ni.c`, `ni/initialize.h`, `ni/x64/iinitialize.h`), except `platform.c` and `Python/pyruntime.c`, which stay separate. With everything static, gcc's unused-function warnings list the dead code (about 30 functions, 2026-11-18). Checked build passes `tests/run.py` (C55, `c33b13f`). [run]
 - `setup.py:autodetect` accepts only `x86_64`, and adds `ni/x64` to the include path, so backend headers are included as `<iencoding.h>`.
 
 **Generated code (D67, D68).** Before compiling, `build_ext` runs `tools/metac/generate.py`, which writes `plongobject_gen.h`, `pfloatobject_gen.h`, `pycompiler_gen.h` and the three `mechanism_*_gen.h` (the snippets the source's answers choose, D75) into `build/temp.<platform>-<X.Y>/gen/` (on the include path). Nothing generated is in git. What it needs:

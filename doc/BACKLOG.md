@@ -90,7 +90,6 @@ From `KNOWN_BUGS.md`, ordered by what they can do to a user's program.
 - **Encoder from `@asm` annotations** (QUESTIONS 37): owner wants it after compile-time metrics, which now exist.
 - **`v_mem_mov.h` annotations, a lint for unannotated emission, and pointbreak checks of emitted code** (BUILD, "Design notes").
 - **Stale tools** (QUESTIONS 19) and `MANIFEST` (QUESTIONS 20).
-- **`NI_ALL_STATIC=1` doesn't compile** (C55).
 - **A quiet re-baseline** of pyperformance and compile cost once the in-flight branches are merged: timings since the morning of 2026-11-17 were taken with agents running.
 
 ### Research (the project goal)

@@ -68,7 +68,7 @@ Example: `pobject.c:PsycoObject_IsTrue`, `pabstract.c:binary_op1`, `pabstract.c:
 
 **P10 module-fn-meta** (M)
 A builtin module function's meta is registered on its C pointer with `Psyco_DefineMetaModule(name)` + `Psyco_DefineModuleFn(md, name, ml_flags, meta)`. The registration does nothing if `ml_flags` don't match exactly, for example after Argument Clinic changed a function to `METH_FASTCALL`, because the meta's arguments and its residual fallback follow the convention it was written for; it is then listed by `ni._unregistered_metas()` (printed in checked builds, and `tests/compile_bounds.py` fails). A `METH_FASTCALL` meta takes its arguments as a tuple and falls back through `PsycoCFunction_CallFast` (D36).
-Example: `ni/Modules/pmath.c` (the `PMATH_FUNC1/2` macros are themselves a small hand-written meta-compiler). `ni/Python/pbltinmodule.c` uses it too, but imports `"__builtin__"` and so registers nothing on Py3.
+Example: `ni/Modules/pmath.c` (the `PMATH_FUNC1/2` macros are themselves a small hand-written meta-compiler). `ni/Python/pbltinmodule.c:psyco_bltinmodule_init` imports `"builtins"` and registers 14 builtins this way, plus `type_call` with `Psyco_DefineMeta` (INVENTORY.md). [read]
 
 **P11 slot-redirect** (J)
 A meta on a slot that returns a different, more optimisable object than CPython would.
@@ -190,4 +190,4 @@ Example: `pobject.c:Psyco_ForgetClasses`, `Psyco_ClassMutable` (KNOWN_BUGS F55, 
 2. **Error conventions are per call.** Metas return NULL / `CC_ERROR`. Residual calls get theirs from `CfPyErr*`. The generator needs the C function's error convention as data (most can be derived from CPython docs and return types). [read]
 3. **Per-slot meta signatures and `Cf*` flags are data** (P09). Today they exist only implicitly in call sites. [read]
 4. **Mixed values.** A translated function's arguments can be `vinfo_t*` or raw compile-time values (the `l` tag). The generator must decide this per argument and per slot. [read]
-5. **Version drift is the problem being solved.** Several translations are Py2 semantics running on 3.7: `pabstract.c:binary_op1` depends on `Py_TPFLAGS_CHECKTYPES`, which doesn't exist in Py3, so mixed-type arithmetic falls to a TypeError [read + inferred]; `pbltinmodule.c` imports `__builtin__`. These are exactly the failures a generator from the 3.7 source would avoid. Use them as test cases.
+5. **Version drift is the problem being solved.** Hand translations drift from the CPython they mirror, and a generator reading the 3.7 source avoids that. The two old examples are fixed (`pabstract.c:binary_op1` follows 3.7, with no `Py_TPFLAGS_CHECKTYPES`; `pbltinmodule.c` imports `builtins`). INVENTORY.md lists 65 remaining places (DRIFT) where Ni differs from 3.7, eight of them bugs (KNOWN_BUGS F97–F104); those are the test cases now, and a faithful translation of each shows in same code as a difference with a reason. [read]

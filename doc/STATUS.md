@@ -1,5 +1,12 @@
 # Status
 
+## 2026-11-18: tidy-ups before steps 5–7 (`896dfaf`, `6f8009a`, `c33b13f`)
+
+The PsycoFunction proxy is gone (`psyfunc.c`, `psyfunc.h`: 379 lines net; `pdescrobject.c` now uses 3.7's exported descriptor types), `NI_ALL_STATIC=1` builds again (KNOWN_BUGS C55), stale header comments are fixed, and MAP's layers follow INVENTORY's split (new `psliceobject.*` rows; PATTERNS P10 and rule 5 updated). [run]
+- **Same code:** `tools/samecode.py baseline-3.7 896dfaf` and `896dfaf c33b13f`: 83 units same, 0 differ (4,089 code objects) each.
+- Checked build: `tests/run.py` 749 pass, `tests/compile_bounds.py` 7 checks, `tests/cpython_tests.py -j 2` default set 285 modules, 0 unexpected. Checked `NI_ALL_STATIC=1` build: `tests/run.py` 749 pass.
+- Not done: release `NI_ALL_STATIC` build not tried; the dead functions its warnings list are not removed.
+
 ## 2026-11-18: mechanism detectors and snippets (GENERATION.md step 9, `36b5beb`, D75)
 
 Ni's own mechanisms (entry, tracing, frames) are chosen from what the target's source offers, never a version: `tools/metac/mechanisms.py` detectors, its `VARIANTS` table, and one snippet per mechanism in `ni/mechanisms/`, written by `generate.py` into `mechanism_*_gen.h`. METACOMPILER.md "Mechanisms". [run]
