@@ -45,6 +45,9 @@ PSY_INLINE vinfo_t *PsycoLong_FROM_WORD(vinfo_t *vlong) {
 /* MEDIUM_VALUE of an int that is one digit at run time, as a new reference
    in *pval: 1; 0 if it isn't one digit; -1 on error or promotion */
 EXTERNFN int PsycoLong_MediumValue(PsycoObject *po, vinfo_t *v, vinfo_t **pval);
+/* a borrowed vinfo with the sign of the int (D83): a virtual int's word, a
+   real int's ob_size; NULL on error */
+EXTERNFN vinfo_t *PsycoLong_Sign(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *PsycoLong_AsLong(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *PsycoNumber_AsSsize_t(PsycoObject *po, vinfo_t *v,
                                        PyObject *err);

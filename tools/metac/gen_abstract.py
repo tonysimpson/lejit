@@ -194,6 +194,9 @@ class Source:
                          and not t.text.startswith('#undef')]
         keep_local = KEEP | {n for n, m in self.local_macros.items()
                              if m.params is None}
+        # the file's macros a representation rule names (D83) stay calls
+        keep_local |= {n for n in rule_macros() if n in self.local_macros}
+        self.keep_local = keep_local
         self.funcs = {}
         self.toks = toks
         self.obj_structs = self.object_structs()
@@ -281,6 +284,10 @@ class Source:
                 elif first[0] == 'ob_base' and base in out:
                     out.add(name)
                     changed = True
+        # 'typedef struct _longobject PyLongObject;' apart from the struct
+        for name, what in self.decls.aliases.items():
+            if what.replace('struct ', '').strip() in out:
+                out.add(name)
         return out
 
     def is_obj(self, ctype):
@@ -306,6 +313,26 @@ class Source:
             return cparse.parse_expr(body, self.decls.types)
         except cparse.ParseError as e:
             raise Resume('macro %s: %s' % (name, e))
+
+    def int_macro(self, name):
+        """The value of an integer macro of the target (casts to integer
+        types dropped)."""
+        toks = cparse.expand(ctokens.tokenize(name)[0], self.macros, set())
+        words, i = [], 0
+        while i < len(toks):
+            if toks[i].text == '(' and i + 2 < len(toks) and toks[i + 2].text == ')' \
+                    and (toks[i + 1].text in self.decls.types
+                         or toks[i + 1].text in cparse.TYPE_WORDS):
+                i += 3
+                continue
+            t = toks[i].text
+            if t[:1].isdigit():
+                t = t.rstrip('uUlL')
+            elif t not in ('(', ')', '<<', '>>', '+', '-', '*', '|', '&', '~'):
+                raise cparse.ParseError('macro %s: %r is not an integer constant' % (name, t))
+            words.append(t)
+            i += 1
+        return int(eval(' '.join(words), {'__builtins__': {}}))  # noqa: S307 - integer tokens only
 
     def is_fnptr(self, ctype):
         return ctype.rstrip(' *') in self.decls.fnptr and not ctype.endswith('*') \
@@ -515,6 +542,8 @@ class Var:
         self.virt = None          # rt: a virtual object the meta builds (D80)
         self.base = None          # ptr: the object whose items it points into
         self.alias = None         # rt: the parameter it is a copy of (a cast of it)
+        self.rng = None           # rt integer: (lo, hi, bits) its value is in (D83)
+        self.word_of = None       # rt: the word of this object variable (D83)
 
 
 class State:
@@ -535,8 +564,7 @@ class State:
         s.vars = {}
         for k, v in self.vars.items():
             w = Var(v.name, v.ctype, v.bt, v.cname)
-            w.owned, w.conv, w.tp, w.isparam = v.owned, v.conv, v.tp, v.isparam
-            w.virt, w.base, w.alias = v.virt, v.base, v.alias
+            w.__dict__.update(v.__dict__)
             s.vars[k] = w
         s.known, s.called = set(self.known), self.called
         s.slots, s.ended, s.early = dict(self.slots), self.ended, self.early
@@ -835,6 +863,8 @@ class Translator:
 
             def rest(k=k):
                 return self.seq_loops(f, stmts, k + 1, cont, depth)
+            if once_do(s):
+                return self.seq_loops(f, block_of(s[1]), 0, rest, depth)
             if kind in ('for', 'while', 'do'):
                 return 'loop' if self.counted(s) is None else False
             if kind == 'return':
@@ -1049,7 +1079,569 @@ class Translator:
         return cslots.text(out)
 
 
-class Walk:
+# ---- representation rules: values Ni holds in its own form (D83) ---------------
+#
+# A TYPES entry's 'word' section says that an object of that struct is, on
+# a path where a C test holds, one machine word: Ni's virtual int holds it
+# in its array, a real one has it read by Ni's 'load' function. The rules
+# read the C's own expressions (the 'test', 'value' and 'sign' texts, with
+# the file's macros expanded as the bodies are), never a function's name:
+#   - the test is a load: where it fails, CPython's function resumes
+#     (the rest of the function has digits, which Ni never holds);
+#   - the value is the word, with the range 'bound' gives, and C
+#     arithmetic on such values (+ - * unary -, casts, the integer types
+#     of the target) is word arithmetic when an interval check proves that
+#     the C can't overflow its types and the result fits a word;
+#   - the sign field compared with 0 is the word compared with 0 (for a
+#     real int, the field itself: Ni's 'sign' function);
+#   - the constructors given the word build the virtual (Ni's 'new');
+#   - a compare of such values that the function returns as its int
+#     result is the condition as a value, not a branch (rule
+#     condition_value).
+
+# widths of C's signed integer types on x86-64 (LP64), asserted in the
+# header of a unit that uses them
+C_INT_BITS = {'signed char': 8, 'short': 16, 'short int': 16, 'int': 32,
+              'signed': 32, 'signed int': 32, 'long': 64, 'long int': 64,
+              'signed long': 64, 'long long': 64, 'long long int': 64,
+              'Py_ssize_t': 64}
+# the INT_TYPES name the meta declares a local of that width as
+CANON_INT = {32: 'int', 64: 'long'}
+WORD_BITS = 64
+# word arithmetic: the backend's functions
+WORD_OPS = {'+': 'integer_add', '-': 'integer_sub', '*': 'integer_mul'}
+
+
+def unify(p, e, env):
+    """Does the expression e have the shape of the pattern p, whose
+    identifier 'x' stands for any variable (bound in env)?"""
+    if isinstance(p, tuple) and len(p) == 2 and p[0] == 'id' and p[1] == 'x':
+        if not (isinstance(e, tuple) and e and e[0] == 'id'):
+            return False
+        if 'x' in env:
+            return env['x'] == e[1]
+        env['x'] = e[1]
+        return True
+    if isinstance(p, (tuple, list)):
+        if type(p) is not type(e) or len(p) != len(e):
+            return False
+        return all(unify(a, b, env) for a, b in zip(p, e))
+    return p == e
+
+
+def match(p, e):
+    env = {}
+    return env['x'] if unify(p, e, env) and 'x' in env else None
+
+
+def fits(lo, hi, bits):
+    return -2 ** (bits - 1) <= lo and hi < 2 ** (bits - 1)
+
+
+class WordRep:
+    """One TYPES 'word' section, read against the unit's source."""
+
+    def __init__(self, source, struct, spec):
+        self.s = source
+        self.struct, self.spec = struct, spec
+        self.test = self.pattern(spec['test'])
+        self.value = self.pattern(spec['value'])
+        self.sign = self.pattern(spec['sign']) if 'sign' in spec else None
+        self.bound = source.int_macro(spec['bound'])
+        self.value_bits = int_bits(source, spec['value_ctype'])
+        if self.value_bits is None:
+            raise Refuse('%s: %s is not a signed integer type'
+                         % (struct, spec['value_ctype']))
+        self.load = ni_short(spec['load'])
+        self.sign_load = ni_short(spec['sign_load']) if 'sign_load' in spec else None
+        self.new = ni_short(spec['new'])
+        self.ctors = {c.split(':')[1] for c in spec['constructors']}
+        self.used = False
+
+    def pattern(self, text):
+        toks = ctokens.tokenize(text)[0]
+        toks = cparse.expand(toks, self.s.local_macros, self.s.keep_local)
+        return cparse.parse_expr(toks, self.s.decls.types, loops=True)
+
+    def asserts(self):
+        return ['_Static_assert(%s == %d, "the word range of %s (D83)");'
+                % (self.spec['bound'], self.bound, self.struct)]
+
+
+def int_bits(source, ctype):
+    """Width of a signed integer C type (through typedefs), or None."""
+    ctype = ctype.replace('const ', '').strip()
+    for _ in range(8):
+        words = ctype.split()
+        if 'unsigned' in words or 'char' in words:
+            return None
+        words = [w for w in words if w != 'signed']
+        if ('long' in words or 'short' in words) and 'int' in words:
+            words.remove('int')
+        if ' '.join(words) in C_INT_BITS:
+            return C_INT_BITS[' '.join(words)]
+        if not words:
+            return C_INT_BITS['int']
+        nxt = source.decls.aliases.get(ctype)
+        if nxt is None or nxt == ctype:
+            return None
+        ctype = nxt.replace('const ', '').strip()
+    return None
+
+
+def rule_macros():
+    """Names called in the representation rules' C texts (D83)."""
+    out = set()
+    for t in policy_table.TYPES.values():
+        for k in ('test', 'value', 'sign'):
+            text = t.get('word', {}).get(k)
+            toks = ctokens.tokenize(text)[0] if text else []
+            out |= {x.text for i, x in enumerate(toks[:-1])
+                    if x.kind == 'id' and toks[i + 1].text == '('}
+    return out
+
+
+def word_reps(source):
+    """{struct or typedef name: WordRep} for the TYPES entries with a
+    'word' section whose struct the unit's source declares."""
+    out = {}
+    for key, t in policy_table.TYPES.items():
+        if 'word' not in t:
+            continue
+        struct = key.split(':')[1]
+        if struct not in source.decls.structs:
+            continue
+        r = WordRep(source, struct, dict(t['word'], type=t['type']))
+        out[struct] = r
+        for name, what in source.decls.aliases.items():
+            if what.replace('struct ', '').strip() == struct:
+                out[name] = r
+    return out
+
+
+class RepresentationRules:
+    """Walk's representation rules (D83). Each hook answers None when the
+    expression is not one it knows, and the walk goes on as before."""
+
+    # -- what applies --
+
+    def reps(self):
+        tr = self.tr
+        if getattr(tr, 'word_reps', None) is None:
+            tr.word_reps = word_reps(tr.s)
+        return tr.word_reps
+
+    def rep_of_var(self, st, name):
+        v = st.vars.get(name)
+        if v is None or v.bt != 'rt' or not self.s.is_obj(v.ctype) or v.owned == 'dead' \
+                and not v.isparam:
+            return None
+        base = v.ctype.replace('const ', '').rstrip(' *').replace('struct ', '').strip()
+        return self.reps().get(base)
+
+    def word_var(self, st, x):
+        return st.vars.get('$w_' + x)
+
+    def rep_match(self, which, e, st):
+        """(x, rep) when e is the rep's 'test', 'value' or 'sign' of a
+        variable x of its struct."""
+        for r in set(self.reps().values()):
+            p = getattr(r, which)
+            if p is None:
+                continue
+            x = match(p, e)
+            if x is not None and self.rep_of_var(st, x) is r:
+                return x, r
+        return None
+
+    # -- the test: load the word, CPython's function where there is none --
+
+    def rep_cond(self, e, st, out, frames):
+        m = self.rep_match('test', e, st)
+        if m is not None:
+            x, r = m
+            if self.word_var(st, x) is None:
+                self.load_word(st, out, frames, x, r)
+            return True
+        if e[0] == 'bin' and e[1] in PY_OPS:
+            return self.sign_compare(e, st, out, frames)
+        return None
+
+    def load_word(self, st, out, frames, x, r):
+        r.used = True
+        xv = st.vars[x]
+        w = Var('$w_' + x, 'long', 'rt', 'w_' + x)
+        w.word_of = x
+        w.rng = (-r.bound, r.bound, r.value_bits)
+        self.decls[w.cname] = 'vinfo_t *%s;' % w.cname
+        out('switch (%s(po, %s, &%s)) {' % (r.load, xv.cname, w.cname))
+        out('case 1:')
+        out('  break;')
+        out('case 0:')
+        sub = Out(out.depth + 1)
+        self.resume_inside(st.copy(), sub, frames,
+                           '%s is not one word (%s)' % (x, r.spec['test']))
+        out.extend(sub)
+        out('default:')
+        sub = Out(out.depth + 1)
+        self.release_all(st, sub)
+        sub('return %s;' % self.err())
+        out.extend(sub)
+        out('}')
+        w.owned = 'yes'
+        st.vars[w.name] = w
+
+    # -- the sign field compared with 0 --
+
+    def sign_operand(self, e, st, out):
+        """The sign vinfo (borrowed) when e is the sign field of a
+        variable of a struct with a word; None otherwise."""
+        m = self.rep_match('sign', e, st)
+        if m is None:
+            return None
+        x, r = m
+        if r.sign_load is None:
+            return None
+        r.used = True
+        t = self.new_tmp('vinfo_t *')
+        out('%s = %s(po, %s);' % (t, r.sign_load, st.vars[x].cname))
+        self.error_exit(st, out, '%s == NULL' % t)
+        return t
+
+    def sign_cc(self, e, st, out):
+        """(condition code variable, C text) of 'SIGN op 0', or None."""
+        op, a, b = e[1], e[2], e[3]
+        if b != ('num', '0'):
+            if a != ('num', '0'):
+                return None
+            a, b, op = b, a, FLIP[op]
+        if self.rep_match('sign', a, st) is None:
+            return None
+        s = self.sign_operand(a, st, out)
+        cc = self.new_tmp('condition_code_t')
+        call, inverted = int_condition(op, s, '0', True)
+        out('%s = %s;' % (cc, call))
+        self.error_exit(st, out, '%s == CC_ERROR' % cc)
+        if inverted:
+            out('%s = INVERT_CC(%s);' % (cc, cc))
+        return cc
+
+    def sign_compare(self, e, st, out, frames):
+        cc = self.sign_cc(e, st, out)
+        if cc is None:
+            return None
+        text = ' '.join(cparse.c_expr(e).replace('(', '').replace(')', '').split())
+        if text not in self.likely:
+            text = ' '.join(cparse.c_expr(e)[1:-1].split())   # the C as written
+        how = self.likely.get(text)
+        if how is None:
+            raise Refuse("no 'likely' item in the policy table for the run-time"
+                         " branch %r" % text)
+        self.used_likely.add(text)
+        t = self.new_tmp('int')
+        out('%s = runtime_condition_%s(po, %s);' % (t, 't' if how == 'true' else 'f', cc))
+        return t
+
+    def rep_condition_value(self, e, st, out, frames):
+        """Rule condition_value: 'return A op B;' from a function whose
+        result is an int, A and B values of a word representation: the
+        condition as a 0/1 value (psyco_vinfo_condition), no branch."""
+        if not (e[0] == 'bin' and e[1] in PY_OPS) or self.sm.kind != 'val':
+            return None
+        cc = self.sign_cc(e, st, out)
+        if cc is None:
+            return None
+        t = self.new_tmp('vinfo_t *')
+        out('%s = psyco_vinfo_condition(po, %s);' % (t, cc))
+        return Val('rt', t, 'int', owned=True)
+
+    # -- the word, and arithmetic on it --
+
+    def ranged_tree(self, e, st):
+        """Does e read a word or a ranged integer variable?"""
+        if self.rep_match('value', e, st) is not None:
+            return True
+        if isinstance(e, tuple) and e:
+            if e[0] == 'id':
+                v = st.vars.get(e[1])
+                return v is not None and v.rng is not None and v.owned != 'dead'
+            return any(self.ranged_tree(x, st) for x in e[1:]
+                       if isinstance(x, (tuple, list)))
+        if isinstance(e, list):
+            return any(self.ranged_tree(x, st) for x in e)
+        return False
+
+    def word_uses(self, frames, x):
+        """Reads of x's word left in the statement being translated."""
+        s = frames[-1][0][frames[-1][1]] if frames else None
+        key = id(s)
+        if getattr(self, '_wcount_key', None) != key:
+            self._wcount_key = key
+            self._wcount = {}
+        if x not in self._wcount:
+            if s[0] == 'decl':
+                own = [d[2] for d in s[1] if d[2] is not None]
+            elif s[0] in ('if', 'expr', 'return'):
+                own = [s[1]]
+            else:
+                own = [s]
+            n = [0]
+
+            def walk(t):
+                if self.rep_match_x('value', t, x):
+                    n[0] += 1
+                    return
+                if isinstance(t, (tuple, list)):
+                    for y in t:
+                        walk(y)
+            walk(own)
+            self._wcount[x] = n[0]
+        return s
+
+    def rep_match_x(self, which, e, x):
+        for r in set(self.reps().values()):
+            if match(getattr(r, which), e) == x:
+                return True
+        return False
+
+    def word_read(self, e, st, out, frames):
+        m = self.rep_match('value', e, st)
+        if m is None:
+            return None
+        x, r = m
+        w = self.word_var(st, x)
+        if w is None or w.owned != 'yes':
+            raise ResumeHere('%s read where %s has no word' % (cparse.c_expr(e), x))
+        s = self.word_uses(frames, x)
+        self._wcount[x] -= 1
+        val = Val('rt', w.cname, 'long', var=w)
+        val.rng = w.rng
+        # its last read here, and x is not read after: released after use
+        val.last = (self._wcount[x] == 0 and not self.loop_ctx
+                    and (s[0] == 'return' or x not in self.tr.live.after.get(id(s), {x})))
+        return val
+
+    def int_operand(self, e, st, out, frames):
+        v = self.ev(e, st, out, frames)
+        if v.bt == 'ct' and v.c.lstrip('-').isdigit():
+            n = int(v.c)
+            v.rng = (n, n, 32 if fits(n, n, 32) else 64)
+            v.const = n
+            return v
+        if v.bt == 'rt' and getattr(v, 'rng', None) is not None:
+            return v
+        raise ResumeHere('%s: arithmetic on a value with no known range'
+                         % cparse.c_expr(e))
+
+    def consumed(self, out, vals):
+        """Release what an operation consumed: temporaries, and words at
+        their last read."""
+        for v in vals:
+            if v.bt != 'rt':
+                continue
+            if v.owned and v.var is None:
+                out('vinfo_decref(%s, po);' % v.c)
+            elif getattr(v, 'last', False) and v.var is not None and v.var.owned == 'yes':
+                out('vinfo_decref(%s, po);' % v.c)
+                v.var.owned = 'dead'
+
+    def word_op(self, e, st, out, frames):
+        k = e[0]
+        if k == 'un' and e[1] == '-':
+            a = self.int_operand(e[2], st, out, frames)
+            if a.bt == 'ct':
+                raise ResumeHere('a constant expression')
+            lo, hi, bits = -a.rng[1], -a.rng[0], max(32, a.rng[2])
+            if not fits(lo, hi, bits):
+                raise ResumeHere('%s may overflow its C type' % cparse.c_expr(e))
+            return self.emit_op('integer_neg(po, %s, false)' % a.c, [a], (lo, hi, bits), e, st, out)
+        if k == 'cast':
+            ctype = ctype_of(ctokens.tokenize(e[1])[0])
+            bits = int_bits(self.s, ctype)
+            a = self.int_operand(e[2], st, out, frames)
+            if bits is None:
+                raise ResumeHere('a cast to %s' % ctype)
+            if not fits(a.rng[0], a.rng[1], bits):
+                raise ResumeHere('a cast to %s may truncate' % ctype)
+            v = Val(a.bt, a.c, CANON_INT.get(bits, ctype), owned=a.owned, var=a.var)
+            v.rng = (a.rng[0], a.rng[1], bits)
+            v.last = getattr(a, 'last', False)
+            if a.bt == 'ct':
+                v.const = a.const
+            return v
+        op = e[1]
+        if op not in WORD_OPS:
+            raise ResumeHere('the operator %s on a word' % op)
+        a = self.int_operand(e[2], st, out, frames)
+        b = self.int_operand(e[3], st, out, frames)
+        if a.bt == 'ct' and b.bt == 'ct':
+            raise ResumeHere('a constant expression')
+        bits = max(32, a.rng[2], b.rng[2])
+        if op == '*':
+            c = [a.rng[0] * b.rng[0], a.rng[0] * b.rng[1], a.rng[1] * b.rng[0],
+                 a.rng[1] * b.rng[1]]
+            lo, hi = min(c), max(c)
+        elif op == '+':
+            lo, hi = a.rng[0] + b.rng[0], a.rng[1] + b.rng[1]
+        else:
+            lo, hi = a.rng[0] - b.rng[1], a.rng[1] - b.rng[0]
+        if not fits(lo, hi, bits):
+            # signed overflow is undefined in C: the C itself must not
+            raise ResumeHere('%s may overflow its %d-bit C type' % (cparse.c_expr(e), bits))
+        if b.bt == 'ct' and op in '+-':
+            call = 'integer_add_i(po, %s, %d, false)' % (a.c, b.const if op == '+' else -b.const)
+        elif a.bt == 'ct' and op == '+':
+            call = 'integer_add_i(po, %s, %d, false)' % (b.c, a.const)
+        elif 'ct' in (a.bt, b.bt):
+            raise ResumeHere('%s with a constant' % op)
+        else:
+            call = '%s(po, %s, %s, false)' % (WORD_OPS[op], a.c, b.c)
+        return self.emit_op(call, [a, b], (lo, hi, bits), e, st, out)
+
+    def emit_op(self, call, vals, rng, e, st, out):
+        out('/* %s: in [%d, %d] */' % (cparse.c_expr(e), rng[0], rng[1]))
+        t = self.new_tmp('vinfo_t *')
+        out('%s = %s;' % (t, call))
+        self.consumed(out, vals)
+        self.error_exit(st, out, '%s == NULL' % t)
+        v = Val('rt', t, CANON_INT.get(rng[2], 'long'), owned=True)
+        v.rng = rng
+        return v
+
+    def word_ctor(self, e, st, out, frames):
+        """A constructor given a word: Ni's virtual."""
+        if not (e[0] == 'call' and e[1][0] == 'id' and len(e[2]) == 1):
+            return None
+        for r in set(self.reps().values()):
+            if e[1][1] not in r.ctors or not self.ranged_tree(e[2][0], st):
+                continue
+            a = self.int_operand(e[2][0], st, out, frames)
+            ptype = ctype_of(ctokens.tokenize(self.s.decls.protos.get(e[1][1], 'long'))[0])
+            if a.bt != 'rt' or not fits(a.rng[0], a.rng[1], WORD_BITS):
+                raise ResumeHere('%s of a value that may not fit a word' % e[1][1])
+            r.used = True
+            if not (a.owned and a.var is None):
+                if getattr(a, 'last', False) and a.var is not None and a.var.owned == 'yes':
+                    a.var.owned = 'dead'      # the virtual takes its reference
+                else:
+                    out('vinfo_incref(%s);' % a.c)
+            t = self.new_tmp('vinfo_t *')
+            out('%s = %s(%s);' % (t, r.new, a.c))
+            del ptype
+            return Val('rt', t, 'PyObject *', owned=True,
+                       virt={'array': False, 'type': r.spec['type']})
+        return None
+
+    def rep_ev(self, e, st, out, frames):
+        if not self.reps() or not isinstance(e, tuple):
+            return None
+        v = self.word_read(e, st, out, frames)
+        if v is not None:
+            return v
+        v = self.word_ctor(e, st, out, frames)
+        if v is not None:
+            return v
+        if e[0] == 'id' and e[1] in st.vars and st.vars[e[1]].rng is not None \
+                and st.vars[e[1]].owned != 'dead':
+            v = self.ev_id(e[1], st, out)
+            v.rng = st.vars[e[1]].rng
+            return v
+        if e[0] in ('bin', 'un', 'cast') and not (e[0] == 'bin' and (
+                e[1] in PY_OPS or e[1] in ('&&', '||'))) and self.ranged_tree(e, st):
+            return self.word_op(e, st, out, frames)
+        return None
+
+    def rep_int_ctype(self, ctype):
+        """A signed integer typedef as the INT_TYPES name of its width."""
+        if ctype in INT_TYPES or not self.reps():
+            return ctype
+        bits = int_bits(self.s, ctype)
+        return CANON_INT.get(bits, ctype) if bits else ctype
+
+    def rep_assigning(self, v, val, out):
+        """A ranged value stored in an integer variable keeps its range if
+        the variable's type holds it (C would truncate otherwise); a word
+        read is the variable's own reference (taken at its last read)."""
+        rng = getattr(val, 'rng', None)
+        if rng is None or val.bt != 'rt':
+            v.rng = None
+            return val
+        bits = int_bits(self.s, v.ctype)
+        if bits is None or not fits(rng[0], rng[1], bits):
+            raise ResumeHere('%s may not hold the value' % v.name)
+        v.rng = (rng[0], rng[1], bits)
+        if val.var is not None and val.var.word_of is not None:
+            if getattr(val, 'last', False) and val.var.owned == 'yes':
+                val.var.owned = 'dead'
+            else:
+                out('vinfo_incref(%s);' % val.c)
+            val = Val('rt', val.c, val.ctype, owned=True)
+            val.rng = rng
+        return val
+
+    # -- resuming: does the rest return NotImplemented? --
+
+    def notimpl_after(self, frames):
+        """Can the C from the statement frames name to the end return
+        NotImplemented? (conservative: a goto may go anywhere)"""
+        rest = []
+        for level, (stmts, i) in enumerate(reversed(frames)):
+            rest.extend(stmts[i:] if level == 0 else stmts[i + 1:])
+        found = []
+
+        def walk(n):
+            if isinstance(n, tuple) and n:
+                if n[0] == 'goto':
+                    found.append(1)
+                if n[0] == 'expr' and n[1] == ('id', 'Py_RETURN_NOTIMPLEMENTED'):
+                    found.append(1)
+                if n[0] == 'return' and n[1] is not None:
+                    r = n[1]
+                    if r == ('id', 'Py_NotImplemented'):
+                        found.append(1)
+                    if r[0] == 'call' and r[1][0] == 'id' and r[1][1] in self.tr.sums \
+                            and self.tr.sums[r[1][1]].notimpl:
+                        found.append(1)
+                for y in n[1:]:
+                    if isinstance(y, (tuple, list)):
+                        walk(y)
+            elif isinstance(n, list):
+                for y in n:
+                    walk(y)
+        walk(rest)
+        return bool(found)
+
+    def resume_notimpl(self, frames):
+        """The resumed call's result may be NotImplemented: only when the
+        rest can return it, if the function's result type is asserted."""
+        if not self.notimpl_fn():
+            return False
+        return not self.restype or self.notimpl_after(frames)
+
+
+def once_do(s):
+    """'do S while (0);' with no break or continue of its own: S, once."""
+    if s[0] != 'do' or s[2] != ('num', '0'):
+        return False
+    found = []
+
+    def walk(n):
+        if isinstance(n, tuple) and n:
+            if n[0] in ('break', 'continue'):
+                found.append(1)
+            if n[0] in ('for', 'while', 'do'):
+                return
+            for y in n[1:]:
+                if isinstance(y, (tuple, list)):
+                    walk(y)
+        elif isinstance(n, list):
+            for y in n:
+                walk(y)
+    walk(s[1])
+    return not found
+
+
+class Walk(RepresentationRules):
     """One translation of a function: the meta's text, and what it found
     (promotions it had to do after a call, the parameters whose type it
     reads before any call on every path)."""
@@ -1180,7 +1772,7 @@ class Walk:
 
     def release_dead(self, st, out, live):
         for v in list(st.vars.values()):
-            if v.bt == 'rt' and v.owned in ('yes', 'shadow') and v.name not in live:
+            if v.bt == 'rt' and v.owned in ('yes', 'shadow') and (v.word_of or v.name) not in live:
                 self.release(v, out)
 
     def release(self, v, out):
@@ -1301,7 +1893,7 @@ class Walk:
             else:
                 fmt += 'l'
                 args.append('(long)(%s)' % v.cname)
-        conv = {'obj': 'notimpl' if self.notimpl_fn() else 'null',
+        conv = {'obj': 'notimpl' if self.resume_notimpl(frames) else 'null',
                 'val': 'neg', 'ok': 'zero_ok'}.get(sm.kind)
         if conv is None:
             raise Refuse('resuming in a compile-time function')
@@ -1310,7 +1902,7 @@ class Walk:
             name, flags, fmt, ''.join(', ' + a for a in args))
         st.called = True
         self.any_call = True
-        self.ret_value(st, out, call, sm.kind == 'ok')
+        self.ret_value(st, out, call, sm.kind == 'ok', notimpl=conv == 'notimpl')
 
     def notimpl_fn(self):
         return self.tr_notimpl(self.f)
@@ -1338,14 +1930,14 @@ class Walk:
         walk(f.ast)
         return bool(found)
 
-    def ret_value(self, st, out, cexpr, as_ok=False):
+    def ret_value(self, st, out, cexpr, as_ok=False, notimpl=False):
         """return a run-time value the meta owns, after releasing the rest"""
         expr = '%s != NULL' % cexpr if as_ok else cexpr
         owned = [v for v in st.vars.values() if v.bt == 'rt' and v.owned in ('yes', 'shadow')]
         if self.restype and not as_ok:
             r = self.new_tmp('vinfo_t *')
             out('%s = %s;' % (r, expr))
-            self.assert_restype(out, r)
+            self.assert_restype(out, r, notimpl)
             self.release_all(st, out)
             out('return %s;' % r)
         elif owned:
@@ -1367,6 +1959,9 @@ class Walk:
             return
         if k == 'unsupported':
             raise ResumeHere(s[1])
+        if once_do(s):
+            self.stmt(s[1], st, out, frames)     # do S while (0)
+            return
         if k in ('for', 'while', 'do'):
             self.loop_stmt(s, st, out, frames)
             return
@@ -1404,6 +1999,7 @@ class Walk:
         raise Refuse('statement %s' % k)
 
     def declare(self, st, name, ctype):
+        ctype = self.rep_int_ctype(ctype)
         if name in st.vars and not st.vars[name].isparam:
             old = st.vars[name]
             if old.ctype != ctype:
@@ -1566,6 +2162,7 @@ class Walk:
                 raise ResumeHere('%s assigned a compile-time value' % name)
         if val.var is v:
             return
+        val = self.rep_assigning(v, val, out)
         old_owned = v.owned
         if old_owned in ('yes', 'shadow'):
             # the new value may read the old one: release after
@@ -1603,7 +2200,8 @@ class Walk:
         kind = self.sm.kind
         if e is None:
             raise Refuse('return without a value')
-        val = self.ev(e, st, out, frames, dest='<return>')
+        val = self.rep_condition_value(e, st, out, frames) \
+            or self.ev(e, st, out, frames, dest='<return>')
         if val.bt == 'g':
             raise Refuse('returns a constant known now')
         if kind in ('obj', 'val'):
@@ -1654,9 +2252,11 @@ class Walk:
             return
         raise Refuse('kind %s' % kind)
 
-    def assert_restype(self, out, r):
+    def assert_restype(self, out, r, notimpl=False):
         for t in self.restype:
-            out('if (%s != NULL)' % r)
+            # (a result that may be NotImplemented is asserted where not)
+            out(('if (%s != NULL && !IS_NOTIMPLEMENTED(%s))' % (r, r)) if notimpl
+                else 'if (%s != NULL)' % r)
             out('  Psyco_AssertType(po, %s, &%s);' % (r, t))
 
     def ret_value_owned(self, st, out, val):
@@ -1799,6 +2399,9 @@ class Walk:
     # ---- conditions: a compile-time C boolean, or a Python bool if known now ----
 
     def cond(self, e, st, out, frames, facts_t=None, facts_f=None):
+        r = self.rep_cond(e, st, out, frames) if self.reps() else None
+        if r is not None:
+            return r
         k = e[0]
         if k == 'un' and e[1] == '!' and (self.is_obj_param(e[2], st)
                                           or self.is_virtual(e[2], st)):
@@ -2016,6 +2619,9 @@ class Walk:
     # ---- expressions ----
 
     def ev(self, e, st, out, frames, dest=None):
+        r = self.rep_ev(e, st, out, frames)
+        if r is not None:
+            return r
         k = e[0]
         if k == 'num':
             return Val('ct', e[1], 'int')
@@ -3251,6 +3857,7 @@ UNITS = {
     'list': Unit('Objects/listobject.c', None, 'plistobject.c'),
     'dict': Unit('Objects/dictobject.c', None, 'pdictobject.c'),
     'bytes': Unit('Objects/bytesobject.c', None, 'pbytesobject.c'),
+    'long': Unit('Objects/longobject.c', None, 'plongobject.c'),
 }
 
 
@@ -3436,6 +4043,12 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
     head = ['/* GENERATED by tools/metac/gen_abstract.py from CPython %s\'s'
             % cpython_src.source_version(src),
             '   %s: do not edit. Included by %s. */' % (unit.cfile, unit.includer), '']
+    used = sorted({r for r in (getattr(tr, 'word_reps', None) or {}).values() if r.used},
+                  key=lambda r: r.struct)
+    if used:
+        head += ['_Static_assert(sizeof(long) * 8 == %d, "words are longs (D83)");'
+                 % WORD_BITS, '_Static_assert(sizeof(int) * 8 == 32, "C_INT_BITS");']
+        head += [a for r in used for a in r.asserts()] + ['']
     body = []
     if tr.copy_order:
         body.append('/* run-time copies: where a heap type\'s slot changed, or'
@@ -3509,6 +4122,9 @@ def build_dict(target):
 def build_bytes(target):
     """pbytesobject_gen.h: the bytes slots the translator generates."""
     return build(target, UNITS['bytes'])
+def build_long(target):
+    """plongobject_gen.h: the int slots the translator generates (D83)."""
+    return build(target, UNITS['long'])
 
 
 def build(target, unit=None):

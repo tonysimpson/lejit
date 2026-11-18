@@ -648,6 +648,7 @@ class Decls:
         self.structs = {}        # struct tag or typedef name -> {field: type}
         self.protos = {}         # function name -> return type text
         self.vars = set()
+        self.aliases = {}        # typedef name -> the type it names, as text
         self.read(toks)
 
     def read(self, toks):
@@ -735,6 +736,10 @@ class Decls:
                     name = x.text
             if name:
                 self.types.add(name)
+                # 'typedef struct _longobject PyLongObject;', 'typedef
+                # int32_t sdigit;': what the name stands for
+                if '[' not in words and '(' not in words and words[-1] == name:
+                    self.aliases[name] = ' '.join(words[1:-1])
             return
         # prototype: RET NAME ( ... )
         if words[-1] == ')':

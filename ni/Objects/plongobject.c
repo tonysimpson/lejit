@@ -8,11 +8,15 @@
  * (respawn), and an operand that fails falls back to CPython's slot, as
  * longobject.c does.
  *
- * + - * unary - and ~ are generated (plongobject_gen.h, by
- * tools/metac/gen_long.py; QUESTIONS 26). Hand-written here: what the
- * generator can't derive from the C, i.e. plong_medium_value (MEDIUM_VALUE
- * and its guard on a virtual int, which has no ob_size), the fallbacks,
- * long_bool and long_richcompare (long_compare reduced to one digit).
+ * + - * unary - ~ + abs(), bool, / and ** are generated (plongobject_gen.h,
+ * by tools/metac/gen_abstract.py's long unit with the word representation
+ * of policy_table.TYPES, D83). Hand-written here: the representation
+ * itself (plong_medium_value, MEDIUM_VALUE and its guard on a virtual int,
+ * which has no ob_size; PsycoLong_Sign), and what 3.7's C has no word
+ * form of: long_richcompare (long_compare is a digit loop), long_hash's
+ * one-digit cases, & | ^ << >> (digit loops) and // % divmod() (3.7's fast
+ * paths read the digit and the sign, which a virtual int doesn't have;
+ * the helpers compute the same on words), each a policy item.
  */
 #include "plongobject.h"
 #include "pboolobject.h"
@@ -75,6 +79,12 @@ static int plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval) {
 DEFINEFN int PsycoLong_MediumValue(PsycoObject *po, vinfo_t *v,
                                vinfo_t **pval) {
   return plong_medium_value(po, v, pval);
+}
+
+DEFINEFN vinfo_t *PsycoLong_Sign(PsycoObject *po, vinfo_t *v) {
+  if (PsycoLong_IsVirtual(v))
+    return v->array->items[iLONG_VALUE];
+  return psyco_get_const(po, v, LONG_ob_size);
 }
 
 DEFINEFN
@@ -226,14 +236,7 @@ static vinfo_t *plong_fallback2(PsycoObject *po, void *slot, vinfo_t *v,
   return x;
 }
 
-static vinfo_t *plong_fallback1(PsycoObject *po, void *slot, vinfo_t *v) {
-  vinfo_t *x = psyco_generic_call(po, slot, CfCommonNewRefPyObject, "v", v);
-  if (x != NULL)
-    Psyco_AssertType(po, x, &PyLong_Type);
-  return x;
-}
-
-/* + - * unary - ~, generated from Objects/longobject.c */
+/* + - * unary - ~ + abs() bool / **, generated from Objects/longobject.c */
 #include "plongobject_gen.h"
 
 /* long_hash: a one-digit int hashes to its value, but -1 to -2 (-1 means
@@ -252,22 +255,6 @@ static vinfo_t *plong_hash(PsycoObject *po, vinfo_t *v) {
                          a);
   vinfo_decref(a, po);
   return x;
-}
-
-/* long_bool: ob_size != 0, i.e. the value isn't zero */
-static vinfo_t *plong_bool(PsycoObject *po, vinfo_t *v) {
-  condition_code_t cc;
-  if (PsycoLong_IsVirtual(v))
-    cc = integer_cmp_i(po, v->array->items[iLONG_VALUE], 0, Py_NE);
-  else {
-    vinfo_t *size = psyco_get_const(po, v, LONG_ob_size);
-    if (size == NULL)
-      return NULL;
-    cc = integer_cmp_i(po, size, 0, Py_NE);
-  }
-  if (cc == CC_ERROR)
-    return NULL;
-  return psyco_vinfo_condition(po, cc);
 }
 
 /* long_richcompare: for one-digit ints, long_compare is the comparison of
@@ -303,32 +290,13 @@ static vinfo_t *plong_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
   return PsycoBool_FromCondition(po, cc);
 }
 
-#define RETLONG(arity, cname, slotname)                                        \
-  DEF_KNOWN_RET_TYPE_##arity(cname, PyLong_Type.tp_as_number->slotname,        \
-                             (arity) == 1 ? (CfCommonNewRefPyObject)           \
-                                          : (CfCommonCheckNotImplemented),     \
-                             &PyLong_Type)
-
-#define RETFLOAT(arity, cname, slotname)                                       \
-  DEF_KNOWN_RET_TYPE_##arity(cname, PyLong_Type.tp_as_number->slotname,        \
-                             (arity) == 1 ? (CfCommonNewRefPyObject)           \
-                                          : (CfCommonCheckNotImplemented),     \
-                             &PyFloat_Type)
-
-RETLONG(1, plong_pos, nb_positive)
-RETLONG(1, plong_abs, nb_absolute)
-RETFLOAT(2, plong_true_divide, nb_true_divide)
-
-#undef RETLONG
-#undef RETFLOAT
-
 /* & | ^ << >> on one-digit ints as word operations. Hand-written: 3.7's
    long_and etc. work on digit arrays with no one-digit fast path, but
    3.12's long_and/long_or/long_xor have one (_PyLong_IsCompact), which
-   gen_long.py can translate there. A word shift has Python's meaning for
-   >> (a count of 64 or more gives the sign, a negative one raises
-   ValueError, as integer_rshift does); for << the count must be at most
-   32, which keeps a one-digit value inside a word. */
+   the word representation (D83) could translate there. A word shift has
+   Python's meaning for >> (a count of 64 or more gives the sign, a
+   negative one raises ValueError, as integer_rshift does); for << the
+   count must be at most 32, which keeps a one-digit value inside a word. */
 enum { OP_AND, OP_OR, OP_XOR, OP_LSHIFT, OP_RSHIFT };
 
 static vinfo_t *plong_bitop(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op,
@@ -505,24 +473,12 @@ static vinfo_t *plong_divmod(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
   return plong_divmod_op(po, v, w, 2, PyLong_Type.tp_as_number->nb_divmod);
 }
 
-static vinfo_t *plong_pow(PsycoObject *po, vinfo_t *v1, vinfo_t *v2,
-                          vinfo_t *v3) {
-  /* not a RET* macro: long_pow returns a float for a negative exponent
-     without modulus (it calls float_pow), so the result type is unknown */
-  return psyco_generic_call(po, PyLong_Type.tp_as_number->nb_power,
-                            CfCommonCheckNotImplemented, "vvv", v1, v2, v3);
-}
-
 INITIALIZATIONFN
 void psy_longobject_init(void) {
   PyNumberMethods *m = PyLong_Type.tp_as_number;
 
-  plong_generated_init(m);
-  Psyco_DefineMeta(m->nb_true_divide, plong_true_divide);
+  gen_longobject_init();
   Psyco_DefineMeta(m->nb_remainder, plong_mod);
-  Psyco_DefineMeta(m->nb_power, plong_pow);
-  Psyco_DefineMeta(m->nb_positive, plong_pos);
-  Psyco_DefineMeta(m->nb_absolute, plong_abs);
   Psyco_DefineMeta(m->nb_lshift, plong_lshift);
   Psyco_DefineMeta(m->nb_rshift, plong_rshift);
   Psyco_DefineMeta(m->nb_and, plong_and);
@@ -530,7 +486,6 @@ void psy_longobject_init(void) {
   Psyco_DefineMeta(m->nb_or, plong_or);
   Psyco_DefineMeta(m->nb_floor_divide, plong_div);
   Psyco_DefineMeta(m->nb_divmod, plong_divmod);
-  Psyco_DefineMeta(m->nb_bool, plong_bool);
   Psyco_DefineMeta(PyLong_Type.tp_richcompare, plong_richcompare);
   Psyco_DefineMeta(PyLong_Type.tp_hash, plong_hash);
 

@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 # generator module -> the header it writes
-GENERATORS = [('gen_long', 'plongobject_gen.h'),
+GENERATORS = [('gen_abstract:build_long', 'plongobject_gen.h'),
               ('gen_float', 'pfloatobject_gen.h'),
               ('gen_ceval', 'pycompiler_gen.h'),
               ('gen_ceval:build_copies', 'pycompiler_copies_gen.h'),

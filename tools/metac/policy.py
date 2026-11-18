@@ -251,7 +251,7 @@ class Checker:
             where = 'TYPES ' + key
             self.fields(where, e, ('shape', 'type', 'mutable', 'immutable',
                                    'virtual', 'slot_result', 'ni', 'known_length',
-                                   'descriptors'))
+                                   'descriptors', 'word'))
             self.descriptors(where, e)
             kl = e.get('known_length')
             if kl is not None:
@@ -278,6 +278,27 @@ class Checker:
                 self.ni_name(where, n)
             if 'virtual' in e:
                 self.virtual(where, e['virtual'], bool(e.get('mutable')))
+            if 'word' in e:
+                self.word(where, e['word'])
+
+    def word(self, where, w):
+        """A word representation (D83): its Ni functions are declared and
+        its constructors are in the source."""
+        where += ' word'
+        self.fields(where, w, ('test', 'value', 'value_ctype', 'bound', 'load',
+                               'sign', 'sign_load', 'constructors', 'new'))
+        for k in ('test', 'value', 'value_ctype', 'bound', 'load', 'constructors', 'new'):
+            if k not in w:
+                self.bad(where, 'no %r' % k)
+        for k in ('load', 'sign_load', 'new'):
+            if k in w:
+                path, _, name = w[k].partition(':')
+                f = self.ni.file(path)
+                if f is None or not any(t.text == name for t in f[0]):
+                    self.bad(where, '%s does not declare %s' % (path, name))
+        for c in w.get('constructors', ()):
+            if self.src.find(c) is None:
+                self.bad(where, 'no constructor %s in the source' % c)
 
     def descriptors(self, where, e):
         """Each descriptor is a #define of Ni's for a field the entry lists,
