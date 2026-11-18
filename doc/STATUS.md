@@ -1,11 +1,11 @@
 # Status
 
-## 2026-11-18: `in` on str generated; QUESTIONS 51 answered (`7cdd95d`, D92)
+## 2026-11-18: `in` on str generated; QUESTIONS 51 answered (`03ce514`, D92)
 
 The pyflate cost of the generated `in` (1.5% more instructions, from its `CfNoPython`) was glibc malloc's state, not the code: the flag keeps known classes across the call, which improves only start-up code that uses `in` on a str (`argparse`, `sre_parse`), and that leaves malloc's bins in another state for pyflate's 2 KB lists. callgrind counts the same emitted-code instructions with either build; the extra ones are all in `_int_malloc`/`unlink_chunk`; one kept `malloc` block or Python object reverses the sign (METACOMPILER.md "str and descriptors", PROFILE.md "Heap state").
-- **Generated:** `PyUnicode_Contains`; `punicode_contains` removed. donecheck: generated 198 (6,007 lines), reasoned 223 (4,829), no reason 22 (331, unchanged).
+- **Generated:** `PyUnicode_Contains`; `punicode_contains` removed. donecheck on `cd70306`: generated 204 (6,064 lines), reasoned 231 (4,986), no reason 2 (9, unchanged).
 - **No core change:** the effect rules' `CfNoPython` is right, and stays on every generated meta.
-- **Checks:** generation deterministic; checked build, `tests/run.py` 925; `compile_bounds` OK; `cpython_tests.py -j 2` 285 modules, 0 unexpected; same code with a reason for every difference; release instructions: the seven within noise once heap state is controlled (D92).
+- **Checks:** generation deterministic; checked build, `tests/run.py` 929; `compile_bounds` OK; `cpython_tests.py -j 2` 285 modules, 0 unexpected; same code with a reason for every difference; release instructions (`cd70306` → `03ce514`): richards, deltablue, raytrace, go, chaos within noise; pyflate +0.8% and hexiom +0.9% under `profile_bench.py`, both heap state (a kept object or block, or another driver, puts the head ahead; callgrind counts the same emitted code), D92.
 
 ## 2026-11-18: the done test's 22 settled but two (GENERATION.md step 10; `351a4d5` … `08c702e`)
 
