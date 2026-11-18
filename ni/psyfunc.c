@@ -148,8 +148,8 @@ PSY_INLINE void fncall_finish_store(struct fncall_arg_s *fncall,
   array_release(fncall->inputvinfos);
 
   /* store the code object */
-  /* borrowed (C14): the code object's co_extra owns its compiled code, so
-     an owned reference here would be a cycle that keeps both forever.
+  /* borrowed: the code object's co_extra owns its compiled code, so an
+     owned reference here would be a cycle through the code object.
      Whenever this code can run, something else holds the code: the frame
      the eval hook was given, or the caller's promotion cache, which keeps
      every function it switched on */

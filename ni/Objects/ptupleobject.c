@@ -50,9 +50,9 @@ int PsycoTuple_Load(vinfo_t* tuple)
 		for (i=0; i<size; i++) {
 			if (PsycoTuple_GET_ITEM(tuple, i) == NULL) {
 				PyObject* item = PyTuple_GET_ITEM(o, i);
-				source_known_t* sk = sk_new((long) item,
-							    SkFlagPyObj);
+				source_known_t* sk;
 				Py_INCREF(item);
+				sk = sk_new((long) item, SkFlagPyObj);
 				PsycoTuple_GET_ITEM(tuple, i) =
 					vinfo_new(CompileTime_NewSk(sk));
 			}

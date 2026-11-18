@@ -43,7 +43,7 @@ EXTERNVAR ni_owner_t *psyco_owner;
 /* the owner of 'co''s compiled code; NULL with an exception set */
 EXTERNFN ni_owner_t *psyco_code_owner(PyCodeObject *co);
 /* give the current owner a reference, which it drops with its code
-   (stolen: a constant's at its release, vcompiler.c:sk_release) */
+   (stolen: a constant's when its source_known_t is made, vcompiler.h:sk_new) */
 EXTERNFN void psyco_owner_keep(PyObject *o);
 /* the same with a new reference: what the code relies on staying alive */
 EXTERNFN void psyco_owner_pin(PyObject *o);
@@ -57,6 +57,29 @@ EXTERNFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
 /* machine code for stubs and the like: 'n' bytes, held by the current
    owner (dispatcher.c:stub_pool_reserve) */
 EXTERNFN code_t *psyco_code_take(size_t n);
+
+/* Every code object's record is listed (ni.c), for the scan that frees
+   owners whose code objects are reachable only from garbage
+   (codemanager.c, cycles through code objects). */
+EXTERNFN void psyco_owner_track(ni_code_extra_t *x);
+EXTERNFN void psyco_owner_untrack(ni_code_extra_t *x);
+/* scans run and owners they freed: ni._stats() */
+EXTERNVAR long psyco_stat_owner_scans;
+EXTERNVAR long psyco_stat_owners_collected;
+
+/* A map from addresses, for the caches that record what a compile saw at
+   an address and must see the same in a replay. psyco_record gives the
+   slot of the record for 'key', NULL in a new one, for the caller to fill
+   with a reference the record then holds. The current owner holds the
+   record, which dies, and leaves the map, when the last owner relying on
+   it dies: the value is alive while some code relies on it, and the key
+   object is too if the code holds it, so no address it records is ever
+   reused under it. */
+typedef struct {
+  struct ni_addrmap_item_s *items;
+  size_t mask, n;
+} ni_addrmap_t;
+EXTERNFN PyObject **psyco_record(ni_addrmap_t *map, void *key);
 
 /* Compile guards. Each way into the compiler (eval_hook.c, the stub
    functions) pushes one; running out of memory under it (OUT_OF_MEMORY)

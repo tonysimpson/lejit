@@ -145,52 +145,36 @@ bool PsycoGenexpr_Check(vinfo_t *v) {
 /***************************************************************/
 /*** function objects meta-implementation                    ***/
 
-/* The defaults a call to 'f' is compiled with: those Ni
-   first saw on f, held for good, never changed, so a respawn's replay
-   decides as the original compile did and a guard comparing f's
-   func_defaults with them can't be fooled by a new tuple at a reused
-   address. Py_None stands for NULL. f is held by the code that promoted
-   it, so its address isn't reused either. */
+/* The defaults a call to 'f' is compiled with: those Ni first saw on f,
+   recorded while code relies on them (psyco_record), never changed, so a
+   respawn's replay decides as the original compile did and a guard
+   comparing f's func_defaults with them can't be fooled by a new tuple at
+   a reused address. Py_None stands for NULL. f is held by the code that
+   promoted it, so its address isn't reused under the record either. */
 static PyObject *compiled_defaults(PyObject *f)
 {
-    static PyObject *seen = NULL; /* function address -> defaults */
-    PyObject *key, *d;
-    if (seen == NULL && (seen = PyDict_New()) == NULL)
-        OUT_OF_MEMORY();
-    key = PyLong_FromVoidPtr(f);
-    if (key == NULL)
-        OUT_OF_MEMORY();
-    d = PyDict_GetItem(seen, key);
-    if (d == NULL) {
-        d = PyFunction_GET_DEFAULTS(f);
-        if (d == NULL)
-            d = Py_None;
-        if (PyDict_SetItem(seen, key, d) < 0)
-            OUT_OF_MEMORY();
+    static ni_addrmap_t seen; /* function address -> defaults */
+    PyObject **d = psyco_record(&seen, f);
+    if (*d == NULL) {
+        *d = PyFunction_GET_DEFAULTS(f);
+        if (*d == NULL)
+            *d = Py_None;
+        Py_INCREF(*d);
     }
-    Py_DECREF(key);
-    return d == Py_None ? NULL : d;
+    return *d == Py_None ? NULL : *d;
 }
 
 /* The same for f's code: a call compiled for one code
    object checks that f still has it. */
 static PyCodeObject *compiled_code(PyObject *f)
 {
-    static PyObject *seen = NULL; /* function address -> code */
-    PyObject *key, *c;
-    if (seen == NULL && (seen = PyDict_New()) == NULL)
-        OUT_OF_MEMORY();
-    key = PyLong_FromVoidPtr(f);
-    if (key == NULL)
-        OUT_OF_MEMORY();
-    c = PyDict_GetItem(seen, key);
-    if (c == NULL) {
-        c = PyFunction_GET_CODE(f);
-        if (PyDict_SetItem(seen, key, c) < 0)
-            OUT_OF_MEMORY();
+    static ni_addrmap_t seen; /* function address -> code */
+    PyObject **c = psyco_record(&seen, f);
+    if (*c == NULL) {
+        *c = PyFunction_GET_CODE(f);
+        Py_INCREF(*c);
     }
-    Py_DECREF(key);
-    return (PyCodeObject *)c;
+    return (PyCodeObject *)*c;
 }
 
 /* emits 'f's field != expected' and says if it is true at run time */

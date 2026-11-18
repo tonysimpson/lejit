@@ -109,9 +109,9 @@ static void forget_mutable_types(PsycoObject *po, vinfo_array_t *a,
    The hint is part of the state a replay starts from (it is kept in
    snapshots), so a replay emits the same guards; states are compared
    without it, since a block that guards or promotes is right for any
-   type. The type is held by the hint's source_known_t (sk_release keeps
-   objects for good), so its address can't be reused while code compares
-   with it. */
+   type. The type is held by the owner from when the hint's
+   source_known_t is made (sk_new), so its address can't be reused while
+   code compares with it. */
 DEFINEFN
 bool Psyco_TypeHintGuard(PsycoObject *po, vinfo_t *vi) {
   source_known_t *sk = vi->type_hint;
@@ -166,27 +166,17 @@ void Psyco_ForgetConstantClasses(PsycoObject *po) {
    from all before it (they failed in that same run), so a chain is at
    most as long as the classes the object has had. Records never change,
    so a respawn's replay emits the same checks. Records are kept by
-   address and hold their types; the object itself is held by the code
-   that uses it as a constant. */
+   address (psyco_record) and hold their types; the object itself is held
+   by the code that uses it as a constant. */
 DEFINEFN
 int Psyco_ConstantType(PsycoObject *po, vinfo_t *vi, PyTypeObject **tp) {
-  static PyObject *records = NULL; /* object address -> list of types */
+  static ni_addrmap_t records; /* object address -> list of types */
   PyObject *o = (PyObject *)CompileTime_Get(vi->source)->value;
-  PyObject *key, *types;
+  PyObject **slot = psyco_record(&records, o), *types;
   Py_ssize_t k;
-  if (records == NULL && (records = PyDict_New()) == NULL)
+  if (*slot == NULL && (*slot = PyList_New(0)) == NULL)
     OUT_OF_MEMORY();
-  key = PyLong_FromVoidPtr(o);
-  if (key == NULL)
-    OUT_OF_MEMORY();
-  types = PyDict_GetItem(records, key);
-  if (types == NULL) {
-    types = PyList_New(0);
-    if (types == NULL || PyDict_SetItem(records, key, types) < 0)
-      OUT_OF_MEMORY();
-    Py_DECREF(types);
-  }
-  Py_DECREF(key);
+  types = *slot;
   for (k = 0;; k++) {
     vinfo_t *vnow, *vexp;
     condition_code_t cc;
@@ -208,38 +198,39 @@ int Psyco_ConstantType(PsycoObject *po, vinfo_t *vi, PyTypeObject **tp) {
   }
 }
 
-/* The value recorded for a slot never changes, so a respawn's replay
-   (dispatcher.h) decides as the original compile did whatever the slot is
-   then; a changed slot only fails the guard, for good. The types are held
-   by the code that promoted them, so a slot's address is never reused. */
+/* The value recorded for a slot never changes while code relies on it
+   (psyco_record), so a respawn's replay (dispatcher.h) decides as the
+   original compile did whatever the slot is then; a changed slot only
+   fails the guard, for good. The types are held by the code that promoted
+   them, so a slot's address is never reused under a record. */
 typedef struct {
   void *p;
 } slot_word_t;
 #define SLOT_value FMUT(DEF_FIELD(slot_word_t, void *, p, NO_PREV_FIELD))
 
-/* 'hold': the value is an object, held for good once recorded, so that
-   a new object at the same address can't pass the guard */
+/* 'hold': the value is an object (Py_None for NULL in the record), held
+   by the record, so that a new object at the same address can't pass the
+   guard */
 static int heap_word(PsycoObject *po, void *slot, void **value, bool hold) {
-  static PyObject *seen = NULL; /* slot address -> value first seen */
-  PyObject *key, *v;
+  /* slot address -> value first seen */
+  static ni_addrmap_t words, objects;
+  PyObject **rec = psyco_record(hold ? &objects : &words, slot);
   vinfo_t *vslot, *vnow, *vexp;
   condition_code_t cc;
-  if (seen == NULL && (seen = PyDict_New()) == NULL)
-    OUT_OF_MEMORY();
-  key = PyLong_FromVoidPtr(slot);
-  if (key == NULL)
-    OUT_OF_MEMORY();
-  v = PyDict_GetItem(seen, key);
-  if (v == NULL) {
-    v = PyLong_FromVoidPtr(*(void **)slot);
-    if (v == NULL || PyDict_SetItem(seen, key, v) < 0)
+  if (*rec == NULL) {
+    if (!hold)
+      *rec = PyLong_FromVoidPtr(*(void **)slot);
+    else {
+      *rec = *(PyObject **)slot != NULL ? *(PyObject **)slot : Py_None;
+      Py_INCREF(*rec);
+    }
+    if (*rec == NULL)
       OUT_OF_MEMORY();
-    Py_DECREF(v);
-    if (hold)
-      Py_XINCREF(*(PyObject **)slot);
   }
-  Py_DECREF(key);
-  *value = PyLong_AsVoidPtr(v);
+  if (!hold)
+    *value = PyLong_AsVoidPtr(*rec);
+  else
+    *value = *rec == Py_None ? NULL : *rec;
 
   vslot = vinfo_new(CompileTime_New((long)slot));
   vnow = psyco_get_field(po, vslot, SLOT_value);
@@ -920,7 +911,7 @@ static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
     goto generic;
   if (descr != NULL) {
     f = Py_TYPE(descr)->tp_descr_get;
-    Py_INCREF(descr); /* held by the compiled code */
+    psyco_owner_pin(descr); /* held while the compiled code lives */
   }
 
   if (f != NULL && PyDescr_IsData(descr))

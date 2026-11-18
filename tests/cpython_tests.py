@@ -150,8 +150,8 @@ KNOWN = {
     'test_frame': ('run=10 fail=2 err=0 skip=0 exit=0',
                    'C11: f_lineno and f_executing of compiled frames'),
     'test_gc': ('run=39 fail=2 err=0 skip=0 exit=0',
-                'C11: locals not in the frame, so no cycle; C14: compiled '
-                'code keeps classes alive'),
+                'C11: locals not in the frame, so no cycle; C14: live '
+                'compiled code holds the classes it was compiled with'),
     'test_importlib': ('run=1267 fail=6 err=0 skip=17 exit=0',
                        'C9: marshal writes no FLAG_REF for a code object '
                        'with refcount 1'),
@@ -159,9 +159,6 @@ KNOWN = {
                      'C11: f_locals and line numbers of compiled frames'),
     'test_logging': ('run=183 fail=1 err=0 skip=1 exit=0',
                      'C11: line numbers in stack_info'),
-    'test_module': ('run=30 fail=1 err=0 skip=0 exit=0',
-                    'C14: compiled code keeps a class, so its module dict, '
-                    'alive'),
     'test_exceptions': ('run=53 fail=1 err=0 skip=1 exit=0',
                         'C11: f_back of a traceback frame'),
     'test_traceback': ('run=63 fail=5 err=0 skip=0 exit=0',
@@ -186,8 +183,8 @@ KNOWN = {
                  'its callees, not on its own next line; C11: line '
                  'numbers of compiled frames'),
     'test_weakref': ('run=124 fail=3 err=0 skip=0 exit=0',
-                     'C14: compiled code keeps objects alive (classes, '
-                     'bound methods)'),
+                     'C14: live compiled code holds what it was compiled '
+                     'with (classes, the methods it looked up)'),
 }
 
 # not run, and why (doc/BUILD.md, Tests)

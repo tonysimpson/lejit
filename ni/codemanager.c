@@ -331,6 +331,482 @@ DEFINEFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
   }
 }
 
+/*** Records per address ***/
+
+struct ni_addrmap_item_s {
+  void *key, *val;
+};
+
+/* linear probing; a removal shifts the rest of the run back, so there are
+   no tombstones */
+static size_t amap_home(ni_addrmap_t *m, void *key) {
+  return (((size_t)key >> 3) * (size_t)0x9E3779B97F4A7C15ULL >> 20) & m->mask;
+}
+
+static void *amap_get(ni_addrmap_t *m, void *key) {
+  size_t i;
+  if (m->items == NULL)
+    return NULL;
+  for (i = amap_home(m, key); m->items[i].key != NULL; i = (i + 1) & m->mask)
+    if (m->items[i].key == key)
+      return m->items[i].val;
+  return NULL;
+}
+
+/* room for one more; -1 if out of memory */
+static int amap_reserve(ni_addrmap_t *m) {
+  struct ni_addrmap_item_s *old = m->items;
+  size_t i, oldsize = old == NULL ? 0 : m->mask + 1;
+  size_t size = oldsize ? 2 * oldsize : 64;
+  if (2 * (m->n + 1) <= oldsize)
+    return 0;
+  m->items = PyMem_Calloc(size, sizeof(*old));
+  if (m->items == NULL) {
+    m->items = old;
+    return -1;
+  }
+  m->mask = size - 1;
+  for (i = 0; i < oldsize; i++)
+    if (old[i].key != NULL) {
+      size_t j = amap_home(m, old[i].key);
+      while (m->items[j].key != NULL)
+        j = (j + 1) & m->mask;
+      m->items[j] = old[i];
+    }
+  PyMem_Free(old);
+  return 0;
+}
+
+/* after amap_reserve; 'key' must be new */
+static void amap_put(ni_addrmap_t *m, void *key, void *val) {
+  size_t i = amap_home(m, key);
+  while (m->items[i].key != NULL)
+    i = (i + 1) & m->mask;
+  m->items[i].key = key;
+  m->items[i].val = val;
+  m->n++;
+}
+
+static void amap_remove(ni_addrmap_t *m, void *key) {
+  size_t i, j;
+  if (m->items == NULL)
+    return;
+  for (i = amap_home(m, key); m->items[i].key != key; i = (i + 1) & m->mask)
+    if (m->items[i].key == NULL)
+      return;
+  m->items[i].key = NULL;
+  m->n--;
+  /* move back each later item of the run whose home isn't after the hole */
+  for (j = (i + 1) & m->mask; m->items[j].key != NULL; j = (j + 1) & m->mask) {
+    size_t h = amap_home(m, m->items[j].key);
+    if (i < j ? (h <= i || h > j) : (h <= i && h > j)) {
+      m->items[i] = m->items[j];
+      m->items[j].key = NULL;
+      i = j;
+    }
+  }
+}
+
+typedef struct {
+  PyObject_HEAD
+  ni_addrmap_t *map;
+  void *key;
+  PyObject *value;
+} record_t;
+
+/* a GC type for its tp_traverse, which the owner scan follows; never
+   tracked, since only owners hold records */
+static void record_dealloc(record_t *r) {
+  amap_remove(r->map, r->key);
+  Py_XDECREF(r->value);
+  PyObject_GC_Del(r);
+}
+
+static int record_traverse(record_t *r, visitproc visit, void *arg) {
+  Py_VISIT(r->value);
+  return 0;
+}
+
+static PyTypeObject Record_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "ni.record",
+    .tp_basicsize = sizeof(record_t),
+    .tp_dealloc = (destructor)record_dealloc,
+    .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
+    .tp_traverse = (traverseproc)record_traverse,
+};
+
+DEFINEFN PyObject **psyco_record(ni_addrmap_t *map, void *key) {
+  record_t *r = amap_get(map, key);
+  if (r != NULL) {
+    psyco_owner_pin((PyObject *)r);
+    return &r->value;
+  }
+  if (amap_reserve(map) < 0)
+    OUT_OF_MEMORY();
+  r = PyObject_GC_New(record_t, &Record_Type);
+  if (r == NULL)
+    OUT_OF_MEMORY();
+  r->map = map;
+  r->key = key;
+  r->value = NULL;
+  amap_put(map, key, r);
+  psyco_owner_keep((PyObject *)r);
+  return &r->value;
+}
+
+/*** Cycles through code objects ***/
+
+/* Code objects aren't tracked by CPython's GC, so it can't see that an
+   owner's references belong to its code object: a cycle through one, such
+   as a function whose code holds a cached global that leads back to it
+   (an exec'd namespace, a namedtuple class), looks alive for good. This
+   scan finds such owners by trial deletion over what owners reach. Each
+   object reached (one with a tp_traverse, or a code object with a record,
+   its references being its owner's set) has the references the others
+   hold subtracted from its count; one with a reference left is held from
+   elsewhere, so it and all it reaches are alive. A code object not found
+   alive that way is garbage: no frame runs it (a frame holds its code), no
+   live caller's code jumps into it (a caller holds what it calls or
+   inlines), and every reference its code relies on is in its owner's set
+   (constants, sk_new; records, psyco_record). Its record is taken off it
+   and freed with its owner, so that a finaliser calling it compiles it
+   again; CPython's GC then frees the rest of the cycle. What the scan
+   doesn't follow (module objects and their dicts, where it stops to stay
+   small, or a reference held outside an owner's set) only makes more look
+   alive.
+   It runs at the start of a collection (gc.callbacks), in the main
+   interpreter and never during a compile, once half as many code objects
+   as there are (and at least 256) have been seen since the last scan, so
+   that its cost per code object stays the same and dead code is at most
+   about half the live; or at a full collection, or after a few collections
+   without a new one, if any were seen. The callback is listed only until
+   then, so code that stops making code objects pays nothing. */
+
+DEFINEVAR long psyco_stat_owner_scans = 0;
+DEFINEVAR long psyco_stat_owners_collected = 0;
+
+static ni_code_extra_t *extras = NULL; /* every record */
+static long nextras = 0, extras_since_scan = 0;
+static long scan_after = 256; /* new records; more after a scan too big */
+static long quiet_since = -1; /* extras_since_scan at the last collection */
+static int quiet = 0;         /* collections since it last changed */
+#define SCAN_QUIET 64
+static PyObject *gc_callbacks = NULL, *scan_callback = NULL;
+
+#define SCAN_MAX_NODES ((size_t)1 << 20)
+enum { NODE_GC, NODE_CODE, NODE_PRUNED };
+typedef struct {
+  PyObject *o;
+  Py_ssize_t refs;
+  char kind, alive;
+} node_t;
+
+static struct {
+  node_t *nodes;
+  size_t n, cap;
+  ni_addrmap_t index; /* object -> node number + 1 */
+  size_t *stack;
+  size_t nstack, stackcap;
+  bool failed;
+} scan;
+
+/* every code object with a record is a node, so that one only garbage
+   reaches is found to be garbage too, whatever its owner holds */
+static bool has_record(PyObject *o) {
+  return ni_code_extra_get((PyCodeObject *)o) != NULL;
+}
+
+/* the node of 'o', made if it is one; -1 if it isn't or the scan failed */
+static long scan_node(PyObject *o, char kind) {
+  size_t i = (size_t)amap_get(&scan.index, o);
+  if (i != 0)
+    return i - 1;
+  if (kind != NODE_PRUNED) {
+    if (PyCode_Check(o) && has_record(o))
+      kind = NODE_CODE;
+    else if (PyObject_IS_GC(o) && Py_TYPE(o)->tp_traverse != NULL)
+      kind = NODE_GC;
+    else
+      return -1;
+  }
+  if (scan.n == scan.cap) {
+    size_t cap = scan.cap ? 2 * scan.cap : 1024;
+    node_t *n = cap > SCAN_MAX_NODES
+                    ? NULL
+                    : PyMem_Realloc(scan.nodes, cap * sizeof(node_t));
+    if (n == NULL) {
+      scan.failed = true;
+      return -1;
+    }
+    scan.nodes = n;
+    scan.cap = cap;
+  }
+  if (amap_reserve(&scan.index) < 0) {
+    scan.failed = true;
+    return -1;
+  }
+  amap_put(&scan.index, o, (void *)(scan.n + 1));
+  scan.nodes[scan.n].o = o;
+  scan.nodes[scan.n].refs = Py_REFCNT(o);
+  scan.nodes[scan.n].kind = kind;
+  scan.nodes[scan.n].alive = false;
+  return scan.n++;
+}
+
+/* calls 'visit' on every reference node 'i' holds that the scan follows */
+static void scan_edges(size_t i, visitproc visit) {
+  node_t *nd = &scan.nodes[i];
+  if (nd->kind == NODE_CODE) {
+    ni_owner_t *o = &ni_code_extra_get((PyCodeObject *)nd->o)->owner;
+    size_t j;
+    for (j = 0; o->pins != NULL && j <= o->pinmask; j++)
+      if (o->pins[j] != NULL)
+        visit(o->pins[j], NULL);
+  } else if (nd->kind == NODE_GC)
+    Py_TYPE(nd->o)->tp_traverse(nd->o, visit, NULL);
+}
+
+static int visit_count(PyObject *o, void *unused) {
+  long i = scan_node(o, NODE_GC);
+  if (i >= 0)
+    scan.nodes[i].refs--;
+  return 0;
+}
+
+static void push_alive(size_t i) {
+  if (scan.nodes[i].alive)
+    return;
+  scan.nodes[i].alive = true;
+  if (scan.nstack == scan.stackcap) {
+    size_t cap = scan.stackcap ? 2 * scan.stackcap : 1024;
+    size_t *s = PyMem_Realloc(scan.stack, cap * sizeof(size_t));
+    if (s == NULL) {
+      scan.failed = true;
+      return;
+    }
+    scan.stack = s;
+    scan.stackcap = cap;
+  }
+  scan.stack[scan.nstack++] = i;
+}
+
+static int visit_alive(PyObject *o, void *unused) {
+  size_t i = (size_t)amap_get(&scan.index, o);
+  if (i != 0)
+    push_alive(i - 1);
+  return 0;
+}
+
+/* the garbage code objects, as new references, in *out; their count, or
+   -1 if the scan didn't finish */
+static long scan_find(PyCodeObject ***out) {
+  ni_code_extra_t *x;
+  PyObject *modules = PyImport_GetModuleDict();
+  Py_ssize_t pos = 0;
+  PyObject *k, *m;
+  size_t i;
+  long n = 0;
+  while (modules != NULL && PyDict_Check(modules) &&
+         PyDict_Next(modules, &pos, &k, &m))
+    if (PyModule_Check(m)) {
+      scan_node(m, NODE_PRUNED);
+      if (PyModule_GetDict(m) != NULL)
+        scan_node(PyModule_GetDict(m), NODE_PRUNED);
+    }
+  for (x = extras; x != NULL; x = x->next)
+    if (x->owner.npins > 0)
+      scan_node((PyObject *)x->co, NODE_CODE);
+  for (i = 0; i < scan.n && !scan.failed; i++)
+    scan_edges(i, visit_count);
+  for (i = 0; i < scan.n && !scan.failed; i++)
+    if (scan.nodes[i].refs > 0 || scan.nodes[i].kind == NODE_PRUNED)
+      push_alive(i);
+  while (scan.nstack > 0 && !scan.failed)
+    scan_edges(scan.stack[--scan.nstack], visit_alive);
+  if (scan.failed)
+    return -1;
+  for (i = 0; i < scan.n; i++)
+    if (scan.nodes[i].kind == NODE_CODE && !scan.nodes[i].alive)
+      n++;
+  if (n == 0)
+    return 0;
+  if ((*out = PyMem_Malloc(n * sizeof(PyCodeObject *))) == NULL)
+    return -1;
+  n = 0;
+  for (i = 0; i < scan.n; i++)
+    if (scan.nodes[i].kind == NODE_CODE && !scan.nodes[i].alive) {
+      Py_INCREF(scan.nodes[i].o);
+      (*out)[n++] = (PyCodeObject *)scan.nodes[i].o;
+    }
+  return n;
+}
+
+static void owners_scan(void) {
+  PyCodeObject **dead_co = NULL;
+  ni_code_extra_t **dead = NULL;
+  long i, n = scan_find(&dead_co);
+  PyMem_Free(scan.nodes);
+  PyMem_Free(scan.stack);
+  PyMem_Free(scan.index.items);
+  memset(&scan, 0, sizeof(scan));
+  psyco_stat_owner_scans++;
+  if (n < 0)
+    scan_after = 2 * (scan_after > nextras ? scan_after : nextras);
+  else
+    scan_after = nextras / 2 > 256 ? nextras / 2 : 256;
+  if (n > 0)
+    dead = PyMem_Malloc(n * sizeof(ni_code_extra_t *));
+  if (dead == NULL) {
+    for (i = 0; i < n; i++)
+      Py_DECREF(dead_co[i]); /* found again by the next scan */
+    n = 0;
+  }
+  /* all records are taken off their code objects before any reference is
+     dropped, so that code a finaliser runs is compiled afresh, and freed
+     here, in the main interpreter (ni.c:ni_code_extra_detach says why) */
+  for (i = 0; i < n; i++)
+    dead[i] = ni_code_extra_detach(dead_co[i]);
+  for (i = 0; i < n; i++)
+    ni_code_extra_free(dead[i]);
+  psyco_stat_owners_collected += n;
+  PyMem_Free(dead);
+  for (i = 0; i < n; i++)
+    Py_DECREF(dead_co[i]);
+  PyMem_Free(dead_co);
+}
+
+static bool scan_listed_last(void) {
+  Py_ssize_t n = PyList_GET_SIZE(gc_callbacks);
+  return n > 0 && PyList_GET_ITEM(gc_callbacks, n - 1) == scan_callback;
+}
+
+static PyObject *owners_gc_callback(PyObject *self, PyObject *args) {
+  const char *phase;
+  PyObject *info, *gen;
+  if (!PyArg_ParseTuple(args, "sO", &phase, &info))
+    return NULL;
+  /* gc.callbacks are shared by every interpreter: a subinterpreter's
+     collection, perhaps while it is torn down, would scan from its
+     sys.modules */
+  if (PyThreadState_GET()->interp != PyInterpreterState_Main())
+    Py_RETURN_NONE;
+  if (strcmp(phase, "start") == 0) {
+    gen = PyDict_Check(info) ? PyDict_GetItemString(info, "generation") : NULL;
+    if (extras_since_scan != quiet_since) {
+      quiet_since = extras_since_scan;
+      quiet = 0;
+    } else if (quiet < SCAN_QUIET)
+      quiet++;
+    if (extras_since_scan > 0 &&
+        (extras_since_scan >= scan_after || quiet >= SCAN_QUIET ||
+         (gen != NULL && PyLong_Check(gen) && PyLong_AsLong(gen) == 2)) &&
+        psyco_owner == NULL && psyco_stat_compile_depth == 0 &&
+        nlocked == 0 && psyco_compile_guard == NULL && !_Py_IsFinalizing()) {
+      extras_since_scan = 0;
+      quiet_since = -1;
+      owners_scan();
+    }
+  } else if (extras_since_scan == 0 && scan_listed_last()) {
+    /* the last one, so that removing it skips no other callback */
+    Py_ssize_t n = PyList_GET_SIZE(gc_callbacks);
+    if (PyList_SetSlice(gc_callbacks, n - 1, n, NULL) < 0)
+      PyErr_Clear();
+  }
+  Py_RETURN_NONE;
+}
+
+static PyMethodDef owners_gc_callback_def = {"ni_owner_scan",
+                                             owners_gc_callback, METH_VARARGS,
+                                             NULL};
+
+/* code_dealloc calls the free functions of the interpreter current then,
+   and only the main one has Ni's: a code object freed under another
+   (a collection a subinterpreter runs) would leave its record behind,
+   and the scan would read the code through it. So each tracked record
+   also has a weak reference to its code; the free function drops it
+   first, and if the code dies without that, its callback frees the
+   record instead. */
+typedef struct {
+  PyWeakReference wr;
+  ni_code_extra_t *x;
+} code_ref_t;
+
+static PyTypeObject CodeRef_Type = {
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "ni.code_ref",
+    .tp_basicsize = sizeof(code_ref_t),
+    .tp_flags = Py_TPFLAGS_DEFAULT, /* GC and traverse from weakref */
+};
+static PyObject *code_gone = NULL;
+
+static PyObject *code_gone_fn(PyObject *self, PyObject *ref) {
+  ni_code_extra_t *x = ((code_ref_t *)ref)->x;
+  if (x != NULL)
+    ni_code_extra_free(x);
+  Py_RETURN_NONE;
+}
+
+static PyMethodDef code_gone_def = {"ni_code_gone", code_gone_fn, METH_O,
+                                    NULL};
+
+DEFINEFN void psyco_owner_track(ni_code_extra_t *x) {
+  PyObject *t, *v, *tb, *ref = NULL;
+  PyErr_Fetch(&t, &v, &tb);
+  if (code_gone != NULL)
+    ref = PyObject_CallFunctionObjArgs((PyObject *)&CodeRef_Type, x->co,
+                                       code_gone, NULL);
+  if (ref == NULL) { /* untracked: never scanned, so never collected */
+    PyErr_Clear();
+    PyErr_Restore(t, v, tb);
+    return;
+  }
+  ((code_ref_t *)ref)->x = x;
+  x->ref = ref;
+  x->prev = NULL;
+  x->next = extras;
+  if (extras != NULL)
+    extras->prev = x;
+  extras = x;
+  nextras++;
+  extras_since_scan++;
+  if (scan_callback != NULL && !scan_listed_last()) {
+    if (PySequence_Contains(gc_callbacks, scan_callback) == 0)
+      PyList_Append(gc_callbacks, scan_callback);
+    PyErr_Clear(); /* out of memory: listed with a later record */
+  }
+  PyErr_Restore(t, v, tb);
+}
+
+DEFINEFN void psyco_owner_untrack(ni_code_extra_t *x) {
+  if (x->ref == NULL)
+    return;
+  ((code_ref_t *)x->ref)->x = NULL;
+  Py_CLEAR(x->ref);
+  if (x->prev != NULL)
+    x->prev->next = x->next;
+  else
+    extras = x->next;
+  if (x->next != NULL)
+    x->next->prev = x->prev;
+  nextras--;
+}
+
+/* without it, cycles through code objects stay */
+static void owners_scan_init(void) {
+  PyObject *gc;
+  CodeRef_Type.tp_base = &_PyWeakref_RefType;
+  if (PyType_Ready(&Record_Type) < 0 || PyType_Ready(&CodeRef_Type) < 0 ||
+      (code_gone = PyCFunction_New(&code_gone_def, NULL)) == NULL ||
+      (gc = PyImport_ImportModule("gc")) == NULL) {
+    PyErr_Clear();
+    return;
+  }
+  gc_callbacks = PyObject_GetAttrString(gc, "callbacks");
+  Py_DECREF(gc);
+  if (gc_callbacks != NULL && PyList_Check(gc_callbacks))
+    scan_callback = PyCFunction_New(&owners_gc_callback_def, NULL);
+  PyErr_Clear();
+}
+
 DEFINEVAR unsigned long psyco_next_serial = 0;
 
 #if NI_CODESTATS
@@ -595,4 +1071,7 @@ PyTypeObject CodeBuffer_Type = {
 };
 
 DEFINEFN
-void codemanager_init() { PyType_Ready(&CodeBuffer_Type); }
+void codemanager_init() {
+  PyType_Ready(&CodeBuffer_Type);
+  owners_scan_init();
+}

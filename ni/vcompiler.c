@@ -70,9 +70,10 @@ void vinfo_array_shrink(PsycoObject *po, vinfo_t *vi, int ncount) {
       vinfo_decref(v1, po);
     }
   }
-  if (ncount == 0)
+  if (ncount == 0) {
+    PyMem_FREE(array);
     array = NullArray;
-  else {
+  } else {
     array = PyMem_REALLOC(array, offsetof(vinfo_array_t, items) +
                                      ncount * sizeof(vinfo_t *));
     if (array == NULL)
@@ -87,12 +88,12 @@ void vinfo_array_shrink(PsycoObject *po, vinfo_t *vi, int ncount) {
 DEFINEFN
 void sk_release(source_known_t *sk) {
   /* Code may hold the object's address, or that of anything reached from
-     it, so the reference goes to the owner whose compile the constant
-     dies in, which drops it with its code. Another owner's code can have
-     used it only if the constant came to it as a callee's argument, and a
-     callee holds every constant it was given (psyfunc.c:compile_callee). */
-  if ((sk->refcount1_flags & (SkFlagPyObj | SkFlagBorrowed)) == SkFlagPyObj)
-    psyco_owner_keep((PyObject *)sk->value);
+     it, so the owner the constant was made under holds it until its code
+     dies (sk_new). Another owner's code can have used it only if the
+     constant came to it as a callee's argument, and a callee holds every
+     constant it was given (psyfunc.c:compile_callee). The owner, not the
+     source_known_t, holds it so that every reference an owner has is in
+     its set, where the cycle scan sees it (codemanager.c). */
   sk_delete(sk);
 }
 
@@ -1176,10 +1177,11 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
   po->pr.auto_recursion = AUTO_RECURSION(recursion);
 
   /* initialize po->vlocals. The globals are borrowed: compiled code holds
-     its constants until its code object dies (sk_release), and here that
+     its constants until its code object dies (sk_new), and here that
      would close a cycle the GC can't see, globals -> function -> code ->
-     co_extra -> owner -> globals, so code with globals of its own (exec,
-     namedtuple) would never die. Borrowing is safe because compiled code
+     co_extra -> owner -> globals, in all code with globals of its own
+     (exec, namedtuple), which only the owner scan (codemanager.c) would
+     find. Borrowing is safe because compiled code
      uses the dict only as an argument to run-time calls, never its
      contents at compile time: it runs only in a frame that holds the dict,
      and if a new dict later gets a dead one's address, the old code does

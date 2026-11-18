@@ -1,7 +1,9 @@
-# Compiled code objects must be able to die (KNOWN_BUGS C14). The code
-# object's co_extra holds its snapshots, so a snapshot holding the code
-# object would make it immortal. Compiled code borrows its globals, so code
-# with globals of its own (exec into a new dict, namedtuple) dies with them.
+# Compiled code objects must be able to die. The code object's co_extra
+# holds its snapshots, so a snapshot holding the code object would make it
+# immortal. Compiled code borrows its globals, so code with globals of its
+# own (exec into a new dict, namedtuple) dies with them, and a cycle back
+# to the code through what its code holds is found by the owner scan
+# (codemanager.c).
 import collections
 import ctypes
 import gc
@@ -41,6 +43,82 @@ def code_dies_with_own_globals():
     del ns
     gc.collect()
     return total, [r() is None for r in refs]
+
+
+CALLS = '''
+def g(a):
+    return a + 1
+def f(a):
+    t = 0
+    for i in range(a):
+        t += g(i)
+    return t
+'''
+
+
+def own_namespace_calls():
+    # f's code holds g (a cached global), g holds the namespace, which
+    # holds f: a cycle through f's code object, which CPython's GC can't see
+    refs = []
+    total = 0
+    for k in range(5):
+        ns = {}
+        exec(CALLS, ns)
+        refs.append(weakref.ref(ns['f'].__code__))
+        total += ns['f'](10 + k)
+    del ns
+    gc.collect()
+    return total, [r() is None for r in refs]
+
+
+RECURSIVE = '''
+def even(n):
+    return True if n == 0 else odd(n - 1)
+def odd(n):
+    return False if n == 0 else even(n - 1)
+'''
+
+
+def own_namespace_recursion():
+    # each code object holds the other, through code alone as well as
+    # through the namespace
+    refs = []
+    out = []
+    for k in range(5):
+        ns = {}
+        exec(RECURSIVE, ns)
+        refs.append(weakref.ref(ns['even'].__code__))
+        refs.append(weakref.ref(ns['odd'].__code__))
+        out.append(ns['even'](20 + k))
+    del ns
+    gc.collect()
+    return out, [r() is None for r in refs]
+
+
+MANY = ''.join('def h%d(a):\n    return a + %d\n' % (i, i) for i in range(600))
+
+
+def freed_in_subinterpreter():
+    # a cycle through compiled code, old by the time it is garbage, found
+    # by a scan at a young collection, then freed by a subinterpreter's
+    # collection: that interpreter has no free function for Ni's co_extra
+    import _testcapi
+    cycles = []
+    for k in range(20):
+        ns = {}
+        exec(CALLS, ns)
+        ns['f'](k)
+        cycles.append(ns)
+    refs = [weakref.ref(ns['f'].__code__) for ns in cycles]
+    gc.collect()
+    del cycles, ns
+    keep = {}
+    exec(MANY, keep)
+    total = sum(keep['h%d' % i](1) for i in range(600))
+    gc.collect(0)
+    r = _testcapi.run_in_subinterp('import gc; gc.collect()')
+    gc.collect()
+    return total, r, [x() is None for x in refs]
 
 
 def namedtuple_code_dies():
@@ -162,6 +240,9 @@ def recompiled_loops_free():
 CASES = [
     ('code_dies_with_shared_globals', [()], {'interpreted': 'calls exec (C15)'}),
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec (C15)'}),
+    ('own_namespace_calls', [()], {'interpreted': 'calls exec (C15)'}),
+    ('own_namespace_recursion', [()], {'interpreted': 'calls exec (C15)'}),
+    ('freed_in_subinterpreter', [()], {'interpreted': 'calls exec (C15)'}),
     ('namedtuple_code_dies', [()], {}),
     ('isinstance_class_dies', [()], {}),
     ('isinstance_instance_class_dies', [()], {}),

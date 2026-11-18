@@ -1084,10 +1084,10 @@ done:
    unrelated write to the module) updates the expected tags and resumes;
    anything else respawns into a version where the name is varying and
    loaded at run time; a name not found is loaded at run time behind the
-   same guard. The closure owns the value, so a constant that outlives a
-   rebinding stays valid, and owns builtins, whose tag the guard reads;
-   globals stays borrowed: a new dict at its address has a new tag and
-   is looked up. The guard slots live as long as the code's owner. */
+   same guard. The code's owner holds the value, so a constant that
+   outlives a rebinding stays valid, and holds builtins, whose tag the
+   guard reads; globals stays borrowed: a new dict at its address has a
+   new tag and is looked up. The guard slots live as long as the owner. */
 typedef struct {
   uint64_t globals_tag;
   uint64_t builtins_tag;
@@ -1100,34 +1100,23 @@ typedef struct {
 #define GUARD_builtins_tag                                                     \
   FMUT(UNSIGNED_FIELD(global_guard_t, uint64_t, builtins_tag, NO_PREV_FIELD))
 
+/* all borrowed; the owner holds name, value and builtins */
 typedef struct {
-  PyObject *name;     /* owned */
-  PyObject *value;    /* owned: the value compiled in, or NULL */
-  PyObject *globals;  /* borrowed */
-  PyObject *builtins; /* owned: the frame's (LOC_BUILTINS), which a new
+  PyObject *name;
+  PyObject *value;    /* the value compiled in, or NULL */
+  PyObject *globals;
+  PyObject *builtins; /* the frame's (LOC_BUILTINS), which a new
                          globals['__builtins__'] doesn't change */
   global_guard_t *guard;
 } changed_global_t;
-
-/* the references go to the owner, which drops them with its code */
-static void changed_global_release(void *closure) {
-  changed_global_t *cg = (changed_global_t *)closure;
-  psyco_owner_keep(cg->name);
-  psyco_owner_keep(cg->value);
-  psyco_owner_keep(cg->builtins);
-  cg->name = cg->value = cg->builtins = NULL;
-}
 
 static code_t *do_changed_global(changed_global_t *cg) {
   PyObject *x = PyDict_GetItem(cg->globals, cg->name);
   if (x == NULL)
     x = PyDict_GetItem(cg->builtins, cg->name);
-  if (x != cg->value) {
+  if (x != cg->value)
     /* the respawn compiles a version that never comes back here */
-    code_t *r = psyco_do_respawn(cg, sizeof(*cg));
-    changed_global_release(cg);
-    return r;
-  }
+    return psyco_do_respawn(cg, sizeof(*cg));
   /* no real change */
   cg->guard->globals_tag = ((PyDictObject *)cg->globals)->ma_version_tag;
   cg->guard->builtins_tag = ((PyDictObject *)cg->builtins)->ma_version_tag;
@@ -1219,14 +1208,13 @@ static bool load_global_cached(PsycoObject *po, PyObject *name,
   po->pr.split_after_global = 1;
   if (cg != NULL) {
     cg->name = name;
-    Py_INCREF(name);
+    psyco_owner_pin(name);
     cg->value = value;
-    Py_XINCREF(value);
+    psyco_owner_pin(value);
     cg->globals = globals;
     cg->builtins = builtins;
-    Py_INCREF(builtins);
+    psyco_owner_pin(builtins);
     cg->guard = guard;
-    psyco_stub_set_release(cg, &changed_global_release);
   }
   /* not found: a run-time load raises NameError; the guard catches a
      later definition */

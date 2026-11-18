@@ -777,13 +777,17 @@ def class_assigned_in_call(n):
     return out
 
 
+# a new class per call: the sites specialise on each until they go
+# megamorphic, after about 10 calls
+NEW_CLASSES = {'warmup': (20, 'specialises until megamorphic')}
+
 CASES = [
     ('overwrite_loop', [(20,)], {}),
     ('init_fills', [(50,)], {}),
     ('guard_holds', [(50,)], {}),
     ('many_instances', [(500,)], {}),
     ('out_of_order', [(9,)], {}),
-    ('skip_a_slot', [(3,)], {'leaks': 'C14: per-address guard caches hold what they saw for good'}),
+    ('skip_a_slot', [(3,)], NEW_CLASSES),
     ('size_mismatch', [(4,)], {}),
     ('same_object', [(10,)], {}),
     ('old_value_freed', [(5,)], {}),
@@ -795,12 +799,11 @@ CASES = [
     ('module_instance', [(5,)], {}),
     ('dict_replaced', [(12,)], {}),
     ('after_delete', [(3,)], {}),
-    ('reshare', [(3,)], {'leaks': 'C14: per-address guard caches hold what they saw for good'}),
+    ('reshare', [(3,)], NEW_CLASSES),
     ('name_joins_keys', [(4,)], {}),
     ('equal_not_identical_key', [(3,)], {}),
     ('type_guard', [(5,)], {}),
-    ('two_classes_one_site', [(4,)],
-     {'leaks': 'C14: per-address guard caches hold what they saw for good'}),
+    ('two_classes_one_site', [(4,)], NEW_CLASSES),
     ('class_address_reuse', [(4,)], {}),
     ('wide_keys', [(3,)], {}),
     ('miss_cap', [(200,)], {}),

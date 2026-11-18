@@ -275,7 +275,7 @@ CASES = [
     ('change_builtins_module', [()], {}),
     ('deleted_global', [()], {}),
     ('exec_namespaces', [()], {}),
-    ('reused_addresses', [()], {'leaks': 'C14: per-address guard caches hold what they saw for good'}),
+    ('reused_addresses', [()], {}),
     ('cached_value_after_rebind', [()], {}),
     ('global_class_isinstance', '[([1, Value(), "s", 2.5, True],)]', {}),
     ('megamorphic_global', [(30,)], {}),

@@ -181,8 +181,9 @@ typedef struct {
    essentially on this value to be constant */
 #define SkFlagFixed 0x01
 
-/* value is a PyObject* and holds a reference, which goes to the current
-   owner when the source_known_t is released (codemanager.h) */
+/* value is a PyObject*, and the reference given with it goes to the
+   owner current when the source_known_t is made (codemanager.h), which
+   holds it while its code lives: the source_known_t borrows it */
 #define SkFlagPyObj 0x02
 
 /* with SkFlagPyObj: the reference is borrowed (the frame's globals) */
@@ -205,8 +206,11 @@ PSY_INLINE void sk_decref(source_known_t *sk) {
 /* construction */
 BLOCKALLOC_INTERFACE(sk, source_known_t)
 
+EXTERNFN void psyco_owner_keep(PyObject *o); /* codemanager.h */
 PSY_INLINE source_known_t *sk_new(long v, long flags) {
   source_known_t *sk = psyco_llalloc_sk();
+  if ((flags & (SkFlagPyObj | SkFlagBorrowed)) == SkFlagPyObj)
+    psyco_owner_keep((PyObject *)v);
   sk->refcount1_flags = flags;
   sk->value = v;
   sk->used = 0;

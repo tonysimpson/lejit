@@ -196,7 +196,7 @@ typedef struct ni_owner_s {
 /* What Ni keeps per code object, in its co_extra slot (PEP 523): found by
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
-typedef struct {
+typedef struct ni_code_extra_s {
   PyObject* merge_points;  /* capsule, Py_None if unsupported, NULL if not
                               built yet; owned */
   PyObject* entry_point;   /* codebuf, Py_None if compiling failed, NULL if
@@ -209,9 +209,18 @@ typedef struct {
   long serial;             /* never reused, unlike the code object's
                               address (psyfunc.c:psyco_save_inline_po) */
   ni_owner_t owner;        /* what its compiled code holds */
+  PyCodeObject* co;        /* borrowed: the record dies with it */
+  struct ni_code_extra_s *prev, *next; /* every record (codemanager.c) */
+  PyObject* ref;           /* a weak reference to co, NULL if untracked */
 } ni_code_extra_t;
 /* the record for 'co', made on first use; NULL with an exception set */
 EXTERNFN ni_code_extra_t* ni_code_extra(PyCodeObject* co);
+/* the record for 'co' if it has one, never raising */
+EXTERNFN ni_code_extra_t* ni_code_extra_get(PyCodeObject* co);
+/* co_extra's free function: releases the record's compiled code */
+EXTERNFN void ni_code_extra_free(void* p);
+/* takes the record off 'co' and returns it (ni.c says why) */
+EXTERNFN ni_code_extra_t* ni_code_extra_detach(PyCodeObject* co);
 
 /* moved here from vcompiler.h because needed by numerous header files.
    See vcompiler.h for comments */

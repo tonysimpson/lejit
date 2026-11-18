@@ -15,6 +15,8 @@ options:
                                       outside the whitelist); results must
                                       still match
   'leaks': 'KNOWN_BUGS id'            skip the leak check
+  'warmup': (n, 'reason')             warm up n rounds, not 9, for growth
+                                      that is bounded but lasts longer
 Every case is also leak-checked: after warm-up the calls run 100 more times
 and the growth in sys.getallocatedblocks() must stay within LEAK_SLACK of
 the plain run's.
@@ -31,11 +33,11 @@ TIMEOUT = 20 * SLOWDOWN
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
 
 
-def run_child(modname, fname, calls, use_ni):
+def run_child(modname, fname, calls, use_ni, warmup=9):
     if not isinstance(calls, str):
         calls = repr(calls)
     cmd = [PY37, os.path.join(ROOT, 'tests', 'child.py'), NI_DIR, CASES,
-           modname, fname, calls, '1' if use_ni else '0']
+           modname, fname, calls, '1' if use_ni else '0', str(warmup)]
     tag = '%s.%s.%s' % (modname, fname, 'ni' if use_ni else 'plain')
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -71,12 +73,13 @@ def main():
     verbose = '-v' in args
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
     for name, modname, fname, calls, opts in load_cases(filt):
-        expected, err = run_child(modname, fname, calls, False)
+        warmup = opts.get('warmup', (9,))[0]
+        expected, err = run_child(modname, fname, calls, False, warmup)
         if err:
             print('ERROR %s: reference run failed: %s' % (name, err))
             counts['FAIL'] += 1
             continue
-        got, err = run_child(modname, fname, calls, True)
+        got, err = run_child(modname, fname, calls, True, warmup)
         problem = None
         if err:
             problem = err

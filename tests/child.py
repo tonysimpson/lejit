@@ -23,11 +23,12 @@ if use_ni:
                'compiled: no (%s)' % info)
 # leak check: after warm-up, run the calls 100 more times and report how
 # many more memory blocks are allocated than before. The warm-up is a few
-# rounds, not one: compiling can go on for a few calls (a call site that
-# sees a new function each time specialises until it goes megamorphic),
-# and that bounded growth is tests/compile_bounds.py's business.
+# rounds (9 unless the case says), not one: compiling can go on for a few
+# calls (a call site that sees a new function each time specialises until
+# it goes megamorphic), and that bounded growth is
+# tests/compile_bounds.py's business.
 import gc
-for _ in range(9):
+for _ in range(int(sys.argv[7])):
     for args in calls:
         try:
             fn(*args)

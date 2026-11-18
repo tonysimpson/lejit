@@ -2842,8 +2842,9 @@ void psyco_unfix(PsycoObject *po, vinfo_t *vi) {
 
   /* release 'vi->source' and move 'newvi->source' into it. SkFlagPyObj
      stays: the object is never released (code holds its address and
-     sk_release keeps constants forever), and the source_known_t may be
-     shared with a snapshot or a callee's frame, whose constant it still is */
+     the owner holds the object while the code lives), and the
+     source_known_t may be shared with a snapshot or a callee's frame,
+     whose constant it still is */
   sk = CompileTime_Get(vi->source);
   sk_decref(sk);
   vinfo_move(po, vi, newvi);

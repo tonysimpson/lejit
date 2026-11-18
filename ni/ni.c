@@ -110,14 +110,53 @@ DEFINEVAR PyObject *CPsycoModule;
    code (codemanager.c). */
 static Py_ssize_t code_extra_index = -1;
 
-static void code_extra_free(void *p) {
+DEFINEFN void ni_code_extra_free(void *p) {
   /* code_dealloc calls every user's free function for every slot, so a
      code object only another co_extra user touched gives NULL here */
   ni_code_extra_t *x = (ni_code_extra_t *)p;
   if (x == NULL)
     return;
+  psyco_owner_untrack(x);
   psyco_owner_release(&x->owner, x->merge_points, x->entry_point);
   PyMem_Free(x);
+}
+
+DEFINEFN
+ni_code_extra_t *ni_code_extra_get(PyCodeObject *co) {
+  void *x;
+  /* fails only for an object that isn't code */
+  if (_PyCode_GetExtra((PyObject *)co, code_extra_index, &x) < 0)
+    return NULL;
+  return (ni_code_extra_t *)x;
+}
+
+/* Objects/codeobject.c's private layout of co_extra */
+typedef struct {
+  Py_ssize_t ce_size;
+  void *ce_extras[1];
+} code_extra_array_t;
+
+/* code_dealloc calls the free functions of the interpreter current then.
+   A subinterpreter has no Ni free function, and on 3.7 its table isn't
+   even initialised (PyInterpreterState_New), so a code object that has
+   co_extra must not die under one: the owner scan, which runs in the
+   main interpreter, takes the record off and, when no other user has a
+   slot, frees the array too */
+DEFINEFN
+ni_code_extra_t *ni_code_extra_detach(PyCodeObject *co) {
+  code_extra_array_t *e = co->co_extra;
+  ni_code_extra_t *x;
+  Py_ssize_t i;
+  if (e == NULL || e->ce_size <= code_extra_index)
+    return NULL;
+  x = e->ce_extras[code_extra_index];
+  e->ce_extras[code_extra_index] = NULL;
+  for (i = 0; i < e->ce_size; i++)
+    if (e->ce_extras[i] != NULL)
+      return x;
+  PyMem_Free(e);
+  co->co_extra = NULL;
+  return x;
 }
 
 DEFINEFN
@@ -137,6 +176,8 @@ ni_code_extra_t *ni_code_extra(PyCodeObject *co) {
       return NULL;
     }
     ((ni_code_extra_t *)x)->serial = ++next_serial;
+    ((ni_code_extra_t *)x)->co = co;
+    psyco_owner_track((ni_code_extra_t *)x);
   }
   return (ni_code_extra_t *)x;
 }
@@ -219,6 +260,14 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
     PyObject *t = Py_BuildValue("(ll)", psyco_stat_code_bytes_live,
                                 psyco_stat_kept_for_good);
     if (t == NULL || PyDict_SetItemString(d, "code_live", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+  if (d != NULL) {
+    /* cycle scans run, and the owners they freed (codemanager.c) */
+    PyObject *t = Py_BuildValue("(ll)", psyco_stat_owner_scans,
+                                psyco_stat_owners_collected);
+    if (t == NULL || PyDict_SetItemString(d, "owner_scans", t) < 0)
       Py_CLEAR(d);
     Py_XDECREF(t);
   }
@@ -407,7 +456,7 @@ PyMODINIT_FUNC PyInit_ni(void) {
   module = PyModule_Create(&ni_module);
   /* XXX tony: make this code handle errors properly */
   if (module) {
-    code_extra_index = _PyEval_RequestCodeExtraIndex(code_extra_free);
+    code_extra_index = _PyEval_RequestCodeExtraIndex(ni_code_extra_free);
     if (code_extra_index < 0) {
       Py_DECREF(module);
       return NULL;
