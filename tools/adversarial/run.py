@@ -50,7 +50,8 @@ is worse for Ni.
     python3.7 tools/adversarial/run.py --plain          # CPython only
     python3.7 tools/adversarial/run.py --calibrate [-k NAME]   # rewrite sizes.txt
 
-Options: --length short|medium|long (repeatable; default short and medium),
+Options: --round 1|2|all (default all; round 2 is round2/, written black box),
+--length short|medium|long (repeatable; default short and medium),
 --long, --processes P (5), --train T (5), --iters I (15), --scale F
 (multiplies each n), --timeout S per process (600), --trace-midway,
 --data FILE (also write the results one line per benchmark and measure).
@@ -618,7 +619,9 @@ def main(args):
             'iters': max(1, option(args, '--iters', 15, int)),
             'timeout': option(args, '--timeout', 600, int),
             'trace_midway': '--trace-midway' in args}
-    paths = sorted(p for p in glob.glob(os.path.join(HERE, '*.py'))
+    rounds = {'1': [HERE], '2': [os.path.join(HERE, 'round2')],
+              'all': [HERE, os.path.join(HERE, 'round2')]}[option(args, '--round', 'all', str)]
+    paths = sorted(p for d in rounds for p in glob.glob(os.path.join(d, '*.py'))
                    if os.path.basename(p) != 'run.py')
     k = option(args, '-k', None, str)
     if k:
