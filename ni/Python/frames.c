@@ -21,25 +21,16 @@
 #include "mechanism_recursion_gen.h"
 
 /***************************************************************/
-#define FRAME_STACK_ALLOC_BY 83 /* about 1KB */
 
+/* held by the code that passes it, so it lives as long as that code's
+   owner (codemanager.h) */
 DEFINEFN
 stack_frame_info_t *psyco_finfo(PsycoObject *caller, PsycoObject *callee) {
-  static stack_frame_info_t *current = NULL;
-  static stack_frame_info_t *end = NULL;
-
   Source sglobals;
   stack_frame_info_t *p;
   int inlining = caller != NULL && caller->pr.is_inlining;
 
-  if (end - current <= inlining) {
-    current = PyMem_NEW(stack_frame_info_t, FRAME_STACK_ALLOC_BY);
-    if (current == NULL)
-      OUT_OF_MEMORY();
-    end = current + FRAME_STACK_ALLOC_BY;
-  }
-  p = current;
-  current += inlining + 1;
+  p = psyco_owner_alloc((inlining + 1) * sizeof(stack_frame_info_t));
   p->link_stack_depth = -inlining;
   p->co = callee->pr.co;
   sglobals = callee->vlocals.items[INDEX_LOC_GLOBALS]->source;

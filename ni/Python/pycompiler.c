@@ -960,8 +960,8 @@ done:
    loaded at run time; a name not found is loaded at run time behind the
    same guard. The closure owns the value, so a constant that outlives a
    rebinding stays valid, and owns builtins, whose tag the guard reads;
-   globals stays borrowed: a new dict at its address has a new tag and is
-   looked up. The guard slots are never freed. */
+   globals stays borrowed: a new dict at its address has a new tag and
+   is looked up. The guard slots live as long as the code's owner. */
 typedef struct {
   uint64_t globals_tag;
   uint64_t builtins_tag;
@@ -983,12 +983,25 @@ typedef struct {
   global_guard_t *guard;
 } changed_global_t;
 
+/* the references go to the owner, which drops them with its code */
+static void changed_global_release(void *closure) {
+  changed_global_t *cg = (changed_global_t *)closure;
+  psyco_owner_keep(cg->name);
+  psyco_owner_keep(cg->value);
+  psyco_owner_keep(cg->builtins);
+  cg->name = cg->value = cg->builtins = NULL;
+}
+
 static code_t *do_changed_global(changed_global_t *cg) {
   PyObject *x = PyDict_GetItem(cg->globals, cg->name);
   if (x == NULL)
     x = PyDict_GetItem(cg->builtins, cg->name);
-  if (x != cg->value)
-    return psyco_do_respawn(cg, sizeof(*cg));
+  if (x != cg->value) {
+    /* the respawn compiles a version that never comes back here */
+    code_t *r = psyco_do_respawn(cg, sizeof(*cg));
+    changed_global_release(cg);
+    return r;
+  }
   /* no real change */
   cg->guard->globals_tag = ((PyDictObject *)cg->globals)->ma_version_tag;
   cg->guard->builtins_tag = ((PyDictObject *)cg->builtins)->ma_version_tag;
@@ -1047,9 +1060,7 @@ static bool load_global_cached(PsycoObject *po, PyObject *name,
   if (is_respawning(po))
     guard = &respawn_guard;
   else {
-    guard = PyMem_Malloc(sizeof(global_guard_t));
-    if (guard == NULL)
-      OUT_OF_MEMORY();
+    guard = psyco_owner_alloc(sizeof(global_guard_t));
     guard->globals_tag = ((PyDictObject *)globals)->ma_version_tag;
     guard->builtins_tag = ((PyDictObject *)builtins)->ma_version_tag;
   }
@@ -1089,12 +1100,14 @@ static bool load_global_cached(PsycoObject *po, PyObject *name,
     cg->builtins = builtins;
     Py_INCREF(builtins);
     cg->guard = guard;
+    psyco_stub_set_release(cg, &changed_global_release);
   }
   /* not found: a run-time load raises NameError; the guard catches a
      later definition */
-  if (value != NULL)
-    /* borrowed from cg (constants are never released, see sk_release) */
+  if (value != NULL) {
+    Py_INCREF(value);
     *result = vinfo_new(CompileTime_NewSk(sk_new((long)value, SkFlagPyObj)));
+  }
   return true;
 }
 

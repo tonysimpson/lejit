@@ -159,6 +159,23 @@ typedef struct stack_frame_info_s stack_frame_info_t; /* def in pycompiler.h */
 
 EXTERNVAR PyObject* PyExc_PsycoError;
 EXTERNVAR PyObject* CPsycoModule;
+
+/* Everything the compiled code of one code object holds (codemanager.c),
+   released with that code object. */
+typedef struct ni_owner_s {
+  struct { code_t *start, *end; } *extents; /* its machine code */
+  int nextents, extentscap;
+  CodeBufferObject **bufs;          /* every code buffer made for it */
+  int nbufs, bufscap;
+  PyObject **pins;                  /* a hash set of owned references */
+  size_t npins, pinmask;
+  struct { void (*fn)(void *); void *closure; } *releases;
+  int nreleases, releasescap;       /* its records holding something */
+  void *blocks;                     /* records freed with the owner */
+  code_t *stub_pool, *stub_pool_end;
+  size_t stub_chunk;
+} ni_owner_t;
+
 /* What Ni keeps per code object, in its co_extra slot (PEP 523): found by
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
@@ -174,6 +191,7 @@ typedef struct {
                                the compiled code owns it */
   long serial;             /* never reused, unlike the code object's
                               address (psyfunc.c:psyco_save_inline_po) */
+  ni_owner_t owner;        /* what its compiled code holds */
 } ni_code_extra_t;
 /* the record for 'co', made on first use; NULL with an exception set */
 EXTERNFN ni_code_extra_t* ni_code_extra(PyCodeObject* co);

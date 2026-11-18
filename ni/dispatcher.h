@@ -161,8 +161,8 @@ EXTERNFN void psyco_delete_unused_vars(PsycoObject* po, global_entries_t* ge);
 /* Update 'po' to match 'lastmatch', then jump to 'lastmatch'.
    For the conversion we might have to emit some code.
    If po->code == NULL or there is not enough room between code and
-   po->codelimit, a new code buffer is created. A new reference to
-   the new or target code buffer is returned in 'target'.
+   po->codelimit, a new code buffer is created. The new or target code
+   buffer is returned in 'target', borrowed (its owner holds it).
    If po->code != NULL, the return value points at the end of the
    code that has been written there; otherwise, the return value is
    undefined (but not NULL).
@@ -174,8 +174,8 @@ EXTERNFN code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
 /* Simplified interface to psyco_unify() without using a previously
    existing code buffer (i.e. 'po->code' is uninitialized). If needed,
    return a new buffer with the necessary code followed by a JMP to
-   'lastmatch'. If no code is needed, just return a new reference to
-   'lastmatch->matching'.
+   'lastmatch'. If no code is needed, just return 'lastmatch->matching'
+   (borrowed).
 */
 EXTERNFN CodeBufferObject* psyco_unify_code(PsycoObject* po,
                                             vcompatible_t* lastmatch);

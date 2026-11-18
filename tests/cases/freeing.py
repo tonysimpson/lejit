@@ -129,9 +129,9 @@ def other_code_extra_user():
 CASES = [
     ('code_dies_with_shared_globals', [()], {'interpreted': 'calls exec (C15)'}),
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec (C15)'}),
-    ('namedtuple_code_dies', [()], {'leaks': 'C14 (2): state referenced from machine code'}),
-    ('isinstance_class_dies', [()], {'leaks': 'C14 (2): state referenced from machine code'}),
-    ('isinstance_instance_class_dies', [()], {'leaks': 'C14 (2): state referenced from machine code'}),
-    ('borrowed_globals_reused', [()], {'leaks': 'C14 (2): a snapshot per new dict'}),
+    ('namedtuple_code_dies', [()], {}),
+    ('isinstance_class_dies', [()], {}),
+    ('isinstance_instance_class_dies', [()], {}),
+    ('borrowed_globals_reused', [()], {}),
     ('other_code_extra_user', [()], {}),
 ]

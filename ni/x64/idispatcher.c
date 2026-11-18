@@ -485,7 +485,7 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
   PyMem_FREE(dm.usages);
   if (dm.private_codebuf == NULL)
     {
-      Py_INCREF(target_codebuf);      /* no new buffer created */
+      /* no new buffer created */
       *target = target_codebuf;
     }
   else

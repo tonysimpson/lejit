@@ -26,8 +26,9 @@
  *    compiles a specialised continuation, kept in a move-to-front list and
  *    in the site's polymorphic inline cache (idispatcher.h), with a
  *    megamorphic cut-off after MEGAMORPHIC_MAX values. A promoted value is
- *    held by the code for good; do_promotion_static_type only specialises on
- *    static types and sends anything else to the megamorphic version.
+ *    held until the code's owner dies; do_promotion_static_type only
+ *    specialises on static types and sends anything else to the
+ *    megamorphic version.
  * psyco_delete_unused_vars drops the dead locals that mergepoints.c lists
  * first in each fatlist. State is global and non-re-entrant (cmpinternal,
  * the static result in psyco_compatible).
@@ -565,7 +566,6 @@ typedef struct {
 #endif
 
 typedef struct respawn_s {
-  void *record; /* the stub's record (psyco_new_stub), freed once compiled */
   void *write_jmp;
   int respawn_cnt;
   CodeBufferObject *respawn_from;
@@ -644,13 +644,18 @@ static int respawn_flatten(vinfo_array_t *a, int depth, respawn_item_t *out,
   return n;
 }
 
-static void respawn_check_fill(struct respawn_check_s *c, PsycoObject *po) {
+/* a point's own copy lives as long as its owner; the replay's is freed */
+static void respawn_check_fill(struct respawn_check_s *c, PsycoObject *po,
+                               bool owned) {
   c->file = psyco_respawn_file;
   c->line = psyco_respawn_line;
   c->next_instr = po->pr.next_instr;
   c->stack_depth = po->stack_depth;
   c->count = respawn_flatten(&po->vlocals, 0, NULL, 0);
-  c->items = PyMem_Malloc(c->count * sizeof(respawn_item_t) + 1);
+  if (owned)
+    c->items = psyco_owner_alloc(c->count * sizeof(respawn_item_t) + 1);
+  else
+    c->items = PyMem_Malloc(c->count * sizeof(respawn_item_t) + 1);
   if (c->items == NULL)
     OUT_OF_MEMORY();
   respawn_flatten(&po->vlocals, 0, c->items, 0);
@@ -674,7 +679,7 @@ static bool respawn_same_constant(respawn_item_t *a, respawn_item_t *b) {
 static void respawn_check(respawn_t *rs, PsycoObject *po) {
   struct respawn_check_s now;
   int i, diff = -1;
-  respawn_check_fill(&now, po);
+  respawn_check_fill(&now, po, false);
   for (i = 0; i < now.count && i < rs->check.count; i++)
     if ((now.items[i].x != rs->check.items[i].x &&
          !respawn_same_constant(&now.items[i], &rs->check.items[i])) ||
@@ -797,9 +802,8 @@ static code_t *do_respawn_body(respawn_t *rs) {
   /* fix the jump to point to 'codebuf->codestart' */
   change_cond_jump_target(rs->write_jmp, (code_t *)codebuf->codestart);
 
-  /* the stub is never entered again; its 13 bytes stay, unused */
-  PyMem_Free(rs->record);
-  /* XXX don't know what to do with this reference to codebuf */
+  /* the stub is never entered again; it and its record stay, unused, until
+     the owner dies */
   return codebuf->codestart;
 }
 
@@ -839,20 +843,22 @@ void psyco_respawn_detected(PsycoObject *po) {
     Psyco_ForgetConstantClasses(po);
   }
   /* restart at the beginning of the buffer, overriding the code written
-     so far. XXX when implementing freeing of code, be careful that this
-     lost code does not looses references to other objects as well.
-     Use is_respawning() to bypass the creation of all references when
-     compiling during respawn. */
+     so far. What the overwritten code made (constants, frame records) is
+     held by the owner like the rest: a replay only wastes it. */
   po->code = (code_t *)codebuf->codestart;
   INIT_CODE_EMISSION(po->code);
 }
 
-/* Stubs (idispatcher.h): records on the heap, code packed into pool chunks
-   of code buffer memory, taken whole and closed at once so that no buffer
-   stays locked. The chunks are never freed, like all code. */
+/* Stubs (idispatcher.h): records on the heap (psyco_owner_alloc), code
+   packed into pool chunks of code buffer memory, taken whole and closed at
+   once so that no buffer stays locked. Both belong to the owner whose code
+   was being compiled and are freed with it. The stub enters the compiler
+   as that owner. */
+#define STUB_POOL_MIN 128
 #define STUB_POOL_SIZE 4096
 
 typedef struct {
+  ni_owner_t *owner;
   code_t *(*fn)(void *closure, long value);
   /* the closure follows, 8-aligned */
 } stub_record_t;
@@ -862,67 +868,75 @@ typedef struct {
    under SysV the extra argument is harmless. */
 DEFINEFN code_t *psyco_stub_enter(void *record, long value) {
   stub_record_t *r = (stub_record_t *)record;
-  return r->fn(r + 1, value);
+  code_t *result;
+  NI_OWNER_ENTER(r->owner);
+  result = r->fn(r + 1, value);
+  NI_OWNER_LEAVE();
+  return result;
 }
 
-DEFINEFN void psyco_free_stub(void *closure) {
-  PyMem_Free(((stub_record_t *)closure) - 1);
+DEFINEFN void psyco_stub_set_release(void *closure, void (*fn)(void *)) {
+  ni_owner_t *o = (((stub_record_t *)closure) - 1)->owner;
+  if (o == NULL)
+    return; /* kept for good */
+  if (o->nreleases == o->releasescap) {
+    int cap = o->releasescap ? 2 * o->releasescap : 4;
+    void *n = PyMem_Realloc(o->releases, cap * sizeof(*o->releases));
+    if (n == NULL)
+      OUT_OF_MEMORY();
+    o->releases = n;
+    o->releasescap = cap;
+  }
+  o->releases[o->nreleases].fn = fn;
+  o->releases[o->nreleases].closure = closure;
+  o->nreleases++;
 }
 
-static void *write_stub(stub_record_t *r, void *fn, code_t **at) {
-  if (r == NULL)
-    OUT_OF_MEMORY();
+DEFINEFN void psyco_owner_release_records(ni_owner_t *o) {
+  int i;
+  for (i = 0; i < o->nreleases; i++)
+    o->releases[i].fn(o->releases[i].closure);
+  PyMem_Free(o->releases);
+  o->releases = NULL;
+  o->nreleases = o->releasescap = 0;
+}
+
+static void *write_stub(void *fn, size_t size, code_t **at) {
+  stub_record_t *r = psyco_owner_alloc(sizeof(stub_record_t) + size);
+  r->owner = psyco_owner;
   r->fn = (code_t * (*)(void *, long)) fn;
   *at = psyco_write_stub(*at, r);
   return r + 1;
 }
 
-/* Used by promotions only, whose records are never freed: carved from
-   64 KB chunks of the C heap, which is cheaper than a malloc each and keeps
-   them out of pymalloc's pools (scattered there, they changed hexiom's
-   allocation pattern enough to cost 0.5% more instructions). */
-#define STUB_RECORD_CHUNK 65536
-
 DEFINEFN void *psyco_new_stub_at(void *fn, size_t size, code_t **at) {
-  static char *next = NULL, *end = NULL;
-  size_t n = (sizeof(stub_record_t) + size + 7) & ~(size_t)7;
-  stub_record_t *r;
-  psyco_assert(n <= STUB_RECORD_CHUNK);
-  if ((size_t)(end - next) < n) {
-    next = PyMem_RawMalloc(STUB_RECORD_CHUNK);
-    if (next == NULL)
-      OUT_OF_MEMORY();
-    end = next + STUB_RECORD_CHUNK;
-  }
-  r = (stub_record_t *)next;
-  next += n;
-  return write_stub(r, fn, at);
+  return write_stub(fn, size, at);
 }
 
 /* The stub pool also holds promotion chains. stub_pool_reserve makes room
-   for 'n' bytes at stub_pool; the caller moves stub_pool past what it wrote. */
-static code_t *stub_pool = NULL, *stub_pool_end = NULL;
+   for 'n' bytes at the owner's stub_pool; the caller moves it past what it
+   wrote. Each owner has its own, in chunks growing to STUB_POOL_SIZE. */
+static ni_owner_t stubs_for_good; /* while no owner is current */
+#define POOL_OWNER (psyco_owner != NULL ? psyco_owner : &stubs_for_good)
 
 static code_t *stub_pool_reserve(size_t n) {
-  if ((size_t)(stub_pool_end - stub_pool) < n) {
-    code_t *limit;
-    CodeBufferObject *b = psyco_new_code_buffer(NULL, NULL, &limit);
-    stub_pool = (code_t *)b->codestart;
-    /* a reused buffer may have less than STUB_POOL_SIZE left (only
-       BUFFER_MARGIN is certain) */
-    stub_pool_end = stub_pool + STUB_POOL_SIZE;
-    if (stub_pool_end > limit)
-      stub_pool_end = limit;
-    psyco_assert((size_t)(stub_pool_end - stub_pool) >= n);
-    SHRINK_CODE_BUFFER(b, stub_pool_end, "stubs"); /* held for good */
+  ni_owner_t *o = POOL_OWNER;
+  if ((size_t)(o->stub_pool_end - o->stub_pool) < n) {
+    size_t size = o->stub_chunk < STUB_POOL_MIN ? STUB_POOL_MIN : o->stub_chunk;
+    if (o == &stubs_for_good)
+      size = STUB_POOL_SIZE;
+    while (size < n)
+      size *= 2;
+    o->stub_chunk = size < STUB_POOL_SIZE ? 2 * size : size;
+    o->stub_pool = psyco_code_take(size);
+    o->stub_pool_end = o->stub_pool + size;
   }
-  return stub_pool;
+  return o->stub_pool;
 }
 
 DEFINEFN void *psyco_new_stub(void *fn, size_t size, code_t **stub) {
-  stub_record_t *r = PyMem_Malloc(sizeof(stub_record_t) + size);
   *stub = stub_pool_reserve(STUB_SIZE_MAX);
-  return write_stub(r, fn, &stub_pool);
+  return write_stub(fn, size, &POOL_OWNER->stub_pool);
 }
 
 DEFINEFN
@@ -941,11 +955,10 @@ void *psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
     rs = (respawn_t *)(closure + extrasize);
     /* fill in the respawn_t structure */
     extra_assert(po->respawn_proxy != NULL);
-    rs->record = ((stub_record_t *)closure) - 1;
     rs->respawn_cnt = po->respawn_cnt;
     rs->respawn_from = po->respawn_proxy;
 #if ALL_CHECKS
-    respawn_check_fill(&rs->check, po);
+    respawn_check_fill(&rs->check, po, true);
 #endif
 
     /* write the jump to the stub */
@@ -2380,7 +2393,6 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
     psyco_compatible_keep_facts = false;
     psyco_codestats_buffer("promotion", codebuf, codeend);
     psyco_shrink_code_buffer(codebuf, codeend);
-    /* XXX don't know what to do with reference to 'codebuf' */
   }
 
   return result;
@@ -2445,7 +2457,6 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
     psyco_compatible_keep_facts = false;
     psyco_codestats_buffer("megamorphic", codebuf, codeend);
     psyco_shrink_code_buffer(codebuf, codeend);
-    /* XXX don't know what to do with reference to 'codebuf' */
   }
 
   return result;
@@ -2472,7 +2483,7 @@ static void promotion_need_chain(rt_promotion_t *fs, int n) {
     return;
   cap = fs->chain == NULL && n <= 1 ? 1 : PROMOTION_CHAIN_MAX;
   chain = stub_pool_reserve(PROMOTION_CHAIN_SIZE(cap));
-  stub_pool += PROMOTION_CHAIN_SIZE(cap);
+  POOL_OWNER->stub_pool += PROMOTION_CHAIN_SIZE(cap);
   for (i = 0; i < CHAIN_COUNT(fs); i++) {
     long value;
     code_t *target;
@@ -2684,13 +2695,18 @@ static code_t *do_promotion_static_type(rt_promotion_t *fs, PyObject *key) {
   return result;
 }
 
+/* the site's state, when its owner dies */
+static void promotion_release(void *closure) {
+  PsycoObject_Delete(((rt_promotion_t *)closure)->po);
+}
+
 DEFINEFN
 code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
   rt_promotion_t *fs;
   void *do_promotion;
 
   /* a promotion ends the block, so a replay stops before one; were it not
-     so, the record (on the heap, never freed) would leak */
+     so, its record would outlive the replay */
   extra_assert(!is_respawning(po));
   /* we remove the non-compile-time array values from 'fix' */
   if (fix->array != NullArray)
@@ -2729,6 +2745,7 @@ code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
   fs->po = po; /* don't release 'po' */
   fs->fix = fix;
   fs->local_chained_list = NULL;
+  psyco_stub_set_release(fs, &promotion_release);
   return po->code;
 }
 

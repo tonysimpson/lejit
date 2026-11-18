@@ -600,7 +600,7 @@ static vinfo_t *keys_mismatch(PsycoObject *po, vinfo_t *vk, vinfo_t *vg) {
    now (cimpl_dict_get_known); no dict at all is "not found". As for the type guard, a
    replay may find different keys, so the code emitted must not depend on
    them: the expected values are run-time loads from a per-site
-   keys_guard_t (never freed), and without usable keys it expects an
+   keys_guard_t (freed with the code), and without usable keys it expects an
    impossible pointer and fails into the helper. The keys are held for
    good, like descriptors. */
 static vinfo_t *instance_dict_get(PsycoObject *po, vinfo_t *obj,
@@ -616,9 +616,7 @@ static vinfo_t *instance_dict_get(PsycoObject *po, vinfo_t *obj,
     goto helper;
   shared = keys_inline(po, tp);
   if (shared && !is_respawning(po)) {
-    guard = PyMem_Malloc(sizeof(keys_guard_t));
-    if (guard == NULL)
-      OUT_OF_MEMORY();
+    guard = psyco_owner_alloc(sizeof(keys_guard_t));
     if (shared_key_slot(tp, name, &keys, &ix, &n)) {
       guard->keys = keys;
       guard->n = n < 0 ? 0 : n;

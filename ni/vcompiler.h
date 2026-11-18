@@ -181,11 +181,15 @@ typedef struct {
    essentially on this value to be constant */
 #define SkFlagFixed 0x01
 
-/* value is a PyObject* and holds a reference */
+/* value is a PyObject* and holds a reference, which goes to the current
+   owner when the source_known_t is released (codemanager.h) */
 #define SkFlagPyObj 0x02
 
+/* with SkFlagPyObj: the reference is borrowed (the frame's globals) */
+#define SkFlagBorrowed 0x04
+
 /* first unused flag */
-#define SkFlagEnd 0x04
+#define SkFlagEnd 0x08
 #define SkFlagMask (SkFlagEnd - 1)
 
 /* refcounting */

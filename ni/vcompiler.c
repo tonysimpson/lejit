@@ -14,9 +14,9 @@
  * objects in C and caches results in vinfo->array, except the type of a
  * constant whose class can be assigned, which is checked.
  *
- * References to compiled code buffers are mostly dropped ("XXX don't know
- * what to do with reference"): those buffers, and machine code, are never
- * freed. Only the buffers in a code object's fatlists die with it (C14).
+ * Code buffers, machine code, stub records and the references constants
+ * held belong to the owner whose code is compiled (codemanager.h), and are
+ * released when its code object dies; a buffer is returned borrowed.
  */
 #include "vcompiler.h"
 #include "Python/pycompiler.h"
@@ -86,24 +86,13 @@ void vinfo_array_shrink(PsycoObject *po, vinfo_t *vi, int ncount) {
 
 DEFINEFN
 void sk_release(source_known_t *sk) {
-#if 0
-  XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX
-    The Python objects who get once in a source_known_t are never
-    freed. This is so because we might have references to them left
-    in the code buffers. This is tricky because the references can
-    be indirect (to a sub-objects, to a field in the object structure,
-                 etc...)
-    So not freeing them at all is the easy way out. It is expected
-    that not too many objects will get lost this way. This must be
-    carefully worked out when implementing releasing of code
-    buffers. It will probably require careful checks for all
-    instructions that might emit an immediate value in the code,
-    and for where this immediate value (indirectly or not) comes from.
-  XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX
-  if ((sk->refcount1_flags & SkFlagPyObj) != 0) {
-    Py_XDECREF((PyObject*)(sk->value));
-  }
-#endif
+  /* Code may hold the object's address, or that of anything reached from
+     it, so the reference goes to the owner whose compile the constant
+     dies in, which drops it with its code. Another owner's code can have
+     used it only if the constant came to it as a callee's argument, and a
+     callee holds every constant it was given (psyfunc.c:compile_callee). */
+  if ((sk->refcount1_flags & (SkFlagPyObj | SkFlagBorrowed)) == SkFlagPyObj)
+    psyco_owner_keep((PyObject *)sk->value);
   sk_delete(sk);
 }
 
@@ -741,9 +730,17 @@ static code_t *do_resume_coding_body(coding_pause_t *cp) {
   /* then fix the jump to point to 'target' */
   change_cond_jump_target(cp->jump_to_fix, target);
 
-  /* the only way in was that jump: the stub is never entered again */
-  psyco_free_stub(cp);
+  /* the only way in was that jump: the stub is never entered again, and
+     the compile consumed cp->po */
+  cp->po = NULL;
   return target;
+}
+
+/* a pause never reached when its owner dies */
+static void coding_pause_release(void *closure) {
+  coding_pause_t *cp = (coding_pause_t *)closure;
+  if (cp->po != NULL)
+    PsycoObject_Delete(cp->po);
 }
 
 /* Prepare a 'coding pause', i.e. a stub (idispatcher.h) that will be
@@ -779,6 +776,7 @@ void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
   cp->po = po;
   cp->resume_fn = resume_fn;
   memcpy(cp + 1, extra, extrasize);
+  psyco_stub_set_release(cp, &coding_pause_release);
 
   /* write the jump to the stub */
   cp->jump_to_fix = conditional_jump_to(po, stub, jmpcondition);
@@ -792,8 +790,6 @@ static code_t *psyco_resume_compile(PsycoObject *po, void *extra) {
   /* check that we are not compiling recursively, or at least not too deeply */
   extra_assert(psyco_locked_buffers() < WARN_TOO_MANY_BUFFERS - 1);
   return (code_t *)psyco_compile_code(po, mp)->codestart;
-  /* XXX don't know what to do with the reference returned by
-     XXX psyco_compile_code() */
 }
 
 #if NI_CODESTATS
@@ -891,9 +887,7 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
   if (cmp != NULL && cmp->diff == NullArray) /* exact match, jump there */
   {
     CodeBufferObject *oldcodebuf;
-    code_t *code2 = psyco_unify(po, cmp, &oldcodebuf);
-    /* XXX store reference to oldcodebuf somewhere */
-    return code2;
+    return psyco_unify(po, cmp, &oldcodebuf);
   } else {
     if (po->codelimit - po->code <= BUFFER_MARGIN && cmp == NULL) {
       /* Running out of space in this buffer. */
@@ -915,7 +909,6 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
     {
       CodeBufferObject *codebuf =
           psyco_proxy_code_buffer(po, mp != NULL ? &mp->entries : NULL);
-      /*Py_DECREF(codebuf); XXX cannot loose reference if mp == NULL*/
       po->code = insn_code_label(codebuf->codestart);
     }
 
@@ -1034,7 +1027,6 @@ void psyco_compile_cond(PsycoObject *po, mergepoint_t *mp,
     void *extra = setup_conditional_code_bounds(po, po2, condition);
     codeend = psyco_unify(po2, cmp, &oldcodebuf);
     make_code_conditional(po, codeend, condition, extra);
-    /* XXX store reference to oldcodebuf somewhere */
   } else {
     /* Use the conditional-compiling abilities of
        coding_pause(); it will write a Jcond to a proxy
@@ -1169,18 +1161,17 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
   INIT_PROCESSOR_PSYCOOBJECT(po);
   po->pr.auto_recursion = AUTO_RECURSION(recursion);
 
-  /* initialize po->vlocals. The globals are borrowed (C14): compiled code
-     keeps its constants forever (sk_release), and owning the globals would
-     close a cycle the GC can't see, globals -> function -> code -> co_extra
-     -> buffers -> globals, so code with globals of its own (exec,
-     namedtuple) would never die.
-     Borrowing is safe because compiled code uses the dict only as an
-     argument to run-time calls, never its contents at compile time: it
-     runs only in a frame that holds the dict, and if a new dict later gets
-     a dead one's address, the old code does for it what new code would.
-     Code that reads globals at compile time (say a cached LOAD_GLOBAL)
-     must take its own reference. */
-  sk = sk_new((long)globals, SkFlagPyObj);
+  /* initialize po->vlocals. The globals are borrowed: compiled code holds
+     its constants until its code object dies (sk_release), and here that
+     would close a cycle the GC can't see, globals -> function -> code ->
+     co_extra -> owner -> globals, so code with globals of its own (exec,
+     namedtuple) would never die. Borrowing is safe because compiled code
+     uses the dict only as an argument to run-time calls, never its
+     contents at compile time: it runs only in a frame that holds the dict,
+     and if a new dict later gets a dead one's address, the old code does
+     for it what new code would. Code that reads globals at compile time
+     (say a cached LOAD_GLOBAL) must take its own reference. */
+  sk = sk_new((long)globals, SkFlagPyObj | SkFlagBorrowed);
   LOC_GLOBALS = vinfo_new(CompileTime_NewSk(sk));
   /* the frame's f_builtins, owned: lookups read it at compile time, and a
      dict swapped in for a while may not outlive the code */

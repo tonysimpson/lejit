@@ -81,12 +81,15 @@ static PyObject *ni_entry_point(PyCodeObject *co, PyObject *globals,
         /* Not compiled yet */
         PsycoObject *po;
         CodeBufferObject *codebuf;
+        NI_OWNER_ENTER(&x->owner);
         NI_COMPILE_BEGIN(NI_ENTER_CALL);
         po = PsycoObject_FromCode(co, globals, builtins, mergepoints,
                                   DEFAULT_RECURSION);
         codebuf = psyco_compile_code(po, PsycoObject_Ready(po));
         NI_COMPILE_END(NI_ENTER_CALL);
+        NI_OWNER_LEAVE();
         entry_point = (PyObject *)codebuf;
+        Py_INCREF(entry_point);
         x->entry_point = entry_point;
         x->entry_globals = globals;
         x->entry_builtins = builtins;

@@ -133,13 +133,15 @@ EXTERNVAR code_t *psyco_stub_trampoline;
 EXTERNFN code_t *psyco_write_stub(code_t *code, void *record);
 EXTERNFN code_t *psyco_stub_enter(void *record, long value); /* dispatcher.c */
 /* dispatcher.c: a stub that calls 'fn' with a new closure of 'size' bytes;
-   returns the closure and sets *stub to the code to jump to. Once the stub
-   can no longer be entered, psyco_free_stub(closure) frees the record.
-   psyco_new_stub_at writes the stub at *at instead of in the pool, and
-   advances *at past it. */
+   returns the closure and sets *stub to the code to jump to. The record
+   lives as long as the current owner (codemanager.h); one that holds
+   something gets a release function (psyco_stub_set_release), called with
+   the closure when the owner dies, which must do nothing for what the stub
+   has used up by then. psyco_new_stub_at writes the stub at *at instead of
+   in the pool, and advances *at past it. */
 EXTERNFN void *psyco_new_stub(void *fn, size_t size, code_t **stub);
 EXTERNFN void *psyco_new_stub_at(void *fn, size_t size, code_t **at);
-EXTERNFN void psyco_free_stub(void *closure);
+EXTERNFN void psyco_stub_set_release(void *closure, void (*fn)(void *));
 
 /* write the miss path 'mov rsi, reg; mov r11, record; jmp trampoline' */
 PSY_INLINE code_t* ipromotion_write_miss(code_t* code, int rg, void* record)
@@ -152,8 +154,9 @@ PSY_INLINE code_t* ipromotion_write_miss(code_t* code, int rg, void* record)
    'mov rsi, reg; mov r11, record; jmp psyco_stub_trampoline', which calls
    do_promotion(fs, value) (37 bytes in all). The value is always in a
    register here; the trampoline leaves RSI alone. The record holds the
-   rt_promotion_t, whose head is ipromotion_s, and is never freed: the site
-   is entered again for every value the cache doesn't hold. */
+   rt_promotion_t, whose head is ipromotion_s, and lives as long as its
+   owner: the site is entered again for every value the cache doesn't
+   hold. */
 PSY_INLINE void* ipromotion_finish(PsycoObject* po, vinfo_t* fix, void* do_promotion, size_t block_size)
 {
   struct ipromotion_s* fs;

@@ -46,8 +46,7 @@ typedef struct {
     mergepoint_t mergepoints[1];
 } co_report_t;
 
-/* when the code object dies (ni.c:code_extra_free): its fatlists hold its
-   code buffers (C14) */
+/* when the code object dies (ni.c:code_extra_free) */
 static void
 report_free(co_report_t *report)
 {
@@ -790,6 +789,21 @@ psyco_join_point(PyObject *mergepoints, int position)
         }
     }
     return ge;
+}
+
+/* whether 'ge' is one of this report's lists (codemanager.c) */
+DEFINEFN bool
+psyco_ge_in_report(PyObject *mergepoints, global_entries_t *ge)
+{
+    co_report_t *report;
+    if (mergepoints == NULL || !PyCapsule_CheckExact(mergepoints))
+        return false;
+    report = PyCapsule_GetPointer(mergepoints, NULL);
+    if (ge >= &report->mergepoints[0].entries &&
+        ge <= &report->mergepoints[report->mergepoint_count].entries)
+        return true;
+    return report->joins != NULL && ge >= report->joins &&
+           ge < report->joins + report->unit_count;
 }
 
 DEFINEFN int

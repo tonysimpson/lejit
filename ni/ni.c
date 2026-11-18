@@ -104,10 +104,8 @@ void ni_trace_unify(PsycoObject *po, CodeBufferObject *match) {}
 DEFINEVAR PyObject *PyExc_PsycoError;
 DEFINEVAR PyObject *CPsycoModule;
 
-/* A record dies with its code object, releasing its code buffers. Compiled
-   code holds its globals (a compile-time constant), so a code object whose
-   only globals are its own (exec into a new dict, namedtuple) still never
-   dies (KNOWN_BUGS C14). */
+/* A record dies with its code object, and its owner releases the compiled
+   code (codemanager.c). */
 static Py_ssize_t code_extra_index = -1;
 
 static void code_extra_free(void *p) {
@@ -116,8 +114,7 @@ static void code_extra_free(void *p) {
   ni_code_extra_t *x = (ni_code_extra_t *)p;
   if (x == NULL)
     return;
-  Py_XDECREF(x->merge_points);
-  Py_XDECREF(x->entry_point);
+  psyco_owner_release(&x->owner, x->merge_points, x->entry_point);
   PyMem_Free(x);
 }
 
@@ -212,6 +209,14 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
   if (d != NULL) {
     PyObject *t = PyLong_FromLong(psyco_stat_fact_drops);
     if (t == NULL || PyDict_SetItemString(d, "fact_drops", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+  if (d != NULL) {
+    /* machine code not freed yet, and references never to be dropped */
+    PyObject *t = Py_BuildValue("(ll)", psyco_stat_code_bytes_live,
+                                psyco_stat_kept_for_good);
+    if (t == NULL || PyDict_SetItemString(d, "code_live", t) < 0)
       Py_CLEAR(d);
     Py_XDECREF(t);
   }

@@ -86,7 +86,7 @@ CASES = [
     ('depth_names', "[(4,)]", {}),
     ('call_back_chain', "[()]", {}),
     ('call_caller_globals', "[()]", {}),
-    ('make_namedtuple', "[()]", {'leaks': 'C14 (each namedtuple compiles new code)'}),
+    ('make_namedtuple', "[()]", {}),
     ('too_deep', "[()]", {}),
     ('traceback_frames', "[([1],)]", {}),
 ]

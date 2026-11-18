@@ -32,10 +32,10 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/cf_flags.h` | core | Cf* flags describing a C function for residual calls: purity, new ref, return type, errors. | none (CPython C API conventions) | `56e5faf` |
 | `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding), integer emitters, rich compare. | Objects/object.c | `56e5faf` |
 | `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions. | none | `fa3dae7` |
-| `ni/codemanager.c` | core | Executable buffer allocation, shrinking, emergency enlargement, deferred freeing. | none | `bc3c590` |
-| `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from. | none | `0b808fa` |
+| `ni/codemanager.c` | core | Executable memory as free extents; owners (D102): what a code object's compiled code holds, released with it. | none | `bc3c590` |
+| `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner API. | none | `0b808fa` |
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
-| `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, promotion dispatch and inline-cache chains, pooled stubs. | none | `a6a687b` |
+| `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `a6a687b` |
 | `ni/dispatcher.h` | core | Snapshots (FrozenPsycoObject), compatibility and join API, respawn and promotion helpers. | none | `f229d14` |
 | `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles on the first call, `NiCode_Run` runs it. | Python/ceval.c | `f254b5d` |
 | `ni/initialize.h` | glue | Calls every file's init; with ALL_STATIC=1 includes all .c files into one unit. | none | `b251646` |
@@ -56,7 +56,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/platform.c` | glue | Allocates executable (RWX) memory: mmap on Unix, VirtualAlloc on Windows. | none | `1e65d32` |
 | `ni/platform.h` | glue | Prototype for psyco_allocate_executable_buffer(). | none | `e1fd808` |
 | `ni/processor.h` | backend (interface) | Prototypes for running compiled code: psyco_processor_run, RUN_ARGC, aligned-call glues. | none | `4398496` |
-| `ni/psyco.h` | glue | Global definitions: build switches, sizes, assertions, linkage macros; includes `layouts_gen.h`. | none | `f254b5d` |
+| `ni/psyco.h` | glue | Global definitions: build switches, sizes, assertions, linkage macros, the `co_extra` record and its owner; includes `layouts_gen.h`. | none | `f254b5d` |
 | `ni/psyfunc.c` | core + translated | Python calls at compile time: build the callee frame, inline small functions or compile and call. | Python/ceval.c, Objects/call.c, Include/ceval.h | `e11f2a3` |
 | `ni/psyfunc.h` | glue | Declarations for psyfunc.c and the generated binder (D85). | none | `e11f2a3` |
 | `ni/pycodegen.h` | core | Emits Py_INCREF/Py_DECREF and reference-ownership helpers on vinfo_t. | Include/object.h | `fa3dae7` |

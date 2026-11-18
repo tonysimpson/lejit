@@ -500,6 +500,42 @@ static vinfo_t *callee_builtins(PsycoObject *po, vinfo_t *vglobals) {
 
 #define MAX_CALL_FREES 64
 
+/* the callee's owner holds every constant object it is given: its code may
+   use one after the caller's last reference has gone */
+static void pin_constants(vinfo_array_t *a) {
+  int i;
+  for (i = a->count; i--;) {
+    vinfo_t *v = a->items[i];
+    if (v == NULL)
+      continue;
+    if (is_compiletime(v->source)) {
+      source_known_t *sk = CompileTime_Get(v->source);
+      if ((sk->refcount1_flags & (SkFlagPyObj | SkFlagBorrowed)) ==
+          SkFlagPyObj)
+        psyco_owner_pin((PyObject *)sk->value);
+    }
+    if (v->array != NullArray)
+      pin_constants(v->array);
+  }
+}
+
+/* Compile a direct call's callee, as its own owner (codemanager.h). The
+   caller's code jumps into it, so the caller holds the callee's code
+   object, which holds the compiled code. */
+static CodeBufferObject *compile_callee(PsycoObject *mypo, PyCodeObject *co) {
+  CodeBufferObject *codebuf;
+  ni_owner_t *callee = psyco_code_owner(co);
+  psyco_assert(callee != NULL); /* made with the merge points */
+  psyco_owner_pin((PyObject *)co);
+  {
+    NI_OWNER_ENTER(callee);
+    pin_constants(&mypo->vlocals);
+    codebuf = psyco_compile_code(mypo, PsycoObject_Ready(mypo));
+    NI_OWNER_LEAVE();
+  }
+  return codebuf;
+}
+
 DEFINEFN
 vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
                            vinfo_t *vglobals, vinfo_t *vdefaults,
@@ -648,7 +684,9 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
 
   /* try to inline the call */
   if (inlining) {
-    /* inlining call */
+    /* inlining call: blocks compiled in the inlined frame are listed at
+       the callee's join points until this owner dies (codemanager.c) */
+    psyco_owner_pin((PyObject *)co);
     result = call_with_inline_frame(po, &fncall, recursion);
   } else {
     /* non-inlining call: the callee's entry compares the arguments' known
@@ -663,7 +701,7 @@ vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     finfo = psyco_finfo(po, mypo);
 
     /* compile the function (this frees mypo) */
-    codebuf = psyco_compile_code(mypo, PsycoObject_Ready(mypo));
+    codebuf = compile_callee(mypo, co);
 
     /* get the run-time argument sources and push them on the stack
        and write the actual CALL */
@@ -784,7 +822,7 @@ vinfo_t *psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode,
     } else {
       argcount = get_arguments_count(&mypo->vlocals);
       finfo = psyco_finfo(po, mypo);
-      codebuf = psyco_compile_code(mypo, PsycoObject_Ready(mypo));
+      codebuf = compile_callee(mypo, co);
       result = psyco_call_psyco(po, codebuf, sources, argcount, finfo);
       PyMem_FREE(sources);
     }

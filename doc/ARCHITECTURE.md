@@ -130,7 +130,7 @@ Backend details are in the comments at the top of the `ni/x64/*` files.
 ## Design observations (for the tidy-up)
 
 - **Global, non-re-entrant state**: `dispatcher.c:cmpinternal`, the static result in `psyco_compatible`, and `frames.c:psyco_finfo` statics. [read]
-- **Compiled code is rarely freed** (KNOWN_BUGS C14). Two "XXX don't know what to do with reference" comments remain, both on promotion caches in `dispatcher.c`. [read]
+- **Compiled code is freed with its code object** (D102, `codemanager.h:psyco_owner`), apart from KNOWN_BUGS C14's remainder. [read]
 - **Merge-point lookup is a linear scan** over snapshots (the code itself calls it "the most dummy algorithm"). [read] `psyco_compatible`
 - **Encoding a `Source` in a tagged `long`** is compact but ties the core to the word size; the 64-bit masks in `vcompiler.h` were re-derived by hand. [read]
 - **`pr` vs `vlocals` contract**: two states that differ only in `pr` must produce interchangeable code (`pycheader.h` comment). Any tidied design has to keep this invariant explicit. [read]

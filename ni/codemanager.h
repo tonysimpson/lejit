@@ -26,7 +26,37 @@ struct CodeBufferObject_s {
 	void* codestart;
 	FrozenPsycoObject snapshot;
 	unsigned long serial;  /* order of creation: psyco_block_serial() */
+	global_entries_t* ge;  /* the list it is registered in, or NULL */
 };
+
+/* The owner whose code is being compiled: the record of the code object
+   whose merge points the blocks are registered at (an inlined callee's
+   code belongs to its caller). What a compile allocates is held by it and
+   released with that code object (psyco_owner_release); NULL while
+   nothing is compiled, and what is made then is kept for good. Entering a
+   compile sets it with NI_OWNER_ENTER, and NI_OWNER_LEAVE restores it. */
+EXTERNVAR ni_owner_t *psyco_owner;
+#define NI_OWNER_ENTER(o)  ni_owner_t *_ni_prev_owner = psyco_owner;          \
+                           psyco_owner = (o)
+#define NI_OWNER_LEAVE()   (psyco_owner = _ni_prev_owner)
+
+/* the owner of 'co''s compiled code; NULL with an exception set */
+EXTERNFN ni_owner_t *psyco_code_owner(PyCodeObject *co);
+/* give the current owner a reference, which it drops with its code
+   (stolen: a constant's at its release, vcompiler.c:sk_release) */
+EXTERNFN void psyco_owner_keep(PyObject *o);
+/* the same with a new reference: what the code relies on staying alive */
+EXTERNFN void psyco_owner_pin(PyObject *o);
+/* memory for a record the code uses, freed with the owner (zeroed) */
+EXTERNFN void *psyco_owner_alloc(size_t size);
+/* release everything 'o' holds; its code object is dead. The references
+   to the code's report and entry point are released with it. */
+EXTERNFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
+                                  PyObject *entry_point);
+
+/* machine code for stubs and the like: 'n' bytes, held by the current
+   owner (dispatcher.c:stub_pool_reserve) */
+EXTERNFN code_t *psyco_code_take(size_t n);
 
 /* code buffers created so far; the next one's serial */
 EXTERNVAR unsigned long psyco_next_serial;
@@ -63,8 +93,11 @@ EXTERNVAR PyTypeObject CodeBuffer_Type;
 /* code buffers started so far (not proxies): ni._stats() */
 EXTERNVAR long psyco_stat_code_buffers;
 EXTERNVAR long psyco_stat_code_buffers_freed;
-/* bytes of code emitted, proxies included */
+/* bytes of code emitted, proxies included; those not freed yet */
 EXTERNVAR long psyco_stat_code_bytes;
+EXTERNVAR long psyco_stat_code_bytes_live;
+/* references held for good, given while no owner was current */
+EXTERNVAR long psyco_stat_kept_for_good;
 
 /* Time spent compiling, by how the compiler was entered (ni._stats()).
    NI_COMPILE_BEGIN/END bracket each way in from run time; only the
