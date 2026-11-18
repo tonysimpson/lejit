@@ -148,6 +148,10 @@ Only a case or a branch of these is translated; the rest goes to the CPython fun
 
 Not inventoried (MAP marks them `backend`, `glue` or `core + backend`), but they hold CPython knowledge a version change could break: `ni/codegen.c` (the rich-compare inversion table), `ni/x64/ipyencoding.c` (`insertdict`'s split-table store, `Py_DECREF`/`_Py_Dealloc`), `ni/x64/iencoding.c` (CPython's error conventions in `compile_time_check`/`run_time_result_check`), `ni/eval_hook.c` (the PEP 523 hook point), `ni/compat2to3.h`, `ni/Python/pycinternal.h` (`opcode.h`).
 
+### Layouts, generated since D76 [run]
+
+The per-file rows below that are field descriptors (`OB_type`, `FIX_size`, `FLOAT_ob_fval`, `LIST_ob_item`, `TUPLE_ob_item`, `LONG_ob_digit0`, `SEQITER_*`, `DICT_*`, `SLICE_*`, `METHOD_*`, `FUNC_*`, `CFUNC_*`, `RANGE_*`, `RANGEITER_*`, `UNICODE_*` and `STATE_*`, `CELL_ob_ref`, `KEYS_nentries`, `TSTATE_depth`/`_overflowed`, `CF_TSTATE_curexc_type`, `BYTES_sval`) now take each CPython field's offset, read size and sign from `layouts_gen.h` (`CPY_FIELD`; `tools/metac/gen_layouts.py`, `policy_table.LAYOUTS`). The copies of private structs (`rangeobject`, `rangeiterobject`, `seqiterobject`, `ni_dictkeys_t`, `ni_dictentry_t`) are generated from the source and gone from `prangeobject.c`, `piterobject.h` and `pobject.h`. What each row calls core stays core: the index chain, mutability, `FPYREF`/`FARRAY`, virtual-only slots. The backend's offsets (`x64/ipyencoding.*`, `iprocessor.c`, `iencoding.c`, `pycompiler.h`) and `pyruntime.c`'s two `_PyRuntime` fields come from the same headers (`CPY_OFFSET`, `NI_RUNTIME_`). METACOMPILER.md "Stage 0: layouts".
+
 ### What this changes in GENERATION.md
 
 1. **The target is smaller than the file list suggests.** Of 14.3k live lines, 3.8k are translated and 3.3k mixed; step 0's split is above, and MAP's layers should follow it (the files listed under "Lines by class").

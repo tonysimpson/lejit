@@ -24,7 +24,7 @@ One Ni source serves every CPython version from 3.7 on; none is dropped.
 
 | Stage | Output | Simplest approach |
 |---|---|---|
-| 0 | Field descriptors and layouts (`DEF_FIELD` entries) for the 3.12 object structs | Token-scan the struct declarations in the headers for field names and declared types. Let the C compiler do the arithmetic: generated code uses `offsetof()`/`sizeof()`, with a `static_assert` for each assumed size and signedness, so a layout change fails the build. |
+| 0 | Field descriptors and layouts (`DEF_FIELD` entries) for the object structs of the version built for (done on 3.7, D76, "Stage 0: layouts" below) | Token-scan the struct declarations in the headers for field names and declared types. Let the C compiler do the arithmetic: generated code uses `offsetof()`/`sizeof()`, with a `static_assert` for each assumed size and signedness, so a layout change fails the build. |
 | 1 | Compile-time versions of a small, regular slice (float slots, parts of `abstract.c`) | Token-level pattern rewriting in plain Python, with no dependencies. Diff the result against the hand-written `ni/Objects/p*.c`. |
 | 2 | Whatever stage 1 can't do | Add analysis only for the failures seen. Expected first: run-time vs compile-time values, branches on run-time values, reference ownership. |
 | Bytecode | Bytecode compiler from `Python/bytecodes.c` (3.12+) | Reuse CPython's own `Tools/cases_generator` parser (pure Python, upstream-maintained), then template the instruction bodies. |
@@ -292,7 +292,46 @@ On 3.11 the hook stays usable although vectorcall isn't: the specialiser refuses
 - **Tracing** (`tstate_use_tracing.h`): `ni_tracing_now(tstate)`, the hook's test, and `ni_tracing_test(po, vts)`, the same test emitted by `psyfunc.c:tracing_on` (`psyco_int32_nonzero_in` at `offsetof(PyThreadState, use_tracing)`). Loading the thread state stays core (`load_tstate`).
 - **Frames** (`frame_object.h`): `ni_frame_t` (here `PyFrameObject`) and accessors for the frame chain and entry: `ni_frame_current`, `ni_frame_set_current`, `ni_frame_back`, `ni_frame_object`, `ni_frame_code`, `ni_frame_globals`, `ni_frame_args`, `ni_frame_set_executing`. Used by `NiCode_Run`, `frames.c` (`pvisitframes`, `psyco_build_pyframe`, `psyco_running_real_frame`) and `pycompiler.c:cimpl_new_frame`. On 3.7 every one is a field access; the snippet exists because on 3.11+ the chain is a different structure (interpreter frames, frame objects made on demand), not different offsets.
 
-**Not covered** [read]: fields of frame *objects* (`f_lasti`, `f_lineno`, emulated frames' `f_back`, `PyFrame_New`) stay in `frames.c` and `pycompiler.c`; `pyruntime.c`'s `_PyRuntime` addresses (the thread state, `eval_breaker`) and `ni_eval_breaker_at_entry` are 3.7 internals outside the three mechanisms, and will need their own detector or generated layout; so will the exception state (PORT312.md). The generated headers have include guards for the one-unit `NI_ALL_STATIC=1` build, which compiles again since `c33b13f` (KNOWN_BUGS C55).
+**Not covered** [read]: fields of frame *objects* (`f_lasti`, `f_lineno`, emulated frames' `f_back`, `PyFrame_New`) stay in `frames.c` and `pycompiler.c`; `pyruntime.c`'s two `_PyRuntime` fields are now generated layouts ("Stage 0: layouts", D76); `ni_eval_breaker_at_entry`'s handler and the exception state still need detectors (PORT312.md). The generated headers have include guards for the one-unit `NI_ALL_STATIC=1` build, which compiles again since `c33b13f` (KNOWN_BUGS C55).
+
+## Stage 0: layouts (D76)
+
+The CPython fields Ni relies on are data, `policy_table.LAYOUTS` and `policy_table.RUNTIME`; `tools/metac/gen_layouts.py` (run by `generate.py`) checks them against the target's headers and writes `layouts_gen.h` and `runtime_layouts_gen.h`. `python3 tools/metac/gen_layouts.py SRC...` reports, per tree, what is missing or changed and writes nothing. [run] unless marked.
+
+**What is listed** (3.7.17): 55 fields of 22 structs and 2 runtime fields. Public: `PyObject` (`ob_refcnt`, `ob_type`), `PyVarObject.ob_size`, `PyTypeObject` (`tp_dealloc`, `tp_flags`, `tp_version_tag`), `PyGC_Head.gc.gc_refs`, `PyFloatObject.ob_fval`, `PyLongObject.ob_digit`, `PyListObject.ob_item`, `PyTupleObject.ob_item`, `PyBytesObject.ob_sval`, `PyDictObject` (`ma_used`, `ma_version_tag`, `ma_keys`, `ma_values`), `PyASCIIObject` (`length`, `hash`, `state` with its five bit-fields), `PySliceObject` (3), `PyFunctionObject` (7), `PyMethodObject` (2), `PyCFunctionObject` (2), `PyCellObject.ob_ref`, `PyThreadState` (`recursion_depth`, `overflowed`, `curexc_type`). Private, copied from their C file under Ni's name: `seqiterobject`, `rangeobject`, `rangeiterobject`, `PyDictKeysObject` (as `ni_dictkeys_t`, with its `dict_lookup_func` typedef), `PyDictKeyEntry` (as `ni_dictentry_t`). Runtime: `_PyRuntime.gilstate.tstate_current`, `_PyRuntime.ceval.eval_breaker`.
+
+**How a field is read and checked.** The generator finds a struct by tag or typedef in any `Include/**/*.h` (then the entry's `from` files), expands the headers' macros in its body (`PyObject_HEAD`, `COMMON_FIELDS(func_)` with `##`), drops `__extension__` and `__pragma(...)`, treats an anonymous struct or union's members as the parent's, and compares each field's declared type with the table's, a typedef of a struct tag counting as the tag. A field missing or declared differently stops generation, naming struct, field and header. The header then gives `NI_OFS_`, `NI_SIZE2_` and `NI_UNSIGNED_<struct>__<field>` (`offsetof`; the compiler does the arithmetic) and four `_Static_assert`s per field: `__builtin_types_compatible_p` with the declared type, the size Ni reads (`>=` for `/low`), the kind (`__builtin_classify_type`: integer, pointer, floating) and the sign, the last two skipped for `/low` and `/bits`. 181 assertions on 3.7. Bit-fields Ni tests get `NI_BIT_` masks, low bit first (x86-64's ABI).
+
+**What uses it.** `vcompiler.h:CPY_FIELD(struct, field, prev)`, `CPY_NONNEG_FIELD`, `CPY_ARRAY` and `CPY_OFFSET`: 43 descriptors in `Objects/p*`, `psyfunc.c` and `pycompiler.c`, `BYTES_sval`, 22 offsets in the backend and `pycompiler.h`, `punicodeobject.c`'s `STATE_*`, and `pyruntime.c`'s `NI_RUNTIME_tstate_current` and `NI_RUNTIME_eval_breaker`. `layouts_gen.h` is included by `psyco.h`; `runtime_layouts_gen.h` only by `pyruntime.c` (`Py_BUILD_CORE`). A field not in the table doesn't compile.
+
+**Stays hand-written, and why.**
+- Ni's own structs and representation: `tstate_slot_t`, `int_slot_t`, `cf_tstate_slot_t`, `slot_word_t`, `keys_guard_t`, `global_guard_t`, `store_cache_t`, `pyc_data_t` (`DEF_FIELD`); the index chain, `FMUT`, `FPYREF`, `FARRAY`, non-negative sizes, and virtual-only slots (`iLONG_VALUE`, `iVRANGE_*`, `VLIST_ITEMS`). Mutability is also in `TYPES`; step 6 should read it from there.
+- Arrays with no struct field behind them: `LIST_itemsarray`, `VALUES_item`, `INSTANCE_dict` (at `tp_dictoffset`, read at compile time), `pstructmember.c`'s `T_*` arrays, the str data arrays (offset from the object).
+- Mechanism snippets: `tstate_use_tracing.h` keeps `offsetof(PyThreadState, use_tracing)` (a layout entry would fail versions whose snippet doesn't use it) and gained a size assertion; `frame_object.h`'s frame fields likewise.
+- Mechanisms, not layouts (control flow, not offsets): `pyruntime.c:ni_eval_breaker_handler` (a copy of the top of ceval's loop: pending calls, GIL drop, async exception); the inline store's GC test (`ipyencoding.c`: `sizeof(PyGC_Head)`, `_PyGC_REFS_*`), which needs a detector once `gc_refs` is gone (3.8).
+- `pabstract.c`'s slot offsets (`PyNumberMethods` and others): step 4's file.
+- Fields that Ni's C reads through the headers (`tp_dictoffset`, `co_nlocals`, `f_lasti`…) are compiled against them, so a rename already fails the build; their offsets aren't built into emitted code.
+
+**Mutation tests.** On copies of 3.7.17's source: `PyFloatObject.ob_fval` renamed gives `PyFloatObject.ob_fval (Include/floatobject.h): no field ob_fval` (in `generate.py` the policy table's `TYPES` shape check stops it first); `PyDictObject.ma_used` declared `int` gives `declared 'int', Ni assumes 'Py_ssize_t'`; `rangeiterobject.index` declared `int` in `Objects/rangeobject.c` gives `rangeiterobject.index (Objects/rangeobject.c): declared 'int', Ni assumes 'long'`; `PyThreadState.overflowed` declared `int`, a struct the policy table has no shape for, stops `generate.py` in `gen_layouts`, removes the old headers, and fails `setup.py build_ext` with `NI_CPYTHON_SRC` set to it. A change only the compiled configuration shows: the generated header compiled against a copy of the installed headers with `digit` as `unsigned short` fails with `static assertion failed: "Ni: PyLongObject.ob_digit: Ni reads 4 bytes"`; against the real ones it compiles clean.
+
+**Other versions** (generation only, tarballs in `~/.cache/ni/cpython`): what each would need. 3.13.2 gives 3.12.9's list.
+
+| Field | 3.8.20 | 3.11.11 | 3.12.9 / 3.13.2 |
+|---|---|---|---|
+| `PyGC_Head.gc.gc_refs` | gone: `_gc_next`, `_gc_prev` (refs in `_gc_prev`'s bits) | gone | gone |
+| `PyObject.ob_refcnt`, `ob_type` | as 3.7 | as 3.7 | as 3.7 (the refcount in an anonymous union) |
+| `PyLongObject.ob_digit` | as 3.7 | as 3.7 | gone: `long_value.ob_digit`, size in `lv_tag` |
+| `PyDictObject.ma_values` | as 3.7 | `PyDictValues *` | `PyDictValues *` |
+| `PyDictKeysObject.dk_size` | as 3.7 | gone: `dk_log2_size` | gone |
+| `PyASCIIObject.state` bits | as 3.7 | as 3.7 | `ready` gone (`statically_allocated` in its place) |
+| `PyThreadState.recursion_depth`, `overflowed` | as 3.7 | gone: `recursion_remaining` counts down | gone: `py_recursion_remaining`, `c_recursion_remaining` |
+| `PyThreadState.curexc_type` | as 3.7 | as 3.7 | gone: `current_exception` alone |
+| `rangeiterobject` | as 3.7 | as 3.7 | gone: `_PyRangeIterObject` in `internal/pycore_range.h`, no `index` |
+| `_PyRuntime.gilstate.tstate_current` | as 3.7 | as 3.7 | gone [inferred: a thread-local `_Py_tss_tstate`] |
+| `_PyRuntime.ceval.eval_breaker` | as 3.7 | gone: per interpreter (`interp->ceval.eval_breaker`, since 3.9 [inferred]) | per interpreter; 3.13 in the thread state (`tstate->eval_breaker`, `uintptr_t`) |
+| fields declared as Ni assumes (of 57; the tool's count) | 56 | 51 | 44 (`state` is declared the same; its bits are not) |
+
+So 3.8 needs one change, the GC test's field (a detector for how the store tests GC tracking, or a policy entry for `_gc_prev`); 3.11 six; 3.12 and 3.13 fourteen (thirteen fields, four of them `rangeiterobject`'s, and `state`'s bits). Several are mechanisms for D75's detectors rather than new layout entries: the recursion counter (counts down from 3.11), the exception state (one object from 3.12), the eval breaker's home and the thread state's (from 3.9 and 3.12), the dict values and keys size (a new representation for the inline store and shared-key loads), `ob_digit` (3.12's compact ints). `PyFunctionObject` reads the same on 3.11+ only because the generator expands `COMMON_FIELDS(func_)`.
 
 ## Failures log
 

@@ -1,5 +1,15 @@
 # Status
 
+## 2026-11-18: layouts generated from the target's headers (D19 stage 0, `ee76274`, `9869ad9`, D76)
+
+The CPython fields Ni relies on are a list in the policy table (`LAYOUTS`, `RUNTIME`); `tools/metac/gen_layouts.py` checks each against the target's headers and writes `layouts_gen.h` and `runtime_layouts_gen.h`: offsets by `offsetof`, read sizes, and a `_Static_assert` per assumption (type, size, kind, sign). METACOMPILER.md "Stage 0: layouts".
+- **3.7:** 57 fields (55 in 17 public and 5 private structs, 2 in `_PyRuntime`), 181 assertions. Used by 43 field descriptors (`CPY_FIELD`), `BYTES_sval`, 22 backend offsets, `punicodeobject.c`'s state bits and `pyruntime.c`'s two runtime fields; the hand-written copies of `rangeobject`, `rangeiterobject`, `seqiterobject` and the dict keys and entries are gone. Ni's own structs, the index chain and flags, virtual-only slots, snippets and two mechanisms (the eval-breaker handler, the inline store's GC test) stay hand-written.
+- **Same code:** `tools/samecode.py baseline-3.7 ee76274`: 83 units same, 0 differ (4,089 code objects). `9869ad9` changes the generator only; its 3.7 headers are byte-identical.
+- **Breaks loudly:** a renamed field, a changed declared type (public, private, and in a struct the policy table has no shape for) each stop generation naming the struct, field and header, and the build with `NI_CPYTHON_SRC`; `digit` narrowed in a copy of the installed headers fails the generated header's `_Static_assert` by name.
+- **Other versions** (generation only): 3.8.20 one field (`PyGC_Head.gc.gc_refs`), 3.11.11 six, 3.12.9 and 3.13.2 fourteen (thirteen fields and `PyASCIIObject.state`'s bits); table in METACOMPILER.md.
+- Checked build: generators twice, same output, and the build used it; `tests/run.py` 749 pass; `tests/compile_bounds.py` 7 checks; the seven `tools/profile_bench.py` runs; `tests/cpython_tests.py -j 2` default set 285 modules, 0 unexpected.
+- **Risks:** the struct reader is token-level, so a header construct it doesn't know shows as a missing field (it fails, not guesses; 3.11's `COMMON_FIELDS` and 3.12's anonymous union needed rules); bit positions follow x86-64's ABI and aren't asserted by the compiler; `/low` reads assume little-endian.
+
 ## 2026-11-18: tidy-ups before steps 5–7 (`896dfaf`, `6f8009a`, `c33b13f`)
 
 The PsycoFunction proxy is gone (`psyfunc.c`, `psyfunc.h`: 379 lines net; `pdescrobject.c` now uses 3.7's exported descriptor types), `NI_ALL_STATIC=1` builds again (KNOWN_BUGS C55), stale header comments are fixed, and MAP's layers follow INVENTORY's split (new `psliceobject.*` rows; PATTERNS P10 and rule 5 updated). [run]

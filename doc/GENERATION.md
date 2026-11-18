@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`), 3 (`e7fd745`) and 9 (`36b5beb`) done; step 8 begun (front end, `99d9b26`)
+status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`), 3 (`e7fd745`) and 9 (`36b5beb`) done, and D19's stage 0, layouts (`ee76274`, D76); step 8 begun (front end, `99d9b26`)
 ---
 # Plan of work: generate the translated layer on 3.7
 
@@ -101,7 +101,14 @@ The reader expresses stack effects that depend on oparg as 3.12's DSL does (`val
 - **3.7:** entry `frame_eval_hook`, tracing `tstate_use_tracing`, frames `frame_object`. Each needed a snippet: the hook and its installation; the `use_tracing` test at run time and in emitted code; `ni_frame_t` and eight accessors for the frame chain (field accesses on 3.7, a different structure on 3.11+). The core (`eval_hook.c:ni_entry_point`, `NiCode_Run`, `frames.c`, `pycompiler.c:cimpl_new_frame`, `psyfunc.c:tracing_on`) calls only those.
 - **Other versions, detectors only** (`tests/mechanisms.py`): 3.8.20 gives 3.7's answers; 3.11.11 a hook given `_PyInterpreterFrame` (vectorcall unusable: specialised calls would bypass it), CFrame tracing, CFrame frames; 3.12.9 vectorcall with watchers, `sys.monitoring`, CFrame frames; 3.13.2 the same but the innermost frame in `tstate->current_frame`. Those snippets are stubs that `#error` "not written yet".
 - **Checks:** generation twice, same output, and the build used it; answers not in `VARIANTS` fail generation and remove the headers (`tests/mechanisms.py`); `tools/samecode.py 2d2d3d5 36b5beb` 83 units same, 0 differ (4,089 code objects); checked build `tests/run.py` 749 pass (`tracing` 9), `compile_bounds.py` 7, `cpython_tests.py -j 2` 285 modules 0 unexpected, `smoke.py` same, `v_mem_mov` 90,144 cases.
-- **For 3.8:** no mechanism work. What will stop a 3.8 build is elsewhere, for example `pyruntime.c`'s `_PyRuntime` fields and the policy table's shapes [inferred, not built].
+- **For 3.8:** no mechanism work. What will stop a 3.8 build is elsewhere: the policy table's shapes [inferred, not built], and of the layouts only `PyGC_Head.gc.gc_refs` (below).
+
+## Layouts: D19's stage 0 (`ee76274`, `9869ad9`, D76) [run]
+
+The CPython fields Ni relies on are a list in the policy table (`LAYOUTS`, `RUNTIME`); `tools/metac/gen_layouts.py` checks them against the target's headers and writes `layouts_gen.h` and `runtime_layouts_gen.h` (offsets by `offsetof`, a `_Static_assert` per assumption). Details: METACOMPILER.md "Stage 0: layouts".
+- **3.7:** 57 fields (55 in 22 structs, 2 in `_PyRuntime`); 43 field descriptors (`CPY_FIELD`), one array, 22 backend offsets and `pyruntime.c`'s two runtime fields use them; five private struct copies left Ni's code. Hand-written: Ni's own structs, the index chain and flags, virtual-only slots, mechanism snippets, and two mechanisms (the eval-breaker handler, the inline store's GC test).
+- **Checks:** `tools/samecode.py baseline-3.7 ee76274`: 83 units same, 0 differ (4,089 code objects); generation twice, same output, and the build used it; mutation tests fail generation or the build naming the field.
+- **Other versions:** 3.8.20 one field changed (`PyGC_Head`), 3.11.11 six, 3.12.9 and 3.13.2 fourteen (thirteen fields and `PyASCIIObject.state`'s bits); the table in METACOMPILER.md is the input for those versions' work, and says which are mechanisms for D75's detectors.
 
 ## Risks
 
