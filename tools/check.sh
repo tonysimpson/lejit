@@ -1,7 +1,14 @@
 #!/bin/bash
 # Build Ni (debug, all checks) and run every test suite. Stops at the first
 # failure, so a broken build can never be followed by a test run against an
-# old ni.so. Run from anywhere:  tools/check.sh
+# old ni.so. Run from anywhere:
+#   tools/check.sh                 every step: the gate before a merge
+#   tools/check.sh STEP...         only those steps (and what they need)
+#   tools/check.sh --changed [REF] the steps the files changed since REF
+#                                  (default HEAD; the working tree and
+#                                  untracked files count) can affect
+# Steps: parse effects snippets gen done build run bounds cpython encoder
+# vmem smoke. done needs gen; run, bounds, cpython, vmem and smoke need build.
 #
 # NI_PY37 overrides the CPython 3.7 interpreter (NI_PY38 the 3.8 one the
 # parse gate and the 3.8 dry run read), NI_GEN_PYTHON the Python
@@ -15,6 +22,48 @@ GEN_PY=${NI_GEN_PYTHON:-python3}
 LOG=build/check-build.log
 mkdir -p build
 
+ALL_STEPS="parse effects snippets gen done build run bounds cpython encoder vmem smoke"
+GENERATOR="parse effects snippets gen done build run bounds cpython smoke"
+CORE="gen done build run bounds cpython smoke"
+
+# the steps a changed path can affect; a path nothing here names gets every
+# step, so a new kind of file is checked until it is listed
+steps_for() {
+    case "$1" in
+        doc/*|*.md|.gitignore|tools/adversarial/*|tools/fuzz/*|tools/realworld/*|\
+        tools/thirdparty/*|tools/benchmarks.sh|tools/bench.py|tools/sanitize*|tools/memrepro.py) ;;
+        tools/metac/*|tests/parse_gate.py|tests/effect_snippets.py|tests/gen2_snippets.py) echo "$GENERATOR" ;;
+        ni/x64/*) echo "$CORE encoder vmem" ;;
+        ni/*|setup.py) echo "$CORE" ;;
+        tests/encoding/*) echo "encoder vmem" ;;
+        tests/cases/*|tests/run.py|tests/testenv.py) echo "build run" ;;
+        tests/cpython_tests.py) echo "build cpython" ;;
+        tests/compile_bounds.py) echo "build bounds" ;;
+        tests/smoke.py) echo "build smoke" ;;
+        *) echo "$ALL_STEPS" ;;
+    esac
+}
+
+WANT=
+if [ $# -eq 0 ]; then
+    WANT=$ALL_STEPS
+elif [ "$1" = --changed ]; then
+    REF=${2:-HEAD}
+    CHANGED=$( { git diff --name-only "$REF"; git ls-files --others --exclude-standard; } | sort -u)
+    for f in $CHANGED; do WANT+=" $(steps_for "$f")"; done
+    printf 'changed since %s:\n%s\n' "$REF" "${CHANGED:-(nothing)}"
+else
+    for s in "$@"; do
+        case " $ALL_STEPS " in *" $s "*) WANT+=" $s" ;; *) echo "unknown step: $s (steps: $ALL_STEPS)"; exit 2 ;; esac
+    done
+fi
+want() { case " $WANT " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+want done && WANT+=" gen"
+for s in run bounds cpython vmem smoke; do want $s && WANT+=" build"; done
+SELECTED=; for s in $ALL_STEPS; do want $s && SELECTED+=" $s"; done
+if [ -z "$SELECTED" ]; then echo "no step is affected"; exit 0; fi
+[ "$SELECTED" != " $ALL_STEPS" ] && echo "steps:$SELECTED"
+
 STEP_T0=$SECONDS; STEP_NAME=; STEP_TIMES=
 step_done() { if [ -n "$STEP_NAME" ]; then STEP_TIMES+=$(printf '%5ds  %s\n' $((SECONDS - STEP_T0)) "${STEP_NAME%% (*}")$'\n'; fi; }
 step() { step_done; STEP_NAME=$*; STEP_T0=$SECONDS; printf '\n== %s\n' "$*"; }
@@ -26,91 +75,121 @@ stale_sources() {   # sources newer than ni.so (find compares to the ns)
     find ni setup.py $(ls -d build/temp.*/gen 2>/dev/null) -newer "$so" \( -name '*.c' -o -name '*.h' -o -name setup.py \) | head -5
 }
 
-step "parse gate: every mirrored CPython file parses, on 3.7 and 3.8 (tests/parse_gate.py)"
-"$GEN_PY" tests/parse_gate.py
+if want parse; then
+    step "parse gate: every mirrored CPython file parses, on 3.7 and 3.8 (tests/parse_gate.py)"
+    "$GEN_PY" tests/parse_gate.py
+fi
 
-step "effect snippets: small C in, the effect flags out (tests/effect_snippets.py)"
-"$GEN_PY" tests/effect_snippets.py
+if want effects; then
+    step "effect snippets: small C in, the effect flags out (tests/effect_snippets.py)"
+    "$GEN_PY" tests/effect_snippets.py
+fi
 
-step "translator snippets: small C in, the meta or refusal out (tests/gen2_snippets.py)"
-NI_PY37="$PY37" "$GEN_PY" tests/gen2_snippets.py
+if want snippets; then
+    step "translator snippets: small C in, the meta or refusal out (tests/gen2_snippets.py)"
+    NI_PY37="$PY37" "$GEN_PY" tests/gen2_snippets.py
+fi
 
-step "generators: seeds 1 and 2, seed 1 again, and the 3.8 dry run, in parallel (tools/metac/generate.py)"
-# the cross-checks (gen_ceval against ceval.c and dis.stack_effect) and the
-# comparison with tools/metac/expected/3.7.17.txt run in each; the 3.8 dry
-# run (--past-policy) compares with expected/3.8.20.txt. A second seed-1 run
-# catches what the hash seed doesn't fix (id() reuse, file order). The build
-# below generates again (seed 0) and must get the same headers
-rm -rf build/gen-check
-mkdir -p build/gen-check
-declare -A GEN_PIDS
-for n in 1 2 1-again; do
-    PYTHONHASHSEED=${n%-again} "$GEN_PY" tools/metac/generate.py --python "$PY37" \
-        --out build/gen-check/$n > build/gen-check/$n.log 2>&1 &
-    GEN_PIDS[$n]=$!
-done
-NI_CPYTHON_SRC= "$GEN_PY" tools/metac/generate.py --python "$PY38" --past-policy \
-    --out build/gen-check/3.8 > build/gen-check/3.8.log 2>&1 &
-GEN_PIDS[3.8]=$!
-GEN_FAILED=
-for n in 1 2 1-again 3.8; do
-    if ! wait "${GEN_PIDS[$n]}"; then
-        printf '\n-- %s FAILED (build/gen-check/%s.log):\n' "$n" "$n"
-        tail -40 "build/gen-check/$n.log"
-        GEN_FAILED=1
+if want gen; then
+    step "generators: seeds 1 and 2, seed 1 again, and the 3.8 dry run, in parallel (tools/metac/generate.py)"
+    # the cross-checks (gen_ceval against ceval.c and dis.stack_effect) and the
+    # comparison with tools/metac/expected/3.7.17.txt run in each; the 3.8 dry
+    # run (--past-policy) compares with expected/3.8.20.txt. A second seed-1 run
+    # catches what the hash seed doesn't fix (id() reuse, file order). The build
+    # below generates again (seed 0) and must get the same headers
+    rm -rf build/gen-check
+    mkdir -p build/gen-check
+    declare -A GEN_PIDS
+    for n in 1 2 1-again; do
+        PYTHONHASHSEED=${n%-again} "$GEN_PY" tools/metac/generate.py --python "$PY37" \
+            --out build/gen-check/$n > build/gen-check/$n.log 2>&1 &
+        GEN_PIDS[$n]=$!
+    done
+    NI_CPYTHON_SRC= "$GEN_PY" tools/metac/generate.py --python "$PY38" --past-policy \
+        --out build/gen-check/3.8 > build/gen-check/3.8.log 2>&1 &
+    GEN_PIDS[3.8]=$!
+    GEN_FAILED=
+    for n in 1 2 1-again 3.8; do
+        if ! wait "${GEN_PIDS[$n]}"; then
+            printf '\n-- %s FAILED (build/gen-check/%s.log):\n' "$n" "$n"
+            tail -40 "build/gen-check/$n.log"
+            GEN_FAILED=1
+        fi
+    done
+    [ -n "$GEN_FAILED" ] && exit 1
+    cat build/gen-check/1.log
+    diff -r build/gen-check/1 build/gen-check/2
+    diff -r build/gen-check/1 build/gen-check/1-again
+    echo "same output under seeds 1, 2 and 1 again; 3.8: same statuses"
+fi
+
+if want done; then
+    step "done test, point 1: what mirrors CPython and is still hand-written (tools/metac/donecheck.py)"
+    # a definition with no reason (exit 1), a stale report or hand_table.py
+    # (exit 2) fails the check; transitional reasons only (exit 3) don't: the
+    # phase isn't done
+    rc=0
+    "$GEN_PY" tools/metac/donecheck.py --gen build/gen-check/1 || rc=$?
+    [ "$rc" -eq 2 ] && { echo "stale report, or hand_table.py does not match Ni or the docs"; exit 1; }
+    [ "$rc" -eq 1 ] && { echo "hand-written mirrors with no reason (listed above)"; exit 1; }
+    [ "$rc" -eq 3 ] && echo "not done: transitional reasons remain (above)"
+fi
+
+if want build; then
+    step "build (NI_TRACE=1 NI_ALL_CHECKS=1)"
+    # distutils compares whole seconds: an edit in the same second as the last
+    # build looks up to date to it, so remove the module ourselves
+    [ -n "$(stale_sources)" ] && rm -f ni*.so
+    if ! NI_TRACE=1 NI_ALL_CHECKS=1 "$PY37" setup.py build_ext --inplace > "$LOG" 2>&1; then
+        grep -E ": error|Error" "$LOG" | head -20
+        echo "BUILD FAILED (full log: $LOG)"
+        exit 1
     fi
-done
-[ -n "$GEN_FAILED" ] && exit 1
-cat build/gen-check/1.log
-diff -r build/gen-check/1 build/gen-check/2
-diff -r build/gen-check/1 build/gen-check/1-again
-echo "same output under seeds 1, 2 and 1 again; 3.8: same statuses"
-
-step "done test, point 1: what mirrors CPython and is still hand-written (tools/metac/donecheck.py)"
-# a definition with no reason (exit 1), a stale report or hand_table.py
-# (exit 2) fails the check; transitional reasons only (exit 3) don't: the
-# phase isn't done
-rc=0
-"$GEN_PY" tools/metac/donecheck.py --gen build/gen-check/1 || rc=$?
-[ "$rc" -eq 2 ] && { echo "stale report, or hand_table.py does not match Ni or the docs"; exit 1; }
-[ "$rc" -eq 1 ] && { echo "hand-written mirrors with no reason (listed above)"; exit 1; }
-[ "$rc" -eq 3 ] && echo "not done: transitional reasons remain (above)"
-
-step "build (NI_TRACE=1 NI_ALL_CHECKS=1)"
-# distutils compares whole seconds: an edit in the same second as the last
-# build looks up to date to it, so remove the module ourselves
-[ -n "$(stale_sources)" ] && rm -f ni*.so
-if ! NI_TRACE=1 NI_ALL_CHECKS=1 "$PY37" setup.py build_ext --inplace > "$LOG" 2>&1; then
-    grep -E ": error|Error" "$LOG" | head -20
-    echo "BUILD FAILED (full log: $LOG)"
-    exit 1
+    STALE=$(stale_sources)
+    if [ -n "$STALE" ]; then
+        echo "STALE ni.so: older than"; echo "$STALE"
+        exit 1
+    fi
+    echo "ok ($(ls ni*.so))"
+    if want gen; then
+        diff -r build/gen-check/1 build/temp.*/gen
+        echo "built from the same generated headers"
+    fi
 fi
-STALE=$(stale_sources)
-if [ -n "$STALE" ]; then
-    echo "STALE ni.so: older than"; echo "$STALE"
-    exit 1
+
+if want run; then
+    step "behaviour tests (tests/run.py)"
+    "$PY37" tests/run.py
 fi
-echo "ok ($(ls ni*.so))"
-diff -r build/gen-check/1 build/temp.*/gen
-echo "built from the same generated headers"
 
-step "behaviour tests (tests/run.py)"
-"$PY37" tests/run.py
+if want bounds; then
+    step "compile bounds (tests/compile_bounds.py)"
+    "$PY37" tests/compile_bounds.py
+fi
 
-step "compile bounds (tests/compile_bounds.py)"
-"$PY37" tests/compile_bounds.py
+if want cpython; then
+    step "CPython's own tests, with and without Ni (tests/cpython_tests.py)"
+    "$PY37" tests/cpython_tests.py
+fi
 
-step "CPython's own tests, with and without Ni (tests/cpython_tests.py)"
-"$PY37" tests/cpython_tests.py
+if want encoder; then
+    step "encoder tests (tests/encoding/check.py)"
+    python3 tests/encoding/check.py
+fi
 
-step "encoder tests (tests/encoding/check.py)"
-python3 tests/encoding/check.py
+if want vmem; then
+    step "v_mem_mov execution tests"
+    NI_PY37="$PY37" bash tests/encoding/run_v_mem_mov.sh
+fi
 
-step "v_mem_mov execution tests"
-NI_PY37="$PY37" bash tests/encoding/run_v_mem_mov.sh
+if want smoke; then
+    step "stdlib smoke test (tests/smoke.py, with and without Ni)"
+    diff <("$PY37" tests/smoke.py plain 2>&1) <("$PY37" tests/smoke.py ni 2>&1)
+    echo "same output"
+fi
 
-step "stdlib smoke test (tests/smoke.py, with and without Ni)"
-diff <("$PY37" tests/smoke.py plain 2>&1) <("$PY37" tests/smoke.py ni 2>&1)
-echo "same output"
-
-printf '\nALL CHECKS PASSED\n'
+if [ "$SELECTED" = " $ALL_STEPS" ]; then
+    printf '\nALL CHECKS PASSED\n'
+else
+    printf '\nSELECTED CHECKS PASSED:%s (not the full gate)\n' "$SELECTED"
+fi
