@@ -12,6 +12,7 @@ What is still open, one line each, with where the detail is. Done items leave th
 In KNOWN_BUGS.md. Worth doing first among them: C29 (no events for a frame already running compiled), then C11's `PyEval_GetFrame` hook and `f_lineno`; F97, F100, F103 are small translated-layer fixes. On the 3.12 backlog by D64: C14, C15, C18, F27.
 
 ## Speed
+- The adversarial suite (`tools/adversarial/`, `tools/benchmarks.sh adversarial`), written blind at `481b099` to target Ni's weak points, needs its first run with Ni; no benchmark in it is to be tuned after its results.
 - Attribute stores: checks shared between consecutive stores to one object; present-name loads on the shared store cache (FINDINGS.md "Attribute stores"); GC tracking inline; one dealloc glue for every decref (D47).
 - Load guards: a class attribute bumped as a counter fails every guard on its class (`tools/load_micro.py bump`); `store_guard` could share `load_guard`'s C table (D60).
 - Type hints (D63): a wrong hint at a polymorphic call site pays a respawned block; the guard could be skipped where the promotion after it has seen several types, if a replay decides the same.
