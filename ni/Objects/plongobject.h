@@ -54,6 +54,7 @@ EXTERNFN vinfo_t *PsycoNumber_AsSsize_t(PsycoObject *po, vinfo_t *v,
 EXTERNFN bool PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v, vinfo_t **vd);
 EXTERNFN vinfo_t *PsycoLong_FromUnsignedLong(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *PsycoLong_FromLong(PsycoObject *po, vinfo_t *v);
+EXTERNFN vinfo_t *PsycoLong_FromSsize_t(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *PsycoLong_FROM_LONG(PsycoObject *po, vinfo_t *v); /* consumes v */
 
 #endif /* _PSY_LONGOBJECT_H */

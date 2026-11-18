@@ -85,6 +85,9 @@ VOCABULARY = {
         'direct_meta': "a known type's meta called instead of the generic path",
         'if_known': 'an integer parameter used as its value when that is a'
                     ' constant, else CPython\'s function (D80)',
+        'zero_or_one': 'the int result is 0 or 1 when it is not an error',
+        'bool_word': "an argument known to be 0 or 1 is the bool's word"
+                     " (note: Ni's function of that word)",
     },
     'likely': {
         'true': 'the condition in the note is expected true (runtime_condition_t)',
@@ -117,6 +120,9 @@ VOCABULARY = {
         'trace_fallback': 'while tracing, the real call (C23, D46)',
         'mutable_fields': 'every field read is mutable',
         'not_translation': "Ni's function of this name does another job (not generated)",
+        'unpack_arguments': 'binds its outputs to the items of an argument array'
+                            ' whose count is within its bounds, else fails'
+                            ' (gen_builtins.py, D86)',
         'frame_binding': 'the argument binding, between making the frame and'
                          ' running it, is generated as a binder the compiler'
                          ' runs (gen_call.py, D85)',
@@ -481,6 +487,31 @@ class Checker:
                 if d is not None and '"%s"' % spec['format'] not in [x.text for x in d.toks]:
                     self.bad(where, '%s does not call with "%s"' % (n, spec['format']))
 
+    def builtins(self, t):
+        """TRANSLATED_FUNCTIONS names files of the source; METH_ARGS'
+        keys are ml_flags, its parts a closed set, and each function it
+        names is Ni's caller of the metas it describes."""
+        for path, names in getattr(t, 'TRANSLATED_FUNCTIONS', {}).items():
+            where = 'TRANSLATED_FUNCTIONS ' + path
+            if self.src.file(path) is None:
+                self.bad(where, 'not in the source')
+            if len(set(names)) != len(names):
+                self.bad(where, 'a name listed twice')
+        for key, spec in getattr(t, 'METH_ARGS', {}).items():
+            where = 'METH_ARGS ' + key
+            self.fields(where, spec, ('c', 'fallback', 'applied_by'))
+            for flag in key.split('|'):
+                if not re.match(r'^METH_[A-Z]+$', flag.strip()):
+                    self.bad(where, '%r is not an ml_flags name' % flag)
+            for part in spec.get('c', ()):
+                if part not in ('self', 'arg', 'array', 'count'):
+                    self.bad(where, 'unknown part %r' % part)
+            for n in spec.get('applied_by', ()):
+                self.ni_name(where, n)
+                d = self.ni.find(n)
+                if d is not None and key.split('|')[0].strip() not in [x.text for x in d.toks]:
+                    self.bad(where, '%s does not test %s' % (n, key))
+
     def run(self, t):
         self.entries(t)
         self.rules(t)
@@ -497,6 +528,7 @@ class Checker:
                 self.fields(where, spec, ('type', 'slots'))
                 self.type_object(where, spec['type'])
         self.slot_args(t)
+        self.builtins(t)
         self.type_list('NO_DEL_TYPES', t.NO_DEL_TYPES,
                        [['ni/Objects/pobject.c:collect_undeletable_vars'],
                         ['ni/x64/ipyencoding.h:psyco_decref_rt']])

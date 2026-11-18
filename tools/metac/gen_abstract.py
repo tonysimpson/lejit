@@ -184,8 +184,7 @@ class Source:
         self.undefined = cparse.undefined_later(src, pyconfig, CFILE,
                                                 self.macros, defines)
         self.decls = cparse.Decls(pptoks)
-        with open(os.path.join(src, CFILE), encoding='latin-1') as f:
-            text = f.read()
+        text = self.read_text()
         toks, self.local_macros = ctokens.tokenize(text, CFILE)
         pptoks_lines = ctokens.tokenize(text, CFILE, directives=True)[0]
         # a conditional chooses between texts; an #undef ends a macro the
@@ -226,6 +225,11 @@ class Source:
                 i = close + 1
                 continue
             i += 1
+
+    def read_text(self):
+        """The C file's text (a subclass may add what it includes)."""
+        with open(os.path.join(self.src, self.cfile), encoding='latin-1') as f:
+            return f.read()
 
     def add_func(self, name, d, keep_local):
         static = 'static' in [t.text for t in d.ret]
@@ -798,7 +802,7 @@ class Translator:
                 rounds += 1
                 if rounds > 16:
                     raise Refuse('promotions after calls remain: %s' % w.late)
-                w = Walk(self, f, sm, hoist)
+                w = self.new_walk(f, sm, hoist)
                 try:
                     w.run()
                 except Rewalk:
@@ -818,6 +822,9 @@ class Translator:
             self.resumes.extend(w.resumed)
         except Refuse as e:
             self.fails[name] = str(e)
+
+    def new_walk(self, f, sm, hoist):
+        return Walk(self, f, sm, hoist)
 
     def kind_of(self, f):
         if self.s.is_obj(f.ret):

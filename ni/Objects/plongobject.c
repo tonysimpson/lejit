@@ -163,6 +163,13 @@ vinfo_t *PsycoLong_FromLong(PsycoObject *po, vinfo_t *v) {
   return PsycoLong_FROM_WORD(v);
 }
 
+/* a Py_ssize_t is a long */
+DEFINEFN
+vinfo_t *PsycoLong_FromSsize_t(PsycoObject *po, vinfo_t *v) {
+  vinfo_incref(v);
+  return PsycoLong_FROM_WORD(v);
+}
+
 DEFINEFN
 vinfo_t *PsycoLong_FROM_LONG(PsycoObject *po, vinfo_t *v) {
   return PsycoLong_FROM_WORD(v);

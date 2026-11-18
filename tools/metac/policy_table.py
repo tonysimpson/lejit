@@ -192,6 +192,32 @@ TRANSLATED_SLOTS = {
     'Objects/floatobject.c': {'type': 'PyFloat_Type', 'slots': ['nb_positive']},
 }
 
+# The functions of a module whose metas the general translator generates
+# (gen_builtins.py, D86), per C file, by their Python names: which C
+# function each is and its ml_flags come from the module's method table.
+# Ni's choice of what to translate; a builtin not listed keeps its hand
+# meta, or has none (the C function called directly, D36).
+TRANSLATED_FUNCTIONS = {
+    'Python/bltinmodule.c': ['abs', 'len', 'hash', 'id', 'divmod', 'pow',
+                             'isinstance', 'issubclass', 'getattr', 'setattr'],
+}
+
+# How Ni calls the meta of a builtin function, by its ml_flags
+# (pmethodobject.c:PsycoCFunction_Call): 'c' is each C parameter's part,
+# 'self' and 'arg' a vinfo each, 'array' and 'count' the one tuple Ni
+# passes for a METH_FASTCALL function's C array and its length; 'fallback'
+# is how a meta calls the C function itself ({cfunc}, {flags}, {args}: the
+# meta's parameters).
+METH_ARGS = {
+    'METH_O': {'c': ['self', 'arg'],
+               'fallback': 'psyco_generic_call(po, {cfunc}, CfCommonNewRefPyObject,'
+                           ' "vv", {args})',
+               'applied_by': ['ni/Objects/pmethodobject.c:PsycoCFunction_Call']},
+    'METH_FASTCALL': {'c': ['self', 'array', 'count'],
+                      'fallback': 'PsycoCFunction_CallFast(po, {cfunc}, {flags}, {args})',
+                      'applied_by': ['ni/Objects/pmethodobject.c:PsycoCFunction_Call']},
+}
+
 # How Ni calls a slot's meta: the argument format Psyco_META* is given,
 # 'v' a vinfo, 'l' a C value known when compiling. A translated slot
 # function's parameters take these binding times (D84); a slot not listed
@@ -1180,40 +1206,50 @@ ENTRIES = {
         'policy': [
             ('other', 'untraced_only', 'generator-expression fusion (D46)'),
         ]},
-    'Python/bltinmodule.c:builtin_id': {'shape': '6cb6d3e675c7', 'ni': ['ni/Python/pbltinmodule.c:pbuiltin_id']},
+    'Python/getargs.c:_PyArg_UnpackStack': {
+        'shape': '51abbe8f7bdf',
+        'ni': ['tools/metac/gen_builtins.py:unpackers'],
+        'policy': [
+            ('other', 'unpack_arguments', 'the outputs are the items of (args, nargs) when min <= nargs <= max'),
+        ]},
+    'Python/bltinmodule.c:builtin_id': {'shape': '6cb6d3e675c7', 'ni': ['tools/metac/gen_builtins.py:generate']},
     'Python/bltinmodule.c:builtin_globals_impl': {'shape': 'c7657d4e0e53', 'ni': ['ni/Python/pbltinmodule.c:pbuiltin_globals']},
     'Python/bltinmodule.c:builtin_len': {
         'shape': 'ed1073a2df2e',
-        'ni': ['ni/Python/pbltinmodule.c:pbuiltin_len'],
-        'policy': [
-            ('virtual', 'result', 'PyLong_Type'),
-        ]},
-    'Python/bltinmodule.c:builtin_abs': {'shape': 'ce718b61be96', 'ni': ['ni/Python/pbltinmodule.c:pbuiltin_abs']},
-    'Python/bltinmodule.c:builtin_divmod_impl': {'shape': 'd4ee89bf5868', 'ni': ['ni/Python/pbltinmodule.c:pbuiltin_divmod']},
+        'ni': ['tools/metac/gen_builtins.py:generate']},
+    'Python/bltinmodule.c:builtin_abs': {'shape': 'ce718b61be96', 'ni': ['tools/metac/gen_builtins.py:generate']},
+    'Python/bltinmodule.c:builtin_divmod_impl': {'shape': 'd4ee89bf5868', 'ni': ['tools/metac/gen_builtins.py:generate']},
     'Python/bltinmodule.c:builtin_hash': {
         'shape': 'beec34eaba7f',
-        'ni': ['ni/Python/pbltinmodule.c:pbuiltin_hash'],
-        'policy': [
-            ('virtual', 'result', 'PyLong_Type'),
-        ]},
-    'Python/bltinmodule.c:builtin_pow_impl': {'shape': '602fb145c78e', 'ni': ['ni/Python/pbltinmodule.c:pbuiltin_pow']},
+        'ni': ['tools/metac/gen_builtins.py:generate']},
+    'Python/bltinmodule.c:builtin_pow_impl': {'shape': '602fb145c78e', 'ni': ['tools/metac/gen_builtins.py:generate']},
     'Objects/abstract.c:PyObject_IsInstance': {
         'shape': '3b2b3063c680',
-        'ni': ['ni/Python/pbltinmodule.c:isinstance_known'],
+        'ni': ['ni/Python/pbltinmodule.c:PsycoObject_IsInstance', 'ni/Python/pbltinmodule.c:isinstance_known'],
         'policy': [
+            ('promote', 'static_type', 'obj'),
+            ('guard', 'constant_class', 'D62'),
             ('shortcut', 'const_fold', 'an exact-type cls and a static type of obj'),
             ('limit', 'depth', '8 nested tuples, then the real call'),
             ('guard', 'no_fold_heap', 'cls or the object type a heap type: __bases__ can change'),
+            ('shortcut', 'zero_or_one', 'returns 1, 0, or -1 with an error'),
+        ]},
+    'Objects/abstract.c:PyObject_IsSubclass': {
+        'shape': '593e76e6c81c',
+        'ni': ['tools/metac/gen_builtins.py:shortcut'],
+        'policy': [
+            ('shortcut', 'zero_or_one', 'returns 1, 0, or -1 with an error'),
+        ]},
+    'Objects/boolobject.c:PyBool_FromLong': {
+        'shape': '32d27a056330',
+        'ni': ['ni/Objects/pboolobject.c:PsycoBool_FromLong', 'ni/Objects/pboolobject.c:PsycoBool_FromZeroOrOne'],
+        'policy': [
+            ('shortcut', 'bool_word', 'PsycoBool_FromZeroOrOne'),
         ]},
     'Objects/abstract.c:recursive_isinstance': {'shape': '8505e1a6833c', 'ni': ['ni/Python/pbltinmodule.c:isinstance_known']},
     'Python/bltinmodule.c:builtin_isinstance_impl': {
         'shape': 'b53e4c00e3ee',
-        'ni': ['ni/Python/pbltinmodule.c:pbuiltin_isinstance'],
-        'policy': [
-            ('promote', 'static_type', 'obj'),
-            ('guard', 'constant_class', 'D62'),
-            ('restype', 'PyBool_Type'),
-        ]},
+        'ni': ['tools/metac/gen_builtins.py:generate']},
     'Python/bltinmodule.c:builtin_sum_impl': {
         'shape': '6adf2ab71762',
         'ni': ['ni/Python/pbltinmodule.c:pbuiltin_sum'],

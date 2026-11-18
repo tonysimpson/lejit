@@ -26,4 +26,10 @@ PSY_INLINE vinfo_t *PsycoBool_FromCondition(PsycoObject *po,
   return vc != NULL ? PsycoBool_FROM_WORD(vc) : NULL;
 }
 
+/* PyBool_FromLong's meta: True for any non-zero v (borrowed); a constant
+   v gives the constant bool */
+EXTERNFN vinfo_t *PsycoBool_FromLong(PsycoObject *po, vinfo_t *v);
+/* the same for a v known to be 0 or 1: v is the bool's word */
+EXTERNFN vinfo_t *PsycoBool_FromZeroOrOne(PsycoObject *po, vinfo_t *v);
+
 #endif /* _PSY_BOOLOBJECT_H */
