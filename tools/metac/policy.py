@@ -247,7 +247,9 @@ class Checker:
         for key, e in t.TYPES.items():
             where = 'TYPES ' + key
             self.fields(where, e, ('shape', 'type', 'mutable', 'immutable',
-                                   'virtual', 'slot_result', 'ni', 'known_length'))
+                                   'virtual', 'slot_result', 'ni', 'known_length',
+                                   'descriptors'))
+            self.descriptors(where, e)
             kl = e.get('known_length')
             if kl is not None:
                 self.fields(where + ' known_length', kl, ('size', 'items', 'load', 'item'))
@@ -273,6 +275,24 @@ class Checker:
                 self.ni_name(where, n)
             if 'virtual' in e:
                 self.virtual(where, e['virtual'], bool(e.get('mutable')))
+
+    def descriptors(self, where, e):
+        """Each descriptor is a #define of Ni's for a field the entry lists,
+        with FMUT in its definition exactly when the field is mutable."""
+        for field, name in e.get('descriptors', {}).items():
+            path, _, n = name.partition(':')
+            full = os.path.join(self.ni_root, path)
+            text = open(full).read() if os.path.isfile(full) else ''
+            m = re.search(r'^#define %s\s+(.*)$' % n, text, re.M)
+            if m is None:
+                self.bad(where, '%s does not define %s' % (path, n))
+                continue
+            mutable = field in e.get('mutable', ())
+            if not mutable and field not in e.get('immutable', ()):
+                self.bad(where, 'a descriptor for %s, not a listed field' % field)
+            if ('FMUT' in m.group(1)) != mutable:
+                self.bad(where, '%s: FMUT and the field being %s disagree'
+                         % (name, 'mutable' if mutable else 'immutable'))
 
     def virtual(self, where, v, mutable=False):
         """The weights as INIT_SVIRTUAL(_NOCALL) in Ni registers them; for
@@ -423,6 +443,20 @@ class Checker:
                 if a not in ASSUME:
                     self.bad(where, 'unknown assumption %r' % a)
 
+    def slot_args(self, t):
+        """SLOT_ARGS copies how Ni calls a slot's meta: each function it
+        names must pass that format to Psyco_META*."""
+        for slot, spec in getattr(t, 'SLOT_ARGS', {}).items():
+            where = 'SLOT_ARGS ' + slot
+            self.fields(where, spec, ('format', 'applied_by'))
+            if set(spec['format']) - set('vl'):
+                self.bad(where, 'format %r is not made of v and l' % spec['format'])
+            for n in spec.get('applied_by', ()):
+                self.ni_name(where, n)
+                d = self.ni.find(n)
+                if d is not None and '"%s"' % spec['format'] not in [x.text for x in d.toks]:
+                    self.bad(where, '%s does not call with "%s"' % (n, spec['format']))
+
     def run(self, t):
         self.entries(t)
         self.rules(t)
@@ -430,12 +464,15 @@ class Checker:
         self.light_opcodes(t)
         self.types(t)
         self.cannot_block(t)
-        for path, spec in t.TRANSLATED_SLOTS.items():
+        for path, specs in t.TRANSLATED_SLOTS.items():
             where = 'TRANSLATED_SLOTS ' + path
-            self.fields(where, spec, ('type', 'slots'))
             if self.src.file(path) is None:
                 self.bad(where, 'not in the source')
-            self.type_object(where, spec['type'])
+            # one spec, or one per type the file defines
+            for spec in specs if isinstance(specs, list) else [specs]:
+                self.fields(where, spec, ('type', 'slots'))
+                self.type_object(where, spec['type'])
+        self.slot_args(t)
         self.type_list('NO_DEL_TYPES', t.NO_DEL_TYPES,
                        [['ni/Objects/pobject.c:collect_undeletable_vars'],
                         ['ni/x64/ipyencoding.h:psyco_decref_rt']])

@@ -176,9 +176,26 @@ RULES = {
 # The slots whose functions the general translator generates, per C file
 # besides abstract.c (rule loops, D78): the header registers each meta
 # (gen_<file>_init). Ni's choice of what to translate, as Ni's declarations
-# are for abstract.c.
+# are for abstract.c. A slot is a field of one of the type's tables or a
+# function-pointer field of the type itself (tp_richcompare, tp_iternext,
+# tp_descr_get: D84); a file defining several types has one spec per type.
 TRANSLATED_SLOTS = {
-    'Objects/tupleobject.c': {'type': 'PyTuple_Type', 'slots': ['sq_contains', 'sq_concat', 'sq_repeat']},
+    'Objects/tupleobject.c': {'type': 'PyTuple_Type', 'slots': ['sq_contains', 'sq_concat', 'sq_repeat', 'tp_richcompare']},
+    'Objects/listobject.c': {'type': 'PyList_Type', 'slots': ['sq_length']},
+    'Objects/dictobject.c': {'type': 'PyDict_Type', 'slots': ['mp_length']},
+    'Objects/bytesobject.c': {'type': 'PyBytes_Type', 'slots': ['sq_length']},
+}
+
+# How Ni calls a slot's meta: the argument format Psyco_META* is given,
+# 'v' a vinfo, 'l' a C value known when compiling. A translated slot
+# function's parameters take these binding times (D84); a slot not listed
+# is called with vinfos only. policy.py checks that each Ni caller passes
+# this format.
+SLOT_ARGS = {
+    'tp_richcompare': {'format': 'vvl',
+                       'applied_by': ['ni/Objects/pobject.c:try_rich_compare']},
+    'tp_descr_get': {'format': 'lvl',
+                     'applied_by': ['ni/Objects/pobject.c:generic_getattr']},
 }
 
 # ---- limits: numbers in Ni's code, checked to be the same -------------------
@@ -229,6 +246,8 @@ TYPES = {
                     'max_items': 'CT_TUPLE_LOAD_SIZE_LIMIT'}},
     'Include/listobject.h:PyListObject': {
         'shape': '1e17e786b756', 'type': 'PyList_Type', 'mutable': ['ob_size', 'ob_item'],
+        # Ni's descriptor of a field a translated function reads (D84)
+        'descriptors': {'ob_size': 'ni/Objects/pobject.h:VAR_size'},
         # mutable: only its construction is the rule's (BUILD_LIST, D73),
         # its force function and fields are hand-written
         'virtual': {'ni': 'ni/Objects/plistobject.c:psyco_computed_vlist',
@@ -287,6 +306,12 @@ TYPES = {
                     'weight': 0, 'weight_at_calls': 0,
                     'constructor': 'Objects/classobject.c:PyMethod_New',
                     'new': 'ni/Objects/pclassobject.h:PsycoMethod_New'}},
+    'Include/bytesobject.h:PyBytesObject': {
+        'shape': '54250b6aedae', 'type': 'PyBytes_Type', 'immutable': ['ob_size'],
+        'descriptors': {'ob_size': 'ni/Objects/pobject.h:FIX_size'}},
+    'Include/dictobject.h:PyDictObject': {
+        'shape': '125dec0484fa', 'type': 'PyDict_Type', 'mutable': ['ma_used'],
+        'descriptors': {'ma_used': 'ni/Objects/pdictobject.c:DICT_ma_used'}},
     'Include/cellobject.h:PyCellObject': {
         # a cell can change under any call
         'shape': '666fb76e2c4d', 'type': 'PyCell_Type', 'mutable': ['ob_ref']},
@@ -858,7 +883,8 @@ ENTRIES = {
     'Objects/abstract.c:PyObject_Size': {'shape': '9861cd31b9b8', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/abstract.c:PyMapping_Size': {'shape': '2f44f1295dd8', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/tupleobject.c:tuplelength': {'shape': 'c26701baea26', 'ni': ['ni/Objects/pabstract.c:psyco_generic_immut_ob_size']},
-    'Objects/listobject.c:list_length': {'shape': '03a5f134f09c', 'ni': ['ni/Objects/pabstract.c:psyco_generic_mut_ob_size']},
+    'Objects/listobject.c:list_length': {'shape': '03a5f134f09c', 'ni': ['tools/metac/gen_abstract.py:generate']},
+    'Objects/bytesobject.c:bytes_length': {'shape': '0179586bdd2f', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/abstract.c:PySequence_GetItem': {
         'shape': 'dd19d399aba4',
         'ni': ['tools/metac/gen_abstract.py:generate'],
@@ -1205,6 +1231,13 @@ ENTRIES = {
             ('shortcut', 'if_known', 'n'),
             ('restype', 'PyTuple_Type'),
         ]},
+    'Objects/tupleobject.c:tuplerichcompare': {
+        'shape': '0567abd826b6',
+        'ni': ['tools/metac/gen_abstract.py:generate'],
+        'policy': [
+            # the items compared are expected equal: the loop goes on
+            ('likely', 'true', 'k != 0'),
+        ]},
     'Objects/tupleobject.c:tupleitem': {'shape': 'e61481faa2e9', 'ni': ['ni/Objects/ptupleobject.c:ptuple_item']},
     'Objects/iterobject.c:seqiterobject': {'shape': '24ea9b846c56', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
     'Objects/object.c:PyObject_SelfIter': {'shape': 'ba0edf658c0b', 'ni': ['ni/Objects/piterobject.c:piter_getiter', 'ni/Objects/prangeobject.c:prangeiter_getiter']},
@@ -1283,7 +1316,7 @@ ENTRIES = {
             ('restype', 'PyDict_Type'),
         ]},
     'Objects/dictobject.c:PyDict_SetItem': {'shape': '5a5b634a6f8b', 'ni': ['ni/Objects/pdictobject.c:PsycoDict_SetItemC']},
-    'Objects/dictobject.c:dict_length': {'shape': 'e490f691ac9c', 'ni': ['ni/Objects/pdictobject.c:psyco_dict_length']},
+    'Objects/dictobject.c:dict_length': {'shape': 'e490f691ac9c', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/bytesobject.c:bytes_subscript': {
         'shape': '5c4dee939553',
         'ni': ['ni/Objects/pbytesobject.c:cimpl_bytes_slice', 'ni/Objects/pbytesobject.c:pbytes_subscript'],

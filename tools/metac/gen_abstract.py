@@ -103,7 +103,8 @@ IMPLEMENTED = {'likely', 'restype', ('shortcut', 'if_known')}
 # the C names that are vocabulary, never expanded as macros
 KEEP = {'Py_INCREF', 'Py_DECREF', 'Py_XINCREF', 'Py_XDECREF', 'assert',
         'NULL', 'Py_None', 'Py_NotImplemented', 'Py_True', 'Py_False',
-        'Py_RETURN_NOTIMPLEMENTED', 'Py_RETURN_NONE', 'offsetof',
+        'Py_RETURN_NOTIMPLEMENTED', 'Py_RETURN_NONE', 'Py_RETURN_TRUE',
+        'Py_RETURN_FALSE', 'offsetof',
         '_Py_IDENTIFIER', 'PyErr_Occurred', 'Py_SAFE_DOWNCAST'}
 # C types of objects (run-time values)
 OBJ_TYPES = {'PyObject *'}
@@ -119,6 +120,10 @@ COMMON = {
     'CfReturnTypeInt|CfNotNegative|CfPyErrCheckNeg': 'CfCommonIntBoolOrError',
     'CfNoReturnValue|CfReturnTypeInt|CfPyErrIfNonNull': 'CfCommonIntZeroOk',
 }
+# the constant returns of object.h and boolobject.h: Ni's constant
+CONST_RETURNS = {'Py_RETURN_TRUE': 'psyco_vi_Py_True',
+                 'Py_RETURN_FALSE': 'psyco_vi_Py_False',
+                 'Py_RETURN_NONE': 'psyco_vi_None'}
 PY_OPS = {'<': 'Py_LT', '<=': 'Py_LE', '==': 'Py_EQ', '!=': 'Py_NE',
           '>': 'Py_GT', '>=': 'Py_GE'}
 FLIP = {'<': '>', '>': '<', '<=': '>=', '>=': '<=', '==': '==', '!=': '!='}
@@ -227,6 +232,9 @@ class Source:
         in_force = dict(self.local_macros)
         in_force.update((n, m) for n, (ln, m) in self.undefined.items()
                         if lines[0] < ln)
+        # a header's statement macro ('do { ... } while (0)') is read as
+        # the statements it stands for (D84)
+        in_force.update(self.statement_macros())
         # an object-like macro the function defines inside its body is
         # an alias of its own, expanded like a function-like one
         keep = keep_local - {n for n, m in self.local_macros.items()
@@ -236,8 +244,21 @@ class Source:
         if any(lines[0] <= ln <= lines[1] for ln in self.pp_lines):
             f.why = 'a preprocessor conditional inside the body'
         else:
-            f.ast = cparse.parse_body(body, self.decls.types, loops=True)
+            f.ast = cparse.parse_body(body, self.decls.types, loops=True,
+                                      switches=True)
         self.funcs[name] = f
+
+    def statement_macros(self):
+        """The header macros whose body is one statement, 'do { ... }
+        while (0)' (Py_RETURN_RICHCOMPARE), except the vocabulary (KEEP)."""
+        if getattr(self, '_stmt_macros', None) is None:
+            self._stmt_macros = {}
+            for n, m in self.macros.items():
+                w = [t.text for t in m.body]
+                if m.params is not None and n not in KEEP and w[:1] == ['do'] \
+                        and w[-4:] == ['while', '(', '0', ')']:
+                    self._stmt_macros[n] = m
+        return self._stmt_macros
 
     def object_structs(self):
         """Struct names (tags and typedefs) whose first member is a
@@ -438,6 +459,21 @@ class Liveness:
             self.labels[s[1]] = live
         elif k in ('for', 'while', 'do'):
             live = self.loop(s, after)
+        elif k == 'switch':
+            # break leaves the switch; each case is entered from its head
+            cont = self.loops[-1][1] if self.loops else after
+            self.loops.append((after, cont))
+            self.cases = getattr(self, 'cases', [])
+            self.cases.append(set())
+            b = self.stmt(s[2], after)
+            entries = self.cases.pop()
+            self.loops.pop()
+            live = frozenset(after | b | set(cparse.names_in(s[1])).union(*entries)
+                             if entries else after | b | set(cparse.names_in(s[1])))
+        elif k in ('case', 'default'):
+            live = after
+            if getattr(self, 'cases', None):
+                self.cases[-1].add(after)
         elif k == 'break' and self.loops:
             live = self.loops[-1][0]
         elif k == 'continue' and self.loops:
@@ -478,6 +514,7 @@ class Var:
         self.isparam = False
         self.virt = None          # rt: a virtual object the meta builds (D80)
         self.base = None          # ptr: the object whose items it points into
+        self.alias = None         # rt: the parameter it is a copy of (a cast of it)
 
 
 class State:
@@ -499,7 +536,7 @@ class State:
         for k, v in self.vars.items():
             w = Var(v.name, v.ctype, v.bt, v.cname)
             w.owned, w.conv, w.tp, w.isparam = v.owned, v.conv, v.tp, v.isparam
-            w.virt, w.base = v.virt, v.base
+            w.virt, w.base, w.alias = v.virt, v.base, v.alias
             s.vars[k] = w
         s.known, s.called = set(self.known), self.called
         s.slots, s.ended, s.early = dict(self.slots), self.ended, self.early
@@ -613,6 +650,10 @@ class Translator:
             f = self.s.funcs[n]
             meta = self.meta_name(f)
             decl = self.ni.get(meta)
+            fmt = slot_format(self, n)
+            if fmt is not None:
+                ct_names[n] = slot_binding(f, fmt)
+                continue
             pbt = []
             for k, (ctype, pname) in enumerate(f.params):
                 if self.s.is_obj(ctype):
@@ -1035,6 +1076,7 @@ class Walk:
         self.kl_rep = {}          # parameter -> its known_length representation
         self.goto_depth = 0
         self.restype = [i[1] for i in tr.policy_items(f.name) if i[0] == 'restype']
+        self.switch_depth = 0     # switches being translated (switch_stmt)
 
     @property
     def always_error(self):
@@ -1216,6 +1258,9 @@ class Walk:
             # the meta's error is raised at compile time or run time: the
             # C's handling of it can't run as a copy
             raise Refuse('resuming where a call has failed: %s' % why)
+        if self.switch_depth and st.called:
+            # a copy of the rest would start among a switch's case labels
+            raise Refuse('resuming inside a switch: %s' % why)
         for v in st.vars.values():
             if v.bt == 'rt' and v.virt is not None and v.owned == 'yes':
                 # its items may not all be stored yet
@@ -1226,8 +1271,7 @@ class Walk:
                 name, params = f.name, f.params
             elif f.name in self.tr.slot_roots:
                 # a static type's slot: CPython's function through it
-                tfield, _, slot = self.tr.slot_roots[f.name]
-                name = '%s.%s->%s' % (self.tr.slot_type, tfield, slot)
+                name = slot_ref(self.tr.slot_types[f.name], *self.tr.slot_roots[f.name])
                 params = f.params
             else:
                 name, params = self.tr.copy(f, [(f.ast, 0)], set())
@@ -1326,6 +1370,11 @@ class Walk:
         if k in ('for', 'while', 'do'):
             self.loop_stmt(s, st, out, frames)
             return
+        if k == 'switch':
+            self.switch_stmt(s, st, out, frames)
+            return
+        if k in ('case', 'default'):
+            raise Refuse('a %s label outside a switch' % k)
         if k in ('break', 'continue'):
             self.jump(k, st, out)
             return
@@ -1385,6 +1434,15 @@ class Walk:
     # ---- expression statements ----
 
     def expr_stmt(self, e, st, out, frames):
+        if e[0] == 'id' and e[1] in CONST_RETURNS:
+            self.const_return(st, out, e[1])
+            return
+        if e in (('call', ('id', 'abort'), []), ('call', ('id', 'Py_UNREACHABLE'), [])):
+            # Py_UNREACHABLE(): a path the C says never runs
+            self.release_all(st, out)
+            out('abort();')
+            st.ended = True
+            return
         if e == ('id', 'Py_RETURN_NOTIMPLEMENTED'):
             if self.sm.kind != 'obj':
                 raise Refuse('NotImplemented from a non-object function')
@@ -1525,6 +1583,7 @@ class Walk:
             v.owned = 'no'
         else:
             v.owned = 'no'
+        v.alias = param_alias(val.var) if not val.owned else None
         v.conv = val.conv
         v.virt = val.virt
         if val.conv and val.conv.get('checkable') and not val.conv.get('check') \
@@ -1766,6 +1825,11 @@ class Walk:
         if k == 'call' and e[1][0] == 'id' and e[1][1] in self.s.macros \
                 and e[1][1] not in KEEP and self.s.macros[e[1][1]].params is not None:
             return self.cond(self.s.expand_call(e[1][1], e[2]), st, out, frames,
+                             facts_t, facts_f)
+        if k == 'id' and e[1] in st.vars and st.vars[e[1]].bt == 'rt' \
+                and st.vars[e[1]].ctype in INT_TYPES:
+            # the truth of a run-time integer is 'x != 0' (P05)
+            return self.cond(('bin', '!=', e, ('num', '0')), st, out, frames,
                              facts_t, facts_f)
         val = self.ev(e, st, out, frames)
         if val.bt == 'g':
@@ -2092,6 +2156,9 @@ class Walk:
                 if field == kl[1]['size']:
                     return Val('ct', st.loaded[kl[0]], 'Py_ssize_t')
                 return Val('ptr', '0', 'PyObject **', base=kl[0])
+            fv = self.object_field(b, field, st, out)
+            if fv is not None:
+                return fv
             raise ResumeHere('the field %s of a run-time value' % field)
         if b.bt != 'ct':
             raise ResumeHere('a field of %s' % cparse.c_expr(base))
@@ -2102,6 +2169,29 @@ class Walk:
             return self.slot(st, out, frames, b.tp, '&%s->%s' % (paren(b.c), field), ftype)
         tp = b.tp if ftype in TABLE_TYPES else None
         return Val('ct', '%s->%s' % (paren(b.c), field), ftype, tp=tp)
+
+    def object_field(self, b, field, st, out):
+        """A field of a run-time object whose struct policy_table.TYPES
+        lists with a descriptor for it (D84): read with psyco_get_field,
+        again after every call if the field is mutable (the descriptor's
+        FMUT). The struct is the variable's own type (through a cast like
+        Py_SIZE's)."""
+        if b.var is None or not self.s.is_obj(b.ctype):
+            return None
+        v = b.var
+        if v.alias is not None and v.alias in st.vars:
+            v = st.vars[v.alias]
+        desc = field_descriptor(v.ctype, field)
+        if desc is None:
+            return None
+        ftype = self.s.field_type(v.ctype, field) or \
+            self.s.field_type('PyVarObject *', field)
+        if ftype not in INT_TYPES:
+            raise ResumeHere('the field %s, of type %s' % (field, ftype))
+        r = self.new_tmp('vinfo_t *')
+        out('%s = psyco_get_field(po, %s, %s);' % (r, v.cname, desc))
+        self.error_exit(st, out, '%s == NULL' % r)
+        return Val('rt', r, ftype, owned=True, conv={'checkable': False})
 
     def ev_unary(self, e, st, out, frames):
         op, x = e[1], e[2]
@@ -2525,6 +2615,9 @@ class Walk:
         if e[0] != 'id' or e[1] not in st.vars:
             return None
         v = st.vars[e[1]]
+        if v.alias is not None and v.alias in st.vars:
+            casts.append(v.ctype)
+            v = st.vars[v.alias]      # a local copy of a parameter is it
         if not v.isparam or v.bt != 'rt':
             return None
         for ctype in casts + [v.ctype]:
@@ -2737,6 +2830,8 @@ class Walk:
         if isinstance(p, tuple):
             name = p[1]
             kl = self.known_length(('id', name), st)
+            if kl is None and name in self.kl_rep:
+                kl = (name, self.kl_rep[name])     # loaded through a local copy
             if name not in st.loaded or kl is None:
                 raise Refuse('the items of %s are needed before their length' % name)
             j = self.new_tmp('int')
@@ -2789,6 +2884,76 @@ class Walk:
                 if v.bt == 'ct' and v.tp != w.tp and v.tp is not None:
                     v.tp, changed = None, True
         return new if changed else None
+
+    def const_return(self, st, out, name):
+        """Py_RETURN_TRUE, Py_RETURN_FALSE, Py_RETURN_NONE: the object,
+        a constant."""
+        if self.sm.kind != 'obj':
+            raise Refuse('%s from a non-object function' % name)
+        self.release_all(st, out)
+        out('return %s();' % CONST_RETURNS[name])
+        st.ended = True
+        self.returns.append('value')
+
+    def switch_stmt(self, s, st, out, frames):
+        """A switch on a compile-time value is a switch of the meta (D84):
+        each case's statements are translated on their own path, which
+        must end (return, or Py_UNREACHABLE's abort); a case running on
+        into the next, or a break out of the switch, is refused."""
+        _, c, body, span = s
+        v = self.ev(c, st, out, frames)
+        if v.bt == 'g':
+            v = Val('ct', '1' if v.const else '0', 'int')
+        if v.bt != 'ct':
+            raise ResumeHere('a switch on a run-time value %s' % cparse.c_expr(c))
+        stmts = block_of(body)
+        groups, cur = [], None
+        for i, x in enumerate(stmts):
+            if x[0] in ('case', 'default'):
+                if cur is None or cur[1]:
+                    cur = ([], [])
+                    groups.append(cur)
+                cur[0].append(x)
+            elif cur is None:
+                raise Refuse('a statement before the first case of a switch')
+            else:
+                cur[1].append(i)
+        out('switch (%s) {' % v.c)
+        self.switch_depth += 1
+        try:
+            for labels, idxs in groups:
+                for lab in labels:
+                    if lab[0] == 'default':
+                        out('default:')
+                    else:
+                        k = self.ev(lab[1], st, out, frames)
+                        if k.bt != 'ct':
+                            raise Refuse('a case label not known at compile time')
+                        out('case %s:' % k.c)
+                gst = st.copy()
+                sub = Out(out.depth + 1)
+                sub('{')
+                inner = Out(out.depth + 2)
+                for i in idxs:
+                    if gst.ended:
+                        break
+                    x = stmts[i]
+                    if x[0] == 'break':
+                        raise Refuse('a break out of a switch')
+                    self.statement(x, gst, inner, frames + [(stmts, i)])
+                    if not gst.ended:
+                        self.release_dead(gst, inner, self.tr.live.after[id(x)])
+                if not gst.ended:
+                    raise Refuse('a case of a switch runs on into the next')
+                sub.extend(inner)
+                sub('}')
+                out.extend(sub)
+        finally:
+            self.switch_depth -= 1
+        if not any(lab[0] == 'default' for labels, _ in groups for lab in labels):
+            raise Refuse('a switch without a default')
+        out('}')
+        st.ended = True
 
     def jump(self, k, st, out):
         if not self.loop_ctx:
@@ -3003,6 +3168,18 @@ def known_length_of(ctype):
     return None
 
 
+def field_descriptor(ctype, field):
+    """policy_table.TYPES' descriptor for a field of an object struct
+    pointer, or None."""
+    struct = ctype.replace('const ', '').rstrip(' *').replace('struct ', '').strip()
+    for key, t in policy_table.TYPES.items():
+        if key.split(':')[1] == struct:
+            d = t.get('descriptors', {}).get(field)
+            if d is not None:
+                return ni_short(d)
+    return None
+
+
 def ni_short(path_name):
     """'ni/Objects/x.h:Name' -> 'Name'."""
     return path_name.rpartition(':')[2]
@@ -3071,20 +3248,114 @@ class Unit:
 UNITS = {
     'abstract': Unit(CFILE, NI_DECLS, 'pabstract.c'),
     'tuple': Unit('Objects/tupleobject.c', None, 'ptupleobject.c'),
+    'list': Unit('Objects/listobject.c', None, 'plistobject.c'),
+    'dict': Unit('Objects/dictobject.c', None, 'pdictobject.c'),
+    'bytes': Unit('Objects/bytesobject.c', None, 'pbytesobject.c'),
 }
+
+
+def slot_specs(cfile):
+    """The TRANSLATED_SLOTS specs for one C file: an entry is one spec
+    ({'type': ..., 'slots': [...]}) or a list of them, one per type the
+    file defines."""
+    spec = policy_table.TRANSLATED_SLOTS.get(cfile)
+    if spec is None:
+        return []
+    return spec if isinstance(spec, list) else [spec]
+
+
+def slot_ref(tp, tfield, struct, slot):
+    """The C expression for a type's slot: a field of one of its tables
+    ('PyTuple_Type.tp_as_sequence->sq_contains'), or a function-pointer
+    field of the type itself ('PyTuple_Type.tp_richcompare': struct
+    None)."""
+    if struct is None:
+        return '%s.%s' % (tp, slot)
+    return '%s.%s->%s' % (tp, tfield, slot)
+
+
+def param_alias(var):
+    """The parameter a value read from var stands for: var itself if a
+    parameter, the one var copies, else None."""
+    if var is None:
+        return None
+    if var.isparam:
+        return var.name
+    return var.alias
+
+
+def slot_format(tr, fname):
+    """Ni's argument format for the slot a translated slot function fills
+    (policy_table.SLOT_ARGS), or None: vinfos only."""
+    where = tr.slot_roots.get(fname)
+    if where is None:
+        return None
+    spec = policy_table.SLOT_ARGS.get(where[2])
+    return spec and spec['format']
+
+
+def slot_binding(f, fmt):
+    """The parameters' binding times from Ni's call format: 'l' a C value
+    the meta is given (compile-time, objects included), 'v' a vinfo."""
+    if len(fmt) != len(f.params):
+        raise cparse.ParseError('%s takes %d parameters; Ni calls its slot with'
+                                ' "%s"' % (f.name, len(f.params), fmt))
+    return ['ct' if c == 'l' else 'rt' for c in fmt]
+
+
+def expanded_initializer(source, var_name):
+    """The entries of 'T var_name = { ... };' with the file's macros
+    expanded first, so a head macro holding its own comma
+    (PyVarObject_HEAD_INIT) gives its fields; casts removed, as
+    ctokens.initializer gives them."""
+    toks = source.toks
+    for i, t in enumerate(toks):
+        if t.text == var_name and toks[i + 1].text == '=' and toks[i + 2].text == '{':
+            end = ctokens.match_close(toks, i + 2)
+            body = cparse.expand(toks[i + 3:end], source.macros, set())
+            out = []
+            for e in ctokens.split_top(body, ','):
+                if e and e[0].text == '{':
+                    # a nested struct (the head): one entry per field of it
+                    # is not needed, it is the ob_base field
+                    e = e[:ctokens.match_close(e, 0) + 1]
+                while len(e) > 1 and e[0].text == '(':
+                    e = e[ctokens.match_close(e, 0) + 1:]
+                out.append(' '.join(x.text for x in e))
+            return out
+    raise cparse.ParseError('no initializer %s in %s' % (var_name, source.cfile))
+
+
+def type_field_slot(source, spec, slot, tfields, entries):
+    """A slot that is a function-pointer field of PyTypeObject itself
+    (tp_richcompare, tp_iter, tp_iternext, tp_descr_get), read from the
+    type's initialiser at that field's place: (function, (slot, None,
+    slot)); None when the slot is not such a field."""
+    if slot not in tfields or not source.is_fnptr(tfields[slot]):
+        return None
+    j = list(tfields).index(slot)
+    entries = expanded_initializer(source, spec['type'])
+    if j >= len(entries) or entries[j] not in source.funcs:
+        raise cparse.ParseError('%s.%s is not a function of %s'
+                                % (spec['type'], slot, source.cfile))
+    return entries[j], (slot, None, slot)
 
 
 def slot_functions(source, spec):
     """{function: (type field, table struct, slot)} for the slots spec
     names ({'type': 'PyTuple_Type', 'slots': [...]}): the file's table of
     that struct which the type's initialiser points to, read in the
-    struct's field order."""
+    struct's field order; for a slot that is a field of the type itself,
+    the initialiser's own entry (struct None)."""
     tfields = source.decls.structs['_typeobject']
     entries = ctokens.initializer(source.toks, spec['type'])
     toks = source.toks
     out = {}
     for slot in spec['slots']:
-        found = None
+        found = type_field_slot(source, spec, slot, tfields, entries)
+        if found is not None:
+            out[found[0]] = found[1]
+            continue
         for tfield, ftype in tfields.items():
             if ftype not in TABLE_TYPES:
                 continue
@@ -3117,9 +3388,11 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
     declared = set(ni_decls(ni_root, [unit.decls])) if unit.decls else set()
     policy = {k: e.get('policy', []) for k, e in policy_table.ENTRIES.items()}
     tr = Translator(source, ni, policy, effects)
-    spec = policy_table.TRANSLATED_SLOTS.get(unit.cfile)
-    tr.slot_roots = slot_functions(source, spec) if spec else {}
-    tr.slot_type = spec and spec['type']
+    tr.slot_roots, tr.slot_types = {}, {}
+    for spec in slot_specs(unit.cfile):
+        for fname, where in slot_functions(source, spec).items():
+            tr.slot_roots[fname] = where
+            tr.slot_types[fname] = spec['type']
     tr.copy_keys = {}
     # functions whose entry says Ni's meta of that name is not a translation
     for k, items in policy.items():
@@ -3187,10 +3460,10 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
         init = os.path.splitext(os.path.basename(unit.cfile))[0]
         body.append('/* the metas of the slots policy_table.TRANSLATED_SLOTS names */')
         body.append('static void gen_%s_init(void) {' % init)
-        for n, (tfield, struct, slot) in sorted(tr.slot_roots.items()):
+        for n, where in sorted(tr.slot_roots.items()):
             if n in tr.metas:
-                body.append('  Psyco_DefineMeta(%s.%s->%s, %s);'
-                            % (spec['type'], tfield, slot, tr.sums[n].meta))
+                body.append('  Psyco_DefineMeta(%s, %s);'
+                            % (slot_ref(tr.slot_types[n], *where), tr.sums[n].meta))
         body.append('}')
     report = []
     for n in order:
@@ -3221,6 +3494,21 @@ def target_defines(python):
 def build_tuple(target):
     """ptupleobject_gen.h: the tuple slots the translator generates."""
     return build(target, UNITS['tuple'])
+
+
+def build_list(target):
+    """plistobject_gen.h: the list slots the translator generates."""
+    return build(target, UNITS['list'])
+
+
+def build_dict(target):
+    """pdictobject_gen.h: the dict slots the translator generates."""
+    return build(target, UNITS['dict'])
+
+
+def build_bytes(target):
+    """pbytesobject_gen.h: the bytes slots the translator generates."""
+    return build(target, UNITS['bytes'])
 
 
 def build(target, unit=None):

@@ -87,10 +87,12 @@ fail:
   return NULL;
 }
 
+/* the bytes slots generated from bytesobject.c (sq_length, D84) */
+#include "pbytesobject_gen.h"
+
 INITIALIZATIONFN
 void psy_bytesobject_init(void) {
   bytes_subscript = PyBytes_Type.tp_as_mapping->mp_subscript;
-  Psyco_DefineMeta(PyBytes_Type.tp_as_sequence->sq_length,
-                   psyco_generic_immut_ob_size);
+  gen_bytesobject_init();
   Psyco_DefineMeta(bytes_subscript, pbytes_subscript);
 }

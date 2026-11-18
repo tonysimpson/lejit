@@ -32,6 +32,11 @@ Nodes are tuples whose first item is the kind:
     comma list read as ('comma', [exprs]); ('while', cond, body, span)
     ('do', body, cond, span) ('break', span) ('continue', span); and the
     expressions ('pre', op, e) and ('post', op, e) for ++ and --.
+  with switches=True as well (the general translator's reading, D84):
+    ('switch', cond, body, span), whose body holds ('case', e, span) and
+    ('default', span) labels among its statements; a 'do ... while (0)'
+    with no break of its own is the ('block', [body], span) it stands for
+    (a statement macro's body).
 """
 import os
 import re
@@ -53,10 +58,11 @@ class ParseError(Exception):
 
 
 class Parser:
-    def __init__(self, toks, types, loops=False):
+    def __init__(self, toks, types, loops=False, switches=False):
         self.toks = toks
         self.types = types          # identifiers that name types
         self.loops = loops          # read loops, break, continue, ++, --
+        self.switches = switches    # read switch, case, default, do-while(0)
         self.i = 0
 
     # ---- helpers ----
@@ -124,6 +130,8 @@ class Parser:
             if t == ';':
                 self.take(';')
                 return ('empty', (lo, self.i))
+            if self.switches and t in ('switch', 'case', 'default'):
+                return self.switch(lo, t)
             if self.loops and t in ('for', 'while', 'do', 'break', 'continue'):
                 return self.loop(lo, t)
             if t in ('while', 'for', 'do', 'switch', 'break', 'continue',
@@ -163,6 +171,8 @@ class Parser:
             c = self.expr()
             self.take(')')
             self.take(';')
+            if self.switches and c == ('num', '0') and not breaks_in(body):
+                return ('block', [body], (lo, self.i))
             return ('do', body, c, (lo, self.i))
         self.take('(')
         ilo = self.i
@@ -182,6 +192,21 @@ class Parser:
         self.take(')')
         body = self.statement()
         return ('for', init, c, step, body, (lo, self.i))
+
+    def switch(self, lo, t):
+        self.take(t)
+        if t == 'default':
+            self.take(':')
+            return ('default', (lo, self.i))
+        if t == 'case':
+            e = self.conditional()
+            self.take(':')
+            return ('case', e, (lo, self.i))
+        self.take('(')
+        c = self.expr()
+        self.take(')')
+        body = self.statement()
+        return ('switch', c, body, (lo, self.i))
 
     def comma_list(self, end):
         items = [self.assignment()]
@@ -386,9 +411,41 @@ class Parser:
         raise ParseError('line %d: unexpected %r' % (tok.line, tok.text))
 
 
-def parse_body(toks, types, loops=False):
+def _children(s):
+    for x in s[1:]:
+        if isinstance(x, tuple):
+            yield x
+        elif isinstance(x, list):
+            yield from (y for y in x if isinstance(y, tuple))
+
+
+def breaks_in(s):
+    """Does statement s hold a break or continue of its own (not one of a
+    loop or switch inside it; a continue inside a switch is its own)?"""
+    if not isinstance(s, tuple) or not s:
+        return False
+    if s[0] in ('break', 'continue'):
+        return True
+    if s[0] in ('for', 'while', 'do'):
+        return False
+    if s[0] == 'switch':
+        return continues_in(s[2])
+    return any(breaks_in(x) for x in _children(s))
+
+
+def continues_in(s):
+    if not isinstance(s, tuple) or not s:
+        return False
+    if s[0] == 'continue':
+        return True
+    if s[0] in ('for', 'while', 'do'):
+        return False
+    return any(continues_in(x) for x in _children(s))
+
+
+def parse_body(toks, types, loops=False, switches=False):
     """The statements of a function body (the tokens inside its braces)."""
-    return Parser(toks, types, loops).statements()
+    return Parser(toks, types, loops, switches).statements()
 
 
 def parse_expr(toks, types, loops=False):
@@ -602,7 +659,10 @@ class Decls:
                 head = toks[start:i]
                 words = [x.text for x in head]
                 tail_end = i
-                if 'struct' in words or 'union' in words:
+                # a function's head or an initialised variable's may name
+                # a struct too (dict_length's PyDictObject was a function's)
+                if ('struct' in words or 'union' in words) and \
+                        '(' not in words and '=' not in words:
                     semi = next(j for j in range(end, len(toks)) if toks[j].text == ';')
                     fields = self.fields(toks[i + 1:end])
                     tag = [x.text for x in head if x.kind == 'id'

@@ -70,15 +70,11 @@ bool PsycoDict_SetItemC(PsycoObject* po, vinfo_t* vdict,
 				  "vlv", vdict, (long) key, vvalue) != NULL;
 }
 
-static vinfo_t* psyco_dict_length(PsycoObject* po, vinfo_t* vi)
-{
-	return psyco_get_field(po, vi, DICT_ma_used);
-}
-
+/* the dict slots generated from dictobject.c (mp_length, D84) */
+#include "pdictobject_gen.h"
 
 INITIALIZATIONFN
 void psy_dictobject_init(void)
 {
-	PyMappingMethods *m = PyDict_Type.tp_as_mapping;
-	Psyco_DefineMeta(m->mp_length, psyco_dict_length);
+	gen_dictobject_init();
 }

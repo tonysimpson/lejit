@@ -406,12 +406,15 @@ static bool plist_ass_subscript(PsycoObject* po, vinfo_t* o, vinfo_t* key,
 }
 
 
+/* the list slots generated from listobject.c (sq_length, D84) */
+#include "plistobject_gen.h"
+
 INITIALIZATIONFN
 void psy_listobject_init(void)
 {
 	PyMappingMethods *mm;
 	PySequenceMethods *m = PyList_Type.tp_as_sequence;
-	Psyco_DefineMeta(m->sq_length, psyco_generic_mut_ob_size);
+	gen_listobject_init();
 	Psyco_DefineMeta(m->sq_item, plist_item);
 	Psyco_DefineMeta(m->sq_ass_item, plist_ass_item);
 	Psyco_DefineMeta(m->sq_concat, psyco_plist_concat);
