@@ -346,8 +346,10 @@ vinfo_t *
         /* compile the run time call */
         if (!(flags & CfNoBlock) && !psyco_cannot_block(c_function))
             po->blocking_call = 1;
-        if (!(flags & (CfPure | CfNoPython)))
+        if (!(flags & (CfPure | CfNoPython))) {
             po->pr.class_unchecked = 1; /* it may assign __class__ */
+            po->pr.python_call = 1;
+        }
         vresult = run_time_call(po, c_function, flags, count, argtags, args,
                                 totalstackspace);
         if (vresult == NULL && has_refs) {

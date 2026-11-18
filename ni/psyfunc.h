@@ -15,6 +15,10 @@ EXTERNFN vinfo_t *psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc,
 EXTERNFN vinfo_t *psyco_call_closure(PsycoObject *po, vinfo_t *vfunc,
                                      PyCodeObject *co, vinfo_t *arg_tuple);
 
+/* emits the test of whether a trace or profile function is set in this
+   thread; true on its rare path, -1 with an exception set in 'po' */
+EXTERNFN int psyco_tracing_on(PsycoObject *po);
+
 /* generator expressions fused with their consumer (pycheader.h GENEXPR_*) */
 EXTERNFN bool psyco_genexpr_fusable(vinfo_t *v);
 /* psyco_genexpr_fusable, and not while tracing (emits that test): 1 to

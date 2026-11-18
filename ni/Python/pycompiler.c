@@ -19,6 +19,8 @@
  *  - After the switch come the merge-point checks, then the handling of
  *    pseudo-exceptions (promotion, EInline, EReturn/EBreak/EContinue, Python
  *    exceptions) with ceval-style unwinding of the block stack.
+ *  - After a call that may have started tracing, a frame can leave compiled
+ *    code for ceval (resume_if_tracing), with its state at that instruction.
  * The block opcodes (SETUP_LOOP/EXCEPT/FINALLY) exist only up to 3.7.
  * Exceptions: catching one follows 3.7 (an EXCEPT_HANDLER block over six
  * stack items, cimpl_push_exc_info), and a finally block entered by an
@@ -1852,6 +1854,94 @@ static bool breaker_after_call(PsycoObject *po, int next_instr) {
   return psyco_check_eval_breaker(po);
 }
 
+/* the 3-tuple a finally block entered by EReturn, EBreak or EContinue has
+   on the stack where ceval has other items */
+static bool is_pseudo_exception_tuple(vinfo_t *v) {
+  vinfo_t *e;
+  if (v == NULL || !is_virtualtime(v->source) ||
+      Psyco_KnownType(v) != &PyTuple_Type ||
+      PsycoTuple_Load(v) != 3)
+    return false;
+  e = PsycoTuple_GET_ITEM(v, 0);
+  return e != NULL && is_virtualtime(e->source) &&
+         (VirtualTime_Get(e->source) == &EReturn ||
+          VirtualTime_Get(e->source) == &EBreak ||
+          VirtualTime_Get(e->source) == &EContinue);
+}
+
+/* After an instruction that made a call that may run Python code: if that
+   started tracing or profiling, the frame goes on interpreted from the
+   next instruction, as a frame ceval was running would get its events
+   from there (KNOWN_BUGS C29). The rare path, compiled when first taken,
+   copies the frame's state into a frame object for ceval
+   (frames.c:psyco_resume_run), then ends this frame with ceval's result:
+   ceval has run its handlers and recorded its traceback entry, so the
+   blocks are dropped and '*unwound' is set. Not inside a
+   fused generator expression, nor while a finally block entered by a
+   pseudo-exception holds its 3-tuple. 1 to go on, 0 with a
+   pseudo-exception set. */
+static int resume_if_tracing(PsycoObject *po, int next_instr, int *unwound) {
+  PyCodeObject *co = po->pr.co;
+  vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+  int nlocals = co->co_nlocals + PyTuple_GET_SIZE(co->co_cellvars) +
+                PyTuple_GET_SIZE(co->co_freevars);
+  int nstack = STACK_LEVEL();
+  int i, on;
+  vinfo_t *st, *result;
+
+  if (co->co_flags & CO_GENERATOR)
+    return 1;
+  for (i = 0; i < nstack; i++)
+    if (is_pseudo_exception_tuple(stack_a[i]))
+      return 1;
+  on = psyco_tracing_on(po);
+  if (on <= 0)
+    return on == 0;
+
+  st = psyco_generic_call(po, psyco_resume_begin,
+                          CfReturnTypePtr | CfPyErrIfNull, "lvvl", co,
+                          LOC_GLOBALS, LOC_BUILTINS, (long)(nlocals + nstack));
+  if (st == NULL)
+    return 0;
+  for (i = 0; i < nlocals + nstack; i++) {
+    vinfo_t *v = i < nlocals ? LOC_LOCALS_PLUS[i] : stack_a[i - nlocals];
+    vinfo_t *ok = v == NULL
+                      ? psyco_generic_call(po, psyco_resume_value,
+                                           CfNoReturnValue, "vll", st,
+                                           (long)i, 0L)
+                      : psyco_generic_call(po, psyco_resume_value,
+                                           CfNoReturnValue, "vlv", st,
+                                           (long)i, v);
+    if (ok == NULL) {
+      vinfo_decref(st, po);
+      return 0;
+    }
+  }
+  for (i = 0; i < po->pr.iblock; i++) {
+    PyTryBlock *b = &po->pr.blockstack[i];
+    if (psyco_generic_call(po, psyco_resume_block, CfNoReturnValue, "vlll",
+                           st, (long)b->b_type, (long)b->b_handler,
+                           (long)b->b_level) == NULL) {
+      vinfo_decref(st, po);
+      return 0;
+    }
+  }
+  result = psyco_generic_call(po, psyco_resume_run, CfCommonNewRefPyObject,
+                              "vll", st,
+                              (long)(next_instr - sizeof(_Py_CODEUNIT)),
+                              (long)nstack);
+  vinfo_decref(st, po);
+  if (result == NULL && !PycException_Is(po, &ERtPython))
+    return 0;
+  while (STACK_LEVEL() > 0)
+    POP_DECREF();
+  po->pr.iblock = 0;
+  *unwound = 1;
+  if (result != NULL)
+    PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), result);
+  return 0;
+}
+
 /* psyco_pycompiler_mainloop() compiles the function,
    writing function entry and exit points if needed, and destroys 'po' when
    it is done */
@@ -1863,6 +1953,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
   int oparg = 0;  /* Current opcode argument, if any */
   code_t *code1;
   int saved_rec_limit;
+  int unwound = 0; /* the frame went on interpreted (resume_if_tracing) */
+  int resumed = 0;
 #if NI_CODESTATS
   PsycoObject *cs_saved_owner = cs_owner;
   cs_owner = po;
@@ -1943,6 +2035,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           !psyco_check_eval_breaker(po))
         break;
       po->blocking_call = 0;
+      po->pr.python_call = 0;
     dispatch_opcode:
 
       /* Main switch on opcode */
@@ -2589,6 +2682,14 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
     fine:
       extra_assert(!PycException_Occurred(po));
+      if ((po->pr.python_call &&
+           (opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
+            opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD)) ||
+          po->pr.resume_pending) {
+        po->pr.resume_pending = 0;
+        if (!resume_if_tracing(po, next_instr, &unwound))
+          break;
+      }
       /* before the next merge point compares known types */
       Psyco_ForgetClasses(po);
       extra_assert(mp ==
@@ -2693,11 +2794,13 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
     /* At this point, we got a real pseudo-exception. */
 
     if (PycException_IsPython(po) && opcode != END_FINALLY &&
-        !(opcode == RAISE_VARARGS && oparg == 0)) {
+        !(opcode == RAISE_VARARGS && oparg == 0) && !unwound) {
       /* log traceback info for real Python exceptions, unless re-raised
          by END_FINALLY or a bare raise (cimpl_reraise) */
       PsycoTraceBack_Here(po, po->pr.next_instr);
     }
+    resumed = unwound;
+    unwound = 0;
 
     /* All exceptions raised inside an inlined frame are passed to the
        parent (neither exception handlers nor loops are allowed in
@@ -2712,6 +2815,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       po->pr.is_inlining = false;
       /* mark this point as an inline frame exit */
       psyco_inline_exit(po);
+      /* the inlined frame went on interpreted: so may the caller, after
+         the instruction that called it */
+      if (resumed)
+        po->pr.resume_pending = 1;
 
       if (PycException_Is(po, &EReturn)) {
         /* caught EReturn from the inlined frame */
@@ -2804,6 +2911,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         array_release(array);
         JUMPTO(handler);
         SAVE_NEXT_INSTR(next_instr);
+        /* a callee that raised may have started tracing */
+        po->pr.resume_pending = 1;
         break;
       }
       if (b->b_type == SETUP_FINALLY) {

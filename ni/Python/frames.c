@@ -7,6 +7,9 @@
  * frame getter behind PyEval_GetFrame, and C code that walks
  * tstate->frame itself (warnings) still skips compiled frames. Real
  * frames running compiled code are never updated (f_lasti/f_lineno).
+ * When tracing starts, a compiled frame goes on in ceval
+ * (psyco_resume_run); pvisitframes then hides its compiled record, since
+ * the real frame now stands for it.
  */
 #include "frames.h"
 #include "../Objects/pobject.h"
@@ -171,6 +174,24 @@ struct sfitmp_s {
   struct sfitmp_s *next;
 };
 
+/* The compiled frames now running interpreted (psyco_resume_run): each is
+   the first entry of the record in a stack slot, which pvisitframes skips,
+   since the real frame stands for it. Slots are stack addresses, so the
+   list can mix threads. */
+struct hidden_s {
+  stack_frame_info_t **slot;
+  struct hidden_s *next;
+};
+static struct hidden_s *hidden_frames = NULL;
+
+static bool is_hidden(stack_frame_info_t **slot) {
+  struct hidden_s *h;
+  for (h = hidden_frames; h != NULL; h = h->next)
+    if (h->slot == slot)
+      return true;
+  return false;
+}
+
 static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
                               void *data) {
   /* Whenever we run Psyco-produced machine code, we mark the current
@@ -236,6 +257,11 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
           tag = (long)(p->fi);
           fdata = *p->fi;
           flimit = finfo_last(fdata);
+          if (hidden_frames != NULL && is_hidden(p->fi)) {
+            if (fdata == flimit)
+              goto next_record;
+            fdata++, tag--;
+          }
           while (1) {
             g = fdata->globals;
             if (g == NULL)
@@ -252,6 +278,7 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
             fdata++, tag--;
           }
         }
+      next_record:
         revlist = p->next;
         PyMem_FREE(p);
       }
@@ -371,4 +398,177 @@ void psyco_frames_init(void) {
     PyErr_Print();
   Py_XDECREF(fn);
   Py_XDECREF(sysmod);
+}
+
+/***************************************************************/
+/* A compiled frame going on interpreted (pycompiler.c:resume_if_tracing):
+   its locals, value stack and blocks are copied into a frame object, the
+   real one NiCode_Run runs or a new one, and ceval's own loop resumes it
+   after f_lasti, as it resumes a generator. */
+
+struct resume_s {
+  PyFrameObject *f;
+  stack_frame_info_t **slot; /* the compiled frame's record, or NULL */
+  int nvalues, iblock;
+  PyTryBlock blocks[CO_MAXBLOCKS];
+  PyObject *values[1];
+};
+
+/* the slot of the record whose first entry is the innermost compiled
+   frame, NULL when that frame is the real one 'real' is set to */
+static stack_frame_info_t **innermost_slot(PyFrameObject **real) {
+  ni_frame_t *f = ni_frame_current(PyThreadState_GET());
+  FrameRuntime *fstart =
+      f == NULL ? NULL : psyco_frame_start_get(ni_frame_object(f));
+  stack_frame_info_t **f1, **last = NULL;
+  *real = NULL;
+  if (fstart == NULL)
+    return NULL;
+  *real = fstart->py_frame;
+  for (f1 = *(fstart->psy_frames_start); (((long)(*f1)) & 1) == 0;
+       f1 = psyco_next_stack_frame(f1)) {
+    last = f1;
+    if ((*f1)->link_stack_depth == 0)
+      break;
+  }
+  return last;
+}
+
+DEFINEFN
+struct resume_s *psyco_resume_begin(PyCodeObject *co, PyObject *globals,
+                                    PyObject *builtins, long nvalues) {
+  PyFrameObject *real;
+  struct resume_s *st =
+      PyMem_Malloc(sizeof(struct resume_s) + nvalues * sizeof(PyObject *));
+  if (st == NULL) {
+    PyErr_NoMemory();
+    return NULL;
+  }
+  st->slot = innermost_slot(&real);
+  if (st->slot == NULL && real != NULL && real->f_code == co) {
+    st->f = real;
+    Py_INCREF(real);
+  } else {
+    st->f = PyFrame_New(PyThreadState_GET(), co, globals, NULL);
+    if (st->f == NULL) {
+      PyMem_Free(st);
+      return NULL;
+    }
+    Py_INCREF(builtins);
+    Py_XSETREF(st->f->f_builtins, builtins);
+  }
+  st->nvalues = 0;
+  st->iblock = 0;
+  return st;
+}
+
+DEFINEFN
+void psyco_resume_value(struct resume_s *st, long i, PyObject *v) {
+  Py_XINCREF(v);
+  st->values[i] = v;
+  st->nvalues = i + 1;
+}
+
+DEFINEFN
+void psyco_resume_block(struct resume_s *st, long type, long handler,
+                        long level) {
+  PyTryBlock *b = &st->blocks[st->iblock++];
+  b->b_type = type;
+  b->b_handler = handler;
+  b->b_level = level;
+}
+
+/* Stand-ins for the trace and profile functions while the resumed frame
+   starts: ceval would give it a 'call' event, which CPython never gives a
+   frame already running when tracing starts. Each puts its own function
+   back on its first event, before any of the frame's code runs. */
+typedef struct {
+  Py_tracefunc func;
+  PyObject *obj;
+} hook_t;
+
+static int skip_call_trace(PyObject *obj, PyFrameObject *frame, int what,
+                           PyObject *arg) {
+  hook_t *h = (hook_t *)obj;
+  PyThreadState *ts = PyThreadState_GET();
+  ts->c_tracefunc = h->func;
+  ts->c_traceobj = h->obj;
+  if (what == PyTrace_CALL)
+    return 0;
+  return h->func(h->obj, frame, what, arg);
+}
+
+static int skip_call_profile(PyObject *obj, PyFrameObject *frame, int what,
+                             PyObject *arg) {
+  hook_t *h = (hook_t *)obj;
+  PyThreadState *ts = PyThreadState_GET();
+  ts->c_profilefunc = h->func;
+  ts->c_profileobj = h->obj;
+  if (what == PyTrace_CALL)
+    return 0;
+  return h->func(h->obj, frame, what, arg);
+}
+
+DEFINEFN
+PyObject *psyco_resume_run(struct resume_s *st, long lasti, long nstack) {
+  PyFrameObject *f = st->f;
+  PyThreadState *ts = PyThreadState_GET();
+  int nlocals = st->nvalues - nstack;
+  int i;
+  PyObject *result;
+  hook_t trace = {ts->c_tracefunc, ts->c_traceobj};
+  hook_t profile = {ts->c_profilefunc, ts->c_profileobj};
+  struct hidden_s hidden = {st->slot, hidden_frames};
+  extra_assert(nlocals == f->f_code->co_nlocals +
+                              PyTuple_GET_SIZE(f->f_code->co_cellvars) +
+                              PyTuple_GET_SIZE(f->f_code->co_freevars));
+  extra_assert(nstack <= f->f_code->co_stacksize);
+
+  /* the old locals go only once all the new ones are in: one may hold
+     the last reference to another's value */
+  for (i = 0; i < nlocals; i++) {
+    PyObject *old = f->f_localsplus[i];
+    f->f_localsplus[i] = st->values[i];
+    st->values[i] = old;
+  }
+  for (i = 0; i < nstack; i++)
+    f->f_valuestack[i] = st->values[nlocals + i];
+  f->f_stacktop = f->f_valuestack + nstack;
+  f->f_lasti = lasti;
+  f->f_iblock = st->iblock;
+  memcpy(f->f_blockstack, st->blocks, st->iblock * sizeof(PyTryBlock));
+  for (i = 0; i < nlocals; i++)
+    Py_XDECREF(st->values[i]);
+
+  if (st->slot != NULL)
+    hidden_frames = &hidden;
+  if (!ts->tracing) {
+    if (trace.func != NULL) {
+      ts->c_tracefunc = skip_call_trace;
+      ts->c_traceobj = (PyObject *)&trace;
+    }
+    if (profile.func != NULL) {
+      ts->c_profilefunc = skip_call_profile;
+      ts->c_profileobj = (PyObject *)&profile;
+    }
+  }
+  result = _PyEval_EvalFrameDefault(f, 0);
+  /* not put back if the frame never started (RecursionError) */
+  if (ts->c_tracefunc == skip_call_trace) {
+    ts->c_tracefunc = trace.func;
+    ts->c_traceobj = trace.obj;
+  }
+  if (ts->c_profilefunc == skip_call_profile) {
+    ts->c_profilefunc = profile.func;
+    ts->c_profileobj = profile.obj;
+  }
+  if (st->slot != NULL) {
+    struct hidden_s **h = &hidden_frames;
+    while (*h != &hidden)
+      h = &(*h)->next;
+    *h = hidden.next;
+  }
+  Py_DECREF(f);
+  PyMem_Free(st);
+  return result;
 }

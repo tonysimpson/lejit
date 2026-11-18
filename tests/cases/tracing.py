@@ -1,9 +1,8 @@
 # A trace or profile function must see every frame:
 # while one is set, eval_hook.c runs code interpreted, even code already
 # compiled, and a compiled call or inlined frame tests it at entry and makes
-# the real call instead (psyfunc.c:tracing_on). A frame already running
-# compiled when tracing starts gets no events (nor in CPython for settrace);
-# the filters below keep the case function's own frame out.
+# the real call instead (psyfunc.c:tracing_on). The filters below keep the
+# case function's own frame out (tracing_midframe.py tests that frame).
 import sys
 
 

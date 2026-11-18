@@ -20,6 +20,21 @@ EXTERNFN PyFrameObject *psyco_emulate_frame(PyObject *o);
 EXTERNFN PyFrameObject *psyco_running_real_frame(PyCodeObject *co);
 
 EXTERNFN PyObject *psyco_get_globals(void);
+
+/* A compiled frame going on interpreted: psyco_resume_begin, then each of
+   its f_localsplus and value stack items in order (psyco_resume_value) and
+   its blocks (psyco_resume_block); psyco_resume_run runs it in ceval from
+   the instruction after 'lasti' and returns its result. Called from
+   compiled code (pycompiler.c:resume_if_tracing). */
+struct resume_s;
+EXTERNFN struct resume_s *psyco_resume_begin(PyCodeObject *co,
+                                             PyObject *globals,
+                                             PyObject *builtins, long nvalues);
+EXTERNFN void psyco_resume_value(struct resume_s *st, long i, PyObject *v);
+EXTERNFN void psyco_resume_block(struct resume_s *st, long type,
+                                 long handler, long level);
+EXTERNFN PyObject *psyco_resume_run(struct resume_s *st, long lasti,
+                                    long nstack);
 /* PyObject* psyco_get_locals(void); this one implemented in psyco.c */
 
 /* to keep a trace of the Psyco stack frames */

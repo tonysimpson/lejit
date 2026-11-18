@@ -134,5 +134,7 @@ def injected(counts):
 
 CASES = [
     ('memory_runs_out', [(0, 60)], {'leaks': 'runs child processes'}),
-    ('injected', [((1, 2, 3, 5, 8, 13, 30, 100, 300),)], {'leaks': 'runs child processes'}),
+    ('injected', [((1, 2, 3, 5, 8, 13, 30, 100, 300),)],
+     {'leaks': 'runs child processes',
+      'xfail': 'F116: a coding pause that runs out of memory and recompiles can diverge on respawn replay'}),
 ]

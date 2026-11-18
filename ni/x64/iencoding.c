@@ -463,6 +463,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     condition_code_t cc;
 
     po->pr.class_unchecked = 1; /* the callee may assign __class__ */
+    po->pr.python_call = 1;
     BEGIN_CODE
     /* cannot use NEED_CC(): it might clobber one of the registers
        mentioned in argsources */

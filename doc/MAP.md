@@ -109,13 +109,13 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/pstructmember.h` | glue | Declaration of PsycoMember_GetOne. | Include/structmember.h | `b36a1ac` |
 | `ni/Objects/ptupleobject.c` | core + translated | PsycoTuple_Load; includes the generated virtual tuple and slots. | Objects/tupleobject.c | `935df0b` |
 | `ni/Objects/ptupleobject.h` | core | API for virtual and compile-time tuples (descriptors generated, D80). | Include/tupleobject.h | `603363c` |
-| `ni/Python/frames.c` | core | Maps machine-code stack frames to Python frames for `sys._getframe` and tracebacks. | none (but `ni_getframe`: Python/sysmodule.c) | `f254b5d` |
+| `ni/Python/frames.c` | core | Maps machine-code stack frames to Python frames for `sys._getframe` and tracebacks; resumes a compiled frame in ceval when tracing starts. | none (but `ni_getframe`: Python/sysmodule.c) | `f254b5d` |
 | `ni/Python/frames.h` | core | Stack frame info (stack_frame_info_t) and frame registration API. | none | `6f8009a` |
 | `ni/Python/pbltinmodule.c` | translated + core | Registers the generated builtins; hand metas for min, max, sum, round etc. and type_call (`range`, `super`). | Python/bltinmodule.c, Objects/abstract.c, Objects/typeobject.c | `cddaf8d` |
 | `ni/Python/pbltinmodule.h` | glue | Declares `PsycoObject_IsInstance`. | Python/bltinmodule.c | `58e52de` |
 | `ni/Python/pycheader.h` | core | pyc_data_t (language-specific compiler state) and the LOC_* slots in po->vlocals. | Include/frameobject.h | `56e5faf` |
 | `ni/Python/pycinternal.h` | glue | Includes CPython internal headers and opcode names. | Include/opcode.h | `e1fd808` |
-| `ni/Python/pycompiler.c` | translated + core | The bytecode compiler: ceval's main loop at compile time, block unwinding, exceptions, calls. | Python/ceval.c | `ab0f53b` |
+| `ni/Python/pycompiler.c` | translated + core | The bytecode compiler: ceval's main loop at compile time, block unwinding, exceptions, calls, the way out to ceval when tracing starts. | Python/ceval.c | `ab0f53b` |
 | `pycompiler_gen.h` | translated (generated) | 75 opcode cases included in `pycompiler.c`'s switch, by `tools/metac/gen_ceval.py`. | Python/ceval.c | `ab0f53b` |
 | `pycompiler_copies_gen.h` | translated (generated) | Copies of the ceval helpers and arms the generated cases call (`gen_ceval:build_copies`). | Python/ceval.c | `e17f6fc` |
 | `mechanism_<name>_gen.h`: entry, tracing, frames, eval_breaker_runtime, eval_breaker, tstate_runtime, tstate, recursion, exceptions, store_gc | glue (generated) | One per mechanism, by `mechanisms.py`: detector answers and the snippet `VARIANTS` chose. | the definitions the detectors read | `f254b5d` |

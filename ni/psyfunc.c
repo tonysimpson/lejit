@@ -437,10 +437,10 @@ static void cannot_block_init(void) {
    interpreted while the thread is tracing, so each one tests that first
    (ni_tracing_test, from the tracing mechanism's snippet). When set, the
    caller makes the real call instead (rare path: a runtime_condition_f
-   respawn point, compiled when first taken). Only the callee's entry is
-   tested: a frame already running compiled when tracing starts has f_trace None, so CPython gives it no
-   trace events either; its profile events are missed (KNOWN_BUGS C29).
-   use_tracing is per thread and set by every way in, C ones too
+   respawn point, compiled when first taken). A frame already running
+   compiled code when tracing starts goes on interpreted after its next
+   call (pycompiler.c:resume_if_tracing). use_tracing is per thread and
+   set by every way in, C ones too
    (PyEval_SetTrace and PyEval_SetProfile, as cProfile uses). */
 EXTERNVAR int ni_trace_fallback; /* eval_hook.c */
 static bool tracing_on(PsycoObject *po, vinfo_t *vts) {
@@ -450,8 +450,8 @@ static bool tracing_on(PsycoObject *po, vinfo_t *vts) {
   return runtime_condition_f(po, ni_tracing_test(po, vts));
 }
 
-/* the same test on its own; -1 with an exception set in 'po' */
-static int psyco_tracing_on(PsycoObject *po) {
+DEFINEFN
+int psyco_tracing_on(PsycoObject *po) {
   bool on;
   vinfo_t *vts;
   if (!ni_trace_fallback)

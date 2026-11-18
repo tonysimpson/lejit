@@ -86,6 +86,11 @@ typedef struct {
   char class_unchecked; /* a call that may assign __class__ was emitted
                            since the known types were last forgotten
                            (pobject.c:Psyco_ForgetClasses) */
+  char python_call;     /* a call that may run Python code, so may have
+                           started tracing, was emitted in this instruction
+                           (pycompiler.c:resume_if_tracing) */
+  char resume_pending;  /* test for tracing at the next instruction: after
+                           an inlined frame's return, or at a handler */
   PyObject* changing_globals;  /* names of globals detected to change: saved
                                   in snapshots, so a respawn replays the same
                                   LOAD_GLOBAL decisions; shared, so never
