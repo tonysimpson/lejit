@@ -3,3 +3,9 @@
 # Take each from a source other than the download itself: 3.7.17's is
 # pyenv's python-build definition, and matched the download.
 Python-3.7.17.tgz  fd50161bc2a04f4c22a0971ff0f3856d98b4bf294f89740a9f06b520aae63b49
+# Fetched for the mechanism detectors (mechanisms.py); each from pyenv's
+# python-build definition, and matched the download.
+Python-3.8.20.tgz  9f2d5962c2583e67ef75924cd56d0c1af78bf45ec57035cf8a2cc09f74f4bf78
+Python-3.11.11.tgz  883bddee3c92fcb91cf9c09c5343196953cbb9ced826213545849693970868ed
+Python-3.12.9.tgz  45313e4c5f0e8acdec9580161d565cf5fea578e3eabf25df7cc6355bf4afa1ee
+Python-3.13.2.tgz  b8d79530e3b7c96a5cb2d40d431ddb512af4a563e863728d8713039aa50203f9

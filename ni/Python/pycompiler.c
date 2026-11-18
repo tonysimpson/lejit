@@ -36,6 +36,8 @@
 #include "../processor.h"
 #include "../psyfunc.h"
 #include "frames.h"
+/* ni_frame_current, ni_frame_set_current (D75) */
+#include "mechanism_frames_gen.h"
 #include "../pycodegen.h"
 
 #include "../Objects/pabstract.h"
@@ -693,18 +695,18 @@ static PyFrameObject *cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code,
      objects (because of free lists etc); cimpl_rt_traceback links it to
      its caller's (KNOWN_BUGS C11) */
   PyFrameObject *result = psyco_running_real_frame(code);
-  PyFrameObject *back = tstate->frame;
+  ni_frame_t *back = ni_frame_current(tstate);
   if (result != NULL) {
     Py_INCREF(result);
     result->f_lasti = lasti;
     result->f_lineno = lineno;
     return result;
   }
-  tstate->frame = NULL; /* frame objects are not created in stack order
-                           with Psyco, so it's probably better not to
-                           create plain wrong chained lists */
+  /* frame objects are not created in stack order with Psyco, so it's
+     probably better not to create plain wrong chained lists */
+  ni_frame_set_current(tstate, NULL);
   result = PyFrame_New(tstate, code, globals, NULL);
-  tstate->frame = back;
+  ni_frame_set_current(tstate, back);
   if (result != NULL) {
     result->f_lasti = lasti;
     result->f_lineno = lineno;

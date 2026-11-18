@@ -27,6 +27,8 @@ sys.path.insert(0, HERE)
 GENERATORS = [('gen_long', 'plongobject_gen.h'),
               ('gen_float', 'pfloatobject_gen.h'),
               ('gen_ceval', 'pycompiler_gen.h')]
+# and mechanisms.py writes mechanisms.HEADERS: the snippet for each of Ni's
+# own mechanisms that the source's answers choose (D75)
 
 
 def target_info(python):
@@ -45,7 +47,9 @@ def main(argv):
     err = generate(argv)
     if err:
         out = argv[argv.index('--out') + 1] if '--out' in argv else None
-        for _, filename in GENERATORS if out else ():
+        import mechanisms
+        for filename in [f for _, f in GENERATORS] + mechanisms.HEADERS \
+                if out else ():
             path = os.path.join(out, filename)
             if os.path.exists(path):
                 os.remove(path)
@@ -95,6 +99,14 @@ def generate(argv):
               % (filename, done, len(report) - done, version))
         if args.verbose:
             print('\n'.join('  ' + line for line in report))
+    import mechanisms
+    try:
+        chosen = mechanisms.build(target)
+    except cslots.GenError as e:
+        return 'generate.py: mechanisms: %s' % e
+    for filename, text, report in chosen:
+        outputs.append((filename, text))
+        print('%-20s %s' % (filename, report[0]))
     os.makedirs(args.out, exist_ok=True)
     for filename, text in outputs:
         path = os.path.join(args.out, filename)

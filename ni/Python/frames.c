@@ -13,6 +13,8 @@
 #include "../codemanager.h"
 #include "../vcompiler.h"
 #include "pyver.h"
+/* ni_frame_t and its accessors (D75) */
+#include "mechanism_frames_gen.h"
 
 /***************************************************************/
 #define FRAME_STACK_ALLOC_BY 83 /* about 1KB */
@@ -132,19 +134,19 @@ DEFINEFN int psyco_frame_start_unregister(PyFrameObject *f) {
 
 PSY_INLINE PyFrameObject *psyco_build_pyframe(PyObject *co, PyObject *globals,
                                               PyThreadState *tstate) {
-  PyFrameObject *back;
+  ni_frame_t *back;
   PyFrameObject *result;
 
   /* frame objects are not created in stack order
      with Psyco, so it's probably better not to
      create plain wrong chained lists */
-  back = tstate->frame;
-  tstate->frame = NULL;
+  back = ni_frame_current(tstate);
+  ni_frame_set_current(tstate, NULL);
   result = PyFrame_New(tstate, (PyCodeObject *)co, globals, NULL);
   if (result == NULL)
     OUT_OF_MEMORY();
   result->f_lasti = -1; /* can be used to identify emulated frames */
-  tstate->frame = back;
+  ni_frame_set_current(tstate, back);
   return result;
 }
 
@@ -191,12 +193,12 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
 
   PyObject *result = NULL;
   FrameRuntime *fstart;
-  PyFrameObject *f = PyThreadState_Get()->frame;
+  ni_frame_t *f = ni_frame_current(PyThreadState_Get());
   RECLIMIT_SAFE_ENTER();
   while (f != NULL) {
     /* is this Python frame the starting point of a chained
        list of Psyco frames ? */
-    fstart = psyco_frame_start_get(f);
+    fstart = psyco_frame_start_get(ni_frame_object(f));
     if (fstart != NULL) {
       /* Yes. Get the list start. */
       struct sfitmp_s *revlist;
@@ -242,7 +244,7 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
           while (1) {
             g = fdata->globals;
             if (g == NULL)
-              g = f->f_globals;
+              g = ni_frame_globals(f);
             o = Py_BuildValue("OOl", fdata->co, g, tag);
             if (o == NULL)
               OUT_OF_MEMORY();
@@ -265,18 +267,19 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
          which is shadowed by a Psyco frame, i.e. a
          proxy function. Represented as
          (co, globals, f) */
-      o = Py_BuildValue("OOO", fstart->psy_code, fstart->psy_globals, f);
+      o = Py_BuildValue("OOO", fstart->psy_code, fstart->psy_globals,
+                        ni_frame_object(f));
       if (o == NULL)
         OUT_OF_MEMORY();
       result = callback(o, data);
       Py_DECREF(o);
     } else {
       /* a real unshadowed Python frame */
-      result = callback((PyObject *)f, data);
+      result = callback((PyObject *)ni_frame_object(f), data);
     }
     if (result != NULL)
       break;
-    f = f->f_back;
+    f = ni_frame_back(f);
   }
   RECLIMIT_SAFE_LEAVE();
   return result;
@@ -329,16 +332,16 @@ static PyFrameObject *linked_frame(int depth) {
 
 DEFINEFN
 PyFrameObject *psyco_running_real_frame(PyCodeObject *co) {
-  PyFrameObject *f = PyThreadState_GET()->frame;
+  ni_frame_t *f = ni_frame_current(PyThreadState_GET());
   FrameRuntime *fstart;
-  if (f == NULL || f->f_code != co)
+  if (f == NULL || ni_frame_code(f) != co)
     return NULL;
-  fstart = psyco_frame_start_get(f);
+  fstart = psyco_frame_start_get(ni_frame_object(f));
   /* the top compiled frame's finfo slot is odd (-1) except while it is in a
      compiled sub-call (ABOUT_TO_CALL_SUBFUNCTION) */
   if (fstart == NULL || (((long)**fstart->psy_frames_start) & 1) == 0)
     return NULL;
-  return f;
+  return ni_frame_object(f);
 }
 
 static PyObject *ni_getframe(PyObject *self, PyObject *args) {

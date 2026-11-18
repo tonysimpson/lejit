@@ -26,6 +26,8 @@
 #include "mergepoints.h"
 #include "pycodegen.h"
 #include "vcompiler.h"
+/* ni_tracing_test (D75) */
+#include "mechanism_tracing_gen.h"
 
 
 /***************************************************************/
@@ -539,10 +541,10 @@ static void cannot_block_init(void) {
 
 /* Whether a trace or profile function is set in this thread (KNOWN_BUGS
    C23, D46): a compiled call or inlined frame skips the eval hook, which
-   runs frames interpreted while tstate->use_tracing is set, so each one
-   tests that int first. When set, the caller makes the real call instead
-   (rare path: a runtime_condition_f respawn point, compiled when first
-   taken). Only the callee's entry is tested: a frame already running
+   runs frames interpreted while the thread is tracing, so each one tests
+   that first (ni_tracing_test, from the tracing mechanism's snippet). When
+   set, the caller makes the real call instead (rare path: a
+   runtime_condition_f respawn point, compiled when first taken). Only the callee's entry is tested: a frame already running
    compiled when tracing starts has f_trace None, so CPython gives it no
    trace events either; its profile events are missed (KNOWN_BUGS C29).
    use_tracing is per thread and set by every way in, C ones too
@@ -552,8 +554,7 @@ static bool tracing_on(PsycoObject *po, vinfo_t *vts) {
   /* off only for tools/interpreted.py, before anything is compiled */
   if (!ni_trace_fallback)
     return false;
-  return runtime_condition_f(
-      po, psyco_int32_nonzero_in(po, vts, offsetof(PyThreadState, use_tracing)));
+  return runtime_condition_f(po, ni_tracing_test(po, vts));
 }
 
 /* the same test on its own; -1 with an exception set in 'po' */
