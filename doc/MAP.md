@@ -190,13 +190,13 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/load_micro.py` | tooling | Loads on a changing class or one with a metaclass (`FINDINGS.md "Attribute stores"`). | `6cd0c26` |
 | `tools/store_cache_sim.py` | tooling | Simulates FINDINGS.md "Attribute stores" option 4's per-(class, name) store cache over benchmark stores. | `074d210` |
 | `tools/pyperf37.py` | tooling | Runs the vendored pyperformance benchmarks under 3.7 with and without Ni. | `88b1fa1` |
-| `tools/benchmarks.sh` | tooling | Release build plus the benchmark tools, saved in `build/bench/`; `adversarial` only when named. | `481b099` |
+| `tools/benchmarks.sh` | tooling | Release build plus the benchmark tools, saved in `build/bench/`; `adversarial` only when named. | `c585f0d` |
 | `tools/codesize.py` | tooling | Code emitted by kind, opcode, function, instruction; promotion sites (`FINDINGS.md "Code size"`). | `8081f96` |
 | `tools/samecode.py` | tooling | Whether two builds emit the same machine code, per instruction (D70; `FINDINGS.md "Code size"`). | `8b8ffea` |
 | `tools/promostats.py` | tooling | The promotion-site reports for `codesize.py` (`-p`, `-D`), from `ni._promostats()`. | `8081f96` |
 | `tools/compilebench.py` | tooling | Compile cost against pay-off per benchmark (`FINDINGS.md "Compile cost"`). | `f598d22` |
-| `tools/adversarial/run.py` | tooling | Runs the adversarial benchmarks with and without Ni in fresh processes: cold, first and warm time, peak RSS and its growth, results checked, worst ratio first. | `481b099` |
-| `tools/adversarial/*.py` | tooling | One benchmark per file aimed at a Ni weakness (its docstring names it), `main(n)` and `N`; written blind, not to be tuned on Ni's results. | `481b099` |
+| `tools/adversarial/run.py` | tooling | Runs the adversarial benchmarks with and without Ni in fresh processes: cold, first and warm time, peak RSS and its growth, results checked, worst ratio first. | `c585f0d` |
+| `tools/adversarial/*.py` | tooling | One benchmark per file aimed at a Ni weakness (its docstring names it), `main(n)` and `N`; written blind, not to be tuned on Ni's results. | `c585f0d` |
 | `tools/closurecalls.py` | tooling | Counts calls straight to closures per benchmark iteration (`FINDINGS.md "Calls to closures"`). | `b11de13` |
 | `tools/closure_micro.py` | tooling | One loop calling a function or each kind of closure, for `perf stat` (`FINDINGS.md "Calls to closures"`). | `b11de13` |
 | `tools/interpreted.py` | tooling | Per benchmark, the most-called functions still interpreted under Ni, with the reason. | `5f1dbf6` |
