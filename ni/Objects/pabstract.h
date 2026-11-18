@@ -12,10 +12,6 @@
 
 EXTERNFN vinfo_t* PsycoObject_Call(PsycoObject* po, vinfo_t* callable_object,
                                    vinfo_t* args, vinfo_t* kw);
-/* 'args' and 'kw' may be NULL; this version performs type checks */
-EXTERNFN vinfo_t* PsycoEval_CallObjectWithKeywords(PsycoObject* po,
-                                                   vinfo_t* callable_object,
-						   vinfo_t* args, vinfo_t* kw);
 
 EXTERNFN vinfo_t* PsycoObject_Size(PsycoObject* po, vinfo_t* vi);
 EXTERNFN vinfo_t* PsycoMapping_Size(PsycoObject* po, vinfo_t* vi);

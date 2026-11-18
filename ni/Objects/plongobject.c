@@ -87,17 +87,6 @@ DEFINEFN vinfo_t *PsycoLong_Sign(PsycoObject *po, vinfo_t *v) {
   return psyco_get_const(po, v, LONG_ob_size);
 }
 
-DEFINEFN
-vinfo_t *PsycoLong_AsLong(PsycoObject *po, vinfo_t *v) {
-  if (PsycoLong_IsVirtual(v)) {
-    vinfo_t *w = v->array->items[iLONG_VALUE];
-    vinfo_incref(w);
-    return w;
-  }
-  return psyco_generic_call(po, PyLong_AsLong,
-                            CfReturnTypeLong | CfPyErrCheckMinus1, "v", v);
-}
-
 /* PyNumber_AsSsize_t: an int whose type is known (or a subclass) inline
    when virtual or one digit, which always fits, and a constant at compile
    time; anything else, and a constant that doesn't fit, is the call */

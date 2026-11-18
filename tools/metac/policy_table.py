@@ -1220,7 +1220,6 @@ ENTRIES = {
             ('likely', 'true', 'Py_ABS(Py_SIZE(x)) <= 1'),
             ('likely', 'false', 'Py_SIZE(x) == 0'),
         ]},
-    'Objects/longobject.c:PyLong_AsLong': {'shape': '519d736695d6', 'ni': ['ni/Objects/plongobject.c:PsycoLong_AsLong']},
     'Objects/abstract.c:PyNumber_AsSsize_t': {
         'shape': '07bc4ee19b50',
         'ni': ['ni/Objects/plongobject.c:PsycoNumber_AsSsize_t'],

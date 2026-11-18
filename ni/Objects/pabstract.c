@@ -50,51 +50,6 @@ vinfo_t *PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object,
 }
 
 DEFINEFN
-vinfo_t *PsycoEval_CallObjectWithKeywords(PsycoObject *po,
-                                          vinfo_t *callable_object,
-                                          vinfo_t *args, vinfo_t *kw) {
-  vinfo_t *result;
-
-  if (args == NULL)
-    args = PsycoTuple_New(0, NULL);
-  else {
-    switch (Psyco_VerifyType(po, args, &PyTuple_Type)) {
-    case true: /* args is a tuple */
-      vinfo_incref(args);
-      break;
-    case false: /* args is not a tuple */
-      goto use_proxy;
-    default: /* error or promotion */
-      return NULL;
-    }
-  }
-  if (kw == NULL)
-    kw = psyco_vi_Zero();
-  else {
-    switch (Psyco_VerifyType(po, kw, &PyDict_Type)) {
-    case true: /* kw is a dict */
-      vinfo_incref(kw);
-      break;
-    case false: /* kw is not a dict */
-      vinfo_decref(args, po);
-      goto use_proxy;
-    default: /* error or promotion */
-      return NULL;
-    }
-  }
-
-  result = PsycoObject_Call(po, callable_object, args, kw);
-  vinfo_decref(kw, po);
-  vinfo_decref(args, po);
-  return result;
-
-use_proxy:
-  return psyco_generic_call(po, PyEval_CallObjectWithKeywords,
-                            CfCommonNewRefPyObject, "vvv", callable_object,
-                            args, kw);
-}
-
-DEFINEFN
 vinfo_t *psyco_generic_immut_ob_size(PsycoObject *po, vinfo_t *vi) {
   return psyco_get_field(po, vi, FIX_size);
 }

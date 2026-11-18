@@ -39,20 +39,6 @@ vinfo_t* _PsycoDict_NewPresized(PsycoObject* po, long minused)
 #endif
 
 DEFINEFN
-vinfo_t* PsycoDict_Copy(PsycoObject* po, vinfo_t* orig)
-{
-	vinfo_t* v = psyco_generic_call(po, PyDict_Copy,
-					CfCommonNewRefPyObject,
-					"v", orig);
-	if (v == NULL)
-		return NULL;
-
-	/* the result is a dict */
-	Psyco_AssertType(po, v, &PyDict_Type);
-	return v;
-}
-
-DEFINEFN
 bool PsycoDict_SetItem(PsycoObject* po, vinfo_t* vdict,
 		       vinfo_t* key, vinfo_t* vvalue)
 {
