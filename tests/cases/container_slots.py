@@ -68,6 +68,30 @@ def tup_notimpl(a):
     return (a, 1) == [a, 1], (a, 1) != None
 
 
+class NeverEq:
+    def __eq__(self, o):
+        return False
+
+    def __ne__(self, o):
+        return True
+
+    __hash__ = object.__hash__
+
+
+NAN = float('nan')
+NEVER = NeverEq()
+
+
+def identity(x):
+    # CPython's PyObject_RichCompareBool: the same object is equal (F109)
+    return [(x,) == (x,), (x, 1) != (x, 1), x in (x,), x in (1, x),
+            x not in (x,), (x,) == (float('nan'),)]
+
+
+def identity_runtime(x, t):
+    return [x in t, (x,) == t, t == (x,)]
+
+
 def lens(l, d, b):
     return len(l), len(d), len(b)
 
@@ -114,6 +138,9 @@ CASES = [
     ('tup_uncomparable', [(1,), ('x',)], {}),
     ('tup_subclass', [(1,), ('a',)], {}),
     ('tup_notimpl', [(1,), (None,)], {}),
+    ('identity', "[(NAN,), (NEVER,), (1,), ('a',)]", {}),
+    ('identity_runtime', "[(NAN, (NAN,)), (NEVER, (NEVER,)), (NAN, (float('nan'),)),"
+                         " (NEVER, (NeverEq(),)), (1, (1,))]", {}),
     ('lens', [([], {}, b''), ([1, 2], {1: 2}, b'abc'),
               (list(range(1000)), dict.fromkeys(range(100)), b'x' * 70000)], {}),
     ('len_mutated', [(0,), (3,), (10,)], {}),

@@ -1443,9 +1443,28 @@ vinfo_t *PsycoObject_RichCompareBool(PsycoObject *po, vinfo_t *v, vinfo_t *w,
                                      int op) {
   /* The result is a temporary, and only values in the frame can be
      promoted, so if its type isn't known its truth is a run-time call.
-     Unlike CPython there is no v == w shortcut for Py_EQ/Py_NE. */
+     CPython's identity shortcut for Py_EQ/Py_NE (F109): the same object
+     gives 1 for Py_EQ, 0 for Py_NE without calling __eq__ (nan == nan is
+     False, (nan,) == (nan,) True). A virtual object is a new one, so it
+     is identical only to itself; two run-time values are compared as
+     words, the identical case being the rare branch. */
   vinfo_t *diff;
-  vinfo_t *result = PsycoObject_RichCompare(po, v, w, op);
+  vinfo_t *result;
+  if (op == Py_EQ || op == Py_NE) {
+    condition_code_t cc;
+    if (v == w)
+      cc = CC_ALWAYS_TRUE;
+    else if (is_virtualtime(v->source) || is_virtualtime(w->source))
+      cc = CC_ALWAYS_FALSE;
+    else {
+      cc = integer_cmp(po, v, w, Py_EQ);
+      if (cc == CC_ERROR)
+        return NULL;
+    }
+    if (runtime_condition_f(po, cc))
+      return op == Py_EQ ? psyco_vi_One() : psyco_vi_Zero();
+  }
+  result = PsycoObject_RichCompare(po, v, w, op);
   if (result == NULL)
     return NULL;
   if (Psyco_KnownType(result) != NULL)
