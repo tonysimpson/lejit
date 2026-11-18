@@ -28,6 +28,9 @@ import itertools, json, os, re, subprocess, sys, sysconfig, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HEADER = os.path.join(ROOT, 'ni', 'x64', 'iencoding.h')
 PY37 = os.environ.get('NI_PY37', os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
+# the headers the build generates (D68): psyco.h includes layouts_gen.h
+_gen = sorted(__import__('glob').glob(os.path.join(ROOT, 'build', 'temp.*', 'gen')))
+GEN = _gen[0] if _gen else os.path.join(ROOT, 'build', 'gen-missing')
 
 REG64 = ['rax', 'rcx', 'rdx', 'rbx', 'rsp', 'rbp', 'rsi', 'rdi',
          'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15']
@@ -150,7 +153,7 @@ def build_emitted(case_list, workdir):
     inc = subprocess.check_output([PY37, '-c', "import sysconfig;print(sysconfig.get_paths()['include'])"]).decode().strip()
     exe = os.path.join(workdir, 'emit')
     subprocess.check_call(['gcc', '-w', '-O0', '-DALL_CHECKS=0', '-DNI_TRACE=0', '-DALL_STATIC=0',
-                           '-I' + inc, '-I' + os.path.join(ROOT, 'ni'), '-I' + os.path.join(ROOT, 'ni', 'x64'),
+                           '-I' + inc, '-I' + os.path.join(ROOT, 'ni'), '-I' + os.path.join(ROOT, 'ni', 'x64'), '-I' + GEN,
                            cfile, '-o', exe])
     out = subprocess.check_output([exe]).decode().split('\n')
     starts = {}
@@ -298,7 +301,7 @@ def check_jump_decoder(workdir):
     inc = subprocess.check_output([PY37, '-c', "import sysconfig;print(sysconfig.get_paths()['include'])"]).decode().strip()
     exe = os.path.join(workdir, 'jumps')
     subprocess.check_call(['gcc', '-w', '-O0', '-DALL_CHECKS=0', '-DNI_TRACE=0', '-DALL_STATIC=0',
-                           '-I' + inc, '-I' + os.path.join(ROOT, 'ni'), '-I' + os.path.join(ROOT, 'ni', 'x64'),
+                           '-I' + inc, '-I' + os.path.join(ROOT, 'ni'), '-I' + os.path.join(ROOT, 'ni', 'x64'), '-I' + GEN,
                            cfile, '-o', exe])
     p = subprocess.run([exe], stdout=subprocess.PIPE)
     for line in p.stdout.decode().splitlines():

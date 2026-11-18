@@ -11,7 +11,7 @@ LIBDIR=$($PY37 -c "import sysconfig;print(sysconfig.get_config_var('LIBDIR'))")
 OBJS=$(find "$ROOT"/build/temp.* -name '*.o' | grep -v '/ni/ni.o$')
 OUT=${TMPDIR:-/tmp}/v_mem_mov_test.$$
 gcc -w -O0 -g -DALL_STATIC=0 -DNI_TRACE=1 -DALL_CHECKS=1 \
-    -I"$INC" -I"$ROOT/ni" -I"$ROOT/ni/x64" "$HERE/v_mem_mov_test.c" \
+    -I"$INC" -I"$ROOT/ni" -I"$ROOT/ni/x64" $(for g in "$ROOT"/build/temp.*/gen; do echo -I"$g"; done) "$HERE/v_mem_mov_test.c" \
     $OBJS $(find "$ROOT"/build/temp.* -name 'ni.o') \
     -L"$LIBDIR" -Wl,-rpath,"$LIBDIR" -lpython3.7m -lffi -lm -o "$OUT"
 "$OUT" "$@"
