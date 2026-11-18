@@ -85,6 +85,17 @@ REASONS = {
         'core', ['C11'], "chooses cimpl_rt_traceback or cimpl_vt_traceback"),
     'ni/Python/frames.c:ni_getframe': (
         'core', ['C11', 'F100'], "counts compiled frames for sys._getframe"),
+    'ni/Objects/pabstract.c:PsycoObject_Call': (
+        'core', ['D85', 'D77'],
+        "the call path (D85 (5)): tp_call's meta behind the slot guard, with"
+        " no recursion count or result check, which are the callee meta's"
+        " and the recursion mechanism's; call.c's function and C-function"
+        " arms are pfuncobject.c's and pmethodobject.c's metas"),
+    'ni/mergepoints.c:NEXTOPARG': (
+        'core', [],
+        "mergepoints.c's own bytecode walk (MAP: core), decoding with the"
+        " target's _Py_OPCODE/_Py_OPARG; the walk, not this macro, is what"
+        " changes where the code format does (3.12's inline caches)"),
     'ni/Python/pycompiler.h:psyco_PyErr_Occurred': (
         'core', ['D77'], "the backend's inline error test; the field is the"
         " exceptions mechanism's"),
@@ -184,12 +195,33 @@ REASONS = {
         'limit', ['D87', 'failures:float___trunc___impl'],
         "an int result from a double: ceil and floor stay hand-written"),
 
+    'ni/Objects/pobject.c:PsycoObject_Hash': (
+        'limit', ['failures:object.c:PyObject_Hash'],
+        "object.c cannot be read (cparse.undefined_later); not attempted"),
+    'ni/Objects/pobject.c:PsycoObject_RichCompareBool': (
+        'limit', ['F109', 'failures:object.c:PyObject_Hash'],
+        "object.c cannot be read; then F109's identity of virtuals and the"
+        " result's truth without a promotion"),
+    'ni/Objects/pobject.c:try_rich_compare': (
+        'limit', ['F50', 'failures:object.c:PyObject_Hash'],
+        "do_richcompare's slot calls; object.c cannot be read"),
+    'ni/Objects/plongobject.c:PsycoLong_AsDouble': (
+        'limit', ['D87', 'failures:longobject.c:PyLong_AsDouble'],
+        "the word test on a PyObject *, and no list of the long unit's"
+        " declared functions to translate"),
+    'ni/Objects/pfloatobject.c:cimpl_fp_from_long': (
+        'limit', ['D87', 'failures:longobject.c:PyLong_AsDouble'],
+        "PsycoLong_AsDouble's helper for a virtual int's word"),
+
     # ---- judgement ----
     'ni/Python/pbltinmodule.c:pbuiltin_globals': (
         'judgement', ['D86', 'F47', 'failures:builtin_globals_impl'],
         "the compiled frame's globals, not PyEval_GetGlobals"),
 
     # ---- helpers of hand-written definitions with their own reason ----
+    'ni/Objects/pobject.h:PyType_TypeCheck': (
+        'helper', [], "PyObject_TypeCheck on a PyTypeObject, as Ni holds"
+        " types; of PsycoLong_Check, PsycoFloat_Check and hand metas"),
     'ni/Objects/pabstract.c:type_error_tp': (
         'helper', [], "of PsycoObject_GetIter and PsycoObject_Call"),
     'ni/Objects/pfloatobject.c:cimpl_fp_ne_fp': (
