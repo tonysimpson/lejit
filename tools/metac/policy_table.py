@@ -1008,6 +1008,7 @@ ENTRIES = {
         'ni': ['ni/Objects/pobject.c:PsycoObject_IsTrue'],
         'policy': [
             ('shortcut', 'const_fold', 'None'),
+            ('shortcut', 'zero_or_one', 'its last return is (res > 0) ? 1 : res, res -1 for an error'),
         ]},
     'Objects/object.c:PyObject_GetAttr': {
         'shape': '999d93e1d6a6',

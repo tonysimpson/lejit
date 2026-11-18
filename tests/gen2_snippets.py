@@ -764,7 +764,7 @@ static PyObject *snip_b1(PyObject *m, PyObject *o) {
                'PsycoBool_FromZeroOrOne(po, r)'], absent=['PsycoBool_FromLong']),
     Case("METH_O: a bool of an int not known to be 0 or 1 is Ni's general one", '''
 static PyObject *snip_b3(PyObject *m, PyObject *o) {
-    int r = PyObject_IsTrue(o);
+    int r = PySequence_Contains(o, o);
     if (r < 0) return NULL;
     return PyBool_FromLong(r);
 }''', ['snip_b3'], methods=[('b3', 'snip_b3', 'METH_O')],
@@ -1249,6 +1249,50 @@ PyObject *y = TOP(); Py_INCREF(y); PUSH(y); DISPATCH();''', refused='read back')
     Op('opcodes: an input both released and pushed is consumed twice, refused', '''
 PyObject *top = TOP(); Py_DECREF(top); STACKADJ(-1); PUSH(top); DISPATCH();''',
        refused='read with no value'),
+    Op("opcodes: JUMPTO and JUMPBY are Ni's, after the epilogue, and the case ends JUMPED", '''
+PyObject *v = POP(); Py_DECREF(v); JUMPBY(oparg); FAST_DISPATCH();''',
+       want=['POP(v);', 'vinfo_decref(v, po);', 'JUMPBY(oparg);', 'JUMPED();'],
+       absent=['goto fine'], effect=-1),
+    Op("opcodes: JUMPTO is Ni's JUMPTO of the same byte offset", '''
+JUMPTO(oparg); DISPATCH();''', want=['JUMPTO(oparg);', 'JUMPED();'], effect=0),
+    Op("opcodes: next_instr moved otherwise is the interpreter's", '''
+next_instr++; DISPATCH();''', refused='core'),
+    Op("opcodes: a test of PyObject_IsTrue's result is a condition code, its jump JUMP_IF_CC",
+       '''
+PyObject *cond = POP(); int err;
+if (cond == Py_True) { Py_DECREF(cond); FAST_DISPATCH(); }
+if (cond == Py_False) { Py_DECREF(cond); JUMPTO(oparg); FAST_DISPATCH(); }
+err = PyObject_IsTrue(cond); Py_DECREF(cond);
+if (err > 0) ; else if (err == 0) JUMPTO(oparg); else goto error;
+DISPATCH();''',
+       want=['err = _t1;', 'if (err == NULL) {', 'break;', '= integer_non_null(po, err);',
+             '== CC_ERROR', 'vinfo_decref(err, po);', 'JUMP_IF_CC(INVERT_CC(',
+             'JUMPTO(oparg), 1, 0);', 'POP(cond);', 'vinfo_decref(cond, po);', 'goto fine;'],
+       absent=['psyco_vi_Py_True', 'JUMPED'], effect=-1),
+    Op("opcodes: a jump that keeps its condition on the stack pops none at the target", '''
+PyObject *cond = TOP(); int err;
+if (cond == Py_True) { STACKADJ(-1); Py_DECREF(cond); FAST_DISPATCH(); }
+if (cond == Py_False) { JUMPTO(oparg); FAST_DISPATCH(); }
+err = PyObject_IsTrue(cond);
+if (err > 0) { STACKADJ(-1); Py_DECREF(cond); }
+else if (err == 0) JUMPTO(oparg);
+else goto error;
+DISPATCH();''', want=['JUMP_IF_CC(INVERT_CC(', 'JUMPTO(oparg), 0, 0);', 'POP(cond);'],
+       effect=0),
+    Op("opcodes: Py_True on one arm, Py_False on the other, is the condition's bool", '''
+PyObject *value = TOP(); int err = PyObject_IsTrue(value); Py_DECREF(value);
+if (err == 0) { Py_INCREF(Py_True); SET_TOP(Py_True); DISPATCH(); }
+else if (err > 0) { Py_INCREF(Py_False); SET_TOP(Py_False); err = 0; DISPATCH(); }
+STACKADJ(-1); goto error;''',
+       want=['= integer_non_null(po, err);', 'PsycoBool_FromCondition(po, INVERT_CC(',
+             'POP(value);', 'vinfo_decref(value, po);', 'PUSH('],
+       absent=['psyco_vi_Py_True', 'psyco_vi_Py_False'], effect=0),
+    Op("opcodes: a singleton's arm that ends otherwise than the generic path is refused", '''
+PyObject *cond = POP(); int err;
+if (cond == Py_True) { Py_DECREF(cond); JUMPTO(oparg); FAST_DISPATCH(); }
+err = PyObject_IsTrue(cond); Py_DECREF(cond);
+if (err > 0) ; else if (err == 0) JUMPTO(oparg); else goto error;
+DISPATCH();''', refused='does not end the case as PyObject_IsTrue answering 1'),
     Op('opcodes: the stack effect is checked against dis.stack_effect', '''
 PyObject *top = TOP(); Py_INCREF(top); PUSH(top); FAST_DISPATCH();''', effect=0,
        refused='dis.stack_effect says'),
@@ -1262,6 +1306,7 @@ def ops(cases):
     ast = front.parse(t, 'Python/ceval.c', Op.text(cases))
     ni = conventions.ni_decls(abstract.ROOT, scope.NI_HEADERS)
     tr = abstract.Translator(scope.CEVAL, ast, ni, set(), {}, None)
+    tr.front_target = t
     names = {'SNIP_%d' % k: 1000 + k for k in range(len(cases))}
     bodies = dict(opcodes.cases(ast, names, 'snip_eval'))
     fails = 0
