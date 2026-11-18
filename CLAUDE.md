@@ -19,6 +19,7 @@ Ni is a fork of Armin Rigo's **Psyco** JIT for CPython, ported to x86-64 and CPy
 | What mirrors CPython and why it's still hand-written | `tools/metac/donecheck.py` (`doc/INVENTORY.md`) |
 | Decisions, open questions, open bugs, open ideas | `doc/DECISIONS.md`, `doc/QUESTIONS.md`, `doc/KNOWN_BUGS.md`, `doc/BACKLOG.md` |
 | Findings of finished studies (stores, code size, same code, closures, generators, compile cost) and their tools | `doc/FINDINGS.md` |
+| Choosing the real-world applications suite | `doc/REALWORLD.md` |
 | Profiling, and telling heap noise from code changes | `doc/PROFILE.md` |
 | Specialisation policy: promotion sites and merge points | `doc/SPECIALISATION.md` |
 | Porting to 3.8 and 3.12 | `doc/PORT38.md`, `doc/PORT312.md` |
