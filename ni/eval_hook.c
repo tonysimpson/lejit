@@ -82,7 +82,7 @@ compile_entry(PyCodeObject *co, ni_code_extra_t *x, PyObject *globals,
 
 /* The compiled code to run for 'co' with these globals and builtins,
    compiled now on its first call, or NULL to run it interpreted. 'locals'
-   is the frame's locals mapping (equal to globals for a module). */
+   is the frame's locals mapping (NULL for a function). */
 static PyObject *ni_entry_point(PyCodeObject *co, PyObject *globals,
                                 PyObject *locals, PyObject *builtins) {
   /* generators are never compiled (mergepoints.c), and every resume comes
@@ -91,8 +91,10 @@ static PyObject *ni_entry_point(PyCodeObject *co, PyObject *globals,
     return NULL;
   if (ni_trace_fallback && ni_tracing_now(PyThreadState_GET()))
     return NULL;
-  /* Don't compile modules - buggy */
-  if (globals != locals) {
+  /* only function frames, whose f_locals is NULL at entry. Module code,
+     class bodies and exec or eval with a locals mapping have one, and the
+     compiler's name opcodes (IMPORT_STAR, DELETE_NAME) act on the globals */
+  if (locals == NULL) {
     PyObject *mergepoints;
     mergepoints = psyco_get_merge_points(co, 0);
     if (mergepoints != Py_None) {

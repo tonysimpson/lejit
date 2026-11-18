@@ -37,7 +37,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
 | `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `a6a687b`; `dfe1a39` (psyco_compatible) |
 | `ni/dispatcher.h` | core | Snapshots (FrozenPsycoObject), compatibility and join API, respawn and promotion helpers. | none | `f229d14` |
-| `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles on the first call (interpreted if memory runs out), `NiCode_Run` runs it. | Python/ceval.c | `f254b5d` |
+| `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles a function frame (no locals mapping) on its first call (interpreted if memory runs out), `NiCode_Run` runs it. | Python/ceval.c | `f254b5d` |
 | `ni/initialize.h` | glue | Calls every file's init; with ALL_STATIC=1 includes all .c files into one unit. | none | `b251646` |
 | `ni/mechanisms/entry/frame_eval_hook.h` | glue (mechanism snippet) | 3.7's entry (D75): the PEP 523 hook `NiEval_EvalFrame` and its installation. | Include/pystate.h | `36b5beb` |
 | `ni/mechanisms/frames/frame_object.h` | glue (mechanism snippet) | 3.7's frames (D75): `ni_frame_t` is `PyFrameObject`, with inline accessors. | Include/frameobject.h, Include/pystate.h | `36b5beb` |
