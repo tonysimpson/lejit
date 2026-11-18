@@ -35,8 +35,8 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/codemanager.c` | core | Executable memory as free extents (poisoned under ASan, a LeakSanitizer root region); owners (D102): what a code object's compiled code holds, released with it; per-address records; the owner scan for cycles through code objects, as a pending call or at a full collection (D122); compile guards (D103). | none | `55c5b5e` |
 | `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner, record and compile guard APIs. | none | `9b9dcef` |
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
-| `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, parked compiler states (live, then frozen), promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `95b1e61` |
-| `ni/dispatcher.h` | core | Snapshots (FrozenPsycoObject), parked states, compatibility and join API, respawn and promotion helpers. | none | `f229d14` |
+| `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, parked compiler states (live, then frozen), promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `a7cb8e9` |
+| `ni/dispatcher.h` | core | Snapshots (FrozenPsycoObject), parked states, compatibility and join API, respawn and promotion helpers. | none | `a7cb8e9` |
 | `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles a function frame (no locals mapping) on its first call (interpreted if memory runs out), `NiCode_Run` runs it. | Python/ceval.c | `8347596` |
 | `ni/initialize.h` | glue | Calls every file's init; with ALL_STATIC=1 includes all .c files into one unit. | none | `b251646` |
 | `ni/mechanisms/entry/frame_eval_hook.h` | glue (mechanism snippet) | 3.7's entry (D75): the PEP 523 hook `NiEval_EvalFrame` and its installation. | Include/pystate.h | `36b5beb` |
@@ -52,16 +52,16 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/mechanisms/entry/{frame_eval_hook_interp,vectorcall}.h`, `ni/mechanisms/tracing/{cframe_use_tracing,monitoring}.h`, `ni/mechanisms/frames/{interpreter_frame_cframe,interpreter_frame}.h` | glue (stubs) | One `#error "... not written yet"` each, saying what the variant must do. | 3.11–3.13 | `36b5beb` |
 | `ni/mergepoints.c` | core | Finds merge points, dead locals, join points and eval_breaker tests in a code object; the opcode whitelist. | none (copies `NEXTOPARG` from Python/ceval.c) | `b36a1ac` |
 | `ni/mergepoints.h` | core | Merge point tables: where control paths join and compiled states are cached. | none | `e26c2a3` |
-| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code records (weak references on the code object, D124), `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `9b9dcef` |
+| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code records (weak references on the code object, D124), `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `a7cb8e9` |
 | `ni/platform.c` | glue | Allocates executable (RWX) memory: mmap on Unix, VirtualAlloc on Windows. | none | `1e65d32` |
 | `ni/platform.h` | glue | Prototype for psyco_allocate_executable_buffer(). | none | `e1fd808` |
 | `ni/processor.h` | backend (interface) | Prototypes for running compiled code: psyco_processor_run, RUN_ARGC, aligned-call glues. | none | `4398496` |
-| `ni/psyco.h` | glue | Global definitions: build switches, sizes, assertions, linkage macros, the sanitizer hooks (`NI_POISON`, `NI_LSAN_ROOT`), the per-code record and its owner; includes `layouts_gen.h`. | none | `9b9dcef` |
+| `ni/psyco.h` | glue | Global definitions: build switches, sizes, assertions, linkage macros, the sanitizer hooks (`NI_POISON`, `NI_LSAN_ROOT`), the per-code record and its owner; includes `layouts_gen.h`. | none | `9f4c57d` |
 | `ni/psyfunc.c` | core + translated | Python calls at compile time: build the callee frame, inline small functions or compile and call. | Python/ceval.c, Objects/call.c, Include/ceval.h | `95b1e61` |
 | `ni/psyfunc.h` | glue | Declarations for psyfunc.c and the generated binder (D85). | none | `e11f2a3` |
 | `ni/pycodegen.h` | core | Emits Py_INCREF/Py_DECREF and reference-ownership helpers on vinfo_t. | Include/object.h | `fa3dae7` |
-| `ni/vcompiler.c` | core | vinfo lifetime, field get/put with load folding (a constant array index only when small), coding pauses (their states parked), the psyco_compile*() entry points. | none | `99b81d7` |
-| `ni/vcompiler.h` | core | Central data model: Source, vinfo_t, field descriptors, PsycoObject (compiler state). Start here. | none | `95b1e61` |
+| `ni/vcompiler.c` | core | vinfo lifetime, field get/put with load folding (a constant array index only when small), coding pauses (their states parked), the psyco_compile*() entry points. | none | `a7cb8e9` |
+| `ni/vcompiler.h` | core | Central data model: Source, vinfo_t, field descriptors, PsycoObject (compiler state). Start here. | none | `a7cb8e9` |
 | `ni/Modules/pmath.c` | translated + glue | ceil and floor of an exact float; registers the generated math functions. | Modules/mathmodule.c | `cddaf8d` |
 | `ni/Objects/pabstract.c` | translated + core | The hand-written rest of the abstract protocol (`**`, `iter()`, next, int subscripts). | Objects/call.c, Objects/abstract.c, Objects/tupleobject.c, Objects/listobject.c | `351a4d5`, `935df0b` |
 | `pabstract_gen.h` | translated (generated) | The abstract protocol's metas and run-time copies, by `gen2/abstract.py` (D74, D104). | Objects/abstract.c | `df8385b` |
@@ -200,7 +200,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/samecode.py` | tooling | Whether two builds emit the same machine code, per instruction (D70; `FINDINGS.md "Code size"`). | `8b8ffea` |
 | `tools/promostats.py` | tooling | The promotion-site reports for `codesize.py` (`-p`, `-D`), from `ni._promostats()`. | `8081f96` |
 | `tools/compilebench.py` | tooling | Compile cost against pay-off per benchmark (`FINDINGS.md "Compile cost"`). | `f598d22` |
-| `tools/memrepro.py` | tooling | RSS and Ni's counters per code buffer over N distinct compiled functions (`FINDINGS.md "Memory per code buffer"`, C61). | (this commit) |
+| `tools/memrepro.py` | tooling | RSS and Ni's counters per code buffer over N distinct compiled functions (`FINDINGS.md "Memory per code buffer"`, C61). | `a7cb8e9` |
 | `tools/adversarial/run.py` | tooling | Runs the adversarial benchmarks with and without Ni, many fresh processes per mode and run length: every call timed (total, first, median, worst, spreads, warm-up shape), trained on variant 0 and timed on variant 1, outputs compared call by call, losses first; `--calibrate` writes `sizes.txt`; `--data` writes one line per benchmark and measure. | `49763c9` |
 | `tools/adversarial/sizes.txt` | tooling | n per run length for each benchmark, calibrated on plain CPython by `run.py --calibrate`. | `49763c9` |
 | `tools/realworld/setup.sh`, `common.sh`, `fetch.py` | tooling | Real-world suite setup (REALWORLD.md): one venv per environment for a given interpreter from the hashed locks, inputs checked by sha256, models pinned by commit; the workload table and offline settings. | `a27ae13` |

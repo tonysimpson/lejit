@@ -73,7 +73,7 @@ Nothing else: no wrong arithmetic at the 2**31, 2**63 or float edges, no unpacki
 
 `tools/memrepro.py DIR N` compiles N distinct small functions and reports the RSS growth per code buffer; run under heaptrack with `PYTHONMALLOC=malloc`, its leaked allocations say where the memory goes. At 2000 functions (113,782 buffers, 232 bytes of code each), release build [run]:
 
-| Per buffer | before (`cbd536d`) | after (`5cfa974`) |
+| Per buffer | before (`cbd536d`) | after (`a7cb8e9`) |
 |---|---|---|
 | Live compiler states kept by pauses and promotion sites (vinfo blocks, PsycoObjects, arrays) | 1204 B | 0 (frozen: 170 B) |
 | Snapshots at merge points (`fz` pseudo-code, `pyc` data) | 434 B | 432 B |
@@ -114,7 +114,7 @@ Twelve pure-Python projects' own suites, each at its last release for 3.7 (`tool
 | MarkupSafe 2.1.5, pure | 53 | 0.2 | 0.4 | 0 |
 | docutils 0.20.1 | 375 | 2.0 | 2.5 | 0 |
 | networkx 2.6.3 | 4086 | 42 | 41 | 0 |
-| sympy 1.10.1, 9 packages (run at `5cfa974`) | 4529 | 586 | 448 | 0 |
+| sympy 1.10.1, 9 packages (run at `a7cb8e9`) | 4529 | 586 | 448 | 0 |
 | python-dateutil 2.9.0.post0 | 2095 | 2.8 | 2.9 | 0 |
 | toolz 0.12.1 | 180 | 0.5 | 0.8 | 0 |
 | sortedcontainers 2.4.0 | 300 | 4.7 | 1.7 | 1 (C20) |
@@ -122,6 +122,6 @@ Twelve pure-Python projects' own suites, each at its last release for 3.7 (`tool
 
 No test fails plainly and passes with Ni.
 - **Wrong answers fixed:** code run by `exec` with its own locals mapping was compiled and its `from m import *` and `del x` used the globals (`8347596`; sympy's `lambdify` and `Sum.evalf`, 9 tests); the inline attribute store never made an untracked instance dict tracked when it stored a GC value of unknown type, so cycles through it were never collected (`edfcdcd`; sympy reached the 4 GB limit).
-- **C11:** pyparsing's parse actions with fewer than three arguments raise TypeError, because `_trim_arity` compares line numbers from `traceback.extract_stack`; with that worked round, 37 failures are left, all C11 (`f_locals` read by `autoname_elements` and `ParseException.explain`, a warning keyed on the caller's line). Django's debug page and `sensitive_variables` read traceback frames' locals; Django's warning stack-level tests fail (sympy's pass at `5cfa974`).
+- **C11:** pyparsing's parse actions with fewer than three arguments raise TypeError, because `_trim_arity` compares line numbers from `traceback.extract_stack`; with that worked round, 37 failures are left, all C11 (`f_locals` read by `autoname_elements` and `ParseException.explain`, a warning keyed on the caller's line). Django's debug page and `sensitive_variables` read traceback frames' locals; Django's warning stack-level tests fail (sympy's pass at `a7cb8e9`).
 - **Memory (C61):** the sympy run aborted at the 4 GB limit after about 630,000 code buffers (3 GB of RSS) until compiler states were parked; it now completes with 1,036,438 ("Memory per code buffer" above).
 - **Time:** pyparsing's Ni time is its failing parse actions (13.7 s with them worked round). Django, many short tests over much code, is 1.3× slower; sympy is 1.3× faster and sortedcontainers 2.8×.
