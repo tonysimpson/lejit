@@ -238,7 +238,7 @@ Every generator run against 3.8.20's source with a 3.8.20 interpreter (uv's), Ni
 
 ## Step 10, point 1: the done test as a tool (`88d850c`, D90) [run]
 
-`tools/metac/donecheck.py --python EXE` lists every definition in Ni that mirrors CPython, found from the code (D90 (1)), and classes each: (a) generated, from the generators' reports; (b) hand-written with a reason (`tools/metac/hand_table.py`, the entry's policy items, or the generator's refusal); (c) hand-written with none, on which it exits 1. It runs the generators itself (about a minute). `tools/check.sh` runs it after the generators, as a report (it fails only on a stale `hand_table.py`).
+`tools/metac/donecheck.py --python EXE` lists every definition in Ni that mirrors CPython, found from the code (D90 (1)), and classes each: (a) generated, from the generators' reports; (b) hand-written with a reason (`tools/metac/hand_table.py`, the entry's policy items, or the generator's refusal); (c) hand-written with none, on which it exits 1. It runs the generators itself (about a minute). `tools/check.sh` runs it after the generators and fails on exit 1 or 2 (it was a report, failing only on a stale `hand_table.py`, until (c) was empty at `40fefdd`).
 
 At `88d850c`, CPython 3.7.17 (functions, macros and opcode cases; lines of each definition, a case's lines not counted again in the loop that holds it):
 
