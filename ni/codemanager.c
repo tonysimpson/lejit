@@ -482,8 +482,12 @@ DEFINEFN PyObject **psyco_record(ni_addrmap_t *map, void *key) {
    least 512, more than a short program makes), the scan is asked for as
    a pending call (Py_AddPendingCall), so it runs between bytecodes, in the
    main interpreter and never during a compile; its cost per record stays
-   the same and dead records are at most about half the live. Nothing runs per collection: garbage below
-   that count waits for the next records. */
+   the same and dead records are at most about half the live. It also runs
+   at a full collection (gc.collect()) if a record was counted since the
+   last: a gc.callbacks entry, listed only once the program has imported
+   gc (as any program calling gc.collect() has), and only while there are
+   such records, acts on generation 2 only. Importing gc for it would run
+   importlib's Python code, which Ni compiles, in every program. */
 
 DEFINEVAR long psyco_stat_owner_scans = 0;
 DEFINEVAR long psyco_stat_owners_collected = 0;
@@ -493,7 +497,8 @@ static long extras_since_scan = 0; /* records counted since the last scan */
 #define SCAN_MIN 512 /* records counted before the first scan */
 static long scan_after = SCAN_MIN; /* more after a scan too big */
 static bool scan_asked = false; /* the pending call is queued */
-static PyObject *get_objects = NULL; /* gc.get_objects, found by a scan */
+static PyObject *get_objects = NULL; /* gc.get_objects, once imported */
+static PyObject *gc_callbacks = NULL, *scan_callback = NULL;
 
 #define SCAN_MAX_NODES ((size_t)1 << 20)
 enum { NODE_GC, NODE_CODE, NODE_PRUNED };
@@ -722,12 +727,73 @@ static int owners_pending(void *arg) {
   return 0;
 }
 
+static bool scan_listed_last(void) {
+  Py_ssize_t n = PyList_GET_SIZE(gc_callbacks);
+  return n > 0 && PyList_GET_ITEM(gc_callbacks, n - 1) == scan_callback;
+}
+
+static PyObject *owners_gc_callback(PyObject *self, PyObject *args) {
+  const char *phase;
+  PyObject *info, *gen;
+  if (!PyArg_ParseTuple(args, "sO", &phase, &info))
+    return NULL;
+  /* gc.callbacks are shared by every interpreter */
+  if (PyThreadState_GET()->interp != PyInterpreterState_Main())
+    Py_RETURN_NONE;
+  if (strcmp(phase, "start") == 0) {
+    gen = PyDict_Check(info) ? PyDict_GetItemString(info, "generation") : NULL;
+    if (extras_since_scan > 0 && gen != NULL && PyLong_Check(gen) &&
+        PyLong_AsLong(gen) == 2 && psyco_owner == NULL &&
+        psyco_stat_compile_depth == 0 && nlocked == 0 &&
+        psyco_compile_guard == NULL && !_Py_IsFinalizing()) {
+      extras_since_scan = 0;
+      owners_scan();
+    }
+  } else if (extras_since_scan == 0 && scan_listed_last()) {
+    /* the last one, so that removing it skips no other callback */
+    Py_ssize_t n = PyList_GET_SIZE(gc_callbacks);
+    if (PyList_SetSlice(gc_callbacks, n - 1, n, NULL) < 0)
+      PyErr_Clear();
+  }
+  Py_RETURN_NONE;
+}
+
+static PyMethodDef owners_gc_callback_def = {"ni_owner_scan",
+                                             owners_gc_callback, METH_VARARGS,
+                                             NULL};
+
+/* lists the callback if gc has been imported */
+static void scan_callback_list(void) {
+  PyObject *t, *v, *tb;
+  PyErr_Fetch(&t, &v, &tb);
+  if (scan_callback == NULL) {
+    PyObject *gc = PyDict_GetItemString(PyImport_GetModuleDict(), "gc");
+    if (gc == NULL || !PyModule_Check(gc))
+      goto done;
+    gc_callbacks = PyObject_GetAttrString(gc, "callbacks");
+    if (gc_callbacks == NULL || !PyList_Check(gc_callbacks) ||
+        (scan_callback = PyCFunction_New(&owners_gc_callback_def, NULL)) ==
+            NULL) {
+      Py_CLEAR(gc_callbacks);
+      goto done;
+    }
+  }
+  if (!scan_listed_last() &&
+      PySequence_Contains(gc_callbacks, scan_callback) == 0)
+    PyList_Append(gc_callbacks, scan_callback);
+done:
+  PyErr_Clear(); /* out of memory: listed with a later record */
+  PyErr_Restore(t, v, tb);
+}
+
 DEFINEFN void psyco_owner_track(ni_code_extra_t *x) {
   if (x->counted)
     return;
   x->counted = 1;
   psyco_stat_owners_counted++;
   extras_since_scan++;
+  if (scan_callback == NULL || !scan_listed_last())
+    scan_callback_list();
   if (extras_since_scan >= scan_after && !scan_asked &&
       Py_AddPendingCall(owners_pending, NULL) == 0)
     scan_asked = true; /* a full queue: asked again by the next record */
