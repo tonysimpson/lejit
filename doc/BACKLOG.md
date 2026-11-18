@@ -28,7 +28,7 @@ In KNOWN_BUGS.md. Worth doing first among them: C11's `PyEval_GetFrame` hook and
 
 ## Code size and compile time
 - Shared code after polymorphic promotion sites, option D: on 3.7 (D64, FINDINGS.md "Option D", QUESTIONS 43–46).
-- Forgotten values (D43): forget a forgotten value's type too (`Psyco_NeedType`'s cut-off goes to ceval, D135; a generic path in its callers would keep it compiled); mark values that partial matches un-promote before the cap (SPECIALISATION.md).
+- Forgotten values (D43): forget a forgotten value's type too (`Psyco_NeedType`'s cut-off goes to ceval, D140; a generic path in its callers would keep it compiled); mark values that partial matches un-promote before the cap (SPECIALISATION.md).
 - Unused facts (D50, D57): promotions at a merge point, whose own compare must keep the fact.
 - Rejoining (D44): respawn points that are not split sites (error paths, overflow); a small case for C27.
 - Promotion code (FINDINGS.md "Code size"): matching across promoted knowledge; why chain placement moves richards' cycles; a cut-off for sites without one.
