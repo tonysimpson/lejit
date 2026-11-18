@@ -1,5 +1,12 @@
 # Status
 
+## 2026-11-18: str and descriptors generated (GENERATION.md step 5; `ccb5735`, D89)
+
+Conditional compilation is evaluated against the target's pyconfig.h (`cparse.conditionals`), so `unicodeobject.c` reads; new rules for bit-fields, run-time `?:`, pointers into an object and switch breaks (`tools/metac/conditions.py`, `pointers.py`).
+- **Generated:** str's length and `+`, `PyMember_GetOne` (every `T_*`), `member_get`, `delattr`; 201 hand lines removed (`pstructmember.c` is includes only). donecheck at `ccb5735`: generated 197 (5,998 lines), reasoned 224 (4,840), no reason 22 (331, unchanged).
+- **Kept:** `in` on str (the generated one costs pyflate 1.5% instructions through `CfNoPython`, QUESTIONS 51), str compare and subscript, `method_get`, `ord`, `chr`, `callable`, `iter`, `next`, `hasattr` (METACOMPILER failures log).
+- **Checks:** generation deterministic; checked build, `tests/run.py` 925; `compile_bounds` OK; `cpython_tests.py -j 2` 285 modules and `--all` 371, 0 unexpected; same code with a reason for every difference; release instructions unchanged within noise on all seven benchmarks; 3.8 generates the same str and member functions (not built).
+
 ## 2026-11-18: GOAL's done test, point 1, as a tool (GENERATION.md step 10; `88d850c`, D90)
 
 `tools/metac/donecheck.py --python EXE` finds every definition in Ni that mirrors CPython from the code and classes it generated, hand-written with a reason, or hand-written with none (exit 1); written reasons are data in `tools/metac/hand_table.py`, checked against Ni and the docs. `tools/check.sh` runs it as a report.

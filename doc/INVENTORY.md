@@ -30,9 +30,9 @@ The tables below are this inventory at `b36a1ac`, by hand, and are not kept up t
 | `ni/Objects/pboolobject.c` | 2 | 18 |  |  |
 | `ni/Objects/pbytesobject.c` | 2 | 74 |  |  |
 | `ni/Objects/pclassobject.c` | 1 | 53 |  |  |
-| `ni/Objects/pdescrobject.c` | 2 | 18 |  |  |
+| `ni/Objects/pdescrobject.c` | 1 | 7 |  |  |
 | `ni/Objects/pdictobject.c` | 3 | 37 | 2 | 21 |
-| `ni/Objects/pfloatobject.c` | 14 | 121 | 2 | 8 |
+| `ni/Objects/pfloatobject.c` | 12 | 110 | 2 | 8 |
 | `ni/Objects/pfloatobject.h` | 6 | 13 |  |  |
 | `ni/Objects/pfuncobject.c` | 4 | 124 |  |  |
 | `ni/Objects/piterobject.c` | 4 | 128 | 1 | 5 |
@@ -46,10 +46,9 @@ The tables below are this inventory at `b36a1ac`, by hand, and are not kept up t
 | `ni/Objects/pobject.h` |  |  | 2 | 5 |
 | `ni/Objects/prangeobject.c` | 5 | 91 | 1 | 4 |
 | `ni/Objects/psliceobject.c` | 2 | 57 |  |  |
-| `ni/Objects/pstructmember.c` | 1 | 144 |  |  |
 | `ni/Objects/ptupleobject.c` |  |  | 1 | 21 |
 | `ni/Objects/ptupleobject.h` | 2 | 6 |  |  |
-| `ni/Objects/punicodeobject.c` | 9 | 185 |  |  |
+| `ni/Objects/punicodeobject.c` | 8 | 171 |  |  |
 | `ni/Python/frames.c` | 1 | 12 |  |  |
 | `ni/Python/pbltinmodule.c` | 13 | 337 |  |  |
 | `ni/Python/pycompiler.c` | 68 | 1,803 | 3 | 38 |
@@ -60,9 +59,9 @@ The tables below are this inventory at `b36a1ac`, by hand, and are not kept up t
 | `ni/mechanisms/tstate/runtime_address.h` | 1 | 7 |  |  |
 | `ni/mergepoints.c` | 1 | 7 | 1 | 7 |
 | `ni/psyfunc.c` | 7 | 264 |  |  |
-| **total** | **229** | **5,020** | **22** | **331** |
+| **total** | **224** | **4,840** | **22** | **331** |
 
-The tool counts definitions that mirror CPython, not files: the core around them (promotion, merge points, the backend) is not in these lines, and neither are comments or glue, so the totals are not comparable with "Lines by class". Generated, by header: `pabstract_gen.h` 52 (1,921 lines), `pycompiler_gen.h` 73 cases (1,125), `pfloatslots_gen.h` 10 (789), `pmathmodule_gen.h` 12 (516), `ptupleobject_gen.h` 4 (370), `plongobject_gen.h` 12 (330), `pbltinmodule_gen.h` 15 (228), `psyfunc_gen.h` 1 (153), the three `*_virtual_gen.h` 3 (149), `pycompiler_copies_gen.h` 6 (40), the list, dict and bytes lengths 3 (24). The 22 with no reason, and what would settle each: GENERATION.md step 10.
+The tool counts definitions that mirror CPython, not files: the core around them (promotion, merge points, the backend) is not in these lines, and neither are comments or glue, so the totals are not comparable with "Lines by class". Generated, by header: `pabstract_gen.h` 52 (1,921 lines), `pycompiler_gen.h` 73 cases (1,125), `pfloatslots_gen.h` 10 (789), `pmathmodule_gen.h` 12 (516), `ptupleobject_gen.h` 4 (370), `plongobject_gen.h` 12 (330), `pbltinmodule_gen.h` 17 (250), `psyfunc_gen.h` 1 (153), the three `*_virtual_gen.h` 3 (149), `pycompiler_copies_gen.h` 6 (40), the list, dict and bytes lengths 3 (24), and since D89 (`ccb5735`) `pstructmember_gen.h` 1 (296), `punicodeobject_gen.h` 2 (30), `pdescrobject_gen.h` 1 (5). The 22 with no reason, and what would settle each: GENERATION.md step 10.
 
 ### Lines by class [read]
 
@@ -616,14 +615,14 @@ Virtual floats plus the helpers `pbltinmodule.c` uses for `int(x)` and `round(x)
 | #if HAVE_FP_FN_CALLS, CF_NONPURE_FP_HELPER, CF_PURE_FP_HELPER | 10 | glue | none |  |  | Both CF_* macros are unused [read]: dead |
 | cimpl_fp_eq_fp, _ne_, _le_, _lt_ | 6 | translated | partial: Objects/floatobject.c:float_richcompare (the double compares) | P13 |  |  |
 | cimpl_fp_from_long | 2 | translated | partial: Objects/longobject.c:PyLong_AsDouble (one-digit case) | P13 |  | Also used by plongobject.c |
-| cimpl_fp_from_float | 2 | translated | partial: Python/structmember.c:PyMember_GetOne (T_FLOAT) | P13 |  | Takes a float but is called with tag 'd'; works because the float's bits are the low 32 bits of the word [inferred] |
+| cimpl_fp_from_float | 2 | obsolete | partial: Python/structmember.c:PyMember_GetOne (T_FLOAT) | P13 |  | Takes a float but is called with tag 'd'; works because the float's bits are the low 32 bits of the word [inferred] Removed in D89 (`ccb5735`): its one user is generated. |
 | cimpl_fp_fits_long, cimpl_fp_to_long | 6 | translated | partial: Objects/floatobject.c:float___trunc___impl (LONG_MIN < x < LONG_MAX) | P13 |  |  |
 | cimpl_fp_trunc | 7 | translated | partial: Objects/floatobject.c:float___trunc___impl (modf) | P13 |  |  |
 | cimpl_fp_round_even | 8 | translated | partial: Objects/floatobject.c:float___round___impl (no ndigits) | P13 |  | Same code as 3.7 [read] |
 | PsycoFloat_Trunc | 6 | translated | partial: Objects/floatobject.c:float___trunc___impl | P13 | EFFECT: CfPure\|CfReturnTypeDouble | Used by pbltinmodule.c (int(x)) |
 | PsycoFloat_RoundEven | 6 | translated | partial: Objects/floatobject.c:float___round___impl | P13 | EFFECT: CfPure\|CfReturnTypeDouble | Used by pbltinmodule.c (round(x)) |
 | PsycoFloat_WholeToLong | 20 | mixed | partial: Objects/floatobject.c:float___trunc___impl (fits-long fast path) | P13,P05,P18 | EFFECT: CfPure on both helpers; VIRTUAL: virtual int result; LIKELY: fits is _t | Core part: virtual int; does not fit -> caller asks CPython |
-| PsycoFloat_FromFloat | 11 | translated | partial: Python/structmember.c:PyMember_GetOne (T_FLOAT) | P13,P18 | EFFECT: CfPure\|CfReturnTypeDouble | Used by pstructmember.c |
+| PsycoFloat_FromFloat | 11 | obsolete | partial: Python/structmember.c:PyMember_GetOne (T_FLOAT) | P13,P18 | EFFECT: CfPure\|CfReturnTypeDouble | Used by pstructmember.c Removed in D89 (`ccb5735`): the generated `PyMember_GetOne` calls the C function for `T_FLOAT`. |
 | PsycoFloat_AsDouble | 37 | translated | Objects/floatobject.c:PyFloat_AsDouble | P01,P09,P15,P24 | DRIFT: message 'a float is required' (3.7: 'must be real number, not %.50s'), __float__'s result not checked to be a float; GUARD: nb_float read without Psyco_TypeSlot | No callers [read]: dead. Removed in D87: generated from the C instead |
 | compute_float | 21 | core | none | P18 | EFFECT: CfPure on PyFloat_FromDouble |  |
 | direct_compute_float, psyco_computed_float | 14 | core | none | P18 |  | Unreachable (KNOWN_BUGS F6) |
@@ -643,7 +642,7 @@ The `ob_fval` descriptor and the virtual-float builder; one word holds the doubl
 | header, include guard, HAVE_FP_FN_CALLS, includes | 14 | glue | none |  |  |  |
 | FLOAT_ob_fval, iFLOAT_OB_FVAL, FLOAT_TOTAL, PsycoFloat_Check | 7 | translated | Include/floatobject.h:PyFloatObject, PyFloat_Check | P15 |  | One vinfo for the double (upstream i386 used two) |
 | psyco_computed_float, PsycoFloat_FROM_DOUBLE, PsycoFloat_FromDouble | 23 | core | none | P18 | VIRTUAL: virtual float | Comment 'not-yet-computed integers' is stale |
-| PsycoFloat_FromFloat declaration | 2 | glue | none |  |  |  |
+| PsycoFloat_FromFloat declaration | 2 | obsolete | none |  |  |  Removed in D89. |
 | PsycoFloat_AS_DOUBLE | 5 | translated | Include/floatobject.h:PyFloat_AS_DOUBLE | P15 |  | psyco_get_const: ob_fval treated as immutable |
 | declarations, commented-out prototypes, #endif | 37 | glue | none |  |  |  |
 
@@ -942,7 +941,7 @@ Virtual bound methods and a `method_call` meta that prepends self in a virtual t
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
 | file comment, includes | 14 | glue | none |  |  | comment is stale: pobject.c:generic_getattr dispatches tp_descr_get through Psyco_META3 'lvl' |
-| pmember_get | 12 | translated | partial: Objects/descrobject.c:member_get | P09 | DRIFT: no descr_check (obj NULL, wrong type); pobject.c:generic_getattr uses it only for a subtype of d_type, so the check lives in core | meta signature 'lvl' |
+| pmember_get | 12 | translated (generated) | partial: Objects/descrobject.c:member_get | P09 | DRIFT: no descr_check (obj NULL, wrong type); pobject.c:generic_getattr uses it only for a subtype of d_type, so the check lives in core | meta signature 'lvl' Generated since D89 (`ccb5735`, `pdescrobject_gen.h:member_get`; `descr_check`'s type test is the policy's `skip_check`). |
 | pmethod_get | 8 | translated | partial: Objects/descrobject.c:method_get | P09, P18 | VIRTUAL: virtual builtin method (PsycoCFunction_New); DRIFT: no descr_check, as pmember_get |  |
 | psy_descrobject_init | 32 | glue | none |  | OTHER: finds PyMemberDescr_Type and PyMethodDescr_Type by making dummy descriptors, though 3.7 exports both (Include/descrobject.h) |  |
 
@@ -996,12 +995,12 @@ The PEP 393 str metas: compare, length, index, slice and `in`. They read the lay
 | cimpl_unicode_eq | 4 | translated | partial: Objects/unicodeobject.c:PyUnicode_RichCompare |  | DRIFT: no PyUnicode_READY before _PyUnicode_EQ (a not-ready legacy str would compare wrongly [inferred]) | identity then unicode_compare_eq |
 | punicode_richcompare | 37 | mixed | Objects/unicodeobject.c:PyUnicode_RichCompare | P25, P14, P13, P23, P12 | SHORTCUT: two constants compare at compile time (P14); EFFECT: cimpl_unicode_eq CfPure\|CfReturnTypeInt; VIRTUAL: ==/!= result a virtual bool (PsycoBool_FromCondition) | core = helper split and virtual bool. MAP says unicode_richcompare: no such function in 3.7, tp_richcompare is PyUnicode_RichCompare |
 | state_at_least | 8 | core | none | P15, P07 |  | state byte compared unsigned |
-| punicode_length | 16 | mixed | Objects/unicodeobject.c:unicode_length | P15, P05, P12 | LIKELY: ready (_t); EFFECT: CfCommonPySSizeTResult | core = PyUnicode_READY as an inline state-byte test |
+| punicode_length | 16 | translated (generated) | Objects/unicodeobject.c:unicode_length | P15, P05, P12 | LIKELY: ready (_t); EFFECT: CfCommonPySSizeTResult | core = PyUnicode_READY as an inline state-byte test Generated since D89 (`ccb5735`, `punicodeobject_gen.h:unicode_length`, rule `bit_field`). |
 | cimpl_unicode_item | 13 | translated | partial: Objects/unicodeobject.c:unicode_subscript, unicode_getitem |  |  | integer case, any str |
 | punicode_item | 69 | mixed | Objects/unicodeobject.c:unicode_getitem | P15, P05, P06, P07, P24, P12, P08 | SHORTCUT: inline only for compact ASCII at run time or a compact constant, else the helper; latin1[] table for 1-byte results; LIKELY: compact ASCII (_t), negative and out of range (_f); EFFECT: PyUnicode_FromOrdinal CfPure (a constant non-Latin-1 char folds to one shared str [inferred]); RESTYPE: str | core = inline layout reads and the latin1[] table |
 | cimpl_unicode_slice | 14 | translated | partial: Objects/unicodeobject.c:unicode_subscript | P18a |  | step-1 slice case; PyUnicode_New(0,0) is the shared empty str |
 | punicode_subscript | 36 | mixed | Objects/unicodeobject.c:unicode_subscript | P01, P18a, P13, P14, P12, P08 | PROMOTE: key type; SHORTCUT: slice of a constant exact str folds (CfPure, D56); RESTYPE: str for a run-time slice | core = virtual-slice unpack. Only int subtypes inline; other __index__ keys residual |
-| punicode_contains | 13 | translated | Objects/unicodeobject.c:PyUnicode_Contains | P14, P12 | SHORTCUT: two constants fold, an error is left to run time; EFFECT: CfCommonIntBoolOrError |  |
+| punicode_contains | 13 | translated | Objects/unicodeobject.c:PyUnicode_Contains | P14, P12 | SHORTCUT: two constants fold, an error is left to run time; EFFECT: CfCommonIntBoolOrError |  D89: generated and kept by hand: the generated one adds `CfNoPython`, which costs pyflate 1.5% instructions (QUESTIONS 51). |
 | psy_unicodeobject_init | 21 | glue | none |  | OTHER: checks the compact-ASCII layout and fails loudly; fills latin1[] from CPython's cache |  |
 
 ### `ni/Objects/pstructmember.h`
@@ -1019,7 +1018,7 @@ One function: `PyMember_GetOne`, one field descriptor per `T_*` type. Several `T
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
 | file comment, includes | 13 | glue | none |  |  |  |
-| PsycoMember_GetOne | 144 | translated | Python/structmember.c:PyMember_GetOne | P15, P05, P12, P08, P17, P24 | REF: need_reference on borrowed T_OBJECT/T_OBJECT_EX loads; LIKELY: non-NULL pointer (_t); RESTYPE: str for T_STRING, T_STRING_INPLACE; OTHER: every member read as FMUT; DRIFT: READ_RESTRICTED goes residual (3.7 ignores the flag; same result); T_BOOL, T_CHAR, T_LONGLONG, T_ULONGLONG, T_PYSSIZET, T_NONE, T_ULONG residual | the T_ULONG test in the integer tail is dead (T_ULONG goes to fallback) |
+| PsycoMember_GetOne | 144 | translated (generated) | Python/structmember.c:PyMember_GetOne | P15, P05, P12, P08, P17, P24 | REF: need_reference on borrowed T_OBJECT/T_OBJECT_EX loads; LIKELY: non-NULL pointer (_t); RESTYPE: str for T_STRING, T_STRING_INPLACE; OTHER: every member read as FMUT; DRIFT: READ_RESTRICTED goes residual (3.7 ignores the flag; same result); T_BOOL, T_CHAR, T_LONGLONG, T_ULONGLONG, T_PYSSIZET, T_NONE, T_ULONG residual | the T_ULONG test in the integer tail is dead (T_ULONG goes to fallback) Generated since D89 (`ccb5735`, `pstructmember_gen.h`, rule `raw_pointer`); `T_FLOAT` is now a C call. |
 
 ### `ni/Objects/pboolobject.h`
 
