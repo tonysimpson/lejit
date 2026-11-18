@@ -358,7 +358,7 @@ typedef struct {
   FMUT(DEF_FIELD(PyThreadState, char, overflowed, NO_PREV_FIELD))
 #define INT_value FMUT(DEF_FIELD(int_slot_t, int, value, NO_PREV_FIELD))
 
-EXTERNFN void *ni_tstate_current_address(void); /* Python/pyruntime.c */
+extern void *ni_tstate_current_address(void); /* Python/pyruntime.c */
 static tstate_slot_t *tstate_current;
 
 /* Py_LeaveRecursiveCall after the decrement */
@@ -446,8 +446,8 @@ bool psyco_leave_recursive_call(PsycoObject *po) {
    handlers, a GIL drop for other threads, an async exception). The helper
    can run any Python code, as any residual call can. Its branch is a
    runtime_condition_f respawn point, compiled when first taken. */
-EXTERNFN void *ni_eval_breaker_address(void); /* Python/pyruntime.c */
-EXTERNFN int ni_eval_breaker_handler(void);
+extern void *ni_eval_breaker_address(void); /* Python/pyruntime.c */
+extern int ni_eval_breaker_handler(void);
 static void *eval_breaker;
 
 DEFINEFN

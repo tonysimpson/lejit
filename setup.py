@@ -22,12 +22,11 @@ from distutils.errors import DistutilsError
 # install with debug trace points:
 # > NI_TRACE=1 pip install -e .
 #
-# If the following is set to 1, Psyco is compiled by #including all .c
-# files into ni.c.
-# It provides a version of _psyco.so whose only exported (non-static)
-# symbol is init_psyco(). It also seems that the GDB debugger doesn't locate
-# too well non-static symbols in shared libraries. Recompiling after minor
-# changes is faster if ALL_STATIC=0.
+# If the following is set to 1, Ni is compiled by #including all .c files
+# into ni.c (initialize.h, x64/iinitialize.h); platform.c and
+# Python/pyruntime.c stay separate units. Everything else is static, so the
+# compiler warns about unused functions, and recompiling after small changes
+# is slower.
 ALL_STATIC = int(os.environ.get('NI_ALL_STATIC', 0))
 
 # Enable debugger trace points and compiler with debug options by 
@@ -76,8 +75,9 @@ PROCESSOR = autodetect()
 
 def find_sources(processor, all_static):
     if all_static:
-        # Python/pyruntime.c is built with Py_BUILD_CORE, on its own
-        return ['./ni/ni.c', './ni/Python/pyruntime.c']
+        # Python/pyruntime.c is built with Py_BUILD_CORE, on its own;
+        # platform.c is kept apart from the Python headers
+        return ['./ni/ni.c', './ni/platform.c', './ni/Python/pyruntime.c']
     else:
         result = glob.glob('./ni/*.c')
         result += glob.glob('./ni/Python/*.c')

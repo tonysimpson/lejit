@@ -245,7 +245,6 @@ static void check_no_rtref(vinfo_array_t* aa)
 }
 #endif
 
-DEFINEFN
 #if ALL_CHECKS
 /* Debug check of the register moves below (KNOWN_BUGS B7): before them,
    each value wanted in a register is copied from where it is now to
@@ -298,6 +297,7 @@ static code_t* unify_check_verify(code_t* code, struct dmove_s* dm,
 }
 #endif
 
+DEFINEFN
 code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
                     CodeBufferObject** target)
 {

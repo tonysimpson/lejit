@@ -79,7 +79,7 @@ typedef struct {
   FMUT(DEF_FIELD(PyThreadState, PyObject *, curexc_type, NO_PREV_FIELD))
 #define CF_UNCHECKED (CfReturnTypePtr | CfNewRef)
 
-EXTERNFN void *ni_tstate_current_address(void); /* Python/pyruntime.c */
+extern void *ni_tstate_current_address(void); /* Python/pyruntime.c */
 
 static PyObject *cimpl_null_result(PyObject *func) {
   return _Py_CheckFunctionResult(func, NULL, NULL);

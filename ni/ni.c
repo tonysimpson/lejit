@@ -308,7 +308,7 @@ static PyObject *ni_inlinable(PyObject *self, PyObject *co) {
 
 /* for debugging (doc/BUILD.md): (codebuf, address of the globals) the eval
    hook runs; the address, since the globals are borrowed and may be dead */
-static PyObject *ni_entry_point(PyObject *self, PyObject *co) {
+static PyObject *ni_py_entry_point(PyObject *self, PyObject *co) {
   void *x;
   PyObject *e;
   if (!PyCode_Check(co)) {
@@ -357,7 +357,7 @@ static PyMethodDef module_methods[] = {
      "['module.name: why'] for each meta that wasn't registered."},
     {"_set_trace_fallback", ni_set_trace_fallback, METH_O,
      "Whether code runs interpreted while sys.settrace/setprofile is set."},
-    {"_entry_point", ni_entry_point, METH_O,
+    {"_entry_point", ni_py_entry_point, METH_O,
      "(codebuf, globals) run for a code object, or None."},
     {NULL, NULL, 0, NULL}};
 

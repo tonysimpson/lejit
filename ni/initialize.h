@@ -43,6 +43,7 @@
 #include "Objects/plongobject.c"
 #include "Objects/pmethodobject.c"
 #include "Objects/pobject.c"
+#include "Objects/prangeobject.c"
 #include "Objects/psliceobject.c"
 #include "Objects/pstructmember.c"
 #include "Objects/ptupleobject.c"

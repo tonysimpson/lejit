@@ -78,7 +78,7 @@ PyObject *psyco_processor_run(CodeBufferObject *codebuf, long initial_stack[],
 
 typedef char (*psyco_int_mul_ovf_fn)(long a, long b);
 
-psyco_int_mul_ovf_fn psyco_int_mul_ovf;
+DEFINEVAR psyco_int_mul_ovf_fn psyco_int_mul_ovf;
 
 void write_psyco_int_mul_ovf(PsycoObject *po) {
   BEGIN_CODE

@@ -14,7 +14,7 @@
    which profiles to find what Ni didn't compile. */
 DEFINEVAR int ni_trace_fallback = 1;
 
-EXTERNFN int ni_eval_breaker_at_entry(PyFrameObject *f); /* pyruntime.c */
+extern int ni_eval_breaker_at_entry(PyFrameObject *f); /* pyruntime.c */
 
 static PyObject *NiCode_Run(PyObject *codebuf, ni_frame_t *f) {
   stack_frame_info_t **finfo;

@@ -94,13 +94,13 @@ typedef int64_t qword_t;
 
 
 #ifndef ALL_STATIC
-#define ALL_STATIC  0   /* make all functions static; set to 1 by hack.c */
+#define ALL_STATIC  0   /* 1: one unit, all static (setup.py NI_ALL_STATIC) */
 #endif
 
 #if ALL_STATIC
-# define EXTERNVAR   staticforward
+# define EXTERNVAR   static
 # define EXTERNFN    static
-# define DEFINEVAR   statichere
+# define DEFINEVAR   static
 # define DEFINEFN    static
 # define INITIALIZATIONFN  PSY_INLINE
 #else
