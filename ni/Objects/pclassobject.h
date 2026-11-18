@@ -9,9 +9,9 @@
 #include "pobject.h"
 
 /* Instance methods */
-#define METHOD_im_func DEF_FIELD(PyMethodObject, PyObject *, im_func, OB_type)
+#define METHOD_im_func CPY_FIELD(PyMethodObject, im_func, OB_type)
 #define METHOD_im_self                                                         \
-  DEF_FIELD(PyMethodObject, PyObject *, im_self, METHOD_im_func) 
+  CPY_FIELD(PyMethodObject, im_self, METHOD_im_func) 
 #define iMETHOD_IM_FUNC FIELD_INDEX(METHOD_im_func)
 #define iMETHOD_IM_SELF FIELD_INDEX(METHOD_im_self)
 #define METHOD_TOTAL FIELDS_TOTAL(METHOD_im_self)

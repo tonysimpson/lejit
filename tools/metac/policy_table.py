@@ -208,6 +208,110 @@ TYPES = {
         'shape': '666fb76e2c4d', 'type': 'PyCell_Type', 'mutable': ['ob_ref']},
 }
 
+# ---- layouts: the CPython fields Ni relies on (stage 0, D19, D76) ----------
+
+# Every struct field whose offset, size or representation Ni builds into
+# emitted code or a field descriptor. gen_layouts.py finds each struct by
+# name in Include/**/*.h (then in 'from', for a struct private to a C file,
+# which it copies under the name 'copy'), checks each field is declared
+# with the C type given, and writes layouts_gen.h: NI_OFS_, NI_SIZE2_ and
+# NI_UNSIGNED_<struct>__<field>, with a _Static_assert per assumption.
+# Fields are (path, declared C type, how Ni reads it): the read is ptr, f64,
+# i8/u8 ... i64/u64, with '/low' when Ni reads only the first bytes of a
+# wider field and '/bits' when it reads the bytes whatever the declared
+# kind or sign. 'bits': bit-fields Ni tests by mask, from the first.
+# Ni's own fields (virtual-object slots, guards) stay in core.
+LAYOUTS = {
+    # refcounts and types: the backend (x64/ipyencoding.*) and OB_type
+    'PyObject': {'fields': [('ob_refcnt', 'Py_ssize_t', 'i64'),
+                            ('ob_type', 'struct _typeobject *', 'ptr')]},
+    'PyVarObject': {'fields': [('ob_size', 'Py_ssize_t', 'i64')]},
+    # the backend: decref's dealloc call, type guards, the inline store's
+    # GC test (a byte of tp_flags)
+    'PyTypeObject': {'fields': [('tp_dealloc', 'destructor', 'ptr'),
+                                ('tp_flags', 'unsigned long', 'u64'),
+                                ('tp_version_tag', 'unsigned int', 'u32')]},
+    # the inline store's GC test (ipyencoding.c:GC_REFS_OFFSET)
+    'PyGC_Head': {'fields': [('gc.gc_refs', 'Py_ssize_t', 'i64')]},
+    'PyFloatObject': {'fields': [('ob_fval', 'double', 'f64')]},
+    'PyLongObject': {'fields': [('ob_digit', 'digit[1]', 'u32')]},
+    'PyListObject': {'fields': [('ob_item', 'PyObject **', 'ptr')]},
+    'PyTupleObject': {'fields': [('ob_item', 'PyObject *[1]', 'ptr')]},
+    'PyBytesObject': {'fields': [('ob_sval', 'char[1]', 'u8/bits')]},
+    # len() reads ma_used's low 32 bits (pdictobject.c); the inline store
+    # compares and increments all 64 (ipyencoding.c)
+    'PyDictObject': {'fields': [('ma_used', 'Py_ssize_t', 'i32/low'),
+                                ('ma_version_tag', 'uint64_t', 'u64'),
+                                ('ma_keys', 'PyDictKeysObject *', 'ptr'),
+                                ('ma_values', 'PyObject **', 'ptr')]},
+    # 'state' is read as its low byte (punicodeobject.c)
+    'PyASCIIObject': {'fields': [('length', 'Py_ssize_t', 'i64'),
+                                 ('hash', 'Py_hash_t', 'i64'),
+                                 ('state', 'struct {...}', 'u8/low')],
+                      'bits': {'state': ('interned:2', 'kind:3', 'compact:1',
+                                         'ascii:1', 'ready:1')}},
+    'PySliceObject': {'fields': [('start', 'PyObject *', 'ptr'),
+                                 ('stop', 'PyObject *', 'ptr'),
+                                 ('step', 'PyObject *', 'ptr')]},
+    'PyFunctionObject': {'fields': [
+        ('func_code', 'PyObject *', 'ptr'), ('func_globals', 'PyObject *', 'ptr'),
+        ('func_defaults', 'PyObject *', 'ptr'),
+        ('func_kwdefaults', 'PyObject *', 'ptr'),
+        ('func_closure', 'PyObject *', 'ptr'),
+        ('func_annotations', 'PyObject *', 'ptr'),
+        ('func_qualname', 'PyObject *', 'ptr')]},
+    'PyMethodObject': {'fields': [('im_func', 'PyObject *', 'ptr'),
+                                  ('im_self', 'PyObject *', 'ptr')]},
+    'PyCFunctionObject': {'fields': [('m_ml', 'PyMethodDef *', 'ptr'),
+                                     ('m_self', 'PyObject *', 'ptr')]},
+    'PyCellObject': {'fields': [('ob_ref', 'PyObject *', 'ptr')]},
+    # the recursion count (psyfunc.c) and PyErr_Occurred inline
+    # (pmethodobject.c, pycompiler.h, x64/iencoding.c)
+    'PyThreadState': {'fields': [('recursion_depth', 'int', 'i32'),
+                                 ('overflowed', 'char', 'i8'),
+                                 ('curexc_type', 'PyObject *', 'ptr')]},
+    # private to a C file: copied under Ni's name
+    'seqiterobject': {'from': ('Objects/iterobject.c',), 'copy': 'seqiterobject',
+                      'fields': [('it_index', 'Py_ssize_t', 'i64'),
+                                 ('it_seq', 'PyObject *', 'ptr')]},
+    'rangeobject': {'from': ('Objects/rangeobject.c',), 'copy': 'rangeobject',
+                    'fields': [('start', 'PyObject *', 'ptr'),
+                               ('stop', 'PyObject *', 'ptr'),
+                               ('step', 'PyObject *', 'ptr'),
+                               ('length', 'PyObject *', 'ptr')]},
+    'rangeiterobject': {'from': ('Objects/rangeobject.c',),
+                        'copy': 'rangeiterobject',
+                        'fields': [('index', 'long', 'i64'),
+                                   ('start', 'long', 'i64'),
+                                   ('step', 'long', 'i64'),
+                                   ('len', 'long', 'i64')]},
+    # shared keys: attribute loads (pobject.c) and the inline store
+    'PyDictKeysObject': {'from': ('Objects/dict-common.h',),
+                         'copy': 'ni_dictkeys_t',
+                         'fields': [('dk_refcnt', 'Py_ssize_t', 'i64'),
+                                    ('dk_size', 'Py_ssize_t', 'i64'),
+                                    ('dk_usable', 'Py_ssize_t', 'i64'),
+                                    ('dk_nentries', 'Py_ssize_t', 'i64'),
+                                    ('dk_indices', 'char[]', 'u8/bits')]},
+    'PyDictKeyEntry': {'from': ('Objects/dict-common.h',),
+                       'copy': 'ni_dictentry_t',
+                       'fields': [('me_hash', 'Py_hash_t', 'i64'),
+                                  ('me_key', 'PyObject *', 'ptr'),
+                                  ('me_value', 'PyObject *', 'ptr')]},
+}
+
+# Fields reached from a global variable, for pyruntime.c (built with
+# Py_BUILD_CORE): name -> (variable, field path, declared type, read).
+# runtime_layouts_gen.h gives NI_RUNTIME_<name>, the field as an lvalue.
+RUNTIME = {
+    # where PyThreadState_GET() reads the current thread state: a plain load
+    'tstate_current': ('_PyRuntime', 'gilstate.tstate_current',
+                       '_Py_atomic_address', 'ptr/bits'),
+    # compared with 0 as a 32-bit int (KNOWN_BUGS C24)
+    'eval_breaker': ('_PyRuntime', 'ceval.eval_breaker', '_Py_atomic_int',
+                     'i32/bits'),
+}
+
 # ---- what Ni accepts without proof ------------------------------------------
 
 # C functions after which no eval_breaker test is needed (D53): they run
@@ -657,8 +761,8 @@ ENTRIES = {
     'Objects/object.c:PyObject_Hash': {'shape': 'ad375cb16529', 'ni': ['ni/Objects/pobject.c:PsycoObject_Hash']},
     'Include/object.h:PyObject_TypeCheck': {'shape': '888f9816c6d8', 'ni': ['ni/Objects/pobject.h:PyType_TypeCheck']},
     'Include/abstract.h:PyIter_Check': {'shape': 'd43c4196f3b7', 'ni': ['ni/Objects/pobject.h:PyType_TypeCheck']},
-    'Objects/dict-common.h:_dictkeysobject': {'shape': 'aa0c0e83a5c7', 'ni': ['ni/Objects/pobject.h:ni_dictkeys_t', 'ni/Objects/pobject.h:ni_dictentry_t']},
-    'Objects/dict-common.h:PyDictKeyEntry': {'shape': 'a42b235499c6', 'ni': ['ni/Objects/pobject.h:ni_dictkeys_t', 'ni/Objects/pobject.h:ni_dictentry_t']},
+    'Objects/dict-common.h:_dictkeysobject': {'shape': 'aa0c0e83a5c7', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
+    'Objects/dict-common.h:PyDictKeyEntry': {'shape': 'a42b235499c6', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
     'Objects/abstract.c:type_error': {'shape': '121037b863a2', 'ni': ['ni/Objects/pabstract.c:type_error_tp']},
     'Objects/call.c:PyObject_Call': {'shape': '61774182df72', 'ni': ['ni/Objects/pabstract.c:PsycoObject_Call']},
     'Objects/abstract.c:PyObject_GetItem': {
@@ -997,7 +1101,7 @@ ENTRIES = {
             ('restype', 'PyTuple_Type'),
         ]},
     'Objects/tupleobject.c:tupleitem': {'shape': 'e61481faa2e9', 'ni': ['ni/Objects/ptupleobject.c:ptuple_item']},
-    'Objects/iterobject.c:seqiterobject': {'shape': '24ea9b846c56', 'ni': ['ni/Objects/piterobject.h:seqiterobject']},
+    'Objects/iterobject.c:seqiterobject': {'shape': '24ea9b846c56', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
     'Objects/object.c:PyObject_SelfIter': {'shape': 'ba0edf658c0b', 'ni': ['ni/Objects/piterobject.c:piter_getiter', 'ni/Objects/prangeobject.c:prangeiter_getiter']},
     'Objects/iterobject.c:iter_iternext': {
         'shape': 'f4f8c9902f51',
@@ -1009,8 +1113,8 @@ ENTRIES = {
             ('shortcut', 'direct_meta', "a list's item by list_item"),
             ('promote', 'type', 'seq'),
         ]},
-    'Objects/rangeobject.c:rangeobject': {'shape': '1534db80b98a', 'ni': ['ni/Objects/prangeobject.c:rangeobject', 'ni/Objects/prangeobject.c:rangeiterobject']},
-    'Objects/rangeobject.c:rangeiterobject': {'shape': 'd9be9f22f87f', 'ni': ['ni/Objects/prangeobject.c:rangeobject', 'ni/Objects/prangeobject.c:rangeiterobject']},
+    'Objects/rangeobject.c:rangeobject': {'shape': '1534db80b98a', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
+    'Objects/rangeobject.c:rangeiterobject': {'shape': 'd9be9f22f87f', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
     'Objects/rangeobject.c:get_len_of_range': {'shape': '966634e07870', 'ni': ['ni/Objects/prangeobject.c:cimpl_range_len']},
     'Objects/rangeobject.c:fast_range_iter': {'shape': '171e7bf3cd4f', 'ni': ['ni/Objects/prangeobject.c:cimpl_rangeiter_new']},
     'Objects/rangeobject.c:range_iter': {

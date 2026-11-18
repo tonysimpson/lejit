@@ -13,8 +13,7 @@
 /* ob_size is the signed number of digits; ob_digit[0] is only there when
    ob_size != 0 (_PyLong_New(0) allocates no digit) */
 #define LONG_ob_size FIX_signed_size
-#define LONG_ob_digit0                                                         \
-  UNSIGNED_FIELD(PyLongObject, digit, ob_digit[0], FIX_signed_size)
+#define LONG_ob_digit0 CPY_FIELD(PyLongObject, ob_digit, FIX_signed_size)
 #define iLONG_OB_DIGIT0 FIELD_INDEX(LONG_ob_digit0)
 /* virtual ints only: the value as a machine word; not a C field, so it is
    never read from memory (a field read the virtual int doesn't have makes

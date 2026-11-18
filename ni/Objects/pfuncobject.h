@@ -8,19 +8,19 @@
 #include "pabstract.h"
 #include "pobject.h"
 
-#define FUNC_code DEF_FIELD(PyFunctionObject, PyObject *, func_code, OB_type)
+#define FUNC_code CPY_FIELD(PyFunctionObject, func_code, OB_type)
 #define FUNC_globals \
-    DEF_FIELD(PyFunctionObject, PyObject *, func_globals, FUNC_code)
+    CPY_FIELD(PyFunctionObject, func_globals, FUNC_code)
 #define FUNC_defaults \
-    DEF_FIELD(PyFunctionObject, PyObject *, func_defaults, FUNC_globals)
+    CPY_FIELD(PyFunctionObject, func_defaults, FUNC_globals)
 #define FUNC_kwdefaults \
-    DEF_FIELD(PyFunctionObject, PyObject *, func_kwdefaults, FUNC_defaults)
+    CPY_FIELD(PyFunctionObject, func_kwdefaults, FUNC_defaults)
 #define FUNC_closure \
-    DEF_FIELD(PyFunctionObject, PyObject *, func_closure, FUNC_kwdefaults)
+    CPY_FIELD(PyFunctionObject, func_closure, FUNC_kwdefaults)
 #define FUNC_annotations \
-    DEF_FIELD(PyFunctionObject, PyObject *, func_annotations, FUNC_closure)
+    CPY_FIELD(PyFunctionObject, func_annotations, FUNC_closure)
 #define FUNC_qualname \
-    DEF_FIELD(PyFunctionObject, PyObject *, func_qualname, FUNC_annotations)
+    CPY_FIELD(PyFunctionObject, func_qualname, FUNC_annotations)
 
 #define iFUNC_CODE FIELD_INDEX(FUNC_code)
 #define iFUNC_GLOBALS FIELD_INDEX(FUNC_globals)

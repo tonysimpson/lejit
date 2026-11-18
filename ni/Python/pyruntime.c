@@ -1,26 +1,25 @@
-/* The only file built with Py_BUILD_CORE, for what 3.7 keeps in _PyRuntime
-   (Include/internal/pystate.h), which the extension headers don't
-   describe. Not #included into ni.c under ALL_STATIC: setup.py always
-   builds it on its own. */
+/* The only file built with Py_BUILD_CORE, for what the runtime state
+   (_PyRuntime, in the internal headers) holds, which the extension headers
+   don't describe. The two fields compiled code reads are generated
+   (runtime_layouts_gen.h, policy_table.RUNTIME, D76). The handler below is
+   a copy of the top of ceval's loop, a mechanism rather than a layout: its
+   reads of the pending-calls and GIL state change with the loop. Not
+   #included into ni.c under ALL_STATIC: setup.py always builds it on its
+   own. */
 #define Py_BUILD_CORE
 #include <Python.h>
 #include "internal/pystate.h"
 #include "frameobject.h"
 #include "opcode.h"
+#include "runtime_layouts_gen.h"
 
 /* where PyThreadState_GET() reads the current thread state: an
    _Py_atomic_address, which a plain load reads */
-void *ni_tstate_current_address(void) {
-  return &_PyRuntime.gilstate.tstate_current;
-}
+void *ni_tstate_current_address(void) { return &NI_RUNTIME_tstate_current; }
 
 /* ceval's eval_breaker (KNOWN_BUGS C24): compiled code compares it with 0
    as a 32-bit int, at loop heads and after calls */
-_Static_assert(sizeof(_PyRuntime.ceval.eval_breaker) == sizeof(int),
-               "eval_breaker is read as a 32-bit int");
-void *ni_eval_breaker_address(void) {
-  return &_PyRuntime.ceval.eval_breaker;
-}
+void *ni_eval_breaker_address(void) { return &NI_RUNTIME_eval_breaker; }
 
 /* What ceval's main loop does when eval_breaker is set (3.7
    Python/ceval.c, the top of the for loop). PyEval_SaveThread and
@@ -57,7 +56,7 @@ int ni_eval_breaker_handler(void) {
    its traceback, as ceval's error path would. */
 int ni_eval_breaker_at_entry(PyFrameObject *f) {
   int op;
-  if (!_Py_atomic_load_relaxed(&_PyRuntime.ceval.eval_breaker))
+  if (!_Py_atomic_load_relaxed(&NI_RUNTIME_eval_breaker))
     return 0;
   op = _Py_OPCODE(*(_Py_CODEUNIT *)PyBytes_AS_STRING(f->f_code->co_code));
   if (op == SETUP_FINALLY || op == SETUP_WITH || op == BEFORE_ASYNC_WITH ||

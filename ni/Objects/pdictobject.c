@@ -1,8 +1,8 @@
 #include "pdictobject.h"
 
 
-/* ma_used is Py_ssize_t in Python 3, but this reads it as an int (low 32 bits). */
-#define DICT_ma_used   FMUT(DEF_FIELD(PyDictObject, int, ma_used, OB_type))
+/* ma_used is read as its low 32 bits (policy_table.LAYOUTS) */
+#define DICT_ma_used   FMUT(CPY_FIELD(PyDictObject, ma_used, OB_type))
 #define iDICT_MA_USED  FIELD_INDEX(DICT_ma_used)
 
 DEFINEFN

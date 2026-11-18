@@ -76,7 +76,7 @@ typedef struct {
 #define CF_TSTATE_current                                                      \
   FMUT(DEF_FIELD(cf_tstate_slot_t, PyThreadState *, ts, NO_PREV_FIELD))
 #define CF_TSTATE_curexc_type                                                  \
-  FMUT(DEF_FIELD(PyThreadState, PyObject *, curexc_type, NO_PREV_FIELD))
+  FMUT(CPY_FIELD(PyThreadState, curexc_type, NO_PREV_FIELD))
 #define CF_UNCHECKED (CfReturnTypePtr | CfNewRef)
 
 extern void *ni_tstate_current_address(void); /* Python/pyruntime.c */

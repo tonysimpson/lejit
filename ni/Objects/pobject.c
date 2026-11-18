@@ -533,12 +533,12 @@ typedef struct {
 
 #define INSTANCE_dict FMUT(DEF_ARRAY(PyObject *, 0))
 #define DICT_ma_keys                                                           \
-  FMUT(DEF_FIELD(PyDictObject, PyDictKeysObject *, ma_keys, NO_PREV_FIELD))
+  FMUT(CPY_FIELD(PyDictObject, ma_keys, NO_PREV_FIELD))
 #define DICT_ma_values                                                         \
-  FMUT(DEF_FIELD(PyDictObject, PyObject **, ma_values, NO_PREV_FIELD))
+  FMUT(CPY_FIELD(PyDictObject, ma_values, NO_PREV_FIELD))
 #define VALUES_item FMUT(DEF_ARRAY(PyObject *, 0))
 #define KEYS_nentries                                                          \
-  FMUT(DEF_FIELD(ni_dictkeys_t, Py_ssize_t, dk_nentries, NO_PREV_FIELD))
+  FMUT(CPY_FIELD(ni_dictkeys_t, dk_nentries, NO_PREV_FIELD))
 
 /* Whether to emit the inline path for 'tp', in a way that a replay repeats
    (see psyco_block_serial). CPython never gives a class shared keys again

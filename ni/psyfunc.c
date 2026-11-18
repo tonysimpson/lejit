@@ -353,9 +353,9 @@ typedef struct {
 #define TSTATE_current                                                         \
   FMUT(DEF_FIELD(tstate_slot_t, PyThreadState *, ts, NO_PREV_FIELD))
 #define TSTATE_depth                                                           \
-  FMUT(DEF_FIELD(PyThreadState, int, recursion_depth, NO_PREV_FIELD))
+  FMUT(CPY_FIELD(PyThreadState, recursion_depth, NO_PREV_FIELD))
 #define TSTATE_overflowed                                                      \
-  FMUT(DEF_FIELD(PyThreadState, char, overflowed, NO_PREV_FIELD))
+  FMUT(CPY_FIELD(PyThreadState, overflowed, NO_PREV_FIELD))
 #define INT_value FMUT(DEF_FIELD(int_slot_t, int, value, NO_PREV_FIELD))
 
 extern void *ni_tstate_current_address(void); /* Python/pyruntime.c */

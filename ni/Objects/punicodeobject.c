@@ -15,15 +15,19 @@
 #include "psliceobject.h"
 #include "../pycodegen.h"
 
-/* 'state' is read as its low byte: bit 7 ready, 6 ascii, 5 compact, 2-4
-   kind, 0-1 interned. Only 'interned' changes once a string is ready; the
-   rest of the word is padding that CPython never initialises. */
-#define UNICODE_length NONNEG_FIELD(PyASCIIObject, Py_ssize_t, length, OB_type)
-#define UNICODE_hash DEF_FIELD(PyASCIIObject, Py_hash_t, hash, UNICODE_length)
-#define UNICODE_state                                                          \
-  UNSIGNED_FIELD(PyASCIIObject, unsigned char, state, UNICODE_hash)
-#define STATE_READY 0x80
-#define STATE_COMPACT_ASCII 0xE0 /* ready, ascii and compact */
+/* 'state' is read as its low byte, which holds the bit-fields ready, ascii,
+   compact, kind and interned (their masks are generated: NI_BIT_, from
+   the bit order policy_table.LAYOUTS checks, which puts ready, ascii and
+   compact at the top, as state_at_least's unsigned >= needs). Only
+   'interned' changes once a string is ready; the rest of the word is
+   padding that CPython never initialises. */
+#define UNICODE_length CPY_NONNEG_FIELD(PyASCIIObject, length, OB_type)
+#define UNICODE_hash CPY_FIELD(PyASCIIObject, hash, UNICODE_length)
+#define UNICODE_state CPY_FIELD(PyASCIIObject, state, UNICODE_hash)
+#define STATE_READY NI_BIT_PyASCIIObject__state__ready
+#define STATE_COMPACT_ASCII                                                    \
+  (NI_BIT_PyASCIIObject__state__ready | NI_BIT_PyASCIIObject__state__ascii |  \
+   NI_BIT_PyASCIIObject__state__compact)
 
 static PyObject *latin1[256];
 static lenfunc unicode_length;

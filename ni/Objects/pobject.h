@@ -10,10 +10,10 @@
 
 
 /*#define OB_REFCOUNT         never directly manipulated*/
-#define OB_type      DEF_FIELD(PyObject, PyTypeObject*, ob_type, NO_PREV_FIELD)
-#define FIX_size     NONNEG_FIELD(PyVarObject,     Py_ssize_t, ob_size, OB_type)
+#define OB_type      CPY_FIELD(PyObject, ob_type, NO_PREV_FIELD)
+#define FIX_size     CPY_NONNEG_FIELD(PyVarObject, ob_size, OB_type)
 #define VAR_size     FMUT(FIX_size)
-#define FIX_signed_size DEF_FIELD(PyVarObject,     Py_ssize_t, ob_size, OB_type)
+#define FIX_signed_size CPY_FIELD(PyVarObject, ob_size, OB_type)
 #define VAR_signed_size FMUT(FIX_signed_size)
 
 #define iOB_TYPE   FIELD_INDEX(OB_type)
@@ -232,21 +232,9 @@ static vinfo_t* cname  fargs  {						\
 /* for dispatcher.c */
 EXTERNFN vinfo_t* Psyco_SafelyDeleteVar(PsycoObject* po, vinfo_t* vi);
 
-/* 3.7's struct _dictkeysobject (Objects/dict-common.h), which isn't in the
-   installed headers; the entries follow the indices. */
-typedef struct {
-  Py_ssize_t dk_refcnt;
-  Py_ssize_t dk_size;
-  void *dk_lookup;
-  Py_ssize_t dk_usable;
-  Py_ssize_t dk_nentries;
-  char dk_indices[];
-} ni_dictkeys_t;
-typedef struct {
-  Py_hash_t me_hash;
-  PyObject *me_key;
-  PyObject *me_value;
-} ni_dictentry_t;
+/* ni_dictkeys_t and ni_dictentry_t, the dict keys and entries that aren't
+   in the installed headers, are copied from the source into layouts_gen.h
+   (policy_table.LAYOUTS); the entries follow the indices. */
 
 /* Inline attribute stores (D38): a cache per (class, name) says where the
    name sits in keys of one size; it holds no reference to any keys. The

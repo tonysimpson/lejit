@@ -954,7 +954,7 @@ typedef struct {
 } global_guard_t;
 
 #define DICT_ma_version_tag                                                    \
-  FMUT(UNSIGNED_FIELD(PyDictObject, uint64_t, ma_version_tag, NO_PREV_FIELD))
+  FMUT(CPY_FIELD(PyDictObject, ma_version_tag, NO_PREV_FIELD))
 #define GUARD_globals_tag                                                      \
   FMUT(UNSIGNED_FIELD(global_guard_t, uint64_t, globals_tag, NO_PREV_FIELD))
 #define GUARD_builtins_tag                                                     \
@@ -1251,7 +1251,7 @@ static void unbound_deref_error(PsycoObject *po, PyCodeObject *co, int oparg) {
                                               oparg - ncells)));
 }
 
-#define CELL_ob_ref FMUT(DEF_FIELD(PyCellObject, PyObject *, ob_ref, OB_type))
+#define CELL_ob_ref FMUT(CPY_FIELD(PyCellObject, ob_ref, OB_type))
 
 /* ceval.c:import_from, as 3.7: the sys.modules fallback for circular
    relative imports, and an ImportError with name and path (F44) */

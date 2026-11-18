@@ -3,7 +3,7 @@
 #include "plongobject.h"
 #include "psliceobject.h"
 
-#define BYTES_sval UNSIGNED_ARRAY(unsigned char, offsetof(PyBytesObject, ob_sval))
+#define BYTES_sval CPY_ARRAY(PyBytesObject, ob_sval)
 
 static binaryfunc bytes_subscript;
 

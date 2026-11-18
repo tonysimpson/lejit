@@ -53,16 +53,16 @@ DEFINEFN void function_return(PsycoObject *po, Source retval, int nframelocal,
 DEFINEFN
 code_t *decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg,
                                destructor fn) {
-  extra_assert(offsetof(PyObject, ob_type) < 128);
-  extra_assert(offsetof(PyTypeObject, tp_dealloc) < 128);
+  extra_assert(CPY_OFFSET(PyObject, ob_type) < 128);
+  extra_assert(CPY_OFFSET(PyTypeObject, tp_dealloc) < 128);
   DEC_OB_REFCNT_NZ(rg);
   BEGIN_SHORT_COND_JUMP(0, CC_NE); /* NE is the not zero flag */
   if (fn == NULL) {
     BEGIN_CALL(1);
     CALL_SET_ARG_FROM_REG(rg, 0);
-    MOV_R_O8(REG_TRANSIENT_1, rg, offsetof(PyObject, ob_type));
+    MOV_R_O8(REG_TRANSIENT_1, rg, CPY_OFFSET(PyObject, ob_type));
     MOV_R_O8(REG_TRANSIENT_1, REG_TRANSIENT_1,
-             offsetof(PyTypeObject, tp_dealloc));
+             CPY_OFFSET(PyTypeObject, tp_dealloc));
     END_CALL_R(REG_TRANSIENT_1);
   } else {
     BEGIN_CALL(1);
@@ -127,14 +127,14 @@ bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w) {
    short where they reach: the body is emitted twice, first with every
    one near, which gives an upper bound on each distance. */
 _Static_assert(sizeof(PyGC_Head) == 32 &&
-                   offsetof(PyGC_Head, gc.gc_refs) == 16 &&
+                   NI_OFS_PyGC_Head__gc__gc_refs == 16 &&
                    _PyGC_REFS_SHIFT == 1 && _PyGC_REFS_UNTRACKED == -2 &&
                    Py_TPFLAGS_HAVE_GC == 1UL << 14,
-               "3.7's PyGC_Head, as the inline GC test reads it");
+               "PyGC_Head with gc.gc_refs, as the inline GC test reads it");
 _Static_assert(offsetof(store_cache_t, dk_size) == 0,
                "the size check compares [cache] directly");
 #define GC_REFS_OFFSET                                                         \
-  ((long)offsetof(PyGC_Head, gc.gc_refs) - (long)sizeof(PyGC_Head))
+  ((long)NI_OFS_PyGC_Head__gc__gc_refs - (long)sizeof(PyGC_Head))
 #define STORE_MAX_MISS_JUMPS 8
 
 /* Which encodings reach: decided once from where the site starts, with a
@@ -198,11 +198,11 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
   MOV_R_O(REG_X64_RCX, REG_X64_RDI, s->dictoffset);
   TEST_R_R(REG_X64_RCX, REG_X64_RCX);
   JCC_MISS(CC_E); /* no dict yet */
-  MOV_R_O(REG_X64_R8, REG_X64_RCX, offsetof(PyDictObject, ma_values));
+  MOV_R_O(REG_X64_R8, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_values));
   TEST_R_R(REG_X64_R8, REG_X64_R8);
   JCC_MISS(CC_E); /* combined */
-  MOV_R_O(REG_X64_R9, REG_X64_RCX, offsetof(PyDictObject, ma_keys));
-  MOV_R_O(REG_X64_RAX, REG_X64_R9, offsetof(ni_dictkeys_t, dk_size));
+  MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
+  MOV_R_O(REG_X64_RAX, REG_X64_R9, CPY_OFFSET(ni_dictkeys_t, dk_size));
   CMP_R_A(REG_X64_RAX, REG_X64_RDX);
   JCC_MISS(CC_NE); /* keys of another size */
   MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, kword));
@@ -219,8 +219,8 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
     } else {
       gc_ok = code;
       WRITE_2(0x70 | CC_NE, 0); /* the dict is tracked */
-      MOV_R_O(REG_TRANSIENT_1, REG_X64_RSI, offsetof(PyObject, ob_type));
-      TEST_I8_BO(REG_TRANSIENT_1, offsetof(PyTypeObject, tp_flags) + 1,
+      MOV_R_O(REG_TRANSIENT_1, REG_X64_RSI, CPY_OFFSET(PyObject, ob_type));
+      TEST_I8_BO(REG_TRANSIENT_1, CPY_OFFSET(PyTypeObject, tp_flags) + 1,
                  Py_TPFLAGS_HAVE_GC >> 8);
       JCC_MISS(CC_NE);
       gc_ok[1] = (code_t)(code - (gc_ok + 2));
@@ -240,7 +240,7 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
   MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX, offsetof(store_cache_t, version));
   INC_A(REG_TRANSIENT_1);
   MOV_R_A(REG_TRANSIENT_1, REG_TRANSIENT_1);
-  MOV_O_R(REG_X64_RCX, offsetof(PyDictObject, ma_version_tag),
+  MOV_O_R(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag),
           REG_TRANSIENT_1);
   DEC_A(REG_X64_RAX); /* last: may run any code */
   s->done[0] = code;
@@ -253,9 +253,9 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
   extra_assert(code - (fill_jz + 2) < 128);
   fill_jz[1] = (code_t)(code - (fill_jz + 2));
   ni_trace_jump_cond(fill_jz, fill_jz + 2, code);
-  CMP_R_O8(REG_X64_R9, REG_X64_RCX, offsetof(PyDictObject, ma_used));
+  CMP_R_O8(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
   JCC_MISS(CC_NE); /* out of order: CPython converts the dict */
-  INC_O8(REG_X64_RCX, offsetof(PyDictObject, ma_used));
+  INC_O8(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
   MOV_R_R(REG_X64_RAX, REG_X64_RSI);
   INC_A(REG_X64_RSI);
   extra_assert(store - (code + 2) >= -128);
@@ -336,9 +336,9 @@ condition_code_t psyco_type_guard(PsycoObject *po, PyTypeObject *tp,
   NEED_CC();
   NEED_REGISTER(REG_X64_RAX);
   MOV_R_I(REG_TRANSIENT_1, (long)tp);
-  MOV_R_O(REG_TRANSIENT_2, REG_TRANSIENT_1, offsetof(PyTypeObject, tp_flags));
+  MOV_R_O(REG_TRANSIENT_2, REG_TRANSIENT_1, CPY_OFFSET(PyTypeObject, tp_flags));
   MOV_DR_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
-           offsetof(PyTypeObject, tp_version_tag));
+           CPY_OFFSET(PyTypeObject, tp_version_tag));
   off = (long)flags - ((long)code + 7);
   if (FITS_IN_32BITS(off) && FITS_IN_32BITS((long)tag - ((long)code + 14))) {
     XOR_R_RIP(REG_TRANSIENT_2, off);

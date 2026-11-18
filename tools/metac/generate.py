@@ -26,7 +26,10 @@ sys.path.insert(0, HERE)
 # generator module -> the header it writes
 GENERATORS = [('gen_long', 'plongobject_gen.h'),
               ('gen_float', 'pfloatobject_gen.h'),
-              ('gen_ceval', 'pycompiler_gen.h')]
+              ('gen_ceval', 'pycompiler_gen.h'),
+              ('gen_layouts', 'layouts_gen.h'),
+              ('gen_layouts:build_runtime', 'runtime_layouts_gen.h')]
+# (a 'module:function' entry calls that function instead of build)
 # and mechanisms.py writes mechanisms.HEADERS: the snippet for each of Ni's
 # own mechanisms that the source's answers choose (D75)
 
@@ -88,9 +91,10 @@ def generate(argv):
             ' match this source:\n  ' + '\n  '.join(problems)
     outputs = []
     for name, filename in GENERATORS:
+        name, _, func = name.partition(':')
         mod = __import__(name)
         try:
-            text, report = mod.build(target)
+            text, report = getattr(mod, func or 'build')(target)
         except cslots.GenError as e:
             return 'generate.py: %s: %s' % (name, e)
         outputs.append((filename, text))

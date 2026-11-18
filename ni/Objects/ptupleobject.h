@@ -10,8 +10,7 @@
 #include "pabstract.h"
 
 
-#define TUPLE_ob_item   FARRAY(DEF_FIELD(PyTupleObject, PyObject*, ob_item, \
-						FIX_size))
+#define TUPLE_ob_item   FARRAY(CPY_FIELD(PyTupleObject, ob_item, FIX_size))
 #define iTUPLE_OB_ITEM  FIELD_INDEX(TUPLE_ob_item)
 
 /* The following macro reads an item from a Psyco tuple without any

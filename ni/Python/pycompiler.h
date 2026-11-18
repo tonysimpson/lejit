@@ -221,7 +221,7 @@ PSY_INLINE vinfo_t *psyco_PyErr_Occurred(PsycoObject *po) {
     /* XXX Can we get _PyThreadState_Current to make this quicker ? */
     vtstate = psyco_generic_call(po, PyThreadState_Get, CfReturnTypePtr, "");
     vcurexc =
-        v_mem_mov(po, NULL, vtstate, NULL, offsetof(PyThreadState, curexc_type),
+        v_mem_mov(po, NULL, vtstate, NULL, CPY_OFFSET(PyThreadState, curexc_type),
                   V_MEM_MOV_SCALE_POINTER, false);
     vinfo_decref(vtstate, po);
     return vcurexc;

@@ -40,10 +40,10 @@
   } while (0)
 #define INC_OB_REFCNT_internal(rg)                                             \
   do {                                                                         \
-    if (offsetof(PyObject, ob_refcnt) == 0) {                                  \
+    if (CPY_OFFSET(PyObject, ob_refcnt) == 0) {                                  \
       ADD_A_I8(rg, 1);                                                         \
     } else {                                                                   \
-      ADD_O8_I8(rg, offsetof(PyObject, ob_refcnt), 1);                         \
+      ADD_O8_I8(rg, CPY_OFFSET(PyObject, ob_refcnt), 1);                         \
     }                                                                          \
   } while (0)
 

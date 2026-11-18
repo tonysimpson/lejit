@@ -16,9 +16,9 @@
 #include "psliceobject.h"
 #include "plongobject.h"
 
-#define SLICE_start DEF_FIELD(PySliceObject, PyObject *, start, OB_type)
-#define SLICE_stop DEF_FIELD(PySliceObject, PyObject *, stop, SLICE_start)
-#define SLICE_step DEF_FIELD(PySliceObject, PyObject *, step, SLICE_stop)
+#define SLICE_start CPY_FIELD(PySliceObject, start, OB_type)
+#define SLICE_stop CPY_FIELD(PySliceObject, stop, SLICE_start)
+#define SLICE_step CPY_FIELD(PySliceObject, step, SLICE_stop)
 #define iSLICE_START FIELD_INDEX(SLICE_start)
 #define iSLICE_STOP FIELD_INDEX(SLICE_stop)
 #define iSLICE_STEP FIELD_INDEX(SLICE_step)

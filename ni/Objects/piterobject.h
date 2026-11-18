@@ -10,16 +10,10 @@
 #include "pabstract.h"
 
 
-/* this structure not exported by iterobject.h */
-typedef struct {
-	PyObject_HEAD
-	long      it_index;
-	PyObject *it_seq;
-} seqiterobject;
-
-#define SEQITER_it_index  FMUT(DEF_FIELD(seqiterobject, long, it_index, OB_type))
-#define SEQITER_it_seq    DEF_FIELD(seqiterobject, PyObject*, it_seq, \
-						SEQITER_it_index)
+/* seqiterobject, private to Objects/iterobject.c, is copied from the
+   source into layouts_gen.h */
+#define SEQITER_it_index  FMUT(CPY_FIELD(seqiterobject, it_index, OB_type))
+#define SEQITER_it_seq    CPY_FIELD(seqiterobject, it_seq, SEQITER_it_index)
 #define iSEQITER_IT_INDEX FIELD_INDEX(SEQITER_it_index)
 #define iSEQITER_IT_SEQ   FIELD_INDEX(SEQITER_it_seq)
 #define SEQITER_TOTAL     FIELDS_TOTAL(SEQITER_it_seq)

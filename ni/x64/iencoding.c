@@ -307,7 +307,7 @@ test_condition_and_pyerr_occured:
     BEGIN_CALL(0);
     END_CALL_I(PyThreadState_Get);
     MOV_R_O(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN,
-            offsetof(PyThreadState, curexc_type));
+            CPY_OFFSET(PyThreadState, curexc_type));
     TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
     TEST_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
     END_CODE

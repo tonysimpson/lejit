@@ -8,7 +8,7 @@
  * when every argument is an exact int that is one digit at run time
  * (PsycoLong_MediumValue) and the step is non-zero; anything else is the
  * real call. GET_ITER on a virtual range gives a virtual range iterator
- * with 3.7's rangeiterobject layout (index, start, step, len: all words,
+ * with rangeiterobject's layout (index, start, step, len: all words,
  * index mutable), and the iternext meta works on virtual and real fast
  * iterators alike. The long iterator (longrangeiterobject, a different
  * type) is never specialised.
@@ -16,31 +16,22 @@
 #include "prangeobject.h"
 #include "plongobject.h"
 
-/* private in Objects/rangeobject.c */
-typedef struct {
-  PyObject_HEAD
-  PyObject *start, *stop, *step, *length;
-} rangeobject;
-
-typedef struct {
-  PyObject_HEAD
-  long index, start, step, len;
-} rangeiterobject;
-
-#define RANGE_start DEF_FIELD(rangeobject, PyObject *, start, OB_type)
-#define RANGE_stop DEF_FIELD(rangeobject, PyObject *, stop, RANGE_start)
-#define RANGE_step DEF_FIELD(rangeobject, PyObject *, step, RANGE_stop)
-#define RANGE_length DEF_FIELD(rangeobject, PyObject *, length, RANGE_step)
+/* rangeobject and rangeiterobject, private to Objects/rangeobject.c, are
+   copied from the source into layouts_gen.h */
+#define RANGE_start CPY_FIELD(rangeobject, start, OB_type)
+#define RANGE_stop CPY_FIELD(rangeobject, stop, RANGE_start)
+#define RANGE_step CPY_FIELD(rangeobject, step, RANGE_stop)
+#define RANGE_length CPY_FIELD(rangeobject, length, RANGE_step)
 /* virtual ranges only: words, not C fields */
 #define iVRANGE_START FIELDS_TOTAL(RANGE_length)
 #define iVRANGE_STOP (iVRANGE_START + 1)
 #define iVRANGE_STEP (iVRANGE_START + 2)
 #define VRANGE_TOTAL (iVRANGE_START + 3)
 
-#define RANGEITER_index FMUT(DEF_FIELD(rangeiterobject, long, index, OB_type))
-#define RANGEITER_start DEF_FIELD(rangeiterobject, long, start, RANGEITER_index)
-#define RANGEITER_step DEF_FIELD(rangeiterobject, long, step, RANGEITER_start)
-#define RANGEITER_len DEF_FIELD(rangeiterobject, long, len, RANGEITER_step)
+#define RANGEITER_index FMUT(CPY_FIELD(rangeiterobject, index, OB_type))
+#define RANGEITER_start CPY_FIELD(rangeiterobject, start, RANGEITER_index)
+#define RANGEITER_step CPY_FIELD(rangeiterobject, step, RANGEITER_start)
+#define RANGEITER_len CPY_FIELD(rangeiterobject, len, RANGEITER_step)
 #define iRANGEITER_INDEX FIELD_INDEX(RANGEITER_index)
 #define iRANGEITER_START FIELD_INDEX(RANGEITER_start)
 #define iRANGEITER_STEP FIELD_INDEX(RANGEITER_step)
@@ -236,7 +227,7 @@ static vinfo_t *prangeiter_getiter(PsycoObject *po, vinfo_t *v) {
 
 INITIALIZATIONFN
 void psy_rangeobject_init(void) {
-  /* the layouts copied above must be 3.7's */
+  /* the layouts copied from the source (layouts_gen.h) must be the types' */
   if (PyRange_Type.tp_basicsize != sizeof(rangeobject) ||
       PyRangeIter_Type.tp_basicsize != sizeof(rangeiterobject))
     return;

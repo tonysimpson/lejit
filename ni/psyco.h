@@ -10,6 +10,9 @@
 #include <structmember.h>   /* for offsetof() */
 #include <stdint.h>
 #include "compat2to3.h"
+/* offsets, sizes and private structs of the CPython fields Ni relies on,
+   generated from the target's headers (vcompiler.h:CPY_FIELD, D76) */
+#include "layouts_gen.h"
 
 typedef int8_t byte_t;
 typedef int16_t word_t;

@@ -136,8 +136,8 @@ static void write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax) {
 #ifdef Py_TRACE_REFS
     CALL_I(_Py_Dealloc);
 #else
-    MOV_R_O8(REG_X64_RAX, REG_X64_RDI, offsetof(PyObject, ob_type));
-    MOV_R_O8(REG_X64_RAX, REG_X64_RAX, offsetof(PyTypeObject, tp_dealloc));
+    MOV_R_O8(REG_X64_RAX, REG_X64_RDI, CPY_OFFSET(PyObject, ob_type));
+    MOV_R_O8(REG_X64_RAX, REG_X64_RAX, CPY_OFFSET(PyTypeObject, tp_dealloc));
     CALL_R(REG_X64_RAX);
 #endif
   } else {
