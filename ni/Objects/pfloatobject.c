@@ -8,8 +8,9 @@
  * + - * / % unary - abs and bool are generated (pfloatobject_gen.h, by
  * tools/metac/gen_float.py), helpers included; unary + by the general
  * translator (pfloatslots_gen.h, D83). Hand-written here: the
- * representation (psyco_convert_to_double for CONVERT_TO_DOUBLE, compute
- * functions) and comparisons.
+ * representation (psyco_convert_to_double, floatobject.c's
+ * CONVERT_TO_DOUBLE, which the generated slots call; compute functions)
+ * and comparisons.
  * The double is one word holding its bits, at run time (a stack slot) and
  * at compile time (source_known_t.value); upstream (32-bit) used two words.
  */
@@ -175,24 +176,6 @@ DEFINEVAR source_virtual_t psyco_computed_float;
 
 /***************************************************************/
 /*** float objects meta-implementation                       ***/
-
-#define CONVERT_TO_DOUBLE_CORE(vobj, v, ERRORACTION)                           \
-  switch (psyco_convert_to_double(po, vobj, &v)) {                             \
-  case true:                                                                   \
-    break; /* fine */                                                          \
-  case false:                                                                  \
-    return ERRORACTION; /* error or promotion */                               \
-  default:                                                                     \
-    ERRORACTION;                                                               \
-    return psyco_vi_NotImplemented(); /* cannot do it */                       \
-  }
-
-#define CONVERT_TO_DOUBLE(vobj, v)                                             \
-  CONVERT_TO_DOUBLE_CORE(vobj, v, return_null())
-
-#define RELEASE_DOUBLE(v) vinfo_decref(v, po);
-
-static vinfo_t *return_null(void) { return NULL; }
 
 DEFINEFN
 int psyco_convert_to_double(PsycoObject *po, vinfo_t *vobj, vinfo_t **pv) {

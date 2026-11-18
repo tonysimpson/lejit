@@ -1138,7 +1138,7 @@ ENTRIES = {
             ('likely', 'true', 'the double fits a long'),
         ]},
     'Objects/floatobject.c:float___round___impl': {'shape': '76fa6887b4b3', 'ni': ['ni/Objects/pfloatobject.c:cimpl_fp_round_even', 'ni/Objects/pfloatobject.c:PsycoFloat_RoundEven', 'ni/Python/pbltinmodule.c:float_whole_to_int']},
-    'Objects/floatobject.c:CONVERT_TO_DOUBLE': {'shape': 'a29ca6d6c073', 'ni': ['ni/Objects/pfloatobject.c:CONVERT_TO_DOUBLE_CORE', 'ni/Objects/pfloatobject.c:CONVERT_TO_DOUBLE', 'ni/Objects/pfloatobject.c:RELEASE_DOUBLE', 'ni/Objects/pfloatobject.c:return_null', 'ni/Objects/pfloatobject.c:psyco_convert_to_double']},
+    'Objects/floatobject.c:CONVERT_TO_DOUBLE': {'shape': 'a29ca6d6c073', 'ni': ['ni/Objects/pfloatobject.c:psyco_convert_to_double']},
     'Objects/floatobject.c:convert_to_double': {'shape': '8ba659cc76fe', 'ni': ['ni/Objects/pfloatobject.c:psyco_convert_to_double']},
     'Objects/floatobject.c:float_hash': {'shape': 'ee5774f0b8dd', 'ni': ['ni/Objects/pfloatobject.c:pfloat_hash']},
     # D83: the general translator's float unit; a subclass resumes into
