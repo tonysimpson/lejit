@@ -1,7 +1,8 @@
 # Slots generated from the container files (D84): tuple's tp_richcompare
 # (a field of the type, not of a slot table) unrolled for tuples of known
-# length, CPython's slot otherwise; len() of a list, dict and bytes read
-# as a field through policy_table.TYPES' descriptors.
+# length, CPython's slot otherwise; len() of a list, dict, bytes and tuple
+# read as a field through policy_table.TYPES' descriptors; a tuple's item
+# (tupleitem: one unsigned bounds test, the item read at run time).
 
 
 def tup_eq(a, b):
@@ -127,6 +128,25 @@ def len_subclass(l, d, b):
     return len(l), len(d), len(b)
 
 
+def tup_len(t, a):
+    return len(t), len((a, a)), len(()), len(T(t))
+
+
+def tup_item(t, i):
+    # a negative or huge index, a run-time tuple and a virtual one
+    try:
+        return t[i], (i, t)[0], t[-1] if t else None
+    except IndexError as e:
+        return 'IndexError: %s' % e
+
+
+def tup_item_loop(t):
+    out = 0
+    for i in range(len(t)):
+        out += t[i]
+    return out
+
+
 CASES = [
     ('tup_eq', [(1, 2), (2, 1), (1, 2.0), ('a', 2)], {}),
     ('tup_ops', [(1, 2), (2, 1), (1, 1), ('a', 'b')], {}),
@@ -145,4 +165,8 @@ CASES = [
               (list(range(1000)), dict.fromkeys(range(100)), b'x' * 70000)], {}),
     ('len_mutated', [(0,), (3,), (10,)], {}),
     ('len_subclass', "[(L([1]), D(a=1), B(b'xy')), (L(), D(), B())]", {}),
+    ('tup_len', [((), 1), ((1, 2, 3), 'a'), (tuple(range(100)), None)], {}),
+    ('tup_item', [((1, 2, 3), 0), ((1, 2, 3), 2), ((1, 2, 3), 3), ((1, 2, 3), -1),
+                  ((1, 2, 3), -4), ((), 0), ((7,), 2 ** 62)], {}),
+    ('tup_item_loop', [((),), ((1, 2, 3),), (tuple(range(50)),)], {}),
 ]

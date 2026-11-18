@@ -313,7 +313,7 @@ RULES = {
 # function-pointer field of the type itself (tp_richcompare, tp_iternext,
 # tp_descr_get: D84); a file defining several types has one spec per type.
 TRANSLATED_SLOTS = {
-    'Objects/tupleobject.c': {'type': 'PyTuple_Type', 'slots': ['sq_contains', 'sq_concat', 'sq_repeat', 'tp_richcompare']},
+    'Objects/tupleobject.c': {'type': 'PyTuple_Type', 'slots': ['sq_length', 'sq_item', 'sq_contains', 'sq_concat', 'sq_repeat', 'tp_richcompare']},
     'Objects/listobject.c': {'type': 'PyList_Type', 'slots': ['sq_length']},
     'Objects/dictobject.c': {'type': 'PyDict_Type', 'slots': ['mp_length']},
     'Objects/bytesobject.c': {'type': 'PyBytes_Type', 'slots': ['sq_length']},
@@ -419,6 +419,8 @@ LIGHT_OPCODES = [
 TYPES = {
     'Include/tupleobject.h:PyTupleObject': {
         'shape': 'ecfd13dd0064', 'type': 'PyTuple_Type', 'immutable': ['ob_size', 'ob_item'],
+        # Ni's descriptor of a field a translated function reads (D84)
+        'descriptors': {'ob_size': 'ni/Objects/pobject.h:FIX_size'},
         # a loop over ob_item to ob_size unrolls when Ni knows the length
         # (rule loops): PsycoTuple_Load gives it or -1, and fills the items
         'known_length': {'size': 'ob_size', 'items': 'ob_item',
@@ -1104,7 +1106,7 @@ ENTRIES = {
     'Objects/abstract.c:PyObject_DelItem': {'shape': '922ec42abbdc', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/abstract.c:PyObject_Size': {'shape': '9861cd31b9b8', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/abstract.c:PyMapping_Size': {'shape': '2f44f1295dd8', 'ni': ['tools/metac/gen_abstract.py:generate']},
-    'Objects/tupleobject.c:tuplelength': {'shape': 'c26701baea26', 'ni': ['ni/Objects/pabstract.c:psyco_generic_immut_ob_size']},
+    'Objects/tupleobject.c:tuplelength': {'shape': 'c26701baea26', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/listobject.c:list_length': {'shape': '03a5f134f09c', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/bytesobject.c:bytes_length': {'shape': '0179586bdd2f', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/abstract.c:PySequence_GetItem': {
@@ -1490,7 +1492,12 @@ ENTRIES = {
             # the items compared are expected equal: the loop goes on
             ('likely', 'true', 'k != 0'),
         ]},
-    'Objects/tupleobject.c:tupleitem': {'shape': 'e61481faa2e9', 'ni': ['ni/Objects/ptupleobject.c:ptuple_item']},
+    'Objects/tupleobject.c:tupleitem': {
+        'shape': 'e61481faa2e9',
+        'ni': ['tools/metac/gen_abstract.py:generate'],
+        'policy': [
+            ('likely', 'false', 'i < 0 || i >= Py_SIZEa'),
+        ]},
     'Objects/iterobject.c:seqiterobject': {'shape': '24ea9b846c56', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
     'Objects/object.c:PyObject_SelfIter': {'shape': 'ba0edf658c0b', 'ni': ['ni/Objects/piterobject.c:piter_getiter', 'ni/Objects/prangeobject.c:prangeiter_getiter']},
     'Objects/iterobject.c:iter_iternext': {

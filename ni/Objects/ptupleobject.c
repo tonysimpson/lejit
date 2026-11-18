@@ -63,34 +63,8 @@ int PsycoTuple_Load(vinfo_t* tuple)
 	return size;
 }
 
- /***************************************************************/
-  /*** tuple objects meta-implementation                       ***/
-
-static vinfo_t* ptuple_item(PsycoObject* po, vinfo_t* a, vinfo_t* i)
-{
-	condition_code_t cc;
-	vinfo_t* vlen;
-
-	vlen = psyco_get_const(po, a, FIX_size);
-	if (vlen == NULL)
-		return NULL;
-	
-	cc = integer_cmp(po, i, vlen, Py_GE|COMPARE_UNSIGNED);
-	if (cc == CC_ERROR)
-		return NULL;
-
-	if (runtime_condition_f(po, cc)) {
-		PycException_SetString(po, PyExc_IndexError,
-				       "tuple index out of range");
-		return NULL;
-	}
-
-	return psyco_get_field_array(po, a, FPYREF(TUPLE_ob_item), i);
-}
-
-
-/* the slots generated from tupleobject.c (D78, D80): sq_contains,
-   sq_concat, sq_repeat */
+/* the slots generated from tupleobject.c (D78, D80, D84): sq_length,
+   sq_item, sq_contains, sq_concat, sq_repeat, tp_richcompare */
 #include "ptupleobject_gen.h"
 
 
@@ -98,9 +72,6 @@ INITIALIZATIONFN
 void psy_tupleobject_init(void)
 {
 	PyMappingMethods *mm;
-	PySequenceMethods *m = PyTuple_Type.tp_as_sequence;
-	Psyco_DefineMeta(m->sq_length, psyco_generic_immut_ob_size);
-	Psyco_DefineMeta(m->sq_item, ptuple_item);
 	gen_tupleobject_init();
 
 	mm = PyTuple_Type.tp_as_mapping;

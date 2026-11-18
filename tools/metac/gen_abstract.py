@@ -2194,6 +2194,8 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
                          or e[2][0] == ('id', st.pending[1])):
                 st.pending = None     # the store took the reference
                 return
+            if fn == 'Py_INCREF' and self.incref_returned(e[2][0], st, frames):
+                return
             if fn in ('Py_INCREF', 'Py_XINCREF') and e[2][0] in (
                     ('id', 'Py_None'), ('id', 'Py_True'), ('id', 'Py_False')):
                 return      # Ni's constant for it is made where it is used
@@ -2226,6 +2228,26 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
             if not val.conv or val.conv.get('always_error'):
                 return
             out('vinfo_xdecref(%s, po);' % val.c)
+
+    def incref_returned(self, x, st, frames):
+        """'Py_INCREF(E); return E;' with E no variable (an item read): the
+        return gives the reference (rule incref_return in ret); True when
+        the incref is left to it."""
+        while x[0] == 'cast':
+            x = x[2]
+        if x[0] == 'id':
+            return False
+        stmts, i = frames[-1]
+        nxt = stmts[i + 1] if i + 1 < len(stmts) else None
+        if nxt is None or nxt[0] != 'return' or nxt[1] is None:
+            return False
+        r = nxt[1]
+        while r[0] == 'cast':
+            r = r[2]
+        if cparse.c_expr(r) != cparse.c_expr(x):
+            return False
+        st.incref_return = cparse.c_expr(x)
+        return True
 
     def var_of(self, st, e):
         while e[0] == 'cast':
@@ -2330,7 +2352,19 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
                 and st.vars[e[1]].owned == 'dead':
             e = ('id', 'NULL')      # 'v = NULL; ... return v;'
         val = self.rep_condition_value(e, st, out, frames) \
+            or self.returned_length(e, st, out, frames) \
             or self.ev(e, st, out, frames, dest='<return>')
+        x = e
+        while x[0] == 'cast':
+            x = x[2]
+        if getattr(st, 'incref_return', None) is not None:
+            # rule incref_return: the incref left to this return
+            if cparse.c_expr(x) != st.incref_return or val.bt != 'rt':
+                raise Refuse('an incref of %s not returned' % st.incref_return)
+            st.incref_return = None
+            if not val.owned and val.var is None:
+                out('vinfo_incref(%s);' % val.c)
+                val = Val('rt', val.c, val.ctype, owned=True, conv=val.conv)
         if val.bt == 'g':
             raise Refuse('returns a constant known now')
         if kind in ('obj', 'val'):
@@ -2382,6 +2416,92 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
             self.ret_value(st, out, val.c, as_ok=True)
             return
         raise Refuse('kind %s' % kind)
+
+    def returned_length(self, e, st, out, frames):
+        """Rule known_length, for a length that is only returned
+        (tuplelength): the field read through its TYPES descriptor, which
+        is the constant where Ni knows the length, so the meta needs no
+        compile-time length and nothing resumes. None otherwise."""
+        return self.length_value(e, st, out, frames)
+
+    def length_value(self, e, st, out, frames):
+        """e, the length of a parameter whose type has a known_length, read
+        as a run-time value through the size field's TYPES descriptor
+        (psyco_get_field: the constant where Ni knows it), when it is not
+        loaded yet; None for anything else. For a length that is only a
+        value (returned, or a bound tested: rules returned_length,
+        bounds_test), not one a loop or a virtual needs now."""
+        while e[0] == 'call' and e[1][0] == 'id' and e[1][1] in self.s.macros \
+                and e[1][1] not in KEEP and self.s.macros[e[1][1]].params is not None:
+            try:
+                e = self.s.expand_call(e[1][1], e[2])
+            except Resume:
+                return None
+        if e[0] != 'arrow':
+            return None
+        kl = self.known_length(e[1], st)
+        if kl is None or e[2] != kl[1]['size'] or kl[0] in st.loaded:
+            return None
+        b = self.ev(e[1], st, out, frames)
+        return self.object_field(b, e[2], st, out)
+
+    def bounds_test(self, e, st, out, frames, facts_t, facts_f):
+        """'x < 0 || x >= n', x a run-time integer and n a length (never
+        negative): one unsigned compare, as C compilers make it. The
+        branch's likelihood is a 'likely' item, as for any run-time
+        branch. None for anything else."""
+        if not (e[0] == 'bin' and e[1] == '||' and e[2][0] == 'bin' and e[2][1] == '<'
+                and e[2][3] == ('num', '0') and e[3][0] == 'bin' and e[3][1] == '>='
+                and e[2][2] == e[3][2] and e[2][2][0] == 'id'):
+            return None
+        v = st.vars.get(e[2][2][1])
+        if v is None or v.bt != 'rt' or v.ctype not in INT_TYPES:
+            return None
+        n = self.length_value(e[3][3], st, out, frames)
+        if n is None:
+            return None
+        cc = self.new_tmp('condition_code_t')
+        out('%s = integer_cmp(po, %s, %s, Py_GE|COMPARE_UNSIGNED);' % (cc, v.cname, n.c))
+        out('vinfo_decref(%s, po);' % n.c)
+        self.error_exit(st, out, '%s == CC_ERROR' % cc)
+        text = ' '.join(cparse.c_expr(e).replace('(', '').replace(')', '').split())
+        how = self.likely.get(text)
+        if how is None:
+            raise Refuse("no 'likely' item in the policy table for the run-time"
+                         " branch %r" % text)
+        self.used_likely.add(text)
+        t = self.new_tmp('int')
+        out('%s = runtime_condition_%s(po, %s);' % (t, 't' if how == 'true' else 'f', cc))
+        return t
+
+    def field_array_read(self, e, st, out, frames):
+        """'p->f[i]', i a run-time integer and f an array of objects that
+        policy_table.TYPES gives a descriptor for (or the items of a
+        known_length type, whose descriptor gen_virtual.py writes): the
+        item read at run time (psyco_get_field_array), a new vinfo. None
+        for anything else."""
+        arr, idx = e[1], e[2]
+        if arr[0] != 'arrow' or idx[0] != 'id':
+            return None
+        v = st.vars.get(idx[1])
+        if v is None or v.bt != 'rt' or v.ctype not in INT_TYPES:
+            return None
+        b = self.ev(arr[1], st, out, frames)
+        if b.var is None or not self.s.is_obj(b.ctype):
+            return None
+        bv = b.var
+        if bv.alias is not None and bv.alias in st.vars:
+            bv = st.vars[bv.alias]
+        desc = field_descriptor(bv.ctype, arr[2]) or items_descriptor(bv.ctype, arr[2])
+        ftype = self.s.field_type(bv.ctype, arr[2])
+        # (an indexed field of object type is an array of them: cparse
+        # keeps the element type, ob_item[1] is 'PyObject *')
+        if desc is None or ftype is None or not self.s.is_obj(ftype):
+            return None
+        r = self.new_tmp('vinfo_t *')
+        out('%s = psyco_get_field_array(po, %s, FPYREF(%s), %s);' % (r, bv.cname, desc, v.cname))
+        self.error_exit(st, out, '%s == NULL' % r)
+        return Val('rt', r, 'PyObject *', owned=True)
 
     def assert_restype(self, out, r, notimpl=False):
         for t in self.restype:
@@ -2568,6 +2688,10 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
         if k == 'un' and e[1] == '!':
             r = self.cond(e[2], st, out, frames, facts_f, facts_t)
             return (not r) if isinstance(r, bool) else '!(%s)' % r
+        if k == 'bin' and e[1] == '||':
+            r = self.bounds_test(e, st, out, frames, facts_t, facts_f)
+            if r is not None:
+                return r
         if k == 'bin' and e[1] in ('&&', '||'):
             return self.short_circuit(e, st, out, frames)
         if k == 'bin' and e[1] in PY_OPS:
@@ -3474,6 +3598,9 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
 
     def ev_index(self, e, st, out, frames):
         arr, idx = e[1], e[2]
+        r = self.field_array_read(e, st, out, frames)
+        if r is not None:
+            return r
         a = self.ev(arr, st, out, frames)
         if a.bt == 'ptr':
             i = self.ev(idx, st, out, frames)
@@ -4057,6 +4184,18 @@ def field_descriptor(ctype, field):
             d = t.get('descriptors', {}).get(field)
             if d is not None:
                 return ni_short(d)
+    return None
+
+
+def items_descriptor(ctype, field):
+    """The descriptor gen_virtual.py writes for the items of a virtual
+    type with a known_length (TUPLE_ob_item), when field is them; None
+    otherwise."""
+    import gen_virtual
+    struct = ctype.replace('const ', '').rstrip(' *').replace('struct ', '').strip()
+    for vt in gen_virtual.virtual_types():
+        if vt.struct == struct and vt.array and vt.items == field:
+            return vt.field(field)
     return None
 
 

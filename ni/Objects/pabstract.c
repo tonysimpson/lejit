@@ -49,16 +49,6 @@ vinfo_t *PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object,
   return type_error_tp(po, "'%.200s' object is not callable", tp);
 }
 
-DEFINEFN
-vinfo_t *psyco_generic_immut_ob_size(PsycoObject *po, vinfo_t *vi) {
-  return psyco_get_field(po, vi, FIX_size);
-}
-
-DEFINEFN
-vinfo_t *psyco_generic_mut_ob_size(PsycoObject *po, vinfo_t *vi) {
-  return psyco_get_field(po, vi, VAR_size);
-}
-
 /* the metas generated from abstract.c (D74) */
 #include "pabstract_gen.h"
 
