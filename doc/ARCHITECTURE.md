@@ -1,6 +1,6 @@
 ---
 written: 2026-11-16
-head_ref: e1fd808
+checked: e404100
 ---
 # Architecture
 
@@ -23,6 +23,7 @@ How the pieces fit together. Definitions are in `GLOSSARY.md`, and the file-by-f
                  |
  translated ni/Python/pycompiler.c   ceval main loop, compile-time version  (+ core at loop end)
            ni/Objects/p*.c, ni/Modules/pmath.c, ni/Python/pbltinmodule.c
+           *_gen.h: generated at build time from CPython's source (tools/metac)
                  |  Psyco_META*, psyco_generic_call, psyco_get_field, runtime_condition_*
                  v
  backend   ni/x64/*  instruction encoding, register allocation, unification moves,
@@ -35,13 +36,13 @@ Dependencies point downward in principle. In practice the translated files also 
 
 1. **Import.** `ni/ni.c:PyInit_ni` calls `initialize_all_files` (`ni/initialize.h`). Every translated file's `*_init` registers its meta functions (`Psyco_DefineMeta(c_slot_or_fn, psyco_version)`) and initialises its virtual sources (`INIT_SVIRTUAL`). `ni/eval_hook.c:ni_eval_hook_init` installs `NiEval_EvalFrame` as the interpreter's frame evaluator. [read]
 2. **First call of a function.** `NiEval_EvalFrame` [read]:
-   - It skips module-level code (`f_globals == f_locals`).
+   - It skips module-level code (globals are the locals), generator and coroutine code, and frames run while tracing falls back to CPython (D46).
    - `psyco_get_merge_points(co)` returns `Py_None` if the code uses any opcode not supported in `ni/mergepoints.c`. The frame then runs in CPython as normal.
    - Otherwise, if the code object has no entry point yet (its `co_extra` record, `ni/ni.c:ni_code_extra`), it builds a `PsycoObject` with `ni/vcompiler.c:PsycoObject_FromCode`: arguments become run-time stack slots, globals become a compile-time constant, unbound locals become compile-time zero, and `*args`/`**kw` are run-time with a known type.
    - It then calls `PsycoObject_Ready` (first merge point, drop dead vars) and `psyco_compile_code`, and caches `(codebuf, globals)`.
    - **There's no hotness check: every eligible function is compiled on its first call**, with auto-recursion depth `DEFAULT_RECURSION` = 10.
 3. **Running.** `NiCode_Run` registers the frame (`ni/Python/frames.c:psyco_frame_start_register`) and jumps into the machine code via `psyco_processor_run(codebuf, f_localsplus, finfo)` (backend). [read]
-4. **Compiling: `ni/Python/pycompiler.c:psyco_pycompiler_mainloop`.** A `switch(opcode)` mirroring `ceval.c`. Each opcode works on the virtual value stack (`vinfo_t*`) by calling the compile-time object protocol (`PsycoNumber_Add`, `PsycoObject_GetAttr`, … in `ni/Objects/`). Those in turn [read]:
+4. **Compiling: `ni/Python/pycompiler.c:psyco_pycompiler_mainloop`.** A `switch(opcode)` mirroring `ceval.c`. Each opcode works on the virtual value stack (`vinfo_t*`) by calling the compile-time object protocol (`PsycoNumber_Add`, `PsycoObject_GetAttr`, …, hand-written in `ni/Objects/` or generated). Many opcode cases are generated from `ceval.c` into `pycompiler_gen.h`. Those in turn [read]:
    - dispatch through type slots with `Psyco_META*`: a meta function if registered, else a residual call;
    - fall back to `psyco_generic_call`, which folds at compile time when `CfPure` and every argument is constant;
    - read and write struct fields with `psyco_get_field`/`psyco_put_field`;
@@ -54,6 +55,7 @@ Dependencies point downward in principle. In practice the translated files also 
      - **exact match**: `psyco_unify` emits moves and a jump, and compilation of this path ends;
      - **partial match**: un-fix the differing constants and retry;
      - **no match**: register a new snapshot and carry on compiling inline.
+   - Before the compare, a known field that nothing since the last merge point relied on may be dropped (D50, D57); past the cap of 6 blocks the state is generalised and differing constants are forgotten (D40, D43). After a split site, a respawned branch joins the block the site started (join points, D44).
    - If the code buffer is nearly full (`BUFFER_MARGIN`), it stops and emits a coding pause.
 6. **End of the main loop: pseudo-exceptions** [read]:
    - **Promotion**: `psyco_finish_promotion` emits a run-time switch on the value (backend `ipromotion_finish`). Compilation of this path stops, and the instruction is restarted later with the value known.
@@ -62,33 +64,33 @@ Dependencies point downward in principle. In practice the translated files also 
    - **`EReturn`, or an uncaught exception**: `exit_function` and then `codegen.c:psyco_finish_return`.
 7. **Lazy continuation at run-time** [read]:
    - Reaching a **coding pause** calls `vcompiler.c:do_resume_coding`, which compiles the continuation and patches the jump.
-   - Reaching a **promotion switch** calls `dispatcher.c:do_promotion_long/pyobj/pyobj_mega`, which looks the value up in a move-to-front list. If it's not found, it duplicates the frozen `po`, makes the value a fixed constant, and compiles.
-   - Reaching a **respawn stub** calls `dispatcher.c:do_respawn`, which re-runs compilation from the last snapshot to rebuild the state, then compiles the rare branch.
+   - A **promotion site** compares the value inline and in a chain of up to four more cases (D42); a miss calls `dispatcher.c:do_promotion_long/pyobj/pyobj_mega`, which looks the value up in a move-to-front list. If it's not found, it duplicates the frozen `po`, makes the value a fixed constant, and compiles.
+   - Coding pauses, respawns and promotion misses go through 15-byte pooled stubs and one trampoline (D32). Reaching a **respawn stub** calls `dispatcher.c:do_respawn`, which re-runs compilation from the last snapshot to rebuild the state, then compiles the rare branch.
 8. **Calls to Python functions** (`CALL_FUNCTION`… go to `ni/psyfunc.c:psyco_call_pyfunc`) [read]:
    - If the argument count and defaults are known at compile time, it binds arguments at compile time.
-   - Small loop-free callees can be **inlined** (`MP_FLAGS_INLINABLE`, the `EInline` pseudo-exception). In practice this almost never fires now, because nearly every instruction is a merge point (`doc/history/removed-mechanisms.md` A2/A4).
+   - Small callees can be **inlined** (`MP_FLAGS_INLINABLE`: one merge point, no `LOAD_GLOBAL`, weight at most `INLINE_MAXIMUM_WEIGHT`; the `EInline` pseudo-exception; D10), except a call to the caller's own code.
    - Others are compiled separately and called directly (`psyco_call_psyco`), passing a `stack_frame_info_t` for frame reconstruction.
    - Closures get their cells as extra inputs in the free-variable slots: from a virtual function's closure tuple, read at compile time for a constant function, or loaded from `func_closure` for a run-time one (`psyco_call_closure`; D58).
    - Anything unsupported (keyword-only args, `**kwargs`, code with cells of its own, unknown arity, recursion depth used up) becomes a residual call of the function object.
 
 ## The mixed files, by section
 
-### `ni/Python/pycompiler.c` (≈2.3k lines)
+### `ni/Python/pycompiler.c` (≈2.9k lines)
 | Section | Class | Note |
 |---|---|---|
 | `Psyco_DefineMeta`, `Psyco_DefineMetaModule`, `Psyco_DefineModuleFn/C`, `Psyco_Meta1x/2x/3x` | core | Meta-function registry and dispatch. |
 | `PycException_*`, `psyco_virtualize_exception`, `clear_pseudo_exception` | core | Pseudo-exception machinery. |
-| `cimpl_pyerr_*`, `cimpl_set_exc_info`, `PycException_Fetch*` | translated | Run-time helpers mirroring `ceval.c`/`errors.c` exception state; Py3 rework. |
+| `cimpl_pyerr_*`, `PycException_Fetch*` | translated | Run-time helpers mirroring `ceval.c`/`errors.c` exception state; Py3 rework. |
 | `cimpl_new_frame`, `cimpl_rt_traceback`, `cimpl_vt_traceback`, `PsycoTraceBack_Here` | translated + core | Traceback construction for compiled frames. |
 | `psyco_ext_do_calls`, `cimpl_load_global`, `cimpl_unpack_*`, `cimpl_do_raise`, `cimpl_import_*` | translated | Compile-time or residual copies of `ceval.c` helpers (`call_function`, `do_raise`, `import_name`, `unpack_iterable`). |
-| `psyco_pycompiler_mainloop`, the opcode `switch` | translated | Mechanical in shape: one case per `ceval.c` opcode. |
+| `psyco_pycompiler_mainloop`, the opcode `switch` | translated | One case per `ceval.c` opcode; many are generated (`pycompiler_gen.h`). |
 | `psyco_pycompiler_mainloop` after the `switch` (merge points, promotion, inline, unwind) | core | The specialiser's control loop, mixed with `ceval` block unwinding. |
 | `exit_function`, `compute_and_raise_exception` | core + translated | |
 
-### `ni/dispatcher.c` (≈1.9k lines): all core
-Snapshot compression (`fz_*`, two implementations selected by `VLOCALS_OPC`); compatibility (`compatible_vinfo`, `compatible_array`, `psyco_compatible`); dead-variable removal (`psyco_delete_unused_vars`, `psyco_simplify_array`); respawn (`do_respawn`, `psyco_respawn_detected`, `psyco_prepare_respawn*`); promotion (`rt_promotion_t`, `do_promotion_*`, `psyco_finish_promotion`); un-promotion (`psyco_unfix`). Ni additions: `compare_return_address_in_a_stupid_way`, which rejects matches whose return-address stack slot differs mod 16 (for x64 call alignment). Ni's own comment calls it a kludge. [read]
+### `ni/dispatcher.c` (≈2.8k lines): all core
+Snapshot compression (`fz_*`, two implementations selected by `VLOCALS_OPC`); compatibility (`compatible_vinfo`, `compatible_array`, `psyco_compatible`); dead-variable removal (`psyco_delete_unused_vars`, `psyco_simplify_array`); respawn (`do_respawn`, `psyco_respawn_detected`, `psyco_prepare_respawn*`); promotion (`rt_promotion_t`, `do_promotion_*`, `psyco_finish_promotion`); un-promotion (`psyco_unfix`). Ni additions: `compare_return_address`, which rejects matches whose return-address stack slot differs mod 16 (x64 call alignment; KNOWN_BUGS C1, C31); the cap's generalisation (`psyco_forget_values`); join points (`psyco_compatible_join`); the polymorphic inline cache (`promotion_cache_add`). [read]
 
-### `ni/codegen.c` (≈1k lines): core + backend
+### `ni/codegen.c` (≈1.1k lines): core + backend
 `psyco_generic_call` (residual calls, `CfPure` folding), condition-code virtual sources, `integer_*` arithmetic and comparison emitters (these contain x64 encoding: backend), `psyco_finish_return`, rich-compare helpers. [read; split detail: see backend section]
 
 ### `ni/vcompiler.h`/`.c`: all core
@@ -120,13 +122,10 @@ The backend is chosen at build time: `setup.py` puts `ni/x64` on the include pat
 - **Condition codes:** live flags are virtual values in `po->ccregs[2]`. Anything that would clobber them calls `NEED_CC*` first, which materialises them with `SETcc`. `NEED_FREE_BYTE_REG` uses a slow PUSHF/POPF "temp fix".
 - **Stack:** there's no frame pointer. Values are addressed `[RSP + (stack_depth - pos)]`. Frame from the bottom up: finfo slot (`INITIAL_STACK_DEPTH`), arguments, return address (`LOC_CONTINUATION`), optional frame locals, then spills.
 - **Calls:** C calls use SysV, with 16-byte alignment computed in `BEGIN_CALL`. In the Psyco-to-Psyco convention the callee pops its own arguments and returns a new reference in RAX. C-to-Psyco entry goes through glue generated at init (`iprocessor.c`).
-- **Patching:** proxies are `JMP over data; PUSH RAX; CALL fn(data); JMP RAX-result`. Jumps are rel32 and get repointed once their target is compiled. A promotion site is a self-patching `CMP imm64; JE` inline cache (PATTERNS: inline-cache-patch).
+- **Patching:** a branch not compiled yet goes through a 15-byte pooled stub (`mov r11, record; jmp psyco_stub_trampoline`, D32). Jumps are rel32 and get repointed once their target is compiled. A promotion site is an inline `CMP imm64; JE` with an out-of-line chain (PATTERNS: inline-cache-patch, D42).
 - **Assumptions:** LP64 and SysV only (no Win64). Every code buffer must be within ±2 GB of every other, with no guarantee (rel32 jumps; mmap without a hint). Memory is mapped RWX (no W^X).
 
-### Suspected backend bugs (from reading, 2026-11-16)
-All five have since been confirmed and fixed: KNOWN_BUGS B1 (`CMP_I8_*` compared 32 bits), B2 (`run_time_result_check` and `stack_depth`), M2/M3 (`v_mem_mov` byte and word stores), B3 (`run_time_call` after a double) and B9 (wrong asserts hidden by `-DNDEBUG`).
-
-Details and evidence: `doc/history/removed-mechanisms.md` (A17–A21, D4–D8) the comments at the top of the `ni/x64/*` files, and `doc/KNOWN_BUGS.md`.
+Backend details are in the comments at the top of the `ni/x64/*` files.
 
 ## Design observations (for the tidy-up)
 

@@ -1,6 +1,6 @@
 ---
 written: 2026-11-16
-head_ref: e1fd808
+checked: e404100
 ---
 # Glossary
 
@@ -44,17 +44,18 @@ Use these words in conversation, docs and commit messages. They name the two pla
 - **Cap**: the limit of blocks per merge point (6, D40). The promotion site's equivalent is the megamorphic limit (5).
 - **Two forms**: one value described in two ways that don't match, such as "the constant 0" and "a computed int that happens to be 0". D33 gives small ints one form.
 
-- **Merge point**: a bytecode position where the current compiler state is compared against previously compiled states (and a snapshot is stored). Upstream Psyco placed them only where control paths join (with delays and a 170-instruction maximum gap). **Ni currently marks almost every instruction** (`default: MP_HERE()`), which multiplies snapshots and disables inlining (see `doc/history/removed-mechanisms.md` A2). [read] `ni/mergepoints.h`, `ni/mergepoints.c:_find_merge_points`
+- **Merge point** (where they go): the start, every position entered from two or more places, every loop head and exception or finally handler, and at least every `MAX_MP_DISTANCE` instructions so respawn replays stay short (D10, as upstream without its delaying). Dead locals are dropped there before the compare (D15). [read] `ni/mergepoints.c:_find_merge_points`
+- **Join point** (D44): the block a split site (`split_after_global`) starts after itself, kept per instruction so a branch respawned from the site's checks can jump into it. [read] `mergepoints.c:psyco_join_point`, `vcompiler.c:psyco_compile_join`
 - **Snapshot / `FrozenPsycoObject` (fpo)**: a compact, frozen copy of `po->vlocals` (plus part of `pr`), stored with each code buffer at a merge point. With `VLOCALS_OPC` it is stored as a compressed pseudo-code (`fz_compress`) rather than a copied array. [read] `ni/dispatcher.h`, `ni/dispatcher.c`
 - **Compatibility (`psyco_compatible`)**: compares the current `po` with each snapshot at a merge point.
   - **Exact match**: emit a jump to that code.
   - **Partial match**: some non-fixed compile-time values differ. It returns them in `diff`, the caller **un-fixes** them to run-time (`psyco_unfix`) and retries.
   - **No match**: compile new code. [read] `ni/dispatcher.c:psyco_compatible`, `ni/vcompiler.c:psyco_compile`
 - **Unification (`psyco_unify`)**: emits the register and stack moves needed to make the current state's run-time layout match a compatible snapshot, then jumps there. Implemented in the backend. [read] `ni/dispatcher.h`; implementation in `ni/x64/idispatcher.c`
-- **Promotion**: turning a run-time value into a compile-time one. Psyco emits a run-time switch: the code calls back into the compiler with the actual value, compiles a version specialised for it, caches it (a move-to-front chained list in `rt_promotion_t`), and jumps there. Triggered by raising the **promotion pseudo-exception** (`PycException_Promote`). The bytecode compiler restarts the current instruction once the value is known. [read] `ni/Python/pycompiler.h:psyco_atcompiletime`, `ni/dispatcher.c:psyco_finish_promotion`, `ni/Python/pycompiler.c` (loop end)
-- **Megamorphic site**: a promotion site that has seen more than `MEGAMORPHIC_MAX` (5) distinct values. It stops specialising and compiles a generic version with `RunTime_Megamorphic` set. [read] `ni/codegen.h`, `ni/dispatcher.c:do_promotion_pyobj_mega`
+- **Promotion**: turning a run-time value into a compile-time one. Psyco emits a run-time switch: the code calls back into the compiler with the actual value, compiles a version specialised for it, caches it (a move-to-front chained list in `rt_promotion_t`, and the site's polymorphic inline cache, D42), and jumps there. Triggered by raising the **promotion pseudo-exception** (`PycException_Promote`). The bytecode compiler restarts the current instruction once the value is known. [read] `ni/Python/pycompiler.h:psyco_atcompiletime`, `ni/dispatcher.c:psyco_finish_promotion`, `ni/Python/pycompiler.c` (loop end)
+- **Megamorphic site**: a promotion site that has seen more than `MEGAMORPHIC_MAX` (5) distinct values (the megamorphic version itself not counted, D66). It stops specialising and compiles a generic version with `RunTime_Megamorphic` set. [read] `ni/codegen.h`, `ni/dispatcher.c:do_promotion_pyobj_mega`
 - **Un-promotion / unfix**: turning a non-fixed compile-time value back into run-time (emitting a load of the constant), so as to merge with existing code. [read] `ni/dispatcher.c:psyco_unfix`
-- **Coding pause**: a small stub emitted instead of real code. When execution reaches it, it calls back into the compiler (`resume_fn`) to compile the continuation lazily, then patches the jump. Used for not-yet-taken branches, full buffers and deep recursion. [read] `ni/vcompiler.c:psyco_coding_pause`
+- **Coding pause**: a pooled stub (D32) emitted instead of real code. When execution reaches it, it calls back into the compiler (`resume_fn`) to compile the continuation lazily, then patches the jump. Used for not-yet-taken branches, full buffers and deep recursion. [read] `ni/vcompiler.c:psyco_coding_pause`
 - **Respawn**: for a run-time condition whose rare branch wasn't compiled, Psyco doesn't keep a snapshot at the branch. When the rare branch is first taken, it re-runs the compiler from the last snapshot (`fpo_unfreeze`), throwing away the re-emitted code, until it reaches the same point (`detect_respawn`). It then compiles the rare branch. This trades compile time for memory. [read] `ni/dispatcher.c:do_respawn`, `psyco_respawn_detected`
 - **`runtime_condition_t/f`**: ask "is this condition true?" about a run-time condition code. The answer drives a C `if` at compile time, with the other branch compiled lazily (via coding pause or respawn). `_t`/`_f` says which outcome is the likely one. [read] `ni/dispatcher.h`
 - **Condition code (`condition_code_t`, `CC_*`)**: processor flags held as a virtual value (`psyco_vinfo_condition`). `CC_ALWAYS_TRUE`/`CC_ALWAYS_FALSE` are compile-time outcomes and `CC_ERROR` signals an exception. [read] `ni/codegen.c`
@@ -88,5 +89,5 @@ Use these words in conversation, docs and commit messages. They name the two pla
 ## Build switches
 
 - `IS_PY3K`: defined unconditionally in `ni/compat2to3.h`, so every `#ifdef IS_PY3K … #else …` else-branch is dead Python 2 code (all of `pstringobject.*` is one). [read]
-- `ALL_STATIC` (put all `.c` files in one unit), `NI_TRACE` (debug build with `-O0 -g3`), `ALL_CHECKS` (`extra_assert` and coherence checks). Set via environment variables in `setup.py`. [read]
+- `ALL_STATIC` (put all `.c` files in one unit), `NI_TRACE` (debug build with `-O0 -g3`), `ALL_CHECKS` (`extra_assert` and coherence checks), `NI_CODESTATS` (code size counters, `ni._codestats()`). Set via environment variables (`NI_ALL_STATIC`, `NI_TRACE`, `NI_ALL_CHECKS`, `NI_CODESTATS`) in `setup.py`. [read]
 - `VLOCALS_OPC` (compressed snapshots, on), `COMPRESS_COMPILETIME_SUBITEMS`, `PROMOTION_FAST_COMMON_CASE`, `HAVE_CCREG`, `REG_TOTAL`. Compile-time feature switches. [read] `ni/dispatcher.h`, `ni/dispatcher.c`, backend headers
