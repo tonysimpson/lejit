@@ -32,10 +32,10 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/cf_flags.h` | core | Cf* flags describing a C function for residual calls: purity, new ref, return type, errors. | none (CPython C API conventions) | `56e5faf` |
 | `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding), integer emitters, rich compare, a frame's call-site note. | Objects/object.c | `56e5faf` |
 | `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions, the call-site note. | none | `fa3dae7` |
-| `ni/codemanager.c` | core | Executable memory as free extents (poisoned under ASan, a LeakSanitizer root region); owners (D102): what a code object's compiled code holds, released with it; per-address records; the owner scan for cycles through code objects, as a pending call or at a full collection (D122); compile guards (D103). | none | `a56dd1d` |
-| `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner, record and compile guard APIs. | none | `76ed0db` |
+| `ni/codemanager.c` | core | Executable memory as free extents (poisoned under ASan, a LeakSanitizer root region); owners (D102): what a code object's compiled code holds, released with it; per-address records; the owner scan for cycles through code objects, as a pending call or at a full collection (D122); compile guards (D103). | none | `55c5b5e` |
+| `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner, record and compile guard APIs. | none | `9b9dcef` |
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
-| `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `9898e33` |
+| `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `95b1e61` |
 | `ni/dispatcher.h` | core | Snapshots (FrozenPsycoObject), compatibility and join API, respawn and promotion helpers. | none | `f229d14` |
 | `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles a function frame (no locals mapping) on its first call (interpreted if memory runs out), `NiCode_Run` runs it. | Python/ceval.c | `8347596` |
 | `ni/initialize.h` | glue | Calls every file's init; with ALL_STATIC=1 includes all .c files into one unit. | none | `b251646` |
@@ -52,16 +52,16 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/mechanisms/entry/{frame_eval_hook_interp,vectorcall}.h`, `ni/mechanisms/tracing/{cframe_use_tracing,monitoring}.h`, `ni/mechanisms/frames/{interpreter_frame_cframe,interpreter_frame}.h` | glue (stubs) | One `#error "... not written yet"` each, saying what the variant must do. | 3.11–3.13 | `36b5beb` |
 | `ni/mergepoints.c` | core | Finds merge points, dead locals, join points and eval_breaker tests in a code object; the opcode whitelist. | none (copies `NEXTOPARG` from Python/ceval.c) | `b36a1ac` |
 | `ni/mergepoints.h` | core | Merge point tables: where control paths join and compiled states are cached. | none | `e26c2a3` |
-| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code `co_extra` records, `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `76ed0db` |
+| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code `co_extra` records, `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `9b9dcef` |
 | `ni/platform.c` | glue | Allocates executable (RWX) memory: mmap on Unix, VirtualAlloc on Windows. | none | `1e65d32` |
 | `ni/platform.h` | glue | Prototype for psyco_allocate_executable_buffer(). | none | `e1fd808` |
 | `ni/processor.h` | backend (interface) | Prototypes for running compiled code: psyco_processor_run, RUN_ARGC, aligned-call glues. | none | `4398496` |
-| `ni/psyco.h` | glue | Global definitions: build switches, sizes, assertions, linkage macros, the sanitizer hooks (`NI_POISON`, `NI_LSAN_ROOT`), the `co_extra` record and its owner; includes `layouts_gen.h`. | none | `76ed0db` |
-| `ni/psyfunc.c` | core + translated | Python calls at compile time: build the callee frame, inline small functions or compile and call. | Python/ceval.c, Objects/call.c, Include/ceval.h | `9898e33` |
+| `ni/psyco.h` | glue | Global definitions: build switches, sizes, assertions, linkage macros, the sanitizer hooks (`NI_POISON`, `NI_LSAN_ROOT`), the `co_extra` record and its owner; includes `layouts_gen.h`. | none | `9b9dcef` |
+| `ni/psyfunc.c` | core + translated | Python calls at compile time: build the callee frame, inline small functions or compile and call. | Python/ceval.c, Objects/call.c, Include/ceval.h | `95b1e61` |
 | `ni/psyfunc.h` | glue | Declarations for psyfunc.c and the generated binder (D85). | none | `e11f2a3` |
 | `ni/pycodegen.h` | core | Emits Py_INCREF/Py_DECREF and reference-ownership helpers on vinfo_t. | Include/object.h | `fa3dae7` |
-| `ni/vcompiler.c` | core | vinfo lifetime, field get/put with load folding, coding pauses, the psyco_compile*() entry points. | none | `9898e33` |
-| `ni/vcompiler.h` | core | Central data model: Source, vinfo_t, field descriptors, PsycoObject (compiler state). Start here. | none | `9898e33` |
+| `ni/vcompiler.c` | core | vinfo lifetime, field get/put with load folding, coding pauses, the psyco_compile*() entry points. | none | `95b1e61` |
+| `ni/vcompiler.h` | core | Central data model: Source, vinfo_t, field descriptors, PsycoObject (compiler state). Start here. | none | `95b1e61` |
 | `ni/Modules/pmath.c` | translated + glue | ceil and floor of an exact float; registers the generated math functions. | Modules/mathmodule.c | `cddaf8d` |
 | `ni/Objects/pabstract.c` | translated + core | The hand-written rest of the abstract protocol (`**`, `iter()`, next, int subscripts). | Objects/call.c, Objects/abstract.c, Objects/tupleobject.c, Objects/listobject.c | `351a4d5`, `935df0b` |
 | `pabstract_gen.h` | translated (generated) | The abstract protocol's metas and run-time copies, by `gen2/abstract.py` (D74, D104). | Objects/abstract.c | `df8385b` |
@@ -83,7 +83,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/pdictobject.h` | glue | API for (non-virtual) dict creation through residual calls. | Include/dictobject.h | `351a4d5`, `0f88313` |
 | `ni/Objects/pfloatobject.c` | translated + core | Virtual floats: representation, float/float comparisons, helpers; includes the generated slots. | Objects/floatobject.c | `87b5ff5` |
 | `ni/Objects/pfloatobject.h` | core + translated | Field descriptor and virtual-float builder (one vinfo holds the double). | Include/floatobject.h | `ccb5735` |
-| `ni/Objects/pfuncobject.c` | core | Virtual function objects and tp_call/tp_descr_get metas that inline Python calls. | Objects/funcobject.c | `9898e33` |
+| `ni/Objects/pfuncobject.c` | core | Virtual function objects and tp_call/tp_descr_get metas that inline Python calls. | Objects/funcobject.c | `95b1e61` |
 | `ni/Objects/pfuncobject.h` | core | PyFunctionObject field descriptors and the virtual-function and call API. | Include/funcobject.h | `ee76274` |
 | `ni/Objects/piterobject.c` | core + translated | Virtual sequence iterators and their tp_iternext meta. | Objects/iterobject.c | `9e58f97` |
 | `ni/Objects/piterobject.h` | core + translated | seqiterobject descriptors (private struct re-declared) and virtual iterator constructor. | Objects/iterobject.c | `ee76274` |
@@ -99,7 +99,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/prangeobject.c`, `.h` | core + translated | Virtual ranges (words) and range iterators. | Objects/rangeobject.c | `9e58f97` |
 | `ni/Objects/psliceobject.c` | core + translated | Virtual slices (D56); `PsycoSlice_Unpack` gives step-1 bounds as words. | Objects/sliceobject.c, Python/ceval.c | `a6a687b` |
 | `ni/Objects/psliceobject.h` | glue | Declarations of `PsycoSlice_New` and `PsycoSlice_Unpack`. | Include/sliceobject.h | `b36a1ac` |
-| `ni/Objects/pobject.c` | core + translated | Generic object protocol metas (truth, attributes, hash, compare); attribute loads and stores behind type guards. | Objects/object.c | `9898e33` |
+| `ni/Objects/pobject.c` | core + translated | Generic object protocol metas (truth, attributes, hash, compare); attribute loads and stores behind type guards. | Objects/object.c | `95b1e61` |
 | `ni/Objects/pobject.h` | core + translated | Compile-time PyObject API: ob_type/ob_size descriptors, type promotion (`Psyco_NeedType` etc.). | Include/object.h | `351a4d5`, `935df0b` |
 | `ni/Objects/pbytesobject.c` | translated + core | `bytes` metas: `len()`, inline `b[i]`, `b[i:j]` of a virtual slice. | Objects/bytesobject.c | `ee76274`, `5169c24` |
 | `ni/Objects/pstringobject.c` | core + translated | Py2 str metas with virtual strings; compiled out on Py3. | Objects/stringobject.c (Py2) | `b36a1ac` |
@@ -107,7 +107,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/punicodeobject.c` | translated + core | `str` metas (D14): `==`/`!=`, inline `s[i]` for compact ASCII, slices; includes generated slots. | Objects/unicodeobject.c, Include/unicodeobject.h | `03ce514` |
 | `ni/Objects/pstructmember.c` | translated (generated) | Includes the generated `PyMember_GetOne` (`pstructmember_gen.h`). | Python/structmember.c | `ccb5735` |
 | `ni/Objects/pstructmember.h` | glue | Declaration of PsycoMember_GetOne. | Include/structmember.h | `b36a1ac` |
-| `ni/Objects/ptupleobject.c` | core + translated | PsycoTuple_Load; includes the generated virtual tuple and slots. | Objects/tupleobject.c | `9898e33` |
+| `ni/Objects/ptupleobject.c` | core + translated | PsycoTuple_Load; includes the generated virtual tuple and slots. | Objects/tupleobject.c | `95b1e61` |
 | `ni/Objects/ptupleobject.h` | core | API for virtual and compile-time tuples (descriptors generated, D80). | Include/tupleobject.h | `603363c` |
 | `ni/Python/frames.c` | core | Maps machine-code stack frames to Python frames for `sys._getframe`, tracebacks and `warnings`, with their lines; writes a compiled frame's locals into a traceback frame; resumes a compiled frame in ceval when tracing starts. | none (but `ni_getframe`: Python/sysmodule.c) | `f254b5d` |
 | `ni/Python/frames.h` | core | Stack frame info (stack_frame_info_t), frame registration API and writing locals into a frame. | none | `6f8009a` |
@@ -115,7 +115,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Python/pbltinmodule.h` | glue | Declares `PsycoObject_IsInstance`. | Python/bltinmodule.c | `58e52de` |
 | `ni/Python/pycheader.h` | core | pyc_data_t (language-specific compiler state) and the LOC_* slots in po->vlocals. | Include/frameobject.h | `56e5faf` |
 | `ni/Python/pycinternal.h` | glue | Includes CPython internal headers and opcode names. | Include/opcode.h | `e1fd808` |
-| `ni/Python/pycompiler.c` | translated + core | The bytecode compiler: ceval's main loop at compile time, block unwinding, exceptions and their tracebacks' locals, calls, the way out to ceval when tracing starts. | Python/ceval.c | `9898e33` |
+| `ni/Python/pycompiler.c` | translated + core | The bytecode compiler: ceval's main loop at compile time, block unwinding, exceptions and their tracebacks' locals, calls, the way out to ceval when tracing starts. | Python/ceval.c | `95b1e61` |
 | `pycompiler_gen.h` | translated (generated) | 75 opcode cases included in `pycompiler.c`'s switch, by `tools/metac/gen_ceval.py`. | Python/ceval.c | `ab0f53b` |
 | `pycompiler_copies_gen.h` | translated (generated) | Copies of the ceval helpers and arms the generated cases call (`gen_ceval:build_copies`). | Python/ceval.c | `e17f6fc` |
 | `mechanism_<name>_gen.h`: entry, tracing, frames, eval_breaker_runtime, eval_breaker, tstate_runtime, tstate, recursion, exceptions, store_gc | glue (generated) | One per mechanism, by `mechanisms.py`: detector answers and the snippet `VARIANTS` chose. | the definitions the detectors read | `f254b5d` |
@@ -144,12 +144,12 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | file | layer | what it is | reviewed |
 |---|---|---|---|
 | `setup.py` | glue | distutils build of the `ni` extension; runs `generate.py` first, with `PYTHONHASHSEED=0` (D68); `NI_SANITIZE` builds into `--build-lib` with its own config stamp. | `ebc2296` |
-| `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests). | `76ed0db` |
+| `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests). | `9b9dcef` |
 | `tests/testenv.py` | tooling | What the runners share with `tools/sanitize.sh`: `NI_MODULE_DIR`, `NI_SANITIZE_LOGS` (per-child logs, longer timeouts, no address-space limit), the modules skipped under the sanitizers. | `4896477` |
 | `tests/encoding/check.py` | tooling | Checks `@asm`-annotated emitters in `iencoding.h` against GNU `as`; the cases compile in parts of 15000. | `974f1ea` |
 | `tests/smoke.py` | tooling | Stdlib smoke test: about 30 modules, output must match with and without Ni. | `6ca580a`; `ebc2296` (`NI_MODULE_DIR`) |
 | `tests/compile_bounds.py` | tooling | Fails if warm code keeps starting code buffers (`ni._stats()`); run by check.sh. | `932f416`; `ebc2296` (`NI_MODULE_DIR`) |
-| `tests/cpython_tests.py` | tooling | Runs CPython's test modules with and without Ni and compares counts and exit status. | `9898e33` |
+| `tests/cpython_tests.py` | tooling | Runs CPython's test modules with and without Ni and compares counts and exit status. | `95b1e61` |
 | `tests/mechanisms.py` | tooling | Checks the mechanism detectors' answers on five CPython versions (D75). | `f254b5d` |
 | `tests/parse_gate.py` | tooling | Migration step 1: every mirrored CPython `.c` file preprocesses and parses on 3.7 and 3.8, with right line numbers; run by check.sh. | `7f2955a` |
 | `tests/effect_snippets.py` | tooling | Snippet tests of `effects.py` (G1–G4, each flag, the `Cf*` mapping), no build; run by check.sh. | `041bbd1` |
