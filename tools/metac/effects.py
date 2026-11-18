@@ -27,7 +27,7 @@ What is taken on trust is policy_table's, each entry with its reason: SEEDS
 (the walk stops at them: decref, gc, blocks, sets_error, alloc, fatal),
 ASSUMPTIONS (flags held whatever the body does), EXTERNAL, and NO_DEL_TYPES
 (a decref of a local declared with one of their structs, or of a singleton,
-runs no Python). The decref seeds are vocabulary (tools/metac/shim/vocab.h),
+runs no Python). The decref seeds are vocabulary (tools/metac/gen2/vocabulary.py),
 so each use keeps its argument.
 """
 import argparse
@@ -54,11 +54,11 @@ BREAKS = {
 }
 ASSUMED = {'no_python': {'no_python'}, 'no_block': {'no_block'},
            'pure': {'pure', 'readonly'}, 'raises': set()}
+from gen2 import vocabulary  # noqa: E402
+
 SINGLETONS = {'_Py_NoneStruct', '_Py_TrueStruct', '_Py_FalseStruct',
               '_Py_NotImplementedStruct', '_Py_EllipsisObject'}
 REFCOUNT = {'ob_refcnt'}
-WRITES_ARG = {'Py_CLEAR', 'Py_SETREF', 'Py_XSETREF'}
-VOCAB = '__ni_vocab_'
 
 
 class EffectsError(Exception):
@@ -298,8 +298,8 @@ class Reader:
         while isinstance(f, c_ast.UnaryOp) and f.op == '*':
             f = f.expr
         args = c.args.exprs if c.args else []
-        if isinstance(f, c_ast.ID) and f.name.startswith(VOCAB):
-            self.vocab(f.name[len(VOCAB):], args)
+        if isinstance(f, c_ast.ID) and vocabulary.of_marker(f.name):
+            self.vocab(vocabulary.of_marker(f.name), args)
         elif isinstance(f, c_ast.ID) and f.name == '__ni_va_arg':
             self.reason('read', 'va_arg')
         elif isinstance(f, c_ast.ID) and f.name not in self.scope \
@@ -327,8 +327,9 @@ class Reader:
             if 'const' not in getattr(p.type, 'quals', ()):
                 self.reason('write', 'through a pointer argument')
 
-    def vocab(self, name, args):
-        if name in self.rules.decref:
+    def vocab(self, entry, args):
+        name = entry.name
+        if entry.effect == 'decref' and name in self.rules.decref:
             e = _strip(args[0])
             if isinstance(e, c_ast.UnaryOp) and e.op == '&' \
                     and isinstance(e.expr, c_ast.ID) and e.expr.name in SINGLETONS:
@@ -338,13 +339,11 @@ class Reader:
                 pass
             else:
                 self.reason('decref', name)
-            if name in WRITES_ARG:
+            if entry.kind == 'writes_arg':
                 self.write(args[0])
-        elif name.startswith('_Py_atomic_load'):
-            self.reason('read', name)
-        elif name.startswith('_Py_atomic_store'):
-            self.reason('write', name)
-        elif not name.endswith('_fence'):
+        elif entry.effect in ('read', 'write'):
+            self.reason(entry.effect, name)
+        elif entry.effect not in ('fence', 'none'):
             raise EffectsError('vocabulary name %s has no effect rule' % name)
 
 
@@ -402,13 +401,13 @@ class Effects:
     def solve(self):
         """self.broken {flag: {key: why}}: why is a reason or 'calls KEY'.
         An assumed flag is given: the walk doesn't go into its function."""
-        vocabulary = front.vocabulary()
+        names = front.vocabulary()
         for key, reason in self.rules.seeds.items():
             if key in self.nodes:
                 self.nodes[key].reasons = [(reason, 'seed')]
             elif reason != 'decref':
                 raise EffectsError('SEEDS %s: no such function was read' % key)
-            elif key.split(':')[1] not in vocabulary:
+            elif key.split(':')[1] not in names:
                 raise EffectsError('SEEDS %s: a decref must be vocabulary' % key)
         for key in self.rules.assumptions:
             if key not in self.nodes:

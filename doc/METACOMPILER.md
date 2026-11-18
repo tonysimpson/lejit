@@ -148,7 +148,7 @@ The CPython fields Ni relies on are data, `policy_table.LAYOUTS` and `RUNTIME`; 
 
 ## General translation (D74)
 
-`tools/metac/gen_abstract.py` writes `pabstract_gen.h` (D19 stage 2); its units write the object, number and builtin headers below.
+`tools/metac/gen_abstract.py`'s units write the object, number and builtin headers below (D19 stage 2). `pabstract_gen.h` has moved to the new translator, `tools/metac/gen2/abstract.py` (GENERATOR_DESIGN, Migration step 3; D104): the same rules on pycparser's AST, so what follows holds for it too, except that it reads no `cparse` and keeps its policy items in `gen2/policy.py`. [read]
 
 **Reading C.** `tools/metac/cparse.py` reads statements and expressions over ctokens' tokens, each keeping its token span so it can be copied back as C. `cparse.cpp` runs `gcc -E -dM` (macros as the file is compiled) and `gcc -E -P` (typedefs, struct fields, prototypes: `cparse.Decls`) with the target's `pyconfig.h` and CFLAGS (`NDEBUG`).
 
@@ -242,9 +242,9 @@ What the generator can't do: the CPython construct and what was done. `tools/met
 | `ceval.c:BUILD_CONST_KEY_MAP` | Where Ni doesn't know `keys`, the loop reads items of a tuple Ni has not loaded (only `PsycoTuple_Load` gives items). | Hand-written, `limit`. |
 | `ceval.c:CALL_FUNCTION_EX` | `PyDict_New` failing leaks `kwargs`: CPython 3.7.17's own bug. | Refused; calls are core. |
 | `ceval.c:BEFORE_ASYNC_WITH` | An error exit with a pushed value. | Refused (core). |
-| `abstract.c:PyObject_Length`, `PyObject_LengthHint`, `PySequence_Check`, `_PyObject_HasLen`; `dictobject.c:PyDict_Contains` | An `int` result's convention is in no test the C makes. | Not generated; needs a Ni declaration. |
-| `abstract.c:PySequence_Fast` | Its error is replaced after a failed call. | Not generated; no caller. |
-| `abstract.c:PyIter_Next` | `PsycoIter_Next` is FOR_ITER's call and leaves StopIteration set. | `('other', 'not_translation')`. |
+| `abstract.c:PyObject_LengthHint`, `PySequence_Check`, `_PyObject_HasLen`; `dictobject.c:PyDict_Contains` | An `int` result's convention is in no test the C makes. | Not generated; needs a Ni declaration. |
+| `abstract.c:PySequence_Fast` | After a failed call it calls `PyErr_ExceptionMatches`, a run-time call with the error pending. | Not generated; no caller. |
+| `abstract.c:PyIter_Next` | `PsycoIter_Next` is FOR_ITER's call and leaves StopIteration set. | `NotTranslation` in `gen2/policy.py`. |
 | `listobject.c:PyList_New` support (`compute_vlist`, `PsycoList_New`) | A list is mutable: its virtual is a vlist of at most `VLIST_LENGTH_MAX` items, not the struct's fields. | Hand-written, core. |
 | `listobject.c:list_contains`, `list_richcompare`; `bytesobject.c:bytes_contains`, `bytes_item`, `bytes_richcompare` | A mutable `ob_size`; a comma operator in `PyBytes_AS_STRING`, `likely` items, `memcmp`. | Slot calls; `pbytes_subscript` kept (D56). |
 | `rangeobject.c:range_length`, `compute_range_item`, `get_len_of_range`, `range_iter`, `rangeiter_next` | Ni's range is a virtual of words; an object constant where a vinfo is wanted; `get_len_of_range` returns `unsigned long`. | Hand `prangeobject.c`. |

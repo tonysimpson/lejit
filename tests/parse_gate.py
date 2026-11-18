@@ -31,12 +31,12 @@ TARGETS = [
 def check_the_check():
     """check_vocabulary must see a header's definition that the shim didn't
     replace before the file's code, and accept one that it did."""
-    name = front.vocabulary()[0]
+    name, shim = front.vocabulary()[0], front.vocab_shim()
     late = '# 1 "a.c"\n# 1 "h.h"\n#define %s(x) x\n# 2 "a.c"\nint y;\n' % name
     fixed = late.replace('# 2 "a.c"', '# 1 "%s"\n#undef %s\n#define %s(...) m\n'
-                         '# 2 "a.c"' % (front.VOCAB, name, name))
-    return (front.check_vocabulary(late, 'a.c', [name]) != []
-            and front.check_vocabulary(fixed, 'a.c', [name]) == [])
+                         '# 2 "a.c"' % (shim, name, name))
+    return (front.check_vocabulary(late, 'a.c', [name], shim) != []
+            and front.check_vocabulary(fixed, 'a.c', [name], shim) == [])
 
 
 def misplaced(ast, path):

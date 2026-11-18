@@ -39,6 +39,7 @@ vendored cases_generator needs 3.10); setup.py finds it with NI_GEN_PYTHON.
 import argparse
 import difflib
 import hashlib
+import importlib
 import os
 import subprocess
 import sys
@@ -53,7 +54,7 @@ GENERATORS = [('gen_abstract:build_long', 'plongobject_gen.h'),
               ('gen_ceval:build_copies', 'pycompiler_copies_gen.h'),
               ('gen_layouts', 'layouts_gen.h'),
               ('gen_layouts:build_runtime', 'runtime_layouts_gen.h'),
-              ('gen_abstract', 'pabstract_gen.h'),
+              ('gen2.abstract', 'pabstract_gen.h'),
               ('gen_abstract:build_tuple', 'ptupleobject_gen.h'),
               ('gen_abstract:build_list', 'plistobject_gen.h'),
               ('gen_abstract:build_dict', 'pdictobject_gen.h'),
@@ -222,7 +223,7 @@ def generate(argv):
     outputs, reports = [], []
     for name, filename in GENERATORS:
         name, _, func = name.partition(':')
-        mod = __import__(name)
+        mod = importlib.import_module(name)
         try:
             text, report = getattr(mod, func or 'build')(target)
         except cslots.GenError as e:

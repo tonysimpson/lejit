@@ -145,6 +145,9 @@ def table():
     return policy_table
 
 
+GEN2 = 'tools/metac/gen2/'
+
+
 class Checker:
     def __init__(self, src, ni_root=ROOT):
         self.src = csource.Tree(src)
@@ -202,7 +205,14 @@ class Checker:
     def entries(self, t):
         for key, e in t.ENTRIES.items():
             self.fields(key, e, ('shape', 'ni', 'policy'))
-            self.shape(key, key, e)
+            if e.get('ni') and all(n.startswith(GEN2) for n in e['ni']):
+                # tools/metac/gen2 checks its own items against the C
+                if 'shape' in e or 'policy' in e:
+                    self.bad(key, 'a gen2 function has its items in gen2/policy.py')
+                if self.src.find(key) is None:
+                    self.bad(key, 'not in the source')
+            else:
+                self.shape(key, key, e)
             for n in e.get('ni', ()):
                 self.ni_name(key, n)
             for item in e.get('policy', ()):

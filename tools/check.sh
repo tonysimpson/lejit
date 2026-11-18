@@ -29,6 +29,9 @@ step "parse gate: every mirrored CPython file parses, on 3.7 and 3.8 (tests/pars
 step "effect snippets: small C in, the effect flags out (tests/effect_snippets.py)"
 "$GEN_PY" tests/effect_snippets.py
 
+step "translator snippets: small C in, the meta or refusal out (tests/gen2_snippets.py)"
+NI_PY37="$PY37" "$GEN_PY" tests/gen2_snippets.py
+
 step "generators run under two hash seeds, with the same output and the baseline's statuses (tools/metac/generate.py)"
 # the cross-checks (gen_ceval against ceval.c and dis.stack_effect) and the
 # comparison with tools/metac/expected/3.7.17.txt run in each; the build

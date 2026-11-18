@@ -39,7 +39,6 @@ if pycparser.__version__ != PYCPARSER_VERSION:
                          pycparser.__file__))
 
 PRELUDE = os.path.join(HERE, 'shim', 'prelude.h')
-VOCAB = os.path.join(HERE, 'shim', 'vocab.h')
 DEPARTURES = ['-DUSE_COMPUTED_GOTOS=0']
 
 Target = collections.namedtuple('Target', 'src version pyconfig flags builtins')
@@ -188,14 +187,19 @@ def mirrored_files():
 
 
 def vocabulary():
-    with open(VOCAB) as f:
-        return re.findall(r'^#undef\s+(\w+)', f.read(), re.M)
+    from gen2 import vocabulary
+    return vocabulary.names()
+
+
+def vocab_shim():
+    from gen2 import vocabulary
+    return vocabulary.shim_path()
 
 
 _DIRECTIVE = re.compile(r'\s*#\s*(\w+)\s*(\w*)')
 
 
-def splice(text, cfile, names):
+def splice(text, cfile, names, shim):
     """`text` with the vocabulary shim included after each #include and
     each #define or #undef of a vocabulary name. A #line after each
     insertion, and after each #else, #elif and #endif (an insertion in a
@@ -213,10 +217,10 @@ def splice(text, cfile, names):
         if not m:
             continue
         word, name = m.groups()
-        shim = word == 'include' or (word in ('define', 'undef') and name in names)
-        if shim:
-            out.append('#include "%s"' % VOCAB)
-        if shim or word in ('else', 'elif', 'endif'):
+        insert = word == 'include' or (word in ('define', 'undef') and name in names)
+        if insert:
+            out.append('#include "%s"' % shim)
+        if insert or word in ('else', 'elif', 'endif'):
             out.append('#line %d "%s"' % (i + 1, cfile))
     return '\n'.join(out)
 
@@ -239,9 +243,10 @@ def _gcc(t, cfile, text):
         cwd, m.group(2)) if m.group(2)[:1] not in '/<' else m.group(2)), r.stdout)
 
 
-def check_vocabulary(dd, path, names):
+def check_vocabulary(dd, path, names, shim):
     """Problems in `dd`, gcc -E -dD output: a vocabulary name whose
-    definition is not the shim's where code of the file `path` follows."""
+    definition is not the shim's (the file `shim`) where code of the file
+    `path` follows."""
     names = set(names)
     stale = {}
     problems = []
@@ -253,7 +258,7 @@ def check_vocabulary(dd, path, names):
             continue
         d = _DIRECTIVE.match(text)
         if d and d.group(1) in ('define', 'undef') and d.group(2) in names:
-            if current == VOCAB:
+            if current == shim:
                 stale.pop(d.group(2), None)
             else:
                 stale[d.group(2)] = '%s:%d' % (current, line)
@@ -266,24 +271,25 @@ def check_vocabulary(dd, path, names):
     return problems
 
 
-def preprocess(t, cfile):
+def preprocess(t, cfile, extra=''):
     """The preprocessed text of `cfile` (a path relative to the source tree),
-    with line markers. Raises FrontError if gcc fails or a vocabulary name
-    is not the shim's where the file uses code."""
+    with line markers. `extra` is C put after the file's own text (the
+    rules' C, read in the file's scope). Raises FrontError if gcc fails or
+    a vocabulary name is not the shim's where the file uses code."""
     path = os.path.join(t.src, cfile)
     with open(path) as f:
-        text = f.read()
-    names = vocabulary()
-    dd = _gcc(t, cfile, splice(text, path, names))
-    problems = check_vocabulary(dd, path, names)
+        text = f.read() + ('\n#line 1 "<rules>"\n' + extra if extra else '')
+    names, shim = vocabulary(), vocab_shim()
+    dd = _gcc(t, cfile, splice(text, path, names, shim))
+    problems = check_vocabulary(dd, path, names, shim)
     if problems:
         raise FrontError('\n'.join(problems))
     return '\n'.join('' if s.startswith(('#define ', '#undef ')) else s
                      for s in dd.split('\n'))
 
 
-def parse(t, cfile):
-    """pycparser's AST of `cfile`; a pycparser.c_parser.ParseError names the
-    file and line."""
-    return c_parser.CParser().parse(preprocess(t, cfile),
+def parse(t, cfile, extra=''):
+    """pycparser's AST of `cfile` (and `extra`, as preprocess); a
+    pycparser.c_parser.ParseError names the file and line."""
+    return c_parser.CParser().parse(preprocess(t, cfile, extra),
                                     os.path.join(t.src, cfile))

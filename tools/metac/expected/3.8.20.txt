@@ -1,4 +1,4 @@
-# 3.8.20 9f2d5962c2583e67ef75924cd56d0c1af78bf45ec57035cf8a2cc09f74f4bf78 6840dc7ed7e2cf504657356fac8b1c0773165c1d+5701db94c7af
+# 3.8.20 9f2d5962c2583e67ef75924cd56d0c1af78bf45ec57035cf8a2cc09f74f4bf78 7f2955af1270e758c9c0176d46078b598212eb9f+84bcffe0c0a5
 BEFORE_ASYNC_WITH	refused	stack: error exit with exit on the stack	Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)
 BEGIN_FINALLY	refused	stack: pushes NULL, not a variable	Python/ceval.c:TARGET(BEGIN_FINALLY)
 BINARY_ADD	generated		Python/ceval.c:TARGET(BINARY_ADD)
@@ -127,7 +127,7 @@ PyMethodDescr_Type.tp_descr_get	refused	policy items left to the hand translatio
 PyNumber_Absolute	resumed	a slot of a heap type changed: if (m && m->nb_absolute) return m->nb_absolute(o);	Objects/abstract.c:PyNumber_Absolute
 PyNumber_Add	resumed	a slot of a heap type changed: if (m && m->sq_concat) { return (*m->sq_concat)(v, w); }	Objects/abstract.c:PyNumber_Add
 PyNumber_And	generated		Objects/abstract.c:PyNumber_And
-PyNumber_AsSsize_t	refused	policy items left to the hand translation: shortcut one_digit	Objects/abstract.c:PyNumber_AsSsize_t
+PyNumber_AsSsize_t	refused	policy items left to the hand translation: shortcut const_fold, shortcut one_digit	Objects/abstract.c:PyNumber_AsSsize_t
 PyNumber_Divmod	generated		Objects/abstract.c:PyNumber_Divmod
 PyNumber_FloorDivide	generated		Objects/abstract.c:PyNumber_FloorDivide
 PyNumber_InPlaceAdd	resumed	a slot of a heap type changed: f = m->sq_inplace_concat;; a slot of a heap type changed: f = m->sq_concat;	Objects/abstract.c:PyNumber_InPlaceAdd
@@ -156,18 +156,17 @@ PyNumber_Rshift	generated		Objects/abstract.c:PyNumber_Rshift
 PyNumber_Subtract	generated		Objects/abstract.c:PyNumber_Subtract
 PyNumber_TrueDivide	generated		Objects/abstract.c:PyNumber_TrueDivide
 PyNumber_Xor	generated		Objects/abstract.c:PyNumber_Xor
-PyObject_DelItem	resumed	a slot of a heap type changed: if (m && m->mp_ass_subscript) return m->mp_ass_subscript(o, key, (PyOb; a slot of a heap type changed: if (((key)->ob_type->tp_as_number != NULL && (key)->ob_type->tp_as_num; a slot of a heap type changed: if (o->ob_type->tp_as_sequence->sq_ass_item) { type_error("sequence in	Objects/abstract.c:PyObject_DelItem
-PyObject_GetItem	resumed	a slot of a heap type changed: if (m && m->mp_subscript) { PyObject *item = m->mp_subscript(o, key); ; a slot of a heap type changed: if (ms && ms->sq_item) { if (((key)->ob_type->tp_as_number != NULL && ; a slot of a heap type changed: if (((key)->ob_type->tp_as_number != NULL && (key)->ob_type->tp_as_num; an array stack: PyObject *meth, *result, *stack[1] = {key};	Objects/abstract.c:PyObject_GetItem
-PyObject_GetIter	refused	policy items left to the hand translation: virtual result	Objects/abstract.c:PyObject_GetIter
-PyObject_Length	refused	an int result needs its convention: declare PsycoObject_Length in ni/Objects/pabstract.h	Objects/abstract.c:PyObject_Length
+PyObject_DelItem	resumed	a slot of a heap type changed: if (m && m->mp_ass_subscript) return m->mp_ass_subscript(o, key, (PyOb; a slot of a heap type changed: if (PyIndex_Check(key)) { Py_ssize_t key_value; key_value = PyNumber_A; a slot of a heap type changed: if (o->ob_type->tp_as_sequence->sq_ass_item) { type_error("sequence in	Objects/abstract.c:PyObject_DelItem
+PyObject_GetItem	resumed	a slot of a heap type changed: if (m && m->mp_subscript) { PyObject *item = m->mp_subscript(o, key); ; a slot of a heap type changed: if (ms && ms->sq_item) { if (PyIndex_Check(key)) { Py_ssize_t key_valu; a slot of a heap type changed: if (PyIndex_Check(key)) { Py_ssize_t key_value; key_value = PyNumber_A; an array stack: PyObject *meth, *result, *stack[1] = {key};	Objects/abstract.c:PyObject_GetItem
+PyObject_GetIter	refused	policy items left to the hand translation: shortcut skip_check, virtual result	Objects/abstract.c:PyObject_GetIter
 PyObject_LengthHint	refused	an int result needs its convention: declare PsycoObject_LengthHint in ni/Objects/pabstract.h	Objects/abstract.c:PyObject_LengthHint
 PyObject_SelfIter	generated		Objects/object.c:PyObject_SelfIter
-PyObject_SetItem	resumed	a slot of a heap type changed: if (m && m->mp_ass_subscript) return m->mp_ass_subscript(o, key, value; a slot of a heap type changed: if (((key)->ob_type->tp_as_number != NULL && (key)->ob_type->tp_as_num; a slot of a heap type changed: if (o->ob_type->tp_as_sequence->sq_ass_item) { type_error("sequence in	Objects/abstract.c:PyObject_SetItem
+PyObject_SetItem	resumed	a slot of a heap type changed: if (m && m->mp_ass_subscript) return m->mp_ass_subscript(o, key, value; a slot of a heap type changed: if (PyIndex_Check(key)) { Py_ssize_t key_value; key_value = PyNumber_A; a slot of a heap type changed: if (o->ob_type->tp_as_sequence->sq_ass_item) { type_error("sequence in	Objects/abstract.c:PyObject_SetItem
 PyObject_Size	resumed	a slot of a heap type changed: if (m && m->sq_length) { Py_ssize_t len = m->sq_length(o); assert(len 	Objects/abstract.c:PyObject_Size
 PySequence_Check	refused	an int result needs its convention: declare PsycoSequence_Check in ni/Objects/pabstract.h	Objects/abstract.c:PySequence_Check
 PySequence_Contains	resumed	a slot of a heap type changed: if (sqm != NULL && sqm->sq_contains != NULL) return (*sqm->sq_contains	Objects/abstract.c:PySequence_Contains
 PySequence_DelItem	resumed	a slot of a heap type changed: if (m && m->sq_ass_item) { if (i < 0) { if (m->sq_length) { Py_ssize_t; a slot of a heap type changed: if (m->sq_length) { Py_ssize_t l = (*m->sq_length)(s); if (l < 0) { as; a slot of a heap type changed: return m->sq_ass_item(s, i, (PyObject *)NULL);; a slot of a heap type changed: if (s->ob_type->tp_as_mapping && s->ob_type->tp_as_mapping->mp_ass_sub	Objects/abstract.c:PySequence_DelItem
-PySequence_Fast	refused	resuming where a call has failed: a test of the run-time value PyErr_ExceptionMatches(PyExc_TypeError)	Objects/abstract.c:PySequence_Fast
+PySequence_Fast	refused	a run-time call where an error is pending	Objects/abstract.c:PySequence_Fast
 PySequence_GetItem	resumed	a slot of a heap type changed: if (m && m->sq_item) { if (i < 0) { if (m->sq_length) { Py_ssize_t l =; a slot of a heap type changed: if (m->sq_length) { Py_ssize_t l = (*m->sq_length)(s); if (l < 0) { as; a slot of a heap type changed: return m->sq_item(s, i);; a slot of a heap type changed: if (s->ob_type->tp_as_mapping && s->ob_type->tp_as_mapping->mp_subscri	Objects/abstract.c:PySequence_GetItem
 PySequence_GetSlice	resumed	a slot of a heap type changed: if (mp && mp->mp_subscript) { PyObject *res; PyObject *slice = _PySlic; a slot of a heap type changed: res = mp->mp_subscript(s, slice);	Objects/abstract.c:PySequence_GetSlice
 PySequence_List	restarted	PsycoList_New has 3 parameters: result = PyList_New(0);	Objects/abstract.c:PySequence_List
@@ -224,9 +223,9 @@ _PyUnicode_Copy	refused	no 'likely' item in the policy table for the run-time te
 _PyUnicode_FastCopyCharacters	refused	returns void	Objects/unicodeobject.c:_PyUnicode_FastCopyCharacters
 _PyUnicode_Ready	refused	an int result needs its convention: declare _PsycoUnicode_Ready in ni/Objects/pabstract.h	Objects/unicodeobject.c:_PyUnicode_Ready
 binary_iop	generated		Objects/abstract.c:binary_iop
-binary_iop1	resumed	a slot of a heap type changed: binaryfunc slot = (*(binaryfunc*)(& ((char*)mv)[iop_slot]));	Objects/abstract.c:binary_iop1
-binary_op	resumed	the field m_ml of a run-time value: if (op_slot == offsetof(PyNumberMethods, nb_rshift) && PyCFunction_Che	Objects/abstract.c:binary_op
-binary_op1	resumed	a slot of a heap type changed: slotv = (*(binaryfunc*)(& ((char*)v->ob_type->tp_as_number)[op_slot])); a slot of a heap type changed: slotw = (*(binaryfunc*)(& ((char*)w->ob_type->tp_as_number)[op_slot])); the mro of a heap type changed: if (slotw && PyType_IsSubtype(w->ob_type, v->ob_type)) { x = slotw(v, 	Objects/abstract.c:binary_op1
+binary_iop1	resumed	a slot of a heap type changed: binaryfunc slot = NB_BINOP(mv, iop_slot);	Objects/abstract.c:binary_iop1
+binary_op	resumed	a cast of a run-time value to PyCFunctionObject *: if (op_slot == NB_SLOT(nb_rshift) && PyCFunction_Check(v) && strcmp(((	Objects/abstract.c:binary_op
+binary_op1	resumed	a slot of a heap type changed: slotv = NB_BINOP(v->ob_type->tp_as_number, op_slot);; a slot of a heap type changed: slotw = NB_BINOP(w->ob_type->tp_as_number, op_slot);; the mro of a heap type changed: if (slotw && PyType_IsSubtype(w->ob_type, v->ob_type)) { x = slotw(v, 	Objects/abstract.c:binary_op1
 binop_type_error	generated		Objects/abstract.c:binop_type_error
 builtins.abs	generated		Python/bltinmodule.c:builtin_abs
 builtins.callable	generated		Python/bltinmodule.c:builtin_callable
@@ -262,8 +261,8 @@ math.sqrt	generated		Modules/mathmodule.c:math_sqrt
 math.tan	generated		Modules/mathmodule.c:math_tan
 math.tanh	generated		Modules/mathmodule.c:math_tanh
 maybe_small_long	refused	a call returning PyLongObject *	Objects/longobject.c:maybe_small_long
-sequence_repeat	resumed	a slot of a heap type changed: if (((n)->ob_type->tp_as_number != NULL && (n)->ob_type->tp_as_number-	Objects/abstract.c:sequence_repeat
-ternary_op	resumed	a slot of a heap type changed: slotv = (*(ternaryfunc*)(& ((char*)mv)[op_slot]));; a slot of a heap type changed: slotw = (*(ternaryfunc*)(& ((char*)mw)[op_slot]));; the mro of a heap type changed: if (slotw && PyType_IsSubtype(w->ob_type, v->ob_type)) { x = slotw(v, ; a slot of a heap type changed: slotz = (*(ternaryfunc*)(& ((char*)mz)[op_slot]));; the object Py_None as a value: if (z == Py_None) PyErr_Format( PyExc_TypeError, "unsupported operand 	Objects/abstract.c:ternary_op
+sequence_repeat	resumed	a slot of a heap type changed: if (PyIndex_Check(n)) { count = PyNumber_AsSsize_t(n, PyExc_OverflowEr	Objects/abstract.c:sequence_repeat
+ternary_op	resumed	a slot of a heap type changed: slotv = NB_TERNOP(mv, op_slot);; a slot of a heap type changed: slotw = NB_TERNOP(mw, op_slot);; the mro of a heap type changed: if (slotw && PyType_IsSubtype(w->ob_type, v->ob_type)) { x = slotw(v, ; a slot of a heap type changed: slotz = NB_TERNOP(mz, op_slot);; the object Py_None as a value: if (z == Py_None) PyErr_Format( PyExc_TypeError, "unsupported operand 	Objects/abstract.c:ternary_op
 type_error	generated		Objects/abstract.c:type_error
 v_iadd	refused	returns digit	Objects/longobject.c:v_iadd
 v_isub	refused	returns digit	Objects/longobject.c:v_isub

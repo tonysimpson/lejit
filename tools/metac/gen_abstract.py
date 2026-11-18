@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """General translation of CPython C functions into Psyco metas (GENERATION
-step 4, D19 stage 2, DECISIONS D74). First on Objects/abstract.c; written
-into pabstract_gen.h, which pabstract.c includes.
+step 4, D19 stage 2, DECISIONS D74), for the files UNITS names, each
+written into its header (plongobject_gen.h, ptupleobject_gen.h, ...).
+Objects/abstract.c is no longer one: tools/metac/gen2/abstract.py
+translates it (doc/GENERATOR_DESIGN.md, Migration step 3).
 
-What is translated: every abstract.c function whose meta Ni declares in
-pabstract.h ('Psyco' + the name without 'Py'), and the abstract.c functions
-those call. A function the policy table gives items this translator does
+What is translated: every function of a unit's file whose meta Ni declares
+in the unit's header ('Psyco' + the name without 'Py'), the slots
+TRANSLATED_SLOTS names, and the functions of the file those call. A function the policy table gives items this translator does
 not implement (a shortcut, a virtual result, a whitelist) is left to its
 hand translation, and so is one whose entry says Ni's function of that name
 is not a translation of it.
@@ -68,12 +70,12 @@ The rules, none of them about one function:
     value when its vinfo is a constant, else CPython's function runs.
 Anything else stops that function (refused, with the reason).
 
-Units: abstract.c by default; --unit tuple translates the slots
-policy_table.TRANSLATED_SLOTS names for tupleobject.c into
-ptupleobject_gen.h, with gen_tupleobject_init() registering them.
+Units: --unit tuple translates the slots policy_table.TRANSLATED_SLOTS
+names for tupleobject.c into ptupleobject_gen.h, with
+gen_tupleobject_init() registering them; and so for the others.
 
-Run by generate.py; 'python3 gen_abstract.py --src DIR --pyconfig H'
-prints the header and the report.
+Run by generate.py; 'python3 gen_abstract.py --src DIR --pyconfig H
+--unit U' prints the header and the report.
 """
 import argparse
 import os
@@ -4306,7 +4308,6 @@ class Unit:
 
 
 UNITS = {
-    'abstract': Unit(CFILE, NI_DECLS, 'pabstract.c'),
     'tuple': Unit('Objects/tupleobject.c', None, 'ptupleobject.c'),
     'list': Unit('Objects/listobject.c', None, 'plistobject.c'),
     'dict': Unit('Objects/dictobject.c', None, 'pdictobject.c'),
@@ -4470,8 +4471,7 @@ def slot_functions(source, spec):
     return out
 
 
-def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
-    unit = unit or UNITS['abstract']
+def generate(src, pyconfig, defines, unit, ni_root=ROOT, effects=None):
     source = Source(src, pyconfig, defines, unit.cfile)
     ni = ni_decls(ni_root, NI_HEADERS)
     declared = set(ni_decls(ni_root, [unit.decls])) if unit.decls else set()
@@ -4656,7 +4656,7 @@ def build_float(target):
     return build(target, UNITS['float'])
 
 
-def build(target, unit=None):
+def build(target, unit):
     try:
         import effects
         g = effects.analyse(target.python, target.src)
@@ -4664,7 +4664,7 @@ def build(target, unit=None):
         raise cslots.GenError('effects.py: %s' % e)
     try:
         text, report = generate(target.src, target.pyconfig,
-                                target_defines(target.python), effects=g, unit=unit)
+                                target_defines(target.python), unit, effects=g)
     except cparse.ParseError as e:
         raise cslots.GenError(str(e))
     return text, report
@@ -4677,15 +4677,14 @@ def main(argv):
     ap.add_argument('--python', default=None)
     ap.add_argument('--no-effects', action='store_true')
     ap.add_argument('--report', action='store_true')
-    ap.add_argument('--unit', default='abstract', choices=sorted(UNITS))
+    ap.add_argument('--unit', required=True, choices=sorted(UNITS))
     args = ap.parse_args(argv)
     g = None
     if args.python and not args.no_effects:
         import effects
         g = effects.analyse(args.python, args.src)
     defines = target_defines(args.python) if args.python else ['Py_BUILD_CORE', 'NDEBUG']
-    text, report = generate(args.src, args.pyconfig, defines, effects=g,
-                            unit=UNITS[args.unit])
+    text, report = generate(args.src, args.pyconfig, defines, UNITS[args.unit], effects=g)
     if args.report:
         print('\n'.join(report))
     else:
