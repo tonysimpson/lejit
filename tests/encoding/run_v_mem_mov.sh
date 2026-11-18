@@ -7,11 +7,12 @@ ROOT=$(cd "$HERE/../.." && pwd)
 PY37=${NI_PY37:-$HOME/.pyenv/versions/3.7.17/bin/python3.7}
 INC=$($PY37 -c "import sysconfig;print(sysconfig.get_paths()['include'])")
 LIBDIR=$($PY37 -c "import sysconfig;print(sysconfig.get_config_var('LIBDIR'))")
-OBJS=$(find "$ROOT/build" -name '*.o' -path '*temp*' | grep -v '/ni/ni.o$')
+# only the main build: tools/samecode.py keeps other builds under build/samecode
+OBJS=$(find "$ROOT"/build/temp.* -name '*.o' | grep -v '/ni/ni.o$')
 OUT=${TMPDIR:-/tmp}/v_mem_mov_test.$$
 gcc -w -O0 -g -DALL_STATIC=0 -DNI_TRACE=1 -DALL_CHECKS=1 \
     -I"$INC" -I"$ROOT/ni" -I"$ROOT/ni/x64" "$HERE/v_mem_mov_test.c" \
-    $OBJS $(find "$ROOT/build" -name 'ni.o' -path '*temp*') \
+    $OBJS $(find "$ROOT"/build/temp.* -name 'ni.o') \
     -L"$LIBDIR" -Wl,-rpath,"$LIBDIR" -lpython3.7m -lffi -lm -o "$OUT"
 "$OUT" "$@"
 status=$?
