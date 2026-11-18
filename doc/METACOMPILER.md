@@ -167,7 +167,7 @@ A known count is unrolled; otherwise the run-time function runs, after any case 
 4. **Promotions inside a loop** needed after its first call are made at its entry if nothing was called before, else refused (PATTERNS rule 1).
 5. **Errors:** a call's error in a loop is tested at once when the error value ends the loop and is returned (`errors_leave_loop`); resuming where an error test held is refused.
 
-**Object units.** `gen_abstract.py --unit X` translates the slots `TRANSLATED_SLOTS` names for a file, found from the type's initialiser and tables (`slot_functions`), into `p<file>_gen.h`, registered with `Psyco_DefineMeta`; a static slot function resumes through the type's slot. A type's initialiser is read from the file that defines it (`type_tokens`), so `object.c:PyObject_SelfIter` is the iterators' `tp_iter`.
+**Object units.** `gen_abstract.py --unit X` translates the slots `TRANSLATED_SLOTS` names for a file, found from the type's initialiser and tables (`slot_functions`), into `p<file>_gen.h`, registered with `Psyco_DefineMeta`; a static slot function resumes through the type's slot. A type's initialiser is read from the file that defines it (`type_tokens`), so `object.c:PyObject_SelfIter` is the iterators' `tp_iter`. gen2's families name their slots in `gen2/scope.py` instead (`gen2/slots.py`, D110).
 
 ## Virtual objects (D80)
 
@@ -195,7 +195,7 @@ A virtual type's support is generated from CPython's constructor and its `TYPES`
 
 ## Representation rules (D83)
 
-How Ni represents a value is data in `TYPES`, its rules written as C, parsed with the file's macros and matched with `x` for any variable of the struct (or a typedef, `cparse`'s `aliases`). For ints (`TYPES['Include/longintrepr.h:_longobject']['word']`): `test` `Py_ABS(Py_SIZE(x)) <= 1` is `load` (`PsycoLong_MediumValue`: 1 a word, 0 not, -1 error) as a `switch` whose 0 arm resumes CPython; `value` `MEDIUM_VALUE(x)` is the word; `sign` `Py_SIZE(x)` against 0 is `PsycoLong_Sign` against 0, returned as an `int` the condition. Casts, `+ - *`, unary `-` and constants are `integer_*` calls, checked by interval arithmetic (the C must not overflow its type, the result must fit a word); a `constructors` call given a word is `new` (`PsycoLong_FROM_WORD`). A branch on the sign needs a `likely` item.
+How Ni represents a value is data in `TYPES`, its rules written as C, parsed after the file with its macros (`gen2/types.py`) and matched structurally with `x` for any variable, casts ignored; `gen2/reps.py` applies them in the numbers family (`plongobject_gen.h`, `pfloatslots_gen.h`, D110). For ints (`TYPES['Include/longintrepr.h:_longobject']['word']`): `test` `Py_ABS(Py_SIZE(x)) <= 1` is `load` (`PsycoLong_MediumValue`: 1 a word, 0 not, -1 error) as a `switch` whose 0 arm resumes CPython; `value` `MEDIUM_VALUE(x)` is the word; `sign` `Py_SIZE(x)` against 0 is `PsycoLong_Sign` against 0, as a value `psyco_vinfo_condition`. Casts, `+ - *`, unary `-` and constants are `integer_*` calls, checked by interval arithmetic (the C must not overflow its type, the result must fit a word); a word is released after its last read in the statement; a `constructors` call given a word is `new` (`PsycoLong_FROM_WORD`), whose result needs no type assertion. A branch on the sign needs a `likely` item. [read] [run]
 
 ## Builtins (D86)
 
@@ -206,7 +206,7 @@ How Ni represents a value is data in `TYPES`, its rules written as C, parsed wit
 
 ## Scalar code (D87)
 
-Float slots, `PyFloat_AsDouble`, int's `nb_float` and math come from the general translator, rules in `tools/metac/scalars.py` (`ScalarRules`).
+Float slots, `PyFloat_AsDouble` and int's `nb_float` come from gen2 (`gen2/scalar.py`, `gen2/inline.py`; D113, D114, GENERATOR_DESIGN "The scalar helper"); math still from the general translator, rules in `tools/metac/scalars.py` (`ScalarRules`), as below.
 - **Representation** (`TYPES['Include/floatobject.h:PyFloatObject']['double']`): reading `ob_fval` (directly, through a cast or `PyFloat_AS_DOUBLE`) is `PsycoFloat_AS_DOUBLE`; `PyFloat_FromDouble` of a double is `PsycoFloat_FROM_DOUBLE`, a virtual float.
 - **Copy-through** (`copy_through`, D19): the backend has no floating point, so the longest run of statements on C scalars only (the representation's locals, integers, constants, compiler built-ins, `EXTERNAL`'s pure functions, `SCALAR_CODE`'s raising functions and variables such as `errno`, static scalar functions copied as `cimpl_*`, another file's functions `proven_pure`) becomes a C helper the meta calls. A run must read a double; its inputs are the helper's arguments, its one live result the return. A tail (every path an error or a scalar's constructor) returns the scalar, `return NULL` as `return -1`. Flags `CfPure`, and `CfPyErrCheck` where it can raise.
 - **`inline_static`:** a static function called with a local's address or a function's name is its body at the call (`convert_to_double(&v, &a)`, `math_1(args, acos, 0)`), for `return f(...)` and `if (f(...) OP K)` (or `if (f(...))`).
