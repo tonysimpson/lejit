@@ -11,7 +11,7 @@ generator problem, counted as invalid and kept in DIR/invalid/. A mismatch
 keeps its program and both outputs in DIR/mismatch/SEED.*. Ni's own
 diagnostics on stderr (DIAG) count as a mismatch even when the output agrees.
 """
-import argparse, concurrent.futures, difflib, os, re, subprocess, sys, time
+import argparse, concurrent.futures, difflib, os, re, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.environ.get('NI_ROOT', os.path.dirname(os.path.dirname(HERE)))
@@ -20,6 +20,7 @@ import gen  # noqa: E402
 
 PY37 = os.environ.get('NI_PY37', os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
 LIMIT = ['prlimit', '--as=4000000000']
+MAX_OUT = 8 << 20
 ADDR = re.compile(r'0x[0-9a-fA-F]+')
 # what Ni itself writes to stderr when something is wrong (iencoding.h's
 # immediate range checks, psyco_fatal_msg, extra_assert, missing metas)
@@ -28,17 +29,22 @@ DIAG = re.compile(r'Bad value for|psyco: |ni: no |nonnull_refcount|XXX opcode|'
 
 
 def run_one(path, mode, timeout):
-    """(status, stdout, stderr); status is the exit code or 'timeout'"""
+    """(status, stdout, stderr); status is the exit code or 'timeout'.
+    Output goes to files and only its first MAX_OUT bytes are read: a
+    runaway program can print gigabytes before its timeout."""
     env = dict(os.environ, PYTHONHASHSEED='0')
     cmd = LIMIT + [PY37, os.path.join(HERE, 'launch.py'), ROOT, mode, path]
-    try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           timeout=timeout, env=env)
-    except subprocess.TimeoutExpired as e:
-        return 'timeout', ADDR.sub('0x?', (e.stdout or b'').decode(errors='replace')), \
-            (e.stderr or b'').decode(errors='replace')
-    return p.returncode, ADDR.sub('0x?', p.stdout.decode(errors='replace')), \
-        p.stderr.decode(errors='replace')
+    with tempfile.TemporaryFile(dir=os.path.dirname(path)) as out, \
+            tempfile.TemporaryFile(dir=os.path.dirname(path)) as err:
+        try:
+            status = subprocess.run(cmd, stdout=out, stderr=err, timeout=timeout,
+                                    env=env).returncode
+        except subprocess.TimeoutExpired:
+            status = 'timeout'
+        out.seek(0)
+        err.seek(0)
+        return (status, ADDR.sub('0x?', out.read(MAX_OUT).decode(errors='replace')),
+                err.read(MAX_OUT).decode(errors='replace'))
 
 
 def compare(plain, ni):
