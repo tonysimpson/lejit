@@ -1,6 +1,6 @@
 # Status
 
-## 2026-11-18: 3.8.20 generates to the end (`cfc162e` … `9265267`, F112, F113, F115)
+## 2026-11-18: 3.8.20 generates to the end (`96eeba2` … `962af09`, F112, F113, F115)
 
 `generate.py --python <3.8.20> --src <3.8.20> --past-policy` writes all 32 headers, the same set as 3.7.17, and the same text twice. Three generator bugs, each fixed by a general rule: F112 (`gen_ceval`'s label copies matched 3.7's statement form, not 3.8's with `tstate` first), F113 (`gen_virtual` read `objimpl.h`'s static inline `_PyObject_INIT_VAR` without the macros of the file that calls it) and F115 (an error handler's run-time copy kept 3.8's `_PyErr_X(tstate, …)`, which wouldn't compile). `--past-policy` on `generate.py` and `donecheck.py` replaces PORT38's scratch driver.
 - **3.8.20 against 3.7.17:** opcodes 72 of 120 (75 of 119), 68 cases identical; abstract 52, containers 15, numbers 23, math 12, binding 1, virtuals 3, layouts 51 fields as 3.7 (real C changes translated); builtins 11 (20), 7 of them the fallback only; mechanisms 8 of 10 (2 stubs, as before); policy table 131 problems. donecheck: generated 195 (6,228 → 5,980 lines), reasoned 224, no reason 0.

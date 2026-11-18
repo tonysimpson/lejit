@@ -1,6 +1,6 @@
 ---
 written: 2026-11-18
-status: dry run of generation against CPython 3.8.20 at `2a71def`, rerun at `5dc2ce9` ("Now"); Ni not built for 3.8
+status: dry run of generation against CPython 3.8.20 at `2a71def`, rerun at `3186aca` ("Now"); Ni not built for 3.8
 ---
 # Porting to 3.8: a dry run of generation
 
@@ -12,9 +12,9 @@ GOAL.md says 3.8 is the first test that versions differ only in the input (D67).
 - **Interpreter:** none in pyenv, but uv already had one: `~/.local/share/uv/python/cpython-3.8.20-linux-x86_64-gnu/bin/python3.8` (python-build-standalone, built with Clang, CFLAGS with `-DNDEBUG`). Nothing was installed. It gave `dis.stack_effect`, `sysconfig`'s CFLAGS and the installed `pyconfig.h`, so nothing was blocked for want of an interpreter.
 - **`generate.py --python <3.8> --src <3.8>`** stops at the policy check, as designed (below). To see the generators past it, a scratch driver built the `cslots.Target` the same way and called each generator's `build(target)` on its own, catching `GenError` and exceptions. The baseline was `generate.py` on 3.7.17 at `7088760`. Outputs were compared header by header, and the ceval cases case by case.
 
-## Now (`9265267`, 2026-11-18)
+## Now (`962af09`, 2026-11-18)
 
-`generate.py --python <uv 3.8.20> --src ~/.cache/ni/cpython/Python-3.8.20 --out DIR --past-policy` runs to the end and writes all 32 headers (the same set as 3.7.17), twice with the same output. Two generator bugs stood in the way: F112 (`gen_ceval`'s label copies, `cfc162e`) and, behind it, F113 (`gen_virtual` reading `PyTuple_New`, `ec08641`). A third, found by reading the output, would have stopped a 3.8 compile: F115 (`ceval_BUILD_MAP_UNPACK_0` named `tstate`, `9265267`). `--past-policy` (`a13aa90`, item 13 below as a flag) prints the policy table's problems instead of stopping; `donecheck.py` has the same flag (`5dc2ce9`). No fix changes 3.7.17's output (byte-identical headers and report before and after each). [run]
+`generate.py --python <uv 3.8.20> --src ~/.cache/ni/cpython/Python-3.8.20 --out DIR --past-policy` runs to the end and writes all 32 headers (the same set as 3.7.17), twice with the same output. Two generator bugs stood in the way: F112 (`gen_ceval`'s label copies, `96eeba2`) and, behind it, F113 (`gen_virtual` reading `PyTuple_New`, `24dd41d`). A third, found by reading the output, would have stopped a 3.8 compile: F115 (`ceval_BUILD_MAP_UNPACK_0` named `tstate`, `962af09`). `--past-policy` (`a2def0d`, item 13 below as a flag) prints the policy table's problems instead of stopping; `donecheck.py` has the same flag (`3186aca`). No fix changes 3.7.17's output (byte-identical headers and report before and after each). [run]
 
 ### What generates, 3.8.20 against 3.7.17
 
@@ -118,7 +118,7 @@ Crashed (`IndexError` in `_statement`): 3.8 writes `case TARGET(op): {` (`TARGET
 - **Gone:** `SETUP_LOOP`, `SETUP_EXCEPT`, `BREAK_LOOP`, `CONTINUE_LOOP`.
 - **Refused for another reason, both versions:** `FORMAT_VALUE` (3.8 adds a `FVC_NONE` case and a `default:` raising SystemError: control flow, a `switch` with `goto error`; it was read on 3.7 and stopped in the back half), `RAISE_VARARGS` (a `switch` on oparg; was `why = WHY_EXCEPTION`), `RETURN_VALUE`, `YIELD_VALUE`, `YIELD_FROM`, `END_FINALLY` (other labels: `exit_returning`, `exit_yielding`, `exception_unwind`), `WITH_CLEANUP_START`, `WITH_CLEANUP_FINISH` (block stack).
 
-Refusals by kind on 3.8: core 20, shared code 6, stack 6, control flow 3, falls through 2 (`BUILD_TUPLE_UNPACK_WITH_CALL`, `BUILD_TUPLE_UNPACK`). Since D93 the reader reads a case that falls into the next with that body, so 3.8 has none falling through; `BUILD_TUPLE_UNPACK` generates (3.7's text but one call's effect flags) and `BUILD_TUPLE_UNPACK_WITH_CALL` is refused in the back half (`check_args_iterable` takes `tstate`). From `631c0dd` to `cfc162e`, 3.8's `gen_ceval` stopped at its label copies (`unbound_local_error`, F112, fixed).
+Refusals by kind on 3.8: core 20, shared code 6, stack 6, control flow 3, falls through 2 (`BUILD_TUPLE_UNPACK_WITH_CALL`, `BUILD_TUPLE_UNPACK`). Since D93 the reader reads a case that falls into the next with that body, so 3.8 has none falling through; `BUILD_TUPLE_UNPACK` generates (3.7's text but one call's effect flags) and `BUILD_TUPLE_UNPACK_WITH_CALL` is refused in the back half (`check_args_iterable` takes `tstate`). From `631c0dd` to `96eeba2`, 3.8's `gen_ceval` stopped at its label copies (`unbound_local_error`, F112, fixed).
 
 ### `gen_ceval`: the back half
 
@@ -180,8 +180,8 @@ Estimates are AI elapsed time, rough.
 | 10 | **Dicts' shared empty keys:** check the inline store, keys guards and `PsycoDict_*` against 3.8's empty dicts (`Py_EMPTY_KEYS`, `empty_values`: a split-looking table with `dk_usable` 0) [inferred risk]. | core (STORES.md) | 2–4 h |
 | 11 | **Re-read the hand metas whose C changed:** `PsycoObject_Call` and the call path (vectorcall), `pfloat_richcompare` (F104), list item and subscript, `PyDict_New`/`SetItem`. Item 1 finds them; same code against the 3.8 hand version where it applies. | translated | 2–3 h |
 | 12 | **3.8 build and tests:** an interpreter to build against (pyenv 3.8.20, or the uv one if its headers and `libpython` suit `setup.py`), `cpython_tests.py`'s module lists for `lib/python3.8/test`, `check.sh` for a second version, behaviour tests whose expectations depend on 3.7 bytecode. | tooling | 3–5 h |
-| 13 | **Done** (`a13aa90`, `5dc2ce9`): `generate.py --past-policy` reports the policy problems and runs the generators past them, writing every header (for reading, not a build); `donecheck.py --past-policy` likewise. | tooling | – |
-| 14 | **Since the rerun at `5dc2ce9`** ("3.8 refusals by cause"): `_PyArg_CheckPositional`'s entry once item 5 exists (13 builtin definitions); a `tstate` parameter in `helper_copy` (3 opcodes, 5 copies); `METH_FASTCALL \| METH_KEYWORDS` for `pow`; `A && f() < 0` as nested tests (`id`); a dead `switch` arm (`FORMAT_VALUE`); F114 (math's error test). | generator, rules | 4–6 h |
+| 13 | **Done** (`a2def0d`, `3186aca`): `generate.py --past-policy` reports the policy problems and runs the generators past them, writing every header (for reading, not a build); `donecheck.py --past-policy` likewise. | tooling | – |
+| 14 | **Since the rerun at `3186aca`** ("3.8 refusals by cause"): `_PyArg_CheckPositional`'s entry once item 5 exists (13 builtin definitions); a `tstate` parameter in `helper_copy` (3 opcodes, 5 copies); `METH_FASTCALL \| METH_KEYWORDS` for `pow`; `A && f() < 0` as nested tests (`id`); a dead `switch` arm (`FORMAT_VALUE`); F114 (math's error test). | generator, rules | 4–6 h |
 
 Not needed for 3.8 [inferred]: an entry mechanism other than the frame hook (the detectors give `frame_eval_hook`; 3.8's functions still evaluate through `_PyEval_EvalFrame`, so the PEP 523 hook sees every Python call); anything for positional-only parameters (Ni binds positional arguments only); new layouts (Ni reads none of the changed fields).
 
@@ -191,4 +191,4 @@ Order: 8, 7, 6 and 9 are what a compile needs; 1 (with 2) is what generation nee
 
 ## Rerunning
 
-`generate.py --python ~/.local/share/uv/python/cpython-3.8.20-linux-x86_64-gnu/bin/python3.8 --src ~/.cache/ni/cpython/Python-3.8.20 --out DIR --past-policy -v` (since `a13aa90`; the scratch driver of `2a71def` is no longer needed), and the same for 3.7.17 without `--src`/`--past-policy`. Compare per header with the version string masked, `gen_ceval`'s output case by case (`      case X: {` starts a case), and the `-v` reports entry by entry. `donecheck.py --python <3.8> --src <3.8> --past-policy` runs the done test. `python3 tools/metac/ceval_reader.py SRC` and `policy.py --src SRC` run alone.
+`generate.py --python ~/.local/share/uv/python/cpython-3.8.20-linux-x86_64-gnu/bin/python3.8 --src ~/.cache/ni/cpython/Python-3.8.20 --out DIR --past-policy -v` (since `a2def0d`; the scratch driver of `2a71def` is no longer needed), and the same for 3.7.17 without `--src`/`--past-policy`. Compare per header with the version string masked, `gen_ceval`'s output case by case (`      case X: {` starts a case), and the `-v` reports entry by entry. `donecheck.py --python <3.8> --src <3.8> --past-policy` runs the done test. `python3 tools/metac/ceval_reader.py SRC` and `policy.py --src SRC` run alone.
