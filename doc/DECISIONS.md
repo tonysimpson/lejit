@@ -28,7 +28,7 @@ Settled choices. Don't reopen one without new evidence. Each is what was decided
 ## Compilation strategy
 - **D10** Merge points by control flow, not on every instruction (`27f066d`), and inlining by upstream's rule (`085392a`, with B6).
 - **D11** Bring back compact objects (fast instance attributes), keeping the old design but clearer.
-- **D12** Compile everything on first call for now, to expose gaps; later a hotness or benefit policy replaces the placeholder in `ni/eval_hook.c`.
+- **D12** Compile everything on first call, with no hotness threshold or profiling (owner, 2026-11-18): compile cost must be made small, not hidden, and compiling everything keeps it visible in every measurement.
 - **D13** Floats, and integers as a virtual one-word int following CPython's one-digit fast paths, falling back to `PyLong` (`fdbaa88`); generated since D83.
 - **D14** Python 3 `bytes` and `str` (PEP 393) are a goal; Py2's `pstringobject.c` is the design reference, not code to port.
 - **D15** Dead-local deletion restored with a 3.7 liveness pass in `mergepoints.c`, and the `CodeBuffer_Check` guard in `psyco_compatible` (`458ef80`).
