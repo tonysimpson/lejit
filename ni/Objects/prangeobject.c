@@ -220,11 +220,6 @@ error:
   return NULL;
 }
 
-static vinfo_t *prangeiter_getiter(PsycoObject *po, vinfo_t *v) {
-  vinfo_incref(v);
-  return v;
-}
-
 INITIALIZATIONFN
 void psy_rangeobject_init(void) {
   /* the layouts copied from the source (layouts_gen.h) must be the types' */
@@ -233,7 +228,6 @@ void psy_rangeobject_init(void) {
     return;
   range_iter = PyRange_Type.tp_iter;
   Psyco_DefineMeta(range_iter, prange_iter);
-  Psyco_DefineMeta(PyRangeIter_Type.tp_iter, prangeiter_getiter);
   Psyco_DefineMeta(PyRangeIter_Type.tp_iternext, prangeiter_next);
   /* ranges are immutable, iterators not: both are forced across calls
      (identity, KNOWN_BUGS C17) */

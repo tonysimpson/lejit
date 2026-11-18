@@ -4292,6 +4292,7 @@ UNITS = {
     'descr': Unit('Objects/descrobject.c', None, 'pdescrobject.c'),
     'long': Unit('Objects/longobject.c', None, 'plongobject.c'),
     'float': Unit('Objects/floatobject.c', 'ni/Objects/pfloatobject.h', 'pfloatobject.c'),
+    'object': Unit('Objects/object.c', None, 'pobject.c'),
 }
 
 
@@ -4344,12 +4345,35 @@ def slot_binding(f, fmt):
     return ['ct' if c == 'l' else 'rt' for c in fmt]
 
 
+def type_tokens(source, tp):
+    """The tokens of the file that holds type tp's initialiser: the unit's
+    own, or else the one Objects/ file that defines it, for a slot of a
+    type defined elsewhere that a function of this file fills
+    (PySeqIter_Type.tp_iter is object.c's PyObject_SelfIter)."""
+    toks = source.toks
+    if any(t.text == tp and toks[i + 1].text == '=' for i, t in enumerate(toks[:-1])):
+        return toks
+    pat = re.compile(r'^PyTypeObject\s+%s\s*=' % re.escape(tp), re.M)
+    found = []
+    odir = os.path.join(source.src, 'Objects')
+    for name in sorted(os.listdir(odir)):
+        if name.endswith('.c'):
+            with open(os.path.join(odir, name), encoding='latin-1') as f:
+                text = f.read()
+            if pat.search(text):
+                found.append((name, text))
+    if len(found) != 1:
+        raise cparse.ParseError('type %s: %d initialisers in Objects/'
+                                % (tp, len(found)))
+    return ctokens.tokenize(found[0][1], 'Objects/' + found[0][0])[0]
+
+
 def expanded_initializer(source, var_name):
     """The entries of 'T var_name = { ... };' with the file's macros
     expanded first, so a head macro holding its own comma
     (PyVarObject_HEAD_INIT) gives its fields; casts removed, as
     ctokens.initializer gives them."""
-    toks = source.toks
+    toks = type_tokens(source, var_name)
     for i, t in enumerate(toks):
         if t.text == var_name and toks[i + 1].text == '=' and toks[i + 2].text == '{':
             end = ctokens.match_close(toks, i + 2)
@@ -4389,7 +4413,7 @@ def slot_functions(source, spec):
     struct's field order; for a slot that is a field of the type itself,
     the initialiser's own entry (struct None)."""
     tfields = source.decls.structs['_typeobject']
-    entries = ctokens.initializer(source.toks, spec['type'])
+    entries = ctokens.initializer(type_tokens(source, spec['type']), spec['type'])
     toks = source.toks
     out = {}
     for slot in spec['slots']:
@@ -4431,10 +4455,12 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
     tr = Translator(source, ni, policy, effects)
     tr.slot_roots, tr.slot_types = {}, {}
     tr.header_asserts = set()     # rule raw_pointer's
+    registered = {}               # one function filling several types' slots
     for spec in slot_specs(unit.cfile):
         for fname, where in slot_functions(source, spec).items():
-            tr.slot_roots[fname] = where
-            tr.slot_types[fname] = spec['type']
+            tr.slot_roots.setdefault(fname, where)
+            tr.slot_types.setdefault(fname, spec['type'])
+            registered.setdefault(fname, []).append(slot_ref(spec['type'], *where))
     tr.copy_keys = {}
     # functions whose entry says Ni's meta of that name is not a translation
     for k, items in policy.items():
@@ -4510,10 +4536,10 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
         init = os.path.splitext(os.path.basename(unit.cfile))[0]
         body.append('/* the metas of the slots policy_table.TRANSLATED_SLOTS names */')
         body.append('static void gen_%s_init(void) {' % init)
-        for n, where in sorted(tr.slot_roots.items()):
+        for n in sorted(tr.slot_roots):
             if n in tr.metas:
-                body.append('  Psyco_DefineMeta(%s, %s);'
-                            % (slot_ref(tr.slot_types[n], *where), tr.sums[n].meta))
+                for ref in registered[n]:
+                    body.append('  Psyco_DefineMeta(%s, %s);' % (ref, tr.sums[n].meta))
         body.append('}')
     report = []
     for n in order:
@@ -4584,6 +4610,11 @@ def build_descr(target):
 def build_long(target):
     """plongobject_gen.h: the int slots the translator generates (D83)."""
     return build(target, UNITS['long'])
+
+
+def build_object(target):
+    """pobject_gen.h: object.c's functions that fill other types' slots."""
+    return build(target, UNITS['object'])
 
 
 def build_float(target):

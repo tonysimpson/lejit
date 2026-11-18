@@ -32,12 +32,6 @@ DEFINEFN vinfo_t* PsycoSeqIter_NEW(PsycoObject* po, vinfo_t* seq)
 }
 
 
-static vinfo_t* piter_getiter(PsycoObject* po, vinfo_t* v)
-{
-	vinfo_incref(v);
-	return v;
-}
-
 /* An exhausted iterator has dropped its sequence (it_seq = NULL). */
 static void cimpl_seqiter_drop_seq(seqiterobject* it)
 {
@@ -243,7 +237,6 @@ DEFINEVAR source_virtual_t psyco_computed_seqiter;
 INITIALIZATIONFN
 void psy_iterobject_init(void)
 {
-        Psyco_DefineMeta(PySeqIter_Type.tp_iter, &piter_getiter);
         Psyco_DefineMeta(PySeqIter_Type.tp_iternext, &piter_iternext);
 
         /* iterator object are mutable;

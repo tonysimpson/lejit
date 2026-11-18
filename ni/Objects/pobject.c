@@ -1549,10 +1549,13 @@ vinfo_t *Psyco_SafelyDeleteVar(PsycoObject *po, vinfo_t *vi) {
   return result;
 }
 
+#include "pobject_gen.h"
+
 INITIALIZATIONFN
 void psy_object_init(void) {
   /* associate the Python implementation of some functions with
      the one from Psyco */
   Psyco_DefineMeta(PyObject_GenericGetAttr, PsycoObject_GenericGetAttr);
+  gen_object_init();
   store_miss_glue = psyco_aligned_call_glue(cimpl_store_miss);
 }

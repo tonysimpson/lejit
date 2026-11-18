@@ -343,6 +343,9 @@ TRANSLATED_SLOTS = {
     'Objects/floatobject.c': {'type': 'PyFloat_Type', 'slots': [
         'nb_add', 'nb_subtract', 'nb_multiply', 'nb_remainder', 'nb_negative',
         'nb_positive', 'nb_absolute', 'nb_bool', 'nb_true_divide', 'tp_hash']},
+    # slots of types defined in other files that object.c's functions fill
+    'Objects/object.c': [{'type': 'PySeqIter_Type', 'slots': ['tp_iter']},
+                         {'type': 'PyRangeIter_Type', 'slots': ['tp_iter']}],
 }
 
 # The functions of a module whose metas the general translator generates
@@ -1511,7 +1514,7 @@ ENTRIES = {
             ('likely', 'false', 'i < 0 || i >= Py_SIZEa'),
         ]},
     'Objects/iterobject.c:seqiterobject': {'shape': '24ea9b846c56', 'ni': ['tools/metac/gen_layouts.py:copy_struct']},
-    'Objects/object.c:PyObject_SelfIter': {'shape': 'ba0edf658c0b', 'ni': ['ni/Objects/piterobject.c:piter_getiter', 'ni/Objects/prangeobject.c:prangeiter_getiter']},
+    'Objects/object.c:PyObject_SelfIter': {'shape': 'ba0edf658c0b', 'ni': ['tools/metac/gen_abstract.py:generate']},
     'Objects/iterobject.c:iter_iternext': {
         'shape': 'f4f8c9902f51',
         'ni': ['ni/Objects/piterobject.c:cimpl_seqiter_drop_seq', 'ni/Objects/piterobject.c:piter_ends', 'ni/Objects/piterobject.c:piter_iternext'],
