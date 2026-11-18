@@ -30,9 +30,9 @@ Everything in the per-file tables was checked in code **[read]** unless the cell
 | `ni/Objects/pabstract.h` | 115 | 0 | 0 | 0 | 115 |
 | `ni/Objects/plongobject.c` | 538 | 109 | 289 | 60 | 80 |
 | `ni/Objects/plongobject.h` | 57 | 8 | 0 | 27 | 22 |
-| `ni/Objects/pfloatobject.c` | 326 | 157 | 83 | 35 | 51 |
-| `ni/Objects/pfloatobject.h` | 88 | 12 | 0 | 23 | 53 |
-| `ni/Modules/pmath.c` | 188 | 84 | 22 | 0 | 82 |
+| `ni/Objects/pfloatobject.c` (after D87: 230 lines) | 326 | 157 | 83 | 35 | 51 |
+| `ni/Objects/pfloatobject.h` (after D87: 84 lines) | 88 | 12 | 0 | 23 | 53 |
+| `ni/Modules/pmath.c` (after D87: 70 lines) | 188 | 84 | 22 | 0 | 82 |
 | `ni/Python/pbltinmodule.c` (after D86: 546 lines) | 668 | 174 | 333 | 84 | 77 |
 | `ni/Objects/pstringobject.c` (compiled out) | 1,233 | 11 | 455 | 696 | 71 |
 | `ni/Objects/pstringobject.h` (compiled out) | 73 | 18 | 0 | 36 | 19 |
@@ -119,7 +119,7 @@ The main ones, by where they must go:
 | `longobject.c:long_long` | generated (D83; was `plong_pos`), and again inside `pbltinmodule.c:pbuiltin_round`, `ptype_call` | |
 | `floatobject.c:float___trunc___impl`, `float___round___impl` | split into `pfloatobject.c` helpers, put together again in `pbltinmodule.c` (`float_whole_to_int`, `pbuiltin_round`) | float's `nb_int` has no meta |
 | `rangeobject.c:get_len_of_range` | `prangeobject.c:cimpl_range_len` (the dead copy in `pbltinmodule.c` removed, D86) | |
-| `floatobject.c:PyFloat_AsDouble` | `pfloatobject.c:PsycoFloat_AsDouble` (dead), `pmath.c:PMATH_CONVERT_TO_DOUBLE` (an approximation, F99) | |
+| `floatobject.c:PyFloat_AsDouble` | generated since D87 (`pfloatslots_gen.h`, `PsycoFloat_AsDouble`); was `pfloatobject.c:PsycoFloat_AsDouble` (dead) and `pmath.c:PMATH_CONVERT_TO_DOUBLE` (an approximation, F99, fixed) | |
 | `bltinmodule.c:min_max` | `pbltinmodule.c:pbuiltin_min_max`, and `pycompiler.c:cimpl_minmax_step`/`cimpl_minmax_result` (genexpr fusion) | |
 | index normalisation and the step-1 slice case | per type in `pbytes_subscript`, `punicode_item`, `cimpl_bytes_slice`, `cimpl_unicode_slice`, `cimpl_list_slice` | P18a |
 | `call.c:_Py_CheckFunctionResult` | `pmethodobject.c:check_result`, `cimpl_null_result`, `cimpl_result_with_error` | |
@@ -563,7 +563,7 @@ Field descriptors for `PyLongObject` plus the virtual int, whose `iLONG_VALUE` w
 
 ### `ni/Objects/pfloatobject.c`
 
-Virtual floats plus the helpers `pbltinmodule.c` uses for `int(x)` and `round(x)`. `pfloatobject_gen.h` (by `gen_float.py`) supplies `float_add`, `float_sub`, `float_mul`, `float_rem`, `float_neg`, `float_abs`, `float_bool` and `float_div`, and `pfloatslots_gen.h` (D83) `float_float`; the hand-written part is `float_richcompare` (float/float only) and `float_hash`, so nothing is done twice **[read]**. `PsycoFloat_AsDouble` has no callers **[read]**. `pfloat_richcompare`'s residual call to compare with an int was flagged NoError, but `float_richcompare` can return NULL there: fixed (F104, D83) **[read]**.
+Virtual floats plus the helpers `pbltinmodule.c` uses for `int(x)` and `round(x)`. Since D87 `pfloatslots_gen.h` (by `gen_abstract.py`'s float unit; `gen_float.py` and `pfloatobject_gen.h` are gone) supplies `float_add`, `float_sub`, `float_mul`, `float_rem`, `float_neg`, `float_abs`, `float_bool`, `float_div`, `float_float` and `PsycoFloat_AsDouble`, and the hand `PsycoFloat_AsDouble` and `psyco_convert_to_double` rows below are removed; before D87 `pfloatobject_gen.h` supplied the first eight; the hand-written part is `float_richcompare` (float/float only) and `float_hash`, so nothing is done twice **[read]**. `PsycoFloat_AsDouble` has no callers **[read]**. `pfloat_richcompare`'s residual call to compare with an int was flagged NoError, but `float_richcompare` can return NULL there: fixed (F104, D83) **[read]**.
 
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
@@ -579,13 +579,13 @@ Virtual floats plus the helpers `pbltinmodule.c` uses for `int(x)` and `round(x)
 | PsycoFloat_RoundEven | 6 | translated | partial: Objects/floatobject.c:float___round___impl | P13 | EFFECT: CfPure\|CfReturnTypeDouble | Used by pbltinmodule.c (round(x)) |
 | PsycoFloat_WholeToLong | 20 | mixed | partial: Objects/floatobject.c:float___trunc___impl (fits-long fast path) | P13,P05,P18 | EFFECT: CfPure on both helpers; VIRTUAL: virtual int result; LIKELY: fits is _t | Core part: virtual int; does not fit -> caller asks CPython |
 | PsycoFloat_FromFloat | 11 | translated | partial: Python/structmember.c:PyMember_GetOne (T_FLOAT) | P13,P18 | EFFECT: CfPure\|CfReturnTypeDouble | Used by pstructmember.c |
-| PsycoFloat_AsDouble | 37 | translated | Objects/floatobject.c:PyFloat_AsDouble | P01,P09,P15,P24 | DRIFT: message 'a float is required' (3.7: 'must be real number, not %.50s'), __float__'s result not checked to be a float; GUARD: nb_float read without Psyco_TypeSlot | No callers [read]: dead |
+| PsycoFloat_AsDouble | 37 | translated | Objects/floatobject.c:PyFloat_AsDouble | P01,P09,P15,P24 | DRIFT: message 'a float is required' (3.7: 'must be real number, not %.50s'), __float__'s result not checked to be a float; GUARD: nb_float read without Psyco_TypeSlot | No callers [read]: dead. Removed in D87: generated from the C instead |
 | compute_float | 21 | core | none | P18 | EFFECT: CfPure on PyFloat_FromDouble |  |
 | direct_compute_float, psyco_computed_float | 14 | core | none | P18 |  | Unreachable (KNOWN_BUGS F6) |
-| psyco_convert_to_double | 20 | translated | Objects/floatobject.c:convert_to_double, CONVERT_TO_DOUBLE | P01,P15 | DRIFT: tests int before float (no observable difference) | Returns -1 for NotImplemented. Also used by pmath.c, where it stands in for PyFloat_AsDouble (see there) |
+| psyco_convert_to_double | 20 | translated | Objects/floatobject.c:convert_to_double, CONVERT_TO_DOUBLE | P01,P15 | DRIFT: tests int before float (no observable difference) | Removed in D87: the generated slots inline `convert_to_double` (rule `inline_static`); pmath.c no longer uses it |
 | pfloat_richcompare | 63 | mixed | partial: Objects/floatobject.c:float_richcompare (float/float case) | P01,P13,P12,P26,P23,P25 | SHORTCUT: float/float only (P26), int is the residual slot; EFFECT: CfCommonNewRefPyObject\|CfPure on the residual float_richcompare (NoError until F104's fix); RESTYPE: bool (virtual) | Core part: GE/GT as swapped LE/LT. BUG [read]: float_richcompare with a big int can return NULL (its Error: label, MemoryError), but NoError means the NULL is not checked KNOWN_BUGS F104. |
 | pfloat_hash | 9 | translated | Objects/floatobject.c:float_hash | P15,P13 | EFFECT: CfPure\|CfReturnTypeLong on _Py_HashDouble |  |
-| #include pfloatobject_gen.h | 3 | glue | none |  |  | Generated: float_add, float_sub, float_mul, float_rem, float_neg, float_abs, float_bool, float_div |
+| #include pfloatobject_gen.h | 3 | glue | none |  |  | Removed in D87: `pfloatslots_gen.h` has the slots |
 | psy_floatobject_init | 15 | glue | none |  |  | Registers the generated slots, then nb_positive, tp_richcompare, tp_hash |
 | #else psy_floatobject_init (no FP calls) | 5 | glue | none |  |  |  |
 
@@ -604,7 +604,7 @@ The `ob_fval` descriptor and the virtual-float builder; one word holds the doubl
 
 ### `ni/Modules/pmath.c`
 
-One-argument `math` functions as macros that mirror `FUNC1`/`math_1_to_whatever`, plus `ceil`/`floor` for an exact float **[read]**. Conversion goes through `psyco_convert_to_double` (float's `CONVERT_TO_DOUBLE`) instead of `PyFloat_AsDouble`, so an int subclass's `__float__` is ignored **[read]**.
+One-argument `math` functions as macros that mirror `FUNC1`/`math_1_to_whatever`, plus `ceil`/`floor` for an exact float **[read]**. Conversion goes through `psyco_convert_to_double` (float's `CONVERT_TO_DOUBLE`) instead of `PyFloat_AsDouble`, so an int subclass's `__float__` is ignored **[read]**. **Since D87** the twelve `FUNC1` metas are generated (`pmathmodule_gen.h`, by `gen_builtins.py`'s math unit, with `PsycoFloat_AsDouble`: F99 fixed); what is left is `ceil`/`floor` (`PMATH_TO_INT`, reading the exact float's double directly) and the registration. The rows for `PMATH_CONVERT_TO_DOUBLE`, `cimpl_math_1`, `PMATH_FUNC1` and the `FUNC1` instances describe the code before D87.
 
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|

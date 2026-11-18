@@ -1,5 +1,17 @@
 # Status
 
+## 2026-11-18: C doubles from the general translator (GENERATION.md step 5, doubles; `cddaf8d`, D87)
+
+`tools/metac/scalars.py` gives the translator a `double` representation (`TYPES`), copies runs of scalar statements into C helpers (rule `copy_through`) and inlines static functions given a pointer or a function (rule `inline_static`); `gen_float.py` is gone.
+- **Generated:** float's `+ - * / %`, unary `-` `+`, `abs`, `bool` and `PyFloat_AsDouble` (`pfloatslots_gen.h`), int's `nb_float` (new), twelve math functions (`pmathmodule_gen.h`). 235 hand lines removed (43 added), `gen_float.py`'s 241; `scalars.py` is 1,009 lines.
+- **Fixed:** F99 (math functions now convert with `PyFloat_AsDouble`, so `__float__` runs).
+- **Same code:** `tools/samecode.py baseline-3.7 HEAD`: 76 units same, 15 differ (4,383 of 4,417 code objects same); reasons in METACOMPILER.md "Scalar code" (one argument fewer per math call, F99, subclass loads, promotion data).
+- Release builds, instructions per warm iteration, `8b4d3ae` → `cddaf8d`: `float` 662.1 → 656.2 M (−0.9%); richards, deltablue, raytrace, go, hexiom, chaos, pyflate, nbody, spectral_norm, scimark equal (within 0.1%).
+- Checked build: generation twice, same output; `tests/run.py` 879 pass (7 new in `gen_doubles.py`: edge values, subclasses, mixed ints, `__float__` types, math domain and overflow); `compile_bounds.py` 7 checks; the seven `profile_bench.py` runs; `cpython_tests.py -j 2` 285 modules, 0 unexpected; `--all` 371 modules, 0 unexpected.
+- **3.8.20** (not built): the same 34 functions generate; `PyFloat_AsDouble` gains a helper for 3.8's `nb_index` arm.
+- **Left, and why:** `float_richcompare` (whitelist), `float_hash`, `ceil`/`floor` (int result), `divmod`/`//` (two results), `**`, math's `m_*` (from `_math.h` conditionals), `FUNC1A`, `FUNC2` and the clinic `pow`/`fmod`/`hypot` (failures log).
+- **Risks:** the scalar vocabulary (`EXTERNAL`, `SCALAR_CODE`) decides what a helper may contain, so a new libm call or raising function in a later version's C refuses until listed; a helper is copied C, so a difference in CPython's double code is carried, not checked.
+
 ## 2026-11-18: builtins from the general translator (GENERATION.md step 5, builtins; `58e52de`, `a8a9038`, D86)
 
 `tools/metac/gen_builtins.py` finds each builtin's C function and `ml_flags` in `bltinmodule.c`'s method table, takes the meta's parameters and fallback from `policy_table.METH_ARGS`, and unpacks arguments per count by `_PyArg_UnpackStack`'s policy item; Argument Clinic's wrappers need no rule.
