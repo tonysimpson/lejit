@@ -46,7 +46,7 @@ Example: `ni/Objects/pabstract.c:PsycoSequence_GetItem`.
 
 **P07 unsigned-bounds** (M when it mirrors a `(size_t)` cast; J otherwise)
 `(size_t)i >= (size_t)n` → `integer_cmp(po, i, n, Py_GE | COMPARE_UNSIGNED)`. `CHEAT_MAXINT` (clamping slice bounds) is a Psyco-only trick.
-Example: tuple's `sq_item`, generated into `ptupleobject_gen.h` (`gen_abstract.bounds_test`, `571d4a9`; was `ptupleobject.c:ptuple_item`), `pstringobject.c:pstring_slice` (Py2 only).
+Example: tuple's `sq_item`, generated into `ptupleobject_gen.h` (`gen_abstract.bounds_test`, `935df0b`; was `ptupleobject.c:ptuple_item`), `pstringobject.c:pstring_slice` (Py2 only).
 
 **P08 assert-result-type** (J)
 A residual call whose result type is known → `Psyco_AssertType(po, r, &PyX_Type)`, or the `DEF_KNOWN_RET_TYPE_n` macros. The knowledge isn't in the callee's C signature; a generator could get some of it by analysing the callee's return statements.

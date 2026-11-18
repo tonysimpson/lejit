@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`), 3 (`e7fd745`) and 9 (`36b5beb`) done, and D19's stage 0, layouts (`ee76274`, D76); step 8 begun (front end, `99d9b26`); 3.8 dry run (`2a71def`, PORT38.md); step 10 point 1 as a tool (`88d850c`, D90), its 22 settled but two (`f3863a9`)
+status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`), 3 (`e7fd745`) and 9 (`36b5beb`) done, and D19's stage 0, layouts (`ee76274`, D76); step 8 begun (front end, `99d9b26`); 3.8 dry run (`2a71def`, PORT38.md); step 10 point 1 as a tool (`88d850c`, D90), its 22 settled but two (`08c702e`)
 ---
 # Plan of work: generate the translated layer on 3.7
 
@@ -258,20 +258,24 @@ At `88d850c`, CPython 3.7.17 (functions, macros and opcode cases; lines of each 
 - **What the count does not say:** (b) is not done. GOAL point 1 wants what is left to be core with a reason; the 116 with policy items, the 8 limits and the 4 refusals that are generator limits (vocabulary, control flow, stack) are still the phase's work (QUESTIONS 50).
 - **Checks:** a hand_table key that names nothing, a definition the tool doesn't see as a mirror, an unknown kind, a reference not in the docs, an excluded file that is gone, or an `ENTRIES` Ni name the tool can't find each gives exit 2 (tried by mutation).
 
-## Step 10, the 22 with no reason (`3baa2da` … `f3863a9`) [run]
+## Step 10, the 22 with no reason (`351a4d5` … `08c702e`) [run]
 
 Each of the 22 `donecheck.py` listed at `88d850c` was deleted, generated or given a reason; two are left to the iterator work (`piter_getiter`, `prangeiter_getiter`, `PyObject_SelfIter`).
 
 | class | definitions | lines |
 |---|---:|---:|
-| (a) generated | 197 | 5,702 |
-| (b) hand-written, reasoned | 237 | 5,177 |
+At `08c702e`, on D89 (`dc3c353`), 3.7.17:
+
+| class | definitions | lines |
+|---|---:|---:|
+| (a) generated | 203 | 6,055 |
+| (b) hand-written, reasoned | 232 | 4,997 |
 | (c) hand-written, no reason | 2 | 9 |
 
-- **Deleted, no callers:** `PsycoEval_CallObjectWithKeywords` (and F11), `PsycoDict_Copy`, `PsycoIter_Check`, `PsycoLong_AsLong` (`3baa2da`); `PsycoDict_SetItem` and `PsycoObject_Repr` once `BUILD_MAP`/`MAP_ADD` and `FORMAT_VALUE` make the same residual calls themselves (`52f2540`); `cimpl_finalize_frame_locals` and `FINALIZE_FRAME_LOCALS`, Py2's `reset_exc_info`, never reached (`39c11bc`: a compare and a jump fewer on every return of a function with handlers; the three reserved words stay, B17).
-- **Generated:** tuple's `sq_length` and `sq_item` (`571d4a9`; rules `returned_length`, `bounds_test` (the `x < 0 || x >= n` test as one unsigned compare), `field_array_read` (`TUPLE_ob_item` from `gen_virtual`'s layout), `incref_returned`), which also retires `psyco_generic_immut_ob_size`/`mut_ob_size`; float's `tp_hash` (`3444d48`; integer typedefs through the file's typedefs, and a pure function of another file called directly, `scalars.proven_pure`); `unbound_local_error` and `unbound_deref_error` (`93b3b78`, rule `compile_time_copy`: the `ceval.c` helper's body run in the compiler with Ni's compile-time exception).
-- **Reasoned** (`f3863a9`): core `PsycoObject_Call` (D85 (5)) and `mergepoints.c:NEXTOPARG` (the walker's own decoder); helper `PyType_TypeCheck`; limit, with failures-log rows, `PsycoObject_Hash`, `PsycoObject_RichCompareBool`, `try_rich_compare` (`object.c` can't be read: `cparse.undefined_later`, as `unicodeobject.c`) and `PsycoLong_AsDouble`, `cimpl_fp_from_long` (a long unit has no list of the declared functions to translate, and the one-digit test is on a `PyObject *`). Trying the latter found F111 (a double's `return -1.0`), fixed in `cb3908e`.
-- **(b) by reason:** policy items 116, core 48, generator refusals 28, helper 21, limit 13, mechanism 10, judgement 1. The limits are still the phase's work (QUESTIONS 50).
+- **Deleted, no callers:** `PsycoEval_CallObjectWithKeywords` (and F11), `PsycoDict_Copy`, `PsycoIter_Check`, `PsycoLong_AsLong` (`351a4d5`); `PsycoDict_SetItem` and `PsycoObject_Repr` once `BUILD_MAP`/`MAP_ADD` and `FORMAT_VALUE` make the same residual calls themselves (`0f88313`); `cimpl_finalize_frame_locals` and `FINALIZE_FRAME_LOCALS`, Py2's `reset_exc_info`, never reached (`0d378fb`: a compare and a jump fewer on every return of a function with handlers; the three reserved words stay, B17).
+- **Generated:** tuple's `sq_length` and `sq_item` (`935df0b`; rules `returned_length`, `bounds_test` (the `x < 0 || x >= n` test as one unsigned compare), `field_array_read` (`TUPLE_ob_item` from `gen_virtual`'s layout), `incref_returned`), which also retires `psyco_generic_immut_ob_size`/`mut_ob_size`; float's `tp_hash` (`87b5ff5`; integer typedefs through the file's typedefs, and a pure function of another file called directly, `scalars.proven_pure`); `unbound_local_error` and `unbound_deref_error` (`e17f6fc`, rule `compile_time_copy`: the `ceval.c` helper's body run in the compiler with Ni's compile-time exception).
+- **Reasoned** (`6ee46c1`, `08c702e`): core `PsycoObject_Call` (D85 (5)) and `mergepoints.c:NEXTOPARG` (the walker's own decoder); helper `PyType_TypeCheck`; limit, with failures-log rows, `PsycoObject_Hash`, `PsycoObject_RichCompareBool`, `try_rich_compare` (`object.c` reads since D89; `PyObject_Hash` is refused for want of a `likely` item and F50's heap-type guard, `PyObject_RichCompareBool` resumes at its `v == w` test, F109, and `do_richcompare` is refused) and `PsycoLong_AsDouble`, `cimpl_fp_from_long` (a long unit has no list of the declared functions to translate, and the one-digit test is on a `PyObject *`). Trying the latter found F111 (a double's `return -1.0`), fixed in `caa579d`.
+- **(b) by reason:** policy items 112, core 48, generator refusals 28, helper 21, limit 12, mechanism 10, judgement 1. The limits are still the phase's work (QUESTIONS 50).
 
 ## Risks
 

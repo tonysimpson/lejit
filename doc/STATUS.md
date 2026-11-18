@@ -1,5 +1,16 @@
 # Status
 
+## 2026-11-18: the done test's 22 settled but two (GENERATION.md step 10; `351a4d5` … `08c702e`)
+
+`donecheck.py` (D90) listed 22 hand-written mirrors with no reason; 20 are now deleted, generated or reasoned, and the two left (`piter_getiter`, `prangeiter_getiter`) are the iterator work's.
+- **Done test at `08c702e`, on D89, 3.7.17:** generated 203 definitions (6,055 lines); with a reason 232 (4,997); with none 2 (9).
+- **Deleted:** `PsycoEval_CallObjectWithKeywords` (F11 gone), `PsycoDict_Copy`, `PsycoIter_Check`, `PsycoLong_AsLong`, `PsycoDict_SetItem`, `PsycoObject_Repr` (the generated cases make the residual calls), and Py2's frame finaliser (`cimpl_finalize_frame_locals`, `FINALIZE_FRAME_LOCALS`; its three reserved words stay, B17).
+- **Generated:** tuple's `sq_length` and `sq_item`; float's `tp_hash`; the unbound-variable errors (rule `compile_time_copy`: `ceval.c`'s helper body run in the compiler).
+- **Reasoned:** `PsycoObject_Call` and `NEXTOPARG` core; `PyType_TypeCheck` a helper; `object.c`'s three and `PyLong_AsDouble`'s two limits, each with a failures-log row. F111 (a double's `return -1.0` as a constant) found and fixed, latent.
+- **Same code** (`samecode.py`, against `dc3c353`): the generation commits (`e17f6fc`) emit the same code for every instruction but one copy, `stores.py:del_replaces_dict`'s `LOAD_METHOD`, whose bytes past a jump capstone decodes out of step; the difference is first seen with `0f88313`, which changes no logic on that path, and swaps sides with the baseline, so it is an address in the bytes [inferred]. With the finaliser gone (`0d378fb`): 3,684 of 4,556 code objects the same; the others differ at returns (the compare and jump gone, and the return path's registers no longer chosen around a call).
+- **Release builds, instructions per warm iteration** (`perf stat -e instructions:u`, `profile_bench.py` 1 s and 4 s, raytrace 2 s and 8 s, PYTHONHASHSEED=0), `dc3c353` → `08c702e`: richards 168.36 → 168.36 M, deltablue 27.08 → 27.07, raytrace 3,102.8 → 3,093.0, go 1,062.95 → 1,062.95, hexiom 40.20 → 40.20, chaos 467.15 → 465.87, pyflate 1,956.29 → 1,956.29: nothing slower.
+- **Tests:** generation deterministic; checked build `tests/run.py` 929 pass, 0 fail (cases `tup_len`, `tup_item`, `tup_item_loop`, `hashes`); `compile_bounds` 7 checks, 0 failed; the seven `profile_bench` runs on the checked build; `cpython_tests.py -j 2`: 285 modules, 0 unexpected; `--all`: 371 modules, 0 unexpected (only the known C11–C20 differences).
+
 ## 2026-11-18: str and descriptors generated (GENERATION.md step 5; `ccb5735`, D89)
 
 Conditional compilation is evaluated against the target's pyconfig.h (`cparse.conditionals`), so `unicodeobject.c` reads; new rules for bit-fields, run-time `?:`, pointers into an object and switch breaks (`tools/metac/conditions.py`, `pointers.py`).
