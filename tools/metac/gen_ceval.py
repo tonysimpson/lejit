@@ -1517,6 +1517,22 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         params, body = [], []
         local = set()
         cps = []
+        # an item of an input array the call takes (values[oparg - i] in a
+        # loop) is a parameter of the wrapper, in the handler too
+        cargs = call_args(ctokens.tokenize(args_text)[0], 0)[0]
+        items = {}
+        for a in cargs:
+            m_ = re.fullmatch(r'(\w+) \[ .+ \]', a)
+            if m_ and in_kind.get(m_.group(1)) == 'array' and a not in items:
+                items[a] = 'item%d' % len(items)
+        if items:
+            texts_ = []
+            for st in handler:
+                t_ = words(st)
+                for a, p_ in items.items():
+                    t_ = t_.replace(a, p_)
+                texts_.append(ctokens.tokenize(t_)[0])
+            handler = texts_
         for st in handler:
             # the locals the handler declares (PyObject *exc, *val, *tb)
             ws = [t_.text for t_ in ctokens.tokenize(words(st))[0]]
@@ -1544,23 +1560,27 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                 elif x_ in ctx.ceval_macros or x_ in in_names:
                     raise Skip('an error handler reading %s' % x_)
             text.append(' '.join(ws) + ('' if ws[-1] == '}' else ' ;'))
-        cargs = call_args(ctokens.tokenize(args_text)[0], 0)[0]
-        for a in cargs:
+        # a pointer cast of a variable ('(PyListObject *) sum') stays in the
+        # wrapper; the variable is its parameter
+        bare = [re.sub(r'^\( \w+ \* \) (\w+)$', r'\1', a) for a in cargs]
+        for a in bare:
             if a in var:
                 if var[a] not in OBJECT_KINDS:
                     raise Skip('an error handler around %s of %s' % (fn, a))
-            elif not re.fullmatch(r'-?\d+|NULL', a):
+            elif a not in items and not re.fullmatch(r'-?\d+|NULL', a):
                 raise Skip('an error handler around %s ( %s )' % (fn, a))
-        ps = [a for a in cargs if a in var]
+        ps = [a for a in bare if a in var or a in items]
         ps += [p_ for p_ in params if p_ not in ps]
         ret = {'object': 'PyObject *', 'int': 'int'}.get(csigs[fn][0])
         if ret is None:
             raise Skip('an error handler around %s returning %s' % (fn, csigs[fn][0]))
         name = 'ceval_%s_%d' % (inst.name, len(wrappers))
         head = 'static %s%s%s(%s)' % (ret, '' if ret.endswith('*') else ' ', name,
-                                      ', '.join('PyObject *%s' % p_ for p_ in ps))
+                                      ', '.join('PyObject *%s' % items.get(p_, p_)
+                                                for p_ in ps))
         code = '%s {\n  %s r = %s ( %s );\n  if (r %s) {\n    %s\n  }\n  return r;\n}' % (
-            head, ret, fn, ', '.join(cargs), test, tidy(' '.join(text)))
+            head, ret, fn, ', '.join(items.get(a, a) for a in cargs), test,
+            tidy(' '.join(text)))
         wrappers[name] = ret
         copies.extend(cps + [(name, code)])
         calls.extend(n for n, _ in cps)
@@ -1937,6 +1957,17 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     var[x] = 'owned'
                     released.add(w[2])
                     continue
+                m = re.fullmatch(r'(_?Py[A-Z]\w*) (\( .* \))', ' '.join(w[2:]))
+                if m and m.group(1) in csigs and stmts and \
+                        words(stmts[0][:6]) == 'if ( %s == NULL )' % x:
+                    # the call's result tested next, with a handler of its
+                    # error: a wrapper as for a call in the test (rule
+                    # error_handler)
+                    call = error_handler(m.group(1), m.group(2), stmts[0][6:], '== NULL')
+                    if call[0] != '%s %s' % (m.group(1), m.group(2)):
+                        stmts[0] = stmts[0][:6] + call[1]
+                        w = w[:2] + [t_.text for t_ in ctokens.tokenize(call[0])[0]]
+                        stmt = stmt[:2] + ctokens.tokenize(call[0])[0]
                 if len(w) > 3 and w[2] in wrappers and w[3] == '(':
                     # a call with its error handler, at run time (rule
                     # error_handler)
@@ -2224,6 +2255,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                                      for b in body):
             body = [b for b in body if not own.match(b)]
             decls = [d for d in decls if not re.fullmatch(r'\w+ %s;' % n, d)]
+    lines += concat_shortcut(inst, entry, inputs[keep:], outputs[keep:])
     lines += ['  ' + d for d in decls]
     lines += ['  ' + b for b in body]
     if jump_line:
@@ -2259,6 +2291,54 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
     lines += ['}']
     used = [(n, t) for n, t in copies if n in calls]
     return '\n'.join(lines), calls, used
+
+
+def concat_shortcut(inst, entry, popped, pushed):
+    """Policy ('virtual', 'concat', why): where Ni knows the length of
+    every item of the case's one popped array as an object of the case's
+    'restype' (its policy_table.TYPES entry's 'known_length'), the one
+    output is a virtual of that type holding their items in order, made
+    by Ni's 'new', and the C does not run (P22: f(*a, *b) and (*a, *b) of
+    known tuples)."""
+    items = [i for i in entry.get('policy', []) if tuple(i[:2]) == ('virtual', 'concat')]
+    if not items:
+        return []
+    restype = [i[1] for i in entry.get('policy', []) if i[0] == 'restype']
+    t = next((t for t in policy_table.TYPES.values()
+              if restype and t.get('type') == restype[0]), {})
+    kl, virt = t.get('known_length'), t.get('virtual', {})
+    if len(items) > 1 or kl is None or 'new' not in virt:
+        raise Skip("policy ('virtual', 'concat') with no restype of a known length"
+                   " and a virtual constructor")
+    if len(popped) != 1 or popped[0][1] != 'array' or len(pushed) != 1 \
+            or pushed[0][1] != 'scalar':
+        raise Skip("policy ('virtual', 'concat') on a case that does not pop one"
+                   " array and push one value")
+    load, item, new = (x.split(':')[1] for x in (kl['load'], kl['item'], virt['new']))
+    a, size = popped[0][0], popped[0][2].text()
+    return ['  { /* %s (policy virtual concat, P22) */' % items[0][2]] + ['    ' + x for x in [
+        'int i_, j_, k_, m_ = 0, n_ = 0;',
+        'for (i_ = 0; i_ < %s; i_++) {' % size,
+        '  k_ = %s(%s[i_]);' % (load, a),
+        '  if (k_ < 0)',
+        '    break;',
+        '  n_ += k_;',
+        '}',
+        'if (i_ == %s) {' % size,
+        '  vinfo_t *v_, **items_ = (vinfo_t **)PyMem_Malloc((n_ + 1) * sizeof(*items_));',
+        '  if (items_ == NULL) {',
+        '    PycException_SetString(po, PyExc_MemoryError, "");',
+        '    break;',
+        '  }',
+        '  for (i_ = 0; i_ < %s; i_++)' % size,
+        '    for (j_ = 0, k_ = %s(%s[i_]); j_ < k_; j_++)' % (load, a),
+        '      items_[m_++] = %s(%s[i_], j_);' % (item, a),
+        '  v_ = %s(n_, items_);' % new,
+        '  PyMem_Free(items_);',
+        '  { int n = %s; while (n--) POP_DECREF(); }' % size,
+        '  PUSH(v_);',
+        '  goto fine;',
+        '}']] + ['  }']
 
 
 def fill_loop(stmts, x, typ, count, inputs):

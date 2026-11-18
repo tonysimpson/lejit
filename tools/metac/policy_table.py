@@ -831,7 +831,7 @@ ENTRIES = {
             ('promote', 'type', 'callargs'),
             ('shortcut', 'direct_meta', 'an exact tuple without **'),
         ]},
-    'Python/ceval.c:check_args_iterable': {'shape': 'c64cc9801246', 'ni': ['ni/Python/pycompiler.c:cimpl_call_function_ex', 'ni/Python/pycompiler.c:cimpl_build_unpack']},
+    'Python/ceval.c:check_args_iterable': {'shape': 'c64cc9801246', 'ni': ['ni/Python/pycompiler.c:cimpl_call_function_ex', 'tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:format_kwargs_mapping_error': {'shape': '8a34b9309457', 'ni': ['ni/Python/pycompiler.c:cimpl_call_function_ex', 'tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:format_exc_check_arg': {'shape': '4a1f4255a9e4', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:format_exc_unbound': {'shape': '7670fed16a8a', 'ni': ['tools/metac/gen_ceval.py:translate']},
@@ -846,12 +846,18 @@ ENTRIES = {
     'Python/ceval.c:TARGET(STORE_DEREF)': {'shape': '4c4c566b974a', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK_WITH_CALL)': {
         'shape': '661922c6394b',
-        'ni': ['ni/Python/pycompiler.c:cimpl_build_unpack', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK'],
+        'ni': ['tools/metac/gen_ceval.py:translate'],
         'policy': [
             ('virtual', 'concat', 'parts that are tuples with known items'),
-            ('restype', 'PyTuple_Type', 'BUILD_TUPLE_*'),
+            ('restype', 'PyTuple_Type'),
         ]},
-    'Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK)': {'shape': 'b1abba726c4d', 'ni': ['ni/Python/pycompiler.c:cimpl_build_unpack', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK']},
+    'Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK)': {
+        'shape': 'b1abba726c4d',
+        'ni': ['tools/metac/gen_ceval.py:translate'],
+        'policy': [
+            ('virtual', 'concat', 'parts that are tuples with known items'),
+            ('restype', 'PyTuple_Type'),
+        ]},
     'Python/ceval.c:TARGET(BUILD_LIST_UNPACK)': {
         'shape': 'c95697e345d5',
         'ni': ['tools/metac/gen_ceval.py:translate'],

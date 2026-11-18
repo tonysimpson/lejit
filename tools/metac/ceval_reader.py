@@ -1266,6 +1266,14 @@ class Case:
         if dead is not None:
             arm = then if dead else other
             return self.node(arm, states, False) if arm else states
+        w = _texts(cond)
+        if len(w) > 4 and w[0] == 'opcode' and w[3] == '&&' and \
+                (w[2] == self.name) == (w[1] == '=='):
+            # 'opcode == K && R' in case K is R
+            cond = cond[4:]
+            node = Node('if', node.toks[:2] + node.toks[6:], cond=cond, then=then,
+                        other=other)
+            c = ' '.join(_texts(cond))
         body = _block(then)
         ci = (self.expression(_texts(cond), states) if self.touches(cond, states)
               else [c])
@@ -2113,7 +2121,18 @@ def read(src):
     give, and [(name, kind, reason)] for the cases refused."""
     ctx = Context(src)
     texts, refused = [], []
-    for name, toks, problem in cases(src):
+    listed = cases(src)
+    bodies = {name: (toks, problem) for name, toks, problem in listed}
+    for name, toks, problem in listed:
+        # rule fall_through: a TARGET that falls into the next has that
+        # case's body, read as its own case (opcode is its own)
+        seen = {name}
+        while problem and problem.startswith('falls into TARGET('):
+            into = problem[len('falls into TARGET('):-1]
+            if into in seen or into not in bodies:
+                break
+            seen.add(into)
+            toks, problem = bodies[into]
         if problem:
             refused.append((name, 'falls through', problem))
             continue
