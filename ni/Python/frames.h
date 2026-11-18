@@ -33,6 +33,9 @@ EXTERNFN struct resume_s *psyco_resume_begin(PyCodeObject *co,
 EXTERNFN void psyco_resume_value(struct resume_s *st, long i, PyObject *v);
 EXTERNFN void psyco_resume_block(struct resume_s *st, long type,
                                  long handler, long level);
+EXTERNFN void psyco_frame_note_caller(PyFrameObject *f);
+EXTERNFN void psyco_frame_link_callee(PyFrameObject *callee,
+                                      PyFrameObject *f);
 EXTERNFN PyObject *psyco_resume_run(struct resume_s *st, long lasti,
                                     long nstack);
 /* PyObject* psyco_get_locals(void); this one implemented in psyco.c */

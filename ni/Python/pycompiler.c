@@ -614,6 +614,13 @@ static void cimpl_push_exc_info(PyObject *target[]) {
   PyErr_Fetch(&exc, &val, &tb);
   PyErr_NormalizeException(&exc, &val, &tb);
   PyException_SetTraceback(val, tb != NULL ? tb : Py_None);
+  if (tb != NULL && PyTraceBack_Check(tb)) {
+    /* this frame's entry, made for it: its f_back is its caller, noted
+       here rather than for every frame the exception passes */
+    PyFrameObject *f = ((PyTracebackObject *)tb)->tb_frame;
+    if (f->f_back == NULL && !f->f_executing)
+      psyco_frame_note_caller(f);
+  }
   Py_INCREF(exc);
   Py_INCREF(val);
   ni_exc_info_put(tstate, exc, val, tb);
@@ -668,8 +675,9 @@ static PyFrameObject *cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code,
   /* The real frame if the code has one (run by NiCode_Run). Otherwise a
      minimalistic frame object, working around the specific expectations
      of PyFrame_New(), which is the only reasonable way to create frame
-     objects (because of free lists etc); cimpl_rt_traceback links it to
-     its caller's (KNOWN_BUGS C11) */
+     objects (because of free lists etc). Its f_back is the entry's over
+     it (psyco_frame_link_callee), or for the frame that catches the
+     exception its caller, when read (cimpl_push_exc_info). */
   PyFrameObject *result = psyco_running_real_frame(code);
   ni_frame_t *back = ni_frame_current(tstate);
   if (result != NULL) {
@@ -701,11 +709,7 @@ static void cimpl_rt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
        entry is recorded in every frame the exception passes through */
     PyObject *last = ni_exc_traceback(tstate);
     if (last != NULL && PyTraceBack_Check(last)) {
-      PyFrameObject *callee = ((PyTracebackObject *)last)->tb_frame;
-      if (callee->f_back == NULL && callee != f) {
-        Py_INCREF(f);
-        callee->f_back = f;
-      }
+      psyco_frame_link_callee(((PyTracebackObject *)last)->tb_frame, f);
     }
     PyTraceBack_Here(f);
     Py_DECREF(f);
@@ -741,6 +745,8 @@ static PyObject *cimpl_vt_traceback(PyCodeObject *code, PyObject *globals,
   }
   oldtb = ni_exc_traceback(tstate); /* might be NULL */
   Py_XINCREF(oldtb);
+  if (oldtb != NULL && PyTraceBack_Check(oldtb))
+    psyco_frame_link_callee(((PyTracebackObject *)oldtb)->tb_frame, f);
   if (PyTraceBack_Here(f)) {
     /* out-of-memory error */
     Py_XDECREF(oldtb);

@@ -160,9 +160,10 @@ KNOWN = {
     'test_logging': ('run=183 fail=1 err=0 skip=1 exit=0',
                      'C11: line numbers in stack_info'),
     'test_exceptions': ('run=53 fail=1 err=0 skip=1 exit=0',
-                        'C11: f_back of a traceback frame'),
-    'test_traceback': ('run=63 fail=5 err=0 skip=0 exit=0',
-                       'C11: frames, locals and line numbers in stacks'),
+                        'C11: f_back of a frame whose exception C replaced '
+                        'unseen by the compiled caller'),
+    'test_traceback': ('run=63 fail=1 err=0 skip=0 exit=0',
+                       'C11: locals of an emulated frame in a stack'),
     'test_tracemalloc': ('run=43 fail=8 err=0 skip=0 exit=0',
                          'C11: allocation tracebacks miss compiled frames; '
                          'compiling allocates'),
