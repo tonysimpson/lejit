@@ -100,6 +100,10 @@ typedef struct ni_compile_guard_s {
   ni_owner_t *owner;
   int depth, nlocked, njournal, tries;
   PyObject *exc_type, *exc_value, *exc_tb;
+#if ALL_CHECKS
+  const char *respawn_file; /* dispatcher.h:NI_RESPAWN_SITE's, restored */
+  int respawn_line;
+#endif
 } ni_compile_guard_t;
 EXTERNVAR ni_compile_guard_t *psyco_compile_guard;
 EXTERNFN void psyco_guard_push(ni_compile_guard_t *g);

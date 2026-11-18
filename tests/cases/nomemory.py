@@ -132,9 +132,12 @@ def injected(counts):
     return _cache[counts]
 
 
+# every count early on, then densely: what a failure leaves behind shows
+# only in a later compile (F116 needed a respawn of code compiled after a
+# failed pause, for most counts between 59 and 289)
+INJECT_COUNTS = tuple(range(1, 14)) + tuple(range(15, 400, 4))
+
 CASES = [
     ('memory_runs_out', [(0, 60)], {'leaks': 'runs child processes'}),
-    ('injected', [((1, 2, 3, 5, 8, 13, 30, 100, 300),)],
-     {'leaks': 'runs child processes',
-      'xfail': 'F116: a coding pause that runs out of memory and recompiles can diverge on respawn replay'}),
+    ('injected', [(INJECT_COUNTS,)], {'leaks': 'runs child processes'}),
 ]

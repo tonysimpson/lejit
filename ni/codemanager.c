@@ -864,6 +864,8 @@ static void journal_add(CodeBufferObject *b) {
 DEFINEVAR ni_compile_guard_t *psyco_compile_guard = NULL;
 #if ALL_CHECKS
 DEFINEVAR long psyco_fail_after[NI_FAIL_SITES];
+EXTERNVAR const char *psyco_respawn_file; /* dispatcher.h */
+EXTERNVAR int psyco_respawn_line;
 #endif
 
 DEFINEFN void psyco_guard_push(ni_compile_guard_t *g) {
@@ -877,6 +879,10 @@ DEFINEFN void psyco_guard_push(ni_compile_guard_t *g) {
   g->exc_type = ts->curexc_type;
   g->exc_value = ts->curexc_value;
   g->exc_tb = ts->curexc_traceback;
+#if ALL_CHECKS
+  g->respawn_file = psyco_respawn_file;
+  g->respawn_line = psyco_respawn_line;
+#endif
   psyco_compile_guard = g;
 }
 
@@ -920,6 +926,12 @@ DEFINEFN void psyco_guard_abandon(void) {
   }
   psyco_owner = g->owner;
   psyco_stat_compile_depth = g->depth;
+#if ALL_CHECKS
+  /* the jump skipped NI_RESPAWN_SITE's restore: the next point recorded
+     would carry the abandoned one's site, which its replay can't match */
+  psyco_respawn_file = g->respawn_file;
+  psyco_respawn_line = g->respawn_line;
+#endif
   psyco_compile_abandoned();
   if (ts->curexc_type != g->exc_type || ts->curexc_value != g->exc_value ||
       ts->curexc_traceback != g->exc_tb) {
