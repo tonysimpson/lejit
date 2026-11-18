@@ -89,6 +89,11 @@ LABELS = {
     'error': 'break;',
     'unbound_local_error': '{ unbound_local_error(po, co, oparg); break; }',
 }
+# what setting and testing an error are where the compiler runs a ceval.c
+# helper (rule compile_time_copy): Ni's compile-time exception
+CT_ERRORS = {'PyErr_Format': 'PycException_SetFormat',
+             'PyErr_SetString': 'PycException_SetString',
+             'PyErr_Occurred': 'PycException_Occurred'}
 # statements with no effect at compile time
 DROPPED = {'assert', 'STAT_INC'}
 # C constants that have a compile-time vinfo: (make, release)
@@ -1867,10 +1872,13 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                 continue
             if w[0] in ctx.helpers and w[1] == '(' and stmts and \
                     words(stmts[0]).replace(' ', '').startswith('ERROR_IF(true,'):
-                # a helper of ceval.c that sets the error: Ni's own version
-                # of it (its policy entry's 'ni'), at compile time
+                # a helper of ceval.c that sets the error: its compile-time
+                # copy (rule compile_time_copy)
                 args, _ = call_args(stmt, 1)
-                fn, ps = ctx.ni_error_helper(w[0])
+                cps = ctx.ct_copy(w[0])
+                fn, ps = cps[0][0], ctx.ct_params(w[0])
+                copies.extend(cps)
+                calls.extend(n for n, _ in cps)
                 args = [a for a, (t, _) in zip(args, ctx.helpers[w[0]].params)
                         if t.replace(' ', '') != 'PyThreadState*']
                 if len(args) != len(ps) or any(
@@ -2401,6 +2409,10 @@ def run(insts, src, effects=None, ctx=None):
             skipped.append((inst.name, e.kind, str(e)))
             continue
         done.append((inst.name, code))
+    if ctx is not None and ctx.src is not None and any(
+            name in code for _, code in done for name in
+            (lab for _, lab in ceval_reader.ERROR_FORMS)):
+        copies = ctx.label_copies() + copies
     return done, skipped, copies
 
 
@@ -2592,18 +2604,104 @@ class Context:
             return None
         return effects.by_file.get('Python/ceval.c', {}).get(name)
 
-    def ni_error_helper(self, helper):
-        """(name, parameters) of Ni's version of a ceval.c helper that sets
-        an error (its policy entry's 'ni'), which takes po first: the
-        compile-time error."""
-        e = policy_table.ENTRIES.get('Python/ceval.c:%s' % helper, {})
-        for ref in e.get('ni', []):
-            path, _, name = ref.partition(':')
-            m = re.search(r'^static void %s\(PsycoObject \*po((?:, [^)]*)?)\)' % name,
-                          open(os.path.join(ROOT, path)).read(), re.M)
-            if m:
-                return name, [p for p in m.group(1).split(',') if p.strip()]
-        raise Skip('%s: no Ni version taking po' % helper)
+    def ct_params(self, helper):
+        """The parameters of a helper's compile-time copy (after po): its
+        own, less the thread state."""
+        return [(t, p) for t, p in self.helpers[helper].params
+                if t.replace(' ', '') != 'PyThreadState*']
+
+    def ct_copy(self, name):
+        """[(copy name, C text)] for the compile-time copy of a ceval.c
+        static helper that sets an error, run by the compiler with
+        arguments it knows (rule compile_time_copy): ct_<name>, taking po
+        first, its body as the source has it with CT_ERRORS' calls as
+        Ni's compile-time exception (a 3.8 _PyErr_X(tstate, ...) as
+        PyErr_X), the helpers it calls as their compile-time copies and
+        string macros as their strings. Refused (Skip) for a helper that
+        returns a value, or whose body reads another ceval.c macro or has
+        a preprocessor line."""
+        out, todo, seen = [], [name], set()
+        lines = self._ceval_lines()
+        while todo:
+            n = todo.pop(0)
+            if n in seen:
+                continue
+            seen.add(n)
+            h = self.helpers[n]
+            if h.ret.strip() != 'void':
+                raise Skip('%s: no compile-time copy (it returns %s)' % (n, h.ret))
+            if any(lines[k].lstrip().startswith('#') for k in range(
+                    h.body[0].line - 1, h.body[-1].line)):
+                raise Skip('%s: no compile-time copy (a preprocessor line)' % n)
+            b, w, k = h.body, [], 0
+            while k < len(b):
+                t = b[k]
+                call = t.kind == 'id' and k + 1 < len(b) and b[k + 1].text == '('
+                if call and t.text.startswith('_PyErr_') and k + 3 < len(b) \
+                        and b[k + 2].text == 'tstate' and b[k + 3].text in (',', ')'):
+                    # 3.8: _PyErr_X(tstate, ...) is PyErr_X(...)
+                    b = b[:k] + [t._replace(text=t.text[1:])] + \
+                        b[k + 1:k + 2] + b[k + 3 + (b[k + 3].text == ','):]
+                    continue
+                if call and (t.text in CT_ERRORS or t.text in self.helpers):
+                    if t.text in self.helpers:
+                        todo.append(t.text)
+                    w += [CT_ERRORS.get(t.text, 'ct_' + t.text), '(', 'po']
+                    nxt = b[k + 2]
+                    if nxt.text == 'tstate' and t.text in self.helpers:
+                        k += 1 + (b[k + 3].text == ',')
+                        nxt = b[k + 2]
+                    if nxt.text != ')':
+                        w.append(',')
+                    k += 2
+                    continue
+                if t.kind == 'id' and t.text in self.strings:
+                    w.append(self.strings[t.text])
+                elif t.kind == 'id' and t.text in self.ceval_macros:
+                    raise Skip('%s: no compile-time copy (it reads %s)' % (n, t.text))
+                else:
+                    w.append(t.text)
+                k += 1
+            head = 'static void ct_%s(PsycoObject *po%s)' % (
+                n, ''.join(', %s%s%s' % (c, '' if c.endswith('*') else ' ', p)
+                           for c, p in self.ct_params(n)))
+            out.append(('ct_' + n, '%s;\n%s {\n  %s\n}' % (head, head, tidy(' '.join(w)))))
+        return out
+
+    def label_copies(self):
+        """[(name, C text)] for the error labels the reader makes of a
+        statement (ceval_reader.ERROR_FORMS): the function LABELS calls,
+        taking what the case has at compile time (po, co, oparg), whose
+        body is that statement of the eval loop, every occurrence the same,
+        with its helper's compile-time copy (rule compile_time_copy)."""
+        out = []
+        with open(os.path.join(self.src, 'Python', 'ceval.c'), encoding='latin-1') as f:
+            toks = ctokens.tokenize(f.read(), 'ceval.c')[0]
+        # the statements of the cases (the eval loop's), not of the helpers
+        fn = ctokens.functions(toks).get('_PyEval_EvalFrameDefault')
+        texts = [t.text for t in fn[1]] if fn else []
+        for form, label in ceval_reader.ERROR_FORMS:
+            found = set()
+            for k in range(len(texts) - len(form)):
+                if texts[k:k + len(form)] == form and texts[k - 1] in (';', '{', '}'):
+                    end = texts.index(';', k)
+                    found.add(tuple(texts[k:end + 1]))
+            if len(found) != 1:
+                raise Skip('label %s: %d forms of its statement' % (label, len(found)))
+            stmt = list(found.pop())
+            helper = stmt[0]
+            cps = self.ct_copy(helper)
+            names = set(stmt) - set(form)
+            for x in names:
+                if re.fullmatch(r'[A-Za-z_]\w*', x) and x not in ('co', 'oparg') \
+                        and x not in self.strings and not x.startswith('Py') \
+                        and not x.startswith('co_'):
+                    raise Skip('label %s: its statement reads %s' % (label, x))
+            body = ['ct_' + helper, '(', 'po', ','] + [
+                self.strings.get(x, x) for x in stmt[2:]]
+            head = 'static void %s(PsycoObject *po, PyCodeObject *co, int oparg)' % label
+            out += cps + [(label, '%s {\n  %s\n}' % (head, tidy(' '.join(body))))]
+        return out
 
     def known_only(self, helper):
         """The helper's type tests use the types Ni knows, never promote

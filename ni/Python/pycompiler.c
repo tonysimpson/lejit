@@ -1258,31 +1258,6 @@ done:
 /* the code of the following functions is "copy-pasted" from ceval.c */
 
 #define GLOBAL_NAME_ERROR_MSG "name '%.200s' is not defined"
-#define UNBOUNDLOCAL_ERROR_MSG                                                 \
-  "local variable '%.200s' referenced before assignment"
-
-static void unbound_local_error(PsycoObject *po, PyCodeObject *co, int oparg) {
-  PyObject *namev = PyTuple_GetItem(co->co_varnames, oparg);
-  PycException_SetFormat(po, PyExc_UnboundLocalError, UNBOUNDLOCAL_ERROR_MSG,
-                         NiCompatStr_AsString(namev));
-}
-
-/* ceval.c:format_exc_unbound */
-#define UNBOUNDFREE_ERROR_MSG                                                  \
-  "free variable '%.200s' referenced before assignment in enclosing scope"
-
-static void unbound_deref_error(PsycoObject *po, PyCodeObject *co, int oparg) {
-  Py_ssize_t ncells = PyTuple_GET_SIZE(co->co_cellvars);
-  if (oparg < ncells)
-    PycException_SetFormat(
-        po, PyExc_UnboundLocalError, UNBOUNDLOCAL_ERROR_MSG,
-        NiCompatStr_AsString(PyTuple_GET_ITEM(co->co_cellvars, oparg)));
-  else
-    PycException_SetFormat(
-        po, PyExc_NameError, UNBOUNDFREE_ERROR_MSG,
-        NiCompatStr_AsString(PyTuple_GET_ITEM(co->co_freevars,
-                                              oparg - ncells)));
-}
 
 /* a frame's own cells, which CPython made before the frame reached Ni
    (PsycoObject_FromCode maps them as borrowed words); a cell can change

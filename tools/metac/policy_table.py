@@ -129,6 +129,18 @@ RULES = {
         'applied_by': ['tools/metac/ceval_inline.py:helpers',
                        'tools/metac/gen_ceval.py:translate'],
     },
+    'compile_time_copy': {
+        'what': "A static function of ceval.c that only sets an error, called by a"
+                " case with arguments the compiler knows (format_exc_unbound), or the"
+                " statement an error label stands for (format_exc_check_arg's"
+                " unbound_local_error), runs in the compiler: its body as the source"
+                " has it, written into pycompiler_copies_gen.h as ct_<name> taking po"
+                " first, with PyErr_Format, PyErr_SetString and PyErr_Occurred as Ni's"
+                " compile-time exception (gen_ceval.CT_ERRORS) and the helpers it calls"
+                " as their compile-time copies.",
+        'decisions': ['D82', 'D88'],
+        'applied_by': ['tools/metac/gen_ceval.py:translate'],
+    },
     'helper_copy': {
         'what': "A static function of ceval.c that a case calls and that can't be"
                 " inlined (its body has no compile-time form: a local array, a goto)"
@@ -817,8 +829,8 @@ ENTRIES = {
         ]},
     'Python/ceval.c:check_args_iterable': {'shape': 'c64cc9801246', 'ni': ['ni/Python/pycompiler.c:cimpl_call_function_ex', 'ni/Python/pycompiler.c:cimpl_build_unpack']},
     'Python/ceval.c:format_kwargs_mapping_error': {'shape': '8a34b9309457', 'ni': ['ni/Python/pycompiler.c:cimpl_call_function_ex', 'tools/metac/gen_ceval.py:translate']},
-    'Python/ceval.c:format_exc_check_arg': {'shape': '4a1f4255a9e4', 'ni': ['ni/Python/pycompiler.c:unbound_local_error']},
-    'Python/ceval.c:format_exc_unbound': {'shape': '7670fed16a8a', 'ni': ['ni/Python/pycompiler.c:unbound_deref_error']},
+    'Python/ceval.c:format_exc_check_arg': {'shape': '4a1f4255a9e4', 'ni': ['tools/metac/gen_ceval.py:translate']},
+    'Python/ceval.c:format_exc_unbound': {'shape': '7670fed16a8a', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:import_from': {'shape': '0f68c89c4d5f', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:cmp_outcome': {
         'shape': 'be6025dd04f3',
