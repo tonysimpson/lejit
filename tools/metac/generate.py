@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run every generator for one CPython: the entry point setup.py uses (D67).
 
-    generate.py --python EXE --out DIR [--src DIR]
+    generate.py --python EXE --out DIR [--src DIR] [--past-policy]
 
 EXE is the interpreter Ni is being built for; its version (sys.version) picks
 the source, and its installed pyconfig.h is the configuration. The source is
@@ -11,6 +11,11 @@ generator writes one header into DIR, rewritten only when its text changes so
 that an unchanged header doesn't rebuild ni.so. Any mismatch or generator
 error exits non-zero with the reason, and removes DIR's old headers so
 nothing stale can be built.
+
+--past-policy is for a dry run on a version Ni isn't built for yet
+(doc/PORT38.md): the policy table's problems are printed instead of
+stopping, and every generator runs and writes its header, to be read and
+compared, not built (setup.py never passes it).
 
 This script runs under a newer Python than the one being built for (the
 vendored cases_generator needs 3.10); setup.py finds it with NI_GEN_PYTHON.
@@ -80,6 +85,7 @@ def generate(argv):
     ap.add_argument('--python', required=True)
     ap.add_argument('--out', required=True)
     ap.add_argument('--src')
+    ap.add_argument('--past-policy', action='store_true')
     ap.add_argument('-v', '--verbose', action='store_true')
     args = ap.parse_args(argv)
     if sys.version_info < (3, 10):
@@ -102,7 +108,12 @@ def generate(argv):
                            pyconfig)
     import policy
     problems = policy.check(target.src)
-    if problems:
+    if problems and args.past_policy:
+        print('policy table: %d problems against this source (--past-policy:'
+              ' generating anyway, not for a build)' % len(problems))
+        if args.verbose:
+            print('\n'.join('  ' + p for p in problems))
+    elif problems:
         return 'generate.py: the policy table (policy_table.py) does not' \
             ' match this source:\n  ' + '\n  '.join(problems)
     outputs = []
