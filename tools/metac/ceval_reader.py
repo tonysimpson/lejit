@@ -161,9 +161,10 @@ def constants(src):
     paths = [os.path.join(src, 'Include', h)
              for h in sorted(os.listdir(os.path.join(src, 'Include')))
              if h.endswith('.h')] + [os.path.join(src, 'Python', 'ceval.c')]
+    enums = []
     for p in paths:
         with open(p, errors='replace') as f:
-            macros = ctokens.tokenize(f.read(), p)[1]
+            toks, macros = ctokens.tokenize(f.read(), p)
         for m in macros.values():
             body = [t.text for t in m.body]
             while len(body) == 3 and body[0] == '(' and body[2] == ')':
@@ -174,8 +175,52 @@ def constants(src):
                 if out.get(m.name, v) != v:
                     bad.add(m.name)
                 out[m.name] = v
+        enums += _enums(toks)
+    # enumerators, after the macros their values name (opcode.h's
+    # 'enum cmp_op {PyCmp_LT=Py_LT, ..., PyCmp_IS, ...}'); one whose value
+    # can't be read ends its enum
+    for items in enums:
+        v = -1
+        for name, value in items:
+            if value is None:
+                v += 1
+            else:
+                try:
+                    v = cvalue(value, 0, out)
+                except Refuse:
+                    break
+            if out.get(name, v) != v:
+                bad.add(name)
+            out[name] = v
     for n in bad:
         del out[n]
+    return out
+
+
+def _enums(toks):
+    """[[(name, value text or None)]] for each 'enum [tag] { ... }' body."""
+    out = []
+    for i, t in enumerate(toks):
+        if t.text != 'enum':
+            continue
+        j = i + 1
+        if j < len(toks) and toks[j].kind == 'id':
+            j += 1
+        if j >= len(toks) or toks[j].text != '{':
+            continue
+        end = ctokens.match_close(toks, j)
+        items = []
+        for part in ctokens.split_top(toks[j + 1:end], ','):
+            w = [u.text for u in part]
+            if not w:
+                continue
+            if len(w) == 1 and part[0].kind == 'id':
+                items.append((w[0], None))
+            elif len(w) >= 3 and w[1] == '=' and part[0].kind == 'id':
+                items.append((w[0], ' '.join(w[2:])))
+            else:
+                break
+        out.append(items)
     return out
 
 

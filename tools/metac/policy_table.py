@@ -109,6 +109,26 @@ RULES = {
         'decisions': ['D79'],
         'applied_by': ['tools/metac/ceval_reader.py:_answer'],
     },
+    'identity_compare': {
+        'what': "In a ceval case or an inlined helper, 'x == y' or 'x != y' on two"
+                " objects is a compare of their words (integer_cmp), held as a"
+                " condition code until a bool_select or a test uses it.",
+        'decisions': ['D82', 'P05'],
+        'applied_by': ['tools/metac/gen_ceval.py:translate'],
+    },
+    'inline_helpers': {
+        'what': "A ceval case's call of a static function of ceval.c is that"
+                " function's body in its place: parameters bound to the arguments,"
+                " a switch on a compile-time value an if-chain on it with the"
+                " statements after the switch copied into each arm, 'return E' the"
+                " case's result followed by the rest of the case, 'return NULL' its"
+                " error exit. A type test in it uses only the types Ni knows when the"
+                " helper's entry says ('promote', 'known_only'); where Ni knows too"
+                " little the arm runs in a generated run-time copy of it.",
+        'decisions': ['D82'],
+        'applied_by': ['tools/metac/ceval_inline.py:helpers',
+                       'tools/metac/gen_ceval.py:translate'],
+    },
     'bool_select': {
         'what': "A run-time branch whose arms only make one output Py_True and"
                 " Py_False is that object chosen by the condition: a virtual bool"
@@ -553,7 +573,13 @@ ENTRIES = {
     'Python/ceval.c:format_exc_check_arg': {'shape': '4a1f4255a9e4', 'ni': ['ni/Python/pycompiler.c:unbound_local_error']},
     'Python/ceval.c:format_exc_unbound': {'shape': '7670fed16a8a', 'ni': ['ni/Python/pycompiler.c:unbound_deref_error']},
     'Python/ceval.c:import_from': {'shape': '0f68c89c4d5f', 'ni': ['ni/Python/pycompiler.c:cimpl_import_from']},
-    'Python/ceval.c:cmp_outcome': {'shape': 'be6025dd04f3', 'ni': ['ni/Python/pycompiler.c:cimpl_exc_match', 'ni/Python/pycompiler.c:case COMPARE_OP']},
+    'Python/ceval.c:cmp_outcome': {
+        'shape': 'be6025dd04f3',
+        'ni': ['tools/metac/gen_ceval.py:translate'],
+        'policy': [
+            ('promote', 'known_only', "w in PyCmp_EXC_MATCH: its type and, for a class, the class are"
+             " used where Ni knows them (a constant); otherwise the arm runs in its run-time copy"),
+        ]},
     'Python/ceval.c:TARGET(STORE_DEREF)': {
         'shape': '4c4c566b974a',
         'ni': ['ni/Python/pycompiler.c:cimpl_store_deref', 'ni/Python/pycompiler.c:case STORE_DEREF'],
@@ -674,7 +700,7 @@ ENTRIES = {
     'Python/ceval.c:TARGET(LOAD_CLOSURE)': {'shape': '11f8250608e3', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(LOAD_DEREF)': {
         'shape': '2e6c9f5e9bed',
-        'ni': ['ni/Python/pycompiler.c:case LOAD_DEREF'],
+        'ni': ['tools/metac/gen_ceval.py:translate'],
         'policy': [
             ('ref', 'need_reference', 'the cell content'),
         ]},
@@ -697,12 +723,7 @@ ENTRIES = {
         'policy': [
             ('virtual', 'result', 'PyMethod_Type'),
         ]},
-    'Python/ceval.c:TARGET(COMPARE_OP)': {
-        'shape': 'f6b147c1740c',
-        'ni': ['ni/Python/pycompiler.c:case COMPARE_OP'],
-        'policy': [
-            ('shortcut', 'word_compare', 'is, is not'),
-        ]},
+    'Python/ceval.c:TARGET(COMPARE_OP)': {'shape': 'f6b147c1740c', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(IMPORT_NAME)': {'shape': 'b192173e7a57', 'ni': ['ni/Python/pycompiler.c:case IMPORT_NAME']},
     'Python/ceval.c:TARGET(IMPORT_STAR)': {'shape': '66ad65b82d90', 'ni': ['ni/Python/pycompiler.c:case IMPORT_STAR']},
     'Python/ceval.c:TARGET(IMPORT_FROM)': {'shape': 'cc9c45f8467c', 'ni': ['ni/Python/pycompiler.c:case IMPORT_FROM']},

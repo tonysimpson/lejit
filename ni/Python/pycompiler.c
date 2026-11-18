@@ -1339,22 +1339,9 @@ error:
   return NULL;
 }
 
-/* ceval.c:cmp_outcome, PyCmp_EXC_MATCH: -1 with a TypeError if w is not an
-   exception class or a tuple of them (F43) */
-static int cimpl_exc_match(PyObject *v, PyObject *w) {
-  Py_ssize_t i;
-  if (PyTuple_Check(w)) {
-    for (i = 0; i < PyTuple_GET_SIZE(w); i++)
-      if (!PyExceptionClass_Check(PyTuple_GET_ITEM(w, i)))
-        goto bad;
-  } else if (!PyExceptionClass_Check(w))
-    goto bad;
-  return PyErr_GivenExceptionMatches(v, w);
-bad:
-  PyErr_SetString(PyExc_TypeError, "catching classes that do not inherit "
-                                   "from BaseException is not allowed");
-  return -1;
-}
+/* the run-time copies of ceval.c helpers' arms that generated cases call
+   (cmp_outcome's PyCmp_EXC_MATCH, D82) */
+#include "pycompiler_copies_gen.h"
 
 static void cimpl_store_deref(PyObject *cell, PyObject *v) {
   PyObject *old = PyCell_GET(cell);
@@ -2597,26 +2584,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
          still real calls (psyfunc.c:fncall_init), so no cell is ever made
          here. A cell can change under any call (nonlocal in a callee), so
          its contents are read each time (FMUT). */
-      case LOAD_DEREF: {
-        condition_code_t cc;
-        x = psyco_get_field(po, GETLOCAL(co->co_nlocals + oparg), CELL_ob_ref);
-        if (x == NULL)
-          break;
-        cc = integer_cmp_i(po, x, 0, Py_NE);
-        if (cc == CC_ERROR) {
-          vinfo_decref(x, po);
-          break;
-        }
-        if (!runtime_condition_t(po, cc)) {
-          vinfo_decref(x, po);
-          unbound_deref_error(po, co, oparg);
-          break;
-        }
-        need_reference(po, x);
-        PUSH(x);
-        goto fine;
-      }
-
       case STORE_DEREF:
         if (!psyco_generic_call(po, cimpl_store_deref, CfNoReturnValue, "vv",
                                 GETLOCAL(co->co_nlocals + oparg), NTOP(1)))
@@ -2774,54 +2741,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(psyco_vi_Zero());
         PUSH(x);
         goto fine;
-
-      case COMPARE_OP: {
-        condition_code_t cc = CC_ERROR;
-        w = TOP();
-        v = NTOP(2);
-        switch (oparg) {
-
-        case PyCmp_IS: /* pointer comparison */
-          cc = integer_cmp(po, v, w, Py_EQ);
-          break;
-
-        case PyCmp_IS_NOT: /* pointer comparison */
-          cc = integer_cmp(po, v, w, Py_NE);
-          break;
-
-        case PyCmp_IN:
-        case PyCmp_NOT_IN:
-          x = PsycoSequence_Contains(po, w, v);
-          cc = integer_NON_NULL(po, x);
-          if (oparg == PyCmp_NOT_IN && cc != CC_ERROR)
-            cc = INVERT_CC(cc);
-          break;
-
-        case PyCmp_EXC_MATCH:
-          x = psyco_generic_call(po, cimpl_exc_match,
-                                 CfCommonIntBoolOrError, "vv", v, w);
-          cc = integer_NON_NULL(po, x);
-          break;
-
-        default:
-          x = PsycoObject_RichCompare(po, v, w, oparg);
-          goto compare_done;
-        }
-
-        if (cc == CC_ERROR)
-          break;
-
-        /* turns 'cc' into a virtual Python boolean object */
-        x = PsycoBool_FromCondition(po, cc);
-
-      compare_done:
-        if (x == NULL)
-          break;
-        POP_DECREF();
-        POP_DECREF();
-        PUSH(x); /* consumes ref on x */
-        goto fine;
-      }
 
       case IMPORT_NAME: {
         PyObject *w = GETNAMEV(oparg);

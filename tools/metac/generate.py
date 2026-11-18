@@ -27,6 +27,7 @@ sys.path.insert(0, HERE)
 GENERATORS = [('gen_long', 'plongobject_gen.h'),
               ('gen_float', 'pfloatobject_gen.h'),
               ('gen_ceval', 'pycompiler_gen.h'),
+              ('gen_ceval:build_copies', 'pycompiler_copies_gen.h'),
               ('gen_layouts', 'layouts_gen.h'),
               ('gen_layouts:build_runtime', 'runtime_layouts_gen.h'),
               ('gen_abstract', 'pabstract_gen.h'),
