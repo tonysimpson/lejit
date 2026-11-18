@@ -3,8 +3,8 @@
  * count reaches zero) and the prologue and epilogue for a function's frame
  * locals. This is CPython object layout and C-API policy living in the
  * backend; in a tidied design it belongs in a generated Python layer.
- * FINALIZE_FRAME_LOCALS still follows Python 2's per-frame exception state
- * (f_exc_*).
+ * The frame locals are the words of Python 2's per-frame exception state
+ * (f_exc_*), which nothing sets or reads now.
  */
 /***************************************************************/
 /***     Processor- and language-dependent code producers      ***/
@@ -204,19 +204,6 @@ EXTERNFN bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
     PUSH_IMMED(0); /* f_exc_type, initially NULL */                            \
   } while (0)
 
-/* called by psyco_finish_return() */
-#define FINALIZE_FRAME_LOCALS()                                                \
-  do {                                                                         \
-    CMP_I8_A(0, REG_X64_RSP);                                                  \
-    BEGIN_SHORT_COND_JUMP(0, CC_E);                                            \
-    BEGIN_CALL(3);                                                             \
-    CALL_SET_ARG_FROM_RT(LOC_CONTINUATION->array->items[2]->source, 2);        \
-    CALL_SET_ARG_FROM_RT(LOC_CONTINUATION->array->items[1]->source, 1);        \
-    CALL_SET_ARG_FROM_RT(LOC_CONTINUATION->array->items[0]->source, 0);        \
-    END_CALL_I(cimpl_finalize_frame_locals);                                   \
-    END_SHORT_JUMP(0);                                                         \
-  } while (0)
-
 #define WRITE_FRAME_EPILOGUE(retval, nframelocal)                              \
   do {                                                                         \
     /* load the return value into EAX for regular functions, EBX for functions \
@@ -234,8 +221,6 @@ EXTERNFN bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
       STACK_CORRECTION(framelocpos - po->stack_depth);                         \
       po->stack_depth = framelocpos;                                           \
                                                                                \
-      /* perform Python-specific cleanup */                                    \
-      FINALIZE_FRAME_LOCALS();                                                 \
       MOV_R_R(REG_FUNCTIONS_RETURN, REG_ANY_CALLEE_SAVED);                     \
     }                                                                          \
   } while (0)
@@ -301,9 +286,6 @@ EXTERNFN void psyco_inline_store_end(PsycoObject *po, inline_store_t *s);
 EXTERNFN condition_code_t psyco_type_guard(PsycoObject *po, PyTypeObject *tp,
                                            unsigned long *flags,
                                            unsigned long *tag);
-
-/* implemented in pycompiler.c */
-EXTERNFN void cimpl_finalize_frame_locals(PyObject *, PyObject *, PyObject *);
 
 EXTERNFN void function_return(PsycoObject *po, Source retval, int nframelocal,
                               long retpos);

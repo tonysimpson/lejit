@@ -22,8 +22,6 @@ DEFINEFN void function_return(PsycoObject *po, Source retval, int nframelocal,
     int framelocpos = getstack(LOC_CONTINUATION->array->items[0]->source);
     STACK_CORRECTION(framelocpos - po->stack_depth);
     po->stack_depth = framelocpos;
-    /* perform Python-specific cleanup */
-    FINALIZE_FRAME_LOCALS();
     MOV_R_R(REG_FUNCTIONS_RETURN, REG_ANY_CALLEE_SAVED);
   }
 

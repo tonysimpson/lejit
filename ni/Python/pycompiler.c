@@ -24,8 +24,9 @@
  * stack items, cimpl_push_exc_info), and a finally block entered by an
  * exception gets the same. A finally block entered by a pseudo-exception
  * (EReturn, EBreak, EContinue) differs from ceval: it gets a single 3-tuple,
- * which END_FINALLY tells apart from an exception type. The Py2 per-frame saved exception
- * (FINALIZE_FRAME_LOCALS, cimpl_finalize_frame_locals) is now never set.
+ * which END_FINALLY tells apart from an exception type. The three words
+ * psyco_emit_header reserves for a function with handlers were Py2's
+ * per-frame saved exception (f_exc_*); nothing reads or sets them now.
  */
 #include "pycompiler.h"
 #include "../codemanager.h"
@@ -585,28 +586,6 @@ static void cimpl_pyerr_fetch(PyObject *target[]) {
     target[2] = Py_None;
     Py_INCREF(Py_None);
   }
-}
-
-DEFINEFN
-void cimpl_finalize_frame_locals(PyObject *f_exc_type, PyObject *f_exc_value,
-                                 PyObject *f_exc_traceback) {
-  /* Called by code emitted by pycencoding.h when a function exits,
-     but only if f_exc_type!=NULL. Works like reset_exc_info() of
-     Python. */
-  PyThreadState *tstate = PyThreadState_GET();
-  PyObject *tmp_type, *tmp_value, *tmp_tb;
-
-  /* This frame caught an exception */
-  ni_exc_get_current(tstate, &tmp_type, &tmp_value, &tmp_tb);
-  /* references are transferred */
-  ni_exc_put_current(tstate, f_exc_type, f_exc_value, f_exc_traceback);
-  Py_XDECREF(tmp_type);
-  Py_XDECREF(tmp_value);
-  Py_XDECREF(tmp_tb);
-  /* For b/w compatibility */
-  PySys_SetObject("exc_type", f_exc_type);
-  PySys_SetObject("exc_value", f_exc_value);
-  PySys_SetObject("exc_traceback", f_exc_traceback);
 }
 
 /* Catching an exception, as 3.7 ceval.c's exception_unwind does for
