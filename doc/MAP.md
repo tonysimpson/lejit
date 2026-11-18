@@ -142,43 +142,43 @@ One row per file. **Every file has been read in full at least once.** The "revie
 
 | file | layer | what it is | reviewed |
 |---|---|---|---|
-| `setup.py` | glue | distutils build of the `ni` extension; runs `generate.py` first, with `PYTHONHASHSEED=0` (D68). | `57e6732` |
+| `setup.py` | glue | distutils build of the `ni` extension; runs `generate.py` first, with `PYTHONHASHSEED=0` (D68). | `ac8f978` |
 | `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests). | `ccb5735` |
 | `tests/encoding/check.py` | tooling | Checks `@asm`-annotated emitters in `iencoding.h` against GNU `as`. | `6ca580a` |
 | `tests/smoke.py` | tooling | Stdlib smoke test: about 30 modules, output must match with and without Ni. | `6ca580a` |
 | `tests/compile_bounds.py` | tooling | Fails if warm code keeps starting code buffers (`ni._stats()`); run by check.sh. | `932f416` |
 | `tests/cpython_tests.py` | tooling | Runs CPython's test modules with and without Ni and compares counts and exit status. | `fbb5f4a` |
 | `tests/mechanisms.py` | tooling | Checks the mechanism detectors' answers on five CPython versions (D75). | `f254b5d` |
-| `tests/parse_gate.py` | tooling | Migration step 1: every mirrored CPython `.c` file preprocesses and parses on 3.7 and 3.8, with right line numbers; run by check.sh. | `85542ac` |
-| `tests/effect_snippets.py` | tooling | Snippet tests of `effects.py` (G1–G4, each flag, the `Cf*` mapping), no build; run by check.sh. | `82a5def` |
-| `tools/check.sh` | tooling | Runs the parse gate, the effect snippets, the generators under two hash seeds against the baseline, the 3.8 dry run, `donecheck.py`, a checked build and every suite. | SQUASH |
+| `tests/parse_gate.py` | tooling | Migration step 1: every mirrored CPython `.c` file preprocesses and parses on 3.7 and 3.8, with right line numbers; run by check.sh. | `e055c02` |
+| `tests/effect_snippets.py` | tooling | Snippet tests of `effects.py` (G1–G4, each flag, the `Cf*` mapping), no build; run by check.sh. | `041bbd1` |
+| `tools/check.sh` | tooling | Runs the parse gate, the effect snippets, the generators under two hash seeds against the baseline, the 3.8 dry run, `donecheck.py`, a checked build and every suite. | ac8f978 |
 | `tools/metac/ctokens.py`, `cslots.py` | tooling | A C tokeniser, and the shared slot driver (`Target`, `GenError`, `text`). | `7b21dea` (ctokens), `9eae61d`, `2a71def` (cslots: `PyNumberMethods` from any `Include/**/*.h`) |
-| `tools/metac/gen_ceval.py` | tooling | Writes `pycompiler_gen.h` from instruction definitions, checked against `dis` (D69). | `b8093ba` |
+| `tools/metac/gen_ceval.py` | tooling | Writes `pycompiler_gen.h` from instruction definitions, checked against `dis` (D69). | `ac8f978` |
 | `tools/metac/ceval_inline.py` | tooling | Inlines a static function of `ceval.c` into the case that calls it (D82). | `fa3dae7` |
-| `tools/metac/gen_abstract.py`, `cparse.py` | tooling | General translation (D74): `cparse` reads C; `gen_abstract` translates functions Ni declares a meta for. | `b8093ba` |
-| `tools/metac/scalars.py` | tooling | Scalar code (D87): the `double` representation, copy-through into C helpers, static inlining. | `57e6732` |
+| `tools/metac/gen_abstract.py`, `cparse.py` | tooling | General translation (D74): `cparse` reads C; `gen_abstract` translates functions Ni declares a meta for. | `ac8f978` |
+| `tools/metac/scalars.py` | tooling | Scalar code (D87): the `double` representation, copy-through into C helpers, static inlining. | `ac8f978` |
 | `tools/metac/conditions.py`, `pointers.py` | tooling | Translator rules (D89): `ConditionRules` and `PointerRules`. | `ccb5735` |
 | `tools/metac/ceval_reader.py` | tooling | Reads `ceval.c`'s `TARGET` cases as `bytecodes.c` definitions (D69). | `96eeba2` |
-| `tools/metac/generate.py` | tooling | The one entry point for generation (D68): checks, runs every generator, writes headers and `report.txt`, compares it with `expected/` (D98). | `b8093ba` |
-| `tools/metac/gen_virtual.py` | tooling | Virtual objects (D80): from each immutable `TYPES` virtual's constructor. | `b8093ba` |
-| `tools/metac/gen_call.py` | tooling | The call path (D85): argument binding as a C function the compiler runs. | `b8093ba` |
+| `tools/metac/generate.py` | tooling | The one entry point for generation (D68): checks, runs every generator, writes headers and `report.txt`, compares it with `expected/` (D98). | `ac8f978` |
+| `tools/metac/gen_virtual.py` | tooling | Virtual objects (D80): from each immutable `TYPES` virtual's constructor. | `ac8f978` |
+| `tools/metac/gen_call.py` | tooling | The call path (D85): argument binding as a C function the compiler runs. | `ac8f978` |
 | `pbltinmodule_gen.h` | translated (generated) | The builtins' metas (Python/bltinmodule.c), by `gen_builtins.py` (D86). | `58e52de` |
-| `tools/metac/gen_builtins.py` | tooling | Builtins (D86): writes `pbltinmodule_gen.h`; also the math unit. | `b8093ba` |
-| `tools/metac/csource.py` | tooling | Names definitions in a C source tree, for the policy table's keys (D71); a lookup in a file it can't balance raises. | `57e6732` |
+| `tools/metac/gen_builtins.py` | tooling | Builtins (D86): writes `pbltinmodule_gen.h`; also the math unit. | `ac8f978` |
+| `tools/metac/csource.py` | tooling | Names definitions in a C source tree, for the policy table's keys (D71); a lookup in a file it can't balance raises. | `ac8f978` |
 | `tools/metac/policy.py` | tooling | The policy table's vocabulary and checks against the source and Ni (D71). | `ccb5735` |
 | `tools/metac/policy_table.py` | tooling (data) | The policy table (D71): entries keyed by CPython definitions, rules, limits, types, layouts. | `ab0f53b` |
-| `tools/metac/effects.py` | tooling | Effect rules (D71, D96): per C function of libpython and the mirrored files, on the front end's AST, pure, readonly, no Python, no blocking, no raise; mapped onto `Cf*` flags. | `82a5def` |
-| `tools/metac/cpython_src.py`, `cpython_sha256.txt` | tooling | The CPython source for a version, local or a sha256-checked tarball. | `57e6732` |
+| `tools/metac/effects.py` | tooling | Effect rules (D71, D96): per C function of libpython and the mirrored files, on the front end's AST, pure, readonly, no Python, no blocking, no raise; mapped onto `Cf*` flags. | `041bbd1` |
+| `tools/metac/cpython_src.py`, `cpython_sha256.txt` | tooling | The CPython source for a version, local or a sha256-checked tarball. | `ac8f978` |
 | `tools/metac/mechanisms.py` | tooling | Mechanism detectors (D75); `VARIANTS` maps answers to snippets. | `f254b5d` |
 | `tools/metac/gen_layouts.py` | tooling | Stage 0 (D76): finds and checks each `LAYOUTS` struct, writes the layout headers. | `9869ad9` |
-| `tools/metac/donecheck.py` | tooling | GOAL's done test (D90, D97): each Ni mirror of CPython, generated or hand-written and why, from `report.txt`. | `b8093ba` |
-| `tools/metac/expected/*.txt` | tooling | Each version's expected `report.txt`, which `generate.py` compares (D98). | `b8093ba` |
-| `tools/metac/status_diff.py` | tooling | Compares two versions' status files key by key, for a port review (D98). | `b8093ba` |
+| `tools/metac/donecheck.py` | tooling | GOAL's done test (D90, D97): each Ni mirror of CPython, generated or hand-written and why, from `report.txt`. | `ac8f978` |
+| `tools/metac/expected/*.txt` | tooling | Each version's expected `report.txt`, which `generate.py` compares (D98). | `ac8f978` |
+| `tools/metac/status_diff.py` | tooling | Compares two versions' status files key by key, for a port review (D98). | `ac8f978` |
 | `tools/metac/hand_table.py` | tooling (data) | Why each hand-written mirror is still hand-written (D90). | `18c250d` |
 | `tools/metac/cases_generator/` | tooling (vendored) | CPython 3.12.9's DSL lexer and parser, unchanged. | `69900ac` |
-| `tools/metac/front.py` | tooling | The new front end (GENERATOR_DESIGN "Front end"): `gcc -E` with the target's `pyconfig.h` and build flags (a file's own Makefile rule and Setup line included), the vocabulary shim spliced in and checked, parsed by pycparser (D94, D95); which files libpython links and which Ni mirrors. | `13ebac4` |
-| `tools/metac/shim/prelude.h`, `vocab.h` | tooling | The GNU prelude (`-include`) and the vocabulary shim (the atomics and the decrefs, for now) that `front.py` uses. | `13ebac4` |
-| `tools/metac/third_party/pycparser/` | tooling (vendored) | pycparser 3.11 from PyPI's sdist, unchanged (D94). | `b55c52b` |
+| `tools/metac/front.py` | tooling | The new front end (GENERATOR_DESIGN "Front end"): `gcc -E` with the target's `pyconfig.h` and build flags (a file's own Makefile rule and Setup line included), the vocabulary shim spliced in and checked, parsed by pycparser (D94, D95); which files libpython links and which Ni mirrors. | `f8e5918` |
+| `tools/metac/shim/prelude.h`, `vocab.h` | tooling | The GNU prelude (`-include`) and the vocabulary shim (the atomics and the decrefs, for now) that `front.py` uses. | `f8e5918` |
+| `tools/metac/third_party/pycparser/` | tooling (vendored) | pycparser 3.11 from PyPI's sdist, unchanged (D94). | `a3433b4` |
 | `tools/proto312/` | tooling | 3.12 feasibility prototype (`PORT312.md`); evidence only, not part of Ni. | `92c51c6` |
 | `tools/without_fix.sh` | tooling | Runs a command with changes stashed, to show a test fails without its fix (D21). | `4a5a3e5` |
 | `tools/demo.py` | tooling | Demo: n-queens, n-body, ASCII Mandelbrot, word counts, timed with and without Ni. | `e4f21aa` |

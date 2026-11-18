@@ -32,4 +32,4 @@ DIR is `generate.py`'s output directory (`tools/check.sh` uses `build/gen-check/
 
 ## Current counts
 
-CPython 3.7.17 at `b8093ba`: (a) 201 of 280 attempted functions (generated 142, resumed 53, restarted 6; refused 79), the headers 311 definitions, 6,601 lines; (b) 60 definitions, 1,362 lines (core 49, judgement 1, mechanism 10); (t) 168 definitions, 3,547 lines (helper 21, limit 13, policy 108, refused 26); (c) 0. 3.8.20 (dry run): (a) 189 of 277, (b) 60, (t) 164 (refused 22), (c) 0. Rerun for the current figures.
+CPython 3.7.17 at `ac8f978`: (a) 201 of 280 attempted functions (generated 142, resumed 53, restarted 6; refused 79), the headers 311 definitions, 6,601 lines; (b) 60 definitions, 1,362 lines (core 49, judgement 1, mechanism 10); (t) 168 definitions, 3,547 lines (helper 21, limit 13, policy 108, refused 26); (c) 0. 3.8.20 (dry run): (a) 189 of 277, (b) 60, (t) 164 (refused 22), (c) 0. Rerun for the current figures.
