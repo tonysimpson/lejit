@@ -32,12 +32,12 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/cf_flags.h` | core | Cf* flags describing a C function for residual calls: purity, new ref, return type, errors. | none (CPython C API conventions) | `56e5faf` |
 | `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding), integer emitters, rich compare. | Objects/object.c | `56e5faf` |
 | `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions. | none | `fa3dae7` |
-| `ni/codemanager.c` | core | Executable memory as free extents; owners (D102): what a code object's compiled code holds, released with it. | none | `bc3c590` |
-| `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner API. | none | `0b808fa` |
+| `ni/codemanager.c` | core | Executable memory as free extents; owners (D102): what a code object's compiled code holds, released with it; compile guards (D103). | none | `bc3c590` |
+| `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner and compile guard APIs. | none | `0b808fa` |
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
 | `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `a6a687b` |
 | `ni/dispatcher.h` | core | Snapshots (FrozenPsycoObject), compatibility and join API, respawn and promotion helpers. | none | `f229d14` |
-| `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles on the first call, `NiCode_Run` runs it. | Python/ceval.c | `f254b5d` |
+| `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles on the first call (interpreted if memory runs out), `NiCode_Run` runs it. | Python/ceval.c | `f254b5d` |
 | `ni/initialize.h` | glue | Calls every file's init; with ALL_STATIC=1 includes all .c files into one unit. | none | `b251646` |
 | `ni/mechanisms/entry/frame_eval_hook.h` | glue (mechanism snippet) | 3.7's entry (D75): the PEP 523 hook `NiEval_EvalFrame` and its installation. | Include/pystate.h | `36b5beb` |
 | `ni/mechanisms/frames/frame_object.h` | glue (mechanism snippet) | 3.7's frames (D75): `ni_frame_t` is `PyFrameObject`, with inline accessors. | Include/frameobject.h, Include/pystate.h | `36b5beb` |
@@ -52,7 +52,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/mechanisms/entry/{frame_eval_hook_interp,vectorcall}.h`, `ni/mechanisms/tracing/{cframe_use_tracing,monitoring}.h`, `ni/mechanisms/frames/{interpreter_frame_cframe,interpreter_frame}.h` | glue (stubs) | One `#error "... not written yet"` each, saying what the variant must do. | 3.11–3.13 | `36b5beb` |
 | `ni/mergepoints.c` | core | Finds merge points, dead locals, join points and eval_breaker tests in a code object; the opcode whitelist. | none (copies `NEXTOPARG` from Python/ceval.c) | `b36a1ac` |
 | `ni/mergepoints.h` | core | Merge point tables: where control paths join and compiled states are cached. | none | `e26c2a3` |
-| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code `co_extra` records, `_stats` etc., fatal-error handlers, `ni_trace_*` hooks. | none | `6cd0c26` |
+| `ni/ni.c` | glue | Module entry (PyInit_ni), per-code `co_extra` records, `_stats` etc. and debug builds' `_fail_after`, out-of-memory and fatal-error handlers, `ni_trace_*` hooks. | none | `6cd0c26` |
 | `ni/platform.c` | glue | Allocates executable (RWX) memory: mmap on Unix, VirtualAlloc on Windows. | none | `1e65d32` |
 | `ni/platform.h` | glue | Prototype for psyco_allocate_executable_buffer(). | none | `e1fd808` |
 | `ni/processor.h` | backend (interface) | Prototypes for running compiled code: psyco_processor_run, RUN_ARGC, aligned-call glues. | none | `4398496` |

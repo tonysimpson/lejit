@@ -227,12 +227,22 @@ typedef struct {
 EXTERNFN code_t* psyco_pycompiler_mainloop(PsycoObject* po);
 
 
-/* XXX no handling of out-of-memory conditions. We have to define precisely
-   what should occur in various cases, like when we run out of memory in the
-   middle of writing code, when the beginning is already executing. When
-   should we report the exception? */
+/* Mid-compile this abandons the compile (codemanager.h, compile guards);
+   anywhere else it aborts. It never returns. */
 EXTERNFN void psyco_out_of_memory(char *filename, int lineno);
 #define OUT_OF_MEMORY()      psyco_out_of_memory(__FILE__, __LINE__)
+
+/* For tests: NI_FAIL(site) is true at the n-th time it is reached after
+   ni._fail_after(site, n), as if that allocation had failed. */
+enum { NI_FAIL_PSYCOOBJECT, NI_FAIL_ARRAY, NI_FAIL_CODEBUF, NI_FAIL_LOOKUP,
+       NI_FAIL_OWNER, NI_FAIL_SITES };
+#if ALL_CHECKS
+EXTERNVAR long psyco_fail_after[NI_FAIL_SITES];
+#define NI_FAIL(site)                                                          \
+  (psyco_fail_after[site] > 0 && --psyco_fail_after[site] == 0)
+#else
+#define NI_FAIL(site) 0
+#endif
 
 /* Thread-specific state */
 EXTERNFN PyObject* psyco_thread_dict(void);

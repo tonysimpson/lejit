@@ -727,12 +727,17 @@ static code_t *do_respawn_body(respawn_t *rs);
 /* a stub function: 'value' (RSI) is used only by promotions */
 static code_t *do_respawn(respawn_t *rs, long value) {
   code_t *r;
+  ni_compile_guard_t g;
 #if NI_CODESTATS
   long t0 = psyco_stat_now_ns();
   psyco_cs_load_respawn = false;
 #endif
   NI_COMPILE_BEGIN(NI_ENTER_RESPAWN);
+  psyco_guard_push(&g);
+  if (sigsetjmp(g.env, 0) != 0)
+    psyco_guard_retry(&g); /* the replay starts from the snapshot again */
   r = do_respawn_body(rs);
+  psyco_guard_pop(&g);
   NI_COMPILE_END(NI_ENTER_RESPAWN);
 #if NI_CODESTATS
   if (psyco_cs_load_respawn) { /* a load guard's failure branch */
@@ -1284,10 +1289,17 @@ static bool compatible_at_join = false;
    blocks without progress can only enter blocks that know more and
    more. */
 DEFINEVAR bool psyco_compatible_keep_facts = false;
+
 DEFINEVAR long psyco_stat_fact_drops = 0;
 static bool compatible_drop_unused = false;
 static unsigned long compatible_serial;
 static int compatible_drops;
+
+/* a compile was abandoned (codemanager.h, compile guards) */
+DEFINEFN void psyco_compile_abandoned(void) {
+  compatible_drop_extra = compatible_rt_parent = compatible_at_join = false;
+  compatible_drop_unused = psyco_compatible_keep_facts = false;
+}
 
 
 static bool compatible_unused_fact(vinfo_t *a, bool rt_parent) {
@@ -2323,15 +2335,23 @@ PSY_INLINE int lookup_count_previous_values(rt_promotion_t *fs,
 
 static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
                                           source_known_t *sk);
-static code_t *do_promotion_internal(rt_promotion_t *fs, long key,
-                                     source_known_t *sk) {
+/* 'flags' are the constant's: with SkFlagPyObj, 'key' is an object. Out
+   of line, as sigsetjmp would slow its callers (eval_hook.c) */
+static __attribute__((noinline)) code_t *do_promotion_internal(rt_promotion_t *fs, long key,
+                                     long flags) {
   code_t *r;
+  ni_compile_guard_t g;
 #if NI_CODESTATS
-  psyco_cs_promo_begin(fs->cs_site, key,
-                       (sk->refcount1_flags & SkFlagPyObj) != 0);
+  psyco_cs_promo_begin(fs->cs_site, key, (flags & SkFlagPyObj) != 0);
 #endif
   NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
-  r = do_promotion_internal_body(fs, key, sk);
+  psyco_guard_push(&g);
+  if (sigsetjmp(g.env, 0) != 0)
+    psyco_guard_retry(&g); /* fs->po is still a whole state */
+  if (flags & SkFlagPyObj)
+    Py_INCREF((PyObject *)key);
+  r = do_promotion_internal_body(fs, key, sk_new(key, flags));
+  psyco_guard_pop(&g);
   NI_COMPILE_END(NI_ENTER_PROMOTION);
 #if NI_CODESTATS
   psyco_cs_promo_end();
@@ -2383,29 +2403,36 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
     result = code;
     buf = ((rt_local_buf_t *)code) - 1;
 
-    buf->next = fs->local_chained_list;
-    buf->key = key;
-    fs->local_chained_list = buf;
-
     po->code = insn_code_label(NI_CS_PROMO_COUNTER(result));
     psyco_compatible_keep_facts = true;
     codeend = psyco_compile(po, mp, false);
     psyco_compatible_keep_facts = false;
     psyco_codestats_buffer("promotion", codebuf, codeend);
     psyco_shrink_code_buffer(codebuf, codeend);
+
+    /* listed only once compiled */
+    buf->next = fs->local_chained_list;
+    buf->key = key;
+    fs->local_chained_list = buf;
   }
 
   return result;
 }
 
 static code_t *detected_megamorphic_body(rt_promotion_t *fs);
-static code_t *detected_megamorphic_pyobj_site(rt_promotion_t *fs) {
+static __attribute__((noinline)) code_t *
+detected_megamorphic_pyobj_site(rt_promotion_t *fs) {
   code_t *r;
+  ni_compile_guard_t g;
 #if NI_CODESTATS
   psyco_cs_promo_begin(fs->cs_site, -1, -1);
 #endif
   NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
+  psyco_guard_push(&g);
+  if (sigsetjmp(g.env, 0) != 0)
+    psyco_guard_retry(&g);
   r = detected_megamorphic_body(fs);
+  psyco_guard_pop(&g);
   NI_COMPILE_END(NI_ENTER_PROMOTION);
 #if NI_CODESTATS
   psyco_cs_promo_end();
@@ -2447,16 +2474,16 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs) {
     result = code;
     buf = ((rt_local_buf_t *)code) - 1;
 
-    buf->next = fs->local_chained_list;
-    buf->key = -1; /* use (PyObject*)(-1) as a marker */
-    fs->local_chained_list = buf;
-
     po->code = insn_code_label(NI_CS_PROMO_COUNTER(result));
     psyco_compatible_keep_facts = true;
     codeend = psyco_compile(po, mp, false);
     psyco_compatible_keep_facts = false;
     psyco_codestats_buffer("megamorphic", codebuf, codeend);
     psyco_shrink_code_buffer(codebuf, codeend);
+
+    buf->next = fs->local_chained_list;
+    buf->key = -1; /* use (PyObject*)(-1) as a marker */
+    fs->local_chained_list = buf;
   }
 
   return result;
@@ -2600,7 +2627,7 @@ static code_t *do_promotion_long(rt_promotion_t *fs, long value) {
   QUICK_LOOKUP_PROMOTION_VALUE(fs, key1, result);
   if (result == NULL) {
     /* no -> we must build new code */
-    result = do_promotion_internal(fs, key1, sk_new(value, SkFlagFixed));
+    result = do_promotion_internal(fs, key1, SkFlagFixed);
   }
   /* done -> jump to the codebuf */
   promotion_cache_add(fs, value, result);
@@ -2618,9 +2645,7 @@ static code_t *do_promotion_pyobj(rt_promotion_t *fs, PyObject *key) {
   QUICK_LOOKUP_PROMOTION_VALUE(fs, key1, result);
   if (result == NULL) {
     /* no -> we must build new code */
-    Py_INCREF(key);
-    result = do_promotion_internal(
-        fs, key1, sk_new((long)key, SkFlagFixed | SkFlagPyObj));
+    result = do_promotion_internal(fs, key1, SkFlagFixed | SkFlagPyObj);
   }
   /* done -> jump to the codebuf */
   promotion_cache_add(fs, key1, result);
@@ -2649,9 +2674,7 @@ static code_t *do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key) {
       return result;
     }
     /* no -> we must build new code */
-    Py_INCREF(key);
-    result = do_promotion_internal(
-        fs, key1, sk_new((long)key, SkFlagFixed | SkFlagPyObj));
+    result = do_promotion_internal(fs, key1, SkFlagFixed | SkFlagPyObj);
   }
   /* done -> jump to the codebuf */
   promotion_cache_add(fs, key1, result);
@@ -2686,9 +2709,7 @@ static code_t *do_promotion_static_type(rt_promotion_t *fs, PyObject *key) {
         return result;
       }
     } else {
-      Py_INCREF(key);
-      result = do_promotion_internal(
-          fs, key1, sk_new((long)key, SkFlagFixed | SkFlagPyObj));
+      result = do_promotion_internal(fs, key1, SkFlagFixed | SkFlagPyObj);
     }
   }
   promotion_cache_add(fs, key1, result);

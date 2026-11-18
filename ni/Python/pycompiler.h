@@ -253,7 +253,7 @@ EXTERNFN void Psyco_DefineMeta(void *c_function, void *psyco_function);
 PSY_INLINE void *Psyco_Lookup(void *c_function) {
   PyObject *value;
   PyObject *key = NiCompatInt_FromLong((long)c_function);
-  if (key == NULL)
+  if (key == NULL || NI_FAIL(NI_FAIL_LOOKUP))
     OUT_OF_MEMORY();
   value = PyDict_GetItem(Psyco_Meta_Dict, key);
   Py_DECREF(key);

@@ -38,6 +38,8 @@ PyObject *psyco_thread_dict() {
 DEFINEFN
 void psyco_out_of_memory(char *filename, int lineno) {
   char *msg;
+  if (psyco_compile_guard != NULL)
+    psyco_guard_abandon();
   if (PyErr_Occurred()) {
     PyErr_Print();
     msg = "psyco cannot recover from the error above";
@@ -346,7 +348,34 @@ static PyObject *ni_unregistered_metas(PyObject *self, PyObject *unused) {
   return PyList_GetSlice(Psyco_Unregistered_Metas, 0, PY_SSIZE_T_MAX);
 }
 
+#if ALL_CHECKS
+/* for tests: _fail_after(site, n) makes the n-th allocation at 'site' from
+   now fail (psyco.h:NI_FAIL); 0 cancels. Returns what was left of the
+   previous count, 0 once it fired. */
+static PyObject *ni_fail_after(PyObject *self, PyObject *args) {
+  static const char *names[NI_FAIL_SITES] = {"psycoobject", "array",
+                                             "codebuf", "lookup", "owner"};
+  const char *site;
+  long n, left;
+  int i;
+  if (!PyArg_ParseTuple(args, "sl", &site, &n))
+    return NULL;
+  for (i = 0; i < NI_FAIL_SITES; i++)
+    if (strcmp(site, names[i]) == 0) {
+      left = psyco_fail_after[i];
+      psyco_fail_after[i] = n;
+      return PyLong_FromLong(left);
+    }
+  PyErr_SetString(PyExc_ValueError, "unknown site");
+  return NULL;
+}
+#endif
+
 static PyMethodDef module_methods[] = {
+#if ALL_CHECKS
+    {"_fail_after", ni_fail_after, METH_VARARGS,
+     "Make the n-th allocation at a site fail (debug builds)."},
+#endif
     {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
 #if NI_CODESTATS
     {"_codestats", ni_codestats, METH_NOARGS, "Code size per instruction."},

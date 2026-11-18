@@ -727,7 +727,7 @@ psyco_get_merge_points(PyCodeObject *co, int module)
         mps = _build_merge_points(co, module);
         NI_COMPILE_END(NI_ENTER_ANALYSE);
         if (mps == NULL) {
-            /* out of memory (KNOWN_BUGS F27): don't compile this time, and
+            /* out of memory: don't compile this time, and
                leave nothing cached so that a later call tries again */
             PyErr_Clear();
             return Py_None;

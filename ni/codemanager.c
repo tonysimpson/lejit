@@ -260,7 +260,7 @@ DEFINEFN void psyco_owner_pin(PyObject *p) {
 DEFINEFN void *psyco_owner_alloc(size_t size) {
   ni_owner_t *o = psyco_owner;
   void **p = PyMem_Malloc(sizeof(void *) + size);
-  if (p == NULL)
+  if (p == NULL || NI_FAIL(NI_FAIL_OWNER))
     OUT_OF_MEMORY();
   memset(p + 1, 0, size);
   if (o != NULL) {
@@ -361,6 +361,96 @@ DEFINEFN long psyco_stat_now_ns(void) {
   return t.tv_sec * 1000000000L + t.tv_nsec;
 }
 
+/* the buffers made under the current compile guards, to unregister if
+   the compile is abandoned */
+static CodeBufferObject **journal = NULL;
+static int njournal = 0, journalcap = 0;
+
+static void journal_add(CodeBufferObject *b) {
+  if (psyco_compile_guard == NULL)
+    return;
+  if (njournal == journalcap) {
+    int cap = journalcap ? 2 * journalcap : 64;
+    void *n = PyMem_Realloc(journal, cap * sizeof(CodeBufferObject *));
+    if (n == NULL)
+      OUT_OF_MEMORY();
+    journal = n;
+    journalcap = cap;
+  }
+  journal[njournal++] = b;
+}
+
+DEFINEVAR ni_compile_guard_t *psyco_compile_guard = NULL;
+#if ALL_CHECKS
+DEFINEVAR long psyco_fail_after[NI_FAIL_SITES];
+#endif
+
+DEFINEFN void psyco_guard_push(ni_compile_guard_t *g) {
+  PyThreadState *ts = PyThreadState_GET();
+  g->prev = psyco_compile_guard;
+  g->owner = psyco_owner;
+  g->depth = psyco_stat_compile_depth;
+  g->nlocked = nlocked;
+  g->njournal = njournal;
+  g->tries = 0;
+  g->exc_type = ts->curexc_type;
+  g->exc_value = ts->curexc_value;
+  g->exc_tb = ts->curexc_traceback;
+  psyco_compile_guard = g;
+}
+
+DEFINEFN void psyco_guard_pop(ni_compile_guard_t *g) {
+  extra_assert(psyco_compile_guard == g);
+  psyco_compile_guard = g->prev;
+  if (g->prev == NULL)
+    njournal = 0;
+}
+
+DEFINEFN void psyco_guard_retry(ni_compile_guard_t *g) {
+  if (g->tries > NI_GUARD_RETRIES) {
+    psyco_guard_pop(g);
+    psyco_out_of_memory(__FILE__, __LINE__);
+  }
+}
+
+EXTERNFN void psyco_compile_abandoned(void); /* dispatcher.c */
+
+DEFINEFN void psyco_guard_abandon(void) {
+  ni_compile_guard_t *g = psyco_compile_guard;
+  PyThreadState *ts = PyThreadState_GET();
+  /* nothing below may run out of memory under this guard again */
+  psyco_compile_guard = g->prev;
+  while (njournal > g->njournal) {
+    CodeBufferObject *b = journal[--njournal];
+    if (b->ge != NULL) {
+      PyObject *l = b->ge->fatlist;
+      Py_ssize_t j;
+      for (j = PyList_GET_SIZE(l); j--;)
+        if (PyList_GET_ITEM(l, j) == (PyObject *)b) {
+          PyList_SetSlice(l, j, j + 1, NULL);
+          break;
+        }
+      b->ge = NULL;
+    }
+  }
+  while (nlocked > g->nlocked) {
+    locked_t l = locked[--nlocked];
+    owner_add_extent(l.owner, l.start, l.end);
+  }
+  psyco_owner = g->owner;
+  psyco_stat_compile_depth = g->depth;
+  psyco_compile_abandoned();
+  if (ts->curexc_type != g->exc_type || ts->curexc_value != g->exc_value ||
+      ts->curexc_traceback != g->exc_tb) {
+    PyErr_Clear();
+    if (g->exc_type != NULL)
+      PyErr_NoMemory(); /* the compile lost the run-time exception */
+  }
+  g->tries++;
+  psyco_compile_guard = g;
+  siglongjmp(g->env, 1);
+}
+
 /* the owner takes the new reference: a buffer is returned borrowed */
 static void owner_add_buffer(ni_owner_t *o, CodeBufferObject *b) {
   if (o == NULL)
@@ -385,10 +475,11 @@ static CodeBufferObject *new_code_buffer(PsycoObject *po, global_entries_t *ge,
     plimit = &limit;
 
   b = PyObject_New(CodeBufferObject, &CodeBuffer_Type);
-  if (b == NULL)
+  if (b == NULL || NI_FAIL(NI_FAIL_CODEBUF))
     OUT_OF_MEMORY();
   b->serial = psyco_next_serial++;
   b->ge = NULL;
+  journal_add(b);
   if (proxy_to != NULL) {
     *plimit = NULL;
     b->codestart = proxy_to; /* points inside another code buffer */

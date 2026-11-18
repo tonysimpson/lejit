@@ -48,7 +48,7 @@ vinfo_array_t *array_grow1(vinfo_array_t *array, int ncount) {
   else
     array = PyMem_REALLOC(array, offsetof(vinfo_array_t, items) +
                                      ncount * sizeof(vinfo_t *));
-  if (array == NULL)
+  if (array == NULL || NI_FAIL(NI_FAIL_ARRAY))
     OUT_OF_MEMORY();
   array->count = ncount;
   while (i < ncount)
@@ -716,22 +716,35 @@ static code_t *do_resume_coding_body(coding_pause_t *cp);
 /* a stub function: 'value' (RSI) is used only by promotions */
 static code_t *do_resume_coding(coding_pause_t *cp, long value) {
   code_t *r;
+  ni_compile_guard_t g;
   NI_COMPILE_BEGIN(NI_ENTER_PAUSE);
+  psyco_guard_push(&g);
+  if (sigsetjmp(g.env, 0) != 0)
+    psyco_guard_retry(&g);
   r = do_resume_coding_body(cp);
+  psyco_guard_pop(&g);
   NI_COMPILE_END(NI_ENTER_PAUSE);
   return r;
 }
 
 static code_t *do_resume_coding_body(coding_pause_t *cp) {
-  /* called when entering a coding_pause (described by 'cp') */
-  code_t *target =
-      (cp->resume_fn)(cp->po, cp + 1); /* resume compilation work */
+  /* called when entering a coding_pause (described by 'cp'). The compile
+     consumes the state, so the record keeps a copy until it is done, for
+     a compile that runs out of memory to start again from. */
+  PsycoObject *po = cp->po;
+  code_t *target;
+  cp->po = PsycoObject_Duplicate(po);
+  if (cp->po == NULL) {
+    cp->po = po;
+    OUT_OF_MEMORY();
+  }
+  target = (cp->resume_fn)(po, cp + 1); /* resume compilation work */
 
   /* then fix the jump to point to 'target' */
   change_cond_jump_target(cp->jump_to_fix, target);
 
-  /* the only way in was that jump: the stub is never entered again, and
-     the compile consumed cp->po */
+  /* the only way in was that jump: the stub is never entered again */
+  PsycoObject_Delete(cp->po);
   cp->po = NULL;
   return target;
 }

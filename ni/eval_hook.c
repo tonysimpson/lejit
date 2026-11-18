@@ -58,6 +58,28 @@ static PyObject *NiCode_Run(PyObject *codebuf, ni_frame_t *f) {
 
 #define DEFAULT_RECURSION 10
 
+/* out of line: a function that calls sigsetjmp is compiled with its
+   locals in memory, and ni_entry_point runs for every frame */
+static __attribute__((noinline)) CodeBufferObject *
+compile_entry(PyCodeObject *co, ni_code_extra_t *x, PyObject *globals,
+              PyObject *builtins, PyObject *mergepoints) {
+  PsycoObject *po;
+  CodeBufferObject *volatile codebuf = NULL;
+  ni_compile_guard_t g;
+  NI_OWNER_ENTER(&x->owner);
+  NI_COMPILE_BEGIN(NI_ENTER_CALL);
+  psyco_guard_push(&g);
+  if (sigsetjmp(g.env, 0) == 0) {
+    po = PsycoObject_FromCode(co, globals, builtins, mergepoints,
+                              DEFAULT_RECURSION);
+    codebuf = psyco_compile_code(po, PsycoObject_Ready(po));
+  }
+  psyco_guard_pop(&g);
+  NI_COMPILE_END(NI_ENTER_CALL);
+  NI_OWNER_LEAVE();
+  return codebuf;
+}
+
 /* The compiled code to run for 'co' with these globals and builtins,
    compiled now on its first call, or NULL to run it interpreted. 'locals'
    is the frame's locals mapping (equal to globals for a module). */
@@ -79,15 +101,10 @@ static PyObject *ni_entry_point(PyCodeObject *co, PyObject *globals,
       entry_point = x->entry_point;
       if (entry_point == NULL) {
         /* Not compiled yet */
-        PsycoObject *po;
-        CodeBufferObject *codebuf;
-        NI_OWNER_ENTER(&x->owner);
-        NI_COMPILE_BEGIN(NI_ENTER_CALL);
-        po = PsycoObject_FromCode(co, globals, builtins, mergepoints,
-                                  DEFAULT_RECURSION);
-        codebuf = psyco_compile_code(po, PsycoObject_Ready(po));
-        NI_COMPILE_END(NI_ENTER_CALL);
-        NI_OWNER_LEAVE();
+        CodeBufferObject *codebuf =
+            compile_entry(co, x, globals, builtins, mergepoints);
+        if (codebuf == NULL)
+          return NULL; /* out of memory: this call runs interpreted */
         entry_point = (PyObject *)codebuf;
         Py_INCREF(entry_point);
         x->entry_point = entry_point;

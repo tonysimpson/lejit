@@ -820,7 +820,7 @@ EXTERNFN void psyco_assert_coherent1(PsycoObject *po, bool full);
 PSY_INLINE PsycoObject *PsycoObject_New(int vlocalscnt) {
   int psize = PSYCOOBJECT_SIZE(vlocalscnt);
   PsycoObject *po = (PsycoObject *)PyMem_MALLOC(psize);
-  if (po == NULL)
+  if (po == NULL || NI_FAIL(NI_FAIL_PSYCOOBJECT))
     OUT_OF_MEMORY();
   memset(po, 0, psize);
   return po;

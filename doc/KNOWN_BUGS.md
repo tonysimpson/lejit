@@ -13,7 +13,7 @@ Open bugs only. IDs: **M** memory access (`ni/x64/v_mem_mov.h`, field functions 
 ### Front end
 - **F12** (latent): `PsycoObject_IsTrue` doesn't normalise lengths to 0/1 and `PsycoObject_RichCompareBool` returns the raw value. Every caller today only tests against zero; a new caller that uses the value as 0/1 must normalise it. [read]
 - **F18** (dormant): the Py2 per-frame saved exception (`FINALIZE_FRAME_LOCALS`, `cimpl_finalize_frame_locals`, a prologue slot) is never set, so it is dead code that would write `curexc_*` if reached. See B17. [read]
-- **F27** (to fix on 3.7): running out of memory mid-compile aborts ("psyco: out of memory"): `PsycoObject_New`/`array_grow1` (`vcompiler.h`), the code buffer object (`codemanager.c`), `Psyco_Lookup` during a meta call (`pycompiler.h`). Raising MemoryError would mean unwinding a half-built compilation; the merge-point analysis and frame registration already fail cleanly. [run]
+- **F27** (remainder): running out of memory mid-compile abandons the compile (D103), but a compile entered from compiled code (a pause, respawn or promotion) that runs out on every one of its tries still aborts, as does `OUT_OF_MEMORY` outside any compile. [read], [run]
 - **F34** (accepted): instance-dict lookups by an exact str name are called `CfNoPython` (`pobject.c`, `cf_flags.h`; `policy_table.py` `ASSUMPTIONS` for `PyDict_GetItem`), so a str-subclass key whose `__eq__` changes the class during the lookup isn't seen. [read]
 - **F36** (live): holding a class's shared keys (`pobject.c:shared_key_slot`, D31) can stop CPython re-sharing them when the class's only live instance grows its keys after a compile (`_PyObjectDict_SetItem` re-shares only if the class holds the sole reference). Results stay right; that class's instances use ordinary dicts (go's `Board`). Fixes tried cost more than the bug. [read], [run]
 - **F72** (accepted, D64): a direct compiled call into another module reads that module's `__builtins__` when the call site compiles, where CPython reads it at each frame start (`psyfunc.c:callee_builtins`). Exact would need a guard at every cross-module call. [inferred]
@@ -71,7 +71,7 @@ From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent:
 - **F24** (`0feefaf`): `PsycoObject_RichCompareBool` promoted a temporary's type.
 - **F25** (`96aaec2`, `d0821ce`): `isinstance` and `type_call` metas promoted heap classes, keeping them alive; now `psyco_atcompiletime_static_type`.
 - **F26** (`1c06812`): a compile-time exception with a NULL value segfaulted at the re-raise.
-- **F27** (`50318dd`): early allocation failures in the merge-point analysis and frame capsules crashed (the rest is open, above).
+- **F27** (`50318dd`, and compile guards, D103): allocation failures in the merge-point analysis and frame capsules crashed, and mid-compile ones aborted (the remainder is open, above).
 - **F31** (`e657847`): `pr.changing_globals` wasn't saved in snapshots, so a respawn replay diverged.
 - **F32** (`24a3af9`): `int` varargs to `psyco_generic_call`; its macro now rejects narrow arguments.
 - **F33** (`df37def`): `T_INT`/`T_UINT` members read as 8 bytes.

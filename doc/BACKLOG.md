@@ -9,7 +9,7 @@ What is still open, one line each, with where the detail is. Done items leave th
 - Mechanism snippets for 3.11+ (D75): the stubs in `ni/mechanisms/*` that `#error` "not written yet".
 
 ## Open bugs
-In KNOWN_BUGS.md. Worth doing first among them: C29 (no events for a frame already running compiled), then C11's `PyEval_GetFrame` hook and `f_lineno`; F97, F100, F103 are small translated-layer fixes. On the 3.12 backlog by D64: C14, C15, C18, F27.
+In KNOWN_BUGS.md. Worth doing first among them: C29 (no events for a frame already running compiled), then C11's `PyEval_GetFrame` hook and `f_lineno`; F97, F100, F103 are small translated-layer fixes. C15 and C18 are to be done on 3.7 (D64).
 
 ## Speed
 - The adversarial suite (`tools/adversarial/`, `tools/benchmarks.sh adversarial`), written blind at `481b099` to target Ni's weak points, needs its first run with Ni; no benchmark in it is to be tuned after its results.

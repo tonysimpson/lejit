@@ -58,6 +58,32 @@ EXTERNFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
    owner (dispatcher.c:stub_pool_reserve) */
 EXTERNFN code_t *psyco_code_take(size_t n);
 
+/* Compile guards. Each way into the compiler (eval_hook.c, the stub
+   functions) pushes one; running out of memory under it (OUT_OF_MEMORY)
+   drops what the compile registered, so that no half-written block can be
+   matched, and returns to its sigsetjmp. The machine code and records
+   already made stay with their owners, unused; Python references the
+   compile held are lost. Run-time error state is kept, or becomes a
+   MemoryError if the compile replaced it. The caller then runs the
+   interpreter instead (psyco_guard_pop), or compiles again from a state
+   the compile didn't consume (psyco_guard_retry, which aborts after
+   NI_GUARD_RETRIES tries: compiled code can't go back to the
+   interpreter). */
+#include <setjmp.h>
+#define NI_GUARD_RETRIES 3
+typedef struct ni_compile_guard_s {
+  sigjmp_buf env;
+  struct ni_compile_guard_s *prev;
+  ni_owner_t *owner;
+  int depth, nlocked, njournal, tries;
+  PyObject *exc_type, *exc_value, *exc_tb;
+} ni_compile_guard_t;
+EXTERNVAR ni_compile_guard_t *psyco_compile_guard;
+EXTERNFN void psyco_guard_push(ni_compile_guard_t *g);
+EXTERNFN void psyco_guard_pop(ni_compile_guard_t *g);
+EXTERNFN void psyco_guard_retry(ni_compile_guard_t *g);
+EXTERNFN void psyco_guard_abandon(void); /* for psyco_out_of_memory */
+
 /* code buffers created so far; the next one's serial */
 EXTERNVAR unsigned long psyco_next_serial;
 
