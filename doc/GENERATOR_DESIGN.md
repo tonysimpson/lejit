@@ -204,7 +204,7 @@ These share the front end, the rules loader and the C builder:
 
 ## Migration
 
-1. **Gate:** the front end parses every mirrored file on 3.7 and 3.8.
+1. **Gate:** the front end parses every mirrored file on 3.7 and 3.8. **Done:** `tools/metac/front.py` and `tests/parse_gate.py` (a `check.sh` step) parse 28 files on 3.7.17 and on 3.8.20, about 12 s per version (`85542ac`, D94, D95).
 2. **Front end, effects and report** first, in use by today's generators. This fixes G1–G4 and G16–G18 on its own.
 3. **Move one family at a time:** abstract, numbers, containers, builtins, argument binding, opcodes. Each must give the same headers, or the same machine code by `samecode.py`, with every difference given a reason. Delete the family's old code as it moves.
 4. **When all have moved, delete** `gen_abstract.py`, `gen_ceval.py`, `ceval_reader.py`, `ceval_inline.py`, `cparse.py`, `conditions.py`, `pointers.py`, `scalars.py`, `csource.py`, the old `policy_table.py` and the dead code in `cslots.py` (delete that now).

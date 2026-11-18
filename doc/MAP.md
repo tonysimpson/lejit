@@ -149,6 +149,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tests/compile_bounds.py` | tooling | Fails if warm code keeps starting code buffers (`ni._stats()`); run by check.sh. | `932f416` |
 | `tests/cpython_tests.py` | tooling | Runs CPython's test modules with and without Ni and compares counts and exit status. | `fbb5f4a` |
 | `tests/mechanisms.py` | tooling | Checks the mechanism detectors' answers on five CPython versions (D75). | `f254b5d` |
+| `tests/parse_gate.py` | tooling | Migration step 1: every mirrored CPython `.c` file preprocesses and parses on 3.7 and 3.8, with right line numbers; run by check.sh. | `85542ac` |
 | `tools/check.sh` | tooling | Runs the generators, `donecheck.py`, a checked build and every suite (D21, D68). | `747f2c9` |
 | `tools/metac/ctokens.py`, `cslots.py` | tooling | A C tokeniser, and the shared slot driver (`Target`, `GenError`, `text`). | `7b21dea` (ctokens), `9eae61d`, `2a71def` (cslots: `PyNumberMethods` from any `Include/**/*.h`) |
 | `tools/metac/gen_ceval.py` | tooling | Writes `pycompiler_gen.h` from instruction definitions, checked against `dis` (D69). | `962af09` |
@@ -172,6 +173,9 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/metac/donecheck.py` | tooling | GOAL's done test (D90): each Ni mirror of CPython, generated or hand-written and why. | `3186aca` |
 | `tools/metac/hand_table.py` | tooling (data) | Why each hand-written mirror is still hand-written (D90). | `18c250d` |
 | `tools/metac/cases_generator/` | tooling (vendored) | CPython 3.12.9's DSL lexer and parser, unchanged. | `69900ac` |
+| `tools/metac/front.py` | tooling | The new front end (GENERATOR_DESIGN "Front end"): `gcc -E` with the target's `pyconfig.h` and build flags, the vocabulary shim spliced in and checked, parsed by pycparser (D94, D95). | `a23ebf5` |
+| `tools/metac/shim/prelude.h`, `vocab.h` | tooling | The GNU prelude (`-include`) and the vocabulary shim (the atomics only, for now) that `front.py` uses. | `a23ebf5` |
+| `tools/metac/third_party/pycparser/` | tooling (vendored) | pycparser 3.11 from PyPI's sdist, unchanged (D94). | `b55c52b` |
 | `tools/proto312/` | tooling | 3.12 feasibility prototype (`PORT312.md`); evidence only, not part of Ni. | `92c51c6` |
 | `tools/without_fix.sh` | tooling | Runs a command with changes stashed, to show a test fails without its fix (D21). | `4a5a3e5` |
 | `tools/demo.py` | tooling | Demo: n-queens, n-body, ASCII Mandelbrot, word counts, timed with and without Ni. | `e4f21aa` |
