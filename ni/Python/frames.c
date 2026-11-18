@@ -185,9 +185,9 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
      the outermost to the innermost frames. Note that the list does
      not contain the first Psyco frame, the one directly run by a
      call to psyco_processor_run(). This still gives the expected
-     result, because PsycoFunctionObjects are only supposed to be
-     called by proxy codes (see psyco_proxycode()). This proxy
-     code itself has a frame. It replaces the missing Psyco frame.
+     result, because psyco_processor_run() is only called by
+     eval_hook.c:NiCode_Run() on a real Python frame, which replaces
+     the missing Psyco frame.
      XXX this would no longer work if we filled the emulated frames
          with more information, like local variables */
 
