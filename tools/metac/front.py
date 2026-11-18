@@ -17,6 +17,8 @@ so only what the source lacks comes from there.
 One departure from CPython's flags: -DUSE_COMPUTED_GOTOS=0 (D95).
 """
 import collections
+import functools
+import glob
 import json
 import os
 import re
@@ -94,16 +96,94 @@ def _build_flags(cflags, src):
     return out
 
 
+_LISTS = ('OBJECT_OBJS', 'PYTHON_OBJS', 'POBJS', 'PARSER_OBJS', 'MODULE_OBJS')
+
+
+@functools.lru_cache()
+def library_files(src):
+    """The .c files Makefile.pre.in links into libpython, from those of its
+    object lists that don't depend on configure, and Setup's modules."""
+    with open(os.path.join(src, 'Makefile.pre.in')) as f:
+        text = f.read().replace('\\\n', ' ')
+    out = set()
+    for var in _LISTS:
+        m = re.search(r'^%s=(.*)$' % var, text, re.M)
+        if not m:
+            raise FrontError('Makefile.pre.in has no %s' % var)
+        for w in m.group(1).split():
+            c = w[:-2] + '.c'
+            if w.endswith('.o') and '$' not in w and os.path.isfile(os.path.join(src, c)):
+                out.add(c)
+    return out | set(setup_modules(src))
+
+
+@functools.lru_cache()
+def setup_modules(src):
+    """{cfile: flags} for the modules Modules/Setup (Setup.dist until 3.7)
+    builds into every interpreter: its lines before any marker, with their
+    own -D and -I flags."""
+    path = os.path.join(src, 'Modules', 'Setup')
+    if os.path.isfile(path + '.dist'):
+        path += '.dist'
+    out = {}
+    with open(path) as f:
+        for line in f:
+            words = line.split('#')[0].split()
+            if words and words[0].startswith('*'):
+                break
+            if not words or '=' in words[0]:
+                continue
+            own = [w.replace('$(srcdir)', src) for w in words[1:] if w.startswith(('-D', '-I'))]
+            for w in words[1:]:
+                if w.endswith('.c'):
+                    out['Modules/' + w] = own
+    return out
+
+
+@functools.lru_cache()
+def rule_defines(src):
+    """{cfile: flags} for the files whose own Makefile.pre.in rule defines
+    macros. Their values are strings made from make variables, so each is
+    an empty string here."""
+    with open(os.path.join(src, 'Makefile.pre.in')) as f:
+        text = f.read().replace('\\\n', ' ')
+    out = {}
+    for m in re.finditer(r'^(\S+)\.o:.*\n((?:\t.*\n)+)', text, re.M):
+        names = re.findall(r'-D(\w+)=', m.group(2))
+        if names:
+            out[m.group(1) + '.c'] = ['-D%s=""' % n for n in names]
+    return out
+
+
 def flags_for(t, cfile):
-    """CPython's flags for `cfile`: a module in Modules/ is compiled as a
-    built-in or as a shared module, as the target was built."""
-    if not cfile.startswith('Modules/'):
-        return t.flags['core']
+    """CPython's flags for `cfile`: Setup's modules are built in; another
+    module in Modules/ outside the library is compiled as a built-in or as a
+    shared module, as the target was built."""
+    own = rule_defines(t.src).get(cfile, [])
+    setup = setup_modules(t.src)
+    if cfile in setup:
+        return t.flags['builtin'] + setup[cfile]
+    if not cfile.startswith('Modules/') or cfile in library_files(t.src):
+        return t.flags['core'] + own
     with open(os.path.join(t.src, cfile)) as f:
         m = re.search(r'\bPyInit_(\w+)', f.read())
     if not m:
         raise FrontError('%s: no PyInit_ function, so no module name' % cfile)
     return t.flags['builtin' if m.group(1) in t.builtins else 'module']
+
+
+def mirrored_files():
+    """Every .c file Ni mirrors: those the policy table names, those the
+    generators read, and ceval.c."""
+    import policy_table
+    files = {k.split(':')[0] for k in policy_table.ENTRIES}
+    files |= set(policy_table.TRANSLATED_SLOTS) | set(policy_table.TRANSLATED_FUNCTIONS)
+    for path in glob.glob(os.path.join(HERE, 'gen_*.py')):
+        with open(path) as f:
+            files |= set(re.findall(r"'((?:Objects|Python|Modules)/[\w/-]+\.c)'",
+                                    f.read()))
+    files.add('Python/ceval.c')
+    return sorted(f for f in files if f.endswith('.c'))
 
 
 def vocabulary():

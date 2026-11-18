@@ -9,17 +9,14 @@ The targets are the interpreters given, else NI_PY37 and NI_PY38 (defaults:
 pyenv's 3.7.17 and uv's 3.8.20). Runs under NI_GEN_PYTHON (3.10 or later)
 and needs no build. Exits 1 if any file fails, naming the file and line.
 """
-import glob
 import os
 import re
 import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-METAC = os.path.join(ROOT, 'tools', 'metac')
-sys.path.insert(0, METAC)
+sys.path.insert(0, os.path.join(ROOT, 'tools', 'metac'))
 import front  # noqa: E402
-import policy_table  # noqa: E402
 from pycparser import c_ast  # noqa: E402
 from pycparser.c_parser import ParseError  # noqa: E402
 
@@ -29,19 +26,6 @@ TARGETS = [
     os.environ.get('NI_PY38', os.path.expanduser(
         '~/.local/share/uv/python/cpython-3.8.20-linux-x86_64-gnu/bin/python3.8')),
 ]
-
-
-def mirrored_files():
-    """Every .c file Ni mirrors: those the policy table names, those the
-    generators read, and ceval.c."""
-    files = {k.split(':')[0] for k in policy_table.ENTRIES}
-    files |= set(policy_table.TRANSLATED_SLOTS) | set(policy_table.TRANSLATED_FUNCTIONS)
-    for path in glob.glob(os.path.join(METAC, 'gen_*.py')):
-        with open(path) as f:
-            files |= set(re.findall(r"'((?:Objects|Python|Modules)/[\w/-]+\.c)'",
-                                    f.read()))
-    files.add('Python/ceval.c')
-    return sorted(f for f in files if f.endswith('.c'))
 
 
 def check_the_check():
@@ -72,7 +56,7 @@ def main(argv):
     if not check_the_check():
         print('FAIL front.check_vocabulary misses a late definition')
         return 1
-    files = mirrored_files()
+    files = front.mirrored_files()
     failed = 0
     for python in argv or TARGETS:
         try:

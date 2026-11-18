@@ -10,7 +10,7 @@
 #define __inline__ inline
 #define __asm__(x)
 #define __asm(x)
-#define __volatile__
+#define __volatile__(...)
 #define __builtin_va_list int
 #define _Float128 double
 #define _Float64x double
