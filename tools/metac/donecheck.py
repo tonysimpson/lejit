@@ -22,7 +22,10 @@ A hand-written definition mirrors CPython when the code says so, by any of:
 A name match that mirrors nothing is in hand_table.REASONS as 'not_mirror';
 the files hand_table.EXCLUDED names are not read.
 
-  donecheck.py --python EXE [--src DIR] [-v] [--list a|b|c|x]
+  donecheck.py --python EXE [--src DIR] [-v] [--list a|b|c|x] [--past-policy]
+
+--past-policy runs past the policy table's problems, as generate.py's
+does, for a dry run on a version Ni isn't built for yet.
 
 Exit 0 when (c) is empty, 1 when it is not, 2 when hand_table.py names
 something that isn't in Ni or a reference that isn't in the docs.
@@ -64,15 +67,18 @@ def def_lines(d):
 
 # ---- (a): what the generators write ------------------------------------------
 
-def run_generators(target):
+def run_generators(target, past_policy=False):
     """[(header, text, report lines)] of every generator, as generate.py
-    runs them (the policy table checked first)."""
+    runs them (the policy table checked first, unless past_policy)."""
     import cslots
     import generate
     import gen_virtual
     import policy
     problems = policy.check(target.src)
-    if problems:
+    if problems and past_policy:
+        print('policy table: %d problems against this source (--past-policy)'
+              % len(problems))
+    elif problems:
         raise cslots.GenError('the policy table does not match this source:\n  '
                               + '\n  '.join(problems))
     out = []
@@ -337,6 +343,8 @@ def main(argv):
     ap.add_argument('-v', '--verbose', action='store_true', help='list every definition')
     ap.add_argument('--list', choices='abcx', action='append', default=[],
                     help='list the definitions of a class (c is always listed)')
+    ap.add_argument('--past-policy', action='store_true',
+                    help="run past the policy table's problems (a dry run)")
     args = ap.parse_args(argv)
     import cpython_src
     import cslots
@@ -351,7 +359,7 @@ def main(argv):
         cpython_src.check_version(src, version)
     target = cslots.Target(os.path.abspath(src), version, args.python, pyconfig)
     try:
-        outputs = run_generators(target)
+        outputs = run_generators(target, args.past_policy)
     except cslots.GenError as e:
         print('donecheck.py: %s' % e)
         return 2
