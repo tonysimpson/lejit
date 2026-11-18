@@ -726,20 +726,11 @@ static PyMethodDef owners_gc_callback_def = {"ni_owner_scan",
    also has a weak reference to its code; the free function drops it
    first, and if the code dies without that, its callback frees the
    record instead. */
-typedef struct {
-  PyWeakReference wr;
-  ni_code_extra_t *x;
-} code_ref_t;
-
-static PyTypeObject CodeRef_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "ni.code_ref",
-    .tp_basicsize = sizeof(code_ref_t),
-    .tp_flags = Py_TPFLAGS_DEFAULT, /* GC and traverse from weakref */
-};
+static ni_addrmap_t code_refs; /* weak reference -> record */
 static PyObject *code_gone = NULL;
 
 static PyObject *code_gone_fn(PyObject *self, PyObject *ref) {
-  ni_code_extra_t *x = ((code_ref_t *)ref)->x;
+  ni_code_extra_t *x = amap_get(&code_refs, ref);
   if (x != NULL)
     ni_code_extra_free(x);
   Py_RETURN_NONE;
@@ -751,15 +742,14 @@ static PyMethodDef code_gone_def = {"ni_code_gone", code_gone_fn, METH_O,
 DEFINEFN void psyco_owner_track(ni_code_extra_t *x) {
   PyObject *t, *v, *tb, *ref = NULL;
   PyErr_Fetch(&t, &v, &tb);
-  if (code_gone != NULL)
-    ref = PyObject_CallFunctionObjArgs((PyObject *)&CodeRef_Type, x->co,
-                                       code_gone, NULL);
+  if (code_gone != NULL && amap_reserve(&code_refs) == 0)
+    ref = PyWeakref_NewRef((PyObject *)x->co, code_gone);
   if (ref == NULL) { /* untracked: never scanned, so never collected */
     PyErr_Clear();
     PyErr_Restore(t, v, tb);
     return;
   }
-  ((code_ref_t *)ref)->x = x;
+  amap_put(&code_refs, ref, x);
   x->ref = ref;
   x->prev = NULL;
   x->next = extras;
@@ -779,7 +769,7 @@ DEFINEFN void psyco_owner_track(ni_code_extra_t *x) {
 DEFINEFN void psyco_owner_untrack(ni_code_extra_t *x) {
   if (x->ref == NULL)
     return;
-  ((code_ref_t *)x->ref)->x = NULL;
+  amap_remove(&code_refs, x->ref);
   Py_CLEAR(x->ref);
   if (x->prev != NULL)
     x->prev->next = x->next;
@@ -793,8 +783,7 @@ DEFINEFN void psyco_owner_untrack(ni_code_extra_t *x) {
 /* without it, cycles through code objects stay */
 static void owners_scan_init(void) {
   PyObject *gc;
-  CodeRef_Type.tp_base = &_PyWeakref_RefType;
-  if (PyType_Ready(&Record_Type) < 0 || PyType_Ready(&CodeRef_Type) < 0 ||
+  if (PyType_Ready(&Record_Type) < 0 ||
       (code_gone = PyCFunction_New(&code_gone_def, NULL)) == NULL ||
       (gc = PyImport_ImportModule("gc")) == NULL) {
     PyErr_Clear();
