@@ -1,6 +1,6 @@
 # Status
 
-## 2026-11-18: oparg-dependent stack effects (GENERATION.md step 8, front end; `0f5af55`, D73)
+## 2026-11-18: oparg-dependent stack effects (GENERATION.md step 8, front end; `99d9b26`, D73)
 
 The `ceval.c` reader writes array and conditional stack effects as 3.12's DSL does, derived from the C; METACOMPILER.md "`ceval.c` reader". [run]
 - **Of the 18 refused for oparg: 17 read, 5 generated** (`LIST_APPEND`, `MAP_ADD`, `BUILD_TUPLE`, `BUILD_LIST`, `BUILD_SLICE`; hand-written cases removed from `pycompiler.c`, same calls in the same order). `CALL_FUNCTION_EX` is refused: CPython 3.7.17 leaks `kwargs` when `PyDict_New` fails. The calls are read (effects from `call_function`'s body) and skipped as core. In all: read 74 of 119 (was 51), generated 49 (was 44).

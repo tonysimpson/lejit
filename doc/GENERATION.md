@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`) and 3 (`e7fd745`) done; step 8 begun (front end, `0f5af55`)
+status: plan; steps 1 (`9eae61d`), 2 (`7b21dea`) and 3 (`e7fd745`) done; step 8 begun (front end, `99d9b26`)
 ---
 # Plan of work: generate the translated layer on 3.7
 
@@ -86,7 +86,7 @@ The policy table is `tools/metac/policy_table.py`, checked by `policy.py` in eve
 - **Step 8:** the `ceval.c` entries' `guard`, `promote` and `other` items (`LOAD_GLOBAL`'s dict-version guard, `ends_block`), and `LIGHT_OPCODES`.
 - When code moves from hand-written to generated, the checks that compare the table with Ni's code (limits, `cannot_block_init`, whitelists) should be replaced by the generator reading the table.
 
-## Step 8, front end: oparg-dependent stack effects (`0f5af55`, D73) [run]
+## Step 8, front end: oparg-dependent stack effects (`99d9b26`, D73) [run]
 
 The reader expresses stack effects that depend on oparg as 3.12's DSL does (`values[oparg]`, `step if (oparg == 3)`, `unused[oparg - 1]`), derived from the C; METACOMPILER.md "`ceval.c` reader".
 - **Of the 18 opcodes step 2 refused for oparg: 17 read, 5 generated** (`LIST_APPEND`, `MAP_ADD`, `BUILD_TUPLE`, `BUILD_LIST`, `BUILD_SLICE`; their hand-written cases left `pycompiler.c`, same calls in the same order, and `tools/samecode.py` finds the same machine code everywhere). `CALL_FUNCTION_EX` is refused: CPython 3.7 leaks `kwargs` on one error path. The 12 read but not generated need a residual-call rule with effect flags (step 3: `SET_ADD`, `BUILD_SET`, `BUILD_STRING`), loops with error exits in the back half (`BUILD_MAP`, `BUILD_CONST_KEY_MAP`, the four `BUILD_*_UNPACK`), `ceval.c` helpers translated (`UNPACK_*`'s `unpack_iterable`), or a `switch` on oparg folded (`FORMAT_VALUE`); each is in the failures log.
