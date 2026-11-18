@@ -153,6 +153,7 @@ PSY_INLINE int get_arguments_count(vinfo_array_t* vlocals) {
 /* Emit the code to mark the presence of an inlined frame */
 EXTERNFN void psyco_inline_enter(PsycoObject* po);
 EXTERNFN void psyco_inline_exit (PsycoObject* po);
+EXTERNFN void psyco_note_call_site(PsycoObject *po, int lasti);
 
 
 /*****************************************************************/

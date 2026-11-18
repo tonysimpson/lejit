@@ -3,12 +3,18 @@
  * globals) for each compiled call, and the machine stack is walked through the
  * finfo slot that each Psyco frame keeps (x64/iprocessor.c). sys._getframe
  * is replaced by ni_getframe, which counts compiled frames and emulates
- * them (no locals, first line only). A traceback's frame does get the
- * locals, written when the exception passes (psyco_frame_write_locals).
- * Not yet done: upstream's hook of the
- * frame getter behind PyEval_GetFrame, and C code that walks
- * tstate->frame itself (warnings) still skips compiled frames. Real
- * frames running compiled code are never updated (f_lasti/f_lineno).
+ * them (no locals). An emulated frame's f_lasti is the call it is in:
+ * each record says where the frame out of it called (back_lasti), and the
+ * innermost frame notes its place in its slot before a residual call in
+ * a CALL_* (codegen.c:psyco_note_call_site); otherwise f_lineno is the
+ * first line. A traceback's frame does get the locals, written when the
+ * exception passes (psyco_frame_write_locals). _warnings.warn runs with
+ * every frame linked and the innermost one current (ni_warn). Not yet
+ * done: a real frame entered through C from compiled code keeps an f_back
+ * that skips the compiled frames between (linked_frame); upstream's hook
+ * of the frame getter behind PyEval_GetFrame, and other C code that walks
+ * tstate->frame from a compiled frame still skips it. Real frames running
+ * compiled code are never updated (f_lasti/f_lineno).
  * When tracing starts, a compiled frame goes on in ceval
  * (psyco_resume_run); pvisitframes then hides its compiled record, since
  * the real frame now stands for it.
@@ -18,6 +24,7 @@
 #include "../codemanager.h"
 #include "../vcompiler.h"
 #include "pyver.h"
+#include "pycheader.h"
 /* ni_frame_t and its accessors */
 #include "mechanism_frames_gen.h"
 /* ni_recursion_suspend and ni_recursion_resume */
@@ -27,8 +34,19 @@
 
 /***************************************************************/
 
+/* the instruction of an inlined frame's parent that called it, or -1 */
+static int inline_parent_lasti(PsycoObject *po) {
+  vinfo_t *v = po->vlocals.items[INDEX_LOC_INLINING];
+  if (v == NULL || v->array->count <= LOC_INLINE_NEXT_INSTR ||
+      v->array->items[LOC_INLINE_NEXT_INSTR] == NULL)
+    return -1;
+  return (int)CompileTime_Get(v->array->items[LOC_INLINE_NEXT_INSTR]->source)
+             ->value - 2;
+}
+
 /* held by the code that passes it, so it lives as long as that code's
-   owner (codemanager.h) */
+   owner (codemanager.h). Each entry says where the frame out of it is,
+   for f_lineno: the innermost compiled frame's own place isn't known. */
 DEFINEFN
 stack_frame_info_t *psyco_finfo(PsycoObject *caller, PsycoObject *callee) {
   Source sglobals;
@@ -38,6 +56,8 @@ stack_frame_info_t *psyco_finfo(PsycoObject *caller, PsycoObject *callee) {
   p = psyco_owner_alloc((inlining + 1) * sizeof(stack_frame_info_t));
   p->link_stack_depth = -inlining;
   p->co = callee->pr.co;
+  p->back_lasti = caller != NULL ? caller->pr.next_instr - 2
+                                 : inline_parent_lasti(callee);
   sglobals = callee->vlocals.items[INDEX_LOC_GLOBALS]->source;
   if (is_compiletime(sglobals))
     p->globals = (PyObject *)CompileTime_Get(sglobals)->value;
@@ -45,6 +65,7 @@ stack_frame_info_t *psyco_finfo(PsycoObject *caller, PsycoObject *callee) {
     p->globals = NULL; /* uncommon */
   if (inlining) {
     (p + 1)->co = caller->pr.co;
+    (p + 1)->back_lasti = inline_parent_lasti(caller);
     sglobals = caller->vlocals.items[INDEX_LOC_GLOBALS]->source;
     if (is_compiletime(sglobals))
       (p + 1)->globals = (PyObject *)CompileTime_Get(sglobals)->value;
@@ -185,7 +206,7 @@ PSY_INLINE PyFrameObject *psyco_build_pyframe(PyObject *co, PyObject *globals,
   result = PyFrame_New(tstate, (PyCodeObject *)co, globals, NULL);
   if (result == NULL)
     OUT_OF_MEMORY();
-  result->f_lasti = -1; /* can be used to identify emulated frames */
+  result->f_lasti = -1;
   ni_frame_set_current(tstate, back);
   return result;
 }
@@ -205,9 +226,12 @@ PyFrameObject *psyco_emulate_frame(PyObject *o) {
     /* a Psyco frame: emulate it */
     PyObject *co = PyTuple_GetItem(o, 0);
     PyObject *globals = PyTuple_GetItem(o, 1);
+    PyFrameObject *result;
     extra_assert(co != NULL);
     extra_assert(globals != NULL);
-    return psyco_build_pyframe(co, globals, PyThreadState_GET());
+    result = psyco_build_pyframe(co, globals, PyThreadState_GET());
+    result->f_lasti = (int)PyLong_AsLong(PyTuple_GET_ITEM(o, 3));
+    return result;
   }
 }
 
@@ -252,11 +276,15 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
   PyObject *result = NULL;
   FrameRuntime *fstart;
   ni_frame_t *f = ni_frame_current(PyThreadState_Get());
+  bool linked = false; /* the previous frame was emulated, so the compiled
+                          frames up to this one are already in the chain
+                          (linked_frame) */
   ni_recursion_suspend();
   while (f != NULL) {
     /* is this Python frame the starting point of a chained
        list of Psyco frames ? */
-    fstart = psyco_frame_start_get(ni_frame_object(f));
+    fstart = linked ? NULL : psyco_frame_start_get(ni_frame_object(f));
+    linked = !ni_frame_object(f)->f_executing;
     if (fstart != NULL) {
       /* Yes. Get the list start. */
       struct sfitmp_s *revlist;
@@ -268,6 +296,7 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
       stack_frame_info_t **finfo;
       stack_frame_info_t *fdata;
       stack_frame_info_t *flimit;
+      int lasti = -1; /* the place of the frame visited next */
       finfo = *(fstart->psy_frames_start);
 
       /* Enumerate the frames and store them in a
@@ -289,6 +318,9 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
         if ((*f1)->link_stack_depth == 0)
           break; /* stack top is an inline frame */
       }
+      /* the innermost frame's place, if it noted one */
+      if ((((long)*f1) & 1) != 0 && (long)*f1 != -1)
+        lasti = (int)((long)*f1 >> 1);
 
       /* now actually visit them in the correct order */
       while (revlist) {
@@ -300,6 +332,7 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
           fdata = *p->fi;
           flimit = finfo_last(fdata);
           if (hidden_frames != NULL && is_hidden(p->fi)) {
+            lasti = fdata->back_lasti;
             if (fdata == flimit)
               goto next_record;
             fdata++, tag--;
@@ -308,7 +341,8 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
             g = fdata->globals;
             if (g == NULL)
               g = ni_frame_globals(f);
-            o = Py_BuildValue("OOl", fdata->co, g, tag);
+            o = Py_BuildValue("OOli", fdata->co, g, tag, lasti);
+            lasti = fdata->back_lasti;
             if (o == NULL)
               OUT_OF_MEMORY();
             result = callback(o, data);
@@ -366,32 +400,69 @@ PyObject *psyco_get_globals(void) {
 
 /* sys._getframe, replaced (as upstream's support.py did) by a version that
    also counts compiled frames, which have no real frame object: they are
-   emulated, with f_lasti == -1 and empty locals (KNOWN_BUGS C11). */
+   emulated, new objects each time, with empty locals (KNOWN_BUGS C11). */
 
-static PyObject *visit_nth_frame(PyObject *o, void *n) {
-  if ((*(int *)n)-- == 0)
-    return (PyObject *)psyco_emulate_frame(o); /* new reference */
+/* the frame 'depth' calls below the top, or NULL (no exception set),
+   with the emulated frames from it out (new, so with no f_back yet)
+   linked by f_back to the next frame out. A real frame keeps its own
+   f_back, which skips any compiled frames between it and the one it was
+   called from through C: relinking it would need the eval hook to put
+   tstate->frame back after every such frame (KNOWN_BUGS C11). With
+   'undo', a list, real frames are relinked too, each as (frame, old
+   f_back) in it, for restore_links. */
+struct link_s {
+  int depth;
+  PyFrameObject *top, *prev;
+  PyObject *undo;
+};
+
+static PyObject *visit_link_frame(PyObject *o, void *data) {
+  struct link_s *l = (struct link_s *)data;
+  PyFrameObject *f, *old;
+  PyObject *t;
+  if (l->depth > 0) {
+    l->depth--;
+    return NULL;
+  }
+  f = psyco_emulate_frame(o);
+  if (l->top == NULL)
+    l->top = f; /* the reference returned */
+  else if (l->prev->f_back == NULL)
+    l->prev->f_back = f; /* takes the reference */
+  else if (l->prev->f_back == f)
+    Py_DECREF(f);
+  else if (l->undo == NULL ||
+           (t = PyTuple_Pack(2, l->prev, old = l->prev->f_back)) == NULL ||
+           PyList_Append(l->undo, t) < 0) {
+    Py_DECREF(f);
+    PyErr_Clear();
+    return Py_None; /* stop: the rest is in the real frame's own chain */
+  } else {
+    Py_DECREF(t);
+    Py_DECREF(old); /* the tuple holds it */
+    l->prev->f_back = f; /* takes the reference */
+  }
+  l->prev = f;
   return NULL;
 }
 
-/* the frame 'depth' calls below the top, or NULL (no exception set) */
-static PyFrameObject *nth_frame(int depth) {
-  return (PyFrameObject *)pvisitframes(visit_nth_frame, &depth);
+static PyFrameObject *linked_frame(int depth, PyObject *undo) {
+  struct link_s l = {depth, NULL, NULL, undo};
+  pvisitframes(visit_link_frame, &l);
+  return l.top;
 }
 
-/* as nth_frame, with emulated frames linked to the next frame out; a real
-   frame keeps its own f_back, which skips any compiled callers between it
-   and its creator (frames are not created in stack order) */
-static PyFrameObject *linked_frame(int depth) {
-  PyFrameObject *top = nth_frame(depth), *f;
-  for (f = top; f != NULL && f->f_lasti == -1 && f->f_back == NULL;) {
-    PyFrameObject *next = nth_frame(++depth);
-    if (next == NULL)
-      break;
-    f->f_back = next; /* takes the reference */
-    f = next;
+static void restore_links(PyObject *undo) {
+  Py_ssize_t i = PyList_GET_SIZE(undo);
+  while (i--) {
+    PyObject *t = PyList_GET_ITEM(undo, i);
+    PyFrameObject *frame = (PyFrameObject *)PyTuple_GET_ITEM(t, 0);
+    PyFrameObject *old = (PyFrameObject *)PyTuple_GET_ITEM(t, 1);
+    PyFrameObject *cur = frame->f_back;
+    Py_INCREF(old);
+    frame->f_back = old;
+    Py_XDECREF(cur);
   }
-  return top;
 }
 
 DEFINEFN
@@ -415,7 +486,7 @@ static PyObject *ni_getframe(PyObject *self, PyObject *args) {
     return NULL;
   if (depth < 0)
     depth = 0;
-  top = linked_frame(depth);
+  top = linked_frame(depth, NULL);
   if (top == NULL) {
     PyErr_SetString(PyExc_ValueError, "call stack is not deep enough");
     return NULL;
@@ -423,11 +494,63 @@ static PyObject *ni_getframe(PyObject *self, PyObject *args) {
   return (PyObject *)top;
 }
 
+/* _warnings.warn walks tstate->frame in C: it runs with the compiled
+   frames over the current real frame emulated and current. */
+static PyObject *original_warn = NULL;
+
+static PyObject *ni_warn(PyObject *self, PyObject *args, PyObject *kwds) {
+  PyThreadState *ts = PyThreadState_GET();
+  PyFrameObject *saved = ts->frame, *top;
+  PyObject *result, *undo = PyList_New(0);
+  if (undo == NULL)
+    return NULL;
+  /* every frame is linked for the call, and put back after it */
+  top = linked_frame(0, undo);
+  if (top != NULL && top != saved)
+    ts->frame = top;
+  result = PyObject_Call(original_warn, args, kwds);
+  ts->frame = saved;
+  restore_links(undo);
+  Py_DECREF(undo);
+  Py_XDECREF(top);
+  return result;
+}
+
+static PyMethodDef ni_warn_def = {
+    "warn", (PyCFunction)ni_warn, METH_VARARGS | METH_KEYWORDS,
+    "warn(message, category=None, stacklevel=1)\n\n"
+    "Issue a warning, or maybe ignore it or raise an exception, counting\n"
+    "frames of code compiled by Ni for stacklevel."};
+
+/* replaces warn in _warnings and, if imported, warnings */
+static void warn_init(void) {
+  PyObject *mod = PyImport_ImportModule("_warnings"), *fn, *w;
+  if (mod == NULL) {
+    PyErr_Clear(); /* no C warnings: warnings.py walks sys._getframe */
+    return;
+  }
+  original_warn = PyObject_GetAttrString(mod, "warn");
+  fn = PyCFunction_New(&ni_warn_def, NULL);
+  if (original_warn == NULL || fn == NULL ||
+      PyObject_SetAttrString(mod, "warn", fn) < 0)
+    PyErr_Print();
+  w = PyDict_GetItemString(PyImport_GetModuleDict(), "warnings");
+  if (w != NULL && fn != NULL) {
+    PyObject *cur = PyObject_GetAttrString(w, "warn");
+    if (cur == original_warn && PyObject_SetAttrString(w, "warn", fn) < 0)
+      PyErr_Print();
+    Py_XDECREF(cur);
+    PyErr_Clear();
+  }
+  Py_XDECREF(fn);
+  Py_DECREF(mod);
+}
+
 static PyMethodDef ni_getframe_def = {
     "_getframe", ni_getframe, METH_VARARGS,
     "_getframe([depth]) -> frameobject\n\n"
     "Return a frame object from the call stack, counting frames of code\n"
-    "compiled by Ni (emulated: no locals, f_lineno is the first line)."};
+    "compiled by Ni (emulated: no locals)."};
 
 INITIALIZATIONFN
 void psyco_frames_init(void) {
@@ -440,6 +563,7 @@ void psyco_frames_init(void) {
     PyErr_Print();
   Py_XDECREF(fn);
   Py_XDECREF(sysmod);
+  warn_init();
 }
 
 /***************************************************************/

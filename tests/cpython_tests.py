@@ -130,12 +130,6 @@ EXTENDED = ['test_pdb', 'test_cprofile', 'test_trace', 'test_asynchat', 'test_as
 # module -> reason it is expected to differ, or (the expected result with
 # Ni, reason) when only that difference is accepted
 KNOWN = {
-    'test_re': 'C11: warnings stacklevel skips compiled callees',
-    'test_exceptions': ('run=53 fail=1 err=0 skip=1 exit=0',
-                        'C11: f_back of a traceback frame'),
-    'test_builtin': ('run=92 fail=1 err=0 skip=3 exit=0',
-                     'C11: type() in a compiled callee takes __module__ from '
-                     'the caller\'s globals'),
     'test_generators': ('run=16 fail=1 err=0 skip=0 exit=0',
                         'C19: getrefcount misses borrowed arguments'),
     'test_descr': ('run=138 fail=1 err=0 skip=2 exit=0',
@@ -166,20 +160,19 @@ KNOWN = {
     'test_module': ('run=30 fail=1 err=0 skip=0 exit=0',
                     'C14: compiled code keeps a class, so its module dict, '
                     'alive'),
-    'test_raise': ('run=35 fail=1 err=0 skip=0 exit=0',
-                   'C11: tb_frame is an emulated frame'),
+    'test_exceptions': ('run=53 fail=1 err=0 skip=1 exit=0',
+                        'C11: f_back of a traceback frame'),
     'test_traceback': ('run=63 fail=5 err=0 skip=0 exit=0',
                        'C11: frames, locals and line numbers in stacks'),
     'test_tracemalloc': ('run=43 fail=8 err=0 skip=0 exit=0',
                          'C11: allocation tracebacks miss compiled frames; '
                          'compiling allocates'),
-    'test_warnings': ('run=121 fail=5 err=0 skip=0 exit=0',
-                      'C11: warnings stacklevel skips compiled callees'),
+    'test_warnings': ('run=121 fail=3 err=0 skip=0 exit=0',
+                      'C11: a freshly imported _warnings walks '
+                      'tstate->frame, which skips compiled frames'),
     'test_socket': 'C19: getrefcount around calls into C '
                    '(testRefCountGetNameInfo); counts vary with the '
                    'environment, so no expected result',
-    'test_unittest': ('run=798 fail=2 err=0 skip=3 exit=0',
-                      'C11: warnings line numbers'),
     'test_asyncio': ('run=2055 fail=18 err=0 skip=35 exit=0',
                      'C11: line numbers and stacks in source tracebacks'),
     'test_sys_settrace': ('run=136 fail=6 err=0 skip=0 exit=0',

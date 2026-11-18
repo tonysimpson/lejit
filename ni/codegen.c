@@ -349,6 +349,10 @@ vinfo_t *
         if (!(flags & (CfPure | CfNoPython))) {
             po->pr.class_unchecked = 1; /* it may assign __class__ */
             po->pr.python_call = 1;
+            if (po->pr.call_site && !po->pr.is_inlining) {
+                psyco_note_call_site(po, po->pr.call_site - 1);
+                po->pr.call_site_noted = 1;
+            }
         }
         vresult = run_time_call(po, c_function, flags, count, argtags, args,
                                 totalstackspace);
@@ -378,6 +382,21 @@ psyco_inline_enter(PsycoObject *po)
     struct stack_frame_info_s *finfo = psyco_finfo(NULL, po);
     BEGIN_CODE
     ABOUT_TO_CALL_SUBFUNCTION((long)finfo);
+    END_CODE
+}
+
+/* While the frame runs, its finfo slot holds an odd word: before a call
+   that may go through C, (lasti << 1) | 1, for f_lineno of its emulated
+   frame (frames.c:pvisitframes); a direct call to compiled code needs no
+   note. An inlined frame's slot holds its record. */
+DEFINEFN
+void
+psyco_note_call_site(PsycoObject *po, int lasti)
+{
+    if (po->pr.is_inlining)
+        return;
+    BEGIN_CODE
+    SAVE_IMMED_TO_EBP_BASE(((long)lasti << 1) | 1, INITIAL_STACK_DEPTH);
     END_CODE
 }
 

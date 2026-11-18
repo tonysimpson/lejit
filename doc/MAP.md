@@ -30,8 +30,8 @@ One row per file. **Every file has been read in full at least once.** The "revie
 |---|---|---|---|---|
 | `ni/blockalloc.h` | core | Fixed-size block allocator macros for vinfo_t and source_known_t. | none | `e1fd808` |
 | `ni/cf_flags.h` | core | Cf* flags describing a C function for residual calls: purity, new ref, return type, errors. | none (CPython C API conventions) | `56e5faf` |
-| `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding), integer emitters, rich compare. | Objects/object.c | `56e5faf` |
-| `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions. | none | `fa3dae7` |
+| `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding), integer emitters, rich compare, a frame's call-site note. | Objects/object.c | `56e5faf` |
+| `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions, the call-site note. | none | `fa3dae7` |
 | `ni/codemanager.c` | core | Executable memory as free extents; owners (D102): what a code object's compiled code holds, released with it; compile guards (D103). | none | `bc3c590` |
 | `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner and compile guard APIs. | none | `0b808fa` |
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
@@ -109,7 +109,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/Objects/pstructmember.h` | glue | Declaration of PsycoMember_GetOne. | Include/structmember.h | `b36a1ac` |
 | `ni/Objects/ptupleobject.c` | core + translated | PsycoTuple_Load; includes the generated virtual tuple and slots. | Objects/tupleobject.c | `935df0b` |
 | `ni/Objects/ptupleobject.h` | core | API for virtual and compile-time tuples (descriptors generated, D80). | Include/tupleobject.h | `603363c` |
-| `ni/Python/frames.c` | core | Maps machine-code stack frames to Python frames for `sys._getframe` and tracebacks; writes a compiled frame's locals into a traceback frame; resumes a compiled frame in ceval when tracing starts. | none (but `ni_getframe`: Python/sysmodule.c) | `f254b5d` |
+| `ni/Python/frames.c` | core | Maps machine-code stack frames to Python frames for `sys._getframe`, tracebacks and `warnings`, with their lines; writes a compiled frame's locals into a traceback frame; resumes a compiled frame in ceval when tracing starts. | none (but `ni_getframe`: Python/sysmodule.c) | `f254b5d` |
 | `ni/Python/frames.h` | core | Stack frame info (stack_frame_info_t), frame registration API and writing locals into a frame. | none | `6f8009a` |
 | `ni/Python/pbltinmodule.c` | translated + core | Registers the generated builtins; hand metas for min, max, sum, round etc. and type_call (`range`, `super`). | Python/bltinmodule.c, Objects/abstract.c, Objects/typeobject.c | `cddaf8d` |
 | `ni/Python/pbltinmodule.h` | glue | Declares `PsycoObject_IsInstance`. | Python/bltinmodule.c | `58e52de` |

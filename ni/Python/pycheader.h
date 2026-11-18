@@ -91,6 +91,10 @@ typedef struct {
                            (pycompiler.c:resume_if_tracing) */
   char resume_pending;  /* test for tracing at the next instruction: after
                            an inlined frame's return, or at a handler */
+  char call_site_noted; /* the frame's slot was given call_site */
+  int call_site;        /* 1 + the CALL_* instruction being compiled, or 0:
+                           a residual call in it that may run Python notes
+                           it in the frame's slot (codegen.c) */
   PyObject* changing_globals;  /* names of globals detected to change: saved
                                   in snapshots, so a respawn replays the same
                                   LOAD_GLOBAL decisions; shared, so never

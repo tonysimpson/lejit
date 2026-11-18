@@ -13,7 +13,7 @@
 
 /* A frame object for one item pvisitframes() visits: a real frame, the
    real frame of a (code, globals, frame) tuple, or a new emulated frame for
-   a compiled frame's (code, globals, tag) (f_lasti -1). New reference. */
+   a compiled frame's (code, globals, tag, lasti). New reference. */
 EXTERNFN PyFrameObject *psyco_emulate_frame(PyObject *o);
 /* the real frame, if the compiled code 'co' making the current C call is
    the one NiCode_Run runs (not a compiled callee); borrowed, or NULL */
@@ -42,6 +42,8 @@ struct stack_frame_info_s {
   long link_stack_depth; /* -1 if there is an inline frame following */
   PyCodeObject *co;
   PyObject *globals; /* NULL if not compile-time */
+  int back_lasti;    /* the instruction of the next frame out that called
+                        this one, or -1 */
 };
 
 PSY_INLINE stack_frame_info_t *finfo_last(stack_frame_info_t *finfo) {

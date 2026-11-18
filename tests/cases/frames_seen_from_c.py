@@ -1,8 +1,7 @@
 # What logging, warnings and line-number users see of compiled frames, from
-# the adversarial suite's frames_logging (KNOWN_BUGS C11). A keyword call
-# from compiled code runs its callee in a real frame, whose f_back skips the
-# compiled caller; warnings' C code walks tstate->frame, which skips every
-# compiled frame; emulated frames report their first line.
+# the adversarial suite's frames_logging (KNOWN_BUGS C11): the f_back of a
+# frame a keyword call runs, warnings' stacklevel, which _warnings walks in
+# C from tstate->frame, and emulated frames' current lines.
 import io
 import logging
 import sys
@@ -90,11 +89,11 @@ def lineno_chain():
 CASES = [
     ('pos_call_chain', "[()]", {}),
     ('kw_call_chain', "[()]",
-     {'xfail': "C11: a keyword call's real callee frame has f_back skipping the compiled caller"}),
-    ('warn_stacklevel', "[()]",
-     {'xfail': 'C11: warnings walks tstate->frame, which skips compiled frames'}),
+     {'xfail': "C11: a keyword call's real callee frame has f_back "
+               'skipping the compiled caller'}),
+    ('warn_stacklevel', "[()]", {}),
     ('log_caller', "[()]",
-     {'xfail': "C11: logging's findCaller crosses a keyword call and an emulated frame's first line"}),
-    ('lineno_chain', "[()]",
-     {'xfail': 'C11: an emulated frame reports its first line'}),
+     {'xfail': "C11: logging's findCaller crosses a keyword call, whose "
+               "real frame's f_back skips the compiled caller"}),
+    ('lineno_chain', "[()]", {}),
 ]

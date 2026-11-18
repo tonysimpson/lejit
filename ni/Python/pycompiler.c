@@ -1243,6 +1243,14 @@ static bool load_global_cached(PsycoObject *po, PyObject *name,
    *stack_to_pop counts everything including the callable. Keyword
    arguments go in a fresh dict: duplicates are impossible here (the
    bytecode compiler rejects them) and the callee checks the rest. */
+/* after a CALL_*: the slot no longer says where the frame is */
+static void end_call_site(PsycoObject *po) {
+  if (po->pr.call_site_noted)
+    psyco_note_call_site(po, -1);
+  po->pr.call_site = 0;
+  po->pr.call_site_noted = 0;
+}
+
 static vinfo_t *psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg,
                                    vinfo_t **stack_top, int *stack_to_pop) {
   int na = oparg, nk = 0, i;
@@ -2725,8 +2733,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         /* always the (NULL, attribute) form, see LOAD_METHOD */
         int i, stack_to_pop;
         extra_assert(psyco_knowntobe(NTOP(oparg + 2), 0));
+        po->pr.call_site = next_instr - (int)sizeof(_Py_CODEUNIT) + 1;
         x = psyco_ext_do_calls(po, CALL_FUNCTION, oparg, STACK_POINTER(),
                                &stack_to_pop);
+        end_call_site(po);
         if (x == NULL)
           break;
         for (i = stack_to_pop + 1; i--;) /* args, callable and the NULL */
@@ -2741,11 +2751,13 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       case CALL_FUNCTION_KW:
       case CALL_FUNCTION_EX: {
         int i, stack_to_pop;
+        po->pr.call_site = next_instr - (int)sizeof(_Py_CODEUNIT) + 1;
         if (opcode == CALL_FUNCTION_EX)
           x = psyco_ext_do_call_ex(po, oparg, STACK_POINTER(), &stack_to_pop);
         else
           x = psyco_ext_do_calls(po, opcode, oparg, STACK_POINTER(),
                                  &stack_to_pop);
+        end_call_site(po);
         if (x == NULL)
           break;
 
