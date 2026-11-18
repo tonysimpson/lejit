@@ -2019,6 +2019,7 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
         psyco_cs_align_rejects++;
 #endif
         fz_restore_invariant(&codebuf->snapshot);
+        array_release(result.diff);
         continue;
       }
       if (result.diff == NullArray && compatible_drops > 0) {
@@ -2048,8 +2049,10 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
         bestbuf = codebuf;
       }
     } else {
-      /* compatible_array() should have reset all 'tmp' fields */
+      /* compatible_array() should have reset all 'tmp' fields; the
+         differences it found before failing are dropped */
       fz_check_invariant(&codebuf->snapshot);
+      array_release(result.diff);
     }
   }
   if (dropbuf != NULL) {

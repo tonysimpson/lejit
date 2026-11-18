@@ -126,6 +126,39 @@ def other_code_extra_user():
     del c
     return r
 
+
+LOOPS = '''
+def f(n):
+    t = 0
+    i = 0
+    while i < n:
+        j = 0
+        while j < n:
+            t += i * j
+            j += 1
+        i += 1
+    return t
+'''
+
+
+_exec = exec    # by another name, so that the caller is compiled (C15)
+_warm = [200]
+
+
+def recompiled_loops_free():
+    # each compile of nested loops compares states at the loop heads; the
+    # differences found for a block not taken must be freed (the leak
+    # check, over 100 compiles). The first call compiles 200 times: what
+    # Ni's own allocators hold grows a little before it levels off
+    for _ in range(_warm.pop() if _warm else 1):
+        ns = {}
+        _exec(LOOPS, ns)
+        # called from C: a call site of its own would specialise on each
+        # new function until it went megamorphic, which looks like a leak
+        r = sum(map(ns['f'], (5,)))
+    return r
+
+
 CASES = [
     ('code_dies_with_shared_globals', [()], {'interpreted': 'calls exec (C15)'}),
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec (C15)'}),
@@ -134,4 +167,5 @@ CASES = [
     ('isinstance_instance_class_dies', [()], {}),
     ('borrowed_globals_reused', [()], {}),
     ('other_code_extra_user', [()], {}),
+    ('recompiled_loops_free', [()], {}),
 ]
