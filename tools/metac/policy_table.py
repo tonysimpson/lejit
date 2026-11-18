@@ -330,7 +330,7 @@ TRANSLATED_SLOTS = {
     'Objects/dictobject.c': {'type': 'PyDict_Type', 'slots': ['mp_length']},
     'Objects/bytesobject.c': {'type': 'PyBytes_Type', 'slots': ['sq_length']},
     'Objects/unicodeobject.c': {'type': 'PyUnicode_Type', 'slots': [
-        'sq_length', 'sq_concat', 'tp_richcompare']},
+        'sq_length', 'sq_concat', 'sq_contains', 'tp_richcompare']},
     # D89: member and method descriptors' __get__ (SLOT_ARGS' 'lvl')
     'Objects/descrobject.c': [{'type': 'PyMemberDescr_Type', 'slots': ['tp_descr_get']},
                               {'type': 'PyMethodDescr_Type', 'slots': ['tp_descr_get']}],
@@ -1637,7 +1637,7 @@ ENTRIES = {
         ]},
     'Objects/unicodeobject.c:PyUnicode_Contains': {
         'shape': '500a01f02f96',
-        'ni': ['ni/Objects/punicodeobject.c:punicode_contains'],
+        'ni': ['tools/metac/gen_abstract.py:generate'],
         'policy': [
             ('shortcut', 'const_fold', 'two constants'),
         ]},

@@ -9,13 +9,10 @@
  * holds them, taken from CPython's cache at start-up), as unicode_char
  * returns, so identities match CPython's.
  *
- * Length and + are generated (punicodeobject_gen.h, D89) from the C with
- * the descriptors below (policy_table.TYPES); what stays here is the
- * representation the C doesn't state: the inline character read, the
- * slices (D56) and compare's constant fold and one-call equality. 'in'
- * stays too: the generated one is the same but for the effect rules'
- * CfNoPython, with which pyflate runs 1.5% more instructions (METACOMPILER
- * failures log, QUESTIONS 51).
+ * Length, + and 'in' are generated (punicodeobject_gen.h, D89, D92) from
+ * the C with the descriptors below (policy_table.TYPES); what stays here is
+ * the representation the C doesn't state: the inline character read, the
+ * slices (D56) and compare's constant fold and one-call equality.
  */
 #include "pobject.h"
 #include "pboolobject.h"
@@ -38,9 +35,8 @@
 
 static PyObject *latin1[256];
 static binaryfunc unicode_subscript;
-static objobjproc unicode_contains;
 
-/* unicode_length, PyUnicode_Concat (D89) */
+/* unicode_length, PyUnicode_Concat, PyUnicode_Contains (D89, D92) */
 #include "punicodeobject_gen.h"
 
 /* unicode_richcompare compares any two str instances, subclasses included
@@ -234,19 +230,6 @@ static vinfo_t *punicode_subscript(PsycoObject *po, vinfo_t *v,
   return r;
 }
 
-/* PyUnicode_Contains: two constants fold, an error is left to run time */
-static vinfo_t *punicode_contains(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
-  if (is_compiletime(v->source) && is_compiletime(w->source)) {
-    int r = unicode_contains((PyObject *)CompileTime_Get(v->source)->value,
-                             (PyObject *)CompileTime_Get(w->source)->value);
-    if (r >= 0)
-      return vinfo_new(CompileTime_New(r));
-    PyErr_Clear(); /* raised again at run time */
-  }
-  return psyco_generic_call(po, unicode_contains, CfCommonIntBoolOrError, "vv",
-                            v, w);
-}
-
 INITIALIZATIONFN
 void psy_unicodeobject_init(void) {
   int c;
@@ -261,9 +244,7 @@ void psy_unicodeobject_init(void) {
     if ((latin1[c] = PyUnicode_FromOrdinal(c)) == NULL)
       Py_FatalError("ni: no one-character strings");
   unicode_subscript = PyUnicode_Type.tp_as_mapping->mp_subscript;
-  unicode_contains = PyUnicode_Type.tp_as_sequence->sq_contains;
   Psyco_DefineMeta(PyUnicode_Type.tp_richcompare, punicode_richcompare);
   Psyco_DefineMeta(unicode_subscript, punicode_subscript);
-  Psyco_DefineMeta(unicode_contains, punicode_contains);
   gen_unicodeobject_init();
 }
