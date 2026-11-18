@@ -50,8 +50,19 @@ The rules, none of them about one function:
     comparison with Py_NotImplemented is IS_IMPLEMENTED (P25);
   - a construct with no compile-time form (a field of an object, an array,
     an out-parameter) resumes CPython's algorithm at run time from its
-    statement, as for a changed slot. Each is listed in the report.
+    statement, as for a changed slot. Each is listed in the report;
+  - loops (D78, rule loops; loop_rule and counted_loop, shared with
+    gen_ceval.py): a for counting a variable by one to a bound neither
+    changes, the bound and start known at compile time, runs in the meta,
+    which emits its body once per turn; a bound that is the length of a
+    type with a known_length (policy_table.TYPES) is asked of Ni's
+    representation (PsycoTuple_Load), CPython's function where unknown;
+    any other loop is CPython's, resumed at it.
 Anything else stops that function (refused, with the reason).
+
+Units: abstract.c by default; --unit tuple translates the slots
+policy_table.TRANSLATED_SLOTS names for tupleobject.c into
+ptupleobject_gen.h, with gen_tupleobject_init() registering them.
 
 Run by generate.py; 'python3 gen_abstract.py --src DIR --pyconfig H'
 prints the header and the report.
