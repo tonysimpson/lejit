@@ -33,14 +33,14 @@ Rules for the phase:
 - Each failure of the generator goes in METACOMPILER's failures log with the CPython construct that caused it, before a heavier tool is tried.
 
 **When the phase is done.** All of:
-1. Every `translated` and `core + translated` file in `doc/MAP.md` is generated, or the parts left are named in MAP as core with a reason.
+1. Every definition in Ni that mirrors a CPython one is generated, or hand-written with a named reason: `tools/metac/donecheck.py` (D90) exits 0. Whether a reason that is only a policy item the translator doesn't implement is enough is QUESTIONS 50.
 2. Nothing in the build is hand-translated from CPython; `bytecodes37.c` is gone.
-3. `tools/check.sh` passes, and the behaviour tests and CPython's tests give the same results as the hand-written baseline (`19fa1df`, STATUS "final 3.7 baseline").
-4. A re-baseline shows no loss against that baseline: pyperformance, `tools/compilebench.py` and `tools/codesize.py`, in `doc/STATUS.md`.
+3. `tools/check.sh` passes, and the behaviour tests and CPython's tests give the same results as the hand-written baseline (`19fa1df`).
+4. A re-baseline shows no loss against that baseline: pyperformance, `tools/compilebench.py` and `tools/codesize.py`, recorded in the commit message.
 
 Then 3.8 (positional-only arguments, CPython's own vectorcall, a few opcodes) is the first test that versions differ only in the input.
 
-**Previous phase, done 2026-11-17:** a robust 3.7 baseline with worthwhile performance. All four of its points were met (STATUS "final 3.7 baseline at `cdd8a94`": pyperformance 2.19×, `tools/check.sh` passing, no expected failures). Its open items are in `doc/BACKLOG.md`; those moved to later versions are marked there (D64).
+**Previous phase, done 2026-11-17:** a robust 3.7 baseline with worthwhile performance. All four of its points were met at `cdd8a94`: pyperformance 2.19×, `tools/check.sh` passing, no expected failures. Its open items are in `doc/BACKLOG.md`; those moved to later versions are marked there (D64).
 
 Hand-written improvements are translated-layer code too: each one is something the generator must reproduce. Record the pattern behind each in `doc/PATTERNS.md`.
 
@@ -73,11 +73,4 @@ The owner accepts this is a very high bar. Without it the code stays unmaintaina
 
 ## Success looks like
 
-For this phase: the backlog's bugs fixed or knowingly accepted, CPython's tests and pyperformance passing under Ni, and each performance change measured against speed, compile time and code size.
-
-For the classification phase (done):
-
-1. Every file and every significant function in this repo is classified (`doc/MAP.md`).
-2. The translation patterns are catalogued with examples (`doc/PATTERNS.md`).
-3. What was removed from Psyco during the port, and why, is known (`doc/history/`).
-4. There's enough understanding of the core (`doc/ARCHITECTURE.md`, `doc/GLOSSARY.md`) to design a tidied core and a meta-compiler interface against it.
+For this phase: the four points of "When the phase is done" above, with each performance change measured against speed, compile time and code size (D29). The classification phase before it is done: every file classified (`doc/MAP.md`), the patterns catalogued (`doc/PATTERNS.md`), the port's removals known (`doc/history/`), the core described (`doc/ARCHITECTURE.md`, `doc/GLOSSARY.md`).
