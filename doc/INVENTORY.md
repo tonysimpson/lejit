@@ -233,17 +233,17 @@ Ni's compile-time copy of `ceval.c`'s main loop, the `cimpl_*` run-time copies o
 | error message macros, unbound_local_error | 15 | translated | Python/ceval.c:format_exc_check_arg (UNBOUNDLOCAL_ERROR_MSG, NAME_ERROR_MSG) | P24 |  |  |
 | unbound_deref_error | 17 | translated | Python/ceval.c:format_exc_unbound | P24 |  |  |
 | CELL_ob_ref descriptor | 2 | core | none | P15 | OTHER: FMUT (a cell can change under any call) | Field descriptor |
-| cimpl_import_from | 53 | translated | Python/ceval.c:import_from | P12 |  | Copy (F44) |
+| cimpl_import_from | 53 | translated | Python/ceval.c:import_from | P12 |  | **Removed, generated (D88, `fa3dae7`)**: `ceval_import_from`, a run-time copy of the C (rule `helper_copy`); was: Copy (F44) |
 | cimpl_exc_match | 17 | translated | partial: Python/ceval.c:cmp_outcome (PyCmp_EXC_MATCH) | P12 |  | F43 |
-| cimpl_store_deref | 7 | translated | Python/ceval.c:TARGET(STORE_DEREF) | P12 | REF: increfs v (ceval steals it) |  |
+| cimpl_store_deref | 7 | translated | Python/ceval.c:TARGET(STORE_DEREF) | P12 | REF: increfs v (ceval steals it) | **Removed, generated (D88, `fa3dae7`)**: the case stores the cell inline (`field_store`) |
 | cimpl_build_unpack | 34 | translated | Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK_WITH_CALL)/(BUILD_TUPLE_UNPACK)/(BUILD_LIST_UNPACK), check_args_iterable | P12 |  | Loops over a tuple of parts instead of PEEK(i) |
-| cimpl_build_map_unpack | 52 | translated | Python/ceval.c:TARGET(BUILD_MAP_UNPACK)/(BUILD_MAP_UNPACK_WITH_CALL), format_kwargs_mapping_error | P12 |  | Over a tuple of parts |
+| cimpl_build_map_unpack | 52 | translated | Python/ceval.c:TARGET(BUILD_MAP_UNPACK)/(BUILD_MAP_UNPACK_WITH_CALL), format_kwargs_mapping_error | P12 |  | **Removed, generated (D88, `fa3dae7`)**: one wrapper call per part (`error_handler`); was: Over a tuple of parts |
 | cimpl_build_set_unpack | 14 | translated | Python/ceval.c:TARGET(BUILD_SET_UNPACK) | P12 |  |  |
 | special_lookup | 10 | translated | Python/ceval.c:special_lookup |  |  | Copy |
 | cimpl_setup_with | 25 | translated | partial: Python/ceval.c:TARGET(SETUP_WITH) (up to the block setup) | P12 | DRIFT: mgr stays on the stack while __enter__ runs | Results through an A array |
 | cimpl_call_exit | 10 | translated | partial: Python/ceval.c:TARGET(WITH_CLEANUP_START) (the __exit__ call) | P12 |  |  |
 | cimpl_load_build_class | 25 | translated | Python/ceval.c:TARGET(LOAD_BUILD_CLASS) | P12 |  |  |
-| cimpl_delete_deref | 11 | translated | partial: Python/ceval.c:TARGET(DELETE_DEREF) | P12,P27 |  | Returns 1 for an empty cell; the caller raises |
+| cimpl_delete_deref | 11 | translated | partial: Python/ceval.c:TARGET(DELETE_DEREF) | P12,P27 |  | **Removed, generated (D88, `fa3dae7`)**: the case stores NULL inline and releases with `psyco_decref_v`; was: Returns 1 for an empty cell; the caller raises |
 | cimpl_load_global | 20 | translated | partial: Python/ceval.c:TARGET(LOAD_GLOBAL) | P12 | DRIFT: always PyDict_GetItem (3.7: _PyDict_LoadGlobal for exact dicts, else PyObject_GetItem), so lookup errors are swallowed and a dict subclass's __getitem__/__missing__ ignored; OTHER: RECLIMIT_SAFE_ENTER | The uncached path |
 | unpack_iterable | 86 | translated | Python/ceval.c:unpack_iterable |  | DRIFT: fills sp[] upwards (the caller pushes in reverse) | 3.7 messages (F30) |
 | cimpl_unpack_iterable | 4 | translated | Python/ceval.c:unpack_iterable | P12 |  | Wrapper (argcntafter -1) |
@@ -254,8 +254,8 @@ Ni's compile-time copy of `ceval.c`'s main loop, the `cimpl_*` run-time copies o
 | cimpl_import_name | 26 | translated | partial: Python/ceval.c:import_name | P12 | DRIFT: always calls __import__ (no PyImport_ImportModuleLevelObject fast path); passes None as locals (3.7 passes f_locals at module level); keeps Py2's level -1 test |  |
 | cimpl_import_all_from | 53 | translated | Python/ceval.c:import_all_from | P12 | DRIFT: Py2 shape (GetAttrString, AS_STRING[0] test, always PyDict_SetItem) | Called with globals as locals |
 | compute_and_raise_exception | 34 | core | none | P12 | EFFECT: PyErr_Restore CfNoReturnValue | Raises a virtual exception for real |
-| cimpl_format_value | 27 | translated | Python/ceval.c:TARGET(FORMAT_VALUE) | P12 |  |  |
-| cimpl_build_string | 16 | translated | Python/ceval.c:TARGET(BUILD_STRING) | P12 | OTHER: up to four parts as arguments, else a tuple |  |
+| cimpl_format_value | 27 | translated | Python/ceval.c:TARGET(FORMAT_VALUE) | P12 |  | **Removed, generated (D88, `fa3dae7`)**: the conversion switch folded (`switch_arms`) |
+| cimpl_build_string | 16 | translated | Python/ceval.c:TARGET(BUILD_STRING) | P12 | OTHER: up to four parts as arguments, else a tuple | **Removed, generated (D88, `fa3dae7`)**: `ceval_BUILD_STRING_0` (`residual_wrapper`, `ARRAY_ARGS_MAX`) |
 | cimpl_minmax_step | 15 | translated | partial: Python/bltinmodule.c:min_max (one step, no key or default) | P12 |  | For fused generator-expression consumers (core policy) |
 | cimpl_minmax_result | 10 | translated | partial: Python/bltinmodule.c:min_max (empty-sequence error) | P12 |  |  |
 | cimpl_generator_stop | 23 | translated | partial: Objects/genobject.c:gen_send_ex (PEP 479) with Python/errors.c:_PyErr_ChainExceptions | P12 | DRIFT: the generator message only (coroutines and async generators never reach it) | For fused generator expressions |
@@ -273,8 +273,8 @@ Ni's compile-time copy of `ceval.c`'s main loop, the `cimpl_*` run-time copies o
 | case CONTINUE_LOOP | 5 | core | Python/ceval.c:TARGET(CONTINUE_LOOP) |  |  | Hand-written; EContinue |
 | case RAISE_VARARGS | 28 | core | Python/ceval.c:TARGET(RAISE_VARARGS) | P12,P27 | EFFECT: cimpl_do_raise and cimpl_reraise CfPyErrAlways | Hand-written; exceptions; two commented MISSING_OPCODE lines |
 | case RETURN_VALUE | 26 | mixed | Python/ceval.c:TARGET(RETURN_VALUE) | P12 | VIRTUAL: a fused generator expression returns its consumer's result (GENEXPR_*) | Hand-written; EReturn; core part the fusion |
-| case FORMAT_VALUE | 24 | translated | Python/ceval.c:TARGET(FORMAT_VALUE) | P12,P08 | SHORTCUT: a known exact str with no conversion stays; RESTYPE: result asserted exact str | Hand-written; BUG [inferred]: a user __format__ may return a str subclass (PyObject_Format checks PyUnicode_Check, not exact) KNOWN_BUGS F98. |
-| case BUILD_STRING | 27 | translated | Python/ceval.c:TARGET(BUILD_STRING) | P12,P08,P18 | RESTYPE: str | Hand-written; more than 4 parts through a virtual tuple |
+| case FORMAT_VALUE | 24 | translated | Python/ceval.c:TARGET(FORMAT_VALUE) | P12,P08 | SHORTCUT: a known exact str with no conversion stays; RESTYPE: result asserted exact str | **Removed, generated (D88, `fa3dae7`)**; no result type (F98 fixed); a conversion is two calls; was: Hand-written; BUG [inferred]: a user __format__ may return a str subclass (PyObject_Format checks PyUnicode_Check, not exact) KNOWN_BUGS F98. |
+| case BUILD_STRING | 27 | translated | Python/ceval.c:TARGET(BUILD_STRING) | P12,P08,P18 | RESTYPE: str | **Removed, generated (D88, `fa3dae7`)**; one call, as by hand; was: Hand-written; more than 4 parts through a virtual tuple |
 | case YIELD_VALUE | 53 | mixed | Python/ceval.c:TARGET(YIELD_VALUE) in name only | P09,P12,P05 | VIRTUAL: generator expression fused with its consumer (list, set, sum, min/max, any/all); SHORTCUT: sum by PsycoNumber_Add when the type is known; LIKELY: any/all early exit unlikely | Hand-written; core part the fusion; sum follows bltinmodule.c:builtin_sum's generic loop |
 | case RETURN_NONE (#ifdef) | 13 | glue | none |  |  | Dead: not a 3.7 opcode; two commented MISSING_OPCODE lines |
 | case POP_BLOCK | 9 | core | Python/ceval.c:TARGET(POP_BLOCK) | P17 |  | Hand-written; block stack (UNWIND_BLOCK) |
@@ -290,15 +290,15 @@ Ni's compile-time copy of `ceval.c`'s main loop, the `cimpl_*` run-time copies o
 | case DELETE_FAST | 14 | translated | Python/ceval.c:TARGET(DELETE_FAST) | P24 |  | Hand-written |
 | case LOAD_CLOSURE | 12 | translated | Python/ceval.c:TARGET(LOAD_CLOSURE) | P17 |  | Hand-written; leading comment on cells |
 | case LOAD_DEREF | 20 | translated | Python/ceval.c:TARGET(LOAD_DEREF) | P15,P05,P17,P24 | REF: need_reference on the borrowed cell content | Hand-written |
-| case STORE_DEREF | 7 | translated | Python/ceval.c:TARGET(STORE_DEREF) | P12 |  | Hand-written |
-| case DELETE_DEREF | 13 | translated | Python/ceval.c:TARGET(DELETE_DEREF) | P12,P05,P24 |  | Hand-written |
+| case STORE_DEREF | 7 | translated | Python/ceval.c:TARGET(STORE_DEREF) | P12 |  | **Removed, generated (D88, `fa3dae7`)**; was: Hand-written |
+| case DELETE_DEREF | 13 | translated | Python/ceval.c:TARGET(DELETE_DEREF) | P12,P05,P24 |  | **Removed, generated (D88, `fa3dae7`)**; was: Hand-written |
 | case LOAD_BUILD_CLASS | 10 | translated | Python/ceval.c:TARGET(LOAD_BUILD_CLASS) | P12 |  | Hand-written |
 | case BUILD_TUPLE | 7 | translated | Python/ceval.c:TARGET(BUILD_TUPLE) | P18 | VIRTUAL: virtual tuple | Hand-written |
 | case BUILD_TUPLE_UNPACK_WITH_CALL, BUILD_TUPLE_UNPACK, BUILD_LIST_UNPACK | 50 | mixed | Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK_WITH_CALL)/(BUILD_TUPLE_UNPACK)/(BUILD_LIST_UNPACK) | P22,P18,P12,P08 | VIRTUAL: parts that are tuples with known items make a virtual tuple; RESTYPE: list or tuple | Hand-written; core part the virtual concatenation |
 | case BUILD_LIST | 9 | translated | Python/ceval.c:TARGET(BUILD_LIST) | P18 | VIRTUAL: PsycoList_New (VLIST_LENGTH_MAX) | Hand-written |
 | case BUILD_MAP | 19 | translated | Python/ceval.c:TARGET(BUILD_MAP) | P09 |  | Hand-written |
-| case BUILD_CONST_KEY_MAP | 29 | translated | Python/ceval.c:TARGET(BUILD_CONST_KEY_MAP) | P24 |  | Hand-written |
-| case BUILD_MAP_UNPACK, BUILD_MAP_UNPACK_WITH_CALL, BUILD_SET_UNPACK | 30 | translated | Python/ceval.c:TARGET(BUILD_MAP_UNPACK)/(BUILD_MAP_UNPACK_WITH_CALL)/(BUILD_SET_UNPACK) | P12,P08 | RESTYPE: dict or set | Hand-written |
+| case BUILD_CONST_KEY_MAP | 29 | translated | Python/ceval.c:TARGET(BUILD_CONST_KEY_MAP) | P24 |  | Hand-written (D88: a negative type check of `keys`, no resumable arm; METACOMPILER failures log) |
+| case BUILD_MAP_UNPACK, BUILD_MAP_UNPACK_WITH_CALL, BUILD_SET_UNPACK | 30 | translated | Python/ceval.c:TARGET(BUILD_MAP_UNPACK)/(BUILD_MAP_UNPACK_WITH_CALL)/(BUILD_SET_UNPACK) | P12,P08 | RESTYPE: dict or set | BUILD_MAP_UNPACK* generated (D88), BUILD_SET_UNPACK (D81); was: Hand-written |
 | case STORE_MAP (#ifdef) | 12 | glue | none |  |  | Dead: not a 3.7 opcode |
 | case MAP_ADD | 12 | translated | Python/ceval.c:TARGET(MAP_ADD) | P09 |  | Hand-written (#ifdef; defined in 3.7) |
 | case BUILD_SET | 22 | translated | Python/ceval.c:TARGET(BUILD_SET) | P12,P08 | RESTYPE: set | Hand-written |
@@ -306,9 +306,9 @@ Ni's compile-time copy of `ceval.c`'s main loop, the `cimpl_*` run-time copies o
 | case LOAD_ATTR | 10 | translated | Python/ceval.c:TARGET(LOAD_ATTR) | P09 |  | Hand-written |
 | case LOAD_METHOD | 14 | mixed | Python/ceval.c:TARGET(LOAD_METHOD) | P09 | DRIFT: always pushes (NULL, attribute), never (method, self); VIRTUAL: relies on a virtual bound method | Hand-written; paired with CALL_METHOD |
 | case COMPARE_OP | 48 | translated | Python/ceval.c:TARGET(COMPARE_OP) with cmp_outcome | P09,P23,P12 | SHORTCUT: is / is not as word compares | Hand-written |
-| case IMPORT_NAME | 22 | translated | Python/ceval.c:TARGET(IMPORT_NAME) | P12 |  | Hand-written; the Py<2.5 branch is dead |
+| case IMPORT_NAME | 22 | translated | Python/ceval.c:TARGET(IMPORT_NAME) | P12 |  | Hand-written (D88: `import_name` takes the frame, core); the Py<2.5 branch is dead |
 | case IMPORT_STAR | 14 | translated | Python/ceval.c:TARGET(IMPORT_STAR) | P12 | EFFECT: CfReturnTypeInt\|CfPyErrIfNonNull; DRIFT: globals as locals, no PyFrame_FastToLocals | Hand-written |
-| case IMPORT_FROM | 9 | translated | Python/ceval.c:TARGET(IMPORT_FROM) | P12 |  | Hand-written |
+| case IMPORT_FROM | 9 | translated | Python/ceval.c:TARGET(IMPORT_FROM) | P12 |  | **Removed, generated (D88, `fa3dae7`)**; was: Hand-written |
 | case JUMP_FORWARD | 5 | mixed | Python/ceval.c:TARGET(JUMP_FORWARD) |  |  | Hand-written; core part the merge-point lookup |
 | case POP_JUMP_IF_FALSE, POP_JUMP_IF_TRUE, JUMP_IF_FALSE_OR_POP, JUMP_IF_TRUE_OR_POP | 58 | mixed | Python/ceval.c:TARGET(POP_JUMP_IF_FALSE)/(POP_JUMP_IF_TRUE)/(JUMP_IF_FALSE_OR_POP)/(JUMP_IF_TRUE_OR_POP) | P09,P05 | FORGET: Psyco_ForgetClasses before the branch to a merge point (D59) | Hand-written; core part psyco_compile_cond and NEXT_INSTR_POP; the Py<2.7 branches are dead |
 | case JUMP_ABSOLUTE | 5 | mixed | Python/ceval.c:TARGET(JUMP_ABSOLUTE) |  |  | Hand-written; core part the merge point |

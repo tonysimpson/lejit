@@ -139,6 +139,8 @@ Not needed for 3.8 [inferred]: an entry mechanism other than the frame hook (the
 
 Order: 8, 7, 6 and 9 are what a compile needs; 1 (with 2) is what generation needs; then 3, 11 and 12 for same behaviour; 4 and 5 before step 5's families. Total, roughly 3–5 days, most of it item 9.
 
+**After D88** (`fa3dae7`) [run]: 71 generated on 3.8.20 (3.7.17: 73). `STORE_DEREF`, `DELETE_DEREF`, `BUILD_STRING` and `BUILD_MAP_UNPACK` are byte-identical to 3.7's. Refused on 3.8 only: `IMPORT_FROM` and `BUILD_MAP_UNPACK_WITH_CALL` (their helpers take `PyThreadState *tstate`; rule `helper_copy` takes object parameters only, and 3.8's `import_from` has a `goto`), `FORMAT_VALUE` (the `switch` gained `case FVC_NONE` and a `default:` that raises SystemError and jumps to `error`, which the reader refuses). 3.8 needs: a `tstate` parameter in a copy as the current thread's, and a switch arm that can't be taken (a compile-time value outside the arms) read as dead.
+
 ## Rerunning
 
 The scratch driver was a few lines: build `cslots.Target(src, version, python, pyconfig)` from `generate.target_info(python)`, then call each `GENERATORS` entry's `build` (or `module:function`) and `mechanisms.build` on its own, writing each header and its report. Compare with `generate.py` on 3.7.17 per header, and `gen_ceval`'s output case by case (`      case X: {` starts a case). `python3 tools/metac/ceval_reader.py SRC` and `policy.py --src SRC` run alone.

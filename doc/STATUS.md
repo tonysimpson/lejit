@@ -1,5 +1,13 @@
 # Status
 
+## 2026-11-18: cells, imports, map unpacking and strings generated (GENERATION.md step 8; `fa3dae7`, `e33981f`, D88)
+
+A core primitive, `psyco_xdecref_v` (an emitted `Py_XDECREF` of a run-time value Ni holds no reference to), and six rules in `gen_ceval.py` (`field_store`, `helper_copy`, `error_handler`, `residual_wrapper`, `switch_arms`, `type_test_generic`).
+- **Generated:** `STORE_DEREF`, `DELETE_DEREF`, `IMPORT_FROM`, `BUILD_MAP_UNPACK`, `BUILD_MAP_UNPACK_WITH_CALL`, `BUILD_STRING`, `FORMAT_VALUE`: 73 of 119. Hand-written still: `IMPORT_NAME`, `BUILD_CONST_KEY_MAP`, `BUILD_TUPLE_UNPACK*` (failures log). F98 and F110 fixed.
+- **Same code:** 4,142 of 4,463 code objects same; every first difference is a generated case's new code (inline cell store, per-part map merges, `PyObject_Format` direct, `ceval_import_from`) or promotion data and registers after it.
+- **Instructions** (release): nothing slower beyond noise (hexiom 39.71 → 39.73 M, bimodal in both builds).
+- **Checked build:** generation twice, same output; `tests/run.py` 897 pass; `compile_bounds.py` 7; `cpython_tests.py -j 2` 285 modules, 0 unexpected; `--all` 371 modules, 1 unexpected: `test_queue` (6 errors with Ni, 5 plain; rerun alone three times, 6 and 6 each time: timing, as D86 found).
+- **3.8.20** (not built): 71 generated; `IMPORT_FROM`, `BUILD_MAP_UNPACK_WITH_CALL` (`tstate` helpers) and `FORMAT_VALUE` (a raising `default:`) refused there.
 ## 2026-11-18: C doubles from the general translator (GENERATION.md step 5, doubles; `cddaf8d`, D87)
 
 `tools/metac/scalars.py` gives the translator a `double` representation (`TYPES`), copies runs of scalar statements into C helpers (rule `copy_through`) and inlines static functions given a pointer or a function (rule `inline_static`); `gen_float.py` is gone.
