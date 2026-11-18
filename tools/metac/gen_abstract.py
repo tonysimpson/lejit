@@ -90,6 +90,8 @@ import cslots  # noqa: E402
 import cpython_src  # noqa: E402
 import policy_table  # noqa: E402
 import scalars  # noqa: E402
+import conditions  # noqa: E402
+import pointers  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(HERE))
 CFILE = 'Objects/abstract.c'
@@ -98,10 +100,13 @@ NI_DECLS = 'ni/Objects/pabstract.h'
 NI_HEADERS = ['ni/Objects/pabstract.h', 'ni/Objects/pobject.h', 'ni/Objects/pfloatobject.h',
               'ni/Objects/plongobject.h', 'ni/Objects/piterobject.h',
               'ni/Objects/ptupleobject.h', 'ni/Objects/plistobject.h',
-              'ni/Objects/pdictobject.h']
+              'ni/Objects/pdictobject.h', 'ni/Objects/pboolobject.h',
+              'ni/Objects/pstructmember.h', 'ni/Objects/pmethodobject.h']
 # policy items the translator implements; any other item on a function's
 # entry leaves it to its hand translation
-IMPLEMENTED = {'likely', 'restype', ('shortcut', 'if_known')}
+IMPLEMENTED = {'likely', 'restype', ('shortcut', 'skip_check'), ('shortcut', 'if_known'),
+               ('shortcut', 'const_fold'), ('promote', 'known_only'),
+               ('ref', 'need_reference'), ('other', 'mutable_fields')}
 # the C names that are vocabulary, never expanded as macros
 KEEP = {'Py_INCREF', 'Py_DECREF', 'Py_XINCREF', 'Py_XDECREF', 'assert',
         'NULL', 'Py_None', 'Py_NotImplemented', 'Py_True', 'Py_False',
@@ -200,13 +205,20 @@ def fnptr_param(p):
 class Source:
     def __init__(self, src, pyconfig, defines, cfile=CFILE):
         self.src = src
+        self.pyconfig, self.defines = pyconfig, defines
         self.cfile = CFILE = cfile
         self.macros, pptoks = cparse.cpp(src, pyconfig, CFILE, defines)
-        # macros the file #undefs: in force for the functions before
-        self.undefined = cparse.undefined_later(src, pyconfig, CFILE,
-                                                self.macros, defines)
         self.decls = cparse.Decls(pptoks)
-        text = self.read_text()
+        # the file's #if branches as the target's build takes them (rule
+        # preprocess_conditionals): the rest of the text is empty lines
+        text, undefs = cparse.conditionals(src, pyconfig, CFILE, defines,
+                                           self.read_text())
+        # macros the file #undefs: in force for the functions before
+        self.undefined = {}
+        for line, name, macro in undefs:
+            if name not in self.macros and name not in self.undefined \
+                    and macro is not None:
+                self.undefined[name] = (line, macro)
         toks, self.local_macros = ctokens.tokenize(text, CFILE)
         pptoks_lines = ctokens.tokenize(text, CFILE, directives=True)[0]
         # a conditional chooses between texts; an #undef ends a macro the
@@ -887,7 +899,8 @@ class Translator:
             if decl.ret == 'vinfo_t *':
                 return 'val'
             raise Refuse('Ni declares %s returning %s' % (decl.name, decl.ret))
-        if f.static:
+        if f.static or f.name in getattr(self, 'slot_roots', {}):
+            # a slot's meta returns its int as a vinfo, NULL for the error
             return 'val'
         raise Refuse('an int result needs its convention: declare %s in %s'
                      % (self.meta_name(f), NI_DECLS))
@@ -1098,7 +1111,16 @@ class Translator:
                  and v not in declared_inside]
         if None in decls:
             raise Refuse('copy: an array declared outside it')
-        body = self.rename_statics(body)
+        # a static that reaches itself again (k_mul and k_lopsided_mul) is
+        # not copied
+        making = self.__dict__.setdefault('copies_making', set())
+        if key in making:
+            raise Refuse('copy: %s calls itself' % f.name)
+        making.add(key)
+        try:
+            body = self.rename_statics(body)
+        finally:
+            making.discard(key)
         body = ''.join('Py_INCREF(%s); ' % v for v in sorted(owned)) + body
         ret = f.ret
         text = 'static %s %s(%s) {\n  %s\n  %s\n}\n' % (
@@ -1397,7 +1419,7 @@ class RepresentationRules:
             return None
         text = ' '.join(cparse.c_expr(e).replace('(', '').replace(')', '').split())
         if text not in self.likely:
-            text = ' '.join(cparse.c_expr(e)[1:-1].split())   # the C as written
+            text = self.likely_key(e) or text   # the C as written
         how = self.likely.get(text)
         if how is None:
             raise Refuse("no 'likely' item in the policy table for the run-time"
@@ -1706,7 +1728,8 @@ def once_do(s):
     return not found
 
 
-class Walk(RepresentationRules, scalars.ScalarRules):
+class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
+           pointers.PointerRules):
     """One translation of a function: the meta's text, and what it found
     (promotions it had to do after a call, the parameters whose type it
     reads before any call on every path)."""
@@ -1772,6 +1795,8 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         for item in self.tr.policy_items(f.name):
             if tuple(item[:2]) == ('shortcut', 'if_known'):
                 self.if_known(st, out, item[2])
+            if tuple(item[:2]) == ('shortcut', 'const_fold'):
+                self.const_fold(st, out)
         self.block(f.ast, st, out, [])
         if st.pending is not None:
             raise Refuse('a borrowed reference stored into a new object, never'
@@ -2142,6 +2167,8 @@ class Walk(RepresentationRules, scalars.ScalarRules):
             if e[2][0] != 'id':
                 raise ResumeHere('a store into %s' % cparse.c_expr(e[2]))
             name = e[2][1]
+            if self.raw_step(st, out, name, e[1], e[3], frames):
+                return
             if e[1] == '=':
                 self.assign(st, out, name, e[3], frames)
             elif e[1] in ('+=', '-=') and st.vars.get(name) is not None \
@@ -2166,6 +2193,17 @@ class Walk(RepresentationRules, scalars.ScalarRules):
                     and (cparse.c_expr(e[2][0]) == st.pending[0]
                          or e[2][0] == ('id', st.pending[1])):
                 st.pending = None     # the store took the reference
+                return
+            if fn in ('Py_INCREF', 'Py_XINCREF') and e[2][0] in (
+                    ('id', 'Py_None'), ('id', 'Py_True'), ('id', 'Py_False')):
+                return      # Ni's constant for it is made where it is used
+            if fn == 'Py_XINCREF' and e[2][0][0] == 'id' and getattr(
+                    st.vars.get(e[2][0][1]), 'known_null', False):
+                return      # NULL here
+            if fn in ('Py_INCREF', 'Py_XINCREF') and getattr(
+                    self.var_of(st, e[2][0]), 'singleton', False):
+                return      # it holds Ni's constant, a new reference already
+            if fn in ('Py_INCREF', 'Py_XINCREF') and self.noref_incref(st, out, e[2][0]):
                 return
             if fn in ('Py_INCREF', 'Py_XINCREF'):
                 v = self.var_of(st, e[2][0])
@@ -2200,7 +2238,11 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         v = st.vars.get(name)
         if v is None:
             raise Refuse('assignment to %s' % name)
-        val = self.ev(e, st, out, frames, dest=name)
+        val = self.raw_load(e, st, out, owned=True) or self.singleton(e, st, out) \
+            or self.ev(e, st, out, frames, dest=name)
+        noref = getattr(val, 'noref', False) or getattr(val.var, 'noref', False)
+        v.known_null = False
+        singleton = getattr(val, 'singleton', False)
         if not v.isparam:
             st.known.discard(name)      # a known type (known_type) is the old value's
         if v.bt == 'ptr':
@@ -2234,6 +2276,7 @@ class Walk(RepresentationRules, scalars.ScalarRules):
                 if v.owned in ('yes', 'shadow'):
                     self.release(v, out)
                 v.owned = 'dead'
+                v.known_null = True     # returned, it is the error
                 return
             if v.ctype in INT_TYPES and val.bt == 'ct':
                 # an integer that is run-time around a loop: its first
@@ -2264,6 +2307,7 @@ class Walk(RepresentationRules, scalars.ScalarRules):
             v.owned = 'no'
         v.alias = param_alias(val.var) if not val.owned else None
         v.conv = val.conv
+        v.noref, v.singleton = noref, singleton
         v.virt = val.virt
         if val.conv and val.conv.get('checkable') and not val.conv.get('check') \
                 and self.loop_ctx and self.errors_leave_loop(name, frames):
@@ -2282,6 +2326,9 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         kind = self.sm.kind
         if e is None:
             raise Refuse('return without a value')
+        if e[0] == 'id' and getattr(st.vars.get(e[1]), 'known_null', False) \
+                and st.vars[e[1]].owned == 'dead':
+            e = ('id', 'NULL')      # 'v = NULL; ... return v;'
         val = self.rep_condition_value(e, st, out, frames) \
             or self.ev(e, st, out, frames, dest='<return>')
         if val.bt == 'g':
@@ -2302,6 +2349,8 @@ class Walk(RepresentationRules, scalars.ScalarRules):
                 raise ResumeHere('returns the constant %s' % val.c)
             if val.var is not None and val.var.owned == 'no':
                 raise Refuse('returns %s, which it does not own' % val.var.name)
+            if getattr(val.var, 'noref', False):
+                raise Refuse('returns %s, read from memory with no reference' % val.var.name)
             if val.conv and val.conv.get('always_error'):
                 self.release_all(st, out, keep=val.var.name if val.var else None)
                 out('return %s;' % val.c)
@@ -2406,8 +2455,20 @@ class Walk(RepresentationRules, scalars.ScalarRules):
             out_t(line)
         for line in facts_f:
             out_f(line)
+        rn = self.raw_null_test(c, st)
+        if rn is not None:
+            # rule raw_pointer: where the pointer read is NULL, the meta's
+            # vinfo holds no object; that path is translated to its end
+            name, when = rn
+            sn, on = (st_t, out_t) if when else (st_f, out_f)
+            x = sn.vars[name]
+            on('vinfo_decref(%s, po);' % x.cname)
+            x.owned, x.known_null = 'dead', True
         self.release_dead(st_t, out_t, self.tr.live.before[id(then)])
         self.branch(then, st_t, out_t, frames)
+        if rn is not None and rn[1] and not st_t.ended and \
+                getattr(st_t.vars[rn[0]], 'known_null', False):
+            self.rest_of_path(st_t, out_t, frames)
         if els is not None:
             self.release_dead(st_f, out_f, self.tr.live.before[id(els)])
             self.branch(els, st_f, out_f, frames)
@@ -2475,6 +2536,8 @@ class Walk(RepresentationRules, scalars.ScalarRules):
                 v.tp = None
             if va.conv != vb.conv:
                 v.conv = None
+            v.noref = getattr(va, 'noref', False) or getattr(vb, 'noref', False)
+            v.singleton = getattr(va, 'singleton', False) and getattr(vb, 'singleton', False)
             st.vars[name] = v
         st.ended = False
 
@@ -2482,6 +2545,10 @@ class Walk(RepresentationRules, scalars.ScalarRules):
 
     def cond(self, e, st, out, frames, facts_t=None, facts_f=None):
         r = self.rep_cond(e, st, out, frames) if self.reps() else None
+        if r is None:
+            r = self.assumed(e)
+        if r is None:
+            r = self.bit_test(e, st, out, frames)
         if r is not None:
             return r
         k = e[0]
@@ -2601,6 +2668,14 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         if va.bt == 'ct':
             va, vb, op = vb, va, FLIP[op]
             a, b = b, a
+        if va.bt == 'rt' and vb.c == 'NULL' and op in ('==', '!=') and \
+                getattr(va.var, 'noref', False):
+            # rule raw_pointer: an object read from memory may be NULL
+            vb = Val('ct', '0', 'long')
+            va = Val('rt', va.c, 'long', var=va.var)
+        if va.bt == 'rt' and vb.c == 'NULL' and op in ('==', '!=') and \
+                va.ctype.endswith('*'):
+            vb = Val('ct', '0', 'long')     # a C pointer: a word
         if self.s.is_obj(va.ctype) or self.s.is_obj(vb.ctype):
             raise ResumeHere('a compare of the object %s' % cparse.c_expr(a))
         cc = self.new_tmp('condition_code_t')
@@ -2610,6 +2685,8 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         if inverted:
             out('%s = INVERT_CC(%s);' % (cc, cc))
         text = ' '.join(cparse.c_expr(e).replace('(', '').replace(')', '').split())
+        if text not in self.likely:
+            text = self.likely_key(e) or text   # the C as written
         how = self.likely.get(text)
         if how is None:
             raise Refuse("no 'likely' item in the policy table for the run-time"
@@ -2617,6 +2694,7 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         self.used_likely.add(text)
         t = self.new_tmp('int')
         out('%s = runtime_condition_%s(po, %s);' % (t, 't' if how == 'true' else 'f', cc))
+        self.choice_likely()[t] = how == 'true'
         # P06: where x < 0 failed, x is not negative
         if vb.bt == 'ct' and vb.c == '0' and va.var is not None and facts_f is not None:
             if op == '<':
@@ -2705,6 +2783,10 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         if r is not None:
             return r
         k = e[0]
+        if k in ('id', 'cast'):
+            r = self.raw_value(e, st, out)
+            if r is not None:
+                return r
         if k == 'num':
             return Val('ct', e[1], 'int')
         if k == 'str':
@@ -2723,6 +2805,10 @@ class Walk(RepresentationRules, scalars.ScalarRules):
                                var=v.var, item_of=v.item_of, virt=v.virt)
                 if self.s.is_obj(ctype) or ctype in INT_TYPES:
                     return v
+                if ctype in pointers.RAW_TYPES and self.s.is_obj(v.ctype) and \
+                        dest is None:
+                    # rule raw_pointer: an object's bytes, passed on
+                    return Val('rt', v.c, ctype, owned=v.owned, var=v.var)
                 raise ResumeHere('a cast of a run-time value to %s' % t)
             return v
         if k == 'arrow':
@@ -2764,6 +2850,9 @@ class Walk(RepresentationRules, scalars.ScalarRules):
             raise ResumeHere('run-time arithmetic %s' % cparse.c_expr(e))
         if k == 'cond':
             c = self.cond(e[1], st, out, frames)
+            r = self.choice(e, c, st, out, frames)
+            if r is not None:
+                return r
             va = self.ev(e[2], st, out, frames)
             vb = self.ev(e[3], st, out, frames)
             if isinstance(c, bool):
@@ -2805,7 +2894,8 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         tpv = 'tp_' + name
         if name in st.known:
             return tpv
-        if v is not None and not v.isparam and v.bt == 'rt' and not entry:
+        if v is not None and (not v.isparam or self.known_only()) and v.bt == 'rt' \
+                and not entry:
             return self.known_type(st, out, v)
         if v is None or not v.isparam:
             raise ResumeHere("the type of %s, which is not a parameter (F24)" % name)
@@ -2871,6 +2961,12 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         if b.bt != 'ct':
             raise ResumeHere('a field of %s' % cparse.c_expr(base))
         ftype = self.s.field_type(b.ctype, field)
+        if b.tp is None and ftype is not None and b.ctype != 'global' \
+                and b.ctype.replace('const ', '').rstrip(' *') not in ('PyTypeObject', '_typeobject'):
+            # rule ct_struct (D89): a field of a C struct the compiler holds
+            # (a PyMemberDef, a descriptor an 'l' parameter gives) is read
+            # when compiling; such structs don't change once made
+            return Val('ct', '%s->%s' % (paren(b.c), field), ftype)
         if b.tp is None or ftype is None:
             raise ResumeHere('the field %s of %s' % (field, cparse.c_expr(base)))
         if self.s.is_fnptr(ftype):
@@ -2889,10 +2985,15 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         v = b.var
         if v.alias is not None and v.alias in st.vars:
             v = st.vars[v.alias]
-        desc = field_descriptor(v.ctype, field)
+        ctype = v.ctype
+        desc = field_descriptor(ctype, field)
+        if desc is None and b.ctype != v.ctype:
+            # the struct a cast names ('((PyASCIIObject *)op)->length')
+            ctype = b.ctype
+            desc = field_descriptor(ctype, field)
         if desc is None:
             return None
-        ftype = self.s.field_type(v.ctype, field) or \
+        ftype = self.s.field_type(ctype, field) or \
             self.s.field_type('PyVarObject *', field)
         if ftype not in INT_TYPES:
             raise ResumeHere('the field %s, of type %s' % (field, ftype))
@@ -2914,6 +3015,9 @@ class Walk(RepresentationRules, scalars.ScalarRules):
                 return Val('ct', '&' + x[1], 'global')
             raise ResumeHere('an address %s' % cparse.c_expr(e))
         if op == '*':
+            r = self.raw_load(e, st, out)
+            if r is not None:
+                return r
             # a load from a type: *(T *)ADDRESS
             p = x
             ctype = None
@@ -3122,6 +3226,8 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         """The first statement after the current one that reads name."""
         for stmts, i in reversed(frames):
             for s in stmts[i + 1:]:
+                if s[0] == 'break':
+                    break       # on after the switch or loop it leaves
                 if name in cparse.names_in(list(s[1:-1])):
                     if s[0] == 'expr' and s[1][0] == 'call' and \
                             s[1][1] == ('id', 'assert') and not ' '.join(
@@ -3210,8 +3316,15 @@ class Walk(RepresentationRules, scalars.ScalarRules):
         if len(decl.params) != len(args) + 1:
             raise ResumeHere('%s has %d parameters' % (decl.name, len(decl.params)))
         vals = []
-        for (ptype, _), a in zip(decl.params[1:], args):
+        nulls = {i[2] for key, items in self.tr.policy.items() if key.endswith(':' + name)
+                 for i in items if tuple(i[:2]) == ('ref', 'null_arg')}
+        for (ptype, pname), a in zip(decl.params[1:], args):
             v = self.ev(a, st, out, frames)
+            if ptype == 'vinfo_t *' and v.bt == 'ct' and pname in nulls and \
+                    v.c.replace(' ', '') in ('NULL', '((PyObject*)NULL)'):
+                # policy ('ref', 'null_arg', p): Ni's meta takes a NULL vinfo
+                vals.append(Val('ct', 'NULL', 'void *'))
+                continue
             if ptype == 'vinfo_t *' and v.bt != 'rt':
                 raise ResumeHere('%s: a compile-time argument' % decl.name)
             if ptype != 'vinfo_t *' and v.bt != 'ct':
@@ -3647,12 +3760,19 @@ class Walk(RepresentationRules, scalars.ScalarRules):
                         break
                     x = stmts[i]
                     if x[0] == 'break':
-                        raise Refuse('a break out of a switch')
+                        # rule switch_break (D89): the statements after the
+                        # switch, on this case's path; they must end it
+                        self.switch_tail(gst, inner, frames)
+                        break
                     self.statement(x, gst, inner, frames + [(stmts, i)])
                     if not gst.ended:
                         self.release_dead(gst, inner, self.tr.live.after[id(x)])
+                if not gst.ended and idxs is groups[-1][1]:
+                    self.switch_tail(gst, inner, frames)    # the last case ends the switch
                 if not gst.ended:
-                    raise Refuse('a case of a switch runs on into the next')
+                    raise Refuse('a case of a switch runs on into the next (%s)'
+                                 % ', '.join(cparse.c_expr(lab[1]) if lab[0] == 'case'
+                                             else 'default' for lab in labels))
                 sub.extend(inner)
                 sub('}')
                 out.extend(sub)
@@ -3662,6 +3782,58 @@ class Walk(RepresentationRules, scalars.ScalarRules):
             raise Refuse('a switch without a default')
         out('}')
         st.ended = True
+
+    def raw_null_test(self, c, st):
+        """(variable, True if NULL where c holds) when c compares with
+        NULL an object read from memory (pointers.py)."""
+        if c[0] == 'bin' and c[1] in ('==', '!=') and c[3] == ('id', 'NULL') \
+                and c[2][0] == 'id' and getattr(st.vars.get(c[2][1]), 'noref', False):
+            return c[2][1], c[1] == '=='
+        return None
+
+    def rest_of_path(self, st, out, frames):
+        """The statements after the current one up to the function's end,
+        translated on this path; a 'break' leaves the switch it is in."""
+        if self.loop_ctx:
+            raise Refuse('a path translated to its end inside a loop')
+        fr = list(frames)
+        while fr and not st.ended:
+            outer, j = fr.pop()
+            k = j + 1
+            while k < len(outer) and not st.ended:
+                x = outer[k]
+                if x[0] == 'break':
+                    while fr and fr[-1][0][fr[-1][1]][0] != 'switch':
+                        fr.pop()
+                    if not fr:
+                        raise Refuse('a break outside a switch')
+                    break
+                if x[0] in ('label', 'continue'):
+                    raise Refuse('a path to its end through %s' % x[0])
+                self.statement(x, st, out, fr + [(outer, k)])
+                if not st.ended:
+                    self.release_dead(st, out, self.tr.live.after[id(x)])
+                k += 1
+        if not st.ended:
+            raise Refuse('a path translated to its end that does not end')
+
+    def switch_tail(self, st, out, frames):
+        """A case's 'break': the rest of the block the switch is in,
+        translated on the case's path, as if copied there."""
+        if not frames:
+            raise Refuse('a break out of a switch')
+        outer, j = frames[-1]
+        for k in range(j + 1, len(outer)):
+            if st.ended:
+                break
+            x = outer[k]
+            if x[0] in ('label', 'break', 'continue'):
+                raise Refuse('a break out of a switch to %s' % x[0])
+            self.statement(x, st, out, frames[:-1] + [(outer, k)])
+            if not st.ended:
+                self.release_dead(st, out, self.tr.live.after[id(x)])
+        if not st.ended:
+            raise Refuse('a break out of a switch that does not end the function')
 
     def jump(self, k, st, out):
         if not self.loop_ctx:
@@ -3959,6 +4131,9 @@ UNITS = {
     'list': Unit('Objects/listobject.c', None, 'plistobject.c'),
     'dict': Unit('Objects/dictobject.c', None, 'pdictobject.c'),
     'bytes': Unit('Objects/bytesobject.c', None, 'pbytesobject.c'),
+    'unicode': Unit('Objects/unicodeobject.c', None, 'punicodeobject.c'),
+    'structmember': Unit('Python/structmember.c', 'ni/Objects/pstructmember.h', 'pstructmember.c'),
+    'descr': Unit('Objects/descrobject.c', None, 'pdescrobject.c'),
     'long': Unit('Objects/longobject.c', None, 'plongobject.c'),
     'float': Unit('Objects/floatobject.c', 'ni/Objects/pfloatobject.h', 'pfloatobject.c'),
 }
@@ -4099,6 +4274,7 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
     policy = {k: e.get('policy', []) for k, e in policy_table.ENTRIES.items()}
     tr = Translator(source, ni, policy, effects)
     tr.slot_roots, tr.slot_types = {}, {}
+    tr.header_asserts = set()     # rule raw_pointer's
     for spec in slot_specs(unit.cfile):
         for fname, where in slot_functions(source, spec).items():
             tr.slot_roots[fname] = where
@@ -4152,6 +4328,8 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
         head += ['_Static_assert(sizeof(long) * 8 == %d, "words are longs (D83)");'
                  % WORD_BITS, '_Static_assert(sizeof(int) * 8 == 32, "C_INT_BITS");']
         head += [a for r in used for a in r.asserts()] + ['']
+    if tr.header_asserts:
+        head += sorted(tr.header_asserts) + ['']
     body = []
     if tr.copy_order:
         body.append('/* run-time copies: where a heap type\'s slot changed, or'
@@ -4195,6 +4373,8 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
 
 
 scalars.GA = sys.modules[__name__]
+conditions.GA = sys.modules[__name__]
+pointers.GA = sys.modules[__name__]
 
 
 def target_defines(python):
@@ -4228,6 +4408,23 @@ def build_dict(target):
 def build_bytes(target):
     """pbytesobject_gen.h: the bytes slots the translator generates."""
     return build(target, UNITS['bytes'])
+
+
+def build_unicode(target):
+    """punicodeobject_gen.h: the str slots the translator generates (D89)."""
+    return build(target, UNITS['unicode'])
+
+
+def build_structmember(target):
+    """pstructmember_gen.h: PyMember_GetOne (D89)."""
+    return build(target, UNITS['structmember'])
+
+
+def build_descr(target):
+    """pdescrobject_gen.h: the descriptors' __get__ slots (D89)."""
+    return build(target, UNITS['descr'])
+
+
 def build_long(target):
     """plongobject_gen.h: the int slots the translator generates (D83)."""
     return build(target, UNITS['long'])

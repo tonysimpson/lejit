@@ -405,7 +405,14 @@ class Parser:
                 texts.append(self.take().text)
             return ('str', texts)
         if tok.text == '(':
-            e = self.expr()
+            e = self.assignment()
+            # '(assert(X), E)', as PEP 393's accessor macros write it: the
+            # assert is the statement the translator ignores, so this is E
+            while self.peek() == ',' and e[0] == 'call' and e[1] == ('id', 'assert'):
+                self.take(',')
+                e = self.assignment()
+            if self.peek() == ',':
+                raise ParseError('comma operator')
             self.take(')')
             return e
         raise ParseError('line %d: unexpected %r' % (tok.line, tok.text))
@@ -665,35 +672,136 @@ def cpp(src, pyconfig, cfile, defines=('Py_BUILD_CORE',)):
     return macros, toks
 
 
-def undefined_later(src, pyconfig, cfile, macros, defines=('Py_BUILD_CORE',)):
-    """{name: (line, macro)} for each macro the file #undefs that the
-    compiled file's -dM (macros) no longer lists: its definition where the
-    #undef is, from 'gcc -E -dM' of the file cut there. A function before
-    that line sees the macro, one after it the name (a function the file
-    defines, as 3.8's abstract.c does for PyIndex_Check)."""
-    import re
+_DIRECTIVE = re.compile(r'\s*#\s*(\w+)')
+_COND_OPEN = {'if', 'ifdef', 'ifndef'}
+_COND_BRANCH = _COND_OPEN | {'elif', 'else'}
+
+
+def strip_comments(text):
+    """The text with each comment replaced by spaces, its newlines kept, so
+    lines keep their numbers. String and character literals are kept; a
+    quote with no partner on its line (an apostrophe in an '#if 0' block)
+    is an ordinary character."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '/' and text.startswith('/*', i):
+            j = text.find('*/', i + 2)
+            j = n if j < 0 else j + 2
+            out.append(re.sub(r'[^\n]', ' ', text[i:j]))
+            i = j
+        elif c == '/' and text.startswith('//', i):
+            j = text.find('\n', i)
+            j = n if j < 0 else j
+            out.append(' ' * (j - i))
+            i = j
+        elif c in '"\'':
+            m = re.compile(r'%s(?:\\.|[^%s\\\n])*%s' % (c, c, c)).match(text, i)
+            j = m.end() if m else i + 1
+            out.append(text[i:j])
+            i = j
+        else:
+            j = i + 1
+            while j < n and text[j] not in '/"\'':
+                j += 1
+            out.append(text[i:j])
+            i = j
+    return ''.join(out)
+
+
+def logical_lines(lines):
+    """[(first, last)] line indexes of each logical line (backslash
+    continuations joined)."""
+    out, i = [], 0
+    while i < len(lines):
+        j = i
+        while lines[j].endswith('\\') and j + 1 < len(lines):
+            j += 1
+        out.append((i, j))
+        i = j + 1
+    return out
+
+
+def conditionals(src, pyconfig, cfile, defines=('Py_BUILD_CORE',), text=None):
+    """The file's conditional compilation as the target's build does it
+    (rule preprocess_conditionals): (active text, undefs). The active text
+    is the file (or 'text', a spliced copy of it) with comments blanked,
+    and every conditional directive and every line of a branch the
+    compiler skips made empty, so lines keep their numbers, the file's own
+    #defines are the ones in force, and no body has a conditional left.
+    'undefs' is [(line, name, macro or None)] for each #undef the compiler
+    obeys, with the definition in force just before it.
+
+    One gcc run decides: a probe made of the file's directives only (text
+    lines don't change what is defined), each branch followed by a marker
+    line and each #undef preceded by one, preprocessed with -dD so the
+    #defines and #undefs it obeys come out in order among the markers."""
+    if text is None:
+        with open(os.path.join(src, cfile), encoding='latin-1') as f:
+            text = f.read()
+    lines = strip_comments(text).split('\n')
+    probe = []
+    for lo, hi in logical_lines(lines):
+        m = _DIRECTIVE.match(lines[lo])
+        if not m:
+            continue
+        probe.extend(lines[lo:hi + 1])
+        word = m.group(1)
+        if word in _COND_BRANCH:
+            probe.append('__ni_branch_%d' % lo)
+        elif word == 'undef':
+            probe.insert(len(probe) - (hi - lo + 1), '__ni_undef_%d' % lo)
     full = os.path.join(src, cfile)
-    with open(full, encoding='latin-1') as f:
-        lines = f.read().split('\n')
-    cmd = ['gcc', '-E', '-dM', '-I', os.path.dirname(full)] \
+    cmd = ['gcc', '-E', '-dD', '-P', '-I', os.path.dirname(full)] \
         + [w for d in include_dirs(src) for w in ('-I', d)] \
         + ['-I', os.path.dirname(pyconfig)] + ['-D' + d for d in defines]
-    out = {}
-    for i, text in enumerate(lines):
-        m = re.match(r'\s*#\s*undef\s+(\w+)', text)
-        if not m or m.group(1) in macros or m.group(1) in out:
-            continue
-        name = m.group(1)
-        dm = subprocess.run(cmd + ['-x', 'c', '-'], input='\n'.join(lines[:i]) + '\n',
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            universal_newlines=True, timeout=120)
-        if dm.returncode != 0:
-            raise ParseError('gcc -E -dM %s up to line %d: %s'
-                             % (cfile, i + 1, dm.stderr[:400]))
-        before = ctokens.tokenize(dm.stdout, cfile + ' (macros)')[1]
-        if name in before:
-            out[name] = (i + 1, before[name])
-    return out
+    r = subprocess.run(cmd + ['-x', 'c', '-'], input='\n'.join(probe) + '\n',
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       universal_newlines=True, timeout=120)
+    if r.returncode != 0:
+        raise ParseError('gcc -E -dD %s (its directives): %s'
+                         % (cfile, r.stderr[:400]))
+    active, undefs, defs, pending = set(), [], {}, None
+    for ln in r.stdout.split('\n'):
+        w = ln.strip()
+        if w.startswith('__ni_branch_'):
+            active.add(int(w[len('__ni_branch_'):]))
+        elif w.startswith('__ni_undef_'):
+            pending = int(w[len('__ni_undef_'):])
+        elif w.startswith('#define'):
+            ms = ctokens.tokenize(w + '\n', cfile + ' (macros)')[1]
+            defs.update(ms)
+        elif w.startswith('#undef'):
+            name = w.split()[1]
+            if pending is not None:
+                undefs.append((pending + 1, name, defs.get(name)))
+                pending = None
+            defs.pop(name, None)
+    # every line inside a branch not taken, and every conditional
+    # directive, is emptied
+    out = list(lines)
+    stack = []      # per open conditional: is the enclosing text live
+    live = True
+    for lo, hi in logical_lines(lines):
+        m = _DIRECTIVE.match(lines[lo])
+        word = m.group(1) if m else None
+        if word in _COND_BRANCH or word == 'endif':
+            if word in _COND_OPEN:
+                stack.append(live)
+            if not stack:
+                raise ParseError('%s:%d: #%s with no #if' % (cfile, lo + 1, word))
+            if word == 'endif':
+                live = stack.pop()
+            else:
+                live = stack[-1] and lo in active
+            for k in range(lo, hi + 1):
+                out[k] = ''
+        elif not live:
+            for k in range(lo, hi + 1):
+                out[k] = ''
+    if stack:
+        raise ParseError('%s: unterminated #if' % cfile)
+    return '\n'.join(out), undefs
 
 
 class Decls:

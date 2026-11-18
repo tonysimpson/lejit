@@ -100,6 +100,8 @@ VOCABULARY = {
         'no_steal': 'the helper does not consume its arguments',
         'incref': 'the helper increfs what the C steals',
         'keep_alive': 'a reference kept for the duration of a call',
+        'null_arg': "a NULL argument is a NULL vinfo, which Ni's function takes"
+                    ' (note: the parameter, D89)',
     },
     'forget': {
         'before_branch': 'known types forgotten before a branch to a merge point (D59)',
@@ -176,7 +178,7 @@ class Checker:
             path, _, n = name.partition(':')
             full = os.path.join(self.ni_root, path)
             text = open(full).read() if os.path.isfile(full) else ''
-            if not re.search(r'^(def %s\b|%s = )' % (n, n), text, re.M):
+            if not re.search(r'^(def %s\b|class %s\b|%s = )' % (n, n, n), text, re.M):
                 self.bad(where, '%s not found' % name)
         elif self.ni.find(name) is None:
             self.bad(where, '%s not in Ni' % name)

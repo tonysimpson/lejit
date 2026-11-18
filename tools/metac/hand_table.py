@@ -164,9 +164,6 @@ REASONS = {
         'mechanism', ['D77'], "tstate: runtime_address"),
 
     # ---- generator limits, each a failures-log row ----
-    'ni/Objects/pdescrobject.c:pmember_get': (
-        'limit', ['failures:member_get'], "descr_check and a switch on the"
-        " member's run-time type code; not attempted"),
     'ni/Objects/pdictobject.c:PsycoDict_SetItemC': (
         'limit', ['failures:BUILD_CONST_KEY_MAP'],
         "the hand BUILD_CONST_KEY_MAP's store of a compile-time key"),

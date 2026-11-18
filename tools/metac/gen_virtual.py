@@ -113,6 +113,51 @@ def headers():
     return [FIELDS_HEADER] + [t.header() for t in virtual_types()]
 
 
+def stores_through_call(source, f, param, field, effects, depth=0):
+    """Whether f, with the file's and the headers' macros expanded, stores
+    its parameter 'param' in 'field' ('-> field ... = param'), itself or in
+    a function it passes it to (found by effects.py's call graph, read the
+    same way): PyTuple_New's size reaches ob_size through
+    PyObject_GC_NewVar's PyObject_INIT_VAR."""
+    import gen_abstract
+    macros = dict(source.macros)
+    macros.update(source.local_macros)
+    for st in _statements(f.toks):
+        toks = cparse.expand(st, macros, set())
+        w = [t.text for t in toks]
+        for i in range(len(w) - 1):
+            if w[i] == '->' and w[i + 1] == field:
+                rest = [x for x in w[i + 2:] if x not in ('(', ')')]
+                if rest[:2] == ['=', param]:
+                    return True
+        if depth >= 3 or effects is None:
+            continue
+        for i, x in enumerate(w):
+            if i + 1 >= len(w) or w[i + 1] != '(' or toks[i].kind != 'id':
+                continue
+            key = effects.globals.get(x)
+            if key is None or effects.nodes[key].kind != 'function':
+                continue
+            close = ctokens.match_close(toks, i + 1)
+            args = [[t.text for t in a if t.text not in ('(', ')')]
+                    for a in ctokens.split_top(toks[i + 2:close], ',')]
+            if [param] not in args:
+                continue
+            path = key.partition(':')[0]
+            try:
+                other = gen_abstract.Source(source.src, source.pyconfig,
+                                            source.defines, path)
+            except cparse.ParseError:
+                continue
+            g = other.funcs.get(x)
+            if g is None or len(g.params) != len(args):
+                continue
+            if stores_through_call(other, g, g.params[args.index([param])][1],
+                                   field, effects, depth + 1):
+                return True
+    return False
+
+
 def _statements(toks):
     """The body's simple statements as token lists (split at ';', '{', '}')."""
     out, cur = [], []
@@ -128,7 +173,7 @@ def _statements(toks):
     return out
 
 
-def read_constructor(source, vt):
+def read_constructor(source, vt, effects=None):
     """Fill vt's slots, params and defaults from the constructor's body."""
     f = source.funcs.get(vt.ctor)
     if f is None:
@@ -160,6 +205,9 @@ def read_constructor(source, vt):
                                   % (vt.ctor, stored[fld], w[-1], fld))
         stored[fld] = w[-1]
     if vt.array:
+        if len(f.params) == 1 and not stored and stores_through_call(
+                source, f, vt.params[0], vt.size, effects):
+            stored = {vt.size: vt.params[0]}
         if len(f.params) != 1 or stored != {vt.size: vt.params[0]}:
             raise cslots.GenError(
                 '%s: an array constructor must store its one parameter in %s'
@@ -370,7 +418,7 @@ def generate(src, pyconfig, defines, effects):
                 sources[vt.cpath] = gen_abstract.Source(src, pyconfig, defines, vt.cpath)
             except cparse.ParseError as e:
                 raise cslots.GenError('%s: %s' % (vt.cpath, e))
-        read_constructor(sources[vt.cpath], vt)
+        read_constructor(sources[vt.cpath], vt, effects)
     out.append((FIELDS_HEADER, fields_text(types),
                 ['generated  %s' % vt.key for vt in types]))
     for vt in types:

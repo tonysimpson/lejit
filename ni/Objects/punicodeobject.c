@@ -8,6 +8,14 @@
  * A one-character result below 256 is CPython's own cached string (latin1[]
  * holds them, taken from CPython's cache at start-up), as unicode_char
  * returns, so identities match CPython's.
+ *
+ * Length and + are generated (punicodeobject_gen.h, D89) from the C with
+ * the descriptors below (policy_table.TYPES); what stays here is the
+ * representation the C doesn't state: the inline character read, the
+ * slices (D56) and compare's constant fold and one-call equality. 'in'
+ * stays too: the generated one is the same but for the effect rules'
+ * CfNoPython, with which pyflate runs 1.5% more instructions (METACOMPILER
+ * failures log, QUESTIONS 51).
  */
 #include "pobject.h"
 #include "pboolobject.h"
@@ -24,15 +32,16 @@
 #define UNICODE_length CPY_NONNEG_FIELD(PyASCIIObject, length, OB_type)
 #define UNICODE_hash CPY_FIELD(PyASCIIObject, hash, UNICODE_length)
 #define UNICODE_state CPY_FIELD(PyASCIIObject, state, UNICODE_hash)
-#define STATE_READY NI_BIT_PyASCIIObject__state__ready
 #define STATE_COMPACT_ASCII                                                    \
   (NI_BIT_PyASCIIObject__state__ready | NI_BIT_PyASCIIObject__state__ascii |  \
    NI_BIT_PyASCIIObject__state__compact)
 
 static PyObject *latin1[256];
-static lenfunc unicode_length;
 static binaryfunc unicode_subscript;
 static objobjproc unicode_contains;
+
+/* unicode_length, PyUnicode_Concat (D89) */
+#include "punicodeobject_gen.h"
 
 /* unicode_richcompare compares any two str instances, subclasses included
    (an override in a subclass is its own slot, tried by the caller); anything
@@ -91,22 +100,6 @@ static condition_code_t state_at_least(PsycoObject *po, vinfo_t *v, int bits) {
   if (st == NULL)
     return CC_ERROR;
   return integer_cmp_i(po, st, bits, Py_GE | COMPARE_UNSIGNED);
-}
-
-/* unicode_length */
-static vinfo_t *punicode_length(PsycoObject *po, vinfo_t *v) {
-  if (is_compiletime(v->source)) {
-    if (PyUnicode_IS_READY((PyObject *)CompileTime_Get(v->source)->value))
-      return psyco_get_field(po, v, UNICODE_length);
-  } else {
-    condition_code_t cc = state_at_least(po, v, STATE_READY);
-    if (cc == CC_ERROR)
-      return NULL;
-    if (runtime_condition_t(po, cc))
-      return psyco_get_field(po, v, UNICODE_length);
-  }
-  return psyco_generic_call(po, unicode_length, CfCommonPySSizeTResult, "v",
-                            v);
 }
 
 /* unicode_subscript's integer case, for any str */
@@ -241,7 +234,7 @@ static vinfo_t *punicode_subscript(PsycoObject *po, vinfo_t *v,
   return r;
 }
 
-/* PyUnicode_Contains: two constants fold */
+/* PyUnicode_Contains: two constants fold, an error is left to run time */
 static vinfo_t *punicode_contains(PsycoObject *po, vinfo_t *v, vinfo_t *w) {
   if (is_compiletime(v->source) && is_compiletime(w->source)) {
     int r = unicode_contains((PyObject *)CompileTime_Get(v->source)->value,
@@ -267,11 +260,10 @@ void psy_unicodeobject_init(void) {
   for (c = 0; c < 256; c++)
     if ((latin1[c] = PyUnicode_FromOrdinal(c)) == NULL)
       Py_FatalError("ni: no one-character strings");
-  unicode_length = PyUnicode_Type.tp_as_sequence->sq_length;
-  unicode_contains = PyUnicode_Type.tp_as_sequence->sq_contains;
   unicode_subscript = PyUnicode_Type.tp_as_mapping->mp_subscript;
+  unicode_contains = PyUnicode_Type.tp_as_sequence->sq_contains;
   Psyco_DefineMeta(PyUnicode_Type.tp_richcompare, punicode_richcompare);
-  Psyco_DefineMeta(unicode_length, punicode_length);
   Psyco_DefineMeta(unicode_subscript, punicode_subscript);
   Psyco_DefineMeta(unicode_contains, punicode_contains);
+  gen_unicodeobject_init();
 }

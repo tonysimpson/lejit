@@ -132,6 +132,13 @@ def _stmt(source, f, s):
                 g, args = m
                 body = _body(source, f, g, args, (s[1][1], k, s[2], s[3]))
                 return ('block', body, INL)
+        if s[0] == 'if' and s[1][0] == 'call':
+            # 'if (g(...))' is 'if (g(...) != 0)'
+            m = _inlinable(source, f, s[1])
+            if m is not None:
+                g, args = m
+                body = _body(source, f, g, args, ('!=', 0, s[2], s[3]))
+                return ('block', body, INL)
     except NoInline:
         return None
     return None
@@ -192,7 +199,8 @@ def _body(source, f, g, args, test):
         elif p in mine:
             raise NoInline('%s assigns its parameter %s' % (g.name, p))
         elif a[0] in ('id', 'num', 'str') or (a[0] == 'un' and a[1] == '-'
-                                              and a[2][0] == 'num'):
+                                              and a[2][0] == 'num') \
+                or (a[0] == 'cast' and a[2][0] == 'id'):
             env[p] = a
         else:
             raise NoInline('%s: argument %s' % (g.name, cparse.c_expr(a)))
@@ -556,6 +564,9 @@ class ScalarRules:
         m = self.value_read(e, st)
         if m is not None:
             return self.load_value(m[0], m[1], st, out)
+        r = self.raw_load(e, st, out, owned=True, scalars=self.scalar_ctypes())
+        if r is not None:
+            return r        # '*(double *)p' (pointers.py)
         run = Run()
         if self.scalar_expr(e, st, run) and (run.doubles or e[0] == 'num'):
             return self.emit_expr(e, run, st, out, sorted(self.scalar_ctypes())[0])

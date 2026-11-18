@@ -255,6 +255,49 @@ RULES = {
         'decisions': ['D87'],
         'applied_by': ['tools/metac/scalars.py:inline_calls'],
     },
+    'preprocess_conditionals': {
+        'what': "A source file's #if/#ifdef/#elif/#else are evaluated as"
+                " CPython's build would, against the target's pyconfig.h and"
+                " defines (gcc -E on the file's directives alone); inactive"
+                " lines are blanked, line numbers kept, and an #undef obeyed"
+                " records the definition it ends.",
+        'decisions': ['D89'],
+        'applied_by': ['tools/metac/cparse.py:conditionals'],
+    },
+    'bit_field': {
+        'what': "A one-bit field X->F.B, where LAYOUTS lists F's bits and TYPES"
+                " a descriptor for F, is F read through Ni's descriptor; a bit at"
+                " the top of the bytes Ni reads is 'F >= mask', unsigned. A"
+                " branch on it needs a 'likely' item naming the macro the C"
+                " wrote (PyUnicode_IS_READY).",
+        'decisions': ['D89'],
+        'applied_by': ['tools/metac/conditions.py:ConditionRules'],
+    },
+    'runtime_choice': {
+        'what': "'c ? A : B' on a run-time test takes the arm c's 'likely' item"
+                " favours; on the other, CPython resumes from the statement.",
+        'decisions': ['D89'],
+        'applied_by': ['tools/metac/conditions.py:ConditionRules'],
+    },
+    'raw_pointer': {
+        'what': "A 'char *' pointer into an object (an object cast to char *)"
+                " moved by a compile-time offset is the object's vinfo plus the"
+                " offset: '*(T *)p' is psyco_get_field_offset with FMUT (read"
+                " again each time), 'p' itself integer_add_i; an object read so"
+                " holds no reference (Py_INCREF of it is need_reference, by"
+                " policy) and may be NULL, a run-time test whose NULL path is"
+                " translated to the function's end. A field of a C struct the"
+                " compiler holds (a PyMemberDef) is read when compiling.",
+        'decisions': ['D89'],
+        'applied_by': ['tools/metac/pointers.py:PointerRules'],
+    },
+    'switch_break': {
+        'what': "A 'break' in a case of a compile-time switch, or the last case"
+                " running off the end, is the statements after the switch on"
+                " that case's path, which must end the function.",
+        'decisions': ['D89'],
+        'applied_by': ['tools/metac/gen_abstract.py:generate'],
+    },
     'virtual_types': {
         'what': "What is virtual, its weights and its fields' mutability are per"
                 " type (TYPES), not per function; 'virtual' items say where a"
@@ -274,6 +317,11 @@ TRANSLATED_SLOTS = {
     'Objects/listobject.c': {'type': 'PyList_Type', 'slots': ['sq_length']},
     'Objects/dictobject.c': {'type': 'PyDict_Type', 'slots': ['mp_length']},
     'Objects/bytesobject.c': {'type': 'PyBytes_Type', 'slots': ['sq_length']},
+    'Objects/unicodeobject.c': {'type': 'PyUnicode_Type', 'slots': [
+        'sq_length', 'sq_concat', 'tp_richcompare']},
+    # D89: member and method descriptors' __get__ (SLOT_ARGS' 'lvl')
+    'Objects/descrobject.c': [{'type': 'PyMemberDescr_Type', 'slots': ['tp_descr_get']},
+                              {'type': 'PyMethodDescr_Type', 'slots': ['tp_descr_get']}],
     # D83: with the word representation of TYPES' _longobject
     'Objects/longobject.c': {'type': 'PyLong_Type', 'slots': [
         'nb_add', 'nb_subtract', 'nb_multiply', 'nb_negative', 'nb_invert',
@@ -292,7 +340,8 @@ TRANSLATED_SLOTS = {
 # meta, or has none (the C function called directly, D36).
 TRANSLATED_FUNCTIONS = {
     'Python/bltinmodule.c': ['abs', 'len', 'hash', 'id', 'divmod', 'pow',
-                             'isinstance', 'issubclass', 'getattr', 'setattr'],
+                             'isinstance', 'issubclass', 'getattr', 'setattr',
+                             'delattr'],
     # D87: ceil and floor stay hand-written (pmath.c: an int result)
     'Modules/mathmodule.c': ['acos', 'asin', 'atan', 'cos', 'cosh', 'exp', 'fabs',
                              'sin', 'sinh', 'sqrt', 'tan', 'tanh'],
@@ -476,6 +525,13 @@ TYPES = {
     'Include/dictobject.h:PyDictObject': {
         'shape': '125dec0484fa', 'type': 'PyDict_Type', 'mutable': ['ma_used'],
         'descriptors': {'ma_used': 'ni/Objects/pdictobject.c:DICT_ma_used'}},
+    'Include/unicodeobject.h:PyASCIIObject': {
+        # PEP 393 (D37, D89): every str starts with these fields. 'state' is
+        # read as its low byte, whose bits (LAYOUTS) are fixed once a string
+        # is ready but for 'interned', which Ni doesn't test
+        'shape': '9601b2dd71df', 'type': 'PyUnicode_Type', 'immutable': ['length', 'state'],
+        'descriptors': {'length': 'ni/Objects/punicodeobject.c:UNICODE_length',
+                        'state': 'ni/Objects/punicodeobject.c:UNICODE_state'}},
     'Include/cellobject.h:PyCellObject': {
         # a cell can change under any call
         'shape': '666fb76e2c4d', 'type': 'PyCell_Type', 'mutable': ['ob_ref']},
@@ -1024,6 +1080,7 @@ ENTRIES = {
         'policy': [
             ('mega', 'type', 'the object'),
             ('shortcut', 'specialise_only', 'a constant exact-str name'),
+            ('ref', 'null_arg', 'v'),
         ]},
     'Objects/object.c:_Py_SwappedOp': {'shape': 'cfe40181e844', 'ni': ['ni/Objects/pobject.c:swapped_op']},
     'Objects/object.c:do_richcompare': {'shape': '9ba14ef60646', 'ni': ['ni/Objects/pobject.c:try_rich_compare', 'ni/Objects/pobject.c:PsycoObject_RichCompare']},
@@ -1268,11 +1325,11 @@ ENTRIES = {
         ]},
     'Python/structmember.c:PyMember_GetOne': {
         'shape': '81f3827c0062',
-        'ni': ['ni/Objects/pfloatobject.c:cimpl_fp_from_float', 'ni/Objects/pfloatobject.c:PsycoFloat_FromFloat', 'ni/Objects/pstructmember.c:PsycoMember_GetOne'],
+        'ni': ['tools/metac/gen_abstract.py:generate'],
         'policy': [
             ('ref', 'need_reference', 'T_OBJECT, T_OBJECT_EX'),
-            ('likely', 'true', 'the member pointer is non-NULL'),
-            ('restype', 'PyUnicode_Type', 'T_STRING, T_STRING_INPLACE'),
+            ('likely', 'false', '*(char**)addr == NULL'),
+            ('likely', 'false', 'v == NULL'),
             ('other', 'mutable_fields', 'every struct member read as mutable'),
         ]},
     'Objects/floatobject.c:float___trunc___impl': {
@@ -1491,7 +1548,13 @@ ENTRIES = {
             ('likely', 'true', 'im_self != NULL'),
             ('virtual', 'args_tuple', 'self prepended'),
         ]},
-    'Objects/descrobject.c:member_get': {'shape': '1e4827b8796b', 'ni': ['ni/Objects/pdescrobject.c:pmember_get']},
+    'Objects/descrobject.c:member_get': {
+        'shape': '1e4827b8796b',
+        'ni': ['tools/metac/gen_abstract.py:generate'],
+        'policy': [
+            # pobject.c:generic_getattr calls it only on an instance of d_type
+            ('shortcut', 'skip_check', 'PyObject_TypeCheck(obj, descr->d_type)'),
+        ]},
     'Objects/descrobject.c:method_get': {
         'shape': '234c927d374d',
         'ni': ['ni/Objects/pdescrobject.c:pmethod_get'],
@@ -1533,7 +1596,7 @@ ENTRIES = {
         ]},
     'Objects/unicodeobject.c:unicode_length': {
         'shape': '26b64b51971a',
-        'ni': ['ni/Objects/punicodeobject.c:punicode_length'],
+        'ni': ['tools/metac/gen_abstract.py:generate'],
         'policy': [
             ('likely', 'true', 'PyUnicode_IS_READY'),
         ]},

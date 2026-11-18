@@ -42,7 +42,6 @@ PSY_INLINE vinfo_t* PsycoFloat_FromDouble(vinfo_t* vdouble)
 	return PsycoFloat_FROM_DOUBLE(vdouble);
 }
 
-EXTERNFN vinfo_t* PsycoFloat_FromFloat(PsycoObject* po, vinfo_t* vfloat);
 
 PSY_INLINE vinfo_t* PsycoFloat_AS_DOUBLE(PsycoObject* po, vinfo_t* v)
 {	/* no type check; does not return a new reference. */

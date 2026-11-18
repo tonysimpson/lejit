@@ -35,8 +35,6 @@ static int cimpl_fp_lt_fp(double a, double b) { return a < b; }
 
 DEFINEFN double cimpl_fp_from_long(long value) { return (double)value; }
 
-DEFINEFN double cimpl_fp_from_float(float value) { return (double)value; }
-
 static int cimpl_fp_fits_long(double whole) {
   return LONG_MIN < whole && whole < LONG_MAX; /* false for NaN */
 }
@@ -88,17 +86,6 @@ int PsycoFloat_WholeToLong(PsycoObject *po, vinfo_t *vwhole,
     return -1;
   *result = PsycoLong_FROM_WORD(x);
   return 1;
-}
-
-DEFINEFN
-vinfo_t *PsycoFloat_FromFloat(PsycoObject *po, vinfo_t *vfloat) {
-  vinfo_t *x;
-  x = psyco_generic_call(po, cimpl_fp_from_float, CfReturnTypeDouble | CfPure,
-                         "d", vfloat);
-  if (x != NULL) {
-    x = PsycoFloat_FROM_DOUBLE(x);
-  }
-  return x;
 }
 
 static bool compute_float(PsycoObject *po, vinfo_t *floatobj) {
