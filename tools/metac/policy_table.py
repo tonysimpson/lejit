@@ -129,6 +129,69 @@ RULES = {
         'applied_by': ['tools/metac/ceval_inline.py:helpers',
                        'tools/metac/gen_ceval.py:translate'],
     },
+    'helper_copy': {
+        'what': "A static function of ceval.c that a case calls and that can't be"
+                " inlined (its body has no compile-time form: a local array, a goto)"
+                " is a residual call of its run-time copy: the body as the source"
+                " has it, written into pycompiler_copies_gen.h as ceval_<name> with"
+                " the helpers it calls, when every parameter is an object and the"
+                " body reads no other macro of ceval.c than a string and has no"
+                " preprocessor line. A helper taking the frame stays hand-written.",
+        'decisions': ['D88'],
+        'applied_by': ['tools/metac/gen_ceval.py:translate'],
+    },
+    'error_handler': {
+        'what': "An error exit after a call whose block does more than release and"
+                " exit (it tests the exception the call raised and replaces its"
+                " message: BUILD_MAP_UNPACK's 'is not a mapping') runs that handling"
+                " at run time: the call and the handler are a wrapper written into"
+                " pycompiler_copies_gen.h, taking the objects they read and"
+                " returning the call's result; the case calls the wrapper, one call"
+                " per part, and keeps the releases and the exit.",
+        'decisions': ['D88'],
+        'applied_by': ['tools/metac/gen_ceval.py:translate'],
+    },
+    'residual_wrapper': {
+        'what': "A residual call that takes an input array with its count (C's"
+                " 'values, oparg') goes through a wrapper written into"
+                " pycompiler_copies_gen.h, given up to ARRAY_ARGS_MAX items as words"
+                " (the rest NULL) or, past that, a tuple of them, where the case's"
+                " entry has ('limit', 'max_args'). A residual call of constants"
+                " whose result is only an argument of the next residual call and"
+                " released after it (BUILD_STRING's empty string) is made inside"
+                " that call's wrapper.",
+        'decisions': ['D88'],
+        'applied_by': ['tools/metac/gen_ceval.py:translate'],
+    },
+    'type_test_generic': {
+        'what': "A type test in a case whose entry has ('shortcut',"
+                " 'specialise_only') and that only tests (no '!', no '||'): a type"
+                " Ni doesn't know makes it false, so the C's other, generic arm"
+                " runs. The table says the test's arm is only a shortcut of it.",
+        'decisions': ['D88'],
+        'applied_by': ['tools/metac/gen_ceval.py:translate'],
+    },
+    'switch_arms': {
+        'what': "A switch in a case on a value the compiler knows is an if-chain"
+                " on it, the statements after the switch copied into each arm; a"
+                " pointer to a C function set in an arm is that function on the"
+                " arm's path (FORMAT_VALUE's conv_fn), so a test of it folds and a"
+                " call through it is a call of the function.",
+        'decisions': ['D88'],
+        'applied_by': ['tools/metac/gen_ceval.py:translate'],
+    },
+    'field_store': {
+        'what': "A macro storing into a mutable field that TYPES and LAYOUTS"
+                " describe (PyCell_SET) is psyco_put_field with Ni's descriptor; the"
+                " field takes the reference the C value held, so Ni moves its own"
+                " (consume_reference). A Py_DECREF or Py_XDECREF the C makes of a"
+                " field value read at run time, which Ni holds no reference to (the"
+                " old content of a field it overwrote), is an emitted decref of the"
+                " word: the core's psyco_decref_v, or psyco_xdecref_v when the word"
+                " may be NULL on that path.",
+        'decisions': ['D88'],
+        'applied_by': ['tools/metac/gen_ceval.py:translate'],
+    },
     'bool_select': {
         'what': "A run-time branch whose arms only make one output Py_True and"
                 " Py_False is that object chosen by the condition: a virtual bool"
@@ -287,6 +350,7 @@ LIMITS = {
     'FAST_MAX': ('ni/Objects/pmethodobject.c', 5),
     'MAX_CALL_FREES': ('ni/psyfunc.c', 64),
     'STORE_CACHE_MAX_REFRESHES': ('ni/Objects/pobject.c', 64),
+    'ARRAY_ARGS_MAX': ('ni/codegen.h', 4),
 }
 
 # opcodes that don't count towards INLINE_MAXIMUM_WEIGHT (upstream's rule)
@@ -694,10 +758,10 @@ ENTRIES = {
             ('shortcut', 'direct_meta', 'an exact tuple without **'),
         ]},
     'Python/ceval.c:check_args_iterable': {'shape': 'c64cc9801246', 'ni': ['ni/Python/pycompiler.c:cimpl_call_function_ex', 'ni/Python/pycompiler.c:cimpl_build_unpack']},
-    'Python/ceval.c:format_kwargs_mapping_error': {'shape': '8a34b9309457', 'ni': ['ni/Python/pycompiler.c:cimpl_call_function_ex', 'ni/Python/pycompiler.c:cimpl_build_map_unpack']},
+    'Python/ceval.c:format_kwargs_mapping_error': {'shape': '8a34b9309457', 'ni': ['ni/Python/pycompiler.c:cimpl_call_function_ex', 'tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:format_exc_check_arg': {'shape': '4a1f4255a9e4', 'ni': ['ni/Python/pycompiler.c:unbound_local_error']},
     'Python/ceval.c:format_exc_unbound': {'shape': '7670fed16a8a', 'ni': ['ni/Python/pycompiler.c:unbound_deref_error']},
-    'Python/ceval.c:import_from': {'shape': '0f68c89c4d5f', 'ni': ['ni/Python/pycompiler.c:cimpl_import_from']},
+    'Python/ceval.c:import_from': {'shape': '0f68c89c4d5f', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:cmp_outcome': {
         'shape': 'be6025dd04f3',
         'ni': ['tools/metac/gen_ceval.py:translate'],
@@ -705,12 +769,7 @@ ENTRIES = {
             ('promote', 'known_only', "w in PyCmp_EXC_MATCH: its type and, for a class, the class are"
              " used where Ni knows them (a constant); otherwise the arm runs in its run-time copy"),
         ]},
-    'Python/ceval.c:TARGET(STORE_DEREF)': {
-        'shape': '4c4c566b974a',
-        'ni': ['ni/Python/pycompiler.c:cimpl_store_deref', 'ni/Python/pycompiler.c:case STORE_DEREF'],
-        'policy': [
-            ('ref', 'incref', 'v, which ceval steals'),
-        ]},
+    'Python/ceval.c:TARGET(STORE_DEREF)': {'shape': '4c4c566b974a', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(BUILD_TUPLE_UNPACK_WITH_CALL)': {
         'shape': '661922c6394b',
         'ni': ['ni/Python/pycompiler.c:cimpl_build_unpack', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK_WITH_CALL', 'ni/Python/pycompiler.c:case BUILD_TUPLE_UNPACK'],
@@ -727,11 +786,16 @@ ENTRIES = {
         ]},
     'Python/ceval.c:TARGET(BUILD_MAP_UNPACK)': {
         'shape': '84eba75c8103',
-        'ni': ['ni/Python/pycompiler.c:cimpl_build_map_unpack', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK_WITH_CALL'],
+        'ni': ['tools/metac/gen_ceval.py:translate'],
         'policy': [
-            ('restype', 'PyDict_Type', 'BUILD_MAP_*'),
+            ('restype', 'PyDict_Type'),
         ]},
-    'Python/ceval.c:TARGET(BUILD_MAP_UNPACK_WITH_CALL)': {'shape': '1304d703ab21', 'ni': ['ni/Python/pycompiler.c:cimpl_build_map_unpack', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK', 'ni/Python/pycompiler.c:case BUILD_MAP_UNPACK_WITH_CALL']},
+    'Python/ceval.c:TARGET(BUILD_MAP_UNPACK_WITH_CALL)': {
+        'shape': '1304d703ab21',
+        'ni': ['tools/metac/gen_ceval.py:translate'],
+        'policy': [
+            ('restype', 'PyDict_Type'),
+        ]},
     'Python/ceval.c:TARGET(BUILD_SET_UNPACK)': {
         'shape': 'bce59f084ed5',
         'ni': ['tools/metac/gen_ceval.py:translate'],
@@ -742,7 +806,7 @@ ENTRIES = {
     'Python/ceval.c:TARGET(SETUP_WITH)': {'shape': '5484de92c04f', 'ni': ['ni/Python/pycompiler.c:cimpl_setup_with']},
     'Python/ceval.c:TARGET(WITH_CLEANUP_START)': {'shape': 'a33864999e5e', 'ni': ['ni/Python/pycompiler.c:cimpl_call_exit']},
     'Python/ceval.c:TARGET(LOAD_BUILD_CLASS)': {'shape': '5d23b6efa3cf', 'ni': ['ni/Python/pycompiler.c:cimpl_load_build_class', 'ni/Python/pycompiler.c:case LOAD_BUILD_CLASS']},
-    'Python/ceval.c:TARGET(DELETE_DEREF)': {'shape': '21086dea1389', 'ni': ['ni/Python/pycompiler.c:cimpl_delete_deref', 'ni/Python/pycompiler.c:case DELETE_DEREF']},
+    'Python/ceval.c:TARGET(DELETE_DEREF)': {'shape': '21086dea1389', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(LOAD_GLOBAL)': {
         'shape': 'fe591e989209',
         'ni': ['ni/Python/pycompiler.c:cimpl_load_global', 'ni/Python/pycompiler.c:case LOAD_NAME', 'ni/Python/pycompiler.c:case LOAD_GLOBAL'],
@@ -775,16 +839,17 @@ ENTRIES = {
     'Python/ceval.c:import_all_from': {'shape': 'e643326dceb4', 'ni': ['ni/Python/pycompiler.c:cimpl_import_all_from']},
     'Python/ceval.c:TARGET(FORMAT_VALUE)': {
         'shape': '2024d177721d',
-        'ni': ['ni/Python/pycompiler.c:cimpl_format_value', 'ni/Python/pycompiler.c:case FORMAT_VALUE'],
+        'ni': ['tools/metac/gen_ceval.py:translate'],
         'policy': [
-            ('shortcut', 'identity', 'an exact str with no conversion or spec'),
-            ('restype', 'PyUnicode_Type', 'KNOWN_BUGS F98: a __format__ may return a subclass'),
+            ('shortcut', 'specialise_only', 'an exact str with no spec is the value'
+             ' itself, no call; a type Ni does not know takes PyObject_Format'
+             ' (rule type_test_generic)'),
         ]},
     'Python/ceval.c:TARGET(BUILD_STRING)': {
         'shape': 'fed73d9e1625',
-        'ni': ['ni/Python/pycompiler.c:cimpl_build_string', 'ni/Python/pycompiler.c:case BUILD_STRING'],
+        'ni': ['tools/metac/gen_ceval.py:translate'],
         'policy': [
-            ('limit', 'max_args', '4 parts as arguments, more as a tuple'),
+            ('limit', 'max_args', 'ARRAY_ARGS_MAX parts as words, more as a tuple'),
             ('restype', 'PyUnicode_Type'),
         ]},
     'Python/bltinmodule.c:min_max': {
@@ -851,7 +916,7 @@ ENTRIES = {
     'Python/ceval.c:TARGET(COMPARE_OP)': {'shape': 'f6b147c1740c', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(IMPORT_NAME)': {'shape': 'b192173e7a57', 'ni': ['ni/Python/pycompiler.c:case IMPORT_NAME']},
     'Python/ceval.c:TARGET(IMPORT_STAR)': {'shape': '66ad65b82d90', 'ni': ['ni/Python/pycompiler.c:case IMPORT_STAR']},
-    'Python/ceval.c:TARGET(IMPORT_FROM)': {'shape': 'cc9c45f8467c', 'ni': ['ni/Python/pycompiler.c:case IMPORT_FROM']},
+    'Python/ceval.c:TARGET(IMPORT_FROM)': {'shape': 'cc9c45f8467c', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(JUMP_FORWARD)': {'shape': '6d28fc612e60', 'ni': ['tools/metac/gen_ceval.py:translate']},
     'Python/ceval.c:TARGET(POP_JUMP_IF_FALSE)': {
         'shape': '71362d8c5285',

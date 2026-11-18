@@ -95,6 +95,12 @@ def helpers(src):
     return out, strings
 
 
+def macro_names(src):
+    """The names of the macros Python/ceval.c defines itself."""
+    with open(os.path.join(src, 'Python', 'ceval.c'), encoding='latin-1') as f:
+        return set(ctokens.tokenize(f.read(), 'ceval.c')[1])
+
+
 def untstate(toks, public):
     """'_PyX(tstate, a...)' is 'PyX(a...)' where PyX is public: from 3.8
     ceval.c hands the running thread's state to the internal form of a

@@ -556,7 +556,7 @@ class Checker:
         self.builtins(t)
         self.type_list('NO_DEL_TYPES', t.NO_DEL_TYPES,
                        [['ni/Objects/pobject.c:collect_undeletable_vars'],
-                        ['ni/x64/ipyencoding.h:psyco_decref_rt']])
+                        ['ni/x64/ipyencoding.h:decref_may_run_python']])
         self.type_list('SAFE_DESCRIPTORS', t.SAFE_DESCRIPTORS,
                        [['ni/Objects/pobject.c:c_descriptor',
                          'ni/Objects/pobject.c:safe_descriptor']])

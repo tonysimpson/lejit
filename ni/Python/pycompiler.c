@@ -1284,71 +1284,15 @@ static void unbound_deref_error(PsycoObject *po, PyCodeObject *co, int oparg) {
                                               oparg - ncells)));
 }
 
+/* a frame's own cells, which CPython made before the frame reached Ni
+   (PsycoObject_FromCode maps them as borrowed words); a cell can change
+   under any call (nonlocal in a callee), so its content is read each time.
+   The generated *_DEREF cases read and store it through this. */
 #define CELL_ob_ref FMUT(CPY_FIELD(PyCellObject, ob_ref, OB_type))
-
-/* ceval.c:import_from, as 3.7: the sys.modules fallback for circular
-   relative imports, and an ImportError with name and path (F44) */
-static PyObject *cimpl_import_from(PyObject *v, PyObject *name) {
-  _Py_IDENTIFIER(__name__);
-  PyObject *x, *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
-
-  if (_PyObject_LookupAttr(v, name, &x) != 0)
-    return x;
-  pkgname = _PyObject_GetAttrId(v, &PyId___name__);
-  if (pkgname == NULL)
-    goto error;
-  if (!PyUnicode_Check(pkgname)) {
-    Py_CLEAR(pkgname);
-    goto error;
-  }
-  fullmodname = PyUnicode_FromFormat("%U.%U", pkgname, name);
-  if (fullmodname == NULL) {
-    Py_DECREF(pkgname);
-    return NULL;
-  }
-  x = PyImport_GetModule(fullmodname);
-  Py_DECREF(fullmodname);
-  if (x == NULL && !PyErr_Occurred())
-    goto error;
-  Py_DECREF(pkgname);
-  return x;
-error:
-  pkgpath = PyModule_GetFilenameObject(v);
-  if (pkgname == NULL) {
-    pkgname_or_unknown = PyUnicode_FromString("<unknown module name>");
-    if (pkgname_or_unknown == NULL) {
-      Py_XDECREF(pkgpath);
-      return NULL;
-    }
-  } else
-    pkgname_or_unknown = pkgname;
-  if (pkgpath == NULL || !PyUnicode_Check(pkgpath)) {
-    PyErr_Clear();
-    errmsg = PyUnicode_FromFormat(
-        "cannot import name %R from %R (unknown location)", name,
-        pkgname_or_unknown);
-    PyErr_SetImportError(errmsg, pkgname, NULL);
-  } else {
-    errmsg = PyUnicode_FromFormat("cannot import name %R from %R (%S)", name,
-                                  pkgname_or_unknown, pkgpath);
-    PyErr_SetImportError(errmsg, pkgname, pkgpath);
-  }
-  Py_XDECREF(errmsg);
-  Py_XDECREF(pkgname_or_unknown);
-  Py_XDECREF(pkgpath);
-  return NULL;
-}
 
 /* the run-time copies of ceval.c helpers' arms that generated cases call
    (cmp_outcome's PyCmp_EXC_MATCH, D82) */
 #include "pycompiler_copies_gen.h"
-
-static void cimpl_store_deref(PyObject *cell, PyObject *v) {
-  PyObject *old = PyCell_GET(cell);
-  Py_INCREF(v);
-  PyCell_SET(cell, v);
-  Py_XDECREF(old);
-}
 
 /* ceval.c BUILD_TUPLE_UNPACK_WITH_CALL and BUILD_TUPLE_UNPACK, on a tuple
    of the parts; func is the function being called (for the WITH_CALL
@@ -1380,58 +1324,6 @@ static PyObject *cimpl_build_unpack(PyObject *parts, PyObject *func,
   r = PyList_AsTuple(sum);
   Py_DECREF(sum);
   return r;
-}
-
-/* ceval.c BUILD_MAP_UNPACK (func == NULL) and BUILD_MAP_UNPACK_WITH_CALL,
-   on a tuple of the parts */
-static PyObject *cimpl_build_map_unpack(PyObject *parts, PyObject *func) {
-  Py_ssize_t i;
-  PyObject *sum = PyDict_New();
-  if (sum == NULL)
-    return NULL;
-  for (i = 0; i < PyTuple_GET_SIZE(parts); i++) {
-    PyObject *arg = PyTuple_GET_ITEM(parts, i);
-    if (func == NULL) {
-      if (PyDict_Update(sum, arg) < 0) {
-        if (PyErr_ExceptionMatches(PyExc_AttributeError))
-          PyErr_Format(PyExc_TypeError, "'%.200s' object is not a mapping",
-                       arg->ob_type->tp_name);
-        Py_DECREF(sum);
-        return NULL;
-      }
-    } else if (_PyDict_MergeEx(sum, arg, 2) < 0) {
-      if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-        PyErr_Format(PyExc_TypeError,
-                     "%.200s%.200s argument after ** "
-                     "must be a mapping, not %.200s",
-                     PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
-                     arg->ob_type->tp_name);
-      } else if (PyErr_ExceptionMatches(PyExc_KeyError)) {
-        PyObject *exc, *val, *tb;
-        PyErr_Fetch(&exc, &val, &tb);
-        if (val && PyTuple_Check(val) && PyTuple_GET_SIZE(val) == 1) {
-          PyObject *key = PyTuple_GET_ITEM(val, 0);
-          if (!PyUnicode_Check(key))
-            PyErr_Format(PyExc_TypeError,
-                         "%.200s%.200s keywords must be strings",
-                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func));
-          else
-            PyErr_Format(PyExc_TypeError,
-                         "%.200s%.200s got multiple "
-                         "values for keyword argument '%U'",
-                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
-                         key);
-          Py_XDECREF(exc);
-          Py_XDECREF(val);
-          Py_XDECREF(tb);
-        } else
-          PyErr_Restore(exc, val, tb);
-      }
-      Py_DECREF(sum);
-      return NULL;
-    }
-  }
-  return sum;
 }
 
 /* ceval.c:special_lookup */
@@ -1502,17 +1394,6 @@ static PyObject *cimpl_load_build_class(PyObject *builtins) {
     }
   }
   return bc;
-}
-
-/* ceval.c DELETE_DEREF: 1 if the cell was already empty (the caller
-   raises ceval's error) */
-static int cimpl_delete_deref(PyObject *cell) {
-  PyObject *oldobj = PyCell_GET(cell);
-  if (oldobj == NULL)
-    return 1;
-  PyCell_SET(cell, NULL);
-  Py_DECREF(oldobj);
-  return 0;
 }
 
 static PyObject *cimpl_load_global(PyObject *globals, PyObject *builtins,
@@ -1841,49 +1722,6 @@ static bool compute_and_raise_exception(PsycoObject *po) {
                                po->pr.exc, po->pr.val, po->pr.tb) != NULL);
   } else
     return true;
-}
-
-/* FORMAT_VALUE as ceval: 'which' is oparg & FVC_MASK, spec may be NULL */
-static PyObject *cimpl_format_value(PyObject *value, PyObject *spec,
-                                    long which) {
-  PyObject *conv = NULL, *result;
-  switch (which) {
-  case FVC_STR:
-    conv = PyObject_Str(value);
-    break;
-  case FVC_REPR:
-    conv = PyObject_Repr(value);
-    break;
-  case FVC_ASCII:
-    conv = PyObject_ASCII(value);
-    break;
-  default:
-    Py_INCREF(value);
-    conv = value;
-  }
-  if (conv == NULL)
-    return NULL;
-  if (PyUnicode_CheckExact(conv) && spec == NULL)
-    return conv;
-  result = PyObject_Format(conv, spec);
-  Py_DECREF(conv);
-  return result;
-}
-
-/* BUILD_STRING as ceval, for up to four parts or a tuple of them (n < 0) */
-static PyObject *cimpl_build_string(long n, PyObject *a, PyObject *b,
-                                    PyObject *c, PyObject *d) {
-  PyObject *items[4] = {a, b, c, d};
-  PyObject *empty = PyUnicode_New(0, 0), *str;
-  if (empty == NULL)
-    return NULL;
-  if (n < 0)
-    str = _PyUnicode_JoinArray(empty, &PyTuple_GET_ITEM(a, 0),
-                               PyTuple_GET_SIZE(a));
-  else
-    str = _PyUnicode_JoinArray(empty, items, n);
-  Py_DECREF(empty);
-  return str;
 }
 
 /* min_max (bltinmodule.c) without key or default, one item at a time */
@@ -2256,57 +2094,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
         break;
 
-      case FORMAT_VALUE: {
-        /* f-strings: the value (and spec) stay on the stack until done */
-        int which = oparg & FVC_MASK;
-        int spec = (oparg & FVS_MASK) == FVS_HAVE_SPEC;
-        u = spec ? NTOP(1) : NULL;
-        v = spec ? NTOP(2) : NTOP(1);
-        if (which == FVC_NONE && !spec &&
-            Psyco_KnownType(v) == &PyUnicode_Type) {
-          goto fine; /* the value itself, as ceval */
-        }
-        w = psyco_vi_Zero();
-        x = psyco_generic_call(po, cimpl_format_value, CfCommonNewRefPyObject,
-                               "vvl", v, spec ? u : w, (long)which);
-        vinfo_decref(w, po);
-        if (x == NULL)
-          break;
-        Psyco_AssertType(po, x, &PyUnicode_Type);
-        if (spec)
-          POP_DECREF();
-        POP_DECREF();
-        PUSH(x);
-        goto fine;
-      }
-
-      case BUILD_STRING: {
-        int i;
-        vinfo_t *parts[4], *t = NULL;
-        if (oparg <= 4) {
-          w = psyco_vi_Zero();
-          for (i = 0; i < 4; i++)
-            parts[i] = i < oparg ? NTOP(oparg - i) : w;
-          x = psyco_generic_call(po, cimpl_build_string,
-                                 CfCommonNewRefPyObject, "lvvvv", (long)oparg,
-                                 parts[0], parts[1], parts[2], parts[3]);
-          vinfo_decref(w, po);
-        } else {
-          t = PsycoTuple_New(oparg, STACK_POINTER() - oparg);
-          x = psyco_generic_call(po, cimpl_build_string,
-                                 CfCommonNewRefPyObject, "lvlll", -1L, t, 0L, 0L,
-                                 0L);
-          vinfo_decref(t, po);
-        }
-        if (x == NULL)
-          break;
-        Psyco_AssertType(po, x, &PyUnicode_Type);
-        while (oparg--)
-          POP_DECREF();
-        PUSH(x);
-        goto fine;
-      }
-
       case YIELD_VALUE: {
         /* only in a generator expression fused with its consumer
            (GENEXPR_*): do the consumer's step, then push the value send()
@@ -2578,32 +2365,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-      /* Cells and free variables: the frame's own cells, which CPython made
-         before the frame reached Ni (PsycoObject_FromCode maps them as
-         borrowed words). Calls to closure code from compiled code are
-         still real calls (psyfunc.c:fncall_init), so no cell is ever made
-         here. A cell can change under any call (nonlocal in a callee), so
-         its contents are read each time (FMUT). */
-      case STORE_DEREF:
-        if (!psyco_generic_call(po, cimpl_store_deref, CfNoReturnValue, "vv",
-                                GETLOCAL(co->co_nlocals + oparg), NTOP(1)))
-          break;
-        POP_DECREF();
-        goto fine;
-
-      case DELETE_DEREF: {
-        int r = runtime_NON_NULL_f(
-            po, psyco_generic_call(po, cimpl_delete_deref, CfReturnTypeInt,
-                                   "v", GETLOCAL(co->co_nlocals + oparg)));
-        if (r < 0)
-          break;
-        if (r) {
-          unbound_deref_error(po, co, oparg);
-          break;
-        }
-        goto fine;
-      }
-
       /* class statements: a run-time load each time (classes made in a
          function are a rare, slow path anyway) */
       case LOAD_BUILD_CLASS:
@@ -2692,30 +2453,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-      /* {**a, **b}, f(**a, k=1): ceval's code at run time */
-      case BUILD_MAP_UNPACK:
-      case BUILD_MAP_UNPACK_WITH_CALL: {
-        /* the function being called is under the positional tuple */
-        vinfo_t *fn = opcode == BUILD_MAP_UNPACK_WITH_CALL
-                          ? NTOP(oparg + 2) : NULL;
-        w = PsycoTuple_New(oparg, STACK_POINTER() - oparg);
-        if (fn == NULL)
-          fn = psyco_vi_Zero();
-        else
-          vinfo_incref(fn);
-        v = psyco_generic_call(po, cimpl_build_map_unpack,
-                               CfCommonNewRefPyObject, "vv", w, fn);
-        vinfo_decref(fn, po);
-        vinfo_decref(w, po);
-        if (v == NULL)
-          break;
-        Psyco_AssertType(po, v, &PyDict_Type);
-        while (oparg--)
-          POP_DECREF();
-        PUSH(v);
-        goto fine;
-      }
-
 #ifdef STORE_MAP
       case STORE_MAP:
         w = NTOP(1);                         /* key */
@@ -2775,15 +2512,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           break;
         vinfo_decref(x, po);
         POP_DECREF();
-        goto fine;
-      }
-
-      case IMPORT_FROM: {
-        x = psyco_generic_call(po, cimpl_import_from, CfCommonNewRefPyObject,
-                               "vl", TOP(), (long)GETNAMEV(oparg));
-        if (x == NULL)
-          break;
-        PUSH(x);
         goto fine;
       }
 

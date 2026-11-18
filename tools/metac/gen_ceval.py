@@ -40,6 +40,15 @@ pycompiler.c's JUMP_IF_CC, with the policy's ('forget', 'before_branch'),
 and an unconditional jump ends with JUMPED(). A C-API function without a
 counterpart is a residual call with step 4's flags (Translator.flags).
 
+D88 (policy_table RULES): a cell's field written (field_store) and its old
+value released with psyco_xdecref_v; a ceval.c helper the Inliner refuses
+called as a run-time copy (helper_copy); an error block's handler moved
+into a wrapper of the call it follows (error_handler); an input array and
+its count, and a temporary of constants, passed through a wrapper
+(residual_wrapper); a switch on a compile-time value as an if-chain with
+function pointers known per arm (switch_arms); a type test that is only a
+shortcut false for a type Ni doesn't know (type_test_generic).
+
 Every stack effect read is checked against dis.stack_effect() run in the
 interpreter being built for, for several opargs: it must be the same. A
 mismatch stops generation, and so the build.
@@ -179,6 +188,13 @@ def split_statements(toks):
                 if level == 0 and toks[j].text == '}':
                     break
                 j += 1
+            out.append(toks[k:j + 1])
+            k = j + 1
+            continue
+        if t.text == 'switch' and depth == 0 and not cur:
+            # 'switch (...) { ... }' is one statement (translate() makes it
+            # an if-chain)
+            j = ctokens.match_close(toks, ctokens.match_close(toks, k + 1) + 1)
             out.append(toks[k:j + 1])
             k = j + 1
             continue
@@ -435,6 +451,15 @@ TYPE_NAMES = {'Py_ssize_t', 'PyObject', 'PyListObject', 'PyTupleObject',
               'PyDictObject', 'PySetObject', 'PyTypeObject', 'size_t'}
 
 
+def _has(e, pred):
+    """Does a node of the cparse expression e satisfy pred?"""
+    if isinstance(e, tuple) and e and isinstance(e[0], str):
+        return pred(e) or any(_has(x, pred) for x in e[1:])
+    if isinstance(e, list):
+        return any(_has(x, pred) for x in e)
+    return False
+
+
 def kinds_in(e, out=None):
     """The kinds of the nodes of a cparse expression."""
     if out is None:
@@ -639,6 +664,8 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
     temps = []                # constants made for a call: released after it
     const_of = {}             # 'const' variable -> Ni's expression for it
     nonneg = set()            # 'int' variables known not negative
+    nonnull = set()           # 'field' variables known not NULL on this path
+    fnval = {}                # 'fnptr' variable -> the C function it points to here
     jump = None               # the conditional jump, the case's last statement
     jump_all = None           # an unconditional jump, the case's last statement
     cond_of = {}              # 'cond' variable -> (its condition code, len(calls) then)
@@ -648,6 +675,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         'Python/ceval.c:TARGET(%s)' % inst.name, {}).get('policy', [])]
     sel_of = {}               # 'selected' variable -> (constructor, condition code)
     copies = []               # run-time copies of inlined arms: (name, C text)
+    wrappers = {}             # run-time wrappers of calls with error handlers -> return type
     regions = []              # resumable arms being read (innermost last)
     facts = []                # type tests true on this path: (macro, variable)
     resume_labels = []        # the labels of resumable arms' copies
@@ -667,7 +695,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
             first_commit = len(body)
 
     def declare(name, ctype):
-        if name in var:
+        if name in var and (var[name] != 'consumed' or name in in_names):
             raise Skip('%s assigned twice' % name)
         d = '%s%s;' % (ctype, name)
         if d not in decls:          # the other arm of a branch declared it
@@ -723,7 +751,8 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
     def temp(make):
         t = 'tmp%d' % len(temps)
         temps.append(t)
-        decls.append('vinfo_t *%s;' % t)
+        if 'vinfo_t *%s;' % t not in decls:
+            decls.append('vinfo_t *%s;' % t)
         body.append('%s = %s;' % (t, make))
         return t
 
@@ -751,14 +780,18 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
             return temp(CONSTANTS[text])
         raise Skip('operand %r' % text)
 
-    def residual(x, fn, args):
+    def residual(x, fn, args, ret=None, key=None):
         """A C-API function with no Psyco counterpart: a call at run time
         (P12), with the flags step 4's rules give (gen_abstract.Translator:
-        return type, error convention, effects.py's proofs)."""
+        return type, error convention, effects.py's proofs). ret, key: the
+        return type and effects key of a function not in csigs (a ceval.c
+        helper's run-time copy)."""
         nonlocal last_fail
-        ctype = {'object': 'PyObject *', 'int': 'int'}.get(csigs[fn][0])
+        kind = csigs[fn][0] if ret is None else \
+            {'PyObject *': 'object', 'int': 'int'}.get(ret, ret)
+        ctype = {'object': 'PyObject *', 'int': 'int'}.get(kind)
         if ctype is None:
-            raise Skip('%s returns %s' % (fn, csigs[fn][0]))
+            raise Skip('%s returns %s' % (fn, kind))
         try:
             conv = residual_convention(x, following())
         except Skip as e:
@@ -767,16 +800,24 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
             if ctype != 'int' or 'never checked' not in str(e) or var.get(x) == 'ctint':
                 raise
             conv = None
+        if any(in_kind.get(a) == 'array' for a in args):
+            return wrapped(x, fn, args, ctype, conv, key)
+        if temp_arg(x, fn, args):
+            return
         fmt, ops = '', []
         for a in args:
             if a == 'NULL':
                 fmt, o = fmt + 'l', '0L'
+            elif in_kind.get(a) == 'cond':
+                # NULL where the input is absent, as the C's
+                fmt, o = fmt + 'v', '%s ? %s : %s' % (a, a, temp(CONSTANTS['NULL']))
             elif ct_node(a) is not None:
                 fmt, o = fmt + 'l', '(long)(%s)' % tidy(a)
             else:
                 fmt, o = fmt + 'v', operand(a)
             ops.append(o)
-        key = effects.globals.get(fn) if effects is not None else None
+        if key is None and ret is None:
+            key = effects.globals.get(fn) if effects is not None else None
         tr = gen_abstract.Translator(None, {}, {}, effects)
         if conv is None:
             flags = ' | '.join(['CfReturnTypeInt'] + tr.effect_flags(key))
@@ -881,13 +922,23 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         (Py_DECREF(values[E])): the releases, recorded."""
         stmts_ = node[4][1] if node[4][0] == 'block' else [node[4]]
         found = []
+        alias = {}        # 'PyObject *item = values[E];' then Py_DECREF(item)
         for st in stmts_:
+            if st[0] == 'decl' and len(st[1]) == 1 and st[1][0][0] == 'PyObject *' \
+                    and st[1][0][2] is not None and st[1][0][2][0] == 'index':
+                alias[st[1][0][1]] = st[1][0][2]
+                continue
             e = st[1] if st[0] == 'expr' else None
+            if e and e[0] == 'call' and len(e[2]) == 1 and e[2][0][0] == 'id' \
+                    and e[2][0][1] in alias:
+                e = (e[0], e[1], [alias.pop(e[2][0][1])])
             if not (e and e[0] == 'call' and e[1] in (('id', 'Py_DECREF'), ('id', 'Py_XDECREF'))
                     and len(e[2]) == 1 and e[2][0][0] == 'index'
                     and e[2][0][1][0] == 'id' and in_kind.get(e[2][0][1][1]) == 'array'):
                 return False
             found.append((e[2][0][1][1], e[2][0][2]))
+        if alias:
+            return False
         for arr, idx in found:
             elem_rel.setdefault(arr, []).append((idx, loops + [node]))
         return bool(found)
@@ -952,12 +1003,19 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         v = ct_value(node) if node is not None else None
         if v is not None:
             return run_block(then if v else other)
+        nonlocal first_commit
         before = (dict(var), {k: list(x) for k, x in elem_rel.items()})
+        commit0, released0 = first_commit, set(released)
+        commits, rels = [], []
         outs = []
         for k, arm in enumerate((then, other)):
             if k == 1 and not arm:
                 outs.append((False, dict(var)))
+                rels.append(set(released))
                 break
+            first_commit = commit0
+            released.clear()
+            released.update(released0)
             body.append(('if (%s) {' % (text or tidy(cond))) if k == 0 else 'else {')
             body.indent += 1
             if fact and fact[k]:
@@ -968,10 +1026,25 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
             body.indent -= 1
             body.append('}')
             outs.append((ended, dict(var)))
+            if not ended:
+                commits.append(first_commit)
+                rels.append(set(released))
             if {k_: list(x) for k_, x in elem_rel.items()} != before[1]:
                 raise Skip('items released on one arm of %s' % cond)
             var.clear()
             var.update(before[0])
+        # a path's irreversible statements are its own; after the join
+        # everything is irreversible if one arm's was
+        first_commit = commit0 if all(c == commit0 for c in commits) else len(body)
+        released.clear()
+        released.update(released0)
+        for r in rels:
+            # an input released on some arms only: only a conditional one,
+            # NULL on the others (its release is vinfo_xdecref)
+            for n_ in r ^ rels[0]:
+                if in_kind.get(n_) != 'cond':
+                    raise Skip('the arms of %s release %s differently' % (cond, n_))
+            released.update(r)
         live = [o for e, o in outs if not e]
         if not live:
             return True
@@ -979,7 +1052,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         def held(o):
             # what each arm leaves that the rest of the case can use: owned
             # values (a virtual object is an owned object there) and inputs
-            return {n: 'object' if k_ == 'virtual' else k_ for n, k_ in o.items()
+            return {n: 'object' if k_ in ('virtual', 'owned') else k_ for n, k_ in o.items()
                     if k_ in ('input', 'object', 'owned', 'virtual', 'int', 'cond',
                               'selected', 'bool')}
         if any(held(o) != held(live[0]) for o in live):
@@ -1112,13 +1185,23 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         except cparse.ParseError as err:
             raise Skip('a type test %s: %s' % (cond, err))
         pre, types_ = [], {}
+        # ('shortcut', 'specialise_only') on the case: the test's arm is a
+        # shortcut of the other, so a type Ni doesn't know makes the test
+        # false and the generic arm runs (rule type_test_generic)
+        generic = ('shortcut', 'specialise_only') in entry_policy and not regions
+        if generic and (_has(e, lambda n: n[0] == 'un' and n[1] == '!') or
+                     _has(e, lambda n: n[0] == 'bin' and n[1] == '||')):
+            raise Skip('a promoted type test %s that is not positive' % cond)
 
         def type_of(x):
             if x not in types_:
                 t = 'tp%d' % sum(1 for d in decls if d.startswith('PyTypeObject *'))
                 decls.append('PyTypeObject *%s;' % t)
-                pre.append('%s = Psyco_KnownType(%s);' % (t, x))
-                pre.append('if (%s == NULL) %s' % (t, fallback('the type of %s' % x)))
+                if generic:
+                    pre.append('%s = Psyco_KnownType(%s);' % (t, x))
+                else:
+                    pre.append('%s = Psyco_KnownType(%s);' % (t, x))
+                    pre.append('if (%s == NULL) %s' % (t, fallback('the type of %s' % x)))
                 types_[x] = t
             return types_[x]
 
@@ -1146,8 +1229,17 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                 return '(%s %s %s)' % (ev(e[2]), e[1], ev(e[3]))
             if k == 'un':
                 return '%s(%s)' % (e[1], ev(e[2]))
+            if k == 'id' and in_kind.get(e[1]) == 'cond':
+                # a conditional input is NULL exactly when it is absent:
+                # its vinfo pointer (a stack value is never NULL)
+                return e[1]
+            if k == 'id' and e[1] not in var and e[1] not in in_kind and \
+                    re.fullmatch(r'_?Py\w+_Type', e[1]):
+                return e[1]      # a type object of the source
             raise Skip('a type test reading %s' % cparse.c_expr(e))
         text = ev(e)
+        if generic:
+            text = '(%s)' % ' && '.join(['%s != NULL' % t for t in types_.values()] + [text])
         for line in pre:
             body.append(line)
         # the test that holds on each arm, for the accessors (known length)
@@ -1204,7 +1296,315 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         body.append('}')
         var.clear()
         var.update(before)
+        nonnull.add(x)
         return False
+
+    pre_calls = []    # [(variable, fn, args)]: temporaries made inside a wrapper
+
+    def switch_chain(stmt, rest):
+        """'switch (V) { case L: A; break; ... default: D; break; }' and the
+        statements after it: an if-chain on V, each arm followed by those
+        statements (rule switch_arms, as ceval_inline does in a helper),
+        since each arm may set what they read (a function pointer)."""
+        close = ctokens.match_close(stmt, 1)
+        value = words(stmt[2:close])
+        if ct_node(value) is None:
+            raise Skip('a switch on %s' % value)
+        arms, labels, cur, k = [], [], None, close + 2
+        toks = stmt[:-1]
+        depth = 0
+        while k < len(toks):
+            t = toks[k]
+            depth += t.text in '([{'
+            depth -= t.text in ')]}'
+            if depth == 0 and t.text in ('case', 'default'):
+                j = k + 1
+                while toks[j].text != ':':
+                    j += 1
+                if cur:
+                    arms.append((labels, cur))
+                    labels = []
+                labels = labels + ['default' if t.text == 'default' else words(toks[k + 1:j])]
+                cur = []
+                k = j + 1
+                continue
+            cur.append(t)
+            k += 1
+        if cur:
+            arms.append((labels, cur))
+        tail = ' '.join(words(st_) + ('' if words(st_).endswith('}') else ' ;')
+                        for st_ in rest)
+        chain, default = [], None
+        for labs, toks_ in arms:
+            sts = split_statements(toks_)
+            if not sts or words(sts[-1]) != 'break':
+                raise Skip('a switch arm that does not end in break')
+            text = '{ %s %s }' % (' '.join(words(st_) + ('' if words(st_).endswith('}')
+                                                         else ' ;') for st_ in sts[:-1]), tail)
+            if 'default' in labs:
+                default = text
+            else:
+                chain.append('if ( %s ) %s' % (' || '.join('%s == %s' % (value, l_)
+                                                         for l_ in labs), text))
+        out = ' else '.join(chain)
+        out += ' else %s' % (default if default is not None else '{ %s }' % tail)
+        return ctokens.tokenize(out)[0]
+
+    def temp_arg(x, fn, args):
+        """'x = F(constants); ERROR_IF(x == NULL, L); y = G(.. x ..);
+        Py_DECREF(x);' with G residual too and x read nowhere else: x is a
+        temporary of G's call, made inside G's wrapper (rule
+        residual_wrapper). The three statements are taken from the block
+        and G's call made in place of F's."""
+        if pre_calls or any(ct_node(a) is None or ct_value(ct_node(a)) is None for a in args):
+            return False
+        st = rests[-1]
+        if len(st) < 3 or words(st[0]).replace(' ', '') != 'ERROR_IF(%s==NULL,error)' % x \
+                or words(st[2]) != 'Py_DECREF ( %s )' % x:
+            return False
+        m = re.fullmatch(r'(\w+) = (_?Py[A-Z]\w*) \( (.*) \)', words(st[1]))
+        if not m or m.group(2) not in csigs or x not in m.group(3).split(' '):
+            return False
+        try:
+            counterpart(m.group(2), csigs, psigs)
+            return False
+        except NoCounterpart:
+            pass
+        if any(x in [t.text for t in s_] for s_ in st[3:]) or \
+                any(x in [t.text for t in s_] for r in rests[:-1] for s_ in r):
+            return False
+        y, g = m.group(1), m.group(2)
+        gargs = call_args(st[1], 3)[0]
+        del st[:3]
+        pre_calls.append((x, fn, [tidy(a) for a in args]))
+        if y not in var and y not in in_names:
+            pending.discard(y)
+        residual(y, g, gargs)
+        return True
+
+    def wrapped(x, fn, args, ctype, conv, key):
+        """A residual call through a wrapper written into the copies (rule
+        residual_wrapper): the temporaries pre_calls holds are made in it,
+        and an input array with its count (C's 'values, oparg') is passed
+        as up to ARRAY_ARGS_MAX words, the rest NULL, or past that a tuple
+        of the items (the TARGET's ('limit', 'max_args'))."""
+        nonlocal last_fail
+        pre = list(pre_calls)
+        pre_calls.clear()
+        tmps = {t for t, _, _ in pre}
+        params, cargs, ops, fmt = [], [], [], ''
+        arr = None
+        k = 0
+        while k < len(args):
+            a = args[k]
+            if a in tmps:
+                cargs.append(a)
+            elif in_kind.get(a) == 'array':
+                size = next(sz for n_, kd, sz in inputs if n_ == a)
+                if arr is not None or k + 1 >= len(args) or \
+                        tidy(args[k + 1]).replace(' ', '') != size.text().replace(' ', ''):
+                    raise Skip('the array %s passed to %s without its count' % (a, fn))
+                if ('limit', 'max_args') not in entry_policy:
+                    raise Skip("the array %s passed to %s, with no ('limit', 'max_args')"
+                               % (a, fn))
+                arr = (a, size.text())
+                cargs += ['_items', '_n']
+                k += 2
+                continue
+            elif a == 'NULL':
+                cargs.append('NULL')
+            elif ct_node(a) is not None:
+                v = ct_value(ct_node(a))
+                if v is not None:
+                    cargs.append(str(v))
+                else:
+                    params.append(('long', 'p%d' % len(params)))
+                    cargs.append('(Py_ssize_t)' + params[-1][1])
+                    fmt, o = fmt + 'l', '(long)(%s)' % tidy(a)
+                    ops.append(o)
+            else:
+                params.append(('PyObject *', 'p%d' % len(params)))
+                cargs.append(params[-1][1])
+                fmt += 'v'
+                ops.append(operand(a))
+            k += 1
+        nmax = policy_table.LIMITS['ARRAY_ARGS_MAX'][1]
+        if arr is not None:
+            params += [('long', '_count')] + [('PyObject *', '_a%d' % i) for i in range(nmax)]
+        name = 'ceval_%s_%d' % (inst.name, len(wrappers))
+        bad = 'NULL' if ctype == 'PyObject *' else '-1'
+        lines = []
+        for t, f, fa in pre:
+            lines.append('PyObject *%s = %s(%s);' % (t, f, ', '.join(fa)))
+            lines.append('if (%s == NULL) return %s;' % (t, bad))
+        if arr is not None:
+            lines.append('PyObject *_words[%d] = {%s};' % (
+                nmax, ', '.join('_a%d' % i for i in range(nmax))))
+            lines.append('PyObject **_items = _words;')
+            lines.append('Py_ssize_t _n = _count;')
+            lines.append('if (_count < 0) {  /* a tuple of the items */')
+            lines.append('  _items = &PyTuple_GET_ITEM(_a0, 0);')
+            lines.append('  _n = PyTuple_GET_SIZE(_a0);')
+            lines.append('}')
+        lines.append('%s_r = %s(%s);' % (ctype if ctype.endswith('*') else ctype + ' ',
+                                         fn, ', '.join(cargs)))
+        for t, _, _ in pre:
+            lines.append('Py_DECREF(%s);' % t)
+        lines.append('return _r;')
+        head = 'static %s%s%s(%s)' % (ctype, '' if ctype.endswith('*') else ' ', name,
+                                      ', '.join('%s%s%s' % (t, '' if t.endswith('*') else ' ', n)
+                                                for t, n in params))
+        wrappers[name] = ctype
+        copies.append((name, '%s {\n  %s\n}' % (head, '\n  '.join(lines))))
+        calls.append(name)
+        tr = gen_abstract.Translator(None, {}, {}, effects)
+        keys = [key] + [effects.globals.get(f) if effects is not None else None
+                        for _, f, _ in pre]
+        flags = tr.flags(ctype, conv, None)
+        common = None
+        for kk in keys:
+            ef = set(tr.effect_flags(kk))
+            common = ef if common is None else common & ef
+        flags += ''.join(' | ' + f for f in ['CfPure', 'CfNoPython', 'CfNoBlock']
+                         if f in (common or ()))
+        declare(x, 'vinfo_t *')
+        var[x] = 'int' if conv in ('neg', None) else 'object'
+        if arr is None:
+            body.append('%s = psyco_generic_call(po, %s, %s, "%s"%s);' % (
+                x, name, flags, fmt, ''.join(', ' + o for o in ops)))
+        else:
+            a, size = arr
+            z = temp(CONSTANTS['NULL'])
+            words_ = ', '.join('%s > %d ? %s[%d] : %s' % (size, i, a, i, z)
+                               for i in range(nmax))
+            body.append('if (%s <= ARRAY_ARGS_MAX)' % size)
+            body.append('  %s = psyco_generic_call(po, %s, %s, "%sl%s"%s, (long)(%s), %s);' % (
+                x, name, flags, fmt, 'v' * nmax, ''.join(', ' + o for o in ops), size, words_))
+            body.append('else {')
+            body.append('  vinfo_t *_t = PsycoTuple_New(%s, %s);' % (size, a))
+            body.append('  %s = psyco_generic_call(po, %s, %s, "%slv%s"%s, -1L, _t%s);' % (
+                x, name, flags, fmt, 'l' * (nmax - 1), ''.join(', ' + o for o in ops),
+                ', 0L' * (nmax - 1)))
+            body.append('  vinfo_decref(_t, po);')
+            body.append('}')
+        for t in temps:
+            body.append('vinfo_decref(%s, po);' % t)
+        temps.clear()
+        last_fail = len(body)
+        if first_commit is not None:
+            raise Skip('call after an irreversible statement')
+
+    def error_handler(fn, args_text, arms, test):
+        """'if (F(args) OP V) { H; releases; ERROR_IF(true, L); }' where H
+        handles the exception F raised (tests it, replaces its message):
+        H runs at run time, in a wrapper of the call written into the
+        copies (rule error_handler), which returns F's result; the case
+        calls the wrapper and keeps the releases and the exit. (call text,
+        the arms' tokens left)."""
+        _, then, other = if_parts(ctokens.tokenize('if ( x )')[0] + arms)
+        k = len(then)
+        while k and (words(then[k - 1]).replace(' ', '').startswith('ERROR_IF(true,')
+                     or re.fullmatch(r'Py_X?DECREF \( \w+ \)', words(then[k - 1]))):
+            k -= 1
+        handler = then[:k]
+        if other or not handler or k == len(then):
+            return '%s %s' % (fn, args_text), arms
+        params, body = [], []
+        local = set()
+        cps = []
+        for st in handler:
+            # the locals the handler declares (PyObject *exc, *val, *tb)
+            ws = [t_.text for t_ in ctokens.tokenize(words(st))[0]]
+            for j in range(len(ws) - 1):
+                if ws[j] in ('*', ',') and re.fullmatch(r'\w+', ws[j + 1]) and \
+                        (ws[0] == 'PyObject' or (ws[:1] == ['{'] and 'PyObject' in ws)):
+                    local.add(ws[j + 1])
+        text = []
+        for st in handler:
+            ws = [t_.text for t_ in ctokens.tokenize(words(st))[0]]
+            for j, x_ in enumerate(ws):
+                prev = ws[j - 1] if j else ''
+                if not re.fullmatch(r'[A-Za-z_]\w*', x_) or prev in ('.', '->'):
+                    continue
+                if x_ in var and x_ not in local:
+                    if var[x_] not in OBJECT_KINDS:
+                        raise Skip('an error handler reading %s (%s)' % (x_, var[x_]))
+                    if x_ not in params:
+                        params.append(x_)
+                elif x_ in ctx.helpers and j + 1 < len(ws) and ws[j + 1] == '(':
+                    cps += ctx.helper_copy(x_, 'an error handler calling %s' % x_)
+                    ws[j] = 'ceval_' + x_
+                elif x_ in ctx.strings:
+                    ws[j] = ctx.strings[x_]
+                elif x_ in ctx.ceval_macros or x_ in in_names:
+                    raise Skip('an error handler reading %s' % x_)
+            text.append(' '.join(ws) + ('' if ws[-1] == '}' else ' ;'))
+        cargs = call_args(ctokens.tokenize(args_text)[0], 0)[0]
+        for a in cargs:
+            if a in var:
+                if var[a] not in OBJECT_KINDS:
+                    raise Skip('an error handler around %s of %s' % (fn, a))
+            elif not re.fullmatch(r'-?\d+|NULL', a):
+                raise Skip('an error handler around %s ( %s )' % (fn, a))
+        ps = [a for a in cargs if a in var]
+        ps += [p_ for p_ in params if p_ not in ps]
+        ret = {'object': 'PyObject *', 'int': 'int'}.get(csigs[fn][0])
+        if ret is None:
+            raise Skip('an error handler around %s returning %s' % (fn, csigs[fn][0]))
+        name = 'ceval_%s_%d' % (inst.name, len(wrappers))
+        head = 'static %s%s%s(%s)' % (ret, '' if ret.endswith('*') else ' ', name,
+                                      ', '.join('PyObject *%s' % p_ for p_ in ps))
+        code = '%s {\n  %s r = %s ( %s );\n  if (r %s) {\n    %s\n  }\n  return r;\n}' % (
+            head, ret, fn, ', '.join(cargs), test, tidy(' '.join(text)))
+        wrappers[name] = ret
+        copies.extend(cps + [(name, code)])
+        calls.extend(n for n, _ in cps)
+        rest = ' '.join(words(st) + ('' if words(st).endswith('}') else ' ;')
+                        for st in then[k:])
+        return '%s ( %s )' % (name, ', '.join(ps)), ctokens.tokenize('{ %s }' % rest)[0]
+
+    def field_exit():
+        """An error exit where the case holds field values: their
+        vinfos released first (Ni's own references, not the C's)."""
+        held = [n for n, k in var.items() if k == 'field']
+        code = error_code('error')
+        if held:
+            code = '{ %s%s }' % (''.join('vinfo_decref(%s, po); ' % n for n in held), code)
+        return code
+
+    def field_store(fs):
+        """'M(y, v)' storing v into a mutable field of y (PyCell_SET):
+        psyco_put_field with Ni's descriptor; the field takes the
+        reference v held (the C doesn't incref it), so Ni moves its own
+        (consume_reference) and v is released at the vinfo level."""
+        nonlocal last_fail
+        y, desc, v = fs
+        if first_commit is not None:
+            raise Skip('a field store after an irreversible statement (restart rule)')
+        if v == 'NULL':
+            val = temp(CONSTANTS['NULL'])
+        elif var.get(v) in ('input', 'object', 'owned', 'virtual') and \
+                in_kind.get(v, 'scalar') == 'scalar':
+            val = v
+        else:
+            raise Skip('a field store of %s (%s)' % (v, var.get(v)))
+        ok = 'st%d' % sum(1 for d in decls if d.startswith('bool st'))
+        decls.append('bool %s;' % ok)
+        body.append('%s = psyco_put_field(po, %s, %s, %s);' % (ok, y, desc, val))
+        for t in temps:
+            body.append('vinfo_decref(%s, po);' % t)
+        temps.clear()
+        body.append('if (!%s)' % ok)
+        body.append('  ' + field_exit())
+        last_fail = len(body)
+        if v != 'NULL':
+            commit()
+            body.append('consume_reference(po, %s);' % v)
+            if var[v] == 'input':
+                released.add(v)
+            else:
+                body.append('vinfo_decref(%s, po);' % v)
+                var[v] = 'consumed'
 
     def resumable(stmt, cond):
         """'if (NI_RESUME(copy, x, args...)) { arm }' (ceval_inline): the
@@ -1268,6 +1668,22 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                 body.append('vinfo_decref(%s, po);' % w[2])
                 var[w[2]] = 'consumed'
                 continue
+            if len(w) == 4 and w[0] in ('Py_DECREF', 'Py_XDECREF') and \
+                    var.get(w[2]) == 'field':
+                # a value read at run time, which Ni holds no reference
+                # to, released by the C (the old content of a field it has
+                # overwritten): an emitted decref of the word
+                x = w[2]
+                xd = w[0] == 'Py_XDECREF' and x not in nonnull
+                commit()
+                body.append('psyco_%s_v(po, %s);' % ('xdecref' if xd else 'decref', x))
+                body.append('vinfo_decref(%s, po);' % x)
+                var[x] = 'consumed'
+                continue
+            fs = w[0] != 'ERROR_IF' and ctx.field_store(s, var)
+            if fs:
+                field_store(fs)
+                continue
             if len(w) == 4 and w[0] == 'Py_DECREF' and var.get(w[2]) == 'elem':
                 # an item of an input array: released with the array (the
                 # loops must release each item once)
@@ -1284,6 +1700,22 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                 continue
             if w[0] == 'for':
                 for_loop(stmt)
+                continue
+            m = re.fullmatch(r'PyObject \* \( \* (\w+) \) \( [^()]* \)', s)
+            if m:
+                # a pointer to a C function: the generator knows which one
+                # on each path, from its assignment (rule switch_arms)
+                var[m.group(1)] = 'fnptr'
+                fnval[m.group(1)] = None
+                continue
+            if w[0] == 'switch':
+                stmts[:] = [switch_chain(stmt, stmts)]
+                continue
+            m = re.fullmatch(r'(\w+) = (\w+)', s)
+            if m and var.get(m.group(1)) == 'fnptr':
+                if m.group(2) != 'NULL' and m.group(2) not in csigs:
+                    raise Skip('the function pointer %s set to %s' % m.groups())
+                fnval[m.group(1)] = m.group(2)
                 continue
             if len(w) == 4 and w[0] == 'Py_INCREF':
                 x = w[2]
@@ -1338,6 +1770,17 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                 continue
             if w[0] == 'if':
                 cond = call_args(stmt, 1)[0][0]
+                m = re.fullmatch(r'(\w+) (==|!=) NULL', cond)
+                if m and var.get(m.group(1)) == 'fnptr':
+                    f = fnval[m.group(1)]
+                    if f is None:
+                        raise Skip('the function pointer %s unknown here' % m.group(1))
+                    _, then, other = if_parts(stmt)
+                    if run_block(then if (f != 'NULL') == (m.group(2) == '!=') else other):
+                        if stmts:
+                            raise Skip('code after an error exit')
+                        return True
+                    continue
                 if cond.startswith(ceval_inline.RESUME + ' ('):
                     resumable(stmt, cond)
                     continue
@@ -1367,10 +1810,12 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     # the call in an error test is made first, into a
                     # temporary the test then reads
                     t = '_r%d' % len(decls)
-                    pre = ctokens.tokenize('int %s = %s %s ;' % (t, m.group(1), m.group(2)))[0]
                     k = call_args(stmt, 1)[1]
+                    call = error_handler(m.group(1), m.group(2), stmt[k:],
+                                         '%s %s' % (m.group(3), m.group(4)))
+                    pre = ctokens.tokenize('int %s = %s ;' % (t, call[0]))[0]
                     test = ctokens.tokenize('if ( %s %s %s )' % (t, m.group(3), m.group(4)))[0]
-                    stmts[:0] = [pre[:-1], test + stmt[k:]]
+                    stmts[:0] = [pre[:-1], test + call[1]]
                     continue
                 if error_block(stmt, cond):
                     continue
@@ -1399,7 +1844,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     if stmts:
                         raise Skip('code after ERROR_IF(true)')
                     live = [t for t, o in var.items()
-                            if o in ('object', 'owned', 'virtual', 'int')]
+                            if o in ('object', 'owned', 'virtual', 'int', 'field')]
                     if live:
                         raise Skip('an error exit with %s owned' % ', '.join(live))
                     body.append(error_code(args[1]))
@@ -1412,7 +1857,8 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     if var.get(x) == 'int':
                         nonneg.add(x)   # the C's error values are the negative ones
                 live = [t for t, o in var.items()
-                        if o in ('object', 'owned', 'virtual', 'int') and t not in cond[1]]
+                        if o in ('object', 'owned', 'virtual', 'int', 'field')
+                        and t not in cond[1]]
                 if live:
                     raise Skip('ERROR_IF with %s owned' % ', '.join(live))
                 body.append('if (%s)' % cond[0])
@@ -1453,6 +1899,42 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
             if len(w) >= 3 and w[1] == '=':
                 x = w[0]
                 rhs = ' '.join(w[2:])
+                if len(w) > 3 and var.get(w[2]) == 'fnptr' and w[3] == '(':
+                    # a call through a pointer the generator knows: that
+                    # function
+                    if not fnval[w[2]] or fnval[w[2]] == 'NULL':
+                        raise Skip('a call through %s' % w[2])
+                    stmts.insert(0, ctokens.tokenize(' '.join(
+                        ([ctype] if ctype else []) + [x, '='] + [fnval[w[2]]] + w[3:]))[0])
+                    continue
+                if len(w) == 3 and x in in_names and in_kind[x] == 'scalar' and \
+                        x in released and not ctype and \
+                        var.get(w[2]) in ('object', 'owned', 'virtual'):
+                    # an input assigned again after its release: a new
+                    # local from here (the C reuses the name)
+                    new_ = '%s_%d' % (x, sum(1 for n_ in var if n_.startswith(x + '_')) + 1)
+                    for r in rests:
+                        r[:] = [[t._replace(text=new_) if t.kind == 'id' and t.text == x
+                                 else t for t in st_] for st_ in r]
+                    stmts.insert(0, ctokens.tokenize('%s = %s' % (new_, w[2]))[0])
+                    continue
+                if len(w) == 3 and var.get(w[2]) == 'input' and in_kind[w[2]] == 'scalar' \
+                        and not ctype and x not in in_names and w[2] not in released:
+                    # an input moves to x (C's 'result = value'): Ni's own
+                    # reference goes with it, and the input slot is released
+                    declare(x, 'vinfo_t *')
+                    commit()
+                    body.append('vinfo_incref(%s);' % w[2])
+                    body.append('%s = %s;' % (x, w[2]))
+                    var[x] = 'owned'
+                    released.add(w[2])
+                    continue
+                if len(w) > 3 and w[2] in wrappers and w[3] == '(':
+                    # a call with its error handler, at run time (rule
+                    # error_handler)
+                    args, end = call_args(stmt, 3)
+                    residual(x, w[2], args, ret=wrappers[w[2]], key=None)
+                    continue
                 if len(w) > 3 and w[2] in ctx.helpers and w[3] == '(' and not ctype:
                     # a static helper of ceval.c: its body in place (D82)
                     args, end = call_args(stmt, 3)
@@ -1464,14 +1946,21 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                             ctx.known_only(w[2]), csigs)
                         stmts[:] = inl.run()
                     except ceval_inline.Refused as e:
-                        raise Skip('%s: %s' % (w[2], e))
+                        # no compile-time form: a residual call of the
+                        # helper's run-time copy (rule helper_copy)
+                        cp = ctx.helper_copy(w[2], '%s: %s' % (w[2], e))
+                        residual(x, cp[0][0], args, ret=ctx.helpers[w[2]].ret,
+                                 key=ctx.helper_key(w[2], effects))
+                        copies.extend(cp)
+                        calls.extend(n for n, _ in cp[1:])
+                        continue
                     copies.extend(inl.copies)
                     continue
                 fr = not ctype or ctype == 'PyObject *'
                 fr = fr and x not in var and ctx.field_read(rhs, var)
                 if fr:
                     # a field of an object: Ni's descriptor of it (D76)
-                    y, desc = fr
+                    y, desc = fr[:2]
                     declare(x, 'vinfo_t *')
                     body.append('%s = psyco_get_field(po, %s, %s);' % (x, y, desc))
                     body.append('if (%s == NULL)' % x)
@@ -1615,11 +2104,11 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                         if ret != 'int':
                             raise Skip('%s into the C int %s' % (fn, x))
                         ctint[x] = None
-                        body.append('%s = %s(po, %s) ? 0 : -1;' % (x, pname, ', '.join(ops)))
+                        body.append('%s = %s(po%s) ? 0 : -1;' % (x, pname, ''.join(', ' + o for o in ops)))
                     elif ret == 'intval':
                         declare(x, 'vinfo_t *')
                         var[x] = 'int'
-                        body.append('%s = %s(po, %s);' % (x, pname, ', '.join(ops)))
+                        body.append('%s = %s(po%s);' % (x, pname, ''.join(', ' + o for o in ops)))
                     elif ret == 'virtual':
                         declare(x, 'vinfo_t *')
                         var[x] = 'virtual'
@@ -1627,13 +2116,13 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     elif ret == 'object':
                         declare(x, 'vinfo_t *')
                         var[x] = 'object'
-                        body.append('%s = %s(po, %s);' % (x, pname, ', '.join(ops)))
+                        body.append('%s = %s(po%s);' % (x, pname, ''.join(', ' + o for o in ops)))
                     else:
                         # C's int (0: done) becomes Psyco's bool (true: done);
                         # the name says which, ERROR_IF tests it as x_ok
                         declare(x + '_ok', 'bool ')
                         var[x] = 'bool'
-                        body.append('%s_ok = %s(po, %s);' % (x, pname, ', '.join(ops)))
+                        body.append('%s_ok = %s(po%s);' % (x, pname, ''.join(', ' + o for o in ops)))
                     for t in temps:
                         body.append('vinfo_decref(%s, po);' % t)
                     temps.clear()
@@ -1698,7 +2187,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
             raise Skip('input %s is neither released nor stored' % n)
     for n, origin in var.items():
         if n not in in_names and n not in out_names and n not in jout and \
-                origin not in ('bool', 'const', 'local', 'consumed', 'ctint', 'elem'):
+                origin not in ('bool', 'const', 'local', 'consumed', 'ctint', 'elem', 'fnptr'):
             # not a stack value: a result dropped, or interpreter state
             # (3.12's kwnames)
             raise Skip('%s is assigned but is not an output' % n)
@@ -1953,12 +2442,13 @@ class Context:
 
     def __init__(self, src=None, pyconfig=None, defines=None):
         self.src = src
-        self.helpers, self.strings = {}, {}
+        self.helpers, self.strings, self.ceval_macros = {}, {}, set()
         self.macros, self.types = None, set()
         self.accessors = {}
         if src is None:
             return
         self.helpers, self.strings = ceval_inline.helpers(src)
+        self.ceval_macros = ceval_inline.macro_names(src)
         if pyconfig is not None:
             macros, pptoks = cparse.cpp(src, pyconfig, 'Python/ceval.c', defines)
             self.macros = macros
@@ -1989,6 +2479,37 @@ class Context:
             e = cparse.parse_expr(self.expand(ctokens.tokenize(rhs)[0]), self.types)
         except cparse.ParseError:
             return None
+        return self._field_of(e, var)
+
+    def field_store(self, stmt, var):
+        """(object, Ni's descriptor, value text) when the statement stores
+        into one field of an object (a macro, expanded: PyCell_SET) that
+        policy_table.TYPES lists as mutable; the value is a variable or
+        NULL."""
+        if self.macros is None or not re.fullmatch(r'\w+ \( \w+ , \w+ \)', stmt):
+            return None
+        try:
+            e = cparse.parse_expr(self.expand(ctokens.tokenize(stmt)[0]), self.types)
+        except cparse.ParseError:
+            return None
+        if e[0] != 'assign' or e[1] != '=':
+            return None
+        fr = self._field_of(e[2], var)
+        if fr is None:
+            return None
+        if not fr[2]:
+            raise Skip('a store into the immutable field of %s' % fr[0])
+        v = e[3]
+        if v == ('id', 'NULL') or (v[0] == 'cast' and v[1].replace(' ', '') == 'void*'
+                                   and v[2] == ('num', '0')):
+            return fr[0], fr[1], 'NULL'
+        if v[0] != 'id':
+            return None
+        return fr[0], fr[1], v[1]
+
+    def _field_of(self, e, var):
+        """(object, descriptor, mutable) for 'arrow' node e reading a field
+        of a variable holding an object, as field_read."""
         if e[0] != 'arrow' or e[1][0] != 'cast' or e[1][2][0] != 'id':
             return None
         st, y, fld = e[1][1].replace(' ', '').rstrip('*'), e[1][2][1], e[2]
@@ -2005,7 +2526,7 @@ class Context:
         if desc is None or desc[1] != mutable:
             raise Skip('no descriptor of %s.%s in Ni%s' % (
                 st, fld, ' (mutable)' if mutable else ''))
-        return y, desc[0]
+        return y, desc[0], mutable
 
     def descriptors(self):
         """{(struct, field): (Ni's name, FMUT)} from Ni's sources."""
@@ -2018,6 +2539,58 @@ class Context:
                     self._descs.setdefault((m.group(3), m.group(4)),
                                            (m.group(1), bool(m.group(2))))
         return self._descs
+
+    def helper_copy(self, name, why):
+        """[(copy name, C text)] for the run-time copy of a ceval.c static
+        helper that can't be inlined (rule helper_copy): its body as the
+        source has it, the helpers it calls copied too, each renamed
+        ceval_<name>. Refused (Skip, with why) when a parameter isn't an
+        object, or the body reads a macro of ceval.c other than a string,
+        or has a preprocessor line."""
+        out, todo, seen = [], [name], set()
+        lines = self._ceval_lines()
+        while todo:
+            n = todo.pop(0)
+            if n in seen:
+                continue
+            seen.add(n)
+            h = self.helpers[n]
+            for ctype, p in h.params:
+                if ctype.replace(' ', '') != 'PyObject*':
+                    raise Skip('%s (and no run-time copy: it takes %s %s)' % (why, ctype, p))
+            if any(lines[k].lstrip().startswith('#') for k in range(
+                    h.body[0].line - 1, h.body[-1].line)):
+                raise Skip('%s (and no run-time copy: a preprocessor line)' % why)
+            w = []
+            for k, t in enumerate(h.body):
+                if t.kind == 'id' and t.text in self.helpers and k + 1 < len(h.body) \
+                        and h.body[k + 1].text == '(':
+                    todo.append(t.text)
+                    w.append('ceval_' + t.text)
+                elif t.kind == 'id' and t.text in self.strings:
+                    w.append(self.strings[t.text])
+                elif t.kind == 'id' and t.text in self.ceval_macros:
+                    raise Skip('%s (and no run-time copy: it reads %s)' % (why, t.text))
+                else:
+                    w.append(t.text)
+            head = 'static %s%sceval_%s(%s)' % (
+                h.ret, '' if h.ret.endswith('*') else ' ', n,
+                ', '.join('PyObject *%s' % p for _, p in h.params))
+            out.append(('ceval_' + n, '%s;\n%s {\n  %s\n}' % (
+                head, head, tidy(' '.join(w)))))
+        return out
+
+    def _ceval_lines(self):
+        if not hasattr(self, '_lines'):
+            with open(os.path.join(self.src, 'Python', 'ceval.c'), encoding='latin-1') as f:
+                self._lines = f.read().split('\n')
+        return self._lines
+
+    def helper_key(self, name, effects):
+        """The effects key of a ceval.c static helper."""
+        if effects is None:
+            return None
+        return effects.by_file.get('Python/ceval.c', {}).get(name)
 
     def ni_error_helper(self, helper):
         """(name, parameters) of Ni's version of a ceval.c helper that sets

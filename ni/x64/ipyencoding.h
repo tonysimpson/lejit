@@ -124,15 +124,19 @@ PSY_INLINE void psyco_incref_nv(PsycoObject *po, vinfo_t *v) {
   }
 }
 
+/* a dealloc can run a __del__ (KNOWN_BUGS F55), except these types' */
+PSY_INLINE void decref_may_run_python(PsycoObject *po, PyTypeObject *tp) {
+  if (!(tp == &PyUnicode_Type || tp == &PyBool_Type || tp == &PyFloat_Type ||
+        tp == &PyLong_Type || tp == Py_None->ob_type || tp == &PyRange_Type))
+    po->pr.class_unchecked = 1;
+}
+
 /* emit Py_DECREF(v) for run-time v. Used by vcompiler.c when releasing a
    run-time vinfo_t holding a reference to a Python object. */
 PSY_INLINE void psyco_decref_rt(PsycoObject *po, vinfo_t *v) {
   PyTypeObject *tp = Psyco_KnownType(v);
   reg_t rg;
-  /* a dealloc can run a __del__ (KNOWN_BUGS F55), except these types' */
-  if (!(tp == &PyUnicode_Type || tp == &PyBool_Type || tp == &PyFloat_Type ||
-        tp == &PyLong_Type || tp == Py_None->ob_type || tp == &PyRange_Type))
-    po->pr.class_unchecked = 1;
+  decref_may_run_python(po, tp);
   BEGIN_CODE
   RTVINFO_IN_REG(v);
   rg = RUNTIME_REG(v);
@@ -140,6 +144,29 @@ PSY_INLINE void psyco_decref_rt(PsycoObject *po, vinfo_t *v) {
     DEC_OB_REFCNT_T(rg, tp);
   else
     DEC_OB_REFCNT(rg);
+  END_CODE
+}
+
+/* emit Py_XDECREF(v) for run-time v, a word Ni holds no reference to that
+   may be NULL at run time: the old content of a field the C code has just
+   overwritten, whose reference it now releases (STORE_DEREF's cell). The
+   register load and the cc save are made before the NULL test, so both
+   paths leave the compiler's state the same. */
+PSY_INLINE void psyco_xdecref_rt(PsycoObject *po, vinfo_t *v) {
+  PyTypeObject *tp = Psyco_KnownType(v);
+  reg_t rg;
+  decref_may_run_python(po, tp);
+  BEGIN_CODE
+  RTVINFO_IN_REG(v);
+  rg = RUNTIME_REG(v);
+  NEED_CC_REG(rg);
+  TEST_R_R(rg, rg);
+  BEGIN_SHORT_COND_JUMP(1, CC_E);
+  if (tp != NULL)
+    DEC_OB_REFCNT_T(rg, tp);
+  else
+    DEC_OB_REFCNT(rg);
+  END_SHORT_JUMP(1);
   END_CODE
 }
 

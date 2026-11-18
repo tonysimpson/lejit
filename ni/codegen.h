@@ -292,6 +292,11 @@ EXTERNVAR c_promotion_t psyco_static_type_promotion;
 
 #define MEGAMORPHIC_MAX    5
 
+/* an input array that a generated case passes to a C function (rule
+   residual_wrapper, BUILD_STRING) goes as this many words at most, the
+   rest NULL; a longer one as a tuple of its items */
+#define ARRAY_ARGS_MAX     4
+
 /* Check if the given virtual source is a promotion exception */
 EXTERNFN bool psyco_vsource_is_promotion(VirtualTimeSource source);
 

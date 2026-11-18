@@ -335,15 +335,8 @@ vinfo_t *PsycoObject_IsTrue(PsycoObject *po, vinfo_t *vi) {
 
 DEFINEFN
 vinfo_t *PsycoObject_Repr(PsycoObject *po, vinfo_t *vi) {
-  /* XXX implement me */
-  vinfo_t *vstr =
-      psyco_generic_call(po, PyObject_Repr, CfCommonNewRefPyObject, "v", vi);
-  if (vstr == NULL)
-    return NULL;
-
-  /* the result is a string */
-  Psyco_AssertType(po, vstr, &NiCompatStr_Type);
-  return vstr;
+  /* a str, but a __repr__ may return a subclass: no type is known (F110) */
+  return psyco_generic_call(po, PyObject_Repr, CfCommonNewRefPyObject, "v", vi);
 }
 
 static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
