@@ -2,7 +2,7 @@
 
 **Aim:** show that software people widely use today gets faster with Ni, measured as they use it. pyperformance and the adversarial suite (`tools/adversarial/`) are for us; this suite is for everyone else, so the list below was chosen from usage data and plain-CPython profiles only, before Ni ran on any of it.
 
-**When:** the suite runs on CPython 3.10 or later, once Ni works there; today's versions of these packages no longer support 3.7. The choice is made (steps 1–4); the workloads and harness (step 5) are committed blind before Ni runs on them.
+**When:** the suite runs once Ni works on a CPython these packages support; today's versions no longer support 3.7. The choice is made (steps 1–4) and the workloads are committed (`tools/realworld/`, `10d65cb`), both blind: Ni has not run on any of them.
 
 ## Criteria
 
@@ -120,12 +120,30 @@ Notes on the choices:
 - Single runs at 199 Hz: shares are good to a few points. Runs under 2 s (#11, numpy) are coarser.
 - Downloads overstate libraries that are installed in CI and pulled in as dependencies. The survey corrects for that only at the level of what people use Python for.
 
+## The workloads (`tools/realworld/`)
+
+Step 5's workloads are committed (`10d65cb`), written blind.
+
+**Running them:**
+- `setup.sh PYTHON` builds one venv per environment under `build/realworld/envs/<tag>/`, then fetches the inputs. It is the only step that uses the network.
+- `run.sh WORKLOAD PYTHON` runs one workload offline and prints `<workload> digest <sha256>`. Compare digests across interpreters.
+- `profile.sh WORKLOAD PYTHON` gives the profile split above.
+
+**Pinning:**
+- **Packages:** `reqs/<env>.in` pins the releases profiled above. `reqs/<env>.txt` locks them for Python 3.12+ with sha256 hashes, and they install with `--require-hashes --only-binary :all:`.
+- **Inputs and models:** the Flask, packaging and requests sdists are checked by sha256; the Hugging Face models are pinned by commit (`fetch.py`).
+
+**How runs are made the same:**
+- **Servers:** fed a fixed request list with `curl` for the digest. `RW_LOAD` adds `wrk` load.
+- **Ansible:** module tasks run under the venv's interpreter, so each task starts one more process. [read]
+- **Interpreter settings:** every workload runs with `PYTHONHASHSEED=0` and single-threaded BLAS and torch.
+- **pylint:** its duplicate-code messages are left out of the digest, because which copy of a repeated block it reports varies from run to run. [run]
+
+**Checked so far** [run]: on CPython 3.12.9, every workload gave the same digest twice. The exception is Ansible's module tasks: they were only syntax-checked, because a full run means three Python processes at once.
+
+**Open:** current Django (6.x) and numpy (2.4+) need 3.12. If Ni first works on 3.10 or 3.11, those versions need their own locks with older releases, which their profiles must be rechecked against [inferred].
+
 ## Remaining steps
 
-5. **Commit the workloads and harness, blind:**
-   - Pin the versions above and cache the inputs: the sdists, the codebases, the wheels, and the Hugging Face models.
-   - Reuse `tools/adversarial/run.py`'s measurements: total time with start-up, warm-up, steady state, peak memory, and output checked against CPython's.
-   - The servers need a non-Python load generator (`wrk`) and a fixed request mix.
-   - Ansible gains a few module tasks.
-   - #12 reports load time and per-token time apart.
-6. **First run on 3.10+, reported in full**, losses as prominently as wins, the controls included.
+5. **The timing harness** reuses `tools/adversarial/run.py`'s measures: total time with start-up, warm-up, steady state, peak memory, and the digest checked against CPython's. It waits for Ni on a supported CPython. #12 already reports import, load and per-token time apart.
+6. **First run, reported in full**, losses as prominently as wins, the controls included.
