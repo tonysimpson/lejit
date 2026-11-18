@@ -42,6 +42,16 @@ Rules (each general, none per opcode):
     value is run on both arms, as two paths; the paths must agree on the
     stack where they meet. A branch on 'opcode' is folded: in a case
     reached by its own TARGET, opcode is that case.
+  - Arms that end the case (D79). 'if (C) { A; DISPATCH(); } REST' is
+    'if (C) A else { REST }'. An if-chain on one int compared with
+    constants whose last arm is an error exit tests that exit first, on
+    the values no arm takes. 'if (x == K) { A; DISPATCH(); }', K one of
+    SINGLETONS, is dropped when the callee the rest applies to x answers
+    K first in its own body and the rest, folded with that answer, does A
+    (judgement checked against the C: singleton_test_generic_path).
+  - Jumps. JUMPTO/JUMPBY mark their path; slots only jumping paths keep
+    are outputs 'x if (jump)'. A #if whose arms are each one dispatch is
+    a dispatch.
   - Loops. 'while (--oparg >= 0)' or 'while (oparg--)' whose body pops k
     values reads an array of k*oparg inputs; 'for (i = N; i > 0; i--)'
     whose body reads PEEK(a*i + b) reads an array of a*N. Either is

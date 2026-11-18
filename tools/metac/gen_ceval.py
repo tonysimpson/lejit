@@ -31,6 +31,15 @@ F(args) is translated only if PSYCO_HEADERS declare Psyco's counterpart
 matching return kind: PyObject * -> vinfo_t * (NULL: error), int -> bool
 (false: error). Anything else is skipped with the reason.
 
+Control flow (D79): 'if (x OP N)' on a run-time int (a counterpart's int
+result, NULL for C's negative error values) is a condition code by step
+4's rule (gen_abstract.int_condition); arms that only choose Py_True or
+Py_False are the object built from the condition (SELECTS, rule
+bool_select); a jump on one arm, as the case's last statement, is
+pycompiler.c's JUMP_IF_CC, with the policy's ('forget', 'before_branch'),
+and an unconditional jump ends with JUMPED(). A C-API function without a
+counterpart is a residual call with step 4's flags (Translator.flags).
+
 Every stack effect read is checked against dis.stack_effect() run in the
 interpreter being built for, for several opargs: it must be the same. A
 mismatch stops generation, and so the build.
