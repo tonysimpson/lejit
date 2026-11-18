@@ -97,11 +97,11 @@ From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent:
 - **F115** (`962af09`): a 3.8 error handler's run-time copy kept `_PyErr_X(tstate, …)`.
 
 ### Generator
-gen_abstract.py and scalars.py are gone (D128); gen2 has none of these (`tests/gen2_snippets.py` names each).
+gen_abstract.py and scalars.py are gone (D133); gen2 has none of these (`tests/gen2_snippets.py` names each).
 - **G7**: `gen_abstract.Walk.expr_stmt` never emitted a discarded bool-returning call's result, and leaked an owned temporary with no convention; `compare` never released owned operands.
-- **G8**: `gen_abstract.Walk.raise_` didn't set `st.failed`, so residual calls on an error path weren't refused. gen2 also walks an arm on which an error was raised to the function's end on its own, rather than merging it into an arm with none (`d38215d`).
+- **G8**: `gen_abstract.Walk.raise_` didn't set `st.failed`, so residual calls on an error path weren't refused. gen2 also walks an arm on which an error was raised to the function's end on its own, rather than merging it into an arm with none (`a142a37`).
 - **G9**: `gen_abstract.Walk.statement`'s rollback didn't restore `used_likely`, `needs`, `any_call` or `_wcount`.
-- **G10**: `('other', 'mutable_fields')` was in `gen_abstract.IMPLEMENTED`, but nothing implemented it; the item is gone (`d38215d`).
+- **G10**: `('other', 'mutable_fields')` was in `gen_abstract.IMPLEMENTED`, but nothing implemented it; the item is gone (`a142a37`).
 - **G11** (`127d4d6`): `gen_builtins.Walk.compare` evaluated its operand twice; gen_builtins is gone, and gen2 evaluates it once.
 - **G12**: `scalars.call_helper`'s helpers never got `CfNoBlock`, raising ones not `CfNoPython`; a known function pointer in a run was accepted unchecked; errno was assumed to stay within one helper.
 

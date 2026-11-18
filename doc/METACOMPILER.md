@@ -148,9 +148,9 @@ The CPython fields Ni relies on are data, `policy_table.LAYOUTS` and `RUNTIME`; 
 
 ## General translation (D74)
 
-Every object, number and builtin header comes from the new translator, `tools/metac/gen2/abstract.py` (GENERATOR_DESIGN, Migration step 3; D104, D128), on pycparser's AST, its policy items in `gen2/policy.py`. `gen_ceval.py` and `gen_virtual.py` still read C with `tools/metac/cparse.py` (statements and expressions over ctokens' tokens; `cparse.cpp` runs `gcc -E -dM` and `gcc -E -P` with the target's `pyconfig.h` and CFLAGS) through `cread.py`. [read]
+Every object, number and builtin header comes from the new translator, `tools/metac/gen2/abstract.py` (GENERATOR_DESIGN, Migration step 3; D104, D133), on pycparser's AST, its policy items in `gen2/policy.py`. `gen_ceval.py` and `gen_virtual.py` still read C with `tools/metac/cparse.py` (statements and expressions over ctokens' tokens; `cparse.cpp` runs `gcc -E -dM` and `gcc -E -P` with the target's `pyconfig.h` and CFLAGS) through `cread.py`. [read]
 
-**The walk.** Per function: a summary of its callees (meta kind, parameter binding times, which parameters' types it reads, whether it may return NotImplemented or always fails), then a walk with a state per path (binding time and ownership per variable, promoted types, slots read since the last call, whether a run-time call has happened, whether an error is pending). An `if` on a compile-time condition is a C `if` in the meta, one known at generation time folds, one on a run-time integer is a condition code. At a merge, differing ownership is an `own_x` shadow; slots and types are kept only where both paths have them; an arm on which an error was raised, the other with none, takes the rest of the function on its own (D129). `&&`/`||` keep C's order. The walk repeats until the promotions it hoists to the entry are all it needs; one still needed after a call is a refusal.
+**The walk.** Per function: a summary of its callees (meta kind, parameter binding times, which parameters' types it reads, whether it may return NotImplemented or always fails), then a walk with a state per path (binding time and ownership per variable, promoted types, slots read since the last call, whether a run-time call has happened, whether an error is pending). An `if` on a compile-time condition is a C `if` in the meta, one known at generation time folds, one on a run-time integer is a condition code. At a merge, differing ownership is an `own_x` shadow; slots and types are kept only where both paths have them; an arm on which an error was raised, the other with none, takes the rest of the function on its own (D134). `&&`/`||` keep C's order. The walk repeats until the promotions it hoists to the entry are all it needs; one still needed after a call is a refusal.
 
 **Run-time copies.** Resuming CPython's algorithm calls the exported function if nothing ran yet (or the call is the statement's own), else a `cimpl_` copy: a whole static function, or the statements from the resume point on, live variables as parameters; static callees are copied too. Only rare paths reach a copy.
 
@@ -165,7 +165,7 @@ A known count is unrolled; otherwise the run-time function runs, after any case 
 4. **Promotions inside a loop** needed after a call in a turn are made at the outermost loop's entry if nothing was called before it, else refused (PATTERNS rule 1); gen2 promotes a loaded tuple's items there too.
 5. **No resume inside a loop:** CPython's code runs from the outermost loop instead.
 
-**Object units.** A family translates the slots `gen2/scope.py` names, found from the type's initialiser and tables (`gen2/slots.py`, D110), into its header, registered with `Psyco_DefineMeta`; a static slot function resumes through the type's slot. A slot named with a file is read from the initialiser in that file, so `object.c:PyObject_SelfIter` is the iterators' `tp_iter` (D128).
+**Object units.** A family translates the slots `gen2/scope.py` names, found from the type's initialiser and tables (`gen2/slots.py`, D110), into its header, registered with `Psyco_DefineMeta`; a static slot function resumes through the type's slot. A slot named with a file is read from the initialiser in that file, so `object.c:PyObject_SelfIter` is the iterators' `tp_iter` (D133).
 
 ## Virtual objects (D80)
 
@@ -183,7 +183,7 @@ A virtual type's support is generated from CPython's constructor and its `TYPES`
 - **Fields of run-time objects:** `p->f`, `Py_SIZE(p)` with a `TYPES` `descriptors` entry is `psyco_get_field` (`object_field`; gen2's `actions.field_read` for list, dict and bytes, D116); `FMUT` decides re-reading after calls.
 - **Tuple slots** (`gen2/items.py`): `returned_length`, `bounds_test` (`x < 0 || x >= n` as one unsigned compare), `field_array_read` (`TUPLE_ob_item` from the layout), `incref_returned`.
 
-## Argument binding (D85, D127)
+## Argument binding (D85, D132)
 
 `tools/metac/gen2/binding.py` generates the binding part of `ceval.c:_PyEval_EvalCodeWithName` (`gen2/scope.py:BINDING`) into `psyfunc_gen.h`, a C function the compiler runs while it compiles a call; it emits no code. Making, inlining and running the frame stay core.
 - **Input:** Ni's declaration `psyfunc.h:_PsycoEval_EvalCodeWithName` gives binding times: a `vinfo_t **` parameter is an array (its length and NULL slots known, its items vinfos), the rest are the compiler's C values. The keyword parameters are left out, and `gen2/conventions.py:BINDING` gives them the values Ni's one call would pass (no keywords, no `kwdefs`); folded with C's semantics, the keyword loop and the `kwdefs` lookup are not generated. A read of a left-out parameter on a path that runs is refused.
@@ -212,11 +212,11 @@ Float slots, `PyFloat_AsDouble`, int's `nb_float` and math come from gen2 (`gen2
 
 ## str and descriptors (D89)
 
-str's slots are gen2's (D116): `bit_field` is `actions.bit_test`, `runtime_choice` `Walk.choice`, `const_fold` the `FoldMayFail` item, and `PyUnicode_Concat` a `Whole` item. The descriptors are gen2's too (D128).
+str's slots are gen2's (D116): `bit_field` is `actions.bit_test`, `runtime_choice` `Walk.choice`, `const_fold` the `FoldMayFail` item, and `PyUnicode_Concat` a `Whole` item. The descriptors are gen2's too (D133).
 - **`preprocess_conditionals`:** gen2 reads the file after `gcc -E` with the target's configuration, so a macro is the one in force where used; `cread.py` blanks the inactive lines itself (`cparse.conditionals`). A function that calls itself is refused. `(assert(X), E)` is E.
 - **`bit_field`:** `((PyASCIIObject *)s)->state.ready`, with the bits in `LAYOUTS` and a descriptor in `TYPES`, is one unsigned compare against `NI_BIT_PyASCIIObject__state__ready`; the `likely` item names the macro as written.
 - **`runtime_choice`:** `PyUnicode_READY(s)` is `(IS_READY ? 0 : _PyUnicode_Ready(s))`, the `likely` arm leaving the legacy path to CPython.
-- **`raw_pointer`** (`gen2/address.py`): an `l` parameter's fields are C reads in the compiler; `addr += E` adds to an offset; `*(T *)addr` is `psyco_get_field_offset` with T's range, a `char` asserted signed; a `float` read resumes. A `PyObject *` read so holds no reference (`Py_INCREF` is `need_reference`), and its NULL test is a run-time test on whose NULL arm the vinfo is released; `PyErr_SetString` there takes the rest of the function on that arm (D129). `member_get`'s type check is a `Holds` item: `pobject.c:generic_getattr` has made it.
+- **`raw_pointer`** (`gen2/address.py`): an `l` parameter's fields are C reads in the compiler; `addr += E` adds to an offset; `*(T *)addr` is `psyco_get_field_offset` with T's range, a `char` asserted signed; a `float` read resumes. A `PyObject *` read so holds no reference (`Py_INCREF` is `need_reference`), and its NULL test is a run-time test on whose NULL arm the vinfo is released; `PyErr_SetString` there takes the rest of the function on that arm (D134). `member_get`'s type check is a `Holds` item: `pobject.c:generic_getattr` has made it.
 - **`switch_break`:** a `break`, or the last case running off, is the statements after the switch on that path.
 
 ## Failures log
