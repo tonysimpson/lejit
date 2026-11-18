@@ -29,6 +29,9 @@ ASSUMPTIONS (flags held whatever the body does), EXTERNAL, and NO_DEL_TYPES
 (a decref of a local declared with one of their structs, or of a singleton,
 runs no Python). The decref seeds are vocabulary (tools/metac/gen2/vocabulary.py),
 so each use keeps its argument.
+
+The result is cached (cache.py) under the hash of every file's preprocessed
+text, the rules, this file, the vocabulary and the front end.
 """
 import argparse
 import os
@@ -36,6 +39,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import cache  # noqa: E402
 import front  # noqa: E402
 from pycparser import c_ast  # noqa: E402
 from pycparser.c_parser import ParseError  # noqa: E402
@@ -492,18 +496,44 @@ def analyse(python, src=None, rules=None):
     key = (python, src)
     if key not in _CACHE:
         t = front.target(python, src)
-        g = Effects(t.src, rules or policy_rules())
+        rules = rules or policy_rules()
         mirrored = set(front.mirrored_files())
-        for cfile in scanned_files(t.src):
-            try:
-                g.add(cfile, front.parse(t, cfile))
-            except (front.FrontError, ParseError) as e:
-                if cfile in mirrored:
-                    raise EffectsError('%s: %s' % (cfile, e))
-                g.unread.append(cfile)
-        g.solve()
+        ck = _cache_key(t, rules, mirrored)
+        g = cache.load('effects', ck)
+        if not isinstance(g, Effects):
+            g = Effects(t.src, rules)
+            for cfile in scanned_files(t.src):
+                try:
+                    g.add(cfile, front.parse(t, cfile))
+                except (front.FrontError, ParseError) as e:
+                    if cfile in mirrored:
+                        raise EffectsError('%s: %s' % (cfile, e))
+                    g.unread.append(cfile)
+            g.solve()
+            cache.store('effects', ck, g)
         _CACHE[key] = g
     return _CACHE[key]
+
+
+def _cache_key(t, rules, mirrored):
+    """The key of the analysis's cache entry (cache.py): the preprocessed
+    text of each file read, the rules, and the code that reads them."""
+    files = []
+    for cfile in scanned_files(t.src):
+        try:
+            files.append('%s %s' % (cfile, front.source_digest(t, cfile)))
+        except front.FrontError as e:
+            if cfile in mirrored:
+                raise EffectsError('%s: %s' % (cfile, e))
+            files.append('%s unread' % cfile)
+    r = rules
+    return cache.key(
+        'effects', front.code_digest(), cache.file_digest(__file__),
+        cache.file_digest(vocabulary.__file__), t.src, t.version,
+        repr((sorted(r.seeds.items()),
+              sorted((k, sorted(v)) for k, v in r.assumptions.items()),
+              sorted(r.external.items()), sorted(r.no_del))),
+        '\n'.join(sorted(mirrored)), '\n'.join(front.vocabulary()), *files)
 
 
 def main(argv):

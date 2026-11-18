@@ -14,12 +14,19 @@ prefix, whose headers must not shadow the source's. The build directory is
 the source tree; pyconfig.h's directory is searched after it (-idirafter),
 so only what the source lacks comes from there.
 
+parse() is cached (cache.py). Preprocessing is keyed on the .c file, its
+flags, gcc, the shims and this front end, and checked against the hash of
+every file its line markers name, so an edited header is seen; a header
+newly added where the include path would find it first is not (NI_NO_CACHE
+bypasses the cache). The AST is keyed on the preprocessed text's hash.
+
 One departure from CPython's flags: -DUSE_COMPUTED_GOTOS=0, since computed
 gotos don't parse; with them off ceval.c's TARGETs are cases of one switch.
 """
 import collections
 import functools
 import glob
+import hashlib
 import json
 import os
 import re
@@ -31,6 +38,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, 'third_party', 'pycparser'))
 import pycparser  # noqa: E402
 from pycparser import c_parser  # noqa: E402
+import cache  # noqa: E402
 
 PYCPARSER_VERSION = '3.11'
 if pycparser.__version__ != PYCPARSER_VERSION:
@@ -228,11 +236,15 @@ def splice(text, cfile, names, shim):
 _MARKER = re.compile(r'^# (\d+) "([^"]*)"', re.M)
 
 
-def _gcc(t, cfile, text):
+def _gcc_cmd(t, cfile):
     cmd = (['gcc', '-E', '-dD'] + flags_for(t, cfile) + DEPARTURES
            + ['-include', PRELUDE, '-idirafter', os.path.dirname(t.pyconfig),
               '-x', 'c', '-'])
-    cwd = os.path.dirname(os.path.join(t.src, cfile))
+    return cmd, os.path.dirname(os.path.join(t.src, cfile))
+
+
+def _gcc(t, cfile, text):
+    cmd, cwd = _gcc_cmd(t, cfile)
     r = subprocess.run(cmd, input=text, stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE, universal_newlines=True,
                        cwd=cwd, timeout=300)
@@ -288,8 +300,71 @@ def preprocess(t, cfile, extra=''):
                      for s in dd.split('\n'))
 
 
+@functools.lru_cache()
+def code_digest():
+    """What the front end's results depend on besides their inputs: this
+    file, the vendored pycparser and the prelude."""
+    pkg = os.path.dirname(pycparser.__file__)
+    paths = [os.path.abspath(__file__), PRELUDE] + sorted(
+        glob.glob(os.path.join(pkg, '*.py')))
+    return cache.key(PYCPARSER_VERSION, *[cache.file_digest(p) for p in paths])
+
+
+@functools.lru_cache()
+def _gcc_identity():
+    r = subprocess.run(['gcc', '-v'], stderr=subprocess.PIPE,
+                       stdout=subprocess.DEVNULL, universal_newlines=True,
+                       timeout=60)
+    return r.stderr
+
+
+def _deps_same(deps):
+    try:
+        return all(cache.file_digest(p) == d for p, d in deps)
+    except OSError:
+        return False
+
+
+def _preprocessed(t, cfile, extra):
+    """(the sha256 of preprocess's text, a function returning the text)."""
+    path = os.path.join(t.src, cfile)
+    names, shim = vocabulary(), vocab_shim()
+    cmd, cwd = _gcc_cmd(t, cfile)
+    k = cache.key('pp', code_digest(), path, cache.file_digest(path), extra,
+                  '\0'.join(cmd), cwd, _gcc_identity(), '\0'.join(names),
+                  cache.file_digest(shim))
+    e = cache.load('pp', k)
+    if isinstance(e, tuple) and len(e) == 2 and _deps_same(e[0]):
+        sha = e[1]
+        return sha, lambda: cache.load('text', sha) or preprocess(t, cfile, extra)
+    text = preprocess(t, cfile, extra)
+    sha = hashlib.sha256(text.encode()).hexdigest()
+    deps = sorted({p for _, p in _MARKER.findall(text) if os.path.isabs(p)})
+    cache.store('text', sha, text)
+    cache.store('pp', k, ([(p, cache.file_digest(p)) for p in deps], sha))
+    return sha, lambda: text
+
+
+def source_digest(t, cfile, extra=''):
+    """The sha256 of preprocess's text, from the cache when it can be."""
+    return _preprocessed(t, cfile, extra)[0]
+
+
 def parse(t, cfile, extra=''):
     """pycparser's AST of `cfile` (and `extra`, as preprocess); a
     pycparser.c_parser.ParseError names the file and line."""
-    return c_parser.CParser().parse(preprocess(t, cfile, extra),
-                                    os.path.join(t.src, cfile))
+    sha, text = _preprocessed(t, cfile, extra)
+    filename = os.path.join(t.src, cfile)
+    k = cache.key('ast', code_digest(), sha, filename)
+    e = cache.load('ast', k)
+    if isinstance(e, tuple) and len(e) == 2 and e[0] == 'ast':
+        return e[1]
+    if isinstance(e, tuple) and len(e) == 2 and e[0] == 'error':
+        raise c_parser.ParseError(e[1])
+    try:
+        ast = c_parser.CParser().parse(text(), filename)
+    except c_parser.ParseError as ex:
+        cache.store('ast', k, ('error', str(ex)))
+        raise
+    cache.store('ast', k, ('ast', ast))
+    return ast

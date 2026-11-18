@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run every generator for one CPython: the entry point setup.py uses.
 
-    generate.py --python EXE --out DIR [--src DIR] [--past-policy]
+    generate.py --python EXE --out DIR [--src DIR] [--past-policy] [--no-cache]
 
 EXE is the interpreter Ni is being built for; its version (sys.version) picks
 the source, and its installed pyconfig.h is the configuration. The source is
@@ -32,6 +32,10 @@ silently. To accept the differences, copy the report over the baseline:
 (doc/PORT38.md): the policy table's problems are printed instead of
 stopping, and every generator runs and writes its header, to be read and
 compared, not built (setup.py never passes it).
+
+--no-cache (or NI_NO_CACHE=1) neither reads nor writes the cache of parsed
+files and effects (cache.py), which only saves time: the headers are the
+same either way.
 
 This script runs under a newer Python than the one being built for (the
 vendored cases_generator needs 3.10); setup.py finds it with NI_GEN_PYTHON.
@@ -190,8 +194,11 @@ def generate(argv):
     ap.add_argument('--out', required=True)
     ap.add_argument('--src')
     ap.add_argument('--past-policy', action='store_true')
+    ap.add_argument('--no-cache', action='store_true')
     ap.add_argument('-v', '--verbose', action='store_true')
     args = ap.parse_args(argv)
+    if args.no_cache:
+        os.environ['NI_NO_CACHE'] = '1'
     if sys.version_info < (3, 10):
         return 'generate.py needs Python 3.10 or later to run (it is %s)' % (
             sys.version.split()[0])
