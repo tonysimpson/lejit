@@ -3,7 +3,8 @@ translator knows of each C value on one path.
 
 Binding times: gen (the generator folds it: `const`), meta (a C value of
 the meta: `c` is its C), dynamic (a vinfo: `c` names it), pointer (a
-run-time base and a meta offset; not used by the families moved so far).
+pointer into an object's items: `base` names the object's variable, `c`
+the meta offset).
 
 Ownership of a variable holding a dynamic value, as a reference count the
 meta holds: 'borrowed' (none: a parameter, or a copy of one), 'new' (one,
@@ -58,6 +59,9 @@ class Var:
         self.singleton = None     # assigned an immortal object (types.SINGLETONS)
         self.rng = None           # an integer's (lo, hi), where known
         self.word_of = None       # the object variable whose word it holds
+        self.base = None          # pointer: the variable whose items it points into
+        self.within = False       # meta: at most the unroll budget (a loaded length)
+        self.virt = None          # dynamic: a virtual array this meta built (its spec)
 
     def clone(self):
         v = Var.__new__(Var)
@@ -72,7 +76,7 @@ class Val:
     """The value of an expression."""
 
     def __init__(self, bt, c, ctype, tp=None, lv=False, owned=False, conv=None,
-                 var=None, const=None, rng=None, last=False):
+                 var=None, const=None, rng=None, last=False, base=None, within=False):
         self.bt, self.c, self.ctype = bt, c, ctype
         self.tp = tp              # meta: the meta variable of the type it is inside
         self.lv = lv              # meta: an address inside a type (a slot's)
@@ -83,6 +87,10 @@ class Val:
         self.rng = rng            # an integer's (lo, hi), where known
         self.last = last          # a word's last read in the statement
         self.made = None          # a representation's virtual: its type
+        self.base = base          # pointer: the variable whose items it points into
+        self.item_of = None       # an item of this object variable's loaded items
+        self.within = within      # meta: at most the unroll budget
+        self.virt = None          # a virtual array being built: its spec
 
 
 class Path:
@@ -96,6 +104,8 @@ class Path:
         self.ended = False        # the path returned
         self.early = False        # some path may have returned before here
         self.failed = False       # the error state: an error is pending
+        self.loaded = {}          # object variable -> the meta variable of its length
+        self.budgeted = set()     # loops whose bound was checked against the budget
 
     def copy(self):
         p = Path()
@@ -103,6 +113,7 @@ class Path:
         p.known, p.called = set(self.known), self.called
         p.slots, p.ended, p.early = dict(self.slots), self.ended, self.early
         p.failed = self.failed
+        p.loaded, p.budgeted = dict(self.loaded), set(self.budgeted)
         return p
 
     def take(self, other):

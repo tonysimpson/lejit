@@ -11,13 +11,13 @@ import copy
 
 from pycparser import c_ast
 
-from . import actions, cprint, reps, resume, scalar
+from . import actions, cprint, items, loops, reps, resume, scalar
 from .cbuild import Code
 from .ctyping import INT, LONG, VOID_P, strip_casts, text
 from .errors import Refuse, ResumeHere
 from .liveness import body
 from .types import NOT_IMPLEMENTED, SINGLETONS, SINGLETON_NAMES
-from .policy import FoldMayFail, Whole
+from .policy import FoldMayFail, IfKnown, Whole
 from .values import Conv, Path, Val, Var
 
 COMPARE = actions.COMPARE
@@ -34,6 +34,7 @@ class Record:
         self.needs = set()        # parameter indexes whose type is read
         self.returns = []         # 'error' or 'value' per return
         self.resumed = []         # (statement text, why, at once)
+        self.loop_late = []       # (loop, promotion) needed after a call in its turns
         self.notimpl = False      # may return NotImplemented
         self.used_likely = []     # policy Likely items used
         self.any_call = False
@@ -71,8 +72,36 @@ class Walk:
         self.incref_return = None
         self.word_counts = {}     # (statement, x) -> [reads so far, reads]
         self.chosen = {}          # a likely branch's C truth -> the arm assumed
+        self.loops = []           # the meta loops being walked, outermost first
+        self.loop_nodes = [n for n in walk_nodes(fn.body) if isinstance(n, c_ast.For)]
+        self.loop_hoist = tr.loop_hoists.get(self.name, {})
+        self.pending_store = None     # an item stored borrowed, to be increfed next
+        self.sc_slots = None
+        self.kl_specs = {}        # an object variable whose length is loaded -> its spec
 
     # ---- the walk's record ----
+
+    def loop_key(self, s):
+        """A loop's key: its place among the function's loops."""
+        return next(k for k, n in enumerate(self.loop_nodes) if n is s)
+
+    def late(self, p, what):
+        """A promotion needed after a call: at the entry of the outermost
+        meta loop if nothing was called before it, else at the function's
+        entry (rule 1). what: a parameter, or 'items:NAME'."""
+        if self.loops and not self.loops[0].entry_called:
+            key = self.loops[0].key
+            if what not in self.loop_hoist.get(key, []) \
+                    and (key, what) not in self.rec.loop_late:
+                self.rec.loop_late.append((key, what))
+            return
+        if what.startswith('items:'):
+            if self.rec.loop_late:
+                return          # the walk is made again with those promotions
+            raise Refuse('the types of the items of %s are needed after a call'
+                         % what[len('items:'):])
+        if what not in self.rec.late:
+            self.rec.late.append(what)
 
     @property
     def always_error(self):
@@ -112,6 +141,9 @@ class Walk:
             self.body_start = len(out.items)
             resume.resume(self, p, out, [(body(self.fn.body), 0)], 'policy whole: ' + whole.why)
             return
+        for i in self.items:
+            if isinstance(i, IfKnown):
+                self.if_known(p, out, i.name)
         for name in self.hoist:
             actions.promote(self, p, out, name, entry=True)
         self.body_start = len(out.items)
@@ -123,6 +155,21 @@ class Walk:
         for item in self.likely:
             if item.text not in self.rec.used_likely:
                 raise Refuse('policy %r matches no run-time branch' % item)
+
+    def if_known(self, p, out, name):
+        """Policy IfKnown: the integer parameter is its compile-time value
+        where Ni knows it; any other value runs CPython's function (no
+        promotion)."""
+        v = p.vars[name]
+        back = out.sub()
+        resume.resume(self, p.copy(), back, [(body(self.fn.body), 0)],
+                      '%s is not known at compile time' % name, inside=True)
+        out.if_('!is_compiletime(%s->source)' % v.cname, back)
+        k = Var(name, v.ctype, 'meta', name + '_k', isparam=True)
+        self.rec.decls[k.cname] = declaration(text(unconst(v.ctype)), k.cname)
+        out.line('%s = (%s)CompileTime_Get(%s->source)->value;'
+                 % (k.cname, text(unconst(v.ctype)), v.cname))
+        p.vars[name] = k
 
     def block(self, stmts, p, out, frames):
         i = 0
@@ -139,7 +186,11 @@ class Walk:
             if n:
                 s = stmts[i + n - 1]
             else:
+                pending = self.pending_store
                 self.statement(s, p, out, here)
+                if pending is not None and self.pending_store is pending:
+                    raise Refuse('%s stored a borrowed reference that the next statement'
+                                 ' does not incref' % cprint.expr(pending))
                 n = 1
             if not p.ended:
                 self.release_dead(p, out, self.live.after[id(s)])
@@ -198,12 +249,16 @@ class Walk:
             return
         elif once_do(s):
             self.stmt(s.stmt, p, out, frames)
-        elif isinstance(s, (c_ast.For, c_ast.While, c_ast.DoWhile)):
+        elif isinstance(s, c_ast.For):
+            loops.loop(self, s, p, out, frames)
+        elif isinstance(s, (c_ast.While, c_ast.DoWhile)):
             raise ResumeHere('a loop with a run-time bound')
         elif isinstance(s, c_ast.Switch):
             self.switch_stmt(s, p, out, frames)
         elif isinstance(s, (c_ast.Case, c_ast.Default)):
             raise Refuse('a case label outside a switch')
+        elif isinstance(s, c_ast.Break) and self.loops:
+            loops.break_(self, p, out)
         elif isinstance(s, (c_ast.Break, c_ast.Continue)):
             raise Refuse('%s outside a loop' % type(s).__name__.lower())
         elif isinstance(s, c_ast.Goto):
@@ -230,14 +285,16 @@ class Walk:
         bt = self.bts.get(name)
         if bt is None:
             raise ResumeHere('a local of type %s' % text(t))
-        if bt in ('pointer', 'array'):
+        if bt == 'array' or (bt == 'pointer' and not items.lengths(self)):
             raise ResumeHere('a %s local %s' % (bt, name))
         old = p.vars.get(name)
         if old is not None and not old.isparam and text(old.ctype) != text(t):
             raise Refuse('%s declared twice with different types' % name)
         v = Var(name, t, bt, name)
         p.vars[name] = v
-        if bt == 'meta':
+        if bt == 'pointer':
+            self.rec.decls[name] = 'Py_ssize_t %s;' % name     # its offset
+        elif bt == 'meta':
             self.rec.decls[name] = declaration(text(unconst(t)), name)
         else:
             self.rec.decls[name] = 'vinfo_t *%s;' % name
@@ -252,8 +309,9 @@ class Walk:
         if isinstance(e, c_ast.FuncCall) and isinstance(e.name, c_ast.ID):
             fn = e.name.name
             args = e.args.exprs if e.args else []
-            if fn == 'abort' and not args:
-                # Py_UNREACHABLE(): a path the C says never runs
+            if (fn == 'abort' and not args) or fn in fatal_functions():
+                # Py_UNREACHABLE() (abort(), or Py_FatalError from 3.8): a
+                # path the C says never runs
                 self.release_all(p, out)
                 out.line('abort();')
                 p.ended = True
@@ -266,6 +324,8 @@ class Walk:
         if isinstance(e, c_ast.Assignment):
             lv = strip_casts(e.lvalue)
             if not isinstance(lv, c_ast.ID):
+                if e.op == '=' and items.store(self, e.lvalue, e.rvalue, p, out, frames):
+                    return
                 raise ResumeHere('a store into %s' % cprint.expr(e.lvalue))
             name = lv.name
             v = p.vars.get(name)
@@ -294,6 +354,13 @@ class Walk:
         for x in p.vars.values():
             if x.alias == name:
                 x.alias = None      # a copy of the old value, no longer the parameter's
+        if v.bt == 'pointer':
+            val = items.pointer(self, e, p, out, frames)
+            if val is None:
+                raise ResumeHere('%s assigned no pointer into an object\'s items' % name)
+            out.line('%s = %s;' % (v.cname, val.c))
+            v.base = val.base
+            return
         st = singleton(e)
         if st is not None and v.bt == 'dynamic' and self.u.is_object(v.ctype):
             # an immortal object: Ni's constant, made where it is used
@@ -316,9 +383,10 @@ class Walk:
                 raise Refuse('%s is meta, given a dynamic value' % name)
             out.line('%s = %s;' % (v.cname, val.c))
             v.tp = val.tp
+            v.within = val.within
             return
         if val.bt != 'dynamic':
-            if cprint.is_null(e) or val.c == 'NULL':
+            if (cprint.is_null(e) and not self.u.is_int(v.ctype)) or val.c == 'NULL':
                 # no value: what the C reads next it assigns first
                 if v.owned():
                     self.release(v, out)
@@ -352,6 +420,7 @@ class Walk:
         v.own = 'new' if val.owned else 'borrowed'
         v.alias = param_alias(val.var) if not val.owned else None
         v.conv = val.conv
+        v.virt = val.virt
         v.rng = None
         if val.rng is not None:
             bs = reps.int_type(self.u, v.ctype)
@@ -397,7 +466,10 @@ class Walk:
             out.line('vinfo_incref(%s);' % val.c)
             return self.ret_value_owned(p, out, Val('dynamic', val.c, val.ctype, owned=True,
                                                     conv=val.conv))
-        val = self.ev(e, p, out, frames, dest='<return>')
+        if items.unloaded_size(self, x, p):
+            val = items.length(self, x, p, out, frames, as_value=True)    # only returned
+        else:
+            val = self.ev(e, p, out, frames, dest='<return>')
         if self.incref_return is not None:
             if not same_expr(x, self.incref_return) or val.bt != 'dynamic':
                 raise Refuse('an incref of %s not returned' % cprint.expr(self.incref_return))
@@ -566,6 +638,8 @@ class Walk:
         p.early = a.early or b.early
         p.failed = a.failed and b.failed
         p.slots = {k: v for k, v in a.slots.items() if b.slots.get(k) == v}
+        p.loaded = {k: v for k, v in a.loaded.items() if b.loaded.get(k) == v}
+        p.budgeted = a.budgeted & b.budgeted
         for name in sorted(set(a.vars) | set(b.vars)):
             va, vb = a.vars.get(name), b.vars.get(name)
             if va is None or vb is None:
@@ -573,7 +647,12 @@ class Walk:
                 continue
             if va.bt != vb.bt:
                 raise Refuse('%s has a different binding time on two paths' % name)
+            if va.bt == 'pointer' and va.base != vb.base:
+                raise Refuse('the pointer %s points into two objects' % name)
+            if va.virt is not vb.virt and va.owned() and vb.owned():
+                raise Refuse('%s holds a virtual on one path only' % name)
             v = va
+            v.within = va.within and vb.within
             if va.bt == 'dynamic' and va.own != vb.own:
                 states = {va.own, vb.own}
                 if states <= {'borrowed', 'new', 'mixed'}:
@@ -624,6 +703,9 @@ class Walk:
         if isinstance(x, c_ast.UnaryOp) and x.op == '!':
             r = self.cond(x.expr, p, out, frames, facts_f, facts_t)
             return (not r) if isinstance(r, bool) else '!(%s)' % r
+        t = items.bounds_test(self, x, p, out, frames)
+        if t is not None:
+            return t
         if is_logic(x):
             return self.short_circuit(x, p, out, frames)
         if isinstance(x, c_ast.BinaryOp) and x.op in COMPARE:
@@ -635,6 +717,8 @@ class Walk:
             # the truth of a run-time integer is 'x != 0' (P05)
             return self.cond(c_ast.BinaryOp('!=', x, c_ast.Constant('int', '0')), p, out,
                              frames, facts_t, facts_f)
+        if self.is_virtual(x, p) or self.is_obj_param(x, p):
+            return True
         val = self.ev(e, p, out, frames)
         if val.bt == 'gen':
             return bool(val.const)
@@ -699,13 +783,21 @@ class Walk:
                     raise ResumeHere('a compare with NotImplemented of %s' % cprint.expr(x))
                 return ('IS_IMPLEMENTED(%s)' if op == '!=' else '!IS_IMPLEMENTED(%s)') % v.c
         for x, y in ((a, b), (b, a)):
-            if cprint.is_null(y) and op in ('==', '!=') and self.is_obj_param(x, p):
-                return op == '!='       # a meta's object parameter is never NULL
+            if cprint.is_null(y) and op in ('==', '!=') and (self.is_obj_param(x, p)
+                                                           or self.is_virtual(x, p)):
+                return op == '!='       # a meta's object parameter is never NULL, nor a virtual
         va = vb = None
         if reps.is_zero(b):
             va = reps.sign(self, a, p, out)
         elif reps.is_zero(a):
             vb = reps.sign(self, b, p, out)
+        # a length compared with a run-time integer is its field, read
+        if items.unloaded_size(self, a, p) and not items.unloaded_size(self, b, p):
+            vb = vb or self.ev(b, p, out, frames)
+            va = items.length(self, a, p, out, frames, as_value=vb.bt == 'dynamic')
+        elif items.unloaded_size(self, b, p) and not items.unloaded_size(self, a, p):
+            va = va or self.ev(a, p, out, frames)
+            vb = items.length(self, b, p, out, frames, as_value=va.bt == 'dynamic')
         va = va or self.ev(a, p, out, frames)
         vb = vb or self.ev(b, p, out, frames)
         if va.bt == 'gen' or vb.bt == 'gen':
@@ -767,6 +859,11 @@ class Walk:
                 return v
         return None
 
+    def is_virtual(self, x, p):
+        x = strip_casts(x)
+        return isinstance(x, c_ast.ID) and x.name in p.vars and p.vars[x.name].virt is not None \
+            and p.vars[x.name].own == 'new'
+
     def is_obj_param(self, x, p):
         x = strip_casts(x)
         if not isinstance(x, c_ast.ID) or x.name not in p.vars:
@@ -799,6 +896,13 @@ class Walk:
         v = reps.value(self, e, p, out, frames)
         if v is not None:
             return v
+        v = items.length(self, e, p, out, frames)
+        if v is not None:
+            return v
+        if isinstance(e, (c_ast.ArrayRef, c_ast.UnaryOp)):
+            v = items.read(self, e, p, out, frames)
+            if v is not None:
+                return v
         if isinstance(e, c_ast.Constant):
             if e.type == 'string':
                 return Val('meta', e.value, self.type_of(e))
@@ -869,8 +973,12 @@ class Walk:
             if v.bt == 'dynamic':
                 if v.own == 'none' and not v.isparam:
                     raise Refuse('%s read with no value' % name)
-                return Val('dynamic', v.cname, v.ctype, var=v, conv=v.conv, rng=v.rng)
-            return Val('meta', v.cname, v.ctype, tp=v.tp)
+                r = Val('dynamic', v.cname, v.ctype, var=v, conv=v.conv, rng=v.rng)
+                r.virt = v.virt
+                return r
+            if v.bt == 'pointer':
+                return Val('pointer', v.cname, v.ctype, base=v.base)
+            return Val('meta', v.cname, v.ctype, tp=v.tp, within=v.within)
         if name in self.u.vars or name in self.u.enums:
             return Val('meta', name, self.u.vars.get(name, INT))
         raise ResumeHere('the name %s' % name)
@@ -889,7 +997,9 @@ class Walk:
             return Val('meta', '((%s)%s)' % (text(t), v.c), t, tp=v.tp)
         if v.bt == 'dynamic':
             if self.u.is_object(t) and self.u.is_object(v.ctype):
-                return Val('dynamic', v.c, t, owned=v.owned, conv=v.conv, var=v.var)
+                r = Val('dynamic', v.c, t, owned=v.owned, conv=v.conv, var=v.var)
+                r.made, r.virt, r.item_of = v.made, v.virt, v.item_of
+                return r
             if self.u.is_int(t) and self.u.is_int(v.ctype):
                 return v
             raise ResumeHere('a cast of a run-time value to %s' % text(t))
@@ -958,7 +1068,8 @@ class Walk:
             return Val('meta', 'sizeof(%s)' % cprint.expr(x), LONG)
         if op in ('++', '--', 'p++', 'p--'):
             y = strip_casts(x)
-            if isinstance(y, c_ast.ID) and y.name in p.vars and p.vars[y.name].bt == 'meta':
+            if isinstance(y, c_ast.ID) and y.name in p.vars \
+                    and p.vars[y.name].bt in ('meta', 'pointer'):
                 v = p.vars[y.name]
                 return Val('meta', (op + v.cname) if op in ('++', '--')
                            else (v.cname + op[1:]), v.ctype)
@@ -1074,6 +1185,12 @@ def param_decls(fn):
     if args is None:
         return []
     return [p for p in args.params if isinstance(p, c_ast.Decl) and p.name]
+
+
+def fatal_functions():
+    """The functions policy_table.SEEDS says never return."""
+    import policy_table
+    return {k.split(':')[1] for k, v in policy_table.SEEDS.items() if v['reason'] == 'fatal'}
 
 
 def walk_nodes(n):

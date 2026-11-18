@@ -40,8 +40,7 @@ def promote(w, p, out, name, entry=False):
     w.rec.needs.add(pidx)
     if not entry:
         if p.called:
-            if name not in w.rec.late:
-                w.rec.late.append(name)
+            w.late(p, name)
         elif out.depth == 1 and not p.early and name not in w.rec.must:
             w.rec.must.append(name)
     w.rec.decls[tpv] = 'PyTypeObject *%s;' % tpv
@@ -209,6 +208,9 @@ def refcount(w, p, out, fn, args, frames):
     if refs in ('+1', 'x+1'):
         if singleton_of(x) is not None:
             return True     # Ni's constant for it is made where it is used
+        from . import items
+        if items.increfs_store(w, x):
+            return True
         nxt = next_statement(frames)
         if not isinstance(x, c_ast.ID) and isinstance(nxt, c_ast.Return) \
                 and nxt.expr is not None and same(strip_casts(nxt.expr), x):
@@ -295,7 +297,9 @@ def runtime_compare(w, p, out, e, op, va, vb, facts_t, facts_f, value=False):
         r = w.new_tmp('vinfo_t *')
         out.line('%s = psyco_vinfo_condition(po, %s);' % (r, cc))
         return Val('dynamic', r, INT, owned=True)
-    item = next((i for i in w.likely if same(i.expr, e)), None)
+    # (the truth of an integer x is 'x != 0': an item may name x)
+    item = next((i for i in w.likely if same(i.expr, e) or (
+        op == '!=' and vb.c == '0' and same(i.expr, e.left))), None)
     if item is None:
         if not p.called:
             # nothing run yet: CPython's code runs whole, its branches its own
@@ -404,9 +408,13 @@ def call(w, e, p, out, frames, dest):
         r = reps.construct(w, name, args, p, out, frames)
         if r is not None:
             return r
+        from . import items
+        r = items.construct(w, name, args, p, out, frames)
+        if r is not None:
+            return r
         pname = conventions.psyco_name(name)
         if pname in tr.ni and pname not in tr.declared:
-            return ni_call(w, tr.ni[pname], name, args, p, out, frames)
+            return ni_call(w, tr.ni[pname], name, args, p, out, frames, dest)
         if name in tr.funcs:
             g = tr.funcs[name]
             if 'static' in g.decl.storage:
@@ -521,10 +529,12 @@ def meta_call(w, name, args, p, out, frames, dest):
     for k in sorted(g.needs, key=lambda k: (g.entry.index(gparams[k])
                                             if gparams[k] in g.entry else 99, k)):
         v = vals[k]
-        if v.var is not None and v.var.isparam and v.var.name not in p.known:
+        if v.item_of is not None:
+            if 'items:' + v.item_of not in p.known and p.called:
+                w.late(p, 'items:' + v.item_of)
+        elif v.var is not None and v.var.isparam and v.var.name not in p.known:
             if p.called:
-                if v.var.name not in w.rec.late:
-                    w.rec.late.append(v.var.name)
+                w.late(p, v.var.name)
             elif gparams[k] in g.entry and out.depth == 1 and not p.early \
                     and v.var.name not in w.rec.must:
                 w.rec.must.append(v.var.name)
@@ -557,7 +567,7 @@ def meta_call(w, name, args, p, out, frames, dest):
                          always_error=g.always_error))
 
 
-def ni_call(w, decl, name, args, p, out, frames):
+def ni_call(w, decl, name, args, p, out, frames, dest=None):
     if len(decl.params) != len(args) + 1:
         raise ResumeHere('%s has %d parameters' % (decl.name, len(decl.params)))
     no_error_pending(p)
@@ -572,14 +582,17 @@ def ni_call(w, decl, name, args, p, out, frames):
             raise ResumeHere('%s: a run-time argument' % decl.name)
         if v.bt == 'dynamic' and v.owned and not held_scalar(w, v):
             raise ResumeHere('a call as an argument')
-        if v.bt == 'dynamic' and w.u.is_object(v.ctype):
+        if v.bt == 'dynamic' and v.item_of is not None:
+            if 'items:' + v.item_of not in p.known and p.called:
+                w.late(p, 'items:' + v.item_of)
+        elif v.bt == 'dynamic' and w.u.is_object(v.ctype):
             pv = v.var
             if pv is not None and not pv.isparam and pv.alias and pv.own == 'borrowed':
                 pv = p.vars.get(pv.alias, pv)       # a copy of a parameter
             if pv is None or not pv.isparam:
                 raise ResumeHere('%s of a value that is not a parameter' % decl.name)
-            if pv.name not in p.known and p.called and pv.name not in w.rec.late:
-                w.rec.late.append(pv.name)
+            if pv.name not in p.known and p.called:
+                w.late(p, pv.name)
             if pv is not v.var:
                 v = Val('dynamic', pv.cname, v.ctype, var=pv, conv=v.conv)
         vals.append(v)
@@ -594,7 +607,22 @@ def ni_call(w, decl, name, args, p, out, frames):
     out.line('%s = %s;' % (r, c))
     release_held(w, vals, out)
     ctype = w.u.funcs[name].type if name in w.u.funcs else None
+    if dest not in (None, '<return>') and ctype is not None and w.u.is_int(ctype) \
+            and not error_tested(w, dest, frames):
+        # the meta's NULL is the C's -1: tested now, as nothing else would
+        return Val('dynamic', r, ctype, owned=True, conv=Conv('null', check_now=True))
     return Val('dynamic', r, ctype, owned=True, conv=Conv('null', checkable=True))
+
+
+def error_tested(w, dest, frames):
+    """The next statement reading dest (inside the meta loop being walked,
+    whose test or step may read it first) tests it for the C's error."""
+    scope = frames[w.loops[-1].depth:] if w.loops else frames
+    nxt = next_use(dest, scope)
+    if not isinstance(nxt, c_ast.If):
+        return False
+    k = test_kind(strip_casts(nxt.cond), dest)
+    return k is not None and k[0] in ('neg', 'minus1')
 
 
 def residual(w, name, args, p, out, frames, dest, cname=None, rtype=None):

@@ -22,6 +22,11 @@ variable.
           borrowed vinfo), a `constructors` call given a double is `new`,
           which takes the reference (gen_abstract.py's units read the
           section too, through scalars.py).
+  known_length  an immutable array object (policy_table.TYPES'
+          'known_length' and 'virtual' sections, the types gen_virtual.py
+          makes virtuals of): its length is `load`'s when Ni knows it,
+          its items `item`'s, and a `constructor` call builds Ni's
+          virtual by `new` (items.py).
 """
 import collections
 
@@ -73,11 +78,36 @@ def descriptors():
     return out
 
 
+def length_spec():
+    """{struct: spec} of the types with a known_length: an immutable
+    array object whose length and items Ni can know when compiling, and
+    whose virtual (gen_virtual.py) is built by `new` for a `constructor`
+    call, up to `max_items`."""
+    import gen_virtual
+    import policy_table
+    out = {}
+    for vt in gen_virtual.virtual_types():
+        if not vt.array:
+            continue
+        t = policy_table.TYPES[vt.key]
+        kl = t['known_length']
+        out[vt.struct] = {
+            'type': vt.type, 'struct': vt.struct, 'size': kl['size'], 'items': kl['items'],
+            'load': kl['load'].split(':')[1], 'item': kl['item'].split(':')[1],
+            'size_desc': t['descriptors'][kl['size']].split(':')[1],
+            'items_desc': vt.field(kl['items']), 'constructor': vt.ctor, 'new': vt.new,
+            'max_items': t['virtual'].get('max_items')}
+    return out
+
+
 Rep = collections.namedtuple('Rep', 'name spec exprs bound')
 TEXTS = ('test', 'value', 'sign', 'bound')
 
 
 def spec(name):
+    if name == 'known_length':
+        return {'lengths': length_spec(), 'constructors': tuple(
+            s['constructor'] for s in length_spec().values())}
     return word_spec() if name == 'word' else double_spec()
 
 
@@ -87,6 +117,8 @@ def rule_text(names):
     out = []
     for n in names:
         s = spec(n)
+        if 'struct' not in s:
+            continue
         texts = [s[k] for k in TEXTS if k in s]
         if texts:
             out.append('void __ni_rep_%s(%s *x) { %s }\n' % (

@@ -79,6 +79,7 @@ class Translator:
         self.resumes = []
         self.local_bts, self.liveness, self.expanded = {}, {}, {}
         self.reps_used, self.budgets_hit = set(), []
+        self.loop_hoists = {}     # function -> {loop: [promotions at its entry]}
         self.copies = resume.Copies(self)
         self._expansions = {}
 
@@ -152,8 +153,14 @@ class Translator:
             fn = self.funcs[n]
             decl = self.ni.get(self.meta_name(fn))
             out = []
+            fmt = conventions.slot_format(self.slot_roots.get(n))
+            if fmt is not None and len(fmt) != len(resume.params_of(fn)):
+                self.fails[n] = 'Ni calls its slot with "%s"' % fmt
+                fmt = None
             for k, p in enumerate(resume.params_of(fn)):
-                if self.unit.is_object(p.type):
+                if fmt is not None:
+                    out.append('meta' if fmt[k] == 'l' else 'dynamic')
+                elif self.unit.is_object(p.type):
                     out.append('dynamic')
                 elif decl is not None and k + 1 < len(decl.params):
                     out.append('dynamic' if decl.params[k + 1][0] == 'vinfo_t *' else 'meta')
@@ -251,14 +258,21 @@ class Translator:
             fn, hit = self.expansion(name)
             self.expanded[name] = fn
             self.liveness[name] = Liveness(fn.body)
-            self.local_bts[name] = locals_bt(
-                fn, self.unit, dict(zip(sm.params, sm.pbt)))
+            pbt = dict(zip(sm.params, sm.pbt))
+            for i in items:
+                if isinstance(i, policy.IfKnown):
+                    pbt[i.name] = 'meta'        # its value, where the meta goes on
+            self.local_bts[name] = locals_bt(fn, self.unit, pbt,
+                                             length=lengths_read(self, fn))
             hoist = []
+            lh = self.loop_hoists[name] = {}
             for _ in range(self.budgets['rewalks']):
                 w = Walk(self, fn, sm, hoist)
                 w.run()
                 new = [p for p in w.rec.must + w.rec.late if p not in hoist]
-                if not new:
+                for key, what in w.rec.loop_late:
+                    lh.setdefault(key, []).append(what)
+                if not new and not w.rec.loop_late:
                     break
                 hoist = hoist + [p for i, p in enumerate(new) if p not in new[:i]]
             else:
@@ -433,6 +447,34 @@ class Translator:
 
     def cannot_raise(self, key):
         return self.effects is not None and key is not None and self.effects.cannot_raise(key)
+
+
+def lengths_read(tr, fn):
+    """A test of whether an expression of fn reads the size field of an
+    object whose type has a known length (by a cast the C writes, or the
+    declared type of the variable it reads): a meta value for binding
+    times, the length Ni loads (items.py)."""
+    specs = tr.reps['known_length'].spec['lengths'] if 'known_length' in tr.reps else {}
+    if not specs:
+        return None
+    declared = {d.name: d.type for d in resume.decls_in(fn.body)}
+    declared.update({p.name: p.type for p in resume.params_of(fn)})
+
+    def struct(t):
+        pt = tr.unit.pointee(t)
+        return text(pt).replace('const ', '').replace('struct ', '').strip() if pt else None
+
+    def test(e):
+        if not (isinstance(e, c_ast.StructRef) and e.type == '->'):
+            return False
+        x, names = e.name, []
+        while isinstance(x, c_ast.Cast):
+            names.append(struct(x.to_type.type))
+            x = x.expr
+        if isinstance(x, c_ast.ID) and x.name in declared:
+            names.append(struct(declared[x.name]))
+        return any(n in specs and e.field.name == specs[n]['size'] for n in names)
+    return test
 
 
 def clinic_file(cfile):
@@ -610,6 +652,10 @@ def build_float(target):
 
 def build_math(target):
     return build(target, 'math')
+
+
+def build_tuple(target):
+    return build(target, 'tuple')
 
 
 def build_list(target):

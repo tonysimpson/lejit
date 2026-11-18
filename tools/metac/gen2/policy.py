@@ -21,6 +21,10 @@ names the item.
                       is cleared and left to the run-time code (the
                       arguments are immutable, so a respawn's replay of
                       the call is safe)
+  IfKnown(n)          the integer parameter n is its value where Ni knows
+                      it when compiling; any other value runs CPython's
+                      function whole (no promotion: a count is rarely
+                      worth one)
 
 Where these are, and where a generic rule decides instead, is the design's
 "Rules" table; each item here has the source's own reason as its note.
@@ -98,6 +102,21 @@ class Whole:
         return None
 
 
+class IfKnown:
+    def __init__(self, name):
+        self.name, self.text, self.expr = name, None, None
+
+    def __repr__(self):
+        return 'if_known(%s)' % self.name
+
+    def check(self, fn, unit):
+        params = [p for p in (fn.decl.type.args.params if fn.decl.type.args else ())
+                  if getattr(p, 'name', None) == self.name]
+        if not params or not unit.is_int(params[0].type):
+            return '%r: %s has no integer parameter %s' % (self, fn.decl.name, self.name)
+        return None
+
+
 class FoldMayFail:
     def __init__(self, why):
         self.why, self.text, self.expr = why, None, None
@@ -133,6 +152,16 @@ ITEMS['long'] = {f: [Restype('PyLong_Type')] for f in (
 ITEMS['long']['long_abs'].append(Likely('Py_SIZE(v) < 0', False))
 ITEMS['long']['long_true_divide'] = [Restype('PyFloat_Type')]
 ITEMS['float'] = {'float_float': [Restype('PyFloat_Type')]}
+ITEMS['tuple'] = {
+    'tupleitem': [Likely('i < 0 || i >= Py_SIZE(a)', False)],
+    # the item is not found at each turn: the search goes on
+    'tuplecontains': [Likely('cmp == 0', True)],
+    # the items compared are expected equal: the loop goes on
+    'tuplerichcompare': [Likely('k', True)],
+    'tupleconcat': [Restype('PyTuple_Type')],
+    # a repeat count is a constant where it matters ((x,) * 3)
+    'tuplerepeat': [IfKnown('n'), Restype('PyTuple_Type')],
+}
 ITEMS['unicode'] = {
     # a legacy string (not ready) is rare
     'unicode_length': [Likely('PyUnicode_IS_READY(self)', True)],
@@ -150,9 +179,14 @@ BUDGETS = {
     'rewalks': 16,              # walks to move promotions before calls
     'inline_depth': 3,          # inlines inside inlined bodies
     'inline_statements': 40,    # a callee's statements, to inline it
+    'loop_walks': 6,            # walks of a meta loop's body to its fixed point
+    # turns of a meta loop, and items whose types are promoted, checked when
+    # Ni compiles (beyond it, CPython's code from the loop or the load);
+    # above CT_TUPLE_LOAD_SIZE_LIMIT, so no constant tuple Ni loads hits it
+    'unroll': 16,
 }
 
-KINDS = (Likely, Restype, NotTranslation, HandOnly, FoldMayFail, Whole)
+KINDS = (Likely, Restype, NotTranslation, HandOnly, FoldMayFail, Whole, IfKnown)
 
 
 def load(target, family, items=None, extra=''):
@@ -290,8 +324,11 @@ def assigned(n):
 
 
 def exact_test(c, name, tp):
-    """c is 'Py_TYPE(name) == &tp' (PyX_CheckExact) as preprocessed."""
+    """c is 'Py_TYPE(name) == &tp' (PyX_CheckExact) as preprocessed, or
+    an && of which one is."""
     c = strip_casts(c)
+    if isinstance(c, c_ast.BinaryOp) and c.op == '&&':
+        return exact_test(c.left, name, tp) or exact_test(c.right, name, tp)
     if not (isinstance(c, c_ast.BinaryOp) and c.op == '=='):
         return False
     a, b = strip_casts(c.left), strip_casts(c.right)

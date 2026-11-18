@@ -13,11 +13,15 @@ from pycparser import c_ast
 
 from . import conventions, cprint, inline
 from .ctyping import text
-from .errors import Refuse
+from .errors import Refuse, ResumeHere
 from .liveness import names
 
 
 def resume(w, p, out, frames, why, inside=False):
+    if w.loops:
+        # a copy from inside a meta loop would lose the turns still to
+        # run: CPython's code runs from the outermost loop instead
+        raise ResumeHere(why)
     if inside and w.rec.ncalls > w.stmt_ncalls:
         # the copy would evaluate the statement's call again
         raise Refuse('resuming in a statement after its call: %s' % why)
@@ -50,6 +54,10 @@ def resume(w, p, out, frames, why, inside=False):
         owned = set()
         for vname in sorted(live):
             v = p.vars.get(vname)
+            if v is not None and v.bt == 'pointer':
+                raise Refuse('resuming with the pointer %s live: %s' % (vname, why))
+            if v is not None and v.virt is not None and v.owned():
+                raise Refuse('resuming while the virtual %s is being built: %s' % (vname, why))
             if v is not None and v.bt == 'dynamic' and v.owned() and w.u.is_object(v.ctype):
                 if v.own == 'mixed':
                     raise Refuse('resuming with %s owned on some paths' % vname)

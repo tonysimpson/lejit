@@ -1,4 +1,4 @@
-# 3.8.20 9f2d5962c2583e67ef75924cd56d0c1af78bf45ec57035cf8a2cc09f74f4bf78 5a22f248e5d16351a3b24569a73aae12e5d96706+6eb9a5e5c1c0
+# 3.8.20 9f2d5962c2583e67ef75924cd56d0c1af78bf45ec57035cf8a2cc09f74f4bf78 67ddc05e95eb50c9b3136caeb457eb929a1cb11b+52543ace5159
 BEFORE_ASYNC_WITH	refused	stack: error exit with exit on the stack	Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)
 BEGIN_FINALLY	refused	stack: pushes NULL, not a variable	Python/ceval.c:TARGET(BEGIN_FINALLY)
 BINARY_ADD	generated		Python/ceval.c:TARGET(BINARY_ADD)
@@ -171,13 +171,12 @@ PySequence_List	restarted	PsycoList_New has 3 parameters: result = PyList_New(0)
 PySequence_SetItem	resumed	a slot of a heap type changed: if (m && m->sq_ass_item) { if (i < 0) { if (m->sq_length) { Py_ssize_t; a slot of a heap type changed: if (m->sq_length) { Py_ssize_t l = (*m->sq_length)(s); if (l < 0) { as; a slot of a heap type changed: return m->sq_ass_item(s, i, o);; a slot of a heap type changed: if (s->ob_type->tp_as_mapping && s->ob_type->tp_as_mapping->mp_ass_sub	Objects/abstract.c:PySequence_SetItem
 PySequence_SetSlice	resumed	a slot of a heap type changed: if (mp && mp->mp_ass_subscript) { int res; PyObject *slice = _PySlice_; a slot of a heap type changed: res = mp->mp_ass_subscript(s, slice, o);	Objects/abstract.c:PySequence_SetSlice
 PySequence_Tuple	resumed	every path from here runs a loop with a run-time bound: it = PyObject_GetIter(v);	Objects/abstract.c:PySequence_Tuple
-PyTuple_New	refused	resuming needs op, which has no value here	Objects/tupleobject.c:PyTuple_New
-PyTuple_Type.sq_concat	resumed	the length of a is not known at compile time: if (Py_SIZE(a) == 0 && PyTuple_CheckExact(bb)) { Py_INCREF(bb); return; the length of bb is not known at compile time: if (Py_SIZE(((PyTupleObject*)bb)) == 0 && PyTuple_CheckExact(a)) { Py_; a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT items: np = (PyTupleObject *) PyTuple_New(size);	Objects/tupleobject.c:tupleconcat
-PyTuple_Type.sq_contains	resumed	the length of a is not known at compile time: for (i = 0, cmp = 0 ; cmp == 0 && i < Py_SIZE(a); ++i) cmp = PyObject_	Objects/tupleobject.c:tuplecontains
+PyTuple_Type.sq_concat	resumed	the length of a is not known at compile time or is over 16: if (Py_SIZE(a) == 0 && PyTuple_CheckExact(bb)) { Py_INCREF(bb); return; the length of bb is not known at compile time or is over 16: if (Py_SIZE(b) == 0 && PyTuple_CheckExact(a)) { Py_INCREF(a); return (; a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT items: np = (PyTupleObject *) PyTuple_New(size);	Objects/tupleobject.c:tupleconcat
+PyTuple_Type.sq_contains	resumed	the length of a is not known at compile time or is over 16: for (i = 0, cmp = 0 ; cmp == 0 && i < Py_SIZE(a); ++i) cmp = PyObject_	Objects/tupleobject.c:tuplecontains
 PyTuple_Type.sq_item	generated		Objects/tupleobject.c:tupleitem
 PyTuple_Type.sq_length	generated		Objects/tupleobject.c:tuplelength
-PyTuple_Type.sq_repeat	resumed	n is not known at compile time: Py_ssize_t i, j;; the length of a is not known at compile time: if (Py_SIZE(a) == 0 || n == 1) { if (PyTuple_CheckExact(a)) { Py_INCRE; a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT items: np = (PyTupleObject *) PyTuple_New(size);	Objects/tupleobject.c:tuplerepeat
-PyTuple_Type.tp_richcompare	resumed	the length of v is not known at compile time: vlen = Py_SIZE(vt);; the length of w is not known at compile time: wlen = Py_SIZE(wt);	Objects/tupleobject.c:tuplerichcompare
+PyTuple_Type.sq_repeat	resumed	n is not known at compile time: Py_ssize_t i, j;; the length of a is not known at compile time or is over 16: if (Py_SIZE(a) == 0 || n == 1) { if (PyTuple_CheckExact(a)) { Py_INCRE; a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT items: np = (PyTupleObject *) PyTuple_New(size);; a loop of more than 16 turns: for (i = 0; i < n; i++) { for (j = 0; j < Py_SIZE(a); j++) { *p = item	Objects/tupleobject.c:tuplerepeat
+PyTuple_Type.tp_richcompare	resumed	the length of v is not known at compile time or is over 16: vlen = Py_SIZE(vt);; the length of w is not known at compile time or is over 16: wlen = Py_SIZE(wt);	Objects/tupleobject.c:tuplerichcompare
 PyUnicode_Concat	restarted	policy whole: a new string built in C: PyObject *result;	Objects/unicodeobject.c:PyUnicode_Concat
 PyUnicode_Contains	restarted	a local of type void *: void *buf1, *buf2;	Objects/unicodeobject.c:PyUnicode_Contains
 PyUnicode_RichCompare	refused	policy items left to the hand translation: promote known_only, virtual result	Objects/unicodeobject.c:PyUnicode_RichCompare

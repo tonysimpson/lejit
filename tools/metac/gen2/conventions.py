@@ -99,6 +99,18 @@ def flags(unit, t, conv, effect_flags=()):
     return out + ''.join(' | ' + x for x in effect_flags)
 
 
+def slot_format(refs):
+    """How Ni calls the meta of the slot a function fills (refs: its
+    [(slot reference, slot)]): policy_table.SLOT_ARGS' format, 'v' a vinfo
+    and 'l' a C value known when compiling; None for vinfos only."""
+    import policy_table
+    for _, slot in refs or ():
+        spec = policy_table.SLOT_ARGS.get(slot)
+        if spec is not None:
+            return spec['format']
+    return None
+
+
 def resume_conv(kind, notimpl):
     """How a run-time copy's result is described, by the meta's kind."""
     if kind == 'obj':

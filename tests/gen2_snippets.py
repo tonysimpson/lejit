@@ -3,7 +3,8 @@
 the generated meta (or the refusal) out. The C is read after
 Objects/abstract.c, in its scope, so it has CPython 3.7's types (a
 number test's after Objects/longobject.c or Objects/floatobject.c, with
-the word and double representations); a test's functions are translated
+the word and double representations, a tuple test's after
+Objects/tupleobject.c with the known-length one); a test's functions are translated
 as a family whose metas Ni declares as the test says. Needs gcc and
 CPython 3.7's source; no build.
 
@@ -18,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools', 'metac'))
 import front  # noqa: E402
 from gen2 import abstract, conventions, policy, scope, types  # noqa: E402
-from gen2.policy import Likely, Restype  # noqa: E402
+from gen2.policy import IfKnown, Likely, Restype  # noqa: E402
 
 PY37 = os.environ.get('NI_PY37', os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
 
@@ -400,6 +401,216 @@ PyObject *PySnip_G11(PyObject *o) {
          want=['_t1 = PsycoObject_Size(po, o);', 'integer_cmp_i(po, _t1, 0, Py_LT);',
                'vinfo_decref(_t1, po);'],
          absent=['_t2 = PsycoObject_Size', '_t3 = PsycoObject_Size']),
+    # ---- tuples: known lengths, meta loops, items, virtual tuples ----
+    Case('known length: a loop over a tuple\'s items runs when Ni compiles', '''
+PyObject *PySnip_TLoop(PyTupleObject *a, PyObject *o) {
+    Py_ssize_t i;
+    for (i = 0; i < Py_SIZE(a); i++)
+        { PyObject *t = PyObject_GetItem(o, a->ob_item[i]); if (t == NULL) return NULL; Py_DECREF(t); }
+    Py_INCREF(o);
+    return o;
+}''', ['PySnip_TLoop'], file='tuple',
+         want=['_t1 = PsycoTuple_Load(a);', 'if (_t1 < 0 || _t1 > 16) {',
+               'return psyco_generic_call(po, PySnip_TLoop,', 'i = 0;', 'for (;;) {',
+               'if (!(i < _t1))', 'break;',
+               'PsycoObject_GetItem(po, o, PsycoTuple_GET_ITEM(a, i))', 'i++;',
+               'vinfo_incref(o);', 'return o;'],
+         report='the length of a is not known at compile time or is over 16'),
+    Case('loop budget: a meta bound that is no loaded length is checked when Ni compiles', '''
+PyObject *PySnip_TBudget(PyObject *o, Py_ssize_t n) {
+    Py_ssize_t i;
+    for (i = 0; i < n; i++)
+        { PyObject *t = PyObject_GetItem(o, o); if (t == NULL) return NULL; Py_DECREF(t); }
+    Py_INCREF(o);
+    return o;
+}''', ['PySnip_TBudget'], file='tuple', items={'PySnip_TBudget': [IfKnown('n')]},
+         want=['if (!is_compiletime(n->source)) {', 'return psyco_generic_call(po, PySnip_TBudget,',
+               'n_k = (Py_ssize_t)CompileTime_Get(n->source)->value;', 'if (n_k > 16) {',
+               'for (;;) {', 'if (!(i < n_k))'],
+         report='a loop of more than 16 turns'),
+    Case('if_known: a parameter Ni does not know runs CPython\'s function', '''
+PyObject *PySnip_TIfK(PyObject *o, Py_ssize_t n) {
+    if (n == 1) return PyObject_Repr(o);
+    return PyObject_Str(o);
+}''', ['PySnip_TIfK'], file='tuple', items={'PySnip_TIfK': [IfKnown('n')]},
+         want=['if (!is_compiletime(n->source)) {', '"vv", o, n);', 'if (n_k == 1) {',
+               'PyObject_Repr,', 'PyObject_Str,'],
+         absent=['Psyco_NeedType(po, n)'], report='n is not known at compile time'),
+    Case('item promotion: item types a turn needs after a call, at the loop\'s entry', '''
+PyObject *PySnip_TProm(PyTupleObject *a, PyObject *o) {
+    Py_ssize_t i;
+    for (i = 0; i < Py_SIZE(a); i++)
+        if (PyObject_RichCompareBool(o, a->ob_item[i], Py_EQ) < 0) return NULL;
+    Py_INCREF(o);
+    return o;
+}''', ['PySnip_TProm'], file='tuple', 
+         items={'PySnip_TProm': [Likely('PyObject_RichCompareBool(o, a->ob_item[i], Py_EQ) < 0',
+                                        False)]},
+         want=['_t1 = PsycoTuple_Load(a);', 'tp_o = Psyco_NeedType(po, o);',
+               'for (_t2 = 0; _t2 < _t1; _t2++) {',
+               'if (Psyco_NeedType(po, PsycoTuple_GET_ITEM(a, _t2)) == NULL) {', 'for (;;) {',
+               'PsycoObject_RichCompareBool(po, o, PsycoTuple_GET_ITEM(a, i), 2)']),
+    Case('item promotion: refused when a call comes before the loop (rule 1)', '''
+PyObject *PySnip_TLate(PyTupleObject *a, PyObject *o) {
+    Py_ssize_t i;
+    { PyObject *t = PyObject_GetItem(o, o); if (t == NULL) return NULL; Py_DECREF(t); }
+    for (i = 0; i < Py_SIZE(a); i++)
+        if (PyObject_RichCompareBool(o, a->ob_item[i], Py_EQ) < 0) return NULL;
+    Py_INCREF(o);
+    return o;
+}''', ['PySnip_TLate'], file='tuple',
+         items={'PySnip_TLate': [Likely('PyObject_RichCompareBool(o, a->ob_item[i], Py_EQ) < 0',
+                                        False)]},
+         refused='the types of the items of a are needed after a call'),
+    Case('item read: a run-time index reads the item array; the bounds test is one compare', '''
+PyObject *PySnip_TItem(PyTupleObject *a, Py_ssize_t i) {
+    if (i < 0 || i >= Py_SIZE(a)) {
+        PyErr_SetString(PyExc_IndexError, "out of range");
+        return NULL;
+    }
+    Py_INCREF(a->ob_item[i]);
+    return a->ob_item[i];
+}''', ['PySnip_TItem'], file='tuple',
+         items={'PySnip_TItem': [Likely('i < 0 || i >= Py_SIZE(a)', False)]},
+         want=['_t1 = psyco_get_field(po, a, FIX_size);',
+               '_t2 = integer_cmp(po, i, _t1, Py_GE|COMPARE_UNSIGNED);', 'vinfo_decref(_t1, po);',
+               '_t3 = runtime_condition_f(po, _t2);',
+               'PycException_SetString(po, PyExc_IndexError,',
+               'psyco_get_field_array(po, a, FPYREF(TUPLE_ob_item), i);'],
+         absent=['PsycoTuple_Load']),
+    Case('virtual tuple: built by the meta, its items stored, never NULL', '''
+PyObject *PySnip_TNew(PyTupleObject *a) {
+    Py_ssize_t i;
+    PyTupleObject *np = (PyTupleObject *)PyTuple_New(Py_SIZE(a));
+    if (np == NULL) return NULL;
+    for (i = 0; i < Py_SIZE(a); i++) {
+        PyObject *v = a->ob_item[i];
+        Py_INCREF(v);
+        np->ob_item[i] = v;
+    }
+    return (PyObject *)np;
+}''', ['PySnip_TNew'], file='tuple',
+         want=['_t1 = PsycoTuple_Load(a);', 'PsycoTuple_New(', 'v = PsycoTuple_GET_ITEM(a, i);',
+               'vinfo_incref(v);', 'PsycoTuple_GET_ITEM(np, i) = v;', 'return np;'],
+         absent=['np == NULL', 'PyTuple_New,']),
+    Case('virtual tuple: a borrowed item stored is increfed by the next statement', '''
+PyObject *PySnip_TPend(PyTupleObject *a) {
+    Py_ssize_t i;
+    PyTupleObject *np = (PyTupleObject *)PyTuple_New(Py_SIZE(a));
+    if (!np) return NULL;
+    for (i = 0; i < Py_SIZE(a); i++) {
+        np->ob_item[i] = a->ob_item[i];
+        Py_INCREF(np->ob_item[i]);
+    }
+    return (PyObject *)np;
+}''', ['PySnip_TPend'], file='tuple',
+         want=['PsycoTuple_GET_ITEM(np, i) = PsycoTuple_GET_ITEM(a, i);',
+               'vinfo_incref(PsycoTuple_GET_ITEM(np, i));'], absent=['np == NULL', '!np']),
+    Case('virtual tuple: a borrowed item stored and never increfed is refused', '''
+PyObject *PySnip_TNoInc(PyTupleObject *a) {
+    Py_ssize_t i;
+    PyTupleObject *np = (PyTupleObject *)PyTuple_New(Py_SIZE(a));
+    if (np == NULL) return NULL;
+    for (i = 0; i < Py_SIZE(a); i++)
+        np->ob_item[i] = a->ob_item[i];
+    return (PyObject *)np;
+}''', ['PySnip_TNoInc'], file='tuple', refused='does not incref'),
+    Case('virtual tuple: more items than Ni builds runs CPython\'s function', '''
+PyObject *PySnip_TBig(PyTupleObject *a, PyTupleObject *b) {
+    Py_ssize_t i;
+    PyTupleObject *np = (PyTupleObject *)PyTuple_New(Py_SIZE(a) + Py_SIZE(b));
+    if (np == NULL) return NULL;
+    for (i = 0; i < Py_SIZE(a); i++) {
+        PyObject *v = a->ob_item[i];
+        Py_INCREF(v);
+        np->ob_item[i] = v;
+    }
+    return (PyObject *)np;
+}''', ['PySnip_TBig'], file='tuple',
+         want=['_t1 = PsycoTuple_Load(a);', 'PsycoTuple_Load(b);',
+               '> CT_TUPLE_LOAD_SIZE_LIMIT) {', 'return psyco_generic_call(po, PySnip_TBig,',
+               'PsycoTuple_New('],
+         report='a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT items'),
+    Case('pointers: an offset into an object\'s items, moved and stored through', '''
+PyObject *PySnip_TPtr(PyTupleObject *a) {
+    Py_ssize_t i;
+    PyObject **p, **src;
+    PyTupleObject *np = (PyTupleObject *)PyTuple_New(Py_SIZE(a));
+    if (np == NULL) return NULL;
+    p = np->ob_item;
+    src = a->ob_item;
+    for (i = 0; i < Py_SIZE(a); i++) {
+        *p = src[i];
+        Py_INCREF(*p);
+        p++;
+    }
+    return (PyObject *)np;
+}''', ['PySnip_TPtr'], file='tuple',
+         want=['p = 0;', 'src = 0;', 'PsycoTuple_GET_ITEM(np, p) = PsycoTuple_GET_ITEM(a, src + i);',
+               'vinfo_incref(PsycoTuple_GET_ITEM(np, p));', 'p++;', 'return np;']),
+    Case('switch: on a meta value, a switch of the meta', '''
+static PyObject *snip_tsw(PyTupleObject *v, PyTupleObject *w, int op) {
+    switch (op) {
+    case Py_EQ: if (Py_SIZE(v) == Py_SIZE(w)) Py_RETURN_TRUE; Py_RETURN_FALSE;
+    case Py_LT: if (Py_SIZE(v) < Py_SIZE(w)) Py_RETURN_TRUE; Py_RETURN_FALSE;
+    default: Py_RETURN_NOTIMPLEMENTED;
+    }
+}
+PyObject *PySnip_TSw(PyTupleObject *v, PyTupleObject *w) { return snip_tsw(v, w, Py_EQ); }''',
+         ['PySnip_TSw'], fn='snip_tsw', file='tuple',
+         want=['switch (op) {', 'case 2:', 'if (_t1 == _t2) {', 'return psyco_vi_Py_True();',
+               'case 0:', 'default:', 'return psyco_vi_NotImplemented();']),
+    Case('G6: a resume inside a meta loop runs CPython\'s code from the loop', '''
+PyObject *PySnip_TG6(PyTupleObject *a, PyObject *o) {
+    Py_ssize_t i;
+    PyObject *r = PyObject_Repr(o);
+    if (r == NULL) return NULL;
+    for (i = 0; i < Py_SIZE(a); i++) {
+        PyObject *b[1] = {a->ob_item[i]};
+        PyObject *t = PyObject_GetItem(o, b[0]); if (t == NULL) { Py_DECREF(r); return NULL; } Py_DECREF(t);
+    }
+    return r;
+}''', ['PySnip_TG6'], file='tuple', want=['cimpl_PySnip_TG6_1'],
+         absent=['for (;;)', 'PsycoTuple_Load'], copy=['for (i = 0;'], report='an array b'),
+    Case('G9: a loop taken back takes back the likely items its turns used', '''
+PyObject *PySnip_TG9(PyTupleObject *a, Py_ssize_t k) {
+    Py_ssize_t i, j = 0;
+    for (i = 0; i < Py_SIZE(a); i++) {
+        j = k < 0 ? PyObject_Size(a->ob_item[i]) : 0;
+        PyObject *b[1] = {a->ob_item[i]};
+    }
+    return PyLong_FromSsize_t(j);
+}''', ['PySnip_TG9'], file='tuple', items={'PySnip_TG9': [Likely('k < 0', False)]},
+         refused="likely('k < 0', False) matches no run-time branch"),
+    Case('G14: a store under a condition stays under it; a NULL test of a virtual folds', '''
+PyObject *PySnip_TG14(PyObject *o, PyObject *w) {
+    PyTupleObject *np = (PyTupleObject *)PyTuple_New(1);
+    if (!np) return NULL;
+    if (o->ob_type == &PyLong_Type) { Py_INCREF(o); np->ob_item[0] = o; }
+    else { Py_INCREF(w); np->ob_item[0] = w; }
+    return (PyObject *)np;
+}''', ['PySnip_TG14'], file='tuple',
+         want=['_t1 = 1;', 'PsycoTuple_New(_t1, NULL);', 'if (tp_o == (&PyLong_Type)) {',
+               'vinfo_incref(o);',
+               'PsycoTuple_GET_ITEM(np, 0) = o;', 'else {', 'vinfo_incref(w);',
+               'PsycoTuple_GET_ITEM(np, 0) = w;', 'return np;'],
+         absent=['np == NULL', '!np', 'CT_TUPLE_LOAD_SIZE_LIMIT']),
+    Case('G19: a loop\'s entry promotions are its own (loops keyed by place)', '''
+PyObject *PySnip_TG19(PyTupleObject *a, PyTupleObject *b, PyObject *o) {
+    Py_ssize_t i;
+    for (i = 0; i < Py_SIZE(a); i++)
+        if (PyObject_RichCompareBool(o, a->ob_item[i], Py_EQ) < 0) return NULL;
+    for (i = 0; i < Py_SIZE(b); i++)
+        { PyObject *t = PyObject_Dir(b->ob_item[i]); if (t == NULL) return NULL; Py_DECREF(t); }
+    Py_INCREF(o);
+    return o;
+}''', ['PySnip_TG19'], file='tuple',
+         items={'PySnip_TG19': [Likely('PyObject_RichCompareBool(o, a->ob_item[i], Py_EQ) < 0',
+                                        False)]},
+         want=['Psyco_NeedType(po, PsycoTuple_GET_ITEM(a, _t', 'for (;;) {',
+               'PsycoObject_RichCompareBool(', 'PsycoTuple_Load(b);', 'for (;;) {',
+               'psyco_generic_call(po, PyObject_Dir,'],
+         absent=['Psyco_NeedType(po, PsycoTuple_GET_ITEM(b,']),
     # ---- the old generator's bugs, the correct behaviour ----
     Case('G6: no resume starts inside a loop the meta runs (the meta runs none)', '''
 PyObject *PySnip_G6(PyObject *o, Py_ssize_t n) {
@@ -526,7 +737,8 @@ def fold_may_fail():
 
 
 FILES = {'abstract': ('Objects/abstract.c', ()), 'long': ('Objects/longobject.c', ('word', 'double')),
-         'float': ('Objects/floatobject.c', ('double',))}
+         'float': ('Objects/floatobject.c', ('double',)),
+         'tuple': ('Objects/tupleobject.c', ('known_length',))}
 
 
 def run(cases):

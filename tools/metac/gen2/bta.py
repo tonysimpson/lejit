@@ -15,9 +15,10 @@ from pycparser import c_ast
 from .ctyping import strip_casts
 
 
-def expr_bt(e, env, unit, meta_calls=()):
+def expr_bt(e, env, unit, meta_calls=(), length=None):
     """'meta' or 'dynamic' for expression e, its names' binding times in
-    env; calls are dynamic but for names in meta_calls."""
+    env; calls are dynamic but for names in meta_calls, and a length the
+    meta loads (length(e)) is meta."""
     if e is None or isinstance(e, c_ast.Constant):
         return 'meta'
     if isinstance(e, c_ast.ID):
@@ -25,15 +26,17 @@ def expr_bt(e, env, unit, meta_calls=()):
             return 'dynamic' if env[e.name] in ('dynamic', None) else 'meta'
         return 'meta'
     if isinstance(e, c_ast.Cast):
-        return expr_bt(e.expr, env, unit, meta_calls)
+        return expr_bt(e.expr, env, unit, meta_calls, length)
+    if length is not None and length(e):
+        return 'meta'
     if isinstance(e, c_ast.StructRef):
-        b = expr_bt(e.name, env, unit, meta_calls)
+        b = expr_bt(e.name, env, unit, meta_calls, length)
         if b == 'meta':
             return 'meta'
         return 'meta' if e.field.name == 'ob_type' else 'dynamic'
     if isinstance(e, c_ast.FuncCall):
         name = e.name.name if isinstance(e.name, c_ast.ID) else None
-        if name in meta_calls and all(expr_bt(a, env, unit, meta_calls) == 'meta'
+        if name in meta_calls and all(expr_bt(a, env, unit, meta_calls, length) == 'meta'
                                       for a in (e.args.exprs if e.args else ())):
             return 'meta'
         return 'dynamic'
@@ -44,7 +47,7 @@ def expr_bt(e, env, unit, meta_calls=()):
     parts = [c for _, c in e.children()]
     if not parts:
         return 'meta'
-    return 'dynamic' if any(expr_bt(c, env, unit, meta_calls) == 'dynamic'
+    return 'dynamic' if any(expr_bt(c, env, unit, meta_calls, length) == 'dynamic'
                             for c in parts) else 'meta'
 
 
@@ -83,7 +86,7 @@ def assignments(body):
     return out
 
 
-def locals_bt(fn, unit, pbt, meta_calls=()):
+def locals_bt(fn, unit, pbt, meta_calls=(), length=None):
     """{local: binding time} for function definition fn, its parameters'
     binding times pbt ({name: bt}); a local of no rule maps to None."""
     decls = {}
@@ -105,7 +108,7 @@ def locals_bt(fn, unit, pbt, meta_calls=()):
         changed = False
         for name, e in assigns:
             if name in ints and env[name] == 'meta' \
-                    and expr_bt(e, env, unit, meta_calls) == 'dynamic':
+                    and expr_bt(e, env, unit, meta_calls, length) == 'dynamic':
                 env[name] = 'dynamic'
                 changed = True
     return {n: env[n] for n in decls if n not in pbt}
