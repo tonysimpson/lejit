@@ -21,6 +21,7 @@ Ni is a fork of Armin Rigo's **Psyco** JIT for CPython, ported partway to x86-64
 | CPython's own JIT: speed-ups, status, pyperformance on 3.7 | `doc/CPYTHON_JIT.md` |
 | Compile cost: compile time and code size per benchmark (`tools/compilebench.py`) | `doc/COMPILE_COST.md` |
 | Code size: where emitted code goes, identical copies (`tools/codesize.py`) | `doc/CODE_SIZE.md` |
+| Same code: do two builds emit the same machine code, per instruction (`tools/samecode.py`) | `doc/CODE_SIZE.md` "Same code" |
 | Profiles: where compiled code spends its time (`tools/profile_bench.py`) | `doc/PROFILE.md` |
 | Attribute stores: what they cost, what they do to the dict, options (`tools/storeclasses.py`) | `doc/STORES.md` |
 | Generators: where time goes, options (resumable bodies, genexpr inlining) | `doc/GENERATORS.md` |

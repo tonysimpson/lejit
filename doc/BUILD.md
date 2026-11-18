@@ -83,3 +83,5 @@ Upstream Psyco's test suite (`test/`) and the Ni regression pack were removed (s
 
 `NI_CODESTATS=1 python3.7 setup.py build_ext --inplace` builds in per-instruction and per-buffer code size counters (`ni._codestats()`); `tools/codesize.py <benchmark> [-d]` reports them (`doc/CODE_SIZE.md`). `-d` needs capstone: `python3.7 -m pip install --target <dir> capstone`, then `PYTHONPATH=<dir>`.
 
+**Same code:** `tools/samecode.py A B` builds two revisions (or takes two `NI_CODESTATS` builds) and says per code object and instruction whether they emit the same machine code, with addresses named (CODE_SIZE.md "Same code"). About 2 minutes for the tests and the seven benchmarks. [run]
+

@@ -44,6 +44,10 @@ Order: 0, 1 and 2 can run at once; then 3; then 4 alone; then 5, 6, 7 and 8 in p
 - **Step 8**: 41 opcodes are generated today (not 39); the block-stack and `with` cases are core (Ni's finally states, not `WHY_*`); ten 3.7 opcodes are not compiled at all.
 - **Same code** will differ, with a reason, wherever a faithful translation fixes a hand-translation bug: KNOWN_BUGS F97–F104, all found by the inventory and not yet fixed. Shortcuts with no 3.7 C behind them (one-digit bit operations, `divmod()`'s fast path, power-of-two divisors, `PsycoDict_NewPresized`'s small case) must become policy entries or show as a loss.
 
+## Step 0, the tool half: done (`54afbce`, D70) [run]
+
+`tools/samecode.py A B` compares the code two builds emit (revisions, directories or `.so` files; it builds revisions itself with `NI_CODESTATS=1`). Workload: `tests/cases` and the seven benchmarks, about 2 minutes. Baseline against itself: all same, four full runs. It found a deliberate swap in `plist_item` at list `FOR_ITER`/`BINARY_SUBSCR`, and C54 (`a599bd2`) at the four `isinstance` calls it changes. Use: build the generated function's revision against its parent and require "0 differ", or record each difference with a reason. Definition, method and limits (per instruction, not per meta function; inlined callees show the caller's state) in CODE_SIZE.md "Same code".
+
 ## Step 1: done (`9eae61d`, D68) [run]
 
 `setup.py`'s `build_ext` runs `tools/metac/generate.py --python sys.executable --out build/temp.*/gen` before compiling; the three `*_gen.h` files are gone from git. How to build, the cache and `NI_CPYTHON_SRC` are in BUILD.md "Build".
