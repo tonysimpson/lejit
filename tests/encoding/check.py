@@ -23,7 +23,7 @@ Placeholders: {name} or {name:kind}. The parameter name picks the domain:
 
 Usage: check.py [-k MACRO] [-v]      exits 1 on any mismatch
 """
-import itertools, json, os, re, subprocess, sys, sysconfig, tempfile
+import concurrent.futures, itertools, json, os, re, subprocess, sys, sysconfig, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HEADER = os.path.join(ROOT, 'ni', 'x64', 'iencoding.h')
@@ -125,36 +125,62 @@ def c_literal(v):
     return '%dUL' % v
 
 
+# Each case is a macro expansion of a few kB of C (over 500 MB preprocessed
+# in all), and gcc keeps a translation unit's functions until its end even
+# at -O0: as one file it needed more than 16 GB. So the cases are split into
+# files of PART cases, compiled separately (about 0.5 GB each) and linked.
+# -ftrack-macro-expansion=0 drops the location gcc keeps for every token of
+# a macro expansion, used only by diagnostics, which halves that.
+PART = 15000
+CHUNK = 300            # cases per function; PART is a multiple
+JOBS = min(4, os.cpu_count() or 1)
+CFLAGS = ['-w', '-O0', '-ftrack-macro-expansion=0', '-DALL_CHECKS=0',
+          '-DNI_TRACE=0', '-DALL_STATIC=0']
+HEAD = ['#include <Python.h>', '#include "psyco.h"', '#include "vcompiler.h"',
+        '#include <iencoding.h>', '#include <stdio.h>']
+
+
+def includes():
+    inc = subprocess.check_output([PY37, '-c', "import sysconfig;print(sysconfig.get_paths()['include'])"]).decode().strip()
+    return ['-I' + inc, '-I' + os.path.join(ROOT, 'ni'),
+            '-I' + os.path.join(ROOT, 'ni', 'x64'), '-I' + GEN]
+
+
 def build_emitted(case_list, workdir):
-    src = ['#include <Python.h>', '#include "psyco.h"', '#include "vcompiler.h"',
-           '#include <iencoding.h>', '#include <stdio.h>',
-           'static code_t buf[%d];' % (len(case_list) * 24 + 64),
-           'static code_t *code = buf;']
-    chunk = 300
-    nfun = 0
-    for i, (name, params, combo, _) in enumerate(case_list):
-        if i % chunk == 0:
-            if i:
-                src.append('}')
-            src.append('static void f%d(void) {' % nfun)
-            nfun += 1
-        args = ', '.join(c_literal(v) if p not in REG_PARAMS | {'index'} else str(v)
-                         for p, v in zip(params, combo))
-        src.append('  printf("%%d %%ld\\n", %d, (long)(code - buf)); { %s(%s); }' % (i, name, args))
-    if case_list:
+    sources = []
+    for p0 in range(0, len(case_list), PART):
+        src = HEAD + ['extern code_t buf[];', 'extern code_t *code;']
+        for i in range(p0, min(p0 + PART, len(case_list))):
+            name, params, combo, _ = case_list[i]
+            if i % CHUNK == 0:
+                if i > p0:
+                    src.append('}')
+                src.append('void f%d(void) {' % (i // CHUNK))
+            args = ', '.join(c_literal(v) if p not in REG_PARAMS | {'index'} else str(v)
+                             for p, v in zip(params, combo))
+            src.append('  printf("%%d %%ld\\n", %d, (long)(code - buf)); { %s(%s); }' % (i, name, args))
         src.append('}')
+        sources.append(src)
+    nfun = (len(case_list) + CHUNK - 1) // CHUNK
+    src = HEAD + ['code_t buf[%d];' % (len(case_list) * 24 + 64), 'code_t *code = buf;']
+    src += ['void f%d(void);' % k for k in range(nfun)]
     src += ['int main(void) {', '  FILE *f;']
     src += ['  f%d();' % k for k in range(nfun)]
     src += ['  printf("end %ld\\n", (long)(code - buf));',
             '  f = fopen(%s, "wb"); fwrite(buf, 1, code - buf, f); fclose(f);' % json.dumps(os.path.join(workdir, 'emitted.bin')),
             '  return 0; }']
-    cfile = os.path.join(workdir, 'emit.c')
-    open(cfile, 'w').write('\n'.join(src) + '\n')
-    inc = subprocess.check_output([PY37, '-c', "import sysconfig;print(sysconfig.get_paths()['include'])"]).decode().strip()
+    sources.append(src)
+    flags = CFLAGS + includes()
+    objs = []
+    for k, src in enumerate(sources):
+        cfile = os.path.join(workdir, 'emit%d.c' % k)
+        open(cfile, 'w').write('\n'.join(src) + '\n')
+        objs.append(cfile[:-2] + '.o')
+    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
+        list(pool.map(lambda o: subprocess.check_call(
+            ['gcc', '-c'] + flags + [o[:-2] + '.c', '-o', o]), objs))
     exe = os.path.join(workdir, 'emit')
-    subprocess.check_call(['gcc', '-w', '-O0', '-DALL_CHECKS=0', '-DNI_TRACE=0', '-DALL_STATIC=0',
-                           '-I' + inc, '-I' + os.path.join(ROOT, 'ni'), '-I' + os.path.join(ROOT, 'ni', 'x64'), '-I' + GEN,
-                           cfile, '-o', exe])
+    subprocess.check_call(['gcc'] + objs + ['-o', exe])
     out = subprocess.check_output([exe]).decode().split('\n')
     starts = {}
     end = None
