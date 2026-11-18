@@ -120,7 +120,6 @@ VOCABULARY = {
         'ends_block': 'the block ends after the guard (split_after_global)',
         'untraced_only': 'done only while no trace function is set',
         'trace_fallback': 'while tracing, the real call',
-        'mutable_fields': 'every field read is mutable',
         'not_translation': "Ni's function of this name does another job (not generated)",
     },
 }
@@ -540,14 +539,6 @@ class Checker:
         self.light_opcodes(t)
         self.types(t)
         self.cannot_block(t)
-        for path, specs in t.TRANSLATED_SLOTS.items():
-            where = 'TRANSLATED_SLOTS ' + path
-            if self.src.file(path) is None:
-                self.bad(where, 'not in the source')
-            # one spec, or one per type the file defines
-            for spec in specs if isinstance(specs, list) else [specs]:
-                self.fields(where, spec, ('type', 'slots'))
-                self.type_object(where, spec['type'])
         for r in t.SCALAR_CODE['raises']:
             if self.src.find(r) is None:
                 self.bad('SCALAR_CODE', 'no function %s in the source' % r)

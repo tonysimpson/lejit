@@ -33,7 +33,7 @@ matching return kind: PyObject * -> vinfo_t * (NULL: error), int -> bool
 
 Control flow: 'if (x OP N)' on a run-time int (a counterpart's int
 result, NULL for C's negative error values) is a condition code by the
-general translator's rule (gen_abstract.int_condition); arms that only
+general translator's rule (cread.int_condition); arms that only
 choose Py_True or Py_False are the object built from the condition
 (SELECTS, rule bool_select); a jump on one arm, as the case's last statement, is
 pycompiler.c's JUMP_IF_CC, with the policy's ('forget', 'before_branch'),
@@ -73,7 +73,7 @@ import cparse  # noqa: E402
 import ctokens  # noqa: E402
 import cslots  # noqa: E402
 import parser as dsl  # noqa: E402  (CPython's Tools/cases_generator/parser.py)
-import gen_abstract  # noqa: E402  (its rules: conditions, residual flags)
+import cread  # noqa: E402
 import gen_virtual  # noqa: E402  (the virtual constructors)
 import policy_table  # noqa: E402
 
@@ -374,7 +374,7 @@ class NoCounterpart(Skip):
 def counterpart(fn, csigs, psigs):
     if fn not in csigs:
         raise Skip('%s: no declaration in Include/' % fn)
-    pname = gen_abstract.psyco_name(fn)
+    pname = cread.psyco_name(fn)
     if pname not in psigs:
         raise NoCounterpart('%s: no Psyco counterpart %s' % (fn, pname))
     cret, carity = csigs[fn]
@@ -399,7 +399,7 @@ def counterpart(fn, csigs, psigs):
 
 def residual_convention(x, stmts):
     """How the C tests x, a call's result, for an error: from the next
-    ERROR_IF that reads it (the same conventions as gen_abstract's)."""
+    ERROR_IF that reads it (the same conventions as gen2's)."""
     for st in stmts:
         w = [t.text for t in st]
         cond = None
@@ -789,7 +789,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
     def residual(x, fn, args, ret=None, key=None):
         """A C-API function with no Psyco counterpart: a call at run time
         (P12), with the flags the general translator's rules give
-        (gen_abstract.Translator:
+        (cread.Translator:
         return type, error convention, effects.py's proofs). ret, key: the
         return type and effects key of a function not in csigs (a ceval.c
         helper's run-time copy)."""
@@ -825,11 +825,10 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
             ops.append(o)
         if key is None and ret is None:
             key = effects.globals.get(fn) if effects is not None else None
-        tr = gen_abstract.Translator(None, {}, {}, effects)
         if conv is None:
-            flags = ' | '.join(['CfReturnTypeInt'] + tr.effect_flags(key))
+            flags = ' | '.join(['CfReturnTypeInt'] + cread.effect_flags(effects, key))
         else:
-            flags = tr.flags(ctype, conv, key)
+            flags = cread.flags(ctype, conv, effects, key)
         call = 'psyco_generic_call(po, %s, %s, "%s"%s)' % (
             fn, flags, fmt, ''.join(', ' + o for o in ops))
         calls.append(fn)
@@ -856,7 +855,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
 
     def branch(stmt):
         """'if (x OP N) A else B' on a run-time int: its condition code (P05,
-        gen_abstract.int_condition), then either the object the arms choose
+        cread.int_condition), then either the object the arms choose
         (rule bool_select) or a jump on one arm (pycompiler.c:JUMP_IF_CC)."""
         nonlocal last_fail
         cond, then, other = if_parts(stmt)
@@ -866,7 +865,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         x = m.group(1)
         if any(x in [t.text for t in st] for st in following()):
             raise Skip('%s is read after its test' % x)
-        call, inv = gen_abstract.int_condition(m.group(2), x, m.group(3), True, x in nonneg)
+        call, inv = cread.int_condition(m.group(2), x, m.group(3), True, x in nonneg)
         cc = 'cc%d' % sum(1 for d in decls if d.startswith('condition_code_t'))
         decls.append('condition_code_t %s;' % cc)
         if first_commit is not None:
@@ -956,7 +955,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
 
     def for_loop(stmt):
         """A for loop with a bound the compiler knows runs in the compiler
-        (rule loops, gen_abstract.loop_rule): the case emits its body once
+        (rule loops, cread.loop_rule): the case emits its body once
         per turn."""
         toks = ctokens.tokenize(words(stmt))[0]
         try:
@@ -975,13 +974,13 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     raise Skip('a loop declaring %s %s' % (ctype, name))
                 declare(name, ctype + ' ')
                 var[name] = 'ctint'
-        rule = gen_abstract.loop_rule(node, bound_known)
+        rule = cread.loop_rule(node, bound_known)
         if rule[0] != 'unroll':
             raise Skip('a loop: %s' % rule[1])
         if var.get(rule[1]) != 'ctint':
             raise Skip('a loop on %s' % rule[1])
         # what the body assigns is not known to the generator after a turn
-        for n in gen_abstract.assigned_in(node):
+        for n in cread.assigned_in(node):
             if n in ctint:
                 ctint[n] = None
         _, j = call_args(stmt, 1)
@@ -1065,7 +1064,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         if any(held(o) != held(live[0]) for o in live):
             raise Skip('the arms of %s leave different values' % cond)
         var.update(live[0])
-        for n in gen_abstract.assigned_in(cparse.parse_body(
+        for n in cread.assigned_in(cparse.parse_body(
                 ctokens.tokenize(words(stmt))[0], TYPE_NAMES, loops=True)):
             if n in ctint:
                 ctint[n] = None
@@ -1132,10 +1131,10 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
 
     def as_cond(x):
         """The condition code of x, a C truth value: a 'cond', or a
-        run-time int tested against 0 here (gen_abstract.int_condition)."""
+        run-time int tested against 0 here (cread.int_condition)."""
         nonlocal last_fail
         if var.get(x) == 'int':
-            call, inv = gen_abstract.int_condition('!=', x, '0', True, x in nonneg)
+            call, inv = cread.int_condition('!=', x, '0', True, x in nonneg)
             cc = new_cc()
             if first_commit is not None:
                 raise Skip('a condition after an irreversible statement (restart rule)')
@@ -1283,7 +1282,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         if first_commit is not None:
             raise Skip('a run-time test after an irreversible statement (restart rule)')
         cc = new_cc()
-        call, inv = gen_abstract.int_condition('!=', x, '0', True)
+        call, inv = cread.int_condition('!=', x, '0', True)
         body.append('%s = %s;' % (cc, call))
         body.append('if (%s == CC_ERROR) {' % cc)
         body.append('  vinfo_decref(%s, po);' % x)
@@ -1464,13 +1463,12 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
         wrappers[name] = ctype
         copies.append((name, '%s {\n  %s\n}' % (head, '\n  '.join(lines))))
         calls.append(name)
-        tr = gen_abstract.Translator(None, {}, {}, effects)
         keys = [key] + [effects.globals.get(f) if effects is not None else None
                         for _, f, _ in pre]
-        flags = tr.flags(ctype, conv, None)
+        flags = cread.flags(ctype, conv)
         common = None
         for kk in keys:
-            ef = set(tr.effect_flags(kk))
+            ef = set(cread.effect_flags(effects, kk))
             common = ef if common is None else common & ef
         flags += ''.join(' | ' + f for f in ['CfPure', 'CfNoPython', 'CfNoBlock']
                          if f in (common or ()))
@@ -2023,7 +2021,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     # the identity of two objects: a compare of their words
                     # (rule identity_compare), held as a condition code
                     make_cond(x, 'integer_cmp(po, %s, %s, %s)' % (
-                        m.group(2), m.group(4), gen_abstract.PY_OPS[m.group(3)]))
+                        m.group(2), m.group(4), cread.PY_OPS[m.group(3)]))
                     continue
                 m = re.fullmatch(r'! (\w+)', rhs)
                 if m and ctype in INT_DECLS and x not in var and \
@@ -2058,7 +2056,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                         var[x] = 'ctint'
                     ctint[x] = None
                     y = m.group(2)
-                    body.append('%s = %s(%s);' % (x, gen_abstract.ni_short(kl['load']), y))
+                    body.append('%s = %s(%s);' % (x, cread.ni_short(kl['load']), y))
                     body.append('if (%s < 0) %s' % (x, fallback('the length of %s' % y)))
                     loaded[y] = kl
                     continue
@@ -2069,7 +2067,7 @@ def translate(inst, csigs, psigs, consts=None, effects=None, frame=None, ctx=Non
                     if ct_node(idx) is None:
                         raise Skip('item %s of %s' % (idx, y))
                     declare(x, 'vinfo_t *')
-                    body.append('%s = %s(%s, %s);' % (x, gen_abstract.ni_short(kl['item']),
+                    body.append('%s = %s(%s, %s);' % (x, cread.ni_short(kl['item']),
                                                       y, tidy(idx)))
                     var[x] = 'local'
                     continue
@@ -2808,7 +2806,7 @@ class Context:
             return None
         for key, t in policy_table.TYPES.items():
             if t.get('type') == m.group(1) + '_Type':
-                return gen_abstract.known_length_of(key.split(':')[1] + ' *')
+                return cread.known_length_of(key.split(':')[1] + ' *')
         return None
 
     def accessor(self, fn):
@@ -2884,7 +2882,7 @@ def generated(target):
         g = effects.analyse(target.python, target.src)
     except Exception as e:  # noqa: BLE001 - the build must say why
         raise cslots.GenError('effects.py: %s' % e)
-    ctx = Context(target.src, target.pyconfig, gen_abstract.target_defines(target.python))
+    ctx = Context(target.src, target.pyconfig, cread.target_defines(target.python))
     done, skipped, copies = run(insts, target.src, g, ctx)
     skipped += refused
     _RUNS[target.src] = done, skipped, copies

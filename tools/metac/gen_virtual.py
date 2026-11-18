@@ -42,6 +42,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import cparse  # noqa: E402
+import cread  # noqa: E402
 import cpython_src  # noqa: E402
 import cslots  # noqa: E402
 import ctokens  # noqa: E402
@@ -101,7 +102,7 @@ def virtual_types():
 def constructors():
     """{CPython constructor: Ni's virtual constructor} for every TYPES entry
     whose virtual names one, generated or not (a list's is Ni's): the rule
-    that a call of one builds a virtual (gen_ceval.py, gen_abstract.py)."""
+    that a call of one builds a virtual (gen_ceval.py)."""
     out = {}
     for e in policy_table.TYPES.values():
         v = e.get('virtual') or {}
@@ -123,7 +124,6 @@ def stores_through_call(source, f, param, field, effects, depth=0, outer=None):
     (3.8's static inline _PyObject_INIT_VAR) is read with the macros of
     the file that calls it as well (outer): a header alone doesn't include
     the headers before it (objimpl.h's Py_SIZE is object.h's)."""
-    import gen_abstract
     macros = dict(outer or {})
     macros.update(source.macros)
     macros.update(source.local_macros)
@@ -150,8 +150,7 @@ def stores_through_call(source, f, param, field, effects, depth=0, outer=None):
                 continue
             path = key.partition(':')[0]
             try:
-                other = gen_abstract.Source(source.src, source.pyconfig,
-                                            source.defines, path)
+                other = cread.Source(source.src, source.pyconfig, source.defines, path)
             except cparse.ParseError:
                 continue
             g = other.funcs.get(x)
@@ -263,11 +262,11 @@ def fields_text(types):
     return '\n'.join(out)
 
 
-def ctor_flags(tr, vt):
+def ctor_flags(effects, vt):
     """The run-time call of the constructor: a new reference or NULL, and
     the effect rules' flags (rule effects)."""
     key = '%s:%s' % (vt.cpath, vt.ctor)
-    return tr.flags('PyObject *', 'null', key if key in tr.effects.nodes else None)
+    return cread.flags('PyObject *', 'null', effects, key if key in effects.nodes else None)
 
 
 def code_text(vt, flags, version):
@@ -415,14 +414,13 @@ def code_text(vt, flags, version):
 
 
 def generate(src, pyconfig, defines, effects):
-    import gen_abstract
     types = virtual_types()
     version = cpython_src.source_version(src)
     out, sources = [], {}
     for vt in types:
         if vt.cpath not in sources:
             try:
-                sources[vt.cpath] = gen_abstract.Source(src, pyconfig, defines, vt.cpath)
+                sources[vt.cpath] = cread.Source(src, pyconfig, defines, vt.cpath)
             except cparse.ParseError as e:
                 raise cslots.GenError('%s: %s' % (vt.cpath, e))
         read_constructor(sources[vt.cpath], vt, effects)
@@ -430,8 +428,7 @@ def generate(src, pyconfig, defines, effects):
                 ['generated  %s' % vt.key for vt in types]))
     for vt in types:
         s = sources[vt.cpath]
-        tr = gen_abstract.Translator(s, {}, {}, effects)
-        text = code_text(vt, ctor_flags(tr, vt), version)
+        text = code_text(vt, ctor_flags(effects, vt), version)
         out.append((vt.header(), text,
                     ['generated  %-20s %s, compute_%s, direct_compute_%s'
                      % ('virtual.%s %s:%s' % (vt.ctor, vt.cpath, vt.ctor), vt.new, vt.lower, vt.lower)]))
@@ -441,13 +438,12 @@ def generate(src, pyconfig, defines, effects):
 def build(target):
     """[(header, text, report)] for generate.py."""
     import effects
-    import gen_abstract
     try:
         g = effects.analyse(target.python, target.src)
     except Exception as e:  # noqa: BLE001 - the build must say why
         raise cslots.GenError('effects.py: %s' % e)
     return generate(target.src, target.pyconfig,
-                    gen_abstract.target_defines(target.python), g)
+                    cread.target_defines(target.python), g)
 
 
 def main(argv):

@@ -24,7 +24,7 @@ RULES = {
                 " heap type's first value is held and compared at run time. Where"
                 " it changed, the code resumes CPython's algorithm at that point:"
                 " the whole function if no slot has run yet, else a run-time C copy"
-                " of the rest (gen_abstract.py's cimpl_ copies). PyType_IsSubtype on a heap type holds tp_mro"
+                " of the rest (gen2/resume.py's cimpl_ copies). PyType_IsSubtype on a heap type holds tp_mro"
                 " the same way.",
         'decisions': ['D48', 'D54', 'P29', 'F56'],
         'replaces': "INVENTORY's GUARD items on slot reads: 22 in translated and"
@@ -32,7 +32,7 @@ RULES = {
         'applied_by': ['ni/Objects/pobject.h:Psyco_TypeSlot',
                        'ni/Objects/pobject.c:Psyco_HeapSlot',
                        'ni/Objects/pobject.c:Psyco_TypeIsSubtype',
-                       'tools/metac/gen_abstract.py:generate'],
+                       'tools/metac/gen2/actions.py:slot_guard'],
     },
     'restart': {
         'what': "Every promotion an instruction or meta needs comes before its"
@@ -240,7 +240,7 @@ RULES = {
                 " Promotions a loop's body needs after its first call are made at"
                 " the loop's entry when nothing was called before it (rule 1).",
         'decisions': ['D78', 'D74', 'PATTERNS rule 1'],
-        'applied_by': ['tools/metac/gen_abstract.py:generate'],
+        'applied_by': ['tools/metac/gen2/loops.py:loop', 'tools/metac/cread.py:loop_rule'],
     },
     'copy_through': {
         'what': "The backend has no floating-point instructions: a C double is a"
@@ -256,23 +256,22 @@ RULES = {
                 " status and its result through an output array. A run that ends"
                 " the function, every path returning an error or a constructor of a"
                 " scalar, returns the scalar and the meta builds the object (TYPES"
-                " 'double': Ni's 'new'). The units still on gen_abstract.py read a"
-                " double through scalars.py, which makes no helper for them.",
+                " 'double': Ni's 'new').",
         'decisions': ['D19', 'D87', 'D113'],
-        'applied_by': ['tools/metac/gen2/scalar.py:run', 'tools/metac/scalars.py:scalar_reps'],
+        'applied_by': ['tools/metac/gen2/scalar.py:run'],
     },
     'inline_static': {
         'what': "A static function of the file called with the address of a"
                 " local (an out-parameter) or with a function's name is its body"
                 " at the call, by value: each parameter a fresh local holding its"
                 " argument, '*p' the caller's variable, and a parameter given a"
-                " constant or a function's name, never assigned, that constant or"
-                " function. 'return f(...)' keeps f's returns; 'if (f(...) OP K)"
-                " S1 else S2', f returning constants, puts S1 or S2 at each return"
-                " as the test chooses. The units still on gen_abstract.py inline"
-                " through scalars.py, by substituting the arguments (KNOWN_BUGS G13).",
+                " constant, a function's name or a parameter of the caller that"
+                " neither function assigns, never assigned, that argument."
+                " 'return f(...)' keeps f's returns; 'if (f(...) OP K) S1 else S2',"
+                " f returning constants, puts S1 or S2 at each return as the test"
+                " chooses.",
         'decisions': ['D87', 'D114'],
-        'applied_by': ['tools/metac/gen2/inline.py:expand', 'tools/metac/scalars.py:inline_calls'],
+        'applied_by': ['tools/metac/gen2/inline.py:expand'],
     },
     'preprocess_conditionals': {
         'what': "A source file's #if/#ifdef/#elif/#else are evaluated as"
@@ -303,19 +302,20 @@ RULES = {
                 " moved by a compile-time offset is the object's vinfo plus the"
                 " offset: '*(T *)p' is psyco_get_field_offset with FMUT (read"
                 " again each time), 'p' itself integer_add_i; an object read so"
-                " holds no reference (Py_INCREF of it is need_reference, by"
-                " policy) and may be NULL, a run-time test whose NULL path is"
-                " translated to the function's end. A field of a C struct the"
+                " holds no reference (Py_INCREF of it is need_reference) and may"
+                " be NULL, a run-time test on whose NULL arm its vinfo is released;"
+                " an error raised on that arm alone takes the rest of the function"
+                " on that arm. A float read so resumes. A field of a C struct the"
                 " compiler holds (a PyMemberDef) is read when compiling.",
         'decisions': ['D89'],
-        'applied_by': ['tools/metac/pointers.py:PointerRules'],
+        'applied_by': ['tools/metac/gen2/address.py:load', 'tools/metac/gen2/walk.py:Walk'],
     },
     'switch_break': {
         'what': "A 'break' in a case of a compile-time switch, or the last case"
                 " running off the end, is the statements after the switch on"
                 " that case's path, which must end the function.",
         'decisions': ['D89'],
-        'applied_by': ['tools/metac/gen_abstract.py:generate'],
+        'applied_by': ['tools/metac/gen2/walk.py:Walk'],
     },
     'virtual_types': {
         'what': "What is virtual, its weights and its fields' mutability are per"
@@ -323,21 +323,6 @@ RULES = {
                 " function makes or consumes one.",
         'decisions': ['P15', 'P18'],
     },
-}
-
-# The slots whose functions the general translator generates, per C file
-# besides abstract.c (rule loops): the header registers each meta
-# (gen_<file>_init). Ni's choice of what to translate, as Ni's declarations
-# are for abstract.c. A slot is a field of one of the type's tables or a
-# function-pointer field of the type itself (tp_richcompare, tp_iternext,
-# tp_descr_get); a file defining several types has one spec per type.
-TRANSLATED_SLOTS = {
-    # member and method descriptors' __get__ (SLOT_ARGS' 'lvl')
-    'Objects/descrobject.c': [{'type': 'PyMemberDescr_Type', 'slots': ['tp_descr_get']},
-                              {'type': 'PyMethodDescr_Type', 'slots': ['tp_descr_get']}],
-    # slots of types defined in other files that object.c's functions fill
-    'Objects/object.c': [{'type': 'PySeqIter_Type', 'slots': ['tp_iter']},
-                         {'type': 'PyRangeIter_Type', 'slots': ['tp_iter']}],
 }
 
 # How Ni calls the meta of a builtin function, by its ml_flags
@@ -427,7 +412,7 @@ TYPES = {
                     'constructor': 'Objects/tupleobject.c:PyTuple_New',
                     'new': 'ni/Objects/ptupleobject.h:PsycoTuple_New',
                     # a tuple whose size a meta computes is virtual up to the
-                    # size Ni loads from a constant one (gen_abstract.py)
+                    # size Ni loads from a constant one (gen2/items.py)
                     'max_items': 'CT_TUPLE_LOAD_SIZE_LIMIT'}},
     'Include/listobject.h:PyListObject': {
         'shape': '1e17e786b756', 'type': 'PyList_Type', 'mutable': ['ob_size', 'ob_item'],

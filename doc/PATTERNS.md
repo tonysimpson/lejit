@@ -21,7 +21,7 @@ All examples are **[read]** unless marked otherwise. Many of the hand-written ex
 
 **P01 promote-type** (M)
 `Py_TYPE(o)` → `tp = Psyco_NeedType(po, o); if (tp == NULL) return NULL;`. If the type is run-time, this raises a promotion pseudo-exception, so the opcode is restarted once the type is known.
-Example: nearly every `PsycoNumber_*`/`PsycoObject_*`, generated from `abstract.c` (`PyNumber_Add` and the rest, `gen_abstract.py`); hand-written, `pabstract.c:PsycoObject_Call`. `Psyco_FastType` is the variant for when promotion has already happened.
+Example: nearly every `PsycoNumber_*`/`PsycoObject_*`, generated from `abstract.c` (`PyNumber_Add` and the rest, `gen2/abstract.py`); hand-written, `pabstract.c:PsycoObject_Call`. `Psyco_FastType` is the variant for when promotion has already happened.
 
 **P02 verify-type** (M)
 `if (PyTuple_Check(x))` → `switch (Psyco_VerifyType(po, x, &PyTuple_Type)) { case true: …; case false: …; default: return NULL; }`. It's three-way: true, false, or error/promotion.
@@ -45,7 +45,7 @@ Example: `PsycoSequence_GetItem`, generated from `abstract.c:PySequence_GetItem`
 
 **P07 unsigned-bounds** (M when it mirrors a `(size_t)` cast; J otherwise)
 `(size_t)i >= (size_t)n` → `integer_cmp(po, i, n, Py_GE | COMPARE_UNSIGNED)`. `CHEAT_MAXINT` (clamping slice bounds) is a Psyco-only trick.
-Example: tuple's `sq_item`, generated into `ptupleobject_gen.h` (`gen_abstract.bounds_test`, `935df0b`; was `ptupleobject.c:ptuple_item`), `pstringobject.c:pstring_slice` (Py2 only).
+Example: tuple's `sq_item`, generated into `ptupleobject_gen.h` (`gen2/items.py:bounds_test`; was `ptupleobject.c:ptuple_item`), `pstringobject.c:pstring_slice` (Py2 only).
 
 **P08 assert-result-type** (J)
 A residual call whose result type is known → `Psyco_AssertType(po, r, &PyX_Type)`, or the `DEF_KNOWN_RET_TYPE_n` macros. The knowledge isn't in the callee's C signature; a generator could get some of it by analysing the callee's return statements.

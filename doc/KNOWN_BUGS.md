@@ -40,12 +40,7 @@ Open bugs only. IDs: **M** memory access (`ni/x64/v_mem_mov.h`, field functions 
 ### Generator
 From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent: no generated header shows them today. The redesign removes them by construction; until then, a change that reaches one must fix it.
 - **G5**: `ceval_reader.cvalue` evaluates C with Python's semantics: `oparg && 4` gives 4, `!oparg + 1` gives 0 at `oparg = 0`, `1 < oparg < 3` chains. It feeds stack-effect sizes. [run]
-- **G7** (latent): `gen_abstract.Walk.expr_stmt` never emits a discarded `okv` (bool-returning call) result, and leaks an owned `rt` temporary with no convention; `compare` never releases owned operands. The abstract family, now on gen2, doesn't have it (`tests/gen2_snippets.py`). [read] [run]
-- **G8** (latent): `Walk.raise_` doesn't set `st.failed`, so residual calls on an error path aren't refused. The abstract family, now on gen2, doesn't have it (`tests/gen2_snippets.py`). [read] [run]
-- **G9** (latent): `Walk.statement`'s rollback doesn't restore `used_likely`, `needs`, `any_call` or `_wcount`. The abstract family, now on gen2, doesn't have it (`tests/gen2_snippets.py`). [read] [run]
-- **G10**: `('other', 'mutable_fields')` is in `gen_abstract.IMPLEMENTED`, but nothing implements it. The abstract family, now on gen2, doesn't have it (`tests/gen2_snippets.py`). [read] [run]
-- **G12** (latent): scalar helpers (`scalars.call_helper`) never get `CfNoBlock`, and raising ones not `CfNoPython`; a known function pointer in a run is accepted unchecked; errno is assumed to stay within one helper. No unit makes a helper through `scalars` now (gen_abstract's units read doubles but copy no run); gen2's (`gen2/scalar.py`: the float slots and math) have none of these (`tests/gen2_snippets.py`). [read] [run]
-- **G13** (latent): `scalars` and `ceval_inline` inline by substituting names or argument text, not values: a local copied from `*p` sees a later `*p = …`, and an argument with a call is evaluated once per use. gen2's `inline.py` inlines by value (`tests/gen2_snippets.py`). [read] [run]
+- **G13** (latent): `ceval_inline` inlines by substituting names or argument text, not values: a local copied from `*p` sees a later `*p = …`, and an argument with a call is evaluated once per use. gen2's `inline.py` inlines by value (`tests/gen2_snippets.py`). [read] [run]
 - **G14** (latent): `gen_virtual` treats a store under a condition as unconditional, and misses a NULL default written another way (`if (!step)`). gen2's tuple stores are emitted where the C makes them (`tests/gen2_snippets.py`). [read] [run]
 - **G15** (latent): `ceval_inline.Inliner.switch` loses a switch arm's fall-through when another arm returns. gen2 refuses an arm that falls into the next (`tests/gen2_snippets.py`). [read] [run]
 
@@ -102,7 +97,13 @@ From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent:
 - **F115** (`962af09`): a 3.8 error handler's run-time copy kept `_PyErr_X(tstate, …)`.
 
 ### Generator
-- **G11** (`127d4d6`): `gen_builtins.Walk.compare` evaluated its operand twice; gen_builtins is gone, and gen2 evaluates it once (`tests/gen2_snippets.py`).
+gen_abstract.py and scalars.py are gone (D128); gen2 has none of these (`tests/gen2_snippets.py` names each).
+- **G7**: `gen_abstract.Walk.expr_stmt` never emitted a discarded bool-returning call's result, and leaked an owned temporary with no convention; `compare` never released owned operands.
+- **G8**: `gen_abstract.Walk.raise_` didn't set `st.failed`, so residual calls on an error path weren't refused. gen2 also walks an arm on which an error was raised to the function's end on its own, rather than merging it into an arm with none (`d38215d`).
+- **G9**: `gen_abstract.Walk.statement`'s rollback didn't restore `used_likely`, `needs`, `any_call` or `_wcount`.
+- **G10**: `('other', 'mutable_fields')` was in `gen_abstract.IMPLEMENTED`, but nothing implemented it; the item is gone (`d38215d`).
+- **G11** (`127d4d6`): `gen_builtins.Walk.compare` evaluated its operand twice; gen_builtins is gone, and gen2 evaluates it once.
+- **G12**: `scalars.call_helper`'s helpers never got `CfNoBlock`, raising ones not `CfNoPython`; a known function pointer in a run was accepted unchecked; errno was assumed to stay within one helper.
 
 ### Backend
 - **B1** (`d56791d`): `CMP_I8_O`/`CMP_I8_A` compared 32 bits.

@@ -20,8 +20,7 @@ variable.
           word's reference.
   double  a float holds a C double in `field`: a read of it is `load` (a
           borrowed vinfo), a `constructors` call given a double is `new`,
-          which takes the reference (gen_abstract.py's units read the
-          section too, through scalars.py).
+          which takes the reference.
   known_length  an immutable array object (policy_table.TYPES'
           'known_length' and 'virtual' sections, the types gen_virtual.py
           makes virtuals of): its length is `load`'s when Ni knows it,

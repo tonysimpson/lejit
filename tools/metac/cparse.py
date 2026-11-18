@@ -1,7 +1,7 @@
 """C statements and expressions over ctokens' tokens.
 
-Token rules match fixed shapes; general
-translation (gen_abstract.py) needs the structure of a function body: which
+Token rules match fixed shapes; the opcode translation (gen_ceval.py)
+needs the structure of a function body: which
 statement is inside which 'if', and the operands of each operator. This
 reads it, still from ctokens' tokens and with no dependency: a statement
 reader (blocks, declarations, if/else, return, goto, labels) and an
