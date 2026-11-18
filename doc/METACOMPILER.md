@@ -518,6 +518,32 @@ Release builds, instructions per warm iteration (as D80), `0a38681` → `772a4d3
 - `pstructmember.c:PyMember_GetOne`, `pdescrobject.c`: not attempted. `member_get`'s `descr_check` and the `T_*` switch on a run-time member type; `method_get`'s virtual `PyCFunction`. `SLOT_ARGS` has `tp_descr_get`'s format for when they are.
 - `pdictobject.c:PsycoDict_New`/`Copy`/`SetItem*`: residual-call wrappers that `gen_ceval` and the hand code call by name.
 
+## Argument binding (D85)
+
+GENERATION step 7: the binding part of the call path is generated from `ceval.c:_PyEval_EvalCodeWithName` by `tools/metac/gen_call.py` into `psyfunc_gen.h`, a C function the compiler runs; making, inlining and running the frame stay core. No per-function code, no version numbers (D67). [run]
+
+**Input.** The policy entry `Python/ceval.c:_PyEval_EvalCodeWithName` with `('other', 'frame_binding')`, and Ni's declaration `psyfunc.h:_PsycoEval_EvalCodeWithName` (the usual name). The declaration is the binding-time input: `vinfo_t **` parameters (`f_localsplus`, `args`, `kwargs`, `defs`, `closure`) are values, the rest (`_co`, the counts, `kwnames`, `kwdefs`) the compiler's. A C parameter the declaration leaves out (`globals`, `locals`, `name`, `qualname`) may not be read.
+
+**The slice.** From the first statement that takes the frame's locals (`fastlocals = f->f_localsplus`, mapped to the parameter) to the first that uses `f` otherwise (`if (co->co_flags & (CO_GENERATOR | …))`). Before it, CPython makes the frame (core: `psyco_build_frame`); after it, runs or makes a generator (core).
+
+**Rules.**
+- A local takes the binding time of what is assigned to it, to a fixed point; a name declared with two C types is refused. A local only ever assigned what has no form is not declared, and reading it ends the binding (3.8's `tstate`).
+- An expression over C values is C in the binder: fields of the code object, counts, `PyUnicode_Check` of a keyword name, a test of a locals slot for NULL. A `vinfo_t **` read as a tuple's items (`((PyTupleObject *)P)->ob_item`) is that array.
+- `SETLOCAL`'s `Py_XDECREF` of the old value is `vinfo_xdecref`; `Py_INCREF` `vinfo_incref`.
+- `PyTuple_New(n)` is `PsycoTuple_New(n, NULL)` (D80), behind `n > max_items → return -1`; the C's item stores fill it.
+- Anything with no compile-time form, an error, or a `goto` out of the slice is `return -1` (the real call); the statements after it in the block are dead until a label.
+- Header macros are expanded in the binder (`assert(...),` inside an expression, which NDEBUG removes, is dropped first).
+
+**Generated.** 3.7: positional copy, `*args`, the keyword loop (called with no keywords today: `pfunction_call` makes keyword calls real ones), too-many and missing checks (real call), defaults, kw-only (real call), cells (real call), free variables from the closure. Replaces `psyfunc.c:fncall_collect_arguments` and the translated part of `fncall_store_arguments`; hand code 90 lines removed, 77 added (`fncall_bind`, the ownership changes, comments).
+
+**Kept core**, each in DECISIONS D85 (5): `fncall_init`'s refusals, `COMPUTE_DEFCOUNT`, keyword and kw-only calls, inlining, recursion, tracing, genexpr fusion, and `pmethodobject.c:PsycoCFunction_Call`'s dispatch (emission strategy, and 3.8 replaces the switch with vectorcall functions).
+
+**Same code.** `tools/samecode.py db9c68f e11f2a3`: 78 units same, 10 differ (4,261 of 4,291 code objects same). One difference is code, accepted as D85 (6): `arg_binding.many_extras` calls `star` with 20 extra arguments, which A compiled with a 20-item virtual tuple and B makes the real call. Every other first difference is inline promotion-stub data (heap addresses disassembled as instructions; `LOAD_METHOD`, `LOAD_ATTR` and the like) and the register choices after it [read: by eye in samecode's output, and no other copy count changes]. The binder's arrays have new sizes (`nlocals` where they were the argument count) and `PyMem_MALLOC` is pymalloc, whose pools Python objects share, so objects land at other addresses [inferred]. A check of that: the baseline built with only a heap shift (`malloc(100000)` and 300 small blocks at module init) against itself gives 59 units same, 28 differ, all promotion data of the same kind. Against `0a38681` before the rebase, two loop copies (`sre_parse._parse`, `bm_raytrace` `<listcomp>`, the latter empty) also differed by one promotion entry; after the rebase they are the same.
+
+Release builds, instructions per warm iteration (`perf stat -e instructions:u`, `profile_bench.py` 1 s and 4 s, raytrace 2 s and 8 s, PYTHONHASHSEED=0), `db9c68f` → `e11f2a3`: richards 168.29 → 168.29 M, deltablue 27.12 → 27.12, raytrace 3,094.3 → 3,089.7, go 1,064.5 → 1,065.1 (five runs each, alternated: means 1,065.44 → 1,065.42), hexiom 39.82 → 39.82, chaos 461.25 → 460.26, pyflate 2,002.93 → 2,002.93: nothing slower.
+
+**3.8.** (PORT38 "Rerunning", not built): generated. The input carries 3.8's change: the keyword loop starts at `co->co_posonlyargcount` and `positional_only_passed_as_keyword` is a new real-call exit; error calls are `_PyErr_*`, `PyDict_GetItemWithError`. `*args` is the real call on 3.8: `_PyTuple_FromArray` (3.8's replacement for `PyTuple_New` and the fill loop) has no form, so every call to a `*args` function would be residual until a rule reads it (failures log). Needed one rule: a local only ever assigned what has no form (3.8's `tstate = _PyThreadState_GET()`, a GNU statement expression, read only by error calls) is not declared and reading it ends the binding; 3.7's output is byte-identical.
+
 ## Failures log
 
 Record here each case where the current approach failed: the CPython file and function, what it couldn't do, and what we did.
@@ -588,3 +614,6 @@ Record here each case where the current approach failed: the CPython file and fu
 | `unicodeobject.c` (the whole unit) | `cparse.undefined_later` fails: `gcc -E -dM` of the file cut at line 7815 stops inside an `#ifdef` opened at 7080. | Hand `punicodeobject.c` kept (also D37, PEP 393 bit-fields). Candidate fix: cut at a line outside any conditional. |
 | `iterobject.c:iter_iternext`, `descrobject.c:member_get`, `method_get`, `structmember.c:PyMember_GetOne` | Not attempted: F48's guard on `it_seq`; `descr_check` and a `switch` on the member's run-time type code; `method_get` builds a `PyCFunction`, whose virtual is hand-written. | Hand-written. `SLOT_ARGS` has `tp_descr_get`'s format ready. |
 | (reading declarations) `cparse.Decls.read` | A function head naming `struct` was read as a struct definition and overwrote the struct of its return type (`PyDictObject` in `dictobject.c`). | Fixed (D84): a head with `(` or `=` is not a struct. |
+| `ceval.c:_PyEval_EvalCodeWithName` on 3.8: `_PyTuple_FromArray(args + n, argcount - n)` | A call of another file's function with no form; `PyTuple_New` and the fill loop moved into it. | `*args` is the real call on 3.8. Candidate rule: inline a source function that is a `TYPES` constructor plus item stores, as `ceval_inline` does for `ceval.c` statics. |
+| `call.c:_PyMethodDef_RawFastCallDict`, `PyCFunction_Call` (pmethodobject.c's dispatch) | The arms are how Ni emits the call (meta or checked direct call, fixed-arity helpers, no `Py_EnterRecursiveCall`), not translation; 3.8 has one vectorcall function per flag instead. | Hand-written (D85). |
+| `call.c:_PyFunction_FastCallDict` (`COMPUTE_DEFCOUNT`) | The defaults tuple's length must be known at compile time, behind F52's guard of `func_defaults`: policy, not the C. | Core (D85). |
