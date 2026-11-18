@@ -196,15 +196,19 @@ REASONS = {
         "an int result from a double: ceil and floor stay hand-written"),
 
     'ni/Objects/pobject.c:PsycoObject_Hash': (
-        'limit', ['failures:object.c:PyObject_Hash'],
-        "object.c cannot be read (cparse.undefined_later); not attempted"),
+        'limit', ['F50', 'failures:object.c:PyObject_Hash'],
+        "refused: no 'likely' item for the tp_dict == NULL arm (PyType_Ready);"
+        " past it, tp_hash read behind F50's heap-type guard (Psyco_TypeSlot),"
+        " which the translator doesn't emit"),
     'ni/Objects/pobject.c:PsycoObject_RichCompareBool': (
         'limit', ['F109', 'failures:object.c:PyObject_Hash'],
-        "object.c cannot be read; then F109's identity of virtuals and the"
+        "the translation resumes at its first statement, v == w on two"
+        " objects (F109: a virtual is identical only to itself); then the"
         " result's truth without a promotion"),
     'ni/Objects/pobject.c:try_rich_compare': (
         'limit', ['F50', 'failures:object.c:PyObject_Hash'],
-        "do_richcompare's slot calls; object.c cannot be read"),
+        "do_richcompare: refused (resuming needs res, which has no value);"
+        " its slot calls want F50's heap-type guard"),
     'ni/Objects/plongobject.c:PsycoLong_AsDouble': (
         'limit', ['D87', 'failures:longobject.c:PyLong_AsDouble'],
         "the word test on a PyObject *, and no list of the long unit's"
