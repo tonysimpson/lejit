@@ -116,8 +116,8 @@ DEFINEFN void ni_code_extra_free(void *p) {
   ni_code_extra_t *x = (ni_code_extra_t *)p;
   if (x == NULL)
     return;
-  psyco_owner_untrack(x);
   psyco_owner_release(&x->owner, x->merge_points, x->entry_point);
+  psyco_owner_untrack(x); /* after: releasing can keep into the owner */
   PyMem_Free(x);
 }
 
@@ -176,8 +176,6 @@ ni_code_extra_t *ni_code_extra(PyCodeObject *co) {
       return NULL;
     }
     ((ni_code_extra_t *)x)->serial = ++next_serial;
-    ((ni_code_extra_t *)x)->co = co;
-    psyco_owner_track((ni_code_extra_t *)x);
   }
   return (ni_code_extra_t *)x;
 }
@@ -264,9 +262,11 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
     Py_XDECREF(t);
   }
   if (d != NULL) {
-    /* cycle scans run, and the owners they freed (codemanager.c) */
-    PyObject *t = Py_BuildValue("(ll)", psyco_stat_owner_scans,
-                                psyco_stat_owners_collected);
+    /* cycle scans run, the owners they freed, and the records counted
+       now (codemanager.c) */
+    PyObject *t = Py_BuildValue("(lll)", psyco_stat_owner_scans,
+                                psyco_stat_owners_collected,
+                                psyco_stat_owners_counted);
     if (t == NULL || PyDict_SetItemString(d, "owner_scans", t) < 0)
       Py_CLEAR(d);
     Py_XDECREF(t);

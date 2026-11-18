@@ -253,7 +253,9 @@ DEFINEFN void psyco_owner_keep(PyObject *p) {
     return;
   }
   o->pins[i] = p;
-  o->npins++;
+  if (o->npins++ == 0)
+    psyco_owner_track((ni_code_extra_t *)((char *)o -
+                                          offsetof(ni_code_extra_t, owner)));
 }
 
 DEFINEFN void psyco_owner_pin(PyObject *p) {
@@ -474,24 +476,24 @@ DEFINEFN PyObject **psyco_record(ni_addrmap_t *map, void *key) {
    doesn't follow (module objects and their dicts, where it stops to stay
    small, or a reference held outside an owner's set) only makes more look
    alive.
-   It runs at the start of a collection (gc.callbacks), in the main
-   interpreter and never during a compile, once half as many code objects
-   as there are (and at least 256) have been seen since the last scan, so
-   that its cost per code object stays the same and dead code is at most
-   about half the live; or at a full collection, or after a few collections
-   without a new one, if any were seen. The callback is listed only until
-   then, so code that stops making code objects pays nothing. */
+   Records are counted when their owner first holds a reference
+   (psyco_owner_keep): one that holds none can't keep anything alive. Once
+   half as many have been counted since the last scan as there are (and at
+   least 512, more than a short program makes), the scan is asked for as
+   a pending call (Py_AddPendingCall), so it runs between bytecodes, in the
+   main interpreter and never during a compile; its cost per record stays
+   the same and dead records are at most about half the live. Nothing runs per collection: garbage below
+   that count waits for the next records. */
 
 DEFINEVAR long psyco_stat_owner_scans = 0;
 DEFINEVAR long psyco_stat_owners_collected = 0;
 
-static ni_code_extra_t *extras = NULL; /* every record */
-static long nextras = 0, extras_since_scan = 0;
-static long scan_after = 256; /* new records; more after a scan too big */
-static long quiet_since = -1; /* extras_since_scan at the last collection */
-static int quiet = 0;         /* collections since it last changed */
-#define SCAN_QUIET 64
-static PyObject *gc_callbacks = NULL, *scan_callback = NULL;
+DEFINEVAR long psyco_stat_owners_counted = 0;
+static long extras_since_scan = 0; /* records counted since the last scan */
+#define SCAN_MIN 512 /* records counted before the first scan */
+static long scan_after = SCAN_MIN; /* more after a scan too big */
+static bool scan_asked = false; /* the pending call is queued */
+static PyObject *get_objects = NULL; /* gc.get_objects, found by a scan */
 
 #define SCAN_MAX_NODES ((size_t)1 << 20)
 enum { NODE_GC, NODE_CODE, NODE_PRUNED };
@@ -601,6 +603,7 @@ static int visit_alive(PyObject *o, void *unused) {
    -1 if the scan didn't finish */
 static long scan_find(PyCodeObject ***out) {
   ni_code_extra_t *x;
+  PyObject *all;
   PyObject *modules = PyImport_GetModuleDict();
   Py_ssize_t pos = 0;
   PyObject *k, *m;
@@ -613,9 +616,33 @@ static long scan_find(PyCodeObject ***out) {
       if (PyModule_GetDict(m) != NULL)
         scan_node(PyModule_GetDict(m), NODE_PRUNED);
     }
-  for (x = extras; x != NULL; x = x->next)
-    if (x->owner.npins > 0)
-      scan_node((PyObject *)x->co, NODE_CODE);
+  /* every function is tracked by CPython's GC, so its code is found
+     here; one only something else holds is never a seed, which only
+     makes more look alive */
+  if (get_objects == NULL) {
+    /* not at start-up: importing runs Python code, which Ni compiles */
+    PyObject *gc = PyImport_ImportModule("gc");
+    if (gc != NULL) {
+      get_objects = PyObject_GetAttrString(gc, "get_objects");
+      Py_DECREF(gc);
+    }
+  }
+  all = get_objects != NULL ? PyObject_CallObject(get_objects, NULL) : NULL;
+  if (all == NULL || !PyList_Check(all)) {
+    PyErr_Clear();
+    Py_XDECREF(all);
+    return -1;
+  }
+  for (i = 0; i < (size_t)PyList_GET_SIZE(all); i++) {
+    PyObject *f = PyList_GET_ITEM(all, i);
+    if (PyFunction_Check(f)) {
+      PyObject *co = PyFunction_GET_CODE(f);
+      x = ni_code_extra_get((PyCodeObject *)co);
+      if (x != NULL && x->owner.npins > 0)
+        scan_node(co, NODE_CODE);
+    }
+  }
+  Py_DECREF(all);
   for (i = 0; i < scan.n && !scan.failed; i++)
     scan_edges(i, visit_count);
   for (i = 0; i < scan.n && !scan.failed; i++)
@@ -651,9 +678,13 @@ static void owners_scan(void) {
   memset(&scan, 0, sizeof(scan));
   psyco_stat_owner_scans++;
   if (n < 0)
-    scan_after = 2 * (scan_after > nextras ? scan_after : nextras);
+    scan_after = 2 * (scan_after > psyco_stat_owners_counted
+                          ? scan_after
+                          : psyco_stat_owners_counted);
   else
-    scan_after = nextras / 2 > 256 ? nextras / 2 : 256;
+    scan_after = psyco_stat_owners_counted / 2 > SCAN_MIN
+                     ? psyco_stat_owners_counted / 2
+                     : SCAN_MIN;
   if (n > 0)
     dead = PyMem_Malloc(n * sizeof(ni_code_extra_t *));
   if (dead == NULL) {
@@ -675,125 +706,42 @@ static void owners_scan(void) {
   PyMem_Free(dead_co);
 }
 
-static bool scan_listed_last(void) {
-  Py_ssize_t n = PyList_GET_SIZE(gc_callbacks);
-  return n > 0 && PyList_GET_ITEM(gc_callbacks, n - 1) == scan_callback;
+static int owners_pending(void *arg) {
+  PyObject *t, *v, *tb;
+  scan_asked = false;
+  /* pending calls run in whatever interpreter the main thread is in; one
+     skipped is asked for again by the next record counted */
+  if (PyThreadState_GET()->interp != PyInterpreterState_Main() ||
+      psyco_owner != NULL || psyco_stat_compile_depth != 0 || nlocked != 0 ||
+      psyco_compile_guard != NULL || _Py_IsFinalizing())
+    return 0;
+  extras_since_scan = 0;
+  PyErr_Fetch(&t, &v, &tb);
+  owners_scan();
+  PyErr_Restore(t, v, tb);
+  return 0;
 }
-
-static PyObject *owners_gc_callback(PyObject *self, PyObject *args) {
-  const char *phase;
-  PyObject *info, *gen;
-  if (!PyArg_ParseTuple(args, "sO", &phase, &info))
-    return NULL;
-  /* gc.callbacks are shared by every interpreter: a subinterpreter's
-     collection, perhaps while it is torn down, would scan from its
-     sys.modules */
-  if (PyThreadState_GET()->interp != PyInterpreterState_Main())
-    Py_RETURN_NONE;
-  if (strcmp(phase, "start") == 0) {
-    gen = PyDict_Check(info) ? PyDict_GetItemString(info, "generation") : NULL;
-    if (extras_since_scan != quiet_since) {
-      quiet_since = extras_since_scan;
-      quiet = 0;
-    } else if (quiet < SCAN_QUIET)
-      quiet++;
-    if (extras_since_scan > 0 &&
-        (extras_since_scan >= scan_after || quiet >= SCAN_QUIET ||
-         (gen != NULL && PyLong_Check(gen) && PyLong_AsLong(gen) == 2)) &&
-        psyco_owner == NULL && psyco_stat_compile_depth == 0 &&
-        nlocked == 0 && psyco_compile_guard == NULL && !_Py_IsFinalizing()) {
-      extras_since_scan = 0;
-      quiet_since = -1;
-      owners_scan();
-    }
-  } else if (extras_since_scan == 0 && scan_listed_last()) {
-    /* the last one, so that removing it skips no other callback */
-    Py_ssize_t n = PyList_GET_SIZE(gc_callbacks);
-    if (PyList_SetSlice(gc_callbacks, n - 1, n, NULL) < 0)
-      PyErr_Clear();
-  }
-  Py_RETURN_NONE;
-}
-
-static PyMethodDef owners_gc_callback_def = {"ni_owner_scan",
-                                             owners_gc_callback, METH_VARARGS,
-                                             NULL};
-
-/* code_dealloc calls the free functions of the interpreter current then,
-   and only the main one has Ni's: a code object freed under another
-   (a collection a subinterpreter runs) would leave its record behind,
-   and the scan would read the code through it. So each tracked record
-   also has a weak reference to its code; the free function drops it
-   first, and if the code dies without that, its callback frees the
-   record instead. */
-static ni_addrmap_t code_refs; /* weak reference -> record */
-static PyObject *code_gone = NULL;
-
-static PyObject *code_gone_fn(PyObject *self, PyObject *ref) {
-  ni_code_extra_t *x = amap_get(&code_refs, ref);
-  if (x != NULL)
-    ni_code_extra_free(x);
-  Py_RETURN_NONE;
-}
-
-static PyMethodDef code_gone_def = {"ni_code_gone", code_gone_fn, METH_O,
-                                    NULL};
 
 DEFINEFN void psyco_owner_track(ni_code_extra_t *x) {
-  PyObject *t, *v, *tb, *ref = NULL;
-  PyErr_Fetch(&t, &v, &tb);
-  if (code_gone != NULL && amap_reserve(&code_refs) == 0)
-    ref = PyWeakref_NewRef((PyObject *)x->co, code_gone);
-  if (ref == NULL) { /* untracked: never scanned, so never collected */
-    PyErr_Clear();
-    PyErr_Restore(t, v, tb);
+  if (x->counted)
     return;
-  }
-  amap_put(&code_refs, ref, x);
-  x->ref = ref;
-  x->prev = NULL;
-  x->next = extras;
-  if (extras != NULL)
-    extras->prev = x;
-  extras = x;
-  nextras++;
+  x->counted = 1;
+  psyco_stat_owners_counted++;
   extras_since_scan++;
-  if (scan_callback != NULL && !scan_listed_last()) {
-    if (PySequence_Contains(gc_callbacks, scan_callback) == 0)
-      PyList_Append(gc_callbacks, scan_callback);
-    PyErr_Clear(); /* out of memory: listed with a later record */
-  }
-  PyErr_Restore(t, v, tb);
+  if (extras_since_scan >= scan_after && !scan_asked &&
+      Py_AddPendingCall(owners_pending, NULL) == 0)
+    scan_asked = true; /* a full queue: asked again by the next record */
 }
 
 DEFINEFN void psyco_owner_untrack(ni_code_extra_t *x) {
-  if (x->ref == NULL)
-    return;
-  amap_remove(&code_refs, x->ref);
-  Py_CLEAR(x->ref);
-  if (x->prev != NULL)
-    x->prev->next = x->next;
-  else
-    extras = x->next;
-  if (x->next != NULL)
-    x->next->prev = x->prev;
-  nextras--;
+  if (x->counted)
+    psyco_stat_owners_counted--;
+  x->counted = 0;
 }
 
-/* without it, cycles through code objects stay */
 static void owners_scan_init(void) {
-  PyObject *gc;
-  if (PyType_Ready(&Record_Type) < 0 ||
-      (code_gone = PyCFunction_New(&code_gone_def, NULL)) == NULL ||
-      (gc = PyImport_ImportModule("gc")) == NULL) {
+  if (PyType_Ready(&Record_Type) < 0)
     PyErr_Clear();
-    return;
-  }
-  gc_callbacks = PyObject_GetAttrString(gc, "callbacks");
-  Py_DECREF(gc);
-  if (gc_callbacks != NULL && PyList_Check(gc_callbacks))
-    scan_callback = PyCFunction_New(&owners_gc_callback_def, NULL);
-  PyErr_Clear();
 }
 
 DEFINEVAR unsigned long psyco_next_serial = 0;

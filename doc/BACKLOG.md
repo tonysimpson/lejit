@@ -31,6 +31,7 @@ In KNOWN_BUGS.md. Worth doing first among them: C11's `PyEval_GetFrame` hook, `f
 - Forgotten values (D43): forget a forgotten value's type too (needs a generic path for `Psyco_NeedType`); mark values that partial matches un-promote before the cap (SPECIALISATION.md).
 - Unused facts (D50, D57): promotions at a merge point, whose own compare must keep the fact.
 - Rejoining (D44): respawn points that are not split sites (error paths, overflow); a small case for C27.
+- A megamorphic cut-off for `Psyco_NeedType` type-promotion sites: namedtuple's `_make` and `__repr__` compile a block for each new class, about +29.9 MB per 2000 namedtuples while that code lives (C14, SPECIALISATION.md).
 - Promotion code (FINDINGS.md "Code size"): matching across promoted knowledge; why chain placement moves richards' cycles; a cut-off for sites without one.
 - Other two-form values at merge points (QUESTIONS 38): ints outside -5..256, floats, stack slots.
 - Type-set guards: one copy of a base-class method for several subclasses (richards' `Task`).

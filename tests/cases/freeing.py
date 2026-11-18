@@ -56,6 +56,27 @@ def f(a):
 '''
 
 
+MANY = ''.join('def h%d(a):\n    return a + %d\n' % (i, i) for i in range(600))
+
+
+def scan_soon():
+    # the owner scan runs once enough records have been counted since the
+    # last (codemanager.c), so make records until it has run
+    import sys
+    ni = sys.modules.get('ni')
+    if ni is None:
+        return
+    start = ni._stats()['owner_scans'][0]
+    for k in range(40):
+        ns = {}
+        exec(MANY, ns)
+        for i in range(600):
+            ns['h%d' % i](1)
+        ns.clear()  # freed now: no cycle left for a later collection
+        if ni._stats()['owner_scans'][0] > start:
+            return
+
+
 def own_namespace_calls():
     # f's code holds g (a cached global), g holds the namespace, which
     # holds f: a cycle through f's code object, which CPython's GC can't see
@@ -67,6 +88,7 @@ def own_namespace_calls():
         refs.append(weakref.ref(ns['f'].__code__))
         total += ns['f'](10 + k)
     del ns
+    scan_soon()
     gc.collect()
     return total, [r() is None for r in refs]
 
@@ -91,17 +113,15 @@ def own_namespace_recursion():
         refs.append(weakref.ref(ns['odd'].__code__))
         out.append(ns['even'](20 + k))
     del ns
+    scan_soon()
     gc.collect()
     return out, [r() is None for r in refs]
 
 
-MANY = ''.join('def h%d(a):\n    return a + %d\n' % (i, i) for i in range(600))
-
-
 def freed_in_subinterpreter():
     # a cycle through compiled code, old by the time it is garbage, found
-    # by a scan at a young collection, then freed by a subinterpreter's
-    # collection: that interpreter has no free function for Ni's co_extra
+    # by a scan, then freed by a subinterpreter's collection: that
+    # interpreter has no free function for Ni's co_extra
     import _testcapi
     cycles = []
     for k in range(20):
@@ -115,8 +135,10 @@ def freed_in_subinterpreter():
     keep = {}
     exec(MANY, keep)
     total = sum(keep['h%d' % i](1) for i in range(600))
+    scan_soon()
     gc.collect(0)
     r = _testcapi.run_in_subinterp('import gc; gc.collect()')
+    keep.clear()
     gc.collect()
     return total, r, [x() is None for x in refs]
 

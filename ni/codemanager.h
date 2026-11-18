@@ -58,14 +58,17 @@ EXTERNFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
    owner (dispatcher.c:stub_pool_reserve) */
 EXTERNFN code_t *psyco_code_take(size_t n);
 
-/* Every code object's record is listed (ni.c), for the scan that frees
-   owners whose code objects are reachable only from garbage
-   (codemanager.c, cycles through code objects). */
+/* A record is counted once its owner holds a reference (psyco_owner_keep):
+   the count since the last scan decides when the scan that frees owners
+   whose code objects are reachable only from garbage runs (codemanager.c,
+   cycles through code objects); one that holds none can't keep anything
+   alive. */
 EXTERNFN void psyco_owner_track(ni_code_extra_t *x);
 EXTERNFN void psyco_owner_untrack(ni_code_extra_t *x);
-/* scans run and owners they freed: ni._stats() */
+/* scans run, owners they freed, records counted: ni._stats() */
 EXTERNVAR long psyco_stat_owner_scans;
 EXTERNVAR long psyco_stat_owners_collected;
+EXTERNVAR long psyco_stat_owners_counted;
 
 /* A map from addresses, for the caches that record what a compile saw at
    an address and must see the same in a replay. psyco_record gives the

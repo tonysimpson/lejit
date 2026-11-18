@@ -209,9 +209,7 @@ typedef struct ni_code_extra_s {
   long serial;             /* never reused, unlike the code object's
                               address (psyfunc.c:psyco_save_inline_po) */
   ni_owner_t owner;        /* what its compiled code holds */
-  PyCodeObject* co;        /* borrowed: the record dies with it */
-  struct ni_code_extra_s *prev, *next; /* every record (codemanager.c) */
-  PyObject* ref;           /* a weak reference to co, NULL if untracked */
+  char counted;            /* in the owner scan's count (codemanager.c) */
 } ni_code_extra_t;
 /* the record for 'co', made on first use; NULL with an exception set */
 EXTERNFN ni_code_extra_t* ni_code_extra(PyCodeObject* co);
