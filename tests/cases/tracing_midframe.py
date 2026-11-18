@@ -179,6 +179,31 @@ def mid_trace_callee(n):
     return list(LINES), a
 
 
+SEEN = []
+
+
+def locals_tracer(frame, event, arg):
+    loc = frame.f_locals
+    SEEN.append((event, loc.get('i'), loc.get('total')))
+    return locals_tracer
+
+
+def attach_locals_tracer():
+    sys._getframe(1).f_trace = locals_tracer
+    sys.settrace(lambda *a: None)
+
+
+def trace_reads_locals(n):            # ceval runs it on: f_locals is ceval's
+    del SEEN[:]
+    total = 0
+    for i in range(n):
+        total += i
+        if i == 1:
+            attach_locals_tracer()
+    sys.settrace(None)
+    return total, list(SEEN)
+
+
 CASES = [
     ('mid_profile', [(1,), (2,)], {}),
     ('mid_trace', [(1,), (2,)], {}),
@@ -189,6 +214,7 @@ CASES = [
     ('mid_handler', [(5,)], {}),
     ('mid_with', [(4,)], {}),
     ('mid_loop', [(5,)], {}),
+    ('trace_reads_locals', [(4,)], {}),
     ('mid_trace_callee', [(2,)],
      {'xfail': 'C29: f_trace set on a compiled callee\'s emulated frame is lost'}),
 ]

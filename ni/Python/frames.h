@@ -100,6 +100,9 @@ typedef struct {
   PyObject *psy_globals;
   PyObject **entry_locals; /* see psyco_frame_write_locals, or NULL */
   int n_entry_locals;
+  /* ceval now runs the frame (psyco_resume_run): its locals and line are
+     ceval's, and the compiled code under it waits for ceval's result */
+  int resumed;
 } FrameRuntime;
 
 EXTERNFN int psyco_frame_start_register(PyFrameObject *f,

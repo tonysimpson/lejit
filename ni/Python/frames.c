@@ -31,7 +31,10 @@
  * the locals a real frame NiCode_Run runs started with.
  * When tracing starts, a compiled frame goes on in ceval
  * (psyco_resume_run); pvisitframes then hides its compiled record, since
- * the real frame now stands for it.
+ * the real frame now stands for it. A real frame NiCode_Run runs is
+ * marked resumed instead: its locals and line are then ceval's, and a
+ * trace function's f_locals must not hand ceval the locals compiled code
+ * had at the call, which PyFrame_LocalsToFast would write back.
  */
 #include "frames.h"
 #include "../Objects/pobject.h"
@@ -120,6 +123,7 @@ frame_runtime_capsule_new(PyFrameObject *py_frame,
   fr->psy_globals = py_frame->f_globals;
   fr->entry_locals = NULL;
   fr->n_entry_locals = 0;
+  fr->resumed = 0;
   capsule = PyCapsule_New((void *)fr, NULL, frame_runtime_capsule_dealloc);
   if (capsule == NULL) {
     PyMem_Free(fr);
@@ -517,7 +521,7 @@ static PyObject *pvisitframes(PyObject *(*callback)(PyObject *, void *),
        list of Psyco frames ? */
     fstart = linked ? NULL : psyco_frame_start_get(ni_frame_object(f));
     linked = !ni_frame_object(f)->f_executing;
-    if (fstart != NULL) {
+    if (fstart != NULL && !fstart->resumed) {
       /* Yes. Get the list start. */
       struct sfitmp_s *revlist;
       struct sfitmp_s *p;
@@ -715,7 +719,8 @@ static void restore_links(PyObject *undo) {
 /* whether NiCode_Run is running 'f' (its f_lasti is -1, or the place of
    the last traceback entry made for it) */
 static bool runs_compiled(PyFrameObject *f) {
-  return f->f_executing && psyco_frame_start_get(f) != NULL;
+  FrameRuntime *fr = f->f_executing ? psyco_frame_start_get(f) : NULL;
+  return fr != NULL && !fr->resumed;
 }
 
 /* frame.f_back, replaced in PyFrame_Type's dict. A running real frame
@@ -954,7 +959,8 @@ PyFrameObject *psyco_running_real_frame(PyCodeObject *co) {
   fstart = psyco_frame_start_get(ni_frame_object(f));
   /* the top compiled frame's finfo slot is odd (-1) except while it is in a
      compiled sub-call (ABOUT_TO_CALL_SUBFUNCTION) */
-  if (fstart == NULL || (((long)**fstart->psy_frames_start) & 1) == 0)
+  if (fstart == NULL || fstart->resumed ||
+      (((long)**fstart->psy_frames_start) & 1) == 0)
     return NULL;
   return ni_frame_object(f);
 }
@@ -1324,6 +1330,7 @@ PyObject *psyco_resume_run(struct resume_s *st, long lasti, long nstack) {
   hook_t trace = {ts->c_tracefunc, ts->c_traceobj};
   hook_t profile = {ts->c_profilefunc, ts->c_profileobj};
   struct hidden_s hidden = {st->slot, hidden_frames};
+  FrameRuntime *fr = st->slot == NULL ? psyco_frame_start_get(f) : NULL;
   extra_assert(nlocals == f->f_code->co_nlocals +
                               PyTuple_GET_SIZE(f->f_code->co_cellvars) +
                               PyTuple_GET_SIZE(f->f_code->co_freevars));
@@ -1347,6 +1354,8 @@ PyObject *psyco_resume_run(struct resume_s *st, long lasti, long nstack) {
 
   if (st->slot != NULL)
     hidden_frames = &hidden;
+  if (fr != NULL)
+    fr->resumed = 1;
   if (!ts->tracing) {
     if (trace.func != NULL) {
       ts->c_tracefunc = skip_call_trace;
@@ -1358,6 +1367,8 @@ PyObject *psyco_resume_run(struct resume_s *st, long lasti, long nstack) {
     }
   }
   result = _PyEval_EvalFrameDefault(f, 0);
+  if (fr != NULL)
+    fr->resumed = 0;
   /* not put back if the frame never started (RecursionError) */
   if (ts->c_tracefunc == skip_call_trace) {
     ts->c_tracefunc = trace.func;
