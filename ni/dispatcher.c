@@ -165,9 +165,13 @@ static signed char *fz_internal_copy(vcompat_internal_t *current, int nsize) {
   signed char *buf = (signed char *)PyMem_MALLOC(nsize);
   if (buf == NULL)
     OUT_OF_MEMORY();
-  memcpy(buf, current->buf_begin,
-         ((signed char *)current->buf_args) - current->buf_begin);
-  memcpy(buf + nsize - opc_size, current->buf_opc, opc_size);
+  /* the first buffer is NULL, and memcpy from NULL is undefined even for
+     0 bytes */
+  if (current->buf_begin != NULL) {
+    memcpy(buf, current->buf_begin,
+           ((signed char *)current->buf_args) - current->buf_begin);
+    memcpy(buf + nsize - opc_size, current->buf_opc, opc_size);
+  }
   return buf;
 }
 

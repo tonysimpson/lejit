@@ -788,7 +788,8 @@ void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
   extra_assert(!HAS_CCREG(po));
   cp->po = po;
   cp->resume_fn = resume_fn;
-  memcpy(cp + 1, extra, extrasize);
+  if (extrasize > 0) /* 'extra' may be NULL */
+    memcpy(cp + 1, extra, extrasize);
   psyco_stub_set_release(cp, &coding_pause_release);
 
   /* write the jump to the stub */
