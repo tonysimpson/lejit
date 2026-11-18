@@ -76,7 +76,7 @@ Under AddressSanitizer and UBSan (BUILD.md, Sanitizers), the behaviour tests, th
 
 ## Other projects' test suites (`tools/thirdparty/`)
 
-Twelve pure-Python projects' own suites, each at its last release for 3.7 (`tools/thirdparty/projects.py`, `lock.txt`), run plainly and with Ni for the whole process on a release build (BUILD.md). Last run at `86107a0`, both modes at once (`-j 2`) [run]:
+Twelve pure-Python projects' own suites, each at its last release for 3.7 (`tools/thirdparty/projects.py`, `lock.txt`), run plainly and with Ni for the whole process on a release build (BUILD.md). Last run at `edfcdcd`, both modes at once (`-j 2`) [run]:
 
 | Project | Tests | Plain s | Ni s | Ni-only failures |
 |---|---|---|---|---|
@@ -94,7 +94,7 @@ Twelve pure-Python projects' own suites, each at its last release for 3.7 (`tool
 | Django 3.2.25, all, sqlite | 14684 | 273 | 355 | 15 (C11) |
 
 No test fails plainly and passes with Ni.
-- **Wrong answers fixed:** code run by `exec` with its own locals mapping was compiled and its `from m import *` and `del x` used the globals (`eda22fe`; sympy's `lambdify` and `Sum.evalf`, 9 tests); the inline attribute store never made an untracked instance dict tracked when it stored a GC value of unknown type, so cycles through it were never collected (`86107a0`; sympy reached the 4 GB limit).
+- **Wrong answers fixed:** code run by `exec` with its own locals mapping was compiled and its `from m import *` and `del x` used the globals (`8347596`; sympy's `lambdify` and `Sum.evalf`, 9 tests); the inline attribute store never made an untracked instance dict tracked when it stored a GC value of unknown type, so cycles through it were never collected (`edfcdcd`; sympy reached the 4 GB limit).
 - **C11:** pyparsing's parse actions with fewer than three arguments raise TypeError, because `_trim_arity` compares line numbers from `traceback.extract_stack`; with that worked round, 37 failures are left, all C11 (`f_locals` read by `autoname_elements` and `ParseException.explain`, a warning keyed on the caller's line). Django's debug page and `sensitive_variables` read traceback frames' locals; Django's and sympy's warning stack-level tests fail.
 - **Memory (C61):** the sympy run aborts at the 4 GB limit once it has compiled about 630,000 code buffers (3 GB of RSS, 250 MB plainly).
 - **Time:** pyparsing's Ni time is its failing parse actions (13.7 s with them worked round). Django, many short tests over much code, is 1.3× slower; sympy is 1.4× faster and sortedcontainers 2.8×.

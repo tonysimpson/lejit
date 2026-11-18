@@ -37,7 +37,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
 | `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `a6a687b`; `dfe1a39` (psyco_compatible) |
 | `ni/dispatcher.h` | core | Snapshots (FrozenPsycoObject), compatibility and join API, respawn and promotion helpers. | none | `f229d14` |
-| `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles a function frame (no locals mapping) on its first call (interpreted if memory runs out), `NiCode_Run` runs it. | Python/ceval.c | `eda22fe` |
+| `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles a function frame (no locals mapping) on its first call (interpreted if memory runs out), `NiCode_Run` runs it. | Python/ceval.c | `8347596` |
 | `ni/initialize.h` | glue | Calls every file's init; with ALL_STATIC=1 includes all .c files into one unit. | none | `b251646` |
 | `ni/mechanisms/entry/frame_eval_hook.h` | glue (mechanism snippet) | 3.7's entry (D75): the PEP 523 hook `NiEval_EvalFrame` and its installation. | Include/pystate.h | `36b5beb` |
 | `ni/mechanisms/frames/frame_object.h` | glue (mechanism snippet) | 3.7's frames (D75): `ni_frame_t` is `PyFrameObject`, with inline accessors. | Include/frameobject.h, Include/pystate.h | `36b5beb` |
@@ -126,7 +126,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/x64/idispatcher.c` | backend + core | psyco_unify(): emits moves and refcounts to match a snapshot, then jumps to it. | none | `a4b946e` |
 | `ni/x64/idispatcher.h` | backend | Dispatcher hooks: promotion inline cache and chain, jumps and patching, unify blocks, stubs. | none | `a599bd2` |
 | `ni/x64/iencoding.c` | backend + glue | C calls (SysV at run time, libffi at compile time), psyco_call_psyco, cc and ALU emitters. | none (encodes CPython error conventions) | `f254b5d` |
-| `ni/x64/iencoding.h` | backend | x86-64 encoders, register and cc model, call macros, jumps: the main core-to-backend API. | none | `86107a0` |
+| `ni/x64/iencoding.h` | backend | x86-64 encoders, register and cc model, call macros, jumps: the main core-to-backend API. | none | `edfcdcd` |
 | `ni/x64/iinitialize.h` | glue | Runs psyco_processor_init(); under ALL_STATIC includes the x64 `.c` files. | none | `e1fd808` |
 | `ni/x64/iprocessor.c` | backend | Run-time entry glue, the stub trampoline, stack frame walking, aligned-call glues. | none | `ee76274` |
 | `ni/x64/ipyencoding.c` | backend | function_return(), decref emitters, the inline attribute store (D47), the type guard. | Include/object.h, Objects/dictobject.c | `0d378fb` |
@@ -223,7 +223,7 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `tools/test_harness` | tooling | Counts `NiEval_EvalFrame` against `NiCode_Run` hits under `pointbreak`. | `e1fd808` |
 | `tools/nianalyser/dump_function.py` | tooling | Prints the annotated machine code generated for one function (BUILD.md, Debug). | `28f3bae` |
 | `tools/nianalyser/crash_report.py` | tooling | Explains a crash in emitted code (BUILD.md, Debug). | `2f23846` |
-| `tools/thirdparty/` | tooling | Other projects' test suites, plain and with Ni, compared per test (`thirdparty.py`; `projects.py` the projects, `lock.txt` their pinned files, `ni_tp_pytest.py` and `ni_tp_django.py` the recorders; BUILD.md). | `2e91f0e` |
+| `tools/thirdparty/` | tooling | Other projects' test suites, plain and with Ni, compared per test (`thirdparty.py`; `projects.py` the projects, `lock.txt` their pinned files, `ni_tp_pytest.py` and `ni_tp_django.py` the recorders; BUILD.md). | `10a8132` |
 | `tools/test_runner` | tooling | unittest main; imports `ni` if `NI_ENABLED` is set. | `e1fd808` |
 | `tools/asm`, `tools/test_asm`, `tools/asm_test_cases.txt` | tooling | Compare encoder-macro bytes with gas output. | `e1fd808` |
 | `tools/test_c_encoding` | tooling | Expand one macro and disassemble it (Python 2). | `e1fd808` |
