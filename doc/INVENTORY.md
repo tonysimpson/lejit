@@ -735,7 +735,7 @@ Tuple item descriptor and vinfo-array access macros **[read]**.
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
 | header guard and includes | 12 | glue | none |  |  |  |
-| TUPLE_ob_item, iTUPLE_OB_ITEM | 4 | core | none | P15 |  | PyTupleObject.ob_item, FARRAY after FIX_size |
+| TUPLE_ob_item, iTUPLE_OB_ITEM | – | generated | none | P15 |  | **Generated** into `virtual_fields_gen.h` by `gen_virtual.py` from `policy_table.TYPES` and the D76 layout (D80) |
 | PsycoTuple_GET_ITEM, PsycoTuple_SET_ITEM | 11 | core | none | P22 |  | vinfo-array access, no checks |
 | declarations | 16 | glue | none |  |  |  |
 
@@ -746,12 +746,9 @@ Mostly core: virtual tuples, constant folding of all-constant tuples, `PsycoTupl
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
 | file comment, include, psyco_computed_tuple | 18 | glue | none |  |  |  |
-| check_ituple | 11 | core | none |  |  | ALL_CHECKS only |
-| compute_tuple | 56 | core | none | P18, P14, P12, P15, P17 | SHORTCUT: all-constant items build the tuple at compile time (P14); EFFECT: PyTuple_New CfCommonNewRefPyObject |  |
-| direct_compute_tuple | 23 | core | none | P18 |  |  |
-| PsycoTuple_New | 18 | core | none | P18 |  |  |
+| compute_tuple, direct_compute_tuple, PsycoTuple_New | – | generated | Objects/tupleobject.c:PyTuple_New | P18, P14, P12 | SHORTCUT: all-constant items built at compile time (rule allocator_pure); EFFECT: PyTuple_New from effects.py (CfNoPython, CfNoBlock) | **Generated** into `ptupleobject_virtual_gen.h` by `gen_virtual.py` (D80); the hand versions (97 lines) are gone |
 | CT_TUPLE_LOAD_SIZE_LIMIT, PsycoTuple_Load | 42 | core | none | P22 | VIRTUAL: constant tuples over 15 items are not loaded | -1 for a non-tuple constant (F45) |
-| PsycoTuple_Concat | 64 | mixed | Objects/tupleobject.c:tupleconcat | P02, P22, P21, P12, P08 | PROMOTE: both types (Psyco_VerifyType); SHORTCUT: an empty operand gives the other only if it is an exact tuple (P21, as tupleconcat); VIRTUAL: known-length operands give a virtual tuple; RESTYPE: tuple for the residual | core = virtual concat. Returns NULL with no exception when v1 is not a tuple (unreachable through sq_concat [inferred]) |
+| PsycoTuple_Concat | – | removed | Objects/tupleobject.c:tupleconcat | P02, P22, P21, P12 | | **Removed** (D80): `tupleconcat` and `tuplerepeat` are generated into `ptupleobject_gen.h` by the constructor rule; see METACOMPILER "Virtual objects" for the differences |
 | ptuple_item | 26 | translated | Objects/tupleobject.c:tupleitem | P15, P07, P05, P24 | LIKELY: out of range unlikely (_f) | no assert_nonneg after the test, unlike plist_item |
 | psy_tupleobject_init | 20 | glue | none |  | OTHER: tuple mp_subscript is the generic pabstract.c:psyco_generic_subscript, not a tuplesubscript translation; VIRTUAL: INIT_SVIRTUAL (stays virtual across calls), weights NW_TUPLES_NORMAL, NW_TUPLES_FUNCALL | sq_length is psyco_generic_immut_ob_size |
 
@@ -902,9 +899,7 @@ Virtual bound methods and a `method_call` meta that prepends self in a virtual t
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
 | file comment, includes | 8 | glue | none |  |  |  |
-| PsycoMethod_New | 18 | core | none | P18 |  | im_func always a constant |
-| compute_method | 24 | core | none | P18, P12 | EFFECT: PyMethod_New called CfPure (an allocator: constant func and self would fold to one shared bound method [inferred]) |  |
-| direct_compute_method | 16 | core | none | P18 |  |  |
+| PsycoMethod_New, compute_method, direct_compute_method | – | generated | Objects/classobject.c:PyMethod_New | P18, P12 | EFFECT: PyMethod_New from effects.py (CfNoPython, CfNoBlock; was CfPure); SHORTCUT: constant func and self built at compile time | **Generated** into `pclassobject_virtual_gen.h` (D80); `PsycoMethod_New` now takes func as a vinfo (`pfunc_descr_get` makes the constant) |
 | psyco_computed_method, section comment | 5 | glue | none |  |  |  |
 | pinstancemethod_call | 54 | mixed | Objects/classobject.c:method_call | P15, P05, P22, P18, P12 | LIKELY: im_self non-NULL (_t); VIRTUAL: self prepended in a virtual tuple (_PyObject_Call_Prepend uses a stack array); unknown arity goes residual; DRIFT: NULL im_self branch is a Py2 unbound-method leftover (residual raises BadInternalCall as CPython) | core = virtual-tuple prepend; then PsycoObject_Call re-dispatches |
 | psy_classobject_init | 7 | glue | none |  | VIRTUAL: INIT_SVIRTUAL, weights 0, 0 |  |
@@ -1021,10 +1016,9 @@ Virtual slices (D56): core construction and forcing, with `PySlice_Unpack` and `
 | function | lines | class | CPython 3.7 counterpart | patterns | policy | notes |
 |---|---|---|---|---|---|---|
 | file comment, includes | 18 | glue | none |  |  |  |
-| SLICE_* descriptors | 8 | core | none | P15 |  | PySliceObject start/stop/step indices, used only while virtual |
+| SLICE_* descriptors | – | generated | none | P15 |  | **Generated** into `virtual_fields_gen.h` (D80) |
 | psyco_computed_slice | 2 | glue | none |  |  |  |
-| compute_slice | 12 | core | none | P18, P12 | EFFECT: PySlice_New CfCommonNewRefPyObject |  |
-| PsycoSlice_New | 17 | core | none | P18 | VIRTUAL: BUILD_SLICE always virtual (D56) | stands for ceval.c TARGET(BUILD_SLICE)'s PySlice_New |
+| compute_slice, direct_compute_slice, PsycoSlice_New | – | generated | Objects/sliceobject.c:PySlice_New | P18, P12 | VIRTUAL: BUILD_SLICE always virtual (D56); SHORTCUT: constant bounds built at compile time (new); forced: fields dropped (`TYPES` `forced: drop_fields`) | **Generated** into `psliceobject_virtual_gen.h` (D80); stands for ceval.c TARGET(BUILD_SLICE)'s PySlice_New |
 | is_none | 5 | core | none |  |  |  |
 | slice_index | 43 | mixed | Python/ceval.c:_PyEval_SliceIndex | P01, P12 | SHORTCUT: constant ints clip at compile time; a virtual int gives its word; a run-time int its one-digit value (PsycoLong_MediumValue), more digits a residual PyNumber_AsSsize_t on a respawn; PROMOTE: bound type; EFFECT: CfReturnTypeNative\|CfPyErrCheckMinus1 | core = virtual-int and one-digit paths; non-int bounds answer 0 (the real slice) |
 | PsycoSlice_Unpack | 17 | mixed | partial: Objects/sliceobject.c:PySlice_Unpack | P18a | VIRTUAL: virtual slices with step None only | core = the virtual-slice test; defaults 0 and PY_SSIZE_T_MAX as PySlice_Unpack for step 1 |

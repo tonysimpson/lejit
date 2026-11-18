@@ -444,6 +444,38 @@ Step 5's first rule for `gen_abstract.py`: what a C loop becomes in a meta, deci
 
 Release builds, instructions per warm iteration (`perf stat -e instructions:u`, `profile_bench.py` 1 s and 4 s, raytrace 2 s and 8 s, PYTHONHASHSEED=0), `7088760` → this code: richards 168.94 → 168.32 M, deltablue 26.52 → 26.51, raytrace 3,095.3 → 3,098.2, go 1,071.4 → 1,065.4, hexiom 40.65 → 39.78 (−2.1%), chaos 464.85 → 463.61, pyflate 2,012.0 → 2,003.0: nothing slower beyond noise (raytrace +0.09%).
 
+## Virtual objects (D80)
+
+GENERATION step 6: a virtual type's support is generated from CPython's constructor and its `policy_table.TYPES` entry, and a call of that constructor in translated C is the virtual object. Representation policy (which types are virtual, their weights, the item limit, whether the fields are kept when forced) stays in the table; the generator has no per-type code and no version numbers (D67). [run]
+
+**Input.** A `TYPES` entry's `virtual` section names Ni's source variable (`ni`), the weights, the CPython `constructor` (`Objects/tupleobject.c:PyTuple_New`, `sliceobject.c:PySlice_New`, `classobject.c:PyMethod_New`, `listobject.c:PyList_New`), Ni's `new`, and optionally `max_items` (a `LIMITS` name) and `forced: drop_fields`. `policy.py` checks that the constructor exists in the source, that `new` is declared in Ni's header, and the keys. The ceval builder entries no longer carry `('virtual', 'result', …)` items: D73's rule (`gen_ceval.constructor`/`counterpart`) asks `gen_virtual.constructors()`, and `policy.py` refuses such an item on an entry a generator writes.
+
+**`gen_virtual.py`** reads each constructor (types with no mutable fields only):
+- a fixed type: the statements `op->F = P;` give field ← parameter, `if (P == NULL) P = Py_None;` a default (`PySlice_New`'s three bounds);
+- an array type (one with `known_length`): the one parameter must be stored in the size field and `<Prefix>_SET_ITEM` must store into the items field;
+- the fields must be in `LAYOUTS`, whose D76 layout gives the descriptors (`virtual_fields_gen.h`: `TUPLE_ob_item`, `SLICE_*`, `METHOD_*`, included by `pobject.h`).
+
+Per type it writes `<file>_virtual_gen.h`: `direct_compute_X` (the constructor on raw values), `compute_X` (every field a constant: built now and a constant, rule `allocator_pure`; else the constructor called at run time with effects.py's flags, an array's items stored with `psyco_put_nth_field`, the fields dropped if the table says so), Ni's `new`, and `gen_virtual_X_init()` with the table's weights.
+
+**The constructor rule** (`gen_abstract.py`): a call of a `TYPES` constructor is Ni's `new`. An array type's size must be known at compile time and within `max_items` (`CT_TUPLE_LOAD_SIZE_LIMIT`), else CPython's function resumes there. Such a virtual is never NULL (`np == NULL` folds). A `PyObject **` local is an offset the meta holds into a known-length parameter's items or into the virtual being built; `P[i] = x` and `*P = x` store x's vinfo; an owned x is taken, a borrowed one increfed and the C's next statement must be its `Py_INCREF`. A length read outside a loop is loaded as a loop's bound is (`PsycoTuple_Load`, CPython's function where -1). A resume while a virtual is half built is refused. New vocabulary item `('shortcut', 'if_known', n)`: the integer parameter is used as its constant value, any other value runs CPython's function.
+
+**Generated.**
+- tuple, slice, bound method: forcing, direct computation, construction (hand: 293 lines removed, 39 added in `ni/Objects`).
+- `tupleobject.c:tupleconcat` (replaces `PsycoTuple_Concat`) and `tuplerepeat` (new: `t * n` was a residual call), `sq_concat`/`sq_repeat` in `TRANSLATED_SLOTS`.
+- Not: list (mutable; failures log).
+
+**Differences from the hand versions, each with its reason.**
+1. A slice of constants is now a constant when forced (it was always `PySlice_New` at run time): `allocator_pure`, as for tuples. A folded slice is a new object on each compile, so the respawn replay check compares slices by type (`dispatcher.c:respawn_flatten`), as for other immutable constants.
+2. The constructors are called with effects.py's flags, `CfNoPython | CfNoBlock` (tuple and slice had none, so a forced constructor forgot known classes; the method had `CfPure`).
+3. A slice now has a `direct_compute` and object mask (the hand one had none; the path is reached only through the compute fold).
+4. `tupleconcat`: where an operand's length is unknown the hand code still returned `t + ()` as `t`; the generated meta calls the slot. Past 15 items the result is CPython's (`max_items`), where the hand code built a virtual of any size.
+
+**Same code.** `tools/samecode.py` A = `e0ae987` with F107's fix (`scratch` build; the plain baseline's codestats build reads freed memory), B = `603363c`: 54 units same, 31 differ (3,993 of 4,136 code objects same); `virtual_objects` runs only on B (A segfaults in `concat_in_loop`, F108). The first differences are: a constant slice now a constant (`movabs obj:slice` where A built it: `BINARY_SUBSCR` in `zipfile`, `sre_compile._mk_bitmap`, `containers.slicing`, `heap_slots`, about 25 code objects); `tuplerepeat` and `tupleconcat` generated (`argparse.format`'s `(result,) * tuple_size` is a constant tuple; `subscript_concat.concat_types`' `a + ()` with `a` unknown is the slot call where the hand code promoted and returned `a`); the rest are register and stack-offset renamings and different addresses in promotion stubs after those (`sre_parse`'s `LOAD_ATTR` copies, as part A alone showed against `031b0a6`) [inferred: read by eye in the first differences samecode prints, not classified by a tool].
+
+Release builds, instructions per warm iteration (`perf stat -e instructions:u`, `profile_bench.py` 1 s and 4 s, raytrace 2 s and 8 s, PYTHONHASHSEED=0), `e0ae987` → `603363c`: richards 168.31 → 168.29 M, deltablue 27.17 → 27.18, raytrace 3,120.1 → 3,110.5, go 1,064.0 → 1,064.4, hexiom 39.73 → 39.70, chaos 464.77 → 461.01 (−0.8%), pyflate 2,003.1 → 2,003.0: nothing slower beyond noise (≤ 0.04%).
+
+**Bugs found.** KNOWN_BUGS F107 (an `NI_CODESTATS` build read freed memory; samecode crashed) and F108 (the hand concat in a loop ran the compiler out of memory).
+
 ## Failures log
 
 Record here each case where the current approach failed: the CPython file and function, what it couldn't do, and what we did.
@@ -495,7 +527,9 @@ Record here each case where the current approach failed: the CPython file and fu
 | `abstract.c:PySequence_List` | `PyList_New(0)` has no meta with one argument (`PsycoList_New` takes three). | Generated as the residual call with its `restype`; the C's loop (`_PyList_Extend`) is in the call. |
 | `listobject.c:list_contains` | A list's length is mutable (a compare can change it): `PyListObject` can't have an immutable `known_length`, which `policy.py` requires, so the loop's bound is never known. | Not translated (it would be the slot's call, as today). [read] |
 | `tupleobject.c:tuplerichcompare` | `tp_richcompare` is a field of the type, not of a slot table, which `slot_functions` reads; its last step returns a compare's object (`PyObject_RichCompare(vitem, witem, op)`), and the first loop runs to the shorter length, both known for virtual tuples. [inferred: not run] | Not translated. Next: read type fields as slots too. |
-| `tupleobject.c:tupleconcat`, `tuplerepeat` | Build a tuple: virtual objects (GENERATION step 6). | Hand-written (`PsycoTuple_Concat`); `tuplerepeat` residual. |
+| `tupleobject.c:tupleconcat`, `tuplerepeat` | Build a tuple: virtual objects (GENERATION step 6). | Generated since D80 (the constructor rule; `PsycoTuple_Concat` removed). `tuplerepeat` needs `('shortcut', 'if_known', 'n')`: a run-time count is CPython's function, as before. |
+| `listobject.c:PyList_New` support (`compute_vlist`, `PsycoList_New`) | A list is mutable: its virtual form is a different representation (a vlist of at most `VLIST_LENGTH_MAX` items, forced across calls), not the struct's fields. `gen_virtual.py` takes only `TYPES` entries with no mutable fields. | Hand-written; `TYPES` names its constructor so D73's rule still reads it. |
+| a virtual type's constructor with a size not known now, or a resume while a virtual is half built | The items can't be stored into a virtual of unknown size, and a `cimpl_` copy can't take a vinfo array with empty slots. | The meta resumes CPython's function before the constructor (size unknown or over `max_items`); a resume after it is refused. |
 | `tupleobject.c:tuplecontains` (cost) | The condition `cmp == 0 && i < n` is tested in C's order, so after the last compare one more run-time test of `cmp` is emitted before the bound ends the loop; both of its sides return `cmp`. | Accepted (one `test`/`jcc` per `in`). Candidate: test the compile-time conjunct first when it has no effect. |
 | `abstract.c:PyNumber_Power`, `PyObject_GetIter`, `PyNumber_AsSsize_t` | Their policy entries have items the translator doesn't implement (`type_whitelist`; `skip_check` and a virtual result; `const_fold`, `one_digit`). | Hand-written, by rule (D74 (2)). |
 | `abstract.c:PyIter_Next` | `PsycoIter_Next` is FOR_ITER's call and leaves StopIteration set; generating PyIter_Next's meta would clear it. | `('other', 'not_translation')` in the policy table. |
