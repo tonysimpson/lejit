@@ -52,9 +52,6 @@ From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent:
 - **G13** (latent): `scalars` and `ceval_inline` inline by substituting names or argument text, not values: a local copied from `*p` sees a later `*p = …`, and an argument with a call is evaluated once per use. [read]
 - **G14** (latent): `gen_virtual` treats a store under a condition as unconditional, and misses a NULL default written another way (`if (!step)`). [read]
 - **G15** (latent): `ceval_inline.Inliner.switch` loses a switch arm's fall-through when another arm returns. [read]
-- **G16**: generation doesn't fix `PYTHONHASHSEED`; merges iterate sets, so "same output twice" isn't shown across seeds. [inferred]
-- **G17**: `donecheck.py` counts a refusal or an unimplemented policy item as a reason, so adding an item both stops generation and passes the done test, and a function moving from generated to refused is silent (3.8: 212 to 195, still "0 with no reason"). [run]
-- **G18**: `csource.Tree.file` keeps only a file's macros when `#if` leaves its braces unbalanced, so every function in it becomes "not found" without an error. [read]
 
 ## Fixed, still cited
 

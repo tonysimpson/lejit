@@ -1344,7 +1344,7 @@ class RepresentationRules:
     def rep_match(self, which, e, st):
         """(x, rep) when e is the rep's 'test', 'value' or 'sign' of a
         variable x of its struct."""
-        for r in set(self.reps().values()):
+        for r in dict.fromkeys(self.reps().values()):
             p = getattr(r, which)
             if p is None:
                 continue
@@ -1498,7 +1498,7 @@ class RepresentationRules:
         return s
 
     def rep_match_x(self, which, e, x):
-        for r in set(self.reps().values()):
+        for r in dict.fromkeys(self.reps().values()):
             if match(getattr(r, which), e) == x:
                 return True
         return False
@@ -1611,7 +1611,7 @@ class RepresentationRules:
         """A constructor given a word: Ni's virtual."""
         if not (e[0] == 'call' and e[1][0] == 'id' and len(e[2]) == 1):
             return None
-        for r in set(self.reps().values()):
+        for r in dict.fromkeys(self.reps().values()):
             if e[1][1] not in r.ctors or not self.ranged_tree(e[2][0], st):
                 continue
             a = self.int_operand(e[2][0], st, out, frames)
@@ -1759,6 +1759,7 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
         self.notimpl = False
         self.returns = []         # 'error' or 'value' per return
         self.resumed = []
+        self.body_start = None    # len(self.out.lines) where the body's code starts
         self.likely = {}
         for item in tr.policy_items(f.name):
             if item[0] == 'likely':
@@ -1809,6 +1810,7 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
                 self.if_known(st, out, item[2])
             if tuple(item[:2]) == ('shortcut', 'const_fold'):
                 self.const_fold(st, out)
+        self.body_start = len(out.lines)
         self.block(f.ast, st, out, [])
         if st.pending is not None:
             raise Refuse('a borrowed reference stored into a new object, never'
@@ -1956,6 +1958,11 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
             raise Refuse('resuming in a statement after its call: %s' % why)
         self.resume(st, out, frames, why)
 
+    def at_once(self, st, out):
+        """Whether resuming here restarts the whole function before the meta
+        has emitted anything of its own."""
+        return out is self.out and len(out.lines) == self.body_start and not st.called
+
     def resume(self, st, out, frames, why):
         """Resume CPython's algorithm at run time from the statement frames
         name: the whole function if nothing has run yet."""
@@ -1972,7 +1979,8 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
             if v.bt == 'rt' and v.virt is not None and v.owned == 'yes':
                 # its items may not all be stored yet
                 raise Refuse('resuming while %s is being built: %s' % (v.name, why))
-        self.resumed.append((f.name, self.tr.stmt_text(f, stmt)[:70], why))
+        self.resumed.append((f.name, self.tr.stmt_text(f, stmt)[:70], why,
+                             self.at_once(st, out)))
         if not st.called:
             if not f.static:
                 name, params = f.name, f.params
@@ -1987,7 +1995,7 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
             # the copy takes its own reference to what the C owns here; the
             # meta keeps and releases its own
             owned = set()
-            for vname in live:
+            for vname in sorted(live):
                 v = st.vars.get(vname)
                 if v is not None and v.bt == 'rt' and v.owned in ('yes', 'shadow') \
                         and self.s.is_obj(v.ctype):
@@ -2640,7 +2648,7 @@ class Walk(RepresentationRules, scalars.ScalarRules, conditions.ConditionRules,
         st.early = a.early or b.early
         st.slots = {k: v for k, v in a.slots.items() if b.slots.get(k) == v}
         st.loaded = {k: v for k, v in a.loaded.items() if b.loaded.get(k) == v}
-        for name in set(a.vars) | set(b.vars):
+        for name in sorted(set(a.vars) | set(b.vars)):
             va, vb = a.vars.get(name), b.vars.get(name)
             if va is None or vb is None:
                 st.vars.pop(name, None)
@@ -4558,13 +4566,23 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
                     body.append('  Psyco_DefineMeta(%s, %s);' % (ref, tr.sums[n].meta))
         body.append('}')
     report = []
+
+    def loc(n):
+        """Its key (an exported function's name; a static slot's type and
+        slot) and its location."""
+        f = source.funcs.get(n)
+        key = n
+        if (f is None or f.static) and n in tr.slot_roots:
+            key = '%s.%s' % (tr.slot_types[n], tr.slot_roots[n][2])
+        return '%s %s:%s' % (key, source.cfile, n)
     for n in order:
         if n in tr.metas:
-            report.append('generated  %-32s %s' % (n, tr.sums[n].meta))
+            report.append('generated  %-32s %s' % (loc(n), tr.sums[n].meta))
     for n in sorted(tr.fails):
-        report.append('skipped    %-32s %s' % (n, tr.fails[n]))
-    for fname, stmt, why in tr.resumes:
-        report.append('resumes    %-32s %s: %s' % (fname, why, stmt))
+        report.append('skipped    %-32s %s' % (loc(n), tr.fails[n]))
+    for fname, stmt, why, at_once in tr.resumes:
+        report.append('%-10s %-32s %s: %s' % ('restarts' if at_once else 'resumes',
+                                              loc(fname), why, stmt))
     text = '\n'.join(head + body) + '\n/* not generated:\n' + '\n'.join(
         '   ' + r for r in report if not r.startswith('generated')) + '\n*/\n'
     return text, report

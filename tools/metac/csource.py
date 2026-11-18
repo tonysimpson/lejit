@@ -161,30 +161,52 @@ def _cases(toks, path):
     return out
 
 
+# files of CPython's tree read as empty: not built on the platforms Ni
+# supports, and their #if branches leave the braces unbalanced to scan()
+NOT_BUILT = {'Python/dynload_win.c'}
+
+
+class Unbalanced(SyntaxError):
+    pass
+
+
 class Tree:
     """A source tree, read one file at a time as names ask for them."""
 
     def __init__(self, root):
         self.root = root
         self.files = {}
+        self.unbalanced = {}      # path -> why only its macros were read
 
     def file(self, path):
-        """(tokens, {name: Def}) of one file, or None if it doesn't exist."""
+        """(tokens, {name: Def}) of one file, or None if it doesn't exist.
+        Where #if branches leave the braces unbalanced, the Defs are its
+        macros only, the path is in self.unbalanced, and find() of any other
+        name in it raises Unbalanced."""
         if path not in self.files:
             full = os.path.join(self.root, path)
             if not os.path.isfile(full):
                 self.files[path] = None
+            elif path in NOT_BUILT:
+                self.files[path] = ([], {})
             else:
                 with open(full, encoding='latin-1') as f:
                     toks, macros = ctokens.tokenize(f.read(), path)
                 try:
                     defs = scan(toks, macros, path)
-                except (SyntaxError, StopIteration):
-                    # braces unbalanced by #if branches: its macros only
+                except (SyntaxError, StopIteration) as e:
+                    self.unbalanced[path] = str(e)
                     defs = scan([], macros, path)
                 defs.update(_cases(toks, path))
                 self.files[path] = (toks, defs)
         return self.files[path]
+
+    def check_balanced(self, path, name):
+        if path in self.unbalanced:
+            raise Unbalanced('%s: cannot look for %s: its #if branches leave'
+                             ' the braces unbalanced (%s)'
+                             % (os.path.join(self.root, path), name,
+                                self.unbalanced[path]))
 
     def find(self, key):
         """The Def named 'path:name', or None. A header's definition is
@@ -195,11 +217,15 @@ class Tree:
         path, _, name = key.partition(':')
         f = self.file(path)
         d = f[1].get(name) if f else None
+        if d is None:
+            self.check_balanced(path, name)
         if d is None and path.startswith('Include/'):
             for h in self.headers():
                 g = self.file(h)
                 if g and name in g[1]:
                     return g[1][name]
+            for h in self.headers():
+                self.check_balanced(h, name)
         return d
 
     def headers(self):

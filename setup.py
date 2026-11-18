@@ -134,7 +134,9 @@ class build_ext_generated(build_ext):
         print(' '.join(cmd))
         sys.stdout.flush()
         try:
-            ok = subprocess.call(cmd) == 0
+            # a fixed string hash, so that no set order can vary the headers
+            env = dict(os.environ, PYTHONHASHSEED='0')
+            ok = subprocess.call(cmd, env=env) == 0
         except OSError as e:
             raise DistutilsError('cannot run the generators with %s (%s): set'
                                  ' NI_GEN_PYTHON to a Python 3.10 or later'

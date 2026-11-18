@@ -18,8 +18,6 @@ Unknowns still open. When one is answered, record the answer where it belongs (u
 41. Answered by D60 (load guards repaired at run time).
 42. Answered by D44 (respawned branches rejoin).
 47. **Compute D53's cannot-block list?** 82 of Ni's hand-written residual call sites can't release the GIL but still get an `eval_breaker` test [run]. Measure what those tests cost first.
-49. **How does the policy table name a definition some sources lack?** `policy.py` fails a key not in the source and D67 allows no version, so 3.8-only functions (`_PyErr_SetObject`, `PyVectorcall_Call`, `_PyArg_CheckPositional`, the largest 3.8 unlock) have no entry. Candidate: `None` in a shape tuple meaning "absent here". PORT38.md.
-50. **Does a non-core reason satisfy GOAL's done test, point 1?** `donecheck.py` (D90) passes, but 108 definitions are reasoned only by policy items the translator doesn't implement, plus limits and refusals. Are those work left for this phase, should each name the item that stops it, and does point 1 count definitions or lines?
 51. Answered by D92 (glibc malloc's state, not the code).
 
 ## Specialisation and code size
@@ -34,7 +32,6 @@ Unknowns still open. When one is answered, record the answer where it belongs (u
 31. **Enter compiled code on 3.12 through `PyFunction_SetVectorcall`** (PORT312.md): on every function through a creation watcher, or only on hot ones?
 32. **Tracing on 3.12:** on 3.7 Ni falls back to the interpreter (D46). Should it do the same while `sys.monitoring` is active?
 33. **Compiled generator bodies and the 3.12 hook:** FINDINGS.md "Generators" option A needs the PEP 523 hook for generator frames on 3.12. Acceptable, or generators interpreted there with only genexpr inlining?
-48. **3.8's finally opcodes without `#if`:** the core names `SETUP_LOOP`, `SETUP_EXCEPT`, `BREAK_LOOP`, `CONTINUE_LOOP`, which 3.8 lacks, and 3.8 adds `BEGIN_FINALLY` and others. A `block_stack` mechanism (D75), or a generated header of which opcodes exist? Needed to build 3.8. PORT38.md item 9.
 
 ## Decoupling the core (D16)
 21. **Host data structures:** should the core replace the CPython lists, dicts and capsules it keeps snapshots, the meta table and promotion caches in with its own C structures?

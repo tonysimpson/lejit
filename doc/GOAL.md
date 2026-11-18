@@ -33,7 +33,7 @@ Rules for the phase:
 - Each failure of the generator goes in METACOMPILER's failures log with the CPython construct that caused it, before a heavier tool is tried.
 
 **When the phase is done.** All of:
-1. Every definition in Ni that mirrors a CPython one is generated, or hand-written with a named reason: `tools/metac/donecheck.py` (D90) exits 0. Whether a reason that is only a policy item the translator doesn't implement is enough is QUESTIONS 50.
+1. Every definition in Ni that mirrors a CPython one is generated, or hand-written with a named reason: `tools/metac/donecheck.py` (D90) exits 0. Whether a reason that is only a policy item the translator doesn't implement is enough is D99.
 2. Nothing in the build is hand-translated from CPython; `bytecodes37.c` is gone.
 3. `tools/check.sh` passes, and the behaviour tests and CPython's tests give the same results as the hand-written baseline (`19fa1df`).
 4. A re-baseline shows no loss against that baseline: pyperformance, `tools/compilebench.py` and `tools/codesize.py`, recorded in the commit message.

@@ -20,7 +20,7 @@ source ─▶ gcc -E (+ prelude, vocabulary shim) ─▶ pycparser ─▶ typed 
                                                                  │
       rules (Python) ──▶ effects ─▶ binding times ─▶ promotion placement
                                                                  │
-                                   specialiser ─▶ C builder ─▶ *_gen.h + report.json
+                                   specialiser ─▶ C builder ─▶ *_gen.h + report.txt
 ```
 
 One front end serves everything: the translator, effects, layouts, mechanisms, the policy checks and the done check. Today there are four separate C readers.
@@ -177,15 +177,17 @@ A **policy item** is a typed object whose arguments are C expressions matched ag
 
 ## Report, baseline and done check
 
-- **The report** is JSON in the build directory. Per function: status (generated, resumed in part with where, restarted at once, refused), reason, CPython location, the source's SHA and the generator's commit.
-- **A checked-in expected-status baseline** per CPython version, statuses only. Any change fails the build until accepted, so a function sliding from generated to refused can't pass silently.
-- **The done check** reads the report and refuses a stale one. Reasons are **final** (core, mechanism, not a mirror) or **transitional** (refused, budget, limit). It passes only with no transitional reasons, and reports them separately until then. A policy item stops being a reason in itself: today, adding an item both stops generation and passes the done test (G17).
+- **The report** is a text file in the build directory, one sorted line per function: a key that names no file (so versions compare), status (generated, resumed in part with where, restarted at once, refused), reason and CPython location; a header line gives the source's SHA and the generator's commit.
+- **A checked-in baseline** per CPython version, the same file; its keys, statuses and reasons are compared. Any change fails the build until accepted (copied over), so a function sliding from generated to refused can't pass silently.
+- **The done check** reads the report and refuses a stale one. Reasons are **final** (core, mechanism, judgement, not a mirror) or **transitional** (refused, budget, limit, helper, a policy item the translator doesn't implement). It passes only with no transitional reasons, and reports them separately until then. A policy item is never more than transitional, so adding one can't pass the done test.
+
+Today's generators already do this (`generate.py`, `donecheck.py`, `tools/metac/expected/`; INVENTORY.md). [run]
 
 ## Determinism
 
 - `PYTHONHASHSEED=0` is fixed by `setup.py`.
 - Every set iteration is sorted.
-- A test generates under two seeds and compares.
+- A test generates under two seeds and compares: `check.sh` runs the generators with seeds 1 and 2 and compares both with the build's (seed 0), at no extra cost.
 - Headers are written atomically, with a `try/finally` that removes them on any failure.
 - Stale outputs are swept.
 
@@ -205,7 +207,7 @@ These share the front end, the rules loader and the C builder:
 ## Migration
 
 1. **Gate:** the front end parses every mirrored file on 3.7 and 3.8. **Done:** `tools/metac/front.py` and `tests/parse_gate.py` (a `check.sh` step) parse 28 files on 3.7.17 and on 3.8.20, about 12 s per version (`85542ac`, D94, D95).
-2. **Front end, effects and report** first, in use by today's generators. This fixes G1–G4 and G16–G18 on its own. **Effects done:** `tools/metac/effects.py` on the front end, with `tests/effect_snippets.py` (a `check.sh` step); the vocabulary shim carries the decrefs.
+2. **Front end, effects and report** first, in use by today's generators. This fixes G1–G4 and G16–G18 on its own. **Done.** Effects: `tools/metac/effects.py` on the front end, with `tests/effect_snippets.py` (a `check.sh` step); the vocabulary shim carries the decrefs. Report: `report.txt`, the 3.7.17 and 3.8.20 baselines, `status_diff.py`, the done check from the report, the fixed hash seed and the loud unbalanced-file error.
 3. **Move one family at a time:** abstract, numbers, containers, builtins, argument binding, opcodes. Each must give the same headers, or the same machine code by `samecode.py`, with every difference given a reason. Delete the family's old code as it moves.
 4. **When all have moved, delete** `gen_abstract.py`, `gen_ceval.py`, `ceval_reader.py`, `ceval_inline.py`, `cparse.py`, `conditions.py`, `pointers.py`, `scalars.py`, `csource.py`, the old `policy_table.py` and the dead code in `cslots.py` (delete that now).
 5. **Then extend.** `float_richcompare` and the other `type_whitelist` functions should each come from one `specialise` policy line.

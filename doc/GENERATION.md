@@ -27,7 +27,7 @@ A 3.8 dry run of generation is in PORT38.md.
 
 ## What is left
 
-- **Reasoned but not done** (QUESTIONS 50): `donecheck.py`'s `policy`, `limit` and non-core `refused` definitions are still the phase's work by GOAL point 1, which wants what is left to be core with a reason. Their reasons are in `tools/metac/hand_table.py`, the policy table's items and METACOMPILER.md's failures log.
+- **Reasoned but not done** (D99): `donecheck.py`'s `policy`, `limit` and non-core `refused` definitions are still the phase's work by GOAL point 1, which wants what is left to be core with a reason. Their reasons are in `tools/metac/hand_table.py`, the policy table's items and METACOMPILER.md's failures log.
 - **Opcodes**: `BUILD_CONST_KEY_MAP` (limit) and `IMPORT_NAME` (core: frame state) stay hand-written, reasons in `hand_table.py`; the block-stack, call and exception opcodes are core.
 - **Same code** differs, with a reason, wherever a faithful translation fixes a hand-translation bug (KNOWN_BUGS) or a shortcut with no 3.7 C behind it becomes a policy entry or shows as a loss (D29).
 - **GOAL points 2 to 4**: nothing hand-translated in the build, and on a quiet machine `check.sh`, same results as the hand-written baseline (`19fa1df`) and a re-baseline with no loss.

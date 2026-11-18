@@ -2782,7 +2782,7 @@ class Context:
             helper = stmt[0]
             cps = self.ct_copy(helper)
             names = set(stmt) - set(form)
-            for x in names:
+            for x in sorted(names):
                 if re.fullmatch(r'[A-Za-z_]\w*', x) and x not in ('co', 'oparg') \
                         and x not in self.strings and not x.startswith('Py') \
                         and not x.startswith('co_'):
@@ -2891,9 +2891,13 @@ def generated(target):
 
 def build(target):
     done, skipped, _ = generated(target)
+    if os.path.exists(os.path.join(target.src, 'Python', 'bytecodes.c')):
+        loc = 'Python/bytecodes.c:inst(%s)'
+    else:
+        loc = 'Python/ceval.c:TARGET(%s)'
     return header(done, skipped), (
-        ['generated  %s' % name for name, _ in done] +
-        ['skipped    %-28s %-13s %s' % x for x in skipped])
+        ['generated  %s %s' % (name, loc % name) for name, _ in done] +
+        ['skipped    %s %s %s: %s' % (n, loc % n, kind, why) for n, kind, why in skipped])
 
 
 def build_copies(target):

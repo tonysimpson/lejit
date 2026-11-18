@@ -4,12 +4,13 @@
 # old ni.so. Run from anywhere:  tools/check.sh
 #
 # NI_PY37 overrides the CPython 3.7 interpreter (NI_PY38 the 3.8 one the
-# parse gate also reads), NI_GEN_PYTHON the Python
+# parse gate and the 3.8 dry run read), NI_GEN_PYTHON the Python
 # that runs the generators, NI_CPYTHON_SRC the source tree they read (else
 # the cached release tarball; doc/BUILD.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY37=${NI_PY37:-$HOME/.pyenv/versions/3.7.17/bin/python3.7}
+PY38=${NI_PY38:-$HOME/.local/share/uv/python/cpython-3.8.20-linux-x86_64-gnu/bin/python3.8}
 GEN_PY=${NI_GEN_PYTHON:-python3}
 LOG=build/check-build.log
 mkdir -p build
@@ -28,23 +29,31 @@ step "parse gate: every mirrored CPython file parses, on 3.7 and 3.8 (tests/pars
 step "effect snippets: small C in, the effect flags out (tests/effect_snippets.py)"
 "$GEN_PY" tests/effect_snippets.py
 
-step "generators run, twice, with the same output (tools/metac/generate.py)"
-# the cross-checks (gen_ceval against ceval.c and dis.stack_effect) run in
-# each; the build below generates again and must get the same headers
+step "generators run under two hash seeds, with the same output and the baseline's statuses (tools/metac/generate.py)"
+# the cross-checks (gen_ceval against ceval.c and dis.stack_effect) and the
+# comparison with tools/metac/expected/3.7.17.txt run in each; the build
+# below generates again (seed 0) and must get the same headers
 rm -rf build/gen-check
 for n in 1 2; do
-    "$GEN_PY" tools/metac/generate.py --python "$PY37" --out build/gen-check/$n
+    PYTHONHASHSEED=$n "$GEN_PY" tools/metac/generate.py --python "$PY37" --out build/gen-check/$n
 done
 diff -r build/gen-check/1 build/gen-check/2
 echo "same output"
 
+step "3.8 dry run against its baseline (generate.py --past-policy, tools/metac/expected/3.8.20.txt)"
+NI_CPYTHON_SRC= "$GEN_PY" tools/metac/generate.py --python "$PY38" --past-policy --out build/gen-check/3.8 > build/gen-check/3.8.log \
+    || { tail -40 build/gen-check/3.8.log; exit 1; }
+echo "same statuses"
+
 step "done test, point 1: what mirrors CPython and is still hand-written (tools/metac/donecheck.py)"
-# a definition with no reason (exit 1) or a stale hand_table.py (exit 2)
-# fails the check
+# a definition with no reason (exit 1), a stale report or hand_table.py
+# (exit 2) fails the check; transitional reasons only (exit 3) don't: the
+# phase isn't done
 rc=0
-"$GEN_PY" tools/metac/donecheck.py --python "$PY37" || rc=$?
-[ "$rc" -ge 2 ] && { echo "hand_table.py does not match Ni or the docs"; exit 1; }
+"$GEN_PY" tools/metac/donecheck.py --gen build/gen-check/1 || rc=$?
+[ "$rc" -eq 2 ] && { echo "stale report, or hand_table.py does not match Ni or the docs"; exit 1; }
 [ "$rc" -eq 1 ] && { echo "hand-written mirrors with no reason (listed above)"; exit 1; }
+[ "$rc" -eq 3 ] && echo "not done: transitional reasons remain (above)"
 
 step "build (NI_TRACE=1 NI_ALL_CHECKS=1)"
 # distutils compares whole seconds: an edit in the same second as the last

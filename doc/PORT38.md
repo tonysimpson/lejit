@@ -30,14 +30,14 @@ Most first; "blocks" counts definitions lost from the generated headers, or degr
 
 | # | Cause | Blocks on 3.8 | What would fix it |
 |---|---|---|---|
-| 1 | **`_PyArg_CheckPositional` has no policy entry** (QUESTIONS 49: the table can't name a definition 3.7 lacks); 3.8's clinic wrappers use it where 3.7 called `_PyArg_UnpackStack`. | 13: 7 wrappers resume at once, 6 `_impl`s unreached | need 5, then `('other', 'unpack_arguments')` on it |
+| 1 | **`_PyArg_CheckPositional` has no policy entry** (D100: the table can't name a definition 3.7 lacks); 3.8's clinic wrappers use it where 3.7 called `_PyArg_UnpackStack`. | 13: 7 wrappers resume at once, 6 `_impl`s unreached | need 5, then `('other', 'unpack_arguments')` on it |
 | 2 | **`tstate` parameters in helper copies**: `helper_copy` (D88) copies only helpers that take objects. | 8: `BUILD_TUPLE_UNPACK_WITH_CALL`, `BUILD_MAP_UNPACK_WITH_CALL`, `IMPORT_FROM` and 5 copies | a `tstate` parameter as the running thread's; `import_from` also needs its `goto` |
 | 3 | **Effect rules on 3.8**: the walk goes round `SEEDS`/`ASSUMPTIONS` through `_PyErr_*`, and follows `_PyObject_ASSERT`'s `NDEBUG`-off branch. | 0 refused; at least 35 calls lose `CfNoPython \| CfNoBlock`, so known classes are dropped across them (F55) | need 4 |
 | 4 | **Keyword calling convention**: `pow` is `METH_FASTCALL \| METH_KEYWORDS`. | 2: `builtin_pow`, `builtin_pow_impl` | a `METH_ARGS` entry with the positional count only |
 | 5 | **An error test inside `&&`**: `if (x && PySys_Audit(...) < 0)`. | 1: `builtin_id`; `member_get` resumes on its restricted path | read `A && f() < 0` as nested tests |
 | 6 | **A `switch` arm that can't be taken** in `FORMAT_VALUE`. | 1: `FORMAT_VALUE` | an arm outside a compile-time value's range as dead |
 | 7 | **Another file's function with no form** (`_PyTuple_FromArray`) in the binding. | 0 refused; `*args` binding is the real call | inline a `TYPES` constructor plus item stores |
-| 8 | **Block stack and the finally model** (QUESTIONS 48). | 0 generated (core on both); stops a build | need 9 |
+| 8 | **Block stack and the finally model** (D100). | 0 generated (core on both); stops a build | need 9 |
 | 9 | **Vectorcall** (PEP 590). | 0 generated; 5 policy entries and 3 `TYPES` shapes to re-read | needs 1, 11 |
 | 10 | **Positional-only parameters** (PEP 570). | 0 | nothing |
 
@@ -48,11 +48,11 @@ Most first; "blocks" counts definitions lost from the generated headers, or degr
 | 1 | **Policy table re-read:** 128 entries against their 3.8 C, a second shape each; `format_kwargs_mapping_error` → `format_kwargs_error`, `sys_getframe` → `sys__getframe_impl`; `small_presized` from `extra` to `shortcut`. Mostly mechanical; 33 carry policy items. A `policy.py --diff OLD_SRC` would make it a reading job. | rules (data) |
 | 2 | **`PREDICTED(op);` left out of a `TARGET`'s shape** (optional: removes artefacts from 1). | generator |
 | 4 | **Effect rules on 3.8:** macros as compiled (or `Py_NO_RETURN` → fatal), seeds on the `_PyErr_*` internals (needs 5). | rules |
-| 5 | **Policy keys absent in some sources** (QUESTIONS 49), e.g. a shape `None` for "no such definition". | rules (checker) |
+| 5 | **Policy keys absent in some sources** (D100), e.g. a shape `None` for "no such definition". | rules (checker) |
 | 6 | **Mechanism `ceval_loop_top_signals`:** 3.7's snippet plus 3.8's `signals_pending`, `handle_signals`, `make_pending_calls`, `_PyRuntime.ceval`; or generate it from the loop top (D77 (6)). | mechanism |
 | 7 | **Mechanism `store_gc: gc_next`:** compare `_gc_next` (16 bytes before the object) with 0. | mechanism (backend) |
 | 8 | **`pyruntime.c`'s internal header** (`internal/pycore_pystate.h`): a detector for where `_PyRuntime` is declared. | mechanism |
-| 9 | **The block stack and finally opcodes in the core:** `mergepoints.c` and `pycompiler.c` name opcodes 3.8 lacks; 3.8 needs `BEGIN_FINALLY`, `CALL_FINALLY`, `POP_FINALLY`, `END_ASYNC_FOR`, the new `END_FINALLY`/`WITH_CLEANUP_*` stacks, and `ROT_FOUR` in the whitelist. Without `#if` is QUESTIONS 48. The biggest item. | core |
+| 9 | **The block stack and finally opcodes in the core:** `mergepoints.c` and `pycompiler.c` name opcodes 3.8 lacks; 3.8 needs `BEGIN_FINALLY`, `CALL_FINALLY`, `POP_FINALLY`, `END_ASYNC_FOR`, the new `END_FINALLY`/`WITH_CLEANUP_*` stacks, and `ROT_FOUR` in the whitelist. Without `#if` is D100. The biggest item. | core |
 | 10 | **Dicts' shared empty keys:** check the inline store, keys guards and `PsycoDict_*` against 3.8's empty dicts [inferred risk]. | core |
 | 11 | **Re-read the hand metas whose C changed:** `PsycoObject_Call` and the call path (vectorcall), `pfloat_richcompare` (F104), list item and subscript, `PyDict_New`/`SetItem`. | translated |
 | 12 | **3.8 build and tests:** an interpreter to build against, `cpython_tests.py`'s 3.8 module lists, `check.sh` for a second version, tests that depend on 3.7 bytecode. | tooling |
@@ -64,4 +64,4 @@ Order: 8, 7, 6 and 9 for a compile; 1 (with 2) for generation; then 11 and 12 fo
 
 ## Rerunning
 
-`generate.py --python ~/.local/share/uv/python/cpython-3.8.20-linux-x86_64-gnu/bin/python3.8 --src ~/.cache/ni/cpython/Python-3.8.20 --out DIR --past-policy -v`, and the same for 3.7.17 without `--src`/`--past-policy`. Compare per header with the version string masked, `gen_ceval`'s output case by case (`      case X: {` starts a case), and the `-v` reports entry by entry. `donecheck.py --python <3.8> --src <3.8> --past-policy` runs the done test. `python3 tools/metac/ceval_reader.py SRC` and `policy.py --src SRC` run alone.
+`generate.py --python ~/.local/share/uv/python/cpython-3.8.20-linux-x86_64-gnu/bin/python3.8 --src ~/.cache/ni/cpython/Python-3.8.20 --out DIR --past-policy -v`, and the same for 3.7.17 without `--src`/`--past-policy`. Compare per header with the version string masked, `gen_ceval`'s output case by case (`      case X: {` starts a case), and the `-v` reports entry by entry. `donecheck.py --gen DIR` runs the done test on that run's report. `python3 tools/metac/ceval_reader.py SRC` and `policy.py --src SRC` run alone.

@@ -432,7 +432,7 @@ def generate(src, pyconfig, defines, effects):
         text = code_text(vt, ctor_flags(tr, vt), version)
         out.append((vt.header(), text,
                     ['generated  %-20s %s, compute_%s, direct_compute_%s'
-                     % (vt.ctor, vt.new, vt.lower, vt.lower)]))
+                     % ('virtual.%s %s:%s' % (vt.ctor, vt.cpath, vt.ctor), vt.new, vt.lower, vt.lower)]))
     return out
 
 

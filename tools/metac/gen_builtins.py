@@ -292,6 +292,7 @@ class Walk(ga.Walk):
         for p in self.hoist:
             if p in st.vars:
                 self.promote(st, out, p, entry=True)
+        self.body_start = len(out.lines)
         self.block(f.ast, st, out, [])
         if st.pending is not None:
             raise ga.Refuse('a borrowed reference stored into a new object, never increfed')
@@ -310,7 +311,8 @@ class Walk(ga.Walk):
         if st.failed:
             raise ga.Refuse('resuming where a call has failed: %s' % why)
         stmt = frames[-1][0][frames[-1][1]]
-        self.resumed.append((self.f.name, self.tr.stmt_text(self.f, stmt)[:70], why))
+        self.resumed.append((self.f.name, self.tr.stmt_text(self.f, stmt)[:70], why,
+                             self.at_once(st, out)))
         self.release_all(st, out)
         out('return %s;' % fallback_call(self.f, root, [p for _, p in self.params]))
         st.ended = True
@@ -648,16 +650,24 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
                     % (cfunc_name(n), py, ' | '.join(sorted(flags)), tr.sums[n].meta))
     body.append('}')
     report = []
+
+    pynames = {c: py for py, c, _ in module_table(source)[1]}
+
+    def loc(n):
+        """Its key (a builtin's module.name) and its location."""
+        key = '%s.%s' % (module, pynames[n]) if n in pynames else n
+        return '%s %s:%s' % (key, source.file_of(n), n)
     for n in order:
         if n in tr.metas:
-            report.append('generated  %-32s %s' % (n, tr.sums[n].meta))
+            report.append('generated  %-32s %s' % (loc(n), tr.sums[n].meta))
     for n in sorted(set(tr.fails) | set(skipped)):
-        report.append('skipped    %-32s %s' % (n, tr.fails.get(n) or skipped[n]))
+        report.append('skipped    %-32s %s' % (loc(n), tr.fails.get(n) or skipped[n]))
     for n in sorted(roots):
         if n not in tr.metas and n not in tr.fails:
-            report.append('skipped    %-32s not translated' % n)
-    for fname, stmt, why in tr.resumes:
-        report.append('resumes    %-32s %s: %s' % (fname, why, stmt))
+            report.append('skipped    %-32s not translated' % loc(n))
+    for fname, stmt, why, at_once in tr.resumes:
+        report.append('%-10s %-32s %s: %s' % ('restarts' if at_once else 'resumes',
+                                              loc(fname), why, stmt))
     text = '\n'.join(head + body) + '\n/* not generated:\n' + '\n'.join(
         '   ' + r for r in report if not r.startswith('generated')) + '\n*/\n'
     return text, report

@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""GOAL's done test, point 1, as a check (GENERATION step 10, D90).
+"""GOAL's done test, point 1, as a check.
 
 Lists every definition in Ni that mirrors a CPython one and puts each in one
 class:
-  (a) generated   written at build time by a generator (its report says
-                  'generated'); counted in the generated headers' lines
-  (b) reasoned    hand-written, with a named reason: an item of
-                  hand_table.REASONS, the policy items of the policy table
-                  entry that names it, or the generator's own refusal of
-                  its CPython counterpart
+  (a) generated   the functions generate.py's report.txt gives as generated,
+                  resumed or restarted, and the lines of the headers
+  (b) reasoned    hand-written, with a reason that is either
+                  final         an item of hand_table.REASONS of a kind in
+                                FINAL (core, mechanism, judgement)
+                  transitional  any other hand_table kind (limit, helper),
+                                the generator's refusal of its CPython
+                                counterpart, or the policy items of the
+                                policy table entry that names it: open work
+                                for the phase, never enough for the done test
   (c) unreasoned  hand-written with no reason: the done test fails
 
 A hand-written definition mirrors CPython when the code says so, by any of:
@@ -22,13 +26,16 @@ A hand-written definition mirrors CPython when the code says so, by any of:
 A name match that mirrors nothing is in hand_table.REASONS as 'not_mirror';
 the files hand_table.EXCLUDED names are not read.
 
-  donecheck.py --python EXE [--src DIR] [-v] [--list a|b|c|x] [--past-policy]
+  donecheck.py --gen DIR [--src DIR] [-v] [--list a|b|t|c|x]
 
---past-policy runs past the policy table's problems, as generate.py's
-does, for a dry run on a version Ni isn't built for yet.
+DIR is where generate.py wrote its headers and report.txt; a report from
+another generator commit or another source is refused as stale. The source
+is --src, else as generate.py finds it for the report's version.
 
-Exit 0 when (c) is empty, 1 when it is not, 2 when hand_table.py names
-something that isn't in Ni or a reference that isn't in the docs.
+Exit 0 when the done test passes (no (c), no transitional reasons), 3 when
+only transitional reasons remain, 1 when (c) is not empty, 2 when the report
+is stale or hand_table.py names something that isn't in Ni or a reference
+that isn't in the docs.
 """
 import argparse
 import collections
@@ -51,6 +58,8 @@ PREFIXES = [('_Psyco', '_Py'), ('Psyco', 'Py'), ('psyco_', ''), ('cimpl_', ''),
 CPY_DIRS = ['Objects', 'Objects/clinic', 'Python', 'Python/clinic']
 CPY_FILES = ['Modules/mathmodule.c', 'Modules/clinic/mathmodule.c.h']
 KINDS_SHOWN = ('function', 'macro', 'case', 'var')
+# hand_table kinds that are reasons for good; not_mirror is class (x)
+FINAL = {'core', 'mechanism', 'judgement'}
 
 Unit = collections.namedtuple('Unit', 'name path lines cpython signals span')
 
@@ -65,75 +74,45 @@ def def_lines(d):
     return hi - lo + 1
 
 
-# ---- (a): what the generators write ------------------------------------------
+# ---- (a): what the generators wrote ------------------------------------------
 
-def run_generators(target, past_policy=False):
-    """[(header, text, report lines)] of every generator, as generate.py
-    runs them (the policy table checked first, unless past_policy)."""
-    import cslots
+def read_report(gen):
+    """(version, source sha, generator commit, [(key, status, reason,
+    location)])."""
+    with open(os.path.join(gen, 'report.txt')) as f:
+        head, *lines = f.read().split('\n')
+    version, sha, commit = head.split()[1:]
+    return version, sha, commit, [tuple(ln.split('\t')) for ln in lines if ln]
+
+
+def stale(sha, commit, src):
+    """Why the report doesn't describe this source and these generators,
+    or None."""
+    import cpython_src
     import generate
-    import gen_virtual
-    import policy
-    problems = policy.check(target.src)
-    if problems and past_policy:
-        print('policy table: %d problems against this source (--past-policy)'
-              % len(problems))
-    elif problems:
-        raise cslots.GenError('the policy table does not match this source:\n  '
-                              + '\n  '.join(problems))
-    out = []
-    for name, filename in generate.GENERATORS:
-        mod, _, func = name.partition(':')
-        text, report = getattr(__import__(mod), func or 'build')(target)
-        out.append((filename, text, report))
-    out += gen_virtual.build(target)
-    return out
+    if sha != cpython_src.source_sha(src):
+        return 'its source has sha256 %s, not %s' % (sha, cpython_src.source_sha(src))
+    if commit != generate.generator_commit():
+        return 'it was generated at %s, not %s' % (commit, generate.generator_commit())
+    return None
 
 
-def generated_units(outputs):
-    """[Unit] for each 'generated' report line that is a definition (not a
-    layout field), with the lines of what the header holds for it."""
+def header_units(gen):
+    """[Unit] for each definition of the generated headers that hold
+    functions, with its lines."""
+    import generate
     units = []
-    for filename, text, report in outputs:
-        if filename.startswith(('layouts', 'runtime_layouts', 'virtual_fields')):
+    for h in sorted(os.listdir(gen)):
+        if not h.endswith('_gen.h') or h in generate.NOT_FUNCTIONS - {
+                'pycompiler_copies_gen.h'} or h.startswith('mechanism_'):
             continue
-        toks, macros = ctokens.tokenize(text, filename)
-        defs = csource.scan(toks, macros, filename)
-        defs.update(csource._cases(toks, filename))
-        used = set()
-        for line in report:
-            words = line.split()
-            if not words or words[0] != 'generated' or len(words) < 2:
-                continue
-            cname = words[1]
-            ni_names = [w.strip(',') for w in words[2:]] or [cname]
-            if ':' in cname:          # a struct's field descriptors (gen_virtual)
-                continue
-            mine = []
-            for n in ni_names + ['case ' + cname]:
-                if n in defs:
-                    mine.append(n)
-            # its run-time copies: cimpl_<name>, cimpl_<name>_<k>
-            for n in defs:
-                for base in [cname] + ni_names:
-                    if re.fullmatch(r'cimpl_%s(_\d+)?' % re.escape(base), n):
-                        mine.append(n)
-            mine = [n for n in dict.fromkeys(mine) if n not in used]
-            used.update(mine)
-            lines = sum(def_lines(defs[n]) for n in mine)
-            units.append(Unit(cname, filename, lines, cname, ('generated',), None))
+        with open(os.path.join(gen, h)) as f:
+            toks, macros = ctokens.tokenize(f.read(), h)
+        defs = csource.scan(toks, macros, h)
+        defs.update(csource._cases(toks, h))
+        units += [Unit(n, h, def_lines(d), None, (), None) for n, d in defs.items()
+                  if d.kind in ('function', 'case')]
     return units
-
-
-def refusals(outputs):
-    """{CPython name: reason} for each 'skipped' report line."""
-    out = {}
-    for filename, text, report in outputs:
-        for line in report:
-            words = line.split(None, 2)
-            if len(words) >= 2 and words[0] == 'skipped':
-                out.setdefault(words[1], '%s: %s' % (filename, words[2] if len(words) > 2 else ''))
-    return out
 
 
 # ---- (b) and (c): what is hand-written ---------------------------------------
@@ -151,6 +130,7 @@ def cpython_index(src):
     paths += [p for p in CPY_FILES if os.path.isfile(os.path.join(src, p))]
     for p in paths:
         f = tree.file(p)
+        tree.check_balanced(p, 'its functions')
         for n, d in (f[1].items() if f else ()):
             if d.kind == 'function':
                 funcs.setdefault(n, '%s:%s' % (p, n))
@@ -252,25 +232,23 @@ def nested(units):
 
 
 def classify(units, by_ni, refused, table):
-    """{class: [(unit, reason)]}; classes 'b', 'c' and 'x' (not a mirror)."""
+    """{class: [(unit, reason)]}; classes 'b' (final), 't' (transitional),
+    'c' and 'x' (not a mirror)."""
     import policy_table
     out = collections.defaultdict(list)
     for u in units:
         r = table.REASONS.get(u.name)
         if r is not None:
-            out['x' if r[0] == 'not_mirror' else 'b'].append((u, r))
+            out['x' if r[0] == 'not_mirror' else 'b' if r[0] in FINAL else 't'].append((u, r))
             continue
         items = [i for k in by_ni.get(u.name, ())
                  for i in policy_table.ENTRIES[k].get('policy', ())]
         if items:
-            out['b'].append((u, ('policy', [], '; '.join(
+            out['t'].append((u, ('policy', [], '; '.join(
                 ' '.join(str(x) for x in i[:2]) for i in items))))
             continue
-        cname = u.cpython.rpartition(':')[2] if u.cpython else None
-        if cname and cname.startswith('TARGET('):
-            cname = cname[7:-1]
-        if cname in refused:
-            out['b'].append((u, ('refused', [], refused[cname])))
+        if u.cpython in refused:
+            out['t'].append((u, ('refused', [], refused[u.cpython])))
             continue
         out['c'].append((u, None))
     return out
@@ -336,61 +314,76 @@ def summary(title, rows):
         print('  %-56s %4d %6d' % (f, n, l))
 
 
+def by_kind(rows, key):
+    n, lines = collections.Counter(), collections.Counter()
+    for u, x in rows:
+        n[key(u, x)] += 1
+        lines[key(u, x)] += u.lines
+    return ', '.join('%s %d (%d lines)' % (k, n[k], lines[k]) for k in sorted(n))
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('--python', required=True, help='the interpreter Ni is built for')
-    ap.add_argument('--src', help='the CPython source (else as generate.py finds it)')
+    ap.add_argument('--gen', required=True,
+                    help="generate.py's output directory (headers and report.txt)")
+    ap.add_argument('--src', help="the CPython source (else as generate.py finds it)")
     ap.add_argument('-v', '--verbose', action='store_true', help='list every definition')
-    ap.add_argument('--list', choices='abcx', action='append', default=[],
+    ap.add_argument('--list', choices='abtcx', action='append', default=[],
                     help='list the definitions of a class (c is always listed)')
-    ap.add_argument('--past-policy', action='store_true',
-                    help="run past the policy table's problems (a dry run)")
     args = ap.parse_args(argv)
     import cpython_src
-    import cslots
-    import generate
     import hand_table
-    version, pyconfig = generate.target_info(args.python)
-    if version is None:
-        print('donecheck.py: cannot run %s' % args.python)
-        return 2
-    src = args.src or cpython_src.find_source(version)
-    if args.src:
-        cpython_src.check_version(src, version)
-    target = cslots.Target(os.path.abspath(src), version, args.python, pyconfig)
     try:
-        outputs = run_generators(target, args.past_policy)
-    except cslots.GenError as e:
+        version, sha, commit, rows = read_report(args.gen)
+        src = args.src or cpython_src.find_source(version)
+        cpython_src.check_version(src, version)
+    except (OSError, ValueError, cpython_src.SourceError) as e:
+        print('donecheck.py: no report to read in %s (%s)' % (args.gen, e))
+        return 2
+    why = stale(sha, commit, src)
+    if why:
+        print('donecheck.py: %s/report.txt is stale: %s; run generate.py again'
+              % (args.gen, why))
+        return 2
+    refused = {loc: why for _, st, why, loc in rows if st == 'refused'}
+    gen = header_units(args.gen)
+    try:
+        hand, by_ni = hand_units(src, hand_table)
+    except csource.Unbalanced as e:
         print('donecheck.py: %s' % e)
         return 2
-    gen = generated_units(outputs)
-    hand, by_ni = hand_units(target.src, hand_table)
-    classes = classify(hand, by_ni, refusals(outputs), hand_table)
+    classes = classify(hand, by_ni, refused, hand_table)
     problems = check_table(hand_table, hand)
 
     print('Done test, point 1 (GOAL): what mirrors CPython %s, by class' % version)
     print()
-    summary('(a) generated', [(u.path, u) for u in gen])
+    statuses = collections.Counter(st for _, st, _, _ in rows)
+    print('(a) generated: %s of %d functions the generators attempt (%s)'
+          % (sum(statuses.values()) - statuses['refused'], len(rows), ', '.join(
+              '%s %d' % kv for kv in sorted(statuses.items()))))
+    summary('  in the headers', [(u.path, u) for u in gen])
     print()
-    summary('(b) hand-written, reasoned', [(u.path, u) for u, _ in classes['b']])
-    kinds = collections.Counter(r[0] for _, r in classes['b'])
-    lines = collections.Counter()
-    for u, r in classes['b']:
-        lines[r[0]] += u.lines
-    print('  by reason: ' + ', '.join('%s %d (%d lines)' % (k, n, lines[k])
-                                      for k, n in sorted(kinds.items())))
+    summary('(b) hand-written, final reason', [(u.path, u) for u, _ in classes['b']])
+    print('  by reason: ' + by_kind(classes['b'], lambda _, r: r[0]))
+    print()
+    summary('(t) hand-written, transitional reason (open work: the done test'
+            ' waits on these)', [(u.path, u) for u, _ in classes['t']])
+    print('  by reason: ' + by_kind(classes['t'], lambda _, r: r[0]))
     print()
     summary('(c) hand-written, no reason', [(u.path, u) for u, _ in classes['c']])
     print()
     print('not mirrors (name matches, hand_table not_mirror): %d; files not read: %s'
           % (len(classes['x']), ', '.join(sorted(hand_table.EXCLUDED))))
 
-    show = set(args.list) | {'c'} | (set('abcx') if args.verbose else set())
+    show = set(args.list) | {'c'} | (set('abtcx') if args.verbose else set())
     if 'a' in show:
         print('\n(a) generated')
-        for u in gen:
-            print('  %-28s %-34s %4d' % (u.path, u.name, u.lines))
-    for cls, title in (('b', 'hand-written, reasoned'), ('x', 'not mirrors'),
+        for key, st, _, loc in rows:
+            if st != 'refused':
+                print('  %-40s %-10s %s' % (key, st, loc))
+    for cls, title in (('b', 'hand-written, final reason'),
+                       ('t', 'hand-written, transitional reason'),
+                       ('x', 'not mirrors'),
                        ('c', 'hand-written, no reason (the done test fails on these)')):
         if cls not in show or not classes[cls]:
             continue
@@ -413,7 +406,9 @@ def main(argv):
         for p in problems:
             print('  ' + p)
         return 2
-    return 1 if classes['c'] else 0
+    if classes['c']:
+        return 1
+    return 3 if classes['t'] else 0
 
 
 if __name__ == '__main__':

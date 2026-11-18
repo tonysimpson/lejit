@@ -536,7 +536,7 @@ class ScalarRules:
         if m is not None:
             return self.load_value(m[0], m[1], st, out)
         if e[0] == 'call' and e[1][0] == 'id' and len(e[2]) == 1:
-            for r in set(self.sreps().values()):
+            for r in dict.fromkeys(self.sreps().values()):
                 if e[1][1] in r.ctors:
                     a = self.scalar_value(e[2][0], st, out)
                     if a is None:
@@ -749,7 +749,7 @@ class ScalarRules:
             if self.sm.kind == 'obj':
                 if not (e[0] == 'call' and e[1][0] == 'id' and len(e[2]) == 1):
                     return False
-                for r in set(self.sreps().values()):
+                for r in dict.fromkeys(self.sreps().values()):
                     if e[1][1] in r.ctors and run.ctor in (None, r):
                         run.ctor = r
                         return self.scalar_expr(e[2][0], st, run, local)

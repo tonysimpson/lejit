@@ -44,6 +44,16 @@ def check_version(src, version):
                           % (src, found, version))
 
 
+def source_sha(src):
+    """The sha256 of the release tarball the tree was unpacked from, or
+    'local' for a tree this module didn't unpack (NI_CPYTHON_SRC)."""
+    try:
+        with open(os.path.join(src, VERIFIED)) as f:
+            return f.read().strip()
+    except OSError:
+        return 'local'
+
+
 def cache_dir():
     if os.environ.get('NI_CACHE_DIR'):
         return os.environ['NI_CACHE_DIR']
