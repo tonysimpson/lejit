@@ -344,6 +344,8 @@ static PyObject *ni_getframe(PyObject *self, PyObject *args) {
   PyFrameObject *top;
   if (!PyArg_ParseTuple(args, "|i:_getframe", &depth))
     return NULL;
+  if (depth < 0)
+    depth = 0;
   top = linked_frame(depth);
   if (top == NULL) {
     PyErr_SetString(PyExc_ValueError, "call stack is not deep enough");
