@@ -165,6 +165,33 @@ RULES = {
         'decisions': ['D78', 'D74', 'PATTERNS rule 1'],
         'applied_by': ['tools/metac/gen_abstract.py:generate'],
     },
+    'copy_through': {
+        'what': "The backend has no floating-point instructions: a C double is a"
+                " word holding its bits. A maximal run of statements that read and"
+                " write only C scalars (locals of a representation's C type,"
+                " integers, constants, compiler built-ins, EXTERNAL's pure functions,"
+                " SCALAR_CODE) is copied into one C helper the meta calls, CfPure"
+                " (folded on constants) or CfPyErrCheck where it can raise; its"
+                " inputs are the helper's arguments, its one result the helper's."
+                " A run that ends the function, every path returning an error or a"
+                " constructor of a scalar, returns the scalar and the meta builds"
+                " the object (TYPES 'double': Ni's 'new'). A static function on"
+                " scalars it calls is copied with it.",
+        'decisions': ['D19', 'D87'],
+        'applied_by': ['tools/metac/scalars.py:scalar_reps'],
+    },
+    'inline_static': {
+        'what': "A static function of the file called with the address of a"
+                " local (an out-parameter) or with a function's name is its body"
+                " at the call, parameters replaced by the arguments: '*p' is the"
+                " caller's variable, a call through a function parameter calls"
+                " that function. 'return f(...)' keeps f's returns; 'if (f(...)"
+                " OP K) S1 else S2', f returning constants, puts S1 or S2 at each"
+                " return as the test chooses ('*p = E' before one answered"
+                " 'return x' is 'return E').",
+        'decisions': ['D87'],
+        'applied_by': ['tools/metac/scalars.py:inline_calls'],
+    },
     'virtual_types': {
         'what': "What is virtual, its weights and its fields' mutability are per"
                 " type (TYPES), not per function; 'virtual' items say where a"
@@ -187,9 +214,12 @@ TRANSLATED_SLOTS = {
     # D83: with the word representation of TYPES' _longobject
     'Objects/longobject.c': {'type': 'PyLong_Type', 'slots': [
         'nb_add', 'nb_subtract', 'nb_multiply', 'nb_negative', 'nb_invert',
-        'nb_bool', 'nb_positive', 'nb_absolute', 'nb_true_divide', 'nb_power']},
-    # gen_float.py writes the others (copy-through of their double code)
-    'Objects/floatobject.c': {'type': 'PyFloat_Type', 'slots': ['nb_positive']},
+        'nb_bool', 'nb_positive', 'nb_absolute', 'nb_true_divide', 'nb_power',
+        'nb_float']},
+    # D87: with the double representation of TYPES' PyFloatObject
+    'Objects/floatobject.c': {'type': 'PyFloat_Type', 'slots': [
+        'nb_add', 'nb_subtract', 'nb_multiply', 'nb_remainder', 'nb_negative',
+        'nb_positive', 'nb_absolute', 'nb_bool', 'nb_true_divide']},
 }
 
 # The functions of a module whose metas the general translator generates
@@ -200,6 +230,9 @@ TRANSLATED_SLOTS = {
 TRANSLATED_FUNCTIONS = {
     'Python/bltinmodule.c': ['abs', 'len', 'hash', 'id', 'divmod', 'pow',
                              'isinstance', 'issubclass', 'getattr', 'setattr'],
+    # D87: ceil and floor stay hand-written (pmath.c: an int result)
+    'Modules/mathmodule.c': ['acos', 'asin', 'atan', 'cos', 'cosh', 'exp', 'fabs',
+                             'sin', 'sinh', 'sqrt', 'tan', 'tanh'],
 }
 
 # How Ni calls the meta of a builtin function, by its ml_flags
@@ -228,6 +261,18 @@ SLOT_ARGS = {
                        'applied_by': ['ni/Objects/pobject.c:try_rich_compare']},
     'tp_descr_get': {'format': 'lvl',
                      'applied_by': ['ni/Objects/pobject.c:generic_getattr']},
+}
+
+# What scalar code copied into a C helper (rule copy_through, D87) may use
+# besides its scalar locals, constants, compiler built-ins and the pure
+# functions of EXTERNAL: functions that only raise an exception of a
+# built-in class, given constants; and variables of the C library, each
+# with why a helper may read and write it.
+SCALAR_CODE = {
+    'raises': ['Python/errors.c:PyErr_SetString', 'Python/errors.c:PyErr_SetFromErrno',
+               'Python/errors.c:PyErr_Format'],
+    'variables': {'errno': "errno.h's error number, thread-local: mathmodule.c sets"
+                           " it to 0, calls libm and reads it, all in one helper"},
 }
 
 # ---- limits: numbers in Ni's code, checked to be the same -------------------
@@ -309,6 +354,15 @@ TYPES = {
                     'weight': 0, 'weight_at_calls': 0}},
     'Include/floatobject.h:PyFloatObject': {
         'shape': '1458f11765b5', 'type': 'PyFloat_Type', 'immutable': ['ob_fval'],
+        # D87: a float holds a C double (value_ctype) in 'field': a read of
+        # it is 'load' (a borrowed vinfo: Ni's virtual float holds it at
+        # iFLOAT_OB_FVAL), a 'constructors' call given a double is 'new',
+        # which takes the reference. A double is a word holding its bits;
+        # code on doubles is copied into C helpers (rule copy_through)
+        'double': {'field': 'ob_fval', 'value_ctype': 'double',
+                   'load': 'ni/Objects/pfloatobject.h:PsycoFloat_AS_DOUBLE',
+                   'constructors': ['Objects/floatobject.c:PyFloat_FromDouble'],
+                   'new': 'ni/Objects/pfloatobject.h:PsycoFloat_FROM_DOUBLE'},
         'virtual': {'ni': 'ni/Objects/pfloatobject.c:psyco_computed_float',
                     'weight': 0, 'weight_at_calls': 0}},
     'Objects/iterobject.c:seqiterobject': {
@@ -584,7 +638,7 @@ ASSUMPTIONS = {
         'why': 'with a built-in exception class (PyExc_*) and an ASCII message,'
                ' the exception is made by C code that neither runs Python nor'
                ' releases the GIL (the message decoder could, on an error'
-               " handler); gen_float.py copies C that calls it"},
+               " handler); scalar code copied into helpers calls it (D87)"},
     'Objects/dictobject.c:PyDict_GetItem': {
         'shape': '73f877432a78', 'assume': ['no_python'],
         'why': "KNOWN_BUGS F34: an instance dict looked up by an exact str name;"
@@ -1164,8 +1218,9 @@ ENTRIES = {
             ('likely', 'true', 'the double fits a long'),
         ]},
     'Objects/floatobject.c:float___round___impl': {'shape': '76fa6887b4b3', 'ni': ['ni/Objects/pfloatobject.c:cimpl_fp_round_even', 'ni/Objects/pfloatobject.c:PsycoFloat_RoundEven', 'ni/Python/pbltinmodule.c:float_whole_to_int']},
-    'Objects/floatobject.c:CONVERT_TO_DOUBLE': {'shape': 'a29ca6d6c073', 'ni': ['ni/Objects/pfloatobject.c:psyco_convert_to_double']},
-    'Objects/floatobject.c:convert_to_double': {'shape': '8ba659cc76fe', 'ni': ['ni/Objects/pfloatobject.c:psyco_convert_to_double']},
+    # D87: inlined where float_add and the others use it (rule inline_static)
+    'Objects/floatobject.c:CONVERT_TO_DOUBLE': {'shape': 'a29ca6d6c073', 'ni': ['tools/metac/gen_abstract.py:build_float']},
+    'Objects/floatobject.c:convert_to_double': {'shape': '8ba659cc76fe', 'ni': ['tools/metac/gen_abstract.py:build_float']},
     'Objects/floatobject.c:float_hash': {'shape': 'ee5774f0b8dd', 'ni': ['ni/Objects/pfloatobject.c:pfloat_hash']},
     # D83: the general translator's float unit; a subclass resumes into
     # CPython's float_float (the hand pfloat_pos boxed its double instead)
@@ -1175,16 +1230,14 @@ ENTRIES = {
     'Include/floatobject.h:PyFloatObject': {'shape': '1458f11765b5', 'ni': ['ni/Objects/pfloatobject.h:FLOAT_ob_fval', 'ni/Objects/pfloatobject.h:iFLOAT_OB_FVAL', 'ni/Objects/pfloatobject.h:FLOAT_TOTAL', 'ni/Objects/pfloatobject.h:PsycoFloat_Check']},
     'Include/floatobject.h:PyFloat_Check': {'shape': 'c550f09007dc', 'ni': ['ni/Objects/pfloatobject.h:FLOAT_ob_fval', 'ni/Objects/pfloatobject.h:iFLOAT_OB_FVAL', 'ni/Objects/pfloatobject.h:FLOAT_TOTAL', 'ni/Objects/pfloatobject.h:PsycoFloat_Check']},
     'Include/floatobject.h:PyFloat_AS_DOUBLE': {'shape': '1c13bbe6b768', 'ni': ['ni/Objects/pfloatobject.h:PsycoFloat_AS_DOUBLE']},
-    'Objects/floatobject.c:PyFloat_AsDouble': {'shape': '0a58f1bcb013', 'ni': ['ni/Modules/pmath.c:PMATH_CONVERT_TO_DOUBLE', 'ni/Modules/pmath.c:PMATH_RELEASE_DOUBLE']},
-    'Modules/mathmodule.c:math_1_to_whatever': {'shape': 'cd6f59f052aa', 'ni': ['ni/Modules/pmath.c:cimpl_math_1']},
-    'Modules/mathmodule.c:is_error': {'shape': '4134a5ed9548', 'ni': ['ni/Modules/pmath.c:cimpl_math_1']},
+    # D87: generated (pfloatslots_gen.h); math's functions call it (F99)
+    'Objects/floatobject.c:PyFloat_AsDouble': {'shape': '0a58f1bcb013', 'ni': ['tools/metac/gen_abstract.py:build_float']},
+    'Modules/mathmodule.c:math_1_to_whatever': {'shape': 'cd6f59f052aa', 'ni': ['tools/metac/gen_builtins.py:build_math']},
+    'Modules/mathmodule.c:is_error': {'shape': '4134a5ed9548', 'ni': ['tools/metac/gen_builtins.py:build_math']},
     'Modules/mathmodule.c:FUNC1': {
         'shape': 'f0fd927ef403',
-        'ni': ['ni/Modules/pmath.c:PMATH_FUNC1', 'ni/Modules/pmath.c:PMATH_TO_INT'],
-        'policy': [
-            ('virtual', 'result', 'PyFloat_Type'),
-        ]},
-    'Modules/mathmodule.c:math_1': {'shape': 'be63fd72b546', 'ni': ['ni/Modules/pmath.c:PMATH_FUNC1']},
+        'ni': ['tools/metac/gen_builtins.py:build_math', 'ni/Modules/pmath.c:PMATH_TO_INT']},
+    'Modules/mathmodule.c:math_1': {'shape': 'be63fd72b546', 'ni': ['tools/metac/gen_builtins.py:build_math']},
     'Modules/mathmodule.c:math_1_to_int': {'shape': '6972e8ae844b', 'ni': ['ni/Modules/pmath.c:cimpl_floor_to_int', 'ni/Modules/pmath.c:cimpl_ceil_to_int']},
     'Modules/mathmodule.c:math_ceil': {
         'shape': 'eaf343d6c390',

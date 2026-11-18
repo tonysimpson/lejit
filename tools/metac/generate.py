@@ -25,7 +25,6 @@ sys.path.insert(0, HERE)
 
 # generator module -> the header it writes
 GENERATORS = [('gen_abstract:build_long', 'plongobject_gen.h'),
-              ('gen_float', 'pfloatobject_gen.h'),
               ('gen_ceval', 'pycompiler_gen.h'),
               ('gen_ceval:build_copies', 'pycompiler_copies_gen.h'),
               ('gen_layouts', 'layouts_gen.h'),
@@ -36,6 +35,7 @@ GENERATORS = [('gen_abstract:build_long', 'plongobject_gen.h'),
               ('gen_abstract:build_dict', 'pdictobject_gen.h'),
               ('gen_abstract:build_bytes', 'pbytesobject_gen.h'),
               ('gen_builtins', 'pbltinmodule_gen.h'),
+              ('gen_builtins:build_math', 'pmathmodule_gen.h'),
               ('gen_call', 'psyfunc_gen.h'),
               ('gen_abstract:build_float', 'pfloatslots_gen.h')]
 # (a 'module:function' entry calls that function instead of build)

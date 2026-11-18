@@ -506,7 +506,7 @@ static vinfo_t *ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg,
       return x;
   }
   if (t == (PyObject *)&PyFloat_Type && tp == &PyLong_Type) {
-    if (!PsycoLong_AsDouble(po, v, &x))
+    if ((x = PsycoLong_AsDouble(po, v)) == NULL)
       return NULL;
     return PsycoFloat_FROM_DOUBLE(x);
   }

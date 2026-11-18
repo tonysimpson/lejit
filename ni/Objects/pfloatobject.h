@@ -49,13 +49,9 @@ PSY_INLINE vinfo_t* PsycoFloat_AS_DOUBLE(PsycoObject* po, vinfo_t* v)
 	return psyco_get_const(po, v, FLOAT_ob_fval);
 }
 
-/* return a new ref */
-EXTERNFN bool PsycoFloat_AsDouble(PsycoObject* po, vinfo_t* v, vinfo_t** vd);
-
-/* return true if successful, false if error or promotion, or
-   -1 if the convertion is impossible */
-EXTERNFN int psyco_convert_to_double(PsycoObject* po, vinfo_t* vobj,
-                                     vinfo_t** pv);
+/* PyFloat_AsDouble's meta, generated (pfloatslots_gen.h): a new reference
+   to the double, NULL on error */
+EXTERNFN vinfo_t *PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op);
 
 /*EXTERNFN condition_code_t float_cmp(PsycoObject* po, vinfo_t* a1, vinfo_t* a2, 
   vinfo_t* b1, vinfo_t* b2, int op);*/

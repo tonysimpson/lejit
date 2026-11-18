@@ -465,7 +465,10 @@ def c_expr(e):
     if k == 'str':
         return ' '.join(e[1])
     if k == 'call':
-        return '%s(%s)' % (c_expr(e[1]), ', '.join(c_expr(a) for a in e[2]))
+        fn = c_expr(e[1])
+        if e[1][0] == 'un':
+            fn = '(%s)' % fn        # (*f)(x), not *(f)(x)
+        return '%s(%s)' % (fn, ', '.join(c_expr(a) for a in e[2]))
     if k == 'arrow':
         return '%s->%s' % (c_expr(e[1]), e[2])
     if k == 'dot':
@@ -527,7 +530,7 @@ def expand(toks, macros, keep, active=frozenset()):
             out.append(t)
             i += 1
             continue
-        if any(b.text in ('#', '##') for b in m.body):
+        if any(b.text in ('#', '##') for b in m.body) and m.params is None:
             out.append(t)
             i += 1
             continue
@@ -548,19 +551,75 @@ def expand(toks, macros, keep, active=frozenset()):
             out.append(t)
             i += 1
             continue
-        args = [expand(a, macros, keep, active) for a in args]
-        env = dict(zip(m.params, args))
-        body = []
-        for b in m.body:
-            if b.kind == 'id' and b.text in env:
-                body.extend(env[b.text])
-            else:
-                body.append(b._replace(line=t.line))
+        if any(b.text in ('#', '##') for b in m.body):
+            body = _paste(m, args, [expand(a, macros, keep, active) for a in args], t)
+            if body is None:
+                out.append(t)
+                i += 1
+                continue
+        else:
+            args = [expand(a, macros, keep, active) for a in args]
+            env = dict(zip(m.params, args))
+            body = []
+            for b in m.body:
+                if b.kind == 'id' and b.text in env:
+                    # the argument's first token is spaced as the parameter
+                    body.extend([a._replace(sp=b.sp) if j == 0 else a
+                                 for j, a in enumerate(env[b.text])])
+                else:
+                    body.append(b._replace(line=t.line))
         if body:
             body[0] = body[0]._replace(sp=t.sp)
         out.extend(expand(body, macros, keep, active | {t.text}))
         i = close + 1
     return out
+
+
+def _paste(m, raw, expanded, t):
+    """The body of a function-like macro using # or ## with these
+    arguments, as C does it: '# p' is the argument's text as a string, an
+    operand of '##' is the argument unexpanded and the two sides are
+    joined into one token; other parameters are the expanded argument.
+    None if a paste does not give one token (the macro is left as it
+    is)."""
+    env_raw = dict(zip(m.params, raw))
+    env_exp = dict(zip(m.params, expanded))
+    body, out = m.body, []
+    k = 0
+    while k < len(body):
+        b = body[k]
+        if b.text == '#' and k + 1 < len(body) and body[k + 1].text in env_raw:
+            words = env_raw[body[k + 1].text]
+            text = ''.join((' ' if j and w.sp else '') + w.text for j, w in enumerate(words))
+            out.append(ctokens.Tok('str', '"%s"' % text.replace('\\', '\\\\').replace('"', '\\"'),
+                                   t.line, b.sp))
+            k += 2
+            continue
+        if b.text == '##':
+            out.append(b._replace(kind='paste', line=t.line))
+            k += 1
+            continue
+        pasted = (k + 1 < len(body) and body[k + 1].text == '##') or \
+            (k > 0 and body[k - 1].text == '##')
+        if b.kind == 'id' and b.text in env_raw:
+            out.extend([a._replace(sp=b.sp) if j == 0 else a
+                        for j, a in enumerate((env_raw if pasted else env_exp)[b.text])])
+        else:
+            out.append(b._replace(line=t.line))
+        k += 1
+    res = []
+    for k, b in enumerate(out):
+        if res and res[-1].kind == 'paste':
+            res.pop()
+            left = res.pop() if res else None
+            text = (left.text if left else '') + b.text
+            toks = ctokens.tokenize(text)[0]
+            if len(toks) != 1:
+                return None
+            res.append(toks[0]._replace(line=t.line, sp=left.sp if left else b.sp))
+            continue
+        res.append(b)
+    return res
 
 
 # ---- what the compiler sees: cpp and the declarations ----------------------

@@ -257,7 +257,7 @@ class Checker:
             where = 'TYPES ' + key
             self.fields(where, e, ('shape', 'type', 'mutable', 'immutable',
                                    'virtual', 'slot_result', 'ni', 'known_length',
-                                   'descriptors', 'word'))
+                                   'descriptors', 'word', 'double'))
             self.descriptors(where, e)
             kl = e.get('known_length')
             if kl is not None:
@@ -286,6 +286,8 @@ class Checker:
                 self.virtual(where, e['virtual'], bool(e.get('mutable')))
             if 'word' in e:
                 self.word(where, e['word'])
+            if 'double' in e:
+                self.double(where, e['double'], names if d else None)
 
     def word(self, where, w):
         """A word representation (D83): its Ni functions are declared and
@@ -297,6 +299,26 @@ class Checker:
             if k not in w:
                 self.bad(where, 'no %r' % k)
         for k in ('load', 'sign_load', 'new'):
+            if k in w:
+                path, _, name = w[k].partition(':')
+                f = self.ni.file(path)
+                if f is None or not any(t.text == name for t in f[0]):
+                    self.bad(where, '%s does not declare %s' % (path, name))
+        for c in w.get('constructors', ()):
+            if self.src.find(c) is None:
+                self.bad(where, 'no constructor %s in the source' % c)
+
+    def double(self, where, w, fields):
+        """A scalar representation (D87): its field is the struct's, its Ni
+        functions are declared, its constructors are in the source."""
+        where += ' double'
+        self.fields(where, w, ('field', 'value_ctype', 'load', 'constructors', 'new'))
+        for k in ('field', 'value_ctype', 'load', 'constructors', 'new'):
+            if k not in w:
+                self.bad(where, 'no %r' % k)
+        if fields is not None and w.get('field') not in fields:
+            self.bad(where, 'no field %s' % w.get('field'))
+        for k in ('load', 'new'):
             if k in w:
                 path, _, name = w[k].partition(':')
                 f = self.ni.file(path)
@@ -527,6 +549,9 @@ class Checker:
             for spec in specs if isinstance(specs, list) else [specs]:
                 self.fields(where, spec, ('type', 'slots'))
                 self.type_object(where, spec['type'])
+        for r in t.SCALAR_CODE['raises']:
+            if self.src.find(r) is None:
+                self.bad('SCALAR_CODE', 'no function %s in the source' % r)
         self.slot_args(t)
         self.builtins(t)
         self.type_list('NO_DEL_TYPES', t.NO_DEL_TYPES,

@@ -1,6 +1,6 @@
-"""Shared parts of the slot generators (gen_float.py; gen_long.py until D83): C
-statements, macro expansion, the slot table, and the driver that writes a
-generated header's report (generate.py runs them)."""
+"""Shared parts of the slot generators (gen_float.py until D87, gen_long.py
+until D83): C statements, macro expansion, the slot table, and the driver that
+writes a generated header's report (generate.py runs them)."""
 import collections
 import os
 

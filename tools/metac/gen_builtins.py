@@ -66,6 +66,7 @@ class Unit:
 
 UNITS = {
     'bltin': Unit('Python/bltinmodule.c', 'pbltinmodule.c'),
+    'math': Unit('Modules/mathmodule.c', 'pmath.c'),
 }
 
 
@@ -660,6 +661,11 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
     text = '\n'.join(head + body) + '\n/* not generated:\n' + '\n'.join(
         '   ' + r for r in report if not r.startswith('generated')) + '\n*/\n'
     return text, report
+
+
+def build_math(target):
+    """pmathmodule_gen.h: the math functions (D87)."""
+    return build(target, UNITS['math'])
 
 
 def build(target, unit=None):

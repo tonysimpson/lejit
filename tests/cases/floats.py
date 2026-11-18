@@ -1,4 +1,4 @@
-# Float slots generated from Objects/floatobject.c (pfloatobject_gen.h):
+# Float slots generated from Objects/floatobject.c (pfloatslots_gen.h, D87):
 # + - * / % unary - abs bool. Results, signs of zeros, NaN and infinities,
 # errors and mixed int operands must be CPython's.
 

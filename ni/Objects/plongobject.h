@@ -51,7 +51,8 @@ EXTERNFN vinfo_t *PsycoLong_Sign(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *PsycoLong_AsLong(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *PsycoNumber_AsSsize_t(PsycoObject *po, vinfo_t *v,
                                        PyObject *err);
-EXTERNFN bool PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v, vinfo_t **vd);
+/* PyLong_AsDouble's meta: a new reference to the double, NULL on error */
+EXTERNFN vinfo_t *PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *PsycoLong_FromUnsignedLong(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *PsycoLong_FromLong(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *PsycoLong_FromSsize_t(PsycoObject *po, vinfo_t *v);

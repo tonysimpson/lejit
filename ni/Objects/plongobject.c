@@ -131,21 +131,15 @@ vinfo_t *PsycoNumber_AsSsize_t(PsycoObject *po, vinfo_t *v, PyObject *err) {
 }
 
 DEFINEFN
-bool PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v, vinfo_t **vd) {
+vinfo_t *PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v) {
   /* the backend has no int-to-double conversion: a C helper. A virtual
      int's word converts directly; (double)long rounds to nearest even,
      as PyLong_AsDouble does. */
-  if (PsycoLong_IsVirtual(v)) {
-    *vd = psyco_generic_call(po, cimpl_fp_from_long, CfPure | CfReturnTypeDouble,
-                             "v", v->array->items[iLONG_VALUE]);
-    return *vd != NULL;
-  }
-  if ((*vd = psyco_generic_call(po, PyLong_AsDouble,
-                                CfPyErrCheck | CfReturnTypeDouble, "v", v)) ==
-      NULL) {
-    return false;
-  }
-  return true;
+  if (PsycoLong_IsVirtual(v))
+    return psyco_generic_call(po, cimpl_fp_from_long, CfPure | CfReturnTypeDouble,
+                              "v", v->array->items[iLONG_VALUE]);
+  return psyco_generic_call(po, PyLong_AsDouble, CfPyErrCheck | CfReturnTypeDouble,
+                            "v", v);
 }
 
 DEFINEFN

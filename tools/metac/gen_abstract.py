@@ -77,6 +77,7 @@ prints the header and the report.
 """
 import argparse
 import os
+import re
 import subprocess
 import sys
 
@@ -88,12 +89,13 @@ import ctokens  # noqa: E402
 import cslots  # noqa: E402
 import cpython_src  # noqa: E402
 import policy_table  # noqa: E402
+import scalars  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(HERE))
 CFILE = 'Objects/abstract.c'
 NI_DECLS = 'ni/Objects/pabstract.h'
 # Ni headers searched for the meta of a CPython function ('Psyco' + name)
-NI_HEADERS = ['ni/Objects/pabstract.h', 'ni/Objects/pobject.h',
+NI_HEADERS = ['ni/Objects/pabstract.h', 'ni/Objects/pobject.h', 'ni/Objects/pfloatobject.h',
               'ni/Objects/plongobject.h', 'ni/Objects/piterobject.h',
               'ni/Objects/ptupleobject.h', 'ni/Objects/plistobject.h',
               'ni/Objects/pdictobject.h']
@@ -112,7 +114,8 @@ INT_TYPES = {'int', 'Py_ssize_t', 'long', 'const int', 'size_t'}
 TABLE_TYPES = {'PyNumberMethods *', 'PySequenceMethods *',
                'PyMappingMethods *', 'PyAsyncMethods *', 'PyBufferProcs *'}
 RET_FLAG = {'PyObject *': 'CfReturnTypePtr', 'int': 'CfReturnTypeInt',
-            'long': 'CfReturnTypeLong', 'Py_ssize_t': 'CfReturnTypeNative'}
+            'long': 'CfReturnTypeLong', 'Py_ssize_t': 'CfReturnTypeNative',
+            'double': 'CfReturnTypeDouble'}
 COMMON = {
     'CfReturnTypePtr|CfNewRef|CfPyErrIfNull': 'CfCommonNewRefPyObject',
     'CfReturnTypePtr|CfNewRef|CfPyErrNotImplemented': 'CfCommonCheckNotImplemented',
@@ -124,8 +127,11 @@ COMMON = {
 CONST_RETURNS = {'Py_RETURN_TRUE': 'psyco_vi_Py_True',
                  'Py_RETURN_FALSE': 'psyco_vi_Py_False',
                  'Py_RETURN_NONE': 'psyco_vi_None'}
-PY_OPS = {'<': 'Py_LT', '<=': 'Py_LE', '==': 'Py_EQ', '!=': 'Py_NE',
+RETURN_MACROS = set(CONST_RETURNS) | {'Py_RETURN_NOTIMPLEMENTED'}
+PY_OPS ={'<': 'Py_LT', '<=': 'Py_LE', '==': 'Py_EQ', '!=': 'Py_NE',
           '>': 'Py_GT', '>=': 'Py_GE'}
+# a function-pointer parameter declared in place: 'double (*)(double)'
+FNPTR_DECL = re.compile(r'\(\*\)\((.*)\)$')
 FLIP = {'<': '>', '>': '<', '<=': '>=', '>=': '<=', '==': '==', '!=': '!='}
 
 
@@ -170,9 +176,25 @@ def split_params(toks):
         if not ids:         # a declaration with no parameter name
             out.append((ctype_of(p), '_arg%d' % k))
             continue
+        w = [t.text for t in p]
+        if '(' in w and w[w.index('(') + 1:w.index('(') + 3] == ['*', ids[-1]] or \
+                '(' in w and len(ids) > 1 and w[w.index('(') + 1:w.index('(') + 2] == ['*']:
+            out.append(fnptr_param(p))
+            continue
         name = ids[-1]
         out.append((ctype_of([t for t in p if t.text != name]), name))
     return out
+
+
+def fnptr_param(p):
+    """'RET (*name)(ARGS)': ('RET (*)(ARGS)', name), the prototype kept."""
+    w = [t.text for t in p]
+    j = w.index('(')
+    close = j + w[j:].index(')')
+    name = w[close - 1]
+    ret = ctype_of(p[:j])
+    args = ' '.join(w[close + 2:-1])
+    return ('%s (*)(%s)' % (ret, args), name)
 
 
 class Source:
@@ -225,6 +247,8 @@ class Source:
                 i = close + 1
                 continue
             i += 1
+        # static functions given an out-parameter or a function (D87)
+        scalars.inline_calls(self)
 
     def read_text(self):
         """The C file's text (a subclass may add what it includes)."""
@@ -242,6 +266,9 @@ class Source:
         # a header's statement macro ('do { ... } while (0)') is read as
         # the statements it stands for (D84)
         in_force.update(self.statement_macros())
+        # a header macro defined empty stands for nothing (pyfpe.h's
+        # PyFPE_START_PROTECT without WANT_SIGFPE_HANDLER, D87)
+        in_force.update(self.empty_macros())
         # an object-like macro the function defines inside its body is
         # an alias of its own, expanded like a function-like one
         keep = keep_local - {n for n, m in self.local_macros.items()
@@ -266,6 +293,12 @@ class Source:
                         and w[-4:] == ['while', '(', '0', ')']:
                     self._stmt_macros[n] = m
         return self._stmt_macros
+
+    def empty_macros(self):
+        """The header function-like macros whose body is empty, except the
+        vocabulary (KEEP)."""
+        return {n: m for n, m in self.macros.items()
+                if m.params is not None and not m.body and n not in KEEP}
 
     def object_structs(self):
         """Struct names (tags and typedefs) whose first member is a
@@ -340,12 +373,14 @@ class Source:
 
     def is_fnptr(self, ctype):
         return ctype.rstrip(' *') in self.decls.fnptr and not ctype.endswith('*') \
-            or ctype.endswith('(*)()')
+            or ctype.endswith('(*)()') or FNPTR_DECL.search(ctype) is not None
 
     def fn_ret(self, ctype):
         """Return type of a function-pointer type."""
         if ctype.endswith('(*)()'):
             return ctype[:-5].strip()
+        if FNPTR_DECL.search(ctype):
+            return ctype[:FNPTR_DECL.search(ctype).start()].strip()
         return self.decls.fnptr[ctype.strip()]
 
     def field_type(self, struct_ctype, field):
@@ -477,6 +512,8 @@ class Liveness:
                 if init is not None:
                     live |= set(cparse.names_in(init))
             live = frozenset(live)
+        elif k == 'expr' and s[1][0] == 'id' and s[1][1] in RETURN_MACROS:
+            live = frozenset()      # Py_RETURN_NOTIMPLEMENTED and the like return
         elif k == 'expr':
             live = frozenset(expr_live(s[1], after))
         elif k == 'if':
@@ -642,9 +679,19 @@ class Translator:
     def callees(self, f):
         out = []
         for n in cparse.names_in(f.ast or []):
-            if n in self.s.funcs and n != f.name and n not in out:
+            if n in self.s.funcs and n != f.name and n not in out \
+                    and not self.hand_meta(n):
                 out.append(n)
         return out
+
+    def hand_meta(self, name):
+        """Has Ni its own meta of this exported function, one the unit does
+        not translate (D87: PyLong_AsDouble's)? Calls go to it."""
+        meta = psyco_name(name)
+        f = self.s.funcs[name]
+        return bool(meta) and not f.static and meta in self.ni \
+            and self.ni[meta].name not in self.declared \
+            and name not in self.slot_roots and scalars.scalar_result(self, f)
 
     def run(self, declared):
         self.declared = declared
@@ -829,6 +876,8 @@ class Translator:
     def kind_of(self, f):
         if self.s.is_obj(f.ret):
             return 'obj'
+        if scalars.scalar_result(self, f):
+            return 'val'
         if f.ret not in INT_TYPES:
             raise Refuse('returns %s' % f.ret)
         decl = self.ni.get(self.meta_name(f))
@@ -909,6 +958,8 @@ class Translator:
             return True
         if e == ('un', '-', ('num', '1')) and f.ret in INT_TYPES:
             return True
+        if scalars.error_value(self, f, e):
+            return True
         if e[0] == 'call' and e[1][0] == 'id' and e[1][1] in self.s.funcs:
             g = self.s.funcs[e[1][1]]
             rets = []
@@ -954,7 +1005,10 @@ class Translator:
             parts = [r]
             if r == 'CfReturnTypePtr':
                 parts.append('CfNewRef')
-            if conv == 'neg':
+            if r == 'CfReturnTypeDouble' and conv in ('neg', 'minus1'):
+                # -1.0 and an exception (D87): the word is no integer
+                parts.append('CfPyErrCheck')
+            elif conv == 'neg':
                 parts += ['CfNotNegative', 'CfPyErrCheckNeg']
             elif conv == 'minus1':
                 parts.append('CfPyErrCheckMinus1')
@@ -1008,6 +1062,10 @@ class Translator:
                 return name, params
         n = sum(1 for nm in self.copy_keys if nm.startswith('cimpl_%s_' % f.name))
         name = self.copy_name(f, 0 if whole else n + 1)
+        while name in self.copies:
+            # a scalar helper has the name (rule copy_through, D87)
+            n += 1
+            name = self.copy_name(f, n + 1)
         locs = self.local_types(f)
         ptypes = dict((p, t) for t, p in f.params)
         ptypes.update(locs)
@@ -1044,8 +1102,7 @@ class Translator:
         body = ''.join('Py_INCREF(%s); ' % v for v in sorted(owned)) + body
         ret = f.ret
         text = 'static %s %s(%s) {\n  %s\n  %s\n}\n' % (
-            ret, name, ', '.join('%s%s%s' % (t, '' if t.endswith('*') else ' ', p)
-                                 for t, p in params) or 'void',
+            ret, name, ', '.join(scalars.declarator(t, p) for t, p in params) or 'void',
             ' '.join(decls), body)
         self.copy_keys[name] = (key, params)
         self.copies[name] = text
@@ -1068,6 +1125,8 @@ class Translator:
         return out
 
     def stmt_text(self, f, s):
+        if s[-1] == scalars.INL:
+            return scalars.stmt_text(s)     # inlined from another function
         lo, hi = s[-1]
         return cslots.text(f.toks[lo:hi])
 
@@ -1080,8 +1139,7 @@ class Translator:
                 g = self.s.funcs[t.text]
                 if g.ast is None:
                     raise Refuse('copy calls %s: %s' % (g.name, g.why))
-                self.copy(g, [(g.ast, 0)], set())
-                t = t._replace(text='cimpl_' + t.text)
+                t = t._replace(text=self.copy(g, [(g.ast, 0)], set())[0])
             out.append(t)
         return cslots.text(out)
 
@@ -1648,7 +1706,7 @@ def once_do(s):
     return not found
 
 
-class Walk(RepresentationRules):
+class Walk(RepresentationRules, scalars.ScalarRules):
     """One translation of a function: the meta's text, and what it found
     (promotions it had to do after a call, the parameters whose type it
     reads before any call on every path)."""
@@ -1761,10 +1819,21 @@ class Walk(RepresentationRules):
         return '\n'.join(lines) + '\n'
 
     def block(self, stmts, st, out, frames):
+        skip = 0
         for i, s in enumerate(stmts):
             if st.ended:
                 break
+            if skip:
+                skip -= 1
+                continue
             here = frames + [(stmts, i)]
+            took = self.scalar_run(stmts, i, st, out, here)
+            if took:
+                # rule copy_through: statements i to i + took in a helper
+                skip = took - 1
+                if not st.ended:
+                    self.release_dead(st, out, self.tr.live.after[id(stmts[i + took - 1])])
+                continue
             if (not st.called and not self.loop_ctx and self.sm.kind != 'ct'
                     and s[0] not in ('decl', 'empty')
                     and self.tr.every_path_loops(self.f, here)):
@@ -1818,6 +1887,7 @@ class Walk(RepresentationRules):
         saved_notimpl = self.notimpl
         outer_calls = self.stmt_calls
         self.stmt_calls = self.ncalls
+        outer_frames, self.stmt_frames = getattr(self, 'stmt_frames', None), frames
         pending = st.pending
         try:
             self.stmt(s, st, out, frames)
@@ -1839,6 +1909,7 @@ class Walk(RepresentationRules):
             self.stmt_calls = self.ncalls
             self.resume(st, out, frames, str(e))
         self.stmt_calls = outer_calls
+        self.stmt_frames = outer_frames
 
     def resume_inside(self, st, out, frames, why):
         """Resume from the statement being translated, part of whose code
@@ -2006,6 +2077,8 @@ class Walk(RepresentationRules):
         raise Refuse('statement %s' % k)
 
     def declare(self, st, name, ctype):
+        if self.scalar_declare(st, name, ctype):
+            return
         ctype = self.rep_int_ctype(ctype)
         if name in st.vars and not st.vars[name].isparam:
             old = st.vars[name]
@@ -2128,6 +2201,8 @@ class Walk(RepresentationRules):
         if v is None:
             raise Refuse('assignment to %s' % name)
         val = self.ev(e, st, out, frames, dest=name)
+        if not v.isparam:
+            st.known.discard(name)      # a known type (known_type) is the old value's
         if v.bt == 'ptr':
             if val.bt != 'ptr':
                 raise ResumeHere('%s assigned a pointer the meta cannot follow' % name)
@@ -2619,14 +2694,14 @@ class Walk(RepresentationRules):
             return '%s %s NULL' % (v.cname, op)
         if op == '<' and b == ('num', '0'):
             return '%s == NULL' % v.cname
-        if op == '==' and b == ('un', '-', ('num', '1')):
+        if op == '==' and b in (('un', '-', ('num', '1')), ('un', '-', ('num', '1.0'))):
             return '%s == NULL' % v.cname
         return None
 
     # ---- expressions ----
 
     def ev(self, e, st, out, frames, dest=None):
-        r = self.rep_ev(e, st, out, frames)
+        r = self.rep_ev(e, st, out, frames) or self.scalar_ev(e, st, out, frames)
         if r is not None:
             return r
         k = e[0]
@@ -2730,6 +2805,8 @@ class Walk(RepresentationRules):
         tpv = 'tp_' + name
         if name in st.known:
             return tpv
+        if v is not None and not v.isparam and v.bt == 'rt' and not entry:
+            return self.known_type(st, out, v)
         if v is None or not v.isparam:
             raise ResumeHere("the type of %s, which is not a parameter (F24)" % name)
         pidx = [p for _, p in self.f.params].index(name)
@@ -2744,6 +2821,24 @@ class Walk(RepresentationRules):
         out('%s = Psyco_NeedType(po, %s);' % (tpv, v.cname))
         self.error_exit(st, out, '%s == NULL' % tpv)
         st.known.add(name)
+        return tpv
+
+    def known_type(self, st, out, v):
+        """The type of a value that is not a parameter (F24: it can't be
+        promoted): the one Ni knows (a virtual's, a constant's), else CPython
+        resumes from the statement."""
+        tpv = 'tp_' + v.name
+        if self.ncalls > self.stmt_calls:
+            raise ResumeHere("the type of %s, which is not a parameter (F24)" % v.name)
+        self.decls[tpv] = 'PyTypeObject *%s;' % tpv
+        out('%s = Psyco_KnownType(%s);' % (tpv, v.cname))
+        out('if (%s == NULL) {' % tpv)
+        sub = Out(out.depth + 1)
+        self.resume_inside(st.copy(), sub, self.stmt_frames,
+                           'the type of %s is not known (F24)' % v.name)
+        out.extend(sub)
+        out('}')
+        st.known.add(v.name)
         return tpv
 
     def ev_arrow(self, e, st, out, frames):
@@ -3865,7 +3960,7 @@ UNITS = {
     'dict': Unit('Objects/dictobject.c', None, 'pdictobject.c'),
     'bytes': Unit('Objects/bytesobject.c', None, 'pbytesobject.c'),
     'long': Unit('Objects/longobject.c', None, 'plongobject.c'),
-    'float': Unit('Objects/floatobject.c', None, 'pfloatobject.c'),
+    'float': Unit('Objects/floatobject.c', 'ni/Objects/pfloatobject.h', 'pfloatobject.c'),
 }
 
 
@@ -4097,6 +4192,9 @@ def generate(src, pyconfig, defines, ni_root=ROOT, effects=None, unit=None):
     text = '\n'.join(head + body) + '\n/* not generated:\n' + '\n'.join(
         '   ' + r for r in report if not r.startswith('generated')) + '\n*/\n'
     return text, report
+
+
+scalars.GA = sys.modules[__name__]
 
 
 def target_defines(python):
