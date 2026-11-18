@@ -1,10 +1,12 @@
 """Inline (doc/GENERATOR_DESIGN.md "The specialiser's actions"): a call of
 a static function of the file given the address of a local (an
-out-parameter) is the function's body in its place, by value: each
-parameter is a fresh local holding its argument, evaluated once, and a
-parameter given '&x' is the caller's x itself where the body reads or
-writes '*p' (the address is known when generating; any other use of it
-refuses the inline). The callee's locals are renamed.
+out-parameter) or a function's name is the function's body in its place,
+by value: each parameter is a fresh local holding its argument, evaluated
+once, and a parameter given '&x' is the caller's x itself where the body
+reads or writes '*p' (the address is known when generating; any other use
+of it refuses the inline). A parameter given a constant or a function's
+name, and never assigned in the body, is that constant or function where
+the body reads it (nothing to evaluate). The callee's locals are renamed.
 
 The call is the statement's: 'return f(...)' (the body's returns are the
 caller's), or 'if (f(...) OP K) S1 else S2' and 'if (f(...))', where
@@ -79,6 +81,8 @@ class Expander:
     def __init__(self, tr, fn, budgets, hit):
         self.tr, self.fn, self.budgets, self.hit = tr, fn, budgets, hit
         self.taken = names_in(fn.body) | {p.name for p in params(fn)}
+        self.local = {d.name for d in walk(fn.body) if isinstance(d, c_ast.Decl)} \
+            | {p.name for p in params(fn)}
 
     def stmt(self, s):
         """s, or a copy of it with its calls expanded (orig: s)."""
@@ -146,7 +150,7 @@ class Expander:
         ps = params(g)
         if len(args) != len(ps):
             return None
-        if not any(out_arg(a) is not None for a in args):
+        if not any(out_arg(a) is not None or self.designator(a) for a in args):
             return None
         n = sum(1 for x in walk(g.body) if isinstance(x, c_ast.Node)
                 and type(x).__name__ in STATEMENTS)
@@ -158,6 +162,29 @@ class Expander:
             return None
         return g, args
 
+    def designator(self, a):
+        """a names a function (not a variable of the caller)."""
+        a = strip_casts(a)
+        return isinstance(a, c_ast.ID) and a.name in self.tr.unit.funcs \
+            and a.name not in self.local
+
+    def fixed(self, g, p, a):
+        """The parameter p may be replaced by its argument a: a constant or
+        a function's name, and p never assigned or addressed in g."""
+        if not (self.designator(a) or const_value(a) is not None
+                or (isinstance(strip_casts(a), c_ast.Constant)
+                    and strip_casts(a).type != 'string')):
+            return False
+        for x in walk(g.body):
+            if isinstance(x, c_ast.Assignment) and isinstance(strip_casts(x.lvalue), c_ast.ID) \
+                    and strip_casts(x.lvalue).name == p.name:
+                return False
+            if isinstance(x, c_ast.UnaryOp) and x.op in ('&', '++', '--', 'p++', 'p--') \
+                    and isinstance(strip_casts(x.expr), c_ast.ID) \
+                    and strip_casts(x.expr).name == p.name:
+                return False
+        return True
+
     def fresh(self, g, name):
         n = '%s_%s' % (g.decl.name, name)
         k = 1
@@ -168,11 +195,14 @@ class Expander:
         return n
 
     def body(self, g, args, test, at):
-        ptr, rename, head = {}, {}, []
+        ptr, rename, head, value = {}, {}, [], {}
         for p, a in zip(params(g), args):
             x = out_arg(a)
             if x is not None:
                 ptr[p.name] = x
+                continue
+            if self.fixed(g, p, a):
+                value[p.name] = a
                 continue
             n = self.fresh(g, p.name)
             rename[p.name] = n
@@ -186,7 +216,7 @@ class Expander:
                     and not isinstance(d.type, c_ast.FuncDecl):
                 rename[d.name] = self.fresh(g, d.name)
         b = copy.deepcopy(g.body)
-        b = Subst(ptr, rename).visit(b)
+        b = Subst(ptr, rename, value).visit(b)
         items = b.block_items or []
         if test is not None:
             items = choose(items, test, True)
@@ -236,11 +266,11 @@ def rename_decl(d, name):
 
 
 class Subst:
-    """The callee's body in the caller: '*p' is the caller's variable, the
-    callee's own names renamed."""
+    """The callee's body in the caller: '*p' is the caller's variable, a
+    fixed parameter its argument, the callee's own names renamed."""
 
-    def __init__(self, ptr, rename):
-        self.ptr, self.rename = ptr, rename
+    def __init__(self, ptr, rename, value=None):
+        self.ptr, self.rename, self.value = ptr, rename, value or {}
 
     def visit(self, n):
         if isinstance(n, c_ast.UnaryOp) and n.op == '*':
@@ -250,6 +280,8 @@ class Subst:
         if isinstance(n, c_ast.ID):
             if n.name in self.ptr:
                 raise NoInline('the pointer %s is used as a value' % n.name)
+            if n.name in self.value:
+                return copy.deepcopy(self.value[n.name])
             if n.name in self.rename:
                 return c_ast.ID(self.rename[n.name], n.coord)
             return n

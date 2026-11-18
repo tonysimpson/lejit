@@ -27,16 +27,16 @@ class Case:
     """C, the functions whose metas Ni declares (roots), policy items,
     and what must come out: `want` in order in the named function's meta,
     `absent` nowhere in it, or `refused` in its refusal; `report` in its
-    resume lines, `copy` in its run-time copies."""
+    resume lines, `copy` in its run-time copies (`absent_copy` not)."""
 
     def __init__(self, name, c, roots, fn=None, items=None, want=(), absent=(),
-                 refused=None, report=None, copy=(), file='abstract'):
+                 refused=None, report=None, copy=(), file='abstract', absent_copy=()):
         self.name, self.c, self.roots = name, c, roots
         self.file = file
         self.fn = fn or roots[0]
         self.items = items or {}
         self.want, self.absent, self.refused, self.report = want, absent, refused, report
-        self.copy = copy
+        self.copy, self.absent_copy = copy, absent_copy
 
 
 CASES = [
@@ -265,14 +265,60 @@ PyObject *PySnip_ErrnoOut(PyFloatObject *v) {
     if (errno) return PyObject_Repr((PyObject *)v);
     return PyFloat_FromDouble(v->ob_fval + 1.0);
 }''', ['PySnip_ErrnoOut'], file='float', want=['return psyco_generic_call(po, PySnip_ErrnoOut,']),
-    Case('double: a function-pointer parameter every caller gives a pure function (G12)', '''
+    Case('inline: a function\'s name given to a static is that function in its body (G12)', '''
 static PyObject *snip_fp(PyFloatObject *v, double (*func)(double)) {
     return PyFloat_FromDouble(func(v->ob_fval));
 }
 PyObject *PySnip_Fp(PyFloatObject *v) { return snip_fp(v, fabs); }''', ['PySnip_Fp'],
-         fn='snip_fp', file='float',
-         want=['CfPure | CfReturnTypeDouble | CfNoPython | CfNoBlock, "ld", (long)(func),'],
-         copy=['return func(v_ob_fval);']),
+         file='float', want=['CfPure | CfReturnTypeDouble | CfNoPython | CfNoBlock, "d",'],
+         absent=['snip_fp(po', '(long)(func)'], copy=['return fabs(snip_fp_v_ob_fval);']),
+    Case('inline: a constant and a function given through two levels, (*f)(x) called', '''
+static PyObject *snip_lvl2(PyObject *o, double (*f)(double), int k) {
+    double x = PyFloat_AsDouble(o);
+    if (x == -1.0 && PyErr_Occurred())
+        return NULL;
+    x = (*f)(x);
+    if (k)
+        x = x + 1.0;
+    return PyFloat_FromDouble(x);
+}
+static PyObject *snip_lvl1(PyObject *o, double (*f)(double)) { return snip_lvl2(o, f, 0); }
+PyObject *PySnip_Lvl(PyObject *o) { return snip_lvl1(o, sqrt); }''', ['PySnip_Lvl'],
+         file='float', want=['= PsycoFloat_AsDouble(po, o);', '== NULL', 'cimpl_PySnip_Lvl,',
+                             'PsycoFloat_FROM_DOUBLE('],
+         absent=['snip_lvl1(po', 'snip_lvl2(po'],
+         copy=['(*sqrt)(snip_lvl2_x)', 'if (0)']),
+    Case('inline: a parameter the body assigns stays a fresh local, given a constant', '''
+static PyObject *snip_set(PyFloatObject *v, double (*f)(double), int k) {
+    k = k + 1;
+    return PyFloat_FromDouble(f(v->ob_fval) + k);
+}
+PyObject *PySnip_Set(PyFloatObject *v) { return snip_set(v, fabs, 2); }''', ['PySnip_Set'],
+         file='float', copy=['int snip_set_k = 2;', 'fabs(snip_set_v_ob_fval) + snip_set_k'], absent=['snip_set(po']),
+    Case('double: a static function on scalars is called in the helper as its copy', '''
+static int snip_big(double x) {
+    if (x > 1.0) {
+        PyErr_SetString(PyExc_ValueError, "big");
+        return 1;
+    }
+    return 0;
+}
+PyObject *PySnip_Static(PyFloatObject *v) {
+    double x = v->ob_fval * 2.0;
+    if (snip_big(x))
+        return NULL;
+    return PyFloat_FromDouble(x);
+}''', ['PySnip_Static'], file='float',
+         want=['CfCommonIntZeroOk | CfNoPython | CfNoBlock, "da",'], absent=['CfPure'],
+         copy=['if (cimpl_snip_big', '(x))', 'return -1;']),
+    Case('double: a static reading errno the run did not set stays out of its helper (G12)', '''
+static int snip_err(double x) { return errno != 0; }
+PyObject *PySnip_StaticErrno(PyFloatObject *v) {
+    double x = v->ob_fval * 2.0;
+    if (snip_err(x))
+        return NULL;
+    return PyFloat_FromDouble(x);
+}''', ['PySnip_StaticErrno'], file='float', absent=['cimpl_snip_err']),
     Case('inline (G13): parameters by value, *p the caller\'s variable', '''
 static int snip_take(PyObject **p, double *d) {
     PyObject *o = *p;
@@ -323,6 +369,17 @@ PyObject *PySnip_G6(PyObject *o, Py_ssize_t n) {
     return r;
 }''', ['PySnip_G6'], want=['cimpl_PySnip_G6_1'], absent=['Psyco_TypeSlot', 'while'],
          report='a loop with a run-time bound'),
+    Case('G20: a copy from inside a block that returns has none of the code after it', '''
+PyObject *PySnip_G20(PyObject *o, PyObject *w, Py_ssize_t n) {
+    if (o->ob_type->tp_as_number != NULL) {
+        PyObject *r = PyObject_Repr(o);
+        if (r == NULL) return NULL;
+        while (n-- > 0) { if (PyObject_Size(r) < 0) break; }
+        return r;
+    }
+    return PyNumber_Negative(w);
+}''', ['PySnip_G20'], want=['cimpl_PySnip_G20_1'], copy=['while', 'return r;'],
+         absent_copy=['PyNumber_Negative']),
     Case("G7: a discarded bool result's call is still made", '''
 PyObject *PySnip_G7a(PyObject *o, PyObject *k) {
     PyObject_SetItem(o, k, k);
@@ -377,6 +434,30 @@ def g10():
     return False, 'loaded'
 
 
+def builtins():
+    """A module's builtins: which C function and flags from its method
+    table, registered under those flags; flags Ni has no convention for,
+    or passes otherwise, are not attempted."""
+    import cslots
+    import cpython_src
+    fam = scope.Family('snipmath', 'Modules/mathmodule.c', None, 'pmath.c', 'snip_gen.h',
+                       reps=('double',), builtins=('acos', 'atan2', 'pow'))
+    t = front.target(PY37)
+    src = cpython_src.find_source('3.7.17')
+    import generate
+    version, pyconfig = generate.target_info(PY37)
+    text, report = abstract.generate(cslots.Target(src, version, PY37, pyconfig), fam)
+    want = ['static PyCFunction cfunc_math_acos;',
+            'static vinfo_t * math_acos(PsycoObject *po, vinfo_t *self, vinfo_t *args) {',
+            'static void gen_mathmodule_init(PyObject *md) {',
+            'cfunc_math_acos = Psyco_DefineModuleFn(md, "acos", METH_O, &math_acos);']
+    lines = ['generated  math.acos', 'skipped    math_atan2', 'ml_flags 1: no METH_ARGS entry',
+             'skipped    math.pow', 'ml_flags METH_FASTCALL: Ni passes self, array, count']
+    missing = [w for w in want if w not in text] + [w for w in lines
+                                                     if not any(w in r for r in report)]
+    return not missing, "missing %s in %s" % (missing, report)
+
+
 FILES = {'abstract': ('Objects/abstract.c', ()), 'long': ('Objects/longobject.c', ('word', 'double')),
          'float': ('Objects/floatobject.c', ('double',))}
 
@@ -423,6 +504,9 @@ def run(cases):
             for x in c.copy:
                 if x not in copies:
                     problem = 'no %r in its copies' % x
+            for x in c.absent_copy:
+                if x in copies:
+                    problem = 'has %r in its copies' % x
             if c.report and not any(c.report in r for r in reasons):
                 problem = 'no resume for %r (resumes: %s)' % (c.report, reasons)
         if problem:
@@ -432,18 +516,24 @@ def run(cases):
                 print('resumes: %s' % reasons)
             if meta:
                 print(meta)
+            for n, t in tr.copies.texts.items():
+                if c.fn in n:
+                    print(t)
         else:
             print('ok   %s' % c.name)
     ok, msg = g10()
     print('%s G10: an unknown policy item is refused on load%s' % (
         'ok  ' if ok else 'FAIL', '' if ok else ': ' + msg))
-    return fails + (not ok)
+    ok2, msg = builtins()
+    print('%s builtins: from the method table, registered under their flags%s' % (
+        'ok  ' if ok2 else 'FAIL', '' if ok2 else ': ' + msg))
+    return fails + (not ok) + (not ok2)
 
 
 def main(argv):
     cases = [c for c in CASES if not argv or any(a in c.name for a in argv)]
     fails = run(cases)
-    print('%d of %d snippets pass' % (len(cases) + 1 - fails, len(cases) + 1))
+    print('%d of %d snippets pass' % (len(cases) + 2 - fails, len(cases) + 2))
     return 1 if fails else 0
 
 

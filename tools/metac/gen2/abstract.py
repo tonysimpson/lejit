@@ -3,8 +3,10 @@
 of Objects/abstract.c's functions that Ni declares in
 ni/Objects/pabstract.h; plongobject_gen.h and pfloatslots_gen.h, the
 metas of the int and float slots scope.py names (registered by the
-header's gen_FILE_init) and of floatobject.c's functions Ni declares; and
-the metas of the file's functions those call.
+header's gen_FILE_init) and of floatobject.c's functions Ni declares;
+pmathmodule_gen.h, the metas of the math functions scope.py names
+(registered under their method table's flags by gen_mathmodule_init);
+and the metas of the file's functions those call.
 
 A function's meta is found by walking it (walk.py) until the promotions it
 needs before any call are all at its entry; a callee is translated before
@@ -61,8 +63,14 @@ class Translator:
             for f, refs in slots.slot_functions(ast, self.unit, tp, names).items():
                 self.slot_roots.setdefault(f, []).extend(refs)
                 self.slot_types.setdefault(f, tp)
+        # function -> (Python name, flag names, METH_ARGS spec)
+        self.module, self.builtins, self.builtins_skipped = None, {}, {}
+        if family.builtins:
+            self.module, self.builtins, self.builtins_skipped = slots.builtin_functions(
+                ast, self.unit, family.builtins)
+        mine = (own or family.cfile, clinic_file(own or family.cfile))
         self.funcs = {d.decl.name: d for d in ast.ext if isinstance(d, c_ast.FuncDef)
-                      and d.coord.file.endswith(own or family.cfile)}
+                      and d.coord.file.endswith(mine)}
         self.ni, self.declared = ni, declared
         self.policy, self.effects = items, effects
         import policy_table
@@ -72,16 +80,27 @@ class Translator:
         self.local_bts, self.liveness, self.expanded = {}, {}, {}
         self.reps_used, self.budgets_hit = set(), []
         self.copies = resume.Copies(self)
+        self._expansions = {}
 
     # ---- which functions, in what order ----
 
     def roots(self):
         return [n for n in sorted(self.funcs)
-                if conventions.psyco_name(n) in self.declared or n in self.slot_roots]
+                if conventions.psyco_name(n) in self.declared or n in self.slot_roots
+                or n in self.builtins]
+
+    def expansion(self, name):
+        """(the function with its inlinable calls expanded, the budgets
+        hit), made once."""
+        if name not in self._expansions:
+            self._expansions[name] = inline.expand(self, self.funcs[name], self.budgets)
+        return self._expansions[name]
 
     def callees(self, fn):
+        """The functions of the file fn still calls once its inlinable
+        calls are expanded."""
         out = []
-        for n in id_names(fn.body):
+        for n in id_names(self.expansion(fn.decl.name)[0].body):
             if n in self.funcs and n != fn.decl.name and n not in out \
                     and not self.ni_own(n) and not self.constructor(n):
                 out.append(n)
@@ -158,6 +177,11 @@ class Translator:
         for n in order:
             sm = self.sums.setdefault(n, Summary(self.funcs[n]))
             sm.pbt = [b or 'dynamic' for b in pbt[n]]
+            if n in self.builtins:
+                spec = self.builtins[n][2]
+                if len(spec['c']) != len(sm.params) or spec['c'] != ['self', 'arg']:
+                    self.fails[n] = 'ml_flags %s: Ni passes %s' % (
+                        ' | '.join(self.builtins[n][1]), ', '.join(spec['c']))
 
     def call_sites(self, name):
         for cname, fn in self.funcs.items():
@@ -224,7 +248,7 @@ class Translator:
                 return
         try:
             sm.kind = self.kind_of(fn)
-            fn, hit = inline.expand(self, fn, self.budgets)
+            fn, hit = self.expansion(name)
             self.expanded[name] = fn
             self.liveness[name] = Liveness(fn.body)
             self.local_bts[name] = locals_bt(
@@ -275,7 +299,10 @@ class Translator:
         self.copies.drop(name)
 
     def slot_key(self, n):
-        """A static slot function's key in the report: its type and slot."""
+        """A static slot function's key in the report: its type and slot;
+        a builtin's: its module and Python name."""
+        if n in self.builtins:
+            return '%s.%s' % (self.module, self.builtins[n][0])
         if n in self.slot_roots and 'static' in self.funcs[n].decl.storage:
             return '%s.%s' % (self.slot_types[n], self.slot_roots[n][0][1])
         return n
@@ -408,6 +435,13 @@ class Translator:
         return self.effects is not None and key is not None and self.effects.cannot_raise(key)
 
 
+def clinic_file(cfile):
+    """The file Argument Clinic writes a C file's wrappers into, which the
+    file includes: its functions are the file's."""
+    d, base = os.path.split(cfile)
+    return os.path.join(d, 'clinic', base + '.h')
+
+
 def counted_loop(s):
     """(variable, bound) when loop s is a 'for' stepping V by one towards
     E (V < E, V <= E or V != E, V++; or V > E, V >= E, V != E, V--), V
@@ -456,7 +490,8 @@ def id_names(n):
 
 def generate(target, family, effects=None):
     ft = front.target(target.python, target.src)
-    ast = front.parse(ft, family.cfile, types.rule_text(family.reps))
+    ast = front.parse(ft, family.cfile, types.rule_text(family.reps)
+                      + (slots.meth_text() if family.builtins else ''))
     ni = conventions.ni_decls(ROOT, scope.NI_HEADERS)
     declared = set(conventions.ni_decls(ROOT, [family.decls])) if family.decls else set()
     items = policy.load(ft, family)
@@ -466,7 +501,8 @@ def generate(target, family, effects=None):
     by_meta = {tr.sums[n].meta: n for n in order if n in tr.metas}
     texts = {m: tr.metas[n] for m, n in by_meta.items()}
     texts.update(tr.copies.texts)
-    used = {m for m in by_meta if m in declared or by_meta[m] in tr.slot_roots}
+    used = {m for m in by_meta if m in declared or by_meta[m] in tr.slot_roots
+            or by_meta[m] in tr.builtins}
     work = list(used)
     import re
     while work:
@@ -481,6 +517,11 @@ def generate(target, family, effects=None):
             % cpython_src.source_version(target.src),
             '   %s: do not edit. Included by %s. */' % (family.cfile, family.includer), '']
     out = []
+    done = [n for n in sorted(tr.builtins) if n in metas]
+    if done:
+        out.append('/* the C functions, for the fallbacks: set by the registration */')
+        out += ['static PyCFunction %s;' % cfunc_name(n) for n in done]
+        out.append('')
     if 'word' in tr.reps_used:
         r = tr.reps['word']
         out += ['_Static_assert(sizeof(long) * 8 == 64, "words are longs");',
@@ -503,6 +544,15 @@ def generate(target, family, effects=None):
         out.append('static void gen_%s_init(void) {' % base)
         out += ['  Psyco_DefineMeta(%s, %s);' % (ref, m) for m, ref in regs]
         out.append('}')
+    if done:
+        base = os.path.splitext(os.path.basename(family.cfile))[0]
+        out.append('/* the metas of the functions tools/metac/gen2/scope.py names, under the'
+                   ' flags of the module\'s method table */')
+        out.append('static void gen_%s_init(PyObject *md) {' % base)
+        out += ['  %s = Psyco_DefineModuleFn(md, "%s", %s, &%s);' % (
+            cfunc_name(n), tr.builtins[n][0], ' | '.join(tr.builtins[n][1]), tr.sums[n].meta)
+            for n in done]
+        out.append('}')
     report = []
 
     def loc(n):
@@ -510,8 +560,9 @@ def generate(target, family, effects=None):
     for n in order:
         if n in metas:
             report.append('generated  %-32s %s' % (loc(n), tr.sums[n].meta))
-    for n in sorted(tr.fails):
-        report.append('skipped    %-32s %s' % (loc(n), tr.fails[n]))
+    for n in sorted(set(tr.fails) | set(tr.builtins_skipped)):
+        report.append('skipped    %-32s %s' % (loc(n), tr.fails.get(n)
+                                                or tr.builtins_skipped[n]))
     notes = []
     for n, b in tr.budgets_hit:
         notes.append('budget     %-32s %s' % (loc(n), b))
@@ -536,9 +587,26 @@ def build(target, family='abstract'):
         raise cslots.GenError(str(e))
 
 
+def cfunc_name(fname):
+    """The variable holding a builtin's C function, for its fallback."""
+    return 'cfunc_' + fname
+
+
+def fallback(tr, fname, params):
+    """The builtin's C function itself, as Ni calls it for its flags
+    (METH_ARGS 'fallback'), with the meta's own parameters."""
+    _, flags, spec = tr.builtins[fname]
+    return spec['fallback'].format(cfunc=cfunc_name(fname), flags=' | '.join(flags),
+                                   args=', '.join(params))
+
+
 def build_long(target):
     return build(target, 'long')
 
 
 def build_float(target):
     return build(target, 'float')
+
+
+def build_math(target):
+    return build(target, 'math')

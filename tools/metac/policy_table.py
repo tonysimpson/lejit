@@ -242,30 +242,35 @@ RULES = {
     },
     'copy_through': {
         'what': "The backend has no floating-point instructions: a C double is a"
-                " word holding its bits. A maximal run of statements that read and"
-                " write only C scalars (locals of a representation's C type,"
-                " integers, constants, compiler built-ins, EXTERNAL's pure functions,"
-                " SCALAR_CODE) is copied into one C helper the meta calls, CfPure"
-                " (folded on constants) or CfPyErrCheck where it can raise; its"
-                " inputs are the helper's arguments, its one result the helper's."
-                " A run that ends the function, every path returning an error or a"
-                " constructor of a scalar, returns the scalar and the meta builds"
-                " the object (TYPES 'double': Ni's 'new'). A static function on"
-                " scalars it calls is copied with it.",
-        'decisions': ['D19', 'D87'],
-        'applied_by': ['tools/metac/scalars.py:scalar_reps'],
+                " word holding its bits. The longest run of statements on C scalars"
+                " only (doubles and integers, a float's double field, constants,"
+                " compiler built-ins, EXTERNAL's pure functions and those effects.py"
+                " proves pure, SCALAR_CODE, and static functions of the file that are"
+                " scalar code themselves, called as their copies) that leaves at most"
+                " one variable live, or the rest of the block when every path"
+                " returns, is copied into one C helper the meta calls: always"
+                " CfNoPython and CfNoBlock, CfPure only when it raises nothing and"
+                " touches no C library state; one that may raise returns an int"
+                " status and its result through an output array. A run that ends"
+                " the function, every path returning an error or a constructor of a"
+                " scalar, returns the scalar and the meta builds the object (TYPES"
+                " 'double': Ni's 'new'). The units still on gen_abstract.py read a"
+                " double through scalars.py, which makes no helper for them.",
+        'decisions': ['D19', 'D87', 'D113'],
+        'applied_by': ['tools/metac/gen2/scalar.py:run', 'tools/metac/scalars.py:scalar_reps'],
     },
     'inline_static': {
         'what': "A static function of the file called with the address of a"
                 " local (an out-parameter) or with a function's name is its body"
-                " at the call, parameters replaced by the arguments: '*p' is the"
-                " caller's variable, a call through a function parameter calls"
-                " that function. 'return f(...)' keeps f's returns; 'if (f(...)"
-                " OP K) S1 else S2', f returning constants, puts S1 or S2 at each"
-                " return as the test chooses ('*p = E' before one answered"
-                " 'return x' is 'return E').",
-        'decisions': ['D87'],
-        'applied_by': ['tools/metac/scalars.py:inline_calls'],
+                " at the call, by value: each parameter a fresh local holding its"
+                " argument, '*p' the caller's variable, and a parameter given a"
+                " constant or a function's name, never assigned, that constant or"
+                " function. 'return f(...)' keeps f's returns; 'if (f(...) OP K)"
+                " S1 else S2', f returning constants, puts S1 or S2 at each return"
+                " as the test chooses. The units still on gen_abstract.py inline"
+                " through scalars.py, by substituting the arguments (KNOWN_BUGS G13).",
+        'decisions': ['D87', 'D114'],
+        'applied_by': ['tools/metac/gen2/inline.py:expand', 'tools/metac/scalars.py:inline_calls'],
     },
     'preprocess_conditionals': {
         'what': "A source file's #if/#ifdef/#elif/#else are evaluated as"
@@ -349,9 +354,6 @@ TRANSLATED_FUNCTIONS = {
     'Python/bltinmodule.c': ['abs', 'len', 'hash', 'id', 'divmod', 'pow',
                              'isinstance', 'issubclass', 'getattr', 'setattr',
                              'delattr', 'callable', 'hasattr'],
-    # ceil and floor stay hand-written (pmath.c: an int result)
-    'Modules/mathmodule.c': ['acos', 'asin', 'atan', 'cos', 'cosh', 'exp', 'fabs',
-                             'sin', 'sinh', 'sqrt', 'tan', 'tanh'],
 }
 
 # How Ni calls the meta of a builtin function, by its ml_flags
@@ -1316,12 +1318,13 @@ ENTRIES = {
     'Include/floatobject.h:PyFloat_AS_DOUBLE': {'shape': '1c13bbe6b768', 'ni': ['ni/Objects/pfloatobject.h:PsycoFloat_AS_DOUBLE']},
     # generated (pfloatslots_gen.h); math's functions call it
     'Objects/floatobject.c:PyFloat_AsDouble': {'ni': ['tools/metac/gen2/abstract.py:generate']},
-    'Modules/mathmodule.c:math_1_to_whatever': {'shape': 'cd6f59f052aa', 'ni': ['tools/metac/gen_builtins.py:build_math']},
-    'Modules/mathmodule.c:is_error': {'shape': '4134a5ed9548', 'ni': ['tools/metac/gen_builtins.py:build_math']},
+    # inlined into the math functions (pmathmodule_gen.h), is_error copied
+    'Modules/mathmodule.c:math_1_to_whatever': {'ni': ['tools/metac/gen2/abstract.py:generate']},
+    'Modules/mathmodule.c:is_error': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Modules/mathmodule.c:FUNC1': {
         'shape': 'f0fd927ef403',
-        'ni': ['tools/metac/gen_builtins.py:build_math', 'ni/Modules/pmath.c:PMATH_TO_INT']},
-    'Modules/mathmodule.c:math_1': {'shape': 'be63fd72b546', 'ni': ['tools/metac/gen_builtins.py:build_math']},
+        'ni': ['tools/metac/gen2/abstract.py:generate', 'ni/Modules/pmath.c:PMATH_TO_INT']},
+    'Modules/mathmodule.c:math_1': {'ni': ['tools/metac/gen2/abstract.py:generate']},
     'Modules/mathmodule.c:math_1_to_int': {'shape': '6972e8ae844b', 'ni': ['ni/Modules/pmath.c:cimpl_floor_to_int', 'ni/Modules/pmath.c:cimpl_ceil_to_int']},
     'Modules/mathmodule.c:math_ceil': {
         'shape': 'eaf343d6c390',

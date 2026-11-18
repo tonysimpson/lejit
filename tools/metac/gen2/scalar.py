@@ -48,6 +48,7 @@ class Run:
         self.errno_read = False
         self.ctor = None          # a tail: the representation its returns build
         self.fnptrs = []          # function-pointer parameters it calls
+        self.copies = []          # static functions it calls, as their copies
 
     def add_in(self, key, kind, what):
         if all(k != key for k, _, _ in self.ins):
@@ -58,6 +59,7 @@ class Run:
         r = copy.copy(self)
         r.ins, r.local, r.defs = list(self.ins), dict(self.local), list(self.defs)
         r.fnptrs = list(self.fnptrs)
+        r.copies = list(self.copies)
         return r
 
 
@@ -66,6 +68,7 @@ class Scan:
 
     def __init__(self, w, p):
         self.w, self.p, self.u = w, p, w.u
+        self.inside = frozenset()
         from . import reps
         self.double_rep = reps.reps_of(w, 'double')
 
@@ -134,9 +137,9 @@ class Scan:
         return n in self.u.enums
 
     def call(self, e, run):
-        f = strip_casts(e.name)
+        f = callee(e)
         args = e.args.exprs if e.args else []
-        if not isinstance(f, c_ast.ID):
+        if f is None:
             return False
         n = f.name
         v = self.p.vars.get(n)
@@ -149,9 +152,43 @@ class Scan:
             run.add_in(n, 'var', v)
             run.fnptrs.append(n)
             return all(self.expr(a, run) for a in args)
+        if n in self.w.tr.funcs:
+            if not self.copied(n, run):
+                return False
+            return all(self.expr(a, run) for a in args)
         if not self.pure(n):
             return False
         return all(self.expr(a, run) for a in args)
+
+    def copied(self, n, run):
+        """A static function of the file that is itself scalar code (its
+        parameters its locals, its returns scalars) is called in the helper
+        as its run-time copy. It counts as C library state; it raises if
+        its code may, and reads errno only after the run set it."""
+        tr, u = self.w.tr, self.u
+        g = tr.funcs[n]
+        if 'static' not in g.decl.storage or g is self.w.fn or n in self.inside:
+            return False
+        args = g.decl.type.args
+        ps = [x for x in (args.params if args else []) if isinstance(x, c_ast.Decl)]
+        if ps and ps[0].name is None and u.is_void(ps[0].type):
+            ps = []
+        if not self.scalar_type(g.decl.type.type) or not all(
+                x.name and self.scalar_type(x.type) for x in ps):
+            return False
+        sub = Run()
+        sub.local = {x.name: x.type for x in ps}
+        sub.errno_set = run.errno_set
+        inner = StaticScan(self, n)
+        if not all(inner.stmt(x, sub, True) for x in g.body.block_items or []):
+            return False
+        run.state = True
+        run.raises = run.raises or sub.raises
+        run.errno_read = run.errno_read or sub.errno_read
+        for c in sub.copies + [n]:
+            if c not in run.copies:
+                run.copies.append(c)
+        return True
 
     def pure(self, n):
         tr = self.w.tr
@@ -226,11 +263,11 @@ class Scan:
             return True
         if w.sm.kind == 'obj':
             e = strip_casts(e)
-            if not (isinstance(e, c_ast.FuncCall) and isinstance(e.name, c_ast.ID)
+            if not (isinstance(e, c_ast.FuncCall) and callee(e) is not None
                     and e.args and len(e.args.exprs) == 1):
                 return False
             r = self.double_rep
-            if r is None or e.name.name not in r.spec['constructors']:
+            if r is None or callee(e).name not in r.spec['constructors']:
                 return False
             run.ctor = r
             before = run.doubles
@@ -248,6 +285,37 @@ class Scan:
             return cprint.is_null(e)
         return isinstance(e, c_ast.UnaryOp) and e.op == '-' \
             and isinstance(e.expr, c_ast.Constant) and e.expr.value in ('1', '1.0')
+
+
+class StaticScan(Scan):
+    """A static function's body, as scalar code of its own: only its
+    parameters and locals are its variables, and it returns scalars."""
+
+    def __init__(self, outer, name):
+        import types
+        self.w, self.p, self.u = outer.w, types.SimpleNamespace(vars={}), outer.u
+        self.double_rep = None
+        self.inside = outer.inside | {name}
+
+    def name(self, n, run):
+        if n in run.local:
+            return True
+        return n in self.u.enums
+
+    def ret(self, e, run):
+        return e is not None and self.expr(e, run)
+
+    def error_return(self, e):
+        return False
+
+
+def callee(e):
+    """The function call e names: 'f(...)' or '(*f)(...)', f an ID (casts
+    ignored); else None."""
+    f = strip_casts(e.name)
+    if isinstance(f, c_ast.UnaryOp) and f.op == '*':
+        f = strip_casts(f.expr)
+    return f if isinstance(f, c_ast.ID) else None
 
 
 def is_errno(e):
@@ -364,9 +432,10 @@ class HelperPrinter(cprint.Printer):
     """The run's C in the helper: a field read is the parameter it was
     loaded into; a return is the helper's."""
 
-    def __init__(self, scan, status, tail, result):
+    def __init__(self, scan, status, tail, result, copies):
         super().__init__()
         self.scan, self.status, self.tail, self.result = scan, status, tail, result
+        self.copies = copies
 
     def visit_StructRef(self, n):
         from . import reps
@@ -375,6 +444,13 @@ class HelperPrinter(cprint.Printer):
             if xv is not None:
                 return '%s_%s' % (xv.name, n.field.name)
         return super().visit_StructRef(n)
+
+    def visit_FuncCall(self, n):
+        f = callee(n)
+        if f is not None and f.name in self.copies:
+            args = n.args.exprs if n.args else []
+            return '%s(%s)' % (self.copies[f.name], ', '.join(self.visit(a) for a in args))
+        return super().visit_FuncCall(n)
 
     def visit_Return(self, n):
         if self.scan.error_return(n.expr):
@@ -430,7 +506,8 @@ def emit(w, scan, stmts, r, p, out, frames, tail, outs=()):
         params.append(text(c_ast.PtrDecl([], unconst(rtype)), '_r'))
     lines = ['  %s;' % text(unconst(p.vars[n].ctype), n)
              for n in r.defs if n not in [k for k, _, _ in r.ins]]
-    pr = HelperPrinter(scan, status, tail, rtype)
+    pr = HelperPrinter(scan, status, tail, rtype,
+                       {n: w.tr.copies.whole(n) for n in r.copies})
     for s in stmts:
         for ln in pr._generate_stmt(s).rstrip('\n').split('\n'):
             lines.append('  ' + ln)

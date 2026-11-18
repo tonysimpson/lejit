@@ -20,8 +20,8 @@ variable.
           word's reference.
   double  a float holds a C double in `field`: a read of it is `load` (a
           borrowed vinfo), a `constructors` call given a double is `new`,
-          which takes the reference (the math unit's scalars.py reads the
-          section too).
+          which takes the reference (gen_abstract.py's units read the
+          section too, through scalars.py).
 """
 import collections
 

@@ -3,7 +3,8 @@ time from a statement, as a call the meta emits, and the call's result is
 the meta's. One checked function; the refusals are the design's.
 
 At once (nothing called yet on the path), the call is of the whole
-function: CPython's own if exported, else its copy (cimpl_NAME). Later,
+function: CPython's own if exported, a builtin's C function as Ni calls
+one of its flags, else its copy (cimpl_NAME). Later,
 it is of a copy of the rest of the function from the statement
 (cimpl_NAME_k), taking the variables live there; the copy takes its own
 reference to each object the meta owns, and the meta releases its own.
@@ -28,6 +29,12 @@ def resume(w, p, out, frames, why, inside=False):
     stmt = frames[-1][0][frames[-1][1]]
     at_once = out is w.out and len(out.items) == w.body_start and not p.called
     w.rec.resumed.append((cprint.stmt_text(stmt), why, at_once))
+    if not p.called and w.name in tr.builtins:
+        # the C function itself, called as Ni calls one of its flags
+        from .abstract import fallback
+        p.called = True
+        w.rec.any_call = True
+        return w.ret_value(p, out, fallback(tr, w.name, [n for n, _ in w.params]))
     if not p.called:
         params = [(n, t) for n, t in w.params]
         if 'static' not in fn.decl.storage:
@@ -132,10 +139,13 @@ class Copies:
             if isinstance(t, c_ast.ArrayDecl):
                 raise Refuse('copy: array %s is live' % pn)
         parts, used = [], []
+        from .scalar import ends
         for stmts, i in reversed(frames):
             rest = [inline.orig(x) for x in (stmts[i:] if not parts else stmts[i + 1:])]
             used.extend(rest)
             parts.append(' '.join(join_decls(rest)))
+            if ends(rest) and not leaves_block(rest):
+                break           # what follows the block never runs
         body = ''
         for part in parts:
             body = ('{ %s } ' % body if body else '') + part
@@ -197,7 +207,8 @@ class Copies:
         including the copies doesn't), to expand in a copy's text."""
         if self._macros is None:
             import ctokens
-            path = self.tr.funcs[next(iter(self.tr.funcs))].coord.file
+            files = [f.coord.file for f in self.tr.funcs.values()]
+            path = next((f for f in files if f.endswith(self.tr.family.cfile)), files[0])
             try:
                 with open(path, encoding='latin-1') as f:
                     macros = ctokens.tokenize(f.read(), path)[1]
@@ -220,6 +231,18 @@ class Copies:
                 t = t._replace(text=self.whole(t.text))
             out.append(t)
         return cslots.text(out)
+
+
+def leaves_block(stmts):
+    """A goto, or a break or continue of no loop or switch inside stmts."""
+    def walk(n, inner):
+        if isinstance(n, (c_ast.Goto, c_ast.Label)):
+            return True
+        if isinstance(n, (c_ast.Break, c_ast.Continue)) and not inner:
+            return True
+        inner = inner or isinstance(n, (c_ast.For, c_ast.While, c_ast.DoWhile, c_ast.Switch))
+        return any(walk(c, inner) for _, c in n.children())
+    return any(walk(s, False) for s in stmts)
 
 
 def params_of(fn):
