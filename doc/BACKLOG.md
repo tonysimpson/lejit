@@ -9,7 +9,7 @@ What is still open, one line each, with where the detail is. Done items leave th
 - Mechanism snippets for 3.11+ (D75): the stubs in `ni/mechanisms/*` that `#error` "not written yet".
 
 ## Open bugs
-In KNOWN_BUGS.md. Worth doing first among them: C29 (no events for a frame already running compiled), then C11's `PyEval_GetFrame` hook and `f_lineno`; F97, F100, F103 are small translated-layer fixes. C15 and C18 are to be done on 3.7 (D64).
+In KNOWN_BUGS.md. Worth doing first among them: C29 (no events for a frame already running compiled), then C11's `PyEval_GetFrame` hook and `f_lineno`. C15 and C18 are to be done on 3.7 (D64).
 
 ## Speed
 - From the adversarial suite (FINDINGS.md): compile speed itself (`import_heavy` 4.4× cold, `many_functions` 13× on the first call: D12 keeps compiling everything, so compiling must get cheaper); Python dunder methods (`operator_overloading` 1.27× slower); the fixed 9 MB of RSS; recompiling fresh code (`exec_templates`, `lambdas_in_loops`); a guard broken by a class attribute bumped every call (`class_counter`).

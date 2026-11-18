@@ -164,6 +164,40 @@ vinfo_t *PsycoIter_Next(PsycoObject *po, vinfo_t *iter) {
   return Psyco_META1(po, f, CfCommonIterNext, "v", iter);
 }
 
+/* tuplesubscript, list_subscript and list_ass_subscript count a negative
+   index from the object's own size and call their own item functions, not
+   the type's slots, which a subclass's __len__ replaces */
+static PyTypeObject *subscript_base(PsycoObject *po, vinfo_t *o) {
+  PyTypeObject *tp = Psyco_NeedType(po, o);
+  if (tp == NULL)
+    return NULL;
+  if (PyType_TypeCheck(tp, &PyList_Type))
+    return &PyList_Type;
+  extra_assert(PyType_TypeCheck(tp, &PyTuple_Type));
+  return &PyTuple_Type;
+}
+
+/* the index plus the size if it is negative: a new reference */
+static vinfo_t *own_size_index(PsycoObject *po, PyTypeObject *base,
+                               vinfo_t *o, vinfo_t *i) {
+  vinfo_t *l, *r;
+  condition_code_t cc = integer_cmp_i(po, i, 0, Py_LT);
+  if (cc == CC_ERROR)
+    return NULL;
+  if (!runtime_condition_f(po, cc)) {
+    assert_nonneg(i);
+    vinfo_incref(i);
+    return i;
+  }
+  l = Psyco_META1(po, base->tp_as_sequence->sq_length,
+                  CfCommonPySSizeTResult, "v", o);
+  if (l == NULL)
+    return NULL;
+  r = integer_add(po, i, l, false);
+  vinfo_decref(l, po);
+  return r;
+}
+
 DEFINEFN
 vinfo_t *psyco_generic_subscript(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
   /* This is the meta-implementation of the mapping item assignment
@@ -181,11 +215,21 @@ vinfo_t *psyco_generic_subscript(PsycoObject *po, vinfo_t *o, vinfo_t *key) {
     vinfo_t *result;
     /* as list_subscript and tuplesubscript: PyNumber_AsSsize_t(item,
        PyExc_IndexError) */
-    vinfo_t *key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
+    vinfo_t *index;
+    PyTypeObject *base = subscript_base(po, o);
+    vinfo_t *key_value;
+    if (base == NULL)
+      return NULL;
+    key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
     if (key_value == NULL)
       return NULL;
-    result = PsycoSequence_GetItem(po, o, key_value);
+    index = own_size_index(po, base, o, key_value);
     vinfo_decref(key_value, po);
+    if (index == NULL)
+      return NULL;
+    result = Psyco_META2(po, base->tp_as_sequence->sq_item,
+                         CfCommonNewRefPyObject, "vv", o, index);
+    vinfo_decref(index, po);
     return result;
   } else {
     PyTypeObject *tp = Psyco_NeedType(po, o);
@@ -210,13 +254,26 @@ bool psyco_generic_ass_subscript(PsycoObject *po, vinfo_t *o, vinfo_t *key,
 
   if (PyType_TypeCheck(ktp, &PyLong_Type)) {
     bool result;
-    vinfo_t *key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
+    vinfo_t *index;
+    PyTypeObject *base = subscript_base(po, o);
+    vinfo_t *key_value;
+    if (base == NULL)
+      return false;
+    key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
     if (key_value == NULL)
       return false;
-    result = (value != NULL)
-                 ? PsycoSequence_SetItem(po, o, key_value, value)
-                 : PsycoSequence_DelItem(po, o, key_value);
+    index = own_size_index(po, base, o, key_value);
     vinfo_decref(key_value, po);
+    if (index == NULL)
+      return false;
+    if (value != NULL)
+      result = Psyco_META3(po, base->tp_as_sequence->sq_ass_item,
+                           CfCommonIntZeroOk, "vvv", o, index, value) != NULL;
+    else
+      result = Psyco_META3(po, base->tp_as_sequence->sq_ass_item,
+                           CfCommonIntZeroOk, "vvl", o, index,
+                           (long)NULL) != NULL;
+    vinfo_decref(index, po);
     return result;
   } else {
     char *vargs = (value != NULL) ? "vvv" : "vvl";

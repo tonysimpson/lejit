@@ -17,7 +17,6 @@ Open bugs only. IDs: **M** memory access (`ni/x64/v_mem_mov.h`, field functions 
 - **F34** (accepted): instance-dict lookups by an exact str name are called `CfNoPython` (`pobject.c`, `cf_flags.h`; `policy_table.py` `ASSUMPTIONS` for `PyDict_GetItem`), so a str-subclass key whose `__eq__` changes the class during the lookup isn't seen. [read]
 - **F36** (live): holding a class's shared keys (`pobject.c:shared_key_slot`, D31) can stop CPython re-sharing them when the class's only live instance grows its keys after a compile (`_PyObjectDict_SetItem` re-shares only if the class holds the sole reference). Results stay right; that class's instances use ordinary dicts (go's `Board`). Fixes tried cost more than the bug. [read], [run]
 - **F72** (accepted, D64): a direct compiled call into another module reads that module's `__builtins__` when the call site compiles, where CPython reads it at each frame start (`psyfunc.c:callee_builtins`). Exact would need a guard at every cross-module call. [inferred]
-- **F103** (live): a negative index on a tuple or list subclass defining `__len__` calls it: `pabstract.c:psyco_generic_subscript` and `psyco_generic_ass_subscript` go through `PsycoSequence_GetItem`/`SetItem` (`sq_length`), where 3.7 adds `Py_SIZE`. [read]
 - **F105** (out of memory only): `pycompiler.c:PsycoTraceBack_Here` calls `cimpl_vt_traceback` as `CfCommonNewRefPyObjectNoError`, but when `PyFrame_New` or `PyTraceBack_Here` fails it returns `Py_None` with a MemoryError still set. [read]
 
 ### Backend
@@ -92,7 +91,6 @@ From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent:
 - **F92** (`0b46284`): wrong argument counts raised a Py2 message.
 - **F96** (`3116d30`, D62): a constant's type was read at compile time and never checked. Left: the check chain is unbounded for an object given ever new classes.
 - **F99** (`cddaf8d`, D87): `math` functions ignored an int subclass's `__float__`.
-- **F100**: `sys._getframe` with a negative depth raised ValueError; CPython returns the top frame.
 - **F101** (`1aa473c`, D74): an in-place operator could run `__iadd__` twice (restart rule).
 - **F104** (`28ff76f`, D83): `pfloat_richcompare`'s int fallback didn't check NULL.
 - **F106** (D78): a respawn mishandled a condition still in the flags.
