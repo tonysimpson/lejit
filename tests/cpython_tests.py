@@ -12,9 +12,10 @@ with a timeout and a memory limit, in a temporary directory.
 """
 import os, resource, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
+from testenv import NI_DIR, SANITIZE_LOGS, SLOWDOWN, child_env, save_stderr
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TIMEOUT = 600                   # seconds per run
+TIMEOUT = 600 * SLOWDOWN        # seconds per run
 MEMORY_LIMIT = 4 << 30          # bytes of address space per run
 
 # the default set (tools/check.sh): fast modules, mostly pure Python
@@ -232,16 +233,21 @@ def limit_memory():
 
 
 def run(mode, name):
+    tag = name + '.' + mode
     with tempfile.TemporaryDirectory(prefix='ni_cpython_tests_') as cwd:
+        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, NI_DIR],
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE if SANITIZE_LOGS else subprocess.DEVNULL,
+                             stdin=subprocess.DEVNULL, cwd=cwd, env=child_env(tag),
+                             preexec_fn=None if SANITIZE_LOGS else limit_memory)
         try:
-            p = subprocess.run([sys.executable, '-c', CHILD, mode, name, ROOT],
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL,
-                               stdin=subprocess.DEVNULL, cwd=cwd,
-                               timeout=TIMEOUT, preexec_fn=limit_memory)
+            out, err = p.communicate(timeout=TIMEOUT)
         except subprocess.TimeoutExpired:
+            p.kill()
+            p.communicate()
             return 'timeout'
-    out = p.stdout.decode().strip().splitlines()
+    save_stderr(tag, p.pid, err)
+    out = out.decode().strip().splitlines()
     return '%s exit=%d' % (out[-1] if out else '(no output)', p.returncode)
 
 

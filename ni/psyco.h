@@ -125,6 +125,18 @@ EXTERNFN int psyco_fatal_error(char* msg, char* filename, int lineno);
 # define extra_assert(x)  (void)0  /* nothing */
 #endif
 
+/* Under AddressSanitizer (setup.py NI_SANITIZE), Ni's own allocators mark
+   what they hold free as unaddressable, so that an access through a stale
+   pointer is reported as malloc'd memory would be */
+#if defined(__SANITIZE_ADDRESS__)
+# include <sanitizer/asan_interface.h>
+# define NI_POISON(p, n)    ASAN_POISON_MEMORY_REGION(p, n)
+# define NI_UNPOISON(p, n)  ASAN_UNPOISON_MEMORY_REGION(p, n)
+#else
+# define NI_POISON(p, n)    ((void)0)
+# define NI_UNPOISON(p, n)  ((void)0)
+#endif
+
 #if INLINE_COMMON_FUNCTIONS
 # define PSY_INLINE	__inline static
 #else

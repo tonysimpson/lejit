@@ -33,8 +33,11 @@ static int nlocked = 0, lockedcap = 0;
 /* a compile prefers an extent this large, so that it doesn't pause soon */
 #define EXTENT_PREFERRED 16384
 
+/* free code is unaddressable under AddressSanitizer (NI_POISON): only
+   Ni's C code is checked, not the code it emits */
 static void free_insert(code_t *start, code_t *end) {
   int lo = 0, hi = nfree;
+  NI_POISON(start, end - start);
   while (lo < hi) {
     int mid = (lo + hi) / 2;
     if (free_ext[mid].start < start)
@@ -121,6 +124,7 @@ static code_t *take_extent(size_t want, size_t need, code_t **end) {
   *end = free_ext[i].end;
   memmove(free_ext + i, free_ext + i + 1, (nfree - i - 1) * sizeof(extent_t));
   nfree--;
+  NI_UNPOISON(start, *end - start);
   return start;
 }
 

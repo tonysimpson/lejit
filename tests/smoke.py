@@ -6,7 +6,8 @@ Output must be identical with and without Ni (tools/check.sh does this).
 """
 import sys, os
 if len(sys.argv) > 1 and sys.argv[1] == 'ni':
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    sys.path.insert(0, os.environ.get('NI_MODULE_DIR') or
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
     import ni
 import json, re, collections, textwrap, string, fractions, heapq, bisect, functools, itertools, base64, difflib, pprint, statistics, decimal, datetime, csv, io
 print(json.loads(json.dumps({'a': [1, 2.5, None]})))

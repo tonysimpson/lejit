@@ -23,6 +23,19 @@
   BLOCKALLOC_INTERN_DEF(name, type, static, static /*forward*/)         \
   BLOCKALLOC_INTERN_IMPL(name, type, blocksize, static, static)
 
+/* Under AddressSanitizer (setup.py NI_SANITIZE) each item is its own
+   malloc'd block, so that a use after free or an overflow into the next
+   item is reported, with the stacks that allocated and freed it */
+#if defined(__SANITIZE_ADDRESS__)
+#define BLOCKALLOC_INTERN_DEF(name, type, EVAR, EFN)                           \
+  PSY_INLINE type *psyco_llalloc_##name(void) {                                \
+    type *vi = (type *)PyMem_MALLOC(sizeof(type));                             \
+    if (vi == NULL)                                                            \
+      OUT_OF_MEMORY();                                                         \
+    return vi;                                                                 \
+  }                                                                            \
+  PSY_INLINE void psyco_llfree_##name(type *vi) { PyMem_FREE(vi); }
+#else
 #define BLOCKALLOC_INTERN_DEF(name, type, EVAR, EFN)                           \
   EVAR void **psyco_linked_list_##name;                                        \
   EFN void *psyco_ll_newblock_##name(void);                                    \
@@ -40,7 +53,11 @@
     *(void **)vi = psyco_linked_list_##name;                                   \
     psyco_linked_list_##name = (void **)vi;                                    \
   }
+#endif
 
+#if defined(__SANITIZE_ADDRESS__)
+#define BLOCKALLOC_INTERN_IMPL(name, type, blocksize, DVAR, DFN)
+#else
 #define BLOCKALLOC_INTERN_IMPL(name, type, blocksize, DVAR, DFN)               \
   DVAR void **psyco_linked_list_##name = NULL;                                 \
   DFN void *psyco_ll_newblock_##name() {                                       \
@@ -59,5 +76,6 @@
     psyco_linked_list_##name = *(void ***)prev;                                \
     return prev;                                                               \
   }
+#endif
 /***************************************************************/
 #endif /* _BLOCKALLOC_H */

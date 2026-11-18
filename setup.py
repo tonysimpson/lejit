@@ -44,6 +44,11 @@ NI_CODESTATS = int(os.environ.get('NI_CODESTATS', 0))
 # instead of the cached release tarball (doc/BUILD.md).
 NI_GEN_PYTHON = os.environ.get('NI_GEN_PYTHON', 'python3')
 
+# NI_SANITIZE=address or address,undefined: build with gcc's sanitizers
+# (tools/sanitize.sh, doc/BUILD.md). Such a build goes in build/asan
+# (--build-lib), never in place, with its own config stamp.
+NI_SANITIZE = os.environ.get('NI_SANITIZE', '')
+
 ####################################################################
 
 macros = [
@@ -97,6 +102,18 @@ extra_compile_args += ['-Werror=implicit-function-declaration',
                        '-Werror=int-conversion',
                        '-Werror=incompatible-pointer-types']
 extra_link_args = []
+if NI_SANITIZE:
+    if '--inplace' in sys.argv or '-i' in sys.argv:
+        raise SystemExit('NI_SANITIZE: build with --build-lib build/asan,'
+                         ' not --inplace (tools/sanitize.sh)')
+    # after the options above, so this -O1 wins
+    extra_compile_args += ['-fsanitize=' + NI_SANITIZE, '-O1', '-g',
+                           '-fno-omit-frame-pointer']
+    # the encoder writes instructions' immediates and displacements at any
+    # byte address, by design (x86 allows it)
+    if 'undefined' in NI_SANITIZE:
+        extra_compile_args += ['-fno-sanitize=alignment']
+    extra_link_args += ['-fsanitize=' + NI_SANITIZE]
 sources = find_sources(PROCESSOR, ALL_STATIC==1)
 # distutils rebuilds only when a file listed here or in sources is newer
 # than ni.so: list every header and .c file (ni.c #includes the .c files)
@@ -105,12 +122,16 @@ depends = sorted(set(glob.glob('./ni/**/*.h', recursive=True) +
 # switching NI_TRACE or NI_ALL_CHECKS must also rebuild: remember the
 # options, and remove the built module when they change (distutils compares
 # whole seconds, so a fresh stamp file alone is not reliably "newer")
-config = repr((macros, extra_compile_args))
-stamp = os.path.join('build', 'ni_config.stamp')
+config = repr((macros, extra_compile_args, extra_link_args))
+if NI_SANITIZE:
+    stamp_dir, built_glob = 'build/asan', ['build/asan/ni*.so']
+else:
+    stamp_dir, built_glob = 'build', ['ni*.so', 'build/lib*/ni*.so']
+stamp = os.path.join(stamp_dir, 'ni_config.stamp')
 if not os.path.exists(stamp) or open(stamp).read() != config:
-    for built in glob.glob('ni*.so') + glob.glob('build/lib*/ni*.so'):
+    for built in [b for g in built_glob for b in glob.glob(g)]:
         os.remove(built)
-    os.makedirs('build', exist_ok=True)
+    os.makedirs(stamp_dir, exist_ok=True)
     with open(stamp, 'w') as f:
         f.write(config)
 processor_dir = os.path.join('./ni', PROCESSOR)

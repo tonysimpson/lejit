@@ -8,7 +8,8 @@ code buffers are started than a small allowance.
     python3.7 tests/compile_bounds.py [-v]
 """
 import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.insert(0, os.environ.get('NI_MODULE_DIR') or
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import math
 import ni
 

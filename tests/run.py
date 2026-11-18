@@ -22,28 +22,34 @@ the plain run's.
 Usage: run.py [-k substring] [-v]
 """
 import glob, os, subprocess, sys
+from testenv import NI_DIR, SLOWDOWN, child_env, save_stderr
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CASES = os.path.join(ROOT, 'tests', 'cases')
 PY37 = os.environ.get('NI_PY37', os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
-TIMEOUT = 20
+TIMEOUT = 20 * SLOWDOWN
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
 
 
 def run_child(modname, fname, calls, use_ni):
     if not isinstance(calls, str):
         calls = repr(calls)
-    cmd = [PY37, os.path.join(ROOT, 'tests', 'child.py'), ROOT, CASES,
+    cmd = [PY37, os.path.join(ROOT, 'tests', 'child.py'), NI_DIR, CASES,
            modname, fname, calls, '1' if use_ni else '0']
+    tag = '%s.%s.%s' % (modname, fname, 'ni' if use_ni else 'plain')
     try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           timeout=TIMEOUT)
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env=child_env(tag))
+        out, err = p.communicate(timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
+        p.kill()
+        p.communicate()
         return None, 'timeout after %ds' % TIMEOUT
+    save_stderr(tag, p.pid, err)
     if p.returncode != 0:
-        err = p.stderr.decode(errors='replace').strip().splitlines()
+        err = err.decode(errors='replace').strip().splitlines()
         return None, 'exit %d: %s' % (p.returncode, ' | '.join(err[-3:]))
-    return p.stdout.decode().splitlines(), None
+    return out.decode().splitlines(), None
 
 
 def load_cases(filt):
