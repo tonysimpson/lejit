@@ -274,33 +274,33 @@ typedef enum {
 #define WRITE_8BIT(immed)                                                      \
   do {                                                                         \
     if (((long)(immed) < -128) || ((long)(immed) > 127)) {                     \
-      fprintf(stderr, "Bad value for 8bit %ld %s:%d\n", (long)immed, __FILE__, \
+      fprintf(stderr, "Bad value for 8bit %ld %s:%d\n", (long)(immed), __FILE__,\
               __LINE__);                                                       \
     }                                                                          \
     if (!ONLY_UPDATING) {                                                      \
-      *code = (code_t)immed;                                                   \
+      *code = (code_t)(immed);                                                 \
     }                                                                          \
     code += 1;                                                                 \
   } while (0)
 #define WRITE_16BIT(immed)                                                     \
   do {                                                                         \
     if (((long)(immed) < -32768) || ((long)(immed) > 32767)) {                 \
-      fprintf(stderr, "Bad value for 16bit %ld %s:%d\n", (long)immed,          \
+      fprintf(stderr, "Bad value for 16bit %ld %s:%d\n", (long)(immed),        \
               __FILE__, __LINE__);                                             \
     }                                                                          \
     if (!ONLY_UPDATING) {                                                      \
-      *(word_t *)code = (word_t)immed;                                         \
+      *(word_t *)code = (word_t)(immed);                                       \
     }                                                                          \
     code += sizeof(word_t);                                                    \
   } while (0)
 #define WRITE_32BIT(immed)                                                     \
   do {                                                                         \
     if (((long)(immed) < -2147483648) || ((long)(immed) > 2147483647)) {       \
-      fprintf(stderr, "Bad value for 32bit %ld %s:%d\n", (long)immed,          \
+      fprintf(stderr, "Bad value for 32bit %ld %s:%d\n", (long)(immed),        \
               __FILE__, __LINE__);                                             \
     }                                                                          \
     if (!ONLY_UPDATING) {                                                      \
-      *(dword_t *)code = (dword_t)immed;                                       \
+      *(dword_t *)code = (dword_t)(immed);                                     \
     }                                                                          \
     code += sizeof(dword_t);                                                   \
   } while (0)
@@ -313,22 +313,22 @@ typedef enum {
   } while (0)
 #define UPDATABLE_WRITE_8BIT(immed)                                            \
   do {                                                                         \
-    *code = (code_t)immed;                                                     \
+    *code = (code_t)(immed);                                                   \
     code += 1;                                                                 \
   } while (0)
 #define UPDATABLE_WRITE_16BIT(immed)                                           \
   do {                                                                         \
-    *(word_t *)code = (word_t)immed;                                           \
+    *(word_t *)code = (word_t)(immed);                                         \
     code += sizeof(word_t);                                                    \
   } while (0)
 #define UPDATABLE_WRITE_32BIT(immed)                                           \
   do {                                                                         \
-    *(dword_t *)code = (dword_t)immed;                                         \
+    *(dword_t *)code = (dword_t)(immed);                                       \
     code += sizeof(dword_t);                                                   \
   } while (0)
 #define UPDATABLE_WRITE_64BIT(immed)                                           \
   do {                                                                         \
-    *(qword_t *)code = (qword_t)immed;                                         \
+    *(qword_t *)code = (qword_t)(immed);                                       \
     code += sizeof(qword_t);                                                   \
   } while (0)
 #define WRITE_1(b1)                                                            \
@@ -381,12 +381,12 @@ typedef enum {
 #define OP_REX_64_RM_I64(opcode, reg, immed)                                   \
   do {                                                                         \
     WRITE_2(REX_64_RM(reg), REG_IN_OPCODE(opcode, reg));                       \
-    WRITE_64BIT(immed);                                                        \
+    WRITE_64BIT(immed);                                                      \
   } while (0)
 #define OP_REX_64_RM_UI64(opcode, reg, immed)                                  \
   do {                                                                         \
     WRITE_2(REX_64_RM(reg), REG_IN_OPCODE(opcode, reg));                       \
-    UPDATABLE_WRITE_64BIT(immed);                                              \
+    UPDATABLE_WRITE_64BIT(immed);                                            \
   } while (0)
 #define OP_REX_64_MODRM_REG_RM(opcode, reg, rm)                                \
   WRITE_3(REX_64_REG_RM(reg, rm), opcode, MODRM_REG_RM(reg, rm))
@@ -1034,10 +1034,10 @@ typedef enum {
   do {                                                                         \
     if (FITS_IN_8BITS(immed)) {                                                \
       DIRECT_OR_RSP_OFFSET_ENCODING(true, 1, 0x6B, 0, 0, 0, dstrg, source);    \
-      WRITE_8BIT(immed);                                                       \
+      WRITE_8BIT(immed);                                                     \
     } else if (FITS_IN_32BITS(immed)) {                                        \
       DIRECT_OR_RSP_OFFSET_ENCODING(true, 1, 0x69, 0, 0, 0, dstrg, source);    \
-      WRITE_32BIT(immed);                                                      \
+      WRITE_32BIT(immed);                                                    \
     } else {                                                                   \
       MOV_R_I(REG_TRANSIENT_1, immed);                                         \
       IMUL_REG_FROM_RT(source, REG_TRANSIENT_1);                               \
@@ -1257,7 +1257,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
 #define END_CALL_I(immed)                                                      \
   do {                                                                         \
     extra_assert(_last_arg_index == 0); /* every argument was set */        \
-    CALL_I(immed);                                                             \
+    CALL_I(immed);                                                           \
     STACK_CORRECTION(_initial_stack_depth - po->stack_depth);                  \
     po->stack_depth = _initial_stack_depth;                                    \
     _last_arg_index = 0;   /* suppress warning */                              \
@@ -1282,7 +1282,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
       CHECK_AND_UPDATE_TARGET_REG(dst_reg);                                    \
       MOV_R_I(dst_reg, immed);                                                 \
     } else {                                                                   \
-      PUSH_I(immed);                                                           \
+      PUSH_I(immed);                                                         \
       psyco_inc_stackdepth(po);                                                \
     }                                                                          \
   } while (0)
