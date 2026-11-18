@@ -1,4 +1,4 @@
-# 3.7.17 fd50161bc2a04f4c22a0971ff0f3856d98b4bf294f89740a9f06b520aae63b49 7f2955af1270e758c9c0176d46078b598212eb9f+84bcffe0c0a5
+# 3.7.17 fd50161bc2a04f4c22a0971ff0f3856d98b4bf294f89740a9f06b520aae63b49 3c6c6999176cef69992eee75cc1e7c9020a889f4+ad95167fcebf
 BEFORE_ASYNC_WITH	refused	stack: error exit with exit on the stack	Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)
 BINARY_ADD	generated		Python/ceval.c:TARGET(BINARY_ADD)
 BINARY_AND	generated		Python/ceval.c:TARGET(BINARY_AND)
@@ -93,16 +93,16 @@ POP_TOP	generated		Python/ceval.c:TARGET(POP_TOP)
 PRINT_EXPR	refused	vocabulary: statement '_Py_IDENTIFIER ( displayhook )'	Python/ceval.c:TARGET(PRINT_EXPR)
 PyBytes_Type.sq_length	generated		Objects/bytesobject.c:bytes_length
 PyDict_Type.mp_length	generated		Objects/dictobject.c:dict_length
-PyFloat_AsDouble	resumed	the mro of a heap type changed: if (PyFloat_Check(op)) { return PyFloat_AS_DOUBLE(op); }; a slot of a heap type changed: if (nb == NULL || nb->nb_float == NULL) { PyErr_Format(PyExc_TypeError; the type of res is not known (F24): if (!PyFloat_CheckExact(res)) { if (!PyFloat_Check(res)) { PyErr_Forma; the mro of a heap type changed: if (!PyFloat_Check(res)) { PyErr_Format(PyExc_TypeError, "%.50s.__floa; a test of the run-time value PyErr_WarnFormat(PyExc_DeprecationWarning, 1, "%.50s.__float__ returned non-float (type %.50s).  " "The ability to return an instance of a strict subclass of float " "is deprecated, and may be removed in a future version of Python.", op->ob_type->tp_name, res->ob_type->tp_name): if (PyErr_WarnFormat(PyExc_DeprecationWarning, 1, "%.50s.__float__ ret	Objects/floatobject.c:PyFloat_AsDouble
+PyFloat_AsDouble	resumed	the mro of a heap type changed: if (PyFloat_Check(op)) { return PyFloat_AS_DOUBLE(op); }; a slot of a heap type changed: if (nb == NULL || nb->nb_float == NULL) { PyErr_Format(PyExc_TypeError; the type of res is not known: if (!PyFloat_CheckExact(res)) { if (!PyFloat_Check(res)) { PyErr_Forma; the mro of a heap type changed: if (!PyFloat_Check(res)) { PyErr_Format(PyExc_TypeError, "%.50s.__floa; a test of the run-time value PyErr_WarnFormat(PyExc_DeprecationWarning, 1, "%.50s.__float__ returned non-float (type %.50s).  The ability to return an instance of a strict subclass of float is deprecated, and may be removed in a future version of Python.", op->ob_type->tp_name, res->ob_type->tp_name): if (PyErr_WarnFormat(PyExc_DeprecationWarning, 1, "%.50s.__float__ ret	Objects/floatobject.c:PyFloat_AsDouble
 PyFloat_Type.nb_absolute	generated		Objects/floatobject.c:float_abs
-PyFloat_Type.nb_add	resumed	the mro of a heap type changed: if (PyFloat_Check(v)) a = PyFloat_AS_DOUBLE(v); else if (convert_to_do; the mro of a heap type changed: if (PyFloat_Check(w)) b = PyFloat_AS_DOUBLE(w); else if (convert_to_do	Objects/floatobject.c:float_add
+PyFloat_Type.nb_add	resumed	the mro of a heap type changed: CONVERT_TO_DOUBLE(v, a);; the mro of a heap type changed: CONVERT_TO_DOUBLE(w, b);	Objects/floatobject.c:float_add
 PyFloat_Type.nb_bool	generated		Objects/floatobject.c:float_bool
-PyFloat_Type.nb_multiply	resumed	the mro of a heap type changed: if (PyFloat_Check(v)) a = PyFloat_AS_DOUBLE(v); else if (convert_to_do; the mro of a heap type changed: if (PyFloat_Check(w)) b = PyFloat_AS_DOUBLE(w); else if (convert_to_do	Objects/floatobject.c:float_mul
+PyFloat_Type.nb_multiply	resumed	the mro of a heap type changed: CONVERT_TO_DOUBLE(v, a);; the mro of a heap type changed: CONVERT_TO_DOUBLE(w, b);	Objects/floatobject.c:float_mul
 PyFloat_Type.nb_negative	generated		Objects/floatobject.c:float_neg
 PyFloat_Type.nb_positive	generated		Objects/floatobject.c:float_float
-PyFloat_Type.nb_remainder	resumed	the mro of a heap type changed: if (PyFloat_Check(v)) vx = PyFloat_AS_DOUBLE(v); else if (convert_to_d; the mro of a heap type changed: if (PyFloat_Check(w)) wx = PyFloat_AS_DOUBLE(w); else if (convert_to_d	Objects/floatobject.c:float_rem
-PyFloat_Type.nb_subtract	resumed	the mro of a heap type changed: if (PyFloat_Check(v)) a = PyFloat_AS_DOUBLE(v); else if (convert_to_do; the mro of a heap type changed: if (PyFloat_Check(w)) b = PyFloat_AS_DOUBLE(w); else if (convert_to_do	Objects/floatobject.c:float_sub
-PyFloat_Type.nb_true_divide	resumed	the mro of a heap type changed: if (PyFloat_Check(v)) a = PyFloat_AS_DOUBLE(v); else if (convert_to_do; the mro of a heap type changed: if (PyFloat_Check(w)) b = PyFloat_AS_DOUBLE(w); else if (convert_to_do	Objects/floatobject.c:float_div
+PyFloat_Type.nb_remainder	resumed	the mro of a heap type changed: CONVERT_TO_DOUBLE(v, vx);; the mro of a heap type changed: CONVERT_TO_DOUBLE(w, wx);	Objects/floatobject.c:float_rem
+PyFloat_Type.nb_subtract	resumed	the mro of a heap type changed: CONVERT_TO_DOUBLE(v, a);; the mro of a heap type changed: CONVERT_TO_DOUBLE(w, b);	Objects/floatobject.c:float_sub
+PyFloat_Type.nb_true_divide	resumed	the mro of a heap type changed: CONVERT_TO_DOUBLE(v, a);; the mro of a heap type changed: CONVERT_TO_DOUBLE(w, b);	Objects/floatobject.c:float_div
 PyFloat_Type.tp_hash	generated		Objects/floatobject.c:float_hash
 PyIter_Next	refused	Ni's PsycoIter_Next is not a translation of it: FOR_ITER's call: StopIteration is left set	Objects/abstract.c:PyIter_Next
 PyList_Type.sq_length	generated		Objects/listobject.c:list_length
@@ -116,7 +116,7 @@ PyLong_Type.nb_negative	resumed	v is not one word (Py_ABS(Py_SIZE(x)) <= 1): if 
 PyLong_Type.nb_positive	generated		Objects/longobject.c:long_long
 PyLong_Type.nb_power	resumed	an array table: PyLongObject *table[32] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,	Objects/longobject.c:long_pow
 PyLong_Type.nb_subtract	resumed	a is not one word (Py_ABS(Py_SIZE(x)) <= 1): if (Py_ABS(Py_SIZE(a)) <= 1 && Py_ABS(Py_SIZE(b)) <= 1) { return PyLon; b is not one word (Py_ABS(Py_SIZE(x)) <= 1): if (Py_ABS(Py_SIZE(a)) <= 1 && Py_ABS(Py_SIZE(b)) <= 1) { return PyLon	Objects/longobject.c:long_sub
-PyLong_Type.nb_true_divide	restarted	a local of type digit: digit mask, low;	Objects/longobject.c:long_true_divide
+PyLong_Type.nb_true_divide	resumed	no 'likely' item for the run-time branch ((PyVarObject *) a)->ob_size < 0: a_size = Py_ABS(Py_SIZE(a));	Objects/longobject.c:long_true_divide
 PyMapping_Size	resumed	a slot of a heap type changed: if (m && m->mp_length) { Py_ssize_t len = m->mp_length(o); assert(len 	Objects/abstract.c:PyMapping_Size
 PyMemberDescr_Type.tp_descr_get	generated		Objects/descrobject.c:member_get
 PyMember_GetOne	resumed	a read of a float through addr: v = PyFloat_FromDouble((double)*(float*)addr);	Python/structmember.c:PyMember_GetOne
@@ -124,7 +124,6 @@ PyMethodDescr_Type.tp_descr_get	refused	policy items left to the hand translatio
 PyNumber_Absolute	resumed	a slot of a heap type changed: if (m && m->nb_absolute) return m->nb_absolute(o);	Objects/abstract.c:PyNumber_Absolute
 PyNumber_Add	resumed	a slot of a heap type changed: if (m && m->sq_concat) { return (*m->sq_concat)(v, w); }	Objects/abstract.c:PyNumber_Add
 PyNumber_And	generated		Objects/abstract.c:PyNumber_And
-PyNumber_AsSsize_t	refused	policy items left to the hand translation: shortcut const_fold, shortcut one_digit	Objects/abstract.c:PyNumber_AsSsize_t
 PyNumber_Divmod	generated		Objects/abstract.c:PyNumber_Divmod
 PyNumber_FloorDivide	generated		Objects/abstract.c:PyNumber_FloorDivide
 PyNumber_InPlaceAdd	resumed	a slot of a heap type changed: f = m->sq_inplace_concat;; a slot of a heap type changed: f = m->sq_concat;	Objects/abstract.c:PyNumber_InPlaceAdd
@@ -211,8 +210,7 @@ YIELD_FROM	refused	shared code: goto fast_yield	Python/ceval.c:TARGET(YIELD_FROM
 YIELD_VALUE	refused	shared code: goto fast_yield	Python/ceval.c:TARGET(YIELD_VALUE)
 _PyEval_EvalCodeWithName	generated		Python/ceval.c:_PyEval_EvalCodeWithName
 _PyLong_Copy	restarted	the field ob_size of a run-time value: i = Py_SIZE(src);	Objects/longobject.c:_PyLong_Copy
-_PyLong_Negate	refused	returns 	Objects/longobject.c:_PyLong_Negate
-_PyLong_New	refused	no 'likely' item in the policy table for the run-time branch 'size > Py_ssize_tMAX_LONG_DIGITS'	Objects/longobject.c:_PyLong_New
+_PyLong_Negate	refused	returns void	Objects/longobject.c:_PyLong_Negate
 _PyObject_HasLen	refused	an int result needs its convention: declare _PsycoObject_HasLen in ni/Objects/pabstract.h	Objects/abstract.c:_PyObject_HasLen
 _PySequence_IterSearch	restarted	every path from here runs a loop with a run-time bound: if (seq == NULL || obj == NULL) { null_error(); return -1; }	Objects/abstract.c:_PySequence_IterSearch
 _PyUnicode_AsKind	refused	returns void *	Objects/unicodeobject.c:_PyUnicode_AsKind
@@ -221,7 +219,7 @@ _PyUnicode_FastCopyCharacters	refused	returns void	Objects/unicodeobject.c:_PyUn
 _PyUnicode_Ready	refused	an int result needs its convention: declare _PsycoUnicode_Ready in ni/Objects/pabstract.h	Objects/unicodeobject.c:_PyUnicode_Ready
 binary_iop	generated		Objects/abstract.c:binary_iop
 binary_iop1	resumed	a slot of a heap type changed: binaryfunc slot = NB_BINOP(mv, iop_slot);	Objects/abstract.c:binary_iop1
-binary_op	resumed	a cast of a run-time value to PyCFunctionObject *: if (op_slot == NB_SLOT(nb_rshift) && PyCFunction_Check(v) && strcmp(((	Objects/abstract.c:binary_op
+binary_op	resumed	the field m_ml of a run-time value: if (op_slot == NB_SLOT(nb_rshift) && PyCFunction_Check(v) && strcmp(((	Objects/abstract.c:binary_op
 binary_op1	resumed	a slot of a heap type changed: slotv = NB_BINOP(v->ob_type->tp_as_number, op_slot);; a slot of a heap type changed: slotw = NB_BINOP(w->ob_type->tp_as_number, op_slot);; the mro of a heap type changed: if (slotw && PyType_IsSubtype(w->ob_type, v->ob_type)) { x = slotw(v, 	Objects/abstract.c:binary_op1
 binop_type_error	generated		Objects/abstract.c:binop_type_error
 builtin_delattr_impl	generated		Python/bltinmodule.c:builtin_delattr_impl
@@ -244,13 +242,10 @@ builtins.issubclass	resumed	a count of arguments outside 2..2: if (!_PyArg_Unpac
 builtins.len	generated		Python/bltinmodule.c:builtin_len
 builtins.pow	resumed	a count of arguments outside 2..3: if (!_PyArg_UnpackStack(args, nargs, "pow", 2, 3, &x, &y, &z)) { goto 	Python/clinic/bltinmodule.c.h:builtin_pow
 builtins.setattr	resumed	a count of arguments outside 3..3: if (!_PyArg_UnpackStack(args, nargs, "setattr", 3, 3, &obj, &name, &va	Python/clinic/bltinmodule.c.h:builtin_setattr
-divrem1	refused	a call returning PyLongObject *	Objects/longobject.c:divrem1
 ensure_unicode	refused	no 'likely' item in the policy table for the run-time test of the bit-field ((PyASCIIObject *)obj)->state.ready	Objects/unicodeobject.c:ensure_unicode
-fast_floor_div	refused	policy items left to the hand translation: extra power_of_two	Objects/longobject.c:fast_floor_div
 inplace_divrem1	refused	returns digit	Objects/longobject.c:inplace_divrem1
 k_lopsided_mul	refused	copy: k_lopsided_mul calls itself	Objects/longobject.c:k_lopsided_mul
 k_mul	refused	recursive	Objects/longobject.c:k_mul
-long_normalize	refused	a call returning PyLongObject *	Objects/longobject.c:long_normalize
 math.acos	generated		Modules/mathmodule.c:math_acos
 math.asin	generated		Modules/mathmodule.c:math_asin
 math.atan	generated		Modules/mathmodule.c:math_atan
@@ -263,7 +258,6 @@ math.sinh	generated		Modules/mathmodule.c:math_sinh
 math.sqrt	generated		Modules/mathmodule.c:math_sqrt
 math.tan	generated		Modules/mathmodule.c:math_tan
 math.tanh	generated		Modules/mathmodule.c:math_tanh
-maybe_small_long	refused	a call returning PyLongObject *	Objects/longobject.c:maybe_small_long
 sequence_repeat	resumed	a slot of a heap type changed: if (PyIndex_Check(n)) { count = PyNumber_AsSsize_t(n, PyExc_OverflowEr	Objects/abstract.c:sequence_repeat
 ternary_op	resumed	a slot of a heap type changed: slotv = NB_TERNOP(mv, op_slot);; a slot of a heap type changed: slotw = NB_TERNOP(mw, op_slot);; the mro of a heap type changed: if (slotw && PyType_IsSubtype(w->ob_type, v->ob_type)) { x = slotw(v, ; a slot of a heap type changed: slotz = NB_TERNOP(mz, op_slot);; the object Py_None as a value: if (z == Py_None) PyErr_Format( PyExc_TypeError, "unsupported operand 	Objects/abstract.c:ternary_op
 type_error	generated		Objects/abstract.c:type_error
@@ -274,7 +268,3 @@ v_rshift	refused	returns digit	Objects/longobject.c:v_rshift
 virtual.PyMethod_New	generated		Objects/classobject.c:PyMethod_New
 virtual.PySlice_New	generated		Objects/sliceobject.c:PySlice_New
 virtual.PyTuple_New	generated		Objects/tupleobject.c:PyTuple_New
-x_add	refused	a call returning PyLongObject *	Objects/longobject.c:x_add
-x_divrem	refused	a call returning PyLongObject *	Objects/longobject.c:x_divrem
-x_mul	refused	a call returning PyLongObject *	Objects/longobject.c:x_mul
-x_sub	refused	a call returning PyLongObject *	Objects/longobject.c:x_sub

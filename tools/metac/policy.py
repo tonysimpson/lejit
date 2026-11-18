@@ -305,9 +305,9 @@ class Checker:
         """A word representation: its Ni functions are declared and
         its constructors are in the source."""
         where += ' word'
-        self.fields(where, w, ('test', 'value', 'value_ctype', 'bound', 'load',
+        self.fields(where, w, ('test', 'value', 'bound', 'load',
                                'sign', 'sign_load', 'constructors', 'new'))
-        for k in ('test', 'value', 'value_ctype', 'bound', 'load', 'constructors', 'new'):
+        for k in ('test', 'value', 'bound', 'load', 'constructors', 'new'):
             if k not in w:
                 self.bad(where, 'no %r' % k)
         for k in ('load', 'sign_load', 'new'):

@@ -29,6 +29,8 @@ def promote(w, p, out, name, entry=False):
     tpv = 'tp_' + name
     if name in p.known:
         return tpv
+    if v is not None and not v.isparam and v.alias and v.own == 'borrowed' and not entry:
+        return promote(w, p, out, v.alias)      # a copy of a parameter
     if v is not None and not v.isparam and v.bt == 'dynamic' and not entry:
         return known_type(w, p, out, v)
     if v is None or not v.isparam:
@@ -191,9 +193,10 @@ def same(a, b):
 
 # ---- run-time branches ----
 
-def runtime_compare(w, p, out, e, op, va, vb, facts_t, facts_f):
+def runtime_compare(w, p, out, e, op, va, vb, facts_t, facts_f, value=False):
     """A compare of a run-time integer: a condition code, and the branch
-    the policy says is likely (P05, P06)."""
+    the policy says is likely (P05, P06); as a value (the C's 0 or 1, not
+    a branch), the condition's vinfo."""
     cc = w.new_tmp('condition_code_t')
     ct = vb.bt == 'meta'
     inverted = False
@@ -210,8 +213,15 @@ def runtime_compare(w, p, out, e, op, va, vb, facts_t, facts_f):
     w.error_exit(p, out, '%s == CC_ERROR' % cc)
     if inverted:
         out.line('%s = INVERT_CC(%s);' % (cc, cc))
+    if value:
+        r = w.new_tmp('vinfo_t *')
+        out.line('%s = psyco_vinfo_condition(po, %s);' % (r, cc))
+        return Val('dynamic', r, INT, owned=True)
     item = next((i for i in w.likely if same(i.expr, e)), None)
     if item is None:
+        if not p.called:
+            # nothing run yet: CPython's code runs whole, its branches its own
+            raise ResumeHere("no 'likely' item for the run-time branch %s" % cprint.expr(e))
         raise Refuse("no 'likely' item for the run-time branch %s" % cprint.expr(e))
     if item.text not in w.rec.used_likely:
         w.rec.used_likely.append(item.text)
@@ -255,6 +265,10 @@ def call(w, e, p, out, frames, dest):
             return subtype(w, p, out, frames, args)
         if name in tr.metas:
             return meta_call(w, name, args, p, out, frames, dest)
+        from . import reps
+        r = reps.construct(w, name, args, p, out, frames)
+        if r is not None:
+            return r
         pname = conventions.psyco_name(name)
         if pname in tr.ni and pname not in tr.declared:
             return ni_call(w, tr.ni[pname], name, args, p, out, frames)
@@ -424,10 +438,15 @@ def ni_call(w, decl, name, args, p, out, frames):
         if v.bt == 'dynamic' and v.owned and not held_scalar(w, v):
             raise ResumeHere('a call as an argument')
         if v.bt == 'dynamic' and w.u.is_object(v.ctype):
-            if v.var is None or not v.var.isparam:
+            pv = v.var
+            if pv is not None and not pv.isparam and pv.alias and pv.own == 'borrowed':
+                pv = p.vars.get(pv.alias, pv)       # a copy of a parameter
+            if pv is None or not pv.isparam:
                 raise ResumeHere('%s of a value that is not a parameter' % decl.name)
-            if v.var.name not in p.known and p.called and v.var.name not in w.rec.late:
-                w.rec.late.append(v.var.name)
+            if pv.name not in p.known and p.called and pv.name not in w.rec.late:
+                w.rec.late.append(pv.name)
+            if pv is not v.var:
+                v = Val('dynamic', pv.cname, v.ctype, var=pv, conv=v.conv)
         vals.append(v)
     note_call(w, p)
     c = '%s(po%s)' % (decl.name, ''.join(', ' + v.c for v in vals))

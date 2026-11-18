@@ -11,7 +11,7 @@ import copy
 
 from pycparser import c_ast
 
-from . import actions, cprint, resume
+from . import actions, cprint, reps, resume, scalar
 from .cbuild import Code
 from .ctyping import INT, LONG, VOID_P, strip_casts, text
 from .errors import Refuse, ResumeHere
@@ -37,6 +37,8 @@ class Record:
         self.used_likely = []     # policy Likely items used
         self.any_call = False
         self.ncalls = 0
+        self.reps = set()         # representations used
+        self.budgets = []         # budgets hit
 
     def snapshot(self):
         return copy.deepcopy(self.__dict__)
@@ -66,6 +68,7 @@ class Walk:
         self.stmt_ncalls = 0
         self.stmt_frames = None
         self.incref_return = None
+        self.word_counts = {}     # (statement, x) -> [reads so far, reads]
 
     # ---- the walk's record ----
 
@@ -113,9 +116,9 @@ class Walk:
                 raise Refuse('policy %r matches no run-time branch' % item)
 
     def block(self, stmts, p, out, frames):
-        for i, s in enumerate(stmts):
-            if p.ended:
-                break
+        i = 0
+        while i < len(stmts) and not p.ended:
+            s = stmts[i]
             here = frames + [(stmts, i)]
             if (not p.called and self.sm.kind != 'ct'
                     and not isinstance(s, (c_ast.Decl, c_ast.EmptyStatement))
@@ -123,9 +126,15 @@ class Walk:
                 resume.resume(self, p, out, here, 'every path from here runs a loop'
                               ' with a run-time bound')
                 break
-            self.statement(s, p, out, here)
+            n = scalar.run(self, stmts, i, p, out, here)
+            if n:
+                s = stmts[i + n - 1]
+            else:
+                self.statement(s, p, out, here)
+                n = 1
             if not p.ended:
                 self.release_dead(p, out, self.live.after[id(s)])
+            i += n
 
     def statement(self, s, p, out, frames):
         mark = len(out.items)
@@ -147,7 +156,7 @@ class Walk:
 
     def release_dead(self, p, out, live):
         for v in list(p.vars.values()):
-            if v.bt == 'dynamic' and v.owned() and v.name not in live:
+            if v.bt == 'dynamic' and v.owned() and (v.word_of or v.name) not in live:
                 self.release(v, out)
 
     def release(self, v, out):
@@ -273,8 +282,20 @@ class Walk:
         v = p.vars.get(name)
         if v is None:
             raise Refuse('assignment to %s' % name)
+        for x in p.vars.values():
+            if x.alias == name:
+                x.alias = None      # a copy of the old value, no longer the parameter's
+        st = singleton(e)
+        if st is not None and v.bt == 'dynamic' and self.u.is_object(v.ctype):
+            # an immortal object: Ni's constant, made where it is used
+            if v.owned():
+                self.release(v, out)
+            v.own, v.singleton, v.known_null, v.conv = 'none', st, False, None
+            p.known.discard(name)
+            return
         val = self.ev(e, p, out, frames, dest=name)
         v.known_null = False
+        v.singleton = None
         if not v.isparam:
             p.known.discard(name)       # a known type was the old value's
         if val.bt == 'gen':
@@ -302,6 +323,13 @@ class Walk:
                 raise ResumeHere('%s assigned a compile-time value' % name)
         if val.var is v:
             return
+        if val.var is not None and val.var.word_of and not val.owned:
+            # the variable's own reference to the word
+            if val.last and val.var.own == 'new':
+                val.var.own = 'none'
+            else:
+                out.line('vinfo_incref(%s);' % val.c)
+            val = Val('dynamic', val.c, val.ctype, owned=True, rng=val.rng)
         if val.var is not None and val.var.owned() and not val.owned:
             raise Refuse('%s aliases an owned value' % name)
         if v.owned():
@@ -315,6 +343,12 @@ class Walk:
         v.own = 'new' if val.owned else 'borrowed'
         v.alias = param_alias(val.var) if not val.owned else None
         v.conv = val.conv
+        v.rng = None
+        if val.rng is not None:
+            bs = reps.int_type(self.u, v.ctype)
+            if bs is None or not reps.fits(val.rng[0], val.rng[1], *bs):
+                raise ResumeHere('%s may not hold the value' % name)
+            v.rng = val.rng
         if val.conv and val.conv.check_now:
             own, v.own = v.own, 'borrowed'      # NULL: nothing to release
             self.error_exit(p, out, '%s == NULL' % v.cname)
@@ -337,9 +371,11 @@ class Walk:
             raise Refuse('return without a value')
         x = strip_casts(e)
         if isinstance(x, c_ast.ID) and getattr(p.vars.get(x.name), 'known_null', False) \
-                and p.vars[x.name].own == 'none':
+                and (p.vars[x.name].own == 'none' or p.vars[x.name].isparam):
             e = x = c_ast.Constant('int', '0')      # 'v = NULL; ... return v;'
             return self.ret_error(p, out)
+        if isinstance(x, c_ast.ID) and getattr(p.vars.get(x.name), 'singleton', None):
+            return actions.const_return(self, p, out, p.vars[x.name].singleton)
         ref = new_reference(x)
         if ref is not None:
             # 'return Py_INCREF(x), x': Py_RETURN_NONE and the like
@@ -365,7 +401,8 @@ class Walk:
         if kind in ('obj', 'val'):
             if val.bt == 'meta':
                 if val.c == 'NULL' or (kind == 'val' and (
-                        val.c in ('-1', '(-1)') or self.tr.error_value(self.fn, e))):
+                        val.c in ('-1', '(-1)', '-1.0', '(-1.0)')
+                        or self.tr.error_value(self.fn, e))):
                     return self.ret_error(p, out)
                 if kind == 'val':
                     return self.ret_value_owned(p, out, Val(
@@ -429,7 +466,7 @@ class Walk:
 
     def ret_value_owned(self, p, out, val):
         keep = val.var.name if val.var is not None else None
-        if self.restype and val.var is None:
+        if self.restype and val.var is None and val.made not in self.restype:
             r = val.c
             if not (r.startswith('_t') and r[2:].isdigit()):
                 r = self.new_tmp('vinfo_t *')
@@ -552,8 +589,10 @@ class Walk:
 
     # ---- conditions: a meta C boolean, or a Python bool if known now ----
 
-    def cond(self, e, p, out, frames, facts_t=None, facts_f=None):
+    def cond(self, e, p, out, frames, facts_t=None, facts_f=None, value=False):
         x = strip_casts(e)
+        if reps.test(self, x, p, out, frames):
+            return True
         if isinstance(x, c_ast.UnaryOp) and x.op == '!':
             if self.is_obj_param(x.expr, p):
                 return False
@@ -576,7 +615,7 @@ class Walk:
         if is_logic(x):
             return self.short_circuit(x, p, out, frames)
         if isinstance(x, c_ast.BinaryOp) and x.op in COMPARE:
-            r = self.compare(x, p, out, frames, facts_t, facts_f)
+            r = self.compare(x, p, out, frames, facts_t, facts_f, value)
             if r is not None:
                 return r
         if isinstance(x, c_ast.ID) and x.name in p.vars and p.vars[x.name].bt == 'dynamic' \
@@ -636,7 +675,7 @@ class Walk:
         p.early = p.early or sub.ended
         p.slots = {k: v for k, v in p.slots.items() if sub.slots.get(k) == v}
 
-    def compare(self, e, p, out, frames, facts_t, facts_f):
+    def compare(self, e, p, out, frames, facts_t, facts_f, value=False):
         op, a, b = e.op, e.left, e.right
         r = self.error_test(e, p)
         if r is not None:
@@ -650,8 +689,13 @@ class Walk:
         for x, y in ((a, b), (b, a)):
             if cprint.is_null(y) and op in ('==', '!=') and self.is_obj_param(x, p):
                 return op == '!='       # a meta's object parameter is never NULL
-        va = self.ev(a, p, out, frames)
-        vb = self.ev(b, p, out, frames)
+        va = vb = None
+        if reps.is_zero(b):
+            va = reps.sign(self, a, p, out)
+        elif reps.is_zero(a):
+            vb = reps.sign(self, b, p, out)
+        va = va or self.ev(a, p, out, frames)
+        vb = vb or self.ev(b, p, out, frames)
         if va.bt == 'gen' or vb.bt == 'gen':
             if va.bt == 'gen' and vb.bt == 'gen':
                 return (va.const == vb.const) == (op == '==')
@@ -668,7 +712,9 @@ class Walk:
             raise ResumeHere('a compare of the object %s' % cprint.expr(a))
         if va.bt != 'dynamic' or vb.bt not in ('meta', 'dynamic'):
             raise ResumeHere('a compare of %s' % cprint.expr(e))
-        return actions.runtime_compare(self, p, out, e, op, va, vb, facts_t, facts_f)
+        if self.u.is_double(va.ctype) or (vb.bt == 'dynamic' and self.u.is_double(vb.ctype)):
+            raise ResumeHere('a compare of a double %s' % cprint.expr(e))
+        return actions.runtime_compare(self, p, out, e, op, va, vb, facts_t, facts_f, value)
 
     def null_test(self, c, p):
         """(variable, True if NULL where c holds) when c is just the error
@@ -738,6 +784,9 @@ class Walk:
     # ---- expressions ----
 
     def ev(self, e, p, out, frames, dest=None):
+        v = reps.value(self, e, p, out, frames)
+        if v is not None:
+            return v
         if isinstance(e, c_ast.Constant):
             if e.type == 'string':
                 return Val('meta', e.value, self.type_of(e))
@@ -754,10 +803,15 @@ class Walk:
             return actions.call(self, e, p, out, frames, dest)
         if isinstance(e, c_ast.BinaryOp):
             if e.op in ('&&', '||') or e.op in COMPARE:
-                c = self.cond(e, p, out, frames)
+                c = self.cond(e, p, out, frames, value=True)
                 if isinstance(c, bool):
                     return Val('gen', None, INT, const=c)
+                if isinstance(c, Val):
+                    return c
                 return Val('meta', c, INT)
+            r = reps.arith(self, e, p, out, frames)
+            if r is not None:
+                return r
             va = self.ev(e.left, p, out, frames)
             vb = self.ev(e.right, p, out, frames)
             if va.bt == 'meta' and vb.bt == 'meta':
@@ -781,10 +835,12 @@ class Walk:
     def ev_id(self, name, p, out):
         if name in p.vars:
             v = p.vars[name]
+            if v.singleton is not None:
+                raise ResumeHere('the object %s as a value' % SINGLETON_NAMES[v.singleton])
             if v.bt == 'dynamic':
                 if v.own == 'none' and not v.isparam:
                     raise Refuse('%s read with no value' % name)
-                return Val('dynamic', v.cname, v.ctype, var=v, conv=v.conv)
+                return Val('dynamic', v.cname, v.ctype, var=v, conv=v.conv, rng=v.rng)
             return Val('meta', v.cname, v.ctype, tp=v.tp)
         if name in self.u.vars or name in self.u.enums:
             return Val('meta', name, self.u.vars.get(name, INT))
@@ -797,6 +853,8 @@ class Walk:
         if cprint.is_null(e) and isinstance(e.expr, c_ast.Constant):
             return Val('meta', 'NULL', VOID_P)
         t = e.to_type.type
+        if self.u.is_int(t) and reps.ranged(self, e.expr, p):
+            return reps.arith(self, e, p, out, frames)
         v = self.ev(e.expr, p, out, frames, dest)
         if v.bt == 'meta':
             return Val('meta', '((%s)%s)' % (text(t), v.c), t, tp=v.tp)
@@ -873,6 +931,8 @@ class Walk:
                 return Val('meta', (op + v.cname) if op in ('++', '--')
                            else (v.cname + op[1:]), v.ctype)
             raise ResumeHere('%s of a run-time value' % op.lstrip('p'))
+        if op == '-' and reps.ranged(self, x, p):
+            return reps.arith(self, e, p, out, frames)
         v = self.ev(x, p, out, frames)
         if v.bt == 'meta':
             return Val('meta', '%s%s' % (op, paren(v.c)), v.ctype)

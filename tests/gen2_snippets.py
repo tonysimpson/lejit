@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Snippet tests for the new translator (tools/metac/gen2): small C in,
 the generated meta (or the refusal) out. The C is read after
-Objects/abstract.c, in its scope, so it has CPython 3.7's types; a test's
-functions are translated as a family whose metas Ni declares as the test
-says. Needs gcc and CPython 3.7's source; no build.
+Objects/abstract.c, in its scope, so it has CPython 3.7's types (a
+number test's after Objects/longobject.c or Objects/floatobject.c, with
+the word and double representations); a test's functions are translated
+as a family whose metas Ni declares as the test says. Needs gcc and
+CPython 3.7's source; no build.
 
     gen2_snippets.py [NAME...]
 
@@ -15,7 +17,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools', 'metac'))
 import front  # noqa: E402
-from gen2 import abstract, conventions, policy, scope  # noqa: E402
+from gen2 import abstract, conventions, policy, scope, types  # noqa: E402
 from gen2.policy import Likely, Restype  # noqa: E402
 
 PY37 = os.environ.get('NI_PY37', os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
@@ -28,8 +30,9 @@ class Case:
     resume lines, `copy` in its run-time copies."""
 
     def __init__(self, name, c, roots, fn=None, items=None, want=(), absent=(),
-                 refused=None, report=None, copy=()):
+                 refused=None, report=None, copy=(), file='abstract'):
         self.name, self.c, self.roots = name, c, roots
+        self.file = file
         self.fn = fn or roots[0]
         self.items = items or {}
         self.want, self.absent, self.refused, self.report = want, absent, refused, report
@@ -137,11 +140,20 @@ PyObject *PySnip_Likely(PyObject *o, Py_ssize_t i) {
 }''', ['PySnip_Likely'], items={'PySnip_Likely': [Likely('i < 0', False)]},
          want=['integer_cmp_i(po, i, 0, Py_LT)', '== CC_ERROR', 'runtime_condition_f(po,',
                'assert_nonneg(i);']),
-    Case('likely: a run-time branch with no item is refused', '''
+    Case('likely: a run-time branch with no item, nothing called yet: CPython\'s function', '''
 PyObject *PySnip_NoLikely(PyObject *o, Py_ssize_t i) {
     if (i < 0) return PyObject_Repr(o);
     return PySequence_GetItem(o, i);
-}''', ['PySnip_NoLikely'], refused="no 'likely' item for the run-time branch"),
+}''', ['PySnip_NoLikely'], want=['return psyco_generic_call(po, PySnip_NoLikely,'],
+         report="no 'likely' item for the run-time branch"),
+    Case('likely: a run-time branch with no item after a call is refused', '''
+PyObject *PySnip_NoLikely2(PyObject *o, Py_ssize_t i) {
+    PyObject *r = PyObject_Repr(o);
+    if (r == NULL) return NULL;
+    Py_DECREF(r);
+    if (i < 0) return PyObject_Repr(o);
+    return PySequence_GetItem(o, i);
+}''', ['PySnip_NoLikely2'], refused="no 'likely' item for the run-time branch"),
     Case('restype: the result is asserted to be of the type', '''
 PyObject *PySnip_Restype(PyObject *o) { return PySequence_Tuple(o); }''', ['PySnip_Restype'],
          items={'PySnip_Restype': [Restype('PyTuple_Type')]},
@@ -163,6 +175,145 @@ PyObject *PySnip_Mixed(PyObject *o, PyObject *w) {
     Case('refuse: a construct with no rule refuses the function', '''
 int PySnip_Refuse(PyObject *o) { return 1; }''', ['PySnip_Refuse'],
          refused='an int result needs its convention'),
+    # ---- the numbers: the word and double representations, helpers, inline ----
+    Case('word: the test is a guard; case 0 runs CPython\'s function', '''
+PyObject *PySnip_Word(PyLongObject *a, PyLongObject *b) {
+    if (Py_ABS(Py_SIZE(a)) <= 1 && Py_ABS(Py_SIZE(b)) <= 1)
+        return PyLong_FromLong(MEDIUM_VALUE(a) + MEDIUM_VALUE(b));
+    return PyNumber_Add((PyObject *)a, (PyObject *)b);
+}''', ['PySnip_Word'], file='long',
+         want=['switch (PsycoLong_MediumValue(po, a, &w_a))', 'case 1:', 'case 0:',
+               'psyco_generic_call(po, PySnip_Word,', 'default:',
+               'switch (PsycoLong_MediumValue(po, b, &w_b))', 'vinfo_decref(w_a, po);',
+               '/* in [-2147483646, 2147483646]: no overflow */',
+               'integer_add(po, w_a, w_b, false);', 'vinfo_decref(w_a, po);',
+               'vinfo_decref(w_b, po);', 'PsycoLong_FROM_WORD('],
+         report='a is not one word'),
+    Case('word: arithmetic that may overflow its C type resumes', '''
+PyObject *PySnip_WordOvf(PyLongObject *a, PyLongObject *b) {
+    if (Py_ABS(Py_SIZE(a)) <= 1 && Py_ABS(Py_SIZE(b)) <= 1)
+        return PyLong_FromLong(MEDIUM_VALUE(a) * MEDIUM_VALUE(b));
+    return PyNumber_Add((PyObject *)a, (PyObject *)b);
+}''', ['PySnip_WordOvf'], file='long', absent=['integer_mul'],
+         report='may overflow its 32-bit C type'),
+    Case('word: a cast to a wider type first, and the value kept in a variable', '''
+PyObject *PySnip_WordWide(PyLongObject *a, PyLongObject *b) {
+    if (Py_ABS(Py_SIZE(a)) <= 1 && Py_ABS(Py_SIZE(b)) <= 1) {
+        stwodigits v = (stwodigits)(MEDIUM_VALUE(a)) * MEDIUM_VALUE(b);
+        return PyLong_FromLongLong((long long)v);
+    }
+    return PyNumber_Add((PyObject *)a, (PyObject *)b);
+}''', ['PySnip_WordWide'], file='long',
+         want=['integer_mul(po, w_a, w_b, false);', 'v = _t', 'vinfo_incref(v);',
+               'PsycoLong_FROM_WORD(v);', 'vinfo_decref(v, po);']),
+    Case('word: read with no guard before it resumes', '''
+PyObject *PySnip_NoWord(PyLongObject *a) {
+    return PyLong_FromLong(MEDIUM_VALUE(a) + 1);
+}''', ['PySnip_NoWord'], file='long',
+         want=['return psyco_generic_call(po, PySnip_NoWord,'], report='has no word'),
+    Case('word: the sign compared with 0 is Ni\'s sign, compared', '''
+PyObject *PySnip_Sign(PyLongObject *a) {
+    if (Py_SIZE(a) < 0) return PyNumber_Negative((PyObject *)a);
+    return PyNumber_Positive((PyObject *)a);
+}''', ['PySnip_Sign'], file='long', items={'PySnip_Sign': [Likely('Py_SIZE(a) < 0', False)]},
+         want=['PsycoLong_Sign(po, a);', 'integer_cmp_i(po, _t', '0, Py_LT)',
+               'runtime_condition_f(po,']),
+    Case('word: a compare as a value is the condition\'s vinfo', '''
+PyObject *PySnip_SignValue(PyLongObject *a) {
+    int r = Py_SIZE(a) != 0;
+    return PyBool_FromLong(r);
+}''', ['PySnip_SignValue'], file='long',
+         want=['PsycoLong_Sign(po, a);', 'integer_non_null(po, _t1);', 'psyco_vinfo_condition(po,',
+               'PsycoBool_FromLong(po, r);'], absent=['runtime_condition']),
+    Case('double: C on doubles is one helper, pure, never Python, never blocking (G12)', '''
+PyObject *PySnip_Double(PyFloatObject *v) {
+    return PyFloat_FromDouble(v->ob_fval * 2.0 + 1.0);
+}''', ['PySnip_Double'], file='float',
+         want=['PsycoFloat_AS_DOUBLE(po, v);', 'vinfo_incref(',
+               'CfPure | CfReturnTypeDouble | CfNoPython | CfNoBlock, "d",',
+               'PsycoFloat_FROM_DOUBLE('],
+         copy=['static double cimpl_PySnip_Double(double v_ob_fval)',
+               'return (v_ob_fval * 2.0) + 1.0;']),
+    Case('double: a helper that raises returns a status, its double through an array (G12)', '''
+PyObject *PySnip_Raises(PyFloatObject *v) {
+    double b = v->ob_fval;
+    if (b == 0.0) {
+        PyErr_SetString(PyExc_ZeroDivisionError, "snip");
+        return NULL;
+    }
+    return PyFloat_FromDouble(1.0 / b);
+}''', ['PySnip_Raises'], file='float',
+         want=['array_new(1);', 'CfCommonIntZeroOk | CfNoPython | CfNoBlock, "da",',
+               'array_release(', '->items[0];', 'PsycoFloat_FROM_DOUBLE('],
+         absent=['CfPure', 'CfPyErrCheck'],
+         copy=['static int cimpl_PySnip_Raises(double v_ob_fval, double *_r)',
+               '{ *_r = 1.0 / b; return 0; }', 'return -1;']),
+    Case('double: errno set and read in one helper, which is not pure (G12)', '''
+PyObject *PySnip_Errno(PyFloatObject *v) {
+    double r;
+    errno = 0;
+    r = fmod(v->ob_fval, 2.0);
+    if (errno) {
+        PyErr_SetString(PyExc_ValueError, "snip");
+        return NULL;
+    }
+    return PyFloat_FromDouble(r);
+}''', ['PySnip_Errno'], file='float', want=['CfCommonIntZeroOk | CfNoPython | CfNoBlock'],
+         absent=['CfPure'], copy=['__errno_location', 'fmod(v_ob_fval, 2.0)']),
+    Case('double: errno read with no set before it in the run stays out of a helper (G12)', '''
+PyObject *PySnip_ErrnoOut(PyFloatObject *v) {
+    if (errno) return PyObject_Repr((PyObject *)v);
+    return PyFloat_FromDouble(v->ob_fval + 1.0);
+}''', ['PySnip_ErrnoOut'], file='float', want=['return psyco_generic_call(po, PySnip_ErrnoOut,']),
+    Case('double: a function-pointer parameter every caller gives a pure function (G12)', '''
+static PyObject *snip_fp(PyFloatObject *v, double (*func)(double)) {
+    return PyFloat_FromDouble(func(v->ob_fval));
+}
+PyObject *PySnip_Fp(PyFloatObject *v) { return snip_fp(v, fabs); }''', ['PySnip_Fp'],
+         fn='snip_fp', file='float',
+         want=['CfPure | CfReturnTypeDouble | CfNoPython | CfNoBlock, "ld", (long)(func),'],
+         copy=['return func(v_ob_fval);']),
+    Case('inline (G13): parameters by value, *p the caller\'s variable', '''
+static int snip_take(PyObject **p, double *d) {
+    PyObject *o = *p;
+    if (!PyFloat_CheckExact(o)) {
+        *p = NULL;
+        return -1;
+    }
+    *d = PyFloat_AS_DOUBLE(o);
+    return 0;
+}
+PyObject *PySnip_Inline(PyObject *v) {
+    double x;
+    if (snip_take(&v, &x) < 0)
+        return v;
+    return PyFloat_FromDouble(x + 1.0);
+}''', ['PySnip_Inline'], file='float',
+         want=['snip_take_o = v;', 'if (!(tp_v == (&PyFloat_Type)))', 'return NULL;',
+               'PsycoFloat_AS_DOUBLE(po, snip_take_o);', 'x = _t',
+               'PsycoFloat_FROM_DOUBLE('],
+         absent=['snip_take(po', 'cimpl_snip_take']),
+    Case('inline (G13): an argument is evaluated once', '''
+static int snip_once(double a, double *d) {
+    *d = a * a;
+    return 0;
+}
+PyObject *PySnip_Once2(PyFloatObject *v) {
+    double x;
+    if (snip_once(v->ob_fval, &x) < 0)
+        return NULL;
+    return PyFloat_FromDouble(x);
+}''', ['PySnip_Once2'], file='float',
+         want=['PsycoFloat_AS_DOUBLE(po, v);', 'PsycoFloat_FROM_DOUBLE('],
+         copy=['snip_once_a = v_ob_fval;', 'x = snip_once_a * snip_once_a;']),
+    Case('G11: a compare\'s operand is evaluated once', '''
+PyObject *PySnip_G11(PyObject *o) {
+    if (PyObject_Size(o) < 0) return NULL;
+    return PyObject_Repr(o);
+}''', ['PySnip_G11'], items={'PySnip_G11': [Likely('PyObject_Size(o) < 0', False)]},
+         want=['_t1 = PsycoObject_Size(po, o);', 'integer_cmp_i(po, _t1, 0, Py_LT);',
+               'vinfo_decref(_t1, po);'],
+         absent=['_t2 = PsycoObject_Size', '_t3 = PsycoObject_Size']),
     # ---- the old generator's bugs, the correct behaviour ----
     Case('G6: no resume starts inside a loop the meta runs (the meta runs none)', '''
 PyObject *PySnip_G6(PyObject *o, Py_ssize_t n) {
@@ -226,16 +377,25 @@ def g10():
     return False, 'loaded'
 
 
+FILES = {'abstract': ('Objects/abstract.c', ()), 'long': ('Objects/longobject.c', ('word', 'double')),
+         'float': ('Objects/floatobject.c', ('double',))}
+
+
 def run(cases):
     t = front.target(PY37)
-    fam = scope.Family('snip', 'Objects/abstract.c', 'snip.h', None, None)
-    extra = '\n'.join(c.c for c in cases)
-    items = {k: v for c in cases for k, v in c.items.items()}
-    loaded = policy.load(t, fam, items, extra)
-    ast = front.parse(t, fam.cfile, extra)
     ni = conventions.ni_decls(abstract.ROOT, scope.NI_HEADERS)
     fails = 0
+    parsed = {}
+    for f, (cfile, reps) in FILES.items():
+        mine = [c for c in cases if c.file == f]
+        if not mine:
+            continue
+        fam = scope.Family('snip', cfile, 'snip.h', None, None, (), reps)
+        extra = types.rule_text(reps) + '\n'.join(c.c for c in mine)
+        items = {k: v for c in mine for k, v in c.items.items()}
+        parsed[f] = (fam, front.parse(t, cfile, extra), policy.load(t, fam, items, extra))
     for c in cases:
+        fam, ast, loaded = parsed[c.file]
         declared = {conventions.psyco_name(r) for r in c.roots}
         tr = abstract.Translator(fam, ast, ni, declared, loaded, None, own='<rules>')
         tr.run()

@@ -1,6 +1,10 @@
-"""pabstract_gen.h: the metas of Objects/abstract.c's functions that Ni
-declares in ni/Objects/pabstract.h, and of the file's functions they call
-(doc/GENERATOR_DESIGN.md, Migration step 3, the first family).
+"""The translator's driver, one family (scope.FAMILIES) at a time
+(doc/GENERATOR_DESIGN.md, Migration step 3): pabstract_gen.h, the metas
+of Objects/abstract.c's functions that Ni declares in
+ni/Objects/pabstract.h; plongobject_gen.h and pfloatslots_gen.h, the
+metas of the int and float slots scope.py names (registered by the
+header's gen_FILE_init) and of floatobject.c's functions Ni declares; and
+the metas of the file's functions those call.
 
 A function's meta is found by walking it (walk.py) until the promotions it
 needs before any call are all at its entry; a callee is translated before
@@ -13,7 +17,7 @@ from pycparser import c_ast
 import cpython_src
 import cslots
 import front
-from . import conventions, policy, resume, scope
+from . import conventions, inline, policy, resume, scope, slots, types
 from .bta import locals_bt
 from .cbuild import Function
 from .ctyping import Unit, strip_casts, text
@@ -49,6 +53,14 @@ class Translator:
         family's (a test's C after it)."""
         self.family = family
         self.unit = Unit(ast)
+        self.reps = types.load(ast, family.reps)
+        self.budgets = dict(policy.BUDGETS)
+        self.slot_roots = {}      # function -> [(slot reference, slot)]
+        self.slot_types = {}      # function -> its type
+        for tp, names in family.slots:
+            for f, refs in slots.slot_functions(ast, self.unit, tp, names).items():
+                self.slot_roots.setdefault(f, []).extend(refs)
+                self.slot_types.setdefault(f, tp)
         self.funcs = {d.decl.name: d for d in ast.ext if isinstance(d, c_ast.FuncDef)
                       and d.coord.file.endswith(own or family.cfile)}
         self.ni, self.declared = ni, declared
@@ -57,21 +69,35 @@ class Translator:
         self.pure = {k for k, v in policy_table.EXTERNAL.items() if v == 'pure'}
         self.sums, self.metas, self.fails = {}, {}, {}
         self.resumes = []
-        self.local_bts, self.liveness = {}, {}
+        self.local_bts, self.liveness, self.expanded = {}, {}, {}
+        self.reps_used, self.budgets_hit = set(), []
         self.copies = resume.Copies(self)
 
     # ---- which functions, in what order ----
 
     def roots(self):
         return [n for n in sorted(self.funcs)
-                if conventions.psyco_name(n) in self.declared]
+                if conventions.psyco_name(n) in self.declared or n in self.slot_roots]
 
     def callees(self, fn):
         out = []
         for n in id_names(fn.body):
-            if n in self.funcs and n != fn.decl.name and n not in out:
+            if n in self.funcs and n != fn.decl.name and n not in out \
+                    and not self.ni_own(n) and not self.constructor(n):
                 out.append(n)
         return out
+
+    def constructor(self, n):
+        """A representation's constructor: given a word or a double, the
+        representation's virtual (reps.construct)."""
+        return any(n in r.spec['constructors'] for r in self.reps.values())
+
+    def ni_own(self, n):
+        """Ni's own meta of n (declared in another of Ni's headers) is the
+        one calls use."""
+        m = conventions.psyco_name(n)
+        return 'static' not in self.funcs[n].decl.storage and m in self.ni \
+            and m not in self.declared
 
     def run(self):
         order, seen = [], set()
@@ -161,7 +187,8 @@ class Translator:
         ret = fn.decl.type.type
         if self.unit.is_object(ret):
             return 'obj'
-        if not self.unit.is_int(ret):
+        if not (self.unit.is_int(ret) or self.unit.is_double(ret)) \
+                or conventions.ret_flag(self.unit, ret) is None:
             raise Refuse('returns %s' % text(ret))
         decl = self.ni.get(self.meta_name(fn))
         if decl is not None:
@@ -197,11 +224,13 @@ class Translator:
                 return
         try:
             sm.kind = self.kind_of(fn)
+            fn, hit = inline.expand(self, fn, self.budgets)
+            self.expanded[name] = fn
             self.liveness[name] = Liveness(fn.body)
             self.local_bts[name] = locals_bt(
                 fn, self.unit, dict(zip(sm.params, sm.pbt)))
             hoist = []
-            for _ in range(16):
+            for _ in range(self.budgets['rewalks']):
                 w = Walk(self, fn, sm, hoist)
                 w.run()
                 new = [p for p in w.rec.must + w.rec.late if p not in hoist]
@@ -209,16 +238,47 @@ class Translator:
                     break
                 hoist = hoist + [p for i, p in enumerate(new) if p not in new[:i]]
             else:
-                raise Refuse('promotions after calls remain: %s' % w.rec.late)
+                raise Refuse('budget rewalks: promotions after calls remain: %s' % w.rec.late)
             sm.entry = hoist
             sm.needs = w.rec.needs
             sm.may_call = w.rec.any_call
             sm.notimpl = w.rec.notimpl
             sm.always_error = w.always_error
+            self.reps_used |= w.rec.reps
+            self.budgets_hit.extend((name, b) for b in hit + w.rec.budgets)
             self.metas[name] = self.text(w)
             self.resumes.extend((name,) + r for r in w.rec.resumed)
         except Refuse as e:
             self.fails[name] = str(e)
+
+    def fnptr_targets_pure(self, fname, param):
+        """Every call of fname gives its function-pointer parameter a pure
+        function (by name)."""
+        names = [p.name for p in resume.params_of(self.funcs[fname])]
+        k = names.index(param)
+        sites = list(self.call_sites(fname))
+        if not sites or fname in self.slot_roots or conventions.psyco_name(fname) \
+                in self.declared:
+            return False
+        for _, args in sites:
+            a = strip_casts(args[k]) if k < len(args) else None
+            if not (isinstance(a, c_ast.ID) and (a.name in self.pure or 'CfPure' in
+                                                 self.effect_flags(self.effects_key(a.name)))):
+                return False
+        return True
+
+    def helper(self, fname, key, ret, params, lines):
+        """A scalar helper's C (scalar.py), named and kept with the copies."""
+        return self.copies.helper(fname, key, ret, params, lines)
+
+    def unhelper(self, name):
+        self.copies.drop(name)
+
+    def slot_key(self, n):
+        """A static slot function's key in the report: its type and slot."""
+        if n in self.slot_roots and 'static' in self.funcs[n].decl.storage:
+            return '%s.%s' % (self.slot_types[n], self.slot_roots[n][0][1])
+        return n
 
     def text(self, w):
         fn, sm = w.fn, w.sm
@@ -244,8 +304,12 @@ class Translator:
         return self.returns_notimpl_in(fn.body, gotos=False)
 
     def returns_notimpl_in(self, n, gotos=True):
-        """A return in n may give NotImplemented (a goto may go anywhere)."""
+        """A return in n may give NotImplemented (a goto may go anywhere,
+        and a variable assigned it may be returned)."""
         for x in walk_nodes(n):
+            if isinstance(x, c_ast.Assignment) and x.op == '=' \
+                    and singleton(x.rvalue) == NOT_IMPLEMENTED:
+                return True
             if gotos and isinstance(x, c_ast.Goto):
                 return True
             if isinstance(x, c_ast.Return) and x.expr is not None:
@@ -392,9 +456,9 @@ def id_names(n):
 
 def generate(target, family, effects=None):
     ft = front.target(target.python, target.src)
-    ast = front.parse(ft, family.cfile)
+    ast = front.parse(ft, family.cfile, types.rule_text(family.reps))
     ni = conventions.ni_decls(ROOT, scope.NI_HEADERS)
-    declared = set(conventions.ni_decls(ROOT, [family.decls]))
+    declared = set(conventions.ni_decls(ROOT, [family.decls])) if family.decls else set()
     items = policy.load(ft, family)
     tr = Translator(family, ast, ni, declared, items, effects)
     order = tr.run()
@@ -402,7 +466,7 @@ def generate(target, family, effects=None):
     by_meta = {tr.sums[n].meta: n for n in order if n in tr.metas}
     texts = {m: tr.metas[n] for m, n in by_meta.items()}
     texts.update(tr.copies.texts)
-    used = {m for m in by_meta if m in declared}
+    used = {m for m in by_meta if m in declared or by_meta[m] in tr.slot_roots}
     work = list(used)
     import re
     while work:
@@ -417,6 +481,12 @@ def generate(target, family, effects=None):
             % cpython_src.source_version(target.src),
             '   %s: do not edit. Included by %s. */' % (family.cfile, family.includer), '']
     out = []
+    if 'word' in tr.reps_used:
+        r = tr.reps['word']
+        out += ['_Static_assert(sizeof(long) * 8 == 64, "words are longs");',
+                '_Static_assert(sizeof(int) * 8 == 32, "C ints are 32 bits");',
+                '_Static_assert(%s == %d, "the word range of %s");' % (
+                    r.spec['bound'], r.bound, r.spec['struct']), '']
     if copies:
         out.append('/* run-time copies: where a heap type\'s slot changed, or'
                    ' where the meta has no compile-time form, CPython\'s'
@@ -426,31 +496,49 @@ def generate(target, family, effects=None):
         'static' in tr.funcs[n].decl.storage or tr.sums[n].meta not in declared)]
     out.append('')
     out += [metas[n] for n in order if n in metas]
+    regs = sorted((tr.sums[n].meta, ref) for n in metas for ref, _ in tr.slot_roots.get(n, ()))
+    if regs:
+        base = os.path.splitext(os.path.basename(family.cfile))[0]
+        out.append('/* the metas of the slots tools/metac/gen2/scope.py names */')
+        out.append('static void gen_%s_init(void) {' % base)
+        out += ['  Psyco_DefineMeta(%s, %s);' % (ref, m) for m, ref in regs]
+        out.append('}')
     report = []
 
     def loc(n):
-        return '%s %s:%s' % (n, family.cfile, n)
+        return '%s %s:%s' % (tr.slot_key(n), family.cfile, n)
     for n in order:
         if n in metas:
             report.append('generated  %-32s %s' % (loc(n), tr.sums[n].meta))
     for n in sorted(tr.fails):
         report.append('skipped    %-32s %s' % (loc(n), tr.fails[n]))
+    notes = []
+    for n, b in tr.budgets_hit:
+        notes.append('budget     %-32s %s' % (loc(n), b))
     for fname, stmt, why, at_once in tr.resumes:
         if fname in metas:
             report.append('%-10s %-32s %s: %s' % ('restarts' if at_once else 'resumes',
                                                   loc(fname), why, stmt))
     text_ = '\n'.join(head + out) + '\n/* not generated:\n' + '\n'.join(
-        '   ' + r for r in report if not r.startswith('generated')) + '\n*/\n'
+        '   ' + r for r in report + notes if not r.startswith('generated')) + '\n*/\n'
     return text_, report
 
 
-def build(target):
+def build(target, family='abstract'):
     try:
         import effects
         g = effects.analyse(target.python, target.src)
     except Exception as e:  # noqa: BLE001 - the build must say why
         raise cslots.GenError('effects.py: %s' % e)
     try:
-        return generate(target, scope.FAMILIES['abstract'], g)
+        return generate(target, scope.FAMILIES[family], g)
     except (front.FrontError, policy.PolicyError) as e:
         raise cslots.GenError(str(e))
+
+
+def build_long(target):
+    return build(target, 'long')
+
+
+def build_float(target):
+    return build(target, 'float')

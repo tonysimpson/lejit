@@ -7,7 +7,8 @@ names the item.
   Likely(cond, how)   the run-time branch on cond is taken (how True) or
                       not; it must match exactly one run-time branch
   Restype(T)          every result is of type T (Psyco_AssertType); no
-                      return path may contradict it
+                      return path may contradict it (a parameter returned
+                      unchanged must be tested exactly a T on its path)
   NotTranslation(why) Ni's meta of that name is not a translation of the
                       function; the function is not generated
   HandOnly(what)      an item only Ni's hand translation implements: the
@@ -47,13 +48,12 @@ class Restype:
         return 'restype(%s)' % self.tp
 
     def check(self, fn, unit):
-        params = {p.name for p in (fn.decl.type.args.params if fn.decl.type.args else ())}
-        for ret, tests in returns(fn.body):
-            e = strip_casts(ret.expr) if ret.expr is not None else None
-            if isinstance(e, c_ast.ID) and e.name in params and \
-                    not any(exact_test(t, e.name, self.tp) for t in tests):
-                return '%r: %s returns its parameter %s with no test that it is a %s' % (
-                    self, fn.decl.name, e.name, self.tp)
+        params = [p.name for p in (fn.decl.type.args.params if fn.decl.type.args else ())
+                  if getattr(p, 'name', None)]
+        bad = unchecked_returns(fn.body, {n: 'param' for n in params}, self.tp)
+        if bad:
+            return '%r: %s returns its parameter %s with no test that it is a %s' % (
+                self, fn.decl.name, bad, self.tp)
         return None
 
 
@@ -89,10 +89,24 @@ ITEMS = {
         'PyIter_Next': [NotTranslation("FOR_ITER's call: StopIteration is left set")],
         'PyNumber_Power': [HandOnly('shortcut type_whitelist')],
         'PyObject_GetIter': [HandOnly('shortcut skip_check'), HandOnly('virtual result')],
-        'PyNumber_AsSsize_t': [HandOnly('shortcut const_fold'), HandOnly('shortcut one_digit')],
     },
 }
 
+
+ITEMS['long'] = {f: [Restype('PyLong_Type')] for f in (
+    'long_add', 'long_sub', 'long_mul', 'long_neg', 'long_invert', 'long_long', 'long_abs')}
+# CPython's long_abs negates only a negative int
+ITEMS['long']['long_abs'].append(Likely('Py_SIZE(v) < 0', False))
+ITEMS['long']['long_true_divide'] = [Restype('PyFloat_Type')]
+ITEMS['float'] = {'float_float': [Restype('PyFloat_Type')]}
+
+# The translator's budgets: past one, the function (or the call) is left to
+# the run-time code, and the report names the budget.
+BUDGETS = {
+    'rewalks': 16,              # walks to move promotions before calls
+    'inline_depth': 3,          # inlines inside inlined bodies
+    'inline_statements': 40,    # a callee's statements, to inline it
+}
 
 KINDS = (Likely, Restype, NotTranslation, HandOnly)
 
@@ -176,6 +190,58 @@ def returns(n, tests=()):
     else:
         for _, c in n.children():
             out += returns(c, tests)
+    return out
+
+
+def unchecked_returns(stmts, state, tp):
+    """A parameter some path returns while it may still be the caller's
+    object untested (state: name -> 'param', 'tested' or 'other'), or
+    None."""
+    if not isinstance(stmts, list):
+        stmts = [stmts]
+    for s in stmts:
+        if s is None:
+            continue
+        if isinstance(s, c_ast.Return):
+            e = strip_casts(s.expr) if s.expr is not None else None
+            if isinstance(e, c_ast.ID) and state.get(e.name) == 'param':
+                return e.name
+            return None
+        if isinstance(s, c_ast.Compound):
+            bad = unchecked_returns(s.block_items or [], state, tp)
+            if bad:
+                return bad
+            continue
+        if isinstance(s, c_ast.If):
+            st, sf = dict(state), dict(state)
+            for n in state:
+                if exact_test(s.cond, n, tp):
+                    st[n] = 'tested'
+            bad = unchecked_returns(s.iftrue, st, tp) or unchecked_returns(s.iffalse, sf, tp)
+            if bad:
+                return bad
+            for n in state:
+                if st[n] != 'param' and sf[n] != 'param':
+                    state[n] = 'tested' if 'tested' in (st[n], sf[n]) else 'other'
+            continue
+        for n in assigned(s):
+            if n in state:
+                state[n] = 'other'
+        for r, _ in returns(s):
+            e = strip_casts(r.expr) if r.expr is not None else None
+            if isinstance(e, c_ast.ID) and state.get(e.name) == 'param':
+                return e.name
+    return None
+
+
+def assigned(n):
+    out = []
+    stack = [n]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, c_ast.Assignment) and isinstance(strip_casts(x.lvalue), c_ast.ID):
+            out.append(strip_casts(x.lvalue).name)
+        stack.extend(c for _, c in x.children())
     return out
 
 

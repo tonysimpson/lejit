@@ -101,7 +101,8 @@ def _source(path):
 def stmt_text(s, limit=70):
     """The statement as the source writes it, spaced as written and on
     one line, up to `limit` characters."""
-    found = _from_source(s)
+    # (a macro's trailing ';' is placed past the end of its line)
+    found = ';' if isinstance(s, c_ast.EmptyStatement) else _from_source(s)
     if found is None:
         found = ' '.join(stmt(s).split())
     return found[:limit]
@@ -114,6 +115,8 @@ def _from_source(s):
         return None
     line = lines[c.line - 1]
     col = c.column - 1
+    if col >= len(line):
+        return None
     want = _first_word(s)
     if isinstance(s, c_ast.Decl) and want:
         # a declaration's position is its declarator's

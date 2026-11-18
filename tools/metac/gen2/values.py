@@ -55,6 +55,9 @@ class Var:
         self.tp = None            # meta table: the meta variable of its type
         self.alias = None         # dynamic: the parameter it copies
         self.known_null = False   # assigned NULL: returned, it is the error
+        self.singleton = None     # assigned an immortal object (types.SINGLETONS)
+        self.rng = None           # an integer's (lo, hi), where known
+        self.word_of = None       # the object variable whose word it holds
 
     def clone(self):
         v = Var.__new__(Var)
@@ -69,7 +72,7 @@ class Val:
     """The value of an expression."""
 
     def __init__(self, bt, c, ctype, tp=None, lv=False, owned=False, conv=None,
-                 var=None, const=None):
+                 var=None, const=None, rng=None, last=False):
         self.bt, self.c, self.ctype = bt, c, ctype
         self.tp = tp              # meta: the meta variable of the type it is inside
         self.lv = lv              # meta: an address inside a type (a slot's)
@@ -77,6 +80,9 @@ class Val:
         self.conv = conv
         self.var = var            # dynamic: the variable it is read from
         self.const = const        # gen: True or False
+        self.rng = rng            # an integer's (lo, hi), where known
+        self.last = last          # a word's last read in the statement
+        self.made = None          # a representation's virtual: its type
 
 
 class Path:

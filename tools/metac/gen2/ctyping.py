@@ -135,17 +135,22 @@ class Unit:
         p = self.pointee(t)
         if p is None or isinstance(self.resolve(p), c_ast.PtrDecl):
             return False
-        return self._object_struct(self.struct_name(p))
+        return self._object_struct(p)
 
-    def _object_struct(self, s, depth=0):
-        if s is None or s in TYPE_OBJECT or depth > 20:
+    def _object_struct(self, t, depth=0):
+        t = self.resolve(t)
+        if depth > 20 or not (isinstance(t, c_ast.TypeDecl) and isinstance(t.type, c_ast.Struct)):
+            return False
+        s = t.type.name
+        if s in TYPE_OBJECT:
             return False
         if s == '_object':
             return True
-        fs = self.fields(s)
+        fs = [(d.name, d.type) for d in t.type.decls] if t.type.decls is not None \
+            else self.fields(s or '')
         if not fs or fs[0][0] != 'ob_base':
             return False
-        return self._object_struct(self.struct_name(fs[0][1]), depth + 1)
+        return self._object_struct(fs[0][1], depth + 1)
 
     def is_table(self, t):
         p = self.pointee(t)

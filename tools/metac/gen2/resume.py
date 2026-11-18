@@ -10,7 +10,7 @@ reference to each object the meta owns, and the meta releases its own.
 """
 from pycparser import c_ast
 
-from . import conventions, cprint
+from . import conventions, cprint, inline
 from .ctyping import text
 from .errors import Refuse
 from .liveness import names
@@ -29,11 +29,16 @@ def resume(w, p, out, frames, why, inside=False):
     at_once = out is w.out and len(out.items) == w.body_start and not p.called
     w.rec.resumed.append((cprint.stmt_text(stmt), why, at_once))
     if not p.called:
+        params = [(n, t) for n, t in w.params]
         if 'static' not in fn.decl.storage:
-            name, params = w.name, [(n, t) for n, t in w.params]
+            name = w.name
+        elif w.name in tr.slot_roots:
+            name = tr.slot_roots[w.name][0][0]     # the type's slot is the function
         else:
-            name, params = tr.copies.whole(w.name), [(n, t) for n, t in w.params]
+            name = tr.copies.whole(w.name)
     else:
+        if inlined_frames(frames):
+            raise Refuse('resuming inside an inlined call: %s' % why)
         live = w.live.before[id(stmt)]
         owned = set()
         for vname in sorted(live):
@@ -49,7 +54,7 @@ def resume(w, p, out, frames, why, inside=False):
         if v is None or (v.own == 'none' and v.bt == 'dynamic' and not v.isparam):
             raise Refuse('resuming needs %s, which has no value here' % pname)
         if v.bt == 'dynamic':
-            fmt += 'v'
+            fmt += 'd' if w.u.is_double(v.ctype) else 'v'
             args.append(v.cname)
         else:
             fmt += 'l'
@@ -64,6 +69,12 @@ def resume(w, p, out, frames, why, inside=False):
     p.called = True
     w.rec.any_call = True
     w.ret_value(p, out, call, w.sm.kind == 'ok', notimpl=conv == 'notimpl')
+
+
+def inlined_frames(frames):
+    """Is the statement inside a call's body inlined in place? (A copy is
+    of the C as written, which calls the function instead.)"""
+    return any(inline.expanded(stmts[i]) for stmts, i in frames[:-1])
 
 
 def notimpl_possible(w, frames):
@@ -115,12 +126,14 @@ class Copies:
             raise Refuse('copy: %s calls itself' % fname)
         n = sum(1 for k in self.keys if k[0] == fname and self.keys[k][0] != 'cimpl_' + fname)
         name = 'cimpl_%s' % fname if whole else 'cimpl_%s_%d' % (fname, n + 1)
+        if whole and name in self.texts:
+            name += '_whole'        # a scalar helper has the name
         for pn, t in params:
             if isinstance(t, c_ast.ArrayDecl):
                 raise Refuse('copy: array %s is live' % pn)
         parts, used = [], []
         for stmts, i in reversed(frames):
-            rest = stmts[i:] if not parts else stmts[i + 1:]
+            rest = [inline.orig(x) for x in (stmts[i:] if not parts else stmts[i + 1:])]
             used.extend(rest)
             parts.append(' '.join(join_decls(rest)))
         body = ''
@@ -128,7 +141,7 @@ class Copies:
             body = ('{ %s } ' % body if body else '') + part
         declared_inside = {d.name for s in used for d in decls_in(s)}
         locs = {}
-        for d in decls_in(fn.body):
+        for d in decls_in(self.tr.funcs[fname].body):
             locs.setdefault(d.name, d.type)
         pnames = {pn for pn, _ in params}
         decls = []
@@ -152,6 +165,32 @@ class Copies:
         self.texts[name] = c
         self.order.append(name)
         return name, params
+
+    def helper(self, fname, key, ret, params, lines):
+        """A scalar helper (scalar.py): cimpl_FUNCTION, then cimpl_FUNCTION_sN."""
+        key = ('scalar', fname, key)
+        if key in self.keys:
+            name = self.keys[key][0]
+            self.order.remove(name)
+        else:
+            n = sum(1 for k in self.keys if k[0] == 'scalar' and k[1] == fname)
+            # the first is cimpl_FUNCTION, unless the whole copy has it
+            name = 'cimpl_%s' % fname if n == 0 else 'cimpl_%s_s%d' % (fname, n + 1)
+            if name in self.texts:
+                name = 'cimpl_%s_s%d' % (fname, n + 1)
+        self.keys[key] = (name, None)
+        self.texts[name] = '/* %s:%s: scalar code */\nstatic %s %s(%s) {\n%s\n}\n' % (
+            self.tr.family.cfile, fname, ret, name, ', '.join(params) or 'void',
+            '\n'.join(lines))
+        self.order.append(name)
+        return name
+
+    def drop(self, name):
+        if name in self.texts:
+            del self.texts[name]
+            self.order.remove(name)
+            for k in [k for k, v in self.keys.items() if v[0] == name]:
+                del self.keys[k]
 
     def local_macros(self):
         """The function-like macros the family's file defines (Ni's file
