@@ -73,3 +73,28 @@ Last full run at `a4bd69e`, by the earlier runner (best of 5 warm calls on one i
 ## Sanitizers (`tools/sanitize.sh`)
 
 Under AddressSanitizer and UBSan (BUILD.md, Sanitizers), the behaviour tests, the compile bounds, the smoke test and 370 of the 371 CPython test modules `--all` runs (not `test_threading`: an ASan fork hang, QUESTIONS 52) give no ASan report from Ni, with each vinfo, source_known and vci link a block of its own, free executable memory poisoned and `detect_stack_use_after_return` on. UBSan found two `memcpy`s from NULL of 0 bytes, which every compile made (`aed3df0`). LeakSanitizer found `psyco_compatible` dropping the differences of a rejected partial match, about 14 blocks a compile (`dfe1a39`, test `freeing.recompiled_loops_free`); its other reports at exit are memory kept for good or reached only through emitted code. Not covered: the emitted code itself, and anything the tests don't reach. [run]
+
+## Other projects' test suites (`tools/thirdparty/`)
+
+Twelve pure-Python projects' own suites, each at its last release for 3.7 (`tools/thirdparty/projects.py`, `lock.txt`), run plainly and with Ni for the whole process on a release build (BUILD.md). Last run at `86107a0`, both modes at once (`-j 2`) [run]:
+
+| Project | Tests | Plain s | Ni s | Ni-only failures |
+|---|---|---|---|---|
+| attrs 23.2.0 | 1299 | 6.7 | 7.5 | 0 |
+| more-itertools 9.1.0 | 572 | 1.3 | 1.7 | 1 (C60) |
+| pyparsing 3.1.4 | 1717 | 21 | 155 | 356 (C11) |
+| Jinja2 3.1.6 | 908 | 1.7 | 2.0 | 0 |
+| MarkupSafe 2.1.5, pure | 53 | 0.2 | 0.4 | 0 |
+| docutils 0.20.1 | 375 | 2.0 | 2.5 | 0 |
+| networkx 2.6.3 | 4086 | 42 | 41 | 0 |
+| sympy 1.10.1, 9 packages | 4529 | 599 | 438 | 7: 6 (C11), 1 crash (C61, F27) |
+| python-dateutil 2.9.0.post0 | 2095 | 2.8 | 2.9 | 0 |
+| toolz 0.12.1 | 180 | 0.5 | 0.8 | 0 |
+| sortedcontainers 2.4.0 | 300 | 4.7 | 1.7 | 1 (C20) |
+| Django 3.2.25, all, sqlite | 14684 | 273 | 355 | 15 (C11) |
+
+No test fails plainly and passes with Ni.
+- **Wrong answers fixed:** code run by `exec` with its own locals mapping was compiled and its `from m import *` and `del x` used the globals (`eda22fe`; sympy's `lambdify` and `Sum.evalf`, 9 tests); the inline attribute store never made an untracked instance dict tracked when it stored a GC value of unknown type, so cycles through it were never collected (`86107a0`; sympy reached the 4 GB limit).
+- **C11:** pyparsing's parse actions with fewer than three arguments raise TypeError, because `_trim_arity` compares line numbers from `traceback.extract_stack`; with that worked round, 37 failures are left, all C11 (`f_locals` read by `autoname_elements` and `ParseException.explain`, a warning keyed on the caller's line). Django's debug page and `sensitive_variables` read traceback frames' locals; Django's and sympy's warning stack-level tests fail.
+- **Memory (C61):** the sympy run aborts at the 4 GB limit once it has compiled about 630,000 code buffers (3 GB of RSS, 250 MB plainly).
+- **Time:** pyparsing's Ni time is its failing parse actions (13.7 s with them worked round). Django, many short tests over much code, is 1.3× slower; sympy is 1.4× faster and sortedcontainers 2.8×.
