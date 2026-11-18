@@ -288,15 +288,13 @@ RULES = {
                 " branch on it needs a 'likely' item naming the macro the C"
                 " wrote (PyUnicode_IS_READY).",
         'decisions': ['D89'],
-        'applied_by': ['tools/metac/conditions.py:ConditionRules',
-                       'tools/metac/gen2/actions.py:bit_test'],
+        'applied_by': ['tools/metac/gen2/actions.py:bit_test'],
     },
     'runtime_choice': {
         'what': "'c ? A : B' on a run-time test takes the arm c's 'likely' item"
                 " favours; on the other, CPython resumes from the statement.",
         'decisions': ['D89'],
-        'applied_by': ['tools/metac/conditions.py:ConditionRules',
-                       'tools/metac/gen2/walk.py:Walk'],
+        'applied_by': ['tools/metac/gen2/walk.py:Walk'],
     },
     'raw_pointer': {
         'what': "A 'char *' pointer into an object (an object cast to char *)"

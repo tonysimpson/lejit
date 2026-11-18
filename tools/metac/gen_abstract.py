@@ -109,7 +109,7 @@ NI_HEADERS = ['ni/Objects/pabstract.h', 'ni/Objects/pobject.h', 'ni/Objects/pflo
 # policy items the translator implements; any other item on a function's
 # entry leaves it to its hand translation
 IMPLEMENTED = {'likely', 'restype', ('shortcut', 'skip_check'), ('shortcut', 'if_known'),
-               ('shortcut', 'const_fold'), ('promote', 'known_only'),
+               ('promote', 'known_only'),
                ('ref', 'need_reference'), ('other', 'mutable_fields')}
 # the C names that are vocabulary, never expanded as macros
 KEEP = {'Py_INCREF', 'Py_DECREF', 'Py_XINCREF', 'Py_XDECREF', 'assert',
@@ -1312,8 +1312,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         for item in self.tr.policy_items(f.name):
             if tuple(item[:2]) == ('shortcut', 'if_known'):
                 self.if_known(st, out, item[2])
-            if tuple(item[:2]) == ('shortcut', 'const_fold'):
-                self.const_fold(st, out)
         self.body_start = len(out.lines)
         self.block(f.ast, st, out, [])
         if st.pending is not None:
@@ -2188,8 +2186,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
 
     def cond(self, e, st, out, frames, facts_t=None, facts_f=None):
         r = self.assumed(e)
-        if r is None:
-            r = self.bit_test(e, st, out, frames)
         if r is not None:
             return r
         k = e[0]
@@ -2339,7 +2335,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
         self.used_likely.add(text)
         t = self.new_tmp('int')
         out('%s = runtime_condition_%s(po, %s);' % (t, 't' if how == 'true' else 'f', cc))
-        self.choice_likely()[t] = how == 'true'
         # P06: where x < 0 failed, x is not negative
         if vb.bt == 'ct' and vb.c == '0' and va.var is not None and facts_f is not None:
             if op == '<':
@@ -2495,9 +2490,6 @@ class Walk(NotImplementedRules, scalars.ScalarRules, conditions.ConditionRules,
             raise ResumeHere('run-time arithmetic %s' % cparse.c_expr(e))
         if k == 'cond':
             c = self.cond(e[1], st, out, frames)
-            r = self.choice(e, c, st, out, frames)
-            if r is not None:
-                return r
             va = self.ev(e[2], st, out, frames)
             vb = self.ev(e[3], st, out, frames)
             if isinstance(c, bool):
