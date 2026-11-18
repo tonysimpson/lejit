@@ -41,3 +41,4 @@ Unknowns still open. When one is answered, record the answer where it belongs (u
 ## Housekeeping
 19. Fix or remove the tools with stale `../c/` paths or Py2 code: `tools/gen_opcodes_h.py`, `tools/test_mcg_template.c`, `tools/asm_microbenchmarks/benchmark.h`?
 20. `MANIFEST` lists upstream paths. Delete or regenerate?
+52. **A thread in malloc at fork, under ASan with Ni only:** in `test_threading`'s `test_is_alive_after_fork` after the rest of the module, the forked child waits for good on an ASan allocator lock (BUILD.md, Sanitizers). Is it only timing, or does Ni leave a thread allocating at a point where plain CPython's threads are waiting for the GIL? [run]

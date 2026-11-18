@@ -28,14 +28,14 @@ One row per file. **Every file has been read in full at least once.** The "revie
 
 | file | layer | what it is | CPython counterpart | reviewed |
 |---|---|---|---|---|
-| `ni/blockalloc.h` | core | Fixed-size block allocator macros for vinfo_t and source_known_t. | none | `e1fd808` |
+| `ni/blockalloc.h` | core | Fixed-size block allocator macros for vinfo_t and source_known_t; under ASan each item is its own `PyMem_MALLOC` block. | none | `e1fd808`; `ebc2296` (ASan) |
 | `ni/cf_flags.h` | core | Cf* flags describing a C function for residual calls: purity, new ref, return type, errors. | none (CPython C API conventions) | `56e5faf` |
 | `ni/codegen.c` | core + backend | codegen.h's code: condition-code vinfos, psyco_generic_call (CfPure folding), integer emitters, rich compare, a frame's call-site note. | Objects/object.c | `56e5faf` |
 | `ni/codegen.h` | core | Code generation API: condition codes, psyco_generic_call (residual calls), integer ops, promotion pseudo-exceptions, the call-site note. | none | `fa3dae7` |
-| `ni/codemanager.c` | core | Executable memory as free extents; owners (D102): what a code object's compiled code holds, released with it; compile guards (D103). | none | `bc3c590` |
+| `ni/codemanager.c` | core | Executable memory as free extents (poisoned under ASan, a LeakSanitizer root region); owners (D102): what a code object's compiled code holds, released with it; compile guards (D103). | none | `bc3c590` |
 | `ni/codemanager.h` | core | CodeBufferObject: emitted machine code plus the snapshot it was compiled from; the owner and compile guard APIs. | none | `0b808fa` |
 | `ni/compat2to3.h` | glue | NiCompat* macros mapping Py2 names (PyString/PyInt) onto Py3 (PyUnicode/PyLong). | Include/ | `e1fd808` |
-| `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `a6a687b` |
+| `ni/dispatcher.c` | core | Snapshot compression, psyco_compatible(), respawn, promotion dispatch and inline-cache chains, stubs and their records, per owner. | none | `a6a687b`; `dfe1a39` (psyco_compatible) |
 | `ni/dispatcher.h` | core | Snapshots (FrozenPsycoObject), compatibility and join API, respawn and promotion helpers. | none | `f229d14` |
 | `ni/eval_hook.c` | glue | Entry into compiled code: `ni_entry_point` compiles on the first call (interpreted if memory runs out), `NiCode_Run` runs it. | Python/ceval.c | `f254b5d` |
 | `ni/initialize.h` | glue | Calls every file's init; with ALL_STATIC=1 includes all .c files into one unit. | none | `b251646` |
@@ -56,11 +56,11 @@ One row per file. **Every file has been read in full at least once.** The "revie
 | `ni/platform.c` | glue | Allocates executable (RWX) memory: mmap on Unix, VirtualAlloc on Windows. | none | `1e65d32` |
 | `ni/platform.h` | glue | Prototype for psyco_allocate_executable_buffer(). | none | `e1fd808` |
 | `ni/processor.h` | backend (interface) | Prototypes for running compiled code: psyco_processor_run, RUN_ARGC, aligned-call glues. | none | `4398496` |
-| `ni/psyco.h` | glue | Global definitions: build switches, sizes, assertions, linkage macros, the `co_extra` record and its owner; includes `layouts_gen.h`. | none | `f254b5d` |
+| `ni/psyco.h` | glue | Global definitions: build switches, sizes, assertions, linkage macros, the sanitizer hooks (`NI_POISON`, `NI_LSAN_ROOT`), the `co_extra` record and its owner; includes `layouts_gen.h`. | none | `f254b5d`; `4896477` (sanitizer hooks) |
 | `ni/psyfunc.c` | core + translated | Python calls at compile time: build the callee frame, inline small functions or compile and call. | Python/ceval.c, Objects/call.c, Include/ceval.h | `e11f2a3` |
 | `ni/psyfunc.h` | glue | Declarations for psyfunc.c and the generated binder (D85). | none | `e11f2a3` |
 | `ni/pycodegen.h` | core | Emits Py_INCREF/Py_DECREF and reference-ownership helpers on vinfo_t. | Include/object.h | `fa3dae7` |
-| `ni/vcompiler.c` | core | vinfo lifetime, field get/put with load folding, coding pauses, the psyco_compile*() entry points. | none | `603363c` |
+| `ni/vcompiler.c` | core | vinfo lifetime, field get/put with load folding, coding pauses, the psyco_compile*() entry points. | none | `603363c`; `aed3df0` (psyco_coding_pause) |
 | `ni/vcompiler.h` | core | Central data model: Source, vinfo_t, field descriptors, PsycoObject (compiler state). Start here. | none | `ee76274` |
 | `ni/Modules/pmath.c` | translated + glue | ceil and floor of an exact float; registers the generated math functions. | Modules/mathmodule.c | `cddaf8d` |
 | `ni/Objects/pabstract.c` | translated + core | The hand-written rest of the abstract protocol (`**`, `iter()`, next, int subscripts). | Objects/call.c, Objects/abstract.c, Objects/tupleobject.c, Objects/listobject.c | `351a4d5`, `935df0b` |
@@ -143,16 +143,18 @@ One row per file. **Every file has been read in full at least once.** The "revie
 
 | file | layer | what it is | reviewed |
 |---|---|---|---|
-| `setup.py` | glue | distutils build of the `ni` extension; runs `generate.py` first, with `PYTHONHASHSEED=0` (D68). | `ac8f978` |
-| `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests). | `ccb5735` |
+| `setup.py` | glue | distutils build of the `ni` extension; runs `generate.py` first, with `PYTHONHASHSEED=0` (D68); `NI_SANITIZE` builds into `--build-lib` with its own config stamp. | `ebc2296` |
+| `tests/run.py`, `tests/child.py`, `tests/cases/*.py` | tooling | Differential behaviour tests with compile and leak checks (BUILD.md, Tests). | `ccb5735`; `ebc2296` (run.py: `testenv`) |
+| `tests/testenv.py` | tooling | What the runners share with `tools/sanitize.sh`: `NI_MODULE_DIR`, `NI_SANITIZE_LOGS` (per-child logs, longer timeouts, no address-space limit), the modules skipped under the sanitizers. | `4896477` |
 | `tests/encoding/check.py` | tooling | Checks `@asm`-annotated emitters in `iencoding.h` against GNU `as`; the cases compile in parts of 15000. | `974f1ea` |
-| `tests/smoke.py` | tooling | Stdlib smoke test: about 30 modules, output must match with and without Ni. | `6ca580a` |
-| `tests/compile_bounds.py` | tooling | Fails if warm code keeps starting code buffers (`ni._stats()`); run by check.sh. | `932f416` |
-| `tests/cpython_tests.py` | tooling | Runs CPython's test modules with and without Ni and compares counts and exit status. | `fbb5f4a` |
+| `tests/smoke.py` | tooling | Stdlib smoke test: about 30 modules, output must match with and without Ni. | `6ca580a`; `ebc2296` (`NI_MODULE_DIR`) |
+| `tests/compile_bounds.py` | tooling | Fails if warm code keeps starting code buffers (`ni._stats()`); run by check.sh. | `932f416`; `ebc2296` (`NI_MODULE_DIR`) |
+| `tests/cpython_tests.py` | tooling | Runs CPython's test modules with and without Ni and compares counts and exit status. | `fbb5f4a`; `4896477` (`testenv`) |
 | `tests/mechanisms.py` | tooling | Checks the mechanism detectors' answers on five CPython versions (D75). | `f254b5d` |
 | `tests/parse_gate.py` | tooling | Migration step 1: every mirrored CPython `.c` file preprocesses and parses on 3.7 and 3.8, with right line numbers; run by check.sh. | `7f2955a` |
 | `tests/effect_snippets.py` | tooling | Snippet tests of `effects.py` (G1–G4, each flag, the `Cf*` mapping), no build; run by check.sh. | `041bbd1` |
 | `tests/gen2_snippets.py` | tooling | Snippet tests of the new translator: C read after abstract.c (or longobject.c, floatobject.c with the representations), the meta or refusal out, for each pass and action and G6–G13, G15, G20, with math's builtins and str's fold-may-fail; no build; run by check.sh. | `9bd4d22` |
+| `tools/sanitize.sh`, `tools/sanitize_report.py` | tooling | Builds Ni with ASan and UBSan in `build/asan` and runs the suites under it; the report deduplicates ASan, LSan and UBSan reports by stack (BUILD.md, Sanitizers). | `4896477` |
 | `tools/check.sh` | tooling | Runs the parse gate, the effect and translator snippets, the generators (seeds 1, 2 and 1 again, and the 3.8 dry run, in parallel) against the baselines, `donecheck.py`, a checked build and every suite. | `ab24e2f` |
 | `tools/metac/ctokens.py`, `cslots.py` | tooling | A C tokeniser, and the shared slot driver (`Target`, `GenError`, `text`). | `7b21dea` (ctokens), `9eae61d`, `2a71def` (cslots: `PyNumberMethods` from any `Include/**/*.h`) |
 | `tools/metac/gen_ceval.py` | tooling | Writes `pycompiler_gen.h` from instruction definitions, checked against `dis` (D69). | `ac8f978` |

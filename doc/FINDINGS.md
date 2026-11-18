@@ -69,3 +69,7 @@ Last full run at `a4bd69e`, by the earlier runner (best of 5 warm calls on one i
 - **Slower warm:** `reload_modules` 3.2×, `classes_per_request` 2.45×, `exec_templates` 1.45× (compiling fresh code each time), `operator_overloading` 1.27× (Python dunder methods), `lambdas_in_loops` 1.19×, `class_counter` 1.11× (a guard broken on every call), `genexpr_unfused` 1.09×.
 - **Faster:** `bytecode_vm` 11×, `class_switch` 6.5×, `deep_recursion` 5×, `text_tokeniser` 3×, the megamorphic benchmarks about 2×.
 
+
+## Sanitizers (`tools/sanitize.sh`)
+
+Under AddressSanitizer and UBSan (BUILD.md, Sanitizers), the behaviour tests, the compile bounds, the smoke test and 370 of the 371 CPython test modules `--all` runs (not `test_threading`: an ASan fork hang, QUESTIONS 52) give no ASan report from Ni, with each vinfo, source_known and vci link a block of its own, free executable memory poisoned and `detect_stack_use_after_return` on. UBSan found two `memcpy`s from NULL of 0 bytes, which every compile made (`aed3df0`). LeakSanitizer found `psyco_compatible` dropping the differences of a rejected partial match, about 14 blocks a compile (`dfe1a39`, test `freeing.recompiled_loops_free`); its other reports at exit are memory kept for good or reached only through emitted code. Not covered: the emitted code itself, and anything the tests don't reach. [run]
