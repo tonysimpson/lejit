@@ -104,8 +104,18 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
                 RTVINFO_FROM_STACK_TO_REG(index, index_reg);
             }
         } else {
-            index_reg = REG_NONE;
-            offset_or_address += V_CT_GET_VALUE(index) << scale;
+            long i = V_CT_GET_VALUE(index);
+            if (base_reg != REG_NONE && (i < -(1L << 26) || i >= (1L << 26))) {
+                /* scaled, it may not fit the displacement (in bounds only
+                   for an array of 64 MB or more): the index goes in R11,
+                   scaled by the SIB byte. With a constant base it folds
+                   into the absolute address, which goes in R11 below. */
+                index_reg = REG_TRANSIENT_2;
+                MOV_R_I(index_reg, i);
+            } else {
+                index_reg = REG_NONE;
+                offset_or_address += (long)((unsigned long)i << scale);
+            }
         }
     }
     if (read) {

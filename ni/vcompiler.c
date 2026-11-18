@@ -588,6 +588,12 @@ done:
   return vf;
 }
 
+/* a constant index small enough to be a field of its own: an int whose
+   item's offset is a 32-bit displacement (psyco_get_nth_field). A larger
+   one, only in bounds for an array of over 128 MB, goes to v_mem_mov as an
+   index, which puts it in a register. */
+#define NTH_FIELD_INDEX(i) ((i) >= -(1L << 24) && (i) < (1L << 24))
+
 DEFINEFN
 vinfo_t *psyco_get_field_array(PsycoObject *po, vinfo_t *vi, defield_t df,
                                vinfo_t *vindex) {
@@ -596,7 +602,8 @@ vinfo_t *psyco_get_field_array(PsycoObject *po, vinfo_t *vi, defield_t df,
     return NULL;
 
   extra_assert((long)df & FIELD_ARRAY);
-  if (is_compiletime(vindex->source)) {
+  if (is_compiletime(vindex->source) &&
+      NTH_FIELD_INDEX(CompileTime_Get(vindex->source)->value)) {
     return psyco_get_nth_field(po, vi, df,
                                CompileTime_Get(vindex->source)->value);
   } else {
@@ -662,7 +669,8 @@ bool psyco_put_field_array(PsycoObject *po, vinfo_t *vi, defield_t df,
     return false;
 
   extra_assert((long)df & FIELD_ARRAY);
-  if (is_compiletime(vindex->source)) {
+  if (is_compiletime(vindex->source) &&
+      NTH_FIELD_INDEX(CompileTime_Get(vindex->source)->value)) {
     return psyco_put_nth_field(po, vi, df,
                                CompileTime_Get(vindex->source)->value, value);
   } else {
