@@ -56,3 +56,13 @@ Generator bodies are never compiled. The eval hook leaves at once for generator 
 ## Compile cost
 
 `ni._stats()` gives time and count per way into the compiler (`analyse`, `call`, `pause`, `respawn`, `promotion`), outermost entry only, about 50 ns per entry. Compiling is cheap, about 157 KB of code per ms: Ni pays for itself within 1–3 iterations on almost every benchmark, which supports D29. Promotion is most of the compile time. Code size is the cost to watch more than time. Open (BACKLOG, QUESTIONS 35): instruction-cache effects (`perf stat` icache events), and the run-time cost of merge-point lookup and the promotion cache-hit path.
+
+## Adversarial suite (`tools/adversarial/`)
+
+First run at `a4bd69e` (release build, a busy machine, so ratios within about 10% are noise) [run]. Over 42 benchmarks written to make Ni look bad, warm time is 0.75 of CPython's and cold time 0.95.
+- **Wrong answers:** `builtin_subclasses` and `frames_logging` differ from CPython; `frames_logging` also varies between calls.
+- **Memory:** `classes_per_request` peaks at 569 MB against 11, and `reload_modules` at 379 against 15 (C14's remainder). Loading Ni costs about 9 MB of RSS in every process.
+- **Compile before pay-off:** `import_heavy` is 4.4× slower cold, `many_functions` 13× on the first call and `short_script` 1.24× cold. Ni compiles code the first time it runs, module-level code included.
+- **Slower warm:** `reload_modules` 3.2×, `classes_per_request` 2.45×, `exec_templates` 1.45× (compiling fresh code each time), `operator_overloading` 1.27× (Python dunder methods), `lambdas_in_loops` 1.19×, `class_counter` 1.11× (a guard broken on every call), `genexpr_unfused` 1.09×.
+- **Faster:** `bytecode_vm` 11×, `class_switch` 6.5×, `deep_recursion` 5×, `text_tokeniser` 3×, the megamorphic benchmarks about 2×.
+
