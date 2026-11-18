@@ -1849,9 +1849,10 @@ static code_t *exit_function(PsycoObject *po) {
   Source retsource;
   extra_assert(!po->pr.is_inlining);
 
-  /* clear the stack and the locals */
+  /* clear the locals, first to last as frame_dealloc does (finalisers run
+     in that order), then the stack */
   locals_plus = LOC_LOCALS_PLUS;
-  for (pp = po->vlocals.items + po->vlocals.count; --pp >= locals_plus;)
+  for (pp = locals_plus; pp < po->vlocals.items + po->vlocals.count; pp++)
     if (*pp != NULL) {
       vinfo_decref(*pp, po);
       *pp = NULL;

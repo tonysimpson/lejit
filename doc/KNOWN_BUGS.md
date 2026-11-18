@@ -34,7 +34,6 @@ Open bugs only. IDs: **M** memory access (`ni/x64/v_mem_mov.h`, field functions 
 - **C19** (accepted, by design, D64): `sys.getrefcount` sees one reference fewer for an argument compiled code passes to C (borrowed); a constant's count includes one reference per block that uses it. [run]
 - **C20** (accepted, D64): `len(gc.get_objects())` can grow by one around code compiled at that moment (a GC-tracked object per compile; not a leak). [run]
 - **C29** (partly fixed, D117): a frame already running compiled code when tracing or profiling starts goes on interpreted after its next call (`pycompiler.c:resume_if_tracing`). Left: `f_trace` set on a compiled callee's frame is lost, since that frame is emulated, a new object each time (C11), so `pdb.set_trace()` in a compiled callee stops only at the next call event; tracing started from an operator's or attribute's Python method is seen at the frame's next call; locals the liveness analysis dropped are unbound in the resumed frame. [run]
-- **C56** (live): finalisers run in another order than CPython's: a compiled function's locals are released last to first when it returns (CPython: first to last), and in `tools/adversarial/finalisers.py` a dropped two-item list frees its items first to last. A program sees it through `__del__` or weakref callbacks. [run]
 
 ### Generator
 From the review against `doc/GENERATOR_DESIGN.md` (2026-11-18). Most are latent: no generated header shows them today. The redesign removes them by construction; until then, a change that reaches one must fix it.

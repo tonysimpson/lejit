@@ -1538,9 +1538,13 @@ vinfo_t *Psyco_SafelyDeleteVar(PsycoObject *po, vinfo_t *vi) {
     result = vinfo_new(VirtualTime_New(&psyco_vsource_not_important));
     count += iOB_TYPE + 1;
     result->array = array_new(count);
+    /* the list runs from the first item to the last, and an array is
+       released from its end: last to first, as list_dealloc and
+       tupledealloc release their items */
+    count = iOB_TYPE + 1;
     for (p = head; p != queue; p = p->tmp) {
       vinfo_incref(p);
-      result->array->items[--count] = p;
+      result->array->items[count++] = p;
     }
   }
   return result;
