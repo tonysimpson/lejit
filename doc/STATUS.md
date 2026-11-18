@@ -1,5 +1,14 @@
 # Status
 
+## 2026-11-18: branches and jumps generated (GENERATION.md step 8, back half; `a907150`, D79)
+
+`UNARY_NOT`, the four conditional jumps, `JUMP_FORWARD`, `JUMP_ABSOLUTE`, `DELETE_FAST` and `SET_ADD` are generated from `ceval.c` with step 4's rules (condition codes, residual-call flags), the jumps through two core macros; nine hand cases left `pycompiler.c`. Read 82 of 119, generated 59. [run]
+- **Same code:** `tools/samecode.py baseline-3.7 a907150`: 83 units same, 0 differ (4,107 code objects).
+- Checked build: generators twice, same output, and the build used it; `tests/run.py` 755 pass (six new cases in `generated_opcodes.py`: every new opcode, its error exits through `__bool__` raising, unbound `del`, an unhashable set item, and conditions known at compile time); `tests/compile_bounds.py` 7 checks; the seven `profile_bench.py` runs; `tests/cpython_tests.py -j 2` 285 modules, 0 unexpected; `tests/smoke.py` same.
+- Release builds, instructions per warm iteration (`perf stat -e instructions:u`, `profile_bench.py` 1 s and 4 s, raytrace 2 s and 8 s, PYTHONHASHSEED=0), `a54b25a` → `a907150`: richards 168.93 → 168.92 M, deltablue 27.00 → 27.01, raytrace 3,112.1 → 3,100.6, go 1,072.2 → 1,072.5, hexiom 41.06 → 41.19, chaos 464.00 → 463.94, pyflate 2,013.09 → 2,013.09: no change (the same machine code; noise).
+- **Left, and why:** loops with error exits (`BUILD_SET`, `BUILD_MAP`, `BUILD_CONST_KEY_MAP`, `BUILD_*_UNPACK`) wait for gen_abstract's loop rule; `COMPARE_OP` needs `cmp_outcome` translated; `BUILD_STRING` an array argument; `FORMAT_VALUE` is a deliberate residual.
+- **Risks:** the singleton rule trusts that a callee answering K first gives the same result as the fast path, checked statement by statement but only for the callee's leading identity tests; `JUMP_IF_CC` supports popping one value on a jump (`NEXT_INSTR_POP`), and refuses more; `dis.stack_effect` is checked with `jump` taken as true (3.7's maximum), so a jump that keeps fewer slots than the fall path is refused rather than checked. `gen_ceval.build` now runs `effects.analyse` too (generation 6.6 s → 11.4 s).
+
 ## 2026-11-18: the rest of the mechanisms through the detectors (`f254b5d`, D77)
 
 eval_breaker (its home and ceval's handler), the current thread state, the recursion count, the exception state and the inline store's GC test are chosen from the target's source like entry, tracing and frames: ten mechanisms, METACOMPILER.md "Mechanisms" for the table. [run]

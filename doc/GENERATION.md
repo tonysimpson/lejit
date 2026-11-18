@@ -104,6 +104,14 @@ The reader expresses stack effects that depend on oparg as 3.12's DSL does (`val
 - **Policy table:** the five entries' `ni` now name `gen_ceval.py:translate` (`policy.py` fails the build while they name the removed hand cases). Their `virtual` items (`BUILD_TUPLE`, `BUILD_LIST`, `BUILD_SLICE`) are not read: the generator finds the constructor by PATTERNS E's rule, and `BUILD_LIST`'s length limit is inside `PsycoList_New`. Step 6 should read those items or drop them, so the table and the rule can't disagree unnoticed.
 - **Left for step 8's back half:** branches on run-time values as condition codes (`UNARY_NOT`, `POP_JUMP_IF_*`), loops with error exits, `cmp_outcome`'s switch, jumps.
 
+## Step 8, back half: branches and jumps (`a907150`, D79) [run]
+
+The control-flow cases are generated with step 4's rules: METACOMPILER.md "`ceval.c` reader" (the restructuring rules, the refusals table, the back half's additions) and the failures log.
+- **Generated: 9 more, 59 of 119** (`UNARY_NOT`, `POP_JUMP_IF_FALSE`, `POP_JUMP_IF_TRUE`, `JUMP_IF_FALSE_OR_POP`, `JUMP_IF_TRUE_OR_POP`, `JUMP_FORWARD`, `JUMP_ABSOLUTE`, `DELETE_FAST`, `SET_ADD`); their hand cases left `pycompiler.c` (104 lines out, 37 in: the two core macros). Read 82 (was 74); refused 37: core 18, shared code 8, stack 5, falls through 4, control flow 2 (`GET_ANEXT`, `WITH_CLEANUP_FINISH`); `DELETE_DEREF` is read but needs cells in the vocabulary.
+- **Reused from step 4:** `gen_abstract.int_condition` (P05, now shared; gen_abstract's output unchanged) and `Translator.flags` for residual calls. Core: `JUMP_IF_CC` and `JUMPED()` in `pycompiler.c`. Policy: rules `singleton_test_generic_path` and `bool_select`, and `forget before_branch` on all four conditional jumps.
+- **Same code:** `tools/samecode.py baseline-3.7 a907150`: 83 units same, 0 differ (4,107 code objects). Release instructions per warm iteration on the seven benchmarks: no change (within 0.4%, the same machine code).
+- **Left:** `COMPARE_OP` (needs `cmp_outcome` translated: a compile-time `switch`, an object identity compare, a loop), `BUILD_SET`, `BUILD_MAP`, `BUILD_CONST_KEY_MAP`, the four `BUILD_*_UNPACK` (loops with error exits: the loop rule being added to gen_abstract), `BUILD_STRING` (an array argument to a residual call), `FORMAT_VALUE` (the hand case is one residual call, judgement), `UNPACK_*` (`unpack_iterable`), cells (`LOAD_CLOSURE`, `LOAD_DEREF`, `STORE_DEREF`, `DELETE_DEREF`), imports.
+
 ## Step 9: mechanism detectors (`36b5beb`, D75) [run]
 
 `tools/metac/mechanisms.py` answers capability questions from the target's source and maps the answers to one snippet per mechanism in `ni/mechanisms/`; `generate.py` writes `mechanism_{entry,tracing,frames}_gen.h`. Details, the interfaces and the detector table: METACOMPILER.md "Mechanisms".
