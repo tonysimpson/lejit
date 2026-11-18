@@ -110,7 +110,15 @@ The reader expresses stack effects that depend on oparg as 3.12's DSL does (`val
 - **3.7:** entry `frame_eval_hook`, tracing `tstate_use_tracing`, frames `frame_object`. Each needed a snippet: the hook and its installation; the `use_tracing` test at run time and in emitted code; `ni_frame_t` and eight accessors for the frame chain (field accesses on 3.7, a different structure on 3.11+). The core (`eval_hook.c:ni_entry_point`, `NiCode_Run`, `frames.c`, `pycompiler.c:cimpl_new_frame`, `psyfunc.c:tracing_on`) calls only those.
 - **Other versions, detectors only** (`tests/mechanisms.py`): 3.8.20 gives 3.7's answers; 3.11.11 a hook given `_PyInterpreterFrame` (vectorcall unusable: specialised calls would bypass it), CFrame tracing, CFrame frames; 3.12.9 vectorcall with watchers, `sys.monitoring`, CFrame frames; 3.13.2 the same but the innermost frame in `tstate->current_frame`. Those snippets are stubs that `#error` "not written yet".
 - **Checks:** generation twice, same output, and the build used it; answers not in `VARIANTS` fail generation and remove the headers (`tests/mechanisms.py`); `tools/samecode.py 2d2d3d5 36b5beb` 83 units same, 0 differ (4,089 code objects); checked build `tests/run.py` 749 pass (`tracing` 9), `compile_bounds.py` 7, `cpython_tests.py -j 2` 285 modules 0 unexpected, `smoke.py` same, `v_mem_mov` 90,144 cases.
-- **For 3.8:** no mechanism work. What will stop a 3.8 build is elsewhere: the policy table's shapes [inferred, not built], and of the layouts only `PyGC_Head.gc.gc_refs` (below).
+- **For 3.8:** no entry, tracing or frames work. Since D77 two mechanism stubs stop a 3.8 build (below), with the policy table's shapes [inferred, not built].
+
+## Step 9, the rest of the mechanisms (`f254b5d`, D77) [run]
+
+Five more mechanisms go through step 9's machinery: where eval_breaker is and what ceval does on it, the current thread state, the recursion count, the exception state, the inline store's GC test. Seven `VARIANTS` entries (two pairs whose code is half in `pyruntime.c`); detector table and interfaces in METACOMPILER.md "Mechanisms".
+- **3.7:** each mechanism's code moved into a snippet behind a narrow interface, and the layout entries it read (`PyThreadState`'s three fields, `PyGC_Head`, both `RUNTIME` fields) moved with it. `pyruntime.c` is now only the snippets' home.
+- **Other versions, detectors only:** 3.8 picks two stubs (the handler with `signals_pending`, the GC test on `_gc_next`); 3.11 the per-interpreter breaker with a copy of `eval_frame_handle_pending`, `recursion_remaining`, the handled exception as one value, `_gc_next`; 3.12 the thread state as a thread-local, `_Py_HandlePending` (not exported), `py_recursion_remaining`, `current_exception`; 3.13 eval_breaker per thread and an exported handler.
+- **Checks:** generation twice, same output, and the build used it; `tools/samecode.py 59c5fba f254b5d`: 83 units same, 0 differ (4,089 code objects); checked build `tests/run.py` 749 pass, `compile_bounds.py` 7, `cpython_tests.py -j 2` 285 modules 0 unexpected; `tests/mechanisms.py` 0 failed (every mechanism has an expected row per version).
+- **Not done:** the handler copy could come from the `ceval.c` reader (the loop top on 3.7 and 3.8, a function on 3.11 and 3.12); on 3.13 it is exported.
 
 ## Layouts: D19's stage 0 (`ee76274`, `9869ad9`, D76) [run]
 

@@ -1,5 +1,15 @@
 # Status
 
+## 2026-11-18: the rest of the mechanisms through the detectors (`f254b5d`, D77)
+
+eval_breaker (its home and ceval's handler), the current thread state, the recursion count, the exception state and the inline store's GC test are chosen from the target's source like entry, tracing and frames: ten mechanisms, METACOMPILER.md "Mechanisms" for the table. [run]
+- **3.7:** today's code moved into seven snippets with the same emitted code; the layout entries they read moved with them (`layouts_gen.h` 51 fields, 166 assertions; `RUNTIME` empty). `pyruntime.c` holds only snippets.
+- **Detector answers** on 3.7.17, 3.8.20, 3.11.11, 3.12.9, 3.13.2 in `tests/mechanisms.py`. 3.8 now selects two stubs (handler with `signals_pending`, GC test on `_gc_next`).
+- **Same code:** `tools/samecode.py 59c5fba f254b5d`: 83 units same, 0 differ (4,089 code objects).
+- Checked build: generators twice, same output, and the build used it; `tests/run.py` 749 pass; `tests/compile_bounds.py` 7 checks; `tests/cpython_tests.py -j 2` 285 modules, 0 unexpected; `tests/mechanisms.py` 0 failed.
+- **Noted, not done:** the eval-breaker handler is a copy of ceval's loop top that the `ceval.c` reader could generate (on 3.13 it is exported and needs no copy).
+- **Risks:** the triple-shaped exception interface follows 3.7's bytecode; 3.11's handled exception is one value, so its snippet must make a triple from an object. The `gc_tracked_test` detector reads both `#if` branches, so on 3.13 it can't tell the free-threaded build. `eval_breaker` `int32_address` on 3.11 and 3.12 assumes one interpreter. Detectors are token-level, as D75's.
+
 ## 2026-11-18: general translation of `abstract.c` (GENERATION.md step 4, `1aa473c`, D74)
 
 `tools/metac/gen_abstract.py` translates `abstract.c`'s functions into metas by binding times and fixed rules (D74, METACOMPILER.md "General translation"); the build writes `pabstract_gen.h`. [run]

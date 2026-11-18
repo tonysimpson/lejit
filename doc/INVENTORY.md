@@ -112,7 +112,7 @@ The main ones, by where they must go:
 | `ceval.c:unpack_iterable` | `pycompiler.c:unpack_iterable`, `cimpl_unpack_iterable`, `cimpl_unpack_ex`; `cimpl_unpack_list` copies UNPACK_SEQUENCE's list branch | output array (P12) |
 | `ceval.c:do_raise` | `cimpl_do_raise`, `cimpl_reraise` | P27 |
 | `ceval.c` `fast_block_end` | `cimpl_push_exc_info`, `unwind_except_handler`/`cimpl_pop_exc_info`, the unwind loop | Ni's finally states |
-| `ceval.c` eval_breaker block and its skip list | `pyruntime.c:ni_eval_breaker_handler`, `ni_eval_breaker_at_entry`; skip list in `mergepoints.h:BREAKER_SKIPS` and again inline in `ni_eval_breaker_at_entry` | runtime-poll; the skip list is copied twice |
+| `ceval.c` eval_breaker block and its skip list | `ni_eval_breaker_handler`, `ni_eval_breaker_at_entry` (since D77 in `mechanisms/eval_breaker_runtime/ceval_loop_top.h`); skip list in `mergepoints.h:BREAKER_SKIPS` and again inline in `ni_eval_breaker_at_entry` | runtime-poll; the skip list is copied twice |
 | `frameobject.c:_PyFrame_New_NoTrack` (the builtins choice) | `psyfunc.c:callee_builtins` and `pycompiler.c:psy_get_builtins` (also called from `psycofunction_call`) | P28 |
 | `object.c:PyObject_SelfIter` | `piterobject.c:piter_getiter` and `prangeobject.c:prangeiter_getiter`, registered on the same C pointer | identical; the later registration wins for every iterator type |
 | `listobject.c:list_item` | `plistobject.c:plist_item`, used for list `sq_item` and by `piterobject.c:piter_iternext` | shortcut |
