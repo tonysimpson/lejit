@@ -1,6 +1,6 @@
 ---
 written: 2026-11-17
-status: plan; step 1 done (`9eae61d`)
+status: plan; steps 1 (`9eae61d`) and 2 (`20689cd`) done
 ---
 # Plan of work: generate the translated layer on 3.7
 
@@ -56,6 +56,14 @@ Order: 0, 1 and 2 can run at once; then 3; then 4 alone; then 5, 6, 7 and 8 in p
 - For step 2: `gen_ceval.py`'s internals (`read_defs`, `translate`, `run`, `check_37`, `header`) are unchanged except that `check_37` and `stack_effects` take the interpreter as an argument. Its `main` is now only `--try BYTECODES_C CPYTHON_SRC`, and `build(target)` is the entry: replacing `run(DEFS, target.src)` with the `ceval.c` reader is the whole change there.
 
 **Checks** (`tools/check.sh`): the generators run twice and must give identical output; the build must then have compiled the same headers. The cross-checks of `gen_ceval` run in every generation, so in every build.
+
+## Step 2: done (`20689cd`, D69) [run]
+
+`tools/metac/ceval_reader.py` reads 3.7's 119 `TARGET` cases; `gen_ceval.build` takes its definitions from it (or from `Python/bytecodes.c` when the source has one), and `bytecodes37.c` is gone. Details, the rules and the refusals by kind: METACOMPILER.md "`ceval.c` reader".
+- **Read 51, generated 44, refused 68**: core 21, oparg 18, control flow 15, shared code 8, falls through 4, preprocessor 1, stack 1. The 7 read but not generated are vocabulary (`DELETE_SUBSCR`, `LOAD_CLOSURE`, `STORE_DEREF`, `COMPARE_OP`, `IMPORT_NAME`, `IMPORT_FROM`, `JUMP_FORWARD`).
+- **The 41 regenerate the same** but for variable names (10 cases) and `DUP_TOP_TWO`'s incref order; case order is `ceval.c`'s. New: `LOAD_ATTR`, `STORE_ATTR`, `DELETE_ATTR`, with the same calls as the hand-written cases they replace (removed from `pycompiler.c`).
+- **Checks:** every derived effect against `dis.stack_effect` (nine opargs) in every generation; a mutation test (wrong readers, wrong `ceval.c`) fails or refuses each time. Checked build: `tests/run.py` 747 pass, compile bounds, the seven `profile_bench.py` runs, CPython's default set 285 modules, 0 unexpected. Release build, instructions per warm iteration on the seven benchmarks against `b36a1ac`: within ±0.05% (STATUS).
+- **For step 8:** the reader already gives definitions for the compares, imports, closures and jumps; what stops them is back-half vocabulary (failures log). The refused kinds core, shared code and falls through stay hand-written by design; oparg and control flow need array inputs and branches on run-time values.
 
 ## Risks
 

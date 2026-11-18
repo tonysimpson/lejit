@@ -1,6 +1,6 @@
 ---
 written: 2026-11-16
-status: stage 1 started (`64f88e7` ints, `749985f` floats); bytecode stage started (gen_ceval.py, D26)
+status: stage 1 started (`64f88e7` ints, `749985f` floats); bytecode stage started (gen_ceval.py, D26); its 3.7 input is `ceval.c` itself (D69)
 ---
 # Meta-compiler: approach and tooling options
 
@@ -109,6 +109,8 @@ Read from the 3.12.9 source tarball (`Python/bytecodes.c`, `Tools/cases_generato
 
 ## Bytecode slice: simple opcodes from the DSL (D26)
 
+*History: until D69 the input was the hand-written `bytecodes37.c`; it is gone, and the next section reads the same opcodes from `ceval.c`. The rest of this section (shape, vocabulary, restart rule, 3.12 trial) is still how the back half works.*
+
 `tools/metac/gen_ceval.py` reads `tools/metac/bytecodes37.c` (3.7's opcodes in 3.12's DSL) with CPython's own parser (`tools/metac/cases_generator/`, vendored from 3.12.9) and writes `pycompiler_gen.h`, which `pycompiler.c` includes in its opcode switch. [run]
 
 - **Result:** 39 of the 43 described opcodes are generated, and their hand-written cases are gone from `pycompiler.c` (165 lines):
@@ -147,6 +149,37 @@ Read from the 3.12.9 source tarball (`Python/bytecodes.c`, `Tools/cases_generato
 - `KW_NAMES` was refused only after a rule was added: assigning a variable that isn't an output (3.12's `kwnames` is interpreter state).
 - The next vocabulary to add follows from that: array inputs (calls, `BUILD_*`), conditional outputs, and a branch on a run-time truth value (below).
 
+## `ceval.c` reader (D69)
+
+`tools/metac/ceval_reader.py` reads the `TARGET(op)` cases of the source's `Python/ceval.c` and gives `gen_ceval.py` the same `InstDef`s CPython's parser gives for a `bytecodes.c`: it writes each case out in that syntax (`inst(NAME, (ins -- outs)) { body }`) and parses the text with the vendored parser. `gen_ceval.definitions` picks the front end by what the source has: `Python/bytecodes.c` if present, else `ceval.c`; no version number. Plain token rules were enough (`ctokens.py`, which can now keep preprocessor lines as tokens so that a conditional inside a case is seen). `python3 tools/metac/ceval_reader.py SRC` prints what it reads. [run]
+
+**How a case is read.** A symbolic run over the case's statements:
+- **Stack.** The stack starts with unknown inputs below the stack pointer. `POP`, `TOP`, `SECOND`, `THIRD`, `FOURTH`, `PEEK(n)` assigned to a variable bind that input slot to the variable; `PUSH`, `SET_TOP`…`SET_FOURTH`, `SET_VALUE(n, x)` write a slot; `STACKADJ`, `STACK_GROW`, `STACK_SHRINK` move the pointer. The deepest slot touched is the base: the inputs are the slots from it to the old pointer, the outputs the slots from it to the new one, named by the variables they hold. Reading a slot twice, overwriting or dropping an input it didn't read, pushing an unset slot or an expression, or a stack macro inside an expression: refused.
+- **Error exits.** `if (C) goto error;`, or `if (C) { …; goto error; }` whose statements are releases of inputs and at most one known error statement, becomes `ERROR_IF(C, label)`. The one known statement is `format_exc_check_arg(PyExc_UnboundLocalError, UNBOUNDLOCAL_ERROR_MSG, …)`, which is what 3.12's `unbound_local_error` label does, so it gets that label. The exit is accepted only if every input read so far is still in its slot or has been released or stored (never both), and every other slot written holds the value `C` says is NULL: then the inputs are dead after it, which is what `ERROR_IF` means to the back half.
+- **Generic path.** `if (T) A else B`, where `T` only tests types (`Py*_Check`, `Py*_CheckExact`, `!`, `&&`, `||`), keeps `B`. This is the one judgement rule: CPython's exact-type fast paths (`unicode_concatenate` in `BINARY_ADD`/`INPLACE_ADD`, `PyUnicode_Format` in `BINARY_MODULO`) give the same result as the generic call, and Psyco's counterpart of the generic call dispatches on the type itself. It is what `bytecodes37.c` wrote by hand, and what 3.12 did by moving them to specialisations.
+- **Duplicates.** An output that is the same variable as another gets a new name (`top2`), and the `Py_INCREF` that made the extra reference becomes `top2 = Py_NewRef(top)`, as `bytecodes.c` writes a copy. The number of increfs must match.
+- **Tidying.** `T x;` then `x = E;` becomes `T x = E;`; an output loses its declaration (the DSL declares outputs). `DISPATCH`/`FAST_DISPATCH` must be the last statement of the main path; `PREDICT` is dropped. `PREDICTED` labels sit outside the cases.
+
+**Refused, by kind** (the first construct that stops the reader; 3.7.17, 119 cases):
+
+| Kind | Count | Opcodes, and the construct |
+|---|---|---|
+| core | 21 | Block stack (`POP_BLOCK`, `POP_EXCEPT`, `SETUP_FINALLY`, `SETUP_WITH`, `SETUP_ASYNC_WITH`), frame state `f->` (`LOAD_GLOBAL`, `LOAD_NAME`, `STORE_NAME`, `MAKE_FUNCTION`, `WITH_CLEANUP_START`…), `tstate` (`FOR_ITER`), the stack pointer handed to a helper (`CALL_FUNCTION`, `CALL_FUNCTION_KW`, `CALL_METHOD`) |
+| oparg | 18 | `PEEK(oparg)` (`LIST_APPEND`, `SET_ADD`, `MAP_ADD`), loops over `oparg` (`BUILD_*`), slots addressed from `stack_pointer` (`UNPACK_*`, `BUILD_STRING`), `if (oparg …)` (`BUILD_SLICE`, `CALL_FUNCTION_EX`), `FORMAT_VALUE`'s conditional pop. A refusal is also put in this kind whenever `dis.stack_effect` varies with oparg. |
+| control flow | 15 | Branches on run-time values (`UNARY_NOT`, `POP_JUMP_IF_*`, `JUMP_IF_*_OR_POP`, `DELETE_FAST`, `DELETE_DEREF`, `LOAD_METHOD`, `GET_AITER`…), error exits that set their own message (`PRINT_EXPR`, `LOAD_DEREF`'s `format_exc_unbound`) |
+| shared code | 8 | `goto fast_block_end` or `why = WHY_*` (`RETURN_VALUE`, `RAISE_VARARGS`, `END_FINALLY`, `BREAK_LOOP`, `CONTINUE_LOOP`), `goto fast_yield` (`YIELD_VALUE`, `YIELD_FROM`), `goto dispatch_opcode` (`EXTENDED_ARG`) |
+| falls through | 4 | `SETUP_LOOP`, `SETUP_EXCEPT` into `SETUP_FINALLY`; `BUILD_TUPLE_UNPACK_WITH_CALL`, `BUILD_TUPLE_UNPACK` into `BUILD_LIST_UNPACK` |
+| preprocessor | 1 | `JUMP_ABSOLUTE` (`#if FAST_LOOPS`) |
+| stack | 1 | `BEFORE_ASYNC_WITH` (an error exit with a pushed value on the stack) |
+
+**Read: 51; generated: 44.** The 41 that `bytecodes37.c` gave, and `LOAD_ATTR`, `STORE_ATTR`, `DELETE_ATTR`, whose hand-written cases are gone from `pycompiler.c`. That took three general additions to the back half: `pobject.h` is searched for counterparts (`PsycoObject_GetAttr`, `PsycoObject_SetAttr`); a borrowed constant from `co_consts` or `co_names` passed to a call becomes a compile-time vinfo for the call's duration (`GETNAMEV(oparg)`); a `NULL` argument (cast or not) stays `NULL`, as Psyco's counterparts take it where C does (`DELETE_ATTR`). The 7 read but not generated are in the failures log.
+
+**Compared with the `bytecodes37.c` output** (each case's text, with variables renamed by order of appearance) [run]: 30 cases identical, 10 differ only in variable names (ceval.c's `dividend`/`divisor`, `sum`, `diff`, `quotient`, `mod`), and `DUP_TOP_TWO` increfs `top` before `second`, as ceval.c does (no failure point between them, same effect). The cases come in `ceval.c`'s order, and the list of what isn't generated is now every opcode, by kind. The three attribute cases make the same calls in the same order as the hand-written ones they replace.
+
+**Checks, in every generation:** every effect read must equal `dis.stack_effect` run in the target interpreter, for opargs 0, 1, 2, 3, 4, 5, 7, 8 and 255; an effect that varies is a mismatch, as is a name that isn't an opcode. A mismatch is a `GenError`, so the build stops. The old checks (the `TARGET` exists, `ceval.c` calls the functions the description calls) are true by construction now and were dropped.
+
+**Mutation test** [run]: three wrong readers (a `STACKADJ` that doesn't move, a `PUSH` that doesn't move, an output dropped from two-input cases) each stop generation with `dis.stack_effect` mismatches. Six edits to a copy of `ceval.c`: `STORE_FAST` with `TOP()` for `POP()` is a mismatch (effect 0, dis −1); `STACKADJ(-2)` in `STORE_SUBSCR`, `BINARY_POWER` without `SET_TOP`, `BINARY_ADD` reading `SECOND()`, `BINARY_SUBSCR` not releasing `sub`, and `LOAD_FAST` increfing before its error exit are each refused (the error-exit check, or the restart rule), so the opcode drops out of the output and is left to the hand-written code, never generated wrong.
+
 ## Failures log
 
 Record here each case where the current approach failed: the CPython file and function, what it couldn't do, and what we did.
@@ -164,6 +197,13 @@ Record here each case where the current approach failed: the CPython file and fu
 | `float_pow` | Uses `int` locals and many early returns of objects. | Residual. |
 | `float___trunc___impl` (nb_int) | Returns an int (`PyLong_FromDouble`), and the backend can't convert a double to a word. | Residual. |
 | `floatobject.c:float_richcompare` | Not in the number table. Switches on the type of `w`, with an exact int/float comparison. | Hand-written (P26 whitelist: float/float only). |
-| `bytecodes37.c:UNARY_NOT` | `if (err == 0) res = Py_True; else res = Py_False;` is a branch on a run-time value. Ni turns it into a condition code and a virtual bool (`integer_NON_NULL`, `PsycoBool_FromCondition`), and `PsycoObject_IsTrue` returns a vinfo, not an int. | Hand-written. Candidate rule: `int x = F(...)` where F's Psyco counterpart returns a vinfo, then `if (x == 0) A else B` becomes a condition code when A and B are constants. 3.12's `POP_JUMP_IF_*` need the same. |
+| `ceval.c:UNARY_NOT` (was `bytecodes37.c`) | `if (err == 0) { …SET_TOP(Py_True); DISPATCH(); } else if (err > 0) …`: a branch on a run-time value, with a dispatch in each arm. Ni turns it into a condition code and a virtual bool (`integer_NON_NULL`, `PsycoBool_FromCondition`), and `PsycoObject_IsTrue` returns a vinfo, not an int. | Hand-written. Candidate rule: `int x = F(...)` where F's Psyco counterpart returns a vinfo, then `if (x == 0) A else B` becomes a condition code when A and B are constants. 3.12's `POP_JUMP_IF_*` need the same. |
 | `BINARY_MATRIX_MULTIPLY`, `INPLACE_MATRIX_MULTIPLY` | No `PsycoNumber_MatrixMultiply` (until `93b201f`). | `pabstract.c` got both (abstract.c's `binary_op`/`binary_iop` on `nb_matrix_multiply`), and the generator now writes the cases: 41 of 43. |
-| `bytecodes37.c:DELETE_SUBSCR` | No `PsycoObject_DelItem`. The hand-written case calls `PsycoObject_SetItem(po, o, key, NULL)`, which is a fact about Ni's API, not about the C. | Hand-written. Fix: give pabstract a `PsycoObject_DelItem`. |
+| `ceval.c:DELETE_SUBSCR` | Read; no `PsycoObject_DelItem`. The hand-written case calls `PsycoObject_SetItem(po, o, key, NULL)`, which is a fact about Ni's API, not about the C. | Hand-written. Fix: give pabstract a `PsycoObject_DelItem`. |
+| `ceval.c:BINARY_ADD`, `INPLACE_ADD`, `BINARY_MODULO` | A fast path under an exact-type test (`unicode_concatenate`, `PyUnicode_Format`). Not a failure, but the reader's one judgement rule. | The reader keeps the generic `else` branch (D69). If a later version's fast path gives a different result from the generic call, the rule is wrong there and belongs in the policy table (GENERATION step 3). |
+| `ceval.c:LOAD_CLOSURE`, `STORE_DEREF` | Read; `freevars[oparg]` and `PyCell_GET`/`PyCell_SET` aren't in the back half's vocabulary. | Hand-written. Candidate: `freevars[oparg]` as a representation rule (Ni's cells), as `GETLOCAL` is. |
+| `ceval.c:COMPARE_OP` | Read; `cmp_outcome(oparg, left, right)` is a static function of `ceval.c` that switches on `oparg`. | Hand-written (condition codes). Needs `cmp_outcome` translated, with the switch on a compile-time `oparg` folded. |
+| `ceval.c:IMPORT_NAME`, `IMPORT_FROM` | Read; `import_name(f, …)` and `import_from` are `ceval.c` helpers, and `import_name` takes the frame. | Hand-written. |
+| `ceval.c:JUMP_FORWARD` | Read; `JUMPBY(oparg)` is a jump, not in the vocabulary. | Hand-written. Jumps are a small vocabulary for step 8. |
+| `ceval.c:PRINT_EXPR`, `LOAD_DEREF`, `BUILD_CONST_KEY_MAP` | An error exit that sets its own exception (`PyErr_SetString`, `format_exc_unbound`). The reader knows one error statement, the one 3.12 names as a label. | Refused. Candidate: an error exit whose statement only sets an exception becomes a labelled `ERROR_IF` carrying that call, if the back half can emit it. |
+| `ceval.c:BEFORE_ASYNC_WITH` | An error exit with a value it pushed still on the stack. | Refused (coroutines, core in any case). |
