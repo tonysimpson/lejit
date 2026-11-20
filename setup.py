@@ -163,8 +163,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 class build_ext_generated(build_ext):
-    """Detect the features of the CPython being built for, from its source,
-    into the build directory's ni_features_gen.h, before compiling."""
+    """Detect the features of the CPython being built for, and take its
+    messages from the interpreter, into the build directory's
+    ni_features_gen.h and ni_strings_gen.h, before compiling."""
 
     def run(self):
         # "file.h" looks next to the includer first: an old copy there
@@ -180,6 +181,13 @@ class build_ext_generated(build_ext):
         sys.stdout.flush()
         if subprocess.call(cmd) != 0:
             raise DistutilsError('detecting the features of CPython\'s source'
+                                 ' failed (above)')
+        cmd = [sys.executable, os.path.join(HERE, 'tools', 'features', 'strings.py'),
+               '--python', sys.executable, '--out', gen_dir]
+        print(' '.join(cmd))
+        sys.stdout.flush()
+        if subprocess.call(cmd) != 0:
+            raise DistutilsError('taking CPython\'s messages from the interpreter'
                                  ' failed (above)')
         gen = sorted(glob.glob(os.path.join(gen_dir, '*.h')))
         for ext in self.extensions:

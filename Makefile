@@ -9,10 +9,6 @@
 # The build runs the feature detector under PY; it reads the source of PY's
 # CPython release, fetched into ~/.cache/ni once. GEN_PY runs the tools'
 # own tests.
-#
-# Until setup.py writes it, strings-header puts PY's messages
-# (tools/features/strings.py) in the build directory, beside the features,
-# before each build.
 
 SHELL := bash
 
@@ -24,18 +20,14 @@ PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
            $(HOME)/.pyenv/versions/3.10.16/bin/python3.10
 
 .PHONY: build checked-build check check-all test cpython-test encoder-test \
-        features-test features-installed-test strings-header strings-test \
+        features-test features-installed-test strings-test \
         no-version-tests clean
 
-build: strings-header
+build:
 	$(PY) setup.py build_ext --inplace
 
-checked-build: strings-header
+checked-build:
 	NI_TRACE=1 NI_ALL_CHECKS=1 $(PY) setup.py build_ext --inplace
-
-strings-header:
-	$(PY) tools/features/strings.py --python $(PY) \
-	    --out "$$($(PY) tests/common.py)/gen"
 
 test: checked-build
 	$(PY) tests/jit/run.py
