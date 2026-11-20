@@ -1323,11 +1323,26 @@ PyFrameObject *psyco_running_real_frame(PyCodeObject *co) {
   return ni_frame_object(f);
 }
 
-static PyObject *ni_getframe(PyObject *self, PyObject *args) {
+static PyObject *original_getframe = NULL;
+
+static PyObject *ni_getframe(PyObject *self, PyObject *args,
+                             PyObject *kwds) {
   int depth = 0;
   PyFrameObject *top;
-  if (!PyArg_ParseTuple(args, "|i:_getframe", &depth))
+  if ((kwds != NULL && PyDict_GET_SIZE(kwds) != 0) ||
+      !PyArg_ParseTuple(args, "|i:_getframe", &depth)) {
+    /* arguments sys._getframe refuses (it is replaced only once read):
+       its own parsing raises, with the version's messages, from 3.8
+       Argument Clinic's */
+    PyObject *r;
+    PyErr_Clear();
+    r = PyObject_Call(original_getframe, args, kwds);
+    if (r != NULL) { /* never: both refuse the same arguments */
+      Py_DECREF(r);
+      PyErr_BadArgument();
+    }
     return NULL;
+  }
   if (depth < 0)
     depth = 0;
 #if NI_HAS_AUDIT_HOOKS
@@ -1573,7 +1588,8 @@ static void get_referents_init(void) {
 }
 
 static PyMethodDef ni_getframe_def = {
-    "_getframe", ni_getframe, METH_VARARGS,
+    "_getframe", (PyCFunction)(void (*)(void))ni_getframe,
+    METH_VARARGS | METH_KEYWORDS,
     "_getframe([depth]) -> frameobject\n\n"
     "Return a frame object from the call stack, counting frames of code\n"
     "compiled by Ni (emulated)."};
@@ -1583,11 +1599,17 @@ void psyco_frames_init(void) {
   /* Upstream also hooked _PyThreadState_GetFrame (in 3.7,
      _PyRuntime.gilstate.getframe, behind PyEval_GetFrame), not done yet */
   PyObject *sysmod = PyImport_ImportModule("sys");
-  PyObject *fn = PyCFunction_New(&ni_getframe_def, NULL);
-  if (sysmod == NULL || fn == NULL ||
+  /* named as sys's, for the messages that name the function */
+  PyObject *name = PyUnicode_FromString("sys");
+  PyObject *fn = name == NULL ? NULL
+                              : PyCFunction_NewEx(&ni_getframe_def, NULL, name);
+  if (sysmod != NULL)
+    original_getframe = PyObject_GetAttrString(sysmod, "_getframe");
+  if (sysmod == NULL || fn == NULL || original_getframe == NULL ||
       PyObject_SetAttrString(sysmod, "_getframe", fn) < 0)
     PyErr_Print();
   Py_XDECREF(fn);
+  Py_XDECREF(name);
   Py_XDECREF(sysmod);
   warn_init();
   get_referents_init();

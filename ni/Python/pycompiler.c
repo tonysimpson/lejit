@@ -6332,7 +6332,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             vinfo_t *v_, **items_ = (vinfo_t **)PyMem_Malloc((n_ + 1) *
                                                              sizeof(*items_));
             if (items_ == NULL) {
-              PycException_SetString(po, PyExc_MemoryError, "");
+              Py_INCREF(Py_None); /* MemoryError(), as PyErr_NoMemory */
+              PycException_SetObject(po, PyExc_MemoryError, Py_None);
               break;
             }
             for (i_ = 0; i_ < (1 * oparg); i_++)
@@ -6409,7 +6410,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             vinfo_t *v_, **items_ = (vinfo_t **)PyMem_Malloc((n_ + 1) *
                                                              sizeof(*items_));
             if (items_ == NULL) {
-              PycException_SetString(po, PyExc_MemoryError, "");
+              Py_INCREF(Py_None); /* MemoryError(), as PyErr_NoMemory */
+              PycException_SetObject(po, PyExc_MemoryError, Py_None);
               break;
             }
             for (i_ = 0; i_ < (1 * oparg); i_++)

@@ -4046,11 +4046,11 @@ generic:
 /* ceval.c's FOR_ITER: GET_ITER made sure the slot was there, but a heap
    type's can have gone since (CPython leaves _PyObject_NextNotImplemented,
    which raises TypeError); NULL is tested only in case Ni's GET_ITER was
-   bypassed. */
+   bypassed, and raises what _PyObject_NextNotImplemented does. */
 static PyObject *cimpl_iternext(PyObject *iter) {
   iternextfunc f = Py_TYPE(iter)->tp_iternext;
   if (f == NULL) {
-    PyErr_Format(PyExc_TypeError, "'%.100s' object is not an iterator",
+    PyErr_Format(PyExc_TypeError, "'%.200s' object is not iterable",
                  Py_TYPE(iter)->tp_name);
     return NULL;
   }
@@ -4074,7 +4074,7 @@ vinfo_t *PsycoIter_Next(PsycoObject *po, vinfo_t *iter) {
   }
   if (f == NULL) {
     PycException_SetFormat(po, PyExc_TypeError,
-                           "'%.100s' object is not an iterator", tp->tp_name);
+                           "'%.200s' object is not iterable", tp->tp_name);
     return NULL;
   }
   return Psyco_META1(po, f, CfCommonIterNext, "v", iter);
