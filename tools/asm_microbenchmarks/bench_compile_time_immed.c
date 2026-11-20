@@ -1,6 +1,0 @@
-#include "benchmark.h"
-BEGIN
-BEGIN_LOOP
-MOV_R_I(REG_X64_RAX, 0x1FFFFFFF);
-END_LOOP
-END

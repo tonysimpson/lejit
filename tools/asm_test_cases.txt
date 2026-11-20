@@ -1,5 +1,0 @@
-MOV_R_O(REG_X64_R14, REG_X64_RSP, 64); mov 64(%rsp), %r14
-CMP_I8_O(0, REG_X64_RAX, 0x20); cmp $0,0x20(%rax)
-CMP_I8_O(0, REG_X64_RAX, 0x80); cmp $0,0x80(%rax)
-CMP_I8_A(1, REG_X64_RSP); cmp $1,(%rsp)
-MOV_R_O(REG_X64_RBP, REG_X64_RSP, 0); mov 0x0(%rsp),%rbp

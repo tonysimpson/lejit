@@ -1,7 +1,0 @@
-set -e
-echo $@
-gcc -I/usr/include/python2.7 test_mcg_template.c -DREPLACE_ME="$@"
-./a.out | tee out.out
-rm a.out
-head -n2 out.out | tail -n1 | python -c 'import distorm3; import sys; d = ("".join(sys.stdin.read().split())).decode("hex"); print distorm3.Decode(0, d, distorm3.Decode64Bits)[0][2]'
-
