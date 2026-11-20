@@ -4,6 +4,7 @@
 #   make check                checked build and every test, for PY
 #   make check-all            make check for each of PYTHONS
 #   make test | cpython-test | encoder-test | features-test
+#   make features-installed-test
 #
 # The build runs the feature detector under PY; it reads the source of PY's
 # CPython release, fetched into ~/.cache/ni once. GEN_PY runs the tools'
@@ -19,7 +20,7 @@ PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
            $(HOME)/.pyenv/versions/3.10.16/bin/python3.10
 
 .PHONY: build checked-build check check-all test cpython-test encoder-test \
-        features-test no-version-tests clean
+        features-test features-installed-test no-version-tests clean
 
 build:
 	$(PY) setup.py build_ext --inplace
@@ -43,13 +44,19 @@ encoder-test: checked-build
 features-test:
 	$(GEN_PY) tests/features/test.py
 
+# the installed detector (no source) agrees with the source one, on each
+# interpreter
+features-installed-test:
+	$(GEN_PY) tests/features/installed_test.py
+
 # features come from CPython's source (NI_HAS_*), never its version number
 no-version-tests:
 	@! grep -rnwE 'PY_(VERSION_HEX|MAJOR_VERSION|MINOR_VERSION|MICRO_VERSION)' \
 	    ni/ --include='*.[ch]' \
 	  || { echo "a CPython version test in ni/ (above): add an NI_HAS_ feature"; exit 1; }
 
-check: no-version-tests features-test test cpython-test encoder-test
+check: no-version-tests features-test features-installed-test test cpython-test \
+       encoder-test
 
 check-all:
 	@for p in $(PYTHONS); do \
