@@ -1,0 +1,18 @@
+# sha256 of CPython release tarballs, as fetched from
+# https://www.python.org/ftp/python/X.Y.Z/Python-X.Y.Z.tgz (cpython_src.py).
+# Take each from a source other than the download itself: 3.7.17's is
+# pyenv's python-build definition, and matched the download.
+Python-3.7.17.tgz  fd50161bc2a04f4c22a0971ff0f3856d98b4bf294f89740a9f06b520aae63b49
+# Fetched for the mechanism detectors (mechanisms.py); each from pyenv's
+# python-build definition, and matched the download.
+Python-3.8.20.tgz  9f2d5962c2583e67ef75924cd56d0c1af78bf45ec57035cf8a2cc09f74f4bf78
+Python-3.11.11.tgz  883bddee3c92fcb91cf9c09c5343196953cbb9ced826213545849693970868ed
+Python-3.12.9.tgz  45313e4c5f0e8acdec9580161d565cf5fea578e3eabf25df7cc6355bf4afa1ee
+Python-3.13.2.tgz  b8d79530e3b7c96a5cb2d40d431ddb512af4a563e863728d8713039aa50203f9
+# Fetched for the feature detectors' backport test (tests/features/test.py), from
+# pyenv's python-build definition, and matched the download.
+Python-3.7.13.tgz  e405417f50984bc5870c7e7a9f9aeb93e9d270f5ac67f667a0cd3a09439682b5
+# The 3.9 port, from pyenv's python-build definition.
+Python-3.9.21.tgz  667c3ba2ca98d39ead1162f6548c3475768582e2ff89e0821d25eb956ac09944
+# The 3.10 port, from pyenv's python-build definition.
+Python-3.10.16.tgz  f2e22ed965a93cfeb642378ed6e6cdbc127682664b24123679f3d013fafe9cd0
