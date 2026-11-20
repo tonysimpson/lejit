@@ -1,7 +1,7 @@
 The MIT License (MIT)
 
 Copyright (c) 2000 - 2010 Armin Rigo and Psyco authors.
-Copyright (c) 2016 - 2020 Tony Simpson.
+Copyright (c) 2016 - 2026 Tony Simpson.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
@@ -20,3 +20,8 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+
+Parts of ni/ are copied or adapted from CPython: the interpreter loop
+(Python/ceval.c), object implementations (Objects/) and the layouts of
+CPython's internal structures. Those parts are under the Python Software
+Foundation License; see LICENSE-CPython.
