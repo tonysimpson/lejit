@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: make check (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    # the official images give exact CPython releases, built as shared
+    # libraries with their headers
+    container: python:${{ matrix.python }}-bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libffi and libunwind
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+      # the source detector's releases, fetched from python.org once
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ni
+          key: cpython-source-${{ hashFiles('tools/features/cpython_sha256.txt') }}
+      - name: make check
+        run: make -k check PY=python GEN_PY=python
+
+  wheels:
+    name: wheels (built, not released)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # cibuildwheel 3 dropped Python 3.7
+      - uses: pypa/cibuildwheel@v2.23.3
+        env:
+          CIBW_BUILD: "cp37-* cp38-* cp39-* cp310-*"
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_ARCHS_LINUX: x86_64
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_BEFORE_ALL_LINUX: >-
+            dnf install -y epel-release &&
+            dnf install -y libffi-devel libunwind-devel
+          CIBW_TEST_COMMAND: >-
+            python -c "import ni; print(ni.build_info['source_version'])"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: wheelhouse/*.whl
