@@ -181,19 +181,27 @@ tuple_get_empty(PsycoObject *po)
 }
 #endif
 
-#if NI_HAS_TUPLE_GET_EMPTY
+#if NI_HAS_TUPLE_ALLOC
 static vinfo_t *
 tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
 {
     int _t1;
+#if !NI_HAS_TUPLE_GET_EMPTY
+    vinfo_t *_t10;
+#endif
     vinfo_t *_t2;
     int _t3;
     int _t4;
     vinfo_t *_t5;
     int _t6;
     vinfo_t *_t7;
+#if NI_HAS_TUPLE_GET_EMPTY
     vinfo_t *_t8;
     vinfo_t *b;
+#else
+    Py_ssize_t _t8;
+    vinfo_t *_t9;
+#endif
     Py_ssize_t size;
     PyTypeObject *tp_a;
     PyTypeObject *tp_bb;
@@ -229,7 +237,9 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
             tp_bb->tp_name);
         return NULL;
     }
+#if NI_HAS_TUPLE_GET_EMPTY
     b = bb;
+#endif
     _t4 = PsycoTuple_Load(bb);
     if (_t4 < 0 || _t4 > 16) {
         _t5 = psyco_generic_call(
@@ -251,6 +261,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         vinfo_incref(a);
         return a;
     }
+#if NI_HAS_TUPLE_GET_EMPTY
     size = (_t1 + _t4);
     if (size == 0) {
         _t7 = tuple_get_empty(po);
@@ -264,77 +275,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
     if (_t8 != NULL)
         Psyco_AssertType(po, _t8, &PyTuple_Type);
     return _t8;
-}
-#elif NI_HAS_TUPLE_ALLOC
-static vinfo_t *
-tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
-{
-    int _t1;
-    vinfo_t *_t10;
-    vinfo_t *_t2;
-    int _t3;
-    int _t4;
-    vinfo_t *_t5;
-    int _t6;
-    vinfo_t *_t7;
-    Py_ssize_t _t8;
-    vinfo_t *_t9;
-    Py_ssize_t size;
-    PyTypeObject *tp_a;
-    PyTypeObject *tp_bb;
-    _t1 = PsycoTuple_Load(a);
-    if (_t1 < 0 || _t1 > 16) {
-        _t2 = psyco_generic_call(
-            po, PyTuple_Type.tp_as_sequence->sq_concat,
-            CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "vv", a, bb);
-        if (_t2 != NULL)
-            Psyco_AssertType(po, _t2, &PyTuple_Type);
-        return _t2;
-    }
-    _t3 = _t1 == 0;
-    if (_t3) {
-        tp_bb = Psyco_NeedType(po, bb);
-        if (tp_bb == NULL) {
-            return NULL;
-        }
-        _t3 = tp_bb == (&PyTuple_Type);
-    }
-    if (_t3) {
-        vinfo_incref(bb);
-        return bb;
-    }
-    tp_bb = Psyco_NeedType(po, bb);
-    if (tp_bb == NULL) {
-        return NULL;
-    }
-    if (!(((tp_bb->tp_flags & (1UL << 26))) != 0)) {
-        PycException_SetFormat(
-            po, PyExc_TypeError,
-            "can only concatenate tuple (not \"%.200s\") to tuple",
-            tp_bb->tp_name);
-        return NULL;
-    }
-    _t4 = PsycoTuple_Load(bb);
-    if (_t4 < 0 || _t4 > 16) {
-        _t5 = psyco_generic_call(
-            po, PyTuple_Type.tp_as_sequence->sq_concat,
-            CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "vv", a, bb);
-        if (_t5 != NULL)
-            Psyco_AssertType(po, _t5, &PyTuple_Type);
-        return _t5;
-    }
-    _t6 = _t4 == 0;
-    if (_t6) {
-        tp_a = Psyco_NeedType(po, a);
-        if (tp_a == NULL) {
-            return NULL;
-        }
-        _t6 = tp_a == (&PyTuple_Type);
-    }
-    if (_t6) {
-        vinfo_incref(a);
-        return a;
-    }
+#else
     if (_t1 > ((((Py_ssize_t)(((size_t)-1) >> 1)) - _t4))) {
         _t7 = psyco_generic_call(
             po, PyErr_NoMemory,
@@ -350,11 +291,12 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         return _t9;
     }
     _t10 = psyco_generic_call(po, PyTuple_Type.tp_as_sequence->sq_concat,
-                              CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
-                              "vv", a, bb);
+                             CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
+                             "vv", a, bb);
     if (_t10 != NULL)
         Psyco_AssertType(po, _t10, &PyTuple_Type);
     return _t10;
+#endif
 }
 #else
 static vinfo_t *
@@ -479,24 +421,24 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
 
 static vinfo_t *
 tuplecontains(PsycoObject *po, vinfo_t *a, vinfo_t *el)
+{
+    int _t1;
+    int _t2;
+    condition_code_t _t3;
+    int _t4;
+    vinfo_t *_t5;
+    vinfo_t *_t6;
+    vinfo_t *cmp;
+    Py_ssize_t i;
+    PyTypeObject *tp_el;
+    _t1 = PsycoTuple_Load(a);
+    if (_t1 < 0 || _t1 > 16) {
+        return psyco_generic_call(po, PyTuple_Type.tp_as_sequence->sq_contains,
+                                  CfCommonIntBoolOrError, "vv", a, el);
+    }
+    i = 0;
+    cmp = vinfo_new(CompileTime_New((long)(0)));
 #if NI_HAS_CONTAINS_ITEM_FIRST
-{
-    int _t1;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    vinfo_t *_t5;
-    vinfo_t *_t6;
-    vinfo_t *cmp;
-    Py_ssize_t i;
-    PyTypeObject *tp_el;
-    _t1 = PsycoTuple_Load(a);
-    if (_t1 < 0 || _t1 > 16) {
-        return psyco_generic_call(po, PyTuple_Type.tp_as_sequence->sq_contains,
-                                  CfCommonIntBoolOrError, "vv", a, el);
-    }
-    i = 0;
-    cmp = vinfo_new(CompileTime_New((long)(0)));
     for (_t2 = 0; _t2 < _t1; _t2++) {
         if (Psyco_NeedType(po, PsycoTuple_GET_ITEM(a, _t2)) == NULL) {
             vinfo_decref(cmp, po);
@@ -508,46 +450,7 @@ tuplecontains(PsycoObject *po, vinfo_t *a, vinfo_t *el)
         vinfo_decref(cmp, po);
         return NULL;
     }
-    for (;;) {
-        _t3 = integer_non_null(po, cmp);
-        if (_t3 == CC_ERROR) {
-            vinfo_decref(cmp, po);
-            return NULL;
-        }
-        _t3 = INVERT_CC(_t3);
-        _t4 = runtime_condition_t(po, _t3);
-        if (!((_t4 && i < _t1)))
-            break;
-        _t5 =
-            PsycoObject_RichCompareBool(po, PsycoTuple_GET_ITEM(a, i), el, 2);
-        _t6 = _t5;
-        vinfo_decref(cmp, po);
-        cmp = _t6;
-        if (cmp == NULL) {
-            return NULL;
-        }
-        ++i;
-    }
-    return cmp;
-}
 #else
-{
-    int _t1;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    vinfo_t *_t5;
-    vinfo_t *_t6;
-    vinfo_t *cmp;
-    Py_ssize_t i;
-    PyTypeObject *tp_el;
-    _t1 = PsycoTuple_Load(a);
-    if (_t1 < 0 || _t1 > 16) {
-        return psyco_generic_call(po, PyTuple_Type.tp_as_sequence->sq_contains,
-                                  CfCommonIntBoolOrError, "vv", a, el);
-    }
-    i = 0;
-    cmp = vinfo_new(CompileTime_New((long)(0)));
     tp_el = Psyco_NeedType(po, el);
     if (tp_el == NULL) {
         vinfo_decref(cmp, po);
@@ -559,6 +462,7 @@ tuplecontains(PsycoObject *po, vinfo_t *a, vinfo_t *el)
             return NULL;
         }
     }
+#endif
     for (;;) {
         _t3 = integer_non_null(po, cmp);
         if (_t3 == CC_ERROR) {
@@ -570,7 +474,11 @@ tuplecontains(PsycoObject *po, vinfo_t *a, vinfo_t *el)
         if (!((_t4 && i < _t1)))
             break;
         _t5 =
+#if NI_HAS_CONTAINS_ITEM_FIRST
+            PsycoObject_RichCompareBool(po, PsycoTuple_GET_ITEM(a, i), el, 2);
+#else
             PsycoObject_RichCompareBool(po, el, PsycoTuple_GET_ITEM(a, i), 2);
+#endif
         _t6 = _t5;
         vinfo_decref(cmp, po);
         cmp = _t6;
@@ -581,7 +489,6 @@ tuplecontains(PsycoObject *po, vinfo_t *a, vinfo_t *el)
     }
     return cmp;
 }
-#endif
 
 static vinfo_t *
 tupleitem(PsycoObject *po, vinfo_t *a, vinfo_t *i)

@@ -603,11 +603,7 @@ struct unicode_formatter_t {
     PyObject *dict;
     enum PyUnicode_Kind fmtkind;
     Py_ssize_t fmtcnt, fmtpos;
-#if NI_HAS_UNICODE_CONST_DATA
     const void *fmtdata;
-#else
-    void *fmtdata;
-#endif
     PyObject *fmtstr;
     _PyUnicodeWriter writer;
 };

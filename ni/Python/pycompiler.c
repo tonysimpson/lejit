@@ -2023,102 +2023,27 @@ cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
 #if !NI_HAS_TRACE_INFO
 static PyObject *
 cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
+#if NI_HAS_CALL_TRACE_METHOD_DESCR
+{
+    PyThreadState *tstate = PyThreadState_GET();
+
+    PyObject *result;
 #if NI_HAS_FASTCALL_DICT_TSTATE
-{
-    PyThreadState *tstate = PyThreadState_GET();
-
-    PyObject *result;
     if (PyCFunction_CheckExact(func) || PyCMethod_CheckExact(func)) {
-        if (tstate->use_tracing && tstate->c_profilefunc) {
-            if (cimpl_call_trace(tstate->c_profilefunc, tstate->c_profileobj,
-                                 tstate->frame, PyTrace_C_CALL, func)) {
-                result = NULL;
-            }
-            else {
-                result = PyObject_Call(func, callargs, kwdict);
-                if (tstate->c_profilefunc != NULL) {
-                    if (result == NULL) {
-                        cimpl_call_trace_protected(
-                            tstate->c_profilefunc, tstate->c_profileobj,
-                            tstate->frame, PyTrace_C_EXCEPTION, func);
-                    }
-                    else {
-                        if (cimpl_call_trace(
-                                tstate->c_profilefunc, tstate->c_profileobj,
-                                tstate->frame, PyTrace_C_RETURN, func)) {
-                            Py_DECREF(result);
-                            result = NULL;
-                        }
-                    }
-                }
-            }
-        }
-        else {
-            result = PyObject_Call(func, callargs, kwdict);
-        };
-        return result;
-    }
-    else if (Py_IS_TYPE(func, &PyMethodDescr_Type)) {
-        Py_ssize_t nargs = PyTuple_GET_SIZE(callargs);
-        if (nargs > 0 && tstate->use_tracing) {
-            PyObject *self = PyTuple_GET_ITEM(callargs, 0);
-            func = Py_TYPE(func)->tp_descr_get(func, self,
-                                               (PyObject *)Py_TYPE(self));
-            if (func == NULL) {
-                return NULL;
-            }
-            if (tstate->use_tracing && tstate->c_profilefunc) {
-                if (cimpl_call_trace(tstate->c_profilefunc,
-                                     tstate->c_profileobj, tstate->frame,
-                                     PyTrace_C_CALL, func)) {
-                    result = NULL;
-                }
-                else {
-                    result = _PyObject_FastCallDictTstate(
-                        tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
-                        nargs - 1, kwdict);
-                    if (tstate->c_profilefunc != NULL) {
-                        if (result == NULL) {
-                            cimpl_call_trace_protected(
-                                tstate->c_profilefunc, tstate->c_profileobj,
-                                tstate->frame, PyTrace_C_EXCEPTION, func);
-                        }
-                        else {
-                            if (cimpl_call_trace(tstate->c_profilefunc,
-                                                 tstate->c_profileobj,
-                                                 tstate->frame,
-                                                 PyTrace_C_RETURN, func)) {
-                                Py_DECREF(result);
-                                result = NULL;
-                            }
-                        }
-                    }
-                }
-            }
-            else {
-                result = _PyObject_FastCallDictTstate(
-                    tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
-                    nargs - 1, kwdict);
-            };
-            Py_DECREF(func);
-            return result;
-        }
-    }
-    return PyObject_Call(func, callargs, kwdict);
-}
-#elif NI_HAS_CALL_TRACE_METHOD_DESCR
-{
-    PyThreadState *tstate = PyThreadState_GET();
-
-    PyObject *result;
+#else
     if (PyCFunction_Check(func)) {
+#endif
         if (tstate->use_tracing && tstate->c_profilefunc) {
             if (cimpl_call_trace(tstate->c_profilefunc, tstate->c_profileobj,
                                  tstate->frame, PyTrace_C_CALL, func)) {
                 result = NULL;
             }
             else {
+#if NI_HAS_FASTCALL_DICT_TSTATE
+                result = PyObject_Call(func, callargs, kwdict);
+#else
                 result = PyCFunction_Call(func, callargs, kwdict);
+#endif
                 if (tstate->c_profilefunc != NULL) {
                     if (result == NULL) {
                         cimpl_call_trace_protected(
@@ -2137,8 +2062,12 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
             }
         }
         else {
+#if NI_HAS_FASTCALL_DICT_TSTATE
+            result = PyObject_Call(func, callargs, kwdict);
+#else
             result = PyCFunction_Call(func, callargs, kwdict);
-        };
+#endif
+        }
         return result;
     }
     else if (Py_TYPE(func) == &PyMethodDescr_Type) {
@@ -2157,9 +2086,15 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
                     result = NULL;
                 }
                 else {
+#if NI_HAS_FASTCALL_DICT_TSTATE
+                    result = _PyObject_FastCallDictTstate(
+                        tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
+                        nargs - 1, kwdict);
+#else
                     result = _PyObject_FastCallDict(
                         func, &(_PyTuple_CAST(callargs)->ob_item)[1],
                         nargs - 1, kwdict);
+#endif
                     if (tstate->c_profilefunc != NULL) {
                         if (result == NULL) {
                             cimpl_call_trace_protected(
@@ -2179,10 +2114,16 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
                 }
             }
             else {
+#if NI_HAS_FASTCALL_DICT_TSTATE
+                result = _PyObject_FastCallDictTstate(
+                    tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
+                    nargs - 1, kwdict);
+#else
                 result = _PyObject_FastCallDict(
                     func, &(_PyTuple_CAST(callargs)->ob_item)[1], nargs - 1,
                     kwdict);
-            };
+#endif
+            }
             Py_DECREF(func);
             return result;
         }
@@ -2220,7 +2161,7 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
         }
         else {
             result = PyCFunction_Call(func, callargs, kwdict);
-        };
+        }
         return result;
     }
     else {
@@ -2625,9 +2566,6 @@ cimpl_get_aiter_r0(PyObject *_in0, long _oparg, PyObject *iter, PyObject *obj,
             }
             stack_pointer[-1] = iter;
             goto _done;
-#if NI_HAS_DISPATCH_PREDISPATCH
-            ;
-#endif
         }
     }
 _done:
@@ -2667,9 +2605,6 @@ cimpl_get_aiter_r1(PyObject *_in0, long _oparg, PyObject *iter,
             }
             stack_pointer[-1] = iter;
             goto _done;
-#if NI_HAS_DISPATCH_PREDISPATCH
-            ;
-#endif
         }
     }
 _done:
@@ -2702,7 +2637,6 @@ cimpl_get_anext_0(PyObject *next_iter)
 static int
 cimpl_get_anext_r0(PyObject *_in0, long _oparg, PyObject *aiter,
                    PyObject *next_iter, PyTypeObject *type, PyObject **_out)
-#if NI_HAS_CASE_TARGET
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 1, _i;
@@ -2742,7 +2676,6 @@ cimpl_get_anext_r0(PyObject *_in0, long _oparg, PyObject *aiter,
                 }
             }
             *(stack_pointer++) = awaitable;
-            ;
             goto _done;
         }
     }
@@ -2756,61 +2689,6 @@ _error:
     }
     return -1;
 }
-#else
-{
-    int oparg = (int)_oparg;
-    Py_ssize_t _t = 1, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(51, oparg) + 0 + 1];
-    PyObject **stack_pointer = _stack;
-    unaryfunc getter;
-    PyObject *awaitable;
-    *stack_pointer = _in0;
-    Py_INCREF(*stack_pointer);
-    stack_pointer++;
-    {
-        {
-            {
-                {
-                    getter = type->tp_as_async->am_anext;
-                }
-                if (getter != (NULL)) {
-                    next_iter = (*getter)(aiter);
-                    if (next_iter == (NULL)) {
-                        goto _error;
-                    }
-                }
-                else {
-                    PyErr_Format(
-                        PyExc_TypeError,
-                        "'async for' requires an iterator with __anext__ method, got %.100s",
-                        type->tp_name);
-                    goto _error;
-                }
-                awaitable = cimpl_get_anext_0(next_iter);
-                if (awaitable == (NULL)) {
-                    Py_DECREF(next_iter);
-                    goto _error;
-                }
-                else {
-                    Py_DECREF(next_iter);
-                }
-            }
-            *(stack_pointer++) = awaitable;
-            ;
-            goto _done;
-        };
-    }
-_done:
-    for (_i = 0; _stack + _i < stack_pointer; _i++) _out[_i] = _stack[_i];
-    return 0;
-_error:
-    while (stack_pointer > _stack) {
-        PyObject *_x = *--stack_pointer;
-        Py_XDECREF(_x);
-    }
-    return -1;
-}
-#endif
 #endif
 
 #if NI_HAS_OPCODE_LOAD_ASSERTION_ERROR
@@ -2827,9 +2705,6 @@ cimpl_load_assertion_error_r0(long _oparg, PyObject **_out)
             Py_INCREF(value);
             *(stack_pointer++) = value;
             goto _done;
-#if NI_HAS_DISPATCH_PREDISPATCH
-            ;
-#endif
         }
     }
 _done:
@@ -2886,9 +2761,6 @@ cimpl_load_build_class_r0(long _oparg, PyObject *_f_f_builtins,
             }
             *(stack_pointer++) = bc;
             goto _done;
-#if NI_HAS_DISPATCH_PREDISPATCH
-            ;
-#endif
         }
     }
 _done:
@@ -3210,7 +3082,6 @@ cimpl_match_mapping_r0(PyObject *_in0, long _oparg, int match, PyObject **_out)
             Py_INCREF(res);
             *(stack_pointer++) = res;
             goto _done;
-            ;
         }
     }
 _done:
@@ -3244,7 +3115,6 @@ cimpl_match_sequence_r0(PyObject *_in0, long _oparg, int match,
             Py_INCREF(res);
             *(stack_pointer++) = res;
             goto _done;
-            ;
         }
     }
 _done:
@@ -3283,13 +3153,10 @@ cimpl_match_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
                 Py_INCREF((PyObject *)(&_Py_FalseStruct));
                 *(stack_pointer++) = (PyObject *)(&_Py_FalseStruct);
                 goto _done;
-                ;
             }
-            NULL;
             Py_INCREF((PyObject *)(&_Py_TrueStruct));
             *(stack_pointer++) = (PyObject *)(&_Py_TrueStruct);
             goto _done;
-            ;
         }
     }
 _done:
@@ -3327,7 +3194,6 @@ cimpl_copy_dict_without_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
                 Py_XDECREF(rest);
                 goto _error;
             }
-            NULL;
             for (Py_ssize_t i = 0;
                  i < ((PyVarObject *)((NULL, (PyTupleObject *)keys)))->ob_size;
                  i++) {
@@ -3340,7 +3206,6 @@ cimpl_copy_dict_without_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
             Py_DECREF(keys);
             stack_pointer[-1] = rest;
             goto _done;
-            ;
         }
     }
 _done:
@@ -3386,7 +3251,6 @@ cimpl_copy_dict_without_keys_r1(PyObject *_in0, PyObject *_in1, long _oparg,
             Py_DECREF(keys);
             stack_pointer[-1] = rest;
             goto _done;
-            ;
         }
     }
 _done:
@@ -3520,9 +3384,6 @@ cimpl_with_except_start_r0(PyObject *_items, long _oparg, PyObject *exc,
                 goto _error;
             *(stack_pointer++) = res;
             goto _done;
-#if NI_HAS_DISPATCH_PREDISPATCH
-            ;
-#endif
         }
     }
 _done:
@@ -3852,7 +3713,7 @@ cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
         }
         else {
             result = PyObject_Call(func, callargs, kwdict);
-        };
+        }
         return result;
     }
     else if (Py_IS_TYPE(func, &PyMethodDescr_Type)) {
@@ -3897,7 +3758,7 @@ cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
                 result = _PyObject_FastCallDictTstate(
                     tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
                     nargs - 1, kwdict);
-            };
+            }
             Py_DECREF(func);
             return result;
         }
@@ -3925,7 +3786,6 @@ cimpl_call_function_ex(PyObject *_in0, PyObject *_in1, PyObject *_in2)
     }
     {
         {
-            ;
             PyObject *func;
             PyObject *callargs;
             PyObject *kwargs = NULL;
@@ -3945,7 +3805,6 @@ cimpl_call_function_ex(PyObject *_in0, PyObject *_in1, PyObject *_in2)
                     Py_DECREF(kwargs);
                     kwargs = d;
                 }
-                NULL;
             }
             callargs = *(--stack_pointer);
             func = stack_pointer[-1];
@@ -3959,149 +3818,7 @@ cimpl_call_function_ex(PyObject *_in0, PyObject *_in1, PyObject *_in2)
                     goto _error;
                 }
             }
-            NULL;
             result = cimpl_do_call_core(&trace_info, func, callargs, kwargs);
-            Py_DECREF(func);
-            Py_DECREF(callargs);
-            Py_XDECREF(kwargs);
-            stack_pointer[-1] = result;
-            if (result == (NULL)) {
-                goto _error;
-            };
-            ;
-            goto _done;
-            ;
-        }
-    }
-_done:
-    return _stack[0];
-_error:
-    while (stack_pointer > _stack) {
-        PyObject *_x = *--stack_pointer;
-        Py_XDECREF(_x);
-    }
-    return NULL;
-}
-#elif NI_HAS_PY_IS_TYPE
-{
-    int oparg = _in2 != NULL ? 1 : 0;
-    PyObject *_stack[3];
-    PyObject **stack_pointer = _stack;
-    *stack_pointer++ = _in0;
-    Py_INCREF(_in0);
-    *stack_pointer++ = _in1;
-    Py_INCREF(_in1);
-    if (_in2 != NULL) {
-        *stack_pointer++ = _in2;
-        Py_INCREF(_in2);
-    }
-    {
-        {
-            ;
-            PyObject *func;
-            PyObject *callargs;
-            PyObject *kwargs = NULL;
-            PyObject *result;
-            if (oparg & 0x01) {
-                kwargs = *(--stack_pointer);
-                if (!(((const PyObject *)kwargs)->ob_type == (&PyDict_Type))) {
-                    PyObject *d = PyDict_New();
-                    if (d == (NULL))
-                        goto _error;
-                    if (_PyDict_MergeEx(d, kwargs, 2) < 0) {
-                        Py_DECREF(d);
-                        cimpl_format_kwargs_error(stack_pointer[-2], kwargs);
-                        Py_DECREF(kwargs);
-                        goto _error;
-                    }
-                    Py_DECREF(kwargs);
-                    kwargs = d;
-                }
-                NULL;
-            }
-            callargs = *(--stack_pointer);
-            func = stack_pointer[-1];
-            if (!(((const PyObject *)callargs)->ob_type == (&PyTuple_Type))) {
-                if (cimpl_check_args_iterable(func, callargs) < 0) {
-                    Py_DECREF(callargs);
-                    goto _error;
-                }
-                Py_SETREF(callargs, PySequence_Tuple(callargs));
-                if (callargs == (NULL)) {
-                    goto _error;
-                }
-            }
-            NULL;
-            result = cimpl_do_call_core(func, callargs, kwargs);
-            Py_DECREF(func);
-            Py_DECREF(callargs);
-            Py_XDECREF(kwargs);
-            stack_pointer[-1] = result;
-            if (result == (NULL)) {
-                goto _error;
-            }
-            goto _done;
-        }
-    }
-_done:
-    return _stack[0];
-_error:
-    while (stack_pointer > _stack) {
-        PyObject *_x = *--stack_pointer;
-        Py_XDECREF(_x);
-    }
-    return NULL;
-}
-#elif NI_HAS_KWARGS_MERGE_EX
-{
-    int oparg = _in2 != NULL ? 1 : 0;
-    PyObject *_stack[3];
-    PyObject **stack_pointer = _stack;
-    *stack_pointer++ = _in0;
-    Py_INCREF(_in0);
-    *stack_pointer++ = _in1;
-    Py_INCREF(_in1);
-    if (_in2 != NULL) {
-        *stack_pointer++ = _in2;
-        Py_INCREF(_in2);
-    }
-    {
-        {
-            PyObject *func;
-            PyObject *callargs;
-            PyObject *kwargs = NULL;
-            PyObject *result;
-            if (oparg & 0x01) {
-                kwargs = *(--stack_pointer);
-                if (!(((PyObject *)kwargs)->ob_type == (&PyDict_Type))) {
-                    PyObject *d = PyDict_New();
-                    if (d == (NULL))
-                        goto _error;
-                    if (_PyDict_MergeEx(d, kwargs, 2) < 0) {
-                        Py_DECREF(d);
-                        cimpl_format_kwargs_error(stack_pointer[-2], kwargs);
-                        Py_DECREF(kwargs);
-                        goto _error;
-                    }
-                    Py_DECREF(kwargs);
-                    kwargs = d;
-                }
-                NULL;
-            }
-            callargs = *(--stack_pointer);
-            func = stack_pointer[-1];
-            if (!(((PyObject *)callargs)->ob_type == (&PyTuple_Type))) {
-                if (cimpl_check_args_iterable(func, callargs) < 0) {
-                    Py_DECREF(callargs);
-                    goto _error;
-                }
-                Py_SETREF(callargs, PySequence_Tuple(callargs));
-                if (callargs == (NULL)) {
-                    goto _error;
-                }
-            }
-            NULL;
-            result = cimpl_do_call_core(func, callargs, kwargs);
             Py_DECREF(func);
             Py_DECREF(callargs);
             Py_XDECREF(kwargs);
@@ -4146,6 +3863,14 @@ _error:
                     PyObject *d = PyDict_New();
                     if (d == (NULL))
                         goto _error;
+#if NI_HAS_KWARGS_MERGE_EX
+                    if (_PyDict_MergeEx(d, kwargs, 2) < 0) {
+                        Py_DECREF(d);
+                        cimpl_format_kwargs_error(stack_pointer[-2], kwargs);
+                        Py_DECREF(kwargs);
+                        goto _error;
+                    }
+#else
                     if (PyDict_Update(d, kwargs) != 0) {
                         Py_DECREF(d);
                         if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
@@ -4155,10 +3880,10 @@ _error:
                         Py_DECREF(kwargs);
                         goto _error;
                     }
+#endif
                     Py_DECREF(kwargs);
                     kwargs = d;
                 }
-                NULL;
             }
             callargs = *(--stack_pointer);
             func = stack_pointer[-1];
@@ -4172,7 +3897,6 @@ _error:
                     goto _error;
                 }
             }
-            NULL;
             result = cimpl_do_call_core(func, callargs, kwargs);
             Py_DECREF(func);
             Py_DECREF(callargs);
@@ -8111,45 +7835,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         PUSH(res);
         goto fine;
       }
-#elif NI_HAS_CALL_NO_ARG_FUNCTION
-      case BEFORE_ASYNC_WITH: {
-        vinfo_t *_t1;
-        vinfo_t *_t2;
-        vinfo_t *_t3;
-        vinfo_t *enter;
-        vinfo_t *exit;
-        vinfo_t *mgr;
-        vinfo_t *res;
-        mgr = NTOP(1);
-        _t1 = psyco_generic_call(po, cimpl_special_lookup,
-                                 CfCommonNewRefPyObject, "vl", mgr,
-                                 (long)(&PyId___aexit__));
-        exit = _t1;
-        if (exit == NULL) {
-          break;
-        }
-        _t2 = psyco_generic_call(po, cimpl_special_lookup,
-                                 CfCommonNewRefPyObject, "vl", mgr,
-                                 (long)(&PyId___aenter__));
-        enter = _t2;
-        if (enter == NULL) {
-          vinfo_decref(exit, po);
-          break;
-        }
-        _t3 = psyco_generic_call(po, _PyObject_CallNoArg,
-                                 CfCommonNewRefPyObject, "v", enter);
-        res = _t3;
-        vinfo_decref(enter, po);
-        if (res == NULL) {
-          vinfo_decref(exit, po);
-          break;
-        }
-        POP(mgr);
-        vinfo_decref(mgr, po);
-        PUSH(exit);
-        PUSH(res);
-        goto fine;
-      }
 #else
       case BEFORE_ASYNC_WITH: {
         vinfo_t *_t1;
@@ -8175,9 +7860,14 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           vinfo_decref(exit, po);
           break;
         }
+#if NI_HAS_CALL_NO_ARG_FUNCTION
+        _t3 = psyco_generic_call(po, _PyObject_CallNoArg,
+                                 CfCommonNewRefPyObject, "v", enter);
+#else
         _t3 = psyco_generic_call(po, _PyObject_FastCallDict,
                                  CfCommonNewRefPyObject, "vlll", enter, 0L,
                                  (long)(0), 0L);
+#endif
         res = _t3;
         vinfo_decref(enter, po);
         if (res == NULL) {

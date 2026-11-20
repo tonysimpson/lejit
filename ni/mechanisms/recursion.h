@@ -21,84 +21,6 @@
    calls _Py_CheckRecursiveCall, which knows the overflow flag and raises
    RecursionError, in a runtime_condition_f branch
    compiled when first taken. */
-static inline int ni_recursion_enter(void) { return Py_EnterRecursiveCall(""); }
-static inline void ni_recursion_leave(void) { Py_LeaveRecursiveCall(); }
-static inline void ni_recursion_suspend(void) {
-  PyThreadState_GET()->recursion_depth--;
-}
-static inline void ni_recursion_resume(void) {
-  PyThreadState_GET()->recursion_depth++;
-}
-
-_Static_assert(
-    __builtin_types_compatible_p(
-        __typeof__(((PyThreadState *)0)->recursion_depth), int),
-    "Ni: recursion_depth is counted as an int");
-typedef struct {
-  int value;
-} int_slot_t;
-#define TSTATE_depth                                                           \
-  FMUT(DEF_FIELD(PyThreadState, int, recursion_depth, NO_PREV_FIELD))
-#define INT_value FMUT(DEF_FIELD(int_slot_t, int, value, NO_PREV_FIELD))
-
-/* Python/pyruntime.c */
-extern int *ni_recursion_limit_address(void);
-/* exported, declared in an internal header */
-PyAPI_FUNC(int) _Py_CheckRecursiveCall(PyThreadState *tstate, const char *where);
-
-static int cimpl_check_recursive_call(void) {
-  return _Py_CheckRecursiveCall(PyThreadState_GET(), "");
-}
-
-/* adds 'delta' to the depth of thread state 'vts': the new depth */
-static inline vinfo_t *add_to_depth(PsycoObject *po, long delta,
-                                    vinfo_t *vts) {
-  vinfo_t *vdepth, *vnew;
-  vdepth = psyco_get_field(po, vts, TSTATE_depth);
-  if (vdepth == NULL)
-    return NULL;
-  vnew = integer_add_i(po, vdepth, delta, true);
-  vinfo_decref(vdepth, po);
-  if (vnew == NULL)
-    return NULL;
-  if (psyco_put_field(po, vts, TSTATE_depth, vnew))
-    return vnew;
-  vinfo_decref(vnew, po);
-  return NULL;
-}
-
-/* false with an exception set in 'po' */
-static inline bool enter_recursive_call(PsycoObject *po, vinfo_t *vts) {
-  vinfo_t *vlimit, *vslot;
-  condition_code_t cc = CC_ERROR;
-  vinfo_t *vdepth = add_to_depth(po, 1, vts);
-  if (vdepth == NULL)
-    return false;
-  vslot = vinfo_new(CompileTime_New((long)ni_recursion_limit_address()));
-  vlimit = psyco_get_field(po, vslot, INT_value);
-  vinfo_decref(vslot, po);
-  if (vlimit != NULL) {
-    cc = integer_cmp(po, vdepth, vlimit, Py_GT);
-    vinfo_decref(vlimit, po);
-  }
-  vinfo_decref(vdepth, po);
-  if (cc == CC_ERROR)
-    return false;
-  if (runtime_condition_f(po, cc))
-    return psyco_generic_call(po, cimpl_check_recursive_call, CfCommonIntZeroOk,
-                              "") != NULL;
-  return true;
-}
-
-/* consumes 'vts'; false with an exception set in 'po' */
-static inline bool leave_recursive_call(PsycoObject *po, vinfo_t *vts) {
-  vinfo_t *vdepth = add_to_depth(po, -1, vts);
-  vinfo_decref(vts, po);
-  if (vdepth == NULL)
-    return false;
-  vinfo_decref(vdepth, po);
-  return true;
-}
 #else
 /* A thread counts the Python calls it is in up, in recursion_depth, and
    compares the count with the exported _Py_CheckRecursionLimit, which
@@ -119,6 +41,7 @@ static inline bool leave_recursive_call(PsycoObject *po, vinfo_t *vts) {
    and raises RecursionError, and a leave calls C only while overflowed is
    set. Both rare paths are runtime_condition_f branches, compiled when
    first taken. */
+#endif
 static inline int ni_recursion_enter(void) { return Py_EnterRecursiveCall(""); }
 static inline void ni_recursion_leave(void) { Py_LeaveRecursiveCall(); }
 static inline void ni_recursion_suspend(void) {
@@ -128,20 +51,37 @@ static inline void ni_recursion_resume(void) {
   PyThreadState_GET()->recursion_depth++;
 }
 
+#if NI_HAS_INTERP_RECURSION_LIMIT
+_Static_assert(
+    __builtin_types_compatible_p(
+        __typeof__(((PyThreadState *)0)->recursion_depth), int),
+    "Ni: recursion_depth is counted as an int");
+#else
 _Static_assert(
     __builtin_types_compatible_p(
         __typeof__(((PyThreadState *)0)->recursion_depth), int) &&
         __builtin_types_compatible_p(
             __typeof__(((PyThreadState *)0)->overflowed), char),
     "Ni: recursion_depth is counted as an int and overflowed tested as a char");
+#endif
 typedef struct {
   int value;
 } int_slot_t;
 #define TSTATE_depth                                                           \
   FMUT(DEF_FIELD(PyThreadState, int, recursion_depth, NO_PREV_FIELD))
+#define INT_value FMUT(DEF_FIELD(int_slot_t, int, value, NO_PREV_FIELD))
+#if NI_HAS_INTERP_RECURSION_LIMIT
+/* Python/pyruntime.c */
+extern int *ni_recursion_limit_address(void);
+/* exported, declared in an internal header */
+PyAPI_FUNC(int) _Py_CheckRecursiveCall(PyThreadState *tstate, const char *where);
+
+static int cimpl_check_recursive_call(void) {
+  return _Py_CheckRecursiveCall(PyThreadState_GET(), "");
+}
+#else
 #define TSTATE_overflowed                                                      \
   FMUT(DEF_FIELD(PyThreadState, char, overflowed, NO_PREV_FIELD))
-#define INT_value FMUT(DEF_FIELD(int_slot_t, int, value, NO_PREV_FIELD))
 
 /* Py_LeaveRecursiveCall after the decrement */
 static inline void cimpl_leave_overflowed(void) {
@@ -150,6 +90,7 @@ static inline void cimpl_leave_overflowed(void) {
       _Py_RecursionLimitLowerWaterMark(_Py_CheckRecursionLimit))
     ts->overflowed = 0;
 }
+#endif
 
 /* adds 'delta' to the depth of thread state 'vts': the new depth */
 static inline vinfo_t *add_to_depth(PsycoObject *po, long delta,
@@ -175,7 +116,11 @@ static inline bool enter_recursive_call(PsycoObject *po, vinfo_t *vts) {
   vinfo_t *vdepth = add_to_depth(po, 1, vts);
   if (vdepth == NULL)
     return false;
+#if NI_HAS_INTERP_RECURSION_LIMIT
+  vslot = vinfo_new(CompileTime_New((long)ni_recursion_limit_address()));
+#else
   vslot = vinfo_new(CompileTime_New((long)&_Py_CheckRecursionLimit));
+#endif
   vlimit = psyco_get_field(po, vslot, INT_value);
   vinfo_decref(vslot, po);
   if (vlimit != NULL) {
@@ -186,13 +131,25 @@ static inline bool enter_recursive_call(PsycoObject *po, vinfo_t *vts) {
   if (cc == CC_ERROR)
     return false;
   if (runtime_condition_f(po, cc))
+#if NI_HAS_INTERP_RECURSION_LIMIT
+    return psyco_generic_call(po, cimpl_check_recursive_call, CfCommonIntZeroOk,
+                              "") != NULL;
+#else
     return psyco_generic_call(po, _Py_CheckRecursiveCall, CfCommonIntZeroOk,
                               "l", (long)"") != NULL;
+#endif
   return true;
 }
 
 /* consumes 'vts'; false with an exception set in 'po' */
 static inline bool leave_recursive_call(PsycoObject *po, vinfo_t *vts) {
+#if NI_HAS_INTERP_RECURSION_LIMIT
+  vinfo_t *vdepth = add_to_depth(po, -1, vts);
+  vinfo_decref(vts, po);
+  if (vdepth == NULL)
+    return false;
+  vinfo_decref(vdepth, po);
+#else
   vinfo_t *vover, *vdepth;
   condition_code_t cc;
   vdepth = add_to_depth(po, -1, vts);
@@ -209,7 +166,7 @@ static inline bool leave_recursive_call(PsycoObject *po, vinfo_t *vts) {
   if (runtime_condition_f(po, cc))
     return psyco_generic_call(po, cimpl_leave_overflowed, CfNoReturnValue,
                               "") != NULL;
+#endif
   return true;
 }
-#endif
 #endif /* NI_MECHANISMS_RECURSION_H */

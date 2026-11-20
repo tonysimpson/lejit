@@ -414,21 +414,18 @@ builtin_len(PsycoObject *po, vinfo_t *module, vinfo_t *obj)
     return _t3;
 }
 
-static vinfo_t *
 #if NI_HAS_POW_KEYWORDS
+#define POW_FLAGS (METH_FASTCALL | METH_KEYWORDS)
+#else
+#define POW_FLAGS METH_FASTCALL
+#endif
+
+static vinfo_t *
 builtin_pow_impl(PsycoObject *po, vinfo_t *module, vinfo_t *base, vinfo_t *exp,
                  vinfo_t *mod)
-#else
-builtin_pow_impl(PsycoObject *po, vinfo_t *module, vinfo_t *x, vinfo_t *y,
-                 vinfo_t *z)
-#endif
 {
     vinfo_t *_t1;
-#if NI_HAS_POW_KEYWORDS
     _t1 = PsycoNumber_Power(po, base, exp, mod);
-#else
-    _t1 = PsycoNumber_Power(po, x, y, z);
-#endif
     return _t1;
 }
 
@@ -438,63 +435,38 @@ builtin_pow(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
     int _t1;
     vinfo_t *_t2;
     vinfo_t *_t3;
-#if NI_HAS_POW_KEYWORDS
     vinfo_t *base;
     vinfo_t *exp;
     vinfo_t *mod;
+#if NI_HAS_POW_KEYWORDS
     Py_ssize_t noptargs;
 #endif
     vinfo_t *return_value;
-#if !NI_HAS_POW_KEYWORDS
-    vinfo_t *x;
-    vinfo_t *y;
-    vinfo_t *z;
-#endif
     _t1 = PsycoTuple_Load(vargs);
     if (_t1 < 2 || _t1 > 3) {
-#if NI_HAS_POW_KEYWORDS
-        return PsycoCFunction_CallFast(po, cfunc_builtin_pow,
-                                       METH_FASTCALL | METH_KEYWORDS, module,
-                                       vargs);
-#else
-        return PsycoCFunction_CallFast(po, cfunc_builtin_pow, METH_FASTCALL,
+        return PsycoCFunction_CallFast(po, cfunc_builtin_pow, POW_FLAGS,
                                        module, vargs);
-#endif
     }
     if (_t1 == 2) {
 #if NI_HAS_POW_KEYWORDS
         noptargs = 0;
+#endif
         base = PsycoTuple_GET_ITEM(vargs, 0);
         exp = PsycoTuple_GET_ITEM(vargs, 1);
         mod = psyco_vi_None();
         _t2 = builtin_pow_impl(po, module, base, exp, mod);
-#else
-        x = PsycoTuple_GET_ITEM(vargs, 0);
-        y = PsycoTuple_GET_ITEM(vargs, 1);
-        z = psyco_vi_None();
-        _t2 = builtin_pow_impl(po, module, x, y, z);
-#endif
         return_value = _t2;
-#if NI_HAS_POW_KEYWORDS
         vinfo_decref(mod, po);
-#else
-        vinfo_decref(z, po);
-#endif
         return return_value;
     }
     else {
 #if NI_HAS_POW_KEYWORDS
         noptargs = 1;
+#endif
         base = PsycoTuple_GET_ITEM(vargs, 0);
         exp = PsycoTuple_GET_ITEM(vargs, 1);
         mod = PsycoTuple_GET_ITEM(vargs, 2);
         _t3 = builtin_pow_impl(po, module, base, exp, mod);
-#else
-        x = PsycoTuple_GET_ITEM(vargs, 0);
-        y = PsycoTuple_GET_ITEM(vargs, 1);
-        z = PsycoTuple_GET_ITEM(vargs, 2);
-        _t3 = builtin_pow_impl(po, module, x, y, z);
-#endif
         return_value = _t3;
         return return_value;
     }
@@ -554,13 +526,8 @@ gen_bltinmodule_init(PyObject *md)
     cfunc_builtin_issubclass = Psyco_DefineModuleFn(
         md, "issubclass", METH_FASTCALL, &builtin_issubclass);
     cfunc_builtin_len = Psyco_DefineModuleFn(md, "len", METH_O, &builtin_len);
-#if NI_HAS_POW_KEYWORDS
-    cfunc_builtin_pow = Psyco_DefineModuleFn(
-        md, "pow", METH_FASTCALL | METH_KEYWORDS, &builtin_pow);
-#else
     cfunc_builtin_pow =
-        Psyco_DefineModuleFn(md, "pow", METH_FASTCALL, &builtin_pow);
-#endif
+        Psyco_DefineModuleFn(md, "pow", POW_FLAGS, &builtin_pow);
     cfunc_builtin_setattr =
         Psyco_DefineModuleFn(md, "setattr", METH_FASTCALL, &builtin_setattr);
 }

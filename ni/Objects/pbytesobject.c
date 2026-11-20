@@ -100,11 +100,7 @@ static PyObject *
 cimpl_do_xstrip(PyBytesObject *self, int striptype, PyObject *sepobj)
 {
     Py_buffer vsep;
-#if NI_HAS_BYTES_STRIP_CONST
     const char *s = PyBytes_AS_STRING(self);
-#else
-    char *s = PyBytes_AS_STRING(self);
-#endif
     Py_ssize_t len = PyBytes_GET_SIZE(self);
     char *sep;
     Py_ssize_t seplen;
@@ -138,11 +134,7 @@ cimpl_do_xstrip(PyBytesObject *self, int striptype, PyObject *sepobj)
 static PyObject *
 cimpl_do_strip(PyBytesObject *self, int striptype)
 {
-#if NI_HAS_BYTES_STRIP_CONST
     const char *s = PyBytes_AS_STRING(self);
-#else
-    char *s = PyBytes_AS_STRING(self);
-#endif
     Py_ssize_t len = PyBytes_GET_SIZE(self), i, j;
     i = 0;
     if (striptype != 1) {

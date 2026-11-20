@@ -91,13 +91,7 @@ cimpl_math_acos(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*acos)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -126,13 +120,7 @@ cimpl_math_asin(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*asin)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -161,13 +149,7 @@ cimpl_math_atan(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*atan)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -196,13 +178,7 @@ cimpl_math_cos(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*cos)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -231,13 +207,7 @@ cimpl_math_cosh(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*cosh)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -266,13 +236,7 @@ cimpl_math_exp(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*exp)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -301,13 +265,7 @@ cimpl_math_fabs(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*fabs)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -336,13 +294,7 @@ cimpl_math_sin(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*sin)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -371,13 +323,7 @@ cimpl_math_sinh(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*sinh)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -406,13 +352,7 @@ cimpl_math_sqrt(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*sqrt)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -441,13 +381,7 @@ cimpl_math_tan(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*tan)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");
@@ -476,13 +410,7 @@ cimpl_math_tanh(double math_1_to_whatever_x, double *_r)
 {
     double math_1_to_whatever_r;
     *__errno_location() = 0;
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     math_1_to_whatever_r = (*tanh)(math_1_to_whatever_x);
-#if NI_HAS_PYFPE_PROTECT
-    ;
-#endif
     if (__builtin_isnan(math_1_to_whatever_r) &&
         (!__builtin_isnan(math_1_to_whatever_x))) {
         PyErr_SetString(PyExc_ValueError, "math domain error");

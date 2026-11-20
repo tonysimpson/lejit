@@ -83,79 +83,30 @@ cimpl_dict_get_impl(PyDictObject *self, PyObject *key, PyObject *default_value)
     return val;
 }
 
-#if !NI_HAS_DICTKEYS_GET_INDEX
 static Py_ssize_t
-cimpl_dk_get_index(PyDictKeysObject *keys, Py_ssize_t i)
-{
-    Py_ssize_t s = ((keys)->dk_size);
-    Py_ssize_t ix;
-    if (s <= 0xff) {
-        int8_t *indices = (int8_t *)(keys->dk_indices);
-        ix = indices[i];
-    }
-    else if (s <= 0xffff) {
-        int16_t *indices = (int16_t *)(keys->dk_indices);
-        ix = indices[i];
-    }
-    else if (s > 0xffffffff) {
-        int64_t *indices = (int64_t *)(keys->dk_indices);
-        ix = indices[i];
-    }
-    else {
-        int32_t *indices = (int32_t *)(keys->dk_indices);
-        ix = indices[i];
-    }
-    assert(ix >= (-2));
-    return ix;
-}
-#endif
-
-#if NI_HAS_DICTKEYS_GET_INDEX
-static Py_ssize_t
-#if NI_HAS_DICTKEYS_CONST
 cimpl_dictkeys_get_index(const PyDictKeysObject *keys, Py_ssize_t i)
-#else
-cimpl_dictkeys_get_index(PyDictKeysObject *keys, Py_ssize_t i)
-#endif
 {
     Py_ssize_t s = ((keys)->dk_size);
     Py_ssize_t ix;
     if (s <= 0xff) {
-#if NI_HAS_DICTKEYS_CONST
         const int8_t *indices = (const int8_t *)(keys->dk_indices);
-#else
-        int8_t *indices = (int8_t *)(keys->dk_indices);
-#endif
         ix = indices[i];
     }
     else if (s <= 0xffff) {
-#if NI_HAS_DICTKEYS_CONST
         const int16_t *indices = (const int16_t *)(keys->dk_indices);
-#else
-        int16_t *indices = (int16_t *)(keys->dk_indices);
-#endif
         ix = indices[i];
     }
     else if (s > 0xffffffff) {
-#if NI_HAS_DICTKEYS_CONST
         const int64_t *indices = (const int64_t *)(keys->dk_indices);
-#else
-        int64_t *indices = (int64_t *)(keys->dk_indices);
-#endif
         ix = indices[i];
     }
     else {
-#if NI_HAS_DICTKEYS_CONST
         const int32_t *indices = (const int32_t *)(keys->dk_indices);
-#else
-        int32_t *indices = (int32_t *)(keys->dk_indices);
-#endif
         ix = indices[i];
     }
     assert(ix >= (-2));
     return ix;
 }
-#endif
 
 static PyObject *
 cimpl_dict_setdefault_impl(PyDictObject *self, PyObject *key,
@@ -203,11 +154,7 @@ cimpl_lookdict_unicode_str_key(PyDictObject *mp, const ni_strkey_t *key,
     size_t perturb = (size_t)hash;
     size_t i = (size_t)hash & mask;
     for (;;) {
-#if NI_HAS_DICTKEYS_GET_INDEX
         Py_ssize_t ix = cimpl_dictkeys_get_index(mp->ma_keys, i);
-#else
-        Py_ssize_t ix = cimpl_dk_get_index(mp->ma_keys, i);
-#endif
         if (ix == (-1)) {
             *value_addr = NULL;
             return (-1);
@@ -243,11 +190,7 @@ cimpl_lookdict_unicode_nodummy_str_key(PyDictObject *mp,
     size_t perturb = (size_t)hash;
     size_t i = (size_t)hash & mask;
     for (;;) {
-#if NI_HAS_DICTKEYS_GET_INDEX
         Py_ssize_t ix = cimpl_dictkeys_get_index(mp->ma_keys, i);
-#else
-        Py_ssize_t ix = cimpl_dk_get_index(mp->ma_keys, i);
-#endif
         if (ix == (-1)) {
             *value_addr = NULL;
             return (-1);

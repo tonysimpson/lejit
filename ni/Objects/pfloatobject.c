@@ -235,7 +235,7 @@ cimpl_PyFloat_AsDouble_2(PyObject *op, PyObject *res)
 {
     double val;
     Py_INCREF(res);
-#if NI_HAS_PY_IS_TYPE
+#if NI_HAS_FLOAT_ASDOUBLE_INDEX
     if (!PyFloat_CheckExact(res)) {
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError,
@@ -250,25 +250,6 @@ cimpl_PyFloat_AsDouble_2(PyObject *op, PyObject *res)
                 "The ability to return an instance of a strict subclass of float "
                 "is deprecated, and may be removed in a future version of Python.",
                 Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
-            Py_DECREF(res);
-            return -1;
-        }
-    }
-#elif NI_HAS_FLOAT_ASDOUBLE_INDEX
-    if (!PyFloat_CheckExact(res)) {
-        if (!PyFloat_Check(res)) {
-            PyErr_Format(PyExc_TypeError,
-                         "%.50s.__float__ returned non-float (type %.50s)",
-                         op->ob_type->tp_name, res->ob_type->tp_name);
-            Py_DECREF(res);
-            return -1;
-        }
-        if (PyErr_WarnFormat(
-                PyExc_DeprecationWarning, 1,
-                "%.50s.__float__ returned non-float (type %.50s).  "
-                "The ability to return an instance of a strict subclass of float "
-                "is deprecated, and may be removed in a future version of Python.",
-                op->ob_type->tp_name, res->ob_type->tp_name)) {
             Py_DECREF(res);
             return -1;
         }
@@ -300,11 +281,11 @@ cimpl_PyFloat_AsDouble_2(PyObject *op, PyObject *res)
 
 static double
 cimpl_PyFloat_AsDouble_3(PyObject *op, PyObject *res)
-#if NI_HAS_PY_IS_TYPE
 {
     double val;
     Py_INCREF(res);
     {
+#if NI_HAS_FLOAT_ASDOUBLE_INDEX
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError,
                          "%.50s.__float__ returned non-float (type %.50s)",
@@ -312,6 +293,7 @@ cimpl_PyFloat_AsDouble_3(PyObject *op, PyObject *res)
             Py_DECREF(res);
             return -1;
         }
+#endif
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
                 "%.50s.__float__ returned non-float (type %.50s).  "
@@ -326,57 +308,10 @@ cimpl_PyFloat_AsDouble_3(PyObject *op, PyObject *res)
     Py_DECREF(res);
     return val;
 }
-#elif NI_HAS_FLOAT_ASDOUBLE_INDEX
-{
-    double val;
-    Py_INCREF(res);
-    {
-        if (!PyFloat_Check(res)) {
-            PyErr_Format(PyExc_TypeError,
-                         "%.50s.__float__ returned non-float (type %.50s)",
-                         op->ob_type->tp_name, res->ob_type->tp_name);
-            Py_DECREF(res);
-            return -1;
-        }
-        if (PyErr_WarnFormat(
-                PyExc_DeprecationWarning, 1,
-                "%.50s.__float__ returned non-float (type %.50s).  "
-                "The ability to return an instance of a strict subclass of float "
-                "is deprecated, and may be removed in a future version of Python.",
-                op->ob_type->tp_name, res->ob_type->tp_name)) {
-            Py_DECREF(res);
-            return -1;
-        }
-    }
-    val = PyFloat_AS_DOUBLE(res);
-    Py_DECREF(res);
-    return val;
-}
-#else
-{
-    double val;
-    Py_INCREF(res);
-    {
-        if (PyErr_WarnFormat(
-                PyExc_DeprecationWarning, 1,
-                "%.50s.__float__ returned non-float (type %.50s).  "
-                "The ability to return an instance of a strict subclass of float "
-                "is deprecated, and may be removed in a future version of Python.",
-                op->ob_type->tp_name, res->ob_type->tp_name)) {
-            Py_DECREF(res);
-            return -1;
-        }
-    }
-    val = PyFloat_AS_DOUBLE(res);
-    Py_DECREF(res);
-    return val;
-}
-#endif
 
 #if NI_HAS_FLOAT_ASDOUBLE_INDEX
 static double
 cimpl_PyFloat_AsDouble_4(PyObject *op, PyObject *res)
-#if NI_HAS_PY_IS_TYPE
 {
     double val;
     Py_INCREF(res);
@@ -395,26 +330,6 @@ cimpl_PyFloat_AsDouble_4(PyObject *op, PyObject *res)
     Py_DECREF(res);
     return val;
 }
-#else
-{
-    double val;
-    Py_INCREF(res);
-    {
-        if (PyErr_WarnFormat(
-                PyExc_DeprecationWarning, 1,
-                "%.50s.__float__ returned non-float (type %.50s).  "
-                "The ability to return an instance of a strict subclass of float "
-                "is deprecated, and may be removed in a future version of Python.",
-                op->ob_type->tp_name, res->ob_type->tp_name)) {
-            Py_DECREF(res);
-            return -1;
-        }
-    }
-    val = PyFloat_AS_DOUBLE(res);
-    Py_DECREF(res);
-    return val;
-}
-#endif
 #endif
 
 /* Objects/floatobject.c:float_abs: scalar code */
@@ -451,8 +366,6 @@ cimpl_float_add_1(PyObject *w, double a)
         b = PyFloat_AS_DOUBLE(w);
     else if (cimpl_convert_to_double(&(w), &(b)) < 0)
         return w;
-    ;
-    ;
     a = a + b;
     return PyFloat_FromDouble(a);
 }
@@ -480,8 +393,6 @@ cimpl_float_div_1(PyObject *w, double a)
         b = PyFloat_AS_DOUBLE(w);
     else if (cimpl_convert_to_double(&(w), &(b)) < 0)
         return w;
-    ;
-    ;
     if (b == 0.0) {
         PyErr_SetString(PyExc_ZeroDivisionError, "float division by zero");
         return NULL;
@@ -513,8 +424,6 @@ cimpl_float_mul_1(PyObject *w, double a)
         b = PyFloat_AS_DOUBLE(w);
     else if (cimpl_convert_to_double(&(w), &(b)) < 0)
         return w;
-    ;
-    ;
     a = a * b;
     return PyFloat_FromDouble(a);
 }
@@ -543,8 +452,6 @@ cimpl_float_rem_1(PyObject *w, double vx)
         wx = PyFloat_AS_DOUBLE(w);
     else if (cimpl_convert_to_double(&(w), &(wx)) < 0)
         return w;
-    ;
-    ;
     if (wx == 0.0) {
         PyErr_SetString(PyExc_ZeroDivisionError, "float modulo");
         return NULL;
@@ -593,8 +500,6 @@ cimpl_float_sub_1(PyObject *w, double a)
         b = PyFloat_AS_DOUBLE(w);
     else if (cimpl_convert_to_double(&(w), &(b)) < 0)
         return w;
-    ;
-    ;
     a = a - b;
     return PyFloat_FromDouble(a);
 }
@@ -628,7 +533,7 @@ float_rem(PsycoObject *po, vinfo_t *, vinfo_t *);
 static vinfo_t *
 float_sub(PsycoObject *po, vinfo_t *, vinfo_t *);
 
-#if NI_HAS_PRIVATE_NUMBER_INDEX
+#if NI_HAS_FLOAT_ASDOUBLE_INDEX
 DEFINEFN vinfo_t *
 PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
 {
@@ -710,163 +615,14 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
             _t7 = _t6 != 0;
         }
         if (_t7) {
+#if NI_HAS_PRIVATE_NUMBER_INDEX
             _t8 = psyco_generic_call(po, _PyNumber_Index,
                                      CfCommonNewRefPyObject, "v", op);
-            res = _t8;
-            if (res == NULL) {
-                return NULL;
-            }
-            _t9 = psyco_generic_call(po, cimpl_PyFloat_AsDouble_1,
-                                     CfReturnTypeDouble | CfPyErrCheck, "v",
-                                     res);
-            vinfo_decref(res, po);
-            return _t9;
-        }
-        PycException_SetFormat(po, PyExc_TypeError,
-                               "must be real number, not %.50s",
-                               tp_op->tp_name);
-        return NULL;
-    }
-    _t10 = Psyco_META1(po, _t4, CfCommonNewRefPyObject, "v", op);
-    res = _t10;
-    if (res == NULL) {
-        return NULL;
-    }
-    tp_res = Psyco_KnownType(res);
-    if (tp_res == NULL) {
-        _t11 = psyco_generic_call(po, cimpl_PyFloat_AsDouble_2,
-                                  CfReturnTypeDouble | CfPyErrCheck, "vv", op,
-                                  res);
-        vinfo_decref(res, po);
-        return _t11;
-    }
-    if (!(tp_res == (&PyFloat_Type))) {
-        _t14 = tp_res == (&PyFloat_Type);
-        if (!_t14) {
-            switch (Psyco_TypeIsSubtype(po, tp_res, &PyFloat_Type, &_t12)) {
-                case 1:
-                    break;
-                case 0:
-                    _t13 = psyco_generic_call(
-                        po, cimpl_PyFloat_AsDouble_3,
-                        CfReturnTypeDouble | CfPyErrCheck, "vv", op, res);
-                    vinfo_decref(res, po);
-                    return _t13;
-                default:
-                    vinfo_decref(res, po);
-                    return NULL;
-            }
-            _t14 = _t12 != 0;
-        }
-        if (!(_t14)) {
-            PycException_SetFormat(
-                po, PyExc_TypeError,
-                "%.50s.__float__ returned non-float (type %.50s)",
-                tp_op->tp_name, tp_res->tp_name);
-            vinfo_decref(res, po);
-            return NULL;
-        }
-        _t15 = psyco_generic_call(po, cimpl_PyFloat_AsDouble_4,
-                                  CfReturnTypeDouble | CfPyErrCheck, "vv", op,
-                                  res);
-        vinfo_decref(res, po);
-        return _t15;
-    }
-    _t16 = PsycoFloat_AS_DOUBLE(po, res);
-    if (_t16 == NULL) {
-        vinfo_decref(res, po);
-        return NULL;
-    }
-    vinfo_incref(_t16);
-    val = _t16;
-    vinfo_decref(res, po);
-    return val;
-}
-#elif NI_HAS_FLOAT_ASDOUBLE_INDEX
-DEFINEFN vinfo_t *
-PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
-{
-    bool _t1;
-    vinfo_t *_t10;
-    vinfo_t *_t11;
-    bool _t12;
-    vinfo_t *_t13;
-    int _t14;
-    vinfo_t *_t15;
-    vinfo_t *_t16;
-    int _t2;
-    vinfo_t *_t3;
-    unaryfunc _t4;
-    int _t5;
-    unaryfunc _t6;
-    int _t7;
-    vinfo_t *_t8;
-    vinfo_t *_t9;
-    PyNumberMethods *nb;
-    vinfo_t *res;
-    PyTypeObject *tp_op;
-    PyTypeObject *tp_res;
-    vinfo_t *val;
-    tp_op = Psyco_NeedType(po, op);
-    if (tp_op == NULL) {
-        return NULL;
-    }
-    _t2 = tp_op == (&PyFloat_Type);
-    if (!_t2) {
-        switch (Psyco_TypeIsSubtype(po, tp_op, &PyFloat_Type, &_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PyFloat_AsDouble,
-                                          CfReturnTypeDouble | CfPyErrCheck,
-                                          "v", op);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = PsycoFloat_AS_DOUBLE(po, op);
-        if (_t3 == NULL) {
-            return NULL;
-        }
-        vinfo_incref(_t3);
-        return _t3;
-    }
-    nb = tp_op->tp_as_number;
-    _t5 = nb == NULL;
-    if (!_t5) {
-        switch (Psyco_TypeSlot(po, tp_op, &nb->nb_float, (void **)&_t4)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PyFloat_AsDouble,
-                                          CfReturnTypeDouble | CfPyErrCheck,
-                                          "v", op);
-            default:
-                return NULL;
-        }
-        _t5 = _t4 == NULL;
-    }
-    if (_t5) {
-        _t7 = nb != 0;
-        if (_t7) {
-            switch (Psyco_TypeSlot(po, tp_op, &nb->nb_index, (void **)&_t6)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(
-                        po, PyFloat_AsDouble,
-                        CfReturnTypeDouble | CfPyErrCheck, "v", op);
-                default:
-                    return NULL;
-            }
-            _t7 = _t6 != 0;
-        }
-        if (_t7) {
+#else
             _t8 = psyco_generic_call(po, PyNumber_Index,
                                      CfCommonNewRefPyObject | CfNoBlock, "v",
                                      op);
+#endif
             res = _t8;
             if (res == NULL) {
                 return NULL;

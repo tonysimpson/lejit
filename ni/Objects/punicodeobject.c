@@ -25,6 +25,16 @@
 #include "../psyfunc.h"
 #include "../Python/pycheader.h"
 
+#if NI_HAS_PYCORE_FORMAT_H
+/* the format flags, no longer in bytesobject.h but in the internal
+   pycore_format.h */
+#define F_LJUST (1<<0)
+#define F_SIGN  (1<<1)
+#define F_BLANK (1<<2)
+#define F_ALT   (1<<3)
+#define F_ZERO  (1<<4)
+#endif
+
 /* 'state' is read as its low byte, which holds the bit-fields ready, ascii,
    compact, kind and interned (their masks are NI_BIT_, psyco.h's, from
    the bit order its layouts check, which puts ready, ascii and
@@ -62,11 +72,7 @@ cimpl_do_strip(PyObject *self, int striptype)
         return NULL;
     len = PyUnicode_GET_LENGTH(self);
     if (PyUnicode_IS_ASCII(self)) {
-#if NI_HAS_UNICODE_CONST_DATA
         const Py_UCS1 *data = PyUnicode_1BYTE_DATA(self);
-#else
-        Py_UCS1 *data = PyUnicode_1BYTE_DATA(self);
-#endif
         i = 0;
         if (striptype != 1) {
             while (i < len) {
@@ -90,11 +96,7 @@ cimpl_do_strip(PyObject *self, int striptype)
     }
     else {
         int kind = PyUnicode_KIND(self);
-#if NI_HAS_UNICODE_CONST_DATA
         const void *data = PyUnicode_DATA(self);
-#else
-        void *data = PyUnicode_DATA(self);
-#endif
         i = 0;
         if (striptype != 1) {
             while (i < len) {
@@ -126,16 +128,9 @@ cimpl_do_argstrip(PyObject *self, int striptype, PyObject *sep)
 {
 #if NI_HAS_UNICODE_STRIP_NONE_DEFAULT
     if (sep != Py_None) {
-        if (PyUnicode_Check(sep))
-            return _PyUnicode_XStrip(self, striptype, sep);
-        else {
-            PyErr_Format(PyExc_TypeError, "%s arg must be None or str",
-                         (cstatic_stripfuncnames[striptype]));
-            return NULL;
-        }
-    }
 #else
     if (sep != NULL && sep != Py_None) {
+#endif
         if (PyUnicode_Check(sep))
             return _PyUnicode_XStrip(self, striptype, sep);
         else {
@@ -144,7 +139,6 @@ cimpl_do_argstrip(PyObject *self, int striptype, PyObject *sep)
             return NULL;
         }
     }
-#endif
     return cimpl_do_strip(self, striptype);
 }
 
@@ -215,39 +209,19 @@ cimpl_unicode_format_arg_parse(struct unicode_formatter_t *ctx,
         ctx->fmtpos++;
         switch (arg->ch) {
             case '-':
-#if NI_HAS_PYCORE_FORMAT_H
-                arg->flags |= (1 << 0);
-#else
                 arg->flags |= F_LJUST;
-#endif
                 continue;
             case '+':
-#if NI_HAS_PYCORE_FORMAT_H
-                arg->flags |= (1 << 1);
-#else
                 arg->flags |= F_SIGN;
-#endif
                 continue;
             case ' ':
-#if NI_HAS_PYCORE_FORMAT_H
-                arg->flags |= (1 << 2);
-#else
                 arg->flags |= F_BLANK;
-#endif
                 continue;
             case '#':
-#if NI_HAS_PYCORE_FORMAT_H
-                arg->flags |= (1 << 3);
-#else
                 arg->flags |= F_ALT;
-#endif
                 continue;
             case '0':
-#if NI_HAS_PYCORE_FORMAT_H
-                arg->flags |= (1 << 4);
-#else
                 arg->flags |= F_ZERO;
-#endif
                 continue;
         }
         break;
@@ -264,11 +238,7 @@ cimpl_unicode_format_arg_parse(struct unicode_formatter_t *ctx,
         if (arg->width == -1 && PyErr_Occurred())
             return -1;
         if (arg->width < 0) {
-#if NI_HAS_PYCORE_FORMAT_H
-            arg->flags |= (1 << 0);
-#else
             arg->flags |= F_LJUST;
-#endif
             arg->width = -arg->width;
         }
         if (--ctx->fmtcnt >= 0) {
@@ -527,11 +497,7 @@ cimpl_formatfloat(PyObject *v, struct unicode_format_arg_t *arg,
     prec = arg->prec;
     if (prec < 0)
         prec = 6;
-#if NI_HAS_PYCORE_FORMAT_H
-    if (arg->flags & (1 << 3))
-#else
     if (arg->flags & F_ALT)
-#endif
         dtoa_flags = Py_DTSF_ALT;
     else
         dtoa_flags = 0;
@@ -614,93 +580,6 @@ static int
 cimpl_unicode_format_arg_format(struct unicode_formatter_t *ctx,
                                 struct unicode_format_arg_t *arg,
                                 PyObject **p_str)
-#if NI_HAS_PYCORE_FORMAT_H
-{
-    PyObject *v;
-    _PyUnicodeWriter *writer = &ctx->writer;
-    if (ctx->fmtcnt == 0)
-        ctx->writer.overallocate = 0;
-    v = cimpl_unicode_format_getnextarg(ctx);
-    if (v == NULL)
-        return -1;
-    switch (arg->ch) {
-        case 's':
-        case 'r':
-        case 'a':
-            if (PyLong_CheckExact(v) && arg->width == -1 && arg->prec == -1) {
-                if (_PyLong_FormatWriter(writer, v, 10,
-                                         arg->flags & (1 << 3)) == -1)
-                    return -1;
-                return 1;
-            }
-            if (PyUnicode_CheckExact(v) && arg->ch == 's') {
-                *p_str = v;
-                Py_INCREF(*p_str);
-            }
-            else {
-                if (arg->ch == 's')
-                    *p_str = PyObject_Str(v);
-                else if (arg->ch == 'r')
-                    *p_str = PyObject_Repr(v);
-                else
-                    *p_str = PyObject_ASCII(v);
-            }
-            break;
-        case 'i':
-        case 'd':
-        case 'u':
-        case 'o':
-        case 'x':
-        case 'X': {
-            int ret = cimpl_mainformatlong(v, arg, p_str, writer);
-            if (ret != 0)
-                return ret;
-            arg->sign = 1;
-            break;
-        }
-        case 'e':
-        case 'E':
-        case 'f':
-        case 'F':
-        case 'g':
-        case 'G':
-            if (arg->width == -1 && arg->prec == -1 &&
-                !(arg->flags & ((1 << 1) | (1 << 2)))) {
-                if (cimpl_formatfloat(v, arg, NULL, writer) == -1)
-                    return -1;
-                return 1;
-            }
-            arg->sign = 1;
-            if (cimpl_formatfloat(v, arg, p_str, NULL) == -1)
-                return -1;
-            break;
-        case 'c': {
-            Py_UCS4 ch = cimpl_formatchar(v);
-            if (ch == (Py_UCS4)-1)
-                return -1;
-            if (arg->width == -1 && arg->prec == -1) {
-                if (cimpl__PyUnicodeWriter_WriteCharInline(writer, ch) < 0)
-                    return -1;
-                return 1;
-            }
-            *p_str = PyUnicode_FromOrdinal(ch);
-            break;
-        }
-        default:
-            PyErr_Format(
-                PyExc_ValueError,
-                "unsupported format character '%c' (0x%x) "
-                "at index %zd",
-                (31 <= arg->ch && arg->ch <= 126) ? (char)arg->ch : '?',
-                (int)arg->ch, ctx->fmtpos - 1);
-            return -1;
-    }
-    if (*p_str == NULL)
-        return -1;
-    assert(PyUnicode_Check(*p_str));
-    return 0;
-}
-#else
 {
     PyObject *v;
     _PyUnicodeWriter *writer = &ctx->writer;
@@ -786,7 +665,6 @@ cimpl_unicode_format_arg_format(struct unicode_formatter_t *ctx,
     assert(PyUnicode_Check(*p_str));
     return 0;
 }
-#endif
 
 #if NI_HAS_UNICODE_FILL
 static void
@@ -829,271 +707,11 @@ static int
 cimpl_unicode_format_arg_output(struct unicode_formatter_t *ctx,
                                 struct unicode_format_arg_t *arg,
                                 PyObject *str)
-#if NI_HAS_PYCORE_FORMAT_H
+#if NI_HAS_UNICODE_FILL
 {
     Py_ssize_t len;
     enum PyUnicode_Kind kind;
     const void *pbuf;
-    Py_ssize_t pindex;
-    Py_UCS4 signchar;
-    Py_ssize_t buflen;
-    Py_UCS4 maxchar;
-    Py_ssize_t sublen;
-    _PyUnicodeWriter *writer = &ctx->writer;
-    Py_UCS4 fill;
-    fill = ' ';
-    if (arg->sign && arg->flags & (1 << 4))
-        fill = '0';
-    if ((assert(PyUnicode_Check(str)),
-         (PyUnicode_IS_READY(str) ? 0 : _PyUnicode_Ready(str))) == -1)
-        return -1;
-    len = PyUnicode_GET_LENGTH(str);
-    if ((arg->width == -1 || arg->width <= len) &&
-        (arg->prec == -1 || arg->prec >= len) &&
-        !(arg->flags & ((1 << 1) | (1 << 2)))) {
-        if (_PyUnicodeWriter_WriteStr(writer, str) == -1)
-            return -1;
-        return 0;
-    }
-    if (arg->ch == 's' || arg->ch == 'r' || arg->ch == 'a') {
-        if (arg->prec >= 0 && len > arg->prec)
-            len = arg->prec;
-    }
-    kind = PyUnicode_KIND(str);
-    pbuf = PyUnicode_DATA(str);
-    pindex = 0;
-    signchar = '\0';
-    if (arg->sign) {
-        Py_UCS4 ch = PyUnicode_READ(kind, pbuf, pindex);
-        if (ch == '-' || ch == '+') {
-            signchar = ch;
-            len--;
-            pindex++;
-        }
-        else if (arg->flags & (1 << 1))
-            signchar = '+';
-        else if (arg->flags & (1 << 2))
-            signchar = ' ';
-        else
-            arg->sign = 0;
-    }
-    if (arg->width < len)
-        arg->width = len;
-    maxchar = writer->maxchar;
-    if (!(arg->flags & (1 << 0))) {
-        if (arg->sign) {
-            if ((arg->width - 1) > len)
-                maxchar = Py_MAX(maxchar, fill);
-        }
-        else {
-            if (arg->width > len)
-                maxchar = Py_MAX(maxchar, fill);
-        }
-    }
-    if (PyUnicode_MAX_CHAR_VALUE(str) > maxchar) {
-        Py_UCS4 strmaxchar = _PyUnicode_FindMaxChar(str, 0, pindex + len);
-        maxchar = Py_MAX(maxchar, strmaxchar);
-    }
-    buflen = arg->width;
-    if (arg->sign && len == arg->width)
-        buflen++;
-    if (_PyUnicodeWriter_Prepare(writer, buflen, maxchar) == -1)
-        return -1;
-    if (arg->sign) {
-        if (fill != ' ') {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, signchar);
-            writer->pos += 1;
-        }
-        if (arg->width > len)
-            arg->width--;
-    }
-    if ((arg->flags & (1 << 3)) &&
-        (arg->ch == 'x' || arg->ch == 'X' || arg->ch == 'o')) {
-        assert(PyUnicode_READ(kind, pbuf, pindex) == '0');
-        assert(PyUnicode_READ(kind, pbuf, pindex + 1) == arg->ch);
-        if (fill != ' ') {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, '0');
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos + 1,
-                            arg->ch);
-            writer->pos += 2;
-            pindex += 2;
-        }
-        arg->width -= 2;
-        if (arg->width < 0)
-            arg->width = 0;
-        len -= 2;
-    }
-    if (arg->width > len && !(arg->flags & (1 << 0))) {
-        sublen = arg->width - len;
-        cimpl_unicode_fill(writer->kind, writer->data, fill, writer->pos,
-                           sublen);
-        writer->pos += sublen;
-        arg->width = len;
-    }
-    if (fill == ' ') {
-        if (arg->sign) {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, signchar);
-            writer->pos += 1;
-        }
-        if ((arg->flags & (1 << 3)) &&
-            (arg->ch == 'x' || arg->ch == 'X' || arg->ch == 'o')) {
-            assert(PyUnicode_READ(kind, pbuf, pindex) == '0');
-            assert(PyUnicode_READ(kind, pbuf, pindex + 1) == arg->ch);
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, '0');
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos + 1,
-                            arg->ch);
-            writer->pos += 2;
-            pindex += 2;
-        }
-    }
-    if (len) {
-        _PyUnicode_FastCopyCharacters(writer->buffer, writer->pos, str, pindex,
-                                      len);
-        writer->pos += len;
-    }
-    if (arg->width > len) {
-        sublen = arg->width - len;
-        cimpl_unicode_fill(writer->kind, writer->data, ' ', writer->pos,
-                           sublen);
-        writer->pos += sublen;
-    }
-    return 0;
-}
-#elif NI_HAS_UNICODE_CONST_DATA
-{
-    Py_ssize_t len;
-    enum PyUnicode_Kind kind;
-    const void *pbuf;
-    Py_ssize_t pindex;
-    Py_UCS4 signchar;
-    Py_ssize_t buflen;
-    Py_UCS4 maxchar;
-    Py_ssize_t sublen;
-    _PyUnicodeWriter *writer = &ctx->writer;
-    Py_UCS4 fill;
-    fill = ' ';
-    if (arg->sign && arg->flags & F_ZERO)
-        fill = '0';
-    if ((assert(PyUnicode_Check(str)),
-         (PyUnicode_IS_READY(str) ? 0 : _PyUnicode_Ready(str))) == -1)
-        return -1;
-    len = PyUnicode_GET_LENGTH(str);
-    if ((arg->width == -1 || arg->width <= len) &&
-        (arg->prec == -1 || arg->prec >= len) &&
-        !(arg->flags & (F_SIGN | F_BLANK))) {
-        if (_PyUnicodeWriter_WriteStr(writer, str) == -1)
-            return -1;
-        return 0;
-    }
-    if (arg->ch == 's' || arg->ch == 'r' || arg->ch == 'a') {
-        if (arg->prec >= 0 && len > arg->prec)
-            len = arg->prec;
-    }
-    kind = PyUnicode_KIND(str);
-    pbuf = PyUnicode_DATA(str);
-    pindex = 0;
-    signchar = '\0';
-    if (arg->sign) {
-        Py_UCS4 ch = PyUnicode_READ(kind, pbuf, pindex);
-        if (ch == '-' || ch == '+') {
-            signchar = ch;
-            len--;
-            pindex++;
-        }
-        else if (arg->flags & F_SIGN)
-            signchar = '+';
-        else if (arg->flags & F_BLANK)
-            signchar = ' ';
-        else
-            arg->sign = 0;
-    }
-    if (arg->width < len)
-        arg->width = len;
-    maxchar = writer->maxchar;
-    if (!(arg->flags & F_LJUST)) {
-        if (arg->sign) {
-            if ((arg->width - 1) > len)
-                maxchar = Py_MAX(maxchar, fill);
-        }
-        else {
-            if (arg->width > len)
-                maxchar = Py_MAX(maxchar, fill);
-        }
-    }
-    if (PyUnicode_MAX_CHAR_VALUE(str) > maxchar) {
-        Py_UCS4 strmaxchar = _PyUnicode_FindMaxChar(str, 0, pindex + len);
-        maxchar = Py_MAX(maxchar, strmaxchar);
-    }
-    buflen = arg->width;
-    if (arg->sign && len == arg->width)
-        buflen++;
-    if (_PyUnicodeWriter_Prepare(writer, buflen, maxchar) == -1)
-        return -1;
-    if (arg->sign) {
-        if (fill != ' ') {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, signchar);
-            writer->pos += 1;
-        }
-        if (arg->width > len)
-            arg->width--;
-    }
-    if ((arg->flags & F_ALT) &&
-        (arg->ch == 'x' || arg->ch == 'X' || arg->ch == 'o')) {
-        assert(PyUnicode_READ(kind, pbuf, pindex) == '0');
-        assert(PyUnicode_READ(kind, pbuf, pindex + 1) == arg->ch);
-        if (fill != ' ') {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, '0');
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos + 1,
-                            arg->ch);
-            writer->pos += 2;
-            pindex += 2;
-        }
-        arg->width -= 2;
-        if (arg->width < 0)
-            arg->width = 0;
-        len -= 2;
-    }
-    if (arg->width > len && !(arg->flags & F_LJUST)) {
-        sublen = arg->width - len;
-        cimpl_unicode_fill(writer->kind, writer->data, fill, writer->pos,
-                           sublen);
-        writer->pos += sublen;
-        arg->width = len;
-    }
-    if (fill == ' ') {
-        if (arg->sign) {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, signchar);
-            writer->pos += 1;
-        }
-        if ((arg->flags & F_ALT) &&
-            (arg->ch == 'x' || arg->ch == 'X' || arg->ch == 'o')) {
-            assert(PyUnicode_READ(kind, pbuf, pindex) == '0');
-            assert(PyUnicode_READ(kind, pbuf, pindex + 1) == arg->ch);
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, '0');
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos + 1,
-                            arg->ch);
-            writer->pos += 2;
-            pindex += 2;
-        }
-    }
-    if (len) {
-        _PyUnicode_FastCopyCharacters(writer->buffer, writer->pos, str, pindex,
-                                      len);
-        writer->pos += len;
-    }
-    if (arg->width > len) {
-        sublen = arg->width - len;
-        cimpl_unicode_fill(writer->kind, writer->data, ' ', writer->pos,
-                           sublen);
-        writer->pos += sublen;
-    }
-    return 0;
-}
-#elif NI_HAS_UNICODE_FILL
-{
-    Py_ssize_t len;
-    enum PyUnicode_Kind kind;
-    void *pbuf;
     Py_ssize_t pindex;
     Py_UCS4 signchar;
     Py_ssize_t buflen;
@@ -3091,16 +2709,16 @@ vinfo_t *PsycoUnicode_SplitNext(PsycoObject *po, vinfo_t *it, vinfo_t *list) {
     return NULL;
   }
   assert_nonneg(start);
-  if (sep == NULL)
-    ;
-  else if (PyUnicode_GET_LENGTH(sep) == 1)
-    end = psyco_generic_call(po, cimpl_split_char_end, VIEW_HELPER, "vvvl",
-                             root, start, n,
-                             (long)PyUnicode_READ_CHAR(sep, 0));
-  else
-    end = psyco_generic_call(po, cimpl_split_sep_end,
-                             VIEW_HELPER | CfPyErrIfNeg, "vvvv", root, start,
-                             n, vsep);
+  if (sep != NULL) {
+    if (PyUnicode_GET_LENGTH(sep) == 1)
+      end = psyco_generic_call(po, cimpl_split_char_end, VIEW_HELPER, "vvvl",
+                               root, start, n,
+                               (long)PyUnicode_READ_CHAR(sep, 0));
+    else
+      end = psyco_generic_call(po, cimpl_split_sep_end,
+                               VIEW_HELPER | CfPyErrIfNeg, "vvvv", root, start,
+                               n, vsep);
+  }
   if (end == NULL)
     goto error_start;
   assert_nonneg(end);
