@@ -38,11 +38,42 @@
 #define INDEX_LOC_CONTINUATION  0   /* return address in the stack */
 #define INDEX_LOC_GLOBALS       1   /* globals() dict object */
 #define INDEX_LOC_INLINING      2   /* for function inlining */
-#define INDEX_LOC_LOCALS_PLUS   3   /* start of local variables + stack */
+#define INDEX_LOC_BUILTINS      3   /* the frame's builtins dict: fixed when
+                                       the frame starts, as f_builtins, so a
+                                       vlocal and not a 'pr' field (the
+                                       note above) */
+#define INDEX_LOC_LOCALS_PLUS   4   /* start of local variables + stack */
+
+/* LOC_INLINING's array, while a frame is inlined: the parent's code
+   object, position and code serial (psyfunc.c:psyco_save_inline_po), then
+   the parent's vlocals */
+#define LOC_INLINE_CO           0
+#define LOC_INLINE_NEXT_INSTR   1
+#define LOC_INLINE_SERIAL       2
+#define TOTAL_LOC_INLINE        3
+
+/* A generator expression compiled into its consumer
+   (psyfunc.c:psyco_call_genexpr) has two more slots, after its free
+   variables and before the stack: what YIELD_VALUE does (GENEXPR_*, a
+   compile-time value, so versions for different consumers never match at
+   a merge point) and the accumulator. Its RETURN_VALUE returns the
+   result. */
+#define GENEXPR_LIST 1  /* list(), tuple(): acc is a list, append */
+#define GENEXPR_SET  2  /* set(): acc is a set, add */
+#define GENEXPR_SUM  3  /* sum(): acc = acc + value */
+#define GENEXPR_ANY  4  /* any(): return True on a true value */
+#define GENEXPR_ALL  5  /* all(): return False on a false value */
+#define GENEXPR_MIN  6  /* min(), max(): acc is the best so far, or NULL */
+#define GENEXPR_MAX  7
+#define GENEXPR_SLOTS 2
+#define GENEXPR_SLOT_MODE(co) (INDEX_LOC_LOCALS_PLUS + (co)->co_nlocals +     \
+                               PyTuple_GET_SIZE((co)->co_freevars))
+#define GENEXPR_SLOT_ACC(co) (GENEXPR_SLOT_MODE(co) + 1)
 
 #define LOC_CONTINUATION    (po->vlocals.items[INDEX_LOC_CONTINUATION])
 #define LOC_GLOBALS         (po->vlocals.items[INDEX_LOC_GLOBALS])
 #define LOC_INLINING        (po->vlocals.items[INDEX_LOC_INLINING])
+#define LOC_BUILTINS        (po->vlocals.items[INDEX_LOC_BUILTINS])
 #define LOC_LOCALS_PLUS     (po->vlocals.items + INDEX_LOC_LOCALS_PLUS)
 
 
@@ -52,6 +83,24 @@ typedef struct {
   short auto_recursion; /* # levels to auto-compile calls to Python functions */
   char is_inlining;     /* true when compiling a code inlined in a parent */
   unsigned char iblock; /* index in blockstack */
+  char class_unchecked; /* a call that may assign __class__ was emitted
+                           since the known types were last forgotten
+                           (pobject.c:Psyco_ForgetClasses) */
+  char python_call;     /* a call that may run Python code, so may have
+                           started tracing, was emitted in this instruction
+                           (pycompiler.c:resume_if_tracing) */
+  char resume_pending;  /* test for tracing at the next instruction: after
+                           an inlined frame's return, or at a handler */
+  char go_interpreted;  /* the frame goes on in ceval from the next
+                           instruction: a type-promotion site's
+                           megamorphic version (Psyco_NeedType) */
+  int call_site;        /* 1 + the CALL_* instruction being compiled, or 0 */
+  struct locals_map_s *pending_map; /* noted for the C call being emitted,
+                                       which gives it its return address */
+  PyObject* changing_globals;  /* names of globals detected to change: saved
+                                  in snapshots, so a respawn replays the same
+                                  LOAD_GLOBAL decisions; shared, so never
+                                  changed in place (mark_varying) */
   PyTryBlock blockstack[CO_MAXBLOCKS]; /* for try and loop blocks */
   
   /* fields after 'blockstack' are not saved in a FrozenPsycoObject */
@@ -61,9 +110,10 @@ typedef struct {
   vinfo_t* exc;         /* current compile-time (pseudo) exception, see below */
   vinfo_t* val;         /* exception value */
   vinfo_t* tb;          /* traceback object */
-  PyObject* f_builtins;
-  PyObject* changing_globals;  /* dict of names of globals that are detected to
-                                  change */
+  char split_after_global; /* a guarded LOAD_GLOBAL or attribute lookup was
+                              just compiled: start a new block
+                              (pycompiler.c:load_global_cached,
+                              pobject.c:generic_getattr) */
 } pyc_data_t;
 
 #define AUTO_RECURSION_MAX 200
