@@ -57,8 +57,6 @@ bool PsycoDict_SetItemC(PsycoObject* po, vinfo_t* vdict,
 static PyCFunction cfunc_dict_get;
 static PyCFunction cfunc_dict_setdefault;
 
-/* every copy with a parameter in the str_key representation is made */
-#define NI_COPIES_str_key 1
 
 /* dictobject.c's macros for the keys' layout, which it keeps to itself */
 #define DKIX_EMPTY (-1)
@@ -502,7 +500,6 @@ static int cimpl_dictstr_setitem(PyDictObject *mp, PyObject *key,
    object-key helper. So the virtual becomes CPython's object wherever
    one exists, and the key a store inserts is the str any later use of
    the variable sees, as in CPython. */
-#ifdef NI_COPIES_str_key
 
 /* 'key needed': a value no dict holds, as nothing else can reach it */
 static PyObject key_needed = {_PyObject_EXTRA_INIT 1, &PyBaseObject_Type};
@@ -682,13 +679,6 @@ static bool not_built(vinfo_t *k) {
   return PsycoUnicode_KeyParts(k, &root, &start, &len, &map);
 }
 
-#else
-static bool not_built(vinfo_t *k) { return false; }
-#define key_getitem(po, mp, k, record, need) (*(need) = true, NULL)
-#define key_get(po, mp, k, dflt, record, need) (*(need) = true, NULL)
-#define key_contains(po, mp, k, need) (*(need) = true, NULL)
-#define key_setitem(po, mp, k, value, fused, need) (*(need) = true, false)
-#endif
 
 DEFINEFN
 bool PsycoDict_StrKey(vinfo_t *mp, vinfo_t *key) {

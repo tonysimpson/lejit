@@ -59,8 +59,6 @@ static PyCFunction cfunc_unicode_lstrip;
 static PyCFunction cfunc_unicode_rstrip;
 static PyCFunction cfunc_unicode_strip;
 
-/* every whole copy scope.py names is made */
-#define NI_COPIES_unicodeobject 1
 
 /* CPython's code, copied for the metas to call at run time */
 static PyObject *
@@ -2758,7 +2756,6 @@ error_n:
 
 /* ---- str % args with a constant format ---- */
 
-#ifdef NI_COPIES_unicodeobject
 /* PyUnicode_Format's loop with the format read once, when the code is
    compiled, by the copy of unicode_format_arg_parse: a plan of
    pieces, each a run of the format's characters, a '%%', or one argument
@@ -3017,7 +3014,6 @@ generic:
   return psyco_generic_call(po, unicode_mod, CfCommonNewRefPyObject, "vv", v,
                             w);
 }
-#endif
 
 /* ---- sep.join(x) ---- */
 
@@ -3320,10 +3316,8 @@ void psy_unicodeobject_init(void) {
   cfunc_unicode_upper = Psyco_DefineMethodFn(&PyUnicode_Type, "upper",
                                              METH_NOARGS, punicode_upper);
   check_case_hash();
-#ifdef NI_COPIES_unicodeobject
   unicode_mod = PyUnicode_Type.tp_as_number->nb_remainder;
   Psyco_DefineMeta(unicode_mod, punicode_mod);
-#endif
   cfunc_unicode_join = Psyco_DefineMethodFn(&PyUnicode_Type, "join", METH_O,
                                             punicode_join);
   cfunc_unicode_partition = Psyco_DefineMethodFn(
