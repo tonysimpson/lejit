@@ -1,0 +1,4 @@
+graft ni
+include tools/features/*.py tools/features/cpython_sha256.txt
+include LICENSE LICENSE-CPython AUTHORS README.md
+global-exclude *_gen.h *.py[cod] __pycache__

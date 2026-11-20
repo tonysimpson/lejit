@@ -12,10 +12,12 @@ from __future__ import print_function
 import os, sys, sysconfig
 import glob
 import subprocess
-from distutils.core import setup
-from distutils.extension import Extension
-from distutils.command.build_ext import build_ext
-from distutils.errors import DistutilsError
+from setuptools import setup, Extension
+from setuptools.command.build_ext import build_ext
+
+
+class BuildError(Exception):
+    pass
 
 ####################################################################
 # Override defaults using environment variables e.g. dev mode
@@ -176,7 +178,7 @@ class build_ext_generated(build_ext):
         # would win over the fresh one
         old = glob.glob(os.path.join(HERE, 'ni', '**', '*_gen.h'), recursive=True)
         if old:
-            raise DistutilsError('remove %s: generated headers now live in'
+            raise BuildError('remove %s: generated headers now live in'
                                  ' the build directory' % ', '.join(old))
         gen_dir = os.path.join(self.build_temp, 'gen')
         detector = 'features.py' if NI_FEATURES == 'source' else 'installed.py'
@@ -185,14 +187,14 @@ class build_ext_generated(build_ext):
         print(' '.join(cmd))
         sys.stdout.flush()
         if subprocess.call(cmd) != 0:
-            raise DistutilsError('detecting the features of CPython'
+            raise BuildError('detecting the features of CPython'
                                  ' failed (above)')
         cmd = [sys.executable, os.path.join(HERE, 'tools', 'features', 'strings.py'),
                '--python', sys.executable, '--out', gen_dir]
         print(' '.join(cmd))
         sys.stdout.flush()
         if subprocess.call(cmd) != 0:
-            raise DistutilsError('taking CPython\'s messages from the interpreter'
+            raise BuildError('taking CPython\'s messages from the interpreter'
                                  ' failed (above)')
         gen = sorted(glob.glob(os.path.join(gen_dir, '*.h')))
         for ext in self.extensions:
@@ -201,37 +203,16 @@ class build_ext_generated(build_ext):
         build_ext.run(self)
 
 
-CLASSIFIERS = [
-    'Development Status :: 2 - Pre-Alpha',
-    'Intended Audience :: Developers',
-    'License :: OSI Approved :: MIT License',
-    'Operating System :: OS Independent',
-    'Programming Language :: Python',
-    'Programming Language :: C',
-    'Topic :: Software Development :: Compilers',
-    'Topic :: Software Development :: Interpreters',
-    ]
-
-setup( 
-    name             = "ni",
-    version          = "0.1a2",
-    description      = "Plugin JIT for CPython",
-    maintainer       = "Tony Simpson",
-    maintainer_email = "agjasimpson@gmail.com",
-    url              = "http://github.com/tonysimpson/ni",
-    license          = "MIT License",
-    long_description = __doc__,
-    packages         = ['ni'],
+# the package's name, version and licence are in pyproject.toml
+setup(
     ext_modules=[Extension(name = 'ni',
                            sources = sources,
                            depends = depends,
                            extra_compile_args = extra_compile_args,
                            extra_link_args = extra_link_args,
                            define_macros = macros,
-                           debug = True,
                            include_dirs = [processor_dir],
                            libraries = ['ffi', 'unwind'],
     )],
-    classifiers=CLASSIFIERS,
     cmdclass={'build_ext': build_ext_generated},
 )

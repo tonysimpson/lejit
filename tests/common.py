@@ -17,8 +17,8 @@ SANITIZE_SKIP = {
 }
 
 
-# distutils' build_temp, relative to the repo root
-BUILD_TEMP_CODE = ("from distutils.dist import Distribution\n"
+# setuptools' build_temp, relative to the repo root
+BUILD_TEMP_CODE = ("from setuptools.dist import Distribution\n"
                    "b = Distribution().get_command_obj('build')\n"
                    "b.finalize_options(); print(b.build_temp)")
 

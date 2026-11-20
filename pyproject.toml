@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ni"
+version = "0.1a2"
+description = "Plugin JIT for CPython"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT AND PSF-2.0"}
+maintainers = [{name = "Tony Simpson", email = "agjasimpson@gmail.com"}]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Python Software Foundation License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: C",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Software Development :: Interpreters",
+]
+
+[project.urls]
+Homepage = "https://github.com/tonysimpson/ni"
+
+[tool.setuptools]
+# the package is the one extension module; ni/ holds its C sources
+packages = []
+py-modules = []
