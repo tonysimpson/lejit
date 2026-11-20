@@ -202,6 +202,14 @@ class build_ext_generated(build_ext):
             ext.depends += gen
         build_ext.run(self)
 
+    def get_libraries(self, ext):
+        # 3.7's distutils links libpython into an extension when Python is
+        # a shared library; 3.8 stopped. The interpreter provides those
+        # symbols when it loads the module, and a manylinux wheel must not
+        # name libpython, so leave it out on every version
+        return [lib for lib in build_ext.get_libraries(self, ext)
+                if not lib.startswith('python')]
+
 
 # the package's name, version and licence are in pyproject.toml
 setup(
