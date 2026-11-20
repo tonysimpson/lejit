@@ -4,7 +4,7 @@
 #   make check                checked build and every test, for PY
 #   make check-all            make check for each of PYTHONS
 #   make test | cpython-test | encoder-test | features-test | strings-test
-#   make features-installed-test
+#   make features-installed-test | cross-check (both detectors, every interpreter)
 #
 # The build detects PY's features and takes its messages from PY itself
 # (NI_FEATURES=source reads the source of PY's CPython release instead,
@@ -21,7 +21,7 @@ PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
 
 .PHONY: build checked-build check check-all test cpython-test encoder-test \
         features-test features-installed-test strings-test \
-        no-version-tests clean
+        cross-check no-version-tests clean
 
 build:
 	$(PY) setup.py build_ext --inplace
@@ -45,13 +45,18 @@ encoder-test: checked-build
 features-test:
 	$(GEN_PY) tests/features/test.py
 
-# the installed detector (no source) agrees with the source one, on each
-# interpreter
+# the installed detector (no source) agrees with the source one, for PY
 features-installed-test:
-	$(GEN_PY) tests/features/installed_test.py
+	$(GEN_PY) tests/features/installed_test.py --strict $(PY)
 
-# each message probe's answer is in its CPython's source
+# each message probe's answer is in PY's CPython source
 strings-test:
+	$(GEN_PY) tests/features/strings_test.py $(PY)
+
+# both, on every interpreter installed here (pyenv), and newer ones for
+# information
+cross-check:
+	$(GEN_PY) tests/features/installed_test.py --strict
 	$(GEN_PY) tests/features/strings_test.py
 
 # features come from CPython's source (NI_HAS_*), never its version number

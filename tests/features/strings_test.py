@@ -13,6 +13,7 @@ checked to be literals of the versions Ni uses them on.
 """
 import os
 import re
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -109,10 +110,20 @@ def found(text, lits, filled):
     return None
 
 
-def check_version(version):
+def interpreter_of(version):
+    return os.path.join(PYENV, version, 'bin', 'python' + version.rsplit('.', 1)[0])
+
+
+def version_of(python):
+    return subprocess.check_output(
+        [python, '-I', '-c', 'import sys; print(sys.version.split()[0])'],
+        universal_newlines=True).strip()
+
+
+def check_version(version, python=None):
     """(problems, notes) for one version."""
     src = cpython_src.find_source(version)
-    python = os.path.join(PYENV, version, 'bin', 'python' + version.rsplit('.', 1)[0])
+    python = python or interpreter_of(version)
     lits = literals(src)
     filled = [l for l in lits if '%' in l]
     got = strings.probe(python)
@@ -140,12 +151,18 @@ def check_version(version):
     return problems, notes, len(got)
 
 
-def main():
+def main(argv):
+    """Every supported version and, for information, a few newer ones;
+    or just the interpreters named on the command line."""
+    if argv:
+        runs = [(version_of(p), p) for p in argv]
+    else:
+        runs = [(v, None) for v in SUPPORTED + INFORMATION]
     failed = False
-    for version in SUPPORTED + INFORMATION:
+    for version, python in runs:
         info = version in INFORMATION
         try:
-            problems, notes, n = check_version(version)
+            problems, notes, n = check_version(version, python)
         except (strings.StringError, cpython_src.SourceError) as e:
             problems, notes, n = [str(e)], [], 0
         status = 'ok' if not problems else ('differs' if info else 'FAIL')
@@ -161,4 +178,4 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
