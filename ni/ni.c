@@ -3,7 +3,6 @@
 #include "Objects/pmethodobject.h"
 #include "Objects/pobject.h"
 #include "codemanager.h"
-#include "compat2to3.h"
 #include "dispatcher.h"
 #include "mergepoints.h"
 #include "psyco.h"

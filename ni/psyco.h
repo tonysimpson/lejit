@@ -9,7 +9,6 @@
 #include <Python.h>
 #include <structmember.h>   /* for offsetof() */
 #include <stdint.h>
-#include "compat2to3.h"
 /* the NI_HAS_ features of the CPython source built for */
 #include "ni_features_gen.h"
 /* offsets, sizes and private structs of the CPython fields Ni relies on
@@ -910,7 +909,7 @@ typedef struct {
 
 
 /* to display code object names */
-#define PyCodeObject_NAME(co)   (co->co_name ? NiCompatStr_AS_STRING(co->co_name)  \
+#define PyCodeObject_NAME(co)   (co->co_name ? PyUnicode_AsUTF8(co->co_name)  \
                                  : "<anonymous code object>")
 
 

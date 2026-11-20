@@ -5,7 +5,6 @@
 #include "../Objects/plongobject.h"
 #include "../Objects/pmethodobject.h"
 #include "../Objects/prangeobject.h"
-#include "../Objects/pstringobject.h"
 #include "../Objects/ptupleobject.h"
 #include "../Objects/ptypeobject.h"
 #include "../psyfunc.h"

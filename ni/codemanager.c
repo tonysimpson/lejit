@@ -1,6 +1,5 @@
 #include "codemanager.h"
 #include <time.h>
-#include "compat2to3.h"
 #include "platform.h"
 #include <ipyencoding.h>
 
@@ -1067,7 +1066,7 @@ CodeBufferObject *psyco_proxy_code_buffer(PsycoObject *po,
 }
 
 static PyObject *codebuf_repr(CodeBufferObject *self) {
-  return NiCompatStr_FromFormat("<code buffer ptr %p at %p>", self->codestart,
+  return PyUnicode_FromFormat("<code buffer ptr %p at %p>", self->codestart,
                                 self);
 }
 

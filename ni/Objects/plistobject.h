@@ -33,7 +33,6 @@ EXTERNFN bool PsycoList_Append(PsycoObject* po, vinfo_t* v, vinfo_t* vitem);
 EXTERNFN int PsycoList_Load(vinfo_t* list);
 
 
-/* for pstringobject.c */
 EXTERNFN vinfo_t* psyco_plist_concat(PsycoObject* po, vinfo_t* a, vinfo_t* b);
 
 /* for piterobject.c */

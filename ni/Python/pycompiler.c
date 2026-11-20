@@ -59,7 +59,6 @@
 #include "../Objects/psliceobject.h"
 #include "../Objects/punicodeobject.h"
 
-#include "../compat2to3.h"
 
 #include "pycinternal.h"
 #include <eval.h>
@@ -255,9 +254,9 @@ void Psyco_DefineMeta(void *c_function, void *psyco_function) {
     /* should not occur */
     return;
   }
-  key = NiCompatInt_FromLong((long)c_function);
+  key = PyLong_FromLong((long)c_function);
   if (key != NULL) {
-    value = NiCompatInt_FromLong((long)psyco_function);
+    value = PyLong_FromLong((long)psyco_function);
     if (value != NULL) {
       PyDict_SetItem(Psyco_Meta_Dict, key, value);
       Py_DECREF(value);
@@ -513,7 +512,7 @@ DEFINEVAR source_virtual_t EInline;   /* request to inline a function */
 
 DEFINEFN
 void PycException_SetString(PsycoObject *po, PyObject *e, const char *text) {
-  PyObject *s = NiCompatStr_FromString(text);
+  PyObject *s = PyUnicode_FromString(text);
   if (s == NULL)
     OUT_OF_MEMORY();
   PycException_SetObject(po, e, s);
@@ -552,7 +551,7 @@ void PycException_SetFormat(PsycoObject *po, PyObject *e, const char *fmt,
 #else
   va_start(vargs);
 #endif
-  s = NiCompatStr_FromFormatV(fmt, vargs);
+  s = PyUnicode_FromFormatV(fmt, vargs);
   va_end(vargs);
 
   if (s == NULL)
@@ -1126,7 +1125,7 @@ static code_t *load_global_miss_glue;
 
 INITIALIZATIONFN
 void psyco_pycompiler_init(void) {
-  s_builtin_object = NiCompatStr_InternFromString("__builtins__");
+  s_builtin_object = PyUnicode_InternFromString("__builtins__");
   load_global_miss_glue = psyco_aligned_call_glue(cimpl_load_global_miss);
 
   psyco_skZero.refcount1_flags = SkFlagFixed;
@@ -4709,7 +4708,7 @@ static PyObject *cimpl_import_name(PyObject *globals, PyObject *builtins,
     PyErr_SetString(PyExc_ImportError, "__import__ not found");
     return NULL;
   }
-  if (NiCompatInt_AsLong(fitharg) != -1 || PyErr_Occurred())
+  if (PyLong_AsLong(fitharg) != -1 || PyErr_Occurred())
     w = PyTuple_Pack(5, name, globals, Py_None, fromlist, fitharg);
   else
     w = Py_BuildValue("(OOOO)", name, globals, Py_None, fromlist);
@@ -4754,8 +4753,8 @@ static int cimpl_import_all_from(PyObject *locals, PyObject *v) {
         PyErr_Clear();
       break;
     }
-    if (skip_leading_underscores && NiCompatStr_Check(name) &&
-        NiCompatStr_AS_STRING(name)[0] == '_') {
+    if (skip_leading_underscores && PyUnicode_Check(name) &&
+        PyUnicode_AsUTF8(name)[0] == '_') {
       Py_DECREF(name);
       continue;
     }

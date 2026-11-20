@@ -6,7 +6,6 @@
  * tuples and lists.
  */
 #include "pabstract.h"
-#include "../compat2to3.h"
 #include "pclassobject.h"
 #include "pfuncobject.h"
 #include "piterobject.h"

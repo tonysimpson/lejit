@@ -1,7 +1,6 @@
 #include "Python/frames.h"
 #include "codegen.h"
 #include "codemanager.h"
-#include "compat2to3.h"
 #include "mergepoints.h"
 #include <Python.h>
 /* how CPython's frames, tracing flag and recursion count are reached */

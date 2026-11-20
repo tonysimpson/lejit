@@ -21,11 +21,9 @@
  * against the value first seen.
  */
 #include "pobject.h"
-#include "../compat2to3.h"
 #include "../pycodegen.h"
 #include "../codemanager.h"
 #include "pboolobject.h"
-#include "pstringobject.h"
 
 DEFINEFN
 PyTypeObject *Psyco_NeedType(PsycoObject *po, vinfo_t *vi) {
@@ -1335,7 +1333,7 @@ bool PsycoObject_SetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *vattrname,
   if (r == 0)
     goto generic;
   Py_INCREF(name);
-  NiCompatStr_InternInPlace(&name);
+  PyUnicode_InternInPlace(&name);
   /* a heap type's tp_setattro can change: read it only behind a guard */
   if ((tp->tp_flags & Py_TPFLAGS_HEAPTYPE) && tp->tp_setattro != NULL) {
     bool ok = heap_setattr(po, o, tp, name, v);
@@ -1351,7 +1349,7 @@ bool PsycoObject_SetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *vattrname,
   if (tp->tp_setattr != NULL) {
     vresult =
         Psyco_META3(po, tp->tp_setattr, CfCommonIntZeroOk, v ? "vlv" : "vll", o,
-                    (long)NiCompatStr_AS_STRING(name), v);
+                    (long)PyUnicode_AsUTF8(name), v);
     Py_DECREF(name);
     return vresult != NULL;
   }
