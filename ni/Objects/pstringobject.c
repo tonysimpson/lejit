@@ -1,3 +1,11 @@
+/*
+ * Python 2 'str' support only. The whole file is inside '#ifdef IS_PY3K
+ * #else', and compat2to3.h always defines IS_PY3K, so on Python 3 it compiles
+ * to nothing (psy_stringobject_init is not called either). It is kept because
+ * its virtual strings (one-character strings, slices, over-allocated
+ * concatenation buffers) are the best worked examples of virtual objects. The
+ * layouts would port to PyBytesObject, not to PEP 393 unicode.
+ */
 #include "pstringobject.h"
 #include "../compat2to3.h"
 #ifdef IS_PY3K

@@ -1,3 +1,4 @@
+/* Python 2 str layouts: empty on Python 3 (see pstringobject.c). */
  /***************************************************************/
 /***           Psyco equivalent of stringobject.h              ***/
  /***************************************************************/
