@@ -127,7 +127,7 @@ static code_t *take_extent(size_t want, size_t need, code_t **end) {
 }
 
 static void owner_add_extent(ni_owner_t *o, code_t *start, code_t *end) {
-  psyco_stat_code_bytes_live += end - start;
+  NI_STAT(psyco_stat_code_bytes_live += end - start);
   if (o == NULL)
     return; /* kept for good */
   if (o->nextents > 0 && o->extents[o->nextents - 1].end == start) {
@@ -147,8 +147,12 @@ static void owner_add_extent(ni_owner_t *o, code_t *start, code_t *end) {
   o->nextents++;
 }
 
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_code_buffers = 0;
+#endif
+#if ALL_CHECKS || NI_CODESTATS
 DEFINEVAR long psyco_stat_code_bytes = 0;
+#endif
 
 static code_t *open_extent(code_t **limit) {
   code_t *start, *end;
@@ -174,7 +178,7 @@ static code_t *open_extent(code_t **limit) {
 }
 
 DEFINEFN code_t *psyco_code_open(code_t **limit) {
-  psyco_stat_code_buffers++;
+  NI_STAT(psyco_stat_code_buffers++);
   return open_extent(limit);
 }
 
@@ -191,7 +195,9 @@ DEFINEFN void psyco_code_close(code_t *code) {
       /* checked builds fill the padding, which must stay in the extent */
       if (x.end - code >= 16)
         ALIGN_NO_FILL();
+#if ALL_CHECKS || NI_CODESTATS
       psyco_stat_code_bytes += code - x.start;
+#endif
       if (x.end - code < EXTENT_MIN)
         code = x.end; /* full */
       else
@@ -229,8 +235,10 @@ DEFINEFN code_t *psyco_code_take(size_t n) {
 /*** Owners ***/
 
 DEFINEVAR ni_owner_t *psyco_owner = NULL;
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_code_bytes_live = 0;
 DEFINEVAR long psyco_stat_kept_for_good = 0;
+#endif
 
 DEFINEFN ni_owner_t *psyco_code_owner(PyCodeObject *co) {
   ni_code_extra_t *x = ni_code_extra(co);
@@ -265,7 +273,7 @@ DEFINEFN void psyco_owner_keep(PyObject *p) {
   if (p == NULL)
     return;
   if (o == NULL) {
-    psyco_stat_kept_for_good++;
+    NI_STAT(psyco_stat_kept_for_good++);
     return;
   }
   if (o->pins == NULL || 2 * (o->npins + 1) > o->pinmask + 1)
@@ -331,7 +339,7 @@ DEFINEFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
 #if ALL_CHECKS
     memset(s, 0xCC, e - s); /* INT 3: a stale jump traps */
 #endif
-    psyco_stat_code_bytes_live -= e - s;
+    NI_STAT(psyco_stat_code_bytes_live -= e - s);
     free_insert(s, e);
   }
   PyMem_Free(dead.extents);
@@ -508,10 +516,12 @@ DEFINEFN PyObject **psyco_record(ni_addrmap_t *map, void *key) {
    such records, acts on generation 2 only. Importing gc for it would run
    importlib's Python code, which Ni compiles, in every program. */
 
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_owner_scans = 0;
 DEFINEVAR long psyco_stat_owners_collected = 0;
+#endif
 
-DEFINEVAR long psyco_stat_owners_counted = 0;
+DEFINEVAR long ni_owners_counted = 0;
 static long extras_since_scan = 0; /* records counted since the last scan */
 #define SCAN_MIN 512 /* records counted before the first scan */
 static long scan_after = SCAN_MIN; /* more after a scan too big */
@@ -700,14 +710,14 @@ static void owners_scan(void) {
   PyMem_Free(scan.stack);
   PyMem_Free(scan.index.items);
   memset(&scan, 0, sizeof(scan));
-  psyco_stat_owner_scans++;
+  NI_STAT(psyco_stat_owner_scans++);
   if (n < 0)
-    scan_after = 2 * (scan_after > psyco_stat_owners_counted
+    scan_after = 2 * (scan_after > ni_owners_counted
                           ? scan_after
-                          : psyco_stat_owners_counted);
+                          : ni_owners_counted);
   else
-    scan_after = psyco_stat_owners_counted / 2 > SCAN_MIN
-                     ? psyco_stat_owners_counted / 2
+    scan_after = ni_owners_counted / 2 > SCAN_MIN
+                     ? ni_owners_counted / 2
                      : SCAN_MIN;
   if (n > 0)
     dead = PyMem_Malloc(n * sizeof(ni_code_extra_t *));
@@ -722,7 +732,7 @@ static void owners_scan(void) {
     dead[i] = ni_code_extra_detach(dead_co[i]);
   for (i = 0; i < n; i++)
     ni_code_extra_free(dead[i]);
-  psyco_stat_owners_collected += n;
+  NI_STAT(psyco_stat_owners_collected += n);
   PyMem_Free(dead);
   for (i = 0; i < n; i++)
     Py_DECREF(dead_co[i]);
@@ -735,7 +745,7 @@ static int owners_pending(void *arg) {
   /* pending calls run in whatever interpreter the main thread is in; one
      skipped is asked for again by the next record counted */
   if (PyThreadState_GET()->interp != PyInterpreterState_Main() ||
-      psyco_owner != NULL || psyco_stat_compile_depth != 0 || nopen != 0 ||
+      psyco_owner != NULL || ni_compile_depth != 0 || nopen != 0 ||
       psyco_compile_guard != NULL || _Py_IsFinalizing())
     return 0;
   extras_since_scan = 0;
@@ -762,7 +772,7 @@ static PyObject *owners_gc_callback(PyObject *self, PyObject *args) {
     gen = PyDict_Check(info) ? PyDict_GetItemString(info, "generation") : NULL;
     if (extras_since_scan > 0 && gen != NULL && PyLong_Check(gen) &&
         PyLong_AsLong(gen) == 2 && psyco_owner == NULL &&
-        psyco_stat_compile_depth == 0 && nopen == 0 &&
+        ni_compile_depth == 0 && nopen == 0 &&
         psyco_compile_guard == NULL && !_Py_IsFinalizing()) {
       extras_since_scan = 0;
       owners_scan();
@@ -808,7 +818,7 @@ DEFINEFN void psyco_owner_track(ni_code_extra_t *x) {
   if (x->counted)
     return;
   x->counted = 1;
-  psyco_stat_owners_counted++;
+  ni_owners_counted++;
   extras_since_scan++;
   if (scan_callback == NULL || !scan_listed_last())
     scan_callback_list();
@@ -819,7 +829,7 @@ DEFINEFN void psyco_owner_track(ni_code_extra_t *x) {
 
 DEFINEFN void psyco_owner_untrack(ni_code_extra_t *x) {
   if (x->counted)
-    psyco_stat_owners_counted--;
+    ni_owners_counted--;
   x->counted = 0;
 }
 
@@ -850,16 +860,20 @@ DEFINEFN void psyco_codestats_buffer(const char *kind, code_t *start,
   PyList_SetItem(e, 1, PyLong_FromLong(PyLong_AsLong(PyList_GET_ITEM(e, 1)) + n));
 }
 #endif
+DEFINEVAR int ni_compile_depth = 0;
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_compile_ns[NI_ENTER_KINDS];
 DEFINEVAR long psyco_stat_compile_count[NI_ENTER_KINDS];
-DEFINEVAR int psyco_stat_compile_depth = 0;
+#endif
+#if ALL_CHECKS || NI_CODESTATS
 DEFINEVAR int psyco_stat_compile_kind = 0;
 
-DEFINEFN long psyco_stat_now_ns(void) {
+DEFINEFN long ni_now_ns(void) {
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
   return t.tv_sec * 1000000000L + t.tv_nsec;
 }
+#endif
 
 /* the blocks registered under the current compile guards, to unregister
    if the compile is abandoned */
@@ -891,7 +905,7 @@ DEFINEFN void psyco_guard_push(ni_compile_guard_t *g) {
   PyThreadState *ts = PyThreadState_GET();
   g->prev = psyco_compile_guard;
   g->owner = psyco_owner;
-  g->depth = psyco_stat_compile_depth;
+  g->depth = ni_compile_depth;
   g->nopen = nopen;
   g->njournal = njournal;
   g->tries = 0;
@@ -936,7 +950,7 @@ DEFINEFN void psyco_guard_abandon(void) {
     owner_add_extent(x.owner, x.start, x.end);
   }
   psyco_owner = g->owner;
-  psyco_stat_compile_depth = g->depth;
+  ni_compile_depth = g->depth;
 #if ALL_CHECKS
   /* the jump skipped NI_RESPAWN_SITE's restore: the next point recorded
      would carry the abandoned one's site, which its replay can't match */
@@ -1051,10 +1065,12 @@ static PyObject *codebuf_repr(CodeBufferObject *self) {
                                 self);
 }
 
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_code_buffers_freed = 0;
+#endif
 
 static void codebuf_dealloc(CodeBufferObject *self) {
-  psyco_stat_code_buffers_freed++;
+  NI_STAT(psyco_stat_code_buffers_freed++);
   fpo_release(&self->snapshot);
   PyObject_Del(self);
 }

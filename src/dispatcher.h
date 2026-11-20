@@ -110,8 +110,12 @@ EXTERNFN void psyco_park(parked_state_t* ps, PsycoObject* po, vinfo_t* fix);
 EXTERNFN PsycoObject* psyco_unpark(parked_state_t* ps, vinfo_t** fix);
 /* releases the parked state; it may be released again */
 EXTERNFN void psyco_park_release(parked_state_t* ps);
-/* states parked live and frozen: ni._core._stats()['parked'] */
-EXTERNVAR long psyco_stat_parked_live, psyco_stat_parked_frozen;
+/* states parked live, held to PARK_LIVE_MAX, and frozen:
+   ni._core._stats()['parked'] */
+EXTERNVAR long ni_parked_live;
+#if ALL_CHECKS
+EXTERNVAR long psyco_stat_parked_frozen;
+#endif
 
 /* inspection */
 PSY_INLINE int get_stack_depth(FrozenPsycoObject* fpo) {
@@ -138,9 +142,11 @@ EXTERNFN vcompatible_t* psyco_compatible(PsycoObject* po,
 /* set while a promotion's continuation is compared at its own instruction:
    no known fact is dropped there (dispatcher.c, compatible_unused_fact) */
 EXTERNVAR bool psyco_compatible_keep_facts;
+#if ALL_CHECKS
 /* merge-point matches that dropped unused facts
    (ni._core._stats()['fact_drops']) */
 EXTERNVAR long psyco_stat_fact_drops;
+#endif
 /* the same, at a join point (vcompiler.c:psyco_compile_join): with
    'drop_fields' the known fields of a run-time value that the snapshot
    hasn't are dropped at any depth, not only below the first two

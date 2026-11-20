@@ -8,6 +8,8 @@ sys.path.insert(0, os.environ.get('NI_MODULE_DIR') or
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import math
 import ni
+if not hasattr(ni._core, '_stats'):
+    sys.exit('ni was not built for tests: build it with NI_ALL_CHECKS=1')
 ni.start()
 
 VERBOSE = '-v' in sys.argv

@@ -96,9 +96,11 @@ EXTERNFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
 EXTERNFN void psyco_owner_track(ni_code_extra_t *x);
 EXTERNFN void psyco_owner_untrack(ni_code_extra_t *x);
 /* scans run, owners they freed, records counted: ni._core._stats() */
+#if ALL_CHECKS
 EXTERNVAR long psyco_stat_owner_scans;
 EXTERNVAR long psyco_stat_owners_collected;
-EXTERNVAR long psyco_stat_owners_counted;
+#endif
+EXTERNVAR long ni_owners_counted;
 
 /* A map from addresses, for the caches that record what a compile saw at
    an address and must see the same in a replay. psyco_record gives the
@@ -177,37 +179,55 @@ EXTERNVAR PyTypeObject CodeBuffer_Type, CodeBufferShort_Type,
 #define CodeBuffer_Check(v)                                                    \
   (Py_TYPE(v) == &CodeBuffer_Type || Py_TYPE(v) == &CodeBufferShort_Type || \
    Py_TYPE(v) == &CodeBufferSummary_Type)
+#if ALL_CHECKS
 /* extents opened by psyco_code_open, and blocks freed: ni._core._stats()'s
    code_buffers and code_buffers_freed */
 EXTERNVAR long psyco_stat_code_buffers;
 EXTERNVAR long psyco_stat_code_buffers_freed;
-/* bytes of code emitted, proxies included; those not freed yet */
-EXTERNVAR long psyco_stat_code_bytes;
-EXTERNVAR long psyco_stat_code_bytes_live;
 /* references held for good, given while no owner was current */
 EXTERNVAR long psyco_stat_kept_for_good;
+/* bytes of code not freed yet */
+EXTERNVAR long psyco_stat_code_bytes_live;
+#endif
+#if ALL_CHECKS || NI_CODESTATS
+/* bytes of code emitted, proxies included */
+EXTERNVAR long psyco_stat_code_bytes;
+#endif
 
-/* Time spent compiling, by how the compiler was entered (ni._core._stats()).
-   NI_COMPILE_BEGIN/END bracket each way in from run time; only the
-   outermost counts, so a compile nested in another isn't counted twice. */
+/* NI_COMPILE_BEGIN/END bracket each way in from run time, by how the
+   compiler was entered; ni_compile_depth counts the compiles open, during
+   which no owner scan runs. Checked builds time the outermost
+   (ni._core._stats()), so a compile nested in another isn't counted twice;
+   codestats builds keep its kind. A normal build reads no clock. */
 enum { NI_ENTER_ANALYSE, NI_ENTER_CALL, NI_ENTER_PAUSE, NI_ENTER_RESPAWN, NI_ENTER_PROMOTION,
        NI_ENTER_KINDS };
+EXTERNVAR int ni_compile_depth;
+#if ALL_CHECKS || NI_CODESTATS
+EXTERNFN long ni_now_ns(void);
+EXTERNVAR int psyco_stat_compile_kind; /* the outermost entry's kind */
+#endif
+#if ALL_CHECKS
 EXTERNVAR long psyco_stat_compile_ns[NI_ENTER_KINDS];
 EXTERNVAR long psyco_stat_compile_count[NI_ENTER_KINDS];
-EXTERNVAR int psyco_stat_compile_depth;
-EXTERNFN long psyco_stat_now_ns(void);
-EXTERNVAR int psyco_stat_compile_kind; /* the outermost entry's kind */
 #define NI_COMPILE_BEGIN(kind)                                                 \
-  long _ni_t0 = psyco_stat_compile_depth++                                     \
+  long _ni_t0 = ni_compile_depth++                                             \
                     ? 0                                                        \
-                    : (psyco_stat_compile_kind = (kind), psyco_stat_now_ns())
+                    : (psyco_stat_compile_kind = (kind), ni_now_ns())
 #define NI_COMPILE_END(kind)                                                   \
   do {                                                                         \
-    if (--psyco_stat_compile_depth == 0) {                                     \
-      psyco_stat_compile_ns[kind] += psyco_stat_now_ns() - _ni_t0;             \
+    if (--ni_compile_depth == 0) {                                             \
+      psyco_stat_compile_ns[kind] += ni_now_ns() - _ni_t0;                     \
       psyco_stat_compile_count[kind]++;                                        \
     }                                                                          \
   } while (0)
+#elif NI_CODESTATS
+#define NI_COMPILE_BEGIN(kind)                                                 \
+  (void)(ni_compile_depth++ ? 0 : (psyco_stat_compile_kind = (kind)))
+#define NI_COMPILE_END(kind) ((void)ni_compile_depth--)
+#else
+#define NI_COMPILE_BEGIN(kind) ((void)ni_compile_depth++)
+#define NI_COMPILE_END(kind) ((void)ni_compile_depth--)
+#endif
 
 
 /* A block at the start of a new extent (psyco_code_open, whose limit it

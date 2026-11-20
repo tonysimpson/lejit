@@ -75,7 +75,9 @@ PyTypeObject *Psyco_KnownType(vinfo_t *vi) {
    (SkFlagPyObj), and only builtin types are asserted without the flag.
    A run-time value's forgotten type stays as its type_hint; a
    constant needs none, its next use checks again. */
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_forgotten_types = 0;
+#endif
 
 static void forget_mutable_type(PsycoObject *po, vinfo_t *v, bool runtime) {
   /* a constant's known type is one Psyco_ConstantType checked; any
@@ -96,7 +98,7 @@ static void forget_mutable_type(PsycoObject *po, vinfo_t *v, bool runtime) {
         v->type_hint = sk;
       }
       psyco_forget_field(po, v, OB_type);
-      psyco_stat_forgotten_types++;
+      NI_STAT(psyco_stat_forgotten_types++);
     }
   }
 }
@@ -784,8 +786,10 @@ static void load_guard_set(attr_guard_t *guard, PyTypeObject *tp) {
                      : 0;
 }
 
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_load_type_changes = 0;
 DEFINEVAR long psyco_stat_load_repairs = 0;
+#endif
 #if NI_CODESTATS
 DEFINEVAR long psyco_cs_load[8];
 DEFINEVAR bool psyco_cs_load_respawn = false;
@@ -797,12 +801,12 @@ DEFINEVAR bool psyco_cs_load_respawn = false;
 static void load_type_changed(PyObject *obj, PyObject *name) {
   PyTypeObject *tp = Py_TYPE(obj);
   load_guard_t *g;
-  psyco_stat_load_type_changes++;
+  NI_STAT(psyco_stat_load_type_changes++);
   enable_version_tag(tp);
   g = load_guard(tp, name, load_kind(tp, name), false);
   if (g != NULL) {
     load_guard_set(&g->guard, tp);
-    psyco_stat_load_repairs++;
+    NI_STAT(psyco_stat_load_repairs++);
   }
 #if NI_CODESTATS
   if (tp->tp_getattro != PyObject_GenericGetAttr)
@@ -863,14 +867,14 @@ DEFINEFN
 void cimpl_type_lookup_changed(PyTypeObject *tp, PyObject *name,
                                PyObject *descr) {
   load_guard_t *g;
-  psyco_stat_load_type_changes++;
+  NI_STAT(psyco_stat_load_type_changes++);
   enable_version_tag(tp);
   if (_PyType_Lookup(tp, name) != descr)
     return;
   g = load_guard(tp, name, LOOKUP_KIND(descr), false);
   if (g != NULL) {
     load_guard_set(&g->guard, tp);
-    psyco_stat_load_repairs++;
+    NI_STAT(psyco_stat_load_repairs++);
   }
 }
 
@@ -1039,9 +1043,11 @@ static int cimpl_dict_set_known(PyObject *dict, PyObject *name,
 
 DEFINEVAR uint64_t ni_dict_version = (uint64_t)1 << 63;
 
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_store_misses = 0;
 DEFINEVAR long psyco_stat_store_type_changes = 0;
 DEFINEVAR long psyco_stat_store_refreshes = 0;
+#endif
 
 /* point 'c' at its name in keys 'k' if they hold it: true if 'c' changed */
 static bool store_cache_set(store_cache_t *c, ni_dictkeys_t *k) {
@@ -1091,14 +1097,14 @@ static int cimpl_store_attr_miss(PyObject *obj, PyObject *name,
                                  PyObject *value, store_cache_t *c) {
   int r = cimpl_instance_dict_set(obj, name, value);
   PyObject *d;
-  psyco_stat_store_misses++;
+  NI_STAT(psyco_stat_store_misses++);
   if (r < 0 || c->refreshes >= STORE_CACHE_MAX_REFRESHES)
     return r;
   d = *(PyObject **)((char *)obj + Py_TYPE(obj)->tp_dictoffset);
   if (d != NULL && PyDict_Check(d) && ((PyDictObject *)d)->ma_values != NULL &&
       store_cache_set(c, (ni_dictkeys_t *)((PyDictObject *)d)->ma_keys)) {
     c->refreshes++;
-    psyco_stat_store_refreshes++;
+    NI_STAT(psyco_stat_store_refreshes++);
   }
   return r;
 }
@@ -1125,7 +1131,7 @@ static PyObject *cimpl_load_miss(PyObject *dict, store_cache_t *c) {
       c->refreshes < STORE_CACHE_MAX_REFRESHES &&
       store_cache_set(c, (ni_dictkeys_t *)((PyDictObject *)dict)->ma_keys)) {
     c->refreshes++;
-    psyco_stat_store_refreshes++;
+    NI_STAT(psyco_stat_store_refreshes++);
   }
   return v;
 }
@@ -1187,7 +1193,7 @@ static int cimpl_store_type_changed(PyObject *obj, PyObject *name,
   attr_guard_t *guard;
   enable_version_tag(tp);
   guard = store_guard(tp, name, store_kind(tp, name), false);
-  psyco_stat_store_type_changes++;
+  NI_STAT(psyco_stat_store_type_changes++);
   if (guard != NULL)
     store_guard_set(guard, tp);
   else if (PyErr_Occurred())

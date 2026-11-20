@@ -988,7 +988,9 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
    Replay-safe as merge points are: a replay never reaches the end of its
    block, a joined block's respawn points replay from its own snapshot,
    and un-promotion and unification emit no respawn point. */
+#if ALL_CHECKS
 DEFINEFN long psyco_stat_joins[4];
+#endif
 
 static code_t *compile_join(PsycoObject *po, global_entries_t *ge,
                             bool branch, bool first) {
@@ -999,7 +1001,7 @@ static code_t *compile_join(PsycoObject *po, global_entries_t *ge,
   if (cmp != NULL && cmp->diff == NullArray) {
     CodeBufferObject *oldcodebuf;
     if (first)
-      psyco_stat_joins[branch ? 0 : 3]++;
+      NI_STAT(psyco_stat_joins[branch ? 0 : 3]++);
     return psyco_unify(po, cmp, &oldcodebuf);
   }
   if (cmp != NULL && !branch) {
@@ -1007,7 +1009,7 @@ static code_t *compile_join(PsycoObject *po, global_entries_t *ge,
     cmp = NULL;
   }
   if (branch && first)
-    psyco_stat_joins[cmp != NULL ? 1 : 2]++;
+    NI_STAT(psyco_stat_joins[cmp != NULL ? 1 : 2]++);
   codebuf = psyco_proxy_code_buffer(po, ge);
   po->code = insn_code_label(codebuf->codestart);
   if (cmp != NULL) {

@@ -402,7 +402,7 @@ psyco_inline_enter(PsycoObject *po)
    frame running that code reads its notes, so no live note names a reused
    index. */
 DEFINEVAR struct locals_map_s **psyco_locals_maps = NULL;
-DEFINEVAR long psyco_stat_notes_made = 0, psyco_stat_notes_free = 0;
+DEFINEVAR long ni_notes_made = 0, ni_notes_free = 0;
 static int *free_notes = NULL;
 static long free_notes_cap = 0;
 
@@ -418,10 +418,10 @@ static long note_index(void)
         o->notes = p;
         o->notescap = cap;
     }
-    if (psyco_stat_notes_free > 0)
-        i = free_notes[--psyco_stat_notes_free];
+    if (ni_notes_free > 0)
+        i = free_notes[--ni_notes_free];
     else {
-        i = psyco_stat_notes_made;
+        i = ni_notes_made;
         if ((i & (i - 1)) == 0) {
             void *p = PyMem_Realloc(psyco_locals_maps,
                                     2 * (i + 1) * sizeof(*psyco_locals_maps));
@@ -429,7 +429,7 @@ static long note_index(void)
                 OUT_OF_MEMORY();
             psyco_locals_maps = p;
         }
-        psyco_stat_notes_made++;
+        ni_notes_made++;
     }
     if (o != NULL)
         o->notes[o->nnotes++] = (int)i;
@@ -441,8 +441,8 @@ void
 psyco_release_notes(int *notes, int n)
 {
     int k;
-    if (psyco_stat_notes_free + n > free_notes_cap) {
-        long cap = 2 * (psyco_stat_notes_free + n);
+    if (ni_notes_free + n > free_notes_cap) {
+        long cap = 2 * (ni_notes_free + n);
         void *p = PyMem_Realloc(free_notes, cap * sizeof(int));
         if (p == NULL)
             return; /* those indices are not reused */
@@ -451,7 +451,7 @@ psyco_release_notes(int *notes, int n)
     }
     for (k = 0; k < n; k++) {
         psyco_locals_maps[notes[k]] = NULL;
-        free_notes[psyco_stat_notes_free++] = notes[k];
+        free_notes[ni_notes_free++] = notes[k];
     }
 }
 

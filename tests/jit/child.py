@@ -10,6 +10,8 @@ calls = eval(sys.argv[5], dict(vars(mod), nan=float('nan'), inf=float('inf')))
 use_ni = sys.argv[6] == '1'
 if use_ni:
     import ni
+    if not hasattr(ni._core, '_stats'):
+        sys.exit('ni was not built for tests: build it with NI_ALL_CHECKS=1')
     ni.start()
 out = []
 for args in calls:

@@ -163,7 +163,7 @@ EXTERNFN void psyco_note_call_site(PsycoObject *po, int lasti);
 /* give back the psyco_locals_maps indices of a dead owner's call sites */
 EXTERNFN void psyco_release_notes(int *notes, int n);
 /* indices made, and free for reuse */
-EXTERNVAR long psyco_stat_notes_made, psyco_stat_notes_free;
+EXTERNVAR long ni_notes_made, ni_notes_free;
 
 
 /*****************************************************************/

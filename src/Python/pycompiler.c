@@ -156,7 +156,7 @@ DEFINEFN void psyco_cs_promo_begin(int site, long key, int kind) {
   Py_XDECREF(cs_promo_pending);
   cs_promo_pending = Py_BuildValue("[Nll]", d, (long)site, 0L);
   cs_promo_last_counter = NULL;
-  cs_promo_t0 = psyco_stat_now_ns();
+  cs_promo_t0 = ni_now_ns();
   cs_promo_b0 = psyco_stat_code_bytes;
   psyco_cs_promo_cur = site;
   cs_promo_vidx =
@@ -172,7 +172,7 @@ DEFINEFN void psyco_cs_promo_end(void) {
     return;
   cs_promo_pending = NULL;
   site = PyLong_AsLong(PyList_GET_ITEM(v, 1));
-  PyList_SetItem(v, 1, PyLong_FromLong(psyco_stat_now_ns() - cs_promo_t0));
+  PyList_SetItem(v, 1, PyLong_FromLong(ni_now_ns() - cs_promo_t0));
   PyList_SetItem(v, 2, PyLong_FromLong(psyco_stat_code_bytes - cs_promo_b0));
   PyList_Append(v, PyLong_FromVoidPtr(cs_promo_last_counter));
   Py_DECREF(PyList_GET_ITEM(v, 3)); /* PyList_Append took its own */
@@ -1417,14 +1417,16 @@ static void global_tags_set(global_guard_t *guard, PyObject *globals,
    compiles */
 static changed_global_t *respawning_global;
 
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_global_fails = 0;
+#endif
 
 static code_t *do_changed_global(changed_global_t *cg) {
   long size, offset;
   code_t *code;
   changed_global_t *prev = respawning_global;
   PyObject *x = PyDict_GetItem(cg->globals, cg->name);
-  psyco_stat_global_fails++;
+  NI_STAT(psyco_stat_global_fails++);
   if (x == NULL && cg->form != GLOBAL_ENTRY)
     x = PyDict_GetItem(cg->builtins, cg->name);
   if (x != cg->value) {

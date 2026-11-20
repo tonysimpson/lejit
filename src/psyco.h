@@ -750,6 +750,13 @@ typedef int64_t qword_t;
 #define ALL_CHECKS 0
 #endif
 
+/* a counter only the tests read (ni._core._stats): checked builds only */
+#if ALL_CHECKS
+#define NI_STAT(x) (x)
+#else
+#define NI_STAT(x) ((void)0)
+#endif
+
 /*  define to inline the most common functions in the produced code
     (should be enabled unless you want to trade code size for speed) */
 #ifndef INLINE_COMMON_FUNCTIONS

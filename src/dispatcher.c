@@ -652,8 +652,10 @@ PsycoObject *fpo_unfreeze(FrozenPsycoObject *fpo) {
   return po;
 }
 
-DEFINEVAR long psyco_stat_parked_live = 0;
+DEFINEVAR long ni_parked_live = 0;
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_parked_frozen = 0;
+#endif
 static parked_state_t *live_oldest = NULL, *live_newest = NULL;
 
 static void live_unlink(parked_state_t *ps) {
@@ -668,7 +670,7 @@ static void live_unlink(parked_state_t *ps) {
   else
     live_newest = ps->older;
   ps->older = ps->newer = NULL;
-  psyco_stat_parked_live--;
+  ni_parked_live--;
 }
 
 static void live_append(parked_state_t *ps) {
@@ -679,7 +681,7 @@ static void live_append(parked_state_t *ps) {
   else
     live_oldest = ps;
   live_newest = ps;
-  psyco_stat_parked_live++;
+  ni_parked_live++;
 }
 
 /* the indices from 'a' to 'v' at exactly 'depth' more levels, not under
@@ -740,7 +742,7 @@ static void park_freeze(parked_state_t *ps) {
   ps->stack_level = po->pr.stack_level;
   ps->split_after_global = po->pr.split_after_global;
   ps->live = NULL;
-  psyco_stat_parked_frozen++;
+  NI_STAT(psyco_stat_parked_frozen++);
   PsycoObject_Delete(po);
 }
 
@@ -751,7 +753,7 @@ DEFINEFN void psyco_park(parked_state_t *ps, PsycoObject *po, vinfo_t *fix) {
   if (po->pr.exc != NULL || po->pr.val != NULL || po->pr.tb != NULL)
     return;
   live_append(ps);
-  if (psyco_stat_parked_live > PARK_LIVE_MAX)
+  if (ni_parked_live > PARK_LIVE_MAX)
     park_freeze(live_oldest);
 }
 
@@ -794,7 +796,7 @@ DEFINEFN void psyco_park_release(parked_state_t *ps) {
     PsycoObject_Delete(ps->live);
     ps->live = NULL;
   } else if (ps->fz.fz_vlocals_opc != NULL || ps->fz.fz_pyc_data != NULL) {
-    psyco_stat_parked_frozen--;
+    NI_STAT(psyco_stat_parked_frozen--);
     fpo_release(&ps->fz);
   }
   fpo_mark_unused(&ps->fz);
@@ -992,7 +994,7 @@ static code_t *do_respawn(respawn_t *rs, long value) {
   code_t *r;
   ni_compile_guard_t g;
 #if NI_CODESTATS
-  long t0 = psyco_stat_now_ns();
+  long t0 = ni_now_ns();
   psyco_cs_load_respawn = false;
 #endif
   NI_COMPILE_BEGIN(NI_ENTER_RESPAWN);
@@ -1004,7 +1006,7 @@ static code_t *do_respawn(respawn_t *rs, long value) {
   NI_COMPILE_END(NI_ENTER_RESPAWN);
 #if NI_CODESTATS
   if (psyco_cs_load_respawn) { /* a load guard's failure branch */
-    psyco_cs_load[4] += psyco_stat_now_ns() - t0;
+    psyco_cs_load[4] += ni_now_ns() - t0;
     psyco_cs_load_respawn = false;
   }
 #endif
@@ -1656,7 +1658,9 @@ static bool compatible_at_join = false;
    more. */
 DEFINEVAR bool psyco_compatible_keep_facts = false;
 
+#if ALL_CHECKS
 DEFINEVAR long psyco_stat_fact_drops = 0;
+#endif
 static bool compatible_drop_unused = false;
 static unsigned long compatible_serial;
 static int compatible_drops;
@@ -2665,7 +2669,7 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
     ok = fz_compatible_array(&po->vlocals, &dropbuf->snapshot, &result);
     psyco_assert(ok && result.diff == NullArray);
     compatible_drop_unused = false;
-    psyco_stat_fact_drops++;
+    NI_STAT(psyco_stat_fact_drops++);
     return &result;
   }
   compatible_drop_unused = false;

@@ -1,6 +1,7 @@
-/* The private functions of ni._core that tests and measurements use: the
-   compiler's counters and what it made of a code object. They are not part
-   of Ni's API, and may change. ni.c adds them to the module. */
+/* The private functions of ni._core that tests use: the compiler's
+   counters and what it made of a code object. Only checked builds
+   (NI_ALL_CHECKS=1) have them, and the code size counts only codestats
+   builds (NI_CODESTATS=1). ni.c adds them to the module. */
 #include "Python/frames.h"
 #include "Python/pycompiler.h"
 #include "Objects/pmethodobject.h"
@@ -40,6 +41,7 @@ static PyObject *ni_promostats(PyObject *self, PyObject *unused) {
 }
 #endif
 
+#if ALL_CHECKS
 static PyObject *ni_stats(PyObject *self, PyObject *unused) {
   static const char *kinds[NI_ENTER_KINDS] = {"analyse", "call", "pause",
                                               "respawn", "promotion"};
@@ -87,15 +89,15 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
   }
   if (d != NULL) {
     /* call-site notes' map indices made, and free for reuse (codegen.c) */
-    PyObject *t = Py_BuildValue("(ll)", psyco_stat_notes_made,
-                                psyco_stat_notes_free);
+    PyObject *t = Py_BuildValue("(ll)", ni_notes_made,
+                                ni_notes_free);
     if (t == NULL || PyDict_SetItemString(d, "call_notes", t) < 0)
       Py_CLEAR(d);
     Py_XDECREF(t);
   }
   if (d != NULL) {
     /* compiler states kept for pauses and promotions (dispatcher.h) */
-    PyObject *t = Py_BuildValue("(ll)", psyco_stat_parked_live,
+    PyObject *t = Py_BuildValue("(ll)", ni_parked_live,
                                 psyco_stat_parked_frozen);
     if (t == NULL || PyDict_SetItemString(d, "parked", t) < 0)
       Py_CLEAR(d);
@@ -113,7 +115,7 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
        now (codemanager.c) */
     PyObject *t = Py_BuildValue("(lll)", psyco_stat_owner_scans,
                                 psyco_stat_owners_collected,
-                                psyco_stat_owners_counted);
+                                ni_owners_counted);
     if (t == NULL || PyDict_SetItemString(d, "owner_scans", t) < 0)
       Py_CLEAR(d);
     Py_XDECREF(t);
@@ -243,7 +245,6 @@ static PyObject *ni_unregistered_metas(PyObject *self, PyObject *unused) {
   return PyList_GetSlice(Psyco_Unregistered_Metas, 0, PY_SSIZE_T_MAX);
 }
 
-#if ALL_CHECKS
 /* for tests: _fail_after(site, n) makes the n-th allocation at 'site' from
    now fail (psyco.h:NI_FAIL); 0 cancels. Returns what was left of the
    previous count, 0 once it fired. */
@@ -267,15 +268,14 @@ static PyObject *ni_fail_after(PyObject *self, PyObject *args) {
 #endif
 
 DEFINEVAR PyMethodDef ni_testing_methods[] = {
-#if ALL_CHECKS
-    {"_fail_after", ni_fail_after, METH_VARARGS,
-     "Make the n-th allocation at a site fail (checked builds)."},
-#endif
-    {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
 #if NI_CODESTATS
     {"_codestats", ni_codestats, METH_NOARGS, "Code size per instruction."},
     {"_promostats", ni_promostats, METH_NOARGS, "Promotion sites."},
 #endif
+#if ALL_CHECKS
+    {"_fail_after", ni_fail_after, METH_VARARGS,
+     "Make the n-th allocation at a site fail."},
+    {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
     {"_code_info", ni_code_info, METH_O,
      "'not seen', 'unsupported', 'no entry point' or 'compiled'."},
     {"_dead_locals", ni_dead_locals, METH_O,
@@ -284,4 +284,5 @@ DEFINEVAR PyMethodDef ni_testing_methods[] = {
      "True if calls to this code object are inlined."},
     {"_unregistered_metas", ni_unregistered_metas, METH_NOARGS,
      "['module.name: why'] for each meta that wasn't registered."},
+#endif
     {NULL, NULL, 0, NULL}};

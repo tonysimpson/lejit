@@ -137,8 +137,10 @@ EXTERNFN void PycException_Clear(PsycoObject *po);
 /* globals['__builtins__'] as a dict, as frameobject.c finds a new frame's
    builtins; borrowed */
 EXTERNFN PyObject *psy_get_builtins(PyObject *globals);
+#if ALL_CHECKS
 /* failed guards of cached globals, for ni._core._stats() */
 EXTERNVAR long psyco_stat_global_fails;
+#endif
 PSY_INLINE void PycException_Raise(PsycoObject *po, vinfo_t *exc,
                                    vinfo_t *val) {
   if (PycException_Occurred(po))

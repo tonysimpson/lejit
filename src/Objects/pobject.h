@@ -101,9 +101,11 @@ EXTERNFN int Psyco_ConstantType(PsycoObject* po, vinfo_t* vi,
 EXTERNFN void Psyco_ForgetConstantClasses(PsycoObject* po);
 /* the same for one constant 'v' with known fields, and what is under it
    (dispatcher.c:fz_compress meets every constant); psyco_stat_forgotten_types
-   counts the types either drops */
+   counts the types either drops, in checked builds */
 EXTERNFN void Psyco_ForgetConstantClass(PsycoObject* po, vinfo_t* v);
+#if ALL_CHECKS
 EXTERNVAR long psyco_stat_forgotten_types;
+#endif
 
 /* A slot of a heap type, at 'slot' (an address inside the type), for code
    specialised on it: *value is the slot as Ni first saw it, and compiled
@@ -206,6 +208,7 @@ EXTERNFN vinfo_t* PsycoObject_GetAttr(PsycoObject* po, vinfo_t* o,
                                       vinfo_t* attr_name);
 EXTERNFN bool PsycoObject_SetAttr(PsycoObject* po, vinfo_t* o,
                                   vinfo_t* attr_name, vinfo_t* v);
+#if ALL_CHECKS
 /* inline attribute stores that missed (called the C helper), and misses
    that changed their (class, name) cache: ni._core._stats() */
 EXTERNVAR long psyco_stat_store_misses;
@@ -214,6 +217,7 @@ EXTERNVAR long psyco_stat_store_refreshes;
 /* failed load guards, and those that re-armed some sites */
 EXTERNVAR long psyco_stat_load_type_changes;
 EXTERNVAR long psyco_stat_load_repairs;
+#endif
 #if NI_CODESTATS
 /* load guards: see pobject.c */
 EXTERNVAR long psyco_cs_load[8];

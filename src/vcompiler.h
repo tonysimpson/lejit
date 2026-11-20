@@ -796,8 +796,10 @@ EXTERNFN code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
    (or jump into a block there, see vcompiler.c). Returns NULL to continue
    compiling 'po'. */
 EXTERNFN code_t *psyco_compile_join(PsycoObject *po, global_entries_t *ge);
+#if ALL_CHECKS
 /* joins of a respawned branch: exact, partial, none; of a main path: exact */
 EXTERNVAR long psyco_stat_joins[4];
+#endif
 
 /* Conditional compilation: the state 'po' is compiled to be executed only if
    'condition' holds. In general this creates a coding pause for it to be
