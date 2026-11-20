@@ -348,30 +348,6 @@ def pydict_newpresized(s):
     return _exported(s, '_PyDict_NewPresized')
 
 
-def int_max_str_digits(s):
-    """int <-> str conversion has a digit limit (backported to 3.7.14)"""
-    return _macro(s, '_PY_LONG_DEFAULT_MAX_STR_DIGITS')
-
-
-def vectorcall(s):
-    """types have a vectorcall slot, tp_vectorcall_offset (PEP 590)"""
-    return _field(s, '_typeobject', 'tp_vectorcall_offset')
-
-
-def posonlyargs(s):
-    """code objects count positional-only parameters (PEP 570)"""
-    # from 3.11 the struct's body is a macro's (_PyCode_DEF), so look for
-    # the member's declaration itself
-    for path, toks in s.headers_with('co_posonlyargcount'):
-        bodies = [toks] + [m.body for m in s.macros(path).values()]
-        for body in bodies:
-            for i in range(1, len(body) - 1):
-                if (body[i].text == 'co_posonlyargcount'
-                        and body[i - 1].text == 'int' and body[i + 1].text == ';'):
-                    return True, path + ':co_posonlyargcount'
-    return False, 'Include, every header: co_posonlyargcount'
-
-
 def audit_hooks(s):
     """PySys_Audit is exported (audit hooks, PEP 578)"""
     return _exported(s, 'PySys_Audit')
@@ -383,12 +359,6 @@ def arg_check_positional(s):
     return _declared(s, '_PyArg_CheckPositional')
 
 
-def tstate_errors(s):
-    """the internal error functions take the thread state
-    (_PyErr_SetObject(tstate, ...))"""
-    return _takes_tstate(s, '_PyErr_SetObject')
-
-
 def objectdict_setitem_linkable(s):
     """_PyObjectDict_SetItem, the instance dict store that keeps a class's
     shared keys, can be called from an extension"""
@@ -398,11 +368,6 @@ def objectdict_setitem_linkable(s):
 def check_result_tstate(s):
     """_Py_CheckFunctionResult takes the thread state first"""
     return _takes_tstate(s, '_Py_CheckFunctionResult')
-
-
-def dict_new_empty_keys(s):
-    """PyDict_New shares one empty keys object (Py_EMPTY_KEYS)"""
-    return _body_has(s, 'Objects/dictobject.c', 'PyDict_New', 'Py_EMPTY_KEYS')
 
 
 def float_asdouble_index(s):
@@ -654,15 +619,10 @@ UO = 'Objects/unicodeobject.c'
 # comment
 FEATURES = [
     ('PYDICT_NEWPRESIZED', pydict_newpresized),
-    ('INT_MAX_STR_DIGITS', int_max_str_digits),
-    ('VECTORCALL', vectorcall),
-    ('POSONLYARGS', posonlyargs),
     ('AUDIT_HOOKS', audit_hooks),
     ('ARG_CHECK_POSITIONAL', arg_check_positional),
-    ('TSTATE_ERRORS', tstate_errors),
     ('CHECK_RESULT_TSTATE', check_result_tstate),
     ('OBJECTDICT_SETITEM_LINKABLE', objectdict_setitem_linkable),
-    ('DICT_NEW_EMPTY_KEYS', dict_new_empty_keys),
     ('FLOAT_ASDOUBLE_INDEX', float_asdouble_index),
     ('MAP_ADD_VALUE_ON_TOP', map_add_value_on_top),
     ('POP_BLOCK_UNWINDS', pop_block_unwinds),
@@ -686,8 +646,6 @@ FEATURES = [
     ('GC_TRACKED_BY_NEXT', gc_tracked_by_next),
     ('GC_HEAD_INTERNAL', gc_head_internal),
     # Objects/abstract.c
-    ('PY_IS_TYPE', D('Py_IS_TYPE exists, and the object code tests types with it and reads them with Py_TYPE',
-                     lambda s: _macro(s, 'Py_IS_TYPE'))),
     ('CHECK_SLOT_RESULT', D('abstract.c asserts each slot\'s result with _Py_CheckSlotResult',
                             lambda s: _declared(s, '_Py_CheckSlotResult'))),
     ('TERNARY_IOP', D('abstract.c has ternary_iop, the in-place ternary operation (**=)',
@@ -718,20 +676,12 @@ FEATURES = [
     ('TUPLE_ALLOC', D('tuples are allocated with tuple_alloc, and an empty result is PyTuple_New(0)',
                       lambda s: _defines(s, 'Objects/tupleobject.c', 'tuple_alloc'))),
     ('CONTAINS_ITEM_FIRST', tuplecontains_item_first),
-    ('DICTKEYS_GET_INDEX', D('dictobject.c reads an index with dictkeys_get_index (not dk_get_index)',
-                             lambda s: _defines(s, 'Objects/dictobject.c', 'dictkeys_get_index'))),
-    ('DICTKEYS_CONST', D('dictkeys_get_index reads a const PyDictKeysObject',
-                         lambda s: _file_has(s, 'Objects/dictobject.c', 'dictkeys_get_index(const PyDictKeysObject *keys'))),
     ('UNICODE_EQ_ASSUMES_READY', D('unicode_eq asserts its strings are ready, not readies them',
                                    lambda s: _not(_body_has(s, 'Objects/stringlib/eq.h', 'unicode_eq', 'PyUnicode_READY')))),
     ('BYTES_STRIP_NONE_DEFAULT', D('bytes.strip\'s argument defaults to None, not NULL',
                                    lambda s: _not(_body_has(s, 'Objects/bytesobject.c', 'do_argstrip', 'bytes != NULL')))),
-    ('BYTES_STRIP_CONST', D('bytes.strip reads the bytes through a const char *',
-                            lambda s: _body_has(s, 'Objects/bytesobject.c', 'do_strip', 'const char *s'))),
     ('UNICODE_STRIP_NONE_DEFAULT', D('str.strip\'s argument defaults to None, not NULL',
                                      lambda s: _not(_body_has(s, UO, 'do_argstrip', 'sep != NULL')))),
-    ('UNICODE_CONST_DATA', D('unicodeobject.c reads string data through const void *',
-                             lambda s: _file_has(s, UO, 'const void *fmtdata;'))),
     ('UNICODE_FILL', D('unicodeobject.c fills with unicode_fill, not the FILL macro',
                        lambda s: _defines(s, UO, 'unicode_fill'))),
     ('PYCORE_FORMAT_H', D('the format flags F_LJUST... are the internal pycore_format.h\'s',
@@ -742,8 +692,6 @@ FEATURES = [
                              lambda s: _file_has(s, 'Python/pyhash.c', '_Py_HashDouble(PyObject *'))),
     ('MATH_UNDERFLOW_BELOW_1_5', D('math\'s is_error takes ERANGE as underflow below 1.5, not 1.0',
                                    lambda s: _body_has(s, 'Modules/mathmodule.c', 'is_error', 'fabs(x) < 1.5'))),
-    ('PYFPE_PROTECT', D('math\'s functions are bracketed by PyFPE_START_PROTECT',
-                        lambda s: _body_has(s, 'Modules/mathmodule.c', 'math_1_to_whatever', 'PyFPE_START_PROTECT'))),
     ('MEMBER_EX_ERROR_FROM_TYPE', D('PyMember_GetOne keeps obj_addr, and a missing T_OBJECT_EX member\'s error names its type',
                                     lambda s: _body_has(s, 'Python/structmember.c', 'PyMember_GetOne',
                                                         'PyObject *obj = (PyObject *)obj_addr'))),
@@ -755,10 +703,6 @@ FEATURES = [
     # Python/ceval.c
     ('VARARGS_FROM_ARRAY', D('ceval builds a function\'s *args tuple with _PyTuple_FromArray',
                              lambda s: _file_has(s, CE, 'u = _PyTuple_FromArray('))),
-    ('CASE_TARGET', D('ceval\'s opcode cases are spelled case TARGET(op):',
-                      lambda s: _file_has(s, CE, 'case TARGET(NOP):'))),
-    ('DISPATCH_PREDISPATCH', D('ceval\'s DISPATCH() goes to predispatch',
-                               lambda s: _file_has(s, CE, 'predispatch:'))),
     ('CMP_OUTCOME', D('COMPARE_OP also does is, in and exception matches (cmp_outcome)',
                       lambda s: _defines(s, CE, 'cmp_outcome'))),
     ('TRACE_INFO', D('ceval keeps the tracing state of a frame in a PyTraceInfo',
@@ -773,8 +717,6 @@ FEATURES = [
                                 lambda s: _not(_body_has(s, CE, 'import_from', '_Py_IDENTIFIER(__name__)')))),
     ('SPECIAL_LOOKUP_FROM_ID', D('special_lookup\'s AttributeError reads the name with _PyUnicode_FromId',
                                  lambda s: _body_has(s, CE, 'special_lookup', '_PyUnicode_FromId'))),
-    ('IDENTIFIER_INDEX', D('a _Py_Identifier is found by its index, not linked into a list',
-                           lambda s: _field(s, '_Py_Identifier', 'index'))),
     ('KWARGS_MERGE_EX', D('CALL_FUNCTION_EX merges **kwargs with _PyDict_MergeEx, and format_kwargs_error reports it',
                           lambda s: _case_has(s, 'CALL_FUNCTION_EX', '_PyDict_MergeEx'))),
     ('DELETE_GLOBAL_KEYERROR_ONLY', D('DELETE_GLOBAL raises NameError only for a KeyError',
