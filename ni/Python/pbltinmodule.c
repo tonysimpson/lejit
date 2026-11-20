@@ -1,165 +1,1114 @@
 #include "pbltinmodule.h"
+#include "../Objects/pboolobject.h"
+#include "../Objects/pfloatobject.h"
 #include "../Objects/plistobject.h"
 #include "../Objects/plongobject.h"
+#include "../Objects/pmethodobject.h"
+#include "../Objects/prangeobject.h"
 #include "../Objects/pstringobject.h"
 #include "../Objects/ptupleobject.h"
+#include "../Objects/ptypeobject.h"
+#include "../psyfunc.h"
+#include "../mergepoints.h"
 
-static PyCFunction cimpl_range;
-static PyCFunction cimpl_id;
-static PyCFunction cimpl_len;
-static PyCFunction cimpl_abs;
-static PyCFunction cimpl_apply;
-static PyCFunction cimpl_divmod;
+/* the metas translated from Python/bltinmodule.c (abs, callable, delattr,
+   divmod, getattr, hasattr, hash, id, isinstance, issubclass, len, pow,
+   setattr); gen_bltinmodule_init registers them. The rest of this file
+   is what isn't a translation, each with its reason. */
+/* the translation keeps CPython's unused variables */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+/* the C functions, for the fallbacks: set by the registration */
+static PyCFunction cfunc_builtin_abs;
+static PyCFunction cfunc_builtin_callable;
+static PyCFunction cfunc_builtin_delattr;
+static PyCFunction cfunc_builtin_divmod;
+static PyCFunction cfunc_builtin_getattr;
+static PyCFunction cfunc_builtin_hasattr;
+static PyCFunction cfunc_builtin_hash;
+static PyCFunction cfunc_builtin_id;
+static PyCFunction cfunc_builtin_isinstance;
+static PyCFunction cfunc_builtin_issubclass;
+static PyCFunction cfunc_builtin_len;
+static PyCFunction cfunc_builtin_pow;
+static PyCFunction cfunc_builtin_setattr;
 
-static vinfo_t *get_len_of_range(PsycoObject *po, vinfo_t *lo, vinfo_t *hi
-                                 /*, vinfo_t* step == 1 currently*/) {
-  /* translated from bltinmodule.c */
-  condition_code_t cc = integer_cmp(po, lo, hi, Py_LT);
-  if (cc == CC_ERROR)
-    return NULL;
-  if (runtime_condition_t(po, cc)) {
-    vinfo_t *vresult = integer_sub(po, hi, lo, false);
-    assert_nonneg(vresult);
-    return vresult;
+/* run-time copies: where a heap type's slot changed, or where the meta has no compile-time form, CPython's algorithm resumes in these */
+static PyObject *
+cimpl_builtin_hasattr_impl(PyObject *module, PyObject *obj, PyObject *name)
+{
+    PyObject *v;
+    if (!PyUnicode_Check(name)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "hasattr(): attribute name must be string");
+        return NULL;
+    }
+    if (_PyObject_LookupAttr(obj, name, &v) < 0) {
+        return NULL;
+    }
+    if (v == NULL) {
+        Py_RETURN_FALSE;
+    }
+    Py_DECREF(v);
+    Py_RETURN_TRUE;
+}
+
+static vinfo_t *
+builtin_abs(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_callable(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_delattr_impl(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_delattr(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_divmod_impl(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_divmod(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_getattr(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_hasattr_impl(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_hasattr(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_hash(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_id(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_isinstance_impl(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_isinstance(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_issubclass_impl(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_issubclass(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_len(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_pow_impl(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_pow(PsycoObject *po, vinfo_t *, vinfo_t *);
+static vinfo_t *
+builtin_setattr_impl(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *,
+                     vinfo_t *);
+static vinfo_t *
+builtin_setattr(PsycoObject *po, vinfo_t *, vinfo_t *);
+
+static vinfo_t *
+builtin_abs(PsycoObject *po, vinfo_t *module, vinfo_t *x)
+{
+    vinfo_t *_t1;
+    _t1 = PsycoNumber_Absolute(po, x);
+    return _t1;
+}
+
+static vinfo_t *
+builtin_callable(PsycoObject *po, vinfo_t *module, vinfo_t *obj)
+{
+    vinfo_t *_t1;
+    vinfo_t *_t2;
+    _t1 =
+        psyco_generic_call(po, PyCallable_Check,
+                           CfReturnTypeInt | CfNoPython | CfNoBlock, "v", obj);
+    _t2 = PsycoBool_FromLong(po, _t1);
+    vinfo_decref(_t1, po);
+    return _t2;
+}
+
+static vinfo_t *
+builtin_delattr_impl(PsycoObject *po, vinfo_t *module, vinfo_t *obj,
+                     vinfo_t *name)
+{
+    if (!(PsycoObject_SetAttr(po, obj, name, NULL))) {
+        return NULL;
+    }
+    return psyco_vi_None();
+}
+
+static vinfo_t *
+builtin_delattr(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
+{
+    int _t1;
+    vinfo_t *_t2;
+    vinfo_t *name;
+    vinfo_t *obj;
+    vinfo_t *return_value;
+    _t1 = PsycoTuple_Load(vargs);
+    if (_t1 < 2 || _t1 > 2) {
+        return PsycoCFunction_CallFast(po, cfunc_builtin_delattr,
+                                       METH_FASTCALL, module, vargs);
+    }
+    obj = PsycoTuple_GET_ITEM(vargs, 0);
+    name = PsycoTuple_GET_ITEM(vargs, 1);
+    _t2 = builtin_delattr_impl(po, module, obj, name);
+    return_value = _t2;
+    return return_value;
+}
+
+static vinfo_t *
+builtin_divmod_impl(PsycoObject *po, vinfo_t *module, vinfo_t *x, vinfo_t *y)
+{
+    vinfo_t *_t1;
+    _t1 = PsycoNumber_Divmod(po, x, y);
+    return _t1;
+}
+
+static vinfo_t *
+builtin_divmod(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
+{
+    int _t1;
+    vinfo_t *_t2;
+    vinfo_t *return_value;
+    vinfo_t *x;
+    vinfo_t *y;
+    _t1 = PsycoTuple_Load(vargs);
+    if (_t1 < 2 || _t1 > 2) {
+        return PsycoCFunction_CallFast(po, cfunc_builtin_divmod, METH_FASTCALL,
+                                       module, vargs);
+    }
+    x = PsycoTuple_GET_ITEM(vargs, 0);
+    y = PsycoTuple_GET_ITEM(vargs, 1);
+    _t2 = builtin_divmod_impl(po, module, x, y);
+    return_value = _t2;
+    return return_value;
+}
+
+static vinfo_t *
+builtin_getattr(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
+{
+    int _t1;
+    vinfo_t *_t2;
+#if !NI_HAS_ARG_CHECK_POSITIONAL
+    vinfo_t *dflt;
+#endif
+    vinfo_t *name;
+    vinfo_t *result;
+    PyTypeObject *tp_name;
+    vinfo_t *v;
+    _t1 = PsycoTuple_Load(vargs);
+    if (_t1 < 2 || _t1 > 3) {
+        return PsycoCFunction_CallFast(po, cfunc_builtin_getattr,
+                                       METH_FASTCALL, self, vargs);
+    }
+    if (_t1 == 2) {
+        v = PsycoTuple_GET_ITEM(vargs, 0);
+        name = PsycoTuple_GET_ITEM(vargs, 1);
+        tp_name = Psyco_NeedType(po, name);
+        if (tp_name == NULL) {
+            return NULL;
+        }
+        if (!(((tp_name->tp_flags & (1UL << 28))) != 0)) {
+            PycException_SetString(po, PyExc_TypeError,
+                                   "getattr(): attribute name must be string");
+            return NULL;
+        }
+        _t2 = PsycoObject_GetAttr(po, v, name);
+        result = _t2;
+        return result;
+    }
+    else {
+        v = PsycoTuple_GET_ITEM(vargs, 0);
+        name = PsycoTuple_GET_ITEM(vargs, 1);
+#if !NI_HAS_ARG_CHECK_POSITIONAL
+        dflt = PsycoTuple_GET_ITEM(vargs, 2);
+#endif
+        tp_name = Psyco_NeedType(po, name);
+        if (tp_name == NULL) {
+            return NULL;
+        }
+        if (!(((tp_name->tp_flags & (1UL << 28))) != 0)) {
+            PycException_SetString(po, PyExc_TypeError,
+                                   "getattr(): attribute name must be string");
+            return NULL;
+        }
+        return PsycoCFunction_CallFast(po, cfunc_builtin_getattr,
+                                       METH_FASTCALL, self, vargs);
+    }
+}
+
+static vinfo_t *
+builtin_hasattr_impl(PsycoObject *po, vinfo_t *module, vinfo_t *obj,
+                     vinfo_t *name)
+{
+    PyTypeObject *tp_name;
+    tp_name = Psyco_NeedType(po, name);
+    if (tp_name == NULL) {
+        return NULL;
+    }
+    if (!(((tp_name->tp_flags & (1UL << 28))) != 0)) {
+        PycException_SetString(po, PyExc_TypeError,
+                               "hasattr(): attribute name must be string");
+        return NULL;
+    }
+    return psyco_generic_call(po, cimpl_builtin_hasattr_impl,
+                              CfCommonNewRefPyObject, "vvv", module, obj,
+                              name);
+}
+
+static vinfo_t *
+builtin_hasattr(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
+{
+    int _t1;
+    vinfo_t *_t2;
+    vinfo_t *name;
+    vinfo_t *obj;
+    vinfo_t *return_value;
+    PyTypeObject *tp_name;
+    _t1 = PsycoTuple_Load(vargs);
+    if (_t1 < 2 || _t1 > 2) {
+        return PsycoCFunction_CallFast(po, cfunc_builtin_hasattr,
+                                       METH_FASTCALL, module, vargs);
+    }
+    obj = PsycoTuple_GET_ITEM(vargs, 0);
+    name = PsycoTuple_GET_ITEM(vargs, 1);
+    tp_name = Psyco_NeedType(po, name);
+    if (tp_name == NULL) {
+        return NULL;
+    }
+    _t2 = builtin_hasattr_impl(po, module, obj, name);
+    return_value = _t2;
+    return return_value;
+}
+
+static vinfo_t *
+builtin_hash(PsycoObject *po, vinfo_t *module, vinfo_t *obj)
+{
+    vinfo_t *_t1;
+    vinfo_t *_t2;
+    vinfo_t *_t3;
+    vinfo_t *x;
+    _t1 = PsycoObject_Hash(po, obj);
+    x = _t1;
+    if (x == NULL) {
+        return NULL;
+    }
+    _t2 = PsycoLong_FromSsize_t(po, x);
+    _t3 = _t2;
+    vinfo_decref(x, po);
+    return _t3;
+}
+
+static vinfo_t *
+builtin_id(PsycoObject *po, vinfo_t *self, vinfo_t *v)
+#if NI_HAS_AUDIT_HOOKS
+{
+    vinfo_t *_t1;
+    vinfo_t *id;
+    _t1 = psyco_generic_call(po, PyLong_FromVoidPtr,
+                             CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
+                             "v", v);
+    id = _t1;
+    if ((id != NULL &&
+         psyco_generic_call(
+             po, PySys_Audit, CfNoReturnValue | CfReturnTypeInt | CfPyErrIfNeg,
+             "llv", (long)("builtins.id"), (long)("O"), id) == NULL)) {
+        vinfo_decref(id, po);
+        return NULL;
+    }
+    return id;
+}
+#else
+{
+    vinfo_t *_t1;
+    _t1 = psyco_generic_call(po, PyLong_FromVoidPtr,
+                             CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
+                             "v", v);
+    return _t1;
+}
+#endif
+
+static vinfo_t *
+builtin_isinstance_impl(PsycoObject *po, vinfo_t *module, vinfo_t *obj,
+                        vinfo_t *class_or_tuple)
+{
+    vinfo_t *_t1;
+    vinfo_t *_t2;
+    vinfo_t *_t3;
+    vinfo_t *retval;
+    _t1 = PsycoObject_IsInstance(po, obj, class_or_tuple);
+    retval = _t1;
+    if (retval == NULL) {
+        return NULL;
+    }
+    _t2 = PsycoBool_FromZeroOrOne(po, retval);
+    _t3 = _t2;
+    vinfo_decref(retval, po);
+    return _t3;
+}
+
+static vinfo_t *
+builtin_isinstance(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
+{
+    int _t1;
+    vinfo_t *_t2;
+    vinfo_t *class_or_tuple;
+    vinfo_t *obj;
+    vinfo_t *return_value;
+    _t1 = PsycoTuple_Load(vargs);
+    if (_t1 < 2 || _t1 > 2) {
+        return PsycoCFunction_CallFast(po, cfunc_builtin_isinstance,
+                                       METH_FASTCALL, module, vargs);
+    }
+    obj = PsycoTuple_GET_ITEM(vargs, 0);
+    class_or_tuple = PsycoTuple_GET_ITEM(vargs, 1);
+    _t2 = builtin_isinstance_impl(po, module, obj, class_or_tuple);
+    return_value = _t2;
+    return return_value;
+}
+
+static vinfo_t *
+builtin_issubclass_impl(PsycoObject *po, vinfo_t *module, vinfo_t *cls,
+                        vinfo_t *class_or_tuple)
+{
+    vinfo_t *_t1;
+    vinfo_t *_t2;
+    vinfo_t *_t3;
+    vinfo_t *retval;
+    _t1 = psyco_generic_call(po, PyObject_IsSubclass, CfCommonIntBoolOrError,
+                             "vv", cls, class_or_tuple);
+    retval = _t1;
+    if (retval == NULL) {
+        return NULL;
+    }
+    _t2 = PsycoBool_FromZeroOrOne(po, retval);
+    _t3 = _t2;
+    vinfo_decref(retval, po);
+    return _t3;
+}
+
+static vinfo_t *
+builtin_issubclass(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
+{
+    int _t1;
+    vinfo_t *_t2;
+    vinfo_t *class_or_tuple;
+    vinfo_t *cls;
+    vinfo_t *return_value;
+    _t1 = PsycoTuple_Load(vargs);
+    if (_t1 < 2 || _t1 > 2) {
+        return PsycoCFunction_CallFast(po, cfunc_builtin_issubclass,
+                                       METH_FASTCALL, module, vargs);
+    }
+    cls = PsycoTuple_GET_ITEM(vargs, 0);
+    class_or_tuple = PsycoTuple_GET_ITEM(vargs, 1);
+    _t2 = builtin_issubclass_impl(po, module, cls, class_or_tuple);
+    return_value = _t2;
+    return return_value;
+}
+
+static vinfo_t *
+builtin_len(PsycoObject *po, vinfo_t *module, vinfo_t *obj)
+{
+    vinfo_t *_t1;
+    vinfo_t *_t2;
+    vinfo_t *_t3;
+    vinfo_t *res;
+    _t1 = PsycoObject_Size(po, obj);
+    res = _t1;
+    if (res == NULL) {
+        return NULL;
+    }
+    _t2 = PsycoLong_FromSsize_t(po, res);
+    _t3 = _t2;
+    vinfo_decref(res, po);
+    return _t3;
+}
+
+static vinfo_t *
+#if NI_HAS_POW_KEYWORDS
+builtin_pow_impl(PsycoObject *po, vinfo_t *module, vinfo_t *base, vinfo_t *exp,
+                 vinfo_t *mod)
+#else
+builtin_pow_impl(PsycoObject *po, vinfo_t *module, vinfo_t *x, vinfo_t *y,
+                 vinfo_t *z)
+#endif
+{
+    vinfo_t *_t1;
+#if NI_HAS_POW_KEYWORDS
+    _t1 = PsycoNumber_Power(po, base, exp, mod);
+#else
+    _t1 = PsycoNumber_Power(po, x, y, z);
+#endif
+    return _t1;
+}
+
+static vinfo_t *
+builtin_pow(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
+{
+    int _t1;
+    vinfo_t *_t2;
+    vinfo_t *_t3;
+#if NI_HAS_POW_KEYWORDS
+    vinfo_t *base;
+    vinfo_t *exp;
+    vinfo_t *mod;
+    Py_ssize_t noptargs;
+#endif
+    vinfo_t *return_value;
+#if !NI_HAS_POW_KEYWORDS
+    vinfo_t *x;
+    vinfo_t *y;
+    vinfo_t *z;
+#endif
+    _t1 = PsycoTuple_Load(vargs);
+    if (_t1 < 2 || _t1 > 3) {
+#if NI_HAS_POW_KEYWORDS
+        return PsycoCFunction_CallFast(po, cfunc_builtin_pow,
+                                       METH_FASTCALL | METH_KEYWORDS, module,
+                                       vargs);
+#else
+        return PsycoCFunction_CallFast(po, cfunc_builtin_pow, METH_FASTCALL,
+                                       module, vargs);
+#endif
+    }
+    if (_t1 == 2) {
+#if NI_HAS_POW_KEYWORDS
+        noptargs = 0;
+        base = PsycoTuple_GET_ITEM(vargs, 0);
+        exp = PsycoTuple_GET_ITEM(vargs, 1);
+        mod = psyco_vi_None();
+        _t2 = builtin_pow_impl(po, module, base, exp, mod);
+#else
+        x = PsycoTuple_GET_ITEM(vargs, 0);
+        y = PsycoTuple_GET_ITEM(vargs, 1);
+        z = psyco_vi_None();
+        _t2 = builtin_pow_impl(po, module, x, y, z);
+#endif
+        return_value = _t2;
+#if NI_HAS_POW_KEYWORDS
+        vinfo_decref(mod, po);
+#else
+        vinfo_decref(z, po);
+#endif
+        return return_value;
+    }
+    else {
+#if NI_HAS_POW_KEYWORDS
+        noptargs = 1;
+        base = PsycoTuple_GET_ITEM(vargs, 0);
+        exp = PsycoTuple_GET_ITEM(vargs, 1);
+        mod = PsycoTuple_GET_ITEM(vargs, 2);
+        _t3 = builtin_pow_impl(po, module, base, exp, mod);
+#else
+        x = PsycoTuple_GET_ITEM(vargs, 0);
+        y = PsycoTuple_GET_ITEM(vargs, 1);
+        z = PsycoTuple_GET_ITEM(vargs, 2);
+        _t3 = builtin_pow_impl(po, module, x, y, z);
+#endif
+        return_value = _t3;
+        return return_value;
+    }
+}
+
+static vinfo_t *
+builtin_setattr_impl(PsycoObject *po, vinfo_t *module, vinfo_t *obj,
+                     vinfo_t *name, vinfo_t *value)
+{
+    if (!(PsycoObject_SetAttr(po, obj, name, value))) {
+        return NULL;
+    }
+    return psyco_vi_None();
+}
+
+static vinfo_t *
+builtin_setattr(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
+{
+    int _t1;
+    vinfo_t *_t2;
+    vinfo_t *name;
+    vinfo_t *obj;
+    vinfo_t *return_value;
+    vinfo_t *value;
+    _t1 = PsycoTuple_Load(vargs);
+    if (_t1 < 3 || _t1 > 3) {
+        return PsycoCFunction_CallFast(po, cfunc_builtin_setattr,
+                                       METH_FASTCALL, module, vargs);
+    }
+    obj = PsycoTuple_GET_ITEM(vargs, 0);
+    name = PsycoTuple_GET_ITEM(vargs, 1);
+    value = PsycoTuple_GET_ITEM(vargs, 2);
+    _t2 = builtin_setattr_impl(po, module, obj, name, value);
+    return_value = _t2;
+    return return_value;
+}
+
+static void
+gen_bltinmodule_init(PyObject *md)
+{
+    cfunc_builtin_abs = Psyco_DefineModuleFn(md, "abs", METH_O, &builtin_abs);
+    cfunc_builtin_callable =
+        Psyco_DefineModuleFn(md, "callable", METH_O, &builtin_callable);
+    cfunc_builtin_delattr =
+        Psyco_DefineModuleFn(md, "delattr", METH_FASTCALL, &builtin_delattr);
+    cfunc_builtin_divmod =
+        Psyco_DefineModuleFn(md, "divmod", METH_FASTCALL, &builtin_divmod);
+    cfunc_builtin_getattr =
+        Psyco_DefineModuleFn(md, "getattr", METH_FASTCALL, &builtin_getattr);
+    cfunc_builtin_hasattr =
+        Psyco_DefineModuleFn(md, "hasattr", METH_FASTCALL, &builtin_hasattr);
+    cfunc_builtin_hash =
+        Psyco_DefineModuleFn(md, "hash", METH_O, &builtin_hash);
+    cfunc_builtin_id = Psyco_DefineModuleFn(md, "id", METH_O, &builtin_id);
+    cfunc_builtin_isinstance = Psyco_DefineModuleFn(
+        md, "isinstance", METH_FASTCALL, &builtin_isinstance);
+    cfunc_builtin_issubclass = Psyco_DefineModuleFn(
+        md, "issubclass", METH_FASTCALL, &builtin_issubclass);
+    cfunc_builtin_len = Psyco_DefineModuleFn(md, "len", METH_O, &builtin_len);
+#if NI_HAS_POW_KEYWORDS
+    cfunc_builtin_pow = Psyco_DefineModuleFn(
+        md, "pow", METH_FASTCALL | METH_KEYWORDS, &builtin_pow);
+#else
+    cfunc_builtin_pow =
+        Psyco_DefineModuleFn(md, "pow", METH_FASTCALL, &builtin_pow);
+#endif
+    cfunc_builtin_setattr =
+        Psyco_DefineModuleFn(md, "setattr", METH_FASTCALL, &builtin_setattr);
+}
+#pragma GCC diagnostic pop
+
+static PyCFunction cimpl_globals;
+static PyCFunction cimpl_min;
+static PyCFunction cimpl_max;
+static PyCFunction cimpl_round;
+static PyCFunction cimpl_sum;
+/* the fastcall builtins' own ml_flags (Psyco_DefineModuleFast) */
+static int round_flags, sum_flags;
+static PyCFunction cimpl_any;
+static PyCFunction cimpl_all;
+
+/* a pending generator expression (pfuncobject.h) consumed whole by a
+   builtin: run its code fused with the consumer's step, so neither the
+   generator nor its frame exists (psyfunc.c:psyco_call_genexpr). 'start'
+   is sum()'s, or NULL. */
+static vinfo_t *genexpr_consume(PsycoObject *po, vinfo_t *vgen, int mode,
+                                PyTypeObject *tp, vinfo_t *start) {
+  vinfo_t *acc, *result, *t;
+  if (mode == GENEXPR_LIST)
+    acc = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l", 0L);
+  else if (mode == GENEXPR_SET)
+    acc = psyco_generic_call(po, PySet_New, CfCommonNewRefPyObject, "l", 0L);
+  else if (mode == GENEXPR_SUM) {
+    if (start != NULL) {
+      vinfo_incref(start);
+      acc = start;
+    } else
+      acc = PsycoLong_FROM_LONG(po, psyco_vi_Zero());
   } else
-    return psyco_vi_Zero();
-}
-
-static vinfo_t *longobj_as_long(PsycoObject *po, vinfo_t *v) {
-  if (Psyco_VerifyType(po, v, &PyLong_Type) == 1)
-    return PsycoLong_AsLong(po, v);
-  else
+    acc = psyco_vi_Zero();
+  if (acc == NULL)
     return NULL;
-}
-
-static bool parse_range_args(PsycoObject *po, vinfo_t *vargs, vinfo_t **iistart,
-                             vinfo_t **iilen) {
-  vinfo_t *ilow;
-  vinfo_t *ihigh;
-  int tuplesize = PsycoTuple_Load(vargs); /* -1 if unknown */
-
-  switch (tuplesize) {
-  case 1:
-    ihigh = longobj_as_long(po, PsycoTuple_GET_ITEM(vargs, 0));
-    if (ihigh == NULL)
-      return false;
-    ilow = psyco_vi_Zero();
-    vinfo_incref(ihigh);
-    break;
-    /*case 3:
-            istep = intobj_as_long(po, PsycoTuple_GET_ITEM(vargs, 2));
-            if (istep == NULL) return NULL;*/
-    /* fall through */
-  case 2:
-    ilow = longobj_as_long(po, PsycoTuple_GET_ITEM(vargs, 0));
-    if (ilow == NULL)
-      return false;
-    ihigh = longobj_as_long(po, PsycoTuple_GET_ITEM(vargs, 1));
-    if (ihigh == NULL)
-      return false;
-    vinfo_incref(ilow);
-    vinfo_incref(ihigh);
-    break;
-  default:
-    return false;
+  result = psyco_call_genexpr(po, vgen, mode, acc);
+  vinfo_decref(acc, po);
+  if (result != NULL && tp == &PyTuple_Type) {
+    t = psyco_generic_call(po, PyList_AsTuple, CfCommonNewRefPyObject, "v",
+                           result);
+    vinfo_decref(result, po);
+    result = t;
   }
-  *iilen = get_len_of_range(po, ilow, ihigh);
-  vinfo_decref(ihigh, po);
-  if (*iilen == NULL) {
-    vinfo_decref(ilow, po);
-    return false;
-  }
-  *iistart = ilow;
-  return true;
-}
-
-static vinfo_t *pbuiltin_id(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
-  return psyco_generic_call(po, PyLong_FromVoidPtr, CfCommonNewRefPyObject, "v",
-                            vobj);
-}
-
-static vinfo_t *pbuiltin_len(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
-  vinfo_t *result;
-  result = PsycoObject_Size(po, vobj);
-  if (result != NULL)
-    result = PsycoLong_FROM_LONG(po, result);
+  if (result != NULL && tp != NULL)
+    Psyco_AssertType(po, result, tp);
   return result;
 }
 
-static vinfo_t *pbuiltin_abs(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
-  return PsycoNumber_Absolute(po, vobj);
-}
-
-static vinfo_t *pbuiltin_apply(PsycoObject *po, vinfo_t *vself,
-                               vinfo_t *vargs) {
-  vinfo_t *alist = NULL;
-  vinfo_t *kwdict = NULL;
-  vinfo_t *retval;
-  int tuplesize = PsycoTuple_Load(vargs); /* -1 if unknown */
-  PyTypeObject *argt;
-  vinfo_t *t = NULL;
-
-  switch (tuplesize) {
-  case 3:
-    kwdict = PsycoTuple_GET_ITEM(vargs, 2);
-    if (Psyco_VerifyType(po, kwdict, &PyDict_Type) != true) {
-      /* 'kwdict' is not a dictionary */
-      break;
-    }
-    /* fall through */
-  case 2:
-    alist = PsycoTuple_GET_ITEM(vargs, 1);
-    argt = Psyco_NeedType(po, alist);
-    if (argt == NULL)
-      return NULL;
-    if (!PyType_TypeCheck(argt, &PyTuple_Type)) {
-      /* 'alist' is not a tuple */
-      if (!PsycoSequence_Check(argt))
-        break; /* give up */
-      t = PsycoSequence_Tuple(po, alist);
-      if (t == NULL)
-        break; /* give up */
-      alist = t;
-    }
-    /* fall through */
+static vinfo_t *pbuiltin_any(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
+  switch (psyco_genexpr_fuse(po, vobj)) {
   case 1:
-    retval = PsycoEval_CallObjectWithKeywords(po, PsycoTuple_GET_ITEM(vargs, 0),
-                                              alist, kwdict);
-    vinfo_xdecref(t, po);
-    return retval;
-  }
-
-  if (PycException_Occurred(po))
+    return genexpr_consume(po, vobj, GENEXPR_ANY, &PyBool_Type, NULL);
+  case -1:
     return NULL;
-  return psyco_generic_call(po, cimpl_apply, CfCommonNewRefPyObject, "lv", NULL,
-                            vargs);
+  }
+  return psyco_generic_call(po, cimpl_any, CfCommonNewRefPyObject, "vv",
+                            vself, vobj);
 }
 
-static vinfo_t *pbuiltin_divmod(PsycoObject *po, vinfo_t *vself,
-                                vinfo_t *vargs) {
-  int tuplesize = PsycoTuple_Load(vargs); /* -1 if unknown */
-
-  if (tuplesize == 2) {
-    return PsycoNumber_Divmod(po, PsycoTuple_GET_ITEM(vargs, 0),
-                              PsycoTuple_GET_ITEM(vargs, 1));
+static vinfo_t *pbuiltin_all(PsycoObject *po, vinfo_t *vself, vinfo_t *vobj) {
+  switch (psyco_genexpr_fuse(po, vobj)) {
+  case 1:
+    return genexpr_consume(po, vobj, GENEXPR_ALL, &PyBool_Type, NULL);
+  case -1:
+    return NULL;
   }
-  return psyco_generic_call(po, cimpl_divmod, CfCommonNewRefPyObject, "lv",
-                            NULL, vargs);
+  return psyco_generic_call(po, cimpl_all, CfCommonNewRefPyObject, "vv",
+                            vself, vobj);
+}
+static ternaryfunc type_call;
+static PyObject *object_class_descr; /* object.__class__ */
+static PyObject *str___class__;
+
+/* globals() is the compiled function's own globals: the real builtin reads
+   the nearest interpreted frame's */
+static vinfo_t *pbuiltin_globals(PsycoObject *po, vinfo_t *vself,
+                                 vinfo_t *vnull) {
+  vinfo_incref(LOC_GLOBALS);
+  return LOC_GLOBALS;
+}
+
+/* bltinmodule.c:min_max with two or more positional arguments: compare in
+   order, keeping the first extreme item, as CPython does. Each comparison
+   picks a path at run time (respawn), so a virtual result stays virtual.
+   Every type is promoted before the first comparison: a promotion restarts
+   the instruction, which would run a comparison already emitted again
+   (a user __gt__ twice). One iterable argument, or key=/default=, goes to
+   CPython: walking a sequence of run-time length can't be compiled (the
+   NFS branch tried). */
+static vinfo_t *pbuiltin_min_max(PsycoObject *po, vinfo_t *vargs,
+                                 vinfo_t *vkw, int op, PyCFunction cimpl) {
+  int i, n = PsycoTuple_Load(vargs);
+  vinfo_t *best, *item, *cmp;
+  int fuse = 0;
+  if (n == 1 && psyco_knowntobe(vkw, (long)NULL) &&
+      (fuse = psyco_genexpr_fuse(po, PsycoTuple_GET_ITEM(vargs, 0))) < 0)
+    return NULL;
+  if (fuse)
+    return genexpr_consume(po, PsycoTuple_GET_ITEM(vargs, 0),
+                           op == Py_LT ? GENEXPR_MIN : GENEXPR_MAX, NULL,
+                           NULL);
+  if (n < 2 || !psyco_knowntobe(vkw, (long)NULL))
+    return psyco_generic_call(po, cimpl, CfCommonNewRefPyObject, "lvv", NULL,
+                              vargs, vkw);
+  for (i = 0; i < n; i++)
+    if (Psyco_NeedType(po, PsycoTuple_GET_ITEM(vargs, i)) == NULL)
+      return NULL;
+  best = PsycoTuple_GET_ITEM(vargs, 0);
+  for (i = 1; i < n; i++) {
+    item = PsycoTuple_GET_ITEM(vargs, i);
+    cmp = PsycoObject_RichCompareBool(po, item, best, op);
+    if (cmp == NULL)
+      return NULL;
+    switch (runtime_NON_NULL_f(po, cmp)) { /* consumes cmp */
+    case true:
+      best = item;
+      break;
+    case false:
+      break;
+    default:
+      return NULL;
+    }
+  }
+  vinfo_incref(best);
+  return best;
+}
+
+static vinfo_t *pbuiltin_min(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs,
+                             vinfo_t *vkw) {
+  return pbuiltin_min_max(po, vargs, vkw, Py_LT, cimpl_min);
+}
+
+static vinfo_t *pbuiltin_max(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs,
+                             vinfo_t *vkw) {
+  return pbuiltin_min_max(po, vargs, vkw, Py_GT, cimpl_max);
+}
+
+/* builtin_isinstance: Objects/abstract.c:PyObject_IsInstance decided at
+   compile time from the promoted type of obj and the promoted class (or
+   tuple of classes). 1 or 0 if known, -1 if it must be asked at run time.
+   Only the rules for an exact 'type' cls are folded; a metaclass's
+   __instancecheck__ is never guessed. A heap type's subtype relation can
+   change (__bases__ assignment) and so is never folded; a static type's
+   can't. A false answer also needs obj.__class__ to be the ordinary
+   object.__class__, which recursive_isinstance consults next. */
+static int isinstance_known(PyTypeObject *tp, PyObject *cls, int depth) {
+  if ((PyObject *)tp == cls)
+    return 1;
+  if (PyTuple_Check(cls)) {
+    Py_ssize_t i;
+    if (depth > 8) /* CPython counts recursion here */
+      return -1;
+    for (i = 0; i < PyTuple_GET_SIZE(cls); i++) {
+      int r = isinstance_known(tp, PyTuple_GET_ITEM(cls, i), depth + 1);
+      if (r != 0)
+        return r; /* found, or unknown: then CPython decides it all */
+    }
+    return 0;
+  }
+  if (!PyType_CheckExact(cls) || (tp->tp_flags & Py_TPFLAGS_HEAPTYPE))
+    return -1;
+  if (PyType_IsSubtype(tp, (PyTypeObject *)cls))
+    return 1;
+  if (tp->tp_getattro == PyObject_GenericGetAttr &&
+      _PyType_Lookup(tp, str___class__) == object_class_descr)
+    return 0;
+  return -1;
+}
+
+/* the same for a class given as a vinfo: a virtual tuple (built here) is
+   walked item by item; otherwise only a static type is promoted. Anything
+   else at run time (a heap class, which a constant would keep alive, or a
+   tuple made elsewhere, a new object each call) is left to CPython. Sets
+   *r; returns false on error or promotion. */
+static bool isinstance_known_v(PsycoObject *po, PyTypeObject *tp,
+                               vinfo_t *vcls, int depth, int *r) {
+  PyObject *cls;
+  int m;
+  if (Psyco_KnownType(vcls) == &PyTuple_Type && !is_compiletime(vcls->source) &&
+      PsycoTuple_Load(vcls) >= 0) {
+    int i, n = PsycoTuple_Load(vcls);
+    *r = 0;
+    if (depth > 8)
+      *r = -1;
+    for (i = 0; i < n && *r == 0; i++)
+      if (!isinstance_known_v(po, tp, PsycoTuple_GET_ITEM(vcls, i), depth + 1,
+                              r))
+        return false;
+    return true;
+  }
+  m = psyco_atcompiletime_static_type(po, vcls, &cls);
+  if (m < 0)
+    return false;
+  *r = m == 0 ? -1 : isinstance_known(tp, cls, depth);
+  return true;
+}
+
+/* Objects/abstract.c:PyObject_IsInstance's meta, by hand: the answer at
+   compile time when isinstance_known gives one (the const_fold
+   shortcut, its depth limit, never for a heap type), else the real call.
+   Hand-written because the shortcut is judgement: the C has no
+   compile-time form of it. A 0 or 1, or NULL on error. */
+DEFINEFN
+vinfo_t *PsycoObject_IsInstance(PsycoObject *po, vinfo_t *vobj,
+                                vinfo_t *vcls) {
+  vinfo_t *x;
+  PyTypeObject *tp;
+  int r;
+  /* isinstance_known never folds for a heap type, so only a static type is
+     promoted: a constant heap type would keep the class alive, and a class
+     made per call would compile a new path each time */
+  if (is_compiletime(vobj->source) && !Psyco_ConstantClassMutable(vobj)) {
+    tp = Py_TYPE((PyObject *)CompileTime_Get(vobj->source)->value);
+    r = 1;
+  } else {
+    x = psyco_get_const(po, vobj, OB_type);
+    if (x == NULL)
+      return NULL;
+    r = psyco_atcompiletime_static_type(po, x, (PyObject **)&tp);
+    if (r < 0)
+      return NULL;
+  }
+  if (r == 0)
+    r = -1;
+  else if (!isinstance_known_v(po, tp, vcls, 0, &r))
+    return NULL;
+  if (r == 1)
+    return psyco_vi_One();
+  if (r == 0)
+    return psyco_vi_Zero();
+  return psyco_generic_call(po, PyObject_IsInstance, CfCommonIntBoolOrError,
+                            "vv", vobj, vcls);
+}
+
+/* builtin_sum_impl (Python/bltinmodule.c) is a left fold of PyNumber_Add
+   from start (default 0); its C fast paths for exact ints and floats give
+   the same results. Compiled only when the length is known now: a tuple
+   built here or a constant tuple. Every type is promoted before the first
+   addition: a user __add__ must not run
+   twice. A str, bytes or bytearray start raises, and anything else (lists,
+   iterators: items that are not frame values can't be promoted) is
+   CPython's, as before. */
+static vinfo_t *pbuiltin_sum(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs) {
+  int n = PsycoTuple_Load(vargs);
+  int i, k;
+  vinfo_t *vit, *result, *x;
+  PyTypeObject *tp;
+  if (n != 1 && n != 2)
+    goto fallback;
+  vit = PsycoTuple_GET_ITEM(vargs, 0);
+  if (psyco_genexpr_fusable(po, vit)) {
+    if (n == 2) {
+      tp = Psyco_NeedType(po, PsycoTuple_GET_ITEM(vargs, 1));
+      if (tp == NULL)
+        return NULL;
+      if (PyType_IsSubtype(tp, &PyUnicode_Type) ||
+          PyType_IsSubtype(tp, &PyBytes_Type) ||
+          PyType_IsSubtype(tp, &PyByteArray_Type))
+        goto fallback; /* sum() raises its own TypeError */
+    }
+    switch (psyco_genexpr_fuse(po, vit)) {
+    case 0:
+      goto fallback;
+    case -1:
+      return NULL;
+    }
+    return genexpr_consume(po, vit, GENEXPR_SUM, NULL,
+                           n == 2 ? PsycoTuple_GET_ITEM(vargs, 1) : NULL);
+  }
+  if (is_compiletime(vit->source)) {
+    if (!PyTuple_CheckExact((PyObject *)CompileTime_Get(vit->source)->value))
+      goto fallback;
+  } else if (Psyco_KnownType(vit) != &PyTuple_Type)
+    goto fallback;
+  k = PsycoTuple_Load(vit);
+  if (k < 0)
+    goto fallback;
+  if (n == 2) {
+    tp = Psyco_NeedType(po, PsycoTuple_GET_ITEM(vargs, 1));
+    if (tp == NULL)
+      return NULL;
+    if (PyType_IsSubtype(tp, &PyUnicode_Type) ||
+        PyType_IsSubtype(tp, &PyBytes_Type) ||
+        PyType_IsSubtype(tp, &PyByteArray_Type))
+      goto fallback;
+  }
+  for (i = 0; i < k; i++)
+    if (Psyco_NeedType(po, PsycoTuple_GET_ITEM(vit, i)) == NULL)
+      return NULL;
+  if (n == 2) {
+    result = PsycoTuple_GET_ITEM(vargs, 1);
+    vinfo_incref(result);
+  } else
+    result = PsycoLong_FROM_LONG(po, psyco_vi_Zero());
+  for (i = 0; i < k && result != NULL; i++) {
+    vinfo_t *item = PsycoTuple_GET_ITEM(vit, i);
+    if (Psyco_KnownType(result) != NULL)
+      x = PsycoNumber_Add(po, result, item);
+    else /* e.g. from a user __add__: a temporary, so its type can't be
+            promoted; CPython's generic loop */
+      x = psyco_generic_call(po, PyNumber_Add, CfCommonNewRefPyObject, "vv",
+                             result, item);
+    vinfo_decref(result, po);
+    result = x;
+  }
+  return result;
+fallback:
+  return PsycoCFunction_CallFast(po, cimpl_sum, sum_flags, vself, vargs);
+}
+
+/* An exact float's whole part (trunc or round-half-even) as an int, or
+   NULL in *out (with true returned) if it doesn't fit a long: then the
+   caller asks CPython, which raises for NaN and infinities or builds a
+   big int. */
+static bool float_whole_to_int(PsycoObject *po, vinfo_t *vf, bool round_even,
+                               vinfo_t **out) {
+  vinfo_t *vd, *vw;
+  int r;
+  *out = NULL;
+  vd = PsycoFloat_AS_DOUBLE(po, vf); /* borrowed */
+  if (vd == NULL)
+    return false;
+  vw = round_even ? PsycoFloat_RoundEven(po, vd) : PsycoFloat_Trunc(po, vd);
+  if (vw == NULL)
+    return false;
+  r = PsycoFloat_WholeToLong(po, vw, out);
+  vinfo_decref(vw, po);
+  return r >= 0;
+}
+
+/* builtin_round (Python/bltinmodule.c) without ndigits calls
+   type(number).__round__(): for an exact int that is long_round ->
+   long_long, the same object; for an exact float float___round___impl,
+   round half to even then PyLong_FromDouble. */
+static vinfo_t *pbuiltin_round(PsycoObject *po, vinfo_t *vself,
+                               vinfo_t *vargs) {
+  vinfo_t *v, *x;
+  PyTypeObject *tp;
+  if (PsycoTuple_Load(vargs) == 1) {
+    v = PsycoTuple_GET_ITEM(vargs, 0);
+    tp = Psyco_NeedType(po, v);
+    if (tp == NULL)
+      return NULL;
+    if (tp == &PyLong_Type) {
+      vinfo_incref(v);
+      return v;
+    }
+    if (tp == &PyFloat_Type) {
+      if (!float_whole_to_int(po, v, true, &x))
+        return NULL;
+      if (x != NULL)
+        return x;
+    }
+  }
+  return PsycoCFunction_CallFast(po, cimpl_round, round_flags, vself, vargs);
+}
+
+/* super() with no arguments: typeobject.c:super_init's frame lookup, with
+   the frame being the compiled one, which a direct call (psyfunc.c) never
+   makes real. 'argc' is the code's co_argcount, 'obj' its first local and
+   'objcell' the cell holding the first argument instead, if any. */
+static PyObject *cimpl_super_noargs(long argc, PyObject *obj,
+                                    PyObject *objcell, PyObject *classcell) {
+  PyObject *type;
+  if (argc == 0) {
+    PyErr_SetString(PyExc_RuntimeError, "super(): no arguments");
+    return NULL;
+  }
+  if (obj == NULL && objcell != NULL)
+    obj = PyCell_GET(objcell);
+  if (obj == NULL) {
+    PyErr_SetString(PyExc_RuntimeError, "super(): arg[0] deleted");
+    return NULL;
+  }
+  if (classcell == NULL) {
+    PyErr_SetString(PyExc_RuntimeError, "super(): __class__ cell not found");
+    return NULL;
+  }
+  if (!PyCell_Check(classcell)) {
+    PyErr_SetString(PyExc_RuntimeError, "super(): bad __class__ cell");
+    return NULL;
+  }
+  type = PyCell_GET(classcell);
+  if (type == NULL) {
+    PyErr_SetString(PyExc_RuntimeError, "super(): empty __class__ cell");
+    return NULL;
+  }
+  if (!PyType_Check(type)) {
+    PyErr_Format(PyExc_RuntimeError, "super(): __class__ is not a type (%s)",
+                 Py_TYPE(type)->tp_name);
+    return NULL;
+  }
+  return PyObject_CallFunctionObjArgs((PyObject *)&PySuper_Type, type, obj,
+                                      NULL);
+}
+
+static vinfo_t *psuper_noargs(PsycoObject *po) {
+  PyCodeObject *co = po->pr.co;
+  Py_ssize_t i, ncells = PyTuple_GET_SIZE(co->co_cellvars);
+  int fv = psyco_class_cell(co);
+  vinfo_t *obj, *objcell = NULL, *classcell = NULL, *zero, *r;
+  zero = psyco_vi_Zero();
+  obj = co->co_argcount > 0 ? LOC_LOCALS_PLUS[0] : zero;
+  if (obj == NULL)
+    obj = zero;
+  for (i = 0; co->co_cell2arg != NULL && i < ncells; i++)
+    if (co->co_cell2arg[i] == 0)
+      objcell = LOC_LOCALS_PLUS[co->co_nlocals + i];
+  if (fv >= 0)
+    classcell = LOC_LOCALS_PLUS[co->co_nlocals + ncells + fv];
+  r = psyco_generic_call(po, cimpl_super_noargs, CfCommonNewRefPyObject,
+                         "lvvv", (long)co->co_argcount, obj,
+                         objcell ? objcell : zero,
+                         classcell ? classcell : zero);
+  vinfo_decref(zero, po);
+  return r;
+}
+
+/* type_call (Objects/typeobject.c) for type(x), int(x) and float(x) with
+   one positional argument of an exact type, and for a heap class already
+   known (ptypeobject.c:psyco_heap_type_call); everything else is the
+   residual type_call.
+   type(x): the "ugly exception", the type itself. int(x): long_new_impl ->
+   PyNumber_Long, which returns an exact int unchanged and uses nb_int
+   (float___trunc___impl) for a float. float(x): float_new_impl ->
+   PyNumber_Float, which returns an exact float unchanged and uses nb_float
+   (long_float -> PyLong_AsDouble) for an int. Only a static type
+   callee is promoted: a promoted class would be kept alive by the compiled
+   code (freeing.namedtuple_code_dies). */
+static vinfo_t *ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg,
+                           vinfo_t *vkw) {
+  PyObject *t;
+  PyTypeObject *tp;
+  vinfo_t *v, *x;
+  int fuse;
+  int m = psyco_atcompiletime_static_type(po, vtype, &t);
+  if (m < 0)
+    return NULL;
+  /* super(): also when the callee isn't known, if this code has the
+     __class__ cell super() would look for */
+  if (psyco_knowntobe(vkw, 0) && PsycoTuple_Load(varg) == 0) {
+    if (m != 0 && t == (PyObject *)&PySuper_Type)
+      return psuper_noargs(po);
+    if (m == 0 && psyco_class_cell(po->pr.co) >= 0) {
+      condition_code_t cc =
+          integer_cmp_i(po, vtype, (long)&PySuper_Type, Py_EQ);
+      if (cc == CC_ERROR)
+        return NULL;
+      if (runtime_condition_f(po, cc))
+        return psuper_noargs(po);
+    }
+  }
+  if (m != 0 && t == (PyObject *)&PyRange_Type && psyco_knowntobe(vkw, 0)) {
+    int n = PsycoTuple_Load(varg);
+    if (n >= 1 && n <= 3) {
+      int r = PsycoRange_New(po, &PsycoTuple_GET_ITEM(varg, 0), n, &x);
+      if (r < 0)
+        return NULL;
+      if (r > 0)
+        return x;
+    }
+    goto fallback;
+  }
+  if (m != 0 && psyco_knowntobe(vkw, 0) && PsycoTuple_Load(varg) == 1 &&
+      (t == (PyObject *)&PyList_Type || t == (PyObject *)&PyTuple_Type ||
+       t == (PyObject *)&PySet_Type) &&
+      (fuse = psyco_genexpr_fuse(po, PsycoTuple_GET_ITEM(varg, 0))) != 0) {
+    if (fuse < 0)
+      return NULL;
+    return genexpr_consume(po, PsycoTuple_GET_ITEM(varg, 0),
+                           t == (PyObject *)&PySet_Type ? GENEXPR_SET
+                                                        : GENEXPR_LIST,
+                           (PyTypeObject *)t, NULL);
+  }
+  /* a class known now (a cached global, a class attribute): its code
+     already holds it */
+  if (m != 0 && PyType_Check(t) &&
+      (((PyTypeObject *)t)->tp_flags & Py_TPFLAGS_HEAPTYPE) &&
+      psyco_knowntobe(vkw, 0))
+    return psyco_heap_type_call(po, (PyTypeObject *)t, vtype, varg, vkw);
+  if (m == 0 || !psyco_knowntobe(vkw, 0) || PsycoTuple_Load(varg) != 1 ||
+      (t != (PyObject *)&PyType_Type && t != (PyObject *)&PyLong_Type &&
+       t != (PyObject *)&PyFloat_Type))
+    goto fallback;
+  v = PsycoTuple_GET_ITEM(varg, 0);
+  if (t == (PyObject *)&PyType_Type) {
+    vinfo_t *vt = is_runtime(v->source) ? vinfo_getitem(v, iOB_TYPE) : NULL;
+    /* a run-time type already loaded (a megamorphic site's) is not
+       forgotten after a call that may assign __class__: read it again */
+    if (vt != NULL && is_runtime(vt->source))
+      return psyco_get_field(po, v, FMUT(OB_type));
+    return psyco_get_field(po, v, OB_type);
+  }
+  tp = Psyco_NeedType(po, v);
+  if (tp == NULL)
+    return NULL;
+  if ((PyObject *)tp == t) {
+    vinfo_incref(v);
+    return v;
+  }
+  if (t == (PyObject *)&PyLong_Type && tp == &PyFloat_Type) {
+    if (!float_whole_to_int(po, v, false, &x))
+      return NULL;
+    if (x != NULL)
+      return x;
+  }
+  if (t == (PyObject *)&PyFloat_Type && tp == &PyLong_Type) {
+    if ((x = PsycoLong_AsDouble(po, v)) == NULL)
+      return NULL;
+    return PsycoFloat_FROM_DOUBLE(x);
+  }
+fallback:
+  return psyco_generic_call(po, type_call, CfCommonNewRefPyObject, "vvv",
+                            vtype, varg, vkw);
 }
 
 /***************************************************************/
 
 INITIALIZATIONFN
 void psyco_bltinmodule_init(void) {
-  PyObject *md = Psyco_DefineMetaModule("__builtin__");
+  /* a meta is registered only if the builtin's ml_flags match the meta's
+     (either fastcall convention for DEFFAST's), otherwise
+     ni._unregistered_metas() lists it. A METH_FASTCALL meta takes a tuple
+     (pmethodobject.h). No meta
+     for iter(): PsycoObject_GetIter gives lists a virtual seq-iterator,
+     right for a for loop but the wrong type for iter() to hand out. */
+  PyObject *md = Psyco_DefineMetaModule("builtins");
 
+  gen_bltinmodule_init(md);
 #define DEFMETA(name, flags)                                                   \
   cimpl_##name = Psyco_DefineModuleFn(md, #name, flags, &pbuiltin_##name)
-  DEFMETA(id, METH_O);
-  DEFMETA(len, METH_O);
-  DEFMETA(abs, METH_O);
-  DEFMETA(apply, METH_VARARGS);
-  DEFMETA(divmod, METH_VARARGS);
+  DEFMETA(globals, METH_NOARGS);
+  DEFMETA(min, METH_VARARGS | METH_KEYWORDS);
+  DEFMETA(max, METH_VARARGS | METH_KEYWORDS);
+#define DEFFAST(name)                                                          \
+  cimpl_##name =                                                               \
+      Psyco_DefineModuleFast(md, #name, &name##_flags, &pbuiltin_##name)
+  DEFFAST(round);
+  DEFFAST(sum);
+  DEFMETA(any, METH_O);
+  DEFMETA(all, METH_O);
+  type_call = PyType_Type.tp_call;
+  Psyco_DefineMeta(type_call, ptype_call);
+  str___class__ = PyUnicode_InternFromString("__class__");
+  object_class_descr = _PyType_Lookup(&PyBaseObject_Type, str___class__);
 #undef DEFMETA
+#undef DEFFAST
   Py_XDECREF(md);
 }
