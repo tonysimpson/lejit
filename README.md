@@ -1,43 +1,30 @@
-# Ni JIT
+# Ni
 
-Ni aims to provide a module that just makes Python faster.
+Ni is a JIT compiler for CPython: a fork of Armin Rigo's Psyco, ported to
+x86-64 and CPython 3.7. Psyco's authors went on to build PyPy
+(https://pypy.org).
 
-Ni is based on a fork of Armin Rigo's Psyco, Armin and the other Psyco
-developers moved onto PyPy so go check that out if you want a high performance
-implementation of Python (http://pypy.org).
+On CPython 3.7, Ni runs pyperformance about 2.2× faster than plain CPython
+and passes CPython's own test suite.
 
-## Current state
+## Why
 
-* 64 bit port working ok but machine code is far from optimal
-* Compiles against Python 3.7 and will compile simple function
-* Many pysco limitation still remain, many Py2 behaviours will still remain.
+Ni is a research project. It keeps Psyco's design, with Psyco's
+"compile-time CPython" (the layer that mirrors CPython's C code) translated
+from CPython's own C source. One Ni source tree serves CPython 3.7 to 3.10:
+where they differ, the code follows the features the build detects in the
+CPython source it is built for (`tools/features/features.py`), never a version
+number.
 
-Will compile very simple functions see mergepoints.c for supported opcodes.
+## Use
 
-Examples:
+    make PY=python3.10                        # needs gcc, libffi, libunwind
+    python3.10 -c "import ni; ..."            # importing ni enables it for the process
 
-    def test(a, b):
-        return a + b
+`ni.build_info` gives the features and the version of the CPython source
+they were detected in.
 
-Or
+## Status
 
-    def test(n):
-        i = 0
-        while i < n:
-            i = i + 1
-        return i
-
-Like I say very simple but I suspect other opcodes could be re-enable with
-very little effort. Any discoveries in this area would be very interesting.
-
-I know I should really explain now to use nianalyser and gdb to debug things.
-
-## Milestones
-
-* Improve debugging and execution performance analysis - nianalyser - DONE
-* Refactor code for maintainability and to CPython coding standards - On-going
-* Make Ni work on all Python code - On-going
-* Improve preformance and implement better optimisation decision making - Very on-going
-* Python 3 port - on-going but progress made
-
-I really need to make Trello for all this.
+Research code, not for production. Build with `make`, test with `make check`
+(`make check-all` for 3.7–3.10).
