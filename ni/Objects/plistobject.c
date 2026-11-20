@@ -1,6 +1,19 @@
+/*
+ * Virtual lists, for short lists only (length <= VLIST_LENGTH_MAX, i.e. 3).
+ * Layout: [iOB_TYPE], [iVAR_SIZE] = length, [LIST_ob_item] (unset while
+ * virtual), then the items from VLIST_ITEMS. Lists are mutable, so they are
+ * forced out of virtual time at any call boundary (INIT_SVIRTUAL_NOCALL) and
+ * whenever they are indexed with a run-time index. compute_vlist emits
+ * PyList_New and the item stores, then forgets the size, which becomes
+ * mutable. The list tp_iter slot is redirected to the generic virtual
+ * seq-iterator (piterobject.c), so a materialised iterator would be an
+ * 'iterator' rather than a 'list_iterator'.
+ */
 #include "plistobject.h"
 #include "plongobject.h"
 #include "piterobject.h"
+#include "punicodeobject.h"
+#include "psliceobject.h"
 #include "../pycodegen.h"
 
 
@@ -293,30 +306,159 @@ bool PsycoList_Append(PsycoObject* po, vinfo_t* v, vinfo_t* vitem)
 }
 
 
+/* list_subscript's slice case with step 1, after PySlice_Unpack */
+static PyObject* cimpl_list_slice(PyObject* self, Py_ssize_t start,
+				  Py_ssize_t stop)
+{
+	if (PySlice_AdjustIndices(Py_SIZE(self), &start, &stop, 1) <= 0)
+		return PyList_New(0);
+	return PyList_GetSlice(self, start, stop);
+}
+
+/* list_ass_subscript's slice case with step 1: list_ass_slice, which
+   PyList_SetSlice is (value NULL deletes) */
+static int cimpl_list_ass_slice(PyObject* self, Py_ssize_t start,
+				Py_ssize_t stop, PyObject* value)
+{
+	PySlice_AdjustIndices(Py_SIZE(self), &start, &stop, 1);
+	return PyList_SetSlice(self, start, stop, value);
+}
+
+/* list_subscript is also list.__getitem__ (METH_COEXIST), so
+   super().__getitem__(i) brings it a subclass instance whose own slots run
+   Python code; the generic meta would dispatch on those */
+static vinfo_t* plist_subscript(PsycoObject* po, vinfo_t* o, vinfo_t* key)
+{
+	/* a subclass's slots behind guards, as the generic meta
+	   reads them */
+	void* slots[3];
+	void* list_slots[3];
+	int i;
+	PyTypeObject* tp = Psyco_NeedType(po, o);
+	if (tp == NULL)
+		return NULL;
+	slots[0] = &tp->tp_as_mapping->mp_subscript;
+	slots[1] = &tp->tp_as_sequence->sq_item;
+	slots[2] = &tp->tp_as_sequence->sq_length;
+	list_slots[0] = PyList_Type.tp_as_mapping->mp_subscript;
+	list_slots[1] = PyList_Type.tp_as_sequence->sq_item;
+	list_slots[2] = PyList_Type.tp_as_sequence->sq_length;
+	for (i = 0; i < 3; i++) {
+		void* f;
+		switch (Psyco_TypeSlot(po, tp, slots[i], &f)) {
+		case 1:
+			if (f == list_slots[i])
+				break;
+			/* fall through */
+		case 0:
+			return psyco_generic_call(po,
+					PyList_Type.tp_as_mapping->mp_subscript,
+					CfCommonNewRefPyObject, "vv", o, key);
+		default:
+			return NULL;
+		}
+	}
+	if (Psyco_KnownType(key) == &PySlice_Type) {
+		vinfo_t *i, *j, *r;
+		switch (PsycoSlice_Unpack(po, key, &i, &j)) {
+		case -1:
+			return NULL;
+		case 1:
+			r = psyco_generic_call(po, cimpl_list_slice,
+					       CfCommonNewRefPyObject,
+					       "vvv", o, i, j);
+			vinfo_decref(j, po);
+			vinfo_decref(i, po);
+			if (r != NULL)
+				Psyco_AssertType(po, r, &PyList_Type);
+			return r;
+		}
+	}
+	return psyco_generic_subscript(po, o, key);
+}
+
+/* list_ass_subscript: a virtual slice is cimpl_list_ass_slice */
+static bool plist_ass_subscript(PsycoObject* po, vinfo_t* o, vinfo_t* key,
+				vinfo_t* value)
+{
+	PyTypeObject* ktp = Psyco_NeedType(po, key);
+	if (ktp == NULL)
+		return false;
+	if (ktp == &PySlice_Type) {
+		vinfo_t *i, *j, *r;
+		switch (PsycoSlice_Unpack(po, key, &i, &j)) {
+		case -1:
+			return false;
+		case 1:
+			if (value != NULL)
+				r = psyco_generic_call(po, cimpl_list_ass_slice,
+						       CfCommonIntZeroOk,
+						       "vvvv", o, i, j, value);
+			else
+				r = psyco_generic_call(po, cimpl_list_ass_slice,
+						       CfCommonIntZeroOk,
+						       "vvvl", o, i, j, 0L);
+			vinfo_decref(j, po);
+			vinfo_decref(i, po);
+			return r != NULL;
+		}
+	}
+	return psyco_generic_ass_subscript(po, o, key, value);
+}
+
+
+/* list_iter; a str.split() list held only by the caller is iterated
+   without being made */
+static vinfo_t* plist_iter(PsycoObject* po, vinfo_t* v)
+{
+	if (PsycoUnicode_IsSplitList(v))
+		return PsycoUnicode_SplitIter(po, v);
+	return PsycoSeqIter_New(po, v);
+}
+
+/* the list slots translated from listobject.c (sq_length) */
+static vinfo_t *
+list_length(PsycoObject *po, vinfo_t *);
+
+static vinfo_t *
+list_length(PsycoObject *po, vinfo_t *a)
+{
+    vinfo_t *_t1;
+    _t1 = psyco_get_field(po, a, VAR_size);
+    if (_t1 == NULL) {
+        return NULL;
+    }
+    return _t1;
+}
+
+static void
+gen_listobject_init(void)
+{
+    Psyco_DefineMeta(PyList_Type.tp_as_sequence->sq_length, list_length);
+}
+
 INITIALIZATIONFN
 void psy_listobject_init(void)
 {
 	PyMappingMethods *mm;
 	PySequenceMethods *m = PyList_Type.tp_as_sequence;
-	Psyco_DefineMeta(m->sq_length, psyco_generic_mut_ob_size);
+	gen_listobject_init();
 	Psyco_DefineMeta(m->sq_item, plist_item);
 	Psyco_DefineMeta(m->sq_ass_item, plist_ass_item);
 	Psyco_DefineMeta(m->sq_concat, psyco_plist_concat);
 
 	mm = PyList_Type.tp_as_mapping;
-	if (mm) {  /* Python >= 2.3 */
-		Psyco_DefineMeta(mm->mp_subscript, psyco_generic_subscript);
+	if (mm) {
+		Psyco_DefineMeta(mm->mp_subscript, plist_subscript);
 		Psyco_DefineMeta(mm->mp_ass_subscript,
-				 psyco_generic_ass_subscript);
+				 plist_ass_subscript);
 	}
 
-	/* In Python 2.3, lists have their own iterator type for
-	   performance, because generic sequence iterators have an
-	   extra overhead -- which is however completely removed by
-	   Psyco. So we redirect list iterators to generic iterators.
-	   (thus in Psyco, iter(l) never returns a listiterator) */
-	if (PyList_Type.tp_iter != NULL)  /* Python >= 2.3 */
-		Psyco_DefineMeta(PyList_Type.tp_iter, &PsycoSeqIter_New);
+	/* CPython gives lists their own iterator type for speed; a
+	   virtual sequence iterator costs compiled code nothing, so
+	   iter(l) is one here, never a listiterator */
+	if (PyList_Type.tp_iter != NULL)
+		Psyco_DefineMeta(PyList_Type.tp_iter, &plist_iter);
 
         /* list object are mutable;
            they must be forced out of virtual-time across function calls */
