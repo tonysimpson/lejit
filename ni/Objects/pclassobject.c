@@ -1,65 +1,79 @@
+/*
+ * Virtual bound methods ([iMETHOD_IM_FUNC] constant, [iMETHOD_IM_SELF]). The
+ * tp_call meta prepends self as a virtual tuple and re-dispatches the call.
+ * The branch for a NULL im_self can't run: Python 3 has no unbound methods.
+ */
 #include "pclassobject.h"
 #include "ptupleobject.h"
 
-DEFINEFN
-vinfo_t *PsycoMethod_New(PyObject *func, vinfo_t *self) {
-  vinfo_t *result = vinfo_new(VirtualTime_New(&psyco_computed_method));
-
-  result->array = array_new(METHOD_TOTAL);
-  result->array->items[iOB_TYPE] =
-      vinfo_new(CompileTime_New((long)(&PyMethod_Type)));
-
-  Py_INCREF(func);
-  result->array->items[iMETHOD_IM_FUNC] =
-      vinfo_new(CompileTime_NewSk(sk_new((long)func, SkFlagPyObj)));
-
-  vinfo_incref(self);
-  result->array->items[iMETHOD_IM_SELF] = self;
-
-  return result;
-}
-
-static bool compute_method(PsycoObject *po, vinfo_t *methobj) {
-  vinfo_t *newobj;
-  vinfo_t *im_func;
-  vinfo_t *im_self;
-
-  /* get the fields from the Python object 'methobj' */
-  im_func = vinfo_getitem(methobj, iMETHOD_IM_FUNC);
-  if (im_func == NULL)
-    return false;
-  im_self = vinfo_getitem(methobj, iMETHOD_IM_SELF);
-  if (im_self == NULL)
-    return false;
-
-  /* call PyMethod_New() */
-  newobj = psyco_generic_call(po, PyMethod_New, CfPure | CfCommonNewRefPyObject,
-                              "vv", im_func, im_self);
-  if (newobj == NULL)
-    return false;
-
-  /* move the resulting non-virtual Python object back into 'methobj' */
-  vinfo_move(po, methobj, newobj);
-  return true;
-}
-
-static PyObject *direct_compute_method(vinfo_t *methobj, char *data) {
-  PyObject *im_func;
-  PyObject *im_self;
-  PyObject *result = NULL;
-
-  im_func = direct_xobj_vinfo(vinfo_getitem(methobj, iMETHOD_IM_FUNC), data);
-  im_self = direct_xobj_vinfo(vinfo_getitem(methobj, iMETHOD_IM_SELF), data);
-
-  if (!PyErr_Occurred() && im_func != NULL)
-    result = PyMethod_New(im_func, im_self);
-
-  Py_XDECREF(im_self);
-  Py_XDECREF(im_func);
-  return result;
-}
-
 DEFINEVAR source_virtual_t psyco_computed_method;
+
+/* PsycoMethod_New, compute_method and direct_compute_method: a virtual
+   PyMethod_New */
+/* PyMethod_New(func, self) on raw values */
+static PyObject *
+direct_compute_method(vinfo_t *v, char *data)
+{
+    PyObject *o = NULL;
+    PyObject *func = direct_xobj_vinfo(v->array->items[iMETHOD_IM_FUNC], data);
+    PyObject *self = direct_xobj_vinfo(v->array->items[iMETHOD_IM_SELF], data);
+    if (func != NULL && self != NULL)
+        o = PyMethod_New(func, self);
+    Py_XDECREF(self);
+    Py_XDECREF(func);
+    return o;
+}
+
+/* forced: a constant if every field is one and CPython would share the
+   object (rule allocator_pure), else PyMethod_New at run time */
+static bool
+compute_method(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *newobj = NULL;
+    if (is_compiletime(v->array->items[iMETHOD_IM_FUNC]->source) &&
+        is_compiletime(v->array->items[iMETHOD_IM_SELF]->source)) {
+        PyObject *o = direct_compute_method(v, NULL);
+        if (o == NULL)
+            OUT_OF_MEMORY();
+        newobj = psyco_shared_constant(o);
+    }
+    if (newobj == NULL) {
+        newobj = psyco_generic_call(
+            po, PyMethod_New, CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
+            "vv", v->array->items[iMETHOD_IM_FUNC],
+            v->array->items[iMETHOD_IM_SELF]);
+        if (newobj == NULL)
+            return false;
+    }
+    vinfo_move(po, v, newobj);
+    return true;
+}
+
+/* a virtual method: PyMethod_New's arguments, each a new reference */
+DEFINEFN
+vinfo_t *
+PsycoMethod_New(vinfo_t *func, vinfo_t *self)
+{
+    vinfo_t *v = vinfo_new(VirtualTime_New(&psyco_computed_method));
+    v->array = array_new(METHOD_TOTAL);
+    v->array->items[iOB_TYPE] =
+        vinfo_new(CompileTime_New((long)&PyMethod_Type));
+    extra_assert(func != NULL);
+    vinfo_incref(func);
+    v->array->items[iMETHOD_IM_FUNC] = func;
+    extra_assert(self != NULL);
+    vinfo_incref(self);
+    v->array->items[iMETHOD_IM_SELF] = self;
+    return v;
+}
+
+/* the force and direct functions, with their weights */
+static void
+gen_virtual_method_init(void)
+{
+    INIT_SVIRTUAL(psyco_computed_method, compute_method, direct_compute_method,
+                  (1 << iMETHOD_IM_FUNC) | (1 << iMETHOD_IM_SELF), 0, 0);
+}
 
 /***************************************************************/
 /*** instance method objects meta-implementation             ***/
@@ -120,8 +134,7 @@ fallback:
 
 INITIALIZATIONFN
 void psy_classobject_init(void) {
-  Psyco_DefineMeta(PyMethod_Type.tp_call, pinstancemethod_call);
+  Psyco_DefineCallMeta(&PyMethod_Type, pinstancemethod_call);
 
-  INIT_SVIRTUAL(psyco_computed_method, compute_method, direct_compute_method,
-                (1 << iMETHOD_IM_FUNC) | (1 << iMETHOD_IM_SELF), 0, 0);
+  gen_virtual_method_init();
 }

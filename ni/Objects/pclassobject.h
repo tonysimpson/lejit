@@ -8,14 +8,8 @@
 #include "pabstract.h"
 #include "pobject.h"
 
-/* Instance methods */
-#define METHOD_im_func DEF_FIELD(PyMethodObject, PyObject *, im_func, OB_type)
-#define METHOD_im_self                                                         \
-  DEF_FIELD(PyMethodObject, PyObject *, im_self, METHOD_im_func) 
-#define iMETHOD_IM_FUNC FIELD_INDEX(METHOD_im_func)
-#define iMETHOD_IM_SELF FIELD_INDEX(METHOD_im_self)
-#define METHOD_TOTAL FIELDS_TOTAL(METHOD_im_self)
-
+/* Instance methods: METHOD_im_func, METHOD_im_self and their indices are
+   in pobject.h */
 EXTERNFN vinfo_t *pinstancemethod_call(PsycoObject *po, vinfo_t *methobj,
                                        vinfo_t *arg, vinfo_t *kw);
 
@@ -26,7 +20,8 @@ EXTERNFN vinfo_t *pinstancemethod_call(PsycoObject *po, vinfo_t *methobj,
    but if it needs be, will call PyMethod_New(). */
 EXTERNVAR source_virtual_t psyco_computed_method;
 
+/* PyMethod_New(func, self), virtual; new references to both */
 EXTERNFN
-vinfo_t *PsycoMethod_New(PyObject *func, vinfo_t *self);
+vinfo_t *PsycoMethod_New(vinfo_t *func, vinfo_t *self);
 
 #endif /* _PSY_CLASSOBJECT_H */
