@@ -13,16 +13,17 @@ Ni is a research project. It keeps Psyco's design, with Psyco's
 "compile-time CPython" (the layer that mirrors CPython's C code) translated
 from CPython's own C source. One Ni source tree serves CPython 3.7 to 3.10:
 where they differ, the code follows the features the build detects in the
-CPython source it is built for (`tools/features/features.py`), never a version
-number.
+installed CPython it is built for (`tools/features/installed.py`), never a
+version number. A second detector reads CPython's source
+(`tools/features/features.py`) and checks the first.
 
 ## Use
 
     make PY=python3.10                        # needs gcc, libffi, libunwind
     python3.10 -c "import ni; ..."            # importing ni enables it for the process
 
-`ni.build_info` gives the features and the version of the CPython source
-they were detected in.
+`ni.build_info` gives the features and the CPython version they were
+detected in.
 
 ## Status
 

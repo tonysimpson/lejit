@@ -32,8 +32,12 @@ ALL_CHECKS = int(os.environ.get('NI_ALL_CHECKS', 0))
 # Code size per instruction, ni._codestats()
 NI_CODESTATS = int(os.environ.get('NI_CODESTATS', 0))
 
-# NI_CPYTHON_SRC: the CPython source tree to detect the features in,
-# instead of the cached release tarball (tools/features/cpython_src.py).
+# NI_FEATURES=source: detect the features in CPython's source (fetched and
+# cached once, or NI_CPYTHON_SRC) instead of the installed interpreter; the
+# source detector is the reference the installed one is checked against.
+NI_FEATURES = os.environ.get('NI_FEATURES', 'installed')
+if NI_FEATURES not in ('installed', 'source'):
+    raise SystemExit('NI_FEATURES must be installed or source, not %r' % NI_FEATURES)
 
 # NI_SANITIZE=address or address,undefined: build with gcc's sanitizers
 # Such a build goes in build/asan
@@ -175,12 +179,13 @@ class build_ext_generated(build_ext):
             raise DistutilsError('remove %s: generated headers now live in'
                                  ' the build directory' % ', '.join(old))
         gen_dir = os.path.join(self.build_temp, 'gen')
-        cmd = [sys.executable, os.path.join(HERE, 'tools', 'features', 'features.py'),
+        detector = 'features.py' if NI_FEATURES == 'source' else 'installed.py'
+        cmd = [sys.executable, os.path.join(HERE, 'tools', 'features', detector),
                '--python', sys.executable, '--out', gen_dir]
         print(' '.join(cmd))
         sys.stdout.flush()
         if subprocess.call(cmd) != 0:
-            raise DistutilsError('detecting the features of CPython\'s source'
+            raise DistutilsError('detecting the features of CPython'
                                  ' failed (above)')
         cmd = [sys.executable, os.path.join(HERE, 'tools', 'features', 'strings.py'),
                '--python', sys.executable, '--out', gen_dir]

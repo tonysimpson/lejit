@@ -6,9 +6,9 @@
 #   make test | cpython-test | encoder-test | features-test | strings-test
 #   make features-installed-test
 #
-# The build runs the feature detector under PY; it reads the source of PY's
-# CPython release, fetched into ~/.cache/ni once. GEN_PY runs the tools'
-# own tests.
+# The build detects PY's features and takes its messages from PY itself
+# (NI_FEATURES=source reads the source of PY's CPython release instead,
+# fetched into ~/.cache/ni once). GEN_PY runs the tools' own tests.
 
 SHELL := bash
 
