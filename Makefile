@@ -62,8 +62,8 @@ cross-check:
 # features come from CPython's source (NI_HAS_*), never its version number
 no-version-tests:
 	@! grep -rnwE 'PY_(VERSION_HEX|MAJOR_VERSION|MINOR_VERSION|MICRO_VERSION)' \
-	    ni/ --include='*.[ch]' \
-	  || { echo "a CPython version test in ni/ (above): add an NI_HAS_ feature"; exit 1; }
+	    src/ --include='*.[ch]' \
+	  || { echo "a CPython version test in src/ (above): add an NI_HAS_ feature"; exit 1; }
 
 check: no-version-tests features-test features-installed-test strings-test \
        test cpython-test encoder-test

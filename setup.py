@@ -80,11 +80,11 @@ def autodetect():
 PROCESSOR = autodetect()
 
 def find_sources(processor):
-    result = glob.glob('./ni/*.c')
-    result += glob.glob('./ni/Python/*.c')
-    result += glob.glob('./ni/Modules/*.c')
-    result += glob.glob('./ni/Objects/*.c')
-    result += glob.glob('./ni/%s/*.c' % (processor,))
+    result = glob.glob('./src/*.c')
+    result += glob.glob('./src/Python/*.c')
+    result += glob.glob('./src/Modules/*.c')
+    result += glob.glob('./src/Objects/*.c')
+    result += glob.glob('./src/%s/*.c' % (processor,))
     return result
 
 def cpython_warnings():
@@ -141,8 +141,8 @@ if NI_COVERAGE:
 sources = find_sources(PROCESSOR)
 # distutils rebuilds only when a file listed here or in sources is newer
 # than ni.so: list every header and .c file
-depends = sorted(set(glob.glob('./ni/**/*.h', recursive=True) +
-                     glob.glob('./ni/**/*.c', recursive=True)))
+depends = sorted(set(glob.glob('./src/**/*.h', recursive=True) +
+                     glob.glob('./src/**/*.c', recursive=True)))
 # switching NI_TRACE or NI_ALL_CHECKS must also rebuild: remember the
 # options, and remove the built module when they change (distutils compares
 # whole seconds, so a fresh stamp file alone is not reliably "newer").
@@ -164,7 +164,7 @@ if not os.path.exists(stamp) or open(stamp).read() != config:
     os.makedirs(stamp_dir, exist_ok=True)
     with open(stamp, 'w') as f:
         f.write(config)
-processor_dir = os.path.join('./ni', PROCESSOR)
+processor_dir = os.path.join('./src', PROCESSOR)
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -176,7 +176,7 @@ class build_ext_generated(build_ext):
     def run(self):
         # "file.h" looks next to the includer first: an old copy there
         # would win over the fresh one
-        old = glob.glob(os.path.join(HERE, 'ni', '**', '*_gen.h'), recursive=True)
+        old = glob.glob(os.path.join(HERE, 'src', '**', '*_gen.h'), recursive=True)
         if old:
             raise BuildError('remove %s: generated headers now live in'
                                  ' the build directory' % ', '.join(old))

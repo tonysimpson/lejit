@@ -30,7 +30,7 @@
 /* The running thread's state is the word _PyRuntime.gilstate.tstate_current
    (an _Py_atomic_address, which a plain load reads), at an address fixed
    for the process: what PyThreadState_GET() reads. Compiled code's load
-   is ni/mechanisms/tstate.h's. */
+   is src/mechanisms/tstate.h's. */
 _Static_assert(__builtin_types_compatible_p(
                    __typeof__(_PyRuntime.gilstate.tstate_current),
                    _Py_atomic_address) &&

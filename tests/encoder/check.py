@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks each x86-64 emitter in ni/x64/iencoding.h against its annotation,
+"""Checks each x86-64 emitter in src/x64/iencoding.h against its annotation,
 by assembling both with GNU as and comparing objdump's disassembly:
 
     /* @asm: mov {r}, qword ptr [{rm}{o}] */
@@ -13,7 +13,7 @@ Placeholders are {name} or {name:kind}: registers (r, rm, base, index...),
 import concurrent.futures, itertools, json, os, re, subprocess, sys, sysconfig, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-HEADER = os.path.join(ROOT, 'ni', 'x64', 'iencoding.h')
+HEADER = os.path.join(ROOT, 'src', 'x64', 'iencoding.h')
 # the interpreter whose headers and build are used (make's PY)
 PY = (os.environ.get('NI_PYTHON') or os.environ.get('NI_PY37')
       or os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
@@ -147,8 +147,8 @@ HEAD = ['#include <Python.h>', '#include "psyco.h"', '#include "vcompiler.h"',
 
 def includes():
     inc = subprocess.check_output([PY, '-c', "import sysconfig;print(sysconfig.get_paths()['include'])"]).decode().strip()
-    return ['-I' + inc, '-I' + os.path.join(ROOT, 'ni'),
-            '-I' + os.path.join(ROOT, 'ni', 'x64'), '-I' + gen_dir()]
+    return ['-I' + inc, '-I' + os.path.join(ROOT, 'src'),
+            '-I' + os.path.join(ROOT, 'src', 'x64'), '-I' + gen_dir()]
 
 
 def build_emitted(case_list, workdir):
@@ -332,7 +332,7 @@ def check_jump_decoder(workdir):
     inc = subprocess.check_output([PY, '-c', "import sysconfig;print(sysconfig.get_paths()['include'])"]).decode().strip()
     exe = os.path.join(workdir, 'jumps')
     subprocess.check_call(['gcc', '-w', '-O0', '-DALL_CHECKS=0', '-DNI_TRACE=0',
-                           '-I' + inc, '-I' + os.path.join(ROOT, 'ni'), '-I' + os.path.join(ROOT, 'ni', 'x64'), '-I' + gen_dir(),
+                           '-I' + inc, '-I' + os.path.join(ROOT, 'src'), '-I' + os.path.join(ROOT, 'src', 'x64'), '-I' + gen_dir(),
                            cfile, '-o', exe])
     p = subprocess.run([exe], stdout=subprocess.PIPE)
     for line in p.stdout.decode().splitlines():

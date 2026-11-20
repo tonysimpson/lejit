@@ -3,5 +3,5 @@ build
 *.py[cod]
 *.so
 *.egg-info
-# written at build time, under build/: a copy in ni/ would win over it
-ni/**/*_gen.h
+# written at build time, under build/: a copy in src/ would win over it
+src/**/*_gen.h
