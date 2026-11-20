@@ -29,6 +29,17 @@ EXTERNFN PyObject *psyco_processor_run(CodeBufferObject *codebuf,
 /* check for signed integer multiplication overflow */
 EXTERNVAR char (*psyco_int_mul_ovf)(long a, long b);
 
+/* code that compiled code may 'call' with arguments in the SysV
+   registers and the stack at any alignment: it aligns the stack and calls
+   'fn' (made once, at start-up); the dealloc glue calls tp_dealloc on the
+   object in RAX (x64/iprocessor.c) */
+EXTERNFN code_t *psyco_aligned_call_glue(void *fn);
+EXTERNVAR code_t *psyco_dealloc_rax_glue;
+
+/* the return address given to a compiled callee whose frame object is
+   kept (x64/iprocessor.c, frames.c:psyco_activation) */
+EXTERNVAR code_t *psyco_return_barrier;
+
 /* find the next stack frame
    ("next" = more recent in time = towards innermost frames) */
 EXTERNFN struct stack_frame_info_s **

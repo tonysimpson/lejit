@@ -1,5 +1,26 @@
+/*
+ * psyco_compile() makes the merge-point decision. It compares the current state
+ * with the snapshots stored at this merge point (dispatcher.c:psyco_compatible):
+ *   - exact match:   emit unification moves and jump to the existing code;
+ *   - partial match: un-promote the differing constants to run-time and retry;
+ *   - no match:      start new code (or a coding pause if the buffer is full),
+ *                    unless the merge point already has MP_BLOCK_CAP blocks:
+ *                    then forget the ints' known values and the constants
+ *                    that differ between its blocks, and retry.
+ * A coding pause is a stub that compiles the continuation only when execution
+ * first reaches it.
+ *
+ * Field access (psyco_internal_getfld/putfld) folds loads from compile-time
+ * objects in C and caches results in vinfo->array, except the type of a
+ * constant whose class can be assigned, which is checked.
+ *
+ * Code buffers, machine code, stub records and the references constants
+ * held belong to the owner whose code is compiled (codemanager.h), and are
+ * released when its code object dies; a buffer is returned borrowed.
+ */
 #include "vcompiler.h"
 #include "Python/pycompiler.h"
+#include "Objects/pobject.h"
 #include "codemanager.h"
 #include "dispatcher.h"
 #include "mergepoints.h"
@@ -27,7 +48,7 @@ vinfo_array_t *array_grow1(vinfo_array_t *array, int ncount) {
   else
     array = PyMem_REALLOC(array, offsetof(vinfo_array_t, items) +
                                      ncount * sizeof(vinfo_t *));
-  if (array == NULL)
+  if (array == NULL || NI_FAIL(NI_FAIL_ARRAY))
     OUT_OF_MEMORY();
   array->count = ncount;
   while (i < ncount)
@@ -49,9 +70,10 @@ void vinfo_array_shrink(PsycoObject *po, vinfo_t *vi, int ncount) {
       vinfo_decref(v1, po);
     }
   }
-  if (ncount == 0)
+  if (ncount == 0) {
+    PyMem_FREE(array);
     array = NullArray;
-  else {
+  } else {
     array = PyMem_REALLOC(array, offsetof(vinfo_array_t, items) +
                                      ncount * sizeof(vinfo_t *));
     if (array == NULL)
@@ -65,30 +87,21 @@ void vinfo_array_shrink(PsycoObject *po, vinfo_t *vi, int ncount) {
 
 DEFINEFN
 void sk_release(source_known_t *sk) {
-#if 0
-  XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX
-    The Python objects who get once in a source_known_t are never
-    freed. This is so because we might have references to them left
-    in the code buffers. This is tricky because the references can
-    be indirect (to a sub-objects, to a field in the object structure,
-                 etc...)
-    So not freeing them at all is the easy way out. It is expected
-    that not too many objects will get lost this way. This must be
-    carefully worked out when implementing releasing of code
-    buffers. It will probably require careful checks for all
-    instructions that might emit an immediate value in the code,
-    and for where this immediate value (indirectly or not) comes from.
-  XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX --- XXX
-  if ((sk->refcount1_flags & SkFlagPyObj) != 0) {
-    Py_XDECREF((PyObject*)(sk->value));
-  }
-#endif
+  /* Code may hold the object's address, or that of anything reached from
+     it, so the owner the constant was made under holds it until its code
+     dies (sk_new). Another owner's code can have used it only if the
+     constant came to it as a callee's argument, and a callee holds every
+     constant it was given (psyfunc.c:compile_callee). The owner, not the
+     source_known_t, holds it so that every reference an owner has is in
+     its set, where the cycle scan sees it (codemanager.c). */
   sk_delete(sk);
 }
 
 DEFINEFN
 vinfo_t *vinfo_copy(vinfo_t *vi) {
   vinfo_t *result = vinfo_new_skref(vi->source);
+  if ((result->type_hint = vi->type_hint) != NULL)
+    sk_incref(result->type_hint);
   result->array = vi->array;
   if (result->array->count > 0) {
     result->array = array_new(result->array->count);
@@ -132,6 +145,8 @@ void vinfo_release(vinfo_t *vi, PsycoObject *po) {
      array to extract any available type information to speed up Py_DECREF(). */
   if (vi->array != NullArray)
     array_delete(vi->array, po);
+  if (vi->type_hint != NULL)
+    sk_decref(vi->type_hint);
 
 #if HAVE_CCREG && ALL_CHECKS
   /* only virtual-time vinfos are allowed in po->ccreg */
@@ -164,6 +179,8 @@ void vinfo_move(PsycoObject *po, vinfo_t *vtarget, vinfo_t *vsource) {
   if (is_runtime(src))
     RTVINFO_MOVE(src, vtarget);
   extra_assert(vsource->refcount == 1);
+  if (vsource->type_hint != NULL)
+    sk_decref(vsource->type_hint);
   psyco_llfree_vinfo(vsource);
   clear_tmp_marks(vtarget->array);
   psyco_simplify_array(vtarget->array, po);
@@ -302,17 +319,22 @@ static vinfo_t *nonnull_refcount(vinfo_array_t *source) {
 
 DEFINEFN
 void psyco_assert_coherent1(PsycoObject *po, bool full) {
-  vinfo_array_t debug_extra_refs;
+  union {
+    vinfo_array_t a;
+    char room[offsetof(vinfo_array_t, items) + 3 * sizeof(vinfo_t *)];
+  } extra_refs;
+  vinfo_array_t *debug_extra_refs = &extra_refs.a;
   int found[REG_TOTAL + HAVE_CCREG];
   int i;
   vinfo_t *err;
   for (i = 0; i < REG_TOTAL + HAVE_CCREG; i++)
     found[i] = 0;
-  debug_extra_refs.count = 2;
-  debug_extra_refs.items[0] = po->pr.exc; /* normally private to pycompiler.c,*/
-  debug_extra_refs.items[1] = po->pr.val; /* but this is for debugging only */
+  debug_extra_refs->count = 3;
+  debug_extra_refs->items[0] = po->pr.exc; /* normally private to pycompiler.c,*/
+  debug_extra_refs->items[1] = po->pr.val; /* but this is for debugging only */
+  debug_extra_refs->items[2] = po->pr.tb;  /* run-time after END_FINALLY */
   coherent_array(&po->vlocals, po, found, true);
-  coherent_array(&debug_extra_refs, po, found, true);
+  coherent_array(debug_extra_refs, po, found, true);
   if (full) {
     RTVINFO_CHECKED(po, found);
 #if HAVE_CCREG
@@ -321,9 +343,9 @@ void psyco_assert_coherent1(PsycoObject *po, bool full) {
         extra_assert(po->ccregs[i] == NULL);
 #endif
     hack_refcounts(&po->vlocals, -1, 0);
-    hack_refcounts(&debug_extra_refs, -1, 0);
+    hack_refcounts(debug_extra_refs, -1, 0);
     err = nonnull_refcount(&po->vlocals);
-    hack_refcounts(&debug_extra_refs, +1, 0x10000);
+    hack_refcounts(debug_extra_refs, +1, 0x10000);
     hack_refcounts(&po->vlocals, +1, 0x10000);
     extra_assert(!err); /* see nonnull_refcounts() */
   }
@@ -379,8 +401,12 @@ PsycoObject *psyco_duplicate(PsycoObject *po) {
   /* the rest of the data is copied with no change */
   result->respawn_cnt = po->respawn_cnt;
   result->respawn_proxy = po->respawn_proxy;
+  result->mp_serial = po->mp_serial;
   result->code = po->code;
   result->codelimit = po->codelimit;
+#if NI_CODESTATS
+  result->cs_bc = po->cs_bc;
+#endif
   pyc_data_duplicate(&result->pr, &po->pr);
 
   assert_cleared_tmp_marks(&result->vlocals);
@@ -389,6 +415,9 @@ PsycoObject *psyco_duplicate(PsycoObject *po) {
 }
 
 DEFINEFN void PsycoObject_Delete(PsycoObject *po) {
+#if NI_CODESTATS
+  psyco_codestats_delete(po);
+#endif
   pyc_data_release(&po->pr);
   deallocate_array(&po->vlocals, NULL);
   PyMem_FREE(po);
@@ -509,6 +538,15 @@ vinfo_t *psyco_internal_getfld(PsycoObject *po, int findex, defield_t df,
 
   if (is_runtime(vi->source)) {
     vf = field_read(po, vi, offset, NULL, df, newref);
+  } else if (findex == iOB_TYPE && offset == FIELD_C_OFFSET(OB_type) &&
+             !((long)df & FIELD_ARRAY) && Psyco_ConstantClassMutable(vi)) {
+    /* the type of a constant whose class can be assigned: checked at run
+       time, not read */
+    PyTypeObject *tp;
+    if (Psyco_ConstantType(po, vi, &tp) < 0)
+      return NULL;
+    Py_INCREF(tp);
+    vf = vinfo_new(CompileTime_NewSk(sk_new((long)tp, SkFlagPyObj)));
   } else {
     long result;
     long sk_flag = 0;
@@ -526,6 +564,12 @@ vinfo_t *psyco_internal_getfld(PsycoObject *po, int findex, defield_t df,
         result = *((unsigned short *)ptr);
       else
         result = *((signed short *)ptr);
+      break;
+    case 2:
+      if ((long)df & FIELD_UNSIGNED)
+        result = *((unsigned int *)ptr);
+      else
+        result = *((int *)ptr);
       break;
     default:
       result = *((long *)ptr);
@@ -551,6 +595,12 @@ done:
   return vf;
 }
 
+/* a constant index small enough to be a field of its own: an int whose
+   item's offset is a 32-bit displacement (psyco_get_nth_field). A larger
+   one, only in bounds for an array of over 128 MB, goes to v_mem_mov as an
+   index, which puts it in a register. */
+#define NTH_FIELD_INDEX(i) ((i) >= -(1L << 24) && (i) < (1L << 24))
+
 DEFINEFN
 vinfo_t *psyco_get_field_array(PsycoObject *po, vinfo_t *vi, defield_t df,
                                vinfo_t *vindex) {
@@ -559,7 +609,8 @@ vinfo_t *psyco_get_field_array(PsycoObject *po, vinfo_t *vi, defield_t df,
     return NULL;
 
   extra_assert((long)df & FIELD_ARRAY);
-  if (is_compiletime(vindex->source)) {
+  if (is_compiletime(vindex->source) &&
+      NTH_FIELD_INDEX(CompileTime_Get(vindex->source)->value)) {
     return psyco_get_nth_field(po, vi, df,
                                CompileTime_Get(vindex->source)->value);
   } else {
@@ -625,7 +676,8 @@ bool psyco_put_field_array(PsycoObject *po, vinfo_t *vi, defield_t df,
     return false;
 
   extra_assert((long)df & FIELD_ARRAY);
-  if (is_compiletime(vindex->source)) {
+  if (is_compiletime(vindex->source) &&
+      NTH_FIELD_INDEX(CompileTime_Get(vindex->source)->value)) {
     return psyco_put_nth_field(po, vi, df,
                                CompileTime_Get(vindex->source)->value, value);
   } else {
@@ -671,68 +723,89 @@ void psyco_assert_field(PsycoObject *po, vinfo_t *vi, defield_t df,
 /*****************************************************************/
 
 typedef struct {
-  CodeBufferObject *self;
-  PsycoObject *po;
+  parked_state_t state;
   resume_fn_t resume_fn;
   void *jump_to_fix;
 } coding_pause_t;
 
-static code_t *do_resume_coding(coding_pause_t *cp) {
-  /* called when entering a coding_pause (described by 'cp') */
-  code_t *target =
-      (cp->resume_fn)(cp->po, cp + 1); /* resume compilation work */
+static code_t *do_resume_coding_body(coding_pause_t *cp);
+/* a stub function: 'value' (RSI) is used only by promotions */
+static code_t *do_resume_coding(coding_pause_t *cp, long value) {
+  code_t *r;
+  ni_compile_guard_t g;
+  NI_COMPILE_BEGIN(NI_ENTER_PAUSE);
+  psyco_guard_push(&g);
+  if (sigsetjmp(g.env, 0) != 0)
+    psyco_guard_retry(&g);
+  r = do_resume_coding_body(cp);
+  psyco_guard_pop(&g);
+  NI_COMPILE_END(NI_ENTER_PAUSE);
+  return r;
+}
+
+static code_t *do_resume_coding_body(coding_pause_t *cp) {
+  /* called when entering a coding_pause (described by 'cp'). The compile
+     consumes the state, so it starts from a copy, and the parked one is
+     kept until it is done, for a compile that runs out of memory to start
+     again from. */
+  vinfo_t *unused;
+  code_t *target = (cp->resume_fn)(psyco_unpark(&cp->state, &unused), cp + 1);
 
   /* then fix the jump to point to 'target' */
   change_cond_jump_target(cp->jump_to_fix, target);
 
-  /* cannot Py_DECREF(cp->self) because the current function is returning into
-     that code now, but any time later is fine: use the trash of codemanager.c
-   */
-  psyco_trash_object((PyObject *)cp->self);
+  /* the only way in was that jump: the stub is never entered again */
+  psyco_park_release(&cp->state);
   return target;
 }
 
-/* Prepare a 'coding pause', i.e. a short amount of code (proxy) that will be
-   called only if the execution actually reaches it to go on with compilation.
-   'po' is the PsycoObject corresponding to the proxy.
-   'jmpcondition' should not be CC_ALWAYS_FALSE.
-   The (possibly conditional) jump to the proxy is encoded in 'calling_code'.
-   When the execution reaches the proxy, 'resume_fn' is called and the proxy
-   destroys itself and replaces the original jump to it by a jump to the newly
-   compiled code. */
-DEFINEFN
-void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
-                        resume_fn_t resume_fn, void *extra, size_t extrasize) {
-  coding_pause_t *cp;
-  code_t *calling_code;
-  code_t *calling_limit;
-  code_t *limit;
-  CodeBufferObject *codebuf = psyco_new_code_buffer(NULL, NULL, &limit);
+/* a pause never reached when its owner dies */
+static void coding_pause_release(void *closure) {
+  psyco_park_release(&((coding_pause_t *)closure)->state);
+}
 
-  /* the proxy contains only a jump to do_resume_coding,
-     followed by a coding_pause_t structure, itself followed by the
-     'extra' data. */
-  calling_code = po->code;
-  calling_limit = po->codelimit;
-  po->code = insn_code_label(codebuf->codestart);
-  po->codelimit = limit;
-  cp = (coding_pause_t *)psyco_call_code_builder(
-      po, &do_resume_coding, true, SOURCE_DUMMY,
-      sizeof(coding_pause_t) + extrasize);
-  SHRINK_CODE_BUFFER(codebuf, po->code, "coding_pause");
-  /* fill in the coding_pause_t structure and the following 'extra' data */
+/* Prepare a 'coding pause', i.e. a stub (idispatcher.h) that will be
+   entered only if the execution actually reaches it to go on with
+   compilation.
+   'po' is the PsycoObject corresponding to the stub.
+   'jmpcondition' should not be CC_ALWAYS_FALSE.
+   The (possibly conditional) jump to the stub is written at 'po->code'.
+   When the execution reaches the stub, 'resume_fn' is called, the original
+   jump is repointed to the newly compiled code and the record is freed. */
+DEFINEFN
+code_t *psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
+                           resume_fn_t resume_fn, void *extra,
+                           size_t extrasize) {
+  coding_pause_t *cp;
+  code_t *stub, *end;
+
+  /* the trampoline's call clobbers the flags: a condition
+     still live in them, such as a virtual bool just compared, is saved in a
+     register first, in the calling code. A conditional pause jumps on the
+     flags, so there the only live condition must be the one it jumps on. */
+  if (jmpcondition == CC_ALWAYS_TRUE) {
+    code_t *code = po->code;
+    NEED_CC();
+    po->code = code;
+  }
+
+  /* the stub's record holds a coding_pause_t, then the 'extra' data */
+  cp = (coding_pause_t *)psyco_new_stub(
+      &do_resume_coding, sizeof(coding_pause_t) + extrasize, &stub);
   psyco_resolved_cc(po, jmpcondition); /* jmpcondition is true if we follow
                                           the branch */
-  cp->self = codebuf;
-  cp->po = po;
+  extra_assert(!HAS_CCREG(po));
   cp->resume_fn = resume_fn;
-  memcpy(cp + 1, extra, extrasize);
+  if (extrasize > 0) /* 'extra' may be NULL */
+    memcpy(cp + 1, extra, extrasize);
+  psyco_stub_set_release(cp, &coding_pause_release);
 
-  /* write the jump to the proxy */
-  po->code = calling_code;
-  po->codelimit = calling_limit;
-  cp->jump_to_fix =
-      conditional_jump_to(po, (code_t *)codebuf->codestart, jmpcondition);
+  /* write the jump to the stub */
+  cp->jump_to_fix = conditional_jump_to(po, stub, jmpcondition);
+  end = po->code;
+  NI_CS_STUB('P', cp, &cp->state, po);
+  psyco_park(&cp->state, po, NULL);
+  return end;
 }
 
 /* for psyco_coding_pause(): a resume function that simply resumes compilation.
@@ -741,10 +814,94 @@ static code_t *psyco_resume_compile(PsycoObject *po, void *extra) {
   mergepoint_t *mp =
       psyco_exact_merge_point(po->pr.merge_points, po->pr.next_instr);
   /* check that we are not compiling recursively, or at least not too deeply */
-  extra_assert(psyco_locked_buffers() < WARN_TOO_MANY_BUFFERS - 1);
+  extra_assert(psyco_code_open_count() < OPEN_EXTENTS_MAX);
   return (code_t *)psyco_compile_code(po, mp)->codestart;
-  /* XXX don't know what to do with the reference returned by
-     XXX psyco_compile_code() */
+}
+
+#if NI_CODESTATS
+/* The state each new block at a merge point starts from:
+   (code object, instruction, one string per vlocals slot). R is a
+   run-time value, C/F a constant (F: fixed, i.e. promoted), V a virtual
+   one by its computer, with the known fields in brackets. */
+DEFINEVAR PyObject *psyco_codestats_states = NULL;
+
+static void cs_sig(char **p, char *end, vinfo_t *vi, int depth) {
+  int i;
+  if (*p >= end - 64)
+    return;
+  if (vi == NULL) {
+    *p += sprintf(*p, "-");
+    return;
+  }
+  if (is_runtime(vi->source))
+    *p += sprintf(*p, "R");
+  else if (is_compiletime(vi->source)) {
+    source_known_t *sk = CompileTime_Get(vi->source);
+    *p += sprintf(*p, "%c%lx", (sk->refcount1_flags & SkFlagFixed) ? 'F' : 'C',
+                  (unsigned long)sk->value);
+  } else
+    *p += sprintf(*p, "V%lx",
+                  (unsigned long)VirtualTime_Get(vi->source)->compute_fn);
+  if (vi->array != NullArray && depth < 4) {
+    *p += sprintf(*p, "[");
+    for (i = 0; i < vi->array->count; i++) {
+      if (i)
+        *p += sprintf(*p, ",");
+      cs_sig(p, end, vi->array->items[i], depth + 1);
+    }
+    *p += sprintf(*p, "]");
+  }
+}
+
+/* leaves the thread's error indicator as it found it, as pycompiler.c's
+   counters do */
+static void cs_state(PsycoObject *po) {
+  PyObject *slots, *t, *et, *ev, *etb;
+  int i;
+  char buf[4096];
+  PyErr_Fetch(&et, &ev, &etb);
+  if (psyco_codestats_states == NULL &&
+      (psyco_codestats_states = PyList_New(0)) == NULL)
+    OUT_OF_MEMORY();
+  slots = PyList_New(po->vlocals.count);
+  if (slots == NULL)
+    OUT_OF_MEMORY();
+  for (i = 0; i < po->vlocals.count; i++) {
+    char *p = buf;
+    cs_sig(&p, buf + sizeof(buf), po->vlocals.items[i], 0);
+    PyList_SET_ITEM(slots, i, PyUnicode_FromStringAndSize(buf, p - buf));
+  }
+  t = Py_BuildValue("(OiNi)", po->pr.co, po->pr.next_instr, slots,
+                    psyco_cs_align_rejects);
+  if (t == NULL || PyList_Append(psyco_codestats_states, t) < 0)
+    OUT_OF_MEMORY();
+  Py_DECREF(t);
+  PyErr_Restore(et, ev, etb);
+}
+#endif
+
+/* The cap per merge point: once this many
+   blocks have been compiled at a merge point, a state that matches none of
+   them is generalised (dispatcher.c:psyco_forget_values) and compared
+   again, so it joins a general block instead of starting one more. The
+   count changes over time, but a respawn replay never passes a merge
+   point: it starts from the snapshot of the block, taken after this
+   decision, and the generalisation emits no respawn point. 0 disables. */
+#ifndef MP_BLOCK_CAP
+#define MP_BLOCK_CAP 6
+#endif
+static bool mp_capped(mergepoint_t *mp) {
+  return MP_BLOCK_CAP > 0 && mp != NULL && mp->blocks >= MP_BLOCK_CAP;
+}
+
+static void mp_new_block(PsycoObject *po, mergepoint_t *mp) {
+  if (mp == NULL)
+    return;
+  mp->blocks++;
+  po->mp_serial = po->respawn_proxy->serial;
+#if NI_CODESTATS
+  cs_state(po);
+#endif
 }
 
 /* Main compiling function. Emit machine code corresponding to the state
@@ -760,9 +917,7 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
   if (cmp != NULL && cmp->diff == NullArray) /* exact match, jump there */
   {
     CodeBufferObject *oldcodebuf;
-    code_t *code2 = psyco_unify(po, cmp, &oldcodebuf);
-    /* XXX store reference to oldcodebuf somewhere */
-    return code2;
+    return psyco_unify(po, cmp, &oldcodebuf);
   } else {
     if (po->codelimit - po->code <= BUFFER_MARGIN && cmp == NULL) {
       /* Running out of space in this buffer. */
@@ -775,15 +930,16 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
          while the user sees no progression in the execution of
          her program.
        */
-      psyco_coding_pause(po, CC_ALWAYS_TRUE, &psyco_resume_compile, NULL, 0);
-      return po->code;
+      psyco_compatible_keep_facts = false;
+      return psyco_coding_pause(po, CC_ALWAYS_TRUE, &psyco_resume_compile,
+                                NULL, 0);
     }
 
     /* Enough space left, continue in the same buffer. */
     {
-      CodeBufferObject *codebuf =
-          psyco_proxy_code_buffer(po, mp != NULL ? &mp->entries : NULL);
-      /*Py_DECREF(codebuf); XXX cannot loose reference if mp == NULL*/
+      CodeBufferObject *codebuf;
+      NI_SNAPKIND(cmp != NULL ? 'm' : 'M');
+      codebuf = psyco_proxy_code_buffer(po, mp != NULL ? &mp->entries : NULL);
       po->code = insn_code_label(codebuf->codestart);
     }
 
@@ -798,12 +954,83 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
       return psyco_compile(po, mp, continue_compilation);
     }
 
+    /* a second block at this merge point: large int constants become
+       run-time objects first. Replay-safe for the same
+       reasons as the cap. */
+    if (mp != NULL && mp->blocks > 0 && psyco_unpromote_large_ints(po))
+      return psyco_compile(po, mp, continue_compilation);
+
+    if (mp_capped(mp) && psyco_forget_values(po, &mp->entries))
+      return psyco_compile(po, mp, continue_compilation);
+
+    /* a promotion's compare at its own instruction ends here: what is
+       compiled next runs instructions (dispatcher.c) */
+    psyco_compatible_keep_facts = false;
+    mp_new_block(po, mp);
     if (continue_compilation)
       return NULL; /* I won't actually compile myself, let the caller know */
 
     /* call the entry point function which performs the actual compilation */
     return GLOBAL_ENTRY_POINT(po);
   }
+}
+
+/* Join points. A split site
+   (pycompiler.c, split_after_global) ends its block, and the blocks started
+   after it at one instruction are listed like a merge point's ('ge',
+   mergepoints.c:psyco_join_point). A branch respawned from the site's
+   checks (its block is a respawned one) usually ends in the state the main
+   path had there, so it is compared as at a merge point: it jumps into a
+   compatible block, constants that differ made run-time, and the known
+   fields of run-time values that the block doesn't have are dropped
+   (psyco_compatible_join), instead of compiling its own copy of the code
+   up to the next merge point. Any other path only jumps into an exact
+   match: un-promoting or dropping there would make the main path lose
+   facts. Both rewrite the state's small ints first (canonical_int), as at
+   a merge point. Merge points are never inside an inlined frame, join
+   points can be: the caller's code object and position there are fixed
+   constants (psyfunc.c:psyco_save_inline_po), never made run-time.
+   Replay-safe as merge points are: a replay never reaches the end of its
+   block, a joined block's respawn points replay from its own snapshot,
+   and un-promotion and unification emit no respawn point. */
+DEFINEFN long psyco_stat_joins[4];
+
+static code_t *compile_join(PsycoObject *po, global_entries_t *ge,
+                            bool branch, bool first) {
+  vcompatible_t *cmp =
+      ge == NULL ? NULL : psyco_compatible_join(po, ge, branch);
+  CodeBufferObject *codebuf;
+
+  if (cmp != NULL && cmp->diff == NullArray) {
+    CodeBufferObject *oldcodebuf;
+    if (first)
+      psyco_stat_joins[branch ? 0 : 3]++;
+    return psyco_unify(po, cmp, &oldcodebuf);
+  }
+  if (cmp != NULL && !branch) {
+    psyco_stabilize(cmp);
+    cmp = NULL;
+  }
+  if (branch && first)
+    psyco_stat_joins[cmp != NULL ? 1 : 2]++;
+  NI_SNAPKIND(cmp != NULL ? 'j' : 'J');
+  codebuf = psyco_proxy_code_buffer(po, ge);
+  po->code = insn_code_label(codebuf->codestart);
+  if (cmp != NULL) {
+    int i;
+    for (i = cmp->diff->count; i--;)
+      psyco_unfix(po, cmp->diff->items[i]);
+    psyco_stabilize(cmp);
+    return compile_join(po, ge, branch, false);
+  }
+  return NULL;
+}
+
+DEFINEFN
+code_t *psyco_compile_join(PsycoObject *po, global_entries_t *ge) {
+  bool branch = po->respawn_proxy != NULL &&
+                po->respawn_proxy->snapshot.fz_respawned_from != NULL;
+  return compile_join(po, ge, branch, true);
 }
 
 DEFINEFN
@@ -832,7 +1059,6 @@ void psyco_compile_cond(PsycoObject *po, mergepoint_t *mp,
     void *extra = setup_conditional_code_bounds(po, po2, condition);
     codeend = psyco_unify(po2, cmp, &oldcodebuf);
     make_code_conditional(po, codeend, condition, extra);
-    /* XXX store reference to oldcodebuf somewhere */
   } else {
     /* Use the conditional-compiling abilities of
        coding_pause(); it will write a Jcond to a proxy
@@ -840,8 +1066,8 @@ void psyco_compile_cond(PsycoObject *po, mergepoint_t *mp,
     */
     if (cmp != NULL)
       psyco_stabilize(cmp);
-    psyco_coding_pause(po2, condition, &psyco_resume_compile, NULL, 0);
-    po->code = po2->code;
+    po->code =
+        psyco_coding_pause(po2, condition, &psyco_resume_compile, NULL, 0);
   }
 }
 
@@ -860,21 +1086,27 @@ CodeBufferObject *psyco_compile_code(PsycoObject *po, mergepoint_t *mp) {
     return psyco_unify_code(po, cmp);
 
   /* We compile the new code right now if we have a full mismatch and if
-     there are not too many locked big buffers in codemanager.c */
-  compile_now =
-      cmp == NULL && psyco_locked_buffers() < WARN_TOO_MANY_BUFFERS - 1;
+     there are not too many extents being written (codemanager.h) */
+  compile_now = cmp == NULL && psyco_code_open_count() < OPEN_EXTENTS_MAX;
   if (cmp == NULL && !compile_now)
     mp = NULL; /* we are about to write a coding pause,
                   don't register it in mp->entries */
 
   /* Normal case. Start a new buffer */
+  NI_SNAPKIND(cmp != NULL ? 'b' : mp != NULL ? 'B' : 'U');
   codebuf = psyco_new_code_buffer(po, mp == NULL ? NULL : &mp->entries,
                                   &po->codelimit);
   po->code = insn_code_label(codebuf->codestart);
 
-  if (compile_now) {
+  if (compile_now && mp != NULL && mp->blocks > 0 &&
+      psyco_unpromote_large_ints(po))
+    code1 = psyco_compile(po, mp, false);
+  else if (compile_now && mp_capped(mp) && psyco_forget_values(po, &mp->entries))
+    code1 = psyco_compile(po, mp, false);
+  else if (compile_now) {
     /* call the entry point function which performs the actual compilation
        (this is the usual case) */
+    mp_new_block(po, mp);
     code1 = GLOBAL_ENTRY_POINT(po);
   } else if (cmp != NULL) /* partial match */
   {
@@ -885,17 +1117,15 @@ CodeBufferObject *psyco_compile_code(PsycoObject *po, mergepoint_t *mp) {
     /* start over (maybe we have already seen this new state) */
     code1 = psyco_compile(po, mp, false);
   } else {
-    /* detected too many locked buffers. This occurs when compiling a
+    /* too many extents being written. This occurs when compiling a
        function that calls a function that needs compiling, recursively.
-       Delay compilation until run-time, when psyco_locked_buffers() will
+       Delay compilation until run-time, when psyco_code_open_count() will
        be much smaller. */
-    psyco_coding_pause(po, CC_ALWAYS_TRUE, &psyco_resume_compile, NULL, 0);
-    code1 = po->code;
+    code1 =
+        psyco_coding_pause(po, CC_ALWAYS_TRUE, &psyco_resume_compile, NULL, 0);
   }
 
-  /* we have written some code into a new codebuf, now shrink it to
-     its actual size */
-  psyco_shrink_code_buffer(codebuf, code1);
+  CLOSE_CODE("block", codebuf->codestart, code1);
   return codebuf;
 }
 
@@ -926,13 +1156,24 @@ mergepoint_t *PsycoObject_Ready(PsycoObject *po) {
   mergepoint_t *mp;
   psyco_assert_coherent(po);
   mp = psyco_first_merge_point(po->pr.merge_points);
-  psyco_delete_unused_vars(po, &mp->entries);
+  psyco_forget_dead_vars(po, &mp->entries);
   return mp;
+}
+
+static bool is_cell_arg(PyCodeObject *co, int arg) {
+  Py_ssize_t i;
+  if (co->co_cell2arg == NULL)
+    return false;
+  for (i = 0; i < PyTuple_GET_SIZE(co->co_cellvars); i++)
+    if (co->co_cell2arg[i] == arg)
+      return true;
+  return false;
 }
 
 DEFINEFN
 PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
-                                  PyObject *merge_points, int recursion) {
+                                  PyObject *builtins, PyObject *merge_points,
+                                  int recursion) {
   int i, argc, ncells, nfrees, extras;
   PsycoObject *po;
   Source rsrc;
@@ -949,12 +1190,28 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
   INIT_PROCESSOR_PSYCOOBJECT(po);
   po->pr.auto_recursion = AUTO_RECURSION(recursion);
 
-  /* initialize po->vlocals */
-  Py_INCREF(globals);
-  sk = sk_new((long)globals, SkFlagPyObj);
+  /* initialize po->vlocals. The globals are borrowed: compiled code holds
+     its constants until its code object dies (sk_new), and here that
+     would close a cycle the GC can't see, globals -> function -> code ->
+     record -> owner -> globals, in all code with globals of its own
+     (exec, namedtuple), which only the owner scan (codemanager.c) would
+     find. Borrowing is safe because compiled code
+     uses the dict only as an argument to run-time calls, never its
+     contents at compile time: it runs only in a frame that holds the dict,
+     and if a new dict later gets a dead one's address, the old code does
+     for it what new code would. Code that reads globals at compile time
+     (say a cached LOAD_GLOBAL) must take its own reference. */
+  sk = sk_new((long)globals, SkFlagPyObj | SkFlagBorrowed);
   LOC_GLOBALS = vinfo_new(CompileTime_NewSk(sk));
+  /* the frame's f_builtins, owned: lookups read it at compile time, and a
+     dict swapped in for a while may not outlive the code */
+  Py_INCREF(builtins);
+  LOC_BUILTINS = vinfo_new(CompileTime_NewSk(sk_new((long)builtins,
+                                                    SkFlagPyObj)));
 
-  argc = co->co_argcount;
+  /* keyword-only arguments follow the positional ones in the frame, filled
+     in by CPython (only frame entries get here with any: psyfunc.c) */
+  argc = co->co_argcount + co->co_kwonlyargcount;
   if (co->co_flags & CO_VARARGS)
     argc++;
   if (co->co_flags & CO_VARKEYWORDS)
@@ -1003,9 +1260,13 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
   }
   /* initialize the regular arguments */
   while (i > 0) {
-    /* XXX do something more intelligent for cell and
-           free vars */
     po->stack_depth += sizeof(long);
+    if (is_cell_arg(co, i - 1)) {
+      /* CPython moved it into its cell and left NULL (ceval.c:
+         _PyEval_EvalCodeWithName); only LOAD_DEREF reads it now */
+      LOC_LOCALS_PLUS[--i] = psyco_vi_Zero();
+      continue;
+    }
     /* arguments get borrowed references */
     rsrc = RunTime_NewStack(po->stack_depth, false, false);
     v = vinfo_new(rsrc);
@@ -1015,8 +1276,7 @@ PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
      initialized to NULL by PsycoObject_New() */
 
   /* store the code object */
-  po->pr.co = co;
-  Py_INCREF(co); /* XXX never freed */
+  po->pr.co = co; /* borrowed: see psyfunc.c:fncall_finish_store */
   pyc_data_build(po, merge_points);
 
   /* set up the CALL return address */

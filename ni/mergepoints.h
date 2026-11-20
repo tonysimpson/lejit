@@ -18,6 +18,7 @@
 */
 struct mergepoint_s {
   int bytecode_position;
+  int blocks; /* blocks compiled from here (vcompiler.c, the cap) */
   global_entries_t entries;
 };
 
@@ -30,6 +31,12 @@ struct mergepoint_s {
 
 /* Get merge points (cached) */
 EXTERNFN PyObject* psyco_get_merge_points(PyCodeObject* co, int module);
+/* the same where x->merge_points is NULL: analyses 'co' */
+EXTERNFN PyObject* psyco_analyse_code(PyCodeObject* co, ni_code_extra_t* x,
+                                      int module);
+EXTERNFN int psyco_is_genexpr(PyCodeObject* co);
+/* the index in co_freevars of '__class__', or -1 */
+EXTERNFN int psyco_class_cell(PyCodeObject* co);
 
 /* Get a pointer to the first mergepoint_t structure in the array whose
    'bytecode_ptr' is >= position. */
@@ -43,6 +50,11 @@ EXTERNFN mergepoint_t* psyco_first_merge_point(PyObject* mergepoints);
 EXTERNFN mergepoint_t* psyco_exact_merge_point(PyObject* mergepoints, int position);
 
 
+/* The snapshots of the blocks started at 'position' after a split site
+   (vcompiler.c:psyco_compile_join); NULL if out of memory. */
+EXTERNFN global_entries_t* psyco_join_point(PyObject* mergepoints,
+					    int position);
+
 #define MP_FLAGS_HAS_EXCEPT      1   /* the code block has an 'except' clause */
 #define MP_FLAGS_HAS_FINALLY     2   /* the code block has a 'finally' clause */
 #define MP_FLAGS_INLINABLE       4   /* function could be inlined             */
@@ -51,4 +63,13 @@ EXTERNFN mergepoint_t* psyco_exact_merge_point(PyObject* mergepoints, int positi
 #define MP_FLAGS_EXTRA       (-256)
 
 EXTERNFN int psyco_mp_flags(PyObject* mergepoints);
+/* whether compiled code tests eval_breaker before the instruction at
+   position (a byte offset) */
+EXTERNFN int psyco_breaker_check_at(PyObject* mergepoints, int position);
+/* the instructions before which ceval doesn't test eval_breaker: it tests
+   before the next one, as these go on with DISPATCH(). YIELD_FROM is
+   never compiled. */
+#define BREAKER_SKIPS(op)                                                    \
+    ((op) == SETUP_FINALLY || (op) == SETUP_WITH ||                          \
+     (op) == BEFORE_ASYNC_WITH || (op) == YIELD_FROM)
 #endif /* _MERGEPOINTS_H */

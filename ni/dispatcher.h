@@ -38,8 +38,11 @@ struct FrozenPsycoObject_s {
 #endif
   PROCESSOR_FROZENOBJECT_FIELDS
   short fz_respawned_cnt;
+  int fz_next_instr;        /* pr.next_instr, which fz_pyc_data leaves out */
   CodeBufferObject* fz_respawned_from;
-  pyc_data_t* fz_pyc_data;  /* only partially allocated */
+  pyc_data_t* fz_pyc_data;  /* partially allocated, and shared by the
+                               snapshots with the same (dispatcher.c,
+                               pyc_share) */
 };
 
 
@@ -59,8 +62,96 @@ PSY_INLINE void fpo_mark_unused(FrozenPsycoObject* fpo) {
 EXTERNFN void fpo_build(FrozenPsycoObject* fpo, PsycoObject* po);
 EXTERNFN void fpo_release(FrozenPsycoObject* fpo);
 
+#if NI_CODESTATS
+/* NI_SNAPDUMP=FILE appends every snapshot taken to FILE, with its kind,
+   buffer, predecessor and code position. A caller
+   sets the kind before the buffer is made; new_code_buffer reads and
+   clears it. */
+EXTERNVAR char psyco_cs_snap_kind;
+EXTERNFN void psyco_cs_snapdump(FrozenPsycoObject* fpo, PsycoObject* po,
+                                int kind, unsigned long serial,
+                                CodeBufferObject* pred, int summary);
+#define NI_SNAPKIND(k)  (psyco_cs_snap_kind = (k))
+#else
+#define NI_SNAPKIND(k)  ((void)0)
+#endif
+#if NI_CODESTATS
+/* NI_STUBDUMP=FILE writes a record to FILE for every stub made and
+   entered, record allocated for an owner, owner released, snapshot taken,
+   parked state frozen and locals map made or read, with the user-mode
+   instruction count at each. Kinds of stub: 'R'
+   respawn, 'G' a cached global's guard (a respawn), 'P' coding pause, 'M'
+   promotion site. */
+EXTERNVAR bool psyco_cs_stubdump_on;
+EXTERNFN void psyco_cs_stub(int kind, void* closure, void* ps,
+                            PsycoObject* po);
+EXTERNFN void psyco_cs_stub_enter(void* closure, bool leave);
+EXTERNFN void psyco_cs_replay_done(PsycoObject* po);
+EXTERNFN void psyco_cs_bytecode(PsycoObject* po);
+EXTERNFN void psyco_cs_owner_alloc(void* p, size_t size, void* caller);
+EXTERNFN void psyco_cs_owner_free(ni_owner_t* o);
+/* a frame's locals map made ('data', 'n' bytes, hashed for duplicates),
+   and one read (frames.c) */
+EXTERNFN void psyco_cs_map(void* map, const void* data, size_t n);
+EXTERNFN void psyco_cs_map_read(void* map);
+#define NI_CS_STUB(k, c, ps, po)                                         \
+  (psyco_cs_stubdump_on ? psyco_cs_stub(k, c, ps, po) : (void)0)
+#else
+#define NI_CS_STUB(k, c, ps, po)  ((void)0)
+#endif
+
 /* build a 'live' PsycoObject from frozen snapshot */
 EXTERNFN PsycoObject* fpo_unfreeze(FrozenPsycoObject* fpo);
+
+/* A compiler state kept until run time reaches it: a coding pause's, or a
+   promotion site's for each new value, with a variable in it ('fix', the
+   promoted one). Most are never used, and a live PsycoObject is about four
+   times the size of its frozen form, but freezing one and unfreezing it
+   costs more than copying it. So a parked state stays live until
+   PARK_LIVE_MAX newer ones are, then is frozen: a short program never
+   freezes one. A frozen state has the fields a snapshot rebuilds or
+   leaves out saved as they were, and 'fix' as the indices leading to it;
+   unlike fpo_build, freezing keeps what is known of constants' classes,
+   since the code compiled from it runs only after the checks before it.
+   A state with a pending pseudo-exception, or whose 'fix' is too deep or
+   under a constant, stays live. What only a live state uses and what only
+   a frozen one does share their bytes; 'live' says which is there. */
+#ifndef PARK_LIVE_MAX
+#define PARK_LIVE_MAX 4096
+#endif
+#define FIXPATH_MAX 6
+typedef struct parked_state_s {
+  PsycoObject* live;   /* the live state, or NULL once frozen or released */
+  union {
+    struct {
+      vinfo_t* fix;    /* in 'live' */
+      struct parked_state_s *older, *newer;  /* the live ones not frozen yet */
+    };
+    struct {
+      FrozenPsycoObject fz;     /* unused (fpo_mark_unused) once released */
+      CodeBufferObject* respawn_proxy;
+      PyObject* merge_points;
+      unsigned long mp_serial;
+      int respawn_cnt, stack_base, stack_level;
+      short fixpath[FIXPATH_MAX];   /* ended by -1 if shorter */
+      char split_after_global;
+#if NI_CODESTATS
+      int cs_bc;                    /* po->cs_bc */
+#endif
+    };
+  };
+} parked_state_t;
+/* parks 'po', which it takes; 'fix' may be NULL. 'ps' is zeroed */
+EXTERNFN void psyco_park(parked_state_t* ps, PsycoObject* po, vinfo_t* fix);
+/* a state to compile from, and 'fix' in it. The parked one stays, for a
+   compile that runs out of memory to start again from: a frozen one is
+   unfrozen afresh, a live one is returned and replaced by a copy
+   (psyco_duplicate) */
+EXTERNFN PsycoObject* psyco_unpark(parked_state_t* ps, vinfo_t** fix);
+/* releases the parked state; it may be released again */
+EXTERNFN void psyco_park_release(parked_state_t* ps);
+/* states parked live and frozen: ni._stats()['parked'] */
+EXTERNVAR long psyco_stat_parked_live, psyco_stat_parked_frozen;
 
 /* inspection */
 PSY_INLINE int get_stack_depth(FrozenPsycoObject* fpo) {
@@ -84,8 +175,54 @@ typedef struct {
 } vcompatible_t;
 EXTERNFN vcompatible_t* psyco_compatible(PsycoObject* po,
                                          global_entries_t* pattern);
+/* set while a promotion's continuation is compared at its own instruction:
+   no known fact is dropped there (dispatcher.c, compatible_unused_fact) */
+EXTERNVAR bool psyco_compatible_keep_facts;
+/* merge-point matches that dropped unused facts (ni._stats()['fact_drops']) */
+EXTERNVAR long psyco_stat_fact_drops;
+/* the same, at a join point (vcompiler.c:psyco_compile_join): with
+   'drop_fields' the known fields of a run-time value that the snapshot
+   hasn't are dropped at any depth, not only below the first two
+   (compatible_array, CHECK_FOR_NULL) */
+EXTERNFN vcompatible_t* psyco_compatible_join(PsycoObject* po,
+                                              global_entries_t* pattern,
+                                              bool drop_fields);
+
+/* What psyco_compatible() can reject a snapshot by without reading it:
+   for the first 63 vlocals, two bits each of what the item must be in a
+   state that matches (b1:b0 = 00 anything, 01 run-time, 10 compile-time,
+   11 virtual); in an inlined frame, a hash of the fixed constants
+   LOC_INLINING starts with (its code object, position and serial; 0 if
+   none), which a state that matches has the same, and the same two bits
+   for the first 64 items of the parent frame after them. Made when a
+   buffer is registered (codemanager.c), from the state its snapshot is
+   taken of. */
+typedef struct {
+  unsigned long b1, b0; /* SUMMARY_REST in b0 */
+} fz_summary_head_t;
+typedef struct {
+  fz_summary_head_t head;
+  unsigned long inline_key;
+  unsigned long p1, p0;
+} fz_summary_t;
+/* A state with no inlined frame has a summary whose rest after 'head' is
+   0 and rejects nothing: most states. Their buffers keep 'head' alone
+   (codemanager.h); the others have SUMMARY_REST in head.b0, and so has
+   every state's summary. */
+#define SUMMARY_REST (1UL << 63)
+EXTERNFN bool psyco_summary_short(vinfo_array_t* aa);
+EXTERNFN void psyco_summary_build(fz_summary_t* s, vinfo_array_t* aa);
+EXTERNFN void psyco_summary_build_short(fz_summary_head_t* s, vinfo_array_t* aa);
 
 EXTERNFN void psyco_stabilize(vcompatible_t* lastmatch);
+EXTERNFN bool psyco_forget_values(PsycoObject* po, global_entries_t* ge);
+/* a block left 'ge', or 'ge' is freed: what psyco_forget_values kept
+   about it is dropped */
+EXTERNFN void psyco_ge_changed(global_entries_t* ge);
+EXTERNFN bool psyco_unpromote_large_ints(PsycoObject* po);
+#if NI_CODESTATS
+EXTERNVAR int psyco_cs_align_rejects;
+#endif
 
 
 /*****************************************************************/
@@ -112,10 +249,12 @@ EXTERNFN void psyco_stabilize(vcompatible_t* lastmatch);
 */
 struct global_entries_s {
 	PyObject* fatlist;      /* list of PyLongObjects then CodeBufferObjects */
+	struct varies_s* varies; /* psyco_forget_values's, or NULL */
 };
 
 /* initialize a global_entries_t structure */
 PSY_INLINE void psyco_ge_init(global_entries_t* ge) {
+	ge->varies = NULL;
 	ge->fatlist = PyList_New(0);
 	if (ge->fatlist == NULL)
 		OUT_OF_MEMORY();
@@ -135,7 +274,7 @@ PSY_INLINE void psyco_ge_unused_var(global_entries_t* ge, int num)
 		OUT_OF_MEMORY();
 }
 
-EXTERNFN void psyco_delete_unused_vars(PsycoObject* po, global_entries_t* ge);
+EXTERNFN void psyco_forget_dead_vars(PsycoObject* po, global_entries_t* ge);
 
 
 /*****************************************************************/
@@ -144,8 +283,8 @@ EXTERNFN void psyco_delete_unused_vars(PsycoObject* po, global_entries_t* ge);
 /* Update 'po' to match 'lastmatch', then jump to 'lastmatch'.
    For the conversion we might have to emit some code.
    If po->code == NULL or there is not enough room between code and
-   po->codelimit, a new code buffer is created. A new reference to
-   the new or target code buffer is returned in 'target'.
+   po->codelimit, a new code buffer is created. The new or target code
+   buffer is returned in 'target', borrowed (its owner holds it).
    If po->code != NULL, the return value points at the end of the
    code that has been written there; otherwise, the return value is
    undefined (but not NULL).
@@ -157,8 +296,8 @@ EXTERNFN code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
 /* Simplified interface to psyco_unify() without using a previously
    existing code buffer (i.e. 'po->code' is uninitialized). If needed,
    return a new buffer with the necessary code followed by a JMP to
-   'lastmatch'. If no code is needed, just return a new reference to
-   'lastmatch->matching'.
+   'lastmatch'. If no code is needed, just return 'lastmatch->matching'
+   (borrowed).
 */
 EXTERNFN CodeBufferObject* psyco_unify_code(PsycoObject* po,
                                             vcompatible_t* lastmatch);
@@ -265,6 +404,31 @@ EXTERNFN int runtime_NON_NULL_t(PsycoObject* po, vinfo_t* vi);
    Same return values as above.  Does not consume a ref. */
 EXTERNFN int runtime_in_bounds(PsycoObject* po, vinfo_t* vi,
                                long lowbound, long highbound);
+
+#if ALL_CHECKS
+/* the replay check (dispatcher.c) records where each respawn point was made:
+   the outermost of these calls, as file and line */
+EXTERNVAR const char* psyco_respawn_file;
+EXTERNVAR int psyco_respawn_line;
+#define NI_RESPAWN_SITE(call) ({                                    \
+        const char* _f = psyco_respawn_file;                        \
+        int _l = psyco_respawn_line;                                \
+        __typeof__(call) _r;                                        \
+        if (_f == NULL) {                                           \
+                psyco_respawn_file = __FILE__;                      \
+                psyco_respawn_line = __LINE__;                      \
+        }                                                           \
+        _r = (call);                                                \
+        psyco_respawn_file = _f;                                    \
+        psyco_respawn_line = _l;                                    \
+        _r; })
+#define runtime_condition_f(po, c) NI_RESPAWN_SITE(runtime_condition_f(po, c))
+#define runtime_condition_t(po, c) NI_RESPAWN_SITE(runtime_condition_t(po, c))
+#define runtime_NON_NULL_f(po, v)  NI_RESPAWN_SITE(runtime_NON_NULL_f(po, v))
+#define runtime_NON_NULL_t(po, v)  NI_RESPAWN_SITE(runtime_NON_NULL_t(po, v))
+#define runtime_in_bounds(po, v, lo, hi)                                  \
+        NI_RESPAWN_SITE(runtime_in_bounds(po, v, lo, hi))
+#endif
 
 
 #endif /* _DISPATCHER_H */

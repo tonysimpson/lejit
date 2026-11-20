@@ -1,3 +1,18 @@
+/*
+ * The core data model of the specialiser. Every value the compiler handles is
+ * a vinfo_t whose 'source' says *when* the value is known:
+ *   RunTime     - only when the emitted code runs; it lives in a register
+ *                 and/or a stack slot;
+ *   CompileTime - a constant known now (a refcounted source_known_t);
+ *   VirtualTime - not built yet: described by sub-values in vinfo->array and
+ *                 materialised by source_virtual_t.compute_fn only if it
+ *                 escapes.
+ * Source is a tagged long (low 2 bits = time). The RunTime encoding packs the
+ * x86-64 register number into the top bits, so this header is not really
+ * backend-neutral. PsycoObject is the whole compiler state at one bytecode
+ * position; only po->vlocals is compared when looking for code that has
+ * already been compiled.
+ */
 /***************************************************************/
 /***           Structures used by the compiler part            ***/
 /***************************************************************/
@@ -108,6 +123,12 @@ PSY_INLINE bool is_rtnonneg(RunTimeSource s) {
   return s & RunTime_NonNeg;
 }
 
+/* a run-time value whose promotions take the generic path: a megamorphic
+   site's, or a forgotten value (dispatcher.c:psyco_forget_values) */
+PSY_INLINE bool is_megamorphic(Source s) {
+  return is_runtime(s) && (s & RunTime_Megamorphic) != 0;
+}
+
 /* mutation */
 PSY_INLINE RunTimeSource remove_rtref(RunTimeSource s) {
   CHKTIME(s, RunTime);
@@ -150,6 +171,8 @@ PSY_INLINE RunTimeSource set_rtnonneg(RunTimeSource s) {
 typedef struct {
   long refcount1_flags; /* flags and reference counter */
   long value;           /* compile-time known value */
+  unsigned long used;   /* serial of the last block that relied on it
+                           (codemanager.h:sk_mark_used) */
 } source_known_t;
 
 /* flags for source_known_t::refcount1_flags: */
@@ -158,11 +181,16 @@ typedef struct {
    essentially on this value to be constant */
 #define SkFlagFixed 0x01
 
-/* value is a PyObject* and holds a reference */
+/* value is a PyObject*, and the reference given with it goes to the
+   owner current when the source_known_t is made (codemanager.h), which
+   holds it while its code lives: the source_known_t borrows it */
 #define SkFlagPyObj 0x02
 
+/* with SkFlagPyObj: the reference is borrowed (the frame's globals) */
+#define SkFlagBorrowed 0x04
+
 /* first unused flag */
-#define SkFlagEnd 0x04
+#define SkFlagEnd 0x08
 #define SkFlagMask (SkFlagEnd - 1)
 
 /* refcounting */
@@ -178,10 +206,14 @@ PSY_INLINE void sk_decref(source_known_t *sk) {
 /* construction */
 BLOCKALLOC_INTERFACE(sk, source_known_t)
 
+EXTERNFN void psyco_owner_keep(PyObject *o); /* codemanager.h */
 PSY_INLINE source_known_t *sk_new(long v, long flags) {
   source_known_t *sk = psyco_llalloc_sk();
+  if ((flags & (SkFlagPyObj | SkFlagBorrowed)) == SkFlagPyObj)
+    psyco_owner_keep((PyObject *)v);
   sk->refcount1_flags = flags;
   sk->value = v;
+  sk->used = 0;
   return sk;
 }
 PSY_INLINE void sk_delete(source_known_t *sk) { psyco_llfree_sk(sk); }
@@ -261,7 +293,9 @@ PSY_INLINE CompileTimeSource set_ct_value(CompileTimeSource s, long v) {
    real-code testing would be welcome.) */
 #define NW_VLISTS 5
 #define NW_TUPLES_NORMAL 4
-#define NW_TUPLES_FUNCALL 4
+/* forced: a tuple passed to a compiled callee and given back must be the
+   same object */
+#define NW_TUPLES_FUNCALL NW_FORCE
 #define NW_STRSLICES_NORMAL 5
 #define NW_STRSLICES_FUNCALL 9
 #define NW_CATSTRS_NORMAL 4 /* catstrs also have a vlist internally */
@@ -304,7 +338,7 @@ EXTERNVAR const long psyco_zero;
 
 struct vinfo_array_s {
   int count;
-  vinfo_t *items[7]; /* always variable-sized */
+  vinfo_t *items[]; /* always variable-sized */
 };
 
 /* construction */
@@ -330,6 +364,10 @@ struct vinfo_s {
   Source source;
   vinfo_array_t *array; /* substructure variables or a NullArray */
   vinfo_t *tmp;         /* internal use of the dispatcher */
+  /* a run-time object's type as it was when last known, held, or NULL: a
+     hint, not a fact (pobject.c:Psyco_TypeHintGuard). Kept in
+     snapshots, ignored when states are compared */
+  source_known_t *type_hint;
 };
 
 /* construction */
@@ -340,12 +378,29 @@ PSY_INLINE vinfo_t *vinfo_new(Source src) {
   vi->refcount = 1;
   vi->source = src;
   vi->array = NullArray;
+  vi->tmp = NULL; /* fz_compress reads stale marks (dispatcher.c) */
+  vi->type_hint = NULL;
   return vi;
 }
 PSY_INLINE vinfo_t *vinfo_new_skref(Source src) {
   if (is_compiletime(src))
     sk_incref(CompileTime_Get(src));
   return vinfo_new(src);
+}
+
+/* An object built at compile time from constants, as a constant. Every run
+   of the code then sees this one object, which is right only where CPython
+   shares it too: a result its constructor took from a cache (a small int, a
+   one-character str, the empty tuple, the operand itself) has other
+   references. A fresh object, which CPython makes anew on every run, is
+   released and the result is NULL: the caller builds it at run time, so
+   identity (is, id(), NaN in a set) stays as CPython has it. */
+PSY_INLINE vinfo_t *psyco_shared_constant(PyObject *o) {
+  if (Py_REFCNT(o) == 1) {
+    Py_DECREF(o);
+    return NULL;
+  }
+  return vinfo_new(CompileTime_NewSk(sk_new((long)o, SkFlagPyObj)));
 }
 
 /* copy constructor */
@@ -528,6 +583,30 @@ EXTERNFN bool psyco_internal_putfld(PsycoObject *po, int findex, defield_t df,
 #define NONNEG_FIELD(cstruct, ctype, cfield, prevf)                            \
   STRUCT_FIELD_BUILD(cstruct, ctype, cfield, prevf, FIELD_NONNEG)
 
+/* a field of a CPython struct: its offset, the size Ni reads and whether
+   unsigned come from psyco.h's NI_OFS_, NI_SIZE2_ and NI_UNSIGNED_
+   macros, checked against the target's headers; a field not listed
+   there doesn't compile. DEF_FIELD and the others above are for
+   Ni's own structs. */
+#define CPY_FIELD_BUILD(cstruct, cfield, prevf, flags)                         \
+  ((defield_t)(((long)NI_OFS_##cstruct##__##cfield << FIELD_OFS_SHIFT) |       \
+               ((long)NI_SIZE2_##cstruct##__##cfield << FIELD_SIZE2_SHIFT) |   \
+               field_next_index(prevf, true) |                                 \
+               (NI_UNSIGNED_##cstruct##__##cfield ? FIELD_UNSIGNED : 0) |      \
+               flags))
+#define CPY_FIELD(cstruct, cfield, prevf)                                      \
+  CPY_FIELD_BUILD(cstruct, cfield, prevf, 0)
+#define CPY_NONNEG_FIELD(cstruct, cfield, prevf)                               \
+  CPY_FIELD_BUILD(cstruct, cfield, prevf, FIELD_NONNEG)
+/* the items of an array field, as DEF_ARRAY at its offset */
+#define CPY_ARRAY(cstruct, cfield)                                             \
+  ((defield_t)(((long)NI_OFS_##cstruct##__##cfield << FIELD_OFS_SHIFT) |       \
+               ((long)NI_SIZE2_##cstruct##__##cfield << FIELD_SIZE2_SHIFT) |   \
+               FIELD_RESERVED_INDEX | FIELD_ARRAY |                            \
+               (NI_UNSIGNED_##cstruct##__##cfield ? FIELD_UNSIGNED : 0)))
+/* the offset alone, for the backend */
+#define CPY_OFFSET(cstruct, cfield) NI_OFS_##cstruct##__##cfield
+
 /* the same, for pure arrays instead of structures */
 #define DEF_ARRAY(ctype, baseofs) ARRAY_FIELD_BUILD(ctype, baseofs, 0)
 #define UNSIGNED_ARRAY(ctype, baseofs)                                         \
@@ -654,8 +733,6 @@ PSY_INLINE int field_next_index(defield_t df, bool ovf) {
 /***   PsycoObject: state of the compiler                      ***/
 
 struct PsycoObject_s {
-  /* used to be a Python object, hence the name */
-
   /* assembly code */
   code_t *code;      /* where the emitted code goes                */
   code_t *codelimit; /* do not write code past this limit          */
@@ -664,7 +741,20 @@ struct PsycoObject_s {
   PROCESSOR_PSYCOOBJECT_FIELDS     /* processor state                       */
       int respawn_cnt;             /* see psyco_prepare_respawn()           */
   CodeBufferObject *respawn_proxy; /* see psyco_prepare_respawn()           */
+  unsigned long mp_serial; /* serial of the block started at the last merge
+                              point: the facts stamped since then are in use
+                              (dispatcher.c:compatible_unused_fact) */
   pyc_data_t pr;                   /* private language-dependent data       */
+  /* set when a C call that may block is emitted (psyco_generic_call);
+     pycompiler.c clears it before each instruction and tests eval_breaker
+     after a CALL_* that set it (breaker_after_call) */
+  char blocking_call;
+#if NI_CODESTATS
+  code_t *cs_mark;       /* where the current instruction's code began */
+  PyCodeObject *cs_co;   /* ... and the instruction (pycompiler.c) */
+  int cs_instr;
+  int cs_bc; /* instructions compiled since the last snapshot (stub study) */
+#endif
 
   /* finally, the description of variable stages. This is the data against
      which state matches and synchronizations are performed. */
@@ -703,6 +793,13 @@ EXTERNFN void vinfo_move(PsycoObject *po, vinfo_t *vtarget, vinfo_t *vsource);
 EXTERNFN code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
                                bool continue_compilation);
 
+/* The end of a block at a split site: start a new block registered in 'ge'
+   (or jump into a block there, see vcompiler.c). Returns NULL to continue
+   compiling 'po'. */
+EXTERNFN code_t *psyco_compile_join(PsycoObject *po, global_entries_t *ge);
+/* joins of a respawned branch: exact, partial, none; of a main path: exact */
+EXTERNVAR long psyco_stat_joins[4];
+
 /* Conditional compilation: the state 'po' is compiled to be executed only if
    'condition' holds. In general this creates a coding pause for it to be
    compiled later. It always makes a copy of 'po' so that the original can be
@@ -718,18 +815,19 @@ EXTERNFN void psyco_compile_cond(PsycoObject *po, mergepoint_t *mp,
 EXTERNFN CodeBufferObject *psyco_compile_code(PsycoObject *po,
                                               mergepoint_t *mp);
 
-/* Prepare a 'coding pause', i.e. a short amount of code (proxy) that will be
-   called only if the execution actually reaches it to go on with compilation.
-   'po' is the PsycoObject corresponding to the proxy.
-   'condition' may not be CC_ALWAYS_FALSE.
-   The (possibly conditional) jump to the proxy is encoded in 'calling_code'.
-   When the execution reaches the proxy, 'resume_fn' is called and the proxy
-   destroys itself and replaces the original jump to it by a jump to the newly
-   compiled code. */
+/* Prepare a 'coding pause', i.e. a stub (idispatcher.h) that will be entered
+   only if the execution actually reaches it to go on with compilation.
+   'po' is the PsycoObject corresponding to the stub, which it takes
+   (parked, dispatcher.h). 'condition' may not be CC_ALWAYS_FALSE.
+   The (possibly conditional) jump to the stub is written at 'po->code';
+   the end of the jump is returned.
+   When the execution reaches the stub, 'resume_fn' is called, the original
+   jump is repointed to the newly compiled code and the record is freed. */
 typedef code_t *(*resume_fn_t)(PsycoObject *po, void *extra);
-EXTERNFN void psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
-                                 resume_fn_t resume_fn, void *extra,
-                                 size_t extrasize);
+EXTERNFN code_t *psyco_coding_pause(PsycoObject *po,
+                                    condition_code_t jmpcondition,
+                                    resume_fn_t resume_fn, void *extra,
+                                    size_t extrasize);
 
 /* management functions; see comments in compiler.c */
 #if ALL_CHECKS
@@ -745,7 +843,7 @@ EXTERNFN void psyco_assert_coherent1(PsycoObject *po, bool full);
 PSY_INLINE PsycoObject *PsycoObject_New(int vlocalscnt) {
   int psize = PSYCOOBJECT_SIZE(vlocalscnt);
   PsycoObject *po = (PsycoObject *)PyMem_MALLOC(psize);
-  if (po == NULL)
+  if (po == NULL || NI_FAIL(NI_FAIL_PSYCOOBJECT))
     OUT_OF_MEMORY();
   memset(po, 0, psize);
   return po;
@@ -764,6 +862,7 @@ PSY_INLINE PsycoObject *PsycoObject_Resize(PsycoObject *po, int nvlocalscnt) {
 
 EXTERNFN mergepoint_t *PsycoObject_Ready(PsycoObject *po);
 EXTERNFN PsycoObject *PsycoObject_FromCode(PyCodeObject *co, PyObject *globals,
+                                           PyObject *builtins,
                                            PyObject *mergepoints,
                                            int recursion);
 #endif /* _VCOMPILER_H */
