@@ -80,7 +80,6 @@ void ni_trace_run_fail(PyCodeObject *co, char *reason) {}
 DEFINEFN
 void ni_trace_unify(PsycoObject *po, CodeBufferObject *match) {}
 #endif
-DEFINEVAR PyObject *CPsycoModule;
 
 /* A record hangs off its code object as a weak reference of Ni's own
    type rather than in co_extra: code_dealloc calls the co_extra free
@@ -220,33 +219,6 @@ static PyObject *ni_stop(PyObject *self, PyObject *unused) {
   Py_RETURN_NONE;
 }
 
-/* for debugging: (codebuf, address of the globals) the eval
-   hook runs; the address, since the globals are borrowed and may be dead */
-static PyObject *ni_py_entry_point(PyObject *self, PyObject *co) {
-  ni_code_extra_t *x;
-  PyObject *e;
-  if (!PyCode_Check(co)) {
-    PyErr_SetString(PyExc_TypeError, "_entry_point() needs a code object");
-    return NULL;
-  }
-  x = ni_code_extra_get((PyCodeObject *)co);
-  e = x ? x->entry_point : NULL;
-  if (e == NULL || e == Py_None)
-    Py_RETURN_NONE;
-  return Py_BuildValue("(On)", e,
-                       (Py_ssize_t)x->entry_globals);
-}
-
-/* a profiler of compiled code's callers turns off
-   the fallback to the interpreter while tracing (eval_hook.c) */
-static PyObject *ni_set_trace_fallback(PyObject *self, PyObject *on) {
-  int r = PyObject_IsTrue(on);
-  if (r < 0)
-    return NULL;
-  ni_trace_fallback = r;
-  Py_RETURN_NONE;
-}
-
 /* The structs psyco.h copies from CPython's source, because no installed
    header declares them, can't be checked against the headers when Ni is
    built. ni._core._build['layouts'] has the size of each copy; _layouts()
@@ -353,10 +325,6 @@ static PyMethodDef module_methods[] = {
     {"_stop", ni_stop, METH_NOARGS, "Take out the eval hook (ni.stop)."},
     {"_layouts", ni_layouts, METH_NOARGS,
      "{struct: size} of the copied structs, as this interpreter shows them."},
-    {"_set_trace_fallback", ni_set_trace_fallback, METH_O,
-     "Whether code runs interpreted while sys.settrace/setprofile is set."},
-    {"_entry_point", ni_py_entry_point, METH_O,
-     "(codebuf, globals) run for a code object, or None."},
     {NULL, NULL, 0, NULL}};
 
 /* ni._core._build, for ni.build_features and the tests: the CPython source
@@ -434,9 +402,6 @@ PyMODINIT_FUNC PyInit__core(void) {
     return NULL;
   if (code_records_init() < 0)
     goto error;
-  /* so that timings can tell a debug build (make check's) */
-  if (PyModule_AddIntConstant(module, "_debug_build", NI_TRACE || ALL_CHECKS))
-    goto error;
   if (PyModule_AddFunctions(module, ni_testing_methods) < 0)
     goto error;
   build = build_dict();
@@ -444,7 +409,6 @@ PyMODINIT_FUNC PyInit__core(void) {
     Py_XDECREF(build);
     goto error;
   }
-  CPsycoModule = module;
   return module;
 error:
   Py_DECREF(module);

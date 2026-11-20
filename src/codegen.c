@@ -594,10 +594,6 @@ psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos)
                                 : b.items[i + 1];
         map->items[i + 2] = b.items[i + 2];
     }
-#if NI_CODESTATS
-    psyco_cs_map(map, &map->lasti, (char *)(map->items + b.count) -
-                                       (char *)&map->lasti);
-#endif
     return map;
 }
 

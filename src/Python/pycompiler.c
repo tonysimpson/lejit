@@ -4926,7 +4926,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_CODESTATS
       codestats_begin(po, next_instr, bytecode[next_instr]);
-      psyco_cs_bytecode(po);
 #endif
       /* no Python error is pending between instructions: a meta that
          tests for one would decide otherwise in a respawn's replay */

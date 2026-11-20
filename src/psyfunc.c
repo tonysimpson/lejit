@@ -676,11 +676,7 @@ static void cannot_block_init(void) {
    call (pycompiler.c:resume_if_tracing). use_tracing is per thread and
    set by every way in, C ones too
    (PyEval_SetTrace and PyEval_SetProfile, as cProfile uses). */
-EXTERNVAR int ni_trace_fallback; /* eval_hook.c */
 static bool tracing_on(PsycoObject *po, vinfo_t *vts) {
-  /* off only when profiling compiled code, before anything is compiled */
-  if (!ni_trace_fallback)
-    return false;
   return runtime_condition_f(po, ni_tracing_test(po, vts));
 }
 
@@ -688,8 +684,6 @@ DEFINEFN
 int psyco_tracing_on(PsycoObject *po) {
   bool on;
   vinfo_t *vts;
-  if (!ni_trace_fallback)
-    return 0;
   vts = load_tstate(po);
   if (vts == NULL)
     return -1;

@@ -62,43 +62,6 @@ PSY_INLINE void fpo_mark_unused(FrozenPsycoObject* fpo) {
 EXTERNFN void fpo_build(FrozenPsycoObject* fpo, PsycoObject* po);
 EXTERNFN void fpo_release(FrozenPsycoObject* fpo);
 
-#if NI_CODESTATS
-/* NI_SNAPDUMP=FILE appends every snapshot taken to FILE, with its kind,
-   buffer, predecessor and code position. A caller
-   sets the kind before the buffer is made; new_code_buffer reads and
-   clears it. */
-EXTERNVAR char psyco_cs_snap_kind;
-EXTERNFN void psyco_cs_snapdump(FrozenPsycoObject* fpo, PsycoObject* po,
-                                int kind, unsigned long serial,
-                                CodeBufferObject* pred, int summary);
-#define NI_SNAPKIND(k)  (psyco_cs_snap_kind = (k))
-#else
-#define NI_SNAPKIND(k)  ((void)0)
-#endif
-#if NI_CODESTATS
-/* NI_STUBDUMP=FILE writes a record to FILE for every stub made and
-   entered, record allocated for an owner, owner released, snapshot taken,
-   parked state frozen and locals map made or read, with the user-mode
-   instruction count at each. Kinds of stub: 'R'
-   respawn, 'G' a cached global's guard (a respawn), 'P' coding pause, 'M'
-   promotion site. */
-EXTERNVAR bool psyco_cs_stubdump_on;
-EXTERNFN void psyco_cs_stub(int kind, void* closure, void* ps,
-                            PsycoObject* po);
-EXTERNFN void psyco_cs_stub_enter(void* closure, bool leave);
-EXTERNFN void psyco_cs_replay_done(PsycoObject* po);
-EXTERNFN void psyco_cs_bytecode(PsycoObject* po);
-EXTERNFN void psyco_cs_owner_alloc(void* p, size_t size, void* caller);
-EXTERNFN void psyco_cs_owner_free(ni_owner_t* o);
-/* a frame's locals map made ('data', 'n' bytes, hashed for duplicates),
-   and one read (frames.c) */
-EXTERNFN void psyco_cs_map(void* map, const void* data, size_t n);
-EXTERNFN void psyco_cs_map_read(void* map);
-#define NI_CS_STUB(k, c, ps, po)                                         \
-  (psyco_cs_stubdump_on ? psyco_cs_stub(k, c, ps, po) : (void)0)
-#else
-#define NI_CS_STUB(k, c, ps, po)  ((void)0)
-#endif
 
 /* build a 'live' PsycoObject from frozen snapshot */
 EXTERNFN PsycoObject* fpo_unfreeze(FrozenPsycoObject* fpo);
@@ -135,9 +98,6 @@ typedef struct parked_state_s {
       int respawn_cnt, stack_base, stack_level;
       short fixpath[FIXPATH_MAX];   /* ended by -1 if shorter */
       char split_after_global;
-#if NI_CODESTATS
-      int cs_bc;                    /* po->cs_bc */
-#endif
     };
   };
 } parked_state_t;

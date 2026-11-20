@@ -8,11 +8,6 @@
 #include "mechanisms/tracing.h"
 #include "mechanisms/recursion.h"
 
-/* run interpreted while a trace or profile function is set:
-   compiled code is invisible to them. Off only when
-   profiling to find what Ni didn't compile. */
-DEFINEVAR int ni_trace_fallback = 1;
-
 extern int ni_eval_breaker_at_entry(PyFrameObject *f); /* pyruntime.c */
 
 static PyObject *NiCode_Run(PyObject *codebuf, ni_frame_t *f) {
@@ -50,7 +45,7 @@ static PyObject *NiCode_Run(PyObject *codebuf, ni_frame_t *f) {
 #define DEFAULT_RECURSION 10
 
 /* out of line: a function that calls sigsetjmp is compiled with its
-   locals in memory, and ni_entry_point runs for every frame */
+   locals in memory, and ni_code_to_run runs for every frame */
 static __attribute__((noinline)) CodeBufferObject *
 compile_entry(PyCodeObject *co, ni_code_extra_t *x, PyObject *globals,
               PyObject *builtins, PyObject *mergepoints) {
@@ -74,13 +69,15 @@ compile_entry(PyCodeObject *co, ni_code_extra_t *x, PyObject *globals,
 /* The compiled code to run for 'co' with these globals and builtins,
    compiled now on its first call, or NULL to run it interpreted. 'locals'
    is the frame's locals mapping (NULL for a function). */
-static PyObject *ni_entry_point(PyCodeObject *co, PyObject *globals,
+static PyObject *ni_code_to_run(PyCodeObject *co, PyObject *globals,
                                 PyObject *locals, PyObject *builtins) {
   /* generators are never compiled (mergepoints.c), and every resume comes
      through here: leave before any lookup */
   if (co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR))
     return NULL;
-  if (ni_trace_fallback && ni_tracing_now(PyThreadState_GET()))
+  /* run interpreted while a trace or profile function is set: compiled
+     code is invisible to them */
+  if (ni_tracing_now(PyThreadState_GET()))
     return NULL;
   /* only function frames, whose f_locals is NULL at entry. Module code,
      class bodies and exec or eval with a locals mapping have one, and the
@@ -122,7 +119,7 @@ static PyObject *ni_entry_point(PyCodeObject *co, PyObject *globals,
 #if NI_HAS_EVAL_HOOK_TSTATE
 /* Entry by the PEP 523 frame-evaluation hook, which is given the thread
    state and a PyFrameObject. Every frame CPython evaluates comes here
-   first: one whose code Ni has compiled (eval_hook.c:ni_entry_point) runs
+   first: one whose code Ni has compiled (eval_hook.c:ni_code_to_run) runs
    on the frame's argument words (eval_hook.c:NiCode_Run), anything else
    goes to the evaluator installed before. The hook is read and set
    through the interpreter state's API functions. */
@@ -132,7 +129,7 @@ static ni_eval_frame_fn original_eval_frame = NULL;
 
 static PyObject *NiEval_EvalFrame(PyThreadState *tstate, PyFrameObject *frame,
                                   int throwflag) {
-  PyObject *entry_point = ni_entry_point(frame->f_code, frame->f_globals,
+  PyObject *entry_point = ni_code_to_run(frame->f_code, frame->f_globals,
                                          frame->f_locals, frame->f_builtins);
   if (entry_point != NULL)
     return NiCode_Run(entry_point, frame);
@@ -154,7 +151,7 @@ DEFINEFN PyObject *ni_eval_frame_default(PyFrameObject *f) {
 #else
 /* Entry by the PEP 523 frame-evaluation hook, which is given a
    PyFrameObject. Every frame CPython evaluates comes here first: one
-   whose code Ni has compiled (eval_hook.c:ni_entry_point) runs on the
+   whose code Ni has compiled (eval_hook.c:ni_code_to_run) runs on the
    frame's argument words (eval_hook.c:NiCode_Run), anything else goes to
    the evaluator installed before. The interpreter state that holds the
    hook is internal from 3.8, so Python/pyruntime.c (Py_BUILD_CORE) reads
@@ -166,7 +163,7 @@ void ni_set_interp_eval_frame(void *fn);
 static ni_eval_frame_fn original_eval_frame = NULL;
 
 static PyObject *NiEval_EvalFrame(PyFrameObject *frame, int throwflag) {
-  PyObject *entry_point = ni_entry_point(frame->f_code, frame->f_globals,
+  PyObject *entry_point = ni_code_to_run(frame->f_code, frame->f_globals,
                                          frame->f_locals, frame->f_builtins);
   if (entry_point != NULL)
     return NiCode_Run(entry_point, frame);

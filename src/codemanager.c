@@ -297,9 +297,6 @@ DEFINEFN void *psyco_owner_alloc(size_t size) {
     *p = o->blocks;
     o->blocks = p;
   }
-#if NI_CODESTATS
-  psyco_cs_owner_alloc(p + 1, size, __builtin_return_address(0));
-#endif
   return p + 1;
 }
 
@@ -312,9 +309,6 @@ DEFINEFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
                                   PyObject *entry_point) {
   ni_owner_t dead;
   int i;
-#if NI_CODESTATS
-  psyco_cs_owner_free(o);
-#endif
   NI_OWNER_ENTER(o);
   /* a block compiled in an inlined frame is listed at the callee's join
      point; the callee is held until here (psyfunc.c) */
@@ -1024,19 +1018,6 @@ static CodeBufferObject *codebuf_new(PsycoObject *po, global_entries_t *ge,
     if (is_respawning(po))
       Py_FatalError("psyco: internal bug: respawning in codebuf_new()");
     fpo_build(&b->snapshot, po);
-#if NI_CODESTATS
-    psyco_cs_snapdump(&b->snapshot, po,
-                      psyco_cs_snap_kind ? psyco_cs_snap_kind
-                      : proxy            ? 'P'
-                      : ge != NULL       ? 'B'
-                                         : 'U',
-                      b->serial, po->respawn_proxy,
-                      ge == NULL ? 0
-                      : tp == &CodeBufferShort_Type
-                          ? (int)sizeof(fz_summary_head_t)
-                          : (int)sizeof(fz_summary_t));
-    psyco_cs_snap_kind = 0;
-#endif
     if (ge != NULL) {
       if (tp == &CodeBufferShort_Type)
         psyco_summary_build_short(&b->summary.head, &po->vlocals);

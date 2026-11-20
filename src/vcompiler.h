@@ -753,7 +753,6 @@ struct PsycoObject_s {
   code_t *cs_mark;       /* where the current instruction's code began */
   PyCodeObject *cs_co;   /* ... and the instruction (pycompiler.c) */
   int cs_instr;
-  int cs_bc; /* instructions compiled since the last snapshot (stub study) */
 #endif
 
   /* finally, the description of variable stages. This is the data against

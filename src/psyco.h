@@ -838,7 +838,6 @@ typedef struct global_entries_s global_entries_t;  /* def in dispatcher.h */
 typedef struct mergepoint_s mergepoint_t;   /* defined in mergepoint.h */
 typedef struct stack_frame_info_s stack_frame_info_t; /* def in pycompiler.h */
 
-EXTERNVAR PyObject* CPsycoModule;
 
 /* Everything the compiled code of one code object holds (codemanager.c),
    released with that code object. */

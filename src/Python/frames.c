@@ -338,9 +338,6 @@ static bool slot_locals(stack_frame_info_t **slot, PyCodeObject *co,
     if (map == NULL || map->nvalues != n)
       return false;
   }
-#if NI_CODESTATS
-  psyco_cs_map_read(map);
-#endif
   data = (char *)slot - map->below;
   p = map->items;
   PyErr_Fetch(&t, &val, &tb);

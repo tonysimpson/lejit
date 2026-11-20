@@ -611,103 +611,6 @@ void fpo_release(FrozenPsycoObject *fpo) {
   fz_release(fpo);
 }
 
-#if NI_CODESTATS && VLOCALS_OPC
-/* One record per snapshot, little-endian: "SNP1", kind, buffer serial,
-   1 + the predecessor's serial (0: none), code object address, next_instr,
-   is_inlining, summary bytes, then the counts of opcode bytes, arguments
-   and pyc bytes, the code's name, file and first line, the opcodes and the
-   arguments in the order they are read, for each argument a constant's
-   value and flags (0 and 0xff if not a constant), and the frozen pyc_data. */
-DEFINEVAR char psyco_cs_snap_kind = 0;
-static FILE *snapdump_file = NULL;
-static int snapdump_on = -1;
-static parked_state_t *stubdump_freezing = NULL; /* park_freeze's state */
-static void stubdump_snap(FrozenPsycoObject *fpo, PsycoObject *po, int kind,
-                          unsigned long serial, CodeBufferObject *pred,
-                          int summary, unsigned long fzbytes,
-                          parked_state_t *ps);
-
-static void snapdump_str(PyObject *s) {
-  unsigned short n = 0;
-  const char *p = "";
-  if (s != NULL && PyUnicode_Check(s) && PyUnicode_IS_ASCII(s)) {
-    p = (const char *)PyUnicode_DATA(s);
-    n = (unsigned short)PyUnicode_GET_LENGTH(s);
-  }
-  fwrite(&n, 2, 1, snapdump_file);
-  fwrite(p, 1, n, snapdump_file);
-}
-
-DEFINEFN void psyco_cs_snapdump(FrozenPsycoObject *fpo, PsycoObject *po,
-                                int kind, unsigned long serial,
-                                CodeBufferObject *pred, int summary) {
-  unsigned long u[3];
-  unsigned int n[3];
-  int i, nargs, line;
-  unsigned char c[3];
-  Source *args;
-  PyCodeObject *co = po->pr.co;
-  if (psyco_cs_stubdump_on && fpo->fz_vlocals_opc != NULL) {
-    fz_load_fpo(fpo);
-    fz_parse(fz_getopc(), false);
-    stubdump_snap(fpo, po, kind, serial, pred, summary,
-                  (cmpinternal.buf_opc - (signed char *)fpo->fz_vlocals_opc) +
-                      (fpo->fz_vlocals_opc - cmpinternal.buf_args) *
-                          sizeof(Source),
-                  kind == 'Z' ? stubdump_freezing : NULL);
-  }
-  if (snapdump_on < 0) {
-    const char *path = getenv("NI_SNAPDUMP");
-    snapdump_on = 0;
-    if (path != NULL && *path && (snapdump_file = fopen(path, "ab")) != NULL)
-      snapdump_on = 1;
-  }
-  if (!snapdump_on || fpo->fz_vlocals_opc == NULL)
-    return;
-  fz_load_fpo(fpo);
-  fz_parse(fz_getopc(), false); /* leaves both ends of the pseudo-code */
-  args = cmpinternal.buf_args;
-  nargs = (int)(fpo->fz_vlocals_opc - args);
-  fwrite("SNP1", 1, 4, snapdump_file);
-  c[0] = (unsigned char)kind;
-  fwrite(c, 1, 1, snapdump_file);
-  u[0] = serial;
-  u[1] = pred == NULL ? 0 : pred->serial + 1;
-  u[2] = (unsigned long)co;
-  fwrite(u, 8, 3, snapdump_file);
-  i = po->pr.next_instr;
-  fwrite(&i, 4, 1, snapdump_file);
-  c[0] = po->pr.is_inlining;
-  c[1] = (unsigned char)summary;
-  fwrite(c, 1, 2, snapdump_file);
-  n[0] = (unsigned int)(cmpinternal.buf_opc - (signed char *)fpo->fz_vlocals_opc);
-  n[1] = (unsigned int)nargs;
-  n[2] = (unsigned int)frozen_size(&po->pr);
-  fwrite(n, 4, 3, snapdump_file);
-  snapdump_str(co ? co->co_name : NULL);
-  snapdump_str(co ? co->co_filename : NULL);
-  line = co ? co->co_firstlineno : 0;
-  fwrite(&line, 4, 1, snapdump_file);
-  fwrite(fpo->fz_vlocals_opc, 1, n[0], snapdump_file);
-  for (i = nargs; i--;)
-    fwrite(&args[i], 8, 1, snapdump_file);
-  for (i = nargs; i--;) {
-    long v = 0;
-    if (is_compiletime(args[i]))
-      v = CompileTime_Get(args[i])->value;
-    fwrite(&v, 8, 1, snapdump_file);
-  }
-  for (i = nargs; i--;) {
-    c[0] = is_compiletime(args[i])
-               ? (unsigned char)(CompileTime_Get(args[i])->refcount1_flags &
-                                 SkFlagMask)
-               : 0xff;
-    fwrite(c, 1, 1, snapdump_file);
-  }
-  fwrite(&po->pr, 1, n[2], snapdump_file);
-}
-#endif
-
 static void fpo_find_regs_array(vinfo_array_t *source, PsycoObject *po) {
 #if HAVE_CCREG
   condition_code_t cc;
@@ -826,11 +729,6 @@ static void park_freeze(parked_state_t *ps) {
   fz_build(&fz, &po->vlocals);
   fz.fz_stuff.fz_stack_depth = po->stack_depth;
   SAVE_PROCESSOR_FROZENOBJECT((&fz), po);
-#if NI_CODESTATS
-  stubdump_freezing = ps;
-  psyco_cs_snapdump(&fz, po, 'Z', 0, po->respawn_proxy, 0);
-  ps->cs_bc = po->cs_bc;
-#endif
   /* the live part is overwritten from here */
   memcpy(ps->fixpath, fixpath, sizeof(fixpath));
   ps->fz = fz;
@@ -879,9 +777,6 @@ DEFINEFN PsycoObject *psyco_unpark(parked_state_t *ps, vinfo_t **fix) {
     po->pr.stack_base = ps->stack_base;
     po->pr.stack_level = ps->stack_level;
     po->pr.split_after_global = ps->split_after_global;
-#if NI_CODESTATS
-    po->cs_bc = ps->cs_bc;
-#endif
     psyco_assert_coherent(po);
     a = &po->vlocals;
     for (i = 0; i < FIXPATH_MAX && ps->fixpath[i] >= 0; i++) {
@@ -1200,15 +1095,8 @@ void psyco_respawn_detected(PsycoObject *po) {
 #if ALL_CHECKS
     respawn_check(rs, po);
 #endif
-#if NI_CODESTATS
-    psyco_cs_replay_done(po);
-#endif
     extra_assert(fz_top_array_count(&codebuf->snapshot) == 0);
     fpo_build(&codebuf->snapshot, po);
-#if NI_CODESTATS
-    psyco_cs_snapdump(&codebuf->snapshot, po, 'R', codebuf->serial,
-                      rs->respawn_from, 0);
-#endif
   } else {
     /* proceed to the next block */
     CodeBufferObject *nextblock;
@@ -1252,13 +1140,7 @@ DEFINEFN code_t *psyco_stub_enter(void *record, long value) {
   stub_record_t *r = (stub_record_t *)record;
   code_t *result;
   NI_OWNER_ENTER(r->owner);
-#if NI_CODESTATS
-  psyco_cs_stub_enter(r + 1, false);
-#endif
   result = r->fn(r + 1, value);
-#if NI_CODESTATS
-  psyco_cs_stub_enter(r + 1, true);
-#endif
   NI_OWNER_LEAVE();
   return result;
 }
@@ -1380,13 +1262,7 @@ DEFINEFN code_t *psyco_respawn_enter(code_t *record) {
   rs.check = *r.check;
 #endif
   NI_OWNER_ENTER(o);
-#if NI_CODESTATS
-  psyco_cs_stub_enter(record, false);
-#endif
   result = do_respawn(&rs, 0);
-#if NI_CODESTATS
-  psyco_cs_stub_enter(record, true);
-#endif
   NI_OWNER_LEAVE();
   return result;
 }
@@ -1438,7 +1314,6 @@ void *psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
       respawn_check_fill(c, po, true);
       memcpy(record + offsetof(pooled_respawn_t, check), &c, sizeof(c));
 #endif
-      NI_CS_STUB('R', record, NULL, po);
       psyco_resolved_cc(po, INVERT_CC(jmpcondition));
       write_jmp = conditional_jump_to(po, stub, jmpcondition);
       psyco_assert(FITS_IN_32BITS((code_t *)write_jmp - record));
@@ -1456,7 +1331,6 @@ void *psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
 #if ALL_CHECKS
     respawn_check_fill(&rs->check, po, true);
 #endif
-    NI_CS_STUB(fn == &do_respawn ? 'R' : 'G', closure, NULL, po);
 
     /* write the jump to the stub */
     psyco_resolved_cc(po, INVERT_CC(jmpcondition)); /* no jump => cond false */
@@ -3492,7 +3366,6 @@ code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
   fs->local_chained_list = NULL;
   psyco_stub_set_release(fs, &promotion_release);
   code = po->code;
-  NI_CS_STUB('M', fs, &fs->state, po);
   psyco_park(&fs->state, po, fix);
   return code;
 }
@@ -3570,234 +3443,3 @@ void psyco_unfix(PsycoObject *po, vinfo_t *vi) {
   vinfo_move(po, vi, newvi);
 }
 
-#if NI_CODESTATS
-/* The stub study's dump (dispatcher.h, NI_STUBDUMP).
-   Fixed records of 12 little-endian words: type, kind and a 32-bit field
-   in the first, then what the record says. Instruction counts are
-   user-mode, from a perf counter (0 if it can't be opened), and include
-   writing the records ('H' says about how much each costs). */
-#include <linux/perf_event.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-#include <dlfcn.h>
-
-DEFINEVAR bool psyco_cs_stubdump_on = false;
-static FILE *stubdump_file = NULL;
-static int stubdump_perf = -1;
-static void *stubdump_base = NULL; /* ni.so's, for callers' offsets */
-/* the replay in the stub entered last: its end, and the instructions
-   replayed (-1: none) */
-static long stubdump_replay_instr = 0, stubdump_replay_bc = -1;
-#define STUBDUMP_DEPTH 64
-static long stubdump_stack_instr[STUBDUMP_DEPTH];
-static unsigned long stubdump_stack_serial[STUBDUMP_DEPTH];
-static int stubdump_depth = 0;
-static long stubdump_bc_total = 0, stubdump_bc_replayed = 0;
-
-static long stubdump_now(void) {
-  long n = 0;
-  if (stubdump_perf >= 0 && read(stubdump_perf, &n, sizeof(n)) != sizeof(n))
-    n = 0;
-  return n;
-}
-
-static void stubdump_put(char type, char kind, unsigned int x,
-                         unsigned long a, unsigned long b, unsigned long c,
-                         unsigned long d, unsigned long e, unsigned long f,
-                         unsigned long g, unsigned long h, unsigned long i,
-                         unsigned long j, unsigned long k) {
-  unsigned long w[12];
-  w[0] = (unsigned char)type | ((unsigned long)(unsigned char)kind << 8) |
-         ((unsigned long)x << 32);
-  w[1] = a; w[2] = b; w[3] = c; w[4] = d; w[5] = e; w[6] = f;
-  w[7] = g; w[8] = h; w[9] = i; w[10] = j; w[11] = k;
-  fwrite(w, sizeof(w), 1, stubdump_file);
-}
-
-static void stubdump_exit(void) {
-  if (stubdump_file == NULL)
-    return;
-  stubdump_put('X', 0, 0, stubdump_now(), stubdump_bc_total,
-               stubdump_bc_replayed, psyco_next_serial, psyco_stat_code_buffers,
-               0, 0, 0, 0, 0, 0);
-  fclose(stubdump_file);
-  stubdump_file = NULL;
-  psyco_cs_stubdump_on = false;
-}
-
-__attribute__((constructor)) static void stubdump_init(void) {
-  const char *path = getenv("NI_STUBDUMP");
-  struct perf_event_attr pa;
-  Dl_info info;
-  long t0, t1;
-  int i;
-  if (path == NULL || !*path || (stubdump_file = fopen(path, "wb")) == NULL)
-    return;
-  memset(&pa, 0, sizeof(pa));
-  pa.type = PERF_TYPE_HARDWARE;
-  pa.size = sizeof(pa);
-  pa.config = PERF_COUNT_HW_INSTRUCTIONS;
-  pa.exclude_kernel = 1;
-  pa.exclude_hv = 1;
-  stubdump_perf = (int)syscall(SYS_perf_event_open, &pa, 0, -1, -1, 0);
-  if (dladdr((void *)&stubdump_init, &info))
-    stubdump_base = info.dli_fbase;
-  psyco_cs_stubdump_on = true;
-  /* what a record costs: a count read and a write */
-  t0 = stubdump_now();
-  for (i = 0; i < 64; i++)
-    stubdump_put('-', 0, 0, stubdump_now(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-  t1 = stubdump_now();
-  stubdump_put('H', 0, 0, (t1 - t0) / 64, sizeof(CodeBufferObject),
-               offsetof(CodeBufferObject, summary), sizeof(FrozenPsycoObject),
-               sizeof(parked_state_t), sizeof(stub_record_t),
-               sizeof(respawn_t), sizeof(rt_promotion_t),
-               offsetof(pyc_data_t, blockstack), PSYCOOBJECT_SIZE(0),
-               sizeof(vinfo_t));
-  stubdump_put('I', 0, 0, sizeof(ni_owner_t), sizeof(ni_code_extra_t),
-               sizeof(PyTryBlock), offsetof(vinfo_array_t, items),
-               offsetof(pyc_data_t, next_instr), STUB_SIZE_MAX,
-               RESPAWN_STUB_SIZE + sizeof(pooled_respawn_t), 0, 0, 0, 0);
-  atexit(stubdump_exit);
-}
-
-/* a live state's bytes, each vinfo counted once per reference: an upper
-   bound, as vinfos are shared */
-static unsigned long stubdump_array_bytes(vinfo_array_t *a, int depth) {
-  unsigned long n = 0;
-  int i;
-  if (depth > 8)
-    return 0;
-  for (i = 0; i < a->count; i++) {
-    vinfo_t *v = a->items[i];
-    if (v == NULL)
-      continue;
-    n += sizeof(vinfo_t);
-    if (v->array != NullArray)
-      n += offsetof(vinfo_array_t, items) +
-           v->array->count * sizeof(vinfo_t *) +
-           stubdump_array_bytes(v->array, depth + 1);
-  }
-  return n;
-}
-
-static unsigned long stubdump_hash(const unsigned char *p, size_t n,
-                                   size_t skip, size_t skipn) {
-  unsigned long h = 1469598103934665603UL;
-  size_t i;
-  for (i = 0; i < n; i++)
-    if (i < skip || i >= skip + skipn)
-      h = (h ^ p[i]) * 1099511628211UL;
-  return h;
-}
-
-/* 'S': a stub made while compiling 'po', before 'po' is parked in 'ps' */
-DEFINEFN void psyco_cs_stub(int kind, void *closure, void *ps,
-                            PsycoObject *po) {
-  CodeBufferObject *b = po->respawn_proxy;
-  stubdump_put('S', (char)kind, (unsigned int)po->pr.next_instr,
-               (unsigned long)closure, (unsigned long)psyco_owner,
-               b == NULL ? 0 : b->serial + 1,
-               b == NULL ? 0 : psyco_block_serial(po) + 1, po->cs_bc,
-               stubdump_now(), (unsigned long)ps, (unsigned long)po->pr.co,
-               PSYCOOBJECT_SIZE(po->vlocals.count) +
-                   stubdump_array_bytes(&po->vlocals, 0),
-               psyco_next_serial, po->pr.is_inlining);
-}
-
-/* 'E': a stub entered and left (psyco_stub_enter), with its replay's end
-   and length if it respawned */
-DEFINEFN void psyco_cs_stub_enter(void *closure, bool leave) {
-  if (!psyco_cs_stubdump_on)
-    return;
-  if (!leave) {
-    if (stubdump_depth < STUBDUMP_DEPTH) {
-      stubdump_stack_instr[stubdump_depth] = stubdump_now();
-      stubdump_stack_serial[stubdump_depth] = psyco_next_serial;
-    }
-    stubdump_depth++;
-    stubdump_replay_instr = 0;
-    stubdump_replay_bc = -1;
-    return;
-  }
-  if (--stubdump_depth < STUBDUMP_DEPTH)
-    stubdump_put('E', 0, (unsigned int)stubdump_depth, (unsigned long)closure,
-                 stubdump_stack_instr[stubdump_depth], stubdump_now(),
-                 stubdump_stack_serial[stubdump_depth], psyco_next_serial,
-                 stubdump_replay_instr, stubdump_replay_bc, 0, 0, 0, 0);
-  stubdump_replay_instr = 0;
-  stubdump_replay_bc = -1;
-}
-
-DEFINEFN void psyco_cs_replay_done(PsycoObject *po) {
-  if (!psyco_cs_stubdump_on)
-    return;
-  stubdump_replay_instr = stubdump_now();
-  stubdump_replay_bc = po->cs_bc;
-}
-
-/* each bytecode instruction compiled: counted, not written */
-DEFINEFN void psyco_cs_bytecode(PsycoObject *po) {
-  po->cs_bc++;
-  stubdump_bc_total++;
-  if (is_respawning(po))
-    stubdump_bc_replayed++;
-}
-
-/* 'A' */
-DEFINEFN void psyco_cs_owner_alloc(void *p, size_t size, void *caller) {
-  if (psyco_cs_stubdump_on)
-    stubdump_put('A', 0, 0, (unsigned long)p, size, (unsigned long)psyco_owner,
-                 (unsigned long)((char *)caller - (char *)stubdump_base),
-                 stubdump_now(), 0, 0, 0, 0, 0, 0);
-}
-
-/* 'F' */
-DEFINEFN void psyco_cs_owner_free(ni_owner_t *o) {
-  if (psyco_cs_stubdump_on)
-    stubdump_put('F', 0, 0, (unsigned long)o, stubdump_now(), o->nbufs, 0, 0,
-                 0, 0, 0, 0, 0, 0);
-}
-
-/* 'L' and 'Q' */
-DEFINEFN void psyco_cs_map(void *map, const void *data, size_t n) {
-  if (psyco_cs_stubdump_on)
-    stubdump_put('L', 0, (unsigned int)n, (unsigned long)map,
-                 stubdump_hash(data, n, 0, 0), (unsigned long)psyco_owner,
-                 stubdump_now(), 0, 0, 0, 0, 0, 0, 0);
-}
-
-DEFINEFN void psyco_cs_map_read(void *map) {
-  if (psyco_cs_stubdump_on)
-    stubdump_put('Q', 0, 0, (unsigned long)map, stubdump_now(), 0, 0, 0, 0, 0,
-                 0, 0, 0, 0);
-}
-
-/* 'N': a snapshot; for kind 'Z', a parked state frozen, 'ps' */
-static void stubdump_snap(FrozenPsycoObject *fpo, PsycoObject *po, int kind,
-                          unsigned long serial, CodeBufferObject *pred,
-                          int summary, unsigned long fzbytes,
-                          parked_state_t *ps) {
-  size_t pn = frozen_size(&po->pr);
-  const unsigned char *pyc =
-      fpo->fz_pyc_data == NULL ? NULL : (const unsigned char *)&po->pr;
-  /* its pyc_data was already held by another snapshot */
-  unsigned long shared =
-      pyc != NULL && ((pyc_shared_t *)((char *)fpo->fz_pyc_data -
-                                       offsetof(pyc_shared_t, pyc)))
-                             ->refcnt > 1;
-  stubdump_put('N', (char)kind, (unsigned int)po->pr.next_instr, serial,
-               pred == NULL ? 0 : pred->serial + 1, (unsigned long)psyco_owner,
-               fzbytes,
-               pn | ((unsigned long)summary << 32) | (shared << 48),
-               pyc == NULL ? 0 : stubdump_hash(pyc, pn, 0, 0),
-               pyc == NULL ? 0
-                           : stubdump_hash(pyc, pn,
-                                           offsetof(pyc_data_t, next_instr),
-                                           sizeof(int)),
-               (unsigned long)po->pr.co, po->cs_bc, (unsigned long)ps,
-               stubdump_now());
-  if (kind != 'Z') /* the next snapshot's predecessor is this one */
-    po->cs_bc = 0;
-}
-#endif

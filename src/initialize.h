@@ -54,7 +54,6 @@ EXTERNFN void psy_unicodeobject_init(void); /* Objects/punicodeobject.c */
 EXTERNFN void psyco_initmath(void);         /* Modules/pmath.c */
 EXTERNFN void ni_entry_install(void);       /* eval_hook.c */
 EXTERNFN int ni_entry_remove(void);         /* eval_hook.c */
-EXTERNVAR int ni_trace_fallback;            /* eval_hook.c */
 EXTERNFN void codemanager_init();           /* codemanager.c */
 EXTERNFN void psycofunction_init();         /* psyfunc.c */
 

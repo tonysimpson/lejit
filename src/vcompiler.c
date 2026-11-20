@@ -404,9 +404,6 @@ PsycoObject *psyco_duplicate(PsycoObject *po) {
   result->mp_serial = po->mp_serial;
   result->code = po->code;
   result->codelimit = po->codelimit;
-#if NI_CODESTATS
-  result->cs_bc = po->cs_bc;
-#endif
   pyc_data_duplicate(&result->pr, &po->pr);
 
   assert_cleared_tmp_marks(&result->vlocals);
@@ -803,7 +800,6 @@ code_t *psyco_coding_pause(PsycoObject *po, condition_code_t jmpcondition,
   /* write the jump to the stub */
   cp->jump_to_fix = conditional_jump_to(po, stub, jmpcondition);
   end = po->code;
-  NI_CS_STUB('P', cp, &cp->state, po);
   psyco_park(&cp->state, po, NULL);
   return end;
 }
@@ -938,7 +934,6 @@ code_t *psyco_compile(PsycoObject *po, mergepoint_t *mp,
     /* Enough space left, continue in the same buffer. */
     {
       CodeBufferObject *codebuf;
-      NI_SNAPKIND(cmp != NULL ? 'm' : 'M');
       codebuf = psyco_proxy_code_buffer(po, mp != NULL ? &mp->entries : NULL);
       po->code = insn_code_label(codebuf->codestart);
     }
@@ -1013,7 +1008,6 @@ static code_t *compile_join(PsycoObject *po, global_entries_t *ge,
   }
   if (branch && first)
     psyco_stat_joins[cmp != NULL ? 1 : 2]++;
-  NI_SNAPKIND(cmp != NULL ? 'j' : 'J');
   codebuf = psyco_proxy_code_buffer(po, ge);
   po->code = insn_code_label(codebuf->codestart);
   if (cmp != NULL) {
@@ -1093,7 +1087,6 @@ CodeBufferObject *psyco_compile_code(PsycoObject *po, mergepoint_t *mp) {
                   don't register it in mp->entries */
 
   /* Normal case. Start a new buffer */
-  NI_SNAPKIND(cmp != NULL ? 'b' : mp != NULL ? 'B' : 'U');
   codebuf = psyco_new_code_buffer(po, mp == NULL ? NULL : &mp->entries,
                                   &po->codelimit);
   po->code = insn_code_label(codebuf->codestart);
