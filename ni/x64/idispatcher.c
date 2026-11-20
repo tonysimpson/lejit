@@ -1,3 +1,17 @@
+/*
+ * psyco_unify: given a compatible snapshot, emit the stack and register moves
+ * (and reference fix-ups) that turn the current run-time layout into the
+ * snapshot's, then jump to its code. References are settled first: those
+ * the snapshot's values own are moved or made, and the values it doesn't
+ * have are decref'd from where they are, before any stack move can
+ * overwrite their slots. If the moves overflow the current buffer they are
+ * copied to a new one (data_new_buffer). A value wanted in several
+ * registers (shared in po, distinct in the snapshot) is moved to one and
+ * copied to the others last. With ALL_CHECKS the generated code verifies
+ * every target register after the moves and traps (UD2, SIGILL) on a
+ * mismatch; whether a given loop reaches the case depends on register
+ * allocation.
+ */
 #include "idispatcher.h"
 #include "../dispatcher.h"
 #include "../codemanager.h"
@@ -29,7 +43,7 @@ static code_t* data_new_buffer(code_t* code, struct dmove_s* dm)
   if (dm->private_codebuf != NULL)
     {
       /* overflowing the regular (large) code buffer */
-      psyco_emergency_enlarge_buffer(&code, &dm->code_limit);
+      psyco_code_continue(&code, &dm->code_limit);
       return code;
     }
   else
@@ -65,15 +79,12 @@ static void data_original_table(vinfo_t* a, RunTimeSource bsource,
     ORIGINAL_VINFO(RUNTIME_STACK(a)) = a;
 }
 
-static void data_update_stack(vinfo_t* a, RunTimeSource bsource,
+static void data_transfer_ref(vinfo_t* a, RunTimeSource bsource,
                               struct dmove_s* dm)
 {
   PsycoObject* po = dm->po;
   code_t* code = dm->code;
-  long dststack = getstack(bsource);
-  long srcstack = getstack(a->source);
-  char rg, rgb;
-  vinfo_t* overridden;
+  char rg;
   /* check for values passing from no-reference to reference */
   if (has_rtref(bsource)) {  /* destination has ref */
     if (has_rtref(a->source))   /* source has ref too */
@@ -102,6 +113,21 @@ static void data_update_stack(vinfo_t* a, RunTimeSource bsource,
      is forbidden by psyco_compatible() because decrefing 'a'
      would potentially leave a freed pointer in 'b'. */
   extra_assert(!has_rtref(a->source));
+  if (code > dm->code_limit)
+    /* oops, buffer overflow. Start a new buffer */
+    code = data_new_buffer(code, dm);
+  dm->code = code;
+}
+
+static void data_update_stack(vinfo_t* a, RunTimeSource bsource,
+                              struct dmove_s* dm)
+{
+  PsycoObject* po = dm->po;
+  code_t* code = dm->code;
+  long dststack = getstack(bsource);
+  long srcstack = getstack(a->source);
+  char rg, rgb;
+  vinfo_t* overridden;
 
   /* The operation below is: copy the value currently held by 'a'
      into the stack position 'dststack'. */
@@ -200,6 +226,76 @@ static code_t* data_free_unused(code_t* code, struct dmove_s* dm,
   return code;
 }
 
+#if ALL_CHECKS
+/* nothing in 'po' owns a reference any more (data_transfer_ref,
+   data_free_unused): the stack moves may overwrite any slot that the
+   snapshot doesn't use */
+static void check_no_rtref(vinfo_array_t* aa)
+{
+  int i = aa->count;
+  while (i--)
+    if (aa->items[i] != NULL)
+      {
+        extra_assert(!is_runtime(aa->items[i]->source) ||
+                     !has_rtref(aa->items[i]->source));
+        if (aa->items[i]->array != NullArray)
+          check_no_rtref(aa->items[i]->array);
+      }
+}
+#endif
+
+#if ALL_CHECKS
+/* Debug check of the register moves below: before them,
+   each value wanted in a register is copied from where it is now to
+   unify_check_buf; after them, the generated code compares every target
+   register with its copy and traps (UD2) on a mismatch. Each piece is
+   small and position-independent, as data_new_buffer may move the code
+   written so far. */
+static long unify_check_buf[REG_TOTAL];
+
+static code_t* unify_check_save(code_t* code, struct dmove_s* dm,
+                                vinfo_t* wanted[])
+{
+    int i;
+    for (i=0; i<REG_TOTAL; i++) {
+        if (wanted[i] != NULL && RUNTIME_REG(wanted[i]) != REG_NONE) {
+            ni_trace_begin_simple_code(code);
+            MOV_R_I(REG_TRANSIENT_2, (long)&unify_check_buf[i]);
+            MOV_O_R(REG_TRANSIENT_2, 0, RUNTIME_REG(wanted[i]));
+            ni_trace_end_simple_code(code);
+            if (code > dm->code_limit)
+                code = data_new_buffer(code, dm);
+        }
+    }
+    return code;
+}
+
+static code_t* unify_check_verify(code_t* code, struct dmove_s* dm,
+                                  vinfo_t* wanted[], bool saved[])
+{
+    int i;
+    for (i=0; i<REG_TOTAL; i++) {
+        if (saved[i]) {
+            ni_trace_begin_simple_code(code);
+            WRITE_1(0x9C);                                /* PUSHFQ */
+            MOV_R_I(REG_TRANSIENT_2, (long)&unify_check_buf[i]);
+            MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_2, 0);
+            CMP_R_R(REG_TRANSIENT_1, i);
+            {
+                BEGIN_SHORT_COND_JUMP(0, CC_E);
+                WRITE_2(0x0F, 0x0B);                      /* UD2 */
+                END_SHORT_JUMP(0);
+            }
+            WRITE_1(0x9D);                                /* POPFQ */
+            ni_trace_end_simple_code(code);
+            if (code > dm->code_limit)
+                code = data_new_buffer(code, dm);
+        }
+    }
+    return code;
+}
+#endif
+
 DEFINEFN
 code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
                     CodeBufferObject** target)
@@ -208,6 +304,11 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
 
   int i;
   struct dmove_s dm;
+  vinfo_t* wanted[REG_TOTAL];      /* the targets, before (1) clears them */
+  reg_t copy_from[REG_TOTAL];      /* (1b): copy this register to i */
+#if ALL_CHECKS
+  bool check_saved[REG_TOTAL];
+#endif
   code_t* code = po->code;
   code_t* backpointer;
   CodeBufferObject* target_codebuf = lastmatch->matching;
@@ -241,6 +342,24 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
       po->stack_depth = sdepth;
     }
 
+  /* the references the snapshot's values own: moved from the value in
+     'po', or new */
+  dm.code = code;
+  fz_find_runtimes(&po->vlocals, &target_codebuf->snapshot,
+                   (fz_find_fn) &data_transfer_ref,
+                   &dm, false);
+  code = dm.code;
+
+  /* decref any object that would be present in 'po' but not at all in
+     the snapshot (data_transfer_ref() has removed the 'ref' tag of all
+     vinfo_ts it actually used from 'po'). Before the stack moves: they
+     know only the values the snapshot has, and may overwrite the slot
+     of one it hasn't. */
+  code = data_free_unused(code, &dm, &po->vlocals);
+#if ALL_CHECKS
+  check_no_rtref(&po->vlocals);
+#endif
+
   /* update the stack */
   dm.code = code;
   fz_find_runtimes(&po->vlocals, &target_codebuf->snapshot,
@@ -248,18 +367,28 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
                    &dm, true);
   code = dm.code;
 
-  /* decref any object that would be present in 'po' but not at all in
-     the snapshot (data_update_stack() has removed the 'ref' tag of all
-     vinfo_ts it actually used from 'po') */
-  code = data_free_unused(code, &dm, &po->vlocals);
-
-  /* update the registers (1): reg-to-reg moves and exchanges */
+  /* update the registers (1): reg-to-reg moves and exchanges. A value
+     can be wanted in several registers (shared in 'po', distinct in the
+     snapshot): it is moved to one target, and copied to the others in
+     (1b), once every register holds its final value. */
+    memcpy(wanted, dm.copy_regs, sizeof(wanted));
+    for (i=0; i<REG_TOTAL; i++)
+        copy_from[i] = REG_NONE;
+#if ALL_CHECKS
+    for (i=0; i<REG_TOTAL; i++)
+        check_saved[i] = wanted[i] != NULL && RUNTIME_REG(wanted[i]) != REG_NONE;
+    code = unify_check_save(code, &dm, wanted);
+#endif
     for (i=0; i<REG_TOTAL; i++) {
         vinfo_t* v = dm.copy_regs[i];
         if (v != NULL) {
             reg_t rg = RUNTIME_REG(v);
             if (rg != REG_NONE) {
-                if (rg != i) {
+                if (rg != i && wanted[(int)rg] == v) {
+                    /* v must also stay in rg: copy it in (1b) */
+                    copy_from[i] = rg;
+                }
+                else if (rg != i) {
                     /* Value v is in rg but needs to be in register i */
                     vinfo_t *v2 = REG_NUMBER(po, i);
                     if (v2 != NULL) {
@@ -286,10 +415,30 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
             } 
         }
     }
+    /* (1b): the extra copies. A register written here is a target of v, so
+       whatever it held is not wanted in any register (that value has
+       already been moved to its own target, or is wanted only on the
+       stack, which is up to date). */
+    for (i=0; i<REG_TOTAL; i++) {
+        if (copy_from[i] != REG_NONE) {
+            vinfo_t *w = REG_NUMBER(po, i);
+            extra_assert(RUNTIME_REG(wanted[i]) == copy_from[i]);
+            ni_trace_begin_simple_code(code);
+            MOV_R_R(i, copy_from[i]);
+            ni_trace_end_simple_code(code);
+            if (w != NULL && w != wanted[i]) {
+                SET_RUNTIME_REG_TO_NONE(w);
+                REG_NUMBER(po, i) = NULL;
+            }
+        }
+    }
     if (code > dm.code_limit) {
         /* start a new buffer if we wrote past the end */
         code = data_new_buffer(code, &dm);
     }
+#if ALL_CHECKS
+    code = unify_check_verify(code, &dm, wanted, check_saved);
+#endif
     /* update the registers (2): stack-to-register loads */
     for (i=0; i<REG_TOTAL; i++) {
         vinfo_t* v = dm.copy_regs[i];
@@ -311,9 +460,14 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
     code = data_new_buffer(code, &dm);
   }
   backpointer = code;
-  ni_trace_begin_simple_code(code);
-  JUMP_TO((code_t*) target_codebuf->codestart);
-  ni_trace_end_simple_code(code);
+  /* psyco_unify_code() passes a throwaway stack buffer with no room
+     (codelimit NULL): if nothing needed a new buffer, the jump would be
+     discarded, and it can't reach the code from the stack anyway */
+  if (po->codelimit != NULL || dm.private_codebuf != NULL) {
+    ni_trace_begin_simple_code(code);
+    JUMP_TO((code_t*) target_codebuf->codestart);
+    ni_trace_end_simple_code(code);
+  }
   
   /* start a new buffer if the last JUMP_TO overflowed,
      but not if we had no room at all in the first place. */
@@ -331,18 +485,22 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
   PyMem_FREE(dm.usages);
   if (dm.private_codebuf == NULL)
     {
-      Py_INCREF(target_codebuf);      /* no new buffer created */
+      /* no new buffer created */
       *target = target_codebuf;
     }
   else
     {
-      SHRINK_CODE_BUFFER(dm.private_codebuf, code, "unify");
+      CLOSE_CODE("unify", dm.private_codebuf->codestart, code);
       *target = dm.private_codebuf;
-      /* add a jump from the original code buffer to the new one */
+      /* add a jump from the original code buffer to the new one, unless
+         that is psyco_unify_code()'s throwaway stack buffer (codelimit
+         NULL): the jump could not reach from there, and nothing runs it */
       code = po->code;
-      ni_trace_begin_simple_code(code);
-      JUMP_TO((code_t*) dm.private_codebuf->codestart);
-      ni_trace_end_simple_code(code);
+      if (po->codelimit != NULL) {
+        ni_trace_begin_simple_code(code);
+        JUMP_TO((code_t*) dm.private_codebuf->codestart);
+        ni_trace_end_simple_code(code);
+      }
     }
   PsycoObject_Delete(po);
   return code;

@@ -1,3 +1,13 @@
+/*
+ * Backend functions:
+ *  - C calls at run time (run_time_call: SysV registers and 16-byte alignment,
+ *    then run_time_result_check applies the CfPyErr* convention);
+ *  - C calls at compile time (compile_time_call: libffi, for CfPure folding);
+ *  - Psyco-to-Psyco calls (psyco_call_psyco: the caller pushes a finfo slot and
+ *    the arguments, the callee pops them, and the result is a new reference in
+ *    RAX);
+ *  - condition-code materialisation and the integer ALU emitters.
+ */
 
 #include "iencoding.h"
 #include <ffi.h>
@@ -27,37 +37,6 @@ DEFINEVAR reg_t RegistersLoop[REG_TOTAL] = {
     /* R13 > */ REG_X64_R14,
     /* R14 > */ REG_X64_R15,
     /* R15 > */ REG_X64_RBX};
-
-DEFINEFN void *
-psyco_call_code_builder(PsycoObject *po, void *fn, int restore,
-                        RunTimeSource extraarg, size_t block_size)
-{
-    code_t *block_start;
-
-    BEGIN_CODE
-    BEGIN_SHORT_JUMP(0);
-    block_start = (code_t *)(((long)code + 7) & (~7)); /* alignment */
-    code = block_start;
-    code += block_size;
-    END_SHORT_JUMP(0);
-    PUSH_R(REG_FUNCTIONS_RETURN);
-    /* XXX tony: Need to preserve RAX because we can be here from
-    run_time_result_check and we don't decided to put RAX in a compiler
-    tracked location until run_time_result. */
-    psyco_inc_stackdepth(po);
-    BEGIN_CALL(extraarg != SOURCE_DUMMY ? 2 : 1);
-    if (extraarg != SOURCE_DUMMY) {
-        CALL_SET_ARG_FROM_RT(extraarg, 1);
-    }
-    CALL_SET_ARG_IMMED(block_start, 0);
-    END_CALL_I(fn);
-    MOV_R_R(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN);
-    POP_R(REG_FUNCTIONS_RETURN); /* Restore RAX */
-    psyco_dec_stackdepth(po);
-    JMP_R(REG_TRANSIENT_1);
-    END_CODE
-    return (void *)block_start;
-}
 
 static vinfo_t *
 compile_time_check(PsycoObject *po, long result, int flags)
@@ -107,6 +86,14 @@ compile_time_check(PsycoObject *po, long result, int flags)
             }
             if (result == 0) {
                 goto error;
+            }
+            break;
+        case CfPyErrCheckNull:
+            if (result == 0) {
+                if (PyErr_Occurred()) {
+                    goto error;
+                }
+                return psyco_vi_Zero();
             }
             break;
         case CfPyErrIterNext:
@@ -214,7 +201,10 @@ compile_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
         return VINFO_OK;
     }
     else if (flags & CfNewRef) {
-        return vinfo_new(CompileTime_NewSk(sk_new(result, SkFlagPyObj)));
+        if (result == 0)
+            return vinfo_new(CompileTime_New(0));
+        vresult = psyco_shared_constant((PyObject *)result);
+        return vresult != NULL ? vresult : VINFO_FRESH;
     }
     else {
         return vinfo_new(CompileTime_New(result));
@@ -225,6 +215,7 @@ static vinfo_t *
 run_time_result_check(PsycoObject *po, int flags)
 {
     condition_code_t error_cc;
+    int mark; /* TEMP_PUSH_R */
 #define CMP_RETURN_MINUS_1()                                 \
     do {                                                     \
         BEGIN_CODE                                           \
@@ -304,6 +295,17 @@ run_time_result_check(PsycoObject *po, int flags)
                iteration. Raise a pseudo PyErr_StopIteration. */
             PycException_SetVInfo(po, PyExc_StopIteration, psyco_vi_None());
             return NULL;
+        case CfPyErrCheckNull: /* NULL: an error if PyErr_Occurred() */
+            TEST_RETURN();
+            if (!runtime_condition_f(po, CC_E)) {
+                break; /* not NULL */
+            }
+            error_cc = integer_NON_NULL(po, psyco_PyErr_Occurred(po));
+            if (error_cc == CC_ERROR || runtime_condition_f(po, error_cc)) {
+                goto error;
+            }
+            /* NULL with no error: nothing to hold a reference to */
+            return psyco_vi_Zero();
         case CfPyErrAlways: /* always set an exception */
             goto error;
         default:
@@ -314,16 +316,25 @@ test_condition_and_pyerr_occured:
     if (!runtime_condition_f(po, error_cc)) {
         return VINFO_OK;
     }
-    /* XXX tony: We need to preserve RAX over this call.
-    This means we will end up pushing+poping RAX twice which is dumb.
-    It would be nice if the compiler knew to do this automatically. */
+    /* PyErr_Occurred() while the result is still only in RAX: save RAX
+       around the call to PyThreadState_Get. Nothing between the PUSH and
+       the POP may go through the register allocator, which can spill with
+       a PUSH of its own, so that the POP restores the wrong value and the
+       spilled vinfo is left above the top of the stack.
+       The exception word (NI_EXC_OCCURRED_OFFSET) is read into the
+       scratch register instead. */
     BEGIN_CODE
-    PUSH_R(REG_FUNCTIONS_RETURN);
+    NEED_CC(); /* before the PUSH: it may take a register */
+    /* counted: the call's alignment and RSP-relative addressing use it */
+    TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
+    BEGIN_CALL(0);
+    END_CALL_I(PyThreadState_Get);
+    MOV_R_O(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN,
+            NI_EXC_OCCURRED_OFFSET);
+    TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
+    TEST_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
     END_CODE
-    error_cc = integer_NON_NULL(po, psyco_PyErr_Occurred(po));
-    BEGIN_CODE
-    POP_R(REG_FUNCTIONS_RETURN);
-    END_CODE
+    error_cc = CC_NE;
 test_condition:
     if (!runtime_condition_f(po, error_cc)) {
         return VINFO_OK;
@@ -375,7 +386,7 @@ DEFINEFN vinfo_t *
 run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
               char argtags[], long args[], int total_output_array_size)
 {
-    int stackbase, i, double_arg_count, double_arg_i;
+    int stackbase, i, double_arg_count, double_arg_i, int_arg_i;
     vinfo_t *vresult;
     BEGIN_CODE
     NEED_CC();
@@ -387,17 +398,34 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
             double_arg_count++;
         }
     }
-    assert(double_arg_count <= arg_count);
-    assert(double_arg_count <=
-           2); /* < 8 would be fine with current backend code */
+    extra_assert(double_arg_count <= arg_count);
+    extra_assert(double_arg_count <= 8); /* xmm0-xmm7 */
+    /* the padding that aligns the call stays after it, as an unused slot,
+       so the calls after it at the same depth need none; the next merge
+       point or return drops it. A call with stack arguments pads and pops
+       with them (BEGIN_CALL), as do the calls on a conditional path
+       (decref_dealloc_calling), which must leave the depth as it was;
+       this one is only reached from straight-line code. */
+    if (arg_count - double_arg_count <= argument_reg_table_len) {
+        int pad = (16 - (STACK_DEPTH_SINCE_CALL() % 16)) % 16;
+        STACK_CORRECTION(pad);
+        po->stack_depth += pad;
+    }
     BEGIN_CALL(arg_count - double_arg_count);
-    for (i = arg_count, double_arg_i = double_arg_count - 1; i--;) {
+    /* SysV numbers integer and floating-point arguments separately: an
+       integer argument's register is chosen by its position among the
+       integer arguments only (int_arg_i), not by its overall position */
+    for (i = arg_count, double_arg_i = double_arg_count - 1,
+        int_arg_i = arg_count - double_arg_count;
+         i--;) {
+        if (argtags[i] != 'd' && argtags[i] != 'D')
+            int_arg_i--;
         switch (argtags[i]) {
             case 'v':
-                CALL_SET_ARG_FROM_RT(((vinfo_t *)args[i])->source, i);
+                CALL_SET_ARG_FROM_RT(((vinfo_t *)args[i])->source, int_arg_i);
                 break;
             case 'r':
-                CALL_SET_ARG_FROM_STACK_REF(args[i], i);
+                CALL_SET_ARG_FROM_STACK_REF(args[i], int_arg_i);
                 break;
             case 'a':
             case 'A': {
@@ -409,7 +437,13 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
                     array->items[--j] = vinfo_new(
                         RunTime_NewStack(stackbase, with_reference, false));
                 }
-                CALL_SET_ARG_FROM_STACK_REF(array->items[0]->source, i);
+                if (array->count == 0)
+                    /* nothing to point at (an empty array is NullArray,
+                       whose items[0] isn't a vinfo) */
+                    CALL_SET_ARG_IMMED(0, int_arg_i);
+                else
+                    CALL_SET_ARG_FROM_STACK_REF(array->items[0]->source,
+                                                int_arg_i);
                 break;
             }
             case 'd':
@@ -422,7 +456,7 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
                 double_arg_i--;
                 break;
             case 'l':
-                CALL_SET_ARG_IMMED(args[i], i);
+                CALL_SET_ARG_IMMED(args[i], int_arg_i);
                 break;
             default:
                 printf("var_call: unsupported '%c'\n", argtags[i]);
@@ -431,6 +465,10 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
     }
     END_CALL_I(c_function);
     END_CODE
+    if (po->pr.pending_map != NULL) {
+        po->pr.pending_map->retaddr = po->call_end;
+        po->pr.pending_map = NULL;
+    }
     vresult = run_time_result_check(po, flags);
     if (vresult != VINFO_OK) {
         return vresult;
@@ -458,8 +496,12 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     bool ccflags;
     int initial_stack_depth;
     int stack_correction;
+    long reg_pos[REG_TOTAL];
     vinfo_t *vresult;
+    condition_code_t cc;
 
+    po->pr.class_unchecked = 1; /* the callee may assign __class__ */
+    po->pr.python_call = 1;
     BEGIN_CODE
     /* cannot use NEED_CC(): it might clobber one of the registers
        mentioned in argsources */
@@ -470,11 +512,16 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     /* PUSH RTs with reg set */
     for (i = 0; i < REG_TOTAL; i++) {
         vinfo_t *content = REG_NUMBER(po, i);
+        reg_pos[i] = RUNTIME_STACK_NONE;
         if (content != NULL) {
             PUSH_R(i);
             psyco_inc_stackdepth(po);
+            reg_pos[i] = po->stack_depth;
         }
     }
+    END_CODE
+    finfo->back_locals = psyco_locals_map(po, po->pr.next_instr - 2, reg_pos);
+    BEGIN_CODE
 
     /* add 16 byte aligned stack */
     do {
@@ -491,6 +538,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     psyco_inc_stackdepth(po);
 
     ABOUT_TO_CALL_SUBFUNCTION(finfo);
+    finfo->nargs = argcount;
     /* offset in stack to this this finfo */
     finfo_last(finfo)->link_stack_depth =
         po->stack_depth - INITIAL_STACK_DEPTH;
@@ -501,7 +549,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     for (i = 0; i < argcount; i++) {
         Source source = argsources[i];
         if (RSOURCE_REG_IS_NONE(source)) {
-            assert(getstack(source) != RUNTIME_STACK_NONE);
+            extra_assert(getstack(source) != RUNTIME_STACK_NONE);
             PUSH_O(REG_X64_RSP, STACK_POS_OFFSET(RSOURCE_STACK(source)));
         }
         else {
@@ -512,6 +560,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     po->stack_depth += stack_correction;
 
     CALL_I(codebuf->codestart);
+    finfo->ret_addr = code;
     /* psyco callees remove args :| */
     po->stack_depth = initial_stack_depth;
     RETURNED_FROM_SUBFUNCTION();
@@ -533,11 +582,24 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
         POP_CC();
 
     END_CODE
-    vresult = run_time_result_check(po, CfCommonNewRefPyObject);
-    if (vresult != VINFO_OK) {
-        return vresult;
+    /* leave the depth counted by the caller (psyco_call_pyfunc) before the
+       error check, with the result in a register and no reference yet, so
+       that the error path doesn't release it */
+    vresult = run_time_result(po, CfReturnTypePtr);
+    if (!psyco_leave_recursive_call(po)) {
+        vinfo_decref(vresult, po);
+        return NULL;
     }
-    return run_time_result(po, CfCommonNewRefPyObject);
+    cc = integer_non_null(po, vresult);
+    if (cc == CC_ERROR || !runtime_condition_t(po, cc)) {
+        vinfo_decref(vresult, po);
+        if (cc != CC_ERROR)
+            PycException_Raise(po, vinfo_new(VirtualTime_New(&ERtPython)),
+                               NULL);
+        return NULL;
+    }
+    vresult->source = add_rtref(vresult->source);
+    return vresult;
 }
 
 /* internal, see NEED_CC() */
@@ -594,6 +656,9 @@ bint_add_i(PsycoObject *po, vinfo_t *rt1, long value2, bool unsafe)
     reg_t rg, dst;
     extra_assert(is_runtime(rt1->source));
     BEGIN_CODE
+    if (!FITS_IN_32BITS(value2))
+        NEED_CC(); /* the ADD below clobbers the flags (the LEA doesn't);
+                      first, as it may take a free register */
     NEED_FREE_REG(dst);
     rg = getreg(rt1->source);
     if (rg == REG_NONE) {
@@ -809,6 +874,68 @@ make_runtime_copy(PsycoObject *po, vinfo_t *v)
     return new_rtvinfo(po, rg, false, is_nonneg(v->source));
 }
 
+/* A local rebound while it alone holds its old value: each run-time part of
+   the new value that is only in a register takes the stack slot of the
+   matching part of the old one, which the release frees. Spilling would
+   push it to a new slot instead, so a loop rebinding a local would leave it
+   where its head doesn't have it, and every back edge would move it back:
+   dead locals keep their values, so this is most locals of a loop body.
+   Parts match by position in values of the same virtual kind. */
+#define REBIND_MAX 8
+struct rebind_s {
+    vinfo_t *v[REBIND_MAX];
+    int stack[REBIND_MAX];
+    int n;
+};
+
+static void rebind_pairs(struct rebind_s *r, vinfo_t *old, vinfo_t *v)
+{
+    int i, n;
+    if (old == NULL || old == v || old->refcount != 1)
+        return;
+    if (is_runtime(old->source)) {
+        if (is_runtime(v->source) && RUNTIME_STACK(old) != RUNTIME_STACK_NONE &&
+            RUNTIME_STACK(v) == RUNTIME_STACK_NONE && !RUNTIME_REG_IS_NONE(v) &&
+            r->n < REBIND_MAX) {
+            r->v[r->n] = v;
+            r->stack[r->n] = RUNTIME_STACK(old);
+            r->n++;
+        }
+        return;
+    }
+    if (!is_virtualtime(old->source) || old->source != v->source)
+        return;
+    n = old->array->count < v->array->count ? old->array->count
+                                            : v->array->count;
+    for (i = 0; i < n; i++)
+        if (old->array->items[i] != NULL && v->array->items[i] != NULL)
+            rebind_pairs(r, old->array->items[i], v->array->items[i]);
+}
+
+DEFINEFN
+void psyco_rebind_local(PsycoObject *po, vinfo_t **slot, vinfo_t *v)
+{
+    struct rebind_s r;
+    int i;
+    r.n = 0;
+    rebind_pairs(&r, *slot, v);
+    vinfo_xdecref(*slot, po);
+    *slot = v;
+    if (r.n == 0)
+        return;
+    BEGIN_CODE
+    for (i = 0; i < r.n; i++) {
+        vinfo_t *w = r.v[i];
+        /* the release may have spilled it */
+        if (RUNTIME_STACK(w) != RUNTIME_STACK_NONE || RUNTIME_REG_IS_NONE(w) ||
+            r.stack[i] > po->stack_depth)
+            continue;
+        SAVE_REG_TO_EBP_BASE(RUNTIME_REG(w), r.stack[i]);
+        SET_RUNTIME_STACK_TO(w, r.stack[i]);
+    }
+    END_CODE
+}
+
 #if 0
 DEFINEFN   -- unused --
 vinfo_t* integer_and_i(PsycoObject* po, vinfo_t* v1, long value2)
@@ -900,3 +1027,23 @@ vinfo_t* integer_seqindex(PsycoObject* po, vinfo_t* vi, vinfo_t* vn, bool ovf)
     }
 }
 #endif /* 0 */
+
+DEFINEFN
+condition_code_t psyco_int32_nonzero_at(PsycoObject *po, void *address) {
+    BEGIN_CODE
+    NEED_CC();
+    CMP_I8_DABS(0, address);
+    END_CODE
+    return CC_NE;
+}
+
+DEFINEFN
+condition_code_t psyco_int32_nonzero_in(PsycoObject *po, vinfo_t *vbase,
+                                        long offset) {
+    BEGIN_CODE
+    NEED_CC();
+    RTVINFO_IN_REG(vbase);
+    CMP_I8_DO(0, getreg(vbase->source), offset);
+    END_CODE
+    return CC_NE;
+}

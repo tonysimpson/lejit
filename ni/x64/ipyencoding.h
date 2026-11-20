@@ -1,3 +1,11 @@
+/*
+ * Python-aware emitters: Py_INCREF/Py_DECREF (calling tp_dealloc when the
+ * count reaches zero) and the prologue and epilogue for a function's frame
+ * locals. This is CPython object layout and C-API policy living in the
+ * backend; in a tidied design it belongs in a generated Python layer.
+ * The frame locals are the words of Python 2's per-frame exception state
+ * (f_exc_*), which nothing sets or reads.
+ */
 /***************************************************************/
 /***     Processor- and language-dependent code producers      ***/
 /***************************************************************/
@@ -32,10 +40,10 @@
   } while (0)
 #define INC_OB_REFCNT_internal(rg)                                             \
   do {                                                                         \
-    if (offsetof(PyObject, ob_refcnt) == 0) {                                  \
+    if (CPY_OFFSET(PyObject, ob_refcnt) == 0) {                                  \
       ADD_A_I8(rg, 1);                                                         \
     } else {                                                                   \
-      ADD_O8_I8(rg, offsetof(PyObject, ob_refcnt), 1);                         \
+      ADD_O8_I8(rg, CPY_OFFSET(PyObject, ob_refcnt), 1);                         \
     }                                                                          \
   } while (0)
 
@@ -116,11 +124,19 @@ PSY_INLINE void psyco_incref_nv(PsycoObject *po, vinfo_t *v) {
   }
 }
 
+/* a dealloc can run a __del__, except these types' */
+PSY_INLINE void decref_may_run_python(PsycoObject *po, PyTypeObject *tp) {
+  if (!(tp == &PyUnicode_Type || tp == &PyBool_Type || tp == &PyFloat_Type ||
+        tp == &PyLong_Type || tp == Py_None->ob_type || tp == &PyRange_Type))
+    po->pr.class_unchecked = 1;
+}
+
 /* emit Py_DECREF(v) for run-time v. Used by vcompiler.c when releasing a
    run-time vinfo_t holding a reference to a Python object. */
 PSY_INLINE void psyco_decref_rt(PsycoObject *po, vinfo_t *v) {
   PyTypeObject *tp = Psyco_KnownType(v);
   reg_t rg;
+  decref_may_run_python(po, tp);
   BEGIN_CODE
   RTVINFO_IN_REG(v);
   rg = RUNTIME_REG(v);
@@ -128,6 +144,29 @@ PSY_INLINE void psyco_decref_rt(PsycoObject *po, vinfo_t *v) {
     DEC_OB_REFCNT_T(rg, tp);
   else
     DEC_OB_REFCNT(rg);
+  END_CODE
+}
+
+/* emit Py_XDECREF(v) for run-time v, a word Ni holds no reference to that
+   may be NULL at run time: the old content of a field the C code has just
+   overwritten, whose reference it now releases (STORE_DEREF's cell). The
+   register load and the cc save are made before the NULL test, so both
+   paths leave the compiler's state the same. */
+PSY_INLINE void psyco_xdecref_rt(PsycoObject *po, vinfo_t *v) {
+  PyTypeObject *tp = Psyco_KnownType(v);
+  reg_t rg;
+  decref_may_run_python(po, tp);
+  BEGIN_CODE
+  RTVINFO_IN_REG(v);
+  rg = RUNTIME_REG(v);
+  NEED_CC_REG(rg);
+  TEST_R_R(rg, rg);
+  BEGIN_SHORT_COND_JUMP(1, CC_E);
+  if (tp != NULL)
+    DEC_OB_REFCNT_T(rg, tp);
+  else
+    DEC_OB_REFCNT(rg);
+  END_SHORT_JUMP(1);
   END_CODE
 }
 
@@ -162,20 +201,7 @@ EXTERNFN bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
       MOV_R_R(REG_X64_RBP, REG_X64_RSP);                                       \
     }                                                                          \
     STACK_CORRECTION(sizeof(long) * ((nframelocal)-1));                        \
-    PUSH_IMMED(0); /* f_exc_type, initially NULL */                            \
-  } while (0)
-
-/* called by psyco_finish_return() */
-#define FINALIZE_FRAME_LOCALS()                                                \
-  do {                                                                         \
-    CMP_I8_A(0, REG_X64_RSP);                                                  \
-    BEGIN_SHORT_COND_JUMP(0, CC_E);                                            \
-    BEGIN_CALL(3);                                                             \
-    CALL_SET_ARG_FROM_RT(LOC_CONTINUATION->array->items[2]->source, 2);        \
-    CALL_SET_ARG_FROM_RT(LOC_CONTINUATION->array->items[1]->source, 1);        \
-    CALL_SET_ARG_FROM_RT(LOC_CONTINUATION->array->items[0]->source, 0);        \
-    END_CALL_I(cimpl_finalize_frame_locals);                                   \
-    END_SHORT_JUMP(0);                                                         \
+    PUSH_IMMED(0); /* the catcher word (pycompiler.c:catcher_word) */          \
   } while (0)
 
 #define WRITE_FRAME_EPILOGUE(retval, nframelocal)                              \
@@ -195,8 +221,6 @@ EXTERNFN bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
       STACK_CORRECTION(framelocpos - po->stack_depth);                         \
       po->stack_depth = framelocpos;                                           \
                                                                                \
-      /* perform Python-specific cleanup */                                    \
-      FINALIZE_FRAME_LOCALS();                                                 \
       MOV_R_R(REG_FUNCTIONS_RETURN, REG_ANY_CALLEE_SAVED);                     \
     }                                                                          \
   } while (0)
@@ -230,8 +254,137 @@ EXTERNFN bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
     po->stack_depth = 0;                                                       \
   } while (0)
 
-/* implemented in pycompiler.c */
-EXTERNFN void cimpl_finalize_frame_locals(PyObject *, PyObject *, PyObject *);
+/* The inline attribute store into a split instance dict,
+   behind a type guard emitted
+   before it. Hand-allocated in the caller-saved registers, which hold no
+   tracked values, so the compiler's state is the same on every path
+   through it. psyco_inline_store_begin emits the checks and the store,
+   then the miss path: 'call miss_glue' (miss_glue(obj, value, cache)
+   in RDI, RSI, RDX, returning an int, nonzero on error) and 'test eax,
+   eax'; the caller then emits the error check (runtime_condition_f with
+   CC_NE) and calls psyco_inline_store_end, which points the store's
+   exits past that check. */
+typedef enum {
+  STORE_GC_NONE, /* the value's type is known and not GC */
+  STORE_GC_DICT, /* it is known and GC: miss if the dict is untracked */
+  STORE_GC_FULL, /* unknown: miss if the dict is untracked and it is GC */
+} store_gc_t;
+typedef struct {
+  vinfo_t *obj, *value; /* run-time or compile-time */
+  long dictoffset;      /* the type's tp_dictoffset, > 0 */
+  store_cache_t *cache;
+  store_gc_t gc;
+  bool fill;            /* inline the store into the next empty slot */
+  code_t *miss_glue;
+  code_t *done[2]; /* jumps for psyco_inline_store_end to point */
+} inline_store_t;
+EXTERNFN void psyco_inline_store_begin(PsycoObject *po, inline_store_t *s);
+EXTERNFN void psyco_inline_store_end(PsycoObject *po, inline_store_t *s);
+
+/* The inline attribute load from an instance dict, behind a type guard
+   emitted before it, hand-allocated like the store. Its result, a
+   borrowed pointer or NULL, is the vinfo returned. 'absent' is the
+   load expected to find nothing (a class attribute exists): it runs the
+   dict's own probe sequence (lookdict_split's) and is done at an empty
+   index slot; otherwise the name is read from the dict's values at the
+   index the cache gives, if the keys hold it there. Anything else calls
+   miss_glue(dict, cache), which returns the same. Nothing depends on
+   which keys a dict has when the code is emitted. */
+typedef struct {
+  vinfo_t *obj;         /* run-time or compile-time */
+  long dictoffset;      /* the type's tp_dictoffset, > 0 */
+  store_cache_t *cache; /* (class, name), shared with the stores */
+  Py_hash_t hash;       /* the name's */
+  bool absent;
+  code_t *miss_glue;
+} inline_load_t;
+EXTERNFN vinfo_t *psyco_inline_load(PsycoObject *po, inline_load_t *s);
+
+/* a type guard: the condition code for "tp's tp_flags or tp_version_tag
+   differs from *flags or *tag" */
+EXTERNFN condition_code_t psyco_type_guard(PsycoObject *po, PyTypeObject *tp,
+                                           unsigned long *flags,
+                                           unsigned long *tag);
+
+/* A cached global's guard (Python/pycompiler.c:load_global_cached): the
+   condition code for "changed". With 'entry', the keys of globals must
+   have dk_size 'size' and hold name and value at the entry 'offset' bytes
+   from their start, both written into the code, where the at_ fields say.
+   With 'absent', the name must be absent from globals and the version tag
+   of builtins tags[1], written into the code where *patch says. Otherwise the
+   version tags of globals and builtins must be tags[0] and tags[1], read
+   from 'tags'. All forms change the compiler's state in the same way, so
+   a replay may emit any. */
+typedef struct {
+  dword_t *at_size, *at_key, *at_value; /* in the code */
+} global_patch_t;
+/* The name absent from globals, as the dict's own probe walks it: keys of
+   dk_size 'size', and the 'n' distinct index slots it walks before the
+   first empty one holding what they held at compile time, each a dummy or an entry whose
+   hash differs from the name's in its low 32 bits. Then any lookup of the
+   name in such keys stops at that empty slot. */
+#define GLOBAL_PROBE_MAX 4
+/* room for the longest absent guard, and a jump */
+#define GLOBAL_ABSENT_CODE_MAX 256
+typedef struct {
+  long size;
+  int width;                       /* of an index: 1, 2 or 4 bytes */
+  int n;
+  long slot[GLOBAL_PROBE_MAX + 1]; /* from the keys; the last is empty */
+  long index[GLOBAL_PROBE_MAX];    /* what each slot holds */
+  long hash_at[GLOBAL_PROBE_MAX];  /* an entry's me_hash, from the keys */
+  int32_t hash[GLOBAL_PROBE_MAX];  /* its low 32 bits */
+} global_absent_t;
+/* false if the probe isn't one this guard can show */
+EXTERNFN bool psyco_global_absent(PyObject *globals, PyObject *name,
+                                  global_absent_t *a);
+/* Where an absent guard is: the code from 'start' up to 'end', where the
+   code goes on with flags clear if the name is still absent, and 'fresh',
+   NULL or the memory the guard was moved to when shown again for keys it
+   didn't fit. */
+typedef struct {
+  code_t *start, *end, *fresh;
+} global_absent_patch_t;
+EXTERNFN condition_code_t psyco_global_guard(PsycoObject *po,
+                                             PyObject *globals,
+                                             PyObject *builtins,
+                                             PyObject *name, PyObject *value,
+                                             global_patch_t *entry,
+                                             long size, long offset,
+                                             const global_absent_t *absent,
+                                             global_absent_patch_t *patch,
+                                             uint64_t *tags);
+/* An absent guard shown again for the keys globals have now and builtins'
+   tag now (the keys resized, a name inserted into the slots it walked, or
+   builtins written), so that it passes again while the name stays absent:
+   rewritten in place where it fits, else in fresh memory that the start
+   jumps to. A probe that can't be shown is replaced by globals' tag, so
+   the guard passes until globals or builtins are written. */
+EXTERNFN void psyco_global_absent_rearm(global_absent_patch_t *patch,
+                                        PyObject *globals, PyObject *builtins,
+                                        PyObject *name);
+/* the entry moved: rewrites the code's size and displacements (with no
+   at_value, the size and key's) */
+EXTERNFN void psyco_global_guard_move(global_patch_t *entry, long size,
+                                      long offset);
+/* jumps to 'stub' unless the keys of globals have dk_size 'size' and hold
+   the name at the entry 'offset' bytes from their start, both written into
+   the code where check's at_size and at_key say */
+EXTERNFN void psyco_global_stale(PsycoObject *po, PyObject *globals,
+                                 PyObject *name, global_patch_t *check,
+                                 long size, long offset, code_t *stub);
+
+/* A global loaded at run time from the entry of globals that holds the
+   name, the size and offset written into the code as the guard's entry
+   form: keys of that size holding the name there give its value, increfed;
+   anything else calls miss_glue(arg), which returns a new reference or
+   NULL, and may move the entry. The result is in a register, tested
+   (zero: the miss's error), and not yet owned: the caller checks the
+   condition CC_E, then adds the reference. */
+EXTERNFN vinfo_t *psyco_global_load(PsycoObject *po, PyObject *globals,
+                                    PyObject *name, global_patch_t *entry,
+                                    long size, long offset,
+                                    code_t *miss_glue, void *arg);
 
 EXTERNFN void function_return(PsycoObject *po, Source retval, int nframelocal,
                               long retpos);
