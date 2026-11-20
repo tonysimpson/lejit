@@ -181,27 +181,19 @@ tuple_get_empty(PsycoObject *po)
 }
 #endif
 
-#if NI_HAS_TUPLE_ALLOC
+#if NI_HAS_TUPLE_GET_EMPTY
 static vinfo_t *
 tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
 {
     int _t1;
-#if !NI_HAS_TUPLE_GET_EMPTY
-    vinfo_t *_t10;
-#endif
     vinfo_t *_t2;
     int _t3;
     int _t4;
     vinfo_t *_t5;
     int _t6;
     vinfo_t *_t7;
-#if NI_HAS_TUPLE_GET_EMPTY
     vinfo_t *_t8;
     vinfo_t *b;
-#else
-    Py_ssize_t _t8;
-    vinfo_t *_t9;
-#endif
     Py_ssize_t size;
     PyTypeObject *tp_a;
     PyTypeObject *tp_bb;
@@ -237,9 +229,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
             tp_bb->tp_name);
         return NULL;
     }
-#if NI_HAS_TUPLE_GET_EMPTY
     b = bb;
-#endif
     _t4 = PsycoTuple_Load(bb);
     if (_t4 < 0 || _t4 > 16) {
         _t5 = psyco_generic_call(
@@ -261,7 +251,6 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         vinfo_incref(a);
         return a;
     }
-#if NI_HAS_TUPLE_GET_EMPTY
     size = (_t1 + _t4);
     if (size == 0) {
         _t7 = tuple_get_empty(po);
@@ -275,28 +264,6 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
     if (_t8 != NULL)
         Psyco_AssertType(po, _t8, &PyTuple_Type);
     return _t8;
-#else
-    if (_t1 > ((PY_SSIZE_T_MAX - _t4))) {
-        _t7 = psyco_generic_call(
-            po, PyErr_NoMemory,
-            CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "");
-        if (_t7 != NULL)
-            Psyco_AssertType(po, _t7, &PyTuple_Type);
-        return _t7;
-    }
-    size = (_t1 + _t4);
-    if (size == 0) {
-        _t8 = 0;
-        _t9 = PsycoTuple_New(_t8, NULL);
-        return _t9;
-    }
-    _t10 = psyco_generic_call(po, PyTuple_Type.tp_as_sequence->sq_concat,
-                             CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
-                             "vv", a, bb);
-    if (_t10 != NULL)
-        Psyco_AssertType(po, _t10, &PyTuple_Type);
-    return _t10;
-#endif
 }
 #else
 static vinfo_t *
@@ -591,70 +558,6 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
     if (_t6 != NULL)
         Psyco_AssertType(po, _t6, &PyTuple_Type);
     return _t6;
-}
-#elif NI_HAS_TUPLE_ALLOC
-static vinfo_t *
-tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
-{
-    vinfo_t *_t1;
-    int _t2;
-    vinfo_t *_t3;
-    Py_ssize_t _t4;
-    vinfo_t *_t5;
-    vinfo_t *_t6;
-    vinfo_t *_t7;
-    Py_ssize_t n_k;
-    Py_ssize_t size;
-    PyTypeObject *tp_a;
-    if (!is_compiletime(n->source)) {
-        _t1 = psyco_generic_call(
-            po, PyTuple_Type.tp_as_sequence->sq_repeat,
-            CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "vv", a, n);
-        if (_t1 != NULL)
-            Psyco_AssertType(po, _t1, &PyTuple_Type);
-        return _t1;
-    }
-    n_k = (Py_ssize_t)CompileTime_Get(n->source)->value;
-    _t2 = PsycoTuple_Load(a);
-    if (_t2 < 0 || _t2 > 16) {
-        _t3 =
-            psyco_generic_call(po, PyTuple_Type.tp_as_sequence->sq_repeat,
-                               CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
-                               "vl", a, (long)(n_k));
-        if (_t3 != NULL)
-            Psyco_AssertType(po, _t3, &PyTuple_Type);
-        return _t3;
-    }
-    if ((_t2 == 0 || n_k == 1)) {
-        tp_a = Psyco_NeedType(po, a);
-        if (tp_a == NULL) {
-            return NULL;
-        }
-        if (tp_a == &PyTuple_Type) {
-            vinfo_incref(a);
-            return a;
-        }
-    }
-    if ((_t2 == 0 || n_k <= 0)) {
-        _t4 = 0;
-        _t5 = PsycoTuple_New(_t4, NULL);
-        return _t5;
-    }
-    if (n_k > ((PY_SSIZE_T_MAX / _t2))) {
-        _t6 = psyco_generic_call(
-            po, PyErr_NoMemory,
-            CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "");
-        if (_t6 != NULL)
-            Psyco_AssertType(po, _t6, &PyTuple_Type);
-        return _t6;
-    }
-    size = (_t2 * n_k);
-    _t7 = psyco_generic_call(po, PyTuple_Type.tp_as_sequence->sq_repeat,
-                             CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
-                             "vl", a, (long)(n_k));
-    if (_t7 != NULL)
-        Psyco_AssertType(po, _t7, &PyTuple_Type);
-    return _t7;
 }
 #else
 static vinfo_t *

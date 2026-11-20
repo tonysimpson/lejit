@@ -124,11 +124,7 @@ static const char *cstatic_stripfuncnames[] = {"lstrip", "rstrip", "strip"};
 static PyObject *
 cimpl_do_argstrip(PyObject *self, int striptype, PyObject *sep)
 {
-#if NI_HAS_UNICODE_STRIP_NONE_DEFAULT
     if (sep != Py_None) {
-#else
-    if (sep != NULL && sep != Py_None) {
-#endif
         if (PyUnicode_Check(sep))
             return _PyUnicode_XStrip(self, striptype, sep);
         else {
@@ -664,7 +660,6 @@ cimpl_unicode_format_arg_format(struct unicode_formatter_t *ctx,
     return 0;
 }
 
-#if NI_HAS_UNICODE_FILL
 static void
 cimpl_unicode_fill(enum PyUnicode_Kind kind, void *data, Py_UCS4 value,
                    Py_ssize_t start, Py_ssize_t length)
@@ -699,13 +694,11 @@ cimpl_unicode_fill(enum PyUnicode_Kind kind, void *data, Py_UCS4 value,
             Py_UNREACHABLE();
     }
 }
-#endif
 
 static int
 cimpl_unicode_format_arg_output(struct unicode_formatter_t *ctx,
                                 struct unicode_format_arg_t *arg,
                                 PyObject *str)
-#if NI_HAS_UNICODE_FILL
 {
     Py_ssize_t len;
     enum PyUnicode_Kind kind;
@@ -835,195 +828,6 @@ cimpl_unicode_format_arg_output(struct unicode_formatter_t *ctx,
     }
     return 0;
 }
-#else
-{
-    Py_ssize_t len;
-    enum PyUnicode_Kind kind;
-    void *pbuf;
-    Py_ssize_t pindex;
-    Py_UCS4 signchar;
-    Py_ssize_t buflen;
-    Py_UCS4 maxchar;
-    Py_ssize_t sublen;
-    _PyUnicodeWriter *writer = &ctx->writer;
-    Py_UCS4 fill;
-    fill = ' ';
-    if (arg->sign && arg->flags & F_ZERO)
-        fill = '0';
-    if ((assert(PyUnicode_Check(str)),
-         (PyUnicode_IS_READY(str) ? 0 : _PyUnicode_Ready(str))) == -1)
-        return -1;
-    len = PyUnicode_GET_LENGTH(str);
-    if ((arg->width == -1 || arg->width <= len) &&
-        (arg->prec == -1 || arg->prec >= len) &&
-        !(arg->flags & (F_SIGN | F_BLANK))) {
-        if (_PyUnicodeWriter_WriteStr(writer, str) == -1)
-            return -1;
-        return 0;
-    }
-    if (arg->ch == 's' || arg->ch == 'r' || arg->ch == 'a') {
-        if (arg->prec >= 0 && len > arg->prec)
-            len = arg->prec;
-    }
-    kind = PyUnicode_KIND(str);
-    pbuf = PyUnicode_DATA(str);
-    pindex = 0;
-    signchar = '\0';
-    if (arg->sign) {
-        Py_UCS4 ch = PyUnicode_READ(kind, pbuf, pindex);
-        if (ch == '-' || ch == '+') {
-            signchar = ch;
-            len--;
-            pindex++;
-        }
-        else if (arg->flags & F_SIGN)
-            signchar = '+';
-        else if (arg->flags & F_BLANK)
-            signchar = ' ';
-        else
-            arg->sign = 0;
-    }
-    if (arg->width < len)
-        arg->width = len;
-    maxchar = writer->maxchar;
-    if (!(arg->flags & F_LJUST)) {
-        if (arg->sign) {
-            if ((arg->width - 1) > len)
-                maxchar = Py_MAX(maxchar, fill);
-        }
-        else {
-            if (arg->width > len)
-                maxchar = Py_MAX(maxchar, fill);
-        }
-    }
-    if (PyUnicode_MAX_CHAR_VALUE(str) > maxchar) {
-        Py_UCS4 strmaxchar = _PyUnicode_FindMaxChar(str, 0, pindex + len);
-        maxchar = Py_MAX(maxchar, strmaxchar);
-    }
-    buflen = arg->width;
-    if (arg->sign && len == arg->width)
-        buflen++;
-    if (_PyUnicodeWriter_Prepare(writer, buflen, maxchar) == -1)
-        return -1;
-    if (arg->sign) {
-        if (fill != ' ') {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, signchar);
-            writer->pos += 1;
-        }
-        if (arg->width > len)
-            arg->width--;
-    }
-    if ((arg->flags & F_ALT) &&
-        (arg->ch == 'x' || arg->ch == 'X' || arg->ch == 'o')) {
-        assert(PyUnicode_READ(kind, pbuf, pindex) == '0');
-        assert(PyUnicode_READ(kind, pbuf, pindex + 1) == arg->ch);
-        if (fill != ' ') {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, '0');
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos + 1,
-                            arg->ch);
-            writer->pos += 2;
-            pindex += 2;
-        }
-        arg->width -= 2;
-        if (arg->width < 0)
-            arg->width = 0;
-        len -= 2;
-    }
-    if (arg->width > len && !(arg->flags & F_LJUST)) {
-        sublen = arg->width - len;
-        do {
-            assert(0 <= writer->pos);
-            assert(writer->kind != PyUnicode_WCHAR_KIND);
-            switch (writer->kind) {
-                case PyUnicode_1BYTE_KIND: {
-                    assert(fill <= 0xff);
-                    Py_UCS1 ch = (unsigned char)fill;
-                    Py_UCS1 *to = (Py_UCS1 *)writer->data + writer->pos;
-                    memset(to, ch, sublen);
-                    break;
-                }
-                case PyUnicode_2BYTE_KIND: {
-                    assert(fill <= 0xffff);
-                    Py_UCS2 ch = (Py_UCS2)fill;
-                    Py_UCS2 *to = (Py_UCS2 *)writer->data + writer->pos;
-                    const Py_UCS2 *end = to + sublen;
-                    for (; to < end; ++to) *to = ch;
-                    break;
-                }
-                case PyUnicode_4BYTE_KIND: {
-                    assert(fill <= 0x10ffff);
-                    Py_UCS4 ch = fill;
-                    Py_UCS4 *to = (Py_UCS4 *)writer->data + writer->pos;
-                    const Py_UCS4 *end = to + sublen;
-                    for (; to < end; ++to) *to = ch;
-                    break;
-                }
-                default:
-                    Py_UNREACHABLE();
-            }
-        } while (0);
-        writer->pos += sublen;
-        arg->width = len;
-    }
-    if (fill == ' ') {
-        if (arg->sign) {
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, signchar);
-            writer->pos += 1;
-        }
-        if ((arg->flags & F_ALT) &&
-            (arg->ch == 'x' || arg->ch == 'X' || arg->ch == 'o')) {
-            assert(PyUnicode_READ(kind, pbuf, pindex) == '0');
-            assert(PyUnicode_READ(kind, pbuf, pindex + 1) == arg->ch);
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos, '0');
-            PyUnicode_WRITE(writer->kind, writer->data, writer->pos + 1,
-                            arg->ch);
-            writer->pos += 2;
-            pindex += 2;
-        }
-    }
-    if (len) {
-        _PyUnicode_FastCopyCharacters(writer->buffer, writer->pos, str, pindex,
-                                      len);
-        writer->pos += len;
-    }
-    if (arg->width > len) {
-        sublen = arg->width - len;
-        do {
-            assert(0 <= writer->pos);
-            assert(writer->kind != PyUnicode_WCHAR_KIND);
-            switch (writer->kind) {
-                case PyUnicode_1BYTE_KIND: {
-                    assert(' ' <= 0xff);
-                    Py_UCS1 ch = (unsigned char)' ';
-                    Py_UCS1 *to = (Py_UCS1 *)writer->data + writer->pos;
-                    memset(to, ch, sublen);
-                    break;
-                }
-                case PyUnicode_2BYTE_KIND: {
-                    assert(' ' <= 0xffff);
-                    Py_UCS2 ch = (Py_UCS2)' ';
-                    Py_UCS2 *to = (Py_UCS2 *)writer->data + writer->pos;
-                    const Py_UCS2 *end = to + sublen;
-                    for (; to < end; ++to) *to = ch;
-                    break;
-                }
-                case PyUnicode_4BYTE_KIND: {
-                    assert(' ' <= 0x10ffff);
-                    Py_UCS4 ch = ' ';
-                    Py_UCS4 *to = (Py_UCS4 *)writer->data + writer->pos;
-                    const Py_UCS4 *end = to + sublen;
-                    for (; to < end; ++to) *to = ch;
-                    break;
-                }
-                default:
-                    Py_UNREACHABLE();
-            }
-        } while (0);
-        writer->pos += sublen;
-    }
-    return 0;
-}
-#endif
 
 static vinfo_t *
 PsycoUnicode_Concat(PsycoObject *po, vinfo_t *, vinfo_t *);
@@ -1131,11 +935,7 @@ unicode_lstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
                                        self, vargs);
     }
     if (_t1 == 0) {
-#if NI_HAS_UNICODE_STRIP_NONE_DEFAULT
         chars = psyco_vi_None();
-#else
-        chars = psyco_vi_Zero();
-#endif
         return_value = unicode_lstrip_impl(po, self, chars);
         vinfo_decref(chars, po);
         return return_value;
@@ -1167,11 +967,7 @@ unicode_rstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
                                        self, vargs);
     }
     if (_t1 == 0) {
-#if NI_HAS_UNICODE_STRIP_NONE_DEFAULT
         chars = psyco_vi_None();
-#else
-        chars = psyco_vi_Zero();
-#endif
         return_value = unicode_rstrip_impl(po, self, chars);
         vinfo_decref(chars, po);
         return return_value;

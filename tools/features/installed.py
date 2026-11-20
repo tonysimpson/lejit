@@ -329,21 +329,7 @@ HEADER_DETECTORS = {
 
 # features that neither the interpreter nor the headers show: the two forms
 # Ni copies behave the same, and the difference is only in a C file
-NOT_VISIBLE = {
-    'ITER_CHECK_TYPE_LOCAL': 'PyIter_Check reading the type into a local behaves the same',
-    'TUPLE_ALLOC': 'tuple_alloc is a static function of tupleobject.c; tuples behave the same',
-    'UNICODE_EQ_ASSUMES_READY': 'unicode_eq asserting rather than readying shows only in a debug build',
-    'BYTES_STRIP_NONE_DEFAULT': 'a NULL default is never seen from Python',
-    'UNICODE_STRIP_NONE_DEFAULT': 'a NULL default is never seen from Python',
-    'UNICODE_FILL': 'unicode_fill is a static function of unicodeobject.c',
-    'MATH_UNDERFLOW_BELOW_1_5': 'shows only with a C library that sets ERANGE for results near -1',
-    'VARARGS_FROM_ARRAY': 'how ceval builds *args is not visible: the tuple is the same',
-    'TRACE_INFO': 'ceval\'s tracing state is a static type of ceval.c',
-    'CEVAL_NAME_IDENTIFIER': 'where ceval.c declares its __name__ identifier is not visible',
-    'SPECIAL_LOOKUP_FROM_ID': 'the AttributeError is the same either way',
-    'FORMAT_VALUE_CHECKS_CONVERSION': 'the unknown-conversion branch cannot be reached (the'
-                                      ' conversion is 2 bits, all 4 values known)',
-}
+NOT_VISIBLE = {}
 
 
 # --- the features ----------------------------------------------------------

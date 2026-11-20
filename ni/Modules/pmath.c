@@ -59,11 +59,7 @@ cimpl_is_error(double x)
     if (errno == EDOM)
         PyErr_SetString(PyExc_ValueError, "math domain error");
     else if (errno == ERANGE) {
-#if NI_HAS_MATH_UNDERFLOW_BELOW_1_5
         if (fabs(x) < 1.5)
-#else
-        if (fabs(x) < 1.0)
-#endif
             result = 0;
         else
             PyErr_SetString(PyExc_OverflowError, "math range error");

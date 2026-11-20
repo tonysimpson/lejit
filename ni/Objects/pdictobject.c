@@ -133,11 +133,9 @@ cimpl_unicode_eq_str_key(PyObject *aa, const ni_strkey_t *bb)
 {
     PyUnicodeObject *a = (PyUnicodeObject *)aa;
     const ni_strkey_t *b = bb;
-#if !NI_HAS_UNICODE_EQ_ASSUMES_READY
     if (PyUnicode_READY(a) == -1) {
         Py_UNREACHABLE();
     }
-#endif
     if (PyUnicode_GET_LENGTH(a) != (b->length))
         return 0;
     if (PyUnicode_GET_LENGTH(a) == 0)

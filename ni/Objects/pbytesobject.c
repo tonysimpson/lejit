@@ -160,15 +160,9 @@ cimpl_do_strip(PyBytesObject *self, int striptype)
 static PyObject *
 cimpl_do_argstrip(PyBytesObject *self, int striptype, PyObject *bytes)
 {
-#if NI_HAS_BYTES_STRIP_NONE_DEFAULT
     if (bytes != Py_None) {
         return cimpl_do_xstrip(self, striptype, bytes);
     }
-#else
-    if (bytes != NULL && bytes != Py_None) {
-        return cimpl_do_xstrip(self, striptype, bytes);
-    }
-#endif
     return cimpl_do_strip(self, striptype);
 }
 

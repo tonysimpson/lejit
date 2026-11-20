@@ -777,20 +777,12 @@ PsycoIter_Check(PsycoObject *po, vinfo_t *obj)
 {
     iternextfunc _t1;
     int _t2;
-#if NI_HAS_ITER_CHECK_TYPE_LOCAL
-    PyTypeObject *tp;
-#endif
     PyTypeObject *tp_obj;
     tp_obj = Psyco_NeedType(po, obj);
     if (tp_obj == NULL) {
         return NULL;
     }
-#if NI_HAS_ITER_CHECK_TYPE_LOCAL
-    tp = tp_obj;
-    switch (Psyco_TypeSlot(po, tp_obj, &tp->tp_iternext, (void **)&_t1)) {
-#else
     switch (Psyco_TypeSlot(po, tp_obj, &tp_obj->tp_iternext, (void **)&_t1)) {
-#endif
         case 1:
             break;
         case 0:

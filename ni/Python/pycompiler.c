@@ -1935,7 +1935,7 @@ cimpl_cmp_outcome(int op, PyObject *v, PyObject *w)
 }
 #endif
 
-#if NI_HAS_TRACE_INFO
+#if NI_HAS_CFRAME
 static void
 cimpl_PyLineTable_InitAddressRange(const char *linetable, Py_ssize_t length,
                                    int firstlineno, PyCodeAddressRange *range)
@@ -1949,7 +1949,7 @@ cimpl_PyLineTable_InitAddressRange(const char *linetable, Py_ssize_t length,
 }
 #endif
 
-#if NI_HAS_TRACE_INFO
+#if NI_HAS_CFRAME
 static int
 cimpl__PyCode_InitAddressRange(PyCodeObject *co, PyCodeAddressRange *bounds)
 {
@@ -1968,11 +1968,7 @@ _PyObject_FastCallDictTstate(PyThreadState *tstate, PyObject *callable,
                              PyObject *kwargs);
 #endif
 
-#if NI_HAS_CEVAL_NAME_IDENTIFIER
-_Py_IDENTIFIER(__name__);
-#endif
-
-#if !NI_HAS_TRACE_INFO
+#if !NI_HAS_CFRAME
 static int
 cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
                  int what, PyObject *arg)
@@ -1992,7 +1988,7 @@ cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
 }
 #endif
 
-#if !NI_HAS_TRACE_INFO
+#if !NI_HAS_CFRAME
 static int
 cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
                            PyFrameObject *frame, int what, PyObject *arg)
@@ -2014,7 +2010,7 @@ cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
 }
 #endif
 
-#if !NI_HAS_TRACE_INFO
+#if !NI_HAS_CFRAME
 static PyObject *
 cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
 #if NI_HAS_CALL_TRACE_METHOD_DESCR
@@ -2226,7 +2222,7 @@ error:
 }
 #endif
 
-#if NI_HAS_TRACE_INFO
+#if NI_HAS_CFRAME
 typedef struct {
     PyCodeObject *code;
     PyCodeAddressRange bounds;
@@ -2972,73 +2968,6 @@ cimpl_jump_if_not_exc_match_0(PyObject *right)
 }
 #endif
 
-#if NI_HAS_CEVAL_NAME_IDENTIFIER
-static PyObject *
-cimpl_import_from_whole(PyObject *v, PyObject *name)
-{
-    PyObject *x;
-    PyObject *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
-    if (_PyObject_LookupAttr(v, name, &x) != 0) {
-        return x;
-    }
-    pkgname = _PyObject_GetAttrId(v, &PyId___name__);
-    if (pkgname == NULL) {
-        goto error;
-    }
-    if (!PyUnicode_Check(pkgname)) {
-        Py_CLEAR(pkgname);
-        goto error;
-    }
-    fullmodname = PyUnicode_FromFormat("%U.%U", pkgname, name);
-    if (fullmodname == NULL) {
-        Py_DECREF(pkgname);
-        return NULL;
-    }
-    x = PyImport_GetModule(fullmodname);
-    Py_DECREF(fullmodname);
-    if (x == NULL && !PyErr_Occurred()) {
-        goto error;
-    }
-    Py_DECREF(pkgname);
-    return x;
-error:
-    pkgpath = PyModule_GetFilenameObject(v);
-    if (pkgname == NULL) {
-        pkgname_or_unknown = PyUnicode_FromString("<unknown module name>");
-        if (pkgname_or_unknown == NULL) {
-            Py_XDECREF(pkgpath);
-            return NULL;
-        }
-    }
-    else {
-        pkgname_or_unknown = pkgname;
-    }
-    if (pkgpath == NULL || !PyUnicode_Check(pkgpath)) {
-        PyErr_Clear();
-        errmsg = PyUnicode_FromFormat(
-            "cannot import name %R from %R (unknown location)", name,
-            pkgname_or_unknown);
-        PyErr_SetImportError(errmsg, pkgname, NULL);
-    }
-    else {
-        _Py_IDENTIFIER(__spec__);
-        PyObject *spec = _PyObject_GetAttrId(v, &PyId___spec__);
-        const char *fmt =
-            _PyModuleSpec_IsInitializing(spec)
-                ? "cannot import name %R from partially initialized module %R "
-                  "(most likely due to a circular import) (%S)"
-                : "cannot import name %R from %R (%S)";
-        Py_XDECREF(spec);
-        errmsg = PyUnicode_FromFormat(fmt, name, pkgname_or_unknown, pkgpath);
-        PyErr_SetImportError(errmsg, pkgname, pkgpath);
-    }
-    Py_XDECREF(errmsg);
-    Py_XDECREF(pkgname_or_unknown);
-    Py_XDECREF(pkgpath);
-    return NULL;
-}
-#endif
-
 #if NI_HAS_OPCODE_MATCH_MAPPING
 static int
 cimpl_match_mapping_r0(PyObject *_in0, long _oparg, int match, PyObject **_out)
@@ -3232,7 +3161,7 @@ _error:
 }
 #endif
 
-#if NI_HAS_TRACE_INFO
+#if NI_HAS_CFRAME
 static void
 cimpl_initialize_trace_info(PyTraceInfo *trace_info, PyFrameObject *frame)
 {
@@ -3243,7 +3172,7 @@ cimpl_initialize_trace_info(PyTraceInfo *trace_info, PyFrameObject *frame)
 }
 #endif
 
-#if NI_HAS_TRACE_INFO
+#if NI_HAS_CFRAME
 static int
 cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
                  PyTraceInfo *trace_info, int what, PyObject *arg)
@@ -3275,7 +3204,6 @@ cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
 _Py_IDENTIFIER(__aenter__);
 _Py_IDENTIFIER(__aexit__);
 
-#if NI_HAS_SPECIAL_LOOKUP_FROM_ID
 static PyObject *
 cimpl_special_lookup(PyObject *o, _Py_Identifier *id)
 {
@@ -3287,7 +3215,6 @@ cimpl_special_lookup(PyObject *o, _Py_Identifier *id)
     }
     return res;
 }
-#endif
 
 #if NI_HAS_OPCODE_WITH_EXCEPT_START
 static int
@@ -3508,7 +3435,7 @@ cimpl_build_map_unpack_with_call_0(PyObject *sum, PyObject *arg,
 }
 #endif
 
-#if NI_HAS_IMPORT_FROM_SPEC && !NI_HAS_CEVAL_NAME_IDENTIFIER
+#if NI_HAS_IMPORT_FROM_SPEC
 static PyObject *
 cimpl_import_from_whole(PyObject *v, PyObject *name)
 {
@@ -3576,21 +3503,7 @@ error:
 }
 #endif
 
-#if !NI_HAS_SPECIAL_LOOKUP_FROM_ID
-static PyObject *
-cimpl_special_lookup(PyObject *o, _Py_Identifier *id)
-{
-    PyObject *res;
-    res = _PyObject_LookupSpecial(o, id);
-    if (res == NULL && !PyErr_Occurred()) {
-        PyErr_SetObject(PyExc_AttributeError, id->object);
-        return NULL;
-    }
-    return res;
-}
-#endif
-
-#if NI_HAS_TRACE_INFO
+#if NI_HAS_CFRAME
 static int
 cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
                            PyFrameObject *frame, PyTraceInfo *trace_info,
@@ -3613,7 +3526,7 @@ cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
 }
 #endif
 
-#if NI_HAS_TRACE_INFO
+#if NI_HAS_CFRAME
 static PyObject *
 cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
                    PyObject *kwdict)
@@ -3707,7 +3620,7 @@ cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
 
 static PyObject *
 cimpl_call_function_ex(PyObject *_in0, PyObject *_in1, PyObject *_in2)
-#if NI_HAS_TRACE_INFO
+#if NI_HAS_CFRAME
 {
     PyThreadState *tstate = PyThreadState_GET();
     PyTraceInfo trace_info = {.code = NULL, .cframe = *tstate->cframe};
@@ -7761,7 +7674,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         }
       }
 
-#if NI_HAS_FORMAT_VALUE_CHECKS_CONVERSION
       case FORMAT_VALUE: {
         vinfo_t *_t1;
         PyObject *(*conv_fn)(PyObject *);
@@ -8000,229 +7912,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           }
         }
       }
-#else
-      case FORMAT_VALUE: {
-        vinfo_t *_t2;
-        PyObject *(*conv_fn)(PyObject *);
-        vinfo_t *fmt_spec;
-        int have_fmt_spec;
-        vinfo_t *result;
-        PyTypeObject *tp_value;
-        vinfo_t *value;
-        int which_conversion;
-        which_conversion = (oparg & 0x3);
-        have_fmt_spec = ((oparg & 0x4)) == 0x4;
-        if (have_fmt_spec != 0) {
-          fmt_spec = NTOP(1);
-          value = NTOP(2);
-          if (which_conversion == 0x1) {
-            conv_fn = PyObject_Str;
-            result = psyco_generic_call(po, PyObject_Str,
-                                        CfCommonNewRefPyObject, "v", value);
-            if (result == NULL) {
-              break;
-            }
-            value = result;
-            tp_value = Psyco_KnownType(value);
-            _t2 =
-                psyco_generic_call(po, PyObject_Format, CfCommonNewRefPyObject,
-                                   "vv", value, fmt_spec);
-            result = _t2;
-            vinfo_decref(value, po);
-            if (result == NULL) {
-              break;
-            }
-            POP(fmt_spec);
-            POP(value);
-            vinfo_decref(fmt_spec, po);
-            vinfo_decref(value, po);
-            PUSH(result);
-            goto fine;
-          }
-          else {
-            if (which_conversion == 0x2) {
-              conv_fn = PyObject_Repr;
-              result = psyco_generic_call(po, PyObject_Repr,
-                                          CfCommonNewRefPyObject, "v", value);
-              if (result == NULL) {
-                break;
-              }
-              value = result;
-              tp_value = Psyco_KnownType(value);
-              result = psyco_generic_call(po, PyObject_Format,
-                                          CfCommonNewRefPyObject, "vv", value,
-                                          fmt_spec);
-              vinfo_decref(value, po);
-              if (result == NULL) {
-                break;
-              }
-              POP(fmt_spec);
-              POP(value);
-              vinfo_decref(fmt_spec, po);
-              vinfo_decref(value, po);
-              PUSH(result);
-              goto fine;
-            }
-            else {
-              if (which_conversion == 0x3) {
-                conv_fn = PyObject_ASCII;
-                result = psyco_generic_call(po, PyObject_ASCII,
-                                            CfCommonNewRefPyObject, "v", value);
-                if (result == NULL) {
-                  break;
-                }
-                value = result;
-                tp_value = Psyco_KnownType(value);
-                result = psyco_generic_call(po, PyObject_Format,
-                                            CfCommonNewRefPyObject, "vv", value,
-                                            fmt_spec);
-                vinfo_decref(value, po);
-                if (result == NULL) {
-                  break;
-                }
-                POP(fmt_spec);
-                POP(value);
-                vinfo_decref(fmt_spec, po);
-                vinfo_decref(value, po);
-                PUSH(result);
-                goto fine;
-              }
-              else {
-                conv_fn = NULL;
-                tp_value = Psyco_KnownType(value);
-                result = psyco_generic_call(po, PyObject_Format,
-                                            CfCommonNewRefPyObject, "vv", value,
-                                            fmt_spec);
-                if (result == NULL) {
-                  break;
-                }
-                POP(fmt_spec);
-                POP(value);
-                vinfo_decref(fmt_spec, po);
-                vinfo_decref(value, po);
-                PUSH(result);
-                goto fine;
-              }
-            }
-          }
-        }
-        else {
-          value = NTOP(1);
-          if (which_conversion == 0x1) {
-            conv_fn = PyObject_Str;
-            result = psyco_generic_call(po, PyObject_Str,
-                                        CfCommonNewRefPyObject, "v", value);
-            if (result == NULL) {
-              break;
-            }
-            value = result;
-            tp_value = Psyco_KnownType(value);
-            if ((tp_value == &PyUnicode_Type && 1)) {
-              result = value;
-            }
-            else {
-              fmt_spec = psyco_vi_Zero();
-              result = psyco_generic_call(po, PyObject_Format,
-                                          CfCommonNewRefPyObject, "vv", value,
-                                          fmt_spec);
-              vinfo_decref(value, po);
-              vinfo_decref(fmt_spec, po);
-              if (result == NULL) {
-                break;
-              }
-            }
-            POP(value);
-            vinfo_decref(value, po);
-            PUSH(result);
-            goto fine;
-          }
-          else {
-            if (which_conversion == 0x2) {
-              conv_fn = PyObject_Repr;
-              result = psyco_generic_call(po, PyObject_Repr,
-                                          CfCommonNewRefPyObject, "v", value);
-              if (result == NULL) {
-                break;
-              }
-              value = result;
-              tp_value = Psyco_KnownType(value);
-              if ((tp_value == &PyUnicode_Type && 1)) {
-                result = value;
-              }
-              else {
-                fmt_spec = psyco_vi_Zero();
-                result = psyco_generic_call(po, PyObject_Format,
-                                            CfCommonNewRefPyObject, "vv", value,
-                                            fmt_spec);
-                vinfo_decref(value, po);
-                vinfo_decref(fmt_spec, po);
-                if (result == NULL) {
-                  break;
-                }
-              }
-              POP(value);
-              vinfo_decref(value, po);
-              PUSH(result);
-              goto fine;
-            }
-            else {
-              if (which_conversion == 0x3) {
-                conv_fn = PyObject_ASCII;
-                result = psyco_generic_call(po, PyObject_ASCII,
-                                            CfCommonNewRefPyObject, "v", value);
-                if (result == NULL) {
-                  break;
-                }
-                value = result;
-                tp_value = Psyco_KnownType(value);
-                if ((tp_value == &PyUnicode_Type && 1)) {
-                  result = value;
-                }
-                else {
-                  fmt_spec = psyco_vi_Zero();
-                  result = psyco_generic_call(po, PyObject_Format,
-                                              CfCommonNewRefPyObject, "vv",
-                                              value, fmt_spec);
-                  vinfo_decref(value, po);
-                  vinfo_decref(fmt_spec, po);
-                  if (result == NULL) {
-                    break;
-                  }
-                }
-                POP(value);
-                vinfo_decref(value, po);
-                PUSH(result);
-                goto fine;
-              }
-              else {
-                conv_fn = NULL;
-                tp_value = Psyco_KnownType(value);
-                if ((tp_value == &PyUnicode_Type && 1)) {
-                  result = value;
-                  POP(value);
-                  PUSH(value);
-                  goto fine;
-                }
-                else {
-                  fmt_spec = psyco_vi_Zero();
-                  result = psyco_generic_call(po, PyObject_Format,
-                                              CfCommonNewRefPyObject, "vv",
-                                              value, fmt_spec);
-                  vinfo_decref(fmt_spec, po);
-                  if (result == NULL) {
-                    break;
-                  }
-                  POP(value);
-                  vinfo_decref(value, po);
-                  PUSH(result);
-                  goto fine;
-                }
-              }
-            }
-          }
-        }
-      }
-#endif
 
 #if NI_HAS_OPCODE_ROT_N
       case ROT_N: {
