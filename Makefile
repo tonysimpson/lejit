@@ -3,7 +3,7 @@
 #   make                      build ni for PY, in place
 #   make check                checked build and every test, for PY
 #   make check-all            make check for each of PYTHONS
-#   make test | cpython-test | encoder-test | features-test
+#   make test | cpython-test | encoder-test | features-test | strings-test
 #   make features-installed-test
 #
 # The build runs the feature detector under PY; it reads the source of PY's
@@ -24,7 +24,7 @@ PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
            $(HOME)/.pyenv/versions/3.10.16/bin/python3.10
 
 .PHONY: build checked-build check check-all test cpython-test encoder-test \
-        features-test features-installed-test strings-header \
+        features-test features-installed-test strings-header strings-test \
         no-version-tests clean
 
 build: strings-header
@@ -58,13 +58,17 @@ features-test:
 features-installed-test:
 	$(GEN_PY) tests/features/installed_test.py
 
+# each message probe's answer is in its CPython's source
+strings-test:
+	$(GEN_PY) tests/features/strings_test.py
+
 # features come from CPython's source (NI_HAS_*), never its version number
 no-version-tests:
 	@! grep -rnwE 'PY_(VERSION_HEX|MAJOR_VERSION|MINOR_VERSION|MICRO_VERSION)' \
 	    ni/ --include='*.[ch]' \
 	  || { echo "a CPython version test in ni/ (above): add an NI_HAS_ feature"; exit 1; }
 
-check: no-version-tests features-test features-installed-test \
+check: no-version-tests features-test features-installed-test strings-test \
        test cpython-test encoder-test
 
 check-all:

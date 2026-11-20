@@ -1,0 +1,164 @@
+"""The message probes (tools/features/strings.py) give, for each supported
+CPython, a text that is in that version's source: a string literal (with
+adjacent literals joined), or a literal format with one conversion filled
+in by another literal (an operator's name CPython passes as a constant).
+A fragment (an operator's name) is a literal, or fills its message's
+conversion to make one. 3.11 and 3.12 are shown for information.
+
+The CPython texts Ni keeps as they are, because no Python code reaches
+them (they need malformed bytecode or more memory than there is), are
+checked to be literals of the versions Ni uses them on.
+
+    python3 tests/features/strings_test.py
+"""
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, 'tools', 'features'))
+import cpython_src  # noqa: E402
+import ctokens  # noqa: E402
+import strings  # noqa: E402
+
+PYENV = os.path.expanduser('~/.pyenv/versions')
+SUPPORTED = ['3.7.17', '3.8.20', '3.9.21', '3.10.16']
+INFORMATION = ['3.11.11', '3.12.9']
+
+# CPython's texts Ni keeps as literals: (text, the versions Ni uses it on)
+UNREACHABLE = [
+    ('bad memberdescr type', SUPPORTED),
+    ('popped block is not an except handler', SUPPORTED),
+    ('join() result is too long for a Python string', SUPPORTED),
+    ('super(): bad __class__ cell', SUPPORTED),
+    ('bad RAISE_VARARGS oparg', SUPPORTED),
+    ('bad BUILD_CONST_KEY_MAP keys argument', SUPPORTED),
+    ('unexpected conversion flag %d', SUPPORTED[1:]),
+]
+
+_ESC = {'n': '\n', 't': '\t', 'r': '\r', '0': '\0', '\\': '\\', '"': '"',
+        "'": "'", '?': '?', 'a': '\a', 'b': '\b', 'f': '\f', 'v': '\v'}
+
+
+def unescape(body):
+    """A C string literal's text (between the quotes)."""
+    out, i = bytearray(), 0
+    while i < len(body):
+        c = body[i]
+        if c != '\\':
+            out += c.encode('latin-1')
+            i += 1
+            continue
+        n = body[i + 1]
+        m = re.match(r'[0-7]{1,3}', body[i + 1:])
+        if m:
+            out.append(int(m.group(), 8) & 0xff)
+            i += 1 + len(m.group())
+        elif n == 'x':
+            m = re.match(r'[0-9a-fA-F]+', body[i + 2:])
+            out.append(int(m.group(), 16) & 0xff)
+            i += 2 + len(m.group())
+        else:
+            out += _ESC.get(n, n).encode('latin-1')
+            i += 2
+    return out.decode('utf-8', 'replace')
+
+
+def _joined(toks, into):
+    run = []
+    for t in list(toks) + [None]:
+        if t is not None and t.kind == 'str' and t.text.startswith('"'):
+            run.append(t.text[1:-1])
+        elif run:
+            into.add(unescape(''.join(run)))
+            run = []
+
+
+def literals(src):
+    """Every string literal's text in the tree, adjacent ones joined."""
+    out = set()
+    for top in ('Include', 'Objects', 'Python', 'Modules', 'Parser'):
+        for dirpath, _, files in os.walk(os.path.join(src, top)):
+            for name in files:
+                if not name.endswith(('.c', '.h')):
+                    continue
+                with open(os.path.join(dirpath, name), encoding='latin-1') as f:
+                    toks, macros = ctokens.tokenize(f.read(), name)
+                _joined(toks, out)
+                for m in macros.values():
+                    _joined(m.body, out)
+    return out
+
+
+CONV = re.compile(r'%[-.0-9]*(?:z|l)?[a-zA-Z]')
+
+
+def found(text, lits, filled):
+    """How `text` is in the source: 'literal', 'filled' or None."""
+    if text in lits:
+        return 'literal'
+    for lit in filled:
+        for m in CONV.finditer(lit):
+            head, tail = lit[:m.start()], lit[m.end():]
+            if (text.startswith(head) and text.endswith(tail)
+                    and len(text) >= len(head) + len(tail)):
+                middle = text[len(head):len(text) - len(tail)]
+                # a constant filled in, never a conversion
+                if middle and '%' not in middle and middle in lits:
+                    return 'filled'
+    return None
+
+
+def check_version(version):
+    """(problems, notes) for one version."""
+    src = cpython_src.find_source(version)
+    python = os.path.join(PYENV, version, 'bin', 'python' + version.rsplit('.', 1)[0])
+    lits = literals(src)
+    filled = [l for l in lits if '%' in l]
+    got = strings.probe(python)
+    problems, notes = [], []
+    for name in sorted(got):
+        e, text = strings.entry_of(name), got[name]
+        if text is None:
+            notes.append('%s: no such case' % name)
+            continue
+        how = found(text, lits, filled)
+        if how is None and 'parent' in e:
+            pieces, convs = strings._format_pieces(got[e['parent']])
+            whole = ''.join(
+                p.replace('%', '%%') + (
+                    (text.replace('%', '%%') if j == e['hole'] else convs[j])
+                    if j < len(convs) else '')
+                for j, p in enumerate(pieces))
+            if whole in lits:
+                how = 'fills its message'
+        if how is None:
+            problems.append('%s = %r is not in the source' % (name, text))
+    for text, versions in UNREACHABLE:
+        if version in versions and text not in lits:
+            problems.append('kept literal %r is not in the source' % text)
+    return problems, notes, len(got)
+
+
+def main():
+    failed = False
+    for version in SUPPORTED + INFORMATION:
+        info = version in INFORMATION
+        try:
+            problems, notes, n = check_version(version)
+        except (strings.StringError, cpython_src.SourceError) as e:
+            problems, notes, n = [str(e)], [], 0
+        status = 'ok' if not problems else ('differs' if info else 'FAIL')
+        print('%s: %s, %d messages in the source%s%s' % (
+            version, status, n - len(notes),
+            ', %d cases it has not' % len(notes) if notes else '',
+            ' (for information)' if info else ''))
+        for p in problems:
+            print('  ' + p)
+        if problems and not info:
+            failed = True
+    return 1 if failed else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
