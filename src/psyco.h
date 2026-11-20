@@ -838,7 +838,6 @@ typedef struct global_entries_s global_entries_t;  /* def in dispatcher.h */
 typedef struct mergepoint_s mergepoint_t;   /* defined in mergepoint.h */
 typedef struct stack_frame_info_s stack_frame_info_t; /* def in pycompiler.h */
 
-EXTERNVAR PyObject* PyExc_PsycoError;
 EXTERNVAR PyObject* CPsycoModule;
 
 /* Everything the compiled code of one code object holds (codemanager.c),
@@ -923,7 +922,7 @@ EXTERNFN void psyco_out_of_memory(char *filename, int lineno);
 #define OUT_OF_MEMORY()      psyco_out_of_memory(__FILE__, __LINE__)
 
 /* For tests: NI_FAIL(site) is true at the n-th time it is reached after
-   ni._fail_after(site, n), as if that allocation had failed. */
+   ni._core._fail_after(site, n), as if that allocation had failed. */
 enum { NI_FAIL_PSYCOOBJECT, NI_FAIL_ARRAY, NI_FAIL_CODEBUF, NI_FAIL_LOOKUP,
        NI_FAIL_OWNER, NI_FAIL_SITES };
 #if ALL_CHECKS

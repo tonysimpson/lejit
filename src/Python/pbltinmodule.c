@@ -1015,10 +1015,10 @@ INITIALIZATIONFN
 void psyco_bltinmodule_init(void) {
   /* a meta is registered only if the builtin's ml_flags match the meta's
      (either fastcall convention for DEFFAST's), otherwise
-     ni._unregistered_metas() lists it. A METH_FASTCALL meta takes a tuple
-     (pmethodobject.h). No meta
-     for iter(): PsycoObject_GetIter gives lists a virtual seq-iterator,
-     right for a for loop but the wrong type for iter() to hand out. */
+     ni._core._unregistered_metas() lists it. A METH_FASTCALL meta takes a
+     tuple (pmethodobject.h). No meta for iter(): PsycoObject_GetIter gives
+     lists a virtual seq-iterator, right for a for loop but the wrong type
+     for iter() to hand out. */
   PyObject *md = Psyco_DefineMetaModule("builtins");
 
   gen_bltinmodule_init(md);

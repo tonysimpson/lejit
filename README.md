@@ -20,10 +20,19 @@ version number. A second detector reads CPython's source
 ## Use
 
     make PY=python3.10                        # needs gcc, libffi, libunwind
-    python3.10 -c "import ni; ..."            # importing ni enables it for the process
+    python3.10 -c "import ni; ni.start(); ..."   # importing alone starts nothing
 
-`ni.build_info` gives the features and the CPython version they were
-detected in.
+`ni.stop()` stops it. `ni.check()` compares the features Ni was built with
+(`ni.build_features()`) against the running CPython's
+(`ni.runtime_features()`); a difference warns with a `RuntimeWarning`, or
+with `error=True` raises one. `ni.start(check=True)` checks first, as does
+`NI_START_CHECK=warning` (or `error`); `NI_MODE=off` makes `ni.start()` do
+nothing.
+
+The package is `ni/` (its API, in Python, is `ni/__init__.py`) over the
+compiled module `ni._core`, built from the C sources in `src/`. On a Python
+Ni can't run on (not CPython, not x86-64 Linux, or 3.11 and later) only the
+package is installed: `ni.start()` warns and does nothing.
 
 ## Status
 

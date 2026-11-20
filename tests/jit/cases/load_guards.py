@@ -3,8 +3,8 @@
 # leaves a load's lookup as compiled re-arms the guard, one that doesn't
 # must be seen. Classes with a metaclass get a version tag
 # (enable_version_tag), so their guards hold, and their changes must be
-# seen too. Counts of failed guards come from ni._stats() and are 0 in the
-# plain run, so a case returns them only where Ni must also give 0.
+# seen too. Counts of failed guards come from ni._core._stats() and are 0 in
+# the plain run, so a case returns them only where Ni must also give 0.
 import abc
 import enum
 import sys
@@ -12,7 +12,7 @@ import sys
 
 def _fails():
     ni = sys.modules.get('ni')
-    return ni._stats()['load_type_changes'] if ni is not None else 0
+    return ni._core._stats()['load_type_changes'] if ni is not None else 0
 
 
 def _m1(self):

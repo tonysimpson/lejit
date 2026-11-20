@@ -28,7 +28,7 @@ EXTERNFN vinfo_t* PsycoCFunction_CallFast(PsycoObject* po, PyCFunction meth,
                                           vinfo_t* vargs);
 
 /* compiled METH_FASTCALL calls with an argument array, and residual
-   PyCFunction_Call sites (ni._stats(), for tests) */
+   PyCFunction_Call sites (ni._core._stats(), for tests) */
 EXTERNVAR long psyco_stat_cfunc_fast;
 EXTERNVAR long psyco_stat_cfunc_proxy;
 

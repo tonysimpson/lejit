@@ -139,13 +139,12 @@ static PyObject *NiEval_EvalFrame(PyThreadState *tstate, PyFrameObject *frame,
   return original_eval_frame(tstate, frame, throwflag);
 }
 
-static int ni_entry_install(void) {
-  if (original_eval_frame == NULL) {
-    PyInterpreterState *interp = PyThreadState_Get()->interp;
-    original_eval_frame = _PyInterpreterState_GetEvalFrameFunc(interp);
-    _PyInterpreterState_SetEvalFrameFunc(interp, NiEval_EvalFrame);
-  }
-  return 0;
+static ni_eval_frame_fn get_eval_frame(void) {
+  return _PyInterpreterState_GetEvalFrameFunc(PyThreadState_Get()->interp);
+}
+
+static void set_eval_frame(ni_eval_frame_fn fn) {
+  _PyInterpreterState_SetEvalFrameFunc(PyThreadState_Get()->interp, fn);
 }
 
 /* ceval's own evaluation of a frame, past the hook (frames.c) */
@@ -174,12 +173,12 @@ static PyObject *NiEval_EvalFrame(PyFrameObject *frame, int throwflag) {
   return original_eval_frame(frame, throwflag);
 }
 
-static int ni_entry_install(void) {
-  if (original_eval_frame == NULL) {
-    original_eval_frame = (ni_eval_frame_fn)ni_interp_eval_frame();
-    ni_set_interp_eval_frame((void *)NiEval_EvalFrame);
-  }
-  return 0;
+static ni_eval_frame_fn get_eval_frame(void) {
+  return (ni_eval_frame_fn)ni_interp_eval_frame();
+}
+
+static void set_eval_frame(ni_eval_frame_fn fn) {
+  ni_set_interp_eval_frame((void *)fn);
 }
 
 DEFINEFN PyObject *ni_eval_frame_default(PyFrameObject *f) {
@@ -187,5 +186,27 @@ DEFINEFN PyObject *ni_eval_frame_default(PyFrameObject *f) {
 }
 #endif
 
-INITIALIZATIONFN
-int ni_eval_hook_init(void) { return ni_entry_install(); }
+/* ni.start: CPython hands every frame to Ni from now on. The evaluator
+   that was there is kept, since Ni passes it the frames it doesn't
+   compile, and it stays kept after ni.stop for any call already on its
+   way through Ni's */
+DEFINEFN void ni_entry_install(void) {
+  ni_eval_frame_fn now = get_eval_frame();
+  if (now != NiEval_EvalFrame) {
+    original_eval_frame = now;
+    set_eval_frame(NiEval_EvalFrame);
+  }
+}
+
+/* ni.stop: new frames go to the evaluator that was there before; frames
+   already running compiled code go on to their end compiled. Returns -1
+   if another evaluator has been installed over Ni's: it would still pass
+   frames on to Ni, and can't be taken out from here. */
+DEFINEFN int ni_entry_remove(void) {
+  ni_eval_frame_fn now = get_eval_frame();
+  if (now == NiEval_EvalFrame)
+    set_eval_frame(original_eval_frame);
+  else if (now != original_eval_frame)
+    return -1;
+  return 0;
+}

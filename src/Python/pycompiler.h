@@ -137,7 +137,7 @@ EXTERNFN void PycException_Clear(PsycoObject *po);
 /* globals['__builtins__'] as a dict, as frameobject.c finds a new frame's
    builtins; borrowed */
 EXTERNFN PyObject *psy_get_builtins(PyObject *globals);
-/* failed guards of cached globals, for ni._stats() */
+/* failed guards of cached globals, for ni._core._stats() */
 EXTERNVAR long psyco_stat_global_fails;
 PSY_INLINE void PycException_Raise(PsycoObject *po, vinfo_t *exc,
                                    vinfo_t *val) {
@@ -204,7 +204,7 @@ EXTERNFN void PycException_Promote(PsycoObject *po, vinfo_t *vi,
                                    c_promotion_t *promotion);
 
 #if NI_CODESTATS
-/* Promotion sites, for ni._promostats(): the site
+/* Promotion sites, for ni._core._promostats(): the site
    (code object, instruction, who asked: a backtrace), the bytes of its stub,
    each value seen with the code and time its compile took, how often its
    code ran (a counter at the start of each promoted block, this build only)
@@ -368,7 +368,7 @@ EXTERNFN PyObject *Psyco_GetModuleObject(PyObject *module, char *name,
    Returns a pointer to the C function itself, or NULL if the module has no
    such builtin or its ml_flags aren't meth_flags; then nothing is
    registered, and "module.name: why" goes in Psyco_Unregistered_Metas
-   (ni._unregistered_metas(); printed in checked builds). */
+   (ni._core._unregistered_metas(); printed in checked builds). */
 EXTERNVAR PyObject *Psyco_Unregistered_Metas;
 EXTERNFN PyCFunction Psyco_DefineModuleFn(PyObject *module, char *meth_name,
                                           int meth_flags, void *meta_fn);

@@ -874,6 +874,10 @@ def build(python, version):
             continue
         lines += ['/* %s */' % what,
                   '#define NI_MSG_%s %s' % (name, c_string(found[name]))]
+    lines += ['', '/* for ni._core._build: every message */',
+              '#define NI_MESSAGES(M) \\']
+    lines += ['  M(NI_MSG_%s) \\' % name for name in sorted(found)
+              if found[name] is not None]
     lines += ['', '#endif /* NI_STRINGS_GEN_H */', '']
     return '\n'.join(lines)
 
@@ -894,7 +898,7 @@ def target_version(python):
 def build_header(python, out_dir):
     """Write out_dir/ni_strings_gen.h for the interpreter `python`; the
     path. Rewritten only when its text changes, so an unchanged header
-    doesn't rebuild ni.so. Raises StringError."""
+    doesn't rebuild ni._core. Raises StringError."""
     path = os.path.join(out_dir, HEADER)
     try:
         text = build(python, target_version(python))

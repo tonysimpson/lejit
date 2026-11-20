@@ -68,7 +68,7 @@
 #include <dlfcn.h>
 #include <execinfo.h>
 /* Promotion sites (pycompiler.h). Each site is a list
-   [code, instr, opcode, pflags, stub bytes, (backtrace offsets in ni.so),
+   [code, instr, opcode, pflags, stub bytes, (backtrace offsets in ni._core),
     entry kind, [values], parent, parent's value] and each value
    [description, ns, bytes, counter]; the parent is the site whose value was
    being compiled when this site was emitted, or -1, and the parent's value
@@ -199,7 +199,7 @@ DEFINEFN code_t *psyco_cs_promo_counter(code_t *code) {
 
 DEFINEFN void psyco_cs_promo_miss(int site) { cs_promo_misses[site]++; }
 
-/* ni._promostats(): the sites, each with its misses and its values' run
+/* ni._core._promostats(): the sites, each with its misses and its values' run
    counts filled in (copies; the counters keep counting) */
 DEFINEFN PyObject *psyco_cs_promo_stats(void) {
   Py_ssize_t i, j;
@@ -4480,7 +4480,7 @@ static code_t *exit_function(PsycoObject *po) {
 /***   the main loop of the interpreter/compiler.            ***/
 
 #if NI_CODESTATS
-/* Code size per instruction (ni._codestats()): for each
+/* Code size per instruction (ni._core._codestats()): for each
    (code object, instruction offset), [opcode, times compiled, bytes, the
    copies as (address, bytes, how the compiler
    was entered: codemanager.h NI_ENTER_*, the promotion site or -1, the

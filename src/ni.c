@@ -80,7 +80,6 @@ void ni_trace_run_fail(PyCodeObject *co, char *reason) {}
 DEFINEFN
 void ni_trace_unify(PsycoObject *po, CodeBufferObject *match) {}
 #endif
-DEFINEVAR PyObject *PyExc_PsycoError;
 DEFINEVAR PyObject *CPsycoModule;
 
 /* A record hangs off its code object as a weak reference of Ni's own
@@ -100,7 +99,7 @@ typedef struct {
 } code_record_t;
 
 static PyTypeObject CodeRecord_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "ni.code_record",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "ni._core.code_record",
     .tp_basicsize = sizeof(code_record_t),
     .tp_flags = Py_TPFLAGS_DEFAULT,
 };
@@ -187,215 +186,38 @@ int psyco_fatal_error(char *msg, char *filename, int lineno) {
   return 0;
 }
 
-static const char MODULE_NAME[] = "ni";
+static const char MODULE_NAME[] = "ni._core";
 
-/* counters for tests and measurements, e.g. that a loop is not compiled
-   afresh on every back-edge */
-#if NI_CODESTATS
-EXTERNVAR PyObject *psyco_codestats;
-EXTERNVAR long psyco_codestats_lost;
-EXTERNVAR PyObject *psyco_codestats_buffers;
-EXTERNVAR PyObject *psyco_codestats_states;
-/* the code size counts (pycompiler.c), handed over and reset */
-static PyObject *ni_codestats(PyObject *self, PyObject *unused) {
-  PyObject *r = psyco_codestats ? psyco_codestats : PyDict_New();
-  PyObject *bufs = psyco_codestats_buffers ? psyco_codestats_buffers
-                                            : PyDict_New();
-  PyObject *states = psyco_codestats_states ? psyco_codestats_states
-                                              : PyList_New(0);
-  PyObject *t = Py_BuildValue("(NlNN)", r, psyco_codestats_lost, bufs, states);
-  psyco_codestats_states = NULL;
-  psyco_codestats = NULL;
-  psyco_codestats_buffers = NULL;
-  psyco_codestats_lost = 0;
-  return t;
-}
-EXTERNFN PyObject *psyco_cs_promo_stats(void); /* pycompiler.c */
-static PyObject *ni_promostats(PyObject *self, PyObject *unused) {
-  return psyco_cs_promo_stats();
-}
-#endif
+/* Importing ni._core sets nothing up and hooks nothing: the first _start
+   sets up the compiler, and _start and _stop put in or take out the eval
+   hook; each does nothing if that is done already. The API is in Python
+   (ni/__init__.py). */
+DEFINEVAR int ni_set_up = 0; /* testing.c reads it */
+static int ni_running = 0;
 
-static PyObject *ni_stats(PyObject *self, PyObject *unused) {
-  static const char *kinds[NI_ENTER_KINDS] = {"analyse", "call", "pause",
-                                              "respawn", "promotion"};
-  PyObject *d = Py_BuildValue(
-      "{slslslslslslslslslsl}", "code_buffers", psyco_stat_code_buffers,
-      "code_buffers_freed", psyco_stat_code_buffers_freed, "code_bytes",
-      psyco_stat_code_bytes, "cfunc_fast", psyco_stat_cfunc_fast,
-      "cfunc_proxy", psyco_stat_cfunc_proxy, "store_misses",
-      psyco_stat_store_misses, "store_refreshes", psyco_stat_store_refreshes,
-      "store_type_changes", psyco_stat_store_type_changes,
-      "load_type_changes", psyco_stat_load_type_changes, "load_repairs",
-      psyco_stat_load_repairs);
-  int i;
-  for (i = 0; d != NULL && i < NI_ENTER_KINDS; i++) {
-    PyObject *t = Py_BuildValue("(ld)", psyco_stat_compile_count[i],
-                                psyco_stat_compile_ns[i] * 1e-9);
-    if (t == NULL || PyDict_SetItemString(d, kinds[i], t) < 0) {
-      Py_XDECREF(t);
-      Py_CLEAR(d);
-      break;
+static PyObject *ni_start(PyObject *self, PyObject *unused) {
+  if (!ni_set_up) {
+    initialize_all_files();
+    ni_set_up = 1;
+  }
+  if (!ni_running) {
+    ni_entry_install();
+    ni_running = 1;
+  }
+  Py_RETURN_NONE;
+}
+
+static PyObject *ni_stop(PyObject *self, PyObject *unused) {
+  if (ni_running) {
+    if (ni_entry_remove() < 0) {
+      PyErr_SetString(PyExc_RuntimeError,
+                      "ni.stop(): another frame evaluator was installed"
+                      " over Ni's, so it can't be taken out");
+      return NULL;
     }
-    Py_DECREF(t);
+    ni_running = 0;
   }
-  if (d != NULL) {
-    PyObject *t = Py_BuildValue("(llll)", psyco_stat_joins[0],
-                                psyco_stat_joins[1], psyco_stat_joins[2],
-                                psyco_stat_joins[3]);
-    if (t == NULL || PyDict_SetItemString(d, "joins", t) < 0)
-      Py_CLEAR(d);
-    Py_XDECREF(t);
-  }
-  if (d != NULL) {
-    PyObject *t = PyLong_FromLong(psyco_stat_fact_drops);
-    if (t == NULL || PyDict_SetItemString(d, "fact_drops", t) < 0)
-      Py_CLEAR(d);
-    Py_XDECREF(t);
-  }
-  if (d != NULL) {
-    /* machine code not freed yet, and references never to be dropped */
-    PyObject *t = Py_BuildValue("(ll)", psyco_stat_code_bytes_live,
-                                psyco_stat_kept_for_good);
-    if (t == NULL || PyDict_SetItemString(d, "code_live", t) < 0)
-      Py_CLEAR(d);
-    Py_XDECREF(t);
-  }
-  if (d != NULL) {
-    /* call-site notes' map indices made, and free for reuse (codegen.c) */
-    PyObject *t = Py_BuildValue("(ll)", psyco_stat_notes_made,
-                                psyco_stat_notes_free);
-    if (t == NULL || PyDict_SetItemString(d, "call_notes", t) < 0)
-      Py_CLEAR(d);
-    Py_XDECREF(t);
-  }
-  if (d != NULL) {
-    /* compiler states kept for pauses and promotions (dispatcher.h) */
-    PyObject *t = Py_BuildValue("(ll)", psyco_stat_parked_live,
-                                psyco_stat_parked_frozen);
-    if (t == NULL || PyDict_SetItemString(d, "parked", t) < 0)
-      Py_CLEAR(d);
-    Py_XDECREF(t);
-  }
-  if (d != NULL) {
-    /* failed guards of cached globals (pycompiler.c:do_changed_global) */
-    PyObject *t = PyLong_FromLong(psyco_stat_global_fails);
-    if (t == NULL || PyDict_SetItemString(d, "global_fails", t) < 0)
-      Py_CLEAR(d);
-    Py_XDECREF(t);
-  }
-  if (d != NULL) {
-    /* cycle scans run, the owners they freed, and the records counted
-       now (codemanager.c) */
-    PyObject *t = Py_BuildValue("(lll)", psyco_stat_owner_scans,
-                                psyco_stat_owners_collected,
-                                psyco_stat_owners_counted);
-    if (t == NULL || PyDict_SetItemString(d, "owner_scans", t) < 0)
-      Py_CLEAR(d);
-    Py_XDECREF(t);
-  }
-#if !defined(__SANITIZE_ADDRESS__)
-  if (d != NULL) {
-    /* vinfos and source_knowns in use: made, less those on the free list
-       (blockalloc.h; not counted under ASan, where each is malloc'd) */
-    long nv = psyco_ll_items_vinfo, ns = psyco_ll_items_sk;
-    void **p;
-    for (p = psyco_linked_list_vinfo; p != NULL; p = (void **)*p)
-      nv--;
-    for (p = psyco_linked_list_sk; p != NULL; p = (void **)*p)
-      ns--;
-    PyObject *t = Py_BuildValue("(ll)", nv, ns);
-    if (t == NULL || PyDict_SetItemString(d, "vinfos", t) < 0)
-      Py_CLEAR(d);
-    Py_XDECREF(t);
-  }
-#endif
-#if NI_CODESTATS
-  if (d != NULL) {
-    long *c = psyco_cs_load;
-    PyObject *t = Py_BuildValue(
-        "(llllllll)", c[0], psyco_stat_load_type_changes,
-        psyco_stat_load_repairs, c[3], c[4], c[5], c[6], c[7]);
-    if (t == NULL || PyDict_SetItemString(d, "load_guards", t) < 0)
-      Py_CLEAR(d);
-    Py_XDECREF(t);
-  }
-#endif
-  return d;
-}
-
-/* for tests and tools: what the eval hook did with a code object */
-static PyObject *ni_code_info(PyObject *self, PyObject *co) {
-  ni_code_extra_t *e;
-  if (!PyCode_Check(co)) {
-    PyErr_SetString(PyExc_TypeError, "_code_info() needs a code object");
-    return NULL;
-  }
-  e = ni_code_extra_get((PyCodeObject *)co);
-  if (e == NULL || e->merge_points == NULL)
-    return PyUnicode_FromString("not seen");
-  if (e->merge_points == Py_None)
-    return PyUnicode_FromString("unsupported");
-  if (e->entry_point == NULL || e->entry_point == Py_None)
-    return PyUnicode_FromString("no entry point");
-  return PyUnicode_FromString("compiled");
-}
-
-/* for tests: {bytecode offset: [dead local names]} at each merge
-   point, or None if the code isn't compiled */
-static PyObject *ni_dead_locals(PyObject *self, PyObject *co) {
-  PyObject *mps, *result;
-  mergepoint_t *mp;
-  if (!PyCode_Check(co)) {
-    PyErr_SetString(PyExc_TypeError, "_dead_locals() needs a code object");
-    return NULL;
-  }
-  mps = psyco_get_merge_points((PyCodeObject *)co, 0);
-  if (mps == Py_None)
-    Py_RETURN_NONE;
-  result = PyDict_New();
-  if (result == NULL)
-    return NULL;
-  for (mp = psyco_first_merge_point(mps); mp->bytecode_position >= 0; mp++) {
-    PyObject *names = PyList_New(0), *key;
-    Py_ssize_t i;
-    if (names == NULL)
-      goto fail;
-    for (i = 0; i < PyList_GET_SIZE(mp->entries.fatlist); i++) {
-      PyObject *o = PyList_GET_ITEM(mp->entries.fatlist, i);
-      if (!PyLong_Check(o))
-        break;
-      if (PyList_Append(names, PyTuple_GET_ITEM(((PyCodeObject *)co)->co_varnames,
-                                                PyLong_AS_LONG(o))) < 0) {
-        Py_DECREF(names);
-        goto fail;
-      }
-    }
-    key = PyLong_FromLong(mp->bytecode_position);
-    if (key == NULL || PyDict_SetItem(result, key, names) < 0) {
-      Py_XDECREF(key);
-      Py_DECREF(names);
-      goto fail;
-    }
-    Py_DECREF(key);
-    Py_DECREF(names);
-  }
-  return result;
-fail:
-  Py_DECREF(result);
-  return NULL;
-}
-
-/* for tests: would calls to this code be inlined? */
-static PyObject *ni_inlinable(PyObject *self, PyObject *co) {
-  PyObject *mps;
-  if (!PyCode_Check(co)) {
-    PyErr_SetString(PyExc_TypeError, "_inlinable() needs a code object");
-    return NULL;
-  }
-  mps = psyco_get_merge_points((PyCodeObject *)co, 0);
-  return PyBool_FromLong(mps != Py_None &&
-                         (psyco_mp_flags(mps) & MP_FLAGS_INLINABLE) != 0);
+  Py_RETURN_NONE;
 }
 
 /* for debugging: (codebuf, address of the globals) the eval
@@ -425,62 +247,121 @@ static PyObject *ni_set_trace_fallback(PyObject *self, PyObject *on) {
   Py_RETURN_NONE;
 }
 
-/* for tests: the metas Psyco_DefineModuleFn couldn't register */
-static PyObject *ni_unregistered_metas(PyObject *self, PyObject *unused) {
-  if (Psyco_Unregistered_Metas == NULL)
-    return PyList_New(0);
-  return PyList_GetSlice(Psyco_Unregistered_Metas, 0, PY_SSIZE_T_MAX);
+/* The structs psyco.h copies from CPython's source, because no installed
+   header declares them, can't be checked against the headers when Ni is
+   built. ni._core._build['layouts'] has the size of each copy; _layouts()
+   what the running interpreter shows of it: the same size where the fields
+   of one it makes read through the copy as they should, or what is wrong.
+   ni.runtime_features calls it in a subprocess. */
+static int add_layout(PyObject *d, const char *name, Py_ssize_t size,
+                      int fields_ok) {
+  PyObject *v = fields_ok ? PyLong_FromSsize_t(size)
+                          : PyUnicode_FromFormat("not as Ni's copy (size %zd)",
+                                                 size);
+  int err = v == NULL || PyDict_SetItemString(d, name, v) < 0;
+  Py_XDECREF(v);
+  return err ? -1 : 0;
 }
 
-#if ALL_CHECKS
-/* for tests: _fail_after(site, n) makes the n-th allocation at 'site' from
-   now fail (psyco.h:NI_FAIL); 0 cancels. Returns what was left of the
-   previous count, 0 once it fired. */
-static PyObject *ni_fail_after(PyObject *self, PyObject *args) {
-  static const char *names[NI_FAIL_SITES] = {"psycoobject", "array",
-                                             "codebuf", "lookup", "owner"};
-  const char *site;
-  long n, left;
-  int i;
-  if (!PyArg_ParseTuple(args, "sl", &site, &n))
-    return NULL;
-  for (i = 0; i < NI_FAIL_SITES; i++)
-    if (strcmp(site, names[i]) == 0) {
-      left = psyco_fail_after[i];
-      psyco_fail_after[i] = n;
-      return PyLong_FromLong(left);
+static PyObject *ni_layouts(PyObject *self, PyObject *unused) {
+  PyObject *result = PyDict_New(), *list = PyList_New(0), *d = PyDict_New();
+  PyObject *it = NULL, *r = NULL, *rit = NULL, *one = NULL;
+  int ok;
+  if (result == NULL || list == NULL || d == NULL)
+    goto error;
+
+  /* Objects/iterobject.c's seqiterobject */
+  it = PySeqIter_New(list);
+  if (it == NULL)
+    goto error;
+  ok = PySeqIter_Type.tp_basicsize == sizeof(seqiterobject) &&
+       ((seqiterobject *)it)->it_seq == list &&
+       ((seqiterobject *)it)->it_index == 0;
+  if (add_layout(result, "seqiterobject", PySeqIter_Type.tp_basicsize, ok) < 0)
+    goto error;
+
+  /* Objects/rangeobject.c's rangeobject and rangeiterobject, of range(1, 7,
+     2): 3 items */
+  r = PyObject_CallFunction((PyObject *)&PyRange_Type, "iii", 1, 7, 2);
+  rit = r ? PyObject_GetIter(r) : NULL;
+  if (rit == NULL)
+    goto error;
+  ok = PyRange_Type.tp_basicsize == sizeof(rangeobject);
+  if (ok) {
+    rangeobject *ro = (rangeobject *)r;
+    PyObject *fields[4] = {ro->start, ro->stop, ro->step, ro->length};
+    long want[4] = {1, 7, 2, 3};
+    int i;
+    for (i = 0; ok && i < 4; i++)
+      ok = PyLong_CheckExact(fields[i]) && PyLong_AsLong(fields[i]) == want[i];
+  }
+  if (add_layout(result, "rangeobject", PyRange_Type.tp_basicsize, ok) < 0)
+    goto error;
+  ok = Py_TYPE(rit) == &PyRangeIter_Type &&
+       PyRangeIter_Type.tp_basicsize == sizeof(rangeiterobject) &&
+       ((rangeiterobject *)rit)->index == 0 &&
+       ((rangeiterobject *)rit)->start == 1 &&
+       ((rangeiterobject *)rit)->step == 2 &&
+       ((rangeiterobject *)rit)->len == 3;
+  if (add_layout(result, "rangeiterobject", PyRangeIter_Type.tp_basicsize,
+                 ok) < 0)
+    goto error;
+
+  /* Objects/dict-common.h's keys and entries: a dict of one item has keys
+     of its own, whose size _PyDict_SizeOf counts from the real structs */
+  one = PyLong_FromLong(1);
+  if (one == NULL || PyDict_SetItem(d, one, one) < 0)
+    goto error;
+  {
+    ni_dictkeys_t *k = (ni_dictkeys_t *)((PyDictObject *)d)->ma_keys;
+    Py_ssize_t size = k->dk_size, usable = size * 2 / 3;
+    Py_ssize_t whole = _PyDict_SizeOf((PyDictObject *)d), header = 0;
+    ok = k->dk_refcnt == 1 && size >= 8 && (size & (size - 1)) == 0 &&
+         size <= 0xff && k->dk_nentries == 1 && k->dk_usable == usable - 1 &&
+         k->dk_lookup != NULL;
+    if (ok) {
+      ni_dictentry_t *e = ni_dict_entries(k);
+      /* what the interpreter's own keys header takes, past the index
+         bytes and the entries */
+      header = whole - (Py_ssize_t)sizeof(PyDictObject) - size -
+               (Py_ssize_t)sizeof(ni_dictentry_t) * usable;
+      ok = e[0].me_key == one && e[0].me_value == one && e[0].me_hash == 1;
     }
-  PyErr_SetString(PyExc_ValueError, "unknown site");
+    if (add_layout(result, "PyDictKeysObject", ok ? header : whole, ok) < 0)
+      goto error;
+  }
+  Py_DECREF(one);
+  Py_DECREF(rit);
+  Py_DECREF(r);
+  Py_DECREF(it);
+  Py_DECREF(list);
+  Py_DECREF(d);
+  return result;
+error:
+  Py_XDECREF(one);
+  Py_XDECREF(rit);
+  Py_XDECREF(r);
+  Py_XDECREF(it);
+  Py_XDECREF(list);
+  Py_XDECREF(d);
+  Py_XDECREF(result);
   return NULL;
 }
-#endif
 
 static PyMethodDef module_methods[] = {
-#if ALL_CHECKS
-    {"_fail_after", ni_fail_after, METH_VARARGS,
-     "Make the n-th allocation at a site fail (debug builds)."},
-#endif
-    {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
-#if NI_CODESTATS
-    {"_codestats", ni_codestats, METH_NOARGS, "Code size per instruction."},
-    {"_promostats", ni_promostats, METH_NOARGS, "Promotion sites."},
-#endif
-    {"_code_info", ni_code_info, METH_O,
-     "'not seen', 'unsupported', 'no entry point' or 'compiled'."},
-    {"_dead_locals", ni_dead_locals, METH_O,
-     "{offset: [dead local names]} at each merge point, or None."},
-    {"_inlinable", ni_inlinable, METH_O,
-     "True if calls to this code object are inlined."},
-    {"_unregistered_metas", ni_unregistered_metas, METH_NOARGS,
-     "['module.name: why'] for each meta that wasn't registered."},
+    {"_start", ni_start, METH_NOARGS, "Put in the eval hook (ni.start)."},
+    {"_stop", ni_stop, METH_NOARGS, "Take out the eval hook (ni.stop)."},
+    {"_layouts", ni_layouts, METH_NOARGS,
+     "{struct: size} of the copied structs, as this interpreter shows them."},
     {"_set_trace_fallback", ni_set_trace_fallback, METH_O,
      "Whether code runs interpreted while sys.settrace/setprofile is set."},
     {"_entry_point", ni_py_entry_point, METH_O,
      "(codebuf, globals) run for a code object, or None."},
     {NULL, NULL, 0, NULL}};
 
-/* ni.build_info: the CPython source the features were detected in, the
-   features, and how Ni was built; read-only, nothing checks it */
+/* ni._core._build, for ni.build_features and the tests: the CPython source
+   the features were detected in, the features, messages and copied structs'
+   sizes compiled in, and how Ni was built */
 static int add_str(PyObject *d, const char *key, const char *value) {
   PyObject *v = value ? PyUnicode_FromString(value) : (Py_INCREF(Py_None), Py_None);
   int err = v == NULL || PyDict_SetItemString(d, key, v) < 0;
@@ -494,15 +375,26 @@ static int add_obj(PyObject *d, const char *key, PyObject *v) {
   return err ? -1 : 0;
 }
 
-static PyObject *build_info(void) {
-  PyObject *d = PyDict_New(), *features = PyDict_New();
-  if (d == NULL || features == NULL)
+static PyObject *build_dict(void) {
+  PyObject *d = PyDict_New(), *features = PyDict_New(),
+           *messages = PyDict_New(), *layouts = PyDict_New();
+  if (d == NULL || features == NULL || messages == NULL || layouts == NULL)
     goto error;
 #define NI_FEATURE(name)                                                       \
   if (add_obj(features, #name, PyLong_FromLong(name)) < 0)                     \
     goto error;
   NI_FEATURES(NI_FEATURE)
 #undef NI_FEATURE
+#define NI_MESSAGE(name)                                                       \
+  if (add_str(messages, #name, name) < 0)                                      \
+    goto error;
+  NI_MESSAGES(NI_MESSAGE)
+#undef NI_MESSAGE
+  if (add_layout(layouts, "seqiterobject", sizeof(seqiterobject), 1) < 0 ||
+      add_layout(layouts, "rangeobject", sizeof(rangeobject), 1) < 0 ||
+      add_layout(layouts, "rangeiterobject", sizeof(rangeiterobject), 1) < 0 ||
+      add_layout(layouts, "PyDictKeysObject", sizeof(ni_dictkeys_t), 1) < 0)
+    goto error;
 #ifdef NI_SANITIZE
   const char *sanitizer = NI_SANITIZE;
 #else
@@ -513,51 +405,48 @@ static PyObject *build_info(void) {
       add_obj(d, "trace", PyBool_FromLong(NI_TRACE)) < 0 ||
       add_obj(d, "codestats", PyBool_FromLong(NI_CODESTATS)) < 0 ||
       add_str(d, "sanitizer", sanitizer) < 0 ||
-      add_obj(d, "features", PyDictProxy_New(features)) < 0)
+      PyDict_SetItemString(d, "features", features) < 0 ||
+      PyDict_SetItemString(d, "messages", messages) < 0 ||
+      PyDict_SetItemString(d, "layouts", layouts) < 0)
     goto error;
   Py_DECREF(features);
-  PyObject *proxy = PyDictProxy_New(d);
-  Py_DECREF(d);
-  return proxy;
+  Py_DECREF(messages);
+  Py_DECREF(layouts);
+  return d;
 error:
   Py_XDECREF(features);
+  Py_XDECREF(messages);
+  Py_XDECREF(layouts);
   Py_XDECREF(d);
   return NULL;
 }
 
+/* the private functions for tests (testing.c) */
+EXTERNVAR PyMethodDef ni_testing_methods[];
+
 static struct PyModuleDef ni_module = {PyModuleDef_HEAD_INIT, MODULE_NAME, NULL,
                                        -1, module_methods};
 
-PyMODINIT_FUNC PyInit_ni(void) {
-  PyObject *module;
-  module = PyModule_Create(&ni_module);
-  /* XXX tony: make this code handle errors properly */
-  if (module) {
-    if (code_records_init() < 0) {
-      Py_DECREF(module);
-      return NULL;
-    }
-    PyExc_PsycoError = PyErr_NewException("ni.error", NULL, NULL);
-    if (PyExc_PsycoError == NULL) {
-      Py_DECREF(module);
-      return NULL;
-    }
-    if (PyModule_AddObject(module, "error", PyExc_PsycoError)) {
-      Py_DECREF(PyExc_PsycoError);
-      Py_DECREF(module);
-      return NULL;
-    }
-    /* so that timings can tell a debug build (make check's) */
-    if (PyModule_AddIntConstant(module, "_debug_build", NI_TRACE || ALL_CHECKS)) {
-      Py_DECREF(module);
-      return NULL;
-    }
-    if (PyModule_AddObject(module, "build_info", build_info())) {
-      Py_DECREF(module);
-      return NULL;
-    }
-    initialize_all_files();
+/* Importing ni._core starts nothing: ni.start calls _start. */
+PyMODINIT_FUNC PyInit__core(void) {
+  PyObject *module = PyModule_Create(&ni_module), *build;
+  if (module == NULL)
+    return NULL;
+  if (code_records_init() < 0)
+    goto error;
+  /* so that timings can tell a debug build (make check's) */
+  if (PyModule_AddIntConstant(module, "_debug_build", NI_TRACE || ALL_CHECKS))
+    goto error;
+  if (PyModule_AddFunctions(module, ni_testing_methods) < 0)
+    goto error;
+  build = build_dict();
+  if (build == NULL || PyModule_AddObject(module, "_build", build)) {
+    Py_XDECREF(build);
+    goto error;
   }
   CPsycoModule = module;
   return module;
+error:
+  Py_DECREF(module);
+  return NULL;
 }

@@ -30,6 +30,6 @@ classifiers = [
 Homepage = "https://github.com/tonysimpson/ni"
 
 [tool.setuptools]
-# the package is the one extension module; ni/ holds its C sources
-packages = []
-py-modules = []
+# the package ni, with its compiled module ni._core where Ni can run
+# (setup.py); src/ holds the C sources
+packages = ["ni"]

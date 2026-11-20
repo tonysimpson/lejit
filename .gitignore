@@ -5,3 +5,5 @@ build
 *.egg-info
 # written at build time, under build/: a copy in src/ would win over it
 src/**/*_gen.h
+# copied from tools/features at build time
+/ni/_features/

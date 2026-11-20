@@ -38,7 +38,7 @@ BANNED = {
 CHILD = r'''
 import sys, unittest, io
 if sys.argv[1] == 'ni':
-    sys.path.insert(0, sys.argv[3]); import ni
+    sys.path.insert(0, sys.argv[3]); import ni; ni.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)
 r = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)

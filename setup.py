@@ -11,6 +11,8 @@ from __future__ import print_function
 
 import os, sys, sysconfig
 import glob
+import shutil
+import platform
 import subprocess
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
@@ -18,6 +20,26 @@ from setuptools.command.build_ext import build_ext
 
 class BuildError(Exception):
     pass
+
+
+def fallback_reason():
+    """Why no C extension is built for this Python, or None. Ni compiles to
+    x86-64 code for CPython on Linux; anywhere else only the Python package
+    is installed, whose functions then do nothing, so that installing Ni
+    never fails. NI_FALLBACK=1 installs it so anyway, to test it."""
+    impl = platform.python_implementation()
+    if impl != 'CPython':
+        return 'Ni runs only on CPython, not %s' % impl
+    if not sys.platform.startswith('linux') or platform.machine() != 'x86_64' \
+            or sys.maxsize <= 2**32:
+        return 'Ni runs only on x86-64 Linux, not %s %s' % (sys.platform,
+                                                           platform.machine())
+    if os.environ.get('NI_FALLBACK') == '1':
+        return 'NI_FALLBACK=1 was set when it was installed'
+    return None
+
+
+FALLBACK = fallback_reason()
 
 ####################################################################
 # Override defaults using environment variables e.g. dev mode
@@ -31,7 +53,7 @@ NI_TRACE = int(os.environ.get('NI_TRACE', 0))
 # Extra checks enable with 1
 ALL_CHECKS = int(os.environ.get('NI_ALL_CHECKS', 0))
 
-# Code size per instruction, ni._codestats()
+# Code size per instruction, ni._core._codestats()
 NI_CODESTATS = int(os.environ.get('NI_CODESTATS', 0))
 
 # NI_FEATURES=source: detect the features in CPython's source (fetched and
@@ -57,7 +79,7 @@ macros = [
     ('NI_CODESTATS', str(NI_CODESTATS)),
 ]
 if NI_SANITIZE:
-    macros.append(('NI_SANITIZE', '"%s"' % NI_SANITIZE))   # ni.build_info
+    macros.append(('NI_SANITIZE', '"%s"' % NI_SANITIZE))   # ni._core._build
 
 class ProcessorAutodetectError(Exception):
     pass
@@ -77,7 +99,7 @@ def autodetect():
     except KeyError:
         raise ProcessorAutodetectError("unsupported processor '%s'" % mach)
 
-PROCESSOR = autodetect()
+PROCESSOR = None if FALLBACK else autodetect()
 
 def find_sources(processor):
     result = glob.glob('./src/*.c')
@@ -140,7 +162,7 @@ if NI_COVERAGE:
     extra_link_args += ['--coverage']
 sources = find_sources(PROCESSOR)
 # distutils rebuilds only when a file listed here or in sources is newer
-# than ni.so: list every header and .c file
+# than the module: list every header and .c file
 depends = sorted(set(glob.glob('./src/**/*.h', recursive=True) +
                      glob.glob('./src/**/*.c', recursive=True)))
 # switching NI_TRACE or NI_ALL_CHECKS must also rebuild: remember the
@@ -150,7 +172,7 @@ depends = sorted(set(glob.glob('./src/**/*.h', recursive=True) +
 # so building for one leaves the other's alone
 config = repr((macros, extra_compile_args, extra_link_args))
 version = '%d.%d' % sys.version_info[:2]
-module = 'ni' + sysconfig.get_config_var('EXT_SUFFIX')
+module = 'ni/_core' + sysconfig.get_config_var('EXT_SUFFIX')
 if NI_SANITIZE:
     stamp_dir, built_glob = 'build/asan', ['build/asan/' + module]
 elif NI_COVERAGE:
@@ -158,14 +180,18 @@ elif NI_COVERAGE:
 else:
     stamp_dir, built_glob = 'build', [module, 'build/lib*/' + module]
 stamp = os.path.join(stamp_dir, 'ni_config-%s.stamp' % version)
-if not os.path.exists(stamp) or open(stamp).read() != config:
+if not FALLBACK and (not os.path.exists(stamp) or open(stamp).read() != config):
     for built in [b for g in built_glob for b in glob.glob(g)]:
         os.remove(built)
     os.makedirs(stamp_dir, exist_ok=True)
     with open(stamp, 'w') as f:
         f.write(config)
-processor_dir = os.path.join('./src', PROCESSOR)
+processor_dir = os.path.join('./src', PROCESSOR or '')
 HERE = os.path.dirname(os.path.abspath(__file__))
+# the files of tools/features ni.runtime_features runs: check.py and the
+# detectors it calls
+CHECK_FILES = ['check.py', 'installed.py', 'installed_probes.py',
+               'features.py', 'ctokens.py', 'strings.py']
 
 
 class build_ext_generated(build_ext):
@@ -201,6 +227,23 @@ class build_ext_generated(build_ext):
             ext.include_dirs.append(gen_dir)
             ext.depends += gen
         build_ext.run(self)
+        # the detectors ni.runtime_features runs go next to the module, as
+        # the package ni._features
+        pkg = os.path.join(os.path.dirname(self.get_ext_fullpath('ni._core')),
+                           '_features')
+        os.makedirs(pkg, exist_ok=True)
+        with open(os.path.join(pkg, '__init__.py'), 'w') as f:
+            f.write('"""The detectors ni.runtime_features runs: see'
+                    ' check.py."""\n')
+        for name in CHECK_FILES:
+            shutil.copyfile(os.path.join(HERE, 'tools', 'features', name),
+                            os.path.join(pkg, name))
+        # a build outside the tree (build_ext --build-lib, as the sanitizer
+        # and coverage builds are) needs the package's API next to it too
+        init = os.path.join(os.path.dirname(pkg), '__init__.py')
+        source = os.path.join(HERE, 'ni', '__init__.py')
+        if os.path.abspath(init) != source:
+            shutil.copyfile(source, init)
 
     def get_libraries(self, ext):
         # 3.7's distutils links libpython into an extension when Python is
@@ -212,15 +255,20 @@ class build_ext_generated(build_ext):
 
 
 # the package's name, version and licence are in pyproject.toml
-setup(
-    ext_modules=[Extension(name = 'ni',
-                           sources = sources,
-                           depends = depends,
-                           extra_compile_args = extra_compile_args,
-                           extra_link_args = extra_link_args,
-                           define_macros = macros,
-                           include_dirs = [processor_dir],
-                           libraries = ['ffi', 'unwind'],
-    )],
-    cmdclass={'build_ext': build_ext_generated},
-)
+if FALLBACK:
+    print('ni: %s; installing only the Python package, which does nothing'
+          % FALLBACK)
+    setup()
+else:
+    setup(
+        ext_modules=[Extension(name = 'ni._core',
+                               sources = sources,
+                               depends = depends,
+                               extra_compile_args = extra_compile_args,
+                               extra_link_args = extra_link_args,
+                               define_macros = macros,
+                               include_dirs = [processor_dir],
+                               libraries = ['ffi', 'unwind'],
+        )],
+        cmdclass={'build_ext': build_ext_generated},
+    )

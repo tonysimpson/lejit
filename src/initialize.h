@@ -52,7 +52,8 @@ EXTERNFN void psy_tupleobject_init(void);   /* Objects/ptupleobject.c */
 EXTERNFN void psy_typeobject_init(void);    /* Objects/ptypeobject.c */
 EXTERNFN void psy_unicodeobject_init(void); /* Objects/punicodeobject.c */
 EXTERNFN void psyco_initmath(void);         /* Modules/pmath.c */
-EXTERNFN int ni_eval_hook_init(void);       /* eval_hook.c */
+EXTERNFN void ni_entry_install(void);       /* eval_hook.c */
+EXTERNFN int ni_entry_remove(void);         /* eval_hook.c */
 EXTERNVAR int ni_trace_fallback;            /* eval_hook.c */
 EXTERNFN void codemanager_init();           /* codemanager.c */
 EXTERNFN void psycofunction_init();         /* psyfunc.c */
@@ -81,7 +82,6 @@ PSY_INLINE void initialize_all_files(void) {
   psy_typeobject_init();    /* Objects/ptypeobject.c */
   psy_unicodeobject_init(); /* Objects/punicodeobject.c */
   psyco_initmath();         /* Modules/pmath.c */
-  ni_eval_hook_init();      /* eval_hook.c */
   codemanager_init();       /* codemanager.c */
   psycofunction_init();     /* psyfunc.c */
 }

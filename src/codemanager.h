@@ -95,7 +95,7 @@ EXTERNFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
    alive. */
 EXTERNFN void psyco_owner_track(ni_code_extra_t *x);
 EXTERNFN void psyco_owner_untrack(ni_code_extra_t *x);
-/* scans run, owners they freed, records counted: ni._stats() */
+/* scans run, owners they freed, records counted: ni._core._stats() */
 EXTERNVAR long psyco_stat_owner_scans;
 EXTERNVAR long psyco_stat_owners_collected;
 EXTERNVAR long psyco_stat_owners_counted;
@@ -177,7 +177,7 @@ EXTERNVAR PyTypeObject CodeBuffer_Type, CodeBufferShort_Type,
 #define CodeBuffer_Check(v)                                                    \
   (Py_TYPE(v) == &CodeBuffer_Type || Py_TYPE(v) == &CodeBufferShort_Type || \
    Py_TYPE(v) == &CodeBufferSummary_Type)
-/* extents opened by psyco_code_open, and blocks freed: ni._stats()'s
+/* extents opened by psyco_code_open, and blocks freed: ni._core._stats()'s
    code_buffers and code_buffers_freed */
 EXTERNVAR long psyco_stat_code_buffers;
 EXTERNVAR long psyco_stat_code_buffers_freed;
@@ -187,7 +187,7 @@ EXTERNVAR long psyco_stat_code_bytes_live;
 /* references held for good, given while no owner was current */
 EXTERNVAR long psyco_stat_kept_for_good;
 
-/* Time spent compiling, by how the compiler was entered (ni._stats()).
+/* Time spent compiling, by how the compiler was entered (ni._core._stats()).
    NI_COMPILE_BEGIN/END bracket each way in from run time; only the
    outermost counts, so a compile nested in another isn't counted twice. */
 enum { NI_ENTER_ANALYSE, NI_ENTER_CALL, NI_ENTER_PAUSE, NI_ENTER_RESPAWN, NI_ENTER_PROMOTION,

@@ -66,14 +66,14 @@ def scan_soon():
     ni = sys.modules.get('ni')
     if ni is None:
         return
-    start = ni._stats()['owner_scans'][0]
+    start = ni._core._stats()['owner_scans'][0]
     for k in range(40):
         ns = {}
         exec(MANY, ns)
         for i in range(600):
             ns['h%d' % i](1)
         ns.clear()  # freed now: no cycle left for a later collection
-        if ni._stats()['owner_scans'][0] > start:
+        if ni._core._stats()['owner_scans'][0] > start:
             return
 
 
@@ -176,7 +176,8 @@ def _run_perturbed():
     import os
     import subprocess
     import sys
-    src = ('import sys\nif sys.argv[1] == "1":\n    import ni\n'
+    src = ('import sys\nif sys.argv[1] == "1":\n'
+           '    import ni\n    ni.start()\n'
            'import freeing\nfreeing._perturbed.append(None)\n'
            'print(freeing.unscanned_freed_in_subinterpreter'
            '()[0::2] == (0, [True] * 50))\n')
@@ -326,11 +327,11 @@ def call_notes_reused():
         return r
     for _ in range(20):
         one()
-    start = ni._stats()['call_notes'][0] if ni else 0
+    start = ni._core._stats()['call_notes'][0] if ni else 0
     for _ in range(200):
         r = one()
     # each round makes three notes; the caller's own new code a few more
-    return r, (ni._stats()['call_notes'][0] if ni else 0) - start < 50
+    return r, (ni._core._stats()['call_notes'][0] if ni else 0) - start < 50
 
 
 MAKES = '''
@@ -357,7 +358,7 @@ def made_functions_free():
         return r
     for _ in range(20):
         one()
-    vinfos = lambda: (ni._stats().get('vinfos') or (0,))[0] if ni else 0
+    vinfos = lambda: (ni._core._stats().get('vinfos') or (0,))[0] if ni else 0
     start = vinfos()
     for _ in range(300):
         r = one()

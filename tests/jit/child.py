@@ -10,6 +10,7 @@ calls = eval(sys.argv[5], dict(vars(mod), nan=float('nan'), inf=float('inf')))
 use_ni = sys.argv[6] == '1'
 if use_ni:
     import ni
+    ni.start()
 out = []
 for args in calls:
     try:
@@ -18,7 +19,7 @@ for args in calls:
     except Exception as e:
         out.append('exc %s: %s' % (type(e).__name__, e))
 if use_ni:
-    info = ni._code_info(fn.__code__)
+    info = ni._core._code_info(fn.__code__)
     out.append('compiled: yes' if info == 'compiled' else
                'compiled: no (%s)' % info)
 # leak check: after warm-up, run the calls 100 more times and report how

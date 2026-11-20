@@ -8,8 +8,9 @@ Python line, bytecode offset and the compiler call stack that wrote it.
 
 Usage (from a venv with pointbreak, distorm3 and intervaltree):
     dump_function.py FUNC_NAME python3.7 script.py [args...]
-Ni must be built with NI_TRACE=1. Promotion records and other data sit
-inline in the code and disassemble as junk.
+Ni must be built with NI_TRACE=1, and the script must call ni.start().
+Promotion records and other data sit inline in the code and disassemble
+as junk.
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

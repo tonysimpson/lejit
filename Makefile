@@ -74,4 +74,4 @@ check-all:
 	done
 
 clean:
-	rm -rf build ni.cpython-*.so
+	rm -rf build ni/_core.cpython-*.so ni/_features

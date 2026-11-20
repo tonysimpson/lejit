@@ -1,0 +1,287 @@
+/* The private functions of ni._core that tests and measurements use: the
+   compiler's counters and what it made of a code object. They are not part
+   of Ni's API, and may change. ni.c adds them to the module. */
+#include "Python/frames.h"
+#include "Python/pycompiler.h"
+#include "Objects/pmethodobject.h"
+#include "Objects/pobject.h"
+#include "codemanager.h"
+#include "dispatcher.h"
+#include "mergepoints.h"
+#include "psyco.h"
+#include "psyfunc.h"
+
+EXTERNVAR int ni_set_up; /* ni.c */
+
+/* counters for tests and measurements, e.g. that a loop is not compiled
+   afresh on every back-edge */
+#if NI_CODESTATS
+EXTERNVAR PyObject *psyco_codestats;
+EXTERNVAR long psyco_codestats_lost;
+EXTERNVAR PyObject *psyco_codestats_buffers;
+EXTERNVAR PyObject *psyco_codestats_states;
+/* the code size counts (pycompiler.c), handed over and reset */
+static PyObject *ni_codestats(PyObject *self, PyObject *unused) {
+  PyObject *r = psyco_codestats ? psyco_codestats : PyDict_New();
+  PyObject *bufs = psyco_codestats_buffers ? psyco_codestats_buffers
+                                            : PyDict_New();
+  PyObject *states = psyco_codestats_states ? psyco_codestats_states
+                                              : PyList_New(0);
+  PyObject *t = Py_BuildValue("(NlNN)", r, psyco_codestats_lost, bufs, states);
+  psyco_codestats_states = NULL;
+  psyco_codestats = NULL;
+  psyco_codestats_buffers = NULL;
+  psyco_codestats_lost = 0;
+  return t;
+}
+EXTERNFN PyObject *psyco_cs_promo_stats(void); /* pycompiler.c */
+static PyObject *ni_promostats(PyObject *self, PyObject *unused) {
+  return psyco_cs_promo_stats();
+}
+#endif
+
+static PyObject *ni_stats(PyObject *self, PyObject *unused) {
+  static const char *kinds[NI_ENTER_KINDS] = {"analyse", "call", "pause",
+                                              "respawn", "promotion"};
+  PyObject *d = Py_BuildValue(
+      "{slslslslslslslslslsl}", "code_buffers", psyco_stat_code_buffers,
+      "code_buffers_freed", psyco_stat_code_buffers_freed, "code_bytes",
+      psyco_stat_code_bytes, "cfunc_fast", psyco_stat_cfunc_fast,
+      "cfunc_proxy", psyco_stat_cfunc_proxy, "store_misses",
+      psyco_stat_store_misses, "store_refreshes", psyco_stat_store_refreshes,
+      "store_type_changes", psyco_stat_store_type_changes,
+      "load_type_changes", psyco_stat_load_type_changes, "load_repairs",
+      psyco_stat_load_repairs);
+  int i;
+  for (i = 0; d != NULL && i < NI_ENTER_KINDS; i++) {
+    PyObject *t = Py_BuildValue("(ld)", psyco_stat_compile_count[i],
+                                psyco_stat_compile_ns[i] * 1e-9);
+    if (t == NULL || PyDict_SetItemString(d, kinds[i], t) < 0) {
+      Py_XDECREF(t);
+      Py_CLEAR(d);
+      break;
+    }
+    Py_DECREF(t);
+  }
+  if (d != NULL) {
+    PyObject *t = Py_BuildValue("(llll)", psyco_stat_joins[0],
+                                psyco_stat_joins[1], psyco_stat_joins[2],
+                                psyco_stat_joins[3]);
+    if (t == NULL || PyDict_SetItemString(d, "joins", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+  if (d != NULL) {
+    PyObject *t = PyLong_FromLong(psyco_stat_fact_drops);
+    if (t == NULL || PyDict_SetItemString(d, "fact_drops", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+  if (d != NULL) {
+    /* machine code not freed yet, and references never to be dropped */
+    PyObject *t = Py_BuildValue("(ll)", psyco_stat_code_bytes_live,
+                                psyco_stat_kept_for_good);
+    if (t == NULL || PyDict_SetItemString(d, "code_live", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+  if (d != NULL) {
+    /* call-site notes' map indices made, and free for reuse (codegen.c) */
+    PyObject *t = Py_BuildValue("(ll)", psyco_stat_notes_made,
+                                psyco_stat_notes_free);
+    if (t == NULL || PyDict_SetItemString(d, "call_notes", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+  if (d != NULL) {
+    /* compiler states kept for pauses and promotions (dispatcher.h) */
+    PyObject *t = Py_BuildValue("(ll)", psyco_stat_parked_live,
+                                psyco_stat_parked_frozen);
+    if (t == NULL || PyDict_SetItemString(d, "parked", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+  if (d != NULL) {
+    /* failed guards of cached globals (pycompiler.c:do_changed_global) */
+    PyObject *t = PyLong_FromLong(psyco_stat_global_fails);
+    if (t == NULL || PyDict_SetItemString(d, "global_fails", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+  if (d != NULL) {
+    /* cycle scans run, the owners they freed, and the records counted
+       now (codemanager.c) */
+    PyObject *t = Py_BuildValue("(lll)", psyco_stat_owner_scans,
+                                psyco_stat_owners_collected,
+                                psyco_stat_owners_counted);
+    if (t == NULL || PyDict_SetItemString(d, "owner_scans", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+#if !defined(__SANITIZE_ADDRESS__)
+  if (d != NULL) {
+    /* vinfos and source_knowns in use: made, less those on the free list
+       (blockalloc.h; not counted under ASan, where each is malloc'd) */
+    long nv = psyco_ll_items_vinfo, ns = psyco_ll_items_sk;
+    void **p;
+    for (p = psyco_linked_list_vinfo; p != NULL; p = (void **)*p)
+      nv--;
+    for (p = psyco_linked_list_sk; p != NULL; p = (void **)*p)
+      ns--;
+    PyObject *t = Py_BuildValue("(ll)", nv, ns);
+    if (t == NULL || PyDict_SetItemString(d, "vinfos", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+#endif
+#if NI_CODESTATS
+  if (d != NULL) {
+    long *c = psyco_cs_load;
+    PyObject *t = Py_BuildValue(
+        "(llllllll)", c[0], psyco_stat_load_type_changes,
+        psyco_stat_load_repairs, c[3], c[4], c[5], c[6], c[7]);
+    if (t == NULL || PyDict_SetItemString(d, "load_guards", t) < 0)
+      Py_CLEAR(d);
+    Py_XDECREF(t);
+  }
+#endif
+  return d;
+}
+
+/* the analysis functions would run code that isn't set up before the
+   first start, so they refuse */
+static int ni_not_set_up(const char *fn) {
+  if (ni_set_up)
+    return 0;
+  PyErr_Format(PyExc_RuntimeError, "%s(): ni.start() has not been called",
+               fn);
+  return 1;
+}
+
+/* for tests and tools: what the eval hook did with a code object */
+static PyObject *ni_code_info(PyObject *self, PyObject *co) {
+  ni_code_extra_t *e;
+  if (!PyCode_Check(co)) {
+    PyErr_SetString(PyExc_TypeError, "_code_info() needs a code object");
+    return NULL;
+  }
+  e = ni_code_extra_get((PyCodeObject *)co);
+  if (e == NULL || e->merge_points == NULL)
+    return PyUnicode_FromString("not seen");
+  if (e->merge_points == Py_None)
+    return PyUnicode_FromString("unsupported");
+  if (e->entry_point == NULL || e->entry_point == Py_None)
+    return PyUnicode_FromString("no entry point");
+  return PyUnicode_FromString("compiled");
+}
+
+/* for tests: {bytecode offset: [dead local names]} at each merge
+   point, or None if the code isn't compiled */
+static PyObject *ni_dead_locals(PyObject *self, PyObject *co) {
+  PyObject *mps, *result;
+  mergepoint_t *mp;
+  if (!PyCode_Check(co)) {
+    PyErr_SetString(PyExc_TypeError, "_dead_locals() needs a code object");
+    return NULL;
+  }
+  if (ni_not_set_up("_dead_locals"))
+    return NULL;
+  mps = psyco_get_merge_points((PyCodeObject *)co, 0);
+  if (mps == Py_None)
+    Py_RETURN_NONE;
+  result = PyDict_New();
+  if (result == NULL)
+    return NULL;
+  for (mp = psyco_first_merge_point(mps); mp->bytecode_position >= 0; mp++) {
+    PyObject *names = PyList_New(0), *key;
+    Py_ssize_t i;
+    if (names == NULL)
+      goto fail;
+    for (i = 0; i < PyList_GET_SIZE(mp->entries.fatlist); i++) {
+      PyObject *o = PyList_GET_ITEM(mp->entries.fatlist, i);
+      if (!PyLong_Check(o))
+        break;
+      if (PyList_Append(names, PyTuple_GET_ITEM(((PyCodeObject *)co)->co_varnames,
+                                                PyLong_AS_LONG(o))) < 0) {
+        Py_DECREF(names);
+        goto fail;
+      }
+    }
+    key = PyLong_FromLong(mp->bytecode_position);
+    if (key == NULL || PyDict_SetItem(result, key, names) < 0) {
+      Py_XDECREF(key);
+      Py_DECREF(names);
+      goto fail;
+    }
+    Py_DECREF(key);
+    Py_DECREF(names);
+  }
+  return result;
+fail:
+  Py_DECREF(result);
+  return NULL;
+}
+
+/* for tests: would calls to this code be inlined? */
+static PyObject *ni_inlinable(PyObject *self, PyObject *co) {
+  PyObject *mps;
+  if (!PyCode_Check(co)) {
+    PyErr_SetString(PyExc_TypeError, "_inlinable() needs a code object");
+    return NULL;
+  }
+  if (ni_not_set_up("_inlinable"))
+    return NULL;
+  mps = psyco_get_merge_points((PyCodeObject *)co, 0);
+  return PyBool_FromLong(mps != Py_None &&
+                         (psyco_mp_flags(mps) & MP_FLAGS_INLINABLE) != 0);
+}
+
+/* for tests: the metas Psyco_DefineModuleFn couldn't register */
+static PyObject *ni_unregistered_metas(PyObject *self, PyObject *unused) {
+  if (Psyco_Unregistered_Metas == NULL)
+    return PyList_New(0);
+  return PyList_GetSlice(Psyco_Unregistered_Metas, 0, PY_SSIZE_T_MAX);
+}
+
+#if ALL_CHECKS
+/* for tests: _fail_after(site, n) makes the n-th allocation at 'site' from
+   now fail (psyco.h:NI_FAIL); 0 cancels. Returns what was left of the
+   previous count, 0 once it fired. */
+static PyObject *ni_fail_after(PyObject *self, PyObject *args) {
+  static const char *names[NI_FAIL_SITES] = {"psycoobject", "array",
+                                             "codebuf", "lookup", "owner"};
+  const char *site;
+  long n, left;
+  int i;
+  if (!PyArg_ParseTuple(args, "sl", &site, &n))
+    return NULL;
+  for (i = 0; i < NI_FAIL_SITES; i++)
+    if (strcmp(site, names[i]) == 0) {
+      left = psyco_fail_after[i];
+      psyco_fail_after[i] = n;
+      return PyLong_FromLong(left);
+    }
+  PyErr_SetString(PyExc_ValueError, "unknown site");
+  return NULL;
+}
+#endif
+
+DEFINEVAR PyMethodDef ni_testing_methods[] = {
+#if ALL_CHECKS
+    {"_fail_after", ni_fail_after, METH_VARARGS,
+     "Make the n-th allocation at a site fail (checked builds)."},
+#endif
+    {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
+#if NI_CODESTATS
+    {"_codestats", ni_codestats, METH_NOARGS, "Code size per instruction."},
+    {"_promostats", ni_promostats, METH_NOARGS, "Promotion sites."},
+#endif
+    {"_code_info", ni_code_info, METH_O,
+     "'not seen', 'unsupported', 'no entry point' or 'compiled'."},
+    {"_dead_locals", ni_dead_locals, METH_O,
+     "{offset: [dead local names]} at each merge point, or None."},
+    {"_inlinable", ni_inlinable, METH_O,
+     "True if calls to this code object are inlined."},
+    {"_unregistered_metas", ni_unregistered_metas, METH_NOARGS,
+     "['module.name: why'] for each meta that wasn't registered."},
+    {NULL, NULL, 0, NULL}};

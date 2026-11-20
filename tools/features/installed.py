@@ -433,7 +433,7 @@ def write(python, out):
         return 1
     os.makedirs(out, exist_ok=True)
     # rewritten only when its text changes, so that an unchanged header
-    # doesn't rebuild ni.so
+    # doesn't rebuild ni._core
     if os.path.exists(path):
         with open(path) as f:
             if f.read() == text:

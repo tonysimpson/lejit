@@ -455,7 +455,7 @@ DEFINEFN
 long direct_read_vinfo(vinfo_t *vi, char *data) {
   int sindex;
   if (vi == NULL) {
-    PyErr_SetString(PyExc_PsycoError, "undefined value");
+    PyErr_SetString(PyExc_RuntimeError, "undefined value");
     return -1;
   }
   switch (gettime(vi->source)) {
@@ -1139,7 +1139,7 @@ static bool computed_do_not_use(PsycoObject *po, vinfo_t *vi) {
 }
 
 static PyObject *direct_computed_do_not_use(vinfo_t *vi, char *data) {
-  PyErr_SetString(PyExc_PsycoError,
+  PyErr_SetString(PyExc_RuntimeError,
                   "internal error (direct_computed_do_not_use)");
   extra_assert(0); /* stop if debugging */
   return NULL;
