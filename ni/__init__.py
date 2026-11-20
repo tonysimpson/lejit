@@ -28,6 +28,8 @@ def _unsupported():
         return 'Ni runs only on CPython'
     if _sys.platform != 'linux' or _platform.machine() != 'x86_64':
         return 'Ni runs only on x86-64 Linux'
+    if _sys.version_info >= (3, 11):
+        return 'Ni runs only on CPython 3.7 to 3.10'
     return _missing
 
 

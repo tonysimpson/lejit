@@ -34,6 +34,8 @@ def fallback_reason():
             or sys.maxsize <= 2**32:
         return 'Ni runs only on x86-64 Linux, not %s %s' % (sys.platform,
                                                            platform.machine())
+    if sys.version_info >= (3, 11):
+        return 'Ni runs only on CPython 3.7 to 3.10, not %d.%d' % sys.version_info[:2]
     if os.environ.get('NI_FALLBACK') == '1':
         return 'NI_FALLBACK=1 was set when it was installed'
     return None
