@@ -133,7 +133,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
     total_args = (co->co_argcount + co->co_kwonlyargcount);
     fastlocals = f_localsplus;
     freevars = (f_localsplus + co->co_nlocals);
-    if ((co->co_flags & 0x0008)) {
+    if ((co->co_flags & CO_VARKEYWORDS)) {
         return -1; /* PyDict_New: the real call */
     }
     if ((argcount > co->co_argcount)) {
@@ -149,10 +149,10 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
         fastlocals[j] = x;
         vinfo_xdecref(tmp, po);
     }
-    if ((co->co_flags & 0x0004)) {
+    if ((co->co_flags & CO_VARARGS)) {
         return -1; /* u (no form): the real call */
     }
-    if (((argcount > co->co_argcount) && !((co->co_flags & 0x0004)))) {
+    if (((argcount > co->co_argcount) && !((co->co_flags & CO_VARARGS)))) {
         return -1; /* too_many_positional: the real call */
     }
     if ((argcount < co->co_argcount)) {
@@ -198,9 +198,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             return -1; /* missing_arguments: the real call */
         }
     }
-    for ((i = 0);
-         (i < ((PyVarObject *)((PyTupleObject *)co->co_cellvars))->ob_size);
-         ++i) {
+    for ((i = 0); (i < PyTuple_GET_SIZE(co->co_cellvars)); ++i) {
         if (((co->co_cell2arg != NULL) &&
              ((arg = co->co_cell2arg[i]) != -1))) {
             return -1; /* PyCell_New: the real call */
@@ -209,14 +207,10 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             return -1; /* PyCell_New: the real call */
         }
     }
-    for ((i = 0);
-         (i < ((PyVarObject *)((PyTupleObject *)co->co_freevars))->ob_size);
-         ++i) {
+    for ((i = 0); (i < PyTuple_GET_SIZE(co->co_freevars)); ++i) {
         o = closure[i];
         vinfo_incref(o);
-        freevars[(
-            ((PyVarObject *)((PyTupleObject *)co->co_cellvars))->ob_size +
-            i)] = o;
+        freevars[(PyTuple_GET_SIZE(co->co_cellvars) + i)] = o;
     }
     return 0;
 }
@@ -246,7 +240,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
     total_args = (co->co_argcount + co->co_kwonlyargcount);
     fastlocals = f_localsplus;
     freevars = (f_localsplus + co->co_nlocals);
-    if ((co->co_flags & 0x0008)) {
+    if ((co->co_flags & CO_VARKEYWORDS)) {
         return -1; /* PyDict_New: the real call */
     }
     if ((argcount > co->co_argcount)) {
@@ -262,11 +256,11 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
         fastlocals[j] = x;
         vinfo_xdecref(tmp, po);
     }
-    if ((co->co_flags & 0x0004)) {
+    if ((co->co_flags & CO_VARARGS)) {
         return -1; /* _PyTuple_FromArray: the real call */
     }
     i = 0;
-    if (((argcount > co->co_argcount) && !((co->co_flags & 0x0004)))) {
+    if (((argcount > co->co_argcount) && !((co->co_flags & CO_VARARGS)))) {
         return -1; /* too_many_positional: the real call */
     }
     if ((argcount < co->co_argcount)) {
@@ -308,9 +302,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             return -1; /* missing_arguments: the real call */
         }
     }
-    for ((i = 0);
-         (i < ((PyVarObject *)((PyTupleObject *)co->co_cellvars))->ob_size);
-         ++i) {
+    for ((i = 0); (i < PyTuple_GET_SIZE(co->co_cellvars)); ++i) {
         if (((co->co_cell2arg != NULL) &&
              ((arg = co->co_cell2arg[i]) != -1))) {
             return -1; /* PyCell_New: the real call */
@@ -319,14 +311,10 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             return -1; /* PyCell_New: the real call */
         }
     }
-    for ((i = 0);
-         (i < ((PyVarObject *)((PyTupleObject *)co->co_freevars))->ob_size);
-         ++i) {
+    for ((i = 0); (i < PyTuple_GET_SIZE(co->co_freevars)); ++i) {
         o = closure[i];
         vinfo_incref(o);
-        freevars[(
-            ((PyVarObject *)((PyTupleObject *)co->co_cellvars))->ob_size +
-            i)] = o;
+        freevars[(PyTuple_GET_SIZE(co->co_cellvars) + i)] = o;
     }
     return 0;
 }
@@ -357,7 +345,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
     total_args = (co->co_argcount + co->co_kwonlyargcount);
     fastlocals = f_localsplus;
     freevars = (f_localsplus + co->co_nlocals);
-    if ((co->co_flags & 0x0008)) {
+    if ((co->co_flags & CO_VARKEYWORDS)) {
         return -1; /* PyDict_New: the real call */
     }
     if ((argcount > co->co_argcount)) {
@@ -373,7 +361,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
         fastlocals[i] = x;
         vinfo_xdecref(tmp, po);
     }
-    if ((co->co_flags & 0x0004)) {
+    if ((co->co_flags & CO_VARARGS)) {
         _t1 = (argcount - n);
         if (_t1 < 0 || _t1 > 15)
             return -1; /* a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT items: the real call */
@@ -388,7 +376,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
         }
     }
     i = 0;
-    if (((argcount > co->co_argcount) && !((co->co_flags & 0x0004)))) {
+    if (((argcount > co->co_argcount) && !((co->co_flags & CO_VARARGS)))) {
         return -1; /* too_many_positional: the real call */
     }
     if ((argcount < co->co_argcount)) {
@@ -430,7 +418,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             return -1; /* missing_arguments: the real call */
         }
     }
-    for ((i = 0); (i < ((PyVarObject *)co->co_cellvars)->ob_size); ++i) {
+    for ((i = 0); (i < PyTuple_GET_SIZE(co->co_cellvars)); ++i) {
         if (((co->co_cell2arg != NULL) &&
              ((arg = co->co_cell2arg[i]) != -1))) {
             return -1; /* PyCell_New: the real call */
@@ -439,10 +427,10 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             return -1; /* PyCell_New: the real call */
         }
     }
-    for ((i = 0); (i < ((PyVarObject *)co->co_freevars)->ob_size); ++i) {
+    for ((i = 0); (i < PyTuple_GET_SIZE(co->co_freevars)); ++i) {
         o = closure[i];
         vinfo_incref(o);
-        freevars[(((PyVarObject *)co->co_cellvars)->ob_size + i)] = o;
+        freevars[(PyTuple_GET_SIZE(co->co_cellvars) + i)] = o;
     }
     return 0;
 }

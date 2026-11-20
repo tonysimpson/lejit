@@ -62,7 +62,7 @@ static PyCFunction cfunc_unicode_strip;
 /* every whole copy scope.py names is made */
 #define NI_COPIES_unicodeobject 1
 
-/* run-time copies: where a heap type's slot changed, or where the meta has no compile-time form, CPython's algorithm resumes in these */
+/* CPython's code, copied for the metas to call at run time */
 static PyObject *
 cimpl_do_strip(PyObject *self, int striptype)
 {
@@ -1125,8 +1125,6 @@ static vinfo_t *
 unicode_lstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
     vinfo_t *chars;
     vinfo_t *return_value;
     _t1 = PsycoTuple_Load(vargs);
@@ -1140,15 +1138,13 @@ unicode_lstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 #else
         chars = psyco_vi_Zero();
 #endif
-        _t2 = unicode_lstrip_impl(po, self, chars);
-        return_value = _t2;
+        return_value = unicode_lstrip_impl(po, self, chars);
         vinfo_decref(chars, po);
         return return_value;
     }
     else {
         chars = PsycoTuple_GET_ITEM(vargs, 0);
-        _t3 = unicode_lstrip_impl(po, self, chars);
-        return_value = _t3;
+        return_value = unicode_lstrip_impl(po, self, chars);
         return return_value;
     }
 }
@@ -1165,8 +1161,6 @@ static vinfo_t *
 unicode_rstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
     vinfo_t *chars;
     vinfo_t *return_value;
     _t1 = PsycoTuple_Load(vargs);
@@ -1180,15 +1174,13 @@ unicode_rstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 #else
         chars = psyco_vi_Zero();
 #endif
-        _t2 = unicode_rstrip_impl(po, self, chars);
-        return_value = _t2;
+        return_value = unicode_rstrip_impl(po, self, chars);
         vinfo_decref(chars, po);
         return return_value;
     }
     else {
         chars = PsycoTuple_GET_ITEM(vargs, 0);
-        _t3 = unicode_rstrip_impl(po, self, chars);
-        return_value = _t3;
+        return_value = unicode_rstrip_impl(po, self, chars);
         return return_value;
     }
 }
@@ -1205,8 +1197,6 @@ static vinfo_t *
 unicode_strip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
     vinfo_t *chars;
     vinfo_t *return_value;
     _t1 = PsycoTuple_Load(vargs);
@@ -1216,15 +1206,13 @@ unicode_strip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
     }
     if (_t1 == 0) {
         chars = psyco_vi_None();
-        _t2 = unicode_strip_impl(po, self, chars);
-        return_value = _t2;
+        return_value = unicode_strip_impl(po, self, chars);
         vinfo_decref(chars, po);
         return return_value;
     }
     else {
         chars = PsycoTuple_GET_ITEM(vargs, 0);
-        _t3 = unicode_strip_impl(po, self, chars);
-        return_value = _t3;
+        return_value = unicode_strip_impl(po, self, chars);
         return return_value;
     }
 }

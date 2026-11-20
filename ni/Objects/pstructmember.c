@@ -33,7 +33,6 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
     vinfo_t *_t2;
     vinfo_t *_t20;
     vinfo_t *_t21;
-    vinfo_t *_t22;
     vinfo_t *_t23;
     condition_code_t _t24;
     int _t25;
@@ -64,7 +63,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
     switch (l->type) {
         case 14:
             _t1 = psyco_get_field_offset(po, addr, FMUT(DEF_ARRAY(char, 0)),
-                                         0 + (l->offset));
+                                         l->offset);
             if (_t1 == NULL) {
                 return NULL;
             }
@@ -74,7 +73,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             return v;
         case 8:
             _t3 = psyco_get_field_offset(po, addr, FMUT(DEF_ARRAY(char, 0)),
-                                         0 + (l->offset));
+                                         l->offset);
             if (_t3 == NULL) {
                 return NULL;
             }
@@ -85,7 +84,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
         case 9:
             _t5 = psyco_get_field_offset(
                 po, addr, FMUT(UNSIGNED_ARRAY(unsigned char, 0)),
-                0 + (l->offset));
+                l->offset);
             if (_t5 == NULL) {
                 return NULL;
             }
@@ -95,7 +94,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             return v;
         case 0:
             _t7 = psyco_get_field_offset(po, addr, FMUT(DEF_ARRAY(short, 0)),
-                                         0 + (l->offset));
+                                         l->offset);
             if (_t7 == NULL) {
                 return NULL;
             }
@@ -106,7 +105,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
         case 10:
             _t9 = psyco_get_field_offset(
                 po, addr, FMUT(UNSIGNED_ARRAY(unsigned short, 0)),
-                0 + (l->offset));
+                l->offset);
             if (_t9 == NULL) {
                 return NULL;
             }
@@ -116,7 +115,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             return v;
         case 1:
             _t11 = psyco_get_field_offset(po, addr, FMUT(DEF_ARRAY(int, 0)),
-                                          0 + (l->offset));
+                                          l->offset);
             if (_t11 == NULL) {
                 return NULL;
             }
@@ -127,7 +126,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
         case 11:
             _t13 = psyco_get_field_offset(
                 po, addr, FMUT(UNSIGNED_ARRAY(unsigned int, 0)),
-                0 + (l->offset));
+                l->offset);
             if (_t13 == NULL) {
                 return NULL;
             }
@@ -137,7 +136,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             return v;
         case 2:
             _t15 = psyco_get_field_offset(po, addr, FMUT(DEF_ARRAY(long, 0)),
-                                          0 + (l->offset));
+                                          l->offset);
             if (_t15 == NULL) {
                 return NULL;
             }
@@ -148,7 +147,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
         case 12:
             _t17 = psyco_get_field_offset(
                 po, addr, FMUT(UNSIGNED_ARRAY(unsigned long, 0)),
-                0 + (l->offset));
+                l->offset);
             if (_t17 == NULL) {
                 return NULL;
             }
@@ -158,7 +157,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             return v;
         case 19:
             _t19 = psyco_get_field_offset(
-                po, addr, FMUT(DEF_ARRAY(Py_ssize_t, 0)), 0 + (l->offset));
+                po, addr, FMUT(DEF_ARRAY(Py_ssize_t, 0)), l->offset);
             if (_t19 == NULL) {
                 return NULL;
             }
@@ -172,16 +171,15 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
                                       (long)(l));
         case 4:
             _t21 = psyco_get_field_offset(po, addr, FMUT(DEF_ARRAY(double, 0)),
-                                          0 + (l->offset));
+                                          l->offset);
             if (_t21 == NULL) {
                 return NULL;
             }
-            _t22 = PsycoFloat_FROM_DOUBLE(_t21);
-            v = _t22;
+            v = PsycoFloat_FROM_DOUBLE(_t21);
             return v;
         case 5:
             _t23 = psyco_get_field_offset(po, addr, FMUT(DEF_ARRAY(char *, 0)),
-                                          0 + (l->offset));
+                                          l->offset);
             if (_t23 == NULL) {
                 return NULL;
             }
@@ -197,7 +195,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             }
             else {
                 _t26 = psyco_get_field_offset(
-                    po, addr, FMUT(DEF_ARRAY(char *, 0)), 0 + (l->offset));
+                    po, addr, FMUT(DEF_ARRAY(char *, 0)), l->offset);
                 if (_t26 == NULL) {
                     return NULL;
                 }
@@ -208,14 +206,14 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             }
             return v;
         case 13:
-            _t28 = integer_add_i(po, addr, 0 + (l->offset), false);
+            _t28 = integer_add_i(po, addr, l->offset, false);
             _t29 = psyco_generic_call(po, PyUnicode_FromString,
                                       CfCommonNewRefPyObject, "v", _t28);
             vinfo_decref(_t28, po);
             v = _t29;
             return v;
         case 7:
-            _t30 = integer_add_i(po, addr, 0 + (l->offset), false);
+            _t30 = integer_add_i(po, addr, l->offset, false);
             _t31 = psyco_generic_call(po, PyUnicode_FromStringAndSize,
                                       CfCommonNewRefPyObject, "vl", _t30,
                                       (long)(1));
@@ -224,7 +222,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             return v;
         case 6:
             _t32 = psyco_get_field_offset(
-                po, addr, FMUT(DEF_ARRAY(PyObject *, 0)), 0 + (l->offset));
+                po, addr, FMUT(DEF_ARRAY(PyObject *, 0)), l->offset);
             if (_t32 == NULL) {
                 return NULL;
             }
@@ -244,7 +242,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             return v;
         case 16:
             _t35 = psyco_get_field_offset(
-                po, addr, FMUT(DEF_ARRAY(PyObject *, 0)), 0 + (l->offset));
+                po, addr, FMUT(DEF_ARRAY(PyObject *, 0)), l->offset);
             if (_t35 == NULL) {
                 return NULL;
             }
@@ -271,7 +269,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             return v;
         case 17:
             _t38 = psyco_get_field_offset(
-                po, addr, FMUT(DEF_ARRAY(long long, 0)), 0 + (l->offset));
+                po, addr, FMUT(DEF_ARRAY(long long, 0)), l->offset);
             if (_t38 == NULL) {
                 return NULL;
             }
@@ -284,7 +282,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
         case 18:
             _t40 = psyco_get_field_offset(
                 po, addr, FMUT(UNSIGNED_ARRAY(unsigned long long, 0)),
-                0 + (l->offset));
+                l->offset);
             if (_t40 == NULL) {
                 return NULL;
             }

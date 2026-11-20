@@ -220,7 +220,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         if (tp_bb == NULL) {
             return NULL;
         }
-        _t3 = tp_bb == (&PyTuple_Type);
+        _t3 = tp_bb == &PyTuple_Type;
     }
     if (_t3) {
         vinfo_incref(bb);
@@ -230,7 +230,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
     if (tp_bb == NULL) {
         return NULL;
     }
-    if (!(((tp_bb->tp_flags & (1UL << 26))) != 0)) {
+    if ((tp_bb->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
         PycException_SetFormat(
             po, PyExc_TypeError,
             "can only concatenate tuple (not \"%.200s\") to tuple",
@@ -255,7 +255,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         if (tp_a == NULL) {
             return NULL;
         }
-        _t6 = tp_a == (&PyTuple_Type);
+        _t6 = tp_a == &PyTuple_Type;
     }
     if (_t6) {
         vinfo_incref(a);
@@ -276,7 +276,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         Psyco_AssertType(po, _t8, &PyTuple_Type);
     return _t8;
 #else
-    if (_t1 > ((((Py_ssize_t)(((size_t)-1) >> 1)) - _t4))) {
+    if (_t1 > ((PY_SSIZE_T_MAX - _t4))) {
         _t7 = psyco_generic_call(
             po, PyErr_NoMemory,
             CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "");
@@ -303,7 +303,6 @@ static vinfo_t *
 tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
 {
     int _t1;
-    vinfo_t *_t10;
     vinfo_t *_t2;
     int _t3;
     int _t4;
@@ -335,7 +334,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         if (tp_bb == NULL) {
             return NULL;
         }
-        _t3 = tp_bb == (&PyTuple_Type);
+        _t3 = tp_bb == &PyTuple_Type;
     }
     if (_t3) {
         vinfo_incref(bb);
@@ -345,7 +344,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
     if (tp_bb == NULL) {
         return NULL;
     }
-    if (!(((tp_bb->tp_flags & (1UL << 26))) != 0)) {
+    if ((tp_bb->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
         PycException_SetFormat(
             po, PyExc_TypeError,
             "can only concatenate tuple (not \"%.200s\") to tuple",
@@ -367,13 +366,13 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         if (tp_a == NULL) {
             return NULL;
         }
-        _t6 = tp_a == (&PyTuple_Type);
+        _t6 = tp_a == &PyTuple_Type;
     }
     if (_t6) {
         vinfo_incref(a);
         return a;
     }
-    if (_t1 > ((((Py_ssize_t)(((size_t)-1) >> 1)) - _t4))) {
+    if (_t1 > ((PY_SSIZE_T_MAX - _t4))) {
         _t7 = psyco_generic_call(
             po, PyErr_NoMemory,
             CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "");
@@ -391,8 +390,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
             Psyco_AssertType(po, _t9, &PyTuple_Type);
         return _t9;
     }
-    _t10 = PsycoTuple_New(_t8, NULL);
-    np = _t10;
+    np = PsycoTuple_New(_t8, NULL);
     src = 0;
     dest = 0;
     i = 0;
@@ -567,7 +565,7 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
         if (tp_a == NULL) {
             return NULL;
         }
-        if (tp_a == (&PyTuple_Type)) {
+        if (tp_a == &PyTuple_Type) {
             vinfo_incref(a);
             return a;
         }
@@ -578,7 +576,7 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
             Psyco_AssertType(po, _t4, &PyTuple_Type);
         return _t4;
     }
-    if (n_k > ((((Py_ssize_t)(((size_t)-1) >> 1)) / _t2))) {
+    if (n_k > ((PY_SSIZE_T_MAX / _t2))) {
         _t5 = psyco_generic_call(
             po, PyErr_NoMemory,
             CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "");
@@ -632,7 +630,7 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
         if (tp_a == NULL) {
             return NULL;
         }
-        if (tp_a == (&PyTuple_Type)) {
+        if (tp_a == &PyTuple_Type) {
             vinfo_incref(a);
             return a;
         }
@@ -642,7 +640,7 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
         _t5 = PsycoTuple_New(_t4, NULL);
         return _t5;
     }
-    if (n_k > ((((Py_ssize_t)(((size_t)-1) >> 1)) / _t2))) {
+    if (n_k > ((PY_SSIZE_T_MAX / _t2))) {
         _t6 = psyco_generic_call(
             po, PyErr_NoMemory,
             CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "");
@@ -671,7 +669,6 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
     vinfo_t *_t6;
     Py_ssize_t _t7;
     vinfo_t *_t8;
-    vinfo_t *_t9;
     Py_ssize_t i;
     Py_ssize_t items;
     Py_ssize_t j;
@@ -707,7 +704,7 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
         if (tp_a == NULL) {
             return NULL;
         }
-        if (tp_a == (&PyTuple_Type)) {
+        if (tp_a == &PyTuple_Type) {
             vinfo_incref(a);
             return a;
         }
@@ -717,7 +714,7 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
             return _t5;
         }
     }
-    if (n_k > ((((Py_ssize_t)(((size_t)-1) >> 1)) / _t2))) {
+    if (n_k > ((PY_SSIZE_T_MAX / _t2))) {
         _t6 = psyco_generic_call(
             po, PyErr_NoMemory,
             CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "");
@@ -736,8 +733,7 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
             Psyco_AssertType(po, _t8, &PyTuple_Type);
         return _t8;
     }
-    _t9 = PsycoTuple_New(_t7, NULL);
-    np = _t9;
+    np = PsycoTuple_New(_t7, NULL);
     p = 0;
     items = 0;
     if (n_k > 16) {
@@ -793,13 +789,13 @@ tuplerichcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
     if (tp_v == NULL) {
         return NULL;
     }
-    _t1 = !(((tp_v->tp_flags & (1UL << 26))) != 0);
+    _t1 = (tp_v->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0;
     if (!_t1) {
         tp_w = Psyco_NeedType(po, w);
         if (tp_w == NULL) {
             return NULL;
         }
-        _t1 = !(((tp_w->tp_flags & (1UL << 26))) != 0);
+        _t1 = (tp_w->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0;
     }
     if (_t1) {
         return psyco_vi_NotImplemented();

@@ -191,7 +191,7 @@ static vinfo_t *pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
 /* the translation keeps CPython's unused variables */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
-/* run-time copies: where a heap type's slot changed, or where the meta has no compile-time form, CPython's algorithm resumes in these */
+/* CPython's code, copied for the metas to call at run time */
 static double
 #if NI_HAS_FLOAT_ASDOUBLE_INDEX
 cimpl_PyFloat_AsDouble_1(PyObject *res)
@@ -538,7 +538,6 @@ DEFINEFN vinfo_t *
 PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
 {
     bool _t1;
-    vinfo_t *_t10;
     vinfo_t *_t11;
     bool _t12;
     vinfo_t *_t13;
@@ -562,7 +561,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
     if (tp_op == NULL) {
         return NULL;
     }
-    _t2 = tp_op == (&PyFloat_Type);
+    _t2 = tp_op == &PyFloat_Type;
     if (!_t2) {
         switch (Psyco_TypeIsSubtype(po, tp_op, &PyFloat_Type, &_t1)) {
             case 1:
@@ -638,8 +637,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
                                tp_op->tp_name);
         return NULL;
     }
-    _t10 = Psyco_META1(po, _t4, CfCommonNewRefPyObject, "v", op);
-    res = _t10;
+    res = Psyco_META1(po, _t4, CfCommonNewRefPyObject, "v", op);
     if (res == NULL) {
         return NULL;
     }
@@ -651,8 +649,8 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
         vinfo_decref(res, po);
         return _t11;
     }
-    if (!(tp_res == (&PyFloat_Type))) {
-        _t14 = tp_res == (&PyFloat_Type);
+    if (tp_res != &PyFloat_Type) {
+        _t14 = tp_res == &PyFloat_Type;
         if (!_t14) {
             switch (Psyco_TypeIsSubtype(po, tp_res, &PyFloat_Type, &_t12)) {
                 case 1:
@@ -705,7 +703,6 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
     vinfo_t *_t3;
     unaryfunc _t4;
     int _t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     bool _t8;
     vinfo_t *_t9;
@@ -718,7 +715,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
     if (tp_op == NULL) {
         return NULL;
     }
-    _t2 = tp_op == (&PyFloat_Type);
+    _t2 = tp_op == &PyFloat_Type;
     if (!_t2) {
         switch (Psyco_TypeIsSubtype(po, tp_op, &PyFloat_Type, &_t1)) {
             case 1:
@@ -761,8 +758,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
                                tp_op->tp_name);
         return NULL;
     }
-    _t6 = Psyco_META1(po, _t4, CfCommonNewRefPyObject, "v", op);
-    res = _t6;
+    res = Psyco_META1(po, _t4, CfCommonNewRefPyObject, "v", op);
     if (res == NULL) {
         return NULL;
     }
@@ -774,8 +770,8 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
         vinfo_decref(res, po);
         return _t7;
     }
-    if (!(tp_res == (&PyFloat_Type))) {
-        _t10 = tp_res == (&PyFloat_Type);
+    if (tp_res != &PyFloat_Type) {
+        _t10 = tp_res == &PyFloat_Type;
         if (!_t10) {
             switch (Psyco_TypeIsSubtype(po, tp_res, &PyFloat_Type, &_t8)) {
                 case 1:
@@ -845,16 +841,13 @@ float_add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
     bool _t1;
     vinfo_t *_t10;
-    vinfo_t *_t11;
     vinfo_t *_t12;
     int _t2;
     vinfo_t *_t3;
-    vinfo_t *_t4;
     bool _t5;
     vinfo_t *_t6;
     int _t7;
     vinfo_t *_t8;
-    vinfo_t *_t9;
     vinfo_t *a;
     vinfo_t *b;
     vinfo_t *convert_to_double_obj;
@@ -869,7 +862,7 @@ float_add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t2 = tp_v == (&PyFloat_Type);
+    _t2 = tp_v == &PyFloat_Type;
     if (!_t2) {
         switch (Psyco_TypeIsSubtype(po, tp_v, &PyFloat_Type, &_t1)) {
             case 1:
@@ -894,9 +887,8 @@ float_add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     else {
         convert_to_double_obj = v;
-        if (((tp_v->tp_flags & (1UL << 24))) != 0) {
-            _t4 = PsycoLong_AsDouble(po, v);
-            a = _t4;
+        if ((tp_v->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+            a = PsycoLong_AsDouble(po, v);
             if (a == NULL) {
                 return NULL;
             }
@@ -905,7 +897,7 @@ float_add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
             return psyco_vi_NotImplemented();
         }
     }
-    _t7 = tp_w == (&PyFloat_Type);
+    _t7 = tp_w == &PyFloat_Type;
     if (!_t7) {
         switch (Psyco_TypeIsSubtype(po, tp_w, &PyFloat_Type, &_t5)) {
             case 1:
@@ -934,9 +926,8 @@ float_add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     else {
         convert_to_double_obj_2 = w;
-        if (((tp_w->tp_flags & (1UL << 24))) != 0) {
-            _t9 = PsycoLong_AsDouble(po, w);
-            b = _t9;
+        if ((tp_w->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+            b = PsycoLong_AsDouble(po, w);
             if (b == NULL) {
                 vinfo_decref(a, po);
                 return NULL;
@@ -955,8 +946,7 @@ float_add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         vinfo_decref(b, po);
         return NULL;
     }
-    _t11 = PsycoFloat_FROM_DOUBLE(_t10);
-    _t12 = _t11;
+    _t12 = PsycoFloat_FROM_DOUBLE(_t10);
     vinfo_decref(a, po);
     vinfo_decref(b, po);
     return _t12;
@@ -989,16 +979,13 @@ float_div(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     vinfo_array_t *_t10;
     vinfo_t *_t11;
     vinfo_t *_t12;
-    vinfo_t *_t13;
     vinfo_t *_t14;
     int _t2;
     vinfo_t *_t3;
-    vinfo_t *_t4;
     bool _t5;
     vinfo_t *_t6;
     int _t7;
     vinfo_t *_t8;
-    vinfo_t *_t9;
     vinfo_t *a;
     vinfo_t *b;
     vinfo_t *convert_to_double_obj;
@@ -1013,7 +1000,7 @@ float_div(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t2 = tp_v == (&PyFloat_Type);
+    _t2 = tp_v == &PyFloat_Type;
     if (!_t2) {
         switch (Psyco_TypeIsSubtype(po, tp_v, &PyFloat_Type, &_t1)) {
             case 1:
@@ -1038,9 +1025,8 @@ float_div(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     else {
         convert_to_double_obj = v;
-        if (((tp_v->tp_flags & (1UL << 24))) != 0) {
-            _t4 = PsycoLong_AsDouble(po, v);
-            a = _t4;
+        if ((tp_v->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+            a = PsycoLong_AsDouble(po, v);
             if (a == NULL) {
                 return NULL;
             }
@@ -1049,7 +1035,7 @@ float_div(PsycoObject *po, vinfo_t *v, vinfo_t *w)
             return psyco_vi_NotImplemented();
         }
     }
-    _t7 = tp_w == (&PyFloat_Type);
+    _t7 = tp_w == &PyFloat_Type;
     if (!_t7) {
         switch (Psyco_TypeIsSubtype(po, tp_w, &PyFloat_Type, &_t5)) {
             case 1:
@@ -1078,9 +1064,8 @@ float_div(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     else {
         convert_to_double_obj_2 = w;
-        if (((tp_w->tp_flags & (1UL << 24))) != 0) {
-            _t9 = PsycoLong_AsDouble(po, w);
-            b = _t9;
+        if ((tp_w->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+            b = PsycoLong_AsDouble(po, w);
             if (b == NULL) {
                 vinfo_decref(a, po);
                 return NULL;
@@ -1103,8 +1088,7 @@ float_div(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     _t12 = _t10->items[0];
     array_release(_t10);
-    _t13 = PsycoFloat_FROM_DOUBLE(_t12);
-    _t14 = _t13;
+    _t14 = PsycoFloat_FROM_DOUBLE(_t12);
     vinfo_decref(a, po);
     vinfo_decref(b, po);
     return _t14;
@@ -1120,7 +1104,7 @@ float_float(PsycoObject *po, vinfo_t *v)
     if (tp_v == NULL) {
         return NULL;
     }
-    if (tp_v == (&PyFloat_Type)) {
+    if (tp_v == &PyFloat_Type) {
         vinfo_incref(v);
     }
     else {
@@ -1165,16 +1149,13 @@ float_mul(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
     bool _t1;
     vinfo_t *_t10;
-    vinfo_t *_t11;
     vinfo_t *_t12;
     int _t2;
     vinfo_t *_t3;
-    vinfo_t *_t4;
     bool _t5;
     vinfo_t *_t6;
     int _t7;
     vinfo_t *_t8;
-    vinfo_t *_t9;
     vinfo_t *a;
     vinfo_t *b;
     vinfo_t *convert_to_double_obj;
@@ -1189,7 +1170,7 @@ float_mul(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t2 = tp_v == (&PyFloat_Type);
+    _t2 = tp_v == &PyFloat_Type;
     if (!_t2) {
         switch (Psyco_TypeIsSubtype(po, tp_v, &PyFloat_Type, &_t1)) {
             case 1:
@@ -1214,9 +1195,8 @@ float_mul(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     else {
         convert_to_double_obj = v;
-        if (((tp_v->tp_flags & (1UL << 24))) != 0) {
-            _t4 = PsycoLong_AsDouble(po, v);
-            a = _t4;
+        if ((tp_v->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+            a = PsycoLong_AsDouble(po, v);
             if (a == NULL) {
                 return NULL;
             }
@@ -1225,7 +1205,7 @@ float_mul(PsycoObject *po, vinfo_t *v, vinfo_t *w)
             return psyco_vi_NotImplemented();
         }
     }
-    _t7 = tp_w == (&PyFloat_Type);
+    _t7 = tp_w == &PyFloat_Type;
     if (!_t7) {
         switch (Psyco_TypeIsSubtype(po, tp_w, &PyFloat_Type, &_t5)) {
             case 1:
@@ -1254,9 +1234,8 @@ float_mul(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     else {
         convert_to_double_obj_2 = w;
-        if (((tp_w->tp_flags & (1UL << 24))) != 0) {
-            _t9 = PsycoLong_AsDouble(po, w);
-            b = _t9;
+        if ((tp_w->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+            b = PsycoLong_AsDouble(po, w);
             if (b == NULL) {
                 vinfo_decref(a, po);
                 return NULL;
@@ -1275,8 +1254,7 @@ float_mul(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         vinfo_decref(b, po);
         return NULL;
     }
-    _t11 = PsycoFloat_FROM_DOUBLE(_t10);
-    _t12 = _t11;
+    _t12 = PsycoFloat_FROM_DOUBLE(_t10);
     vinfo_decref(a, po);
     vinfo_decref(b, po);
     return _t12;
@@ -1311,16 +1289,13 @@ float_rem(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     vinfo_array_t *_t10;
     vinfo_t *_t11;
     vinfo_t *_t12;
-    vinfo_t *_t13;
     vinfo_t *_t14;
     int _t2;
     vinfo_t *_t3;
-    vinfo_t *_t4;
     bool _t5;
     vinfo_t *_t6;
     int _t7;
     vinfo_t *_t8;
-    vinfo_t *_t9;
     vinfo_t *convert_to_double_obj;
     vinfo_t *convert_to_double_obj_2;
     PyTypeObject *tp_v;
@@ -1335,7 +1310,7 @@ float_rem(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t2 = tp_v == (&PyFloat_Type);
+    _t2 = tp_v == &PyFloat_Type;
     if (!_t2) {
         switch (Psyco_TypeIsSubtype(po, tp_v, &PyFloat_Type, &_t1)) {
             case 1:
@@ -1360,9 +1335,8 @@ float_rem(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     else {
         convert_to_double_obj = v;
-        if (((tp_v->tp_flags & (1UL << 24))) != 0) {
-            _t4 = PsycoLong_AsDouble(po, v);
-            vx = _t4;
+        if ((tp_v->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+            vx = PsycoLong_AsDouble(po, v);
             if (vx == NULL) {
                 return NULL;
             }
@@ -1371,7 +1345,7 @@ float_rem(PsycoObject *po, vinfo_t *v, vinfo_t *w)
             return psyco_vi_NotImplemented();
         }
     }
-    _t7 = tp_w == (&PyFloat_Type);
+    _t7 = tp_w == &PyFloat_Type;
     if (!_t7) {
         switch (Psyco_TypeIsSubtype(po, tp_w, &PyFloat_Type, &_t5)) {
             case 1:
@@ -1400,9 +1374,8 @@ float_rem(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     else {
         convert_to_double_obj_2 = w;
-        if (((tp_w->tp_flags & (1UL << 24))) != 0) {
-            _t9 = PsycoLong_AsDouble(po, w);
-            wx = _t9;
+        if ((tp_w->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+            wx = PsycoLong_AsDouble(po, w);
             if (wx == NULL) {
                 vinfo_decref(vx, po);
                 return NULL;
@@ -1425,8 +1398,7 @@ float_rem(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     _t12 = _t10->items[0];
     array_release(_t10);
-    _t13 = PsycoFloat_FROM_DOUBLE(_t12);
-    _t14 = _t13;
+    _t14 = PsycoFloat_FROM_DOUBLE(_t12);
     vinfo_decref(vx, po);
     vinfo_decref(wx, po);
     return _t14;
@@ -1437,16 +1409,13 @@ float_sub(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
     bool _t1;
     vinfo_t *_t10;
-    vinfo_t *_t11;
     vinfo_t *_t12;
     int _t2;
     vinfo_t *_t3;
-    vinfo_t *_t4;
     bool _t5;
     vinfo_t *_t6;
     int _t7;
     vinfo_t *_t8;
-    vinfo_t *_t9;
     vinfo_t *a;
     vinfo_t *b;
     vinfo_t *convert_to_double_obj;
@@ -1461,7 +1430,7 @@ float_sub(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t2 = tp_v == (&PyFloat_Type);
+    _t2 = tp_v == &PyFloat_Type;
     if (!_t2) {
         switch (Psyco_TypeIsSubtype(po, tp_v, &PyFloat_Type, &_t1)) {
             case 1:
@@ -1486,9 +1455,8 @@ float_sub(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     else {
         convert_to_double_obj = v;
-        if (((tp_v->tp_flags & (1UL << 24))) != 0) {
-            _t4 = PsycoLong_AsDouble(po, v);
-            a = _t4;
+        if ((tp_v->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+            a = PsycoLong_AsDouble(po, v);
             if (a == NULL) {
                 return NULL;
             }
@@ -1497,7 +1465,7 @@ float_sub(PsycoObject *po, vinfo_t *v, vinfo_t *w)
             return psyco_vi_NotImplemented();
         }
     }
-    _t7 = tp_w == (&PyFloat_Type);
+    _t7 = tp_w == &PyFloat_Type;
     if (!_t7) {
         switch (Psyco_TypeIsSubtype(po, tp_w, &PyFloat_Type, &_t5)) {
             case 1:
@@ -1526,9 +1494,8 @@ float_sub(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     else {
         convert_to_double_obj_2 = w;
-        if (((tp_w->tp_flags & (1UL << 24))) != 0) {
-            _t9 = PsycoLong_AsDouble(po, w);
-            b = _t9;
+        if ((tp_w->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+            b = PsycoLong_AsDouble(po, w);
             if (b == NULL) {
                 vinfo_decref(a, po);
                 return NULL;
@@ -1547,8 +1514,7 @@ float_sub(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         vinfo_decref(b, po);
         return NULL;
     }
-    _t11 = PsycoFloat_FROM_DOUBLE(_t10);
-    _t12 = _t11;
+    _t12 = PsycoFloat_FROM_DOUBLE(_t10);
     vinfo_decref(a, po);
     vinfo_decref(b, po);
     return _t12;

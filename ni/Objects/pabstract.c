@@ -72,7 +72,7 @@ vinfo_t *PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object,
 }
 
 /* the metas translated from abstract.c */
-/* run-time copies: where a heap type's slot changed, or where the meta has no compile-time form, CPython's algorithm resumes in these */
+/* CPython's code, copied for the metas to call at run time */
 #if NI_HAS_CHECK_SLOT_RESULT
 extern int
 _Py_CheckSlotResult(PyObject *obj, const char *slot_name, int success);
@@ -827,7 +827,6 @@ PsycoMapping_Size(PsycoObject *po, vinfo_t *o)
 {
     lenfunc _t1;
     int _t2;
-    vinfo_t *_t3;
 #if NI_HAS_NOT_A_SEQUENCE_ERROR
     lenfunc _t4;
     int _t5;
@@ -854,8 +853,7 @@ PsycoMapping_Size(PsycoObject *po, vinfo_t *o)
         _t2 = _t1 != 0;
     }
     if (_t2) {
-        _t3 = Psyco_META1(po, _t1, CfCommonPySSizeTResult, "v", o);
-        len = _t3;
+        len = Psyco_META1(po, _t1, CfCommonPySSizeTResult, "v", o);
         return len;
     }
 #if NI_HAS_NOT_A_SEQUENCE_ERROR
@@ -932,9 +930,6 @@ binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot)
     binaryfunc _t2;
     bool _t3;
     int _t4;
-    vinfo_t *_t5;
-    vinfo_t *_t6;
-    vinfo_t *_t7;
     binaryfunc slotv;
     binaryfunc slotw;
     PyTypeObject *tp_v;
@@ -1013,25 +1008,22 @@ binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot)
             _t4 = _t3 != 0;
         }
         if (_t4) {
-            _t5 = Psyco_META2(po, slotw, CfCommonCheckNotImplemented, "vv", v,
-                              w);
-            x = _t5;
+            x = Psyco_META2(po, slotw, CfCommonCheckNotImplemented, "vv", v,
+                            w);
             if (IS_IMPLEMENTED(x)) {
                 return x;
             }
             vinfo_decref(x, po);
             slotw = NULL;
         }
-        _t6 = Psyco_META2(po, slotv, CfCommonCheckNotImplemented, "vv", v, w);
-        x = _t6;
+        x = Psyco_META2(po, slotv, CfCommonCheckNotImplemented, "vv", v, w);
         if (IS_IMPLEMENTED(x)) {
             return x;
         }
         vinfo_decref(x, po);
     }
     if (slotw != 0) {
-        _t7 = Psyco_META2(po, slotw, CfCommonCheckNotImplemented, "vv", v, w);
-        x = _t7;
+        x = Psyco_META2(po, slotw, CfCommonCheckNotImplemented, "vv", v, w);
         if (IS_IMPLEMENTED(x)) {
             return x;
         }
@@ -1064,10 +1056,8 @@ binop_type_error(PsycoObject *po, vinfo_t *v, vinfo_t *w, const char *op_name)
 DEFINEFN vinfo_t *
 PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
-    vinfo_t *_t1;
     binaryfunc _t2;
     int _t3;
-    vinfo_t *_t4;
     vinfo_t *_t5;
     PySequenceMethods *m;
     vinfo_t *result;
@@ -1081,8 +1071,7 @@ PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op1(po, v, w, offsetof(PyNumberMethods, nb_add));
-    result = _t1;
+    result = binary_op1(po, v, w, offsetof(PyNumberMethods, nb_add));
     if (IS_IMPLEMENTED(result)) {
         return result;
     }
@@ -1103,8 +1092,7 @@ PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         _t3 = _t2 != 0;
     }
     if (_t3) {
-        _t4 = Psyco_META2(po, _t2, CfCommonNewRefPyObject, "vv", v, w);
-        result = _t4;
+        result = Psyco_META2(po, _t2, CfCommonNewRefPyObject, "vv", v, w);
         return result;
     }
     _t5 = binop_type_error(po, v, w, "+");
@@ -1114,11 +1102,9 @@ PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 DEFINEFN vinfo_t *
 PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
-    vinfo_t *_t1;
     binaryfunc _t2;
     int _t3;
     vinfo_t *_t4;
-    vinfo_t *_t5;
     PySequenceMethods *m;
     vinfo_t *result;
     PyTypeObject *tp_v;
@@ -1131,8 +1117,7 @@ PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op1(po, v, w, offsetof(PyNumberMethods, nb_add));
-    result = _t1;
+    result = binary_op1(po, v, w, offsetof(PyNumberMethods, nb_add));
     if (!IS_IMPLEMENTED(result)) {
         m = tp_v->tp_as_sequence;
         vinfo_decref(result, po);
@@ -1154,8 +1139,7 @@ PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
             _t4 = Psyco_META2(po, _t2, CfCommonNewRefPyObject, "vv", v, w);
             return _t4;
         }
-        _t5 = binop_type_error(po, v, w, "+");
-        result = _t5;
+        result = binop_type_error(po, v, w, "+");
         return result;
     }
     return result;
@@ -1166,7 +1150,6 @@ static vinfo_t *
 binary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot,
           const char *op_name)
 {
-    vinfo_t *_t1;
     int _t2;
     vinfo_t *_t3;
     vinfo_t *result;
@@ -1180,12 +1163,11 @@ binary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot,
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op1(po, v, w, op_slot);
-    result = _t1;
+    result = binary_op1(po, v, w, op_slot);
     if (!IS_IMPLEMENTED(result)) {
         vinfo_decref(result, po);
         _t2 = (op_slot == (offsetof(PyNumberMethods, nb_rshift)) &&
-               tp_v == (&PyCFunction_Type));
+               tp_v == &PyCFunction_Type);
         if (_t2) {
             return psyco_generic_call(po, cimpl_binary_op_1,
                                       CfCommonNewRefPyObject, "vvll", v, w,
@@ -1310,11 +1292,9 @@ binary_iop1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int iop_slot, int op_slot)
 DEFINEFN vinfo_t *
 PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
-    vinfo_t *_t1;
     binaryfunc _t2;
     binaryfunc _t3;
     vinfo_t *_t4;
-    vinfo_t *_t5;
     binaryfunc func;
     PySequenceMethods *m;
     vinfo_t *result;
@@ -1328,9 +1308,8 @@ PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_iop1(po, v, w, offsetof(PyNumberMethods, nb_inplace_add),
-                      offsetof(PyNumberMethods, nb_add));
-    result = _t1;
+    result = binary_iop1(po, v, w, offsetof(PyNumberMethods, nb_inplace_add),
+                         offsetof(PyNumberMethods, nb_add));
     if (!IS_IMPLEMENTED(result)) {
         m = tp_v->tp_as_sequence;
         vinfo_decref(result, po);
@@ -1376,8 +1355,7 @@ PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 #endif
             }
         }
-        _t5 = binop_type_error(po, v, w, "+=");
-        result = _t5;
+        result = binop_type_error(po, v, w, "+=");
         return result;
     }
     return result;
@@ -1387,7 +1365,6 @@ static vinfo_t *
 binary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, int iop_slot, int op_slot,
            const char *op_name)
 {
-    vinfo_t *_t1;
     vinfo_t *_t2;
     vinfo_t *result;
     PyTypeObject *tp_v;
@@ -1400,8 +1377,7 @@ binary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, int iop_slot, int op_slot,
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_iop1(po, v, w, iop_slot, op_slot);
-    result = _t1;
+    result = binary_iop1(po, v, w, iop_slot, op_slot);
     if (!IS_IMPLEMENTED(result)) {
         vinfo_decref(result, po);
         _t2 = binop_type_error(po, v, w, op_name);
@@ -1494,7 +1470,6 @@ sequence_repeat(PsycoObject *po, ssizeargfunc repeatfunc, vinfo_t *seq,
 {
     unaryfunc _t1;
     int _t2;
-    vinfo_t *_t3;
     vinfo_t *_t4;
     vinfo_t *_t5;
 #if !NI_HAS_CHECK_SLOT_RESULT
@@ -1525,8 +1500,7 @@ sequence_repeat(PsycoObject *po, ssizeargfunc repeatfunc, vinfo_t *seq,
         _t2 = _t1 != NULL;
     }
     if (_t2) {
-        _t3 = PsycoNumber_AsSsize_t(po, n, PyExc_OverflowError);
-        count = _t3;
+        count = PsycoNumber_AsSsize_t(po, n, PyExc_OverflowError);
         if (count == NULL) {
             return NULL;
         }
@@ -1554,13 +1528,11 @@ sequence_repeat(PsycoObject *po, ssizeargfunc repeatfunc, vinfo_t *seq,
 DEFINEFN vinfo_t *
 PsycoNumber_InPlaceMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
-    vinfo_t *_t1;
     ssizeargfunc _t2;
     ssizeargfunc _t3;
     vinfo_t *_t4;
     ssizeargfunc _t5;
     vinfo_t *_t6;
-    vinfo_t *_t7;
     ssizeargfunc f;
     PySequenceMethods *mv;
     PySequenceMethods *mw;
@@ -1575,9 +1547,9 @@ PsycoNumber_InPlaceMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_iop1(po, v, w, offsetof(PyNumberMethods, nb_inplace_multiply),
-                      offsetof(PyNumberMethods, nb_multiply));
-    result = _t1;
+    result = binary_iop1(po, v, w,
+                         offsetof(PyNumberMethods, nb_inplace_multiply),
+                         offsetof(PyNumberMethods, nb_multiply));
     if (!IS_IMPLEMENTED(result)) {
         f = NULL;
         mv = tp_v->tp_as_sequence;
@@ -1634,8 +1606,7 @@ PsycoNumber_InPlaceMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
                 }
             }
         }
-        _t7 = binop_type_error(po, v, w, "*=");
-        result = _t7;
+        result = binop_type_error(po, v, w, "*=");
         return result;
     }
     return result;
@@ -1911,7 +1882,6 @@ ternary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z, int iop_slot,
             int op_slot, const char *op_name)
 {
     ternaryfunc _t1;
-    vinfo_t *_t2;
     vinfo_t *_t3;
     PyNumberMethods *mv;
     ternaryfunc slot;
@@ -1946,9 +1916,8 @@ ternary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z, int iop_slot,
         }
         slot = _t1;
         if (slot != 0) {
-            _t2 = Psyco_META3(po, slot, CfCommonCheckNotImplemented, "vvv", v,
-                              w, z);
-            x = _t2;
+            x = Psyco_META3(po, slot, CfCommonCheckNotImplemented, "vvv", v,
+                            w, z);
             if (IS_IMPLEMENTED(x)) {
                 return x;
             }
@@ -2205,14 +2174,12 @@ PsycoNumber_MatrixMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 DEFINEFN vinfo_t *
 PsycoNumber_Multiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
-    vinfo_t *_t1;
     ssizeargfunc _t2;
     int _t3;
     vinfo_t *_t4;
     ssizeargfunc _t5;
     int _t6;
     vinfo_t *_t7;
-    vinfo_t *_t8;
     PySequenceMethods *mv;
     PySequenceMethods *mw;
     vinfo_t *result;
@@ -2226,8 +2193,7 @@ PsycoNumber_Multiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op1(po, v, w, offsetof(PyNumberMethods, nb_multiply));
-    result = _t1;
+    result = binary_op1(po, v, w, offsetof(PyNumberMethods, nb_multiply));
     if (!IS_IMPLEMENTED(result)) {
         mv = tp_v->tp_as_sequence;
         mw = tp_w->tp_as_sequence;
@@ -2271,8 +2237,7 @@ PsycoNumber_Multiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
                 return _t7;
             }
         }
-        _t8 = binop_type_error(po, v, w, "*");
-        result = _t8;
+        result = binop_type_error(po, v, w, "*");
         return result;
     }
     return result;
@@ -2483,7 +2448,6 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
     condition_code_t _t3;
     int _t4;
     lenfunc _t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     ssizeobjargproc _t8;
     bool _t9;
@@ -2529,8 +2493,7 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                     return false;
             }
             if (_t5 != 0) {
-                _t6 = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                l = _t6;
+                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
                 if (l == NULL) {
                     return false;
                 }
@@ -2565,7 +2528,7 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                 return false;
         }
         res = Psyco_META3(po, _t8, CfCommonIntZeroOk, "vvl", s, i,
-                          (long)(((PyObject *)NULL)));
+                          (long)NULL);
         vinfo_xdecref(own_i, po);
         return res != NULL;
     }
@@ -2604,7 +2567,6 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
     condition_code_t _t3;
     int _t4;
     lenfunc _t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     ssizeobjargproc _t8;
     bool _t9;
@@ -2649,8 +2611,7 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                     return false;
             }
             if (_t5 != 0) {
-                _t6 = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                l = _t6;
+                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
                 if (l == NULL) {
                     return false;
                 }
@@ -2685,7 +2646,7 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                 return false;
         }
         _t10 = Psyco_META3(po, _t8, CfCommonIntZeroOk, "vvl", s, i,
-                           (long)(((PyObject *)NULL))) != NULL;
+                           (long)NULL) != NULL;
         vinfo_xdecref(own_i, po);
         return _t10;
     }
@@ -2722,7 +2683,6 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
     condition_code_t _t3;
     int _t4;
     lenfunc _t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     ssizeobjargproc _t8;
     bool _t9;
@@ -2767,8 +2727,7 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                     return false;
             }
             if (_t5 != 0) {
-                _t6 = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                l = _t6;
+                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
                 if (l == NULL) {
                     return false;
                 }
@@ -2803,7 +2762,7 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                 return false;
         }
         _t10 = Psyco_META3(po, _t8, CfCommonIntZeroOk, "vvl", s, i,
-                           (long)(((PyObject *)NULL))) != NULL;
+                           (long)NULL) != NULL;
         vinfo_xdecref(own_i, po);
         return _t10;
     }
@@ -2819,7 +2778,6 @@ PsycoObject_DelItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
     int _t2;
     unaryfunc _t3;
     int _t4;
-    vinfo_t *_t5;
     bool _t6;
     ssizeobjargproc _t7;
     vinfo_t *key_value;
@@ -2852,11 +2810,11 @@ PsycoObject_DelItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
     if (_t2) {
 #if NI_HAS_CHECK_SLOT_RESULT
         res = Psyco_META3(po, _t1, CfCommonIntZeroOk, "vvl", o, key,
-                          (long)(((PyObject *)NULL)));
+                          (long)NULL);
         return res != NULL;
 #else
         return Psyco_META3(po, _t1, CfCommonIntZeroOk, "vvl", o, key,
-                           (long)(((PyObject *)NULL))) != NULL;
+                           (long)NULL) != NULL;
 #endif
     }
     if ((tp_o->tp_as_sequence) != 0) {
@@ -2881,8 +2839,7 @@ PsycoObject_DelItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
             _t4 = _t3 != NULL;
         }
         if (_t4) {
-            _t5 = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
-            key_value = _t5;
+            key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
             if (key_value == NULL) {
                 return false;
             }
@@ -2919,7 +2876,6 @@ DEFINEFN vinfo_t *
 PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
 {
     ssizeargfunc _t1;
-    vinfo_t *_t10;
     binaryfunc _t11;
     int _t12;
     vinfo_t *_t13;
@@ -2928,7 +2884,6 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
     condition_code_t _t3;
     int _t4;
     lenfunc _t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     ssizeargfunc _t8;
     vinfo_t *_t9;
@@ -2973,8 +2928,7 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                     return NULL;
             }
             if (_t5 != 0) {
-                _t6 = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                l = _t6;
+                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
                 if (l == NULL) {
                     return NULL;
                 }
@@ -3008,8 +2962,7 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                 vinfo_xdecref(own_i, po);
                 return NULL;
         }
-        _t10 = Psyco_META2(po, _t8, CfCommonNewRefPyObject, "vv", s, i);
-        res = _t10;
+        res = Psyco_META2(po, _t8, CfCommonNewRefPyObject, "vv", s, i);
         vinfo_xdecref(own_i, po);
         return res;
     }
@@ -3039,7 +2992,6 @@ DEFINEFN vinfo_t *
 PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
 {
     ssizeargfunc _t1;
-    vinfo_t *_t10;
     vinfo_t *_t11;
     binaryfunc _t12;
     int _t13;
@@ -3049,7 +3001,6 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
     condition_code_t _t3;
     int _t4;
     lenfunc _t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     ssizeargfunc _t8;
     vinfo_t *_t9;
@@ -3093,8 +3044,7 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                     return NULL;
             }
             if (_t5 != 0) {
-                _t6 = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                l = _t6;
+                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
                 if (l == NULL) {
                     return NULL;
                 }
@@ -3128,8 +3078,7 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                 vinfo_xdecref(own_i, po);
                 return NULL;
         }
-        _t10 = Psyco_META2(po, _t8, CfCommonNewRefPyObject, "vv", s, i);
-        _t11 = _t10;
+        _t11 = Psyco_META2(po, _t8, CfCommonNewRefPyObject, "vv", s, i);
         vinfo_xdecref(own_i, po);
         return _t11;
     }
@@ -3159,14 +3108,12 @@ DEFINEFN vinfo_t *
 PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
 {
     ssizeargfunc _t1;
-    vinfo_t *_t10;
     vinfo_t *_t11;
     vinfo_t *_t12;
     int _t2;
     condition_code_t _t3;
     int _t4;
     lenfunc _t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     ssizeargfunc _t8;
     vinfo_t *_t9;
@@ -3210,8 +3157,7 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                     return NULL;
             }
             if (_t5 != 0) {
-                _t6 = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                l = _t6;
+                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
                 if (l == NULL) {
                     return NULL;
                 }
@@ -3245,8 +3191,7 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
                 vinfo_xdecref(own_i, po);
                 return NULL;
         }
-        _t10 = Psyco_META2(po, _t8, CfCommonNewRefPyObject, "vv", s, i);
-        _t11 = _t10;
+        _t11 = Psyco_META2(po, _t8, CfCommonNewRefPyObject, "vv", s, i);
         vinfo_xdecref(own_i, po);
         return _t11;
     }
@@ -3263,13 +3208,10 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
     vinfo_t *_t11;
     vinfo_t *_t12;
     int _t2;
-    vinfo_t *_t3;
     ssizeargfunc _t4;
     int _t5;
     unaryfunc _t6;
     int _t7;
-    vinfo_t *_t8;
-    vinfo_t *_t9;
     vinfo_t *item;
     vinfo_t *key_value;
     PyMappingMethods *m;
@@ -3296,8 +3238,7 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
         _t2 = _t1 != 0;
     }
     if (_t2) {
-        _t3 = Psyco_META2(po, _t1, CfCommonNewRefPyObject, "vv", o, key);
-        item = _t3;
+        item = Psyco_META2(po, _t1, CfCommonNewRefPyObject, "vv", o, key);
         return item;
     }
     ms = tp_o->tp_as_sequence;
@@ -3337,13 +3278,11 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
             _t7 = _t6 != NULL;
         }
         if (_t7) {
-            _t8 = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
-            key_value = _t8;
+            key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
             if (key_value == NULL) {
                 return NULL;
             }
-            _t9 = PsycoSequence_GetItem(po, o, key_value);
-            _t10 = _t9;
+            _t10 = PsycoSequence_GetItem(po, o, key_value);
             vinfo_decref(key_value, po);
             return _t10;
         }
@@ -3353,7 +3292,7 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
             return _t11;
         }
     }
-    if (((tp_o->tp_flags & (1UL << 31))) != 0) {
+    if ((tp_o->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) != 0) {
         return psyco_generic_call(po, PyObject_GetItem, CfCommonNewRefPyObject,
                                   "vv", o, key);
     }
@@ -3372,7 +3311,6 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
     condition_code_t _t3;
     int _t4;
     lenfunc _t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     ssizeobjargproc _t8;
     bool _t9;
@@ -3418,8 +3356,7 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
                     return false;
             }
             if (_t5 != 0) {
-                _t6 = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                l = _t6;
+                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
                 if (l == NULL) {
                     return false;
                 }
@@ -3492,7 +3429,6 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
     condition_code_t _t3;
     int _t4;
     lenfunc _t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     ssizeobjargproc _t8;
     bool _t9;
@@ -3537,8 +3473,7 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
                     return false;
             }
             if (_t5 != 0) {
-                _t6 = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                l = _t6;
+                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
                 if (l == NULL) {
                     return false;
                 }
@@ -3609,7 +3544,6 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
     condition_code_t _t3;
     int _t4;
     lenfunc _t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     ssizeobjargproc _t8;
     bool _t9;
@@ -3654,8 +3588,7 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
                     return false;
             }
             if (_t5 != 0) {
-                _t6 = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                l = _t6;
+                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
                 if (l == NULL) {
                     return false;
                 }
@@ -3705,7 +3638,6 @@ PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
     int _t2;
     unaryfunc _t3;
     int _t4;
-    vinfo_t *_t5;
     bool _t6;
     ssizeobjargproc _t7;
     vinfo_t *key_value;
@@ -3766,8 +3698,7 @@ PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
             _t4 = _t3 != NULL;
         }
         if (_t4) {
-            _t5 = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
-            key_value = _t5;
+            key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
             if (key_value == NULL) {
                 return false;
             }
@@ -3804,7 +3735,6 @@ PsycoObject_Size(PsycoObject *po, vinfo_t *o)
 {
     lenfunc _t1;
     int _t2;
-    vinfo_t *_t3;
     vinfo_t *_t4;
     vinfo_t *len;
     PySequenceMethods *m;
@@ -3828,8 +3758,7 @@ PsycoObject_Size(PsycoObject *po, vinfo_t *o)
         _t2 = _t1 != 0;
     }
     if (_t2) {
-        _t3 = Psyco_META1(po, _t1, CfCommonPySSizeTResult, "v", o);
-        len = _t3;
+        len = Psyco_META1(po, _t1, CfCommonPySSizeTResult, "v", o);
         return len;
     }
     _t4 = PsycoMapping_Size(po, o);
@@ -3851,7 +3780,6 @@ PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob)
     objobjproc _t1;
     int _t2;
     vinfo_t *_t3;
-    vinfo_t *_t4;
 #if NI_HAS_CHECK_SLOT_RESULT
     vinfo_t *res;
 #endif
@@ -3886,8 +3814,7 @@ PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob)
         return _t3;
 #endif
     }
-    _t4 = _PsycoSequence_IterSearch(po, seq, ob, 3);
-    result = _t4;
+    result = _PsycoSequence_IterSearch(po, seq, ob, 3);
     return result;
 }
 
@@ -3907,10 +3834,8 @@ PsycoSequence_GetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2)
 {
     binaryfunc _t1;
     int _t2;
-    vinfo_t *_t3;
     binaryfunc _t4;
     vinfo_t *_t5;
-    vinfo_t *_t6;
     vinfo_t *_t7;
     PyMappingMethods *mp;
     vinfo_t *res;
@@ -3936,9 +3861,8 @@ PsycoSequence_GetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2)
         _t2 = _t1 != 0;
     }
     if (_t2) {
-        _t3 = psyco_generic_call(po, _PySlice_FromIndices,
-                                 CfCommonNewRefPyObject, "vv", i1, i2);
-        slice = _t3;
+        slice = psyco_generic_call(po, _PySlice_FromIndices,
+                                   CfCommonNewRefPyObject, "vv", i1, i2);
         if (slice == NULL) {
             return NULL;
         }
@@ -3955,8 +3879,7 @@ PsycoSequence_GetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2)
                 vinfo_decref(slice, po);
                 return NULL;
         }
-        _t6 = Psyco_META2(po, _t4, CfCommonNewRefPyObject, "vv", s, slice);
-        res = _t6;
+        res = Psyco_META2(po, _t4, CfCommonNewRefPyObject, "vv", s, slice);
         vinfo_decref(slice, po);
         return res;
     }
@@ -3970,7 +3893,6 @@ PsycoSequence_SetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2,
 {
     objobjargproc _t1;
     int _t2;
-    vinfo_t *_t3;
     objobjargproc _t4;
     bool _t5;
     PyMappingMethods *mp;
@@ -3998,9 +3920,8 @@ PsycoSequence_SetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2,
         _t2 = _t1 != 0;
     }
     if (_t2) {
-        _t3 = psyco_generic_call(po, _PySlice_FromIndices,
-                                 CfCommonNewRefPyObject, "vv", i1, i2);
-        slice = _t3;
+        slice = psyco_generic_call(po, _PySlice_FromIndices,
+                                   CfCommonNewRefPyObject, "vv", i1, i2);
         if (slice == NULL) {
             return false;
         }
@@ -4036,11 +3957,11 @@ PsycoSequence_Tuple(PsycoObject *po, vinfo_t *v)
     if (tp_v == NULL) {
         return NULL;
     }
-    if (tp_v == (&PyTuple_Type)) {
+    if (tp_v == &PyTuple_Type) {
         vinfo_incref(v);
         return v;
     }
-    if (tp_v == (&PyList_Type)) {
+    if (tp_v == &PyList_Type) {
         _t1 = psyco_generic_call(
             po, PyList_AsTuple,
             CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v", v);

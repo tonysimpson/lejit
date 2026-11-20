@@ -32,7 +32,7 @@ static PyCFunction cfunc_builtin_len;
 static PyCFunction cfunc_builtin_pow;
 static PyCFunction cfunc_builtin_setattr;
 
-/* run-time copies: where a heap type's slot changed, or where the meta has no compile-time form, CPython's algorithm resumes in these */
+/* CPython's code, copied for the metas to call at run time */
 static PyObject *
 cimpl_builtin_hasattr_impl(PyObject *module, PyObject *obj, PyObject *name)
 {
@@ -129,7 +129,6 @@ static vinfo_t *
 builtin_delattr(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
     vinfo_t *name;
     vinfo_t *obj;
     vinfo_t *return_value;
@@ -140,8 +139,7 @@ builtin_delattr(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
     }
     obj = PsycoTuple_GET_ITEM(vargs, 0);
     name = PsycoTuple_GET_ITEM(vargs, 1);
-    _t2 = builtin_delattr_impl(po, module, obj, name);
-    return_value = _t2;
+    return_value = builtin_delattr_impl(po, module, obj, name);
     return return_value;
 }
 
@@ -157,7 +155,6 @@ static vinfo_t *
 builtin_divmod(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
     vinfo_t *return_value;
     vinfo_t *x;
     vinfo_t *y;
@@ -168,8 +165,7 @@ builtin_divmod(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
     }
     x = PsycoTuple_GET_ITEM(vargs, 0);
     y = PsycoTuple_GET_ITEM(vargs, 1);
-    _t2 = builtin_divmod_impl(po, module, x, y);
-    return_value = _t2;
+    return_value = builtin_divmod_impl(po, module, x, y);
     return return_value;
 }
 
@@ -177,7 +173,6 @@ static vinfo_t *
 builtin_getattr(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
 #if !NI_HAS_ARG_CHECK_POSITIONAL
     vinfo_t *dflt;
 #endif
@@ -197,13 +192,12 @@ builtin_getattr(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
         if (tp_name == NULL) {
             return NULL;
         }
-        if (!(((tp_name->tp_flags & (1UL << 28))) != 0)) {
+        if ((tp_name->tp_flags & Py_TPFLAGS_UNICODE_SUBCLASS) == 0) {
             PycException_SetString(po, PyExc_TypeError,
                                    "getattr(): attribute name must be string");
             return NULL;
         }
-        _t2 = PsycoObject_GetAttr(po, v, name);
-        result = _t2;
+        result = PsycoObject_GetAttr(po, v, name);
         return result;
     }
     else {
@@ -216,7 +210,7 @@ builtin_getattr(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
         if (tp_name == NULL) {
             return NULL;
         }
-        if (!(((tp_name->tp_flags & (1UL << 28))) != 0)) {
+        if ((tp_name->tp_flags & Py_TPFLAGS_UNICODE_SUBCLASS) == 0) {
             PycException_SetString(po, PyExc_TypeError,
                                    "getattr(): attribute name must be string");
             return NULL;
@@ -235,7 +229,7 @@ builtin_hasattr_impl(PsycoObject *po, vinfo_t *module, vinfo_t *obj,
     if (tp_name == NULL) {
         return NULL;
     }
-    if (!(((tp_name->tp_flags & (1UL << 28))) != 0)) {
+    if ((tp_name->tp_flags & Py_TPFLAGS_UNICODE_SUBCLASS) == 0) {
         PycException_SetString(po, PyExc_TypeError,
                                "hasattr(): attribute name must be string");
         return NULL;
@@ -249,7 +243,6 @@ static vinfo_t *
 builtin_hasattr(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
     vinfo_t *name;
     vinfo_t *obj;
     vinfo_t *return_value;
@@ -265,25 +258,20 @@ builtin_hasattr(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
     if (tp_name == NULL) {
         return NULL;
     }
-    _t2 = builtin_hasattr_impl(po, module, obj, name);
-    return_value = _t2;
+    return_value = builtin_hasattr_impl(po, module, obj, name);
     return return_value;
 }
 
 static vinfo_t *
 builtin_hash(PsycoObject *po, vinfo_t *module, vinfo_t *obj)
 {
-    vinfo_t *_t1;
-    vinfo_t *_t2;
     vinfo_t *_t3;
     vinfo_t *x;
-    _t1 = PsycoObject_Hash(po, obj);
-    x = _t1;
+    x = PsycoObject_Hash(po, obj);
     if (x == NULL) {
         return NULL;
     }
-    _t2 = PsycoLong_FromSsize_t(po, x);
-    _t3 = _t2;
+    _t3 = PsycoLong_FromSsize_t(po, x);
     vinfo_decref(x, po);
     return _t3;
 }
@@ -292,12 +280,10 @@ static vinfo_t *
 builtin_id(PsycoObject *po, vinfo_t *self, vinfo_t *v)
 #if NI_HAS_AUDIT_HOOKS
 {
-    vinfo_t *_t1;
     vinfo_t *id;
-    _t1 = psyco_generic_call(po, PyLong_FromVoidPtr,
-                             CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
-                             "v", v);
-    id = _t1;
+    id = psyco_generic_call(po, PyLong_FromVoidPtr,
+                            CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
+                            "v", v);
     if ((id != NULL &&
          psyco_generic_call(
              po, PySys_Audit, CfNoReturnValue | CfReturnTypeInt | CfPyErrIfNeg,
@@ -321,17 +307,13 @@ static vinfo_t *
 builtin_isinstance_impl(PsycoObject *po, vinfo_t *module, vinfo_t *obj,
                         vinfo_t *class_or_tuple)
 {
-    vinfo_t *_t1;
-    vinfo_t *_t2;
     vinfo_t *_t3;
     vinfo_t *retval;
-    _t1 = PsycoObject_IsInstance(po, obj, class_or_tuple);
-    retval = _t1;
+    retval = PsycoObject_IsInstance(po, obj, class_or_tuple);
     if (retval == NULL) {
         return NULL;
     }
-    _t2 = PsycoBool_FromZeroOrOne(po, retval);
-    _t3 = _t2;
+    _t3 = PsycoBool_FromZeroOrOne(po, retval);
     vinfo_decref(retval, po);
     return _t3;
 }
@@ -340,7 +322,6 @@ static vinfo_t *
 builtin_isinstance(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
     vinfo_t *class_or_tuple;
     vinfo_t *obj;
     vinfo_t *return_value;
@@ -351,8 +332,7 @@ builtin_isinstance(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
     }
     obj = PsycoTuple_GET_ITEM(vargs, 0);
     class_or_tuple = PsycoTuple_GET_ITEM(vargs, 1);
-    _t2 = builtin_isinstance_impl(po, module, obj, class_or_tuple);
-    return_value = _t2;
+    return_value = builtin_isinstance_impl(po, module, obj, class_or_tuple);
     return return_value;
 }
 
@@ -360,18 +340,14 @@ static vinfo_t *
 builtin_issubclass_impl(PsycoObject *po, vinfo_t *module, vinfo_t *cls,
                         vinfo_t *class_or_tuple)
 {
-    vinfo_t *_t1;
-    vinfo_t *_t2;
     vinfo_t *_t3;
     vinfo_t *retval;
-    _t1 = psyco_generic_call(po, PyObject_IsSubclass, CfCommonIntBoolOrError,
-                             "vv", cls, class_or_tuple);
-    retval = _t1;
+    retval = psyco_generic_call(po, PyObject_IsSubclass, CfCommonIntBoolOrError,
+                                "vv", cls, class_or_tuple);
     if (retval == NULL) {
         return NULL;
     }
-    _t2 = PsycoBool_FromZeroOrOne(po, retval);
-    _t3 = _t2;
+    _t3 = PsycoBool_FromZeroOrOne(po, retval);
     vinfo_decref(retval, po);
     return _t3;
 }
@@ -380,7 +356,6 @@ static vinfo_t *
 builtin_issubclass(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
     vinfo_t *class_or_tuple;
     vinfo_t *cls;
     vinfo_t *return_value;
@@ -391,25 +366,20 @@ builtin_issubclass(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
     }
     cls = PsycoTuple_GET_ITEM(vargs, 0);
     class_or_tuple = PsycoTuple_GET_ITEM(vargs, 1);
-    _t2 = builtin_issubclass_impl(po, module, cls, class_or_tuple);
-    return_value = _t2;
+    return_value = builtin_issubclass_impl(po, module, cls, class_or_tuple);
     return return_value;
 }
 
 static vinfo_t *
 builtin_len(PsycoObject *po, vinfo_t *module, vinfo_t *obj)
 {
-    vinfo_t *_t1;
-    vinfo_t *_t2;
     vinfo_t *_t3;
     vinfo_t *res;
-    _t1 = PsycoObject_Size(po, obj);
-    res = _t1;
+    res = PsycoObject_Size(po, obj);
     if (res == NULL) {
         return NULL;
     }
-    _t2 = PsycoLong_FromSsize_t(po, res);
-    _t3 = _t2;
+    _t3 = PsycoLong_FromSsize_t(po, res);
     vinfo_decref(res, po);
     return _t3;
 }
@@ -433,8 +403,6 @@ static vinfo_t *
 builtin_pow(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
     vinfo_t *base;
     vinfo_t *exp;
     vinfo_t *mod;
@@ -454,8 +422,7 @@ builtin_pow(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
         base = PsycoTuple_GET_ITEM(vargs, 0);
         exp = PsycoTuple_GET_ITEM(vargs, 1);
         mod = psyco_vi_None();
-        _t2 = builtin_pow_impl(po, module, base, exp, mod);
-        return_value = _t2;
+        return_value = builtin_pow_impl(po, module, base, exp, mod);
         vinfo_decref(mod, po);
         return return_value;
     }
@@ -466,8 +433,7 @@ builtin_pow(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
         base = PsycoTuple_GET_ITEM(vargs, 0);
         exp = PsycoTuple_GET_ITEM(vargs, 1);
         mod = PsycoTuple_GET_ITEM(vargs, 2);
-        _t3 = builtin_pow_impl(po, module, base, exp, mod);
-        return_value = _t3;
+        return_value = builtin_pow_impl(po, module, base, exp, mod);
         return return_value;
     }
 }
@@ -486,7 +452,6 @@ static vinfo_t *
 builtin_setattr(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
     vinfo_t *name;
     vinfo_t *obj;
     vinfo_t *return_value;
@@ -499,8 +464,7 @@ builtin_setattr(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
     obj = PsycoTuple_GET_ITEM(vargs, 0);
     name = PsycoTuple_GET_ITEM(vargs, 1);
     value = PsycoTuple_GET_ITEM(vargs, 2);
-    _t2 = builtin_setattr_impl(po, module, obj, name, value);
-    return_value = _t2;
+    return_value = builtin_setattr_impl(po, module, obj, name, value);
     return return_value;
 }
 

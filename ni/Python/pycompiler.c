@@ -1953,9 +1953,8 @@ cimpl_PyLineTable_InitAddressRange(const char *linetable, Py_ssize_t length,
 static int
 cimpl__PyCode_InitAddressRange(PyCodeObject *co, PyCodeAddressRange *bounds)
 {
-    const char *linetable =
-        ((void)0, ((PyBytesObject *)co->co_linetable)->ob_sval);
-    Py_ssize_t length = ((void)0, ((PyVarObject *)co->co_linetable)->ob_size);
+    const char *linetable = PyBytes_AS_STRING(co->co_linetable);
+    Py_ssize_t length = PyBytes_GET_SIZE(co->co_linetable);
     cimpl_PyLineTable_InitAddressRange(linetable, length, co->co_firstlineno,
                                        bounds);
     return bounds->ar_line;
@@ -1970,12 +1969,7 @@ _PyObject_FastCallDictTstate(PyThreadState *tstate, PyObject *callable,
 #endif
 
 #if NI_HAS_CEVAL_NAME_IDENTIFIER
-#if NI_HAS_IDENTIFIER_INDEX
-static _Py_Identifier PyId___name__ = {.string = "__name__", .index = -1};
-#else
-static _Py_Identifier PyId___name__ = {
-    .next = (void *)0, .string = "__name__", .object = (void *)0};
-#endif
+_Py_IDENTIFIER(__name__);
 #endif
 
 #if !NI_HAS_TRACE_INFO
@@ -2176,8 +2170,7 @@ static PyObject *
 cimpl_import_from(PyObject *v, PyObject *name)
 {
     PyObject *x;
-    static _Py_Identifier PyId___name__ = {
-        .next = NULL, .string = "__name__", .object = NULL};
+    _Py_IDENTIFIER(__name__);
     PyObject *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
     if (_PyObject_LookupAttr(v, name, &x) != 0) {
         return x;
@@ -2375,7 +2368,7 @@ cimpl_match_keys(PyObject *map, PyObject *keys)
     PyObject *seen = NULL;
     PyObject *dummy = NULL;
     PyObject *values = NULL;
-    static _Py_Identifier PyId_get = {.string = "get", .index = -1};
+    _Py_IDENTIFIER(get);
     PyObject *get = _PyObject_GetAttrId(map, &PyId_get);
     if (get == NULL) {
         goto fail;
@@ -2468,13 +2461,7 @@ ct_format_exc_check_arg(PsycoObject *po, PyObject *exc, const char *format_str,
 }
 #endif
 
-#if NI_HAS_IDENTIFIER_INDEX
-static _Py_Identifier PyId_displayhook = {.string = "displayhook",
-                                          .index = -1};
-#else
-static _Py_Identifier PyId_displayhook = {
-    .next = (void *)0, .string = "displayhook", .object = (void *)0};
-#endif
+_Py_IDENTIFIER(displayhook);
 
 #if !NI_HAS_INLINE_CALL_TSTATE_GET
 static int
@@ -2490,7 +2477,7 @@ cimpl_print_expr_r0(PyObject *_in0, long _oparg, PyObject *value,
         {
             PyObject *hook = _PySys_GetObjectId(&PyId_displayhook);
             PyObject *res;
-            if (hook == (NULL)) {
+            if (hook == NULL) {
                 PyErr_SetString(PyExc_RuntimeError, "lost sys.displayhook");
                 Py_DECREF(value);
                 goto _error;
@@ -2501,7 +2488,7 @@ cimpl_print_expr_r0(PyObject *_in0, long _oparg, PyObject *value,
             res = PyObject_CallFunctionObjArgs(hook, value, NULL);
 #endif
             Py_DECREF(value);
-            if (res == (NULL))
+            if (res == NULL)
                 goto _error;
             Py_DECREF(res);
             goto _done;
@@ -2536,10 +2523,10 @@ cimpl_get_aiter_r0(PyObject *_in0, long _oparg, PyObject *iter, PyObject *obj,
             {
                 getter = type->tp_as_async->am_aiter;
             }
-            if (getter != (NULL)) {
+            if (getter != NULL) {
                 iter = (*getter)(obj);
                 Py_DECREF(obj);
-                if (iter == (NULL)) {
+                if (iter == NULL) {
                     stack_pointer[-1] = NULL;
                     goto _error;
                 }
@@ -2553,14 +2540,13 @@ cimpl_get_aiter_r0(PyObject *_in0, long _oparg, PyObject *iter, PyObject *obj,
                 Py_DECREF(obj);
                 goto _error;
             }
-            if ((((PyObject *)iter)->ob_type->tp_as_async == (NULL)) ||
-                (((PyObject *)iter)->ob_type->tp_as_async->am_anext ==
-                 (NULL))) {
+            if ((Py_TYPE(iter)->tp_as_async == NULL) ||
+                (Py_TYPE(iter)->tp_as_async->am_anext == NULL)) {
                 stack_pointer[-1] = NULL;
                 PyErr_Format(
                     PyExc_TypeError,
                     "'async for' received an object from __aiter__ that does not implement __anext__: %.100s",
-                    ((PyObject *)iter)->ob_type->tp_name);
+                    Py_TYPE(iter)->tp_name);
                 Py_DECREF(iter);
                 goto _error;
             }
@@ -2592,14 +2578,13 @@ cimpl_get_aiter_r1(PyObject *_in0, long _oparg, PyObject *iter,
     Py_INCREF(iter);
     {
         {
-            if ((((PyObject *)iter)->ob_type->tp_as_async == (NULL)) ||
-                (((PyObject *)iter)->ob_type->tp_as_async->am_anext ==
-                 (NULL))) {
+            if ((Py_TYPE(iter)->tp_as_async == NULL) ||
+                (Py_TYPE(iter)->tp_as_async->am_anext == NULL)) {
                 stack_pointer[-1] = NULL;
                 PyErr_Format(
                     PyExc_TypeError,
                     "'async for' received an object from __aiter__ that does not implement __anext__: %.100s",
-                    ((PyObject *)iter)->ob_type->tp_name);
+                    Py_TYPE(iter)->tp_name);
                 Py_DECREF(iter);
                 goto _error;
             }
@@ -2623,11 +2608,11 @@ static PyObject *
 cimpl_get_anext_0(PyObject *next_iter)
 {
     PyObject *_r = _PyCoro_GetAwaitableIter(next_iter);
-    if (_r == (NULL)) {
+    if (_r == NULL) {
         _PyErr_FormatFromCause(
             PyExc_TypeError,
             "'async for' received an invalid object from __anext__: %.100s",
-            ((PyObject *)next_iter)->ob_type->tp_name);
+            Py_TYPE(next_iter)->tp_name);
     }
     return _r;
 }
@@ -2653,9 +2638,9 @@ cimpl_get_anext_r0(PyObject *_in0, long _oparg, PyObject *aiter,
                 {
                     getter = type->tp_as_async->am_anext;
                 }
-                if (getter != (NULL)) {
+                if (getter != NULL) {
                     next_iter = (*getter)(aiter);
-                    if (next_iter == (NULL)) {
+                    if (next_iter == NULL) {
                         goto _error;
                     }
                 }
@@ -2667,7 +2652,7 @@ cimpl_get_anext_r0(PyObject *_in0, long _oparg, PyObject *aiter,
                     goto _error;
                 }
                 awaitable = cimpl_get_anext_0(next_iter);
-                if (awaitable == (NULL)) {
+                if (awaitable == NULL) {
                     Py_DECREF(next_iter);
                     goto _error;
                 }
@@ -2675,7 +2660,7 @@ cimpl_get_anext_r0(PyObject *_in0, long _oparg, PyObject *aiter,
                     Py_DECREF(next_iter);
                 }
             }
-            *(stack_pointer++) = awaitable;
+            *stack_pointer++ = awaitable;
             goto _done;
         }
     }
@@ -2703,7 +2688,7 @@ cimpl_load_assertion_error_r0(long _oparg, PyObject **_out)
         {
             PyObject *value = PyExc_AssertionError;
             Py_INCREF(value);
-            *(stack_pointer++) = value;
+            *stack_pointer++ = value;
             goto _done;
         }
     }
@@ -2719,19 +2704,13 @@ _error:
 }
 #endif
 
-#if NI_HAS_IDENTIFIER_INDEX
-static _Py_Identifier PyId___build_class__ = {.string = "__build_class__",
-                                              .index = -1};
-#else
-static _Py_Identifier PyId___build_class__ = {
-    .next = (void *)0, .string = "__build_class__", .object = (void *)0};
-#endif
+_Py_IDENTIFIER(__build_class__);
 
 static PyObject *
 cimpl_load_build_class_1(PyObject *build_class_str, PyObject *_in0)
 {
     PyObject *_r = PyObject_GetItem(_in0, build_class_str);
-    if (_r == (NULL)) {
+    if (_r == NULL) {
         if (PyErr_ExceptionMatches(PyExc_KeyError))
             PyErr_SetString(PyExc_NameError, "__build_class__ not found");
     }
@@ -2752,14 +2731,14 @@ cimpl_load_build_class_r0(long _oparg, PyObject *_f_f_builtins,
             {
                 PyObject *build_class_str =
                     _PyUnicode_FromId(&PyId___build_class__);
-                if (build_class_str == (NULL))
+                if (build_class_str == NULL)
                     goto _error;
                 bc = cimpl_load_build_class_1(build_class_str, _f_f_builtins);
-                if (bc == (NULL)) {
+                if (bc == NULL) {
                     goto _error;
                 }
             }
-            *(stack_pointer++) = bc;
+            *stack_pointer++ = bc;
             goto _done;
         }
     }
@@ -2883,14 +2862,14 @@ static PyObject *
 cimpl_list_extend_0(PyObject *list, PyObject *iterable)
 {
     PyObject *_r = _PyList_Extend((PyListObject *)list, iterable);
-    if (_r == (NULL)) {
+    if (_r == NULL) {
         if (PyErr_ExceptionMatches(PyExc_TypeError) &&
-            ((((PyObject *)iterable)->ob_type->tp_iter == (NULL)) &&
+            ((Py_TYPE(iterable)->tp_iter == NULL) &&
              (!PySequence_Check(iterable)))) {
             PyErr_Clear();
             PyErr_Format(PyExc_TypeError,
                          "Value after * must be an iterable, not %.200s",
-                         ((PyObject *)iterable)->ob_type->tp_name);
+                         Py_TYPE(iterable)->tp_name);
         }
     }
     return _r;
@@ -2905,7 +2884,7 @@ cimpl_dict_update_0(PyObject *dict, PyObject *update)
     if (_r < 0) {
         if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
             PyErr_Format(PyExc_TypeError, "'%.200s' object is not a mapping",
-                         ((PyObject *)update)->ob_type->tp_name);
+                         Py_TYPE(update)->tp_name);
         }
     }
     return _r;
@@ -2967,15 +2946,13 @@ cimpl_dict_merge_0(PyObject *dict, PyObject *update, PyObject *_in0)
 static int
 cimpl_jump_if_not_exc_match_0(PyObject *right)
 {
-    if ((((PyObject *)right)->ob_type->tp_flags & (1UL << 26)) != 0) {
+    if (PyTuple_Check(right)) {
         Py_ssize_t i;
         Py_ssize_t length;
-        length = ((PyVarObject *)((NULL, (PyTupleObject *)right)))->ob_size;
+        length = PyTuple_GET_SIZE(right);
         for (i = 0; i < length; i++) {
-            PyObject *exc = ((NULL, (PyTupleObject *)right))->ob_item[i];
-            if (!(((((PyObject *)((PyObject *)exc))->ob_type->tp_flags &
-                    (1UL << 31)) != 0) &&
-                  ((((PyTypeObject *)exc)->tp_flags & (1UL << 30)) != 0))) {
+            PyObject *exc = PyTuple_GET_ITEM(right, i);
+            if (!PyExceptionClass_Check(exc)) {
                 PyErr_SetString(
                     PyExc_TypeError,
                     "catching classes that do not inherit from BaseException is not allowed");
@@ -2984,9 +2961,7 @@ cimpl_jump_if_not_exc_match_0(PyObject *right)
         }
     }
     else {
-        if (!(((((PyObject *)((PyObject *)right))->ob_type->tp_flags &
-                (1UL << 31)) != 0) &&
-              ((((PyTypeObject *)right)->tp_flags & (1UL << 30)) != 0))) {
+        if (!PyExceptionClass_Check(right)) {
             PyErr_SetString(
                 PyExc_TypeError,
                 "catching classes that do not inherit from BaseException is not allowed");
@@ -3077,10 +3052,9 @@ cimpl_match_mapping_r0(PyObject *_in0, long _oparg, int match, PyObject **_out)
     stack_pointer++;
     {
         {
-            PyObject *res = (match) ? ((PyObject *)(&_Py_TrueStruct))
-                                    : ((PyObject *)(&_Py_FalseStruct));
+            PyObject *res = (match) ? Py_True : Py_False;
             Py_INCREF(res);
-            *(stack_pointer++) = res;
+            *stack_pointer++ = res;
             goto _done;
         }
     }
@@ -3110,10 +3084,9 @@ cimpl_match_sequence_r0(PyObject *_in0, long _oparg, int match,
     stack_pointer++;
     {
         {
-            PyObject *res = (match) ? ((PyObject *)(&_Py_TrueStruct))
-                                    : ((PyObject *)(&_Py_FalseStruct));
+            PyObject *res = (match) ? Py_True : Py_False;
             Py_INCREF(res);
-            *(stack_pointer++) = res;
+            *stack_pointer++ = res;
             goto _done;
         }
     }
@@ -3149,13 +3122,13 @@ cimpl_match_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
     stack_pointer++;
     {
         {
-            if (values_or_none == (&_Py_NoneStruct)) {
-                Py_INCREF((PyObject *)(&_Py_FalseStruct));
-                *(stack_pointer++) = (PyObject *)(&_Py_FalseStruct);
+            if (values_or_none == Py_None) {
+                Py_INCREF(Py_False);
+                *stack_pointer++ = Py_False;
                 goto _done;
             }
-            Py_INCREF((PyObject *)(&_Py_TrueStruct));
-            *(stack_pointer++) = (PyObject *)(&_Py_TrueStruct);
+            Py_INCREF(Py_True);
+            *stack_pointer++ = Py_True;
             goto _done;
         }
     }
@@ -3190,15 +3163,12 @@ cimpl_copy_dict_without_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
     Py_INCREF(rest);
     {
         {
-            if ((rest == (NULL)) || PyDict_Update(rest, subject)) {
+            if ((rest == NULL) || PyDict_Update(rest, subject)) {
                 Py_XDECREF(rest);
                 goto _error;
             }
-            for (Py_ssize_t i = 0;
-                 i < ((PyVarObject *)((NULL, (PyTupleObject *)keys)))->ob_size;
-                 i++) {
-                if (PyDict_DelItem(
-                        rest, ((NULL, (PyTupleObject *)keys))->ob_item[i])) {
+            for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(keys); i++) {
+                if (PyDict_DelItem(rest, PyTuple_GET_ITEM(keys, i))) {
                     Py_DECREF(rest);
                     goto _error;
                 }
@@ -3239,11 +3209,8 @@ cimpl_copy_dict_without_keys_r1(PyObject *_in0, PyObject *_in1, long _oparg,
     Py_INCREF(rest);
     {
         {
-            for (Py_ssize_t i = 0;
-                 i < ((PyVarObject *)((NULL, (PyTupleObject *)keys)))->ob_size;
-                 i++) {
-                if (PyDict_DelItem(
-                        rest, ((NULL, (PyTupleObject *)keys))->ob_item[i])) {
+            for (Py_ssize_t i = 0; i < PyTuple_GET_SIZE(keys); i++) {
+                if (PyDict_DelItem(rest, PyTuple_GET_ITEM(keys, i))) {
                     Py_DECREF(rest);
                     goto _error;
                 }
@@ -3305,23 +3272,8 @@ cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
 }
 #endif
 
-#if NI_HAS_AENTER_LOOKUP_FIRST
-#if NI_HAS_IDENTIFIER_INDEX
-static _Py_Identifier PyId___aenter__ = {.string = "__aenter__", .index = -1};
-#else
-static _Py_Identifier PyId___aenter__ = {
-    .next = (void *)0, .string = "__aenter__", .object = (void *)0};
-#endif
-#endif
-
-#if NI_HAS_AENTER_LOOKUP_FIRST
-#if NI_HAS_IDENTIFIER_INDEX
-static _Py_Identifier PyId___aexit__ = {.string = "__aexit__", .index = -1};
-#else
-static _Py_Identifier PyId___aexit__ = {
-    .next = (void *)0, .string = "__aexit__", .object = (void *)0};
-#endif
-#endif
+_Py_IDENTIFIER(__aenter__);
+_Py_IDENTIFIER(__aexit__);
 
 #if NI_HAS_SPECIAL_LOOKUP_FROM_ID
 static PyObject *
@@ -3380,9 +3332,9 @@ cimpl_with_except_start_r0(PyObject *_items, long _oparg, PyObject *exc,
             res = PyObject_Vectorcall(
                 exit_func, stack + 1,
                 3 | (((size_t)1) << ((8 * (sizeof(size_t))) - 1)), NULL);
-            if (res == (NULL))
+            if (res == NULL)
                 goto _error;
-            *(stack_pointer++) = res;
+            *stack_pointer++ = res;
             goto _done;
         }
     }
@@ -3432,7 +3384,7 @@ cimpl_build_tuple_unpack_with_call_0(PyObject *sum, PyObject *_in0,
                                      PyObject *_in1)
 {
     PyObject *_r = _PyList_Extend((PyListObject *)sum, _in0);
-    if (_r == (NULL)) {
+    if (_r == NULL) {
         if (PyErr_ExceptionMatches(PyExc_TypeError)) {
             cimpl_check_args_iterable(_in1, _in0);
         }
@@ -3527,12 +3479,9 @@ cimpl_build_map_unpack_with_call_0(PyObject *sum, PyObject *arg,
             PyObject *val;
             PyObject *tb;
             PyErr_Fetch(&exc, &val, &tb);
-            if ((val && ((((PyObject *)val)->ob_type->tp_flags &
-                          (1UL << 26)) != 0)) &&
-                (((PyVarObject *)val)->ob_size == 1)) {
-                PyObject *key = ((PyTupleObject *)val)->ob_item[0];
-                if (!((((PyObject *)key)->ob_type->tp_flags & (1UL << 28)) !=
-                      0)) {
+            if (val && PyTuple_Check(val) && PyTuple_GET_SIZE(val) == 1) {
+                PyObject *key = PyTuple_GET_ITEM(val, 0);
+                if (!PyUnicode_Check(key)) {
                     PyErr_Format(PyExc_TypeError,
                                  "%.200s%.200s keywords must be strings",
                                  PyEval_GetFuncName(func),
@@ -3564,8 +3513,7 @@ static PyObject *
 cimpl_import_from_whole(PyObject *v, PyObject *name)
 {
     PyObject *x;
-    static _Py_Identifier PyId___name__ = {
-        .next = NULL, .string = "__name__", .object = NULL};
+    _Py_IDENTIFIER(__name__);
     PyObject *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
     if (_PyObject_LookupAttr(v, name, &x) != 0) {
         return x;
@@ -3626,16 +3574,6 @@ error:
     Py_XDECREF(pkgpath);
     return NULL;
 }
-#endif
-
-#if !NI_HAS_AENTER_LOOKUP_FIRST
-static _Py_Identifier PyId___aexit__ = {
-    .next = (void *)0, .string = "__aexit__", .object = (void *)0};
-#endif
-
-#if !NI_HAS_AENTER_LOOKUP_FIRST
-static _Py_Identifier PyId___aenter__ = {
-    .next = (void *)0, .string = "__aenter__", .object = (void *)0};
 #endif
 
 #if !NI_HAS_SPECIAL_LOOKUP_FROM_ID
@@ -3791,10 +3729,10 @@ cimpl_call_function_ex(PyObject *_in0, PyObject *_in1, PyObject *_in2)
             PyObject *kwargs = NULL;
             PyObject *result;
             if (oparg & 0x01) {
-                kwargs = *(--stack_pointer);
-                if (!(((const PyObject *)kwargs)->ob_type == (&PyDict_Type))) {
+                kwargs = *--stack_pointer;
+                if (!PyDict_CheckExact(kwargs)) {
                     PyObject *d = PyDict_New();
-                    if (d == (NULL))
+                    if (d == NULL)
                         goto _error;
                     if (_PyDict_MergeEx(d, kwargs, 2) < 0) {
                         Py_DECREF(d);
@@ -3806,15 +3744,15 @@ cimpl_call_function_ex(PyObject *_in0, PyObject *_in1, PyObject *_in2)
                     kwargs = d;
                 }
             }
-            callargs = *(--stack_pointer);
+            callargs = *--stack_pointer;
             func = stack_pointer[-1];
-            if (!(((const PyObject *)callargs)->ob_type == (&PyTuple_Type))) {
+            if (!PyTuple_CheckExact(callargs)) {
                 if (cimpl_check_args_iterable(func, callargs) < 0) {
                     Py_DECREF(callargs);
                     goto _error;
                 }
                 Py_SETREF(callargs, PySequence_Tuple(callargs));
-                if (callargs == (NULL)) {
+                if (callargs == NULL) {
                     goto _error;
                 }
             }
@@ -3823,7 +3761,7 @@ cimpl_call_function_ex(PyObject *_in0, PyObject *_in1, PyObject *_in2)
             Py_DECREF(callargs);
             Py_XDECREF(kwargs);
             stack_pointer[-1] = result;
-            if (result == (NULL)) {
+            if (result == NULL) {
                 goto _error;
             }
             goto _done;
@@ -3858,10 +3796,10 @@ _error:
             PyObject *kwargs = NULL;
             PyObject *result;
             if (oparg & 0x01) {
-                kwargs = *(--stack_pointer);
-                if (!(((PyObject *)kwargs)->ob_type == (&PyDict_Type))) {
+                kwargs = *--stack_pointer;
+                if (!PyDict_CheckExact(kwargs)) {
                     PyObject *d = PyDict_New();
-                    if (d == (NULL))
+                    if (d == NULL)
                         goto _error;
 #if NI_HAS_KWARGS_MERGE_EX
                     if (_PyDict_MergeEx(d, kwargs, 2) < 0) {
@@ -3885,15 +3823,15 @@ _error:
                     kwargs = d;
                 }
             }
-            callargs = *(--stack_pointer);
+            callargs = *--stack_pointer;
             func = stack_pointer[-1];
-            if (!(((PyObject *)callargs)->ob_type == (&PyTuple_Type))) {
+            if (!PyTuple_CheckExact(callargs)) {
                 if (cimpl_check_args_iterable(func, callargs) < 0) {
                     Py_DECREF(callargs);
                     goto _error;
                 }
                 Py_SETREF(callargs, PySequence_Tuple(callargs));
-                if (callargs == (NULL)) {
+                if (callargs == NULL) {
                     goto _error;
                 }
             }
@@ -3902,7 +3840,7 @@ _error:
             Py_DECREF(callargs);
             Py_XDECREF(kwargs);
             stack_pointer[-1] = result;
-            if (result == (NULL)) {
+            if (result == NULL) {
                 goto _error;
             }
             goto _done;
@@ -3928,17 +3866,14 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
     int _t11;
     int _t12;
     int _t13;
-    vinfo_t *_t14;
     condition_code_t _t15;
     vinfo_t *_t16;
     vinfo_t *_t17;
     vinfo_t *_t2;
     condition_code_t _t3;
     vinfo_t *_t4;
-    vinfo_t *_t5;
     condition_code_t _t6;
     vinfo_t *_t7;
-    vinfo_t *_t8;
     condition_code_t _t9;
     vinfo_t *exc;
     Py_ssize_t i;
@@ -3966,8 +3901,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
             v = _t4;
             return v;
         case PyCmp_IN:
-            _t5 = PsycoSequence_Contains(po, w, v);
-            res = _t5;
+            res = PsycoSequence_Contains(po, w, v);
             if (res == NULL) {
                 return NULL;
             }
@@ -3981,8 +3915,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
             vinfo_decref(res, po);
             return v;
         case PyCmp_NOT_IN:
-            _t8 = PsycoSequence_Contains(po, w, v);
-            res = _t8;
+            res = PsycoSequence_Contains(po, w, v);
             if (res == NULL) {
                 return NULL;
             }
@@ -4003,7 +3936,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
                                           CfCommonNewRefPyObject, "lvv",
                                           (long)(op), v, w);
             }
-            if (((tp_w->tp_flags & (1UL << 26))) != 0) {
+            if ((tp_w->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) != 0) {
                 _t11 = PsycoTuple_Load(w);
                 if (_t11 < 0 || _t11 > 16) {
                     return psyco_generic_call(po, cimpl_cmp_outcome,
@@ -4022,7 +3955,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
                                                   CfCommonNewRefPyObject,
                                                   "lvv", (long)(op), v, w);
                     }
-                    _t12 = ((tp_exc->tp_flags & (1UL << 31))) != 0;
+                    _t12 = (tp_exc->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) != 0;
                     if (_t12) {
                         if (!is_compiletime(exc->source)) {
                             return psyco_generic_call(po, cimpl_cmp_outcome,
@@ -4031,7 +3964,8 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
                         }
                         k_exc = (PyTypeObject *)CompileTime_Get(exc->source)
                                     ->value;
-                        _t12 = ((k_exc->tp_flags & (1UL << 30))) != 0;
+                        _t12 = (k_exc->tp_flags &
+                                Py_TPFLAGS_BASE_EXC_SUBCLASS) != 0;
                     }
                     if (!(_t12)) {
                         PycException_SetString(
@@ -4043,7 +3977,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
                 }
             }
             else {
-                _t13 = ((tp_w->tp_flags & (1UL << 31))) != 0;
+                _t13 = (tp_w->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) != 0;
                 if (_t13) {
                     if (!is_compiletime(w->source)) {
                         return psyco_generic_call(po, cimpl_cmp_outcome,
@@ -4051,7 +3985,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
                                                   "lvv", (long)(op), v, w);
                     }
                     k_w = (PyTypeObject *)CompileTime_Get(w->source)->value;
-                    _t13 = ((k_w->tp_flags & (1UL << 30))) != 0;
+                    _t13 = (k_w->tp_flags & Py_TPFLAGS_BASE_EXC_SUBCLASS) != 0;
                 }
                 if (!(_t13)) {
                     PycException_SetString(
@@ -4060,10 +3994,9 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
                     return NULL;
                 }
             }
-            _t14 = psyco_generic_call(po, PyErr_GivenExceptionMatches,
-                                      CfReturnTypeInt | CfNoPython | CfNoBlock,
-                                      "vv", v, w);
-            res = _t14;
+            res = psyco_generic_call(po, PyErr_GivenExceptionMatches,
+                                     CfReturnTypeInt | CfNoPython | CfNoBlock,
+                                     "vv", v, w);
             _t15 = integer_non_null(po, res);
             if (_t15 == CC_ERROR) {
                 vinfo_decref(res, po);
@@ -4091,7 +4024,7 @@ match_class(PsycoObject *po, vinfo_t *subject, vinfo_t *type, Py_ssize_t nargs,
     if (tp_type == NULL) {
         return NULL;
     }
-    if (!(((tp_type->tp_flags & (1UL << 31))) != 0)) {
+    if ((tp_type->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) == 0) {
         e = "called match pattern must be a type";
         PycException_SetFormat(po, PyExc_TypeError, e);
         return NULL;
@@ -5254,12 +5187,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case UNARY_POSITIVE: {
-        vinfo_t *_t1;
         vinfo_t *res;
         vinfo_t *value;
         value = NTOP(1);
-        _t1 = PsycoNumber_Positive(po, value);
-        res = _t1;
+        res = PsycoNumber_Positive(po, value);
         if (res == NULL) {
           break;
         }
@@ -5270,12 +5201,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case UNARY_NEGATIVE: {
-        vinfo_t *_t1;
         vinfo_t *res;
         vinfo_t *value;
         value = NTOP(1);
-        _t1 = PsycoNumber_Negative(po, value);
-        res = _t1;
+        res = PsycoNumber_Negative(po, value);
         if (res == NULL) {
           break;
         }
@@ -5286,14 +5215,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case UNARY_NOT: {
-        vinfo_t *_t1;
         condition_code_t _t2;
         vinfo_t *_t3;
         vinfo_t *err;
         vinfo_t *value;
         value = NTOP(1);
-        _t1 = PsycoObject_IsTrue(po, value);
-        err = _t1;
+        err = PsycoObject_IsTrue(po, value);
         if (err == NULL) {
           break;
         }
@@ -5311,12 +5238,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case UNARY_INVERT: {
-        vinfo_t *_t1;
         vinfo_t *res;
         vinfo_t *value;
         value = NTOP(1);
-        _t1 = PsycoNumber_Invert(po, value);
-        res = _t1;
+        res = PsycoNumber_Invert(po, value);
         if (res == NULL) {
           break;
         }
@@ -5328,15 +5253,13 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
       case BINARY_POWER: {
         vinfo_t *_t1;
-        vinfo_t *_t2;
         vinfo_t *base;
         vinfo_t *exp;
         vinfo_t *res;
         exp = NTOP(1);
         base = NTOP(2);
         _t1 = psyco_vi_None();
-        _t2 = PsycoNumber_Power(po, base, exp, _t1);
-        res = _t2;
+        res = PsycoNumber_Power(po, base, exp, _t1);
         vinfo_decref(_t1, po);
         if (res == NULL) {
           break;
@@ -5350,14 +5273,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_MULTIPLY: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_Multiply(po, left, right);
-        res = _t1;
+        res = PsycoNumber_Multiply(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5370,14 +5291,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_MATRIX_MULTIPLY: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_MatrixMultiply(po, left, right);
-        res = _t1;
+        res = PsycoNumber_MatrixMultiply(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5390,14 +5309,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_TRUE_DIVIDE: {
-        vinfo_t *_t1;
         vinfo_t *dividend;
         vinfo_t *divisor;
         vinfo_t *quotient;
         divisor = NTOP(1);
         dividend = NTOP(2);
-        _t1 = PsycoNumber_TrueDivide(po, dividend, divisor);
-        quotient = _t1;
+        quotient = PsycoNumber_TrueDivide(po, dividend, divisor);
         if (quotient == NULL) {
           break;
         }
@@ -5410,14 +5327,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_FLOOR_DIVIDE: {
-        vinfo_t *_t1;
         vinfo_t *dividend;
         vinfo_t *divisor;
         vinfo_t *quotient;
         divisor = NTOP(1);
         dividend = NTOP(2);
-        _t1 = PsycoNumber_FloorDivide(po, dividend, divisor);
-        quotient = _t1;
+        quotient = PsycoNumber_FloorDivide(po, dividend, divisor);
         if (quotient == NULL) {
           break;
         }
@@ -5430,14 +5345,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_MODULO: {
-        vinfo_t *_t1;
         vinfo_t *dividend;
         vinfo_t *divisor;
         vinfo_t *res;
         divisor = NTOP(1);
         dividend = NTOP(2);
-        _t1 = PsycoNumber_Remainder(po, dividend, divisor);
-        res = _t1;
+        res = PsycoNumber_Remainder(po, dividend, divisor);
         if (res == NULL) {
           break;
         }
@@ -5450,14 +5363,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_ADD: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *right;
         vinfo_t *sum;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_Add(po, left, right);
-        sum = _t1;
+        sum = PsycoNumber_Add(po, left, right);
         if (sum == NULL) {
           break;
         }
@@ -5470,14 +5381,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_SUBTRACT: {
-        vinfo_t *_t1;
         vinfo_t *diff;
         vinfo_t *left;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_Subtract(po, left, right);
-        diff = _t1;
+        diff = PsycoNumber_Subtract(po, left, right);
         if (diff == NULL) {
           break;
         }
@@ -5490,14 +5399,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_SUBSCR: {
-        vinfo_t *_t1;
         vinfo_t *container;
         vinfo_t *res;
         vinfo_t *sub;
         sub = NTOP(1);
         container = NTOP(2);
-        _t1 = PsycoObject_GetItem(po, container, sub);
-        res = _t1;
+        res = PsycoObject_GetItem(po, container, sub);
         if (res == NULL) {
           break;
         }
@@ -5510,14 +5417,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_LSHIFT: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_Lshift(po, left, right);
-        res = _t1;
+        res = PsycoNumber_Lshift(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5530,14 +5435,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_RSHIFT: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_Rshift(po, left, right);
-        res = _t1;
+        res = PsycoNumber_Rshift(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5550,14 +5453,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_AND: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_And(po, left, right);
-        res = _t1;
+        res = PsycoNumber_And(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5570,14 +5471,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_XOR: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_Xor(po, left, right);
-        res = _t1;
+        res = PsycoNumber_Xor(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5590,14 +5489,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BINARY_OR: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_Or(po, left, right);
-        res = _t1;
+        res = PsycoNumber_Or(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5642,15 +5539,13 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
       case INPLACE_POWER: {
         vinfo_t *_t1;
-        vinfo_t *_t2;
         vinfo_t *base;
         vinfo_t *exp;
         vinfo_t *res;
         exp = NTOP(1);
         base = NTOP(2);
         _t1 = psyco_vi_None();
-        _t2 = PsycoNumber_InPlacePower(po, base, exp, _t1);
-        res = _t2;
+        res = PsycoNumber_InPlacePower(po, base, exp, _t1);
         vinfo_decref(_t1, po);
         if (res == NULL) {
           break;
@@ -5664,14 +5559,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_MULTIPLY: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_InPlaceMultiply(po, left, right);
-        res = _t1;
+        res = PsycoNumber_InPlaceMultiply(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5684,14 +5577,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_MATRIX_MULTIPLY: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_InPlaceMatrixMultiply(po, left, right);
-        res = _t1;
+        res = PsycoNumber_InPlaceMatrixMultiply(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5704,14 +5595,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_TRUE_DIVIDE: {
-        vinfo_t *_t1;
         vinfo_t *dividend;
         vinfo_t *divisor;
         vinfo_t *quotient;
         divisor = NTOP(1);
         dividend = NTOP(2);
-        _t1 = PsycoNumber_InPlaceTrueDivide(po, dividend, divisor);
-        quotient = _t1;
+        quotient = PsycoNumber_InPlaceTrueDivide(po, dividend, divisor);
         if (quotient == NULL) {
           break;
         }
@@ -5724,14 +5613,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_FLOOR_DIVIDE: {
-        vinfo_t *_t1;
         vinfo_t *dividend;
         vinfo_t *divisor;
         vinfo_t *quotient;
         divisor = NTOP(1);
         dividend = NTOP(2);
-        _t1 = PsycoNumber_InPlaceFloorDivide(po, dividend, divisor);
-        quotient = _t1;
+        quotient = PsycoNumber_InPlaceFloorDivide(po, dividend, divisor);
         if (quotient == NULL) {
           break;
         }
@@ -5744,14 +5631,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_MODULO: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *mod;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_InPlaceRemainder(po, left, right);
-        mod = _t1;
+        mod = PsycoNumber_InPlaceRemainder(po, left, right);
         if (mod == NULL) {
           break;
         }
@@ -5764,14 +5649,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_ADD: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *right;
         vinfo_t *sum;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_InPlaceAdd(po, left, right);
-        sum = _t1;
+        sum = PsycoNumber_InPlaceAdd(po, left, right);
         if (sum == NULL) {
           break;
         }
@@ -5784,14 +5667,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_SUBTRACT: {
-        vinfo_t *_t1;
         vinfo_t *diff;
         vinfo_t *left;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_InPlaceSubtract(po, left, right);
-        diff = _t1;
+        diff = PsycoNumber_InPlaceSubtract(po, left, right);
         if (diff == NULL) {
           break;
         }
@@ -5804,14 +5685,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_LSHIFT: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_InPlaceLshift(po, left, right);
-        res = _t1;
+        res = PsycoNumber_InPlaceLshift(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5824,14 +5703,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_RSHIFT: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_InPlaceRshift(po, left, right);
-        res = _t1;
+        res = PsycoNumber_InPlaceRshift(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5844,14 +5721,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_AND: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_InPlaceAnd(po, left, right);
-        res = _t1;
+        res = PsycoNumber_InPlaceAnd(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5864,14 +5739,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_XOR: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_InPlaceXor(po, left, right);
-        res = _t1;
+        res = PsycoNumber_InPlaceXor(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -5884,14 +5757,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case INPLACE_OR: {
-        vinfo_t *_t1;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoNumber_InPlaceOr(po, left, right);
-        res = _t1;
+        res = PsycoNumber_InPlaceOr(po, left, right);
         if (res == NULL) {
           break;
         }
@@ -6008,7 +5879,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         int _t3;
         int _t4;
         vinfo_array_t *_t6;
-        vinfo_t *_t7;
         int _t8;
         int _t9;
         unaryfunc getter;
@@ -6052,8 +5922,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           getter = _t1;
         }
         if (getter != NULL) {
-          _t7 = Psyco_META1(po, getter, CfCommonNewRefPyObject, "v", obj);
-          iter = _t7;
+          iter = Psyco_META1(po, getter, CfCommonNewRefPyObject, "v", obj);
           if (iter == NULL) {
             break;
           }
@@ -6138,8 +6007,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         int _t3;
         int _t4;
         vinfo_array_t *_t6;
-        vinfo_t *_t7;
-        vinfo_t *_t8;
         vinfo_t *aiter;
         vinfo_t *awaitable;
         unaryfunc getter;
@@ -6181,8 +6048,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           getter = _t1;
         }
         if (getter != NULL) {
-          _t7 = Psyco_META1(po, getter, CfCommonNewRefPyObject, "v", aiter);
-          next_iter = _t7;
+          next_iter = Psyco_META1(po, getter, CfCommonNewRefPyObject, "v",
+                                  aiter);
           if (next_iter == NULL) {
             break;
           }
@@ -6194,9 +6061,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
               type->tp_name);
           break;
         }
-        _t8 = psyco_generic_call(po, cimpl_get_anext_0, CfCommonNewRefPyObject,
-                                 "v", next_iter);
-        awaitable = _t8;
+        awaitable = psyco_generic_call(po, cimpl_get_anext_0,
+                                       CfCommonNewRefPyObject, "v", next_iter);
         if (awaitable == NULL) {
           vinfo_decref(next_iter, po);
           break;
@@ -6496,13 +6362,11 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
       case BUILD_TUPLE: {
         Py_ssize_t _t1;
-        vinfo_t *_t2;
         vinfo_t *item;
         int pop_i;
         vinfo_t *tup;
         _t1 = oparg;
-        _t2 = PsycoTuple_New(_t1, NULL);
-        tup = _t2;
+        tup = PsycoTuple_New(_t1, NULL);
         pop_i = (oparg - 1);
         for (;;) {
           if (!(pop_i >= 0))
@@ -6521,10 +6385,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BUILD_LIST: {
-        vinfo_t *_t1;
         vinfo_t *list;
-        _t1 = PsycoList_New(po, oparg, STACK_POINTER() - (oparg));
-        list = _t1;
+        list = PsycoList_New(po, oparg, STACK_POINTER() - (oparg));
         if (list == NULL) {
           break;
         }
@@ -6538,11 +6400,9 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
       case BUILD_TUPLE_UNPACK_WITH_CALL: {
-        vinfo_t *_t1;
         vinfo_t *_t2;
         vinfo_t *_t3;
         vinfo_t *_t4;
-        vinfo_t *_t5;
         Py_ssize_t i;
         vinfo_t *none_val;
         vinfo_t *return_value;
@@ -6576,9 +6436,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             goto fine;
           }
         }
-        _t1 = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l",
+        sum = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l",
                                  (long)(0));
-        sum = _t1;
         if (sum == NULL) {
           break;
         }
@@ -6599,10 +6458,9 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           vinfo_decref(none_val, po);
           i--;
         }
-        _t5 = psyco_generic_call(
+        return_value = psyco_generic_call(
             po, PyList_AsTuple,
             CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v", sum);
-        return_value = _t5;
         vinfo_decref(sum, po);
         if (return_value == NULL) {
           break;
@@ -6621,10 +6479,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_BUILD_TUPLE_UNPACK
       case BUILD_TUPLE_UNPACK: {
-        vinfo_t *_t1;
         vinfo_t *_t2;
-        vinfo_t *_t3;
-        vinfo_t *_t4;
         Py_ssize_t i;
         vinfo_t *none_val;
         vinfo_t *return_value;
@@ -6658,9 +6513,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             goto fine;
           }
         }
-        _t1 = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l",
+        sum = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l",
                                  (long)(0));
-        sum = _t1;
         if (sum == NULL) {
           break;
         }
@@ -6669,9 +6523,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           if (!(i > 0))
             break;
           _t2 = NTOP(i);
-          _t3 = psyco_generic_call(po, _PyList_Extend, CfCommonNewRefPyObject,
-                                   "vv", sum, _t2);
-          none_val = _t3;
+          none_val = psyco_generic_call(po, _PyList_Extend,
+                                        CfCommonNewRefPyObject, "vv", sum, _t2);
           if (none_val == NULL) {
             vinfo_decref(sum, po);
             goto error_build_tuple_unpack;
@@ -6679,10 +6532,9 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           vinfo_decref(none_val, po);
           i--;
         }
-        _t4 = psyco_generic_call(
+        return_value = psyco_generic_call(
             po, PyList_AsTuple,
             CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v", sum);
-        return_value = _t4;
         vinfo_decref(sum, po);
         if (return_value == NULL) {
           break;
@@ -6701,16 +6553,13 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_BUILD_LIST_UNPACK
       case BUILD_LIST_UNPACK: {
-        vinfo_t *_t1;
         vinfo_t *_t2;
-        vinfo_t *_t3;
         Py_ssize_t i;
         vinfo_t *none_val;
         vinfo_t *return_value;
         vinfo_t *sum;
-        _t1 = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l",
+        sum = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l",
                                  (long)(0));
-        sum = _t1;
         if (sum == NULL) {
           break;
         }
@@ -6719,9 +6568,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           if (!(i > 0))
             break;
           _t2 = NTOP(i);
-          _t3 = psyco_generic_call(po, _PyList_Extend, CfCommonNewRefPyObject,
-                                   "vv", sum, _t2);
-          none_val = _t3;
+          none_val = psyco_generic_call(po, _PyList_Extend,
+                                        CfCommonNewRefPyObject, "vv", sum, _t2);
           if (none_val == NULL) {
             vinfo_decref(sum, po);
             goto error_build_list_unpack;
@@ -6744,14 +6592,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_LIST_TO_TUPLE
       case LIST_TO_TUPLE: {
-        vinfo_t *_t1;
         vinfo_t *list;
         vinfo_t *tuple;
         list = NTOP(1);
-        _t1 = psyco_generic_call(
+        tuple = psyco_generic_call(
             po, PyList_AsTuple,
             CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v", list);
-        tuple = _t1;
         if (tuple == NULL) {
           break;
         }
@@ -6764,15 +6610,14 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_LIST_EXTEND
       case LIST_EXTEND: {
-        vinfo_t *_t1;
         vinfo_t *iterable;
         vinfo_t *list;
         vinfo_t *none_val;
         iterable = NTOP(1);
         list = NTOP(oparg + 1);
-        _t1 = psyco_generic_call(po, cimpl_list_extend_0,
-                                 CfCommonNewRefPyObject, "vv", list, iterable);
-        none_val = _t1;
+        none_val = psyco_generic_call(po, cimpl_list_extend_0,
+                                      CfCommonNewRefPyObject, "vv", list,
+                                      iterable);
         if (none_val == NULL) {
           break;
         }
@@ -6785,15 +6630,13 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_SET_UPDATE
       case SET_UPDATE: {
-        vinfo_t *_t1;
         vinfo_t *err;
         vinfo_t *iterable;
         vinfo_t *set;
         iterable = NTOP(1);
         set = NTOP(oparg + 1);
-        _t1 = psyco_generic_call(po, _PySet_Update, CfCommonIntBoolOrError,
+        err = psyco_generic_call(po, _PySet_Update, CfCommonIntBoolOrError,
                                  "vv", set, iterable);
-        err = _t1;
         if (err == NULL) {
           break;
         }
@@ -6846,7 +6689,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       case BUILD_SET_UNPACK: {
         vinfo_t *_t1;
         vinfo_t *_t2;
-        vinfo_t *_t3;
         vinfo_t *_tested0;
         Py_ssize_t i;
         vinfo_t *sum;
@@ -6861,9 +6703,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           if (!(i > 0))
             break;
           _t2 = NTOP(i);
-          _t3 = psyco_generic_call(po, _PySet_Update, CfCommonIntBoolOrError,
-                                   "vv", sum, _t2);
-          _tested0 = _t3;
+          _tested0 = psyco_generic_call(po, _PySet_Update,
+                                        CfCommonIntBoolOrError, "vv", sum, _t2);
           if (_tested0 == NULL) {
             vinfo_decref(sum, po);
             goto error_build_set_unpack;
@@ -6886,14 +6727,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 #endif
 
       case BUILD_MAP: {
-        vinfo_t *_t1;
         vinfo_t *err;
         Py_ssize_t i;
         vinfo_t *key;
         vinfo_t *map;
         vinfo_t *value;
-        _t1 = _PsycoDict_NewPresized(po, ((Py_ssize_t)oparg));
-        map = _t1;
+        map = _PsycoDict_NewPresized(po, ((Py_ssize_t)oparg));
         if (map == NULL) {
           break;
         }
@@ -6923,14 +6762,11 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_BUILD_MAP_UNPACK
       case BUILD_MAP_UNPACK: {
-        vinfo_t *_t1;
-        vinfo_t *_t2;
         vinfo_t *_tested0;
         vinfo_t *arg;
         Py_ssize_t i;
         vinfo_t *sum;
-        _t1 = PsycoDict_New(po);
-        sum = _t1;
+        sum = PsycoDict_New(po);
         if (sum == NULL) {
           break;
         }
@@ -6939,9 +6775,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           if (!(i > 0))
             break;
           arg = NTOP(i);
-          _t2 = psyco_generic_call(po, cimpl_build_map_unpack_0,
-                                   CfCommonIntBoolOrError, "vv", sum, arg);
-          _tested0 = _t2;
+          _tested0 = psyco_generic_call(po, cimpl_build_map_unpack_0,
+                                        CfCommonIntBoolOrError, "vv", sum, arg);
           if (_tested0 == NULL) {
             vinfo_decref(sum, po);
             goto error_build_map_unpack;
@@ -6965,15 +6800,13 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
       case BUILD_MAP_UNPACK_WITH_CALL: {
-        vinfo_t *_t1;
         vinfo_t *_t2;
         vinfo_t *_t3;
         vinfo_t *_tested0;
         vinfo_t *arg;
         Py_ssize_t i;
         vinfo_t *sum;
-        _t1 = PsycoDict_New(po);
-        sum = _t1;
+        sum = PsycoDict_New(po);
         if (sum == NULL) {
           break;
         }
@@ -7010,15 +6843,14 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_DICT_UPDATE
       case DICT_UPDATE: {
-        vinfo_t *_t1;
         vinfo_t *_tested0;
         vinfo_t *dict;
         vinfo_t *update;
         update = NTOP(1);
         dict = NTOP(oparg + 1);
-        _t1 = psyco_generic_call(po, cimpl_dict_update_0,
-                                 CfCommonIntBoolOrError, "vv", dict, update);
-        _tested0 = _t1;
+        _tested0 = psyco_generic_call(po, cimpl_dict_update_0,
+                                      CfCommonIntBoolOrError, "vv", dict,
+                                      update);
         if (_tested0 == NULL) {
           break;
         }
@@ -7092,14 +6924,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case LOAD_ATTR: {
-        vinfo_t *_t1;
         vinfo_t *name;
         vinfo_t *owner;
         vinfo_t *res;
         owner = NTOP(1);
         name = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
-        _t1 = PsycoObject_GetAttr(po, owner, name);
-        res = _t1;
+        res = PsycoObject_GetAttr(po, owner, name);
         vinfo_decref(name, po);
         if (res == NULL) {
           break;
@@ -7137,7 +6967,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 #if NI_HAS_OPCODE_IS_OP
       case IS_OP: {
         condition_code_t _t1;
-        vinfo_t *_t2;
         vinfo_t *b;
         vinfo_t *left;
         vinfo_t *right;
@@ -7150,8 +6979,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         _t1 = ((oparg) == 0   ? _t1
                : (oparg) == 1 ? INVERT_CC(_t1)
                               : CC_ALWAYS_TRUE);
-        _t2 = PsycoBool_FromCondition(po, _t1);
-        b = _t2;
+        b = PsycoBool_FromCondition(po, _t1);
         POP(right);
         POP(left);
         vinfo_decref(right, po);
@@ -7163,17 +6991,14 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_CONTAINS_OP
       case CONTAINS_OP: {
-        vinfo_t *_t1;
         condition_code_t _t2;
-        vinfo_t *_t3;
         vinfo_t *b;
         vinfo_t *left;
         vinfo_t *res;
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-        _t1 = PsycoSequence_Contains(po, right, left);
-        res = _t1;
+        res = PsycoSequence_Contains(po, right, left);
         if (res == NULL) {
           break;
         }
@@ -7182,10 +7007,9 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           vinfo_decref(res, po);
           break;
         }
-        _t3 = PsycoBool_FromCondition(po, ((oparg) == 0   ? _t2
+        b = PsycoBool_FromCondition(po, ((oparg) == 0   ? _t2
                                            : (oparg) == 1 ? INVERT_CC(_t2)
                                                           : CC_ALWAYS_TRUE));
-        b = _t3;
         vinfo_decref(res, po);
         POP(right);
         POP(left);
@@ -7226,7 +7050,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           }
           goto checked_0;
         }
-        if (((tp_right->tp_flags & (1UL << 26))) != 0) {
+        if ((tp_right->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) != 0) {
           _t1 = PsycoTuple_Load(right);
           if (_t1 < 0 || _t1 > 16) {
             if (psyco_generic_call(
@@ -7253,7 +7077,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
               }
               goto checked_0;
             }
-            _t2 = ((tp_exc->tp_flags & (1UL << 31))) != 0;
+            _t2 = (tp_exc->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) != 0;
             if (_t2) {
               if (!is_compiletime(exc->source)) {
                 if (psyco_generic_call(
@@ -7265,7 +7089,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
                 goto checked_0;
               }
               k_exc = (PyTypeObject *)CompileTime_Get(exc->source)->value;
-              _t2 = ((k_exc->tp_flags & (1UL << 30))) != 0;
+              _t2 = (k_exc->tp_flags & Py_TPFLAGS_BASE_EXC_SUBCLASS) != 0;
             }
             if (!(_t2)) {
               PycException_SetString(
@@ -7277,7 +7101,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           }
         }
         else {
-          _t3 = ((tp_right->tp_flags & (1UL << 31))) != 0;
+          _t3 = (tp_right->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) != 0;
           if (_t3) {
             if (!is_compiletime(right->source)) {
               if (psyco_generic_call(
@@ -7289,7 +7113,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
               goto checked_0;
             }
             k_right = (PyTypeObject *)CompileTime_Get(right->source)->value;
-            _t3 = ((k_right->tp_flags & (1UL << 30))) != 0;
+            _t3 = (k_right->tp_flags & Py_TPFLAGS_BASE_EXC_SUBCLASS) != 0;
           }
           if (!(_t3)) {
             PycException_SetString(
@@ -7365,13 +7189,11 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case POP_JUMP_IF_FALSE: {
-        vinfo_t *_t1;
         condition_code_t _t2;
         vinfo_t *cond;
         vinfo_t *err;
         cond = NTOP(1);
-        _t1 = PsycoObject_IsTrue(po, cond);
-        err = _t1;
+        err = PsycoObject_IsTrue(po, cond);
         if (err == NULL) {
           break;
         }
@@ -7393,13 +7215,11 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case POP_JUMP_IF_TRUE: {
-        vinfo_t *_t1;
         condition_code_t _t2;
         vinfo_t *cond;
         vinfo_t *err;
         cond = NTOP(1);
-        _t1 = PsycoObject_IsTrue(po, cond);
-        err = _t1;
+        err = PsycoObject_IsTrue(po, cond);
         if (err == NULL) {
           break;
         }
@@ -7420,13 +7240,11 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case JUMP_IF_FALSE_OR_POP: {
-        vinfo_t *_t1;
         condition_code_t _t2;
         vinfo_t *cond;
         vinfo_t *err;
         cond = NTOP(1);
-        _t1 = PsycoObject_IsTrue(po, cond);
-        err = _t1;
+        err = PsycoObject_IsTrue(po, cond);
         if (err == NULL) {
           break;
         }
@@ -7448,13 +7266,11 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case JUMP_IF_TRUE_OR_POP: {
-        vinfo_t *_t1;
         condition_code_t _t2;
         vinfo_t *cond;
         vinfo_t *err;
         cond = NTOP(1);
-        _t1 = PsycoObject_IsTrue(po, cond);
-        err = _t1;
+        err = PsycoObject_IsTrue(po, cond);
         if (err == NULL) {
           break;
         }
@@ -7486,18 +7302,14 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 #if NI_HAS_OPCODE_GET_LEN
       case GET_LEN: {
         vinfo_t *_t1;
-        vinfo_t *_t2;
-        vinfo_t *_t3;
         vinfo_t *len_i;
         vinfo_t *len_o;
         _t1 = NTOP(1);
-        _t2 = PsycoObject_Size(po, _t1);
-        len_i = _t2;
+        len_i = PsycoObject_Size(po, _t1);
         if (len_i == NULL) {
           break;
         }
-        _t3 = PsycoLong_FromSsize_t(po, len_i);
-        len_o = _t3;
+        len_o = PsycoLong_FromSsize_t(po, len_i);
         vinfo_decref(len_i, po);
         if (len_o == NULL) {
           break;
@@ -7509,7 +7321,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_MATCH_CLASS
       case MATCH_CLASS: {
-        vinfo_t *_t1;
         vinfo_t *_t2;
         vinfo_t *_t3;
         vinfo_t *_t4;
@@ -7528,8 +7339,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         if (tp_type == NULL) {
           break;
         }
-        _t1 = match_class(po, subject, type, oparg, names);
-        attrs = _t1;
+        attrs = match_class(po, subject, type, oparg, names);
         if (attrs == NULL) {
           break;
         }
@@ -7641,7 +7451,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_MATCH_KEYS
       case MATCH_KEYS: {
-        vinfo_t *_t1;
         int _t2;
         int _t3;
         int _t4;
@@ -7651,8 +7460,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         vinfo_t *values_or_none;
         keys = NTOP(1);
         subject = NTOP(2);
-        _t1 = match_keys(po, subject, keys);
-        values_or_none = _t1;
+        values_or_none = match_keys(po, subject, keys);
         if (values_or_none == NULL) {
           break;
         }
@@ -7679,7 +7487,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
       case COPY_DICT_WITHOUT_KEYS: {
-        vinfo_t *_t1;
         int _t10;
         int _t11;
         vinfo_array_t *_t13;
@@ -7694,8 +7501,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         vinfo_t *subject;
         keys = NTOP(1);
         subject = NTOP(2);
-        _t1 = PsycoDict_New(po);
-        rest = _t1;
+        rest = PsycoDict_New(po);
         _t8 = rest == NULL;
         if (!_t8) {
           _t3 = 2;
@@ -7744,12 +7550,10 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 #endif
 
       case GET_ITER: {
-        vinfo_t *_t1;
         vinfo_t *iter;
         vinfo_t *iterable;
         iterable = NTOP(1);
-        _t1 = PsycoObject_GetIter(po, iterable);
-        iter = _t1;
+        iter = PsycoObject_GetIter(po, iterable);
         if (iter == NULL) {
           break;
         }
@@ -7760,7 +7564,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case GET_YIELD_FROM_ITER: {
-        vinfo_t *_t1;
         vinfo_t *iter;
         vinfo_t *iterable;
         PyTypeObject *tp_iterable;
@@ -7769,7 +7572,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         if (tp_iterable == NULL) {
           break;
         }
-        if (tp_iterable == (&PyCoro_Type)) {
+        if (tp_iterable == &PyCoro_Type) {
           if (!((co->co_flags & (0x0080 | 0x0100)))) {
             PycException_SetString(
                 po, PyExc_TypeError,
@@ -7778,9 +7581,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           }
         }
         else {
-          if (!(tp_iterable == (&PyGen_Type))) {
-            _t1 = PsycoObject_GetIter(po, iterable);
-            iter = _t1;
+          if (tp_iterable != &PyGen_Type) {
+            iter = PsycoObject_GetIter(po, iterable);
             if (iter == NULL) {
               break;
             }
@@ -7798,32 +7600,26 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
 #if NI_HAS_AENTER_LOOKUP_FIRST
       case BEFORE_ASYNC_WITH: {
-        vinfo_t *_t1;
-        vinfo_t *_t2;
-        vinfo_t *_t3;
         vinfo_t *enter;
         vinfo_t *exit;
         vinfo_t *mgr;
         vinfo_t *res;
         mgr = NTOP(1);
-        _t1 = psyco_generic_call(po, cimpl_special_lookup,
-                                 CfCommonNewRefPyObject, "vl", mgr,
-                                 (long)(&PyId___aenter__));
-        enter = _t1;
+        enter = psyco_generic_call(po, cimpl_special_lookup,
+                                   CfCommonNewRefPyObject, "vl", mgr,
+                                   (long)(&PyId___aenter__));
         if (enter == NULL) {
           break;
         }
-        _t2 = psyco_generic_call(po, cimpl_special_lookup,
-                                 CfCommonNewRefPyObject, "vl", mgr,
-                                 (long)(&PyId___aexit__));
-        exit = _t2;
+        exit = psyco_generic_call(po, cimpl_special_lookup,
+                                  CfCommonNewRefPyObject, "vl", mgr,
+                                  (long)(&PyId___aexit__));
         if (exit == NULL) {
           vinfo_decref(enter, po);
           break;
         }
-        _t3 = psyco_generic_call(po, _PyObject_CallNoArg,
+        res = psyco_generic_call(po, _PyObject_CallNoArg,
                                  CfCommonNewRefPyObject, "v", enter);
-        res = _t3;
         vinfo_decref(enter, po);
         if (res == NULL) {
           vinfo_decref(exit, po);
@@ -7837,25 +7633,21 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #else
       case BEFORE_ASYNC_WITH: {
-        vinfo_t *_t1;
-        vinfo_t *_t2;
         vinfo_t *_t3;
         vinfo_t *enter;
         vinfo_t *exit;
         vinfo_t *mgr;
         vinfo_t *res;
         mgr = NTOP(1);
-        _t1 = psyco_generic_call(po, cimpl_special_lookup,
-                                 CfCommonNewRefPyObject, "vl", mgr,
-                                 (long)(&PyId___aexit__));
-        exit = _t1;
+        exit = psyco_generic_call(po, cimpl_special_lookup,
+                                  CfCommonNewRefPyObject, "vl", mgr,
+                                  (long)(&PyId___aexit__));
         if (exit == NULL) {
           break;
         }
-        _t2 = psyco_generic_call(po, cimpl_special_lookup,
-                                 CfCommonNewRefPyObject, "vl", mgr,
-                                 (long)(&PyId___aenter__));
-        enter = _t2;
+        enter = psyco_generic_call(po, cimpl_special_lookup,
+                                   CfCommonNewRefPyObject, "vl", mgr,
+                                   (long)(&PyId___aenter__));
         if (enter == NULL) {
           vinfo_decref(exit, po);
           break;
@@ -7920,14 +7712,12 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 #endif
 
       case LOAD_METHOD: {
-        vinfo_t *_t1;
         vinfo_t *meth;
         vinfo_t *name;
         vinfo_t *obj;
         obj = NTOP(1);
         name = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
-        _t1 = PsycoObject_GetAttr(po, obj, name);
-        meth = _t1;
+        meth = PsycoObject_GetAttr(po, obj, name);
         vinfo_decref(name, po);
         if (meth == NULL) {
           break;
@@ -7940,8 +7730,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case BUILD_SLICE: {
-        vinfo_t *_t1;
-        vinfo_t *_t2;
         vinfo_t *slice;
         vinfo_t *start;
         vinfo_t *step;
@@ -7950,8 +7738,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           step = NTOP(1);
           stop = NTOP(2);
           start = NTOP(3);
-          _t1 = PsycoSlice_New(start, stop, step);
-          slice = _t1;
+          slice = PsycoSlice_New(start, stop, step);
           POP(step);
           POP(stop);
           POP(start);
@@ -7964,8 +7751,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         else {
           stop = NTOP(1);
           start = NTOP(2);
-          _t2 = PsycoSlice_New(start, stop, NULL);
-          slice = _t2;
+          slice = PsycoSlice_New(start, stop, NULL);
           POP(stop);
           POP(start);
           vinfo_decref(stop, po);
@@ -7978,19 +7764,6 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 #if NI_HAS_FORMAT_VALUE_CHECKS_CONVERSION
       case FORMAT_VALUE: {
         vinfo_t *_t1;
-        vinfo_t *_t10;
-        vinfo_t *_t11;
-        vinfo_t *_t12;
-        vinfo_t *_t13;
-        vinfo_t *_t14;
-        vinfo_t *_t2;
-        vinfo_t *_t3;
-        vinfo_t *_t4;
-        vinfo_t *_t5;
-        vinfo_t *_t6;
-        vinfo_t *_t7;
-        vinfo_t *_t8;
-        vinfo_t *_t9;
         PyObject *(*conv_fn)(PyObject *);
         vinfo_t *fmt_spec;
         int have_fmt_spec;
@@ -8023,18 +7796,16 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           else {
             if (which_conversion == 0x1) {
               conv_fn = PyObject_Str;
-              _t2 = psyco_generic_call(po, PyObject_Str,
-                                       CfCommonNewRefPyObject, "v", value);
-              result = _t2;
+              result = psyco_generic_call(po, PyObject_Str,
+                                          CfCommonNewRefPyObject, "v", value);
               if (result == NULL) {
                 break;
               }
               value = result;
               tp_value = Psyco_KnownType(value);
-              _t3 = psyco_generic_call(po, PyObject_Format,
-                                       CfCommonNewRefPyObject, "vv", value,
-                                       fmt_spec);
-              result = _t3;
+              result = psyco_generic_call(po, PyObject_Format,
+                                          CfCommonNewRefPyObject, "vv", value,
+                                          fmt_spec);
               vinfo_decref(value, po);
               if (result == NULL) {
                 break;
@@ -8049,18 +7820,16 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             else {
               if (which_conversion == 0x2) {
                 conv_fn = PyObject_Repr;
-                _t4 = psyco_generic_call(po, PyObject_Repr,
-                                         CfCommonNewRefPyObject, "v", value);
-                result = _t4;
+                result = psyco_generic_call(po, PyObject_Repr,
+                                            CfCommonNewRefPyObject, "v", value);
                 if (result == NULL) {
                   break;
                 }
                 value = result;
                 tp_value = Psyco_KnownType(value);
-                _t5 = psyco_generic_call(po, PyObject_Format,
-                                         CfCommonNewRefPyObject, "vv", value,
-                                         fmt_spec);
-                result = _t5;
+                result = psyco_generic_call(po, PyObject_Format,
+                                            CfCommonNewRefPyObject, "vv", value,
+                                            fmt_spec);
                 vinfo_decref(value, po);
                 if (result == NULL) {
                   break;
@@ -8075,18 +7844,17 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
               else {
                 if (which_conversion == 0x3) {
                   conv_fn = PyObject_ASCII;
-                  _t6 = psyco_generic_call(po, PyObject_ASCII,
-                                           CfCommonNewRefPyObject, "v", value);
-                  result = _t6;
+                  result = psyco_generic_call(po, PyObject_ASCII,
+                                              CfCommonNewRefPyObject, "v",
+                                              value);
                   if (result == NULL) {
                     break;
                   }
                   value = result;
                   tp_value = Psyco_KnownType(value);
-                  _t7 = psyco_generic_call(po, PyObject_Format,
-                                           CfCommonNewRefPyObject, "vv", value,
-                                           fmt_spec);
-                  result = _t7;
+                  result = psyco_generic_call(po, PyObject_Format,
+                                              CfCommonNewRefPyObject, "vv",
+                                              value, fmt_spec);
                   vinfo_decref(value, po);
                   if (result == NULL) {
                     break;
@@ -8113,7 +7881,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           if (which_conversion == 0x0) {
             conv_fn = NULL;
             tp_value = Psyco_KnownType(value);
-            if ((tp_value == (&PyUnicode_Type) && 1)) {
+            if ((tp_value == &PyUnicode_Type && 1)) {
               result = value;
               POP(value);
               PUSH(value);
@@ -8121,10 +7889,9 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             }
             else {
               fmt_spec = psyco_vi_Zero();
-              _t8 = psyco_generic_call(po, PyObject_Format,
-                                       CfCommonNewRefPyObject, "vv", value,
-                                       fmt_spec);
-              result = _t8;
+              result = psyco_generic_call(po, PyObject_Format,
+                                          CfCommonNewRefPyObject, "vv", value,
+                                          fmt_spec);
               vinfo_decref(fmt_spec, po);
               if (result == NULL) {
                 break;
@@ -8138,23 +7905,21 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           else {
             if (which_conversion == 0x1) {
               conv_fn = PyObject_Str;
-              _t9 = psyco_generic_call(po, PyObject_Str,
-                                       CfCommonNewRefPyObject, "v", value);
-              result = _t9;
+              result = psyco_generic_call(po, PyObject_Str,
+                                          CfCommonNewRefPyObject, "v", value);
               if (result == NULL) {
                 break;
               }
               value = result;
               tp_value = Psyco_KnownType(value);
-              if ((tp_value == (&PyUnicode_Type) && 1)) {
+              if ((tp_value == &PyUnicode_Type && 1)) {
                 result = value;
               }
               else {
                 fmt_spec = psyco_vi_Zero();
-                _t10 = psyco_generic_call(po, PyObject_Format,
-                                          CfCommonNewRefPyObject, "vv", value,
-                                          fmt_spec);
-                result = _t10;
+                result = psyco_generic_call(po, PyObject_Format,
+                                            CfCommonNewRefPyObject, "vv", value,
+                                            fmt_spec);
                 vinfo_decref(value, po);
                 vinfo_decref(fmt_spec, po);
                 if (result == NULL) {
@@ -8169,23 +7934,21 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             else {
               if (which_conversion == 0x2) {
                 conv_fn = PyObject_Repr;
-                _t11 = psyco_generic_call(po, PyObject_Repr,
-                                          CfCommonNewRefPyObject, "v", value);
-                result = _t11;
+                result = psyco_generic_call(po, PyObject_Repr,
+                                            CfCommonNewRefPyObject, "v", value);
                 if (result == NULL) {
                   break;
                 }
                 value = result;
                 tp_value = Psyco_KnownType(value);
-                if ((tp_value == (&PyUnicode_Type) && 1)) {
+                if ((tp_value == &PyUnicode_Type && 1)) {
                   result = value;
                 }
                 else {
                   fmt_spec = psyco_vi_Zero();
-                  _t12 = psyco_generic_call(po, PyObject_Format,
-                                            CfCommonNewRefPyObject, "vv",
-                                            value, fmt_spec);
-                  result = _t12;
+                  result = psyco_generic_call(po, PyObject_Format,
+                                              CfCommonNewRefPyObject, "vv",
+                                              value, fmt_spec);
                   vinfo_decref(value, po);
                   vinfo_decref(fmt_spec, po);
                   if (result == NULL) {
@@ -8200,23 +7963,21 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
               else {
                 if (which_conversion == 0x3) {
                   conv_fn = PyObject_ASCII;
-                  _t13 = psyco_generic_call(
+                  result = psyco_generic_call(
                       po, PyObject_ASCII, CfCommonNewRefPyObject, "v", value);
-                  result = _t13;
                   if (result == NULL) {
                     break;
                   }
                   value = result;
                   tp_value = Psyco_KnownType(value);
-                  if ((tp_value == (&PyUnicode_Type) && 1)) {
+                  if ((tp_value == &PyUnicode_Type && 1)) {
                     result = value;
                   }
                   else {
                     fmt_spec = psyco_vi_Zero();
-                    _t14 = psyco_generic_call(po, PyObject_Format,
-                                              CfCommonNewRefPyObject, "vv",
-                                              value, fmt_spec);
-                    result = _t14;
+                    result = psyco_generic_call(po, PyObject_Format,
+                                                CfCommonNewRefPyObject, "vv",
+                                                value, fmt_spec);
                     vinfo_decref(value, po);
                     vinfo_decref(fmt_spec, po);
                     if (result == NULL) {
@@ -8241,20 +8002,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #else
       case FORMAT_VALUE: {
-        vinfo_t *_t1;
-        vinfo_t *_t10;
-        vinfo_t *_t11;
-        vinfo_t *_t12;
-        vinfo_t *_t13;
-        vinfo_t *_t14;
         vinfo_t *_t2;
-        vinfo_t *_t3;
-        vinfo_t *_t4;
-        vinfo_t *_t5;
-        vinfo_t *_t6;
-        vinfo_t *_t7;
-        vinfo_t *_t8;
-        vinfo_t *_t9;
         PyObject *(*conv_fn)(PyObject *);
         vinfo_t *fmt_spec;
         int have_fmt_spec;
@@ -8269,9 +8017,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           value = NTOP(2);
           if (which_conversion == 0x1) {
             conv_fn = PyObject_Str;
-            _t1 = psyco_generic_call(po, PyObject_Str, CfCommonNewRefPyObject,
-                                     "v", value);
-            result = _t1;
+            result = psyco_generic_call(po, PyObject_Str,
+                                        CfCommonNewRefPyObject, "v", value);
             if (result == NULL) {
               break;
             }
@@ -8295,18 +8042,16 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           else {
             if (which_conversion == 0x2) {
               conv_fn = PyObject_Repr;
-              _t3 = psyco_generic_call(po, PyObject_Repr,
-                                       CfCommonNewRefPyObject, "v", value);
-              result = _t3;
+              result = psyco_generic_call(po, PyObject_Repr,
+                                          CfCommonNewRefPyObject, "v", value);
               if (result == NULL) {
                 break;
               }
               value = result;
               tp_value = Psyco_KnownType(value);
-              _t4 = psyco_generic_call(po, PyObject_Format,
-                                       CfCommonNewRefPyObject, "vv", value,
-                                       fmt_spec);
-              result = _t4;
+              result = psyco_generic_call(po, PyObject_Format,
+                                          CfCommonNewRefPyObject, "vv", value,
+                                          fmt_spec);
               vinfo_decref(value, po);
               if (result == NULL) {
                 break;
@@ -8321,18 +8066,16 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             else {
               if (which_conversion == 0x3) {
                 conv_fn = PyObject_ASCII;
-                _t5 = psyco_generic_call(po, PyObject_ASCII,
-                                         CfCommonNewRefPyObject, "v", value);
-                result = _t5;
+                result = psyco_generic_call(po, PyObject_ASCII,
+                                            CfCommonNewRefPyObject, "v", value);
                 if (result == NULL) {
                   break;
                 }
                 value = result;
                 tp_value = Psyco_KnownType(value);
-                _t6 = psyco_generic_call(po, PyObject_Format,
-                                         CfCommonNewRefPyObject, "vv", value,
-                                         fmt_spec);
-                result = _t6;
+                result = psyco_generic_call(po, PyObject_Format,
+                                            CfCommonNewRefPyObject, "vv", value,
+                                            fmt_spec);
                 vinfo_decref(value, po);
                 if (result == NULL) {
                   break;
@@ -8347,10 +8090,9 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
               else {
                 conv_fn = NULL;
                 tp_value = Psyco_KnownType(value);
-                _t7 = psyco_generic_call(po, PyObject_Format,
-                                         CfCommonNewRefPyObject, "vv", value,
-                                         fmt_spec);
-                result = _t7;
+                result = psyco_generic_call(po, PyObject_Format,
+                                            CfCommonNewRefPyObject, "vv", value,
+                                            fmt_spec);
                 if (result == NULL) {
                   break;
                 }
@@ -8368,23 +8110,21 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           value = NTOP(1);
           if (which_conversion == 0x1) {
             conv_fn = PyObject_Str;
-            _t8 = psyco_generic_call(po, PyObject_Str, CfCommonNewRefPyObject,
-                                     "v", value);
-            result = _t8;
+            result = psyco_generic_call(po, PyObject_Str,
+                                        CfCommonNewRefPyObject, "v", value);
             if (result == NULL) {
               break;
             }
             value = result;
             tp_value = Psyco_KnownType(value);
-            if ((tp_value == (&PyUnicode_Type) && 1)) {
+            if ((tp_value == &PyUnicode_Type && 1)) {
               result = value;
             }
             else {
               fmt_spec = psyco_vi_Zero();
-              _t9 = psyco_generic_call(po, PyObject_Format,
-                                       CfCommonNewRefPyObject, "vv", value,
-                                       fmt_spec);
-              result = _t9;
+              result = psyco_generic_call(po, PyObject_Format,
+                                          CfCommonNewRefPyObject, "vv", value,
+                                          fmt_spec);
               vinfo_decref(value, po);
               vinfo_decref(fmt_spec, po);
               if (result == NULL) {
@@ -8399,23 +8139,21 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           else {
             if (which_conversion == 0x2) {
               conv_fn = PyObject_Repr;
-              _t10 = psyco_generic_call(po, PyObject_Repr,
-                                        CfCommonNewRefPyObject, "v", value);
-              result = _t10;
+              result = psyco_generic_call(po, PyObject_Repr,
+                                          CfCommonNewRefPyObject, "v", value);
               if (result == NULL) {
                 break;
               }
               value = result;
               tp_value = Psyco_KnownType(value);
-              if ((tp_value == (&PyUnicode_Type) && 1)) {
+              if ((tp_value == &PyUnicode_Type && 1)) {
                 result = value;
               }
               else {
                 fmt_spec = psyco_vi_Zero();
-                _t11 = psyco_generic_call(po, PyObject_Format,
-                                          CfCommonNewRefPyObject, "vv", value,
-                                          fmt_spec);
-                result = _t11;
+                result = psyco_generic_call(po, PyObject_Format,
+                                            CfCommonNewRefPyObject, "vv", value,
+                                            fmt_spec);
                 vinfo_decref(value, po);
                 vinfo_decref(fmt_spec, po);
                 if (result == NULL) {
@@ -8430,23 +8168,21 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             else {
               if (which_conversion == 0x3) {
                 conv_fn = PyObject_ASCII;
-                _t12 = psyco_generic_call(po, PyObject_ASCII,
-                                          CfCommonNewRefPyObject, "v", value);
-                result = _t12;
+                result = psyco_generic_call(po, PyObject_ASCII,
+                                            CfCommonNewRefPyObject, "v", value);
                 if (result == NULL) {
                   break;
                 }
                 value = result;
                 tp_value = Psyco_KnownType(value);
-                if ((tp_value == (&PyUnicode_Type) && 1)) {
+                if ((tp_value == &PyUnicode_Type && 1)) {
                   result = value;
                 }
                 else {
                   fmt_spec = psyco_vi_Zero();
-                  _t13 = psyco_generic_call(po, PyObject_Format,
-                                            CfCommonNewRefPyObject, "vv",
-                                            value, fmt_spec);
-                  result = _t13;
+                  result = psyco_generic_call(po, PyObject_Format,
+                                              CfCommonNewRefPyObject, "vv",
+                                              value, fmt_spec);
                   vinfo_decref(value, po);
                   vinfo_decref(fmt_spec, po);
                   if (result == NULL) {
@@ -8461,7 +8197,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
               else {
                 conv_fn = NULL;
                 tp_value = Psyco_KnownType(value);
-                if ((tp_value == (&PyUnicode_Type) && 1)) {
+                if ((tp_value == &PyUnicode_Type && 1)) {
                   result = value;
                   POP(value);
                   PUSH(value);
@@ -8469,10 +8205,9 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
                 }
                 else {
                   fmt_spec = psyco_vi_Zero();
-                  _t14 = psyco_generic_call(po, PyObject_Format,
-                                            CfCommonNewRefPyObject, "vv",
-                                            value, fmt_spec);
-                  result = _t14;
+                  result = psyco_generic_call(po, PyObject_Format,
+                                              CfCommonNewRefPyObject, "vv",
+                                              value, fmt_spec);
                   vinfo_decref(fmt_spec, po);
                   if (result == NULL) {
                     break;

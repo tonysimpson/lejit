@@ -95,7 +95,7 @@ static PyCFunction cfunc_bytes_lstrip;
 static PyCFunction cfunc_bytes_rstrip;
 static PyCFunction cfunc_bytes_strip;
 
-/* run-time copies: where a heap type's slot changed, or where the meta has no compile-time form, CPython's algorithm resumes in these */
+/* CPython's code, copied for the metas to call at run time */
 static PyObject *
 cimpl_do_xstrip(PyBytesObject *self, int striptype, PyObject *sepobj)
 {
@@ -219,8 +219,6 @@ static vinfo_t *
 bytes_lstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
     vinfo_t *bytes;
     vinfo_t *return_value;
     _t1 = PsycoTuple_Load(vargs);
@@ -230,15 +228,13 @@ bytes_lstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
     }
     if (_t1 == 0) {
         bytes = psyco_vi_None();
-        _t2 = bytes_lstrip_impl(po, self, bytes);
-        return_value = _t2;
+        return_value = bytes_lstrip_impl(po, self, bytes);
         vinfo_decref(bytes, po);
         return return_value;
     }
     else {
         bytes = PsycoTuple_GET_ITEM(vargs, 0);
-        _t3 = bytes_lstrip_impl(po, self, bytes);
-        return_value = _t3;
+        return_value = bytes_lstrip_impl(po, self, bytes);
         return return_value;
     }
 }
@@ -255,8 +251,6 @@ static vinfo_t *
 bytes_rstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
     vinfo_t *bytes;
     vinfo_t *return_value;
     _t1 = PsycoTuple_Load(vargs);
@@ -266,15 +260,13 @@ bytes_rstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
     }
     if (_t1 == 0) {
         bytes = psyco_vi_None();
-        _t2 = bytes_rstrip_impl(po, self, bytes);
-        return_value = _t2;
+        return_value = bytes_rstrip_impl(po, self, bytes);
         vinfo_decref(bytes, po);
         return return_value;
     }
     else {
         bytes = PsycoTuple_GET_ITEM(vargs, 0);
-        _t3 = bytes_rstrip_impl(po, self, bytes);
-        return_value = _t3;
+        return_value = bytes_rstrip_impl(po, self, bytes);
         return return_value;
     }
 }
@@ -291,8 +283,6 @@ static vinfo_t *
 bytes_strip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
     vinfo_t *bytes;
     vinfo_t *return_value;
     _t1 = PsycoTuple_Load(vargs);
@@ -302,15 +292,13 @@ bytes_strip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
     }
     if (_t1 == 0) {
         bytes = psyco_vi_None();
-        _t2 = bytes_strip_impl(po, self, bytes);
-        return_value = _t2;
+        return_value = bytes_strip_impl(po, self, bytes);
         vinfo_decref(bytes, po);
         return return_value;
     }
     else {
         bytes = PsycoTuple_GET_ITEM(vargs, 0);
-        _t3 = bytes_strip_impl(po, self, bytes);
-        return_value = _t3;
+        return_value = bytes_strip_impl(po, self, bytes);
         return return_value;
     }
 }

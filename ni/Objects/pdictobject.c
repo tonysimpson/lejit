@@ -60,7 +60,19 @@ static PyCFunction cfunc_dict_setdefault;
 /* every copy with a parameter in the str_key representation is made */
 #define NI_COPIES_str_key 1
 
-/* run-time copies: where a heap type's slot changed, or where the meta has no compile-time form, CPython's algorithm resumes in these */
+/* dictobject.c's macros for the keys' layout, which it keeps to itself */
+#define DKIX_EMPTY (-1)
+#define DKIX_DUMMY (-2)
+#define DKIX_ERROR (-3)
+#define DK_SIZE(dk) ((dk)->dk_size)
+#define DK_IXSIZE(dk)                                                   \
+    (DK_SIZE(dk) <= 0xff ? 1 : DK_SIZE(dk) <= 0xffff ? 2 :             \
+     DK_SIZE(dk) <= 0xffffffff ? 4 : sizeof(int64_t))
+#define DK_ENTRIES(dk)                                                  \
+    ((PyDictKeyEntry *)(&((int8_t *)((dk)->dk_indices))                 \
+                            [DK_SIZE(dk) * DK_IXSIZE(dk)]))
+#define DK_MASK(dk) (DK_SIZE(dk) - 1)
+
 static PyObject *
 cimpl_dict_get_impl(PyDictObject *self, PyObject *key, PyObject *default_value)
 {
@@ -74,9 +86,9 @@ cimpl_dict_get_impl(PyDictObject *self, PyObject *key, PyObject *default_value)
             return NULL;
     }
     ix = (self->ma_keys->dk_lookup)(self, key, hash, &val);
-    if (ix == (-3))
+    if (ix == DKIX_ERROR)
         return NULL;
-    if (ix == (-1) || val == NULL) {
+    if (ix == DKIX_EMPTY || val == NULL) {
         val = default_value;
     }
     Py_INCREF(val);
@@ -86,7 +98,7 @@ cimpl_dict_get_impl(PyDictObject *self, PyObject *key, PyObject *default_value)
 static Py_ssize_t
 cimpl_dictkeys_get_index(const PyDictKeysObject *keys, Py_ssize_t i)
 {
-    Py_ssize_t s = ((keys)->dk_size);
+    Py_ssize_t s = DK_SIZE(keys);
     Py_ssize_t ix;
     if (s <= 0xff) {
         const int8_t *indices = (const int8_t *)(keys->dk_indices);
@@ -104,7 +116,7 @@ cimpl_dictkeys_get_index(const PyDictKeysObject *keys, Py_ssize_t i)
         const int32_t *indices = (const int32_t *)(keys->dk_indices);
         ix = indices[i];
     }
-    assert(ix >= (-2));
+    assert(ix >= DKIX_DUMMY);
     return ix;
 }
 
@@ -124,7 +136,7 @@ cimpl_unicode_eq_str_key(PyObject *aa, const ni_strkey_t *bb)
     PyUnicodeObject *a = (PyUnicodeObject *)aa;
     const ni_strkey_t *b = bb;
 #if !NI_HAS_UNICODE_EQ_ASSUMES_READY
-    if (PyUnicode_READY(a) == -1 || 0 == -1) {
+    if (PyUnicode_READY(a) == -1) {
         Py_UNREACHABLE();
     }
 #endif
@@ -142,27 +154,20 @@ static Py_ssize_t
 cimpl_lookdict_unicode_str_key(PyDictObject *mp, const ni_strkey_t *key,
                                Py_hash_t hash, PyObject **value_addr)
 {
-    PyDictKeyEntry *ep0 = ((PyDictKeyEntry *)(&(
-        (int8_t *)((mp->ma_keys)
-                       ->dk_indices))[((mp->ma_keys)->dk_size) *
-                                      (((mp->ma_keys)->dk_size) <= 0xff     ? 1
-                                       : ((mp->ma_keys)->dk_size) <= 0xffff ? 2
-                                       : ((mp->ma_keys)->dk_size) <= 0xffffffff
-                                           ? 4
-                                           : sizeof(int64_t))]));
-    size_t mask = (((mp->ma_keys)->dk_size) - 1);
+    PyDictKeyEntry *ep0 = DK_ENTRIES(mp->ma_keys);
+    size_t mask = DK_MASK(mp->ma_keys);
     size_t perturb = (size_t)hash;
     size_t i = (size_t)hash & mask;
     for (;;) {
         Py_ssize_t ix = cimpl_dictkeys_get_index(mp->ma_keys, i);
-        if (ix == (-1)) {
+        if (ix == DKIX_EMPTY) {
             *value_addr = NULL;
-            return (-1);
+            return DKIX_EMPTY;
         }
         if (ix >= 0) {
             PyDictKeyEntry *ep = &ep0[ix];
-            if ((0) || (ep->me_hash == hash &&
-                        cimpl_unicode_eq_str_key(ep->me_key, key))) {
+            if (ep->me_hash == hash &&
+                cimpl_unicode_eq_str_key(ep->me_key, key)) {
                 *value_addr = ep->me_value;
                 return ix;
             }
@@ -178,26 +183,19 @@ cimpl_lookdict_unicode_nodummy_str_key(PyDictObject *mp,
                                        const ni_strkey_t *key, Py_hash_t hash,
                                        PyObject **value_addr)
 {
-    PyDictKeyEntry *ep0 = ((PyDictKeyEntry *)(&(
-        (int8_t *)((mp->ma_keys)
-                       ->dk_indices))[((mp->ma_keys)->dk_size) *
-                                      (((mp->ma_keys)->dk_size) <= 0xff     ? 1
-                                       : ((mp->ma_keys)->dk_size) <= 0xffff ? 2
-                                       : ((mp->ma_keys)->dk_size) <= 0xffffffff
-                                           ? 4
-                                           : sizeof(int64_t))]));
-    size_t mask = (((mp->ma_keys)->dk_size) - 1);
+    PyDictKeyEntry *ep0 = DK_ENTRIES(mp->ma_keys);
+    size_t mask = DK_MASK(mp->ma_keys);
     size_t perturb = (size_t)hash;
     size_t i = (size_t)hash & mask;
     for (;;) {
         Py_ssize_t ix = cimpl_dictkeys_get_index(mp->ma_keys, i);
-        if (ix == (-1)) {
+        if (ix == DKIX_EMPTY) {
             *value_addr = NULL;
-            return (-1);
+            return DKIX_EMPTY;
         }
         PyDictKeyEntry *ep = &ep0[ix];
-        if ((0) || (ep->me_hash == hash &&
-                    cimpl_unicode_eq_str_key(ep->me_key, key))) {
+        if (ep->me_hash == hash &&
+            cimpl_unicode_eq_str_key(ep->me_key, key)) {
             *value_addr = ep->me_value;
             return ix;
         }
@@ -264,8 +262,6 @@ static vinfo_t *
 dict_setdefault(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
     int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
     vinfo_t *default_value;
     vinfo_t *key;
     vinfo_t *return_value;
@@ -277,20 +273,18 @@ dict_setdefault(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
     if (_t1 == 1) {
         key = PsycoTuple_GET_ITEM(vargs, 0);
         default_value = psyco_vi_None();
-        _t2 = psyco_generic_call(po, cimpl_dict_setdefault_impl,
-                                 CfCommonNewRefPyObject, "vvv", self, key,
-                                 default_value);
-        return_value = _t2;
+        return_value = psyco_generic_call(po, cimpl_dict_setdefault_impl,
+                                          CfCommonNewRefPyObject, "vvv", self,
+                                          key, default_value);
         vinfo_decref(default_value, po);
         return return_value;
     }
     else {
         key = PsycoTuple_GET_ITEM(vargs, 0);
         default_value = PsycoTuple_GET_ITEM(vargs, 1);
-        _t3 = psyco_generic_call(po, cimpl_dict_setdefault_impl,
-                                 CfCommonNewRefPyObject, "vvv", self, key,
-                                 default_value);
-        return_value = _t3;
+        return_value = psyco_generic_call(po, cimpl_dict_setdefault_impl,
+                                          CfCommonNewRefPyObject, "vvv", self,
+                                          key, default_value);
         return return_value;
     }
 }
