@@ -550,6 +550,22 @@ static void lm_value(PsycoObject *po, struct lm_build *b, vinfo_t *vi,
     }
 }
 
+/* whether a map can give 'vi', as lm_value writes it */
+DEFINEFN
+bool
+psyco_locals_map_reads(vinfo_t *vi, int level)
+{
+    int i;
+    if (vi == NULL || !is_virtualtime(vi->source))
+        return true;
+    if (VirtualTime_Get(vi->source)->direct_compute_fn == NULL || level > 3)
+        return false;
+    for (i = 0; i < vi->array->count; i++)
+        if (!psyco_locals_map_reads(vi->array->items[i], level + 1))
+            return false;
+    return true;
+}
+
 DEFINEFN
 struct locals_map_s *
 psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos)

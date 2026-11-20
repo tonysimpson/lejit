@@ -101,8 +101,8 @@ def dead_local(n):
 
 # changes in a finally after the raise reach the traceback's frame when the
 # exception goes on: a del, a rebinding, a deleted
-# argument. The catching frame's own del, after its handler, is not seen
-# while it runs (dies_by_count)
+# argument. The catching frame's own del, after its handler, frees the
+# value while it runs (dies_by_count)
 class Big:
     pass
 
@@ -159,6 +159,5 @@ CASES = [
     ('through', [(2,)], {}),
     ('dead_local', [(2,)], {}),
     ('finally_changes', [(3,)], {}),
-    ('dies_by_count', [(1,)],
-     {'xfail': "a running catcher's frame keeps the locals written as the exception passed"}),
+    ('dies_by_count', [(1,)], {}),
 ]

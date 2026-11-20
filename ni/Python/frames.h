@@ -104,6 +104,7 @@ struct stack_frame_info_s {
 EXTERNFN struct locals_map_s *psyco_locals_map(PsycoObject *po, int lasti,
                                                const long *reg_pos);
 EXTERNVAR struct locals_map_s **psyco_locals_maps;
+EXTERNFN bool psyco_locals_map_reads(vinfo_t *vi, int level);
 PSY_INLINE struct locals_map_s *psyco_note_map(long note) {
   return psyco_locals_maps[note >> 1];
 }

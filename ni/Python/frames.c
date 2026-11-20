@@ -31,9 +31,11 @@
  * the frame that catches it is held by its catcher word until its call
  * ends and reads them like an emulated frame (CATCHER_NOTE), and gets them
  * before an inlined call and at the end while something else holds it
- * (pycompiler.c:catcher_word). Known gaps: virtual lists, inlined frames'
- * locals, a read from another thread or from Python run outside a call
- * that may run it (a finaliser), which see the last written.
+ * (pycompiler.c:catcher_word); a virtual list becomes real as it becomes
+ * one of its locals (catcher_local_readable). Known gaps: virtual lists in
+ * other frames, inlined frames' locals, a read from another thread or
+ * from Python run outside a call that may run it (a finaliser), which
+ * see the last written.
  * frame.f_back, frame.f_lineno and frame.f_locals are replaced in
  * PyFrame_Type's dict: a real frame entered
  * through C from compiled code keeps the f_back ceval gave it, which the

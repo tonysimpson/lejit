@@ -940,6 +940,17 @@ static vinfo_t *catcher_word(PsycoObject *po) {
   return LOC_CONTINUATION->array->items[0];
 }
 
+/* A frame with handlers may hold the frame of an exception it caught,
+   whose locals Python reads from this frame's maps while it runs
+   (frames.c:frame_sync_locals). A virtual value no map can give (a list,
+   which is mutable) is made real as it becomes a local, so that a read
+   finds it, as CPython's frame holds the object. */
+static bool catcher_local_readable(PsycoObject *po, vinfo_t *v) {
+  if (catcher_word(po) == NULL || psyco_locals_map_reads(v, 0))
+    return true;
+  return compute_vinfo(v, po);
+}
+
 /* the catching frame's own slot, as a stack position for 'r' */
 static vinfo_t *own_slot(void) {
   return vinfo_new(RunTime_NewStack(INITIAL_STACK_DEPTH, false, false));
@@ -5010,6 +5021,8 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       case STORE_FAST: {
         vinfo_t *value;
         value = NTOP(1);
+        if (!catcher_local_readable(po, value))
+          break;
         SETLOCAL(oparg, value);
         POP(value);
         goto fine;
