@@ -10,8 +10,8 @@
 #include "pabstract.h"
 
 
-#define CFUNC_m_ml    DEF_FIELD(PyCFunctionObject, PyMethodDef*, m_ml, OB_type)
-#define CFUNC_m_self  DEF_FIELD(PyCFunctionObject, PyObject*, m_self, CFUNC_m_ml)
+#define CFUNC_m_ml    CPY_FIELD(PyCFunctionObject, m_ml, OB_type)
+#define CFUNC_m_self  CPY_FIELD(PyCFunctionObject, m_self, CFUNC_m_ml)
 #define iCFUNC_M_ML   FIELD_INDEX(CFUNC_m_ml)
 #define iCFUNC_M_SELF FIELD_INDEX(CFUNC_m_self)
 #define CFUNC_TOTAL   FIELDS_TOTAL(CFUNC_m_self)
@@ -19,6 +19,18 @@
 
 EXTERNFN vinfo_t* PsycoCFunction_Call(PsycoObject* po, vinfo_t* func,
                                       vinfo_t* tuple, vinfo_t* kw);
+
+/* A meta for a METH_FASTCALL function takes its positional arguments as a
+   tuple, like a METH_VARARGS one (vself, vargs). Its residual fallback is
+   PsycoCFunction_CallFast: the C function itself takes an array. */
+EXTERNFN vinfo_t* PsycoCFunction_CallFast(PsycoObject* po, PyCFunction meth,
+                                          int flags, vinfo_t* vself,
+                                          vinfo_t* vargs);
+
+/* compiled METH_FASTCALL calls with an argument array, and residual
+   PyCFunction_Call sites (ni._stats(), for tests) */
+EXTERNVAR long psyco_stat_cfunc_fast;
+EXTERNVAR long psyco_stat_cfunc_proxy;
 
 
  /***************************************************************/
