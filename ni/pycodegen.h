@@ -32,6 +32,22 @@ PSY_INLINE void psyco_decref_v(PsycoObject* po, vinfo_t* v)
   }
 }
 
+/* emit Py_XDECREF(v): as psyco_decref_v, for a value that may be NULL */
+PSY_INLINE void psyco_xdecref_v(PsycoObject* po, vinfo_t* v)
+{
+  switch (gettime(v->source)) {
+
+  case RunTime:
+    psyco_xdecref_rt(po, v);
+    break;
+
+  case CompileTime:
+    if (CompileTime_Get(v->source)->value != 0)
+      psyco_decref_c(po, (PyObject*) CompileTime_Get(v->source)->value);
+    break;
+  }
+}
+
 
 /* can eat a reference if we had one in the first place, and
    if no one else will require it (i.e. there is only one reference

@@ -1,3 +1,16 @@
+/*
+ * The bridge between translated code and the backend.
+ *  - psyco_generic_call is the residual call. Argument tags (v/l/d/r/a/A) say
+ *    how each argument is passed, and Cf* flags (cf_flags.h) give the return
+ *    type and error convention. With CfPure and every argument compile-time,
+ *    the C function is called now (via libffi) and its result is a constant;
+ *    a fresh object, which CPython would make on every run, is thrown away
+ *    and the call emitted instead (vcompiler.h:psyco_shared_constant).
+ *  - Condition codes are virtual values (cc_functions_table) until something
+ *    needs them in a register.
+ *  - The integer_* functions fold constants and otherwise call the x86-64 ALU
+ *    emitters, so this file is part core and part backend.
+ */
 #include "codegen.h"
 #include <iencoding.h>
 #include "Python/frames.h"
@@ -161,7 +174,7 @@ psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true)
 
 #else /* if !HAVE_CCREG */
 
-#error "this was meant for ivm, but now ivm also defines HAVE_CCREG."
+#error "codegen.c needs HAVE_CCREG, which the x64 backend defines"
 
 #endif /* HAVE_CCREG */
 
@@ -180,6 +193,8 @@ DEFINEVAR c_promotion_t psyco_nonfixed_promotion;
 DEFINEVAR c_promotion_t psyco_nonfixed_pyobj_promotion;
 /*DEFINEVAR c_promotion_t psyco_nonfixed_promotion_mega;*/
 DEFINEVAR c_promotion_t psyco_nonfixed_pyobj_promotion_mega;
+DEFINEVAR c_promotion_t psyco_static_type_promotion;
+DEFINEVAR c_promotion_t psyco_interp_pyobj_promotion;
 
 DEFINEFN
 bool
@@ -199,11 +214,11 @@ EXTERNFN vinfo_t *
 run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
               char argtags[], long args[], int total_output_array_size);
 
-#define MAX_ARGUMENTS_COUNT 7
+#define MAX_ARGUMENTS_COUNT 8 /* as the psyco_generic_call macro (codegen.h) */
 
 DEFINEFN
 vinfo_t *
-psyco_generic_call(PsycoObject *po, void *c_function, int flags,
+(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
                    const char *arguments, ...)
 {
     char argtags[MAX_ARGUMENTS_COUNT];
@@ -226,7 +241,7 @@ psyco_generic_call(PsycoObject *po, void *c_function, int flags,
         char tag;
         vinfo_t *vi;
 
-        extra_assert(count <= MAX_ARGUMENTS_COUNT);
+        extra_assert(count < MAX_ARGUMENTS_COUNT);
         raw_args[count] = arg = va_arg(vargs, long);
         tag = arguments[count];
 
@@ -294,6 +309,7 @@ psyco_generic_call(PsycoObject *po, void *c_function, int flags,
         argtags[count] = tag;
     }
     va_end(vargs);
+    vresult = VINFO_FRESH;
     if (flags & CfPure) {
         /* calling a pure function with no run-time argument now at compile
          * time */
@@ -308,10 +324,11 @@ psyco_generic_call(PsycoObject *po, void *c_function, int flags,
         vresult =
             compile_time_call(po, c_function, flags, count, argtags, args);
         if (has_refs) {
-            if (vresult == NULL) {
+            if (vresult == NULL || vresult == VINFO_FRESH) {
                 for (i = 0; i < count; i++) {
                     if (argtags[i] == 'a' || argtags[i] == 'A') {
                         free((void *)args[i]);
+                        args[i] = raw_args[i];
                     }
                 }
             }
@@ -329,11 +346,23 @@ psyco_generic_call(PsycoObject *po, void *c_function, int flags,
                 }
             }
         }
+        /* a fresh object is made at run time, by a call that cannot block */
+        flags |= CfNoBlock;
     }
-    else {
+    if (vresult == VINFO_FRESH) {
         /* compile the run time call */
+        if (!(flags & CfNoBlock) && !psyco_cannot_block(c_function))
+            po->blocking_call = 1;
+        if (!(flags & (CfPure | CfNoPython))) {
+            po->pr.class_unchecked = 1; /* it may assign __class__ */
+            po->pr.python_call = 1;
+            psyco_note_call_site(po, po->pr.call_site
+                                         ? po->pr.call_site - 1
+                                         : po->pr.next_instr & ~NEXT_INSTR_POP);
+        }
         vresult = run_time_call(po, c_function, flags, count, argtags, args,
                                 totalstackspace);
+        po->pr.pending_map = NULL;
         if (vresult == NULL && has_refs) {
             /* error - we should free the vinfo_ts we created */
             for (i = 0; i < count; i++) {
@@ -361,6 +390,199 @@ psyco_inline_enter(PsycoObject *po)
     BEGIN_CODE
     ABOUT_TO_CALL_SUBFUNCTION((long)finfo);
     END_CODE
+}
+
+/* While the frame runs, its finfo slot holds an odd word: before a call
+   that may go through C, (lasti << 1) | 1, for f_lineno of its emulated
+   frame (frames.c:pvisitframes); a direct call to compiled code needs no
+   note. An inlined frame's slot holds its record. */
+/* every map a note names, by index: (index << 1) | 1 fits the 32-bit
+   immediate of one store. The map belongs to the owner of the code making
+   the call, which keeps the index and gives it back when it dies; only a
+   frame running that code reads its notes, so no live note names a reused
+   index. */
+DEFINEVAR struct locals_map_s **psyco_locals_maps = NULL;
+DEFINEVAR long psyco_stat_notes_made = 0, psyco_stat_notes_free = 0;
+static int *free_notes = NULL;
+static long free_notes_cap = 0;
+
+static long note_index(void)
+{
+    long i;
+    ni_owner_t *o = psyco_owner;
+    if (o != NULL && o->nnotes == o->notescap) {
+        int cap = o->notescap ? 2 * o->notescap : 8;
+        void *p = PyMem_Realloc(o->notes, cap * sizeof(int));
+        if (p == NULL)
+            OUT_OF_MEMORY();
+        o->notes = p;
+        o->notescap = cap;
+    }
+    if (psyco_stat_notes_free > 0)
+        i = free_notes[--psyco_stat_notes_free];
+    else {
+        i = psyco_stat_notes_made;
+        if ((i & (i - 1)) == 0) {
+            void *p = PyMem_Realloc(psyco_locals_maps,
+                                    2 * (i + 1) * sizeof(*psyco_locals_maps));
+            if (p == NULL || i >= (1L << 30))
+                OUT_OF_MEMORY();
+            psyco_locals_maps = p;
+        }
+        psyco_stat_notes_made++;
+    }
+    if (o != NULL)
+        o->notes[o->nnotes++] = (int)i;
+    return i;
+}
+
+DEFINEFN
+void
+psyco_release_notes(int *notes, int n)
+{
+    int k;
+    if (psyco_stat_notes_free + n > free_notes_cap) {
+        long cap = 2 * (psyco_stat_notes_free + n);
+        void *p = PyMem_Realloc(free_notes, cap * sizeof(int));
+        if (p == NULL)
+            return; /* those indices are not reused */
+        free_notes = p;
+        free_notes_cap = cap;
+    }
+    for (k = 0; k < n; k++) {
+        psyco_locals_maps[notes[k]] = NULL;
+        free_notes[psyco_stat_notes_free++] = notes[k];
+    }
+}
+
+DEFINEFN
+void
+psyco_note_call_site(PsycoObject *po, int lasti)
+{
+    struct locals_map_s *map;
+    long i;
+    if (po->pr.is_inlining || lasti < 0)
+        return;
+    map = psyco_locals_map(po, lasti, NULL);
+    i = note_index();
+    psyco_locals_maps[i] = map;
+    po->pr.pending_map = map;
+    BEGIN_CODE
+    SAVE_IMMED_TO_EBP_BASE((i << 1) | 1, INITIAL_STACK_DEPTH);
+    END_CODE
+}
+
+struct lm_build {
+    long *items;
+    int count, size;
+};
+
+static void lm_add(struct lm_build *b, long kind, long value, long n)
+{
+    if (b->count + 3 > b->size) {
+        long *items = PyMem_Realloc(b->items, (b->size * 2 + 48) * sizeof(long));
+        if (items == NULL)
+            OUT_OF_MEMORY();
+        b->items = items;
+        b->size = b->size * 2 + 48;
+    }
+    b->items[b->count++] = kind;
+    b->items[b->count++] = value;
+    b->items[b->count++] = n;
+}
+
+/* Virtual values are kept only if they can be computed from their items
+   at run time (direct_compute_fn), up to a few levels deep. */
+static void lm_value(PsycoObject *po, struct lm_build *b, vinfo_t *vi,
+                     const long *reg_pos, int level)
+{
+    if (vi == NULL) {
+        lm_add(b, LM_NONE, 0, 0);
+        return;
+    }
+    switch (gettime(vi->source)) {
+    case RunTime: {
+        long pos = getstack(vi->source);
+        if (pos == RUNTIME_STACK_NONE) {
+            reg_t rg = getreg(vi->source);
+            if (rg == REG_NONE) {
+                lm_add(b, LM_NONE, 0, 0);
+                return;
+            }
+            if (reg_pos != NULL) {
+                pos = reg_pos[rg];
+            }
+            else if (callee_saved_reg_table[rg]) {
+                /* the C callee keeps it: frames.c finds where */
+                lm_add(b, LM_REG, rg, 0);
+                return;
+            }
+            else {
+                /* the call will move it (RAX, from a call just made) */
+                BEGIN_CODE
+                SAVE_REG_VINFO(vi, rg);
+                END_CODE
+                pos = getstack(vi->source);
+            }
+        }
+        lm_add(b, LM_STACK, pos, 0);
+        return;
+    }
+    case CompileTime: {
+        source_known_t *sk = CompileTime_Get(vi->source);
+        if (sk->refcount1_flags & SkFlagPyObj)
+            psyco_owner_pin((PyObject *)sk->value);
+        lm_add(b, LM_CONST, sk->value, 0);
+        return;
+    }
+    default: {
+        source_virtual_t *sv = VirtualTime_Get(vi->source);
+        int i, n = vi->array->count;
+        if (sv->direct_compute_fn == NULL || level > 3) {
+            lm_add(b, LM_NONE, 0, 0);
+            return;
+        }
+        lm_add(b, LM_VIRTUAL, (long)sv, n);
+        for (i = 0; i < n; i++)
+            lm_value(po, b, vi->array->items[i], reg_pos, level + 1);
+        return;
+    }
+    }
+}
+
+DEFINEFN
+struct locals_map_s *
+psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos)
+{
+    PyCodeObject *co = po->pr.co;
+    int i, n = co->co_nlocals + (int)PyTuple_GET_SIZE(co->co_cellvars) +
+               (int)PyTuple_GET_SIZE(co->co_freevars);
+    /* kept between maps, as there is one per call site */
+    static struct lm_build b = {NULL, 0, 0};
+    struct locals_map_s *map;
+    if (po->pr.is_inlining)
+        return NULL;
+    b.count = 0;
+    for (i = 0; i < n; i++)
+        lm_value(po, &b, LOC_LOCALS_PLUS[i], reg_pos, 0);
+    map = psyco_owner_alloc(offsetof(struct locals_map_s, items) +
+                            (b.count + 1) * sizeof(long));
+    map->lasti = lasti;
+    map->nvalues = n;
+    /* after the pushes: positions are offsets down from the stack top */
+    map->below = po->stack_depth - INITIAL_STACK_DEPTH;
+    for (i = 0; i < b.count; i += 3) {
+        map->items[i] = b.items[i];
+        map->items[i + 1] = b.items[i] == LM_STACK
+                                ? po->stack_depth - b.items[i + 1]
+                                : b.items[i + 1];
+        map->items[i + 2] = b.items[i + 2];
+    }
+#if NI_CODESTATS
+    psyco_cs_map(map, &map->lasti, (char *)(map->items + b.count) -
+                                       (char *)&map->lasti);
+#endif
+    return map;
 }
 
 DEFINEFN
@@ -973,8 +1195,8 @@ integer_cmp(PsycoObject *po, vinfo_t *v1, vinfo_t *v2, int py_op)
 
     if (vinfo_known_equal(v1, v2)) {
     same_source:
-        /* comparing equal sources */
-        switch (base_py_op) {
+        /* comparing equal sources, signed or unsigned */
+        switch (py_op & COMPARE_BASE_MASK) {
             case Py_LE:
             case Py_EQ:
             case Py_GE:
@@ -1009,6 +1231,15 @@ DEFINEFN
 condition_code_t
 integer_cmp_i(PsycoObject *po, vinfo_t *v1, long value2, int py_op)
 {
+    /* a condition still in the flags is 0 or 1: compared with 0 it is the
+       condition itself, as in integer_non_null(). Without this, testing a
+       bool made by a comparison (plong_bool) wrote the flags into a
+       register with SETcc and compared that again. */
+    if (value2 == 0 && (py_op == Py_NE || py_op == Py_EQ)) {
+        condition_code_t cc = psyco_vsource_cc(v1->source);
+        if (cc != CC_ALWAYS_FALSE)
+            return py_op == Py_NE ? cc : INVERT_CC(cc);
+    }
     if (!compute_vinfo(v1, po))
         return CC_ERROR;
 
@@ -1061,4 +1292,12 @@ psyco_codegen_init(void)
     psyco_nonfixed_pyobj_promotion_mega.header.compute_fn =
         &computed_promotion;
     psyco_nonfixed_pyobj_promotion_mega.pflags = PFlagPyObj | PFlagMegamorphic;
+
+    psyco_static_type_promotion.header.compute_fn = &computed_promotion;
+    psyco_static_type_promotion.pflags =
+        PFlagPyObj | PFlagMegamorphic | PFlagStaticType;
+
+    psyco_interp_pyobj_promotion.header.compute_fn = &computed_promotion;
+    psyco_interp_pyobj_promotion.pflags =
+        PFlagPyObj | PFlagMegamorphic | PFlagInterpret;
 }

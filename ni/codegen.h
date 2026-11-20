@@ -85,11 +85,67 @@ PSY_INLINE long reference_from_code(PsycoObject* po, CompileTimeSource source)
 EXTERNFN vinfo_t* psyco_generic_call(PsycoObject* po, void* c_function,
                                      int flags, const char* arguments, ...);
 
+/* compile_time_call's result for a fresh object (psyco_shared_constant):
+   psyco_generic_call then emits the call */
+#define VINFO_FRESH ((vinfo_t*)2)
+
+/* psyco_generic_call reads every argument with va_arg(long), but a vararg
+   narrower than a word (an int, an enum, 0) arrives with its upper 32 bits
+   unspecified. This wrapper makes such an argument a compile
+   error ("size of unnamed array is negative"): cast it to (long). _Generic
+   and sizeof don't evaluate 'x', so each argument is still evaluated once. */
+#define NI_WORD_VARG(x)                                                    \
+    ((void)sizeof(char[_Generic((x),                                       \
+        _Bool: -1, char: -1, signed char: -1, unsigned char: -1,          \
+        short: -1, unsigned short: -1, int: -1, unsigned int: -1,         \
+        float: -1, double: -1, default: 1)]), (x))
+#define NI_WORD_VARGS1(a) NI_WORD_VARG(a)
+#define NI_WORD_VARGS2(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS1(__VA_ARGS__)
+#define NI_WORD_VARGS3(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS2(__VA_ARGS__)
+#define NI_WORD_VARGS4(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS3(__VA_ARGS__)
+#define NI_WORD_VARGS5(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS4(__VA_ARGS__)
+#define NI_WORD_VARGS6(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS5(__VA_ARGS__)
+#define NI_WORD_VARGS7(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS6(__VA_ARGS__)
+#define NI_WORD_VARGS8(a, ...) NI_WORD_VARG(a), NI_WORD_VARGS7(__VA_ARGS__)
+#define NI_GC_FIXED(po, fn, fl, args) po, fn, fl, args
+#define NI_GC_VARGS(n, po, fn, fl, args, ...)                              \
+    po, fn, fl, args, NI_WORD_VARGS##n(__VA_ARGS__)
+#define NI_GC4(...) NI_GC_FIXED(__VA_ARGS__)
+#define NI_GC5(...) NI_GC_VARGS(1, __VA_ARGS__)
+#define NI_GC6(...) NI_GC_VARGS(2, __VA_ARGS__)
+#define NI_GC7(...) NI_GC_VARGS(3, __VA_ARGS__)
+#define NI_GC8(...) NI_GC_VARGS(4, __VA_ARGS__)
+#define NI_GC9(...) NI_GC_VARGS(5, __VA_ARGS__)
+#define NI_GC10(...) NI_GC_VARGS(6, __VA_ARGS__)
+#define NI_GC11(...) NI_GC_VARGS(7, __VA_ARGS__)
+#define NI_GC12(...) NI_GC_VARGS(8, __VA_ARGS__)
+#define NI_GC_PICK(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, N, ...) N
+#define psyco_generic_call(...)                                            \
+    (psyco_generic_call)(NI_GC_PICK(__VA_ARGS__, NI_GC12, NI_GC11, NI_GC10, NI_GC9, \
+                                    NI_GC8, NI_GC7, NI_GC6, NI_GC5,        \
+                                    NI_GC4, , , )(__VA_ARGS__))
+
 #include "cf_flags.h"
 
 /* To emit the call to other code blocks emitted by Psyco. 'argsources' gives
    the run-time sources for the arguments, as specified by
    psyco_build_frame(). */
+/* Py_LeaveRecursiveCall after a compiled call (psyfunc.c); false with an
+   exception set */
+EXTERNFN bool psyco_leave_recursive_call(PsycoObject* po);
+/* tests the 32-bit int at 'address' at run time: CC_NE if it isn't 0 */
+EXTERNFN condition_code_t psyco_int32_nonzero_at(PsycoObject* po,
+                                                 void* address);
+/* tests the 32-bit int at 'offset' in the run-time pointer 'vbase': CC_NE
+   if it isn't 0 */
+EXTERNFN condition_code_t psyco_int32_nonzero_in(PsycoObject* po,
+                                                 vinfo_t* vbase, long offset);
+/* ceval's eval_breaker test at a loop head or after a call (psyfunc.c);
+   false with an exception set */
+EXTERNFN bool psyco_check_eval_breaker(PsycoObject* po);
+/* whether a C function is one after which a call needs no eval_breaker
+   test (psyfunc.c) */
+EXTERNFN bool psyco_cannot_block(void* c_function);
 EXTERNFN vinfo_t* psyco_call_psyco(PsycoObject* po, CodeBufferObject* codebuf,
 				   Source argsources[], int argcount,
 				   struct stack_frame_info_s* finfo);
@@ -103,6 +159,11 @@ PSY_INLINE int get_arguments_count(vinfo_array_t* vlocals) {
 /* Emit the code to mark the presence of an inlined frame */
 EXTERNFN void psyco_inline_enter(PsycoObject* po);
 EXTERNFN void psyco_inline_exit (PsycoObject* po);
+EXTERNFN void psyco_note_call_site(PsycoObject *po, int lasti);
+/* give back the psyco_locals_maps indices of a dead owner's call sites */
+EXTERNFN void psyco_release_notes(int *notes, int n);
+/* indices made, and free for reuse */
+EXTERNVAR long psyco_stat_notes_made, psyco_stat_notes_free;
 
 
 /*****************************************************************/
@@ -178,6 +239,9 @@ EXTERNFN vinfo_t* integer_conditional(PsycoObject* po, condition_code_t cc,
 /* make a run-time copy of a vinfo_t */
 EXTERNFN vinfo_t* make_runtime_copy(PsycoObject* po, vinfo_t* v);
 
+/* store 'v' in the local '*slot', releasing what it held */
+EXTERNFN void psyco_rebind_local(PsycoObject* po, vinfo_t** slot, vinfo_t* v);
+
 PSY_INLINE int intlog2(long value) {
   int counter = 0;
   while ((1<<counter) < value)
@@ -199,19 +263,6 @@ EXTERNFN void psyco_emit_header(PsycoObject* po, int nframelocal);
    'retval' may not be virtual-time in the current implementation. */
 EXTERNFN code_t* psyco_finish_return(PsycoObject* po, Source retval);
 
-/* write codes that calls the C function 'fn' and jumps to its
-   return value.
-   Set 'restore' to 1 to save and restore all used registers across call,
-   or 0 to just unload the used registers into the stack.
-   This function returns a pointer to the end of the jumping code, where
-   you can store closure data for 'fn'.
-   The arguments that will be passed to 'fn' are:
-   1) the same pointer to the closure data
-   2) the run-time value described by 'extraarg' if != SOURCE_DUMMY. */
-EXTERNFN
-void* psyco_call_code_builder(PsycoObject* po, void* fn, int restore,
-                              RunTimeSource extraarg, size_t block_size);
-
 #if 0   /* disabled */
 /* emergency code for out-of-memory conditions in which do not
    have a code buffer available for psyco_finish_err_xxx().
@@ -231,6 +282,8 @@ typedef struct c_promotion_s {
 
 #define PFlagPyObj		1
 #define PFlagMegamorphic	2
+#define PFlagStaticType		4  /* with PFlagPyObj|PFlagMegamorphic */
+#define PFlagInterpret		8  /* with PFlagPyObj|PFlagMegamorphic */
 
 
 
@@ -245,7 +298,25 @@ EXTERNVAR c_promotion_t psyco_nonfixed_pyobj_promotion;
 /*EXTERNVAR c_promotion_t psyco_nonfixed_promotion_mega;*/
 EXTERNVAR c_promotion_t psyco_nonfixed_pyobj_promotion_mega;
 
+/* The same, but a value that is not a static (non-heap) type is never made
+   a constant: it goes to the site's megamorphic version at once, and that
+   version is not one of the MEGAMORPHIC_MAX values. A constant is
+   referenced by the compiled code for good, which is free for a static type
+   and keeps anything else alive. */
+EXTERNVAR c_promotion_t psyco_static_type_promotion;
+
+/* The same, but the megamorphic version has no generic path: from the
+   instruction that promotes, the frame goes on in ceval
+   (pycompiler.c:psyco_go_interpreted). Psyco_NeedType's, whose callers
+   need a type. */
+EXTERNVAR c_promotion_t psyco_interp_pyobj_promotion;
+
 #define MEGAMORPHIC_MAX    5
+
+/* an input array that a translated case passes to a C function
+   (BUILD_STRING) goes as this many words at most, the
+   rest NULL; a longer one as a tuple of its items */
+#define ARRAY_ARGS_MAX     4
 
 /* Check if the given virtual source is a promotion exception */
 EXTERNFN bool psyco_vsource_is_promotion(VirtualTimeSource source);

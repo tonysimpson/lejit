@@ -16,6 +16,13 @@
 #define CfNoReturnValue     0x40
 /* If the c function result after error checking is always positive */
 #define CfNotNegative       0x80
+/* the call needs no eval_breaker test after it, as for a function
+   psyco_cannot_block() accepts: for a helper that calls one */
+#define CfNoBlock           0x1000
+/* the C function runs no Python code, so the known types stay: an
+   instance dict lookup by name (a str-subclass key's __eq__ is not
+   allowed for) */
+#define CfNoPython          0x2000
 
 #define VINFO_OK ((vinfo_t*)1)
 
@@ -57,6 +64,8 @@
 #define CfPyErrNotImplemented 0x800 /* test for a Py_NotImplemented result */
 #define CfPyErrIterNext       0x900 /* specially for tp_iternext slots */
 #define CfPyErrAlways         0xA00 /* always set an exception */
+#define CfPyErrCheckNull      0xB00 /* use PyErr_Occurred() if return is NULL;
+                                       a NULL without one is psyco_vi_Zero() */
 /* Note: CfPyErrNotImplemented means that the C function may return
    Py_NotImplemented, and this is checked; if true, then Psyco_METAX()
    returns exactly 'psyco_viNotImplemented', and not just a possibly run-time
