@@ -164,7 +164,7 @@ vinfo_t* plist_item(PsycoObject* po, vinfo_t* a, vinfo_t* i)
 
 	if (runtime_condition_f(po, cc)) {
 		PycException_SetString(po, PyExc_IndexError,
-				       "list index out of range");
+				       NI_MSG_LIST_INDEX_RANGE);
 		return NULL;
 	}
         assert_nonneg(i);
@@ -217,7 +217,7 @@ static bool plist_ass_item(PsycoObject* po, vinfo_t* a, vinfo_t* i, vinfo_t* v)
 
 	if (runtime_condition_f(po, cc)) {
 		PycException_SetString(po, PyExc_IndexError,
-				       "list assignment index out of range");
+				       NI_MSG_LIST_ASSIGN_INDEX_RANGE);
 		return false;
 	}
         assert_nonneg(i);

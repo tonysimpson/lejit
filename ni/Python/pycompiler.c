@@ -1909,8 +1909,7 @@ cimpl_cmp_outcome(int op, PyObject *v, PyObject *w)
                     if (!PyExceptionClass_Check(exc)) {
                         PyErr_SetString(
                             PyExc_TypeError,
-                            "catching classes that do not inherit from "
-                            "BaseException is not allowed");
+                            NI_MSG_CATCHING_NON_EXCEPTION);
                         return NULL;
                     }
                 }
@@ -1919,8 +1918,7 @@ cimpl_cmp_outcome(int op, PyObject *v, PyObject *w)
                 if (!PyExceptionClass_Check(w)) {
                     PyErr_SetString(
                         PyExc_TypeError,
-                        "catching classes that do not inherit from "
-                        "BaseException is not allowed");
+                        NI_MSG_CATCHING_NON_EXCEPTION);
                     return NULL;
                 }
             }
@@ -2194,7 +2192,7 @@ cimpl_import_from(PyObject *v, PyObject *name)
 error:
     pkgpath = PyModule_GetFilenameObject(v);
     if (pkgname == NULL) {
-        pkgname_or_unknown = PyUnicode_FromString("<unknown module name>");
+        pkgname_or_unknown = PyUnicode_FromString(NI_MSG_UNKNOWN_MODULE_NAME);
         if (pkgname_or_unknown == NULL) {
             Py_XDECREF(pkgpath);
             return NULL;
@@ -2206,12 +2204,12 @@ error:
     if (pkgpath == NULL || !PyUnicode_Check(pkgpath)) {
         PyErr_Clear();
         errmsg = PyUnicode_FromFormat(
-            "cannot import name %R from %R (unknown location)", name,
+            NI_MSG_IMPORT_NAME_UNKNOWN_LOCATION, name,
             pkgname_or_unknown);
         PyErr_SetImportError(errmsg, pkgname, NULL);
     }
     else {
-        errmsg = PyUnicode_FromFormat("cannot import name %R from %R (%S)",
+        errmsg = PyUnicode_FromFormat(NI_MSG_IMPORT_NAME_FROM_FILE,
                                       name, pkgname_or_unknown, pkgpath);
         PyErr_SetImportError(errmsg, pkgname, pkgpath);
     }
@@ -2240,7 +2238,7 @@ cimpl_match_class_attr(PyObject *subject, PyObject *type, PyObject *name,
     if (PySet_Contains(seen, name) || PySet_Add(seen, name)) {
         if (!PyErr_Occurred()) {
             PyErr_Format(PyExc_TypeError,
-                         "%s() got multiple sub-patterns for attribute %R",
+                         NI_MSG_MATCH_DUPLICATE_ATTRIBUTE,
                          ((PyTypeObject *)type)->tp_name, name);
         }
         return NULL;
@@ -2259,7 +2257,7 @@ cimpl_match_class(PyObject *subject, PyObject *type, Py_ssize_t nargs,
                   PyObject *kwargs)
 {
     if (!PyType_Check(type)) {
-        const char *e = "called match pattern must be a type";
+        const char *e = NI_MSG_MATCH_NOT_A_TYPE;
         PyErr_Format(PyExc_TypeError, e);
         return NULL;
     }
@@ -2282,7 +2280,7 @@ cimpl_match_class(PyObject *subject, PyObject *type, Py_ssize_t nargs,
         match_args = PyObject_GetAttrString(type, "__match_args__");
         if (match_args) {
             if (!PyTuple_CheckExact(match_args)) {
-                const char *e = "%s.__match_args__ must be a tuple (got %s)";
+                const char *e = NI_MSG_MATCH_ARGS_NOT_TUPLE;
                 PyErr_Format(PyExc_TypeError, e,
                              ((PyTypeObject *)type)->tp_name,
                              Py_TYPE(match_args)->tp_name);
@@ -2303,7 +2301,7 @@ cimpl_match_class(PyObject *subject, PyObject *type, Py_ssize_t nargs,
         if (allowed < nargs) {
             const char *plural = (allowed == 1) ? "" : "s";
             PyErr_Format(PyExc_TypeError,
-                         "%s() accepts %d positional sub-pattern%s (%d given)",
+                         NI_MSG_MATCH_TOO_MANY_POSITIONAL,
                          ((PyTypeObject *)type)->tp_name, allowed, plural,
                          nargs);
             goto fail;
@@ -2316,8 +2314,7 @@ cimpl_match_class(PyObject *subject, PyObject *type, Py_ssize_t nargs,
                 PyObject *name = PyTuple_GET_ITEM(match_args, i);
                 if (!PyUnicode_CheckExact(name)) {
                     PyErr_Format(PyExc_TypeError,
-                                 "__match_args__ elements must be strings "
-                                 "(got %s)",
+                                 NI_MSG_MATCH_ARGS_NOT_STR,
                                  Py_TYPE(name)->tp_name);
                     goto fail;
                 }
@@ -2386,7 +2383,7 @@ cimpl_match_keys(PyObject *map, PyObject *keys)
         if (PySet_Contains(seen, key) || PySet_Add(seen, key)) {
             if (!PyErr_Occurred()) {
                 PyErr_Format(PyExc_ValueError,
-                             "mapping pattern checks duplicate key (%R)", key);
+                             NI_MSG_MATCH_DUPLICATE_KEY, key);
             }
             goto fail;
         }
@@ -2474,7 +2471,7 @@ cimpl_print_expr_r0(PyObject *_in0, long _oparg, PyObject *value,
             PyObject *hook = _PySys_GetObjectId(&PyId_displayhook);
             PyObject *res;
             if (hook == NULL) {
-                PyErr_SetString(PyExc_RuntimeError, "lost sys.displayhook");
+                PyErr_SetString(PyExc_RuntimeError, NI_MSG_NO_DISPLAYHOOK);
                 Py_DECREF(value);
                 goto _error;
             }
@@ -2531,7 +2528,7 @@ cimpl_get_aiter_r0(PyObject *_in0, long _oparg, PyObject *iter, PyObject *obj,
                 stack_pointer[-1] = NULL;
                 PyErr_Format(
                     PyExc_TypeError,
-                    "'async for' requires an object with __aiter__ method, got %.100s",
+                    NI_MSG_ASYNC_FOR_NO_AITER,
                     type->tp_name);
                 Py_DECREF(obj);
                 goto _error;
@@ -2541,7 +2538,7 @@ cimpl_get_aiter_r0(PyObject *_in0, long _oparg, PyObject *iter, PyObject *obj,
                 stack_pointer[-1] = NULL;
                 PyErr_Format(
                     PyExc_TypeError,
-                    "'async for' received an object from __aiter__ that does not implement __anext__: %.100s",
+                    NI_MSG_ASYNC_FOR_AITER_NO_ANEXT,
                     Py_TYPE(iter)->tp_name);
                 Py_DECREF(iter);
                 goto _error;
@@ -2579,7 +2576,7 @@ cimpl_get_aiter_r1(PyObject *_in0, long _oparg, PyObject *iter,
                 stack_pointer[-1] = NULL;
                 PyErr_Format(
                     PyExc_TypeError,
-                    "'async for' received an object from __aiter__ that does not implement __anext__: %.100s",
+                    NI_MSG_ASYNC_FOR_AITER_NO_ANEXT,
                     Py_TYPE(iter)->tp_name);
                 Py_DECREF(iter);
                 goto _error;
@@ -2607,7 +2604,7 @@ cimpl_get_anext_0(PyObject *next_iter)
     if (_r == NULL) {
         _PyErr_FormatFromCause(
             PyExc_TypeError,
-            "'async for' received an invalid object from __anext__: %.100s",
+            NI_MSG_ASYNC_FOR_BAD_ANEXT,
             Py_TYPE(next_iter)->tp_name);
     }
     return _r;
@@ -2643,7 +2640,7 @@ cimpl_get_anext_r0(PyObject *_in0, long _oparg, PyObject *aiter,
                 else {
                     PyErr_Format(
                         PyExc_TypeError,
-                        "'async for' requires an iterator with __anext__ method, got %.100s",
+                        NI_MSG_ASYNC_FOR_NO_ANEXT,
                         type->tp_name);
                     goto _error;
                 }
@@ -2708,7 +2705,7 @@ cimpl_load_build_class_1(PyObject *build_class_str, PyObject *_in0)
     PyObject *_r = PyObject_GetItem(_in0, build_class_str);
     if (_r == NULL) {
         if (PyErr_ExceptionMatches(PyExc_KeyError))
-            PyErr_SetString(PyExc_NameError, "__build_class__ not found");
+            PyErr_SetString(PyExc_NameError, NI_MSG_NO_BUILD_CLASS);
     }
     return _r;
 }
@@ -2795,7 +2792,7 @@ cimpl_delete_global_0(PyObject *name, PyObject *_in0)
     if (_r != 0) {
         if (PyErr_ExceptionMatches(PyExc_KeyError)) {
             cimpl_format_exc_check_arg(PyExc_NameError,
-                                       "name '%.200s' is not defined", name);
+                                       NI_MSG_NAME_NOT_DEFINED, name);
         }
     }
     return _r;
@@ -2805,7 +2802,7 @@ cimpl_delete_global_0(PyObject *name, PyObject *_in0)
     int _r = PyDict_DelItem(_in0, name);
     if (_r != 0) {
         cimpl_format_exc_check_arg(PyExc_NameError,
-                                   "name '%.200s' is not defined", name);
+                                   NI_MSG_NAME_NOT_DEFINED, name);
     }
     return _r;
 }
@@ -2821,15 +2818,14 @@ ct_format_exc_unbound(PsycoObject *po, PyCodeObject *co, int oparg)
         name = PyTuple_GET_ITEM(co->co_cellvars, oparg);
         ct_format_exc_check_arg(
             po, PyExc_UnboundLocalError,
-            "local variable '%.200s' referenced before assignment", name);
+            NI_MSG_LOCAL_UNBOUND, name);
     }
     else {
         name = PyTuple_GET_ITEM(co->co_freevars,
                                 oparg - PyTuple_GET_SIZE(co->co_cellvars));
         ct_format_exc_check_arg(
             po, PyExc_NameError,
-            "free variable '%.200s' referenced before assignment"
-            " in enclosing scope",
+            NI_MSG_FREE_UNBOUND,
             name);
     }
 }
@@ -2864,7 +2860,7 @@ cimpl_list_extend_0(PyObject *list, PyObject *iterable)
              (!PySequence_Check(iterable)))) {
             PyErr_Clear();
             PyErr_Format(PyExc_TypeError,
-                         "Value after * must be an iterable, not %.200s",
+                         NI_MSG_LIST_STAR_NOT_ITERABLE,
                          Py_TYPE(iterable)->tp_name);
         }
     }
@@ -2879,7 +2875,7 @@ cimpl_dict_update_0(PyObject *dict, PyObject *update)
     int _r = PyDict_Update(dict, update);
     if (_r < 0) {
         if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-            PyErr_Format(PyExc_TypeError, "'%.200s' object is not a mapping",
+            PyErr_Format(PyExc_TypeError, NI_MSG_DICT_STAR_NOT_MAPPING,
                          Py_TYPE(update)->tp_name);
         }
     }
@@ -2896,7 +2892,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
             PyErr_Format(PyExc_TypeError,
-                         "%U argument after ** must be a mapping, not %.200s",
+                         NI_MSG_KWARGS_NOT_MAPPING_FUNCTION_STR,
                          funcstr, Py_TYPE(kwargs)->tp_name);
             Py_DECREF(funcstr);
         }
@@ -2911,7 +2907,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
                 PyObject *key = PyTuple_GET_ITEM(val, 0);
                 PyErr_Format(
                     PyExc_TypeError,
-                    "%U got multiple values for keyword argument '%S'",
+                    NI_MSG_KWARGS_DUPLICATE_FUNCTION_STR,
                     funcstr, key);
                 Py_DECREF(funcstr);
             }
@@ -2951,7 +2947,7 @@ cimpl_jump_if_not_exc_match_0(PyObject *right)
             if (!PyExceptionClass_Check(exc)) {
                 PyErr_SetString(
                     PyExc_TypeError,
-                    "catching classes that do not inherit from BaseException is not allowed");
+                    NI_MSG_CATCHING_NON_EXCEPTION);
                 return -1;
             }
         }
@@ -2960,7 +2956,7 @@ cimpl_jump_if_not_exc_match_0(PyObject *right)
         if (!PyExceptionClass_Check(right)) {
             PyErr_SetString(
                 PyExc_TypeError,
-                "catching classes that do not inherit from BaseException is not allowed");
+                NI_MSG_CATCHING_NON_EXCEPTION);
             return -1;
         }
     }
@@ -3286,7 +3282,7 @@ cimpl_check_args_iterable(PyObject *func, PyObject *args)
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
             PyErr_Format(PyExc_TypeError,
-                         "%U argument after * must be an iterable, not %.200s",
+                         NI_MSG_STAR_NOT_ITERABLE_FUNCTION_STR,
                          funcstr, Py_TYPE(args)->tp_name);
             Py_DECREF(funcstr);
         }
@@ -3295,8 +3291,7 @@ cimpl_check_args_iterable(PyObject *func, PyObject *args)
 #else
     if (args->ob_type->tp_iter == NULL && !PySequence_Check(args)) {
         PyErr_Format(PyExc_TypeError,
-                     "%.200s%.200s argument after * "
-                     "must be an iterable, not %.200s",
+                     NI_MSG_STAR_NOT_ITERABLE_FUNC_NAME,
                      PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
                      args->ob_type->tp_name);
         return -1;
@@ -3327,7 +3322,7 @@ cimpl_build_map_unpack_0(PyObject *sum, PyObject *arg)
     int _r = PyDict_Update(sum, arg);
     if (_r < 0) {
         if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-            PyErr_Format(PyExc_TypeError, "'%.200s' object is not a mapping",
+            PyErr_Format(PyExc_TypeError, NI_MSG_DICT_STAR_NOT_MAPPING,
                          arg->ob_type->tp_name);
         }
     }
@@ -3340,8 +3335,7 @@ static void
 cimpl_format_kwargs_mapping_error(PyObject *func, PyObject *kwargs)
 {
     PyErr_Format(PyExc_TypeError,
-                 "%.200s%.200s argument after ** "
-                 "must be a mapping, not %.200s",
+                 NI_MSG_KWARGS_NOT_MAPPING_FUNC_NAME,
                  PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
                  kwargs->ob_type->tp_name);
 }
@@ -3353,8 +3347,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 {
     if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
         PyErr_Format(PyExc_TypeError,
-                     "%.200s%.200s argument after ** "
-                     "must be a mapping, not %.200s",
+                     NI_MSG_KWARGS_NOT_MAPPING_FUNC_NAME,
                      PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
                      kwargs->ob_type->tp_name);
     }
@@ -3365,13 +3358,12 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
             PyObject *key = PyTuple_GET_ITEM(val, 0);
             if (!PyUnicode_Check(key)) {
                 PyErr_Format(
-                    PyExc_TypeError, "%.200s%.200s keywords must be strings",
+                    PyExc_TypeError, NI_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
                     PyEval_GetFuncName(func), PyEval_GetFuncDesc(func));
             }
             else {
                 PyErr_Format(PyExc_TypeError,
-                             "%.200s%.200s got multiple "
-                             "values for keyword argument '%U'",
+                             NI_MSG_KWARGS_DUPLICATE_FUNC_NAME,
                              PyEval_GetFuncName(func),
                              PyEval_GetFuncDesc(func), key);
             }
@@ -3410,14 +3402,14 @@ cimpl_build_map_unpack_with_call_0(PyObject *sum, PyObject *arg,
                 PyObject *key = PyTuple_GET_ITEM(val, 0);
                 if (!PyUnicode_Check(key)) {
                     PyErr_Format(PyExc_TypeError,
-                                 "%.200s%.200s keywords must be strings",
+                                 NI_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
                                  PyEval_GetFuncName(func),
                                  PyEval_GetFuncDesc(func));
                 }
                 else {
                     PyErr_Format(
                         PyExc_TypeError,
-                        "%.200s%.200s got multiple values for keyword argument '%U'",
+                        NI_MSG_KWARGS_DUPLICATE_FUNC_NAME,
                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
                         key);
                 }
@@ -3468,7 +3460,7 @@ cimpl_import_from_whole(PyObject *v, PyObject *name)
 error:
     pkgpath = PyModule_GetFilenameObject(v);
     if (pkgname == NULL) {
-        pkgname_or_unknown = PyUnicode_FromString("<unknown module name>");
+        pkgname_or_unknown = PyUnicode_FromString(NI_MSG_UNKNOWN_MODULE_NAME);
         if (pkgname_or_unknown == NULL) {
             Py_XDECREF(pkgpath);
             return NULL;
@@ -3480,7 +3472,7 @@ error:
     if (pkgpath == NULL || !PyUnicode_Check(pkgpath)) {
         PyErr_Clear();
         errmsg = PyUnicode_FromFormat(
-            "cannot import name %R from %R (unknown location)", name,
+            NI_MSG_IMPORT_NAME_UNKNOWN_LOCATION, name,
             pkgname_or_unknown);
         PyErr_SetImportError(errmsg, pkgname, NULL);
     }
@@ -3489,9 +3481,8 @@ error:
         PyObject *spec = _PyObject_GetAttrId(v, &PyId___spec__);
         const char *fmt =
             _PyModuleSpec_IsInitializing(spec)
-                ? "cannot import name %R from partially initialized module %R "
-                  "(most likely due to a circular import) (%S)"
-                : "cannot import name %R from %R (%S)";
+                ? NI_MSG_IMPORT_NAME_CIRCULAR
+                : NI_MSG_IMPORT_NAME_FROM_FILE;
         Py_XDECREF(spec);
         errmsg = PyUnicode_FromFormat(fmt, name, pkgname_or_unknown, pkgpath);
         PyErr_SetImportError(errmsg, pkgname, pkgpath);
@@ -3883,7 +3874,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
                     if (!(_t12)) {
                         PycException_SetString(
                             po, PyExc_TypeError,
-                            "catching classes that do not inherit from BaseException is not allowed");
+                            NI_MSG_CATCHING_NON_EXCEPTION);
                         return NULL;
                     }
                     i += 1;
@@ -3903,7 +3894,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
                 if (!(_t13)) {
                     PycException_SetString(
                         po, PyExc_TypeError,
-                        "catching classes that do not inherit from BaseException is not allowed");
+                        NI_MSG_CATCHING_NON_EXCEPTION);
                     return NULL;
                 }
             }
@@ -3938,7 +3929,7 @@ match_class(PsycoObject *po, vinfo_t *subject, vinfo_t *type, Py_ssize_t nargs,
         return NULL;
     }
     if ((tp_type->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) == 0) {
-        e = "called match pattern must be a type";
+        e = NI_MSG_MATCH_NOT_A_TYPE;
         PycException_SetFormat(po, PyExc_TypeError, e);
         return NULL;
     }
@@ -3975,7 +3966,7 @@ match_keys(PsycoObject *po, vinfo_t *map, vinfo_t *keys)
 
 /* a global's NameError: ceval's NAME_ERROR_MSG through its own function */
 static void cimpl_name_error(PyObject *w) {
-  cimpl_format_exc_check_arg(PyExc_NameError, "name '%.200s' is not defined", w);
+  cimpl_format_exc_check_arg(PyExc_NameError, NI_MSG_NAME_NOT_DEFINED, w);
 }
 
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
@@ -4091,7 +4082,7 @@ static int unpack_iterable(PyObject *v, int argcnt, int argcntafter,
   if (it == NULL) {
     if (PyErr_ExceptionMatches(PyExc_TypeError) &&
         v->ob_type->tp_iter == NULL && !PySequence_Check(v))
-      PyErr_Format(PyExc_TypeError, "cannot unpack non-iterable %.200s object",
+      PyErr_Format(PyExc_TypeError, NI_MSG_UNPACK_NON_ITERABLE,
                    v->ob_type->tp_name);
     return -1;
   }
@@ -4103,12 +4094,11 @@ static int unpack_iterable(PyObject *v, int argcnt, int argcntafter,
       if (!PyErr_Occurred()) {
         if (argcntafter == -1)
           PyErr_Format(PyExc_ValueError,
-                       "not enough values to unpack (expected %d, got %d)",
+                       NI_MSG_UNPACK_NOT_ENOUGH,
                        argcnt, i);
         else
           PyErr_Format(PyExc_ValueError,
-                       "not enough values to unpack "
-                       "(expected at least %d, got %d)",
+                       NI_MSG_UNPACK_NOT_ENOUGH_STAR,
                        argcnt + argcntafter, i);
       }
       goto Error;
@@ -4126,7 +4116,7 @@ static int unpack_iterable(PyObject *v, int argcnt, int argcntafter,
       return 0;
     }
     Py_DECREF(w);
-    PyErr_Format(PyExc_ValueError, "too many values to unpack (expected %d)",
+    PyErr_Format(PyExc_ValueError, NI_MSG_UNPACK_TOO_MANY,
                  argcnt);
     goto Error;
   }
@@ -4140,7 +4130,7 @@ static int unpack_iterable(PyObject *v, int argcnt, int argcntafter,
   ll = PyList_GET_SIZE(l);
   if (ll < argcntafter) {
     PyErr_Format(PyExc_ValueError,
-                 "not enough values to unpack (expected at least %d, got %zd)",
+                 NI_MSG_UNPACK_NOT_ENOUGH_AFTER_STAR,
                  argcnt + argcntafter, argcnt + ll);
     goto Error;
   }
@@ -4196,7 +4186,7 @@ static void cimpl_reraise(PyCodeObject *code, PyObject *globals, int lasti,
   PyObject *type, *value, *tb;
   ni_exc_info_topmost(PyThreadState_GET(), &type, &value, &tb);
   if (type == Py_None || type == NULL) {
-    PyErr_SetString(PyExc_RuntimeError, "No active exception to reraise");
+    PyErr_SetString(PyExc_RuntimeError, NI_MSG_NO_ACTIVE_EXCEPTION);
     cimpl_rt_traceback(code, globals, lasti, lineno, NULL);
     return;
   }
@@ -4222,8 +4212,7 @@ static void cimpl_do_raise(PyObject *exc, PyObject *cause) {
       goto raise_error;
     if (!PyExceptionInstance_Check(value)) {
       PyErr_Format(PyExc_TypeError,
-                   "calling %R should have returned an instance of "
-                   "BaseException, not %R",
+                   NI_MSG_RAISE_NOT_INSTANCE,
                    type, Py_TYPE(value));
       goto raise_error;
     }
@@ -4234,7 +4223,7 @@ static void cimpl_do_raise(PyObject *exc, PyObject *cause) {
   } else {
     Py_DECREF(exc);
     PyErr_SetString(PyExc_TypeError,
-                    "exceptions must derive from BaseException");
+                    NI_MSG_RAISE_NOT_EXCEPTION);
     goto raise_error;
   }
 
@@ -4252,7 +4241,7 @@ static void cimpl_do_raise(PyObject *exc, PyObject *cause) {
       fixed_cause = NULL;
     } else {
       PyErr_SetString(PyExc_TypeError,
-                      "exception causes must derive from BaseException");
+                      NI_MSG_RAISE_CAUSE_NOT_EXCEPTION);
       goto raise_error;
     }
     PyException_SetCause(value, fixed_cause);
@@ -4275,7 +4264,7 @@ static PyObject *cimpl_import_name(PyObject *globals, PyObject *builtins,
   PyObject *w;
   PyObject *x = PyDict_GetItemString(builtins, "__import__");
   if (x == NULL) {
-    PyErr_SetString(PyExc_ImportError, "__import__ not found");
+    PyErr_SetString(PyExc_ImportError, NI_MSG_NO_IMPORT);
     return NULL;
   }
   if (PyLong_AsLong(fitharg) != -1 || PyErr_Occurred())
@@ -4304,7 +4293,7 @@ static int cimpl_import_all_from(PyObject *locals, PyObject *v) {
       if (!PyErr_ExceptionMatches(PyExc_AttributeError))
         return -1;
       PyErr_SetString(PyExc_ImportError,
-                      "from-import-* object has no __dict__ and no __all__");
+                      NI_MSG_IMPORT_STAR_NO_DICT);
       return -1;
     }
     all = PyMapping_Keys(dict);
@@ -4393,8 +4382,8 @@ static PyObject *cimpl_minmax_step(PyObject *best, PyObject *item, long op) {
 
 static PyObject *cimpl_minmax_result(PyObject *best, long is_min) {
   if (best == NULL) {
-    PyErr_Format(PyExc_ValueError, "%s() arg is an empty sequence",
-                 is_min ? "min" : "max");
+    PyErr_Format(PyExc_ValueError, NI_MSG_MINMAX_EMPTY,
+                 is_min ? NI_MSG_MINMAX_NAME_MIN : NI_MSG_MINMAX_NAME_MAX);
     return NULL;
   }
   Py_INCREF(best);
@@ -4411,7 +4400,7 @@ static void cimpl_generator_stop(void) {
     PyException_SetTraceback(val, tb);
   Py_DECREF(exc);
   Py_XDECREF(tb);
-  PyErr_SetString(PyExc_RuntimeError, "generator raised StopIteration");
+  PyErr_SetString(PyExc_RuntimeError, NI_MSG_GENERATOR_STOP_ITERATION);
   /* as _PyErr_ChainExceptions: the new exception's cause and context */
   {
     PyObject *e2, *v2, *t2;
@@ -4997,7 +4986,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         if (psyco_knowntobe(value, 0)) {
           ct_format_exc_check_arg(
               po, PyExc_UnboundLocalError,
-              "local variable '%.200s' referenced before assignment",
+              NI_MSG_LOCAL_UNBOUND,
               PyTuple_GetItem(co->co_varnames, oparg));
           break;
         }
@@ -5746,7 +5735,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         hook = _t1;
         if (hook == NULL) {
           PycException_SetString(po, PyExc_RuntimeError,
-                                 "lost sys.displayhook");
+                                 NI_MSG_NO_DISPLAYHOOK);
           break;
         }
         _t2 = psyco_generic_call(po, PyObject_CallOneArg,
@@ -5843,7 +5832,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         else {
           PycException_SetFormat(
               po, PyExc_TypeError,
-              "'async for' requires an object with __aiter__ method, got %.100s",
+              NI_MSG_ASYNC_FOR_NO_AITER,
               type->tp_name);
           break;
         }
@@ -5902,7 +5891,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         if (_t19) {
           PycException_SetFormat(
               po, PyExc_TypeError,
-              "'async for' received an object from __aiter__ that does not implement __anext__: %.100s",
+              NI_MSG_ASYNC_FOR_AITER_NO_ANEXT,
               tp_iter->tp_name);
           vinfo_decref(iter, po);
           break;
@@ -5970,7 +5959,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         else {
           PycException_SetFormat(
               po, PyExc_TypeError,
-              "'async for' requires an iterator with __anext__ method, got %.100s",
+              NI_MSG_ASYNC_FOR_NO_ANEXT,
               type->tp_name);
           break;
         }
@@ -6131,7 +6120,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         }
         ct_format_exc_check_arg(
             po, PyExc_UnboundLocalError,
-            "local variable '%.200s' referenced before assignment",
+            NI_MSG_LOCAL_UNBOUND,
             PyTuple_GetItem(co->co_varnames, oparg));
         break;
       }
@@ -7009,7 +6998,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             if (!(_t2)) {
               PycException_SetString(
                   po, PyExc_TypeError,
-                  "catching classes that do not inherit from BaseException is not allowed");
+                  NI_MSG_CATCHING_NON_EXCEPTION);
               goto error_jump_if_not_exc_match;
             }
             i++;
@@ -7033,7 +7022,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           if (!(_t3)) {
             PycException_SetString(
                 po, PyExc_TypeError,
-                "catching classes that do not inherit from BaseException is not allowed");
+                NI_MSG_CATCHING_NON_EXCEPTION);
             break;
           }
         }
@@ -7491,7 +7480,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           if (!((co->co_flags & (0x0080 | 0x0100)))) {
             PycException_SetString(
                 po, PyExc_TypeError,
-                "cannot 'yield from' a coroutine object in a non-coroutine generator");
+                NI_MSG_YIELD_FROM_COROUTINE);
             break;
           }
         }

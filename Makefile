@@ -9,6 +9,10 @@
 # The build runs the feature detector under PY; it reads the source of PY's
 # CPython release, fetched into ~/.cache/ni once. GEN_PY runs the tools'
 # own tests.
+#
+# Until setup.py writes it, strings-header puts PY's messages
+# (tools/features/strings.py) in the build directory, beside the features,
+# before each build.
 
 SHELL := bash
 
@@ -20,13 +24,18 @@ PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
            $(HOME)/.pyenv/versions/3.10.16/bin/python3.10
 
 .PHONY: build checked-build check check-all test cpython-test encoder-test \
-        features-test features-installed-test no-version-tests clean
+        features-test features-installed-test strings-header \
+        no-version-tests clean
 
-build:
+build: strings-header
 	$(PY) setup.py build_ext --inplace
 
-checked-build:
+checked-build: strings-header
 	NI_TRACE=1 NI_ALL_CHECKS=1 $(PY) setup.py build_ext --inplace
+
+strings-header:
+	$(PY) tools/features/strings.py --python $(PY) \
+	    --out "$$($(PY) tests/common.py)/gen"
 
 test: checked-build
 	$(PY) tests/jit/run.py
@@ -55,8 +64,8 @@ no-version-tests:
 	    ni/ --include='*.[ch]' \
 	  || { echo "a CPython version test in ni/ (above): add an NI_HAS_ feature"; exit 1; }
 
-check: no-version-tests features-test features-installed-test test cpython-test \
-       encoder-test
+check: no-version-tests features-test features-installed-test \
+       test cpython-test encoder-test
 
 check-all:
 	@for p in $(PYTHONS); do \

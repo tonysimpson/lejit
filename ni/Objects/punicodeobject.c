@@ -119,7 +119,7 @@ cimpl_do_strip(PyObject *self, int striptype)
     return PyUnicode_Substring(self, i, j);
 }
 
-static const char *cstatic_stripfuncnames[] = {"lstrip", "rstrip", "strip"};
+static const char *cstatic_stripfuncnames[] = {NI_MSG_STRIP_NAME_LSTRIP, NI_MSG_STRIP_NAME_RSTRIP, NI_MSG_STRIP_NAME_STRIP};
 
 static PyObject *
 cimpl_do_argstrip(PyObject *self, int striptype, PyObject *sep)
@@ -128,7 +128,7 @@ cimpl_do_argstrip(PyObject *self, int striptype, PyObject *sep)
         if (PyUnicode_Check(sep))
             return _PyUnicode_XStrip(self, striptype, sep);
         else {
-            PyErr_Format(PyExc_TypeError, "%s arg must be None or str",
+            PyErr_Format(PyExc_TypeError, NI_MSG_STRIP_ARG,
                          (cstatic_stripfuncnames[striptype]));
             return NULL;
         }
@@ -147,7 +147,7 @@ cimpl_unicode_format_getnextarg(struct unicode_formatter_t *ctx)
         else
             return PyTuple_GetItem(ctx->args, argidx);
     }
-    PyErr_SetString(PyExc_TypeError, "not enough arguments for format string");
+    PyErr_SetString(PyExc_TypeError, NI_MSG_FORMAT_NOT_ENOUGH_ARGS);
     return NULL;
 }
 
@@ -162,7 +162,7 @@ cimpl_unicode_format_arg_parse(struct unicode_formatter_t *ctx,
         PyObject *key;
         int pcount = 1;
         if (ctx->dict == NULL) {
-            PyErr_SetString(PyExc_TypeError, "format requires a mapping");
+            PyErr_SetString(PyExc_TypeError, NI_MSG_FORMAT_NEEDS_MAPPING);
             return -1;
         }
         ++ctx->fmtpos;
@@ -179,7 +179,7 @@ cimpl_unicode_format_arg_parse(struct unicode_formatter_t *ctx,
         }
         keylen = ctx->fmtpos - keystart - 1;
         if (ctx->fmtcnt < 0 || pcount > 0) {
-            PyErr_SetString(PyExc_ValueError, "incomplete format key");
+            PyErr_SetString(PyExc_ValueError, NI_MSG_FORMAT_INCOMPLETE_KEY);
             return -1;
         }
         key = PyUnicode_Substring(ctx->fmtstr, keystart, keystart + keylen);
@@ -225,7 +225,7 @@ cimpl_unicode_format_arg_parse(struct unicode_formatter_t *ctx,
         if (v == NULL)
             return -1;
         if (!PyLong_Check(v)) {
-            PyErr_SetString(PyExc_TypeError, "* wants int");
+            PyErr_SetString(PyExc_TypeError, NI_MSG_FORMAT_STAR_WANTS_INT);
             return -1;
         }
         arg->width = PyLong_AsSsize_t(v);
@@ -250,7 +250,7 @@ cimpl_unicode_format_arg_parse(struct unicode_formatter_t *ctx,
             if (arg->ch < '0' || arg->ch > '9')
                 break;
             if (arg->width > (PY_SSIZE_T_MAX - ((int)arg->ch - '0')) / 10) {
-                PyErr_SetString(PyExc_ValueError, "width too big");
+                PyErr_SetString(PyExc_ValueError, NI_MSG_FORMAT_WIDTH_TOO_BIG);
                 return -1;
             }
             arg->width = arg->width * 10 + (arg->ch - '0');
@@ -268,7 +268,7 @@ cimpl_unicode_format_arg_parse(struct unicode_formatter_t *ctx,
             if (v == NULL)
                 return -1;
             if (!PyLong_Check(v)) {
-                PyErr_SetString(PyExc_TypeError, "* wants int");
+                PyErr_SetString(PyExc_TypeError, NI_MSG_FORMAT_STAR_WANTS_INT);
                 return -1;
             }
             arg->prec = _PyLong_AsInt(v);
@@ -291,7 +291,7 @@ cimpl_unicode_format_arg_parse(struct unicode_formatter_t *ctx,
                 if (arg->ch < '0' || arg->ch > '9')
                     break;
                 if (arg->prec > (INT_MAX - ((int)arg->ch - '0')) / 10) {
-                    PyErr_SetString(PyExc_ValueError, "precision too big");
+                    PyErr_SetString(PyExc_ValueError, NI_MSG_FORMAT_PRECISION_TOO_BIG);
                     return -1;
                 }
                 arg->prec = arg->prec * 10 + (arg->ch - '0');
@@ -308,7 +308,7 @@ cimpl_unicode_format_arg_parse(struct unicode_formatter_t *ctx,
         }
     }
     if (ctx->fmtcnt < 0) {
-        PyErr_SetString(PyExc_ValueError, "incomplete format");
+        PyErr_SetString(PyExc_ValueError, NI_MSG_FORMAT_INCOMPLETE);
         return -1;
     }
     return 0;
@@ -380,14 +380,12 @@ wrongtype:
         case 'x':
         case 'X':
             PyErr_Format(PyExc_TypeError,
-                         "%%%c format: an integer is required, "
-                         "not %.200s",
+                         NI_MSG_FORMAT_NEEDS_INTEGER,
                          type, Py_TYPE(v)->tp_name);
             break;
         default:
             PyErr_Format(PyExc_TypeError,
-                         "%%%c format: a real number is required, "
-                         "not %.200s",
+                         NI_MSG_FORMAT_NEEDS_NUMBER,
                          type, Py_TYPE(v)->tp_name);
             break;
     }
@@ -461,14 +459,12 @@ wrongtype:
         case 'x':
         case 'X':
             PyErr_Format(PyExc_TypeError,
-                         "%%%c format: an integer is required, "
-                         "not %.200s",
+                         NI_MSG_FORMAT_NEEDS_INTEGER,
                          type, Py_TYPE(v)->tp_name);
             break;
         default:
             PyErr_Format(PyExc_TypeError,
-                         "%%%c format: a number is required, "
-                         "not %.200s",
+                         NI_MSG_FORMAT_NEEDS_NUMBER,
                          type, Py_TYPE(v)->tp_name);
             break;
     }
@@ -549,13 +545,13 @@ cimpl_formatchar(PyObject *v)
 #endif
         if (x < 0 || x > 0x10ffff) {
             PyErr_SetString(PyExc_OverflowError,
-                            "%c arg not in range(0x110000)");
+                            NI_MSG_FORMAT_CHAR_RANGE);
             return (Py_UCS4)-1;
         }
         return (Py_UCS4)x;
     }
 onError:
-    PyErr_SetString(PyExc_TypeError, "%c requires int or char");
+    PyErr_SetString(PyExc_TypeError, NI_MSG_FORMAT_CHAR_TYPE);
     return (Py_UCS4)-1;
 }
 
@@ -648,8 +644,7 @@ cimpl_unicode_format_arg_format(struct unicode_formatter_t *ctx,
         default:
             PyErr_Format(
                 PyExc_ValueError,
-                "unsupported format character '%c' (0x%x) "
-                "at index %zd",
+                NI_MSG_FORMAT_UNSUPPORTED_CHAR,
                 (31 <= arg->ch && arg->ch <= 126) ? (char)arg->ch : '?',
                 (int)arg->ch, ctx->fmtpos - 1);
             return -1;
@@ -1565,7 +1560,7 @@ static PyObject *cimpl_unicode_item(PyObject *s, Py_ssize_t i) {
   if (i < 0)
     i += PyUnicode_GET_LENGTH(s);
   if (i < 0 || i >= PyUnicode_GET_LENGTH(s)) {
-    PyErr_SetString(PyExc_IndexError, "string index out of range");
+    PyErr_SetString(PyExc_IndexError, NI_MSG_STR_INDEX_RANGE);
     return NULL;
   }
   return PyUnicode_FromOrdinal(PyUnicode_READ_CHAR(s, i));
@@ -1577,7 +1572,7 @@ static PyObject *cimpl_view_item(PyObject *s, Py_ssize_t start, Py_ssize_t n,
   if (i < 0)
     i += n;
   if (i < 0 || i >= n) {
-    PyErr_SetString(PyExc_IndexError, "string index out of range");
+    PyErr_SetString(PyExc_IndexError, NI_MSG_STR_INDEX_RANGE);
     return NULL;
   }
   return PyUnicode_FromOrdinal(PyUnicode_READ_CHAR(s, start + i));
@@ -1627,7 +1622,7 @@ static vinfo_t *punicode_item(PsycoObject *po, vinfo_t *v, vinfo_t *i) {
   if (cc == CC_ERROR || runtime_condition_f(po, cc)) {
     if (cc != CC_ERROR)
       PycException_SetString(po, PyExc_IndexError,
-                             "string index out of range");
+                             NI_MSG_STR_INDEX_RANGE);
     vinfo_xdecref(release_me, po);
     return NULL;
   }

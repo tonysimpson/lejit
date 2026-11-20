@@ -1358,7 +1358,7 @@ static PyObject *ni_getframe(PyObject *self, PyObject *args,
 #endif
   top = linked_frame(depth, NULL);
   if (top == NULL) {
-    PyErr_SetString(PyExc_ValueError, "call stack is not deep enough");
+    PyErr_SetString(PyExc_ValueError, NI_MSG_CALL_STACK_NOT_DEEP);
     return NULL;
   }
   return (PyObject *)top;

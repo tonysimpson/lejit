@@ -11,6 +11,9 @@
 #include <stdint.h>
 /* the NI_HAS_ features of the CPython source built for */
 #include "ni_features_gen.h"
+/* the messages (NI_MSG_) of the interpreter built for, from
+   tools/features/strings.py */
+#include "ni_strings_gen.h"
 /* offsets, sizes and private structs of the CPython fields Ni relies on
    (vcompiler.h:CPY_FIELD), each checked at compile time against the
    field's type */

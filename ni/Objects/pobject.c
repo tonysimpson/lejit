@@ -1432,7 +1432,7 @@ changed: /* a heap type's slot is not what was compiled */
                             "vvl", v, w, (long)op);
 }
 
-static const char *const opstrings[] = {"<", "<=", "==", "!=", ">", ">="};
+static const char *const opstrings[] = {NI_MSG_CMP_LT, NI_MSG_CMP_LE, "==", "!=", NI_MSG_CMP_GT, NI_MSG_CMP_GE};
 
 /* object.c:do_richcompare. The slots have run; their default must not run
    them again. */
@@ -1453,7 +1453,7 @@ DEFINEFN vinfo_t *PsycoObject_RichCompare(PsycoObject *po, vinfo_t *v,
   default:
     PycException_SetFormat(
         po, PyExc_TypeError,
-        "'%s' not supported between instances of '%.100s' and '%.100s'",
+        NI_MSG_COMPARE_NOT_SUPPORTED,
         opstrings[op], Psyco_FastType(v)->tp_name, Psyco_FastType(w)->tp_name);
     return NULL;
   }

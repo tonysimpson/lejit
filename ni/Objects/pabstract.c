@@ -68,7 +68,7 @@ vinfo_t *PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object,
     return Psyco_META3(po, call, CfCommonNewRefPyObject, "vvv", callable_object,
                        args, kw);
   }
-  return type_error_tp(po, "'%.200s' object is not callable", tp);
+  return type_error_tp(po, NI_MSG_NOT_CALLABLE, tp);
 }
 
 /* the metas translated from abstract.c */
@@ -158,8 +158,7 @@ static PyObject *
 cimpl_binop_type_error(PyObject *v, PyObject *w, const char *op_name)
 {
     PyErr_Format(PyExc_TypeError,
-                 "unsupported operand type(s) for %.100s: "
-                 "'%.100s' and '%.100s'",
+                 NI_MSG_BINOP_TYPE_ERROR,
                  op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     return NULL;
 }
@@ -174,7 +173,7 @@ cimpl_PyNumber_Add_1(PyObject *v, PyObject *w, PySequenceMethods *m)
         assert(_Py_CheckSlotResult(v, "+", result != NULL));
         return result;
     }
-    return cimpl_binop_type_error(v, w, "+");
+    return cimpl_binop_type_error(v, w, NI_MSG_OP_ADD);
 }
 #else
 {
@@ -183,7 +182,7 @@ cimpl_PyNumber_Add_1(PyObject *v, PyObject *w, PySequenceMethods *m)
         if (m && m->sq_concat) {
             return (*m->sq_concat)(v, w);
         }
-        result = cimpl_binop_type_error(v, w, "+");
+        result = cimpl_binop_type_error(v, w, NI_MSG_OP_ADD);
     }
     return result;
 }
@@ -197,9 +196,7 @@ cimpl_binary_op_1(PyObject *v, PyObject *w, const int op_slot,
         Py_TYPE(v) == &PyCFunction_Type &&
         strcmp(((PyCFunctionObject *)v)->m_ml->ml_name, "print") == 0) {
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for %.100s: "
-                     "'%.100s' and '%.100s'. Did you mean \"print(<message>, "
-                     "file=<output_stream>)\"?",
+                     NI_MSG_BINOP_PRINT_TYPE_ERROR,
                      op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
         return NULL;
     }
@@ -253,7 +250,7 @@ cimpl_PyNumber_InPlaceAdd_1(PyObject *v, PyObject *w, PySequenceMethods *m)
                 return (*f)(v, w);
 #endif
         }
-        result = cimpl_binop_type_error(v, w, "+=");
+        result = cimpl_binop_type_error(v, w, NI_MSG_OP_IADD);
     }
     return result;
 }
@@ -279,7 +276,7 @@ cimpl_PyNumber_InPlaceAdd_3(PyObject *v, PyObject *w, PySequenceMethods *m)
                 return (*func)(v, w);
 #endif
         }
-        result = cimpl_binop_type_error(v, w, "+=");
+        result = cimpl_binop_type_error(v, w, NI_MSG_OP_IADD);
     }
     return result;
 }
@@ -304,8 +301,7 @@ cimpl_sequence_repeat(ssizeargfunc repeatfunc, PyObject *seq, PyObject *n)
     }
     else {
         return cimpl_type_error(
-            "can't multiply sequence by "
-            "non-int of type '%.200s'",
+            NI_MSG_SEQ_REPEAT_NON_INT,
             n);
     }
 #if NI_HAS_CHECK_SLOT_RESULT
@@ -331,7 +327,7 @@ cimpl_PyNumber_InPlaceMultiply_1(PyObject *v, PyObject *w,
             if (f != NULL)
                 return cimpl_sequence_repeat(f, v, w);
         }
-        result = cimpl_binop_type_error(v, w, "*=");
+        result = cimpl_binop_type_error(v, w, NI_MSG_OP_IMUL);
     }
     return result;
 }
@@ -350,7 +346,7 @@ cimpl_PyNumber_InPlaceMultiply_4(PyObject *v, PyObject *w,
             if (f != NULL)
                 return cimpl_sequence_repeat(f, v, w);
         }
-        result = cimpl_binop_type_error(v, w, "*=");
+        result = cimpl_binop_type_error(v, w, NI_MSG_OP_IMUL);
     }
     return result;
 }
@@ -367,7 +363,7 @@ cimpl_PyNumber_InPlaceMultiply_5(PyObject *v, PyObject *w,
                     return cimpl_sequence_repeat(mw->sq_repeat, w, v);
             }
         }
-        result = cimpl_binop_type_error(v, w, "*=");
+        result = cimpl_binop_type_error(v, w, NI_MSG_OP_IMUL);
     }
     return result;
 }
@@ -489,33 +485,18 @@ cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
             Py_DECREF(x);
         }
     }
-#if NI_HAS_CHECK_SLOT_RESULT
-    if (z == Py_None) {
-        PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for %.100s: "
-                     "'%.100s' and '%.100s'",
-                     op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
-    }
-    else {
-        PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for %.100s: "
-                     "'%.100s', '%.100s', '%.100s'",
-                     op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
-                     Py_TYPE(z)->tp_name);
-    }
-#else
+    /* op_name is the name a type error of **= shows (NI_MSG_OP_IPOW: before
+       3.10, "** or pow()"). z is INPLACE_POWER's None: pow()'s message of
+       three operands stands for the case no compiled code reaches. */
     if (z == Py_None)
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for ** or pow(): "
-                     "'%.100s' and '%.100s'",
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
+                     NI_MSG_BINOP_TYPE_ERROR,
+                     op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     else
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for pow(): "
-                     "'%.100s', '%.100s', '%.100s'",
+                     NI_MSG_POW3_TYPE_ERROR,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
                      Py_TYPE(z)->tp_name);
-#endif
     return NULL;
 }
 
@@ -541,15 +522,13 @@ cimpl_ternary_op_1(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
     }
     if (z == Py_None) {
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for %.100s: "
-                     "'%.100s' and '%.100s'",
+                     NI_MSG_BINOP_TYPE_ERROR,
                      op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     }
     else {
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for %.100s: "
-                     "'%.100s', '%.100s', '%.100s'",
-                     op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
+                     NI_MSG_POW3_TYPE_ERROR,
+                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
                      Py_TYPE(z)->tp_name);
     }
     return NULL;
@@ -573,13 +552,11 @@ cimpl_ternary_op_1(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
     }
     if (z == Py_None)
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for ** or pow(): "
-                     "'%.100s' and '%.100s'",
+                     NI_MSG_BINOP_TYPE_ERROR, NI_MSG_OP_IPOW,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     else
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for pow(): "
-                     "'%.100s', '%.100s', '%.100s'",
+                     NI_MSG_POW3_TYPE_ERROR,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
                      Py_TYPE(z)->tp_name);
     return NULL;
@@ -596,27 +573,23 @@ cimpl_ternary_op_2(PyObject *v, PyObject *w, PyObject *z)
 #if NI_HAS_CHECK_SLOT_RESULT
     if (z == Py_None) {
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for %.100s: "
-                     "'%.100s' and '%.100s'",
+                     NI_MSG_BINOP_TYPE_ERROR,
                      op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     }
     else {
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for %.100s: "
-                     "'%.100s', '%.100s', '%.100s'",
-                     op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
+                     NI_MSG_POW3_TYPE_ERROR,
+                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
                      Py_TYPE(z)->tp_name);
     }
 #else
     if (z == Py_None)
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for ** or pow(): "
-                     "'%.100s' and '%.100s'",
+                     NI_MSG_BINOP_TYPE_ERROR, NI_MSG_OP_IPOW,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     else
         PyErr_Format(PyExc_TypeError,
-                     "unsupported operand type(s) for pow(): "
-                     "'%.100s', '%.100s', '%.100s'",
+                     NI_MSG_POW3_TYPE_ERROR,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
                      Py_TYPE(z)->tp_name);
 #endif
@@ -655,7 +628,7 @@ cimpl_PyNumber_Multiply_1(PyObject *v, PyObject *w, PySequenceMethods *mv,
         else if (mw && mw->sq_repeat) {
             return cimpl_sequence_repeat(mw->sq_repeat, w, v);
         }
-        result = cimpl_binop_type_error(v, w, "*");
+        result = cimpl_binop_type_error(v, w, NI_MSG_OP_MUL);
     }
     return result;
 }
@@ -670,7 +643,7 @@ cimpl_PyNumber_Multiply_3(PyObject *v, PyObject *w, PySequenceMethods *mw)
                 return cimpl_sequence_repeat(mw->sq_repeat, w, v);
             }
         }
-        result = cimpl_binop_type_error(v, w, "*");
+        result = cimpl_binop_type_error(v, w, NI_MSG_OP_MUL);
     }
     return result;
 }
@@ -864,11 +837,11 @@ PsycoMapping_Size(PsycoObject *po, vinfo_t *o)
         _t5 = _t4 != 0;
     }
     if (_t5) {
-        type_error(po, "%.200s is not a mapping", o);
+        type_error(po, NI_MSG_MAPPING_SIZE_NOT_MAPPING, o);
         return NULL;
     }
 #endif
-    type_error(po, "object of type '%.200s' has no len()", o);
+    type_error(po, NI_MSG_MAPPING_NO_LEN, o);
     return NULL;
 }
 
@@ -911,7 +884,7 @@ PsycoNumber_Absolute(PsycoObject *po, vinfo_t *o)
         return _t3;
 #endif
     }
-    _t4 = type_error(po, "bad operand type for abs(): '%.200s'", o);
+    _t4 = type_error(po, NI_MSG_BAD_ABS, o);
     return _t4;
 }
 
@@ -1039,7 +1012,7 @@ binop_type_error(PsycoObject *po, vinfo_t *v, vinfo_t *w, const char *op_name)
     }
     PycException_SetFormat(
         po, PyExc_TypeError,
-        "unsupported operand type(s) for %.100s: '%.100s' and '%.100s'",
+        NI_MSG_BINOP_TYPE_ERROR,
         op_name, tp_v->tp_name, tp_w->tp_name);
     return NULL;
 }
@@ -1087,7 +1060,7 @@ PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         result = Psyco_META2(po, _t2, CfCommonNewRefPyObject, "vv", v, w);
         return result;
     }
-    _t5 = binop_type_error(po, v, w, "+");
+    _t5 = binop_type_error(po, v, w, NI_MSG_OP_ADD);
     return _t5;
 }
 #else
@@ -1131,7 +1104,7 @@ PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
             _t4 = Psyco_META2(po, _t2, CfCommonNewRefPyObject, "vv", v, w);
             return _t4;
         }
-        result = binop_type_error(po, v, w, "+");
+        result = binop_type_error(po, v, w, NI_MSG_OP_ADD);
         return result;
     }
     return result;
@@ -1168,7 +1141,7 @@ binary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot,
         if (_t2) {
             PycException_SetFormat(
                 po, PyExc_TypeError,
-                "unsupported operand type(s) for %.100s: '%.100s' and '%.100s'. Did you mean \"print(<message>, file=<output_stream>)\"?",
+                NI_MSG_BINOP_PRINT_TYPE_ERROR,
                 op_name, tp_v->tp_name, tp_w->tp_name);
             return NULL;
         }
@@ -1192,7 +1165,7 @@ PsycoNumber_And(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_and), "&");
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_and), NI_MSG_OP_AND);
     return _t1;
 }
 
@@ -1211,7 +1184,7 @@ PsycoNumber_Divmod(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 =
-        binary_op(po, v, w, offsetof(PyNumberMethods, nb_divmod), "divmod()");
+        binary_op(po, v, w, offsetof(PyNumberMethods, nb_divmod), NI_MSG_OP_DIVMOD);
     return _t1;
 }
 
@@ -1230,7 +1203,7 @@ PsycoNumber_FloorDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 =
-        binary_op(po, v, w, offsetof(PyNumberMethods, nb_floor_divide), "//");
+        binary_op(po, v, w, offsetof(PyNumberMethods, nb_floor_divide), NI_MSG_OP_FLOORDIV);
     return _t1;
 }
 
@@ -1347,7 +1320,7 @@ PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 #endif
             }
         }
-        result = binop_type_error(po, v, w, "+=");
+        result = binop_type_error(po, v, w, NI_MSG_OP_IADD);
         return result;
     }
     return result;
@@ -1393,7 +1366,7 @@ PsycoNumber_InPlaceAnd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_and),
-                     offsetof(PyNumberMethods, nb_and), "&=");
+                     offsetof(PyNumberMethods, nb_and), NI_MSG_OP_IAND);
     return _t1;
 }
 
@@ -1413,7 +1386,7 @@ PsycoNumber_InPlaceFloorDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     _t1 = binary_iop(po, v, w,
                      offsetof(PyNumberMethods, nb_inplace_floor_divide),
-                     offsetof(PyNumberMethods, nb_floor_divide), "//=");
+                     offsetof(PyNumberMethods, nb_floor_divide), NI_MSG_OP_IFLOORDIV);
     return _t1;
 }
 
@@ -1432,7 +1405,7 @@ PsycoNumber_InPlaceLshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_lshift),
-                     offsetof(PyNumberMethods, nb_lshift), "<<=");
+                     offsetof(PyNumberMethods, nb_lshift), NI_MSG_OP_ILSHIFT);
     return _t1;
 }
 
@@ -1452,7 +1425,7 @@ PsycoNumber_InPlaceMatrixMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     _t1 = binary_iop(po, v, w,
                      offsetof(PyNumberMethods, nb_inplace_matrix_multiply),
-                     offsetof(PyNumberMethods, nb_matrix_multiply), "@=");
+                     offsetof(PyNumberMethods, nb_matrix_multiply), NI_MSG_OP_IMATMUL);
     return _t1;
 }
 
@@ -1499,7 +1472,7 @@ sequence_repeat(PsycoObject *po, ssizeargfunc repeatfunc, vinfo_t *seq,
     }
     else {
         _t4 = type_error(
-            po, "can't multiply sequence by non-int of type '%.200s'", n);
+            po, NI_MSG_SEQ_REPEAT_NON_INT, n);
         return _t4;
     }
     _t5 =
@@ -1598,7 +1571,7 @@ PsycoNumber_InPlaceMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
                 }
             }
         }
-        result = binop_type_error(po, v, w, "*=");
+        result = binop_type_error(po, v, w, NI_MSG_OP_IMUL);
         return result;
     }
     return result;
@@ -1619,7 +1592,7 @@ PsycoNumber_InPlaceOr(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_or),
-                     offsetof(PyNumberMethods, nb_or), "|=");
+                     offsetof(PyNumberMethods, nb_or), NI_MSG_OP_IOR);
     return _t1;
 }
 
@@ -1942,7 +1915,7 @@ PsycoNumber_InPlacePower(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z)
         return NULL;
     }
     _t1 = ternary_iop(po, v, w, z, offsetof(PyNumberMethods, nb_inplace_power),
-                      offsetof(PyNumberMethods, nb_power), "**=");
+                      offsetof(PyNumberMethods, nb_power), NI_MSG_OP_IPOW);
     return _t1;
 }
 #else
@@ -1976,12 +1949,12 @@ PsycoNumber_InPlacePower(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z)
     }
     if (_t2) {
         _t3 = ternary_op(po, v, w, z,
-                         offsetof(PyNumberMethods, nb_inplace_power), "**=");
+                         offsetof(PyNumberMethods, nb_inplace_power), NI_MSG_OP_IPOW);
         return _t3;
     }
     else {
         _t4 = ternary_op(po, v, w, z, offsetof(PyNumberMethods, nb_power),
-                         "**=");
+                         NI_MSG_OP_IPOW);
         return _t4;
     }
 }
@@ -2002,7 +1975,7 @@ PsycoNumber_InPlaceRemainder(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_remainder),
-                     offsetof(PyNumberMethods, nb_remainder), "%=");
+                     offsetof(PyNumberMethods, nb_remainder), NI_MSG_OP_IMOD);
     return _t1;
 }
 
@@ -2021,7 +1994,7 @@ PsycoNumber_InPlaceRshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_rshift),
-                     offsetof(PyNumberMethods, nb_rshift), ">>=");
+                     offsetof(PyNumberMethods, nb_rshift), NI_MSG_OP_IRSHIFT);
     return _t1;
 }
 
@@ -2040,7 +2013,7 @@ PsycoNumber_InPlaceSubtract(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_subtract),
-                     offsetof(PyNumberMethods, nb_subtract), "-=");
+                     offsetof(PyNumberMethods, nb_subtract), NI_MSG_OP_ISUB);
     return _t1;
 }
 
@@ -2060,7 +2033,7 @@ PsycoNumber_InPlaceTrueDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     _t1 =
         binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_true_divide),
-                   offsetof(PyNumberMethods, nb_true_divide), "/=");
+                   offsetof(PyNumberMethods, nb_true_divide), NI_MSG_OP_ITRUEDIV);
     return _t1;
 }
 
@@ -2079,7 +2052,7 @@ PsycoNumber_InPlaceXor(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_xor),
-                     offsetof(PyNumberMethods, nb_xor), "^=");
+                     offsetof(PyNumberMethods, nb_xor), NI_MSG_OP_IXOR);
     return _t1;
 }
 
@@ -2122,7 +2095,7 @@ PsycoNumber_Invert(PsycoObject *po, vinfo_t *o)
         return _t3;
 #endif
     }
-    _t4 = type_error(po, "bad operand type for unary ~: '%.200s'", o);
+    _t4 = type_error(po, NI_MSG_BAD_INVERT, o);
     return _t4;
 }
 
@@ -2140,7 +2113,7 @@ PsycoNumber_Lshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_lshift), "<<");
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_lshift), NI_MSG_OP_LSHIFT);
     return _t1;
 }
 
@@ -2159,7 +2132,7 @@ PsycoNumber_MatrixMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_matrix_multiply),
-                    "@");
+                    NI_MSG_OP_MATMUL);
     return _t1;
 }
 
@@ -2229,7 +2202,7 @@ PsycoNumber_Multiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
                 return _t7;
             }
         }
-        result = binop_type_error(po, v, w, "*");
+        result = binop_type_error(po, v, w, NI_MSG_OP_MUL);
         return result;
     }
     return result;
@@ -2274,7 +2247,7 @@ PsycoNumber_Negative(PsycoObject *po, vinfo_t *o)
         return _t3;
 #endif
     }
-    _t4 = type_error(po, "bad operand type for unary -: '%.200s'", o);
+    _t4 = type_error(po, NI_MSG_BAD_NEGATIVE, o);
     return _t4;
 }
 
@@ -2292,7 +2265,7 @@ PsycoNumber_Or(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_or), "|");
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_or), NI_MSG_OP_OR);
     return _t1;
 }
 
@@ -2335,7 +2308,7 @@ PsycoNumber_Positive(PsycoObject *po, vinfo_t *o)
         return _t3;
 #endif
     }
-    _t4 = type_error(po, "bad operand type for unary +: '%.200s'", o);
+    _t4 = type_error(po, NI_MSG_BAD_POSITIVE, o);
     return _t4;
 }
 
@@ -2353,7 +2326,7 @@ PsycoNumber_Remainder(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_remainder), "%");
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_remainder), NI_MSG_OP_MOD);
     return _t1;
 }
 
@@ -2371,7 +2344,7 @@ PsycoNumber_Rshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_rshift), ">>");
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_rshift), NI_MSG_OP_RSHIFT);
     return _t1;
 }
 
@@ -2389,7 +2362,7 @@ PsycoNumber_Subtract(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_subtract), "-");
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_subtract), NI_MSG_OP_SUB);
     return _t1;
 }
 
@@ -2407,7 +2380,7 @@ PsycoNumber_TrueDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_true_divide), "/");
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_true_divide), NI_MSG_OP_TRUEDIV);
     return _t1;
 }
 
@@ -2425,7 +2398,7 @@ PsycoNumber_Xor(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_xor), "^");
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_xor), NI_MSG_OP_XOR);
     return _t1;
 }
 
@@ -2541,10 +2514,10 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         _t11 = _t10 != 0;
     }
     if (_t11) {
-        type_error(po, "%.200s is not a sequence", s);
+        type_error(po, NI_MSG_SEQ_DEL_NOT_SEQUENCE, s);
         return false;
     }
-    type_error(po, "'%.200s' object doesn't support item deletion", s);
+    type_error(po, NI_MSG_SEQ_NO_DEL, s);
     return false;
 }
 #elif NI_HAS_NOT_A_SEQUENCE_ERROR
@@ -2659,10 +2632,10 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         _t12 = _t11 != 0;
     }
     if (_t12) {
-        type_error(po, "%.200s is not a sequence", s);
+        type_error(po, NI_MSG_SEQ_DEL_NOT_SEQUENCE, s);
         return false;
     }
-    type_error(po, "'%.200s' object doesn't support item deletion", s);
+    type_error(po, NI_MSG_SEQ_NO_DEL, s);
     return false;
 }
 #else
@@ -2758,7 +2731,7 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         vinfo_xdecref(own_i, po);
         return _t10;
     }
-    type_error(po, "'%.200s' object doesn't support item deletion", s);
+    type_error(po, NI_MSG_SEQ_NO_DEL, s);
     return false;
 }
 #endif
@@ -2853,13 +2826,13 @@ PsycoObject_DelItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
                     return false;
             }
             if (_t7 != 0) {
-                type_error(po, "sequence index must be integer, not '%.200s'",
+                type_error(po, NI_MSG_INDEX_DEL_NOT_INT,
                            key);
                 return false;
             }
         }
     }
-    type_error(po, "'%.200s' object does not support item deletion", o);
+    type_error(po, NI_MSG_NO_ITEM_DELETION, o);
     return false;
 }
 
@@ -2973,10 +2946,10 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         _t12 = _t11 != 0;
     }
     if (_t12) {
-        _t13 = type_error(po, "%.200s is not a sequence", s);
+        _t13 = type_error(po, NI_MSG_SEQ_GET_NOT_SEQUENCE, s);
         return _t13;
     }
-    _t14 = type_error(po, "'%.200s' object does not support indexing", s);
+    _t14 = type_error(po, NI_MSG_SEQ_NO_GET, s);
     return _t14;
 }
 #elif NI_HAS_NOT_A_SEQUENCE_ERROR
@@ -3089,10 +3062,10 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         _t13 = _t12 != 0;
     }
     if (_t13) {
-        _t14 = type_error(po, "%.200s is not a sequence", s);
+        _t14 = type_error(po, NI_MSG_SEQ_GET_NOT_SEQUENCE, s);
         return _t14;
     }
-    _t15 = type_error(po, "'%.200s' object does not support indexing", s);
+    _t15 = type_error(po, NI_MSG_SEQ_NO_GET, s);
     return _t15;
 }
 #else
@@ -3187,7 +3160,7 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         vinfo_xdecref(own_i, po);
         return _t11;
     }
-    _t12 = type_error(po, "'%.200s' object does not support indexing", s);
+    _t12 = type_error(po, NI_MSG_SEQ_NO_GET, s);
     return _t12;
 }
 #endif
@@ -3280,7 +3253,7 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
         }
         else {
             _t11 = type_error(
-                po, "sequence index must be integer, not '%.200s'", key);
+                po, NI_MSG_INDEX_GET_NOT_INT, key);
             return _t11;
         }
     }
@@ -3288,7 +3261,7 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
         return psyco_generic_call(po, PyObject_GetItem, CfCommonNewRefPyObject,
                                   "vv", o, key);
     }
-    _t12 = type_error(po, "'%.200s' object is not subscriptable", o);
+    _t12 = type_error(po, NI_MSG_NOT_SUBSCRIPTABLE, o);
     return _t12;
 }
 
@@ -3403,10 +3376,10 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
         _t11 = _t10 != 0;
     }
     if (_t11) {
-        type_error(po, "%.200s is not a sequence", s);
+        type_error(po, NI_MSG_SEQ_SET_NOT_SEQUENCE, s);
         return false;
     }
-    type_error(po, "'%.200s' object does not support item assignment", s);
+    type_error(po, NI_MSG_SEQ_NO_SET, s);
     return false;
 }
 #elif NI_HAS_NOT_A_SEQUENCE_ERROR
@@ -3520,10 +3493,10 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
         _t12 = _t11 != 0;
     }
     if (_t12) {
-        type_error(po, "%.200s is not a sequence", s);
+        type_error(po, NI_MSG_SEQ_SET_NOT_SEQUENCE, s);
         return false;
     }
-    type_error(po, "'%.200s' object does not support item assignment", s);
+    type_error(po, NI_MSG_SEQ_NO_SET, s);
     return false;
 }
 #else
@@ -3618,7 +3591,7 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
         vinfo_xdecref(own_i, po);
         return _t10;
     }
-    type_error(po, "'%.200s' object does not support item assignment", s);
+    type_error(po, NI_MSG_SEQ_NO_SET, s);
     return false;
 }
 #endif
@@ -3712,13 +3685,13 @@ PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
                     return false;
             }
             if (_t7 != 0) {
-                type_error(po, "sequence index must be integer, not '%.200s'",
+                type_error(po, NI_MSG_INDEX_SET_NOT_INT,
                            key);
                 return false;
             }
         }
     }
-    type_error(po, "'%.200s' object does not support item assignment", o);
+    type_error(po, NI_MSG_NO_ITEM_ASSIGNMENT, o);
     return false;
 }
 
@@ -3875,7 +3848,7 @@ PsycoSequence_GetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2)
         vinfo_decref(slice, po);
         return res;
     }
-    _t7 = type_error(po, "'%.200s' object is unsliceable", s);
+    _t7 = type_error(po, NI_MSG_SEQ_GET_SLICE, s);
     return _t7;
 }
 
@@ -3935,7 +3908,7 @@ PsycoSequence_SetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2,
         vinfo_decref(slice, po);
         return res != NULL;
     }
-    type_error(po, "'%.200s' object doesn't support slice assignment", s);
+    type_error(po, NI_MSG_SEQ_SET_SLICE, s);
     return false;
 }
 
@@ -4032,7 +4005,7 @@ vinfo_t *PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi) {
       }
     if (item != NULL)
       return PsycoSeqIter_New(po, vi);
-    return type_error_tp(po, "'%.200s' object is not iterable", t);
+    return type_error_tp(po, NI_MSG_NOT_ITERABLE, t);
   }
   /* a heap type's __iter__ may return a non-iterator, which
      PyObject_GetIter checks */
@@ -4050,7 +4023,7 @@ generic:
 static PyObject *cimpl_iternext(PyObject *iter) {
   iternextfunc f = Py_TYPE(iter)->tp_iternext;
   if (f == NULL) {
-    PyErr_Format(PyExc_TypeError, "'%.200s' object is not iterable",
+    PyErr_Format(PyExc_TypeError, NI_MSG_NEXT_NOT_IMPLEMENTED,
                  Py_TYPE(iter)->tp_name);
     return NULL;
   }
@@ -4074,7 +4047,7 @@ vinfo_t *PsycoIter_Next(PsycoObject *po, vinfo_t *iter) {
   }
   if (f == NULL) {
     PycException_SetFormat(po, PyExc_TypeError,
-                           "'%.200s' object is not iterable", tp->tp_name);
+                           NI_MSG_NEXT_NOT_IMPLEMENTED, tp->tp_name);
     return NULL;
   }
   return Psyco_META1(po, f, CfCommonIterNext, "v", iter);

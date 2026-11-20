@@ -209,16 +209,14 @@ cimpl_PyFloat_AsDouble_1(PyObject *op, PyObject *res)
     if (!PyFloat_CheckExact(res)) {
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError,
-                         "%.50s.__float__ returned non-float (type %.50s)",
+                         NI_MSG_FLOAT_RETURNED_NON_FLOAT,
                          op->ob_type->tp_name, res->ob_type->tp_name);
             Py_DECREF(res);
             return -1;
         }
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
-                "%.50s.__float__ returned non-float (type %.50s).  "
-                "The ability to return an instance of a strict subclass of float "
-                "is deprecated, and may be removed in a future version of Python.",
+                NI_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
                 op->ob_type->tp_name, res->ob_type->tp_name)) {
             Py_DECREF(res);
             return -1;
@@ -239,16 +237,14 @@ cimpl_PyFloat_AsDouble_2(PyObject *op, PyObject *res)
     if (!PyFloat_CheckExact(res)) {
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError,
-                         "%.50s.__float__ returned non-float (type %.50s)",
+                         NI_MSG_FLOAT_RETURNED_NON_FLOAT,
                          Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name);
             Py_DECREF(res);
             return -1;
         }
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
-                "%.50s.__float__ returned non-float (type %.50s).  "
-                "The ability to return an instance of a strict subclass of float "
-                "is deprecated, and may be removed in a future version of Python.",
+                NI_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
                 Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
             Py_DECREF(res);
             return -1;
@@ -258,16 +254,14 @@ cimpl_PyFloat_AsDouble_2(PyObject *op, PyObject *res)
     {
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError,
-                         "%.50s.__float__ returned non-float (type %.50s)",
+                         NI_MSG_FLOAT_RETURNED_NON_FLOAT,
                          op->ob_type->tp_name, res->ob_type->tp_name);
             Py_DECREF(res);
             return -1;
         }
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
-                "%.50s.__float__ returned non-float (type %.50s).  "
-                "The ability to return an instance of a strict subclass of float "
-                "is deprecated, and may be removed in a future version of Python.",
+                NI_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
                 op->ob_type->tp_name, res->ob_type->tp_name)) {
             Py_DECREF(res);
             return -1;
@@ -288,7 +282,7 @@ cimpl_PyFloat_AsDouble_3(PyObject *op, PyObject *res)
 #if NI_HAS_FLOAT_ASDOUBLE_INDEX
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError,
-                         "%.50s.__float__ returned non-float (type %.50s)",
+                         NI_MSG_FLOAT_RETURNED_NON_FLOAT,
                          Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name);
             Py_DECREF(res);
             return -1;
@@ -296,9 +290,7 @@ cimpl_PyFloat_AsDouble_3(PyObject *op, PyObject *res)
 #endif
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
-                "%.50s.__float__ returned non-float (type %.50s).  "
-                "The ability to return an instance of a strict subclass of float "
-                "is deprecated, and may be removed in a future version of Python.",
+                NI_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
                 Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
             Py_DECREF(res);
             return -1;
@@ -318,9 +310,7 @@ cimpl_PyFloat_AsDouble_4(PyObject *op, PyObject *res)
     {
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
-                "%.50s.__float__ returned non-float (type %.50s).  "
-                "The ability to return an instance of a strict subclass of float "
-                "is deprecated, and may be removed in a future version of Python.",
+                NI_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
                 Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
             Py_DECREF(res);
             return -1;
@@ -394,7 +384,7 @@ cimpl_float_div_1(PyObject *w, double a)
     else if (cimpl_convert_to_double(&(w), &(b)) < 0)
         return w;
     if (b == 0.0) {
-        PyErr_SetString(PyExc_ZeroDivisionError, "float division by zero");
+        PyErr_SetString(PyExc_ZeroDivisionError, NI_MSG_FLOAT_DIVISION_BY_ZERO);
         return NULL;
     }
     a = a / b;
@@ -406,7 +396,7 @@ static int
 cimpl_float_div(double a, double b, double *_r)
 {
     if (b == 0.0) {
-        PyErr_SetString(PyExc_ZeroDivisionError, "float division by zero");
+        PyErr_SetString(PyExc_ZeroDivisionError, NI_MSG_FLOAT_DIVISION_BY_ZERO);
         return -1;
     }
     a = a / b;
@@ -453,7 +443,7 @@ cimpl_float_rem_1(PyObject *w, double vx)
     else if (cimpl_convert_to_double(&(w), &(wx)) < 0)
         return w;
     if (wx == 0.0) {
-        PyErr_SetString(PyExc_ZeroDivisionError, "float modulo");
+        PyErr_SetString(PyExc_ZeroDivisionError, NI_MSG_FLOAT_MODULO_BY_ZERO);
         return NULL;
     }
     mod = fmod(vx, wx);
@@ -474,7 +464,7 @@ cimpl_float_rem(double vx, double wx, double *_r)
 {
     double mod;
     if (wx == 0.0) {
-        PyErr_SetString(PyExc_ZeroDivisionError, "float modulo");
+        PyErr_SetString(PyExc_ZeroDivisionError, NI_MSG_FLOAT_MODULO_BY_ZERO);
         return -1;
     }
     mod = fmod(vx, wx);
@@ -633,7 +623,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
             return _t9;
         }
         PycException_SetFormat(po, PyExc_TypeError,
-                               "must be real number, not %.50s",
+                               NI_MSG_MUST_BE_REAL_NUMBER,
                                tp_op->tp_name);
         return NULL;
     }
@@ -670,7 +660,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
         if (!(_t14)) {
             PycException_SetFormat(
                 po, PyExc_TypeError,
-                "%.50s.__float__ returned non-float (type %.50s)",
+                NI_MSG_FLOAT_RETURNED_NON_FLOAT,
                 tp_op->tp_name, tp_res->tp_name);
             vinfo_decref(res, po);
             return NULL;
@@ -754,7 +744,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
     }
     if (_t5) {
         PycException_SetFormat(po, PyExc_TypeError,
-                               "must be real number, not %.50s",
+                               NI_MSG_MUST_BE_REAL_NUMBER,
                                tp_op->tp_name);
         return NULL;
     }
@@ -791,7 +781,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
         if (!(_t10)) {
             PycException_SetFormat(
                 po, PyExc_TypeError,
-                "%.50s.__float__ returned non-float (type %.50s)",
+                NI_MSG_FLOAT_RETURNED_NON_FLOAT,
                 tp_op->tp_name, tp_res->tp_name);
             vinfo_decref(res, po);
             return NULL;

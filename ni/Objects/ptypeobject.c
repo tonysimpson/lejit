@@ -379,7 +379,7 @@ static PyObject *object_new_checked(PyTypeObject *tp) {
 /* slot_tp_init's error for a result that isn't None */
 static PyObject *init_result_error(PyObject *res) {
   PyErr_Format(PyExc_TypeError,
-               "__init__() should return None, not '%.200s'",
+               NI_MSG_INIT_RETURNED,
                Py_TYPE(res)->tp_name);
   return NULL;
 }

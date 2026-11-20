@@ -75,7 +75,7 @@ static vinfo_t *pbytes_subscript(PsycoObject *po, vinfo_t *v, vinfo_t *key) {
   if (cc == CC_ERROR)
     goto fail;
   if (runtime_condition_f(po, cc)) {
-    PycException_SetString(po, PyExc_IndexError, "index out of range");
+    PycException_SetString(po, PyExc_IndexError, NI_MSG_BYTES_INDEX_RANGE);
     goto fail;
   }
   r = psyco_get_field_array(po, v, BYTES_sval, i);

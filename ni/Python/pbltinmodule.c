@@ -39,7 +39,7 @@ cimpl_builtin_hasattr_impl(PyObject *module, PyObject *obj, PyObject *name)
     PyObject *v;
     if (!PyUnicode_Check(name)) {
         PyErr_SetString(PyExc_TypeError,
-                        "hasattr(): attribute name must be string");
+                        NI_MSG_HASATTR_NAME_NOT_STR);
         return NULL;
     }
     if (_PyObject_LookupAttr(obj, name, &v) < 0) {
@@ -194,7 +194,7 @@ builtin_getattr(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
         }
         if ((tp_name->tp_flags & Py_TPFLAGS_UNICODE_SUBCLASS) == 0) {
             PycException_SetString(po, PyExc_TypeError,
-                                   "getattr(): attribute name must be string");
+                                   NI_MSG_GETATTR_NAME_NOT_STR);
             return NULL;
         }
         result = PsycoObject_GetAttr(po, v, name);
@@ -212,7 +212,7 @@ builtin_getattr(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
         }
         if ((tp_name->tp_flags & Py_TPFLAGS_UNICODE_SUBCLASS) == 0) {
             PycException_SetString(po, PyExc_TypeError,
-                                   "getattr(): attribute name must be string");
+                                   NI_MSG_GETATTR_NAME_NOT_STR);
             return NULL;
         }
         return PsycoCFunction_CallFast(po, cfunc_builtin_getattr,
@@ -231,7 +231,7 @@ builtin_hasattr_impl(PsycoObject *po, vinfo_t *module, vinfo_t *obj,
     }
     if ((tp_name->tp_flags & Py_TPFLAGS_UNICODE_SUBCLASS) == 0) {
         PycException_SetString(po, PyExc_TypeError,
-                               "hasattr(): attribute name must be string");
+                               NI_MSG_HASATTR_NAME_NOT_STR);
         return NULL;
     }
     return psyco_generic_call(po, cimpl_builtin_hasattr_impl,
@@ -858,17 +858,17 @@ static PyObject *cimpl_super_noargs(long argc, PyObject *obj,
                                     PyObject *objcell, PyObject *classcell) {
   PyObject *type;
   if (argc == 0) {
-    PyErr_SetString(PyExc_RuntimeError, "super(): no arguments");
+    PyErr_SetString(PyExc_RuntimeError, NI_MSG_SUPER_NO_ARGS);
     return NULL;
   }
   if (obj == NULL && objcell != NULL)
     obj = PyCell_GET(objcell);
   if (obj == NULL) {
-    PyErr_SetString(PyExc_RuntimeError, "super(): arg[0] deleted");
+    PyErr_SetString(PyExc_RuntimeError, NI_MSG_SUPER_ARG0_DELETED);
     return NULL;
   }
   if (classcell == NULL) {
-    PyErr_SetString(PyExc_RuntimeError, "super(): __class__ cell not found");
+    PyErr_SetString(PyExc_RuntimeError, NI_MSG_SUPER_NO_CLASS_CELL);
     return NULL;
   }
   if (!PyCell_Check(classcell)) {
@@ -877,11 +877,11 @@ static PyObject *cimpl_super_noargs(long argc, PyObject *obj,
   }
   type = PyCell_GET(classcell);
   if (type == NULL) {
-    PyErr_SetString(PyExc_RuntimeError, "super(): empty __class__ cell");
+    PyErr_SetString(PyExc_RuntimeError, NI_MSG_SUPER_EMPTY_CLASS_CELL);
     return NULL;
   }
   if (!PyType_Check(type)) {
-    PyErr_Format(PyExc_RuntimeError, "super(): __class__ is not a type (%s)",
+    PyErr_Format(PyExc_RuntimeError, NI_MSG_SUPER_CLASS_NOT_TYPE,
                  Py_TYPE(type)->tp_name);
     return NULL;
   }

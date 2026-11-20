@@ -225,7 +225,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
     if ((tp_bb->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
         PycException_SetFormat(
             po, PyExc_TypeError,
-            "can only concatenate tuple (not \"%.200s\") to tuple",
+            NI_MSG_TUPLE_CONCAT,
             tp_bb->tp_name);
         return NULL;
     }
@@ -314,7 +314,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
     if ((tp_bb->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
         PycException_SetFormat(
             po, PyExc_TypeError,
-            "can only concatenate tuple (not \"%.200s\") to tuple",
+            NI_MSG_TUPLE_CONCAT,
             tp_bb->tp_name);
         return NULL;
     }
@@ -474,7 +474,7 @@ tupleitem(PsycoObject *po, vinfo_t *a, vinfo_t *i)
     _t3 = runtime_condition_f(po, _t2);
     if (_t3) {
         PycException_SetString(po, PyExc_IndexError,
-                               "tuple index out of range");
+                               NI_MSG_TUPLE_INDEX_RANGE);
         return NULL;
     }
     _t4 = psyco_get_field_array(po, a, FPYREF(TUPLE_ob_item), i);

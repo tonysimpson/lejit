@@ -858,7 +858,7 @@ integer_lshift(PsycoObject *po, vinfo_t *v1, vinfo_t *v2)
             return NULL;
         if (runtime_condition_f(po, cc)) {
             PycException_SetString(po, PyExc_ValueError,
-                                   "negative shift count");
+                                   NI_MSG_NEGATIVE_SHIFT);
             return NULL;
         }
         return vinfo_new(CompileTime_New(0));
@@ -886,7 +886,7 @@ integer_lshift_i(PsycoObject *po, vinfo_t *v1, long counter)
     else if (counter >= LONG_BIT)
         return vinfo_new(CompileTime_New(0));
     else {
-        PycException_SetString(po, PyExc_ValueError, "negative shift count");
+        PycException_SetString(po, PyExc_ValueError, NI_MSG_NEGATIVE_SHIFT);
         return NULL;
     }
 }
@@ -910,7 +910,7 @@ DEFINEFN /* signed */
             return NULL;
         if (runtime_condition_f(po, cc)) {
             PycException_SetString(po, PyExc_ValueError,
-                                   "negative shift count");
+                                   NI_MSG_NEGATIVE_SHIFT);
             return NULL;
         }
         return integer_rshift_i(po, v1, LONG_BIT - 1);
@@ -941,7 +941,7 @@ DEFINEFN /* signed */
         return v1;
     }
     else {
-        PycException_SetString(po, PyExc_ValueError, "negative shift count");
+        PycException_SetString(po, PyExc_ValueError, NI_MSG_NEGATIVE_SHIFT);
         return NULL;
     }
 }
@@ -967,7 +967,7 @@ integer_urshift_i(PsycoObject *po, vinfo_t *v1, long counter)
     else if (counter >= LONG_BIT)
         return vinfo_new(CompileTime_New(0));
     else {
-        PycException_SetString(po, PyExc_ValueError, "negative shift count");
+        PycException_SetString(po, PyExc_ValueError, NI_MSG_NEGATIVE_SHIFT);
         return NULL;
     }
 }
