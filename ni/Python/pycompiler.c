@@ -2277,7 +2277,12 @@ cimpl_match_class(PyObject *subject, PyObject *type, Py_ssize_t nargs,
     PyObject *match_args = NULL;
     if (nargs) {
         int match_self = 0;
-        match_args = PyObject_GetAttrString(type, "__match_args__");
+        /* An interned name, not PyObject_GetAttrString's new string each
+           time: 3.10's type attribute cache is keyed by the name's address
+           and keeps the name alive, so each new string could take another
+           slot and hold on to its memory until the cache is full. */
+        _Py_IDENTIFIER(__match_args__);
+        match_args = _PyObject_GetAttrId(type, &PyId___match_args__);
         if (match_args) {
             if (!PyTuple_CheckExact(match_args)) {
                 const char *e = NI_MSG_MATCH_ARGS_NOT_TUPLE;
