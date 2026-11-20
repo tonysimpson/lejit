@@ -122,6 +122,7 @@ vinfo_t = types.struct_type(
     ('source', types.uint64),
     ('array', types.pointer_type(vinfo_array_t)),
     ('tmp', vinfo_t_pointer),
+    ('type_hint', types.uint64),
 )
 vinfo_t_pointer.referenced_type = vinfo_t
 PyTryBlock = types.struct_type(
@@ -156,6 +157,7 @@ PsycoObject = types.struct_type(
     ('last_used_reg', reg_t),
     ('respawn_cnt', types.int32),
     ('respawn_proxy', types.uint64),
+    ('mp_serial', types.uint64),
     ('pr', pyc_data_t),
     ('vlocals', vinfo_array_t)
 )
