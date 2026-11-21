@@ -3136,7 +3136,7 @@ cimpl_jump_if_not_exc_match_0(PyObject *right)
 
 #if LE_HAS_OPCODE_MATCH_MAPPING
 static int
-cimpl_match_mapping_r0(PyObject *_in0, long _oparg, int match, PyObject **_out)
+cimpl_match_mapping_r0(PyObject *_in0, long _oparg, PyObject **_out)
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 1, _i;
@@ -3147,6 +3147,7 @@ cimpl_match_mapping_r0(PyObject *_in0, long _oparg, int match, PyObject **_out)
     stack_pointer++;
     {
         {
+            int match = Py_TYPE(_in0)->tp_flags & Py_TPFLAGS_MAPPING;
             PyObject *res = (match) ? Py_True : Py_False;
             Py_INCREF(res);
             *stack_pointer++ = res;
@@ -3167,8 +3168,7 @@ _error:
 
 #if LE_HAS_OPCODE_MATCH_SEQUENCE
 static int
-cimpl_match_sequence_r0(PyObject *_in0, long _oparg, int match,
-                        PyObject **_out)
+cimpl_match_sequence_r0(PyObject *_in0, long _oparg, PyObject **_out)
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 1, _i;
@@ -3179,6 +3179,7 @@ cimpl_match_sequence_r0(PyObject *_in0, long _oparg, int match,
     stack_pointer++;
     {
         {
+            int match = Py_TYPE(_in0)->tp_flags & Py_TPFLAGS_SEQUENCE;
             PyObject *res = (match) ? Py_True : Py_False;
             Py_INCREF(res);
             *stack_pointer++ = res;
@@ -7582,21 +7583,12 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     int _t2;
                     int _t3;
                     vinfo_array_t *_t5;
-                    int match;
-                    vinfo_t *subject;
-                    PyTypeObject *tp_subject;
-                    subject = NTOP(1);
-                    tp_subject = Psyco_NeedType(po, subject);
-                    if (tp_subject == NULL) {
-                        break;
-                    }
-                    match = (tp_subject->tp_flags & (1 << 6));
                     _t1 = 1;
                     _t2 = _t1 + PyCompile_OpcodeStackEffect(31, oparg);
                     _t5 = array_new(_t2);
                     if (!psyco_generic_call(po, cimpl_match_mapping_r0,
-                                            CfCommonIntZeroOk, "vllA", NTOP(1),
-                                            (long)oparg, (long)(match), _t5)) {
+                                            CfCommonIntZeroOk, "vlA", NTOP(1),
+                                            (long)oparg, _t5)) {
                         array_release(_t5);
                         break;
                     }
@@ -7616,21 +7608,12 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     int _t2;
                     int _t3;
                     vinfo_array_t *_t5;
-                    int match;
-                    vinfo_t *subject;
-                    PyTypeObject *tp_subject;
-                    subject = NTOP(1);
-                    tp_subject = Psyco_NeedType(po, subject);
-                    if (tp_subject == NULL) {
-                        break;
-                    }
-                    match = (tp_subject->tp_flags & (1 << 5));
                     _t1 = 1;
                     _t2 = _t1 + PyCompile_OpcodeStackEffect(32, oparg);
                     _t5 = array_new(_t2);
                     if (!psyco_generic_call(po, cimpl_match_sequence_r0,
-                                            CfCommonIntZeroOk, "vllA", NTOP(1),
-                                            (long)oparg, (long)(match), _t5)) {
+                                            CfCommonIntZeroOk, "vlA", NTOP(1),
+                                            (long)oparg, _t5)) {
                         array_release(_t5);
                         break;
                     }

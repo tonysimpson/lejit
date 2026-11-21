@@ -2,8 +2,10 @@
 # keywords, a type matching itself, and the TypeErrors match_class
 # raises), mapping patterns (MATCH_MAPPING, MATCH_KEYS, **rest's
 # COPY_DICT_WITHOUT_KEYS), sequence patterns (MATCH_SEQUENCE, GET_LEN),
-# and patterns capturing many names, which rotate the stack (ROT_N). A
-# source without the match statement has no cases here.
+# patterns capturing many names, which rotate the stack (ROT_N), and a
+# class registered with an ABC after its instances were matched, which
+# sets the type's flag without changing its version. A source without the
+# match statement has no cases here.
 try:
     compile('match 0:\n case _: pass', '<probe>', 'exec')
     HAS_MATCH = True
@@ -11,6 +13,9 @@ except SyntaxError:
     HAS_MATCH = False
 
 SRC = '''
+import collections.abc
+
+
 class Point:
     __match_args__ = ('x', 'y')
 
@@ -166,6 +171,33 @@ def mapping_errors(v):
                 return 'none'
     except Exception as e:
         return (type(e).__name__, str(e))
+
+
+def kind(v):
+    match v:
+        case [*_]:
+            return 'sequence'
+        case {}:
+            return 'mapping'
+        case _:
+            return 'other'
+
+
+class LaterSequence:
+    pass
+
+
+class LaterMapping:
+    pass
+
+
+def registered(cls, abc):
+    v = cls()
+    seen = []
+    for _ in range(2):
+        seen.append(kind(v))
+        abc.register(cls)
+    return seen
 '''
 
 # growth that stops, plain as well, after a few hundred rounds (the free
@@ -190,6 +222,8 @@ if HAS_MATCH:
                      ({'x': 1},), ([1],), (5,)], {}),
         ('sequence', [([],), ([1],), ((1, 2),), ([1, 2, 3, 4],), ('ab',), (range(5),),
                       ({1: 2},), (5,)], {}),
+        ('registered', '[(LaterSequence, collections.abc.Sequence),'
+                       ' (LaterMapping, collections.abc.Mapping)]', {}),
         ('mapping_errors', '[({"a": 1},), ({"b": 1},), (BadKeys(a=1),), ([("a", 1)],)]', {}),
     ]
 else:
