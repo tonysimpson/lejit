@@ -740,7 +740,7 @@ psyco_put_field_array(PsycoObject *po, vinfo_t *vi, defield_t df,
         if (!compute_vinfo(vi, po))
             return false;
         if (v_mem_mov(po, value, vi, vindex, offset, FIELD_SIZE2(df),
-                      ((long)df & FIELD_UNSIGNED)) == NULL) {
+                      ((long)df & FIELD_UNSIGNED) == 0) == NULL) {
             return false;
         }
         if (FIELD_HAS_REF(df)) {

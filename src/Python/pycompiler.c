@@ -1017,21 +1017,16 @@ cimpl_vt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
     PyThreadState *tstate = PyThreadState_GET();
     PyFrameObject *f =
         cimpl_new_frame(tstate, code, globals, lasti, lineno, word);
-    if (f == NULL) {
-        /* out-of-memory error */
-        Py_INCREF(Py_None);
-        return Py_None;
-    }
+    if (f == NULL)
+        return NULL;
     oldtb = le_exc_traceback(tstate); /* might be NULL */
     Py_XINCREF(oldtb);
     if (oldtb != NULL && PyTraceBack_Check(oldtb))
         psyco_frame_link_callee(((PyTracebackObject *)oldtb)->tb_frame, f);
     if (PyTraceBack_Here(f)) {
-        /* out-of-memory error */
         Py_XDECREF(oldtb);
         Py_DECREF(f);
-        Py_INCREF(Py_None);
-        return Py_None;
+        return NULL;
     }
     /* the new traceback is now the current exception's */
     newtb = le_exc_traceback(tstate);    /* extracts the reference */
@@ -1357,11 +1352,12 @@ PsycoTraceBack_Here(PsycoObject *po, int lasti)
     }
     else {
         /* We only have a virtual-time exception (not set in Python),
-           so we build po->pr.tb without actually setting it either */
-        vinfo_t *tb = psyco_generic_call(
-            po, cimpl_vt_traceback, CfCommonNewRefPyObjectNoError, tags,
-            (long)po->pr.co, LOC_GLOBALS, (long)lasti, (long)lineno,
-            (long)word);
+           so we build po->pr.tb without actually setting it either. Out of
+           memory, the MemoryError replaces it. */
+        vinfo_t *tb =
+            psyco_generic_call(po, cimpl_vt_traceback, CfCommonNewRefPyObject,
+                               tags, (long)po->pr.co, LOC_GLOBALS, (long)lasti,
+                               (long)lineno, (long)word);
         vinfo_xdecref(po->pr.tb, po);
         po->pr.tb = tb;
         if (tb != NULL && locals_wanted_now(po))
@@ -2720,43 +2716,6 @@ fail:
 }
 #endif
 
-static void
-ct_format_exc_check_arg(PsycoObject *po, PyObject *exc, const char *format_str,
-                        PyObject *obj)
-#if LE_HAS_NAME_ERROR_NAME
-{
-    const char *obj_str;
-    if (!obj)
-        return;
-    obj_str = PyUnicode_AsUTF8(obj);
-    if (!obj_str)
-        return;
-    PycException_SetFormat(po, exc, format_str, obj_str);
-    if (exc == PyExc_NameError) {
-        PyObject *type, *value, *traceback;
-        PyErr_Fetch(&type, &value, &traceback);
-        PyErr_NormalizeException(&type, &value, &traceback);
-        if (PyErr_GivenExceptionMatches(value, PyExc_NameError)) {
-            PyNameErrorObject *exc = (PyNameErrorObject *)value;
-            if (exc->name == NULL) {
-                (void)PyObject_SetAttrString(value, "name", obj);
-            }
-        }
-        PyErr_Restore(type, value, traceback);
-    }
-}
-#else
-{
-    const char *obj_str;
-    if (!obj)
-        return;
-    obj_str = PyUnicode_AsUTF8(obj);
-    if (!obj_str)
-        return;
-    PycException_SetFormat(po, exc, format_str, obj_str);
-}
-#endif
-
 #if !LE_HAS_INLINE_CALL_TSTATE_GET
 static int
 cimpl_print_expr_r0(PyObject *_in0, long _oparg, PyObject *value,
@@ -3073,6 +3032,15 @@ cimpl_format_exc_check_arg(PyObject *exc, const char *format_str,
     PyErr_Format(exc, format_str, obj_str);
 }
 #endif
+
+/* raised when it runs, by CPython's code, which sets a NameError's name */
+static void
+ct_format_exc_check_arg(PsycoObject *po, PyObject *exc, const char *format_str,
+                        PyObject *obj)
+{
+    psyco_generic_call(po, cimpl_format_exc_check_arg, CfPyErrAlways, "lll",
+                       (long)exc, (long)format_str, (long)obj);
+}
 
 static int
 cimpl_delete_global_0(PyObject *name, PyObject *_in0)
