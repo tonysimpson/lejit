@@ -322,3 +322,138 @@ def bare_raise_traceback(which):
 CASES += [
     ('bare_raise_traceback', [(0,), (1,), (2,)], {}),
 ]
+
+
+# A message naming a class is made when compiling, behind a guard on the
+# class: renamed afterwards, the class is named by its new name, as CPython
+# names it at each raise. Any other change to the class fails the guard
+# too, and the message is still right.
+import math
+
+
+class Named:
+    pass
+
+
+class Other:
+    pass
+
+
+def message(f, *args):
+    try:
+        f(*args)
+    except TypeError as e:
+        return str(e)
+
+
+def len_of(x):
+    try:
+        return len(x)
+    except TypeError as e:
+        return str(e)
+
+
+def add(x, y):
+    try:
+        return x + y
+    except TypeError as e:
+        return str(e)
+
+
+def less(x, y):
+    try:
+        return x < y
+    except TypeError as e:
+        return str(e)
+
+
+def iterate(x):
+    try:
+        for _ in x:
+            pass
+    except TypeError as e:
+        return str(e)
+
+
+def tuple_concat(x):
+    try:
+        return (1,) + x
+    except TypeError as e:
+        return str(e)
+
+
+def real_number(x):
+    try:
+        return math.sqrt(x)
+    except TypeError as e:
+        return str(e)
+
+
+async def async_iterate(x):
+    try:
+        async for _ in x:
+            pass
+    except TypeError as e:
+        return str(e)
+
+
+def run_async(x):
+    try:
+        async_iterate(x).send(None)
+    except StopIteration as s:
+        return s.value
+
+
+class NoAnext:
+    def __aiter__(self):
+        return Named()
+
+
+def changed_class(cls, change, undo, calls):
+    """each call before, after change(cls) and after undo(cls)"""
+    r = []
+    for _ in range(3):
+        r.append([f(*args) for f, args in calls])
+    change(cls)
+    r.append([f(*args) for f, args in calls])
+    undo(cls)
+    r.append([f(*args) for f, args in calls])
+    return r
+
+
+def rename(cls):
+    cls.__name__ = 'Renamed'
+
+
+def unrename(cls):
+    cls.__name__ = cls.__qualname__
+
+
+def add_attribute(cls):
+    cls.extra = 1
+
+
+def remove_attribute(cls):
+    del cls.extra
+
+
+def named_calls():
+    a, b = Named(), Other()
+    return [(len_of, (a,)), (add, (a, 1)), (add, (a, b)), (add, (b, a)),
+            (less, (a, b)), (iterate, (a,)), (tuple_concat, (a,)),
+            (real_number, (a,)), (run_async, (a,)), (run_async, (NoAnext(),))]
+
+
+def renamed_class():
+    return changed_class(Named, rename, unrename, named_calls())
+
+
+def changed_unrenamed_class():
+    return changed_class(Named, add_attribute, remove_attribute,
+                         named_calls())
+
+
+CASES += [
+    ('renamed_class', [()], {}),
+    ('changed_unrenamed_class', [()], {}),
+]

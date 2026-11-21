@@ -855,6 +855,38 @@ load_guard_set(attr_guard_t *guard, PyTypeObject *tp)
     guard->flags = version_tag_valid(tp) ? tp->tp_flags : 0;
 }
 
+/* The guards of the messages that name a class (pycompiler.c:
+   PycException_SetTypeFormat): one per (type, name), which any site may set
+   to the type as it is while it has that name. A rename changes the
+   version tag, so a site compiled with the old name fails its guard from
+   then on; so does any other change to the class until a site with the
+   same name is compiled again. A record (dict_record). */
+DEFINEFN
+condition_code_t
+Psyco_TypeNameChanged(PsycoObject *po, PyTypeObject *tp)
+{
+    static PyObject *guards = NULL, *lookup_name;
+    PyObject *key;
+    attr_guard_t *guard;
+    bool made;
+    if (guards == NULL) {
+        guards = PyDict_New();
+        lookup_name = PyUnicode_InternFromString("__name__");
+        if (guards == NULL || lookup_name == NULL)
+            OUT_OF_MEMORY();
+    }
+    enable_version_tag(tp);
+    _PyType_Lookup(tp, lookup_name); /* assigns the version tag */
+    key = Py_BuildValue("(ky)", (unsigned long)tp, tp->tp_name);
+    if (key == NULL)
+        OUT_OF_MEMORY();
+    guard = dict_record(guards, key, sizeof(attr_guard_t), true, &made);
+    Py_DECREF(key);
+    load_guard_set(guard, tp);
+    psyco_owner_pin((PyObject *)tp); /* its address keys the record */
+    return type_changed(po, tp, guard);
+}
+
 #if ALL_CHECKS
 DEFINEVAR long psyco_stat_load_type_changes = 0;
 DEFINEVAR long psyco_stat_load_repairs = 0;
@@ -1532,6 +1564,16 @@ operand_types_stale(PsycoObject *po, PyTypeObject *vtp, PyTypeObject *wtp)
            (Psyco_ClassMutable(vtp) || Psyco_ClassMutable(wtp));
 }
 
+/* The flags of a call of an operand's own slot f: object_richcompare there
+   runs no Python code (its != calls the same slot for ==) */
+static int
+richcompare_flags(richcmpfunc f)
+{
+    return f == PyBaseObject_Type.tp_richcompare
+               ? CfCommonCheckNotImplemented | CfNoPython
+               : CfCommonCheckNotImplemented;
+}
+
 /* do_richcompare's slots, with the types and slots read when compiling.
    NotImplemented if none answered. Once a slot declines after a call that
    may have changed them (operand_types_stale), cimpl_richcompare_rest
@@ -1583,7 +1625,7 @@ try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
                 return NULL;
         }
     if (swap) {
-        res = Psyco_META3(po, fw, CfCommonCheckNotImplemented, "vvl", w, v,
+        res = Psyco_META3(po, fw, richcompare_flags(fw), "vvl", w, v,
                           swapped_op[op]);
         if (IS_IMPLEMENTED(res))
             return res; /* 'res' might be NULL */
@@ -1594,8 +1636,7 @@ try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
                                       (long)op, 0L, 1L);
     }
     if (fv != NULL) {
-        res =
-            Psyco_META3(po, fv, CfCommonCheckNotImplemented, "vvl", v, w, op);
+        res = Psyco_META3(po, fv, richcompare_flags(fv), "vvl", v, w, op);
         if (IS_IMPLEMENTED(res))
             return res;
         vinfo_decref(res, po);
@@ -1605,7 +1646,7 @@ try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
                                       (long)op, 1L, (long)swap);
     }
     if (!swap && fw != NULL) {
-        res = Psyco_META3(po, fw, CfCommonCheckNotImplemented, "vvl", w, v,
+        res = Psyco_META3(po, fw, richcompare_flags(fw), "vvl", w, v,
                           swapped_op[op]);
         if (IS_IMPLEMENTED(res) || !operand_types_stale(po, vtp, wtp))
             return res;
@@ -1639,10 +1680,9 @@ PsycoObject_RichCompare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
                 return NULL;
             return PsycoBool_FromCondition(po, cc);
         default:
-            PycException_SetFormat(po, PyExc_TypeError,
-                                   LE_MSG_COMPARE_NOT_SUPPORTED, opstrings[op],
-                                   Psyco_FastType(v)->tp_name,
-                                   Psyco_FastType(w)->tp_name);
+            PycException_SetTypeFormat(
+                po, PyExc_TypeError, LE_MSG_COMPARE_NOT_SUPPORTED,
+                opstrings[op], Psyco_FastType(v), Psyco_FastType(w));
             return NULL;
     }
 }

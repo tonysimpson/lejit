@@ -222,8 +222,8 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         return NULL;
     }
     if ((tp_bb->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
-        PycException_SetFormat(po, PyExc_TypeError, LE_MSG_TUPLE_CONCAT,
-                               tp_bb->tp_name);
+        PycException_SetTypeFormat(po, PyExc_TypeError, LE_MSG_TUPLE_CONCAT,
+                                   NULL, tp_bb, NULL);
         return NULL;
     }
     b = bb;
@@ -309,8 +309,8 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         return NULL;
     }
     if ((tp_bb->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
-        PycException_SetFormat(po, PyExc_TypeError, LE_MSG_TUPLE_CONCAT,
-                               tp_bb->tp_name);
+        PycException_SetTypeFormat(po, PyExc_TypeError, LE_MSG_TUPLE_CONCAT,
+                                   NULL, tp_bb, NULL);
         return NULL;
     }
     _t4 = PsycoTuple_Load(bb);

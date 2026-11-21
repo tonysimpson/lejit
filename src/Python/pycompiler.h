@@ -180,6 +180,11 @@ EXTERNFN void
 PycException_SetString(PsycoObject *po, PyObject *e, const char *text);
 EXTERNFN void
 PycException_SetFormat(PsycoObject *po, PyObject *e, const char *fmt, ...);
+/* PycException_SetFormat for a message naming the types t1 and t2 (NULL
+   for none): fmt's arguments are s (left out if NULL), then their names */
+EXTERNFN void
+PycException_SetTypeFormat(PsycoObject *po, PyObject *e, const char *fmt,
+                           const char *s, PyTypeObject *t1, PyTypeObject *t2);
 /* consumes a reference on 'v': */
 EXTERNFN void
 PycException_SetObject(PsycoObject *po, PyObject *e, PyObject *v);
