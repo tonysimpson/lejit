@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tonysimpson/ni"
+Homepage = "https://github.com/tonysimpson/lejit"
 
 [tool.setuptools]
 # the package lejit, with its compiled module lejit._core where LeJIT can run
