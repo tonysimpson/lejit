@@ -26,7 +26,7 @@ void psyco_out_of_memory(char *filename, int lineno) {
   Py_FatalError(msg);
 }
 
-#if NI_TRACE
+#if LE_TRACE
 /**************************************************************
  * Ni Debug Trace hooks
  *************************************************************/
@@ -363,15 +363,15 @@ static PyObject *build_dict(void) {
       add_layout(layouts, "rangeiterobject", sizeof(rangeiterobject), 1) < 0 ||
       add_layout(layouts, "PyDictKeysObject", sizeof(ni_dictkeys_t), 1) < 0)
     goto error;
-#ifdef NI_SANITIZE
-  const char *sanitizer = NI_SANITIZE;
+#ifdef LE_SANITIZE
+  const char *sanitizer = LE_SANITIZE;
 #else
   const char *sanitizer = NULL;
 #endif
   if (add_str(d, "source_version", NI_FEATURES_SOURCE_VERSION) < 0 ||
       add_str(d, "build", ALL_CHECKS ? "checked" : "release") < 0 ||
-      add_obj(d, "trace", PyBool_FromLong(NI_TRACE)) < 0 ||
-      add_obj(d, "codestats", PyBool_FromLong(NI_CODESTATS)) < 0 ||
+      add_obj(d, "trace", PyBool_FromLong(LE_TRACE)) < 0 ||
+      add_obj(d, "codestats", PyBool_FromLong(LE_CODESTATS)) < 0 ||
       add_str(d, "sanitizer", sanitizer) < 0 ||
       PyDict_SetItemString(d, "features", features) < 0 ||
       PyDict_SetItemString(d, "messages", messages) < 0 ||

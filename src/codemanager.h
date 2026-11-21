@@ -28,7 +28,7 @@ EXTERNFN code_t *psyco_code_take(size_t n);
 EXTERNFN int psyco_code_open_count(void);
 #define OPEN_EXTENTS_MAX 5
 
-#if NI_CODESTATS
+#if LE_CODESTATS
 /* bytes and count of the code closed, by kind */
 EXTERNFN void psyco_codestats_buffer(const char *kind, code_t *start,
                                      code_t *end);
@@ -189,7 +189,7 @@ EXTERNVAR long psyco_stat_kept_for_good;
 /* bytes of code not freed yet */
 EXTERNVAR long psyco_stat_code_bytes_live;
 #endif
-#if ALL_CHECKS || NI_CODESTATS
+#if ALL_CHECKS || LE_CODESTATS
 /* bytes of code emitted, proxies included */
 EXTERNVAR long psyco_stat_code_bytes;
 #endif
@@ -202,7 +202,7 @@ EXTERNVAR long psyco_stat_code_bytes;
 enum { NI_ENTER_ANALYSE, NI_ENTER_CALL, NI_ENTER_PAUSE, NI_ENTER_RESPAWN, NI_ENTER_PROMOTION,
        NI_ENTER_KINDS };
 EXTERNVAR int ni_compile_depth;
-#if ALL_CHECKS || NI_CODESTATS
+#if ALL_CHECKS || LE_CODESTATS
 EXTERNFN long ni_now_ns(void);
 EXTERNVAR int psyco_stat_compile_kind; /* the outermost entry's kind */
 #endif
@@ -220,7 +220,7 @@ EXTERNVAR long psyco_stat_compile_count[NI_ENTER_KINDS];
       psyco_stat_compile_count[kind]++;                                        \
     }                                                                          \
   } while (0)
-#elif NI_CODESTATS
+#elif LE_CODESTATS
 #define NI_COMPILE_BEGIN(kind)                                                 \
   (void)(ni_compile_depth++ ? 0 : (psyco_stat_compile_kind = (kind)))
 #define NI_COMPILE_END(kind) ((void)ni_compile_depth--)

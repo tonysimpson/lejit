@@ -790,7 +790,7 @@ static void load_guard_set(attr_guard_t *guard, PyTypeObject *tp) {
 DEFINEVAR long psyco_stat_load_type_changes = 0;
 DEFINEVAR long psyco_stat_load_repairs = 0;
 #endif
-#if NI_CODESTATS
+#if LE_CODESTATS
 DEFINEVAR long psyco_cs_load[8];
 DEFINEVAR bool psyco_cs_load_respawn = false;
 #endif
@@ -808,7 +808,7 @@ static void load_type_changed(PyObject *obj, PyObject *name) {
     load_guard_set(&g->guard, tp);
     NI_STAT(psyco_stat_load_repairs++);
   }
-#if NI_CODESTATS
+#if LE_CODESTATS
   if (tp->tp_getattro != PyObject_GenericGetAttr)
     psyco_cs_load[7]++;
   else if (!PyType_HasFeature(tp, Py_TPFLAGS_HAVE_VERSION_TAG))
@@ -909,7 +909,7 @@ static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
   descr = load_kind(tp, name);
   guard = load_guard(tp, name, descr, true);
   load_guard_set(&guard->guard, tp);
-#if NI_CODESTATS
+#if LE_CODESTATS
   if (!is_respawning(po))
     psyco_cs_load[0]++;
 #endif
@@ -918,7 +918,7 @@ static vinfo_t *generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname,
     return NULL;
   po->pr.split_after_global = 1;
   if (runtime_condition_f(po, cc)) {
-#if NI_CODESTATS
+#if LE_CODESTATS
     if (!is_respawning(po)) {
       psyco_cs_load[3]++;
       psyco_cs_load_respawn = true;

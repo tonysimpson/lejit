@@ -1,7 +1,7 @@
 /* The private functions of lejit._core that tests use: the compiler's
    counters and what it made of a code object. Only checked builds
-   (NI_ALL_CHECKS=1) have them, and the code size counts only codestats
-   builds (NI_CODESTATS=1). lejit.c adds them to the module. */
+   (LE_ALL_CHECKS=1) have them, and the code size counts only codestats
+   builds (LE_CODESTATS=1). lejit.c adds them to the module. */
 #include "Python/frames.h"
 #include "Python/pycompiler.h"
 #include "Objects/pmethodobject.h"
@@ -16,7 +16,7 @@ EXTERNVAR int ni_set_up; /* lejit.c */
 
 /* counters for tests and measurements, e.g. that a loop is not compiled
    afresh on every back-edge */
-#if NI_CODESTATS
+#if LE_CODESTATS
 EXTERNVAR PyObject *psyco_codestats;
 EXTERNVAR long psyco_codestats_lost;
 EXTERNVAR PyObject *psyco_codestats_buffers;
@@ -136,7 +136,7 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
     Py_XDECREF(t);
   }
 #endif
-#if NI_CODESTATS
+#if LE_CODESTATS
   if (d != NULL) {
     long *c = psyco_cs_load;
     PyObject *t = Py_BuildValue(
@@ -268,7 +268,7 @@ static PyObject *ni_fail_after(PyObject *self, PyObject *args) {
 #endif
 
 DEFINEVAR PyMethodDef ni_testing_methods[] = {
-#if NI_CODESTATS
+#if LE_CODESTATS
     {"_codestats", ni_codestats, METH_NOARGS, "Code size per instruction."},
     {"_promostats", ni_promostats, METH_NOARGS, "Promotion sites."},
 #endif

@@ -993,7 +993,7 @@ static code_t *do_respawn_body(respawn_t *rs);
 static code_t *do_respawn(respawn_t *rs, long value) {
   code_t *r;
   ni_compile_guard_t g;
-#if NI_CODESTATS
+#if LE_CODESTATS
   long t0 = ni_now_ns();
   psyco_cs_load_respawn = false;
 #endif
@@ -1004,7 +1004,7 @@ static code_t *do_respawn(respawn_t *rs, long value) {
   r = do_respawn_body(rs);
   psyco_guard_pop(&g);
   NI_COMPILE_END(NI_ENTER_RESPAWN);
-#if NI_CODESTATS
+#if LE_CODESTATS
   if (psyco_cs_load_respawn) { /* a load guard's failure branch */
     psyco_cs_load[4] += ni_now_ns() - t0;
     psyco_cs_load_respawn = false;
@@ -1062,7 +1062,7 @@ static code_t *do_respawn_body(respawn_t *rs) {
   code = GLOBAL_ENTRY_POINT(po);
 
   CLOSE_CODE("respawned", codebuf->codestart, code);
-#if NI_CODESTATS
+#if LE_CODESTATS
   if (psyco_cs_load_respawn)
     psyco_cs_load[5] += code - (code_t *)codebuf->codestart;
 #endif
@@ -2449,7 +2449,7 @@ bool psyco_unpromote_large_ints(PsycoObject *po) {
   return changed;
 }
 
-#if NI_CODESTATS
+#if LE_CODESTATS
 /* candidates the last psyco_compatible() rejected only for the alignment
    test */
 DEFINEVAR int psyco_cs_align_rejects = 0;
@@ -2576,7 +2576,7 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
      what the callee specialises on, and in a respawned branch, which
      starts from a snapshot that doesn't keep the serial */
   compatible_serial = po->mp_serial;
-#if NI_CODESTATS
+#if LE_CODESTATS
   psyco_cs_align_rejects = 0;
 #endif
   i = PyList_GET_SIZE(plist);
@@ -2619,7 +2619,7 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
        * cleared unless it is the final result of psyco_compatible() itself.
        */
       if (alignment.match != 1) {
-#if NI_CODESTATS
+#if LE_CODESTATS
         psyco_cs_align_rejects++;
 #endif
         fz_restore_invariant(&codebuf->snapshot);
@@ -2840,7 +2840,7 @@ typedef struct { /* produced at compile time and read by the dispatcher */
   parked_state_t state; /* before promotion, and the variable to promote */
 
   rt_local_buf_t *local_chained_list;
-#if NI_CODESTATS
+#if LE_CODESTATS
   int cs_site; /* pycompiler.c, psyco_cs_promo_site */
 #endif
 } rt_promotion_t;
@@ -2951,7 +2951,7 @@ static __attribute__((noinline)) code_t *do_promotion_internal(rt_promotion_t *f
                                      long flags) {
   code_t *r;
   ni_compile_guard_t g;
-#if NI_CODESTATS
+#if LE_CODESTATS
   psyco_cs_promo_begin(fs->cs_site, key, (flags & SkFlagPyObj) != 0);
 #endif
   NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
@@ -2963,7 +2963,7 @@ static __attribute__((noinline)) code_t *do_promotion_internal(rt_promotion_t *f
   r = do_promotion_internal_body(fs, key, sk_new(key, flags));
   psyco_guard_pop(&g);
   NI_COMPILE_END(NI_ENTER_PROMOTION);
-#if NI_CODESTATS
+#if LE_CODESTATS
   psyco_cs_promo_end();
 #endif
   return r;
@@ -3026,7 +3026,7 @@ static __attribute__((noinline)) code_t *
 detected_megamorphic_pyobj_site(rt_promotion_t *fs, bool interpret) {
   code_t *r;
   ni_compile_guard_t g;
-#if NI_CODESTATS
+#if LE_CODESTATS
   psyco_cs_promo_begin(fs->cs_site, -1, -1);
 #endif
   NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
@@ -3036,7 +3036,7 @@ detected_megamorphic_pyobj_site(rt_promotion_t *fs, bool interpret) {
   r = detected_megamorphic_body(fs, interpret);
   psyco_guard_pop(&g);
   NI_COMPILE_END(NI_ENTER_PROMOTION);
-#if NI_CODESTATS
+#if LE_CODESTATS
   psyco_cs_promo_end();
 #endif
   return r;
@@ -3207,7 +3207,7 @@ static void promotion_cache_fallback(rt_promotion_t *fs, code_t *mega) {
    they are called from the run-time code even during normal (non-compiling)
    execution. */
 static code_t *do_promotion_long(rt_promotion_t *fs, long value) {
-#if NI_CODESTATS
+#if LE_CODESTATS
   psyco_cs_promo_miss(fs->cs_site);
 #endif
   /* need a PyObject* key for the local cache dictionary */
@@ -3226,7 +3226,7 @@ static code_t *do_promotion_long(rt_promotion_t *fs, long value) {
 }
 
 static code_t *do_promotion_pyobj(rt_promotion_t *fs, PyObject *key) {
-#if NI_CODESTATS
+#if LE_CODESTATS
   psyco_cs_promo_miss(fs->cs_site);
 #endif
   code_t *result;
@@ -3245,7 +3245,7 @@ static code_t *do_promotion_pyobj(rt_promotion_t *fs, PyObject *key) {
 
 PSY_INLINE code_t *promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key,
                                         bool interpret) {
-#if NI_CODESTATS
+#if LE_CODESTATS
   psyco_cs_promo_miss(fs->cs_site);
 #endif
   code_t *result;
@@ -3286,7 +3286,7 @@ static code_t *do_promotion_pyobj_interp(rt_promotion_t *fs, PyObject *key) {
    That version is valid for any value, so the inline fast case may point
    to it even if the object dies and its address is reused. */
 static code_t *do_promotion_static_type(rt_promotion_t *fs, PyObject *key) {
-#if NI_CODESTATS
+#if LE_CODESTATS
   psyco_cs_promo_miss(fs->cs_site);
 #endif
   code_t *result;
@@ -3355,12 +3355,12 @@ code_t *psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags) {
     psyco_fatal_msg("bad pflags");
     return NULL;
   }
-#if NI_CODESTATS
+#if LE_CODESTATS
   code_t *cs_start = po->code;
 #endif
   fs = (rt_promotion_t *)ipromotion_finish(po, fix, do_promotion,
                                            sizeof(rt_promotion_t));
-#if NI_CODESTATS
+#if LE_CODESTATS
   fs->cs_site = psyco_cs_promo_site(po, pflags, po->code - cs_start);
 #endif
 

@@ -218,7 +218,7 @@ EXTERNVAR long psyco_stat_store_refreshes;
 EXTERNVAR long psyco_stat_load_type_changes;
 EXTERNVAR long psyco_stat_load_repairs;
 #endif
-#if NI_CODESTATS
+#if LE_CODESTATS
 /* load guards: see pobject.c */
 EXTERNVAR long psyco_cs_load[8];
 EXTERNVAR bool psyco_cs_load_respawn;

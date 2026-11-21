@@ -150,7 +150,7 @@ static void owner_add_extent(ni_owner_t *o, code_t *start, code_t *end) {
 #if ALL_CHECKS
 DEFINEVAR long psyco_stat_code_buffers = 0;
 #endif
-#if ALL_CHECKS || NI_CODESTATS
+#if ALL_CHECKS || LE_CODESTATS
 DEFINEVAR long psyco_stat_code_bytes = 0;
 #endif
 
@@ -195,7 +195,7 @@ DEFINEFN void psyco_code_close(code_t *code) {
       /* checked builds fill the padding, which must stay in the extent */
       if (x.end - code >= 16)
         ALIGN_NO_FILL();
-#if ALL_CHECKS || NI_CODESTATS
+#if ALL_CHECKS || LE_CODESTATS
       psyco_stat_code_bytes += code - x.start;
 #endif
       if (x.end - code < EXTENT_MIN)
@@ -840,7 +840,7 @@ static void owners_scan_init(void) {
 
 DEFINEVAR unsigned long psyco_next_serial = 0;
 
-#if NI_CODESTATS
+#if LE_CODESTATS
 DEFINEVAR PyObject *psyco_codestats_buffers = NULL; /* kind -> [count, bytes] */
 DEFINEFN void psyco_codestats_buffer(const char *kind, code_t *start,
                                      code_t *end) {
@@ -865,7 +865,7 @@ DEFINEVAR int ni_compile_depth = 0;
 DEFINEVAR long psyco_stat_compile_ns[NI_ENTER_KINDS];
 DEFINEVAR long psyco_stat_compile_count[NI_ENTER_KINDS];
 #endif
-#if ALL_CHECKS || NI_CODESTATS
+#if ALL_CHECKS || LE_CODESTATS
 DEFINEVAR int psyco_stat_compile_kind = 0;
 
 DEFINEFN long ni_now_ns(void) {

@@ -64,7 +64,7 @@
 #include <eval.h>
 #include <ipyencoding.h>
 
-#if NI_CODESTATS
+#if LE_CODESTATS
 #include <dlfcn.h>
 #include <execinfo.h>
 /* Promotion sites (pycompiler.h). Each site is a list
@@ -533,7 +533,7 @@ void PycException_SetVInfo(PsycoObject *po, PyObject *e, vinfo_t *v) {
 DEFINEFN
 void PycException_Promote(PsycoObject *po, vinfo_t *vi,
                           c_promotion_t *promotion) {
-#if NI_CODESTATS
+#if LE_CODESTATS
   cs_promo_nbt = backtrace(cs_promo_bt, CS_PROMO_BT);
 #endif
   vinfo_incref(vi);
@@ -4481,7 +4481,7 @@ static code_t *exit_function(PsycoObject *po) {
 /***************************************************************/
 /***   the main loop of the interpreter/compiler.            ***/
 
-#if NI_CODESTATS
+#if LE_CODESTATS
 /* Code size per instruction (lejit._core._codestats()): for each
    (code object, instruction offset), [opcode, times compiled, bytes, the
    copies as (address, bytes, how the compiler
@@ -4851,7 +4851,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
   int unwound = 0; /* the frame went on interpreted (resume_if_tracing) */
   int reraised = 0; /* exception_unwind: an exception raised again */
   int resumed = 0;
-#if NI_CODESTATS
+#if LE_CODESTATS
   PsycoObject *cs_saved_owner = cs_owner;
   cs_owner = po;
 #endif
@@ -4926,7 +4926,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
 
-#if NI_CODESTATS
+#if LE_CODESTATS
       codestats_begin(po, next_instr, bytecode[next_instr]);
 #endif
       /* no Python error is pending between instructions: a meta that
@@ -8841,7 +8841,7 @@ finished:
   }
 #endif
 
-#if NI_CODESTATS
+#if LE_CODESTATS
   if (cs_owner == po)
     codestats_flush(po);
   cs_owner = cs_saved_owner;

@@ -7,7 +7,7 @@
 #   make features-installed-test | cross-check (both detectors, every interpreter)
 #
 # The build detects PY's features and takes its messages from PY itself
-# (NI_FEATURES=source reads the source of PY's CPython release instead,
+# (LE_FEATURES=source reads the source of PY's CPython release instead,
 # fetched into .cache/ once). GEN_PY runs the tools' own tests.
 
 SHELL := bash
@@ -27,7 +27,7 @@ build:
 	$(PY) setup.py build_ext --inplace
 
 checked-build:
-	NI_TRACE=1 NI_ALL_CHECKS=1 $(PY) setup.py build_ext --inplace
+	LE_TRACE=1 LE_ALL_CHECKS=1 $(PY) setup.py build_ext --inplace
 
 test: checked-build
 	$(PY) tests/jit/run.py
@@ -39,8 +39,8 @@ cpython-test: checked-build
 	$(PY) tests/cpython/run.py
 
 encoder-test: checked-build
-	NI_PYTHON=$(PY) $(GEN_PY) tests/encoder/check.py
-	NI_PYTHON=$(PY) sh tests/encoder/mov_mem.sh
+	LE_PYTHON=$(PY) $(GEN_PY) tests/encoder/check.py
+	LE_PYTHON=$(PY) sh tests/encoder/mov_mem.sh
 
 features-test:
 	$(GEN_PY) tests/features/test.py

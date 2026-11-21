@@ -1,15 +1,15 @@
 """Settings the test runners share.
 
-NI_MODULE_DIR: where `import lejit` finds the lejit package (default: the repo
+LE_MODULE_DIR: where `import lejit` finds the lejit package (default: the repo
 root).
-NI_SANITIZE_LOGS: set by sanitizer runs; logs go there and runs get slower.
+LE_SANITIZE_LOGS: set by sanitizer runs; logs go there and runs get slower.
 Run as a script, prints build_temp() for the running interpreter.
 """
 import os, re, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-NI_DIR = os.environ.get('NI_MODULE_DIR') or ROOT
-SANITIZE_LOGS = os.environ.get('NI_SANITIZE_LOGS')
+NI_DIR = os.environ.get('LE_MODULE_DIR') or ROOT
+SANITIZE_LOGS = os.environ.get('LE_SANITIZE_LOGS')
 SLOWDOWN = 4 if SANITIZE_LOGS else 1
 # CPython test modules tests/cpython/run.py leaves out under the sanitizers
 SANITIZE_SKIP = {

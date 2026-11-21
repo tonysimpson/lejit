@@ -412,7 +412,7 @@ PsycoObject *psyco_duplicate(PsycoObject *po) {
 }
 
 DEFINEFN void PsycoObject_Delete(PsycoObject *po) {
-#if NI_CODESTATS
+#if LE_CODESTATS
   psyco_codestats_delete(po);
 #endif
   pyc_data_release(&po->pr);
@@ -814,7 +814,7 @@ static code_t *psyco_resume_compile(PsycoObject *po, void *extra) {
   return (code_t *)psyco_compile_code(po, mp)->codestart;
 }
 
-#if NI_CODESTATS
+#if LE_CODESTATS
 /* The state each new block at a merge point starts from:
    (code object, instruction, one string per vlocals slot). R is a
    run-time value, C/F a constant (F: fixed, i.e. promoted), V a virtual
@@ -895,7 +895,7 @@ static void mp_new_block(PsycoObject *po, mergepoint_t *mp) {
     return;
   mp->blocks++;
   po->mp_serial = po->respawn_proxy->serial;
-#if NI_CODESTATS
+#if LE_CODESTATS
   cs_state(po);
 #endif
 }

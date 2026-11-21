@@ -205,7 +205,7 @@ EXTERNFN void PycException_Fetch(PsycoObject *po);
 EXTERNFN void PycException_Promote(PsycoObject *po, vinfo_t *vi,
                                    c_promotion_t *promotion);
 
-#if NI_CODESTATS
+#if LE_CODESTATS
 /* Promotion sites, for lejit._core._promostats(): the site
    (code object, instruction, who asked: a backtrace), the bytes of its stub,
    each value seen with the code and time its compile took, how often its

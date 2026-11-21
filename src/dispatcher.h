@@ -187,7 +187,7 @@ EXTERNFN bool psyco_forget_values(PsycoObject* po, global_entries_t* ge);
    about it is dropped */
 EXTERNFN void psyco_ge_changed(global_entries_t* ge);
 EXTERNFN bool psyco_unpromote_large_ints(PsycoObject* po);
-#if NI_CODESTATS
+#if LE_CODESTATS
 EXTERNVAR int psyco_cs_align_rejects;
 #endif
 

@@ -1,6 +1,6 @@
 """Find the CPython source tree for the version Ni is being built for.
 
-NI_CPYTHON_SRC, if set, is used as it is. Otherwise the release tarball for
+LE_CPYTHON_SRC, if set, is used as it is. Otherwise the release tarball for
 that exact version is fetched from python.org once, checked against
 cpython_sha256.txt, and unpacked into .cache/cpython/ in the repository
 (untracked; make clean leaves it). Either way the tree's
@@ -46,7 +46,7 @@ def check_version(src, version):
 
 def source_sha(src):
     """The sha256 of the release tarball the tree was unpacked from, or
-    'local' for a tree this module didn't unpack (NI_CPYTHON_SRC)."""
+    'local' for a tree this module didn't unpack (LE_CPYTHON_SRC)."""
     try:
         with open(os.path.join(src, VERIFIED)) as f:
             return f.read().strip()
@@ -69,7 +69,7 @@ def expected_sha256(name):
 
 def find_source(version, log=print):
     """The source tree for `version` (PY_VERSION spelling)."""
-    src = os.environ.get('NI_CPYTHON_SRC')
+    src = os.environ.get('LE_CPYTHON_SRC')
     if src:
         check_version(src, version)
         return src
@@ -78,7 +78,7 @@ def find_source(version, log=print):
     if sha is None:
         raise SourceError(
             'no checksum for %s in %s: add its sha256 (from a source you'
-            ' trust), or set NI_CPYTHON_SRC to a CPython %s source tree'
+            ' trust), or set LE_CPYTHON_SRC to a CPython %s source tree'
             % (name, os.path.relpath(HASHES), version))
     root = os.path.join(cache_dir(), 'cpython')
     tree = os.path.join(root, 'Python-%s' % version)
@@ -121,7 +121,7 @@ def _fetch(version, name, tarball, sha, log):
                               % (url, got, sha))
         os.replace(tmp, tarball)
     except OSError as e:
-        raise SourceError('cannot fetch %s: %s (set NI_CPYTHON_SRC to a'
+        raise SourceError('cannot fetch %s: %s (set LE_CPYTHON_SRC to a'
                           ' CPython %s source tree)' % (url, e, version))
     finally:
         if os.path.exists(tmp):

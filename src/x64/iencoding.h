@@ -767,7 +767,7 @@ typedef enum {
     ni_trace_jump_reg((code_t *)(code), (int)(r));                             \
     DIRECT_ENCODING(false, 1, 0xFF, 0, 0, 0xE0, 0, r);                         \
   } while (0)
-#if NI_TRACE
+#if LE_TRACE
 #define CAPTURE_CODE_LOCATION code_t *location = code;
 #else
 #define CAPTURE_CODE_LOCATION /* Nothing */

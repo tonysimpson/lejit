@@ -26,7 +26,7 @@ def fallback_reason():
     """Why no C extension is built for this Python, or None. Ni compiles to
     x86-64 code for CPython on Linux; anywhere else only the Python package
     is installed, whose functions then do nothing, so that installing Ni
-    never fails. NI_FALLBACK=1 installs it so anyway, to test it."""
+    never fails. LE_FALLBACK=1 installs it so anyway, to test it."""
     impl = platform.python_implementation()
     if impl != 'CPython':
         return 'Ni runs only on CPython, not %s' % impl
@@ -36,8 +36,8 @@ def fallback_reason():
                                                            platform.machine())
     if sys.version_info >= (3, 11):
         return 'Ni runs only on CPython 3.7 to 3.10, not %d.%d' % sys.version_info[:2]
-    if os.environ.get('NI_FALLBACK') == '1':
-        return 'NI_FALLBACK=1 was set when it was installed'
+    if os.environ.get('LE_FALLBACK') == '1':
+        return 'LE_FALLBACK=1 was set when it was installed'
     return None
 
 
@@ -46,42 +46,42 @@ FALLBACK = fallback_reason()
 ####################################################################
 # Override defaults using environment variables e.g. dev mode
 # install with debug trace points:
-# > NI_TRACE=1 pip install -e .
+# > LE_TRACE=1 pip install -e .
 #
 # Enable debugger trace points and compiler with debug options by 
 # setting to 1
-NI_TRACE = int(os.environ.get('NI_TRACE', 0))
+LE_TRACE = int(os.environ.get('LE_TRACE', 0))
 
 # Extra checks enable with 1
-ALL_CHECKS = int(os.environ.get('NI_ALL_CHECKS', 0))
+ALL_CHECKS = int(os.environ.get('LE_ALL_CHECKS', 0))
 
 # Code size per instruction, lejit._core._codestats()
-NI_CODESTATS = int(os.environ.get('NI_CODESTATS', 0))
+LE_CODESTATS = int(os.environ.get('LE_CODESTATS', 0))
 
-# NI_FEATURES=source: detect the features in CPython's source (fetched and
-# cached once, or NI_CPYTHON_SRC) instead of the installed interpreter; the
+# LE_FEATURES=source: detect the features in CPython's source (fetched and
+# cached once, or LE_CPYTHON_SRC) instead of the installed interpreter; the
 # source detector is the reference the installed one is checked against.
-NI_FEATURES = os.environ.get('NI_FEATURES', 'installed')
-if NI_FEATURES not in ('installed', 'source'):
-    raise SystemExit('NI_FEATURES must be installed or source, not %r' % NI_FEATURES)
+LE_FEATURES = os.environ.get('LE_FEATURES', 'installed')
+if LE_FEATURES not in ('installed', 'source'):
+    raise SystemExit('LE_FEATURES must be installed or source, not %r' % LE_FEATURES)
 
-# NI_SANITIZE=address or address,undefined: build with gcc's sanitizers
+# LE_SANITIZE=address or address,undefined: build with gcc's sanitizers
 # Such a build goes in build/asan
 # (--build-lib), never in place, with its own config stamp.
-NI_SANITIZE = os.environ.get('NI_SANITIZE', '')
+LE_SANITIZE = os.environ.get('LE_SANITIZE', '')
 
-# NI_COVERAGE=1: build with gcov into build/cov, never in place
-NI_COVERAGE = int(os.environ.get('NI_COVERAGE', 0))
+# LE_COVERAGE=1: build with gcov into build/cov, never in place
+LE_COVERAGE = int(os.environ.get('LE_COVERAGE', 0))
 
 ####################################################################
 
 macros = [
-    ('NI_TRACE', str(NI_TRACE)),
+    ('LE_TRACE', str(LE_TRACE)),
     ('ALL_CHECKS', str(ALL_CHECKS)),
-    ('NI_CODESTATS', str(NI_CODESTATS)),
+    ('LE_CODESTATS', str(LE_CODESTATS)),
 ]
-if NI_SANITIZE:
-    macros.append(('NI_SANITIZE', '"%s"' % NI_SANITIZE))   # lejit._core._build
+if LE_SANITIZE:
+    macros.append(('LE_SANITIZE', '"%s"' % LE_SANITIZE))   # lejit._core._build
 
 class ProcessorAutodetectError(Exception):
     pass
@@ -124,7 +124,7 @@ def cpython_warnings():
                 out.append(f)
     return out
 
-if NI_TRACE:
+if LE_TRACE:
     extra_compile_args = ['-O0', '-g3', '-fno-stack-protector']
 else:
     extra_compile_args = ['-O3']
@@ -144,21 +144,21 @@ extra_compile_args += ['-Wno-type-limits', '-Wno-deprecated-declarations']
 # any other warning is an error, so the tree stays clean
 extra_compile_args += ['-Werror']
 extra_link_args = []
-if NI_SANITIZE:
+if LE_SANITIZE:
     if '--inplace' in sys.argv or '-i' in sys.argv:
-        raise SystemExit('NI_SANITIZE: build with --build-lib build/asan,'
+        raise SystemExit('LE_SANITIZE: build with --build-lib build/asan,'
                          ' not --inplace')
     # after the options above, so this -O1 wins
-    extra_compile_args += ['-fsanitize=' + NI_SANITIZE, '-O1', '-g',
+    extra_compile_args += ['-fsanitize=' + LE_SANITIZE, '-O1', '-g',
                            '-fno-omit-frame-pointer']
     # the encoder writes instructions' immediates and displacements at any
     # byte address, by design (x86 allows it)
-    if 'undefined' in NI_SANITIZE:
+    if 'undefined' in LE_SANITIZE:
         extra_compile_args += ['-fno-sanitize=alignment']
-    extra_link_args += ['-fsanitize=' + NI_SANITIZE]
-if NI_COVERAGE:
+    extra_link_args += ['-fsanitize=' + LE_SANITIZE]
+if LE_COVERAGE:
     if '--inplace' in sys.argv or '-i' in sys.argv:
-        raise SystemExit('NI_COVERAGE: build with --build-lib build/cov,'
+        raise SystemExit('LE_COVERAGE: build with --build-lib build/cov,'
                          ' not --inplace')
     extra_compile_args += ['--coverage', '-O0']
     extra_link_args += ['--coverage']
@@ -167,7 +167,7 @@ sources = find_sources(PROCESSOR)
 # than the module: list every header and .c file
 depends = sorted(set(glob.glob('./src/**/*.h', recursive=True) +
                      glob.glob('./src/**/*.c', recursive=True)))
-# switching NI_TRACE or NI_ALL_CHECKS must also rebuild: remember the
+# switching LE_TRACE or LE_ALL_CHECKS must also rebuild: remember the
 # options, and remove the built module when they change (distutils compares
 # whole seconds, so a fresh stamp file alone is not reliably "newer").
 # Each CPython version has its own stamp and module (its extension suffix),
@@ -175,9 +175,9 @@ depends = sorted(set(glob.glob('./src/**/*.h', recursive=True) +
 config = repr((macros, extra_compile_args, extra_link_args))
 version = '%d.%d' % sys.version_info[:2]
 module = 'lejit/_core' + sysconfig.get_config_var('EXT_SUFFIX')
-if NI_SANITIZE:
+if LE_SANITIZE:
     stamp_dir, built_glob = 'build/asan', ['build/asan/' + module]
-elif NI_COVERAGE:
+elif LE_COVERAGE:
     stamp_dir, built_glob = 'build/cov', ['build/cov/' + module]
 else:
     stamp_dir, built_glob = 'build', [module, 'build/lib*/' + module]
@@ -209,7 +209,7 @@ class build_ext_generated(build_ext):
             raise BuildError('remove %s: generated headers now live in'
                                  ' the build directory' % ', '.join(old))
         gen_dir = os.path.join(self.build_temp, 'gen')
-        detector = 'features.py' if NI_FEATURES == 'source' else 'installed.py'
+        detector = 'features.py' if LE_FEATURES == 'source' else 'installed.py'
         cmd = [sys.executable, os.path.join(HERE, 'tools', 'features', detector),
                '--python', sys.executable, '--out', gen_dir]
         print(' '.join(cmd))

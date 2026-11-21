@@ -5,7 +5,7 @@ without Ni.
 """
 import sys, os
 if len(sys.argv) > 1 and sys.argv[1] == 'lejit':
-    sys.path.insert(0, os.environ.get('NI_MODULE_DIR') or
+    sys.path.insert(0, os.environ.get('LE_MODULE_DIR') or
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
     import lejit
     lejit.start()

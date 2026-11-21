@@ -736,13 +736,13 @@ typedef int64_t qword_t;
 /***   Various customizable parameters (use your compilers'    ***/
 /***   option to override them, e.g. -DXXX=value in gcc)       ***/
 /* set to 0 to disable all debugging checks and output */
-#ifndef NI_TRACE
-#define NI_TRACE 0
+#ifndef LE_TRACE
+#define LE_TRACE 0
 #endif
 
 /* define to 1 to count code size per instruction */
-#ifndef NI_CODESTATS
-#define NI_CODESTATS 0
+#ifndef LE_CODESTATS
+#define LE_CODESTATS 0
 #endif
 
 /* define to 1 for extra assert()'s */
@@ -796,7 +796,7 @@ EXTERNFN int psyco_fatal_error(char* msg, char* filename, int lineno);
 # define extra_assert(x)  (void)0  /* nothing */
 #endif
 
-/* Under AddressSanitizer (setup.py NI_SANITIZE), Ni's own allocators mark
+/* Under AddressSanitizer (setup.py LE_SANITIZE), Ni's own allocators mark
    what they hold free as unaddressable, so that an access through a stale
    pointer is reported as malloc'd memory would be; and LeakSanitizer is
    told to scan executable memory, where stub and pause records point to
@@ -945,7 +945,7 @@ EXTERNFN PyObject* need_cpsyco_obj(char* name);
 /* defined in dispatcher.c */
 EXTERNFN void PsycoObject_EmergencyCodeRoom(PsycoObject* po);
 
-#if NI_TRACE
+#if LE_TRACE
 /* Calls hooked by analyser to collect compiler behaviour */
 EXTERNFN void ni_trace_begin_simple_code(code_t *code);
 EXTERNFN void ni_trace_end_simple_code(code_t *code);
