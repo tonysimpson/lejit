@@ -799,9 +799,33 @@ def caches(s, ops):
     return sorted(out, key=lambda x: x[1])
 
 
+def backward(src, jrel):
+    """[(name, number)] of the relative jumps in jrel whose argument counts
+    backward (from 3.11), as Lib/dis.py's _is_backward_jump tells them:
+    `'JUMP_BACKWARD' in opname[op]`, or `opname[op] in (NAME, ...)`. None
+    where dis has no _is_backward_jump."""
+    path, tree = _lib(src, 'dis.py')
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == '_is_backward_jump':
+            ret = node.body[-1]
+            test = ret.value if isinstance(ret, ast.Return) else None
+            if isinstance(test, ast.Compare) and len(test.ops) == 1 \
+                    and isinstance(test.ops[0], ast.In):
+                part = _constant(test.left)
+                if isinstance(part, str):
+                    return [x for x in jrel if part in x[0]]
+                right = test.comparators[0]
+                if isinstance(right, ast.Tuple):
+                    names = [_constant(e) for e in right.elts]
+                    return [x for x in jrel if x[0] in names]
+            raise FeatureError('%s: _is_backward_jump is neither form' % path)
+    return []
+
+
 # what the header says of the opcodes: jrel and jabs as jumps() gives them,
-# the highest opcode number, and caches as caches() gives them
-Opcodes = collections.namedtuple('Opcodes', 'jrel jabs highest caches')
+# jback as backward() gives it, the highest opcode number, and caches as
+# caches() gives them
+Opcodes = collections.namedtuple('Opcodes', 'jrel jabs jback highest caches')
 
 
 def opcodes(src):
@@ -809,7 +833,7 @@ def opcodes(src):
     s = Source(src)
     ops = opmap(src)
     jrel, jabs = jumps(s, ops)
-    return Opcodes(jrel, jabs, max(ops.values()), caches(s, ops))
+    return Opcodes(jrel, jabs, backward(src, jrel), max(ops.values()), caches(s, ops))
 
 
 D = _detector
@@ -838,6 +862,8 @@ BYTECODE = [
     ('POP_BLOCK_UNWINDS', pop_block_unwinds),
     ('POP_EXCEPT_UNWINDS', pop_except_unwinds),
     ('JUMP_IN_INSTRUCTIONS', jump_in_instructions),
+    ('CODE_GET_CODE', D('PyCode_GetCode gives a code object\'s bytecode as compiled, unspecialised',
+                        lambda s: _declared(s, 'PyCode_GetCode'))),
 ]
 
 # frames
@@ -981,6 +1007,10 @@ def render(found, ops, version, origin):
     for macro, jump_ops in (('LE_IS_JREL', ops.jrel), ('LE_IS_JABS', ops.jabs)):
         lines.append('#define %s(o) (%s)' % (
             macro, ' || '.join('(o) == %d' % n for _, n in jump_ops) or '0'))
+    if ops.jback:
+        lines += ['', '/* the relative jumps that jump backward */',
+                  '#define LE_IS_JBACK(o) (%s)' % ' || '.join(
+                      '(o) == %d' % n for _, n in ops.jback)]
     if ops.caches:
         lines += ['', '/* the code units of inline cache that follow each'
                       ' instruction (_PyOpcode_Caches) */',

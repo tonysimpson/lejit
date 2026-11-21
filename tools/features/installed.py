@@ -398,14 +398,15 @@ def detect(python):
 
 
 def opcodes(probed):
-    """features.Opcodes of the probed interpreter: its jump instructions and
-    inline caches (below 256, so not the compiler's pseudo-instructions) and
+    """features.Opcodes of the probed interpreter: its jump instructions,
+    which of them jump backward, and inline caches (below 256, so not the compiler's pseudo-instructions) and
     its highest opcode."""
     def ins(pairs):
         return sorted((tuple(x) for x in pairs if x[1] < 256), key=lambda x: x[1])
     ops = probed['opcodes']
     return features.Opcodes(
-        ins(probed['hasjrel']), ins(probed['hasjabs']), max(ops.values()),
+        ins(probed['hasjrel']), ins(probed['hasjabs']), ins(probed['jback']),
+        max(ops.values()),
         sorted(((name, ops[name], n) for name, n in probed['caches'].items()
                 if n and ops.get(name, 256) < 256), key=lambda x: x[1]))
 

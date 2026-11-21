@@ -144,6 +144,12 @@ def CORO_GET_AWAITABLE_ITER_LINKABLE():
 
 
 @probe
+def CODE_GET_CODE():
+    """libpython exports PyCode_GetCode (ctypes)"""
+    return _exported('PyCode_GetCode')
+
+
+@probe
 def ITER_CHECK_FUNCTION():
     """libpython exports PyIter_Check, a function (where it is only a macro
     there is no such symbol) (ctypes)"""
@@ -664,6 +670,8 @@ def main(argv):
         'hasjrel': [[opcode.opname[n], n] for n in opcode.hasjrel],
         'hasjabs': [[opcode.opname[n], n] for n in opcode.hasjabs],
         'caches': _caches(),
+        'jback': [[opcode.opname[n], n] for n in opcode.hasjrel
+                  if getattr(dis, '_is_backward_jump', lambda op: False)(n)],
         'answers': answers,
     }
     sys.stdout.write(json.dumps(out) + '\n')

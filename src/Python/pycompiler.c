@@ -42,6 +42,7 @@
 #include "../mergepoints.h"
 #include "../processor.h"
 #include "../psyfunc.h"
+#include "../bytecode.h"
 #include "frames.h"
 /* le_frame_current, le_frame_set_current */
 #include "../mechanisms/frames.h"
@@ -103,9 +104,8 @@ psyco_cs_promo_site(PsycoObject *po, int pflags, long stub_bytes)
         PyTuple_SET_ITEM(bt, i, PyLong_FromLong(off));
     }
     rec = Py_BuildValue("[OiiilNi[]ii]", po->pr.co, po->pr.next_instr,
-                        (unsigned char)PyBytes_AS_STRING(
-                            po->pr.co->co_code)[po->pr.next_instr],
-                        pflags, stub_bytes, bt, psyco_stat_compile_kind,
+                        le_op(le_code(po->pr.co), po->pr.next_instr), pflags,
+                        stub_bytes, bt, psyco_stat_compile_kind,
                         psyco_cs_promo_cur, cs_promo_vidx);
     if (rec == NULL || PyList_Append(cs_promo_sites, rec) < 0)
         OUT_OF_MEMORY();
@@ -1198,24 +1198,27 @@ psyco_catcher_flush(PsycoObject *po)
 static bool
 handler_drops_exception(PyCodeObject *co, int handler)
 {
-    const unsigned char *c =
-        (const unsigned char *)PyBytes_AS_STRING(co->co_code) + handler;
-    Py_ssize_t left = PyBytes_GET_SIZE(co->co_code) - handler;
-    if (left >= 16 && c[0] == DUP_TOP &&
-        (c[2] == LOAD_GLOBAL || c[2] == LOAD_NAME || c[2] == LOAD_FAST ||
-         c[2] == LOAD_DEREF)) {
-        if (c[4] == COMPARE_OP && c[5] == PyCmp_EXC_MATCH &&
-            c[6] == POP_JUMP_IF_FALSE) {
-            c += 8;
-            left -= 8;
-        }
-        else if (c[4] == JUMP_IF_NOT_EXC_MATCH) {
-            c += 6;
-            left -= 6;
+    le_code_t c = le_code(co);
+    int p = handler, q, i;
+#define OP_AT(pos) ((pos) < c.size ? le_op(c, (pos)) : -1)
+    if (OP_AT(p) == DUP_TOP) {
+        q = le_after(c, p);
+        i = OP_AT(q);
+        if (i == LOAD_GLOBAL || i == LOAD_NAME || i == LOAD_FAST ||
+            i == LOAD_DEREF) {
+            q = le_after(c, q);
+            if (OP_AT(q) == COMPARE_OP && le_arg(c, q) == PyCmp_EXC_MATCH &&
+                OP_AT(le_after(c, q)) == POP_JUMP_IF_FALSE)
+                p = le_after(c, le_after(c, q));
+            else if (OP_AT(q) == JUMP_IF_NOT_EXC_MATCH)
+                p = le_after(c, q);
         }
     }
-    return left >= 8 && c[0] == POP_TOP && c[2] == POP_TOP &&
-           c[4] == POP_TOP && c[6] == POP_EXCEPT;
+    for (i = 0; i < 3; i++, p = le_after(c, p))
+        if (OP_AT(p) != POP_TOP)
+            return false;
+    return OP_AT(p) == POP_EXCEPT;
+#undef OP_AT
 }
 
 /* Whether an exception raised now puts the frame's locals in its entry's
@@ -1970,8 +1973,9 @@ unicode_concatenate(PsycoObject *po, int next_instr)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
-    unsigned char *bytecode = (unsigned char *)PyBytes_AS_STRING(co->co_code);
-    int opcode = bytecode[next_instr], oparg = bytecode[next_instr + 1];
+    le_code_t c = le_code(co);
+    /* the next code unit alone, as ceval's unicode_concatenate reads it */
+    int opcode = le_op(c, next_instr), oparg = le_arg(c, next_instr);
     vinfo_t *left = NTOP(2), *right = NTOP(1), *var = NULL, *sum;
     condition_code_t cc;
 
@@ -2055,10 +2059,10 @@ unicode_concatenate(PsycoObject *po, int next_instr)
 static bool
 feeds_build_string(PyCodeObject *co, int next_instr)
 {
-    unsigned char *bytecode = (unsigned char *)PyBytes_AS_STRING(co->co_code);
-    int end = (int)PyBytes_GET_SIZE(co->co_code), depth = 1;
-    for (; next_instr < end; next_instr += 2) {
-        int op = bytecode[next_instr], arg = bytecode[next_instr + 1];
+    le_code_t c = le_code(co);
+    int depth = 1;
+    for (; next_instr < c.size; next_instr = le_after(c, next_instr)) {
+        int op = le_op(c, next_instr), arg = le_arg(c, next_instr);
         if (op == LOAD_CONST || op == LOAD_FAST || op == LOAD_DEREF)
             depth++;
         else if (op == FORMAT_VALUE)
@@ -4812,11 +4816,11 @@ codestats_begin(PsycoObject *po, int instr, int opcode)
 static bool
 breaker_after_call(PsycoObject *po, int next_instr)
 {
-    PyObject *code = po->pr.co->co_code;
+    le_code_t c;
     if (!po->blocking_call)
         return true;
-    if (next_instr >= PyBytes_GET_SIZE(code) ||
-        BREAKER_SKIPS((unsigned char)PyBytes_AS_STRING(code)[next_instr]) ||
+    c = le_code(po->pr.co);
+    if (next_instr >= c.size || BREAKER_SKIPS(le_op(c, next_instr)) ||
         psyco_breaker_check_at(po->pr.merge_points, next_instr))
         return true;
     return psyco_check_eval_breaker(po);
@@ -4863,47 +4867,52 @@ static int
 fused_store(PsycoObject *po, int i)
 {
     PyCodeObject *co = po->pr.co;
-    unsigned char *b = (unsigned char *)PyBytes_AS_STRING(co->co_code);
-    int n = (int)PyBytes_GET_SIZE(co->co_code), first, s, d, k;
+    le_code_t c = le_code(co);
+    int n = c.size, first, s, d, k;
     mergepoint_t *mp;
-#define FUSION_LOAD(j) (b[j] == LOAD_CONST || b[j] == LOAD_FAST)
-    if (i < 2 || i + 8 >= n || !FUSION_LOAD(i + 2) ||
-        !fusion_operator(b[i + 4]))
+    /* the unit 'u' units after i (before it, if negative) */
+#define OP(u) le_op(c, i + (u) * LE_UNIT)
+#define ARG(u) le_arg(c, i + (u) * LE_UNIT)
+#define FUSION_LOAD(u) (OP(u) == LOAD_CONST || OP(u) == LOAD_FAST)
+    if (i < LE_UNIT || i + 4 * LE_UNIT >= n || !FUSION_LOAD(1) ||
+        !fusion_operator(OP(2)))
         return -1;
-    if (b[i] == BINARY_SUBSCR && b[i - 2] == DUP_TOP_TWO) {
-        if (b[i + 6] != ROT_THREE || b[i + 8] != STORE_SUBSCR)
+    if (OP(0) == BINARY_SUBSCR && OP(-1) == DUP_TOP_TWO) {
+        if (OP(3) != ROT_THREE || OP(4) != STORE_SUBSCR)
             return -1;
         first = i;
-        s = i + 8;
+        s = i + 4 * LE_UNIT;
     }
     else {
-        int kpos, dpos;
-        if (b[i] == BINARY_SUBSCR) {
-            kpos = first = i - 2;
+        int kpos, dpos; /* in units from i */
+        if (OP(0) == BINARY_SUBSCR) {
+            kpos = -1;
         }
-        else if (b[i] == CALL_METHOD && (b[i + 1] == 1 || b[i + 1] == 2)) {
-            kpos = i - 2 * b[i + 1];
-            first = kpos - 2;
-            if ((b[i + 1] == 2 && !FUSION_LOAD(i - 2)) || first < 0 ||
-                b[first] != LOAD_METHOD ||
+        else if (OP(0) == CALL_METHOD && (ARG(0) == 1 || ARG(0) == 2)) {
+            kpos = -ARG(0);
+            if ((ARG(0) == 2 && !FUSION_LOAD(-1)) ||
+                i + (kpos - 1) * LE_UNIT < 0 || OP(kpos - 1) != LOAD_METHOD ||
                 PyUnicode_CompareWithASCIIString(
-                    PyTuple_GET_ITEM(co->co_names, b[first + 1]), "get") != 0)
+                    PyTuple_GET_ITEM(co->co_names, ARG(kpos - 1)), "get") != 0)
                 return -1;
         }
         else
             return -1;
-        dpos = first - 2;
-        if (dpos < 0 || b[dpos] != LOAD_FAST || b[kpos] != LOAD_FAST)
+        first = i + (OP(0) == BINARY_SUBSCR ? kpos : kpos - 1) * LE_UNIT;
+        dpos = (first - i) / LE_UNIT - 1;
+        if (i + dpos * LE_UNIT < 0 || OP(dpos) != LOAD_FAST ||
+            OP(kpos) != LOAD_FAST)
             return -1;
-        d = b[dpos + 1];
-        k = b[kpos + 1];
-        if (i + 10 >= n || b[i + 6] != LOAD_FAST || b[i + 7] != d ||
-            b[i + 8] != LOAD_FAST || b[i + 9] != k ||
-            b[i + 10] != STORE_SUBSCR)
+        d = ARG(dpos);
+        k = ARG(kpos);
+        if (i + 5 * LE_UNIT >= n || OP(3) != LOAD_FAST || ARG(3) != d ||
+            OP(4) != LOAD_FAST || ARG(4) != k || OP(5) != STORE_SUBSCR)
             return -1;
-        s = i + 10;
+        s = i + 5 * LE_UNIT;
     }
 #undef FUSION_LOAD
+#undef ARG
+#undef OP
     mp = psyco_next_merge_point(po->pr.merge_points, first);
     if (mp->bytecode_position >= 0 && mp->bytecode_position <= s)
         return -1;
@@ -4921,13 +4930,13 @@ static int
 dict_str_fusion(PsycoObject *po, int next_instr)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
-    int i = next_instr - (int)sizeof(_Py_CODEUNIT);
-    unsigned char *b = (unsigned char *)PyBytes_AS_STRING(po->pr.co->co_code);
-    int op = b[i], argc = b[i + 1], j;
+    int i = next_instr - LE_UNIT;
+    le_code_t c = le_code(po->pr.co);
+    int op = le_op(c, i), argc = le_arg(c, i), j;
     vinfo_t *d, *k, *res;
     if (op == STORE_SUBSCR) {
-        if (!(i >= 10 && fused_store(po, i - 10) == i) &&
-            !(i >= 8 && fused_store(po, i - 8) == i))
+        if (!(i >= 5 * LE_UNIT && fused_store(po, i - 5 * LE_UNIT) == i) &&
+            !(i >= 4 * LE_UNIT && fused_store(po, i - 4 * LE_UNIT) == i))
             return 0;
         d = NTOP(2);
         k = NTOP(1);
@@ -4947,7 +4956,8 @@ dict_str_fusion(PsycoObject *po, int next_instr)
             return -1;
     }
     else {
-        d = GETLOCAL(b[i - 2 * argc - 3]); /* the LOAD_FAST d's */
+        /* the LOAD_FAST d's */
+        d = GETLOCAL(le_arg(c, i - (argc + 2) * LE_UNIT));
         k = NTOP(argc);
     }
     if (!PsycoDict_StrKey(d, k))
@@ -5140,8 +5150,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
     while (1) {
         /* 'co' is the code object we are interpreting/compiling */
         PyCodeObject *co = po->pr.co;
-        unsigned char *bytecode =
-            (unsigned char *)PyBytes_AS_STRING(co->co_code);
+        le_code_t bytecode = le_code(co);
         vinfo_t *u, *v, /* temporary objects    */
             *w, *x;     /* popped off the stack */
         condition_code_t cc;
@@ -5180,13 +5189,14 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             }
 
 #if LE_CODESTATS
-            codestats_begin(po, next_instr, bytecode[next_instr]);
+            codestats_begin(po, next_instr, le_op(bytecode, next_instr));
 #endif
             /* no Python error is pending between instructions: a meta that
                tests for one would decide otherwise in a respawn's replay */
             extra_assert(!PyErr_Occurred());
-            opcode = bytecode[next_instr++];
-            oparg = bytecode[next_instr++];
+            opcode = le_op(bytecode, next_instr);
+            oparg = le_arg(bytecode, next_instr);
+            next_instr += LE_UNIT;
             /* at loop heads and after calls */
             if (psyco_breaker_check_at(po->pr.merge_points,
                                        po->pr.next_instr) &&
@@ -5195,6 +5205,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             po->blocking_call = 0;
             po->pr.python_call = 0;
         dispatch_opcode:
+            next_instr += LE_CACHE_BYTES(opcode);
 
             /* Main switch on opcode */
 
@@ -8917,8 +8928,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 }
 
                 case EXTENDED_ARG:
-                    opcode = bytecode[next_instr++];
-                    oparg = oparg << 8 | bytecode[next_instr++];
+                    opcode = le_op(bytecode, next_instr);
+                    oparg = oparg << 8 | le_arg(bytecode, next_instr);
+                    next_instr += LE_UNIT;
                     ;
                     goto dispatch_opcode;
 

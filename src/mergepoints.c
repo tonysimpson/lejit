@@ -27,13 +27,14 @@
 #include "mergepoints.h"
 #include <Python.h>
 #include "Python/pycinternal.h"
+#include "bytecode.h"
 #include "vcompiler.h"
 #include "codemanager.h"
 
 typedef struct {
     int flags;
     Py_ssize_t mergepoint_count;
-    Py_ssize_t unit_count;   /* code units in co_code */
+    Py_ssize_t unit_count;   /* code units in the bytecode */
     global_entries_t *joins; /* per code unit, or NULL: psyco_join_point */
     /* one per code unit: compiled code tests eval_breaker before that
        instruction. Allocated after the merge points. */
@@ -68,14 +69,6 @@ report_destructor(PyObject *capsule)
     report_free(PyCapsule_GetPointer(capsule, NULL));
 }
 
-#define NEXTOPARG()                      \
-    do {                                 \
-        _Py_CODEUNIT word = *next_instr; \
-        opcode = _Py_OPCODE(word);       \
-        oparg = _Py_OPARG(word);         \
-        next_instr++;                    \
-    } while (0)
-
 #define _ENTER_INC(loc)             \
     do {                            \
         if (entry_count[loc] < 8) { \
@@ -83,9 +76,9 @@ report_destructor(PyObject *capsule)
         }                           \
     } while (0)
 
-#define ENTER_NEXT()                          \
-    do {                                      \
-        _ENTER_INC(next_instr - first_instr); \
+#define ENTER_NEXT()           \
+    do {                       \
+        _ENTER_INC(next_unit); \
     } while (0)
 
 /* a jump target, in code units, checked to be in the code (where it starts
@@ -114,11 +107,8 @@ report_destructor(PyObject *capsule)
             _ENTER_INC(_t);                  \
     } while (0)
 
-/* the code unit just after the current instruction (relative jumps) */
-#define NEXT_UNIT() (next_instr - first_instr)
-/* a jump's argument in code units: LE_JUMP_BYTES, which pycompiler.c's
-   positions use, over the unit */
-#define JUMP_UNITS(a) (LE_JUMP_BYTES(a) / (int)sizeof(_Py_CODEUNIT))
+/* the current instruction's jump target, in code units */
+#define TARGET_UNIT() (le_jump_target(in) / LE_UNIT)
 
 #define MAX_MP_DISTANCE 170
 
@@ -142,12 +132,12 @@ report_destructor(PyObject *capsule)
    tests it at the target of every backward jump, after calls (below) and
    LeCode_Run at the start; before one of BREAKER_SKIPS, the test is before
    the next instruction instead. */
-#define BREAKER_CHECK(unit)                             \
-    do {                                                \
-        Py_ssize_t _u = (unit);                         \
-        if (BREAKER_SKIPS(_Py_OPCODE(first_instr[_u]))) \
-            _u++;                                       \
-        breaker_check[_u] = 1;                          \
+#define BREAKER_CHECK(unit)              \
+    do {                                 \
+        int _p = (int)(unit) * LE_UNIT;  \
+        if (BREAKER_SKIPS(le_op(c, _p))) \
+            _p = le_after(c, _p);        \
+        breaker_check[_p / LE_UNIT] = 1; \
     } while (0)
 
 #define MP_HERE()                           \
@@ -206,27 +196,20 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
                 break;
             case JUMP_ABSOLUTE:
             case CONTINUE_LOOP:
-                _live_union(tmp, live + JUMP_UNITS(a) * words, words);
-                break;
             case JUMP_FORWARD:
             case CALL_FINALLY: /* its return, by END_FINALLY, is an exit_to */
-                _live_union(tmp, live + (nxt[i] + JUMP_UNITS(a)) * words,
-                            words);
+                _live_union(tmp, live + a * words, words);
                 break;
             case POP_JUMP_IF_FALSE:
             case POP_JUMP_IF_TRUE:
             case JUMP_IF_FALSE_OR_POP:
             case JUMP_IF_TRUE_OR_POP:
-                _live_union(tmp, live + JUMP_UNITS(a) * words, words);
-                _live_union(tmp, live + nxt[i] * words, words);
-                break;
             case FOR_ITER:
             case SETUP_LOOP:
             case SETUP_EXCEPT:
             case SETUP_FINALLY:
             case SETUP_WITH:
-                _live_union(tmp, live + (nxt[i] + JUMP_UNITS(a)) * words,
-                            words);
+                _live_union(tmp, live + a * words, words);
                 _live_union(tmp, live + nxt[i] * words, words);
                 break;
             case BREAK_LOOP:
@@ -240,11 +223,8 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
                 break;
             default:
                 /* any other jump the source has may go either way */
-                if (LE_IS_JABS(o))
-                    _live_union(tmp, live + JUMP_UNITS(a) * words, words);
-                else if (LE_IS_JREL(o))
-                    _live_union(tmp, live + (nxt[i] + JUMP_UNITS(a)) * words,
-                                words);
+                if (LE_IS_JABS(o) || LE_IS_JREL(o))
+                    _live_union(tmp, live + a * words, words);
                 _live_union(tmp, live + nxt[i] * words, words);
         }
         /* in = uses | (out - defs) */
@@ -264,11 +244,12 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
 static int
 _find_dead_locals(PyCodeObject *co, co_report_t *report)
 {
-    const _Py_CODEUNIT *first = (_Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
-    Py_ssize_t n = PyBytes_Size(co->co_code) / sizeof(_Py_CODEUNIT);
+    le_code_t c = le_code(co);
+    Py_ssize_t n = c.size / LE_UNIT;
     int nlocals = co->co_nlocals, words = LIVE_WORDS(co->co_nlocals);
     Py_ssize_t i, m;
-    int *op, *arg, *nxt;
+    int *op, *nxt;
+    int *arg; /* a jump's target, in code units; else the argument */
     int *setup_at, *handler_at,
         nsetups = 0; /* try bodies: [setup_at, handler_at) */
     int *break_to, *exit_to, nbreak = 0, nexit = 0;
@@ -299,22 +280,19 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     op[n] = -1;
     for (i = 0; i < n;) {
         Py_ssize_t start = i;
-        int o = _Py_OPCODE(first[i]), a = _Py_OPARG(first[i]);
-        i++;
-        while (o == EXTENDED_ARG && i < n) {
-            a = (a << 8) | _Py_OPARG(first[i]);
-            o = _Py_OPCODE(first[i]);
-            i++;
-        }
+        le_instr_t in = le_instr(c, (int)i * LE_UNIT);
+        int o = in.op, j;
+        i = in.next / LE_UNIT;
+        j = LE_IS_JABS(o) || LE_IS_JREL(o) ? le_jump_target(in) / LE_UNIT : -1;
         op[start] = o;
-        arg[start] = a;
+        arg[start] = j >= 0 ? j : in.arg;
         nxt[start] = (int)i;
         switch (o) {
             case SETUP_LOOP:
-                jump_targets[i + JUMP_UNITS(a)] |= 1;
+                jump_targets[j] |= 1;
                 break;
             case CONTINUE_LOOP:
-                jump_targets[JUMP_UNITS(a)] |= 2;
+                jump_targets[j] |= 2;
                 break;
             case CALL_FINALLY: /* END_FINALLY returns after it */
                 jump_targets[i] |= 2;
@@ -323,7 +301,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
             case SETUP_FINALLY:
             case SETUP_WITH:
                 setup_at[nsetups] = (int)i;
-                handler_at[nsetups++] = (int)(i + JUMP_UNITS(a));
+                handler_at[nsetups++] = j;
                 break;
         }
     }
@@ -349,7 +327,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
 
     for (m = 0; m < report->mergepoint_count; m++) {
         mergepoint_t *mp = &report->mergepoints[m];
-        uint64_t *in = live + (mp->bytecode_position / 2) * words;
+        uint64_t *in = live + (mp->bytecode_position / LE_UNIT) * words;
         int v;
         for (v = keep_first; v < nlocals; v++)
             if (!LIVE_TEST(in, v)) {
@@ -372,19 +350,17 @@ done:
 static co_report_t *
 _find_merge_points(PyCodeObject *co, int *bad)
 {
-    const _Py_CODEUNIT *next_instr;
-    int opcode; /* Current opcode */
-    int oparg;  /* Current opcode argument, if any */
-    const _Py_CODEUNIT *first_instr;
-    const _Py_CODEUNIT *instr_end;
+    le_code_t c = le_code(co);
+    le_instr_t in;
+    int opcode;
+    Py_ssize_t next_unit = 0, end_unit = c.size / LE_UNIT;
     Py_ssize_t mergepoint_count = 0;
     Py_ssize_t mergepoint_index = 0;
     co_report_t *report;
     int flags = 0;
     int weight = 0, loads_global = 0;
     Py_ssize_t entry_count_index = -1;
-    Py_ssize_t entry_count_len =
-        (PyBytes_Size(co->co_code) / (Py_ssize_t)sizeof(_Py_CODEUNIT)) + 1;
+    Py_ssize_t entry_count_len = end_unit + 1;
     unsigned char entry_count[entry_count_len];
     unsigned char is_start[entry_count_len];
     unsigned char breaker_check[entry_count_len];
@@ -395,23 +371,15 @@ _find_merge_points(PyCodeObject *co, int *bad)
     memset(breaker_check, 0, entry_count_len);
     memset(is_target, 0, entry_count_len);
 
-    first_instr = (_Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
-    next_instr = first_instr;
-    instr_end =
-        first_instr + (PyBytes_Size(co->co_code) / sizeof(_Py_CODEUNIT));
-
     entry_count[0] = 2; /* start of code is always a merge point */
-    for (; next_instr < instr_end;) {
+    while (next_unit < end_unit) {
         /* an instruction with EXTENDED_ARG prefixes is one unit starting at
            the first prefix: that is where jumps land, and pycompiler.c
            handles it in one step */
-        entry_count_index = next_instr - first_instr;
-        NEXTOPARG();
-        while (opcode == EXTENDED_ARG && next_instr < instr_end) {
-            int oldoparg = oparg;
-            NEXTOPARG();
-            oparg |= oldoparg << 8;
-        }
+        entry_count_index = next_unit;
+        in = le_instr(c, (int)next_unit * LE_UNIT);
+        opcode = in.op;
+        next_unit = in.next / LE_UNIT;
         is_start[entry_count_index] = 1;
         if (!IS_LIGHT_INSTR(opcode))
             weight++;
@@ -422,8 +390,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
            instruction ceval skips: then always, after that one */
         if ((opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
              opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD) &&
-            next_instr < instr_end && BREAKER_SKIPS(_Py_OPCODE(*next_instr)))
-            BREAKER_CHECK(next_instr - first_instr);
+            next_unit < end_unit && BREAKER_SKIPS(le_op(c, in.next)))
+            BREAKER_CHECK(next_unit);
         switch (opcode) {
             /* no successor in this code */
             case RETURN_VALUE:
@@ -433,50 +401,39 @@ _find_merge_points(PyCodeObject *co, int *bad)
             /* unconditional jumps */
             case JUMP_ABSOLUTE:
             case CONTINUE_LOOP:
-                ENTER_JUMP_TO(JUMP_UNITS(oparg));
-                break;
             case JUMP_FORWARD:
-                ENTER_JUMP_TO(NEXT_UNIT() + JUMP_UNITS(oparg));
+                ENTER_JUMP_TO(TARGET_UNIT());
                 break;
-            /* the finally block, which END_FINALLY leaves for the next
-               instruction */
+            /* two successors; CALL_FINALLY's are the finally block and the
+               next instruction, where END_FINALLY leaves the block */
             case CALL_FINALLY:
-                ENTER_JUMP_TO(NEXT_UNIT() + JUMP_UNITS(oparg));
-                ENTER_NEXT();
-                break;
-            /* two successors */
             case POP_JUMP_IF_FALSE:
             case POP_JUMP_IF_TRUE:
             case JUMP_IF_FALSE_OR_POP:
             case JUMP_IF_TRUE_OR_POP:
-                ENTER_JUMP_TO(JUMP_UNITS(oparg));
-                ENTER_NEXT();
-                break;
             case FOR_ITER:
             case SETUP_LOOP: /* the loop's end, also reached by break */
-                ENTER_JUMP_TO(NEXT_UNIT() + JUMP_UNITS(oparg));
+                ENTER_JUMP_TO(TARGET_UNIT());
                 ENTER_NEXT();
                 break;
             /* a handler can be entered from anywhere in the block */
             case SETUP_EXCEPT:
                 flags |= MP_FLAGS_HAS_EXCEPT;
                 MP_HERE();
-                entry_count[JUMP_TARGET(NEXT_UNIT() + JUMP_UNITS(oparg))] = 8;
+                entry_count[JUMP_TARGET(TARGET_UNIT())] = 8;
                 ENTER_NEXT();
                 break;
             case SETUP_FINALLY:
             case SETUP_WITH:
                 flags |= MP_FLAGS_HAS_FINALLY;
                 MP_HERE();
-                entry_count[JUMP_TARGET(NEXT_UNIT() + JUMP_UNITS(oparg))] = 8;
+                entry_count[JUMP_TARGET(TARGET_UNIT())] = 8;
                 ENTER_NEXT();
                 break;
             /* any other jump the source has may go either way */
             default:
-                if (LE_IS_JABS(opcode))
-                    ENTER_JUMP_TO(JUMP_UNITS(oparg));
-                else if (LE_IS_JREL(opcode))
-                    ENTER_JUMP_TO(NEXT_UNIT() + JUMP_UNITS(oparg));
+                if (LE_IS_JABS(opcode) || LE_IS_JREL(opcode))
+                    ENTER_JUMP_TO(TARGET_UNIT());
                 ENTER_NEXT();
         }
     }
@@ -536,7 +493,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
          entry_count_index++) {
         if (entry_count[entry_count_index] > 1) {
             report->mergepoints[mergepoint_index].bytecode_position =
-                entry_count_index * 2;
+                entry_count_index * LE_UNIT;
             report->mergepoints[mergepoint_index].entries.fatlist =
                 PyList_New(0);
             if (report->mergepoints[mergepoint_index].entries.fatlist ==
@@ -590,13 +547,9 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
 static PyObject *
 _build_merge_points(PyCodeObject *co, int module)
 {
-    const _Py_CODEUNIT *next_instr;
-    int opcode; /* Current opcode */
-    int oparg;  /* Current opcode argument, if any */
-    const _Py_CODEUNIT *first_instr;
-    const _Py_CODEUNIT *instr_end;
+    le_code_t c;
+    int pos, opcode, oparg;
     co_report_t *report;
-    int extended_arg = 0;
     int reads_class, bad = 0;
 
     /* XXX tony: all these not supported/buggy currently */
@@ -618,15 +571,12 @@ _build_merge_points(PyCodeObject *co, int module)
        see reaches a real frame, whose locals compiled code doesn't write */
     reads_class = psyco_class_cell(co) >= 0;
 
-    first_instr = (_Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
-    next_instr = first_instr;
-    instr_end =
-        first_instr + (PyBytes_Size(co->co_code) / sizeof(_Py_CODEUNIT));
-
-    for (; next_instr < instr_end;) {
-        NEXTOPARG();
-        oparg |= extended_arg;
-        extended_arg = opcode == EXTENDED_ARG ? oparg << 8 : 0;
+    c = le_code(co);
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        opcode = in.op;
+        oparg = in.arg;
+        pos = in.next;
         if (opcode == LOAD_GLOBAL && loads_frame_locals_builtin(co, oparg))
             goto not_ok;
         if (reads_class && oparg == 0 &&
@@ -856,8 +806,8 @@ not_ok:
 DEFINEFN int
 psyco_is_genexpr(PyCodeObject *co)
 {
-    const _Py_CODEUNIT *p, *end;
-    int yields = 0;
+    le_code_t c;
+    int pos, yields = 0;
     if ((co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR |
                          CO_ITERABLE_COROUTINE)) != CO_GENERATOR ||
         co->co_argcount != 1 || co->co_kwonlyargcount != 0 ||
@@ -865,10 +815,11 @@ psyco_is_genexpr(PyCodeObject *co)
         PyTuple_GET_SIZE(co->co_cellvars) != 0 ||
         PyUnicode_CompareWithASCIIString(co->co_name, "<genexpr>") != 0)
         return 0;
-    p = (const _Py_CODEUNIT *)PyBytes_AS_STRING(co->co_code);
-    end = p + PyBytes_GET_SIZE(co->co_code) / sizeof(_Py_CODEUNIT);
-    for (; p < end; p++) {
-        int op = _Py_OPCODE(*p);
+    c = le_code(co);
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        int op = in.op;
+        pos = in.next;
         if (op == YIELD_VALUE)
             yields++;
         else if (op == YIELD_FROM || op == GET_YIELD_FROM_ITER)
