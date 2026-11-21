@@ -4,7 +4,7 @@ runs except BANNED.
 
     python3.X tests/cpython/run.py [-j N] [module ...]
 """
-import fnmatch, os, resource, subprocess, sys, tempfile
+import fnmatch, json, os, resource, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import (LE_DIR, SANITIZE_LOGS, SANITIZE_SKIP, SLOWDOWN,
@@ -60,13 +60,19 @@ def gc_callback_aborts():
                           timeout=TIMEOUT).returncode < 0
 
 
+# Prints a JSON list of the first failing tests, each its id and the end of
+# its traceback, then the counts.
 CHILD = r'''
-import sys, unittest, io
+import sys, unittest, io, json
 if sys.argv[1] == 'lejit':
     sys.path.insert(0, sys.argv[3]); import lejit; lejit.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)
 r = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
+bad = r.failures + r.errors
+print(json.dumps([[t.id()] + [l[:200] for l in tb.splitlines()[-10:]]
+                  for t, tb in bad[:10]] +
+                 [['and %d more' % (len(bad) - 10)]] * (len(bad) > 10)))
 print('run=%d fail=%d err=%d skip=%d' % (r.testsRun, len(r.failures),
                                          len(r.errors), len(r.skipped)))
 sys.stdout.flush()
@@ -79,30 +85,56 @@ def limit_memory():
     resource.setrlimit(resource.RLIMIT_AS, (MEMORY_LIMIT, MEMORY_LIMIT))
 
 
+def stderr_tail(err):
+    """The last lines of a run's stderr (bytes), cut to a bounded width."""
+    return ['stderr:'] + ['    ' + l[:200] for l in
+                          err.decode(errors='replace').splitlines()[-10:]]
+
+
 def run(mode, name):
+    """The run's counts and exit status, and lines that say why tests failed."""
     tag = name + '.' + mode
-    with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd:
+    with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd, \
+            tempfile.TemporaryFile() as errf:
         p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, LE_DIR],
-                             stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE if SANITIZE_LOGS else subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=errf,
                              stdin=subprocess.DEVNULL, cwd=cwd, env=child_env(tag),
                              preexec_fn=None if SANITIZE_LOGS else limit_memory)
         try:
-            out, err = p.communicate(timeout=TIMEOUT)
+            out, _ = p.communicate(timeout=TIMEOUT)
         except subprocess.TimeoutExpired:
             p.kill()
             p.communicate()
-            return 'timeout'
+            out = None
+        size = errf.seek(0, os.SEEK_END)
+        errf.seek(0 if SANITIZE_LOGS else max(0, size - 4096))
+        err = errf.read()
+    if out is None:
+        return 'timeout', stderr_tail(err)
     save_stderr(tag, p.pid, err)
     out = out.decode().strip().splitlines()
-    return '%s exit=%d' % (out[-1] if out else '(no output)', p.returncode)
+    counted = out[-1:] and out[-1].startswith('run=')
+    why = []
+    if counted and len(out) > 1:
+        try:
+            for test in json.loads(out[-2]):
+                why += test[:1] + ['    ' + l for l in test[1:]]
+        except (ValueError, TypeError):
+            pass
+    if not counted or p.returncode:
+        why += stderr_tail(err)
+    return '%s exit=%d' % (out[-1] if out else '(no output)', p.returncode), why
 
 
 def check(name):
-    plain, with_lejit = run('plain', name), run('lejit', name)
+    (plain, plain_why), (with_lejit, lejit_why) = run('plain', name), run('lejit', name)
     if plain == with_lejit:
         return True, 'ok     %-24s %s' % (name, plain)
-    return False, 'FAIL   %-24s %s   with LeJIT: %s' % (name, plain, with_lejit)
+    report = ['FAIL   %-24s %s   with LeJIT: %s' % (name, plain, with_lejit)]
+    for side, why in ('plain', plain_why), ('with LeJIT', lejit_why):
+        if why:
+            report += ['       %s:' % side] + ['         ' + l for l in why]
+    return False, '\n'.join(report)
 
 
 def modules():
