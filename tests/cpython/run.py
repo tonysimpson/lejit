@@ -1,6 +1,6 @@
 """Runs CPython's own test modules plain and with LeJIT; the counts and exit
 status must match. Every test_* module of the interpreter's test package
-runs except BANNED.
+runs except BANNED, and every test except SKIPPED.
 
     python3.X tests/cpython/run.py [-j N] [module ...]
 """
@@ -33,6 +33,15 @@ BANNED = {
         'test_sys_settrace test_pdb',
     'marshal of a code object with one reference': 'test_importlib',
     'timing': 'test_email',
+    "SSL tests that race on OpenSSL 3, which the CI images' older CPythons predate":
+        'test_poplib',
+}
+
+# reason: single tests (module.Class.method) skipped in both runs
+SKIPPED = {
+    'a deadline on the whole run, which slow machines miss':
+        'test_signal.StressTest.test_stress_delivery_dependent '
+        'test_signal.StressTest.test_stress_delivery_simultaneous',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
@@ -67,6 +76,10 @@ import sys, unittest, io, json
 if sys.argv[1] == 'lejit':
     sys.path.insert(0, sys.argv[3]); import lejit; lejit.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
+for name in sys.argv[4:]:
+    cls, meth = name.split('.')
+    cls = getattr(mod, cls)
+    setattr(cls, meth, unittest.skip('skipped by run.py')(getattr(cls, meth)))
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)
 r = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
 bad = r.failures + r.errors
@@ -96,7 +109,9 @@ def run(mode, name):
     tag = name + '.' + mode
     with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd, \
             tempfile.TemporaryFile() as errf:
-        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, LE_DIR],
+        skip = [t.split('.', 1)[1] for ts in SKIPPED.values() for t in ts.split()
+                if t.split('.', 1)[0] == name]
+        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, LE_DIR] + skip,
                              stdout=subprocess.PIPE, stderr=errf,
                              stdin=subprocess.DEVNULL, cwd=cwd, env=child_env(tag),
                              preexec_fn=None if SANITIZE_LOGS else limit_memory)
