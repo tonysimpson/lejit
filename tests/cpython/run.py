@@ -33,6 +33,8 @@ BANNED = {
         'test_sys_settrace test_pdb',
     'marshal of a code object with one reference': 'test_importlib',
     'timing': 'test_email',
+    "SSL tests that race on OpenSSL 3, which the CI images' older CPythons predate":
+        'test_poplib',
 }
 
 # reason: single tests (module.Class.method) skipped in both runs
