@@ -41,7 +41,7 @@ cimpl_builtin_hasattr_impl(PyObject *module, PyObject *obj, PyObject *name)
         PyErr_SetString(PyExc_TypeError, LE_MSG_HASATTR_NAME_NOT_STR);
         return NULL;
     }
-    if (_PyObject_LookupAttr(obj, name, &v) < 0) {
+    if (le_lookup_attr(obj, name, &v) < 0) {
         return NULL;
     }
     if (v == NULL) {

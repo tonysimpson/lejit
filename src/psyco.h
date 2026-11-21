@@ -843,6 +843,37 @@ typedef int bool;
 #define PyObject_TypeCheck(o, t) ((o)->ob_type == (t))
 #endif
 
+/* C API calls that some CPython versions lack: the function where
+   libpython has it, else its public replacement */
+#if LE_HAS_LOOKUP_ATTR_LINKABLE
+#define le_lookup_attr _PyObject_LookupAttr
+#else
+#define le_lookup_attr PyObject_GetOptionalAttr
+#endif
+#if LE_HAS_PRIVATE_IS_FINALIZING_LINKABLE
+#define le_is_finalizing _Py_IsFinalizing
+#else
+#define le_is_finalizing Py_IsFinalizing
+#endif
+#if LE_HAS_HASH_BYTES_LINKABLE
+/* some versions declare it only in an internal header */
+PyAPI_FUNC(Py_hash_t) _Py_HashBytes(const void *, Py_ssize_t);
+#define le_hash_bytes _Py_HashBytes
+#else
+#define le_hash_bytes Py_HashBuffer
+#endif
+#if LE_HAS_UNICODE_FAST_COPY_LINKABLE
+#define le_unicode_copy_characters _PyUnicode_FastCopyCharacters
+#else
+#define le_unicode_copy_characters(to, to_start, from, from_start, n) \
+    ((void)PyUnicode_CopyCharacters(to, to_start, from, from_start, n))
+#endif
+#if LE_HAS_UNICODE_FROM_ASCII_LINKABLE
+#define le_unicode_from_ascii _PyUnicode_FromASCII
+#else
+#define le_unicode_from_ascii(s, size) PyUnicode_DecodeASCII(s, size, NULL)
+#endif
+
 typedef unsigned char code_t;
 
 typedef struct vinfo_s vinfo_t;             /* defined in compiler.h */

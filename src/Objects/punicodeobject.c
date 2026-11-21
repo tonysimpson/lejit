@@ -36,6 +36,122 @@
 #define F_ZERO (1 << 4)
 #endif
 
+/* C API calls that some CPython versions don't export: the function where
+   libpython exports it, else a copy of CPython's or a public call that
+   does the same. Where _PyLong_FormatWriter isn't exported, the
+   formatting skips its fast paths, whose text the slow ones also give. */
+#if LE_HAS_LONG_FORMAT_WRITER_LINKABLE
+/* some versions declare it only in an internal header */
+PyAPI_FUNC(int) _PyLong_FormatWriter(_PyUnicodeWriter *writer, PyObject *obj,
+                                     int base, int alternate);
+#endif
+
+#if LE_HAS_UNICODE_FORMAT_LONG_LINKABLE
+#define le_unicode_format_long _PyUnicode_FormatLong
+#else
+/* '%' formatting does _PyUnicode_FormatLong's work on an int */
+static PyObject *
+le_unicode_format_long(PyObject *val, int alt, int prec, int type)
+{
+    char fmt[6], *f = fmt;
+    PyObject *format, *args, *res;
+    *f++ = '%';
+    if (alt)
+        *f++ = '#';
+    if (prec >= 0) {
+        *f++ = '.';
+        *f++ = '*';
+    }
+    *f++ = (char)type;
+    format = PyUnicode_FromStringAndSize(fmt, f - fmt);
+    if (format == NULL)
+        return NULL;
+    args = prec >= 0 ? Py_BuildValue("(iO)", prec, val) : PyTuple_Pack(1, val);
+    res = args == NULL ? NULL : PyUnicode_Format(format, args);
+    Py_XDECREF(args);
+    Py_DECREF(format);
+    return res;
+}
+#endif
+
+#if LE_HAS_UNICODE_EQ_LINKABLE
+#define le_unicode_eq _PyUnicode_EQ
+#else
+/* stringlib/eq.h:unicode_eq */
+static int
+le_unicode_eq(PyObject *a, PyObject *b)
+{
+    if (PyUnicode_GET_LENGTH(a) != PyUnicode_GET_LENGTH(b))
+        return 0;
+    if (PyUnicode_GET_LENGTH(a) == 0)
+        return 1;
+    if (PyUnicode_KIND(a) != PyUnicode_KIND(b))
+        return 0;
+    return memcmp(PyUnicode_1BYTE_DATA(a), PyUnicode_1BYTE_DATA(b),
+                  PyUnicode_GET_LENGTH(a) * PyUnicode_KIND(a)) == 0;
+}
+#endif
+
+#if LE_HAS_UNICODE_FIND_MAX_CHAR_LINKABLE
+#define le_unicode_find_max_char _PyUnicode_FindMaxChar
+#else
+/* unicodeobject.c:_PyUnicode_FindMaxChar: the largest character of each
+   kind's range (127, 255, 65535 or 1114111) that the characters fit */
+static Py_UCS4
+le_unicode_find_max_char(PyObject *unicode, Py_ssize_t start, Py_ssize_t end)
+{
+    int kind;
+    const void *data;
+    Py_UCS4 max = 0;
+    if (start == 0 && end == PyUnicode_GET_LENGTH(unicode))
+        return PyUnicode_MAX_CHAR_VALUE(unicode);
+    if (start == end || PyUnicode_IS_ASCII(unicode))
+        return 127;
+    kind = PyUnicode_KIND(unicode);
+    data = PyUnicode_DATA(unicode);
+    for (; start < end; start++)
+        max = Py_MAX(max, PyUnicode_READ(kind, data, start));
+    return max < 0x80      ? 0x7f
+           : max < 0x100   ? 0xff
+           : max < 0x10000 ? 0xffff
+                           : 0x10ffff;
+}
+#endif
+
+#if LE_HAS_UNICODE_XSTRIP_LINKABLE
+#define le_unicode_xstrip _PyUnicode_XStrip
+#else
+/* unicodeobject.c:_PyUnicode_XStrip, without its bloom filter */
+static PyObject *
+le_unicode_xstrip(PyObject *self, int striptype, PyObject *sepobj)
+{
+    const void *data = PyUnicode_DATA(self);
+    int kind = PyUnicode_KIND(self);
+    Py_ssize_t len = PyUnicode_GET_LENGTH(self);
+    Py_ssize_t seplen = PyUnicode_GET_LENGTH(sepobj);
+    Py_ssize_t i = 0, j = len;
+    if (striptype != 1) {
+        while (i < len) {
+            Py_UCS4 ch = PyUnicode_READ(kind, data, i);
+            if (PyUnicode_FindChar(sepobj, ch, 0, seplen, 1) < 0)
+                break;
+            i++;
+        }
+    }
+    if (striptype != 0) {
+        j--;
+        while (j >= i) {
+            Py_UCS4 ch = PyUnicode_READ(kind, data, j);
+            if (PyUnicode_FindChar(sepobj, ch, 0, seplen, 1) < 0)
+                break;
+            j--;
+        }
+        j++;
+    }
+    return PyUnicode_Substring(self, i, j);
+}
+#endif
+
 /* 'state' is read as its low byte, which holds the bit-fields ready, ascii,
    compact, kind and interned (their masks are LE_BIT_, psyco.h's, from
    the bit order its layouts check, which puts ready, ascii and
@@ -66,8 +182,7 @@ static PyObject *
 cimpl_do_strip(PyObject *self, int striptype)
 {
     Py_ssize_t len, i, j;
-    if ((assert(PyUnicode_Check(self)),
-         (PyUnicode_IS_READY(self) ? 0 : _PyUnicode_Ready(self))) == -1)
+    if (PyUnicode_READY(self) == -1)
         return NULL;
     len = PyUnicode_GET_LENGTH(self);
     if (PyUnicode_IS_ASCII(self)) {
@@ -129,7 +244,7 @@ cimpl_do_argstrip(PyObject *self, int striptype, PyObject *sep)
 {
     if (sep != Py_None) {
         if (PyUnicode_Check(sep))
-            return _PyUnicode_XStrip(self, striptype, sep);
+            return le_unicode_xstrip(self, striptype, sep);
         else {
             PyErr_Format(PyExc_TypeError, LE_MSG_STRIP_ARG,
                          (cstatic_stripfuncnames[striptype]));
@@ -345,6 +460,7 @@ cimpl_mainformatlong(PyObject *v, struct unicode_format_arg_t *arg,
         iobj = v;
         Py_INCREF(iobj);
     }
+#if LE_HAS_LONG_FORMAT_WRITER_LINKABLE
     if (PyLong_CheckExact(v) && arg->width == -1 && arg->prec == -1 &&
         !(arg->flags & ((1 << 1) | (1 << 2))) && type != 'X') {
         int alternate = arg->flags & (1 << 3);
@@ -372,7 +488,8 @@ cimpl_mainformatlong(PyObject *v, struct unicode_format_arg_t *arg,
         Py_DECREF(iobj);
         return 1;
     }
-    res = _PyUnicode_FormatLong(iobj, arg->flags & (1 << 3), arg->prec, type);
+#endif
+    res = le_unicode_format_long(iobj, arg->flags & (1 << 3), arg->prec, type);
     Py_DECREF(iobj);
     if (res == NULL)
         return -1;
@@ -422,6 +539,7 @@ wrongtype:
         iobj = v;
         Py_INCREF(iobj);
     }
+#if LE_HAS_LONG_FORMAT_WRITER_LINKABLE
     if (PyLong_CheckExact(v) && arg->width == -1 && arg->prec == -1 &&
         !(arg->flags & (F_SIGN | F_BLANK)) && type != 'X') {
         int alternate = arg->flags & F_ALT;
@@ -449,7 +567,8 @@ wrongtype:
         Py_DECREF(iobj);
         return 1;
     }
-    res = _PyUnicode_FormatLong(iobj, arg->flags & F_ALT, arg->prec, type);
+#endif
+    res = le_unicode_format_long(iobj, arg->flags & F_ALT, arg->prec, type);
     Py_DECREF(iobj);
     if (res == NULL)
         return -1;
@@ -502,7 +621,7 @@ cimpl_formatfloat(PyObject *v, struct unicode_format_arg_t *arg,
         }
     }
     else
-        *p_output = _PyUnicode_FromASCII(p, len);
+        *p_output = le_unicode_from_ascii(p, len);
     PyMem_Free(p);
     return 0;
 }
@@ -581,12 +700,14 @@ cimpl_unicode_format_arg_format(struct unicode_formatter_t *ctx,
         case 's':
         case 'r':
         case 'a':
+#if LE_HAS_LONG_FORMAT_WRITER_LINKABLE
             if (PyLong_CheckExact(v) && arg->width == -1 && arg->prec == -1) {
                 if (_PyLong_FormatWriter(writer, v, 10, arg->flags & F_ALT) ==
                     -1)
                     return -1;
                 return 1;
             }
+#endif
             if (PyUnicode_CheckExact(v) && arg->ch == 's') {
                 *p_str = v;
                 Py_INCREF(*p_str);
@@ -706,8 +827,7 @@ cimpl_unicode_format_arg_output(struct unicode_formatter_t *ctx,
     fill = ' ';
     if (arg->sign && arg->flags & F_ZERO)
         fill = '0';
-    if ((assert(PyUnicode_Check(str)),
-         (PyUnicode_IS_READY(str) ? 0 : _PyUnicode_Ready(str))) == -1)
+    if (PyUnicode_READY(str) == -1)
         return -1;
     len = PyUnicode_GET_LENGTH(str);
     if ((arg->width == -1 || arg->width <= len) &&
@@ -753,7 +873,7 @@ cimpl_unicode_format_arg_output(struct unicode_formatter_t *ctx,
         }
     }
     if (PyUnicode_MAX_CHAR_VALUE(str) > maxchar) {
-        Py_UCS4 strmaxchar = _PyUnicode_FindMaxChar(str, 0, pindex + len);
+        Py_UCS4 strmaxchar = le_unicode_find_max_char(str, 0, pindex + len);
         maxchar = Py_MAX(maxchar, strmaxchar);
     }
     buflen = arg->width;
@@ -809,8 +929,8 @@ cimpl_unicode_format_arg_output(struct unicode_formatter_t *ctx,
         }
     }
     if (len) {
-        _PyUnicode_FastCopyCharacters(writer->buffer, writer->pos, str, pindex,
-                                      len);
+        le_unicode_copy_characters(writer->buffer, writer->pos, str, pindex,
+                                   len);
         writer->pos += len;
     }
     if (arg->width > len) {
@@ -1501,7 +1621,7 @@ static int
 cimpl_unicode_eq(PyObject *a, PyObject *b)
 {
     return a == b || (PyUnicode_READY(a) == 0 && PyUnicode_READY(b) == 0 &&
-                      _PyUnicode_EQ(a, b));
+                      le_unicode_eq(a, b));
 }
 
 /* == of two str, one a view at least: a known int, 1 if equal */
@@ -2072,7 +2192,7 @@ case_map(char *dst, const char *src, Py_ssize_t n, long upper)
 }
 
 /* pyhash.c's siphash24 on the mapped bytes as they are written, x86-64
-   being little-endian; used only if it gives _Py_HashBytes's values
+   being little-endian; used only if it gives le_hash_bytes's values
    (case_hash_checked) */
 #define SIP_ROTATE(x, b) (uint64_t)(((x) << (b)) | ((x) >> (64 - (b))))
 #define SIP_HALF_ROUND(a, b, c, d, s, t) \
@@ -2117,13 +2237,13 @@ case_map_hash(char *dst, const char *src, Py_ssize_t n, long upper)
     SIP_DOUBLE_ROUND(v0, v1, v2, v3);
     t = (v0 ^ v1) ^ (v2 ^ v3);
     x = (Py_hash_t)t;
-    return x == -1 ? -2 : x; /* _Py_HashBytes's */
+    return x == -1 ? -2 : x; /* le_hash_bytes's */
 }
 #undef SIP_DOUBLE_ROUND
 #undef SIP_HALF_ROUND
 #undef SIP_ROTATE
 
-static int case_hash_checked; /* case_map_hash is _Py_HashBytes */
+static int case_hash_checked; /* case_map_hash is le_hash_bytes */
 
 /* ascii_upper_or_lower on root[start:start+len]; 'hashed': with the hash
    set, as unicode_hash would set it */
@@ -2143,7 +2263,7 @@ cimpl_casemap(PyObject *root, Py_ssize_t start, Py_ssize_t len, long upper,
         ((PyASCIIObject *)r)->hash = case_map_hash(dst, src, len, upper);
     else {
         case_map(dst, src, len, upper);
-        ((PyASCIIObject *)r)->hash = _Py_HashBytes(dst, len);
+        ((PyASCIIObject *)r)->hash = le_hash_bytes(dst, len);
     }
     return r;
 }
@@ -2234,7 +2354,7 @@ PsycoUnicode_KeyChars(le_strkey_t *k, Py_hash_t *hash, char *buf,
     k->length = len;
     if (map < 0) {
         k->data = (const Py_UCS1 *)src;
-        *hash = _Py_HashBytes(src, len);
+        *hash = le_hash_bytes(src, len);
         return 1;
     }
     if (len > LE_KEY_BUF)
@@ -2246,7 +2366,7 @@ PsycoUnicode_KeyChars(le_strkey_t *k, Py_hash_t *hash, char *buf,
         *hash = case_map_hash(buf, src, len, map);
     else {
         case_map(buf, src, len, map);
-        *hash = _Py_HashBytes(buf, len);
+        *hash = le_hash_bytes(buf, len);
     }
     return 1;
 }
@@ -3143,8 +3263,8 @@ cimpl_build_parts(long tags, long a0, long a1, long a2, long a3, long a4,
         }
         else {
             s = (PyObject *)a[i];
-            _PyUnicode_FastCopyCharacters(res, pos, s, 0,
-                                          PyUnicode_GET_LENGTH(s));
+            le_unicode_copy_characters(res, pos, s, 0,
+                                       PyUnicode_GET_LENGTH(s));
             pos += PyUnicode_GET_LENGTH(s);
         }
     }
@@ -3195,7 +3315,7 @@ PsycoUnicode_BuildParts(PsycoObject *po, vinfo_t **items, int n,
     return 1;
 }
 
-/* case_map_hash against _Py_HashBytes on every length to 40 and each
+/* case_map_hash against le_hash_bytes on every length to 40 and each
    case of byte, so another algorithm, a small-string cut-off or another
    byte order is never taken for CPython's hash; and the map itself
    against Py_TOLOWER and Py_TOUPPER, with nothing written past the
@@ -3219,7 +3339,7 @@ check_case_hash(void)
                         "lejit: case_map is not ascii_upper_or_lower's map");
             if (a[n] != '#' || b[n] != '#')
                 Py_FatalError("lejit: case_map writes past the length");
-            if (memcmp(a, b, n) != 0 || (n > 0 && h != _Py_HashBytes(b, n)))
+            if (memcmp(a, b, n) != 0 || (n > 0 && h != le_hash_bytes(b, n)))
                 return;
         }
     case_hash_checked = 1;

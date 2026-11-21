@@ -164,6 +164,20 @@ le_code_extra_free(le_code_extra_t *x)
     Py_DECREF(RECORD_OF(x));
 }
 
+static int
+weakref_is_dead(PyObject *ref)
+{
+#ifdef PyWeakref_GET_OBJECT
+    return PyWeakref_GET_OBJECT(ref) == Py_None;
+#else
+    PyObject *obj;
+    if (PyWeakref_GetRef(ref, &obj) <= 0)
+        return 1;
+    Py_DECREF(obj);
+    return 0;
+#endif
+}
+
 /* the weak reference's callback; anyone can fetch it from a live
    reference (__callback__) and call it */
 static PyObject *
@@ -171,7 +185,7 @@ record_died(PyObject *self, PyObject *ref)
 {
     code_record_t *r = (code_record_t *)ref;
     if (Py_TYPE(ref) == &CodeRecord_Type && r->attached &&
-        PyWeakref_GET_OBJECT(ref) == Py_None) {
+        weakref_is_dead(ref)) {
         r->attached = 0;
         le_code_extra_free(&r->x);
     }

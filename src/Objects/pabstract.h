@@ -51,10 +51,6 @@ EXTERNFN vinfo_t *
 PsycoSequence_List(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *
 PsycoSequence_Fast(PsycoObject *po, vinfo_t *v, const char *m);
-/* the count, index or 0/1; NULL on error */
-EXTERNFN vinfo_t *
-_PsycoSequence_IterSearch(PsycoObject *po, vinfo_t *seq, vinfo_t *obj,
-                          int operation);
 
 EXTERNFN vinfo_t *
 PsycoNumber_Positive(PsycoObject *po, vinfo_t *vi);
