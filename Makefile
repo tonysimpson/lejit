@@ -8,7 +8,7 @@
 #
 # The build detects PY's features and takes its messages from PY itself
 # (NI_FEATURES=source reads the source of PY's CPython release instead,
-# fetched into ~/.cache/ni once). GEN_PY runs the tools' own tests.
+# fetched into .cache/ once). GEN_PY runs the tools' own tests.
 
 SHELL := bash
 

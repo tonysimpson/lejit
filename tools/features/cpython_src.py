@@ -2,8 +2,8 @@
 
 NI_CPYTHON_SRC, if set, is used as it is. Otherwise the release tarball for
 that exact version is fetched from python.org once, checked against
-cpython_sha256.txt, and unpacked into the cache (NI_CACHE_DIR, else
-$XDG_CACHE_HOME/ni, else ~/.cache/ni; under cpython/). Either way the tree's
+cpython_sha256.txt, and unpacked into .cache/cpython/ in the repository
+(untracked; make clean leaves it). Either way the tree's
 Include/patchlevel.h must name exactly the version asked for: a missing or
 different source is an error, never a reason to use something else.
 """
@@ -55,10 +55,7 @@ def source_sha(src):
 
 
 def cache_dir():
-    if os.environ.get('NI_CACHE_DIR'):
-        return os.environ['NI_CACHE_DIR']
-    base = os.environ.get('XDG_CACHE_HOME') or os.path.expanduser('~/.cache')
-    return os.path.join(base, 'ni')
+    return os.path.normpath(os.path.join(HERE, '..', '..', '.cache'))
 
 
 def expected_sha256(name):

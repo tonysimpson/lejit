@@ -1,4 +1,6 @@
 build
+# CPython source releases, fetched by tools/features/cpython_src.py
+/.cache/
 .vscode
 *.py[cod]
 *.so
