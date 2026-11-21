@@ -620,6 +620,52 @@ PycException_SetFormat(PsycoObject *po, PyObject *e, const char *fmt, ...)
     PycException_SetObject(po, e, s);
 }
 
+/* PycException_SetTypeFormat's message, from the names the types have now */
+static PyObject *
+cimpl_type_message(const char *fmt, const char *s, PyTypeObject *t1,
+                   PyTypeObject *t2)
+{
+    const char *n2 = t2 != NULL ? t2->tp_name : NULL;
+    if (s != NULL)
+        return PyUnicode_FromFormat(fmt, s, t1->tp_name, n2);
+    return PyUnicode_FromFormat(fmt, t1->tp_name, n2);
+}
+
+/* A message naming a class that can be renamed (a mutable type) is made
+   now, as for any other error, behind a guard on each such class
+   (pobject.c:Psyco_TypeNameChanged): CPython makes it at each raise, so a
+   class renamed after compiling must not keep its old name. The exception
+   stays virtual either way, so an except clause still matches at compile
+   time; only on the path where a class changed is its message made at run
+   time. Raising it there instead would set the thread state, match,
+   normalise and build a traceback entry on every raise. */
+DEFINEFN
+void
+PycException_SetTypeFormat(PsycoObject *po, PyObject *e, const char *fmt,
+                           const char *s, PyTypeObject *t1, PyTypeObject *t2)
+{
+    PyTypeObject *t[2] = {t1, t2};
+    const char *n2 = t2 != NULL ? t2->tp_name : NULL;
+    vinfo_t *v;
+    int i;
+    for (i = 0; i < 2; i++) {
+        if (t[i] == NULL || !Psyco_TypeMutable(t[i]))
+            continue;
+        if (runtime_condition_f(po, Psyco_TypeNameChanged(po, t[i]))) {
+            v = psyco_generic_call(po, cimpl_type_message,
+                                   CfCommonNewRefPyObject | CfNoPython, "llll",
+                                   (long)fmt, (long)s, (long)t1, (long)t2);
+            if (v != NULL)
+                PycException_SetVInfo(po, e, v);
+            return;
+        }
+    }
+    if (s != NULL)
+        PycException_SetFormat(po, e, fmt, s, t1->tp_name, n2);
+    else
+        PycException_SetFormat(po, e, fmt, t1->tp_name, n2);
+}
+
 DEFINEFN
 vinfo_t *
 PycException_Matches(PsycoObject *po, PyObject *e)
@@ -6065,9 +6111,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         }
                     }
                     else {
-                        PycException_SetFormat(po, PyExc_TypeError,
-                                               LE_MSG_ASYNC_FOR_NO_AITER,
-                                               type->tp_name);
+                        PycException_SetTypeFormat(po, PyExc_TypeError,
+                                                   LE_MSG_ASYNC_FOR_NO_AITER,
+                                                   NULL, type, NULL);
                         break;
                     }
                     tp_iter = Psyco_KnownType(iter);
@@ -6128,9 +6174,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         _t19 = _t13 == NULL;
                     }
                     if (_t19) {
-                        PycException_SetFormat(po, PyExc_TypeError,
-                                               LE_MSG_ASYNC_FOR_AITER_NO_ANEXT,
-                                               tp_iter->tp_name);
+                        PycException_SetTypeFormat(
+                            po, PyExc_TypeError,
+                            LE_MSG_ASYNC_FOR_AITER_NO_ANEXT, NULL, tp_iter,
+                            NULL);
                         vinfo_decref(iter, po);
                         break;
                     }
@@ -6200,9 +6247,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         }
                     }
                     else {
-                        PycException_SetFormat(po, PyExc_TypeError,
-                                               LE_MSG_ASYNC_FOR_NO_ANEXT,
-                                               type->tp_name);
+                        PycException_SetTypeFormat(po, PyExc_TypeError,
+                                                   LE_MSG_ASYNC_FOR_NO_ANEXT,
+                                                   NULL, type, NULL);
                         break;
                     }
                     awaitable = psyco_generic_call(po, cimpl_get_anext_0,

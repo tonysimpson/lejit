@@ -656,8 +656,9 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
             vinfo_decref(res, po);
             return _t9;
         }
-        PycException_SetFormat(po, PyExc_TypeError, LE_MSG_MUST_BE_REAL_NUMBER,
-                               tp_op->tp_name);
+        PycException_SetTypeFormat(po, PyExc_TypeError,
+                                   LE_MSG_MUST_BE_REAL_NUMBER, NULL, tp_op,
+                                   NULL);
         return NULL;
     }
     res = Psyco_META1(po, _t4, CfCommonNewRefPyObject, "v", op);
@@ -691,9 +692,9 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
             _t14 = _t12 != 0;
         }
         if (!(_t14)) {
-            PycException_SetFormat(po, PyExc_TypeError,
-                                   LE_MSG_FLOAT_RETURNED_NON_FLOAT,
-                                   tp_op->tp_name, tp_res->tp_name);
+            PycException_SetTypeFormat(po, PyExc_TypeError,
+                                       LE_MSG_FLOAT_RETURNED_NON_FLOAT, NULL,
+                                       tp_op, tp_res);
             vinfo_decref(res, po);
             return NULL;
         }
@@ -775,8 +776,9 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
         _t5 = _t4 == NULL;
     }
     if (_t5) {
-        PycException_SetFormat(po, PyExc_TypeError, LE_MSG_MUST_BE_REAL_NUMBER,
-                               tp_op->tp_name);
+        PycException_SetTypeFormat(po, PyExc_TypeError,
+                                   LE_MSG_MUST_BE_REAL_NUMBER, NULL, tp_op,
+                                   NULL);
         return NULL;
     }
     res = Psyco_META1(po, _t4, CfCommonNewRefPyObject, "v", op);
@@ -810,9 +812,9 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
             _t10 = _t8 != 0;
         }
         if (!(_t10)) {
-            PycException_SetFormat(po, PyExc_TypeError,
-                                   LE_MSG_FLOAT_RETURNED_NON_FLOAT,
-                                   tp_op->tp_name, tp_res->tp_name);
+            PycException_SetTypeFormat(po, PyExc_TypeError,
+                                       LE_MSG_FLOAT_RETURNED_NON_FLOAT, NULL,
+                                       tp_op, tp_res);
             vinfo_decref(res, po);
             return NULL;
         }

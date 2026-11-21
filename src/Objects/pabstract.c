@@ -17,7 +17,7 @@
 static vinfo_t *
 type_error_tp(PsycoObject *po, const char *msg, PyTypeObject *tp)
 {
-    PycException_SetFormat(po, PyExc_TypeError, msg, tp->tp_name);
+    PycException_SetTypeFormat(po, PyExc_TypeError, msg, NULL, tp, NULL);
     return NULL;
 }
 
@@ -773,7 +773,7 @@ type_error(PsycoObject *po, const char *msg, vinfo_t *obj)
     if (tp_obj == NULL) {
         return NULL;
     }
-    PycException_SetFormat(po, PyExc_TypeError, msg, tp_obj->tp_name);
+    PycException_SetTypeFormat(po, PyExc_TypeError, msg, NULL, tp_obj, NULL);
     return NULL;
 }
 
@@ -1000,8 +1000,8 @@ binop_type_error(PsycoObject *po, vinfo_t *v, vinfo_t *w, const char *op_name)
     if (tp_w == NULL) {
         return NULL;
     }
-    PycException_SetFormat(po, PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR,
-                           op_name, tp_v->tp_name, tp_w->tp_name);
+    PycException_SetTypeFormat(po, PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR,
+                               op_name, tp_v, tp_w);
     return NULL;
 }
 
@@ -4044,8 +4044,8 @@ PsycoIter_Next(PsycoObject *po, vinfo_t *iter)
             return NULL;
     }
     if (f == NULL) {
-        PycException_SetFormat(po, PyExc_TypeError,
-                               LE_MSG_NEXT_NOT_IMPLEMENTED, tp->tp_name);
+        PycException_SetTypeFormat(
+            po, PyExc_TypeError, LE_MSG_NEXT_NOT_IMPLEMENTED, NULL, tp, NULL);
         return NULL;
     }
     return Psyco_META1(po, f, CfCommonIterNext, "v", iter);

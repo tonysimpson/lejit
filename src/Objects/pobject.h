@@ -150,6 +150,11 @@ Psyco_TypeLookup(PsycoObject *po, PyTypeObject *tp, void *key, PyObject *name,
 EXTERNFN void
 cimpl_type_lookup_changed(PyTypeObject *tp, PyObject *name, PyObject *descr);
 
+/* A guard for a message made now that names tp, a mutable type: a
+   condition code, true where tp has changed since. */
+EXTERNFN condition_code_t
+Psyco_TypeNameChanged(PsycoObject *po, PyTypeObject *tp);
+
 /* PyType_IsSubtype(a, b) as Psyco_TypeSlot reads a slot: a heap type's
    mro changes with a __bases__ assignment, so a's tp_mro is recorded as
    first seen (and held), *result comes from it, and compiled code checks
