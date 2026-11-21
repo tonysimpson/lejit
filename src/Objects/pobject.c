@@ -98,7 +98,7 @@ static void forget_mutable_type(PsycoObject *po, vinfo_t *v, bool runtime) {
         v->type_hint = sk;
       }
       psyco_forget_field(po, v, OB_type);
-      NI_STAT(psyco_stat_forgotten_types++);
+      LE_STAT(psyco_stat_forgotten_types++);
     }
   }
 }
@@ -189,7 +189,7 @@ void Psyco_ForgetConstantClass(PsycoObject *po, vinfo_t *v) {
    by the code that uses it as a constant. */
 DEFINEFN
 int Psyco_ConstantType(PsycoObject *po, vinfo_t *vi, PyTypeObject **tp) {
-  static ni_addrmap_t records; /* object address -> list of types */
+  static le_addrmap_t records; /* object address -> list of types */
   PyObject *o = (PyObject *)CompileTime_Get(vi->source)->value;
   PyObject **slot = psyco_record(&records, o), *types;
   Py_ssize_t k;
@@ -232,7 +232,7 @@ typedef struct {
    guard */
 static int heap_word(PsycoObject *po, void *slot, void **value, bool hold) {
   /* slot address -> value first seen */
-  static ni_addrmap_t words, objects;
+  static le_addrmap_t words, objects;
   PyObject **rec = psyco_record(hold ? &objects : &words, slot);
   vinfo_t *vslot, *vnow, *vexp;
   condition_code_t cc;
@@ -479,7 +479,7 @@ static code_t *load_miss_glue;
 static bool keys_inline(PsycoObject *po, PyTypeObject *tp) {
   /* type -> None while it has shared keys, then the first block serial
      after Ni saw them gone */
-  static ni_addrmap_t seen;
+  static le_addrmap_t seen;
   PyObject **slot = psyco_record(&seen, tp), *d = *slot;
   if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) {
     if (d != Py_None) {
@@ -801,12 +801,12 @@ DEFINEVAR bool psyco_cs_load_respawn = false;
 static void load_type_changed(PyObject *obj, PyObject *name) {
   PyTypeObject *tp = Py_TYPE(obj);
   load_guard_t *g;
-  NI_STAT(psyco_stat_load_type_changes++);
+  LE_STAT(psyco_stat_load_type_changes++);
   enable_version_tag(tp);
   g = load_guard(tp, name, load_kind(tp, name), false);
   if (g != NULL) {
     load_guard_set(&g->guard, tp);
-    NI_STAT(psyco_stat_load_repairs++);
+    LE_STAT(psyco_stat_load_repairs++);
   }
 #if LE_CODESTATS
   if (tp->tp_getattro != PyObject_GenericGetAttr)
@@ -835,7 +835,7 @@ DEFINEFN
 int Psyco_TypeLookup(PsycoObject *po, PyTypeObject *tp, void *key,
                      PyObject *name, PyObject **descr) {
   /* key -> the attribute first seen, Py_None for none */
-  static ni_addrmap_t seen;
+  static le_addrmap_t seen;
   PyObject **rec = psyco_record(&seen, key);
   PyObject *now;
   load_guard_t *guard;
@@ -867,14 +867,14 @@ DEFINEFN
 void cimpl_type_lookup_changed(PyTypeObject *tp, PyObject *name,
                                PyObject *descr) {
   load_guard_t *g;
-  NI_STAT(psyco_stat_load_type_changes++);
+  LE_STAT(psyco_stat_load_type_changes++);
   enable_version_tag(tp);
   if (_PyType_Lookup(tp, name) != descr)
     return;
   g = load_guard(tp, name, LOOKUP_KIND(descr), false);
   if (g != NULL) {
     load_guard_set(&g->guard, tp);
-    NI_STAT(psyco_stat_load_repairs++);
+    LE_STAT(psyco_stat_load_repairs++);
   }
 }
 
@@ -994,15 +994,15 @@ static int cimpl_instance_dict_set(PyObject *obj, PyObject *name,
                                    PyObject *value) {
   PyTypeObject *tp = Py_TYPE(obj);
   PyObject **dictptr = (PyObject **)((char *)obj + tp->tp_dictoffset);
-#if NI_HAS_OBJECTDICT_SETITEM_LINKABLE
+#if LE_HAS_OBJECTDICT_SETITEM_LINKABLE
   int r = _PyObjectDict_SetItem(tp, dictptr, name, value);
   if (r < 0 && PyErr_ExceptionMatches(PyExc_KeyError))
     PyErr_SetObject(PyExc_AttributeError, name);
   return r;
 #else
   PyDictObject *d;
-  ni_dictkeys_t *cached = (tp->tp_flags & Py_TPFLAGS_HEAPTYPE)
-      ? (ni_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys : NULL;
+  le_dictkeys_t *cached = (tp->tp_flags & Py_TPFLAGS_HEAPTYPE)
+      ? (le_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys : NULL;
   if (value == NULL || !PyUnicode_CheckExact(name))
     return PyObject_GenericSetAttr(obj, name, value);
   if (*dictptr == NULL) {
@@ -1014,8 +1014,8 @@ static int cimpl_instance_dict_set(PyObject *obj, PyObject *name,
   d = (PyDictObject *)*dictptr;
   if (!PyDict_CheckExact(d))
     return PyObject_GenericSetAttr(obj, name, value);
-  if (cached != NULL && (ni_dictkeys_t *)d->ma_keys == cached) {
-    ni_dictentry_t *entries = ni_dict_entries(cached);
+  if (cached != NULL && (le_dictkeys_t *)d->ma_keys == cached) {
+    le_dictentry_t *entries = le_dict_entries(cached);
     Py_ssize_t i = d->ma_used; /* where an __init__ fills them in order */
     if (i >= cached->dk_nentries || entries[i].me_key != name)
       for (i = 0; i < cached->dk_nentries; i++)
@@ -1041,7 +1041,7 @@ static int cimpl_dict_set_known(PyObject *dict, PyObject *name,
 /* Inline stores (store_cache_t in pobject.h). */
 #define STORE_CACHE_MAX_REFRESHES 64
 
-DEFINEVAR uint64_t ni_dict_version = (uint64_t)1 << 63;
+DEFINEVAR uint64_t le_dict_version = (uint64_t)1 << 63;
 
 #if ALL_CHECKS
 DEFINEVAR long psyco_stat_store_misses = 0;
@@ -1050,8 +1050,8 @@ DEFINEVAR long psyco_stat_store_refreshes = 0;
 #endif
 
 /* point 'c' at its name in keys 'k' if they hold it: true if 'c' changed */
-static bool store_cache_set(store_cache_t *c, ni_dictkeys_t *k) {
-  ni_dictentry_t *entries = ni_dict_entries(k);
+static bool store_cache_set(store_cache_t *c, le_dictkeys_t *k) {
+  le_dictentry_t *entries = le_dict_entries(k);
   Py_ssize_t i;
   for (i = 0; i < k->dk_nentries; i++)
     if (entries[i].me_key == c->name)
@@ -1082,11 +1082,11 @@ static store_cache_t *store_cache(PyTypeObject *tp, PyObject *name) {
     return c;
   c->dk_size = c->kword = c->ix = 0;
   c->name = name;
-  c->version = &ni_dict_version;
+  c->version = &le_dict_version;
   c->refreshes = 0;
   if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) /* a first hint */
     store_cache_set(c,
-                    (ni_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys);
+                    (le_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys);
   return c;
 }
 
@@ -1097,14 +1097,14 @@ static int cimpl_store_attr_miss(PyObject *obj, PyObject *name,
                                  PyObject *value, store_cache_t *c) {
   int r = cimpl_instance_dict_set(obj, name, value);
   PyObject *d;
-  NI_STAT(psyco_stat_store_misses++);
+  LE_STAT(psyco_stat_store_misses++);
   if (r < 0 || c->refreshes >= STORE_CACHE_MAX_REFRESHES)
     return r;
   d = *(PyObject **)((char *)obj + Py_TYPE(obj)->tp_dictoffset);
   if (d != NULL && PyDict_Check(d) && ((PyDictObject *)d)->ma_values != NULL &&
-      store_cache_set(c, (ni_dictkeys_t *)((PyDictObject *)d)->ma_keys)) {
+      store_cache_set(c, (le_dictkeys_t *)((PyDictObject *)d)->ma_keys)) {
     c->refreshes++;
-    NI_STAT(psyco_stat_store_refreshes++);
+    LE_STAT(psyco_stat_store_refreshes++);
   }
   return r;
 }
@@ -1129,9 +1129,9 @@ static PyObject *cimpl_load_miss(PyObject *dict, store_cache_t *c) {
   PyObject *v = cimpl_dict_get_known(dict, c->name, PyObject_Hash(c->name));
   if (((PyDictObject *)dict)->ma_values != NULL &&
       c->refreshes < STORE_CACHE_MAX_REFRESHES &&
-      store_cache_set(c, (ni_dictkeys_t *)((PyDictObject *)dict)->ma_keys)) {
+      store_cache_set(c, (le_dictkeys_t *)((PyDictObject *)dict)->ma_keys)) {
     c->refreshes++;
-    NI_STAT(psyco_stat_store_refreshes++);
+    LE_STAT(psyco_stat_store_refreshes++);
   }
   return v;
 }
@@ -1193,7 +1193,7 @@ static int cimpl_store_type_changed(PyObject *obj, PyObject *name,
   attr_guard_t *guard;
   enable_version_tag(tp);
   guard = store_guard(tp, name, store_kind(tp, name), false);
-  NI_STAT(psyco_stat_store_type_changes++);
+  LE_STAT(psyco_stat_store_type_changes++);
   if (guard != NULL)
     store_guard_set(guard, tp);
   else if (PyErr_Occurred())
@@ -1438,7 +1438,7 @@ changed: /* a heap type's slot is not what was compiled */
                             "vvl", v, w, (long)op);
 }
 
-static const char *const opstrings[] = {NI_MSG_CMP_LT, NI_MSG_CMP_LE, "==", "!=", NI_MSG_CMP_GT, NI_MSG_CMP_GE};
+static const char *const opstrings[] = {LE_MSG_CMP_LT, LE_MSG_CMP_LE, "==", "!=", LE_MSG_CMP_GT, LE_MSG_CMP_GE};
 
 /* object.c:do_richcompare. The slots have run; their default must not run
    them again. */
@@ -1459,7 +1459,7 @@ DEFINEFN vinfo_t *PsycoObject_RichCompare(PsycoObject *po, vinfo_t *v,
   default:
     PycException_SetFormat(
         po, PyExc_TypeError,
-        NI_MSG_COMPARE_NOT_SUPPORTED,
+        LE_MSG_COMPARE_NOT_SUPPORTED,
         opstrings[op], Psyco_FastType(v)->tp_name, Psyco_FastType(w)->tp_name);
     return NULL;
   }

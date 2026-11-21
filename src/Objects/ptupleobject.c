@@ -150,12 +150,12 @@ int PsycoTuple_Load(vinfo_t* tuple)
 /* the translation keeps CPython's unused variables */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
-#if NI_HAS_TUPLE_GET_EMPTY
+#if LE_HAS_TUPLE_GET_EMPTY
 PyObject *
 cimpl_tuple_get_empty(void);
 #endif
 
-#if NI_HAS_TUPLE_GET_EMPTY
+#if LE_HAS_TUPLE_GET_EMPTY
 static vinfo_t *
 tuple_get_empty(PsycoObject *po);
 #endif
@@ -172,7 +172,7 @@ tuplerepeat(PsycoObject *po, vinfo_t *, vinfo_t *);
 static vinfo_t *
 tuplerichcompare(PsycoObject *po, vinfo_t *, vinfo_t *, int);
 
-#if NI_HAS_TUPLE_GET_EMPTY
+#if LE_HAS_TUPLE_GET_EMPTY
 static vinfo_t *
 tuple_get_empty(PsycoObject *po)
 {
@@ -181,7 +181,7 @@ tuple_get_empty(PsycoObject *po)
 }
 #endif
 
-#if NI_HAS_TUPLE_GET_EMPTY
+#if LE_HAS_TUPLE_GET_EMPTY
 static vinfo_t *
 tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
 {
@@ -225,7 +225,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
     if ((tp_bb->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
         PycException_SetFormat(
             po, PyExc_TypeError,
-            NI_MSG_TUPLE_CONCAT,
+            LE_MSG_TUPLE_CONCAT,
             tp_bb->tp_name);
         return NULL;
     }
@@ -314,7 +314,7 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
     if ((tp_bb->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
         PycException_SetFormat(
             po, PyExc_TypeError,
-            NI_MSG_TUPLE_CONCAT,
+            LE_MSG_TUPLE_CONCAT,
             tp_bb->tp_name);
         return NULL;
     }
@@ -403,7 +403,7 @@ tuplecontains(PsycoObject *po, vinfo_t *a, vinfo_t *el)
     }
     i = 0;
     cmp = vinfo_new(CompileTime_New((long)(0)));
-#if NI_HAS_CONTAINS_ITEM_FIRST
+#if LE_HAS_CONTAINS_ITEM_FIRST
     for (_t2 = 0; _t2 < _t1; _t2++) {
         if (Psyco_NeedType(po, PsycoTuple_GET_ITEM(a, _t2)) == NULL) {
             vinfo_decref(cmp, po);
@@ -439,7 +439,7 @@ tuplecontains(PsycoObject *po, vinfo_t *a, vinfo_t *el)
         if (!((_t4 && i < _t1)))
             break;
         _t5 =
-#if NI_HAS_CONTAINS_ITEM_FIRST
+#if LE_HAS_CONTAINS_ITEM_FIRST
             PsycoObject_RichCompareBool(po, PsycoTuple_GET_ITEM(a, i), el, 2);
 #else
             PsycoObject_RichCompareBool(po, el, PsycoTuple_GET_ITEM(a, i), 2);
@@ -474,7 +474,7 @@ tupleitem(PsycoObject *po, vinfo_t *a, vinfo_t *i)
     _t3 = runtime_condition_f(po, _t2);
     if (_t3) {
         PycException_SetString(po, PyExc_IndexError,
-                               NI_MSG_TUPLE_INDEX_RANGE);
+                               LE_MSG_TUPLE_INDEX_RANGE);
         return NULL;
     }
     _t4 = psyco_get_field_array(po, a, FPYREF(TUPLE_ob_item), i);
@@ -495,7 +495,7 @@ tuplelength(PsycoObject *po, vinfo_t *a)
     return _t1;
 }
 
-#if NI_HAS_TUPLE_GET_EMPTY
+#if LE_HAS_TUPLE_GET_EMPTY
 static vinfo_t *
 tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
 {

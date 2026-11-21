@@ -6,20 +6,20 @@
    call. Built on its own, as pyruntime.c. */
 #define Py_BUILD_CORE
 #include <Python.h>
-#include "ni_features_gen.h"
-#if NI_HAS_TUPLE_GET_EMPTY
+#include "le_features_gen.h"
+#if LE_HAS_TUPLE_GET_EMPTY
 #include "internal/pycore_abstract.h"
 #endif
-#if NI_HAS_TUPLE_GET_EMPTY
+#if LE_HAS_TUPLE_GET_EMPTY
 #include "internal/pycore_gc.h"
 #endif
-#if NI_HAS_TUPLE_GET_EMPTY
+#if LE_HAS_TUPLE_GET_EMPTY
 #include "internal/pycore_initconfig.h"
 #endif
-#if NI_HAS_TUPLE_GET_EMPTY
+#if LE_HAS_TUPLE_GET_EMPTY
 #include "internal/pycore_object.h"
 #endif
-#if NI_HAS_TUPLE_GET_EMPTY
+#if LE_HAS_TUPLE_GET_EMPTY
 struct _Py_tuple_state *
 cimpl_get_tuple_state(void)
 {
@@ -28,7 +28,7 @@ cimpl_get_tuple_state(void)
 }
 #endif
 
-#if NI_HAS_TUPLE_GET_EMPTY
+#if LE_HAS_TUPLE_GET_EMPTY
 PyObject *
 cimpl_tuple_get_empty(void)
 {

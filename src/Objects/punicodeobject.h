@@ -30,7 +30,7 @@ EXTERNFN bool PsycoUnicode_ForceKey(PsycoObject *po, vinfo_t *v);
 typedef struct {
   const Py_UCS1 *data;
   Py_ssize_t length;
-} ni_strkey_t;
+} le_strkey_t;
 
 /* a view or a case map: true with (borrowed) its root, start and length,
    and 'map' -1 (a view), 0 (lower) or 1 (upper) */
@@ -39,10 +39,10 @@ EXTERNFN bool PsycoUnicode_KeyParts(vinfo_t *v, vinfo_t **root,
 
 /* at run time, such a key of root[start:start + len] with its hash as
    unicode_hash would give it, the characters of a case map written into
-   'buf' (NI_KEY_BUF bytes); 0 where it can't be read so (root not compact
+   'buf' (LE_KEY_BUF bytes); 0 where it can't be read so (root not compact
    ASCII, a case map longer than the buffer) */
-#define NI_KEY_BUF 128
-EXTERNFN int PsycoUnicode_KeyChars(ni_strkey_t *k, Py_hash_t *hash, char *buf,
+#define LE_KEY_BUF 128
+EXTERNFN int PsycoUnicode_KeyChars(le_strkey_t *k, Py_hash_t *hash, char *buf,
                                    PyObject *root, Py_ssize_t start,
                                    Py_ssize_t len, long map);
 

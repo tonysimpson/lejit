@@ -43,9 +43,9 @@
 #include "../processor.h"
 #include "../psyfunc.h"
 #include "frames.h"
-/* ni_frame_current, ni_frame_set_current */
+/* le_frame_current, le_frame_set_current */
 #include "../mechanisms/frames.h"
-/* ni_recursion_suspend and ni_recursion_resume */
+/* le_recursion_suspend and le_recursion_resume */
 #include "../mechanisms/recursion.h"
 #include "../pycodegen.h"
 
@@ -156,7 +156,7 @@ DEFINEFN void psyco_cs_promo_begin(int site, long key, int kind) {
   Py_XDECREF(cs_promo_pending);
   cs_promo_pending = Py_BuildValue("[Nll]", d, (long)site, 0L);
   cs_promo_last_counter = NULL;
-  cs_promo_t0 = ni_now_ns();
+  cs_promo_t0 = le_now_ns();
   cs_promo_b0 = psyco_stat_code_bytes;
   psyco_cs_promo_cur = site;
   cs_promo_vidx =
@@ -172,7 +172,7 @@ DEFINEFN void psyco_cs_promo_end(void) {
     return;
   cs_promo_pending = NULL;
   site = PyLong_AsLong(PyList_GET_ITEM(v, 1));
-  PyList_SetItem(v, 1, PyLong_FromLong(ni_now_ns() - cs_promo_t0));
+  PyList_SetItem(v, 1, PyLong_FromLong(le_now_ns() - cs_promo_t0));
   PyList_SetItem(v, 2, PyLong_FromLong(psyco_stat_code_bytes - cs_promo_b0));
   PyList_Append(v, PyLong_FromVoidPtr(cs_promo_last_counter));
   Py_DECREF(PyList_GET_ITEM(v, 3)); /* PyList_Append took its own */
@@ -655,7 +655,7 @@ static void cimpl_push_exc_info(PyObject *target[], PyObject **word,
   PyObject *otype, *ovalue, *otb;
   PyObject *exc, *val, *tb;
   extra_assert(PyErr_Occurred());
-  ni_exc_info_get(tstate, &otype, &ovalue, &otb);
+  le_exc_info_get(tstate, &otype, &ovalue, &otb);
   target[0] = otb ? otb : Py_None;
   target[1] = ovalue ? ovalue : Py_None;
   target[2] = otype ? otype : Py_None;
@@ -668,7 +668,7 @@ static void cimpl_push_exc_info(PyObject *target[], PyObject **word,
   PyException_SetTraceback(val, tb != NULL ? tb : Py_None);
   Py_INCREF(exc);
   Py_INCREF(val);
-  ni_exc_info_put(tstate, exc, val, tb);
+  le_exc_info_put(tstate, exc, val, tb);
   if (tb == NULL)
     tb = Py_None;
   Py_INCREF(tb);
@@ -688,11 +688,11 @@ static void cimpl_pop_exc_info(PyObject *type, PyObject *value,
                                PyObject *tb, PyObject **word) {
   PyThreadState *tstate = PyThreadState_GET();
   PyObject *otype, *ovalue, *otb;
-  ni_exc_info_get(tstate, &otype, &ovalue, &otb);
+  le_exc_info_get(tstate, &otype, &ovalue, &otb);
   Py_INCREF(type);
   Py_INCREF(value);
   Py_INCREF(tb);
-  ni_exc_info_put(tstate, type, value, tb);
+  le_exc_info_put(tstate, type, value, tb);
   Py_XDECREF(otype);
   Py_XDECREF(ovalue);
   Py_XDECREF(otb);
@@ -724,14 +724,14 @@ void PycException_Fetch(PsycoObject *po) {
    whenever it isn't 0, it is left 0, so that the line comes from f_lasti
    and doesn't stay stale while compiled code goes on in the frame */
 static void set_frame_place(PyFrameObject *f, int lasti, int lineno) {
-  f->f_lasti = ni_lasti_of(lasti);
-  f->f_lineno = NI_HAS_LINENO_WHEN_SET ? 0 : lineno;
+  f->f_lasti = le_lasti_of(lasti);
+  f->f_lineno = LE_HAS_LINENO_WHEN_SET ? 0 : lineno;
 }
 
 static PyFrameObject *cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code,
                                       PyObject *globals, int lasti,
                                       int lineno, PyObject **word) {
-  /* The real frame if the code has one (run by NiCode_Run), the one asked
+  /* The real frame if the code has one (run by LeCode_Run), the one asked
      for, or the one that stood for the call when it caught an exception
      (its catcher word's, 'word'), so that the call's entries share one
      frame, as CPython's do. Otherwise a minimalistic frame object,
@@ -741,7 +741,7 @@ static PyFrameObject *cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code,
      (psyco_frame_link_callee), or for the frame that catches the
      exception its caller, when read (frames.c:catcher_caller). */
   PyFrameObject *result = psyco_running_real_frame(code);
-  ni_frame_t *back = ni_frame_current(tstate);
+  le_frame_t *back = le_frame_current(tstate);
   if (result == NULL)
     result = psyco_innermost_activation(code); /* one asked for */
   if (result == NULL && word != NULL)
@@ -753,9 +753,9 @@ static PyFrameObject *cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code,
   }
   /* frame objects are not created in stack order with Psyco, so it's
      probably better not to create plain wrong chained lists */
-  ni_frame_set_current(tstate, NULL);
+  le_frame_set_current(tstate, NULL);
   result = PyFrame_New(tstate, code, globals, NULL);
-  ni_frame_set_current(tstate, back);
+  le_frame_set_current(tstate, back);
   if (result != NULL) {
     /* a frame reused from the code's free one may hold a note */
     if (code->co_stacksize >= 3)
@@ -775,7 +775,7 @@ static void cimpl_rt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
     /* the exception came out of the frame of the last entry: if that is an
        emulated one (a compiled callee), this frame is its f_back; an
        entry is recorded in every frame the exception passes through */
-    PyObject *last = ni_exc_traceback(tstate);
+    PyObject *last = le_exc_traceback(tstate);
     if (last != NULL && PyTraceBack_Check(last)) {
       psyco_frame_link_callee(((PyTracebackObject *)last)->tb_frame, f);
     }
@@ -791,7 +791,7 @@ static void cimpl_tb_locals(PyObject *tb, long start, PyObject *v0,
                             PyObject *v4) {
   PyObject *values[5] = {v0, v1, v2, v3, v4};
   if (tb == NULL)
-    tb = ni_exc_traceback(PyThreadState_GET());
+    tb = le_exc_traceback(PyThreadState_GET());
   if (tb != NULL && PyTraceBack_Check(tb))
     psyco_frame_write_locals(((PyTracebackObject *)tb)->tb_frame, (int)start,
                              values, 5);
@@ -811,7 +811,7 @@ static PyObject *cimpl_vt_traceback(PyCodeObject *code, PyObject *globals,
     Py_INCREF(Py_None);
     return Py_None;
   }
-  oldtb = ni_exc_traceback(tstate); /* might be NULL */
+  oldtb = le_exc_traceback(tstate); /* might be NULL */
   Py_XINCREF(oldtb);
   if (oldtb != NULL && PyTraceBack_Check(oldtb))
     psyco_frame_link_callee(((PyTracebackObject *)oldtb)->tb_frame, f);
@@ -823,8 +823,8 @@ static PyObject *cimpl_vt_traceback(PyCodeObject *code, PyObject *globals,
     return Py_None;
   }
   /* the new traceback is now the current exception's */
-  newtb = ni_exc_traceback(tstate);   /* extracts the reference */
-  ni_exc_put_traceback(tstate, oldtb); /* consumes the reference */
+  newtb = le_exc_traceback(tstate);   /* extracts the reference */
+  le_exc_put_traceback(tstate, oldtb); /* consumes the reference */
   Py_DECREF(f);
   return newtb;
 }
@@ -874,7 +874,7 @@ static bool locals_calls(PsycoObject *po, void *fn, char tag, long target) {
         tags[2 + j] = 'l';
         args[j] = v == NULL && i + j < co->co_nlocals
                       ? 0
-                      : (long)NI_LOCAL_UNKNOWN;
+                      : (long)LE_LOCAL_UNKNOWN;
       } else
         args[j] = (long)v;
     }
@@ -1393,8 +1393,8 @@ enum { GLOBAL_TAGS, GLOBAL_ENTRY, GLOBAL_ABSENT }; /* the guard's forms */
 static bool global_entry_find(PyObject *globals, PyObject *name,
                               PyObject *value, long *size, long *offset) {
   PyDictObject *mp = (PyDictObject *)globals;
-  ni_dictkeys_t *keys = (ni_dictkeys_t *)mp->ma_keys;
-  ni_dictentry_t *ep = ni_dict_entries(keys);
+  le_dictkeys_t *keys = (le_dictkeys_t *)mp->ma_keys;
+  le_dictentry_t *ep = le_dict_entries(keys);
   Py_ssize_t i;
   if (mp->ma_values != NULL)
     return false;
@@ -1402,7 +1402,7 @@ static bool global_entry_find(PyObject *globals, PyObject *name,
     if (ep[i].me_key == name && ep[i].me_value == value) {
       *size = keys->dk_size;
       *offset = (char *)&ep[i] - (char *)keys;
-      return *offset + sizeof(ni_dictentry_t) <= INT32_MAX;
+      return *offset + sizeof(le_dictentry_t) <= INT32_MAX;
     }
   return false;
 }
@@ -1426,7 +1426,7 @@ static code_t *do_changed_global(changed_global_t *cg) {
   code_t *code;
   changed_global_t *prev = respawning_global;
   PyObject *x = PyDict_GetItem(cg->globals, cg->name);
-  NI_STAT(psyco_stat_global_fails++);
+  LE_STAT(psyco_stat_global_fails++);
   if (x == NULL && cg->form != GLOBAL_ENTRY)
     x = PyDict_GetItem(cg->builtins, cg->name);
   if (x != cg->value) {
@@ -1890,7 +1890,7 @@ static int fstring_part(PsycoObject *po, int opcode, int oparg,
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #pragma GCC diagnostic ignored "-Wunused-label"
 #pragma GCC diagnostic ignored "-Wunused-value"
-#if NI_HAS_CMP_OUTCOME
+#if LE_HAS_CMP_OUTCOME
 static PyObject *
 cimpl_cmp_outcome(int op, PyObject *v, PyObject *w)
 {
@@ -1922,7 +1922,7 @@ cimpl_cmp_outcome(int op, PyObject *v, PyObject *w)
                     if (!PyExceptionClass_Check(exc)) {
                         PyErr_SetString(
                             PyExc_TypeError,
-                            NI_MSG_CATCHING_NON_EXCEPTION);
+                            LE_MSG_CATCHING_NON_EXCEPTION);
                         return NULL;
                     }
                 }
@@ -1931,7 +1931,7 @@ cimpl_cmp_outcome(int op, PyObject *v, PyObject *w)
                 if (!PyExceptionClass_Check(w)) {
                     PyErr_SetString(
                         PyExc_TypeError,
-                        NI_MSG_CATCHING_NON_EXCEPTION);
+                        LE_MSG_CATCHING_NON_EXCEPTION);
                     return NULL;
                 }
             }
@@ -1946,7 +1946,7 @@ cimpl_cmp_outcome(int op, PyObject *v, PyObject *w)
 }
 #endif
 
-#if NI_HAS_CFRAME
+#if LE_HAS_CFRAME
 static void
 cimpl_PyLineTable_InitAddressRange(const char *linetable, Py_ssize_t length,
                                    int firstlineno, PyCodeAddressRange *range)
@@ -1960,7 +1960,7 @@ cimpl_PyLineTable_InitAddressRange(const char *linetable, Py_ssize_t length,
 }
 #endif
 
-#if NI_HAS_CFRAME
+#if LE_HAS_CFRAME
 static int
 cimpl__PyCode_InitAddressRange(PyCodeObject *co, PyCodeAddressRange *bounds)
 {
@@ -1972,14 +1972,14 @@ cimpl__PyCode_InitAddressRange(PyCodeObject *co, PyCodeAddressRange *bounds)
 }
 #endif
 
-#if NI_HAS_FASTCALL_DICT_TSTATE
+#if LE_HAS_FASTCALL_DICT_TSTATE
 extern PyObject *
 _PyObject_FastCallDictTstate(PyThreadState *tstate, PyObject *callable,
                              PyObject *const *args, size_t nargsf,
                              PyObject *kwargs);
 #endif
 
-#if !NI_HAS_CFRAME
+#if !LE_HAS_CFRAME
 static int
 cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
                  int what, PyObject *arg)
@@ -1999,7 +1999,7 @@ cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
 }
 #endif
 
-#if !NI_HAS_CFRAME
+#if !LE_HAS_CFRAME
 static int
 cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
                            PyFrameObject *frame, int what, PyObject *arg)
@@ -2021,15 +2021,15 @@ cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
 }
 #endif
 
-#if !NI_HAS_CFRAME
+#if !LE_HAS_CFRAME
 static PyObject *
 cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
-#if NI_HAS_CALL_TRACE_METHOD_DESCR
+#if LE_HAS_CALL_TRACE_METHOD_DESCR
 {
     PyThreadState *tstate = PyThreadState_GET();
 
     PyObject *result;
-#if NI_HAS_FASTCALL_DICT_TSTATE
+#if LE_HAS_FASTCALL_DICT_TSTATE
     if (PyCFunction_CheckExact(func) || PyCMethod_CheckExact(func)) {
 #else
     if (PyCFunction_Check(func)) {
@@ -2040,7 +2040,7 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
                 result = NULL;
             }
             else {
-#if NI_HAS_FASTCALL_DICT_TSTATE
+#if LE_HAS_FASTCALL_DICT_TSTATE
                 result = PyObject_Call(func, callargs, kwdict);
 #else
                 result = PyCFunction_Call(func, callargs, kwdict);
@@ -2063,7 +2063,7 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
             }
         }
         else {
-#if NI_HAS_FASTCALL_DICT_TSTATE
+#if LE_HAS_FASTCALL_DICT_TSTATE
             result = PyObject_Call(func, callargs, kwdict);
 #else
             result = PyCFunction_Call(func, callargs, kwdict);
@@ -2087,7 +2087,7 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
                     result = NULL;
                 }
                 else {
-#if NI_HAS_FASTCALL_DICT_TSTATE
+#if LE_HAS_FASTCALL_DICT_TSTATE
                     result = _PyObject_FastCallDictTstate(
                         tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
                         nargs - 1, kwdict);
@@ -2115,7 +2115,7 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
                 }
             }
             else {
-#if NI_HAS_FASTCALL_DICT_TSTATE
+#if LE_HAS_FASTCALL_DICT_TSTATE
                 result = _PyObject_FastCallDictTstate(
                     tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
                     nargs - 1, kwdict);
@@ -2172,7 +2172,7 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
 #endif
 #endif
 
-#if !NI_HAS_IMPORT_FROM_SPEC
+#if !LE_HAS_IMPORT_FROM_SPEC
 static PyObject *
 cimpl_import_from(PyObject *v, PyObject *name)
 {
@@ -2205,7 +2205,7 @@ cimpl_import_from(PyObject *v, PyObject *name)
 error:
     pkgpath = PyModule_GetFilenameObject(v);
     if (pkgname == NULL) {
-        pkgname_or_unknown = PyUnicode_FromString(NI_MSG_UNKNOWN_MODULE_NAME);
+        pkgname_or_unknown = PyUnicode_FromString(LE_MSG_UNKNOWN_MODULE_NAME);
         if (pkgname_or_unknown == NULL) {
             Py_XDECREF(pkgpath);
             return NULL;
@@ -2217,12 +2217,12 @@ error:
     if (pkgpath == NULL || !PyUnicode_Check(pkgpath)) {
         PyErr_Clear();
         errmsg = PyUnicode_FromFormat(
-            NI_MSG_IMPORT_NAME_UNKNOWN_LOCATION, name,
+            LE_MSG_IMPORT_NAME_UNKNOWN_LOCATION, name,
             pkgname_or_unknown);
         PyErr_SetImportError(errmsg, pkgname, NULL);
     }
     else {
-        errmsg = PyUnicode_FromFormat(NI_MSG_IMPORT_NAME_FROM_FILE,
+        errmsg = PyUnicode_FromFormat(LE_MSG_IMPORT_NAME_FROM_FILE,
                                       name, pkgname_or_unknown, pkgpath);
         PyErr_SetImportError(errmsg, pkgname, pkgpath);
     }
@@ -2233,7 +2233,7 @@ error:
 }
 #endif
 
-#if NI_HAS_CFRAME
+#if LE_HAS_CFRAME
 typedef struct {
     PyCodeObject *code;
     PyCodeAddressRange bounds;
@@ -2241,7 +2241,7 @@ typedef struct {
 } PyTraceInfo;
 #endif
 
-#if NI_HAS_OPCODE_MATCH_CLASS
+#if LE_HAS_OPCODE_MATCH_CLASS
 static PyObject *
 cimpl_match_class_attr(PyObject *subject, PyObject *type, PyObject *name,
                        PyObject *seen)
@@ -2251,7 +2251,7 @@ cimpl_match_class_attr(PyObject *subject, PyObject *type, PyObject *name,
     if (PySet_Contains(seen, name) || PySet_Add(seen, name)) {
         if (!PyErr_Occurred()) {
             PyErr_Format(PyExc_TypeError,
-                         NI_MSG_MATCH_DUPLICATE_ATTRIBUTE,
+                         LE_MSG_MATCH_DUPLICATE_ATTRIBUTE,
                          ((PyTypeObject *)type)->tp_name, name);
         }
         return NULL;
@@ -2264,13 +2264,13 @@ cimpl_match_class_attr(PyObject *subject, PyObject *type, PyObject *name,
 }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_CLASS
+#if LE_HAS_OPCODE_MATCH_CLASS
 static PyObject *
 cimpl_match_class(PyObject *subject, PyObject *type, Py_ssize_t nargs,
                   PyObject *kwargs)
 {
     if (!PyType_Check(type)) {
-        const char *e = NI_MSG_MATCH_NOT_A_TYPE;
+        const char *e = LE_MSG_MATCH_NOT_A_TYPE;
         PyErr_Format(PyExc_TypeError, e);
         return NULL;
     }
@@ -2298,7 +2298,7 @@ cimpl_match_class(PyObject *subject, PyObject *type, Py_ssize_t nargs,
         match_args = _PyObject_GetAttrId(type, &PyId___match_args__);
         if (match_args) {
             if (!PyTuple_CheckExact(match_args)) {
-                const char *e = NI_MSG_MATCH_ARGS_NOT_TUPLE;
+                const char *e = LE_MSG_MATCH_ARGS_NOT_TUPLE;
                 PyErr_Format(PyExc_TypeError, e,
                              ((PyTypeObject *)type)->tp_name,
                              Py_TYPE(match_args)->tp_name);
@@ -2319,7 +2319,7 @@ cimpl_match_class(PyObject *subject, PyObject *type, Py_ssize_t nargs,
         if (allowed < nargs) {
             const char *plural = (allowed == 1) ? "" : "s";
             PyErr_Format(PyExc_TypeError,
-                         NI_MSG_MATCH_TOO_MANY_POSITIONAL,
+                         LE_MSG_MATCH_TOO_MANY_POSITIONAL,
                          ((PyTypeObject *)type)->tp_name, allowed, plural,
                          nargs);
             goto fail;
@@ -2332,7 +2332,7 @@ cimpl_match_class(PyObject *subject, PyObject *type, Py_ssize_t nargs,
                 PyObject *name = PyTuple_GET_ITEM(match_args, i);
                 if (!PyUnicode_CheckExact(name)) {
                     PyErr_Format(PyExc_TypeError,
-                                 NI_MSG_MATCH_ARGS_NOT_STR,
+                                 LE_MSG_MATCH_ARGS_NOT_STR,
                                  Py_TYPE(name)->tp_name);
                     goto fail;
                 }
@@ -2367,7 +2367,7 @@ fail:
 }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_KEYS
+#if LE_HAS_OPCODE_MATCH_KEYS
 static PyObject *
 cimpl_match_keys(PyObject *map, PyObject *keys)
 {
@@ -2401,7 +2401,7 @@ cimpl_match_keys(PyObject *map, PyObject *keys)
         if (PySet_Contains(seen, key) || PySet_Add(seen, key)) {
             if (!PyErr_Occurred()) {
                 PyErr_Format(PyExc_ValueError,
-                             NI_MSG_MATCH_DUPLICATE_KEY, key);
+                             LE_MSG_MATCH_DUPLICATE_KEY, key);
             }
             goto fail;
         }
@@ -2437,7 +2437,7 @@ fail:
 static void
 ct_format_exc_check_arg(PsycoObject *po, PyObject *exc, const char *format_str,
                         PyObject *obj)
-#if NI_HAS_NAME_ERROR_NAME
+#if LE_HAS_NAME_ERROR_NAME
 {
     const char *obj_str;
     if (!obj)
@@ -2474,7 +2474,7 @@ ct_format_exc_check_arg(PsycoObject *po, PyObject *exc, const char *format_str,
 
 _Py_IDENTIFIER(displayhook);
 
-#if !NI_HAS_INLINE_CALL_TSTATE_GET
+#if !LE_HAS_INLINE_CALL_TSTATE_GET
 static int
 cimpl_print_expr_r0(PyObject *_in0, long _oparg, PyObject *value,
                     PyObject **_out)
@@ -2489,11 +2489,11 @@ cimpl_print_expr_r0(PyObject *_in0, long _oparg, PyObject *value,
             PyObject *hook = _PySys_GetObjectId(&PyId_displayhook);
             PyObject *res;
             if (hook == NULL) {
-                PyErr_SetString(PyExc_RuntimeError, NI_MSG_NO_DISPLAYHOOK);
+                PyErr_SetString(PyExc_RuntimeError, LE_MSG_NO_DISPLAYHOOK);
                 Py_DECREF(value);
                 goto _error;
             }
-#if NI_HAS_CALL_ONE_ARG
+#if LE_HAS_CALL_ONE_ARG
             res = PyObject_CallOneArg(hook, value);
 #else
             res = PyObject_CallFunctionObjArgs(hook, value, NULL);
@@ -2546,7 +2546,7 @@ cimpl_get_aiter_r0(PyObject *_in0, long _oparg, PyObject *iter, PyObject *obj,
                 stack_pointer[-1] = NULL;
                 PyErr_Format(
                     PyExc_TypeError,
-                    NI_MSG_ASYNC_FOR_NO_AITER,
+                    LE_MSG_ASYNC_FOR_NO_AITER,
                     type->tp_name);
                 Py_DECREF(obj);
                 goto _error;
@@ -2556,7 +2556,7 @@ cimpl_get_aiter_r0(PyObject *_in0, long _oparg, PyObject *iter, PyObject *obj,
                 stack_pointer[-1] = NULL;
                 PyErr_Format(
                     PyExc_TypeError,
-                    NI_MSG_ASYNC_FOR_AITER_NO_ANEXT,
+                    LE_MSG_ASYNC_FOR_AITER_NO_ANEXT,
                     Py_TYPE(iter)->tp_name);
                 Py_DECREF(iter);
                 goto _error;
@@ -2594,7 +2594,7 @@ cimpl_get_aiter_r1(PyObject *_in0, long _oparg, PyObject *iter,
                 stack_pointer[-1] = NULL;
                 PyErr_Format(
                     PyExc_TypeError,
-                    NI_MSG_ASYNC_FOR_AITER_NO_ANEXT,
+                    LE_MSG_ASYNC_FOR_AITER_NO_ANEXT,
                     Py_TYPE(iter)->tp_name);
                 Py_DECREF(iter);
                 goto _error;
@@ -2614,7 +2614,7 @@ _error:
     return -1;
 }
 
-#if NI_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
+#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
 static PyObject *
 cimpl_get_anext_0(PyObject *next_iter)
 {
@@ -2622,14 +2622,14 @@ cimpl_get_anext_0(PyObject *next_iter)
     if (_r == NULL) {
         _PyErr_FormatFromCause(
             PyExc_TypeError,
-            NI_MSG_ASYNC_FOR_BAD_ANEXT,
+            LE_MSG_ASYNC_FOR_BAD_ANEXT,
             Py_TYPE(next_iter)->tp_name);
     }
     return _r;
 }
 #endif
 
-#if NI_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
+#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
 static int
 cimpl_get_anext_r0(PyObject *_in0, long _oparg, PyObject *aiter,
                    PyObject *next_iter, PyTypeObject *type, PyObject **_out)
@@ -2658,7 +2658,7 @@ cimpl_get_anext_r0(PyObject *_in0, long _oparg, PyObject *aiter,
                 else {
                     PyErr_Format(
                         PyExc_TypeError,
-                        NI_MSG_ASYNC_FOR_NO_ANEXT,
+                        LE_MSG_ASYNC_FOR_NO_ANEXT,
                         type->tp_name);
                     goto _error;
                 }
@@ -2687,7 +2687,7 @@ _error:
 }
 #endif
 
-#if NI_HAS_OPCODE_LOAD_ASSERTION_ERROR
+#if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
 static int
 cimpl_load_assertion_error_r0(long _oparg, PyObject **_out)
 {
@@ -2723,7 +2723,7 @@ cimpl_load_build_class_1(PyObject *build_class_str, PyObject *_in0)
     PyObject *_r = PyObject_GetItem(_in0, build_class_str);
     if (_r == NULL) {
         if (PyErr_ExceptionMatches(PyExc_KeyError))
-            PyErr_SetString(PyExc_NameError, NI_MSG_NO_BUILD_CLASS);
+            PyErr_SetString(PyExc_NameError, LE_MSG_NO_BUILD_CLASS);
     }
     return _r;
 }
@@ -2767,7 +2767,7 @@ _error:
 static void
 cimpl_format_exc_check_arg(PyObject *exc, const char *format_str,
                            PyObject *obj)
-#if NI_HAS_NAME_ERROR_NAME
+#if LE_HAS_NAME_ERROR_NAME
 {
     const char *obj_str;
     if (!obj)
@@ -2804,13 +2804,13 @@ cimpl_format_exc_check_arg(PyObject *exc, const char *format_str,
 
 static int
 cimpl_delete_global_0(PyObject *name, PyObject *_in0)
-#if NI_HAS_DELETE_GLOBAL_KEYERROR_ONLY
+#if LE_HAS_DELETE_GLOBAL_KEYERROR_ONLY
 {
     int _r = PyDict_DelItem(_in0, name);
     if (_r != 0) {
         if (PyErr_ExceptionMatches(PyExc_KeyError)) {
             cimpl_format_exc_check_arg(PyExc_NameError,
-                                       NI_MSG_NAME_NOT_DEFINED, name);
+                                       LE_MSG_NAME_NOT_DEFINED, name);
         }
     }
     return _r;
@@ -2820,7 +2820,7 @@ cimpl_delete_global_0(PyObject *name, PyObject *_in0)
     int _r = PyDict_DelItem(_in0, name);
     if (_r != 0) {
         cimpl_format_exc_check_arg(PyExc_NameError,
-                                   NI_MSG_NAME_NOT_DEFINED, name);
+                                   LE_MSG_NAME_NOT_DEFINED, name);
     }
     return _r;
 }
@@ -2836,14 +2836,14 @@ ct_format_exc_unbound(PsycoObject *po, PyCodeObject *co, int oparg)
         name = PyTuple_GET_ITEM(co->co_cellvars, oparg);
         ct_format_exc_check_arg(
             po, PyExc_UnboundLocalError,
-            NI_MSG_LOCAL_UNBOUND, name);
+            LE_MSG_LOCAL_UNBOUND, name);
     }
     else {
         name = PyTuple_GET_ITEM(co->co_freevars,
                                 oparg - PyTuple_GET_SIZE(co->co_cellvars));
         ct_format_exc_check_arg(
             po, PyExc_NameError,
-            NI_MSG_FREE_UNBOUND,
+            LE_MSG_FREE_UNBOUND,
             name);
     }
 }
@@ -2867,7 +2867,7 @@ cimpl_build_string_array(long _count, PyObject *_a0, PyObject *_a1,
     return _r;
 }
 
-#if NI_HAS_OPCODE_LIST_EXTEND
+#if LE_HAS_OPCODE_LIST_EXTEND
 static PyObject *
 cimpl_list_extend_0(PyObject *list, PyObject *iterable)
 {
@@ -2878,7 +2878,7 @@ cimpl_list_extend_0(PyObject *list, PyObject *iterable)
              (!PySequence_Check(iterable)))) {
             PyErr_Clear();
             PyErr_Format(PyExc_TypeError,
-                         NI_MSG_LIST_STAR_NOT_ITERABLE,
+                         LE_MSG_LIST_STAR_NOT_ITERABLE,
                          Py_TYPE(iterable)->tp_name);
         }
     }
@@ -2886,14 +2886,14 @@ cimpl_list_extend_0(PyObject *list, PyObject *iterable)
 }
 #endif
 
-#if NI_HAS_OPCODE_DICT_UPDATE
+#if LE_HAS_OPCODE_DICT_UPDATE
 static int
 cimpl_dict_update_0(PyObject *dict, PyObject *update)
 {
     int _r = PyDict_Update(dict, update);
     if (_r < 0) {
         if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-            PyErr_Format(PyExc_TypeError, NI_MSG_DICT_STAR_NOT_MAPPING,
+            PyErr_Format(PyExc_TypeError, LE_MSG_DICT_STAR_NOT_MAPPING,
                          Py_TYPE(update)->tp_name);
         }
     }
@@ -2901,7 +2901,7 @@ cimpl_dict_update_0(PyObject *dict, PyObject *update)
 }
 #endif
 
-#if NI_HAS_FUNCTION_STR
+#if LE_HAS_FUNCTION_STR
 static void
 cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 {
@@ -2910,7 +2910,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
             PyErr_Format(PyExc_TypeError,
-                         NI_MSG_KWARGS_NOT_MAPPING_FUNCTION_STR,
+                         LE_MSG_KWARGS_NOT_MAPPING_FUNCTION_STR,
                          funcstr, Py_TYPE(kwargs)->tp_name);
             Py_DECREF(funcstr);
         }
@@ -2925,7 +2925,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
                 PyObject *key = PyTuple_GET_ITEM(val, 0);
                 PyErr_Format(
                     PyExc_TypeError,
-                    NI_MSG_KWARGS_DUPLICATE_FUNCTION_STR,
+                    LE_MSG_KWARGS_DUPLICATE_FUNCTION_STR,
                     funcstr, key);
                 Py_DECREF(funcstr);
             }
@@ -2940,7 +2940,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 }
 #endif
 
-#if NI_HAS_OPCODE_DICT_MERGE
+#if LE_HAS_OPCODE_DICT_MERGE
 static int
 cimpl_dict_merge_0(PyObject *dict, PyObject *update, PyObject *_in0)
 {
@@ -2952,7 +2952,7 @@ cimpl_dict_merge_0(PyObject *dict, PyObject *update, PyObject *_in0)
 }
 #endif
 
-#if NI_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
+#if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
 static int
 cimpl_jump_if_not_exc_match_0(PyObject *right)
 {
@@ -2965,7 +2965,7 @@ cimpl_jump_if_not_exc_match_0(PyObject *right)
             if (!PyExceptionClass_Check(exc)) {
                 PyErr_SetString(
                     PyExc_TypeError,
-                    NI_MSG_CATCHING_NON_EXCEPTION);
+                    LE_MSG_CATCHING_NON_EXCEPTION);
                 return -1;
             }
         }
@@ -2974,7 +2974,7 @@ cimpl_jump_if_not_exc_match_0(PyObject *right)
         if (!PyExceptionClass_Check(right)) {
             PyErr_SetString(
                 PyExc_TypeError,
-                NI_MSG_CATCHING_NON_EXCEPTION);
+                LE_MSG_CATCHING_NON_EXCEPTION);
             return -1;
         }
     }
@@ -2982,7 +2982,7 @@ cimpl_jump_if_not_exc_match_0(PyObject *right)
 }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_MAPPING
+#if LE_HAS_OPCODE_MATCH_MAPPING
 static int
 cimpl_match_mapping_r0(PyObject *_in0, long _oparg, int match, PyObject **_out)
 {
@@ -3013,7 +3013,7 @@ _error:
 }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_SEQUENCE
+#if LE_HAS_OPCODE_MATCH_SEQUENCE
 static int
 cimpl_match_sequence_r0(PyObject *_in0, long _oparg, int match,
                         PyObject **_out)
@@ -3045,7 +3045,7 @@ _error:
 }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_KEYS
+#if LE_HAS_OPCODE_MATCH_KEYS
 static int
 cimpl_match_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
                     PyObject *values_or_none, PyObject **_out)
@@ -3087,7 +3087,7 @@ _error:
 }
 #endif
 
-#if NI_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
+#if LE_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
 static int
 cimpl_copy_dict_without_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
                                 PyObject *keys, PyObject *rest,
@@ -3133,7 +3133,7 @@ _error:
 }
 #endif
 
-#if NI_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
+#if LE_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
 static int
 cimpl_copy_dict_without_keys_r1(PyObject *_in0, PyObject *_in1, long _oparg,
                                 PyObject *keys, PyObject *rest,
@@ -3175,7 +3175,7 @@ _error:
 }
 #endif
 
-#if NI_HAS_CFRAME
+#if LE_HAS_CFRAME
 static void
 cimpl_initialize_trace_info(PyTraceInfo *trace_info, PyFrameObject *frame)
 {
@@ -3186,7 +3186,7 @@ cimpl_initialize_trace_info(PyTraceInfo *trace_info, PyFrameObject *frame)
 }
 #endif
 
-#if NI_HAS_CFRAME
+#if LE_HAS_CFRAME
 static int
 cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
                  PyTraceInfo *trace_info, int what, PyObject *arg)
@@ -3230,7 +3230,7 @@ cimpl_special_lookup(PyObject *o, _Py_Identifier *id)
     return res;
 }
 
-#if NI_HAS_OPCODE_WITH_EXCEPT_START
+#if LE_HAS_OPCODE_WITH_EXCEPT_START
 static int
 cimpl_with_except_start_r0(PyObject *_items, long _oparg, PyObject *exc,
                            PyObject *exit_func, PyObject *tb, PyObject *val,
@@ -3294,13 +3294,13 @@ _error:
 static int
 cimpl_check_args_iterable(PyObject *func, PyObject *args)
 {
-#if NI_HAS_FUNCTION_STR
+#if LE_HAS_FUNCTION_STR
     if (Py_TYPE(args)->tp_iter == NULL && !PySequence_Check(args)) {
         PyErr_Clear();
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
             PyErr_Format(PyExc_TypeError,
-                         NI_MSG_STAR_NOT_ITERABLE_FUNCTION_STR,
+                         LE_MSG_STAR_NOT_ITERABLE_FUNCTION_STR,
                          funcstr, Py_TYPE(args)->tp_name);
             Py_DECREF(funcstr);
         }
@@ -3309,7 +3309,7 @@ cimpl_check_args_iterable(PyObject *func, PyObject *args)
 #else
     if (args->ob_type->tp_iter == NULL && !PySequence_Check(args)) {
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_STAR_NOT_ITERABLE_FUNC_NAME,
+                     LE_MSG_STAR_NOT_ITERABLE_FUNC_NAME,
                      PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
                      args->ob_type->tp_name);
         return -1;
@@ -3318,7 +3318,7 @@ cimpl_check_args_iterable(PyObject *func, PyObject *args)
     return 0;
 }
 
-#if NI_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
+#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
 static PyObject *
 cimpl_build_tuple_unpack_with_call_0(PyObject *sum, PyObject *_in0,
                                      PyObject *_in1)
@@ -3333,14 +3333,14 @@ cimpl_build_tuple_unpack_with_call_0(PyObject *sum, PyObject *_in0,
 }
 #endif
 
-#if NI_HAS_OPCODE_BUILD_MAP_UNPACK
+#if LE_HAS_OPCODE_BUILD_MAP_UNPACK
 static int
 cimpl_build_map_unpack_0(PyObject *sum, PyObject *arg)
 {
     int _r = PyDict_Update(sum, arg);
     if (_r < 0) {
         if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-            PyErr_Format(PyExc_TypeError, NI_MSG_DICT_STAR_NOT_MAPPING,
+            PyErr_Format(PyExc_TypeError, LE_MSG_DICT_STAR_NOT_MAPPING,
                          arg->ob_type->tp_name);
         }
     }
@@ -3348,24 +3348,24 @@ cimpl_build_map_unpack_0(PyObject *sum, PyObject *arg)
 }
 #endif
 
-#if !NI_HAS_KWARGS_MERGE_EX
+#if !LE_HAS_KWARGS_MERGE_EX
 static void
 cimpl_format_kwargs_mapping_error(PyObject *func, PyObject *kwargs)
 {
     PyErr_Format(PyExc_TypeError,
-                 NI_MSG_KWARGS_NOT_MAPPING_FUNC_NAME,
+                 LE_MSG_KWARGS_NOT_MAPPING_FUNC_NAME,
                  PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
                  kwargs->ob_type->tp_name);
 }
 #endif
 
-#if NI_HAS_KWARGS_MERGE_EX && !NI_HAS_FUNCTION_STR
+#if LE_HAS_KWARGS_MERGE_EX && !LE_HAS_FUNCTION_STR
 static void
 cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 {
     if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_KWARGS_NOT_MAPPING_FUNC_NAME,
+                     LE_MSG_KWARGS_NOT_MAPPING_FUNC_NAME,
                      PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
                      kwargs->ob_type->tp_name);
     }
@@ -3376,12 +3376,12 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
             PyObject *key = PyTuple_GET_ITEM(val, 0);
             if (!PyUnicode_Check(key)) {
                 PyErr_Format(
-                    PyExc_TypeError, NI_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
+                    PyExc_TypeError, LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
                     PyEval_GetFuncName(func), PyEval_GetFuncDesc(func));
             }
             else {
                 PyErr_Format(PyExc_TypeError,
-                             NI_MSG_KWARGS_DUPLICATE_FUNC_NAME,
+                             LE_MSG_KWARGS_DUPLICATE_FUNC_NAME,
                              PyEval_GetFuncName(func),
                              PyEval_GetFuncDesc(func), key);
             }
@@ -3396,14 +3396,14 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 }
 #endif
 
-#if NI_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
+#if LE_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
 static int
 cimpl_build_map_unpack_with_call_0(PyObject *sum, PyObject *arg,
                                    PyObject *_in0)
 {
     int _r = _PyDict_MergeEx(sum, arg, 2);
     if (_r < 0) {
-#if NI_HAS_KWARGS_MERGE_EX
+#if LE_HAS_KWARGS_MERGE_EX
         Py_DECREF(sum);
         cimpl_format_kwargs_error(_in0, arg);
 #else
@@ -3420,14 +3420,14 @@ cimpl_build_map_unpack_with_call_0(PyObject *sum, PyObject *arg,
                 PyObject *key = PyTuple_GET_ITEM(val, 0);
                 if (!PyUnicode_Check(key)) {
                     PyErr_Format(PyExc_TypeError,
-                                 NI_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
+                                 LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
                                  PyEval_GetFuncName(func),
                                  PyEval_GetFuncDesc(func));
                 }
                 else {
                     PyErr_Format(
                         PyExc_TypeError,
-                        NI_MSG_KWARGS_DUPLICATE_FUNC_NAME,
+                        LE_MSG_KWARGS_DUPLICATE_FUNC_NAME,
                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
                         key);
                 }
@@ -3445,7 +3445,7 @@ cimpl_build_map_unpack_with_call_0(PyObject *sum, PyObject *arg,
 }
 #endif
 
-#if NI_HAS_IMPORT_FROM_SPEC
+#if LE_HAS_IMPORT_FROM_SPEC
 static PyObject *
 cimpl_import_from_whole(PyObject *v, PyObject *name)
 {
@@ -3478,7 +3478,7 @@ cimpl_import_from_whole(PyObject *v, PyObject *name)
 error:
     pkgpath = PyModule_GetFilenameObject(v);
     if (pkgname == NULL) {
-        pkgname_or_unknown = PyUnicode_FromString(NI_MSG_UNKNOWN_MODULE_NAME);
+        pkgname_or_unknown = PyUnicode_FromString(LE_MSG_UNKNOWN_MODULE_NAME);
         if (pkgname_or_unknown == NULL) {
             Py_XDECREF(pkgpath);
             return NULL;
@@ -3490,7 +3490,7 @@ error:
     if (pkgpath == NULL || !PyUnicode_Check(pkgpath)) {
         PyErr_Clear();
         errmsg = PyUnicode_FromFormat(
-            NI_MSG_IMPORT_NAME_UNKNOWN_LOCATION, name,
+            LE_MSG_IMPORT_NAME_UNKNOWN_LOCATION, name,
             pkgname_or_unknown);
         PyErr_SetImportError(errmsg, pkgname, NULL);
     }
@@ -3499,8 +3499,8 @@ error:
         PyObject *spec = _PyObject_GetAttrId(v, &PyId___spec__);
         const char *fmt =
             _PyModuleSpec_IsInitializing(spec)
-                ? NI_MSG_IMPORT_NAME_CIRCULAR
-                : NI_MSG_IMPORT_NAME_FROM_FILE;
+                ? LE_MSG_IMPORT_NAME_CIRCULAR
+                : LE_MSG_IMPORT_NAME_FROM_FILE;
         Py_XDECREF(spec);
         errmsg = PyUnicode_FromFormat(fmt, name, pkgname_or_unknown, pkgpath);
         PyErr_SetImportError(errmsg, pkgname, pkgpath);
@@ -3512,7 +3512,7 @@ error:
 }
 #endif
 
-#if NI_HAS_CFRAME
+#if LE_HAS_CFRAME
 static int
 cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
                            PyFrameObject *frame, PyTraceInfo *trace_info,
@@ -3535,7 +3535,7 @@ cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
 }
 #endif
 
-#if NI_HAS_CFRAME
+#if LE_HAS_CFRAME
 static PyObject *
 cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
                    PyObject *kwdict)
@@ -3629,7 +3629,7 @@ cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
 
 static PyObject *
 cimpl_call_function_ex(PyObject *_in0, PyObject *_in1, PyObject *_in2)
-#if NI_HAS_CFRAME
+#if LE_HAS_CFRAME
 {
     PyThreadState *tstate = PyThreadState_GET();
     PyTraceInfo trace_info = {.code = NULL, .cframe = *tstate->cframe};
@@ -3723,7 +3723,7 @@ _error:
                     PyObject *d = PyDict_New();
                     if (d == NULL)
                         goto _error;
-#if NI_HAS_KWARGS_MERGE_EX
+#if LE_HAS_KWARGS_MERGE_EX
                     if (_PyDict_MergeEx(d, kwargs, 2) < 0) {
                         Py_DECREF(d);
                         cimpl_format_kwargs_error(stack_pointer[-2], kwargs);
@@ -3779,7 +3779,7 @@ _error:
 }
 #endif
 
-#if NI_HAS_CMP_OUTCOME
+#if LE_HAS_CMP_OUTCOME
 static vinfo_t *
 cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
 {
@@ -3892,7 +3892,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
                     if (!(_t12)) {
                         PycException_SetString(
                             po, PyExc_TypeError,
-                            NI_MSG_CATCHING_NON_EXCEPTION);
+                            LE_MSG_CATCHING_NON_EXCEPTION);
                         return NULL;
                     }
                     i += 1;
@@ -3912,7 +3912,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
                 if (!(_t13)) {
                     PycException_SetString(
                         po, PyExc_TypeError,
-                        NI_MSG_CATCHING_NON_EXCEPTION);
+                        LE_MSG_CATCHING_NON_EXCEPTION);
                     return NULL;
                 }
             }
@@ -3935,7 +3935,7 @@ cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
 }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_CLASS
+#if LE_HAS_OPCODE_MATCH_CLASS
 static vinfo_t *
 match_class(PsycoObject *po, vinfo_t *subject, vinfo_t *type, Py_ssize_t nargs,
             vinfo_t *kwargs)
@@ -3947,7 +3947,7 @@ match_class(PsycoObject *po, vinfo_t *subject, vinfo_t *type, Py_ssize_t nargs,
         return NULL;
     }
     if ((tp_type->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) == 0) {
-        e = NI_MSG_MATCH_NOT_A_TYPE;
+        e = LE_MSG_MATCH_NOT_A_TYPE;
         PycException_SetFormat(po, PyExc_TypeError, e);
         return NULL;
     }
@@ -3957,7 +3957,7 @@ match_class(PsycoObject *po, vinfo_t *subject, vinfo_t *type, Py_ssize_t nargs,
 }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_KEYS
+#if LE_HAS_OPCODE_MATCH_KEYS
 static vinfo_t *
 match_keys(PsycoObject *po, vinfo_t *map, vinfo_t *keys)
 {
@@ -3984,7 +3984,7 @@ match_keys(PsycoObject *po, vinfo_t *map, vinfo_t *keys)
 
 /* a global's NameError: ceval's NAME_ERROR_MSG through its own function */
 static void cimpl_name_error(PyObject *w) {
-  cimpl_format_exc_check_arg(PyExc_NameError, NI_MSG_NAME_NOT_DEFINED, w);
+  cimpl_format_exc_check_arg(PyExc_NameError, LE_MSG_NAME_NOT_DEFINED, w);
 }
 
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
@@ -4068,17 +4068,17 @@ static PyObject *cimpl_call_exit(PyObject *exit_func, PyObject *exc,
 static PyObject *cimpl_load_global(PyObject *globals, PyObject *builtins,
                                    PyObject *w) {
   PyObject *x;
-  ni_recursion_suspend();
+  le_recursion_suspend();
   x = PyDict_GetItem(globals, w);
   if (x == NULL) {
     x = PyDict_GetItem(builtins, w);
     if (x == NULL) {
       cimpl_name_error(w);
-      ni_recursion_resume();
+      le_recursion_resume();
       return NULL;
     }
   }
-  ni_recursion_resume();
+  le_recursion_resume();
   Py_INCREF(x);
   return x;
 }
@@ -4100,7 +4100,7 @@ static int unpack_iterable(PyObject *v, int argcnt, int argcntafter,
   if (it == NULL) {
     if (PyErr_ExceptionMatches(PyExc_TypeError) &&
         v->ob_type->tp_iter == NULL && !PySequence_Check(v))
-      PyErr_Format(PyExc_TypeError, NI_MSG_UNPACK_NON_ITERABLE,
+      PyErr_Format(PyExc_TypeError, LE_MSG_UNPACK_NON_ITERABLE,
                    v->ob_type->tp_name);
     return -1;
   }
@@ -4112,11 +4112,11 @@ static int unpack_iterable(PyObject *v, int argcnt, int argcntafter,
       if (!PyErr_Occurred()) {
         if (argcntafter == -1)
           PyErr_Format(PyExc_ValueError,
-                       NI_MSG_UNPACK_NOT_ENOUGH,
+                       LE_MSG_UNPACK_NOT_ENOUGH,
                        argcnt, i);
         else
           PyErr_Format(PyExc_ValueError,
-                       NI_MSG_UNPACK_NOT_ENOUGH_STAR,
+                       LE_MSG_UNPACK_NOT_ENOUGH_STAR,
                        argcnt + argcntafter, i);
       }
       goto Error;
@@ -4134,7 +4134,7 @@ static int unpack_iterable(PyObject *v, int argcnt, int argcntafter,
       return 0;
     }
     Py_DECREF(w);
-    PyErr_Format(PyExc_ValueError, NI_MSG_UNPACK_TOO_MANY,
+    PyErr_Format(PyExc_ValueError, LE_MSG_UNPACK_TOO_MANY,
                  argcnt);
     goto Error;
   }
@@ -4148,7 +4148,7 @@ static int unpack_iterable(PyObject *v, int argcnt, int argcntafter,
   ll = PyList_GET_SIZE(l);
   if (ll < argcntafter) {
     PyErr_Format(PyExc_ValueError,
-                 NI_MSG_UNPACK_NOT_ENOUGH_AFTER_STAR,
+                 LE_MSG_UNPACK_NOT_ENOUGH_AFTER_STAR,
                  argcnt + argcntafter, argcnt + ll);
     goto Error;
   }
@@ -4202,9 +4202,9 @@ static int cimpl_unpack_list(PyObject *listobject, long argcnt,
 static void cimpl_reraise(PyCodeObject *code, PyObject *globals, int lasti,
                           int lineno) {
   PyObject *type, *value, *tb;
-  ni_exc_info_topmost(PyThreadState_GET(), &type, &value, &tb);
+  le_exc_info_topmost(PyThreadState_GET(), &type, &value, &tb);
   if (type == Py_None || type == NULL) {
-    PyErr_SetString(PyExc_RuntimeError, NI_MSG_NO_ACTIVE_EXCEPTION);
+    PyErr_SetString(PyExc_RuntimeError, LE_MSG_NO_ACTIVE_EXCEPTION);
     cimpl_rt_traceback(code, globals, lasti, lineno, NULL);
     return;
   }
@@ -4230,7 +4230,7 @@ static void cimpl_do_raise(PyObject *exc, PyObject *cause) {
       goto raise_error;
     if (!PyExceptionInstance_Check(value)) {
       PyErr_Format(PyExc_TypeError,
-                   NI_MSG_RAISE_NOT_INSTANCE,
+                   LE_MSG_RAISE_NOT_INSTANCE,
                    type, Py_TYPE(value));
       goto raise_error;
     }
@@ -4241,7 +4241,7 @@ static void cimpl_do_raise(PyObject *exc, PyObject *cause) {
   } else {
     Py_DECREF(exc);
     PyErr_SetString(PyExc_TypeError,
-                    NI_MSG_RAISE_NOT_EXCEPTION);
+                    LE_MSG_RAISE_NOT_EXCEPTION);
     goto raise_error;
   }
 
@@ -4259,7 +4259,7 @@ static void cimpl_do_raise(PyObject *exc, PyObject *cause) {
       fixed_cause = NULL;
     } else {
       PyErr_SetString(PyExc_TypeError,
-                      NI_MSG_RAISE_CAUSE_NOT_EXCEPTION);
+                      LE_MSG_RAISE_CAUSE_NOT_EXCEPTION);
       goto raise_error;
     }
     PyException_SetCause(value, fixed_cause);
@@ -4282,7 +4282,7 @@ static PyObject *cimpl_import_name(PyObject *globals, PyObject *builtins,
   PyObject *w;
   PyObject *x = PyDict_GetItemString(builtins, "__import__");
   if (x == NULL) {
-    PyErr_SetString(PyExc_ImportError, NI_MSG_NO_IMPORT);
+    PyErr_SetString(PyExc_ImportError, LE_MSG_NO_IMPORT);
     return NULL;
   }
   if (PyLong_AsLong(fitharg) != -1 || PyErr_Occurred())
@@ -4311,7 +4311,7 @@ static int cimpl_import_all_from(PyObject *locals, PyObject *v) {
       if (!PyErr_ExceptionMatches(PyExc_AttributeError))
         return -1;
       PyErr_SetString(PyExc_ImportError,
-                      NI_MSG_IMPORT_STAR_NO_DICT);
+                      LE_MSG_IMPORT_STAR_NO_DICT);
       return -1;
     }
     all = PyMapping_Keys(dict);
@@ -4400,8 +4400,8 @@ static PyObject *cimpl_minmax_step(PyObject *best, PyObject *item, long op) {
 
 static PyObject *cimpl_minmax_result(PyObject *best, long is_min) {
   if (best == NULL) {
-    PyErr_Format(PyExc_ValueError, NI_MSG_MINMAX_EMPTY,
-                 is_min ? NI_MSG_MINMAX_NAME_MIN : NI_MSG_MINMAX_NAME_MAX);
+    PyErr_Format(PyExc_ValueError, LE_MSG_MINMAX_EMPTY,
+                 is_min ? LE_MSG_MINMAX_NAME_MIN : LE_MSG_MINMAX_NAME_MAX);
     return NULL;
   }
   Py_INCREF(best);
@@ -4418,7 +4418,7 @@ static void cimpl_generator_stop(void) {
     PyException_SetTraceback(val, tb);
   Py_DECREF(exc);
   Py_XDECREF(tb);
-  PyErr_SetString(PyExc_RuntimeError, NI_MSG_GENERATOR_STOP_ITERATION);
+  PyErr_SetString(PyExc_RuntimeError, LE_MSG_GENERATOR_STOP_ITERATION);
   /* as _PyErr_ChainExceptions: the new exception's cause and context */
   {
     PyObject *e2, *v2, *t2;
@@ -4485,7 +4485,7 @@ static code_t *exit_function(PsycoObject *po) {
 /* Code size per instruction (lejit._core._codestats()): for each
    (code object, instruction offset), [opcode, times compiled, bytes, the
    copies as (address, bytes, how the compiler
-   was entered: codemanager.h NI_ENTER_*, the promotion site or -1, the
+   was entered: codemanager.h LE_ENTER_*, the promotion site or -1, the
    index of that site's value or -1)]. The
    bytes are those emitted from the start of one instruction to the start of
    the next, so an instruction's error paths and the end of a block count
@@ -5003,7 +5003,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         if (psyco_knowntobe(value, 0)) {
           ct_format_exc_check_arg(
               po, PyExc_UnboundLocalError,
-              NI_MSG_LOCAL_UNBOUND,
+              LE_MSG_LOCAL_UNBOUND,
               PyTuple_GetItem(co->co_varnames, oparg));
           break;
         }
@@ -5065,7 +5065,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-#if NI_HAS_OPCODE_ROT_FOUR
+#if LE_HAS_OPCODE_ROT_FOUR
       case ROT_FOUR: {
         vinfo_t *fourth;
         vinfo_t *second;
@@ -5734,7 +5734,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case PRINT_EXPR: {
-#if NI_HAS_INLINE_CALL_TSTATE_GET
+#if LE_HAS_INLINE_CALL_TSTATE_GET
         vinfo_t *_t1;
         vinfo_t *_t2;
         vinfo_t *hook;
@@ -5747,14 +5747,14 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 #endif
         vinfo_t *value;
         value = NTOP(1);
-#if NI_HAS_INLINE_CALL_TSTATE_GET
+#if LE_HAS_INLINE_CALL_TSTATE_GET
         _t1 =
             psyco_generic_call(po, _PySys_GetObjectId, CfCommonNewRefPyObject,
                                "l", (long)(&PyId_displayhook));
         hook = _t1;
         if (hook == NULL) {
           PycException_SetString(po, PyExc_RuntimeError,
-                                 NI_MSG_NO_DISPLAYHOOK);
+                                 LE_MSG_NO_DISPLAYHOOK);
           break;
         }
         _t2 = psyco_generic_call(po, PyObject_CallOneArg,
@@ -5851,7 +5851,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         else {
           PycException_SetFormat(
               po, PyExc_TypeError,
-              NI_MSG_ASYNC_FOR_NO_AITER,
+              LE_MSG_ASYNC_FOR_NO_AITER,
               type->tp_name);
           break;
         }
@@ -5910,7 +5910,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         if (_t19) {
           PycException_SetFormat(
               po, PyExc_TypeError,
-              NI_MSG_ASYNC_FOR_AITER_NO_ANEXT,
+              LE_MSG_ASYNC_FOR_AITER_NO_ANEXT,
               tp_iter->tp_name);
           vinfo_decref(iter, po);
           break;
@@ -5921,7 +5921,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-#if NI_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
+#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
       case GET_ANEXT: {
         unaryfunc _t1;
         int _t2;
@@ -5978,7 +5978,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         else {
           PycException_SetFormat(
               po, PyExc_TypeError,
-              NI_MSG_ASYNC_FOR_NO_ANEXT,
+              LE_MSG_ASYNC_FOR_NO_ANEXT,
               type->tp_name);
           break;
         }
@@ -5996,7 +5996,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_RERAISE
+#if LE_HAS_OPCODE_RERAISE
       case RERAISE: {
         vinfo_t *exc;
         vinfo_t *tb;
@@ -6009,7 +6009,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_LOAD_ASSERTION_ERROR
+#if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
       case LOAD_ASSERTION_ERROR: {
         int _t1;
         int _t2;
@@ -6139,7 +6139,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         }
         ct_format_exc_check_arg(
             po, PyExc_UnboundLocalError,
-            NI_MSG_LOCAL_UNBOUND,
+            LE_MSG_LOCAL_UNBOUND,
             PyTuple_GetItem(co->co_varnames, oparg));
         break;
       }
@@ -6319,7 +6319,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-#if NI_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
+#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
       case BUILD_TUPLE_UNPACK_WITH_CALL: {
         vinfo_t *_t2;
         vinfo_t *_t3;
@@ -6399,7 +6399,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_BUILD_TUPLE_UNPACK
+#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK
       case BUILD_TUPLE_UNPACK: {
         vinfo_t *_t2;
         Py_ssize_t i;
@@ -6474,7 +6474,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_BUILD_LIST_UNPACK
+#if LE_HAS_OPCODE_BUILD_LIST_UNPACK
       case BUILD_LIST_UNPACK: {
         vinfo_t *_t2;
         Py_ssize_t i;
@@ -6513,7 +6513,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_LIST_TO_TUPLE
+#if LE_HAS_OPCODE_LIST_TO_TUPLE
       case LIST_TO_TUPLE: {
         vinfo_t *list;
         vinfo_t *tuple;
@@ -6531,7 +6531,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_LIST_EXTEND
+#if LE_HAS_OPCODE_LIST_EXTEND
       case LIST_EXTEND: {
         vinfo_t *iterable;
         vinfo_t *list;
@@ -6551,7 +6551,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_SET_UPDATE
+#if LE_HAS_OPCODE_SET_UPDATE
       case SET_UPDATE: {
         vinfo_t *err;
         vinfo_t *iterable;
@@ -6608,7 +6608,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         break;
       }
 
-#if NI_HAS_OPCODE_BUILD_SET_UNPACK
+#if LE_HAS_OPCODE_BUILD_SET_UNPACK
       case BUILD_SET_UNPACK: {
         vinfo_t *_t1;
         vinfo_t *_t2;
@@ -6683,7 +6683,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         break;
       }
 
-#if NI_HAS_OPCODE_BUILD_MAP_UNPACK
+#if LE_HAS_OPCODE_BUILD_MAP_UNPACK
       case BUILD_MAP_UNPACK: {
         vinfo_t *_tested0;
         vinfo_t *arg;
@@ -6721,7 +6721,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
+#if LE_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
       case BUILD_MAP_UNPACK_WITH_CALL: {
         vinfo_t *_t2;
         vinfo_t *_t3;
@@ -6764,7 +6764,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_DICT_UPDATE
+#if LE_HAS_OPCODE_DICT_UPDATE
       case DICT_UPDATE: {
         vinfo_t *_tested0;
         vinfo_t *dict;
@@ -6786,7 +6786,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_DICT_MERGE
+#if LE_HAS_OPCODE_DICT_MERGE
       case DICT_MERGE: {
         vinfo_t *_t1;
         vinfo_t *_t2;
@@ -6817,7 +6817,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         vinfo_t *key;
         vinfo_t *map;
         vinfo_t *value;
-#if NI_HAS_MAP_ADD_VALUE_ON_TOP
+#if LE_HAS_MAP_ADD_VALUE_ON_TOP
         value = NTOP(1);
         key = NTOP(2);
 #else
@@ -6830,17 +6830,17 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         if (err == NULL) {
           break;
         }
-#if NI_HAS_MAP_ADD_VALUE_ON_TOP
+#if LE_HAS_MAP_ADD_VALUE_ON_TOP
         POP(value);
 #endif
         POP(key);
-#if NI_HAS_MAP_ADD_VALUE_ON_TOP
+#if LE_HAS_MAP_ADD_VALUE_ON_TOP
         vinfo_decref(value, po);
 #else
         POP(value);
 #endif
         vinfo_decref(key, po);
-#if !NI_HAS_MAP_ADD_VALUE_ON_TOP
+#if !LE_HAS_MAP_ADD_VALUE_ON_TOP
         vinfo_decref(value, po);
 #endif
         goto fine;
@@ -6870,7 +6870,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         vinfo_t *right;
         right = NTOP(1);
         left = NTOP(2);
-#if !NI_HAS_CMP_OUTCOME
+#if !LE_HAS_CMP_OUTCOME
         _t1 = PsycoObject_RichCompare(po, left, right, oparg);
 #else
         _t1 = cmp_outcome(po, oparg, left, right);
@@ -6887,7 +6887,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-#if NI_HAS_OPCODE_IS_OP
+#if LE_HAS_OPCODE_IS_OP
       case IS_OP: {
         condition_code_t _t1;
         vinfo_t *b;
@@ -6912,7 +6912,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_CONTAINS_OP
+#if LE_HAS_OPCODE_CONTAINS_OP
       case CONTAINS_OP: {
         condition_code_t _t2;
         vinfo_t *b;
@@ -6943,7 +6943,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
+#if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
       case JUMP_IF_NOT_EXC_MATCH: {
         int _t1;
         int _t2;
@@ -7017,7 +7017,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             if (!(_t2)) {
               PycException_SetString(
                   po, PyExc_TypeError,
-                  NI_MSG_CATCHING_NON_EXCEPTION);
+                  LE_MSG_CATCHING_NON_EXCEPTION);
               goto error_jump_if_not_exc_match;
             }
             i++;
@@ -7041,7 +7041,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           if (!(_t3)) {
             PycException_SetString(
                 po, PyExc_TypeError,
-                NI_MSG_CATCHING_NON_EXCEPTION);
+                LE_MSG_CATCHING_NON_EXCEPTION);
             break;
           }
         }
@@ -7067,7 +7067,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         vinfo_decref(left, po);
         _t5 = integer_non_null(po, _t6);
         vinfo_decref(_t6, po);
-#if NI_HAS_JUMP_IN_INSTRUCTIONS
+#if LE_HAS_JUMP_IN_INSTRUCTIONS
         JUMP_IF_CC(INVERT_CC(_t5), JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT)),
                    0, 0);
 #else
@@ -7086,7 +7086,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         vinfo_t *res;
         from = NTOP(1);
         name = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
-#if NI_HAS_IMPORT_FROM_SPEC
+#if LE_HAS_IMPORT_FROM_SPEC
         _t1 = psyco_generic_call(po, cimpl_import_from_whole,
                                  CfCommonNewRefPyObject, "vv", from, name);
 #else
@@ -7103,7 +7103,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case JUMP_FORWARD: {
-#if NI_HAS_JUMP_IN_INSTRUCTIONS
+#if LE_HAS_JUMP_IN_INSTRUCTIONS
         JUMPBY((oparg) * (int)sizeof(_Py_CODEUNIT));
 #else
         JUMPBY(oparg);
@@ -7126,7 +7126,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           break;
         }
         vinfo_decref(err, po);
-#if NI_HAS_JUMP_IN_INSTRUCTIONS
+#if LE_HAS_JUMP_IN_INSTRUCTIONS
         JUMP_IF_CC(INVERT_CC(_t2), JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT)),
                    1, 1);
 #else
@@ -7152,7 +7152,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           break;
         }
         vinfo_decref(err, po);
-#if NI_HAS_JUMP_IN_INSTRUCTIONS
+#if LE_HAS_JUMP_IN_INSTRUCTIONS
         JUMP_IF_CC(_t2, JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT)), 1, 1);
 #else
         JUMP_IF_CC(_t2, JUMPTO(oparg), 1, 1);
@@ -7177,7 +7177,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           break;
         }
         vinfo_decref(err, po);
-#if NI_HAS_JUMP_IN_INSTRUCTIONS
+#if LE_HAS_JUMP_IN_INSTRUCTIONS
         JUMP_IF_CC(INVERT_CC(_t2), JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT)),
                    0, 1);
 #else
@@ -7203,7 +7203,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           break;
         }
         vinfo_decref(err, po);
-#if NI_HAS_JUMP_IN_INSTRUCTIONS
+#if LE_HAS_JUMP_IN_INSTRUCTIONS
         JUMP_IF_CC(_t2, JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT)), 0, 1);
 #else
         JUMP_IF_CC(_t2, JUMPTO(oparg), 0, 1);
@@ -7214,7 +7214,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 
       case JUMP_ABSOLUTE: {
-#if NI_HAS_JUMP_IN_INSTRUCTIONS
+#if LE_HAS_JUMP_IN_INSTRUCTIONS
         JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT));
 #else
         JUMPTO(oparg);
@@ -7222,7 +7222,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         JUMPED();
       }
 
-#if NI_HAS_OPCODE_GET_LEN
+#if LE_HAS_OPCODE_GET_LEN
       case GET_LEN: {
         vinfo_t *_t1;
         vinfo_t *len_i;
@@ -7242,7 +7242,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_CLASS
+#if LE_HAS_OPCODE_MATCH_CLASS
       case MATCH_CLASS: {
         vinfo_t *_t2;
         vinfo_t *_t3;
@@ -7304,7 +7304,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_MAPPING
+#if LE_HAS_OPCODE_MATCH_MAPPING
       case MATCH_MAPPING: {
         int _t1;
         int _t2;
@@ -7338,7 +7338,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_SEQUENCE
+#if LE_HAS_OPCODE_MATCH_SEQUENCE
       case MATCH_SEQUENCE: {
         int _t1;
         int _t2;
@@ -7372,7 +7372,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_MATCH_KEYS
+#if LE_HAS_OPCODE_MATCH_KEYS
       case MATCH_KEYS: {
         int _t2;
         int _t3;
@@ -7408,7 +7408,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
+#if LE_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
       case COPY_DICT_WITHOUT_KEYS: {
         int _t10;
         int _t11;
@@ -7499,7 +7499,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           if (!((co->co_flags & (0x0080 | 0x0100)))) {
             PycException_SetString(
                 po, PyExc_TypeError,
-                NI_MSG_YIELD_FROM_COROUTINE);
+                LE_MSG_YIELD_FROM_COROUTINE);
             break;
           }
         }
@@ -7521,7 +7521,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
       }
 
-#if NI_HAS_AENTER_LOOKUP_FIRST
+#if LE_HAS_AENTER_LOOKUP_FIRST
       case BEFORE_ASYNC_WITH: {
         vinfo_t *enter;
         vinfo_t *exit;
@@ -7575,7 +7575,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
           vinfo_decref(exit, po);
           break;
         }
-#if NI_HAS_CALL_NO_ARG_FUNCTION
+#if LE_HAS_CALL_NO_ARG_FUNCTION
         _t3 = psyco_generic_call(po, _PyObject_CallNoArg,
                                  CfCommonNewRefPyObject, "v", enter);
 #else
@@ -7597,7 +7597,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       }
 #endif
 
-#if NI_HAS_OPCODE_WITH_EXCEPT_START
+#if LE_HAS_OPCODE_WITH_EXCEPT_START
       case WITH_EXCEPT_START: {
         int _t1;
         int _t2;
@@ -7923,7 +7923,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         }
       }
 
-#if NI_HAS_OPCODE_ROT_N
+#if LE_HAS_OPCODE_ROT_N
       case ROT_N: {
         vinfo_t *_t1;
         vinfo_t *top;
@@ -8062,7 +8062,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
       case POP_BLOCK: {
         PyTryBlock *b = block_pop(po);
-        if (NI_HAS_POP_BLOCK_UNWINDS) {
+        if (LE_HAS_POP_BLOCK_UNWINDS) {
           while (STACK_LEVEL() > b->b_level) {
             POP(v);
             vinfo_decref(v, po);
@@ -8074,7 +8074,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       case POP_EXCEPT:
         /* from 3.8 the items above the handler's three stay (a return
            value under them, by ROT_FOUR) */
-        if (!pop_except_handler(po, NI_HAS_POP_EXCEPT_UNWINDS))
+        if (!pop_except_handler(po, LE_HAS_POP_EXCEPT_UNWINDS))
           break;
         goto fine;
 
@@ -8090,7 +8090,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
       case CALL_FINALLY:
         PUSH(finally_return(INSTR_OFFSET()));
-        JUMPBY(NI_JUMP_BYTES(oparg));
+        JUMPBY(LE_JUMP_BYTES(oparg));
         JUMPED();
 
       case POP_FINALLY: {
@@ -8359,7 +8359,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             /* iterator ended normally */
             PycException_Clear(po);
             POP_DECREF();
-            JUMPBY(NI_JUMP_BYTES(oparg));
+            JUMPBY(LE_JUMP_BYTES(oparg));
             mp = psyco_next_merge_point(po->pr.merge_points, next_instr);
           } else
             break; /* any other exception, or error in
@@ -8370,7 +8370,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
       case SETUP_LOOP:
       case SETUP_EXCEPT:
       case SETUP_FINALLY:
-        block_setup(po, opcode, INSTR_OFFSET() + NI_JUMP_BYTES(oparg), STACK_LEVEL());
+        block_setup(po, opcode, INSTR_OFFSET() + LE_JUMP_BYTES(oparg), STACK_LEVEL());
         goto fine;
 
       /* with: as 3.7 ceval, a SETUP_FINALLY block over the bound __exit__.
@@ -8387,7 +8387,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         }
         POP_DECREF();
         PUSH(array->items[0]);
-        block_setup(po, SETUP_FINALLY, INSTR_OFFSET() + NI_JUMP_BYTES(oparg),
+        block_setup(po, SETUP_FINALLY, INSTR_OFFSET() + LE_JUMP_BYTES(oparg),
                     STACK_LEVEL());
         PUSH(array->items[1]);
         array_release(array);
@@ -8452,7 +8452,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
             if (!pop_except_handler(po, true))
               break;
             /* for END_FINALLY: None, or NULL where BEGIN_FINALLY is */
-            PUSH(NI_HAS_OPCODE_BEGIN_FINALLY ? psyco_vi_Zero() : psyco_vi_None());
+            PUSH(LE_HAS_OPCODE_BEGIN_FINALLY ? psyco_vi_Zero() : psyco_vi_None());
             goto fine;
           }
         }

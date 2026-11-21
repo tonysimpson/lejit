@@ -20,7 +20,7 @@ member_get(PsycoObject *po, PyMemberDescrObject *descr, vinfo_t *obj,
            PyObject *type)
 {
     vinfo_t *_t1;
-#if NI_HAS_AUDIT_HOOKS
+#if LE_HAS_AUDIT_HOOKS
     if (((descr->d_member)->flags & 2)) {
         if (psyco_generic_call(
                 po, PySys_Audit,

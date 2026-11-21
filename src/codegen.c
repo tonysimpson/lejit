@@ -402,14 +402,14 @@ psyco_inline_enter(PsycoObject *po)
    frame running that code reads its notes, so no live note names a reused
    index. */
 DEFINEVAR struct locals_map_s **psyco_locals_maps = NULL;
-DEFINEVAR long ni_notes_made = 0, ni_notes_free = 0;
+DEFINEVAR long le_notes_made = 0, le_notes_free = 0;
 static int *free_notes = NULL;
 static long free_notes_cap = 0;
 
 static long note_index(void)
 {
     long i;
-    ni_owner_t *o = psyco_owner;
+    le_owner_t *o = psyco_owner;
     if (o != NULL && o->nnotes == o->notescap) {
         int cap = o->notescap ? 2 * o->notescap : 8;
         void *p = PyMem_Realloc(o->notes, cap * sizeof(int));
@@ -418,10 +418,10 @@ static long note_index(void)
         o->notes = p;
         o->notescap = cap;
     }
-    if (ni_notes_free > 0)
-        i = free_notes[--ni_notes_free];
+    if (le_notes_free > 0)
+        i = free_notes[--le_notes_free];
     else {
-        i = ni_notes_made;
+        i = le_notes_made;
         if ((i & (i - 1)) == 0) {
             void *p = PyMem_Realloc(psyco_locals_maps,
                                     2 * (i + 1) * sizeof(*psyco_locals_maps));
@@ -429,7 +429,7 @@ static long note_index(void)
                 OUT_OF_MEMORY();
             psyco_locals_maps = p;
         }
-        ni_notes_made++;
+        le_notes_made++;
     }
     if (o != NULL)
         o->notes[o->nnotes++] = (int)i;
@@ -441,8 +441,8 @@ void
 psyco_release_notes(int *notes, int n)
 {
     int k;
-    if (ni_notes_free + n > free_notes_cap) {
-        long cap = 2 * (ni_notes_free + n);
+    if (le_notes_free + n > free_notes_cap) {
+        long cap = 2 * (le_notes_free + n);
         void *p = PyMem_Realloc(free_notes, cap * sizeof(int));
         if (p == NULL)
             return; /* those indices are not reused */
@@ -451,7 +451,7 @@ psyco_release_notes(int *notes, int n)
     }
     for (k = 0; k < n; k++) {
         psyco_locals_maps[notes[k]] = NULL;
-        free_notes[ni_notes_free++] = notes[k];
+        free_notes[le_notes_free++] = notes[k];
     }
 }
 
@@ -870,7 +870,7 @@ integer_lshift(PsycoObject *po, vinfo_t *v1, vinfo_t *v2)
             return NULL;
         if (runtime_condition_f(po, cc)) {
             PycException_SetString(po, PyExc_ValueError,
-                                   NI_MSG_NEGATIVE_SHIFT);
+                                   LE_MSG_NEGATIVE_SHIFT);
             return NULL;
         }
         return vinfo_new(CompileTime_New(0));
@@ -898,7 +898,7 @@ integer_lshift_i(PsycoObject *po, vinfo_t *v1, long counter)
     else if (counter >= LONG_BIT)
         return vinfo_new(CompileTime_New(0));
     else {
-        PycException_SetString(po, PyExc_ValueError, NI_MSG_NEGATIVE_SHIFT);
+        PycException_SetString(po, PyExc_ValueError, LE_MSG_NEGATIVE_SHIFT);
         return NULL;
     }
 }
@@ -922,7 +922,7 @@ DEFINEFN /* signed */
             return NULL;
         if (runtime_condition_f(po, cc)) {
             PycException_SetString(po, PyExc_ValueError,
-                                   NI_MSG_NEGATIVE_SHIFT);
+                                   LE_MSG_NEGATIVE_SHIFT);
             return NULL;
         }
         return integer_rshift_i(po, v1, LONG_BIT - 1);
@@ -953,7 +953,7 @@ DEFINEFN /* signed */
         return v1;
     }
     else {
-        PycException_SetString(po, PyExc_ValueError, NI_MSG_NEGATIVE_SHIFT);
+        PycException_SetString(po, PyExc_ValueError, LE_MSG_NEGATIVE_SHIFT);
         return NULL;
     }
 }
@@ -979,7 +979,7 @@ integer_urshift_i(PsycoObject *po, vinfo_t *v1, long counter)
     else if (counter >= LONG_BIT)
         return vinfo_new(CompileTime_New(0));
     else {
-        PycException_SetString(po, PyExc_ValueError, NI_MSG_NEGATIVE_SHIFT);
+        PycException_SetString(po, PyExc_ValueError, LE_MSG_NEGATIVE_SHIFT);
         return NULL;
     }
 }

@@ -584,15 +584,15 @@ EXTERNFN bool psyco_internal_putfld(PsycoObject *po, int findex, defield_t df,
   STRUCT_FIELD_BUILD(cstruct, ctype, cfield, prevf, FIELD_NONNEG)
 
 /* a field of a CPython struct: its offset, the size Ni reads and whether
-   unsigned come from psyco.h's NI_OFS_, NI_SIZE2_ and NI_UNSIGNED_
+   unsigned come from psyco.h's LE_OFS_, LE_SIZE2_ and LE_UNSIGNED_
    macros, checked against the target's headers; a field not listed
    there doesn't compile. DEF_FIELD and the others above are for
    Ni's own structs. */
 #define CPY_FIELD_BUILD(cstruct, cfield, prevf, flags)                         \
-  ((defield_t)(((long)NI_OFS_##cstruct##__##cfield << FIELD_OFS_SHIFT) |       \
-               ((long)NI_SIZE2_##cstruct##__##cfield << FIELD_SIZE2_SHIFT) |   \
+  ((defield_t)(((long)LE_OFS_##cstruct##__##cfield << FIELD_OFS_SHIFT) |       \
+               ((long)LE_SIZE2_##cstruct##__##cfield << FIELD_SIZE2_SHIFT) |   \
                field_next_index(prevf, true) |                                 \
-               (NI_UNSIGNED_##cstruct##__##cfield ? FIELD_UNSIGNED : 0) |      \
+               (LE_UNSIGNED_##cstruct##__##cfield ? FIELD_UNSIGNED : 0) |      \
                flags))
 #define CPY_FIELD(cstruct, cfield, prevf)                                      \
   CPY_FIELD_BUILD(cstruct, cfield, prevf, 0)
@@ -600,12 +600,12 @@ EXTERNFN bool psyco_internal_putfld(PsycoObject *po, int findex, defield_t df,
   CPY_FIELD_BUILD(cstruct, cfield, prevf, FIELD_NONNEG)
 /* the items of an array field, as DEF_ARRAY at its offset */
 #define CPY_ARRAY(cstruct, cfield)                                             \
-  ((defield_t)(((long)NI_OFS_##cstruct##__##cfield << FIELD_OFS_SHIFT) |       \
-               ((long)NI_SIZE2_##cstruct##__##cfield << FIELD_SIZE2_SHIFT) |   \
+  ((defield_t)(((long)LE_OFS_##cstruct##__##cfield << FIELD_OFS_SHIFT) |       \
+               ((long)LE_SIZE2_##cstruct##__##cfield << FIELD_SIZE2_SHIFT) |   \
                FIELD_RESERVED_INDEX | FIELD_ARRAY |                            \
-               (NI_UNSIGNED_##cstruct##__##cfield ? FIELD_UNSIGNED : 0)))
+               (LE_UNSIGNED_##cstruct##__##cfield ? FIELD_UNSIGNED : 0)))
 /* the offset alone, for the backend */
-#define CPY_OFFSET(cstruct, cfield) NI_OFS_##cstruct##__##cfield
+#define CPY_OFFSET(cstruct, cfield) LE_OFS_##cstruct##__##cfield
 
 /* the same, for pure arrays instead of structures */
 #define DEF_ARRAY(ctype, baseofs) ARRAY_FIELD_BUILD(ctype, baseofs, 0)
@@ -844,7 +844,7 @@ EXTERNFN void psyco_assert_coherent1(PsycoObject *po, bool full);
 PSY_INLINE PsycoObject *PsycoObject_New(int vlocalscnt) {
   int psize = PSYCOOBJECT_SIZE(vlocalscnt);
   PsycoObject *po = (PsycoObject *)PyMem_MALLOC(psize);
-  if (po == NULL || NI_FAIL(NI_FAIL_PSYCOOBJECT))
+  if (po == NULL || LE_FAIL(LE_FAIL_PSYCOOBJECT))
     OUT_OF_MEMORY();
   memset(po, 0, psize);
   return po;

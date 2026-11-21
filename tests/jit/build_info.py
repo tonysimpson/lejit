@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import common  # noqa: E402
 
-sys.path.insert(0, common.NI_DIR)
+sys.path.insert(0, common.LE_DIR)
 import lejit  # noqa: E402
 
 KEYS = {'source_version', 'build', 'trace', 'codestats', 'sanitizer',
@@ -29,22 +29,22 @@ def main():
                         % (info['source_version'], sys.version.split()[0]))
     if info['build'] not in ('release', 'checked'):
         problems.append('build %r' % info['build'])
-    header = os.path.join(common.build_temp(), 'gen', 'ni_features_gen.h')
+    header = os.path.join(common.build_temp(), 'gen', 'le_features_gen.h')
     if not os.path.exists(header):
         problems.append('no %s' % os.path.relpath(header, common.ROOT))
     else:
         with open(header) as f:
             want = {k: int(v) for k, v in
-                    re.findall(r'^#define (NI_HAS_\w+) (\d)$', f.read(), re.M)}
+                    re.findall(r'^#define (LE_HAS_\w+) (\d)$', f.read(), re.M)}
         if dict(info['features']) != want:
             problems.append('features %s, the header says %s'
                             % (dict(info['features']), want))
-    header = os.path.join(common.build_temp(), 'gen', 'ni_strings_gen.h')
+    header = os.path.join(common.build_temp(), 'gen', 'le_strings_gen.h')
     if not os.path.exists(header):
         problems.append('no %s' % os.path.relpath(header, common.ROOT))
     else:
         with open(header) as f:
-            want = set(re.findall(r'^#define (NI_MSG_\w+) "', f.read(), re.M))
+            want = set(re.findall(r'^#define (LE_MSG_\w+) "', f.read(), re.M))
         if set(info['messages']) != want:
             problems.append('messages %s, the header has %s'
                             % (sorted(info['messages']), sorted(want)))

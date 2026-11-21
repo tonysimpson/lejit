@@ -57,12 +57,12 @@ cimpl_is_error(double x)
     int result = 1;
     assert(errno);
     if (errno == EDOM)
-        PyErr_SetString(PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR);
+        PyErr_SetString(PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR);
     else if (errno == ERANGE) {
         if (fabs(x) < 1.5)
             result = 0;
         else
-            PyErr_SetString(PyExc_OverflowError, NI_MSG_MATH_RANGE_ERROR);
+            PyErr_SetString(PyExc_OverflowError, LE_MSG_MATH_RANGE_ERROR);
     }
     else
         PyErr_SetFromErrno(PyExc_ValueError);
@@ -84,7 +84,7 @@ cimpl_math_##func(double x, double *_r)                                     \
     errno = 0;                                                              \
     r = func(x);                                                            \
     if (isnan(r) && !isnan(x)) {                                            \
-        PyErr_SetString(PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR);        \
+        PyErr_SetString(PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR);        \
         return -1;                                                          \
     }                                                                       \
     if (isinf(r) && isfinite(x)) {                                          \
@@ -122,18 +122,18 @@ math_##func(PsycoObject *po, vinfo_t *self, vinfo_t *args)                  \
     return r;                                                               \
 }
 
-MATH_1(acos, PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR)
-MATH_1(asin, PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR)
-MATH_1(atan, PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR)
-MATH_1(cos, PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR)
-MATH_1(cosh, PyExc_OverflowError, NI_MSG_MATH_RANGE_ERROR)
-MATH_1(exp, PyExc_OverflowError, NI_MSG_MATH_RANGE_ERROR)
-MATH_1(fabs, PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR)
-MATH_1(sin, PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR)
-MATH_1(sinh, PyExc_OverflowError, NI_MSG_MATH_RANGE_ERROR)
-MATH_1(sqrt, PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR)
-MATH_1(tan, PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR)
-MATH_1(tanh, PyExc_ValueError, NI_MSG_MATH_DOMAIN_ERROR)
+MATH_1(acos, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
+MATH_1(asin, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
+MATH_1(atan, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
+MATH_1(cos, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
+MATH_1(cosh, PyExc_OverflowError, LE_MSG_MATH_RANGE_ERROR)
+MATH_1(exp, PyExc_OverflowError, LE_MSG_MATH_RANGE_ERROR)
+MATH_1(fabs, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
+MATH_1(sin, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
+MATH_1(sinh, PyExc_OverflowError, LE_MSG_MATH_RANGE_ERROR)
+MATH_1(sqrt, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
+MATH_1(tan, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
+MATH_1(tanh, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
 
 static void
 gen_mathmodule_init(PyObject *md)

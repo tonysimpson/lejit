@@ -7,7 +7,7 @@ runs except BANNED.
 import fnmatch, os, resource, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common import (NI_DIR, SANITIZE_LOGS, SANITIZE_SKIP, SLOWDOWN,
+from common import (LE_DIR, SANITIZE_LOGS, SANITIZE_SKIP, SLOWDOWN,
                      child_env, save_stderr)
 
 TIMEOUT = 600 * SLOWDOWN        # seconds per run
@@ -57,7 +57,7 @@ def limit_memory():
 def run(mode, name):
     tag = name + '.' + mode
     with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd:
-        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, NI_DIR],
+        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, LE_DIR],
                              stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE if SANITIZE_LOGS else subprocess.DEVNULL,
                              stdin=subprocess.DEVNULL, cwd=cwd, env=child_env(tag),

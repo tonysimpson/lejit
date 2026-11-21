@@ -59,11 +59,11 @@ cross-check:
 	$(GEN_PY) tests/features/installed_test.py --strict
 	$(GEN_PY) tests/features/strings_test.py
 
-# features come from CPython's source (NI_HAS_*), never its version number
+# features come from CPython's source (LE_HAS_*), never its version number
 no-version-tests:
 	@! grep -rnwE 'PY_(VERSION_HEX|MAJOR_VERSION|MINOR_VERSION|MICRO_VERSION)' \
 	    src/ --include='*.[ch]' \
-	  || { echo "a CPython version test in src/ (above): add an NI_HAS_ feature"; exit 1; }
+	  || { echo "a CPython version test in src/ (above): add an LE_HAS_ feature"; exit 1; }
 
 check: no-version-tests features-test features-installed-test strings-test \
        test cpython-test encoder-test

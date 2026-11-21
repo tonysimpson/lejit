@@ -4,7 +4,7 @@ tree: a binary release (python.org's installers, a distribution's package,
 pyenv) is enough, as for any extension.
 
 It answers the same features as features.py (its FEATURES list, read when
-this runs), and writes the same ni_features_gen.h. Each feature is answered
+this runs), and writes the same le_features_gen.h. Each feature is answered
 one of two ways, in this order of preference:
 
   interpreter  in the interpreter itself, in a subprocess of it
@@ -22,7 +22,7 @@ can't answer: never a guess. features.py stays the reference: the check
 tests/features/installed_test.py runs both and requires them to agree.
 
     installed.py --python EXE --out DIR
-        write DIR/ni_features_gen.h for the interpreter EXE
+        write DIR/le_features_gen.h for the interpreter EXE
     installed.py --python EXE
         print each feature, its value and how it was answered
 
@@ -374,8 +374,8 @@ def how(name):
 
 
 def detect(python):
-    """(probed, [(NI_HAS_name, value, what it detects, evidence, kind)],
-    {NI_HAS_name: why unanswered}) for interpreter python. what is
+    """(probed, [(LE_HAS_name, value, what it detects, evidence, kind)],
+    {LE_HAS_name: why unanswered}) for interpreter python. what is
     features.py's description, so that the header reads the same."""
     probed = run_probes(python)
     # opcodes numbered 256 and up are the compiler's pseudo-instructions
@@ -390,9 +390,9 @@ def detect(python):
         try:
             value, kind, evidence = _answer(name, probed, headers)
         except Unanswered as e:
-            unanswered['NI_HAS_' + name] = str(e)
+            unanswered['LE_HAS_' + name] = str(e)
             continue
-        found.append(('NI_HAS_' + name, int(bool(value)), features.describe(d),
+        found.append(('LE_HAS_' + name, int(bool(value)), features.describe(d),
                       evidence, kind))
     return probed, found, unanswered
 
@@ -442,7 +442,7 @@ def write(python, out):
         f.write(text)
     os.replace(path + '.tmp', path)
     print('%s: installed CPython %s, %d features'
-          % (path, version, text.count('\n#define NI_HAS_')))
+          % (path, version, text.count('\n#define LE_HAS_')))
     return 0
 
 
@@ -451,7 +451,7 @@ def show(python):
     print('%s (CPython %s, headers %s)' % (python, probed['version'], probed['include']))
     values = {f[0]: f for f in found}
     for name, _ in features.FEATURES:
-        key = 'NI_HAS_' + name
+        key = 'LE_HAS_' + name
         if key in values:
             _, value, _, evidence, kind = values[key]
             print('  %-38s %d  %-11s %s' % (key, value, kind, evidence))

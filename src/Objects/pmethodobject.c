@@ -12,7 +12,7 @@
  */
 #include "pmethodobject.h"
 #include "ptupleobject.h"
-/* ni_tstate_load */
+/* le_tstate_load */
 #include "../mechanisms/tstate.h"
 
 static bool compute_cfunction(PsycoObject *po, vinfo_t *methobj) {
@@ -75,7 +75,7 @@ DEFINEVAR source_virtual_t psyco_computed_cfunction;
    rule. A meta's result is not checked. */
 #define CF_UNCHECKED (CfReturnTypePtr | CfNewRef)
 
-#if NI_HAS_CHECK_RESULT_TSTATE
+#if LE_HAS_CHECK_RESULT_TSTATE
 #define CHECK_FUNCTION_RESULT(f, r) _Py_CheckFunctionResult(PyThreadState_GET(), f, r, NULL)
 #else
 #define CHECK_FUNCTION_RESULT(f, r) _Py_CheckFunctionResult(f, r, NULL)
@@ -107,10 +107,10 @@ static vinfo_t *check_result(PsycoObject *po, vinfo_t *r, vinfo_t *vfunc) {
                        "v", vfunc);
     return NULL;
   }
-  vts = ni_tstate_load(po);
+  vts = le_tstate_load(po);
   if (vts == NULL)
     goto fail;
-  vexc = psyco_get_field(po, vts, NI_TSTATE_exc_occurred);
+  vexc = psyco_get_field(po, vts, LE_TSTATE_exc_occurred);
   vinfo_decref(vts, po);
   cc = integer_NON_NULL(po, vexc); /* consumes vexc */
   if (cc == CC_ERROR)
@@ -203,7 +203,7 @@ vinfo_t *PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
 
   /* default, slow version */
 use_proxy:
-  NI_STAT(psyco_stat_cfunc_proxy++);
+  LE_STAT(psyco_stat_cfunc_proxy++);
   return psyco_generic_call(po, PyCFunction_Call, CfCommonNewRefPyObject, "vvv",
                             func, args, kwargs);
 }
@@ -274,7 +274,7 @@ static vinfo_t *call_fast(PsycoObject *po, PyCFunction meth, int flags,
   } else {
     for (i = 0; i < n; i++)
       a[i] = PsycoTuple_GET_ITEM(vargs, i);
-    NI_STAT(psyco_stat_cfunc_fast++);
+    LE_STAT(psyco_stat_cfunc_fast++);
     /* fmt[n] stops before the unused (NULL) trailing arguments */
     r = psyco_generic_call(po, cimpl_fast[kw][n], cf, fmt[n], (long)meth,
                            vself, a[0], a[1], a[2], a[3], a[4]);

@@ -51,7 +51,7 @@
    PyType_Ready gives every static type, and an extension's heap type may
    ask for, as array's does). */
 PSY_INLINE bool Psyco_TypeMutable(PyTypeObject* tp) {
-#if NI_HAS_IMMUTABLE_TYPE_FLAG
+#if LE_HAS_IMMUTABLE_TYPE_FLAG
 	return (tp->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) == 0;
 #else
 	return (tp->tp_flags & Py_TPFLAGS_HEAPTYPE) != 0;
@@ -277,7 +277,7 @@ static vinfo_t* cname  fargs  {						\
 	((x)->source == CompileTime_NewSk(&psyco_skNotImplemented))
 
 
-/* ni_dictkeys_t and ni_dictentry_t, the dict keys and entries that aren't
+/* le_dictkeys_t and le_dictentry_t, the dict keys and entries that aren't
    in the installed headers, are copied from the source into psyco.h;
    the entries follow the indices. */
 
@@ -291,23 +291,23 @@ typedef struct {
   Py_ssize_t kword;   /* entries[ix].me_key in such keys, in words */
   Py_ssize_t ix;      /* the name's index in them */
   PyObject *name;     /* interned; held by the table's key */
-  uint64_t *version;  /* &ni_dict_version */
+  uint64_t *version;  /* &le_dict_version */
   long refreshes;     /* misses that changed the cache */
 } store_cache_t;
 
 /* the entries of dict keys, after their indices (dictobject.c:DK_ENTRIES) */
-PSY_INLINE ni_dictentry_t *ni_dict_entries(ni_dictkeys_t *k) {
+PSY_INLINE le_dictentry_t *le_dict_entries(le_dictkeys_t *k) {
   Py_ssize_t ixsize = k->dk_size <= 0xff         ? 1
                       : k->dk_size <= 0xffff     ? 2
                       : k->dk_size <= 0xffffffff ? 4
                                                  : 8;
-  return (ni_dictentry_t *)(k->dk_indices + k->dk_size * ixsize);
+  return (le_dictentry_t *)(k->dk_indices + k->dk_size * ixsize);
 }
 
 /* ma_version_tag for the dict stores Ni makes itself: CPython's own
    counter is static in dictobject.c and never reaches 2^63, where this one
    starts, so tags from the two never meet */
-EXTERNVAR uint64_t ni_dict_version;
+EXTERNVAR uint64_t le_dict_version;
 
 
 #endif /* _PSY_OBJECT_H */

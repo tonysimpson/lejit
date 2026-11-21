@@ -26,19 +26,19 @@
 #include "mergepoints.h"
 #include "pycodegen.h"
 #include "vcompiler.h"
-/* ni_tracing_test */
+/* le_tracing_test */
 #include "mechanisms/tracing.h"
-/* ni_tstate_load and the recursion count */
+/* le_tstate_load and the recursion count */
 #include "mechanisms/tstate.h"
 #include "mechanisms/recursion.h"
 /* ceval's eval_breaker is a 32-bit int at an address fixed for the
    process: compiled code compares it with 0 in place. The
    address and the handler are Python/pyruntime.c's. */
-extern void *ni_eval_breaker_address(void);
-extern int ni_eval_breaker_handler(void);
+extern void *le_eval_breaker_address(void);
+extern int le_eval_breaker_handler(void);
 
-static inline condition_code_t ni_eval_breaker_test(PsycoObject *po) {
-  return psyco_int32_nonzero_at(po, ni_eval_breaker_address());
+static inline condition_code_t le_eval_breaker_test(PsycoObject *po) {
+  return psyco_int32_nonzero_at(po, le_eval_breaker_address());
 }
 
 
@@ -105,7 +105,7 @@ static bool fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co,
 }
 
 /* _PsycoEval_EvalCodeWithName, translated from ceval.c */
-#if NI_HAS_FRAME_BUILTINS_OF_FUNCTION
+#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
 DEFINEFN
 int
 _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
@@ -482,7 +482,7 @@ static vinfo_t *call_with_inline_frame(PsycoObject *po,
 
 DEFINEFN
 vinfo_t *psyco_save_inline_po(PsycoObject *po) {
-  ni_code_extra_t *x;
+  le_code_extra_t *x;
   int i = po->vlocals.count;
   vinfo_t **pp = po->vlocals.items;
   vinfo_t *v = vinfo_new(VirtualTime_New(&EInline));
@@ -498,7 +498,7 @@ vinfo_t *psyco_save_inline_po(PsycoObject *po) {
      callee's join points (vcompiler.c:psyco_compile_join), and their code
      goes on in the dead caller's: the serial keeps a new caller from
      matching them. */
-  x = ni_code_extra(po->pr.co);
+  x = le_code_extra(po->pr.co);
   psyco_assert(x != NULL); /* made with the merge points */
   v->array->items[LOC_INLINE_SERIAL] =
       vinfo_new(CompileTime_NewSk(sk_new(x->serial, SkFlagFixed)));
@@ -560,7 +560,7 @@ PsycoObject *psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a) {
 /***************************************************************/
 
 /* the running thread's state, read at run time (mechanisms/tstate.h) */
-static vinfo_t *load_tstate(PsycoObject *po) { return ni_tstate_load(po); }
+static vinfo_t *load_tstate(PsycoObject *po) { return le_tstate_load(po); }
 
 /* Py_LeaveRecursiveCall after a compiled call; entering
    is mechanisms/recursion.h's enter_recursive_call, on a thread state the
@@ -574,16 +574,16 @@ bool psyco_leave_recursive_call(PsycoObject *po) {
 }
 
 /* ceval's test of eval_breaker before an instruction:
-   ni_eval_breaker_test, inline, and only when it is set a call
+   le_eval_breaker_test, inline, and only when it is set a call
    to the C helper that does what ceval does then (pending calls and signal
    handlers, a GIL drop for other threads, an async exception). The helper
    can run any Python code, as any residual call can. Its branch is a
    runtime_condition_f respawn point, compiled when first taken. */
 DEFINEFN
 bool psyco_check_eval_breaker(PsycoObject *po) {
-  condition_code_t cc = ni_eval_breaker_test(po);
+  condition_code_t cc = le_eval_breaker_test(po);
   if (runtime_condition_f(po, cc))
-    return psyco_generic_call(po, ni_eval_breaker_handler, CfCommonIntZeroOk,
+    return psyco_generic_call(po, le_eval_breaker_handler, CfCommonIntZeroOk,
                               "") != NULL;
   return true;
 }
@@ -596,7 +596,7 @@ bool psyco_check_eval_breaker(PsycoObject *po) {
    finalisers, as at any allocation in compiled code; the str methods can
    call an argument's __index__. A Python function's tp_call runs Python
    code, which tests eval_breaker itself (ceval, or compiled code entered
-   through NiCode_Run), as an inlined or directly compiled callee does.
+   through LeCode_Run), as an inlined or directly compiled callee does.
    Left out, though common at call sites: whatever can call back into
    arbitrary objects (dict lookups, PyObject_IsTrue, getattr, isinstance,
    a class's tp_call, list.extend, str.join), since that may be C code
@@ -652,7 +652,7 @@ static void cannot_block_init(void) {
   add_cannot_block(PyThreadState_Get);
   add_cannot_block(PyLong_Type.tp_richcompare);
   add_cannot_block(PyFloat_Type.tp_richcompare);
-  add_cannot_block(ni_function_tp_call());
+  add_cannot_block(le_function_tp_call());
   add_method(&PyList_Type, "append");
   add_method(&PyList_Type, "reverse");
   add_method(&PyDict_Type, "keys");
@@ -669,7 +669,7 @@ static void cannot_block_init(void) {
 /* Whether a trace or profile function is set in this thread: a
    compiled call or inlined frame skips the eval hook, which runs frames
    interpreted while the thread is tracing, so each one tests that first
-   (ni_tracing_test, mechanisms/tracing.h). When set, the
+   (le_tracing_test, mechanisms/tracing.h). When set, the
    caller makes the real call instead (rare path: a runtime_condition_f
    respawn point, compiled when first taken). A frame already running
    compiled code when tracing starts goes on interpreted after its next
@@ -677,7 +677,7 @@ static void cannot_block_init(void) {
    set by every way in, C ones too
    (PyEval_SetTrace and PyEval_SetProfile, as cProfile uses). */
 static bool tracing_on(PsycoObject *po, vinfo_t *vts) {
-  return runtime_condition_f(po, ni_tracing_test(po, vts));
+  return runtime_condition_f(po, le_tracing_test(po, vts));
 }
 
 DEFINEFN
@@ -725,7 +725,7 @@ static bool same_globals(PsycoObject *po, vinfo_t *vglobals) {
 static int callee_builtins(PsycoObject *po, vinfo_t *vfunc, vinfo_t *vglobals,
                            vinfo_t **out) {
   PyObject *b;
-#if NI_HAS_FRAME_BUILTINS_OF_FUNCTION
+#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
   if (vfunc == NULL)
     return 0;
   if (is_compiletime(vfunc->source)) {
@@ -802,14 +802,14 @@ static void pin_constants(vinfo_array_t *a) {
    object, which holds the compiled code. */
 static CodeBufferObject *compile_callee(PsycoObject *mypo, PyCodeObject *co) {
   CodeBufferObject *codebuf;
-  ni_owner_t *callee = psyco_code_owner(co);
+  le_owner_t *callee = psyco_code_owner(co);
   psyco_assert(callee != NULL); /* made with the merge points */
   psyco_owner_pin((PyObject *)co);
   {
-    NI_OWNER_ENTER(callee);
+    LE_OWNER_ENTER(callee);
     pin_constants(&mypo->vlocals);
     codebuf = psyco_compile_code(mypo, PsycoObject_Ready(mypo));
-    NI_OWNER_LEAVE();
+    LE_OWNER_LEAVE();
   }
   return codebuf;
 }
@@ -1000,7 +1000,7 @@ fail_to_default:
      globals and defaults, as upstream's cimpl_call_pyfunc did, would lose its
      name and qualname (generators take co_name), closure and keyword-only
      defaults */
-  return psyco_generic_call(po, ni_function_tp_call(),
+  return psyco_generic_call(po, le_function_tp_call(),
                             CfCommonNewRefPyObject, "vvl", vfunc, arg_tuple,
                             (long)0);
 
@@ -1041,7 +1041,7 @@ vinfo_t *psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
   return result;
 
 fallback:
-  return psyco_generic_call(po, ni_function_tp_call(),
+  return psyco_generic_call(po, le_function_tp_call(),
                             CfCommonNewRefPyObject, "vvl", vfunc, arg_tuple,
                             (long)0);
 }
@@ -1169,7 +1169,7 @@ int psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v) {
 
 DEFINEFN
 void psycofunction_init() {
-  psyco_assert(ni_tstate_check());
-  psyco_assert(ni_eval_breaker_address() != NULL);
+  psyco_assert(le_tstate_check());
+  psyco_assert(le_eval_breaker_address() != NULL);
   cannot_block_init();
 }

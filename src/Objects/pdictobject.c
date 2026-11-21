@@ -2,7 +2,7 @@
 #include "pmethodobject.h"
 #include "ptupleobject.h"
 #include "punicodeobject.h"
-/* NI_GC_IS_TRACKED */
+/* LE_GC_IS_TRACKED */
 #include "../mechanisms/store_gc.h"
 
 
@@ -24,7 +24,7 @@ vinfo_t* PsycoDict_New(PsycoObject* po)
 	return v;
 }
 
-#if NI_HAS_PYDICT_NEWPRESIZED
+#if LE_HAS_PYDICT_NEWPRESIZED
 DEFINEFN
 vinfo_t* _PsycoDict_NewPresized(PsycoObject* po, long minused)
 {
@@ -129,10 +129,10 @@ cimpl_dict_setdefault_impl(PyDictObject *self, PyObject *key,
 }
 
 static int
-cimpl_unicode_eq_str_key(PyObject *aa, const ni_strkey_t *bb)
+cimpl_unicode_eq_str_key(PyObject *aa, const le_strkey_t *bb)
 {
     PyUnicodeObject *a = (PyUnicodeObject *)aa;
-    const ni_strkey_t *b = bb;
+    const le_strkey_t *b = bb;
     if (PyUnicode_READY(a) == -1) {
         Py_UNREACHABLE();
     }
@@ -147,7 +147,7 @@ cimpl_unicode_eq_str_key(PyObject *aa, const ni_strkey_t *bb)
 }
 
 static Py_ssize_t
-cimpl_lookdict_unicode_str_key(PyDictObject *mp, const ni_strkey_t *key,
+cimpl_lookdict_unicode_str_key(PyDictObject *mp, const le_strkey_t *key,
                                Py_hash_t hash, PyObject **value_addr)
 {
     PyDictKeyEntry *ep0 = DK_ENTRIES(mp->ma_keys);
@@ -176,7 +176,7 @@ cimpl_lookdict_unicode_str_key(PyDictObject *mp, const ni_strkey_t *key,
 
 static Py_ssize_t
 cimpl_lookdict_unicode_nodummy_str_key(PyDictObject *mp,
-                                       const ni_strkey_t *key, Py_hash_t hash,
+                                       const le_strkey_t *key, Py_hash_t hash,
                                        PyObject **value_addr)
 {
     PyDictKeyEntry *ep0 = DK_ENTRIES(mp->ma_keys);
@@ -384,21 +384,21 @@ static void cimpl_dictstr_forget(void) { probed.mp = NULL; }
 
 /* _PyObject_GC_MAY_BE_TRACKED */
 #define MAY_BE_TRACKED(o)                                                      \
-  (PyObject_IS_GC(o) && (!PyTuple_CheckExact(o) || NI_GC_IS_TRACKED(o)))
+  (PyObject_IS_GC(o) && (!PyTuple_CheckExact(o) || LE_GC_IS_TRACKED(o)))
 
 /* insertdict's path for a key found at ix of a combined table; 'key'
    NULL for a key not built (a str, which the GC never tracks) */
 static int store_found(PyDictObject *mp, PyObject *key, Py_ssize_t ix,
                        PyObject *value) {
-  ni_dictentry_t *ep = &ni_dict_entries((ni_dictkeys_t *)mp->ma_keys)[ix];
+  le_dictentry_t *ep = &le_dict_entries((le_dictkeys_t *)mp->ma_keys)[ix];
   PyObject *old = ep->me_value;
   Py_XINCREF(key);
   Py_INCREF(value);
-  if (!NI_GC_IS_TRACKED(mp) &&
+  if (!LE_GC_IS_TRACKED(mp) &&
       ((key != NULL && MAY_BE_TRACKED(key)) || MAY_BE_TRACKED(value)))
     PyObject_GC_Track(mp);
   ep->me_value = value;
-  mp->ma_version_tag = ++ni_dict_version;
+  mp->ma_version_tag = ++le_dict_version;
   Py_XDECREF(old); /* may run any code */
   Py_XDECREF(key);
   return 0;
@@ -506,9 +506,9 @@ static PyObject key_needed = {_PyObject_EXTRA_INIT 1, &PyBaseObject_Type};
 static Py_ssize_t key_probe(PyDictObject *mp, PyObject *root, Py_ssize_t start,
                             Py_ssize_t len, long map, PyObject **pvalue) {
   dict_lookup_func f = mp->ma_keys->dk_lookup;
-  ni_strkey_t k;
+  le_strkey_t k;
   Py_hash_t hash;
-  char buf[NI_KEY_BUF];
+  char buf[LE_KEY_BUF];
   if (f != lookdict_unicode_nodummy_fn && f != lookdict_unicode_fn)
     return -2;
   if (!PsycoUnicode_KeyChars(&k, &hash, buf, root, start, len, map))

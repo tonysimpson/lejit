@@ -256,7 +256,7 @@ PsycoMember_GetOne(PsycoObject *po, vinfo_t *addr, PyMemberDef *l)
             _t37 = runtime_condition_f(po, _t36);
             if (_t37) {
                 vinfo_decref(v, po);
-#if NI_HAS_MEMBER_EX_ERROR_FROM_TYPE
+#if LE_HAS_MEMBER_EX_ERROR_FROM_TYPE
                 return psyco_generic_call(po, PyMember_GetOne,
                                           CfCommonNewRefPyObject, "vl", addr,
                                           (long)(l));

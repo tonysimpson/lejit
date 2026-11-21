@@ -218,25 +218,25 @@ class SimpleExecutionTracer:
         self.sequence_num = 0
 
     def _initialise_breakpoints(self):
-        self.db.add_breakpoint('ni_trace_begin_code', self._ni_trace_begin_code)
-        self.db.add_breakpoint('ni_trace_end_code', self._ni_trace_end_code)
-        self.db.add_breakpoint('ni_trace_begin_simple_code', self._ni_trace_begin_simple_code)
-        self.db.add_breakpoint('ni_trace_end_simple_code', self._ni_trace_end_simple_code)
-        #self.db.add_breakpoint('ni_trace_jump', self._ni_trace_jump)
-        #self.db.add_breakpoint('ni_trace_jump_update', self._ni_trace_jump)
-        #self.db.add_breakpoint('ni_trace_jump_reg', self._ni_trace_jump_reg)
-        #self.db.add_breakpoint('ni_trace_jump_cond', self._ni_trace_jump_cond)
-        #self.db.add_breakpoint('ni_trace_jump_cond_update', self._ni_trace_jump_cond)
-        #self.db.add_breakpoint('ni_trace_jump_cond_reg', self._ni_trace_jump_cond_reg)
-        #self.db.add_breakpoint('ni_trace_call', self._ni_trace_call)
-        #self.db.add_breakpoint('ni_trace_call_reg', self._ni_trace_call_reg)
-        #self.db.add_breakpoint('ni_trace_return', self._ni_trace_return)
+        self.db.add_breakpoint('le_trace_begin_code', self._le_trace_begin_code)
+        self.db.add_breakpoint('le_trace_end_code', self._le_trace_end_code)
+        self.db.add_breakpoint('le_trace_begin_simple_code', self._le_trace_begin_simple_code)
+        self.db.add_breakpoint('le_trace_end_simple_code', self._le_trace_end_simple_code)
+        #self.db.add_breakpoint('le_trace_jump', self._le_trace_jump)
+        #self.db.add_breakpoint('le_trace_jump_update', self._le_trace_jump)
+        #self.db.add_breakpoint('le_trace_jump_reg', self._le_trace_jump_reg)
+        #self.db.add_breakpoint('le_trace_jump_cond', self._le_trace_jump_cond)
+        #self.db.add_breakpoint('le_trace_jump_cond_update', self._le_trace_jump_cond)
+        #self.db.add_breakpoint('le_trace_jump_cond_reg', self._le_trace_jump_cond_reg)
+        #self.db.add_breakpoint('le_trace_call', self._le_trace_call)
+        #self.db.add_breakpoint('le_trace_call_reg', self._le_trace_call_reg)
+        #self.db.add_breakpoint('le_trace_return', self._le_trace_return)
 
-    def _ni_trace_begin_simple_code(self, db):
+    def _le_trace_begin_simple_code(self, db):
         self._begin = db.registers.rdi
         return True
 
-    def _ni_trace_end_simple_code(self, db):
+    def _le_trace_end_simple_code(self, db):
         end = db.registers.rdi
         if self._begin == end:
             return
@@ -244,17 +244,17 @@ class SimpleExecutionTracer:
         g = generated_code([i.function_name for i in db.backtrace()], None, None, self.sequence_num)
         self.sequence_num += 1
         self.code_gen[self._begin:end] = g
-        db.raise_event('NI_CODE_GEN', begin=self._begin, end=end, info=g)
+        db.raise_event('LE_CODE_GEN', begin=self._begin, end=end, info=g)
         return True
 
-    def _ni_trace_begin_code(self, db):
+    def _le_trace_begin_code(self, db):
         po_ptr = db.reference(db.registers.rdi, PsycoObject)
         self._begin = po_ptr.value.code
         self._trace_points = {}
         self._begin_stack_depth = po_ptr.value.stack_depth
         return True
 
-    def _ni_trace_end_code(self, db):
+    def _le_trace_end_code(self, db):
         po_ptr = db.reference(db.registers.rdi, PsycoObject)
         end = po_ptr.value.code
         if self._begin == end:
@@ -266,10 +266,10 @@ class SimpleExecutionTracer:
         g = generated_code([i.function_name for i in db.backtrace()], psycoobject_get_python_location(po_ptr), self._begin_stack_depth, self.sequence_num)
         self.sequence_num += 1
         self.code_gen[self._begin:end] = g
-        db.raise_event('NI_CODE_GEN', begin=self._begin, end=end, info=g)
+        db.raise_event('LE_CODE_GEN', begin=self._begin, end=end, info=g)
         return True
 
-    def _ni_trace_jump(self, db):
+    def _le_trace_jump(self, db):
         location = db.registers.rdi
         target = db.registers.rsi
         def location_func(db, trace):
@@ -278,7 +278,7 @@ class SimpleExecutionTracer:
         self._trace_points[location] = location_func
         return True
 
-    def _ni_trace_jump_reg(self, db):
+    def _le_trace_jump_reg(self, db):
         location = db.registers.rdi
         target_reg = db.registers.rsi
         def location_func(db, trace):
@@ -287,7 +287,7 @@ class SimpleExecutionTracer:
         self._trace_points[location] = location_func
         return True
 
-    def _ni_trace_jump_cond(self, db):
+    def _le_trace_jump_cond(self, db):
         location = db.registers.rdi
         not_taken = db.registers.rsi
         taken = db.registers.rdx
@@ -305,7 +305,7 @@ class SimpleExecutionTracer:
         self._trace_points[location] = location_func
         return True
 
-    def _ni_trace_jump_cond_reg(self, db):
+    def _le_trace_jump_cond_reg(self, db):
         location = db.registers.rdi
         not_taken = db.registers.rsi
         taken_reg = db.registers.rdx
@@ -324,7 +324,7 @@ class SimpleExecutionTracer:
         self._trace_points[location] = location_func
         return True
 
-    def _ni_trace_call(self, db):
+    def _le_trace_call(self, db):
         location = db.registers.rdi
         call_target = db.registers.rsi
         def location_func(db, trace):
@@ -333,7 +333,7 @@ class SimpleExecutionTracer:
         self._trace_points[location] = location_func
         return True
 
-    def _ni_trace_call_reg(self, db):
+    def _le_trace_call_reg(self, db):
         location = db.registers.rdi
         call_target_reg = db.registers.rsi
         def location_func(db, trace):
@@ -342,7 +342,7 @@ class SimpleExecutionTracer:
         self._trace_points[location] = location_func
         return True
 
-    def _ni_trace_return(self, db):
+    def _le_trace_return(self, db):
         location = db.registers.rdi
         stack_adjust = db.registers.rsi
         def location_func(db, trace):
@@ -375,7 +375,7 @@ class SimpleExecutionTracer:
                 return func(db, trace)
             self.db.add_breakpoint(address, breakpoint, immediately=True)
         self.db.add_breakpoint('PyEval_EvalFrameEx', self._py_eval_eval_frame_ex)
-        self.db.add_breakpoint('NiCode_Run', self._psyco_code_run)
+        self.db.add_breakpoint('LeCode_Run', self._psyco_code_run)
 
     def disassemble(self, begin, end):
         return distorm3.Decode(begin, self.db.read_unmodified(begin, end - begin), distorm3.Decode64Bits)

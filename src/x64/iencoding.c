@@ -321,7 +321,7 @@ test_condition_and_pyerr_occured:
        the POP may go through the register allocator, which can spill with
        a PUSH of its own, so that the POP restores the wrong value and the
        spilled vinfo is left above the top of the stack.
-       The exception word (NI_EXC_OCCURRED_OFFSET) is read into the
+       The exception word (LE_EXC_OCCURRED_OFFSET) is read into the
        scratch register instead. */
     BEGIN_CODE
     NEED_CC(); /* before the PUSH: it may take a register */
@@ -330,7 +330,7 @@ test_condition_and_pyerr_occured:
     BEGIN_CALL(0);
     END_CALL_I(PyThreadState_Get);
     MOV_R_O(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN,
-            NI_EXC_OCCURRED_OFFSET);
+            LE_EXC_OCCURRED_OFFSET);
     TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
     TEST_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
     END_CODE

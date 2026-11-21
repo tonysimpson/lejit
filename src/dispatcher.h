@@ -112,7 +112,7 @@ EXTERNFN PsycoObject* psyco_unpark(parked_state_t* ps, vinfo_t** fix);
 EXTERNFN void psyco_park_release(parked_state_t* ps);
 /* states parked live, held to PARK_LIVE_MAX, and frozen:
    lejit._core._stats()['parked'] */
-EXTERNVAR long ni_parked_live;
+EXTERNVAR long le_parked_live;
 #if ALL_CHECKS
 EXTERNVAR long psyco_stat_parked_frozen;
 #endif
@@ -377,7 +377,7 @@ EXTERNFN int runtime_in_bounds(PsycoObject* po, vinfo_t* vi,
    the outermost of these calls, as file and line */
 EXTERNVAR const char* psyco_respawn_file;
 EXTERNVAR int psyco_respawn_line;
-#define NI_RESPAWN_SITE(call) ({                                    \
+#define LE_RESPAWN_SITE(call) ({                                    \
         const char* _f = psyco_respawn_file;                        \
         int _l = psyco_respawn_line;                                \
         __typeof__(call) _r;                                        \
@@ -389,12 +389,12 @@ EXTERNVAR int psyco_respawn_line;
         psyco_respawn_file = _f;                                    \
         psyco_respawn_line = _l;                                    \
         _r; })
-#define runtime_condition_f(po, c) NI_RESPAWN_SITE(runtime_condition_f(po, c))
-#define runtime_condition_t(po, c) NI_RESPAWN_SITE(runtime_condition_t(po, c))
-#define runtime_NON_NULL_f(po, v)  NI_RESPAWN_SITE(runtime_NON_NULL_f(po, v))
-#define runtime_NON_NULL_t(po, v)  NI_RESPAWN_SITE(runtime_NON_NULL_t(po, v))
+#define runtime_condition_f(po, c) LE_RESPAWN_SITE(runtime_condition_f(po, c))
+#define runtime_condition_t(po, c) LE_RESPAWN_SITE(runtime_condition_t(po, c))
+#define runtime_NON_NULL_f(po, v)  LE_RESPAWN_SITE(runtime_NON_NULL_f(po, v))
+#define runtime_NON_NULL_t(po, v)  LE_RESPAWN_SITE(runtime_NON_NULL_t(po, v))
 #define runtime_in_bounds(po, v, lo, hi)                                  \
-        NI_RESPAWN_SITE(runtime_in_bounds(po, v, lo, hi))
+        LE_RESPAWN_SITE(runtime_in_bounds(po, v, lo, hi))
 #endif
 
 

@@ -369,7 +369,7 @@ def NAME_ERROR_NAME():
 def IMPORT_FROM_SPEC():
     """`from m import x`, for a module whose __spec__ says it is still
     initialising, says it is "partially initialized" (run)"""
-    name = '_ni_probe_initialising'
+    name = '_le_probe_initialising'
     m = types.ModuleType(name)
     m.__spec__ = types.SimpleNamespace(name=name, _initializing=True)
     m.__file__ = name + '.py'

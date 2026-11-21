@@ -68,14 +68,14 @@ struct CodeBufferObject_s {
    code belongs to its caller). What a compile allocates is held by it and
    released with that code object (psyco_owner_release); NULL while
    nothing is compiled, and what is made then is kept for good. Entering a
-   compile sets it with NI_OWNER_ENTER, and NI_OWNER_LEAVE restores it. */
-EXTERNVAR ni_owner_t *psyco_owner;
-#define NI_OWNER_ENTER(o)  ni_owner_t *_ni_prev_owner = psyco_owner;          \
+   compile sets it with LE_OWNER_ENTER, and LE_OWNER_LEAVE restores it. */
+EXTERNVAR le_owner_t *psyco_owner;
+#define LE_OWNER_ENTER(o)  le_owner_t *_le_prev_owner = psyco_owner;          \
                            psyco_owner = (o)
-#define NI_OWNER_LEAVE()   (psyco_owner = _ni_prev_owner)
+#define LE_OWNER_LEAVE()   (psyco_owner = _le_prev_owner)
 
 /* the owner of 'co''s compiled code; NULL with an exception set */
-EXTERNFN ni_owner_t *psyco_code_owner(PyCodeObject *co);
+EXTERNFN le_owner_t *psyco_code_owner(PyCodeObject *co);
 /* give the current owner a reference, which it drops with its code
    (stolen: a constant's when its source_known_t is made, vcompiler.h:sk_new) */
 EXTERNFN void psyco_owner_keep(PyObject *o);
@@ -85,7 +85,7 @@ EXTERNFN void psyco_owner_pin(PyObject *o);
 EXTERNFN void *psyco_owner_alloc(size_t size);
 /* release everything 'o' holds; its code object is dead. The references
    to the code's report and entry point are released with it. */
-EXTERNFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
+EXTERNFN void psyco_owner_release(le_owner_t *o, PyObject *mergepoints,
                                   PyObject *entry_point);
 
 /* A record is counted once its owner holds a reference (psyco_owner_keep):
@@ -93,14 +93,14 @@ EXTERNFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
    whose code objects are reachable only from garbage runs (codemanager.c,
    cycles through code objects); one that holds none can't keep anything
    alive. */
-EXTERNFN void psyco_owner_track(ni_code_extra_t *x);
-EXTERNFN void psyco_owner_untrack(ni_code_extra_t *x);
+EXTERNFN void psyco_owner_track(le_code_extra_t *x);
+EXTERNFN void psyco_owner_untrack(le_code_extra_t *x);
 /* scans run, owners they freed, records counted: lejit._core._stats() */
 #if ALL_CHECKS
 EXTERNVAR long psyco_stat_owner_scans;
 EXTERNVAR long psyco_stat_owners_collected;
 #endif
-EXTERNVAR long ni_owners_counted;
+EXTERNVAR long le_owners_counted;
 
 /* A map from addresses, for the caches that record what a compile saw at
    an address and must see the same in a replay. psyco_record gives the
@@ -111,10 +111,10 @@ EXTERNVAR long ni_owners_counted;
    object is too if the code holds it, so no address it records is ever
    reused under it. */
 typedef struct {
-  struct ni_addrmap_item_s *items;
+  struct le_addrmap_item_s *items;
   size_t mask, n;
-} ni_addrmap_t;
-EXTERNFN PyObject **psyco_record(ni_addrmap_t *map, void *key);
+} le_addrmap_t;
+EXTERNFN PyObject **psyco_record(le_addrmap_t *map, void *key);
 
 /* Compile guards. Each way into the compiler (eval_hook.c, the stub
    functions) pushes one; running out of memory under it (OUT_OF_MEMORY)
@@ -125,25 +125,25 @@ EXTERNFN PyObject **psyco_record(ni_addrmap_t *map, void *key);
    MemoryError if the compile replaced it. The caller then runs the
    interpreter instead (psyco_guard_pop), or compiles again from a state
    the compile didn't consume (psyco_guard_retry, which aborts after
-   NI_GUARD_RETRIES tries: compiled code can't go back to the
+   LE_GUARD_RETRIES tries: compiled code can't go back to the
    interpreter). */
 #include <setjmp.h>
-#define NI_GUARD_RETRIES 3
-typedef struct ni_compile_guard_s {
+#define LE_GUARD_RETRIES 3
+typedef struct le_compile_guard_s {
   sigjmp_buf env;
-  struct ni_compile_guard_s *prev;
-  ni_owner_t *owner;
+  struct le_compile_guard_s *prev;
+  le_owner_t *owner;
   int depth, nopen, njournal, tries;
   PyObject *exc_type, *exc_value, *exc_tb;
 #if ALL_CHECKS
-  const char *respawn_file; /* dispatcher.h:NI_RESPAWN_SITE's, restored */
+  const char *respawn_file; /* dispatcher.h:LE_RESPAWN_SITE's, restored */
   int respawn_line;
 #endif
-} ni_compile_guard_t;
-EXTERNVAR ni_compile_guard_t *psyco_compile_guard;
-EXTERNFN void psyco_guard_push(ni_compile_guard_t *g);
-EXTERNFN void psyco_guard_pop(ni_compile_guard_t *g);
-EXTERNFN void psyco_guard_retry(ni_compile_guard_t *g);
+} le_compile_guard_t;
+EXTERNVAR le_compile_guard_t *psyco_compile_guard;
+EXTERNFN void psyco_guard_push(le_compile_guard_t *g);
+EXTERNFN void psyco_guard_pop(le_compile_guard_t *g);
+EXTERNFN void psyco_guard_retry(le_compile_guard_t *g);
 EXTERNFN void psyco_guard_abandon(void); /* for psyco_out_of_memory */
 
 /* code buffers created so far; the next one's serial */
@@ -194,39 +194,39 @@ EXTERNVAR long psyco_stat_code_bytes_live;
 EXTERNVAR long psyco_stat_code_bytes;
 #endif
 
-/* NI_COMPILE_BEGIN/END bracket each way in from run time, by how the
-   compiler was entered; ni_compile_depth counts the compiles open, during
+/* LE_COMPILE_BEGIN/END bracket each way in from run time, by how the
+   compiler was entered; le_compile_depth counts the compiles open, during
    which no owner scan runs. Checked builds time the outermost
    (lejit._core._stats()), so a compile nested in another isn't counted twice;
    codestats builds keep its kind. A normal build reads no clock. */
-enum { NI_ENTER_ANALYSE, NI_ENTER_CALL, NI_ENTER_PAUSE, NI_ENTER_RESPAWN, NI_ENTER_PROMOTION,
-       NI_ENTER_KINDS };
-EXTERNVAR int ni_compile_depth;
+enum { LE_ENTER_ANALYSE, LE_ENTER_CALL, LE_ENTER_PAUSE, LE_ENTER_RESPAWN, LE_ENTER_PROMOTION,
+       LE_ENTER_KINDS };
+EXTERNVAR int le_compile_depth;
 #if ALL_CHECKS || LE_CODESTATS
-EXTERNFN long ni_now_ns(void);
+EXTERNFN long le_now_ns(void);
 EXTERNVAR int psyco_stat_compile_kind; /* the outermost entry's kind */
 #endif
 #if ALL_CHECKS
-EXTERNVAR long psyco_stat_compile_ns[NI_ENTER_KINDS];
-EXTERNVAR long psyco_stat_compile_count[NI_ENTER_KINDS];
-#define NI_COMPILE_BEGIN(kind)                                                 \
-  long _ni_t0 = ni_compile_depth++                                             \
+EXTERNVAR long psyco_stat_compile_ns[LE_ENTER_KINDS];
+EXTERNVAR long psyco_stat_compile_count[LE_ENTER_KINDS];
+#define LE_COMPILE_BEGIN(kind)                                                 \
+  long _le_t0 = le_compile_depth++                                             \
                     ? 0                                                        \
-                    : (psyco_stat_compile_kind = (kind), ni_now_ns())
-#define NI_COMPILE_END(kind)                                                   \
+                    : (psyco_stat_compile_kind = (kind), le_now_ns())
+#define LE_COMPILE_END(kind)                                                   \
   do {                                                                         \
-    if (--ni_compile_depth == 0) {                                             \
-      psyco_stat_compile_ns[kind] += ni_now_ns() - _ni_t0;                     \
+    if (--le_compile_depth == 0) {                                             \
+      psyco_stat_compile_ns[kind] += le_now_ns() - _le_t0;                     \
       psyco_stat_compile_count[kind]++;                                        \
     }                                                                          \
   } while (0)
 #elif LE_CODESTATS
-#define NI_COMPILE_BEGIN(kind)                                                 \
-  (void)(ni_compile_depth++ ? 0 : (psyco_stat_compile_kind = (kind)))
-#define NI_COMPILE_END(kind) ((void)ni_compile_depth--)
+#define LE_COMPILE_BEGIN(kind)                                                 \
+  (void)(le_compile_depth++ ? 0 : (psyco_stat_compile_kind = (kind)))
+#define LE_COMPILE_END(kind) ((void)le_compile_depth--)
 #else
-#define NI_COMPILE_BEGIN(kind) ((void)ni_compile_depth++)
-#define NI_COMPILE_END(kind) ((void)ni_compile_depth--)
+#define LE_COMPILE_BEGIN(kind) ((void)le_compile_depth++)
+#define LE_COMPILE_END(kind) ((void)le_compile_depth--)
 #endif
 
 

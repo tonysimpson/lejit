@@ -161,7 +161,7 @@ def _one(x):
 
 
 # a loop in C calling a compiled function with no loop and no call: the
-# test on entry from the interpreter (NiCode_Run) is the only one
+# test on entry from the interpreter (LeCode_Run) is the only one
 def signal_in_c_loop():
     old = signal.signal(signal.SIGALRM, signal.default_int_handler)
     try:

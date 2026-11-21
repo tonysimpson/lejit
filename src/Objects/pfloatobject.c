@@ -193,30 +193,30 @@ static vinfo_t *pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 /* CPython's code, copied for the metas to call at run time */
 static double
-#if NI_HAS_FLOAT_ASDOUBLE_INDEX
+#if LE_HAS_FLOAT_ASDOUBLE_INDEX
 cimpl_PyFloat_AsDouble_1(PyObject *res)
 #else
 cimpl_PyFloat_AsDouble_1(PyObject *op, PyObject *res)
 #endif
 {
-#if !NI_HAS_FLOAT_ASDOUBLE_INDEX
+#if !LE_HAS_FLOAT_ASDOUBLE_INDEX
     double val;
 #endif
     Py_INCREF(res);
-#if NI_HAS_FLOAT_ASDOUBLE_INDEX
+#if LE_HAS_FLOAT_ASDOUBLE_INDEX
     double val = PyLong_AsDouble(res);
 #else
     if (!PyFloat_CheckExact(res)) {
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError,
-                         NI_MSG_FLOAT_RETURNED_NON_FLOAT,
+                         LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                          op->ob_type->tp_name, res->ob_type->tp_name);
             Py_DECREF(res);
             return -1;
         }
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
-                NI_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
+                LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
                 op->ob_type->tp_name, res->ob_type->tp_name)) {
             Py_DECREF(res);
             return -1;
@@ -233,18 +233,18 @@ cimpl_PyFloat_AsDouble_2(PyObject *op, PyObject *res)
 {
     double val;
     Py_INCREF(res);
-#if NI_HAS_FLOAT_ASDOUBLE_INDEX
+#if LE_HAS_FLOAT_ASDOUBLE_INDEX
     if (!PyFloat_CheckExact(res)) {
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError,
-                         NI_MSG_FLOAT_RETURNED_NON_FLOAT,
+                         LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                          Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name);
             Py_DECREF(res);
             return -1;
         }
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
-                NI_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
+                LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
                 Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
             Py_DECREF(res);
             return -1;
@@ -254,14 +254,14 @@ cimpl_PyFloat_AsDouble_2(PyObject *op, PyObject *res)
     {
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError,
-                         NI_MSG_FLOAT_RETURNED_NON_FLOAT,
+                         LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                          op->ob_type->tp_name, res->ob_type->tp_name);
             Py_DECREF(res);
             return -1;
         }
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
-                NI_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
+                LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
                 op->ob_type->tp_name, res->ob_type->tp_name)) {
             Py_DECREF(res);
             return -1;
@@ -279,10 +279,10 @@ cimpl_PyFloat_AsDouble_3(PyObject *op, PyObject *res)
     double val;
     Py_INCREF(res);
     {
-#if NI_HAS_FLOAT_ASDOUBLE_INDEX
+#if LE_HAS_FLOAT_ASDOUBLE_INDEX
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError,
-                         NI_MSG_FLOAT_RETURNED_NON_FLOAT,
+                         LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                          Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name);
             Py_DECREF(res);
             return -1;
@@ -290,7 +290,7 @@ cimpl_PyFloat_AsDouble_3(PyObject *op, PyObject *res)
 #endif
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
-                NI_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
+                LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
                 Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
             Py_DECREF(res);
             return -1;
@@ -301,7 +301,7 @@ cimpl_PyFloat_AsDouble_3(PyObject *op, PyObject *res)
     return val;
 }
 
-#if NI_HAS_FLOAT_ASDOUBLE_INDEX
+#if LE_HAS_FLOAT_ASDOUBLE_INDEX
 static double
 cimpl_PyFloat_AsDouble_4(PyObject *op, PyObject *res)
 {
@@ -310,7 +310,7 @@ cimpl_PyFloat_AsDouble_4(PyObject *op, PyObject *res)
     {
         if (PyErr_WarnFormat(
                 PyExc_DeprecationWarning, 1,
-                NI_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
+                LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
                 Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
             Py_DECREF(res);
             return -1;
@@ -384,7 +384,7 @@ cimpl_float_div_1(PyObject *w, double a)
     else if (cimpl_convert_to_double(&(w), &(b)) < 0)
         return w;
     if (b == 0.0) {
-        PyErr_SetString(PyExc_ZeroDivisionError, NI_MSG_FLOAT_DIVISION_BY_ZERO);
+        PyErr_SetString(PyExc_ZeroDivisionError, LE_MSG_FLOAT_DIVISION_BY_ZERO);
         return NULL;
     }
     a = a / b;
@@ -396,7 +396,7 @@ static int
 cimpl_float_div(double a, double b, double *_r)
 {
     if (b == 0.0) {
-        PyErr_SetString(PyExc_ZeroDivisionError, NI_MSG_FLOAT_DIVISION_BY_ZERO);
+        PyErr_SetString(PyExc_ZeroDivisionError, LE_MSG_FLOAT_DIVISION_BY_ZERO);
         return -1;
     }
     a = a / b;
@@ -443,7 +443,7 @@ cimpl_float_rem_1(PyObject *w, double vx)
     else if (cimpl_convert_to_double(&(w), &(wx)) < 0)
         return w;
     if (wx == 0.0) {
-        PyErr_SetString(PyExc_ZeroDivisionError, NI_MSG_FLOAT_MODULO_BY_ZERO);
+        PyErr_SetString(PyExc_ZeroDivisionError, LE_MSG_FLOAT_MODULO_BY_ZERO);
         return NULL;
     }
     mod = fmod(vx, wx);
@@ -464,7 +464,7 @@ cimpl_float_rem(double vx, double wx, double *_r)
 {
     double mod;
     if (wx == 0.0) {
-        PyErr_SetString(PyExc_ZeroDivisionError, NI_MSG_FLOAT_MODULO_BY_ZERO);
+        PyErr_SetString(PyExc_ZeroDivisionError, LE_MSG_FLOAT_MODULO_BY_ZERO);
         return -1;
     }
     mod = fmod(vx, wx);
@@ -523,7 +523,7 @@ float_rem(PsycoObject *po, vinfo_t *, vinfo_t *);
 static vinfo_t *
 float_sub(PsycoObject *po, vinfo_t *, vinfo_t *);
 
-#if NI_HAS_FLOAT_ASDOUBLE_INDEX
+#if LE_HAS_FLOAT_ASDOUBLE_INDEX
 DEFINEFN vinfo_t *
 PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
 {
@@ -604,7 +604,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
             _t7 = _t6 != 0;
         }
         if (_t7) {
-#if NI_HAS_PRIVATE_NUMBER_INDEX
+#if LE_HAS_PRIVATE_NUMBER_INDEX
             _t8 = psyco_generic_call(po, _PyNumber_Index,
                                      CfCommonNewRefPyObject, "v", op);
 #else
@@ -623,7 +623,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
             return _t9;
         }
         PycException_SetFormat(po, PyExc_TypeError,
-                               NI_MSG_MUST_BE_REAL_NUMBER,
+                               LE_MSG_MUST_BE_REAL_NUMBER,
                                tp_op->tp_name);
         return NULL;
     }
@@ -660,7 +660,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
         if (!(_t14)) {
             PycException_SetFormat(
                 po, PyExc_TypeError,
-                NI_MSG_FLOAT_RETURNED_NON_FLOAT,
+                LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                 tp_op->tp_name, tp_res->tp_name);
             vinfo_decref(res, po);
             return NULL;
@@ -744,7 +744,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
     }
     if (_t5) {
         PycException_SetFormat(po, PyExc_TypeError,
-                               NI_MSG_MUST_BE_REAL_NUMBER,
+                               LE_MSG_MUST_BE_REAL_NUMBER,
                                tp_op->tp_name);
         return NULL;
     }
@@ -781,7 +781,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
         if (!(_t10)) {
             PycException_SetFormat(
                 po, PyExc_TypeError,
-                NI_MSG_FLOAT_RETURNED_NON_FLOAT,
+                LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                 tp_op->tp_name, tp_res->tp_name);
             vinfo_decref(res, po);
             return NULL;
@@ -1119,7 +1119,7 @@ float_hash(PsycoObject *po, vinfo_t *v)
         return NULL;
     }
     vinfo_incref(_t1);
-#if NI_HAS_HASH_DOUBLE_OBJECT
+#if LE_HAS_HASH_DOUBLE_OBJECT
     _t2 = psyco_generic_call(po, _Py_HashDouble,
                              CfReturnTypeNative | CfPure | CfNoBlock, "vd", v,
                              _t1);

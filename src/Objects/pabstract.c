@@ -68,19 +68,19 @@ vinfo_t *PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object,
     return Psyco_META3(po, call, CfCommonNewRefPyObject, "vvv", callable_object,
                        args, kw);
   }
-  return type_error_tp(po, NI_MSG_NOT_CALLABLE, tp);
+  return type_error_tp(po, LE_MSG_NOT_CALLABLE, tp);
 }
 
 /* the metas translated from abstract.c */
 /* CPython's code, copied for the metas to call at run time */
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
 extern int
 _Py_CheckSlotResult(PyObject *obj, const char *slot_name, int success);
 #endif
 static PyObject *
 cimpl_binary_op1(PyObject *v, PyObject *w, const int op_slot)
 {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     binaryfunc slotv;
     if (Py_TYPE(v)->tp_as_number != NULL) {
         slotv =
@@ -115,7 +115,7 @@ cimpl_binary_op1(PyObject *v, PyObject *w, const int op_slot)
     }
 #endif
     if (slotv) {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         PyObject *x;
 #endif
         if (slotw && PyType_IsSubtype(Py_TYPE(w), Py_TYPE(v))) {
@@ -126,7 +126,7 @@ cimpl_binary_op1(PyObject *v, PyObject *w, const int op_slot)
             slotw = NULL;
         }
         x = slotv(v, w);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         assert(_Py_CheckSlotResult(v, op_name, x != NULL));
         if (x != Py_NotImplemented) {
             return x;
@@ -138,7 +138,7 @@ cimpl_binary_op1(PyObject *v, PyObject *w, const int op_slot)
         Py_DECREF(x);
     }
     if (slotw) {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         PyObject *x = slotw(v, w);
         assert(_Py_CheckSlotResult(w, op_name, x != NULL));
         if (x != Py_NotImplemented) {
@@ -158,14 +158,14 @@ static PyObject *
 cimpl_binop_type_error(PyObject *v, PyObject *w, const char *op_name)
 {
     PyErr_Format(PyExc_TypeError,
-                 NI_MSG_BINOP_TYPE_ERROR,
+                 LE_MSG_BINOP_TYPE_ERROR,
                  op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     return NULL;
 }
 
 static PyObject *
 cimpl_PyNumber_Add_1(PyObject *v, PyObject *w, PySequenceMethods *m)
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
 {
     PyObject *result;
     if (m && m->sq_concat) {
@@ -173,7 +173,7 @@ cimpl_PyNumber_Add_1(PyObject *v, PyObject *w, PySequenceMethods *m)
         assert(_Py_CheckSlotResult(v, "+", result != NULL));
         return result;
     }
-    return cimpl_binop_type_error(v, w, NI_MSG_OP_ADD);
+    return cimpl_binop_type_error(v, w, LE_MSG_OP_ADD);
 }
 #else
 {
@@ -182,7 +182,7 @@ cimpl_PyNumber_Add_1(PyObject *v, PyObject *w, PySequenceMethods *m)
         if (m && m->sq_concat) {
             return (*m->sq_concat)(v, w);
         }
-        result = cimpl_binop_type_error(v, w, NI_MSG_OP_ADD);
+        result = cimpl_binop_type_error(v, w, LE_MSG_OP_ADD);
     }
     return result;
 }
@@ -196,7 +196,7 @@ cimpl_binary_op_1(PyObject *v, PyObject *w, const int op_slot,
         Py_TYPE(v) == &PyCFunction_Type &&
         strcmp(((PyCFunctionObject *)v)->m_ml->ml_name, "print") == 0) {
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_BINOP_PRINT_TYPE_ERROR,
+                     LE_MSG_BINOP_PRINT_TYPE_ERROR,
                      op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
         return NULL;
     }
@@ -212,7 +212,7 @@ cimpl_binary_iop1(PyObject *v, PyObject *w, const int iop_slot,
         binaryfunc slot = (*(binaryfunc *)(&((char *)mv)[iop_slot]));
         if (slot) {
             PyObject *x = (slot)(v, w);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
             assert(_Py_CheckSlotResult(v, op_name, x != NULL));
 #endif
             if (x != Py_NotImplemented) {
@@ -227,13 +227,13 @@ cimpl_binary_iop1(PyObject *v, PyObject *w, const int iop_slot,
 static PyObject *
 cimpl_PyNumber_InPlaceAdd_1(PyObject *v, PyObject *w, PySequenceMethods *m)
 {
-#if !NI_HAS_CHECK_SLOT_RESULT
+#if !LE_HAS_CHECK_SLOT_RESULT
     binaryfunc f;
 #endif
     PyObject *result;
     {
         {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
             binaryfunc func = m->sq_inplace_concat;
             if (func == NULL)
                 func = m->sq_concat;
@@ -250,7 +250,7 @@ cimpl_PyNumber_InPlaceAdd_1(PyObject *v, PyObject *w, PySequenceMethods *m)
                 return (*f)(v, w);
 #endif
         }
-        result = cimpl_binop_type_error(v, w, NI_MSG_OP_IADD);
+        result = cimpl_binop_type_error(v, w, LE_MSG_OP_IADD);
     }
     return result;
 }
@@ -265,7 +265,7 @@ cimpl_PyNumber_InPlaceAdd_3(PyObject *v, PyObject *w, PySequenceMethods *m)
             {
                 func = m->sq_concat;
             }
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
             if (func != NULL) {
                 result = func(v, w);
                 assert(_Py_CheckSlotResult(v, "+=", result != NULL));
@@ -276,7 +276,7 @@ cimpl_PyNumber_InPlaceAdd_3(PyObject *v, PyObject *w, PySequenceMethods *m)
                 return (*func)(v, w);
 #endif
         }
-        result = cimpl_binop_type_error(v, w, NI_MSG_OP_IADD);
+        result = cimpl_binop_type_error(v, w, LE_MSG_OP_IADD);
     }
     return result;
 }
@@ -301,10 +301,10 @@ cimpl_sequence_repeat(ssizeargfunc repeatfunc, PyObject *seq, PyObject *n)
     }
     else {
         return cimpl_type_error(
-            NI_MSG_SEQ_REPEAT_NON_INT,
+            LE_MSG_SEQ_REPEAT_NON_INT,
             n);
     }
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     PyObject *res = (*repeatfunc)(seq, count);
     assert(_Py_CheckSlotResult(seq, "*", res != NULL));
     return res;
@@ -327,7 +327,7 @@ cimpl_PyNumber_InPlaceMultiply_1(PyObject *v, PyObject *w,
             if (f != NULL)
                 return cimpl_sequence_repeat(f, v, w);
         }
-        result = cimpl_binop_type_error(v, w, NI_MSG_OP_IMUL);
+        result = cimpl_binop_type_error(v, w, LE_MSG_OP_IMUL);
     }
     return result;
 }
@@ -346,7 +346,7 @@ cimpl_PyNumber_InPlaceMultiply_4(PyObject *v, PyObject *w,
             if (f != NULL)
                 return cimpl_sequence_repeat(f, v, w);
         }
-        result = cimpl_binop_type_error(v, w, NI_MSG_OP_IMUL);
+        result = cimpl_binop_type_error(v, w, LE_MSG_OP_IMUL);
     }
     return result;
 }
@@ -363,7 +363,7 @@ cimpl_PyNumber_InPlaceMultiply_5(PyObject *v, PyObject *w,
                     return cimpl_sequence_repeat(mw->sq_repeat, w, v);
             }
         }
-        result = cimpl_binop_type_error(v, w, NI_MSG_OP_IMUL);
+        result = cimpl_binop_type_error(v, w, LE_MSG_OP_IMUL);
     }
     return result;
 }
@@ -372,7 +372,7 @@ static PyObject *
 cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
                  const char *op_name)
 {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     PyNumberMethods *mv = Py_TYPE(v)->tp_as_number;
     PyNumberMethods *mw = Py_TYPE(w)->tp_as_number;
     ternaryfunc slotv;
@@ -409,7 +409,7 @@ cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
     }
 #endif
     if (slotv) {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         PyObject *x;
         if (slotw && PyType_IsSubtype(Py_TYPE(w), Py_TYPE(v))) {
             x = slotw(v, w, z);
@@ -429,7 +429,7 @@ cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
         }
 #endif
         x = slotv(v, w, z);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         assert(_Py_CheckSlotResult(v, op_name, x != NULL));
         if (x != Py_NotImplemented) {
             return x;
@@ -441,7 +441,7 @@ cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
         Py_DECREF(x);
     }
     if (slotw) {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         PyObject *x = slotw(v, w, z);
         assert(_Py_CheckSlotResult(w, op_name, x != NULL));
         if (x != Py_NotImplemented) {
@@ -454,13 +454,13 @@ cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
 #endif
         Py_DECREF(x);
     }
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     PyNumberMethods *mz = Py_TYPE(z)->tp_as_number;
 #else
     mz = Py_TYPE(z)->tp_as_number;
 #endif
     if (mz != NULL) {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         ternaryfunc slotz = (*(ternaryfunc *)(&((char *)mz)[op_slot]));
         if (slotz == slotv || slotz == slotw) {
             slotz = NULL;
@@ -471,7 +471,7 @@ cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
             slotz = NULL;
 #endif
         if (slotz) {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
             PyObject *x = slotz(v, w, z);
             assert(_Py_CheckSlotResult(z, op_name, x != NULL));
             if (x != Py_NotImplemented) {
@@ -485,23 +485,23 @@ cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
             Py_DECREF(x);
         }
     }
-    /* op_name is the name a type error of **= shows (NI_MSG_OP_IPOW: before
+    /* op_name is the name a type error of **= shows (LE_MSG_OP_IPOW: before
        3.10, "** or pow()"). z is INPLACE_POWER's None: pow()'s message of
        three operands stands for the case no compiled code reaches. */
     if (z == Py_None)
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_BINOP_TYPE_ERROR,
+                     LE_MSG_BINOP_TYPE_ERROR,
                      op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     else
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_POW3_TYPE_ERROR,
+                     LE_MSG_POW3_TYPE_ERROR,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
                      Py_TYPE(z)->tp_name);
     return NULL;
 }
 
 static PyObject *
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
 cimpl_ternary_op_1(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
                    const char *op_name, PyNumberMethods *mz, ternaryfunc slotv,
                    ternaryfunc slotw)
@@ -522,12 +522,12 @@ cimpl_ternary_op_1(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
     }
     if (z == Py_None) {
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_BINOP_TYPE_ERROR,
+                     LE_MSG_BINOP_TYPE_ERROR,
                      op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     }
     else {
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_POW3_TYPE_ERROR,
+                     LE_MSG_POW3_TYPE_ERROR,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
                      Py_TYPE(z)->tp_name);
     }
@@ -552,11 +552,11 @@ cimpl_ternary_op_1(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
     }
     if (z == Py_None)
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_BINOP_TYPE_ERROR, NI_MSG_OP_IPOW,
+                     LE_MSG_BINOP_TYPE_ERROR, LE_MSG_OP_IPOW,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     else
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_POW3_TYPE_ERROR,
+                     LE_MSG_POW3_TYPE_ERROR,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
                      Py_TYPE(z)->tp_name);
     return NULL;
@@ -564,39 +564,39 @@ cimpl_ternary_op_1(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
 #endif
 
 static PyObject *
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
 cimpl_ternary_op_2(PyObject *v, PyObject *w, PyObject *z, const char *op_name)
 #else
 cimpl_ternary_op_2(PyObject *v, PyObject *w, PyObject *z)
 #endif
 {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     if (z == Py_None) {
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_BINOP_TYPE_ERROR,
+                     LE_MSG_BINOP_TYPE_ERROR,
                      op_name, Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     }
     else {
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_POW3_TYPE_ERROR,
+                     LE_MSG_POW3_TYPE_ERROR,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
                      Py_TYPE(z)->tp_name);
     }
 #else
     if (z == Py_None)
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_BINOP_TYPE_ERROR, NI_MSG_OP_IPOW,
+                     LE_MSG_BINOP_TYPE_ERROR, LE_MSG_OP_IPOW,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
     else
         PyErr_Format(PyExc_TypeError,
-                     NI_MSG_POW3_TYPE_ERROR,
+                     LE_MSG_POW3_TYPE_ERROR,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
                      Py_TYPE(z)->tp_name);
 #endif
     return NULL;
 }
 
-#if NI_HAS_TERNARY_IOP
+#if LE_HAS_TERNARY_IOP
 static PyObject *
 cimpl_ternary_iop(PyObject *v, PyObject *w, PyObject *z, const int iop_slot,
                   const int op_slot, const char *op_name)
@@ -628,7 +628,7 @@ cimpl_PyNumber_Multiply_1(PyObject *v, PyObject *w, PySequenceMethods *mv,
         else if (mw && mw->sq_repeat) {
             return cimpl_sequence_repeat(mw->sq_repeat, w, v);
         }
-        result = cimpl_binop_type_error(v, w, NI_MSG_OP_MUL);
+        result = cimpl_binop_type_error(v, w, LE_MSG_OP_MUL);
     }
     return result;
 }
@@ -643,7 +643,7 @@ cimpl_PyNumber_Multiply_3(PyObject *v, PyObject *w, PySequenceMethods *mw)
                 return cimpl_sequence_repeat(mw->sq_repeat, w, v);
             }
         }
-        result = cimpl_binop_type_error(v, w, NI_MSG_OP_MUL);
+        result = cimpl_binop_type_error(v, w, LE_MSG_OP_MUL);
     }
     return result;
 }
@@ -651,7 +651,7 @@ cimpl_PyNumber_Multiply_3(PyObject *v, PyObject *w, PySequenceMethods *mw)
 static int
 cimpl_PySequence_DelItem_1(PyObject *s, Py_ssize_t i, PySequenceMethods *m)
 {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     int res = m->sq_ass_item(s, i, (PyObject *)NULL);
     assert(_Py_CheckSlotResult(s, "__delitem__", res >= 0));
     return res;
@@ -663,7 +663,7 @@ cimpl_PySequence_DelItem_1(PyObject *s, Py_ssize_t i, PySequenceMethods *m)
 static PyObject *
 cimpl_PySequence_GetItem_1(PyObject *s, Py_ssize_t i, PySequenceMethods *m)
 {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     PyObject *res = m->sq_item(s, i);
     assert(_Py_CheckSlotResult(s, "__getitem__", res != NULL));
     return res;
@@ -676,7 +676,7 @@ static int
 cimpl_PySequence_SetItem_1(PyObject *s, Py_ssize_t i, PyObject *o,
                            PySequenceMethods *m)
 {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     int res = m->sq_ass_item(s, i, o);
     assert(_Py_CheckSlotResult(s, "__setitem__", res >= 0));
     return res;
@@ -688,11 +688,11 @@ cimpl_PySequence_SetItem_1(PyObject *s, Py_ssize_t i, PyObject *o,
 static PyObject *
 cimpl_PySequence_GetSlice_1(PyObject *s, PyMappingMethods *mp, PyObject *slice)
 {
-#if !NI_HAS_CHECK_SLOT_RESULT
+#if !LE_HAS_CHECK_SLOT_RESULT
     PyObject *res;
 #endif
     Py_INCREF(slice);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     PyObject *res = mp->mp_subscript(s, slice);
     assert(_Py_CheckSlotResult(s, "__getitem__", res != NULL));
 #else
@@ -706,11 +706,11 @@ static int
 cimpl_PySequence_SetSlice_1(PyObject *s, PyObject *o, PyMappingMethods *mp,
                             PyObject *slice)
 {
-#if !NI_HAS_CHECK_SLOT_RESULT
+#if !LE_HAS_CHECK_SLOT_RESULT
     int res;
 #endif
     Py_INCREF(slice);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     int res = mp->mp_ass_subscript(s, slice, o);
     assert(_Py_CheckSlotResult(s, "__setitem__", res >= 0));
 #else
@@ -738,13 +738,13 @@ static vinfo_t *
 ternary_op(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *, int,
            const char *);
 
-#if NI_HAS_TERNARY_IOP
+#if LE_HAS_TERNARY_IOP
 static vinfo_t *
 ternary_iop(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *, int, int,
             const char *);
 #endif
 
-#if NI_HAS_ITER_CHECK_FUNCTION
+#if LE_HAS_ITER_CHECK_FUNCTION
 DEFINEFN vinfo_t *
 PsycoIter_Check(PsycoObject *po, vinfo_t *obj)
 {
@@ -792,7 +792,7 @@ PsycoMapping_Size(PsycoObject *po, vinfo_t *o)
 {
     lenfunc _t1;
     int _t2;
-#if NI_HAS_NOT_A_SEQUENCE_ERROR
+#if LE_HAS_NOT_A_SEQUENCE_ERROR
     lenfunc _t4;
     int _t5;
 #endif
@@ -821,7 +821,7 @@ PsycoMapping_Size(PsycoObject *po, vinfo_t *o)
         len = Psyco_META1(po, _t1, CfCommonPySSizeTResult, "v", o);
         return len;
     }
-#if NI_HAS_NOT_A_SEQUENCE_ERROR
+#if LE_HAS_NOT_A_SEQUENCE_ERROR
     _t5 = (tp_o->tp_as_sequence) != 0;
     if (_t5) {
         switch (Psyco_TypeSlot(po, tp_o, &(tp_o->tp_as_sequence)->sq_length,
@@ -837,11 +837,11 @@ PsycoMapping_Size(PsycoObject *po, vinfo_t *o)
         _t5 = _t4 != 0;
     }
     if (_t5) {
-        type_error(po, NI_MSG_MAPPING_SIZE_NOT_MAPPING, o);
+        type_error(po, LE_MSG_MAPPING_SIZE_NOT_MAPPING, o);
         return NULL;
     }
 #endif
-    type_error(po, NI_MSG_MAPPING_NO_LEN, o);
+    type_error(po, LE_MSG_MAPPING_NO_LEN, o);
     return NULL;
 }
 
@@ -853,7 +853,7 @@ PsycoNumber_Absolute(PsycoObject *po, vinfo_t *o)
     vinfo_t *_t3;
     vinfo_t *_t4;
     PyNumberMethods *m;
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     vinfo_t *res;
 #endif
     PyTypeObject *tp_o;
@@ -877,14 +877,14 @@ PsycoNumber_Absolute(PsycoObject *po, vinfo_t *o)
     }
     if (_t2) {
         _t3 = Psyco_META1(po, _t1, CfCommonNewRefPyObject, "v", o);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         res = _t3;
         return res;
 #else
         return _t3;
 #endif
     }
-    _t4 = type_error(po, NI_MSG_BAD_ABS, o);
+    _t4 = type_error(po, LE_MSG_BAD_ABS, o);
     return _t4;
 }
 
@@ -908,7 +908,7 @@ binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot)
     if (tp_w == NULL) {
         return NULL;
     }
-#if !NI_HAS_CHECK_SLOT_RESULT
+#if !LE_HAS_CHECK_SLOT_RESULT
     slotv = NULL;
     slotw = NULL;
 #endif
@@ -927,7 +927,7 @@ binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot)
         }
         slotv = _t1;
     }
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     else {
         slotv = NULL;
     }
@@ -952,7 +952,7 @@ binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot)
             slotw = NULL;
         }
     }
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     else {
         slotw = NULL;
     }
@@ -1012,12 +1012,12 @@ binop_type_error(PsycoObject *po, vinfo_t *v, vinfo_t *w, const char *op_name)
     }
     PycException_SetFormat(
         po, PyExc_TypeError,
-        NI_MSG_BINOP_TYPE_ERROR,
+        LE_MSG_BINOP_TYPE_ERROR,
         op_name, tp_v->tp_name, tp_w->tp_name);
     return NULL;
 }
 
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
 DEFINEFN vinfo_t *
 PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
@@ -1060,7 +1060,7 @@ PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         result = Psyco_META2(po, _t2, CfCommonNewRefPyObject, "vv", v, w);
         return result;
     }
-    _t5 = binop_type_error(po, v, w, NI_MSG_OP_ADD);
+    _t5 = binop_type_error(po, v, w, LE_MSG_OP_ADD);
     return _t5;
 }
 #else
@@ -1104,7 +1104,7 @@ PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
             _t4 = Psyco_META2(po, _t2, CfCommonNewRefPyObject, "vv", v, w);
             return _t4;
         }
-        result = binop_type_error(po, v, w, NI_MSG_OP_ADD);
+        result = binop_type_error(po, v, w, LE_MSG_OP_ADD);
         return result;
     }
     return result;
@@ -1141,7 +1141,7 @@ binary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot,
         if (_t2) {
             PycException_SetFormat(
                 po, PyExc_TypeError,
-                NI_MSG_BINOP_PRINT_TYPE_ERROR,
+                LE_MSG_BINOP_PRINT_TYPE_ERROR,
                 op_name, tp_v->tp_name, tp_w->tp_name);
             return NULL;
         }
@@ -1165,7 +1165,7 @@ PsycoNumber_And(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_and), NI_MSG_OP_AND);
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_and), LE_MSG_OP_AND);
     return _t1;
 }
 
@@ -1184,7 +1184,7 @@ PsycoNumber_Divmod(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 =
-        binary_op(po, v, w, offsetof(PyNumberMethods, nb_divmod), NI_MSG_OP_DIVMOD);
+        binary_op(po, v, w, offsetof(PyNumberMethods, nb_divmod), LE_MSG_OP_DIVMOD);
     return _t1;
 }
 
@@ -1203,7 +1203,7 @@ PsycoNumber_FloorDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 =
-        binary_op(po, v, w, offsetof(PyNumberMethods, nb_floor_divide), NI_MSG_OP_FLOORDIV);
+        binary_op(po, v, w, offsetof(PyNumberMethods, nb_floor_divide), LE_MSG_OP_FLOORDIV);
     return _t1;
 }
 
@@ -1279,7 +1279,7 @@ PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         m = tp_v->tp_as_sequence;
         vinfo_decref(result, po);
         if (m != NULL) {
-#if !NI_HAS_CHECK_SLOT_RESULT
+#if !LE_HAS_CHECK_SLOT_RESULT
             func = NULL;
 #endif
             switch (Psyco_TypeSlot(po, tp_v, &m->sq_inplace_concat,
@@ -1309,7 +1309,7 @@ PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
                 func = _t3;
             }
             if (func != NULL) {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
                 _t4 =
                     Psyco_META2(po, func, CfCommonNewRefPyObject, "vv", v, w);
                 result = _t4;
@@ -1320,7 +1320,7 @@ PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 #endif
             }
         }
-        result = binop_type_error(po, v, w, NI_MSG_OP_IADD);
+        result = binop_type_error(po, v, w, LE_MSG_OP_IADD);
         return result;
     }
     return result;
@@ -1366,7 +1366,7 @@ PsycoNumber_InPlaceAnd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_and),
-                     offsetof(PyNumberMethods, nb_and), NI_MSG_OP_IAND);
+                     offsetof(PyNumberMethods, nb_and), LE_MSG_OP_IAND);
     return _t1;
 }
 
@@ -1386,7 +1386,7 @@ PsycoNumber_InPlaceFloorDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     _t1 = binary_iop(po, v, w,
                      offsetof(PyNumberMethods, nb_inplace_floor_divide),
-                     offsetof(PyNumberMethods, nb_floor_divide), NI_MSG_OP_IFLOORDIV);
+                     offsetof(PyNumberMethods, nb_floor_divide), LE_MSG_OP_IFLOORDIV);
     return _t1;
 }
 
@@ -1405,7 +1405,7 @@ PsycoNumber_InPlaceLshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_lshift),
-                     offsetof(PyNumberMethods, nb_lshift), NI_MSG_OP_ILSHIFT);
+                     offsetof(PyNumberMethods, nb_lshift), LE_MSG_OP_ILSHIFT);
     return _t1;
 }
 
@@ -1425,7 +1425,7 @@ PsycoNumber_InPlaceMatrixMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     _t1 = binary_iop(po, v, w,
                      offsetof(PyNumberMethods, nb_inplace_matrix_multiply),
-                     offsetof(PyNumberMethods, nb_matrix_multiply), NI_MSG_OP_IMATMUL);
+                     offsetof(PyNumberMethods, nb_matrix_multiply), LE_MSG_OP_IMATMUL);
     return _t1;
 }
 
@@ -1437,11 +1437,11 @@ sequence_repeat(PsycoObject *po, ssizeargfunc repeatfunc, vinfo_t *seq,
     int _t2;
     vinfo_t *_t4;
     vinfo_t *_t5;
-#if !NI_HAS_CHECK_SLOT_RESULT
+#if !LE_HAS_CHECK_SLOT_RESULT
     vinfo_t *_t6;
 #endif
     vinfo_t *count;
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     vinfo_t *res;
 #endif
     PyTypeObject *tp_n;
@@ -1472,18 +1472,18 @@ sequence_repeat(PsycoObject *po, ssizeargfunc repeatfunc, vinfo_t *seq,
     }
     else {
         _t4 = type_error(
-            po, NI_MSG_SEQ_REPEAT_NON_INT, n);
+            po, LE_MSG_SEQ_REPEAT_NON_INT, n);
         return _t4;
     }
     _t5 =
         Psyco_META2(po, repeatfunc, CfCommonNewRefPyObject, "vv", seq, count);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     res = _t5;
 #else
     _t6 = _t5;
 #endif
     vinfo_decref(count, po);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     return res;
 #else
     return _t6;
@@ -1571,7 +1571,7 @@ PsycoNumber_InPlaceMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
                 }
             }
         }
-        result = binop_type_error(po, v, w, NI_MSG_OP_IMUL);
+        result = binop_type_error(po, v, w, LE_MSG_OP_IMUL);
         return result;
     }
     return result;
@@ -1592,7 +1592,7 @@ PsycoNumber_InPlaceOr(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_or),
-                     offsetof(PyNumberMethods, nb_or), NI_MSG_OP_IOR);
+                     offsetof(PyNumberMethods, nb_or), LE_MSG_OP_IOR);
     return _t1;
 }
 
@@ -1631,7 +1631,7 @@ ternary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z, int op_slot,
     if (tp_z == NULL) {
         return NULL;
     }
-#if !NI_HAS_CHECK_SLOT_RESULT
+#if !LE_HAS_CHECK_SLOT_RESULT
     slotv = NULL;
     slotw = NULL;
     slotz = NULL;
@@ -1652,7 +1652,7 @@ ternary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z, int op_slot,
         }
         slotv = _t1;
     }
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     else {
         slotv = NULL;
     }
@@ -1841,7 +1841,7 @@ ternary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z, int op_slot,
 #endif
 }
 
-#if NI_HAS_TERNARY_IOP
+#if LE_HAS_TERNARY_IOP
 static vinfo_t *
 ternary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z, int iop_slot,
             int op_slot, const char *op_name)
@@ -1894,7 +1894,7 @@ ternary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z, int iop_slot,
 }
 #endif
 
-#if NI_HAS_TERNARY_IOP
+#if LE_HAS_TERNARY_IOP
 DEFINEFN vinfo_t *
 PsycoNumber_InPlacePower(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z)
 {
@@ -1915,7 +1915,7 @@ PsycoNumber_InPlacePower(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z)
         return NULL;
     }
     _t1 = ternary_iop(po, v, w, z, offsetof(PyNumberMethods, nb_inplace_power),
-                      offsetof(PyNumberMethods, nb_power), NI_MSG_OP_IPOW);
+                      offsetof(PyNumberMethods, nb_power), LE_MSG_OP_IPOW);
     return _t1;
 }
 #else
@@ -1949,12 +1949,12 @@ PsycoNumber_InPlacePower(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z)
     }
     if (_t2) {
         _t3 = ternary_op(po, v, w, z,
-                         offsetof(PyNumberMethods, nb_inplace_power), NI_MSG_OP_IPOW);
+                         offsetof(PyNumberMethods, nb_inplace_power), LE_MSG_OP_IPOW);
         return _t3;
     }
     else {
         _t4 = ternary_op(po, v, w, z, offsetof(PyNumberMethods, nb_power),
-                         NI_MSG_OP_IPOW);
+                         LE_MSG_OP_IPOW);
         return _t4;
     }
 }
@@ -1975,7 +1975,7 @@ PsycoNumber_InPlaceRemainder(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_remainder),
-                     offsetof(PyNumberMethods, nb_remainder), NI_MSG_OP_IMOD);
+                     offsetof(PyNumberMethods, nb_remainder), LE_MSG_OP_IMOD);
     return _t1;
 }
 
@@ -1994,7 +1994,7 @@ PsycoNumber_InPlaceRshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_rshift),
-                     offsetof(PyNumberMethods, nb_rshift), NI_MSG_OP_IRSHIFT);
+                     offsetof(PyNumberMethods, nb_rshift), LE_MSG_OP_IRSHIFT);
     return _t1;
 }
 
@@ -2013,7 +2013,7 @@ PsycoNumber_InPlaceSubtract(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_subtract),
-                     offsetof(PyNumberMethods, nb_subtract), NI_MSG_OP_ISUB);
+                     offsetof(PyNumberMethods, nb_subtract), LE_MSG_OP_ISUB);
     return _t1;
 }
 
@@ -2033,7 +2033,7 @@ PsycoNumber_InPlaceTrueDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     _t1 =
         binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_true_divide),
-                   offsetof(PyNumberMethods, nb_true_divide), NI_MSG_OP_ITRUEDIV);
+                   offsetof(PyNumberMethods, nb_true_divide), LE_MSG_OP_ITRUEDIV);
     return _t1;
 }
 
@@ -2052,7 +2052,7 @@ PsycoNumber_InPlaceXor(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_xor),
-                     offsetof(PyNumberMethods, nb_xor), NI_MSG_OP_IXOR);
+                     offsetof(PyNumberMethods, nb_xor), LE_MSG_OP_IXOR);
     return _t1;
 }
 
@@ -2064,7 +2064,7 @@ PsycoNumber_Invert(PsycoObject *po, vinfo_t *o)
     vinfo_t *_t3;
     vinfo_t *_t4;
     PyNumberMethods *m;
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     vinfo_t *res;
 #endif
     PyTypeObject *tp_o;
@@ -2088,14 +2088,14 @@ PsycoNumber_Invert(PsycoObject *po, vinfo_t *o)
     }
     if (_t2) {
         _t3 = Psyco_META1(po, _t1, CfCommonNewRefPyObject, "v", o);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         res = _t3;
         return res;
 #else
         return _t3;
 #endif
     }
-    _t4 = type_error(po, NI_MSG_BAD_INVERT, o);
+    _t4 = type_error(po, LE_MSG_BAD_INVERT, o);
     return _t4;
 }
 
@@ -2113,7 +2113,7 @@ PsycoNumber_Lshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_lshift), NI_MSG_OP_LSHIFT);
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_lshift), LE_MSG_OP_LSHIFT);
     return _t1;
 }
 
@@ -2132,7 +2132,7 @@ PsycoNumber_MatrixMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_matrix_multiply),
-                    NI_MSG_OP_MATMUL);
+                    LE_MSG_OP_MATMUL);
     return _t1;
 }
 
@@ -2202,7 +2202,7 @@ PsycoNumber_Multiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
                 return _t7;
             }
         }
-        result = binop_type_error(po, v, w, NI_MSG_OP_MUL);
+        result = binop_type_error(po, v, w, LE_MSG_OP_MUL);
         return result;
     }
     return result;
@@ -2216,7 +2216,7 @@ PsycoNumber_Negative(PsycoObject *po, vinfo_t *o)
     vinfo_t *_t3;
     vinfo_t *_t4;
     PyNumberMethods *m;
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     vinfo_t *res;
 #endif
     PyTypeObject *tp_o;
@@ -2240,14 +2240,14 @@ PsycoNumber_Negative(PsycoObject *po, vinfo_t *o)
     }
     if (_t2) {
         _t3 = Psyco_META1(po, _t1, CfCommonNewRefPyObject, "v", o);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         res = _t3;
         return res;
 #else
         return _t3;
 #endif
     }
-    _t4 = type_error(po, NI_MSG_BAD_NEGATIVE, o);
+    _t4 = type_error(po, LE_MSG_BAD_NEGATIVE, o);
     return _t4;
 }
 
@@ -2265,7 +2265,7 @@ PsycoNumber_Or(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_or), NI_MSG_OP_OR);
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_or), LE_MSG_OP_OR);
     return _t1;
 }
 
@@ -2277,7 +2277,7 @@ PsycoNumber_Positive(PsycoObject *po, vinfo_t *o)
     vinfo_t *_t3;
     vinfo_t *_t4;
     PyNumberMethods *m;
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     vinfo_t *res;
 #endif
     PyTypeObject *tp_o;
@@ -2301,14 +2301,14 @@ PsycoNumber_Positive(PsycoObject *po, vinfo_t *o)
     }
     if (_t2) {
         _t3 = Psyco_META1(po, _t1, CfCommonNewRefPyObject, "v", o);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         res = _t3;
         return res;
 #else
         return _t3;
 #endif
     }
-    _t4 = type_error(po, NI_MSG_BAD_POSITIVE, o);
+    _t4 = type_error(po, LE_MSG_BAD_POSITIVE, o);
     return _t4;
 }
 
@@ -2326,7 +2326,7 @@ PsycoNumber_Remainder(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_remainder), NI_MSG_OP_MOD);
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_remainder), LE_MSG_OP_MOD);
     return _t1;
 }
 
@@ -2344,7 +2344,7 @@ PsycoNumber_Rshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_rshift), NI_MSG_OP_RSHIFT);
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_rshift), LE_MSG_OP_RSHIFT);
     return _t1;
 }
 
@@ -2362,7 +2362,7 @@ PsycoNumber_Subtract(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_subtract), NI_MSG_OP_SUB);
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_subtract), LE_MSG_OP_SUB);
     return _t1;
 }
 
@@ -2380,7 +2380,7 @@ PsycoNumber_TrueDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_true_divide), NI_MSG_OP_TRUEDIV);
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_true_divide), LE_MSG_OP_TRUEDIV);
     return _t1;
 }
 
@@ -2398,11 +2398,11 @@ PsycoNumber_Xor(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     if (tp_w == NULL) {
         return NULL;
     }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_xor), NI_MSG_OP_XOR);
+    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_xor), LE_MSG_OP_XOR);
     return _t1;
 }
 
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
 DEFINEFN bool
 PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
 {
@@ -2514,13 +2514,13 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         _t11 = _t10 != 0;
     }
     if (_t11) {
-        type_error(po, NI_MSG_SEQ_DEL_NOT_SEQUENCE, s);
+        type_error(po, LE_MSG_SEQ_DEL_NOT_SEQUENCE, s);
         return false;
     }
-    type_error(po, NI_MSG_SEQ_NO_DEL, s);
+    type_error(po, LE_MSG_SEQ_NO_DEL, s);
     return false;
 }
-#elif NI_HAS_NOT_A_SEQUENCE_ERROR
+#elif LE_HAS_NOT_A_SEQUENCE_ERROR
 DEFINEFN bool
 PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
 {
@@ -2632,10 +2632,10 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         _t12 = _t11 != 0;
     }
     if (_t12) {
-        type_error(po, NI_MSG_SEQ_DEL_NOT_SEQUENCE, s);
+        type_error(po, LE_MSG_SEQ_DEL_NOT_SEQUENCE, s);
         return false;
     }
-    type_error(po, NI_MSG_SEQ_NO_DEL, s);
+    type_error(po, LE_MSG_SEQ_NO_DEL, s);
     return false;
 }
 #else
@@ -2731,7 +2731,7 @@ PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         vinfo_xdecref(own_i, po);
         return _t10;
     }
-    type_error(po, NI_MSG_SEQ_NO_DEL, s);
+    type_error(po, LE_MSG_SEQ_NO_DEL, s);
     return false;
 }
 #endif
@@ -2747,7 +2747,7 @@ PsycoObject_DelItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
     ssizeobjargproc _t7;
     vinfo_t *key_value;
     PyMappingMethods *m;
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     vinfo_t *res;
 #endif
     PyTypeObject *tp_key;
@@ -2773,7 +2773,7 @@ PsycoObject_DelItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
         _t2 = _t1 != 0;
     }
     if (_t2) {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         res = Psyco_META3(po, _t1, CfCommonIntZeroOk, "vvl", o, key,
                           (long)NULL);
         return res != NULL;
@@ -2826,17 +2826,17 @@ PsycoObject_DelItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
                     return false;
             }
             if (_t7 != 0) {
-                type_error(po, NI_MSG_INDEX_DEL_NOT_INT,
+                type_error(po, LE_MSG_INDEX_DEL_NOT_INT,
                            key);
                 return false;
             }
         }
     }
-    type_error(po, NI_MSG_NO_ITEM_DELETION, o);
+    type_error(po, LE_MSG_NO_ITEM_DELETION, o);
     return false;
 }
 
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
 DEFINEFN vinfo_t *
 PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
 {
@@ -2946,13 +2946,13 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         _t12 = _t11 != 0;
     }
     if (_t12) {
-        _t13 = type_error(po, NI_MSG_SEQ_GET_NOT_SEQUENCE, s);
+        _t13 = type_error(po, LE_MSG_SEQ_GET_NOT_SEQUENCE, s);
         return _t13;
     }
-    _t14 = type_error(po, NI_MSG_SEQ_NO_GET, s);
+    _t14 = type_error(po, LE_MSG_SEQ_NO_GET, s);
     return _t14;
 }
-#elif NI_HAS_NOT_A_SEQUENCE_ERROR
+#elif LE_HAS_NOT_A_SEQUENCE_ERROR
 DEFINEFN vinfo_t *
 PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
 {
@@ -3062,10 +3062,10 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         _t13 = _t12 != 0;
     }
     if (_t13) {
-        _t14 = type_error(po, NI_MSG_SEQ_GET_NOT_SEQUENCE, s);
+        _t14 = type_error(po, LE_MSG_SEQ_GET_NOT_SEQUENCE, s);
         return _t14;
     }
-    _t15 = type_error(po, NI_MSG_SEQ_NO_GET, s);
+    _t15 = type_error(po, LE_MSG_SEQ_NO_GET, s);
     return _t15;
 }
 #else
@@ -3160,7 +3160,7 @@ PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
         vinfo_xdecref(own_i, po);
         return _t11;
     }
-    _t12 = type_error(po, NI_MSG_SEQ_NO_GET, s);
+    _t12 = type_error(po, LE_MSG_SEQ_NO_GET, s);
     return _t12;
 }
 #endif
@@ -3253,7 +3253,7 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
         }
         else {
             _t11 = type_error(
-                po, NI_MSG_INDEX_GET_NOT_INT, key);
+                po, LE_MSG_INDEX_GET_NOT_INT, key);
             return _t11;
         }
     }
@@ -3261,11 +3261,11 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
         return psyco_generic_call(po, PyObject_GetItem, CfCommonNewRefPyObject,
                                   "vv", o, key);
     }
-    _t12 = type_error(po, NI_MSG_NOT_SUBSCRIPTABLE, o);
+    _t12 = type_error(po, LE_MSG_NOT_SUBSCRIPTABLE, o);
     return _t12;
 }
 
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
 DEFINEFN bool
 PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
 {
@@ -3376,13 +3376,13 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
         _t11 = _t10 != 0;
     }
     if (_t11) {
-        type_error(po, NI_MSG_SEQ_SET_NOT_SEQUENCE, s);
+        type_error(po, LE_MSG_SEQ_SET_NOT_SEQUENCE, s);
         return false;
     }
-    type_error(po, NI_MSG_SEQ_NO_SET, s);
+    type_error(po, LE_MSG_SEQ_NO_SET, s);
     return false;
 }
-#elif NI_HAS_NOT_A_SEQUENCE_ERROR
+#elif LE_HAS_NOT_A_SEQUENCE_ERROR
 DEFINEFN bool
 PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
 {
@@ -3493,10 +3493,10 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
         _t12 = _t11 != 0;
     }
     if (_t12) {
-        type_error(po, NI_MSG_SEQ_SET_NOT_SEQUENCE, s);
+        type_error(po, LE_MSG_SEQ_SET_NOT_SEQUENCE, s);
         return false;
     }
-    type_error(po, NI_MSG_SEQ_NO_SET, s);
+    type_error(po, LE_MSG_SEQ_NO_SET, s);
     return false;
 }
 #else
@@ -3591,7 +3591,7 @@ PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
         vinfo_xdecref(own_i, po);
         return _t10;
     }
-    type_error(po, NI_MSG_SEQ_NO_SET, s);
+    type_error(po, LE_MSG_SEQ_NO_SET, s);
     return false;
 }
 #endif
@@ -3607,7 +3607,7 @@ PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
     ssizeobjargproc _t7;
     vinfo_t *key_value;
     PyMappingMethods *m;
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     vinfo_t *res;
 #endif
     PyTypeObject *tp_key;
@@ -3633,7 +3633,7 @@ PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
         _t2 = _t1 != 0;
     }
     if (_t2) {
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         res = Psyco_META3(po, _t1, CfCommonIntZeroOk, "vvv", o, key, value);
         return res != NULL;
 #else
@@ -3685,13 +3685,13 @@ PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
                     return false;
             }
             if (_t7 != 0) {
-                type_error(po, NI_MSG_INDEX_SET_NOT_INT,
+                type_error(po, LE_MSG_INDEX_SET_NOT_INT,
                            key);
                 return false;
             }
         }
     }
-    type_error(po, NI_MSG_NO_ITEM_ASSIGNMENT, o);
+    type_error(po, LE_MSG_NO_ITEM_ASSIGNMENT, o);
     return false;
 }
 
@@ -3745,7 +3745,7 @@ PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob)
     objobjproc _t1;
     int _t2;
     vinfo_t *_t3;
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
     vinfo_t *res;
 #endif
     vinfo_t *result;
@@ -3772,7 +3772,7 @@ PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob)
     }
     if (_t2) {
         _t3 = Psyco_META2(po, _t1, CfCommonIntBoolOrError, "vv", seq, ob);
-#if NI_HAS_CHECK_SLOT_RESULT
+#if LE_HAS_CHECK_SLOT_RESULT
         res = _t3;
         return res;
 #else
@@ -3848,7 +3848,7 @@ PsycoSequence_GetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2)
         vinfo_decref(slice, po);
         return res;
     }
-    _t7 = type_error(po, NI_MSG_SEQ_GET_SLICE, s);
+    _t7 = type_error(po, LE_MSG_SEQ_GET_SLICE, s);
     return _t7;
 }
 
@@ -3908,7 +3908,7 @@ PsycoSequence_SetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2,
         vinfo_decref(slice, po);
         return res != NULL;
     }
-    type_error(po, NI_MSG_SEQ_SET_SLICE, s);
+    type_error(po, LE_MSG_SEQ_SET_SLICE, s);
     return false;
 }
 
@@ -4005,7 +4005,7 @@ vinfo_t *PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi) {
       }
     if (item != NULL)
       return PsycoSeqIter_New(po, vi);
-    return type_error_tp(po, NI_MSG_NOT_ITERABLE, t);
+    return type_error_tp(po, LE_MSG_NOT_ITERABLE, t);
   }
   /* a heap type's __iter__ may return a non-iterator, which
      PyObject_GetIter checks */
@@ -4023,7 +4023,7 @@ generic:
 static PyObject *cimpl_iternext(PyObject *iter) {
   iternextfunc f = Py_TYPE(iter)->tp_iternext;
   if (f == NULL) {
-    PyErr_Format(PyExc_TypeError, NI_MSG_NEXT_NOT_IMPLEMENTED,
+    PyErr_Format(PyExc_TypeError, LE_MSG_NEXT_NOT_IMPLEMENTED,
                  Py_TYPE(iter)->tp_name);
     return NULL;
   }
@@ -4047,7 +4047,7 @@ vinfo_t *PsycoIter_Next(PsycoObject *po, vinfo_t *iter) {
   }
   if (f == NULL) {
     PycException_SetFormat(po, PyExc_TypeError,
-                           NI_MSG_NEXT_NOT_IMPLEMENTED, tp->tp_name);
+                           LE_MSG_NEXT_NOT_IMPLEMENTED, tp->tp_name);
     return NULL;
   }
   return Psyco_META1(po, f, CfCommonIterNext, "v", iter);

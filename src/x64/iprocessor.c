@@ -20,12 +20,12 @@ static glue_run_code_fn glue_run_code_aligned;
 static glue_run_code_fn glue_run_code_unaligned;
 
 /* The layout above the finfo slot is fixed, for frames.c:slot_registers:
-   the saved R15, R14, R13, R12, RBX and RBP, then NI_GLUE_PAD if the stack
+   the saved R15, R14, R13, R12, RBX and RBP, then LE_GLUE_PAD if the stack
    needed aligning, then the return address. */
 static void write_glue_run_code_fn(PsycoObject *po, bool aligned) {
   BEGIN_CODE
   if (!aligned) {
-    PUSH_I(NI_GLUE_PAD);
+    PUSH_I(LE_GLUE_PAD);
   }
   PUSH_R(REG_X64_RBP);
 #if RBP_IS_RESERVED

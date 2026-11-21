@@ -1,6 +1,6 @@
-#ifndef NI_MECHANISMS_RECURSION_H
-#define NI_MECHANISMS_RECURSION_H
-#if NI_HAS_INTERP_RECURSION_LIMIT
+#ifndef LE_MECHANISMS_RECURSION_H
+#define LE_MECHANISMS_RECURSION_H
+#if LE_HAS_INTERP_RECURSION_LIMIT
 /* A thread counts the Python calls it is in up, in recursion_depth, and
    compares the count with the interpreter's recursion_limit (internal:
    its address is Python/pyruntime.c's), which sys.setrecursionlimit
@@ -10,9 +10,9 @@
    by psyfunc.c, eval_hook.c, frames.c and pycompiler.c after codegen.h
    and dispatcher.h.
 
-   At run time: ni_recursion_enter and ni_recursion_leave count a frame
-   entered from C (eval_hook.c:NiCode_Run), as ceval counts every frame;
-   ni_recursion_suspend and ni_recursion_resume give a C helper one more
+   At run time: le_recursion_enter and le_recursion_leave count a frame
+   entered from C (eval_hook.c:LeCode_Run), as ceval counts every frame;
+   le_recursion_suspend and le_recursion_resume give a C helper one more
    call that can't raise RecursionError.
 
    In compiled code: _Py_EnterRecursiveCall and _Py_LeaveRecursiveCall
@@ -29,9 +29,9 @@
    psyfunc.c, eval_hook.c, frames.c and pycompiler.c after codegen.h and
    dispatcher.h.
 
-   At run time: ni_recursion_enter and ni_recursion_leave count a frame
-   entered from C (eval_hook.c:NiCode_Run), as ceval counts every frame;
-   ni_recursion_suspend and ni_recursion_resume give a C helper one more
+   At run time: le_recursion_enter and le_recursion_leave count a frame
+   entered from C (eval_hook.c:LeCode_Run), as ceval counts every frame;
+   le_recursion_suspend and le_recursion_resume give a C helper one more
    call that can't raise RecursionError.
 
    In compiled code: Py_EnterRecursiveCall and Py_LeaveRecursiveCall
@@ -42,16 +42,16 @@
    set. Both rare paths are runtime_condition_f branches, compiled when
    first taken. */
 #endif
-static inline int ni_recursion_enter(void) { return Py_EnterRecursiveCall(""); }
-static inline void ni_recursion_leave(void) { Py_LeaveRecursiveCall(); }
-static inline void ni_recursion_suspend(void) {
+static inline int le_recursion_enter(void) { return Py_EnterRecursiveCall(""); }
+static inline void le_recursion_leave(void) { Py_LeaveRecursiveCall(); }
+static inline void le_recursion_suspend(void) {
   PyThreadState_GET()->recursion_depth--;
 }
-static inline void ni_recursion_resume(void) {
+static inline void le_recursion_resume(void) {
   PyThreadState_GET()->recursion_depth++;
 }
 
-#if NI_HAS_INTERP_RECURSION_LIMIT
+#if LE_HAS_INTERP_RECURSION_LIMIT
 _Static_assert(
     __builtin_types_compatible_p(
         __typeof__(((PyThreadState *)0)->recursion_depth), int),
@@ -70,9 +70,9 @@ typedef struct {
 #define TSTATE_depth                                                           \
   FMUT(DEF_FIELD(PyThreadState, int, recursion_depth, NO_PREV_FIELD))
 #define INT_value FMUT(DEF_FIELD(int_slot_t, int, value, NO_PREV_FIELD))
-#if NI_HAS_INTERP_RECURSION_LIMIT
+#if LE_HAS_INTERP_RECURSION_LIMIT
 /* Python/pyruntime.c */
-extern int *ni_recursion_limit_address(void);
+extern int *le_recursion_limit_address(void);
 /* exported, declared in an internal header */
 PyAPI_FUNC(int) _Py_CheckRecursiveCall(PyThreadState *tstate, const char *where);
 
@@ -116,8 +116,8 @@ static inline bool enter_recursive_call(PsycoObject *po, vinfo_t *vts) {
   vinfo_t *vdepth = add_to_depth(po, 1, vts);
   if (vdepth == NULL)
     return false;
-#if NI_HAS_INTERP_RECURSION_LIMIT
-  vslot = vinfo_new(CompileTime_New((long)ni_recursion_limit_address()));
+#if LE_HAS_INTERP_RECURSION_LIMIT
+  vslot = vinfo_new(CompileTime_New((long)le_recursion_limit_address()));
 #else
   vslot = vinfo_new(CompileTime_New((long)&_Py_CheckRecursionLimit));
 #endif
@@ -131,7 +131,7 @@ static inline bool enter_recursive_call(PsycoObject *po, vinfo_t *vts) {
   if (cc == CC_ERROR)
     return false;
   if (runtime_condition_f(po, cc))
-#if NI_HAS_INTERP_RECURSION_LIMIT
+#if LE_HAS_INTERP_RECURSION_LIMIT
     return psyco_generic_call(po, cimpl_check_recursive_call, CfCommonIntZeroOk,
                               "") != NULL;
 #else
@@ -143,7 +143,7 @@ static inline bool enter_recursive_call(PsycoObject *po, vinfo_t *vts) {
 
 /* consumes 'vts'; false with an exception set in 'po' */
 static inline bool leave_recursive_call(PsycoObject *po, vinfo_t *vts) {
-#if NI_HAS_INTERP_RECURSION_LIMIT
+#if LE_HAS_INTERP_RECURSION_LIMIT
   vinfo_t *vdepth = add_to_depth(po, -1, vts);
   vinfo_decref(vts, po);
   if (vdepth == NULL)
@@ -169,4 +169,4 @@ static inline bool leave_recursive_call(PsycoObject *po, vinfo_t *vts) {
 #endif
   return true;
 }
-#endif /* NI_MECHANISMS_RECURSION_H */
+#endif /* LE_MECHANISMS_RECURSION_H */

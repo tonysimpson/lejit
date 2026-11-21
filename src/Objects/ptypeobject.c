@@ -379,7 +379,7 @@ static PyObject *object_new_checked(PyTypeObject *tp) {
 /* slot_tp_init's error for a result that isn't None */
 static PyObject *init_result_error(PyObject *res) {
   PyErr_Format(PyExc_TypeError,
-               NI_MSG_INIT_RETURNED,
+               LE_MSG_INIT_RETURNED,
                Py_TYPE(res)->tp_name);
   return NULL;
 }
@@ -511,7 +511,7 @@ static PyTypeObject *probe_slots(void) {
       PyDict_SetItemString(d, "__getitem__", Py_True) < 0 ||
       PyDict_SetItemString(d, "__setitem__", Py_True) < 0)
     goto done;
-  t = PyObject_CallFunction((PyObject *)&PyType_Type, "s(O)O", "ni_slots",
+  t = PyObject_CallFunction((PyObject *)&PyType_Type, "s(O)O", "le_slots",
                             (PyObject *)&PyBaseObject_Type, d);
   if (t != NULL && !PyType_Check(t))
     Py_CLEAR(t);

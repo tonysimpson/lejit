@@ -106,11 +106,11 @@ def main():
                   % (version, sorted(set(want) ^ names)))
             failed += 1
             continue
-        got = {name[len('NI_HAS_'):]: value for name, value, _, _ in
+        got = {name[len('LE_HAS_'):]: value for name, value, _, _ in
                features.detect(cpython_src.find_source(version, log=lambda *a: None))}
         bad = sorted(k for k in want if got[k] != want[k])
         for k in bad:
-            print('FAIL %s: NI_HAS_%s is %d, expected %d' % (version, k, got[k], want[k]))
+            print('FAIL %s: LE_HAS_%s is %d, expected %d' % (version, k, got[k], want[k]))
         failed += len(bad)
         if not bad:
             print('ok %s: %d features' % (version, len(got)))

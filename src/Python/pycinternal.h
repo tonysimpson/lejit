@@ -9,17 +9,17 @@
 #include <opcode.h>
 /* and, as values no instruction has, the opcodes Ni names that this
    CPython lacks (tools/features/features.py) */
-#include "ni_features_gen.h"
+#include "le_features_gen.h"
 
 /* Ni keeps every position in the bytecode in bytes (merge points, the
    compiler's next_instr, a block's handler). A jump's argument is converted
    where it is read, and a position where CPython's frame takes it
    (f_lasti, b_handler), in instructions where the source counts them. */
-#define NI_JUMP_BYTES(a)                                                       \
-  ((a) * (NI_HAS_JUMP_IN_INSTRUCTIONS ? (int)sizeof(_Py_CODEUNIT) : 1))
+#define LE_JUMP_BYTES(a)                                                       \
+  ((a) * (LE_HAS_JUMP_IN_INSTRUCTIONS ? (int)sizeof(_Py_CODEUNIT) : 1))
 /* -1, before the first instruction, is -1 in either unit */
-static inline int ni_lasti_of(int offset) {
-  return NI_HAS_LASTI_IN_INSTRUCTIONS && offset > 0
+static inline int le_lasti_of(int offset) {
+  return LE_HAS_LASTI_IN_INSTRUCTIONS && offset > 0
              ? offset / (int)sizeof(_Py_CODEUNIT)
              : offset;
 }

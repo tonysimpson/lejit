@@ -110,7 +110,7 @@ def main():
         sig = getattr(ev, 'signal', None)
         if sig in FATAL:
             break
-        if ev.name not in ('STOPPED', 'NI_CODE_GEN') and sig is None:
+        if ev.name not in ('STOPPED', 'LE_CODE_GEN') and sig is None:
             continue
     regs = db.registers
     rip, rsp = regs.rip, regs.rsp

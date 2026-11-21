@@ -199,7 +199,7 @@ CHECK_FILES = ['check.py', 'installed.py', 'installed_probes.py',
 class build_ext_generated(build_ext):
     """Detect the features of the CPython being built for, and take its
     messages from the interpreter, into the build directory's
-    ni_features_gen.h and ni_strings_gen.h, before compiling."""
+    le_features_gen.h and le_strings_gen.h, before compiling."""
 
     def run(self):
         # "file.h" looks next to the includer first: an old copy there

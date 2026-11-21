@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def detect(le_parent=None):
-    """{'features': {NI_HAS_name: 0 or 1}, 'messages': {NI_MSG_name: text},
+    """{'features': {LE_HAS_name: 0 or 1}, 'messages': {LE_MSG_name: text},
     'layouts': {struct: size or what is wrong}} for this interpreter, or
     {'error': why}. A feature the detector can't answer is left out, so
     that it differs from the build."""
@@ -33,7 +33,7 @@ def detect(le_parent=None):
     except (features.FeatureError, strings.StringError) as e:
         return {'error': str(e)}
     answers = {'features': {f[0]: f[1] for f in found},
-               'messages': {'NI_MSG_' + k: v for k, v in messages.items()
+               'messages': {'LE_MSG_' + k: v for k, v in messages.items()
                             if v is not None}}
     # some features are answered only by the headers; without them those
     # are missing here, and the message says why

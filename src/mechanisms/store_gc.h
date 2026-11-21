@@ -1,6 +1,6 @@
-#ifndef NI_MECHANISMS_STORE_GC_H
-#define NI_MECHANISMS_STORE_GC_H
-#if NI_HAS_GC_HEAD_INTERNAL
+#ifndef LE_MECHANISMS_STORE_GC_H
+#define LE_MECHANISMS_STORE_GC_H
+#if LE_HAS_GC_HEAD_INTERNAL
 /* A GC object is tracked while its PyGC_Head's _gc_next isn't 0
    (_PyObject_GC_IS_TRACKED). PyGC_Head is internal: it is
    two uintptr_t words, _gc_next first, so _gc_next is the word 16 bytes
@@ -8,20 +8,20 @@
    (x64/ipyencoding.c) tests the dict with it (MAINTAIN_TRACKING);
    pdictobject.c tests it in C. A free-threaded build tests
    a bit of ob_gc_bits instead, which this would have to refuse. Included
-   after iencoding.h, or where only NI_GC_IS_TRACKED is used. */
+   after iencoding.h, or where only LE_GC_IS_TRACKED is used. */
 #define GC_NEXT_OFFSET (-2 * (long)sizeof(uintptr_t))
 
 /* emits a test of the GC object in register 'rg' after which CC_E means
    untracked; uses REG_TRANSIENT_1 */
-#define NI_GC_UNTRACKED_TEST(rg)                                               \
+#define LE_GC_UNTRACKED_TEST(rg)                                               \
   do {                                                                         \
     MOV_R_O(REG_TRANSIENT_1, rg, GC_NEXT_OFFSET);                              \
     CMP_I8_R(0, REG_TRANSIENT_1);                                              \
   } while (0)
 
 /* the same test in C */
-#define NI_GC_IS_TRACKED(o) (*(uintptr_t *)((char *)(o) + GC_NEXT_OFFSET) != 0)
-#elif NI_HAS_GC_TRACKED_BY_NEXT
+#define LE_GC_IS_TRACKED(o) (*(uintptr_t *)((char *)(o) + GC_NEXT_OFFSET) != 0)
+#elif LE_HAS_GC_TRACKED_BY_NEXT
 /* A GC object is tracked while its PyGC_Head's _gc_next, the first word
    of the 16 bytes before it, isn't 0 (_PyObject_GC_IS_TRACKED). The
    inline attribute store (x64/ipyencoding.c) tests the dict with it
@@ -37,14 +37,14 @@ _Static_assert(sizeof(PyGC_Head) == 16 &&
 
 /* emits a test of the GC object in register 'rg' after which CC_E means
    untracked; uses REG_TRANSIENT_1 */
-#define NI_GC_UNTRACKED_TEST(rg)                                               \
+#define LE_GC_UNTRACKED_TEST(rg)                                               \
   do {                                                                         \
     MOV_R_O(REG_TRANSIENT_1, rg, GC_NEXT_OFFSET);                              \
     CMP_I8_R(0, REG_TRANSIENT_1);                                              \
   } while (0)
 
 /* the same test in C (pdictobject.c) */
-#define NI_GC_IS_TRACKED(o) _PyObject_GC_IS_TRACKED(o)
+#define LE_GC_IS_TRACKED(o) _PyObject_GC_IS_TRACKED(o)
 #else
 /* Whether a GC object is tracked is in its PyGC_Head, the 32 bytes before
    it: gc.gc_refs shifted right by _PyGC_REFS_SHIFT is _PyGC_REFS_UNTRACKED
@@ -62,7 +62,7 @@ _Static_assert(sizeof(PyGC_Head) == 32 &&
 
 /* emits a test of the GC object in register 'rg' after which CC_E means
    untracked; uses REG_TRANSIENT_1 */
-#define NI_GC_UNTRACKED_TEST(rg)                                               \
+#define LE_GC_UNTRACKED_TEST(rg)                                               \
   do {                                                                         \
     MOV_R_O(REG_TRANSIENT_1, rg, GC_REFS_OFFSET);                              \
     SHIFT_SIGNED_RIGHT_BY(REG_TRANSIENT_1, _PyGC_REFS_SHIFT);                  \
@@ -70,6 +70,6 @@ _Static_assert(sizeof(PyGC_Head) == 32 &&
   } while (0)
 
 /* the same test in C (pdictobject.c) */
-#define NI_GC_IS_TRACKED(o) _PyObject_GC_IS_TRACKED(o)
+#define LE_GC_IS_TRACKED(o) _PyObject_GC_IS_TRACKED(o)
 #endif
-#endif /* NI_MECHANISMS_STORE_GC_H */
+#endif /* LE_MECHANISMS_STORE_GC_H */

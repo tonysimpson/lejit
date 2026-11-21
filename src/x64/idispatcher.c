@@ -259,10 +259,10 @@ static code_t* unify_check_save(code_t* code, struct dmove_s* dm,
     int i;
     for (i=0; i<REG_TOTAL; i++) {
         if (wanted[i] != NULL && RUNTIME_REG(wanted[i]) != REG_NONE) {
-            ni_trace_begin_simple_code(code);
+            le_trace_begin_simple_code(code);
             MOV_R_I(REG_TRANSIENT_2, (long)&unify_check_buf[i]);
             MOV_O_R(REG_TRANSIENT_2, 0, RUNTIME_REG(wanted[i]));
-            ni_trace_end_simple_code(code);
+            le_trace_end_simple_code(code);
             if (code > dm->code_limit)
                 code = data_new_buffer(code, dm);
         }
@@ -276,7 +276,7 @@ static code_t* unify_check_verify(code_t* code, struct dmove_s* dm,
     int i;
     for (i=0; i<REG_TOTAL; i++) {
         if (saved[i]) {
-            ni_trace_begin_simple_code(code);
+            le_trace_begin_simple_code(code);
             WRITE_1(0x9C);                                /* PUSHFQ */
             MOV_R_I(REG_TRANSIENT_2, (long)&unify_check_buf[i]);
             MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_2, 0);
@@ -287,7 +287,7 @@ static code_t* unify_check_verify(code_t* code, struct dmove_s* dm,
                 END_SHORT_JUMP(0);
             }
             WRITE_1(0x9D);                                /* POPFQ */
-            ni_trace_end_simple_code(code);
+            le_trace_end_simple_code(code);
             if (code > dm->code_limit)
                 code = data_new_buffer(code, dm);
         }
@@ -313,7 +313,7 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
   code_t* backpointer;
   CodeBufferObject* target_codebuf = lastmatch->matching;
   int sdepth = get_stack_depth(&target_codebuf->snapshot);
-  ni_trace_unify(po, target_codebuf); 
+  le_trace_unify(po, target_codebuf); 
   extra_assert(lastmatch->diff == NullArray);  /* unify with exact match only */
   psyco_assert_coherent(po);
   dm.usages_size = sdepth + sizeof(vinfo_t**);
@@ -336,9 +336,9 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
     {
       /* more items in the target stack (uncommon case).
          Let the stack grow. */
-      ni_trace_begin_simple_code(code);
+      le_trace_begin_simple_code(code);
       STACK_CORRECTION(sdepth - po->stack_depth);
-      ni_trace_end_simple_code(code);
+      le_trace_end_simple_code(code);
       po->stack_depth = sdepth;
     }
 
@@ -393,22 +393,22 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
                     vinfo_t *v2 = REG_NUMBER(po, i);
                     if (v2 != NULL) {
                         /* Theres something in register i exchange and update */
-                        ni_trace_begin_simple_code(code);
+                        le_trace_begin_simple_code(code);
                         XCHG_R_R(rg, i);
                         REG_NUMBER(po, i) = v;
                         SET_RUNTIME_REG_TO(v, i);
                         REG_NUMBER(po, rg) = v2;
                         SET_RUNTIME_REG_TO(v2, rg);
-                        ni_trace_end_simple_code(code);
+                        le_trace_end_simple_code(code);
                     }
                     else {
                         /* Register i is free just move rg to i */
-                        ni_trace_begin_simple_code(code);
+                        le_trace_begin_simple_code(code);
                         MOV_R_R(i, rg);
                         REG_NUMBER(po, rg) = NULL;
                         REG_NUMBER(po, i) = v;
                         SET_RUNTIME_REG_TO(v, i);
-                        ni_trace_end_simple_code(code);
+                        le_trace_end_simple_code(code);
                     }
                 }
                 dm.copy_regs[i] = NULL;
@@ -423,9 +423,9 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
         if (copy_from[i] != REG_NONE) {
             vinfo_t *w = REG_NUMBER(po, i);
             extra_assert(RUNTIME_REG(wanted[i]) == copy_from[i]);
-            ni_trace_begin_simple_code(code);
+            le_trace_begin_simple_code(code);
             MOV_R_R(i, copy_from[i]);
-            ni_trace_end_simple_code(code);
+            le_trace_end_simple_code(code);
             if (w != NULL && w != wanted[i]) {
                 SET_RUNTIME_REG_TO_NONE(w);
                 REG_NUMBER(po, i) = NULL;
@@ -443,17 +443,17 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
     for (i=0; i<REG_TOTAL; i++) {
         vinfo_t* v = dm.copy_regs[i];
         if (v != NULL) {
-            ni_trace_begin_simple_code(code);
+            le_trace_begin_simple_code(code);
             RTVINFO_FROM_STACK_TO_REG(v, i);
-            ni_trace_end_simple_code(code);
+            le_trace_end_simple_code(code);
 
         }
     }
 
     /* done */
-    ni_trace_begin_simple_code(code);
+    le_trace_begin_simple_code(code);
     STACK_CORRECTION(sdepth - po->stack_depth);
-    ni_trace_end_simple_code(code);
+    le_trace_end_simple_code(code);
 
   if (code > dm.code_limit) {
     /* start a new buffer if we wrote past the end */
@@ -464,9 +464,9 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
      (codelimit NULL): if nothing needed a new buffer, the jump would be
      discarded, and it can't reach the code from the stack anyway */
   if (po->codelimit != NULL || dm.private_codebuf != NULL) {
-    ni_trace_begin_simple_code(code);
+    le_trace_begin_simple_code(code);
     JUMP_TO((code_t*) target_codebuf->codestart);
-    ni_trace_end_simple_code(code);
+    le_trace_end_simple_code(code);
   }
   
   /* start a new buffer if the last JUMP_TO overflowed,
@@ -476,9 +476,9 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
       /* the JMP instruction emitted by JUMP_TO() is not position-
          independent; we must emit it again at the new position */
       code = data_new_buffer(backpointer, &dm);
-      ni_trace_begin_simple_code(code);
+      le_trace_begin_simple_code(code);
       JUMP_TO((code_t*) target_codebuf->codestart);
-      ni_trace_end_simple_code(code);
+      le_trace_end_simple_code(code);
       psyco_assert(code <= dm.code_limit);
     }
   
@@ -497,9 +497,9 @@ code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
          NULL): the jump could not reach from there, and nothing runs it */
       code = po->code;
       if (po->codelimit != NULL) {
-        ni_trace_begin_simple_code(code);
+        le_trace_begin_simple_code(code);
         JUMP_TO((code_t*) dm.private_codebuf->codestart);
-        ni_trace_end_simple_code(code);
+        le_trace_end_simple_code(code);
       }
     }
   PsycoObject_Delete(po);

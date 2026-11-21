@@ -34,7 +34,7 @@
 EXTERNFN vinfo_t *
 pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw);
 /* PyFunction_Type's tp_call as compiled code calls it */
-EXTERNFN ternaryfunc ni_function_tp_call(void);
+EXTERNFN ternaryfunc le_function_tp_call(void);
 EXTERNFN vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
                       vinfo_t *arg, bool allow_inline);

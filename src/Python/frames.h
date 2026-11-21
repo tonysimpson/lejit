@@ -16,10 +16,10 @@
    a compiled frame's (code, globals, tag, lasti). New reference. */
 EXTERNFN PyFrameObject *psyco_emulate_frame(PyObject *o);
 /* the real frame, if the compiled code 'co' making the current C call is
-   the one NiCode_Run runs (not a compiled callee); borrowed, or NULL */
+   the one LeCode_Run runs (not a compiled callee); borrowed, or NULL */
 EXTERNFN PyFrameObject *psyco_running_real_frame(PyCodeObject *co);
 /* ceval evaluating a frame itself, past the hook (eval_hook.c) */
-EXTERNFN PyObject *ni_eval_frame_default(PyFrameObject *f);
+EXTERNFN PyObject *le_eval_frame_default(PyFrameObject *f);
 
 EXTERNFN PyObject *psyco_get_globals(void);
 
@@ -81,7 +81,7 @@ struct locals_map_s {
 };
 
 /* what the glue from C into compiled code pushes to align the stack */
-#define NI_GLUE_PAD 0x4e49474cL
+#define LE_GLUE_PAD 0x4e49474cL
 
 /* to keep a trace of the Psyco stack frames */
 struct stack_frame_info_s {
@@ -119,10 +119,10 @@ PSY_INLINE stack_frame_info_t *finfo_last(stack_frame_info_t *finfo) {
 EXTERNFN stack_frame_info_t *psyco_finfo(PsycoObject *caller,
                                          PsycoObject *callee);
 
-/* A real frame NiCode_Run runs: on its C stack, linked into this
+/* A real frame LeCode_Run runs: on its C stack, linked into this
    thread's list from start to return (frames.c:frame_runs) */
 typedef struct frame_runtime_s {
-  PyFrameObject *py_frame; /* borrowed: NiCode_Run's caller holds it */
+  PyFrameObject *py_frame; /* borrowed: LeCode_Run's caller holds it */
   stack_frame_info_t ***psy_frames_start;
   PyCodeObject *psy_code;
   PyObject *psy_globals;
@@ -137,14 +137,14 @@ typedef struct frame_runtime_s {
 EXTERNFN void psyco_frame_start_register(FrameRuntime *fr, PyFrameObject *f,
                                          stack_frame_info_t ***psy_frames_start);
 EXTERNFN void psyco_frame_start_unregister(FrameRuntime *fr);
-/* f's record if NiCode_Run runs it on this thread, else NULL */
+/* f's record if LeCode_Run runs it on this thread, else NULL */
 EXTERNFN FrameRuntime *psyco_frame_start_get(PyFrameObject *f);
 
 /* f_localsplus[start...] = values (up to count, within the frame's
    locals), each with a new reference: the locals of a compiled frame, put
    into the frame of its traceback entry. NULL clears a slot (an unbound
-   local); NI_LOCAL_UNKNOWN leaves it. */
-#define NI_LOCAL_UNKNOWN ((PyObject *)1)
+   local); LE_LOCAL_UNKNOWN leaves it. */
+#define LE_LOCAL_UNKNOWN ((PyObject *)1)
 EXTERNFN void psyco_frame_write_locals(PyFrameObject *f, int start,
                                        PyObject **values, int count);
 

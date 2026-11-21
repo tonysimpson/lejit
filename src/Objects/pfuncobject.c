@@ -120,7 +120,7 @@ static bool compute_genexpr(PsycoObject *po, vinfo_t *v) {
     a = vinfo_getitem(v, iGENEXPR_ARGS);
     if (f == NULL || a == NULL)
         return false;
-    g = psyco_generic_call(po, ni_function_tp_call(),
+    g = psyco_generic_call(po, le_function_tp_call(),
                            CfCommonNewRefPyObject, "vvl", f, a, 0L);
     if (g == NULL)
         return false;
@@ -158,7 +158,7 @@ bool PsycoGenexpr_Check(vinfo_t *v) {
    promoted it, so its address isn't reused under the record either. */
 static PyObject *compiled_defaults(PyObject *f)
 {
-    static ni_addrmap_t seen; /* function address -> defaults */
+    static le_addrmap_t seen; /* function address -> defaults */
     PyObject **d = psyco_record(&seen, f);
     if (*d == NULL) {
         *d = PyFunction_GET_DEFAULTS(f);
@@ -173,7 +173,7 @@ static PyObject *compiled_defaults(PyObject *f)
    object checks that f still has it. */
 static PyCodeObject *compiled_code(PyObject *f)
 {
-    static ni_addrmap_t seen; /* function address -> code */
+    static le_addrmap_t seen; /* function address -> code */
     PyObject **c = psyco_record(&seen, f);
     if (*c == NULL) {
         *c = PyFunction_GET_CODE(f);
@@ -267,7 +267,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     return result;
 
 fallback:
-    return psyco_generic_call(po, ni_function_tp_call(),
+    return psyco_generic_call(po, le_function_tp_call(),
                               CfCommonNewRefPyObject, "lvl", (long)f, arg, (long)0);
 }
 
@@ -345,7 +345,7 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
 
 fallback:
 
-    return psyco_generic_call(po, ni_function_tp_call(),
+    return psyco_generic_call(po, le_function_tp_call(),
                               CfCommonNewRefPyObject, "vvv", func, arg, kw);
 }
 
@@ -375,7 +375,7 @@ static PyObject *function_call_unshared(PyObject *f, PyObject *a,
    function's PyVectorcall_Call): psyfunc.c says a function's call cannot
    block, which a method descriptor's can */
 DEFINEFN
-ternaryfunc ni_function_tp_call(void) {
+ternaryfunc le_function_tp_call(void) {
   if (PyFunction_Type.tp_call == PyMethod_Type.tp_call ||
       PyFunction_Type.tp_call == PyMethodDescr_Type.tp_call)
     return function_call_unshared;

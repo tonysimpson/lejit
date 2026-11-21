@@ -652,7 +652,7 @@ PsycoObject *fpo_unfreeze(FrozenPsycoObject *fpo) {
   return po;
 }
 
-DEFINEVAR long ni_parked_live = 0;
+DEFINEVAR long le_parked_live = 0;
 #if ALL_CHECKS
 DEFINEVAR long psyco_stat_parked_frozen = 0;
 #endif
@@ -670,7 +670,7 @@ static void live_unlink(parked_state_t *ps) {
   else
     live_newest = ps->older;
   ps->older = ps->newer = NULL;
-  ni_parked_live--;
+  le_parked_live--;
 }
 
 static void live_append(parked_state_t *ps) {
@@ -681,7 +681,7 @@ static void live_append(parked_state_t *ps) {
   else
     live_oldest = ps;
   live_newest = ps;
-  ni_parked_live++;
+  le_parked_live++;
 }
 
 /* the indices from 'a' to 'v' at exactly 'depth' more levels, not under
@@ -742,7 +742,7 @@ static void park_freeze(parked_state_t *ps) {
   ps->stack_level = po->pr.stack_level;
   ps->split_after_global = po->pr.split_after_global;
   ps->live = NULL;
-  NI_STAT(psyco_stat_parked_frozen++);
+  LE_STAT(psyco_stat_parked_frozen++);
   PsycoObject_Delete(po);
 }
 
@@ -753,7 +753,7 @@ DEFINEFN void psyco_park(parked_state_t *ps, PsycoObject *po, vinfo_t *fix) {
   if (po->pr.exc != NULL || po->pr.val != NULL || po->pr.tb != NULL)
     return;
   live_append(ps);
-  if (ni_parked_live > PARK_LIVE_MAX)
+  if (le_parked_live > PARK_LIVE_MAX)
     park_freeze(live_oldest);
 }
 
@@ -796,7 +796,7 @@ DEFINEFN void psyco_park_release(parked_state_t *ps) {
     PsycoObject_Delete(ps->live);
     ps->live = NULL;
   } else if (ps->fz.fz_vlocals_opc != NULL || ps->fz.fz_pyc_data != NULL) {
-    NI_STAT(psyco_stat_parked_frozen--);
+    LE_STAT(psyco_stat_parked_frozen--);
     fpo_release(&ps->fz);
   }
   fpo_mark_unused(&ps->fz);
@@ -836,7 +836,7 @@ typedef struct respawn_s {
   CodeBufferObject *respawn_from;
 #if ALL_CHECKS
   struct respawn_check_s {
-    const char *file; /* where the point was made (NI_RESPAWN_SITE), or NULL */
+    const char *file; /* where the point was made (LE_RESPAWN_SITE), or NULL */
     int line;
     int next_instr;
     int stack_depth;
@@ -992,21 +992,21 @@ static code_t *do_respawn_body(respawn_t *rs);
 /* a stub function: 'value' (RSI) is used only by promotions */
 static code_t *do_respawn(respawn_t *rs, long value) {
   code_t *r;
-  ni_compile_guard_t g;
+  le_compile_guard_t g;
 #if LE_CODESTATS
-  long t0 = ni_now_ns();
+  long t0 = le_now_ns();
   psyco_cs_load_respawn = false;
 #endif
-  NI_COMPILE_BEGIN(NI_ENTER_RESPAWN);
+  LE_COMPILE_BEGIN(LE_ENTER_RESPAWN);
   psyco_guard_push(&g);
   if (sigsetjmp(g.env, 0) != 0)
     psyco_guard_retry(&g); /* the replay starts from the snapshot again */
   r = do_respawn_body(rs);
   psyco_guard_pop(&g);
-  NI_COMPILE_END(NI_ENTER_RESPAWN);
+  LE_COMPILE_END(LE_ENTER_RESPAWN);
 #if LE_CODESTATS
   if (psyco_cs_load_respawn) { /* a load guard's failure branch */
-    psyco_cs_load[4] += ni_now_ns() - t0;
+    psyco_cs_load[4] += le_now_ns() - t0;
     psyco_cs_load_respawn = false;
   }
 #endif
@@ -1130,7 +1130,7 @@ void psyco_respawn_detected(PsycoObject *po) {
 #define STUB_POOL_MAX 512
 
 typedef struct {
-  ni_owner_t *owner;
+  le_owner_t *owner;
   code_t *(*fn)(void *closure, long value);
   /* the closure follows, 8-aligned */
 } stub_record_t;
@@ -1141,14 +1141,14 @@ typedef struct {
 DEFINEFN code_t *psyco_stub_enter(void *record, long value) {
   stub_record_t *r = (stub_record_t *)record;
   code_t *result;
-  NI_OWNER_ENTER(r->owner);
+  LE_OWNER_ENTER(r->owner);
   result = r->fn(r + 1, value);
-  NI_OWNER_LEAVE();
+  LE_OWNER_LEAVE();
   return result;
 }
 
 DEFINEFN void psyco_stub_set_release(void *closure, void (*fn)(void *)) {
-  ni_owner_t *o = (((stub_record_t *)closure) - 1)->owner;
+  le_owner_t *o = (((stub_record_t *)closure) - 1)->owner;
   if (o == NULL)
     return; /* kept for good */
   if (o->nreleases == o->releasescap) {
@@ -1164,7 +1164,7 @@ DEFINEFN void psyco_stub_set_release(void *closure, void (*fn)(void *)) {
   o->nreleases++;
 }
 
-DEFINEFN void psyco_owner_release_records(ni_owner_t *o) {
+DEFINEFN void psyco_owner_release_records(le_owner_t *o) {
   int i;
   for (i = 0; i < o->nreleases; i++)
     o->releases[i].fn(o->releases[i].closure);
@@ -1191,22 +1191,22 @@ DEFINEFN void *psyco_new_stub_at(void *fn, size_t size, code_t **at) {
    STUB_POOL_MAX: the unused end of an owner's last chunk is lost while it
    lives, so small chunks waste less, and an owner with few stubs takes
    little. */
-static ni_owner_t stubs_for_good; /* while no owner is current */
+static le_owner_t stubs_for_good; /* while no owner is current */
 #define POOL_OWNER (psyco_owner != NULL ? psyco_owner : &stubs_for_good)
 
 static code_t *stub_pool_reserve(size_t n) {
-  ni_owner_t *o = POOL_OWNER;
+  le_owner_t *o = POOL_OWNER;
   if ((size_t)(o->stub_pool_end - o->stub_pool) < n) {
     size_t size = o->stub_chunk == 0 ? STUB_POOL_MIN
                   : o->stub_chunk < STUB_POOL_MAX ? 2 * o->stub_chunk
                                                   : STUB_POOL_MAX;
     code_t *chunk;
-    while (size < n + sizeof(ni_owner_t *))
+    while (size < n + sizeof(le_owner_t *))
       size *= 2;
     o->stub_chunk = size;
     chunk = psyco_code_take(size);
-    *(ni_owner_t **)chunk = psyco_owner;
-    o->stub_pool = chunk + sizeof(ni_owner_t *);
+    *(le_owner_t **)chunk = psyco_owner;
+    o->stub_pool = chunk + sizeof(le_owner_t *);
     o->stub_pool_end = chunk + size;
   }
   return o->stub_pool;
@@ -1235,8 +1235,8 @@ typedef struct {
 
 /* the index of 'b' in the owner's blocks, or -1. A respawn's base is
    nearly always the block made last, or the one the last search found. */
-static long owner_buf_index(ni_owner_t *o, CodeBufferObject *b) {
-  static ni_owner_t *last_o = NULL;
+static long owner_buf_index(le_owner_t *o, CodeBufferObject *b) {
+  static le_owner_t *last_o = NULL;
   static int last_i = 0;
   int i;
   if (last_o == o && last_i < o->nbufs && o->bufs[last_i] == b)
@@ -1252,27 +1252,27 @@ static long owner_buf_index(ni_owner_t *o, CodeBufferObject *b) {
 
 DEFINEFN code_t *psyco_respawn_enter(code_t *record) {
   pooled_respawn_t r;
-  ni_owner_t *o;
+  le_owner_t *o;
   respawn_t rs;
   code_t *result;
   memcpy(&r, record, sizeof(r));
-  o = *(ni_owner_t **)(record - r.chunk);
+  o = *(le_owner_t **)(record - r.chunk);
   rs.write_jmp = record + r.jmp;
   rs.respawn_cnt = r.cnt;
   rs.respawn_from = o->bufs[r.from];
 #if ALL_CHECKS
   rs.check = *r.check;
 #endif
-  NI_OWNER_ENTER(o);
+  LE_OWNER_ENTER(o);
   result = do_respawn(&rs, 0);
-  NI_OWNER_LEAVE();
+  LE_OWNER_LEAVE();
   return result;
 }
 
 /* a respawn's stub and record in the pool, if its fields fit: the
    record, and the stub in '*stub' */
 static code_t *new_pooled_respawn(PsycoObject *po, code_t **stub) {
-  ni_owner_t *o = psyco_owner;
+  le_owner_t *o = psyco_owner;
   pooled_respawn_t r;
   code_t *record;
   long from;
@@ -2669,7 +2669,7 @@ vcompatible_t *psyco_compatible(PsycoObject *po, global_entries_t *patterns) {
     ok = fz_compatible_array(&po->vlocals, &dropbuf->snapshot, &result);
     psyco_assert(ok && result.diff == NullArray);
     compatible_drop_unused = false;
-    NI_STAT(psyco_stat_fact_drops++);
+    LE_STAT(psyco_stat_fact_drops++);
     return &result;
   }
   compatible_drop_unused = false;
@@ -2950,11 +2950,11 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
 static __attribute__((noinline)) code_t *do_promotion_internal(rt_promotion_t *fs, long key,
                                      long flags) {
   code_t *r;
-  ni_compile_guard_t g;
+  le_compile_guard_t g;
 #if LE_CODESTATS
   psyco_cs_promo_begin(fs->cs_site, key, (flags & SkFlagPyObj) != 0);
 #endif
-  NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
+  LE_COMPILE_BEGIN(LE_ENTER_PROMOTION);
   psyco_guard_push(&g);
   if (sigsetjmp(g.env, 0) != 0)
     psyco_guard_retry(&g); /* the parked state is still whole */
@@ -2962,7 +2962,7 @@ static __attribute__((noinline)) code_t *do_promotion_internal(rt_promotion_t *f
     Py_INCREF((PyObject *)key);
   r = do_promotion_internal_body(fs, key, sk_new(key, flags));
   psyco_guard_pop(&g);
-  NI_COMPILE_END(NI_ENTER_PROMOTION);
+  LE_COMPILE_END(LE_ENTER_PROMOTION);
 #if LE_CODESTATS
   psyco_cs_promo_end();
 #endif
@@ -3002,7 +3002,7 @@ static code_t *do_promotion_internal_body(rt_promotion_t *fs, long key,
     result = code;
     buf = ((rt_local_buf_t *)code) - 1;
 
-    po->code = insn_code_label(NI_CS_PROMO_COUNTER(result));
+    po->code = insn_code_label(LE_CS_PROMO_COUNTER(result));
     /* a constant holds no run-time reference, so the one the value held
        is dropped on entry; the owner holds the object (sk_new) */
     if (owned)
@@ -3025,17 +3025,17 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs, bool interpret);
 static __attribute__((noinline)) code_t *
 detected_megamorphic_pyobj_site(rt_promotion_t *fs, bool interpret) {
   code_t *r;
-  ni_compile_guard_t g;
+  le_compile_guard_t g;
 #if LE_CODESTATS
   psyco_cs_promo_begin(fs->cs_site, -1, -1);
 #endif
-  NI_COMPILE_BEGIN(NI_ENTER_PROMOTION);
+  LE_COMPILE_BEGIN(LE_ENTER_PROMOTION);
   psyco_guard_push(&g);
   if (sigsetjmp(g.env, 0) != 0)
     psyco_guard_retry(&g);
   r = detected_megamorphic_body(fs, interpret);
   psyco_guard_pop(&g);
-  NI_COMPILE_END(NI_ENTER_PROMOTION);
+  LE_COMPILE_END(LE_ENTER_PROMOTION);
 #if LE_CODESTATS
   psyco_cs_promo_end();
 #endif
@@ -3066,7 +3066,7 @@ static code_t *detected_megamorphic_body(rt_promotion_t *fs, bool interpret) {
     result = code;
     buf = ((rt_local_buf_t *)code) - 1;
 
-    po->code = insn_code_label(NI_CS_PROMO_COUNTER(result));
+    po->code = insn_code_label(LE_CS_PROMO_COUNTER(result));
     psyco_compatible_keep_facts = true;
     codeend = psyco_compile(po, mp, false);
     psyco_compatible_keep_facts = false;

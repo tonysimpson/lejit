@@ -1,7 +1,7 @@
 #include "ipyencoding.h"
 #include "../pycodegen.h"
 #include "../codemanager.h"
-/* NI_GC_UNTRACKED_TEST */
+/* LE_GC_UNTRACKED_TEST */
 #include "../mechanisms/store_gc.h"
 
 DEFINEFN void function_return(PsycoObject *po, Source retval, int nframelocal,
@@ -151,7 +151,7 @@ static bool rip_near(code_t *at, void *addr) {
 #define CALL_GLUE(fn, near)                                                    \
   do {                                                                         \
     if (near) {                                                                \
-      ni_trace_call((code_t *)code, (code_t *)(fn));                           \
+      le_trace_call((code_t *)code, (code_t *)(fn));                           \
       WRITE_1(0xE8);                                                           \
       WRITE_32BIT((long)(fn) - ((long)code + 4));                              \
     } else {                                                                   \
@@ -198,7 +198,7 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
   TEST_R_R(REG_X64_R8, REG_X64_R8);
   JCC_MISS(CC_E); /* combined */
   MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
-  MOV_R_O(REG_X64_RAX, REG_X64_R9, CPY_OFFSET(ni_dictkeys_t, dk_size));
+  MOV_R_O(REG_X64_RAX, REG_X64_R9, CPY_OFFSET(le_dictkeys_t, dk_size));
   CMP_R_A(REG_X64_RAX, REG_X64_RDX);
   JCC_MISS(CC_NE); /* keys of another size */
   MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, kword));
@@ -207,7 +207,7 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
   JCC_MISS(CC_NE); /* the name isn't at the cached entry */
   MOV_R_O(REG_X64_R9, REG_X64_RDX, offsetof(store_cache_t, ix));
   if (s->gc != STORE_GC_NONE) { /* MAINTAIN_TRACKING */
-    NI_GC_UNTRACKED_TEST(REG_X64_RCX); /* mechanisms/store_gc.h */
+    LE_GC_UNTRACKED_TEST(REG_X64_RCX); /* mechanisms/store_gc.h */
     if (s->gc == STORE_GC_DICT) {
       JCC_MISS(CC_E);
     } else {
@@ -246,7 +246,7 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
     goto miss;
   extra_assert(code - (fill_jz + 2) < 128);
   fill_jz[1] = (code_t)(code - (fill_jz + 2));
-  ni_trace_jump_cond(fill_jz, fill_jz + 2, code);
+  le_trace_jump_cond(fill_jz, fill_jz + 2, code);
   CMP_R_O8(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
   JCC_MISS(CC_NE); /* out of order: CPython converts the dict */
   INC_O8(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
@@ -254,7 +254,7 @@ static code_t *inline_store_body(PsycoObject *po, code_t *code,
   INC_A(REG_X64_RSI);
   extra_assert(store - (code + 2) >= -128);
   WRITE_2(0xEB, (code_t)(store - (code + 2)));
-  ni_trace_jump(code - 2, store);
+  le_trace_jump(code - 2, store);
 miss:
   *pmiss = code;
   CALL_GLUE(s->miss_glue, rip_near(start, s->miss_glue));
@@ -293,11 +293,11 @@ void psyco_inline_store_begin(PsycoObject *po, inline_store_t *s) {
   for (i = 0; i < nj; i++) {
     if (near[i]) {
       *(dword_t *)(jat[i] + 2) = miss - (jat[i] + 6);
-      ni_trace_jump_cond(jat[i], jat[i] + 6, miss);
+      le_trace_jump_cond(jat[i], jat[i] + 6, miss);
     } else {
       extra_assert(miss - (jat[i] + 2) < 128);
       jat[i][1] = (code_t)(miss - (jat[i] + 2));
-      ni_trace_jump_cond(jat[i], jat[i] + 2, miss);
+      le_trace_jump_cond(jat[i], jat[i] + 2, miss);
     }
   }
   END_CODE
@@ -313,7 +313,7 @@ void psyco_inline_store_end(PsycoObject *po, inline_store_t *s) {
   for (i = 0; i < 2; i++) {
     psyco_assert(po->code - (s->done[i] + 2) < 128);
     s->done[i][1] = (code_t)(po->code - (s->done[i] + 2));
-    ni_trace_jump(s->done[i], po->code);
+    le_trace_jump(s->done[i], po->code);
   }
 }
 
@@ -344,15 +344,15 @@ void psyco_inline_store_end(PsycoObject *po, inline_store_t *s) {
    kind gives the answer its own lookup would. hash & 127 is the first
    index's, as the mask is less than 127. Forward jumps that may be far are
    near, the others short. */
-_Static_assert(offsetof(ni_dictentry_t, me_hash) == 0 &&
-                   sizeof(ni_dictentry_t) == 24,
+_Static_assert(offsetof(le_dictentry_t, me_hash) == 0 &&
+                   sizeof(le_dictentry_t) == 24,
                "an entry is found at 24 * index and its hash first");
 #define LOAD_MAX_JUMPS 8
 DEFINEFN
 vinfo_t *psyco_inline_load(PsycoObject *po, inline_load_t *s) {
   code_t *jmiss[LOAD_MAX_JUMPS], *jnone[2], *jdone[3], *start, *at;
   int nmiss = 0, nnone = 0, ndone = 0, i;
-  long ind = offsetof(ni_dictkeys_t, dk_indices);
+  long ind = offsetof(le_dictkeys_t, dk_indices);
   vinfo_t *v;
   reg_t rg, ro;
 #define NEAR_JCC(cc, list, n)                                                  \
@@ -372,10 +372,10 @@ vinfo_t *psyco_inline_load(PsycoObject *po, inline_load_t *s) {
     at = list[i];                                                              \
     if (at[0] == 0xE9) {                                                       \
       *(dword_t *)(at + 1) = (target) - (at + 5);                              \
-      ni_trace_jump(at, (target));                                             \
+      le_trace_jump(at, (target));                                             \
     } else {                                                                   \
       *(dword_t *)(at + 2) = (target) - (at + 6);                              \
-      ni_trace_jump_cond(at, at + 6, (target));                                \
+      le_trace_jump_cond(at, at + 6, (target));                                \
     }                                                                          \
   }
 #define SHORT_BACK(cc, target)                                                 \
@@ -383,9 +383,9 @@ vinfo_t *psyco_inline_load(PsycoObject *po, inline_load_t *s) {
     extra_assert((target) - (code + 2) >= -128);                               \
     WRITE_2((cc) < 0 ? 0xEB : 0x70 | (cc), (code_t)((target) - (code + 2)));   \
     if ((cc) < 0)                                                              \
-      ni_trace_jump(code - 2, (target));                                       \
+      le_trace_jump(code - 2, (target));                                       \
     else                                                                       \
-      ni_trace_jump_cond(code - 2, code, (target));                            \
+      le_trace_jump_cond(code - 2, code, (target));                            \
   } while (0)
   extra_assert(!is_virtualtime(s->obj->source));
   if (!is_respawning(po) && po->codelimit - po->code < 256)
@@ -416,7 +416,7 @@ vinfo_t *psyco_inline_load(PsycoObject *po, inline_load_t *s) {
     NEAR_JCC(CC_E, jmiss, nmiss); /* combined */
     MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
     LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
-    MOV_R_O(REG_X64_RAX, REG_X64_R9, offsetof(ni_dictkeys_t, dk_size));
+    MOV_R_O(REG_X64_RAX, REG_X64_R9, offsetof(le_dictkeys_t, dk_size));
     CMP_R_A(REG_X64_RAX, REG_X64_RDX);
     NEAR_JCC(CC_NE, jmiss, nmiss); /* keys of another size */
     MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, kword));
@@ -432,7 +432,7 @@ vinfo_t *psyco_inline_load(PsycoObject *po, inline_load_t *s) {
   } else {
     code_t *taken, *none, *body, *jtaken, *jneg;
     MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
-    MOV_R_O(REG_X64_R8, REG_X64_R9, offsetof(ni_dictkeys_t, dk_size));
+    MOV_R_O(REG_X64_R8, REG_X64_R9, offsetof(le_dictkeys_t, dk_size));
     CMP_I8_R(127, REG_X64_R8);
     NEAR_JCC(CC_uG, jmiss, nmiss); /* wider indices */
     SUB_R_I8(REG_X64_R8, 1);
@@ -449,7 +449,7 @@ vinfo_t *psyco_inline_load(PsycoObject *po, inline_load_t *s) {
     NEAR_JMP(jdone, ndone);
     taken = code;
     jtaken[1] = (code_t)(taken - (jtaken + 2));
-    ni_trace_jump_cond(jtaken, jtaken + 2, taken);
+    le_trace_jump_cond(jtaken, jtaken + 2, taken);
     MOV_R_I(REG_X64_RDX, s->hash);
     MOV_R_R(REG_X64_RSI, REG_X64_RDX);
     body = code;
@@ -462,7 +462,7 @@ vinfo_t *psyco_inline_load(PsycoObject *po, inline_load_t *s) {
     CMP_R_X8(REG_X64_RDX, REG_X64_R9, ind + 1, REG_X64_RAX, 1);
     NEAR_JCC(CC_E, jmiss, nmiss); /* the same hash */
     jneg[1] = (code_t)(code - (jneg + 2));
-    ni_trace_jump_cond(jneg, jneg + 2, code);
+    le_trace_jump_cond(jneg, jneg + 2, code);
     SHIFT_RIGHT_BY(REG_X64_RSI, 5);
     LEA_R_X8(REG_X64_RDI, REG_X64_RDI, 0, REG_X64_RDI, 4);
     LEA_R_X8(REG_X64_RDI, REG_X64_RDI, 1, REG_X64_RSI, 1);
@@ -541,12 +541,12 @@ DEFINEFN
 bool psyco_global_absent(PyObject *globals, PyObject *name,
                          global_absent_t *a) {
   PyDictObject *mp = (PyDictObject *)globals;
-  ni_dictkeys_t *keys = (ni_dictkeys_t *)mp->ma_keys;
-  ni_dictentry_t *ep = ni_dict_entries(keys);
+  le_dictkeys_t *keys = (le_dictkeys_t *)mp->ma_keys;
+  le_dictentry_t *ep = le_dict_entries(keys);
   Py_hash_t hash = PyObject_Hash(name);
   size_t mask = (size_t)keys->dk_size - 1, perturb = (size_t)hash;
   size_t i = (size_t)hash & mask;
-  long ix, at, ind = offsetof(ni_dictkeys_t, dk_indices);
+  long ix, at, ind = offsetof(le_dictkeys_t, dk_indices);
   int k;
   if (hash == -1) {
     PyErr_Clear();
@@ -619,7 +619,7 @@ static code_t *global_absent_emit(code_t *code, code_t *done,
     MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
             CPY_OFFSET(PyDictObject, ma_keys));
     CMP_I32_O(absent->size, REG_TRANSIENT_1,
-              offsetof(ni_dictkeys_t, dk_size));
+              offsetof(le_dictkeys_t, dk_size));
     JNE_DONE();
   }
   for (i = 0; absent != NULL && i <= absent->n; i++) {
@@ -646,7 +646,7 @@ static code_t *global_absent_emit(code_t *code, code_t *done,
   for (i = 0; i < nj; i++) {
     *(dword_t *)(jne[i] + 2) = done - (jne[i] + 6);
     if (trace)
-      ni_trace_jump_cond(jne[i], jne[i] + 6, done);
+      le_trace_jump_cond(jne[i], jne[i] + 6, done);
   }
   return code;
 }
@@ -677,24 +677,24 @@ condition_code_t psyco_global_guard(PsycoObject *po, PyObject *globals,
     MOV_R_I(REG_TRANSIENT_1, (long)globals);
     MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
             CPY_OFFSET(PyDictObject, ma_keys));
-    CMP_I32_O(size, REG_TRANSIENT_1, offsetof(ni_dictkeys_t, dk_size));
+    CMP_I32_O(size, REG_TRANSIENT_1, offsetof(le_dictkeys_t, dk_size));
     entry->at_size = (dword_t *)code - 1;
     js[0] = code;
     WRITE_2(0x70 | CC_NE, 0);
     MOV_R_I(REG_X64_RAX, (long)name);
     CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1,
-              offset + offsetof(ni_dictentry_t, me_key));
+              offset + offsetof(le_dictentry_t, me_key));
     entry->at_key = (dword_t *)code - 1;
     js[1] = code;
     WRITE_2(0x70 | CC_NE, 0);
     MOV_R_I(REG_X64_RAX, (long)value);
     CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1,
-              offset + offsetof(ni_dictentry_t, me_value));
+              offset + offsetof(le_dictentry_t, me_value));
     entry->at_value = (dword_t *)code - 1;
     for (i = 0; i < 2; i++) {
       extra_assert(code - (js[i] + 2) < 128);
       js[i][1] = (code_t)(code - (js[i] + 2));
-      ni_trace_jump_cond(js[i], js[i] + 2, code);
+      le_trace_jump_cond(js[i], js[i] + 2, code);
     }
   } else {
     MOV_R_I(REG_TRANSIENT_1, (long)globals);
@@ -740,9 +740,9 @@ void psyco_global_absent_rearm(global_absent_patch_t *patch,
         FITS_IN_32BITS(fresh - patch->start)) {
       patch->fresh = fresh;
       code = fresh + GLOBAL_ABSENT_CODE_MAX - SIZE_OF_FAR_JUMP;
-      ni_trace_begin_simple_code(code);
+      le_trace_begin_simple_code(code);
       JUMP_TO(patch->end);
-      ni_trace_end_simple_code(code);
+      le_trace_end_simple_code(code);
     } else { /* the memory stays the owner's, unused */
       ap = NULL;
       n = global_absent_emit(scratch, NULL, globals, builtins, ap, gtag, tag,
@@ -754,32 +754,32 @@ void psyco_global_absent_rearm(global_absent_patch_t *patch,
     end = patch->fresh + GLOBAL_ABSENT_CODE_MAX - SIZE_OF_FAR_JUMP;
   at = end - n;
   code = at;
-  ni_trace_begin_simple_code(code);
+  le_trace_begin_simple_code(code);
   code = global_absent_emit(code, end, globals, builtins, ap, gtag, tag,
                             true);
-  ni_trace_end_simple_code(code);
+  le_trace_end_simple_code(code);
   extra_assert(code == end);
   /* the start goes to the guard, over the rest of the room */
   code = patch->start;
   if (at != code) {
-    ni_trace_begin_simple_code(code);
+    le_trace_begin_simple_code(code);
     if (at - code >= SIZE_OF_FAR_JUMP || end != patch->end)
       JUMP_TO(at);
     else if (at - code >= 2) {
-      ni_trace_jump(code, at);
+      le_trace_jump(code, at);
       WRITE_2(0xEB, (code_t)(at - (code + 2)));
     } else
       WRITE_1(0x90); /* nop */
-    ni_trace_end_simple_code(code);
+    le_trace_end_simple_code(code);
   }
 }
 
 DEFINEFN
 void psyco_global_guard_move(global_patch_t *entry, long size, long offset) {
   *entry->at_size = (dword_t)size;
-  *entry->at_key = (dword_t)(offset + offsetof(ni_dictentry_t, me_key));
+  *entry->at_key = (dword_t)(offset + offsetof(le_dictentry_t, me_key));
   if (entry->at_value != NULL)
-    *entry->at_value = (dword_t)(offset + offsetof(ni_dictentry_t, me_value));
+    *entry->at_value = (dword_t)(offset + offsetof(le_dictentry_t, me_value));
 }
 
 /*   mov r10, globals; mov r10, [r10 + ma_keys]
@@ -797,12 +797,12 @@ void psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
   BEGIN_CODE
   MOV_R_I(REG_TRANSIENT_1, (long)globals);
   MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1, CPY_OFFSET(PyDictObject, ma_keys));
-  CMP_I32_O(size, REG_TRANSIENT_1, offsetof(ni_dictkeys_t, dk_size));
+  CMP_I32_O(size, REG_TRANSIENT_1, offsetof(le_dictkeys_t, dk_size));
   check->at_size = (dword_t *)code - 1;
   FAR_COND_JUMP_TO(stub, CC_NE);
   MOV_R_I(REG_TRANSIENT_2, (long)name);
   CMP_R_O32(REG_TRANSIENT_2, REG_TRANSIENT_1,
-            offset + offsetof(ni_dictentry_t, me_key));
+            offset + offsetof(le_dictentry_t, me_key));
   check->at_key = (dword_t *)code - 1;
   FAR_COND_JUMP_TO(stub, CC_NE);
   check->at_value = NULL;
@@ -841,17 +841,17 @@ vinfo_t *psyco_global_load(PsycoObject *po, PyObject *globals,
   start = code;
   MOV_R_I(REG_TRANSIENT_1, (long)globals);
   MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1, CPY_OFFSET(PyDictObject, ma_keys));
-  CMP_I32_O(size, REG_TRANSIENT_1, offsetof(ni_dictkeys_t, dk_size));
+  CMP_I32_O(size, REG_TRANSIENT_1, offsetof(le_dictkeys_t, dk_size));
   entry->at_size = (dword_t *)code - 1;
   jmiss[0] = code;
   WRITE_2(0x70 | CC_NE, 0);
   MOV_R_I(REG_X64_RAX, (long)name);
   CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1,
-            offset + offsetof(ni_dictentry_t, me_key));
+            offset + offsetof(le_dictentry_t, me_key));
   entry->at_key = (dword_t *)code - 1;
   jmiss[1] = code;
   WRITE_2(0x70 | CC_NE, 0);
-  MOV_R_O32(rg, REG_TRANSIENT_1, offset + offsetof(ni_dictentry_t, me_value));
+  MOV_R_O32(rg, REG_TRANSIENT_1, offset + offsetof(le_dictentry_t, me_value));
   entry->at_value = (dword_t *)code - 1;
   INC_OB_REFCNT_internal(rg);
   jdone = code;
@@ -859,14 +859,14 @@ vinfo_t *psyco_global_load(PsycoObject *po, PyObject *globals,
   for (i = 0; i < 2; i++) {
     extra_assert(code - (jmiss[i] + 2) < 128);
     jmiss[i][1] = (code_t)(code - (jmiss[i] + 2));
-    ni_trace_jump_cond(jmiss[i], jmiss[i] + 2, code);
+    le_trace_jump_cond(jmiss[i], jmiss[i] + 2, code);
   }
   LOAD_ADDRESS(REG_X64_RDI, arg, rip_near(start, arg));
   CALL_GLUE(miss_glue, rip_near(start, miss_glue));
   MOV_R_R(rg, REG_X64_RAX);
   extra_assert(code - (jdone + 2) < 128);
   jdone[1] = (code_t)(code - (jdone + 2));
-  ni_trace_jump(jdone, code);
+  le_trace_jump(jdone, code);
   TEST_R_R(rg, rg);
   END_CODE
   v = vinfo_new(RunTime_New(rg, false, false));

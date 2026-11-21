@@ -12,7 +12,7 @@
 #include "psyco.h"
 #include "psyfunc.h"
 
-EXTERNVAR int ni_set_up; /* lejit.c */
+EXTERNVAR int le_set_up; /* lejit.c */
 
 /* counters for tests and measurements, e.g. that a loop is not compiled
    afresh on every back-edge */
@@ -22,7 +22,7 @@ EXTERNVAR long psyco_codestats_lost;
 EXTERNVAR PyObject *psyco_codestats_buffers;
 EXTERNVAR PyObject *psyco_codestats_states;
 /* the code size counts (pycompiler.c), handed over and reset */
-static PyObject *ni_codestats(PyObject *self, PyObject *unused) {
+static PyObject *le_codestats(PyObject *self, PyObject *unused) {
   PyObject *r = psyco_codestats ? psyco_codestats : PyDict_New();
   PyObject *bufs = psyco_codestats_buffers ? psyco_codestats_buffers
                                             : PyDict_New();
@@ -36,14 +36,14 @@ static PyObject *ni_codestats(PyObject *self, PyObject *unused) {
   return t;
 }
 EXTERNFN PyObject *psyco_cs_promo_stats(void); /* pycompiler.c */
-static PyObject *ni_promostats(PyObject *self, PyObject *unused) {
+static PyObject *le_promostats(PyObject *self, PyObject *unused) {
   return psyco_cs_promo_stats();
 }
 #endif
 
 #if ALL_CHECKS
-static PyObject *ni_stats(PyObject *self, PyObject *unused) {
-  static const char *kinds[NI_ENTER_KINDS] = {"analyse", "call", "pause",
+static PyObject *le_stats(PyObject *self, PyObject *unused) {
+  static const char *kinds[LE_ENTER_KINDS] = {"analyse", "call", "pause",
                                               "respawn", "promotion"};
   PyObject *d = Py_BuildValue(
       "{slslslslslslslslslsl}", "code_buffers", psyco_stat_code_buffers,
@@ -55,7 +55,7 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
       "load_type_changes", psyco_stat_load_type_changes, "load_repairs",
       psyco_stat_load_repairs);
   int i;
-  for (i = 0; d != NULL && i < NI_ENTER_KINDS; i++) {
+  for (i = 0; d != NULL && i < LE_ENTER_KINDS; i++) {
     PyObject *t = Py_BuildValue("(ld)", psyco_stat_compile_count[i],
                                 psyco_stat_compile_ns[i] * 1e-9);
     if (t == NULL || PyDict_SetItemString(d, kinds[i], t) < 0) {
@@ -89,15 +89,15 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
   }
   if (d != NULL) {
     /* call-site notes' map indices made, and free for reuse (codegen.c) */
-    PyObject *t = Py_BuildValue("(ll)", ni_notes_made,
-                                ni_notes_free);
+    PyObject *t = Py_BuildValue("(ll)", le_notes_made,
+                                le_notes_free);
     if (t == NULL || PyDict_SetItemString(d, "call_notes", t) < 0)
       Py_CLEAR(d);
     Py_XDECREF(t);
   }
   if (d != NULL) {
     /* compiler states kept for pauses and promotions (dispatcher.h) */
-    PyObject *t = Py_BuildValue("(ll)", ni_parked_live,
+    PyObject *t = Py_BuildValue("(ll)", le_parked_live,
                                 psyco_stat_parked_frozen);
     if (t == NULL || PyDict_SetItemString(d, "parked", t) < 0)
       Py_CLEAR(d);
@@ -115,7 +115,7 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
        now (codemanager.c) */
     PyObject *t = Py_BuildValue("(lll)", psyco_stat_owner_scans,
                                 psyco_stat_owners_collected,
-                                ni_owners_counted);
+                                le_owners_counted);
     if (t == NULL || PyDict_SetItemString(d, "owner_scans", t) < 0)
       Py_CLEAR(d);
     Py_XDECREF(t);
@@ -152,8 +152,8 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
 
 /* the analysis functions would run code that isn't set up before the
    first start, so they refuse */
-static int ni_not_set_up(const char *fn) {
-  if (ni_set_up)
+static int le_not_set_up(const char *fn) {
+  if (le_set_up)
     return 0;
   PyErr_Format(PyExc_RuntimeError, "%s(): lejit.start() has not been called",
                fn);
@@ -161,13 +161,13 @@ static int ni_not_set_up(const char *fn) {
 }
 
 /* for tests and tools: what the eval hook did with a code object */
-static PyObject *ni_code_info(PyObject *self, PyObject *co) {
-  ni_code_extra_t *e;
+static PyObject *le_code_info(PyObject *self, PyObject *co) {
+  le_code_extra_t *e;
   if (!PyCode_Check(co)) {
     PyErr_SetString(PyExc_TypeError, "_code_info() needs a code object");
     return NULL;
   }
-  e = ni_code_extra_get((PyCodeObject *)co);
+  e = le_code_extra_get((PyCodeObject *)co);
   if (e == NULL || e->merge_points == NULL)
     return PyUnicode_FromString("not seen");
   if (e->merge_points == Py_None)
@@ -179,14 +179,14 @@ static PyObject *ni_code_info(PyObject *self, PyObject *co) {
 
 /* for tests: {bytecode offset: [dead local names]} at each merge
    point, or None if the code isn't compiled */
-static PyObject *ni_dead_locals(PyObject *self, PyObject *co) {
+static PyObject *le_dead_locals(PyObject *self, PyObject *co) {
   PyObject *mps, *result;
   mergepoint_t *mp;
   if (!PyCode_Check(co)) {
     PyErr_SetString(PyExc_TypeError, "_dead_locals() needs a code object");
     return NULL;
   }
-  if (ni_not_set_up("_dead_locals"))
+  if (le_not_set_up("_dead_locals"))
     return NULL;
   mps = psyco_get_merge_points((PyCodeObject *)co, 0);
   if (mps == Py_None)
@@ -225,13 +225,13 @@ fail:
 }
 
 /* for tests: would calls to this code be inlined? */
-static PyObject *ni_inlinable(PyObject *self, PyObject *co) {
+static PyObject *le_inlinable(PyObject *self, PyObject *co) {
   PyObject *mps;
   if (!PyCode_Check(co)) {
     PyErr_SetString(PyExc_TypeError, "_inlinable() needs a code object");
     return NULL;
   }
-  if (ni_not_set_up("_inlinable"))
+  if (le_not_set_up("_inlinable"))
     return NULL;
   mps = psyco_get_merge_points((PyCodeObject *)co, 0);
   return PyBool_FromLong(mps != Py_None &&
@@ -239,24 +239,24 @@ static PyObject *ni_inlinable(PyObject *self, PyObject *co) {
 }
 
 /* for tests: the metas Psyco_DefineModuleFn couldn't register */
-static PyObject *ni_unregistered_metas(PyObject *self, PyObject *unused) {
+static PyObject *le_unregistered_metas(PyObject *self, PyObject *unused) {
   if (Psyco_Unregistered_Metas == NULL)
     return PyList_New(0);
   return PyList_GetSlice(Psyco_Unregistered_Metas, 0, PY_SSIZE_T_MAX);
 }
 
 /* for tests: _fail_after(site, n) makes the n-th allocation at 'site' from
-   now fail (psyco.h:NI_FAIL); 0 cancels. Returns what was left of the
+   now fail (psyco.h:LE_FAIL); 0 cancels. Returns what was left of the
    previous count, 0 once it fired. */
-static PyObject *ni_fail_after(PyObject *self, PyObject *args) {
-  static const char *names[NI_FAIL_SITES] = {"psycoobject", "array",
+static PyObject *le_fail_after(PyObject *self, PyObject *args) {
+  static const char *names[LE_FAIL_SITES] = {"psycoobject", "array",
                                              "codebuf", "lookup", "owner"};
   const char *site;
   long n, left;
   int i;
   if (!PyArg_ParseTuple(args, "sl", &site, &n))
     return NULL;
-  for (i = 0; i < NI_FAIL_SITES; i++)
+  for (i = 0; i < LE_FAIL_SITES; i++)
     if (strcmp(site, names[i]) == 0) {
       left = psyco_fail_after[i];
       psyco_fail_after[i] = n;
@@ -267,22 +267,22 @@ static PyObject *ni_fail_after(PyObject *self, PyObject *args) {
 }
 #endif
 
-DEFINEVAR PyMethodDef ni_testing_methods[] = {
+DEFINEVAR PyMethodDef le_testing_methods[] = {
 #if LE_CODESTATS
-    {"_codestats", ni_codestats, METH_NOARGS, "Code size per instruction."},
-    {"_promostats", ni_promostats, METH_NOARGS, "Promotion sites."},
+    {"_codestats", le_codestats, METH_NOARGS, "Code size per instruction."},
+    {"_promostats", le_promostats, METH_NOARGS, "Promotion sites."},
 #endif
 #if ALL_CHECKS
-    {"_fail_after", ni_fail_after, METH_VARARGS,
+    {"_fail_after", le_fail_after, METH_VARARGS,
      "Make the n-th allocation at a site fail."},
-    {"_stats", ni_stats, METH_NOARGS, "Internal counters."},
-    {"_code_info", ni_code_info, METH_O,
+    {"_stats", le_stats, METH_NOARGS, "Internal counters."},
+    {"_code_info", le_code_info, METH_O,
      "'not seen', 'unsupported', 'no entry point' or 'compiled'."},
-    {"_dead_locals", ni_dead_locals, METH_O,
+    {"_dead_locals", le_dead_locals, METH_O,
      "{offset: [dead local names]} at each merge point, or None."},
-    {"_inlinable", ni_inlinable, METH_O,
+    {"_inlinable", le_inlinable, METH_O,
      "True if calls to this code object are inlined."},
-    {"_unregistered_metas", ni_unregistered_metas, METH_NOARGS,
+    {"_unregistered_metas", le_unregistered_metas, METH_NOARGS,
      "['module.name: why'] for each meta that wasn't registered."},
 #endif
     {NULL, NULL, 0, NULL}};

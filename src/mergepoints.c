@@ -115,9 +115,9 @@ report_destructor(PyObject *capsule)
 
 /* the code unit just after the current instruction (relative jumps) */
 #define NEXT_UNIT() (next_instr - first_instr)
-/* a jump's argument in code units: NI_JUMP_BYTES, which pycompiler.c's
+/* a jump's argument in code units: LE_JUMP_BYTES, which pycompiler.c's
    positions use, over the unit */
-#define JUMP_UNITS(a) (NI_JUMP_BYTES(a) / (int)sizeof(_Py_CODEUNIT))
+#define JUMP_UNITS(a) (LE_JUMP_BYTES(a) / (int)sizeof(_Py_CODEUNIT))
 
 #define MAX_MP_DISTANCE 170
 
@@ -139,7 +139,7 @@ report_destructor(PyObject *capsule)
 /* ceval tests eval_breaker before every instruction it reaches through
    DISPATCH(): after most opcodes, and at a frame's start. Compiled code
    tests it at the target of every backward jump, after calls (below) and
-   NiCode_Run at the start; before one of BREAKER_SKIPS, the test is before
+   LeCode_Run at the start; before one of BREAKER_SKIPS, the test is before
    the next instruction instead. */
 #define BREAKER_CHECK(unit)                                                  \
     do {                                                                     \
@@ -237,9 +237,9 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
             break;
         default:
             /* any other jump the source has may go either way */
-            if (NI_IS_JABS(o))
+            if (LE_IS_JABS(o))
                 _live_union(tmp, live + JUMP_UNITS(a) * words, words);
-            else if (NI_IS_JREL(o))
+            else if (LE_IS_JREL(o))
                 _live_union(tmp, live + (nxt[i] + JUMP_UNITS(a)) * words, words);
             _live_union(tmp, live + nxt[i] * words, words);
         }
@@ -472,9 +472,9 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 break;
             /* any other jump the source has may go either way */
             default:
-                if (NI_IS_JABS(opcode))
+                if (LE_IS_JABS(opcode))
                     ENTER_JUMP_TO(JUMP_UNITS(oparg));
-                else if (NI_IS_JREL(opcode))
+                else if (LE_IS_JREL(opcode))
                     ENTER_JUMP_TO(NEXT_UNIT() + JUMP_UNITS(oparg));
                 ENTER_NEXT();
         }
@@ -639,7 +639,7 @@ _build_merge_points(PyCodeObject *co, int module)
             case POP_TOP:
             case ROT_TWO:
             case ROT_THREE:
-#if NI_HAS_OPCODE_ROT_FOUR
+#if LE_HAS_OPCODE_ROT_FOUR
             case ROT_FOUR:
 #endif
             case DUP_TOP:
@@ -681,13 +681,13 @@ _build_merge_points(PyCodeObject *co, int module)
             case DELETE_SUBSCR:
             case PRINT_EXPR:
             case GET_AITER:
-#if NI_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
+#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
             case GET_ANEXT:
 #endif
-#if NI_HAS_OPCODE_RERAISE
+#if LE_HAS_OPCODE_RERAISE
             case RERAISE:
 #endif
-#if NI_HAS_OPCODE_LOAD_ASSERTION_ERROR
+#if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
             case LOAD_ASSERTION_ERROR:
 #endif
             case LOAD_BUILD_CLASS:
@@ -703,51 +703,51 @@ _build_merge_points(PyCodeObject *co, int module)
             case BUILD_STRING:
             case BUILD_TUPLE:
             case BUILD_LIST:
-#if NI_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
+#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
             case BUILD_TUPLE_UNPACK_WITH_CALL:
 #endif
-#if NI_HAS_OPCODE_BUILD_TUPLE_UNPACK
+#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK
             case BUILD_TUPLE_UNPACK:
 #endif
-#if NI_HAS_OPCODE_BUILD_LIST_UNPACK
+#if LE_HAS_OPCODE_BUILD_LIST_UNPACK
             case BUILD_LIST_UNPACK:
 #endif
-#if NI_HAS_OPCODE_LIST_TO_TUPLE
+#if LE_HAS_OPCODE_LIST_TO_TUPLE
             case LIST_TO_TUPLE:
 #endif
-#if NI_HAS_OPCODE_LIST_EXTEND
+#if LE_HAS_OPCODE_LIST_EXTEND
             case LIST_EXTEND:
 #endif
-#if NI_HAS_OPCODE_SET_UPDATE
+#if LE_HAS_OPCODE_SET_UPDATE
             case SET_UPDATE:
 #endif
             case BUILD_SET:
-#if NI_HAS_OPCODE_BUILD_SET_UNPACK
+#if LE_HAS_OPCODE_BUILD_SET_UNPACK
             case BUILD_SET_UNPACK:
 #endif
             case BUILD_MAP:
-#if NI_HAS_OPCODE_BUILD_MAP_UNPACK
+#if LE_HAS_OPCODE_BUILD_MAP_UNPACK
             case BUILD_MAP_UNPACK:
 #endif
-#if NI_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
+#if LE_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
             case BUILD_MAP_UNPACK_WITH_CALL:
 #endif
-#if NI_HAS_OPCODE_DICT_UPDATE
+#if LE_HAS_OPCODE_DICT_UPDATE
             case DICT_UPDATE:
 #endif
-#if NI_HAS_OPCODE_DICT_MERGE
+#if LE_HAS_OPCODE_DICT_MERGE
             case DICT_MERGE:
 #endif
             case MAP_ADD:
             case LOAD_ATTR:
             case COMPARE_OP:
-#if NI_HAS_OPCODE_IS_OP
+#if LE_HAS_OPCODE_IS_OP
             case IS_OP:
 #endif
-#if NI_HAS_OPCODE_CONTAINS_OP
+#if LE_HAS_OPCODE_CONTAINS_OP
             case CONTAINS_OP:
 #endif
-#if NI_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
+#if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
             case JUMP_IF_NOT_EXC_MATCH:
 #endif
             case IMPORT_FROM:
@@ -757,34 +757,34 @@ _build_merge_points(PyCodeObject *co, int module)
             case JUMP_IF_FALSE_OR_POP:
             case JUMP_IF_TRUE_OR_POP:
             case JUMP_ABSOLUTE:
-#if NI_HAS_OPCODE_GET_LEN
+#if LE_HAS_OPCODE_GET_LEN
             case GET_LEN:
 #endif
-#if NI_HAS_OPCODE_MATCH_CLASS
+#if LE_HAS_OPCODE_MATCH_CLASS
             case MATCH_CLASS:
 #endif
-#if NI_HAS_OPCODE_MATCH_MAPPING
+#if LE_HAS_OPCODE_MATCH_MAPPING
             case MATCH_MAPPING:
 #endif
-#if NI_HAS_OPCODE_MATCH_SEQUENCE
+#if LE_HAS_OPCODE_MATCH_SEQUENCE
             case MATCH_SEQUENCE:
 #endif
-#if NI_HAS_OPCODE_MATCH_KEYS
+#if LE_HAS_OPCODE_MATCH_KEYS
             case MATCH_KEYS:
 #endif
-#if NI_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
+#if LE_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
             case COPY_DICT_WITHOUT_KEYS:
 #endif
             case GET_ITER:
             case GET_YIELD_FROM_ITER:
             case BEFORE_ASYNC_WITH:
-#if NI_HAS_OPCODE_WITH_EXCEPT_START
+#if LE_HAS_OPCODE_WITH_EXCEPT_START
             case WITH_EXCEPT_START:
 #endif
             case LOAD_METHOD:
             case BUILD_SLICE:
             case FORMAT_VALUE:
-#if NI_HAS_OPCODE_ROT_N
+#if LE_HAS_OPCODE_ROT_N
             case ROT_N:
 #endif
             /* and the others */
@@ -877,7 +877,7 @@ DEFINEFN PyObject *
 psyco_get_merge_points(PyCodeObject *co, int module)
 {
     /* borrowed: the record keeps it */
-    ni_code_extra_t *x = ni_code_extra(co);
+    le_code_extra_t *x = le_code_extra(co);
     if (x == NULL) {
         PyErr_Clear(); /* out of memory: just don't compile */
         return Py_None;
@@ -888,13 +888,13 @@ psyco_get_merge_points(PyCodeObject *co, int module)
 }
 
 DEFINEFN __attribute__((noinline)) PyObject *
-psyco_analyse_code(PyCodeObject *co, ni_code_extra_t *x, int module)
+psyco_analyse_code(PyCodeObject *co, le_code_extra_t *x, int module)
 {
     if (x->merge_points == NULL) {
         PyObject *mps;
-        NI_COMPILE_BEGIN(NI_ENTER_ANALYSE);
+        LE_COMPILE_BEGIN(LE_ENTER_ANALYSE);
         mps = _build_merge_points(co, module);
-        NI_COMPILE_END(NI_ENTER_ANALYSE);
+        LE_COMPILE_END(LE_ENTER_ANALYSE);
         if (mps == NULL) {
             /* out of memory: don't compile this time, and
                leave nothing cached so that a later call tries again */

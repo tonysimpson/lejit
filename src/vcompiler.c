@@ -48,7 +48,7 @@ vinfo_array_t *array_grow1(vinfo_array_t *array, int ncount) {
   else
     array = PyMem_REALLOC(array, offsetof(vinfo_array_t, items) +
                                      ncount * sizeof(vinfo_t *));
-  if (array == NULL || NI_FAIL(NI_FAIL_ARRAY))
+  if (array == NULL || LE_FAIL(LE_FAIL_ARRAY))
     OUT_OF_MEMORY();
   array->count = ncount;
   while (i < ncount)
@@ -729,14 +729,14 @@ static code_t *do_resume_coding_body(coding_pause_t *cp);
 /* a stub function: 'value' (RSI) is used only by promotions */
 static code_t *do_resume_coding(coding_pause_t *cp, long value) {
   code_t *r;
-  ni_compile_guard_t g;
-  NI_COMPILE_BEGIN(NI_ENTER_PAUSE);
+  le_compile_guard_t g;
+  LE_COMPILE_BEGIN(LE_ENTER_PAUSE);
   psyco_guard_push(&g);
   if (sigsetjmp(g.env, 0) != 0)
     psyco_guard_retry(&g);
   r = do_resume_coding_body(cp);
   psyco_guard_pop(&g);
-  NI_COMPILE_END(NI_ENTER_PAUSE);
+  LE_COMPILE_END(LE_ENTER_PAUSE);
   return r;
 }
 
@@ -1001,7 +1001,7 @@ static code_t *compile_join(PsycoObject *po, global_entries_t *ge,
   if (cmp != NULL && cmp->diff == NullArray) {
     CodeBufferObject *oldcodebuf;
     if (first)
-      NI_STAT(psyco_stat_joins[branch ? 0 : 3]++);
+      LE_STAT(psyco_stat_joins[branch ? 0 : 3]++);
     return psyco_unify(po, cmp, &oldcodebuf);
   }
   if (cmp != NULL && !branch) {
@@ -1009,7 +1009,7 @@ static code_t *compile_join(PsycoObject *po, global_entries_t *ge,
     cmp = NULL;
   }
   if (branch && first)
-    NI_STAT(psyco_stat_joins[cmp != NULL ? 1 : 2]++);
+    LE_STAT(psyco_stat_joins[cmp != NULL ? 1 : 2]++);
   codebuf = psyco_proxy_code_buffer(po, ge);
   po->code = insn_code_label(codebuf->codestart);
   if (cmp != NULL) {

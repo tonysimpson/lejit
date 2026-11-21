@@ -30,15 +30,15 @@ UNSUPPORTED = [os.path.join(PYENV, v, 'bin', exe) for v, exe in (
 
 
 def source_answers(src):
-    """{NI_HAS_name: value or the reason it is unanswered}, each feature
+    """{LE_HAS_name: value or the reason it is unanswered}, each feature
     asked on its own so that one unanswered doesn't hide the rest."""
     s = features.Source(src)
     out = {}
     for name, d in features.FEATURES:
         try:
-            out['NI_HAS_' + name] = int(bool(d(s)[0]))
+            out['LE_HAS_' + name] = int(bool(d(s)[0]))
         except features.Unanswered as e:
-            out['NI_HAS_' + name] = str(e)
+            out['LE_HAS_' + name] = str(e)
     return out
 
 
@@ -51,7 +51,7 @@ def check(python):
     got = {name: value for name, value, _, _, _ in found}
     wrong, src_unanswered = [], []
     for name, _ in features.FEATURES:
-        key = 'NI_HAS_' + name
+        key = 'LE_HAS_' + name
         if isinstance(want[key], str):
             src_unanswered.append(key)
             if key in got:

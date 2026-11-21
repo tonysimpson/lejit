@@ -764,7 +764,7 @@ typedef enum {
 /* @asm: jmp {r} */
 #define JMP_R(r)                                                               \
   do {                                                                         \
-    ni_trace_jump_reg((code_t *)(code), (int)(r));                             \
+    le_trace_jump_reg((code_t *)(code), (int)(r));                             \
     DIRECT_ENCODING(false, 1, 0xFF, 0, 0, 0xE0, 0, r);                         \
   } while (0)
 #if LE_TRACE
@@ -776,20 +776,20 @@ typedef enum {
   do {                                                                         \
     CAPTURE_CODE_LOCATION                                                      \
     BASE_ENCODING(false, 1, 0x0F, 0, 0, 0x80 | (cc), 0, 0);                    \
-    ni_trace_jump_cond((code_t *)(location), (code_t *)(code),                 \
+    le_trace_jump_cond((code_t *)(location), (code_t *)(code),                 \
                        (code_t *)(address));                                   \
     UPDATABLE_WRITE_32BIT((address) - ((long)code + 4));                       \
   } while (0)
 /* @asm: call {r} */
 #define CALL_R(r)                                                              \
   do {                                                                         \
-    ni_trace_call_reg((code_t *)(code), r);                                    \
+    le_trace_call_reg((code_t *)(code), r);                                    \
     DIRECT_ENCODING(false, 1, 0xFF, 0, 0, 0xD0, 0, r);                         \
   } while (0)
 #define CALL_I(i)                                                              \
   do {                                                                         \
     long jump_amount;                                                          \
-    ni_trace_call((code_t *)(code), (code_t *)(i));                            \
+    le_trace_call((code_t *)(code), (code_t *)(i));                            \
     jump_amount = (long)(i) - ((long)code + 5);                                \
     if (FITS_IN_32BITS(jump_amount)) {                                         \
       WRITE_1(0xE8);                                                           \
@@ -895,7 +895,7 @@ typedef enum {
   OFFSET_ENCODING(false, false, 1, 0x8F, 0, 0, 0, 0, 0, rm, o)
 #define RET()                                                                  \
   do {                                                                         \
-    ni_trace_return((code_t *)(code), 0);                                      \
+    le_trace_return((code_t *)(code), 0);                                      \
     WRITE_1(0xC3);                                                             \
   } while (0)
 /* @asm: ret {n:u16} */
@@ -904,7 +904,7 @@ typedef enum {
     if (n == 0) {                                                              \
       RET();                                                                   \
     } else {                                                                   \
-      ni_trace_return((code_t *)(code), n);                                    \
+      le_trace_return((code_t *)(code), n);                                    \
       WRITE_1(0xC2);                                                           \
       WRITE_16BIT(n);                                                          \
     }                                                                          \
@@ -1562,7 +1562,7 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
 
 #define JUMP_TO(addr)                                                          \
   do {                                                                         \
-    ni_trace_jump((code_t *)(code), (code_t *)(addr));                         \
+    le_trace_jump((code_t *)(code), (code_t *)(addr));                         \
     *code++ = 0xE9; /* JMP rel32 */                                            \
     extra_assert(FITS_IN_32BITS((code_t *)(addr) - (code + 4)));           \
     *(dword_t *)(code) = (addr) - (code + 4);                                  \
@@ -1585,13 +1585,13 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
     extra_assert(FITS_IN_32BITS((code_t *)(addr) - (code + 4)));           \
     *(dword_t *)(code) = (addr) - (code + 4);                                  \
     code += 4;                                                                 \
-    ni_trace_jump_cond((code_t *)(location), (code_t *)(code),                 \
+    le_trace_jump_cond((code_t *)(location), (code_t *)(code),                 \
                        (code_t *)(addr));                                      \
   } while (0)
 
 #define CHANGE_JUMP_TO(addr)                                                   \
   do {                                                                         \
-    ni_trace_jump_cond_update((code_t *)(code - 6), (code_t *)(code),          \
+    le_trace_jump_cond_update((code_t *)(code - 6), (code_t *)(code),          \
                               (code_t *)(addr));                               \
     extra_assert(FITS_IN_32BITS((code_t *)(addr) - code));                    \
     *(dword_t *)(code - 4) = (addr)-code;                                      \
@@ -1621,11 +1621,11 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
     long _jump_amount = (long)code - (long)_short_jump_op_end_##id;            \
     extra_assert(-128 <= _jump_amount && _jump_amount < 128);                  \
     if (_conditional_##id) {                                                   \
-      ni_trace_jump_cond((code_t *)(_short_jump_op_end_##id - 2),              \
+      le_trace_jump_cond((code_t *)(_short_jump_op_end_##id - 2),              \
                          (code_t *)(_short_jump_op_end_##id),                  \
                          (code_t *)(code));                                    \
     } else {                                                                   \
-      ni_trace_jump((code_t *)(_short_jump_op_end_##id - 2),                   \
+      le_trace_jump((code_t *)(_short_jump_op_end_##id - 2),                   \
                     (code_t *)(code));                                         \
     }                                                                          \
     *(_short_jump_op_end_##id - 1) = (code_t)_jump_amount;                     \
@@ -1640,7 +1640,7 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
     extra_assert(-128 <= _jump_amount && _jump_amount < 128);                  \
     code[0] = 0x70 | (cond);                                                   \
     code[1] = _jump_amount;                                                    \
-    ni_trace_jump_cond((code_t *)(code), (code_t *)(code + 2),                 \
+    le_trace_jump_cond((code_t *)(code), (code_t *)(code + 2),                 \
                        (code_t *)(_reverse_short_jump_target_##id));           \
     code += 2;                                                                 \
   } while (0)
@@ -1651,7 +1651,7 @@ EXTERNFN code_t *psyco_compute_cc(PsycoObject *po, code_t *code,
     extra_assert(-128 <= _ofs && _ofs < 128);                                  \
     code[0] = 0x70 | (code_t)(condition);                                      \
     code[1] = (code_t)_ofs;                                                    \
-    ni_trace_jump_cond((code_t *)(code), (code_t *)(code + 2),                 \
+    le_trace_jump_cond((code_t *)(code), (code_t *)(code + 2),                 \
                        (code_t *)(addr));                                      \
     code += 2;                                                                 \
   } while (0)

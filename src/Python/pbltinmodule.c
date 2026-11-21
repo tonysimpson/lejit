@@ -39,7 +39,7 @@ cimpl_builtin_hasattr_impl(PyObject *module, PyObject *obj, PyObject *name)
     PyObject *v;
     if (!PyUnicode_Check(name)) {
         PyErr_SetString(PyExc_TypeError,
-                        NI_MSG_HASATTR_NAME_NOT_STR);
+                        LE_MSG_HASATTR_NAME_NOT_STR);
         return NULL;
     }
     if (_PyObject_LookupAttr(obj, name, &v) < 0) {
@@ -173,7 +173,7 @@ static vinfo_t *
 builtin_getattr(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
     int _t1;
-#if !NI_HAS_ARG_CHECK_POSITIONAL
+#if !LE_HAS_ARG_CHECK_POSITIONAL
     vinfo_t *dflt;
 #endif
     vinfo_t *name;
@@ -194,7 +194,7 @@ builtin_getattr(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
         }
         if ((tp_name->tp_flags & Py_TPFLAGS_UNICODE_SUBCLASS) == 0) {
             PycException_SetString(po, PyExc_TypeError,
-                                   NI_MSG_GETATTR_NAME_NOT_STR);
+                                   LE_MSG_GETATTR_NAME_NOT_STR);
             return NULL;
         }
         result = PsycoObject_GetAttr(po, v, name);
@@ -203,7 +203,7 @@ builtin_getattr(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
     else {
         v = PsycoTuple_GET_ITEM(vargs, 0);
         name = PsycoTuple_GET_ITEM(vargs, 1);
-#if !NI_HAS_ARG_CHECK_POSITIONAL
+#if !LE_HAS_ARG_CHECK_POSITIONAL
         dflt = PsycoTuple_GET_ITEM(vargs, 2);
 #endif
         tp_name = Psyco_NeedType(po, name);
@@ -212,7 +212,7 @@ builtin_getattr(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
         }
         if ((tp_name->tp_flags & Py_TPFLAGS_UNICODE_SUBCLASS) == 0) {
             PycException_SetString(po, PyExc_TypeError,
-                                   NI_MSG_GETATTR_NAME_NOT_STR);
+                                   LE_MSG_GETATTR_NAME_NOT_STR);
             return NULL;
         }
         return PsycoCFunction_CallFast(po, cfunc_builtin_getattr,
@@ -231,7 +231,7 @@ builtin_hasattr_impl(PsycoObject *po, vinfo_t *module, vinfo_t *obj,
     }
     if ((tp_name->tp_flags & Py_TPFLAGS_UNICODE_SUBCLASS) == 0) {
         PycException_SetString(po, PyExc_TypeError,
-                               NI_MSG_HASATTR_NAME_NOT_STR);
+                               LE_MSG_HASATTR_NAME_NOT_STR);
         return NULL;
     }
     return psyco_generic_call(po, cimpl_builtin_hasattr_impl,
@@ -278,7 +278,7 @@ builtin_hash(PsycoObject *po, vinfo_t *module, vinfo_t *obj)
 
 static vinfo_t *
 builtin_id(PsycoObject *po, vinfo_t *self, vinfo_t *v)
-#if NI_HAS_AUDIT_HOOKS
+#if LE_HAS_AUDIT_HOOKS
 {
     vinfo_t *id;
     id = psyco_generic_call(po, PyLong_FromVoidPtr,
@@ -384,7 +384,7 @@ builtin_len(PsycoObject *po, vinfo_t *module, vinfo_t *obj)
     return _t3;
 }
 
-#if NI_HAS_POW_KEYWORDS
+#if LE_HAS_POW_KEYWORDS
 #define POW_FLAGS (METH_FASTCALL | METH_KEYWORDS)
 #else
 #define POW_FLAGS METH_FASTCALL
@@ -406,7 +406,7 @@ builtin_pow(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
     vinfo_t *base;
     vinfo_t *exp;
     vinfo_t *mod;
-#if NI_HAS_POW_KEYWORDS
+#if LE_HAS_POW_KEYWORDS
     Py_ssize_t noptargs;
 #endif
     vinfo_t *return_value;
@@ -416,7 +416,7 @@ builtin_pow(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
                                        module, vargs);
     }
     if (_t1 == 2) {
-#if NI_HAS_POW_KEYWORDS
+#if LE_HAS_POW_KEYWORDS
         noptargs = 0;
 #endif
         base = PsycoTuple_GET_ITEM(vargs, 0);
@@ -427,7 +427,7 @@ builtin_pow(PsycoObject *po, vinfo_t *module, vinfo_t *vargs)
         return return_value;
     }
     else {
-#if NI_HAS_POW_KEYWORDS
+#if LE_HAS_POW_KEYWORDS
         noptargs = 1;
 #endif
         base = PsycoTuple_GET_ITEM(vargs, 0);
@@ -858,17 +858,17 @@ static PyObject *cimpl_super_noargs(long argc, PyObject *obj,
                                     PyObject *objcell, PyObject *classcell) {
   PyObject *type;
   if (argc == 0) {
-    PyErr_SetString(PyExc_RuntimeError, NI_MSG_SUPER_NO_ARGS);
+    PyErr_SetString(PyExc_RuntimeError, LE_MSG_SUPER_NO_ARGS);
     return NULL;
   }
   if (obj == NULL && objcell != NULL)
     obj = PyCell_GET(objcell);
   if (obj == NULL) {
-    PyErr_SetString(PyExc_RuntimeError, NI_MSG_SUPER_ARG0_DELETED);
+    PyErr_SetString(PyExc_RuntimeError, LE_MSG_SUPER_ARG0_DELETED);
     return NULL;
   }
   if (classcell == NULL) {
-    PyErr_SetString(PyExc_RuntimeError, NI_MSG_SUPER_NO_CLASS_CELL);
+    PyErr_SetString(PyExc_RuntimeError, LE_MSG_SUPER_NO_CLASS_CELL);
     return NULL;
   }
   if (!PyCell_Check(classcell)) {
@@ -877,11 +877,11 @@ static PyObject *cimpl_super_noargs(long argc, PyObject *obj,
   }
   type = PyCell_GET(classcell);
   if (type == NULL) {
-    PyErr_SetString(PyExc_RuntimeError, NI_MSG_SUPER_EMPTY_CLASS_CELL);
+    PyErr_SetString(PyExc_RuntimeError, LE_MSG_SUPER_EMPTY_CLASS_CELL);
     return NULL;
   }
   if (!PyType_Check(type)) {
-    PyErr_Format(PyExc_RuntimeError, NI_MSG_SUPER_CLASS_NOT_TYPE,
+    PyErr_Format(PyExc_RuntimeError, LE_MSG_SUPER_CLASS_NOT_TYPE,
                  Py_TYPE(type)->tp_name);
     return NULL;
   }

@@ -1,7 +1,7 @@
 # The frame that catches an exception shows its locals as they are when
 # Python reads them, not as they were when the exception passed:
 # each way of reading a frame's locals, with them changed after the raise,
-# in the case's own frame (the one NiCode_Run runs) and in a compiled
+# in the case's own frame (the one LeCode_Run runs) and in a compiled
 # callee (whose traceback frame stands in for it).
 import gc
 import inspect

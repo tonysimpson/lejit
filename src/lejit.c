@@ -7,7 +7,7 @@
 #include "mergepoints.h"
 #include "psyco.h"
 #include "psyfunc.h"
-#include "ni_features_gen.h"
+#include "le_features_gen.h"
 
 #define PSYCO_INITIALIZATION
 #include "initialize.h"
@@ -31,54 +31,54 @@ void psyco_out_of_memory(char *filename, int lineno) {
  * Ni Debug Trace hooks
  *************************************************************/
 DEFINEFN
-void ni_trace_begin_simple_code(code_t *code) {}
+void le_trace_begin_simple_code(code_t *code) {}
 
 DEFINEFN
-void ni_trace_end_simple_code(code_t *code) {}
+void le_trace_end_simple_code(code_t *code) {}
 
 DEFINEFN
-void ni_trace_begin_code(PsycoObject *po) {}
+void le_trace_begin_code(PsycoObject *po) {}
 
 DEFINEFN
-void ni_trace_end_code(PsycoObject *po) {}
+void le_trace_end_code(PsycoObject *po) {}
 
 DEFINEFN
-void ni_trace_jump(code_t *location, code_t *target) {}
+void le_trace_jump(code_t *location, code_t *target) {}
 
 DEFINEFN
-void ni_trace_jump_update(code_t *location, code_t *target) {}
+void le_trace_jump_update(code_t *location, code_t *target) {}
 
 DEFINEFN
-void ni_trace_jump_reg(code_t *location, int reg_target) {}
+void le_trace_jump_reg(code_t *location, int reg_target) {}
 
 DEFINEFN
-void ni_trace_jump_cond(code_t *location, code_t *not_taken, code_t *taken) {}
+void le_trace_jump_cond(code_t *location, code_t *not_taken, code_t *taken) {}
 
 DEFINEFN
-void ni_trace_jump_cond_update(code_t *location, code_t *not_taken,
+void le_trace_jump_cond_update(code_t *location, code_t *not_taken,
                                code_t *taken) {}
 
 DEFINEFN
-void ni_trace_jump_cond_reg(code_t *location, code_t *not_taken,
+void le_trace_jump_cond_reg(code_t *location, code_t *not_taken,
                             int reg_taken) {}
 
 DEFINEFN
-void ni_trace_call(code_t *location, code_t *call_target) {}
+void le_trace_call(code_t *location, code_t *call_target) {}
 
 DEFINEFN
-void ni_trace_call_reg(code_t *location, int reg_call_target) {}
+void le_trace_call_reg(code_t *location, int reg_call_target) {}
 
 DEFINEFN
-void ni_trace_return(code_t *location, int stack_adjust) {}
+void le_trace_return(code_t *location, int stack_adjust) {}
 
 DEFINEFN
-void ni_trace_unsupported_opcode(PyCodeObject *co, int bytecode_index) {}
+void le_trace_unsupported_opcode(PyCodeObject *co, int bytecode_index) {}
 
 DEFINEFN
-void ni_trace_run_fail(PyCodeObject *co, char *reason) {}
+void le_trace_run_fail(PyCodeObject *co, char *reason) {}
 
 DEFINEFN
-void ni_trace_unify(PsycoObject *po, CodeBufferObject *match) {}
+void le_trace_unify(PsycoObject *po, CodeBufferObject *match) {}
 #endif
 
 /* A record hangs off its code object as a weak reference of Ni's own
@@ -94,7 +94,7 @@ void ni_trace_unify(PsycoObject *po, CodeBufferObject *match) {}
 typedef struct {
   PyWeakReference wr;
   char attached;
-  ni_code_extra_t x;
+  le_code_extra_t x;
 } code_record_t;
 
 static PyTypeObject CodeRecord_Type = {
@@ -107,7 +107,7 @@ static PyObject *record_died_fn = NULL;
 #define RECORD_OF(px)                                                          \
   ((code_record_t *)((char *)(px)-offsetof(code_record_t, x)))
 
-DEFINEFN void ni_code_extra_free(ni_code_extra_t *x) {
+DEFINEFN void le_code_extra_free(le_code_extra_t *x) {
   psyco_owner_release(&x->owner, x->merge_points, x->entry_point);
   psyco_owner_untrack(x); /* after: releasing can keep into the owner */
   Py_DECREF(RECORD_OF(x));
@@ -120,16 +120,16 @@ static PyObject *record_died(PyObject *self, PyObject *ref) {
   if (Py_TYPE(ref) == &CodeRecord_Type && r->attached &&
       PyWeakref_GET_OBJECT(ref) == Py_None) {
     r->attached = 0;
-    ni_code_extra_free(&r->x);
+    le_code_extra_free(&r->x);
   }
   Py_RETURN_NONE;
 }
 
-static PyMethodDef record_died_def = {"ni_record_died", record_died, METH_O,
+static PyMethodDef record_died_def = {"le_record_died", record_died, METH_O,
                                       NULL};
 
 DEFINEFN
-ni_code_extra_t *ni_code_extra_get(PyCodeObject *co) {
+le_code_extra_t *le_code_extra_get(PyCodeObject *co) {
   PyWeakReference *r = (PyWeakReference *)co->co_weakreflist;
   for (; r != NULL; r = r->wr_next)
     if (Py_TYPE(r) == &CodeRecord_Type)
@@ -139,8 +139,8 @@ ni_code_extra_t *ni_code_extra_get(PyCodeObject *co) {
 
 /* unlinked without its callback; freeing it is the caller's */
 DEFINEFN
-ni_code_extra_t *ni_code_extra_detach(PyCodeObject *co) {
-  ni_code_extra_t *x = ni_code_extra_get(co);
+le_code_extra_t *le_code_extra_detach(PyCodeObject *co) {
+  le_code_extra_t *x = le_code_extra_get(co);
   if (x != NULL) {
     RECORD_OF(x)->attached = 0;
     _PyWeakref_ClearRef(&RECORD_OF(x)->wr);
@@ -149,9 +149,9 @@ ni_code_extra_t *ni_code_extra_detach(PyCodeObject *co) {
 }
 
 DEFINEFN
-ni_code_extra_t *ni_code_extra(PyCodeObject *co) {
+le_code_extra_t *le_code_extra(PyCodeObject *co) {
   static long next_serial = 0;
-  ni_code_extra_t *x = ni_code_extra_get(co);
+  le_code_extra_t *x = le_code_extra_get(co);
   PyObject *args;
   code_record_t *r;
   if (x != NULL)
@@ -191,30 +191,30 @@ static const char MODULE_NAME[] = "lejit._core";
    sets up the compiler, and _start and _stop put in or take out the eval
    hook; each does nothing if that is done already. The API is in Python
    (lejit/__init__.py). */
-DEFINEVAR int ni_set_up = 0; /* testing.c reads it */
-static int ni_running = 0;
+DEFINEVAR int le_set_up = 0; /* testing.c reads it */
+static int le_running = 0;
 
-static PyObject *ni_start(PyObject *self, PyObject *unused) {
-  if (!ni_set_up) {
+static PyObject *le_start(PyObject *self, PyObject *unused) {
+  if (!le_set_up) {
     initialize_all_files();
-    ni_set_up = 1;
+    le_set_up = 1;
   }
-  if (!ni_running) {
-    ni_entry_install();
-    ni_running = 1;
+  if (!le_running) {
+    le_entry_install();
+    le_running = 1;
   }
   Py_RETURN_NONE;
 }
 
-static PyObject *ni_stop(PyObject *self, PyObject *unused) {
-  if (ni_running) {
-    if (ni_entry_remove() < 0) {
+static PyObject *le_stop(PyObject *self, PyObject *unused) {
+  if (le_running) {
+    if (le_entry_remove() < 0) {
       PyErr_SetString(PyExc_RuntimeError,
                       "lejit.stop(): another frame evaluator was installed"
                       " over Ni's, so it can't be taken out");
       return NULL;
     }
-    ni_running = 0;
+    le_running = 0;
   }
   Py_RETURN_NONE;
 }
@@ -235,7 +235,7 @@ static int add_layout(PyObject *d, const char *name, Py_ssize_t size,
   return err ? -1 : 0;
 }
 
-static PyObject *ni_layouts(PyObject *self, PyObject *unused) {
+static PyObject *le_layouts(PyObject *self, PyObject *unused) {
   PyObject *result = PyDict_New(), *list = PyList_New(0), *d = PyDict_New();
   PyObject *it = NULL, *r = NULL, *rit = NULL, *one = NULL;
   int ok;
@@ -285,18 +285,18 @@ static PyObject *ni_layouts(PyObject *self, PyObject *unused) {
   if (one == NULL || PyDict_SetItem(d, one, one) < 0)
     goto error;
   {
-    ni_dictkeys_t *k = (ni_dictkeys_t *)((PyDictObject *)d)->ma_keys;
+    le_dictkeys_t *k = (le_dictkeys_t *)((PyDictObject *)d)->ma_keys;
     Py_ssize_t size = k->dk_size, usable = size * 2 / 3;
     Py_ssize_t whole = _PyDict_SizeOf((PyDictObject *)d), header = 0;
     ok = k->dk_refcnt == 1 && size >= 8 && (size & (size - 1)) == 0 &&
          size <= 0xff && k->dk_nentries == 1 && k->dk_usable == usable - 1 &&
          k->dk_lookup != NULL;
     if (ok) {
-      ni_dictentry_t *e = ni_dict_entries(k);
+      le_dictentry_t *e = le_dict_entries(k);
       /* what the interpreter's own keys header takes, past the index
          bytes and the entries */
       header = whole - (Py_ssize_t)sizeof(PyDictObject) - size -
-               (Py_ssize_t)sizeof(ni_dictentry_t) * usable;
+               (Py_ssize_t)sizeof(le_dictentry_t) * usable;
       ok = e[0].me_key == one && e[0].me_value == one && e[0].me_hash == 1;
     }
     if (add_layout(result, "PyDictKeysObject", ok ? header : whole, ok) < 0)
@@ -321,9 +321,9 @@ error:
 }
 
 static PyMethodDef module_methods[] = {
-    {"_start", ni_start, METH_NOARGS, "Put in the eval hook (lejit.start)."},
-    {"_stop", ni_stop, METH_NOARGS, "Take out the eval hook (lejit.stop)."},
-    {"_layouts", ni_layouts, METH_NOARGS,
+    {"_start", le_start, METH_NOARGS, "Put in the eval hook (lejit.start)."},
+    {"_stop", le_stop, METH_NOARGS, "Take out the eval hook (lejit.stop)."},
+    {"_layouts", le_layouts, METH_NOARGS,
      "{struct: size} of the copied structs, as this interpreter shows them."},
     {NULL, NULL, 0, NULL}};
 
@@ -348,27 +348,27 @@ static PyObject *build_dict(void) {
            *messages = PyDict_New(), *layouts = PyDict_New();
   if (d == NULL || features == NULL || messages == NULL || layouts == NULL)
     goto error;
-#define NI_FEATURE(name)                                                       \
+#define LE_FEATURE(name)                                                       \
   if (add_obj(features, #name, PyLong_FromLong(name)) < 0)                     \
     goto error;
-  NI_FEATURES(NI_FEATURE)
-#undef NI_FEATURE
-#define NI_MESSAGE(name)                                                       \
+  LE_FEATURES(LE_FEATURE)
+#undef LE_FEATURE
+#define LE_MESSAGE(name)                                                       \
   if (add_str(messages, #name, name) < 0)                                      \
     goto error;
-  NI_MESSAGES(NI_MESSAGE)
-#undef NI_MESSAGE
+  LE_MESSAGES(LE_MESSAGE)
+#undef LE_MESSAGE
   if (add_layout(layouts, "seqiterobject", sizeof(seqiterobject), 1) < 0 ||
       add_layout(layouts, "rangeobject", sizeof(rangeobject), 1) < 0 ||
       add_layout(layouts, "rangeiterobject", sizeof(rangeiterobject), 1) < 0 ||
-      add_layout(layouts, "PyDictKeysObject", sizeof(ni_dictkeys_t), 1) < 0)
+      add_layout(layouts, "PyDictKeysObject", sizeof(le_dictkeys_t), 1) < 0)
     goto error;
 #ifdef LE_SANITIZE
   const char *sanitizer = LE_SANITIZE;
 #else
   const char *sanitizer = NULL;
 #endif
-  if (add_str(d, "source_version", NI_FEATURES_SOURCE_VERSION) < 0 ||
+  if (add_str(d, "source_version", LE_FEATURES_SOURCE_VERSION) < 0 ||
       add_str(d, "build", ALL_CHECKS ? "checked" : "release") < 0 ||
       add_obj(d, "trace", PyBool_FromLong(LE_TRACE)) < 0 ||
       add_obj(d, "codestats", PyBool_FromLong(LE_CODESTATS)) < 0 ||
@@ -390,19 +390,19 @@ error:
 }
 
 /* the private functions for tests (testing.c) */
-EXTERNVAR PyMethodDef ni_testing_methods[];
+EXTERNVAR PyMethodDef le_testing_methods[];
 
-static struct PyModuleDef ni_module = {PyModuleDef_HEAD_INIT, MODULE_NAME, NULL,
+static struct PyModuleDef le_module = {PyModuleDef_HEAD_INIT, MODULE_NAME, NULL,
                                        -1, module_methods};
 
 /* Importing lejit._core starts nothing: lejit.start calls _start. */
 PyMODINIT_FUNC PyInit__core(void) {
-  PyObject *module = PyModule_Create(&ni_module), *build;
+  PyObject *module = PyModule_Create(&le_module), *build;
   if (module == NULL)
     return NULL;
   if (code_records_init() < 0)
     goto error;
-  if (PyModule_AddFunctions(module, ni_testing_methods) < 0)
+  if (PyModule_AddFunctions(module, le_testing_methods) < 0)
     goto error;
   build = build_dict();
   if (build == NULL || PyModule_AddObject(module, "_build", build)) {

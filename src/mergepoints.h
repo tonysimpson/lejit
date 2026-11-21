@@ -32,7 +32,7 @@ struct mergepoint_s {
 /* Get merge points (cached) */
 EXTERNFN PyObject* psyco_get_merge_points(PyCodeObject* co, int module);
 /* the same where x->merge_points is NULL: analyses 'co' */
-EXTERNFN PyObject* psyco_analyse_code(PyCodeObject* co, ni_code_extra_t* x,
+EXTERNFN PyObject* psyco_analyse_code(PyCodeObject* co, le_code_extra_t* x,
                                       int module);
 EXTERNFN int psyco_is_genexpr(PyCodeObject* co);
 /* the index in co_freevars of '__class__', or -1 */

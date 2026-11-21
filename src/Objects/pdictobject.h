@@ -26,7 +26,7 @@ EXTERNFN bool PsycoDict_StrSetItem(PsycoObject *po, vinfo_t *mp, vinfo_t *key,
                                    vinfo_t *value, bool fused);
 EXTERNFN bool PsycoDict_StrForget(PsycoObject *po);
 
-#if NI_HAS_PYDICT_NEWPRESIZED
+#if LE_HAS_PYDICT_NEWPRESIZED
 EXTERNFN vinfo_t* _PsycoDict_NewPresized(PsycoObject* po, long minused);
 #else
 #  define _PsycoDict_NewPresized(po, minused)     PsycoDict_New(po)
