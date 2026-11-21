@@ -1,4 +1,4 @@
-# Build and test Ni for one interpreter (PY), or every supported one.
+# Build and test LeJIT for one interpreter (PY), or every supported one.
 #
 #   make                      build lejit for PY, in place
 #   make check                checked build and every test, for PY

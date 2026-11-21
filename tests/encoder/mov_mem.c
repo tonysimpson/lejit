@@ -6,7 +6,7 @@
  * RAX, restore, ret), run it against a patterned buffer, then check the value
  * loaded or the bytes stored, and that every other byte of the buffer is
  * untouched. Built and run by tests/encoder/mov_mem.sh against the
- * objects of an in-place Ni build.
+ * objects of an in-place LeJIT build.
  */
 #include <Python.h>
 #include "psyco.h"

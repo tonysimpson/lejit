@@ -1,9 +1,9 @@
 #! /usr/bin/env python
 
 """
-Ni aims to provide a module that just makes Python faster.
+LeJIT aims to provide a module that just makes Python faster.
 
-Ni is based on a fork of Armin Rigo's Psyco, Armin and the other Psyco
+LeJIT is based on a fork of Armin Rigo's Psyco, Armin and the other Psyco
 developers moved onto PyPy so go check that out if you want a high performance
 implementation of Python (http://pypy.org).
 """
@@ -23,19 +23,19 @@ class BuildError(Exception):
 
 
 def fallback_reason():
-    """Why no C extension is built for this Python, or None. Ni compiles to
+    """Why no C extension is built for this Python, or None. LeJIT compiles to
     x86-64 code for CPython on Linux; anywhere else only the Python package
-    is installed, whose functions then do nothing, so that installing Ni
+    is installed, whose functions then do nothing, so that installing LeJIT
     never fails. LE_FALLBACK=1 installs it so anyway, to test it."""
     impl = platform.python_implementation()
     if impl != 'CPython':
-        return 'Ni runs only on CPython, not %s' % impl
+        return 'LeJIT runs only on CPython, not %s' % impl
     if not sys.platform.startswith('linux') or platform.machine() != 'x86_64' \
             or sys.maxsize <= 2**32:
-        return 'Ni runs only on x86-64 Linux, not %s %s' % (sys.platform,
+        return 'LeJIT runs only on x86-64 Linux, not %s %s' % (sys.platform,
                                                            platform.machine())
     if sys.version_info >= (3, 11):
-        return 'Ni runs only on CPython 3.7 to 3.10, not %d.%d' % sys.version_info[:2]
+        return 'LeJIT runs only on CPython 3.7 to 3.10, not %d.%d' % sys.version_info[:2]
     if os.environ.get('LE_FALLBACK') == '1':
         return 'LE_FALLBACK=1 was set when it was installed'
     return None
@@ -135,7 +135,7 @@ extra_compile_args += cpython_warnings()
 extra_compile_args += ['-Werror=implicit-function-declaration',
                        '-Werror=int-conversion',
                        '-Werror=incompatible-pointer-types']
-# what CPython's flags warn of that is no fault in Ni's code:
+# what CPython's flags warn of that is no fault in LeJIT's code:
 # - type-limits: an opcode the source lacks is defined as 256 and up,
 #   so a byte compared with it is always false on that version
 # - deprecated-declarations: compiled code calls the API the version has

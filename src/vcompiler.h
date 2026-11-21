@@ -583,11 +583,11 @@ EXTERNFN bool psyco_internal_putfld(PsycoObject *po, int findex, defield_t df,
 #define NONNEG_FIELD(cstruct, ctype, cfield, prevf)                            \
   STRUCT_FIELD_BUILD(cstruct, ctype, cfield, prevf, FIELD_NONNEG)
 
-/* a field of a CPython struct: its offset, the size Ni reads and whether
+/* a field of a CPython struct: its offset, the size LeJIT reads and whether
    unsigned come from psyco.h's LE_OFS_, LE_SIZE2_ and LE_UNSIGNED_
    macros, checked against the target's headers; a field not listed
    there doesn't compile. DEF_FIELD and the others above are for
-   Ni's own structs. */
+   LeJIT's own structs. */
 #define CPY_FIELD_BUILD(cstruct, cfield, prevf, flags)                         \
   ((defield_t)(((long)LE_OFS_##cstruct##__##cfield << FIELD_OFS_SHIFT) |       \
                ((long)LE_SIZE2_##cstruct##__##cfield << FIELD_SIZE2_SHIFT) |   \

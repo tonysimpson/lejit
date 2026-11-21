@@ -328,7 +328,7 @@ HEADER_DETECTORS = {
 }
 
 # features that neither the interpreter nor the headers show: the two forms
-# Ni copies behave the same, and the difference is only in a C file
+# LeJIT copies behave the same, and the difference is only in a C file
 NOT_VISIBLE = {}
 
 

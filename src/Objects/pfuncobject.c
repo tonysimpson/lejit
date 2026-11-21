@@ -150,7 +150,7 @@ bool PsycoGenexpr_Check(vinfo_t *v) {
 /***************************************************************/
 /*** function objects meta-implementation                    ***/
 
-/* The defaults a call to 'f' is compiled with: those Ni first saw on f,
+/* The defaults a call to 'f' is compiled with: those LeJIT first saw on f,
    recorded while code relies on them (psyco_record), never changed, so a
    respawn's replay decides as the original compile did and a guard
    comparing f's func_defaults with them can't be fooled by a new tuple at

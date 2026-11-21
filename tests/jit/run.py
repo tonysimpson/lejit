@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runs each case in tests/jit/cases/ plain and with Ni, in fresh processes.
+"""Runs each case in tests/jit/cases/ plain and with LeJIT, in fresh processes.
 Results must match, the function must have been compiled, and it mustn't
 leak.
 
@@ -81,7 +81,7 @@ def main():
             elif got[-1] != 'compiled: yes':
                 problem = got[-1]
             elif leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks'):
-                problem = 'leaks: %d more blocks after 100 extra rounds (%d without Ni)' % (
+                problem = 'leaks: %d more blocks after 100 extra rounds (%d without LeJIT)' % (
                     leak_lejit, leak_ref)
         xfail = opts.get('xfail')
         if problem and xfail:

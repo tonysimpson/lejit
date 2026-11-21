@@ -52,7 +52,7 @@ void *le_tstate_current_address(void) {
    thread that may not handle it); PyEval_SaveThread and
    PyEval_RestoreThread are the GIL drop and take sequence. The word's
    address is the compiling thread's interpreter's, fixed for the process
-   as long as Ni runs in one interpreter. */
+   as long as LeJIT runs in one interpreter. */
 _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyInterpreterState *)0)->ceval.eval_breaker),
                    _Py_atomic_int) &&
@@ -252,7 +252,7 @@ int le_eval_breaker_at_entry(PyFrameObject *f) {
 /* The recursion limit is the interpreter's ceval.recursion_limit, which
    sys.setrecursionlimit sets. Compiled code compares the depth with it in
    place; its address is the compiling thread's interpreter's, fixed for
-   the process as long as Ni runs in one interpreter. */
+   the process as long as LeJIT runs in one interpreter. */
 _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyInterpreterState *)0)->ceval.recursion_limit), int),
                "LeJIT: the interpreter's ceval.recursion_limit is read as an int");
@@ -261,7 +261,7 @@ int *le_recursion_limit_address(void) {
   return &PyThreadState_GET()->interp->ceval.recursion_limit;
 }
 #else
-/* The recursion limit is where Ni's build sees it: nothing to give
+/* The recursion limit is where LeJIT's build sees it: nothing to give
    here. */
 #endif
 

@@ -1,4 +1,4 @@
-"""Ni, a JIT compiler for CPython 3.7 to 3.10 on x86-64 Linux.
+"""LeJIT, a JIT compiler for CPython 3.7 to 3.10 on x86-64 Linux.
 
 Importing lejit starts nothing; call start().
 """
@@ -25,11 +25,11 @@ _no_headers = None
 
 def _unsupported():
     if _platform.python_implementation() != 'CPython':
-        return 'Ni runs only on CPython'
+        return 'LeJIT runs only on CPython'
     if _sys.platform != 'linux' or _platform.machine() != 'x86_64':
-        return 'Ni runs only on x86-64 Linux'
+        return 'LeJIT runs only on x86-64 Linux'
     if _sys.version_info >= (3, 11):
-        return 'Ni runs only on CPython 3.7 to 3.10'
+        return 'LeJIT runs only on CPython 3.7 to 3.10'
     return _missing
 
 
@@ -44,7 +44,7 @@ def _shown(d, name):
 
 
 def build_features():
-    """The features, messages and struct layouts Ni was built with, as a
+    """The features, messages and struct layouts LeJIT was built with, as a
     frozenset of (name, value) pairs."""
     return _pairs(_core._build) if _core else frozenset()
 
@@ -89,7 +89,7 @@ def check(error=False):
         built = dict(build_features())
         here = dict(runtime_features())
         names = sorted({n for n, _ in diffs})
-        why = 'lejit: this Python differs from the one Ni was built for: ' + \
+        why = 'lejit: this Python differs from the one LeJIT was built for: ' + \
             '; '.join('%s is %s, built with %s' % (n, _shown(here, n), _shown(built, n))
                       for n in names[:3])
         if len(names) > 3:

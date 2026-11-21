@@ -30,6 +30,6 @@ classifiers = [
 Homepage = "https://github.com/tonysimpson/ni"
 
 [tool.setuptools]
-# the package lejit, with its compiled module lejit._core where Ni can run
+# the package lejit, with its compiled module lejit._core where LeJIT can run
 # (setup.py); src/ holds the C sources
 packages = ["lejit"]

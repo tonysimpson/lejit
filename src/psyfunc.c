@@ -84,7 +84,7 @@ struct fncall_arg_s {
   int po_size;
 };
 
-/* What Ni's frames support, tested before anything is emitted: no
+/* What LeJIT's frames support, tested before anything is emitted: no
    **kwargs dict and no cells of the code's own (a frame doesn't make them
    at entry; the binder would refuse both later, after the closure's cells
    were loaded), and free variables only when the caller has the cells
@@ -358,7 +358,7 @@ static bool fncall_bind(struct fncall_arg_s *fncall, PsycoObject *po,
     array_delete(a, po);
     return false;
   }
-  /* Ni's unbound local is a known NULL, as LOAD_FAST tests it */
+  /* LeJIT's unbound local is a known NULL, as LOAD_FAST tests it */
   for (i = 0; i < nlocals; i++)
     if (locals[i] == NULL)
       locals[i] = psyco_vi_Zero();

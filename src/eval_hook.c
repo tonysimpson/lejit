@@ -115,11 +115,11 @@ static PyObject *le_code_to_run(PyCodeObject *co, PyObject *globals,
   return NULL;
 }
 
-/* how CPython hands calls to Ni: LeEval_EvalFrame and le_entry_install */
+/* how CPython hands calls to LeJIT: LeEval_EvalFrame and le_entry_install */
 #if LE_HAS_EVAL_HOOK_TSTATE
 /* Entry by the PEP 523 frame-evaluation hook, which is given the thread
    state and a PyFrameObject. Every frame CPython evaluates comes here
-   first: one whose code Ni has compiled (eval_hook.c:le_code_to_run) runs
+   first: one whose code LeJIT has compiled (eval_hook.c:le_code_to_run) runs
    on the frame's argument words (eval_hook.c:LeCode_Run), anything else
    goes to the evaluator installed before. The hook is read and set
    through the interpreter state's API functions. */
@@ -151,7 +151,7 @@ DEFINEFN PyObject *le_eval_frame_default(PyFrameObject *f) {
 #else
 /* Entry by the PEP 523 frame-evaluation hook, which is given a
    PyFrameObject. Every frame CPython evaluates comes here first: one
-   whose code Ni has compiled (eval_hook.c:le_code_to_run) runs on the
+   whose code LeJIT has compiled (eval_hook.c:le_code_to_run) runs on the
    frame's argument words (eval_hook.c:LeCode_Run), anything else goes to
    the evaluator installed before. The interpreter state that holds the
    hook is internal from 3.8, so Python/pyruntime.c (Py_BUILD_CORE) reads
@@ -183,10 +183,10 @@ DEFINEFN PyObject *le_eval_frame_default(PyFrameObject *f) {
 }
 #endif
 
-/* lejit.start: CPython hands every frame to Ni from now on. The evaluator
-   that was there is kept, since Ni passes it the frames it doesn't
+/* lejit.start: CPython hands every frame to LeJIT from now on. The evaluator
+   that was there is kept, since LeJIT passes it the frames it doesn't
    compile, and it stays kept after lejit.stop for any call already on its
-   way through Ni's */
+   way through LeJIT's */
 DEFINEFN void le_entry_install(void) {
   le_eval_frame_fn now = get_eval_frame();
   if (now != LeEval_EvalFrame) {
@@ -197,8 +197,8 @@ DEFINEFN void le_entry_install(void) {
 
 /* lejit.stop: new frames go to the evaluator that was there before; frames
    already running compiled code go on to their end compiled. Returns -1
-   if another evaluator has been installed over Ni's: it would still pass
-   frames on to Ni, and can't be taken out from here. */
+   if another evaluator has been installed over LeJIT's: it would still pass
+   frames on to LeJIT, and can't be taken out from here. */
 DEFINEFN int le_entry_remove(void) {
   le_eval_frame_fn now = get_eval_frame();
   if (now == LeEval_EvalFrame)

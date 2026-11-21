@@ -1,4 +1,4 @@
-"""Find the CPython source tree for the version Ni is being built for.
+"""Find the CPython source tree for the version LeJIT is being built for.
 
 LE_CPYTHON_SRC, if set, is used as it is. Otherwise the release tarball for
 that exact version is fetched from python.org once, checked against

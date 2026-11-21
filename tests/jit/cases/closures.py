@@ -71,7 +71,7 @@ def rebind_arg_cell(k):
 
 
 def calls_from_list(k):
-    # new lambdas each call, called where Ni didn't see them made: the call
+    # new lambdas each call, called where LeJIT didn't see them made: the call
     # site promotes their (shared) code, not each function object
     fs = [lambda: k, lambda: k * 2]
     return [f() for f in fs]

@@ -146,7 +146,7 @@ def freed_in_subinterpreter():
 def unscanned_freed_in_subinterpreter():
     # compiled code in plain cycles (the namespace and its function) that
     # become garbage with no scan since: the subinterpreter's collection
-    # frees them (lejit.c: why Ni's records aren't in co_extra)
+    # frees them (lejit.c: why LeJIT's records aren't in co_extra)
     import _testcapi
     gc.collect()
     gc.disable()
@@ -251,7 +251,7 @@ def borrowed_globals_reused():
 
 
 # Another user of co_extra (PEP 523): CPython calls every registered free
-# function for every slot, NULL included, so Ni's must accept NULL for a code
+# function for every slot, NULL included, so LeJIT's must accept NULL for a code
 # object it never saw (CPython's test_code CoExtra segfaulted). The free
 # function is C (PyMem_RawFree): a Python callback would run at exit too.
 _api = ctypes.pythonapi
@@ -295,7 +295,7 @@ def recompiled_loops_free():
     # each compile of nested loops compares states at the loop heads; the
     # differences found for a block not taken must be freed (the leak
     # check, over 100 compiles). The first call compiles 200 times: what
-    # Ni's own allocators hold grows a little before it levels off
+    # LeJIT's own allocators hold grows a little before it levels off
     for _ in range(_warm.pop() if _warm else 1):
         ns = {}
         _exec(LOOPS, ns)

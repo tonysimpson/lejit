@@ -471,14 +471,14 @@ static code_t *load_miss_glue;
 
 /* Whether to emit the inline path for 'tp', in a way that a replay repeats
    (see psyco_block_serial). CPython never gives a class shared keys again
-   once it drops them. So: yes while it has them; no if Ni never saw it with
-   them; otherwise yes only in blocks older than the moment Ni first saw
+   once it drops them. So: yes while it has them; no if LeJIT never saw it with
+   them; otherwise yes only in blocks older than the moment LeJIT first saw
    them gone, which includes every block compiled while it had them. What
-   Ni saw is a record (psyco_record), held by the code that relied on it:
+   LeJIT saw is a record (psyco_record), held by the code that relied on it:
    a new class at a dead one's address starts unseen. */
 static bool keys_inline(PsycoObject *po, PyTypeObject *tp) {
   /* type -> None while it has shared keys, then the first block serial
-     after Ni saw them gone */
+     after LeJIT saw them gone */
   static le_addrmap_t seen;
   PyObject **slot = psyco_record(&seen, tp), *d = *slot;
   if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) {

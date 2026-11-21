@@ -147,7 +147,7 @@ PSY_INLINE void psyco_decref_rt(PsycoObject *po, vinfo_t *v) {
   END_CODE
 }
 
-/* emit Py_XDECREF(v) for run-time v, a word Ni holds no reference to that
+/* emit Py_XDECREF(v) for run-time v, a word LeJIT holds no reference to that
    may be NULL at run time: the old content of a field the C code has just
    overwritten, whose reference it now releases (STORE_DEREF's cell). The
    register load and the cc save are made before the NULL test, so both

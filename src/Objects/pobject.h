@@ -108,7 +108,7 @@ EXTERNVAR long psyco_stat_forgotten_types;
 #endif
 
 /* A slot of a heap type, at 'slot' (an address inside the type), for code
-   specialised on it: *value is the slot as Ni first saw it, and compiled
+   specialised on it: *value is the slot as LeJIT first saw it, and compiled
    code checks that it still is. 1 on that path, 0 on the path where it
    changed (the caller then calls what CPython calls, which reads the slot
    at run time), -1 on error. */
@@ -126,7 +126,7 @@ PSY_INLINE int Psyco_TypeSlot(PsycoObject* po, PyTypeObject* tp, void* slot,
 
 /* _PyType_Lookup(tp, name) on a heap type, as typeobject.c's slot
    functions find a special method: *descr (borrowed, NULL for none) is what
-   Ni first saw for 'key' (an address of tp's, distinct per name), held by
+   LeJIT first saw for 'key' (an address of tp's, distinct per name), held by
    the record, so a respawn's replay decides as the compile did; compiled
    code checks the version tag behind a guard shared with the sites of
    (tp, name, *descr). 1 on the path where it passes, 0 on the path where
@@ -304,7 +304,7 @@ PSY_INLINE le_dictentry_t *le_dict_entries(le_dictkeys_t *k) {
   return (le_dictentry_t *)(k->dk_indices + k->dk_size * ixsize);
 }
 
-/* ma_version_tag for the dict stores Ni makes itself: CPython's own
+/* ma_version_tag for the dict stores LeJIT makes itself: CPython's own
    counter is static in dictobject.c and never reaches 2^63, where this one
    starts, so tags from the two never meet */
 EXTERNVAR uint64_t le_dict_version;

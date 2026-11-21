@@ -1,5 +1,5 @@
 /*
- * Ni's replacement for Psyco's merge-point analysis. It has three jobs:
+ * LeJIT's replacement for Psyco's merge-point analysis. It has three jobs:
  *  1. It is the opcode whitelist. A code object containing any opcode not
  *     handled in the switch gets Py_None and is never compiled.
  *  2. It marks merge points: bytecode positions where the state is compared
@@ -365,7 +365,7 @@ done:
     return ok;
 }
 
-/* NULL with *bad set: a jump to no instruction's start, which Ni doesn't
+/* NULL with *bad set: a jump to no instruction's start, which LeJIT doesn't
    compile (a wrong unit would be a jump to the wrong place) */
 static co_report_t *
 _find_merge_points(PyCodeObject *co, int *bad)

@@ -4,7 +4,7 @@
 # must be seen. Classes with a metaclass get a version tag
 # (enable_version_tag), so their guards hold, and their changes must be
 # seen too. Counts of failed guards come from lejit._core._stats() and are 0 in
-# the plain run, so a case returns them only where Ni must also give 0.
+# the plain run, so a case returns them only where LeJIT must also give 0.
 import abc
 import enum
 import sys
@@ -214,7 +214,7 @@ class Concrete(Abstract):
 
 
 def metaclass_classes(n):
-    # CPython 3.7 gives these no version tag; Ni sets the flag, so their
+    # CPython 3.7 gives these no version tag; LeJIT sets the flag, so their
     # guards hold, and a change to the class or to a base is still seen
     out = []
     for C, B in ((WithMeta, WithMeta), (Concrete, Abstract)):

@@ -1,5 +1,5 @@
 # The recursion depth that compiled calls count inline.
-# Depths differ between CPython and Ni (inlined calls aren't counted), so
+# Depths differ between CPython and LeJIT (inlined calls aren't counted), so
 # the cases return only what both agree on.
 import sys
 

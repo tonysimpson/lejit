@@ -5,9 +5,9 @@ in by another literal (an operator's name CPython passes as a constant).
 A fragment (an operator's name) is a literal, or fills its message's
 conversion to make one. 3.11 and 3.12 are shown for information.
 
-The CPython texts Ni keeps as they are, because no Python code reaches
+The CPython texts LeJIT keeps as they are, because no Python code reaches
 them (they need malformed bytecode or more memory than there is), are
-checked to be literals of the versions Ni uses them on.
+checked to be literals of the versions LeJIT uses them on.
 
     python3 tests/features/strings_test.py
 """
@@ -26,7 +26,7 @@ PYENV = os.path.expanduser('~/.pyenv/versions')
 SUPPORTED = ['3.7.17', '3.8.20', '3.9.21', '3.10.16']
 INFORMATION = ['3.11.11', '3.12.9']
 
-# CPython's texts Ni keeps as literals: (text, the versions Ni uses it on)
+# CPython's texts LeJIT keeps as literals: (text, the versions LeJIT uses it on)
 UNREACHABLE = [
     ('bad memberdescr type', SUPPORTED),
     ('popped block is not an except handler', SUPPORTED),

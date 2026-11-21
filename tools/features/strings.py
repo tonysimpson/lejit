@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Take the messages CPython shows from the interpreter Ni is built for.
+"""Take the messages CPython shows from the interpreter LeJIT is built for.
 
 Compiled code raises the same exceptions and warnings as CPython, with the
 same text, and that text changes between releases. Rather than copying it,
@@ -15,7 +15,7 @@ from what comes back:
   (%.200s), so a third run with names 1000+ characters long shows it;
 - an object shown as %R is shown by repr, %d and the like by their value.
 
-A precision can't be seen for a fixed C string Ni passes itself (an
+A precision can't be seen for a fixed C string LeJIT passes itself (an
 operator's name, say): the entry gives that conversion, and the operator's
 name is an entry of its own, a fragment, read from the message the operator
 gives. A message the probe can't recover stops the build, never a guess.
@@ -74,7 +74,7 @@ def I(conv):
 
 
 def F(spec, text):
-    """A C string Ni passes itself, shown as `text` in the probe's case:
+    """A C string LeJIT passes itself, shown as `text` in the probe's case:
     its conversion can't be seen, so it is given."""
     return {'k': 'F', 'spec': spec, 'text': text}
 

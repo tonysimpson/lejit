@@ -4,7 +4,7 @@
  * "lvl": (po, PyObject *descr, vinfo_t *obj, PyTypeObject *type). They skip
  * descrobject.c's descr_check; generic_getattr uses them only when obj's
  * type is a subtype of the descriptor's d_type (assumed by member_get,
- * below). method_get stays here: its result is Ni's virtual
+ * below). method_get stays here: its result is LeJIT's virtual
  * PyCFunction, which has no TYPES constructor.
  */
 #include "pdescrobject.h"

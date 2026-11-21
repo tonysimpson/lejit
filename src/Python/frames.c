@@ -41,7 +41,7 @@
  * through C from compiled code keeps the f_back ceval gave it, which the
  * evaluators put tstate->frame back to, and the getter gives the compiled
  * frames it skips (frame_get_back); a real frame LeCode_Run runs gets its
- * current line from Ni's chain (frame_get_lineno). A traceback frame gets
+ * current line from LeJIT's chain (frame_get_lineno). A traceback frame gets
  * the entry's over it as f_back, or the caller for the one that catches
  * (psyco_frame_link_callee, catcher_caller). C code reading f_back,
  * f_lasti or f_localsplus itself bypasses the getters: _warnings.warn runs
@@ -197,7 +197,7 @@ void psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
 
 /* The callee-saved registers of the compiled frame whose slot is
    'slot', as it called C, which keeps them or saves them in its frame:
-   found by unwinding the C frames from here down to it. Ni's code has no
+   found by unwinding the C frames from here down to it. LeJIT's code has no
    unwind information, so each run of compiled code nearer here (from the
    real frame LeCode_Run runs, innermost first) is stepped over from
    where its glue saved the registers of the C code that called it
@@ -380,7 +380,7 @@ static void locals_from_slot(PyFrameObject *f, stack_frame_info_t **slot) {
    they are asked for (frame_sync_locals), not made with it: most emulated
    frames are walked over for their code and line. Its empty value stack
    holds LOCALS_NOTE and its tag meanwhile. Once the compiled frame no
-   longer runs (no tuple of its code and tag in Ni's chain), the frame
+   longer runs (no tuple of its code and tag in LeJIT's chain), the frame
    keeps what was read last. */
 static char locals_note;
 #define LOCALS_NOTE ((PyObject *)&locals_note)
@@ -984,7 +984,7 @@ static bool runs_compiled(PyFrameObject *f) {
 /* frame.f_back, replaced in PyFrame_Type's dict. A running real frame
    entered through C from compiled code has as f_back the real frame
    LeCode_Run runs, which skips any compiled frames in
-   between: they are found where the frame is in Ni's chain and given,
+   between: they are found where the frame is in LeJIT's chain and given,
    emulated and linked to the real one. The stored f_back stays, since
    the evaluators put tstate->frame back to it. */
 struct back_s {
@@ -1146,7 +1146,7 @@ static PyGetSetDef back_getset = {"f_back", (getter)frame_get_back, NULL,
                                   NULL, NULL};
 
 /* frame.f_lineno, replaced too: a frame LeCode_Run runs doesn't keep its
-   f_lasti, so its place comes from Ni's chain, where its tuple carries
+   f_lasti, so its place comes from LeJIT's chain, where its tuple carries
    it. The setter (a jump, under tracing) is ceval's. */
 static PyObject *lineno_descr = NULL;
 
@@ -1525,7 +1525,7 @@ static PyMethodDef le_warn_def = {
     "warn", (PyCFunction)(void (*)(void))le_warn, METH_VARARGS | METH_KEYWORDS,
     "warn(message, category=None, stacklevel=1)\n\n"
     "Issue a warning, or maybe ignore it or raise an exception, counting\n"
-    "frames of code compiled by Ni for stacklevel."};
+    "frames of code compiled by LeJIT for stacklevel."};
 
 /* replaces warn in _warnings and, if imported, warnings */
 static void warn_init(void) {
@@ -1591,7 +1591,7 @@ static PyMethodDef le_getframe_def = {
     METH_VARARGS | METH_KEYWORDS,
     "_getframe([depth]) -> frameobject\n\n"
     "Return a frame object from the call stack, counting frames of code\n"
-    "compiled by Ni (emulated)."};
+    "compiled by LeJIT (emulated)."};
 
 INITIALIZATIONFN
 void psyco_frames_init(void) {

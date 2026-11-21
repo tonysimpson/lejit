@@ -2394,7 +2394,7 @@ generic:
                                  METH_FASTCALL | METH_KEYWORDS, self, vargs);
 }
 
-/* The iterator is Ni's virtual sequence iterator over the list (forced,
+/* The iterator is LeJIT's virtual sequence iterator over the list (forced,
    it is that iterator over the real list at the index of the items
    given), with the scan position as one more word, in the root's
    characters when the source is a view. The root must be ready (a
@@ -2565,7 +2565,7 @@ error_n:
    '(key)'), so no parse error is left to run time, and is used only when
    the number of arguments is the plan's (a non-tuple argument is one: a
    mapping changes nothing then), else it is CPython's function, which
-   raises its own errors. Plans live as long as Ni, one per format. */
+   raises its own errors. Plans live as long as LeJIT, one per format. */
 enum { FMT_TEXT, FMT_PERCENT, FMT_ARG };
 
 typedef struct {

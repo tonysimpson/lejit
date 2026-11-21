@@ -1,4 +1,4 @@
-"""Runs CPython's own test modules plain and with Ni; the counts and exit
+"""Runs CPython's own test modules plain and with LeJIT; the counts and exit
 status must match. Every test_* module of the interpreter's test package
 runs except BANNED.
 
@@ -15,7 +15,7 @@ MEMORY_LIMIT = 4 << 30          # bytes of address space per run
 
 # reason: names (fnmatch patterns); a name no version has is fine
 BANNED = {
-    "can't run here, with or without Ni":
+    "can't run here, with or without LeJIT":
         'test_curses test_idle test_tcl test_tix test_tk test_ttk_* test_turtle '
         'test_*net test_nntplib test_ssl test_timeout test_codecmaps_* test_normalization '
         'test_win* test_msilib test_startfile test_osx_env test_kqueue test_devpoll test_ossaudiodev '
@@ -49,7 +49,7 @@ sys.stdout.flush()
 
 
 def limit_memory():
-    # a module that runs away under Ni gets MemoryError instead of taking
+    # a module that runs away under LeJIT gets MemoryError instead of taking
     # the machine
     resource.setrlimit(resource.RLIMIT_AS, (MEMORY_LIMIT, MEMORY_LIMIT))
 
@@ -77,7 +77,7 @@ def check(name):
     plain, with_lejit = run('plain', name), run('lejit', name)
     if plain == with_lejit:
         return True, 'ok     %-24s %s' % (name, plain)
-    return False, 'FAIL   %-24s %s   with Ni: %s' % (name, plain, with_lejit)
+    return False, 'FAIL   %-24s %s   with LeJIT: %s' % (name, plain, with_lejit)
 
 
 def modules():

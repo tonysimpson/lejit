@@ -4018,7 +4018,7 @@ generic:
 
 /* ceval.c's FOR_ITER: GET_ITER made sure the slot was there, but a heap
    type's can have gone since (CPython leaves _PyObject_NextNotImplemented,
-   which raises TypeError); NULL is tested only in case Ni's GET_ITER was
+   which raises TypeError); NULL is tested only in case LeJIT's GET_ITER was
    bypassed, and raises what _PyObject_NextNotImplemented does. */
 static PyObject *cimpl_iternext(PyObject *iter) {
   iternextfunc f = Py_TYPE(iter)->tp_iternext;

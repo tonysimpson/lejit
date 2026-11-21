@@ -28,7 +28,7 @@ void psyco_out_of_memory(char *filename, int lineno) {
 
 #if LE_TRACE
 /**************************************************************
- * Ni Debug Trace hooks
+ * LeJIT Debug Trace hooks
  *************************************************************/
 DEFINEFN
 void le_trace_begin_simple_code(code_t *code) {}
@@ -81,13 +81,13 @@ DEFINEFN
 void le_trace_unify(PsycoObject *po, CodeBufferObject *match) {}
 #endif
 
-/* A record hangs off its code object as a weak reference of Ni's own
+/* A record hangs off its code object as a weak reference of LeJIT's own
    type rather than in co_extra: code_dealloc calls the co_extra free
    functions of whichever interpreter is current, and on 3.7 a
    subinterpreter's table is never initialised (PyInterpreterState_New),
    so main-interpreter garbage that a subinterpreter's collection frees
    would call junk. A weak reference's callback runs in any interpreter.
-   The record lives inside the reference, which the GC doesn't track; Ni
+   The record lives inside the reference, which the GC doesn't track; LeJIT
    holds one reference to it while it is attached (or being freed), and
    its owner releases the compiled code (codemanager.c). It is visible
    only to weakref.getweakrefs on the code object. */
@@ -211,7 +211,7 @@ static PyObject *le_stop(PyObject *self, PyObject *unused) {
     if (le_entry_remove() < 0) {
       PyErr_SetString(PyExc_RuntimeError,
                       "lejit.stop(): another frame evaluator was installed"
-                      " over Ni's, so it can't be taken out");
+                      " over LeJIT's, so it can't be taken out");
       return NULL;
     }
     le_running = 0;
@@ -220,7 +220,7 @@ static PyObject *le_stop(PyObject *self, PyObject *unused) {
 }
 
 /* The structs psyco.h copies from CPython's source, because no installed
-   header declares them, can't be checked against the headers when Ni is
+   header declares them, can't be checked against the headers when LeJIT is
    built. lejit._core._build['layouts'] has the size of each copy; _layouts()
    what the running interpreter shows of it: the same size where the fields
    of one it makes read through the copy as they should, or what is wrong.
@@ -228,7 +228,7 @@ static PyObject *le_stop(PyObject *self, PyObject *unused) {
 static int add_layout(PyObject *d, const char *name, Py_ssize_t size,
                       int fields_ok) {
   PyObject *v = fields_ok ? PyLong_FromSsize_t(size)
-                          : PyUnicode_FromFormat("not as Ni's copy (size %zd)",
+                          : PyUnicode_FromFormat("not as LeJIT's copy (size %zd)",
                                                  size);
   int err = v == NULL || PyDict_SetItemString(d, name, v) < 0;
   Py_XDECREF(v);
@@ -329,7 +329,7 @@ static PyMethodDef module_methods[] = {
 
 /* lejit._core._build, for lejit.build_features and the tests: the CPython source
    the features were detected in, the features, messages and copied structs'
-   sizes compiled in, and how Ni was built */
+   sizes compiled in, and how LeJIT was built */
 static int add_str(PyObject *d, const char *key, const char *value) {
   PyObject *v = value ? PyUnicode_FromString(value) : (Py_INCREF(Py_None), Py_None);
   int err = v == NULL || PyDict_SetItemString(d, key, v) < 0;

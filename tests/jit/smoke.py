@@ -1,5 +1,5 @@
 """Exercises a spread of the stdlib; output must be the same with and
-without Ni.
+without LeJIT.
 
     python3.X tests/jit/smoke.py plain|lejit
 """

@@ -14,7 +14,7 @@
 /* the messages (LE_MSG_) of the interpreter built for, from
    tools/features/strings.py */
 #include "le_strings_gen.h"
-/* offsets, sizes and private structs of the CPython fields Ni relies on
+/* offsets, sizes and private structs of the CPython fields LeJIT relies on
    (vcompiler.h:CPY_FIELD), each checked at compile time against the
    field's type */
 #include <stddef.h>
@@ -26,11 +26,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyObject *)0)->ob_refcnt), Py_ssize_t),
                "LeJIT: PyObject.ob_refcnt is not Py_ssize_t");
 _Static_assert(sizeof(((PyObject *)0)->ob_refcnt) == 8,
-               "LeJIT: PyObject.ob_refcnt: Ni reads 8 bytes");
+               "LeJIT: PyObject.ob_refcnt: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyObject *)0)->ob_refcnt) == 1,
-               "LeJIT: PyObject.ob_refcnt: Ni reads it as an integer");
+               "LeJIT: PyObject.ob_refcnt: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyObject *)0)->ob_refcnt))-1 < 0) == 1,
-               "LeJIT: PyObject.ob_refcnt: Ni reads it as signed");
+               "LeJIT: PyObject.ob_refcnt: LeJIT reads it as signed");
 #define LE_OFS_PyObject__ob_type offsetof(PyObject, ob_type)
 #define LE_SIZE2_PyObject__ob_type 3
 #define LE_UNSIGNED_PyObject__ob_type 0
@@ -38,9 +38,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyObject *)0)->ob_type), struct _typeobject *),
                "LeJIT: PyObject.ob_type is not struct _typeobject *");
 _Static_assert(sizeof(((PyObject *)0)->ob_type) == 8,
-               "LeJIT: PyObject.ob_type: Ni reads 8 bytes");
+               "LeJIT: PyObject.ob_type: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyObject *)0)->ob_type) == 5,
-               "LeJIT: PyObject.ob_type: Ni reads it as a pointer");
+               "LeJIT: PyObject.ob_type: LeJIT reads it as a pointer");
 
 #define LE_OFS_PyVarObject__ob_size offsetof(PyVarObject, ob_size)
 #define LE_SIZE2_PyVarObject__ob_size 3
@@ -49,11 +49,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyVarObject *)0)->ob_size), Py_ssize_t),
                "LeJIT: PyVarObject.ob_size is not Py_ssize_t");
 _Static_assert(sizeof(((PyVarObject *)0)->ob_size) == 8,
-               "LeJIT: PyVarObject.ob_size: Ni reads 8 bytes");
+               "LeJIT: PyVarObject.ob_size: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyVarObject *)0)->ob_size) == 1,
-               "LeJIT: PyVarObject.ob_size: Ni reads it as an integer");
+               "LeJIT: PyVarObject.ob_size: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyVarObject *)0)->ob_size))-1 < 0) == 1,
-               "LeJIT: PyVarObject.ob_size: Ni reads it as signed");
+               "LeJIT: PyVarObject.ob_size: LeJIT reads it as signed");
 
 #define LE_OFS_PyTypeObject__tp_dealloc offsetof(PyTypeObject, tp_dealloc)
 #define LE_SIZE2_PyTypeObject__tp_dealloc 3
@@ -62,9 +62,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyTypeObject *)0)->tp_dealloc), destructor),
                "LeJIT: PyTypeObject.tp_dealloc is not destructor");
 _Static_assert(sizeof(((PyTypeObject *)0)->tp_dealloc) == 8,
-               "LeJIT: PyTypeObject.tp_dealloc: Ni reads 8 bytes");
+               "LeJIT: PyTypeObject.tp_dealloc: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyTypeObject *)0)->tp_dealloc) == 5,
-               "LeJIT: PyTypeObject.tp_dealloc: Ni reads it as a pointer");
+               "LeJIT: PyTypeObject.tp_dealloc: LeJIT reads it as a pointer");
 #define LE_OFS_PyTypeObject__tp_flags offsetof(PyTypeObject, tp_flags)
 #define LE_SIZE2_PyTypeObject__tp_flags 3
 #define LE_UNSIGNED_PyTypeObject__tp_flags 1
@@ -72,11 +72,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyTypeObject *)0)->tp_flags), unsigned long),
                "LeJIT: PyTypeObject.tp_flags is not unsigned long");
 _Static_assert(sizeof(((PyTypeObject *)0)->tp_flags) == 8,
-               "LeJIT: PyTypeObject.tp_flags: Ni reads 8 bytes");
+               "LeJIT: PyTypeObject.tp_flags: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyTypeObject *)0)->tp_flags) == 1,
-               "LeJIT: PyTypeObject.tp_flags: Ni reads it as an integer");
+               "LeJIT: PyTypeObject.tp_flags: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyTypeObject *)0)->tp_flags))-1 < 0) == 0,
-               "LeJIT: PyTypeObject.tp_flags: Ni reads it as unsigned");
+               "LeJIT: PyTypeObject.tp_flags: LeJIT reads it as unsigned");
 #define LE_OFS_PyTypeObject__tp_version_tag \
     offsetof(PyTypeObject, tp_version_tag)
 #define LE_SIZE2_PyTypeObject__tp_version_tag 2
@@ -86,12 +86,12 @@ _Static_assert(__builtin_types_compatible_p(
                    unsigned int),
                "LeJIT: PyTypeObject.tp_version_tag is not unsigned int");
 _Static_assert(sizeof(((PyTypeObject *)0)->tp_version_tag) == 4,
-               "LeJIT: PyTypeObject.tp_version_tag: Ni reads 4 bytes");
+               "LeJIT: PyTypeObject.tp_version_tag: LeJIT reads 4 bytes");
 _Static_assert(__builtin_classify_type(((PyTypeObject *)0)->tp_version_tag) ==
                    1,
-               "LeJIT: PyTypeObject.tp_version_tag: Ni reads it as an integer");
+               "LeJIT: PyTypeObject.tp_version_tag: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyTypeObject *)0)->tp_version_tag))-1 < 0) == 0,
-               "LeJIT: PyTypeObject.tp_version_tag: Ni reads it as unsigned");
+               "LeJIT: PyTypeObject.tp_version_tag: LeJIT reads it as unsigned");
 
 #define LE_OFS_PyFloatObject__ob_fval offsetof(PyFloatObject, ob_fval)
 #define LE_SIZE2_PyFloatObject__ob_fval 3
@@ -100,9 +100,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyFloatObject *)0)->ob_fval), double),
                "LeJIT: PyFloatObject.ob_fval is not double");
 _Static_assert(sizeof(((PyFloatObject *)0)->ob_fval) == 8,
-               "LeJIT: PyFloatObject.ob_fval: Ni reads 8 bytes");
+               "LeJIT: PyFloatObject.ob_fval: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyFloatObject *)0)->ob_fval) == 8,
-               "LeJIT: PyFloatObject.ob_fval: Ni reads it as floating");
+               "LeJIT: PyFloatObject.ob_fval: LeJIT reads it as floating");
 
 #define LE_OFS_PyLongObject__ob_digit offsetof(PyLongObject, ob_digit)
 #define LE_SIZE2_PyLongObject__ob_digit 2
@@ -111,11 +111,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyLongObject *)0)->ob_digit), digit[1]),
                "LeJIT: PyLongObject.ob_digit is not digit[1]");
 _Static_assert(sizeof(((PyLongObject *)0)->ob_digit[0]) == 4,
-               "LeJIT: PyLongObject.ob_digit: Ni reads 4 bytes");
+               "LeJIT: PyLongObject.ob_digit: LeJIT reads 4 bytes");
 _Static_assert(__builtin_classify_type(((PyLongObject *)0)->ob_digit[0]) == 1,
-               "LeJIT: PyLongObject.ob_digit: Ni reads it as an integer");
+               "LeJIT: PyLongObject.ob_digit: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyLongObject *)0)->ob_digit[0]))-1 < 0) == 0,
-               "LeJIT: PyLongObject.ob_digit: Ni reads it as unsigned");
+               "LeJIT: PyLongObject.ob_digit: LeJIT reads it as unsigned");
 
 #define LE_OFS_PyListObject__ob_item offsetof(PyListObject, ob_item)
 #define LE_SIZE2_PyListObject__ob_item 3
@@ -124,9 +124,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyListObject *)0)->ob_item), PyObject **),
                "LeJIT: PyListObject.ob_item is not PyObject **");
 _Static_assert(sizeof(((PyListObject *)0)->ob_item) == 8,
-               "LeJIT: PyListObject.ob_item: Ni reads 8 bytes");
+               "LeJIT: PyListObject.ob_item: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyListObject *)0)->ob_item) == 5,
-               "LeJIT: PyListObject.ob_item: Ni reads it as a pointer");
+               "LeJIT: PyListObject.ob_item: LeJIT reads it as a pointer");
 
 #define LE_OFS_PyTupleObject__ob_item offsetof(PyTupleObject, ob_item)
 #define LE_SIZE2_PyTupleObject__ob_item 3
@@ -135,9 +135,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyTupleObject *)0)->ob_item), PyObject *[1]),
                "LeJIT: PyTupleObject.ob_item is not PyObject *[1]");
 _Static_assert(sizeof(((PyTupleObject *)0)->ob_item[0]) == 8,
-               "LeJIT: PyTupleObject.ob_item: Ni reads 8 bytes");
+               "LeJIT: PyTupleObject.ob_item: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyTupleObject *)0)->ob_item[0]) == 5,
-               "LeJIT: PyTupleObject.ob_item: Ni reads it as a pointer");
+               "LeJIT: PyTupleObject.ob_item: LeJIT reads it as a pointer");
 
 #define LE_OFS_PyBytesObject__ob_sval offsetof(PyBytesObject, ob_sval)
 #define LE_SIZE2_PyBytesObject__ob_sval 0
@@ -146,7 +146,7 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyBytesObject *)0)->ob_sval), char[1]),
                "LeJIT: PyBytesObject.ob_sval is not char[1]");
 _Static_assert(sizeof(((PyBytesObject *)0)->ob_sval[0]) == 1,
-               "LeJIT: PyBytesObject.ob_sval: Ni reads 1 byte");
+               "LeJIT: PyBytesObject.ob_sval: LeJIT reads 1 byte");
 
 #define LE_OFS_PyDictObject__ma_used offsetof(PyDictObject, ma_used)
 #define LE_SIZE2_PyDictObject__ma_used 2
@@ -155,7 +155,7 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyDictObject *)0)->ma_used), Py_ssize_t),
                "LeJIT: PyDictObject.ma_used is not Py_ssize_t");
 _Static_assert(sizeof(((PyDictObject *)0)->ma_used) >= 4,
-               "LeJIT: PyDictObject.ma_used: Ni reads 4 bytes");
+               "LeJIT: PyDictObject.ma_used: LeJIT reads 4 bytes");
 #define LE_OFS_PyDictObject__ma_version_tag \
     offsetof(PyDictObject, ma_version_tag)
 #define LE_SIZE2_PyDictObject__ma_version_tag 3
@@ -164,12 +164,12 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyDictObject *)0)->ma_version_tag), uint64_t),
                "LeJIT: PyDictObject.ma_version_tag is not uint64_t");
 _Static_assert(sizeof(((PyDictObject *)0)->ma_version_tag) == 8,
-               "LeJIT: PyDictObject.ma_version_tag: Ni reads 8 bytes");
+               "LeJIT: PyDictObject.ma_version_tag: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyDictObject *)0)->ma_version_tag) ==
                    1,
-               "LeJIT: PyDictObject.ma_version_tag: Ni reads it as an integer");
+               "LeJIT: PyDictObject.ma_version_tag: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyDictObject *)0)->ma_version_tag))-1 < 0) == 0,
-               "LeJIT: PyDictObject.ma_version_tag: Ni reads it as unsigned");
+               "LeJIT: PyDictObject.ma_version_tag: LeJIT reads it as unsigned");
 #define LE_OFS_PyDictObject__ma_keys offsetof(PyDictObject, ma_keys)
 #define LE_SIZE2_PyDictObject__ma_keys 3
 #define LE_UNSIGNED_PyDictObject__ma_keys 0
@@ -178,9 +178,9 @@ _Static_assert(
                                  PyDictKeysObject *),
     "LeJIT: PyDictObject.ma_keys is not PyDictKeysObject *");
 _Static_assert(sizeof(((PyDictObject *)0)->ma_keys) == 8,
-               "LeJIT: PyDictObject.ma_keys: Ni reads 8 bytes");
+               "LeJIT: PyDictObject.ma_keys: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyDictObject *)0)->ma_keys) == 5,
-               "LeJIT: PyDictObject.ma_keys: Ni reads it as a pointer");
+               "LeJIT: PyDictObject.ma_keys: LeJIT reads it as a pointer");
 #define LE_OFS_PyDictObject__ma_values offsetof(PyDictObject, ma_values)
 #define LE_SIZE2_PyDictObject__ma_values 3
 #define LE_UNSIGNED_PyDictObject__ma_values 0
@@ -188,9 +188,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyDictObject *)0)->ma_values), PyObject **),
                "LeJIT: PyDictObject.ma_values is not PyObject **");
 _Static_assert(sizeof(((PyDictObject *)0)->ma_values) == 8,
-               "LeJIT: PyDictObject.ma_values: Ni reads 8 bytes");
+               "LeJIT: PyDictObject.ma_values: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyDictObject *)0)->ma_values) == 5,
-               "LeJIT: PyDictObject.ma_values: Ni reads it as a pointer");
+               "LeJIT: PyDictObject.ma_values: LeJIT reads it as a pointer");
 
 #define LE_OFS_PyASCIIObject__length offsetof(PyASCIIObject, length)
 #define LE_SIZE2_PyASCIIObject__length 3
@@ -199,11 +199,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyASCIIObject *)0)->length), Py_ssize_t),
                "LeJIT: PyASCIIObject.length is not Py_ssize_t");
 _Static_assert(sizeof(((PyASCIIObject *)0)->length) == 8,
-               "LeJIT: PyASCIIObject.length: Ni reads 8 bytes");
+               "LeJIT: PyASCIIObject.length: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyASCIIObject *)0)->length) == 1,
-               "LeJIT: PyASCIIObject.length: Ni reads it as an integer");
+               "LeJIT: PyASCIIObject.length: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyASCIIObject *)0)->length))-1 < 0) == 1,
-               "LeJIT: PyASCIIObject.length: Ni reads it as signed");
+               "LeJIT: PyASCIIObject.length: LeJIT reads it as signed");
 #define LE_OFS_PyASCIIObject__hash offsetof(PyASCIIObject, hash)
 #define LE_SIZE2_PyASCIIObject__hash 3
 #define LE_UNSIGNED_PyASCIIObject__hash 0
@@ -211,16 +211,16 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyASCIIObject *)0)->hash), Py_hash_t),
                "LeJIT: PyASCIIObject.hash is not Py_hash_t");
 _Static_assert(sizeof(((PyASCIIObject *)0)->hash) == 8,
-               "LeJIT: PyASCIIObject.hash: Ni reads 8 bytes");
+               "LeJIT: PyASCIIObject.hash: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyASCIIObject *)0)->hash) == 1,
-               "LeJIT: PyASCIIObject.hash: Ni reads it as an integer");
+               "LeJIT: PyASCIIObject.hash: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyASCIIObject *)0)->hash))-1 < 0) == 1,
-               "LeJIT: PyASCIIObject.hash: Ni reads it as signed");
+               "LeJIT: PyASCIIObject.hash: LeJIT reads it as signed");
 #define LE_OFS_PyASCIIObject__state offsetof(PyASCIIObject, state)
 #define LE_SIZE2_PyASCIIObject__state 0
 #define LE_UNSIGNED_PyASCIIObject__state 1
 _Static_assert(sizeof(((PyASCIIObject *)0)->state) >= 1,
-               "LeJIT: PyASCIIObject.state: Ni reads 1 byte");
+               "LeJIT: PyASCIIObject.state: LeJIT reads 1 byte");
 #define LE_BIT_PyASCIIObject__state__interned 0x3
 #define LE_BIT_PyASCIIObject__state__kind 0x1C
 #define LE_BIT_PyASCIIObject__state__compact 0x20
@@ -234,9 +234,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PySliceObject *)0)->start), PyObject *),
                "LeJIT: PySliceObject.start is not PyObject *");
 _Static_assert(sizeof(((PySliceObject *)0)->start) == 8,
-               "LeJIT: PySliceObject.start: Ni reads 8 bytes");
+               "LeJIT: PySliceObject.start: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PySliceObject *)0)->start) == 5,
-               "LeJIT: PySliceObject.start: Ni reads it as a pointer");
+               "LeJIT: PySliceObject.start: LeJIT reads it as a pointer");
 #define LE_OFS_PySliceObject__stop offsetof(PySliceObject, stop)
 #define LE_SIZE2_PySliceObject__stop 3
 #define LE_UNSIGNED_PySliceObject__stop 0
@@ -244,9 +244,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PySliceObject *)0)->stop), PyObject *),
                "LeJIT: PySliceObject.stop is not PyObject *");
 _Static_assert(sizeof(((PySliceObject *)0)->stop) == 8,
-               "LeJIT: PySliceObject.stop: Ni reads 8 bytes");
+               "LeJIT: PySliceObject.stop: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PySliceObject *)0)->stop) == 5,
-               "LeJIT: PySliceObject.stop: Ni reads it as a pointer");
+               "LeJIT: PySliceObject.stop: LeJIT reads it as a pointer");
 #define LE_OFS_PySliceObject__step offsetof(PySliceObject, step)
 #define LE_SIZE2_PySliceObject__step 3
 #define LE_UNSIGNED_PySliceObject__step 0
@@ -254,9 +254,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PySliceObject *)0)->step), PyObject *),
                "LeJIT: PySliceObject.step is not PyObject *");
 _Static_assert(sizeof(((PySliceObject *)0)->step) == 8,
-               "LeJIT: PySliceObject.step: Ni reads 8 bytes");
+               "LeJIT: PySliceObject.step: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PySliceObject *)0)->step) == 5,
-               "LeJIT: PySliceObject.step: Ni reads it as a pointer");
+               "LeJIT: PySliceObject.step: LeJIT reads it as a pointer");
 
 #define LE_OFS_PyFunctionObject__func_code \
     offsetof(PyFunctionObject, func_code)
@@ -266,10 +266,10 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyFunctionObject *)0)->func_code), PyObject *),
                "LeJIT: PyFunctionObject.func_code is not PyObject *");
 _Static_assert(sizeof(((PyFunctionObject *)0)->func_code) == 8,
-               "LeJIT: PyFunctionObject.func_code: Ni reads 8 bytes");
+               "LeJIT: PyFunctionObject.func_code: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyFunctionObject *)0)->func_code) ==
                    5,
-               "LeJIT: PyFunctionObject.func_code: Ni reads it as a pointer");
+               "LeJIT: PyFunctionObject.func_code: LeJIT reads it as a pointer");
 #define LE_OFS_PyFunctionObject__func_globals \
     offsetof(PyFunctionObject, func_globals)
 #define LE_SIZE2_PyFunctionObject__func_globals 3
@@ -279,10 +279,10 @@ _Static_assert(__builtin_types_compatible_p(
                    PyObject *),
                "LeJIT: PyFunctionObject.func_globals is not PyObject *");
 _Static_assert(sizeof(((PyFunctionObject *)0)->func_globals) == 8,
-               "LeJIT: PyFunctionObject.func_globals: Ni reads 8 bytes");
+               "LeJIT: PyFunctionObject.func_globals: LeJIT reads 8 bytes");
 _Static_assert(
     __builtin_classify_type(((PyFunctionObject *)0)->func_globals) == 5,
-    "LeJIT: PyFunctionObject.func_globals: Ni reads it as a pointer");
+    "LeJIT: PyFunctionObject.func_globals: LeJIT reads it as a pointer");
 #define LE_OFS_PyFunctionObject__func_defaults \
     offsetof(PyFunctionObject, func_defaults)
 #define LE_SIZE2_PyFunctionObject__func_defaults 3
@@ -292,10 +292,10 @@ _Static_assert(__builtin_types_compatible_p(
                    PyObject *),
                "LeJIT: PyFunctionObject.func_defaults is not PyObject *");
 _Static_assert(sizeof(((PyFunctionObject *)0)->func_defaults) == 8,
-               "LeJIT: PyFunctionObject.func_defaults: Ni reads 8 bytes");
+               "LeJIT: PyFunctionObject.func_defaults: LeJIT reads 8 bytes");
 _Static_assert(
     __builtin_classify_type(((PyFunctionObject *)0)->func_defaults) == 5,
-    "LeJIT: PyFunctionObject.func_defaults: Ni reads it as a pointer");
+    "LeJIT: PyFunctionObject.func_defaults: LeJIT reads it as a pointer");
 #define LE_OFS_PyFunctionObject__func_kwdefaults \
     offsetof(PyFunctionObject, func_kwdefaults)
 #define LE_SIZE2_PyFunctionObject__func_kwdefaults 3
@@ -305,10 +305,10 @@ _Static_assert(__builtin_types_compatible_p(
                    PyObject *),
                "LeJIT: PyFunctionObject.func_kwdefaults is not PyObject *");
 _Static_assert(sizeof(((PyFunctionObject *)0)->func_kwdefaults) == 8,
-               "LeJIT: PyFunctionObject.func_kwdefaults: Ni reads 8 bytes");
+               "LeJIT: PyFunctionObject.func_kwdefaults: LeJIT reads 8 bytes");
 _Static_assert(
     __builtin_classify_type(((PyFunctionObject *)0)->func_kwdefaults) == 5,
-    "LeJIT: PyFunctionObject.func_kwdefaults: Ni reads it as a pointer");
+    "LeJIT: PyFunctionObject.func_kwdefaults: LeJIT reads it as a pointer");
 #define LE_OFS_PyFunctionObject__func_closure \
     offsetof(PyFunctionObject, func_closure)
 #define LE_SIZE2_PyFunctionObject__func_closure 3
@@ -318,10 +318,10 @@ _Static_assert(__builtin_types_compatible_p(
                    PyObject *),
                "LeJIT: PyFunctionObject.func_closure is not PyObject *");
 _Static_assert(sizeof(((PyFunctionObject *)0)->func_closure) == 8,
-               "LeJIT: PyFunctionObject.func_closure: Ni reads 8 bytes");
+               "LeJIT: PyFunctionObject.func_closure: LeJIT reads 8 bytes");
 _Static_assert(
     __builtin_classify_type(((PyFunctionObject *)0)->func_closure) == 5,
-    "LeJIT: PyFunctionObject.func_closure: Ni reads it as a pointer");
+    "LeJIT: PyFunctionObject.func_closure: LeJIT reads it as a pointer");
 #define LE_OFS_PyFunctionObject__func_annotations \
     offsetof(PyFunctionObject, func_annotations)
 #define LE_SIZE2_PyFunctionObject__func_annotations 3
@@ -331,10 +331,10 @@ _Static_assert(__builtin_types_compatible_p(
                    PyObject *),
                "LeJIT: PyFunctionObject.func_annotations is not PyObject *");
 _Static_assert(sizeof(((PyFunctionObject *)0)->func_annotations) == 8,
-               "LeJIT: PyFunctionObject.func_annotations: Ni reads 8 bytes");
+               "LeJIT: PyFunctionObject.func_annotations: LeJIT reads 8 bytes");
 _Static_assert(
     __builtin_classify_type(((PyFunctionObject *)0)->func_annotations) == 5,
-    "LeJIT: PyFunctionObject.func_annotations: Ni reads it as a pointer");
+    "LeJIT: PyFunctionObject.func_annotations: LeJIT reads it as a pointer");
 #define LE_OFS_PyFunctionObject__func_qualname \
     offsetof(PyFunctionObject, func_qualname)
 #define LE_SIZE2_PyFunctionObject__func_qualname 3
@@ -344,10 +344,10 @@ _Static_assert(__builtin_types_compatible_p(
                    PyObject *),
                "LeJIT: PyFunctionObject.func_qualname is not PyObject *");
 _Static_assert(sizeof(((PyFunctionObject *)0)->func_qualname) == 8,
-               "LeJIT: PyFunctionObject.func_qualname: Ni reads 8 bytes");
+               "LeJIT: PyFunctionObject.func_qualname: LeJIT reads 8 bytes");
 _Static_assert(
     __builtin_classify_type(((PyFunctionObject *)0)->func_qualname) == 5,
-    "LeJIT: PyFunctionObject.func_qualname: Ni reads it as a pointer");
+    "LeJIT: PyFunctionObject.func_qualname: LeJIT reads it as a pointer");
 
 #define LE_OFS_PyMethodObject__im_func offsetof(PyMethodObject, im_func)
 #define LE_SIZE2_PyMethodObject__im_func 3
@@ -356,9 +356,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyMethodObject *)0)->im_func), PyObject *),
                "LeJIT: PyMethodObject.im_func is not PyObject *");
 _Static_assert(sizeof(((PyMethodObject *)0)->im_func) == 8,
-               "LeJIT: PyMethodObject.im_func: Ni reads 8 bytes");
+               "LeJIT: PyMethodObject.im_func: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyMethodObject *)0)->im_func) == 5,
-               "LeJIT: PyMethodObject.im_func: Ni reads it as a pointer");
+               "LeJIT: PyMethodObject.im_func: LeJIT reads it as a pointer");
 #define LE_OFS_PyMethodObject__im_self offsetof(PyMethodObject, im_self)
 #define LE_SIZE2_PyMethodObject__im_self 3
 #define LE_UNSIGNED_PyMethodObject__im_self 0
@@ -366,9 +366,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyMethodObject *)0)->im_self), PyObject *),
                "LeJIT: PyMethodObject.im_self is not PyObject *");
 _Static_assert(sizeof(((PyMethodObject *)0)->im_self) == 8,
-               "LeJIT: PyMethodObject.im_self: Ni reads 8 bytes");
+               "LeJIT: PyMethodObject.im_self: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyMethodObject *)0)->im_self) == 5,
-               "LeJIT: PyMethodObject.im_self: Ni reads it as a pointer");
+               "LeJIT: PyMethodObject.im_self: LeJIT reads it as a pointer");
 
 #define LE_OFS_PyCFunctionObject__m_ml offsetof(PyCFunctionObject, m_ml)
 #define LE_SIZE2_PyCFunctionObject__m_ml 3
@@ -377,9 +377,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyCFunctionObject *)0)->m_ml), PyMethodDef *),
                "LeJIT: PyCFunctionObject.m_ml is not PyMethodDef *");
 _Static_assert(sizeof(((PyCFunctionObject *)0)->m_ml) == 8,
-               "LeJIT: PyCFunctionObject.m_ml: Ni reads 8 bytes");
+               "LeJIT: PyCFunctionObject.m_ml: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyCFunctionObject *)0)->m_ml) == 5,
-               "LeJIT: PyCFunctionObject.m_ml: Ni reads it as a pointer");
+               "LeJIT: PyCFunctionObject.m_ml: LeJIT reads it as a pointer");
 #define LE_OFS_PyCFunctionObject__m_self offsetof(PyCFunctionObject, m_self)
 #define LE_SIZE2_PyCFunctionObject__m_self 3
 #define LE_UNSIGNED_PyCFunctionObject__m_self 0
@@ -387,9 +387,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyCFunctionObject *)0)->m_self), PyObject *),
                "LeJIT: PyCFunctionObject.m_self is not PyObject *");
 _Static_assert(sizeof(((PyCFunctionObject *)0)->m_self) == 8,
-               "LeJIT: PyCFunctionObject.m_self: Ni reads 8 bytes");
+               "LeJIT: PyCFunctionObject.m_self: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyCFunctionObject *)0)->m_self) == 5,
-               "LeJIT: PyCFunctionObject.m_self: Ni reads it as a pointer");
+               "LeJIT: PyCFunctionObject.m_self: LeJIT reads it as a pointer");
 
 #define LE_OFS_PyCellObject__ob_ref offsetof(PyCellObject, ob_ref)
 #define LE_SIZE2_PyCellObject__ob_ref 3
@@ -398,9 +398,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyCellObject *)0)->ob_ref), PyObject *),
                "LeJIT: PyCellObject.ob_ref is not PyObject *");
 _Static_assert(sizeof(((PyCellObject *)0)->ob_ref) == 8,
-               "LeJIT: PyCellObject.ob_ref: Ni reads 8 bytes");
+               "LeJIT: PyCellObject.ob_ref: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyCellObject *)0)->ob_ref) == 5,
-               "LeJIT: PyCellObject.ob_ref: Ni reads it as a pointer");
+               "LeJIT: PyCellObject.ob_ref: LeJIT reads it as a pointer");
 
 typedef struct {
     PyObject_HEAD Py_ssize_t it_index;
@@ -413,11 +413,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((seqiterobject *)0)->it_index), Py_ssize_t),
                "LeJIT: seqiterobject.it_index is not Py_ssize_t");
 _Static_assert(sizeof(((seqiterobject *)0)->it_index) == 8,
-               "LeJIT: seqiterobject.it_index: Ni reads 8 bytes");
+               "LeJIT: seqiterobject.it_index: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((seqiterobject *)0)->it_index) == 1,
-               "LeJIT: seqiterobject.it_index: Ni reads it as an integer");
+               "LeJIT: seqiterobject.it_index: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((seqiterobject *)0)->it_index))-1 < 0) == 1,
-               "LeJIT: seqiterobject.it_index: Ni reads it as signed");
+               "LeJIT: seqiterobject.it_index: LeJIT reads it as signed");
 #define LE_OFS_seqiterobject__it_seq offsetof(seqiterobject, it_seq)
 #define LE_SIZE2_seqiterobject__it_seq 3
 #define LE_UNSIGNED_seqiterobject__it_seq 0
@@ -425,9 +425,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((seqiterobject *)0)->it_seq), PyObject *),
                "LeJIT: seqiterobject.it_seq is not PyObject *");
 _Static_assert(sizeof(((seqiterobject *)0)->it_seq) == 8,
-               "LeJIT: seqiterobject.it_seq: Ni reads 8 bytes");
+               "LeJIT: seqiterobject.it_seq: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((seqiterobject *)0)->it_seq) == 5,
-               "LeJIT: seqiterobject.it_seq: Ni reads it as a pointer");
+               "LeJIT: seqiterobject.it_seq: LeJIT reads it as a pointer");
 
 typedef struct {
     PyObject_HEAD PyObject *start;
@@ -442,9 +442,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((rangeobject *)0)->start), PyObject *),
                "LeJIT: rangeobject.start is not PyObject *");
 _Static_assert(sizeof(((rangeobject *)0)->start) == 8,
-               "LeJIT: rangeobject.start: Ni reads 8 bytes");
+               "LeJIT: rangeobject.start: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((rangeobject *)0)->start) == 5,
-               "LeJIT: rangeobject.start: Ni reads it as a pointer");
+               "LeJIT: rangeobject.start: LeJIT reads it as a pointer");
 #define LE_OFS_rangeobject__stop offsetof(rangeobject, stop)
 #define LE_SIZE2_rangeobject__stop 3
 #define LE_UNSIGNED_rangeobject__stop 0
@@ -452,9 +452,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((rangeobject *)0)->stop), PyObject *),
                "LeJIT: rangeobject.stop is not PyObject *");
 _Static_assert(sizeof(((rangeobject *)0)->stop) == 8,
-               "LeJIT: rangeobject.stop: Ni reads 8 bytes");
+               "LeJIT: rangeobject.stop: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((rangeobject *)0)->stop) == 5,
-               "LeJIT: rangeobject.stop: Ni reads it as a pointer");
+               "LeJIT: rangeobject.stop: LeJIT reads it as a pointer");
 #define LE_OFS_rangeobject__step offsetof(rangeobject, step)
 #define LE_SIZE2_rangeobject__step 3
 #define LE_UNSIGNED_rangeobject__step 0
@@ -462,9 +462,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((rangeobject *)0)->step), PyObject *),
                "LeJIT: rangeobject.step is not PyObject *");
 _Static_assert(sizeof(((rangeobject *)0)->step) == 8,
-               "LeJIT: rangeobject.step: Ni reads 8 bytes");
+               "LeJIT: rangeobject.step: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((rangeobject *)0)->step) == 5,
-               "LeJIT: rangeobject.step: Ni reads it as a pointer");
+               "LeJIT: rangeobject.step: LeJIT reads it as a pointer");
 #define LE_OFS_rangeobject__length offsetof(rangeobject, length)
 #define LE_SIZE2_rangeobject__length 3
 #define LE_UNSIGNED_rangeobject__length 0
@@ -472,9 +472,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((rangeobject *)0)->length), PyObject *),
                "LeJIT: rangeobject.length is not PyObject *");
 _Static_assert(sizeof(((rangeobject *)0)->length) == 8,
-               "LeJIT: rangeobject.length: Ni reads 8 bytes");
+               "LeJIT: rangeobject.length: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((rangeobject *)0)->length) == 5,
-               "LeJIT: rangeobject.length: Ni reads it as a pointer");
+               "LeJIT: rangeobject.length: LeJIT reads it as a pointer");
 
 typedef struct {
     PyObject_HEAD long index;
@@ -489,11 +489,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((rangeiterobject *)0)->index), long),
                "LeJIT: rangeiterobject.index is not long");
 _Static_assert(sizeof(((rangeiterobject *)0)->index) == 8,
-               "LeJIT: rangeiterobject.index: Ni reads 8 bytes");
+               "LeJIT: rangeiterobject.index: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((rangeiterobject *)0)->index) == 1,
-               "LeJIT: rangeiterobject.index: Ni reads it as an integer");
+               "LeJIT: rangeiterobject.index: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((rangeiterobject *)0)->index))-1 < 0) == 1,
-               "LeJIT: rangeiterobject.index: Ni reads it as signed");
+               "LeJIT: rangeiterobject.index: LeJIT reads it as signed");
 #define LE_OFS_rangeiterobject__start offsetof(rangeiterobject, start)
 #define LE_SIZE2_rangeiterobject__start 3
 #define LE_UNSIGNED_rangeiterobject__start 0
@@ -501,11 +501,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((rangeiterobject *)0)->start), long),
                "LeJIT: rangeiterobject.start is not long");
 _Static_assert(sizeof(((rangeiterobject *)0)->start) == 8,
-               "LeJIT: rangeiterobject.start: Ni reads 8 bytes");
+               "LeJIT: rangeiterobject.start: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((rangeiterobject *)0)->start) == 1,
-               "LeJIT: rangeiterobject.start: Ni reads it as an integer");
+               "LeJIT: rangeiterobject.start: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((rangeiterobject *)0)->start))-1 < 0) == 1,
-               "LeJIT: rangeiterobject.start: Ni reads it as signed");
+               "LeJIT: rangeiterobject.start: LeJIT reads it as signed");
 #define LE_OFS_rangeiterobject__step offsetof(rangeiterobject, step)
 #define LE_SIZE2_rangeiterobject__step 3
 #define LE_UNSIGNED_rangeiterobject__step 0
@@ -513,11 +513,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((rangeiterobject *)0)->step), long),
                "LeJIT: rangeiterobject.step is not long");
 _Static_assert(sizeof(((rangeiterobject *)0)->step) == 8,
-               "LeJIT: rangeiterobject.step: Ni reads 8 bytes");
+               "LeJIT: rangeiterobject.step: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((rangeiterobject *)0)->step) == 1,
-               "LeJIT: rangeiterobject.step: Ni reads it as an integer");
+               "LeJIT: rangeiterobject.step: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((rangeiterobject *)0)->step))-1 < 0) == 1,
-               "LeJIT: rangeiterobject.step: Ni reads it as signed");
+               "LeJIT: rangeiterobject.step: LeJIT reads it as signed");
 #define LE_OFS_rangeiterobject__len offsetof(rangeiterobject, len)
 #define LE_SIZE2_rangeiterobject__len 3
 #define LE_UNSIGNED_rangeiterobject__len 0
@@ -525,11 +525,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((rangeiterobject *)0)->len), long),
                "LeJIT: rangeiterobject.len is not long");
 _Static_assert(sizeof(((rangeiterobject *)0)->len) == 8,
-               "LeJIT: rangeiterobject.len: Ni reads 8 bytes");
+               "LeJIT: rangeiterobject.len: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((rangeiterobject *)0)->len) == 1,
-               "LeJIT: rangeiterobject.len: Ni reads it as an integer");
+               "LeJIT: rangeiterobject.len: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((rangeiterobject *)0)->len))-1 < 0) == 1,
-               "LeJIT: rangeiterobject.len: Ni reads it as signed");
+               "LeJIT: rangeiterobject.len: LeJIT reads it as signed");
 
 typedef Py_ssize_t (*dict_lookup_func)(PyDictObject *mp, PyObject *key,
                                        Py_hash_t hash, PyObject **value_addr);
@@ -549,11 +549,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_dictkeys_t *)0)->dk_refcnt), Py_ssize_t),
                "LeJIT: PyDictKeysObject.dk_refcnt is not Py_ssize_t");
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_refcnt) == 8,
-               "LeJIT: PyDictKeysObject.dk_refcnt: Ni reads 8 bytes");
+               "LeJIT: PyDictKeysObject.dk_refcnt: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_dictkeys_t *)0)->dk_refcnt) == 1,
-               "LeJIT: PyDictKeysObject.dk_refcnt: Ni reads it as an integer");
+               "LeJIT: PyDictKeysObject.dk_refcnt: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_dictkeys_t *)0)->dk_refcnt))-1 < 0) == 1,
-               "LeJIT: PyDictKeysObject.dk_refcnt: Ni reads it as signed");
+               "LeJIT: PyDictKeysObject.dk_refcnt: LeJIT reads it as signed");
 #define LE_OFS_le_dictkeys_t__dk_size offsetof(le_dictkeys_t, dk_size)
 #define LE_SIZE2_le_dictkeys_t__dk_size 3
 #define LE_UNSIGNED_le_dictkeys_t__dk_size 0
@@ -561,11 +561,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_dictkeys_t *)0)->dk_size), Py_ssize_t),
                "LeJIT: PyDictKeysObject.dk_size is not Py_ssize_t");
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_size) == 8,
-               "LeJIT: PyDictKeysObject.dk_size: Ni reads 8 bytes");
+               "LeJIT: PyDictKeysObject.dk_size: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_dictkeys_t *)0)->dk_size) == 1,
-               "LeJIT: PyDictKeysObject.dk_size: Ni reads it as an integer");
+               "LeJIT: PyDictKeysObject.dk_size: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_dictkeys_t *)0)->dk_size))-1 < 0) == 1,
-               "LeJIT: PyDictKeysObject.dk_size: Ni reads it as signed");
+               "LeJIT: PyDictKeysObject.dk_size: LeJIT reads it as signed");
 #define LE_OFS_le_dictkeys_t__dk_usable offsetof(le_dictkeys_t, dk_usable)
 #define LE_SIZE2_le_dictkeys_t__dk_usable 3
 #define LE_UNSIGNED_le_dictkeys_t__dk_usable 0
@@ -573,11 +573,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_dictkeys_t *)0)->dk_usable), Py_ssize_t),
                "LeJIT: PyDictKeysObject.dk_usable is not Py_ssize_t");
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_usable) == 8,
-               "LeJIT: PyDictKeysObject.dk_usable: Ni reads 8 bytes");
+               "LeJIT: PyDictKeysObject.dk_usable: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_dictkeys_t *)0)->dk_usable) == 1,
-               "LeJIT: PyDictKeysObject.dk_usable: Ni reads it as an integer");
+               "LeJIT: PyDictKeysObject.dk_usable: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_dictkeys_t *)0)->dk_usable))-1 < 0) == 1,
-               "LeJIT: PyDictKeysObject.dk_usable: Ni reads it as signed");
+               "LeJIT: PyDictKeysObject.dk_usable: LeJIT reads it as signed");
 #define LE_OFS_le_dictkeys_t__dk_nentries offsetof(le_dictkeys_t, dk_nentries)
 #define LE_SIZE2_le_dictkeys_t__dk_nentries 3
 #define LE_UNSIGNED_le_dictkeys_t__dk_nentries 0
@@ -585,11 +585,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_dictkeys_t *)0)->dk_nentries), Py_ssize_t),
                "LeJIT: PyDictKeysObject.dk_nentries is not Py_ssize_t");
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_nentries) == 8,
-               "LeJIT: PyDictKeysObject.dk_nentries: Ni reads 8 bytes");
+               "LeJIT: PyDictKeysObject.dk_nentries: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_dictkeys_t *)0)->dk_nentries) == 1,
-               "LeJIT: PyDictKeysObject.dk_nentries: Ni reads it as an integer");
+               "LeJIT: PyDictKeysObject.dk_nentries: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_dictkeys_t *)0)->dk_nentries))-1 < 0) == 1,
-               "LeJIT: PyDictKeysObject.dk_nentries: Ni reads it as signed");
+               "LeJIT: PyDictKeysObject.dk_nentries: LeJIT reads it as signed");
 #define LE_OFS_le_dictkeys_t__dk_indices offsetof(le_dictkeys_t, dk_indices)
 #define LE_SIZE2_le_dictkeys_t__dk_indices 0
 #define LE_UNSIGNED_le_dictkeys_t__dk_indices 1
@@ -597,7 +597,7 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_dictkeys_t *)0)->dk_indices), char[]),
                "LeJIT: PyDictKeysObject.dk_indices is not char[]");
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_indices[0]) == 1,
-               "LeJIT: PyDictKeysObject.dk_indices: Ni reads 1 byte");
+               "LeJIT: PyDictKeysObject.dk_indices: LeJIT reads 1 byte");
 
 struct unicode_formatter_t {
     PyObject *args;
@@ -618,9 +618,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_formatter_t *)0)->args), PyObject *),
                "LeJIT: unicode_formatter_t.args is not PyObject *");
 _Static_assert(sizeof(((le_formatter_t *)0)->args) == 8,
-               "LeJIT: unicode_formatter_t.args: Ni reads 8 bytes");
+               "LeJIT: unicode_formatter_t.args: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_formatter_t *)0)->args) == 5,
-               "LeJIT: unicode_formatter_t.args: Ni reads it as a pointer");
+               "LeJIT: unicode_formatter_t.args: LeJIT reads it as a pointer");
 #define LE_OFS_le_formatter_t__arglen offsetof(le_formatter_t, arglen)
 #define LE_SIZE2_le_formatter_t__arglen 3
 #define LE_UNSIGNED_le_formatter_t__arglen 0
@@ -628,11 +628,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_formatter_t *)0)->arglen), Py_ssize_t),
                "LeJIT: unicode_formatter_t.arglen is not Py_ssize_t");
 _Static_assert(sizeof(((le_formatter_t *)0)->arglen) == 8,
-               "LeJIT: unicode_formatter_t.arglen: Ni reads 8 bytes");
+               "LeJIT: unicode_formatter_t.arglen: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_formatter_t *)0)->arglen) == 1,
-               "LeJIT: unicode_formatter_t.arglen: Ni reads it as an integer");
+               "LeJIT: unicode_formatter_t.arglen: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_formatter_t *)0)->arglen))-1 < 0) == 1,
-               "LeJIT: unicode_formatter_t.arglen: Ni reads it as signed");
+               "LeJIT: unicode_formatter_t.arglen: LeJIT reads it as signed");
 #define LE_OFS_le_formatter_t__argidx offsetof(le_formatter_t, argidx)
 #define LE_SIZE2_le_formatter_t__argidx 3
 #define LE_UNSIGNED_le_formatter_t__argidx 0
@@ -640,11 +640,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_formatter_t *)0)->argidx), Py_ssize_t),
                "LeJIT: unicode_formatter_t.argidx is not Py_ssize_t");
 _Static_assert(sizeof(((le_formatter_t *)0)->argidx) == 8,
-               "LeJIT: unicode_formatter_t.argidx: Ni reads 8 bytes");
+               "LeJIT: unicode_formatter_t.argidx: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_formatter_t *)0)->argidx) == 1,
-               "LeJIT: unicode_formatter_t.argidx: Ni reads it as an integer");
+               "LeJIT: unicode_formatter_t.argidx: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_formatter_t *)0)->argidx))-1 < 0) == 1,
-               "LeJIT: unicode_formatter_t.argidx: Ni reads it as signed");
+               "LeJIT: unicode_formatter_t.argidx: LeJIT reads it as signed");
 
 struct unicode_format_arg_t {
     Py_UCS4 ch;
@@ -661,11 +661,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_format_arg_t *)0)->ch), Py_UCS4),
                "LeJIT: unicode_format_arg_t.ch is not Py_UCS4");
 _Static_assert(sizeof(((le_format_arg_t *)0)->ch) == 4,
-               "LeJIT: unicode_format_arg_t.ch: Ni reads 4 bytes");
+               "LeJIT: unicode_format_arg_t.ch: LeJIT reads 4 bytes");
 _Static_assert(__builtin_classify_type(((le_format_arg_t *)0)->ch) == 1,
-               "LeJIT: unicode_format_arg_t.ch: Ni reads it as an integer");
+               "LeJIT: unicode_format_arg_t.ch: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_format_arg_t *)0)->ch))-1 < 0) == 0,
-               "LeJIT: unicode_format_arg_t.ch: Ni reads it as unsigned");
+               "LeJIT: unicode_format_arg_t.ch: LeJIT reads it as unsigned");
 #define LE_OFS_le_format_arg_t__width offsetof(le_format_arg_t, width)
 #define LE_SIZE2_le_format_arg_t__width 3
 #define LE_UNSIGNED_le_format_arg_t__width 0
@@ -673,11 +673,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_format_arg_t *)0)->width), Py_ssize_t),
                "LeJIT: unicode_format_arg_t.width is not Py_ssize_t");
 _Static_assert(sizeof(((le_format_arg_t *)0)->width) == 8,
-               "LeJIT: unicode_format_arg_t.width: Ni reads 8 bytes");
+               "LeJIT: unicode_format_arg_t.width: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_format_arg_t *)0)->width) == 1,
-               "LeJIT: unicode_format_arg_t.width: Ni reads it as an integer");
+               "LeJIT: unicode_format_arg_t.width: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_format_arg_t *)0)->width))-1 < 0) == 1,
-               "LeJIT: unicode_format_arg_t.width: Ni reads it as signed");
+               "LeJIT: unicode_format_arg_t.width: LeJIT reads it as signed");
 
 typedef struct {
     Py_hash_t me_hash;
@@ -692,11 +692,11 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_dictentry_t *)0)->me_hash), Py_hash_t),
                "LeJIT: PyDictKeyEntry.me_hash is not Py_hash_t");
 _Static_assert(sizeof(((le_dictentry_t *)0)->me_hash) == 8,
-               "LeJIT: PyDictKeyEntry.me_hash: Ni reads 8 bytes");
+               "LeJIT: PyDictKeyEntry.me_hash: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_dictentry_t *)0)->me_hash) == 1,
-               "LeJIT: PyDictKeyEntry.me_hash: Ni reads it as an integer");
+               "LeJIT: PyDictKeyEntry.me_hash: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_dictentry_t *)0)->me_hash))-1 < 0) == 1,
-               "LeJIT: PyDictKeyEntry.me_hash: Ni reads it as signed");
+               "LeJIT: PyDictKeyEntry.me_hash: LeJIT reads it as signed");
 #define LE_OFS_le_dictentry_t__me_key offsetof(le_dictentry_t, me_key)
 #define LE_SIZE2_le_dictentry_t__me_key 3
 #define LE_UNSIGNED_le_dictentry_t__me_key 0
@@ -704,9 +704,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_dictentry_t *)0)->me_key), PyObject *),
                "LeJIT: PyDictKeyEntry.me_key is not PyObject *");
 _Static_assert(sizeof(((le_dictentry_t *)0)->me_key) == 8,
-               "LeJIT: PyDictKeyEntry.me_key: Ni reads 8 bytes");
+               "LeJIT: PyDictKeyEntry.me_key: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_dictentry_t *)0)->me_key) == 5,
-               "LeJIT: PyDictKeyEntry.me_key: Ni reads it as a pointer");
+               "LeJIT: PyDictKeyEntry.me_key: LeJIT reads it as a pointer");
 #define LE_OFS_le_dictentry_t__me_value offsetof(le_dictentry_t, me_value)
 #define LE_SIZE2_le_dictentry_t__me_value 3
 #define LE_UNSIGNED_le_dictentry_t__me_value 0
@@ -714,9 +714,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((le_dictentry_t *)0)->me_value), PyObject *),
                "LeJIT: PyDictKeyEntry.me_value is not PyObject *");
 _Static_assert(sizeof(((le_dictentry_t *)0)->me_value) == 8,
-               "LeJIT: PyDictKeyEntry.me_value: Ni reads 8 bytes");
+               "LeJIT: PyDictKeyEntry.me_value: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((le_dictentry_t *)0)->me_value) == 5,
-               "LeJIT: PyDictKeyEntry.me_value: Ni reads it as a pointer");
+               "LeJIT: PyDictKeyEntry.me_value: LeJIT reads it as a pointer");
 
 typedef int8_t byte_t;
 typedef int16_t word_t;
@@ -796,7 +796,7 @@ EXTERNFN int psyco_fatal_error(char* msg, char* filename, int lineno);
 # define extra_assert(x)  (void)0  /* nothing */
 #endif
 
-/* Under AddressSanitizer (setup.py LE_SANITIZE), Ni's own allocators mark
+/* Under AddressSanitizer (setup.py LE_SANITIZE), LeJIT's own allocators mark
    what they hold free as unaddressable, so that an access through a stale
    pointer is reported as malloc'd memory would be; and LeakSanitizer is
    told to scan executable memory, where stub and pause records point to
@@ -864,7 +864,7 @@ typedef struct le_owner_s {
   int nnotes, notescap;             /* indices, reused once it dies */
 } le_owner_t;
 
-/* What Ni keeps per code object, on its weak references (lejit.c): found by
+/* What LeJIT keeps per code object, on its weak references (lejit.c): found by
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
 typedef struct le_code_extra_s {

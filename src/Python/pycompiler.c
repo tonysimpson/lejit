@@ -12,7 +12,7 @@
  *    site so that a respawn replay never re-decides one.
  *  - Most of the switch's cases are translated from CPython's ceval.c
  *    (the stack, locals, cells, jumps, operators, attributes and the
- *    BUILD_ cases); the others are written for Ni. In front of the
+ *    BUILD_ cases); the others are written for LeJIT. In front of the
  *    translated BINARY_ADD and INPLACE_ADD, unicode_concatenate does
  *    ceval's in-place append of a str stored back into its variable.
  *  - After the switch come the merge-point checks, then the handling of
@@ -645,7 +645,7 @@ static void cimpl_pyerr_fetch(PyObject *target[]) {
    saved, then the pending error is fetched, normalised and made current.
    target[] gets the six objects ceval pushes, bottom first: old tb, value,
    type, then new tb, value, type (new references). ceval may push NULL for
-   the old tb/value; Ni's stack can't hold NULL, and None means the same
+   the old tb/value; LeJIT's stack can't hold NULL, and None means the same
    to exc_info readers. 'word' is the catching frame's catcher word, which
    takes the frame of the entry made for it (frames.c:psyco_frame_catch),
    and 'own' its slot. */
@@ -1706,7 +1706,7 @@ fail:
 
 /* the code of the following functions is "copy-pasted" from ceval.c */
 
-/* a frame's own cells, which CPython made before the frame reached Ni
+/* a frame's own cells, which CPython made before the frame reached LeJIT
    (PsycoObject_FromCode maps them as borrowed words); a cell can change
    under any call (nonlocal in a callee), so its content is read each time.
    The translated *_DEREF cases read and store it through this. */
@@ -1738,13 +1738,13 @@ static condition_code_t same_object(PsycoObject *po, vinfo_t *a, vinfo_t *b) {
    exact str followed by STORE_FAST or STORE_DEREF. CPython clears the
    variable when it holds the stack's object and the two are its only
    references, so that PyUnicode_Append, given the last reference, resizes
-   the string in place. Ni's references are not CPython's: one vinfo_t
+   the string in place. LeJIT's references are not CPython's: one vinfo_t
    shared by the variable and the stack owns one reference where CPython's
    frame holds two, and a borrowed word (an argument) or a constant is no
-   reference at all. So the test is made only where Ni's owned references
+   reference at all. So the test is made only where LeJIT's owned references
    stand for exactly the frame's: the shared vinfo_t alone (CPython's 2 is
    1), or the stack's and the variable's each alone (2 is 2, and the two
-   words must be equal). Elsewhere CPython's count is more than 2 or Ni
+   words must be equal). Elsewhere CPython's count is more than 2 or LeJIT
    cannot tell, and the translated case concatenates as PyUnicode_Append
    does then. On the in-place path the variable is unbound before the call,
    as CPython's is, so an error leaves it unbound. Returns 1 with the sum
@@ -1883,7 +1883,7 @@ static int fstring_part(PsycoObject *po, int opcode, int oparg,
 }
 
 /* the run-time copies of ceval.c helpers' arms that translated cases call
-   (cmp_outcome's PyCmp_EXC_MATCH), and of the whole cases that Ni's own
+   (cmp_outcome's PyCmp_EXC_MATCH), and of the whole cases that LeJIT's own
    cases leave to CPython (cimpl_call_function_ex) */
 /* the translation keeps CPython's unused variables, labels and values */
 #pragma GCC diagnostic push
@@ -8079,7 +8079,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
         goto fine;
 
       /* Where the bytecode has them (3.8), a finally block is entered by
-         BEGIN_FINALLY's NULL (Ni's 0), CALL_FINALLY's offset to return to,
+         BEGIN_FINALLY's NULL (LeJIT's 0), CALL_FINALLY's offset to return to,
          or an exception's six items; END_FINALLY and POP_FINALLY tell them
          apart. The offset is ceval's int object, a fixed constant
          (finally_return), so END_FINALLY's jump is made at compile time
@@ -8375,7 +8375,7 @@ code_t *psyco_pycompiler_mainloop(PsycoObject *po) {
 
       /* with: as 3.7 ceval, a SETUP_FINALLY block over the bound __exit__.
          Its handler starts with WITH_CLEANUP_START, entered in one of
-         Ni's three finally states (see the unwind loop): None on top (the
+         LeJIT's three finally states (see the unwind loop): None on top (the
          body ended), a 3-tuple (EReturn, EBreak, EContinue), or an
          exception's six items under an EXCEPT_HANDLER block. */
       case SETUP_WITH: {

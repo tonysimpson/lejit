@@ -255,7 +255,7 @@ static void *const cimpl_fast[2][FAST_MAX + 1] = {
      cimpl_fastkw4, cimpl_fastkw5}};
 
 /* the result is checked when 'vfunc' is the function object, not for
-   Ni's own C functions (vfunc NULL) */
+   LeJIT's own C functions (vfunc NULL) */
 static vinfo_t *call_fast(PsycoObject *po, PyCFunction meth, int flags,
                           vinfo_t *vself, vinfo_t *vargs, vinfo_t *vfunc) {
   static const char *const fmt[FAST_MAX + 1] = {"lv",    "lvv",    "lvvv",

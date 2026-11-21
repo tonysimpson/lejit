@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Show the machine code Ni generated for one Python function.
+"""Show the machine code LeJIT generated for one Python function.
 
 Runs a script under pointbreak with analyser's tracer, stops at
 Py_FinalizeEx (so the process is still alive), and prints every code chunk
@@ -8,7 +8,7 @@ Python line, bytecode offset and the compiler call stack that wrote it.
 
 Usage (from a venv with pointbreak, distorm3 and intervaltree):
     dump_function.py FUNC_NAME python3.7 script.py [args...]
-Ni must be built with LE_TRACE=1, and the script must call lejit.start().
+LeJIT must be built with LE_TRACE=1, and the script must call lejit.start().
 Promotion records and other data sit inline in the code and disassemble
 as junk.
 """

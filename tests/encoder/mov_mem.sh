@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build and run mov_mem.c against the objects of an in-place Ni build
+# Build and run mov_mem.c against the objects of an in-place LeJIT build
 # (LE_TRACE=1 LE_ALL_CHECKS=1 python3.7 setup.py build_ext --inplace) for the
 # interpreter LE_PYTHON (make's PY; else LE_PY37, else pyenv's 3.7.17).
 set -e

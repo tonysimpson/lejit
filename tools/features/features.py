@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Detect CPython's features from the source Ni is built against, never
+"""Detect CPython's features from the source LeJIT is built against, never
 from its version number: a release with a backport, a development version,
 a distribution's patches or a fork all say what they have only in their
 source.
@@ -561,7 +561,7 @@ def _opcode(name):
     return detect
 
 
-# the opcodes Ni's core names that some CPython lacks: where the source
+# the opcodes LeJIT's core names that some CPython lacks: where the source
 # lacks one, le_features_gen.h defines it as a value no instruction has
 # (256 and up), so a case for it never matches and the core needs no #if
 OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
@@ -632,7 +632,7 @@ FEATURES = [
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
     ('IMMUTABLE_TYPE_FLAG', immutable_type_flag),
-    # how Ni's own mechanisms reach the interpreter's state
+    # how LeJIT's own mechanisms reach the interpreter's state
     ('PYCORE_PYSTATE_H', D('the runtime and interpreter states are described in the internal pycore_pystate.h',
                            lambda s: _file(s, 'Include/internal/pycore_pystate.h'))),
     ('PYCORE_INTERP_H', D('the interpreter state has an internal header of its own, pycore_interp.h',

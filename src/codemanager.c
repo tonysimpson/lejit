@@ -8,7 +8,7 @@
 /* Machine code is written into extents of executable memory, mapped
    REGION_SIZE at a time (platform.c). An extent is
    - free: in free_ext, sorted by address and coalesced; unaddressable
-     under AddressSanitizer (LE_POISON), since only Ni's C code is checked,
+     under AddressSanitizer (LE_POISON), since only LeJIT's C code is checked,
      not the code it emits;
    - open: being written (psyco_code_open), in open_ext with the owner
      that was current when it was opened. Its writer has a limit
@@ -514,7 +514,7 @@ DEFINEFN PyObject **psyco_record(le_addrmap_t *map, void *key) {
    last: a gc.callbacks entry, listed only once the program has imported
    gc (as any program calling gc.collect() has), and only while there are
    such records, acts on generation 2 only. Importing gc for it would run
-   importlib's Python code, which Ni compiles, in every program. */
+   importlib's Python code, which LeJIT compiles, in every program. */
 
 #if ALL_CHECKS
 DEFINEVAR long psyco_stat_owner_scans = 0;
@@ -654,7 +654,7 @@ static long scan_find(PyCodeObject ***out) {
      here; one only something else holds is never a seed, which only
      makes more look alive */
   if (get_objects == NULL) {
-    /* not at start-up: importing runs Python code, which Ni compiles */
+    /* not at start-up: importing runs Python code, which LeJIT compiles */
     PyObject *gc = PyImport_ImportModule("gc");
     if (gc != NULL) {
       get_objects = PyObject_GetAttrString(gc, "get_objects");

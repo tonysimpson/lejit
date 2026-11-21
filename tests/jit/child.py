@@ -1,5 +1,5 @@
 # Runs one test case in a fresh interpreter. Kept at module level on purpose:
-# Ni doesn't compile module-level code, so the harness itself isn't compiled.
+# LeJIT doesn't compile module-level code, so the harness itself isn't compiled.
 import sys, importlib
 sys.path.insert(0, sys.argv[1])          # repo root (for lejit)
 sys.path.insert(0, sys.argv[2])          # cases directory
