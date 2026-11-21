@@ -214,12 +214,13 @@ EXTERNFN vinfo_t *
 run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
               char argtags[], long args[], int total_output_array_size);
 
-#define MAX_ARGUMENTS_COUNT 8 /* as the psyco_generic_call macro (codegen.h) */
+#define MAX_ARGUMENTS_COUNT                          \
+    8 /* as the psyco_generic_call macro (codegen.h) \
+       */
 
 DEFINEFN
-vinfo_t *
-(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
-                   const char *arguments, ...)
+vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
+                              const char *arguments, ...)
 {
     char argtags[MAX_ARGUMENTS_COUNT];
     long raw_args[MAX_ARGUMENTS_COUNT], args[MAX_ARGUMENTS_COUNT];
@@ -356,9 +357,9 @@ vinfo_t *
         if (!(flags & (CfPure | CfNoPython))) {
             po->pr.class_unchecked = 1; /* it may assign __class__ */
             po->pr.python_call = 1;
-            psyco_note_call_site(po, po->pr.call_site
-                                         ? po->pr.call_site - 1
-                                         : po->pr.next_instr & ~NEXT_INSTR_POP);
+            psyco_note_call_site(
+                po, po->pr.call_site ? po->pr.call_site - 1
+                                     : po->pr.next_instr & ~NEXT_INSTR_POP);
         }
         vresult = run_time_call(po, c_function, flags, count, argtags, args,
                                 totalstackspace);
@@ -406,7 +407,8 @@ DEFINEVAR long le_notes_made = 0, le_notes_free = 0;
 static int *free_notes = NULL;
 static long free_notes_cap = 0;
 
-static long note_index(void)
+static long
+note_index(void)
 {
     long i;
     le_owner_t *o = psyco_owner;
@@ -477,10 +479,12 @@ struct lm_build {
     int count, size;
 };
 
-static void lm_add(struct lm_build *b, long kind, long value, long n)
+static void
+lm_add(struct lm_build *b, long kind, long value, long n)
 {
     if (b->count + 3 > b->size) {
-        long *items = PyMem_Realloc(b->items, (b->size * 2 + 48) * sizeof(long));
+        long *items =
+            PyMem_Realloc(b->items, (b->size * 2 + 48) * sizeof(long));
         if (items == NULL)
             OUT_OF_MEMORY();
         b->items = items;
@@ -493,60 +497,61 @@ static void lm_add(struct lm_build *b, long kind, long value, long n)
 
 /* Virtual values are kept only if they can be computed from their items
    at run time (direct_compute_fn), up to a few levels deep. */
-static void lm_value(PsycoObject *po, struct lm_build *b, vinfo_t *vi,
-                     const long *reg_pos, int level)
+static void
+lm_value(PsycoObject *po, struct lm_build *b, vinfo_t *vi, const long *reg_pos,
+         int level)
 {
     if (vi == NULL) {
         lm_add(b, LM_NONE, 0, 0);
         return;
     }
     switch (gettime(vi->source)) {
-    case RunTime: {
-        long pos = getstack(vi->source);
-        if (pos == RUNTIME_STACK_NONE) {
-            reg_t rg = getreg(vi->source);
-            if (rg == REG_NONE) {
+        case RunTime: {
+            long pos = getstack(vi->source);
+            if (pos == RUNTIME_STACK_NONE) {
+                reg_t rg = getreg(vi->source);
+                if (rg == REG_NONE) {
+                    lm_add(b, LM_NONE, 0, 0);
+                    return;
+                }
+                if (reg_pos != NULL) {
+                    pos = reg_pos[rg];
+                }
+                else if (callee_saved_reg_table[rg]) {
+                    /* the C callee keeps it: frames.c finds where */
+                    lm_add(b, LM_REG, rg, 0);
+                    return;
+                }
+                else {
+                    /* the call will move it (RAX, from a call just made) */
+                    BEGIN_CODE
+                    SAVE_REG_VINFO(vi, rg);
+                    END_CODE
+                    pos = getstack(vi->source);
+                }
+            }
+            lm_add(b, LM_STACK, pos, 0);
+            return;
+        }
+        case CompileTime: {
+            source_known_t *sk = CompileTime_Get(vi->source);
+            if (sk->refcount1_flags & SkFlagPyObj)
+                psyco_owner_pin((PyObject *)sk->value);
+            lm_add(b, LM_CONST, sk->value, 0);
+            return;
+        }
+        default: {
+            source_virtual_t *sv = VirtualTime_Get(vi->source);
+            int i, n = vi->array->count;
+            if (sv->direct_compute_fn == NULL || level > 3) {
                 lm_add(b, LM_NONE, 0, 0);
                 return;
             }
-            if (reg_pos != NULL) {
-                pos = reg_pos[rg];
-            }
-            else if (callee_saved_reg_table[rg]) {
-                /* the C callee keeps it: frames.c finds where */
-                lm_add(b, LM_REG, rg, 0);
-                return;
-            }
-            else {
-                /* the call will move it (RAX, from a call just made) */
-                BEGIN_CODE
-                SAVE_REG_VINFO(vi, rg);
-                END_CODE
-                pos = getstack(vi->source);
-            }
-        }
-        lm_add(b, LM_STACK, pos, 0);
-        return;
-    }
-    case CompileTime: {
-        source_known_t *sk = CompileTime_Get(vi->source);
-        if (sk->refcount1_flags & SkFlagPyObj)
-            psyco_owner_pin((PyObject *)sk->value);
-        lm_add(b, LM_CONST, sk->value, 0);
-        return;
-    }
-    default: {
-        source_virtual_t *sv = VirtualTime_Get(vi->source);
-        int i, n = vi->array->count;
-        if (sv->direct_compute_fn == NULL || level > 3) {
-            lm_add(b, LM_NONE, 0, 0);
+            lm_add(b, LM_VIRTUAL, (long)sv, n);
+            for (i = 0; i < n; i++)
+                lm_value(po, b, vi->array->items[i], reg_pos, level + 1);
             return;
         }
-        lm_add(b, LM_VIRTUAL, (long)sv, n);
-        for (i = 0; i < n; i++)
-            lm_value(po, b, vi->array->items[i], reg_pos, level + 1);
-        return;
-    }
     }
 }
 
@@ -579,8 +584,7 @@ psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos)
     if (po->pr.is_inlining)
         return NULL;
     b.count = 0;
-    for (i = 0; i < n; i++)
-        lm_value(po, &b, LOC_LOCALS_PLUS[i], reg_pos, 0);
+    for (i = 0; i < n; i++) lm_value(po, &b, LOC_LOCALS_PLUS[i], reg_pos, 0);
     map = psyco_owner_alloc(offsetof(struct locals_map_s, items) +
                             (b.count + 1) * sizeof(long));
     map->lasti = lasti;
@@ -903,9 +907,10 @@ integer_lshift_i(PsycoObject *po, vinfo_t *v1, long counter)
     }
 }
 
-DEFINEFN /* signed */
-    vinfo_t *
-    integer_rshift(PsycoObject *po, vinfo_t *v1, vinfo_t *v2)
+/* signed */
+DEFINEFN
+vinfo_t *
+integer_rshift(PsycoObject *po, vinfo_t *v1, vinfo_t *v2)
 {
     condition_code_t cc;
     GENERIC_BINARY_HEADER;
@@ -930,9 +935,10 @@ DEFINEFN /* signed */
     return BINARY_INSTR_RSHIFT(is_nonneg(v1->source));
 }
 
-DEFINEFN /* signed */
-    vinfo_t *
-    integer_rshift_i(PsycoObject *po, vinfo_t *v1, long counter)
+/* signed */
+DEFINEFN
+vinfo_t *
+integer_rshift_i(PsycoObject *po, vinfo_t *v1, long counter)
 {
     GENERIC_BINARY_HEADER_i;
     if (counter >= LONG_BIT - 1) {

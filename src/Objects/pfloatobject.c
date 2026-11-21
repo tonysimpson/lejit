@@ -18,105 +18,145 @@
 
 #if HAVE_FP_FN_CALLS
 
-#define CF_NONPURE_FP_HELPER                                                   \
-  (CfPure | CfNoReturnValue | CfReturnTypeInt | CfPyErrIfNonNull)
+#define CF_NONPURE_FP_HELPER \
+    (CfPure | CfNoReturnValue | CfReturnTypeInt | CfPyErrIfNonNull)
 #ifdef WANT_SIGFPE_HANDLER
-#define CF_PURE_FP_HELPER                                                      \
-  (CfPure | CfNoReturnValue | CfReturnTypeInt | CfPyErrIfNonNull)
+#define CF_PURE_FP_HELPER \
+    (CfPure | CfNoReturnValue | CfReturnTypeInt | CfPyErrIfNonNull)
 #else
 #define CF_PURE_FP_HELPER (CfPure | CfNoReturnValue)
 #endif
 
-static int cimpl_fp_eq_fp(double a, double b) { return a == b; }
-static int cimpl_fp_ne_fp(double a, double b) { return a != b; }
-static int cimpl_fp_le_fp(double a, double b) { return a <= b; }
-static int cimpl_fp_lt_fp(double a, double b) { return a < b; }
-
-DEFINEFN double cimpl_fp_from_long(long value) { return (double)value; }
-
-static int cimpl_fp_fits_long(double whole) {
-  return LONG_MIN < whole && whole < LONG_MAX; /* false for NaN */
+static int
+cimpl_fp_eq_fp(double a, double b)
+{
+    return a == b;
+}
+static int
+cimpl_fp_ne_fp(double a, double b)
+{
+    return a != b;
+}
+static int
+cimpl_fp_le_fp(double a, double b)
+{
+    return a <= b;
+}
+static int
+cimpl_fp_lt_fp(double a, double b)
+{
+    return a < b;
 }
 
-static long cimpl_fp_to_long(double whole) { return (long)whole; }
+DEFINEFN double
+cimpl_fp_from_long(long value)
+{
+    return (double)value;
+}
+
+static int
+cimpl_fp_fits_long(double whole)
+{
+    return LONG_MIN < whole && whole < LONG_MAX; /* false for NaN */
+}
+
+static long
+cimpl_fp_to_long(double whole)
+{
+    return (long)whole;
+}
 
 /* float___trunc___impl */
-static double cimpl_fp_trunc(double x) {
-  double wholepart;
-  (void)modf(x, &wholepart);
-  return wholepart;
+static double
+cimpl_fp_trunc(double x)
+{
+    double wholepart;
+    (void)modf(x, &wholepart);
+    return wholepart;
 }
 
 /* float___round___impl without ndigits: round half to even */
-static double cimpl_fp_round_even(double x) {
-  double rounded = round(x);
-  if (fabs(x - rounded) == 0.5)
-    rounded = 2.0 * round(x / 2.0);
-  return rounded;
+static double
+cimpl_fp_round_even(double x)
+{
+    double rounded = round(x);
+    if (fabs(x - rounded) == 0.5)
+        rounded = 2.0 * round(x / 2.0);
+    return rounded;
 }
 
 DEFINEFN
-vinfo_t *PsycoFloat_Trunc(PsycoObject *po, vinfo_t *vd) {
-  return psyco_generic_call(po, cimpl_fp_trunc, CfPure | CfReturnTypeDouble,
-                            "d", vd);
+vinfo_t *
+PsycoFloat_Trunc(PsycoObject *po, vinfo_t *vd)
+{
+    return psyco_generic_call(po, cimpl_fp_trunc, CfPure | CfReturnTypeDouble,
+                              "d", vd);
 }
 
 DEFINEFN
-vinfo_t *PsycoFloat_RoundEven(PsycoObject *po, vinfo_t *vd) {
-  return psyco_generic_call(po, cimpl_fp_round_even,
-                            CfPure | CfReturnTypeDouble, "d", vd);
+vinfo_t *
+PsycoFloat_RoundEven(PsycoObject *po, vinfo_t *vd)
+{
+    return psyco_generic_call(po, cimpl_fp_round_even,
+                              CfPure | CfReturnTypeDouble, "d", vd);
 }
 
 DEFINEFN
-int PsycoFloat_WholeToLong(PsycoObject *po, vinfo_t *vwhole,
-                           vinfo_t **result) {
-  vinfo_t *x;
-  int r;
-  vinfo_t *fits = psyco_generic_call(po, cimpl_fp_fits_long,
-                                     CfPure | CfReturnTypeInt, "d", vwhole);
-  if (fits == NULL)
-    return -1;
-  r = runtime_NON_NULL_t(po, fits); /* consumes fits */
-  if (r != true)
-    return r == false ? 0 : -1;
-  x = psyco_generic_call(po, cimpl_fp_to_long, CfPure | CfReturnTypeLong, "d",
-                         vwhole);
-  if (x == NULL)
-    return -1;
-  *result = PsycoLong_FROM_WORD(x);
-  return 1;
+int
+PsycoFloat_WholeToLong(PsycoObject *po, vinfo_t *vwhole, vinfo_t **result)
+{
+    vinfo_t *x;
+    int r;
+    vinfo_t *fits = psyco_generic_call(po, cimpl_fp_fits_long,
+                                       CfPure | CfReturnTypeInt, "d", vwhole);
+    if (fits == NULL)
+        return -1;
+    r = runtime_NON_NULL_t(po, fits); /* consumes fits */
+    if (r != true)
+        return r == false ? 0 : -1;
+    x = psyco_generic_call(po, cimpl_fp_to_long, CfPure | CfReturnTypeLong,
+                           "d", vwhole);
+    if (x == NULL)
+        return -1;
+    *result = PsycoLong_FROM_WORD(x);
+    return 1;
 }
 
-static bool compute_float(PsycoObject *po, vinfo_t *floatobj) {
-  vinfo_t *newobj;
-  vinfo_t *fval;
+static bool
+compute_float(PsycoObject *po, vinfo_t *floatobj)
+{
+    vinfo_t *newobj;
+    vinfo_t *fval;
 
-  /* get the field 'ob_fval' from the Python object 'floatobj' */
-  fval = vinfo_getitem(floatobj, iFLOAT_OB_FVAL);
-  if (fval == NULL)
-    return false;
+    /* get the field 'ob_fval' from the Python object 'floatobj' */
+    fval = vinfo_getitem(floatobj, iFLOAT_OB_FVAL);
+    if (fval == NULL)
+        return false;
 
-  /* call PyFloat_FromDouble() */
-  newobj = psyco_generic_call(po, PyFloat_FromDouble,
-                              CfPure | CfCommonNewRefPyObject, "d", fval);
+    /* call PyFloat_FromDouble() */
+    newobj = psyco_generic_call(po, PyFloat_FromDouble,
+                                CfPure | CfCommonNewRefPyObject, "d", fval);
 
-  if (newobj == NULL)
-    return false;
+    if (newobj == NULL)
+        return false;
 
-  /* move the resulting non-virtual Python object back into 'floatobj' */
-  vinfo_move(po, floatobj, newobj);
-  return true;
+    /* move the resulting non-virtual Python object back into 'floatobj' */
+    vinfo_move(po, floatobj, newobj);
+    return true;
 }
 
 /* unreachable: nothing calls direct_xobj_vinfo from outside the
    direct_compute functions */
-static PyObject *direct_compute_float(vinfo_t *floatobj, char *data) {
-  double value;
-  long bits = direct_read_vinfo(vinfo_getitem(floatobj, iFLOAT_OB_FVAL), data);
-  if (PyErr_Occurred())
-    return NULL;
-  memcpy(&value, &bits, sizeof(value));
-  return PyFloat_FromDouble(value);
+static PyObject *
+direct_compute_float(vinfo_t *floatobj, char *data)
+{
+    double value;
+    long bits =
+        direct_read_vinfo(vinfo_getitem(floatobj, iFLOAT_OB_FVAL), data);
+    if (PyErr_Occurred())
+        return NULL;
+    memcpy(&value, &bits, sizeof(value));
+    return PyFloat_FromDouble(value);
 }
 
 DEFINEVAR source_virtual_t psyco_computed_float;
@@ -124,67 +164,68 @@ DEFINEVAR source_virtual_t psyco_computed_float;
 /***************************************************************/
 /*** float objects meta-implementation                       ***/
 
-static vinfo_t *pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w,
-                                   int op) {
-  /* Python >= 2.4 */
-  /* TypeSwitch */
-  PyTypeObject *wtp;
-  vinfo_t *a, *b, *r;
-  void *fn;
+static vinfo_t *
+pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
+{
+    /* Python >= 2.4 */
+    /* TypeSwitch */
+    PyTypeObject *wtp;
+    vinfo_t *a, *b, *r;
+    void *fn;
 
-  wtp = Psyco_NeedType(po, w);
-  if (wtp == NULL)
-    return NULL;
+    wtp = Psyco_NeedType(po, w);
+    if (wtp == NULL)
+        return NULL;
 
-  a = PsycoFloat_AS_DOUBLE(po, v);
-  if (a == NULL)
-    return NULL;
+    a = PsycoFloat_AS_DOUBLE(po, v);
+    if (a == NULL)
+        return NULL;
 
-  if (PyType_TypeCheck(wtp, &PyLong_Type)) {
-    /* fall back; NULL on MemoryError */
-    return psyco_generic_call(po, PyFloat_Type.tp_richcompare,
-                              CfCommonNewRefPyObject | CfPure, "vvl", v, w,
-                              (long)op);
-  }
-  if (PyType_TypeCheck(wtp, &PyFloat_Type)) {
-    b = PsycoFloat_AS_DOUBLE(po, w);
-    if (b == NULL)
-      return NULL;
-#define SWAP_A_B                                                               \
-  r = a;                                                                       \
-  a = b;                                                                       \
-  b = r;
-    switch (op) {
-    case Py_EQ:
-      fn = cimpl_fp_eq_fp;
-      break;
-    case Py_NE:
-      fn = cimpl_fp_ne_fp;
-      break;
-    case Py_LE:
-      fn = cimpl_fp_le_fp;
-      break;
-    case Py_GE:
-      fn = cimpl_fp_le_fp;
-      SWAP_A_B;
-      break;
-    case Py_LT:
-      fn = cimpl_fp_lt_fp;
-      break;
-    case Py_GT:
-      fn = cimpl_fp_lt_fp;
-      SWAP_A_B;
-      break;
-    default:
-      Py_FatalError("bad richcmp op");
-      return NULL;
+    if (PyType_TypeCheck(wtp, &PyLong_Type)) {
+        /* fall back; NULL on MemoryError */
+        return psyco_generic_call(po, PyFloat_Type.tp_richcompare,
+                                  CfCommonNewRefPyObject | CfPure, "vvl", v, w,
+                                  (long)op);
     }
+    if (PyType_TypeCheck(wtp, &PyFloat_Type)) {
+        b = PsycoFloat_AS_DOUBLE(po, w);
+        if (b == NULL)
+            return NULL;
+#define SWAP_A_B \
+    r = a;       \
+    a = b;       \
+    b = r;
+        switch (op) {
+            case Py_EQ:
+                fn = cimpl_fp_eq_fp;
+                break;
+            case Py_NE:
+                fn = cimpl_fp_ne_fp;
+                break;
+            case Py_LE:
+                fn = cimpl_fp_le_fp;
+                break;
+            case Py_GE:
+                fn = cimpl_fp_le_fp;
+                SWAP_A_B;
+                break;
+            case Py_LT:
+                fn = cimpl_fp_lt_fp;
+                break;
+            case Py_GT:
+                fn = cimpl_fp_lt_fp;
+                SWAP_A_B;
+                break;
+            default:
+                Py_FatalError("bad richcmp op");
+                return NULL;
+        }
 #undef SWAP_A_B
-    r = psyco_generic_call(po, fn, CfReturnTypeInt | CfPure, "dd", a, b);
-    return r != NULL ? PsycoBool_FROM_WORD(r) : NULL;
-  }
+        r = psyco_generic_call(po, fn, CfReturnTypeInt | CfPure, "dd", a, b);
+        return r != NULL ? PsycoBool_FROM_WORD(r) : NULL;
+    }
 
-  return psyco_vi_NotImplemented();
+    return psyco_vi_NotImplemented();
 }
 
 /* + - * / % unary + - abs bool hash, translated from Objects/floatobject.c */
@@ -208,16 +249,14 @@ cimpl_PyFloat_AsDouble_1(PyObject *op, PyObject *res)
 #else
     if (!PyFloat_CheckExact(res)) {
         if (!PyFloat_Check(res)) {
-            PyErr_Format(PyExc_TypeError,
-                         LE_MSG_FLOAT_RETURNED_NON_FLOAT,
+            PyErr_Format(PyExc_TypeError, LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                          op->ob_type->tp_name, res->ob_type->tp_name);
             Py_DECREF(res);
             return -1;
         }
-        if (PyErr_WarnFormat(
-                PyExc_DeprecationWarning, 1,
-                LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
-                op->ob_type->tp_name, res->ob_type->tp_name)) {
+        if (PyErr_WarnFormat(PyExc_DeprecationWarning, 1,
+                             LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
+                             op->ob_type->tp_name, res->ob_type->tp_name)) {
             Py_DECREF(res);
             return -1;
         }
@@ -236,16 +275,14 @@ cimpl_PyFloat_AsDouble_2(PyObject *op, PyObject *res)
 #if LE_HAS_FLOAT_ASDOUBLE_INDEX
     if (!PyFloat_CheckExact(res)) {
         if (!PyFloat_Check(res)) {
-            PyErr_Format(PyExc_TypeError,
-                         LE_MSG_FLOAT_RETURNED_NON_FLOAT,
+            PyErr_Format(PyExc_TypeError, LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                          Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name);
             Py_DECREF(res);
             return -1;
         }
-        if (PyErr_WarnFormat(
-                PyExc_DeprecationWarning, 1,
-                LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
-                Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
+        if (PyErr_WarnFormat(PyExc_DeprecationWarning, 1,
+                             LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
+                             Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
             Py_DECREF(res);
             return -1;
         }
@@ -253,16 +290,14 @@ cimpl_PyFloat_AsDouble_2(PyObject *op, PyObject *res)
 #else
     {
         if (!PyFloat_Check(res)) {
-            PyErr_Format(PyExc_TypeError,
-                         LE_MSG_FLOAT_RETURNED_NON_FLOAT,
+            PyErr_Format(PyExc_TypeError, LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                          op->ob_type->tp_name, res->ob_type->tp_name);
             Py_DECREF(res);
             return -1;
         }
-        if (PyErr_WarnFormat(
-                PyExc_DeprecationWarning, 1,
-                LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
-                op->ob_type->tp_name, res->ob_type->tp_name)) {
+        if (PyErr_WarnFormat(PyExc_DeprecationWarning, 1,
+                             LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
+                             op->ob_type->tp_name, res->ob_type->tp_name)) {
             Py_DECREF(res);
             return -1;
         }
@@ -281,17 +316,15 @@ cimpl_PyFloat_AsDouble_3(PyObject *op, PyObject *res)
     {
 #if LE_HAS_FLOAT_ASDOUBLE_INDEX
         if (!PyFloat_Check(res)) {
-            PyErr_Format(PyExc_TypeError,
-                         LE_MSG_FLOAT_RETURNED_NON_FLOAT,
+            PyErr_Format(PyExc_TypeError, LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                          Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name);
             Py_DECREF(res);
             return -1;
         }
 #endif
-        if (PyErr_WarnFormat(
-                PyExc_DeprecationWarning, 1,
-                LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
-                Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
+        if (PyErr_WarnFormat(PyExc_DeprecationWarning, 1,
+                             LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
+                             Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
             Py_DECREF(res);
             return -1;
         }
@@ -308,10 +341,9 @@ cimpl_PyFloat_AsDouble_4(PyObject *op, PyObject *res)
     double val;
     Py_INCREF(res);
     {
-        if (PyErr_WarnFormat(
-                PyExc_DeprecationWarning, 1,
-                LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
-                Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
+        if (PyErr_WarnFormat(PyExc_DeprecationWarning, 1,
+                             LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS,
+                             Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
             Py_DECREF(res);
             return -1;
         }
@@ -384,7 +416,8 @@ cimpl_float_div_1(PyObject *w, double a)
     else if (cimpl_convert_to_double(&(w), &(b)) < 0)
         return w;
     if (b == 0.0) {
-        PyErr_SetString(PyExc_ZeroDivisionError, LE_MSG_FLOAT_DIVISION_BY_ZERO);
+        PyErr_SetString(PyExc_ZeroDivisionError,
+                        LE_MSG_FLOAT_DIVISION_BY_ZERO);
         return NULL;
     }
     a = a / b;
@@ -396,7 +429,8 @@ static int
 cimpl_float_div(double a, double b, double *_r)
 {
     if (b == 0.0) {
-        PyErr_SetString(PyExc_ZeroDivisionError, LE_MSG_FLOAT_DIVISION_BY_ZERO);
+        PyErr_SetString(PyExc_ZeroDivisionError,
+                        LE_MSG_FLOAT_DIVISION_BY_ZERO);
         return -1;
     }
     a = a / b;
@@ -622,8 +656,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
             vinfo_decref(res, po);
             return _t9;
         }
-        PycException_SetFormat(po, PyExc_TypeError,
-                               LE_MSG_MUST_BE_REAL_NUMBER,
+        PycException_SetFormat(po, PyExc_TypeError, LE_MSG_MUST_BE_REAL_NUMBER,
                                tp_op->tp_name);
         return NULL;
     }
@@ -658,10 +691,9 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
             _t14 = _t12 != 0;
         }
         if (!(_t14)) {
-            PycException_SetFormat(
-                po, PyExc_TypeError,
-                LE_MSG_FLOAT_RETURNED_NON_FLOAT,
-                tp_op->tp_name, tp_res->tp_name);
+            PycException_SetFormat(po, PyExc_TypeError,
+                                   LE_MSG_FLOAT_RETURNED_NON_FLOAT,
+                                   tp_op->tp_name, tp_res->tp_name);
             vinfo_decref(res, po);
             return NULL;
         }
@@ -743,8 +775,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
         _t5 = _t4 == NULL;
     }
     if (_t5) {
-        PycException_SetFormat(po, PyExc_TypeError,
-                               LE_MSG_MUST_BE_REAL_NUMBER,
+        PycException_SetFormat(po, PyExc_TypeError, LE_MSG_MUST_BE_REAL_NUMBER,
                                tp_op->tp_name);
         return NULL;
     }
@@ -779,10 +810,9 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
             _t10 = _t8 != 0;
         }
         if (!(_t10)) {
-            PycException_SetFormat(
-                po, PyExc_TypeError,
-                LE_MSG_FLOAT_RETURNED_NON_FLOAT,
-                tp_op->tp_name, tp_res->tp_name);
+            PycException_SetFormat(po, PyExc_TypeError,
+                                   LE_MSG_FLOAT_RETURNED_NON_FLOAT,
+                                   tp_op->tp_name, tp_res->tp_name);
             vinfo_decref(res, po);
             return NULL;
         }
@@ -1527,15 +1557,20 @@ gen_floatobject_init(void)
 #pragma GCC diagnostic pop
 
 INITIALIZATIONFN
-void psy_floatobject_init(void) {
-  gen_floatobject_init();
-  Psyco_DefineMeta(PyFloat_Type.tp_richcompare, pfloat_richcompare);
+void
+psy_floatobject_init(void)
+{
+    gen_floatobject_init();
+    Psyco_DefineMeta(PyFloat_Type.tp_richcompare, pfloat_richcompare);
 
-  INIT_SVIRTUAL(psyco_computed_float, compute_float, direct_compute_float, 0, 0,
-                0);
+    INIT_SVIRTUAL(psyco_computed_float, compute_float, direct_compute_float, 0,
+                  0, 0);
 }
 
 #else  /* !HAVE_FP_FN_CALLS */
 INITIALIZATIONFN
-void psy_floatobject_init(void) {}
+void
+psy_floatobject_init(void)
+{
+}
 #endif /* !HAVE_FP_FN_CALLS */

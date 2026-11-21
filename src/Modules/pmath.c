@@ -15,35 +15,44 @@
 
 #include "../initialize.h"
 #include "../Python/pyver.h"
-#if HAVE_FP_FN_CALLS    /* disable float optimizations if functions with
-                           float/double arguments are not implemented
-                           in the back-end */
+#if HAVE_FP_FN_CALLS /* disable float optimizations if functions with \
+                        float/double arguments are not implemented    \
+                        in the back-end */
 
 #include <math.h>
 #include <errno.h>
 #include "../Objects/pfloatobject.h"
 
-static PyObject *cimpl_floor_to_int(double x) { return PyLong_FromDouble(floor(x)); }
-static PyObject *cimpl_ceil_to_int(double x) { return PyLong_FromDouble(ceil(x)); }
+static PyObject *
+cimpl_floor_to_int(double x)
+{
+    return PyLong_FromDouble(floor(x));
+}
+static PyObject *
+cimpl_ceil_to_int(double x)
+{
+    return PyLong_FromDouble(ceil(x));
+}
 
 /* ceil, floor: a float becomes an int; anything else (an int, or a type
    with __floor__/__ceil__) goes to the real function */
-# define PMATH_TO_INT(func)\
-static PyCFunction fallback_##func;\
-static vinfo_t* pmath_##func(PsycoObject* po, vinfo_t* vself, vinfo_t* v) {\
-    vinfo_t *a;\
-    PyTypeObject *t = Psyco_NeedType(po, v);\
-    if (t == NULL)\
-        return NULL;\
-    if (t != &PyFloat_Type)\
-        return psyco_generic_call(po, fallback_##func, CfCommonNewRefPyObject,\
-                                  "lv", NULL, v);\
-    a = PsycoFloat_AS_DOUBLE(po, v); /* borrowed */\
-    if (a == NULL)\
-        return NULL;\
-    return psyco_generic_call(po, cimpl_##func##_to_int, CfCommonNewRefPyObject,\
-                              "d", a);\
-}
+#define PMATH_TO_INT(func)                                                    \
+    static PyCFunction fallback_##func;                                       \
+    static vinfo_t *pmath_##func(PsycoObject *po, vinfo_t *vself, vinfo_t *v) \
+    {                                                                         \
+        vinfo_t *a;                                                           \
+        PyTypeObject *t = Psyco_NeedType(po, v);                              \
+        if (t == NULL)                                                        \
+            return NULL;                                                      \
+        if (t != &PyFloat_Type)                                               \
+            return psyco_generic_call(po, fallback_##func,                    \
+                                      CfCommonNewRefPyObject, "lv", NULL, v); \
+        a = PsycoFloat_AS_DOUBLE(po, v); /* borrowed */                       \
+        if (a == NULL)                                                        \
+            return NULL;                                                      \
+        return psyco_generic_call(po, cimpl_##func##_to_int,                  \
+                                  CfCommonNewRefPyObject, "d", a);            \
+    }
 
 PMATH_TO_INT(ceil)
 PMATH_TO_INT(floor)
@@ -74,53 +83,52 @@ cimpl_is_error(double x)
    inf_exc with inf_msg: OverflowError for the functions that can overflow
    (cosh, exp, sinh), ValueError for the others. cfunc_math_<func> is the C
    function, set by the registration. */
-#define MATH_1(func, inf_exc, inf_msg)                                      \
-static PyCFunction cfunc_math_##func;                                       \
-                                                                            \
-static int                                                                  \
-cimpl_math_##func(double x, double *_r)                                     \
-{                                                                           \
-    double r;                                                               \
-    errno = 0;                                                              \
-    r = func(x);                                                            \
-    if (isnan(r) && !isnan(x)) {                                            \
-        PyErr_SetString(PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR);        \
-        return -1;                                                          \
-    }                                                                       \
-    if (isinf(r) && isfinite(x)) {                                          \
-        PyErr_SetString(inf_exc, inf_msg);                                  \
-        return -1;                                                          \
-    }                                                                       \
-    if (isfinite(r) && errno && cimpl_is_error(r))                          \
-        return -1;                                                          \
-    *_r = r;                                                                \
-    return 0;                                                               \
-}                                                                           \
-                                                                            \
-static vinfo_t *                                                            \
-math_##func(PsycoObject *po, vinfo_t *self, vinfo_t *args)                  \
-{                                                                           \
-    vinfo_array_t *result;                                                  \
-    vinfo_t *x;                                                             \
-    vinfo_t *r;                                                             \
-    x = PsycoFloat_AsDouble(po, args);                                      \
-    if (x == NULL) {                                                        \
-        return NULL;                                                        \
-    }                                                                       \
-    result = array_new(1);                                                  \
-    if (psyco_generic_call(po, cimpl_math_##func,                           \
-                           CfCommonIntZeroOk | CfNoPython | CfNoBlock, "da", \
-                           x, result) == NULL) {                            \
-        array_release(result);                                              \
-        vinfo_decref(x, po);                                                \
-        return NULL;                                                        \
-    }                                                                       \
-    r = result->items[0];                                                   \
-    array_release(result);                                                  \
-    r = PsycoFloat_FROM_DOUBLE(r);                                          \
-    vinfo_decref(x, po);                                                    \
-    return r;                                                               \
-}
+#define MATH_1(func, inf_exc, inf_msg)                                     \
+    static PyCFunction cfunc_math_##func;                                  \
+                                                                           \
+    static int cimpl_math_##func(double x, double *_r)                     \
+    {                                                                      \
+        double r;                                                          \
+        errno = 0;                                                         \
+        r = func(x);                                                       \
+        if (isnan(r) && !isnan(x)) {                                       \
+            PyErr_SetString(PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR);   \
+            return -1;                                                     \
+        }                                                                  \
+        if (isinf(r) && isfinite(x)) {                                     \
+            PyErr_SetString(inf_exc, inf_msg);                             \
+            return -1;                                                     \
+        }                                                                  \
+        if (isfinite(r) && errno && cimpl_is_error(r))                     \
+            return -1;                                                     \
+        *_r = r;                                                           \
+        return 0;                                                          \
+    }                                                                      \
+                                                                           \
+    static vinfo_t *math_##func(PsycoObject *po, vinfo_t *self,            \
+                                vinfo_t *args)                             \
+    {                                                                      \
+        vinfo_array_t *result;                                             \
+        vinfo_t *x;                                                        \
+        vinfo_t *r;                                                        \
+        x = PsycoFloat_AsDouble(po, args);                                 \
+        if (x == NULL) {                                                   \
+            return NULL;                                                   \
+        }                                                                  \
+        result = array_new(1);                                             \
+        if (psyco_generic_call(po, cimpl_math_##func,                      \
+                               CfCommonIntZeroOk | CfNoPython | CfNoBlock, \
+                               "da", x, result) == NULL) {                 \
+            array_release(result);                                         \
+            vinfo_decref(x, po);                                           \
+            return NULL;                                                   \
+        }                                                                  \
+        r = result->items[0];                                              \
+        array_release(result);                                             \
+        r = PsycoFloat_FROM_DOUBLE(r);                                     \
+        vinfo_decref(x, po);                                               \
+        return r;                                                          \
+    }
 
 MATH_1(acos, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
 MATH_1(asin, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
@@ -153,20 +161,22 @@ gen_mathmodule_init(PyObject *md)
 }
 
 INITIALIZATIONFN
-void psyco_initmath(void)
+void
+psyco_initmath(void)
 {
-    PyObject* md = Psyco_DefineMetaModule("math");
+    PyObject *md = Psyco_DefineMetaModule("math");
 
     fallback_ceil = Psyco_DefineModuleFn(md, "ceil", METH_O, pmath_ceil);
-    fallback_floor= Psyco_DefineModuleFn(md, "floor",METH_O, pmath_floor);
+    fallback_floor = Psyco_DefineModuleFn(md, "floor", METH_O, pmath_floor);
     gen_mathmodule_init(md);
 
     Py_XDECREF(md);
 }
 
-#else /* !HAVE_FP_FN_CALLS */
+#else  /* !HAVE_FP_FN_CALLS */
 INITIALIZATIONFN
-void psyco_initmath(void)
+void
+psyco_initmath(void)
 {
 }
 #endif /* !HAVE_FP_FN_CALLS */

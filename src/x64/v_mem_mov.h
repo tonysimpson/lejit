@@ -21,17 +21,21 @@
 
 #include "../psyco.h"
 #include "iencoding.h"
-#define V_IS_RUNTIME(v) ((v) != NULL && is_runtime(((vinfo_t*)(v))->source))
-#define V_GET_REG(v) (V_IS_RUNTIME(v) ? getreg(((vinfo_t*)(v))->source) : REG_NONE)
-#define V_MEM_MOV_SCALE_BYTE  0
-#define V_MEM_MOV_SCALE_WORD  1
+#define V_IS_RUNTIME(v) ((v) != NULL && is_runtime(((vinfo_t *)(v))->source))
+#define V_GET_REG(v) \
+    (V_IS_RUNTIME(v) ? getreg(((vinfo_t *)(v))->source) : REG_NONE)
+#define V_MEM_MOV_SCALE_BYTE 0
+#define V_MEM_MOV_SCALE_WORD 1
 #define V_MEM_MOV_SCALE_DWORD 2
 #define V_MEM_MOV_SCALE_QWORD 3
 #define V_MEM_MOV_SCALE_POINTER V_MEM_MOV_SCALE_QWORD
 #define V_MEM_MOV_SCALE_TO_BYTES(scale) (1 << (scale))
-#define V_CT_GET_VALUE(v) CompileTime_Get(((vinfo_t*)(v))->source)->value
+#define V_CT_GET_VALUE(v) CompileTime_Get(((vinfo_t *)(v))->source)->value
 
-static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *index, long offset, unsigned char scale, bool signed_) {
+static vinfo_t *
+v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *index,
+          long offset, unsigned char scale, bool signed_)
+{
     reg_t v_reg, base_reg, index_reg;
     reg_t r;
     long value = 0;
@@ -50,32 +54,42 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
             return NULL;
         }
     }
-    
+
     BEGIN_CODE
     if (v == NULL) {
-        NEED_FREE_REG_COND(v_reg, (v_reg != V_GET_REG(base) && v_reg != V_GET_REG(index)));
+        NEED_FREE_REG_COND(
+            v_reg, (v_reg != V_GET_REG(base) && v_reg != V_GET_REG(index)));
         /* an unsigned field narrower than 8 bytes is known non-negative */
-        v = vinfo_new(RunTime_New(v_reg, false,
-                                  !(signed_) && scale < V_MEM_MOV_SCALE_QWORD));
+        v = vinfo_new(RunTime_New(
+            v_reg, false, !(signed_) && scale < V_MEM_MOV_SCALE_QWORD));
         REG_NUMBER(po, v_reg) = v;
         read = true;
-    } else {
+    }
+    else {
         if (V_IS_RUNTIME(v)) {
             v_reg = V_GET_REG(v);
             if (v_reg == REG_NONE) {
-                NEED_FREE_REG_COND(v_reg, (v_reg != V_GET_REG(base) && v_reg != V_GET_REG(index)));
+                NEED_FREE_REG_COND(v_reg, (v_reg != V_GET_REG(base) &&
+                                           v_reg != V_GET_REG(index)));
                 RTVINFO_FROM_STACK_TO_REG(v, v_reg);
             }
-        } else {
+        }
+        else {
             v_reg = REG_NONE;
             value = V_CT_GET_VALUE(v);
             /* a store only keeps the low bytes, so narrow stores can always
                use an immediate (truncated here). A qword store sign-extends
                an imm32, so other values must go through a register. */
             switch (scale) {
-                case V_MEM_MOV_SCALE_BYTE:  value = (signed char)value; break;
-                case V_MEM_MOV_SCALE_WORD:  value = (short)value; break;
-                case V_MEM_MOV_SCALE_DWORD: value = (int)value; break;
+                case V_MEM_MOV_SCALE_BYTE:
+                    value = (signed char)value;
+                    break;
+                case V_MEM_MOV_SCALE_WORD:
+                    value = (short)value;
+                    break;
+                case V_MEM_MOV_SCALE_DWORD:
+                    value = (int)value;
+                    break;
                 default:
                     if (!FITS_IN_32BITS(value)) {
                         v_reg = REG_TRANSIENT_1;
@@ -87,23 +101,28 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
     if (V_IS_RUNTIME(base)) {
         base_reg = V_GET_REG(base);
         if (base_reg == REG_NONE) {
-            NEED_FREE_REG_COND(base_reg, (base_reg != V_GET_REG(index) && base_reg != V_GET_REG(v)));
+            NEED_FREE_REG_COND(base_reg, (base_reg != V_GET_REG(index) &&
+                                          base_reg != V_GET_REG(v)));
             RTVINFO_FROM_STACK_TO_REG(base, base_reg);
         }
-    } else {
+    }
+    else {
         base_reg = REG_NONE;
         offset_or_address += V_CT_GET_VALUE(base);
     }
     if (index == NULL) {
         index_reg = REG_NONE;
-    } else {
+    }
+    else {
         if (V_IS_RUNTIME(index)) {
             index_reg = V_GET_REG(index);
             if (index_reg == REG_NONE) {
-                NEED_FREE_REG_COND(index_reg, (index_reg != V_GET_REG(base) && index_reg != V_GET_REG(v)));
+                NEED_FREE_REG_COND(index_reg, (index_reg != V_GET_REG(base) &&
+                                               index_reg != V_GET_REG(v)));
                 RTVINFO_FROM_STACK_TO_REG(index, index_reg);
             }
-        } else {
+        }
+        else {
             long i = V_CT_GET_VALUE(index);
             if (base_reg != REG_NONE && (i < -(1L << 26) || i >= (1L << 26))) {
                 /* scaled, it may not fit the displacement (in bounds only
@@ -112,7 +131,8 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
                    into the absolute address, which goes in R11 below. */
                 index_reg = REG_TRANSIENT_2;
                 MOV_R_I(index_reg, i);
-            } else {
+            }
+            else {
                 index_reg = REG_NONE;
                 offset_or_address += (long)((unsigned long)i << scale);
             }
@@ -126,54 +146,66 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
             op_len = 2;
             b1 = 0x0F;
             b2 = (signed_) ? 0xBE : 0xB6;
-        } else if (scale == V_MEM_MOV_SCALE_WORD) {
+        }
+        else if (scale == V_MEM_MOV_SCALE_WORD) {
             rex_w = (signed_);
             op_len = 2;
             b1 = 0x0F;
             b2 = (signed_) ? 0xBF : 0xB7;
-        } else if (scale == V_MEM_MOV_SCALE_DWORD) {
-            if(signed_) {
+        }
+        else if (scale == V_MEM_MOV_SCALE_DWORD) {
+            if (signed_) {
                 rex_w = true;
                 op_len = 1;
                 b1 = 0x63;
-            } else {
+            }
+            else {
                 op_len = 1;
                 b1 = 0x8B;
             }
-        } else {
+        }
+        else {
             rex_w = true;
             op_len = 1;
-           b1 = 0x8B;
+            b1 = 0x8B;
         }
-    } else {
+    }
+    else {
         if (v_reg != REG_NONE) {
             /* from register */
             if (scale == V_MEM_MOV_SCALE_BYTE) {
                 op_len = 1;
                 b1 = 0x88;
-            } else if (scale == V_MEM_MOV_SCALE_WORD) {
-                op_len = 1;     /* 0x66 prefix written below, before REX */
+            }
+            else if (scale == V_MEM_MOV_SCALE_WORD) {
+                op_len = 1; /* 0x66 prefix written below, before REX */
                 b1 = 0x89;
-            } else if (scale == V_MEM_MOV_SCALE_DWORD) {
+            }
+            else if (scale == V_MEM_MOV_SCALE_DWORD) {
                 op_len = 1;
                 b1 = 0x89;
-            } else {
+            }
+            else {
                 rex_w = true;
                 op_len = 1;
                 b1 = 0x89;
             }
-        } else {
+        }
+        else {
             /* from immediate */
             if (scale == V_MEM_MOV_SCALE_BYTE) {
                 op_len = 1;
                 b1 = 0xC6;
-            } else if (scale == V_MEM_MOV_SCALE_WORD) {
-                op_len = 1;     /* 0x66 prefix written below, before REX */
+            }
+            else if (scale == V_MEM_MOV_SCALE_WORD) {
+                op_len = 1; /* 0x66 prefix written below, before REX */
                 b1 = 0xC7;
-            } else if (scale == V_MEM_MOV_SCALE_DWORD) {
+            }
+            else if (scale == V_MEM_MOV_SCALE_DWORD) {
                 op_len = 1;
                 b1 = 0xC7;
-            } else {
+            }
+            else {
                 rex_w = true;
                 op_len = 1;
                 b1 = 0xC7;
@@ -198,7 +230,7 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
         offset_or_address = 0;
     }
     if (!read && scale == V_MEM_MOV_SCALE_WORD) {
-        WRITE_1(0x66);   /* operand-size prefix: must precede REX */
+        WRITE_1(0x66); /* operand-size prefix: must precede REX */
     }
     r = (v_reg != REG_NONE ? v_reg : 0);
     if (base_reg == REG_NONE) {
@@ -206,13 +238,20 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
            instruction, after any immediate */
         int imm_len = 0;
         if (!read && v_reg == REG_NONE)
-            imm_len = scale == V_MEM_MOV_SCALE_BYTE ? 1 :
-                      scale == V_MEM_MOV_SCALE_WORD ? 2 : 4;
-        ADDRESS_ENCODING(rex_w, op_len, b1, b2, b3, 0, r, offset_or_address, imm_len);
-    } else if (index_reg == REG_NONE) {
-        OFFSET_ENCODING(false, rex_w, op_len, b1, b2, b3, 0, 0, r, base_reg, offset_or_address);
-    } else {
-        SIB_ENCODING(false, rex_w, op_len, b1, b2, b3, 0, 0, r, base_reg, offset_or_address, index_reg, V_MEM_MOV_SCALE_TO_BYTES(scale));
+            imm_len = scale == V_MEM_MOV_SCALE_BYTE   ? 1
+                      : scale == V_MEM_MOV_SCALE_WORD ? 2
+                                                      : 4;
+        ADDRESS_ENCODING(rex_w, op_len, b1, b2, b3, 0, r, offset_or_address,
+                         imm_len);
+    }
+    else if (index_reg == REG_NONE) {
+        OFFSET_ENCODING(false, rex_w, op_len, b1, b2, b3, 0, 0, r, base_reg,
+                        offset_or_address);
+    }
+    else {
+        SIB_ENCODING(false, rex_w, op_len, b1, b2, b3, 0, 0, r, base_reg,
+                     offset_or_address, index_reg,
+                     V_MEM_MOV_SCALE_TO_BYTES(scale));
     }
     if ((!read) && v_reg == REG_NONE) {
         switch (scale) {
@@ -224,7 +263,7 @@ static vinfo_t* v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *i
                 break;
             default: /* both dword and qwords in 32bit range */
                 WRITE_32BIT(value);
-       }
+        }
     }
     END_CODE
     return v;

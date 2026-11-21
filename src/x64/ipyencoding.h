@@ -23,56 +23,57 @@
 /* XXX if Py_REF_DEBUG is set (Python debug mode), the
        following will not properly update _Py_RefTotal.
        Don't trust _Py_RefTotal with Psyco.     */
-#define INC_OB_REFCNT(rg)                                                      \
-  do {                                                                         \
-    NEED_CC_REG(rg);                                                           \
-    INC_OB_REFCNT_internal(rg);                                                \
-  } while (0)
+#define INC_OB_REFCNT(rg)           \
+    do {                            \
+        NEED_CC_REG(rg);            \
+        INC_OB_REFCNT_internal(rg); \
+    } while (0)
 /* same as above, preserving the cc */
-#define INC_OB_REFCNT_CC(rg)                                                   \
-  do {                                                                         \
-    bool _save_ccreg = HAS_CCREG(po);                                          \
-    if (_save_ccreg)                                                           \
-      PUSH_CC();                                                               \
-    INC_OB_REFCNT_internal(rg);                                                \
-    if (_save_ccreg)                                                           \
-      POP_CC();                                                                \
-  } while (0)
-#define INC_OB_REFCNT_internal(rg)                                             \
-  do {                                                                         \
-    if (CPY_OFFSET(PyObject, ob_refcnt) == 0) {                                  \
-      ADD_A_I8(rg, 1);                                                         \
-    } else {                                                                   \
-      ADD_O8_I8(rg, CPY_OFFSET(PyObject, ob_refcnt), 1);                         \
-    }                                                                          \
-  } while (0)
+#define INC_OB_REFCNT_CC(rg)              \
+    do {                                  \
+        bool _save_ccreg = HAS_CCREG(po); \
+        if (_save_ccreg)                  \
+            PUSH_CC();                    \
+        INC_OB_REFCNT_internal(rg);       \
+        if (_save_ccreg)                  \
+            POP_CC();                     \
+    } while (0)
+#define INC_OB_REFCNT_internal(rg)                             \
+    do {                                                       \
+        if (CPY_OFFSET(PyObject, ob_refcnt) == 0) {            \
+            ADD_A_I8(rg, 1);                                   \
+        }                                                      \
+        else {                                                 \
+            ADD_O8_I8(rg, CPY_OFFSET(PyObject, ob_refcnt), 1); \
+        }                                                      \
+    } while (0)
 
 /* Py_INCREF() for a compile-time-known 'pyobj' */
-#define INC_KNOWN_OB_REFCNT(pyobj)                                             \
-  do {                                                                         \
-    NEED_CC();                                                                 \
-    MOV_R_I(REG_TRANSIENT_1, &(pyobj)->ob_refcnt);                             \
-    ADD_A_I8(REG_TRANSIENT_1, 1);                                              \
-  } while (0)
+#define INC_KNOWN_OB_REFCNT(pyobj)                     \
+    do {                                               \
+        NEED_CC();                                     \
+        MOV_R_I(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
+        ADD_A_I8(REG_TRANSIENT_1, 1);                  \
+    } while (0)
 
 /* Py_DECREF() for a compile-time 'pyobj' assuming counter cannot reach zero */
-#define DEC_KNOWN_OB_REFCNT_NZ(pyobj)                                          \
-  do {                                                                         \
-    NEED_CC();                                                                 \
-    MOV_R_I(REG_TRANSIENT_1, &(pyobj)->ob_refcnt);                             \
-    SUB_A_I8(REG_TRANSIENT_1, 1);                                              \
-  } while (0)
+#define DEC_KNOWN_OB_REFCNT_NZ(pyobj)                  \
+    do {                                               \
+        NEED_CC();                                     \
+        MOV_R_I(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
+        SUB_A_I8(REG_TRANSIENT_1, 1);                  \
+    } while (0)
 
 /* like DEC_OB_REFCNT() but assume the reference counter cannot reach zero */
-#define DEC_OB_REFCNT_NZ(rg)                                                   \
-  do {                                                                         \
-    NEED_CC_REG(rg);                                                           \
-    SUB_A_I8(rg, 1);                                                           \
-  } while (0)
+#define DEC_OB_REFCNT_NZ(rg) \
+    do {                     \
+        NEED_CC_REG(rg);     \
+        SUB_A_I8(rg, 1);     \
+    } while (0)
 
 /* internal utilities for the macros below */
-EXTERNFN code_t *decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg,
-                                        destructor fn);
+EXTERNFN code_t *
+decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn);
 
 /* the equivalent of Py_DECREF().
    XXX Same remark as INC_OB_REFCNT().
@@ -83,8 +84,8 @@ EXTERNFN code_t *decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg,
    but just testing things). */
 #ifdef Py_TRACE_REFS
 /* debugging only */
-#define DEC_OB_REFCNT(rg)                                                      \
-  (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
+#define DEC_OB_REFCNT(rg) \
+    (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
 #else
 #define DEC_OB_REFCNT(rg) (code = decref_dealloc_calling(code, po, rg, NULL))
 #endif
@@ -93,58 +94,66 @@ EXTERNFN code_t *decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg,
    (assuming that tp_dealloc never changes for a given type) */
 #ifdef Py_TRACE_REFS
 /* debugging only */
-#define DEC_OB_REFCNT_T(rg, type)                                              \
-  (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
+#define DEC_OB_REFCNT_T(rg, type) \
+    (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
 #else
-#define DEC_OB_REFCNT_T(rg, type)                                              \
-  (code = decref_dealloc_calling(code, po, rg, (type)->tp_dealloc))
+#define DEC_OB_REFCNT_T(rg, type) \
+    (code = decref_dealloc_calling(code, po, rg, (type)->tp_dealloc))
 #endif
 
 /***************************************************************/
 /***   generic reference counting functions                  ***/
 
 /* emit Py_INCREF(v) for run-time v */
-PSY_INLINE void psyco_incref_rt(PsycoObject *po, vinfo_t *v) {
-  reg_t rg;
-  BEGIN_CODE
-  RTVINFO_IN_REG(v);
-  rg = RUNTIME_REG(v);
-  INC_OB_REFCNT(rg);
-  END_CODE
+PSY_INLINE void
+psyco_incref_rt(PsycoObject *po, vinfo_t *v)
+{
+    reg_t rg;
+    BEGIN_CODE
+    RTVINFO_IN_REG(v);
+    rg = RUNTIME_REG(v);
+    INC_OB_REFCNT(rg);
+    END_CODE
 }
 
 /* emit Py_INCREF(v) for non-virtual v */
-PSY_INLINE void psyco_incref_nv(PsycoObject *po, vinfo_t *v) {
-  if (!is_compiletime(v->source))
-    psyco_incref_rt(po, v);
-  else {
-    BEGIN_CODE
-    INC_KNOWN_OB_REFCNT((PyObject *)CompileTime_Get(v->source)->value);
-    END_CODE
-  }
+PSY_INLINE void
+psyco_incref_nv(PsycoObject *po, vinfo_t *v)
+{
+    if (!is_compiletime(v->source))
+        psyco_incref_rt(po, v);
+    else {
+        BEGIN_CODE
+        INC_KNOWN_OB_REFCNT((PyObject *)CompileTime_Get(v->source)->value);
+        END_CODE
+    }
 }
 
 /* a dealloc can run a __del__, except these types' */
-PSY_INLINE void decref_may_run_python(PsycoObject *po, PyTypeObject *tp) {
-  if (!(tp == &PyUnicode_Type || tp == &PyBool_Type || tp == &PyFloat_Type ||
-        tp == &PyLong_Type || tp == Py_None->ob_type || tp == &PyRange_Type))
-    po->pr.class_unchecked = 1;
+PSY_INLINE void
+decref_may_run_python(PsycoObject *po, PyTypeObject *tp)
+{
+    if (!(tp == &PyUnicode_Type || tp == &PyBool_Type || tp == &PyFloat_Type ||
+          tp == &PyLong_Type || tp == Py_None->ob_type || tp == &PyRange_Type))
+        po->pr.class_unchecked = 1;
 }
 
 /* emit Py_DECREF(v) for run-time v. Used by vcompiler.c when releasing a
    run-time vinfo_t holding a reference to a Python object. */
-PSY_INLINE void psyco_decref_rt(PsycoObject *po, vinfo_t *v) {
-  PyTypeObject *tp = Psyco_KnownType(v);
-  reg_t rg;
-  decref_may_run_python(po, tp);
-  BEGIN_CODE
-  RTVINFO_IN_REG(v);
-  rg = RUNTIME_REG(v);
-  if (tp != NULL)
-    DEC_OB_REFCNT_T(rg, tp);
-  else
-    DEC_OB_REFCNT(rg);
-  END_CODE
+PSY_INLINE void
+psyco_decref_rt(PsycoObject *po, vinfo_t *v)
+{
+    PyTypeObject *tp = Psyco_KnownType(v);
+    reg_t rg;
+    decref_may_run_python(po, tp);
+    BEGIN_CODE
+    RTVINFO_IN_REG(v);
+    rg = RUNTIME_REG(v);
+    if (tp != NULL)
+        DEC_OB_REFCNT_T(rg, tp);
+    else
+        DEC_OB_REFCNT(rg);
+    END_CODE
 }
 
 /* emit Py_XDECREF(v) for run-time v, a word LeJIT holds no reference to that
@@ -152,29 +161,33 @@ PSY_INLINE void psyco_decref_rt(PsycoObject *po, vinfo_t *v) {
    overwritten, whose reference it now releases (STORE_DEREF's cell). The
    register load and the cc save are made before the NULL test, so both
    paths leave the compiler's state the same. */
-PSY_INLINE void psyco_xdecref_rt(PsycoObject *po, vinfo_t *v) {
-  PyTypeObject *tp = Psyco_KnownType(v);
-  reg_t rg;
-  decref_may_run_python(po, tp);
-  BEGIN_CODE
-  RTVINFO_IN_REG(v);
-  rg = RUNTIME_REG(v);
-  NEED_CC_REG(rg);
-  TEST_R_R(rg, rg);
-  BEGIN_SHORT_COND_JUMP(1, CC_E);
-  if (tp != NULL)
-    DEC_OB_REFCNT_T(rg, tp);
-  else
-    DEC_OB_REFCNT(rg);
-  END_SHORT_JUMP(1);
-  END_CODE
+PSY_INLINE void
+psyco_xdecref_rt(PsycoObject *po, vinfo_t *v)
+{
+    PyTypeObject *tp = Psyco_KnownType(v);
+    reg_t rg;
+    decref_may_run_python(po, tp);
+    BEGIN_CODE
+    RTVINFO_IN_REG(v);
+    rg = RUNTIME_REG(v);
+    NEED_CC_REG(rg);
+    TEST_R_R(rg, rg);
+    BEGIN_SHORT_COND_JUMP(1, CC_E);
+    if (tp != NULL)
+        DEC_OB_REFCNT_T(rg, tp);
+    else
+        DEC_OB_REFCNT(rg);
+    END_SHORT_JUMP(1);
+    END_CODE
 }
 
 /* emit Py_DECREF(o) for a compile-time o */
-PSY_INLINE void psyco_decref_c(PsycoObject *po, PyObject *o) {
-  BEGIN_CODE
-  DEC_KNOWN_OB_REFCNT_NZ(o);
-  END_CODE
+PSY_INLINE void
+psyco_decref_c(PsycoObject *po, PyObject *o)
+{
+    BEGIN_CODE
+    DEC_KNOWN_OB_REFCNT_NZ(o);
+    END_CODE
 }
 
 /* to store a new reference to a Python object into a memory structure,
@@ -183,76 +196,80 @@ PSY_INLINE void psyco_decref_c(PsycoObject *po, PyObject *o) {
    reference counter: */
 
 /* normal case */
-EXTERNFN void decref_create_new_ref(PsycoObject *po, vinfo_t *w);
+EXTERNFN void
+decref_create_new_ref(PsycoObject *po, vinfo_t *w);
 
 /* if 'w' is supposed to be freed soon, this function tries (if possible)
    to move an eventual Python reference owned by 'w' to the memory
    structure.  This avoids a Py_INCREF()/Py_DECREF() pair.
    Returns 'true' if the reference was successfully transfered;
    'false' does not mean failure. */
-EXTERNFN bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
+EXTERNFN bool
+decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
 
 /* called by psyco_emit_header() */
-#define INITIALIZE_FRAME_LOCALS(nframelocal)                                   \
-  do {                                                                         \
-    if (RBP_IS_RESERVED) {                                                     \
-      PUSH_R(REG_X64_RBP);                                                     \
-      psyco_inc_stackdepth(po);                                                \
-      MOV_R_R(REG_X64_RBP, REG_X64_RSP);                                       \
-    }                                                                          \
-    STACK_CORRECTION(sizeof(long) * ((nframelocal)-1));                        \
-    PUSH_IMMED(0); /* the catcher word (pycompiler.c:catcher_word) */          \
-  } while (0)
+#define INITIALIZE_FRAME_LOCALS(nframelocal)                              \
+    do {                                                                  \
+        if (RBP_IS_RESERVED) {                                            \
+            PUSH_R(REG_X64_RBP);                                          \
+            psyco_inc_stackdepth(po);                                     \
+            MOV_R_R(REG_X64_RBP, REG_X64_RSP);                            \
+        }                                                                 \
+        STACK_CORRECTION(sizeof(long) * ((nframelocal) - 1));             \
+        PUSH_IMMED(0); /* the catcher word (pycompiler.c:catcher_word) */ \
+    } while (0)
 
-#define WRITE_FRAME_EPILOGUE(retval, nframelocal)                              \
-  do {                                                                         \
-    /* load the return value into EAX for regular functions, EBX for functions \
-       with a prologue */                                                      \
-    if (retval != SOURCE_DUMMY) {                                              \
-      reg_t rg =                                                               \
-          nframelocal > 0 ? REG_ANY_CALLEE_SAVED : REG_FUNCTIONS_RETURN;       \
-      LOAD_REG_FROM(retval, rg);                                               \
-    }                                                                          \
-                                                                               \
-    if (nframelocal > 0) {                                                     \
-      /* psyco_emit_header() was used; first clear the stack only up to and    \
-         not including the frame-local data */                                 \
-      int framelocpos = getstack(LOC_CONTINUATION->array->items[0]->source);   \
-      STACK_CORRECTION(framelocpos - po->stack_depth);                         \
-      po->stack_depth = framelocpos;                                           \
-                                                                               \
-      MOV_R_R(REG_FUNCTIONS_RETURN, REG_ANY_CALLEE_SAVED);                     \
-    }                                                                          \
-  } while (0)
+#define WRITE_FRAME_EPILOGUE(retval, nframelocal)                             \
+    do {                                                                      \
+        /* load the return value into EAX for regular functions, EBX for      \
+           functions with a prologue */                                       \
+        if (retval != SOURCE_DUMMY) {                                         \
+            reg_t rg = nframelocal > 0 ? REG_ANY_CALLEE_SAVED                 \
+                                       : REG_FUNCTIONS_RETURN;                \
+            LOAD_REG_FROM(retval, rg);                                        \
+        }                                                                     \
+                                                                              \
+        if (nframelocal > 0) {                                                \
+            /* psyco_emit_header() was used; first clear the stack only up to \
+               and not including the frame-local data */                      \
+            int framelocpos =                                                 \
+                getstack(LOC_CONTINUATION->array->items[0]->source);          \
+            STACK_CORRECTION(framelocpos - po->stack_depth);                  \
+            po->stack_depth = framelocpos;                                    \
+                                                                              \
+            MOV_R_R(REG_FUNCTIONS_RETURN, REG_ANY_CALLEE_SAVED);              \
+        }                                                                     \
+    } while (0)
 
 /* retpos is position in stack of the return address pushed by call */
 /* the stack must be cleared up this */
-#define FUNCTION_RET(retpos)                                                   \
-  do {                                                                         \
-    int post_return_stack_depth = 0;                                           \
-    int pre_return_stack_correction = retpos - po->stack_depth;                \
-    int return_depth = sizeof(long) + INITIAL_STACK_DEPTH;                     \
-    if (RBP_IS_RESERVED) {                                                     \
-      pre_return_stack_correction += sizeof(long);                             \
-    }                                                                          \
-    STACK_CORRECTION(pre_return_stack_correction);                             \
-    po->stack_depth += pre_return_stack_correction;                            \
-    if (RBP_IS_RESERVED) {                                                     \
-      POP_R(REG_X64_RBP);                                                      \
-      psyco_dec_stackdepth(po);                                                \
-    }                                                                          \
-    post_return_stack_depth = po->stack_depth - return_depth;                  \
-    if (post_return_stack_depth >= 0x8000) {                                   \
-      POP_R(REG_TRANSIENT_1);                                                  \
-      STACK_CORRECTION(-post_return_stack_depth);                              \
-      PUSH_R(REG_TRANSIENT_1);                                                 \
-      po->stack_depth = return_depth;                                          \
-      RET();                                                                   \
-    } else {                                                                   \
-      RET_N(post_return_stack_depth);                                          \
-    }                                                                          \
-    po->stack_depth = 0;                                                       \
-  } while (0)
+#define FUNCTION_RET(retpos)                                        \
+    do {                                                            \
+        int post_return_stack_depth = 0;                            \
+        int pre_return_stack_correction = retpos - po->stack_depth; \
+        int return_depth = sizeof(long) + INITIAL_STACK_DEPTH;      \
+        if (RBP_IS_RESERVED) {                                      \
+            pre_return_stack_correction += sizeof(long);            \
+        }                                                           \
+        STACK_CORRECTION(pre_return_stack_correction);              \
+        po->stack_depth += pre_return_stack_correction;             \
+        if (RBP_IS_RESERVED) {                                      \
+            POP_R(REG_X64_RBP);                                     \
+            psyco_dec_stackdepth(po);                               \
+        }                                                           \
+        post_return_stack_depth = po->stack_depth - return_depth;   \
+        if (post_return_stack_depth >= 0x8000) {                    \
+            POP_R(REG_TRANSIENT_1);                                 \
+            STACK_CORRECTION(-post_return_stack_depth);             \
+            PUSH_R(REG_TRANSIENT_1);                                \
+            po->stack_depth = return_depth;                         \
+            RET();                                                  \
+        }                                                           \
+        else {                                                      \
+            RET_N(post_return_stack_depth);                         \
+        }                                                           \
+        po->stack_depth = 0;                                        \
+    } while (0)
 
 /* The inline attribute store into a split instance dict,
    behind a type guard emitted
@@ -265,21 +282,23 @@ EXTERNFN bool decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
    CC_NE) and calls psyco_inline_store_end, which points the store's
    exits past that check. */
 typedef enum {
-  STORE_GC_NONE, /* the value's type is known and not GC */
-  STORE_GC_DICT, /* it is known and GC: miss if the dict is untracked */
-  STORE_GC_FULL, /* unknown: miss if the dict is untracked and it is GC */
+    STORE_GC_NONE, /* the value's type is known and not GC */
+    STORE_GC_DICT, /* it is known and GC: miss if the dict is untracked */
+    STORE_GC_FULL, /* unknown: miss if the dict is untracked and it is GC */
 } store_gc_t;
 typedef struct {
-  vinfo_t *obj, *value; /* run-time or compile-time */
-  long dictoffset;      /* the type's tp_dictoffset, > 0 */
-  store_cache_t *cache;
-  store_gc_t gc;
-  bool fill;            /* inline the store into the next empty slot */
-  code_t *miss_glue;
-  code_t *done[2]; /* jumps for psyco_inline_store_end to point */
+    vinfo_t *obj, *value; /* run-time or compile-time */
+    long dictoffset;      /* the type's tp_dictoffset, > 0 */
+    store_cache_t *cache;
+    store_gc_t gc;
+    bool fill; /* inline the store into the next empty slot */
+    code_t *miss_glue;
+    code_t *done[2]; /* jumps for psyco_inline_store_end to point */
 } inline_store_t;
-EXTERNFN void psyco_inline_store_begin(PsycoObject *po, inline_store_t *s);
-EXTERNFN void psyco_inline_store_end(PsycoObject *po, inline_store_t *s);
+EXTERNFN void
+psyco_inline_store_begin(PsycoObject *po, inline_store_t *s);
+EXTERNFN void
+psyco_inline_store_end(PsycoObject *po, inline_store_t *s);
 
 /* The inline attribute load from an instance dict, behind a type guard
    emitted before it, hand-allocated like the store. Its result, a
@@ -291,20 +310,21 @@ EXTERNFN void psyco_inline_store_end(PsycoObject *po, inline_store_t *s);
    miss_glue(dict, cache), which returns the same. Nothing depends on
    which keys a dict has when the code is emitted. */
 typedef struct {
-  vinfo_t *obj;         /* run-time or compile-time */
-  long dictoffset;      /* the type's tp_dictoffset, > 0 */
-  store_cache_t *cache; /* (class, name), shared with the stores */
-  Py_hash_t hash;       /* the name's */
-  bool absent;
-  code_t *miss_glue;
+    vinfo_t *obj;         /* run-time or compile-time */
+    long dictoffset;      /* the type's tp_dictoffset, > 0 */
+    store_cache_t *cache; /* (class, name), shared with the stores */
+    Py_hash_t hash;       /* the name's */
+    bool absent;
+    code_t *miss_glue;
 } inline_load_t;
-EXTERNFN vinfo_t *psyco_inline_load(PsycoObject *po, inline_load_t *s);
+EXTERNFN vinfo_t *
+psyco_inline_load(PsycoObject *po, inline_load_t *s);
 
 /* a type guard: the condition code for "tp's tp_flags or tp_version_tag
    differs from *flags or *tag" */
-EXTERNFN condition_code_t psyco_type_guard(PsycoObject *po, PyTypeObject *tp,
-                                           unsigned long *flags,
-                                           unsigned long *tag);
+EXTERNFN condition_code_t
+psyco_type_guard(PsycoObject *po, PyTypeObject *tp, unsigned long *flags,
+                 unsigned long *tag);
 
 /* A cached global's guard (Python/pycompiler.c:load_global_cached): the
    condition code for "changed". With 'entry', the keys of globals must
@@ -316,63 +336,60 @@ EXTERNFN condition_code_t psyco_type_guard(PsycoObject *po, PyTypeObject *tp,
    from 'tags'. All forms change the compiler's state in the same way, so
    a replay may emit any. */
 typedef struct {
-  dword_t *at_size, *at_key, *at_value; /* in the code */
+    dword_t *at_size, *at_key, *at_value; /* in the code */
 } global_patch_t;
 /* The name absent from globals, as the dict's own probe walks it: keys of
    dk_size 'size', and the 'n' distinct index slots it walks before the
-   first empty one holding what they held at compile time, each a dummy or an entry whose
-   hash differs from the name's in its low 32 bits. Then any lookup of the
-   name in such keys stops at that empty slot. */
+   first empty one holding what they held at compile time, each a dummy or an
+   entry whose hash differs from the name's in its low 32 bits. Then any lookup
+   of the name in such keys stops at that empty slot. */
 #define GLOBAL_PROBE_MAX 4
 /* room for the longest absent guard, and a jump */
 #define GLOBAL_ABSENT_CODE_MAX 256
 typedef struct {
-  long size;
-  int width;                       /* of an index: 1, 2 or 4 bytes */
-  int n;
-  long slot[GLOBAL_PROBE_MAX + 1]; /* from the keys; the last is empty */
-  long index[GLOBAL_PROBE_MAX];    /* what each slot holds */
-  long hash_at[GLOBAL_PROBE_MAX];  /* an entry's me_hash, from the keys */
-  int32_t hash[GLOBAL_PROBE_MAX];  /* its low 32 bits */
+    long size;
+    int width; /* of an index: 1, 2 or 4 bytes */
+    int n;
+    long slot[GLOBAL_PROBE_MAX + 1]; /* from the keys; the last is empty */
+    long index[GLOBAL_PROBE_MAX];    /* what each slot holds */
+    long hash_at[GLOBAL_PROBE_MAX];  /* an entry's me_hash, from the keys */
+    int32_t hash[GLOBAL_PROBE_MAX];  /* its low 32 bits */
 } global_absent_t;
 /* false if the probe isn't one this guard can show */
-EXTERNFN bool psyco_global_absent(PyObject *globals, PyObject *name,
-                                  global_absent_t *a);
+EXTERNFN bool
+psyco_global_absent(PyObject *globals, PyObject *name, global_absent_t *a);
 /* Where an absent guard is: the code from 'start' up to 'end', where the
    code goes on with flags clear if the name is still absent, and 'fresh',
    NULL or the memory the guard was moved to when shown again for keys it
    didn't fit. */
 typedef struct {
-  code_t *start, *end, *fresh;
+    code_t *start, *end, *fresh;
 } global_absent_patch_t;
-EXTERNFN condition_code_t psyco_global_guard(PsycoObject *po,
-                                             PyObject *globals,
-                                             PyObject *builtins,
-                                             PyObject *name, PyObject *value,
-                                             global_patch_t *entry,
-                                             long size, long offset,
-                                             const global_absent_t *absent,
-                                             global_absent_patch_t *patch,
-                                             uint64_t *tags);
+EXTERNFN condition_code_t
+psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
+                   PyObject *name, PyObject *value, global_patch_t *entry,
+                   long size, long offset, const global_absent_t *absent,
+                   global_absent_patch_t *patch, uint64_t *tags);
 /* An absent guard shown again for the keys globals have now and builtins'
    tag now (the keys resized, a name inserted into the slots it walked, or
    builtins written), so that it passes again while the name stays absent:
    rewritten in place where it fits, else in fresh memory that the start
    jumps to. A probe that can't be shown is replaced by globals' tag, so
    the guard passes until globals or builtins are written. */
-EXTERNFN void psyco_global_absent_rearm(global_absent_patch_t *patch,
-                                        PyObject *globals, PyObject *builtins,
-                                        PyObject *name);
+EXTERNFN void
+psyco_global_absent_rearm(global_absent_patch_t *patch, PyObject *globals,
+                          PyObject *builtins, PyObject *name);
 /* the entry moved: rewrites the code's size and displacements (with no
    at_value, the size and key's) */
-EXTERNFN void psyco_global_guard_move(global_patch_t *entry, long size,
-                                      long offset);
+EXTERNFN void
+psyco_global_guard_move(global_patch_t *entry, long size, long offset);
 /* jumps to 'stub' unless the keys of globals have dk_size 'size' and hold
    the name at the entry 'offset' bytes from their start, both written into
    the code where check's at_size and at_key say */
-EXTERNFN void psyco_global_stale(PsycoObject *po, PyObject *globals,
-                                 PyObject *name, global_patch_t *check,
-                                 long size, long offset, code_t *stub);
+EXTERNFN void
+psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
+                   global_patch_t *check, long size, long offset,
+                   code_t *stub);
 
 /* A global loaded at run time from the entry of globals that holds the
    name, the size and offset written into the code as the guard's entry
@@ -381,12 +398,12 @@ EXTERNFN void psyco_global_stale(PsycoObject *po, PyObject *globals,
    NULL, and may move the entry. The result is in a register, tested
    (zero: the miss's error), and not yet owned: the caller checks the
    condition CC_E, then adds the reference. */
-EXTERNFN vinfo_t *psyco_global_load(PsycoObject *po, PyObject *globals,
-                                    PyObject *name, global_patch_t *entry,
-                                    long size, long offset,
-                                    code_t *miss_glue, void *arg);
+EXTERNFN vinfo_t *
+psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
+                  global_patch_t *entry, long size, long offset,
+                  code_t *miss_glue, void *arg);
 
-EXTERNFN void function_return(PsycoObject *po, Source retval, int nframelocal,
-                              long retpos);
+EXTERNFN void
+function_return(PsycoObject *po, Source retval, int nframelocal, long retpos);
 
 #endif /* _IPYENCODING_H */

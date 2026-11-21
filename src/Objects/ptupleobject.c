@@ -10,9 +10,8 @@
  */
 #include "ptupleobject.h"
 
-
- /***************************************************************/
-  /***   Virtual tuples                                        ***/
+/***************************************************************/
+/***   Virtual tuples                                        ***/
 
 static source_virtual_t psyco_computed_tuple;
 
@@ -102,47 +101,47 @@ gen_virtual_tuple_init(void)
                   (-1 << iTUPLE_OB_ITEM), NW_TUPLES_NORMAL, NW_TUPLES_FUNCALL);
 }
 
-
 /* do not load a constant tuple into a vinfo_array_t if longer than: */
-#define CT_TUPLE_LOAD_SIZE_LIMIT    15
+#define CT_TUPLE_LOAD_SIZE_LIMIT 15
 
 DEFINEFN
-int PsycoTuple_Load(vinfo_t* tuple)
+int
+PsycoTuple_Load(vinfo_t *tuple)
 {
-	int size;
-	/* if the tuple is virtual, then all items in its
-	   vinfo_array_t are already filled */
-	if (tuple->source == VirtualTime_New(&psyco_computed_tuple))
-		size = tuple->array->count - iTUPLE_OB_ITEM;
-	else if (is_compiletime(tuple->source)) {
-		/* a constant tuple means constant tuple items */
-		int i;
-		PyObject* o = (PyObject*)(CompileTime_Get(tuple->source)->value);
-		/* BUILD_*_UNPACK asks about any constant, such as a global
-		   list */
-		if (!PyTuple_Check(o))
-			return -1;
-		size = PyTuple_GET_SIZE(o);
-		if (tuple->array->count < iTUPLE_OB_ITEM + size) {
-			if (/*not_too_much &&*/ size > CT_TUPLE_LOAD_SIZE_LIMIT)
-				return -1;
-			vinfo_array_grow(tuple, iTUPLE_OB_ITEM + size);
-		}
-		/* load the tuple into the vinfo_array_t */
-		for (i=0; i<size; i++) {
-			if (PsycoTuple_GET_ITEM(tuple, i) == NULL) {
-				PyObject* item = PyTuple_GET_ITEM(o, i);
-				source_known_t* sk;
-				Py_INCREF(item);
-				sk = sk_new((long) item, SkFlagPyObj);
-				PsycoTuple_GET_ITEM(tuple, i) =
-					vinfo_new(CompileTime_NewSk(sk));
-			}
-		}
-	}
-	else
-		return -1;
-	return size;
+    int size;
+    /* if the tuple is virtual, then all items in its
+       vinfo_array_t are already filled */
+    if (tuple->source == VirtualTime_New(&psyco_computed_tuple))
+        size = tuple->array->count - iTUPLE_OB_ITEM;
+    else if (is_compiletime(tuple->source)) {
+        /* a constant tuple means constant tuple items */
+        int i;
+        PyObject *o = (PyObject *)(CompileTime_Get(tuple->source)->value);
+        /* BUILD_*_UNPACK asks about any constant, such as a global
+           list */
+        if (!PyTuple_Check(o))
+            return -1;
+        size = PyTuple_GET_SIZE(o);
+        if (tuple->array->count < iTUPLE_OB_ITEM + size) {
+            if (/*not_too_much &&*/ size > CT_TUPLE_LOAD_SIZE_LIMIT)
+                return -1;
+            vinfo_array_grow(tuple, iTUPLE_OB_ITEM + size);
+        }
+        /* load the tuple into the vinfo_array_t */
+        for (i = 0; i < size; i++) {
+            if (PsycoTuple_GET_ITEM(tuple, i) == NULL) {
+                PyObject *item = PyTuple_GET_ITEM(o, i);
+                source_known_t *sk;
+                Py_INCREF(item);
+                sk = sk_new((long)item, SkFlagPyObj);
+                PsycoTuple_GET_ITEM(tuple, i) =
+                    vinfo_new(CompileTime_NewSk(sk));
+            }
+        }
+    }
+    else
+        return -1;
+    return size;
 }
 
 /* the slots translated from tupleobject.c: sq_length,
@@ -223,10 +222,8 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         return NULL;
     }
     if ((tp_bb->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
-        PycException_SetFormat(
-            po, PyExc_TypeError,
-            LE_MSG_TUPLE_CONCAT,
-            tp_bb->tp_name);
+        PycException_SetFormat(po, PyExc_TypeError, LE_MSG_TUPLE_CONCAT,
+                               tp_bb->tp_name);
         return NULL;
     }
     b = bb;
@@ -312,10 +309,8 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
         return NULL;
     }
     if ((tp_bb->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
-        PycException_SetFormat(
-            po, PyExc_TypeError,
-            LE_MSG_TUPLE_CONCAT,
-            tp_bb->tp_name);
+        PycException_SetFormat(po, PyExc_TypeError, LE_MSG_TUPLE_CONCAT,
+                               tp_bb->tp_name);
         return NULL;
     }
     _t4 = PsycoTuple_Load(bb);
@@ -473,8 +468,7 @@ tupleitem(PsycoObject *po, vinfo_t *a, vinfo_t *i)
     }
     _t3 = runtime_condition_f(po, _t2);
     if (_t3) {
-        PycException_SetString(po, PyExc_IndexError,
-                               LE_MSG_TUPLE_INDEX_RANGE);
+        PycException_SetString(po, PyExc_IndexError, LE_MSG_TUPLE_INDEX_RANGE);
         return NULL;
     }
     _t4 = psyco_get_field_array(po, a, FPYREF(TUPLE_ob_item), i);
@@ -813,17 +807,17 @@ gen_tupleobject_init(void)
 }
 #pragma GCC diagnostic pop
 
-
 INITIALIZATIONFN
-void psy_tupleobject_init(void)
+void
+psy_tupleobject_init(void)
 {
-	PyMappingMethods *mm;
-	gen_tupleobject_init();
+    PyMappingMethods *mm;
+    gen_tupleobject_init();
 
-	mm = PyTuple_Type.tp_as_mapping;
-	if (mm) {  /* Python >= 2.3 */
-		Psyco_DefineMeta(mm->mp_subscript, psyco_generic_subscript);
-	}
+    mm = PyTuple_Type.tp_as_mapping;
+    if (mm) { /* Python >= 2.3 */
+        Psyco_DefineMeta(mm->mp_subscript, psyco_generic_subscript);
+    }
 
-	gen_virtual_tuple_init();
+    gen_virtual_tuple_init();
 }

@@ -9,14 +9,11 @@
 #include "pobject.h"
 
 #define FUNC_code CPY_FIELD(PyFunctionObject, func_code, OB_type)
-#define FUNC_globals \
-    CPY_FIELD(PyFunctionObject, func_globals, FUNC_code)
-#define FUNC_defaults \
-    CPY_FIELD(PyFunctionObject, func_defaults, FUNC_globals)
+#define FUNC_globals CPY_FIELD(PyFunctionObject, func_globals, FUNC_code)
+#define FUNC_defaults CPY_FIELD(PyFunctionObject, func_defaults, FUNC_globals)
 #define FUNC_kwdefaults \
     CPY_FIELD(PyFunctionObject, func_kwdefaults, FUNC_defaults)
-#define FUNC_closure \
-    CPY_FIELD(PyFunctionObject, func_closure, FUNC_kwdefaults)
+#define FUNC_closure CPY_FIELD(PyFunctionObject, func_closure, FUNC_kwdefaults)
 #define FUNC_annotations \
     CPY_FIELD(PyFunctionObject, func_annotations, FUNC_closure)
 #define FUNC_qualname \
@@ -34,7 +31,8 @@
 EXTERNFN vinfo_t *
 pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw);
 /* PyFunction_Type's tp_call as compiled code calls it */
-EXTERNFN ternaryfunc le_function_tp_call(void);
+EXTERNFN ternaryfunc
+le_function_tp_call(void);
 EXTERNFN vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
                       vinfo_t *arg, bool allow_inline);
@@ -53,7 +51,9 @@ PsycoFunction_NewWithQualName(PsycoObject *po, vinfo_t *codeobj,
    runs no code. */
 #define iGENEXPR_FUNC (iOB_TYPE + 1)
 #define iGENEXPR_ARGS (iOB_TYPE + 2)
-EXTERNFN vinfo_t *PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple);
-EXTERNFN bool PsycoGenexpr_Check(vinfo_t *v);
+EXTERNFN vinfo_t *
+PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple);
+EXTERNFN bool
+PsycoGenexpr_Check(vinfo_t *v);
 
 #endif /* _PSY_FUNCOBJECT_H */

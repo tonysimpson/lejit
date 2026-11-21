@@ -3,9 +3,9 @@
  *  - C calls at run time (run_time_call: SysV registers and 16-byte alignment,
  *    then run_time_result_check applies the CfPyErr* convention);
  *  - C calls at compile time (compile_time_call: libffi, for CfPure folding);
- *  - Psyco-to-Psyco calls (psyco_call_psyco: the caller pushes a finfo slot and
- *    the arguments, the callee pops them, and the result is a new reference in
- *    RAX);
+ *  - Psyco-to-Psyco calls (psyco_call_psyco: the caller pushes a finfo slot
+ * and the arguments, the callee pops them, and the result is a new reference
+ * in RAX);
  *  - condition-code materialisation and the integer ALU emitters.
  */
 
@@ -329,8 +329,7 @@ test_condition_and_pyerr_occured:
     TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
     BEGIN_CALL(0);
     END_CALL_I(PyThreadState_Get);
-    MOV_R_O(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN,
-            LE_EXC_OCCURRED_OFFSET);
+    MOV_R_O(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN, LE_EXC_OCCURRED_OFFSET);
     TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
     TEST_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
     END_CODE
@@ -888,15 +887,17 @@ struct rebind_s {
     int n;
 };
 
-static void rebind_pairs(struct rebind_s *r, vinfo_t *old, vinfo_t *v)
+static void
+rebind_pairs(struct rebind_s *r, vinfo_t *old, vinfo_t *v)
 {
     int i, n;
     if (old == NULL || old == v || old->refcount != 1)
         return;
     if (is_runtime(old->source)) {
-        if (is_runtime(v->source) && RUNTIME_STACK(old) != RUNTIME_STACK_NONE &&
-            RUNTIME_STACK(v) == RUNTIME_STACK_NONE && !RUNTIME_REG_IS_NONE(v) &&
-            r->n < REBIND_MAX) {
+        if (is_runtime(v->source) &&
+            RUNTIME_STACK(old) != RUNTIME_STACK_NONE &&
+            RUNTIME_STACK(v) == RUNTIME_STACK_NONE &&
+            !RUNTIME_REG_IS_NONE(v) && r->n < REBIND_MAX) {
             r->v[r->n] = v;
             r->stack[r->n] = RUNTIME_STACK(old);
             r->n++;
@@ -913,7 +914,8 @@ static void rebind_pairs(struct rebind_s *r, vinfo_t *old, vinfo_t *v)
 }
 
 DEFINEFN
-void psyco_rebind_local(PsycoObject *po, vinfo_t **slot, vinfo_t *v)
+void
+psyco_rebind_local(PsycoObject *po, vinfo_t **slot, vinfo_t *v)
 {
     struct rebind_s r;
     int i;
@@ -1029,7 +1031,9 @@ vinfo_t* integer_seqindex(PsycoObject* po, vinfo_t* vi, vinfo_t* vn, bool ovf)
 #endif /* 0 */
 
 DEFINEFN
-condition_code_t psyco_int32_nonzero_at(PsycoObject *po, void *address) {
+condition_code_t
+psyco_int32_nonzero_at(PsycoObject *po, void *address)
+{
     BEGIN_CODE
     NEED_CC();
     CMP_I8_DABS(0, address);
@@ -1038,8 +1042,9 @@ condition_code_t psyco_int32_nonzero_at(PsycoObject *po, void *address) {
 }
 
 DEFINEFN
-condition_code_t psyco_int32_nonzero_in(PsycoObject *po, vinfo_t *vbase,
-                                        long offset) {
+condition_code_t
+psyco_int32_nonzero_in(PsycoObject *po, vinfo_t *vbase, long offset)
+{
     BEGIN_CODE
     NEED_CC();
     RTVINFO_IN_REG(vbase);

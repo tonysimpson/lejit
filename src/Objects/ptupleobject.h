@@ -1,14 +1,12 @@
- /***************************************************************/
+/***************************************************************/
 /***            Psyco equivalent of tupleobject.h              ***/
- /***************************************************************/
+/***************************************************************/
 
 #ifndef _PSY_TUPLEOBJECT_H
 #define _PSY_TUPLEOBJECT_H
 
-
 #include "pobject.h"
 #include "pabstract.h"
-
 
 /* TUPLE_ob_item and iTUPLE_OB_ITEM: pobject.h */
 
@@ -16,24 +14,25 @@
    checks. Be sure the item has already been loaded in the array of
    the vinfo_t. This should only be used after a successful call to
    PsycoTuple_Load(). */
-#define PsycoTuple_GET_ITEM(vtuple, index)  \
-		((vtuple)->array->items[iTUPLE_OB_ITEM + (index)])
-#define PsycoTuple_SET_ITEM(vtuple, index, value) do \
-{ \
-    ((vtuple)->array->items[iTUPLE_OB_ITEM + (index)]) = (value); \
-} while (0)
+#define PsycoTuple_GET_ITEM(vtuple, index) \
+    ((vtuple)->array->items[iTUPLE_OB_ITEM + (index)])
+#define PsycoTuple_SET_ITEM(vtuple, index, value)                     \
+    do {                                                              \
+        ((vtuple)->array->items[iTUPLE_OB_ITEM + (index)]) = (value); \
+    } while (0)
 
 /***************************************************************/
 /* virtual tuples (ptupleobject.c).
    If 'source' is not NULL it gives the content of the tuple.
    If 'source' is NULL you have to initialize it yourself. */
-EXTERNFN vinfo_t* PsycoTuple_New(int count, vinfo_t** source);
+EXTERNFN vinfo_t *
+PsycoTuple_New(int count, vinfo_t **source);
 
 /* get the (possibly virtual) array of items in the tuple,
    returning the length of the tuple or -1 if it fails (items not known).
    The items are then found in PsycoTuple_GET_ITEM(tuple, i).
    Never sets a PycException. */
-EXTERNFN int PsycoTuple_Load(vinfo_t* tuple);
-
+EXTERNFN int
+PsycoTuple_Load(vinfo_t *tuple);
 
 #endif /* _PSY_TUPLEOBJECT_H */

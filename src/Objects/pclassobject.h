@@ -10,8 +10,9 @@
 
 /* Instance methods: METHOD_im_func, METHOD_im_self and their indices are
    in pobject.h */
-EXTERNFN vinfo_t *pinstancemethod_call(PsycoObject *po, vinfo_t *methobj,
-                                       vinfo_t *arg, vinfo_t *kw);
+EXTERNFN vinfo_t *
+pinstancemethod_call(PsycoObject *po, vinfo_t *methobj, vinfo_t *arg,
+                     vinfo_t *kw);
 
 /***************************************************************/
 /***   Virtual-time object builder                           ***/
@@ -22,6 +23,7 @@ EXTERNVAR source_virtual_t psyco_computed_method;
 
 /* PyMethod_New(func, self), virtual; new references to both */
 EXTERNFN
-vinfo_t *PsycoMethod_New(vinfo_t *func, vinfo_t *self);
+vinfo_t *
+PsycoMethod_New(vinfo_t *func, vinfo_t *self);
 
 #endif /* _PSY_CLASSOBJECT_H */

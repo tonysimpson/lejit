@@ -13,6 +13,8 @@ IndentWidth: 4
 Language: Cpp
 PointerAlignment: Right
 ReflowComments: true
+# C headers depend on their order (Python.h first, then the ones that use it)
+SortIncludes: Never
 SpaceBeforeParens: ControlStatements
 SpacesInParentheses: false
 TabWidth: 4

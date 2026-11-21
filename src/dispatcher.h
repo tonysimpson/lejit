@@ -1,10 +1,9 @@
- /***************************************************************/
+/***************************************************************/
 /***          Structures used by the dispatcher part           ***/
- /***************************************************************/
+/***************************************************************/
 
 #ifndef _DISPATCHER_H
 #define _DISPATCHER_H
-
 
 #include "psyco.h"
 #include "processor.h"
@@ -24,47 +23,52 @@
    of the PsycoObject vlocals. So does the second implementation
    (VLOCALS_OPC=1), but it compresses the copy into a very compact
    pseudo-code. */
-#define VLOCALS_OPC  1
+#define VLOCALS_OPC 1
 
 struct FrozenPsycoObject_s {
-  union {
-    int fz_stack_depth;
-    struct respawn_s* respawning;
-  } fz_stuff;
+    union {
+        int fz_stack_depth;
+        struct respawn_s *respawning;
+    } fz_stuff;
 #if VLOCALS_OPC
-  Source* fz_vlocals_opc;     /* compact pseudo-code copy */
+    Source *fz_vlocals_opc; /* compact pseudo-code copy */
 #else
-  vinfo_array_t* fz_vlocals;       /* verbatim copy */
+    vinfo_array_t *fz_vlocals; /* verbatim copy */
 #endif
-  PROCESSOR_FROZENOBJECT_FIELDS
-  short fz_respawned_cnt;
-  int fz_next_instr;        /* pr.next_instr, which fz_pyc_data leaves out */
-  CodeBufferObject* fz_respawned_from;
-  pyc_data_t* fz_pyc_data;  /* partially allocated, and shared by the
-                               snapshots with the same (dispatcher.c,
-                               pyc_share) */
+    PROCESSOR_FROZENOBJECT_FIELDS
+    short fz_respawned_cnt;
+    int fz_next_instr; /* pr.next_instr, which fz_pyc_data leaves out */
+    CodeBufferObject *fz_respawned_from;
+    pyc_data_t *fz_pyc_data; /* partially allocated, and shared by the
+                                snapshots with the same (dispatcher.c,
+                                pyc_share) */
 };
 
-
 /* construction */
-PSY_INLINE void fpo_mark_new(FrozenPsycoObject* fpo) {
-	fpo->fz_respawned_cnt = 0;
-	fpo->fz_respawned_from = NULL;
+PSY_INLINE void
+fpo_mark_new(FrozenPsycoObject *fpo)
+{
+    fpo->fz_respawned_cnt = 0;
+    fpo->fz_respawned_from = NULL;
 }
-PSY_INLINE void fpo_mark_unused(FrozenPsycoObject* fpo) {
+PSY_INLINE void
+fpo_mark_unused(FrozenPsycoObject *fpo)
+{
 #if VLOCALS_OPC
-	fpo->fz_vlocals_opc = NULL;
+    fpo->fz_vlocals_opc = NULL;
 #else
-	fpo->fz_vlocals = NullArray;
+    fpo->fz_vlocals = NullArray;
 #endif
-	fpo->fz_pyc_data = NULL;
+    fpo->fz_pyc_data = NULL;
 }
-EXTERNFN void fpo_build(FrozenPsycoObject* fpo, PsycoObject* po);
-EXTERNFN void fpo_release(FrozenPsycoObject* fpo);
-
+EXTERNFN void
+fpo_build(FrozenPsycoObject *fpo, PsycoObject *po);
+EXTERNFN void
+fpo_release(FrozenPsycoObject *fpo);
 
 /* build a 'live' PsycoObject from frozen snapshot */
-EXTERNFN PsycoObject* fpo_unfreeze(FrozenPsycoObject* fpo);
+EXTERNFN PsycoObject *
+fpo_unfreeze(FrozenPsycoObject *fpo);
 
 /* A compiler state kept until run time reaches it: a coding pause's, or a
    promotion site's for each new value, with a variable in it ('fix', the
@@ -84,32 +88,36 @@ EXTERNFN PsycoObject* fpo_unfreeze(FrozenPsycoObject* fpo);
 #endif
 #define FIXPATH_MAX 6
 typedef struct parked_state_s {
-  PsycoObject* live;   /* the live state, or NULL once frozen or released */
-  union {
-    struct {
-      vinfo_t* fix;    /* in 'live' */
-      struct parked_state_s *older, *newer;  /* the live ones not frozen yet */
+    PsycoObject *live; /* the live state, or NULL once frozen or released */
+    union {
+        struct {
+            vinfo_t *fix; /* in 'live' */
+            struct parked_state_s *older,
+                *newer; /* the live ones not frozen yet */
+        };
+        struct {
+            FrozenPsycoObject fz; /* unused (fpo_mark_unused) once released */
+            CodeBufferObject *respawn_proxy;
+            PyObject *merge_points;
+            unsigned long mp_serial;
+            int respawn_cnt, stack_base, stack_level;
+            short fixpath[FIXPATH_MAX]; /* ended by -1 if shorter */
+            char split_after_global;
+        };
     };
-    struct {
-      FrozenPsycoObject fz;     /* unused (fpo_mark_unused) once released */
-      CodeBufferObject* respawn_proxy;
-      PyObject* merge_points;
-      unsigned long mp_serial;
-      int respawn_cnt, stack_base, stack_level;
-      short fixpath[FIXPATH_MAX];   /* ended by -1 if shorter */
-      char split_after_global;
-    };
-  };
 } parked_state_t;
 /* parks 'po', which it takes; 'fix' may be NULL. 'ps' is zeroed */
-EXTERNFN void psyco_park(parked_state_t* ps, PsycoObject* po, vinfo_t* fix);
+EXTERNFN void
+psyco_park(parked_state_t *ps, PsycoObject *po, vinfo_t *fix);
 /* a state to compile from, and 'fix' in it. The parked one stays, for a
    compile that runs out of memory to start again from: a frozen one is
    unfrozen afresh, a live one is returned and replaced by a copy
    (psyco_duplicate) */
-EXTERNFN PsycoObject* psyco_unpark(parked_state_t* ps, vinfo_t** fix);
+EXTERNFN PsycoObject *
+psyco_unpark(parked_state_t *ps, vinfo_t **fix);
 /* releases the parked state; it may be released again */
-EXTERNFN void psyco_park_release(parked_state_t* ps);
+EXTERNFN void
+psyco_park_release(parked_state_t *ps);
 /* states parked live, held to PARK_LIVE_MAX, and frozen:
    lejit._core._stats()['parked'] */
 EXTERNVAR long le_parked_live;
@@ -118,8 +126,10 @@ EXTERNVAR long psyco_stat_parked_frozen;
 #endif
 
 /* inspection */
-PSY_INLINE int get_stack_depth(FrozenPsycoObject* fpo) {
-	return fpo->fz_stuff.fz_stack_depth;
+PSY_INLINE int
+get_stack_depth(FrozenPsycoObject *fpo)
+{
+    return fpo->fz_stuff.fz_stack_depth;
 }
 
 /* psyco_compatible():
@@ -134,11 +144,11 @@ PSY_INLINE int get_stack_depth(FrozenPsycoObject* fpo) {
    functions below, before another call to psyco_compatible() can be made.
 */
 typedef struct {
-  CodeBufferObject* matching;   /* best match */
-  vinfo_array_t* diff;          /* array of differences */
+    CodeBufferObject *matching; /* best match */
+    vinfo_array_t *diff;        /* array of differences */
 } vcompatible_t;
-EXTERNFN vcompatible_t* psyco_compatible(PsycoObject* po,
-                                         global_entries_t* pattern);
+EXTERNFN vcompatible_t *
+psyco_compatible(PsycoObject *po, global_entries_t *pattern);
 /* set while a promotion's continuation is compared at its own instruction:
    no known fact is dropped there (dispatcher.c, compatible_unused_fact) */
 EXTERNVAR bool psyco_compatible_keep_facts;
@@ -151,9 +161,9 @@ EXTERNVAR long psyco_stat_fact_drops;
    'drop_fields' the known fields of a run-time value that the snapshot
    hasn't are dropped at any depth, not only below the first two
    (compatible_array, CHECK_FOR_NULL) */
-EXTERNFN vcompatible_t* psyco_compatible_join(PsycoObject* po,
-                                              global_entries_t* pattern,
-                                              bool drop_fields);
+EXTERNFN vcompatible_t *
+psyco_compatible_join(PsycoObject *po, global_entries_t *pattern,
+                      bool drop_fields);
 
 /* What psyco_compatible() can reject a snapshot by without reading it:
    for the first 63 vlocals, two bits each of what the item must be in a
@@ -165,35 +175,41 @@ EXTERNFN vcompatible_t* psyco_compatible_join(PsycoObject* po,
    buffer is registered (codemanager.c), from the state its snapshot is
    taken of. */
 typedef struct {
-  unsigned long b1, b0; /* SUMMARY_REST in b0 */
+    unsigned long b1, b0; /* SUMMARY_REST in b0 */
 } fz_summary_head_t;
 typedef struct {
-  fz_summary_head_t head;
-  unsigned long inline_key;
-  unsigned long p1, p0;
+    fz_summary_head_t head;
+    unsigned long inline_key;
+    unsigned long p1, p0;
 } fz_summary_t;
 /* A state with no inlined frame has a summary whose rest after 'head' is
    0 and rejects nothing: most states. Their buffers keep 'head' alone
    (codemanager.h); the others have SUMMARY_REST in head.b0, and so has
    every state's summary. */
 #define SUMMARY_REST (1UL << 63)
-EXTERNFN bool psyco_summary_short(vinfo_array_t* aa);
-EXTERNFN void psyco_summary_build(fz_summary_t* s, vinfo_array_t* aa);
-EXTERNFN void psyco_summary_build_short(fz_summary_head_t* s, vinfo_array_t* aa);
+EXTERNFN bool
+psyco_summary_short(vinfo_array_t *aa);
+EXTERNFN void
+psyco_summary_build(fz_summary_t *s, vinfo_array_t *aa);
+EXTERNFN void
+psyco_summary_build_short(fz_summary_head_t *s, vinfo_array_t *aa);
 
-EXTERNFN void psyco_stabilize(vcompatible_t* lastmatch);
-EXTERNFN bool psyco_forget_values(PsycoObject* po, global_entries_t* ge);
+EXTERNFN void
+psyco_stabilize(vcompatible_t *lastmatch);
+EXTERNFN bool
+psyco_forget_values(PsycoObject *po, global_entries_t *ge);
 /* a block left 'ge', or 'ge' is freed: what psyco_forget_values kept
    about it is dropped */
-EXTERNFN void psyco_ge_changed(global_entries_t* ge);
-EXTERNFN bool psyco_unpromote_large_ints(PsycoObject* po);
+EXTERNFN void
+psyco_ge_changed(global_entries_t *ge);
+EXTERNFN bool
+psyco_unpromote_large_ints(PsycoObject *po);
 #if LE_CODESTATS
 EXTERNVAR int psyco_cs_align_rejects;
 #endif
 
-
 /*****************************************************************/
- /***   "Global Entries"                                        ***/
+/***   "Global Entries"                                        ***/
 
 /* global entry points for the compiler. One global entry point holds a list
    of already-compiled code buffers corresponding to the various states
@@ -205,7 +221,7 @@ EXTERNVAR int psyco_cs_align_rejects;
    (the main entry point is spec_main_loop, the start of the main loop).
    When coming back to this entry point later, the list let us determine
    whether we already encountered the same state.
-   
+
    The details of this structure are private.
    XXX implemented as a list object holding CodeBufferObjects in no
    XXX particular order. Must be optimized for reasonably fast searches
@@ -215,37 +231,42 @@ EXTERNVAR int psyco_cs_align_rejects;
    may safely be deleted at that point.
 */
 struct global_entries_s {
-	PyObject* fatlist;      /* list of PyLongObjects then CodeBufferObjects */
-	struct varies_s* varies; /* psyco_forget_values's, or NULL */
+    PyObject *fatlist;       /* list of PyLongObjects then CodeBufferObjects */
+    struct varies_s *varies; /* psyco_forget_values's, or NULL */
 };
 
 /* initialize a global_entries_t structure */
-PSY_INLINE void psyco_ge_init(global_entries_t* ge) {
-	ge->varies = NULL;
-	ge->fatlist = PyList_New(0);
-	if (ge->fatlist == NULL)
-		OUT_OF_MEMORY();
+PSY_INLINE void
+psyco_ge_init(global_entries_t *ge)
+{
+    ge->varies = NULL;
+    ge->fatlist = PyList_New(0);
+    if (ge->fatlist == NULL)
+        OUT_OF_MEMORY();
 }
 
 /* register the code buffer; it will be found by future calls to
    psyco_compatible(). */
-PSY_INLINE int register_codebuf(global_entries_t* ge, CodeBufferObject* codebuf) {
-	return PyList_Append(ge->fatlist, (PyObject*) codebuf);
+PSY_INLINE int
+register_codebuf(global_entries_t *ge, CodeBufferObject *codebuf)
+{
+    return PyList_Append(ge->fatlist, (PyObject *)codebuf);
 }
 
 /* for mergepoints.c */
-PSY_INLINE void psyco_ge_unused_var(global_entries_t* ge, int num)
+PSY_INLINE void
+psyco_ge_unused_var(global_entries_t *ge, int num)
 {
-	PyObject* o = PyLong_FromLong(num);
-	if (o == NULL || PyList_Append(ge->fatlist, o))
-		OUT_OF_MEMORY();
+    PyObject *o = PyLong_FromLong(num);
+    if (o == NULL || PyList_Append(ge->fatlist, o))
+        OUT_OF_MEMORY();
 }
 
-EXTERNFN void psyco_forget_dead_vars(PsycoObject* po, global_entries_t* ge);
-
+EXTERNFN void
+psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge);
 
 /*****************************************************************/
- /***   Unification                                             ***/
+/***   Unification                                             ***/
 
 /* Update 'po' to match 'lastmatch', then jump to 'lastmatch'.
    For the conversion we might have to emit some code.
@@ -257,8 +278,9 @@ EXTERNFN void psyco_forget_dead_vars(PsycoObject* po, global_entries_t* ge);
    undefined (but not NULL).
    'po' and 'lastmatch' are released.
 */
-EXTERNFN code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
-                             CodeBufferObject** target);
+EXTERNFN code_t *
+psyco_unify(PsycoObject *po, vcompatible_t *lastmatch,
+            CodeBufferObject **target);
 
 /* Simplified interface to psyco_unify() without using a previously
    existing code buffer (i.e. 'po->code' is uninitialized). If needed,
@@ -266,8 +288,8 @@ EXTERNFN code_t* psyco_unify(PsycoObject* po, vcompatible_t* lastmatch,
    'lastmatch'. If no code is needed, just return 'lastmatch->matching'
    (borrowed).
 */
-EXTERNFN CodeBufferObject* psyco_unify_code(PsycoObject* po,
-                                            vcompatible_t* lastmatch);
+EXTERNFN CodeBufferObject *
+psyco_unify_code(PsycoObject *po, vcompatible_t *lastmatch);
 
 /* To "simplify" recursively a vinfo_array_t. The simplification done
    is to replace run-time values inside a sub-array of a non-virtual
@@ -275,23 +297,26 @@ EXTERNFN CodeBufferObject* psyco_unify_code(PsycoObject* po,
    We assume that these can still be reloaded later if necessary.
    Returns the number of run-time values left.
    This assumes that all 'tmp' marks are cleared in 'array'. */
-EXTERNFN int psyco_simplify_array(vinfo_array_t* array,
-                                  PsycoObject* po);  /* 'po' may be NULL */
+EXTERNFN int
+psyco_simplify_array(vinfo_array_t *array,
+                     PsycoObject *po); /* 'po' may be NULL */
 
 /* Emit the code to prepare for Psyco code calling Psyco code in
    a compiled function call */
-PSY_INLINE bool psyco_forking(PsycoObject* po, vinfo_array_t* array) {
-	/* Some virtual-time objects cannot remain virtualized across calls,
-	   because if the called function pulls them out of virtual-time,
-	   the caller will not know it.  This is unacceptable for
-	   mutable Python objects.  We hope it does not hurt in other cases,
-	   but could be defeated by the "is" operator. */
-	return psyco_limit_nested_weight(po, array, NWI_FUNCALL,
-                                         NESTED_WEIGHT_END);
+PSY_INLINE bool
+psyco_forking(PsycoObject *po, vinfo_array_t *array)
+{
+    /* Some virtual-time objects cannot remain virtualized across calls,
+       because if the called function pulls them out of virtual-time,
+       the caller will not know it.  This is unacceptable for
+       mutable Python objects.  We hope it does not hurt in other cases,
+       but could be defeated by the "is" operator. */
+    return psyco_limit_nested_weight(po, array, NWI_FUNCALL,
+                                     NESTED_WEIGHT_END);
 }
 
 /*****************************************************************/
- /***   Promotion                                               ***/
+/***   Promotion                                               ***/
 
 /* Promotion of a run-time variable into a fixed compile-time one.
    Finish the code block with a jump to the dispatcher that
@@ -300,39 +325,47 @@ PSY_INLINE bool psyco_forking(PsycoObject* po, vinfo_array_t* array) {
    given entry point.
    Note: Releases 'po'.
 */
-EXTERNFN code_t* psyco_finish_promotion(PsycoObject* po, vinfo_t* fix,
-                                        int pflags);
-
+EXTERNFN code_t *
+psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags);
 
 /* Un-Promotion from non-fixed compile-time into run-time.
    Note: this does not release 'po'. Un-promoting is easy and
    don't require encoding calls to the dispatcher.
 */
-EXTERNFN void psyco_unfix(PsycoObject* po, vinfo_t* vi);
-
+EXTERNFN void
+psyco_unfix(PsycoObject *po, vinfo_t *vi);
 
 /*****************************************************************/
- /***   Respawning                                              ***/
+/***   Respawning                                              ***/
 
 /* internal use */
-EXTERNFN void* psyco_prepare_respawn_ex(PsycoObject* po,
-                                        condition_code_t jmpcondition,
-                                        void* fn, size_t extrasize);
-EXTERNFN bool psyco_prepare_respawn(PsycoObject* po,
-                                    condition_code_t jmpcondition);
-EXTERNFN code_t* psyco_do_respawn(void* arg, int extrasize);
-EXTERNFN code_t* psyco_dont_respawn(void* arg, int extrasize);
-EXTERNFN void psyco_respawn_detected(PsycoObject* po);
-#define detect_respawn_ex(po)  (!++(po)->respawn_cnt)
-PSY_INLINE bool detect_respawn(PsycoObject* po) {
-	if (detect_respawn_ex(po)) {
-		psyco_respawn_detected(po);
-		return true;
-	}
-	else
-		return false;
+EXTERNFN void *
+psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
+                         void *fn, size_t extrasize);
+EXTERNFN bool
+psyco_prepare_respawn(PsycoObject *po, condition_code_t jmpcondition);
+EXTERNFN code_t *
+psyco_do_respawn(void *arg, int extrasize);
+EXTERNFN code_t *
+psyco_dont_respawn(void *arg, int extrasize);
+EXTERNFN void
+psyco_respawn_detected(PsycoObject *po);
+#define detect_respawn_ex(po) (!++(po)->respawn_cnt)
+PSY_INLINE bool
+detect_respawn(PsycoObject *po)
+{
+    if (detect_respawn_ex(po)) {
+        psyco_respawn_detected(po);
+        return true;
+    }
+    else
+        return false;
 }
-PSY_INLINE bool is_respawning(PsycoObject* po) { return po->respawn_cnt < 0; }
+PSY_INLINE bool
+is_respawning(PsycoObject *po)
+{
+    return po->respawn_cnt < 0;
+}
 
 /* the following powerful function stands for 'if the processor flag (cond) is
    set at run-time, then...'. Of course we do not know yet if this will be
@@ -340,17 +373,25 @@ PSY_INLINE bool is_respawning(PsycoObject* po) { return po->respawn_cnt < 0; }
    respawns if needed. 'cond' may be CC_ALWAYS_xxx or a real processor flag.
    runtime_condition_f() assumes the outcome is generally false,
    runtime_condition_t() assumes the outcome is generally true. */
-PSY_INLINE bool runtime_condition_f(PsycoObject* po, condition_code_t cond) {
-	extra_assert(cond != CC_ERROR);
-	if (cond == CC_ALWAYS_FALSE) return false;
-	if (cond == CC_ALWAYS_TRUE) return true;
-        return psyco_prepare_respawn(po, cond);
+PSY_INLINE bool
+runtime_condition_f(PsycoObject *po, condition_code_t cond)
+{
+    extra_assert(cond != CC_ERROR);
+    if (cond == CC_ALWAYS_FALSE)
+        return false;
+    if (cond == CC_ALWAYS_TRUE)
+        return true;
+    return psyco_prepare_respawn(po, cond);
 }
-PSY_INLINE bool runtime_condition_t(PsycoObject* po, condition_code_t cond) {
-	extra_assert(cond != CC_ERROR);
-	if (cond == CC_ALWAYS_TRUE) return true;
-	if (cond == CC_ALWAYS_FALSE) return false;
-        return !psyco_prepare_respawn(po, INVERT_CC(cond));
+PSY_INLINE bool
+runtime_condition_t(PsycoObject *po, condition_code_t cond)
+{
+    extra_assert(cond != CC_ERROR);
+    if (cond == CC_ALWAYS_TRUE)
+        return true;
+    if (cond == CC_ALWAYS_FALSE)
+        return false;
+    return !psyco_prepare_respawn(po, INVERT_CC(cond));
 }
 /* extreme care is needed when using the runtime_condition_x() functions:
    they must *always* get called in a sequence that doesn't depend on external
@@ -364,38 +405,41 @@ PSY_INLINE bool runtime_condition_t(PsycoObject* po, condition_code_t cond) {
    Uses integer_NON_NULL() and so accepts 'vi==NULL' and !!consumes a ref!!
    *Do not use* for values that might hold a reference to a PyObject;
    use object_non_null() in this case. */
-EXTERNFN int runtime_NON_NULL_f(PsycoObject* po, vinfo_t* vi);
-EXTERNFN int runtime_NON_NULL_t(PsycoObject* po, vinfo_t* vi);
+EXTERNFN int
+runtime_NON_NULL_f(PsycoObject *po, vinfo_t *vi);
+EXTERNFN int
+runtime_NON_NULL_t(PsycoObject *po, vinfo_t *vi);
 
 /* check if an integer is between the given *inclusive* bounds.
    Same return values as above.  Does not consume a ref. */
-EXTERNFN int runtime_in_bounds(PsycoObject* po, vinfo_t* vi,
-                               long lowbound, long highbound);
+EXTERNFN int
+runtime_in_bounds(PsycoObject *po, vinfo_t *vi, long lowbound, long highbound);
 
 #if ALL_CHECKS
 /* the replay check (dispatcher.c) records where each respawn point was made:
    the outermost of these calls, as file and line */
-EXTERNVAR const char* psyco_respawn_file;
+EXTERNVAR const char *psyco_respawn_file;
 EXTERNVAR int psyco_respawn_line;
-#define LE_RESPAWN_SITE(call) ({                                    \
-        const char* _f = psyco_respawn_file;                        \
-        int _l = psyco_respawn_line;                                \
-        __typeof__(call) _r;                                        \
-        if (_f == NULL) {                                           \
-                psyco_respawn_file = __FILE__;                      \
-                psyco_respawn_line = __LINE__;                      \
-        }                                                           \
-        _r = (call);                                                \
-        psyco_respawn_file = _f;                                    \
-        psyco_respawn_line = _l;                                    \
-        _r; })
+#define LE_RESPAWN_SITE(call)                \
+    ({                                       \
+        const char *_f = psyco_respawn_file; \
+        int _l = psyco_respawn_line;         \
+        __typeof__(call) _r;                 \
+        if (_f == NULL) {                    \
+            psyco_respawn_file = __FILE__;   \
+            psyco_respawn_line = __LINE__;   \
+        }                                    \
+        _r = (call);                         \
+        psyco_respawn_file = _f;             \
+        psyco_respawn_line = _l;             \
+        _r;                                  \
+    })
 #define runtime_condition_f(po, c) LE_RESPAWN_SITE(runtime_condition_f(po, c))
 #define runtime_condition_t(po, c) LE_RESPAWN_SITE(runtime_condition_t(po, c))
-#define runtime_NON_NULL_f(po, v)  LE_RESPAWN_SITE(runtime_NON_NULL_f(po, v))
-#define runtime_NON_NULL_t(po, v)  LE_RESPAWN_SITE(runtime_NON_NULL_t(po, v))
-#define runtime_in_bounds(po, v, lo, hi)                                  \
-        LE_RESPAWN_SITE(runtime_in_bounds(po, v, lo, hi))
+#define runtime_NON_NULL_f(po, v) LE_RESPAWN_SITE(runtime_NON_NULL_f(po, v))
+#define runtime_NON_NULL_t(po, v) LE_RESPAWN_SITE(runtime_NON_NULL_t(po, v))
+#define runtime_in_bounds(po, v, lo, hi) \
+    LE_RESPAWN_SITE(runtime_in_bounds(po, v, lo, hi))
 #endif
-
 
 #endif /* _DISPATCHER_H */

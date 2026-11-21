@@ -5,9 +5,8 @@
 #ifndef _PSYCO_H
 #define _PSYCO_H
 
-
 #include <Python.h>
-#include <structmember.h>   /* for offsetof() */
+#include <structmember.h> /* for offsetof() */
 #include <stdint.h>
 /* the LE_HAS_ features of the CPython source built for */
 #include "le_features_gen.h"
@@ -87,11 +86,12 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: PyTypeObject.tp_version_tag is not unsigned int");
 _Static_assert(sizeof(((PyTypeObject *)0)->tp_version_tag) == 4,
                "LeJIT: PyTypeObject.tp_version_tag: LeJIT reads 4 bytes");
-_Static_assert(__builtin_classify_type(((PyTypeObject *)0)->tp_version_tag) ==
-                   1,
-               "LeJIT: PyTypeObject.tp_version_tag: LeJIT reads it as an integer");
-_Static_assert(((__typeof__(((PyTypeObject *)0)->tp_version_tag))-1 < 0) == 0,
-               "LeJIT: PyTypeObject.tp_version_tag: LeJIT reads it as unsigned");
+_Static_assert(
+    __builtin_classify_type(((PyTypeObject *)0)->tp_version_tag) == 1,
+    "LeJIT: PyTypeObject.tp_version_tag: LeJIT reads it as an integer");
+_Static_assert(
+    ((__typeof__(((PyTypeObject *)0)->tp_version_tag))-1 < 0) == 0,
+    "LeJIT: PyTypeObject.tp_version_tag: LeJIT reads it as unsigned");
 
 #define LE_OFS_PyFloatObject__ob_fval offsetof(PyFloatObject, ob_fval)
 #define LE_SIZE2_PyFloatObject__ob_fval 3
@@ -165,11 +165,12 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: PyDictObject.ma_version_tag is not uint64_t");
 _Static_assert(sizeof(((PyDictObject *)0)->ma_version_tag) == 8,
                "LeJIT: PyDictObject.ma_version_tag: LeJIT reads 8 bytes");
-_Static_assert(__builtin_classify_type(((PyDictObject *)0)->ma_version_tag) ==
-                   1,
-               "LeJIT: PyDictObject.ma_version_tag: LeJIT reads it as an integer");
-_Static_assert(((__typeof__(((PyDictObject *)0)->ma_version_tag))-1 < 0) == 0,
-               "LeJIT: PyDictObject.ma_version_tag: LeJIT reads it as unsigned");
+_Static_assert(
+    __builtin_classify_type(((PyDictObject *)0)->ma_version_tag) == 1,
+    "LeJIT: PyDictObject.ma_version_tag: LeJIT reads it as an integer");
+_Static_assert(
+    ((__typeof__(((PyDictObject *)0)->ma_version_tag))-1 < 0) == 0,
+    "LeJIT: PyDictObject.ma_version_tag: LeJIT reads it as unsigned");
 #define LE_OFS_PyDictObject__ma_keys offsetof(PyDictObject, ma_keys)
 #define LE_SIZE2_PyDictObject__ma_keys 3
 #define LE_UNSIGNED_PyDictObject__ma_keys 0
@@ -267,9 +268,9 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: PyFunctionObject.func_code is not PyObject *");
 _Static_assert(sizeof(((PyFunctionObject *)0)->func_code) == 8,
                "LeJIT: PyFunctionObject.func_code: LeJIT reads 8 bytes");
-_Static_assert(__builtin_classify_type(((PyFunctionObject *)0)->func_code) ==
-                   5,
-               "LeJIT: PyFunctionObject.func_code: LeJIT reads it as a pointer");
+_Static_assert(
+    __builtin_classify_type(((PyFunctionObject *)0)->func_code) == 5,
+    "LeJIT: PyFunctionObject.func_code: LeJIT reads it as a pointer");
 #define LE_OFS_PyFunctionObject__func_globals \
     offsetof(PyFunctionObject, func_globals)
 #define LE_SIZE2_PyFunctionObject__func_globals 3
@@ -330,8 +331,9 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyFunctionObject *)0)->func_annotations),
                    PyObject *),
                "LeJIT: PyFunctionObject.func_annotations is not PyObject *");
-_Static_assert(sizeof(((PyFunctionObject *)0)->func_annotations) == 8,
-               "LeJIT: PyFunctionObject.func_annotations: LeJIT reads 8 bytes");
+_Static_assert(
+    sizeof(((PyFunctionObject *)0)->func_annotations) == 8,
+    "LeJIT: PyFunctionObject.func_annotations: LeJIT reads 8 bytes");
 _Static_assert(
     __builtin_classify_type(((PyFunctionObject *)0)->func_annotations) == 5,
     "LeJIT: PyFunctionObject.func_annotations: LeJIT reads it as a pointer");
@@ -550,8 +552,9 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: PyDictKeysObject.dk_refcnt is not Py_ssize_t");
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_refcnt) == 8,
                "LeJIT: PyDictKeysObject.dk_refcnt: LeJIT reads 8 bytes");
-_Static_assert(__builtin_classify_type(((le_dictkeys_t *)0)->dk_refcnt) == 1,
-               "LeJIT: PyDictKeysObject.dk_refcnt: LeJIT reads it as an integer");
+_Static_assert(
+    __builtin_classify_type(((le_dictkeys_t *)0)->dk_refcnt) == 1,
+    "LeJIT: PyDictKeysObject.dk_refcnt: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_dictkeys_t *)0)->dk_refcnt))-1 < 0) == 1,
                "LeJIT: PyDictKeysObject.dk_refcnt: LeJIT reads it as signed");
 #define LE_OFS_le_dictkeys_t__dk_size offsetof(le_dictkeys_t, dk_size)
@@ -562,8 +565,9 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: PyDictKeysObject.dk_size is not Py_ssize_t");
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_size) == 8,
                "LeJIT: PyDictKeysObject.dk_size: LeJIT reads 8 bytes");
-_Static_assert(__builtin_classify_type(((le_dictkeys_t *)0)->dk_size) == 1,
-               "LeJIT: PyDictKeysObject.dk_size: LeJIT reads it as an integer");
+_Static_assert(
+    __builtin_classify_type(((le_dictkeys_t *)0)->dk_size) == 1,
+    "LeJIT: PyDictKeysObject.dk_size: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_dictkeys_t *)0)->dk_size))-1 < 0) == 1,
                "LeJIT: PyDictKeysObject.dk_size: LeJIT reads it as signed");
 #define LE_OFS_le_dictkeys_t__dk_usable offsetof(le_dictkeys_t, dk_usable)
@@ -574,8 +578,9 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: PyDictKeysObject.dk_usable is not Py_ssize_t");
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_usable) == 8,
                "LeJIT: PyDictKeysObject.dk_usable: LeJIT reads 8 bytes");
-_Static_assert(__builtin_classify_type(((le_dictkeys_t *)0)->dk_usable) == 1,
-               "LeJIT: PyDictKeysObject.dk_usable: LeJIT reads it as an integer");
+_Static_assert(
+    __builtin_classify_type(((le_dictkeys_t *)0)->dk_usable) == 1,
+    "LeJIT: PyDictKeysObject.dk_usable: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_dictkeys_t *)0)->dk_usable))-1 < 0) == 1,
                "LeJIT: PyDictKeysObject.dk_usable: LeJIT reads it as signed");
 #define LE_OFS_le_dictkeys_t__dk_nentries offsetof(le_dictkeys_t, dk_nentries)
@@ -586,10 +591,12 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: PyDictKeysObject.dk_nentries is not Py_ssize_t");
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_nentries) == 8,
                "LeJIT: PyDictKeysObject.dk_nentries: LeJIT reads 8 bytes");
-_Static_assert(__builtin_classify_type(((le_dictkeys_t *)0)->dk_nentries) == 1,
-               "LeJIT: PyDictKeysObject.dk_nentries: LeJIT reads it as an integer");
-_Static_assert(((__typeof__(((le_dictkeys_t *)0)->dk_nentries))-1 < 0) == 1,
-               "LeJIT: PyDictKeysObject.dk_nentries: LeJIT reads it as signed");
+_Static_assert(
+    __builtin_classify_type(((le_dictkeys_t *)0)->dk_nentries) == 1,
+    "LeJIT: PyDictKeysObject.dk_nentries: LeJIT reads it as an integer");
+_Static_assert(
+    ((__typeof__(((le_dictkeys_t *)0)->dk_nentries))-1 < 0) == 1,
+    "LeJIT: PyDictKeysObject.dk_nentries: LeJIT reads it as signed");
 #define LE_OFS_le_dictkeys_t__dk_indices offsetof(le_dictkeys_t, dk_indices)
 #define LE_SIZE2_le_dictkeys_t__dk_indices 0
 #define LE_UNSIGNED_le_dictkeys_t__dk_indices 1
@@ -629,8 +636,9 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: unicode_formatter_t.arglen is not Py_ssize_t");
 _Static_assert(sizeof(((le_formatter_t *)0)->arglen) == 8,
                "LeJIT: unicode_formatter_t.arglen: LeJIT reads 8 bytes");
-_Static_assert(__builtin_classify_type(((le_formatter_t *)0)->arglen) == 1,
-               "LeJIT: unicode_formatter_t.arglen: LeJIT reads it as an integer");
+_Static_assert(
+    __builtin_classify_type(((le_formatter_t *)0)->arglen) == 1,
+    "LeJIT: unicode_formatter_t.arglen: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_formatter_t *)0)->arglen))-1 < 0) == 1,
                "LeJIT: unicode_formatter_t.arglen: LeJIT reads it as signed");
 #define LE_OFS_le_formatter_t__argidx offsetof(le_formatter_t, argidx)
@@ -641,8 +649,9 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: unicode_formatter_t.argidx is not Py_ssize_t");
 _Static_assert(sizeof(((le_formatter_t *)0)->argidx) == 8,
                "LeJIT: unicode_formatter_t.argidx: LeJIT reads 8 bytes");
-_Static_assert(__builtin_classify_type(((le_formatter_t *)0)->argidx) == 1,
-               "LeJIT: unicode_formatter_t.argidx: LeJIT reads it as an integer");
+_Static_assert(
+    __builtin_classify_type(((le_formatter_t *)0)->argidx) == 1,
+    "LeJIT: unicode_formatter_t.argidx: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_formatter_t *)0)->argidx))-1 < 0) == 1,
                "LeJIT: unicode_formatter_t.argidx: LeJIT reads it as signed");
 
@@ -674,8 +683,9 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: unicode_format_arg_t.width is not Py_ssize_t");
 _Static_assert(sizeof(((le_format_arg_t *)0)->width) == 8,
                "LeJIT: unicode_format_arg_t.width: LeJIT reads 8 bytes");
-_Static_assert(__builtin_classify_type(((le_format_arg_t *)0)->width) == 1,
-               "LeJIT: unicode_format_arg_t.width: LeJIT reads it as an integer");
+_Static_assert(
+    __builtin_classify_type(((le_format_arg_t *)0)->width) == 1,
+    "LeJIT: unicode_format_arg_t.width: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((le_format_arg_t *)0)->width))-1 < 0) == 1,
                "LeJIT: unicode_format_arg_t.width: LeJIT reads it as signed");
 
@@ -724,12 +734,12 @@ typedef int32_t dword_t;
 typedef int64_t qword_t;
 
 #if INTPTR_MAX == INT32_MAX
-    typedef dword_t stackitem_t;
+typedef dword_t stackitem_t;
 #elif INTPTR_MAX == INT64_MAX
-    typedef int64_t qword_t;
-    typedef qword_t stackitem_t;
+typedef int64_t qword_t;
+typedef qword_t stackitem_t;
 #else
-    #error "Environment not 32 or 64-bit."
+#error "Environment not 32 or 64-bit."
 #endif
 
 /*****************************************************************/
@@ -760,7 +770,7 @@ typedef int64_t qword_t;
 /*  define to inline the most common functions in the produced code
     (should be enabled unless you want to trade code size for speed) */
 #ifndef INLINE_COMMON_FUNCTIONS
-# define INLINE_COMMON_FUNCTIONS 1
+#define INLINE_COMMON_FUNCTIONS 1
 #endif
 
 /*****************************************************************/
@@ -772,28 +782,28 @@ typedef int64_t qword_t;
    before the next END_CODE, which then goes on in a new extent after a
    jump (codemanager.c:psyco_code_continue). */
 #ifndef BUFFER_MARGIN
-# define BUFFER_MARGIN 1024
+#define BUFFER_MARGIN 1024
 #endif
 #ifndef GUARANTEED_MINIMUM
-# define GUARANTEED_MINIMUM 64
+#define GUARANTEED_MINIMUM 64
 #endif
 
-
-#define EXTERNVAR   extern
+#define EXTERNVAR extern
 #define EXTERNFN
 #define DEFINEVAR
 #define DEFINEFN
-#define INITIALIZATIONFN  DEFINEFN
+#define INITIALIZATIONFN DEFINEFN
 
 #define psyco_assert(x) ((void)((x) || psyco_fatal_msg("assertion failed")))
-#define psyco_fatal_msg(msg)  psyco_fatal_error(msg, __FILE__, __LINE__)
-EXTERNFN int psyco_fatal_error(char* msg, char* filename, int lineno);
+#define psyco_fatal_msg(msg) psyco_fatal_error(msg, __FILE__, __LINE__)
+EXTERNFN int
+psyco_fatal_error(char *msg, char *filename, int lineno);
 
 #if ALL_CHECKS
-# define MALLOC_CHECK_    2  /* GCC malloc() checks */
-# define extra_assert(x)  psyco_assert(x)
+#define MALLOC_CHECK_ 2 /* GCC malloc() checks */
+#define extra_assert(x) psyco_assert(x)
 #else
-# define extra_assert(x)  (void)0  /* nothing */
+#define extra_assert(x) (void)0 /* nothing */
 #endif
 
 /* Under AddressSanitizer (setup.py LE_SANITIZE), LeJIT's own allocators mark
@@ -802,37 +812,36 @@ EXTERNFN int psyco_fatal_error(char* msg, char* filename, int lineno);
    told to scan executable memory, where stub and pause records point to
    what they hold (LE_LSAN_ROOT) */
 #if defined(__SANITIZE_ADDRESS__)
-# include <sanitizer/asan_interface.h>
-# include <sanitizer/lsan_interface.h>
-# define LE_POISON(p, n)    ASAN_POISON_MEMORY_REGION(p, n)
-# define LE_UNPOISON(p, n)  ASAN_UNPOISON_MEMORY_REGION(p, n)
-# define LE_LSAN_ROOT(p, n) __lsan_register_root_region(p, n)
+#include <sanitizer/asan_interface.h>
+#include <sanitizer/lsan_interface.h>
+#define LE_POISON(p, n) ASAN_POISON_MEMORY_REGION(p, n)
+#define LE_UNPOISON(p, n) ASAN_UNPOISON_MEMORY_REGION(p, n)
+#define LE_LSAN_ROOT(p, n) __lsan_register_root_region(p, n)
 #else
-# define LE_POISON(p, n)    ((void)0)
-# define LE_UNPOISON(p, n)  ((void)0)
-# define LE_LSAN_ROOT(p, n) ((void)0)
+#define LE_POISON(p, n) ((void)0)
+#define LE_UNPOISON(p, n) ((void)0)
+#define LE_LSAN_ROOT(p, n) ((void)0)
 #endif
 
 #if INLINE_COMMON_FUNCTIONS
-# define PSY_INLINE	__inline static
+#define PSY_INLINE __inline static
 #else
-# define PSY_INLINE	static
+#define PSY_INLINE static
 #endif
 
 #ifndef bool
 typedef int bool;
 #endif
 #ifndef false
-# define false   0
+#define false 0
 #endif
 #ifndef true
-# define true    1
+#define true 1
 #endif
 
 #ifndef PyObject_TypeCheck
-# define PyObject_TypeCheck(o,t)   ((o)->ob_type == (t))
+#define PyObject_TypeCheck(o, t) ((o)->ob_type == (t))
 #endif
-
 
 typedef unsigned char code_t;
 
@@ -840,157 +849,223 @@ typedef struct vinfo_s vinfo_t;             /* defined in compiler.h */
 typedef struct vinfo_array_s vinfo_array_t; /* defined in compiler.h */
 typedef struct PsycoObject_s PsycoObject;   /* defined in compiler.h */
 typedef struct FrozenPsycoObject_s FrozenPsycoObject; /* def in dispatcher.h */
-typedef struct CodeBufferObject_s CodeBufferObject;  /* def in codemanager.h */
-typedef struct global_entries_s global_entries_t;  /* def in dispatcher.h */
-typedef struct mergepoint_s mergepoint_t;   /* defined in mergepoint.h */
+typedef struct CodeBufferObject_s CodeBufferObject; /* def in codemanager.h */
+typedef struct global_entries_s global_entries_t;   /* def in dispatcher.h */
+typedef struct mergepoint_s mergepoint_t; /* defined in mergepoint.h */
 typedef struct stack_frame_info_s stack_frame_info_t; /* def in pycompiler.h */
-
 
 /* Everything the compiled code of one code object holds (codemanager.c),
    released with that code object. */
 typedef struct le_owner_s {
-  struct { code_t *start, *end; } *extents; /* its machine code */
-  int nextents, extentscap;
-  CodeBufferObject **bufs;          /* every code buffer made for it */
-  int nbufs, bufscap;
-  PyObject **pins;                  /* a hash set of owned references */
-  size_t npins, pinmask;
-  struct { void (*fn)(void *); void *closure; } *releases;
-  int nreleases, releasescap;       /* its records holding something */
-  void *blocks;                     /* records freed with the owner */
-  code_t *stub_pool, *stub_pool_end;
-  size_t stub_chunk;                /* the size of stub_pool's chunk */
-  int *notes;                       /* its call sites' psyco_locals_maps */
-  int nnotes, notescap;             /* indices, reused once it dies */
+    struct {
+        code_t *start, *end;
+    } *extents; /* its machine code */
+    int nextents, extentscap;
+    CodeBufferObject **bufs; /* every code buffer made for it */
+    int nbufs, bufscap;
+    PyObject **pins; /* a hash set of owned references */
+    size_t npins, pinmask;
+    struct {
+        void (*fn)(void *);
+        void *closure;
+    } *releases;
+    int nreleases, releasescap; /* its records holding something */
+    void *blocks;               /* records freed with the owner */
+    code_t *stub_pool, *stub_pool_end;
+    size_t stub_chunk;    /* the size of stub_pool's chunk */
+    int *notes;           /* its call sites' psyco_locals_maps */
+    int nnotes, notescap; /* indices, reused once it dies */
 } le_owner_t;
 
 /* What LeJIT keeps per code object, on its weak references (lejit.c): found by
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
 typedef struct le_code_extra_s {
-  PyObject* merge_points;  /* capsule, Py_None if unsupported, NULL if not
-                              built yet; owned */
-  PyObject* entry_point;   /* codebuf, Py_None if compiling failed, NULL if
-                              not tried; owned */
-  PyObject* entry_globals; /* the globals it was compiled for: borrowed, so
-                              maybe dead and reused (vcompiler.c says why
-                              that is safe) */
-  PyObject* entry_builtins; /* and its f_builtins: borrowed,
-                               the compiled code owns it */
-  long serial;             /* never reused, unlike the code object's
-                              address (psyfunc.c:psyco_save_inline_po) */
-  le_owner_t owner;        /* what its compiled code holds */
-  char counted;            /* in the owner scan's count (codemanager.c) */
+    PyObject *merge_points;   /* capsule, Py_None if unsupported, NULL if not
+                                 built yet; owned */
+    PyObject *entry_point;    /* codebuf, Py_None if compiling failed, NULL if
+                                 not tried; owned */
+    PyObject *entry_globals;  /* the globals it was compiled for: borrowed, so
+                                 maybe dead and reused (vcompiler.c says why
+                                 that is safe) */
+    PyObject *entry_builtins; /* and its f_builtins: borrowed,
+                                 the compiled code owns it */
+    long serial;              /* never reused, unlike the code object's
+                                 address (psyfunc.c:psyco_save_inline_po) */
+    le_owner_t owner;         /* what its compiled code holds */
+    char counted;             /* in the owner scan's count (codemanager.c) */
 } le_code_extra_t;
 /* the record for 'co', made on first use; NULL with an exception set */
-EXTERNFN le_code_extra_t* le_code_extra(PyCodeObject* co);
+EXTERNFN le_code_extra_t *
+le_code_extra(PyCodeObject *co);
 /* the record for 'co' if it has one, never raising */
-EXTERNFN le_code_extra_t* le_code_extra_get(PyCodeObject* co);
+EXTERNFN le_code_extra_t *
+le_code_extra_get(PyCodeObject *co);
 /* releases the record and its compiled code; its code object is dead */
-EXTERNFN void le_code_extra_free(le_code_extra_t* x);
+EXTERNFN void
+le_code_extra_free(le_code_extra_t *x);
 /* takes the record off 'co', unfreed, and returns it */
-EXTERNFN le_code_extra_t* le_code_extra_detach(PyCodeObject* co);
+EXTERNFN le_code_extra_t *
+le_code_extra_detach(PyCodeObject *co);
 
 /* moved here from vcompiler.h because needed by numerous header files.
    See vcompiler.h for comments */
-typedef bool (*compute_fn_t)(PsycoObject* po, vinfo_t* vi);
-typedef PyObject* (*direct_compute_fn_t)(vinfo_t* vi, char* data);
+typedef bool (*compute_fn_t)(PsycoObject *po, vinfo_t *vi);
+typedef PyObject *(*direct_compute_fn_t)(vinfo_t *vi, char *data);
 typedef struct {
-  compute_fn_t compute_fn;
-  direct_compute_fn_t direct_compute_fn;
-  long pyobject_mask;
-  signed char nested_weight[2];
+    compute_fn_t compute_fn;
+    direct_compute_fn_t direct_compute_fn;
+    long pyobject_mask;
+    signed char nested_weight[2];
 } source_virtual_t;
 
+#define psyco_inc_stackdepth(po)                \
+    do {                                        \
+        po->stack_depth += sizeof(stackitem_t); \
+    } while (0)
 
-#define psyco_inc_stackdepth(po) do {\
-    po->stack_depth += sizeof(stackitem_t);\
-} while(0)
-
-#define psyco_dec_stackdepth(po) do {\
-    po->stack_depth -= sizeof(stackitem_t);\
-} while(0)
-
+#define psyco_dec_stackdepth(po)                \
+    do {                                        \
+        po->stack_depth -= sizeof(stackitem_t); \
+    } while (0)
 
 /* to display code object names */
-#define PyCodeObject_NAME(co)   (co->co_name ? PyUnicode_AsUTF8(co->co_name)  \
-                                 : "<anonymous code object>")
-
+#define PyCodeObject_NAME(co) \
+    (co->co_name ? PyUnicode_AsUTF8(co->co_name) : "<anonymous code object>")
 
 /* defined in pycompiler.c */
-#define GLOBAL_ENTRY_POINT	psyco_pycompiler_mainloop
-EXTERNFN code_t* psyco_pycompiler_mainloop(PsycoObject* po);
-
+#define GLOBAL_ENTRY_POINT psyco_pycompiler_mainloop
+EXTERNFN code_t *
+psyco_pycompiler_mainloop(PsycoObject *po);
 
 /* Mid-compile this abandons the compile (codemanager.h, compile guards);
    anywhere else it aborts. It never returns. */
-EXTERNFN void psyco_out_of_memory(char *filename, int lineno);
-#define OUT_OF_MEMORY()      psyco_out_of_memory(__FILE__, __LINE__)
+EXTERNFN void
+psyco_out_of_memory(char *filename, int lineno);
+#define OUT_OF_MEMORY() psyco_out_of_memory(__FILE__, __LINE__)
 
 /* For tests: LE_FAIL(site) is true at the n-th time it is reached after
    lejit._core._fail_after(site, n), as if that allocation had failed. */
-enum { LE_FAIL_PSYCOOBJECT, LE_FAIL_ARRAY, LE_FAIL_CODEBUF, LE_FAIL_LOOKUP,
-       LE_FAIL_OWNER, LE_FAIL_SITES };
+enum {
+    LE_FAIL_PSYCOOBJECT,
+    LE_FAIL_ARRAY,
+    LE_FAIL_CODEBUF,
+    LE_FAIL_LOOKUP,
+    LE_FAIL_OWNER,
+    LE_FAIL_SITES
+};
 #if ALL_CHECKS
 EXTERNVAR long psyco_fail_after[LE_FAIL_SITES];
-#define LE_FAIL(site)                                                          \
-  (psyco_fail_after[site] > 0 && --psyco_fail_after[site] == 0)
+#define LE_FAIL(site) \
+    (psyco_fail_after[site] > 0 && --psyco_fail_after[site] == 0)
 #else
 #define LE_FAIL(site) 0
 #endif
 
 /* Getting data from the _psyco module */
-EXTERNFN PyObject* need_cpsyco_obj(char* name);
+EXTERNFN PyObject *
+need_cpsyco_obj(char *name);
 
 /* defined in dispatcher.c */
-EXTERNFN void PsycoObject_EmergencyCodeRoom(PsycoObject* po);
+EXTERNFN void
+PsycoObject_EmergencyCodeRoom(PsycoObject *po);
 
 #if LE_TRACE
 /* Calls hooked by analyser to collect compiler behaviour */
-EXTERNFN void le_trace_begin_simple_code(code_t *code);
-EXTERNFN void le_trace_end_simple_code(code_t *code);
-EXTERNFN void le_trace_begin_code(PsycoObject* po);
-EXTERNFN void le_trace_end_code(PsycoObject* po);
-EXTERNFN void le_trace_jump(code_t *location, code_t *target);
-EXTERNFN void le_trace_jump_update(code_t *location, code_t *target);
-EXTERNFN void le_trace_jump_reg(code_t *location, int reg_target);
-EXTERNFN void le_trace_jump_cond(code_t *location, code_t *not_taken, code_t *taken);
-EXTERNFN void le_trace_jump_cond_update(code_t *location, code_t *not_taken, code_t *taken);
-EXTERNFN void le_trace_jump_cond_reg(code_t *location, code_t *not_taken, int reg_taken);
-EXTERNFN void le_trace_call(code_t *location, code_t *call_target);
-EXTERNFN void le_trace_call_reg(code_t *location, int reg_call_target);
-EXTERNFN void le_trace_return(code_t *location, int stack_adjust);
-EXTERNFN void le_trace_unsupported_opcode(PyCodeObject *co, int bytecode_index);
-EXTERNFN void le_trace_run_fail(PyCodeObject *co, char *reason);
-EXTERNFN void le_trace_unify(PsycoObject* po, CodeBufferObject *match);
+EXTERNFN void
+le_trace_begin_simple_code(code_t *code);
+EXTERNFN void
+le_trace_end_simple_code(code_t *code);
+EXTERNFN void
+le_trace_begin_code(PsycoObject *po);
+EXTERNFN void
+le_trace_end_code(PsycoObject *po);
+EXTERNFN void
+le_trace_jump(code_t *location, code_t *target);
+EXTERNFN void
+le_trace_jump_update(code_t *location, code_t *target);
+EXTERNFN void
+le_trace_jump_reg(code_t *location, int reg_target);
+EXTERNFN void
+le_trace_jump_cond(code_t *location, code_t *not_taken, code_t *taken);
+EXTERNFN void
+le_trace_jump_cond_update(code_t *location, code_t *not_taken, code_t *taken);
+EXTERNFN void
+le_trace_jump_cond_reg(code_t *location, code_t *not_taken, int reg_taken);
+EXTERNFN void
+le_trace_call(code_t *location, code_t *call_target);
+EXTERNFN void
+le_trace_call_reg(code_t *location, int reg_call_target);
+EXTERNFN void
+le_trace_return(code_t *location, int stack_adjust);
+EXTERNFN void
+le_trace_unsupported_opcode(PyCodeObject *co, int bytecode_index);
+EXTERNFN void
+le_trace_run_fail(PyCodeObject *co, char *reason);
+EXTERNFN void
+le_trace_unify(PsycoObject *po, CodeBufferObject *match);
 #else
-#define le_trace_begin_simple_code(code) do {} while(0)
-#define le_trace_end_simple_code(code) do {} while(0)
-#define le_trace_begin_code(po) do {} while(0)
-#define le_trace_end_code(po) do {} while(0)
-#define le_trace_jump(location, target) do {} while(0)
-#define le_trace_jump_update(location, target) do {} while(0)
-#define le_trace_jump_reg(location, target) do {} while(0)
-#define le_trace_jump_cond(location, not_taken, taken) do {} while(0)
-#define le_trace_jump_cond_update(location, not_taken, taken) do {} while(0)
-#define le_trace_jump_cond_reg(location, not_taken, taken) do {} while(0)
-#define le_trace_call(location, call_target) do {} while(0)
-#define le_trace_call_reg(location, reg_call_target) do {} while(0)
-#define le_trace_return(location, stack_adjust) do {} while(0)
-#define le_trace_unsupported_opcode(co, bytecode_index) do {} while(0)
-#define le_trace_run_fail(co, reason) do {} while(0)
-#define le_trace_unify(po, match) do {} while (0)
+#define le_trace_begin_simple_code(code) \
+    do {                                 \
+    } while (0)
+#define le_trace_end_simple_code(code) \
+    do {                               \
+    } while (0)
+#define le_trace_begin_code(po) \
+    do {                        \
+    } while (0)
+#define le_trace_end_code(po) \
+    do {                      \
+    } while (0)
+#define le_trace_jump(location, target) \
+    do {                                \
+    } while (0)
+#define le_trace_jump_update(location, target) \
+    do {                                       \
+    } while (0)
+#define le_trace_jump_reg(location, target) \
+    do {                                    \
+    } while (0)
+#define le_trace_jump_cond(location, not_taken, taken) \
+    do {                                               \
+    } while (0)
+#define le_trace_jump_cond_update(location, not_taken, taken) \
+    do {                                                      \
+    } while (0)
+#define le_trace_jump_cond_reg(location, not_taken, taken) \
+    do {                                                   \
+    } while (0)
+#define le_trace_call(location, call_target) \
+    do {                                     \
+    } while (0)
+#define le_trace_call_reg(location, reg_call_target) \
+    do {                                             \
+    } while (0)
+#define le_trace_return(location, stack_adjust) \
+    do {                                        \
+    } while (0)
+#define le_trace_unsupported_opcode(co, bytecode_index) \
+    do {                                                \
+    } while (0)
+#define le_trace_run_fail(co, reason) \
+    do {                              \
+    } while (0)
+#define le_trace_unify(po, match) \
+    do {                          \
+    } while (0)
 #endif
 
-#define BEGIN_CODE do {\
-    code_t* code = po->code;\
-    le_trace_begin_code(po);
-#define END_CODE\
-    po->code = code;\
-    le_trace_end_code(po);\
-    if (code >= po->codelimit) {\
-        PsycoObject_EmergencyCodeRoom(po);\
-    }\
-} while(0);
+#define BEGIN_CODE               \
+    do {                         \
+        code_t *code = po->code; \
+        le_trace_begin_code(po);
+#define END_CODE                           \
+    po->code = code;                       \
+    le_trace_end_code(po);                 \
+    if (code >= po->codelimit) {           \
+        PsycoObject_EmergencyCodeRoom(po); \
+    }                                      \
+    }                                      \
+    while (0);
 
 #endif /* _PSYCO_H */

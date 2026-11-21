@@ -33,8 +33,8 @@
 typedef struct {
     int flags;
     Py_ssize_t mergepoint_count;
-    Py_ssize_t unit_count;      /* code units in co_code */
-    global_entries_t *joins;    /* per code unit, or NULL: psyco_join_point */
+    Py_ssize_t unit_count;   /* code units in co_code */
+    global_entries_t *joins; /* per code unit, or NULL: psyco_join_point */
     /* one per code unit: compiled code tests eval_breaker before that
        instruction. Allocated after the merge points. */
     unsigned char *breaker_checks;
@@ -83,34 +83,35 @@ report_destructor(PyObject *capsule)
         }                           \
     } while (0)
 
-#define ENTER_NEXT()                               \
-    do {                                           \
-        _ENTER_INC(next_instr - first_instr);      \
+#define ENTER_NEXT()                          \
+    do {                                      \
+        _ENTER_INC(next_instr - first_instr); \
     } while (0)
 
 /* a jump target, in code units, checked to be in the code (where it starts
    an instruction is checked once all are known: JUMP_TARGET_CHECK) */
-#define JUMP_TARGET(target)                                                  \
-    ({                                                                       \
-        Py_ssize_t _j = (target);                                            \
-        if (_j < 0 || _j >= entry_count_len - 1) {                           \
-            bad_jump = 1;                                                    \
-            _j = 0;                                                          \
-        }                                                                    \
-        is_target[_j] = 1;                                                   \
-        _j;                                                                  \
+#define JUMP_TARGET(target)                        \
+    ({                                             \
+        Py_ssize_t _j = (target);                  \
+        if (_j < 0 || _j >= entry_count_len - 1) { \
+            bad_jump = 1;                          \
+            _j = 0;                                \
+        }                                          \
+        is_target[_j] = 1;                         \
+        _j;                                        \
     })
 
 /* target: in code units. A backward jump is to a loop head: always a merge
    point, or compilation would unroll the loop */
-#define ENTER_JUMP_TO(target)                       \
-    do {                                            \
-        Py_ssize_t _t = JUMP_TARGET(target);        \
-        if (_t <= entry_count_index) {              \
-            entry_count[_t] = 8;                    \
-            BREAKER_CHECK(_t);                      \
-        } else                                      \
-            _ENTER_INC(_t);                         \
+#define ENTER_JUMP_TO(target)                \
+    do {                                     \
+        Py_ssize_t _t = JUMP_TARGET(target); \
+        if (_t <= entry_count_index) {       \
+            entry_count[_t] = 8;             \
+            BREAKER_CHECK(_t);               \
+        }                                    \
+        else                                 \
+            _ENTER_INC(_t);                  \
     } while (0)
 
 /* the code unit just after the current instruction (relative jumps) */
@@ -125,28 +126,28 @@ report_destructor(PyObject *capsule)
    LOAD_GLOBAL, and at most this many instructions that are not "light"
    (produce little or no code) */
 #define INLINE_MAXIMUM_WEIGHT 6
-#define IS_LIGHT_INSTR(op)                                                   \
-    ((op) == NOP || (op) == POP_TOP || (op) == ROT_TWO ||                    \
-     (op) == ROT_THREE || (op) == DUP_TOP || (op) == DUP_TOP_TWO ||          \
-     (op) == LOAD_CONST || (op) == LOAD_FAST || (op) == STORE_FAST ||        \
-     (op) == DELETE_FAST || (op) == UNPACK_SEQUENCE ||                       \
-     (op) == BUILD_TUPLE || (op) == BUILD_LIST || (op) == BUILD_MAP ||       \
-     (op) == RETURN_VALUE || (op) == JUMP_FORWARD ||                         \
-     (op) == JUMP_ABSOLUTE || (op) == POP_JUMP_IF_FALSE ||                   \
-     (op) == POP_JUMP_IF_TRUE || (op) == JUMP_IF_FALSE_OR_POP ||             \
-     (op) == JUMP_IF_TRUE_OR_POP || (op) == EXTENDED_ARG)
+#define IS_LIGHT_INSTR(op)                                                    \
+    ((op) == NOP || (op) == POP_TOP || (op) == ROT_TWO ||                     \
+     (op) == ROT_THREE || (op) == DUP_TOP || (op) == DUP_TOP_TWO ||           \
+     (op) == LOAD_CONST || (op) == LOAD_FAST || (op) == STORE_FAST ||         \
+     (op) == DELETE_FAST || (op) == UNPACK_SEQUENCE || (op) == BUILD_TUPLE || \
+     (op) == BUILD_LIST || (op) == BUILD_MAP || (op) == RETURN_VALUE ||       \
+     (op) == JUMP_FORWARD || (op) == JUMP_ABSOLUTE ||                         \
+     (op) == POP_JUMP_IF_FALSE || (op) == POP_JUMP_IF_TRUE ||                 \
+     (op) == JUMP_IF_FALSE_OR_POP || (op) == JUMP_IF_TRUE_OR_POP ||           \
+     (op) == EXTENDED_ARG)
 
 /* ceval tests eval_breaker before every instruction it reaches through
    DISPATCH(): after most opcodes, and at a frame's start. Compiled code
    tests it at the target of every backward jump, after calls (below) and
    LeCode_Run at the start; before one of BREAKER_SKIPS, the test is before
    the next instruction instead. */
-#define BREAKER_CHECK(unit)                                                  \
-    do {                                                                     \
-        Py_ssize_t _u = (unit);                                              \
-        if (BREAKER_SKIPS(_Py_OPCODE(first_instr[_u])))                      \
-            _u++;                                                            \
-        breaker_check[_u] = 1;                                               \
+#define BREAKER_CHECK(unit)                             \
+    do {                                                \
+        Py_ssize_t _u = (unit);                         \
+        if (BREAKER_SKIPS(_Py_OPCODE(first_instr[_u]))) \
+            _u++;                                       \
+        breaker_check[_u] = 1;                          \
     } while (0)
 
 #define MP_HERE()                           \
@@ -200,48 +201,51 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
             if (setup_at[k] <= i && i < handler_at[k])
                 _live_union(tmp, live + handler_at[k] * words, words);
         switch (o) {
-        case RETURN_VALUE:
-        case RAISE_VARARGS:
-            break;
-        case JUMP_ABSOLUTE:
-        case CONTINUE_LOOP:
-            _live_union(tmp, live + JUMP_UNITS(a) * words, words);
-            break;
-        case JUMP_FORWARD:
-        case CALL_FINALLY: /* its return, by END_FINALLY, is an exit_to */
-            _live_union(tmp, live + (nxt[i] + JUMP_UNITS(a)) * words, words);
-            break;
-        case POP_JUMP_IF_FALSE:
-        case POP_JUMP_IF_TRUE:
-        case JUMP_IF_FALSE_OR_POP:
-        case JUMP_IF_TRUE_OR_POP:
-            _live_union(tmp, live + JUMP_UNITS(a) * words, words);
-            _live_union(tmp, live + nxt[i] * words, words);
-            break;
-        case FOR_ITER:
-        case SETUP_LOOP:
-        case SETUP_EXCEPT:
-        case SETUP_FINALLY:
-        case SETUP_WITH:
-            _live_union(tmp, live + (nxt[i] + JUMP_UNITS(a)) * words, words);
-            _live_union(tmp, live + nxt[i] * words, words);
-            break;
-        case BREAK_LOOP:
-            for (k = 0; k < nbreak; k++)
-                _live_union(tmp, live + break_to[k] * words, words);
-            break;
-        case END_FINALLY:
-            for (k = 0; k < nexit; k++)
-                _live_union(tmp, live + exit_to[k] * words, words);
-            _live_union(tmp, live + nxt[i] * words, words);
-            break;
-        default:
-            /* any other jump the source has may go either way */
-            if (LE_IS_JABS(o))
+            case RETURN_VALUE:
+            case RAISE_VARARGS:
+                break;
+            case JUMP_ABSOLUTE:
+            case CONTINUE_LOOP:
                 _live_union(tmp, live + JUMP_UNITS(a) * words, words);
-            else if (LE_IS_JREL(o))
-                _live_union(tmp, live + (nxt[i] + JUMP_UNITS(a)) * words, words);
-            _live_union(tmp, live + nxt[i] * words, words);
+                break;
+            case JUMP_FORWARD:
+            case CALL_FINALLY: /* its return, by END_FINALLY, is an exit_to */
+                _live_union(tmp, live + (nxt[i] + JUMP_UNITS(a)) * words,
+                            words);
+                break;
+            case POP_JUMP_IF_FALSE:
+            case POP_JUMP_IF_TRUE:
+            case JUMP_IF_FALSE_OR_POP:
+            case JUMP_IF_TRUE_OR_POP:
+                _live_union(tmp, live + JUMP_UNITS(a) * words, words);
+                _live_union(tmp, live + nxt[i] * words, words);
+                break;
+            case FOR_ITER:
+            case SETUP_LOOP:
+            case SETUP_EXCEPT:
+            case SETUP_FINALLY:
+            case SETUP_WITH:
+                _live_union(tmp, live + (nxt[i] + JUMP_UNITS(a)) * words,
+                            words);
+                _live_union(tmp, live + nxt[i] * words, words);
+                break;
+            case BREAK_LOOP:
+                for (k = 0; k < nbreak; k++)
+                    _live_union(tmp, live + break_to[k] * words, words);
+                break;
+            case END_FINALLY:
+                for (k = 0; k < nexit; k++)
+                    _live_union(tmp, live + exit_to[k] * words, words);
+                _live_union(tmp, live + nxt[i] * words, words);
+                break;
+            default:
+                /* any other jump the source has may go either way */
+                if (LE_IS_JABS(o))
+                    _live_union(tmp, live + JUMP_UNITS(a) * words, words);
+                else if (LE_IS_JREL(o))
+                    _live_union(tmp, live + (nxt[i] + JUMP_UNITS(a)) * words,
+                                words);
+                _live_union(tmp, live + nxt[i] * words, words);
         }
         /* in = uses | (out - defs) */
         if ((o == STORE_FAST || o == DELETE_FAST) && a < nlocals)
@@ -265,7 +269,8 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     int nlocals = co->co_nlocals, words = LIVE_WORDS(co->co_nlocals);
     Py_ssize_t i, m;
     int *op, *arg, *nxt;
-    int *setup_at, *handler_at, nsetups = 0; /* try bodies: [setup_at, handler_at) */
+    int *setup_at, *handler_at,
+        nsetups = 0; /* try bodies: [setup_at, handler_at) */
     int *break_to, *exit_to, nbreak = 0, nexit = 0;
     uint64_t *live, *tmp;
     unsigned char *jump_targets; /* 1: loop exit, 2: continue target */
@@ -290,8 +295,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     jump_targets = (unsigned char *)(exit_to + (n + 1));
 
     /* decode: op[i] = -1 except at instruction starts */
-    for (i = 0; i < n; i++)
-        op[i] = -1;
+    for (i = 0; i < n; i++) op[i] = -1;
     op[n] = -1;
     for (i = 0; i < n;) {
         Py_ssize_t start = i;
@@ -306,21 +310,21 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
         arg[start] = a;
         nxt[start] = (int)i;
         switch (o) {
-        case SETUP_LOOP:
-            jump_targets[i + JUMP_UNITS(a)] |= 1;
-            break;
-        case CONTINUE_LOOP:
-            jump_targets[JUMP_UNITS(a)] |= 2;
-            break;
-        case CALL_FINALLY: /* END_FINALLY returns after it */
-            jump_targets[i] |= 2;
-            break;
-        case SETUP_EXCEPT:
-        case SETUP_FINALLY:
-        case SETUP_WITH:
-            setup_at[nsetups] = (int)i;
-            handler_at[nsetups++] = (int)(i + JUMP_UNITS(a));
-            break;
+            case SETUP_LOOP:
+                jump_targets[i + JUMP_UNITS(a)] |= 1;
+                break;
+            case CONTINUE_LOOP:
+                jump_targets[JUMP_UNITS(a)] |= 2;
+                break;
+            case CALL_FINALLY: /* END_FINALLY returns after it */
+                jump_targets[i] |= 2;
+                break;
+            case SETUP_EXCEPT:
+            case SETUP_FINALLY:
+            case SETUP_WITH:
+                setup_at[nsetups] = (int)i;
+                handler_at[nsetups++] = (int)(i + JUMP_UNITS(a));
+                break;
         }
     }
 
@@ -337,13 +341,11 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     if (words == 1)
         while (_live_pass(n, op, arg, nxt, setup_at, handler_at, nsetups,
                           break_to, nbreak, exit_to, nexit, live, tmp, nlocals,
-                          1))
-            ;
+                          1));
     else
         while (_live_pass(n, op, arg, nxt, setup_at, handler_at, nsetups,
                           break_to, nbreak, exit_to, nexit, live, tmp, nlocals,
-                          words))
-            ;
+                          words));
 
     for (m = 0; m < report->mergepoint_count; m++) {
         mergepoint_t *mp = &report->mergepoints[m];
@@ -420,8 +422,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
            instruction ceval skips: then always, after that one */
         if ((opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
              opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD) &&
-            next_instr < instr_end &&
-            BREAKER_SKIPS(_Py_OPCODE(*next_instr)))
+            next_instr < instr_end && BREAKER_SKIPS(_Py_OPCODE(*next_instr)))
             BREAKER_CHECK(next_instr - first_instr);
         switch (opcode) {
             /* no successor in this code */
@@ -538,7 +539,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 entry_count_index * 2;
             report->mergepoints[mergepoint_index].entries.fatlist =
                 PyList_New(0);
-            if (report->mergepoints[mergepoint_index].entries.fatlist == NULL) {
+            if (report->mergepoints[mergepoint_index].entries.fatlist ==
+                NULL) {
                 report->mergepoint_count = mergepoint_index;
                 report_free(report);
                 return NULL;
@@ -557,7 +559,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
         PyErr_Clear();
         for (mergepoint_index = 0; mergepoint_index < mergepoint_count;
              mergepoint_index++) {
-            PyObject *l = report->mergepoints[mergepoint_index].entries.fatlist;
+            PyObject *l =
+                report->mergepoints[mergepoint_index].entries.fatlist;
             PyList_SetSlice(l, 0, PyList_GET_SIZE(l), NULL);
         }
     }
@@ -567,8 +570,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
 /* builtins that read the calling frame's locals, which compiled code keeps
    in registers and on the machine stack; the list is
    upstream's NoControlFlowIfBuiltin */
-static const char *const frame_locals_builtins[] = {
-    "locals", "vars", "dir", "eval", "exec", NULL};
+static const char *const frame_locals_builtins[] = {"locals", "vars", "dir",
+                                                    "eval",   "exec", NULL};
 
 static int
 loads_frame_locals_builtin(PyCodeObject *co, int namei)
@@ -824,7 +827,8 @@ _build_merge_points(PyCodeObject *co, int module)
             case GEN_START:
                 continue;
             default:
-                //printf("Not ok %s %d\n", PyUnicode_AsUTF8(co->co_name), opcode);
+                // printf("Not ok %s %d\n", PyUnicode_AsUTF8(co->co_name),
+                // opcode);
                 goto not_ok;
         }
     }
@@ -944,8 +948,8 @@ psyco_join_point(PyObject *mergepoints, int position)
     global_entries_t *ge;
     psyco_assert(position >= 0 && position / 2 < report->unit_count);
     if (report->joins == NULL) {
-        report->joins = PyMem_Calloc(report->unit_count,
-                                     sizeof(global_entries_t));
+        report->joins =
+            PyMem_Calloc(report->unit_count, sizeof(global_entries_t));
         if (report->joins == NULL)
             return NULL;
     }

@@ -21,17 +21,22 @@
 static source_virtual_t psyco_computed_function;
 
 /* 0 or -1, as a long so that the whole register is meaningful */
-static long cimpl_func_set(PyObject *f, long which, PyObject *value) {
+static long
+cimpl_func_set(PyObject *f, long which, PyObject *value)
+{
     switch (which) {
-    case 0: return PyFunction_SetClosure(f, value);
-    case 1:
-        /* stored as ceval's MAKE_FUNCTION stores it: 3.10's compiler gives
-           a tuple of names and values, which the setter refuses */
-        Py_INCREF(value);
-        Py_XSETREF(((PyFunctionObject *)f)->func_annotations, value);
-        return 0;
-    case 2: return PyFunction_SetKwDefaults(f, value);
-    default: return PyFunction_SetDefaults(f, value);
+        case 0:
+            return PyFunction_SetClosure(f, value);
+        case 1:
+            /* stored as ceval's MAKE_FUNCTION stores it: 3.10's compiler gives
+               a tuple of names and values, which the setter refuses */
+            Py_INCREF(value);
+            Py_XSETREF(((PyFunctionObject *)f)->func_annotations, value);
+            return 0;
+        case 2:
+            return PyFunction_SetKwDefaults(f, value);
+        default:
+            return PyFunction_SetDefaults(f, value);
     }
 }
 
@@ -64,15 +69,15 @@ compute_function(PsycoObject *po, vinfo_t *v)
 
     /* the optional fields go through CPython's setters, which take their
        own references */
-#define SET_FIELD(def, which)                                                \
-    do {                                                                     \
-        other = vinfo_getitem(v, FIELD_INDEX(def));                          \
-        if (other != NULL && !psyco_known_NULL(other)) {                     \
-            if (psyco_generic_call(po, cimpl_func_set, CfNoReturnValue |     \
-                                   CfPyErrIfNonNull, "vlv", newobj,          \
-                                   (long)(which), other) == NULL)            \
-                return false;                                                \
-        }                                                                    \
+#define SET_FIELD(def, which)                                                 \
+    do {                                                                      \
+        other = vinfo_getitem(v, FIELD_INDEX(def));                           \
+        if (other != NULL && !psyco_known_NULL(other)) {                      \
+            if (psyco_generic_call(po, cimpl_func_set,                        \
+                                   CfNoReturnValue | CfPyErrIfNonNull, "vlv", \
+                                   newobj, (long)(which), other) == NULL)     \
+                return false;                                                 \
+        }                                                                     \
     } while (0)
 
     SET_FIELD(FUNC_closure, 0);
@@ -114,14 +119,16 @@ PsycoFunction_NewWithQualName(PsycoObject *po, vinfo_t *codeobj,
 
 static source_virtual_t psyco_pending_genexpr;
 
-static bool compute_genexpr(PsycoObject *po, vinfo_t *v) {
+static bool
+compute_genexpr(PsycoObject *po, vinfo_t *v)
+{
     vinfo_t *f, *a, *g;
     f = vinfo_getitem(v, iGENEXPR_FUNC);
     a = vinfo_getitem(v, iGENEXPR_ARGS);
     if (f == NULL || a == NULL)
         return false;
-    g = psyco_generic_call(po, le_function_tp_call(),
-                           CfCommonNewRefPyObject, "vvl", f, a, 0L);
+    g = psyco_generic_call(po, le_function_tp_call(), CfCommonNewRefPyObject,
+                           "vvl", f, a, 0L);
     if (g == NULL)
         return false;
     vinfo_move(po, v, g);
@@ -129,7 +136,9 @@ static bool compute_genexpr(PsycoObject *po, vinfo_t *v) {
 }
 
 DEFINEFN
-vinfo_t *PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple) {
+vinfo_t *
+PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple)
+{
     vinfo_t *r = vinfo_new(VirtualTime_New(&psyco_pending_genexpr));
     r->array = array_new(iGENEXPR_ARGS + 1);
     r->array->items[iOB_TYPE] =
@@ -142,7 +151,9 @@ vinfo_t *PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple) {
 }
 
 DEFINEFN
-bool PsycoGenexpr_Check(vinfo_t *v) {
+bool
+PsycoGenexpr_Check(vinfo_t *v)
+{
     return is_virtualtime(v->source) &&
            VirtualTime_Get(v->source) == &psyco_pending_genexpr;
 }
@@ -156,7 +167,8 @@ bool PsycoGenexpr_Check(vinfo_t *v) {
    comparing f's func_defaults with them can't be fooled by a new tuple at
    a reused address. Py_None stands for NULL. f is held by the code that
    promoted it, so its address isn't reused under the record either. */
-static PyObject *compiled_defaults(PyObject *f)
+static PyObject *
+compiled_defaults(PyObject *f)
 {
     static le_addrmap_t seen; /* function address -> defaults */
     PyObject **d = psyco_record(&seen, f);
@@ -171,7 +183,8 @@ static PyObject *compiled_defaults(PyObject *f)
 
 /* The same for f's code: a call compiled for one code
    object checks that f still has it. */
-static PyCodeObject *compiled_code(PyObject *f)
+static PyCodeObject *
+compiled_code(PyObject *f)
 {
     static le_addrmap_t seen; /* function address -> code */
     PyObject **c = psyco_record(&seen, f);
@@ -183,8 +196,8 @@ static PyCodeObject *compiled_code(PyObject *f)
 }
 
 /* emits 'f's field != expected' and says if it is true at run time */
-static int field_changed(PsycoObject *po, PyObject *f, defield_t df,
-                         PyObject *expected)
+static int
+field_changed(PsycoObject *po, PyObject *f, defield_t df, PyObject *expected)
 {
     vinfo_t *vf = vinfo_new(CompileTime_New((long)f));
     vinfo_t *vnow = psyco_get_field(po, vf, df);
@@ -227,12 +240,12 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     if (co->co_kwonlyargcount > 0)
         goto fallback;
     switch (field_changed(po, f, FUNC_code_now, (PyObject *)co)) {
-    case 0:
-        break;
-    case 1:
-        goto fallback;
-    default:
-        return NULL;
+        case 0:
+            break;
+        case 1:
+            goto fallback;
+        default:
+            return NULL;
     }
 
     /* a call that gives every positional argument doesn't use the
@@ -241,12 +254,12 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     tuple_size = PsycoTuple_Load(arg);
     if (tuple_size < 0 || tuple_size < co->co_argcount)
         switch (field_changed(po, f, FUNC_defaults_now, defl)) {
-        case 0:
-            break;
-        case 1:
-            goto fallback;
-        default:
-            return NULL;
+            case 0:
+                break;
+            case 1:
+                goto fallback;
+            default:
+                return NULL;
         }
 
     glob = PyFunction_GET_GLOBALS(f);
@@ -268,7 +281,8 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
 
 fallback:
     return psyco_generic_call(po, le_function_tp_call(),
-                              CfCommonNewRefPyObject, "lvl", (long)f, arg, (long)0);
+                              CfCommonNewRefPyObject, "lvl", (long)f, arg,
+                              (long)0);
 }
 
 DEFINEFN
@@ -365,9 +379,10 @@ pfunc_descr_get(PsycoObject *po, PyObject *func, vinfo_t *obj, PyObject *type)
     return result;
 }
 
-static PyObject *function_call_unshared(PyObject *f, PyObject *a,
-                                        PyObject *k) {
-  return PyFunction_Type.tp_call(f, a, k);
+static PyObject *
+function_call_unshared(PyObject *f, PyObject *a, PyObject *k)
+{
+    return PyFunction_Type.tp_call(f, a, k);
 }
 
 /* the slot itself, or a function of its own where other types share it
@@ -375,11 +390,13 @@ static PyObject *function_call_unshared(PyObject *f, PyObject *a,
    function's PyVectorcall_Call): psyfunc.c says a function's call cannot
    block, which a method descriptor's can */
 DEFINEFN
-ternaryfunc le_function_tp_call(void) {
-  if (PyFunction_Type.tp_call == PyMethod_Type.tp_call ||
-      PyFunction_Type.tp_call == PyMethodDescr_Type.tp_call)
-    return function_call_unshared;
-  return PyFunction_Type.tp_call;
+ternaryfunc
+le_function_tp_call(void)
+{
+    if (PyFunction_Type.tp_call == PyMethod_Type.tp_call ||
+        PyFunction_Type.tp_call == PyMethodDescr_Type.tp_call)
+        return function_call_unshared;
+    return PyFunction_Type.tp_call;
 }
 
 INITIALIZATIONFN

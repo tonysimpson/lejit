@@ -42,131 +42,153 @@
    set. Both rare paths are runtime_condition_f branches, compiled when
    first taken. */
 #endif
-static inline int le_recursion_enter(void) { return Py_EnterRecursiveCall(""); }
-static inline void le_recursion_leave(void) { Py_LeaveRecursiveCall(); }
-static inline void le_recursion_suspend(void) {
-  PyThreadState_GET()->recursion_depth--;
+static inline int
+le_recursion_enter(void)
+{
+    return Py_EnterRecursiveCall("");
 }
-static inline void le_recursion_resume(void) {
-  PyThreadState_GET()->recursion_depth++;
+static inline void
+le_recursion_leave(void)
+{
+    Py_LeaveRecursiveCall();
+}
+static inline void
+le_recursion_suspend(void)
+{
+    PyThreadState_GET()->recursion_depth--;
+}
+static inline void
+le_recursion_resume(void)
+{
+    PyThreadState_GET()->recursion_depth++;
 }
 
 #if LE_HAS_INTERP_RECURSION_LIMIT
-_Static_assert(
-    __builtin_types_compatible_p(
-        __typeof__(((PyThreadState *)0)->recursion_depth), int),
-    "LeJIT: recursion_depth is counted as an int");
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((PyThreadState *)0)->recursion_depth), int),
+               "LeJIT: recursion_depth is counted as an int");
 #else
-_Static_assert(
-    __builtin_types_compatible_p(
-        __typeof__(((PyThreadState *)0)->recursion_depth), int) &&
-        __builtin_types_compatible_p(
-            __typeof__(((PyThreadState *)0)->overflowed), char),
-    "LeJIT: recursion_depth is counted as an int and overflowed tested as a char");
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((PyThreadState *)0)->recursion_depth), int) &&
+                   __builtin_types_compatible_p(
+                       __typeof__(((PyThreadState *)0)->overflowed), char),
+               "LeJIT: recursion_depth is counted as an int and overflowed "
+               "tested as a char");
 #endif
 typedef struct {
-  int value;
+    int value;
 } int_slot_t;
-#define TSTATE_depth                                                           \
-  FMUT(DEF_FIELD(PyThreadState, int, recursion_depth, NO_PREV_FIELD))
+#define TSTATE_depth \
+    FMUT(DEF_FIELD(PyThreadState, int, recursion_depth, NO_PREV_FIELD))
 #define INT_value FMUT(DEF_FIELD(int_slot_t, int, value, NO_PREV_FIELD))
 #if LE_HAS_INTERP_RECURSION_LIMIT
 /* Python/pyruntime.c */
-extern int *le_recursion_limit_address(void);
+extern int *
+le_recursion_limit_address(void);
 /* exported, declared in an internal header */
-PyAPI_FUNC(int) _Py_CheckRecursiveCall(PyThreadState *tstate, const char *where);
+PyAPI_FUNC(int)
+    _Py_CheckRecursiveCall(PyThreadState *tstate, const char *where);
 
-static int cimpl_check_recursive_call(void) {
-  return _Py_CheckRecursiveCall(PyThreadState_GET(), "");
+static int
+cimpl_check_recursive_call(void)
+{
+    return _Py_CheckRecursiveCall(PyThreadState_GET(), "");
 }
 #else
-#define TSTATE_overflowed                                                      \
-  FMUT(DEF_FIELD(PyThreadState, char, overflowed, NO_PREV_FIELD))
+#define TSTATE_overflowed \
+    FMUT(DEF_FIELD(PyThreadState, char, overflowed, NO_PREV_FIELD))
 
 /* Py_LeaveRecursiveCall after the decrement */
-static inline void cimpl_leave_overflowed(void) {
-  PyThreadState *ts = PyThreadState_GET();
-  if (ts->recursion_depth <
-      _Py_RecursionLimitLowerWaterMark(_Py_CheckRecursionLimit))
-    ts->overflowed = 0;
+static inline void
+cimpl_leave_overflowed(void)
+{
+    PyThreadState *ts = PyThreadState_GET();
+    if (ts->recursion_depth <
+        _Py_RecursionLimitLowerWaterMark(_Py_CheckRecursionLimit))
+        ts->overflowed = 0;
 }
 #endif
 
 /* adds 'delta' to the depth of thread state 'vts': the new depth */
-static inline vinfo_t *add_to_depth(PsycoObject *po, long delta,
-                                    vinfo_t *vts) {
-  vinfo_t *vdepth, *vnew;
-  vdepth = psyco_get_field(po, vts, TSTATE_depth);
-  if (vdepth == NULL)
+static inline vinfo_t *
+add_to_depth(PsycoObject *po, long delta, vinfo_t *vts)
+{
+    vinfo_t *vdepth, *vnew;
+    vdepth = psyco_get_field(po, vts, TSTATE_depth);
+    if (vdepth == NULL)
+        return NULL;
+    vnew = integer_add_i(po, vdepth, delta, true);
+    vinfo_decref(vdepth, po);
+    if (vnew == NULL)
+        return NULL;
+    if (psyco_put_field(po, vts, TSTATE_depth, vnew))
+        return vnew;
+    vinfo_decref(vnew, po);
     return NULL;
-  vnew = integer_add_i(po, vdepth, delta, true);
-  vinfo_decref(vdepth, po);
-  if (vnew == NULL)
-    return NULL;
-  if (psyco_put_field(po, vts, TSTATE_depth, vnew))
-    return vnew;
-  vinfo_decref(vnew, po);
-  return NULL;
 }
 
 /* false with an exception set in 'po' */
-static inline bool enter_recursive_call(PsycoObject *po, vinfo_t *vts) {
-  vinfo_t *vlimit, *vslot;
-  condition_code_t cc = CC_ERROR;
-  vinfo_t *vdepth = add_to_depth(po, 1, vts);
-  if (vdepth == NULL)
-    return false;
+static inline bool
+enter_recursive_call(PsycoObject *po, vinfo_t *vts)
+{
+    vinfo_t *vlimit, *vslot;
+    condition_code_t cc = CC_ERROR;
+    vinfo_t *vdepth = add_to_depth(po, 1, vts);
+    if (vdepth == NULL)
+        return false;
 #if LE_HAS_INTERP_RECURSION_LIMIT
-  vslot = vinfo_new(CompileTime_New((long)le_recursion_limit_address()));
+    vslot = vinfo_new(CompileTime_New((long)le_recursion_limit_address()));
 #else
-  vslot = vinfo_new(CompileTime_New((long)&_Py_CheckRecursionLimit));
+    vslot = vinfo_new(CompileTime_New((long)&_Py_CheckRecursionLimit));
 #endif
-  vlimit = psyco_get_field(po, vslot, INT_value);
-  vinfo_decref(vslot, po);
-  if (vlimit != NULL) {
-    cc = integer_cmp(po, vdepth, vlimit, Py_GT);
-    vinfo_decref(vlimit, po);
-  }
-  vinfo_decref(vdepth, po);
-  if (cc == CC_ERROR)
-    return false;
-  if (runtime_condition_f(po, cc))
+    vlimit = psyco_get_field(po, vslot, INT_value);
+    vinfo_decref(vslot, po);
+    if (vlimit != NULL) {
+        cc = integer_cmp(po, vdepth, vlimit, Py_GT);
+        vinfo_decref(vlimit, po);
+    }
+    vinfo_decref(vdepth, po);
+    if (cc == CC_ERROR)
+        return false;
+    if (runtime_condition_f(po, cc))
 #if LE_HAS_INTERP_RECURSION_LIMIT
-    return psyco_generic_call(po, cimpl_check_recursive_call, CfCommonIntZeroOk,
-                              "") != NULL;
+        return psyco_generic_call(po, cimpl_check_recursive_call,
+                                  CfCommonIntZeroOk, "") != NULL;
 #else
-    return psyco_generic_call(po, _Py_CheckRecursiveCall, CfCommonIntZeroOk,
-                              "l", (long)"") != NULL;
+        return psyco_generic_call(po, _Py_CheckRecursiveCall,
+                                  CfCommonIntZeroOk, "l", (long)"") != NULL;
 #endif
-  return true;
+    return true;
 }
 
 /* consumes 'vts'; false with an exception set in 'po' */
-static inline bool leave_recursive_call(PsycoObject *po, vinfo_t *vts) {
+static inline bool
+leave_recursive_call(PsycoObject *po, vinfo_t *vts)
+{
 #if LE_HAS_INTERP_RECURSION_LIMIT
-  vinfo_t *vdepth = add_to_depth(po, -1, vts);
-  vinfo_decref(vts, po);
-  if (vdepth == NULL)
-    return false;
-  vinfo_decref(vdepth, po);
-#else
-  vinfo_t *vover, *vdepth;
-  condition_code_t cc;
-  vdepth = add_to_depth(po, -1, vts);
-  if (vdepth == NULL) {
+    vinfo_t *vdepth = add_to_depth(po, -1, vts);
     vinfo_decref(vts, po);
-    return false;
-  }
-  vinfo_decref(vdepth, po);
-  vover = psyco_get_field(po, vts, TSTATE_overflowed);
-  vinfo_decref(vts, po);
-  cc = integer_NON_NULL(po, vover); /* consumes vover */
-  if (cc == CC_ERROR)
-    return false;
-  if (runtime_condition_f(po, cc))
-    return psyco_generic_call(po, cimpl_leave_overflowed, CfNoReturnValue,
-                              "") != NULL;
+    if (vdepth == NULL)
+        return false;
+    vinfo_decref(vdepth, po);
+#else
+    vinfo_t *vover, *vdepth;
+    condition_code_t cc;
+    vdepth = add_to_depth(po, -1, vts);
+    if (vdepth == NULL) {
+        vinfo_decref(vts, po);
+        return false;
+    }
+    vinfo_decref(vdepth, po);
+    vover = psyco_get_field(po, vts, TSTATE_overflowed);
+    vinfo_decref(vts, po);
+    cc = integer_NON_NULL(po, vover); /* consumes vover */
+    if (cc == CC_ERROR)
+        return false;
+    if (runtime_condition_f(po, cc))
+        return psyco_generic_call(po, cimpl_leave_overflowed, CfNoReturnValue,
+                                  "") != NULL;
 #endif
-  return true;
+    return true;
 }
 #endif /* LE_MECHANISMS_RECURSION_H */
