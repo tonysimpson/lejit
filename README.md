@@ -20,19 +20,19 @@ version number. A second detector reads CPython's source
 ## Use
 
     make PY=python3.10                        # needs gcc, libffi, libunwind
-    python3.10 -c "import ni; ni.start(); ..."   # importing alone starts nothing
+    python3.10 -c "import lejit; lejit.start(); ..."   # importing alone starts nothing
 
-`ni.stop()` stops it. `ni.check()` compares the features Ni was built with
-(`ni.build_features()`) against the running CPython's
-(`ni.runtime_features()`); a difference warns with a `RuntimeWarning`, or
-with `error=True` raises one. `ni.start(check=True)` checks first, as does
-`NI_START_CHECK=warning` (or `error`); `NI_MODE=off` makes `ni.start()` do
+`lejit.stop()` stops it. `lejit.check()` compares the features Ni was built with
+(`lejit.build_features()`) against the running CPython's
+(`lejit.runtime_features()`); a difference warns with a `RuntimeWarning`, or
+with `error=True` raises one. `lejit.start(check=True)` checks first, as does
+`LEJIT_START_CHECK=warning` (or `error`); `LEJIT_MODE=off` makes `lejit.start()` do
 nothing.
 
-The package is `ni/` (its API, in Python, is `ni/__init__.py`) over the
-compiled module `ni._core`, built from the C sources in `src/`. On a Python
+The package is `lejit/` (its API, in Python, is `lejit/__init__.py`) over the
+compiled module `lejit._core`, built from the C sources in `src/`. On a Python
 Ni can't run on (not CPython, not x86-64 Linux, or 3.11 and later) only the
-package is installed: `ni.start()` warns and does nothing.
+package is installed: `lejit.start()` warns and does nothing.
 
 ## Status
 

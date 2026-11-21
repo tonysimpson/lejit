@@ -3061,9 +3061,9 @@ static void check_case_hash(void) {
       case_map(b, src, n, k);
       for (i = 0; i < n; i++)
         if (b[i] != (char)(k ? Py_TOUPPER(src[i]) : Py_TOLOWER(src[i])))
-          Py_FatalError("ni: case_map is not ascii_upper_or_lower's map");
+          Py_FatalError("lejit: case_map is not ascii_upper_or_lower's map");
       if (a[n] != '#' || b[n] != '#')
-        Py_FatalError("ni: case_map writes past the length");
+        Py_FatalError("lejit: case_map writes past the length");
       if (memcmp(a, b, n) != 0 || (n > 0 && h != _Py_HashBytes(b, n)))
         return;
     }
@@ -3078,16 +3078,16 @@ void psy_unicodeobject_init(void) {
       (*(unsigned char *)&((PyASCIIObject *)a)->state & STATE_COMPACT_ASCII) !=
           STATE_COMPACT_ASCII ||
       PyUnicode_DATA(a) != (char *)a + sizeof(PyASCIIObject))
-    Py_FatalError("ni: str layout is not what punicodeobject.c expects");
+    Py_FatalError("lejit: str layout is not what punicodeobject.c expects");
   Py_DECREF(a);
   for (c = 0; c < 256; c++)
     if ((latin1[c] = PyUnicode_FromOrdinal(c)) == NULL)
-      Py_FatalError("ni: no one-character strings");
+      Py_FatalError("lejit: no one-character strings");
   unicode_subscript = PyUnicode_Type.tp_as_mapping->mp_subscript;
   Psyco_DefineMeta(PyUnicode_Type.tp_richcompare, punicode_richcompare);
   Psyco_DefineMeta(unicode_subscript, punicode_subscript);
   if ((unicode_empty = PyUnicode_New(0, 0)) == NULL)
-    Py_FatalError("ni: no empty string");
+    Py_FatalError("lejit: no empty string");
   gen_unicodeobject_init();
   gen_unicodeobject_methods_init();
   /* the views' metas in front of the translated ones they fall back on */

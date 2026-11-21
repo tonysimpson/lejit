@@ -1,6 +1,6 @@
 """Settings the test runners share.
 
-NI_MODULE_DIR: where `import ni` finds the ni package (default: the repo
+NI_MODULE_DIR: where `import lejit` finds the lejit package (default: the repo
 root).
 NI_SANITIZE_LOGS: set by sanitizer runs; logs go there and runs get slower.
 Run as a script, prints build_temp() for the running interpreter.

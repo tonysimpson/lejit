@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Show the machine code Ni generated for one Python function.
 
-Runs a script under pointbreak with nianalyser's tracer, stops at
+Runs a script under pointbreak with analyser's tracer, stops at
 Py_FinalizeEx (so the process is still alive), and prints every code chunk
 emitted for the named function, in emission order, each annotated with the
 Python line, bytecode offset and the compiler call stack that wrote it.
 
 Usage (from a venv with pointbreak, distorm3 and intervaltree):
     dump_function.py FUNC_NAME python3.7 script.py [args...]
-Ni must be built with NI_TRACE=1, and the script must call ni.start().
+Ni must be built with NI_TRACE=1, and the script must call lejit.start().
 Promotion records and other data sit inline in the code and disassemble
 as junk.
 """
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pointbreak
-import nianalyser
+import analyser
 
 
 def main():
@@ -24,7 +24,7 @@ def main():
     func = sys.argv[1]
     cmd = ' '.join("'%s'" % a for a in sys.argv[2:])
     db = pointbreak.create_debugger(cmd)
-    tracer = nianalyser.SimpleExecutionTracer(db)
+    tracer = analyser.SimpleExecutionTracer(db)
 
     def stop(db):
         db.raise_event('STOP')

@@ -9,7 +9,7 @@ declaration and its parameters, a macro, a function body, an opcode),
 answering 1 or 0 with the definition it read. setup.py runs this before
 compiling, to write ni_features_gen.h into the build directory: one
 `#define NI_HAS_<NAME> 0|1` per feature, the opcodes the source lacks, the
-jump opcodes, and what ni._core._build reports. A question the source can't
+jump opcodes, and what lejit._core._build reports. A question the source can't
 answer (the struct or file it reads is missing) stops the build: a new
 CPython that moves a definition needs the detector updated, never a guess.
 
@@ -747,7 +747,7 @@ def render(found, jump_ops, version, origin):
     for macro, ops in (('NI_IS_JREL', jrel), ('NI_IS_JABS', jabs)):
         lines.append('#define %s(o) (%s)' % (
             macro, ' || '.join('(o) == %d' % n for _, n in ops)))
-    lines += ['', '/* for ni._core._build: the source read, and every'
+    lines += ['', '/* for lejit._core._build: the source read, and every'
                   ' feature */',
               '#define NI_FEATURES_SOURCE_VERSION %s' % json.dumps(version),
               '#define NI_FEATURES(F) \\']
@@ -788,7 +788,7 @@ def write(argv):
         return 1
     os.makedirs(args.out, exist_ok=True)
     # rewritten only when its text changes, so that an unchanged header
-    # doesn't rebuild ni._core
+    # doesn't rebuild lejit._core
     if os.path.exists(path):
         with open(path) as f:
             if f.read() == text:

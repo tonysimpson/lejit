@@ -95,7 +95,7 @@ EXTERNFN void psyco_owner_release(ni_owner_t *o, PyObject *mergepoints,
    alive. */
 EXTERNFN void psyco_owner_track(ni_code_extra_t *x);
 EXTERNFN void psyco_owner_untrack(ni_code_extra_t *x);
-/* scans run, owners they freed, records counted: ni._core._stats() */
+/* scans run, owners they freed, records counted: lejit._core._stats() */
 #if ALL_CHECKS
 EXTERNVAR long psyco_stat_owner_scans;
 EXTERNVAR long psyco_stat_owners_collected;
@@ -180,7 +180,7 @@ EXTERNVAR PyTypeObject CodeBuffer_Type, CodeBufferShort_Type,
   (Py_TYPE(v) == &CodeBuffer_Type || Py_TYPE(v) == &CodeBufferShort_Type || \
    Py_TYPE(v) == &CodeBufferSummary_Type)
 #if ALL_CHECKS
-/* extents opened by psyco_code_open, and blocks freed: ni._core._stats()'s
+/* extents opened by psyco_code_open, and blocks freed: lejit._core._stats()'s
    code_buffers and code_buffers_freed */
 EXTERNVAR long psyco_stat_code_buffers;
 EXTERNVAR long psyco_stat_code_buffers_freed;
@@ -197,7 +197,7 @@ EXTERNVAR long psyco_stat_code_bytes;
 /* NI_COMPILE_BEGIN/END bracket each way in from run time, by how the
    compiler was entered; ni_compile_depth counts the compiles open, during
    which no owner scan runs. Checked builds time the outermost
-   (ni._core._stats()), so a compile nested in another isn't counted twice;
+   (lejit._core._stats()), so a compile nested in another isn't counted twice;
    codestats builds keep its kind. A normal build reads no clock. */
 enum { NI_ENTER_ANALYSE, NI_ENTER_CALL, NI_ENTER_PAUSE, NI_ENTER_RESPAWN, NI_ENTER_PROMOTION,
        NI_ENTER_KINDS };

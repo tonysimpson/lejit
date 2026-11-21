@@ -1,14 +1,14 @@
 """Exercises a spread of the stdlib; output must be the same with and
 without Ni.
 
-    python3.X tests/jit/smoke.py plain|ni
+    python3.X tests/jit/smoke.py plain|lejit
 """
 import sys, os
-if len(sys.argv) > 1 and sys.argv[1] == 'ni':
+if len(sys.argv) > 1 and sys.argv[1] == 'lejit':
     sys.path.insert(0, os.environ.get('NI_MODULE_DIR') or
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
-    import ni
-    ni.start()
+    import lejit
+    lejit.start()
 import json, re, collections, textwrap, string, fractions, heapq, bisect, functools, itertools, base64, difflib, pprint, statistics, decimal, datetime, csv, io
 print(json.loads(json.dumps({'a': [1, 2.5, None]})))
 print(re.findall(r'\d+', 'a1b22c333'))

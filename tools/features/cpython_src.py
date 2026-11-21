@@ -17,7 +17,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 HASHES = os.path.join(HERE, 'cpython_sha256.txt')
 URL = 'https://www.python.org/ftp/python/%s/%s'
-VERIFIED = '.ni-verified'
+VERIFIED = '.le-verified'
 
 
 class SourceError(Exception):
@@ -111,7 +111,7 @@ def _fetch(version, name, tarball, sha, log):
     url = URL % (release, name)
     log('fetching %s' % url)
     tmp = '%s.part%d' % (tarball, os.getpid())
-    req = urllib.request.Request(url, headers={'User-Agent': 'ni-build'})
+    req = urllib.request.Request(url, headers={'User-Agent': 'le-build'})
     try:
         with urllib.request.urlopen(req, timeout=60) as r, open(tmp, 'wb') as f:
             shutil.copyfileobj(r, f)

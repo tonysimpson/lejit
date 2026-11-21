@@ -55,14 +55,14 @@ static inline void ni_recursion_resume(void) {
 _Static_assert(
     __builtin_types_compatible_p(
         __typeof__(((PyThreadState *)0)->recursion_depth), int),
-    "Ni: recursion_depth is counted as an int");
+    "LeJIT: recursion_depth is counted as an int");
 #else
 _Static_assert(
     __builtin_types_compatible_p(
         __typeof__(((PyThreadState *)0)->recursion_depth), int) &&
         __builtin_types_compatible_p(
             __typeof__(((PyThreadState *)0)->overflowed), char),
-    "Ni: recursion_depth is counted as an int and overflowed tested as a char");
+    "LeJIT: recursion_depth is counted as an int and overflowed tested as a char");
 #endif
 typedef struct {
   int value;

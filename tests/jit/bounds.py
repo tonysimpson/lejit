@@ -7,16 +7,16 @@ import os, sys
 sys.path.insert(0, os.environ.get('NI_MODULE_DIR') or
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import math
-import ni
-if not hasattr(ni._core, '_stats'):
-    sys.exit('ni was not built for tests: build it with NI_ALL_CHECKS=1')
-ni.start()
+import lejit
+if not hasattr(lejit._core, '_stats'):
+    sys.exit('lejit was not built for tests: build it with NI_ALL_CHECKS=1')
+lejit.start()
 
 VERBOSE = '-v' in sys.argv
 
 
 def buffers():
-    return ni._core._stats()['code_buffers']
+    return lejit._core._stats()['code_buffers']
 
 
 # A loop whose condition is a chain of popping jumps back to the loop head
@@ -107,7 +107,7 @@ def dead_before_loop(n, flag):
 def check_dead_locals():
     import dis
     code = dead_before_loop.__code__
-    dead = ni._core._dead_locals(code)
+    dead = lejit._core._dead_locals(code)
     # at the loop head (FOR_ITER) only t and z are needed; after the loop, t,
     # where a merge point follows it (3.7's SETUP_LOOP target; from 3.8 the
     # loop's exit has one way in and is none)
@@ -136,9 +136,9 @@ def uses_global(a):
 
 
 def check_inlinable():
-    got = (ni._core._inlinable(small.__code__),
-           ni._core._inlinable(with_loop.__code__),
-           ni._core._inlinable(uses_global.__code__))
+    got = (lejit._core._inlinable(small.__code__),
+           lejit._core._inlinable(with_loop.__code__),
+           lejit._core._inlinable(uses_global.__code__))
     ok = got == (True, False, False)
     if not ok or VERBOSE:
         print('%-4s inlinable small/with_loop/uses_global: %r'
@@ -148,7 +148,7 @@ def check_inlinable():
 
 def check_metas_registered():
     # a meta written for other ml_flags isn't registered
-    got = ni._core._unregistered_metas()
+    got = lejit._core._unregistered_metas()
     if got or VERBOSE:
         print('%-4s unregistered metas: %r' % ('FAIL' if got else 'ok', got))
     return 1 if got else 0
@@ -167,11 +167,11 @@ def check_fastcall_direct():
     # a METH_FASTCALL builtin without keywords is called with an array,
     # not through PyCFunction_Call; with keywords it still is. Called by eval,
     # so they are compiled here, not inlined into this function earlier
-    s0 = ni._core._stats()
+    s0 = lejit._core._stats()
     eval("fast_calls([1, 2], 'a')")
-    s1 = ni._core._stats()
+    s1 = lejit._core._stats()
     eval('kw_call([1, 2])')
-    s2 = ni._core._stats()
+    s2 = lejit._core._stats()
     got = (s1['cfunc_fast'] - s0['cfunc_fast'],
            s1['cfunc_proxy'] - s0['cfunc_proxy'],
            s2['cfunc_proxy'] - s1['cfunc_proxy'])

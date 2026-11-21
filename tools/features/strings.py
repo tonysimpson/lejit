@@ -5,7 +5,7 @@ Compiled code raises the same exceptions and warnings as CPython, with the
 same text, and that text changes between releases. Rather than copying it,
 each message is an entry here: a probe that makes the interpreter raise it
 and the arguments the message is given. The probe runs in the target
-interpreter (a subprocess with -I and a timeout; ni is never imported) with
+interpreter (a subprocess with -I and a timeout; lejit is never imported) with
 arguments chosen to be recognisable, and the C format string is recovered
 from what comes back:
 
@@ -624,7 +624,7 @@ for e in entries:
         continue
     result[e["name"]] = [[run_probe(e, s, run) for run in range(3)]
                          for s in e["shapes"]]
-sys.stdout.write("\n--ni-strings--\n" + json.dumps(result))
+sys.stdout.write("\n--le-strings--\n" + json.dumps(result))
 '''
 
 
@@ -638,7 +638,7 @@ def run_target(python, entries=None):
                            timeout=TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise StringError('cannot run the probes in %s: %s' % (python, e))
-    out = r.stdout.rsplit('\n--ni-strings--\n', 1)
+    out = r.stdout.rsplit('\n--le-strings--\n', 1)
     if r.returncode != 0 or len(out) != 2:
         raise StringError('the probes failed in %s:\n%s' % (python, r.stderr))
     return json.loads(out[1])
@@ -874,7 +874,7 @@ def build(python, version):
             continue
         lines += ['/* %s */' % what,
                   '#define NI_MSG_%s %s' % (name, c_string(found[name]))]
-    lines += ['', '/* for ni._core._build: every message */',
+    lines += ['', '/* for lejit._core._build: every message */',
               '#define NI_MESSAGES(M) \\']
     lines += ['  M(NI_MSG_%s) \\' % name for name in sorted(found)
               if found[name] is not None]
@@ -898,7 +898,7 @@ def target_version(python):
 def build_header(python, out_dir):
     """Write out_dir/ni_strings_gen.h for the interpreter `python`; the
     path. Rewritten only when its text changes, so an unchanged header
-    doesn't rebuild ni._core. Raises StringError."""
+    doesn't rebuild lejit._core. Raises StringError."""
     path = os.path.join(out_dir, HEADER)
     try:
         text = build(python, target_version(python))

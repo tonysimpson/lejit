@@ -55,7 +55,7 @@ jobs:
             dnf install -y epel-release &&
             dnf install -y libffi-devel libunwind-devel
           CIBW_TEST_COMMAND: >-
-            python -c "import ni; ni.start(check=True, error=True); print(sorted(ni.check()))"
+            python -c "import lejit; lejit.start(check=True, error=True); print(sorted(lejit.check()))"
       - uses: actions/upload-artifact@v4
         with:
           name: wheels

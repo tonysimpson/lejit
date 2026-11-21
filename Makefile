@@ -1,6 +1,6 @@
 # Build and test Ni for one interpreter (PY), or every supported one.
 #
-#   make                      build ni for PY, in place
+#   make                      build lejit for PY, in place
 #   make check                checked build and every test, for PY
 #   make check-all            make check for each of PYTHONS
 #   make test | cpython-test | encoder-test | features-test | strings-test
@@ -33,7 +33,7 @@ test: checked-build
 	$(PY) tests/jit/run.py
 	$(PY) tests/jit/build_info.py
 	$(PY) tests/jit/bounds.py
-	diff <($(PY) tests/jit/smoke.py plain 2>&1) <($(PY) tests/jit/smoke.py ni 2>&1)
+	diff <($(PY) tests/jit/smoke.py plain 2>&1) <($(PY) tests/jit/smoke.py lejit 2>&1)
 
 cpython-test: checked-build
 	$(PY) tests/cpython/run.py
@@ -74,4 +74,4 @@ check-all:
 	done
 
 clean:
-	rm -rf build ni/_core.cpython-*.so ni/_features
+	rm -rf build lejit/_core.cpython-*.so lejit/_features

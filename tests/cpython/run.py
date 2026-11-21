@@ -37,8 +37,8 @@ BANNED = {
 
 CHILD = r'''
 import sys, unittest, io
-if sys.argv[1] == 'ni':
-    sys.path.insert(0, sys.argv[3]); import ni; ni.start()
+if sys.argv[1] == 'lejit':
+    sys.path.insert(0, sys.argv[3]); import lejit; lejit.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)
 r = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
@@ -56,7 +56,7 @@ def limit_memory():
 
 def run(mode, name):
     tag = name + '.' + mode
-    with tempfile.TemporaryDirectory(prefix='ni_cpython_tests_') as cwd:
+    with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd:
         p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, NI_DIR],
                              stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE if SANITIZE_LOGS else subprocess.DEVNULL,
@@ -74,10 +74,10 @@ def run(mode, name):
 
 
 def check(name):
-    plain, with_ni = run('plain', name), run('ni', name)
-    if plain == with_ni:
+    plain, with_lejit = run('plain', name), run('lejit', name)
+    if plain == with_lejit:
         return True, 'ok     %-24s %s' % (name, plain)
-    return False, 'FAIL   %-24s %s   with Ni: %s' % (name, plain, with_ni)
+    return False, 'FAIL   %-24s %s   with Ni: %s' % (name, plain, with_lejit)
 
 
 def modules():

@@ -111,7 +111,7 @@ EXTERNFN PsycoObject* psyco_unpark(parked_state_t* ps, vinfo_t** fix);
 /* releases the parked state; it may be released again */
 EXTERNFN void psyco_park_release(parked_state_t* ps);
 /* states parked live, held to PARK_LIVE_MAX, and frozen:
-   ni._core._stats()['parked'] */
+   lejit._core._stats()['parked'] */
 EXTERNVAR long ni_parked_live;
 #if ALL_CHECKS
 EXTERNVAR long psyco_stat_parked_frozen;
@@ -144,7 +144,7 @@ EXTERNFN vcompatible_t* psyco_compatible(PsycoObject* po,
 EXTERNVAR bool psyco_compatible_keep_facts;
 #if ALL_CHECKS
 /* merge-point matches that dropped unused facts
-   (ni._core._stats()['fact_drops']) */
+   (lejit._core._stats()['fact_drops']) */
 EXTERNVAR long psyco_stat_fact_drops;
 #endif
 /* the same, at a join point (vcompiler.c:psyco_compile_join): with

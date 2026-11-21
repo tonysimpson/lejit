@@ -45,7 +45,7 @@ typedef struct {
     mergepoint_t mergepoints[1];
 } co_report_t;
 
-/* when the code object dies (ni.c:code_extra_free) */
+/* when the code object dies (lejit.c:code_extra_free) */
 static void
 report_free(co_report_t *report)
 {

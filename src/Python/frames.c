@@ -1463,7 +1463,7 @@ static PyObject *cimpl_with_frame(long which, PyObject *self,
         self, &PyTuple_GET_ITEM(args, 0), n, NULL);
     break;
   default:
-    PyErr_SetString(PyExc_SystemError, "Ni: unexpected builtin form");
+    PyErr_SetString(PyExc_SystemError, "LeJIT: unexpected builtin form");
     result = NULL;
   }
   ts->frame = saved;

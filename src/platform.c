@@ -62,7 +62,7 @@ long psyco_allocate_executable_buffer(long size, char **result)
   }
   else if (p + size - first > 0x7fff0000L || first + size - p > 0x7fff0000L) {
     munmap(p, size);
-    fprintf(stderr, "ni: no executable memory within 2 GB of the first code "
+    fprintf(stderr, "lejit: no executable memory within 2 GB of the first code "
                     "buffer; rel32 jumps can't reach it\n");
     return 0;
   }

@@ -35,7 +35,7 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(_PyRuntime.gilstate.tstate_current),
                    _Py_atomic_address) &&
                    sizeof(_PyRuntime.gilstate.tstate_current) == 8,
-               "Ni: _PyRuntime.gilstate.tstate_current is loaded as a pointer");
+               "LeJIT: _PyRuntime.gilstate.tstate_current is loaded as a pointer");
 
 void *ni_tstate_current_address(void) {
   return &_PyRuntime.gilstate.tstate_current;
@@ -57,7 +57,7 @@ _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyInterpreterState *)0)->ceval.eval_breaker),
                    _Py_atomic_int) &&
                    sizeof(((PyInterpreterState *)0)->ceval.eval_breaker) == 4,
-               "Ni: the interpreter's ceval.eval_breaker is tested as a 32-bit int");
+               "LeJIT: the interpreter's ceval.eval_breaker is tested as a 32-bit int");
 
 static struct _ceval_state *ni_ceval2(void) {
   return &PyThreadState_GET()->interp->ceval;
@@ -131,7 +131,7 @@ int ni_eval_breaker_at_entry(PyFrameObject *f) {
 _Static_assert(__builtin_types_compatible_p(
                    __typeof__(_PyRuntime.ceval.eval_breaker), _Py_atomic_int) &&
                    sizeof(_PyRuntime.ceval.eval_breaker) == 4,
-               "Ni: _PyRuntime.ceval.eval_breaker is tested as a 32-bit int");
+               "LeJIT: _PyRuntime.ceval.eval_breaker is tested as a 32-bit int");
 
 /* compiled code compares it with 0 as a 32-bit int, at loop heads and
    after calls */
@@ -195,7 +195,7 @@ int ni_eval_breaker_at_entry(PyFrameObject *f) {
 _Static_assert(__builtin_types_compatible_p(
                    __typeof__(_PyRuntime.ceval.eval_breaker), _Py_atomic_int) &&
                    sizeof(_PyRuntime.ceval.eval_breaker) == 4,
-               "Ni: _PyRuntime.ceval.eval_breaker is tested as a 32-bit int");
+               "LeJIT: _PyRuntime.ceval.eval_breaker is tested as a 32-bit int");
 
 /* compiled code compares it with 0 as a 32-bit int, at loop heads and
    after calls */
@@ -255,7 +255,7 @@ int ni_eval_breaker_at_entry(PyFrameObject *f) {
    the process as long as Ni runs in one interpreter. */
 _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyInterpreterState *)0)->ceval.recursion_limit), int),
-               "Ni: the interpreter's ceval.recursion_limit is read as an int");
+               "LeJIT: the interpreter's ceval.recursion_limit is read as an int");
 
 int *ni_recursion_limit_address(void) {
   return &PyThreadState_GET()->interp->ceval.recursion_limit;

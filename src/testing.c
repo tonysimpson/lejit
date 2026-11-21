@@ -1,7 +1,7 @@
-/* The private functions of ni._core that tests use: the compiler's
+/* The private functions of lejit._core that tests use: the compiler's
    counters and what it made of a code object. Only checked builds
    (NI_ALL_CHECKS=1) have them, and the code size counts only codestats
-   builds (NI_CODESTATS=1). ni.c adds them to the module. */
+   builds (NI_CODESTATS=1). lejit.c adds them to the module. */
 #include "Python/frames.h"
 #include "Python/pycompiler.h"
 #include "Objects/pmethodobject.h"
@@ -12,7 +12,7 @@
 #include "psyco.h"
 #include "psyfunc.h"
 
-EXTERNVAR int ni_set_up; /* ni.c */
+EXTERNVAR int ni_set_up; /* lejit.c */
 
 /* counters for tests and measurements, e.g. that a loop is not compiled
    afresh on every back-edge */
@@ -155,7 +155,7 @@ static PyObject *ni_stats(PyObject *self, PyObject *unused) {
 static int ni_not_set_up(const char *fn) {
   if (ni_set_up)
     return 0;
-  PyErr_Format(PyExc_RuntimeError, "%s(): ni.start() has not been called",
+  PyErr_Format(PyExc_RuntimeError, "%s(): lejit.start() has not been called",
                fn);
   return 1;
 }

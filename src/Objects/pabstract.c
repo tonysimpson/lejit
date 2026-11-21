@@ -35,7 +35,7 @@ static int ncall_metas = 0;
 DEFINEFN
 void Psyco_DefineCallMeta(PyTypeObject *tp, call_meta_fn meta) {
   if (ncall_metas == CALL_METAS_MAX)
-    Py_FatalError("Ni: CALL_METAS_MAX call metas");
+    Py_FatalError("LeJIT: CALL_METAS_MAX call metas");
   call_metas[ncall_metas].tp = tp;
   call_metas[ncall_metas].call = tp->tp_call;
   call_metas[ncall_metas].meta = meta;

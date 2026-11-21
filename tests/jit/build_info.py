@@ -1,5 +1,5 @@
-"""ni._core._build is complete and matches the build's features and
-messages, and ni.build_features() holds the same.
+"""lejit._core._build is complete and matches the build's features and
+messages, and lejit.build_features() holds the same.
 
     python3.X tests/jit/build_info.py
 """
@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import common  # noqa: E402
 
 sys.path.insert(0, common.NI_DIR)
-import ni  # noqa: E402
+import lejit  # noqa: E402
 
 KEYS = {'source_version', 'build', 'trace', 'codestats', 'sanitizer',
         'features', 'messages', 'layouts'}
@@ -20,7 +20,7 @@ LAYOUTS = {'seqiterobject', 'rangeobject', 'rangeiterobject',
 
 
 def main():
-    info = ni._core._build
+    info = lejit._core._build
     problems = []
     if set(info) != KEYS:
         problems.append('keys %s, expected %s' % (sorted(info), sorted(KEYS)))
@@ -53,14 +53,14 @@ def main():
         problems.append('layouts %s' % info['layouts'])
     want = set(info['features'].items()) | set(info['messages'].items()) | {
         ('layout:' + k, v) for k, v in info['layouts'].items()}
-    got = ni.build_features()
+    got = lejit.build_features()
     if not isinstance(got, frozenset) or got != want:
-        problems.append('build_features() %s, ni._core._build has %s'
+        problems.append('build_features() %s, lejit._core._build has %s'
                         % (sorted(got ^ want), len(want)))
     for p in problems:
-        print('FAIL ni._core._build: %s' % p)
+        print('FAIL lejit._core._build: %s' % p)
     if not problems:
-        print('ni._core._build: %d keys, %d features, %d messages, %d layouts,'
+        print('lejit._core._build: %d keys, %d features, %d messages, %d layouts,'
               ' as built' % (len(info), len(info['features']),
                              len(info['messages']), len(info['layouts'])))
     return 1 if problems else 0

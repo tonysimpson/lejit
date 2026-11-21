@@ -20,12 +20,12 @@ TIMEOUT = 20 * SLOWDOWN
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
 
 
-def run_child(modname, fname, calls, use_ni, warmup=9):
+def run_child(modname, fname, calls, use_lejit, warmup=9):
     if not isinstance(calls, str):
         calls = repr(calls)
     cmd = [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), NI_DIR, CASES,
-           modname, fname, calls, '1' if use_ni else '0', str(warmup)]
-    tag = '%s.%s.%s' % (modname, fname, 'ni' if use_ni else 'plain')
+           modname, fname, calls, '1' if use_lejit else '0', str(warmup)]
+    tag = '%s.%s.%s' % (modname, fname, 'lejit' if use_lejit else 'plain')
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              env=child_env(tag))
@@ -72,7 +72,7 @@ def main():
             problem = err
         else:
             leak_ref = int(expected.pop().split()[1])
-            leak_ni = int(got.pop().split()[1])
+            leak_lejit = int(got.pop().split()[1])
             if got[:-1] != expected:
                 problem = 'results differ: expected %r, got %r' % (expected, got[:-1])
             elif opts.get('interpreted'):
@@ -80,9 +80,9 @@ def main():
                     problem = 'compiled, but expected to be interpreted'
             elif got[-1] != 'compiled: yes':
                 problem = got[-1]
-            elif leak_ni - leak_ref > LEAK_SLACK and not opts.get('leaks'):
+            elif leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks'):
                 problem = 'leaks: %d more blocks after 100 extra rounds (%d without Ni)' % (
-                    leak_ni, leak_ref)
+                    leak_lejit, leak_ref)
         xfail = opts.get('xfail')
         if problem and xfail:
             status = 'xfail'

@@ -98,7 +98,7 @@ typedef struct {
 } code_record_t;
 
 static PyTypeObject CodeRecord_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "ni._core.code_record",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "lejit._core.code_record",
     .tp_basicsize = sizeof(code_record_t),
     .tp_flags = Py_TPFLAGS_DEFAULT,
 };
@@ -185,12 +185,12 @@ int psyco_fatal_error(char *msg, char *filename, int lineno) {
   return 0;
 }
 
-static const char MODULE_NAME[] = "ni._core";
+static const char MODULE_NAME[] = "lejit._core";
 
-/* Importing ni._core sets nothing up and hooks nothing: the first _start
+/* Importing lejit._core sets nothing up and hooks nothing: the first _start
    sets up the compiler, and _start and _stop put in or take out the eval
    hook; each does nothing if that is done already. The API is in Python
-   (ni/__init__.py). */
+   (lejit/__init__.py). */
 DEFINEVAR int ni_set_up = 0; /* testing.c reads it */
 static int ni_running = 0;
 
@@ -210,7 +210,7 @@ static PyObject *ni_stop(PyObject *self, PyObject *unused) {
   if (ni_running) {
     if (ni_entry_remove() < 0) {
       PyErr_SetString(PyExc_RuntimeError,
-                      "ni.stop(): another frame evaluator was installed"
+                      "lejit.stop(): another frame evaluator was installed"
                       " over Ni's, so it can't be taken out");
       return NULL;
     }
@@ -221,10 +221,10 @@ static PyObject *ni_stop(PyObject *self, PyObject *unused) {
 
 /* The structs psyco.h copies from CPython's source, because no installed
    header declares them, can't be checked against the headers when Ni is
-   built. ni._core._build['layouts'] has the size of each copy; _layouts()
+   built. lejit._core._build['layouts'] has the size of each copy; _layouts()
    what the running interpreter shows of it: the same size where the fields
    of one it makes read through the copy as they should, or what is wrong.
-   ni.runtime_features calls it in a subprocess. */
+   lejit.runtime_features calls it in a subprocess. */
 static int add_layout(PyObject *d, const char *name, Py_ssize_t size,
                       int fields_ok) {
   PyObject *v = fields_ok ? PyLong_FromSsize_t(size)
@@ -321,13 +321,13 @@ error:
 }
 
 static PyMethodDef module_methods[] = {
-    {"_start", ni_start, METH_NOARGS, "Put in the eval hook (ni.start)."},
-    {"_stop", ni_stop, METH_NOARGS, "Take out the eval hook (ni.stop)."},
+    {"_start", ni_start, METH_NOARGS, "Put in the eval hook (lejit.start)."},
+    {"_stop", ni_stop, METH_NOARGS, "Take out the eval hook (lejit.stop)."},
     {"_layouts", ni_layouts, METH_NOARGS,
      "{struct: size} of the copied structs, as this interpreter shows them."},
     {NULL, NULL, 0, NULL}};
 
-/* ni._core._build, for ni.build_features and the tests: the CPython source
+/* lejit._core._build, for lejit.build_features and the tests: the CPython source
    the features were detected in, the features, messages and copied structs'
    sizes compiled in, and how Ni was built */
 static int add_str(PyObject *d, const char *key, const char *value) {
@@ -395,7 +395,7 @@ EXTERNVAR PyMethodDef ni_testing_methods[];
 static struct PyModuleDef ni_module = {PyModuleDef_HEAD_INIT, MODULE_NAME, NULL,
                                        -1, module_methods};
 
-/* Importing ni._core starts nothing: ni.start calls _start. */
+/* Importing lejit._core starts nothing: lejit.start calls _start. */
 PyMODINIT_FUNC PyInit__core(void) {
   PyObject *module = PyModule_Create(&ni_module), *build;
   if (module == NULL)

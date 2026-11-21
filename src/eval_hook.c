@@ -183,9 +183,9 @@ DEFINEFN PyObject *ni_eval_frame_default(PyFrameObject *f) {
 }
 #endif
 
-/* ni.start: CPython hands every frame to Ni from now on. The evaluator
+/* lejit.start: CPython hands every frame to Ni from now on. The evaluator
    that was there is kept, since Ni passes it the frames it doesn't
-   compile, and it stays kept after ni.stop for any call already on its
+   compile, and it stays kept after lejit.stop for any call already on its
    way through Ni's */
 DEFINEFN void ni_entry_install(void) {
   ni_eval_frame_fn now = get_eval_frame();
@@ -195,7 +195,7 @@ DEFINEFN void ni_entry_install(void) {
   }
 }
 
-/* ni.stop: new frames go to the evaluator that was there before; frames
+/* lejit.stop: new frames go to the evaluator that was there before; frames
    already running compiled code go on to their end compiled. Returns -1
    if another evaluator has been installed over Ni's: it would still pass
    frames on to Ni, and can't be taken out from here. */

@@ -457,7 +457,7 @@ static int record_traverse(record_t *r, visitproc visit, void *arg) {
 }
 
 static PyTypeObject Record_Type = {
-    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "ni.record",
+    PyVarObject_HEAD_INIT(NULL, 0).tp_name = "lejit.record",
     .tp_basicsize = sizeof(record_t),
     .tp_dealloc = (destructor)record_dealloc,
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,

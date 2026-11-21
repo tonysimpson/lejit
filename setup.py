@@ -55,7 +55,7 @@ NI_TRACE = int(os.environ.get('NI_TRACE', 0))
 # Extra checks enable with 1
 ALL_CHECKS = int(os.environ.get('NI_ALL_CHECKS', 0))
 
-# Code size per instruction, ni._core._codestats()
+# Code size per instruction, lejit._core._codestats()
 NI_CODESTATS = int(os.environ.get('NI_CODESTATS', 0))
 
 # NI_FEATURES=source: detect the features in CPython's source (fetched and
@@ -81,7 +81,7 @@ macros = [
     ('NI_CODESTATS', str(NI_CODESTATS)),
 ]
 if NI_SANITIZE:
-    macros.append(('NI_SANITIZE', '"%s"' % NI_SANITIZE))   # ni._core._build
+    macros.append(('NI_SANITIZE', '"%s"' % NI_SANITIZE))   # lejit._core._build
 
 class ProcessorAutodetectError(Exception):
     pass
@@ -174,14 +174,14 @@ depends = sorted(set(glob.glob('./src/**/*.h', recursive=True) +
 # so building for one leaves the other's alone
 config = repr((macros, extra_compile_args, extra_link_args))
 version = '%d.%d' % sys.version_info[:2]
-module = 'ni/_core' + sysconfig.get_config_var('EXT_SUFFIX')
+module = 'lejit/_core' + sysconfig.get_config_var('EXT_SUFFIX')
 if NI_SANITIZE:
     stamp_dir, built_glob = 'build/asan', ['build/asan/' + module]
 elif NI_COVERAGE:
     stamp_dir, built_glob = 'build/cov', ['build/cov/' + module]
 else:
     stamp_dir, built_glob = 'build', [module, 'build/lib*/' + module]
-stamp = os.path.join(stamp_dir, 'ni_config-%s.stamp' % version)
+stamp = os.path.join(stamp_dir, 'le_config-%s.stamp' % version)
 if not FALLBACK and (not os.path.exists(stamp) or open(stamp).read() != config):
     for built in [b for g in built_glob for b in glob.glob(g)]:
         os.remove(built)
@@ -190,7 +190,7 @@ if not FALLBACK and (not os.path.exists(stamp) or open(stamp).read() != config):
         f.write(config)
 processor_dir = os.path.join('./src', PROCESSOR or '')
 HERE = os.path.dirname(os.path.abspath(__file__))
-# the files of tools/features ni.runtime_features runs: check.py and the
+# the files of tools/features lejit.runtime_features runs: check.py and the
 # detectors it calls
 CHECK_FILES = ['check.py', 'installed.py', 'installed_probes.py',
                'features.py', 'ctokens.py', 'strings.py']
@@ -229,13 +229,13 @@ class build_ext_generated(build_ext):
             ext.include_dirs.append(gen_dir)
             ext.depends += gen
         build_ext.run(self)
-        # the detectors ni.runtime_features runs go next to the module, as
-        # the package ni._features
-        pkg = os.path.join(os.path.dirname(self.get_ext_fullpath('ni._core')),
+        # the detectors lejit.runtime_features runs go next to the module, as
+        # the package lejit._features
+        pkg = os.path.join(os.path.dirname(self.get_ext_fullpath('lejit._core')),
                            '_features')
         os.makedirs(pkg, exist_ok=True)
         with open(os.path.join(pkg, '__init__.py'), 'w') as f:
-            f.write('"""The detectors ni.runtime_features runs: see'
+            f.write('"""The detectors lejit.runtime_features runs: see'
                     ' check.py."""\n')
         for name in CHECK_FILES:
             shutil.copyfile(os.path.join(HERE, 'tools', 'features', name),
@@ -243,7 +243,7 @@ class build_ext_generated(build_ext):
         # a build outside the tree (build_ext --build-lib, as the sanitizer
         # and coverage builds are) needs the package's API next to it too
         init = os.path.join(os.path.dirname(pkg), '__init__.py')
-        source = os.path.join(HERE, 'ni', '__init__.py')
+        source = os.path.join(HERE, 'lejit', '__init__.py')
         if os.path.abspath(init) != source:
             shutil.copyfile(source, init)
 
@@ -258,12 +258,12 @@ class build_ext_generated(build_ext):
 
 # the package's name, version and licence are in pyproject.toml
 if FALLBACK:
-    print('ni: %s; installing only the Python package, which does nothing'
+    print('lejit: %s; installing only the Python package, which does nothing'
           % FALLBACK)
     setup()
 else:
     setup(
-        ext_modules=[Extension(name = 'ni._core',
+        ext_modules=[Extension(name = 'lejit._core',
                                sources = sources,
                                depends = depends,
                                extra_compile_args = extra_compile_args,

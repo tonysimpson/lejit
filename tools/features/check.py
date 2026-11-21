@@ -1,15 +1,15 @@
-"""What ni.runtime_features() finds on the running interpreter, printed as
+"""What lejit.runtime_features() finds on the running interpreter, printed as
 JSON: the two detectors the build runs (installed.py and strings.py) and
-the layout probe of the compiled module (ni._core._layouts). ni runs it in
+the layout probe of the compiled module (lejit._core._layouts). lejit runs it in
 a subprocess, with -I, so that a probe that crashes can't harm the
 program.
 
-setup.py copies this file and the detector files it needs into ni/_features,
+setup.py copies this file and the detector files it needs into lejit/_features,
 next to the compiled module.
 
     python -I check.py [DIR]
         print this interpreter's answers as JSON, with the struct layouts
-        when DIR, the directory that holds the ni package, is given
+        when DIR, the directory that holds the lejit package, is given
 """
 import json
 import os
@@ -18,7 +18,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
-def detect(ni_parent=None):
+def detect(le_parent=None):
     """{'features': {NI_HAS_name: 0 or 1}, 'messages': {NI_MSG_name: text},
     'layouts': {struct: size or what is wrong}} for this interpreter, or
     {'error': why}. A feature the detector can't answer is left out, so
@@ -39,9 +39,9 @@ def detect(ni_parent=None):
     # are missing here, and the message says why
     if not os.path.isfile(os.path.join(probed['include'], 'Python.h')):
         answers['no_headers'] = probed['include']
-    if ni_parent is not None:
-        sys.path.insert(0, ni_parent)
-        from ni import _core
+    if le_parent is not None:
+        sys.path.insert(0, le_parent)
+        from lejit import _core
         answers['layouts'] = _core._layouts()
     return answers
 

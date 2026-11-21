@@ -210,7 +210,7 @@ EXTERNFN bool PsycoObject_SetAttr(PsycoObject* po, vinfo_t* o,
                                   vinfo_t* attr_name, vinfo_t* v);
 #if ALL_CHECKS
 /* inline attribute stores that missed (called the C helper), and misses
-   that changed their (class, name) cache: ni._core._stats() */
+   that changed their (class, name) cache: lejit._core._stats() */
 EXTERNVAR long psyco_stat_store_misses;
 EXTERNVAR long psyco_stat_store_type_changes;
 EXTERNVAR long psyco_stat_store_refreshes;

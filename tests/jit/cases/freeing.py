@@ -63,17 +63,17 @@ def scan_soon():
     # the owner scan runs once enough records have been counted since the
     # last (codemanager.c), so make records until it has run
     import sys
-    ni = sys.modules.get('ni')
-    if ni is None:
+    lejit = sys.modules.get('lejit')
+    if lejit is None:
         return
-    start = ni._core._stats()['owner_scans'][0]
+    start = lejit._core._stats()['owner_scans'][0]
     for k in range(40):
         ns = {}
         exec(MANY, ns)
         for i in range(600):
             ns['h%d' % i](1)
         ns.clear()  # freed now: no cycle left for a later collection
-        if ni._core._stats()['owner_scans'][0] > start:
+        if lejit._core._stats()['owner_scans'][0] > start:
             return
 
 
@@ -121,7 +121,7 @@ def own_namespace_recursion():
 def freed_in_subinterpreter():
     # a cycle through compiled code, old by the time it is garbage, found
     # by a scan, then freed by a subinterpreter's collection, whose
-    # co_extra free functions are junk on 3.7 (ni.c)
+    # co_extra free functions are junk on 3.7 (lejit.c)
     import _testcapi
     cycles = []
     for k in range(20):
@@ -146,7 +146,7 @@ def freed_in_subinterpreter():
 def unscanned_freed_in_subinterpreter():
     # compiled code in plain cycles (the namespace and its function) that
     # become garbage with no scan since: the subinterpreter's collection
-    # frees them (ni.c: why Ni's records aren't in co_extra)
+    # frees them (lejit.c: why Ni's records aren't in co_extra)
     import _testcapi
     gc.collect()
     gc.disable()
@@ -177,14 +177,14 @@ def _run_perturbed():
     import subprocess
     import sys
     src = ('import sys\nif sys.argv[1] == "1":\n'
-           '    import ni\n    ni.start()\n'
+           '    import lejit\n    lejit.start()\n'
            'import freeing\nfreeing._perturbed.append(None)\n'
            'print(freeing.unscanned_freed_in_subinterpreter'
            '()[0::2] == (0, [True] * 50))\n')
     env = dict(os.environ, MALLOC_PERTURB_='165',
                PYTHONPATH=os.pathsep.join(sys.path))
     p = subprocess.run([sys.executable, '-c', src,
-                        '1' if 'ni' in sys.modules else '0'],
+                        '1' if 'lejit' in sys.modules else '0'],
                        env=env, stdout=subprocess.PIPE, timeout=120)
     return p.returncode, p.stdout.decode().strip()
 
@@ -317,7 +317,7 @@ def call_notes_reused():
     # when the code dies, or code made and dropped in a loop (a reload)
     # grows a table for good
     import sys
-    ni = sys.modules.get('ni')
+    lejit = sys.modules.get('lejit')
 
     def one():
         ns = {}
@@ -327,11 +327,11 @@ def call_notes_reused():
         return r
     for _ in range(20):
         one()
-    start = ni._core._stats()['call_notes'][0] if ni else 0
+    start = lejit._core._stats()['call_notes'][0] if lejit else 0
     for _ in range(200):
         r = one()
     # each round makes three notes; the caller's own new code a few more
-    return r, (ni._core._stats()['call_notes'][0] if ni else 0) - start < 50
+    return r, (lejit._core._stats()['call_notes'][0] if lejit else 0) - start < 50
 
 
 MAKES = '''
@@ -348,7 +348,7 @@ def made_functions_free():
     # and the rest replace those, which must be released, or each compile
     # of code making a function keeps a few vinfos for good (a reload)
     import sys
-    ni = sys.modules.get('ni')
+    lejit = sys.modules.get('lejit')
 
     def one():
         ns = {}
@@ -358,7 +358,7 @@ def made_functions_free():
         return r
     for _ in range(20):
         one()
-    vinfos = lambda: (ni._core._stats().get('vinfos') or (0,))[0] if ni else 0
+    vinfos = lambda: (lejit._core._stats().get('vinfos') or (0,))[0] if lejit else 0
     start = vinfos()
     for _ in range(300):
         r = one()

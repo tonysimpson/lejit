@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Explain a crash in Ni-generated code.
 
-Runs a script under pointbreak with nianalyser's tracer and, when the
+Runs a script under pointbreak with analyser's tracer and, when the
 process stops on a fatal signal (SIGSEGV, SIGBUS, SIGILL, SIGFPE, or
 SIGABRT from a Psyco assertion), reports:
   - the faulting address, and the emitted chunk that contains it (Python
@@ -13,7 +13,7 @@ SIGABRT from a Psyco assertion), reports:
   - the registers, and a disassembly of the chunk around the fault.
 
 Usage (from a venv with pointbreak, distorm3 and intervaltree; Ni built
-with NI_TRACE=1, and a script that calls ni.start()):
+with NI_TRACE=1, and a script that calls lejit.start()):
     crash_report.py [--stack N] [--step-from K] python3.7 script.py [args...]
 
 Each report says how many times compiled code was entered
@@ -25,7 +25,7 @@ import collections
 import os, signal, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pointbreak
-import nianalyser
+import analyser
 from pointbreak import proc_maps
 
 FATAL = {signal.SIGSEGV, signal.SIGBUS, signal.SIGILL, signal.SIGFPE,
@@ -77,7 +77,7 @@ def main():
     if not args:
         sys.exit(__doc__)
     db = pointbreak.create_debugger(' '.join("'%s'" % a for a in args))
-    tracer = nianalyser.SimpleExecutionTracer(db)
+    tracer = analyser.SimpleExecutionTracer(db)
     entries = [0]
     last = collections.deque(maxlen=4000)
 
@@ -140,7 +140,7 @@ def main():
     print('  (%d chunks of emitted code recorded)' % len(tracer.code_gen))
     if not tracer.code_gen:
         print('  no chunks: is Ni built with NI_TRACE=1, and does the script'
-              ' call ni.start()?')
+              ' call lejit.start()?')
     print('\ntop of stack (negative offsets: just popped; [rsp-0x8] == rip '
           'means a ret popped a bad address):')
     for k in range(-4, 6):

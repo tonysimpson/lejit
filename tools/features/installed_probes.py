@@ -11,7 +11,7 @@ Unanswered. The probes look at the interpreter itself: the opcode
 module, which functions libpython exports (ctypes), objects' attributes,
 and a few lines of Python whose result shows the behaviour the feature
 records. Some run a few instructions of hand-made bytecode, to see what one
-instruction does. Nothing here imports ni, and it runs on 3.7 and later.
+instruction does. Nothing here imports lejit, and it runs on 3.7 and later.
 """
 import ctypes
 import dis

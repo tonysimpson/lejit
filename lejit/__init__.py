@@ -1,6 +1,6 @@
 """Ni, a JIT compiler for CPython 3.7 to 3.10 on x86-64 Linux.
 
-Importing ni starts nothing; call start().
+Importing lejit starts nothing; call start().
 """
 import json as _json
 import os as _os
@@ -66,10 +66,10 @@ def runtime_features():
         try:
             answers = _json.loads(r.stdout)
         except ValueError:
-            raise RuntimeWarning('ni: the detectors failed: '
+            raise RuntimeWarning('lejit: the detectors failed: '
                                  + r.stderr.strip()[-300:])
         if 'error' in answers:
-            raise RuntimeWarning('ni: ' + answers['error'])
+            raise RuntimeWarning('lejit: ' + answers['error'])
         _runtime = _pairs(answers)
         _no_headers = answers.get('no_headers')
     return _runtime
@@ -89,7 +89,7 @@ def check(error=False):
         built = dict(build_features())
         here = dict(runtime_features())
         names = sorted({n for n, _ in diffs})
-        why = 'ni: this Python differs from the one Ni was built for: ' + \
+        why = 'lejit: this Python differs from the one Ni was built for: ' + \
             '; '.join('%s is %s, built with %s' % (n, _shown(here, n), _shown(built, n))
                       for n in names[:3])
         if len(names) > 3:
@@ -115,15 +115,15 @@ def _env(name, allowed):
 
 
 def start(check=False, error=False):
-    """Start the JIT. NI_START_CHECK=warning or error adds a check first,
-    as check=True or error=True do. NI_MODE=off makes this do nothing."""
+    """Start the JIT. LEJIT_START_CHECK=warning or error adds a check first,
+    as check=True or error=True do. LEJIT_MODE=off makes this do nothing."""
     global _started
     if _core is None:
-        _warnings.warn("ni: %s, so start() does nothing" % _unsupported(),
+        _warnings.warn("lejit: %s, so start() does nothing" % _unsupported(),
                        RuntimeWarning, stacklevel=2)
         return
-    mode = _env('NI_MODE', ('', 'off'))
-    when = _env('NI_START_CHECK', ('', 'off', 'warning', 'error'))
+    mode = _env('LEJIT_MODE', ('', 'off'))
+    when = _env('LEJIT_START_CHECK', ('', 'off', 'warning', 'error'))
     if mode == 'off' or _started:
         return
     if check or when in ('warning', 'error'):

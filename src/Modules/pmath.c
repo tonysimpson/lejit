@@ -10,7 +10,7 @@
  * other types go to the real function. Functions with no meta (atan2,
  * fmod, hypot, pow, log...) are called.
  * A meta is not registered when the function's ml_flags differ from those
- * expected; ni._core._unregistered_metas() then lists it.
+ * expected; lejit._core._unregistered_metas() then lists it.
  */
 
 #include "../initialize.h"
