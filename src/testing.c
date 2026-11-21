@@ -267,8 +267,8 @@ le_unregistered_metas(PyObject *self, PyObject *unused)
 static PyObject *
 le_fail_after(PyObject *self, PyObject *args)
 {
-    static const char *names[LE_FAIL_SITES] = {"psycoobject", "array",
-                                               "codebuf", "lookup", "owner"};
+    static const char *names[LE_FAIL_SITES] = {
+        "psycoobject", "array", "codebuf", "lookup", "owner", "traceback"};
     const char *site;
     long n, left;
     int i;

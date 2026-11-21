@@ -1019,6 +1019,10 @@ cimpl_vt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
         cimpl_new_frame(tstate, code, globals, lasti, lineno, word);
     if (f == NULL)
         return NULL;
+    if (LE_FAIL(LE_FAIL_TRACEBACK)) {
+        Py_DECREF(f);
+        return PyErr_NoMemory();
+    }
     oldtb = le_exc_traceback(tstate); /* might be NULL */
     Py_XINCREF(oldtb);
     if (oldtb != NULL && PyTraceBack_Check(oldtb))
