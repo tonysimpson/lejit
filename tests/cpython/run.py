@@ -35,6 +35,31 @@ BANNED = {
     'timing': 'test_email',
 }
 
+# Where a gc callback that fails at the recursion limit leaves the limit off,
+# so CPython aborts at it, LeJIT's own callback makes these abort.
+GC_CALLBACK_ABORTS = 'test_json'
+GC_CALLBACK_PROBE = r'''
+import gc, sys
+gc.callbacks.append(lambda phase, info: None)
+exec('def f(n, top):\n'
+     '    if not top - n:\n'
+     '        keep = (' + '{n}, ' * 800 + ')\n'
+     '    f(n + 1, top)\n')
+limit = sys.getrecursionlimit()
+for top in range(limit - 10, limit + 10):
+    try:
+        f(0, top)
+    except RecursionError:
+        pass
+'''
+
+
+def gc_callback_aborts():
+    return subprocess.run([sys.executable, '-c', GC_CALLBACK_PROBE],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          timeout=TIMEOUT).returncode < 0
+
+
 CHILD = r'''
 import sys, unittest, io
 if sys.argv[1] == 'lejit':
@@ -90,6 +115,8 @@ def modules():
                     if n.startswith('test_') and
                     (n.endswith('.py') or os.path.isdir(os.path.join(d, n)))})
     banned = [p for ps in BANNED.values() for p in ps.split()]
+    if gc_callback_aborts():
+        banned += GC_CALLBACK_ABORTS.split()
     return [n for n in names if not any(fnmatch.fnmatchcase(n, p) for p in banned)]
 
 

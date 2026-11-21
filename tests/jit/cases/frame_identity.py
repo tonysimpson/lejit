@@ -3,7 +3,7 @@
 # object, and what is stored on it (f_trace, extra f_locals keys) stays.
 # The function a case names runs in its real frame: each calls the one
 # tested, which has a loop, so it is called compiled, not inlined.
-import sys
+import gc, sys
 
 
 def via(fn, n):
@@ -219,6 +219,7 @@ def holds_walker(n):
 def finaliser_walks(n):               # the frame let go runs Python
     del WALKED[:]
     r = holds_walker(n)
+    gc.collect()                      # the frame and its locals are a cycle
     return r, list(WALKED)
 
 

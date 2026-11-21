@@ -28,14 +28,16 @@ jobs:
         with:
           path: .cache
           key: cpython-source-${{ hashFiles('tools/features/cpython_sha256.txt') }}
-      # the images leave out CPython's own tests: copy them back from the
-      # release's source
+      # the images leave out CPython's own tests and every .pyc: copy the
+      # tests back from the release's source, then byte-compile the library
+      # as CPython's install does (otherwise the first run of a test compiles
+      # what it imports, and sees warnings a second run doesn't)
       - name: Restore CPython's tests
         run: |
           src=$(python -c "import sys, platform; sys.path.insert(0, 'tools/features'); import cpython_src; print(cpython_src.find_source(platform.python_version(), log=lambda *a: None))")
           stdlib=$(python -c "import sysconfig; print(sysconfig.get_paths()['stdlib'])")
-          cd "$src/Lib"
-          find . -type d \( -name test -o -name tests \) -prune -exec cp -r --parents {} "$stdlib" \;
+          (cd "$src/Lib" && find . -type d \( -name test -o -name tests \) -prune -exec cp -r --parents {} "$stdlib" \;)
+          python -Wi -m compileall -q -x 'bad_coding|badsyntax|site-packages|lib2to3/tests/data' "$stdlib"
       - name: make check
         run: make -k check PY=python GEN_PY=python
 
