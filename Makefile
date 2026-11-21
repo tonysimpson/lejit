@@ -5,6 +5,7 @@
 #   make check-all            make check for each of PYTHONS
 #   make test | cpython-test | encoder-test | features-test | strings-test
 #   make features-installed-test | cross-check (both detectors, every interpreter)
+#   make format | format-check   rewrite, or check, the C code's layout
 #
 # The build detects PY's features and takes its messages from PY itself
 # (LE_FEATURES=source reads the source of PY's CPython release instead,
@@ -14,6 +15,9 @@ SHELL := bash
 
 PY ?= python3
 GEN_PY ?= python3
+# CI pins clang-format 19.1.7 (pip install clang-format==19.1.7): other
+# versions may lay the code out differently
+CLANG_FORMAT ?= clang-format
 PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
            $(HOME)/.pyenv/versions/3.8.20/bin/python3.8 \
            $(HOME)/.pyenv/versions/3.9.21/bin/python3.9 \
@@ -21,7 +25,7 @@ PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
 
 .PHONY: build checked-build check check-all test cpython-test encoder-test \
         features-test features-installed-test strings-test \
-        cross-check no-version-tests clean
+        cross-check no-version-tests format format-check clean
 
 build:
 	$(PY) setup.py build_ext --inplace
@@ -64,6 +68,23 @@ no-version-tests:
 	@! grep -rnwE 'PY_(VERSION_HEX|MAJOR_VERSION|MINOR_VERSION|MICRO_VERSION)' \
 	    src/ --include='*.[ch]' \
 	  || { echo "a CPython version test in src/ (above): add an LE_HAS_ feature"; exit 1; }
+
+# the hand-written C, laid out by .clang-format; the generated headers
+# (*_gen.h) are left alone
+FORMAT_FILES = $(shell find src tests -name '*.[ch]' ! -name '*_gen.h' | sort)
+
+format:
+	$(CLANG_FORMAT) -i $(FORMAT_FILES)
+
+# lists the files clang-format would change, and fails if there are any
+format-check:
+	@$(CLANG_FORMAT) --version
+	@bad=; for f in $(FORMAT_FILES); do \
+	    $(CLANG_FORMAT) "$$f" | cmp -s - "$$f" || bad="$$bad $$f"; \
+	done; \
+	if [ -n "$$bad" ]; then \
+	    echo "not formatted (make format):"; printf '  %s\n' $$bad; exit 1; \
+	fi
 
 check: no-version-tests features-test features-installed-test strings-test \
        test cpython-test encoder-test

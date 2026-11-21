@@ -39,6 +39,21 @@ jobs:
       - name: make check
         run: make -k check PY=python GEN_PY=python
 
+  format:
+    name: make format-check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # the runner's own Python refuses pip installs (PEP 668)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # the version the tree is formatted with: others lay it out differently
+      - name: Install clang-format
+        run: pip install clang-format==19.1.7
+      - name: make format-check
+        run: make format-check
+
   wheels:
     name: wheels (built, not released)
     runs-on: ubuntu-24.04
