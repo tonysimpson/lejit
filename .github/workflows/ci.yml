@@ -54,6 +54,23 @@ jobs:
       - name: make format-check
         run: make format-check
 
+  # clang-tidy's findings, reported but not yet fixed: this job never fails
+  # the run
+  lint:
+    name: make lint (3.10.16)
+    runs-on: ubuntu-24.04
+    container: python:3.10.16-bookworm
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libffi, libunwind and clang-tidy
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+          pip install clang-tidy==19.1.0
+      - name: make lint
+        run: make lint PY=python
+
   wheels:
     name: wheels (built, not released)
     runs-on: ubuntu-24.04

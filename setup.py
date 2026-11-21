@@ -11,6 +11,7 @@ from __future__ import print_function
 
 import os, sys, sysconfig
 import glob
+import json
 import shutil
 import platform
 import subprocess
@@ -72,6 +73,10 @@ LE_SANITIZE = os.environ.get('LE_SANITIZE', '')
 
 # LE_COVERAGE=1: build with gcov into build/cov, never in place
 LE_COVERAGE = int(os.environ.get('LE_COVERAGE', 0))
+
+# LE_COMPILE_COMMANDS=file: compile nothing, but write the commands the build
+# would run to file, as a compile_commands.json (for clang-tidy: make lint)
+LE_COMPILE_COMMANDS = os.environ.get('LE_COMPILE_COMMANDS', '')
 
 ####################################################################
 
@@ -182,7 +187,8 @@ elif LE_COVERAGE:
 else:
     stamp_dir, built_glob = 'build', [module, 'build/lib*/' + module]
 stamp = os.path.join(stamp_dir, 'le_config-%s.stamp' % version)
-if not FALLBACK and (not os.path.exists(stamp) or open(stamp).read() != config):
+if not FALLBACK and not LE_COMPILE_COMMANDS and \
+        (not os.path.exists(stamp) or open(stamp).read() != config):
     for built in [b for g in built_glob for b in glob.glob(g)]:
         os.remove(built)
     os.makedirs(stamp_dir, exist_ok=True)
@@ -246,6 +252,23 @@ class build_ext_generated(build_ext):
         source = os.path.join(HERE, 'lejit', '__init__.py')
         if os.path.abspath(init) != source:
             shutil.copyfile(source, init)
+
+    def build_extension(self, ext):
+        if not LE_COMPILE_COMMANDS:
+            return build_ext.build_extension(self, ext)
+        # record the compiler's commands instead of running them
+        commands = []
+
+        def record(cmd):
+            if '-c' in cmd:
+                commands.append({'directory': HERE, 'arguments': list(cmd),
+                                 'file': cmd[cmd.index('-c') + 1]})
+        self.compiler.spawn = record
+        self.force = True
+        build_ext.build_extension(self, ext)
+        with open(LE_COMPILE_COMMANDS, 'w') as f:
+            json.dump(commands, f, indent=1)
+        print('wrote %s (%d files)' % (LE_COMPILE_COMMANDS, len(commands)))
 
     def get_libraries(self, ext):
         # 3.7's distutils links libpython into an extension when Python is

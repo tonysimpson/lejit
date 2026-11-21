@@ -6,6 +6,7 @@
 #   make test | cpython-test | encoder-test | features-test | strings-test
 #   make features-installed-test | cross-check (both detectors, every interpreter)
 #   make format | format-check   rewrite, or check, the C code's layout
+#   make lint                 clang-tidy on src/ (reports, not enforced yet)
 #
 # The build detects PY's features and takes its messages from PY itself
 # (LE_FEATURES=source reads the source of PY's CPython release instead,
@@ -18,6 +19,8 @@ GEN_PY ?= python3
 # CI pins clang-format 19.1.7 (pip install clang-format==19.1.7): other
 # versions may lay the code out differently
 CLANG_FORMAT ?= clang-format
+# and clang-tidy 19.1.0 (pip install clang-tidy==19.1.0)
+CLANG_TIDY ?= clang-tidy
 PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
            $(HOME)/.pyenv/versions/3.8.20/bin/python3.8 \
            $(HOME)/.pyenv/versions/3.9.21/bin/python3.9 \
@@ -25,7 +28,7 @@ PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
 
 .PHONY: build checked-build check check-all test cpython-test encoder-test \
         features-test features-installed-test strings-test \
-        cross-check no-version-tests format format-check clean
+        cross-check no-version-tests format format-check lint clean
 
 build:
 	$(PY) setup.py build_ext --inplace
@@ -85,6 +88,17 @@ format-check:
 	if [ -n "$$bad" ]; then \
 	    echo "not formatted (make format):"; printf '  %s\n' $$bad; exit 1; \
 	fi
+
+# clang-tidy (.clang-tidy) on the C the build compiles, with the flags of
+# PY's checked build, so the checked-only code is linted too: setup.py
+# writes them to build/lint/compile_commands.json instead of compiling.
+# Not part of check
+lint:
+	LE_TRACE=1 LE_ALL_CHECKS=1 LE_COMPILE_COMMANDS=build/lint/compile_commands.json \
+	    $(PY) setup.py build_ext --build-temp build/lint --build-lib build/lint
+	$(CLANG_TIDY) --version
+	$(CLANG_TIDY) -p build/lint --quiet $$($(PY) -c 'import json; \
+	    print(" ".join(e["file"] for e in json.load(open("build/lint/compile_commands.json"))))')
 
 check: no-version-tests features-test features-installed-test strings-test \
        test cpython-test encoder-test

@@ -1,0 +1,16 @@
+# clang-tidy's checks for LeJIT's C (make lint). Not enforced yet: CI
+# reports what it finds without failing.
+# Left out, as they do not apply to C:
+# - clang-analyzer-cplusplus.*, clang-analyzer-optin.cplusplus.*: C++ only
+# - clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling:
+#   asks for C11's optional Annex K functions (memcpy_s and so on), which
+#   glibc does not provide
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  -clang-analyzer-cplusplus.*,
+  -clang-analyzer-optin.cplusplus.*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
+# LeJIT's own headers, not CPython's or the generated ones under build/
+HeaderFilterRegex: '/src/'
