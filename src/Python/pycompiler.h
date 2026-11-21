@@ -267,7 +267,8 @@ psyco_cs_promo_miss(int site);
    variable 'vi', even if it is a run-time variable. Implemented
    by raising a EPromotion exception if needed. Returns -1 in
    this case; use PycException_Occurred() to know if it is really
-   an exception or a plain normal -1. */
+   an exception or a plain normal -1. Its callers fetch values that can't
+   be -1 (pointers), so for them -1 always means "stop: pending". */
 PSY_INLINE long
 psyco_atcompiletime(PsycoObject *po, vinfo_t *vi)
 {
@@ -284,7 +285,8 @@ psyco_atcompiletime(PsycoObject *po, vinfo_t *vi)
     }
 }
 /* the same if the value to promote is itself a PyObject* which can be
-   used as key in the look-up dictionary */
+   used as key in the look-up dictionary. Returns NULL to stop: its callers
+   fetch objects (code, types) that are never NULL themselves. */
 PSY_INLINE PyObject *
 psyco_pyobj_atcompiletime(PsycoObject *po, vinfo_t *vi)
 {

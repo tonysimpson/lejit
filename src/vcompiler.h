@@ -12,6 +12,14 @@
  * backend-neutral. PsycoObject is the whole compiler state at one bytecode
  * position; only po->vlocals is compared when looking for code that has
  * already been compiled.
+ *
+ * A function that returns NULL (or -1, or false) while compiling means:
+ * stop compiling here. po then holds a pending pseudo-exception, in
+ * po->pr.exc: either a Python error, or a request to promote a run-time
+ * value to compile time (PycException_Promote). Callers pass the NULL up
+ * unchanged, and the dispatcher handles a promotion by emitting the code
+ * that fetches the value and compiling again with it known.
+ * PycException_Occurred(po) says whether something is pending.
  */
 /***************************************************************/
 /***           Structures used by the compiler part            ***/
