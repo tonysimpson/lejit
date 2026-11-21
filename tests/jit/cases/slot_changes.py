@@ -2,7 +2,8 @@
 # __next__ makes tp_iternext _PyObject_NextNotImplemented (TypeError),
 # and setting __hash__, __eq__, __ne__ or __iter__ on the class changes
 # tp_hash, tp_richcompare or tp_iter. Compiled code reads
-# a heap type's slots at run time, as CPython does.
+# a heap type's slots at run time, as CPython does, and again after a slot
+# that ran Python code.
 
 
 class It:
@@ -130,10 +131,59 @@ def changed_iter():
     return r
 
 
+# The left operand's __lt__ changes the right operand's class, or gives it
+# __gt__, then declines: CPython reads the right's slot after the left's
+# returns.
+class Right:
+    pass
+
+
+class RightGt:
+    def __gt__(self, other):
+        return 'RightGt.gt'
+
+
+class Plain:
+    pass
+
+
+class Left:
+    def __lt__(self, other):
+        if other.flip == 'method':
+            Right.__gt__ = lambda self, other: 'Right.gt'
+        elif other.flip == 'class':
+            other.__class__ = RightGt
+        elif other.flip == 'plain':
+            other.__class__ = Plain
+        return NotImplemented
+
+
+def lt(a, b):
+    try:
+        return a < b
+    except TypeError as e:
+        return str(e)
+
+
+def right_changed_by_left():
+    for _ in range(20):
+        c = Right()
+        c.flip = None
+        r = [lt(Left(), c)]
+    for flip in ['method', 'class', 'plain', None]:
+        c = Right()
+        c.flip = flip
+        r.append((lt(Left(), c), type(c).__name__))
+        if flip == 'method':
+            del Right.__gt__
+    return r
+
+
 CASES = [
     ('deleted_next', [(2,)], {}),
     ('self_deleting', [()], {}),
     ('changed_hash', [()], {}),
     ('changed_compare', [()], {}),
     ('changed_iter', [()], {}),
+    ('right_changed_by_left', [()], {}),
 ]

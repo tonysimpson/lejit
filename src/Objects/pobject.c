@@ -1471,6 +1471,60 @@ generic:
 /* Map rich comparison operators to their swapped version, e.g. LT --> GT */
 static int swapped_op[] = {Py_GT, Py_GE, Py_EQ, Py_NE, Py_LT, Py_LE};
 
+static const char *const opstrings[] = {
+    LE_MSG_CMP_LT, LE_MSG_CMP_LE, "==", "!=", LE_MSG_CMP_GT, LE_MSG_CMP_GE};
+
+/* object.c:do_richcompare after a slot that may have run Python code
+   declined: the slots still to try, and the default, from the types as
+   they are now. 'tried_v': v's slot has run; 'checked_reverse': w's has. */
+static PyObject *
+cimpl_richcompare_rest(PyObject *v, PyObject *w, int op, int tried_v,
+                       int checked_reverse)
+{
+    richcmpfunc f;
+    PyObject *res;
+    if (!tried_v && (f = Py_TYPE(v)->tp_richcompare) != NULL) {
+        res = (*f)(v, w, op);
+        if (res != Py_NotImplemented)
+            return res;
+        Py_DECREF(res);
+    }
+    if (!checked_reverse && (f = Py_TYPE(w)->tp_richcompare) != NULL) {
+        res = (*f)(w, v, swapped_op[op]);
+        if (res != Py_NotImplemented)
+            return res;
+        Py_DECREF(res);
+    }
+    switch (op) {
+        case Py_EQ:
+            res = (v == w) ? Py_True : Py_False;
+            break;
+        case Py_NE:
+            res = (v != w) ? Py_True : Py_False;
+            break;
+        default:
+            PyErr_Format(PyExc_TypeError, LE_MSG_COMPARE_NOT_SUPPORTED,
+                         opstrings[op], Py_TYPE(v)->tp_name,
+                         Py_TYPE(w)->tp_name);
+            return NULL;
+    }
+    Py_INCREF(res);
+    return res;
+}
+
+/* A call that may have run Python code (po->pr.class_unchecked) may have
+   changed a mutable operand's class or a class's slot */
+static bool
+operand_types_stale(PsycoObject *po, PyTypeObject *vtp, PyTypeObject *wtp)
+{
+    return po->pr.class_unchecked &&
+           (Psyco_ClassMutable(vtp) || Psyco_ClassMutable(wtp));
+}
+
+/* do_richcompare's slots, with the types and slots read when compiling.
+   NotImplemented if none answered. Once a slot declines after a call that
+   may have changed them (operand_types_stale), cimpl_richcompare_rest
+   finishes the comparison, default included. */
 static vinfo_t *
 try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
 {
@@ -1523,6 +1577,10 @@ try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
         if (IS_IMPLEMENTED(res))
             return res; /* 'res' might be NULL */
         vinfo_decref(res, po);
+        if (operand_types_stale(po, vtp, wtp))
+            return psyco_generic_call(po, cimpl_richcompare_rest,
+                                      CfCommonNewRefPyObject, "vvlll", v, w,
+                                      (long)op, 0L, 1L);
     }
     if (fv != NULL) {
         res =
@@ -1530,10 +1588,20 @@ try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
         if (IS_IMPLEMENTED(res))
             return res;
         vinfo_decref(res, po);
+        if (operand_types_stale(po, vtp, wtp))
+            return psyco_generic_call(po, cimpl_richcompare_rest,
+                                      CfCommonNewRefPyObject, "vvlll", v, w,
+                                      (long)op, 1L, (long)swap);
     }
     if (!swap && fw != NULL) {
-        return Psyco_META3(po, fw, CfCommonCheckNotImplemented, "vvl", w, v,
-                           swapped_op[op]);
+        res = Psyco_META3(po, fw, CfCommonCheckNotImplemented, "vvl", w, v,
+                          swapped_op[op]);
+        if (IS_IMPLEMENTED(res) || !operand_types_stale(po, vtp, wtp))
+            return res;
+        vinfo_decref(res, po);
+        return psyco_generic_call(po, cimpl_richcompare_rest,
+                                  CfCommonNewRefPyObject, "vvlll", v, w,
+                                  (long)op, 1L, 1L);
     }
     return psyco_vi_NotImplemented();
 
@@ -1541,9 +1609,6 @@ changed: /* a heap type's slot is not what was compiled */
     return psyco_generic_call(po, PyObject_RichCompare, CfCommonNewRefPyObject,
                               "vvl", v, w, (long)op);
 }
-
-static const char *const opstrings[] = {
-    LE_MSG_CMP_LT, LE_MSG_CMP_LE, "==", "!=", LE_MSG_CMP_GT, LE_MSG_CMP_GE};
 
 /* object.c:do_richcompare. The slots have run; their default must not run
    them again. */
