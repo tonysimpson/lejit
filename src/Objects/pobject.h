@@ -74,6 +74,18 @@ Psyco_ClassMutable(PyTypeObject *tp)
     return Psyco_TypeMutable(tp) || PyType_IsSubtype(tp, &PyModule_Type);
 }
 
+/* Whether a call this instruction made, which may have run Python code
+   (po->pr.class_unchecked), may have changed what was read of a or b when
+   compiling: a mutable one's class, or a class's slots. The instruction
+   forgets the known types only when it ends, so what is left of it is
+   CPython's function, which reads them again. */
+PSY_INLINE bool
+Psyco_TypesStale(PsycoObject *po, PyTypeObject *a, PyTypeObject *b)
+{
+    return po->pr.class_unchecked &&
+           (Psyco_ClassMutable(a) || Psyco_ClassMutable(b));
+}
+
 /* After code that may assign __class__ (po->pr.class_unchecked), forgets
    the run-time values' known types that can change, and the constants'.
    Called between instructions and before a direct call. */

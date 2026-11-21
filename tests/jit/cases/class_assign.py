@@ -570,6 +570,99 @@ def megamorphic_type(n, swap):
     return out
 
 
+
+# Within one instruction that calls Python code more than once, a call can
+# change the class of an operand still to be used: the rest of the
+# instruction must see the new class.
+class Lt:
+    def __lt__(self, other):
+        return True
+
+
+class Gt:
+    def __gt__(self, other):
+        return True
+
+    def __radd__(self, other):
+        return 'Gt.radd'
+
+    def __rpow__(self, other):
+        return 'Gt.rpow'
+
+
+class Plain:
+    pass
+
+
+class Changer:
+    def __init__(self, victim, to):
+        self.victim, self.to = victim, to
+
+    def change(self):
+        if self.to is not None:
+            self.victim.__class__ = self.to
+
+    def __lt__(self, other):
+        self.change()
+        return False
+
+    def __gt__(self, other):
+        return False
+
+    def __iadd__(self, other):
+        self.change()
+        return NotImplemented
+
+    def __imul__(self, other):
+        self.change()
+        return NotImplemented
+
+    def __ipow__(self, other):
+        self.change()
+        return NotImplemented
+
+
+def smallest(b, a, c):
+    return min(b, a, c)
+
+
+def iadd(a, c):
+    try:
+        a += c
+    except TypeError as e:
+        return str(e)
+    return a
+
+
+def imul(a, c):
+    try:
+        a *= c
+    except TypeError as e:
+        return str(e)
+    return a
+
+
+def ipow(a, c):
+    try:
+        a **= c
+    except TypeError as e:
+        return str(e)
+    return a
+
+
+def changed_mid_instruction():
+    out = []
+    for to in [None] * 3 + [Lt, Gt, Plain, None]:
+        c = Plain()
+        out.append((type(smallest(Changer(c, None), Changer(c, to), c))
+                    .__name__, type(c).__name__))
+    for f in iadd, imul, ipow:
+        for to in [None] * 3 + [Gt, None]:
+            c = Plain()
+            out.append((f.__name__, f(Changer(c, to), c), type(c).__name__))
+    return out
+
+
 CASES = [
     ('in_called_function', [(4,)], {}),
     ('in_own_method', [(4,)], {}),
@@ -600,4 +693,5 @@ CASES = [
     ('module_constant', [(4,)], {}),
     ('enum_constants', [(6,)], {}),
     ('megamorphic_type', [(10, False)] * 5 + [(10, True)] * 6, {}),
+    ('changed_mid_instruction', [()], {}),
 ]

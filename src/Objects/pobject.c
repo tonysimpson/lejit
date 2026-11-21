@@ -1555,15 +1555,6 @@ cimpl_richcompare_rest(PyObject *v, PyObject *w, int op, int tried_v,
     return res;
 }
 
-/* A call that may have run Python code (po->pr.class_unchecked) may have
-   changed a mutable operand's class or a class's slot */
-static bool
-operand_types_stale(PsycoObject *po, PyTypeObject *vtp, PyTypeObject *wtp)
-{
-    return po->pr.class_unchecked &&
-           (Psyco_ClassMutable(vtp) || Psyco_ClassMutable(wtp));
-}
-
 /* The flags of a call of an operand's own slot f: object_richcompare there
    runs no Python code (its != calls the same slot for ==) */
 static int
@@ -1576,7 +1567,7 @@ richcompare_flags(richcmpfunc f)
 
 /* do_richcompare's slots, with the types and slots read when compiling.
    NotImplemented if none answered. Once a slot declines after a call that
-   may have changed them (operand_types_stale), cimpl_richcompare_rest
+   may have changed them (Psyco_TypesStale), cimpl_richcompare_rest
    finishes the comparison, default included. */
 static vinfo_t *
 try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
@@ -1594,6 +1585,8 @@ try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
     wtp = (PyTypeObject *)Psyco_NeedType(po, w);
     if (wtp == NULL)
         return NULL;
+    if (Psyco_TypesStale(po, vtp, wtp)) /* min(a, b, c)'s second compare */
+        goto changed;
     switch (Psyco_TypeSlot(po, vtp, &vtp->tp_richcompare, (void **)&fv)) {
         case 1:
             break;
@@ -1630,7 +1623,7 @@ try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
         if (IS_IMPLEMENTED(res))
             return res; /* 'res' might be NULL */
         vinfo_decref(res, po);
-        if (operand_types_stale(po, vtp, wtp))
+        if (Psyco_TypesStale(po, vtp, wtp))
             return psyco_generic_call(po, cimpl_richcompare_rest,
                                       CfCommonNewRefPyObject, "vvlll", v, w,
                                       (long)op, 0L, 1L);
@@ -1640,7 +1633,7 @@ try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
         if (IS_IMPLEMENTED(res))
             return res;
         vinfo_decref(res, po);
-        if (operand_types_stale(po, vtp, wtp))
+        if (Psyco_TypesStale(po, vtp, wtp))
             return psyco_generic_call(po, cimpl_richcompare_rest,
                                       CfCommonNewRefPyObject, "vvlll", v, w,
                                       (long)op, 1L, (long)swap);
@@ -1648,7 +1641,7 @@ try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
     if (!swap && fw != NULL) {
         res = Psyco_META3(po, fw, richcompare_flags(fw), "vvl", w, v,
                           swapped_op[op]);
-        if (IS_IMPLEMENTED(res) || !operand_types_stale(po, vtp, wtp))
+        if (IS_IMPLEMENTED(res) || !Psyco_TypesStale(po, vtp, wtp))
             return res;
         vinfo_decref(res, po);
         return psyco_generic_call(po, cimpl_richcompare_rest,
@@ -1657,7 +1650,7 @@ try_rich_compare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
     }
     return psyco_vi_NotImplemented();
 
-changed: /* a heap type's slot is not what was compiled */
+changed: /* a heap type's slot is not what was compiled, or may not be */
     return psyco_generic_call(po, PyObject_RichCompare, CfCommonNewRefPyObject,
                               "vvl", v, w, (long)op);
 }

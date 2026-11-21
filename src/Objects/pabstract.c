@@ -368,6 +368,32 @@ cimpl_PyNumber_InPlaceMultiply_5(PyObject *v, PyObject *w,
     return result;
 }
 
+/* PyNumber_InPlaceAdd, PyNumber_InPlaceMultiply or another in-place
+   operation, after the in-place slot declined: binary_op1, then the
+   sequence's slots for += and *=, then the error, with the types as they
+   are now */
+static PyObject *
+cimpl_binary_iop_rest(PyObject *v, PyObject *w, const int iop_slot,
+                      const int op_slot, const char *op_name)
+{
+    PyObject *x = cimpl_binary_op1(v, w, op_slot);
+    if (x != Py_NotImplemented)
+        return x;
+    Py_DECREF(x);
+    if (iop_slot == (int)offsetof(PyNumberMethods, nb_inplace_add) &&
+        Py_TYPE(v)->tp_as_sequence != NULL)
+        return cimpl_PyNumber_InPlaceAdd_1(v, w, Py_TYPE(v)->tp_as_sequence);
+    if (iop_slot == (int)offsetof(PyNumberMethods, nb_inplace_multiply)) {
+        if (Py_TYPE(v)->tp_as_sequence != NULL)
+            return cimpl_PyNumber_InPlaceMultiply_1(
+                v, w, Py_TYPE(v)->tp_as_sequence);
+        if (Py_TYPE(w)->tp_as_sequence != NULL)
+            return cimpl_PyNumber_InPlaceMultiply_5(
+                v, w, Py_TYPE(w)->tp_as_sequence);
+    }
+    return cimpl_binop_type_error(v, w, op_name);
+}
+
 static PyObject *
 cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
                  const char *op_name)
@@ -719,7 +745,7 @@ binop_type_error(PsycoObject *po, vinfo_t *, vinfo_t *, const char *);
 static vinfo_t *
 binary_op(PsycoObject *po, vinfo_t *, vinfo_t *, int, const char *);
 static vinfo_t *
-binary_iop1(PsycoObject *po, vinfo_t *, vinfo_t *, int, int);
+binary_iop1(PsycoObject *po, vinfo_t *, vinfo_t *, int, int, const char *);
 static vinfo_t *
 binary_iop(PsycoObject *po, vinfo_t *, vinfo_t *, int, int, const char *);
 static vinfo_t *
@@ -1000,6 +1026,10 @@ binop_type_error(PsycoObject *po, vinfo_t *v, vinfo_t *w, const char *op_name)
     if (tp_w == NULL) {
         return NULL;
     }
+    if (Psyco_TypesStale(po, tp_v, tp_w))
+        return psyco_generic_call(po, cimpl_binop_type_error,
+                                  CfCommonNewRefPyObject, "vvl", v, w,
+                                  (long)op_name);
     PycException_SetTypeFormat(po, PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR,
                                op_name, tp_v, tp_w);
     return NULL;
@@ -1196,7 +1226,8 @@ PsycoNumber_FloorDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 }
 
 static vinfo_t *
-binary_iop1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int iop_slot, int op_slot)
+binary_iop1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int iop_slot, int op_slot,
+            const char *op_name)
 {
     binaryfunc _t1;
     vinfo_t *_t2;
@@ -1236,6 +1267,10 @@ binary_iop1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int iop_slot, int op_slot)
                 return x;
             }
             vinfo_decref(x, po);
+            if (Psyco_TypesStale(po, tp_v, tp_w))
+                return psyco_generic_call(
+                    po, cimpl_binary_iop_rest, CfCommonNewRefPyObject, "vvlll",
+                    v, w, (long)iop_slot, (long)op_slot, (long)op_name);
         }
     }
     _t3 = binary_op1(po, v, w, op_slot);
@@ -1262,7 +1297,7 @@ PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
         return NULL;
     }
     result = binary_iop1(po, v, w, offsetof(PyNumberMethods, nb_inplace_add),
-                         offsetof(PyNumberMethods, nb_add));
+                         offsetof(PyNumberMethods, nb_add), LE_MSG_OP_IADD);
     if (!IS_IMPLEMENTED(result)) {
         m = tp_v->tp_as_sequence;
         vinfo_decref(result, po);
@@ -1331,7 +1366,7 @@ binary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, int iop_slot, int op_slot,
     if (tp_w == NULL) {
         return NULL;
     }
-    result = binary_iop1(po, v, w, iop_slot, op_slot);
+    result = binary_iop1(po, v, w, iop_slot, op_slot, op_name);
     if (!IS_IMPLEMENTED(result)) {
         vinfo_decref(result, po);
         _t2 = binop_type_error(po, v, w, op_name);
@@ -1502,7 +1537,7 @@ PsycoNumber_InPlaceMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
     }
     result =
         binary_iop1(po, v, w, offsetof(PyNumberMethods, nb_inplace_multiply),
-                    offsetof(PyNumberMethods, nb_multiply));
+                    offsetof(PyNumberMethods, nb_multiply), LE_MSG_OP_IMUL);
     if (!IS_IMPLEMENTED(result)) {
         f = NULL;
         mv = tp_v->tp_as_sequence;
@@ -1875,6 +1910,11 @@ ternary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z, int iop_slot,
                 return x;
             }
             vinfo_decref(x, po);
+            if (Psyco_TypesStale(po, tp_v, tp_w) ||
+                Psyco_TypesStale(po, tp_z, tp_z))
+                return psyco_generic_call(po, cimpl_ternary_op,
+                                          CfCommonNewRefPyObject, "vvvll", v,
+                                          w, z, (long)op_slot, (long)op_name);
         }
     }
     _t3 = ternary_op(po, v, w, z, op_slot, op_name);
