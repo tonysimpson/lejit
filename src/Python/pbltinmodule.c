@@ -590,9 +590,10 @@ pbuiltin_globals(PsycoObject *po, vinfo_t *vself, vinfo_t *vnull)
    picks a path at run time (respawn), so a virtual result stays virtual.
    Every type is promoted before the first comparison: a promotion restarts
    the instruction, which would run a comparison already emitted again
-   (a user __gt__ twice). One iterable argument, or key=/default=, goes to
-   CPython: walking a sequence of run-time length can't be compiled (the
-   NFS branch tried). */
+   (a user __gt__ twice). A comparison after one that may have changed a
+   class is CPython's (pobject.h:Psyco_TypesStale). One iterable argument,
+   or key=/default=, goes to CPython: walking a sequence of run-time length
+   can't be compiled (the NFS branch tried). */
 static vinfo_t *
 pbuiltin_min_max(PsycoObject *po, vinfo_t *vargs, vinfo_t *vkw, int op,
                  PyCFunction cimpl)
