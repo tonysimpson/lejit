@@ -174,6 +174,28 @@ def FASTCALL_DICT_TSTATE():
     return _exported('_PyObject_FastCallDictTstate')
 
 
+# C API functions that LeJIT calls where libpython exports them (as
+# features.py's EXPORTS)
+for _feature, _function in [
+        ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
+        ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
+        ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
+        ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
+        ('MODULE_SPEC_IS_INITIALIZING_LINKABLE', '_PyModuleSpec_IsInitializing'),
+        ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
+        ('UNICODE_EQ_LINKABLE', '_PyUnicode_EQ'),
+        ('UNICODE_FAST_COPY_LINKABLE', '_PyUnicode_FastCopyCharacters'),
+        ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
+        ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
+        ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
+        ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip')]:
+    def _export_probe(function=_function):
+        return _exported(function)
+    _export_probe.__name__ = _feature
+    _export_probe.__doc__ = 'libpython exports %s (ctypes)' % _function
+    probe(_export_probe)
+
+
 # --- what the bytecode and its instructions do -----------------------------
 
 @probe

@@ -61,8 +61,84 @@
 #include "../Objects/punicodeobject.h"
 
 #include "pycinternal.h"
-#include <eval.h>
 #include <ipyencoding.h>
+
+/* C API calls that some CPython versions don't export: the function where
+   libpython exports it, else a copy of CPython's or a public call that
+   does the same */
+#if LE_HAS_DICT_MERGE_EX_LINKABLE
+/* some versions declare it only in an internal header */
+PyAPI_FUNC(int) _PyDict_MergeEx(PyObject *mp, PyObject *other, int override);
+#define le_dict_merge_unique(a, b) _PyDict_MergeEx(a, b, 2)
+#else
+PyAPI_FUNC(int)
+    _PyDict_MergeUniq(PyObject *mp, PyObject *other, PyObject **dupkey);
+/* _PyDict_MergeEx(a, b, 2): a key of b already in a raises KeyError(key) */
+static int
+le_dict_merge_unique(PyObject *a, PyObject *b)
+{
+    PyObject *dupkey = NULL, *args;
+    int r = _PyDict_MergeUniq(a, b, &dupkey);
+    if (r == -2) {
+        args = PyTuple_Pack(1, dupkey);
+        if (args != NULL) {
+            PyErr_SetObject(PyExc_KeyError, args);
+            Py_DECREF(args);
+        }
+        Py_DECREF(dupkey);
+        r = -1;
+    }
+    return r;
+}
+#endif
+
+#if LE_HAS_LOOKUP_SPECIAL_ID
+#define le_lookup_special_id _PyObject_LookupSpecial
+#else
+/* typeobject.c:_PyObject_LookupSpecialId and _PyObject_LookupSpecial */
+static PyObject *
+le_lookup_special_id(PyObject *self, _Py_Identifier *attrid)
+{
+    PyObject *attr = _PyUnicode_FromId(attrid), *res; /* borrowed */
+    descrgetfunc f;
+    if (attr == NULL)
+        return NULL;
+    res = _PyType_Lookup(Py_TYPE(self), attr);
+    if (res != NULL) {
+        if ((f = Py_TYPE(res)->tp_descr_get) == NULL)
+            Py_INCREF(res);
+        else
+            res = f(res, self, (PyObject *)(Py_TYPE(self)));
+    }
+    return res;
+}
+#endif
+
+#if LE_HAS_IMPORT_FROM_SPEC
+#if LE_HAS_MODULE_SPEC_IS_INITIALIZING_LINKABLE
+#define le_module_spec_is_initializing _PyModuleSpec_IsInitializing
+#else
+/* moduleobject.c:_PyModuleSpec_IsInitializing, which can fail */
+static int
+le_module_spec_is_initializing(PyObject *spec)
+{
+    _Py_IDENTIFIER(_initializing);
+    PyObject *name, *value;
+    int rc;
+    if (spec == NULL)
+        return 0;
+    name = _PyUnicode_FromId(&PyId__initializing); /* borrowed */
+    if (name == NULL)
+        return -1;
+    rc = le_lookup_attr(spec, name, &value);
+    if (rc > 0) {
+        rc = PyObject_IsTrue(value);
+        Py_DECREF(value);
+    }
+    return rc;
+}
+#endif
+#endif
 
 #if LE_CODESTATS
 #include <dlfcn.h>
@@ -2199,6 +2275,10 @@ extern PyObject *
 _PyObject_FastCallDictTstate(PyThreadState *tstate, PyObject *callable,
                              PyObject *const *args, size_t nargsf,
                              PyObject *kwargs);
+#define le_fastcall_dict_tstate _PyObject_FastCallDictTstate
+#else
+#define le_fastcall_dict_tstate(tstate, callable, args, nargsf, kwargs) \
+    _PyObject_FastCallDict(callable, args, nargsf, kwargs)
 #endif
 
 #if !LE_HAS_CFRAME
@@ -2309,15 +2389,9 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
                     result = NULL;
                 }
                 else {
-#if LE_HAS_FASTCALL_DICT_TSTATE
-                    result = _PyObject_FastCallDictTstate(
+                    result = le_fastcall_dict_tstate(
                         tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
                         nargs - 1, kwdict);
-#else
-                    result = _PyObject_FastCallDict(
-                        func, &(_PyTuple_CAST(callargs)->ob_item)[1],
-                        nargs - 1, kwdict);
-#endif
                     if (tstate->c_profilefunc != NULL) {
                         if (result == NULL) {
                             cimpl_call_trace_protected(
@@ -2337,15 +2411,9 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
                 }
             }
             else {
-#if LE_HAS_FASTCALL_DICT_TSTATE
-                result = _PyObject_FastCallDictTstate(
+                result = le_fastcall_dict_tstate(
                     tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
                     nargs - 1, kwdict);
-#else
-                result = _PyObject_FastCallDict(
-                    func, &(_PyTuple_CAST(callargs)->ob_item)[1], nargs - 1,
-                    kwdict);
-#endif
             }
             Py_DECREF(func);
             return result;
@@ -2401,7 +2469,7 @@ cimpl_import_from(PyObject *v, PyObject *name)
     PyObject *x;
     _Py_IDENTIFIER(__name__);
     PyObject *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
-    if (_PyObject_LookupAttr(v, name, &x) != 0) {
+    if (le_lookup_attr(v, name, &x) != 0) {
         return x;
     }
     pkgname = _PyObject_GetAttrId(v, &PyId___name__);
@@ -2606,7 +2674,7 @@ cimpl_match_keys(PyObject *map, PyObject *keys)
     if (seen == NULL) {
         goto fail;
     }
-    dummy = _PyObject_CallNoArg((PyObject *)&PyBaseObject_Type);
+    dummy = PyObject_CallObject((PyObject *)&PyBaseObject_Type, NULL);
     if (dummy == NULL) {
         goto fail;
     }
@@ -2665,14 +2733,13 @@ ct_format_exc_check_arg(PsycoObject *po, PyObject *exc, const char *format_str,
         return;
     PycException_SetFormat(po, exc, format_str, obj_str);
     if (exc == PyExc_NameError) {
-        _Py_IDENTIFIER(name);
         PyObject *type, *value, *traceback;
         PyErr_Fetch(&type, &value, &traceback);
         PyErr_NormalizeException(&type, &value, &traceback);
         if (PyErr_GivenExceptionMatches(value, PyExc_NameError)) {
             PyNameErrorObject *exc = (PyNameErrorObject *)value;
             if (exc->name == NULL) {
-                (void)_PyObject_SetAttrId(value, &PyId_name, obj);
+                (void)PyObject_SetAttrString(value, "name", obj);
             }
         }
         PyErr_Restore(type, value, traceback);
@@ -2690,8 +2757,6 @@ ct_format_exc_check_arg(PsycoObject *po, PyObject *exc, const char *format_str,
 }
 #endif
 
-_Py_IDENTIFIER(displayhook);
-
 #if !LE_HAS_INLINE_CALL_TSTATE_GET
 static int
 cimpl_print_expr_r0(PyObject *_in0, long _oparg, PyObject *value,
@@ -2704,7 +2769,7 @@ cimpl_print_expr_r0(PyObject *_in0, long _oparg, PyObject *value,
     Py_INCREF(value);
     {
         {
-            PyObject *hook = _PySys_GetObjectId(&PyId_displayhook);
+            PyObject *hook = PySys_GetObject("displayhook");
             PyObject *res;
             if (hook == NULL) {
                 PyErr_SetString(PyExc_RuntimeError, LE_MSG_NO_DISPLAYHOOK);
@@ -2985,14 +3050,13 @@ cimpl_format_exc_check_arg(PyObject *exc, const char *format_str,
         return;
     PyErr_Format(exc, format_str, obj_str);
     if (exc == PyExc_NameError) {
-        _Py_IDENTIFIER(name);
         PyObject *type, *value, *traceback;
         PyErr_Fetch(&type, &value, &traceback);
         PyErr_NormalizeException(&type, &value, &traceback);
         if (PyErr_GivenExceptionMatches(value, PyExc_NameError)) {
             PyNameErrorObject *exc = (PyNameErrorObject *)value;
             if (exc->name == NULL) {
-                (void)_PyObject_SetAttrId(value, &PyId_name, obj);
+                (void)PyObject_SetAttrString(value, "name", obj);
             }
         }
         PyErr_Restore(type, value, traceback);
@@ -3146,7 +3210,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 static int
 cimpl_dict_merge_0(PyObject *dict, PyObject *update, PyObject *_in0)
 {
-    int _r = _PyDict_MergeEx(dict, update, 2);
+    int _r = le_dict_merge_unique(dict, update);
     if (_r < 0) {
         cimpl_format_kwargs_error(_in0, update);
     }
@@ -3422,7 +3486,7 @@ static PyObject *
 cimpl_special_lookup(PyObject *o, _Py_Identifier *id)
 {
     PyObject *res;
-    res = _PyObject_LookupSpecial(o, id);
+    res = le_lookup_special_id(o, id);
     if (res == NULL && !PyErr_Occurred()) {
         PyErr_SetObject(PyExc_AttributeError, _PyUnicode_FromId(id));
         return NULL;
@@ -3597,7 +3661,7 @@ static int
 cimpl_build_map_unpack_with_call_0(PyObject *sum, PyObject *arg,
                                    PyObject *_in0)
 {
-    int _r = _PyDict_MergeEx(sum, arg, 2);
+    int _r = le_dict_merge_unique(sum, arg);
     if (_r < 0) {
 #if LE_HAS_KWARGS_MERGE_EX
         Py_DECREF(sum);
@@ -3646,7 +3710,7 @@ cimpl_import_from_whole(PyObject *v, PyObject *name)
     PyObject *x;
     _Py_IDENTIFIER(__name__);
     PyObject *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
-    if (_PyObject_LookupAttr(v, name, &x) != 0) {
+    if (le_lookup_attr(v, name, &x) != 0) {
         return x;
     }
     pkgname = _PyObject_GetAttrId(v, &PyId___name__);
@@ -3690,7 +3754,7 @@ error:
     else {
         _Py_IDENTIFIER(__spec__);
         PyObject *spec = _PyObject_GetAttrId(v, &PyId___spec__);
-        const char *fmt = _PyModuleSpec_IsInitializing(spec)
+        const char *fmt = le_module_spec_is_initializing(spec)
                               ? LE_MSG_IMPORT_NAME_CIRCULAR
                               : LE_MSG_IMPORT_NAME_FROM_FILE;
         Py_XDECREF(spec);
@@ -3784,7 +3848,7 @@ cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
                     result = NULL;
                 }
                 else {
-                    result = _PyObject_FastCallDictTstate(
+                    result = le_fastcall_dict_tstate(
                         tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
                         nargs - 1, kwdict);
                     if (tstate->c_profilefunc != NULL) {
@@ -3807,7 +3871,7 @@ cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
                 }
             }
             else {
-                result = _PyObject_FastCallDictTstate(
+                result = le_fastcall_dict_tstate(
                     tstate, func, &(_PyTuple_CAST(callargs)->ob_item)[1],
                     nargs - 1, kwdict);
             }
@@ -3848,7 +3912,7 @@ cimpl_call_function_ex(PyObject *_in0, PyObject *_in1, PyObject *_in2)
                     PyObject *d = PyDict_New();
                     if (d == NULL)
                         goto _error;
-                    if (_PyDict_MergeEx(d, kwargs, 2) < 0) {
+                    if (le_dict_merge_unique(d, kwargs) < 0) {
                         Py_DECREF(d);
                         cimpl_format_kwargs_error(stack_pointer[-2], kwargs);
                         Py_DECREF(kwargs);
@@ -3916,7 +3980,7 @@ _error:
                     if (d == NULL)
                         goto _error;
 #if LE_HAS_KWARGS_MERGE_EX
-                    if (_PyDict_MergeEx(d, kwargs, 2) < 0) {
+                    if (le_dict_merge_unique(d, kwargs) < 0) {
                         Py_DECREF(d);
                         cimpl_format_kwargs_error(stack_pointer[-2], kwargs);
                         Py_DECREF(kwargs);
@@ -4218,7 +4282,7 @@ done:
 static PyObject *
 special_lookup(PyObject *o, _Py_Identifier *id)
 {
-    PyObject *res = _PyObject_LookupSpecial(o, id);
+    PyObject *res = le_lookup_special_id(o, id);
     if (res == NULL && !PyErr_Occurred()) {
         PyErr_SetObject(PyExc_AttributeError, _PyUnicode_FromId(id));
         return NULL;
@@ -4242,7 +4306,7 @@ cimpl_setup_with(PyObject *mgr, PyObject *out[])
         Py_DECREF(enter);
         return -1;
     }
-    res = _PyObject_CallNoArg(enter);
+    res = PyObject_CallObject(enter, NULL);
     Py_DECREF(enter);
     if (res == NULL) {
         Py_DECREF(exit);
@@ -4430,7 +4494,7 @@ cimpl_do_raise(PyObject *exc, PyObject *cause)
 
     if (PyExceptionClass_Check(exc)) {
         type = exc;
-        value = _PyObject_CallNoArg(exc);
+        value = PyObject_CallObject(exc, NULL);
         if (value == NULL)
             goto raise_error;
         if (!PyExceptionInstance_Check(value)) {
@@ -4453,7 +4517,7 @@ cimpl_do_raise(PyObject *exc, PyObject *cause)
     if (cause) {
         PyObject *fixed_cause;
         if (PyExceptionClass_Check(cause)) {
-            fixed_cause = _PyObject_CallNoArg(cause);
+            fixed_cause = PyObject_CallObject(cause, NULL);
             if (fixed_cause == NULL)
                 goto raise_error;
             Py_DECREF(cause);
@@ -6009,9 +6073,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     vinfo_t *value;
                     value = NTOP(1);
 #if LE_HAS_INLINE_CALL_TSTATE_GET
-                    _t1 = psyco_generic_call(po, _PySys_GetObjectId,
+                    _t1 = psyco_generic_call(po, PySys_GetObject,
                                              CfCommonNewRefPyObject, "l",
-                                             (long)(&PyId_displayhook));
+                                             (long)"displayhook");
                     hook = _t1;
                     if (hook == NULL) {
                         PycException_SetString(po, PyExc_RuntimeError,
@@ -7853,9 +7917,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         vinfo_decref(enter, po);
                         break;
                     }
-                    res =
-                        psyco_generic_call(po, _PyObject_CallNoArg,
-                                           CfCommonNewRefPyObject, "v", enter);
+                    res = psyco_generic_call(po, PyObject_CallObject,
+                                             CfCommonNewRefPyObject, "vl",
+                                             enter, 0L);
                     vinfo_decref(enter, po);
                     if (res == NULL) {
                         vinfo_decref(exit, po);
@@ -7888,15 +7952,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         vinfo_decref(exit, po);
                         break;
                     }
-#if LE_HAS_CALL_NO_ARG_FUNCTION
-                    _t3 =
-                        psyco_generic_call(po, _PyObject_CallNoArg,
-                                           CfCommonNewRefPyObject, "v", enter);
-#else
-                    _t3 = psyco_generic_call(po, _PyObject_FastCallDict,
-                                             CfCommonNewRefPyObject, "vlll",
-                                             enter, 0L, (long)(0), 0L);
-#endif
+                    _t3 = psyco_generic_call(po, PyObject_CallObject,
+                                             CfCommonNewRefPyObject, "vl",
+                                             enter, 0L);
                     res = _t3;
                     vinfo_decref(enter, po);
                     if (res == NULL) {

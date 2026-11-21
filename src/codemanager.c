@@ -816,7 +816,7 @@ owners_pending(void *arg)
        skipped is asked for again by the next record counted */
     if (PyThreadState_GET()->interp != PyInterpreterState_Main() ||
         psyco_owner != NULL || le_compile_depth != 0 || nopen != 0 ||
-        psyco_compile_guard != NULL || _Py_IsFinalizing())
+        psyco_compile_guard != NULL || le_is_finalizing())
         return 0;
     extras_since_scan = 0;
     PyErr_Fetch(&t, &v, &tb);
@@ -848,7 +848,7 @@ owners_gc_callback(PyObject *self, PyObject *args)
         if (extras_since_scan > 0 && gen != NULL && PyLong_Check(gen) &&
             PyLong_AsLong(gen) == 2 && psyco_owner == NULL &&
             le_compile_depth == 0 && nopen == 0 &&
-            psyco_compile_guard == NULL && !_Py_IsFinalizing()) {
+            psyco_compile_guard == NULL && !le_is_finalizing()) {
             extras_since_scan = 0;
             owners_scan();
         }

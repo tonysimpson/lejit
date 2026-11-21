@@ -230,11 +230,17 @@ def _declared(s, name):
     return bool(path), '%s:%s' % (path or 'Include, every header', name)
 
 
-def _macro(s, name):
-    for path, _ in s.headers_with(name):
-        if name in s.macros(path):
+def _public(s, name):
+    """a header outside internal/ declares function name or defines it as
+    a macro: what an extension can call"""
+    for path, toks in s.headers_with(name):
+        if 'internal' in path.split(os.sep):
+            continue
+        if name in s.macros(path) or any(
+                t.text == name and toks[i + 1].text == '('
+                for i, t in enumerate(toks[:-1])):
             return True, '%s:%s' % (path, name)
-    return False, 'Include, every header: %s' % name
+    return False, 'every header outside internal/: %s' % name
 
 
 def _file(s, path):
@@ -611,17 +617,6 @@ def member_ex_error_from_type(s):
                 for t in s.tokens(sm)), sm + ': "... object has no attribute ..."')
 
 
-def call_no_arg_function(s):
-    """_PyObject_CallNoArg is a function, not a macro over _PyObject_FastCallDict"""
-    is_macro, evidence = _macro(s, '_PyObject_CallNoArg')
-    if is_macro:
-        return False, evidence
-    declared, evidence = _declared(s, '_PyObject_CallNoArg')
-    if not declared:
-        raise Unanswered('no _PyObject_CallNoArg in Include')
-    return True, evidence
-
-
 def delete_global_keyerror_only(s):
     """DELETE_GLOBAL raises NameError only for a KeyError"""
     found, evidence = _case_has(s, 'DELETE_GLOBAL', 'PyExc_KeyError')
@@ -841,6 +836,29 @@ AB = 'Objects/abstract.c'
 CE = 'Python/ceval.c'
 UO = 'Objects/unicodeobject.c'
 
+# C API functions that LeJIT calls where libpython exports them, and
+# replaces where it doesn't
+EXPORTS = [
+    ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
+    ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
+    ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
+    ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
+    ('MODULE_SPEC_IS_INITIALIZING_LINKABLE', '_PyModuleSpec_IsInitializing'),
+    ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
+    ('UNICODE_EQ_LINKABLE', '_PyUnicode_EQ'),
+    ('UNICODE_FAST_COPY_LINKABLE', '_PyUnicode_FastCopyCharacters'),
+    ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
+    ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
+    ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
+    ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip'),
+]
+
+
+def _export_detector(function):
+    return D('libpython exports %s' % function,
+             lambda s: _exported(s, function))
+
+
 # LE_HAS_<name> -> detector; its docstring's first line is the header's
 # comment. One list per area, so that work on different areas adds to
 # different lists; the header has them in the order of FEATURES below.
@@ -854,7 +872,9 @@ C_API = [
     ('CHECK_RESULT_TSTATE', check_result_tstate),
     ('OBJECTDICT_SETITEM_LINKABLE', objectdict_setitem_linkable),
     ('FLOAT_ASDOUBLE_INDEX', float_asdouble_index),
-]
+    ('LOOKUP_SPECIAL_ID', D('an extension can look up a special method by _Py_Identifier, with _PyObject_LookupSpecial',
+                            lambda s: _public(s, '_PyObject_LookupSpecial'))),
+] + [(name, _export_detector(f)) for name, f in EXPORTS]
 
 # the bytecode and what its instructions do
 BYTECODE = [
@@ -910,7 +930,6 @@ ABSTRACT = [
     ('INLINE_CALL_TSTATE_GET', D('the inline call helpers (PyObject_CallOneArg) take the thread state with PyThreadState_Get(), not PyThreadState_GET()',
                                  lambda s: (any('PyThreadState_Get' in _texts(t) for _, t in s.definitions('PyObject_CallOneArg')),
                                             'Include, every header: PyObject_CallOneArg'))),
-    ('CALL_NO_ARG_FUNCTION', call_no_arg_function),
     ('CALL_ONE_ARG', D('PyObject_CallOneArg exists',
                        lambda s: _declared(s, 'PyObject_CallOneArg'))),
     ('FUNCTION_STR', D('_PyObject_FunctionStr names a function in error messages',

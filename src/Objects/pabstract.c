@@ -3762,15 +3762,6 @@ PsycoObject_Size(PsycoObject *po, vinfo_t *o)
 }
 
 DEFINEFN vinfo_t *
-_PsycoSequence_IterSearch(PsycoObject *po, vinfo_t *seq, vinfo_t *obj,
-                          int operation)
-{
-    return psyco_generic_call(po, _PySequence_IterSearch,
-                              CfCommonPySSizeTResult, "vvl", seq, obj,
-                              (long)(operation));
-}
-
-DEFINEFN vinfo_t *
 PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob)
 {
     objobjproc _t1;
@@ -3779,7 +3770,6 @@ PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob)
 #if LE_HAS_CHECK_SLOT_RESULT
     vinfo_t *res;
 #endif
-    vinfo_t *result;
     PySequenceMethods *sqm;
     PyTypeObject *tp_seq;
     tp_seq = Psyco_NeedType(po, seq);
@@ -3810,8 +3800,8 @@ PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob)
         return _t3;
 #endif
     }
-    result = _PsycoSequence_IterSearch(po, seq, ob, 3);
-    return result;
+    return psyco_generic_call(po, PySequence_Contains, CfCommonIntBoolOrError,
+                              "vv", seq, ob);
 }
 
 DEFINEFN vinfo_t *

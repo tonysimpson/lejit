@@ -147,13 +147,6 @@ def _declared(h, name):
     return bool(path), '%s:%s' % (path or 'every header', name)
 
 
-def _macro(h, name):
-    for path, _ in h.headers_with(name):
-        if name in h.macros(path):
-            return True, '%s:%s' % (path, name)
-    return False, 'every header: %s' % name
-
-
 def check_result_tstate(h):
     """headers: _Py_CheckFunctionResult's first parameter is a
     PyThreadState"""
@@ -276,21 +269,18 @@ def inline_call_tstate_get(h):
             ', '.join(sorted({p for p, _ in found})) or 'every header')
 
 
-def call_no_arg_function(h):
-    """headers: _PyObject_CallNoArg is declared, and not as a macro"""
-    is_macro, evidence = _macro(h, '_PyObject_CallNoArg')
-    if is_macro:
-        return False, evidence
-    declared, evidence = _declared(h, '_PyObject_CallNoArg')
-    if not declared:
-        raise Unanswered('no _PyObject_CallNoArg in the headers')
-    return True, evidence
-
-
 def call_one_arg(h):
     """headers: PyObject_CallOneArg is declared (it is static inline, so
     ctypes can't see it)"""
     return _declared(h, 'PyObject_CallOneArg')
+
+
+def public(function):
+    def detect(h):
+        return features._public(h, function)
+    detect.__doc__ = ('headers: a header outside internal/ declares %s or'
+                      ' defines it as a macro' % function)
+    return detect
 
 
 def tuple_get_empty(h):
@@ -322,7 +312,7 @@ HEADER_DETECTORS = {
     'GC_HEAD_INTERNAL': gc_head_internal,
     'CHECK_SLOT_RESULT': check_slot_result,
     'INLINE_CALL_TSTATE_GET': inline_call_tstate_get,
-    'CALL_NO_ARG_FUNCTION': call_no_arg_function,
+    'LOOKUP_SPECIAL_ID': public('_PyObject_LookupSpecial'),
     'CALL_ONE_ARG': call_one_arg,
     'TUPLE_GET_EMPTY': tuple_get_empty,
 }
