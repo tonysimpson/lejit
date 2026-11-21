@@ -535,7 +535,7 @@ pyc_data_build(PsycoObject *po, PyObject *merge_points)
 static void
 block_setup(PsycoObject *po, int type, int handler, int level)
 {
-    PyTryBlock *b;
+    le_block_t *b;
     extra_assert(!po->pr.is_inlining);
     if (po->pr.iblock >= CO_MAXBLOCKS)
         Py_FatalError("block stack overflow");
@@ -545,7 +545,7 @@ block_setup(PsycoObject *po, int type, int handler, int level)
     b->b_handler = handler;
 }
 
-static PyTryBlock *
+static le_block_t *
 block_pop(PsycoObject *po)
 {
     extra_assert(!po->pr.is_inlining);
@@ -1003,8 +1003,7 @@ static bool
 locals_calls(PsycoObject *po, void *fn, char tag, long target)
 {
     PyCodeObject *co = po->pr.co;
-    int n = co->co_nlocals + PyTuple_GET_SIZE(co->co_cellvars) +
-            PyTuple_GET_SIZE(co->co_freevars);
+    int n = le_code_nlocalsplus(co);
     int i, j;
     for (i = 0; i < n; i += 5) {
         char tags[8] = "?lvvvvv";
@@ -1014,7 +1013,7 @@ locals_calls(PsycoObject *po, void *fn, char tag, long target)
             vinfo_t *v = i + j < n ? LOC_LOCALS_PLUS[i + j] : NULL;
             if (v == NULL || v->source == SOURCE_NOT_IMPORTANT) {
                 tags[2 + j] = 'l';
-                args[j] = v == NULL && i + j < co->co_nlocals
+                args[j] = v == NULL && i + j < le_code_nlocals(co)
                               ? 0
                               : (long)LE_LOCAL_UNKNOWN;
             }
@@ -1038,8 +1037,7 @@ static bool
 has_virtual_local(PsycoObject *po)
 {
     PyCodeObject *co = po->pr.co;
-    int i, n = co->co_nlocals + PyTuple_GET_SIZE(co->co_cellvars) +
-               PyTuple_GET_SIZE(co->co_freevars);
+    int i, n = le_code_nlocalsplus(co);
     for (i = 0; i < n; i++) {
         vinfo_t *v = LOC_LOCALS_PLUS[i];
         if (v != NULL && v->source != SOURCE_NOT_IMPORTANT &&
@@ -1238,7 +1236,7 @@ locals_wanted_now(PsycoObject *po)
              LOC_INLINING->array->items[LOC_INLINE_CO]->source)
              ->value;
     for (i = po->pr.iblock; i-- > 0;) {
-        PyTryBlock *b = &po->pr.blockstack[i];
+        le_block_t *b = &po->pr.blockstack[i];
         if (b->b_type == SETUP_LOOP)
             continue;
         return !((b->b_type == SETUP_EXCEPT || b->b_type == SETUP_FINALLY) &&
@@ -1406,7 +1404,7 @@ is_finally_return(vinfo_t *v)
 /* ceval's UNWIND_EXCEPT_HANDLER: drop what the handler left above its six
    items, then restore the saved exc_info from the bottom three */
 static void
-unwind_except_handler(PsycoObject *po, PyTryBlock *b, bool unwind)
+unwind_except_handler(PsycoObject *po, le_block_t *b, bool unwind)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     vinfo_t *type, *value, *tb, *word = catcher_word(po);
@@ -1428,7 +1426,7 @@ unwind_except_handler(PsycoObject *po, PyTryBlock *b, bool unwind)
 static bool
 pop_except_handler(PsycoObject *po, bool unwind)
 {
-    PyTryBlock *b = block_pop(po);
+    le_block_t *b = block_pop(po);
     if (b->b_type != EXCEPT_HANDLER) {
         PycException_SetString(po, PyExc_SystemError,
                                "popped block is not an except handler");
@@ -2011,7 +2009,7 @@ unicode_concatenate(PsycoObject *po, int next_instr)
         SETLOCAL(oparg, psyco_vi_Zero());
     }
     else if (opcode == STORE_DEREF) {
-        vinfo_t *cell = GETLOCAL(co->co_nlocals + oparg), *zero;
+        vinfo_t *cell = GETLOCAL(le_code_nlocals(co) + oparg), *zero;
         bool ok;
         if (left->refcount != 1)
             return 0;
@@ -3042,14 +3040,13 @@ ct_format_exc_unbound(PsycoObject *po, PyCodeObject *co, int oparg)
     PyObject *name;
     if (PycException_Occurred(po))
         return;
-    if (oparg < PyTuple_GET_SIZE(co->co_cellvars)) {
-        name = PyTuple_GET_ITEM(co->co_cellvars, oparg);
+    if (oparg < le_code_ncells(co)) {
+        name = le_code_cell_name(co, oparg);
         ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
                                 LE_MSG_LOCAL_UNBOUND, name);
     }
     else {
-        name = PyTuple_GET_ITEM(co->co_freevars,
-                                oparg - PyTuple_GET_SIZE(co->co_cellvars));
+        name = le_code_free_name(co, oparg - le_code_ncells(co));
         ct_format_exc_check_arg(po, PyExc_NameError, LE_MSG_FREE_UNBOUND,
                                 name);
     }
@@ -5046,8 +5043,7 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
 {
     PyCodeObject *co = po->pr.co;
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
-    int nlocals = co->co_nlocals + PyTuple_GET_SIZE(co->co_cellvars) +
-                  PyTuple_GET_SIZE(co->co_freevars);
+    int nlocals = le_code_nlocalsplus(co);
     int nstack = STACK_LEVEL();
     /* an inlined frame has no blocks of its own: those in 'pr' are its
        caller's, which goes on compiled once the call returns */
@@ -5075,7 +5071,7 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
         }
     }
     for (i = 0; i < nblocks; i++) {
-        PyTryBlock *b = &po->pr.blockstack[i];
+        le_block_t *b = &po->pr.blockstack[i];
         if (psyco_generic_call(po, psyco_resume_block, CfNoReturnValue, "vlll",
                                st, (long)b->b_type, (long)b->b_handler,
                                (long)b->b_level) == NULL) {
@@ -5265,9 +5261,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     vinfo_t *value;
                     value = GETLOCAL(oparg);
                     if (psyco_knowntobe(value, 0)) {
-                        ct_format_exc_check_arg(
-                            po, PyExc_UnboundLocalError, LE_MSG_LOCAL_UNBOUND,
-                            PyTuple_GetItem(co->co_varnames, oparg));
+                        ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
+                                                LE_MSG_LOCAL_UNBOUND,
+                                                le_code_local_name(co, oparg));
                         break;
                     }
                     vinfo_incref(value);
@@ -6422,9 +6418,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         SETLOCAL(oparg, _t1);
                         goto fine;
                     }
-                    ct_format_exc_check_arg(
-                        po, PyExc_UnboundLocalError, LE_MSG_LOCAL_UNBOUND,
-                        PyTuple_GetItem(co->co_varnames, oparg));
+                    ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
+                                            LE_MSG_LOCAL_UNBOUND,
+                                            le_code_local_name(co, oparg));
                     break;
                 }
 
@@ -6436,7 +6432,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     vinfo_t *_t5;
                     vinfo_t *cell;
                     vinfo_t *oldobj;
-                    cell = GETLOCAL(co->co_nlocals + oparg);
+                    cell = GETLOCAL(le_code_nlocals(co) + oparg);
                     _t1 = psyco_get_field(po, cell, CELL_ob_ref);
                     if (_t1 == NULL) {
                         break;
@@ -6469,7 +6465,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
                 case LOAD_CLOSURE: {
                     vinfo_t *cell;
-                    cell = GETLOCAL(co->co_nlocals + oparg);
+                    cell = GETLOCAL(le_code_nlocals(co) + oparg);
                     vinfo_incref(cell);
                     PUSH(cell);
                     goto fine;
@@ -6481,7 +6477,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     int _t3;
                     vinfo_t *cell;
                     vinfo_t *value;
-                    cell = GETLOCAL(co->co_nlocals + oparg);
+                    cell = GETLOCAL(le_code_nlocals(co) + oparg);
                     _t1 = psyco_get_field(po, cell, CELL_ob_ref);
                     if (_t1 == NULL) {
                         break;
@@ -6511,7 +6507,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     vinfo_t *oldobj;
                     vinfo_t *v;
                     v = NTOP(1);
-                    cell = GETLOCAL(co->co_nlocals + oparg);
+                    cell = GETLOCAL(le_code_nlocals(co) + oparg);
                     _t1 = psyco_get_field(po, cell, CELL_ob_ref);
                     if (_t1 == NULL) {
                         break;
@@ -8422,7 +8418,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 }
 
                 case POP_BLOCK: {
-                    PyTryBlock *b = block_pop(po);
+                    le_block_t *b = block_pop(po);
                     if (LE_HAS_POP_BLOCK_UNWINDS) {
                         while (STACK_LEVEL() > b->b_level) {
                             POP(v);
@@ -8779,7 +8775,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 }
 
                 case WITH_CLEANUP_START: {
-                    PyTryBlock *b =
+                    le_block_t *b =
                         po->pr.iblock > 0
                             ? &po->pr.blockstack[(int)po->pr.iblock - 1]
                             : NULL;
@@ -9129,7 +9125,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
            ceval.c's stack unwinding code. */
 
         while (po->pr.iblock > 0) {
-            PyTryBlock *b = block_pop(po);
+            le_block_t *b = block_pop(po);
 
             if (b->b_type == SETUP_LOOP && PycException_Is(po, &EContinue)) {
                 /* For a continue inside a try block,

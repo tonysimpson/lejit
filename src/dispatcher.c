@@ -612,7 +612,7 @@ pyc_set_grow(void)
 }
 
 _Static_assert(offsetof(pyc_data_t, blockstack) % 4 == 0 &&
-                   sizeof(PyTryBlock) % 4 == 0,
+                   sizeof(le_block_t) % 4 == 0,
                "pyc_share hashes 32-bit words");
 
 static pyc_data_t *
@@ -2389,7 +2389,7 @@ canonical_int(PsycoObject *po, int index)
     PyObject *o;
     source_virtual_t *sv;
     long value;
-    int i, in_locals, nlocals = po->pr.co->co_nlocals;
+    int i, in_locals, nlocals = le_code_nlocals(po->pr.co);
     if (a == NULL || !is_compiletime(a->source))
         return;
     sk = CompileTime_Get(a->source);
@@ -2574,7 +2574,7 @@ psyco_forget_values(PsycoObject *po, global_entries_t *ge)
     int i, nlocals;
     long *want;
     char *varies;
-    for (i = 0; i < po->pr.co->co_nlocals; i++) {
+    for (i = 0; i < le_code_nlocals(po->pr.co); i++) {
         vinfo_t *a = LOC_LOCALS_PLUS[i];
         vinfo_t *w;
         long value;
@@ -2606,7 +2606,7 @@ psyco_forget_values(PsycoObject *po, global_entries_t *ge)
        nothing */
     static long *table = NULL;
     static int tablecap = 0;
-    nlocals = po->pr.co->co_nlocals;
+    nlocals = le_code_nlocals(po->pr.co);
     if (nlocals > tablecap) {
         long *t = PyMem_Realloc(table, nlocals * (sizeof(long) + 1));
         if (t == NULL)
@@ -2669,7 +2669,7 @@ psyco_unpromote_large_ints(PsycoObject *po)
 {
     bool changed = false;
     int i;
-    for (i = 0; i < po->pr.co->co_nlocals; i++) {
+    for (i = 0; i < le_code_nlocals(po->pr.co); i++) {
         vinfo_t *a = LOC_LOCALS_PLUS[i];
         source_known_t *sk;
         if (a == NULL || !is_compiletime(a->source))
@@ -2821,7 +2821,7 @@ psyco_compatible(PsycoObject *po, global_entries_t *patterns)
     int i;
     PyObject *plist = patterns->fatlist;
     extra_assert(PyList_Check(plist));
-    for (i = 0; i < po->pr.co->co_nlocals; i++) canonical_int(po, i);
+    for (i = 0; i < le_code_nlocals(po->pr.co); i++) canonical_int(po, i);
     compatible_drop_unused =
         !compatible_at_join && !psyco_compatible_keep_facts;
     /* facts stamped since the last merge point are in use. 0 (all kept)

@@ -36,7 +36,7 @@ EXTERNFN PyObject *
 psyco_analyse_code(PyCodeObject *co, le_code_extra_t *x, int module);
 EXTERNFN int
 psyco_is_genexpr(PyCodeObject *co);
-/* the index in co_freevars of '__class__', or -1 */
+/* the index among the free variables of '__class__', or -1 */
 EXTERNFN int
 psyco_class_cell(PyCodeObject *co);
 

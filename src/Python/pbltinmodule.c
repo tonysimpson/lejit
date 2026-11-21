@@ -924,18 +924,18 @@ static vinfo_t *
 psuper_noargs(PsycoObject *po)
 {
     PyCodeObject *co = po->pr.co;
-    Py_ssize_t i, ncells = PyTuple_GET_SIZE(co->co_cellvars);
+    Py_ssize_t i, ncells = le_code_ncells(co);
     int fv = psyco_class_cell(co);
     vinfo_t *obj, *objcell = NULL, *classcell = NULL, *zero, *r;
     zero = psyco_vi_Zero();
     obj = co->co_argcount > 0 ? LOC_LOCALS_PLUS[0] : zero;
     if (obj == NULL)
         obj = zero;
-    for (i = 0; co->co_cell2arg != NULL && i < ncells; i++)
-        if (co->co_cell2arg[i] == 0)
-            objcell = LOC_LOCALS_PLUS[co->co_nlocals + i];
+    for (i = 0; i < ncells; i++)
+        if (le_code_cell_arg(co, (int)i) == 0)
+            objcell = LOC_LOCALS_PLUS[le_code_nlocals(co) + i];
     if (fv >= 0)
-        classcell = LOC_LOCALS_PLUS[co->co_nlocals + ncells + fv];
+        classcell = LOC_LOCALS_PLUS[le_code_nlocals(co) + ncells + fv];
     r = psyco_generic_call(po, cimpl_super_noargs, CfCommonNewRefPyObject,
                            "lvvv", (long)co->co_argcount, obj,
                            objcell ? objcell : zero,

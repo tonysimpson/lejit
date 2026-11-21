@@ -214,9 +214,9 @@ le_dead_locals(PyObject *self, PyObject *co)
             PyObject *o = PyList_GET_ITEM(mp->entries.fatlist, i);
             if (!PyLong_Check(o))
                 break;
-            if (PyList_Append(
-                    names, PyTuple_GET_ITEM(((PyCodeObject *)co)->co_varnames,
-                                            PyLong_AS_LONG(o))) < 0) {
+            if (PyList_Append(names, le_code_local_name(((PyCodeObject *)co),
+                                                        PyLong_AS_LONG(o))) <
+                0) {
                 Py_DECREF(names);
                 goto fail;
             }

@@ -5,6 +5,7 @@
 #ifndef _PYCHEADER_H
 #define _PYCHEADER_H
 
+#include "../mechanisms/code.h"
 #include "../psyco.h"
 #include <compile.h>
 #include <frameobject.h>
@@ -64,9 +65,8 @@
 #define GENEXPR_MIN 6  /* min(), max(): acc is the best so far, or NULL */
 #define GENEXPR_MAX 7
 #define GENEXPR_SLOTS 2
-#define GENEXPR_SLOT_MODE(co)                   \
-    (INDEX_LOC_LOCALS_PLUS + (co)->co_nlocals + \
-     PyTuple_GET_SIZE((co)->co_freevars))
+#define GENEXPR_SLOT_MODE(co) \
+    (INDEX_LOC_LOCALS_PLUS + le_code_nlocals(co) + le_code_nfrees(co))
 #define GENEXPR_SLOT_ACC(co) (GENEXPR_SLOT_MODE(co) + 1)
 
 #define LOC_CONTINUATION (po->vlocals.items[INDEX_LOC_CONTINUATION])
@@ -74,6 +74,13 @@
 #define LOC_INLINING (po->vlocals.items[INDEX_LOC_INLINING])
 #define LOC_BUILTINS (po->vlocals.items[INDEX_LOC_BUILTINS])
 #define LOC_LOCALS_PLUS (po->vlocals.items + INDEX_LOC_LOCALS_PLUS)
+
+/* a try or loop block of the code being compiled */
+typedef struct {
+    int b_type;    /* the SETUP_* opcode that opened it */
+    int b_handler; /* where it goes, in bytes */
+    int b_level;   /* the value stack's depth in it */
+} le_block_t;
 
 typedef struct {
     PyCodeObject *co; /* code object we are compiling */
@@ -100,7 +107,7 @@ typedef struct {
                                    in snapshots, so a respawn replays the same
                                    LOAD_GLOBAL decisions; shared, so never
                                    changed in place (mark_varying) */
-    PyTryBlock blockstack[CO_MAXBLOCKS]; /* for try and loop blocks */
+    le_block_t blockstack[CO_MAXBLOCKS]; /* for try and loop blocks */
 
     /* fields after 'blockstack' are not saved in a FrozenPsycoObject */
     int stack_base;  /* number of items before the stack in LOC_LOCALS_PLUS */

@@ -178,8 +178,7 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
                          int count)
 {
     PyCodeObject *co = f->f_code;
-    int n = co->co_nlocals + PyTuple_GET_SIZE(co->co_cellvars) +
-            PyTuple_GET_SIZE(co->co_freevars);
+    int n = le_code_nlocalsplus(co);
     int i;
     /* an emulated frame isn't executing, and the first write is from 0 */
     FrameRuntime *fr = start == 0 && le_frame_is_executing(f)
@@ -323,8 +322,7 @@ lm_vinfo(long **p, const long *regs)
 static int
 n_locals_plus(PyCodeObject *co)
 {
-    return co->co_nlocals + (int)PyTuple_GET_SIZE(co->co_cellvars) +
-           (int)PyTuple_GET_SIZE(co->co_freevars);
+    return le_code_nlocalsplus(co);
 }
 
 /* The locals of the compiled frame of code 'co' whose stack slot is
@@ -370,7 +368,7 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
         vinfo_decref(vi, NULL);
         if (values[i] == NULL)
             PyErr_Clear();
-        else if (i >= co->co_nlocals && !PyCell_Check(values[i]))
+        else if (i >= le_code_nlocals(co) && !PyCell_Check(values[i]))
             Py_CLEAR(values[i]);
     }
     PyErr_Restore(t, val, tb);
@@ -387,7 +385,7 @@ locals_from_slot(PyFrameObject *f, stack_frame_info_t **slot)
     if (values == NULL)
         return;
     if (slot_locals(slot, f->f_code, values)) {
-        for (i = f->f_code->co_nlocals; i < n; i++)
+        for (i = le_code_nlocals(f->f_code); i < n; i++)
             if (values[i] == NULL)
                 values[i] = LE_LOCAL_UNKNOWN;
         psyco_frame_write_locals(f, 0, values, n);
@@ -1950,9 +1948,7 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     hook_t profile = {ts->c_profilefunc, ts->c_profileobj};
     struct hidden_s hidden = {st->slot, hidden_frames};
     FrameRuntime *fr = st->slot == NULL ? psyco_frame_start_get(f) : NULL;
-    extra_assert(nlocals == f->f_code->co_nlocals +
-                                PyTuple_GET_SIZE(f->f_code->co_cellvars) +
-                                PyTuple_GET_SIZE(f->f_code->co_freevars));
+    extra_assert(nlocals == le_code_nlocalsplus(f->f_code));
     extra_assert(nstack <= f->f_code->co_stacksize);
 
     /* the old locals go only once all the new ones are in: one may hold

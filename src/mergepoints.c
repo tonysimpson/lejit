@@ -165,9 +165,9 @@ DEFINEFN int
 psyco_class_cell(PyCodeObject *co)
 {
     Py_ssize_t fv;
-    for (fv = 0; fv < PyTuple_GET_SIZE(co->co_freevars); fv++)
-        if (PyUnicode_CompareWithASCIIString(
-                PyTuple_GET_ITEM(co->co_freevars, fv), "__class__") == 0)
+    for (fv = 0; fv < le_code_nfrees(co); fv++)
+        if (PyUnicode_CompareWithASCIIString(le_code_free_name(co, fv),
+                                             "__class__") == 0)
             return (int)fv;
     return -1;
 }
@@ -246,7 +246,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
 {
     le_code_t c = le_code(co);
     Py_ssize_t n = c.size / LE_UNIT;
-    int nlocals = co->co_nlocals, words = LIVE_WORDS(co->co_nlocals);
+    int nlocals = le_code_nlocals(co), words = LIVE_WORDS(le_code_nlocals(co));
     Py_ssize_t i, m;
     int *op, *nxt;
     int *arg; /* a jump's target, in code units; else the argument */
@@ -812,7 +812,7 @@ psyco_is_genexpr(PyCodeObject *co)
                          CO_ITERABLE_COROUTINE)) != CO_GENERATOR ||
         co->co_argcount != 1 || co->co_kwonlyargcount != 0 ||
         (co->co_flags & (CO_VARARGS | CO_VARKEYWORDS)) ||
-        PyTuple_GET_SIZE(co->co_cellvars) != 0 ||
+        le_code_ncells(co) != 0 ||
         PyUnicode_CompareWithASCIIString(co->co_name, "<genexpr>") != 0)
         return 0;
     c = le_code(co);

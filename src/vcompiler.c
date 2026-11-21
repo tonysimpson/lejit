@@ -1265,11 +1265,9 @@ PsycoObject_Ready(PsycoObject *po)
 static bool
 is_cell_arg(PyCodeObject *co, int arg)
 {
-    Py_ssize_t i;
-    if (co->co_cell2arg == NULL)
-        return false;
-    for (i = 0; i < PyTuple_GET_SIZE(co->co_cellvars); i++)
-        if (co->co_cell2arg[i] == arg)
+    int i;
+    for (i = 0; i < le_code_ncells(co); i++)
+        if (le_code_cell_arg(co, i) == arg)
             return true;
     return false;
 }
@@ -1285,9 +1283,9 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     source_known_t *sk;
     vinfo_t *v;
 
-    ncells = PyTuple_GET_SIZE(co->co_cellvars);
-    nfrees = PyTuple_GET_SIZE(co->co_freevars);
-    extras = co->co_stacksize + co->co_nlocals + ncells + nfrees;
+    ncells = le_code_ncells(co);
+    nfrees = le_code_nfrees(co);
+    extras = co->co_stacksize + le_code_nlocals(co) + ncells + nfrees;
 
     po = PsycoObject_New(INDEX_LOC_LOCALS_PLUS + extras);
     po->stack_depth = INITIAL_STACK_DEPTH;
@@ -1323,9 +1321,9 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         argc++;
 
     /* initialize the free and cell vars */
-    i = co->co_nlocals + ncells + nfrees;
+    i = le_code_nlocals(co) + ncells + nfrees;
     if (ncells || nfrees) {
-        while (i > co->co_nlocals) {
+        while (i > le_code_nlocals(co)) {
             po->stack_depth += sizeof(long);
             /* borrowed references from the frame object */
             rsrc = RunTime_NewStack(po->stack_depth, false, false);

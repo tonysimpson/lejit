@@ -1,6 +1,7 @@
 #include "codemanager.h"
 #include <time.h>
 #include "platform.h"
+#include "mechanisms/exc.h"
 #include <ipyencoding.h>
 
 /*** Executable memory ***/
@@ -1002,9 +1003,7 @@ psyco_guard_push(le_compile_guard_t *g)
     g->nopen = nopen;
     g->njournal = njournal;
     g->tries = 0;
-    g->exc_type = ts->curexc_type;
-    g->exc_value = ts->curexc_value;
-    g->exc_tb = ts->curexc_traceback;
+    le_exc_get_current(ts, &g->exc_type, &g->exc_value, &g->exc_tb);
 #if ALL_CHECKS
     g->respawn_file = psyco_respawn_file;
     g->respawn_line = psyco_respawn_line;
@@ -1038,6 +1037,7 @@ psyco_guard_abandon(void)
 {
     le_compile_guard_t *g = psyco_compile_guard;
     PyThreadState *ts = PyThreadState_GET();
+    PyObject *type, *value, *tb;
     /* nothing below may run out of memory under this guard again */
     psyco_compile_guard = g->prev;
     while (njournal > g->njournal) {
@@ -1058,8 +1058,8 @@ psyco_guard_abandon(void)
     psyco_respawn_line = g->respawn_line;
 #endif
     psyco_compile_abandoned();
-    if (ts->curexc_type != g->exc_type || ts->curexc_value != g->exc_value ||
-        ts->curexc_traceback != g->exc_tb) {
+    le_exc_get_current(ts, &type, &value, &tb);
+    if (type != g->exc_type || value != g->exc_value || tb != g->exc_tb) {
         PyErr_Clear();
         if (g->exc_type != NULL)
             PyErr_NoMemory(); /* the compile lost the run-time exception */
