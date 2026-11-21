@@ -508,6 +508,22 @@ def IMMUTABLE_TYPE_FLAG():
 
 
 @probe
+def VALID_VERSION_TAG_FLAG():
+    """a class has the flag 1 << 19 (Py_TPFLAGS_VALID_VERSION_TAG) after a
+    lookup on it, and loses it when the class changes (run)"""
+    class C(object):
+        pass
+    getattr(C, 'x', None)
+    looked = bool(C.__flags__ & (1 << 19))
+    C.x = 1
+    changed = bool(C.__flags__ & (1 << 19))
+    if looked and changed:
+        raise Unanswered('1 << 19 stayed set after the class changed')
+    return looked, 'after a lookup on a class, 1 << 19 is %s' % (
+        'set' if looked else 'not set')
+
+
+@probe
 def TERNARY_IOP():
     """`x **= y` falls back to y.__rpow__ when x.__ipow__ returns
     NotImplemented (run)"""

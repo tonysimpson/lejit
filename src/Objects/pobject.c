@@ -427,8 +427,8 @@ generic:
    those of 3.7's _PyObject_GenericGetAttrWithDict: the type's attribute
    (descr) is looked up now, and is only valid while the type is unchanged,
    which a run-time check of its version tag guards (every change to a type
-   or a base, including a new __getattr__, clears
-   Py_TPFLAGS_VALID_VERSION_TAG; a new tag is assigned at the next lookup).
+   or a base, including a new __getattr__, invalidates the tag
+   (version_tag_valid); a new tag is assigned at the next lookup).
    What the load does once the guard passes is load_kind's result, and the
    guard is shared by every site of (type, name, kind) (load_guard). A
    failed guard calls load_type_changed, which re-arms the guard of the
@@ -465,9 +465,22 @@ typedef struct {
 } attr_guard_t;
 
 /* The guard is inline (x64/ipyencoding.c:psyco_type_guard): the type
-   changed if tp_flags (which include Py_TPFLAGS_VALID_VERSION_TAG) or
+   changed if tp_flags (which may include Py_TPFLAGS_VALID_VERSION_TAG) or
    tp_version_tag differ from the guard's. All four are run-time loads, so
    a replay with an unset guard emits the same conditions. */
+
+/* Whether tp's version tag stands for its current state. CPython marks a
+   change either by clearing Py_TPFLAGS_VALID_VERSION_TAG, which keeps the
+   old tag, or, where it never sets that flag, by setting the tag to 0. */
+static bool
+version_tag_valid(PyTypeObject *tp)
+{
+#if LE_HAS_VALID_VERSION_TAG_FLAG
+    return PyType_HasFeature(tp, Py_TPFLAGS_VALID_VERSION_TAG);
+#else
+    return tp->tp_version_tag != 0;
+#endif
+}
 
 /* the type differs from the guard's: a condition code */
 static condition_code_t
@@ -839,8 +852,7 @@ static void
 load_guard_set(attr_guard_t *guard, PyTypeObject *tp)
 {
     guard->tag = tp->tp_version_tag;
-    guard->flags =
-        PyType_HasFeature(tp, Py_TPFLAGS_VALID_VERSION_TAG) ? tp->tp_flags : 0;
+    guard->flags = version_tag_valid(tp) ? tp->tp_flags : 0;
 }
 
 #if ALL_CHECKS
@@ -1267,8 +1279,7 @@ static void
 store_guard_set(attr_guard_t *guard, PyTypeObject *tp)
 {
     guard->tag = tp->tp_version_tag;
-    guard->flags =
-        PyType_HasFeature(tp, Py_TPFLAGS_VALID_VERSION_TAG) ? tp->tp_flags : 0;
+    guard->flags = version_tag_valid(tp) ? tp->tp_flags : 0;
 }
 
 /* A store whose type guard failed: the class changed, often only by a new
