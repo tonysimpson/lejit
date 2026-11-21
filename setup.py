@@ -35,6 +35,8 @@ def fallback_reason():
             or sys.maxsize <= 2**32:
         return 'LeJIT runs only on x86-64 Linux, not %s %s' % (sys.platform,
                                                            platform.machine())
+    if sysconfig.get_config_var('Py_GIL_DISABLED'):
+        return 'LeJIT runs only on CPython with the GIL, not a free-threaded build'
     if sys.version_info >= (3, 11):
         return 'LeJIT runs only on CPython 3.7 to 3.10, not %d.%d' % sys.version_info[:2]
     if os.environ.get('LE_FALLBACK') == '1':

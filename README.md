@@ -31,8 +31,9 @@ nothing.
 
 The package is `lejit/` (its API, in Python, is `lejit/__init__.py`) over the
 compiled module `lejit._core`, built from the C sources in `src/`. On a Python
-LeJIT can't run on (not CPython, not x86-64 Linux, or 3.11 and later) only the
-package is installed: `lejit.start()` warns and does nothing.
+LeJIT can't run on (not CPython, not x86-64 Linux, a free-threaded build, or
+3.11 and later) only the package is installed: `lejit.start()` warns and does
+nothing.
 
 ## Status
 
