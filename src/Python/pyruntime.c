@@ -25,6 +25,7 @@
 #endif
 #include "frameobject.h"
 #include "opcode.h"
+#include "../bytecode.h"
 
 /* le_tstate_current_address */
 /* The running thread's state is the word _PyRuntime.gilstate.tstate_current
@@ -122,7 +123,7 @@ le_eval_breaker_at_entry(PyFrameObject *f)
     int op;
     if (!_Py_atomic_load_relaxed(&le_ceval2()->eval_breaker))
         return 0;
-    op = _Py_OPCODE(*(_Py_CODEUNIT *)PyBytes_AS_STRING(f->f_code->co_code));
+    op = le_op(le_code(f->f_code), 0);
     if (op == SETUP_FINALLY || op == SETUP_WITH || op == BEFORE_ASYNC_WITH ||
         op == YIELD_FROM)
         return 0;
@@ -197,7 +198,7 @@ le_eval_breaker_at_entry(PyFrameObject *f)
     int op;
     if (!_Py_atomic_load_relaxed(&_PyRuntime.ceval.eval_breaker))
         return 0;
-    op = _Py_OPCODE(*(_Py_CODEUNIT *)PyBytes_AS_STRING(f->f_code->co_code));
+    op = le_op(le_code(f->f_code), 0);
     if (op == SETUP_FINALLY || op == SETUP_WITH || op == BEFORE_ASYNC_WITH ||
         op == YIELD_FROM)
         return 0;
@@ -268,7 +269,7 @@ le_eval_breaker_at_entry(PyFrameObject *f)
     int op;
     if (!_Py_atomic_load_relaxed(&_PyRuntime.ceval.eval_breaker))
         return 0;
-    op = _Py_OPCODE(*(_Py_CODEUNIT *)PyBytes_AS_STRING(f->f_code->co_code));
+    op = le_op(le_code(f->f_code), 0);
     if (op == SETUP_FINALLY || op == SETUP_WITH || op == BEFORE_ASYNC_WITH ||
         op == YIELD_FROM)
         return 0;

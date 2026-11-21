@@ -9,7 +9,7 @@ declaration and its parameters, a macro, a function body, an opcode),
 answering 1 or 0 with the definition it read. setup.py runs this before
 compiling, to write le_features_gen.h into the build directory: one
 `#define LE_HAS_<NAME> 0|1` per feature, the opcodes the source lacks, the
-jump opcodes, and what lejit._core._build reports. A question the source can't
+jump opcodes, the inline caches, and what lejit._core._build reports. A question the source can't
 answer (the struct or file it reads is missing) stops the build: a new
 CPython that moves a definition needs the detector updated, never a guess.
 
@@ -24,9 +24,11 @@ It runs under the Python being built for (3.7 and later).
 """
 import argparse
 import ast
+import collections
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -266,16 +268,28 @@ def _file_has(s, path, text):
     return _has_run(_texts(toks), _c(text)), path
 
 
+# ceval's cases are in ceval.c, or (from 3.12) generated from bytecodes.c
+# into the file ceval.c includes
+CASE_FILES = ('Python/ceval.c', 'Python/generated_cases.c.h')
+
+
+def _case_file(s, opcode):
+    """(path, case tokens): ceval's case for opcode, to the next case; (None,
+    None) where there is none"""
+    for path in CASE_FILES:
+        texts = _texts(s.tokens(path))
+        for i in range(len(texts) - 3):
+            if texts[i:i + 4] == ['TARGET', '(', opcode, ')']:
+                j = i + 4
+                while j < len(texts) - 1 and texts[j:j + 2] != ['TARGET', '(']:
+                    j += 1
+                return path, texts[i + 4:j]
+    return None, None
+
+
 def _case_tokens(s, opcode):
     """ceval's case for opcode, to the next case; None where there is none"""
-    texts = _texts(s.tokens('Python/ceval.c'))
-    for i in range(len(texts) - 3):
-        if texts[i:i + 4] == ['TARGET', '(', opcode, ')']:
-            j = i + 4
-            while j < len(texts) - 1 and texts[j:j + 2] != ['TARGET', '(']:
-                j += 1
-            return texts[i + 4:j]
-    return None
+    return _case_file(s, opcode)[1]
 
 
 def _case_uses(s, opcode, word):
@@ -285,21 +299,27 @@ def _case_uses(s, opcode, word):
 
 
 def _case_has(s, opcode, text, missing=None):
-    ce = 'Python/ceval.c'
-    case = _case_tokens(s, opcode)
+    path, case = _case_file(s, opcode)
     if case is None:
+        where = ', '.join(CASE_FILES)
         if missing is None:
-            raise Unanswered('%s: no TARGET(%s)' % (ce, opcode))
-        return missing, '%s: no TARGET(%s)' % (ce, opcode)
-    return _has_run(case, _c(text)), '%s:TARGET(%s)' % (ce, opcode)
+            raise Unanswered('%s: no TARGET(%s)' % (where, opcode))
+        return missing, '%s: no TARGET(%s)' % (where, opcode)
+    return _has_run(case, _c(text)), '%s:TARGET(%s)' % (path, opcode)
 
 
-def _ceval_macro_uses(s, name, word):
-    ce = 'Python/ceval.c'
-    m = (s.macros(ce) or {}).get(name)
-    if m is None:
-        raise Unanswered('no %s macro in %s' % (name, ce))
-    return word in _texts(m.body), '%s:%s' % (ce, name)
+# ceval's macros, in ceval.c or (from 3.12) the ceval_macros.h it includes
+MACRO_FILES = ('Python/ceval.c', 'Python/ceval_macros.h')
+
+
+def _ceval_macro_uses(s, names, word):
+    """the first of names that ceval defines as a macro uses word"""
+    for name in names:
+        for path in MACRO_FILES:
+            m = (s.macros(path) or {}).get(name)
+            if m is not None:
+                return word in _texts(m.body), '%s:%s' % (path, name)
+    raise Unanswered('no %s macro in %s' % (' or '.join(names), ', '.join(MACRO_FILES)))
 
 
 def _takes_tstate(s, name):
@@ -417,12 +437,16 @@ def pop_except_unwinds(s):
 
 def jump_in_instructions(s):
     """a jump's argument counts instructions, not bytes (ceval's JUMPTO has no / sizeof)"""
-    return _not(_ceval_macro_uses(s, 'JUMPTO', 'sizeof'))
+    return _not(_ceval_macro_uses(s, ('JUMPTO', 'JUMPBY'), 'sizeof'))
 
 
 def lasti_in_instructions(s):
     """a frame's f_lasti and a block's b_handler count instructions, not bytes (ceval's INSTR_OFFSET has no sizeof)"""
-    return _not(_ceval_macro_uses(s, 'INSTR_OFFSET', 'sizeof'))
+    # unanswered where the frame object keeps no f_lasti of its own
+    has, evidence = _field(s, '_frame', 'f_lasti')
+    if not has:
+        raise Unanswered('no %s' % evidence)
+    return _not(_ceval_macro_uses(s, ('INSTR_OFFSET',), 'sizeof'))
 
 
 def lineno_when_set(s):
@@ -438,7 +462,19 @@ def lineno_when_set(s):
 def frame_builtins_of_function(s):
     """a new frame's builtins are its function's (func_builtins, read through
     the PyFrameConstructor), not looked up in its globals"""
-    return _body_has(s, 'Objects/frameobject.c', '_PyFrame_New_NoTrack', 'fc_builtins')
+    found, evidence = _body_has(s, 'Objects/frameobject.c', '_PyFrame_New_NoTrack',
+                                'fc_builtins', missing=False)
+    if found:
+        return found, evidence
+    # from 3.11 an internal header sets up the interpreter's frames:
+    # frame->f_builtins = func->func_builtins
+    for path, toks in s.headers_with('func_builtins'):
+        texts = _texts(toks)
+        for i in range(len(texts) - 4):
+            if texts[i:i + 2] == ['f_builtins', '='] \
+                    and texts[i + 3:i + 5] == ['->', 'func_builtins']:
+                return True, path + ': f_builtins = ...->func_builtins'
+    return False, evidence
 
 
 def immutable_type_flag(s):
@@ -531,6 +567,10 @@ def eval_frame_handle_pending(s):
         if not home:
             raise Unanswered('eval_frame_handle_pending, but no '
                              '_ceval_state.eval_breaker')
+    elif s.declares('_Py_HandlePending'):
+        # the handling has left ceval (3.12): neither form LeJIT copies
+        raise Unanswered('no eval_frame_handle_pending in Python/ceval.c, and %s'
+                         ' declares _Py_HandlePending' % s.declares('_Py_HandlePending'))
     return found, evidence
 
 
@@ -559,19 +599,73 @@ def valid_version_tag_flag(s):
                      'Py_TPFLAGS_VALID_VERSION_TAG')
 
 
+def member_ex_error_from_type(s):
+    """PyMember_GetOne keeps obj_addr, and a missing T_OBJECT_EX member's error names its type"""
+    sm = 'Python/structmember.c'
+    found, evidence = _body_has(s, sm, 'PyMember_GetOne',
+                                'PyObject *obj = (PyObject *)obj_addr')
+    if found:
+        return found, evidence
+    # from 3.13 the error is raised by a helper given obj_addr
+    return (any(t.kind == 'str' and 'object has no attribute' in t.text
+                for t in s.tokens(sm)), sm + ': "... object has no attribute ..."')
+
+
+def call_no_arg_function(s):
+    """_PyObject_CallNoArg is a function, not a macro over _PyObject_FastCallDict"""
+    is_macro, evidence = _macro(s, '_PyObject_CallNoArg')
+    if is_macro:
+        return False, evidence
+    declared, evidence = _declared(s, '_PyObject_CallNoArg')
+    if not declared:
+        raise Unanswered('no _PyObject_CallNoArg in Include')
+    return True, evidence
+
+
+def delete_global_keyerror_only(s):
+    """DELETE_GLOBAL raises NameError only for a KeyError"""
+    found, evidence = _case_has(s, 'DELETE_GLOBAL', 'PyExc_KeyError')
+    if found:
+        return found, evidence
+    # from 3.13 PyDict_Pop tells a missing name from an error
+    return _case_has(s, 'DELETE_GLOBAL', 'PyDict_Pop(GLOBALS(), name, NULL)')
+
+
+def _instructions(s):
+    """{name: number} of the numbers below 256 that Include/opcode.h
+    defines, itself or (from 3.13) in the opcode_ids.h it includes: the
+    instructions, and HAVE_ARGUMENT. The compiler's pseudo-instructions (256
+    and up, from 3.12) are left out: they are never in the bytecode."""
+    path = 'Include/opcode.h'
+    macros = s.macros(path)
+    if macros is None:
+        raise Unanswered('no ' + path)
+    with open(os.path.join(s.src, path), encoding='latin-1') as f:
+        if re.search(r'^\s*#\s*include\s+"opcode_ids\.h"', f.read(), re.M):
+            ids = s.macros('Include/opcode_ids.h')
+            if ids is None:
+                raise Unanswered(path + ' includes opcode_ids.h, which is missing')
+            macros = dict(macros, **ids)
+    out = {}
+    for name, m in macros.items():
+        if m.params is None and len(m.body) == 1 and m.body[0].kind == 'num':
+            n = int(m.body[0].text, 0)
+            if n < 256:
+                out[name] = n
+    return out
+
+
 def _opcode(name):
     def detect(s):
-        macros = s.macros('Include/opcode.h')
-        if macros is None:
-            raise Unanswered('no Include/opcode.h')
-        return name in macros, 'Include/opcode.h:' + name
+        return name in _instructions(s), 'Include/opcode.h:' + name
     detect.__doc__ = 'the %s opcode exists' % name
     return detect
 
 
 # the opcodes LeJIT's core names that some CPython lacks: where the source
-# lacks one, le_features_gen.h defines it as a value no instruction has
-# (256 and up), so a case for it never matches and the core needs no #if
+# lacks one, le_features_gen.h defines it as a value no opcode has (256 and
+# up, above the compiler's pseudo-instructions too), so a case for it never
+# matches and the core needs no #if
 OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'BEGIN_FINALLY', 'CALL_FINALLY', 'POP_FINALLY', 'END_ASYNC_FOR',
            'ROT_FOUR', 'END_FINALLY', 'WITH_CLEANUP_START',
@@ -596,13 +690,75 @@ def _constant(node):
     return None
 
 
-def jumps(src):
-    """(hasjrel, hasjabs) of the source's Lib/opcode.py, each [(name,
-    number)]: the opcodes whose argument is a jump, relative to the next
-    instruction or absolute. Read from the jrel_op and jabs_op calls."""
-    path = os.path.join(src, 'Lib', 'opcode.py')
-    with open(path) as f:
-        tree = ast.parse(f.read(), path)
+def _lib(src, name):
+    """(path, parsed module) of the source's Lib/name, or (path, None)."""
+    path = os.path.join(src, 'Lib', name)
+    if not os.path.isfile(path):
+        return path, None
+    with open(path, encoding='utf-8') as f:
+        return path, ast.parse(f.read(), path)
+
+
+def opmap(src):
+    """{name: number} of every opcode, as opcode.opmap has them (from 3.12
+    with the compiler's pseudo-instructions, 256 and up): from 3.13 the dict
+    Lib/_opcode_metadata.py assigns to opmap, before that the def_op,
+    jrel_op... calls of Lib/opcode.py."""
+    path, tree = _lib(src, '_opcode_metadata.py')
+    if tree is not None:
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                    isinstance(x, ast.Name) and x.id == 'opmap' for x in node.targets):
+                value = node.value
+                try:
+                    if isinstance(value, ast.Call):    # frozendict(...), from 3.15
+                        return dict(ast.literal_eval(value.args[0]) if value.args else {},
+                                    **{k.arg: ast.literal_eval(k.value)
+                                       for k in value.keywords})
+                    return dict(ast.literal_eval(value))
+                except ValueError:
+                    break
+        raise FeatureError('%s: no opmap = {...}' % path)
+    path, tree = _lib(src, 'opcode.py')
+    out = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id.endswith('_op') and len(node.args) >= 2:
+            name, num = _constant(node.args[0]), _constant(node.args[1])
+            if isinstance(name, str) and isinstance(num, int):
+                out[name] = num
+    if not out:
+        raise FeatureError('%s: no def_op calls' % path)
+    return out
+
+
+def _designated(s, array):
+    """(path, {NAME: value tokens}) of the header definition
+    `array[...] = { [NAME] = value, ... }`, or (None, None)."""
+    for path, toks in s.headers_with(array):
+        for i in range(len(toks) - 1):
+            if toks[i].text != array or toks[i + 1].text != '[':
+                continue
+            j = ctokens.match_close(toks, i + 1)
+            if toks[j + 1].text != '=' or toks[j + 2].text != '{':
+                continue
+            out = {}
+            for item in ctokens.split_top(toks[j + 3:ctokens.match_close(toks, j + 2)], ','):
+                texts = _texts(item)
+                if texts[:1] == ['['] and texts[2:4] == [']', '=']:
+                    out[texts[1]] = texts[4:]
+            return path, out
+    return None, None
+
+
+def jumps(s, ops):
+    """(hasjrel, hasjabs) of the source s, each [(name, number)] by number:
+    the instructions whose argument is a jump, relative to the next
+    instruction or absolute. Read from Lib/opcode.py's jrel_op and jabs_op
+    calls; from 3.13, where it has none, the instructions
+    pycore_opcode_metadata.h flags HAS_JUMP_FLAG, every one relative. ops is
+    opmap(); only instructions (below 256) are kept."""
+    path, tree = _lib(s.src, 'opcode.py')
     out = {'jrel_op': [], 'jabs_op': []}
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
@@ -613,9 +769,71 @@ def jumps(src):
                 raise FeatureError('%s: a %s call that is not of constants'
                                    % (path, node.func.id))
             out[node.func.id].append((name, num))
-    if not out['jrel_op'] or not out['jabs_op']:
-        raise FeatureError('%s: no jrel_op or jabs_op calls' % path)
-    return out['jrel_op'], out['jabs_op']
+    if not out['jrel_op'] and not out['jabs_op']:
+        mpath, meta = _designated(s, '_PyOpcode_opcode_metadata')
+        if meta is None:
+            raise FeatureError('%s: no jrel_op or jabs_op calls, and no'
+                               ' _PyOpcode_opcode_metadata in Include' % path)
+        out['jrel_op'] = [(name, ops[name]) for name, value in meta.items()
+                          if 'HAS_JUMP_FLAG' in value and name in ops]
+        if not out['jrel_op']:
+            raise FeatureError('%s: no instruction has HAS_JUMP_FLAG' % mpath)
+    return tuple(sorted((x for x in out[k] if x[1] < 256), key=lambda x: x[1])
+                 for k in ('jrel_op', 'jabs_op'))
+
+
+def caches(s, ops):
+    """[(name, number, entries)] by number: the instructions followed by
+    inline cache entries (from 3.11), and how many code units of them, from
+    the header's _PyOpcode_Caches. ops is opmap()."""
+    _, table = _designated(s, '_PyOpcode_Caches')
+    out = []
+    for name, value in (table or {}).items():
+        if name not in ops or ops[name] >= 256:
+            continue
+        if len(value) != 1 or not value[0].isdigit():
+            raise FeatureError('_PyOpcode_Caches[%s] is not a number: %s'
+                               % (name, ' '.join(value)))
+        if int(value[0]):
+            out.append((name, ops[name], int(value[0])))
+    return sorted(out, key=lambda x: x[1])
+
+
+def backward(src, jrel):
+    """[(name, number)] of the relative jumps in jrel whose argument counts
+    backward (from 3.11), as Lib/dis.py's _is_backward_jump tells them:
+    `'JUMP_BACKWARD' in opname[op]`, or `opname[op] in (NAME, ...)`. None
+    where dis has no _is_backward_jump."""
+    path, tree = _lib(src, 'dis.py')
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == '_is_backward_jump':
+            ret = node.body[-1]
+            test = ret.value if isinstance(ret, ast.Return) else None
+            if isinstance(test, ast.Compare) and len(test.ops) == 1 \
+                    and isinstance(test.ops[0], ast.In):
+                part = _constant(test.left)
+                if isinstance(part, str):
+                    return [x for x in jrel if part in x[0]]
+                right = test.comparators[0]
+                if isinstance(right, ast.Tuple):
+                    names = [_constant(e) for e in right.elts]
+                    return [x for x in jrel if x[0] in names]
+            raise FeatureError('%s: _is_backward_jump is neither form' % path)
+    return []
+
+
+# what the header says of the opcodes: jrel and jabs as jumps() gives them,
+# jback as backward() gives it, the highest opcode number, and caches as
+# caches() gives them
+Opcodes = collections.namedtuple('Opcodes', 'jrel jabs jback highest caches')
+
+
+def opcodes(src):
+    """The Opcodes of source tree src."""
+    s = Source(src)
+    ops = opmap(src)
+    jrel, jabs = jumps(s, ops)
+    return Opcodes(jrel, jabs, backward(src, jrel), max(ops.values()), caches(s, ops))
 
 
 D = _detector
@@ -624,23 +842,45 @@ CE = 'Python/ceval.c'
 UO = 'Objects/unicodeobject.c'
 
 # LE_HAS_<name> -> detector; its docstring's first line is the header's
-# comment
-FEATURES = [
+# comment. One list per area, so that work on different areas adds to
+# different lists; the header has them in the order of FEATURES below.
+
+# the C API: what libpython exports, and its functions' signatures and
+# behaviour
+C_API = [
     ('PYDICT_NEWPRESIZED', pydict_newpresized),
     ('AUDIT_HOOKS', audit_hooks),
     ('ARG_CHECK_POSITIONAL', arg_check_positional),
     ('CHECK_RESULT_TSTATE', check_result_tstate),
     ('OBJECTDICT_SETITEM_LINKABLE', objectdict_setitem_linkable),
     ('FLOAT_ASDOUBLE_INDEX', float_asdouble_index),
+]
+
+# the bytecode and what its instructions do
+BYTECODE = [
     ('MAP_ADD_VALUE_ON_TOP', map_add_value_on_top),
     ('POP_BLOCK_UNWINDS', pop_block_unwinds),
     ('POP_EXCEPT_UNWINDS', pop_except_unwinds),
     ('JUMP_IN_INSTRUCTIONS', jump_in_instructions),
+    ('CODE_GET_CODE', D('PyCode_GetCode gives a code object\'s bytecode as compiled, unspecialised',
+                        lambda s: _declared(s, 'PyCode_GetCode'))),
+]
+
+# frames
+FRAMES = [
     ('LASTI_IN_INSTRUCTIONS', lasti_in_instructions),
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
+]
+
+# types
+TYPES = [
     ('IMMUTABLE_TYPE_FLAG', immutable_type_flag),
-    # how LeJIT's own mechanisms reach the interpreter's state
+    ('VALID_VERSION_TAG_FLAG', valid_version_tag_flag),
+]
+
+# how LeJIT's own mechanisms reach the interpreter's state
+STATE = [
     ('PYCORE_PYSTATE_H', D('the runtime and interpreter states are described in the internal pycore_pystate.h',
                            lambda s: _file(s, 'Include/internal/pycore_pystate.h'))),
     ('PYCORE_INTERP_H', D('the interpreter state has an internal header of its own, pycore_interp.h',
@@ -653,7 +893,10 @@ FEATURES = [
     ('CFRAME', cframe),
     ('GC_TRACKED_BY_NEXT', gc_tracked_by_next),
     ('GC_HEAD_INTERNAL', gc_head_internal),
-    # Objects/abstract.c
+]
+
+# Objects/abstract.c
+ABSTRACT = [
     ('CHECK_SLOT_RESULT', D('abstract.c asserts each slot\'s result with _Py_CheckSlotResult',
                             lambda s: _declared(s, '_Py_CheckSlotResult'))),
     ('TERNARY_IOP', D('abstract.c has ternary_iop, the in-place ternary operation (**=)',
@@ -667,15 +910,17 @@ FEATURES = [
     ('INLINE_CALL_TSTATE_GET', D('the inline call helpers (PyObject_CallOneArg) take the thread state with PyThreadState_Get(), not PyThreadState_GET()',
                                  lambda s: (any('PyThreadState_Get' in _texts(t) for _, t in s.definitions('PyObject_CallOneArg')),
                                             'Include, every header: PyObject_CallOneArg'))),
-    ('CALL_NO_ARG_FUNCTION', D('_PyObject_CallNoArg is a function, not a macro over _PyObject_FastCallDict',
-                               lambda s: _not(_macro(s, '_PyObject_CallNoArg')))),
+    ('CALL_NO_ARG_FUNCTION', call_no_arg_function),
     ('CALL_ONE_ARG', D('PyObject_CallOneArg exists',
                        lambda s: _declared(s, 'PyObject_CallOneArg'))),
     ('FUNCTION_STR', D('_PyObject_FunctionStr names a function in error messages',
                        lambda s: _declared(s, '_PyObject_FunctionStr'))),
     ('FASTCALL_DICT_TSTATE', D('_PyObject_FastCallDictTstate exists',
                                lambda s: _declared(s, '_PyObject_FastCallDictTstate'))),
-    # the other objects
+]
+
+# the other objects
+OBJECTS = [
     ('TUPLE_GET_EMPTY', D('the empty tuple is the interpreter\'s, read with tuple_get_empty',
                           lambda s: _defines(s, 'Objects/tupleobject.c', 'tuple_get_empty'))),
     ('CONTAINS_ITEM_FIRST', tuplecontains_item_first),
@@ -685,15 +930,16 @@ FEATURES = [
                                 lambda s: _body_has(s, UO, 'formatchar', 'PyLong_AsLongAndOverflow'))),
     ('HASH_DOUBLE_OBJECT', D('_Py_HashDouble is given the float object too',
                              lambda s: _file_has(s, 'Python/pyhash.c', '_Py_HashDouble(PyObject *'))),
-    ('MEMBER_EX_ERROR_FROM_TYPE', D('PyMember_GetOne keeps obj_addr, and a missing T_OBJECT_EX member\'s error names its type',
-                                    lambda s: _body_has(s, 'Python/structmember.c', 'PyMember_GetOne',
-                                                        'PyObject *obj = (PyObject *)obj_addr'))),
+    ('MEMBER_EX_ERROR_FROM_TYPE', member_ex_error_from_type),
     ('POW_KEYWORDS', D('pow() takes keyword arguments base, exp and mod',
                        lambda s: _file_has(s, 'Python/clinic/bltinmodule.c.h',
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),
     ('CORO_GET_AWAITABLE_ITER_LINKABLE', D('_PyCoro_GetAwaitableIter can be called from an extension',
                                            lambda s: _linkable(s, '_PyCoro_GetAwaitableIter'))),
-    # Python/ceval.c
+]
+
+# Python/ceval.c
+CEVAL = [
     ('CMP_OUTCOME', D('COMPARE_OP also does is, in and exception matches (cmp_outcome)',
                       lambda s: _defines(s, CE, 'cmp_outcome'))),
     ('CALL_TRACE_METHOD_DESCR', D('do_call_core traces a method descriptor\'s call as a C call',
@@ -704,11 +950,15 @@ FEATURES = [
                            lambda s: _body_has(s, CE, 'import_from', '_PyModuleSpec_IsInitializing'))),
     ('KWARGS_MERGE_EX', D('CALL_FUNCTION_EX merges **kwargs with _PyDict_MergeEx, and format_kwargs_error reports it',
                           lambda s: _case_has(s, 'CALL_FUNCTION_EX', '_PyDict_MergeEx'))),
-    ('DELETE_GLOBAL_KEYERROR_ONLY', D('DELETE_GLOBAL raises NameError only for a KeyError',
-                                      lambda s: _case_has(s, 'DELETE_GLOBAL', 'PyExc_KeyError'))),
+    ('DELETE_GLOBAL_KEYERROR_ONLY', delete_global_keyerror_only),
     ('AENTER_LOOKUP_FIRST', aenter_lookup_first),
-    ('VALID_VERSION_TAG_FLAG', valid_version_tag_flag),
-] + [('OPCODE_' + op, _opcode(op)) for op in OPCODES + CASE_OPCODES]
+]
+
+# the opcodes that some CPython lacks
+OPCODE_FEATURES = [('OPCODE_' + op, _opcode(op)) for op in OPCODES + CASE_OPCODES]
+
+FEATURES = (C_API + BYTECODE + FRAMES + TYPES + STATE + ABSTRACT + OBJECTS
+            + CEVAL + OPCODE_FEATURES)
 
 
 def describe(detector):
@@ -732,14 +982,13 @@ def detect(src):
 
 def build(src, version):
     """The header's text for source tree src, CPython version."""
-    return render(detect(src), jumps(src), version,
+    return render(detect(src), opcodes(src), version,
                   'tools/features/features.py from CPython %s' % version)
 
 
-def render(found, jump_ops, version, origin):
-    """The header's text: found as detect() gives it, jump_ops (hasjrel,
-    hasjabs) as jumps() gives them, for CPython version; origin, in its first
-    line, says what made it."""
+def render(found, ops, version, origin):
+    """The header's text: found as detect() gives it, ops the Opcodes, for
+    CPython version; origin, in its first line, says what made it."""
     lines = ['/* Generated by %s: do not edit. */' % origin,
              '#ifndef LE_FEATURES_GEN_H', '#define LE_FEATURES_GEN_H', '']
     for name, value, what, _ in found:
@@ -749,13 +998,24 @@ def render(found, jump_ops, version, origin):
     absent = [op for op in OPCODES if not values['LE_HAS_OPCODE_' + op]]
     if absent:
         lines += ['', '/* opcodes this source lacks: no instruction has these values */']
-        lines += ['#define %s %d' % (op, 256 + OPCODES.index(op)) for op in absent]
-    jrel, jabs = jump_ops
+        # above every opcode, the compiler's pseudo-instructions too, so
+        # that no case for one of these matches another's
+        base = max(256, ops.highest + 1)
+        lines += ['#define %s %d' % (op, base + OPCODES.index(op)) for op in absent]
     lines +=['', '/* the opcodes whose argument is a jump (Lib/opcode.py hasjrel,'
               ' hasjabs) */']
-    for macro, ops in (('LE_IS_JREL', jrel), ('LE_IS_JABS', jabs)):
+    for macro, jump_ops in (('LE_IS_JREL', ops.jrel), ('LE_IS_JABS', ops.jabs)):
         lines.append('#define %s(o) (%s)' % (
-            macro, ' || '.join('(o) == %d' % n for _, n in ops)))
+            macro, ' || '.join('(o) == %d' % n for _, n in jump_ops) or '0'))
+    if ops.jback:
+        lines += ['', '/* the relative jumps that jump backward */',
+                  '#define LE_IS_JBACK(o) (%s)' % ' || '.join(
+                      '(o) == %d' % n for _, n in ops.jback)]
+    if ops.caches:
+        lines += ['', '/* the code units of inline cache that follow each'
+                      ' instruction (_PyOpcode_Caches) */',
+                  '#define LE_CACHE_ENTRIES(o) (%s0)' % ''.join(
+                      '(o) == %d ? %d : ' % (n, c) for _, n, c in ops.caches)]
     lines += ['', '/* for lejit._core._build: the source read, and every'
                   ' feature */',
               '#define LE_FEATURES_SOURCE_VERSION %s' % json.dumps(version),

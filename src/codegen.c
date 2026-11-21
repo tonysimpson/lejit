@@ -576,8 +576,7 @@ struct locals_map_s *
 psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos)
 {
     PyCodeObject *co = po->pr.co;
-    int i, n = co->co_nlocals + (int)PyTuple_GET_SIZE(co->co_cellvars) +
-               (int)PyTuple_GET_SIZE(co->co_freevars);
+    int i, n = le_code_nlocalsplus(co);
     /* kept between maps, as there is one per call site */
     static struct lm_build b = {NULL, 0, 0};
     struct locals_map_s *map;

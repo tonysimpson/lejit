@@ -9,10 +9,12 @@ Python-3.8.20.tgz  9f2d5962c2583e67ef75924cd56d0c1af78bf45ec57035cf8a2cc09f74f4b
 Python-3.11.11.tgz  883bddee3c92fcb91cf9c09c5343196953cbb9ced826213545849693970868ed
 Python-3.12.9.tgz  45313e4c5f0e8acdec9580161d565cf5fea578e3eabf25df7cc6355bf4afa1ee
 Python-3.13.2.tgz  b8d79530e3b7c96a5cb2d40d431ddb512af4a563e863728d8713039aa50203f9
-# Fetched for the feature detectors' backport test (tests/features/test.py), from
-# pyenv's python-build definition, and matched the download.
-Python-3.7.13.tgz  e405417f50984bc5870c7e7a9f9aeb93e9d270f5ac67f667a0cd3a09439682b5
 # The 3.9 port, from pyenv's python-build definition.
 Python-3.9.21.tgz  667c3ba2ca98d39ead1162f6548c3475768582e2ff89e0821d25eb956ac09944
 # The 3.10 port, from pyenv's python-build definition.
 Python-3.10.16.tgz  f2e22ed965a93cfeb642378ed6e6cdbc127682664b24123679f3d013fafe9cd0
+# 3.14 and 3.15, from Homebrew's python@3.14
+# and python@3.15 formulae; each matched the download, whose files matched
+# the release's git tag.
+Python-3.14.10.tgz  9e4996c19ae5a3df31f10c37723661f71d3455d73bd005f79df7098e5cc13192
+Python-3.15.2.tgz  f74e1db0eabd651cd01e4e2a00201bd41866abe74869ab716f9bf33cbbaa0943

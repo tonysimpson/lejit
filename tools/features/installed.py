@@ -397,9 +397,18 @@ def detect(python):
     return probed, found, unanswered
 
 
-def jumps(probed):
-    return ([tuple(x) for x in probed['hasjrel']],
-            [tuple(x) for x in probed['hasjabs']])
+def opcodes(probed):
+    """features.Opcodes of the probed interpreter: its jump instructions,
+    which of them jump backward, and inline caches (below 256, so not the compiler's pseudo-instructions) and
+    its highest opcode."""
+    def ins(pairs):
+        return sorted((tuple(x) for x in pairs if x[1] < 256), key=lambda x: x[1])
+    ops = probed['opcodes']
+    return features.Opcodes(
+        ins(probed['hasjrel']), ins(probed['hasjabs']), ins(probed['jback']),
+        max(ops.values()),
+        sorted(((name, ops[name], n) for name, n in probed['caches'].items()
+                if n and ops.get(name, 256) < 256), key=lambda x: x[1]))
 
 
 def build(python):
@@ -412,11 +421,11 @@ def build(python):
             ' (features.py reads them in its source):\n%s' % (
                 len(unanswered), python,
                 '\n'.join('  %s: %s' % kv for kv in sorted(unanswered.items()))))
-    jrel, jabs = jumps(probed)
-    if not jrel or not jabs:
-        raise features.FeatureError('opcode.hasjrel or hasjabs is empty')
+    ops = opcodes(probed)
+    if not ops.jrel and not ops.jabs:
+        raise features.FeatureError('opcode.hasjrel and hasjabs are empty')
     version = probed['version']
-    text = features.render([f[:4] for f in found], (jrel, jabs), version,
+    text = features.render([f[:4] for f in found], ops, version,
                            'tools/features/installed.py from the installed'
                            ' CPython %s (%s)' % (version, python))
     return text, version

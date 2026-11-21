@@ -101,8 +101,7 @@ fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co, int nfrees)
     if (co->co_flags & CO_VARKEYWORDS) {
         return false;
     }
-    if (PyTuple_GET_SIZE(co->co_cellvars) != 0 ||
-        PyTuple_GET_SIZE(co->co_freevars) != nfrees) {
+    if (le_code_ncells(co) != 0 || le_code_nfrees(co) != nfrees) {
         return false;
     }
     fncall->co = co;
@@ -139,7 +138,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
     co = ((PyCodeObject *)_co);
     total_args = (co->co_argcount + co->co_kwonlyargcount);
     fastlocals = f_localsplus;
-    freevars = (f_localsplus + co->co_nlocals);
+    freevars = (f_localsplus + le_code_nlocals(co));
     if ((co->co_flags & CO_VARKEYWORDS)) {
         return -1; /* PyDict_New: the real call */
     }
@@ -205,19 +204,18 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             return -1; /* missing_arguments: the real call */
         }
     }
-    for ((i = 0); (i < PyTuple_GET_SIZE(co->co_cellvars)); ++i) {
-        if (((co->co_cell2arg != NULL) &&
-             ((arg = co->co_cell2arg[i]) != -1))) {
+    for ((i = 0); (i < le_code_ncells(co)); ++i) {
+        if ((arg = le_code_cell_arg(co, (int)i)) != -1) {
             return -1; /* PyCell_New: the real call */
         }
         else {
             return -1; /* PyCell_New: the real call */
         }
     }
-    for ((i = 0); (i < PyTuple_GET_SIZE(co->co_freevars)); ++i) {
+    for ((i = 0); (i < le_code_nfrees(co)); ++i) {
         o = closure[i];
         vinfo_incref(o);
-        freevars[(PyTuple_GET_SIZE(co->co_cellvars) + i)] = o;
+        freevars[(le_code_ncells(co) + i)] = o;
     }
     return 0;
 }
@@ -247,7 +245,7 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
     co = ((PyCodeObject *)_co);
     total_args = (co->co_argcount + co->co_kwonlyargcount);
     fastlocals = f_localsplus;
-    freevars = (f_localsplus + co->co_nlocals);
+    freevars = (f_localsplus + le_code_nlocals(co));
     if ((co->co_flags & CO_VARKEYWORDS)) {
         return -1; /* PyDict_New: the real call */
     }
@@ -322,19 +320,18 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             return -1; /* missing_arguments: the real call */
         }
     }
-    for ((i = 0); (i < PyTuple_GET_SIZE(co->co_cellvars)); ++i) {
-        if (((co->co_cell2arg != NULL) &&
-             ((arg = co->co_cell2arg[i]) != -1))) {
+    for ((i = 0); (i < le_code_ncells(co)); ++i) {
+        if ((arg = le_code_cell_arg(co, (int)i)) != -1) {
             return -1; /* PyCell_New: the real call */
         }
         else {
             return -1; /* PyCell_New: the real call */
         }
     }
-    for ((i = 0); (i < PyTuple_GET_SIZE(co->co_freevars)); ++i) {
+    for ((i = 0); (i < le_code_nfrees(co)); ++i) {
         o = closure[i];
         vinfo_incref(o);
-        freevars[(PyTuple_GET_SIZE(co->co_cellvars) + i)] = o;
+        freevars[(le_code_ncells(co) + i)] = o;
     }
     return 0;
 }
@@ -353,7 +350,7 @@ fncall_bind(struct fncall_arg_s *fncall, PsycoObject *po, vinfo_t *vglobals,
             vinfo_t **extra)
 {
     PyCodeObject *co = fncall->co;
-    int i, nlocals = co->co_nlocals, nfrees = fncall->nfrees;
+    int i, nlocals = le_code_nlocals(co), nfrees = fncall->nfrees;
     vinfo_array_t *a =
         array_new(INDEX_LOC_LOCALS_PLUS + nlocals + nfrees + nextra);
     vinfo_t **locals = a->items + INDEX_LOC_LOCALS_PLUS;

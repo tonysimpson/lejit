@@ -65,13 +65,15 @@ def check(python):
     for key in sorted(unanswered):
         print('  %s %s: installed can\'t answer: %s' % (version, key, unanswered[key]))
     try:
-        jrel, jabs = features.jumps(src)
-        if installed.jumps(probed) != (jrel, jabs):
-            wrong.append('jump opcodes')
-            print('  WRONG %s: hasjrel, hasjabs %r, source %r'
-                  % (version, installed.jumps(probed), (jrel, jabs)))
+        theirs = features.opcodes(src)
+        mine = installed.opcodes(probed)
+        for field in theirs._fields:
+            if getattr(mine, field) != getattr(theirs, field):
+                wrong.append('opcodes ' + field)
+                print('  WRONG %s: opcodes %s %r, source %r' % (
+                    version, field, getattr(mine, field), getattr(theirs, field)))
     except features.FeatureError as e:
-        print('  %s: the source has no jump opcodes (%s)' % (version, e))
+        print('  %s: the source has no opcode tables (%s)' % (version, e))
     if not unanswered and not src_unanswered and not wrong:
         mine = installed.build(python)[0].split('\n', 1)[1]
         theirs = features.build(src, version).split('\n', 1)[1]

@@ -2,8 +2,9 @@
 
 installed.py runs this file under the interpreter being built for, as
 `python -I installed_probes.py [NAME...]`, and reads the JSON it prints:
-the interpreter's version and include directory, its opcodes and jump
-opcodes, and an answer for each probe (all of them, or the NAMEs given).
+the interpreter's version and include directory, its opcodes, jump opcodes
+and inline caches, and an answer for each probe (all of them, or the NAMEs
+given).
 
 Each probe is a function named after the feature it answers, whose
 docstring says what it checks. It returns (value, evidence) or raises
@@ -143,6 +144,12 @@ def CORO_GET_AWAITABLE_ITER_LINKABLE():
 
 
 @probe
+def CODE_GET_CODE():
+    """libpython exports PyCode_GetCode (ctypes)"""
+    return _exported('PyCode_GetCode')
+
+
+@probe
 def ITER_CHECK_FUNCTION():
     """libpython exports PyIter_Check, a function (where it is only a macro
     there is no such symbol) (ctypes)"""
@@ -254,7 +261,10 @@ def _pop_except_probe():
 @probe
 def POP_EXCEPT_UNWINDS():
     """POP_EXCEPT drops a value pushed in its handler before restoring the
-    outer exception (run: see _pop_except_probe)"""
+    outer exception (run: see _pop_except_probe); no SETUP_FINALLY
+    instruction, so no block for it to unwind to, is no"""
+    if not _real_op('SETUP_FINALLY'):
+        return False, 'opcode: no SETUP_FINALLY instruction'
     _setup_finally_ops()
     unwinds, took_a = _pop_except_probe()
     if unwinds == took_a:
@@ -631,6 +641,15 @@ def POW_KEYWORDS():
     raise Unanswered('pow(base=, exp=): %r' % e)
 
 
+def _caches():
+    """{name: code units of inline cache after the instruction} (from 3.11:
+    a list by opcode to 3.12, a dict by name from 3.13)"""
+    entries = getattr(opcode, '_inline_cache_entries', {})
+    if isinstance(entries, list):
+        entries = {opcode.opname[op]: n for op, n in enumerate(entries)}
+    return {name: n for name, n in entries.items() if n}
+
+
 def main(argv):
     names = set(argv)
     answers = {}
@@ -650,6 +669,9 @@ def main(argv):
         'opcodes': dict(opcode.opmap),
         'hasjrel': [[opcode.opname[n], n] for n in opcode.hasjrel],
         'hasjabs': [[opcode.opname[n], n] for n in opcode.hasjabs],
+        'caches': _caches(),
+        'jback': [[opcode.opname[n], n] for n in opcode.hasjrel
+                  if getattr(dis, '_is_backward_jump', lambda op: False)(n)],
         'answers': answers,
     }
     sys.stdout.write(json.dumps(out) + '\n')

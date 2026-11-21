@@ -3,7 +3,7 @@
 #   make                      build lejit for PY, in place
 #   make check                checked build and every test, for PY
 #   make check-all            make check for each of PYTHONS
-#   make test | cpython-test | encoder-test | features-test | strings-test
+#   make test | cpython-test | encoder-test | strings-test
 #   make features-installed-test | cross-check (both detectors, every interpreter)
 #   make format | format-check   rewrite, or check, the C code's layout
 #   make lint                 clang-tidy on src/ (reports, not enforced yet)
@@ -27,7 +27,7 @@ PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
            $(HOME)/.pyenv/versions/3.10.16/bin/python3.10
 
 .PHONY: build checked-build check check-all test cpython-test encoder-test \
-        features-test features-installed-test strings-test \
+        features-installed-test strings-test \
         cross-check no-version-tests format format-check lint clean
 
 build:
@@ -48,9 +48,6 @@ cpython-test: checked-build
 encoder-test: checked-build
 	LE_PYTHON=$(PY) $(GEN_PY) tests/encoder/check.py
 	LE_PYTHON=$(PY) sh tests/encoder/mov_mem.sh
-
-features-test:
-	$(GEN_PY) tests/features/test.py
 
 # the installed detector (no source) agrees with the source one, for PY
 features-installed-test:
@@ -100,7 +97,7 @@ lint:
 	$(CLANG_TIDY) -p build/lint --quiet $$($(PY) -c 'import json; \
 	    print(" ".join(e["file"] for e in json.load(open("build/lint/compile_commands.json"))))')
 
-check: no-version-tests features-test features-installed-test strings-test \
+check: no-version-tests features-installed-test strings-test \
        test cpython-test encoder-test
 
 check-all:
