@@ -7,6 +7,7 @@ import os as _os
 import platform as _platform
 import subprocess as _subprocess
 import sys as _sys
+import sysconfig as _sysconfig
 import warnings as _warnings
 
 __all__ = ['start', 'stop', 'check', 'build_features', 'runtime_features']
@@ -28,6 +29,8 @@ def _unsupported():
         return 'LeJIT runs only on CPython'
     if _sys.platform != 'linux' or _platform.machine() != 'x86_64':
         return 'LeJIT runs only on x86-64 Linux'
+    if _sysconfig.get_config_var('Py_GIL_DISABLED'):
+        return 'LeJIT runs only on CPython with the GIL'
     if _sys.version_info >= (3, 11):
         return 'LeJIT runs only on CPython 3.7 to 3.10'
     return _missing
