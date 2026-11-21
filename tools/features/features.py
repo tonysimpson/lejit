@@ -551,6 +551,14 @@ def aenter_lookup_first(s):
             'Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)')
 
 
+def valid_version_tag_flag(s):
+    """a type's version tag is valid while it has
+    Py_TPFLAGS_VALID_VERSION_TAG, which a change clears; without it, a
+    change sets the tag to 0"""
+    return _body_has(s, 'Objects/typeobject.c', 'assign_version_tag',
+                     'Py_TPFLAGS_VALID_VERSION_TAG')
+
+
 def _opcode(name):
     def detect(s):
         macros = s.macros('Include/opcode.h')
@@ -699,6 +707,7 @@ FEATURES = [
     ('DELETE_GLOBAL_KEYERROR_ONLY', D('DELETE_GLOBAL raises NameError only for a KeyError',
                                       lambda s: _case_has(s, 'DELETE_GLOBAL', 'PyExc_KeyError'))),
     ('AENTER_LOOKUP_FIRST', aenter_lookup_first),
+    ('VALID_VERSION_TAG_FLAG', valid_version_tag_flag),
 ] + [('OPCODE_' + op, _opcode(op)) for op in OPCODES + CASE_OPCODES]
 
 
