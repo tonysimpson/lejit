@@ -978,6 +978,10 @@ BYTECODE = [
     ('EXCEPTION_TABLE', D('a code object\'s handlers are in its exception table (co_exceptiontable), not set up at run time on a block stack',
                           lambda s: _file_has(s, 'Objects/codeobject.c', '"co_exceptiontable"'))),
     ('CODE_LOCALSPLUS', code_localsplus),
+    ('MATCH_CLASS_PUSHES_BOOL', D('MATCH_CLASS pushes a bool saying whether the class matched, over the attributes or the subject',
+                                  lambda s: _case_has(s, 'MATCH_CLASS', 'PyBool_FromLong', missing=False))),
+    ('MATCH_KEYS_PUSHES_BOOL', D('MATCH_KEYS pushes a bool saying whether the keys matched, over the values or None',
+                                 lambda s: _case_has(s, 'MATCH_KEYS', 'PUSH(Py_True)', missing=False))),
 ]
 
 # frames
