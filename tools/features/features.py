@@ -831,7 +831,7 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'POP_JUMP_FORWARD_IF_NOT_NONE', 'POP_JUMP_BACKWARD_IF_FALSE',
            'POP_JUMP_BACKWARD_IF_TRUE', 'POP_JUMP_BACKWARD_IF_NONE',
            'POP_JUMP_BACKWARD_IF_NOT_NONE', 'PRECALL', 'KW_NAMES', 'CALL',
-           'MAKE_CELL', 'COPY_FREE_VARS',
+           'MAKE_CELL', 'COPY_FREE_VARS', 'RETURN_GENERATOR',
            # gone from 3.12: the unary plus, the interactive print and
            # import * are CALL_INTRINSIC_1's
            'UNARY_POSITIVE', 'PRINT_EXPR', 'IMPORT_STAR',

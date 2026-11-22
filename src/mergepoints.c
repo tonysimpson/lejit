@@ -788,6 +788,9 @@ compiled_opcode(int op)
         case LOAD_DEREF:
         case STORE_DEREF:
         case DELETE_DEREF:
+        /* generator expressions (psyco_is_genexpr) */
+        case RETURN_GENERATOR:
+        case YIELD_VALUE:
             return 1;
     }
 #if !LE_HAS_EXCEPTION_TABLE
