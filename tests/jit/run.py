@@ -6,11 +6,12 @@ mustn't leak.
 A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
-(no leak check), 'warmup': (rounds, reason).
+(no leak check), 'warmup': (rounds, reason), 'checked': reason (needs a
+checked build).
 
 --release tests a release build, which can't say what it compiled: results
-and leaks are checked, but not whether each function compiled, and an
-'xfail' case that passes isn't an XPASS.
+and leaks are checked, but not whether each function compiled, an 'xfail'
+case that passes isn't an XPASS, and 'checked' cases are skipped.
 
     python3.X tests/jit/run.py [DIR] [-k substring] [-v] [--release]
 """
@@ -65,7 +66,12 @@ def main():
     verbose = '-v' in args
     release = '--release' in args
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
+    if release:
+        counts['skip'] = 0
     for name, modname, fname, calls, opts in load_cases(filt):
+        if release and opts.get('checked'):
+            counts['skip'] += 1
+            continue
         warmup = opts.get('warmup', (9,))[0]
         expected, err = run_child(modname, fname, calls, '0', warmup)
         if err:

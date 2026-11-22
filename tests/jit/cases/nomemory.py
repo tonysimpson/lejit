@@ -139,7 +139,15 @@ def injected(counts):
 # coding pause fails for most counts between 59 and 289)
 INJECT_COUNTS = tuple(range(1, 10)) + tuple(range(15, 300, 30))
 
+RUNS_OUT = {'leaks': 'runs child processes'}
+# where code objects keep their bytecode specialised in place, co_code is
+# made when asked for, and can run out of memory
+if hasattr(memory_runs_out.__code__, '_co_code_adaptive'):
+    RUNS_OUT['xfail'] = ('bytecode.h:le_code stops the process when '
+                         'PyCode_GetCode runs out of memory')
+
 CASES = [
-    ('memory_runs_out', [(0, 50)], {'leaks': 'runs child processes'}),
-    ('injected', [(INJECT_COUNTS,)], {'leaks': 'runs child processes'}),
+    ('memory_runs_out', [(0, 50)], RUNS_OUT),
+    ('injected', [(INJECT_COUNTS,)], {'leaks': 'runs child processes',
+                                   'checked': 'calls lejit._core._fail_after'}),
 ]

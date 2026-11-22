@@ -394,9 +394,9 @@ def promoted_reference_released():
 CASES = [
     ('code_dies_with_shared_globals', [()], {'interpreted': 'calls exec'}),
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec'}),
-    ('own_namespace_calls', [()], {'interpreted': 'calls exec'}),
-    ('own_namespace_recursion', [()], {'interpreted': 'calls exec'}),
-    ('freed_in_subinterpreter', [()], {'interpreted': 'calls exec'}),
+    ('own_namespace_calls', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
+    ('own_namespace_recursion', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
+    ('freed_in_subinterpreter', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
     ('unscanned_freed_in_subinterpreter', [()], {}),
     ('namedtuple_code_dies', [()], {}),
     ('isinstance_class_dies', [()], {}),
@@ -404,7 +404,7 @@ CASES = [
     ('borrowed_globals_reused', [()], {}),
     ('other_code_extra_user', [()], {}),
     ('recompiled_loops_free', [()], {}),
-    ('call_notes_reused', [()], {}),
-    ('made_functions_free', [()], {}),
+    ('call_notes_reused', [()], {'checked': 'reads lejit._core._stats'}),
+    ('made_functions_free', [()], {'checked': 'reads lejit._core._stats'}),
     ('promoted_reference_released', [()], {}),
 ]
