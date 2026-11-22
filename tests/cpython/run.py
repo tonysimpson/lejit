@@ -38,9 +38,6 @@ BANNED = {
 
 # reason: single tests (module.Class.method) skipped in both runs
 SKIPPED = {
-    'a deadline on the whole run, which slow machines miss':
-        'test_signal.StressTest.test_stress_delivery_dependent '
-        'test_signal.StressTest.test_stress_delivery_simultaneous',
     "CPython doesn't specialise Python calls and __getitem__ while a "
     'frame-evaluation hook is installed (specialize.c, SPEC_FAIL_CALL_PEP_523)':
         'test_dis.DisTests.test_loop_quicken '
