@@ -38,9 +38,6 @@ BANNED = {
 
 # reason: single tests (module.Class.method) skipped in both runs
 SKIPPED = {
-    'a deadline on the whole run, which slow machines miss':
-        'test_signal.StressTest.test_stress_delivery_dependent '
-        'test_signal.StressTest.test_stress_delivery_simultaneous',
     "CPython doesn't specialise Python calls and __getitem__ while a "
     'frame-evaluation hook is installed (specialize.c, SPEC_FAIL_CALL_PEP_523)':
         'test_dis.DisTests.test_loop_quicken '
@@ -54,6 +51,9 @@ SKIPPED = {
     "a compiled frame's f_lasti isn't kept up to date while it calls Python, "
     "and 3.11's inspect takes the line from it":
         'test_inspect.TestInterpreterStack.test_stack',
+    "code LeJIT compiles doesn't run in ceval, so ceval doesn't quicken it":
+        'test_dis.DisTests.test_super_instructions '
+        'test_dis.DisWithFileTests.test_super_instructions',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,

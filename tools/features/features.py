@@ -951,7 +951,6 @@ EXPORTS = [
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
     ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
     ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
-    ('MODULE_SPEC_IS_INITIALIZING_LINKABLE', '_PyModuleSpec_IsInitializing'),
     ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
     ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
     ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
@@ -997,6 +996,10 @@ BYTECODE = [
                         lambda s: _file_has(s, 'Objects/codeobject.c', '"co_qualname"'))),
     ('LOAD_GLOBAL_NULL_BIT', D('LOAD_GLOBAL\'s argument is the name\'s index shifted left once, its low bit pushing a NULL under the global',
                                lambda s: _case_has(s, 'LOAD_GLOBAL', 'oparg>>1'))),
+    ('MATCH_CLASS_PUSHES_BOOL', D('MATCH_CLASS pushes a bool saying whether the class matched, over the attributes or the subject',
+                                  lambda s: _case_has(s, 'MATCH_CLASS', 'PyBool_FromLong', missing=False))),
+    ('MATCH_KEYS_PUSHES_BOOL', D('MATCH_KEYS pushes a bool saying whether the keys matched, over the values or None',
+                                 lambda s: _case_has(s, 'MATCH_KEYS', 'PUSH(Py_True)', missing=False))),
 ]
 
 # frames

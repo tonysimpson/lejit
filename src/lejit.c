@@ -368,14 +368,18 @@ le_layouts(PyObject *self, PyObject *unused)
         goto error;
 
     /* Objects/dict-common.h's keys and entries: a dict of one item has keys
-       of its own, whose size _PyDict_SizeOf counts from the real structs */
+       of its own, whose size dict.__sizeof__ counts from the real structs */
     one = PyLong_FromLong(1);
     if (one == NULL || PyDict_SetItem(d, one, one) < 0)
         goto error;
     {
         le_dictkeys_t *k = (le_dictkeys_t *)((PyDictObject *)d)->ma_keys;
         Py_ssize_t size = k->dk_size, usable = size * 2 / 3;
-        Py_ssize_t whole = _PyDict_SizeOf((PyDictObject *)d), header = 0;
+        PyObject *sz = PyObject_CallMethod(d, "__sizeof__", NULL);
+        Py_ssize_t whole = sz == NULL ? -1 : PyLong_AsSsize_t(sz), header = 0;
+        Py_XDECREF(sz);
+        if (whole == -1)
+            goto error;
         ok = k->dk_refcnt == 1 && size >= 8 && (size & (size - 1)) == 0 &&
              size <= 0xff && k->dk_nentries == 1 &&
              k->dk_usable == usable - 1 && k->dk_lookup != NULL;
