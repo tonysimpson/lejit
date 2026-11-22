@@ -387,8 +387,16 @@ getitem_raises = _with_globals(
 # STORE_NAME and LOAD_NAME in a frame with no f_locals: CPython raises
 # SystemError; such code isn't compiled
 _names = compile('x = 1\ny = x\n', 'src', 'exec')
-name_opcodes = types.FunctionType(
-    _names.replace(co_flags=_names.co_flags | 0x3), {})
+if hasattr(_names, 'replace'):
+    _names = _names.replace(co_flags=_names.co_flags | 0x3)
+else:
+    _names = types.CodeType(
+        _names.co_argcount, _names.co_kwonlyargcount, _names.co_nlocals,
+        _names.co_stacksize, _names.co_flags | 0x3, _names.co_code,
+        _names.co_consts, _names.co_names, _names.co_varnames,
+        _names.co_filename, _names.co_name, _names.co_firstlineno,
+        _names.co_lnotab, _names.co_freevars, _names.co_cellvars)
+name_opcodes = types.FunctionType(_names, {})
 
 
 CASES = [
