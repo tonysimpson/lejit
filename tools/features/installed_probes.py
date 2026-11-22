@@ -137,13 +137,6 @@ def OBJECTDICT_SETITEM_LINKABLE():
 
 
 @probe
-def CORO_GET_AWAITABLE_ITER_LINKABLE():
-    """libpython exports _PyCoro_GetAwaitableIter, so an extension can link
-    to it (ctypes)"""
-    return _exported('_PyCoro_GetAwaitableIter')
-
-
-@probe
 def CODE_GET_CODE():
     """libpython exports PyCode_GetCode (ctypes)"""
     return _exported('PyCode_GetCode')
@@ -180,12 +173,7 @@ for _feature, _function in [
         ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
         ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
         ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
-        ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
-        ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
-        ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
-        ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
-        ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
-        ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip')]:
+        ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
@@ -402,37 +390,6 @@ def DELETE_GLOBAL_KEYERROR_ONLY():
     if isinstance(e, NameError):
         return False, 'DELETE_GLOBAL run: NameError'
     raise Unanswered('DELETE_GLOBAL run: %r' % e)
-
-
-@probe
-def AENTER_LOOKUP_FIRST():
-    """`async with` an object whose __aenter__ and __aexit__ are
-    descriptors gets __aenter__ first (run)"""
-    order = []
-
-    class Special(object):
-        def __init__(self, name):
-            self.name = name
-
-        def __get__(self, obj, cls=None):
-            order.append(self.name)
-            return lambda *a: None
-
-    class X(object):
-        __aenter__ = Special('__aenter__')
-        __aexit__ = Special('__aexit__')
-
-    async def c():
-        async with X():
-            pass
-    co = c()
-    try:
-        _error(co.send, None)
-    finally:
-        co.close()
-    if sorted(order[:2]) != ['__aenter__', '__aexit__']:
-        raise Unanswered('async with run: looked up %r' % order)
-    return order[0] == '__aenter__', 'async with run: %s first' % order[0]
 
 
 @probe
@@ -732,18 +689,6 @@ def CONTAINS_ITEM_FIRST():
     if order not in (['value', 'item'], ['item', 'value']):
         raise Unanswered('__eq__ calls %r' % order)
     return order[0] == 'item', '`in` called %s.__eq__ first' % order[0]
-
-
-@probe
-def FORMATCHAR_INDEX_ONLY():
-    """'%c' % 2**100 is an OverflowError (out of range), not a TypeError
-    (run)"""
-    e = _error(lambda: '%c' % (2 ** 100))
-    if isinstance(e, OverflowError):
-        return True, "'%c' % 2**100: OverflowError"
-    if isinstance(e, TypeError):
-        return False, "'%c' % 2**100: TypeError"
-    raise Unanswered("'%%c' %% 2**100: %r" % e)
 
 
 @probe

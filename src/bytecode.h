@@ -23,12 +23,27 @@ typedef struct {
     int size; /* in bytes */
 } le_code_t;
 
+/* Where CPython makes a code object's bytes when first asked for them
+   (PyCode_GetCode), and keeps them until it dies: 0 once they are made,
+   -1 with a MemoryError set. le_code is only used after this. */
+static inline int
+le_code_prepare(PyCodeObject *co)
+{
+#if LE_HAS_CODE_GET_CODE
+    PyObject *b = PyCode_GetCode(co);
+    if (b == NULL)
+        return -1;
+    Py_DECREF(b);
+#endif
+    return 0;
+}
+
 static inline le_code_t
 le_code(PyCodeObject *co)
 {
     le_code_t c;
 #if LE_HAS_CODE_GET_CODE
-    /* a new reference to bytes the code object keeps until it dies */
+    /* a new reference to the bytes le_code_prepare made */
     PyObject *b = PyCode_GetCode(co);
     if (b == NULL)
         Py_FatalError("PyCode_GetCode failed");
@@ -470,15 +485,11 @@ le_op_flags(int op)
         case WITH_CLEANUP_FINISH:
         /* generators */
         case GEN_START:
-        case GET_YIELD_FROM_ITER:
+        /* in a plain function too: an async generator expression's
+           outermost iterable */
         case GET_AITER:
             return LE_OPF_COMPILED_IN_BLOCKS;
         case BEFORE_ASYNC_WITH:
-            return LE_OPF_COMPILED_IN_BLOCKS | LE_OPF_BREAKER_SKIPS;
-#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
-        case GET_ANEXT:
-            return LE_OPF_COMPILED_IN_BLOCKS;
-#endif
         case YIELD_FROM:
             return LE_OPF_BREAKER_SKIPS;
     }

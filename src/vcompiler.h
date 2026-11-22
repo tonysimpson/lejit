@@ -1016,7 +1016,10 @@ PSY_INLINE PsycoObject *
 PsycoObject_Resize(PsycoObject *po, int nvlocalscnt)
 {
     int psize = PSYCOOBJECT_SIZE(nvlocalscnt);
-    return (PsycoObject *)PyMem_REALLOC(po, psize);
+    po = (PsycoObject *)PyMem_REALLOC(po, psize);
+    if (po == NULL)
+        OUT_OF_MEMORY();
+    return po;
 }
 /* end of PsycoObject construction */
 

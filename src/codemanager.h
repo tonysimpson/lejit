@@ -216,9 +216,11 @@ EXTERNVAR long psyco_stat_code_bytes;
 
 /* LE_COMPILE_BEGIN/END bracket each way in from run time, by how the
    compiler was entered; le_compile_depth counts the compiles open, during
-   which no owner scan runs. Checked builds time the outermost
-   (lejit._core._stats()), so a compile nested in another isn't counted twice;
-   codestats builds keep its kind. A normal build reads no clock. */
+   which no owner scan runs, and the outermost keeps the compiler's
+   allocations out of tracemalloc (le_untraced_begin). Checked builds time
+   the outermost (lejit._core._stats()), so a compile nested in another
+   isn't counted twice; codestats builds keep its kind. A normal build reads
+   no clock. */
 enum {
     LE_ENTER_ANALYSE,
     LE_ENTER_CALL,
@@ -228,6 +230,12 @@ enum {
     LE_ENTER_KINDS
 };
 EXTERNVAR int le_compile_depth;
+/* from begin to end, while tracemalloc traces, the compiler's allocations
+   are made past it; nested calls do nothing */
+EXTERNFN void
+le_untraced_begin(void);
+EXTERNFN void
+le_untraced_end(void);
 #if ALL_CHECKS || LE_CODESTATS
 EXTERNFN long
 le_now_ns(void);
@@ -236,24 +244,31 @@ EXTERNVAR int psyco_stat_compile_kind; /* the outermost entry's kind */
 #if ALL_CHECKS
 EXTERNVAR long psyco_stat_compile_ns[LE_ENTER_KINDS];
 EXTERNVAR long psyco_stat_compile_count[LE_ENTER_KINDS];
-#define LE_COMPILE_BEGIN(kind)       \
-    long _le_t0 = le_compile_depth++ \
-                      ? 0            \
-                      : (psyco_stat_compile_kind = (kind), le_now_ns())
+#define LE_COMPILE_BEGIN(kind)                \
+    long _le_t0 = le_compile_depth++          \
+                      ? 0                     \
+                      : (le_untraced_begin(), \
+                         psyco_stat_compile_kind = (kind), le_now_ns())
 #define LE_COMPILE_END(kind)                                     \
     do {                                                         \
         if (--le_compile_depth == 0) {                           \
             psyco_stat_compile_ns[kind] += le_now_ns() - _le_t0; \
             psyco_stat_compile_count[kind]++;                    \
+            le_untraced_end();                                   \
         }                                                        \
     } while (0)
 #elif LE_CODESTATS
 #define LE_COMPILE_BEGIN(kind) \
-    (void)(le_compile_depth++ ? 0 : (psyco_stat_compile_kind = (kind)))
-#define LE_COMPILE_END(kind) ((void)le_compile_depth--)
+    (void)(le_compile_depth++  \
+               ? 0             \
+               : (le_untraced_begin(), psyco_stat_compile_kind = (kind)))
+#define LE_COMPILE_END(kind) \
+    ((void)(--le_compile_depth == 0 ? (le_untraced_end(), 0) : 0))
 #else
-#define LE_COMPILE_BEGIN(kind) ((void)le_compile_depth++)
-#define LE_COMPILE_END(kind) ((void)le_compile_depth--)
+#define LE_COMPILE_BEGIN(kind) \
+    ((void)(le_compile_depth++ ? 0 : (le_untraced_begin(), 0)))
+#define LE_COMPILE_END(kind) \
+    ((void)(--le_compile_depth == 0 ? (le_untraced_end(), 0) : 0))
 #endif
 
 /* A block at the start of a new extent (psyco_code_open, whose limit it
