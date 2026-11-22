@@ -236,6 +236,16 @@ def cframe(h):
     raise Unanswered('%s:_ts has no use_tracing, nor a CFrame with one' % path)
 
 
+def ceval_trace_info(h):
+    """headers: use_tracing is a CFrame's (cframe above), and no header
+    defines PyTraceInfo, so ceval.c does"""
+    has_cframe, evidence = cframe(h)
+    path, fields = h.struct('PyTraceInfo')
+    if not has_cframe or fields is not None:
+        return False, '%s, %s:PyTraceInfo' % (evidence, path or 'no header')
+    return True, evidence + ', no header defines PyTraceInfo'
+
+
 def gc_tracked_by_next(h):
     """headers: _PyObject_GC_IS_TRACKED's definition reads _gc_next"""
     found = h.definitions('_PyObject_GC_IS_TRACKED')
@@ -321,6 +331,8 @@ HEADER_DETECTORS = {
     'CODE_LOCALSPLUS': features.code_localsplus,
     'RECURSION_REMAINING': features.recursion_remaining,
     'EXC_INFO_VALUE_ONLY': features.exc_info_value_only,
+    'DICT_VALUES_STRUCT': features.dict_values_struct,
+    'CEVAL_TRACE_INFO': ceval_trace_info,
     # where the interpreter's probe can't answer: a frame object with no
     # f_lasti of its own
     'LASTI_IN_INSTRUCTIONS': features.interpreter_frame_lasti,

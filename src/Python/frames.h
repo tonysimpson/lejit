@@ -10,6 +10,8 @@
 #include <compile.h>
 #include <frameobject.h>
 #include <idispatcher.h>
+/* le_frame_t */
+#include "../mechanisms/frames.h"
 
 /* A frame object for one item pvisitframes() visits: a real frame, the
    real frame of a (code, globals, frame) tuple, or a new emulated frame for
@@ -22,7 +24,7 @@ EXTERNFN PyFrameObject *
 psyco_running_real_frame(PyCodeObject *co);
 /* ceval evaluating a frame itself, past the hook (eval_hook.c) */
 EXTERNFN PyObject *
-le_eval_frame_default(PyFrameObject *f);
+le_eval_frame_default(le_frame_t *f);
 
 EXTERNFN PyObject *
 psyco_get_globals(void);
@@ -48,8 +50,10 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
                    long nvalues, PyObject **word);
 EXTERNFN void
 psyco_resume_value(struct resume_s *st, long i, PyObject *v);
+#if !LE_HAS_EXCEPTION_TABLE
 EXTERNFN void
 psyco_resume_block(struct resume_s *st, long type, long handler, long level);
+#endif
 /* A compiled frame with handlers has a catcher word, which holds a
    reference to its traceback frame from when it catches an exception
    until its call ends (pycompiler.c:catcher_word). psyco_frame_catch puts
@@ -136,7 +140,7 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee);
 /* A real frame LeCode_Run runs: on its C stack, linked into this
    thread's list from start to return (frames.c:frame_runs) */
 typedef struct frame_runtime_s {
-    PyFrameObject *py_frame; /* borrowed: LeCode_Run's caller holds it */
+    le_frame_t *frame; /* LeCode_Run's caller holds it */
     stack_frame_info_t ***psy_frames_start;
     PyCodeObject *psy_code;
     PyObject *psy_globals;
@@ -149,13 +153,13 @@ typedef struct frame_runtime_s {
 } FrameRuntime;
 
 EXTERNFN void
-psyco_frame_start_register(FrameRuntime *fr, PyFrameObject *f,
+psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
                            stack_frame_info_t ***psy_frames_start);
 EXTERNFN void
 psyco_frame_start_unregister(FrameRuntime *fr);
 /* f's record if LeCode_Run runs it on this thread, else NULL */
 EXTERNFN FrameRuntime *
-psyco_frame_start_get(PyFrameObject *f);
+psyco_frame_start_get(le_frame_t *f);
 
 /* f_localsplus[start...] = values (up to count, within the frame's
    locals), each with a new reference: the locals of a compiled frame, put

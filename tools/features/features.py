@@ -606,7 +606,20 @@ def recursion_remaining(s):
 def exc_info_value_only(s):
     """an exception being handled is kept as its value alone
     (_PyErr_StackItem.exc_value, no exc_type or exc_traceback)"""
-    return _not(_field(s, '_err_stackitem', 'exc_type'))
+    # the last of 'PyObject *exc_type, *exc_value, *exc_traceback;', the
+    # one name the struct parser keeps of the declaration
+    return _not(_field(s, '_err_stackitem', 'exc_traceback'))
+
+
+def dict_values_struct(s):
+    """a split dict's values are a PyDictValues (ma_values), whose array of
+    values is its only field, not a bare array"""
+    path, fields = s.struct('PyDictObject')
+    if fields is None:
+        raise Unanswered('no PyDictObject in Include')
+    if 'ma_values' not in fields:
+        raise Unanswered('%s:PyDictObject has no ma_values' % path)
+    return 'PyDictValues' in fields['ma_values'], path + ':PyDictObject.ma_values'
 
 
 def interp_recursion_limit(s):
@@ -1022,6 +1035,7 @@ OBJECTS = [
     ('TUPLE_GET_EMPTY', D('the empty tuple is the interpreter\'s, read with tuple_get_empty',
                           lambda s: _defines(s, 'Objects/tupleobject.c', 'tuple_get_empty'))),
     ('CONTAINS_ITEM_FIRST', tuplecontains_item_first),
+    ('DICT_VALUES_STRUCT', dict_values_struct),
     ('PYCORE_FORMAT_H', D('the format flags F_LJUST... are the internal pycore_format.h\'s',
                           lambda s: _file(s, 'Include/internal/pycore_format.h'))),
     ('FORMATCHAR_INDEX_ONLY', D('%c takes an int, by PyLong_AsLongAndOverflow (no __int__)',
@@ -1040,6 +1054,8 @@ OBJECTS = [
 CEVAL = [
     ('CMP_OUTCOME', D('COMPARE_OP also does is, in and exception matches (cmp_outcome)',
                       lambda s: _defines(s, CE, 'cmp_outcome'))),
+    ('CEVAL_TRACE_INFO', D('ceval keeps the line bounds it traces with, and the frame\'s CFrame, in a PyTraceInfo of its own (call_trace, do_call_core)',
+                           lambda s: _file_has(s, CE, 'CFrame cframe; } PyTraceInfo;'))),
     ('CALL_TRACE_METHOD_DESCR', D('do_call_core traces a method descriptor\'s call as a C call',
                                   lambda s: _body_has(s, CE, 'do_call_core', 'PyMethodDescr_Type'))),
     ('NAME_ERROR_NAME', D('format_exc_check_arg sets a NameError\'s name',
