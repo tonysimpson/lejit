@@ -5,11 +5,10 @@ the MemoryError replaces the exception, as it does for one already raised.
     python3.X tests/jit/out_of_memory.py
 """
 import os, sys
-sys.path.insert(0, os.environ.get('LE_MODULE_DIR') or
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import lejit
 if not hasattr(lejit._core, '_fail_after'):
-    sys.exit('lejit was not built for tests: build it with LE_ALL_CHECKS=1')
+    sys.exit('lejit was not built for tests: build it with LEJIT_DEV_TRACE=1')
 lejit.start()
 
 

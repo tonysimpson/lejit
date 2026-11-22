@@ -461,16 +461,10 @@ build_dict(void)
             0 ||
         add_layout(layouts, "PyDictKeysObject", sizeof(le_dictkeys_t), 1) < 0)
         goto error;
-#ifdef LE_SANITIZE
-    const char *sanitizer = LE_SANITIZE;
-#else
-    const char *sanitizer = NULL;
-#endif
     if (add_str(d, "source_version", LE_FEATURES_SOURCE_VERSION) < 0 ||
         add_str(d, "build", ALL_CHECKS ? "checked" : "release") < 0 ||
         add_obj(d, "trace", PyBool_FromLong(LE_TRACE)) < 0 ||
         add_obj(d, "codestats", PyBool_FromLong(LE_CODESTATS)) < 0 ||
-        add_str(d, "sanitizer", sanitizer) < 0 ||
         PyDict_SetItemString(d, "features", features) < 0 ||
         PyDict_SetItemString(d, "messages", messages) < 0 ||
         PyDict_SetItemString(d, "layouts", layouts) < 0)

@@ -11,7 +11,7 @@ use_lejit = sys.argv[6] == '1'
 if use_lejit:
     import lejit
     if not hasattr(lejit._core, '_stats'):
-        sys.exit('lejit was not built for tests: build it with LEJIT_ALL_CHECKS=1')
+        sys.exit('lejit was not built for tests: build it with LEJIT_DEV_TRACE=1')
     lejit.start()
 out = []
 for args in calls:

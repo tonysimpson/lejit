@@ -1,7 +1,7 @@
 /* The private functions of lejit._core that tests use: the compiler's
    counters and what it made of a code object. Only checked builds
-   (LEJIT_ALL_CHECKS=1) have them, and the code size counts only codestats
-   builds (LEJIT_CODESTATS=1). lejit.c adds them to the module. */
+   (LEJIT_DEV_TRACE=1) have them, and the code size counts only codestats
+   builds (LEJIT_DEV_CODESTATS=1). lejit.c adds them to the module. */
 #include "Python/frames.h"
 #include "Python/pycompiler.h"
 #include "Objects/pmethodobject.h"
