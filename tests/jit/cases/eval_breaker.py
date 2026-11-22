@@ -2,7 +2,8 @@
 # and on entry from the interpreter: other threads get the
 # GIL, signal handlers run and async exceptions arrive while a compiled loop
 # spins. Without the test these loops never end (the harness's timeout).
-import ctypes, itertools, os, signal, sys, threading, time, zlib
+import ctypes, functools, itertools, operator, os, signal, sys, threading, \
+    time, zlib
 
 
 class Box:
@@ -292,6 +293,38 @@ def switch_interval():
         sys.setswitchinterval(old)
 
 
+_add_pending_call = ctypes.pythonapi.Py_AddPendingCall
+_add_pending_call.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+_PENDING_CALL = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
+_lines_seen = []
+
+
+@_PENDING_CALL
+def _note_lines(arg):
+    f = sys._getframe(1)
+    for _ in range(2):
+        _lines_seen.append((f.f_code.co_name, f.f_lineno))
+        f = f.f_back
+    return 0
+
+
+_queue_note_lines = functools.partial(
+    _add_pending_call, ctypes.cast(_note_lines, ctypes.c_void_p), None)
+
+
+def _entered():
+    return 'entered'
+
+
+# a pending call that runs on entry to a compiled function called from C,
+# before its code starts, reads that frame's line and its caller's
+def pending_call_reads_lines_at_entry():
+    del _lines_seen[:]
+    r = list(map(operator.methodcaller('__call__'),
+                 [_queue_note_lines, _entered]))
+    return r[1], _lines_seen[:]
+
+
 CASES = [
     ('thread_sets_attribute', [()], {}),
     ('thread_sets_global', [()], {}),
@@ -307,4 +340,5 @@ CASES = [
     ('async_exc_from_thread', [()], {}),
     ('async_exc_on_self', [()], {}),
     ('switch_interval', [()], {}),
+    ('pending_call_reads_lines_at_entry', [()], {}),
 ]
