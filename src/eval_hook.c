@@ -9,7 +9,7 @@
 #include "mechanisms/recursion.h"
 
 extern int
-le_eval_breaker_at_entry(PyFrameObject *f); /* pyruntime.c */
+le_eval_breaker_at_entry(PyCodeObject *co); /* pyruntime.c */
 
 static PyObject *
 LeCode_Run(PyObject *codebuf, le_frame_t *f)
@@ -27,18 +27,20 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     /* ceval counts the depth on entering every frame */
     if (le_recursion_enter())
         return NULL;
-    psyco_frame_start_register(&fr, le_frame_object(f), &finfo);
+    psyco_frame_start_register(&fr, f, &finfo);
     /* as ceval: the frame is the current one while its code runs, so that
        sys._getframe, frames made by calls from here (their f_back) and
        pvisitframes() see it */
-    le_frame_set_current(tstate, f);
+    le_frame_push(tstate, f);
     /* also as ceval: frame.clear() (traceback.clear_frames, unittest's
        assertRaises) must refuse to clear it, since the compiled code borrows
        the cells and arguments in f_localsplus */
     le_frame_set_executing(f, 1);
     /* ceval's eval_breaker test at the start */
-    if (le_eval_breaker_at_entry(le_frame_object(f)) < 0)
+    if (le_eval_breaker_at_entry(le_frame_code(f)) < 0) {
+        PyTraceBack_Here(le_frame_object(f));
         result = NULL;
+    }
     else
         result = psyco_processor_run((CodeBufferObject *)codebuf,
                                      (long *)le_frame_args(f), &finfo);
@@ -129,20 +131,21 @@ le_code_to_run(PyCodeObject *co, PyObject *globals, PyObject *locals,
 /* how CPython hands calls to LeJIT: LeEval_EvalFrame and le_entry_install */
 #if LE_HAS_EVAL_HOOK_TSTATE
 /* Entry by the PEP 523 frame-evaluation hook, which is given the thread
-   state and a PyFrameObject. Every frame CPython evaluates comes here
+   state and a frame (le_frame_t). Every frame CPython evaluates comes here
    first: one whose code LeJIT has compiled (eval_hook.c:le_code_to_run) runs
    on the frame's argument words (eval_hook.c:LeCode_Run), anything else
    goes to the evaluator installed before. The hook is read and set
    through the interpreter state's API functions. */
-typedef PyObject *(*le_eval_frame_fn)(PyThreadState *, PyFrameObject *, int);
+typedef PyObject *(*le_eval_frame_fn)(PyThreadState *, le_frame_t *, int);
 
 static le_eval_frame_fn original_eval_frame = NULL;
 
 static PyObject *
-LeEval_EvalFrame(PyThreadState *tstate, PyFrameObject *frame, int throwflag)
+LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
 {
-    PyObject *entry_point = le_code_to_run(frame->f_code, frame->f_globals,
-                                           frame->f_locals, frame->f_builtins);
+    PyObject *entry_point =
+        le_code_to_run(le_frame_code(frame), le_frame_globals(frame),
+                       le_frame_locals(frame), le_frame_builtins(frame));
     if (entry_point != NULL)
         return LeCode_Run(entry_point, frame);
     return original_eval_frame(tstate, frame, throwflag);
@@ -162,7 +165,7 @@ set_eval_frame(le_eval_frame_fn fn)
 
 /* ceval's own evaluation of a frame, past the hook (frames.c) */
 DEFINEFN PyObject *
-le_eval_frame_default(PyFrameObject *f)
+le_eval_frame_default(le_frame_t *f)
 {
     return _PyEval_EvalFrameDefault(PyThreadState_GET(), f, 0);
 }
@@ -205,7 +208,7 @@ set_eval_frame(le_eval_frame_fn fn)
 }
 
 DEFINEFN PyObject *
-le_eval_frame_default(PyFrameObject *f)
+le_eval_frame_default(le_frame_t *f)
 {
     return _PyEval_EvalFrameDefault(f, 0);
 }

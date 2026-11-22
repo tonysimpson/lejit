@@ -214,6 +214,8 @@ def frame_state(h):
     if fields is None:
         raise Unanswered('no struct _frame in the headers')
     if 'f_state' not in fields and 'f_executing' not in fields:
+        if 'f_frame' in fields:
+            return False, '%s:_frame has f_frame, not f_state' % path
         raise Unanswered('%s:_frame has neither f_state nor f_executing' % path)
     return 'f_state' in fields, path + ':_frame.f_state'
 
@@ -232,6 +234,16 @@ def cframe(h):
         if cf is not None and 'use_tracing' in cf:
             return True, '%s:%s.use_tracing' % (cpath, name)
     raise Unanswered('%s:_ts has no use_tracing, nor a CFrame with one' % path)
+
+
+def ceval_trace_info(h):
+    """headers: use_tracing is a CFrame's (cframe above), and no header
+    defines PyTraceInfo, so ceval.c does"""
+    has_cframe, evidence = cframe(h)
+    path, fields = h.struct('PyTraceInfo')
+    if not has_cframe or fields is not None:
+        return False, '%s, %s:PyTraceInfo' % (evidence, path or 'no header')
+    return True, evidence + ', no header defines PyTraceInfo'
 
 
 def gc_tracked_by_next(h):
@@ -315,6 +327,15 @@ HEADER_DETECTORS = {
     'LOOKUP_SPECIAL_ID': public('_PyObject_LookupSpecial'),
     'CALL_ONE_ARG': call_one_arg,
     'TUPLE_GET_EMPTY': tuple_get_empty,
+    'INTERPRETER_FRAME': features.interpreter_frame,
+    'CODE_LOCALSPLUS': features.code_localsplus,
+    'RECURSION_REMAINING': features.recursion_remaining,
+    'EXC_INFO_VALUE_ONLY': features.exc_info_value_only,
+    'DICT_VALUES_STRUCT': features.dict_values_struct,
+    'CEVAL_TRACE_INFO': ceval_trace_info,
+    # where the interpreter's probe can't answer: a frame object with no
+    # f_lasti of its own
+    'LASTI_IN_INSTRUCTIONS': features.interpreter_frame_lasti,
 }
 
 # features that neither the interpreter nor the headers show: the two forms
@@ -333,15 +354,17 @@ def _answer(name, probed, headers):
                 'opcode.opmap' + ('' if op in probed['real_opcodes'] else ': no ' + op))
     if name in answers:
         a = answers[name]
-        if isinstance(a, dict):
+        if not isinstance(a, dict):
+            return a[0], 'interpreter', a[1]
+        if name not in HEADER_DETECTORS:
             raise Unanswered(a['unanswered'])
-        return a[0], 'interpreter', a[1]
     if name in HEADER_DETECTORS:
         if isinstance(headers, Exception):
             raise Unanswered(str(headers))
         try:
             value, evidence = HEADER_DETECTORS[name](headers)
-        except SyntaxError as e:     # ctokens: unbalanced brackets
+        except (SyntaxError,         # ctokens: unbalanced brackets
+                features.Unanswered) as e:
             raise Unanswered(str(e))
         return value, 'headers', evidence
     if name in NOT_VISIBLE:

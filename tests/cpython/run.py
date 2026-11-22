@@ -38,6 +38,12 @@ BANNED = {
 
 # reason: single tests (module.Class.method) skipped in both runs
 SKIPPED = {
+    "CPython doesn't specialise Python calls and __getitem__ while a "
+    'frame-evaluation hook is installed (specialize.c, SPEC_FAIL_CALL_PEP_523)':
+        'test_dis.DisTests.test_loop_quicken '
+        'test_dis.DisWithFileTests.test_loop_quicken '
+        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test_binary_subscript_specialization_user_type',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,

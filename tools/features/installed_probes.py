@@ -183,8 +183,6 @@ for _feature, _function in [
         ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
         ('MODULE_SPEC_IS_INITIALIZING_LINKABLE', '_PyModuleSpec_IsInitializing'),
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
-        ('UNICODE_EQ_LINKABLE', '_PyUnicode_EQ'),
-        ('UNICODE_FAST_COPY_LINKABLE', '_PyUnicode_FastCopyCharacters'),
         ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
         ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
         ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
@@ -296,11 +294,27 @@ def POP_EXCEPT_UNWINDS():
 
 
 @probe
+def EXCEPTION_TABLE():
+    """code objects have co_exceptiontable"""
+    return (hasattr((lambda: None).__code__, 'co_exceptiontable'),
+            'code.co_exceptiontable')
+
+
+@probe
 def KWARGS_MERGE_EX():
     """CALL_FUNCTION_EX given a mapping whose keys() repeats a key reports
     the repeat (TypeError "multiple values"), as _PyDict_MergeEx does,
     rather than keeping the last value as PyDict_Update does (run)"""
-    _need_ops('CALL_FUNCTION_EX', 'CALL_FUNCTION', 'LOAD_CONST', 'RETURN_VALUE')
+    _need_ops('CALL_FUNCTION_EX', 'LOAD_CONST', 'RETURN_VALUE')
+    # the callable is pushed with CALL_FUNCTION, or (from 3.11) with a
+    # NULL under it
+    if _real_op('CALL_FUNCTION'):
+        start = []
+    elif _real_op('PUSH_NULL'):
+        start = [('PUSH_NULL', 0)]
+    else:
+        raise Unanswered('the probe needs opcode CALL_FUNCTION or PUSH_NULL,'
+                         ' which this interpreter lacks')
 
     class M(object):
         def keys(self):
@@ -311,7 +325,7 @@ def KWARGS_MERGE_EX():
 
     def f(**kw):
         return kw
-    call = _code([('LOAD_CONST', 0), ('LOAD_CONST', 1), ('LOAD_CONST', 2),
+    call = _code(start + [('LOAD_CONST', 0), ('LOAD_CONST', 1), ('LOAD_CONST', 2),
                   ('CALL_FUNCTION_EX', 1), ('RETURN_VALUE', 0)],
                  [f, (), M()])
     e = _error(call)
@@ -346,23 +360,33 @@ def DELETE_GLOBAL_KEYERROR_ONLY():
 
 @probe
 def AENTER_LOOKUP_FIRST():
-    """`async with` an object with neither __aenter__ nor __aexit__ fails
-    on __aenter__ (run)"""
+    """`async with` an object whose __aenter__ and __aexit__ are
+    descriptors gets __aenter__ first (run)"""
+    order = []
+
+    class Special(object):
+        def __init__(self, name):
+            self.name = name
+
+        def __get__(self, obj, cls=None):
+            order.append(self.name)
+            return lambda *a: None
+
     class X(object):
-        pass
+        __aenter__ = Special('__aenter__')
+        __aexit__ = Special('__aexit__')
 
     async def c():
         async with X():
             pass
     co = c()
     try:
-        e = _error(co.send, None)
+        _error(co.send, None)
     finally:
         co.close()
-    msg = str(e)
-    if isinstance(e, AttributeError) and ('__aenter__' in msg) != ('__aexit__' in msg):
-        return '__aenter__' in msg, 'async with run: AttributeError %s' % msg
-    raise Unanswered('async with run: %r' % e)
+    if sorted(order[:2]) != ['__aenter__', '__aexit__']:
+        raise Unanswered('async with run: looked up %r' % order)
+    return order[0] == '__aenter__', 'async with run: %s first' % order[0]
 
 
 @probe

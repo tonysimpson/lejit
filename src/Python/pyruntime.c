@@ -123,23 +123,19 @@ le_eval_breaker_handler(void)
 /* The same test before a frame's first instruction, for compiled code
    entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
    instructions ceval's loop top skips. Compiled callers test after each
-   call instead. -1 with the exception set and the frame in its traceback,
-   as ceval's error path would. */
+   call instead. -1 with the exception set, for the caller to give the
+   frame a traceback entry, as ceval's error path would. */
 int
-le_eval_breaker_at_entry(PyFrameObject *f)
+le_eval_breaker_at_entry(PyCodeObject *co)
 {
     int op;
     if (!_Py_atomic_load_relaxed(&le_ceval2()->eval_breaker))
         return 0;
-    op = le_op(le_code(f->f_code), 0);
+    op = le_op(le_code(co), 0);
     if (op == SETUP_FINALLY || op == SETUP_WITH || op == BEFORE_ASYNC_WITH ||
         op == YIELD_FROM)
         return 0;
-    if (le_eval_breaker_handler() < 0) {
-        PyTraceBack_Here(f);
-        return -1;
-    }
-    return 0;
+    return le_eval_breaker_handler();
 }
 #elif LE_HAS_SIGNALS_PENDING
 /* eval_breaker in _PyRuntime.ceval, and what ceval does when it is set:
@@ -207,23 +203,19 @@ le_eval_breaker_handler(void)
 /* The same test before a frame's first instruction, for compiled code
    entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
    instructions ceval's loop top skips. Compiled callers test after each
-   call instead. -1 with the exception set and the frame in its traceback,
-   as ceval's error path would. */
+   call instead. -1 with the exception set, for the caller to give the
+   frame a traceback entry, as ceval's error path would. */
 int
-le_eval_breaker_at_entry(PyFrameObject *f)
+le_eval_breaker_at_entry(PyCodeObject *co)
 {
     int op;
     if (!_Py_atomic_load_relaxed(&_PyRuntime.ceval.eval_breaker))
         return 0;
-    op = le_op(le_code(f->f_code), 0);
+    op = le_op(le_code(co), 0);
     if (op == SETUP_FINALLY || op == SETUP_WITH || op == BEFORE_ASYNC_WITH ||
         op == YIELD_FROM)
         return 0;
-    if (le_eval_breaker_handler() < 0) {
-        PyTraceBack_Here(f);
-        return -1;
-    }
-    return 0;
+    return le_eval_breaker_handler();
 }
 #else
 /* eval_breaker in _PyRuntime.ceval, and what ceval does when it is set:
@@ -278,23 +270,19 @@ le_eval_breaker_handler(void)
 /* The same test before a frame's first instruction, for compiled code
    entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
    instructions ceval's loop top skips. Compiled callers test after each
-   call instead. -1 with the exception set and the frame in its traceback,
-   as ceval's error path would. */
+   call instead. -1 with the exception set, for the caller to give the
+   frame a traceback entry, as ceval's error path would. */
 int
-le_eval_breaker_at_entry(PyFrameObject *f)
+le_eval_breaker_at_entry(PyCodeObject *co)
 {
     int op;
     if (!_Py_atomic_load_relaxed(&_PyRuntime.ceval.eval_breaker))
         return 0;
-    op = le_op(le_code(f->f_code), 0);
+    op = le_op(le_code(co), 0);
     if (op == SETUP_FINALLY || op == SETUP_WITH || op == BEFORE_ASYNC_WITH ||
         op == YIELD_FROM)
         return 0;
-    if (le_eval_breaker_handler() < 0) {
-        PyTraceBack_Here(f);
-        return -1;
-    }
-    return 0;
+    return le_eval_breaker_handler();
 }
 #endif
 /* le_recursion_limit_address, where the limit is internal */

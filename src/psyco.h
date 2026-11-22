@@ -185,9 +185,19 @@ _Static_assert(__builtin_classify_type(((PyDictObject *)0)->ma_keys) == 5,
 #define LE_OFS_PyDictObject__ma_values offsetof(PyDictObject, ma_values)
 #define LE_SIZE2_PyDictObject__ma_values 3
 #define LE_UNSIGNED_PyDictObject__ma_values 0
+#if LE_HAS_DICT_VALUES_STRUCT
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((PyDictObject *)0)->ma_values), PyDictValues *),
+               "LeJIT: PyDictObject.ma_values is not PyDictValues *");
+/* a split dict's values: the PyDictValues' only field, its array */
+#define le_dict_values(d) ((PyObject **)(d)->ma_values)
+#else
 _Static_assert(__builtin_types_compatible_p(
                    __typeof__(((PyDictObject *)0)->ma_values), PyObject **),
                "LeJIT: PyDictObject.ma_values is not PyObject **");
+/* a split dict's values */
+#define le_dict_values(d) ((d)->ma_values)
+#endif
 _Static_assert(sizeof(((PyDictObject *)0)->ma_values) == 8,
                "LeJIT: PyDictObject.ma_values: LeJIT reads 8 bytes");
 _Static_assert(__builtin_classify_type(((PyDictObject *)0)->ma_values) == 5,
@@ -861,12 +871,6 @@ PyAPI_FUNC(Py_hash_t) _Py_HashBytes(const void *, Py_ssize_t);
 #define le_hash_bytes _Py_HashBytes
 #else
 #define le_hash_bytes Py_HashBuffer
-#endif
-#if LE_HAS_UNICODE_FAST_COPY_LINKABLE
-#define le_unicode_copy_characters _PyUnicode_FastCopyCharacters
-#else
-#define le_unicode_copy_characters(to, to_start, from, from_start, n) \
-    ((void)PyUnicode_CopyCharacters(to, to_start, from, from_start, n))
 #endif
 #if LE_HAS_UNICODE_FROM_ASCII_LINKABLE
 #define le_unicode_from_ascii _PyUnicode_FromASCII
