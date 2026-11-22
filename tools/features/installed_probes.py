@@ -299,6 +299,33 @@ def EXCEPTION_TABLE():
             'code.co_exceptiontable')
 
 
+def _match_pushes_bool(name, with_bool, without):
+    """(name's stack effect is with_bool, evidence); False where there is
+    no such instruction"""
+    if not _real_op(name):
+        return False, 'opcode.opmap has no %s' % name
+    op = opcode.opmap[name]
+    effect = dis.stack_effect(op, 0) if op >= opcode.HAVE_ARGUMENT \
+        else dis.stack_effect(op)
+    if effect not in (with_bool, without):
+        raise Unanswered('dis.stack_effect(%s, 0) is %d' % (name, effect))
+    return effect == with_bool, 'dis.stack_effect(%s, 0) == %d' % (name, effect)
+
+
+@probe
+def MATCH_CLASS_PUSHES_BOOL():
+    """MATCH_CLASS leaves two values for its three (a bool over the
+    attributes or the subject), not one (dis.stack_effect)"""
+    return _match_pushes_bool('MATCH_CLASS', -1, -2)
+
+
+@probe
+def MATCH_KEYS_PUSHES_BOOL():
+    """MATCH_KEYS pushes two values (the values or None, and a bool), not
+    one (dis.stack_effect)"""
+    return _match_pushes_bool('MATCH_KEYS', 2, 1)
+
+
 @probe
 def MONITORING():
     """sys.monitoring exists"""

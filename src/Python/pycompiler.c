@@ -3284,7 +3284,7 @@ _error:
 }
 #endif
 
-#if LE_HAS_OPCODE_MATCH_KEYS
+#if LE_HAS_MATCH_KEYS_PUSHES_BOOL
 static int
 cimpl_match_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
                     PyObject *values_or_none, PyObject **_out)
@@ -7675,12 +7675,6 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
 #if LE_HAS_OPCODE_MATCH_CLASS
                 case MATCH_CLASS: {
-                    vinfo_t *_t2;
-                    vinfo_t *_t3;
-                    vinfo_t *_t4;
-                    vinfo_t *_t5;
-                    vinfo_t *_t6;
-                    vinfo_t *_t7;
                     vinfo_t *attrs;
                     vinfo_t *names;
                     vinfo_t *subject;
@@ -7697,6 +7691,27 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     if (attrs == NULL) {
                         break;
                     }
+#if !LE_HAS_MATCH_CLASS_PUSHES_BOOL
+                    /* the attributes in the subject's place, or None */
+                    if (psyco_known_NULL(attrs)) {
+                        vinfo_decref(attrs, po);
+                        attrs = psyco_vi_None();
+                    }
+                    POP(names);
+                    POP(type);
+                    POP(subject);
+                    vinfo_decref(names, po);
+                    vinfo_decref(type, po);
+                    vinfo_decref(subject, po);
+                    PUSH(attrs);
+                    goto fine;
+#else
+                    vinfo_t *_t2;
+                    vinfo_t *_t3;
+                    vinfo_t *_t4;
+                    vinfo_t *_t5;
+                    vinfo_t *_t6;
+                    vinfo_t *_t7;
                     if (!psyco_known_NULL(attrs)) {
                         _t2 = psyco_vi_One();
                         _t3 = PsycoBool_FromLong(po, _t2);
@@ -7732,6 +7747,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         PUSH(_t7);
                         goto fine;
                     }
+#endif
                 }
 #endif
 
@@ -7787,10 +7803,6 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
 #if LE_HAS_OPCODE_MATCH_KEYS
                 case MATCH_KEYS: {
-                    int _t2;
-                    int _t3;
-                    int _t4;
-                    vinfo_array_t *_t6;
                     vinfo_t *keys;
                     vinfo_t *subject;
                     vinfo_t *values_or_none;
@@ -7800,6 +7812,14 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     if (values_or_none == NULL) {
                         break;
                     }
+#if !LE_HAS_MATCH_KEYS_PUSHES_BOOL
+                    PUSH(values_or_none);
+                    goto fine;
+#else
+                    int _t2;
+                    int _t3;
+                    int _t4;
+                    vinfo_array_t *_t6;
                     _t2 = 2;
                     _t3 = _t2 + PyCompile_OpcodeStackEffect(33, oparg);
                     _t6 = array_new(_t3);
@@ -7819,6 +7839,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     for (_t4 = 0; _t4 < _t3; _t4++) PUSH(_t6->items[_t4]);
                     array_release(_t6);
                     goto fine;
+#endif
                 }
 #endif
 
