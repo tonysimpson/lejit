@@ -949,6 +949,141 @@ psyco_codestats_buffer(const char *kind, code_t *start, code_t *end)
 }
 #endif
 DEFINEVAR int le_compile_depth = 0;
+
+/*** The compiler's allocations, kept out of tracemalloc ***/
+
+/* Plain CPython makes none of the compiler's allocations, so while
+   tracemalloc traces they are made past it, in every domain (pymalloc
+   takes large blocks from the raw one): by the allocators it was
+   installed over, those seen the last time a compile started while
+   nothing traced. A block freed or reallocated is forgotten by
+   tracemalloc too, as its own hooks do, so no trace outlives its block.
+   Each hook's context is the allocator under it, as tracemalloc's is:
+   another thread allocating raw memory without the GIL while the hooks
+   are swapped may read one's function with the other's context. */
+typedef struct {
+    PyMemAllocatorDomain domain;
+    PyMemAllocatorEx under, traced;
+} untraced_domain_t;
+static untraced_domain_t untraced_domains[3] = {
+    {PYMEM_DOMAIN_RAW}, {PYMEM_DOMAIN_MEM}, {PYMEM_DOMAIN_OBJ}};
+static bool have_under = false, untraced = false;
+
+/* tracemalloc's domain for PyMem and PyObject blocks */
+#define LE_TRACEMALLOC_DOMAIN 0
+
+static void *
+untraced_malloc(void *ctx, size_t size)
+{
+    PyMemAllocatorEx *a = ctx;
+    return a->malloc(a->ctx, size);
+}
+
+static void *
+untraced_calloc(void *ctx, size_t nelem, size_t elsize)
+{
+    PyMemAllocatorEx *a = ctx;
+    return a->calloc(a->ctx, nelem, elsize);
+}
+
+static void *
+untraced_realloc(void *ctx, void *ptr, size_t size)
+{
+    PyMemAllocatorEx *a = ctx;
+    if (ptr != NULL)
+        PyTraceMalloc_Untrack(LE_TRACEMALLOC_DOMAIN, (uintptr_t)ptr);
+    return a->realloc(a->ctx, ptr, size);
+}
+
+static void
+untraced_free(void *ctx, void *ptr)
+{
+    PyMemAllocatorEx *a = ctx;
+    if (ptr == NULL)
+        return;
+    a->free(a->ctx, ptr);
+    PyTraceMalloc_Untrack(LE_TRACEMALLOC_DOMAIN, (uintptr_t)ptr);
+}
+
+static bool
+same_allocator(PyMemAllocatorEx *a, PyMemAllocatorEx *b)
+{
+    return a->ctx == b->ctx && a->malloc == b->malloc &&
+           a->calloc == b->calloc && a->realloc == b->realloc &&
+           a->free == b->free;
+}
+
+/* _tracemalloc.is_tracing, imported before the eval hook is in place */
+static PyObject *is_tracing_fn = NULL;
+
+/* 1 if tracemalloc traces, 0 if not, -1 if that can't be told */
+static int
+tracemalloc_tracing(void)
+{
+    PyObject *t, *v, *tb, *r;
+    int result = -1;
+    if (is_tracing_fn == NULL)
+        return -1;
+    PyErr_Fetch(&t, &v, &tb);
+    r = PyObject_CallObject(is_tracing_fn, NULL);
+    if (r != NULL) {
+        result = PyObject_IsTrue(r);
+        Py_DECREF(r);
+    }
+    PyErr_Clear();
+    PyErr_Restore(t, v, tb);
+    return result;
+}
+
+DEFINEFN void
+le_untraced_begin(void)
+{
+    PyMemAllocatorEx now[3];
+    bool moved = !have_under;
+    int i, tracing;
+    if (untraced)
+        return;
+    for (i = 0; i < 3; i++) {
+        PyMem_GetAllocator(untraced_domains[i].domain, &now[i]);
+        moved |= !same_allocator(&now[i], &untraced_domains[i].under);
+    }
+    if (!moved)
+        return; /* nothing is installed over them */
+    tracing = tracemalloc_tracing();
+    if (tracing == 0) {
+        for (i = 0; i < 3; i++) untraced_domains[i].under = now[i];
+        have_under = true;
+    }
+    if (tracing != 1 || !have_under)
+        return;
+    for (i = 0; i < 3; i++) {
+        PyMemAllocatorEx hook = {&untraced_domains[i].under, untraced_malloc,
+                                 untraced_calloc, untraced_realloc,
+                                 untraced_free};
+        untraced_domains[i].traced = now[i];
+        PyMem_SetAllocator(untraced_domains[i].domain, &hook);
+    }
+    untraced = true;
+}
+
+DEFINEFN void
+le_untraced_end(void)
+{
+    int i;
+    if (!untraced)
+        return;
+    untraced = false;
+    /* tracemalloc's own, unless something replaced the hook meanwhile (a
+       tracemalloc.stop() run by the compile) */
+    for (i = 0; i < 3; i++) {
+        PyMemAllocatorEx now;
+        PyMem_GetAllocator(untraced_domains[i].domain, &now);
+        if (now.malloc == untraced_malloc)
+            PyMem_SetAllocator(untraced_domains[i].domain,
+                               &untraced_domains[i].traced);
+    }
+}
+
 #if ALL_CHECKS
 DEFINEVAR long psyco_stat_compile_ns[LE_ENTER_KINDS];
 DEFINEVAR long psyco_stat_compile_count[LE_ENTER_KINDS];
@@ -1210,4 +1345,12 @@ codemanager_init(void)
     PyType_Ready(&CodeBufferShort_Type);
     PyType_Ready(&CodeBufferSummary_Type);
     owners_scan_init();
+    {
+        PyObject *m = PyImport_ImportModule("_tracemalloc");
+        if (m != NULL) {
+            is_tracing_fn = PyObject_GetAttrString(m, "is_tracing");
+            Py_DECREF(m);
+        }
+        PyErr_Clear();
+    }
 }
