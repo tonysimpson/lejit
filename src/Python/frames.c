@@ -340,7 +340,7 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
     long *p, regs[REG_TOTAL], *pregs = NULL;
     char *data;
     int i, n = n_locals_plus(co);
-    if (v == -1)
+    if (v == -1 || v == FINFO_RETURNING)
         return false;
     if ((v & 1) != 0) {
         /* a note is for the call the frame is in only if that call returns
@@ -607,7 +607,7 @@ static int
 kept_lasti(activation_t *a)
 {
     long v = (long)*a->own;
-    if (v == -1)
+    if (v == -1 || v == FINFO_RETURNING)
         return -1;
     if ((v & 1) != 0)
         return psyco_note_map(v)->lasti;
@@ -857,6 +857,8 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
             stack_frame_info_t *fdata;
             stack_frame_info_t *flimit;
             int lasti = -1; /* the place of the frame visited next */
+            bool returning; /* the innermost frame is clearing its locals on
+                               the way out (ABOUT_TO_RETURN): skipped */
             finfo = *(fstart->psy_frames_start);
 
             /* Enumerate the frames and store them in a
@@ -879,7 +881,8 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
                     break; /* stack top is an inline frame */
             }
             /* the innermost frame's place, if it noted one */
-            if ((((long)*f1) & 1) != 0 && (long)*f1 != -1)
+            returning = (long)*f1 == FINFO_RETURNING;
+            if ((((long)*f1) & 1) != 0 && (long)*f1 != -1 && !returning)
                 lasti = psyco_note_map((long)*f1)->lasti;
 
             /* now actually visit them in the correct order */
@@ -891,7 +894,9 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
                     tag = (long)(p->fi);
                     fdata = *p->fi;
                     flimit = finfo_last(fdata);
-                    if (hidden_frames != NULL && is_hidden(p->fi)) {
+                    if (returning ||
+                        (hidden_frames != NULL && is_hidden(p->fi))) {
+                        returning = false;
                         lasti = fdata->back_lasti;
                         if (fdata == flimit)
                             goto next_record;
@@ -925,6 +930,10 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
                which is shadowed by a Psyco frame, i.e. a
                proxy function. Represented as
                (co, globals, f, lasti) */
+            if (returning) {
+                fo = le_frame_object_back(fo);
+                continue;
+            }
             o = Py_BuildValue("OOOi", fstart->psy_code, fstart->psy_globals,
                               fo, lasti);
             if (o == NULL)
@@ -1115,11 +1124,12 @@ visit_back_frame(PyObject *o, void *data)
         return Py_None;
     }
     if (!PyTuple_Check(o) || PyFrame_Check(PyTuple_GET_ITEM(o, 2))) {
-        /* a real frame: the one out, as a rule */
+        /* a real frame: the one out, as a rule, or the one past it while
+           that one returns (pvisitframes) */
         if (b->prev != NULL)
             b->prev->f_back = f; /* takes the reference */
         else
-            Py_DECREF(f);
+            b->top = f;
         return Py_None;
     }
     if (b->prev == NULL)
