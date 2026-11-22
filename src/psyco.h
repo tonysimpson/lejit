@@ -543,6 +543,33 @@ _Static_assert(__builtin_classify_type(((rangeiterobject *)0)->len) == 1,
 _Static_assert(((__typeof__(((rangeiterobject *)0)->len))-1 < 0) == 1,
                "LeJIT: rangeiterobject.len: LeJIT reads it as signed");
 
+#if LE_HAS_DICT_KEYS_KIND
+typedef enum {
+    DICT_KEYS_GENERAL = 0,
+    DICT_KEYS_UNICODE = 1,
+    DICT_KEYS_SPLIT = 2
+} DictKeysKind;
+struct _dictkeysobject {
+    Py_ssize_t dk_refcnt;
+    uint8_t dk_log2_size;
+    uint8_t dk_log2_index_bytes;
+    uint8_t dk_kind;
+    uint32_t dk_version;
+    Py_ssize_t dk_usable;
+    Py_ssize_t dk_nentries;
+    char dk_indices[];
+};
+typedef struct _dictkeysobject le_dictkeys_t;
+/* the entries of keys that aren't DICT_KEYS_GENERAL */
+typedef struct {
+    PyObject *me_key;
+    PyObject *me_value;
+} le_dictunicodeentry_t;
+/* emitted code compares the two as one word (pobject.h:le_dict_shape) */
+_Static_assert(offsetof(le_dictkeys_t, dk_kind) ==
+                   offsetof(le_dictkeys_t, dk_log2_index_bytes) + 1,
+               "LeJIT: PyDictKeysObject.dk_kind follows dk_log2_index_bytes");
+#else
 typedef Py_ssize_t (*dict_lookup_func)(PyDictObject *mp, PyObject *key,
                                        Py_hash_t hash, PyObject **value_addr);
 struct _dictkeysobject {
@@ -615,6 +642,7 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: PyDictKeysObject.dk_indices is not char[]");
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_indices[0]) == 1,
                "LeJIT: PyDictKeysObject.dk_indices: LeJIT reads 1 byte");
+#endif
 
 struct unicode_formatter_t {
     PyObject *args;

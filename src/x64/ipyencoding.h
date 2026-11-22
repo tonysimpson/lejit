@@ -326,20 +326,30 @@ EXTERNFN condition_code_t
 psyco_type_guard(PsycoObject *po, PyTypeObject *tp, unsigned long *flags,
                  unsigned long *tag);
 
+/* The shape of dict keys (Objects/pobject.h:le_dict_shape) as emitted
+   code compares it with an immediate, which a patch may rewrite */
+#if LE_HAS_DICT_KEYS_KIND
+typedef uint16_t shape_imm_t;
+#else
+typedef dword_t shape_imm_t;
+#endif
+
 /* A cached global's guard (Python/pycompiler.c:load_global_cached): the
    condition code for "changed". With 'entry', the keys of globals must
-   have dk_size 'size' and hold name and value at the entry 'offset' bytes
-   from their start, both written into the code, where the at_ fields say.
+   have the shape 'shape' and hold name and value at the key 'offset'
+   bytes from their start and the word after it, both written into the
+   code, where the at_ fields say.
    With 'absent', the name must be absent from globals and the version tag
    of builtins tags[1], written into the code where *patch says. Otherwise the
    version tags of globals and builtins must be tags[0] and tags[1], read
    from 'tags'. All forms change the compiler's state in the same way, so
    a replay may emit any. */
 typedef struct {
-    dword_t *at_size, *at_key, *at_value; /* in the code */
+    shape_imm_t *at_shape; /* in the code */
+    dword_t *at_key, *at_value;
 } global_patch_t;
 /* The name absent from globals, as the dict's own probe walks it: keys of
-   dk_size 'size', and the 'n' distinct index slots it walks before the
+   the shape 'shape', and the 'n' distinct index slots it walks before the
    first empty one holding what they held at compile time, each a dummy or an
    entry whose hash differs from the name's in its low 32 bits. Then any lookup
    of the name in such keys stops at that empty slot. */
@@ -347,12 +357,14 @@ typedef struct {
 /* room for the longest absent guard, and a jump */
 #define GLOBAL_ABSENT_CODE_MAX 256
 typedef struct {
-    long size;
+    long shape;
     int width; /* of an index: 1, 2 or 4 bytes */
     int n;
+    bool hashed; /* the hash is in the entry, else in its key, a str */
     long slot[GLOBAL_PROBE_MAX + 1]; /* from the keys; the last is empty */
     long index[GLOBAL_PROBE_MAX];    /* what each slot holds */
-    long hash_at[GLOBAL_PROBE_MAX];  /* an entry's me_hash, from the keys */
+    long hash_at[GLOBAL_PROBE_MAX];  /* an entry's me_hash, or its key,
+                                        from the keys */
     int32_t hash[GLOBAL_PROBE_MAX];  /* its low 32 bits */
 } global_absent_t;
 /* false if the probe isn't one this guard can show */
@@ -368,7 +380,7 @@ typedef struct {
 EXTERNFN condition_code_t
 psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
                    PyObject *name, PyObject *value, global_patch_t *entry,
-                   long size, long offset, const global_absent_t *absent,
+                   long shape, long offset, const global_absent_t *absent,
                    global_absent_patch_t *patch, uint64_t *tags);
 /* An absent guard shown again for the keys globals have now and builtins'
    tag now (the keys resized, a name inserted into the slots it walked, or
@@ -379,28 +391,28 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
 EXTERNFN void
 psyco_global_absent_rearm(global_absent_patch_t *patch, PyObject *globals,
                           PyObject *builtins, PyObject *name);
-/* the entry moved: rewrites the code's size and displacements (with no
-   at_value, the size and key's) */
+/* the entry moved: rewrites the code's shape and displacements (with no
+   at_value, the shape and key's) */
 EXTERNFN void
-psyco_global_guard_move(global_patch_t *entry, long size, long offset);
-/* jumps to 'stub' unless the keys of globals have dk_size 'size' and hold
-   the name at the entry 'offset' bytes from their start, both written into
-   the code where check's at_size and at_key say */
+psyco_global_guard_move(global_patch_t *entry, long shape, long offset);
+/* jumps to 'stub' unless the keys of globals have the shape 'shape' and
+   hold the name 'offset' bytes from their start, both written into the
+   code where check's at_shape and at_key say */
 EXTERNFN void
 psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
-                   global_patch_t *check, long size, long offset,
+                   global_patch_t *check, long shape, long offset,
                    code_t *stub);
 
 /* A global loaded at run time from the entry of globals that holds the
-   name, the size and offset written into the code as the guard's entry
-   form: keys of that size holding the name there give its value, increfed;
+   name, the shape and offset written into the code as the guard's entry
+   form: keys of that shape holding the name there give its value, increfed;
    anything else calls miss_glue(arg), which returns a new reference or
    NULL, and may move the entry. The result is in a register, tested
    (zero: the miss's error), and not yet owned: the caller checks the
    condition CC_E, then adds the reference. */
 EXTERNFN vinfo_t *
 psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
-                  global_patch_t *entry, long size, long offset,
+                  global_patch_t *entry, long shape, long offset,
                   code_t *miss_glue, void *arg);
 
 EXTERNFN void

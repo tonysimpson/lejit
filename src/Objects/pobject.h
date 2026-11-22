@@ -326,23 +326,93 @@ PsycoObject_RichCompareBool(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op);
    psyco_inline_load) reads it at run time and checks it against the live
    keys of the dict it uses, so a wrong cache only costs a miss. */
 typedef struct {
-    Py_ssize_t dk_size; /* size of the keys this was computed for; 0: none */
-    Py_ssize_t kword;   /* entries[ix].me_key in such keys, in words */
-    Py_ssize_t ix;      /* the name's index in them */
-    PyObject *name;     /* interned; held by the table's key */
-    uint64_t *version;  /* &le_dict_version */
-    long refreshes;     /* misses that changed the cache */
+    Py_ssize_t shape;  /* of the keys this was computed for (le_dict_shape);
+                          0: none */
+    Py_ssize_t kword;  /* entries[ix].me_key in such keys, in words */
+    Py_ssize_t ix;     /* the name's index in them */
+    PyObject *name;    /* interned; held by the table's key */
+    uint64_t *version; /* &le_dict_version */
+    long refreshes;    /* misses that changed the cache */
 } store_cache_t;
 
+/* the slots of the keys' hash table */
+PSY_INLINE Py_ssize_t
+le_dict_size(le_dictkeys_t *k)
+{
+#if LE_HAS_DICT_KEYS_KIND
+    return (Py_ssize_t)1 << k->dk_log2_size;
+#else
+    return k->dk_size;
+#endif
+}
+
+/* the entries hold their key's hash (le_dictentry_t), or not
+   (le_dictunicodeentry_t: every key is an exact str, which keeps its
+   hash) */
+PSY_INLINE bool
+le_dict_hashed(le_dictkeys_t *k)
+{
+#if LE_HAS_DICT_KEYS_KIND
+    return k->dk_kind == DICT_KEYS_GENERAL;
+#else
+    return true;
+#endif
+}
+
 /* the entries of dict keys, after their indices (dictobject.c:DK_ENTRIES) */
-PSY_INLINE le_dictentry_t *
+PSY_INLINE char *
 le_dict_entries(le_dictkeys_t *k)
 {
+#if LE_HAS_DICT_KEYS_KIND
+    return k->dk_indices + ((size_t)1 << k->dk_log2_index_bytes);
+#else
     Py_ssize_t ixsize = k->dk_size <= 0xff         ? 1
                         : k->dk_size <= 0xffff     ? 2
                         : k->dk_size <= 0xffffffff ? 4
                                                    : 8;
-    return (le_dictentry_t *)(k->dk_indices + k->dk_size * ixsize);
+    return k->dk_indices + k->dk_size * ixsize;
+#endif
+}
+
+/* entry ix's key, its value in the next word */
+_Static_assert(offsetof(le_dictentry_t, me_value) ==
+                   offsetof(le_dictentry_t, me_key) + sizeof(PyObject *),
+               "an entry's value follows its key");
+PSY_INLINE PyObject **
+le_dict_key_slot(le_dictkeys_t *k, Py_ssize_t ix)
+{
+#if LE_HAS_DICT_KEYS_KIND
+    _Static_assert(
+        offsetof(le_dictunicodeentry_t, me_value) ==
+            offsetof(le_dictunicodeentry_t, me_key) + sizeof(PyObject *),
+        "an entry's value follows its key");
+    if (!le_dict_hashed(k))
+        return &((le_dictunicodeentry_t *)le_dict_entries(k))[ix].me_key;
+#endif
+    return &((le_dictentry_t *)le_dict_entries(k))[ix].me_key;
+}
+
+/* the hash of entry ix's key */
+PSY_INLINE Py_hash_t
+le_dict_hash(le_dictkeys_t *k, Py_ssize_t ix)
+{
+    if (!le_dict_hashed(k))
+        return ((PyASCIIObject *)*le_dict_key_slot(k, ix))->hash;
+    return ((le_dictentry_t *)le_dict_entries(k))[ix].me_hash;
+}
+
+/* What keys of the same shape share: the size, and so where the entries
+   are, and their layout. Emitted code compares it (x64/ipyencoding.c,
+   KEYS_SHAPE_CMP): dk_size, or dk_log2_index_bytes and dk_kind as one
+   word, the index bytes growing with the size. Never -1. */
+PSY_INLINE long
+le_dict_shape(le_dictkeys_t *k)
+{
+#if LE_HAS_DICT_KEYS_KIND
+    return k->dk_log2_index_bytes | (long)k->dk_kind << 8;
+#else
+    return k->dk_size;
+#endif
 }
 
 /* ma_version_tag for the dict stores LeJIT makes itself: CPython's own

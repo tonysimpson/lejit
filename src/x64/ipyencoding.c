@@ -4,6 +4,20 @@
 /* LE_GC_UNTRACKED_TEST */
 #include "../mechanisms/store_gc.h"
 
+/* Emitted code's view of the shape of dict keys (pobject.h:le_dict_shape):
+   a compare of the keys at 'rk' with an immediate, which ends the
+   instruction (shape_imm_t), or a load */
+#if LE_HAS_DICT_KEYS_KIND
+#define KEYS_SHAPE_CMP(shape, rk) \
+    CMP_I16_WO(shape, rk, offsetof(le_dictkeys_t, dk_log2_index_bytes))
+#define KEYS_SHAPE_LOAD(r, rk) \
+    MOVZX_DR_WO(r, rk, offsetof(le_dictkeys_t, dk_log2_index_bytes))
+#else
+#define KEYS_SHAPE_CMP(shape, rk) \
+    CMP_I32_O(shape, rk, offsetof(le_dictkeys_t, dk_size))
+#define KEYS_SHAPE_LOAD(r, rk) MOV_R_O(r, rk, offsetof(le_dictkeys_t, dk_size))
+#endif
+
 DEFINEFN void
 function_return(PsycoObject *po, Source retval, int nframelocal, long retpos)
 {
@@ -139,8 +153,8 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
    distance. */
 _Static_assert(Py_TPFLAGS_HAVE_GC == 1UL << 14,
                "the value's GC flag is tested in tp_flags' second byte");
-_Static_assert(offsetof(store_cache_t, dk_size) == 0,
-               "the size check compares [cache] directly");
+_Static_assert(offsetof(store_cache_t, shape) == 0,
+               "the shape check compares [cache] directly");
 #define STORE_MAX_MISS_JUMPS 8
 
 /* Which encodings reach: decided once from where the site starts, with a
@@ -216,9 +230,9 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     TEST_R_R(REG_X64_R8, REG_X64_R8);
     JCC_MISS(CC_E); /* combined */
     MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
-    MOV_R_O(REG_X64_RAX, REG_X64_R9, CPY_OFFSET(le_dictkeys_t, dk_size));
+    KEYS_SHAPE_LOAD(REG_X64_RAX, REG_X64_R9);
     CMP_R_A(REG_X64_RAX, REG_X64_RDX);
-    JCC_MISS(CC_NE); /* keys of another size */
+    JCC_MISS(CC_NE); /* keys of another shape */
     MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, kword));
     MOV_R_X8(REG_X64_RAX, REG_X64_R9, 0, REG_X64_RAX, 8);
     CMP_R_O8(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, name));
@@ -348,7 +362,7 @@ psyco_inline_store_end(PsycoObject *po, inline_store_t *s)
      rcx = [OBJ + dictoffset]; test rcx, rcx; jz NONE
    expected present:
      r8 = values (jz MISS: combined), r9 = keys, rdx = cache
-     cmp dk_size, [rdx]; jne MISS
+     cmp shape, [rdx]; jne MISS
      cmp [r9 + kword*8], name; jne MISS
      RG = [r8 + ix*8]; jmp DONE
    expected absent, keys with 1-byte indices (dk_size < 128):
@@ -379,7 +393,6 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
 {
     code_t *jmiss[LOAD_MAX_JUMPS], *jnone[2], *jdone[3], *start, *at;
     int nmiss = 0, nnone = 0, ndone = 0, i;
-    long ind = offsetof(le_dictkeys_t, dk_indices);
     vinfo_t *v;
     reg_t rg, ro;
 #define NEAR_JCC(cc, list, n)       \
@@ -440,15 +453,17 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
     MOV_R_O(REG_X64_RCX, ro, s->dictoffset);
     TEST_R_R(REG_X64_RCX, REG_X64_RCX);
     NEAR_JCC(CC_E, jnone, nnone); /* no dict yet */
-    if (!s->absent) {
+    /* the probe reads entries that hold their hash, which keys with a kind
+       may not: there an absent name is a miss */
+    if (!s->absent || LE_HAS_DICT_KEYS_KIND) {
         MOV_R_O(REG_X64_R8, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_values));
         TEST_R_R(REG_X64_R8, REG_X64_R8);
         NEAR_JCC(CC_E, jmiss, nmiss); /* combined */
         MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
         LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
-        MOV_R_O(REG_X64_RAX, REG_X64_R9, offsetof(le_dictkeys_t, dk_size));
+        KEYS_SHAPE_LOAD(REG_X64_RAX, REG_X64_R9);
         CMP_R_A(REG_X64_RAX, REG_X64_RDX);
-        NEAR_JCC(CC_NE, jmiss, nmiss); /* keys of another size */
+        NEAR_JCC(CC_NE, jmiss, nmiss); /* keys of another shape */
         MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, kword));
         MOV_R_X8(REG_X64_RAX, REG_X64_R9, 0, REG_X64_RAX, 8);
         CMP_R_O8(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, name));
@@ -460,8 +475,10 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         XOR_R_R(rg, rg);
         NEAR_JMP(jdone, ndone);
     }
+#if !LE_HAS_DICT_KEYS_KIND
     else {
         code_t *taken, *none, *body, *jtaken, *jneg;
+        long ind = offsetof(le_dictkeys_t, dk_indices);
         MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
         MOV_R_O(REG_X64_R8, REG_X64_R9, offsetof(le_dictkeys_t, dk_size));
         CMP_I8_R(127, REG_X64_R8);
@@ -503,6 +520,7 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         SHORT_BACK(CC_NE, body);
         SHORT_BACK(-1, none); /* empty: absent */
     }
+#endif
     POINT(jmiss, nmiss, code);
     MOV_R_R(REG_X64_RDI, REG_X64_RCX);
     LOAD_ADDRESS(REG_X64_RSI, s->cache, rip_near(start, s->cache));
@@ -555,32 +573,39 @@ psyco_type_guard(PsycoObject *po, PyTypeObject *tp, unsigned long *flags,
 }
 
 /* The entry form, as Psyco's DICT_ITEM_KEYVALUE, r10 the keys:
-     cmp qword [r10 + dk_size], SIZE; jne DONE
-     cmp [r10 + ENTRY + me_key], name; jne DONE
-     cmp [r10 + ENTRY + me_value], value
+     cmp [r10 + shape], SHAPE; jne DONE    (KEYS_SHAPE_CMP)
+     cmp [r10 + KEY], name; jne DONE
+     cmp [r10 + KEY + 8], value
    DONE: ZF clear if changed.
-   SIZE and the two displacements are 32-bit fields of the code, which
+   SHAPE and the two displacements are fields of the code, which
    psyco_global_guard_move rewrites when the entry moves. Keys of the same
-   size are as large, so the entry read is inside them whichever keys the
-   dict has now. The absent form first walks the probe of globals:
-     cmp qword [r10 + dk_size], SIZE; jne DONE
+   shape are as large and lay their entries out alike, so the entry read
+   is inside them whichever keys the dict has now. The absent form first
+   walks the probe of globals:
+     cmp [r10 + shape], SHAPE; jne DONE
      for each slot walked: cmp [r10 + SLOT], what it held; jne DONE
        and for an entry: cmp dword [r10 + its me_hash], low 32 bits; jne DONE
+       or, where the entries hold no hash, the hash its key, a str, keeps:
+         mov r11, [r10 + its key]; cmp dword [r11 + hash], low 32 bits;
+         jne DONE
      cmp [r10 + the empty slot], -1; jne DONE
      rax = builtins' ma_version_tag; mov r10, TAG; cmp rax, r10
    TAG a 64-bit field of the code. The tags form reads its tags from
    'tags' through r11. An absent guard shown again for a probe it can't
    walk compares globals' tag instead of the probe, as the tags form does
    but with the tag in the code (global_absent_emit). */
+_Static_assert(offsetof(le_dictentry_t, me_key) ==
+                   offsetof(le_dictentry_t, me_hash) + sizeof(PyObject *),
+               "an entry's hash is the word before its key");
 DEFINEFN
 bool
 psyco_global_absent(PyObject *globals, PyObject *name, global_absent_t *a)
 {
     PyDictObject *mp = (PyDictObject *)globals;
     le_dictkeys_t *keys = (le_dictkeys_t *)mp->ma_keys;
-    le_dictentry_t *ep = le_dict_entries(keys);
+    Py_ssize_t size = le_dict_size(keys);
     Py_hash_t hash = PyObject_Hash(name);
-    size_t mask = (size_t)keys->dk_size - 1, perturb = (size_t)hash;
+    size_t mask = (size_t)size - 1, perturb = (size_t)hash;
     size_t i = (size_t)hash & mask;
     long ix, at, ind = offsetof(le_dictkeys_t, dk_indices);
     int k;
@@ -589,10 +614,11 @@ psyco_global_absent(PyObject *globals, PyObject *name, global_absent_t *a)
         return false;
     }
     /* keys of 2^24 slots or fewer: every offset fits a 32-bit field */
-    if (mp->ma_values != NULL || keys->dk_size > (1L << 24))
+    if (mp->ma_values != NULL || size > (1L << 24))
         return false;
-    a->size = keys->dk_size;
-    a->width = a->size <= 0xff ? 1 : a->size <= 0xffff ? 2 : 4;
+    a->shape = le_dict_shape(keys);
+    a->hashed = le_dict_hashed(keys);
+    a->width = size <= 0xff ? 1 : size <= 0xffff ? 2 : 4;
     /* a slot the probe comes back to is shown once: what it holds sends the
        probe on the same way each time */
     for (a->n = 0;;) {
@@ -611,10 +637,13 @@ psyco_global_absent(PyObject *globals, PyObject *name, global_absent_t *a)
             a->slot[a->n] = at;
             a->index[a->n] = ix;
             if (ix >= 0) {
-                if ((int32_t)ep[ix].me_hash == (int32_t)hash)
+                if ((int32_t)le_dict_hash(keys, ix) == (int32_t)hash)
                     return false;
-                a->hash_at[a->n] = (char *)&ep[ix].me_hash - (char *)keys;
-                a->hash[a->n] = (int32_t)ep[ix].me_hash;
+                /* the word before the key, or the key */
+                PyObject **key = le_dict_key_slot(keys, ix);
+                a->hash_at[a->n] =
+                    (char *)(a->hashed ? key - 1 : key) - (char *)keys;
+                a->hash[a->n] = (int32_t)le_dict_hash(keys, ix);
             }
             a->n++;
         }
@@ -655,8 +684,7 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
     else {
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_keys));
-        CMP_I32_O(absent->size, REG_TRANSIENT_1,
-                  offsetof(le_dictkeys_t, dk_size));
+        KEYS_SHAPE_CMP(absent->shape, REG_TRANSIENT_1);
         JNE_DONE();
     }
     for (i = 0; absent != NULL && i <= absent->n; i++) {
@@ -668,8 +696,14 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
         else
             CMP_I32_DO(v, REG_TRANSIENT_1, absent->slot[i]);
         JNE_DONE();
-        if (i < absent->n && v >= 0) {
+        if (i < absent->n && v >= 0 && absent->hashed) {
             CMP_I32_DO(absent->hash[i], REG_TRANSIENT_1, absent->hash_at[i]);
+            JNE_DONE();
+        }
+        else if (i < absent->n && v >= 0) {
+            MOV_R_O(REG_TRANSIENT_2, REG_TRANSIENT_1, absent->hash_at[i]);
+            CMP_I32_DO(absent->hash[i], REG_TRANSIENT_2,
+                       offsetof(PyASCIIObject, hash));
             JNE_DONE();
         }
     }
@@ -693,7 +727,7 @@ DEFINEFN
 condition_code_t
 psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
                    PyObject *name, PyObject *value, global_patch_t *entry,
-                   long size, long offset, const global_absent_t *absent,
+                   long shape, long offset, const global_absent_t *absent,
                    global_absent_patch_t *patch, uint64_t *tags)
 {
     int i;
@@ -715,19 +749,17 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
         MOV_R_I(REG_TRANSIENT_1, (long)globals);
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_keys));
-        CMP_I32_O(size, REG_TRANSIENT_1, offsetof(le_dictkeys_t, dk_size));
-        entry->at_size = (dword_t *)code - 1;
+        KEYS_SHAPE_CMP(shape, REG_TRANSIENT_1);
+        entry->at_shape = (shape_imm_t *)code - 1;
         js[0] = code;
         WRITE_2(0x70 | CC_NE, 0);
         MOV_R_I(REG_X64_RAX, (long)name);
-        CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1,
-                  offset + offsetof(le_dictentry_t, me_key));
+        CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1, offset);
         entry->at_key = (dword_t *)code - 1;
         js[1] = code;
         WRITE_2(0x70 | CC_NE, 0);
         MOV_R_I(REG_X64_RAX, (long)value);
-        CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1,
-                  offset + offsetof(le_dictentry_t, me_value));
+        CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1, offset + sizeof(PyObject *));
         entry->at_value = (dword_t *)code - 1;
         for (i = 0; i < 2; i++) {
             extra_assert(code - (js[i] + 2) < 128);
@@ -819,24 +851,24 @@ psyco_global_absent_rearm(global_absent_patch_t *patch, PyObject *globals,
 
 DEFINEFN
 void
-psyco_global_guard_move(global_patch_t *entry, long size, long offset)
+psyco_global_guard_move(global_patch_t *entry, long shape, long offset)
 {
-    *entry->at_size = (dword_t)size;
-    *entry->at_key = (dword_t)(offset + offsetof(le_dictentry_t, me_key));
+    *entry->at_shape = (shape_imm_t)shape;
+    *entry->at_key = (dword_t)offset;
     if (entry->at_value != NULL)
-        *entry->at_value =
-            (dword_t)(offset + offsetof(le_dictentry_t, me_value));
+        *entry->at_value = (dword_t)(offset + sizeof(PyObject *));
 }
 
 /*   mov r10, globals; mov r10, [r10 + ma_keys]
-     cmp qword [r10 + dk_size], SIZE; jne STUB
-     mov r11, name; cmp [r10 + ENTRY + me_key], r11; jne STUB
+     cmp [r10 + shape], SHAPE; jne STUB
+     mov r11, name; cmp [r10 + KEY], r11; jne STUB
    Only the transient registers and the flags, so the state is the one the
    code was entered with. */
 DEFINEFN
 void
 psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
-                   global_patch_t *check, long size, long offset, code_t *stub)
+                   global_patch_t *check, long shape, long offset,
+                   code_t *stub)
 {
     extra_assert(!HAS_CCREG(po));
     if (po->codelimit - po->code < 64)
@@ -845,12 +877,11 @@ psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
     MOV_R_I(REG_TRANSIENT_1, (long)globals);
     MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
             CPY_OFFSET(PyDictObject, ma_keys));
-    CMP_I32_O(size, REG_TRANSIENT_1, offsetof(le_dictkeys_t, dk_size));
-    check->at_size = (dword_t *)code - 1;
+    KEYS_SHAPE_CMP(shape, REG_TRANSIENT_1);
+    check->at_shape = (shape_imm_t *)code - 1;
     FAR_COND_JUMP_TO(stub, CC_NE);
     MOV_R_I(REG_TRANSIENT_2, (long)name);
-    CMP_R_O32(REG_TRANSIENT_2, REG_TRANSIENT_1,
-              offset + offsetof(le_dictentry_t, me_key));
+    CMP_R_O32(REG_TRANSIENT_2, REG_TRANSIENT_1, offset);
     check->at_key = (dword_t *)code - 1;
     FAR_COND_JUMP_TO(stub, CC_NE);
     check->at_value = NULL;
@@ -858,18 +889,18 @@ psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
 }
 
 /*   mov r10, globals; mov r10, [r10 + ma_keys]
-     cmp qword [r10 + dk_size], SIZE; jne MISS
-     cmp [r10 + ENTRY + me_key], name; jne MISS
-     RG = [r10 + ENTRY + me_value]; incref RG; jmp DONE
+     cmp [r10 + shape], SHAPE; jne MISS
+     cmp [r10 + KEY], name; jne MISS
+     RG = [r10 + KEY + 8]; incref RG; jmp DONE
    MISS: rdi = arg; call miss_glue; RG = rax
    DONE: test RG, RG
    Hand-allocated like psyco_inline_load, RG callee-saved, so the
-   compiler's state is the same on both paths and whatever SIZE and ENTRY
+   compiler's state is the same on both paths and whatever SHAPE and KEY
    are. */
 DEFINEFN
 vinfo_t *
 psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
-                  global_patch_t *entry, long size, long offset,
+                  global_patch_t *entry, long shape, long offset,
                   code_t *miss_glue, void *arg)
 {
     code_t *jmiss[2], *jdone, *start;
@@ -892,18 +923,16 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     MOV_R_I(REG_TRANSIENT_1, (long)globals);
     MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
             CPY_OFFSET(PyDictObject, ma_keys));
-    CMP_I32_O(size, REG_TRANSIENT_1, offsetof(le_dictkeys_t, dk_size));
-    entry->at_size = (dword_t *)code - 1;
+    KEYS_SHAPE_CMP(shape, REG_TRANSIENT_1);
+    entry->at_shape = (shape_imm_t *)code - 1;
     jmiss[0] = code;
     WRITE_2(0x70 | CC_NE, 0);
     MOV_R_I(REG_X64_RAX, (long)name);
-    CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1,
-              offset + offsetof(le_dictentry_t, me_key));
+    CMP_R_O32(REG_X64_RAX, REG_TRANSIENT_1, offset);
     entry->at_key = (dword_t *)code - 1;
     jmiss[1] = code;
     WRITE_2(0x70 | CC_NE, 0);
-    MOV_R_O32(rg, REG_TRANSIENT_1,
-              offset + offsetof(le_dictentry_t, me_value));
+    MOV_R_O32(rg, REG_TRANSIENT_1, offset + sizeof(PyObject *));
     entry->at_value = (dword_t *)code - 1;
     INC_OB_REFCNT_internal(rg);
     jdone = code;

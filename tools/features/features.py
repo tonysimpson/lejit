@@ -622,6 +622,20 @@ def dict_values_struct(s):
     return 'PyDictValues' in fields['ma_values'], path + ':PyDictObject.ma_values'
 
 
+def dict_keys_kind(s):
+    """dict keys have a kind (dk_kind) and keep their size as a power of
+    two (dk_log2_size, dk_log2_index_bytes); an entry of keys that are all
+    str holds no hash (PyDictUnicodeEntry)"""
+    path, fields = s.struct('_dictkeysobject')
+    if fields is not None:
+        return 'dk_kind' in fields, path + ':_dictkeysobject.dk_kind'
+    # until 3.10 the struct is private to Objects/
+    found, path = _file_has(s, 'Objects/dict-common.h', 'dict_lookup_func dk_lookup;')
+    if found:
+        return False, path + ':_dictkeysobject.dk_lookup'
+    raise Unanswered('no struct _dictkeysobject in Include or Objects/dict-common.h')
+
+
 def interp_recursion_limit(s):
     """the recursion limit is the interpreter's ceval.recursion_limit, not
     the global _Py_CheckRecursionLimit"""
@@ -978,6 +992,8 @@ BYTECODE = [
     ('EXCEPTION_TABLE', D('a code object\'s handlers are in its exception table (co_exceptiontable), not set up at run time on a block stack',
                           lambda s: _file_has(s, 'Objects/codeobject.c', '"co_exceptiontable"'))),
     ('CODE_LOCALSPLUS', code_localsplus),
+    ('LOAD_GLOBAL_NULL_BIT', D('LOAD_GLOBAL\'s argument is the name\'s index shifted left once, its low bit pushing a NULL under the global',
+                               lambda s: _case_has(s, 'LOAD_GLOBAL', 'oparg>>1'))),
 ]
 
 # frames
@@ -1053,6 +1069,7 @@ OBJECTS = [
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),
     ('CORO_GET_AWAITABLE_ITER_LINKABLE', D('_PyCoro_GetAwaitableIter can be called from an extension',
                                            lambda s: _linkable(s, '_PyCoro_GetAwaitableIter'))),
+    ('DICT_KEYS_KIND', dict_keys_kind),
 ]
 
 # Python/ceval.c
