@@ -27,13 +27,13 @@ def fallback_reason():
     """Why no C extension is built for this Python, or None. LeJIT compiles to
     x86-64 code for CPython on Linux; anywhere else only the Python package
     is installed, whose functions then do nothing, so that installing LeJIT
-    never fails. LEJIT_FALLBACK=force installs it so anyway, to test it;
-    LEJIT_FALLBACK=skip builds the C extension anyway, to develop a port."""
-    choice = os.environ.get('LEJIT_FALLBACK', '')
+    never fails. LEJIT_DEV_FALLBACK=force installs it so anyway, to test it;
+    LEJIT_DEV_FALLBACK=skip builds the C extension anyway, to develop a port."""
+    choice = os.environ.get('LEJIT_DEV_FALLBACK', '')
     if choice not in ('', 'force', 'skip'):
-        raise SystemExit('LEJIT_FALLBACK must be force or skip, not %r' % choice)
+        raise SystemExit('LEJIT_DEV_FALLBACK must be force or skip, not %r' % choice)
     if choice == 'force':
-        return 'LEJIT_FALLBACK=force was set when it was installed'
+        return 'LEJIT_DEV_FALLBACK=force was set when it was installed'
     if choice == 'skip':
         return None
     impl = platform.python_implementation()
@@ -53,38 +53,23 @@ def fallback_reason():
 FALLBACK = fallback_reason()
 
 ####################################################################
-# Override defaults using environment variables e.g. dev mode
-# install with debug trace points:
-# > LEJIT_TRACE=1 pip install -e .
-#
-# Enable debugger trace points and compiler with debug options by 
-# setting to 1
-LE_TRACE = int(os.environ.get('LEJIT_TRACE', 0))
+# Settings for developing LeJIT, from the environment:
+# > LEJIT_DEV_TRACE=1 pip install -e .
 
-# Extra checks enable with 1
-ALL_CHECKS = int(os.environ.get('LEJIT_ALL_CHECKS', 0))
+# LEJIT_DEV_TRACE=1: debugger trace points and extra checks (a checked build)
+LE_TRACE = ALL_CHECKS = int(os.environ.get('LEJIT_DEV_TRACE', 0))
 
-# Code size per instruction, lejit._core._codestats()
-LE_CODESTATS = int(os.environ.get('LEJIT_CODESTATS', 0))
+# LEJIT_DEV_CODESTATS=1: code size per instruction, lejit._core._codestats()
+LE_CODESTATS = int(os.environ.get('LEJIT_DEV_CODESTATS', 0))
 
-# LEJIT_FEATURES=source: detect the features in CPython's source (fetched and
-# cached once, or LEJIT_CPYTHON_SRC) instead of the installed interpreter; the
-# source detector is the reference the installed one is checked against.
-LE_FEATURES = os.environ.get('LEJIT_FEATURES', 'installed')
-if LE_FEATURES not in ('installed', 'source'):
-    raise SystemExit('LEJIT_FEATURES must be installed or source, not %r' % LE_FEATURES)
-
-# LEJIT_SANITIZE=address or address,undefined: build with gcc's sanitizers
-# Such a build goes in build/asan
-# (--build-lib), never in place, with its own config stamp.
-LE_SANITIZE = os.environ.get('LEJIT_SANITIZE', '')
-
-# LEJIT_COVERAGE=1: build with gcov into build/cov, never in place
-LE_COVERAGE = int(os.environ.get('LEJIT_COVERAGE', 0))
-
-# LEJIT_COMPILE_COMMANDS=file: compile nothing, but write the commands the build
-# would run to file, as a compile_commands.json (for clang-tidy: make lint)
-LE_COMPILE_COMMANDS = os.environ.get('LEJIT_COMPILE_COMMANDS', '')
+# LEJIT_DEV_CPYTHON_SRC=DIR, or fetch: detect the features in CPython's source
+# (the tree DIR, or the release fetched and cached once) instead of the
+# installed interpreter; the source detector is the reference the installed
+# one is checked against.
+CPYTHON_SRC = os.environ.get('LEJIT_DEV_CPYTHON_SRC', '')
+if CPYTHON_SRC not in ('', 'fetch') and not os.path.isdir(CPYTHON_SRC):
+    raise SystemExit('LEJIT_DEV_CPYTHON_SRC must be fetch or a CPython source'
+                     ' tree, not %r' % CPYTHON_SRC)
 
 ####################################################################
 
@@ -93,8 +78,6 @@ macros = [
     ('ALL_CHECKS', str(ALL_CHECKS)),
     ('LE_CODESTATS', str(LE_CODESTATS)),
 ]
-if LE_SANITIZE:
-    macros.append(('LE_SANITIZE', '"%s"' % LE_SANITIZE))   # lejit._core._build
 
 class ProcessorAutodetectError(Exception):
     pass
@@ -157,30 +140,12 @@ extra_compile_args += ['-Wno-type-limits', '-Wno-deprecated-declarations']
 # any other warning is an error, so the tree stays clean
 extra_compile_args += ['-Werror']
 extra_link_args = []
-if LE_SANITIZE:
-    if '--inplace' in sys.argv or '-i' in sys.argv:
-        raise SystemExit('LEJIT_SANITIZE: build with --build-lib build/asan,'
-                         ' not --inplace')
-    # after the options above, so this -O1 wins
-    extra_compile_args += ['-fsanitize=' + LE_SANITIZE, '-O1', '-g',
-                           '-fno-omit-frame-pointer']
-    # the encoder writes instructions' immediates and displacements at any
-    # byte address, by design (x86 allows it)
-    if 'undefined' in LE_SANITIZE:
-        extra_compile_args += ['-fno-sanitize=alignment']
-    extra_link_args += ['-fsanitize=' + LE_SANITIZE]
-if LE_COVERAGE:
-    if '--inplace' in sys.argv or '-i' in sys.argv:
-        raise SystemExit('LEJIT_COVERAGE: build with --build-lib build/cov,'
-                         ' not --inplace')
-    extra_compile_args += ['--coverage', '-O0']
-    extra_link_args += ['--coverage']
 sources = find_sources(PROCESSOR)
 # distutils rebuilds only when a file listed here or in sources is newer
 # than the module: list every header and .c file
 depends = sorted(set(glob.glob('./src/**/*.h', recursive=True) +
                      glob.glob('./src/**/*.c', recursive=True)))
-# switching LEJIT_TRACE or LEJIT_ALL_CHECKS must also rebuild: remember the
+# switching LEJIT_DEV_TRACE must also rebuild: remember the
 # options, and remove the built module when they change (distutils compares
 # whole seconds, so a fresh stamp file alone is not reliably "newer").
 # Each CPython version has its own stamp and module (its extension suffix),
@@ -188,18 +153,15 @@ depends = sorted(set(glob.glob('./src/**/*.h', recursive=True) +
 config = repr((macros, extra_compile_args, extra_link_args))
 version = '%d.%d' % sys.version_info[:2]
 module = 'lejit/_core' + sysconfig.get_config_var('EXT_SUFFIX')
-if LE_SANITIZE:
-    stamp_dir, built_glob = 'build/asan', ['build/asan/' + module]
-elif LE_COVERAGE:
-    stamp_dir, built_glob = 'build/cov', ['build/cov/' + module]
-else:
-    stamp_dir, built_glob = 'build', [module, 'build/lib*/' + module]
-stamp = os.path.join(stamp_dir, 'le_config-%s.stamp' % version)
-if not FALLBACK and not LE_COMPILE_COMMANDS and \
+stamp = os.path.join('build', 'le_config-%s.stamp' % version)
+# (--compile-commands compiles nothing, so it leaves them alone)
+if not FALLBACK and \
+        not any(a.startswith('--compile-commands') for a in sys.argv) and \
         (not os.path.exists(stamp) or open(stamp).read() != config):
-    for built in [b for g in built_glob for b in glob.glob(g)]:
-        os.remove(built)
-    os.makedirs(stamp_dir, exist_ok=True)
+    for built in [module] + glob.glob('build/lib*/' + module):
+        if os.path.exists(built):
+            os.remove(built)
+    os.makedirs('build', exist_ok=True)
     with open(stamp, 'w') as f:
         f.write(config)
 processor_dir = os.path.join('./src', PROCESSOR or '')
@@ -213,7 +175,17 @@ CHECK_FILES = ['check.py', 'installed.py', 'installed_probes.py',
 class build_ext_generated(build_ext):
     """Detect the features of the CPython being built for, and take its
     messages from the interpreter, into the build directory's
-    le_features_gen.h and le_strings_gen.h, before compiling."""
+    le_features_gen.h and le_strings_gen.h, before compiling.
+    --compile-commands FILE compiles nothing, but writes the commands the
+    build would run to FILE, as a compile_commands.json (for clang-tidy)."""
+
+    user_options = build_ext.user_options + [
+        ('compile-commands=', None, 'write the compile commands to this file'
+                                    ' instead of compiling')]
+
+    def initialize_options(self):
+        build_ext.initialize_options(self)
+        self.compile_commands = None
 
     def run(self):
         # "file.h" looks next to the includer first: an old copy there
@@ -223,9 +195,11 @@ class build_ext_generated(build_ext):
             raise BuildError('remove %s: generated headers now live in'
                                  ' the build directory' % ', '.join(old))
         gen_dir = os.path.join(self.build_temp, 'gen')
-        detector = 'features.py' if LE_FEATURES == 'source' else 'installed.py'
+        detector = 'features.py' if CPYTHON_SRC else 'installed.py'
         cmd = [sys.executable, os.path.join(HERE, 'tools', 'features', detector),
                '--python', sys.executable, '--out', gen_dir]
+        if CPYTHON_SRC not in ('', 'fetch'):
+            cmd += ['--src', CPYTHON_SRC]
         print(' '.join(cmd))
         sys.stdout.flush()
         if subprocess.call(cmd) != 0:
@@ -254,15 +228,15 @@ class build_ext_generated(build_ext):
         for name in CHECK_FILES:
             shutil.copyfile(os.path.join(HERE, 'tools', 'features', name),
                             os.path.join(pkg, name))
-        # a build outside the tree (build_ext --build-lib, as the sanitizer
-        # and coverage builds are) needs the package's API next to it too
+        # a build outside the tree (build_ext --build-lib) needs the
+        # package's API next to it too
         init = os.path.join(os.path.dirname(pkg), '__init__.py')
         source = os.path.join(HERE, 'lejit', '__init__.py')
         if os.path.abspath(init) != source:
             shutil.copyfile(source, init)
 
     def build_extension(self, ext):
-        if not LE_COMPILE_COMMANDS:
+        if not self.compile_commands:
             return build_ext.build_extension(self, ext)
         # record the compiler's commands instead of running them
         commands = []
@@ -274,9 +248,9 @@ class build_ext_generated(build_ext):
         self.compiler.spawn = record
         self.force = True
         build_ext.build_extension(self, ext)
-        with open(LE_COMPILE_COMMANDS, 'w') as f:
+        with open(self.compile_commands, 'w') as f:
             json.dump(commands, f, indent=1)
-        print('wrote %s (%d files)' % (LE_COMPILE_COMMANDS, len(commands)))
+        print('wrote %s (%d files)' % (self.compile_commands, len(commands)))
 
     def get_libraries(self, ext):
         # 3.7's distutils links libpython into an extension when Python is

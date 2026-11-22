@@ -10,11 +10,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import common  # noqa: E402
 
-sys.path.insert(0, common.LE_DIR)
+sys.path.insert(0, common.ROOT)
 import lejit  # noqa: E402
 
-KEYS = {'source_version', 'build', 'trace', 'codestats', 'sanitizer',
-        'features', 'messages', 'layouts'}
+KEYS = {'source_version', 'build', 'trace', 'codestats', 'features',
+        'messages', 'layouts'}
 LAYOUTS = {'seqiterobject', 'rangeobject', 'rangeiterobject',
            'PyDictKeysObject'}
 

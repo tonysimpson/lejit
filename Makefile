@@ -9,8 +9,8 @@
 #   make lint                 clang-tidy on src/ (reports, not enforced yet)
 #
 # The build detects PY's features and takes its messages from PY itself
-# (LEJIT_FEATURES=source reads the source of PY's CPython release instead,
-# fetched into .cache/ once). GEN_PY runs the tools' own tests.
+# (LEJIT_DEV_CPYTHON_SRC=fetch reads the source of PY's CPython release
+# instead, fetched into .cache/ once). GEN_PY runs the tools' own tests.
 
 SHELL := bash
 
@@ -34,7 +34,7 @@ build:
 	$(PY) setup.py build_ext --inplace
 
 checked-build:
-	LEJIT_TRACE=1 LEJIT_ALL_CHECKS=1 $(PY) setup.py build_ext --inplace
+	LEJIT_DEV_TRACE=1 $(PY) setup.py build_ext --inplace
 
 test: checked-build
 	$(PY) tests/jit/run.py
@@ -47,8 +47,8 @@ cpython-test: checked-build
 	$(PY) tests/cpython/run.py
 
 encoder-test: checked-build
-	LEJIT_PYTHON=$(PY) $(GEN_PY) tests/encoder/check.py
-	LEJIT_PYTHON=$(PY) sh tests/encoder/mov_mem.sh
+	$(GEN_PY) tests/encoder/check.py $(PY)
+	sh tests/encoder/mov_mem.sh $(PY)
 
 # the installed detector (no source) agrees with the source one, for PY
 features-installed-test:
@@ -92,8 +92,8 @@ format-check:
 # writes them to build/lint/compile_commands.json instead of compiling.
 # Not part of check
 lint:
-	LEJIT_TRACE=1 LEJIT_ALL_CHECKS=1 LEJIT_COMPILE_COMMANDS=build/lint/compile_commands.json \
-	    $(PY) setup.py build_ext --build-temp build/lint --build-lib build/lint
+	LEJIT_DEV_TRACE=1 $(PY) setup.py build_ext --build-temp build/lint \
+	    --build-lib build/lint --compile-commands build/lint/compile_commands.json
 	$(CLANG_TIDY) --version
 	$(CLANG_TIDY) -p build/lint --quiet $$($(PY) -c 'import json; \
 	    print(" ".join(e["file"] for e in json.load(open("build/lint/compile_commands.json"))))')
