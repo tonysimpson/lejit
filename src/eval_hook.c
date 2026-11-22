@@ -77,6 +77,11 @@ compile_entry(PyCodeObject *co, le_code_extra_t *x, PyObject *globals,
     return codebuf;
 }
 
+/* generators are never compiled (mergepoints.c), and every resume comes
+   through the hook: they go on interpreted before any lookup (and their
+   frames have no caller between runs) */
+#define LE_GENERATOR_FLAGS (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)
+
 /* The compiled code to run for 'co' with these globals and builtins,
    compiled now on its first call, or NULL to run it interpreted. 'locals'
    is the frame's locals mapping (NULL for a function). */
@@ -84,10 +89,6 @@ static PyObject *
 le_code_to_run(PyCodeObject *co, PyObject *globals, PyObject *locals,
                PyObject *builtins)
 {
-    /* generators are never compiled (mergepoints.c), and every resume comes
-       through here: leave before any lookup */
-    if (co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR))
-        return NULL;
     /* run interpreted while a trace or profile function is set: compiled
        code is invisible to them */
     if (le_tracing_now(PyThreadState_GET()))
@@ -144,9 +145,12 @@ static le_eval_frame_fn original_eval_frame = NULL;
 static PyObject *
 LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
 {
-    PyObject *result, *entry_point = le_code_to_run(
-                          le_frame_code(frame), le_frame_globals(frame),
-                          le_frame_locals(frame), le_frame_builtins(frame));
+    PyObject *result, *entry_point;
+    if (le_frame_code(frame)->co_flags & LE_GENERATOR_FLAGS)
+        return original_eval_frame(tstate, frame, throwflag);
+    entry_point =
+        le_code_to_run(le_frame_code(frame), le_frame_globals(frame),
+                       le_frame_locals(frame), le_frame_builtins(frame));
     if (entry_point != NULL)
         result = LeCode_Run(entry_point, frame);
     else
@@ -193,9 +197,11 @@ static le_eval_frame_fn original_eval_frame = NULL;
 static PyObject *
 LeEval_EvalFrame(PyFrameObject *frame, int throwflag)
 {
-    PyObject *result,
-        *entry_point = le_code_to_run(frame->f_code, frame->f_globals,
-                                      frame->f_locals, frame->f_builtins);
+    PyObject *result, *entry_point;
+    if (frame->f_code->co_flags & LE_GENERATOR_FLAGS)
+        return original_eval_frame(frame, throwflag);
+    entry_point = le_code_to_run(frame->f_code, frame->f_globals,
+                                 frame->f_locals, frame->f_builtins);
     if (entry_point != NULL)
         result = LeCode_Run(entry_point, frame);
     else

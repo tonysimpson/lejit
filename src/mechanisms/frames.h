@@ -519,17 +519,12 @@ le_pyframe_eval_end(PyFrameObject *f, int marked)
     (void)f;
     (void)marked;
 }
-/* the frame of a call that has just run, if something besides the call
-   holds it, so that it outlives the call; a generator's frame has no
-   caller between its runs */
+/* the frame of a call that has just run (not a generator's), if
+   something besides the call holds it, so that it outlives the call */
 static inline PyFrameObject *
 le_frame_outlives(le_frame_t *f)
 {
-    if (Py_REFCNT(f) < 2 ||
-        (f->f_code->co_flags &
-         (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)) != 0)
-        return NULL;
-    return f;
+    return Py_REFCNT(f) < 2 ? NULL : f;
 }
 /* 'back' (a reference it takes) is its caller from now on */
 static inline void
