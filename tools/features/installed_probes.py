@@ -662,6 +662,22 @@ def MANAGED_VALUES_POINTER():
 
 
 @probe
+def RANGE_ITER_INDEX():
+    """an iterator over range(1, 7, 2) that has given one item pickles as the
+    whole range and the index 1, not as range(3, 7, 2) with no index
+    (rangeiter_reduce)"""
+    it = iter(range(1, 7, 2))
+    next(it)
+    reduced = it.__reduce__() + (None,)
+    seen = (reduced[1][0], reduced[2])
+    if seen == (range(1, 7, 2), 1):
+        return True, 'iter(range(1, 7, 2)) after one item: %r' % (seen,)
+    if seen == (range(3, 7, 2), None):
+        return False, 'iter(range(1, 7, 2)) after one item: %r' % (seen,)
+    raise Unanswered('iter(range(1, 7, 2)) after one item: %r' % (seen,))
+
+
+@probe
 def VALID_VERSION_TAG_FLAG():
     """a class has the flag 1 << 19 (Py_TPFLAGS_VALID_VERSION_TAG) after a
     lookup on it, and loses it when the class changes (run)"""
