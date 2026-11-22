@@ -335,6 +335,24 @@ def shadow_builtin_inline():
     return a + 2 * (len is _len) + 4 * b
 
 
+class _MissingNamespace(dict):
+    def __missing__(self, key):
+        if key == 'FROM_MISSING':
+            return 7
+        raise KeyError(key)
+
+
+# globals that are a dict subclass whose __missing__ gives a name
+missing_globals = types.FunctionType(compile(
+    'def missing_globals(n):\n'
+    '    t = 0\n'
+    '    i = 0\n'
+    '    while i < n:\n'
+    '        t = t + FROM_MISSING\n'
+    '        i = i + 1\n'
+    '    return t\n', 'src', 'exec').co_consts[0], _MissingNamespace())
+
+
 CASES = [
     ('read_in_loop', [(5,), (20,)], {}),
     ('rebind_in_loop_inline', [(10,), (11,)], {}),
@@ -355,4 +373,7 @@ CASES = [
     ('replay_after_rebind', [()], {}),
     ('store_then_respawn', [()], {}),
     ('missing_global_name', [(3,), (4,)], {}),
+    ('missing_globals', [(3,), (4,)],
+     {'xfail': 'compiled code reads globals that are a dict subclass as a '
+               'dict, not through __missing__'}),
 ]

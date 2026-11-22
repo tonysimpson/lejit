@@ -34,6 +34,9 @@ BANNED = {
     'timing': 'test_email',
     "SSL tests that race on OpenSSL 3, which the CI images' older CPythons predate":
         'test_poplib',
+    "compiled code reads globals that are a dict subclass as a dict, not "
+    'through __getitem__ and __missing__ (getpath run in a mock namespace)':
+        'test_getpath',
 }
 
 # reason: single tests (module.Class.method) skipped in both runs
@@ -51,6 +54,9 @@ SKIPPED = {
     'through __getitem__ and __missing__':
         'test_dynamic.RebindBuiltinsTests.'
         'test_load_global_specialization_failure_keeps_oparg',
+    "compiled code isn't quickened, so its inline caches stay empty":
+        'test_dis.DisTests.test_show_caches '
+        'test_dis.DisWithFileTests.test_show_caches',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
