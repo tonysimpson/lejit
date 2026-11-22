@@ -1,10 +1,10 @@
-"""Runs CPython's own test modules plain and with LeJIT; the counts and exit
-status must match. Every test_* module of the interpreter's test package
-runs except BANNED, and every test except SKIPPED.
+"""Runs CPython's own test modules plain and with LeJIT; the counts, exit
+status and names of the failing tests must match. Every test_* module of the
+interpreter's test package runs except BANNED, and every test except SKIPPED.
 
     python3.X tests/cpython/run.py [-j N] [module ...]
 """
-import fnmatch, json, os, resource, subprocess, sys, tempfile
+import fnmatch, json, os, re, resource, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import ROOT
@@ -39,42 +39,43 @@ BANNED = {
         'test_poplib',
 }
 
-# reason: single tests (module.Class.method) skipped in both runs
+# reason: tests skipped in both runs, by id as the report prints it (fnmatch
+# patterns)
 SKIPPED = {
     "sys.getrefcount counts a constant once for each compiled block that "
     'uses it, and the code compiled while a test counts holds more':
-        'test_xml_etree.BugsTest.test_bug_xmltoolkit63 '
-        'test_xml_etree_c.BugsTest.test_bug_xmltoolkit63',
+        'test.test_xml_etree.BugsTest.test_bug_xmltoolkit63 '
+        'test.test_xml_etree_c.BugsTest.test_bug_xmltoolkit63',
     "CPython doesn't specialise Python calls, __getitem__ and properties "
     'while a frame-evaluation hook is installed (specialize.c, '
     'SPEC_FAIL_CALL_PEP_523)':
-        'test_dis.DisTests.test_loop_quicken '
-        'test_dis.DisWithFileTests.test_loop_quicken '
-        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test.test_dis.DisTests.test_loop_quicken '
+        'test.test_dis.DisWithFileTests.test_loop_quicken '
+        'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_binary_subscript_specialization_user_type '
-        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_property_load_attr_specialization_user_type',
     "compiled code doesn't specialise the bytecode it runs, which ceval does "
     'as it runs it':
-        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_load_method_specialization_user_type',
     'CPython counts each frame a frame-evaluation hook is given as a C call '
     'too, so a Python recursion 90,000 deep passes the C recursion limit '
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
-        'test_call.TestRecursion.test_super_deep',
+        'test.test_call.TestRecursion.test_super_deep',
     'skipped when the machine converts fast enough':
-        'test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
-        'test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int '
-        'test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
-        'test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int',
+        'test.test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
+        'test.test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int '
+        'test.test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
+        'test.test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int',
     "code LeJIT compiles doesn't run in ceval, so ceval doesn't quicken it":
-        'test_dis.DisTests.test_super_instructions '
-        'test_dis.DisWithFileTests.test_super_instructions '
-        'test_dis.DisTests.test_show_caches '
-        'test_dis.DisWithFileTests.test_show_caches '
-        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test.test_dis.DisTests.test_super_instructions '
+        'test.test_dis.DisWithFileTests.test_super_instructions '
+        'test.test_dis.DisTests.test_show_caches '
+        'test.test_dis.DisWithFileTests.test_show_caches '
+        'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_load_attr_specialization_user_type '
-        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_store_attr_specialization_user_type',
 }
 
@@ -103,29 +104,28 @@ def gc_callback_aborts():
                           timeout=TIMEOUT).returncode < 0
 
 
-# Prints a JSON list of the first failing tests, each its id and the end of
-# its traceback, then the counts.
+# Prints a JSON list of the failing tests, each its id and, for the first
+# ten, the end of its traceback, then the counts. Tests whose ids match one of
+# the patterns given are skipped.
 CHILD = r'''
-import sys, unittest, io, json
+import sys, unittest, io, json, fnmatch
 if sys.argv[1] == 'lejit':
     sys.path.insert(0, sys.argv[3]); import lejit; lejit.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
-# a package's tests may be in its module of the same name (test_inspect)
-try:
-    sub = __import__('test.%s.%s' % (sys.argv[2], sys.argv[2]), fromlist=['x'])
-except ImportError:
-    sub = None
-for name in sys.argv[4:]:
-    cls, meth = name.split('.')
-    cls = getattr(mod, cls, None) or getattr(sub, cls, None)
-    if hasattr(cls, meth):
-        setattr(cls, meth, unittest.skip('skipped by run.py')(getattr(cls, meth)))
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)
+
+def skip(suite):
+    for test in suite:
+        if isinstance(test, unittest.TestSuite):
+            skip(test)
+        elif any(fnmatch.fnmatchcase(test.id(), p) for p in sys.argv[4:]):
+            setattr(test, test._testMethodName,
+                    unittest.skip('skipped by run.py')(lambda: None))
+skip(suite)
 r = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
 bad = r.failures + r.errors
-print(json.dumps([[t.id()] + [l[:200] for l in tb.splitlines()[-10:]]
-                  for t, tb in bad[:10]] +
-                 [['and %d more' % (len(bad) - 10)]] * (len(bad) > 10)))
+print(json.dumps([[t.id()] + [l[:200] for l in tb.splitlines()[-10:]] * (i < 10)
+                  for i, (t, tb) in enumerate(bad)]))
 print('run=%d fail=%d err=%d skip=%d' % (r.testsRun, len(r.failures),
                                          len(r.errors), len(r.skipped)))
 sys.stdout.flush()
@@ -145,11 +145,11 @@ def stderr_tail(err):
 
 
 def run(mode, name):
-    """The run's counts and exit status, and lines that say why tests failed."""
+    """The run's counts and exit status, its failing tests (id: the end of
+    the traceback), and the end of its stderr if it crashed."""
     with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd, \
             tempfile.TemporaryFile() as errf:
-        skip = [t.split('.', 1)[1] for ts in SKIPPED.values() for t in ts.split()
-                if t.split('.', 1)[0] == name]
+        skip = [t for ts in SKIPPED.values() for t in ts.split()]
         p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, ROOT] + skip,
                              stdout=subprocess.PIPE, stderr=errf,
                              stdin=subprocess.DEVNULL, cwd=cwd,
@@ -164,27 +164,33 @@ def run(mode, name):
         errf.seek(max(0, size - 4096))
         err = errf.read()
     if out is None:
-        return 'timeout', stderr_tail(err)
+        return 'timeout', {}, stderr_tail(err)
     out = out.decode().strip().splitlines()
     counted = out[-1:] and out[-1].startswith('run=')
-    why = []
+    failed = {}
     if counted and len(out) > 1:
         try:
-            for test in json.loads(out[-2]):
-                why += test[:1] + ['    ' + l for l in test[1:]]
-        except (ValueError, TypeError):
+            # a subtest's id may show an address
+            failed = {re.sub('0x[0-9a-f]+', '0x...', t[0]): t[1:]
+                      for t in json.loads(out[-2])}
+        except (ValueError, TypeError, IndexError):
             pass
-    if not counted or p.returncode:
-        why += stderr_tail(err)
-    return '%s exit=%d' % (out[-1] if out else '(no output)', p.returncode), why
+    crashed = [] if counted and not p.returncode else stderr_tail(err)
+    return ('%s exit=%d' % (out[-1] if out else '(no output)', p.returncode),
+            failed, crashed)
 
 
 def check(name):
-    (plain, plain_why), (with_lejit, lejit_why) = run('plain', name), run('lejit', name)
-    if plain == with_lejit:
-        return True, 'ok     %-24s %s' % (name, plain)
-    report = ['FAIL   %-24s %s   with LeJIT: %s' % (name, plain, with_lejit)]
-    for side, why in ('plain', plain_why), ('with LeJIT', lejit_why):
+    plain, with_lejit = run('plain', name), run('lejit', name)
+    if plain[0] == with_lejit[0] and set(plain[1]) == set(with_lejit[1]):
+        return True, 'ok     %-24s %s' % (name, plain[0])
+    report = ['FAIL   %-24s %s   with LeJIT: %s' % (name, plain[0], with_lejit[0])]
+    for side, (_, failed, crashed), (_, other, _) in (
+            ('plain', plain, with_lejit), ('with LeJIT', with_lejit, plain)):
+        why = []
+        for test in sorted(set(failed) - set(other)):
+            why += [test] + ['    ' + l for l in failed[test]]
+        why += crashed
         if why:
             report += ['       %s:' % side] + ['         ' + l for l in why]
     return False, '\n'.join(report)
