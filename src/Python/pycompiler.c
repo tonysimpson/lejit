@@ -7203,6 +7203,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
             ended = compile_opcode(po, opcode, oparg, &next_instr, &mp,
                                    &raise_lasti);
+            if (ended == OPCODE_ELSEWHERE) {
+                fprintf(stderr, "XXX opcode: %d\n", opcode);
+                Py_FatalError("unknown opcode");
+            }
             if (ended == OPCODE_FINE)
                 goto fine;
             if (ended == OPCODE_RERAISED)
