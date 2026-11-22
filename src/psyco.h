@@ -862,12 +862,6 @@ PyAPI_FUNC(Py_hash_t) _Py_HashBytes(const void *, Py_ssize_t);
 #else
 #define le_hash_bytes Py_HashBuffer
 #endif
-#if LE_HAS_UNICODE_FAST_COPY_LINKABLE
-#define le_unicode_copy_characters _PyUnicode_FastCopyCharacters
-#else
-#define le_unicode_copy_characters(to, to_start, from, from_start, n) \
-    ((void)PyUnicode_CopyCharacters(to, to_start, from, from_start, n))
-#endif
 #if LE_HAS_UNICODE_FROM_ASCII_LINKABLE
 #define le_unicode_from_ascii _PyUnicode_FromASCII
 #else
