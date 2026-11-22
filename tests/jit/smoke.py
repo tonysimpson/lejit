@@ -5,8 +5,7 @@ without LeJIT.
 """
 import sys, os
 if len(sys.argv) > 1 and sys.argv[1] == 'lejit':
-    sys.path.insert(0, os.environ.get('LE_MODULE_DIR') or
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
     import lejit
     lejit.start()
 import json, re, collections, textwrap, string, fractions, heapq, bisect, functools, itertools, base64, difflib, pprint, statistics, decimal, datetime, csv, io

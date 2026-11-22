@@ -23,7 +23,7 @@
     BLOCKALLOC_INTERN_DEF(name, type, static, static /*forward*/) \
     BLOCKALLOC_INTERN_IMPL(name, type, blocksize, static, static)
 
-/* Under AddressSanitizer (setup.py LE_SANITIZE) each item is its own
+/* Under AddressSanitizer each item is its own
    malloc'd block, so that a use after free or an overflow into the next
    item is reported, with the stacks that allocated and freed it */
 #if defined(__SANITIZE_ADDRESS__)
