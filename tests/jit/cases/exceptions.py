@@ -257,6 +257,24 @@ CASES += [
 ]
 
 
+# an exception the compiler finds inside an except clause (iterating an int
+# it knows) has the exception being handled as its context
+def context_in_except(a):
+    try:
+        try:
+            a // 0
+        except ZeroDivisionError:
+            for i in a:
+                pass
+    except TypeError as e:
+        return repr(e), repr(e.__context__)
+
+
+CASES += [
+    ('context_in_except', [(1,)], {}),
+]
+
+
 # 'print >> f' gets 3.7's hint (CPython's test_print)
 def print_rshift(f):
     try:

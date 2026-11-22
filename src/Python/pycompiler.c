@@ -4617,6 +4617,24 @@ cimpl_import_all_from(PyObject *locals, PyObject *v)
 /***                         Main loop                         ***/
 /***************************************************************/
 
+/* PyErr_Restore of a virtual exception, raised as the interpreter would
+   have raised it: with the exception being handled as its context (as
+   PyErr_SetObject chains it). The traceback it has so far goes with it.
+   Takes the references, as PyErr_Restore. */
+static void
+cimpl_raise_virtual(PyObject *type, PyObject *value, PyObject *tb)
+{
+    PyObject *t, *v, *none;
+    PyErr_SetObject(type, value);
+    Py_DECREF(type);
+    Py_XDECREF(value);
+    if (tb != NULL) {
+        PyErr_Fetch(&t, &v, &none);
+        Py_XDECREF(none);
+        PyErr_Restore(t, v, tb);
+    }
+}
+
 static bool
 compute_and_raise_exception(PsycoObject *po)
 {
@@ -4643,8 +4661,9 @@ compute_and_raise_exception(PsycoObject *po)
         }
         args[0] = 'v';
         consume_reference(po, po->pr.exc);
-        return (psyco_generic_call(po, PyErr_Restore, CfNoReturnValue, args,
-                                   po->pr.exc, po->pr.val, po->pr.tb) != NULL);
+        return (psyco_generic_call(po, cimpl_raise_virtual, CfNoReturnValue,
+                                   args, po->pr.exc, po->pr.val,
+                                   po->pr.tb) != NULL);
     }
     else
         return true;
@@ -9236,7 +9255,17 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             }
 
             if (b->b_type == EXCEPT_HANDLER) {
-                /* leaving an except clause by any (pseudo) exception */
+                /* leaving an except clause by any (pseudo) exception; a
+                   virtual one is raised first, while the exception handled
+                   here is still its context */
+                if (PycException_IsPython(po) &&
+                    !PycException_Is(po, &ERtPython)) {
+                    if (!compute_and_raise_exception(po))
+                        break;
+                    clear_pseudo_exception(po);
+                    PycException_Raise(
+                        po, vinfo_new(VirtualTime_New(&ERtPython)), NULL);
+                }
                 unwind_except_handler(po, b, true);
                 continue;
             }
