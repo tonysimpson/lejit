@@ -22,7 +22,7 @@ BANNED = {
         'test_support test_script_helper test_regrtest test_crashers test_gdb test_check_c_globals',
     "compiled frames aren't kept up to date (line numbers, locals, stacks)":
         'test_sys test_frame test_traceback test_tracemalloc test_warnings test_logging '
-        'test_coroutines test_asyncio test_compile test_raise test_exceptions test_builtin '
+        'test_coroutines test_asyncio test_compile test_raise test_builtin '
         'test_doctest test_capi',
     'compiled code holds what it specialised on':
         'test_weakref test_gc test_module test_descr',
@@ -41,6 +41,10 @@ BANNED = {
 
 # reason: single tests (module.Class.method) skipped in both runs
 SKIPPED = {
+    "sys.getrefcount counts a constant once for each compiled block that "
+    'uses it, and the code compiled while a test counts holds more':
+        'test_xml_etree.BugsTest.test_bug_xmltoolkit63 '
+        'test_xml_etree_c.BugsTest.test_bug_xmltoolkit63',
     "CPython doesn't specialise Python calls, __getitem__ and properties "
     'while a frame-evaluation hook is installed (specialize.c, '
     'SPEC_FAIL_CALL_PEP_523)':
@@ -72,13 +76,6 @@ SKIPPED = {
         'test_load_attr_specialization_user_type '
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_store_attr_specialization_user_type',
-    "a compiled call of a type calls its tp_new and tp_init, not its "
-    'vectorcall, so their argument errors read differently':
-        'test_super.TestSuper.test_super_argcount '
-        'test_super.TestSuper.test_super_argtype',
-    "a respawn into a with statement's handler reaches WITH_EXCEPT_START "
-    "with a short stack (checked builds' assertion)":
-        'test_unparse.UnparseTestCase.test_invalid_yield_from',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,

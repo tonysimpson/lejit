@@ -141,10 +141,15 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
     return could_eat;
 }
 
+/* whether an inline load or store is into a managed dict's values */
+#define IN_VALUES(s) (LE_HAS_MANAGED_VALUES_POINTER && (s)->keys != NULL)
+
 /* Inline attribute store (ipyencoding.h).
    Registers: RDI the object, RSI the value, RDX the cache, RCX
    the dict, R8 its values, R9 its keys then the index, RAX scratch then
-   the old value, R10 scratch. Laid out as
+   the old value, R10 scratch. A managed dict's values (s->keys) have no
+   dict, no version tag and no FILL: R8 is read from the object, R9 is
+   the class keys. Laid out as
 
        checks ............ jcc MISS (each failure)
        old = values[ix]; test; jz FILL
@@ -241,16 +246,24 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     load_operand(po, &code, s->obj->source, REG_X64_RDI, start);
     load_operand(po, &code, s->value->source, REG_X64_RSI, start);
     LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
-    MOV_R_O(REG_X64_RCX, REG_X64_RDI, s->dictoffset);
-    TEST_R_R(REG_X64_RCX, REG_X64_RCX);
-    JCC_MISS(CC_E); /* no dict yet */
-    MOV_R_O(REG_X64_R8, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_values));
-    TEST_R_R(REG_X64_R8, REG_X64_R8);
-    JCC_MISS(CC_E); /* combined */
-    MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
-    KEYS_SHAPE_LOAD(REG_X64_RAX, REG_X64_R9);
-    CMP_R_A(REG_X64_RAX, REG_X64_RDX);
-    JCC_MISS(CC_NE); /* keys of another shape */
+    if (IN_VALUES(s)) {
+        MOV_R_O(REG_X64_R8, REG_X64_RDI, s->dictoffset);
+        TEST_R_R(REG_X64_R8, REG_X64_R8);
+        JCC_MISS(CC_E); /* the dict was made */
+        LOAD_ADDRESS(REG_X64_R9, s->keys, rip_near(start, s->keys));
+    }
+    else {
+        MOV_R_O(REG_X64_RCX, REG_X64_RDI, s->dictoffset);
+        TEST_R_R(REG_X64_RCX, REG_X64_RCX);
+        JCC_MISS(CC_E); /* no dict yet */
+        MOV_R_O(REG_X64_R8, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_values));
+        TEST_R_R(REG_X64_R8, REG_X64_R8);
+        JCC_MISS(CC_E); /* combined */
+        MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
+        KEYS_SHAPE_LOAD(REG_X64_RAX, REG_X64_R9);
+        CMP_R_A(REG_X64_RAX, REG_X64_RDX);
+        JCC_MISS(CC_NE); /* keys of another shape */
+    }
     MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, kword));
     MOV_R_X8(REG_X64_RAX, REG_X64_R9, 0, REG_X64_RAX, 8);
     CMP_R_O8(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, name));
@@ -284,11 +297,14 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     store = code;
     MOV_X8_R(REG_X64_R8, 0, REG_X64_R9, 8, REG_X64_RSI);
     INC_STORED(REG_X64_RSI);
-    MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX, offsetof(store_cache_t, version));
-    INC_A(REG_TRANSIENT_1);
-    MOV_R_A(REG_TRANSIENT_1, REG_TRANSIENT_1);
-    MOV_O_R(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag),
-            REG_TRANSIENT_1);
+    if (!IN_VALUES(s)) { /* a dict's new version tag */
+        MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX,
+                offsetof(store_cache_t, version));
+        INC_A(REG_TRANSIENT_1);
+        MOV_R_A(REG_TRANSIENT_1, REG_TRANSIENT_1);
+        MOV_O_R(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag),
+                REG_TRANSIENT_1);
+    }
 #if LE_HAS_IMMORTAL_OBJECTS
     CMP_I8_DA(0, REG_X64_RAX); /* an immortal is left alone */
     s->done[2] = code;
@@ -397,6 +413,13 @@ psyco_inline_store_end(PsycoObject *po, inline_store_t *s)
        (-2, a dummy, goes on)
        perturb >>= 5; i = (i*5 + perturb + 1) & mask
        rax = indices[i]; cmp rax, -1; jne LOOP; jmp NONE
+   with 'keys' (a managed dict's values, at the values pointer):
+     rcx = OBJ; r8 = [OBJ + dictoffset]; test r8, r8; jz MISS
+     r9 = keys, rdx = cache
+     cmp [r9 + kword*8], name; je PRESENT
+     cmp [r9 + dk_nentries], [rdx + nentries]; jne MISS
+     xor RG, RG; jmp DONE
+     PRESENT: RG = [r8 + ix*8]; jmp DONE
    MISS: rdi = rcx, rsi = cache; call miss_glue; RG = rax
    DONE:
 
@@ -473,12 +496,38 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         ro = REG_X64_RDI;
         load_operand(po, &code, s->obj->source, ro, start);
     }
-    MOV_R_O(REG_X64_RCX, ro, s->dictoffset);
-    TEST_R_R(REG_X64_RCX, REG_X64_RCX);
-    NEAR_JCC(CC_E, jnone, nnone); /* no dict yet */
+    if (IN_VALUES(s)) {
+#if LE_HAS_MANAGED_VALUES_POINTER
+        code_t *jpresent;
+        MOV_R_R(REG_X64_RCX, ro); /* for the miss call */
+        MOV_R_O(REG_X64_R8, ro, s->dictoffset);
+        TEST_R_R(REG_X64_R8, REG_X64_R8);
+        NEAR_JCC(CC_E, jmiss, nmiss); /* the dict was made */
+        LOAD_ADDRESS(REG_X64_R9, s->keys, rip_near(start, s->keys));
+        LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
+        MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, kword));
+        MOV_R_X8(REG_X64_RAX, REG_X64_R9, 0, REG_X64_RAX, 8);
+        CMP_R_O8(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, name));
+        jpresent = code;
+        WRITE_2(0x70 | CC_E, 0);
+        MOV_R_O(REG_X64_RAX, REG_X64_R9, offsetof(le_dictkeys_t, dk_nentries));
+        CMP_R_O8(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, nentries));
+        NEAR_JCC(CC_NE, jmiss, nmiss); /* keys that may hold it now */
+        XOR_R_R(rg, rg);
+        NEAR_JMP(jdone, ndone);
+        jpresent[1] = (code_t)(code - (jpresent + 2));
+        le_trace_jump_cond(jpresent, jpresent + 2, code);
+        MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, ix));
+        MOV_R_X8(rg, REG_X64_R8, 0, REG_X64_RAX, 8);
+        NEAR_JMP(jdone, ndone);
+#endif
+    }
     /* the probe reads entries that hold their hash, which keys with a kind
        may not: there an absent name is a miss */
-    if (!s->absent || LE_HAS_DICT_KEYS_KIND) {
+    else if (!s->absent || LE_HAS_DICT_KEYS_KIND) {
+        MOV_R_O(REG_X64_RCX, ro, s->dictoffset);
+        TEST_R_R(REG_X64_RCX, REG_X64_RCX);
+        NEAR_JCC(CC_E, jnone, nnone); /* no dict yet */
         MOV_R_O(REG_X64_R8, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_values));
         TEST_R_R(REG_X64_R8, REG_X64_R8);
         NEAR_JCC(CC_E, jmiss, nmiss); /* combined */
@@ -502,6 +551,9 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
     else {
         code_t *taken, *none, *body, *jtaken, *jneg;
         long ind = offsetof(le_dictkeys_t, dk_indices);
+        MOV_R_O(REG_X64_RCX, ro, s->dictoffset);
+        TEST_R_R(REG_X64_RCX, REG_X64_RCX);
+        NEAR_JCC(CC_E, jnone, nnone); /* no dict yet */
         MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
         MOV_R_O(REG_X64_R8, REG_X64_R9, offsetof(le_dictkeys_t, dk_size));
         CMP_I8_R(127, REG_X64_R8);

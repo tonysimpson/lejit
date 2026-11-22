@@ -103,6 +103,23 @@ def new_class_bases():
         return name, bases, sorted(ns), kw
     return types.new_class('X', (int, object), dict(metaclass=meta, x=0))
 
+# a type is called as ceval calls it: through its vectorcall where it has
+# one, whose argument errors differ from tp_new's and tp_init's
+def type_call_errors(t):
+    out = []
+    for args in ((1, 2, 3), (1, 2), (int, 1)):
+        try:
+            out.append(type(super(*args)).__name__)
+        except TypeError as e:
+            out.append(str(e))
+    for f in (int, float, range, dict, list, t):
+        try:
+            out.append(f(1, 2, 3, 4))
+        except TypeError as e:
+            out.append(str(e))
+    return out
+
+
 # functions made on each run, called from a frame with handlers (which
 # makes them real objects): each is a new object, so the calls must not
 # specialise on it
@@ -150,6 +167,7 @@ CASES = [
     ('generator_names', [()], {}),
     ('tuple_identity_through_call', "[(int,)]", {}),
     ('new_class_bases', [()], {}),
+    ('type_call_errors', "[(tuple,), (set,)]", {}),
     ('nested_function_calls', [(4,)], {}),
     ('nested_code_changes', [(4,), (2.5,)], {}),
 ]

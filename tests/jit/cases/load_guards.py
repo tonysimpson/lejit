@@ -306,7 +306,112 @@ def enum_members(n):
     return t
 
 
+# Instance attributes read and stored inline where the instance keeps
+# them (shared keys' split dicts; from 3.11 values with no dict, indexed by
+# the class keys, which only grow), with every way out of that shape.
+
+
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def norm(self):
+        return self.x * self.x + self.y * self.y
+
+
+def _z_or_error(p):
+    try:
+        return p.z
+    except AttributeError as e:
+        return str(e)
+
+
+def attributes_present_and_absent(n):
+    ps = [Point(i, i + 1) for i in range(n)]
+    total = 0
+    for p in ps:
+        total = total + p.norm()
+        p.x = p.x + 1
+    return total, [_z_or_error(p) for p in ps[:2]]
+
+
+def name_added_after_absent(n):
+    # z is absent from the class keys while the load compiles, then an
+    # instance adds it
+    class Late:
+        def __init__(self):
+            self.a = 1
+    ls = [Late() for _ in range(n)]
+    out = [_z_or_error(x) for x in ls]
+    ls[1].z = 'zed'
+    out.append([_z_or_error(x) for x in ls])
+    return out
+
+
+def method_shadowed_then_deleted(n):
+    ps = [Point(i, 1) for i in range(n)]
+    out = [p.norm() for p in ps]
+    ps[1].norm = lambda: -1
+    out.append([p.norm() for p in ps])
+    del ps[1].norm
+    out.append([p.norm() for p in ps])
+    return out
+
+
+def attribute_deleted(n):
+    ps = [Point(i, 1) for i in range(n)]
+    del ps[0].x
+    out = []
+    for p in ps:
+        try:
+            out.append(p.x)
+        except AttributeError as e:
+            out.append(str(e))
+    ps[0].x = 7
+    out.append(ps[0].x)
+    return out
+
+
+def dict_made(n):
+    ps = [Point(i, 1) for i in range(n)]
+    d = ps[0].__dict__
+    d['x'] = 100
+    ps[0].y = 5
+    d['w'] = 'w'
+    return [p.norm() for p in ps], ps[0].w, sorted(d.items())
+
+
+class _Many:
+    pass
+
+
+def many_attributes(n):
+    # more names than shared keys hold
+    qs = [_Many() for _ in range(n)]
+    for q in qs:
+        for i in range(40):
+            setattr(q, 'a%d' % i, i)
+    return [q.a0 + q.a1 + q.a39 for q in qs]
+
+
+def stores_in_loop(n):
+    p = Point(0, 0)
+    i = 0
+    while i < n:
+        p.y = p.y + i
+        i = i + 1
+    return p.x, p.y
+
+
 CASES = [
+    ('attributes_present_and_absent', [(5,)], {}),
+    ('name_added_after_absent', [(4,)], {}),
+    ('method_shadowed_then_deleted', [(3,)], {}),
+    ('attribute_deleted', [(3,)], {}),
+    ('dict_made', [(3,)], {}),
+    ('many_attributes', [(3,)], {}),
+    ('stores_in_loop', [(100,)], {}),
     ('same_value', [(5,)], {}),
     ('different_value', [(5,)], {}),
     ('unrelated_attribute', [(5,)], {}),

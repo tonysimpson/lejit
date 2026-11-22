@@ -749,8 +749,9 @@ psuper_noargs(PsycoObject *po)
 
 /* type_call (Objects/typeobject.c) for type(x), int(x) and float(x) with
    one positional argument of an exact type, and for a heap class already
-   known (ptypeobject.c:psyco_heap_type_call); everything else is the
-   residual type_call.
+   known (ptypeobject.c:psyco_heap_type_call); everything else is
+   PyObject_Call, which calls a type through its tp_vectorcall where it has
+   one, as ceval's calls do, and type_call otherwise.
    type(x): the "ugly exception", the type itself. int(x): long_new_impl ->
    PyNumber_Long, which returns an exact int unchanged and uses nb_int
    (float___trunc___impl) for a float. float(x): float_new_impl ->
@@ -843,7 +844,7 @@ ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg, vinfo_t *vkw)
         return PsycoFloat_FROM_DOUBLE(x);
     }
 fallback:
-    return psyco_generic_call(po, type_call, CfCommonNewRefPyObject, "vvv",
+    return psyco_generic_call(po, PyObject_Call, CfCommonNewRefPyObject, "vvv",
                               vtype, varg, vkw);
 }
 

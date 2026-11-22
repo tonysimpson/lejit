@@ -1005,6 +1005,29 @@ set_frame_place(PyFrameObject *f, int lasti, int lineno)
     f->f_lineno = LE_HAS_LINENO_WHEN_SET ? 0 : lineno;
 }
 
+/* the frame object that already stands for a compiled frame running code:
+   the real one, one asked for, or its catcher word's; NULL if none */
+static PyFrameObject *
+existing_frame(PyCodeObject *code, PyObject **word)
+{
+    PyFrameObject *f = psyco_running_real_frame(code);
+    if (f == NULL)
+        f = psyco_innermost_activation(code);
+    if (f == NULL && word != NULL)
+        f = (PyFrameObject *)*word;
+    return f;
+}
+
+/* a re-raise's place in the frame, where it has one: the exception leaves
+   the frame from there, with no new traceback entry */
+static void
+cimpl_reraise_place(PyCodeObject *code, int pos, int lineno, PyObject **word)
+{
+    PyFrameObject *f = existing_frame(code, word);
+    if (f != NULL)
+        set_frame_place(f, pos, lineno);
+}
+
 static PyFrameObject *
 cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
                 int lasti, int lineno, PyObject **word)
@@ -1018,12 +1041,8 @@ cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
        lists etc). Its f_back is the entry's over it
        (psyco_frame_link_callee), or for the frame that catches the
        exception its caller, when read (frames.c:catcher_caller). */
-    PyFrameObject *result = psyco_running_real_frame(code);
+    PyFrameObject *result = existing_frame(code, word);
     le_frame_t *back = le_frame_current(tstate);
-    if (result == NULL)
-        result = psyco_innermost_activation(code); /* one asked for */
-    if (result == NULL && word != NULL)
-        result = (PyFrameObject *)*word;
     if (result != NULL) {
         Py_INCREF(result);
         set_frame_place(result, lasti, lineno);
@@ -1370,7 +1389,8 @@ handler_drops_exception(PyCodeObject *co, int handler)
     if (i == LOAD_GLOBAL || i == LOAD_FAST || i == LOAD_DEREF) {
         q = le_after(c, p);
         if (OP_AT(q) == CHECK_EXC_MATCH &&
-            OP_AT(le_after(c, q)) == POP_JUMP_FORWARD_IF_FALSE)
+            (OP_AT(le_after(c, q)) == POP_JUMP_FORWARD_IF_FALSE ||
+             OP_AT(le_after(c, q)) == POP_JUMP_IF_FALSE))
             p = le_after(c, le_after(c, q));
     }
     return OP_AT(p) == POP_TOP && OP_AT(le_after(c, p)) == POP_EXCEPT;
@@ -1452,6 +1472,18 @@ PycException_Reraise(PsycoObject *po, vinfo_t *exc, vinfo_t *val, vinfo_t *tb)
     po->pr.tb = tb;
     if (locals_wanted_now(po))
         traceback_locals(po, tb);
+}
+
+/* the frame's place set to pos at run time, for an exception raised again
+   (cimpl_reraise_place) */
+static void
+reraise_place(PsycoObject *po, int pos)
+{
+    vinfo_t *word = catcher_word(po);
+    psyco_generic_call(po, cimpl_reraise_place, CfNoReturnValue,
+                       word != NULL ? "lllr" : "llll", (long)po->pr.co,
+                       (long)pos, (long)PyCode_Addr2Line(po->pr.co, pos),
+                       word != NULL ? (long)word : 0L);
 }
 
 /* record a traceback entry for the current virtual Python exception */
@@ -2112,22 +2144,26 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
    the callee checks the rest. */
 #if LE_HAS_OPCODE_CALL
 /* the keyword names of the CALL at 'pos' (its first unit): the constant of
-   the KW_NAMES right before its PRECALL, or NULL for none. False with
-   SystemError if no PRECALL comes right before (mergepoints.c refuses such
-   code). Caches are CACHE units, so a unit read here is an instruction's
-   own only if it is the opcode looked for. */
+   the KW_NAMES right before it, or before its PRECALL where CPython has
+   one, or NULL for none. False with SystemError if no PRECALL comes right
+   before where there is one (mergepoints.c refuses such code). Caches are
+   CACHE units, so a unit read here is an instruction's own only if it is
+   the opcode looked for. */
 static bool
 call_kwnames(PsycoObject *po, PyCodeObject *co, int pos, PyObject **kwnames)
 {
     le_code_t c = le_code(co);
-    int p = pos - LE_CACHE_BYTES(PRECALL) - LE_UNIT, arg, shift;
+    int p = pos - LE_UNIT, arg, shift;
     *kwnames = NULL;
+#if LE_HAS_OPCODE_PRECALL
+    p -= LE_CACHE_BYTES(PRECALL);
     if (p < 0 || le_op(c, p) != PRECALL) {
         PycException_SetString(po, PyExc_SystemError, "CALL without PRECALL");
         return false;
     }
     while (p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG) p -= LE_UNIT;
     p -= LE_UNIT;
+#endif
     if (p < 0 || le_op(c, p) != KW_NAMES)
         return true;
     arg = le_arg(c, p);
@@ -2880,6 +2916,26 @@ cimpl_print_expr(PyObject *value)
     Py_DECREF(res);
     return 0;
 }
+
+#if LE_HAS_OPCODE_LOAD_SUPER_ATTR
+/* ceval.c LOAD_SUPER_ATTR, the attribute name of super(class, self),
+   or of the global super called with no arguments if n is 0 */
+static PyObject *
+cimpl_load_super_attr(PyObject *global_super, PyObject *class, PyObject *self,
+                      PyObject *name, long n)
+{
+    PyObject *stack[] = {class, self};
+    PyObject *super, *res;
+    if (global_super == (PyObject *)&PySuper_Type)
+        n = 2;
+    super = PyObject_Vectorcall(global_super, stack, n, NULL);
+    if (super == NULL)
+        return NULL;
+    res = PyObject_GetAttr(super, name);
+    Py_DECREF(super);
+    return res;
+}
+#endif
 
 /* the end of ceval.c GET_AITER: iter must have __anext__ */
 static int
@@ -4607,7 +4663,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
-                case LOAD_FAST: {
+                case LOAD_FAST:
+                case LOAD_FAST_CHECK: {
                     vinfo_t *value;
                     value = GETLOCAL(oparg);
                     if (psyco_knowntobe(value, 0)) {
@@ -4625,6 +4682,18 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     vinfo_t *value;
                     value = vinfo_new(CompileTime_New((long)GETCONST(oparg)));
                     PUSH(value);
+                    goto fine;
+                }
+
+                /* an inlined comprehension keeps its outer variable's
+                   value, or NULL, on the stack and restores it with
+                   STORE_FAST */
+                case LOAD_FAST_AND_CLEAR: {
+                    vinfo_t *value;
+                    value = GETLOCAL(oparg);
+                    vinfo_incref(value);
+                    PUSH(value);
+                    SETLOCAL(oparg, psyco_vi_Zero());
                     goto fine;
                 }
 
@@ -5065,6 +5134,12 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     }
                     psyco_generic_call(po, cimpl_reraise_value,
                                        CfPyErrAlways | CfNoPython, "v", TOP());
+                    /* the place of the instruction that first raised, or
+                       this one's */
+                    reraise_place(po, raise_lasti < 0 ? po->pr.next_instr
+                                      : LE_HAS_LASTI_IN_INSTRUCTIONS
+                                          ? raise_lasti * LE_UNIT
+                                          : raise_lasti);
                     if (locals_wanted_now(po))
                         traceback_locals(po, NULL);
                     goto exception_unwind;
@@ -5076,6 +5151,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     exc = NTOP(1);
                     val = NTOP(2);
                     tb = NTOP(3);
+                    /* with oparg the place stays the first raise's, which its
+                       traceback entry set */
+                    if (!oparg)
+                        reraise_place(po, po->pr.next_instr);
                     PycException_Reraise(po, exc, val, tb);
                     goto exception_unwind;
                 }
@@ -5416,7 +5495,6 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 }
 #endif
 
-#if LE_HAS_OPCODE_LIST_TO_TUPLE
                 case LIST_TO_TUPLE: {
                     vinfo_t *list;
                     vinfo_t *tuple;
@@ -5433,7 +5511,6 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     PUSH(tuple);
                     goto fine;
                 }
-#endif
 
 #if LE_HAS_OPCODE_LIST_EXTEND
                 case LIST_EXTEND: {
@@ -5681,7 +5758,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     vinfo_t *owner;
                     vinfo_t *res;
                     owner = NTOP(1);
-                    name = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
+                    name = vinfo_new(
+                        CompileTime_New((long)GETNAMEV(LE_ATTR_NAME(oparg))));
                     res = PsycoObject_GetAttr(po, owner, name);
                     vinfo_decref(name, po);
                     if (res == NULL) {
@@ -5689,6 +5767,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     }
                     POP(owner);
                     vinfo_decref(owner, po);
+                    /* the method form as LOAD_METHOD pushes it */
+                    if (LE_ATTR_METHOD(oparg))
+                        PUSH(psyco_vi_Zero());
                     PUSH(res);
                     goto fine;
                 }
@@ -5704,7 +5785,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
 #else
                 case COMPARE_OP:
-                    x = PsycoObject_RichCompare(po, NTOP(2), NTOP(1), oparg);
+                    x = PsycoObject_RichCompare(po, NTOP(2), NTOP(1),
+                                                LE_COMPARE_OP(oparg));
                     if (x == NULL)
                         break;
                     POP_DECREF();
@@ -5817,8 +5899,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     POP_DECREF();
                     goto fine;
 
+                case POP_JUMP_IF_NONE:
                 case POP_JUMP_FORWARD_IF_NONE:
                 case POP_JUMP_BACKWARD_IF_NONE:
+                case POP_JUMP_IF_NOT_NONE:
                 case POP_JUMP_FORWARD_IF_NOT_NONE:
                 case POP_JUMP_BACKWARD_IF_NOT_NONE: {
                     vinfo_t *cond = NTOP(1);
@@ -5826,7 +5910,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         integer_cmp_i(po, cond, (long)Py_None, Py_EQ);
                     if (cc == CC_ERROR)
                         break;
-                    if (opcode == POP_JUMP_FORWARD_IF_NOT_NONE ||
+                    if (opcode == POP_JUMP_IF_NOT_NONE ||
+                        opcode == POP_JUMP_FORWARD_IF_NOT_NONE ||
                         opcode == POP_JUMP_BACKWARD_IF_NOT_NONE)
                         cc = INVERT_CC(cc);
                     JUMP_IF_CC(cc, JUMPTO(JUMP_DEST()), 1, 1);
@@ -6083,6 +6168,77 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
+                case BINARY_SLICE:
+                case STORE_SLICE: {
+                    vinfo_t *slice = PsycoSlice_New(NTOP(2), NTOP(1), NULL);
+                    if (opcode == BINARY_SLICE) {
+                        x = PsycoObject_GetItem(po, NTOP(3), slice);
+                        vinfo_decref(slice, po);
+                        if (x == NULL)
+                            break;
+                    }
+                    else {
+                        bool ok =
+                            PsycoObject_SetItem(po, NTOP(3), slice, NTOP(4));
+                        vinfo_decref(slice, po);
+                        if (!ok)
+                            break;
+                        POP_DECREF();
+                    }
+                    POP_DECREF();
+                    POP_DECREF();
+                    POP_DECREF();
+                    if (opcode == BINARY_SLICE)
+                        PUSH(x);
+                    goto fine;
+                }
+
+                /* the intrinsics mergepoints.c:compiled_intrinsic allows,
+                   as the opcodes they replaced */
+                case CALL_INTRINSIC_1:
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+                    if (oparg == INTRINSIC_PRINT) {
+                        if (!psyco_generic_call(po, cimpl_print_expr,
+                                                CfCommonIntZeroOk, "v", TOP()))
+                            break;
+                        POP_DECREF();
+                        PUSH(psyco_vi_None());
+                        goto fine;
+                    }
+                    opcode = oparg == INTRINSIC_UNARY_POSITIVE ? UNARY_POSITIVE
+                             : oparg == INTRINSIC_LIST_TO_TUPLE ? LIST_TO_TUPLE
+                                                                : -1;
+                    extra_assert(opcode >= 0);
+                    goto dispatch_opcode;
+#else
+                    goto fine;
+#endif
+
+                /* super().name, or super(class, self).name: the builtin
+                   super is given both, as the zero-argument form finds
+                   them */
+                case LOAD_SUPER_ATTR:
+#if LE_HAS_OPCODE_LOAD_SUPER_ATTR
+                    x = psyco_generic_call(
+                        po, cimpl_load_super_attr, CfCommonNewRefPyObject,
+                        "vvvll", NTOP(3), NTOP(2), TOP(),
+                        (long)GETNAMEV(oparg >> 2), (long)(oparg & 2));
+                    if (x == NULL)
+                        break;
+                    POP_DECREF();
+                    POP_DECREF();
+                    POP_DECREF();
+                    if (oparg & 1)
+                        PUSH(psyco_vi_Zero());
+                    PUSH(x);
+#endif
+                    goto fine;
+
+                case END_FOR:
+                    POP_DECREF();
+                    POP_DECREF();
+                    goto fine;
+
                 case BUILD_SLICE: {
                     vinfo_t *slice;
                     vinfo_t *start;
@@ -6218,8 +6374,13 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         goto exception_unwind;
                     break;
 
+                case RETURN_CONST:
+                    v = vinfo_new(CompileTime_New((long)GETCONST(oparg)));
+                    goto return_value;
+
                 case RETURN_VALUE:
                     POP(v);
+                return_value:
                     if (co->co_flags & CO_GENERATOR) {
                         /* a fused generator expression: return the consumer's
                          * result */
@@ -6485,6 +6646,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                            stack, raised again as RERAISE does */
                         POP(w);
                         POP(x);
+                        reraise_place(po, po->pr.next_instr);
                         PycException_Reraise(po, v, w, x);
                         vinfo_decref(v, po);
                         vinfo_decref(w, po);
@@ -6666,7 +6828,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                             /* iterator ended normally */
                             PycException_Clear(po);
                             POP_DECREF();
-                            JUMPBY(LE_JUMP_BYTES(oparg));
+                            JUMPTO(le_for_iter_exit(
+                                bytecode, next_instr + LE_JUMP_BYTES(oparg)));
                             mp = psyco_next_merge_point(po->pr.merge_points,
                                                         next_instr);
                         }
@@ -6788,8 +6951,23 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                    runs (frames.h:le_frame_start). */
                 case PRECALL:
                 case KW_NAMES:
-                case MAKE_CELL:
                 case COPY_FREE_VARS:
+                    goto fine;
+
+                /* after the start, an inlined comprehension's own cell, in
+                   the place LOAD_FAST_AND_CLEAR emptied */
+                case MAKE_CELL:
+#if LE_HAS_INTERPRETER_FRAME
+                    if (next_instr > co->_co_firsttraceable * LE_UNIT) {
+                        x = psyco_generic_call(
+                            po, PyCell_New,
+                            CfCommonNewRefPyObject | CfNoPython, "v",
+                            GETLOCAL(oparg));
+                        if (x == NULL)
+                            break;
+                        SETLOCAL(oparg, x);
+                    }
+#endif
                     goto fine;
 
                 case CALL_METHOD:
@@ -7062,6 +7240,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                the instruction that called it */
             if (resumed)
                 po->pr.resume_pending = 1;
+            resumed = 0; /* the caller's handlers are still to run */
 
             if (PycException_Is(po, &EReturn)) {
                 /* caught EReturn from the inlined frame */
@@ -7102,8 +7281,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
            handler's depth, the place of the instruction pushed if the
            handler wants it, then the exception caught (cimpl_catch). A
            virtual exception is raised for real first, so that the run-time
-           code can fetch it. Pseudo-exceptions have no handler. */
-        if (PycException_IsPython(po)) {
+           code can fetch it. Pseudo-exceptions have no handler, and an
+           exception from a frame ceval went on with has been through its
+           handlers there. */
+        if (PycException_IsPython(po) && !resumed) {
             le_handler_t h;
             int lasti = raise_lasti >= 0
                             ? raise_lasti

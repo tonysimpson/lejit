@@ -53,6 +53,16 @@ le_frame_complete(le_frame_t *f)
 {
     return !_PyFrame_IsIncomplete(f);
 }
+/* the closure of the frame's function */
+static inline PyObject *
+le_frame_closure(le_frame_t *f)
+{
+#if LE_HAS_FRAME_FUNCOBJ
+    return PyFunction_GET_CLOSURE(f->f_funcobj);
+#else
+    return f->f_func->func_closure;
+#endif
+}
 /* the frame's code starts running compiled: what the instructions before
    the first traceable one (RESUME) do, done here as ceval's MAKE_CELL and
    COPY_FREE_VARS do it, and the frame placed past them, so that it is
@@ -72,7 +82,7 @@ le_frame_start(le_frame_t *f)
             Py_XSETREF(f->localsplus[k], cell);
         }
     for (k = 0; k < nfrees; k++) {
-        PyObject *o = PyTuple_GET_ITEM(f->f_func->func_closure, k);
+        PyObject *o = PyTuple_GET_ITEM(le_frame_closure(f), k);
         Py_INCREF(o);
         f->localsplus[n + k] = o;
     }
@@ -592,18 +602,23 @@ le_pyframe_stack(PyFrameObject *f)
    exception is 'done', which is taken back. sys.monitoring's events for
    the unwind are not given (tstate->tracing). A frame object that
    outlives the frame keeps its place, which ceval would show as the
-   first line. */
+   first line, and the f_back psyco_frame_returned gave it, which ceval
+   would replace with the frame it was called from. */
 extern int
 le_monitoring_on(PyThreadState *ts); /* pyruntime.c */
 static inline PyObject *
 le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
                 PyObject *done)
 {
-    PyFrameObject *fo = f->frame_obj;
+    PyFrameObject *fo = f->frame_obj, *back = NULL;
     _Py_CODEUNIT *at = f->prev_instr;
     int quiet = le_monitoring_on(ts);
     PyObject *r;
-    Py_XINCREF(fo);
+    if (fo != NULL) {
+        Py_INCREF(fo);
+        back = fo->f_back;
+        fo->f_back = NULL;
+    }
     f->prev_instr = _PyCode_CODE(f->f_code) - 1;
     if (result != NULL)
         PyErr_SetRaisedException(Py_NewRef(done));
@@ -630,6 +645,8 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
         le_frame_t *own = fo->f_frame;
         if (at >= _PyCode_CODE(own->f_code) + own->f_code->_co_firsttraceable)
             own->prev_instr = at;
+        if (back != NULL)
+            Py_XSETREF(fo->f_back, back);
         Py_DECREF(fo);
     }
     return result;

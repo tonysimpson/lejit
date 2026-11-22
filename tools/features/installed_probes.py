@@ -643,6 +643,25 @@ def MANAGED_DICT():
 
 
 @probe
+def MANAGED_VALUES_POINTER():
+    """an instance with an attribute and no __dict__ made yet has a values
+    pointer four words before it and no dict three words before; once
+    __dict__ is made, the values pointer is gone and the dict is there"""
+    class C(object):
+        pass
+    c = C()
+    c.a = 1
+    word = ctypes.c_void_p.from_address
+    before = word(id(c) - 32).value, word(id(c) - 24).value
+    d = c.__dict__
+    after = word(id(c) - 32).value, word(id(c) - 24).value
+    found = (C.__dictoffset__ < 0 and before[0] is not None and
+             before[1] is None and after == (None, id(d)))
+    return found, 'class C: words -4 and -3 %r, then with __dict__ %r' % (
+        before, after)
+
+
+@probe
 def VALID_VERSION_TAG_FLAG():
     """a class has the flag 1 << 19 (Py_TPFLAGS_VALID_VERSION_TAG) after a
     lookup on it, and loses it when the class changes (run)"""
@@ -777,6 +796,36 @@ def LOAD_GLOBAL_NULL_BIT():
         if x.opname == 'LOAD_GLOBAL' and x.arg in (0, 1):
             return x.arg == 1, 'dis: LOAD_GLOBAL %d for zzz()' % x.arg
     raise Unanswered('zzz() is not LOAD_GLOBAL 0 or 1: %r'
+                     % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
+def LOAD_ATTR_METHOD_BIT():
+    """reading an attribute loads it with LOAD_ATTR whose argument is the
+    name's index (1) shifted left once (dis)"""
+    def f(o):
+        return o.yyy, o.zzz
+    for x in dis.get_instructions(f):
+        if x.opname == 'LOAD_ATTR' and x.argval == 'zzz' and x.arg in (1, 2):
+            return x.arg == 2, 'dis: LOAD_ATTR %d for o.zzz' % x.arg
+    raise Unanswered('o.zzz is not LOAD_ATTR 1 or 2: %r'
+                     % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
+def COMPARE_OP_SHIFT_4():
+    """a > b compiles to COMPARE_OP whose argument is Py_GT (4), shifted
+    left four times where it has the specialiser's bits too (dis)"""
+    def f(a, b):
+        return a > b
+    for x in dis.get_instructions(f):
+        if x.opname == 'COMPARE_OP':
+            if x.arg == 4:
+                return False, 'dis: COMPARE_OP 4 for a > b'
+            if x.arg >> 4 == 4:
+                return True, 'dis: COMPARE_OP %d for a > b' % x.arg
+            raise Unanswered('a > b is COMPARE_OP %d' % x.arg)
+    raise Unanswered('a > b has no COMPARE_OP: %r'
                      % [(x.opname, x.arg) for x in dis.get_instructions(f)])
 
 

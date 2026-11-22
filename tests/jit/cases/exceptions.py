@@ -367,6 +367,93 @@ CASES += [
 ]
 
 
+# the line a frame shows once an exception has left it through a finally
+# block or an except clause that doesn't match: that of the instruction
+# that raised it again
+def leaves_through_finally(a):
+    try:
+        a // 0
+    finally:
+        pass
+
+
+def leaves_through_other_except(a):
+    try:
+        a // 0
+    except TypeError:
+        pass
+
+
+def line_left_from(f):
+    try:
+        f(1)
+    except ZeroDivisionError as e:
+        frame = e.__traceback__.tb_next.tb_frame
+        return frame.f_lineno - frame.f_code.co_firstlineno
+
+
+CASES += [
+    ('line_left_from',
+     '[(leaves_through_finally,), (leaves_through_other_except,)]', {}),
+]
+
+
+# a truth test of many types goes megamorphic and the frame goes on in
+# ceval, which runs the with's __exit__ and the finally block once; the
+# exception leaving ceval is not caught again by the compiled handlers
+class LoggingExit:
+    def __init__(self, log):
+        self.log = log
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.log.append('exit')
+
+
+def raise_if_false_in_with(manager, x):
+    with manager:
+        if not x:
+            raise ValueError('false')
+        return 1
+
+
+def raise_if_false_in_try(log, x):
+    try:
+        if not x:
+            raise ValueError('false')
+        return 1
+    finally:
+        log.append('finally')
+
+
+def handlers_after_going_interpreted():
+    log = []
+    manager = LoggingExit(log)
+    kinds = [type('Truthy%d' % i, (), {'__bool__': lambda self: True})
+             for i in range(12)]
+    falsy = type('Falsy', (), {'__bool__': lambda self: False})
+    out = []
+    for f, first in ((raise_if_false_in_with, manager),
+                     (raise_if_false_in_try, log)):
+        for i in range(30):
+            for kind in kinds:
+                f(first, kind())
+        for i in range(3):
+            del log[:]
+            try:
+                f(first, falsy())
+            except ValueError as e:
+                out.append((str(e), list(log)))
+    return out
+
+
+CASES += [
+    ('handlers_after_going_interpreted', [()], {}),
+]
+
+
 # 'print >> f' gets 3.7's hint (CPython's test_print)
 def print_rshift(f):
     try:

@@ -255,20 +255,24 @@ def borrowed_globals_reused():
 # object it never saw (CPython's test_code CoExtra segfaulted). The free
 # function is C (PyMem_RawFree): a Python callback would run at exit too.
 _api = ctypes.pythonapi
-_api._PyEval_RequestCodeExtraIndex.argtypes = (ctypes.c_void_p,)
-_api._PyEval_RequestCodeExtraIndex.restype = ctypes.c_ssize_t
-_api._PyCode_SetExtra.argtypes = (ctypes.py_object, ctypes.c_ssize_t,
-                                  ctypes.c_void_p)
-_api._PyCode_SetExtra.restype = ctypes.c_int
+# named PyUnstable_ where CPython has that API tier
+_unstable = hasattr(_api, 'PyUnstable_Eval_RequestCodeExtraIndex')
+_request_index = (_api.PyUnstable_Eval_RequestCodeExtraIndex if _unstable
+                  else _api._PyEval_RequestCodeExtraIndex)
+_set_extra = (_api.PyUnstable_Code_SetExtra if _unstable
+              else _api._PyCode_SetExtra)
+_request_index.argtypes = (ctypes.c_void_p,)
+_request_index.restype = ctypes.c_ssize_t
+_set_extra.argtypes = (ctypes.py_object, ctypes.c_ssize_t, ctypes.c_void_p)
+_set_extra.restype = ctypes.c_int
 _api.PyMem_RawMalloc.argtypes = (ctypes.c_size_t,)
 _api.PyMem_RawMalloc.restype = ctypes.c_void_p
-EXTRA_INDEX = _api._PyEval_RequestCodeExtraIndex(
-    ctypes.cast(_api.PyMem_RawFree, ctypes.c_void_p))
+EXTRA_INDEX = _request_index(ctypes.cast(_api.PyMem_RawFree, ctypes.c_void_p))
 
 
 def other_code_extra_user():
     c = compile('42', 'extra', 'eval')
-    r = _api._PyCode_SetExtra(c, EXTRA_INDEX, _api.PyMem_RawMalloc(8))
+    r = _set_extra(c, EXTRA_INDEX, _api.PyMem_RawMalloc(8))
     del c
     return r
 

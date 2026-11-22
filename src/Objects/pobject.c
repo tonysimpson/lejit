@@ -511,12 +511,65 @@ cimpl_dict_get_known(PyObject *dict, PyObject *name, Py_hash_t hash)
     return v;
 }
 
+/* A class whose instances keep their attributes in values with no dict,
+   indexed as the class keys hold the names. Those keys are made with the
+   class and never replaced, and only grow, so a name's index in them
+   never changes. */
+static bool
+has_managed_values(PyTypeObject *tp)
+{
+#if LE_HAS_MANAGED_VALUES_POINTER
+    return (tp->tp_flags & Py_TPFLAGS_MANAGED_DICT) &&
+           ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL;
+#else
+    return false;
+#endif
+}
+
+#if LE_HAS_MANAGED_VALUES_POINTER
+/* where such an instance's values pointer is (NULL once its dict is made),
+   and its dict pointer */
+#define MANAGED_VALUES_OFFSET (-4 * (long)sizeof(PyObject *))
+#define MANAGED_DICT_POINTER_OFFSET (-3 * (long)sizeof(PyObject *))
+
+static PyObject **
+instance_values(PyObject *obj)
+{
+    return *(PyObject ***)((char *)obj + MANAGED_VALUES_OFFSET);
+}
+
+static le_dictkeys_t *
+class_keys(PyTypeObject *tp)
+{
+    return (le_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys;
+}
+
+/* the index of the exact str 'name' in class keys, as
+   _PyDictKeys_StringLookup finds it, or -1 */
+static Py_ssize_t
+class_keys_index(le_dictkeys_t *keys, PyObject *name)
+{
+    Py_hash_t hash = PyObject_Hash(name);
+    Py_ssize_t i;
+    for (i = 0; i < keys->dk_nentries; i++) {
+        PyObject *key = *le_dict_key_slot(keys, i);
+        if (key == name ||
+            (le_dict_hash(keys, i) == hash && _PyUnicode_EQ(key, name)))
+            return i;
+    }
+    return -1;
+}
+#endif
+
 #define INSTANCE_dict FMUT(DEF_ARRAY(PyObject *, 0))
 #define DICT_ma_values FMUT(CPY_FIELD(PyDictObject, ma_values, NO_PREV_FIELD))
 
 static store_cache_t *
 store_cache(PyTypeObject *tp, PyObject *name);
 static code_t *load_miss_glue;
+#if LE_HAS_MANAGED_VALUES_POINTER
+static code_t *managed_load_miss_glue;
+#endif
 
 /* Whether to emit the inline path for 'tp', in a way that a replay repeats
    (see psyco_block_serial). CPython never gives a class shared keys again
@@ -531,14 +584,7 @@ keys_inline(PsycoObject *po, PyTypeObject *tp)
     /* type -> None while it has shared keys, then the first block serial
        after LeJIT saw them gone */
     static le_addrmap_t seen;
-    PyObject **slot, *d;
-    /* an inline store that fills a split table's next value doesn't add
-       it to the insertion order which, where keys have a kind, the values
-       keep */
-    if (LE_HAS_DICT_KEYS_KIND)
-        return false;
-    slot = psyco_record(&seen, tp);
-    d = *slot;
+    PyObject **slot = psyco_record(&seen, tp), *d = *slot;
     if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) {
         if (d != Py_None) {
             Py_INCREF(Py_None);
@@ -577,6 +623,21 @@ instance_dict_get(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
 {
     vinfo_t *vd, *v;
     condition_code_t cc;
+#if LE_HAS_MANAGED_VALUES_POINTER
+    if (has_managed_values(tp)) {
+        inline_load_t s;
+        if (!compute_vinfo(obj, po))
+            return NULL;
+        s.obj = obj;
+        s.dictoffset = MANAGED_VALUES_OFFSET;
+        s.keys = class_keys(tp);
+        s.cache = store_cache(tp, name);
+        s.hash = PyObject_Hash(name);
+        s.absent = absent;
+        s.miss_glue = managed_load_miss_glue;
+        return psyco_inline_load(po, &s);
+    }
+#endif
     if (!(tp->tp_flags & Py_TPFLAGS_HEAPTYPE) || tp->tp_dictoffset <= 0)
         goto helper;
     if (PyUnicode_CheckExact(name) && keys_inline(po, tp)) {
@@ -585,6 +646,7 @@ instance_dict_get(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
             return NULL;
         s.obj = obj;
         s.dictoffset = tp->tp_dictoffset;
+        s.keys = NULL;
         s.cache = store_cache(tp, name);
         s.hash = PyObject_Hash(name);
         s.absent = absent;
@@ -1060,9 +1122,11 @@ generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic)
                            tp);
 
 #if LE_HAS_MANAGED_DICT
-    /* the attributes may be in values with no dict, which only CPython's
-       own lookup reads without making the dict */
-    if (tp->tp_flags & Py_TPFLAGS_MANAGED_DICT)
+    /* the attributes may be in values with no dict: read inline for an
+       exact str (instance_dict_get); CPython makes the dict for any other
+       name */
+    if ((tp->tp_flags & Py_TPFLAGS_MANAGED_DICT) &&
+        !(has_managed_values(tp) && PyUnicode_CheckExact(name)))
         goto generic;
 #endif
     if (tp->tp_dictoffset != 0) {
@@ -1121,6 +1185,10 @@ cimpl_instance_dict_set(PyObject *obj, PyObject *name, PyObject *value)
 {
     PyTypeObject *tp = Py_TYPE(obj);
     PyObject **dictptr = (PyObject **)((char *)obj + tp->tp_dictoffset);
+    /* values with no dict: CPython's own store (the type has no data
+       descriptor for the name) */
+    if (has_managed_values(tp))
+        return PyObject_GenericSetAttr(obj, name, value);
 #if LE_HAS_OBJECTDICT_SETITEM_LINKABLE
     int r = _PyObjectDict_SetItem(tp, dictptr, name, value);
     if (r < 0 && PyErr_ExceptionMatches(PyExc_KeyError))
@@ -1218,6 +1286,9 @@ store_cache(PyTypeObject *tp, PyObject *name)
     c->name = name;
     c->version = &le_dict_version;
     c->refreshes = 0;
+#if LE_HAS_MANAGED_VALUES_POINTER
+    c->nentries = -1;
+#endif
     if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) /* a first hint */
         store_cache_set(
             c, (le_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys);
@@ -1276,6 +1347,58 @@ cimpl_load_miss(PyObject *dict, store_cache_t *c)
     return v;
 }
 
+#if LE_HAS_MANAGED_VALUES_POINTER
+/* point 'c' at the class keys' entry 'ix' of its name, or (-1) record
+   that they don't hold it at their present size */
+static void
+class_keys_cache_set(store_cache_t *c, le_dictkeys_t *keys, Py_ssize_t ix)
+{
+    if (ix < 0) {
+        c->nentries = keys->dk_nentries;
+    }
+    else if (*le_dict_key_slot(keys, ix) == c->name) {
+        c->kword = le_dict_key_slot(keys, ix) - (PyObject **)keys;
+        c->ix = ix;
+    }
+}
+
+/* The miss path of an inline load from an instance's values (inline_load_t
+   with keys): the value, borrowed, or NULL, as CPython's lookup finds it,
+   reading the dict if one was made; the cache follows the class keys. */
+static PyObject *
+cimpl_managed_load_miss(PyObject *obj, store_cache_t *c)
+{
+    PyObject **values = instance_values(obj);
+    le_dictkeys_t *keys = class_keys(Py_TYPE(obj));
+    Py_ssize_t ix;
+    if (values == NULL) {
+        PyObject *dict =
+            *(PyObject **)((char *)obj + MANAGED_DICT_POINTER_OFFSET);
+        if (dict == NULL)
+            return NULL;
+        return cimpl_dict_get_known(dict, c->name, PyObject_Hash(c->name));
+    }
+    ix = class_keys_index(keys, c->name);
+    class_keys_cache_set(c, keys, ix);
+    return ix < 0 ? NULL : values[ix];
+}
+
+/* The miss path of an inline store into an instance's values: CPython's
+   store (the type has no data descriptor for the name), after which the
+   cache follows the class keys, which the store may have grown */
+static int
+cimpl_managed_store_miss(PyObject *obj, PyObject *value, store_cache_t *c)
+{
+    int r = PyObject_GenericSetAttr(obj, c->name, value);
+    le_dictkeys_t *keys = class_keys(Py_TYPE(obj));
+    LE_STAT(psyco_stat_store_misses++);
+    if (r == 0 && instance_values(obj) != NULL)
+        class_keys_cache_set(c, keys, class_keys_index(keys, c->name));
+    return r;
+}
+static code_t *managed_store_miss_glue;
+#endif
+
 /* What a compiled store does once its type guard passes: the function it
    calls. cimpl_instance_dict_set where 3.7's
    _PyObject_GenericSetAttrWithDict would go to the instance dict (no data
@@ -1288,7 +1411,8 @@ store_kind(PyTypeObject *tp, PyObject *name)
     PyObject *descr = NULL;
     if (le_type_dict(tp) != NULL)
         descr = _PyType_Lookup(tp, name); /* borrowed */
-    if (tp->tp_setattro != PyObject_GenericSetAttr || tp->tp_dictoffset <= 0 ||
+    if (tp->tp_setattro != PyObject_GenericSetAttr ||
+        (tp->tp_dictoffset <= 0 && !has_managed_values(tp)) ||
         le_type_dict(tp) == NULL)
         return tp->tp_setattro;
     if (descr != NULL && ((Py_TYPE(descr)->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
@@ -1372,12 +1496,23 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
     s.obj = obj;
     s.value = v;
     s.dictoffset = tp->tp_dictoffset;
+    s.keys = NULL;
     s.cache = c;
     s.gc = vtp == NULL         ? STORE_GC_FULL
            : PyType_IS_GC(vtp) ? STORE_GC_DICT
                                : STORE_GC_NONE;
-    s.fill = init_store(po, obj);
+    /* filling doesn't add to the insertion order that values keep where
+       keys have a kind */
+    s.fill = !LE_HAS_DICT_KEYS_KIND && init_store(po, obj);
     s.miss_glue = store_miss_glue;
+#if LE_HAS_MANAGED_VALUES_POINTER
+    if (has_managed_values(tp)) { /* values with no dict, nor its tracking */
+        s.dictoffset = MANAGED_VALUES_OFFSET;
+        s.keys = class_keys(tp);
+        s.gc = STORE_GC_NONE;
+        s.miss_glue = managed_store_miss_glue;
+    }
+#endif
     po->pr.class_unchecked = 1; /* the old value's dealloc may run Python */
     psyco_inline_store_begin(po, &s);
     if (runtime_condition_f(po, CC_NE)) {
@@ -1434,6 +1569,11 @@ heap_setattr(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, PyObject *name,
         return r != NULL;
     }
 
+    if (has_managed_values(tp)) {
+        if (v == NULL)
+            goto dict_set;
+        return inline_store(po, obj, tp, v, store_cache(tp, name));
+    }
     if (v != NULL && keys_inline(po, tp))
         return inline_store(po, obj, tp, v, store_cache(tp, name));
     if (v != NULL) {
@@ -1781,4 +1921,9 @@ psy_object_init(void)
     gen_object_init();
     store_miss_glue = psyco_aligned_call_glue(cimpl_store_miss);
     load_miss_glue = psyco_aligned_call_glue(cimpl_load_miss);
+#if LE_HAS_MANAGED_VALUES_POINTER
+    managed_load_miss_glue = psyco_aligned_call_glue(cimpl_managed_load_miss);
+    managed_store_miss_glue =
+        psyco_aligned_call_glue(cimpl_managed_store_miss);
+#endif
 }
