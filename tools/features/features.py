@@ -842,7 +842,6 @@ EXPORTS = [
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
     ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
     ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
-    ('MODULE_SPEC_IS_INITIALIZING_LINKABLE', '_PyModuleSpec_IsInitializing'),
     ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
     ('UNICODE_EQ_LINKABLE', '_PyUnicode_EQ'),
     ('UNICODE_FAST_COPY_LINKABLE', '_PyUnicode_FastCopyCharacters'),
