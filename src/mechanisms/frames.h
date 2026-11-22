@@ -240,6 +240,24 @@ le_pyframe_eval_end(PyFrameObject *f, int marked)
     if (marked)
         le_pyframe_set_executing(f, 0);
 }
+/* the frame object of a frame that has just run, if something besides
+   the frame holds it, so that it outlives the call */
+static inline PyFrameObject *
+le_frame_outlives(le_frame_t *f)
+{
+    if (f->owner != FRAME_OWNED_BY_THREAD || f->frame_obj == NULL ||
+        Py_REFCNT(f->frame_obj) < 2)
+        return NULL;
+    return f->frame_obj;
+}
+/* 'back' (a reference it takes) is its caller from now on, in place of
+   the frame it was called from, which CPython gives it as it clears it */
+static inline void
+le_frame_set_back_at_exit(le_frame_t *f, PyFrameObject *back)
+{
+    Py_XSETREF(f->frame_obj->f_back, back);
+    f->previous = NULL;
+}
 /* the frame object is the thread's innermost, for C code that reads it
    (frames.c:le_warn): a frame object's own frame is its frame object
    until le_pyframe_current_end, which it holds a reference to meanwhile,
@@ -500,6 +518,24 @@ le_pyframe_eval_end(PyFrameObject *f, int marked)
 {
     (void)f;
     (void)marked;
+}
+/* the frame of a call that has just run, if something besides the call
+   holds it, so that it outlives the call; a generator's frame has no
+   caller between its runs */
+static inline PyFrameObject *
+le_frame_outlives(le_frame_t *f)
+{
+    if (Py_REFCNT(f) < 2 ||
+        (f->f_code->co_flags &
+         (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)) != 0)
+        return NULL;
+    return f;
+}
+/* 'back' (a reference it takes) is its caller from now on */
+static inline void
+le_frame_set_back_at_exit(le_frame_t *f, PyFrameObject *back)
+{
+    Py_XSETREF(f->f_back, back);
 }
 /* the frame object is the thread's innermost, for C code that reads it
    (frames.c:le_warn), until le_pyframe_current_end */

@@ -144,12 +144,16 @@ static le_eval_frame_fn original_eval_frame = NULL;
 static PyObject *
 LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
 {
-    PyObject *entry_point =
-        le_code_to_run(le_frame_code(frame), le_frame_globals(frame),
-                       le_frame_locals(frame), le_frame_builtins(frame));
+    PyObject *result, *entry_point = le_code_to_run(
+                          le_frame_code(frame), le_frame_globals(frame),
+                          le_frame_locals(frame), le_frame_builtins(frame));
     if (entry_point != NULL)
-        return LeCode_Run(entry_point, frame);
-    return original_eval_frame(tstate, frame, throwflag);
+        result = LeCode_Run(entry_point, frame);
+    else
+        result = original_eval_frame(tstate, frame, throwflag);
+    if (le_frame_outlives(frame) != NULL)
+        psyco_frame_returned(frame);
+    return result;
 }
 
 static le_eval_frame_fn
@@ -189,11 +193,16 @@ static le_eval_frame_fn original_eval_frame = NULL;
 static PyObject *
 LeEval_EvalFrame(PyFrameObject *frame, int throwflag)
 {
-    PyObject *entry_point = le_code_to_run(frame->f_code, frame->f_globals,
-                                           frame->f_locals, frame->f_builtins);
+    PyObject *result,
+        *entry_point = le_code_to_run(frame->f_code, frame->f_globals,
+                                      frame->f_locals, frame->f_builtins);
     if (entry_point != NULL)
-        return LeCode_Run(entry_point, frame);
-    return original_eval_frame(frame, throwflag);
+        result = LeCode_Run(entry_point, frame);
+    else
+        result = original_eval_frame(frame, throwflag);
+    if (le_frame_outlives(frame) != NULL)
+        psyco_frame_returned(frame);
+    return result;
 }
 
 static le_eval_frame_fn
