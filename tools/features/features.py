@@ -1085,6 +1085,8 @@ FRAMES = [
 TYPES = [
     ('IMMUTABLE_TYPE_FLAG', immutable_type_flag),
     ('VALID_VERSION_TAG_FLAG', valid_version_tag_flag),
+    ('MANAGED_DICT', D('a class with Py_TPFLAGS_MANAGED_DICT keeps its instances\' attributes where the interpreter manages them, maybe in values with no dict, which _PyObject_GetDictPtr makes',
+                       lambda s: _body_has(s, 'Objects/object.c', '_PyObject_GetDictPtr', 'Py_TPFLAGS_MANAGED_DICT'))),
 ]
 
 # how LeJIT's own mechanisms reach the interpreter's state

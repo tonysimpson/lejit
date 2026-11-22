@@ -621,6 +621,10 @@ compiled_opcode(int op)
         case COPY:
         case SWAP:
         case PUSH_NULL:
+        /* attributes */
+        case LOAD_ATTR:
+        case STORE_ATTR:
+        case DELETE_ATTR:
         /* operators */
         case UNARY_POSITIVE:
         case UNARY_NEGATIVE:
@@ -821,10 +825,6 @@ compiled_opcode(int op)
         case STORE_NAME:
         case DELETE_NAME:
         case IMPORT_STAR:
-        /* attributes */
-        case LOAD_ATTR:
-        case STORE_ATTR:
-        case DELETE_ATTR:
         /* generators */
         case YIELD_VALUE:
         case GEN_START:

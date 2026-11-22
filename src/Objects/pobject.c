@@ -1052,6 +1052,12 @@ generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic)
         return Psyco_META3(po, f, CfCommonNewRefPyObject, "lvl", descr, obj,
                            tp);
 
+#if LE_HAS_MANAGED_DICT
+    /* the attributes may be in values with no dict, which only CPython's
+       own lookup reads without making the dict */
+    if (tp->tp_flags & Py_TPFLAGS_MANAGED_DICT)
+        goto generic;
+#endif
     if (tp->tp_dictoffset != 0) {
         bool found;
         v = instance_dict_get(po, obj, tp, name, descr != NULL);

@@ -2884,7 +2884,8 @@ cimpl_print_expr_r0(PyObject *_in0, long _oparg, PyObject *value,
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 1, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(70, oparg) + 0 + 1];
+    PyObject
+        *_stack[_t + PyCompile_OpcodeStackEffect(PRINT_EXPR, oparg) + 0 + 1];
     PyObject **stack_pointer = _stack;
     Py_INCREF(value);
     {
@@ -2926,7 +2927,8 @@ cimpl_get_aiter_r0(PyObject *_in0, long _oparg, PyObject *iter, PyObject *obj,
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 1, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(50, oparg) + 0 + 1];
+    PyObject
+        *_stack[_t + PyCompile_OpcodeStackEffect(GET_AITER, oparg) + 0 + 1];
     PyObject **stack_pointer = _stack;
     unaryfunc getter;
     *stack_pointer = _in0;
@@ -2981,7 +2983,8 @@ cimpl_get_aiter_r1(PyObject *_in0, long _oparg, PyObject *iter,
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 1, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(50, oparg) + 0 + 1];
+    PyObject
+        *_stack[_t + PyCompile_OpcodeStackEffect(GET_AITER, oparg) + 0 + 1];
     PyObject **stack_pointer = _stack;
     *stack_pointer = _in0;
     stack_pointer++;
@@ -3031,7 +3034,8 @@ cimpl_get_anext_r0(PyObject *_in0, long _oparg, PyObject *aiter,
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 1, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(51, oparg) + 0 + 1];
+    PyObject
+        *_stack[_t + PyCompile_OpcodeStackEffect(GET_ANEXT, oparg) + 0 + 1];
     PyObject **stack_pointer = _stack;
     unaryfunc getter;
     PyObject *awaitable;
@@ -3086,7 +3090,9 @@ cimpl_load_assertion_error_r0(long _oparg, PyObject **_out)
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 0, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(74, oparg) + 0 + 1];
+    PyObject
+        *_stack[_t + PyCompile_OpcodeStackEffect(LOAD_ASSERTION_ERROR, oparg) +
+                0 + 1];
     PyObject **stack_pointer = _stack;
     {
         {
@@ -3125,7 +3131,9 @@ cimpl_load_build_class_r0(long _oparg, PyObject *_f_f_builtins,
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 0, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(71, oparg) + 0 + 1];
+    PyObject
+        *_stack[_t + PyCompile_OpcodeStackEffect(LOAD_BUILD_CLASS, oparg) + 0 +
+                1];
     PyObject **stack_pointer = _stack;
     PyObject *bc;
     {
@@ -3371,7 +3379,8 @@ cimpl_match_mapping_r0(PyObject *_in0, long _oparg, PyObject **_out)
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 1, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(31, oparg) + 0 + 1];
+    PyObject *
+        _stack[_t + PyCompile_OpcodeStackEffect(MATCH_MAPPING, oparg) + 0 + 1];
     PyObject **stack_pointer = _stack;
     *stack_pointer = _in0;
     Py_INCREF(*stack_pointer);
@@ -3403,7 +3412,8 @@ cimpl_match_sequence_r0(PyObject *_in0, long _oparg, PyObject **_out)
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 1, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(32, oparg) + 0 + 1];
+    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(MATCH_SEQUENCE, oparg) +
+                     0 + 1];
     PyObject **stack_pointer = _stack;
     *stack_pointer = _in0;
     Py_INCREF(*stack_pointer);
@@ -3436,7 +3446,8 @@ cimpl_match_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 2, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(33, oparg) + 0 + 1];
+    PyObject
+        *_stack[_t + PyCompile_OpcodeStackEffect(MATCH_KEYS, oparg) + 0 + 1];
     PyObject **stack_pointer = _stack;
     *stack_pointer = _in0;
     Py_INCREF(*stack_pointer);
@@ -3479,7 +3490,10 @@ cimpl_copy_dict_without_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 2, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(34, oparg) + 0 + 1];
+    PyObject
+        *_stack[_t +
+                PyCompile_OpcodeStackEffect(COPY_DICT_WITHOUT_KEYS, oparg) +
+                0 + 1];
     PyObject **stack_pointer = _stack;
     *stack_pointer = _in0;
     Py_INCREF(*stack_pointer);
@@ -3525,7 +3539,10 @@ cimpl_copy_dict_without_keys_r1(PyObject *_in0, PyObject *_in1, long _oparg,
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 2, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(34, oparg) + 0 + 1];
+    PyObject
+        *_stack[_t +
+                PyCompile_OpcodeStackEffect(COPY_DICT_WITHOUT_KEYS, oparg) +
+                0 + 1];
     PyObject **stack_pointer = _stack;
     *stack_pointer = _in0;
     Py_INCREF(*stack_pointer);
@@ -3622,7 +3639,9 @@ cimpl_with_except_start_r0(PyObject *_items, long _oparg, PyObject *exc,
 {
     int oparg = (int)_oparg;
     Py_ssize_t _t = 7, _i;
-    PyObject *_stack[_t + PyCompile_OpcodeStackEffect(49, oparg) + 0 + 1];
+    PyObject
+        *_stack[_t + PyCompile_OpcodeStackEffect(WITH_EXCEPT_START, oparg) +
+                0 + 1];
     PyObject **stack_pointer = _stack;
     PyObject *res;
     for (_i = 0; _i < _t - 7; _i++) {
@@ -4828,12 +4847,10 @@ cimpl_import_all_from(PyObject *locals, PyObject *v)
 /***                         Main loop                         ***/
 /***************************************************************/
 
-#if LE_HAS_EXCEPTION_TABLE
-/* A virtual exception raised for real, as C code raises one
-   (PyErr_SetObject): chained to the exception being handled, which is
-   still the one there was where it was raised, as handlers are left only by
-   their own instructions. The traceback it has so far goes with it. Takes
-   the references, as PyErr_Restore. */
+/* PyErr_Restore of a virtual exception, raised as the interpreter would
+   have raised it: with the exception being handled as its context (as
+   PyErr_SetObject chains it). The traceback it has so far goes with it.
+   Takes the references, as PyErr_Restore. */
 static void
 cimpl_raise_virtual(PyObject *type, PyObject *value, PyObject *tb)
 {
@@ -4847,7 +4864,6 @@ cimpl_raise_virtual(PyObject *type, PyObject *value, PyObject *tb)
         PyErr_Restore(t, v, tb);
     }
 }
-#endif
 
 static bool
 compute_and_raise_exception(PsycoObject *po)
@@ -4875,14 +4891,9 @@ compute_and_raise_exception(PsycoObject *po)
         }
         args[0] = 'v';
         consume_reference(po, po->pr.exc);
-        return (psyco_generic_call(po,
-#if LE_HAS_EXCEPTION_TABLE
-                                   cimpl_raise_virtual,
-#else
-                                   PyErr_Restore,
-#endif
-                                   CfNoReturnValue, args, po->pr.exc,
-                                   po->pr.val, po->pr.tb) != NULL);
+        return (psyco_generic_call(po, cimpl_raise_virtual, CfNoReturnValue,
+                                   args, po->pr.exc, po->pr.val,
+                                   po->pr.tb) != NULL);
     }
     else
         return true;
@@ -6397,7 +6408,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     vinfo_decref(value, po);
 #else
                     _t1 = 1;
-                    _t2 = _t1 + PyCompile_OpcodeStackEffect(70, oparg);
+                    _t2 = _t1 + PyCompile_OpcodeStackEffect(PRINT_EXPR, oparg);
                     _t5 = array_new(_t2);
                     if (!psyco_generic_call(po, cimpl_print_expr_r0,
                                             CfCommonIntZeroOk, "vlvA", NTOP(1),
@@ -6452,8 +6463,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                                 break;
                             case 0:
                                 _t2 = 1;
-                                _t3 = _t2 +
-                                      PyCompile_OpcodeStackEffect(50, oparg);
+                                _t3 = _t2 + PyCompile_OpcodeStackEffect(
+                                                GET_AITER, oparg);
                                 _t6 = array_new(_t3);
                                 if (!psyco_generic_call(po, cimpl_get_aiter_r0,
                                                         CfCommonIntZeroOk,
@@ -6492,7 +6503,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     tp_iter = Psyco_KnownType(iter);
                     if (tp_iter == NULL) {
                         _t8 = 1;
-                        _t9 = _t8 + PyCompile_OpcodeStackEffect(50, oparg);
+                        _t9 = _t8 +
+                              PyCompile_OpcodeStackEffect(GET_AITER, oparg);
                         _t12 = array_new(_t9);
                         if (!psyco_generic_call(
                                 po, cimpl_get_aiter_r1, CfCommonIntZeroOk,
@@ -6520,8 +6532,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                                 break;
                             case 0:
                                 _t14 = 1;
-                                _t15 = _t14 +
-                                       PyCompile_OpcodeStackEffect(50, oparg);
+                                _t15 = _t14 + PyCompile_OpcodeStackEffect(
+                                                  GET_AITER, oparg);
                                 _t18 = array_new(_t15);
                                 if (!psyco_generic_call(
                                         po, cimpl_get_aiter_r1,
@@ -6588,8 +6600,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                                 break;
                             case 0:
                                 _t2 = 1;
-                                _t3 = _t2 +
-                                      PyCompile_OpcodeStackEffect(51, oparg);
+                                _t3 = _t2 + PyCompile_OpcodeStackEffect(
+                                                GET_ANEXT, oparg);
                                 _t6 = array_new(_t3);
                                 if (!psyco_generic_call(po, cimpl_get_anext_r0,
                                                         CfCommonIntZeroOk,
@@ -6680,7 +6692,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     int _t3;
                     vinfo_array_t *_t5;
                     _t1 = 0;
-                    _t2 = _t1 + PyCompile_OpcodeStackEffect(74, oparg);
+                    _t2 = _t1 + PyCompile_OpcodeStackEffect(
+                                    LOAD_ASSERTION_ERROR, oparg);
                     _t5 = array_new(_t2);
                     if (!psyco_generic_call(po, cimpl_load_assertion_error_r0,
                                             CfCommonIntZeroOk, "lA",
@@ -6704,7 +6717,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     int _t3;
                     vinfo_array_t *_t5;
                     _t1 = 0;
-                    _t2 = _t1 + PyCompile_OpcodeStackEffect(71, oparg);
+                    _t2 = _t1 +
+                          PyCompile_OpcodeStackEffect(LOAD_BUILD_CLASS, oparg);
                     _t5 = array_new(_t2);
                     if (!psyco_generic_call(po, cimpl_load_build_class_r0,
                                             CfCommonIntZeroOk, "lvA",
@@ -8022,7 +8036,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     int _t3;
                     vinfo_array_t *_t5;
                     _t1 = 1;
-                    _t2 = _t1 + PyCompile_OpcodeStackEffect(31, oparg);
+                    _t2 = _t1 +
+                          PyCompile_OpcodeStackEffect(MATCH_MAPPING, oparg);
                     _t5 = array_new(_t2);
                     if (!psyco_generic_call(po, cimpl_match_mapping_r0,
                                             CfCommonIntZeroOk, "vlA", NTOP(1),
@@ -8047,7 +8062,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     int _t3;
                     vinfo_array_t *_t5;
                     _t1 = 1;
-                    _t2 = _t1 + PyCompile_OpcodeStackEffect(32, oparg);
+                    _t2 = _t1 +
+                          PyCompile_OpcodeStackEffect(MATCH_SEQUENCE, oparg);
                     _t5 = array_new(_t2);
                     if (!psyco_generic_call(po, cimpl_match_sequence_r0,
                                             CfCommonIntZeroOk, "vlA", NTOP(1),
@@ -8085,7 +8101,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     int _t4;
                     vinfo_array_t *_t6;
                     _t2 = 2;
-                    _t3 = _t2 + PyCompile_OpcodeStackEffect(33, oparg);
+                    _t3 = _t2 + PyCompile_OpcodeStackEffect(MATCH_KEYS, oparg);
                     _t6 = array_new(_t3);
                     if (!psyco_generic_call(po, cimpl_match_keys_r0,
                                             CfCommonIntZeroOk, "vvlvA",
@@ -8127,7 +8143,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     _t8 = rest == NULL;
                     if (!_t8) {
                         _t3 = 2;
-                        _t4 = _t3 + PyCompile_OpcodeStackEffect(34, oparg);
+                        _t4 = _t3 + PyCompile_OpcodeStackEffect(
+                                        COPY_DICT_WITHOUT_KEYS, oparg);
                         _t7 = array_new(_t4);
                         if (!psyco_generic_call(
                                 po, cimpl_copy_dict_without_keys_r0,
@@ -8151,7 +8168,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         break;
                     }
                     _t9 = 2;
-                    _t10 = _t9 + PyCompile_OpcodeStackEffect(34, oparg);
+                    _t10 = _t9 + PyCompile_OpcodeStackEffect(
+                                     COPY_DICT_WITHOUT_KEYS, oparg);
                     _t13 = array_new(_t10);
                     if (!psyco_generic_call(
                             po, cimpl_copy_dict_without_keys_r1,
@@ -8321,7 +8339,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     tb = NTOP(3);
                     exit_func = NTOP(7);
                     _t1 = 7;
-                    _t2 = _t1 + PyCompile_OpcodeStackEffect(49, oparg);
+                    _t2 = _t1 + PyCompile_OpcodeStackEffect(WITH_EXCEPT_START,
+                                                            oparg);
                     _t4 = PsycoTuple_New(_t1, STACK_POINTER() - _t1);
                     _t5 = array_new(_t2);
                     if (!psyco_generic_call(po, cimpl_with_except_start_r0,
@@ -9680,7 +9699,17 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             }
 
             if (b->b_type == EXCEPT_HANDLER) {
-                /* leaving an except clause by any (pseudo) exception */
+                /* leaving an except clause by any (pseudo) exception; a
+                   virtual one is raised first, while the exception handled
+                   here is still its context */
+                if (PycException_IsPython(po) &&
+                    !PycException_Is(po, &ERtPython)) {
+                    if (!compute_and_raise_exception(po))
+                        break;
+                    clear_pseudo_exception(po);
+                    PycException_Raise(
+                        po, vinfo_new(VirtualTime_New(&ERtPython)), NULL);
+                }
                 unwind_except_handler(po, b, true);
                 continue;
             }
