@@ -57,7 +57,7 @@ def unbound_free(flag):
     try:
         r = g()
     except NameError as e:
-        r = str(e)
+        r = str(e), getattr(e, 'name', None)
     if flag:
         w = 1
     return r
