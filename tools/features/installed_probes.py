@@ -591,6 +591,15 @@ def IMMUTABLE_TYPE_FLAG():
 
 
 @probe
+def MANAGED_DICT():
+    """a plain class's instances keep their dict at a negative offset
+    (__dictoffset__ < 0), where the interpreter manages it"""
+    class C(object):
+        pass
+    return C.__dictoffset__ < 0, 'class C: __dictoffset__ == %d' % C.__dictoffset__
+
+
+@probe
 def VALID_VERSION_TAG_FLAG():
     """a class has the flag 1 << 19 (Py_TPFLAGS_VALID_VERSION_TAG) after a
     lookup on it, and loses it when the class changes (run)"""
