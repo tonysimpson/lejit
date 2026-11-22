@@ -1970,11 +1970,27 @@ frame_builtins_init(void)
     }
 }
 
-static PyMethodDef le_warn_def = {
-    "warn", (PyCFunction)(void (*)(void))le_warn, METH_VARARGS | METH_KEYWORDS,
-    "warn(message, category=None, stacklevel=1)\n\n"
-    "Issue a warning, or maybe ignore it or raise an exception, counting\n"
-    "frames of code compiled by LeJIT for stacklevel."};
+/* a replacement of a module's C function takes the original's docstring,
+   so its text signature, and is bound to the module as the original is */
+static PyObject *
+replacement_new(PyMethodDef *def, PyObject *mod, PyObject *original)
+{
+    PyObject *name;
+    PyObject *fn;
+    if (original == NULL)
+        return NULL;
+    if (PyCFunction_Check(original))
+        def->ml_doc = ((PyCFunctionObject *)original)->m_ml->ml_doc;
+    name = PyModule_GetNameObject(mod);
+    if (name == NULL)
+        return NULL;
+    fn = PyCFunction_NewEx(def, mod, name);
+    Py_DECREF(name);
+    return fn;
+}
+
+static PyMethodDef le_warn_def = {"warn", (PyCFunction)(void (*)(void))le_warn,
+                                  METH_VARARGS | METH_KEYWORDS, NULL};
 
 /* replaces warn in _warnings and, if imported, warnings */
 static void
@@ -1986,7 +2002,7 @@ warn_init(void)
         return;
     }
     original_warn = PyObject_GetAttrString(mod, "warn");
-    fn = PyCFunction_New(&le_warn_def, NULL);
+    fn = replacement_new(&le_warn_def, mod, original_warn);
     if (original_warn == NULL || fn == NULL ||
         PyObject_SetAttrString(mod, "warn", fn) < 0)
         PyErr_Print();
@@ -2035,28 +2051,22 @@ le_get_referents(PyObject *self, PyObject *args)
     return result;
 }
 
-static PyMethodDef le_get_referents_def = {
-    "get_referents", le_get_referents, METH_VARARGS,
-    "get_referents(*objs) -> list\n"
-    "Return the list of objects that are directly referred to by objs."};
+static PyMethodDef le_get_referents_def = {"get_referents", le_get_referents,
+                                           METH_VARARGS, NULL};
 
 static void
 get_referents_init(void)
 {
-    PyObject *mod = PyImport_ImportModule("gc"), *name, *fn = NULL;
+    PyObject *mod = PyImport_ImportModule("gc"), *fn;
     if (mod == NULL) {
         PyErr_Print();
         return;
     }
     original_get_referents = PyObject_GetAttrString(mod, "get_referents");
-    name = PyUnicode_FromString("gc");
-    if (name != NULL)
-        fn = PyCFunction_NewEx(&le_get_referents_def, NULL, name);
-    if (original_get_referents == NULL || fn == NULL ||
-        PyObject_SetAttrString(mod, "get_referents", fn) < 0)
+    fn = replacement_new(&le_get_referents_def, mod, original_get_referents);
+    if (fn == NULL || PyObject_SetAttrString(mod, "get_referents", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
-    Py_XDECREF(name);
     Py_DECREF(mod);
 }
 

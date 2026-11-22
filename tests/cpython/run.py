@@ -57,10 +57,6 @@ SKIPPED = {
     "functools' Python lru_cache passes the recursion limit "
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
         'test.test_functools.TestLRUPy.test_lru_recursion',
-    "LeJIT replaces _warnings.warn and gc.get_referents with functions of "
-    "its own, whose docstrings have no text signature":
-        'test.test_inspect.*TestSignatureDefinitions.test_gc_module_has_signatures '
-        'test.test_inspect.*TestSignatureDefinitions.test_warnings_module_has_signatures',
     'skipped when the machine converts fast enough':
         'test.test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
         'test.test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int '
