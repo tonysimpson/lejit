@@ -133,13 +133,13 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
 static _Thread_local FrameRuntime *frame_runs;
 
 DEFINEFN void
-psyco_frame_start_register(FrameRuntime *fr, PyFrameObject *f,
+psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
                            stack_frame_info_t ***psy_frames_start)
 {
-    fr->py_frame = f;
+    fr->frame = f;
     fr->psy_frames_start = psy_frames_start;
-    fr->psy_code = f->f_code;
-    fr->psy_globals = f->f_globals;
+    fr->psy_code = le_frame_code(f);
+    fr->psy_globals = le_frame_globals(f);
     fr->entry_locals = NULL;
     fr->n_entry_locals = 0;
     fr->resumed = 0;
@@ -148,11 +148,11 @@ psyco_frame_start_register(FrameRuntime *fr, PyFrameObject *f,
 }
 
 DEFINEFN FrameRuntime *
-psyco_frame_start_get(PyFrameObject *f)
+psyco_frame_start_get(le_frame_t *f)
 {
     FrameRuntime *fr;
     for (fr = frame_runs; fr != NULL; fr = fr->next)
-        if (fr->py_frame == f)
+        if (fr->frame == f)
             return fr;
     return NULL;
 }
@@ -177,31 +177,32 @@ void
 psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
                          int count)
 {
-    PyCodeObject *co = f->f_code;
+    PyCodeObject *co = le_pyframe_code(f);
+    PyObject **locals = le_frame_args(le_frame_of(f));
     int n = le_code_nlocalsplus(co);
     int i;
     /* an emulated frame isn't executing, and the first write is from 0 */
     FrameRuntime *fr = start == 0 && le_frame_is_executing(f)
-                           ? psyco_frame_start_get(f)
+                           ? psyco_frame_start_get(le_frame_of(f))
                            : NULL;
     if (fr != NULL && fr->entry_locals == NULL) {
         PyObject **keep = PyMem_Malloc(n * sizeof(PyObject *) + 1);
         if (keep == NULL)
             return; /* the locals stay as they were */
         for (i = 0; i < n; i++) {
-            keep[i] = f->f_localsplus[i];
+            keep[i] = locals[i];
             Py_XINCREF(keep[i]);
         }
         fr->entry_locals = keep;
         fr->n_entry_locals = n;
     }
     for (i = 0; i < count && start + i < n; i++) {
-        PyObject *old = f->f_localsplus[start + i];
+        PyObject *old = locals[start + i];
         if (values[i] == LE_LOCAL_UNKNOWN)
             continue;
         /* NULL: unbound, or deleted since the last write */
         Py_XINCREF(values[i]);
-        f->f_localsplus[start + i] = values[i];
+        locals[start + i] = values[i];
         Py_XDECREF(old);
     }
 }
@@ -225,7 +226,7 @@ slot_registers(stack_frame_info_t **slot, long regs[REG_TOTAL],
     unw_cursor_t c;
     int i, n = 0, steps;
     for (; f != NULL && n < MAX_RUNS; f = le_frame_back(f)) {
-        FrameRuntime *fr = psyco_frame_start_get(le_frame_object(f));
+        FrameRuntime *fr = psyco_frame_start_get(f);
         if (fr == NULL || !le_frame_is_executing(le_frame_object(f)))
             continue;
         roots[n] = *fr->psy_frames_start;
@@ -380,12 +381,12 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
 static void
 locals_from_slot(PyFrameObject *f, stack_frame_info_t **slot)
 {
-    int i, n = n_locals_plus(f->f_code);
+    int i, n = n_locals_plus(le_pyframe_code(f));
     PyObject **values = PyMem_Malloc(n * sizeof(PyObject *) + 1);
     if (values == NULL)
         return;
-    if (slot_locals(slot, f->f_code, values)) {
-        for (i = le_code_nlocals(f->f_code); i < n; i++)
+    if (slot_locals(slot, le_pyframe_code(f), values)) {
+        for (i = le_code_nlocals(le_pyframe_code(f)); i < n; i++)
             if (values[i] == NULL)
                 values[i] = LE_LOCAL_UNKNOWN;
         psyco_frame_write_locals(f, 0, values, n);
@@ -413,9 +414,9 @@ visit_tag(PyObject *o, void *f)
 {
     PyFrameObject *frame = (PyFrameObject *)f;
     if (PyTuple_Check(o) && !PyFrame_Check(PyTuple_GET_ITEM(o, 2)) &&
-        PyTuple_GET_ITEM(o, 0) == (PyObject *)frame->f_code &&
+        PyTuple_GET_ITEM(o, 0) == (PyObject *)le_pyframe_code(frame) &&
         PyLong_AsLong(PyTuple_GET_ITEM(o, 2)) ==
-            (long)frame->f_valuestack[1]) {
+            (long)le_pyframe_stack(frame)[1]) {
         Py_INCREF(Py_True);
         return Py_True;
     }
@@ -428,12 +429,13 @@ fill_noted_locals(PyFrameObject *f)
     PyObject *found;
     long tag;
     if (le_frame_is_executing(f) || !le_frame_stack_empty(f) ||
-        f->f_code->co_stacksize < 2 || f->f_valuestack[0] != LOCALS_NOTE)
+        le_pyframe_code(f)->co_stacksize < 2 ||
+        le_pyframe_stack(f)[0] != LOCALS_NOTE)
         return;
-    tag = (long)f->f_valuestack[1];
+    tag = (long)le_pyframe_stack(f)[1];
     found = pvisitframes(visit_tag, f);
     if (found == NULL) {
-        f->f_valuestack[0] = f->f_valuestack[1] = NULL;
+        le_pyframe_stack(f)[0] = le_pyframe_stack(f)[1] = NULL;
         return;
     }
     Py_DECREF(found);
@@ -454,10 +456,10 @@ psyco_build_pyframe(PyObject *co, PyObject *globals, PyThreadState *tstate)
     result = PyFrame_New(tstate, (PyCodeObject *)co, globals, NULL);
     if (result == NULL)
         OUT_OF_MEMORY();
-    result->f_lasti = -1;
+    le_frame_set_lasti(le_frame_of(result), -1);
     /* a frame reused from the code's free one may hold a note */
     if (((PyCodeObject *)co)->co_stacksize >= 1)
-        result->f_valuestack[0] = NULL;
+        le_pyframe_stack(result)[0] = NULL;
     le_frame_set_current(tstate, back);
     return result;
 }
@@ -567,7 +569,9 @@ act_at(stack_frame_info_t **slot, PyCodeObject *co)
         rec->co != co)
         return NULL;
     a = act_find(psyco_next_stack_frame(slot));
-    return a != NULL && a->slot == slot && a->frame->f_code == co ? a : NULL;
+    return a != NULL && a->slot == slot && le_pyframe_code(a->frame) == co
+               ? a
+               : NULL;
 }
 
 static activation_t *
@@ -577,10 +581,10 @@ activation_of(PyFrameObject *f)
     activation_t *a;
     if (acts_count == 0)
         return NULL;
-    if (f->f_code->co_stacksize >= 2) {
-        if (f->f_valuestack[0] != ACTIVATION_NOTE)
+    if (le_pyframe_code(f)->co_stacksize >= 2) {
+        if (le_pyframe_stack(f)[0] != ACTIVATION_NOTE)
             return NULL;
-        a = act_find((stack_frame_info_t **)f->f_valuestack[1]);
+        a = act_find((stack_frame_info_t **)le_pyframe_stack(f)[1]);
         return a != NULL && a->frame == f ? a : NULL;
     }
     for (i = 0; i <= acts_mask; i++)
@@ -631,7 +635,7 @@ return_address(stack_frame_info_t **own, stack_frame_info_t *rec)
         lo = (code_t **)&p;
         for (t = le_frame_current(PyThreadState_GET()); t != NULL;
              t = le_frame_back(t)) {
-            FrameRuntime *fr = psyco_frame_start_get(le_frame_object(t));
+            FrameRuntime *fr = psyco_frame_start_get(t);
             code_t **root;
             if (fr == NULL || fr->resumed ||
                 !le_frame_is_executing(le_frame_object(t)))
@@ -665,24 +669,24 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
     own = psyco_next_stack_frame(slot);
     a = act_find(own);
     if (a != NULL) {
-        if (a->slot != slot || a->frame->f_code != (PyCodeObject *)co)
+        if (a->slot != slot || le_pyframe_code(a->frame) != (PyCodeObject *)co)
             return NULL;
         f = a->frame;
         Py_INCREF(f);
         if (!a->resumed)
-            f->f_lasti = le_lasti_of(lasti);
+            le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
         return f;
     }
     ret = return_address(own, rec);
     if (ret == NULL)
         return NULL;
     f = psyco_build_pyframe(co, globals, PyThreadState_GET());
-    f->f_lasti = le_lasti_of(lasti);
+    le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
     /* running, as CPython's: frame.clear() refuses it */
-    le_frame_set_executing(f, 1);
+    le_frame_set_executing(le_frame_of(f), 1);
     if (((PyCodeObject *)co)->co_stacksize >= 2) {
-        f->f_valuestack[0] = ACTIVATION_NOTE;
-        f->f_valuestack[1] = (PyObject *)own;
+        le_pyframe_stack(f)[0] = ACTIVATION_NOTE;
+        le_pyframe_stack(f)[1] = (PyObject *)own;
     }
     a = act_add(own);
     a->slot = slot;
@@ -710,9 +714,10 @@ psyco_activation_returned(long *sp)
        finaliser may walk the frames */
     *a->slot = (stack_frame_info_t *)-1;
     act_remove(a);
-    le_frame_set_executing(f, 0);
-    if (f->f_code->co_stacksize >= 2 && f->f_valuestack[0] == ACTIVATION_NOTE)
-        f->f_valuestack[0] = f->f_valuestack[1] = NULL;
+    le_frame_set_executing(le_frame_of(f), 0);
+    if (le_pyframe_code(f)->co_stacksize >= 2 &&
+        le_pyframe_stack(f)[0] == ACTIVATION_NOTE)
+        le_pyframe_stack(f)[0] = le_pyframe_stack(f)[1] = NULL;
     PyErr_Fetch(&t, &v, &tb);
     Py_DECREF(f);
     PyErr_Restore(t, v, tb);
@@ -766,15 +771,16 @@ psyco_emulate_frame(PyObject *o)
             (result = kept_frame(tag, co, globals, lasti)) != NULL)
             return result;
         result = psyco_build_pyframe(co, globals, PyThreadState_GET());
-        result->f_lasti = le_lasti_of(lasti);
+        le_frame_set_lasti(le_frame_of(result), le_lasti_of(lasti));
         if ((tag & (sizeof(long) - 1)) == 0) {
             if (((PyCodeObject *)co)->co_stacksize >= 2) {
-                result->f_valuestack[0] = LOCALS_NOTE;
-                result->f_valuestack[1] = (PyObject *)tag;
+                le_pyframe_stack(result)[0] = LOCALS_NOTE;
+                le_pyframe_stack(result)[1] = (PyObject *)tag;
             }
             else {
                 slot_locals(psyco_next_stack_frame((stack_frame_info_t **)tag),
-                            (PyCodeObject *)co, result->f_localsplus);
+                            (PyCodeObject *)co,
+                            le_frame_args(le_frame_of(result)));
             }
         }
         return result;
@@ -830,11 +836,18 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
                             (linked_frame) */
     le_recursion_suspend();
     while (f != NULL) {
+        PyFrameObject *fo;
+        if (!le_frame_complete(f)) {
+            f = le_frame_back(f);
+            continue;
+        }
+        fo = le_frame_object(f);
+        if (fo == NULL)
+            OUT_OF_MEMORY();
         /* is this Python frame the starting point of a chained
            list of Psyco frames ? */
-        fstart = linked ? NULL : psyco_frame_start_get(le_frame_object(f));
-        linked = !le_frame_is_executing(le_frame_object(f)) ||
-                 live_activation(le_frame_object(f)) != NULL;
+        fstart = linked ? NULL : psyco_frame_start_get(f);
+        linked = !le_frame_is_executing(fo) || live_activation(fo) != NULL;
         if (fstart != NULL && !fstart->resumed) {
             /* Yes. Get the list start. */
             struct sfitmp_s *revlist;
@@ -916,7 +929,7 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
                proxy function. Represented as
                (co, globals, f, lasti) */
             o = Py_BuildValue("OOOi", fstart->psy_code, fstart->psy_globals,
-                              le_frame_object(f), lasti);
+                              fo, lasti);
             if (o == NULL)
                 OUT_OF_MEMORY();
             result = callback(o, data);
@@ -924,7 +937,7 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
         }
         else {
             /* a real unshadowed Python frame */
-            result = callback((PyObject *)le_frame_object(f), data);
+            result = callback((PyObject *)fo, data);
         }
         if (result != NULL)
             break;
@@ -938,7 +951,7 @@ static PyObject *
 visit_get_globals(PyObject *o, void *ignored)
 {
     if (PyFrame_Check(o))
-        return ((PyFrameObject *)o)->f_globals;
+        return le_frame_globals(le_frame_of((PyFrameObject *)o));
     else
         return PyTuple_GetItem(o, 1);
 }
@@ -986,11 +999,12 @@ visit_link_frame(PyObject *o, void *data)
     if (l->undo != NULL && PyTuple_Check(o) &&
         PyFrame_Check(PyTuple_GET_ITEM(o, 2)) &&
         PyLong_AsLong(PyTuple_GET_ITEM(o, 3)) >= 0 &&
-        (t = Py_BuildValue("Oi", f, f->f_lasti)) != NULL) {
+        (t = Py_BuildValue("Oi", f, le_frame_lasti(le_frame_of(f)))) != NULL) {
         /* a frame LeCode_Run runs, at its current place for the call */
         if (PyList_Append(l->undo, t) == 0)
-            f->f_lasti =
-                le_lasti_of((int)PyLong_AsLong(PyTuple_GET_ITEM(o, 3)));
+            le_frame_set_lasti(
+                le_frame_of(f),
+                le_lasti_of((int)PyLong_AsLong(PyTuple_GET_ITEM(o, 3))));
         Py_DECREF(t);
         PyErr_Clear();
     }
@@ -1033,7 +1047,8 @@ restore_links(PyObject *undo)
         PyFrameObject *frame = (PyFrameObject *)PyTuple_GET_ITEM(t, 0);
         PyFrameObject *old, *cur;
         if (PyLong_Check(PyTuple_GET_ITEM(t, 1))) {
-            frame->f_lasti = (int)PyLong_AsLong(PyTuple_GET_ITEM(t, 1));
+            le_frame_set_lasti(le_frame_of(frame),
+                               (int)PyLong_AsLong(PyTuple_GET_ITEM(t, 1)));
             continue;
         }
         old = (PyFrameObject *)PyTuple_GET_ITEM(t, 1);
@@ -1049,8 +1064,9 @@ restore_links(PyObject *undo)
 static bool
 runs_compiled(PyFrameObject *f)
 {
-    FrameRuntime *fr =
-        le_frame_is_executing(f) ? psyco_frame_start_get(f) : NULL;
+    FrameRuntime *fr = le_frame_is_executing(f)
+                           ? psyco_frame_start_get(le_frame_of(f))
+                           : NULL;
     return fr != NULL && !fr->resumed;
 }
 
@@ -1127,14 +1143,16 @@ static bool
 has_catcher_note(PyFrameObject *f)
 {
     return !le_frame_is_executing(f) && le_frame_stack_empty(f) &&
-           f->f_code->co_stacksize >= 3 && f->f_valuestack[0] == CATCHER_NOTE;
+           le_pyframe_code(f)->co_stacksize >= 3 &&
+           le_pyframe_stack(f)[0] == CATCHER_NOTE;
 }
 
 static void
 clear_catcher_note(PyFrameObject *f)
 {
     if (has_catcher_note(f))
-        f->f_valuestack[0] = f->f_valuestack[1] = f->f_valuestack[2] = NULL;
+        le_pyframe_stack(f)[0] = le_pyframe_stack(f)[1] =
+            le_pyframe_stack(f)[2] = NULL;
 }
 
 /* the catching callee's own slot, if it runs on this thread and its word
@@ -1142,11 +1160,12 @@ clear_catcher_note(PyFrameObject *f)
 static stack_frame_info_t **
 catcher_slot(PyFrameObject *f, stack_frame_info_t ***tag, FrameRuntime **run)
 {
-    stack_frame_info_t **own = (stack_frame_info_t **)f->f_valuestack[1], **f1;
-    PyObject **word = (PyObject **)f->f_valuestack[2];
+    stack_frame_info_t **own = (stack_frame_info_t **)le_pyframe_stack(f)[1],
+                       **f1;
+    PyObject **word = (PyObject **)le_pyframe_stack(f)[2];
     FrameRuntime *fr;
     for (fr = frame_runs; fr != NULL; fr = fr->next) {
-        if (fr->resumed || !le_frame_is_executing(fr->py_frame))
+        if (fr->resumed || !le_frame_is_executing(le_frame_object(fr->frame)))
             continue;
         for (f1 = *fr->psy_frames_start;
              (((long)*f1) & 1) == 0 && (*f1)->link_stack_depth != 0;
@@ -1169,16 +1188,16 @@ catcher_caller(PyFrameObject *f)
 {
     stack_frame_info_t **tag;
     FrameRuntime *fr;
-    struct back_s b = {NULL, NULL, NULL, NULL, false, 0, f->f_code};
+    struct back_s b = {NULL, NULL, NULL, NULL, false, 0, le_pyframe_code(f)};
     if (catcher_slot(f, &tag, &fr) == NULL)
         return NULL;
     b.tag = (long)tag;
-    b.back = fr->py_frame;
+    b.back = le_frame_object(fr->frame);
     pvisitframes(visit_back_frame, &b);
     PyErr_Clear();
     if (b.top == NULL && b.found) {
-        Py_INCREF(fr->py_frame);
-        return fr->py_frame;
+        Py_INCREF(b.back);
+        return b.back;
     }
     return b.top;
 }
@@ -1196,8 +1215,8 @@ frame_sync_locals(PyFrameObject *f)
     stack_frame_info_t **own, **tag;
     FrameRuntime *fr;
     if (runs_compiled(f)) {
-        fr = psyco_frame_start_get(f);
-        if (fr->psy_code == f->f_code)
+        fr = psyco_frame_start_get(le_frame_of(f));
+        if (fr->psy_code == le_pyframe_code(f))
             locals_from_slot(f, *fr->psy_frames_start);
     }
     else if ((a = live_activation(f)) != NULL) {
@@ -1215,7 +1234,7 @@ frame_sync_locals(PyFrameObject *f)
 static PyObject *
 frame_get_back(PyFrameObject *frame, void *closure)
 {
-    PyFrameObject *back = frame->f_back;
+    PyFrameObject *back = le_frame_object_back(frame);
     if (back == NULL && has_catcher_note(frame))
         back = frame->f_back = catcher_caller(frame); /* takes the reference */
     if (back == NULL)
@@ -1266,7 +1285,7 @@ frame_get_lineno(PyFrameObject *frame, void *closure)
     if (frame->f_trace == NULL && (a = live_activation(frame)) != NULL) {
         int lasti = kept_lasti(a);
         if (lasti >= 0)
-            frame->f_lasti = le_lasti_of(lasti);
+            le_frame_set_lasti(le_frame_of(frame), le_lasti_of(lasti));
     }
     else if (frame->f_trace == NULL && runs_compiled(frame)) {
         PyObject *o = pvisitframes(visit_root_lasti, frame);
@@ -1274,7 +1293,8 @@ frame_get_lineno(PyFrameObject *frame, void *closure)
         Py_XDECREF(o);
         PyErr_Clear();
         if (lasti >= 0)
-            return line_object(PyCode_Addr2Line(frame->f_code, lasti));
+            return line_object(
+                PyCode_Addr2Line(le_pyframe_code(frame), lasti));
     }
     return line_object(PyFrame_GetLineNumber(frame));
 }
@@ -1320,13 +1340,13 @@ psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
     FrameRuntime *fr;
     if (callee == f || back == f || le_frame_is_executing(callee))
         return;
-    if (back != NULL &&
-        !(back->f_code == f->f_code && !le_frame_is_executing(back))) {
+    if (back != NULL && !(le_pyframe_code(back) == le_pyframe_code(f) &&
+                          !le_frame_is_executing(back))) {
         if (!runs_compiled(back))
             return;
         /* the root slot is even while that code is in a compiled callee or
            inlined frame (psyco_running_real_frame) */
-        fr = psyco_frame_start_get(back);
+        fr = psyco_frame_start_get(le_frame_of(back));
         if ((((long)**fr->psy_frames_start) & 1) != 0)
             return;
     }
@@ -1353,15 +1373,15 @@ psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
     /* a traceback frame made for the entry (cimpl_new_frame), not the
        real frame or a kept one, which are running */
     if (!le_frame_is_executing(f) && le_frame_stack_empty(f) &&
-        f->f_code->co_stacksize >= 3) {
+        le_pyframe_code(f)->co_stacksize >= 3) {
 #if ALL_CHECKS
         PyFrameObject *real;
         stack_frame_info_t **last = innermost_slot(&real);
         extra_assert(last != NULL && psyco_next_stack_frame(last) == own);
 #endif
-        f->f_valuestack[0] = CATCHER_NOTE;
-        f->f_valuestack[1] = (PyObject *)own;
-        f->f_valuestack[2] = (PyObject *)word;
+        le_pyframe_stack(f)[0] = CATCHER_NOTE;
+        le_pyframe_stack(f)[1] = (PyObject *)own;
+        le_pyframe_stack(f)[2] = (PyObject *)word;
     }
 }
 
@@ -1430,7 +1450,7 @@ psyco_running_real_frame(PyCodeObject *co)
     FrameRuntime *fstart;
     if (f == NULL || le_frame_code(f) != co)
         return NULL;
-    fstart = psyco_frame_start_get(le_frame_object(f));
+    fstart = psyco_frame_start_get(f);
     /* the top compiled frame's finfo slot is odd (-1) except while it is in a
        compiled sub-call (ABOUT_TO_CALL_SUBFUNCTION) */
     if (fstart == NULL || fstart->resumed ||
@@ -1489,16 +1509,17 @@ static PyObject *
 le_warn(PyObject *self, PyObject *args, PyObject *kwds)
 {
     PyThreadState *ts = PyThreadState_GET();
-    PyFrameObject *saved = ts->frame, *top;
+    le_frame_t *saved = le_frame_current(ts);
+    PyFrameObject *top;
     PyObject *result, *undo = PyList_New(0);
     if (undo == NULL)
         return NULL;
     /* every frame is linked for the call, and put back after it */
     top = linked_frame(0, undo);
-    if (top != NULL && top != saved)
-        ts->frame = top;
+    if (top != NULL && le_frame_of(top) != saved)
+        le_frame_set_current(ts, le_frame_of(top));
     result = PyObject_Call(original_warn, args, kwds);
-    ts->frame = saved;
+    le_frame_set_current(ts, saved);
     restore_links(undo);
     Py_DECREF(undo);
     Py_XDECREF(top);
@@ -1524,19 +1545,22 @@ frame_get_back(PyFrameObject *frame, void *closure);
 static PyFrameObject *
 root_copy(PyFrameObject *f)
 {
-    FrameRuntime *fr = psyco_frame_start_get(f);
+    FrameRuntime *fr = psyco_frame_start_get(le_frame_of(f));
     PyFrameObject *c;
     PyObject *o;
-    if (fr->psy_code != f->f_code)
+    if (fr->psy_code != le_pyframe_code(f))
         return f;
-    c = psyco_build_pyframe((PyObject *)f->f_code, f->f_globals,
+    c = psyco_build_pyframe((PyObject *)le_pyframe_code(f),
+                            le_frame_globals(le_frame_of(f)),
                             PyThreadState_GET());
-    if (!slot_locals(*fr->psy_frames_start, f->f_code, c->f_localsplus)) {
+    if (!slot_locals(*fr->psy_frames_start, le_pyframe_code(f),
+                     le_frame_args(le_frame_of(c)))) {
         Py_DECREF(c);
         return f;
     }
     o = pvisitframes(visit_root_lasti, f);
-    c->f_lasti = o == NULL ? -1 : le_lasti_of((int)PyLong_AsLong(o));
+    le_frame_set_lasti(le_frame_of(c),
+                       o == NULL ? -1 : le_lasti_of((int)PyLong_AsLong(o)));
     Py_XDECREF(o);
     c->f_back = (PyFrameObject *)frame_get_back(f, NULL);
     if (c->f_back == NULL) {
@@ -1557,7 +1581,8 @@ cimpl_with_frame(long which, PyObject *self, PyObject *args)
     int flags = ml->ml_flags & ~(METH_CLASS | METH_STATIC | METH_COEXIST);
     Py_ssize_t n = args == NULL ? 0 : PyTuple_GET_SIZE(args);
     PyThreadState *ts = PyThreadState_GET();
-    PyFrameObject *saved = ts->frame, *top = NULL;
+    le_frame_t *saved = le_frame_current(ts);
+    PyFrameObject *top = NULL;
     PyObject *result, *undo = NULL;
     /* locals always reads the frame; vars and dir with no argument, eval
        and exec with no globals */
@@ -1570,8 +1595,8 @@ cimpl_with_frame(long which, PyObject *self, PyObject *args)
             top = root_copy(top);
         else if (top != NULL)
             frame_sync_locals(top);
-        if (top != NULL && top != saved)
-            ts->frame = top;
+        if (top != NULL && le_frame_of(top) != saved)
+            le_frame_set_current(ts, le_frame_of(top));
     }
     switch (flags) {
         case METH_NOARGS:
@@ -1594,7 +1619,7 @@ cimpl_with_frame(long which, PyObject *self, PyObject *args)
                             "LeJIT: unexpected builtin form");
             result = NULL;
     }
-    ts->frame = saved;
+    le_frame_set_current(ts, saved);
     if (undo != NULL) {
         restore_links(undo);
         Py_DECREF(undo);
@@ -1796,8 +1821,11 @@ struct resume_s {
     /* the frame the catcher word held, if not 'f': given the locals now */
     PyFrameObject *catcher;
     stack_frame_info_t **slot; /* the compiled frame's record, or NULL */
-    int nvalues, iblock;
+    int nvalues;
+#if !LE_HAS_EXCEPTION_TABLE
+    int iblock;
     PyTryBlock blocks[CO_MAXBLOCKS];
+#endif
     PyObject *values[1];
 };
 
@@ -1807,13 +1835,12 @@ static stack_frame_info_t **
 innermost_slot(PyFrameObject **real)
 {
     le_frame_t *f = le_frame_current(PyThreadState_GET());
-    FrameRuntime *fstart =
-        f == NULL ? NULL : psyco_frame_start_get(le_frame_object(f));
+    FrameRuntime *fstart = f == NULL ? NULL : psyco_frame_start_get(f);
     stack_frame_info_t **f1, **last = NULL;
     *real = NULL;
     if (fstart == NULL)
         return NULL;
-    *real = fstart->py_frame;
+    *real = le_frame_object(fstart->frame);
     for (f1 = *(fstart->psy_frames_start); (((long)(*f1)) & 1) == 0;
          f1 = psyco_next_stack_frame(f1)) {
         last = f1;
@@ -1845,7 +1872,7 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     }
     st->catcher = c;
     st->slot = innermost_slot(&real);
-    if (st->slot == NULL && real != NULL && real->f_code == co) {
+    if (st->slot == NULL && real != NULL && le_pyframe_code(real) == co) {
         st->f = real;
         Py_INCREF(real);
     }
@@ -1856,16 +1883,17 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         st->f = a->frame;
         Py_INCREF(st->f);
         if (co->co_stacksize >= 2)
-            st->f->f_valuestack[0] = st->f->f_valuestack[1] = NULL;
+            le_pyframe_stack(st->f)[0] = le_pyframe_stack(st->f)[1] = NULL;
         Py_INCREF(builtins);
-        Py_XSETREF(st->f->f_builtins, builtins);
+        le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
-    else if (c != NULL && !le_frame_is_executing(c) && c->f_code == co) {
+    else if (c != NULL && !le_frame_is_executing(c) &&
+             le_pyframe_code(c) == co) {
         /* the catching callee's traceback frame, as CPython's is its frame */
         st->f = c;
         Py_INCREF(c);
         Py_INCREF(builtins);
-        Py_XSETREF(st->f->f_builtins, builtins);
+        le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     else {
         st->f = PyFrame_New(PyThreadState_GET(), co, globals, NULL);
@@ -1875,10 +1903,12 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
             return NULL;
         }
         Py_INCREF(builtins);
-        Py_XSETREF(st->f->f_builtins, builtins);
+        le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     st->nvalues = 0;
+#if !LE_HAS_EXCEPTION_TABLE
     st->iblock = 0;
+#endif
     return st;
 }
 
@@ -1891,6 +1921,7 @@ psyco_resume_value(struct resume_s *st, long i, PyObject *v)
     st->nvalues = i + 1;
 }
 
+#if !LE_HAS_EXCEPTION_TABLE
 DEFINEFN
 void
 psyco_resume_block(struct resume_s *st, long type, long handler, long level)
@@ -1900,6 +1931,7 @@ psyco_resume_block(struct resume_s *st, long type, long handler, long level)
     b->b_handler = le_lasti_of((int)handler);
     b->b_level = level;
 }
+#endif
 
 /* Stand-ins for the trace and profile functions while the resumed frame
    starts: ceval would give it a 'call' event, which CPython never gives a
@@ -1938,7 +1970,8 @@ DEFINEFN
 PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack)
 {
-    PyFrameObject *f = st->f;
+    PyFrameObject *f = st->f, *cur;
+    PyObject **locals = le_frame_args(le_frame_of(f));
     PyThreadState *ts = PyThreadState_GET();
     int nlocals = st->nvalues - nstack;
     int i;
@@ -1947,28 +1980,32 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     hook_t trace = {ts->c_tracefunc, ts->c_traceobj};
     hook_t profile = {ts->c_profilefunc, ts->c_profileobj};
     struct hidden_s hidden = {st->slot, hidden_frames};
-    FrameRuntime *fr = st->slot == NULL ? psyco_frame_start_get(f) : NULL;
-    extra_assert(nlocals == le_code_nlocalsplus(f->f_code));
-    extra_assert(nstack <= f->f_code->co_stacksize);
+    FrameRuntime *fr =
+        st->slot == NULL ? psyco_frame_start_get(le_frame_of(f)) : NULL;
+    extra_assert(nlocals == le_code_nlocalsplus(le_pyframe_code(f)));
+    extra_assert(nstack <= le_pyframe_code(f)->co_stacksize);
 
     /* the old locals go only once all the new ones are in: one may hold
        the last reference to another's value */
     for (i = 0; i < nlocals; i++) {
-        PyObject *old = f->f_localsplus[i];
-        f->f_localsplus[i] = st->values[i];
+        PyObject *old = locals[i];
+        locals[i] = st->values[i];
         st->values[i] = old;
     }
-    for (i = 0; i < nstack; i++) f->f_valuestack[i] = st->values[nlocals + i];
+    for (i = 0; i < nstack; i++)
+        le_pyframe_stack(f)[i] = st->values[nlocals + i];
     le_frame_set_stack_depth(f, (int)nstack);
-    f->f_lasti = le_lasti_of((int)lasti);
+    le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
+#if !LE_HAS_EXCEPTION_TABLE
     f->f_iblock = st->iblock;
     memcpy(f->f_blockstack, st->blocks, st->iblock * sizeof(PyTryBlock));
+#endif
     for (i = 0; i < nlocals; i++) Py_XDECREF(st->values[i]);
     if (st->catcher != NULL) {
         /* another frame object stood for the call: it keeps the locals as
            they are now */
         if (st->catcher != f)
-            psyco_frame_write_locals(st->catcher, 0, f->f_localsplus, nlocals);
+            psyco_frame_write_locals(st->catcher, 0, locals, nlocals);
         Py_DECREF(st->catcher);
     }
 
@@ -1989,13 +2026,15 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     /* ceval puts tstate->frame back to f_back: a kept frame's, an emulated
        frame, is given back after; frame_get_back finds it meanwhile */
     kept_back = f->f_back;
-    if (st->slot != NULL && kept_back != ts->frame) {
-        Py_XINCREF(ts->frame);
-        f->f_back = ts->frame;
+    cur = le_frame_current(ts) == NULL ? NULL
+                                       : le_frame_object(le_frame_current(ts));
+    if (st->slot != NULL && kept_back != cur) {
+        Py_XINCREF(cur);
+        f->f_back = cur;
     }
     else
         kept_back = NULL;
-    result = le_eval_frame_default(f);
+    result = le_eval_frame_default(le_frame_of(f));
     if (kept_back != NULL) {
         PyFrameObject *b = f->f_back;
         f->f_back = kept_back;

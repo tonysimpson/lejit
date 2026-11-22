@@ -25,6 +25,13 @@ le_lasti_of(int offset)
                : offset;
 }
 
+#if LE_HAS_EXCEPTION_TABLE
+/* the type of an except handler's block in the compiler's block stack, as
+   a value no opcode has: where handlers are in an exception table, CPython
+   has no block stack */
+#define EXCEPT_HANDLER (-1)
+#endif
+
 /* COMPARE_OP's opargs after the rich comparisons, as macros with the
    values of opcode.h's enum cmp_op */
 

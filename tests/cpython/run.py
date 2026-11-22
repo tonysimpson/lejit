@@ -41,6 +41,12 @@ SKIPPED = {
     'a deadline on the whole run, which slow machines miss':
         'test_signal.StressTest.test_stress_delivery_dependent '
         'test_signal.StressTest.test_stress_delivery_simultaneous',
+    "CPython doesn't specialise Python calls and __getitem__ while a "
+    'frame-evaluation hook is installed (specialize.c, SPEC_FAIL_CALL_PEP_523)':
+        'test_dis.DisTests.test_loop_quicken '
+        'test_dis.DisWithFileTests.test_loop_quicken '
+        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test_binary_subscript_specialization_user_type',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,

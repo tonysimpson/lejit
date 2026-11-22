@@ -1138,7 +1138,7 @@ cimpl_instance_dict_set(PyObject *obj, PyObject *name, PyObject *value)
                 if (entries[i].me_key == name)
                     break;
         if (i == cached->dk_nentries ||
-            (d->ma_values[i] == NULL && d->ma_used != i))
+            (le_dict_values(d)[i] == NULL && d->ma_used != i))
             return PyObject_GenericSetAttr(obj, name, value);
     }
     return PyDict_SetItem((PyObject *)d, name, value);

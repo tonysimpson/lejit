@@ -194,9 +194,17 @@ def _texts(toks):
     return [t.text for t in toks] if toks else []
 
 
-def _has_run(texts, want):
+def _run_at(texts, want):
+    """where texts first has the run want, or None"""
     n = len(want)
-    return any(texts[i:i + n] == want for i in range(len(texts) - n + 1))
+    for i in range(len(texts) - n + 1):
+        if texts[i:i + n] == want:
+            return i
+    return None
+
+
+def _has_run(texts, want):
+    return _run_at(texts, want) is not None
 
 
 def _c(text):
@@ -447,11 +455,45 @@ def jump_in_instructions(s):
 
 def lasti_in_instructions(s):
     """a frame's f_lasti and a block's b_handler count instructions, not bytes (ceval's INSTR_OFFSET has no sizeof)"""
-    # unanswered where the frame object keeps no f_lasti of its own
     has, evidence = _field(s, '_frame', 'f_lasti')
     if not has:
-        raise Unanswered('no %s' % evidence)
+        return interpreter_frame_lasti(s)
     return _not(_ceval_macro_uses(s, ('INSTR_OFFSET',), 'sizeof'))
+
+
+def interpreter_frame_lasti(s):
+    """Where the frame object keeps no f_lasti, the position of an
+    interpreter frame (_PyInterpreterFrame_LASTI) counts instructions; the
+    exception table's handlers count them too. Unanswered without either."""
+    found = s.definitions('_PyInterpreterFrame_LASTI')
+    if not found:
+        raise Unanswered('no _frame.f_lasti, and no _PyInterpreterFrame_LASTI')
+    path, body = found[0]
+    return 'sizeof' not in _texts(body), path + ':_PyInterpreterFrame_LASTI'
+
+
+def code_localsplus(s):
+    """a code object names its locals, cells and free variables in one
+    tuple, co_localsplusnames, with a kind each (CO_FAST_LOCAL, CO_FAST_CELL,
+    CO_FAST_FREE): an argument's cell is in the argument's place"""
+    found = s.definitions('_PyLocals_GetKind')
+    return bool(found), (found[0][0] if found else 'every header') + ':_PyLocals_GetKind'
+
+
+def interpreter_frame(s):
+    """the frame-evaluation hook is given an interpreter frame
+    (_PyInterpreterFrame), the thread's frames are a chain of them, and a
+    frame object is made for one only when asked"""
+    for path, toks in s.headers_with('_PyFrameEvalFunction'):
+        texts = _texts(toks)
+        want = ['PyObject', '*', '(', '*', '_PyFrameEvalFunction', ')', '(']
+        for i in range(len(texts) - len(want)):
+            if texts[i] == 'typedef' and texts[i + 1:i + 1 + len(want)] == want:
+                params = texts[i + 1 + len(want):]
+                params = params[:params.index(')')]
+                return ('_PyInterpreterFrame' in params,
+                        path + ':_PyFrameEvalFunction')
+    raise Unanswered('no typedef of _PyFrameEvalFunction in Include')
 
 
 def lineno_when_set(s):
@@ -531,6 +573,10 @@ def frame_state(s):
     if fields is None:
         raise Unanswered('no struct _frame in Include')
     if 'f_state' not in fields and 'f_executing' not in fields:
+        # a view of an interpreter frame, whose owner says it is running:
+        # LeJIT tests INTERPRETER_FRAME first
+        if 'f_frame' in fields:
+            return False, '%s:_frame has f_frame, not f_state' % path
         raise Unanswered('%s:_frame has neither f_state nor f_executing' % path)
     return 'f_state' in fields, path + ':_frame.f_state'
 
@@ -549,6 +595,31 @@ def cframe(s):
         if cf is not None and 'use_tracing' in cf:
             return True, '%s:%s.use_tracing' % (cpath, name)
     raise Unanswered('%s:_ts has no use_tracing, nor a CFrame with one' % path)
+
+
+def recursion_remaining(s):
+    """a thread counts down the Python calls it may still make, in its
+    recursion_remaining, not up in recursion_depth"""
+    return _field(s, '_ts', 'recursion_remaining')
+
+
+def exc_info_value_only(s):
+    """an exception being handled is kept as its value alone
+    (_PyErr_StackItem.exc_value, no exc_type or exc_traceback)"""
+    # the last of 'PyObject *exc_type, *exc_value, *exc_traceback;', the
+    # one name the struct parser keeps of the declaration
+    return _not(_field(s, '_err_stackitem', 'exc_traceback'))
+
+
+def dict_values_struct(s):
+    """a split dict's values are a PyDictValues (ma_values), whose array of
+    values is its only field, not a bare array"""
+    path, fields = s.struct('PyDictObject')
+    if fields is None:
+        raise Unanswered('no PyDictObject in Include')
+    if 'ma_values' not in fields:
+        raise Unanswered('%s:PyDictObject has no ma_values' % path)
+    return 'PyDictValues' in fields['ma_values'], path + ':PyDictObject.ma_values'
 
 
 def interp_recursion_limit(s):
@@ -588,12 +659,14 @@ def tuplecontains_item_first(s):
 def aenter_lookup_first(s):
     """BEFORE_ASYNC_WITH looks __aenter__ up before __aexit__"""
     case = _case_tokens(s, 'BEFORE_ASYNC_WITH')
-    if case is None or 'PyId___aenter__' not in case \
-            or 'PyId___aexit__' not in case:
-        raise Unanswered('Python/ceval.c: no TARGET(BEFORE_ASYNC_WITH) naming'
-                         ' __aenter__ and __aexit__')
-    return (case.index('PyId___aenter__') < case.index('PyId___aexit__'),
-            'Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)')
+    # the names by _Py_IDENTIFIER (PyId___aenter__), or from 3.11 _Py_ID
+    for enter, exit in (['PyId___aenter__'], ['PyId___aexit__']), \
+            (_c('_Py_ID(__aenter__)'), _c('_Py_ID(__aexit__)')):
+        at = [_run_at(case or [], want) for want in (enter, exit)]
+        if None not in at:
+            return at[0] < at[1], 'Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)'
+    raise Unanswered('Python/ceval.c: no TARGET(BEFORE_ASYNC_WITH) naming'
+                     ' __aenter__ and __aexit__')
 
 
 def valid_version_tag_flag(s):
@@ -664,7 +737,21 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'BEGIN_FINALLY', 'CALL_FINALLY', 'POP_FINALLY', 'END_ASYNC_FOR',
            'ROT_FOUR', 'END_FINALLY', 'WITH_CLEANUP_START',
            'WITH_CLEANUP_FINISH', 'RERAISE', 'WITH_EXCEPT_START',
-           'JUMP_IF_NOT_EXC_MATCH', 'GEN_START', 'ROT_N')
+           'JUMP_IF_NOT_EXC_MATCH', 'GEN_START', 'ROT_N',
+           # gone from 3.11: the operators are BINARY_OP's, calls CALL's,
+           # the stack shuffles COPY's and SWAP's, and handlers the
+           # exception table's
+           'BINARY_ADD', 'BINARY_AND', 'BINARY_FLOOR_DIVIDE', 'BINARY_LSHIFT',
+           'BINARY_MATRIX_MULTIPLY', 'BINARY_MODULO', 'BINARY_MULTIPLY',
+           'BINARY_OR', 'BINARY_POWER', 'BINARY_RSHIFT', 'BINARY_SUBTRACT',
+           'BINARY_TRUE_DIVIDE', 'BINARY_XOR', 'INPLACE_ADD', 'INPLACE_AND',
+           'INPLACE_FLOOR_DIVIDE', 'INPLACE_LSHIFT', 'INPLACE_MATRIX_MULTIPLY',
+           'INPLACE_MODULO', 'INPLACE_MULTIPLY', 'INPLACE_OR', 'INPLACE_POWER',
+           'INPLACE_RSHIFT', 'INPLACE_SUBTRACT', 'INPLACE_TRUE_DIVIDE',
+           'INPLACE_XOR', 'CALL_FUNCTION', 'CALL_FUNCTION_KW', 'CALL_METHOD',
+           'DUP_TOP', 'DUP_TOP_TWO', 'ROT_TWO', 'ROT_THREE', 'JUMP_ABSOLUTE',
+           'POP_JUMP_IF_FALSE', 'POP_JUMP_IF_TRUE', 'SETUP_FINALLY',
+           'SETUP_WITH', 'SETUP_ASYNC_WITH', 'POP_BLOCK', 'YIELD_FROM')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_TO_TUPLE', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -880,6 +967,9 @@ BYTECODE = [
     ('JUMP_IN_INSTRUCTIONS', jump_in_instructions),
     ('CODE_GET_CODE', D('PyCode_GetCode gives a code object\'s bytecode as compiled, unspecialised',
                         lambda s: _declared(s, 'PyCode_GetCode'))),
+    ('EXCEPTION_TABLE', D('a code object\'s handlers are in its exception table (co_exceptiontable), not set up at run time on a block stack',
+                          lambda s: _file_has(s, 'Objects/codeobject.c', '"co_exceptiontable"'))),
+    ('CODE_LOCALSPLUS', code_localsplus),
 ]
 
 # frames
@@ -887,6 +977,7 @@ FRAMES = [
     ('LASTI_IN_INSTRUCTIONS', lasti_in_instructions),
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
+    ('INTERPRETER_FRAME', interpreter_frame),
 ]
 
 # types
@@ -905,6 +996,8 @@ STATE = [
     ('SIGNALS_PENDING', signals_pending),
     ('EVAL_FRAME_HANDLE_PENDING', eval_frame_handle_pending),
     ('INTERP_RECURSION_LIMIT', interp_recursion_limit),
+    ('RECURSION_REMAINING', recursion_remaining),
+    ('EXC_INFO_VALUE_ONLY', exc_info_value_only),
     ('FRAME_STATE', frame_state),
     ('CFRAME', cframe),
     ('GC_TRACKED_BY_NEXT', gc_tracked_by_next),
@@ -939,6 +1032,7 @@ OBJECTS = [
     ('TUPLE_GET_EMPTY', D('the empty tuple is the interpreter\'s, read with tuple_get_empty',
                           lambda s: _defines(s, 'Objects/tupleobject.c', 'tuple_get_empty'))),
     ('CONTAINS_ITEM_FIRST', tuplecontains_item_first),
+    ('DICT_VALUES_STRUCT', dict_values_struct),
     ('PYCORE_FORMAT_H', D('the format flags F_LJUST... are the internal pycore_format.h\'s',
                           lambda s: _file(s, 'Include/internal/pycore_format.h'))),
     ('FORMATCHAR_INDEX_ONLY', D('%c takes an int, by PyLong_AsLongAndOverflow (no __int__)',
@@ -957,6 +1051,8 @@ OBJECTS = [
 CEVAL = [
     ('CMP_OUTCOME', D('COMPARE_OP also does is, in and exception matches (cmp_outcome)',
                       lambda s: _defines(s, CE, 'cmp_outcome'))),
+    ('CEVAL_TRACE_INFO', D('ceval keeps the line bounds it traces with, and the frame\'s CFrame, in a PyTraceInfo of its own (call_trace, do_call_core)',
+                           lambda s: _file_has(s, CE, 'CFrame cframe; } PyTraceInfo;'))),
     ('CALL_TRACE_METHOD_DESCR', D('do_call_core traces a method descriptor\'s call as a C call',
                                   lambda s: _body_has(s, CE, 'do_call_core', 'PyMethodDescr_Type'))),
     ('NAME_ERROR_NAME', D('format_exc_check_arg sets a NameError\'s name',

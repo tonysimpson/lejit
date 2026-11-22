@@ -552,6 +552,12 @@ _build_merge_points(PyCodeObject *co, int module)
     co_report_t *report;
     int reads_class, bad = 0;
 
+#if LE_HAS_EXCEPTION_TABLE
+    /* the compiler doesn't translate this bytecode yet (handlers in an
+       exception table, inline caches, its call sequence): everything runs
+       in ceval */
+    goto not_ok;
+#endif
     /* XXX tony: all these not supported/buggy currently */
     if (module) {
         goto not_ok;

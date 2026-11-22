@@ -928,7 +928,7 @@ PycException_Fetch(PsycoObject *po)
 static void
 set_frame_place(PyFrameObject *f, int lasti, int lineno)
 {
-    f->f_lasti = le_lasti_of(lasti);
+    le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
     f->f_lineno = LE_HAS_LINENO_WHEN_SET ? 0 : lineno;
 }
 
@@ -964,7 +964,7 @@ cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
     if (result != NULL) {
         /* a frame reused from the code's free one may hold a note */
         if (code->co_stacksize >= 3)
-            result->f_valuestack[0] = NULL;
+            le_pyframe_stack(result)[0] = NULL;
         set_frame_place(result, lasti, lineno);
     }
     return result;
@@ -2253,7 +2253,7 @@ cimpl_cmp_outcome(int op, PyObject *v, PyObject *w)
 }
 #endif
 
-#if LE_HAS_CFRAME
+#if LE_HAS_CEVAL_TRACE_INFO
 static void
 cimpl_PyLineTable_InitAddressRange(const char *linetable, Py_ssize_t length,
                                    int firstlineno, PyCodeAddressRange *range)
@@ -2267,7 +2267,7 @@ cimpl_PyLineTable_InitAddressRange(const char *linetable, Py_ssize_t length,
 }
 #endif
 
-#if LE_HAS_CFRAME
+#if LE_HAS_CEVAL_TRACE_INFO
 static int
 cimpl__PyCode_InitAddressRange(PyCodeObject *co, PyCodeAddressRange *bounds)
 {
@@ -2530,7 +2530,7 @@ error:
 }
 #endif
 
-#if LE_HAS_CFRAME
+#if LE_HAS_CEVAL_TRACE_INFO
 typedef struct {
     PyCodeObject *code;
     PyCodeAddressRange bounds;
@@ -3411,7 +3411,7 @@ _error:
 }
 #endif
 
-#if LE_HAS_CFRAME
+#if LE_HAS_CEVAL_TRACE_INFO
 static void
 cimpl_initialize_trace_info(PyTraceInfo *trace_info, PyFrameObject *frame)
 {
@@ -3422,7 +3422,7 @@ cimpl_initialize_trace_info(PyTraceInfo *trace_info, PyFrameObject *frame)
 }
 #endif
 
-#if LE_HAS_CFRAME
+#if LE_HAS_CEVAL_TRACE_INFO
 static int
 cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
                  PyTraceInfo *trace_info, int what, PyObject *arg)
@@ -3738,7 +3738,7 @@ error:
 }
 #endif
 
-#if LE_HAS_CFRAME
+#if LE_HAS_CEVAL_TRACE_INFO
 static int
 cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
                            PyFrameObject *frame, PyTraceInfo *trace_info,
@@ -3761,7 +3761,7 @@ cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
 }
 #endif
 
-#if LE_HAS_CFRAME
+#if LE_HAS_CEVAL_TRACE_INFO
 static PyObject *
 cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
                    PyObject *kwdict)
@@ -3853,9 +3853,21 @@ cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
 }
 #endif
 
+#if LE_HAS_CFRAME && !LE_HAS_CEVAL_TRACE_INFO
+/* ceval's do_call_core where it keeps its trace info in the thread state,
+   without the profiler's c_call events around a C function: compiled code
+   makes no such call on this CPython yet (mergepoints.c refuses every
+   code object) */
+static PyObject *
+cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
+{
+    return PyObject_Call(func, callargs, kwdict);
+}
+#endif
+
 static PyObject *
 cimpl_call_function_ex(PyObject *_in0, PyObject *_in1, PyObject *_in2)
-#if LE_HAS_CFRAME
+#if LE_HAS_CEVAL_TRACE_INFO
 {
     PyThreadState *tstate = PyThreadState_GET();
     PyTraceInfo trace_info = {.code = NULL, .cframe = *tstate->cframe};
@@ -4389,7 +4401,7 @@ unpack_iterable(PyObject *v, int argcnt, int argcntafter, PyObject **sp)
     /* Pop the "after-variable" args off the list. */
     for (j = argcntafter; j > 0; j--, i++) *sp++ = PyList_GET_ITEM(l, ll - j);
     /* Resize the list. */
-    Py_SIZE(l) = ll - argcntafter;
+    ((PyVarObject *)l)->ob_size = ll - argcntafter;
     Py_DECREF(it);
     return 0;
 
@@ -4862,7 +4874,7 @@ static bool
 fusion_operator(int op)
 {
     /* clang-format off */
-    static const unsigned char ops[] = {
+    static const short ops[] = {
         BINARY_ADD,          BINARY_SUBTRACT,      BINARY_MULTIPLY,
         BINARY_TRUE_DIVIDE,  BINARY_FLOOR_DIVIDE,  BINARY_MODULO,
         BINARY_POWER,        BINARY_MATRIX_MULTIPLY, BINARY_LSHIFT,
@@ -4874,7 +4886,7 @@ fusion_operator(int op)
         INPLACE_OR,          INPLACE_XOR};
     /* clang-format on */
     size_t i;
-    for (i = 0; i < sizeof(ops); i++)
+    for (i = 0; i < sizeof(ops) / sizeof(ops[0]); i++)
         if (op == ops[i])
             return true;
     return false;
@@ -5104,6 +5116,9 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
             return 0;
         }
     }
+#if LE_HAS_EXCEPTION_TABLE
+    (void)nblocks; /* ceval has no block stack */
+#else
     for (i = 0; i < nblocks; i++) {
         le_block_t *b = &po->pr.blockstack[i];
         if (psyco_generic_call(po, psyco_resume_block, CfNoReturnValue, "vlll",
@@ -5113,6 +5128,7 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
             return 0;
         }
     }
+#endif
     result = psyco_generic_call(
         po, psyco_resume_run, CfCommonNewRefPyObject, "vll", st,
         (long)(next_instr - sizeof(_Py_CODEUNIT)), (long)nstack);
