@@ -150,11 +150,6 @@ PsycoTuple_Load(vinfo_t *tuple)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #if LE_HAS_TUPLE_GET_EMPTY
-PyObject *
-cimpl_tuple_get_empty(void);
-#endif
-
-#if LE_HAS_TUPLE_GET_EMPTY
 static vinfo_t *
 tuple_get_empty(PsycoObject *po);
 #endif
@@ -175,8 +170,9 @@ tuplerichcompare(PsycoObject *po, vinfo_t *, vinfo_t *, int);
 static vinfo_t *
 tuple_get_empty(PsycoObject *po)
 {
+    /* tupleobject.c's empty tuple, which PyTuple_New(0) gives */
     return vinfo_new(
-        CompileTime_NewSk(sk_new((long)cimpl_tuple_get_empty(), SkFlagPyObj)));
+        CompileTime_NewSk(sk_new((long)PyTuple_New(0), SkFlagPyObj)));
 }
 #endif
 

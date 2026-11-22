@@ -85,6 +85,17 @@ le_exc_info_put(PyThreadState *ts, PyObject *type, PyObject *value,
     Py_XDECREF(type);
     Py_XDECREF(tb);
 }
+/* the entry's value alone (borrowed); the put takes the reference given */
+static inline PyObject *
+le_exc_info_value(PyThreadState *ts)
+{
+    return ts->exc_info->exc_value;
+}
+static inline void
+le_exc_info_put_value(PyThreadState *ts, PyObject *value)
+{
+    ts->exc_info->exc_value = value;
+}
 /* the exception sys.exc_info() gives: the topmost entry with one, else the
    bottom entry; borrowed */
 static inline void

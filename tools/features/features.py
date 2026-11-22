@@ -506,6 +506,11 @@ def lineno_when_set(s):
     return 'f_trace' not in texts and 'f_lineno' in texts, fo + ':PyFrame_GetLineNumber'
 
 
+def lasti_past_prefixes(s):
+    """an instruction's place (a frame's lasti, a traceback's tb_lasti) is its own unit, past its EXTENDED_ARG prefixes, not the first prefix (ceval's EXTENDED_ARG dispatches the instruction, which sets the place, rather than going to dispatch_opcode)"""
+    return _not(_case_has(s, 'EXTENDED_ARG', 'dispatch_opcode'))
+
+
 def frame_builtins_of_function(s):
     """a new frame's builtins are its function's (func_builtins, read through
     the PyFrameConstructor), not looked up in its globals"""
@@ -936,7 +941,6 @@ EXPORTS = [
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
     ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
     ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
-    ('MODULE_SPEC_IS_INITIALIZING_LINKABLE', '_PyModuleSpec_IsInitializing'),
     ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
     ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
     ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
@@ -978,6 +982,10 @@ BYTECODE = [
     ('EXCEPTION_TABLE', D('a code object\'s handlers are in its exception table (co_exceptiontable), not set up at run time on a block stack',
                           lambda s: _file_has(s, 'Objects/codeobject.c', '"co_exceptiontable"'))),
     ('CODE_LOCALSPLUS', code_localsplus),
+    ('MATCH_CLASS_PUSHES_BOOL', D('MATCH_CLASS pushes a bool saying whether the class matched, over the attributes or the subject',
+                                  lambda s: _case_has(s, 'MATCH_CLASS', 'PyBool_FromLong', missing=False))),
+    ('MATCH_KEYS_PUSHES_BOOL', D('MATCH_KEYS pushes a bool saying whether the keys matched, over the values or None',
+                                 lambda s: _case_has(s, 'MATCH_KEYS', 'PUSH(Py_True)', missing=False))),
 ]
 
 # frames
@@ -986,6 +994,7 @@ FRAMES = [
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
     ('INTERPRETER_FRAME', interpreter_frame),
+    ('LASTI_PAST_PREFIXES', lasti_past_prefixes),
 ]
 
 # types

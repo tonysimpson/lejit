@@ -181,7 +181,6 @@ for _feature, _function in [
         ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
         ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
         ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
-        ('MODULE_SPEC_IS_INITIALIZING_LINKABLE', '_PyModuleSpec_IsInitializing'),
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
         ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
         ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
@@ -298,6 +297,33 @@ def EXCEPTION_TABLE():
     """code objects have co_exceptiontable"""
     return (hasattr((lambda: None).__code__, 'co_exceptiontable'),
             'code.co_exceptiontable')
+
+
+def _match_pushes_bool(name, with_bool, without):
+    """(name's stack effect is with_bool, evidence); False where there is
+    no such instruction"""
+    if not _real_op(name):
+        return False, 'opcode.opmap has no %s' % name
+    op = opcode.opmap[name]
+    effect = dis.stack_effect(op, 0) if op >= opcode.HAVE_ARGUMENT \
+        else dis.stack_effect(op)
+    if effect not in (with_bool, without):
+        raise Unanswered('dis.stack_effect(%s, 0) is %d' % (name, effect))
+    return effect == with_bool, 'dis.stack_effect(%s, 0) == %d' % (name, effect)
+
+
+@probe
+def MATCH_CLASS_PUSHES_BOOL():
+    """MATCH_CLASS leaves two values for its three (a bool over the
+    attributes or the subject), not one (dis.stack_effect)"""
+    return _match_pushes_bool('MATCH_CLASS', -1, -2)
+
+
+@probe
+def MATCH_KEYS_PUSHES_BOOL():
+    """MATCH_KEYS pushes two values (the values or None, and a bool), not
+    one (dis.stack_effect)"""
+    return _match_pushes_bool('MATCH_KEYS', 2, 1)
 
 
 @probe
@@ -514,6 +540,30 @@ def FLOAT_ASDOUBLE_INDEX():
     if isinstance(e, TypeError):
         return False, 'math.sqrt(__index__ only): TypeError'
     raise Unanswered('math.sqrt: %r' % e)
+
+
+@probe
+def LASTI_PAST_PREFIXES():
+    """a traceback's tb_lasti for an instruction with an EXTENDED_ARG prefix
+    (a local numbered 300, unbound) is the instruction's own unit, not the
+    prefix"""
+    src = ('def f():\n' + ''.join('    v%d = 0\n' % i for i in range(301))
+           + '    del v300\n    return v300\n')
+    g = {}
+    exec(src, g)
+    try:
+        g['f']()
+    except NameError as e:
+        lasti = e.__traceback__.tb_next.tb_lasti
+    else:
+        raise Unanswered('reading an unbound local raised nothing')
+    code = g['f'].__code__.co_code
+    prefix = opcode.opmap['EXTENDED_ARG']
+    if code[lasti] == prefix:
+        return False, 'tb_lasti %d: the EXTENDED_ARG prefix' % lasti
+    if lasti >= 2 and code[lasti - 2] == prefix:
+        return True, 'tb_lasti %d: the instruction after its prefix' % lasti
+    raise Unanswered('tb_lasti %d is neither a prefix nor after one' % lasti)
 
 
 @probe

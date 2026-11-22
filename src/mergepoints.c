@@ -21,7 +21,8 @@
  *     those of 2, made conservative where 3.7 bytecode doesn't say: an
  *     instruction may reach the handler of every SETUP_EXCEPT/FINALLY/WITH
  *     whose body contains it (the compiler lays the body out between the
- *     SETUP and its handler), BREAK_LOOP every loop exit, END_FINALLY those
+ *     SETUP and its handler) or of every exception table entry whose range
+ *     contains it, BREAK_LOOP every loop exit, END_FINALLY those
  *     and every CONTINUE_LOOP target.
  */
 #include "mergepoints.h"
@@ -184,9 +185,9 @@ psyco_class_cell(PyCodeObject *co)
 /* one backward pass of _find_dead_locals's dataflow: whether a set grew */
 static inline __attribute__((always_inline)) int
 _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
-           const int *setup_at, const int *handler_at, int nsetups,
-           const int *break_to, int nbreak, const int *exit_to, int nexit,
-           uint64_t *live, uint64_t *tmp, int nlocals, int words)
+           const int *setup_at, const int *try_end, const int *handler_at,
+           int nsetups, const int *break_to, int nbreak, const int *exit_to,
+           int nexit, uint64_t *live, uint64_t *tmp, int nlocals, int words)
 {
     Py_ssize_t i, k;
     int changed = 0;
@@ -197,11 +198,14 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
             continue;
         memset(tmp, 0, words * sizeof(uint64_t));
         for (k = 0; k < nsetups; k++)
-            if (setup_at[k] <= i && i < handler_at[k])
+            if (setup_at[k] <= i && i < try_end[k])
                 _live_union(tmp, live + handler_at[k] * words, words);
         switch (o) {
             case RETURN_VALUE:
             case RAISE_VARARGS:
+#if LE_HAS_EXCEPTION_TABLE
+            case RERAISE:
+#endif
                 break;
             case JUMP_ABSOLUTE:
             case JUMP_BACKWARD:
@@ -261,8 +265,8 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     Py_ssize_t i, m;
     int *op, *nxt;
     int *arg; /* a jump's target, in code units; else the argument */
-    int *setup_at, *handler_at,
-        nsetups = 0; /* try bodies: [setup_at, handler_at) */
+    int *setup_at, *try_end, *handler_at,
+        nsetups = 0; /* try bodies: [setup_at, try_end) */
     int *break_to, *exit_to, nbreak = 0, nexit = 0;
     uint64_t *live, *tmp;
     unsigned char *jump_targets; /* 1: loop exit, 2: continue target */
@@ -273,7 +277,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
         return 1;
     /* one block: the sets first, for their alignment */
     live = PyMem_Calloc(1, ((n + 2) * words) * sizeof(uint64_t) +
-                               7 * (n + 1) * sizeof(int) + (n + 1));
+                               8 * (n + 1) * sizeof(int) + (n + 1));
     if (live == NULL)
         goto done;
     tmp = live + (n + 1) * words;
@@ -281,7 +285,8 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     arg = op + (n + 1);
     nxt = arg + (n + 1);
     setup_at = nxt + (n + 1);
-    handler_at = setup_at + (n + 1);
+    try_end = setup_at + (n + 1);
+    handler_at = try_end + (n + 1);
     break_to = handler_at + (n + 1);
     exit_to = break_to + (n + 1);
     jump_targets = (unsigned char *)(exit_to + (n + 1));
@@ -312,10 +317,22 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
             case SETUP_FINALLY:
             case SETUP_WITH:
                 setup_at[nsetups] = (int)i;
+                try_end[nsetups] = j;
                 handler_at[nsetups++] = j;
                 break;
         }
     }
+#if LE_HAS_EXCEPTION_TABLE
+    {
+        Py_ssize_t at = 0;
+        le_handler_t h;
+        while (le_handler_next(co, &at, &h)) {
+            setup_at[nsetups] = h.start / LE_UNIT;
+            try_end[nsetups] = h.end / LE_UNIT;
+            handler_at[nsetups++] = h.handler / LE_UNIT;
+        }
+    }
+#endif
 
     /* where BREAK_LOOP and END_FINALLY may go */
     for (i = 0; i < n; i++)
@@ -328,13 +345,13 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     /* backward dataflow to a fixed point; a separate copy for code with
        at most 64 locals, where a set is one word */
     if (words == 1)
-        while (_live_pass(n, op, arg, nxt, setup_at, handler_at, nsetups,
-                          break_to, nbreak, exit_to, nexit, live, tmp, nlocals,
-                          1));
+        while (_live_pass(n, op, arg, nxt, setup_at, try_end, handler_at,
+                          nsetups, break_to, nbreak, exit_to, nexit, live, tmp,
+                          nlocals, 1));
     else
-        while (_live_pass(n, op, arg, nxt, setup_at, handler_at, nsetups,
-                          break_to, nbreak, exit_to, nexit, live, tmp, nlocals,
-                          words));
+        while (_live_pass(n, op, arg, nxt, setup_at, try_end, handler_at,
+                          nsetups, break_to, nbreak, exit_to, nexit, live, tmp,
+                          nlocals, words));
 
     for (m = 0; m < report->mergepoint_count; m++) {
         mergepoint_t *mp = &report->mergepoints[m];
@@ -407,6 +424,9 @@ _find_merge_points(PyCodeObject *co, int *bad)
             /* no successor in this code */
             case RETURN_VALUE:
             case RAISE_VARARGS:
+#if LE_HAS_EXCEPTION_TABLE
+            case RERAISE:
+#endif
             case BREAK_LOOP: /* to the SETUP_LOOP target, counted there */
                 break;
             /* unconditional jumps */
@@ -450,6 +470,18 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 ENTER_NEXT();
         }
     }
+
+#if LE_HAS_EXCEPTION_TABLE
+    /* a handler can be entered from anywhere in its range */
+    {
+        Py_ssize_t at = 0;
+        le_handler_t h;
+        while (le_handler_next(co, &at, &h)) {
+            flags |= MP_FLAGS_HAS_EXCEPT;
+            entry_count[JUMP_TARGET(h.handler / LE_UNIT)] = 8;
+        }
+    }
+#endif
 
     for (entry_count_index = 0; entry_count_index < entry_count_len;
          entry_count_index++)
@@ -625,78 +657,19 @@ compiled_opcode(int op)
 #if LE_HAS_OPCODE_CONTAINS_OP
         case CONTAINS_OP:
 #endif
-        /* jumps and return */
-        case JUMP_FORWARD:
-        case JUMP_ABSOLUTE:
-        case JUMP_BACKWARD:
-        case JUMP_BACKWARD_NO_INTERRUPT:
-        case POP_JUMP_IF_FALSE:
-        case POP_JUMP_IF_TRUE:
-        case POP_JUMP_FORWARD_IF_FALSE:
-        case POP_JUMP_FORWARD_IF_TRUE:
-        case POP_JUMP_BACKWARD_IF_FALSE:
-        case POP_JUMP_BACKWARD_IF_TRUE:
-        case POP_JUMP_FORWARD_IF_NONE:
-        case POP_JUMP_FORWARD_IF_NOT_NONE:
-        case POP_JUMP_BACKWARD_IF_NONE:
-        case POP_JUMP_BACKWARD_IF_NOT_NONE:
-        case JUMP_IF_FALSE_OR_POP:
-        case JUMP_IF_TRUE_OR_POP:
-        case RETURN_VALUE:
-            return 1;
-    }
-#if !LE_HAS_EXCEPTION_TABLE
-    switch (op) {
-        /* calls, cells and functions */
-        case CALL_FUNCTION:
-        case CALL_FUNCTION_KW:
-        case CALL_FUNCTION_EX:
-        case CALL_METHOD:
-        case LOAD_METHOD:
-        case MAKE_FUNCTION:
-        case LOAD_CLOSURE:
-        case LOAD_DEREF:
-        case STORE_DEREF:
-        case DELETE_DEREF:
-        /* exceptions, and the blocks that handle them */
+        /* exceptions (except* stays interpreted where it has opcodes of its
+           own) */
         case RAISE_VARARGS:
-        case SETUP_LOOP:
-        case SETUP_EXCEPT:
-        case SETUP_FINALLY:
-        case SETUP_WITH:
-        case POP_BLOCK:
+#if LE_HAS_EXCEPTION_TABLE
+        case PUSH_EXC_INFO:
         case POP_EXCEPT:
-        case END_FINALLY:
-        case BEGIN_FINALLY:
-        case CALL_FINALLY:
-        case POP_FINALLY:
-        case BREAK_LOOP:
-        case CONTINUE_LOOP:
-        case WITH_CLEANUP_START:
-        case WITH_CLEANUP_FINISH:
-#if LE_HAS_OPCODE_WITH_EXCEPT_START
+        case RERAISE:
+        case CHECK_EXC_MATCH:
+        case BEFORE_WITH:
         case WITH_EXCEPT_START:
 #endif
-#if LE_HAS_OPCODE_RERAISE
-        case RERAISE:
-#endif
-#if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
-        case JUMP_IF_NOT_EXC_MATCH:
-#endif
-        case BEFORE_ASYNC_WITH:
-        /* globals and names */
-        case LOAD_GLOBAL:
-        case STORE_GLOBAL:
-        case DELETE_GLOBAL:
-        case LOAD_NAME:
-        case STORE_NAME:
-        case DELETE_NAME:
-        /* attributes */
-        case LOAD_ATTR:
-        case STORE_ATTR:
-        case DELETE_ATTR:
-        /* the others: subscripts, building and unpacking, imports,
-           strings, iteration, pattern matching and generators */
+        /* subscripts, building and unpacking, imports, f-strings,
+           iteration and pattern matching */
         case BINARY_SUBSCR:
         case STORE_SUBSCR:
         case DELETE_SUBSCR:
@@ -747,7 +720,6 @@ compiled_opcode(int op)
         case UNPACK_EX:
         case IMPORT_NAME:
         case IMPORT_FROM:
-        case IMPORT_STAR:
         case FORMAT_VALUE:
         case PRINT_EXPR:
         case LOAD_BUILD_CLASS:
@@ -774,6 +746,77 @@ compiled_opcode(int op)
 #if LE_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
         case COPY_DICT_WITHOUT_KEYS:
 #endif
+        /* jumps and return */
+        case JUMP_FORWARD:
+        case JUMP_ABSOLUTE:
+        case JUMP_BACKWARD:
+        case JUMP_BACKWARD_NO_INTERRUPT:
+        case POP_JUMP_IF_FALSE:
+        case POP_JUMP_IF_TRUE:
+        case POP_JUMP_FORWARD_IF_FALSE:
+        case POP_JUMP_FORWARD_IF_TRUE:
+        case POP_JUMP_BACKWARD_IF_FALSE:
+        case POP_JUMP_BACKWARD_IF_TRUE:
+        case POP_JUMP_FORWARD_IF_NONE:
+        case POP_JUMP_FORWARD_IF_NOT_NONE:
+        case POP_JUMP_BACKWARD_IF_NONE:
+        case POP_JUMP_BACKWARD_IF_NOT_NONE:
+        case JUMP_IF_FALSE_OR_POP:
+        case JUMP_IF_TRUE_OR_POP:
+        case RETURN_VALUE:
+            return 1;
+    }
+#if !LE_HAS_EXCEPTION_TABLE
+    switch (op) {
+        /* calls, cells and functions */
+        case CALL_FUNCTION:
+        case CALL_FUNCTION_KW:
+        case CALL_FUNCTION_EX:
+        case CALL_METHOD:
+        case LOAD_METHOD:
+        case MAKE_FUNCTION:
+        case LOAD_CLOSURE:
+        case LOAD_DEREF:
+        case STORE_DEREF:
+        case DELETE_DEREF:
+        /* exceptions, and the blocks that handle them */
+        case SETUP_LOOP:
+        case SETUP_EXCEPT:
+        case SETUP_FINALLY:
+        case SETUP_WITH:
+        case POP_BLOCK:
+        case POP_EXCEPT:
+        case END_FINALLY:
+        case BEGIN_FINALLY:
+        case CALL_FINALLY:
+        case POP_FINALLY:
+        case BREAK_LOOP:
+        case CONTINUE_LOOP:
+        case WITH_CLEANUP_START:
+        case WITH_CLEANUP_FINISH:
+#if LE_HAS_OPCODE_WITH_EXCEPT_START
+        case WITH_EXCEPT_START:
+#endif
+#if LE_HAS_OPCODE_RERAISE
+        case RERAISE:
+#endif
+#if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
+        case JUMP_IF_NOT_EXC_MATCH:
+#endif
+        case BEFORE_ASYNC_WITH:
+        /* globals and names */
+        case LOAD_GLOBAL:
+        case STORE_GLOBAL:
+        case DELETE_GLOBAL:
+        case LOAD_NAME:
+        case STORE_NAME:
+        case DELETE_NAME:
+        case IMPORT_STAR:
+        /* attributes */
+        case LOAD_ATTR:
+        case STORE_ATTR:
+        case DELETE_ATTR:
+        /* generators */
         case YIELD_VALUE:
         case GEN_START:
         case GET_YIELD_FROM_ITER:
