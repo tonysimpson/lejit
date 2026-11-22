@@ -1108,6 +1108,28 @@ psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v)
     return true;
 }
 
+/* whether a type site in the fused code of 'v' (fusable) has seen too
+   many types (mergepoints.h:psyco_fuse_stopped), tested at run time: read
+   now, the flag could change between a compile and its replay */
+static int
+fuse_stopped(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *vcode = vinfo_getitem(v->array->items[iGENEXPR_FUNC], iFUNC_CODE);
+    PyCodeObject *co = (PyCodeObject *)CompileTime_Get(vcode->source)->value;
+    vinfo_t *vslot = vinfo_new(CompileTime_New(
+        (long)psyco_fuse_stopped(psyco_get_merge_points(co, 0))));
+    vinfo_t *vflag = psyco_get_field(po, vslot, INT_value);
+    condition_code_t cc;
+    vinfo_decref(vslot, po);
+    if (vflag == NULL)
+        return -1;
+    cc = integer_non_null(po, vflag);
+    vinfo_decref(vflag, po);
+    if (cc == CC_ERROR)
+        return -1;
+    return runtime_condition_f(po, cc);
+}
+
 /* the fused body is the generator's frame: a tracer must see it */
 DEFINEFN
 int
@@ -1117,6 +1139,9 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
     if (!psyco_genexpr_fusable(po, v))
         return 0;
     on = psyco_tracing_on(po);
+    if (on != 0)
+        return on < 0 ? -1 : 0;
+    on = fuse_stopped(po, v);
     return on < 0 ? -1 : !on;
 }
 

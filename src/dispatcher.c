@@ -1,8 +1,8 @@
 /*
  * "Have we compiled this state before?" and the run-time switches.
  *  - Snapshots: each code buffer at a merge point keeps a frozen copy of
- *    po->vlocals. With VLOCALS_OPC it is compressed into a pseudo-code
- *    (fz_compress) and compared without being decompressed (compatible_array).
+ *    po->vlocals, compressed into a pseudo-code (fz_compress) and compared
+ *    without being decompressed (compatible_array).
  *  - psyco_compatible: a linear scan of the snapshots. Fixed constants
  *    (SkFlagFixed) must match exactly; other differing constants are returned
  *    in 'diff' to be un-promoted, and so is a virtual int's known value where
@@ -53,101 +53,6 @@
 /***************************************************************/
 /***                       Snapshots                           ***/
 /***************************************************************/
-
-#if !VLOCALS_OPC
-
-/* Store-by-copy: this implementation is kept around for reference.
-   See the "!VLOCALS_OPC" version of compatible_array().
-*/
-
-PSY_INLINE void
-fz_build(FrozenPsycoObject *fpo, vinfo_array_t *aa)
-{
-    fpo->fz_vlocals = array_new(aa->count);
-    duplicate_array(fpo->fz_vlocals, aa);
-}
-
-PSY_INLINE void
-fz_unfreeze(vinfo_array_t *aa, FrozenPsycoObject *fpo)
-{
-    assert_cleared_tmp_marks(fpo->fz_vlocals);
-    duplicate_array(aa, fpo->fz_vlocals);
-    clear_tmp_marks(fpo->fz_vlocals);
-}
-
-PSY_INLINE void
-fz_release(FrozenPsycoObject *fpo)
-{
-    array_delete(fpo->fz_vlocals, NULL);
-}
-
-/* invariant: all snapshot.fz_vlocals in the fatlist have
-   all their 'tmp' fields set to NULL. */
-PSY_INLINE void
-fz_check_invariant(FrozenPsycoObject *fpo)
-{
-    assert_cleared_tmp_marks(fpo->fz_vlocals);
-}
-
-PSY_INLINE void
-fz_restore_invariant(FrozenPsycoObject *fpo)
-{
-    clear_tmp_marks(fpo->fz_vlocals);
-}
-
-PSY_INLINE int
-fz_top_array_count(FrozenPsycoObject *fpo)
-{
-    return fpo->fz_vlocals->count;
-}
-
-static void
-fz_find_rt1(vinfo_array_t *bb, fz_find_fn callback, void *extra, bool clear
-#if ALL_CHECKS
-            ,
-            vinfo_array_t *aa
-#endif
-)
-{
-    int i = bb->count;
-    while (i--) {
-        vinfo_t *b = bb->items[i];
-        if (b != NULL && b->tmp != NULL) {
-#if ALL_CHECKS
-            extra_assert(i < aa->count);
-            if (is_runtime(b->source))
-                extra_assert(aa->items[i] == b->tmp);
-#endif
-            if (is_runtime(b->source))
-                (*callback)(b->tmp, b->source, extra);
-            if (clear)
-                b->tmp = NULL; /* don't consider the same 'b' more than once */
-            if (b->array != NullArray)
-                fz_find_rt1(b->array, callback, extra, clear
-#if ALL_CHECKS
-                            ,
-                            aa->items[i]->array
-#endif
-                );
-        }
-    }
-}
-
-DEFINEFN void
-fz_find_runtimes(vinfo_array_t *aa, FrozenPsycoObject *fpo,
-                 fz_find_fn callback, void *extra, bool clear)
-{
-    fz_find_rt1(fpo->fz_vlocals, callback, extra, clear
-#if ALL_CHECKS
-                ,
-                aa
-#endif
-    );
-}
-
-#else /* if VLOCALS_OPC */
-
-#define COMPRESS_COMPILETIME_SUBITEMS 0
 
 struct vcilink_s {
     int time;
@@ -247,43 +152,6 @@ fz_putopc(int opc)
     *--cmpinternal.buf_opc = opc;
 }
 
-#if COMPRESS_COMPILETIME_SUBITEMS
-static void
-fz_compress(vinfo_array_t *aa, bool nolinks)
-{
-    int i;
-    int length = aa->count;
-    /*while (length > 0 && aa->items[length-1] == NULL)
-      length--;  ---- invalid optimization ---- */
-    for (i = 0; i < length; i++) {
-        vinfo_t *a = aa->items[i];
-        if (a == NULL) {
-            fz_putopc(FZ_OPC_NULL); /* emit FZ_OPC_NULL */
-        }
-        else if (a->tmp != NULL) {
-            int prevcounter = (int)a->tmp; /* already seen, emit a link */
-            fz_putopc(FZ_OPC_LINK - (cmpinternal.tmp_counter - prevcounter));
-        }
-        else {
-            bool nosublinks = nolinks;
-            int length;
-            Source arg = a->source;
-            if (is_compiletime(arg)) {
-                sk_incref(CompileTime_Get(arg));
-                nosublinks = true;
-            }
-            ++cmpinternal.tmp_counter;
-            if (!nolinks)
-                a->tmp = (vinfo_t *)cmpinternal.tmp_counter;
-            length = a->array->count;
-            if (length) /* avoid recursive call if unneeded */
-                fz_compress(a->array, nosublinks); /* store the subarray */
-            fz_putarg(a->source); /* store the 'source' field */
-            fz_putopc(length);    /* store the length of the subarray */
-        }
-    }
-}
-#else /* !COMPRESS_COMPILETIME_SUBITEMS */
 /* An item already stored is marked in its 'tmp' with its number, odd,
    from a count that goes on across snapshots and never wraps: a mark left
    by an earlier snapshot is at most fz_mark_base, a pointer or KEEP_MARK
@@ -340,7 +208,6 @@ fz_compress(vinfo_array_t *aa, PsycoObject *forget)
         }
     }
 }
-#endif /* COMPRESS_COMPILETIME_SUBITEMS */
 /* Compression note: if we implement sharing of common initial segments
    (which could save another 50% memory) we get better results by storing
    the 'source' field *before* its sub-array. This will complicate
@@ -562,8 +429,6 @@ PSY_INLINE void
 fz_restore_invariant(FrozenPsycoObject *fpo)
 {
 }
-
-#endif /* VLOCALS_OPC */
 
 DEFINEFN int
 psyco_top_array_count(FrozenPsycoObject *fpo) /*for psyco.c*/
@@ -1599,215 +1464,6 @@ PsycoObject_EmergencyCodeRoom(PsycoObject *po)
 
 /*****************************************************************/
 
-#if !VLOCALS_OPC
-
-/* This implementation should probably not be used any more, but it
-   is kept around for reference. Once you understand the comparison
-   algorithm below you can read its more obscure implementation of
-   the VLOCALS_OPC case.
-*/
-static bool
-compatible_array(vinfo_array_t *aa, vinfo_array_t *bb, vinfo_array_t **result)
-{
-    /* 'aa' is the array from the live PsycoObject. 'bb' is from the snapshop.
-       Test for compatibility. More precisely, it must be allowable for the
-       living state 'aa' to jump back to the code already produced for the
-       state 'bb'. There might be more information in 'aa' than in 'bb' (which
-       will then just be discarded), but the converse is not allowable.
-       Moreover, if two slots in the arrays point to the same vinfo_t in 'bb',
-       they must also do so in 'aa' because the code compiled from 'bb' might
-       have used this fact. Conversely, shared pointers in 'aa' need *not* be
-       shared any more in 'bb'.
-
-       The sharing rule only applies to run-time values: for compile-time and
-       virtual-time values, being shared or not is irrelevant to the
-       compilation process.
-
-       Return value of compatible_array(): false if incompatible, otherwise
-       fills the 'result' array with the variables to un-promote.
-    */
-    int i;
-    int count = bb->count;
-    if (aa->count != count) {
-        if (aa->count <
-            count) /* array too short; ok only if the extra items */
-        {          /*   in 'bb' are all NULL.                     */
-            for (i = aa->count; i < count; i++)
-                if (bb->items[i] != NULL)
-                    return false; /* differs */
-            count = aa->count;
-        }
-        else /* array too long */
-        {
-#if 0
-          /* the extra items in 'aa' must pass the test (b == NULL) below. */
-          for (i=aa->count; i>count; )
-            {
-              vinfo_t* a = aa->items[--i];
-              if (a != NULL && is_compiletime(a->source) &&
-                  ((KNOWN_SOURCE(a)->refcount1_flags & SkFlagFixed) != 0))
-                return false;  /* incompatible */
-            }
-#else
-            /* the extra items in 'aa' must all be NULL. This is not strictly
-               necessary for a compatibility (the above condition is more
-               precise) but I guess that you get better results this way,
-               because you have more information for a recompilation.
-               XXX This assumption should be tested.
-               XXX What about requiring that no NULL goes non-NULL in the
-                   rest of the array as well? */
-            for (i = aa->count; i > count;)
-                if (aa->items[--i] != NULL)
-                    return false; /* differs */
-#endif
-        }
-    }
-    for (i = 0; i < count; i++) {
-        vinfo_t *a = aa->items[i];
-        vinfo_t *b = bb->items[i];
-        if (b == NULL) {
-            /* if b == NULL, any value in 'a' is ok --
-               with the exception of a fixed compile-time value, as
-               created by a promotion. Without the following test,
-               Psyco sometimes emits an infinite loop because the
-               PsycoObject after promotion is found to be compatible
-               with itself just before promotion. */
-            if (a != NULL && is_compiletime(a->source) &&
-                ((KNOWN_SOURCE(a)->refcount1_flags & SkFlagFixed) != 0))
-                goto incompatible;
-        }
-        else {
-            long diff;
-            /* we store in the 'tmp' fields of the 'bb' arrays pointers to the
-               vinfo_t that matched in 'aa'. We assume that all 'tmp' fields
-               are NULL initially. If, walking in the 'bb' arrays, we encounter
-               the same 'b' several times, we use these 'tmp' pointers to make
-               sure they all matched the same 'a'. */
-            if (b->tmp != NULL) {
-                /* This 'b' has already be seen. */
-                if (b->tmp == a)
-                    continue; /* quotient graph */
-
-                /* at this point, the graph 'aa' is not a quotient of the
-                   graph 'bb', i.e. two nodes are shared in 'bb' but not
-                   in 'aa'. This is not acceptable if it is a run-time
-                   value, or if it is a virtual-time value whose identity
-                   matters. */
-                switch (gettime(b->source)) {
-                    case RunTime:
-                        goto incompatible;
-
-                    case VirtualTime:
-                        if (SVIRTUAL_MUTABLE(VirtualTime_Get(b->source)))
-                            goto incompatible;
-                        break;
-
-                    default:;
-                }
-            }
-
-            /* A new 'b', let's check if its 'a' matches. */
-            if (a == NULL)
-                goto incompatible; /* NULL not compatible with non-NULL */
-            b->tmp = a;
-            diff = ((long)a->source) ^ ((long)b->source);
-            if (diff != 0) {
-                if ((diff & TimeMask) != 0)
-                    goto incompatible; /* not the same TIME_MASK */
-                if (is_runtime(a->source)) {
-                    if ((diff & RunTime_NoRef) != 0) {
-                        /* from 'with ref' to 'without ref' or vice-versa:
-                           a source in 'a' with reference cannot pass for
-                           a source in 'b' without reference */
-                        if ((a->source & RunTime_NoRef) == 0)
-                            goto incompatible;
-                    }
-                }
-                else {
-                    if (is_virtualtime(a->source))
-                        goto incompatible; /* different virtual sources */
-                    if (KNOWN_SOURCE(a)->value != KNOWN_SOURCE(b)->value) {
-                        if ((KNOWN_SOURCE(b)->refcount1_flags & SkFlagFixed) !=
-                            0)
-                            goto incompatible; /* b's value is fixed */
-                        if ((KNOWN_SOURCE(a)->refcount1_flags & SkFlagFixed) !=
-                                0 &&
-                            KNOWN_SOURCE(a)->value == 0)
-                            goto incompatible; /* hack: */
-                        /* fixed known-to-be-zero values have a special
-                           role to play with local variables: undefined
-                           variables. These must *never* be un-promoted
-                           to run-time, because we will get a NULL
-                           pointer and a segfault. Argh. */
-                        else {
-                            /* approximative match, might un-promote 'a' from
-                               compile-time to run-time. */
-                            /*fprintf(stderr, "psyco: compatible_array() with
-                             * vinfo_t* a=%p, b=%p\n", a, b);*/
-                            int i, ocount = (*result)->count;
-                            /* do not add several time the same value to the
-                             * array */
-                            for (i = 0; i < ocount; i++)
-                                if ((*result)->items[i] == a)
-                                    break;
-                            if (i == ocount) {
-                                *result = array_grow1(*result, ocount + 1);
-                                (*result)->items[ocount] = a;
-                            }
-                        }
-                    }
-                }
-            }
-            if (a->array !=
-                b->array) /* can only be equal if both ==NullArray */
-            {
-                if (is_compiletime(a->source)) {
-                    /* For compile-time values we don't bother comparing
-                       subarrays, because they only have a caching role
-                       in this case; they should never contain information
-                       different from what psyco_get_field() can load or
-                       reload from immutable data. */
-#if ALL_CHECKS
-                    /* we just verify that there are only compile-time
-                       subitems. */
-                    int j;
-                    for (j = 0; j < a->array->count; j++)
-                        extra_assert(
-                            a->array->items[j] == NULL ||
-                            is_compiletime(a->array->items[j]->source));
-                    for (j = 0; j < b->array->count; j++)
-                        extra_assert(
-                            b->array->items[j] == NULL ||
-                            is_compiletime(b->array->items[j]->source));
-#endif
-                }
-                else if (!compatible_array(a->array, b->array, result))
-                    goto incompatible;
-            }
-        }
-    }
-    return true;
-
-incompatible: /* we have to reset the 'tmp' fields to NULL,
-                 but only as far as we actually progressed */
-    for (; i >= 0; i--)
-        if (bb->items[i] != NULL) {
-            bb->items[i]->tmp = NULL;
-            if (bb->items[i]->array != NullArray)
-                clear_tmp_marks(bb->items[i]->array);
-        }
-    return false;
-}
-
-PSY_INLINE bool
-fz_compatible_array(vinfo_array_t *aa, FrozenPsycoObject *fpo,
-                    vcompatible_t *result)
-{
-    return compatible_array(aa, fpo->fz_vlocals, &result->diff);
-}
-
-#else /* if VLOCALS_OPC */
-
 /* forward */
 /* psyco_compatible_join: the known fields of a run-time value that the
    snapshot doesn't have are dropped at any depth, as compatible_array
@@ -1871,10 +1527,6 @@ compatible_unused_fact(vinfo_t *a, bool rt_parent)
 static bool
 compatible_array(vinfo_array_t *aa, int count, vinfo_array_t **result,
                  vinfo_array_t *reference, int recdepth, bool vint);
-#if COMPRESS_COMPILETIME_SUBITEMS
-static void
-skip_compatible_array(int count);
-#endif
 
 /* approximative match: 'a' may be un-promoted from compile-time to run-time */
 static void
@@ -2015,31 +1667,10 @@ compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
     if (bcount == 0 && a->array == NullArray)
         return true; /* shortcut */
 
-#if COMPRESS_COMPILETIME_SUBITEMS
-    if (/*skip_subarray*/ is_compiletime(bsource)) {
-        /* For compile-time values we don't bother comparing
-           subarrays, because they only have a caching role
-           in this case; they should never contain information
-           different from what psyco_get_field() can load or
-           reload from immutable data. */
-#if ALL_CHECKS
-        /* we just verify that there are only compile-time
-           subitems. */
-        int j;
-        for (j = 0; j < a->array->count; j++)
-            extra_assert(a->array->items[j] == NULL ||
-                         is_compiletime(a->array->items[j]->source));
-#endif
-        /* skip the subarray in the pseudo-code */
-        skip_compatible_array(bcount);
-        return true;
-    }
-#else  /* !COMPRESS_COMPILETIME_SUBITEMS */
     if (is_compiletime(bsource)) {
         extra_assert(bcount == 0);
         return true;
     }
-#endif /* COMPRESS_COMPILETIME_SUBITEMS */
 
     compatible_rt_parent = is_runtime(a->source);
     return compatible_array(a->array, bcount, result, aref->array,
@@ -2234,38 +1865,6 @@ compatible_array(vinfo_array_t *aa, int count, vinfo_array_t **result,
 #undef CHECK_FOR_NULL
 }
 
-#if COMPRESS_COMPILETIME_SUBITEMS
-/* same as 'compatible_array', faster, for when you are not
-   interested in the result */
-static void
-skip_compatible_array(int count)
-{
-    int i;
-    extra_assert(count >= 0);
-    for (i = count; i--;) {
-        int opc = fz_getopc();
-        extra_assert(cmpinternal.tmp_counter <= cmpinternal.vcilink->time);
-        if (opc == FZ_OPC_NULL)
-            ;
-        else if (opc < 0)
-            ;
-        else {
-#if ALL_CHECKS
-            Source bsource = fz_getarg();
-            extra_assert(is_compiletime(bsource));
-#else
-            fz_getarg();
-#endif
-            skip_compatible_array(opc);
-
-            /* no link should resolve now, fz_compress() takes care of that */
-            extra_assert(cmpinternal.tmp_counter < cmpinternal.vcilink->time);
-            cmpinternal.tmp_counter++;
-        }
-    }
-}
-#endif /* COMPRESS_COMPILETIME_SUBITEMS */
-
 PSY_INLINE bool
 fz_compatible_array(vinfo_array_t *aa, FrozenPsycoObject *fpo,
                     vcompatible_t *result)
@@ -2284,8 +1883,6 @@ fz_compatible_array(vinfo_array_t *aa, FrozenPsycoObject *fpo,
 
     return ok;
 }
-
-#endif /* VLOCALS_OPC */
 
 /* whether releasing 'a' would release a run-time reference, which needs
    code emitted */
@@ -3581,6 +3178,32 @@ promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key, bool interpret)
     return result;
 }
 
+/* psyco_fused_pyobj_promotion: as do_promotion_pyobj, and a value past
+   MEGAMORPHIC_MAX stops the generator expression's fusing */
+static code_t *
+do_promotion_pyobj_fused(rt_promotion_t *fs, PyObject *key)
+{
+#if LE_CODESTATS
+    psyco_cs_promo_miss(fs->cs_site);
+#endif
+    code_t *result;
+    long key1 = (long)key;
+
+    QUICK_LOOKUP_PROMOTION_VALUE(fs, key1, result);
+    if (result == NULL) {
+        rt_local_buf_t *megabuf = NULL;
+        if (lookup_count_previous_values(fs, &megabuf) >= MEGAMORPHIC_MAX) {
+            parked_state_t *ps = &fs->state;
+            PyObject *mps = ps->live != NULL ? ps->live->pr.merge_points
+                                             : ps->merge_points;
+            *psyco_fuse_stopped(mps) = 1;
+        }
+        result = do_promotion_internal(fs, key1, SkFlagFixed | SkFlagPyObj);
+    }
+    promotion_cache_add(fs, key1, result);
+    return result;
+}
+
 static code_t *
 do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key)
 {
@@ -3670,6 +3293,9 @@ psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags)
             break;
         case PFlagPyObj | PFlagMegamorphic | PFlagInterpret:
             do_promotion = &do_promotion_pyobj_interp;
+            break;
+        case PFlagPyObj | PFlagFused:
+            do_promotion = &do_promotion_pyobj_fused;
             break;
         default:
             psyco_fatal_msg("bad pflags");
