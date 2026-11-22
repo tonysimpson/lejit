@@ -71,6 +71,9 @@ EXTERNFN void
 psyco_frame_catcher_end(PyObject **word);
 EXTERNFN void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
+/* the frame 'f' has just run and outlives its call (le_frame_outlives) */
+EXTERNFN void
+psyco_frame_returned(le_frame_t *f);
 EXTERNFN PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack);
 /* PyObject* psyco_get_locals(void); this one implemented in psyco.c */

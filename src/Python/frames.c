@@ -1410,6 +1410,33 @@ psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
     Py_XDECREF(back);
 }
 
+/* A frame that has just run and outlives its call keeps as f_back the
+   frame it was called from. Where that is a real frame LeCode_Run runs
+   while its code is in a compiled callee or inlined frame, which made
+   the call, f_back is that frame instead, emulated and linked to the ones
+   out of it, as CPython's would be: frame_get_back can't find it once the
+   call is over. */
+DEFINEFN
+void
+psyco_frame_returned(le_frame_t *f)
+{
+    le_frame_t *back = le_frame_back(f);
+    FrameRuntime *fr = back == NULL ? NULL : psyco_frame_start_get(back);
+    PyFrameObject *top;
+    PyObject *t, *v, *tb;
+    /* the root slot is even while the code is in a compiled callee or
+       inlined frame (psyco_running_real_frame) */
+    if (fr == NULL || fr->resumed || !le_frame_executing(back) ||
+        (((long)**fr->psy_frames_start) & 1) != 0)
+        return;
+    PyErr_Fetch(&t, &v, &tb);
+    top = linked_frame(0, NULL);
+    if (top != NULL)
+        le_frame_set_back_at_exit(f, top);
+    PyErr_Clear();
+    PyErr_Restore(t, v, tb);
+}
+
 DEFINEFN
 void
 psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
