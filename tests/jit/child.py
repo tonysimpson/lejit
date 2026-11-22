@@ -32,7 +32,11 @@ if checked:
 # rounds (9 unless the case says), not one: compiling can go on for a few
 # calls (a call site that sees a new function each time specialises until
 # it goes megamorphic), and that bounded growth is
-# tests/jit/bounds.py's business.
+# tests/jit/bounds.py's business. The collector is off for the 100 rounds
+# and runs at their end: where it is scheduled through eval_breaker, a
+# collection starting in compiled code takes that test's rare path, which
+# is compiled when first taken, so which of them compile during the rounds
+# would depend on when collections happen.
 import gc
 for _ in range(int(sys.argv[7])):
     for args in calls:
@@ -42,12 +46,14 @@ for _ in range(int(sys.argv[7])):
             pass
 gc.collect()
 before = sys.getallocatedblocks()
+gc.disable()
 for _ in range(100):
     for args in calls:
         try:
             fn(*args)
         except Exception:
             pass
+gc.enable()
 gc.collect()
 out.append('leak: %d' % (sys.getallocatedblocks() - before))
 for line in out:

@@ -136,6 +136,19 @@ def nested_code_changes(k):
     return out
 
 
+import math
+
+
+class Ceil:
+    def __ceil__(self):
+        return 42
+
+
+# math.ceil and math.floor of what isn't a float go to the real functions
+def ceil_floor_objects(x):
+    return math.ceil(x), math.floor(2.5), math.ceil(Ceil())
+
+
 CASES = [
     ('call_helper', [(1,), (-4,)], {}),
     ('call_in_loop', [(0,), (50,)], {}),
@@ -152,4 +165,5 @@ CASES = [
     ('new_class_bases', [()], {}),
     ('type_call_errors', "[(tuple,), (set,)]", {}),
     ('nested_code_changes', [(4,), (2.5,)], {}),
+    ('ceil_floor_objects', "[(Ceil(),), (7,), (1.5,)]", {}),
 ]

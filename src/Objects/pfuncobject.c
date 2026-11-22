@@ -219,6 +219,31 @@ field_changed(PsycoObject *po, PyObject *f, defield_t df, PyObject *expected)
 #define FUNC_code_now FMUT(FUNC_code)
 #define FUNC_defaults_now FMUT(FUNC_defaults)
 
+#ifdef Py_TPFLAGS_HAVE_VECTORCALL
+/* CPython calls a function through its vectorcall function, which C code
+   may have replaced: emits 'func's is not the usual one' and says if it
+   is true at run time */
+#define FUNC_vectorcall_now                                          \
+    STRUCT_FIELD_BUILD(PyFunctionObject, vectorcallfunc, vectorcall, \
+                       NO_PREV_FIELD, FIELD_MUTABLE)
+static int
+vectorcall_replaced(PsycoObject *po, vinfo_t *func)
+{
+    vinfo_t *vnow = psyco_get_field(po, func, FUNC_vectorcall_now);
+    vinfo_t *vusual;
+    condition_code_t cc;
+    if (vnow == NULL)
+        return -1;
+    vusual = vinfo_new(CompileTime_New((long)_PyFunction_Vectorcall));
+    cc = integer_cmp(po, vnow, vusual, Py_NE);
+    vinfo_decref(vusual, po);
+    vinfo_decref(vnow, po);
+    if (cc == CC_ERROR)
+        return -1;
+    return runtime_condition_f(po, cc);
+}
+#endif
+
 DEFINEFN
 vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
@@ -235,6 +260,12 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     /* the code and the defaults are those compiled while f still has
        them */
     co = compiled_code(f);
+#ifdef Py_TPFLAGS_HAVE_VECTORCALL
+    /* as vectorcall_replaced, read when compiling the call */
+    if (*(vectorcallfunc *)((char *)f + Py_TYPE(f)->tp_vectorcall_offset) !=
+        _PyFunction_Vectorcall)
+        goto fallback;
+#endif
     /* psyco_call_pyfunc's own fallback rebuilds the function from code,
        globals and defaults, losing keyword-only defaults: call the real
        function instead */
@@ -329,6 +360,16 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
                     return NULL;
                 if (runtime_condition_f(po, cc))
                     goto fallback;
+#ifdef Py_TPFLAGS_HAVE_VECTORCALL
+                switch (vectorcall_replaced(po, func)) {
+                    case 0:
+                        break;
+                    case 1:
+                        goto fallback;
+                    default:
+                        return NULL;
+                }
+#endif
                 return psyco_call_closure(po, func, (PyCodeObject *)c, arg);
             }
         }
