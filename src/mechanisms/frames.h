@@ -52,6 +52,14 @@ le_frame_complete(le_frame_t *f)
 {
     return !_PyFrame_IsIncomplete(f);
 }
+/* the frame's code starts running compiled: placed as ceval places it
+   once past the instructions before the first traceable one (RESUME), so
+   that it is complete */
+static inline void
+le_frame_start(le_frame_t *f)
+{
+    f->prev_instr = _PyCode_CODE(f->f_code) + f->f_code->_co_firsttraceable;
+}
 /* the frame object Python sees (borrowed), made if it has none:
    PyEval_GetFrame makes the current frame's, so the frame is made current
    for it. NULL with no exception set if it can't be made. */
@@ -210,6 +218,12 @@ le_frame_complete(le_frame_t *f)
 {
     (void)f;
     return 1;
+}
+/* the frame's code starts running compiled */
+static inline void
+le_frame_start(le_frame_t *f)
+{
+    (void)f;
 }
 /* the frame object Python sees (borrowed) */
 static inline PyFrameObject *

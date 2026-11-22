@@ -95,16 +95,22 @@ report_destructor(PyObject *capsule)
     })
 
 /* target: in code units. A backward jump is to a loop head: always a merge
-   point, or compilation would unroll the loop */
-#define ENTER_JUMP_TO(target)                \
-    do {                                     \
-        Py_ssize_t _t = JUMP_TARGET(target); \
-        if (_t <= entry_count_index) {       \
-            entry_count[_t] = 8;             \
-            BREAKER_CHECK(_t);               \
-        }                                    \
-        else                                 \
-            _ENTER_INC(_t);                  \
+   point, or compilation would unroll the loop. Where backward jumps have
+   opcodes of their own, ceval tests eval_breaker at the jump (but not at
+   JUMP_BACKWARD_NO_INTERRUPT), so compiled code tests before it; else at
+   the loop head */
+#define ENTER_JUMP_TO(target)                              \
+    do {                                                   \
+        Py_ssize_t _t = JUMP_TARGET(target);               \
+        if (_t <= entry_count_index) {                     \
+            entry_count[_t] = 8;                           \
+            if (!LE_IS_JBACK(opcode))                      \
+                BREAKER_CHECK(_t);                         \
+            else if (opcode != JUMP_BACKWARD_NO_INTERRUPT) \
+                breaker_check[entry_count_index] = 1;      \
+        }                                                  \
+        else                                               \
+            _ENTER_INC(_t);                                \
     } while (0)
 
 /* the current instruction's jump target, in code units */
@@ -125,11 +131,14 @@ report_destructor(PyObject *capsule)
      (op) == JUMP_FORWARD || (op) == JUMP_ABSOLUTE ||                         \
      (op) == POP_JUMP_IF_FALSE || (op) == POP_JUMP_IF_TRUE ||                 \
      (op) == JUMP_IF_FALSE_OR_POP || (op) == JUMP_IF_TRUE_OR_POP ||           \
-     (op) == EXTENDED_ARG)
+     (op) == EXTENDED_ARG || (op) == RESUME || (op) == COPY ||                \
+     (op) == SWAP || (op) == PUSH_NULL || (op) == JUMP_BACKWARD ||            \
+     (op) == POP_JUMP_FORWARD_IF_FALSE || (op) == POP_JUMP_FORWARD_IF_TRUE || \
+     (op) == POP_JUMP_BACKWARD_IF_FALSE || (op) == POP_JUMP_BACKWARD_IF_TRUE)
 
 /* ceval tests eval_breaker before every instruction it reaches through
    DISPATCH(): after most opcodes, and at a frame's start. Compiled code
-   tests it at the target of every backward jump, after calls (below) and
+   tests it at every backward jump (ENTER_JUMP_TO), after calls (below) and
    LeCode_Run at the start; before one of BREAKER_SKIPS, the test is before
    the next instruction instead. */
 #define BREAKER_CHECK(unit)              \
@@ -195,6 +204,8 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
             case RAISE_VARARGS:
                 break;
             case JUMP_ABSOLUTE:
+            case JUMP_BACKWARD:
+            case JUMP_BACKWARD_NO_INTERRUPT:
             case CONTINUE_LOOP:
             case JUMP_FORWARD:
             case CALL_FINALLY: /* its return, by END_FINALLY, is an exit_to */
@@ -400,6 +411,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 break;
             /* unconditional jumps */
             case JUMP_ABSOLUTE:
+            case JUMP_BACKWARD:
+            case JUMP_BACKWARD_NO_INTERRUPT:
             case CONTINUE_LOOP:
             case JUMP_FORWARD:
                 ENTER_JUMP_TO(TARGET_UNIT());
@@ -544,6 +557,236 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
     return 0;
 }
 
+/* The opcodes pycompiler.c compiles, family by family: code with any
+   other runs in ceval. Where handlers are in an exception table, only the
+   families ported to that bytecode are compiled. */
+static int
+compiled_opcode(int op)
+{
+    switch (op) {
+        /* locals, constants and the stack */
+        case NOP:
+        case EXTENDED_ARG:
+        case RESUME:
+        case LOAD_FAST:
+        case LOAD_CONST:
+        case STORE_FAST:
+        case DELETE_FAST:
+        case POP_TOP:
+        case ROT_TWO:
+        case ROT_THREE:
+#if LE_HAS_OPCODE_ROT_FOUR
+        case ROT_FOUR:
+#endif
+#if LE_HAS_OPCODE_ROT_N
+        case ROT_N:
+#endif
+        case DUP_TOP:
+        case DUP_TOP_TWO:
+        case COPY:
+        case SWAP:
+        case PUSH_NULL:
+        /* operators */
+        case UNARY_POSITIVE:
+        case UNARY_NEGATIVE:
+        case UNARY_NOT:
+        case UNARY_INVERT:
+        case BINARY_OP:
+        case BINARY_POWER:
+        case BINARY_MULTIPLY:
+        case BINARY_MATRIX_MULTIPLY:
+        case BINARY_TRUE_DIVIDE:
+        case BINARY_FLOOR_DIVIDE:
+        case BINARY_MODULO:
+        case BINARY_ADD:
+        case BINARY_SUBTRACT:
+        case BINARY_LSHIFT:
+        case BINARY_RSHIFT:
+        case BINARY_AND:
+        case BINARY_XOR:
+        case BINARY_OR:
+        case INPLACE_POWER:
+        case INPLACE_MULTIPLY:
+        case INPLACE_MATRIX_MULTIPLY:
+        case INPLACE_TRUE_DIVIDE:
+        case INPLACE_FLOOR_DIVIDE:
+        case INPLACE_MODULO:
+        case INPLACE_ADD:
+        case INPLACE_SUBTRACT:
+        case INPLACE_LSHIFT:
+        case INPLACE_RSHIFT:
+        case INPLACE_AND:
+        case INPLACE_XOR:
+        case INPLACE_OR:
+        case COMPARE_OP:
+#if LE_HAS_OPCODE_IS_OP
+        case IS_OP:
+#endif
+#if LE_HAS_OPCODE_CONTAINS_OP
+        case CONTAINS_OP:
+#endif
+        /* jumps and return */
+        case JUMP_FORWARD:
+        case JUMP_ABSOLUTE:
+        case JUMP_BACKWARD:
+        case JUMP_BACKWARD_NO_INTERRUPT:
+        case POP_JUMP_IF_FALSE:
+        case POP_JUMP_IF_TRUE:
+        case POP_JUMP_FORWARD_IF_FALSE:
+        case POP_JUMP_FORWARD_IF_TRUE:
+        case POP_JUMP_BACKWARD_IF_FALSE:
+        case POP_JUMP_BACKWARD_IF_TRUE:
+        case POP_JUMP_FORWARD_IF_NONE:
+        case POP_JUMP_FORWARD_IF_NOT_NONE:
+        case POP_JUMP_BACKWARD_IF_NONE:
+        case POP_JUMP_BACKWARD_IF_NOT_NONE:
+        case JUMP_IF_FALSE_OR_POP:
+        case JUMP_IF_TRUE_OR_POP:
+        case RETURN_VALUE:
+            return 1;
+    }
+#if !LE_HAS_EXCEPTION_TABLE
+    switch (op) {
+        /* calls, cells and functions */
+        case CALL_FUNCTION:
+        case CALL_FUNCTION_KW:
+        case CALL_FUNCTION_EX:
+        case CALL_METHOD:
+        case LOAD_METHOD:
+        case MAKE_FUNCTION:
+        case LOAD_CLOSURE:
+        case LOAD_DEREF:
+        case STORE_DEREF:
+        case DELETE_DEREF:
+        /* exceptions, and the blocks that handle them */
+        case RAISE_VARARGS:
+        case SETUP_LOOP:
+        case SETUP_EXCEPT:
+        case SETUP_FINALLY:
+        case SETUP_WITH:
+        case POP_BLOCK:
+        case POP_EXCEPT:
+        case END_FINALLY:
+        case BEGIN_FINALLY:
+        case CALL_FINALLY:
+        case POP_FINALLY:
+        case BREAK_LOOP:
+        case CONTINUE_LOOP:
+        case WITH_CLEANUP_START:
+        case WITH_CLEANUP_FINISH:
+#if LE_HAS_OPCODE_WITH_EXCEPT_START
+        case WITH_EXCEPT_START:
+#endif
+#if LE_HAS_OPCODE_RERAISE
+        case RERAISE:
+#endif
+#if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
+        case JUMP_IF_NOT_EXC_MATCH:
+#endif
+        case BEFORE_ASYNC_WITH:
+        /* globals and names */
+        case LOAD_GLOBAL:
+        case STORE_GLOBAL:
+        case DELETE_GLOBAL:
+        case LOAD_NAME:
+        case STORE_NAME:
+        case DELETE_NAME:
+        /* attributes */
+        case LOAD_ATTR:
+        case STORE_ATTR:
+        case DELETE_ATTR:
+        /* the others: subscripts, building and unpacking, imports,
+           strings, iteration, pattern matching and generators */
+        case BINARY_SUBSCR:
+        case STORE_SUBSCR:
+        case DELETE_SUBSCR:
+        case BUILD_TUPLE:
+        case BUILD_LIST:
+        case BUILD_SET:
+        case BUILD_MAP:
+        case BUILD_CONST_KEY_MAP:
+        case BUILD_STRING:
+        case BUILD_SLICE:
+        case LIST_APPEND:
+        case SET_ADD:
+        case MAP_ADD:
+#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
+        case BUILD_TUPLE_UNPACK_WITH_CALL:
+#endif
+#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK
+        case BUILD_TUPLE_UNPACK:
+#endif
+#if LE_HAS_OPCODE_BUILD_LIST_UNPACK
+        case BUILD_LIST_UNPACK:
+#endif
+#if LE_HAS_OPCODE_LIST_TO_TUPLE
+        case LIST_TO_TUPLE:
+#endif
+#if LE_HAS_OPCODE_LIST_EXTEND
+        case LIST_EXTEND:
+#endif
+#if LE_HAS_OPCODE_SET_UPDATE
+        case SET_UPDATE:
+#endif
+#if LE_HAS_OPCODE_BUILD_SET_UNPACK
+        case BUILD_SET_UNPACK:
+#endif
+#if LE_HAS_OPCODE_BUILD_MAP_UNPACK
+        case BUILD_MAP_UNPACK:
+#endif
+#if LE_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
+        case BUILD_MAP_UNPACK_WITH_CALL:
+#endif
+#if LE_HAS_OPCODE_DICT_UPDATE
+        case DICT_UPDATE:
+#endif
+#if LE_HAS_OPCODE_DICT_MERGE
+        case DICT_MERGE:
+#endif
+        case UNPACK_SEQUENCE:
+        case UNPACK_EX:
+        case IMPORT_NAME:
+        case IMPORT_FROM:
+        case IMPORT_STAR:
+        case FORMAT_VALUE:
+        case PRINT_EXPR:
+        case LOAD_BUILD_CLASS:
+#if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
+        case LOAD_ASSERTION_ERROR:
+#endif
+        case GET_ITER:
+        case FOR_ITER:
+#if LE_HAS_OPCODE_GET_LEN
+        case GET_LEN:
+#endif
+#if LE_HAS_OPCODE_MATCH_CLASS
+        case MATCH_CLASS:
+#endif
+#if LE_HAS_OPCODE_MATCH_MAPPING
+        case MATCH_MAPPING:
+#endif
+#if LE_HAS_OPCODE_MATCH_SEQUENCE
+        case MATCH_SEQUENCE:
+#endif
+#if LE_HAS_OPCODE_MATCH_KEYS
+        case MATCH_KEYS:
+#endif
+#if LE_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
+        case COPY_DICT_WITHOUT_KEYS:
+#endif
+        case YIELD_VALUE:
+        case GEN_START:
+        case GET_YIELD_FROM_ITER:
+        case GET_AITER:
+#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
+        case GET_ANEXT:
+#endif
+            return 1;
+    }
+#endif
+    return 0;
+}
+
 static PyObject *
 _build_merge_points(PyCodeObject *co, int module)
 {
@@ -552,12 +795,6 @@ _build_merge_points(PyCodeObject *co, int module)
     co_report_t *report;
     int reads_class, bad = 0;
 
-#if LE_HAS_EXCEPTION_TABLE
-    /* the compiler doesn't translate this bytecode yet (handlers in an
-       exception table, inline caches, its call sequence): everything runs
-       in ceval */
-    goto not_ok;
-#endif
     /* XXX tony: all these not supported/buggy currently */
     if (module) {
         goto not_ok;
@@ -583,210 +820,13 @@ _build_merge_points(PyCodeObject *co, int module)
         opcode = in.op;
         oparg = in.arg;
         pos = in.next;
+        if (!compiled_opcode(opcode))
+            goto not_ok;
         if (opcode == LOAD_GLOBAL && loads_frame_locals_builtin(co, oparg))
             goto not_ok;
         if (reads_class && oparg == 0 &&
             (opcode == STORE_FAST || opcode == DELETE_FAST))
             goto not_ok;
-
-        switch (opcode) {
-            /* every case pycompiler.c has: those translated from ceval.c */
-            case NOP:
-            case LOAD_FAST:
-            case LOAD_CONST:
-            case STORE_FAST:
-            case POP_TOP:
-            case ROT_TWO:
-            case ROT_THREE:
-#if LE_HAS_OPCODE_ROT_FOUR
-            case ROT_FOUR:
-#endif
-            case DUP_TOP:
-            case DUP_TOP_TWO:
-            case UNARY_POSITIVE:
-            case UNARY_NEGATIVE:
-            case UNARY_NOT:
-            case UNARY_INVERT:
-            case BINARY_POWER:
-            case BINARY_MULTIPLY:
-            case BINARY_MATRIX_MULTIPLY:
-            case BINARY_TRUE_DIVIDE:
-            case BINARY_FLOOR_DIVIDE:
-            case BINARY_MODULO:
-            case BINARY_ADD:
-            case BINARY_SUBTRACT:
-            case BINARY_SUBSCR:
-            case BINARY_LSHIFT:
-            case BINARY_RSHIFT:
-            case BINARY_AND:
-            case BINARY_XOR:
-            case BINARY_OR:
-            case LIST_APPEND:
-            case SET_ADD:
-            case INPLACE_POWER:
-            case INPLACE_MULTIPLY:
-            case INPLACE_MATRIX_MULTIPLY:
-            case INPLACE_TRUE_DIVIDE:
-            case INPLACE_FLOOR_DIVIDE:
-            case INPLACE_MODULO:
-            case INPLACE_ADD:
-            case INPLACE_SUBTRACT:
-            case INPLACE_LSHIFT:
-            case INPLACE_RSHIFT:
-            case INPLACE_AND:
-            case INPLACE_XOR:
-            case INPLACE_OR:
-            case STORE_SUBSCR:
-            case DELETE_SUBSCR:
-            case PRINT_EXPR:
-            case GET_AITER:
-#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
-            case GET_ANEXT:
-#endif
-#if LE_HAS_OPCODE_RERAISE
-            case RERAISE:
-#endif
-#if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
-            case LOAD_ASSERTION_ERROR:
-#endif
-            case LOAD_BUILD_CLASS:
-            case STORE_ATTR:
-            case DELETE_ATTR:
-            case STORE_GLOBAL:
-            case DELETE_GLOBAL:
-            case DELETE_FAST:
-            case DELETE_DEREF:
-            case LOAD_CLOSURE:
-            case LOAD_DEREF:
-            case STORE_DEREF:
-            case BUILD_STRING:
-            case BUILD_TUPLE:
-            case BUILD_LIST:
-#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
-            case BUILD_TUPLE_UNPACK_WITH_CALL:
-#endif
-#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK
-            case BUILD_TUPLE_UNPACK:
-#endif
-#if LE_HAS_OPCODE_BUILD_LIST_UNPACK
-            case BUILD_LIST_UNPACK:
-#endif
-#if LE_HAS_OPCODE_LIST_TO_TUPLE
-            case LIST_TO_TUPLE:
-#endif
-#if LE_HAS_OPCODE_LIST_EXTEND
-            case LIST_EXTEND:
-#endif
-#if LE_HAS_OPCODE_SET_UPDATE
-            case SET_UPDATE:
-#endif
-            case BUILD_SET:
-#if LE_HAS_OPCODE_BUILD_SET_UNPACK
-            case BUILD_SET_UNPACK:
-#endif
-            case BUILD_MAP:
-#if LE_HAS_OPCODE_BUILD_MAP_UNPACK
-            case BUILD_MAP_UNPACK:
-#endif
-#if LE_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
-            case BUILD_MAP_UNPACK_WITH_CALL:
-#endif
-#if LE_HAS_OPCODE_DICT_UPDATE
-            case DICT_UPDATE:
-#endif
-#if LE_HAS_OPCODE_DICT_MERGE
-            case DICT_MERGE:
-#endif
-            case MAP_ADD:
-            case LOAD_ATTR:
-            case COMPARE_OP:
-#if LE_HAS_OPCODE_IS_OP
-            case IS_OP:
-#endif
-#if LE_HAS_OPCODE_CONTAINS_OP
-            case CONTAINS_OP:
-#endif
-#if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
-            case JUMP_IF_NOT_EXC_MATCH:
-#endif
-            case IMPORT_FROM:
-            case JUMP_FORWARD:
-            case POP_JUMP_IF_FALSE:
-            case POP_JUMP_IF_TRUE:
-            case JUMP_IF_FALSE_OR_POP:
-            case JUMP_IF_TRUE_OR_POP:
-            case JUMP_ABSOLUTE:
-#if LE_HAS_OPCODE_GET_LEN
-            case GET_LEN:
-#endif
-#if LE_HAS_OPCODE_MATCH_CLASS
-            case MATCH_CLASS:
-#endif
-#if LE_HAS_OPCODE_MATCH_MAPPING
-            case MATCH_MAPPING:
-#endif
-#if LE_HAS_OPCODE_MATCH_SEQUENCE
-            case MATCH_SEQUENCE:
-#endif
-#if LE_HAS_OPCODE_MATCH_KEYS
-            case MATCH_KEYS:
-#endif
-#if LE_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
-            case COPY_DICT_WITHOUT_KEYS:
-#endif
-            case GET_ITER:
-            case GET_YIELD_FROM_ITER:
-            case BEFORE_ASYNC_WITH:
-#if LE_HAS_OPCODE_WITH_EXCEPT_START
-            case WITH_EXCEPT_START:
-#endif
-            case LOAD_METHOD:
-            case BUILD_SLICE:
-            case FORMAT_VALUE:
-#if LE_HAS_OPCODE_ROT_N
-            case ROT_N:
-#endif
-            /* and the others */
-            case RAISE_VARARGS:
-            case RETURN_VALUE:
-            case YIELD_VALUE:
-            case POP_EXCEPT:
-            case POP_BLOCK:
-            case END_FINALLY:
-            case STORE_NAME:
-            case DELETE_NAME:
-            case UNPACK_SEQUENCE:
-            case UNPACK_EX:
-            case LOAD_NAME:
-            case LOAD_GLOBAL:
-            case BUILD_CONST_KEY_MAP:
-            case IMPORT_NAME:
-            case IMPORT_STAR:
-            case FOR_ITER:
-            case BREAK_LOOP:
-            case CONTINUE_LOOP:
-            case SETUP_LOOP:
-            case SETUP_EXCEPT:
-            case SETUP_FINALLY:
-            case SETUP_WITH:
-            case WITH_CLEANUP_START:
-            case WITH_CLEANUP_FINISH:
-            case CALL_METHOD:
-            case CALL_FUNCTION:
-            case CALL_FUNCTION_KW:
-            case CALL_FUNCTION_EX:
-            case MAKE_FUNCTION:
-            case EXTENDED_ARG:
-            case BEGIN_FINALLY:
-            case CALL_FINALLY:
-            case POP_FINALLY:
-            case GEN_START:
-                continue;
-            default:
-                // printf("Not ok %s %d\n", PyUnicode_AsUTF8(co->co_name),
-                // opcode);
-                goto not_ok;
-        }
     }
 
     report = _find_merge_points(co, &bad);

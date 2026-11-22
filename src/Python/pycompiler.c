@@ -1450,6 +1450,13 @@ psyco_pycompiler_init(void)
 #define STACK_LEVEL() (po->pr.stack_level)
 #define JUMPBY(offset) (next_instr += (offset))
 #define JUMPTO(target) (next_instr = (target))
+/* the target of the jump instruction being compiled, in bytes: its
+   argument counts from the start or from the next instruction, forwards or
+   backwards, as LE_IS_JABS and LE_IS_JBACK say */
+#define JUMP_DEST()                                                     \
+    (LE_IS_JABS(opcode) ? LE_JUMP_BYTES(oparg)                          \
+                        : next_instr + (LE_IS_JBACK(opcode) ? -1 : 1) * \
+                                           LE_JUMP_BYTES(oparg))
 
 /* CALL_FINALLY's return offset: an int object, one per offset, so that two
    states pushing it compare equal (a fixed constant must match exactly) */
@@ -5418,6 +5425,68 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
+                /* the frame's start (LeCode_Run tested eval_breaker), or a
+                   generator's resumption, which isn't compiled */
+                case RESUME:
+                    goto fine;
+
+                case COPY: {
+                    vinfo_t *bottom = NTOP(oparg);
+                    vinfo_incref(bottom);
+                    PUSH(bottom);
+                    goto fine;
+                }
+
+                case SWAP: {
+                    vinfo_t *top = NTOP(1);
+                    stack_a[po->pr.stack_level - 1] = NTOP(oparg);
+                    stack_a[po->pr.stack_level - oparg] = top;
+                    goto fine;
+                }
+
+                case PUSH_NULL:
+                    PUSH(psyco_vi_Zero());
+                    goto fine;
+
+#if LE_HAS_OPCODE_BINARY_OP
+                /* an operator by its NB_ number: compiled as the opcode
+                   that had it before (absent here, so its number is
+                   free) */
+                case BINARY_OP: {
+                    static const short ops[] = {
+                        [NB_ADD] = BINARY_ADD,
+                        [NB_AND] = BINARY_AND,
+                        [NB_FLOOR_DIVIDE] = BINARY_FLOOR_DIVIDE,
+                        [NB_LSHIFT] = BINARY_LSHIFT,
+                        [NB_MATRIX_MULTIPLY] = BINARY_MATRIX_MULTIPLY,
+                        [NB_MULTIPLY] = BINARY_MULTIPLY,
+                        [NB_REMAINDER] = BINARY_MODULO,
+                        [NB_OR] = BINARY_OR,
+                        [NB_POWER] = BINARY_POWER,
+                        [NB_RSHIFT] = BINARY_RSHIFT,
+                        [NB_SUBTRACT] = BINARY_SUBTRACT,
+                        [NB_TRUE_DIVIDE] = BINARY_TRUE_DIVIDE,
+                        [NB_XOR] = BINARY_XOR,
+                        [NB_INPLACE_ADD] = INPLACE_ADD,
+                        [NB_INPLACE_AND] = INPLACE_AND,
+                        [NB_INPLACE_FLOOR_DIVIDE] = INPLACE_FLOOR_DIVIDE,
+                        [NB_INPLACE_LSHIFT] = INPLACE_LSHIFT,
+                        [NB_INPLACE_MATRIX_MULTIPLY] = INPLACE_MATRIX_MULTIPLY,
+                        [NB_INPLACE_MULTIPLY] = INPLACE_MULTIPLY,
+                        [NB_INPLACE_REMAINDER] = INPLACE_MODULO,
+                        [NB_INPLACE_OR] = INPLACE_OR,
+                        [NB_INPLACE_POWER] = INPLACE_POWER,
+                        [NB_INPLACE_RSHIFT] = INPLACE_RSHIFT,
+                        [NB_INPLACE_SUBTRACT] = INPLACE_SUBTRACT,
+                        [NB_INPLACE_TRUE_DIVIDE] = INPLACE_TRUE_DIVIDE,
+                        [NB_INPLACE_XOR] = INPLACE_XOR};
+                    extra_assert(oparg >= 0 &&
+                                 oparg < (int)(sizeof(ops) / sizeof(ops[0])));
+                    opcode = ops[oparg];
+                    goto dispatch_opcode;
+                }
+#endif
+
                 case UNARY_POSITIVE: {
                     vinfo_t *res;
                     vinfo_t *value;
@@ -7437,13 +7506,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     vinfo_decref(left, po);
                     _t5 = integer_non_null(po, _t6);
                     vinfo_decref(_t6, po);
-#if LE_HAS_JUMP_IN_INSTRUCTIONS
-                    JUMP_IF_CC(INVERT_CC(_t5),
-                               JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT)), 0,
-                               0);
-#else
-                    JUMP_IF_CC(INVERT_CC(_t5), JUMPTO(oparg), 0, 0);
-#endif
+                    JUMP_IF_CC(INVERT_CC(_t5), JUMPTO(JUMP_DEST()), 0, 0);
                     goto fine;
                 error_jump_if_not_exc_match:
                     break;
@@ -7475,16 +7538,17 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
-                case JUMP_FORWARD: {
-#if LE_HAS_JUMP_IN_INSTRUCTIONS
-                    JUMPBY((oparg) * (int)sizeof(_Py_CODEUNIT));
-#else
-                    JUMPBY(oparg);
-#endif
+                case JUMP_FORWARD:
+                case JUMP_ABSOLUTE:
+                case JUMP_BACKWARD:
+                case JUMP_BACKWARD_NO_INTERRUPT: {
+                    JUMPTO(JUMP_DEST());
                     JUMPED();
                 }
 
-                case POP_JUMP_IF_FALSE: {
+                case POP_JUMP_IF_FALSE:
+                case POP_JUMP_FORWARD_IF_FALSE:
+                case POP_JUMP_BACKWARD_IF_FALSE: {
                     condition_code_t _t2;
                     vinfo_t *cond;
                     vinfo_t *err;
@@ -7499,19 +7563,15 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         break;
                     }
                     vinfo_decref(err, po);
-#if LE_HAS_JUMP_IN_INSTRUCTIONS
-                    JUMP_IF_CC(INVERT_CC(_t2),
-                               JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT)), 1,
-                               1);
-#else
-                    JUMP_IF_CC(INVERT_CC(_t2), JUMPTO(oparg), 1, 1);
-#endif
+                    JUMP_IF_CC(INVERT_CC(_t2), JUMPTO(JUMP_DEST()), 1, 1);
                     POP(cond);
                     vinfo_decref(cond, po);
                     goto fine;
                 }
 
-                case POP_JUMP_IF_TRUE: {
+                case POP_JUMP_IF_TRUE:
+                case POP_JUMP_FORWARD_IF_TRUE:
+                case POP_JUMP_BACKWARD_IF_TRUE: {
                     condition_code_t _t2;
                     vinfo_t *cond;
                     vinfo_t *err;
@@ -7526,13 +7586,25 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         break;
                     }
                     vinfo_decref(err, po);
-#if LE_HAS_JUMP_IN_INSTRUCTIONS
-                    JUMP_IF_CC(_t2,
-                               JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT)), 1,
-                               1);
-#else
-                    JUMP_IF_CC(_t2, JUMPTO(oparg), 1, 1);
-#endif
+                    JUMP_IF_CC(_t2, JUMPTO(JUMP_DEST()), 1, 1);
+                    POP(cond);
+                    vinfo_decref(cond, po);
+                    goto fine;
+                }
+
+                case POP_JUMP_FORWARD_IF_NONE:
+                case POP_JUMP_BACKWARD_IF_NONE:
+                case POP_JUMP_FORWARD_IF_NOT_NONE:
+                case POP_JUMP_BACKWARD_IF_NOT_NONE: {
+                    vinfo_t *cond = NTOP(1);
+                    condition_code_t cc =
+                        integer_cmp_i(po, cond, (long)Py_None, Py_EQ);
+                    if (cc == CC_ERROR)
+                        break;
+                    if (opcode == POP_JUMP_FORWARD_IF_NOT_NONE ||
+                        opcode == POP_JUMP_BACKWARD_IF_NOT_NONE)
+                        cc = INVERT_CC(cc);
+                    JUMP_IF_CC(cc, JUMPTO(JUMP_DEST()), 1, 1);
                     POP(cond);
                     vinfo_decref(cond, po);
                     goto fine;
@@ -7553,13 +7625,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         break;
                     }
                     vinfo_decref(err, po);
-#if LE_HAS_JUMP_IN_INSTRUCTIONS
-                    JUMP_IF_CC(INVERT_CC(_t2),
-                               JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT)), 0,
-                               1);
-#else
-                    JUMP_IF_CC(INVERT_CC(_t2), JUMPTO(oparg), 0, 1);
-#endif
+                    JUMP_IF_CC(INVERT_CC(_t2), JUMPTO(JUMP_DEST()), 0, 1);
                     POP(cond);
                     vinfo_decref(cond, po);
                     goto fine;
@@ -7580,25 +7646,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         break;
                     }
                     vinfo_decref(err, po);
-#if LE_HAS_JUMP_IN_INSTRUCTIONS
-                    JUMP_IF_CC(_t2,
-                               JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT)), 0,
-                               1);
-#else
-                    JUMP_IF_CC(_t2, JUMPTO(oparg), 0, 1);
-#endif
+                    JUMP_IF_CC(_t2, JUMPTO(JUMP_DEST()), 0, 1);
                     POP(cond);
                     vinfo_decref(cond, po);
                     goto fine;
-                }
-
-                case JUMP_ABSOLUTE: {
-#if LE_HAS_JUMP_IN_INSTRUCTIONS
-                    JUMPTO((oparg) * (int)sizeof(_Py_CODEUNIT));
-#else
-                    JUMPTO(oparg);
-#endif
-                    JUMPED();
                 }
 
 #if LE_HAS_OPCODE_GET_LEN
