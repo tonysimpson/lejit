@@ -38,11 +38,7 @@ BANNED = {
 }
 
 # reason: single tests (module.Class.method) skipped in both runs
-SKIPPED = {
-    'a deadline on the whole run, which slow machines miss':
-        'test_signal.StressTest.test_stress_delivery_dependent '
-        'test_signal.StressTest.test_stress_delivery_simultaneous',
-}
+SKIPPED = {}
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
 # so CPython aborts at it, LeJIT's own callback makes these abort.
@@ -76,6 +72,11 @@ import sys, unittest, io, json
 if sys.argv[1] == 'lejit':
     sys.path.insert(0, sys.argv[3]); import lejit; lejit.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
+import os
+if sys.argv[2] == 'test_signal' and os.environ.get('LE_SIGNAL_TIMING'):
+    sys.path.insert(0, os.path.join(sys.argv[3], 'tests', 'cpython'))
+    import signal_timing
+    signal_timing.wrap(mod, sys.argv[1], open(os.environ['LE_SIGNAL_TIMING'], 'a'))
 for name in sys.argv[4:]:
     cls, meth = name.split('.')
     cls = getattr(mod, cls)

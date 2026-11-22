@@ -1,168 +1,66 @@
 name: CI
 
+# diagnostic only: times test_signal's stress tests, plain and with LeJIT
+
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
 jobs:
-  check:
-    name: make check (${{ matrix.python }})
+  signal-timing:
+    name: signal timing (${{ matrix.python }}, ${{ matrix.rep }})
     runs-on: ubuntu-24.04
-    # the official images give exact CPython releases, built as shared
-    # libraries with their headers
     container: python:${{ matrix.python }}-bookworm
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16"]
+        python: ["3.8.20", "3.10.16"]
+        rep: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - name: Install libffi and libunwind
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
-      # the source detector's releases, fetched from python.org once
+          apt-get install -y --no-install-recommends libffi-dev libunwind-dev util-linux
       - uses: actions/cache@v4
         with:
           path: .cache
           key: cpython-source-${{ hashFiles('tools/features/cpython_sha256.txt') }}
-      # the images leave out CPython's own tests and every .pyc: copy the
-      # tests back from the release's source, then byte-compile the library
-      # as CPython's install does (otherwise the first run of a test compiles
-      # what it imports, and sees warnings a second run doesn't)
       - name: Restore CPython's tests
         run: |
           src=$(python -c "import sys, platform; sys.path.insert(0, 'tools/features'); import cpython_src; print(cpython_src.find_source(platform.python_version(), log=lambda *a: None))")
           stdlib=$(python -c "import sysconfig; print(sysconfig.get_paths()['stdlib'])")
           (cd "$src/Lib" && find . -type d \( -name test -o -name tests \) -prune -exec cp -r --parents {} "$stdlib" \;)
           python -Wi -m compileall -q -x 'bad_coding|badsyntax|site-packages|lib2to3/tests/data' "$stdlib"
-      - name: make check
-        run: make -k check PY=python GEN_PY=python
-
-  # Pythons LeJIT doesn't support yet: installing builds no extension, and
-  # start() warns and does nothing
-  install-newer:
-    name: install only (${{ matrix.python }})
-    runs-on: ubuntu-24.04
-    container: python:${{ matrix.python }}-bookworm
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.11.11", "3.12.9", "3.13.2", "3.14.10", "3.15.2"]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install
+      - name: Machine
         run: |
-          pip install .
-          cd /
-          python -c "
-          import warnings, lejit
-          with warnings.catch_warnings(record=True) as w:
-              warnings.simplefilter('always')
-              lejit.start()
-          assert lejit._core is None, 'an extension was built'
-          assert [x.category for x in w] == [RuntimeWarning], w
-          "
-
-  install-main:
-    name: install only (CPython main)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build CPython main
+          nproc; lscpu | head -20; uname -a
+          echo "timerslack_ns $(cat /proc/self/timerslack_ns)"
+          echo "clocksource $(cat /sys/devices/system/clocksource/clocksource0/current_clocksource)"
+          cat /sys/fs/cgroup/cpu.max 2>/dev/null || true
+          grep -E '^(steal|procs_running)|^cpu ' /proc/stat || true
+      - name: Checked build
+        run: make checked-build PY=python
+      - name: Stress tests alone
+        if: always()
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libssl-dev zlib1g-dev libffi-dev
-          git clone --depth 1 https://github.com/python/cpython "$RUNNER_TEMP/cpython"
-          cd "$RUNNER_TEMP/cpython"
-          ./configure --prefix="$RUNNER_TEMP/py" --enable-shared LDFLAGS="-Wl,-rpath,$RUNNER_TEMP/py/lib"
-          make -j"$(nproc)"
-          make install
-          ln -s python3 "$RUNNER_TEMP/py/bin/python"
-          echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
-      - name: Install
+          python tests/cpython/signal_timing.py plain 3 2>&1 | grep -v '^detected'
+          python tests/cpython/signal_timing.py lejit 3 2>&1 | grep -v '^detected'
+      - name: Every CPython test module, as make check runs them
+        if: always()
         run: |
-          python -m pip install .
-          cd /
-          python -c "
-          import warnings, lejit
-          with warnings.catch_warnings(record=True) as w:
-              warnings.simplefilter('always')
-              lejit.start()
-          assert lejit._core is None, 'an extension was built'
-          assert [x.category for x in w] == [RuntimeWarning], w
-          "
-
-  # the installed detector agrees with the source one, and the message probes
-  # find their messages, on the versions the port has reached: more are added
-  # as it reaches them
-  detectors-newer:
-    name: detectors (${{ matrix.python }})
-    runs-on: ubuntu-24.04
-    container: python:${{ matrix.python }}-bookworm
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.11.11", "3.12.9"]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Detectors agree with the source
-        run: python tests/features/installed_test.py python
-      - name: Message probes
-        run: make strings-test PY=python GEN_PY=python
-
-  format:
-    name: make format-check
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      # the runner's own Python refuses pip installs (PEP 668)
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      # the version the tree is formatted with: others lay it out differently
-      - name: Install clang-format
-        run: pip install clang-format==19.1.7
-      - name: make format-check
-        run: make format-check
-
-  # clang-tidy's findings, reported but not yet fixed: this job never fails
-  # the run
-  lint:
-    name: make lint (3.10.16)
-    runs-on: ubuntu-24.04
-    container: python:3.10.16-bookworm
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install libffi, libunwind and clang-tidy
+          LE_SIGNAL_TIMING=$PWD/timing.txt python tests/cpython/run.py | grep -v '^ok ' || true
+          echo '--- test_signal stress timings'
+          cat timing.txt || true
+          grep -E '^cpu |^steal' /proc/stat || true
+      - name: Stress tests beside six jobs of CPython tests
+        if: always()
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
-          pip install clang-tidy==19.1.0
-      - name: make lint
-        run: make lint PY=python
-
-  wheels:
-    name: wheels (built, not released)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      # cibuildwheel 3 dropped Python 3.7
-      - uses: pypa/cibuildwheel@v2.23.3
-        env:
-          CIBW_BUILD: "cp37-* cp38-* cp39-* cp310-*"
-          CIBW_SKIP: "*-musllinux_*"
-          CIBW_ARCHS_LINUX: x86_64
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_BEFORE_ALL_LINUX: >-
-            dnf install -y epel-release &&
-            dnf install -y libffi-devel libunwind-devel
-          CIBW_TEST_COMMAND: >-
-            python -c "import lejit; lejit.start(check=True, error=True); print(sorted(lejit.check()))"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheels
-          path: wheelhouse/*.whl
+          (for i in 1 2 3; do python tests/cpython/run.py -j 6 test_set test_shelve test_shlex test_shutil test_site test_slice test_smtpd test_smtplib test_socketserver test_sort test_sqlite test_statistics test_string test_struct test_subprocess >/dev/null 2>&1; done) &
+          bg=$!
+          sleep 20
+          for i in 1 2 3; do
+            python tests/cpython/signal_timing.py plain 1 2>&1 | grep -v '^detected'
+            python tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected'
+          done
+          kill $bg || true
