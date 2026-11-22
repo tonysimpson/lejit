@@ -2036,7 +2036,6 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         Py_INCREF(st->f);
         if (co->co_stacksize >= 2)
             le_pyframe_stack(st->f)[0] = le_pyframe_stack(st->f)[1] = NULL;
-        Py_INCREF(builtins);
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     else if (c != NULL && !le_frame_is_executing(c) &&
@@ -2044,7 +2043,6 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         /* the catching callee's traceback frame, as CPython's is its frame */
         st->f = c;
         Py_INCREF(c);
-        Py_INCREF(builtins);
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     else {
@@ -2054,7 +2052,6 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
             PyMem_Free(st);
             return NULL;
         }
-        Py_INCREF(builtins);
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     st->nvalues = 0;

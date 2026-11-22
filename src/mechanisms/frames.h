@@ -140,11 +140,22 @@ le_frame_builtins(le_frame_t *f)
 {
     return f->f_builtins;
 }
-/* the frame borrows its builtins (its function's), so the reference 'b'
-   given is never released */
+/* the frame borrows its builtins from its function, which holds them;
+   the frames given others are PyFrame_New's, whose function is their own,
+   so the function's are replaced */
 static inline void
 le_frame_set_builtins(le_frame_t *f, PyObject *b)
 {
+    PyFunctionObject *func;
+    if (f->f_builtins == b)
+        return;
+#if LE_HAS_FRAME_FUNCOBJ
+    func = (PyFunctionObject *)f->f_funcobj;
+#else
+    func = f->f_func;
+#endif
+    Py_INCREF(b);
+    Py_SETREF(func->func_builtins, b);
     f->f_builtins = b;
 }
 /* the mapping its locals are run in, NULL for a function's */
@@ -405,11 +416,11 @@ le_frame_builtins(le_frame_t *f)
 {
     return f->f_builtins;
 }
-/* the frame holds a reference to its builtins: the old one goes, 'b' is
-   stolen */
+/* the frame holds a reference to its builtins: the old one goes */
 static inline void
 le_frame_set_builtins(le_frame_t *f, PyObject *b)
 {
+    Py_INCREF(b);
     Py_XSETREF(f->f_builtins, b);
 }
 /* the mapping its locals are run in, NULL for a function's */
