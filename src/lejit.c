@@ -227,14 +227,19 @@ le_code_extra(PyCodeObject *co)
     le_code_extra_t *x = le_code_extra_get(co);
     PyObject *args;
     code_record_t *r;
+    bool outermost = le_compile_depth == 0;
     if (x != NULL)
         return x;
     args = PyTuple_Pack(2, (PyObject *)co, record_died_fn);
     if (args == NULL)
         return NULL;
     /* zeroed, and tracked by the GC, which has nothing to find in it */
+    if (outermost)
+        le_untraced_begin();
     r = (code_record_t *)_PyWeakref_RefType.tp_new(&CodeRecord_Type, args,
                                                    NULL);
+    if (outermost)
+        le_untraced_end();
     Py_DECREF(args);
     if (r == NULL)
         return NULL;

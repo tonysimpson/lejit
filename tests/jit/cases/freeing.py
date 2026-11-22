@@ -215,6 +215,25 @@ def isinstance_class_dies():
     return out, [r() is None for r in refs]
 
 
+def _lengths(objs):
+    return sum(len(o) for o in objs)
+
+
+def genexpr_classes_die():
+    # a type site in a fused generator expression past MEGAMORPHIC_MAX
+    # classes stops its fusing, so a class made per call isn't kept by a
+    # fused copy for each
+    refs = []
+    out = []
+    for k in range(40):
+        C = type('C%d' % k, (), {'__len__': lambda self, k=k: k})
+        out.append(_lengths([C(), C()]))
+        refs.append(weakref.ref(C))
+    del C
+    gc.collect()
+    return out, sum(r() is not None for r in refs) <= 10
+
+
 def isinstance_instance_class_dies():
     # nor of the instance's type: a new class each iteration kept every
     # one alive and compiled a new path for each
@@ -401,6 +420,7 @@ CASES = [
     ('namedtuple_code_dies', [()], {}),
     ('isinstance_class_dies', [()], {}),
     ('isinstance_instance_class_dies', [()], {}),
+    ('genexpr_classes_die', [()], {}),
     ('borrowed_globals_reused', [()], {}),
     ('other_code_extra_user', [()], {}),
     ('recompiled_loops_free', [()], {}),

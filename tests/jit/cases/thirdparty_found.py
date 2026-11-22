@@ -53,7 +53,7 @@ def _drain(it):
 
 # more-itertools' IchunkedTests.test_memory_in_order: the peak traced while
 # a function compiled for the first time runs is two strings and a little
-# more (about 250 bytes) plainly, 4 kB more with LeJIT
+# more (about 250 bytes): the compiler's allocations aren't traced
 def traced_peak():
     g = _strings()
     next(g)
@@ -216,6 +216,5 @@ CASES = [
     ('caller_locals', "[()]", {}),
     ('gc_count_first_call', "[()]",
      {'xfail': 'compiling makes a GC-tracked object (sortedcontainers test_ref_counts)'}),
-    ('traced_peak', "[()]",
-     {'xfail': "tracemalloc counts the compiler's allocations (more-itertools ichunked)"}),
+    ('traced_peak', "[()]", {}),
 ]

@@ -1,6 +1,4 @@
-# Builders (punicodeobject.c): str % args with a constant format, run on
-# a plan read once (the parse) through the generated copies of
-# unicode_format_arg_format and unicode_format_arg_output; f-strings whose
+# Builders (punicodeobject.c), and str % args beside them: f-strings whose
 # int parts are written into the BUILD_STRING's one result without their
 # str; sep.join of a list, a tuple and a generator expression fused into a
 # list. The identities CPython gives ('%s' % s is s, the cached character,
