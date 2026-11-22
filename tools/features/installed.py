@@ -356,6 +356,7 @@ HEADER_DETECTORS = {
     'EVAL_BREAKER_GC': internal(features.eval_breaker_gc),
     'LONG_VALUE': features.long_value,
     'TYPE_GET_DICT': public('PyType_GetDict'),
+    'IMMORTAL_OBJECTS': public('_Py_IsImmortal'),
     # where the interpreter's probe can't answer: a frame object with no
     # f_lasti of its own
     'LASTI_IN_INSTRUCTIONS': features.interpreter_frame_lasti,

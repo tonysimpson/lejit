@@ -1125,6 +1125,8 @@ OBJECTS = [
     ('LONG_VALUE', long_value),
     ('TYPE_GET_DICT', D('PyType_GetDict gives a type\'s dict, which a static builtin type keeps in the interpreter (its tp_dict is NULL)',
                         lambda s: _public(s, 'PyType_GetDict'))),
+    ('IMMORTAL_OBJECTS', D('an object whose refcount\'s low 32 bits are negative is immortal: Py_INCREF and Py_DECREF leave it alone (_Py_IsImmortal)',
+                           lambda s: _public(s, '_Py_IsImmortal'))),
 ]
 
 # Python/ceval.c
