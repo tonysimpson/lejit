@@ -44,19 +44,12 @@ jobs:
       - name: Stress tests alone, the handler reading its frame
         if: always()
         run: |
-          for i in 1 2 3 4 5; do python -X faulthandler tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected'; echo "exit $?"; done
+          for i in $(seq 10); do python -X faulthandler tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected' | grep -A8 'FAIL\|Fatal\|Segm'; echo "exit $?"; done
       - name: Stress tests alone, the handler not reading its frame
         if: always()
         run: |
-          for i in 1 2 3 4 5; do LE_NO_FRAME=1 python -X faulthandler tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected'; echo "exit $?"; done
+          for i in $(seq 20); do LE_NO_FRAME=1 python -X faulthandler tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected' | grep -A8 'FAIL\|Fatal\|Segm'; echo "exit $?"; done
       - name: test_signal as run.py runs it, unchanged
         if: always()
         run: |
-          for i in 1 2 3 4 5; do python tests/cpython/run.py test_signal || true; done
-      - name: Under gdb
-        if: always()
-        run: |
-          apt-get install -y --no-install-recommends gdb >/dev/null
-          for i in 1 2 3; do
-            gdb -q -batch -ex 'handle SIGALRM SIGUSR1 SIGPROF nostop noprint pass' -ex run -ex bt -ex 'info registers' -ex 'x/24i $pc-48' -ex 'info proc mappings' --args python tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected' | head -150
-          done
+          for i in $(seq 20); do python tests/cpython/run.py test_signal | grep -v unexpected || true; done
