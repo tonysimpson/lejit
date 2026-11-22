@@ -112,6 +112,36 @@ def memory_runs_out(lo, hi):
     return _cache[lo, hi]
 
 
+# memory_runs_out_later: as memory_runs_out, failing the n-th allocation
+# from the start of INJECT's calls, so through promotions, respawns and
+# inlined calls too
+LATER = INJECT[:INJECT.index("if site != 'plain':\n    lejit._core._fail_after")] + \
+    """
+import _testcapi
+_testcapi.set_nomemory(n, n + 1)
+try:
+    r = g(50), g(70)
+except MemoryError:
+    r = 'MemoryError'
+finally:
+    _testcapi.remove_mem_hooks()
+print(r)
+"""
+
+
+def memory_runs_out_later(lo, hi):
+    if ('later', lo, hi) not in _cache:
+        mode = 'lejit' if 'lejit' in sys.modules else 'plain'
+        expected = _run(INJECT, 'plain', 0)[1][:-5]
+        bad = []
+        for n in range(lo, hi):
+            c, out = _run(LATER, mode, n)
+            if c < 0 or (c == 0 and out not in (expected, b'MemoryError')):
+                bad.append((n, c, out))
+        _cache['later', lo, hi] = bad
+    return _cache['later', lo, hi]
+
+
 def injected(counts):
     # the plain run has nothing to inject: the oracle is []
     if 'lejit' not in sys.modules:
@@ -141,5 +171,6 @@ INJECT_COUNTS = tuple(range(1, 10)) + tuple(range(15, 300, 30))
 
 CASES = [
     ('memory_runs_out', [(0, 50)], {'leaks': 'runs child processes'}),
+    ('memory_runs_out_later', [(0, 300)], {'leaks': 'runs child processes'}),
     ('injected', [(INJECT_COUNTS,)], {'leaks': 'runs child processes'}),
 ]

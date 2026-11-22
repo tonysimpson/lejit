@@ -324,7 +324,6 @@ HEADER_DETECTORS = {
     'CHECK_RESULT_TSTATE': check_result_tstate,
     'PYCORE_PYSTATE_H': pycore_header('pycore_pystate.h'),
     'PYCORE_INTERP_H': pycore_header('pycore_interp.h'),
-    'PYCORE_FORMAT_H': pycore_header('pycore_format.h'),
     'EVAL_HOOK_TSTATE': eval_hook_tstate,
     'SIGNALS_PENDING': signals_pending,
     'EVAL_FRAME_HANDLE_PENDING': eval_frame_handle_pending,
@@ -352,6 +351,7 @@ HEADER_DETECTORS = {
     'LONG_VALUE': features.long_value,
     'TYPE_GET_DICT': public('PyType_GetDict'),
     'IMMORTAL_OBJECTS': public('_Py_IsImmortal'),
+    'DICT_WATCHER_BITS': internal(features.dict_watcher_bits),
     # where the interpreter's probe can't answer: a frame object with no
     # f_lasti of its own
     'LASTI_IN_INSTRUCTIONS': features.interpreter_frame_lasti,

@@ -706,6 +706,19 @@ def managed_values_pointer(s):
                      'return ((PyDictValues **)obj)-4;')
 
 
+def dict_watcher_bits(s):
+    """a dict's version tag keeps in its low 8 bits which watchers watch it
+    (DICT_MAX_WATCHERS is 8), and a change steps it by 1 << 8
+    (DICT_VERSION_INCREMENT); unanswered for another number of watchers"""
+    found = s.definitions('DICT_MAX_WATCHERS')
+    if not found:
+        return False, 'Include, every header: DICT_MAX_WATCHERS'
+    path, body = found[0]
+    if _texts(body) != ['8']:
+        raise Unanswered('%s:DICT_MAX_WATCHERS is %s' % (path, ' '.join(_texts(body))))
+    return True, '%s:DICT_MAX_WATCHERS' % path
+
+
 def interp_recursion_limit(s):
     """the recursion limit is the interpreter's ceval.recursion_limit, not
     the global _Py_CheckRecursionLimit"""
@@ -752,19 +765,6 @@ def tuplecontains_item_first(s):
     """`in` on a tuple compares each item with the value, the item first"""
     return _body_has(s, 'Objects/tupleobject.c', 'tuplecontains',
                      'PyObject_RichCompareBool(PyTuple_GET_ITEM(a, i), el')
-
-
-def aenter_lookup_first(s):
-    """BEFORE_ASYNC_WITH looks __aenter__ up before __aexit__"""
-    case = _case_tokens(s, 'BEFORE_ASYNC_WITH')
-    # the names by _Py_IDENTIFIER (PyId___aenter__), or from 3.11 _Py_ID
-    for enter, exit in (['PyId___aenter__'], ['PyId___aexit__']), \
-            (_c('_Py_ID(__aenter__)'), _c('_Py_ID(__aexit__)')):
-        at = [_run_at(case or [], want) for want in (enter, exit)]
-        if None not in at:
-            return at[0] < at[1], 'Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)'
-    raise Unanswered('Python/ceval.c: no TARGET(BEFORE_ASYNC_WITH) naming'
-                     ' __aenter__ and __aexit__')
 
 
 def valid_version_tag_flag(s):
@@ -1043,7 +1043,6 @@ def opcodes(src):
 D = _detector
 AB = 'Objects/abstract.c'
 CE = 'Python/ceval.c'
-UO = 'Objects/unicodeobject.c'
 
 # C API functions that LeJIT calls where libpython exports them, and
 # replaces where it doesn't
@@ -1051,12 +1050,7 @@ EXPORTS = [
     ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
     ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
-    ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
     ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
-    ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
-    ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
-    ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
-    ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip'),
 ]
 
 
@@ -1176,18 +1170,12 @@ OBJECTS = [
                           lambda s: _defines(s, 'Objects/tupleobject.c', 'tuple_get_empty'))),
     ('CONTAINS_ITEM_FIRST', tuplecontains_item_first),
     ('DICT_VALUES_STRUCT', dict_values_struct),
-    ('PYCORE_FORMAT_H', D('the format flags F_LJUST... are the internal pycore_format.h\'s',
-                          lambda s: _file(s, 'Include/internal/pycore_format.h'))),
-    ('FORMATCHAR_INDEX_ONLY', D('%c takes an int, by PyLong_AsLongAndOverflow (no __int__)',
-                                lambda s: _body_has(s, UO, 'formatchar', 'PyLong_AsLongAndOverflow'))),
     ('HASH_DOUBLE_OBJECT', D('_Py_HashDouble is given the float object too',
                              lambda s: _file_has(s, 'Python/pyhash.c', '_Py_HashDouble(PyObject *'))),
     ('MEMBER_EX_ERROR_FROM_TYPE', member_ex_error_from_type),
     ('POW_KEYWORDS', D('pow() takes keyword arguments base, exp and mod',
                        lambda s: _file_has(s, 'Python/clinic/bltinmodule.c.h',
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),
-    ('CORO_GET_AWAITABLE_ITER_LINKABLE', D('_PyCoro_GetAwaitableIter can be called from an extension',
-                                           lambda s: _linkable(s, '_PyCoro_GetAwaitableIter'))),
     ('DICT_KEYS_KIND', dict_keys_kind),
     ('LONG_VALUE', long_value),
     ('TYPE_GET_DICT', D('PyType_GetDict gives a type\'s dict, which a static builtin type keeps in the interpreter (its tp_dict is NULL)',
@@ -1195,6 +1183,7 @@ OBJECTS = [
     ('IMMORTAL_OBJECTS', D('an object whose refcount\'s low 32 bits are negative is immortal: Py_INCREF and Py_DECREF leave it alone (_Py_IsImmortal)',
                            lambda s: _public(s, '_Py_IsImmortal'))),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
+    ('DICT_WATCHER_BITS', dict_watcher_bits),
 ]
 
 # Python/ceval.c
@@ -1211,7 +1200,6 @@ CEVAL = [
     ('KWARGS_MERGE_EX', D('CALL_FUNCTION_EX merges **kwargs with _PyDict_MergeEx, and format_kwargs_error reports it',
                           lambda s: _case_has(s, 'CALL_FUNCTION_EX', '_PyDict_MergeEx'))),
     ('DELETE_GLOBAL_KEYERROR_ONLY', delete_global_keyerror_only),
-    ('AENTER_LOOKUP_FIRST', aenter_lookup_first),
 ]
 
 # the opcodes that some CPython lacks
