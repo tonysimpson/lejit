@@ -1798,5 +1798,10 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
     SAVE_IMMED_TO_EBP_BASE((long)(finfo), INITIAL_STACK_DEPTH)
 #define RETURNED_FROM_SUBFUNCTION() \
     SAVE_IMM8_TO_EBP_BASE(-1, INITIAL_STACK_DEPTH)
+/* the frame's own slot while it clears its locals on the way out: what
+   their finalisers run no longer counts it (frames.c:pvisitframes) */
+#define FINFO_RETURNING (-3)
+#define ABOUT_TO_RETURN() \
+    SAVE_IMM8_TO_EBP_BASE(FINFO_RETURNING, INITIAL_STACK_DEPTH)
 
 #endif /* _IENCODING_H */

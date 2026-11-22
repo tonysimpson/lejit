@@ -4716,8 +4716,18 @@ exit_function(PsycoObject *po)
     if (!catcher_flush(po, true))
         return NULL;
     /* clear the locals, first to last as frame_dealloc does (finalisers run
-       in that order), then the stack */
+       in that order), then the stack. On a return CPython has popped the
+       frame first. */
     locals_plus = LOC_LOCALS_PLUS;
+    for (pp = locals_plus; PycException_Is(po, &EReturn) &&
+                           pp < po->vlocals.items + po->vlocals.count;
+         pp++)
+        if (*pp != NULL && !is_compiletime((*pp)->source)) {
+            BEGIN_CODE
+            ABOUT_TO_RETURN();
+            END_CODE
+            break;
+        }
     for (pp = locals_plus; pp < po->vlocals.items + po->vlocals.count; pp++)
         if (*pp != NULL) {
             vinfo_decref(*pp, po);
@@ -9172,13 +9182,18 @@ psyco_pycompiler_mainloop(PsycoObject *po)
         if (po->pr.is_inlining) {
             /* unwind the inlined frame by restoring the parent one */
             vinfo_t *v = LOC_INLINING;
+            bool returned = PycException_Is(po, &EReturn);
+            /* mark this point as an inline frame exit: on a return, before
+               its locals go, as CPython pops the frame first */
+            if (returned)
+                psyco_inline_exit(po);
             LOC_INLINING = NULL;
             po = psyco_restore_inline_po(po, &v->array);
             stack_a = po->vlocals.items + po->pr.stack_base;
             vinfo_decref(v, po);
             po->pr.is_inlining = false;
-            /* mark this point as an inline frame exit */
-            psyco_inline_exit(po);
+            if (!returned)
+                psyco_inline_exit(po);
             /* the inlined frame went on interpreted: so may the caller, after
                the instruction that called it */
             if (resumed)
