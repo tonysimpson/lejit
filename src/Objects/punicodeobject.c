@@ -149,7 +149,7 @@ le_unicode_xstrip(PyObject *self, int striptype, PyObject *sepobj)
     Py_ssize_t len = PyUnicode_GET_LENGTH(self);
     Py_ssize_t seplen = PyUnicode_GET_LENGTH(sepobj);
     Py_ssize_t i = 0, j = len;
-    if (striptype != 1) {
+    if (striptype != RIGHTSTRIP) {
         while (i < len) {
             Py_UCS4 ch = PyUnicode_READ(kind, data, i);
             if (PyUnicode_FindChar(sepobj, ch, 0, seplen, 1) < 0)
@@ -157,7 +157,7 @@ le_unicode_xstrip(PyObject *self, int striptype, PyObject *sepobj)
             i++;
         }
     }
-    if (striptype != 0) {
+    if (striptype != LEFTSTRIP) {
         j--;
         while (j >= i) {
             Py_UCS4 ch = PyUnicode_READ(kind, data, j);
@@ -196,6 +196,10 @@ static PyCFunction cfunc_unicode_lstrip;
 static PyCFunction cfunc_unicode_rstrip;
 static PyCFunction cfunc_unicode_strip;
 
+#define LEFTSTRIP 0
+#define RIGHTSTRIP 1
+#define BOTHSTRIP 2
+
 /* CPython's code, copied for the metas to call at run time */
 static PyObject *
 cimpl_do_strip(PyObject *self, int striptype)
@@ -207,7 +211,7 @@ cimpl_do_strip(PyObject *self, int striptype)
     if (PyUnicode_IS_ASCII(self)) {
         const Py_UCS1 *data = PyUnicode_1BYTE_DATA(self);
         i = 0;
-        if (striptype != 1) {
+        if (striptype != RIGHTSTRIP) {
             while (i < len) {
                 Py_UCS1 ch = data[i];
                 if (!ascii_whitespace[ch])
@@ -216,7 +220,7 @@ cimpl_do_strip(PyObject *self, int striptype)
             }
         }
         j = len;
-        if (striptype != 0) {
+        if (striptype != LEFTSTRIP) {
             j--;
             while (j >= i) {
                 Py_UCS1 ch = data[j];
@@ -231,7 +235,7 @@ cimpl_do_strip(PyObject *self, int striptype)
         int kind = PyUnicode_KIND(self);
         const void *data = PyUnicode_DATA(self);
         i = 0;
-        if (striptype != 1) {
+        if (striptype != RIGHTSTRIP) {
             while (i < len) {
                 Py_UCS4 ch = PyUnicode_READ(kind, data, i);
                 if (!Py_UNICODE_ISSPACE(ch))
@@ -240,7 +244,7 @@ cimpl_do_strip(PyObject *self, int striptype)
             }
         }
         j = len;
-        if (striptype != 0) {
+        if (striptype != LEFTSTRIP) {
             j--;
             while (j >= i) {
                 Py_UCS4 ch = PyUnicode_READ(kind, data, j);
@@ -962,27 +966,6 @@ cimpl_unicode_format_arg_output(struct unicode_formatter_t *ctx,
 }
 
 static vinfo_t *
-PsycoUnicode_Concat(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-PsycoUnicode_Contains(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-unicode_length(PsycoObject *po, vinfo_t *);
-static vinfo_t *
-do_argstrip(PsycoObject *po, vinfo_t *, int, vinfo_t *);
-static vinfo_t *
-unicode_lstrip_impl(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-unicode_lstrip(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-unicode_rstrip_impl(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-unicode_rstrip(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-unicode_strip_impl(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-unicode_strip(PsycoObject *po, vinfo_t *, vinfo_t *);
-
-static vinfo_t *
 PsycoUnicode_Concat(PsycoObject *po, vinfo_t *left, vinfo_t *right)
 {
     return psyco_generic_call(po, PyUnicode_Concat,
@@ -1009,138 +992,66 @@ PsycoUnicode_Contains(PsycoObject *po, vinfo_t *str, vinfo_t *substr)
 static vinfo_t *
 unicode_length(PsycoObject *po, vinfo_t *self)
 {
-    vinfo_t *_t1;
-    condition_code_t _t2;
-    int _t3;
-    vinfo_t *_t4;
-    _t1 = psyco_get_field(po, self, UNICODE_state);
-    if (_t1 == NULL) {
+    condition_code_t cc;
+    vinfo_t *state = psyco_get_field(po, self, UNICODE_state);
+    if (state == NULL) {
         return NULL;
     }
-    _t2 = integer_cmp_i(po, _t1, LE_BIT_PyASCIIObject__state__ready,
-                        Py_GE | COMPARE_UNSIGNED);
-    vinfo_decref(_t1, po);
-    if (_t2 == CC_ERROR) {
+    /* PyUnicode_READY: CPython measures a string not ready yet */
+    cc = integer_cmp_i(po, state, LE_BIT_PyASCIIObject__state__ready,
+                       Py_GE | COMPARE_UNSIGNED);
+    vinfo_decref(state, po);
+    if (cc == CC_ERROR) {
         return NULL;
     }
-    _t3 = runtime_condition_t(po, _t2);
-    if (!_t3) {
+    if (!runtime_condition_t(po, cc)) {
         return psyco_generic_call(
             po, PyUnicode_Type.tp_as_sequence->sq_length,
             CfCommonPySSizeTResult | CfNoPython | CfNoBlock, "v", self);
     }
-    if (0 == (-1)) {
-        return NULL;
-    }
-    _t4 = psyco_get_field(po, self, UNICODE_length);
-    if (_t4 == NULL) {
-        return NULL;
-    }
-    return _t4;
+    return psyco_get_field(po, self, UNICODE_length);
 }
 
+/* str.strip, lstrip and rstrip, through their Argument Clinic wrappers:
+   one optional argument, None by default */
 static vinfo_t *
-do_argstrip(PsycoObject *po, vinfo_t *self, int striptype, vinfo_t *sep)
+do_argstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs, PyCFunction cfunc,
+            int striptype)
 {
-    return psyco_generic_call(po, cimpl_do_argstrip,
-                              CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
-                              "vlv", self, (long)(striptype), sep);
-}
-
-static vinfo_t *
-unicode_lstrip_impl(PsycoObject *po, vinfo_t *self, vinfo_t *chars)
-{
-    vinfo_t *_t1;
-    _t1 = do_argstrip(po, self, 0, chars);
-    return _t1;
+    vinfo_t *chars, *return_value;
+    int nargs = PsycoTuple_Load(vargs);
+    if (nargs < 0 || nargs > 1) {
+        return PsycoCFunction_CallFast(po, cfunc, METH_FASTCALL, self, vargs);
+    }
+    if (nargs == 0)
+        chars = psyco_vi_None();
+    else {
+        chars = PsycoTuple_GET_ITEM(vargs, 0);
+        vinfo_incref(chars);
+    }
+    return_value = psyco_generic_call(
+        po, cimpl_do_argstrip, CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
+        "vlv", self, (long)striptype, chars);
+    vinfo_decref(chars, po);
+    return return_value;
 }
 
 static vinfo_t *
 unicode_lstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
-    int _t1;
-    vinfo_t *chars;
-    vinfo_t *return_value;
-    _t1 = PsycoTuple_Load(vargs);
-    if (_t1 < 0 || _t1 > 1) {
-        return PsycoCFunction_CallFast(po, cfunc_unicode_lstrip, METH_FASTCALL,
-                                       self, vargs);
-    }
-    if (_t1 == 0) {
-        chars = psyco_vi_None();
-        return_value = unicode_lstrip_impl(po, self, chars);
-        vinfo_decref(chars, po);
-        return return_value;
-    }
-    else {
-        chars = PsycoTuple_GET_ITEM(vargs, 0);
-        return_value = unicode_lstrip_impl(po, self, chars);
-        return return_value;
-    }
-}
-
-static vinfo_t *
-unicode_rstrip_impl(PsycoObject *po, vinfo_t *self, vinfo_t *chars)
-{
-    vinfo_t *_t1;
-    _t1 = do_argstrip(po, self, 1, chars);
-    return _t1;
+    return do_argstrip(po, self, vargs, cfunc_unicode_lstrip, LEFTSTRIP);
 }
 
 static vinfo_t *
 unicode_rstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
-    int _t1;
-    vinfo_t *chars;
-    vinfo_t *return_value;
-    _t1 = PsycoTuple_Load(vargs);
-    if (_t1 < 0 || _t1 > 1) {
-        return PsycoCFunction_CallFast(po, cfunc_unicode_rstrip, METH_FASTCALL,
-                                       self, vargs);
-    }
-    if (_t1 == 0) {
-        chars = psyco_vi_None();
-        return_value = unicode_rstrip_impl(po, self, chars);
-        vinfo_decref(chars, po);
-        return return_value;
-    }
-    else {
-        chars = PsycoTuple_GET_ITEM(vargs, 0);
-        return_value = unicode_rstrip_impl(po, self, chars);
-        return return_value;
-    }
-}
-
-static vinfo_t *
-unicode_strip_impl(PsycoObject *po, vinfo_t *self, vinfo_t *chars)
-{
-    vinfo_t *_t1;
-    _t1 = do_argstrip(po, self, 2, chars);
-    return _t1;
+    return do_argstrip(po, self, vargs, cfunc_unicode_rstrip, RIGHTSTRIP);
 }
 
 static vinfo_t *
 unicode_strip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
-    int _t1;
-    vinfo_t *chars;
-    vinfo_t *return_value;
-    _t1 = PsycoTuple_Load(vargs);
-    if (_t1 < 0 || _t1 > 1) {
-        return PsycoCFunction_CallFast(po, cfunc_unicode_strip, METH_FASTCALL,
-                                       self, vargs);
-    }
-    if (_t1 == 0) {
-        chars = psyco_vi_None();
-        return_value = unicode_strip_impl(po, self, chars);
-        vinfo_decref(chars, po);
-        return return_value;
-    }
-    else {
-        chars = PsycoTuple_GET_ITEM(vargs, 0);
-        return_value = unicode_strip_impl(po, self, chars);
-        return return_value;
-    }
+    return do_argstrip(po, self, vargs, cfunc_unicode_strip, BOTHSTRIP);
 }
 
 static void
@@ -1474,9 +1385,9 @@ view_bound_end(PsycoObject *po)
 /* do_strip's and _PyUnicode_XStrip's loops on s[i:j] (striptype as
    there): the new i, and the new j in view_bound */
 #define STRIP_LOOPS(TEST)                 \
-    if (striptype != 1)                   \
+    if (striptype != RIGHTSTRIP)          \
         while (i < j && TEST(d[i])) i++;  \
-    if (striptype != 0) {                 \
+    if (striptype != LEFTSTRIP) {         \
         j--;                              \
         while (j >= i && TEST(d[j])) j--; \
         j++;                              \

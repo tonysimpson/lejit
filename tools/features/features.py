@@ -1125,8 +1125,6 @@ STATE = [
 
 # Objects/abstract.c
 ABSTRACT = [
-    ('CHECK_SLOT_RESULT', D('abstract.c asserts each slot\'s result with _Py_CheckSlotResult',
-                            lambda s: _declared(s, '_Py_CheckSlotResult'))),
     ('TERNARY_IOP', D('abstract.c has ternary_iop, the in-place ternary operation (**=)',
                       lambda s: _defines(s, AB, 'ternary_iop'))),
     ('ITER_CHECK_FUNCTION', D('PyIter_Check is a function, not a macro',

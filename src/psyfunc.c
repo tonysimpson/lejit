@@ -110,8 +110,8 @@ fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co, int nfrees)
     return fncall->merge_points != Py_None;
 }
 
-/* _PsycoEval_EvalCodeWithName, translated from ceval.c */
-#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
+/* the arguments' part of ceval.c:_PyEval_EvalCodeWithName: -1 where it
+   needs the real call */
 DEFINEFN
 int
 _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
@@ -119,223 +119,80 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
                             Py_ssize_t argcount, vinfo_t **defs,
                             Py_ssize_t defcount, vinfo_t **closure)
 {
-    Py_ssize_t arg;
-    PyCodeObject *co;
-    vinfo_t *def;
-    Py_ssize_t defcount_;
-    vinfo_t **defs_;
-    vinfo_t **fastlocals;
-    vinfo_t **freevars;
-    Py_ssize_t i;
-    Py_ssize_t j;
-    Py_ssize_t m;
-    Py_ssize_t missing;
-    Py_ssize_t n;
-    vinfo_t *o;
-    vinfo_t *tmp;
-    Py_ssize_t total_args;
+    PyCodeObject *co = (PyCodeObject *)_co;
+    Py_ssize_t total_args = co->co_argcount + co->co_kwonlyargcount;
+    vinfo_t **fastlocals = f_localsplus;
+    vinfo_t **freevars = f_localsplus + le_code_nlocals(co);
+    Py_ssize_t i, n, m, missing;
     vinfo_t *x;
-    co = ((PyCodeObject *)_co);
-    total_args = (co->co_argcount + co->co_kwonlyargcount);
-    fastlocals = f_localsplus;
-    freevars = (f_localsplus + le_code_nlocals(co));
-    if ((co->co_flags & CO_VARKEYWORDS)) {
+
+    if (co->co_flags & CO_VARKEYWORDS) {
         return -1; /* PyDict_New: the real call */
     }
-    if ((argcount > co->co_argcount)) {
-        n = co->co_argcount;
-    }
-    else {
-        n = argcount;
-    }
-    for ((j = 0); (j < n); j++) {
-        x = args[j];
-        vinfo_incref(x);
-        tmp = fastlocals[j];
-        fastlocals[j] = x;
-        vinfo_xdecref(tmp, po);
-    }
-    if ((co->co_flags & CO_VARARGS)) {
-        return -1; /* u (no form): the real call */
-    }
-    if (((argcount > co->co_argcount) && !((co->co_flags & CO_VARARGS)))) {
-        return -1; /* too_many_positional: the real call */
-    }
-    if ((argcount < co->co_argcount)) {
-        defcount_ = ((defcount == 0) ? 0 : defcount);
-        m = (co->co_argcount - defcount_);
-        missing = 0;
-        for ((i = argcount); (i < m); i++) {
-            if ((fastlocals[i] == NULL)) {
-                missing++;
-            }
-        }
-        if (missing) {
-            return -1; /* missing_arguments: the real call */
-        }
-        if ((n > m)) {
-            i = (n - m);
-        }
-        else {
-            i = 0;
-        }
-        if (defcount_) {
-            defs_ = defs;
-            for (; (i < defcount_); i++) {
-                if ((fastlocals[(m + i)] == NULL)) {
-                    def = defs_[i];
-                    vinfo_incref(def);
-                    tmp = fastlocals[(m + i)];
-                    fastlocals[(m + i)] = def;
-                    vinfo_xdecref(tmp, po);
-                }
-            }
-        }
-    }
-    if ((co->co_kwonlyargcount > 0)) {
-        missing = 0;
-        for ((i = co->co_argcount); (i < total_args); i++) {
-            if ((fastlocals[i] != NULL)) {
-                continue;
-            }
-            missing++;
-        }
-        if (missing) {
-            return -1; /* missing_arguments: the real call */
-        }
-    }
-    for ((i = 0); (i < le_code_ncells(co)); ++i) {
-        if ((arg = le_code_cell_arg(co, (int)i)) != -1) {
-            return -1; /* PyCell_New: the real call */
-        }
-        else {
-            return -1; /* PyCell_New: the real call */
-        }
-    }
-    for ((i = 0); (i < le_code_nfrees(co)); ++i) {
-        o = closure[i];
-        vinfo_incref(o);
-        freevars[(le_code_ncells(co) + i)] = o;
-    }
-    return 0;
-}
-#else
-DEFINEFN
-int
-_PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
-                            vinfo_t **f_localsplus, vinfo_t **args,
-                            Py_ssize_t argcount, vinfo_t **defs,
-                            Py_ssize_t defcount, vinfo_t **closure)
-{
-    Py_ssize_t _t1;
-    Py_ssize_t arg;
-    PyCodeObject *co;
-    vinfo_t *def;
-    vinfo_t **fastlocals;
-    vinfo_t **freevars;
-    Py_ssize_t i;
-    Py_ssize_t m;
-    Py_ssize_t missing;
-    Py_ssize_t n;
-    vinfo_t *o;
-    vinfo_t *tmp;
-    Py_ssize_t total_args;
-    vinfo_t *u;
-    vinfo_t *x;
-    co = ((PyCodeObject *)_co);
-    total_args = (co->co_argcount + co->co_kwonlyargcount);
-    fastlocals = f_localsplus;
-    freevars = (f_localsplus + le_code_nlocals(co));
-    if ((co->co_flags & CO_VARKEYWORDS)) {
-        return -1; /* PyDict_New: the real call */
-    }
-    if ((argcount > co->co_argcount)) {
-        n = co->co_argcount;
-    }
-    else {
-        n = argcount;
-    }
-    for ((i = 0); (i < n); i++) {
+    n = argcount > co->co_argcount ? co->co_argcount : argcount;
+    for (i = 0; i < n; i++) {
         x = args[i];
         vinfo_incref(x);
-        tmp = fastlocals[i];
+        vinfo_xdecref(fastlocals[i], po);
         fastlocals[i] = x;
-        vinfo_xdecref(tmp, po);
     }
-    if ((co->co_flags & CO_VARARGS)) {
-        _t1 = (argcount - n);
-        if (_t1 < 0 || _t1 > 15)
+    if (co->co_flags & CO_VARARGS) {
+#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
+        return -1; /* the tuple: the real call */
+#else
+        vinfo_t *u;
+        if (argcount - n > 15)
             return -1; /* a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT
                           items: the real call */
-        u = PsycoTuple_New(_t1, NULL);
-        tmp = fastlocals[total_args];
+        u = PsycoTuple_New(argcount - n, NULL);
+        vinfo_xdecref(fastlocals[total_args], po);
         fastlocals[total_args] = u;
-        vinfo_xdecref(tmp, po);
-        for ((i = n); (i < argcount); i++) {
+        for (i = n; i < argcount; i++) {
             x = args[i];
             vinfo_incref(x);
-            PsycoTuple_GET_ITEM(u, (i - n)) = x;
+            PsycoTuple_GET_ITEM(u, i - n) = x;
         }
+#endif
     }
-    i = 0;
-    if (((argcount > co->co_argcount) && !((co->co_flags & CO_VARARGS)))) {
+    if (argcount > co->co_argcount && !(co->co_flags & CO_VARARGS)) {
         return -1; /* too_many_positional: the real call */
     }
-    if ((argcount < co->co_argcount)) {
-        m = (co->co_argcount - defcount);
+    if (argcount < co->co_argcount) {
+        m = co->co_argcount - defcount;
         missing = 0;
-        for ((i = argcount); (i < m); i++) {
-            if ((fastlocals[i] == NULL)) {
+        for (i = argcount; i < m; i++) {
+            if (fastlocals[i] == NULL) {
                 missing++;
             }
         }
         if (missing) {
             return -1; /* missing_arguments: the real call */
         }
-        if ((n > m)) {
-            i = (n - m);
-        }
-        else {
-            i = 0;
-        }
-        for (; (i < defcount); i++) {
-            if ((fastlocals[(m + i)] == NULL)) {
-                def = defs[i];
-                vinfo_incref(def);
-                tmp = fastlocals[(m + i)];
-                fastlocals[(m + i)] = def;
-                vinfo_xdecref(tmp, po);
+        for (i = n > m ? n - m : 0; i < defcount; i++) {
+            if (fastlocals[m + i] == NULL) {
+                x = defs[i];
+                vinfo_incref(x);
+                fastlocals[m + i] = x;
             }
         }
     }
-    if ((co->co_kwonlyargcount > 0)) {
-        missing = 0;
-        for ((i = co->co_argcount); (i < total_args); i++) {
-            if ((fastlocals[i] != NULL)) {
-                continue;
+    if (co->co_kwonlyargcount > 0) {
+        for (i = co->co_argcount; i < total_args; i++) {
+            if (fastlocals[i] == NULL) {
+                return -1; /* missing_arguments: the real call */
             }
-            missing++;
-        }
-        if (missing) {
-            return -1; /* missing_arguments: the real call */
         }
     }
-    for ((i = 0); (i < le_code_ncells(co)); ++i) {
-        if ((arg = le_code_cell_arg(co, (int)i)) != -1) {
-            return -1; /* PyCell_New: the real call */
-        }
-        else {
-            return -1; /* PyCell_New: the real call */
-        }
+    if (le_code_ncells(co) > 0) {
+        return -1; /* PyCell_New: the real call */
     }
-    for ((i = 0); (i < le_code_nfrees(co)); ++i) {
-        o = closure[i];
-        vinfo_incref(o);
-        freevars[(le_code_ncells(co) + i)] = o;
+    for (i = 0; i < le_code_nfrees(co); i++) {
+        x = closure[i];
+        vinfo_incref(x);
+        freevars[i] = x;
     }
     return 0;
 }
-#endif
 
 /* The callee frame's locals: the call's arguments, defaults and cells
    bound as _PyEval_EvalCodeWithName binds them (the translated binder), and

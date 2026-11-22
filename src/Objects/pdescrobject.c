@@ -12,26 +12,21 @@
 #include "pmethodobject.h"
 
 static vinfo_t *
-member_get(PsycoObject *po, PyMemberDescrObject *, vinfo_t *, PyObject *);
-
-static vinfo_t *
 member_get(PsycoObject *po, PyMemberDescrObject *descr, vinfo_t *obj,
            PyObject *type)
 {
-    vinfo_t *_t1;
 #if LE_HAS_AUDIT_HOOKS
-    if (((descr->d_member)->flags & 2)) {
+    if (descr->d_member->flags & READ_RESTRICTED) {
         if (psyco_generic_call(
                 po, PySys_Audit,
                 CfNoReturnValue | CfReturnTypeInt | CfPyErrIfNeg, "llvl",
-                (long)("object.__getattr__"), (long)("Os"), obj,
-                (long)((descr->d_member)->name)) == NULL) {
+                (long)"object.__getattr__", (long)"Os", obj,
+                (long)descr->d_member->name) == NULL) {
             return NULL;
         }
     }
 #endif
-    _t1 = PsycoMember_GetOne(po, obj, descr->d_member);
-    return _t1;
+    return PsycoMember_GetOne(po, obj, descr->d_member);
 }
 
 static void

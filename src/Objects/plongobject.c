@@ -333,405 +333,206 @@ plong_fallback2(PsycoObject *po, void *slot, vinfo_t *v, vinfo_t *w)
     return x;
 }
 
-/* + - * unary - ~ + abs() bool / **, translated from Objects/longobject.c */
-/* the translation keeps CPython's unused variables */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+/* + - * unary - ~ + abs() bool / **, as in Objects/longobject.c */
 _Static_assert(sizeof(long) * 8 == 64, "words are longs");
 _Static_assert(sizeof(int) * 8 == 32, "C ints are 32 bits");
 _Static_assert(PyLong_MASK == 1073741823,
                "the word range of struct _longobject");
 
+/* the flags of a C call that makes an int, and its result */
+#define CF_LONG (CfCommonNewRefPyObject | CfNoPython | CfNoBlock)
 static vinfo_t *
-_PsycoLong_Copy(PsycoObject *po, vinfo_t *);
-static vinfo_t *
-long_neg(PsycoObject *po, vinfo_t *);
-static vinfo_t *
-long_long(PsycoObject *po, vinfo_t *);
-static vinfo_t *
-long_abs(PsycoObject *po, vinfo_t *);
-static vinfo_t *
-long_add(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-long_bool(PsycoObject *po, vinfo_t *);
-static vinfo_t *
-long_float(PsycoObject *po, vinfo_t *);
-static vinfo_t *
-long_invert(PsycoObject *po, vinfo_t *);
-static vinfo_t *
-long_mul(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-long_sub(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-long_pow(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *);
-static vinfo_t *
-long_true_divide(PsycoObject *po, vinfo_t *, vinfo_t *);
+made_long(PsycoObject *po, vinfo_t *x)
+{
+    if (x != NULL)
+        Psyco_AssertType(po, x, &PyLong_Type);
+    return x;
+}
+
+/* CHECK_BINOP of longobject.c: true if both are ints, false with
+ *result set (NotImplemented, or NULL on error) if not */
+static bool
+check_binop(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t **result)
+{
+    PyTypeObject *tp = Psyco_NeedType(po, v);
+    *result = NULL;
+    if (tp == NULL)
+        return false;
+    if ((tp->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0) {
+        tp = Psyco_NeedType(po, w);
+        if (tp == NULL)
+            return false;
+        if ((tp->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) != 0)
+            return true;
+    }
+    *result = psyco_vi_NotImplemented();
+    return false;
+}
 
 static vinfo_t *
 _PsycoLong_Copy(PsycoObject *po, vinfo_t *src)
 {
-    return psyco_generic_call(po, _PyLong_Copy,
-                              CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
-                              "v", src);
+    return psyco_generic_call(po, _PyLong_Copy, CF_LONG, "v", src);
 }
 
 static vinfo_t *
 long_neg(PsycoObject *po, vinfo_t *v)
 {
-    vinfo_t *_t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
-    vinfo_t *w_v;
+    vinfo_t *w_v, *x;
     switch (PsycoLong_MediumValue(po, v, &w_v)) {
         case 1:
             break;
         case 0:
-            _t1 = psyco_generic_call(
-                po, PyLong_Type.tp_as_number->nb_negative,
-                CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v", v);
-            if (_t1 != NULL)
-                Psyco_AssertType(po, _t1, &PyLong_Type);
-            return _t1;
+            return made_long(po, psyco_generic_call(
+                                     po, PyLong_Type.tp_as_number->nb_negative,
+                                     CF_LONG, "v", v));
         default:
             return NULL;
     }
     /* in [-1073741823, 1073741823]: no overflow */
-    _t2 = integer_neg(po, w_v, false);
+    x = integer_neg(po, w_v, false);
     vinfo_decref(w_v, po);
-    if (_t2 == NULL) {
-        return NULL;
-    }
-    _t3 = PsycoLong_FROM_WORD(_t2);
-    return _t3;
+    return x != NULL ? PsycoLong_FROM_WORD(x) : NULL;
 }
 
 static vinfo_t *
 long_long(PsycoObject *po, vinfo_t *v)
 {
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
         return NULL;
-    }
     if (tp_v == &PyLong_Type) {
         vinfo_incref(v);
+        return v;
     }
-    else {
-        _t1 = _PsycoLong_Copy(po, v);
-        v = _t1;
-    }
-    return v;
+    return _PsycoLong_Copy(po, v);
 }
 
 static vinfo_t *
 long_abs(PsycoObject *po, vinfo_t *v)
 {
-    vinfo_t *_t1;
-    condition_code_t _t2;
-    int _t3;
-    vinfo_t *_t4;
-    vinfo_t *_t5;
-    _t1 = PsycoLong_Sign(po, v);
-    if (_t1 == NULL) {
+    condition_code_t cc;
+    vinfo_t *sign = PsycoLong_Sign(po, v);
+    if (sign == NULL)
         return NULL;
-    }
-    _t2 = integer_cmp_i(po, _t1, 0, Py_LT);
-    vinfo_decref(_t1, po);
-    if (_t2 == CC_ERROR) {
+    cc = integer_cmp_i(po, sign, 0, Py_LT);
+    vinfo_decref(sign, po);
+    if (cc == CC_ERROR)
         return NULL;
+    if (runtime_condition_f(po, cc))
+        return made_long(po, long_neg(po, v));
+    return made_long(po, long_long(po, v));
+}
+
+/* + - * of two medium ints, whose result fits in a word: 'slot' is the
+   whole operation for the others, and 'cf' its flags */
+static vinfo_t *
+long_binop(PsycoObject *po, vinfo_t *a, vinfo_t *b, binaryfunc slot, int cf,
+           vinfo_t *(*op)(PsycoObject *, vinfo_t *, vinfo_t *, bool))
+{
+    vinfo_t *w_a, *w_b, *x;
+    if (!check_binop(po, a, b, &x))
+        return x;
+    switch (PsycoLong_MediumValue(po, a, &w_a)) {
+        case 1:
+            break;
+        case 0:
+            return made_long(po, psyco_generic_call(po, slot, cf, "vv", a, b));
+        default:
+            return NULL;
     }
-    _t3 = runtime_condition_f(po, _t2);
-    if (_t3) {
-        _t4 = long_neg(po, v);
-        if (_t4 != NULL)
-            Psyco_AssertType(po, _t4, &PyLong_Type);
-        return _t4;
+    switch (PsycoLong_MediumValue(po, b, &w_b)) {
+        case 1:
+            break;
+        case 0:
+            x = made_long(po, psyco_generic_call(po, slot, cf, "vv", a, b));
+            vinfo_decref(w_a, po);
+            return x;
+        default:
+            vinfo_decref(w_a, po);
+            return NULL;
     }
-    else {
-        _t5 = long_long(po, v);
-        if (_t5 != NULL)
-            Psyco_AssertType(po, _t5, &PyLong_Type);
-        return _t5;
-    }
+    x = op(po, w_a, w_b, false);
+    vinfo_decref(w_a, po);
+    vinfo_decref(w_b, po);
+    return x != NULL ? PsycoLong_FROM_WORD(x) : NULL;
 }
 
 static vinfo_t *
 long_add(PsycoObject *po, vinfo_t *a, vinfo_t *b)
 {
-    int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
-    vinfo_t *_t4;
-    vinfo_t *_t5;
-    PyTypeObject *tp_a;
-    PyTypeObject *tp_b;
-    vinfo_t *w_a;
-    vinfo_t *w_b;
-    tp_a = Psyco_NeedType(po, a);
-    if (tp_a == NULL) {
-        return NULL;
-    }
-    _t1 = (tp_a->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) == 0;
-    if (!_t1) {
-        tp_b = Psyco_NeedType(po, b);
-        if (tp_b == NULL) {
-            return NULL;
-        }
-        _t1 = (tp_b->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) == 0;
-    }
-    if (_t1) {
-        return psyco_vi_NotImplemented();
-    }
-    switch (PsycoLong_MediumValue(po, a, &w_a)) {
-        case 1:
-            break;
-        case 0:
-            _t2 = psyco_generic_call(
-                po, PyLong_Type.tp_as_number->nb_add,
-                CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "vv", a, b);
-            if (_t2 != NULL)
-                Psyco_AssertType(po, _t2, &PyLong_Type);
-            return _t2;
-        default:
-            return NULL;
-    }
-    switch (PsycoLong_MediumValue(po, b, &w_b)) {
-        case 1:
-            break;
-        case 0:
-            _t3 = psyco_generic_call(
-                po, PyLong_Type.tp_as_number->nb_add,
-                CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "vv", a, b);
-            if (_t3 != NULL)
-                Psyco_AssertType(po, _t3, &PyLong_Type);
-            vinfo_decref(w_a, po);
-            return _t3;
-        default:
-            vinfo_decref(w_a, po);
-            return NULL;
-    }
     /* in [-2147483646, 2147483646]: no overflow */
-    _t4 = integer_add(po, w_a, w_b, false);
-    vinfo_decref(w_a, po);
-    vinfo_decref(w_b, po);
-    if (_t4 == NULL) {
-        return NULL;
-    }
-    _t5 = PsycoLong_FROM_WORD(_t4);
-    return _t5;
-}
-
-static vinfo_t *
-long_bool(PsycoObject *po, vinfo_t *v)
-{
-    vinfo_t *_t1;
-    condition_code_t _t2;
-    vinfo_t *_t3;
-    _t1 = PsycoLong_Sign(po, v);
-    if (_t1 == NULL) {
-        return NULL;
-    }
-    _t2 = integer_non_null(po, _t1);
-    vinfo_decref(_t1, po);
-    if (_t2 == CC_ERROR) {
-        return NULL;
-    }
-    _t3 = psyco_vinfo_condition(po, _t2);
-    return _t3;
-}
-
-static vinfo_t *
-long_float(PsycoObject *po, vinfo_t *v)
-{
-    vinfo_t *_t3;
-    vinfo_t *result;
-    result = PsycoLong_AsDouble(po, v);
-    if (result == NULL) {
-        return NULL;
-    }
-    vinfo_incref(result);
-    _t3 = PsycoFloat_FROM_DOUBLE(result);
-    vinfo_decref(result, po);
-    return _t3;
-}
-
-static vinfo_t *
-long_invert(PsycoObject *po, vinfo_t *v)
-{
-    vinfo_t *_t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
-    vinfo_t *_t4;
-    vinfo_t *w_v;
-    switch (PsycoLong_MediumValue(po, v, &w_v)) {
-        case 1:
-            break;
-        case 0:
-            _t1 = psyco_generic_call(
-                po, PyLong_Type.tp_as_number->nb_invert,
-                CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v", v);
-            if (_t1 != NULL)
-                Psyco_AssertType(po, _t1, &PyLong_Type);
-            return _t1;
-        default:
-            return NULL;
-    }
-    /* in [-1073741822, 1073741824]: no overflow */
-    _t2 = integer_add_i(po, w_v, 1, false);
-    vinfo_decref(w_v, po);
-    if (_t2 == NULL) {
-        return NULL;
-    }
-    /* in [-1073741824, 1073741822]: no overflow */
-    _t3 = integer_neg(po, _t2, false);
-    vinfo_decref(_t2, po);
-    if (_t3 == NULL) {
-        return NULL;
-    }
-    _t4 = PsycoLong_FROM_WORD(_t3);
-    return _t4;
-}
-
-static vinfo_t *
-long_mul(PsycoObject *po, vinfo_t *a, vinfo_t *b)
-{
-    int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
-    vinfo_t *_t4;
-    vinfo_t *_t6;
-    PyTypeObject *tp_a;
-    PyTypeObject *tp_b;
-    vinfo_t *v;
-    vinfo_t *w_a;
-    vinfo_t *w_b;
-    tp_a = Psyco_NeedType(po, a);
-    if (tp_a == NULL) {
-        return NULL;
-    }
-    _t1 = (tp_a->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) == 0;
-    if (!_t1) {
-        tp_b = Psyco_NeedType(po, b);
-        if (tp_b == NULL) {
-            return NULL;
-        }
-        _t1 = (tp_b->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) == 0;
-    }
-    if (_t1) {
-        return psyco_vi_NotImplemented();
-    }
-    switch (PsycoLong_MediumValue(po, a, &w_a)) {
-        case 1:
-            break;
-        case 0:
-            _t2 = psyco_generic_call(po, PyLong_Type.tp_as_number->nb_multiply,
-                                     CfCommonNewRefPyObject, "vv", a, b);
-            if (_t2 != NULL)
-                Psyco_AssertType(po, _t2, &PyLong_Type);
-            return _t2;
-        default:
-            return NULL;
-    }
-    switch (PsycoLong_MediumValue(po, b, &w_b)) {
-        case 1:
-            break;
-        case 0:
-            _t3 = psyco_generic_call(po, PyLong_Type.tp_as_number->nb_multiply,
-                                     CfCommonNewRefPyObject, "vv", a, b);
-            if (_t3 != NULL)
-                Psyco_AssertType(po, _t3, &PyLong_Type);
-            vinfo_decref(w_a, po);
-            return _t3;
-        default:
-            vinfo_decref(w_a, po);
-            return NULL;
-    }
-    /* in [-1152921502459363329, 1152921502459363329]: no overflow */
-    _t4 = integer_mul(po, w_a, w_b, false);
-    vinfo_decref(w_a, po);
-    vinfo_decref(w_b, po);
-    if (_t4 == NULL) {
-        return NULL;
-    }
-    v = _t4;
-    vinfo_incref(v);
-    _t6 = PsycoLong_FROM_WORD(v);
-    vinfo_decref(v, po);
-    return _t6;
+    return long_binop(po, a, b, PyLong_Type.tp_as_number->nb_add, CF_LONG,
+                      integer_add);
 }
 
 static vinfo_t *
 long_sub(PsycoObject *po, vinfo_t *a, vinfo_t *b)
 {
-    int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
-    vinfo_t *_t4;
-    vinfo_t *_t5;
-    PyTypeObject *tp_a;
-    PyTypeObject *tp_b;
-    vinfo_t *w_a;
-    vinfo_t *w_b;
-    tp_a = Psyco_NeedType(po, a);
-    if (tp_a == NULL) {
-        return NULL;
-    }
-    _t1 = (tp_a->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) == 0;
-    if (!_t1) {
-        tp_b = Psyco_NeedType(po, b);
-        if (tp_b == NULL) {
-            return NULL;
-        }
-        _t1 = (tp_b->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) == 0;
-    }
-    if (_t1) {
-        return psyco_vi_NotImplemented();
-    }
-    switch (PsycoLong_MediumValue(po, a, &w_a)) {
-        case 1:
-            break;
-        case 0:
-            _t2 = psyco_generic_call(
-                po, PyLong_Type.tp_as_number->nb_subtract,
-                CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "vv", a, b);
-            if (_t2 != NULL)
-                Psyco_AssertType(po, _t2, &PyLong_Type);
-            return _t2;
-        default:
-            return NULL;
-    }
-    switch (PsycoLong_MediumValue(po, b, &w_b)) {
-        case 1:
-            break;
-        case 0:
-            _t3 = psyco_generic_call(
-                po, PyLong_Type.tp_as_number->nb_subtract,
-                CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "vv", a, b);
-            if (_t3 != NULL)
-                Psyco_AssertType(po, _t3, &PyLong_Type);
-            vinfo_decref(w_a, po);
-            return _t3;
-        default:
-            vinfo_decref(w_a, po);
-            return NULL;
-    }
     /* in [-2147483646, 2147483646]: no overflow */
-    _t4 = integer_sub(po, w_a, w_b, false);
-    vinfo_decref(w_a, po);
-    vinfo_decref(w_b, po);
-    if (_t4 == NULL) {
+    return long_binop(po, a, b, PyLong_Type.tp_as_number->nb_subtract, CF_LONG,
+                      integer_sub);
+}
+
+static vinfo_t *
+long_mul(PsycoObject *po, vinfo_t *a, vinfo_t *b)
+{
+    /* in [-1152921502459363329, 1152921502459363329]: no overflow */
+    return long_binop(po, a, b, PyLong_Type.tp_as_number->nb_multiply,
+                      CfCommonNewRefPyObject, integer_mul);
+}
+
+static vinfo_t *
+long_bool(PsycoObject *po, vinfo_t *v)
+{
+    condition_code_t cc;
+    vinfo_t *sign = PsycoLong_Sign(po, v);
+    if (sign == NULL)
         return NULL;
+    cc = integer_non_null(po, sign);
+    vinfo_decref(sign, po);
+    if (cc == CC_ERROR)
+        return NULL;
+    return psyco_vinfo_condition(po, cc);
+}
+
+static vinfo_t *
+long_float(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *result = PsycoLong_AsDouble(po, v);
+    if (result == NULL)
+        return NULL;
+    return PsycoFloat_FROM_DOUBLE(result);
+}
+
+static vinfo_t *
+long_invert(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *w_v, *x, *y;
+    switch (PsycoLong_MediumValue(po, v, &w_v)) {
+        case 1:
+            break;
+        case 0:
+            return made_long(
+                po, psyco_generic_call(po, PyLong_Type.tp_as_number->nb_invert,
+                                       CF_LONG, "v", v));
+        default:
+            return NULL;
     }
-    _t5 = PsycoLong_FROM_WORD(_t4);
-    return _t5;
+    /* in [-1073741822, 1073741824]: no overflow */
+    x = integer_add_i(po, w_v, 1, false);
+    vinfo_decref(w_v, po);
+    if (x == NULL)
+        return NULL;
+    /* in [-1073741824, 1073741822]: no overflow */
+    y = integer_neg(po, x, false);
+    vinfo_decref(x, po);
+    return y != NULL ? PsycoLong_FROM_WORD(y) : NULL;
 }
 
 static vinfo_t *
 long_pow(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *x)
 {
-    int negativeOutput;
-    negativeOutput = 0;
     return psyco_generic_call(po, PyLong_Type.tp_as_number->nb_power,
                               CfCommonCheckNotImplemented, "vvv", v, w, x);
 }
@@ -739,34 +540,14 @@ long_pow(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *x)
 static vinfo_t *
 long_true_divide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
-    int _t1;
-    vinfo_t *_t2;
-    vinfo_t *a;
-    vinfo_t *b;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    _t1 = (tp_v->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) == 0;
-    if (!_t1) {
-        tp_w = Psyco_NeedType(po, w);
-        if (tp_w == NULL) {
-            return NULL;
-        }
-        _t1 = (tp_w->tp_flags & Py_TPFLAGS_LONG_SUBCLASS) == 0;
-    }
-    if (_t1) {
-        return psyco_vi_NotImplemented();
-    }
-    a = v;
-    b = w;
-    _t2 = psyco_generic_call(po, PyLong_Type.tp_as_number->nb_true_divide,
-                             CfCommonCheckNotImplemented, "vv", v, w);
-    if (_t2 != NULL && !IS_NOTIMPLEMENTED(_t2))
-        Psyco_AssertType(po, _t2, &PyFloat_Type);
-    return _t2;
+    vinfo_t *x;
+    if (!check_binop(po, v, w, &x))
+        return x;
+    x = psyco_generic_call(po, PyLong_Type.tp_as_number->nb_true_divide,
+                           CfCommonCheckNotImplemented, "vv", v, w);
+    if (x != NULL && !IS_NOTIMPLEMENTED(x))
+        Psyco_AssertType(po, x, &PyFloat_Type);
+    return x;
 }
 
 static void
@@ -785,7 +566,6 @@ gen_longobject_init(void)
     Psyco_DefineMeta(PyLong_Type.tp_as_number->nb_true_divide,
                      long_true_divide);
 }
-#pragma GCC diagnostic pop
 
 /* long_hash: a one-digit int hashes to its value, but -1 to -2 (-1 means
    an error) */
