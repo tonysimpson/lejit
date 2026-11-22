@@ -525,7 +525,12 @@ cimpl_dict_get_known(PyObject *dict, PyObject *name, Py_hash_t hash)
 static bool
 has_managed_values(PyTypeObject *tp)
 {
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_HAS_INLINE_VALUES
+    /* emitted code reaches the values with a byte displacement */
+    return (tp->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
+           ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL &&
+           tp->tp_basicsize + LE_VALUES_ARRAY < 128;
+#elif LE_HAS_MANAGED_VALUES_POINTER
     return (tp->tp_flags & Py_TPFLAGS_MANAGED_DICT) &&
            ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL;
 #else
@@ -533,17 +538,37 @@ has_managed_values(PyTypeObject *tp)
 #endif
 }
 
-#if LE_HAS_MANAGED_VALUES_POINTER
-/* where such an instance's values pointer is (NULL once its dict is made),
-   and its dict pointer */
-#define MANAGED_VALUES_OFFSET (-4 * (long)sizeof(PyObject *))
-#define MANAGED_DICT_POINTER_OFFSET (-3 * (long)sizeof(PyObject *))
+#if LE_MANAGED_VALUES
+#if LE_HAS_INLINE_VALUES
+/* where such an instance's values are */
+static long
+values_offset(PyTypeObject *tp)
+{
+    return tp->tp_basicsize;
+}
+
+/* its values, or NULL where they are no longer its attributes */
+static PyObject **
+instance_values(PyObject *obj)
+{
+    char *values = (char *)obj + values_offset(Py_TYPE(obj));
+    return values[LE_VALUES_VALID] ? (PyObject **)(values + LE_VALUES_ARRAY)
+                                   : NULL;
+}
+#else
+/* where such an instance's values pointer is (NULL once its dict is made) */
+static long
+values_offset(PyTypeObject *tp)
+{
+    return -4 * (long)sizeof(PyObject *);
+}
 
 static PyObject **
 instance_values(PyObject *obj)
 {
-    return *(PyObject ***)((char *)obj + MANAGED_VALUES_OFFSET);
+    return *(PyObject ***)((char *)obj + values_offset(Py_TYPE(obj)));
 }
+#endif
 
 static le_dictkeys_t *
 class_keys(PyTypeObject *tp)
@@ -574,7 +599,7 @@ class_keys_index(le_dictkeys_t *keys, PyObject *name)
 static store_cache_t *
 store_cache(PyTypeObject *tp, PyObject *name);
 static code_t *load_miss_glue;
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
 static code_t *managed_load_miss_glue;
 #endif
 
@@ -630,13 +655,13 @@ instance_dict_get(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
 {
     vinfo_t *vd, *v;
     condition_code_t cc;
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
     if (has_managed_values(tp)) {
         inline_load_t s;
         if (!compute_vinfo(obj, po))
             return NULL;
         s.obj = obj;
-        s.dictoffset = MANAGED_VALUES_OFFSET;
+        s.dictoffset = values_offset(tp);
         s.keys = class_keys(tp);
         s.cache = store_cache(tp, name);
         s.hash = PyObject_Hash(name);
@@ -1293,7 +1318,7 @@ store_cache(PyTypeObject *tp, PyObject *name)
     c->name = name;
     c->version = &le_dict_version;
     c->refreshes = 0;
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
     c->nentries = -1;
 #endif
     if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) /* a first hint */
@@ -1354,7 +1379,7 @@ cimpl_load_miss(PyObject *dict, store_cache_t *c)
     return v;
 }
 
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
 /* point 'c' at the class keys' entry 'ix' of its name, or (-1) record
    that they don't hold it at their present size */
 static void
@@ -1379,8 +1404,7 @@ cimpl_managed_load_miss(PyObject *obj, store_cache_t *c)
     le_dictkeys_t *keys = class_keys(Py_TYPE(obj));
     Py_ssize_t ix;
     if (values == NULL) {
-        PyObject *dict =
-            *(PyObject **)((char *)obj + MANAGED_DICT_POINTER_OFFSET);
+        PyObject *dict = *(PyObject **)((char *)obj + LE_MANAGED_DICT_OFFSET);
         if (dict == NULL)
             return NULL;
         return cimpl_dict_get_known(dict, c->name, PyObject_Hash(c->name));
@@ -1512,12 +1536,13 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
        where keys have a kind */
     s.fill = !LE_HAS_DICT_KEYS_KIND && init_store(po, obj);
     s.miss_glue = store_miss_glue;
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
     if (has_managed_values(tp)) { /* values with no dict, nor its tracking */
-        s.dictoffset = MANAGED_VALUES_OFFSET;
+        s.dictoffset = values_offset(tp);
         s.keys = class_keys(tp);
         s.gc = STORE_GC_NONE;
-        s.fill = init_store(po, obj);
+        /* FILL keeps the insertion order of values behind a pointer only */
+        s.fill = !LE_HAS_INLINE_VALUES && init_store(po, obj);
         s.miss_glue = managed_store_miss_glue;
     }
 #endif
@@ -1929,7 +1954,7 @@ psy_object_init(void)
     gen_object_init();
     store_miss_glue = psyco_aligned_call_glue(cimpl_store_miss);
     load_miss_glue = psyco_aligned_call_glue(cimpl_load_miss);
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
     managed_load_miss_glue = psyco_aligned_call_glue(cimpl_managed_load_miss);
     managed_store_miss_glue =
         psyco_aligned_call_glue(cimpl_managed_store_miss);
