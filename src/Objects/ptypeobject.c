@@ -407,26 +407,22 @@ generic:
    passes. */
 static initproc slot_tp_init;
 
-/* object_new once its excess_args test has passed at compile time. An
-   instance with a managed dict also needs its values, which only
-   object_new can make. */
+/* object_new once its excess_args test has passed at compile time: the
+   allocation, or object_new itself for its error, and where classes have
+   managed dicts for the instance's values (_PyObject_InitializeDict),
+   which only it can give */
 static PyObject *
 object_new_checked(PyTypeObject *tp)
 {
-    unsigned long through_object_new = Py_TPFLAGS_IS_ABSTRACT;
-#if LE_HAS_MANAGED_DICT
-    through_object_new |= Py_TPFLAGS_MANAGED_DICT;
-#endif
-    if (tp->tp_flags & through_object_new) {
-        /* object_new's error, or the values */
-        PyObject *r, *args = PyTuple_New(0);
-        if (args == NULL)
-            return NULL;
-        r = PyBaseObject_Type.tp_new(tp, args, NULL);
-        Py_DECREF(args);
-        return r;
-    }
-    return tp->tp_alloc(tp, 0);
+    PyObject *r, *args;
+    if (!LE_HAS_MANAGED_DICT && !(tp->tp_flags & Py_TPFLAGS_IS_ABSTRACT))
+        return tp->tp_alloc(tp, 0);
+    args = PyTuple_New(0);
+    if (args == NULL)
+        return NULL;
+    r = PyBaseObject_Type.tp_new(tp, args, NULL);
+    Py_DECREF(args);
+    return r;
 }
 
 /* slot_tp_init's error for a result that isn't None */
