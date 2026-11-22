@@ -367,6 +367,37 @@ CASES += [
 ]
 
 
+# the line a frame shows once an exception has left it through a finally
+# block or an except clause that doesn't match: that of the instruction
+# that raised it again
+def leaves_through_finally(a):
+    try:
+        a // 0
+    finally:
+        pass
+
+
+def leaves_through_other_except(a):
+    try:
+        a // 0
+    except TypeError:
+        pass
+
+
+def line_left_from(f):
+    try:
+        f(1)
+    except ZeroDivisionError as e:
+        frame = e.__traceback__.tb_next.tb_frame
+        return frame.f_lineno - frame.f_code.co_firstlineno
+
+
+CASES += [
+    ('line_left_from',
+     '[(leaves_through_finally,), (leaves_through_other_except,)]', {}),
+]
+
+
 # a truth test of many types goes megamorphic and the frame goes on in
 # ceval, which runs the with's __exit__ and the finally block once; the
 # exception leaving ceval is not caught again by the compiled handlers

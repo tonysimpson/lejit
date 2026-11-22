@@ -1005,6 +1005,29 @@ set_frame_place(PyFrameObject *f, int lasti, int lineno)
     f->f_lineno = LE_HAS_LINENO_WHEN_SET ? 0 : lineno;
 }
 
+/* the frame object that already stands for a compiled frame running code:
+   the real one, one asked for, or its catcher word's; NULL if none */
+static PyFrameObject *
+existing_frame(PyCodeObject *code, PyObject **word)
+{
+    PyFrameObject *f = psyco_running_real_frame(code);
+    if (f == NULL)
+        f = psyco_innermost_activation(code);
+    if (f == NULL && word != NULL)
+        f = (PyFrameObject *)*word;
+    return f;
+}
+
+/* a re-raise's place in the frame, where it has one: the exception leaves
+   the frame from there, with no new traceback entry */
+static void
+cimpl_reraise_place(PyCodeObject *code, int pos, int lineno, PyObject **word)
+{
+    PyFrameObject *f = existing_frame(code, word);
+    if (f != NULL)
+        set_frame_place(f, pos, lineno);
+}
+
 static PyFrameObject *
 cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
                 int lasti, int lineno, PyObject **word)
@@ -1018,12 +1041,8 @@ cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
        lists etc). Its f_back is the entry's over it
        (psyco_frame_link_callee), or for the frame that catches the
        exception its caller, when read (frames.c:catcher_caller). */
-    PyFrameObject *result = psyco_running_real_frame(code);
+    PyFrameObject *result = existing_frame(code, word);
     le_frame_t *back = le_frame_current(tstate);
-    if (result == NULL)
-        result = psyco_innermost_activation(code); /* one asked for */
-    if (result == NULL && word != NULL)
-        result = (PyFrameObject *)*word;
     if (result != NULL) {
         Py_INCREF(result);
         set_frame_place(result, lasti, lineno);
@@ -1452,6 +1471,18 @@ PycException_Reraise(PsycoObject *po, vinfo_t *exc, vinfo_t *val, vinfo_t *tb)
     po->pr.tb = tb;
     if (locals_wanted_now(po))
         traceback_locals(po, tb);
+}
+
+/* the frame's place set to pos at run time, for an exception raised again
+   (cimpl_reraise_place) */
+static void
+reraise_place(PsycoObject *po, int pos)
+{
+    vinfo_t *word = catcher_word(po);
+    psyco_generic_call(po, cimpl_reraise_place, CfNoReturnValue,
+                       word != NULL ? "lllr" : "llll", (long)po->pr.co,
+                       (long)pos, (long)PyCode_Addr2Line(po->pr.co, pos),
+                       word != NULL ? (long)word : 0L);
 }
 
 /* record a traceback entry for the current virtual Python exception */
@@ -5065,6 +5096,12 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     }
                     psyco_generic_call(po, cimpl_reraise_value,
                                        CfPyErrAlways | CfNoPython, "v", TOP());
+                    /* the place of the instruction that first raised, or
+                       this one's */
+                    reraise_place(po, raise_lasti < 0 ? po->pr.next_instr
+                                      : LE_HAS_LASTI_IN_INSTRUCTIONS
+                                          ? raise_lasti * LE_UNIT
+                                          : raise_lasti);
                     if (locals_wanted_now(po))
                         traceback_locals(po, NULL);
                     goto exception_unwind;
@@ -5076,6 +5113,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     exc = NTOP(1);
                     val = NTOP(2);
                     tb = NTOP(3);
+                    /* with oparg the place stays the first raise's, which its
+                       traceback entry set */
+                    if (!oparg)
+                        reraise_place(po, po->pr.next_instr);
                     PycException_Reraise(po, exc, val, tb);
                     goto exception_unwind;
                 }
@@ -6485,6 +6526,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                            stack, raised again as RERAISE does */
                         POP(w);
                         POP(x);
+                        reraise_place(po, po->pr.next_instr);
                         PycException_Reraise(po, v, w, x);
                         vinfo_decref(v, po);
                         vinfo_decref(w, po);
