@@ -50,6 +50,13 @@ SKIPPED = {
         'test_binary_subscript_specialization_user_type '
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_property_load_attr_specialization_user_type',
+    "compiled code doesn't specialise the bytecode it runs, which ceval does "
+    'as it runs it':
+        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test_load_method_specialization_user_type',
+    "a compiled frame's f_lasti isn't kept up to date while it calls Python, "
+    "and 3.11's inspect takes the line from it":
+        'test_inspect.TestInterpreterStack.test_stack',
     'CPython counts each frame a frame-evaluation hook is given as a C call '
     'too, so a Python recursion 90,000 deep passes the C recursion limit '
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
@@ -100,9 +107,14 @@ import sys, unittest, io, json
 if sys.argv[1] == 'lejit':
     sys.path.insert(0, sys.argv[3]); import lejit; lejit.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
+# a package's tests may be in its module of the same name (test_inspect)
+try:
+    sub = __import__('test.%s.%s' % (sys.argv[2], sys.argv[2]), fromlist=['x'])
+except ImportError:
+    sub = None
 for name in sys.argv[4:]:
     cls, meth = name.split('.')
-    cls = getattr(mod, cls, None)
+    cls = getattr(mod, cls, None) or getattr(sub, cls, None)
     if hasattr(cls, meth):
         setattr(cls, meth, unittest.skip('skipped by run.py')(getattr(cls, meth)))
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)

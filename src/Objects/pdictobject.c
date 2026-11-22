@@ -75,6 +75,15 @@ static PyCFunction cfunc_dict_setdefault;
 static PyObject *
 cimpl_dict_get_impl(PyDictObject *self, PyObject *key, PyObject *default_value)
 {
+#if LE_HAS_DICT_KEYS_KIND
+    /* dict_get_impl's lookup, _Py_dict_lookup, is hidden */
+    PyObject *val = PyDict_GetItemWithError((PyObject *)self, key);
+    if (val == NULL) {
+        if (PyErr_Occurred())
+            return NULL;
+        val = default_value;
+    }
+#else
     PyObject *val = NULL;
     Py_hash_t hash;
     Py_ssize_t ix;
@@ -90,6 +99,7 @@ cimpl_dict_get_impl(PyDictObject *self, PyObject *key, PyObject *default_value)
     if (ix == DKIX_EMPTY || val == NULL) {
         val = default_value;
     }
+#endif
     Py_INCREF(val);
     return val;
 }

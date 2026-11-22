@@ -293,6 +293,13 @@ def POP_EXCEPT_UNWINDS():
 
 
 @probe
+def CODE_QUALNAME():
+    """code objects have co_qualname"""
+    return (hasattr((lambda: None).__code__, 'co_qualname'),
+            'code.co_qualname')
+
+
+@probe
 def EXCEPTION_TABLE():
     """code objects have co_exceptiontable"""
     return (hasattr((lambda: None).__code__, 'co_exceptiontable'),
@@ -757,6 +764,35 @@ def POW_KEYWORDS():
     if isinstance(e, TypeError):
         return False, 'pow(base=, exp=): TypeError'
     raise Unanswered('pow(base=, exp=): %r' % e)
+
+
+@probe
+def LOAD_GLOBAL_NULL_BIT():
+    """a call of a global loads it with LOAD_GLOBAL whose argument is the
+    name's index (0) shifted left once, plus one for the NULL it pushes
+    (dis)"""
+    def f():
+        return zzz()  # noqa: F821
+    for x in dis.get_instructions(f):
+        if x.opname == 'LOAD_GLOBAL' and x.arg in (0, 1):
+            return x.arg == 1, 'dis: LOAD_GLOBAL %d for zzz()' % x.arg
+    raise Unanswered('zzz() is not LOAD_GLOBAL 0 or 1: %r'
+                     % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
+def DICT_KEYS_KIND():
+    """a dict of 5 str keys is smaller than one of 5 int keys, because its
+    entries hold no hash (sys.getsizeof)"""
+    strs, ints = {}, {}
+    for k in range(5):
+        strs[str(k)] = ints[k] = k
+    a, b = sys.getsizeof(strs), sys.getsizeof(ints)
+    if a == b:
+        return False, 'sys.getsizeof: str and int keys both %d' % a
+    if a < b:
+        return True, 'sys.getsizeof: str keys %d, int keys %d' % (a, b)
+    raise Unanswered('sys.getsizeof: str keys %d, int keys %d' % (a, b))
 
 
 def _caches():

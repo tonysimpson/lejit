@@ -676,6 +676,20 @@ def dict_values_struct(s):
     return 'PyDictValues' in fields['ma_values'], path + ':PyDictObject.ma_values'
 
 
+def dict_keys_kind(s):
+    """dict keys have a kind (dk_kind) and keep their size as a power of
+    two (dk_log2_size, dk_log2_index_bytes); an entry of keys that are all
+    str holds no hash (PyDictUnicodeEntry)"""
+    path, fields = s.struct('_dictkeysobject')
+    if fields is not None:
+        return 'dk_kind' in fields, path + ':_dictkeysobject.dk_kind'
+    # until 3.10 the struct is private to Objects/
+    found, path = _file_has(s, 'Objects/dict-common.h', 'dict_lookup_func dk_lookup;')
+    if found:
+        return False, path + ':_dictkeysobject.dk_lookup'
+    raise Unanswered('no struct _dictkeysobject in Include or Objects/dict-common.h')
+
+
 def interp_recursion_limit(s):
     """the recursion limit is the interpreter's ceval.recursion_limit, not
     the global _Py_CheckRecursionLimit"""
@@ -826,7 +840,8 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'POP_JUMP_FORWARD_IF_TRUE', 'POP_JUMP_FORWARD_IF_NONE',
            'POP_JUMP_FORWARD_IF_NOT_NONE', 'POP_JUMP_BACKWARD_IF_FALSE',
            'POP_JUMP_BACKWARD_IF_TRUE', 'POP_JUMP_BACKWARD_IF_NONE',
-           'POP_JUMP_BACKWARD_IF_NOT_NONE',
+           'POP_JUMP_BACKWARD_IF_NOT_NONE', 'PRECALL', 'KW_NAMES', 'CALL',
+           'MAKE_CELL', 'COPY_FREE_VARS', 'RETURN_GENERATOR',
            # gone from 3.12: the unary plus, the interactive print and
            # import * are CALL_INTRINSIC_1's
            'UNARY_POSITIVE', 'PRINT_EXPR', 'IMPORT_STAR',
@@ -1057,6 +1072,10 @@ BYTECODE = [
     ('EXCEPTION_TABLE', D('a code object\'s handlers are in its exception table (co_exceptiontable), not set up at run time on a block stack',
                           lambda s: _file_has(s, 'Objects/codeobject.c', '"co_exceptiontable"'))),
     ('CODE_LOCALSPLUS', code_localsplus),
+    ('CODE_QUALNAME', D('a code object has its function\'s qualified name (co_qualname): MAKE_FUNCTION takes it from there, with no name on the stack',
+                        lambda s: _file_has(s, 'Objects/codeobject.c', '"co_qualname"'))),
+    ('LOAD_GLOBAL_NULL_BIT', D('LOAD_GLOBAL\'s argument is the name\'s index shifted left once, its low bit pushing a NULL under the global',
+                               lambda s: _case_has(s, 'LOAD_GLOBAL', 'oparg>>1'))),
     ('MATCH_CLASS_PUSHES_BOOL', D('MATCH_CLASS pushes a bool saying whether the class matched, over the attributes or the subject',
                                   lambda s: _case_has(s, 'MATCH_CLASS', 'PyBool_FromLong', missing=False))),
     ('MATCH_KEYS_PUSHES_BOOL', D('MATCH_KEYS pushes a bool saying whether the keys matched, over the values or None',
@@ -1145,6 +1164,7 @@ OBJECTS = [
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),
     ('CORO_GET_AWAITABLE_ITER_LINKABLE', D('_PyCoro_GetAwaitableIter can be called from an extension',
                                            lambda s: _linkable(s, '_PyCoro_GetAwaitableIter'))),
+    ('DICT_KEYS_KIND', dict_keys_kind),
     ('LONG_VALUE', long_value),
     ('TYPE_GET_DICT', D('PyType_GetDict gives a type\'s dict, which a static builtin type keeps in the interpreter (its tp_dict is NULL)',
                         lambda s: _public(s, 'PyType_GetDict'))),

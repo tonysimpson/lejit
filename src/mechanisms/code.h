@@ -74,6 +74,40 @@ le_code_free_name(PyCodeObject *co, int i)
     return PyTuple_GET_ITEM(co->co_localsplusnames,
                             co->co_nlocalsplus - co->co_nfreevars + i);
 }
+
+/* the frame's slots: all of them, then where cell i and free variable i
+   are, and the slot of a *_DEREF or LOAD_CLOSURE argument */
+static inline int
+le_code_nlocalsplus(PyCodeObject *co)
+{
+    return co->co_nlocalsplus;
+}
+
+static inline int
+le_code_cell_slot(PyCodeObject *co, int i)
+{
+    return le_code_kind_index(co, CO_FAST_CELL, i);
+}
+
+static inline int
+le_code_free_slot(PyCodeObject *co, int i)
+{
+    return co->co_nlocalsplus - co->co_nfreevars + i;
+}
+
+static inline int
+le_code_deref_slot(PyCodeObject *co, int oparg)
+{
+    (void)co;
+    return oparg;
+}
+
+/* local i's slot holds a cell (MAKE_CELL put it there) */
+static inline int
+le_code_local_is_cell(PyCodeObject *co, int i)
+{
+    return (_PyLocals_GetKind(co->co_localspluskinds, i) & CO_FAST_CELL) != 0;
+}
 #else
 static inline int
 le_code_nlocals(PyCodeObject *co)
@@ -118,12 +152,55 @@ le_code_free_name(PyCodeObject *co, int i)
 {
     return PyTuple_GET_ITEM(co->co_freevars, i);
 }
-#endif
 
-/* locals, cells and free variables */
+/* the frame's slots: locals, cells and free variables; then where cell i
+   and free variable i are, and the slot of a *_DEREF or LOAD_CLOSURE
+   argument (cells, then free variables) */
 static inline int
 le_code_nlocalsplus(PyCodeObject *co)
 {
     return le_code_nlocals(co) + le_code_ncells(co) + le_code_nfrees(co);
+}
+
+static inline int
+le_code_cell_slot(PyCodeObject *co, int i)
+{
+    return le_code_nlocals(co) + i;
+}
+
+static inline int
+le_code_free_slot(PyCodeObject *co, int i)
+{
+    return le_code_nlocals(co) + le_code_ncells(co) + i;
+}
+
+static inline int
+le_code_deref_slot(PyCodeObject *co, int oparg)
+{
+    return le_code_nlocals(co) + oparg;
+}
+
+/* local i's slot holds a cell: never, an argument's cell has its own */
+static inline int
+le_code_local_is_cell(PyCodeObject *co, int i)
+{
+    (void)co;
+    (void)i;
+    return 0;
+}
+#endif
+
+/* the name of a *_DEREF argument's variable, borrowed */
+static inline PyObject *
+le_code_deref_name(PyCodeObject *co, int oparg)
+{
+    int slot = le_code_deref_slot(co, oparg), i;
+    for (i = 0; i < le_code_nfrees(co); i++)
+        if (le_code_free_slot(co, i) == slot)
+            return le_code_free_name(co, i);
+    for (i = 0; i < le_code_ncells(co); i++)
+        if (le_code_cell_slot(co, i) == slot)
+            return le_code_cell_name(co, i);
+    return NULL;
 }
 #endif /* LE_MECHANISMS_CODE_H */

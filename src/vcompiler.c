@@ -1277,15 +1277,13 @@ PsycoObject *
 PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
                      PyObject *merge_points, int recursion)
 {
-    int i, argc, ncells, nfrees, extras;
+    int i, argc, extras;
     PsycoObject *po;
     Source rsrc;
     source_known_t *sk;
     vinfo_t *v;
 
-    ncells = le_code_ncells(co);
-    nfrees = le_code_nfrees(co);
-    extras = co->co_stacksize + le_code_nlocals(co) + ncells + nfrees;
+    extras = co->co_stacksize + le_code_nlocalsplus(co);
 
     po = PsycoObject_New(INDEX_LOC_LOCALS_PLUS + extras);
     po->stack_depth = INITIAL_STACK_DEPTH;
@@ -1321,8 +1319,8 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         argc++;
 
     /* initialize the free and cell vars */
-    i = le_code_nlocals(co) + ncells + nfrees;
-    if (ncells || nfrees) {
+    i = le_code_nlocalsplus(co);
+    if (i > le_code_nlocals(co)) {
         while (i > le_code_nlocals(co)) {
             po->stack_depth += sizeof(long);
             /* borrowed references from the frame object */
@@ -1364,7 +1362,7 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     /* initialize the regular arguments */
     while (i > 0) {
         po->stack_depth += sizeof(long);
-        if (is_cell_arg(co, i - 1)) {
+        if (is_cell_arg(co, i - 1) && !le_code_local_is_cell(co, i - 1)) {
             /* CPython moved it into its cell and left NULL (ceval.c:
                _PyEval_EvalCodeWithName); only LOAD_DEREF reads it now */
             LOC_LOCALS_PLUS[--i] = psyco_vi_Zero();
