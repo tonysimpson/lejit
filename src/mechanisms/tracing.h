@@ -1,6 +1,39 @@
 #ifndef LE_MECHANISMS_TRACING_H
 #define LE_MECHANISMS_TRACING_H
-#if LE_HAS_CFRAME
+#if LE_HAS_MONITORING
+/* Tracing is on in a thread while it has a trace or profile function
+   (c_tracefunc, c_profilefunc): sys.settrace, sys.setprofile and their C
+   forms set them, and sys.monitoring calls them; there is no flag for
+   both. Other sys.monitoring tools are not seen. le_tracing_now tests it
+   at run time (the eval hook); le_tracing_test emits a call of the same
+   test in compiled code, on the thread state 'vts'
+   (psyfunc.c:tracing_on). Included after vcompiler.h and codegen.h. */
+static inline int
+le_tracing_now(PyThreadState *ts)
+{
+    return ts->c_tracefunc != NULL || ts->c_profilefunc != NULL;
+}
+
+static inline int
+cimpl_tracing_now(PyThreadState *ts)
+{
+    return le_tracing_now(ts);
+}
+
+static inline condition_code_t
+le_tracing_test(PsycoObject *po, vinfo_t *vts)
+{
+    condition_code_t cc;
+    vinfo_t *vflag =
+        psyco_generic_call(po, cimpl_tracing_now,
+                           CfReturnTypeInt | CfNoBlock | CfNoPython, "v", vts);
+    if (vflag == NULL)
+        return CC_ERROR;
+    cc = integer_non_null(po, vflag);
+    vinfo_decref(vflag, po);
+    return cc;
+}
+#elif LE_HAS_CFRAME
 /* Tracing is on in a thread while the use_tracing of its current CFrame
    (tstate->cframe) is set: by sys.settrace, sys.setprofile and their C
    forms, which set it in every CFrame of the thread. ceval gives each frame

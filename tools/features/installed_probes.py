@@ -327,10 +327,18 @@ def MATCH_KEYS_PUSHES_BOOL():
 
 
 @probe
+def MONITORING():
+    """sys.monitoring exists"""
+    return hasattr(sys, 'monitoring'), 'sys.monitoring'
+
+
+@probe
 def KWARGS_MERGE_EX():
-    """CALL_FUNCTION_EX given a mapping whose keys() repeats a key reports
-    the repeat (TypeError "multiple values"), as _PyDict_MergeEx does,
-    rather than keeping the last value as PyDict_Update does (run)"""
+    """CALL_FUNCTION_EX given a dict subclass whose keys() repeats a key
+    reports the repeat (TypeError "multiple values"), as _PyDict_MergeEx
+    does, rather than keeping the last value as PyDict_Update does, or
+    passing the dict on as it is, as where DICT_MERGE has made every
+    mapping a dict (run)"""
     _need_ops('CALL_FUNCTION_EX', 'LOAD_CONST', 'RETURN_VALUE')
     # the callable is pushed with CALL_FUNCTION, or (from 3.11) with a
     # NULL under it
@@ -342,9 +350,14 @@ def KWARGS_MERGE_EX():
         raise Unanswered('the probe needs opcode CALL_FUNCTION or PUSH_NULL,'
                          ' which this interpreter lacks')
 
-    class M(object):
+    # a dict, which CALL_FUNCTION_EX may take as it is; its own __iter__
+    # makes a merge read keys()
+    class M(dict):
         def keys(self):
             return ['a', 'a']
+
+        def __iter__(self):
+            return iter(self.keys())
 
         def __getitem__(self, key):
             return 1

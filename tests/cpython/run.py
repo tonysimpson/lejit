@@ -15,7 +15,7 @@ MEMORY_LIMIT = 4 << 30          # bytes of address space per run
 # reason: names (fnmatch patterns); a name no version has is fine
 BANNED = {
     "can't run here, with or without LeJIT":
-        'test_curses test_idle test_tcl test_tix test_tk test_ttk_* test_turtle '
+        'test_curses test_idle test_tcl test_tix test_tk test_tkinter test_ttk test_ttk_* test_turtle '
         'test_*net test_nntplib test_ssl test_timeout test_codecmaps_* test_normalization '
         'test_win* test_msilib test_startfile test_osx_env test_kqueue test_devpoll test_ossaudiodev '
         'test_big* test_largefile test_zipfile64 test_multiprocessing_* test_concurrent_futures '
@@ -30,6 +30,9 @@ BANNED = {
         'test_generators test_ctypes test_memoryio test_socket',
     'tracing that starts in a running frame':
         'test_sys_settrace test_pdb',
+    'sys.monitoring with a frame-evaluation hook installed '
+    '(_testinternalcapi.set_eval_frame_record fails it the same way)':
+        'test_monitoring',
     'marshal of a code object with one reference': 'test_importlib',
     'timing': 'test_email',
     "SSL tests that race on OpenSSL 3, which the CI images' older CPythons predate":
@@ -38,12 +41,24 @@ BANNED = {
 
 # reason: single tests (module.Class.method) skipped in both runs
 SKIPPED = {
-    "CPython doesn't specialise Python calls and __getitem__ while a "
-    'frame-evaluation hook is installed (specialize.c, SPEC_FAIL_CALL_PEP_523)':
+    "CPython doesn't specialise Python calls, __getitem__ and properties "
+    'while a frame-evaluation hook is installed (specialize.c, '
+    'SPEC_FAIL_CALL_PEP_523)':
         'test_dis.DisTests.test_loop_quicken '
         'test_dis.DisWithFileTests.test_loop_quicken '
         'test_type_cache.TypeCacheWithSpecializationTests.'
-        'test_binary_subscript_specialization_user_type',
+        'test_binary_subscript_specialization_user_type '
+        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test_property_load_attr_specialization_user_type',
+    'CPython counts each frame a frame-evaluation hook is given as a C call '
+    'too, so a Python recursion 90,000 deep passes the C recursion limit '
+    '(_testinternalcapi.set_eval_frame_record fails it the same way)':
+        'test_call.TestRecursion.test_super_deep',
+    'skipped when the machine converts fast enough':
+        'test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
+        'test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int '
+        'test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
+        'test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int',
     "code LeJIT compiles doesn't run in ceval, so ceval doesn't quicken it":
         'test_dis.DisTests.test_super_instructions '
         'test_dis.DisWithFileTests.test_super_instructions',
@@ -83,8 +98,9 @@ if sys.argv[1] == 'lejit':
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
 for name in sys.argv[4:]:
     cls, meth = name.split('.')
-    cls = getattr(mod, cls)
-    setattr(cls, meth, unittest.skip('skipped by run.py')(getattr(cls, meth)))
+    cls = getattr(mod, cls, None)
+    if hasattr(cls, meth):
+        setattr(cls, meth, unittest.skip('skipped by run.py')(getattr(cls, meth)))
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)
 r = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
 bad = r.failures + r.errors

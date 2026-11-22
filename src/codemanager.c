@@ -1204,7 +1204,7 @@ DEFINEVAR PyTypeObject CodeBufferSummary_Type =
 
 DEFINEFN
 void
-codemanager_init()
+codemanager_init(void)
 {
     PyType_Ready(&CodeBuffer_Type);
     PyType_Ready(&CodeBufferShort_Type);
