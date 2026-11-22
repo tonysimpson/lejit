@@ -421,8 +421,25 @@ le_dict_shape(le_dictkeys_t *k)
 }
 
 /* ma_version_tag for the dict stores LeJIT makes itself: CPython's own
-   counter is static in dictobject.c and never reaches 2^63, where this one
-   starts, so tags from the two never meet */
+   counter never reaches 2^63, where this one starts, so tags from the two
+   never meet. Where a tag's low 8 bits say which watchers watch the dict,
+   LeJIT stores only into a dict none watch (le_dict_watched), and steps
+   its counter as CPython does, past those bits. */
 EXTERNVAR uint64_t le_dict_version;
+#if LE_HAS_DICT_WATCHER_BITS
+#define LE_DICT_WATCHER_MASK 0xff
+#define LE_DICT_VERSION_STEP 0x100
+#else
+#define LE_DICT_WATCHER_MASK 0
+#define LE_DICT_VERSION_STEP 1
+#endif
+
+/* a watcher watches the dict: a store must go through CPython, which sends
+   the watchers the event */
+PSY_INLINE bool
+le_dict_watched(PyDictObject *mp)
+{
+    return (mp->ma_version_tag & LE_DICT_WATCHER_MASK) != 0;
+}
 
 #endif /* _PSY_OBJECT_H */
