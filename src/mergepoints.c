@@ -880,12 +880,6 @@ _build_merge_points(PyCodeObject *co, int module)
     if (module) {
         goto not_ok;
     }
-#if LE_HAS_MONITORING
-    /* where tracing is sys.monitoring's (3.12 on), a compiled frame is not
-       resumed in ceval when tracing starts: every code object runs in
-       ceval */
-    goto not_ok;
-#endif
     /* a generator expression compiles only into its consumer
        (psyfunc.c:psyco_call_genexpr): the eval hook never runs generator
        code, and psyco_call_pyfunc makes a pending generator of it */
