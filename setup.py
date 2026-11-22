@@ -27,7 +27,15 @@ def fallback_reason():
     """Why no C extension is built for this Python, or None. LeJIT compiles to
     x86-64 code for CPython on Linux; anywhere else only the Python package
     is installed, whose functions then do nothing, so that installing LeJIT
-    never fails. LE_FALLBACK=1 installs it so anyway, to test it."""
+    never fails. LEJIT_FALLBACK=force installs it so anyway, to test it;
+    LEJIT_FALLBACK=skip builds the C extension anyway, to develop a port."""
+    choice = os.environ.get('LEJIT_FALLBACK', '')
+    if choice not in ('', 'force', 'skip'):
+        raise SystemExit('LEJIT_FALLBACK must be force or skip, not %r' % choice)
+    if choice == 'force':
+        return 'LEJIT_FALLBACK=force was set when it was installed'
+    if choice == 'skip':
+        return None
     impl = platform.python_implementation()
     if impl != 'CPython':
         return 'LeJIT runs only on CPython, not %s' % impl
@@ -39,8 +47,6 @@ def fallback_reason():
         return 'LeJIT runs only on CPython with the GIL, not a free-threaded build'
     if sys.version_info >= (3, 11):
         return 'LeJIT runs only on CPython 3.7 to 3.10, not %d.%d' % sys.version_info[:2]
-    if os.environ.get('LE_FALLBACK') == '1':
-        return 'LE_FALLBACK=1 was set when it was installed'
     return None
 
 
@@ -49,36 +55,36 @@ FALLBACK = fallback_reason()
 ####################################################################
 # Override defaults using environment variables e.g. dev mode
 # install with debug trace points:
-# > LE_TRACE=1 pip install -e .
+# > LEJIT_TRACE=1 pip install -e .
 #
 # Enable debugger trace points and compiler with debug options by 
 # setting to 1
-LE_TRACE = int(os.environ.get('LE_TRACE', 0))
+LE_TRACE = int(os.environ.get('LEJIT_TRACE', 0))
 
 # Extra checks enable with 1
-ALL_CHECKS = int(os.environ.get('LE_ALL_CHECKS', 0))
+ALL_CHECKS = int(os.environ.get('LEJIT_ALL_CHECKS', 0))
 
 # Code size per instruction, lejit._core._codestats()
-LE_CODESTATS = int(os.environ.get('LE_CODESTATS', 0))
+LE_CODESTATS = int(os.environ.get('LEJIT_CODESTATS', 0))
 
-# LE_FEATURES=source: detect the features in CPython's source (fetched and
-# cached once, or LE_CPYTHON_SRC) instead of the installed interpreter; the
+# LEJIT_FEATURES=source: detect the features in CPython's source (fetched and
+# cached once, or LEJIT_CPYTHON_SRC) instead of the installed interpreter; the
 # source detector is the reference the installed one is checked against.
-LE_FEATURES = os.environ.get('LE_FEATURES', 'installed')
+LE_FEATURES = os.environ.get('LEJIT_FEATURES', 'installed')
 if LE_FEATURES not in ('installed', 'source'):
-    raise SystemExit('LE_FEATURES must be installed or source, not %r' % LE_FEATURES)
+    raise SystemExit('LEJIT_FEATURES must be installed or source, not %r' % LE_FEATURES)
 
-# LE_SANITIZE=address or address,undefined: build with gcc's sanitizers
+# LEJIT_SANITIZE=address or address,undefined: build with gcc's sanitizers
 # Such a build goes in build/asan
 # (--build-lib), never in place, with its own config stamp.
-LE_SANITIZE = os.environ.get('LE_SANITIZE', '')
+LE_SANITIZE = os.environ.get('LEJIT_SANITIZE', '')
 
-# LE_COVERAGE=1: build with gcov into build/cov, never in place
-LE_COVERAGE = int(os.environ.get('LE_COVERAGE', 0))
+# LEJIT_COVERAGE=1: build with gcov into build/cov, never in place
+LE_COVERAGE = int(os.environ.get('LEJIT_COVERAGE', 0))
 
-# LE_COMPILE_COMMANDS=file: compile nothing, but write the commands the build
+# LEJIT_COMPILE_COMMANDS=file: compile nothing, but write the commands the build
 # would run to file, as a compile_commands.json (for clang-tidy: make lint)
-LE_COMPILE_COMMANDS = os.environ.get('LE_COMPILE_COMMANDS', '')
+LE_COMPILE_COMMANDS = os.environ.get('LEJIT_COMPILE_COMMANDS', '')
 
 ####################################################################
 
@@ -153,7 +159,7 @@ extra_compile_args += ['-Werror']
 extra_link_args = []
 if LE_SANITIZE:
     if '--inplace' in sys.argv or '-i' in sys.argv:
-        raise SystemExit('LE_SANITIZE: build with --build-lib build/asan,'
+        raise SystemExit('LEJIT_SANITIZE: build with --build-lib build/asan,'
                          ' not --inplace')
     # after the options above, so this -O1 wins
     extra_compile_args += ['-fsanitize=' + LE_SANITIZE, '-O1', '-g',
@@ -165,7 +171,7 @@ if LE_SANITIZE:
     extra_link_args += ['-fsanitize=' + LE_SANITIZE]
 if LE_COVERAGE:
     if '--inplace' in sys.argv or '-i' in sys.argv:
-        raise SystemExit('LE_COVERAGE: build with --build-lib build/cov,'
+        raise SystemExit('LEJIT_COVERAGE: build with --build-lib build/cov,'
                          ' not --inplace')
     extra_compile_args += ['--coverage', '-O0']
     extra_link_args += ['--coverage']
@@ -174,7 +180,7 @@ sources = find_sources(PROCESSOR)
 # than the module: list every header and .c file
 depends = sorted(set(glob.glob('./src/**/*.h', recursive=True) +
                      glob.glob('./src/**/*.c', recursive=True)))
-# switching LE_TRACE or LE_ALL_CHECKS must also rebuild: remember the
+# switching LEJIT_TRACE or LEJIT_ALL_CHECKS must also rebuild: remember the
 # options, and remove the built module when they change (distutils compares
 # whole seconds, so a fresh stamp file alone is not reliably "newer").
 # Each CPython version has its own stamp and module (its extension suffix),

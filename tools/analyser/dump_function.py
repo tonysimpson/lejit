@@ -8,7 +8,7 @@ Python line, bytecode offset and the compiler call stack that wrote it.
 
 Usage (from a venv with pointbreak, distorm3 and intervaltree):
     dump_function.py FUNC_NAME python3.7 script.py [args...]
-LeJIT must be built with LE_TRACE=1, and the script must call lejit.start().
+LeJIT must be built with LEJIT_TRACE=1, and the script must call lejit.start().
 Promotion records and other data sit inline in the code and disassemble
 as junk.
 """

@@ -13,7 +13,7 @@ SIGABRT from a Psyco assertion), reports:
   - the registers, and a disassembly of the chunk around the fault.
 
 Usage (from a venv with pointbreak, distorm3 and intervaltree; LeJIT built
-with LE_TRACE=1, and a script that calls lejit.start()):
+with LEJIT_TRACE=1, and a script that calls lejit.start()):
     crash_report.py [--stack N] [--step-from K] python3.7 script.py [args...]
 
 Each report says how many times compiled code was entered
@@ -139,7 +139,7 @@ def main():
                                   'call or return'))
     print('  (%d chunks of emitted code recorded)' % len(tracer.code_gen))
     if not tracer.code_gen:
-        print('  no chunks: is LeJIT built with LE_TRACE=1, and does the script'
+        print('  no chunks: is LeJIT built with LEJIT_TRACE=1, and does the script'
               ' call lejit.start()?')
     print('\ntop of stack (negative offsets: just popped; [rsp-0x8] == rip '
           'means a ret popped a bad address):')

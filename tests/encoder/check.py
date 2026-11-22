@@ -15,7 +15,7 @@ import concurrent.futures, itertools, json, os, re, subprocess, sys, sysconfig, 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HEADER = os.path.join(ROOT, 'src', 'x64', 'iencoding.h')
 # the interpreter whose headers and build are used (make's PY)
-PY = (os.environ.get('LE_PYTHON') or os.environ.get('LE_PY37')
+PY = (os.environ.get('LEJIT_PYTHON') or os.environ.get('LEJIT_PY37')
       or os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
 # the header that interpreter's build writes: psyco.h includes le_features_gen.h
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

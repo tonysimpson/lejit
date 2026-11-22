@@ -4,12 +4,12 @@ already seen.
     python3.X tests/jit/bounds.py [-v]
 """
 import os, sys
-sys.path.insert(0, os.environ.get('LE_MODULE_DIR') or
+sys.path.insert(0, os.environ.get('LEJIT_MODULE_DIR') or
                 os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import math
 import lejit
 if not hasattr(lejit._core, '_stats'):
-    sys.exit('lejit was not built for tests: build it with LE_ALL_CHECKS=1')
+    sys.exit('lejit was not built for tests: build it with LEJIT_ALL_CHECKS=1')
 lejit.start()
 
 VERBOSE = '-v' in sys.argv
