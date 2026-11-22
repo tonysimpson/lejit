@@ -4508,7 +4508,8 @@ enum {
 /* locals, constants, cells and the value stack */
 static int
 compile_locals_and_stack(PsycoObject *po, int opcode, int oparg,
-                         int *next_instr_io)
+                         int *next_instr_io, mergepoint_t **mp_io,
+                         int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -4805,7 +4806,8 @@ out:
 
 /* unary, binary and in-place operators, subscripts and slices */
 static int
-compile_operators(PsycoObject *po, int opcode, int oparg, int *next_instr_io)
+compile_operators(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
+                  mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     vinfo_t *u, *x;
@@ -4967,7 +4969,8 @@ out:
 
 /* comparisons and pattern matching */
 static int
-compile_compares(PsycoObject *po, int opcode, int oparg, int *next_instr_io)
+compile_compares(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
+                 mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     vinfo_t *v, *x;
@@ -5145,7 +5148,8 @@ out:
 /* attributes, globals and builtins */
 static int
 compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
-                               int *next_instr_io)
+                               int *next_instr_io, mergepoint_t **mp_io,
+                               int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -5331,7 +5335,8 @@ out:
 /* building and unpacking tuples, lists, sets, dicts, slices and strings */
 static int
 compile_build_and_unpack(PsycoObject *po, int opcode, int oparg,
-                         int *next_instr_io)
+                         int *next_instr_io, mergepoint_t **mp_io,
+                         int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     vinfo_t *u, *v, *w, *x;
@@ -5992,7 +5997,7 @@ out:
 /* jumps */
 static int
 compile_jumps(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
-              mergepoint_t **mp_io)
+              mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     vinfo_t *x;
@@ -6099,7 +6104,7 @@ out:
 /* iterators and for loops */
 static int
 compile_iteration(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
-                  mergepoint_t **mp_io)
+                  mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -6299,7 +6304,8 @@ out:
 
 /* calls */
 static int
-compile_calls(PsycoObject *po, int opcode, int oparg, int *next_instr_io)
+compile_calls(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
+              mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -6400,7 +6406,8 @@ out:
 /* returning, yielding and making functions */
 static int
 compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
-                              int *next_instr_io)
+                              int *next_instr_io, mergepoint_t **mp_io,
+                              int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -7044,7 +7051,8 @@ out:
 
 /* imports */
 static int
-compile_imports(PsycoObject *po, int opcode, int oparg, int *next_instr_io)
+compile_imports(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
+                mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -7088,6 +7096,49 @@ fine:
 out:
     *next_instr_io = next_instr;
     return ended;
+}
+
+/* the families, in the order ceval.c has their cases */
+static int (*const compile_families[])(PsycoObject *po, int opcode, int oparg,
+                                       int *next_instr_io,
+                                       mergepoint_t **mp_io,
+                                       int *raise_lasti_io) = {
+    compile_locals_and_stack,
+    compile_operators,
+    compile_compares,
+    compile_attributes_and_globals,
+    compile_build_and_unpack,
+    compile_jumps,
+    compile_iteration,
+    compile_calls,
+    compile_functions_and_returns,
+    compile_blocks_and_exceptions,
+    compile_imports,
+};
+#define COMPILE_FAMILIES \
+    ((int)(sizeof(compile_families) / sizeof(compile_families[0])))
+
+/* the case for opcode, from the family that has it */
+static int
+compile_opcode(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
+               mergepoint_t **mp_io, int *raise_lasti_io)
+{
+    /* each opcode's family, plus one, once a family has compiled it */
+    static unsigned char family_of[512];
+    int i, ended;
+    if (opcode >= 0 && opcode < (int)sizeof(family_of) && family_of[opcode])
+        return compile_families[family_of[opcode] - 1](
+            po, opcode, oparg, next_instr_io, mp_io, raise_lasti_io);
+    for (i = 0; i < COMPILE_FAMILIES; i++) {
+        ended = compile_families[i](po, opcode, oparg, next_instr_io, mp_io,
+                                    raise_lasti_io);
+        if (ended != OPCODE_ELSEWHERE) {
+            if (opcode >= 0 && opcode < (int)sizeof(family_of))
+                family_of[opcode] = (unsigned char)(i + 1);
+            return ended;
+        }
+    }
+    return OPCODE_ELSEWHERE;
 }
 
 /* psyco_pycompiler_mainloop() compiles the function,
@@ -7316,36 +7367,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     break;
             } /* switch (opcode) */
 
-            /* the cases, by family, as ceval.c has them */
-            ended = compile_locals_and_stack(po, opcode, oparg, &next_instr);
-            if (ended == OPCODE_ELSEWHERE)
-                ended = compile_operators(po, opcode, oparg, &next_instr);
-            if (ended == OPCODE_ELSEWHERE)
-                ended = compile_compares(po, opcode, oparg, &next_instr);
-            if (ended == OPCODE_ELSEWHERE)
-                ended = compile_attributes_and_globals(po, opcode, oparg,
-                                                       &next_instr);
-            if (ended == OPCODE_ELSEWHERE)
-                ended =
-                    compile_build_and_unpack(po, opcode, oparg, &next_instr);
-            if (ended == OPCODE_ELSEWHERE)
-                ended = compile_jumps(po, opcode, oparg, &next_instr, &mp);
-            if (ended == OPCODE_ELSEWHERE)
-                ended = compile_iteration(po, opcode, oparg, &next_instr, &mp);
-            if (ended == OPCODE_ELSEWHERE)
-                ended = compile_calls(po, opcode, oparg, &next_instr);
-            if (ended == OPCODE_ELSEWHERE)
-                ended = compile_functions_and_returns(po, opcode, oparg,
-                                                      &next_instr);
-            if (ended == OPCODE_ELSEWHERE)
-                ended = compile_blocks_and_exceptions(
-                    po, opcode, oparg, &next_instr, &mp, &raise_lasti);
-            if (ended == OPCODE_ELSEWHERE)
-                ended = compile_imports(po, opcode, oparg, &next_instr);
-            if (ended == OPCODE_ELSEWHERE) {
-                fprintf(stderr, "XXX opcode: %d\n", opcode);
-                Py_FatalError("unknown opcode");
-            }
+            ended = compile_opcode(po, opcode, oparg, &next_instr, &mp,
+                                   &raise_lasti);
             if (ended == OPCODE_FINE)
                 goto fine;
             if (ended == OPCODE_RERAISED)
