@@ -60,7 +60,16 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
 {
     extra_assert(CPY_OFFSET(PyObject, ob_type) < 128);
     extra_assert(CPY_OFFSET(PyTypeObject, tp_dealloc) < 128);
+#if LE_HAS_IMMORTAL_OBJECTS
+    /* as Py_DECREF, an immortal (its count's low 32 bits negative) is left
+       alone */
+    NEED_CC_REG(rg);
+    CMP_I8_DA(0, rg);
+    BEGIN_SHORT_COND_JUMP(1, CC_S);
+    SUB_A_I8(rg, 1);
+#else
     DEC_OB_REFCNT_NZ(rg);
+#endif
     BEGIN_SHORT_COND_JUMP(0, CC_NE); /* NE is the not zero flag */
     if (fn == NULL) {
         BEGIN_CALL(1);
@@ -76,6 +85,9 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
         END_CALL_I(fn);
     }
     END_SHORT_JUMP(0);
+#if LE_HAS_IMMORTAL_OBJECTS
+    END_SHORT_JUMP(1);
+#endif
     return code;
 }
 
@@ -123,7 +135,8 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
        checks ............ jcc MISS (each failure)
        old = values[ix]; test; jz FILL
      STORE:  values[ix] = value; incref value; new version tag
-             dec old; jnz DONE; call dealloc_glue; jmp DONE
+             dec old (not an immortal); jnz DONE; call dealloc_glue;
+             jmp DONE
      FILL:   ix == ma_used, else MISS; ma_used++; old = value; jmp STORE
      MISS:   call miss_glue; test eax, eax
              (the caller's error check: jne <respawn>)
@@ -142,6 +155,11 @@ _Static_assert(Py_TPFLAGS_HAVE_GC == 1UL << 14,
 _Static_assert(offsetof(store_cache_t, dk_size) == 0,
                "the size check compares [cache] directly");
 #define STORE_MAX_MISS_JUMPS 8
+#if LE_HAS_IMMORTAL_OBJECTS
+#define INC_STORED(rg) INC_OB_REFCNT_internal(rg)
+#else
+#define INC_STORED(rg) INC_A(rg)
+#endif
 
 /* Which encodings reach: decided once from where the site starts, with a
    margin, so that both passes emit the same lengths. */
@@ -251,12 +269,17 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     }
     store = code;
     MOV_X8_R(REG_X64_R8, 0, REG_X64_R9, 8, REG_X64_RSI);
-    INC_A(REG_X64_RSI);
+    INC_STORED(REG_X64_RSI);
     MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX, offsetof(store_cache_t, version));
     INC_A(REG_TRANSIENT_1);
     MOV_R_A(REG_TRANSIENT_1, REG_TRANSIENT_1);
     MOV_O_R(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag),
             REG_TRANSIENT_1);
+#if LE_HAS_IMMORTAL_OBJECTS
+    CMP_I8_DA(0, REG_X64_RAX); /* an immortal is left alone */
+    s->done[2] = code;
+    WRITE_2(0x70 | CC_S, 0);
+#endif
     DEC_A(REG_X64_RAX); /* last: may run any code */
     s->done[0] = code;
     WRITE_2(0x70 | CC_NE, 0);
@@ -272,7 +295,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     JCC_MISS(CC_NE); /* out of order: CPython converts the dict */
     INC_O8(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
     MOV_R_R(REG_X64_RAX, REG_X64_RSI);
-    INC_A(REG_X64_RSI);
+    INC_STORED(REG_X64_RSI);
     extra_assert(store - (code + 2) >= -128);
     WRITE_2(0xEB, (code_t)(store - (code + 2)));
     le_trace_jump(code - 2, store);
@@ -335,7 +358,7 @@ psyco_inline_store_end(PsycoObject *po, inline_store_t *s)
        of the trash buffer: nothing to point */
     if (is_respawning(po))
         return;
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < STORE_DONE_JUMPS; i++) {
         psyco_assert(po->code - (s->done[i] + 2) < 128);
         s->done[i][1] = (code_t)(po->code - (s->done[i] + 2));
         le_trace_jump(s->done[i], po->code);

@@ -635,6 +635,16 @@ def eval_breaker_gc(s):
     return _field(s, '_ceval_state', 'gc_scheduled', missing=False)
 
 
+def eval_frame_pops(s):
+    """ceval clears and pops the frame it is given when it ends, from an
+    entry frame of its own, not its caller (an interpreter frame has no
+    is_entry)"""
+    path, fields = s.struct('_PyInterpreterFrame')
+    if fields is None:
+        return False, 'Include, every header: _PyInterpreterFrame'
+    return 'is_entry' not in fields, '%s:_PyInterpreterFrame.is_entry' % path
+
+
 def long_value(s):
     """an int's sign, size and digits are its long_value (lv_tag and
     ob_digit), not ob_size and ob_digit"""
@@ -1110,6 +1120,7 @@ STATE = [
     ('PY_RECURSION_REMAINING', py_recursion_remaining),
     ('CURRENT_EXCEPTION', current_exception),
     ('EVAL_BREAKER_GC', eval_breaker_gc),
+    ('EVAL_FRAME_POPS', eval_frame_pops),
 ]
 
 # Objects/abstract.c
@@ -1157,6 +1168,8 @@ OBJECTS = [
     ('LONG_VALUE', long_value),
     ('TYPE_GET_DICT', D('PyType_GetDict gives a type\'s dict, which a static builtin type keeps in the interpreter (its tp_dict is NULL)',
                         lambda s: _public(s, 'PyType_GetDict'))),
+    ('IMMORTAL_OBJECTS', D('an object whose refcount\'s low 32 bits are negative is immortal: Py_INCREF and Py_DECREF leave it alone (_Py_IsImmortal)',
+                           lambda s: _public(s, '_Py_IsImmortal'))),
 ]
 
 # Python/ceval.c

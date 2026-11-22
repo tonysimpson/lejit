@@ -106,11 +106,18 @@ _Static_assert(__builtin_classify_type(((PyFloatObject *)0)->ob_fval) == 8,
 
 #if LE_HAS_LONG_VALUE
 /* the digits are long_value's; its lv_tag, where ob_size was, holds the
-   digit count and the sign as flags, which plongobject.c doesn't read yet:
-   no code is compiled where ints are so (mergepoints.c) */
+   digit count and the sign as flags (plongobject.h:LONG_lv_tag) */
 #define LE_PyLongObject_digits long_value.ob_digit
+/* an int's signed digit count, as ob_size was */
+static inline Py_ssize_t
+le_long_size(PyObject *o)
+{
+    uintptr_t tag = ((PyLongObject *)o)->long_value.lv_tag;
+    return (Py_ssize_t)(1 - (tag & 3)) * (Py_ssize_t)(tag >> 3);
+}
 #else
 #define LE_PyLongObject_digits ob_digit
+#define le_long_size(o) Py_SIZE(o)
 #endif
 #define LE_OFS_PyLongObject__ob_digit \
     offsetof(PyLongObject, LE_PyLongObject_digits)

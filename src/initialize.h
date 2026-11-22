@@ -74,7 +74,7 @@ EXTERNFN void
 psy_unicodeobject_init(void); /* Objects/punicodeobject.c */
 EXTERNFN void
 psyco_initmath(void); /* Modules/pmath.c */
-EXTERNFN void
+EXTERNFN int
 le_entry_install(void); /* eval_hook.c */
 EXTERNFN int
 le_entry_remove(void); /* eval_hook.c */

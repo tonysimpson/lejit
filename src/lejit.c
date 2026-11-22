@@ -280,7 +280,8 @@ le_start(PyObject *self, PyObject *unused)
         le_set_up = 1;
     }
     if (!le_running) {
-        le_entry_install();
+        if (le_entry_install() < 0)
+            return NULL;
         le_running = 1;
     }
     Py_RETURN_NONE;
