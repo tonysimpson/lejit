@@ -115,7 +115,7 @@ report_destructor(PyObject *capsule)
     } while (0)
 
 /* the current instruction's jump target, in code units */
-#define TARGET_UNIT() (le_jump_target(in) / LE_UNIT)
+#define TARGET_UNIT() (le_jump_target(c, in) / LE_UNIT)
 
 #define MAX_MP_DISTANCE 170
 
@@ -137,7 +137,8 @@ report_destructor(PyObject *capsule)
      (op) == POP_JUMP_FORWARD_IF_FALSE || (op) == POP_JUMP_FORWARD_IF_TRUE || \
      (op) == POP_JUMP_BACKWARD_IF_FALSE ||                                    \
      (op) == POP_JUMP_BACKWARD_IF_TRUE || (op) == PRECALL ||                  \
-     (op) == KW_NAMES || (op) == MAKE_CELL || (op) == COPY_FREE_VARS)
+     (op) == KW_NAMES || (op) == MAKE_CELL || (op) == COPY_FREE_VARS ||       \
+     (op) == RETURN_CONST || (op) == LOAD_FAST_CHECK)
 
 /* ceval tests eval_breaker before every instruction it reaches through
    DISPATCH(): after most opcodes, and at a frame's start. Compiled code
@@ -204,6 +205,7 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
                 _live_union(tmp, live + handler_at[k] * words, words);
         switch (o) {
             case RETURN_VALUE:
+            case RETURN_CONST:
             case RAISE_VARARGS:
 #if LE_HAS_EXCEPTION_TABLE
             case RERAISE:
@@ -245,9 +247,13 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
                 _live_union(tmp, live + nxt[i] * words, words);
         }
         /* in = uses | (out - defs) */
-        if ((o == STORE_FAST || o == DELETE_FAST) && a < nlocals)
+        if ((o == STORE_FAST || o == DELETE_FAST ||
+             o == LOAD_FAST_AND_CLEAR) &&
+            a < nlocals)
             tmp[a / 64] &= ~((uint64_t)1 << (a % 64));
-        if ((o == LOAD_FAST || o == DELETE_FAST) && a < nlocals)
+        if ((o == LOAD_FAST || o == DELETE_FAST || o == LOAD_FAST_CHECK ||
+             o == LOAD_FAST_AND_CLEAR) &&
+            a < nlocals)
             tmp[a / 64] |= (uint64_t)1 << (a % 64);
         changed |= _live_union(in, tmp, words);
     }
@@ -257,7 +263,8 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
 /* write the dead locals at each merge point into its fatlist (before any
    code buffer is added). Returns 0 on memory error, with nothing set.
    The first argument of code with a __class__ cell is never dead: a
-   zero-argument super() reads it (psuper_noargs). */
+   zero-argument super() reads it (psuper_noargs). Nor is a local that is
+   also a cell, which the *_DEREF instructions read. */
 static int
 _find_dead_locals(PyCodeObject *co, co_report_t *report)
 {
@@ -301,7 +308,8 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
         le_instr_t in = le_instr(c, (int)i * LE_UNIT);
         int o = in.op, j;
         i = in.next / LE_UNIT;
-        j = LE_IS_JABS(o) || LE_IS_JREL(o) ? le_jump_target(in) / LE_UNIT : -1;
+        j = LE_IS_JABS(o) || LE_IS_JREL(o) ? le_jump_target(c, in) / LE_UNIT
+                                           : -1;
         op[start] = o;
         arg[start] = j >= 0 ? j : in.arg;
         nxt[start] = (int)i;
@@ -360,7 +368,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
         uint64_t *in = live + (mp->bytecode_position / LE_UNIT) * words;
         int v;
         for (v = keep_first; v < nlocals; v++)
-            if (!LIVE_TEST(in, v)) {
+            if (!LIVE_TEST(in, v) && !le_code_local_is_cell(co, v)) {
                 PyObject *o = PyLong_FromLong(v);
                 if (o == NULL || PyList_Append(mp->entries.fatlist, o) < 0) {
                     Py_XDECREF(o);
@@ -426,6 +434,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
         switch (opcode) {
             /* no successor in this code */
             case RETURN_VALUE:
+            case RETURN_CONST:
             case RAISE_VARARGS:
 #if LE_HAS_EXCEPTION_TABLE
             case RERAISE:
@@ -604,6 +613,8 @@ compiled_opcode(int op)
         case EXTENDED_ARG:
         case RESUME:
         case LOAD_FAST:
+        case LOAD_FAST_CHECK:
+        case LOAD_FAST_AND_CLEAR:
         case LOAD_CONST:
         case STORE_FAST:
         case DELETE_FAST:
@@ -625,6 +636,7 @@ compiled_opcode(int op)
         case LOAD_ATTR:
         case STORE_ATTR:
         case DELETE_ATTR:
+        case LOAD_SUPER_ATTR:
         /* operators */
         case UNARY_POSITIVE:
         case UNARY_NEGATIVE:
@@ -680,6 +692,8 @@ compiled_opcode(int op)
         case BINARY_SUBSCR:
         case STORE_SUBSCR:
         case DELETE_SUBSCR:
+        case BINARY_SLICE:
+        case STORE_SLICE:
         case BUILD_TUPLE:
         case BUILD_LIST:
         case BUILD_SET:
@@ -699,9 +713,7 @@ compiled_opcode(int op)
 #if LE_HAS_OPCODE_BUILD_LIST_UNPACK
         case BUILD_LIST_UNPACK:
 #endif
-#if LE_HAS_OPCODE_LIST_TO_TUPLE
         case LIST_TO_TUPLE:
-#endif
 #if LE_HAS_OPCODE_LIST_EXTEND
         case LIST_EXTEND:
 #endif
@@ -729,12 +741,14 @@ compiled_opcode(int op)
         case IMPORT_FROM:
         case FORMAT_VALUE:
         case PRINT_EXPR:
+        case CALL_INTRINSIC_1: /* compiled_intrinsic's */
         case LOAD_BUILD_CLASS:
 #if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
         case LOAD_ASSERTION_ERROR:
 #endif
         case GET_ITER:
         case FOR_ITER:
+        case END_FOR:
 #if LE_HAS_OPCODE_GET_LEN
         case GET_LEN:
 #endif
@@ -768,9 +782,12 @@ compiled_opcode(int op)
         case POP_JUMP_FORWARD_IF_NOT_NONE:
         case POP_JUMP_BACKWARD_IF_NONE:
         case POP_JUMP_BACKWARD_IF_NOT_NONE:
+        case POP_JUMP_IF_NONE:
+        case POP_JUMP_IF_NOT_NONE:
         case JUMP_IF_FALSE_OR_POP:
         case JUMP_IF_TRUE_OR_POP:
         case RETURN_VALUE:
+        case RETURN_CONST:
         /* globals */
         case LOAD_GLOBAL:
         case STORE_GLOBAL:
@@ -838,6 +855,19 @@ compiled_opcode(int op)
     return 0;
 }
 
+/* the CALL_INTRINSIC_1 arguments pycompiler.c compiles: those that are the
+   opcodes they replaced */
+static int
+compiled_intrinsic(int arg)
+{
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+    return arg == INTRINSIC_PRINT || arg == INTRINSIC_UNARY_POSITIVE ||
+           arg == INTRINSIC_LIST_TO_TUPLE;
+#else
+    return 0;
+#endif
+}
+
 static PyObject *
 _build_merge_points(PyCodeObject *co, int module)
 {
@@ -851,9 +881,9 @@ _build_merge_points(PyCodeObject *co, int module)
         goto not_ok;
     }
 #if LE_HAS_MONITORING
-    /* where tracing is sys.monitoring's (3.12 on), that bytecode is not
-       translated yet, nor is a compiled frame resumed in ceval when tracing
-       starts: every code object runs in ceval */
+    /* where tracing is sys.monitoring's (3.12 on), a compiled frame is not
+       resumed in ceval when tracing starts: every code object runs in
+       ceval */
     goto not_ok;
 #endif
     /* a generator expression compiles only into its consumer
@@ -881,7 +911,9 @@ _build_merge_points(PyCodeObject *co, int module)
         if (!compiled_opcode(opcode))
             goto not_ok;
         /* pycompiler.c:call_kwnames finds a CALL's KW_NAMES before this */
-        if (opcode == CALL && prev != PRECALL)
+        if (LE_HAS_OPCODE_PRECALL && opcode == CALL && prev != PRECALL)
+            goto not_ok;
+        if (opcode == CALL_INTRINSIC_1 && !compiled_intrinsic(oparg))
             goto not_ok;
         if (opcode == LOAD_GLOBAL &&
             loads_frame_locals_builtin(co, LE_GLOBAL_NAME(oparg)))

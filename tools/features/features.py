@@ -645,6 +645,12 @@ def eval_frame_pops(s):
     return 'is_entry' not in fields, '%s:_PyInterpreterFrame.is_entry' % path
 
 
+def frame_funcobj(s):
+    """an interpreter frame keeps its function as a plain object (f_funcobj),
+    not a PyFunctionObject (f_func)"""
+    return _field(s, '_PyInterpreterFrame', 'f_funcobj', missing=False)
+
+
 def long_value(s):
     """an int's sign, size and digits are its long_value (lv_tag and
     ob_digit), not ob_size and ob_digit"""
@@ -842,12 +848,17 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'POP_JUMP_BACKWARD_IF_TRUE', 'POP_JUMP_BACKWARD_IF_NONE',
            'POP_JUMP_BACKWARD_IF_NOT_NONE', 'PRECALL', 'KW_NAMES', 'CALL',
            'MAKE_CELL', 'COPY_FREE_VARS', 'RETURN_GENERATOR',
-           # gone from 3.12: the unary plus, the interactive print and
-           # import * are CALL_INTRINSIC_1's
-           'UNARY_POSITIVE', 'PRINT_EXPR', 'IMPORT_STAR',
-           'JUMP_IF_FALSE_OR_POP', 'JUMP_IF_TRUE_OR_POP')
+           # gone from 3.12: the unary plus, the interactive print, import *
+           # and LIST_TO_TUPLE are CALL_INTRINSIC_1's
+           'UNARY_POSITIVE', 'PRINT_EXPR', 'IMPORT_STAR', 'LIST_TO_TUPLE',
+           'JUMP_IF_FALSE_OR_POP', 'JUMP_IF_TRUE_OR_POP',
+           # new in 3.12
+           'END_FOR', 'RETURN_CONST', 'LOAD_FAST_CHECK', 'LOAD_FAST_AND_CLEAR',
+           'BINARY_SLICE', 'STORE_SLICE', 'CALL_INTRINSIC_1',
+           'CALL_INTRINSIC_2', 'LOAD_SUPER_ATTR', 'POP_JUMP_IF_NONE',
+           'POP_JUMP_IF_NOT_NONE')
 # and the opcodes with a case of their own only where they exist
-CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_TO_TUPLE', 'LIST_EXTEND',
+CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
                 'CONTAINS_OP', 'GET_LEN', 'MATCH_CLASS', 'MATCH_MAPPING',
                 'MATCH_SEQUENCE', 'MATCH_KEYS', 'COPY_DICT_WITHOUT_KEYS',
@@ -1076,6 +1087,10 @@ BYTECODE = [
                         lambda s: _file_has(s, 'Objects/codeobject.c', '"co_qualname"'))),
     ('LOAD_GLOBAL_NULL_BIT', D('LOAD_GLOBAL\'s argument is the name\'s index shifted left once, its low bit pushing a NULL under the global',
                                lambda s: _case_has(s, 'LOAD_GLOBAL', 'oparg>>1'))),
+    ('LOAD_ATTR_METHOD_BIT', D('LOAD_ATTR\'s argument is the name\'s index shifted left once, its low bit asking for the method form (a NULL or the method under the object)',
+                               lambda s: _case_has(s, 'LOAD_ATTR', 'oparg>>1'))),
+    ('COMPARE_OP_SHIFT_4', D('COMPARE_OP\'s comparison is its argument shifted right four times, the low bits the specialiser\'s',
+                             lambda s: _case_has(s, 'COMPARE_OP', 'oparg>>4'))),
     ('MATCH_CLASS_PUSHES_BOOL', D('MATCH_CLASS pushes a bool saying whether the class matched, over the attributes or the subject',
                                   lambda s: _case_has(s, 'MATCH_CLASS', 'PyBool_FromLong', missing=False))),
     ('MATCH_KEYS_PUSHES_BOOL', D('MATCH_KEYS pushes a bool saying whether the keys matched, over the values or None',
@@ -1121,6 +1136,7 @@ STATE = [
     ('CURRENT_EXCEPTION', current_exception),
     ('EVAL_BREAKER_GC', eval_breaker_gc),
     ('EVAL_FRAME_POPS', eval_frame_pops),
+    ('FRAME_FUNCOBJ', frame_funcobj),
 ]
 
 # Objects/abstract.c

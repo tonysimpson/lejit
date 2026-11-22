@@ -41,6 +41,8 @@
 static source_virtual_t psyco_computed_range;
 static source_virtual_t psyco_computed_rangeiter;
 static getiterfunc range_iter;
+/* whether the layouts copied match the types', so that ranges are virtual */
+static int layouts_match;
 
 /* rangeobject.c:get_len_of_range; the arguments are one-digit ints, so the
    result fits a long */
@@ -112,7 +114,7 @@ PsycoRange_New(PsycoObject *po, vinfo_t **args, int n, vinfo_t **result)
     vinfo_t *w[3] = {NULL, NULL, NULL};
     vinfo_t *r;
     int i, k;
-    if (n < 1 || n > 3)
+    if (!layouts_match || n < 1 || n > 3)
         return 0;
     for (i = 0; i < n; i++) {
         PyTypeObject *tp = Psyco_NeedType(po, args[i]);
@@ -244,6 +246,7 @@ psy_rangeobject_init(void)
     if (PyRange_Type.tp_basicsize != sizeof(rangeobject) ||
         PyRangeIter_Type.tp_basicsize != sizeof(rangeiterobject))
         return;
+    layouts_match = 1;
     range_iter = PyRange_Type.tp_iter;
     Psyco_DefineMeta(range_iter, prange_iter);
     Psyco_DefineMeta(PyRangeIter_Type.tp_iternext, prangeiter_next);

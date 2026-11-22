@@ -55,6 +55,11 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     le_frame_set_current(tstate, le_frame_back(f));
     le_recursion_leave();
     psyco_frame_start_unregister(&fr);
+#if LE_HAS_EVAL_FRAME_POPS
+    /* before le_frame_finish pops it */
+    if (le_frame_outlives(f) != NULL)
+        psyco_frame_returned(f);
+#endif
     return le_frame_finish(tstate, f, result, frame_done);
 }
 
@@ -160,8 +165,11 @@ LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
         result = LeCode_Run(entry_point, frame);
     else
         result = original_eval_frame(tstate, frame, throwflag);
+#if !LE_HAS_EVAL_FRAME_POPS
+    /* where the frame is popped by now, LeCode_Run did this before */
     if (le_frame_outlives(frame) != NULL)
         psyco_frame_returned(frame);
+#endif
     return result;
 }
 

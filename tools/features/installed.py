@@ -348,6 +348,7 @@ HEADER_DETECTORS = {
     'CURRENT_EXCEPTION': features.current_exception,
     'EVAL_BREAKER_GC': internal(features.eval_breaker_gc),
     'EVAL_FRAME_POPS': internal(features.eval_frame_pops),
+    'FRAME_FUNCOBJ': internal(features.frame_funcobj),
     'LONG_VALUE': features.long_value,
     'TYPE_GET_DICT': public('PyType_GetDict'),
     'IMMORTAL_OBJECTS': public('_Py_IsImmortal'),
