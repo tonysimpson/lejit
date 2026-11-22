@@ -886,6 +886,8 @@ _build_merge_points(PyCodeObject *co, int module)
        ceval */
     goto not_ok;
 #endif
+    if (le_code_prepare(co) < 0)
+        return NULL;
     /* a generator expression compiles only into its consumer
        (psyfunc.c:psyco_call_genexpr): the eval hook never runs generator
        code, and psyco_call_pyfunc makes a pending generator of it */
@@ -955,6 +957,10 @@ psyco_is_genexpr(PyCodeObject *co)
         le_code_ncells(co) != 0 ||
         PyUnicode_CompareWithASCIIString(co->co_name, "<genexpr>") != 0)
         return 0;
+    if (le_code_prepare(co) < 0) {
+        PyErr_Clear(); /* out of memory: made as a plain generator */
+        return 0;
+    }
     c = le_code(co);
     for (pos = 0; pos < c.size;) {
         le_instr_t in = le_instr(c, pos);
