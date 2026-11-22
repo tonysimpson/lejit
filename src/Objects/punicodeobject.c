@@ -3172,22 +3172,16 @@ DEFINEFN
 int
 PsycoUnicode_DecimalPart(PsycoObject *po, vinfo_t *n, vinfo_t **part)
 {
-    vinfo_t *v, *size, *t;
+    vinfo_t *v;
     condition_code_t cc;
     if (is_compiletime(n->source)) {
-        Py_ssize_t s = Py_SIZE((PyObject *)CompileTime_Get(n->source)->value);
+        Py_ssize_t s =
+            le_long_size((PyObject *)CompileTime_Get(n->source)->value);
         if (s < -DEC_DIGITS_MAX || s > DEC_DIGITS_MAX)
             return 0;
     }
     else if (!PsycoLong_IsVirtual(n)) {
-        if ((size = psyco_get_const(po, n, LONG_ob_size)) == NULL)
-            return -1;
-        t = integer_add_i(po, size, DEC_DIGITS_MAX, false);
-        if (t == NULL)
-            return -1;
-        cc =
-            integer_cmp_i(po, t, 2 * DEC_DIGITS_MAX, Py_LE | COMPARE_UNSIGNED);
-        vinfo_decref(t, po);
+        cc = PsycoLong_SizeWithin(po, n, DEC_DIGITS_MAX);
         if (cc == CC_ERROR)
             return -1;
         if (!runtime_condition_t(po, cc))

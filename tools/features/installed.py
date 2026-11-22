@@ -354,6 +354,7 @@ HEADER_DETECTORS = {
     'PY_RECURSION_REMAINING': features.py_recursion_remaining,
     'CURRENT_EXCEPTION': features.current_exception,
     'EVAL_BREAKER_GC': internal(features.eval_breaker_gc),
+    'EVAL_FRAME_POPS': internal(features.eval_frame_pops),
     'LONG_VALUE': features.long_value,
     'TYPE_GET_DICT': public('PyType_GetDict'),
     'IMMORTAL_OBJECTS': public('_Py_IsImmortal'),

@@ -3,7 +3,8 @@
  * Objects/longobject.c. A result is a virtual int whose [iLONG_VALUE] holds
  * the value as a machine word; it is boxed with PyLong_FromLong only if it
  * escapes. An operand takes the fast path if it has one digit, i.e.
- * |value| <= PyLong_MASK: for an int in memory that is |ob_size| <= 1, for
+ * |value| <= PyLong_MASK: for an int in memory that is one digit at most
+ * (|ob_size| <= 1, or lv_tag's count where ints have one), for
  * a virtual one a range test on the word. Both are run-time conditions
  * (respawn), and an operand that fails falls back to CPython's slot, as
  * longobject.c does.
@@ -48,6 +49,27 @@ plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
         return 1;
     }
 
+#if LE_HAS_LONG_VALUE
+    /* as _PyLong_CompactValue: at most one digit (there is always one,
+       0 for zero), times 1 - the sign flags (0 positive, 1 zero, 2
+       negative) */
+    cc = PsycoLong_SizeWithin(po, v, 1);
+    if (cc == CC_ERROR)
+        return -1;
+    if (!runtime_condition_t(po, cc))
+        return 0;
+    size = PsycoLong_Sign(po, v);
+    if (size == NULL)
+        return -1;
+    digit0 = psyco_get_const(po, v, LONG_ob_digit0);
+    if (digit0 == NULL) {
+        vinfo_decref(size, po);
+        return -1;
+    }
+    *pval = integer_mul(po, size, digit0, false);
+    vinfo_decref(size, po);
+    return *pval != NULL ? 1 : -1;
+#else
     size = psyco_get_const(po, v, LONG_ob_size);
     if (size == NULL)
         return -1;
@@ -75,6 +97,7 @@ plong_medium_value(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
     /* ob_size is -1 or 1 here */
     *pval = integer_mul(po, size, digit0, false);
     return *pval != NULL ? 1 : -1;
+#endif
 }
 
 DEFINEFN int
@@ -86,9 +109,61 @@ PsycoLong_MediumValue(PsycoObject *po, vinfo_t *v, vinfo_t **pval)
 DEFINEFN vinfo_t *
 PsycoLong_Sign(PsycoObject *po, vinfo_t *v)
 {
-    if (PsycoLong_IsVirtual(v))
+    vinfo_t *r;
+#if LE_HAS_LONG_VALUE
+    vinfo_t *tag, *three, *flags, *one;
+#endif
+    if (PsycoLong_IsVirtual(v)) {
+        vinfo_incref(v->array->items[iLONG_VALUE]);
         return v->array->items[iLONG_VALUE];
-    return psyco_get_const(po, v, LONG_ob_size);
+    }
+#if LE_HAS_LONG_VALUE
+    /* 1 - the sign flags: 1, 0 or -1 */
+    tag = psyco_get_const(po, v, LONG_lv_tag);
+    if (tag == NULL)
+        return NULL;
+    three = vinfo_new(CompileTime_New(3));
+    flags = integer_and(po, tag, three);
+    vinfo_decref(three, po);
+    if (flags == NULL)
+        return NULL;
+    one = vinfo_new(CompileTime_New(1));
+    r = integer_sub(po, one, flags, false);
+    vinfo_decref(one, po);
+    vinfo_decref(flags, po);
+    return r;
+#else
+    r = psyco_get_const(po, v, LONG_ob_size);
+    if (r != NULL)
+        vinfo_incref(r);
+    return r;
+#endif
+}
+
+DEFINEFN condition_code_t
+PsycoLong_SizeWithin(PsycoObject *po, vinfo_t *v, long n)
+{
+    vinfo_t *size;
+#if LE_HAS_LONG_VALUE
+    /* the digit count is lv_tag >> 3 */
+    size = psyco_get_const(po, v, LONG_lv_tag);
+    if (size == NULL)
+        return CC_ERROR;
+    return integer_cmp_i(po, size, (n + 1) << 3, Py_LT | COMPARE_UNSIGNED);
+#else
+    vinfo_t *t;
+    condition_code_t cc;
+    /* -n <= ob_size <= n, as one unsigned comparison */
+    size = psyco_get_const(po, v, LONG_ob_size);
+    if (size == NULL)
+        return CC_ERROR;
+    t = integer_add_i(po, size, n, false);
+    if (t == NULL)
+        return CC_ERROR;
+    cc = integer_cmp_i(po, t, 2 * n, Py_LE | COMPARE_UNSIGNED);
+    vinfo_decref(t, po);
+    return cc;
+#endif
 }
 
 /* PyNumber_AsSsize_t: an int whose type is known (or a subclass) inline
@@ -362,6 +437,7 @@ long_abs(PsycoObject *po, vinfo_t *v)
         return NULL;
     }
     _t2 = integer_cmp_i(po, _t1, 0, Py_LT);
+    vinfo_decref(_t1, po);
     if (_t2 == CC_ERROR) {
         return NULL;
     }
@@ -457,6 +533,7 @@ long_bool(PsycoObject *po, vinfo_t *v)
         return NULL;
     }
     _t2 = integer_non_null(po, _t1);
+    vinfo_decref(_t1, po);
     if (_t2 == CC_ERROR) {
         return NULL;
     }

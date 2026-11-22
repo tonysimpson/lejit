@@ -22,6 +22,10 @@ _Static_assert(
         __typeof__(((PyThreadState *)0)->current_exception), PyObject *),
     "LeJIT: PyErr_Occurred() is tested on current_exception, a pointer");
 #define LE_EXC_OCCURRED_OFFSET offsetof(PyThreadState, current_exception)
+/* a traceback entry for a frame, before tb_next, with no exception: exported,
+   declared in an internal header */
+PyAPI_FUNC(PyObject *)
+    _PyTraceBack_FromFrame(PyObject *tb_next, PyFrameObject *frame);
 #define LE_TSTATE_exc_occurred                                   \
     FMUT(DEF_FIELD(PyThreadState, PyObject *, current_exception, \
                    NO_PREV_FIELD))
@@ -44,11 +48,12 @@ le_exc_put_current(PyThreadState *ts, PyObject *type, PyObject *value,
     Py_XDECREF(type);
     Py_XDECREF(tb);
 }
-/* with an exception being raised */
+/* NULL with no exception being raised */
 static inline PyObject *
 le_exc_traceback(PyThreadState *ts)
 {
-    return ((PyBaseExceptionObject *)ts->current_exception)->traceback;
+    PyObject *e = ts->current_exception;
+    return e == NULL ? NULL : ((PyBaseExceptionObject *)e)->traceback;
 }
 static inline void
 le_exc_put_traceback(PyThreadState *ts, PyObject *tb)

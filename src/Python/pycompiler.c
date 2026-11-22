@@ -1022,6 +1022,14 @@ cimpl_vt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
     Py_XINCREF(oldtb);
     if (oldtb != NULL && PyTraceBack_Check(oldtb))
         psyco_frame_link_callee(((PyTracebackObject *)oldtb)->tb_frame, f);
+#if LE_HAS_CURRENT_EXCEPTION
+    /* PyTraceBack_Here needs an exception being raised, which there may not
+       be yet: the entry is made directly */
+    newtb = _PyTraceBack_FromFrame(oldtb, f);
+    Py_XDECREF(oldtb);
+    Py_DECREF(f);
+    return newtb;
+#endif
     if (PyTraceBack_Here(f)) {
         Py_XDECREF(oldtb);
         Py_DECREF(f);
