@@ -7,7 +7,8 @@
  * here stays a pending generator (PsycoGenexpr_New) until a consumer fuses it
  * or it escapes. A promoted function's code and defaults are checked at run
  * time (compiled_code, compiled_defaults).
- * A closure only known at run time is not promoted, only its code
+ * A nested function (a closure, a lambda, a def inside a function) only
+ * known at run time is not promoted, only its code
  * (psyfunc.c:psyco_call_closure).
  */
 #include "pfuncobject.h"
@@ -300,11 +301,13 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         if (is_megamorphic(func->source))
             goto fallback;
         if (!is_compiletime(func->source)) {
-            /* the code first: closures and lambdas are new function objects
-               on every run, but their code is not. Promoting a closure
-               would only add a specialisation per object, each keeping it
-               alive, until the site went megamorphic: it is called with
-               its cells read at run time instead. */
+            /* the code first: nested functions (CO_NESTED: closures,
+               lambdas, defs inside a function) are new function objects on
+               every run of the code that makes them, but their code is
+               not. Promoting one would only add a specialisation per
+               object, each keeping it alive, until the site went
+               megamorphic: it is called with its cells read at run time
+               instead, while it still has the code promoted. */
             PyObject *c;
             int r;
             vinfo_t *fcode = psyco_get_const(po, func, FUNC_code);
@@ -315,8 +318,19 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
                 return NULL;
             if (r == 0 || ((PyCodeObject *)c)->co_kwonlyargcount > 0)
                 goto fallback;
-            if (PyCode_GetNumFree((PyCodeObject *)c) > 0)
+            if (((PyCodeObject *)c)->co_flags & CO_NESTED) {
+                condition_code_t cc;
+                vinfo_t *now = psyco_get_field(po, func, FUNC_code_now);
+                if (now == NULL)
+                    return NULL;
+                cc = integer_cmp(po, now, fcode, Py_NE);
+                vinfo_decref(now, po);
+                if (cc == CC_ERROR)
+                    return NULL;
+                if (runtime_condition_f(po, cc))
+                    goto fallback;
                 return psyco_call_closure(po, func, (PyCodeObject *)c, arg);
+            }
         }
         switch (psyco_pyobj_atcompiletime_mega(po, func, &f)) {
             case 1: /* promotion ok */

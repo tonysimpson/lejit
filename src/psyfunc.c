@@ -913,15 +913,15 @@ pyerr:
     return NULL;
 }
 
-/* A closure known only at run time, with its code 'co' promoted (closures
-   are new function objects on every run of the code that makes them, but
-   their code is not). Neither the function nor anything it holds is made a
-   constant, which would keep each one alive and specialise per object:
-   its cells are loaded from func_closure at each call. The globals must
-   be this frame's (a run-time test), as for a closure made here, so that
-   they and the builtins stay constants that no promotion holds. Defaults
-   are per function object, so a call that would use them is the real one;
-   keyword-only arguments never come here (pfunction_call). */
+/* A nested function (CO_NESTED) known only at run time, with its code 'co'
+   promoted (nested functions are new function objects on every run of the
+   code that makes them, but their code is not). Neither the function nor
+   anything it holds is made a constant, which would keep each one alive and
+   specialise per object: its cells are loaded from func_closure at each call.
+   The globals must be this frame's (a run-time test), as for a closure made
+   here, so that they and the builtins stay constants that no promotion holds.
+   Defaults are per function object, so a call that would use them is the real
+   one; keyword-only arguments never come here (pfunction_call). */
 DEFINEFN
 vinfo_t *
 psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
