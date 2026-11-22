@@ -75,28 +75,37 @@ PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
     return type_error_tp(po, LE_MSG_NOT_CALLABLE, tp);
 }
 
-/* the metas translated from abstract.c */
-/* CPython's code, copied for the metas to call at run time */
-#if LE_HAS_CHECK_SLOT_RESULT
-extern int
-_Py_CheckSlotResult(PyObject *obj, const char *slot_name, int success);
-#endif
+#define NB_SLOT(x) offsetof(PyNumberMethods, x)
+#define NB_BINOP(nb_methods, slot) \
+    (*(binaryfunc *)(&((char *)nb_methods)[slot]))
+#define NB_TERNOP(nb_methods, slot) \
+    (*(ternaryfunc *)(&((char *)nb_methods)[slot]))
+
+/* CPython's code, copied for the metas to call at run time. A copy of part
+   of a CPython function, for where a slot read when compiling has changed,
+   starts where the meta has got to and takes what it has read so far. */
+
+static PyObject *
+cimpl_type_error(const char *msg, PyObject *obj)
+{
+    PyErr_Format(PyExc_TypeError, msg, Py_TYPE(obj)->tp_name);
+    return NULL;
+}
+
 static PyObject *
 cimpl_binary_op1(PyObject *v, PyObject *w, const int op_slot)
 {
-#if LE_HAS_CHECK_SLOT_RESULT
     binaryfunc slotv;
     if (Py_TYPE(v)->tp_as_number != NULL) {
-        slotv =
-            (*(binaryfunc *)(&((char *)Py_TYPE(v)->tp_as_number)[op_slot]));
+        slotv = NB_BINOP(Py_TYPE(v)->tp_as_number, op_slot);
     }
     else {
         slotv = NULL;
     }
+
     binaryfunc slotw;
-    if (!Py_IS_TYPE(w, Py_TYPE(v)) && Py_TYPE(w)->tp_as_number != NULL) {
-        slotw =
-            (*(binaryfunc *)(&((char *)Py_TYPE(w)->tp_as_number)[op_slot]));
+    if (Py_TYPE(w) != Py_TYPE(v) && Py_TYPE(w)->tp_as_number != NULL) {
+        slotw = NB_BINOP(Py_TYPE(w)->tp_as_number, op_slot);
         if (slotw == slotv) {
             slotw = NULL;
         }
@@ -104,56 +113,28 @@ cimpl_binary_op1(PyObject *v, PyObject *w, const int op_slot)
     else {
         slotw = NULL;
     }
-#else
-    PyObject *x;
-    binaryfunc slotv = NULL;
-    binaryfunc slotw = NULL;
-    if (v->ob_type->tp_as_number != NULL)
-        slotv =
-            (*(binaryfunc *)(&((char *)v->ob_type->tp_as_number)[op_slot]));
-    if (w->ob_type != v->ob_type && w->ob_type->tp_as_number != NULL) {
-        slotw =
-            (*(binaryfunc *)(&((char *)w->ob_type->tp_as_number)[op_slot]));
-        if (slotw == slotv)
-            slotw = NULL;
-    }
-#endif
+
     if (slotv) {
-#if LE_HAS_CHECK_SLOT_RESULT
         PyObject *x;
-#endif
         if (slotw && PyType_IsSubtype(Py_TYPE(w), Py_TYPE(v))) {
             x = slotw(v, w);
             if (x != Py_NotImplemented)
                 return x;
-            Py_DECREF(x);
+            Py_DECREF(x); /* can't do it */
             slotw = NULL;
         }
         x = slotv(v, w);
-#if LE_HAS_CHECK_SLOT_RESULT
-        assert(_Py_CheckSlotResult(v, op_name, x != NULL));
         if (x != Py_NotImplemented) {
             return x;
         }
-#else
-        if (x != Py_NotImplemented)
-            return x;
-#endif
-        Py_DECREF(x);
+        Py_DECREF(x); /* can't do it */
     }
     if (slotw) {
-#if LE_HAS_CHECK_SLOT_RESULT
         PyObject *x = slotw(v, w);
-        assert(_Py_CheckSlotResult(w, op_name, x != NULL));
         if (x != Py_NotImplemented) {
             return x;
         }
-#else
-        x = slotw(v, w);
-        if (x != Py_NotImplemented)
-            return x;
-#endif
-        Py_DECREF(x);
+        Py_DECREF(x); /* can't do it */
     }
     Py_RETURN_NOTIMPLEMENTED;
 }
@@ -166,37 +147,12 @@ cimpl_binop_type_error(PyObject *v, PyObject *w, const char *op_name)
     return NULL;
 }
 
+/* binary_op once binary_op1 has declined */
 static PyObject *
-cimpl_PyNumber_Add_1(PyObject *v, PyObject *w, PySequenceMethods *m)
-#if LE_HAS_CHECK_SLOT_RESULT
+cimpl_binary_op_error(PyObject *v, PyObject *w, const int op_slot,
+                      const char *op_name)
 {
-    PyObject *result;
-    if (m && m->sq_concat) {
-        result = (*m->sq_concat)(v, w);
-        assert(_Py_CheckSlotResult(v, "+", result != NULL));
-        return result;
-    }
-    return cimpl_binop_type_error(v, w, LE_MSG_OP_ADD);
-}
-#else
-{
-    PyObject *result;
-    {
-        if (m && m->sq_concat) {
-            return (*m->sq_concat)(v, w);
-        }
-        result = cimpl_binop_type_error(v, w, LE_MSG_OP_ADD);
-    }
-    return result;
-}
-#endif
-
-static PyObject *
-cimpl_binary_op_1(PyObject *v, PyObject *w, const int op_slot,
-                  const char *op_name)
-{
-    if (op_slot == offsetof(PyNumberMethods, nb_rshift) &&
-        Py_TYPE(v) == &PyCFunction_Type &&
+    if (op_slot == NB_SLOT(nb_rshift) && Py_TYPE(v) == &PyCFunction_Type &&
         strcmp(((PyCFunctionObject *)v)->m_ml->ml_name, "print") == 0) {
         PyErr_Format(PyExc_TypeError, LE_MSG_BINOP_PRINT_TYPE_ERROR, op_name,
                      Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
@@ -205,18 +161,146 @@ cimpl_binary_op_1(PyObject *v, PyObject *w, const int op_slot,
     return cimpl_binop_type_error(v, w, op_name);
 }
 
+/* ternary_op once v's and w's slots have declined: mz is z's
+   tp_as_number, or NULL to go straight to the error */
+static PyObject *
+cimpl_ternary_op_rest(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
+                      const char *op_name, PyNumberMethods *mz,
+                      ternaryfunc slotv, ternaryfunc slotw)
+{
+    if (mz != NULL) {
+        ternaryfunc slotz = NB_TERNOP(mz, op_slot);
+        if (slotz == slotv || slotz == slotw) {
+            slotz = NULL;
+        }
+        if (slotz) {
+            PyObject *x = slotz(v, w, z);
+            if (x != Py_NotImplemented) {
+                return x;
+            }
+            Py_DECREF(x); /* can't do it */
+        }
+    }
+
+    /* op_name is the name a type error of **= shows (LE_MSG_OP_IPOW: before
+       3.10, "** or pow()"). z is INPLACE_POWER's None: pow()'s message of
+       three operands stands for the case no compiled code reaches. */
+    if (z == Py_None) {
+        PyErr_Format(PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR, op_name,
+                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
+    }
+    else {
+        PyErr_Format(PyExc_TypeError, LE_MSG_POW3_TYPE_ERROR,
+                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
+                     Py_TYPE(z)->tp_name);
+    }
+    return NULL;
+}
+
+static PyObject *
+cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
+                 const char *op_name)
+{
+    PyNumberMethods *mv = Py_TYPE(v)->tp_as_number;
+    PyNumberMethods *mw = Py_TYPE(w)->tp_as_number;
+
+    ternaryfunc slotv;
+    if (mv != NULL) {
+        slotv = NB_TERNOP(mv, op_slot);
+    }
+    else {
+        slotv = NULL;
+    }
+
+    ternaryfunc slotw;
+    if (Py_TYPE(w) != Py_TYPE(v) && mw != NULL) {
+        slotw = NB_TERNOP(mw, op_slot);
+        if (slotw == slotv) {
+            slotw = NULL;
+        }
+    }
+    else {
+        slotw = NULL;
+    }
+
+    if (slotv) {
+        PyObject *x;
+        if (slotw && PyType_IsSubtype(Py_TYPE(w), Py_TYPE(v))) {
+            x = slotw(v, w, z);
+            if (x != Py_NotImplemented) {
+                return x;
+            }
+            Py_DECREF(x); /* can't do it */
+            slotw = NULL;
+        }
+        x = slotv(v, w, z);
+        if (x != Py_NotImplemented) {
+            return x;
+        }
+        Py_DECREF(x); /* can't do it */
+    }
+    if (slotw) {
+        PyObject *x = slotw(v, w, z);
+        if (x != Py_NotImplemented) {
+            return x;
+        }
+        Py_DECREF(x); /* can't do it */
+    }
+    return cimpl_ternary_op_rest(v, w, z, op_slot, op_name,
+                                 Py_TYPE(z)->tp_as_number, slotv, slotw);
+}
+
+/* PyNumber_Add once binary_op1 has declined: m is v's tp_as_sequence */
+static PyObject *
+LeNumber_Add(PyObject *v, PyObject *w, PySequenceMethods *m)
+{
+    if (m && m->sq_concat) {
+        return (*m->sq_concat)(v, w);
+    }
+    return cimpl_binop_type_error(v, w, LE_MSG_OP_ADD);
+}
+
+static PyObject *
+cimpl_sequence_repeat(ssizeargfunc repeatfunc, PyObject *seq, PyObject *n)
+{
+    Py_ssize_t count;
+    if (Py_TYPE(n)->tp_as_number != NULL &&
+        Py_TYPE(n)->tp_as_number->nb_index != NULL) {
+        count = PyNumber_AsSsize_t(n, PyExc_OverflowError);
+        if (count == -1 && PyErr_Occurred()) {
+            return NULL;
+        }
+    }
+    else {
+        return cimpl_type_error(LE_MSG_SEQ_REPEAT_NON_INT, n);
+    }
+    return (*repeatfunc)(seq, count);
+}
+
+/* PyNumber_Multiply once binary_op1 has declined: mv and mw are v's and
+   w's tp_as_sequence */
+static PyObject *
+LeNumber_Multiply(PyObject *v, PyObject *w, PySequenceMethods *mv,
+                  PySequenceMethods *mw)
+{
+    if (mv && mv->sq_repeat) {
+        return cimpl_sequence_repeat(mv->sq_repeat, v, w);
+    }
+    else if (mw && mw->sq_repeat) {
+        return cimpl_sequence_repeat(mw->sq_repeat, w, v);
+    }
+    return cimpl_binop_type_error(v, w, LE_MSG_OP_MUL);
+}
+
 static PyObject *
 cimpl_binary_iop1(PyObject *v, PyObject *w, const int iop_slot,
                   const int op_slot)
 {
     PyNumberMethods *mv = Py_TYPE(v)->tp_as_number;
     if (mv != NULL) {
-        binaryfunc slot = (*(binaryfunc *)(&((char *)mv)[iop_slot]));
+        binaryfunc slot = NB_BINOP(mv, iop_slot);
         if (slot) {
             PyObject *x = (slot)(v, w);
-#if LE_HAS_CHECK_SLOT_RESULT
-            assert(_Py_CheckSlotResult(v, op_name, x != NULL));
-#endif
             if (x != Py_NotImplemented) {
                 return x;
             }
@@ -226,146 +310,63 @@ cimpl_binary_iop1(PyObject *v, PyObject *w, const int iop_slot,
     return cimpl_binary_op1(v, w, op_slot);
 }
 
+#if LE_HAS_TERNARY_IOP
 static PyObject *
-cimpl_PyNumber_InPlaceAdd_1(PyObject *v, PyObject *w, PySequenceMethods *m)
+cimpl_ternary_iop(PyObject *v, PyObject *w, PyObject *z, const int iop_slot,
+                  const int op_slot, const char *op_name)
 {
-#if !LE_HAS_CHECK_SLOT_RESULT
-    binaryfunc f;
+    PyNumberMethods *mv = Py_TYPE(v)->tp_as_number;
+    if (mv != NULL) {
+        ternaryfunc slot = NB_TERNOP(mv, iop_slot);
+        if (slot) {
+            PyObject *x = (slot)(v, w, z);
+            if (x != Py_NotImplemented) {
+                return x;
+            }
+            Py_DECREF(x);
+        }
+    }
+    return cimpl_ternary_op(v, w, z, op_slot, op_name);
+}
 #endif
-    PyObject *result;
-    {
-        {
-#if LE_HAS_CHECK_SLOT_RESULT
-            binaryfunc func = m->sq_inplace_concat;
-            if (func == NULL)
-                func = m->sq_concat;
-            if (func != NULL) {
-                result = func(v, w);
-                assert(_Py_CheckSlotResult(v, "+=", result != NULL));
-                return result;
-            }
-#else
-            f = m->sq_inplace_concat;
-            if (f == NULL)
-                f = m->sq_concat;
-            if (f != NULL)
-                return (*f)(v, w);
-#endif
-        }
-        result = cimpl_binop_type_error(v, w, LE_MSG_OP_IADD);
-    }
-    return result;
-}
 
+/* PyNumber_InPlaceAdd once binary_iop1 has declined: m is v's
+   tp_as_sequence */
 static PyObject *
-cimpl_PyNumber_InPlaceAdd_3(PyObject *v, PyObject *w, PySequenceMethods *m)
+LeNumber_InPlaceAdd(PyObject *v, PyObject *w, PySequenceMethods *m)
 {
-    binaryfunc func;
-    PyObject *result;
-    {
-        {
-            {
-                func = m->sq_concat;
-            }
-#if LE_HAS_CHECK_SLOT_RESULT
-            if (func != NULL) {
-                result = func(v, w);
-                assert(_Py_CheckSlotResult(v, "+=", result != NULL));
-                return result;
-            }
-#else
-            if (func != NULL)
-                return (*func)(v, w);
-#endif
-        }
-        result = cimpl_binop_type_error(v, w, LE_MSG_OP_IADD);
-    }
-    return result;
-}
-
-static PyObject *
-cimpl_type_error(const char *msg, PyObject *obj)
-{
-    PyErr_Format(PyExc_TypeError, msg, Py_TYPE(obj)->tp_name);
-    return NULL;
-}
-
-static PyObject *
-cimpl_sequence_repeat(ssizeargfunc repeatfunc, PyObject *seq, PyObject *n)
-{
-    Py_ssize_t count;
-    if (n->ob_type->tp_as_number != NULL &&
-        n->ob_type->tp_as_number->nb_index != NULL) {
-        count = PyNumber_AsSsize_t(n, PyExc_OverflowError);
-        if (count == -1 && PyErr_Occurred()) {
-            return NULL;
+    if (m != NULL) {
+        binaryfunc func = m->sq_inplace_concat;
+        if (func == NULL)
+            func = m->sq_concat;
+        if (func != NULL) {
+            return func(v, w);
         }
     }
-    else {
-        return cimpl_type_error(LE_MSG_SEQ_REPEAT_NON_INT, n);
-    }
-#if LE_HAS_CHECK_SLOT_RESULT
-    PyObject *res = (*repeatfunc)(seq, count);
-    assert(_Py_CheckSlotResult(seq, "*", res != NULL));
-    return res;
-#else
-    return (*repeatfunc)(seq, count);
-#endif
+    return cimpl_binop_type_error(v, w, LE_MSG_OP_IADD);
 }
 
+/* PyNumber_InPlaceMultiply once binary_iop1 has declined: mv and mw are
+   v's and w's tp_as_sequence */
 static PyObject *
-cimpl_PyNumber_InPlaceMultiply_1(PyObject *v, PyObject *w,
-                                 PySequenceMethods *mv)
+LeNumber_InPlaceMultiply(PyObject *v, PyObject *w, PySequenceMethods *mv,
+                         PySequenceMethods *mw)
 {
-    ssizeargfunc f;
-    PyObject *result;
-    {
-        {
-            f = mv->sq_inplace_repeat;
-            if (f == NULL)
-                f = mv->sq_repeat;
-            if (f != NULL)
-                return cimpl_sequence_repeat(f, v, w);
-        }
-        result = cimpl_binop_type_error(v, w, LE_MSG_OP_IMUL);
+    if (mv != NULL) {
+        ssizeargfunc f = mv->sq_inplace_repeat;
+        if (f == NULL)
+            f = mv->sq_repeat;
+        if (f != NULL)
+            return cimpl_sequence_repeat(f, v, w);
     }
-    return result;
-}
-
-static PyObject *
-cimpl_PyNumber_InPlaceMultiply_4(PyObject *v, PyObject *w,
-                                 PySequenceMethods *mv)
-{
-    ssizeargfunc f;
-    PyObject *result;
-    {
-        {
-            {
-                f = mv->sq_repeat;
-            }
-            if (f != NULL)
-                return cimpl_sequence_repeat(f, v, w);
-        }
-        result = cimpl_binop_type_error(v, w, LE_MSG_OP_IMUL);
+    else if (mw != NULL) {
+        /* Note that the right hand operand should not be
+         * mutated in this case so sq_inplace_repeat is not
+         * used. */
+        if (mw->sq_repeat)
+            return cimpl_sequence_repeat(mw->sq_repeat, w, v);
     }
-    return result;
-}
-
-static PyObject *
-cimpl_PyNumber_InPlaceMultiply_5(PyObject *v, PyObject *w,
-                                 PySequenceMethods *mw)
-{
-    PyObject *result;
-    {
-        {
-            {
-                if (mw->sq_repeat)
-                    return cimpl_sequence_repeat(mw->sq_repeat, w, v);
-            }
-        }
-        result = cimpl_binop_type_error(v, w, LE_MSG_OP_IMUL);
-    }
-    return result;
+    return cimpl_binop_type_error(v, w, LE_MSG_OP_IMUL);
 }
 
 /* PyNumber_InPlaceAdd, PyNumber_InPlaceMultiply or another in-place
@@ -380,2850 +381,109 @@ cimpl_binary_iop_rest(PyObject *v, PyObject *w, const int iop_slot,
     if (x != Py_NotImplemented)
         return x;
     Py_DECREF(x);
-    if (iop_slot == (int)offsetof(PyNumberMethods, nb_inplace_add) &&
-        Py_TYPE(v)->tp_as_sequence != NULL)
-        return cimpl_PyNumber_InPlaceAdd_1(v, w, Py_TYPE(v)->tp_as_sequence);
-    if (iop_slot == (int)offsetof(PyNumberMethods, nb_inplace_multiply)) {
-        if (Py_TYPE(v)->tp_as_sequence != NULL)
-            return cimpl_PyNumber_InPlaceMultiply_1(
-                v, w, Py_TYPE(v)->tp_as_sequence);
-        if (Py_TYPE(w)->tp_as_sequence != NULL)
-            return cimpl_PyNumber_InPlaceMultiply_5(
-                v, w, Py_TYPE(w)->tp_as_sequence);
-    }
+    if (iop_slot == (int)NB_SLOT(nb_inplace_add))
+        return LeNumber_InPlaceAdd(v, w, Py_TYPE(v)->tp_as_sequence);
+    if (iop_slot == (int)NB_SLOT(nb_inplace_multiply))
+        return LeNumber_InPlaceMultiply(v, w, Py_TYPE(v)->tp_as_sequence,
+                                        Py_TYPE(w)->tp_as_sequence);
     return cimpl_binop_type_error(v, w, op_name);
 }
 
+/* PySequence_GetItem once a negative i has had the length added: m is s's
+   tp_as_sequence */
 static PyObject *
-cimpl_ternary_op(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
-                 const char *op_name)
+LeSequence_GetItem(PyObject *s, Py_ssize_t i, PySequenceMethods *m)
 {
-#if LE_HAS_CHECK_SLOT_RESULT
-    PyNumberMethods *mv = Py_TYPE(v)->tp_as_number;
-    PyNumberMethods *mw = Py_TYPE(w)->tp_as_number;
-    ternaryfunc slotv;
-    if (mv != NULL) {
-        slotv = (*(ternaryfunc *)(&((char *)mv)[op_slot]));
-    }
-    else {
-        slotv = NULL;
-    }
-    ternaryfunc slotw;
-    if (!Py_IS_TYPE(w, Py_TYPE(v)) && mw != NULL) {
-        slotw = (*(ternaryfunc *)(&((char *)mw)[op_slot]));
-        if (slotw == slotv) {
-            slotw = NULL;
-        }
-    }
-    else {
-        slotw = NULL;
-    }
-#else
-    PyNumberMethods *mv, *mw, *mz;
-    PyObject *x = NULL;
-    ternaryfunc slotv = NULL;
-    ternaryfunc slotw = NULL;
-    ternaryfunc slotz = NULL;
-    mv = v->ob_type->tp_as_number;
-    mw = w->ob_type->tp_as_number;
-    if (mv != NULL)
-        slotv = (*(ternaryfunc *)(&((char *)mv)[op_slot]));
-    if (w->ob_type != v->ob_type && mw != NULL) {
-        slotw = (*(ternaryfunc *)(&((char *)mw)[op_slot]));
-        if (slotw == slotv)
-            slotw = NULL;
-    }
-#endif
-    if (slotv) {
-#if LE_HAS_CHECK_SLOT_RESULT
-        PyObject *x;
-        if (slotw && PyType_IsSubtype(Py_TYPE(w), Py_TYPE(v))) {
-            x = slotw(v, w, z);
-            if (x != Py_NotImplemented) {
-                return x;
-            }
-            Py_DECREF(x);
-            slotw = NULL;
-        }
-#else
-        if (slotw && PyType_IsSubtype(Py_TYPE(w), Py_TYPE(v))) {
-            x = slotw(v, w, z);
-            if (x != Py_NotImplemented)
-                return x;
-            Py_DECREF(x);
-            slotw = NULL;
-        }
-#endif
-        x = slotv(v, w, z);
-#if LE_HAS_CHECK_SLOT_RESULT
-        assert(_Py_CheckSlotResult(v, op_name, x != NULL));
-        if (x != Py_NotImplemented) {
-            return x;
-        }
-#else
-        if (x != Py_NotImplemented)
-            return x;
-#endif
-        Py_DECREF(x);
-    }
-    if (slotw) {
-#if LE_HAS_CHECK_SLOT_RESULT
-        PyObject *x = slotw(v, w, z);
-        assert(_Py_CheckSlotResult(w, op_name, x != NULL));
-        if (x != Py_NotImplemented) {
-            return x;
-        }
-#else
-        x = slotw(v, w, z);
-        if (x != Py_NotImplemented)
-            return x;
-#endif
-        Py_DECREF(x);
-    }
-#if LE_HAS_CHECK_SLOT_RESULT
-    PyNumberMethods *mz = Py_TYPE(z)->tp_as_number;
-#else
-    mz = Py_TYPE(z)->tp_as_number;
-#endif
-    if (mz != NULL) {
-#if LE_HAS_CHECK_SLOT_RESULT
-        ternaryfunc slotz = (*(ternaryfunc *)(&((char *)mz)[op_slot]));
-        if (slotz == slotv || slotz == slotw) {
-            slotz = NULL;
-        }
-#else
-        slotz = (*(ternaryfunc *)(&((char *)mz)[op_slot]));
-        if (slotz == slotv || slotz == slotw)
-            slotz = NULL;
-#endif
-        if (slotz) {
-#if LE_HAS_CHECK_SLOT_RESULT
-            PyObject *x = slotz(v, w, z);
-            assert(_Py_CheckSlotResult(z, op_name, x != NULL));
-            if (x != Py_NotImplemented) {
-                return x;
-            }
-#else
-            x = slotz(v, w, z);
-            if (x != Py_NotImplemented)
-                return x;
-#endif
-            Py_DECREF(x);
-        }
-    }
-    /* op_name is the name a type error of **= shows (LE_MSG_OP_IPOW: before
-       3.10, "** or pow()"). z is INPLACE_POWER's None: pow()'s message of
-       three operands stands for the case no compiled code reaches. */
-    if (z == Py_None)
-        PyErr_Format(PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR, op_name,
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
-    else
-        PyErr_Format(PyExc_TypeError, LE_MSG_POW3_TYPE_ERROR,
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
-                     Py_TYPE(z)->tp_name);
-    return NULL;
-}
-
-static PyObject *
-#if LE_HAS_CHECK_SLOT_RESULT
-cimpl_ternary_op_1(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
-                   const char *op_name, PyNumberMethods *mz, ternaryfunc slotv,
-                   ternaryfunc slotw)
-{
-    {
-        ternaryfunc slotz = (*(ternaryfunc *)(&((char *)mz)[op_slot]));
-        if (slotz == slotv || slotz == slotw) {
-            slotz = NULL;
-        }
-        if (slotz) {
-            PyObject *x = slotz(v, w, z);
-            assert(_Py_CheckSlotResult(z, op_name, x != NULL));
-            if (x != Py_NotImplemented) {
-                return x;
-            }
-            Py_DECREF(x);
-        }
-    }
-    if (z == Py_None) {
-        PyErr_Format(PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR, op_name,
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
-    }
-    else {
-        PyErr_Format(PyExc_TypeError, LE_MSG_POW3_TYPE_ERROR,
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
-                     Py_TYPE(z)->tp_name);
-    }
-    return NULL;
-}
-#else
-cimpl_ternary_op_1(PyObject *v, PyObject *w, PyObject *z, const int op_slot,
-                   PyNumberMethods *mz, ternaryfunc slotv, ternaryfunc slotw)
-{
-    ternaryfunc slotz;
-    PyObject *x;
-    {
-        slotz = (*(ternaryfunc *)(&((char *)mz)[op_slot]));
-        if (slotz == slotv || slotz == slotw)
-            slotz = NULL;
-        if (slotz) {
-            x = slotz(v, w, z);
-            if (x != Py_NotImplemented)
-                return x;
-            Py_DECREF(x);
-        }
-    }
-    if (z == Py_None)
-        PyErr_Format(PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR, LE_MSG_OP_IPOW,
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
-    else
-        PyErr_Format(PyExc_TypeError, LE_MSG_POW3_TYPE_ERROR,
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
-                     Py_TYPE(z)->tp_name);
-    return NULL;
-}
-#endif
-
-static PyObject *
-#if LE_HAS_CHECK_SLOT_RESULT
-cimpl_ternary_op_2(PyObject *v, PyObject *w, PyObject *z, const char *op_name)
-#else
-cimpl_ternary_op_2(PyObject *v, PyObject *w, PyObject *z)
-#endif
-{
-#if LE_HAS_CHECK_SLOT_RESULT
-    if (z == Py_None) {
-        PyErr_Format(PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR, op_name,
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
-    }
-    else {
-        PyErr_Format(PyExc_TypeError, LE_MSG_POW3_TYPE_ERROR,
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
-                     Py_TYPE(z)->tp_name);
-    }
-#else
-    if (z == Py_None)
-        PyErr_Format(PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR, LE_MSG_OP_IPOW,
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name);
-    else
-        PyErr_Format(PyExc_TypeError, LE_MSG_POW3_TYPE_ERROR,
-                     Py_TYPE(v)->tp_name, Py_TYPE(w)->tp_name,
-                     Py_TYPE(z)->tp_name);
-#endif
-    return NULL;
-}
-
-#if LE_HAS_TERNARY_IOP
-static PyObject *
-cimpl_ternary_iop(PyObject *v, PyObject *w, PyObject *z, const int iop_slot,
-                  const int op_slot, const char *op_name)
-{
-    PyNumberMethods *mv = Py_TYPE(v)->tp_as_number;
-    if (mv != NULL) {
-        ternaryfunc slot = (*(ternaryfunc *)(&((char *)mv)[iop_slot]));
-        if (slot) {
-            PyObject *x = (slot)(v, w, z);
-            if (x != Py_NotImplemented) {
-                return x;
-            }
-            Py_DECREF(x);
-        }
-    }
-    return cimpl_ternary_op(v, w, z, op_slot, op_name);
-}
-#endif
-
-static PyObject *
-cimpl_PyNumber_Multiply_1(PyObject *v, PyObject *w, PySequenceMethods *mv,
-                          PySequenceMethods *mw)
-{
-    PyObject *result;
-    {
-        if (mv && mv->sq_repeat) {
-            return cimpl_sequence_repeat(mv->sq_repeat, v, w);
-        }
-        else if (mw && mw->sq_repeat) {
-            return cimpl_sequence_repeat(mw->sq_repeat, w, v);
-        }
-        result = cimpl_binop_type_error(v, w, LE_MSG_OP_MUL);
-    }
-    return result;
-}
-
-static PyObject *
-cimpl_PyNumber_Multiply_3(PyObject *v, PyObject *w, PySequenceMethods *mw)
-{
-    PyObject *result;
-    {
-        {
-            if (mw && mw->sq_repeat) {
-                return cimpl_sequence_repeat(mw->sq_repeat, w, v);
-            }
-        }
-        result = cimpl_binop_type_error(v, w, LE_MSG_OP_MUL);
-    }
-    return result;
-}
-
-static int
-cimpl_PySequence_DelItem_1(PyObject *s, Py_ssize_t i, PySequenceMethods *m)
-{
-#if LE_HAS_CHECK_SLOT_RESULT
-    int res = m->sq_ass_item(s, i, (PyObject *)NULL);
-    assert(_Py_CheckSlotResult(s, "__delitem__", res >= 0));
-    return res;
-#else
-    return m->sq_ass_item(s, i, (PyObject *)NULL);
-#endif
-}
-
-static PyObject *
-cimpl_PySequence_GetItem_1(PyObject *s, Py_ssize_t i, PySequenceMethods *m)
-{
-#if LE_HAS_CHECK_SLOT_RESULT
-    PyObject *res = m->sq_item(s, i);
-    assert(_Py_CheckSlotResult(s, "__getitem__", res != NULL));
-    return res;
-#else
     return m->sq_item(s, i);
-#endif
 }
 
-static int
-cimpl_PySequence_SetItem_1(PyObject *s, Py_ssize_t i, PyObject *o,
-                           PySequenceMethods *m)
-{
-#if LE_HAS_CHECK_SLOT_RESULT
-    int res = m->sq_ass_item(s, i, o);
-    assert(_Py_CheckSlotResult(s, "__setitem__", res >= 0));
-    return res;
-#else
-    return m->sq_ass_item(s, i, o);
-#endif
-}
-
+/* PySequence_GetSlice once the slice is made: mp is s's tp_as_mapping */
 static PyObject *
-cimpl_PySequence_GetSlice_1(PyObject *s, PyMappingMethods *mp, PyObject *slice)
+LeSequence_GetSlice(PyObject *s, PyMappingMethods *mp, PyObject *slice)
 {
-#if !LE_HAS_CHECK_SLOT_RESULT
-    PyObject *res;
-#endif
     Py_INCREF(slice);
-#if LE_HAS_CHECK_SLOT_RESULT
     PyObject *res = mp->mp_subscript(s, slice);
-    assert(_Py_CheckSlotResult(s, "__getitem__", res != NULL));
-#else
-    res = mp->mp_subscript(s, slice);
-#endif
     Py_DECREF(slice);
     return res;
 }
 
+/* PySequence_SetItem once a negative i has had the length added */
 static int
-cimpl_PySequence_SetSlice_1(PyObject *s, PyObject *o, PyMappingMethods *mp,
-                            PyObject *slice)
+LeSequence_SetItem(PyObject *s, Py_ssize_t i, PyObject *o,
+                   PySequenceMethods *m)
 {
-#if !LE_HAS_CHECK_SLOT_RESULT
-    int res;
-#endif
+    return m->sq_ass_item(s, i, o);
+}
+
+/* PySequence_DelItem once a negative i has had the length added */
+static int
+LeSequence_DelItem(PyObject *s, Py_ssize_t i, PySequenceMethods *m)
+{
+    return m->sq_ass_item(s, i, (PyObject *)NULL);
+}
+
+/* PySequence_SetSlice once the slice is made */
+static int
+LeSequence_SetSlice(PyObject *s, PyObject *o, PyMappingMethods *mp,
+                    PyObject *slice)
+{
     Py_INCREF(slice);
-#if LE_HAS_CHECK_SLOT_RESULT
     int res = mp->mp_ass_subscript(s, slice, o);
-    assert(_Py_CheckSlotResult(s, "__setitem__", res >= 0));
-#else
-    res = mp->mp_ass_subscript(s, slice, o);
-#endif
     Py_DECREF(slice);
     return res;
 }
 
-static vinfo_t *
-type_error(PsycoObject *po, const char *, vinfo_t *);
-static vinfo_t *
-binary_op1(PsycoObject *po, vinfo_t *, vinfo_t *, int);
-static vinfo_t *
-binop_type_error(PsycoObject *po, vinfo_t *, vinfo_t *, const char *);
-static vinfo_t *
-binary_op(PsycoObject *po, vinfo_t *, vinfo_t *, int, const char *);
-static vinfo_t *
-binary_iop1(PsycoObject *po, vinfo_t *, vinfo_t *, int, int, const char *);
-static vinfo_t *
-binary_iop(PsycoObject *po, vinfo_t *, vinfo_t *, int, int, const char *);
-static vinfo_t *
-sequence_repeat(PsycoObject *po, ssizeargfunc, vinfo_t *, vinfo_t *);
-static vinfo_t *
-ternary_op(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *, int,
-           const char *);
-
-#if LE_HAS_TERNARY_IOP
-static vinfo_t *
-ternary_iop(PsycoObject *po, vinfo_t *, vinfo_t *, vinfo_t *, int, int,
-            const char *);
-#endif
-
-#if LE_HAS_ITER_CHECK_FUNCTION
-DEFINEFN vinfo_t *
-PsycoIter_Check(PsycoObject *po, vinfo_t *obj)
-{
-    iternextfunc _t1;
-    int _t2;
-    PyTypeObject *tp_obj;
-    tp_obj = Psyco_NeedType(po, obj);
-    if (tp_obj == NULL) {
-        return NULL;
-    }
-    switch (Psyco_TypeSlot(po, tp_obj, &tp_obj->tp_iternext, (void **)&_t1)) {
-        case 1:
-            break;
-        case 0:
-            return psyco_generic_call(
-                po, PyIter_Check,
-                CfCommonIntBoolOrError | CfNoPython | CfNoBlock, "v", obj);
-        default:
-            return NULL;
-    }
-    _t2 = _t1 != NULL;
-    if (_t2) {
-        return psyco_generic_call(
-            po, PyIter_Check, CfCommonIntBoolOrError | CfNoPython | CfNoBlock,
-            "v", obj);
-    }
-    return vinfo_new(CompileTime_New((long)(_t2)));
-}
-#endif
+/* the metas translated from abstract.c */
 
 static vinfo_t *
 type_error(PsycoObject *po, const char *msg, vinfo_t *obj)
 {
-    PyTypeObject *tp_obj;
-    tp_obj = Psyco_NeedType(po, obj);
-    if (tp_obj == NULL) {
+    PyTypeObject *tp_obj = Psyco_NeedType(po, obj);
+    if (tp_obj == NULL)
         return NULL;
-    }
     PycException_SetTypeFormat(po, PyExc_TypeError, msg, NULL, tp_obj, NULL);
     return NULL;
 }
 
 DEFINEFN vinfo_t *
-PsycoMapping_Size(PsycoObject *po, vinfo_t *o)
+PsycoObject_Size(PsycoObject *po, vinfo_t *o)
 {
-    lenfunc _t1;
-    int _t2;
-#if LE_HAS_NOT_A_SEQUENCE_ERROR
-    lenfunc _t4;
-    int _t5;
-#endif
-    vinfo_t *len;
-    PyMappingMethods *m;
-    PyTypeObject *tp_o;
-    tp_o = Psyco_NeedType(po, o);
-    if (tp_o == NULL) {
+    PyTypeObject *tp_o = Psyco_NeedType(po, o);
+    if (tp_o == NULL)
         return NULL;
-    }
-    m = tp_o->tp_as_mapping;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_o, &m->mp_length, (void **)&_t1)) {
+
+    PySequenceMethods *m = tp_o->tp_as_sequence;
+    lenfunc sq_length = NULL;
+    if (m != NULL) {
+        switch (Psyco_TypeSlot(po, tp_o, &m->sq_length, (void **)&sq_length)) {
             case 1:
                 break;
             case 0:
-                return psyco_generic_call(po, PyMapping_Size,
+                return psyco_generic_call(po, PyObject_Size,
                                           CfCommonPySSizeTResult, "v", o);
             default:
                 return NULL;
         }
-        _t2 = _t1 != 0;
     }
-    if (_t2) {
-        len = Psyco_META1(po, _t1, CfCommonPySSizeTResult, "v", o);
-        return len;
+    if (sq_length != NULL) {
+        return Psyco_META1(po, sq_length, CfCommonPySSizeTResult, "v", o);
     }
-#if LE_HAS_NOT_A_SEQUENCE_ERROR
-    _t5 = (tp_o->tp_as_sequence) != 0;
-    if (_t5) {
-        switch (Psyco_TypeSlot(po, tp_o, &(tp_o->tp_as_sequence)->sq_length,
-                               (void **)&_t4)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PyMapping_Size,
-                                          CfCommonPySSizeTResult, "v", o);
-            default:
-                return NULL;
-        }
-        _t5 = _t4 != 0;
-    }
-    if (_t5) {
-        type_error(po, LE_MSG_MAPPING_SIZE_NOT_MAPPING, o);
-        return NULL;
-    }
-#endif
-    type_error(po, LE_MSG_MAPPING_NO_LEN, o);
-    return NULL;
-}
 
-DEFINEFN vinfo_t *
-PsycoNumber_Absolute(PsycoObject *po, vinfo_t *o)
-{
-    unaryfunc _t1;
-    int _t2;
-    vinfo_t *_t3;
-    vinfo_t *_t4;
-    PyNumberMethods *m;
-#if LE_HAS_CHECK_SLOT_RESULT
-    vinfo_t *res;
-#endif
-    PyTypeObject *tp_o;
-    tp_o = Psyco_NeedType(po, o);
-    if (tp_o == NULL) {
-        return NULL;
-    }
-    m = tp_o->tp_as_number;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_o, &m->nb_absolute, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PyNumber_Absolute,
-                                          CfCommonNewRefPyObject, "v", o);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = Psyco_META1(po, _t1, CfCommonNewRefPyObject, "v", o);
-#if LE_HAS_CHECK_SLOT_RESULT
-        res = _t3;
-        return res;
-#else
-        return _t3;
-#endif
-    }
-    _t4 = type_error(po, LE_MSG_BAD_ABS, o);
-    return _t4;
+    return PsycoMapping_Size(po, o);
 }
-
-static vinfo_t *
-binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot)
-{
-    binaryfunc _t1;
-    binaryfunc _t2;
-    bool _t3;
-    int _t4;
-    binaryfunc slotv;
-    binaryfunc slotw;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    vinfo_t *x;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-#if !LE_HAS_CHECK_SLOT_RESULT
-    slotv = NULL;
-    slotw = NULL;
-#endif
-    if ((tp_v->tp_as_number) != NULL) {
-        switch (Psyco_TypeSlot(
-            po, tp_v, (void *)&(((char *)tp_v->tp_as_number))[op_slot],
-            (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, cimpl_binary_op1,
-                                          CfCommonCheckNotImplemented, "vvl",
-                                          v, w, (long)(op_slot));
-            default:
-                return NULL;
-        }
-        slotv = _t1;
-    }
-#if LE_HAS_CHECK_SLOT_RESULT
-    else {
-        slotv = NULL;
-    }
-    if ((!(tp_w == tp_v) && (tp_w->tp_as_number) != NULL)) {
-#else
-    if ((tp_w != tp_v && (tp_w->tp_as_number) != NULL)) {
-#endif
-        switch (Psyco_TypeSlot(
-            po, tp_w, (void *)&(((char *)tp_w->tp_as_number))[op_slot],
-            (void **)&_t2)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, cimpl_binary_op1,
-                                          CfCommonCheckNotImplemented, "vvl",
-                                          v, w, (long)(op_slot));
-            default:
-                return NULL;
-        }
-        slotw = _t2;
-        if (slotw == slotv) {
-            slotw = NULL;
-        }
-    }
-#if LE_HAS_CHECK_SLOT_RESULT
-    else {
-        slotw = NULL;
-    }
-#endif
-    if (slotv != 0) {
-        _t4 = slotw != 0;
-        if (_t4) {
-            switch (Psyco_TypeIsSubtype(po, tp_w, tp_v, &_t3)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, cimpl_binary_op1,
-                                              CfCommonCheckNotImplemented,
-                                              "vvl", v, w, (long)(op_slot));
-                default:
-                    return NULL;
-            }
-            _t4 = _t3 != 0;
-        }
-        if (_t4) {
-            x = Psyco_META2(po, slotw, CfCommonCheckNotImplemented, "vv", v,
-                            w);
-            if (IS_IMPLEMENTED(x)) {
-                return x;
-            }
-            vinfo_decref(x, po);
-            slotw = NULL;
-        }
-        x = Psyco_META2(po, slotv, CfCommonCheckNotImplemented, "vv", v, w);
-        if (IS_IMPLEMENTED(x)) {
-            return x;
-        }
-        vinfo_decref(x, po);
-    }
-    if (slotw != 0) {
-        x = Psyco_META2(po, slotw, CfCommonCheckNotImplemented, "vv", v, w);
-        if (IS_IMPLEMENTED(x)) {
-            return x;
-        }
-        vinfo_decref(x, po);
-    }
-    return psyco_vi_NotImplemented();
-}
-
-static vinfo_t *
-binop_type_error(PsycoObject *po, vinfo_t *v, vinfo_t *w, const char *op_name)
-{
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    if (Psyco_TypesStale(po, tp_v, tp_w))
-        return psyco_generic_call(po, cimpl_binop_type_error,
-                                  CfCommonNewRefPyObject, "vvl", v, w,
-                                  (long)op_name);
-    PycException_SetTypeFormat(po, PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR,
-                               op_name, tp_v, tp_w);
-    return NULL;
-}
-
-#if LE_HAS_CHECK_SLOT_RESULT
-DEFINEFN vinfo_t *
-PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    binaryfunc _t2;
-    int _t3;
-    vinfo_t *_t5;
-    PySequenceMethods *m;
-    vinfo_t *result;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    result = binary_op1(po, v, w, offsetof(PyNumberMethods, nb_add));
-    if (IS_IMPLEMENTED(result)) {
-        return result;
-    }
-    vinfo_decref(result, po);
-    m = tp_v->tp_as_sequence;
-    _t3 = m != 0;
-    if (_t3) {
-        switch (Psyco_TypeSlot(po, tp_v, &m->sq_concat, (void **)&_t2)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, cimpl_PyNumber_Add_1,
-                                          CfCommonNewRefPyObject, "vvl", v, w,
-                                          (long)(m));
-            default:
-                return NULL;
-        }
-        _t3 = _t2 != 0;
-    }
-    if (_t3) {
-        result = Psyco_META2(po, _t2, CfCommonNewRefPyObject, "vv", v, w);
-        return result;
-    }
-    _t5 = binop_type_error(po, v, w, LE_MSG_OP_ADD);
-    return _t5;
-}
-#else
-DEFINEFN vinfo_t *
-PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    binaryfunc _t2;
-    int _t3;
-    vinfo_t *_t4;
-    PySequenceMethods *m;
-    vinfo_t *result;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    result = binary_op1(po, v, w, offsetof(PyNumberMethods, nb_add));
-    if (!IS_IMPLEMENTED(result)) {
-        m = tp_v->tp_as_sequence;
-        vinfo_decref(result, po);
-        _t3 = m != 0;
-        if (_t3) {
-            switch (Psyco_TypeSlot(po, tp_v, &m->sq_concat, (void **)&_t2)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, cimpl_PyNumber_Add_1,
-                                              CfCommonNewRefPyObject, "vvl", v,
-                                              w, (long)(m));
-                default:
-                    return NULL;
-            }
-            _t3 = _t2 != 0;
-        }
-        if (_t3) {
-            _t4 = Psyco_META2(po, _t2, CfCommonNewRefPyObject, "vv", v, w);
-            return _t4;
-        }
-        result = binop_type_error(po, v, w, LE_MSG_OP_ADD);
-        return result;
-    }
-    return result;
-}
-#endif
-
-static vinfo_t *
-binary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op_slot,
-          const char *op_name)
-{
-    int _t2;
-    vinfo_t *_t3;
-    vinfo_t *result;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    result = binary_op1(po, v, w, op_slot);
-    if (!IS_IMPLEMENTED(result)) {
-        vinfo_decref(result, po);
-        _t2 = (op_slot == (offsetof(PyNumberMethods, nb_rshift)) &&
-               tp_v == &PyCFunction_Type);
-        if (_t2) {
-            return psyco_generic_call(po, cimpl_binary_op_1,
-                                      CfCommonNewRefPyObject, "vvll", v, w,
-                                      (long)(op_slot), (long)(op_name));
-        }
-        if (_t2) {
-            PycException_SetFormat(po, PyExc_TypeError,
-                                   LE_MSG_BINOP_PRINT_TYPE_ERROR, op_name,
-                                   tp_v->tp_name, tp_w->tp_name);
-            return NULL;
-        }
-        _t3 = binop_type_error(po, v, w, op_name);
-        return _t3;
-    }
-    return result;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_And(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 =
-        binary_op(po, v, w, offsetof(PyNumberMethods, nb_and), LE_MSG_OP_AND);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Divmod(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_divmod),
-                    LE_MSG_OP_DIVMOD);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_FloorDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_floor_divide),
-                    LE_MSG_OP_FLOORDIV);
-    return _t1;
-}
-
-static vinfo_t *
-binary_iop1(PsycoObject *po, vinfo_t *v, vinfo_t *w, int iop_slot, int op_slot,
-            const char *op_name)
-{
-    binaryfunc _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
-    PyNumberMethods *mv;
-    binaryfunc slot;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    vinfo_t *x;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    mv = tp_v->tp_as_number;
-    if (mv != NULL) {
-        switch (Psyco_TypeSlot(po, tp_v, (void *)&(((char *)mv))[iop_slot],
-                               (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(
-                    po, cimpl_binary_iop1, CfCommonCheckNotImplemented, "vvll",
-                    v, w, (long)(iop_slot), (long)(op_slot));
-            default:
-                return NULL;
-        }
-        slot = _t1;
-        if (slot != 0) {
-            _t2 =
-                Psyco_META2(po, slot, CfCommonCheckNotImplemented, "vv", v, w);
-            x = _t2;
-            if (IS_IMPLEMENTED(x)) {
-                return x;
-            }
-            vinfo_decref(x, po);
-            if (Psyco_TypesStale(po, tp_v, tp_w))
-                return psyco_generic_call(
-                    po, cimpl_binary_iop_rest, CfCommonNewRefPyObject, "vvlll",
-                    v, w, (long)iop_slot, (long)op_slot, (long)op_name);
-        }
-    }
-    _t3 = binary_op1(po, v, w, op_slot);
-    return _t3;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    binaryfunc _t2;
-    binaryfunc _t3;
-    vinfo_t *_t4;
-    binaryfunc func;
-    PySequenceMethods *m;
-    vinfo_t *result;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    result = binary_iop1(po, v, w, offsetof(PyNumberMethods, nb_inplace_add),
-                         offsetof(PyNumberMethods, nb_add), LE_MSG_OP_IADD);
-    if (!IS_IMPLEMENTED(result)) {
-        m = tp_v->tp_as_sequence;
-        vinfo_decref(result, po);
-        if (m != NULL) {
-#if !LE_HAS_CHECK_SLOT_RESULT
-            func = NULL;
-#endif
-            switch (Psyco_TypeSlot(po, tp_v, &m->sq_inplace_concat,
-                                   (void **)&_t2)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, cimpl_PyNumber_InPlaceAdd_1,
-                                              CfCommonNewRefPyObject, "vvl", v,
-                                              w, (long)(m));
-                default:
-                    return NULL;
-            }
-            func = _t2;
-            if (func == NULL) {
-                switch (
-                    Psyco_TypeSlot(po, tp_v, &m->sq_concat, (void **)&_t3)) {
-                    case 1:
-                        break;
-                    case 0:
-                        return psyco_generic_call(
-                            po, cimpl_PyNumber_InPlaceAdd_3,
-                            CfCommonNewRefPyObject, "vvl", v, w, (long)(m));
-                    default:
-                        return NULL;
-                }
-                func = _t3;
-            }
-            if (func != NULL) {
-#if LE_HAS_CHECK_SLOT_RESULT
-                _t4 =
-                    Psyco_META2(po, func, CfCommonNewRefPyObject, "vv", v, w);
-                result = _t4;
-                return result;
-#else
-                _t4 =
-                    Psyco_META2(po, func, CfCommonNewRefPyObject, "vv", v, w);
-                return _t4;
-#endif
-            }
-        }
-        result = binop_type_error(po, v, w, LE_MSG_OP_IADD);
-        return result;
-    }
-    return result;
-}
-
-static vinfo_t *
-binary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, int iop_slot, int op_slot,
-           const char *op_name)
-{
-    vinfo_t *_t2;
-    vinfo_t *result;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    result = binary_iop1(po, v, w, iop_slot, op_slot, op_name);
-    if (!IS_IMPLEMENTED(result)) {
-        vinfo_decref(result, po);
-        _t2 = binop_type_error(po, v, w, op_name);
-        return _t2;
-    }
-    return result;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceAnd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_and),
-                     offsetof(PyNumberMethods, nb_and), LE_MSG_OP_IAND);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceFloorDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_iop(
-        po, v, w, offsetof(PyNumberMethods, nb_inplace_floor_divide),
-        offsetof(PyNumberMethods, nb_floor_divide), LE_MSG_OP_IFLOORDIV);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceLshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_lshift),
-                     offsetof(PyNumberMethods, nb_lshift), LE_MSG_OP_ILSHIFT);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceMatrixMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_iop(
-        po, v, w, offsetof(PyNumberMethods, nb_inplace_matrix_multiply),
-        offsetof(PyNumberMethods, nb_matrix_multiply), LE_MSG_OP_IMATMUL);
-    return _t1;
-}
-
-static vinfo_t *
-sequence_repeat(PsycoObject *po, ssizeargfunc repeatfunc, vinfo_t *seq,
-                vinfo_t *n)
-{
-    unaryfunc _t1;
-    int _t2;
-    vinfo_t *_t4;
-    vinfo_t *_t5;
-#if !LE_HAS_CHECK_SLOT_RESULT
-    vinfo_t *_t6;
-#endif
-    vinfo_t *count;
-#if LE_HAS_CHECK_SLOT_RESULT
-    vinfo_t *res;
-#endif
-    PyTypeObject *tp_n;
-    tp_n = Psyco_NeedType(po, n);
-    if (tp_n == NULL) {
-        return NULL;
-    }
-    _t2 = (tp_n->tp_as_number) != NULL;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_n, &(tp_n->tp_as_number)->nb_index,
-                               (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, cimpl_sequence_repeat,
-                                          CfCommonNewRefPyObject, "lvv",
-                                          (long)(repeatfunc), seq, n);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != NULL;
-    }
-    if (_t2) {
-        count = PsycoNumber_AsSsize_t(po, n, PyExc_OverflowError);
-        if (count == NULL) {
-            return NULL;
-        }
-    }
-    else {
-        _t4 = type_error(po, LE_MSG_SEQ_REPEAT_NON_INT, n);
-        return _t4;
-    }
-    _t5 =
-        Psyco_META2(po, repeatfunc, CfCommonNewRefPyObject, "vv", seq, count);
-#if LE_HAS_CHECK_SLOT_RESULT
-    res = _t5;
-#else
-    _t6 = _t5;
-#endif
-    vinfo_decref(count, po);
-#if LE_HAS_CHECK_SLOT_RESULT
-    return res;
-#else
-    return _t6;
-#endif
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    ssizeargfunc _t2;
-    ssizeargfunc _t3;
-    vinfo_t *_t4;
-    ssizeargfunc _t5;
-    vinfo_t *_t6;
-    ssizeargfunc f;
-    PySequenceMethods *mv;
-    PySequenceMethods *mw;
-    vinfo_t *result;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    result =
-        binary_iop1(po, v, w, offsetof(PyNumberMethods, nb_inplace_multiply),
-                    offsetof(PyNumberMethods, nb_multiply), LE_MSG_OP_IMUL);
-    if (!IS_IMPLEMENTED(result)) {
-        f = NULL;
-        mv = tp_v->tp_as_sequence;
-        mw = tp_w->tp_as_sequence;
-        vinfo_decref(result, po);
-        if (mv != NULL) {
-            switch (Psyco_TypeSlot(po, tp_v, &mv->sq_inplace_repeat,
-                                   (void **)&_t2)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(
-                        po, cimpl_PyNumber_InPlaceMultiply_1,
-                        CfCommonNewRefPyObject, "vvl", v, w, (long)(mv));
-                default:
-                    return NULL;
-            }
-            f = _t2;
-            if (f == NULL) {
-                switch (
-                    Psyco_TypeSlot(po, tp_v, &mv->sq_repeat, (void **)&_t3)) {
-                    case 1:
-                        break;
-                    case 0:
-                        return psyco_generic_call(
-                            po, cimpl_PyNumber_InPlaceMultiply_4,
-                            CfCommonNewRefPyObject, "vvl", v, w, (long)(mv));
-                    default:
-                        return NULL;
-                }
-                f = _t3;
-            }
-            if (f != NULL) {
-                _t4 = sequence_repeat(po, f, v, w);
-                return _t4;
-            }
-        }
-        else {
-            if (mw != NULL) {
-                switch (
-                    Psyco_TypeSlot(po, tp_w, &mw->sq_repeat, (void **)&_t5)) {
-                    case 1:
-                        break;
-                    case 0:
-                        return psyco_generic_call(
-                            po, cimpl_PyNumber_InPlaceMultiply_5,
-                            CfCommonNewRefPyObject, "vvl", v, w, (long)(mw));
-                    default:
-                        return NULL;
-                }
-                if (_t5 != 0) {
-                    _t6 = sequence_repeat(po, _t5, w, v);
-                    return _t6;
-                }
-            }
-        }
-        result = binop_type_error(po, v, w, LE_MSG_OP_IMUL);
-        return result;
-    }
-    return result;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceOr(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_or),
-                     offsetof(PyNumberMethods, nb_or), LE_MSG_OP_IOR);
-    return _t1;
-}
-
-static vinfo_t *
-ternary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z, int op_slot,
-           const char *op_name)
-{
-    ternaryfunc _t1;
-    ternaryfunc _t2;
-    bool _t3;
-    int _t4;
-    vinfo_t *_t5;
-    vinfo_t *_t6;
-    vinfo_t *_t7;
-    ternaryfunc _t8;
-    vinfo_t *_t9;
-    PyNumberMethods *mv;
-    PyNumberMethods *mw;
-    PyNumberMethods *mz;
-    ternaryfunc slotv;
-    ternaryfunc slotw;
-    ternaryfunc slotz;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    PyTypeObject *tp_z;
-    vinfo_t *x;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    tp_z = Psyco_NeedType(po, z);
-    if (tp_z == NULL) {
-        return NULL;
-    }
-#if !LE_HAS_CHECK_SLOT_RESULT
-    slotv = NULL;
-    slotw = NULL;
-    slotz = NULL;
-#endif
-    mv = tp_v->tp_as_number;
-    mw = tp_w->tp_as_number;
-    if (mv != NULL) {
-        switch (Psyco_TypeSlot(po, tp_v, (void *)&(((char *)mv))[op_slot],
-                               (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(
-                    po, cimpl_ternary_op, CfCommonNewRefPyObject, "vvvll", v,
-                    w, z, (long)(op_slot), (long)(op_name));
-            default:
-                return NULL;
-        }
-        slotv = _t1;
-    }
-#if LE_HAS_CHECK_SLOT_RESULT
-    else {
-        slotv = NULL;
-    }
-    if ((!(tp_w == tp_v) && mw != NULL)) {
-        switch (Psyco_TypeSlot(po, tp_w, (void *)&(((char *)mw))[op_slot],
-                               (void **)&_t2)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(
-                    po, cimpl_ternary_op, CfCommonNewRefPyObject, "vvvll", v,
-                    w, z, (long)(op_slot), (long)(op_name));
-            default:
-                return NULL;
-        }
-        slotw = _t2;
-        if (slotw == slotv) {
-            slotw = NULL;
-        }
-    }
-    else {
-        slotw = NULL;
-    }
-    if (slotv != 0) {
-        _t4 = slotw != 0;
-        if (_t4) {
-            switch (Psyco_TypeIsSubtype(po, tp_w, tp_v, &_t3)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(
-                        po, cimpl_ternary_op, CfCommonNewRefPyObject, "vvvll",
-                        v, w, z, (long)(op_slot), (long)(op_name));
-                default:
-                    return NULL;
-            }
-            _t4 = _t3 != 0;
-        }
-        if (_t4) {
-            _t5 = Psyco_META3(po, slotw, CfCommonCheckNotImplemented, "vvv", v,
-                              w, z);
-            x = _t5;
-            if (IS_IMPLEMENTED(x)) {
-                return x;
-            }
-            vinfo_decref(x, po);
-            slotw = NULL;
-        }
-        _t6 = Psyco_META3(po, slotv, CfCommonCheckNotImplemented, "vvv", v, w,
-                          z);
-        x = _t6;
-        if (IS_IMPLEMENTED(x)) {
-            return x;
-        }
-        vinfo_decref(x, po);
-    }
-    if (slotw != 0) {
-        _t7 = Psyco_META3(po, slotw, CfCommonCheckNotImplemented, "vvv", v, w,
-                          z);
-        x = _t7;
-        if (IS_IMPLEMENTED(x)) {
-            return x;
-        }
-        vinfo_decref(x, po);
-    }
-    mz = tp_z->tp_as_number;
-    if (mz != NULL) {
-        switch (Psyco_TypeSlot(po, tp_z, (void *)&(((char *)mz))[op_slot],
-                               (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(
-                    po, cimpl_ternary_op_1, CfCommonNewRefPyObject, "vvvlllll",
-                    v, w, z, (long)(op_slot), (long)(op_name), (long)(mz),
-                    (long)(slotv), (long)(slotw));
-            default:
-                return NULL;
-        }
-        slotz = _t8;
-        if ((slotz == slotv || slotz == slotw)) {
-            slotz = NULL;
-        }
-        if (slotz != 0) {
-            _t9 = Psyco_META3(po, slotz, CfCommonCheckNotImplemented, "vvv", v,
-                              w, z);
-            x = _t9;
-            if (IS_IMPLEMENTED(x)) {
-                return x;
-            }
-            vinfo_decref(x, po);
-        }
-    }
-    return psyco_generic_call(po, cimpl_ternary_op_2, CfCommonNewRefPyObject,
-                              "vvvl", v, w, z, (long)(op_name));
-#else
-    if ((tp_w != tp_v && mw != NULL)) {
-        switch (Psyco_TypeSlot(po, tp_w, (void *)&(((char *)mw))[op_slot],
-                               (void **)&_t2)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(
-                    po, cimpl_ternary_op, CfCommonNewRefPyObject, "vvvll", v,
-                    w, z, (long)(op_slot), (long)(op_name));
-            default:
-                return NULL;
-        }
-        slotw = _t2;
-        if (slotw == slotv) {
-            slotw = NULL;
-        }
-    }
-    if (slotv != 0) {
-        _t4 = slotw != 0;
-        if (_t4) {
-            switch (Psyco_TypeIsSubtype(po, tp_w, tp_v, &_t3)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(
-                        po, cimpl_ternary_op, CfCommonNewRefPyObject, "vvvll",
-                        v, w, z, (long)(op_slot), (long)(op_name));
-                default:
-                    return NULL;
-            }
-            _t4 = _t3 != 0;
-        }
-        if (_t4) {
-            _t5 = Psyco_META3(po, slotw, CfCommonCheckNotImplemented, "vvv", v,
-                              w, z);
-            x = _t5;
-            if (IS_IMPLEMENTED(x)) {
-                return x;
-            }
-            vinfo_decref(x, po);
-            slotw = NULL;
-        }
-        _t6 = Psyco_META3(po, slotv, CfCommonCheckNotImplemented, "vvv", v, w,
-                          z);
-        x = _t6;
-        if (IS_IMPLEMENTED(x)) {
-            return x;
-        }
-        vinfo_decref(x, po);
-    }
-    if (slotw != 0) {
-        _t7 = Psyco_META3(po, slotw, CfCommonCheckNotImplemented, "vvv", v, w,
-                          z);
-        x = _t7;
-        if (IS_IMPLEMENTED(x)) {
-            return x;
-        }
-        vinfo_decref(x, po);
-    }
-    mz = tp_z->tp_as_number;
-    if (mz != NULL) {
-        switch (Psyco_TypeSlot(po, tp_z, (void *)&(((char *)mz))[op_slot],
-                               (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, cimpl_ternary_op_1,
-                                          CfCommonNewRefPyObject, "vvvllll", v,
-                                          w, z, (long)(op_slot), (long)(mz),
-                                          (long)(slotv), (long)(slotw));
-            default:
-                return NULL;
-        }
-        slotz = _t8;
-        if ((slotz == slotv || slotz == slotw)) {
-            slotz = NULL;
-        }
-        if (slotz != 0) {
-            _t9 = Psyco_META3(po, slotz, CfCommonCheckNotImplemented, "vvv", v,
-                              w, z);
-            x = _t9;
-            if (IS_IMPLEMENTED(x)) {
-                return x;
-            }
-            vinfo_decref(x, po);
-        }
-    }
-    return psyco_generic_call(po, cimpl_ternary_op_2, CfCommonNewRefPyObject,
-                              "vvv", v, w, z);
-#endif
-}
-
-#if LE_HAS_TERNARY_IOP
-static vinfo_t *
-ternary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z, int iop_slot,
-            int op_slot, const char *op_name)
-{
-    ternaryfunc _t1;
-    vinfo_t *_t3;
-    PyNumberMethods *mv;
-    ternaryfunc slot;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    PyTypeObject *tp_z;
-    vinfo_t *x;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    tp_z = Psyco_NeedType(po, z);
-    if (tp_z == NULL) {
-        return NULL;
-    }
-    mv = tp_v->tp_as_number;
-    if (mv != NULL) {
-        switch (Psyco_TypeSlot(po, tp_v, (void *)&(((char *)mv))[iop_slot],
-                               (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(
-                    po, cimpl_ternary_iop, CfCommonNewRefPyObject, "vvvlll", v,
-                    w, z, (long)(iop_slot), (long)(op_slot), (long)(op_name));
-            default:
-                return NULL;
-        }
-        slot = _t1;
-        if (slot != 0) {
-            x = Psyco_META3(po, slot, CfCommonCheckNotImplemented, "vvv", v, w,
-                            z);
-            if (IS_IMPLEMENTED(x)) {
-                return x;
-            }
-            vinfo_decref(x, po);
-            if (Psyco_TypesStale(po, tp_v, tp_w) ||
-                Psyco_TypesStale(po, tp_z, tp_z))
-                return psyco_generic_call(po, cimpl_ternary_op,
-                                          CfCommonNewRefPyObject, "vvvll", v,
-                                          w, z, (long)op_slot, (long)op_name);
-        }
-    }
-    _t3 = ternary_op(po, v, w, z, op_slot, op_name);
-    return _t3;
-}
-#endif
-
-#if LE_HAS_TERNARY_IOP
-DEFINEFN vinfo_t *
-PsycoNumber_InPlacePower(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    PyTypeObject *tp_z;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    tp_z = Psyco_NeedType(po, z);
-    if (tp_z == NULL) {
-        return NULL;
-    }
-    _t1 = ternary_iop(po, v, w, z, offsetof(PyNumberMethods, nb_inplace_power),
-                      offsetof(PyNumberMethods, nb_power), LE_MSG_OP_IPOW);
-    return _t1;
-}
-#else
-DEFINEFN vinfo_t *
-PsycoNumber_InPlacePower(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z)
-{
-    ternaryfunc _t1;
-    int _t2;
-    vinfo_t *_t3;
-    vinfo_t *_t4;
-    PyTypeObject *tp_v;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    _t2 = (tp_v->tp_as_number) != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_v,
-                               &(tp_v->tp_as_number)->nb_inplace_power,
-                               (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PyNumber_InPlacePower,
-                                          CfCommonNewRefPyObject, "vvv", v, w,
-                                          z);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != NULL;
-    }
-    if (_t2) {
-        _t3 = ternary_op(po, v, w, z,
-                         offsetof(PyNumberMethods, nb_inplace_power),
-                         LE_MSG_OP_IPOW);
-        return _t3;
-    }
-    else {
-        _t4 = ternary_op(po, v, w, z, offsetof(PyNumberMethods, nb_power),
-                         LE_MSG_OP_IPOW);
-        return _t4;
-    }
-}
-#endif
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceRemainder(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_remainder),
-                     offsetof(PyNumberMethods, nb_remainder), LE_MSG_OP_IMOD);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceRshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_rshift),
-                     offsetof(PyNumberMethods, nb_rshift), LE_MSG_OP_IRSHIFT);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceSubtract(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_subtract),
-                     offsetof(PyNumberMethods, nb_subtract), LE_MSG_OP_ISUB);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceTrueDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_iop(
-        po, v, w, offsetof(PyNumberMethods, nb_inplace_true_divide),
-        offsetof(PyNumberMethods, nb_true_divide), LE_MSG_OP_ITRUEDIV);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_InPlaceXor(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_iop(po, v, w, offsetof(PyNumberMethods, nb_inplace_xor),
-                     offsetof(PyNumberMethods, nb_xor), LE_MSG_OP_IXOR);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Invert(PsycoObject *po, vinfo_t *o)
-{
-    unaryfunc _t1;
-    int _t2;
-    vinfo_t *_t3;
-    vinfo_t *_t4;
-    PyNumberMethods *m;
-#if LE_HAS_CHECK_SLOT_RESULT
-    vinfo_t *res;
-#endif
-    PyTypeObject *tp_o;
-    tp_o = Psyco_NeedType(po, o);
-    if (tp_o == NULL) {
-        return NULL;
-    }
-    m = tp_o->tp_as_number;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_o, &m->nb_invert, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PyNumber_Invert,
-                                          CfCommonNewRefPyObject, "v", o);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = Psyco_META1(po, _t1, CfCommonNewRefPyObject, "v", o);
-#if LE_HAS_CHECK_SLOT_RESULT
-        res = _t3;
-        return res;
-#else
-        return _t3;
-#endif
-    }
-    _t4 = type_error(po, LE_MSG_BAD_INVERT, o);
-    return _t4;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Lshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_lshift),
-                    LE_MSG_OP_LSHIFT);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_MatrixMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_matrix_multiply),
-                    LE_MSG_OP_MATMUL);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Multiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    ssizeargfunc _t2;
-    int _t3;
-    vinfo_t *_t4;
-    ssizeargfunc _t5;
-    int _t6;
-    vinfo_t *_t7;
-    PySequenceMethods *mv;
-    PySequenceMethods *mw;
-    vinfo_t *result;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    result = binary_op1(po, v, w, offsetof(PyNumberMethods, nb_multiply));
-    if (!IS_IMPLEMENTED(result)) {
-        mv = tp_v->tp_as_sequence;
-        mw = tp_w->tp_as_sequence;
-        vinfo_decref(result, po);
-        _t3 = mv != 0;
-        if (_t3) {
-            switch (Psyco_TypeSlot(po, tp_v, &mv->sq_repeat, (void **)&_t2)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, cimpl_PyNumber_Multiply_1,
-                                              CfCommonNewRefPyObject, "vvll",
-                                              v, w, (long)(mv), (long)(mw));
-                default:
-                    return NULL;
-            }
-            _t3 = _t2 != 0;
-        }
-        if (_t3) {
-            _t4 = sequence_repeat(po, _t2, v, w);
-            return _t4;
-        }
-        else {
-            _t6 = mw != 0;
-            if (_t6) {
-                switch (
-                    Psyco_TypeSlot(po, tp_w, &mw->sq_repeat, (void **)&_t5)) {
-                    case 1:
-                        break;
-                    case 0:
-                        return psyco_generic_call(
-                            po, cimpl_PyNumber_Multiply_3,
-                            CfCommonNewRefPyObject, "vvl", v, w, (long)(mw));
-                    default:
-                        return NULL;
-                }
-                _t6 = _t5 != 0;
-            }
-            if (_t6) {
-                _t7 = sequence_repeat(po, _t5, w, v);
-                return _t7;
-            }
-        }
-        result = binop_type_error(po, v, w, LE_MSG_OP_MUL);
-        return result;
-    }
-    return result;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Negative(PsycoObject *po, vinfo_t *o)
-{
-    unaryfunc _t1;
-    int _t2;
-    vinfo_t *_t3;
-    vinfo_t *_t4;
-    PyNumberMethods *m;
-#if LE_HAS_CHECK_SLOT_RESULT
-    vinfo_t *res;
-#endif
-    PyTypeObject *tp_o;
-    tp_o = Psyco_NeedType(po, o);
-    if (tp_o == NULL) {
-        return NULL;
-    }
-    m = tp_o->tp_as_number;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_o, &m->nb_negative, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PyNumber_Negative,
-                                          CfCommonNewRefPyObject, "v", o);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = Psyco_META1(po, _t1, CfCommonNewRefPyObject, "v", o);
-#if LE_HAS_CHECK_SLOT_RESULT
-        res = _t3;
-        return res;
-#else
-        return _t3;
-#endif
-    }
-    _t4 = type_error(po, LE_MSG_BAD_NEGATIVE, o);
-    return _t4;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Or(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_or), LE_MSG_OP_OR);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Positive(PsycoObject *po, vinfo_t *o)
-{
-    unaryfunc _t1;
-    int _t2;
-    vinfo_t *_t3;
-    vinfo_t *_t4;
-    PyNumberMethods *m;
-#if LE_HAS_CHECK_SLOT_RESULT
-    vinfo_t *res;
-#endif
-    PyTypeObject *tp_o;
-    tp_o = Psyco_NeedType(po, o);
-    if (tp_o == NULL) {
-        return NULL;
-    }
-    m = tp_o->tp_as_number;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_o, &m->nb_positive, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PyNumber_Positive,
-                                          CfCommonNewRefPyObject, "v", o);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = Psyco_META1(po, _t1, CfCommonNewRefPyObject, "v", o);
-#if LE_HAS_CHECK_SLOT_RESULT
-        res = _t3;
-        return res;
-#else
-        return _t3;
-#endif
-    }
-    _t4 = type_error(po, LE_MSG_BAD_POSITIVE, o);
-    return _t4;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Remainder(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_remainder),
-                    LE_MSG_OP_MOD);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Rshift(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_rshift),
-                    LE_MSG_OP_RSHIFT);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Subtract(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_subtract),
-                    LE_MSG_OP_SUB);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_TrueDivide(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 = binary_op(po, v, w, offsetof(PyNumberMethods, nb_true_divide),
-                    LE_MSG_OP_TRUEDIV);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoNumber_Xor(PsycoObject *po, vinfo_t *v, vinfo_t *w)
-{
-    vinfo_t *_t1;
-    PyTypeObject *tp_v;
-    PyTypeObject *tp_w;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
-        return NULL;
-    }
-    tp_w = Psyco_NeedType(po, w);
-    if (tp_w == NULL) {
-        return NULL;
-    }
-    _t1 =
-        binary_op(po, v, w, offsetof(PyNumberMethods, nb_xor), LE_MSG_OP_XOR);
-    return _t1;
-}
-
-#if LE_HAS_CHECK_SLOT_RESULT
-DEFINEFN bool
-PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
-{
-    ssizeobjargproc _t1;
-    objobjargproc _t10;
-    int _t11;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    lenfunc _t5;
-    vinfo_t *_t7;
-    ssizeobjargproc _t8;
-    bool _t9;
-    vinfo_t *l;
-    PySequenceMethods *m;
-    vinfo_t *own_i;
-    vinfo_t *res;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
-        return false;
-    }
-    m = tp_s->tp_as_sequence;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_DelItem,
-                                          CfCommonIntZeroOk, "vv", s,
-                                          i) != NULL;
-            default:
-                return false;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = integer_cmp_i(po, i, 0, Py_LT);
-        if (_t3 == CC_ERROR) {
-            return false;
-        }
-        _t4 = runtime_condition_f(po, _t3);
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&_t5)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PySequence_DelItem,
-                                              CfCommonIntZeroOk, "vv", s,
-                                              i) != NULL;
-                default:
-                    return false;
-            }
-            if (_t5 != 0) {
-                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                if (l == NULL) {
-                    return false;
-                }
-                _t7 = integer_add(po, i, l, false);
-                i = _t7;
-                if (i == NULL) {
-                    vinfo_decref(l, po);
-                    return false;
-                }
-                vinfo_decref(l, po);
-                own_i = i;
-            }
-            else {
-                own_i = NULL;
-            }
-        }
-        else {
-            assert_nonneg(i);
-            own_i = NULL;
-        }
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                _t9 = psyco_generic_call(po, cimpl_PySequence_DelItem_1,
-                                         CfCommonIntZeroOk, "vvl", s, i,
-                                         (long)(m)) != NULL;
-                vinfo_xdecref(own_i, po);
-                return _t9;
-            default:
-                vinfo_xdecref(own_i, po);
-                return false;
-        }
-        res = Psyco_META3(po, _t8, CfCommonIntZeroOk, "vvl", s, i, (long)NULL);
-        vinfo_xdecref(own_i, po);
-        return res != NULL;
-    }
-    _t11 = (tp_s->tp_as_mapping) != 0;
-    if (_t11) {
-        switch (Psyco_TypeSlot(po, tp_s,
-                               &(tp_s->tp_as_mapping)->mp_ass_subscript,
-                               (void **)&_t10)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_DelItem,
-                                          CfCommonIntZeroOk, "vv", s,
-                                          i) != NULL;
-            default:
-                return false;
-        }
-        _t11 = _t10 != 0;
-    }
-    if (_t11) {
-        type_error(po, LE_MSG_SEQ_DEL_NOT_SEQUENCE, s);
-        return false;
-    }
-    type_error(po, LE_MSG_SEQ_NO_DEL, s);
-    return false;
-}
-#elif LE_HAS_NOT_A_SEQUENCE_ERROR
-DEFINEFN bool
-PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
-{
-    ssizeobjargproc _t1;
-    bool _t10;
-    objobjargproc _t11;
-    int _t12;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    lenfunc _t5;
-    vinfo_t *_t7;
-    ssizeobjargproc _t8;
-    bool _t9;
-    vinfo_t *l;
-    PySequenceMethods *m;
-    vinfo_t *own_i;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
-        return false;
-    }
-    m = tp_s->tp_as_sequence;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_DelItem,
-                                          CfCommonIntZeroOk, "vv", s,
-                                          i) != NULL;
-            default:
-                return false;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = integer_cmp_i(po, i, 0, Py_LT);
-        if (_t3 == CC_ERROR) {
-            return false;
-        }
-        _t4 = runtime_condition_f(po, _t3);
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&_t5)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PySequence_DelItem,
-                                              CfCommonIntZeroOk, "vv", s,
-                                              i) != NULL;
-                default:
-                    return false;
-            }
-            if (_t5 != 0) {
-                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                if (l == NULL) {
-                    return false;
-                }
-                _t7 = integer_add(po, i, l, false);
-                i = _t7;
-                if (i == NULL) {
-                    vinfo_decref(l, po);
-                    return false;
-                }
-                vinfo_decref(l, po);
-                own_i = i;
-            }
-            else {
-                own_i = NULL;
-            }
-        }
-        else {
-            assert_nonneg(i);
-            own_i = NULL;
-        }
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                _t9 = psyco_generic_call(po, cimpl_PySequence_DelItem_1,
-                                         CfCommonIntZeroOk, "vvl", s, i,
-                                         (long)(m)) != NULL;
-                vinfo_xdecref(own_i, po);
-                return _t9;
-            default:
-                vinfo_xdecref(own_i, po);
-                return false;
-        }
-        _t10 = Psyco_META3(po, _t8, CfCommonIntZeroOk, "vvl", s, i,
-                           (long)NULL) != NULL;
-        vinfo_xdecref(own_i, po);
-        return _t10;
-    }
-    _t12 = (tp_s->tp_as_mapping) != 0;
-    if (_t12) {
-        switch (Psyco_TypeSlot(po, tp_s,
-                               &(tp_s->tp_as_mapping)->mp_ass_subscript,
-                               (void **)&_t11)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_DelItem,
-                                          CfCommonIntZeroOk, "vv", s,
-                                          i) != NULL;
-            default:
-                return false;
-        }
-        _t12 = _t11 != 0;
-    }
-    if (_t12) {
-        type_error(po, LE_MSG_SEQ_DEL_NOT_SEQUENCE, s);
-        return false;
-    }
-    type_error(po, LE_MSG_SEQ_NO_DEL, s);
-    return false;
-}
-#else
-DEFINEFN bool
-PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
-{
-    ssizeobjargproc _t1;
-    bool _t10;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    lenfunc _t5;
-    vinfo_t *_t7;
-    ssizeobjargproc _t8;
-    bool _t9;
-    vinfo_t *l;
-    PySequenceMethods *m;
-    vinfo_t *own_i;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
-        return false;
-    }
-    m = tp_s->tp_as_sequence;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_DelItem,
-                                          CfCommonIntZeroOk, "vv", s,
-                                          i) != NULL;
-            default:
-                return false;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = integer_cmp_i(po, i, 0, Py_LT);
-        if (_t3 == CC_ERROR) {
-            return false;
-        }
-        _t4 = runtime_condition_f(po, _t3);
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&_t5)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PySequence_DelItem,
-                                              CfCommonIntZeroOk, "vv", s,
-                                              i) != NULL;
-                default:
-                    return false;
-            }
-            if (_t5 != 0) {
-                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                if (l == NULL) {
-                    return false;
-                }
-                _t7 = integer_add(po, i, l, false);
-                i = _t7;
-                if (i == NULL) {
-                    vinfo_decref(l, po);
-                    return false;
-                }
-                vinfo_decref(l, po);
-                own_i = i;
-            }
-            else {
-                own_i = NULL;
-            }
-        }
-        else {
-            assert_nonneg(i);
-            own_i = NULL;
-        }
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                _t9 = psyco_generic_call(po, cimpl_PySequence_DelItem_1,
-                                         CfCommonIntZeroOk, "vvl", s, i,
-                                         (long)(m)) != NULL;
-                vinfo_xdecref(own_i, po);
-                return _t9;
-            default:
-                vinfo_xdecref(own_i, po);
-                return false;
-        }
-        _t10 = Psyco_META3(po, _t8, CfCommonIntZeroOk, "vvl", s, i,
-                           (long)NULL) != NULL;
-        vinfo_xdecref(own_i, po);
-        return _t10;
-    }
-    type_error(po, LE_MSG_SEQ_NO_DEL, s);
-    return false;
-}
-#endif
-
-DEFINEFN bool
-PsycoObject_DelItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
-{
-    objobjargproc _t1;
-    int _t2;
-    unaryfunc _t3;
-    int _t4;
-    bool _t6;
-    ssizeobjargproc _t7;
-    vinfo_t *key_value;
-    PyMappingMethods *m;
-#if LE_HAS_CHECK_SLOT_RESULT
-    vinfo_t *res;
-#endif
-    PyTypeObject *tp_key;
-    PyTypeObject *tp_o;
-    tp_o = Psyco_NeedType(po, o);
-    if (tp_o == NULL) {
-        return false;
-    }
-    m = tp_o->tp_as_mapping;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (
-            Psyco_TypeSlot(po, tp_o, &m->mp_ass_subscript, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PyObject_DelItem,
-                                          CfCommonIntZeroOk, "vv", o,
-                                          key) != NULL;
-            default:
-                return false;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-#if LE_HAS_CHECK_SLOT_RESULT
-        res =
-            Psyco_META3(po, _t1, CfCommonIntZeroOk, "vvl", o, key, (long)NULL);
-        return res != NULL;
-#else
-        return Psyco_META3(po, _t1, CfCommonIntZeroOk, "vvl", o, key,
-                           (long)NULL) != NULL;
-#endif
-    }
-    if ((tp_o->tp_as_sequence) != 0) {
-        tp_key = Psyco_NeedType(po, key);
-        if (tp_key == NULL) {
-            return false;
-        }
-        _t4 = (tp_key->tp_as_number) != NULL;
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_key,
-                                   &(tp_key->tp_as_number)->nb_index,
-                                   (void **)&_t3)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PyObject_DelItem,
-                                              CfCommonIntZeroOk, "vv", o,
-                                              key) != NULL;
-                default:
-                    return false;
-            }
-            _t4 = _t3 != NULL;
-        }
-        if (_t4) {
-            key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
-            if (key_value == NULL) {
-                return false;
-            }
-            _t6 = PsycoSequence_DelItem(po, o, key_value);
-            vinfo_decref(key_value, po);
-            return _t6;
-        }
-        else {
-            switch (Psyco_TypeSlot(po, tp_o,
-                                   &(tp_o->tp_as_sequence)->sq_ass_item,
-                                   (void **)&_t7)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PyObject_DelItem,
-                                              CfCommonIntZeroOk, "vv", o,
-                                              key) != NULL;
-                default:
-                    return false;
-            }
-            if (_t7 != 0) {
-                type_error(po, LE_MSG_INDEX_DEL_NOT_INT, key);
-                return false;
-            }
-        }
-    }
-    type_error(po, LE_MSG_NO_ITEM_DELETION, o);
-    return false;
-}
-
-#if LE_HAS_CHECK_SLOT_RESULT
-DEFINEFN vinfo_t *
-PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
-{
-    ssizeargfunc _t1;
-    binaryfunc _t11;
-    int _t12;
-    vinfo_t *_t13;
-    vinfo_t *_t14;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    lenfunc _t5;
-    vinfo_t *_t7;
-    ssizeargfunc _t8;
-    vinfo_t *_t9;
-    vinfo_t *l;
-    PySequenceMethods *m;
-    vinfo_t *own_i;
-    vinfo_t *res;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
-        return NULL;
-    }
-    m = tp_s->tp_as_sequence;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_item, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_GetItem,
-                                          CfCommonNewRefPyObject, "vv", s, i);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = integer_cmp_i(po, i, 0, Py_LT);
-        if (_t3 == CC_ERROR) {
-            return NULL;
-        }
-        _t4 = runtime_condition_f(po, _t3);
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&_t5)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PySequence_GetItem,
-                                              CfCommonNewRefPyObject, "vv", s,
-                                              i);
-                default:
-                    return NULL;
-            }
-            if (_t5 != 0) {
-                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                if (l == NULL) {
-                    return NULL;
-                }
-                _t7 = integer_add(po, i, l, false);
-                i = _t7;
-                if (i == NULL) {
-                    vinfo_decref(l, po);
-                    return NULL;
-                }
-                vinfo_decref(l, po);
-                own_i = i;
-            }
-            else {
-                own_i = NULL;
-            }
-        }
-        else {
-            assert_nonneg(i);
-            own_i = NULL;
-        }
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_item, (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                _t9 = psyco_generic_call(po, cimpl_PySequence_GetItem_1,
-                                         CfCommonNewRefPyObject, "vvl", s, i,
-                                         (long)(m));
-                vinfo_xdecref(own_i, po);
-                return _t9;
-            default:
-                vinfo_xdecref(own_i, po);
-                return NULL;
-        }
-        res = Psyco_META2(po, _t8, CfCommonNewRefPyObject, "vv", s, i);
-        vinfo_xdecref(own_i, po);
-        return res;
-    }
-    _t12 = (tp_s->tp_as_mapping) != 0;
-    if (_t12) {
-        switch (Psyco_TypeSlot(po, tp_s, &(tp_s->tp_as_mapping)->mp_subscript,
-                               (void **)&_t11)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_GetItem,
-                                          CfCommonNewRefPyObject, "vv", s, i);
-            default:
-                return NULL;
-        }
-        _t12 = _t11 != 0;
-    }
-    if (_t12) {
-        _t13 = type_error(po, LE_MSG_SEQ_GET_NOT_SEQUENCE, s);
-        return _t13;
-    }
-    _t14 = type_error(po, LE_MSG_SEQ_NO_GET, s);
-    return _t14;
-}
-#elif LE_HAS_NOT_A_SEQUENCE_ERROR
-DEFINEFN vinfo_t *
-PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
-{
-    ssizeargfunc _t1;
-    vinfo_t *_t11;
-    binaryfunc _t12;
-    int _t13;
-    vinfo_t *_t14;
-    vinfo_t *_t15;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    lenfunc _t5;
-    vinfo_t *_t7;
-    ssizeargfunc _t8;
-    vinfo_t *_t9;
-    vinfo_t *l;
-    PySequenceMethods *m;
-    vinfo_t *own_i;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
-        return NULL;
-    }
-    m = tp_s->tp_as_sequence;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_item, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_GetItem,
-                                          CfCommonNewRefPyObject, "vv", s, i);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = integer_cmp_i(po, i, 0, Py_LT);
-        if (_t3 == CC_ERROR) {
-            return NULL;
-        }
-        _t4 = runtime_condition_f(po, _t3);
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&_t5)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PySequence_GetItem,
-                                              CfCommonNewRefPyObject, "vv", s,
-                                              i);
-                default:
-                    return NULL;
-            }
-            if (_t5 != 0) {
-                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                if (l == NULL) {
-                    return NULL;
-                }
-                _t7 = integer_add(po, i, l, false);
-                i = _t7;
-                if (i == NULL) {
-                    vinfo_decref(l, po);
-                    return NULL;
-                }
-                vinfo_decref(l, po);
-                own_i = i;
-            }
-            else {
-                own_i = NULL;
-            }
-        }
-        else {
-            assert_nonneg(i);
-            own_i = NULL;
-        }
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_item, (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                _t9 = psyco_generic_call(po, cimpl_PySequence_GetItem_1,
-                                         CfCommonNewRefPyObject, "vvl", s, i,
-                                         (long)(m));
-                vinfo_xdecref(own_i, po);
-                return _t9;
-            default:
-                vinfo_xdecref(own_i, po);
-                return NULL;
-        }
-        _t11 = Psyco_META2(po, _t8, CfCommonNewRefPyObject, "vv", s, i);
-        vinfo_xdecref(own_i, po);
-        return _t11;
-    }
-    _t13 = (tp_s->tp_as_mapping) != 0;
-    if (_t13) {
-        switch (Psyco_TypeSlot(po, tp_s, &(tp_s->tp_as_mapping)->mp_subscript,
-                               (void **)&_t12)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_GetItem,
-                                          CfCommonNewRefPyObject, "vv", s, i);
-            default:
-                return NULL;
-        }
-        _t13 = _t12 != 0;
-    }
-    if (_t13) {
-        _t14 = type_error(po, LE_MSG_SEQ_GET_NOT_SEQUENCE, s);
-        return _t14;
-    }
-    _t15 = type_error(po, LE_MSG_SEQ_NO_GET, s);
-    return _t15;
-}
-#else
-DEFINEFN vinfo_t *
-PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
-{
-    ssizeargfunc _t1;
-    vinfo_t *_t11;
-    vinfo_t *_t12;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    lenfunc _t5;
-    vinfo_t *_t7;
-    ssizeargfunc _t8;
-    vinfo_t *_t9;
-    vinfo_t *l;
-    PySequenceMethods *m;
-    vinfo_t *own_i;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
-        return NULL;
-    }
-    m = tp_s->tp_as_sequence;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_item, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_GetItem,
-                                          CfCommonNewRefPyObject, "vv", s, i);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = integer_cmp_i(po, i, 0, Py_LT);
-        if (_t3 == CC_ERROR) {
-            return NULL;
-        }
-        _t4 = runtime_condition_f(po, _t3);
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&_t5)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PySequence_GetItem,
-                                              CfCommonNewRefPyObject, "vv", s,
-                                              i);
-                default:
-                    return NULL;
-            }
-            if (_t5 != 0) {
-                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                if (l == NULL) {
-                    return NULL;
-                }
-                _t7 = integer_add(po, i, l, false);
-                i = _t7;
-                if (i == NULL) {
-                    vinfo_decref(l, po);
-                    return NULL;
-                }
-                vinfo_decref(l, po);
-                own_i = i;
-            }
-            else {
-                own_i = NULL;
-            }
-        }
-        else {
-            assert_nonneg(i);
-            own_i = NULL;
-        }
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_item, (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                _t9 = psyco_generic_call(po, cimpl_PySequence_GetItem_1,
-                                         CfCommonNewRefPyObject, "vvl", s, i,
-                                         (long)(m));
-                vinfo_xdecref(own_i, po);
-                return _t9;
-            default:
-                vinfo_xdecref(own_i, po);
-                return NULL;
-        }
-        _t11 = Psyco_META2(po, _t8, CfCommonNewRefPyObject, "vv", s, i);
-        vinfo_xdecref(own_i, po);
-        return _t11;
-    }
-    _t12 = type_error(po, LE_MSG_SEQ_NO_GET, s);
-    return _t12;
-}
-#endif
 
 DEFINEFN vinfo_t *
 PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
 {
-    binaryfunc _t1;
-    vinfo_t *_t10;
-    vinfo_t *_t11;
-    vinfo_t *_t12;
-    int _t2;
-    ssizeargfunc _t4;
-    int _t5;
-    unaryfunc _t6;
-    int _t7;
-    vinfo_t *item;
-    vinfo_t *key_value;
-    PyMappingMethods *m;
-    PySequenceMethods *ms;
-    PyTypeObject *tp_key;
-    PyTypeObject *tp_o;
-    tp_o = Psyco_NeedType(po, o);
-    if (tp_o == NULL) {
+    PyTypeObject *tp_o = Psyco_NeedType(po, o);
+    if (tp_o == NULL)
         return NULL;
-    }
-    m = tp_o->tp_as_mapping;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_o, &m->mp_subscript, (void **)&_t1)) {
+
+    PyMappingMethods *m = tp_o->tp_as_mapping;
+    binaryfunc mp_subscript = NULL;
+    if (m != NULL) {
+        switch (Psyco_TypeSlot(po, tp_o, &m->mp_subscript,
+                               (void **)&mp_subscript)) {
             case 1:
                 break;
             case 0:
@@ -3233,16 +493,16 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
             default:
                 return NULL;
         }
-        _t2 = _t1 != 0;
     }
-    if (_t2) {
-        item = Psyco_META2(po, _t1, CfCommonNewRefPyObject, "vv", o, key);
-        return item;
+    if (mp_subscript != NULL) {
+        return Psyco_META2(po, mp_subscript, CfCommonNewRefPyObject, "vv", o,
+                           key);
     }
-    ms = tp_o->tp_as_sequence;
-    _t5 = ms != 0;
-    if (_t5) {
-        switch (Psyco_TypeSlot(po, tp_o, &ms->sq_item, (void **)&_t4)) {
+
+    PySequenceMethods *ms = tp_o->tp_as_sequence;
+    ssizeargfunc sq_item = NULL;
+    if (ms != NULL) {
+        switch (Psyco_TypeSlot(po, tp_o, &ms->sq_item, (void **)&sq_item)) {
             case 1:
                 break;
             case 0:
@@ -3252,18 +512,15 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
             default:
                 return NULL;
         }
-        _t5 = _t4 != 0;
     }
-    if (_t5) {
-        tp_key = Psyco_NeedType(po, key);
-        if (tp_key == NULL) {
+    if (sq_item != NULL) {
+        PyTypeObject *tp_key = Psyco_NeedType(po, key);
+        if (tp_key == NULL)
             return NULL;
-        }
-        _t7 = (tp_key->tp_as_number) != NULL;
-        if (_t7) {
-            switch (Psyco_TypeSlot(po, tp_key,
-                                   &(tp_key->tp_as_number)->nb_index,
-                                   (void **)&_t6)) {
+        unaryfunc nb_index = NULL;
+        if (tp_key->tp_as_number != NULL) {
+            switch (Psyco_TypeSlot(po, tp_key, &tp_key->tp_as_number->nb_index,
+                                   (void **)&nb_index)) {
                 case 1:
                     break;
                 case 0:
@@ -3273,386 +530,42 @@ PsycoObject_GetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
                 default:
                     return NULL;
             }
-            _t7 = _t6 != NULL;
         }
-        if (_t7) {
-            key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
-            if (key_value == NULL) {
+        if (nb_index != NULL) {
+            vinfo_t *key_value =
+                PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
+            if (key_value == NULL)
                 return NULL;
-            }
-            _t10 = PsycoSequence_GetItem(po, o, key_value);
+            vinfo_t *item = PsycoSequence_GetItem(po, o, key_value);
             vinfo_decref(key_value, po);
-            return _t10;
+            return item;
         }
         else {
-            _t11 = type_error(po, LE_MSG_INDEX_GET_NOT_INT, key);
-            return _t11;
+            return type_error(po, LE_MSG_INDEX_GET_NOT_INT, key);
         }
     }
-    if ((tp_o->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) != 0) {
+
+    if (tp_o->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) {
+        /* a type's __class_getitem__ */
         return psyco_generic_call(po, PyObject_GetItem, CfCommonNewRefPyObject,
                                   "vv", o, key);
     }
-    _t12 = type_error(po, LE_MSG_NOT_SUBSCRIPTABLE, o);
-    return _t12;
-}
 
-#if LE_HAS_CHECK_SLOT_RESULT
-DEFINEFN bool
-PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
-{
-    ssizeobjargproc _t1;
-    objobjargproc _t10;
-    int _t11;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    lenfunc _t5;
-    vinfo_t *_t7;
-    ssizeobjargproc _t8;
-    bool _t9;
-    vinfo_t *l;
-    PySequenceMethods *m;
-    vinfo_t *own_i;
-    vinfo_t *res;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
-        return false;
-    }
-    m = tp_s->tp_as_sequence;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_SetItem,
-                                          CfCommonIntZeroOk, "vvv", s, i,
-                                          o) != NULL;
-            default:
-                return false;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = integer_cmp_i(po, i, 0, Py_LT);
-        if (_t3 == CC_ERROR) {
-            return false;
-        }
-        _t4 = runtime_condition_f(po, _t3);
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&_t5)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PySequence_SetItem,
-                                              CfCommonIntZeroOk, "vvv", s, i,
-                                              o) != NULL;
-                default:
-                    return false;
-            }
-            if (_t5 != 0) {
-                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                if (l == NULL) {
-                    return false;
-                }
-                _t7 = integer_add(po, i, l, false);
-                i = _t7;
-                if (i == NULL) {
-                    vinfo_decref(l, po);
-                    return false;
-                }
-                vinfo_decref(l, po);
-                own_i = i;
-            }
-            else {
-                own_i = NULL;
-            }
-        }
-        else {
-            assert_nonneg(i);
-            own_i = NULL;
-        }
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                _t9 = psyco_generic_call(po, cimpl_PySequence_SetItem_1,
-                                         CfCommonIntZeroOk, "vvvl", s, i, o,
-                                         (long)(m)) != NULL;
-                vinfo_xdecref(own_i, po);
-                return _t9;
-            default:
-                vinfo_xdecref(own_i, po);
-                return false;
-        }
-        res = Psyco_META3(po, _t8, CfCommonIntZeroOk, "vvv", s, i, o);
-        vinfo_xdecref(own_i, po);
-        return res != NULL;
-    }
-    _t11 = (tp_s->tp_as_mapping) != 0;
-    if (_t11) {
-        switch (Psyco_TypeSlot(po, tp_s,
-                               &(tp_s->tp_as_mapping)->mp_ass_subscript,
-                               (void **)&_t10)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_SetItem,
-                                          CfCommonIntZeroOk, "vvv", s, i,
-                                          o) != NULL;
-            default:
-                return false;
-        }
-        _t11 = _t10 != 0;
-    }
-    if (_t11) {
-        type_error(po, LE_MSG_SEQ_SET_NOT_SEQUENCE, s);
-        return false;
-    }
-    type_error(po, LE_MSG_SEQ_NO_SET, s);
-    return false;
+    return type_error(po, LE_MSG_NOT_SUBSCRIPTABLE, o);
 }
-#elif LE_HAS_NOT_A_SEQUENCE_ERROR
-DEFINEFN bool
-PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
-{
-    ssizeobjargproc _t1;
-    bool _t10;
-    objobjargproc _t11;
-    int _t12;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    lenfunc _t5;
-    vinfo_t *_t7;
-    ssizeobjargproc _t8;
-    bool _t9;
-    vinfo_t *l;
-    PySequenceMethods *m;
-    vinfo_t *own_i;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
-        return false;
-    }
-    m = tp_s->tp_as_sequence;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_SetItem,
-                                          CfCommonIntZeroOk, "vvv", s, i,
-                                          o) != NULL;
-            default:
-                return false;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = integer_cmp_i(po, i, 0, Py_LT);
-        if (_t3 == CC_ERROR) {
-            return false;
-        }
-        _t4 = runtime_condition_f(po, _t3);
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&_t5)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PySequence_SetItem,
-                                              CfCommonIntZeroOk, "vvv", s, i,
-                                              o) != NULL;
-                default:
-                    return false;
-            }
-            if (_t5 != 0) {
-                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                if (l == NULL) {
-                    return false;
-                }
-                _t7 = integer_add(po, i, l, false);
-                i = _t7;
-                if (i == NULL) {
-                    vinfo_decref(l, po);
-                    return false;
-                }
-                vinfo_decref(l, po);
-                own_i = i;
-            }
-            else {
-                own_i = NULL;
-            }
-        }
-        else {
-            assert_nonneg(i);
-            own_i = NULL;
-        }
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                _t9 = psyco_generic_call(po, cimpl_PySequence_SetItem_1,
-                                         CfCommonIntZeroOk, "vvvl", s, i, o,
-                                         (long)(m)) != NULL;
-                vinfo_xdecref(own_i, po);
-                return _t9;
-            default:
-                vinfo_xdecref(own_i, po);
-                return false;
-        }
-        _t10 = Psyco_META3(po, _t8, CfCommonIntZeroOk, "vvv", s, i, o) != NULL;
-        vinfo_xdecref(own_i, po);
-        return _t10;
-    }
-    _t12 = (tp_s->tp_as_mapping) != 0;
-    if (_t12) {
-        switch (Psyco_TypeSlot(po, tp_s,
-                               &(tp_s->tp_as_mapping)->mp_ass_subscript,
-                               (void **)&_t11)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_SetItem,
-                                          CfCommonIntZeroOk, "vvv", s, i,
-                                          o) != NULL;
-            default:
-                return false;
-        }
-        _t12 = _t11 != 0;
-    }
-    if (_t12) {
-        type_error(po, LE_MSG_SEQ_SET_NOT_SEQUENCE, s);
-        return false;
-    }
-    type_error(po, LE_MSG_SEQ_NO_SET, s);
-    return false;
-}
-#else
-DEFINEFN bool
-PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
-{
-    ssizeobjargproc _t1;
-    bool _t10;
-    int _t2;
-    condition_code_t _t3;
-    int _t4;
-    lenfunc _t5;
-    vinfo_t *_t7;
-    ssizeobjargproc _t8;
-    bool _t9;
-    vinfo_t *l;
-    PySequenceMethods *m;
-    vinfo_t *own_i;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
-        return false;
-    }
-    m = tp_s->tp_as_sequence;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_SetItem,
-                                          CfCommonIntZeroOk, "vvv", s, i,
-                                          o) != NULL;
-            default:
-                return false;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        _t3 = integer_cmp_i(po, i, 0, Py_LT);
-        if (_t3 == CC_ERROR) {
-            return false;
-        }
-        _t4 = runtime_condition_f(po, _t3);
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&_t5)) {
-                case 1:
-                    break;
-                case 0:
-                    return psyco_generic_call(po, PySequence_SetItem,
-                                              CfCommonIntZeroOk, "vvv", s, i,
-                                              o) != NULL;
-                default:
-                    return false;
-            }
-            if (_t5 != 0) {
-                l = Psyco_META1(po, _t5, CfCommonPySSizeTResult, "v", s);
-                if (l == NULL) {
-                    return false;
-                }
-                _t7 = integer_add(po, i, l, false);
-                i = _t7;
-                if (i == NULL) {
-                    vinfo_decref(l, po);
-                    return false;
-                }
-                vinfo_decref(l, po);
-                own_i = i;
-            }
-            else {
-                own_i = NULL;
-            }
-        }
-        else {
-            assert_nonneg(i);
-            own_i = NULL;
-        }
-        switch (Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&_t8)) {
-            case 1:
-                break;
-            case 0:
-                _t9 = psyco_generic_call(po, cimpl_PySequence_SetItem_1,
-                                         CfCommonIntZeroOk, "vvvl", s, i, o,
-                                         (long)(m)) != NULL;
-                vinfo_xdecref(own_i, po);
-                return _t9;
-            default:
-                vinfo_xdecref(own_i, po);
-                return false;
-        }
-        _t10 = Psyco_META3(po, _t8, CfCommonIntZeroOk, "vvv", s, i, o) != NULL;
-        vinfo_xdecref(own_i, po);
-        return _t10;
-    }
-    type_error(po, LE_MSG_SEQ_NO_SET, s);
-    return false;
-}
-#endif
 
 DEFINEFN bool
 PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
 {
-    objobjargproc _t1;
-    int _t2;
-    unaryfunc _t3;
-    int _t4;
-    bool _t6;
-    ssizeobjargproc _t7;
-    vinfo_t *key_value;
-    PyMappingMethods *m;
-#if LE_HAS_CHECK_SLOT_RESULT
-    vinfo_t *res;
-#endif
-    PyTypeObject *tp_key;
-    PyTypeObject *tp_o;
-    tp_o = Psyco_NeedType(po, o);
-    if (tp_o == NULL) {
+    PyTypeObject *tp_o = Psyco_NeedType(po, o);
+    if (tp_o == NULL)
         return false;
-    }
-    m = tp_o->tp_as_mapping;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (
-            Psyco_TypeSlot(po, tp_o, &m->mp_ass_subscript, (void **)&_t1)) {
+
+    PyMappingMethods *m = tp_o->tp_as_mapping;
+    objobjargproc mp_ass_subscript = NULL;
+    if (m != NULL) {
+        switch (Psyco_TypeSlot(po, tp_o, &m->mp_ass_subscript,
+                               (void **)&mp_ass_subscript)) {
             case 1:
                 break;
             case 0:
@@ -3662,27 +575,20 @@ PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
             default:
                 return false;
         }
-        _t2 = _t1 != 0;
     }
-    if (_t2) {
-#if LE_HAS_CHECK_SLOT_RESULT
-        res = Psyco_META3(po, _t1, CfCommonIntZeroOk, "vvv", o, key, value);
-        return res != NULL;
-#else
-        return Psyco_META3(po, _t1, CfCommonIntZeroOk, "vvv", o, key, value) !=
-               NULL;
-#endif
+    if (mp_ass_subscript != NULL) {
+        return Psyco_META3(po, mp_ass_subscript, CfCommonIntZeroOk, "vvv", o,
+                           key, value) != NULL;
     }
-    if ((tp_o->tp_as_sequence) != 0) {
-        tp_key = Psyco_NeedType(po, key);
-        if (tp_key == NULL) {
+
+    if (tp_o->tp_as_sequence) {
+        PyTypeObject *tp_key = Psyco_NeedType(po, key);
+        if (tp_key == NULL)
             return false;
-        }
-        _t4 = (tp_key->tp_as_number) != NULL;
-        if (_t4) {
-            switch (Psyco_TypeSlot(po, tp_key,
-                                   &(tp_key->tp_as_number)->nb_index,
-                                   (void **)&_t3)) {
+        unaryfunc nb_index = NULL;
+        if (tp_key->tp_as_number != NULL) {
+            switch (Psyco_TypeSlot(po, tp_key, &tp_key->tp_as_number->nb_index,
+                                   (void **)&nb_index)) {
                 case 1:
                     break;
                 case 0:
@@ -3692,21 +598,21 @@ PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
                 default:
                     return false;
             }
-            _t4 = _t3 != NULL;
         }
-        if (_t4) {
-            key_value = PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
-            if (key_value == NULL) {
+        if (nb_index != NULL) {
+            vinfo_t *key_value =
+                PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
+            if (key_value == NULL)
                 return false;
-            }
-            _t6 = PsycoSequence_SetItem(po, o, key_value, value);
+            bool ok = PsycoSequence_SetItem(po, o, key_value, value);
             vinfo_decref(key_value, po);
-            return _t6;
+            return ok;
         }
         else {
+            ssizeobjargproc sq_ass_item;
             switch (Psyco_TypeSlot(po, tp_o,
-                                   &(tp_o->tp_as_sequence)->sq_ass_item,
-                                   (void **)&_t7)) {
+                                   &tp_o->tp_as_sequence->sq_ass_item,
+                                   (void **)&sq_ass_item)) {
                 case 1:
                     break;
                 case 0:
@@ -3716,251 +622,499 @@ PsycoObject_SetItem(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
                 default:
                     return false;
             }
-            if (_t7 != 0) {
+            if (sq_ass_item != NULL) {
                 type_error(po, LE_MSG_INDEX_SET_NOT_INT, key);
                 return false;
             }
         }
     }
+
     type_error(po, LE_MSG_NO_ITEM_ASSIGNMENT, o);
     return false;
 }
 
-DEFINEFN vinfo_t *
-PsycoObject_Size(PsycoObject *po, vinfo_t *o)
-{
-    lenfunc _t1;
-    int _t2;
-    vinfo_t *_t4;
-    vinfo_t *len;
-    PySequenceMethods *m;
-    PyTypeObject *tp_o;
-    tp_o = Psyco_NeedType(po, o);
-    if (tp_o == NULL) {
-        return NULL;
-    }
-    m = tp_o->tp_as_sequence;
-    _t2 = m != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_o, &m->sq_length, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PyObject_Size,
-                                          CfCommonPySSizeTResult, "v", o);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        len = Psyco_META1(po, _t1, CfCommonPySSizeTResult, "v", o);
-        return len;
-    }
-    _t4 = PsycoMapping_Size(po, o);
-    return _t4;
-}
-
-DEFINEFN vinfo_t *
-PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob)
-{
-    objobjproc _t1;
-    int _t2;
-    vinfo_t *_t3;
-#if LE_HAS_CHECK_SLOT_RESULT
-    vinfo_t *res;
-#endif
-    PySequenceMethods *sqm;
-    PyTypeObject *tp_seq;
-    tp_seq = Psyco_NeedType(po, seq);
-    if (tp_seq == NULL) {
-        return NULL;
-    }
-    sqm = tp_seq->tp_as_sequence;
-    _t2 = sqm != NULL;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_seq, &sqm->sq_contains, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_Contains,
-                                          CfCommonIntBoolOrError, "vv", seq,
-                                          ob);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != NULL;
-    }
-    if (_t2) {
-        _t3 = Psyco_META2(po, _t1, CfCommonIntBoolOrError, "vv", seq, ob);
-#if LE_HAS_CHECK_SLOT_RESULT
-        res = _t3;
-        return res;
-#else
-        return _t3;
-#endif
-    }
-    return psyco_generic_call(po, PySequence_Contains, CfCommonIntBoolOrError,
-                              "vv", seq, ob);
-}
-
-DEFINEFN vinfo_t *
-PsycoSequence_List(PsycoObject *po, vinfo_t *v)
-{
-    vinfo_t *_t1;
-    _t1 = psyco_generic_call(po, PySequence_List, CfCommonNewRefPyObject, "v",
-                             v);
-    if (_t1 != NULL)
-        Psyco_AssertType(po, _t1, &PyList_Type);
-    return _t1;
-}
-
-DEFINEFN vinfo_t *
-PsycoSequence_GetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2)
-{
-    binaryfunc _t1;
-    int _t2;
-    binaryfunc _t4;
-    vinfo_t *_t5;
-    vinfo_t *_t7;
-    PyMappingMethods *mp;
-    vinfo_t *res;
-    vinfo_t *slice;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
-        return NULL;
-    }
-    mp = tp_s->tp_as_mapping;
-    _t2 = mp != 0;
-    if (_t2) {
-        switch (Psyco_TypeSlot(po, tp_s, &mp->mp_subscript, (void **)&_t1)) {
-            case 1:
-                break;
-            case 0:
-                return psyco_generic_call(po, PySequence_GetSlice,
-                                          CfCommonNewRefPyObject, "vvv", s, i1,
-                                          i2);
-            default:
-                return NULL;
-        }
-        _t2 = _t1 != 0;
-    }
-    if (_t2) {
-        slice = psyco_generic_call(po, _PySlice_FromIndices,
-                                   CfCommonNewRefPyObject, "vv", i1, i2);
-        if (slice == NULL) {
-            return NULL;
-        }
-        switch (Psyco_TypeSlot(po, tp_s, &mp->mp_subscript, (void **)&_t4)) {
-            case 1:
-                break;
-            case 0:
-                _t5 = psyco_generic_call(po, cimpl_PySequence_GetSlice_1,
-                                         CfCommonNewRefPyObject, "vlv", s,
-                                         (long)(mp), slice);
-                vinfo_decref(slice, po);
-                return _t5;
-            default:
-                vinfo_decref(slice, po);
-                return NULL;
-        }
-        res = Psyco_META2(po, _t4, CfCommonNewRefPyObject, "vv", s, slice);
-        vinfo_decref(slice, po);
-        return res;
-    }
-    _t7 = type_error(po, LE_MSG_SEQ_GET_SLICE, s);
-    return _t7;
-}
-
 DEFINEFN bool
-PsycoSequence_SetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2,
-                       vinfo_t *o)
+PsycoObject_DelItem(PsycoObject *po, vinfo_t *o, vinfo_t *key)
 {
-    objobjargproc _t1;
-    int _t2;
-    objobjargproc _t4;
-    bool _t5;
-    PyMappingMethods *mp;
-    vinfo_t *res;
-    vinfo_t *slice;
-    PyTypeObject *tp_s;
-    tp_s = Psyco_NeedType(po, s);
-    if (tp_s == NULL) {
+    PyTypeObject *tp_o = Psyco_NeedType(po, o);
+    if (tp_o == NULL)
         return false;
-    }
-    mp = tp_s->tp_as_mapping;
-    _t2 = mp != 0;
-    if (_t2) {
-        switch (
-            Psyco_TypeSlot(po, tp_s, &mp->mp_ass_subscript, (void **)&_t1)) {
+
+    PyMappingMethods *m = tp_o->tp_as_mapping;
+    objobjargproc mp_ass_subscript = NULL;
+    if (m != NULL) {
+        switch (Psyco_TypeSlot(po, tp_o, &m->mp_ass_subscript,
+                               (void **)&mp_ass_subscript)) {
             case 1:
                 break;
             case 0:
-                return psyco_generic_call(po, PySequence_SetSlice,
-                                          CfCommonIntZeroOk, "vvvv", s, i1, i2,
-                                          o) != NULL;
+                return psyco_generic_call(po, PyObject_DelItem,
+                                          CfCommonIntZeroOk, "vv", o,
+                                          key) != NULL;
             default:
                 return false;
         }
-        _t2 = _t1 != 0;
     }
-    if (_t2) {
-        slice = psyco_generic_call(po, _PySlice_FromIndices,
-                                   CfCommonNewRefPyObject, "vv", i1, i2);
-        if (slice == NULL) {
+    if (mp_ass_subscript != NULL) {
+        return Psyco_META3(po, mp_ass_subscript, CfCommonIntZeroOk, "vvl", o,
+                           key, (long)NULL) != NULL;
+    }
+
+    if (tp_o->tp_as_sequence) {
+        PyTypeObject *tp_key = Psyco_NeedType(po, key);
+        if (tp_key == NULL)
             return false;
+        unaryfunc nb_index = NULL;
+        if (tp_key->tp_as_number != NULL) {
+            switch (Psyco_TypeSlot(po, tp_key, &tp_key->tp_as_number->nb_index,
+                                   (void **)&nb_index)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, PyObject_DelItem,
+                                              CfCommonIntZeroOk, "vv", o,
+                                              key) != NULL;
+                default:
+                    return false;
+            }
         }
-        switch (
-            Psyco_TypeSlot(po, tp_s, &mp->mp_ass_subscript, (void **)&_t4)) {
-            case 1:
-                break;
-            case 0:
-                _t5 = psyco_generic_call(po, cimpl_PySequence_SetSlice_1,
-                                         CfCommonIntZeroOk, "vvlv", s, o,
-                                         (long)(mp), slice) != NULL;
-                vinfo_decref(slice, po);
-                return _t5;
-            default:
-                vinfo_decref(slice, po);
+        if (nb_index != NULL) {
+            vinfo_t *key_value =
+                PsycoNumber_AsSsize_t(po, key, PyExc_IndexError);
+            if (key_value == NULL)
                 return false;
+            bool ok = PsycoSequence_DelItem(po, o, key_value);
+            vinfo_decref(key_value, po);
+            return ok;
         }
-        res = Psyco_META3(po, _t4, CfCommonIntZeroOk, "vvv", s, slice, o);
-        vinfo_decref(slice, po);
-        return res != NULL;
+        else {
+            ssizeobjargproc sq_ass_item;
+            switch (Psyco_TypeSlot(po, tp_o,
+                                   &tp_o->tp_as_sequence->sq_ass_item,
+                                   (void **)&sq_ass_item)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, PyObject_DelItem,
+                                              CfCommonIntZeroOk, "vv", o,
+                                              key) != NULL;
+                default:
+                    return false;
+            }
+            if (sq_ass_item != NULL) {
+                type_error(po, LE_MSG_INDEX_DEL_NOT_INT, key);
+                return false;
+            }
+        }
     }
-    type_error(po, LE_MSG_SEQ_SET_SLICE, s);
+
+    type_error(po, LE_MSG_NO_ITEM_DELETION, o);
     return false;
 }
 
-DEFINEFN vinfo_t *
-PsycoSequence_Tuple(PsycoObject *po, vinfo_t *v)
+/* Binary operators */
+
+static vinfo_t *
+binary_op1(PsycoObject *po, vinfo_t *v, vinfo_t *w, const int op_slot)
 {
-    vinfo_t *_t1;
-    vinfo_t *_t2;
-    PyTypeObject *tp_v;
-    tp_v = Psyco_NeedType(po, v);
-    if (tp_v == NULL) {
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
         return NULL;
+    PyTypeObject *tp_w = Psyco_NeedType(po, w);
+    if (tp_w == NULL)
+        return NULL;
+
+    binaryfunc slotv;
+    if (tp_v->tp_as_number != NULL) {
+        switch (Psyco_TypeSlot(po, tp_v,
+                               &NB_BINOP(tp_v->tp_as_number, op_slot),
+                               (void **)&slotv)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, cimpl_binary_op1,
+                                          CfCommonCheckNotImplemented, "vvl",
+                                          v, w, (long)op_slot);
+            default:
+                return NULL;
+        }
     }
-    if (tp_v == &PyTuple_Type) {
-        vinfo_incref(v);
-        return v;
+    else {
+        slotv = NULL;
     }
-    if (tp_v == &PyList_Type) {
-        _t1 = psyco_generic_call(
-            po, PyList_AsTuple,
-            CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v", v);
-        if (_t1 != NULL)
-            Psyco_AssertType(po, _t1, &PyTuple_Type);
-        return _t1;
+
+    binaryfunc slotw;
+    if (tp_w != tp_v && tp_w->tp_as_number != NULL) {
+        switch (Psyco_TypeSlot(po, tp_w,
+                               &NB_BINOP(tp_w->tp_as_number, op_slot),
+                               (void **)&slotw)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, cimpl_binary_op1,
+                                          CfCommonCheckNotImplemented, "vvl",
+                                          v, w, (long)op_slot);
+            default:
+                return NULL;
+        }
+        if (slotw == slotv) {
+            slotw = NULL;
+        }
     }
-    _t2 = psyco_generic_call(po, PySequence_Tuple, CfCommonNewRefPyObject, "v",
-                             v);
-    if (_t2 != NULL)
-        Psyco_AssertType(po, _t2, &PyTuple_Type);
-    return _t2;
+    else {
+        slotw = NULL;
+    }
+
+    if (slotv) {
+        vinfo_t *x;
+        if (slotw) {
+            bool w_is_subtype;
+            switch (Psyco_TypeIsSubtype(po, tp_w, tp_v, &w_is_subtype)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, cimpl_binary_op1,
+                                              CfCommonCheckNotImplemented,
+                                              "vvl", v, w, (long)op_slot);
+                default:
+                    return NULL;
+            }
+            if (w_is_subtype) {
+                x = Psyco_META2(po, slotw, CfCommonCheckNotImplemented, "vv",
+                                v, w);
+                if (IS_IMPLEMENTED(x))
+                    return x;
+                vinfo_decref(x, po); /* can't do it */
+                slotw = NULL;
+            }
+        }
+        x = Psyco_META2(po, slotv, CfCommonCheckNotImplemented, "vv", v, w);
+        if (IS_IMPLEMENTED(x)) {
+            return x;
+        }
+        vinfo_decref(x, po); /* can't do it */
+    }
+    if (slotw) {
+        vinfo_t *x =
+            Psyco_META2(po, slotw, CfCommonCheckNotImplemented, "vv", v, w);
+        if (IS_IMPLEMENTED(x)) {
+            return x;
+        }
+        vinfo_decref(x, po); /* can't do it */
+    }
+    return psyco_vi_NotImplemented();
 }
+
+static vinfo_t *
+binop_type_error(PsycoObject *po, vinfo_t *v, vinfo_t *w, const char *op_name)
+{
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    PyTypeObject *tp_w = Psyco_NeedType(po, w);
+    if (tp_w == NULL)
+        return NULL;
+    if (Psyco_TypesStale(po, tp_v, tp_w))
+        return psyco_generic_call(po, cimpl_binop_type_error,
+                                  CfCommonNewRefPyObject, "vvl", v, w,
+                                  (long)op_name);
+    PycException_SetTypeFormat(po, PyExc_TypeError, LE_MSG_BINOP_TYPE_ERROR,
+                               op_name, tp_v, tp_w);
+    return NULL;
+}
+
+static vinfo_t *
+binary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, const int op_slot,
+          const char *op_name)
+{
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    vinfo_t *result = binary_op1(po, v, w, op_slot);
+    if (!IS_IMPLEMENTED(result)) {
+        vinfo_decref(result, po);
+        if (op_slot == NB_SLOT(nb_rshift) && tp_v == &PyCFunction_Type) {
+            /* the message depends on the function's name */
+            return psyco_generic_call(po, cimpl_binary_op_error,
+                                      CfCommonNewRefPyObject, "vvll", v, w,
+                                      (long)op_slot, (long)op_name);
+        }
+        return binop_type_error(po, v, w, op_name);
+    }
+    return result;
+}
+
+static vinfo_t *
+ternary_op(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z,
+           const int op_slot, const char *op_name)
+{
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    PyTypeObject *tp_w = Psyco_NeedType(po, w);
+    if (tp_w == NULL)
+        return NULL;
+    PyTypeObject *tp_z = Psyco_NeedType(po, z);
+    if (tp_z == NULL)
+        return NULL;
+
+    PyNumberMethods *mv = tp_v->tp_as_number;
+    PyNumberMethods *mw = tp_w->tp_as_number;
+
+    ternaryfunc slotv;
+    if (mv != NULL) {
+        switch (Psyco_TypeSlot(po, tp_v, &NB_TERNOP(mv, op_slot),
+                               (void **)&slotv)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, cimpl_ternary_op,
+                                          CfCommonNewRefPyObject, "vvvll", v,
+                                          w, z, (long)op_slot, (long)op_name);
+            default:
+                return NULL;
+        }
+    }
+    else {
+        slotv = NULL;
+    }
+
+    ternaryfunc slotw;
+    if (tp_w != tp_v && mw != NULL) {
+        switch (Psyco_TypeSlot(po, tp_w, &NB_TERNOP(mw, op_slot),
+                               (void **)&slotw)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, cimpl_ternary_op,
+                                          CfCommonNewRefPyObject, "vvvll", v,
+                                          w, z, (long)op_slot, (long)op_name);
+            default:
+                return NULL;
+        }
+        if (slotw == slotv) {
+            slotw = NULL;
+        }
+    }
+    else {
+        slotw = NULL;
+    }
+
+    if (slotv) {
+        vinfo_t *x;
+        if (slotw) {
+            bool w_is_subtype;
+            switch (Psyco_TypeIsSubtype(po, tp_w, tp_v, &w_is_subtype)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(
+                        po, cimpl_ternary_op, CfCommonNewRefPyObject, "vvvll",
+                        v, w, z, (long)op_slot, (long)op_name);
+                default:
+                    return NULL;
+            }
+            if (w_is_subtype) {
+                x = Psyco_META3(po, slotw, CfCommonCheckNotImplemented, "vvv",
+                                v, w, z);
+                if (IS_IMPLEMENTED(x)) {
+                    return x;
+                }
+                vinfo_decref(x, po); /* can't do it */
+                slotw = NULL;
+            }
+        }
+        x = Psyco_META3(po, slotv, CfCommonCheckNotImplemented, "vvv", v, w,
+                        z);
+        if (IS_IMPLEMENTED(x)) {
+            return x;
+        }
+        vinfo_decref(x, po); /* can't do it */
+    }
+    if (slotw) {
+        vinfo_t *x = Psyco_META3(po, slotw, CfCommonCheckNotImplemented, "vvv",
+                                 v, w, z);
+        if (IS_IMPLEMENTED(x)) {
+            return x;
+        }
+        vinfo_decref(x, po); /* can't do it */
+    }
+
+    PyNumberMethods *mz = tp_z->tp_as_number;
+    if (mz != NULL) {
+        ternaryfunc slotz;
+        switch (Psyco_TypeSlot(po, tp_z, &NB_TERNOP(mz, op_slot),
+                               (void **)&slotz)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(
+                    po, cimpl_ternary_op_rest, CfCommonNewRefPyObject,
+                    "vvvlllll", v, w, z, (long)op_slot, (long)op_name,
+                    (long)mz, (long)slotv, (long)slotw);
+            default:
+                return NULL;
+        }
+        if (slotz == slotv || slotz == slotw) {
+            slotz = NULL;
+        }
+        if (slotz) {
+            vinfo_t *x = Psyco_META3(po, slotz, CfCommonCheckNotImplemented,
+                                     "vvv", v, w, z);
+            if (IS_IMPLEMENTED(x)) {
+                return x;
+            }
+            vinfo_decref(x, po); /* can't do it */
+        }
+    }
+
+    /* the error, which depends on whether z is None */
+    return psyco_generic_call(
+        po, cimpl_ternary_op_rest, CfCommonNewRefPyObject, "vvvlllll", v, w, z,
+        (long)op_slot, (long)op_name, (long)NULL, (long)NULL, (long)NULL);
+}
+
+#define BINARY_FUNC(func, op, op_name)                              \
+    DEFINEFN vinfo_t *func(PsycoObject *po, vinfo_t *v, vinfo_t *w) \
+    {                                                               \
+        return binary_op(po, v, w, NB_SLOT(op), op_name);           \
+    }
+
+BINARY_FUNC(PsycoNumber_Or, nb_or, LE_MSG_OP_OR)
+BINARY_FUNC(PsycoNumber_Xor, nb_xor, LE_MSG_OP_XOR)
+BINARY_FUNC(PsycoNumber_And, nb_and, LE_MSG_OP_AND)
+BINARY_FUNC(PsycoNumber_Lshift, nb_lshift, LE_MSG_OP_LSHIFT)
+BINARY_FUNC(PsycoNumber_Rshift, nb_rshift, LE_MSG_OP_RSHIFT)
+BINARY_FUNC(PsycoNumber_Subtract, nb_subtract, LE_MSG_OP_SUB)
+BINARY_FUNC(PsycoNumber_Divmod, nb_divmod, LE_MSG_OP_DIVMOD)
+
+DEFINEFN vinfo_t *
+PsycoNumber_Add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
+{
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    vinfo_t *result = binary_op1(po, v, w, NB_SLOT(nb_add));
+    if (IS_IMPLEMENTED(result)) {
+        return result;
+    }
+    vinfo_decref(result, po);
+
+    PySequenceMethods *m = tp_v->tp_as_sequence;
+    binaryfunc sq_concat = NULL;
+    if (m != NULL) {
+        switch (Psyco_TypeSlot(po, tp_v, &m->sq_concat, (void **)&sq_concat)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, LeNumber_Add,
+                                          CfCommonNewRefPyObject, "vvl", v, w,
+                                          (long)m);
+            default:
+                return NULL;
+        }
+    }
+    if (sq_concat != NULL) {
+        return Psyco_META2(po, sq_concat, CfCommonNewRefPyObject, "vv", v, w);
+    }
+
+    return binop_type_error(po, v, w, LE_MSG_OP_ADD);
+}
+
+static vinfo_t *
+sequence_repeat(PsycoObject *po, ssizeargfunc repeatfunc, vinfo_t *seq,
+                vinfo_t *n)
+{
+    PyTypeObject *tp_n = Psyco_NeedType(po, n);
+    if (tp_n == NULL)
+        return NULL;
+    unaryfunc nb_index = NULL;
+    if (tp_n->tp_as_number != NULL) {
+        switch (Psyco_TypeSlot(po, tp_n, &tp_n->tp_as_number->nb_index,
+                               (void **)&nb_index)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, cimpl_sequence_repeat,
+                                          CfCommonNewRefPyObject, "lvv",
+                                          (long)repeatfunc, seq, n);
+            default:
+                return NULL;
+        }
+    }
+    vinfo_t *count;
+    if (nb_index != NULL) {
+        count = PsycoNumber_AsSsize_t(po, n, PyExc_OverflowError);
+        if (count == NULL) {
+            return NULL;
+        }
+    }
+    else {
+        return type_error(po, LE_MSG_SEQ_REPEAT_NON_INT, n);
+    }
+    vinfo_t *res =
+        Psyco_META2(po, repeatfunc, CfCommonNewRefPyObject, "vv", seq, count);
+    vinfo_decref(count, po);
+    return res;
+}
+
+DEFINEFN vinfo_t *
+PsycoNumber_Multiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
+{
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    PyTypeObject *tp_w = Psyco_NeedType(po, w);
+    if (tp_w == NULL)
+        return NULL;
+    vinfo_t *result = binary_op1(po, v, w, NB_SLOT(nb_multiply));
+    if (!IS_IMPLEMENTED(result)) {
+        PySequenceMethods *mv = tp_v->tp_as_sequence;
+        PySequenceMethods *mw = tp_w->tp_as_sequence;
+        vinfo_decref(result, po);
+        ssizeargfunc sq_repeat_v = NULL;
+        if (mv != NULL) {
+            switch (Psyco_TypeSlot(po, tp_v, &mv->sq_repeat,
+                                   (void **)&sq_repeat_v)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, LeNumber_Multiply,
+                                              CfCommonNewRefPyObject, "vvll",
+                                              v, w, (long)mv, (long)mw);
+                default:
+                    return NULL;
+            }
+        }
+        if (sq_repeat_v != NULL) {
+            return sequence_repeat(po, sq_repeat_v, v, w);
+        }
+        ssizeargfunc sq_repeat_w = NULL;
+        if (mw != NULL) {
+            switch (Psyco_TypeSlot(po, tp_w, &mw->sq_repeat,
+                                   (void **)&sq_repeat_w)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, LeNumber_Multiply,
+                                              CfCommonNewRefPyObject, "vvll",
+                                              v, w, (long)mv, (long)mw);
+                default:
+                    return NULL;
+            }
+        }
+        if (sq_repeat_w != NULL) {
+            return sequence_repeat(po, sq_repeat_w, w, v);
+        }
+        result = binop_type_error(po, v, w, LE_MSG_OP_MUL);
+    }
+    return result;
+}
+
+BINARY_FUNC(PsycoNumber_MatrixMultiply, nb_matrix_multiply, LE_MSG_OP_MATMUL)
+BINARY_FUNC(PsycoNumber_FloorDivide, nb_floor_divide, LE_MSG_OP_FLOORDIV)
+BINARY_FUNC(PsycoNumber_TrueDivide, nb_true_divide, LE_MSG_OP_TRUEDIV)
+BINARY_FUNC(PsycoNumber_Remainder, nb_remainder, LE_MSG_OP_MOD)
 
 DEFINEFN
 vinfo_t *
@@ -3998,6 +1152,855 @@ fallback:
     return psyco_generic_call(po, PyNumber_Power, CfCommonNewRefPyObject,
                               "vvv", v1, v2, v3);
 }
+
+/* Binary in-place operators */
+
+static vinfo_t *
+binary_iop1(PsycoObject *po, vinfo_t *v, vinfo_t *w, const int iop_slot,
+            const int op_slot, const char *op_name)
+{
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    PyTypeObject *tp_w = Psyco_NeedType(po, w);
+    if (tp_w == NULL)
+        return NULL;
+
+    PyNumberMethods *mv = tp_v->tp_as_number;
+    if (mv != NULL) {
+        binaryfunc slot;
+        switch (Psyco_TypeSlot(po, tp_v, &NB_BINOP(mv, iop_slot),
+                               (void **)&slot)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, cimpl_binary_iop1,
+                                          CfCommonCheckNotImplemented, "vvll",
+                                          v, w, (long)iop_slot, (long)op_slot);
+            default:
+                return NULL;
+        }
+        if (slot) {
+            vinfo_t *x =
+                Psyco_META2(po, slot, CfCommonCheckNotImplemented, "vv", v, w);
+            if (IS_IMPLEMENTED(x)) {
+                return x;
+            }
+            vinfo_decref(x, po);
+            if (Psyco_TypesStale(po, tp_v, tp_w))
+                return psyco_generic_call(
+                    po, cimpl_binary_iop_rest, CfCommonNewRefPyObject, "vvlll",
+                    v, w, (long)iop_slot, (long)op_slot, (long)op_name);
+        }
+    }
+    return binary_op1(po, v, w, op_slot);
+}
+
+static vinfo_t *
+binary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, const int iop_slot,
+           const int op_slot, const char *op_name)
+{
+    vinfo_t *result = binary_iop1(po, v, w, iop_slot, op_slot, op_name);
+    if (!IS_IMPLEMENTED(result)) {
+        vinfo_decref(result, po);
+        return binop_type_error(po, v, w, op_name);
+    }
+    return result;
+}
+
+#if LE_HAS_TERNARY_IOP
+static vinfo_t *
+ternary_iop(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z,
+            const int iop_slot, const int op_slot, const char *op_name)
+{
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    PyTypeObject *tp_w = Psyco_NeedType(po, w);
+    if (tp_w == NULL)
+        return NULL;
+    PyTypeObject *tp_z = Psyco_NeedType(po, z);
+    if (tp_z == NULL)
+        return NULL;
+
+    PyNumberMethods *mv = tp_v->tp_as_number;
+    if (mv != NULL) {
+        ternaryfunc slot;
+        switch (Psyco_TypeSlot(po, tp_v, &NB_TERNOP(mv, iop_slot),
+                               (void **)&slot)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(
+                    po, cimpl_ternary_iop, CfCommonNewRefPyObject, "vvvlll", v,
+                    w, z, (long)iop_slot, (long)op_slot, (long)op_name);
+            default:
+                return NULL;
+        }
+        if (slot) {
+            vinfo_t *x = Psyco_META3(po, slot, CfCommonCheckNotImplemented,
+                                     "vvv", v, w, z);
+            if (IS_IMPLEMENTED(x)) {
+                return x;
+            }
+            vinfo_decref(x, po);
+            if (Psyco_TypesStale(po, tp_v, tp_w) ||
+                Psyco_TypesStale(po, tp_z, tp_z))
+                return psyco_generic_call(po, cimpl_ternary_op,
+                                          CfCommonNewRefPyObject, "vvvll", v,
+                                          w, z, (long)op_slot, (long)op_name);
+        }
+    }
+    return ternary_op(po, v, w, z, op_slot, op_name);
+}
+#endif
+
+#define INPLACE_BINOP(func, iop, op, op_name)                            \
+    DEFINEFN vinfo_t *func(PsycoObject *po, vinfo_t *v, vinfo_t *w)      \
+    {                                                                    \
+        return binary_iop(po, v, w, NB_SLOT(iop), NB_SLOT(op), op_name); \
+    }
+
+INPLACE_BINOP(PsycoNumber_InPlaceOr, nb_inplace_or, nb_or, LE_MSG_OP_IOR)
+INPLACE_BINOP(PsycoNumber_InPlaceXor, nb_inplace_xor, nb_xor, LE_MSG_OP_IXOR)
+INPLACE_BINOP(PsycoNumber_InPlaceAnd, nb_inplace_and, nb_and, LE_MSG_OP_IAND)
+INPLACE_BINOP(PsycoNumber_InPlaceLshift, nb_inplace_lshift, nb_lshift,
+              LE_MSG_OP_ILSHIFT)
+INPLACE_BINOP(PsycoNumber_InPlaceRshift, nb_inplace_rshift, nb_rshift,
+              LE_MSG_OP_IRSHIFT)
+INPLACE_BINOP(PsycoNumber_InPlaceSubtract, nb_inplace_subtract, nb_subtract,
+              LE_MSG_OP_ISUB)
+INPLACE_BINOP(PsycoNumber_InPlaceMatrixMultiply, nb_inplace_matrix_multiply,
+              nb_matrix_multiply, LE_MSG_OP_IMATMUL)
+INPLACE_BINOP(PsycoNumber_InPlaceFloorDivide, nb_inplace_floor_divide,
+              nb_floor_divide, LE_MSG_OP_IFLOORDIV)
+INPLACE_BINOP(PsycoNumber_InPlaceTrueDivide, nb_inplace_true_divide,
+              nb_true_divide, LE_MSG_OP_ITRUEDIV)
+INPLACE_BINOP(PsycoNumber_InPlaceRemainder, nb_inplace_remainder, nb_remainder,
+              LE_MSG_OP_IMOD)
+
+DEFINEFN vinfo_t *
+PsycoNumber_InPlaceAdd(PsycoObject *po, vinfo_t *v, vinfo_t *w)
+{
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    vinfo_t *result = binary_iop1(po, v, w, NB_SLOT(nb_inplace_add),
+                                  NB_SLOT(nb_add), LE_MSG_OP_IADD);
+    if (!IS_IMPLEMENTED(result)) {
+        PySequenceMethods *m = tp_v->tp_as_sequence;
+        vinfo_decref(result, po);
+        if (m != NULL) {
+            binaryfunc func;
+            switch (Psyco_TypeSlot(po, tp_v, &m->sq_inplace_concat,
+                                   (void **)&func)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, LeNumber_InPlaceAdd,
+                                              CfCommonNewRefPyObject, "vvl", v,
+                                              w, (long)m);
+                default:
+                    return NULL;
+            }
+            if (func == NULL) {
+                switch (
+                    Psyco_TypeSlot(po, tp_v, &m->sq_concat, (void **)&func)) {
+                    case 1:
+                        break;
+                    case 0:
+                        return psyco_generic_call(po, LeNumber_InPlaceAdd,
+                                                  CfCommonNewRefPyObject,
+                                                  "vvl", v, w, (long)m);
+                    default:
+                        return NULL;
+                }
+            }
+            if (func != NULL) {
+                return Psyco_META2(po, func, CfCommonNewRefPyObject, "vv", v,
+                                   w);
+            }
+        }
+        result = binop_type_error(po, v, w, LE_MSG_OP_IADD);
+    }
+    return result;
+}
+
+DEFINEFN vinfo_t *
+PsycoNumber_InPlaceMultiply(PsycoObject *po, vinfo_t *v, vinfo_t *w)
+{
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    PyTypeObject *tp_w = Psyco_NeedType(po, w);
+    if (tp_w == NULL)
+        return NULL;
+    vinfo_t *result = binary_iop1(po, v, w, NB_SLOT(nb_inplace_multiply),
+                                  NB_SLOT(nb_multiply), LE_MSG_OP_IMUL);
+    if (!IS_IMPLEMENTED(result)) {
+        PySequenceMethods *mv = tp_v->tp_as_sequence;
+        PySequenceMethods *mw = tp_w->tp_as_sequence;
+        vinfo_decref(result, po);
+        if (mv != NULL) {
+            ssizeargfunc f;
+            switch (Psyco_TypeSlot(po, tp_v, &mv->sq_inplace_repeat,
+                                   (void **)&f)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, LeNumber_InPlaceMultiply,
+                                              CfCommonNewRefPyObject, "vvll",
+                                              v, w, (long)mv, (long)mw);
+                default:
+                    return NULL;
+            }
+            if (f == NULL) {
+                switch (
+                    Psyco_TypeSlot(po, tp_v, &mv->sq_repeat, (void **)&f)) {
+                    case 1:
+                        break;
+                    case 0:
+                        return psyco_generic_call(po, LeNumber_InPlaceMultiply,
+                                                  CfCommonNewRefPyObject,
+                                                  "vvll", v, w, (long)mv,
+                                                  (long)mw);
+                    default:
+                        return NULL;
+                }
+            }
+            if (f != NULL)
+                return sequence_repeat(po, f, v, w);
+        }
+        else if (mw != NULL) {
+            /* Note that the right hand operand should not be
+             * mutated in this case so sq_inplace_repeat is not
+             * used. */
+            ssizeargfunc sq_repeat;
+            switch (Psyco_TypeSlot(po, tp_w, &mw->sq_repeat,
+                                   (void **)&sq_repeat)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, LeNumber_InPlaceMultiply,
+                                              CfCommonNewRefPyObject, "vvll",
+                                              v, w, (long)mv, (long)mw);
+                default:
+                    return NULL;
+            }
+            if (sq_repeat)
+                return sequence_repeat(po, sq_repeat, w, v);
+        }
+        result = binop_type_error(po, v, w, LE_MSG_OP_IMUL);
+    }
+    return result;
+}
+
+DEFINEFN vinfo_t *
+PsycoNumber_InPlacePower(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z)
+{
+#if LE_HAS_TERNARY_IOP
+    return ternary_iop(po, v, w, z, NB_SLOT(nb_inplace_power),
+                       NB_SLOT(nb_power), LE_MSG_OP_IPOW);
+#else
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    ternaryfunc nb_inplace_power = NULL;
+    if (tp_v->tp_as_number != NULL) {
+        switch (Psyco_TypeSlot(po, tp_v, &tp_v->tp_as_number->nb_inplace_power,
+                               (void **)&nb_inplace_power)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PyNumber_InPlacePower,
+                                          CfCommonNewRefPyObject, "vvv", v, w,
+                                          z);
+            default:
+                return NULL;
+        }
+    }
+    if (nb_inplace_power != NULL) {
+        return ternary_op(po, v, w, z, NB_SLOT(nb_inplace_power),
+                          LE_MSG_OP_IPOW);
+    }
+    else {
+        return ternary_op(po, v, w, z, NB_SLOT(nb_power), LE_MSG_OP_IPOW);
+    }
+#endif
+}
+
+/* Unary operators and functions */
+
+#define UNARY_FUNC(func, op, cfunc, msg)                                  \
+    DEFINEFN vinfo_t *func(PsycoObject *po, vinfo_t *o)                   \
+    {                                                                     \
+        PyTypeObject *tp_o = Psyco_NeedType(po, o);                       \
+        if (tp_o == NULL)                                                 \
+            return NULL;                                                  \
+        PyNumberMethods *m = tp_o->tp_as_number;                          \
+        unaryfunc slot = NULL;                                            \
+        if (m != NULL) {                                                  \
+            switch (Psyco_TypeSlot(po, tp_o, &m->op, (void **)&slot)) {   \
+                case 1:                                                   \
+                    break;                                                \
+                case 0:                                                   \
+                    return psyco_generic_call(                            \
+                        po, cfunc, CfCommonNewRefPyObject, "v", o);       \
+                default:                                                  \
+                    return NULL;                                          \
+            }                                                             \
+        }                                                                 \
+        if (slot != NULL) {                                               \
+            return Psyco_META1(po, slot, CfCommonNewRefPyObject, "v", o); \
+        }                                                                 \
+        return type_error(po, msg, o);                                    \
+    }
+
+UNARY_FUNC(PsycoNumber_Negative, nb_negative, PyNumber_Negative,
+           LE_MSG_BAD_NEGATIVE)
+UNARY_FUNC(PsycoNumber_Positive, nb_positive, PyNumber_Positive,
+           LE_MSG_BAD_POSITIVE)
+UNARY_FUNC(PsycoNumber_Invert, nb_invert, PyNumber_Invert, LE_MSG_BAD_INVERT)
+UNARY_FUNC(PsycoNumber_Absolute, nb_absolute, PyNumber_Absolute,
+           LE_MSG_BAD_ABS)
+
+/* Operations on sequences */
+
+DEFINEFN vinfo_t *
+PsycoSequence_GetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
+{
+    PyTypeObject *tp_s = Psyco_NeedType(po, s);
+    if (tp_s == NULL)
+        return NULL;
+
+    PySequenceMethods *m = tp_s->tp_as_sequence;
+    ssizeargfunc sq_item = NULL;
+    if (m != NULL) {
+        switch (Psyco_TypeSlot(po, tp_s, &m->sq_item, (void **)&sq_item)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PySequence_GetItem,
+                                          CfCommonNewRefPyObject, "vv", s, i);
+            default:
+                return NULL;
+        }
+    }
+    if (sq_item != NULL) {
+        vinfo_t *own_i = NULL; /* i plus the length, held here */
+        condition_code_t i_negative = integer_cmp_i(po, i, 0, Py_LT);
+        if (i_negative == CC_ERROR)
+            return NULL;
+        if (runtime_condition_f(po, i_negative)) {
+            lenfunc sq_length;
+            switch (
+                Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&sq_length)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, PySequence_GetItem,
+                                              CfCommonNewRefPyObject, "vv", s,
+                                              i);
+                default:
+                    return NULL;
+            }
+            if (sq_length != NULL) {
+                vinfo_t *l =
+                    Psyco_META1(po, sq_length, CfCommonPySSizeTResult, "v", s);
+                if (l == NULL)
+                    return NULL;
+                own_i = integer_add(po, i, l, false);
+                vinfo_decref(l, po);
+                if (own_i == NULL)
+                    return NULL;
+                i = own_i;
+            }
+        }
+        else {
+            assert_nonneg(i);
+        }
+        vinfo_t *res;
+        switch (Psyco_TypeSlot(po, tp_s, &m->sq_item, (void **)&sq_item)) {
+            case 1:
+                res = Psyco_META2(po, sq_item, CfCommonNewRefPyObject, "vv", s,
+                                  i);
+                break;
+            case 0:
+                res = psyco_generic_call(po, LeSequence_GetItem,
+                                         CfCommonNewRefPyObject, "vvl", s, i,
+                                         (long)m);
+                break;
+            default:
+                res = NULL;
+        }
+        vinfo_xdecref(own_i, po);
+        return res;
+    }
+
+#if LE_HAS_NOT_A_SEQUENCE_ERROR
+    binaryfunc mp_subscript = NULL;
+    if (tp_s->tp_as_mapping != NULL) {
+        switch (Psyco_TypeSlot(po, tp_s, &tp_s->tp_as_mapping->mp_subscript,
+                               (void **)&mp_subscript)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PySequence_GetItem,
+                                          CfCommonNewRefPyObject, "vv", s, i);
+            default:
+                return NULL;
+        }
+    }
+    if (mp_subscript != NULL) {
+        return type_error(po, LE_MSG_SEQ_GET_NOT_SEQUENCE, s);
+    }
+#endif
+    return type_error(po, LE_MSG_SEQ_NO_GET, s);
+}
+
+DEFINEFN vinfo_t *
+PsycoSequence_GetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2)
+{
+    PyTypeObject *tp_s = Psyco_NeedType(po, s);
+    if (tp_s == NULL)
+        return NULL;
+
+    PyMappingMethods *mp = tp_s->tp_as_mapping;
+    binaryfunc mp_subscript = NULL;
+    if (mp != NULL) {
+        switch (Psyco_TypeSlot(po, tp_s, &mp->mp_subscript,
+                               (void **)&mp_subscript)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PySequence_GetSlice,
+                                          CfCommonNewRefPyObject, "vvv", s, i1,
+                                          i2);
+            default:
+                return NULL;
+        }
+    }
+    if (mp_subscript != NULL) {
+        vinfo_t *slice = psyco_generic_call(
+            po, _PySlice_FromIndices, CfCommonNewRefPyObject, "vv", i1, i2);
+        if (slice == NULL)
+            return NULL;
+        vinfo_t *res;
+        switch (Psyco_TypeSlot(po, tp_s, &mp->mp_subscript,
+                               (void **)&mp_subscript)) {
+            case 1:
+                res = Psyco_META2(po, mp_subscript, CfCommonNewRefPyObject,
+                                  "vv", s, slice);
+                break;
+            case 0:
+                res = psyco_generic_call(po, LeSequence_GetSlice,
+                                         CfCommonNewRefPyObject, "vlv", s,
+                                         (long)mp, slice);
+                break;
+            default:
+                res = NULL;
+        }
+        vinfo_decref(slice, po);
+        return res;
+    }
+
+    return type_error(po, LE_MSG_SEQ_GET_SLICE, s);
+}
+
+DEFINEFN bool
+PsycoSequence_SetItem(PsycoObject *po, vinfo_t *s, vinfo_t *i, vinfo_t *o)
+{
+    PyTypeObject *tp_s = Psyco_NeedType(po, s);
+    if (tp_s == NULL)
+        return false;
+
+    PySequenceMethods *m = tp_s->tp_as_sequence;
+    ssizeobjargproc sq_ass_item = NULL;
+    if (m != NULL) {
+        switch (
+            Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&sq_ass_item)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PySequence_SetItem,
+                                          CfCommonIntZeroOk, "vvv", s, i,
+                                          o) != NULL;
+            default:
+                return false;
+        }
+    }
+    if (sq_ass_item != NULL) {
+        vinfo_t *own_i = NULL; /* i plus the length, held here */
+        condition_code_t i_negative = integer_cmp_i(po, i, 0, Py_LT);
+        if (i_negative == CC_ERROR)
+            return false;
+        if (runtime_condition_f(po, i_negative)) {
+            lenfunc sq_length;
+            switch (
+                Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&sq_length)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, PySequence_SetItem,
+                                              CfCommonIntZeroOk, "vvv", s, i,
+                                              o) != NULL;
+                default:
+                    return false;
+            }
+            if (sq_length != NULL) {
+                vinfo_t *l =
+                    Psyco_META1(po, sq_length, CfCommonPySSizeTResult, "v", s);
+                if (l == NULL)
+                    return false;
+                own_i = integer_add(po, i, l, false);
+                vinfo_decref(l, po);
+                if (own_i == NULL)
+                    return false;
+                i = own_i;
+            }
+        }
+        else {
+            assert_nonneg(i);
+        }
+        vinfo_t *res;
+        switch (
+            Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&sq_ass_item)) {
+            case 1:
+                res = Psyco_META3(po, sq_ass_item, CfCommonIntZeroOk, "vvv", s,
+                                  i, o);
+                break;
+            case 0:
+                res = psyco_generic_call(po, LeSequence_SetItem,
+                                         CfCommonIntZeroOk, "vvvl", s, i, o,
+                                         (long)m);
+                break;
+            default:
+                res = NULL;
+        }
+        vinfo_xdecref(own_i, po);
+        return res != NULL;
+    }
+
+#if LE_HAS_NOT_A_SEQUENCE_ERROR
+    objobjargproc mp_ass_subscript = NULL;
+    if (tp_s->tp_as_mapping != NULL) {
+        switch (Psyco_TypeSlot(po, tp_s,
+                               &tp_s->tp_as_mapping->mp_ass_subscript,
+                               (void **)&mp_ass_subscript)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PySequence_SetItem,
+                                          CfCommonIntZeroOk, "vvv", s, i,
+                                          o) != NULL;
+            default:
+                return false;
+        }
+    }
+    if (mp_ass_subscript != NULL) {
+        type_error(po, LE_MSG_SEQ_SET_NOT_SEQUENCE, s);
+        return false;
+    }
+#endif
+    type_error(po, LE_MSG_SEQ_NO_SET, s);
+    return false;
+}
+
+DEFINEFN bool
+PsycoSequence_DelItem(PsycoObject *po, vinfo_t *s, vinfo_t *i)
+{
+    PyTypeObject *tp_s = Psyco_NeedType(po, s);
+    if (tp_s == NULL)
+        return false;
+
+    PySequenceMethods *m = tp_s->tp_as_sequence;
+    ssizeobjargproc sq_ass_item = NULL;
+    if (m != NULL) {
+        switch (
+            Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&sq_ass_item)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PySequence_DelItem,
+                                          CfCommonIntZeroOk, "vv", s,
+                                          i) != NULL;
+            default:
+                return false;
+        }
+    }
+    if (sq_ass_item != NULL) {
+        vinfo_t *own_i = NULL; /* i plus the length, held here */
+        condition_code_t i_negative = integer_cmp_i(po, i, 0, Py_LT);
+        if (i_negative == CC_ERROR)
+            return false;
+        if (runtime_condition_f(po, i_negative)) {
+            lenfunc sq_length;
+            switch (
+                Psyco_TypeSlot(po, tp_s, &m->sq_length, (void **)&sq_length)) {
+                case 1:
+                    break;
+                case 0:
+                    return psyco_generic_call(po, PySequence_DelItem,
+                                              CfCommonIntZeroOk, "vv", s,
+                                              i) != NULL;
+                default:
+                    return false;
+            }
+            if (sq_length != NULL) {
+                vinfo_t *l =
+                    Psyco_META1(po, sq_length, CfCommonPySSizeTResult, "v", s);
+                if (l == NULL)
+                    return false;
+                own_i = integer_add(po, i, l, false);
+                vinfo_decref(l, po);
+                if (own_i == NULL)
+                    return false;
+                i = own_i;
+            }
+        }
+        else {
+            assert_nonneg(i);
+        }
+        vinfo_t *res;
+        switch (
+            Psyco_TypeSlot(po, tp_s, &m->sq_ass_item, (void **)&sq_ass_item)) {
+            case 1:
+                res = Psyco_META3(po, sq_ass_item, CfCommonIntZeroOk, "vvl", s,
+                                  i, (long)NULL);
+                break;
+            case 0:
+                res = psyco_generic_call(po, LeSequence_DelItem,
+                                         CfCommonIntZeroOk, "vvl", s, i,
+                                         (long)m);
+                break;
+            default:
+                res = NULL;
+        }
+        vinfo_xdecref(own_i, po);
+        return res != NULL;
+    }
+
+#if LE_HAS_NOT_A_SEQUENCE_ERROR
+    objobjargproc mp_ass_subscript = NULL;
+    if (tp_s->tp_as_mapping != NULL) {
+        switch (Psyco_TypeSlot(po, tp_s,
+                               &tp_s->tp_as_mapping->mp_ass_subscript,
+                               (void **)&mp_ass_subscript)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PySequence_DelItem,
+                                          CfCommonIntZeroOk, "vv", s,
+                                          i) != NULL;
+            default:
+                return false;
+        }
+    }
+    if (mp_ass_subscript != NULL) {
+        type_error(po, LE_MSG_SEQ_DEL_NOT_SEQUENCE, s);
+        return false;
+    }
+#endif
+    type_error(po, LE_MSG_SEQ_NO_DEL, s);
+    return false;
+}
+
+DEFINEFN bool
+PsycoSequence_SetSlice(PsycoObject *po, vinfo_t *s, vinfo_t *i1, vinfo_t *i2,
+                       vinfo_t *o)
+{
+    PyTypeObject *tp_s = Psyco_NeedType(po, s);
+    if (tp_s == NULL)
+        return false;
+
+    PyMappingMethods *mp = tp_s->tp_as_mapping;
+    objobjargproc mp_ass_subscript = NULL;
+    if (mp != NULL) {
+        switch (Psyco_TypeSlot(po, tp_s, &mp->mp_ass_subscript,
+                               (void **)&mp_ass_subscript)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PySequence_SetSlice,
+                                          CfCommonIntZeroOk, "vvvv", s, i1, i2,
+                                          o) != NULL;
+            default:
+                return false;
+        }
+    }
+    if (mp_ass_subscript != NULL) {
+        vinfo_t *slice = psyco_generic_call(
+            po, _PySlice_FromIndices, CfCommonNewRefPyObject, "vv", i1, i2);
+        if (slice == NULL)
+            return false;
+        vinfo_t *res;
+        switch (Psyco_TypeSlot(po, tp_s, &mp->mp_ass_subscript,
+                               (void **)&mp_ass_subscript)) {
+            case 1:
+                res = Psyco_META3(po, mp_ass_subscript, CfCommonIntZeroOk,
+                                  "vvv", s, slice, o);
+                break;
+            case 0:
+                res = psyco_generic_call(po, LeSequence_SetSlice,
+                                         CfCommonIntZeroOk, "vvlv", s, o,
+                                         (long)mp, slice);
+                break;
+            default:
+                res = NULL;
+        }
+        vinfo_decref(slice, po);
+        return res != NULL;
+    }
+
+    type_error(po, LE_MSG_SEQ_SET_SLICE, s);
+    return false;
+}
+
+DEFINEFN vinfo_t *
+PsycoSequence_Tuple(PsycoObject *po, vinfo_t *v)
+{
+    PyTypeObject *tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+
+    /* Special-case the common tuple and list cases, for efficiency. */
+    if (tp_v == &PyTuple_Type) {
+        vinfo_incref(v);
+        return v;
+    }
+    vinfo_t *result;
+    if (tp_v == &PyList_Type) {
+        result = psyco_generic_call(
+            po, PyList_AsTuple,
+            CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v", v);
+    }
+    else {
+        result = psyco_generic_call(po, PySequence_Tuple,
+                                    CfCommonNewRefPyObject, "v", v);
+    }
+    if (result != NULL)
+        Psyco_AssertType(po, result, &PyTuple_Type);
+    return result;
+}
+
+DEFINEFN vinfo_t *
+PsycoSequence_List(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *result = psyco_generic_call(po, PySequence_List,
+                                         CfCommonNewRefPyObject, "v", v);
+    if (result != NULL)
+        Psyco_AssertType(po, result, &PyList_Type);
+    return result;
+}
+
+DEFINEFN vinfo_t *
+PsycoSequence_Contains(PsycoObject *po, vinfo_t *seq, vinfo_t *ob)
+{
+    PyTypeObject *tp_seq = Psyco_NeedType(po, seq);
+    if (tp_seq == NULL)
+        return NULL;
+
+    PySequenceMethods *sqm = tp_seq->tp_as_sequence;
+    objobjproc sq_contains = NULL;
+    if (sqm != NULL) {
+        switch (Psyco_TypeSlot(po, tp_seq, &sqm->sq_contains,
+                               (void **)&sq_contains)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PySequence_Contains,
+                                          CfCommonIntBoolOrError, "vv", seq,
+                                          ob);
+            default:
+                return NULL;
+        }
+    }
+    if (sq_contains != NULL) {
+        return Psyco_META2(po, sq_contains, CfCommonIntBoolOrError, "vv", seq,
+                           ob);
+    }
+    return psyco_generic_call(po, PySequence_Contains, CfCommonIntBoolOrError,
+                              "vv", seq, ob);
+}
+
+/* Operations on mappings */
+
+DEFINEFN vinfo_t *
+PsycoMapping_Size(PsycoObject *po, vinfo_t *o)
+{
+    PyTypeObject *tp_o = Psyco_NeedType(po, o);
+    if (tp_o == NULL)
+        return NULL;
+
+    PyMappingMethods *m = tp_o->tp_as_mapping;
+    lenfunc mp_length = NULL;
+    if (m != NULL) {
+        switch (Psyco_TypeSlot(po, tp_o, &m->mp_length, (void **)&mp_length)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PyMapping_Size,
+                                          CfCommonPySSizeTResult, "v", o);
+            default:
+                return NULL;
+        }
+    }
+    if (mp_length != NULL) {
+        return Psyco_META1(po, mp_length, CfCommonPySSizeTResult, "v", o);
+    }
+
+#if LE_HAS_NOT_A_SEQUENCE_ERROR
+    lenfunc sq_length = NULL;
+    if (tp_o->tp_as_sequence != NULL) {
+        switch (Psyco_TypeSlot(po, tp_o, &tp_o->tp_as_sequence->sq_length,
+                               (void **)&sq_length)) {
+            case 1:
+                break;
+            case 0:
+                return psyco_generic_call(po, PyMapping_Size,
+                                          CfCommonPySSizeTResult, "v", o);
+            default:
+                return NULL;
+        }
+    }
+    if (sq_length != NULL) {
+        type_error(po, LE_MSG_MAPPING_SIZE_NOT_MAPPING, o);
+        return NULL;
+    }
+#endif
+    type_error(po, LE_MSG_MAPPING_NO_LEN, o);
+    return NULL;
+}
+
+/* Iterators */
+
+#if LE_HAS_ITER_CHECK_FUNCTION
+DEFINEFN vinfo_t *
+PsycoIter_Check(PsycoObject *po, vinfo_t *obj)
+{
+    PyTypeObject *tp = Psyco_NeedType(po, obj);
+    if (tp == NULL)
+        return NULL;
+    iternextfunc tp_iternext;
+    switch (Psyco_TypeSlot(po, tp, &tp->tp_iternext, (void **)&tp_iternext)) {
+        case 1:
+            break;
+        case 0:
+            return psyco_generic_call(
+                po, PyIter_Check,
+                CfCommonIntBoolOrError | CfNoPython | CfNoBlock, "v", obj);
+        default:
+            return NULL;
+    }
+    /* the test against _PyObject_NextNotImplemented is left to run time */
+    if (tp_iternext != NULL) {
+        return psyco_generic_call(
+            po, PyIter_Check, CfCommonIntBoolOrError | CfNoPython | CfNoBlock,
+            "v", obj);
+    }
+    return vinfo_new(CompileTime_New(0));
+}
+#endif
 
 DEFINEFN
 vinfo_t *
