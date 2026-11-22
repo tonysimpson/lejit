@@ -1501,8 +1501,8 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
     s.gc = vtp == NULL         ? STORE_GC_FULL
            : PyType_IS_GC(vtp) ? STORE_GC_DICT
                                : STORE_GC_NONE;
-    /* filling doesn't add to the insertion order that values keep where
-       keys have a kind */
+    /* filling a dict doesn't add to the insertion order that values keep
+       where keys have a kind */
     s.fill = !LE_HAS_DICT_KEYS_KIND && init_store(po, obj);
     s.miss_glue = store_miss_glue;
 #if LE_HAS_MANAGED_VALUES_POINTER
@@ -1510,6 +1510,7 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
         s.dictoffset = MANAGED_VALUES_OFFSET;
         s.keys = class_keys(tp);
         s.gc = STORE_GC_NONE;
+        s.fill = init_store(po, obj);
         s.miss_glue = managed_store_miss_glue;
     }
 #endif
