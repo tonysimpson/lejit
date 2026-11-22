@@ -4815,12 +4815,10 @@ cimpl_import_all_from(PyObject *locals, PyObject *v)
 /***                         Main loop                         ***/
 /***************************************************************/
 
-#if LE_HAS_EXCEPTION_TABLE
-/* A virtual exception raised for real, as C code raises one
-   (PyErr_SetObject): chained to the exception being handled, which is
-   still the one there was where it was raised, as handlers are left only by
-   their own instructions. The traceback it has so far goes with it. Takes
-   the references, as PyErr_Restore. */
+/* PyErr_Restore of a virtual exception, raised as the interpreter would
+   have raised it: with the exception being handled as its context (as
+   PyErr_SetObject chains it). The traceback it has so far goes with it.
+   Takes the references, as PyErr_Restore. */
 static void
 cimpl_raise_virtual(PyObject *type, PyObject *value, PyObject *tb)
 {
@@ -4834,7 +4832,6 @@ cimpl_raise_virtual(PyObject *type, PyObject *value, PyObject *tb)
         PyErr_Restore(t, v, tb);
     }
 }
-#endif
 
 static bool
 compute_and_raise_exception(PsycoObject *po)
@@ -4862,14 +4859,9 @@ compute_and_raise_exception(PsycoObject *po)
         }
         args[0] = 'v';
         consume_reference(po, po->pr.exc);
-        return (psyco_generic_call(po,
-#if LE_HAS_EXCEPTION_TABLE
-                                   cimpl_raise_virtual,
-#else
-                                   PyErr_Restore,
-#endif
-                                   CfNoReturnValue, args, po->pr.exc,
-                                   po->pr.val, po->pr.tb) != NULL);
+        return (psyco_generic_call(po, cimpl_raise_virtual, CfNoReturnValue,
+                                   args, po->pr.exc, po->pr.val,
+                                   po->pr.tb) != NULL);
     }
     else
         return true;
@@ -9636,7 +9628,17 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             }
 
             if (b->b_type == EXCEPT_HANDLER) {
-                /* leaving an except clause by any (pseudo) exception */
+                /* leaving an except clause by any (pseudo) exception; a
+                   virtual one is raised first, while the exception handled
+                   here is still its context */
+                if (PycException_IsPython(po) &&
+                    !PycException_Is(po, &ERtPython)) {
+                    if (!compute_and_raise_exception(po))
+                        break;
+                    clear_pseudo_exception(po);
+                    PycException_Raise(
+                        po, vinfo_new(VirtualTime_New(&ERtPython)), NULL);
+                }
                 unwind_except_handler(po, b, true);
                 continue;
             }
