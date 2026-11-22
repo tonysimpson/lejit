@@ -427,8 +427,8 @@ Psyco_DefineMethodFn(PyTypeObject *tp, char *meth_name, int meth_flags,
                      void *meta_fn)
 {
     PyMethodDef *ml;
-    PyObject *d =
-        tp->tp_dict ? PyDict_GetItemString(tp->tp_dict, meth_name) : NULL;
+    PyObject *dict = le_type_dict(tp);
+    PyObject *d = dict ? PyDict_GetItemString(dict, meth_name) : NULL;
     if (d == NULL || Py_TYPE(d) != &PyMethodDescr_Type) {
         meta_not_registered_as(tp->tp_name, meth_name,
                                "not a method descriptor");
@@ -683,11 +683,7 @@ PycException_SetFormat(PsycoObject *po, PyObject *e, const char *fmt, ...)
     PyObject *s;
     va_list vargs;
 
-#ifdef HAVE_STDARG_PROTOTYPES
     va_start(vargs, fmt);
-#else
-    va_start(vargs);
-#endif
     s = PyUnicode_FromFormatV(fmt, vargs);
     va_end(vargs);
 
@@ -2288,7 +2284,7 @@ _PyObject_FastCallDictTstate(PyThreadState *tstate, PyObject *callable,
     _PyObject_FastCallDict(callable, args, nargsf, kwargs)
 #endif
 
-#if !LE_HAS_CFRAME
+#if !LE_HAS_CFRAME && !LE_HAS_MONITORING
 static int
 cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
                  int what, PyObject *arg)
@@ -2308,7 +2304,7 @@ cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
 }
 #endif
 
-#if !LE_HAS_CFRAME
+#if !LE_HAS_CFRAME && !LE_HAS_MONITORING
 static int
 cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
                            PyFrameObject *frame, int what, PyObject *arg)
@@ -2330,7 +2326,7 @@ cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
 }
 #endif
 
-#if !LE_HAS_CFRAME
+#if !LE_HAS_CFRAME && !LE_HAS_MONITORING
 static PyObject *
 cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
 #if LE_HAS_CALL_TRACE_METHOD_DESCR
@@ -3591,13 +3587,20 @@ cimpl_build_map_unpack_0(PyObject *sum, PyObject *arg)
 #endif
 
 #if !LE_HAS_KWARGS_MERGE_EX
+/* with the AttributeError set */
 static void
 cimpl_format_kwargs_mapping_error(PyObject *func, PyObject *kwargs)
+#if LE_HAS_FUNCTION_STR
+{
+    cimpl_format_kwargs_error(func, kwargs);
+}
+#else
 {
     PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_MAPPING_FUNC_NAME,
                  PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
                  kwargs->ob_type->tp_name);
 }
+#endif
 #endif
 
 #if LE_HAS_KWARGS_MERGE_EX && !LE_HAS_FUNCTION_STR
@@ -3862,11 +3865,11 @@ cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
 }
 #endif
 
-#if LE_HAS_CFRAME && !LE_HAS_CEVAL_TRACE_INFO
+#if (LE_HAS_CFRAME || LE_HAS_MONITORING) && !LE_HAS_CEVAL_TRACE_INFO
 /* ceval's do_call_core where it keeps its trace info in the thread state,
-   without the profiler's c_call events around a C function: compiled code
-   makes no such call on this CPython yet (mergepoints.c refuses every
-   code object) */
+   or sys.monitoring traces calls, without the profiler's c_call events
+   around a C function: compiled code makes no such call on these CPythons
+   yet (mergepoints.c refuses every code object) */
 static PyObject *
 cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
 {

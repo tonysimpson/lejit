@@ -27,7 +27,9 @@
 #include "opcode.h"
 #include "../bytecode.h"
 
-/* le_tstate_current_address */
+/* le_tstate_current_address, where the thread state isn't a thread-local
+   (mechanisms/tstate.h) */
+#if !LE_HAS_THREAD_LOCAL_TSTATE
 /* The running thread's state is the word _PyRuntime.gilstate.tstate_current
    (an _Py_atomic_address, which a plain load reads), at an address fixed
    for the process: what PyThreadState_GET() reads. Compiled code's load
@@ -43,9 +45,108 @@ le_tstate_current_address(void)
 {
     return &_PyRuntime.gilstate.tstate_current;
 }
+#endif
 /* le_eval_breaker_address, le_eval_breaker_handler,
    le_eval_breaker_at_entry */
-#if LE_HAS_EVAL_FRAME_HANDLE_PENDING
+#if LE_HAS_EVAL_BREAKER_GC
+/* eval_breaker in the interpreter's ceval state, and what ceval does when
+   it is set: the hidden _Py_HandlePending (3.12 Python/ceval_gil.c), which
+   also runs the cyclic GC when the interpreter's gc_scheduled asks.
+   le_eval_breaker_handler does the same with exported functions:
+   _PyEval_MakePendingCalls handles the signals (in the main thread) and
+   runs the pending calls, as ceval does when either is flagged;
+   PyErr_CheckSignals runs the GC; PyEval_SaveThread and
+   PyEval_RestoreThread are the GIL drop and take sequence; and eval_breaker
+   is recomputed at the end, as ceval does (le_compute_eval_breaker, its
+   COMPUTE_EVAL_BREAKER). The word's address is the compiling thread's
+   interpreter's, fixed for the process as long as LeJIT runs in one
+   interpreter. */
+_Static_assert(
+    __builtin_types_compatible_p(
+        __typeof__(((PyInterpreterState *)0)->ceval.eval_breaker),
+        _Py_atomic_int) &&
+        sizeof(((PyInterpreterState *)0)->ceval.eval_breaker) == 4,
+    "LeJIT: the interpreter's ceval.eval_breaker is tested as a 32-bit int");
+
+static struct _ceval_state *
+le_ceval2(void)
+{
+    return &PyThreadState_GET()->interp->ceval;
+}
+
+/* compiled code compares it with 0 as a 32-bit int, at loop heads and
+   after calls */
+void *
+le_eval_breaker_address(void)
+{
+    return &le_ceval2()->eval_breaker;
+}
+
+static void
+le_compute_eval_breaker(PyInterpreterState *interp)
+{
+    struct _ceval_runtime_state *ceval = &_PyRuntime.ceval;
+    struct _ceval_state *ceval2 = &interp->ceval;
+    _Py_atomic_store_relaxed(
+        &ceval2->eval_breaker,
+        _Py_atomic_load_relaxed(&ceval2->gil_drop_request) |
+            (_Py_atomic_load_relaxed(&ceval->signals_pending) &&
+             _Py_ThreadCanHandleSignals(interp)) |
+            _Py_atomic_load_relaxed(&ceval2->pending.calls_to_do) |
+            (_Py_IsMainThread() && _Py_IsMainInterpreter(interp) &&
+             _Py_atomic_load_relaxed(&ceval->pending_mainthread.calls_to_do)) |
+            ceval2->pending.async_exc |
+            _Py_atomic_load_relaxed(&ceval2->gc_scheduled));
+}
+
+/* -1 with an exception set */
+int
+le_eval_breaker_handler(void)
+{
+    PyThreadState *tstate = PyThreadState_GET();
+    PyInterpreterState *interp = tstate->interp;
+    struct _ceval_runtime_state *ceval = &_PyRuntime.ceval;
+    struct _ceval_state *ceval2 = &interp->ceval;
+    if (_Py_atomic_load_relaxed(&ceval->signals_pending) ||
+        _Py_atomic_load_relaxed(&ceval2->pending.calls_to_do) ||
+        (_Py_IsMainThread() && _Py_IsMainInterpreter(interp) &&
+         _Py_atomic_load_relaxed(&ceval->pending_mainthread.calls_to_do))) {
+        if (_PyEval_MakePendingCalls(tstate) < 0)
+            return -1;
+    }
+    if (_Py_atomic_load_relaxed(&ceval2->gc_scheduled)) {
+        if (PyErr_CheckSignals() < 0)
+            return -1;
+    }
+    if (_Py_atomic_load_relaxed(&ceval2->gil_drop_request))
+        PyEval_RestoreThread(PyEval_SaveThread());
+    if (tstate->async_exc != NULL) {
+        PyObject *exc = tstate->async_exc;
+        tstate->async_exc = NULL;
+        /* UNSIGNAL_ASYNC_EXC */
+        ceval2->pending.async_exc = 0;
+        le_compute_eval_breaker(interp);
+        PyErr_SetNone(exc);
+        Py_DECREF(exc);
+        return -1;
+    }
+    le_compute_eval_breaker(interp);
+    return 0;
+}
+
+/* The same test before a frame's first instruction, for compiled code
+   entered through the eval hook (eval_hook.c:LeCode_Run). Compiled callers
+   test after each call instead. -1 with the exception set, for the caller
+   to give the frame a traceback entry, as ceval's error path would. */
+int
+le_eval_breaker_at_entry(PyCodeObject *co)
+{
+    (void)co;
+    if (!_Py_atomic_load_relaxed(&le_ceval2()->eval_breaker))
+        return 0;
+    return le_eval_breaker_handler();
+}
+#elif LE_HAS_EVAL_FRAME_HANDLE_PENDING
 /* eval_breaker in the interpreter's ceval state, and what ceval does when
    it is set: the static ceval.c:eval_frame_handle_pending, with signals
    flagged in the runtime's ceval state (signals_pending).
