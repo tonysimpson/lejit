@@ -379,20 +379,6 @@ msg('ASYNC_FOR_AITER_NO_ANEXT', 'async for whose __aiter__ returns an object '
     'without __anext__', 'TypeError',
     'r = args[0]; o = cls("A", __aiter__=lambda s: r())()\n'
     'async def f():\n    async for x in o:\n        pass\ncoro_run(f())', [T()])
-msg('ASYNC_FOR_BAD_ANEXT', "async for whose __anext__ returns something that "
-    "isn't awaitable", 'TypeError',
-    'r = args[0]\nA = cls("A", __anext__=lambda s: r())\n'
-    'A.__aiter__ = lambda s: s\n'
-    'async def f():\n    async for x in A():\n        pass\ncoro_run(f())',
-    [T()])
-msg('ASYNC_FOR_NO_ANEXT', "async for whose iterator's __anext__ has gone by "
-    "the next round", 'TypeError',
-    'import types\nA = cls(args[0].__name__)\nA.__aiter__ = lambda s: s\n'
-    '@types.coroutine\ndef step():\n    del A.__anext__\n    return 1\n'
-    '    yield\n'
-    'A.__anext__ = lambda s: step()\n'
-    'async def f():\n    async for x in A():\n        pass\ncoro_run(f())',
-    [T()])
 msg('NO_BUILD_CLASS', 'a class statement without __build_class__', 'NameError',
     'exec("class C: pass", {"__builtins__": {}})', text=True)
 msg('NAME_NOT_DEFINED', 'a global name not found', 'NameError',
@@ -473,11 +459,6 @@ msg('NO_IMPORT', 'an import statement without __import__', 'ImportError',
 msg('GENERATOR_STOP_ITERATION', 'a generator raising StopIteration',
     'RuntimeError',
     'def g():\n    raise StopIteration\n    yield\nnext(g())', text=True)
-msg('YIELD_FROM_COROUTINE', 'yield from a coroutine in a generator',
-    'TypeError',
-    'async def c():\n    pass\ndef g():\n    yield from c()\n'
-    'import warnings\nwith warnings.catch_warnings():\n'
-    '    warnings.simplefilter("ignore")\n    next(g())', text=True)
 msg('NEGATIVE_SHIFT', 'a shift by a negative count', 'ValueError', '1 << -1',
     text=True)
 
