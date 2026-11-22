@@ -76,10 +76,6 @@ SKIPPED = {
         'test_load_attr_specialization_user_type '
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_store_attr_specialization_user_type',
-    "a compiled call of a type calls its tp_new and tp_init, not its "
-    'vectorcall, so their argument errors read differently':
-        'test_super.TestSuper.test_super_argcount '
-        'test_super.TestSuper.test_super_argtype',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,

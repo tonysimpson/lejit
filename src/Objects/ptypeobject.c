@@ -402,7 +402,7 @@ generic:
 
 /* type_call(tp, args, NULL) for a heap class whose tp_new is object_new
    and whose tp_init is slot_tp_init with a plain function as __init__,
-   or object_init with no arguments; anything else is type_call. The
+   or object_init with no arguments; anything else is PyObject_Call. The
    instance is new, so its type is tp and type_call's subtype test
    passes. */
 static initproc slot_tp_init;
@@ -516,8 +516,8 @@ error:
     vinfo_decref(vobj, po);
     return NULL;
 fallback:
-    return psyco_generic_call(po, PyType_Type.tp_call, CfCommonNewRefPyObject,
-                              "vvv", vtype, varg, vkw);
+    return psyco_generic_call(po, PyObject_Call, CfCommonNewRefPyObject, "vvv",
+                              vtype, varg, vkw);
 }
 
 #define BINARY(i)                                                             \
