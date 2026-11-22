@@ -324,7 +324,6 @@ HEADER_DETECTORS = {
     'CHECK_RESULT_TSTATE': check_result_tstate,
     'PYCORE_PYSTATE_H': pycore_header('pycore_pystate.h'),
     'PYCORE_INTERP_H': pycore_header('pycore_interp.h'),
-    'PYCORE_FORMAT_H': pycore_header('pycore_format.h'),
     'EVAL_HOOK_TSTATE': eval_hook_tstate,
     'SIGNALS_PENDING': signals_pending,
     'EVAL_FRAME_HANDLE_PENDING': eval_frame_handle_pending,

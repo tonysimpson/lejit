@@ -265,33 +265,6 @@ msg('INIT_RETURNED', '__init__ returning something other than None',
     'TypeError', 'r = args[0]; cls("C", __init__=lambda s: r())()', [T()])
 
 # str
-msg('FORMAT_NOT_ENOUGH_ARGS', 'str %: fewer arguments than conversions',
-    'TypeError', "'%s %s' % (1,)", text=True)
-msg('FORMAT_NEEDS_MAPPING', 'str %: a key given, no mapping', 'TypeError',
-    "'%(a)s' % 1", text=True)
-msg('FORMAT_INCOMPLETE_KEY', 'str %: a key without its )', 'ValueError',
-    "'%(a' % {}", text=True)
-msg('FORMAT_STAR_WANTS_INT', 'str %: * given a non-integer', 'TypeError',
-    "'%*d' % ('x', 1)", text=True)
-msg('FORMAT_WIDTH_TOO_BIG', 'str %: a width over the largest size', 'ValueError',
-    "'%99999999999999999999d' % 1", text=True)
-msg('FORMAT_PRECISION_TOO_BIG', 'str %: a precision over the largest size',
-    'ValueError', "'%.99999999999999999999d' % 1", text=True)
-msg('FORMAT_INCOMPLETE', 'str %: a % at the end', 'ValueError', "'%' % ()",
-    text=True)
-msg('FORMAT_NEEDS_INTEGER', 'str %: %x or %o of a non-integer', 'TypeError',
-    "('%' + chr(args[0])) % args[1]()", [I('c'), T()],
-    ints=[[ord('x'), 0], [ord('o'), 0]])
-msg('FORMAT_NEEDS_NUMBER', 'str %: %d or %i of a non-number', 'TypeError',
-    "('%' + chr(args[0])) % args[1]()", [I('c'), T()],
-    ints=[[ord('d'), 0], [ord('i'), 0]])
-msg('FORMAT_CHAR_RANGE', 'str %: %c of an integer outside Unicode',
-    'OverflowError', "'%c' % 0x110000", text=True)
-msg('FORMAT_CHAR_TYPE', 'str %: %c of a str longer than one', 'TypeError',
-    "'%c' % 'ab'", text=True)
-msg('FORMAT_UNSUPPORTED_CHAR', 'str %: an unknown conversion', 'ValueError',
-    "('a' * (args[2] - 1) + '%' + chr(args[0])) % 1", [I('c'), I('x'), I('zd')],
-    ints=[[ord('y'), ord('y'), 3], [ord('k'), ord('k'), 5]])
 msg('STR_INDEX_RANGE', 'a str index out of range', 'IndexError', "''[0]",
     text=True)
 
