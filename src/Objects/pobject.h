@@ -333,6 +333,11 @@ typedef struct {
     PyObject *name;    /* interned; held by the table's key */
     uint64_t *version; /* &le_dict_version */
     long refreshes;    /* misses that changed the cache */
+#if LE_HAS_MANAGED_VALUES_POINTER
+    Py_ssize_t nentries; /* where the keys are a managed dict's class keys,
+                            which only grow: their entry count when the
+                            name was last found absent; -1: never */
+#endif
 } store_cache_t;
 
 /* the slots of the keys' hash table */

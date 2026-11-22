@@ -690,6 +690,16 @@ def dict_keys_kind(s):
     raise Unanswered('no struct _dictkeysobject in Include or Objects/dict-common.h')
 
 
+def managed_values_pointer(s):
+    """an instance of a class with a managed dict keeps a pointer to its
+    values four words before it, and its dict three words before
+    (_PyObject_ValuesPointer, _PyObject_ManagedDictPointer)"""
+    if s.tokens('Include/internal/pycore_object.h') is None:
+        return False, 'no Include/internal/pycore_object.h'
+    return _file_has(s, 'Include/internal/pycore_object.h',
+                     'return ((PyDictValues **)obj)-4;')
+
+
 def interp_recursion_limit(s):
     """the recursion limit is the interpreter's ceval.recursion_limit, not
     the global _Py_CheckRecursionLimit"""
@@ -1168,6 +1178,7 @@ OBJECTS = [
                         lambda s: _public(s, 'PyType_GetDict'))),
     ('IMMORTAL_OBJECTS', D('an object whose refcount\'s low 32 bits are negative is immortal: Py_INCREF and Py_DECREF leave it alone (_Py_IsImmortal)',
                            lambda s: _public(s, '_Py_IsImmortal'))),
+    ('MANAGED_VALUES_POINTER', managed_values_pointer),
 ]
 
 # Python/ceval.c

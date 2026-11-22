@@ -643,6 +643,25 @@ def MANAGED_DICT():
 
 
 @probe
+def MANAGED_VALUES_POINTER():
+    """an instance with an attribute and no __dict__ made yet has a values
+    pointer four words before it and no dict three words before; once
+    __dict__ is made, the values pointer is gone and the dict is there"""
+    class C(object):
+        pass
+    c = C()
+    c.a = 1
+    word = ctypes.c_void_p.from_address
+    before = word(id(c) - 32).value, word(id(c) - 24).value
+    d = c.__dict__
+    after = word(id(c) - 32).value, word(id(c) - 24).value
+    found = (C.__dictoffset__ < 0 and before[0] is not None and
+             before[1] is None and after == (None, id(d)))
+    return found, 'class C: words -4 and -3 %r, then with __dict__ %r' % (
+        before, after)
+
+
+@probe
 def VALID_VERSION_TAG_FLAG():
     """a class has the flag 1 << 19 (Py_TPFLAGS_VALID_VERSION_TAG) after a
     lookup on it, and loses it when the class changes (run)"""

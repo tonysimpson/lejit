@@ -41,6 +41,10 @@ BANNED = {
 
 # reason: single tests (module.Class.method) skipped in both runs
 SKIPPED = {
+    "sys.getrefcount counts a constant once for each compiled block that "
+    'uses it, and the code compiled while a test counts holds more':
+        'test_xml_etree.BugsTest.test_bug_xmltoolkit63 '
+        'test_xml_etree_c.BugsTest.test_bug_xmltoolkit63',
     "CPython doesn't specialise Python calls, __getitem__ and properties "
     'while a frame-evaluation hook is installed (specialize.c, '
     'SPEC_FAIL_CALL_PEP_523)':
