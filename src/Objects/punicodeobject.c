@@ -3369,6 +3369,7 @@ void
 psy_unicodeobject_init(void)
 {
     int c;
+    Py_UCS4 ch;
     PyObject *a = PyUnicode_FromOrdinal('a');
     if (a == NULL ||
         (*(unsigned char *)&((PyASCIIObject *)a)->state &
@@ -3377,7 +3378,7 @@ psy_unicodeobject_init(void)
         Py_FatalError(
             "lejit: str layout is not what punicodeobject.c expects");
     Py_DECREF(a);
-    for (c = 0; c < 128; c++) ascii_whitespace[c] = Py_UNICODE_ISSPACE(c);
+    for (ch = 0; ch < 128; ch++) ascii_whitespace[ch] = Py_UNICODE_ISSPACE(ch);
     for (c = 0; c < 256; c++)
         if ((latin1[c] = PyUnicode_FromOrdinal(c)) == NULL)
             Py_FatalError("lejit: no one-character strings");
