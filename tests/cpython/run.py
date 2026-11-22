@@ -30,6 +30,9 @@ BANNED = {
         'test_generators test_ctypes test_memoryio test_socket',
     'tracing that starts in a running frame':
         'test_sys_settrace test_pdb',
+    'sys.monitoring with a frame-evaluation hook installed '
+    '(_testinternalcapi.set_eval_frame_record fails it the same way)':
+        'test_monitoring',
     'marshal of a code object with one reference': 'test_importlib',
     'timing': 'test_email',
     "SSL tests that race on OpenSSL 3, which the CI images' older CPythons predate":
@@ -47,6 +50,15 @@ SKIPPED = {
         'test_dis.DisWithFileTests.test_loop_quicken '
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_binary_subscript_specialization_user_type',
+    'CPython counts each frame a frame-evaluation hook is given as a C call '
+    'too, so a Python recursion 90,000 deep passes the C recursion limit '
+    '(_testinternalcapi.set_eval_frame_record fails it the same way)':
+        'test_call.TestRecursion.test_super_deep',
+    'skipped when the machine converts fast enough':
+        'test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
+        'test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int '
+        'test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
+        'test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
