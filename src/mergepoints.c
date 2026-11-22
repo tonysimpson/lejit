@@ -625,6 +625,84 @@ compiled_opcode(int op)
 #if LE_HAS_OPCODE_CONTAINS_OP
         case CONTAINS_OP:
 #endif
+        /* subscripts, building and unpacking, imports, f-strings,
+           iteration and pattern matching */
+        case BINARY_SUBSCR:
+        case STORE_SUBSCR:
+        case DELETE_SUBSCR:
+        case BUILD_TUPLE:
+        case BUILD_LIST:
+        case BUILD_SET:
+        case BUILD_MAP:
+        case BUILD_CONST_KEY_MAP:
+        case BUILD_STRING:
+        case BUILD_SLICE:
+        case LIST_APPEND:
+        case SET_ADD:
+        case MAP_ADD:
+#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
+        case BUILD_TUPLE_UNPACK_WITH_CALL:
+#endif
+#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK
+        case BUILD_TUPLE_UNPACK:
+#endif
+#if LE_HAS_OPCODE_BUILD_LIST_UNPACK
+        case BUILD_LIST_UNPACK:
+#endif
+#if LE_HAS_OPCODE_LIST_TO_TUPLE
+        case LIST_TO_TUPLE:
+#endif
+#if LE_HAS_OPCODE_LIST_EXTEND
+        case LIST_EXTEND:
+#endif
+#if LE_HAS_OPCODE_SET_UPDATE
+        case SET_UPDATE:
+#endif
+#if LE_HAS_OPCODE_BUILD_SET_UNPACK
+        case BUILD_SET_UNPACK:
+#endif
+#if LE_HAS_OPCODE_BUILD_MAP_UNPACK
+        case BUILD_MAP_UNPACK:
+#endif
+#if LE_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
+        case BUILD_MAP_UNPACK_WITH_CALL:
+#endif
+#if LE_HAS_OPCODE_DICT_UPDATE
+        case DICT_UPDATE:
+#endif
+#if LE_HAS_OPCODE_DICT_MERGE
+        case DICT_MERGE:
+#endif
+        case UNPACK_SEQUENCE:
+        case UNPACK_EX:
+        case IMPORT_NAME:
+        case IMPORT_FROM:
+        case FORMAT_VALUE:
+        case PRINT_EXPR:
+        case LOAD_BUILD_CLASS:
+#if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
+        case LOAD_ASSERTION_ERROR:
+#endif
+        case GET_ITER:
+        case FOR_ITER:
+#if LE_HAS_OPCODE_GET_LEN
+        case GET_LEN:
+#endif
+#if LE_HAS_OPCODE_MATCH_CLASS
+        case MATCH_CLASS:
+#endif
+#if LE_HAS_OPCODE_MATCH_MAPPING
+        case MATCH_MAPPING:
+#endif
+#if LE_HAS_OPCODE_MATCH_SEQUENCE
+        case MATCH_SEQUENCE:
+#endif
+#if LE_HAS_OPCODE_MATCH_KEYS
+        case MATCH_KEYS:
+#endif
+#if LE_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
+        case COPY_DICT_WITHOUT_KEYS:
+#endif
         /* jumps and return */
         case JUMP_FORWARD:
         case JUMP_ABSOLUTE:
@@ -691,89 +769,12 @@ compiled_opcode(int op)
         case LOAD_NAME:
         case STORE_NAME:
         case DELETE_NAME:
+        case IMPORT_STAR:
         /* attributes */
         case LOAD_ATTR:
         case STORE_ATTR:
         case DELETE_ATTR:
-        /* the others: subscripts, building and unpacking, imports,
-           strings, iteration, pattern matching and generators */
-        case BINARY_SUBSCR:
-        case STORE_SUBSCR:
-        case DELETE_SUBSCR:
-        case BUILD_TUPLE:
-        case BUILD_LIST:
-        case BUILD_SET:
-        case BUILD_MAP:
-        case BUILD_CONST_KEY_MAP:
-        case BUILD_STRING:
-        case BUILD_SLICE:
-        case LIST_APPEND:
-        case SET_ADD:
-        case MAP_ADD:
-#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
-        case BUILD_TUPLE_UNPACK_WITH_CALL:
-#endif
-#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK
-        case BUILD_TUPLE_UNPACK:
-#endif
-#if LE_HAS_OPCODE_BUILD_LIST_UNPACK
-        case BUILD_LIST_UNPACK:
-#endif
-#if LE_HAS_OPCODE_LIST_TO_TUPLE
-        case LIST_TO_TUPLE:
-#endif
-#if LE_HAS_OPCODE_LIST_EXTEND
-        case LIST_EXTEND:
-#endif
-#if LE_HAS_OPCODE_SET_UPDATE
-        case SET_UPDATE:
-#endif
-#if LE_HAS_OPCODE_BUILD_SET_UNPACK
-        case BUILD_SET_UNPACK:
-#endif
-#if LE_HAS_OPCODE_BUILD_MAP_UNPACK
-        case BUILD_MAP_UNPACK:
-#endif
-#if LE_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
-        case BUILD_MAP_UNPACK_WITH_CALL:
-#endif
-#if LE_HAS_OPCODE_DICT_UPDATE
-        case DICT_UPDATE:
-#endif
-#if LE_HAS_OPCODE_DICT_MERGE
-        case DICT_MERGE:
-#endif
-        case UNPACK_SEQUENCE:
-        case UNPACK_EX:
-        case IMPORT_NAME:
-        case IMPORT_FROM:
-        case IMPORT_STAR:
-        case FORMAT_VALUE:
-        case PRINT_EXPR:
-        case LOAD_BUILD_CLASS:
-#if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
-        case LOAD_ASSERTION_ERROR:
-#endif
-        case GET_ITER:
-        case FOR_ITER:
-#if LE_HAS_OPCODE_GET_LEN
-        case GET_LEN:
-#endif
-#if LE_HAS_OPCODE_MATCH_CLASS
-        case MATCH_CLASS:
-#endif
-#if LE_HAS_OPCODE_MATCH_MAPPING
-        case MATCH_MAPPING:
-#endif
-#if LE_HAS_OPCODE_MATCH_SEQUENCE
-        case MATCH_SEQUENCE:
-#endif
-#if LE_HAS_OPCODE_MATCH_KEYS
-        case MATCH_KEYS:
-#endif
-#if LE_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
-        case COPY_DICT_WITHOUT_KEYS:
-#endif
+        /* generators */
         case YIELD_VALUE:
         case GEN_START:
         case GET_YIELD_FROM_ITER:

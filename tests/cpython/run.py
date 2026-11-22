@@ -44,6 +44,9 @@ SKIPPED = {
         'test_dis.DisWithFileTests.test_loop_quicken '
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_binary_subscript_specialization_user_type',
+    "code LeJIT compiles doesn't run in ceval, so ceval doesn't quicken it":
+        'test_dis.DisTests.test_super_instructions '
+        'test_dis.DisWithFileTests.test_super_instructions',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
