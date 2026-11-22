@@ -543,6 +543,30 @@ def FLOAT_ASDOUBLE_INDEX():
 
 
 @probe
+def LASTI_PAST_PREFIXES():
+    """a traceback's tb_lasti for an instruction with an EXTENDED_ARG prefix
+    (a local numbered 300, unbound) is the instruction's own unit, not the
+    prefix"""
+    src = ('def f():\n' + ''.join('    v%d = 0\n' % i for i in range(301))
+           + '    del v300\n    return v300\n')
+    g = {}
+    exec(src, g)
+    try:
+        g['f']()
+    except NameError as e:
+        lasti = e.__traceback__.tb_next.tb_lasti
+    else:
+        raise Unanswered('reading an unbound local raised nothing')
+    code = g['f'].__code__.co_code
+    prefix = opcode.opmap['EXTENDED_ARG']
+    if code[lasti] == prefix:
+        return False, 'tb_lasti %d: the EXTENDED_ARG prefix' % lasti
+    if lasti >= 2 and code[lasti - 2] == prefix:
+        return True, 'tb_lasti %d: the instruction after its prefix' % lasti
+    raise Unanswered('tb_lasti %d is neither a prefix nor after one' % lasti)
+
+
+@probe
 def FRAME_BUILTINS_OF_FUNCTION():
     """a function's frame keeps the builtins its globals had when the
     function was made, after its globals' __builtins__ is replaced (run)"""
