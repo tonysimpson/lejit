@@ -842,15 +842,12 @@ compiled_opcode(int op)
 #if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
         case JUMP_IF_NOT_EXC_MATCH:
 #endif
-        case BEFORE_ASYNC_WITH:
         /* generators */
         case YIELD_VALUE:
         case GEN_START:
-        case GET_YIELD_FROM_ITER:
+        /* in a plain function too: an async generator expression's
+           outermost iterable */
         case GET_AITER:
-#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
-        case GET_ANEXT:
-#endif
             return 1;
     }
 #endif

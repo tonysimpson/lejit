@@ -137,13 +137,6 @@ def OBJECTDICT_SETITEM_LINKABLE():
 
 
 @probe
-def CORO_GET_AWAITABLE_ITER_LINKABLE():
-    """libpython exports _PyCoro_GetAwaitableIter, so an extension can link
-    to it (ctypes)"""
-    return _exported('_PyCoro_GetAwaitableIter')
-
-
-@probe
 def CODE_GET_CODE():
     """libpython exports PyCode_GetCode (ctypes)"""
     return _exported('PyCode_GetCode')
@@ -402,37 +395,6 @@ def DELETE_GLOBAL_KEYERROR_ONLY():
     if isinstance(e, NameError):
         return False, 'DELETE_GLOBAL run: NameError'
     raise Unanswered('DELETE_GLOBAL run: %r' % e)
-
-
-@probe
-def AENTER_LOOKUP_FIRST():
-    """`async with` an object whose __aenter__ and __aexit__ are
-    descriptors gets __aenter__ first (run)"""
-    order = []
-
-    class Special(object):
-        def __init__(self, name):
-            self.name = name
-
-        def __get__(self, obj, cls=None):
-            order.append(self.name)
-            return lambda *a: None
-
-    class X(object):
-        __aenter__ = Special('__aenter__')
-        __aexit__ = Special('__aexit__')
-
-    async def c():
-        async with X():
-            pass
-    co = c()
-    try:
-        _error(co.send, None)
-    finally:
-        co.close()
-    if sorted(order[:2]) != ['__aenter__', '__aexit__']:
-        raise Unanswered('async with run: looked up %r' % order)
-    return order[0] == '__aenter__', 'async with run: %s first' % order[0]
 
 
 @probe

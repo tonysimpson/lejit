@@ -767,19 +767,6 @@ def tuplecontains_item_first(s):
                      'PyObject_RichCompareBool(PyTuple_GET_ITEM(a, i), el')
 
 
-def aenter_lookup_first(s):
-    """BEFORE_ASYNC_WITH looks __aenter__ up before __aexit__"""
-    case = _case_tokens(s, 'BEFORE_ASYNC_WITH')
-    # the names by _Py_IDENTIFIER (PyId___aenter__), or from 3.11 _Py_ID
-    for enter, exit in (['PyId___aenter__'], ['PyId___aexit__']), \
-            (_c('_Py_ID(__aenter__)'), _c('_Py_ID(__aexit__)')):
-        at = [_run_at(case or [], want) for want in (enter, exit)]
-        if None not in at:
-            return at[0] < at[1], 'Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)'
-    raise Unanswered('Python/ceval.c: no TARGET(BEFORE_ASYNC_WITH) naming'
-                     ' __aenter__ and __aexit__')
-
-
 def valid_version_tag_flag(s):
     """a type's version tag is valid while it has
     Py_TPFLAGS_VALID_VERSION_TAG, which a change clears; without it, a
@@ -1199,8 +1186,6 @@ OBJECTS = [
     ('POW_KEYWORDS', D('pow() takes keyword arguments base, exp and mod',
                        lambda s: _file_has(s, 'Python/clinic/bltinmodule.c.h',
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),
-    ('CORO_GET_AWAITABLE_ITER_LINKABLE', D('_PyCoro_GetAwaitableIter can be called from an extension',
-                                           lambda s: _linkable(s, '_PyCoro_GetAwaitableIter'))),
     ('DICT_KEYS_KIND', dict_keys_kind),
     ('LONG_VALUE', long_value),
     ('TYPE_GET_DICT', D('PyType_GetDict gives a type\'s dict, which a static builtin type keeps in the interpreter (its tp_dict is NULL)',
@@ -1225,7 +1210,6 @@ CEVAL = [
     ('KWARGS_MERGE_EX', D('CALL_FUNCTION_EX merges **kwargs with _PyDict_MergeEx, and format_kwargs_error reports it',
                           lambda s: _case_has(s, 'CALL_FUNCTION_EX', '_PyDict_MergeEx'))),
     ('DELETE_GLOBAL_KEYERROR_ONLY', delete_global_keyerror_only),
-    ('AENTER_LOOKUP_FIRST', aenter_lookup_first),
 ]
 
 # the opcodes that some CPython lacks
