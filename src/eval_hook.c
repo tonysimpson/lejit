@@ -32,6 +32,7 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
        sys._getframe, frames made by calls from here (their f_back) and
        pvisitframes() see it */
     le_frame_push(tstate, f);
+    le_frame_start(f);
     /* also as ceval: frame.clear() (traceback.clear_frames, unittest's
        assertRaises) must refuse to clear it, since the compiled code borrows
        the cells and arguments in f_localsplus */
