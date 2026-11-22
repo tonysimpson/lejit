@@ -1762,18 +1762,37 @@ warn_init(void)
     Py_DECREF(mod);
 }
 
-/* gc.get_referents visits a frame's f_localsplus in C: a frame given to
-   it gets its locals now first */
+/* gc.get_referents visits a frame's f_localsplus in C, where CPython
+   visits them for the frame (a running one's too, if its frame object is
+   its frame): a frame given to it gets its locals now first, and is
+   marked running for the call if it stands for a call compiled code runs
+   (stands_for_running) */
 static PyObject *original_get_referents = NULL;
 
 static PyObject *
 le_get_referents(PyObject *self, PyObject *args)
 {
-    Py_ssize_t i;
-    for (i = 0; i < PyTuple_GET_SIZE(args); i++)
-        if (PyFrame_Check(PyTuple_GET_ITEM(args, i)))
-            frame_sync_locals((PyFrameObject *)PyTuple_GET_ITEM(args, i));
-    return PyObject_Call(original_get_referents, args, NULL);
+    Py_ssize_t i, n = PyTuple_GET_SIZE(args);
+    PyObject *result;
+    int *old = PyMem_Malloc(n * sizeof(int) + 1);
+    if (old == NULL)
+        return PyErr_NoMemory();
+    for (i = 0; i < n; i++) {
+        PyFrameObject *f = (PyFrameObject *)PyTuple_GET_ITEM(args, i);
+        old[i] = INT_MIN; /* not marked */
+        if (!PyFrame_Check(f))
+            continue;
+        frame_sync_locals(f);
+        if (stands_for_running(f))
+            old[i] = le_pyframe_mark_running(f);
+    }
+    result = PyObject_Call(original_get_referents, args, NULL);
+    for (i = 0; i < n; i++)
+        if (old[i] != INT_MIN)
+            le_pyframe_unmark_running(
+                (PyFrameObject *)PyTuple_GET_ITEM(args, i), old[i]);
+    PyMem_Free(old);
+    return result;
 }
 
 static PyMethodDef le_get_referents_def = {
