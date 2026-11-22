@@ -100,8 +100,7 @@ le_code_to_run(PyCodeObject *co, PyObject *globals, PyObject *locals,
     if (le_tracing_now(PyThreadState_GET()))
         return NULL;
     /* only function frames, whose f_locals is NULL at entry. Module code,
-       class bodies and exec or eval with a locals mapping have one, and the
-       compiler's name opcodes (IMPORT_STAR, DELETE_NAME) act on the globals */
+       class bodies and exec or eval with a locals mapping have one */
     if (locals == NULL) {
         PyObject *mergepoints;
         le_code_extra_t *x = le_code_extra(co);

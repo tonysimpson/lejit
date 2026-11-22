@@ -824,11 +824,6 @@ compiled_opcode(int op)
         case JUMP_IF_NOT_EXC_MATCH:
 #endif
         case BEFORE_ASYNC_WITH:
-        /* names */
-        case LOAD_NAME:
-        case STORE_NAME:
-        case DELETE_NAME:
-        case IMPORT_STAR:
         /* generators */
         case YIELD_VALUE:
         case GEN_START:

@@ -342,15 +342,61 @@ class _MissingNamespace(dict):
         raise KeyError(key)
 
 
-# globals that are a dict subclass whose __missing__ gives a name
-missing_globals = types.FunctionType(compile(
-    'def missing_globals(n):\n'
-    '    t = 0\n'
-    '    i = 0\n'
-    '    while i < n:\n'
-    '        t = t + FROM_MISSING\n'
-    '        i = i + 1\n'
-    '    return t\n', 'src', 'exec').co_consts[0], _MissingNamespace())
+class _GetitemNamespace(dict):
+    def __getitem__(self, key):
+        if key == 'FROM_GETITEM':
+            return 5
+        if key == 'RAISES':
+            raise ZeroDivisionError(key)
+        return dict.__getitem__(self, key)
+
+
+def _with_globals(source, namespace):
+    return types.FunctionType(
+        compile(source, 'src', 'exec').co_consts[0], namespace)
+
+
+_LOOP = ('def {0}(n):\n'
+         '    t = 0\n'
+         '    i = 0\n'
+         '    while i < n:\n'
+         '        t = t + {1}\n'
+         '        i = i + 1\n'
+         '    return t\n')
+
+# globals that are a dict subclass: CPython looks a name up with their
+# __getitem__, which may call __missing__, then in the builtins likewise
+missing_globals = _with_globals(
+    _LOOP.format('missing_globals', 'FROM_MISSING'), _MissingNamespace())
+getitem_globals = _with_globals(
+    _LOOP.format('getitem_globals', 'FROM_GETITEM'), _GetitemNamespace())
+# __getitem__ raises KeyError: the builtins give the name
+builtin_through_getitem = _with_globals(
+    _LOOP.format('builtin_through_getitem', '(len is not None)'),
+    _GetitemNamespace())
+# builtins that are a dict subclass
+builtins_subclass = _with_globals(
+    _LOOP.format('builtins_subclass', 'FROM_MISSING'),
+    {'__builtins__': _MissingNamespace()})
+# NameError where neither has the name; __getitem__'s own error as is
+unknown_in_both = _with_globals(
+    'def unknown_in_both():\n    return NOWHERE\n', _GetitemNamespace())
+getitem_raises = _with_globals(
+    'def getitem_raises():\n    return RAISES\n', _GetitemNamespace())
+
+# STORE_NAME and LOAD_NAME in a frame with no f_locals: CPython raises
+# SystemError; such code isn't compiled
+_names = compile('x = 1\ny = x\n', 'src', 'exec')
+if hasattr(_names, 'replace'):
+    _names = _names.replace(co_flags=_names.co_flags | 0x3)
+else:
+    _names = types.CodeType(
+        _names.co_argcount, _names.co_kwonlyargcount, _names.co_nlocals,
+        _names.co_stacksize, _names.co_flags | 0x3, _names.co_code,
+        _names.co_consts, _names.co_names, _names.co_varnames,
+        _names.co_filename, _names.co_name, _names.co_firstlineno,
+        _names.co_lnotab, _names.co_freevars, _names.co_cellvars)
+name_opcodes = types.FunctionType(_names, {})
 
 
 CASES = [
@@ -373,7 +419,11 @@ CASES = [
     ('replay_after_rebind', [()], {}),
     ('store_then_respawn', [()], {}),
     ('missing_global_name', [(3,), (4,)], {}),
-    ('missing_globals', [(3,), (4,)],
-     {'xfail': 'compiled code reads globals that are a dict subclass as a '
-               'dict, not through __missing__'}),
+    ('missing_globals', [(3,), (4,)], {}),
+    ('getitem_globals', [(3,), (4,)], {}),
+    ('builtin_through_getitem', [(3,), (4,)], {}),
+    ('builtins_subclass', [(3,), (4,)], {}),
+    ('unknown_in_both', [()], {}),
+    ('getitem_raises', [()], {}),
+    ('name_opcodes', [()], {'interpreted': 'STORE_NAME and LOAD_NAME'}),
 ]
