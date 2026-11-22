@@ -294,6 +294,13 @@ def POP_EXCEPT_UNWINDS():
 
 
 @probe
+def CODE_QUALNAME():
+    """code objects have co_qualname"""
+    return (hasattr((lambda: None).__code__, 'co_qualname'),
+            'code.co_qualname')
+
+
+@probe
 def EXCEPTION_TABLE():
     """code objects have co_exceptiontable"""
     return (hasattr((lambda: None).__code__, 'co_exceptiontable'),

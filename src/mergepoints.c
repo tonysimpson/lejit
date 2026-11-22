@@ -400,7 +400,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
            if it emitted a call that may block, except before an
            instruction ceval skips: then always, after that one */
         if ((opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
-             opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD) &&
+             opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD ||
+             opcode == CALL) &&
             next_unit < end_unit && BREAKER_SKIPS(le_op(c, in.next)))
             BREAKER_CHECK(next_unit);
         switch (opcode) {
@@ -643,17 +644,21 @@ compiled_opcode(int op)
         case JUMP_IF_FALSE_OR_POP:
         case JUMP_IF_TRUE_OR_POP:
         case RETURN_VALUE:
-            return 1;
-    }
-#if !LE_HAS_EXCEPTION_TABLE
-    switch (op) {
-        /* calls, cells and functions */
+        /* calls and functions */
         case CALL_FUNCTION:
         case CALL_FUNCTION_KW:
         case CALL_FUNCTION_EX:
         case CALL_METHOD:
         case LOAD_METHOD:
+        case PRECALL:
+        case KW_NAMES:
+        case CALL:
         case MAKE_FUNCTION:
+            return 1;
+    }
+#if !LE_HAS_EXCEPTION_TABLE
+    switch (op) {
+        /* cells */
         case LOAD_CLOSURE:
         case LOAD_DEREF:
         case STORE_DEREF:
@@ -791,7 +796,7 @@ static PyObject *
 _build_merge_points(PyCodeObject *co, int module)
 {
     le_code_t c;
-    int pos, opcode, oparg;
+    int pos, opcode = -1, oparg;
     co_report_t *report;
     int reads_class, bad = 0;
 
@@ -817,10 +822,14 @@ _build_merge_points(PyCodeObject *co, int module)
     c = le_code(co);
     for (pos = 0; pos < c.size;) {
         le_instr_t in = le_instr(c, pos);
+        int prev = opcode;
         opcode = in.op;
         oparg = in.arg;
         pos = in.next;
         if (!compiled_opcode(opcode))
+            goto not_ok;
+        /* pycompiler.c:call_kwnames finds a CALL's KW_NAMES before this */
+        if (opcode == CALL && prev != PRECALL)
             goto not_ok;
         if (opcode == LOAD_GLOBAL && loads_frame_locals_builtin(co, oparg))
             goto not_ok;

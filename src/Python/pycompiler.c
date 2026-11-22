@@ -1936,12 +1936,45 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
     return true;
 }
 
-/* CALL_FUNCTION (oparg positional arguments) and CALL_FUNCTION_KW (oparg
-   arguments, the last ones named by the constant tuple on top), as 3.7's
-   call_function(). The stack, top down: [names tuple], arguments, callable.
-   *stack_to_pop counts everything including the callable. Keyword
-   arguments go in a fresh dict: duplicates are impossible here (the
-   bytecode compiler rejects them) and the callee checks the rest. */
+/* CALL_FUNCTION (oparg positional arguments), CALL_FUNCTION_KW (oparg
+   arguments, the last ones named by the constant tuple on top) and CALL
+   (oparg arguments, the last ones named by 'kwnames', its KW_NAMES
+   constant, or none), as 3.7's call_function(). The stack, top down:
+   [names tuple], arguments, callable. *stack_to_pop counts everything
+   including the callable. Keyword arguments go in a fresh dict:
+   duplicates are impossible here (the bytecode compiler rejects them) and
+   the callee checks the rest. */
+#if LE_HAS_OPCODE_CALL
+/* the keyword names of the CALL at 'pos' (its first unit): the constant of
+   the KW_NAMES right before its PRECALL, or NULL for none. False with
+   SystemError if no PRECALL comes right before (mergepoints.c refuses such
+   code). Caches are CACHE units, so a unit read here is an instruction's
+   own only if it is the opcode looked for. */
+static bool
+call_kwnames(PsycoObject *po, PyCodeObject *co, int pos, PyObject **kwnames)
+{
+    le_code_t c = le_code(co);
+    int p = pos - LE_CACHE_BYTES(PRECALL) - LE_UNIT, arg, shift;
+    *kwnames = NULL;
+    if (p < 0 || le_op(c, p) != PRECALL) {
+        PycException_SetString(po, PyExc_SystemError, "CALL without PRECALL");
+        return false;
+    }
+    while (p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG) p -= LE_UNIT;
+    p -= LE_UNIT;
+    if (p < 0 || le_op(c, p) != KW_NAMES)
+        return true;
+    arg = le_arg(c, p);
+    for (shift = 8; p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG;
+         shift += 8) {
+        p -= LE_UNIT;
+        arg |= le_arg(c, p) << shift;
+    }
+    *kwnames = PyTuple_GET_ITEM(co->co_consts, arg);
+    return true;
+}
+#endif
+
 static void
 end_call_site(PsycoObject *po)
 {
@@ -1949,11 +1982,10 @@ end_call_site(PsycoObject *po)
 }
 
 static vinfo_t *
-psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg, vinfo_t **stack_top,
-                   int *stack_to_pop)
+psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg, PyObject *kwnames,
+                   vinfo_t **stack_top, int *stack_to_pop)
 {
     int na = oparg, nk = 0, i;
-    PyObject *kwnames = NULL;
     vinfo_t **args;
     vinfo_t *vargs = NULL;
     vinfo_t *wdict = NULL;
@@ -1969,9 +2001,11 @@ psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg, vinfo_t **stack_top,
                                    "bad CALL_FUNCTION_KW keyword names");
             return NULL;
         }
+        stack_top--;
+    }
+    if (kwnames != NULL) {
         nk = PyTuple_GET_SIZE(kwnames);
         na = oparg - nk;
-        stack_top--;
     }
     args = stack_top - oparg;
     *stack_to_pop = oparg + 1 + (opcode == CALL_FUNCTION_KW);
@@ -4247,7 +4281,8 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
     vinfo_t *func = stack_top[-2 - (oparg & 1)];
     vinfo_t *zero = NULL, *result;
     PyTypeObject *t;
-    *stack_to_pop = 2 + (oparg & 1);
+    /* and the NULL under the callable, where PUSH_NULL puts one there */
+    *stack_to_pop = 2 + (oparg & 1) + LE_HAS_OPCODE_PUSH_NULL;
 
     t = Psyco_NeedType(po, callargs);
     if (t == NULL)
@@ -8945,14 +8980,28 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     POP_DECREF();
                     goto fine;
 
-                case CALL_METHOD: {
-                    /* always the (NULL, attribute) form: LOAD_METHOD looks the
-                       attribute up and pushes NULL under it */
+                /* the bound method PRECALL would split is called as it
+                   is; KW_NAMES's names are read by its CALL */
+                case PRECALL:
+                case KW_NAMES:
+                    goto fine;
+
+                case CALL_METHOD:
+                case CALL: {
+                    /* always the (NULL, callable) form: LOAD_METHOD looks the
+                       attribute up and pushes NULL under it, as PUSH_NULL
+                       does before other callables */
                     int i, stack_to_pop;
+                    PyObject *kwnames = NULL;
                     extra_assert(psyco_knowntobe(NTOP(oparg + 2), 0));
+#if LE_HAS_OPCODE_CALL
+                    if (opcode == CALL &&
+                        !call_kwnames(po, co, po->pr.next_instr, &kwnames))
+                        break;
+#endif
                     po->pr.call_site =
-                        next_instr - (int)sizeof(_Py_CODEUNIT) + 1;
-                    x = psyco_ext_do_calls(po, CALL_FUNCTION, oparg,
+                        next_instr - LE_CACHE_BYTES(opcode) - LE_UNIT + 1;
+                    x = psyco_ext_do_calls(po, CALL_FUNCTION, oparg, kwnames,
                                            STACK_POINTER(), &stack_to_pop);
                     end_call_site(po);
                     if (x == NULL)
@@ -8971,12 +9020,12 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 case CALL_FUNCTION_EX: {
                     int i, stack_to_pop;
                     po->pr.call_site =
-                        next_instr - (int)sizeof(_Py_CODEUNIT) + 1;
+                        next_instr - LE_CACHE_BYTES(opcode) - LE_UNIT + 1;
                     if (opcode == CALL_FUNCTION_EX)
                         x = psyco_ext_do_call_ex(po, oparg, STACK_POINTER(),
                                                  &stack_to_pop);
                     else
-                        x = psyco_ext_do_calls(po, opcode, oparg,
+                        x = psyco_ext_do_calls(po, opcode, oparg, NULL,
                                                STACK_POINTER(), &stack_to_pop);
                     end_call_site(po);
                     if (x == NULL)
@@ -8997,7 +9046,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                        new function holds */
                     const int fields[4] = {iFUNC_CLOSURE, iFUNC_ANNOTATIONS,
                                            iFUNC_KWDEFAULTS, iFUNC_DEFAULTS};
-                    int i, n = 2;
+                    /* the code object, and its qualified name where the code
+                       object hasn't one */
+                    const int named = !LE_HAS_CODE_QUALNAME;
+                    int i, n = 1 + named;
                     for (i = 0; i < 4; i++)
                         if (oparg & (0x08 >> i)) {
                             n++;
@@ -9006,9 +9058,18 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         }
                     if (i < 4)
                         break;
-                    x = PsycoFunction_NewWithQualName(po, NTOP(2), LOC_GLOBALS,
-                                                      NTOP(1));
-                    POP_DECREF();
+                    if (named) {
+                        x = PsycoFunction_NewWithQualName(
+                            po, NTOP(2), LOC_GLOBALS, NTOP(1));
+                        POP_DECREF();
+                    }
+                    else {
+                        /* NULL: PyFunction_NewWithQualName takes the code's */
+                        vinfo_t *none = psyco_vi_Zero();
+                        x = PsycoFunction_NewWithQualName(po, NTOP(1),
+                                                          LOC_GLOBALS, none);
+                        vinfo_decref(none, po);
+                    }
                     POP_DECREF();
                     for (i = 0; i < 4; i++)
                         if (oparg & (0x08 >> i)) {
@@ -9047,7 +9108,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             extra_assert(!PycException_Occurred(po));
             if ((po->pr.python_call &&
                  (opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
-                  opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD)) ||
+                  opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD ||
+                  opcode == CALL)) ||
                 po->pr.resume_pending) {
                 po->pr.resume_pending = 0;
                 if (!resume_if_tracing(po, next_instr, &unwound))
