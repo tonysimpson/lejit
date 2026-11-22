@@ -38,9 +38,6 @@ BANNED = {
 
 # reason: single tests (module.Class.method) skipped in both runs
 SKIPPED = {
-    'a deadline on the whole run, which slow machines miss':
-        'test_signal.StressTest.test_stress_delivery_dependent '
-        'test_signal.StressTest.test_stress_delivery_simultaneous',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
