@@ -38,6 +38,54 @@
         if (_save_ccreg)                  \
             POP_CC();                     \
     } while (0)
+#if LE_HAS_IMMORTAL_OBJECTS
+_Static_assert(offsetof(PyObject, ob_refcnt) == 0,
+               "LeJIT: the refcount is at the object's address");
+/* as Py_INCREF: the count's low 32 bits go up by one, unless they are all
+   ones (an immortal), which the carry puts back */
+#define INC_OB_REFCNT_internal(rg) \
+    do {                           \
+        ADD_DA_I8(rg, 1);          \
+        SBB_DA_I8(rg, 0);          \
+    } while (0)
+
+/* Py_INCREF() for a compile-time-known 'pyobj': nothing for an immortal,
+   which stays one */
+#define INC_KNOWN_OB_REFCNT(pyobj)                         \
+    do {                                                   \
+        if (!_Py_IsImmortal(pyobj)) {                      \
+            NEED_CC();                                     \
+            MOV_R_I(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
+            INC_OB_REFCNT_internal(REG_TRANSIENT_1);       \
+        }                                                  \
+    } while (0)
+
+/* Py_DECREF() for a compile-time 'pyobj' assuming counter cannot reach zero */
+#define DEC_KNOWN_OB_REFCNT_NZ(pyobj)                      \
+    do {                                                   \
+        if (!_Py_IsImmortal(pyobj)) {                      \
+            NEED_CC();                                     \
+            MOV_R_I(REG_TRANSIENT_1, &(pyobj)->ob_refcnt); \
+            DEC_OB_REFCNT_NZ_internal(REG_TRANSIENT_1);    \
+        }                                                  \
+    } while (0)
+
+/* like DEC_OB_REFCNT() but assume the reference counter cannot reach zero */
+#define DEC_OB_REFCNT_NZ(rg)           \
+    do {                               \
+        NEED_CC_REG(rg);               \
+        DEC_OB_REFCNT_NZ_internal(rg); \
+    } while (0)
+/* as Py_DECREF: an immortal (its count's low 32 bits negative) is left
+   alone */
+#define DEC_OB_REFCNT_NZ_internal(rg)   \
+    do {                                \
+        CMP_I8_DA(0, rg);               \
+        BEGIN_SHORT_COND_JUMP(9, CC_S); \
+        SUB_A_I8(rg, 1);                \
+        END_SHORT_JUMP(9);              \
+    } while (0)
+#else
 #define INC_OB_REFCNT_internal(rg)                             \
     do {                                                       \
         if (CPY_OFFSET(PyObject, ob_refcnt) == 0) {            \
@@ -70,6 +118,8 @@
         NEED_CC_REG(rg);     \
         SUB_A_I8(rg, 1);     \
     } while (0)
+
+#endif
 
 /* internal utilities for the macros below */
 EXTERNFN code_t *
@@ -286,6 +336,8 @@ typedef enum {
     STORE_GC_DICT, /* it is known and GC: miss if the dict is untracked */
     STORE_GC_FULL, /* unknown: miss if the dict is untracked and it is GC */
 } store_gc_t;
+/* the inline store's jumps to its end: a third skips an immortal's decref */
+#define STORE_DONE_JUMPS (2 + LE_HAS_IMMORTAL_OBJECTS)
 typedef struct {
     vinfo_t *obj, *value; /* run-time or compile-time */
     long dictoffset;      /* the type's tp_dictoffset, > 0 */
@@ -293,7 +345,7 @@ typedef struct {
     store_gc_t gc;
     bool fill; /* inline the store into the next empty slot */
     code_t *miss_glue;
-    code_t *done[2]; /* jumps for psyco_inline_store_end to point */
+    code_t *done[STORE_DONE_JUMPS]; /* for psyco_inline_store_end to point */
 } inline_store_t;
 EXTERNFN void
 psyco_inline_store_begin(PsycoObject *po, inline_store_t *s);

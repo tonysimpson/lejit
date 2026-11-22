@@ -842,6 +842,14 @@ typedef enum {
 #define SUB_A_I8(rm, i)                                  \
     INDIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x28, 0, rm); \
     WRITE_8BIT(i)
+/* @asm: add dword ptr [{rm}], {i:i8} */
+#define ADD_DA_I8(rm, i)                               \
+    INDIRECT_ENCODING(false, 1, 0x83, 0, 0, 0, 0, rm); \
+    WRITE_8BIT(i)
+/* @asm: sbb dword ptr [{rm}], {i:i8} */
+#define SBB_DA_I8(rm, i)                                  \
+    INDIRECT_ENCODING(false, 1, 0x83, 0, 0, 0x18, 0, rm); \
+    WRITE_8BIT(i)
 /* inc and dec leave CF alone, so only ZF/SF/OF tests may follow */
 /* @asm: inc qword ptr [{rm}] */
 #define INC_A(rm) INDIRECT_ENCODING(true, 1, 0xFF, 0, 0, 0, 0, rm)

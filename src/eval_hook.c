@@ -11,6 +11,12 @@
 extern int
 le_eval_breaker_at_entry(PyCodeObject *co); /* pyruntime.c */
 
+#if LE_HAS_EVAL_FRAME_POPS
+/* the exception le_frame_finish ends a frame with when it has a result
+   (le_entry_install makes it) */
+static PyObject *frame_done;
+#endif
+
 static PyObject *
 LeCode_Run(PyObject *codebuf, le_frame_t *f)
 {
@@ -26,7 +32,7 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
 
     /* ceval counts the depth on entering every frame */
     if (le_recursion_enter())
-        return NULL;
+        return le_frame_finish(tstate, f, NULL, frame_done);
     psyco_frame_start_register(&fr, f, &finfo);
     /* as ceval: the frame is the current one while its code runs, so that
        sys._getframe, frames made by calls from here (their f_back) and
@@ -49,7 +55,7 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     le_frame_set_current(tstate, le_frame_back(f));
     le_recursion_leave();
     psyco_frame_start_unregister(&fr);
-    return result;
+    return le_frame_finish(tstate, f, result, frame_done);
 }
 
 #define DEFAULT_RECURSION 10
@@ -218,15 +224,21 @@ le_eval_frame_default(le_frame_t *f)
 /* lejit.start: CPython hands every frame to LeJIT from now on. The evaluator
    that was there is kept, since LeJIT passes it the frames it doesn't
    compile, and it stays kept after lejit.stop for any call already on its
-   way through LeJIT's */
-DEFINEFN void
+   way through LeJIT's. -1 with an exception set if it can't. */
+DEFINEFN int
 le_entry_install(void)
 {
     le_eval_frame_fn now = get_eval_frame();
+#if LE_HAS_EVAL_FRAME_POPS
+    if (frame_done == NULL &&
+        (frame_done = PyObject_CallNoArgs(PyExc_Exception)) == NULL)
+        return -1;
+#endif
     if (now != LeEval_EvalFrame) {
         original_eval_frame = now;
         set_eval_frame(LeEval_EvalFrame);
     }
+    return 0;
 }
 
 /* lejit.stop: new frames go to the evaluator that was there before; frames

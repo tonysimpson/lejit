@@ -1,17 +1,19 @@
 #ifndef LE_MECHANISMS_TRACING_H
 #define LE_MECHANISMS_TRACING_H
 #if LE_HAS_MONITORING
-/* Tracing is on in a thread while it has a trace or profile function
-   (c_tracefunc, c_profilefunc): sys.settrace, sys.setprofile and their C
-   forms set them, and sys.monitoring calls them; there is no flag for
-   both. Other sys.monitoring tools are not seen. le_tracing_now tests it
-   at run time (the eval hook); le_tracing_test emits a call of the same
-   test in compiled code, on the thread state 'vts'
-   (psyfunc.c:tracing_on). Included after vcompiler.h and codegen.h. */
+/* Tracing is on while sys.monitoring has any event on in the interpreter
+   (pyruntime.c:le_monitoring_on): sys.settrace and sys.setprofile are
+   tools of its, so other tools are tracing too, and compiled code, which
+   gives them no events, does not run. le_tracing_now tests it at run time
+   (the eval hook); le_tracing_test emits a call of the same test in
+   compiled code, on the thread state 'vts' (psyfunc.c:tracing_on).
+   Included after vcompiler.h and codegen.h. */
+extern int
+le_monitoring_on(PyThreadState *ts);
 static inline int
 le_tracing_now(PyThreadState *ts)
 {
-    return ts->c_tracefunc != NULL || ts->c_profilefunc != NULL;
+    return le_monitoring_on(ts);
 }
 
 static inline int

@@ -11,8 +11,17 @@
 #define PsycoLong_Check(tp) PyType_TypeCheck(tp, &PyLong_Type)
 
 /* ob_size is the signed number of digits; ob_digit[0] is only there when
-   ob_size != 0 (_PyLong_New(0) allocates no digit) */
+   ob_size != 0 (_PyLong_New(0) allocates no digit). Where ints have an
+   lv_tag in its place, there is always a digit. */
 #define LONG_ob_size FIX_signed_size
+#if LE_HAS_LONG_VALUE
+/* where ob_size was: (the digit count << 3) | the sign flags (0 positive,
+   1 zero, 2 negative) */
+#define LONG_lv_tag FIX_signed_size
+_Static_assert(offsetof(PyLongObject, long_value.lv_tag) ==
+                   offsetof(PyVarObject, ob_size),
+               "LeJIT: lv_tag is where ob_size is");
+#endif
 #define LONG_ob_digit0 CPY_FIELD(PyLongObject, ob_digit, FIX_signed_size)
 #define iLONG_OB_DIGIT0 FIELD_INDEX(LONG_ob_digit0)
 /* virtual ints only: the value as a machine word; not a C field, so it is
@@ -50,10 +59,15 @@ PsycoLong_FROM_WORD(vinfo_t *vlong)
    in *pval: 1; 0 if it isn't one digit; -1 on error or promotion */
 EXTERNFN int
 PsycoLong_MediumValue(PsycoObject *po, vinfo_t *v, vinfo_t **pval);
-/* a borrowed vinfo with the sign of the int: a virtual int's word, a
-   real int's ob_size; NULL on error */
+/* a new reference to a word with the sign of the int: a virtual int's
+   word, a real int's ob_size (or, where ints have an lv_tag, 1, 0 or -1);
+   NULL on error */
 EXTERNFN vinfo_t *
 PsycoLong_Sign(PsycoObject *po, vinfo_t *v);
+/* the run-time condition that a real int has at most n digits; CC_ERROR
+   on error */
+EXTERNFN condition_code_t
+PsycoLong_SizeWithin(PsycoObject *po, vinfo_t *v, long n);
 EXTERNFN vinfo_t *
 PsycoNumber_AsSsize_t(PsycoObject *po, vinfo_t *v, PyObject *err);
 /* PyLong_AsDouble's meta: a new reference to the double, NULL on error */

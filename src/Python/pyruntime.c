@@ -46,6 +46,20 @@ le_tstate_current_address(void)
     return &_PyRuntime.gilstate.tstate_current;
 }
 #endif
+#if LE_HAS_MONITORING
+/* sys.monitoring has an event on, for any tool, in the interpreter: its
+   global monitors (sys.settrace and sys.setprofile are tools too). Events
+   set on one code object (set_local_events) are not seen. */
+int
+le_monitoring_on(PyThreadState *ts)
+{
+    const uint8_t *t = ts->interp->monitors.tools;
+    size_t i;
+    uint8_t any = 0;
+    for (i = 0; i < sizeof(ts->interp->monitors.tools); i++) any |= t[i];
+    return any != 0;
+}
+#endif
 /* le_eval_breaker_address, le_eval_breaker_handler,
    le_eval_breaker_at_entry */
 #if LE_HAS_EVAL_BREAKER_GC
