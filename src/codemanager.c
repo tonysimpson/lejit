@@ -1013,22 +1013,35 @@ same_allocator(PyMemAllocatorEx *a, PyMemAllocatorEx *b)
            a->free == b->free;
 }
 
-/* _tracemalloc.is_tracing, imported before the eval hook is in place */
+/* _tracemalloc.is_tracing, once _tracemalloc is imported */
 static PyObject *is_tracing_fn = NULL;
 
-/* 1 if tracemalloc traces, 0 if not, -1 if that can't be told */
+/* 1 if tracemalloc traces, 0 if not, -1 if that can't be told. It can
+   trace with its module not imported only if started as Python started
+   (codemanager_init imports it then). */
 static int
 tracemalloc_tracing(void)
 {
     PyObject *t, *v, *tb, *r;
     int result = -1;
-    if (is_tracing_fn == NULL)
-        return -1;
     PyErr_Fetch(&t, &v, &tb);
-    r = PyObject_CallObject(is_tracing_fn, NULL);
-    if (r != NULL) {
-        result = PyObject_IsTrue(r);
-        Py_DECREF(r);
+    if (is_tracing_fn == NULL) {
+        PyObject *name = PyUnicode_FromString("_tracemalloc");
+        PyObject *m = name == NULL ? NULL : PyImport_GetModule(name);
+        Py_XDECREF(name);
+        if (m != NULL) {
+            is_tracing_fn = PyObject_GetAttrString(m, "is_tracing");
+            Py_DECREF(m);
+        }
+        else if (!PyErr_Occurred())
+            result = 0;
+    }
+    if (is_tracing_fn != NULL) {
+        r = PyObject_CallObject(is_tracing_fn, NULL);
+        if (r != NULL) {
+            result = PyObject_IsTrue(r);
+            Py_DECREF(r);
+        }
     }
     PyErr_Clear();
     PyErr_Restore(t, v, tb);
@@ -1039,16 +1052,15 @@ DEFINEFN void
 le_untraced_begin(void)
 {
     PyMemAllocatorEx now[3];
-    bool moved = !have_under;
     int i, tracing;
     if (untraced)
         return;
-    for (i = 0; i < 3; i++) {
-        PyMem_GetAllocator(untraced_domains[i].domain, &now[i]);
-        moved |= !same_allocator(&now[i], &untraced_domains[i].under);
-    }
-    if (!moved)
+    /* tracemalloc hooks every domain: the object one tells */
+    PyMem_GetAllocator(PYMEM_DOMAIN_OBJ, &now[2]);
+    if (have_under && same_allocator(&now[2], &untraced_domains[2].under))
         return; /* nothing is installed over them */
+    for (i = 0; i < 2; i++)
+        PyMem_GetAllocator(untraced_domains[i].domain, &now[i]);
     tracing = tracemalloc_tracing();
     if (tracing == 0) {
         for (i = 0; i < 3; i++) untraced_domains[i].under = now[i];
@@ -1345,11 +1357,19 @@ codemanager_init(void)
     PyType_Ready(&CodeBufferShort_Type);
     PyType_Ready(&CodeBufferSummary_Type);
     owners_scan_init();
+    /* started as Python started, tracemalloc may trace with its module
+       not imported */
     {
-        PyObject *m = PyImport_ImportModule("_tracemalloc");
-        if (m != NULL) {
-            is_tracing_fn = PyObject_GetAttrString(m, "is_tracing");
-            Py_DECREF(m);
+        const char *env = getenv("PYTHONTRACEMALLOC");
+        PyObject *xoptions = PySys_GetXOptions();
+        if ((env != NULL && env[0] != '\0') ||
+            (xoptions != NULL &&
+             PyDict_GetItemString(xoptions, "tracemalloc") != NULL)) {
+            PyObject *m = PyImport_ImportModule("_tracemalloc");
+            if (m != NULL) {
+                is_tracing_fn = PyObject_GetAttrString(m, "is_tracing");
+                Py_DECREF(m);
+            }
         }
         PyErr_Clear();
     }
