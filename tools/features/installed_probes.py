@@ -173,12 +173,7 @@ for _feature, _function in [
         ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
         ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
         ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
-        ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
-        ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
-        ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
-        ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
-        ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
-        ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip')]:
+        ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
@@ -694,18 +689,6 @@ def CONTAINS_ITEM_FIRST():
     if order not in (['value', 'item'], ['item', 'value']):
         raise Unanswered('__eq__ calls %r' % order)
     return order[0] == 'item', '`in` called %s.__eq__ first' % order[0]
-
-
-@probe
-def FORMATCHAR_INDEX_ONLY():
-    """'%c' % 2**100 is an OverflowError (out of range), not a TypeError
-    (run)"""
-    e = _error(lambda: '%c' % (2 ** 100))
-    if isinstance(e, OverflowError):
-        return True, "'%c' % 2**100: OverflowError"
-    if isinstance(e, TypeError):
-        return False, "'%c' % 2**100: TypeError"
-    raise Unanswered("'%%c' %% 2**100: %r" % e)
 
 
 @probe

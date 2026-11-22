@@ -1043,7 +1043,6 @@ def opcodes(src):
 D = _detector
 AB = 'Objects/abstract.c'
 CE = 'Python/ceval.c'
-UO = 'Objects/unicodeobject.c'
 
 # C API functions that LeJIT calls where libpython exports them, and
 # replaces where it doesn't
@@ -1051,12 +1050,7 @@ EXPORTS = [
     ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
     ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
-    ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
     ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
-    ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
-    ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
-    ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
-    ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip'),
 ]
 
 
@@ -1176,10 +1170,6 @@ OBJECTS = [
                           lambda s: _defines(s, 'Objects/tupleobject.c', 'tuple_get_empty'))),
     ('CONTAINS_ITEM_FIRST', tuplecontains_item_first),
     ('DICT_VALUES_STRUCT', dict_values_struct),
-    ('PYCORE_FORMAT_H', D('the format flags F_LJUST... are the internal pycore_format.h\'s',
-                          lambda s: _file(s, 'Include/internal/pycore_format.h'))),
-    ('FORMATCHAR_INDEX_ONLY', D('%c takes an int, by PyLong_AsLongAndOverflow (no __int__)',
-                                lambda s: _body_has(s, UO, 'formatchar', 'PyLong_AsLongAndOverflow'))),
     ('HASH_DOUBLE_OBJECT', D('_Py_HashDouble is given the float object too',
                              lambda s: _file_has(s, 'Python/pyhash.c', '_Py_HashDouble(PyObject *'))),
     ('MEMBER_EX_ERROR_FROM_TYPE', member_ex_error_from_type),
