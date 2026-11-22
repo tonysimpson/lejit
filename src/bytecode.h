@@ -96,6 +96,19 @@ le_jump_target(le_instr_t in)
     return in.next + (LE_IS_JBACK(in.op) ? -1 : 1) * LE_JUMP_BYTES(in.arg);
 }
 
+/* the place CPython's frame gives the instruction that starts at pos (its
+   lasti, a traceback's tb_lasti): past its EXTENDED_ARG prefixes, or the
+   first of them */
+static inline int
+le_place(le_code_t c, int pos)
+{
+#if LE_HAS_LASTI_PAST_PREFIXES
+    while (pos + LE_UNIT < c.size && le_op(c, pos) == EXTENDED_ARG)
+        pos += LE_UNIT;
+#endif
+    return pos;
+}
+
 #if LE_HAS_EXCEPTION_TABLE
 /* one entry of a code object's exception table: an exception raised by an
    instruction from start up to end goes to handler, with the value stack

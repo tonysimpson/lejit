@@ -1451,8 +1451,9 @@ PycException_Reraise(PsycoObject *po, vinfo_t *exc, vinfo_t *val, vinfo_t *tb)
 
 /* record a traceback entry for the current virtual Python exception */
 PSY_INLINE void
-PsycoTraceBack_Here(PsycoObject *po, int lasti)
+PsycoTraceBack_Here(PsycoObject *po, int pos)
 {
+    int lasti = le_place(le_code(po->pr.co), pos);
     int lineno = PyCode_Addr2Line(po->pr.co, lasti);
     vinfo_t *word = catcher_word(po);
     const char *tags = word != NULL ? "lvllr" : "lvlll";
@@ -9532,8 +9533,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
            code can fetch it. Pseudo-exceptions have no handler. */
         if (PycException_IsPython(po)) {
             le_handler_t h;
-            int lasti = raise_lasti >= 0 ? raise_lasti
-                                         : le_lasti_of(po->pr.next_instr);
+            int lasti = raise_lasti >= 0
+                            ? raise_lasti
+                            : le_lasti_of(le_place(le_code(po->pr.co),
+                                                   po->pr.next_instr));
             raise_lasti = -1;
             if (le_handler_find(po->pr.co, po->pr.next_instr, &h)) {
                 int next_instr;

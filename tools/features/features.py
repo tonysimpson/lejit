@@ -506,6 +506,11 @@ def lineno_when_set(s):
     return 'f_trace' not in texts and 'f_lineno' in texts, fo + ':PyFrame_GetLineNumber'
 
 
+def lasti_past_prefixes(s):
+    """an instruction's place (a frame's lasti, a traceback's tb_lasti) is its own unit, past its EXTENDED_ARG prefixes, not the first prefix (ceval's EXTENDED_ARG dispatches the instruction, which sets the place, rather than going to dispatch_opcode)"""
+    return _not(_case_has(s, 'EXTENDED_ARG', 'dispatch_opcode'))
+
+
 def frame_builtins_of_function(s):
     """a new frame's builtins are its function's (func_builtins, read through
     the PyFrameConstructor), not looked up in its globals"""
@@ -986,6 +991,7 @@ FRAMES = [
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
     ('INTERPRETER_FRAME', interpreter_frame),
+    ('LASTI_PAST_PREFIXES', lasti_past_prefixes),
 ]
 
 # types
