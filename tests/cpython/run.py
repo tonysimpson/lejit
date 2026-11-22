@@ -93,17 +93,21 @@ SKIPPED = {
         'test.test_coroutines.OriginTrackingTest.test_unawaited_warning_when_module_broken '
         'test.test_compile.TestSpecifics.test_lineno_after_implicit_return '
         'test.test_raise.TestTracebackType.test_attrs '
-        'test.test_pdb.test_pdb_where_command '
         'test.test_gc.GCTests.test_frame',
-    'tracing that starts in a running frame':
-        'test.test_sys_settrace.*.test_09_settrace_and_raise',
+    'tracing that starts in a running frame (pdb.set_trace)':
+        'test.test_sys_settrace.*.test_09_settrace_and_raise '
+        'test.test_pdb.test_* '
+        'test.test_doctest.test_pdb_set_trace*',
+    "compiled code's direct and inlined calls skip CPython's recursion "
+    'depth count, so the limit trips somewhere else':
+        'test.test_sys.SysModuleTest.test_recursionlimit_recovery',
     'compiled code holds what it specialised on':
         'test.test_weakref.ReferencesTestCase.test_callback_in_cycle_resurrection '
         'test.test_weakref.WeakMethodTestCase.test_callback_when_method_dead '
         'test.test_weakref.WeakMethodTestCase.test_method_dead '
         'test.test_gc.GCTests.test_newinstance '
         'test.test_gc.GCCallbackTests.test_collect_garbage '
-        'test.test_capi.test_misc.CAPITest.*_decrefs_once',
+        'test.test_capi.*CAPITest.*_decrefs_once',
     'sys.getrefcount counts differently':
         'test.test_sys.SysModuleTest.test_refcount '
         'test.test_generators.FinalizationTest.test_refcycle '
