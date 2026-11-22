@@ -800,6 +800,36 @@ def LOAD_GLOBAL_NULL_BIT():
 
 
 @probe
+def LOAD_ATTR_METHOD_BIT():
+    """reading an attribute loads it with LOAD_ATTR whose argument is the
+    name's index (1) shifted left once (dis)"""
+    def f(o):
+        return o.yyy, o.zzz
+    for x in dis.get_instructions(f):
+        if x.opname == 'LOAD_ATTR' and x.argval == 'zzz' and x.arg in (1, 2):
+            return x.arg == 2, 'dis: LOAD_ATTR %d for o.zzz' % x.arg
+    raise Unanswered('o.zzz is not LOAD_ATTR 1 or 2: %r'
+                     % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
+def COMPARE_OP_SHIFT_4():
+    """a > b compiles to COMPARE_OP whose argument is Py_GT (4), shifted
+    left four times where it has the specialiser's bits too (dis)"""
+    def f(a, b):
+        return a > b
+    for x in dis.get_instructions(f):
+        if x.opname == 'COMPARE_OP':
+            if x.arg == 4:
+                return False, 'dis: COMPARE_OP 4 for a > b'
+            if x.arg >> 4 == 4:
+                return True, 'dis: COMPARE_OP %d for a > b' % x.arg
+            raise Unanswered('a > b is COMPARE_OP %d' % x.arg)
+    raise Unanswered('a > b has no COMPARE_OP: %r'
+                     % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
 def DICT_KEYS_KIND():
     """a dict of 5 str keys is smaller than one of 5 int keys, because its
     entries hold no hash (sys.getsizeof)"""

@@ -1272,6 +1272,18 @@ is_cell_arg(PyCodeObject *co, int arg)
     return false;
 }
 
+/* a local after the arguments is also a cell (an inlined comprehension's
+   variable that a closure in it reads) */
+static bool
+has_cell_local(PyCodeObject *co, int argc)
+{
+    int i;
+    for (i = argc; i < le_code_nlocals(co); i++)
+        if (le_code_local_is_cell(co, i))
+            return true;
+    return false;
+}
+
 DEFINEFN
 PsycoObject *
 PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
@@ -1320,7 +1332,7 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
 
     /* initialize the free and cell vars */
     i = le_code_nlocalsplus(co);
-    if (i > le_code_nlocals(co)) {
+    if (i > le_code_nlocals(co) || has_cell_local(co, argc)) {
         while (i > le_code_nlocals(co)) {
             po->stack_depth += sizeof(long);
             /* borrowed references from the frame object */
@@ -1331,10 +1343,18 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         /* skip the unbound local variables */
         po->stack_depth += sizeof(long) * (i - argc);
     }
-    /* initialize the local variables to zero (unbound) */
+    /* initialize the local variables to zero (unbound), but for one that
+       is also a cell, which the frame holds from the start
+       (frames.h:le_frame_start) */
     while (i > argc) {
-        v = psyco_vi_Zero();
-        LOC_LOCALS_PLUS[--i] = v;
+        i--;
+        if (le_code_local_is_cell(co, i))
+            v = vinfo_new(RunTime_NewStack(
+                po->stack_depth - (int)sizeof(long) * (i - argc), false,
+                false));
+        else
+            v = psyco_vi_Zero();
+        LOC_LOCALS_PLUS[i] = v;
     }
     /* initialize the keyword arguments dict */
     if (co->co_flags & CO_VARKEYWORDS) {

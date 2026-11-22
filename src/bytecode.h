@@ -87,14 +87,45 @@ le_instr(le_code_t c, int pos)
     return in;
 }
 
-/* where a jump instruction goes */
+/* where FOR_ITER's iterator ending goes: its target, past the END_FOR
+   there that pops the iterator and its item where FOR_ITER pops the
+   iterator itself */
 static inline int
-le_jump_target(le_instr_t in)
+le_for_iter_exit(le_code_t c, int target)
 {
+    if (target < c.size && le_op(c, target) == END_FOR)
+        return le_after(c, target);
+    return target;
+}
+
+/* where a jump instruction goes; FOR_ITER's, when its iterator ends */
+static inline int
+le_jump_target(le_code_t c, le_instr_t in)
+{
+    int target;
     if (LE_IS_JABS(in.op))
         return LE_JUMP_BYTES(in.arg);
-    return in.next + (LE_IS_JBACK(in.op) ? -1 : 1) * LE_JUMP_BYTES(in.arg);
+    target = in.next + (LE_IS_JBACK(in.op) ? -1 : 1) * LE_JUMP_BYTES(in.arg);
+    return in.op == FOR_ITER ? le_for_iter_exit(c, target) : target;
 }
+
+/* the index in co_names of the name LOAD_ATTR with argument arg reads, and
+   whether it pushes the method form: a NULL or the method under the
+   attribute, as LOAD_METHOD does */
+#if LE_HAS_LOAD_ATTR_METHOD_BIT
+#define LE_ATTR_NAME(arg) ((arg) >> 1)
+#define LE_ATTR_METHOD(arg) ((arg) & 1)
+#else
+#define LE_ATTR_NAME(arg) (arg)
+#define LE_ATTR_METHOD(arg) 0
+#endif
+
+/* the rich comparison COMPARE_OP with argument arg makes */
+#if LE_HAS_COMPARE_OP_SHIFT_4
+#define LE_COMPARE_OP(arg) ((arg) >> 4)
+#else
+#define LE_COMPARE_OP(arg) (arg)
+#endif
 
 /* the index in co_names of the name LOAD_GLOBAL with argument arg loads,
    and whether it pushes a NULL under the global */

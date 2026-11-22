@@ -163,6 +163,14 @@ def nested_comps(rows, k):
     return [[c + k for c in row] for row in rows]
 
 
+def comp_var_is_cell(n):
+    # the comprehension's variable shadows a local of the same name and
+    # is a cell its lambdas read
+    i = 'outer'
+    fs = [lambda: i * 2 for i in range(n)]
+    return i, [f() for f in fs]
+
+
 CASES = [
     ('genexpr_over_local', [(200,)], {}),
     ('genexpr_over_arg', [([1, 2, 3], 4), ((1.5,), 2)], {}),
@@ -180,4 +188,5 @@ CASES = [
     ('comp_raises', [([1, 2], 2), ([1, 2], 0)], {}),
     ('local_lambda', [(10, 1), (3, 2.5)], {}),
     ('nested_comps', [([[1, 2], [3]], 10)], {}),
+    ('comp_var_is_cell', [(4,), (0,)], {}),
 ]

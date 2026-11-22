@@ -9,6 +9,10 @@
 /* and, as values no instruction has, the opcodes LeJIT names that this
    CPython lacks (tools/features/features.py) */
 #include "le_features_gen.h"
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+/* CALL_INTRINSIC_1's and CALL_INTRINSIC_2's arguments */
+#include "internal/pycore_intrinsics.h"
+#endif
 
 /* LeJIT keeps every position in the bytecode in bytes (merge points, the
    compiler's next_instr, a block's handler). A jump's argument is converted
