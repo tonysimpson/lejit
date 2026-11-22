@@ -6168,28 +6168,29 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
-                case BINARY_SLICE:
+                case BINARY_SLICE: {
+                    vinfo_t *slice = PsycoSlice_New(NTOP(2), NTOP(1), NULL);
+                    x = PsycoObject_GetItem(po, NTOP(3), slice);
+                    vinfo_decref(slice, po);
+                    if (x == NULL)
+                        break;
+                    POP_DECREF();
+                    POP_DECREF();
+                    POP_DECREF();
+                    PUSH(x);
+                    goto fine;
+                }
+
                 case STORE_SLICE: {
                     vinfo_t *slice = PsycoSlice_New(NTOP(2), NTOP(1), NULL);
-                    if (opcode == BINARY_SLICE) {
-                        x = PsycoObject_GetItem(po, NTOP(3), slice);
-                        vinfo_decref(slice, po);
-                        if (x == NULL)
-                            break;
-                    }
-                    else {
-                        bool ok =
-                            PsycoObject_SetItem(po, NTOP(3), slice, NTOP(4));
-                        vinfo_decref(slice, po);
-                        if (!ok)
-                            break;
-                        POP_DECREF();
-                    }
+                    bool ok = PsycoObject_SetItem(po, NTOP(3), slice, NTOP(4));
+                    vinfo_decref(slice, po);
+                    if (!ok)
+                        break;
                     POP_DECREF();
                     POP_DECREF();
                     POP_DECREF();
-                    if (opcode == BINARY_SLICE)
-                        PUSH(x);
+                    POP_DECREF();
                     goto fine;
                 }
 
