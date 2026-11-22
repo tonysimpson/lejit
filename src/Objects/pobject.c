@@ -531,7 +531,14 @@ keys_inline(PsycoObject *po, PyTypeObject *tp)
     /* type -> None while it has shared keys, then the first block serial
        after LeJIT saw them gone */
     static le_addrmap_t seen;
-    PyObject **slot = psyco_record(&seen, tp), *d = *slot;
+    PyObject **slot, *d;
+    /* an inline store that fills a split table's next value doesn't add
+       it to the insertion order which, where keys have a kind, the values
+       keep */
+    if (LE_HAS_DICT_KEYS_KIND)
+        return false;
+    slot = psyco_record(&seen, tp);
+    d = *slot;
     if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) {
         if (d != Py_None) {
             Py_INCREF(Py_None);
@@ -1137,11 +1144,10 @@ cimpl_instance_dict_set(PyObject *obj, PyObject *name, PyObject *value)
     if (!PyDict_CheckExact(d))
         return PyObject_GenericSetAttr(obj, name, value);
     if (cached != NULL && (le_dictkeys_t *)d->ma_keys == cached) {
-        le_dictentry_t *entries = le_dict_entries(cached);
         Py_ssize_t i = d->ma_used; /* where an __init__ fills them in order */
-        if (i >= cached->dk_nentries || entries[i].me_key != name)
+        if (i >= cached->dk_nentries || *le_dict_key_slot(cached, i) != name)
             for (i = 0; i < cached->dk_nentries; i++)
-                if (entries[i].me_key == name)
+                if (*le_dict_key_slot(cached, i) == name)
                     break;
         if (i == cached->dk_nentries ||
             (le_dict_values(d)[i] == NULL && d->ma_used != i))
@@ -1178,15 +1184,14 @@ DEFINEVAR long psyco_stat_store_refreshes = 0;
 static bool
 store_cache_set(store_cache_t *c, le_dictkeys_t *k)
 {
-    le_dictentry_t *entries = le_dict_entries(k);
     Py_ssize_t i;
     for (i = 0; i < k->dk_nentries; i++)
-        if (entries[i].me_key == c->name)
+        if (*le_dict_key_slot(k, i) == c->name)
             break;
-    if (i == k->dk_nentries || (c->dk_size == k->dk_size && c->ix == i))
+    if (i == k->dk_nentries || (c->shape == le_dict_shape(k) && c->ix == i))
         return false;
-    c->dk_size = k->dk_size;
-    c->kword = (PyObject **)&entries[i].me_key - (PyObject **)k;
+    c->shape = le_dict_shape(k);
+    c->kword = le_dict_key_slot(k, i) - (PyObject **)k;
     c->ix = i;
     return true;
 }
@@ -1209,7 +1214,7 @@ store_cache(PyTypeObject *tp, PyObject *name)
     Py_DECREF(key);
     if (!made)
         return c;
-    c->dk_size = c->kword = c->ix = 0;
+    c->shape = c->kword = c->ix = 0;
     c->name = name;
     c->version = &le_dict_version;
     c->refreshes = 0;

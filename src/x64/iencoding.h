@@ -616,6 +616,9 @@ typedef enum {
 /* @asm: mov {r:d}, dword ptr [{rm}{o}] */
 #define MOV_DR_O(r, rm, o) \
     OFFSET_ENCODING(false, false, 1, 0x8B, 0, 0, 0, 0, r, rm, o)
+/* @asm: movzx {r:d}, word ptr [{rm}{o}] */
+#define MOVZX_DR_WO(r, rm, o) \
+    OFFSET_ENCODING(false, false, 2, 0x0F, 0xB7, 0, 0, 0, r, rm, o)
 /* RIP-relative: 'o' is from the end of the instruction, which is 7 bytes.
    It is evaluated before anything is written, so it may use 'code'. */
 /* @asm: lea {r}, [rip{o:d32}] */

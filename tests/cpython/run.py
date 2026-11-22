@@ -37,6 +37,9 @@ BANNED = {
     'timing': 'test_email',
     "SSL tests that race on OpenSSL 3, which the CI images' older CPythons predate":
         'test_poplib',
+    "compiled code reads globals that are a dict subclass as a dict, not "
+    'through __getitem__ and __missing__ (getpath run in a mock namespace)':
+        'test_getpath',
 }
 
 # reason: single tests (module.Class.method) skipped in both runs
@@ -66,10 +69,23 @@ SKIPPED = {
     "code LeJIT compiles doesn't run in ceval, so ceval doesn't quicken it":
         'test_dis.DisTests.test_super_instructions '
         'test_dis.DisWithFileTests.test_super_instructions '
+        'test_dis.DisTests.test_show_caches '
+        'test_dis.DisWithFileTests.test_show_caches '
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_load_attr_specialization_user_type '
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_store_attr_specialization_user_type',
+    "a compiled call of a type calls its tp_new and tp_init, not its "
+    'vectorcall, so their argument errors read differently':
+        'test_super.TestSuper.test_super_argcount '
+        'test_super.TestSuper.test_super_argtype',
+    "a respawn into a with statement's handler reaches WITH_EXCEPT_START "
+    "with a short stack (checked builds' assertion)":
+        'test_unparse.UnparseTestCase.test_invalid_yield_from',
+    "compiled code reads globals that are a dict subclass as a dict, not "
+    'through __getitem__ and __missing__':
+        'test_dynamic.RebindBuiltinsTests.'
+        'test_load_global_specialization_failure_keeps_oparg',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,

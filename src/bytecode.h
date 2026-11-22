@@ -96,6 +96,16 @@ le_jump_target(le_instr_t in)
     return in.next + (LE_IS_JBACK(in.op) ? -1 : 1) * LE_JUMP_BYTES(in.arg);
 }
 
+/* the index in co_names of the name LOAD_GLOBAL with argument arg loads,
+   and whether it pushes a NULL under the global */
+#if LE_HAS_LOAD_GLOBAL_NULL_BIT
+#define LE_GLOBAL_NAME(arg) ((arg) >> 1)
+#define LE_GLOBAL_PUSHES_NULL(arg) ((arg) & 1)
+#else
+#define LE_GLOBAL_NAME(arg) (arg)
+#define LE_GLOBAL_PUSHES_NULL(arg) 0
+#endif
+
 /* the place CPython's frame gives the instruction that starts at pos (its
    lasti, a traceback's tb_lasti): past its EXTENDED_ARG prefixes, or the
    first of them */

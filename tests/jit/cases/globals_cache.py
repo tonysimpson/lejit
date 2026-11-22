@@ -284,7 +284,80 @@ def missing_global_name(n):
     return out
 
 
+# without calls, so compiled wherever LOAD_GLOBAL is
+
+
+def read_in_loop(n):
+    # a global (entry guard) and a builtin (absent guard) in a loop
+    t = 0
+    i = 0
+    while i < n:
+        t = t + G + (len is not None) + i
+        i = i + 1
+    return t
+
+
+def rebind_in_loop_inline(n):
+    # the global changes while the loop that reads it runs
+    global G
+    t = 0
+    i = 0
+    while i < n:
+        t = t + G
+        if i == n // 2:
+            G = 1000
+        i = i + 1
+    G = 10
+    return t
+
+
+def grow_globals(n):
+    # new names grow the module's keys, which moves G's entry, then go
+    global G1, G2, G3, G4, G5, G6, G7, G8, G9, G10, G11, G12
+    t = G
+    if n:
+        G1 = G2 = G3 = G4 = G5 = G6 = G7 = G8 = G9 = G10 = G11 = G12 = n
+        t = t + G + G12
+        del G1, G2, G3, G4, G5, G6, G7, G8, G9, G10, G11, G12
+    return t + G
+
+
+_len = len
+
+
+def shadow_builtin_inline():
+    # a global named like a builtin appears, then goes away
+    global len
+    a = len is _len
+    len = 5
+    b = len
+    del len
+    return a + 2 * (len is _len) + 4 * b
+
+
+class _MissingNamespace(dict):
+    def __missing__(self, key):
+        if key == 'FROM_MISSING':
+            return 7
+        raise KeyError(key)
+
+
+# globals that are a dict subclass whose __missing__ gives a name
+missing_globals = types.FunctionType(compile(
+    'def missing_globals(n):\n'
+    '    t = 0\n'
+    '    i = 0\n'
+    '    while i < n:\n'
+    '        t = t + FROM_MISSING\n'
+    '        i = i + 1\n'
+    '    return t\n', 'src', 'exec').co_consts[0], _MissingNamespace())
+
+
 CASES = [
+    ('read_in_loop', [(5,), (20,)], {}),
+    ('rebind_in_loop_inline', [(10,), (11,)], {}),
+    ('grow_globals', [(0,), (3,), (0,)], {}),
+    ('shadow_builtin_inline', [()], {}),
     ('rebind_between_calls', [()], {}),
     ('rebind_in_loop', [(10,), (11,)], {}),
     ('rebind_by_callee', [(20,)], {}),
@@ -300,4 +373,7 @@ CASES = [
     ('replay_after_rebind', [()], {}),
     ('store_then_respawn', [()], {}),
     ('missing_global_name', [(3,), (4,)], {}),
+    ('missing_globals', [(3,), (4,)],
+     {'xfail': 'compiled code reads globals that are a dict subclass as a '
+               'dict, not through __missing__'}),
 ]
