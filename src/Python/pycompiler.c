@@ -114,30 +114,29 @@ le_lookup_special_id(PyObject *self, _Py_Identifier *attrid)
 }
 #endif
 
+/* names looked up by the run-time helpers, interned at start-up
+   (psyco_pycompiler_init) */
+static PyObject *s_initializing, *s_name, *s_spec, *s_match_args, *s_get,
+    *s_build_class;
+
 #if LE_HAS_IMPORT_FROM_SPEC
-#if LE_HAS_MODULE_SPEC_IS_INITIALIZING_LINKABLE
-#define le_module_spec_is_initializing _PyModuleSpec_IsInitializing
-#else
-/* moduleobject.c:_PyModuleSpec_IsInitializing, which can fail */
+/* moduleobject.c:_PyModuleSpec_IsInitializing: spec._initializing is
+   true; an error is cleared and counts as false */
 static int
 le_module_spec_is_initializing(PyObject *spec)
 {
-    _Py_IDENTIFIER(_initializing);
-    PyObject *name, *value;
-    int rc;
-    if (spec == NULL)
-        return 0;
-    name = _PyUnicode_FromId(&PyId__initializing); /* borrowed */
-    if (name == NULL)
-        return -1;
-    rc = le_lookup_attr(spec, name, &value);
+    PyObject *value;
+    int rc = spec == NULL ? 0 : le_lookup_attr(spec, s_initializing, &value);
     if (rc > 0) {
         rc = PyObject_IsTrue(value);
         Py_DECREF(value);
     }
+    if (rc < 0) {
+        PyErr_Clear();
+        rc = 0;
+    }
     return rc;
 }
-#endif
 #endif
 
 #if LE_CODESTATS
@@ -1393,6 +1392,16 @@ void
 psyco_pycompiler_init(void)
 {
     s_builtin_object = PyUnicode_InternFromString("__builtins__");
+    s_initializing = PyUnicode_InternFromString("_initializing");
+    s_name = PyUnicode_InternFromString("__name__");
+    s_spec = PyUnicode_InternFromString("__spec__");
+    s_match_args = PyUnicode_InternFromString("__match_args__");
+    s_get = PyUnicode_InternFromString("get");
+    s_build_class = PyUnicode_InternFromString("__build_class__");
+    if (s_builtin_object == NULL || s_initializing == NULL || s_name == NULL ||
+        s_spec == NULL || s_match_args == NULL || s_get == NULL ||
+        s_build_class == NULL)
+        Py_FatalError("lejit: no names for the compiler");
     load_global_miss_glue = psyco_aligned_call_glue(cimpl_load_global_miss);
 
     psyco_skZero.refcount1_flags = SkFlagFixed;
@@ -2510,12 +2519,11 @@ static PyObject *
 cimpl_import_from(PyObject *v, PyObject *name)
 {
     PyObject *x;
-    _Py_IDENTIFIER(__name__);
     PyObject *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
     if (le_lookup_attr(v, name, &x) != 0) {
         return x;
     }
-    pkgname = _PyObject_GetAttrId(v, &PyId___name__);
+    pkgname = PyObject_GetAttr(v, s_name);
     if (pkgname == NULL) {
         goto error;
     }
@@ -2625,8 +2633,7 @@ cimpl_match_class(PyObject *subject, PyObject *type, Py_ssize_t nargs,
            time: 3.10's type attribute cache is keyed by the name's address
            and keeps the name alive, so each new string could take another
            slot and hold on to its memory until the cache is full. */
-        _Py_IDENTIFIER(__match_args__);
-        match_args = _PyObject_GetAttrId(type, &PyId___match_args__);
+        match_args = PyObject_GetAttr(type, s_match_args);
         if (match_args) {
             if (!PyTuple_CheckExact(match_args)) {
                 const char *e = LE_MSG_MATCH_ARGS_NOT_TUPLE;
@@ -2708,8 +2715,7 @@ cimpl_match_keys(PyObject *map, PyObject *keys)
     PyObject *seen = NULL;
     PyObject *dummy = NULL;
     PyObject *values = NULL;
-    _Py_IDENTIFIER(get);
-    PyObject *get = _PyObject_GetAttrId(map, &PyId_get);
+    PyObject *get = PyObject_GetAttr(map, s_get);
     if (get == NULL) {
         goto fail;
     }
@@ -2994,8 +3000,6 @@ _error:
 }
 #endif
 
-_Py_IDENTIFIER(__build_class__);
-
 static PyObject *
 cimpl_load_build_class_1(PyObject *build_class_str, PyObject *_in0)
 {
@@ -3019,11 +3023,7 @@ cimpl_load_build_class_r0(long _oparg, PyObject *_f_f_builtins,
     {
         {
             {
-                PyObject *build_class_str =
-                    _PyUnicode_FromId(&PyId___build_class__);
-                if (build_class_str == NULL)
-                    goto _error;
-                bc = cimpl_load_build_class_1(build_class_str, _f_f_builtins);
+                bc = cimpl_load_build_class_1(s_build_class, _f_f_builtins);
                 if (bc == NULL) {
                     goto _error;
                 }
@@ -3321,7 +3321,7 @@ _error:
 }
 #endif
 
-#if LE_HAS_OPCODE_MATCH_KEYS
+#if LE_HAS_MATCH_KEYS_PUSHES_BOOL
 static int
 cimpl_match_keys_r0(PyObject *_in0, PyObject *_in1, long _oparg,
                     PyObject *values_or_none, PyObject **_out)
@@ -3720,12 +3720,11 @@ static PyObject *
 cimpl_import_from_whole(PyObject *v, PyObject *name)
 {
     PyObject *x;
-    _Py_IDENTIFIER(__name__);
     PyObject *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
     if (le_lookup_attr(v, name, &x) != 0) {
         return x;
     }
-    pkgname = _PyObject_GetAttrId(v, &PyId___name__);
+    pkgname = PyObject_GetAttr(v, s_name);
     if (pkgname == NULL) {
         goto error;
     }
@@ -3764,8 +3763,7 @@ error:
         PyErr_SetImportError(errmsg, pkgname, NULL);
     }
     else {
-        _Py_IDENTIFIER(__spec__);
-        PyObject *spec = _PyObject_GetAttrId(v, &PyId___spec__);
+        PyObject *spec = PyObject_GetAttr(v, s_spec);
         const char *fmt = le_module_spec_is_initializing(spec)
                               ? LE_MSG_IMPORT_NAME_CIRCULAR
                               : LE_MSG_IMPORT_NAME_FROM_FILE;
@@ -7710,12 +7708,6 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
 #if LE_HAS_OPCODE_MATCH_CLASS
                 case MATCH_CLASS: {
-                    vinfo_t *_t2;
-                    vinfo_t *_t3;
-                    vinfo_t *_t4;
-                    vinfo_t *_t5;
-                    vinfo_t *_t6;
-                    vinfo_t *_t7;
                     vinfo_t *attrs;
                     vinfo_t *names;
                     vinfo_t *subject;
@@ -7732,6 +7724,27 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     if (attrs == NULL) {
                         break;
                     }
+#if !LE_HAS_MATCH_CLASS_PUSHES_BOOL
+                    /* the attributes in the subject's place, or None */
+                    if (psyco_known_NULL(attrs)) {
+                        vinfo_decref(attrs, po);
+                        attrs = psyco_vi_None();
+                    }
+                    POP(names);
+                    POP(type);
+                    POP(subject);
+                    vinfo_decref(names, po);
+                    vinfo_decref(type, po);
+                    vinfo_decref(subject, po);
+                    PUSH(attrs);
+                    goto fine;
+#else
+                    vinfo_t *_t2;
+                    vinfo_t *_t3;
+                    vinfo_t *_t4;
+                    vinfo_t *_t5;
+                    vinfo_t *_t6;
+                    vinfo_t *_t7;
                     if (!psyco_known_NULL(attrs)) {
                         _t2 = psyco_vi_One();
                         _t3 = PsycoBool_FromLong(po, _t2);
@@ -7767,6 +7780,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         PUSH(_t7);
                         goto fine;
                     }
+#endif
                 }
 #endif
 
@@ -7822,10 +7836,6 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
 #if LE_HAS_OPCODE_MATCH_KEYS
                 case MATCH_KEYS: {
-                    int _t2;
-                    int _t3;
-                    int _t4;
-                    vinfo_array_t *_t6;
                     vinfo_t *keys;
                     vinfo_t *subject;
                     vinfo_t *values_or_none;
@@ -7835,6 +7845,14 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     if (values_or_none == NULL) {
                         break;
                     }
+#if !LE_HAS_MATCH_KEYS_PUSHES_BOOL
+                    PUSH(values_or_none);
+                    goto fine;
+#else
+                    int _t2;
+                    int _t3;
+                    int _t4;
+                    vinfo_array_t *_t6;
                     _t2 = 2;
                     _t3 = _t2 + PyCompile_OpcodeStackEffect(33, oparg);
                     _t6 = array_new(_t3);
@@ -7854,6 +7872,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     for (_t4 = 0; _t4 < _t3; _t4++) PUSH(_t6->items[_t4]);
                     array_release(_t6);
                     goto fine;
+#endif
                 }
 #endif
 
