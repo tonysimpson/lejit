@@ -1,0 +1,4 @@
+# Known differences the targeted fuzzer shows (combine.py): a signature
+# pattern (fnmatch, on kind|blocks|detail), a tab, and a note.
+output|*|values 'while calling a Python object' vs ''	RecursionError's message: LeJIT's direct C calls skip CPython's count, so its frame check trips first
+output|getframe+weakref_callback|*	a caller kept alive by a callee frame object keeps its locals in CPython, not under LeJIT

@@ -1,0 +1,27 @@
+name: Extra tests
+
+# the slower tests and the fuzzers (make extra-test): nightly, not on pull
+# requests
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  extra:
+    name: make extra-test (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    container: python:${{ matrix.python }}-bookworm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libffi and libunwind
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+      - name: make extra-test
+        run: make -k extra-test PY=python

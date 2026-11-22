@@ -39,3 +39,4 @@ nothing.
 
 Research code, not for production. Build with `make`, test with `make check`
 (`make check-all` for 3.7–3.10).
+`make extra-test` runs the slower tests and the fuzzers (nightly in CI).

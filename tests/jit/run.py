@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Runs each case in tests/jit/cases/ plain and with LeJIT, in fresh processes.
-Results must match, the function must have been compiled, and it mustn't
-leak.
+"""Runs each case in tests/jit/cases/ (or DIR) plain and with LeJIT, in fresh
+processes. Results must match, the function must have been compiled, and it
+mustn't leak.
 
 A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
 (no leak check), 'warmup': (rounds, reason).
 
-    python3.X tests/jit/run.py [-k substring] [-v]
+    python3.X tests/jit/run.py [DIR] [-k substring] [-v]
 """
-import glob, os, subprocess, sys
+import glob, os, subprocess, sys, warnings
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CASES = os.path.join(ROOT, 'tests', 'jit', 'cases')
@@ -41,7 +41,10 @@ def load_cases(filt):
     for path in sorted(glob.glob(os.path.join(CASES, '*.py'))):
         modname = os.path.basename(path)[:-3]
         src = {}
-        exec(compile(open(path).read(), path, 'exec'), src)
+        with warnings.catch_warnings():
+            # some cases test identity with 'is' on purpose
+            warnings.simplefilter('ignore', SyntaxWarning)
+            exec(compile(open(path).read(), path, 'exec'), src)
         for fname, calls, opts in src.get('CASES', []):
             name = '%s.%s' % (modname, fname)
             if filt and filt not in name:
@@ -50,8 +53,11 @@ def load_cases(filt):
 
 
 def main():
+    global CASES
     args = sys.argv[1:]
     filt = args[args.index('-k') + 1] if '-k' in args else None
+    if args and not args[0].startswith('-'):
+        CASES = os.path.abspath(args[0])
     verbose = '-v' in args
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
     for name, modname, fname, calls, opts in load_cases(filt):

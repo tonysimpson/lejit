@@ -4,6 +4,7 @@
 #   make check                checked build and every test, for PY
 #   make check-all            make check for each of PYTHONS
 #   make test | cpython-test | encoder-test | strings-test
+#   make extra-test           slower tests and fuzzers, for PY (run nightly, not on PRs)
 #   make features-installed-test | cross-check (both detectors, every interpreter)
 #   make format | format-check   rewrite, or check, the C code's layout
 #   make lint                 clang-tidy on src/ (reports, not enforced yet)
@@ -26,7 +27,7 @@ PYTHONS ?= $(HOME)/.pyenv/versions/3.7.17/bin/python3.7 \
            $(HOME)/.pyenv/versions/3.9.21/bin/python3.9 \
            $(HOME)/.pyenv/versions/3.10.16/bin/python3.10
 
-.PHONY: build checked-build check check-all test cpython-test encoder-test \
+.PHONY: build checked-build check check-all test cpython-test encoder-test extra-test \
         features-installed-test strings-test \
         cross-check no-version-tests format format-check lint clean
 
@@ -45,6 +46,12 @@ test: checked-build
 
 cpython-test: checked-build
 	$(PY) tests/cpython/run.py
+
+extra-test: checked-build
+	$(PY) tests/jit/run.py tests/extra/cases
+	$(PY) tests/extra/stale_types/run.py
+	$(PY) tests/extra/fuzz/run.py -n 2000 -j 4
+	$(PY) tests/extra/fuzz/combine.py -j 4
 
 encoder-test: checked-build
 	$(GEN_PY) tests/encoder/check.py $(PY)
