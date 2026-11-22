@@ -414,19 +414,11 @@ plist_iter(PsycoObject *po, vinfo_t *v)
     return PsycoSeqIter_New(po, v);
 }
 
-/* the list slots translated from listobject.c (sq_length) */
-static vinfo_t *
-list_length(PsycoObject *po, vinfo_t *);
-
+/* listobject.c's sq_length */
 static vinfo_t *
 list_length(PsycoObject *po, vinfo_t *a)
 {
-    vinfo_t *_t1;
-    _t1 = psyco_get_field(po, a, VAR_size);
-    if (_t1 == NULL) {
-        return NULL;
-    }
-    return _t1;
+    return psyco_get_field(po, a, VAR_size);
 }
 
 static void

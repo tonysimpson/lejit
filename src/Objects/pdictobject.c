@@ -236,71 +236,54 @@ cimpl_lookdict_unicode(PyDictObject *mp, PyObject *key, Py_hash_t hash,
 #endif
 
 static vinfo_t *
-dict_get(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-dict_length(PsycoObject *po, vinfo_t *);
-static vinfo_t *
-dict_setdefault(PsycoObject *po, vinfo_t *, vinfo_t *);
-
-static vinfo_t *
 dict_get(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
-    int _t1;
-    vinfo_t *_t2;
-    vinfo_t *_t3;
+    int nargs;
     vinfo_t *default_value;
     vinfo_t *key;
     vinfo_t *return_value;
-    _t1 = PsycoTuple_Load(vargs);
-    if (_t1 < 1 || _t1 > 2) {
+    nargs = PsycoTuple_Load(vargs);
+    if (nargs < 1 || nargs > 2) {
         return PsycoCFunction_CallFast(po, cfunc_dict_get, METH_FASTCALL, self,
                                        vargs);
     }
-    if (_t1 == 1) {
+    if (nargs == 1) {
         key = PsycoTuple_GET_ITEM(vargs, 0);
         default_value = psyco_vi_None();
-        _t2 =
+        return_value =
             psyco_generic_call(po, cimpl_dict_get_impl, CfCommonNewRefPyObject,
                                "vvv", self, key, default_value);
-        return_value = _t2;
         vinfo_decref(default_value, po);
         return return_value;
     }
     else {
         key = PsycoTuple_GET_ITEM(vargs, 0);
         default_value = PsycoTuple_GET_ITEM(vargs, 1);
-        _t3 =
-            psyco_generic_call(po, cimpl_dict_get_impl, CfCommonNewRefPyObject,
-                               "vvv", self, key, default_value);
-        return_value = _t3;
-        return return_value;
+        return psyco_generic_call(po, cimpl_dict_get_impl,
+                                  CfCommonNewRefPyObject, "vvv", self, key,
+                                  default_value);
     }
 }
 
 static vinfo_t *
 dict_length(PsycoObject *po, vinfo_t *mp)
 {
-    vinfo_t *_t1;
-    _t1 = psyco_get_field(po, mp, DICT_ma_used);
-    if (_t1 == NULL) {
-        return NULL;
-    }
-    return _t1;
+    return psyco_get_field(po, mp, DICT_ma_used);
 }
 
 static vinfo_t *
 dict_setdefault(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
-    int _t1;
+    int nargs;
     vinfo_t *default_value;
     vinfo_t *key;
     vinfo_t *return_value;
-    _t1 = PsycoTuple_Load(vargs);
-    if (_t1 < 1 || _t1 > 2) {
+    nargs = PsycoTuple_Load(vargs);
+    if (nargs < 1 || nargs > 2) {
         return PsycoCFunction_CallFast(po, cfunc_dict_setdefault,
                                        METH_FASTCALL, self, vargs);
     }
-    if (_t1 == 1) {
+    if (nargs == 1) {
         key = PsycoTuple_GET_ITEM(vargs, 0);
         default_value = psyco_vi_None();
         return_value = psyco_generic_call(po, cimpl_dict_setdefault_impl,

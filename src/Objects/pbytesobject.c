@@ -99,6 +99,10 @@ static PyCFunction cfunc_bytes_lstrip;
 static PyCFunction cfunc_bytes_rstrip;
 static PyCFunction cfunc_bytes_strip;
 
+#define LEFTSTRIP 0
+#define RIGHTSTRIP 1
+#define BOTHSTRIP 2
+
 /* CPython's code, copied for the metas to call at run time */
 static PyObject *
 cimpl_do_xstrip(PyBytesObject *self, int striptype, PyObject *sepobj)
@@ -114,13 +118,13 @@ cimpl_do_xstrip(PyBytesObject *self, int striptype, PyObject *sepobj)
     sep = vsep.buf;
     seplen = vsep.len;
     i = 0;
-    if (striptype != 1) {
+    if (striptype != RIGHTSTRIP) {
         while (i < len && memchr(sep, Py_CHARMASK(s[i]), seplen)) {
             i++;
         }
     }
     j = len;
-    if (striptype != 0) {
+    if (striptype != LEFTSTRIP) {
         do {
             j--;
         } while (j >= i && memchr(sep, Py_CHARMASK(s[j]), seplen));
@@ -141,13 +145,13 @@ cimpl_do_strip(PyBytesObject *self, int striptype)
     const char *s = PyBytes_AS_STRING(self);
     Py_ssize_t len = PyBytes_GET_SIZE(self), i, j;
     i = 0;
-    if (striptype != 1) {
+    if (striptype != RIGHTSTRIP) {
         while (i < len && Py_ISSPACE(s[i])) {
             i++;
         }
     }
     j = len;
-    if (striptype != 0) {
+    if (striptype != LEFTSTRIP) {
         do {
             j--;
         } while (j >= i && Py_ISSPACE(s[j]));
@@ -171,134 +175,51 @@ cimpl_do_argstrip(PyBytesObject *self, int striptype, PyObject *bytes)
 }
 
 static vinfo_t *
-bytes_length(PsycoObject *po, vinfo_t *);
-static vinfo_t *
-do_argstrip(PsycoObject *po, vinfo_t *, int, vinfo_t *);
-static vinfo_t *
-bytes_lstrip_impl(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-bytes_lstrip(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-bytes_rstrip_impl(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-bytes_rstrip(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-bytes_strip_impl(PsycoObject *po, vinfo_t *, vinfo_t *);
-static vinfo_t *
-bytes_strip(PsycoObject *po, vinfo_t *, vinfo_t *);
-
-static vinfo_t *
 bytes_length(PsycoObject *po, vinfo_t *a)
 {
-    vinfo_t *_t1;
-    _t1 = psyco_get_field(po, a, FIX_size);
-    if (_t1 == NULL) {
-        return NULL;
+    return psyco_get_field(po, a, FIX_size);
+}
+
+/* bytes.strip, lstrip and rstrip, through their Argument Clinic wrappers:
+   one optional argument, None by default */
+static vinfo_t *
+do_argstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs, PyCFunction cfunc,
+            int striptype)
+{
+    vinfo_t *bytes, *return_value;
+    int nargs = PsycoTuple_Load(vargs);
+    if (nargs < 0 || nargs > 1) {
+        return PsycoCFunction_CallFast(po, cfunc, METH_FASTCALL, self, vargs);
     }
-    return _t1;
-}
-
-static vinfo_t *
-do_argstrip(PsycoObject *po, vinfo_t *self, int striptype, vinfo_t *bytes)
-{
-    return psyco_generic_call(po, cimpl_do_argstrip, CfCommonNewRefPyObject,
-                              "vlv", self, (long)(striptype), bytes);
-}
-
-static vinfo_t *
-bytes_lstrip_impl(PsycoObject *po, vinfo_t *self, vinfo_t *bytes)
-{
-    vinfo_t *_t1;
-    _t1 = do_argstrip(po, self, 0, bytes);
-    return _t1;
+    if (nargs == 0)
+        bytes = psyco_vi_None();
+    else {
+        bytes = PsycoTuple_GET_ITEM(vargs, 0);
+        vinfo_incref(bytes);
+    }
+    return_value =
+        psyco_generic_call(po, cimpl_do_argstrip, CfCommonNewRefPyObject,
+                           "vlv", self, (long)striptype, bytes);
+    vinfo_decref(bytes, po);
+    return return_value;
 }
 
 static vinfo_t *
 bytes_lstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
-    int _t1;
-    vinfo_t *bytes;
-    vinfo_t *return_value;
-    _t1 = PsycoTuple_Load(vargs);
-    if (_t1 < 0 || _t1 > 1) {
-        return PsycoCFunction_CallFast(po, cfunc_bytes_lstrip, METH_FASTCALL,
-                                       self, vargs);
-    }
-    if (_t1 == 0) {
-        bytes = psyco_vi_None();
-        return_value = bytes_lstrip_impl(po, self, bytes);
-        vinfo_decref(bytes, po);
-        return return_value;
-    }
-    else {
-        bytes = PsycoTuple_GET_ITEM(vargs, 0);
-        return_value = bytes_lstrip_impl(po, self, bytes);
-        return return_value;
-    }
-}
-
-static vinfo_t *
-bytes_rstrip_impl(PsycoObject *po, vinfo_t *self, vinfo_t *bytes)
-{
-    vinfo_t *_t1;
-    _t1 = do_argstrip(po, self, 1, bytes);
-    return _t1;
+    return do_argstrip(po, self, vargs, cfunc_bytes_lstrip, LEFTSTRIP);
 }
 
 static vinfo_t *
 bytes_rstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
-    int _t1;
-    vinfo_t *bytes;
-    vinfo_t *return_value;
-    _t1 = PsycoTuple_Load(vargs);
-    if (_t1 < 0 || _t1 > 1) {
-        return PsycoCFunction_CallFast(po, cfunc_bytes_rstrip, METH_FASTCALL,
-                                       self, vargs);
-    }
-    if (_t1 == 0) {
-        bytes = psyco_vi_None();
-        return_value = bytes_rstrip_impl(po, self, bytes);
-        vinfo_decref(bytes, po);
-        return return_value;
-    }
-    else {
-        bytes = PsycoTuple_GET_ITEM(vargs, 0);
-        return_value = bytes_rstrip_impl(po, self, bytes);
-        return return_value;
-    }
-}
-
-static vinfo_t *
-bytes_strip_impl(PsycoObject *po, vinfo_t *self, vinfo_t *bytes)
-{
-    vinfo_t *_t1;
-    _t1 = do_argstrip(po, self, 2, bytes);
-    return _t1;
+    return do_argstrip(po, self, vargs, cfunc_bytes_rstrip, RIGHTSTRIP);
 }
 
 static vinfo_t *
 bytes_strip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
 {
-    int _t1;
-    vinfo_t *bytes;
-    vinfo_t *return_value;
-    _t1 = PsycoTuple_Load(vargs);
-    if (_t1 < 0 || _t1 > 1) {
-        return PsycoCFunction_CallFast(po, cfunc_bytes_strip, METH_FASTCALL,
-                                       self, vargs);
-    }
-    if (_t1 == 0) {
-        bytes = psyco_vi_None();
-        return_value = bytes_strip_impl(po, self, bytes);
-        vinfo_decref(bytes, po);
-        return return_value;
-    }
-    else {
-        bytes = PsycoTuple_GET_ITEM(vargs, 0);
-        return_value = bytes_strip_impl(po, self, bytes);
-        return return_value;
-    }
+    return do_argstrip(po, self, vargs, cfunc_bytes_strip, BOTHSTRIP);
 }
 
 static void

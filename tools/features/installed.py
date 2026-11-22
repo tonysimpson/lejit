@@ -275,12 +275,6 @@ def gc_head_internal(h):
     return True, path + ':PyGC_Head'
 
 
-def check_slot_result(h):
-    """headers: _Py_CheckSlotResult is declared (libpython doesn't export
-    it, so ctypes can't see it)"""
-    return _declared(h, '_Py_CheckSlotResult')
-
-
 def inline_call_tstate_get(h):
     """headers: PyObject_CallOneArg's definition (static inline) calls
     PyThreadState_Get(); no definition is no"""
@@ -339,7 +333,6 @@ HEADER_DETECTORS = {
     'CFRAME': cframe,
     'GC_TRACKED_BY_NEXT': gc_tracked_by_next,
     'GC_HEAD_INTERNAL': gc_head_internal,
-    'CHECK_SLOT_RESULT': check_slot_result,
     'INLINE_CALL_TSTATE_GET': inline_call_tstate_get,
     'LOOKUP_SPECIAL_ID': public('_PyObject_LookupSpecial'),
     'CALL_ONE_ARG': call_one_arg,
