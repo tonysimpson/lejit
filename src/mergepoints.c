@@ -21,7 +21,8 @@
  *     those of 2, made conservative where 3.7 bytecode doesn't say: an
  *     instruction may reach the handler of every SETUP_EXCEPT/FINALLY/WITH
  *     whose body contains it (the compiler lays the body out between the
- *     SETUP and its handler), BREAK_LOOP every loop exit, END_FINALLY those
+ *     SETUP and its handler) or of every exception table entry whose range
+ *     contains it, BREAK_LOOP every loop exit, END_FINALLY those
  *     and every CONTINUE_LOOP target.
  */
 #include "mergepoints.h"
@@ -186,9 +187,9 @@ psyco_class_cell(PyCodeObject *co)
 /* one backward pass of _find_dead_locals's dataflow: whether a set grew */
 static inline __attribute__((always_inline)) int
 _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
-           const int *setup_at, const int *handler_at, int nsetups,
-           const int *break_to, int nbreak, const int *exit_to, int nexit,
-           uint64_t *live, uint64_t *tmp, int nlocals, int words)
+           const int *setup_at, const int *try_end, const int *handler_at,
+           int nsetups, const int *break_to, int nbreak, const int *exit_to,
+           int nexit, uint64_t *live, uint64_t *tmp, int nlocals, int words)
 {
     Py_ssize_t i, k;
     int changed = 0;
@@ -199,11 +200,14 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
             continue;
         memset(tmp, 0, words * sizeof(uint64_t));
         for (k = 0; k < nsetups; k++)
-            if (setup_at[k] <= i && i < handler_at[k])
+            if (setup_at[k] <= i && i < try_end[k])
                 _live_union(tmp, live + handler_at[k] * words, words);
         switch (o) {
             case RETURN_VALUE:
             case RAISE_VARARGS:
+#if LE_HAS_EXCEPTION_TABLE
+            case RERAISE:
+#endif
                 break;
             case JUMP_ABSOLUTE:
             case JUMP_BACKWARD:
@@ -263,8 +267,8 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     Py_ssize_t i, m;
     int *op, *nxt;
     int *arg; /* a jump's target, in code units; else the argument */
-    int *setup_at, *handler_at,
-        nsetups = 0; /* try bodies: [setup_at, handler_at) */
+    int *setup_at, *try_end, *handler_at,
+        nsetups = 0; /* try bodies: [setup_at, try_end) */
     int *break_to, *exit_to, nbreak = 0, nexit = 0;
     uint64_t *live, *tmp;
     unsigned char *jump_targets; /* 1: loop exit, 2: continue target */
@@ -275,7 +279,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
         return 1;
     /* one block: the sets first, for their alignment */
     live = PyMem_Calloc(1, ((n + 2) * words) * sizeof(uint64_t) +
-                               7 * (n + 1) * sizeof(int) + (n + 1));
+                               8 * (n + 1) * sizeof(int) + (n + 1));
     if (live == NULL)
         goto done;
     tmp = live + (n + 1) * words;
@@ -283,7 +287,8 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     arg = op + (n + 1);
     nxt = arg + (n + 1);
     setup_at = nxt + (n + 1);
-    handler_at = setup_at + (n + 1);
+    try_end = setup_at + (n + 1);
+    handler_at = try_end + (n + 1);
     break_to = handler_at + (n + 1);
     exit_to = break_to + (n + 1);
     jump_targets = (unsigned char *)(exit_to + (n + 1));
@@ -314,10 +319,22 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
             case SETUP_FINALLY:
             case SETUP_WITH:
                 setup_at[nsetups] = (int)i;
+                try_end[nsetups] = j;
                 handler_at[nsetups++] = j;
                 break;
         }
     }
+#if LE_HAS_EXCEPTION_TABLE
+    {
+        Py_ssize_t at = 0;
+        le_handler_t h;
+        while (le_handler_next(co, &at, &h)) {
+            setup_at[nsetups] = h.start / LE_UNIT;
+            try_end[nsetups] = h.end / LE_UNIT;
+            handler_at[nsetups++] = h.handler / LE_UNIT;
+        }
+    }
+#endif
 
     /* where BREAK_LOOP and END_FINALLY may go */
     for (i = 0; i < n; i++)
@@ -330,13 +347,13 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
     /* backward dataflow to a fixed point; a separate copy for code with
        at most 64 locals, where a set is one word */
     if (words == 1)
-        while (_live_pass(n, op, arg, nxt, setup_at, handler_at, nsetups,
-                          break_to, nbreak, exit_to, nexit, live, tmp, nlocals,
-                          1));
+        while (_live_pass(n, op, arg, nxt, setup_at, try_end, handler_at,
+                          nsetups, break_to, nbreak, exit_to, nexit, live, tmp,
+                          nlocals, 1));
     else
-        while (_live_pass(n, op, arg, nxt, setup_at, handler_at, nsetups,
-                          break_to, nbreak, exit_to, nexit, live, tmp, nlocals,
-                          words));
+        while (_live_pass(n, op, arg, nxt, setup_at, try_end, handler_at,
+                          nsetups, break_to, nbreak, exit_to, nexit, live, tmp,
+                          nlocals, words));
 
     for (m = 0; m < report->mergepoint_count; m++) {
         mergepoint_t *mp = &report->mergepoints[m];
@@ -410,6 +427,9 @@ _find_merge_points(PyCodeObject *co, int *bad)
             /* no successor in this code */
             case RETURN_VALUE:
             case RAISE_VARARGS:
+#if LE_HAS_EXCEPTION_TABLE
+            case RERAISE:
+#endif
             case BREAK_LOOP: /* to the SETUP_LOOP target, counted there */
                 break;
             /* unconditional jumps */
@@ -453,6 +473,18 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 ENTER_NEXT();
         }
     }
+
+#if LE_HAS_EXCEPTION_TABLE
+    /* a handler can be entered from anywhere in its range */
+    {
+        Py_ssize_t at = 0;
+        le_handler_t h;
+        while (le_handler_next(co, &at, &h)) {
+            flags |= MP_FLAGS_HAS_EXCEPT;
+            entry_count[JUMP_TARGET(h.handler / LE_UNIT)] = 8;
+        }
+    }
+#endif
 
     for (entry_count_index = 0; entry_count_index < entry_count_len;
          entry_count_index++)
@@ -628,6 +660,17 @@ compiled_opcode(int op)
 #if LE_HAS_OPCODE_CONTAINS_OP
         case CONTAINS_OP:
 #endif
+        /* exceptions (except* stays interpreted where it has opcodes of its
+           own) */
+        case RAISE_VARARGS:
+#if LE_HAS_EXCEPTION_TABLE
+        case PUSH_EXC_INFO:
+        case POP_EXCEPT:
+        case RERAISE:
+        case CHECK_EXC_MATCH:
+        case BEFORE_WITH:
+        case WITH_EXCEPT_START:
+#endif
         /* subscripts, building and unpacking, imports, f-strings,
            iteration and pattern matching */
         case BINARY_SUBSCR:
@@ -746,7 +789,6 @@ compiled_opcode(int op)
 #if !LE_HAS_EXCEPTION_TABLE
     switch (op) {
         /* exceptions, and the blocks that handle them */
-        case RAISE_VARARGS:
         case SETUP_LOOP:
         case SETUP_EXCEPT:
         case SETUP_FINALLY:
@@ -809,6 +851,12 @@ _build_merge_points(PyCodeObject *co, int module)
     if (module) {
         goto not_ok;
     }
+#if LE_HAS_MONITORING
+    /* where tracing is sys.monitoring's (3.12 on), neither that bytecode
+       nor that runtime (immortal objects, the thread state, the tracing
+       test) is translated yet: every code object runs in ceval */
+    goto not_ok;
+#endif
     /* a generator expression compiles only into its consumer
        (psyfunc.c:psyco_call_genexpr): the eval hook never runs generator
        code, and psyco_call_pyfunc makes a pending generator of it */

@@ -270,6 +270,6 @@ psyco_proxy_code_buffer(PsycoObject *po, global_entries_t *ge);
 
 EXTERNFN
 void
-codemanager_init();
+codemanager_init(void);
 
 #endif /* _CODEMANAGER_H */

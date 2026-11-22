@@ -426,8 +426,8 @@ Psyco_DefineMethodFn(PyTypeObject *tp, char *meth_name, int meth_flags,
                      void *meta_fn)
 {
     PyMethodDef *ml;
-    PyObject *d =
-        tp->tp_dict ? PyDict_GetItemString(tp->tp_dict, meth_name) : NULL;
+    PyObject *dict = le_type_dict(tp);
+    PyObject *d = dict ? PyDict_GetItemString(dict, meth_name) : NULL;
     if (d == NULL || Py_TYPE(d) != &PyMethodDescr_Type) {
         meta_not_registered_as(tp->tp_name, meth_name,
                                "not a method descriptor");
@@ -682,11 +682,7 @@ PycException_SetFormat(PsycoObject *po, PyObject *e, const char *fmt, ...)
     PyObject *s;
     va_list vargs;
 
-#ifdef HAVE_STDARG_PROTOTYPES
     va_start(vargs, fmt);
-#else
-    va_start(vargs);
-#endif
     s = PyUnicode_FromFormatV(fmt, vargs);
     va_end(vargs);
 
@@ -900,6 +896,81 @@ cimpl_pop_exc_info(PyObject *type, PyObject *value, PyObject *tb,
     if (word != NULL)
         psyco_frame_catcher_drop(word);
 }
+
+#if LE_HAS_EXCEPTION_TABLE
+/* Catching an exception at a handler from the exception table, as
+   ceval.c's exception_unwind: the pending error is fetched, normalised and
+   given its traceback, and its value returned for the handler's stack (a
+   new reference). The handled exception changes only at the handler's
+   PUSH_EXC_INFO. 'word' and 'own' as for cimpl_push_exc_info. */
+static PyObject *
+cimpl_catch(PyObject **word, stack_frame_info_t **own)
+{
+    PyObject *exc, *val, *tb;
+    extra_assert(PyErr_Occurred());
+    PyErr_Fetch(&exc, &val, &tb);
+    PyErr_NormalizeException(&exc, &val, &tb);
+    PyException_SetTraceback(val, tb != NULL ? tb : Py_None);
+    if (word != NULL && tb != NULL && PyTraceBack_Check(tb))
+        psyco_frame_catch(((PyTracebackObject *)tb)->tb_frame, word, own);
+    Py_XDECREF(tb);
+    Py_XDECREF(exc);
+    return val;
+}
+
+/* PUSH_EXC_INFO: 'value' becomes the handled exception, and the one it
+   replaces is returned (a new reference; None for none) */
+static PyObject *
+cimpl_push_exc_value(PyObject *value)
+{
+    PyThreadState *tstate = PyThreadState_GET();
+    PyObject *old = le_exc_info_value(tstate);
+    Py_INCREF(value);
+    le_exc_info_put_value(tstate, value);
+    if (old == NULL) {
+        old = Py_None;
+        Py_INCREF(old);
+    }
+    return old;
+}
+
+/* POP_EXCEPT: 'value', which PUSH_EXC_INFO saved, is the handled exception
+   again (not consumed: the caller decrefs it). With it, as a rule, goes the
+   last hold on the frame in the catcher word 'word', as in
+   cimpl_pop_exc_info. */
+static void
+cimpl_pop_exc_value(PyObject *value, PyObject **word)
+{
+    PyThreadState *tstate = PyThreadState_GET();
+    PyObject *old = le_exc_info_value(tstate);
+    Py_INCREF(value);
+    le_exc_info_put_value(tstate, value);
+    Py_XDECREF(old);
+    if (word != NULL)
+        psyco_frame_catcher_drop(word);
+}
+
+/* RERAISE: the exception value is raised again, with the traceback it has */
+static void
+cimpl_reraise_value(PyObject *value)
+{
+    PyObject *type = (PyObject *)Py_TYPE(value);
+    Py_INCREF(type);
+    Py_INCREF(value);
+    PyErr_Restore(type, value, PyException_GetTraceback(value));
+}
+
+/* WITH_EXCEPT_START's call: exit_func(type, value, traceback) of the
+   exception value */
+static PyObject *
+cimpl_with_exit_exc(PyObject *exit_func, PyObject *value)
+{
+    PyObject *tb = PyException_GetTraceback(value);
+    PyObject *stack[3] = {(PyObject *)Py_TYPE(value), value, tb};
+    Py_XDECREF(tb);
+    return PyObject_Vectorcall(exit_func, stack, 3, NULL);
+}
+#endif
 
 DEFINEFN
 void
@@ -1187,6 +1258,11 @@ own_slot(void)
 static bool
 caught_here(PsycoObject *po)
 {
+#if LE_HAS_EXCEPTION_TABLE
+    le_handler_t h;
+    return catcher_word(po) != NULL &&
+           le_handler_find(po->pr.co, po->pr.next_instr, &h);
+#else
     int i;
     if (catcher_word(po) == NULL)
         return false;
@@ -1197,6 +1273,7 @@ caught_here(PsycoObject *po)
         return type == SETUP_EXCEPT || type == SETUP_FINALLY;
     }
     return false;
+#endif
 }
 
 /* five of the frame's locals, from 'start', into the frame its catcher
@@ -1266,13 +1343,28 @@ psyco_catcher_flush(PsycoObject *po)
    reach the traceback's frame. If E doesn't match, END_FINALLY (RERAISE
    from 3.9) re-raises it and puts the locals in then. The test of E is
    COMPARE_OP's exception match and a jump, or from 3.9 one
-   JUMP_IF_NOT_EXC_MATCH. */
+   JUMP_IF_NOT_EXC_MATCH, or where handlers are in an exception table
+   CHECK_EXC_MATCH and a jump, after the handler's PUSH_EXC_INFO and with
+   one POP_TOP for the exception. */
 static bool
 handler_drops_exception(PyCodeObject *co, int handler)
 {
     le_code_t c = le_code(co);
     int p = handler, q, i;
 #define OP_AT(pos) ((pos) < c.size ? le_op(c, (pos)) : -1)
+#if LE_HAS_EXCEPTION_TABLE
+    if (OP_AT(p) != PUSH_EXC_INFO)
+        return false;
+    p = le_after(c, p);
+    i = OP_AT(p);
+    if (i == LOAD_GLOBAL || i == LOAD_FAST || i == LOAD_DEREF) {
+        q = le_after(c, p);
+        if (OP_AT(q) == CHECK_EXC_MATCH &&
+            OP_AT(le_after(c, q)) == POP_JUMP_FORWARD_IF_FALSE)
+            p = le_after(c, le_after(c, q));
+    }
+    return OP_AT(p) == POP_TOP && OP_AT(le_after(c, p)) == POP_EXCEPT;
+#else
     if (OP_AT(p) == DUP_TOP) {
         q = le_after(c, p);
         i = OP_AT(q);
@@ -1290,6 +1382,7 @@ handler_drops_exception(PyCodeObject *co, int handler)
         if (OP_AT(p) != POP_TOP)
             return false;
     return OP_AT(p) == POP_EXCEPT;
+#endif
 #undef OP_AT
 }
 
@@ -1300,15 +1393,28 @@ handler_drops_exception(PyCodeObject *co, int handler)
 static bool
 locals_wanted_now(PsycoObject *po)
 {
-    int i;
     PyCodeObject *co;
+#if LE_HAS_EXCEPTION_TABLE
+    le_handler_t h;
+    int call;
+#else
+    int i;
+#endif
     if (!po->pr.is_inlining)
         return !caught_here(po);
-    /* an inlined frame's blocks in 'pr' are its caller's, with their
-       handlers in the caller's code */
     co = (PyCodeObject *)CompileTime_Get(
              LOC_INLINING->array->items[LOC_INLINE_CO]->source)
              ->value;
+#if LE_HAS_EXCEPTION_TABLE
+    /* the caller's handler for its call, in the caller's code */
+    call = (int)CompileTime_Get(
+               LOC_INLINING->array->items[LOC_INLINE_NEXT_INSTR]->source)
+               ->value;
+    return !le_handler_find(co, call, &h) ||
+           !handler_drops_exception(co, h.handler);
+#else
+    /* an inlined frame's blocks in 'pr' are its caller's, with their
+       handlers in the caller's code */
     for (i = po->pr.iblock; i-- > 0;) {
         le_block_t *b = &po->pr.blockstack[i];
         if (b->b_type == SETUP_LOOP)
@@ -1317,6 +1423,7 @@ locals_wanted_now(PsycoObject *po)
                  handler_drops_exception(co, b->b_handler));
     }
     return true;
+#endif
 }
 
 /* ceval's _PyErr_Restore of three stack items: they become the
@@ -1339,8 +1446,9 @@ PycException_Reraise(PsycoObject *po, vinfo_t *exc, vinfo_t *val, vinfo_t *tb)
 
 /* record a traceback entry for the current virtual Python exception */
 PSY_INLINE void
-PsycoTraceBack_Here(PsycoObject *po, int lasti)
+PsycoTraceBack_Here(PsycoObject *po, int pos)
 {
+    int lasti = le_place(le_code(po->pr.co), pos);
     int lineno = PyCode_Addr2Line(po->pr.co, lasti);
     vinfo_t *word = catcher_word(po);
     const char *tags = word != NULL ? "lvllr" : "lvlll";
@@ -1467,10 +1575,12 @@ psyco_pycompiler_init(void)
                         : next_instr + (LE_IS_JBACK(opcode) ? -1 : 1) * \
                                            LE_JUMP_BYTES(oparg))
 
-/* CALL_FINALLY's return offset: an int object, one per offset, so that two
-   states pushing it compare equal (a fixed constant must match exactly) */
+/* a place ceval keeps on the value stack as an int: CALL_FINALLY's return
+   offset, or the lasti a handler is given. One object per value, so that
+   two states pushing it compare equal (a fixed constant must match
+   exactly) */
 static vinfo_t *
-finally_return(int offset)
+offset_int(int offset)
 {
     static PyObject *ints = NULL;
     PyObject *o, *x;
@@ -1486,7 +1596,7 @@ finally_return(int offset)
 }
 
 static bool
-is_finally_return(vinfo_t *v)
+is_offset_int(vinfo_t *v)
 {
     return is_compiletime(v->source) &&
            (CompileTime_Get(v->source)->refcount1_flags & SkFlagPyObj) &&
@@ -2331,7 +2441,7 @@ _PyObject_FastCallDictTstate(PyThreadState *tstate, PyObject *callable,
     _PyObject_FastCallDict(callable, args, nargsf, kwargs)
 #endif
 
-#if !LE_HAS_CFRAME
+#if !LE_HAS_CFRAME && !LE_HAS_MONITORING
 static int
 cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
                  int what, PyObject *arg)
@@ -2351,7 +2461,7 @@ cimpl_call_trace(Py_tracefunc func, PyObject *obj, PyFrameObject *frame,
 }
 #endif
 
-#if !LE_HAS_CFRAME
+#if !LE_HAS_CFRAME && !LE_HAS_MONITORING
 static int
 cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
                            PyFrameObject *frame, int what, PyObject *arg)
@@ -2373,7 +2483,7 @@ cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
 }
 #endif
 
-#if !LE_HAS_CFRAME
+#if !LE_HAS_CFRAME && !LE_HAS_MONITORING
 static PyObject *
 cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
 #if LE_HAS_CALL_TRACE_METHOD_DESCR
@@ -3228,7 +3338,7 @@ cimpl_dict_merge_0(PyObject *dict, PyObject *update, PyObject *_in0)
 }
 #endif
 
-#if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
+#if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH || LE_HAS_EXCEPTION_TABLE
 static int
 cimpl_jump_if_not_exc_match_0(PyObject *right)
 {
@@ -3504,7 +3614,7 @@ cimpl_special_lookup(PyObject *o, _Py_Identifier *id)
     return res;
 }
 
-#if LE_HAS_OPCODE_WITH_EXCEPT_START
+#if LE_HAS_OPCODE_WITH_EXCEPT_START && !LE_HAS_EXCEPTION_TABLE
 static int
 cimpl_with_except_start_r0(PyObject *_items, long _oparg, PyObject *exc,
                            PyObject *exit_func, PyObject *tb, PyObject *val,
@@ -3622,13 +3732,20 @@ cimpl_build_map_unpack_0(PyObject *sum, PyObject *arg)
 #endif
 
 #if !LE_HAS_KWARGS_MERGE_EX
+/* with the AttributeError set */
 static void
 cimpl_format_kwargs_mapping_error(PyObject *func, PyObject *kwargs)
+#if LE_HAS_FUNCTION_STR
+{
+    cimpl_format_kwargs_error(func, kwargs);
+}
+#else
 {
     PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_MAPPING_FUNC_NAME,
                  PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
                  kwargs->ob_type->tp_name);
 }
+#endif
 #endif
 
 #if LE_HAS_KWARGS_MERGE_EX && !LE_HAS_FUNCTION_STR
@@ -3891,11 +4008,11 @@ cimpl_do_call_core(PyTraceInfo *trace_info, PyObject *func, PyObject *callargs,
 }
 #endif
 
-#if LE_HAS_CFRAME && !LE_HAS_CEVAL_TRACE_INFO
+#if (LE_HAS_CFRAME || LE_HAS_MONITORING) && !LE_HAS_CEVAL_TRACE_INFO
 /* ceval's do_call_core where it keeps its trace info in the thread state,
-   without the profiler's c_call events around a C function: compiled code
-   makes no such call on this CPython yet (mergepoints.c refuses every
-   code object) */
+   or sys.monitoring traces calls, without the profiler's c_call events
+   around a C function: compiled code makes no such call on these CPythons
+   yet (mergepoints.c refuses every code object) */
 static PyObject *
 cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
 {
@@ -4338,6 +4455,70 @@ cimpl_setup_with(PyObject *mgr, PyObject *out[])
     return 0;
 }
 
+#if LE_HAS_EXCEPTION_TABLE
+/* ceval.c BEFORE_WITH: out[0] gets the bound __exit__, out[1] __enter__'s
+   result. Unlike ceval, mgr stays on the stack (one reference more) while
+   __enter__ runs. */
+static int
+cimpl_before_with(PyObject *mgr, PyObject *out[])
+{
+    _Py_IDENTIFIER(__exit__);
+    _Py_IDENTIFIER(__enter__);
+    PyObject *enter = le_lookup_special_id(mgr, &PyId___enter__), *exit, *res;
+    if (enter == NULL) {
+        if (!PyErr_Occurred())
+            PyErr_Format(PyExc_TypeError, LE_MSG_WITH_NO_ENTER,
+                         Py_TYPE(mgr)->tp_name);
+        return -1;
+    }
+    exit = le_lookup_special_id(mgr, &PyId___exit__);
+    if (exit == NULL) {
+        if (!PyErr_Occurred())
+            PyErr_Format(PyExc_TypeError, LE_MSG_WITH_NO_EXIT,
+                         Py_TYPE(mgr)->tp_name);
+        Py_DECREF(enter);
+        return -1;
+    }
+    res = PyObject_CallObject(enter, NULL);
+    Py_DECREF(enter);
+    if (res == NULL) {
+        Py_DECREF(exit);
+        return -1;
+    }
+    out[0] = exit;
+    out[1] = res;
+    return 0;
+}
+
+/* ceval.c:check_except_type_valid, at compile time for a known class or a
+   tuple of known classes */
+static bool
+except_type_valid(PsycoObject *po, vinfo_t *right)
+{
+    PyTypeObject *tp = Psyco_KnownType(right);
+    bool tuple = tp != NULL && (tp->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) != 0;
+    int i, n = tuple ? PsycoTuple_Load(right) : 1;
+    if (n < 0 || n > 16)
+        goto at_run_time;
+    for (i = 0; i < n; i++) {
+        vinfo_t *e = tuple ? PsycoTuple_GET_ITEM(right, i) : right;
+        if (!is_compiletime(e->source))
+            goto at_run_time;
+        if (!PyExceptionClass_Check(
+                (PyObject *)CompileTime_Get(e->source)->value)) {
+            PycException_SetString(po, PyExc_TypeError,
+                                   LE_MSG_CATCHING_NON_EXCEPTION);
+            return false;
+        }
+    }
+    return true;
+at_run_time:
+    return psyco_generic_call(po, cimpl_jump_if_not_exc_match_0,
+                              CfNoReturnValue | CfReturnTypeInt | CfPyErrIfNeg,
+                              "v", right) != NULL;
+}
+#endif
+
 /* WITH_CLEANUP_START's call */
 static PyObject *
 cimpl_call_exit(PyObject *exit_func, PyObject *exc, PyObject *val,
@@ -4647,6 +4828,27 @@ cimpl_import_all_from(PyObject *locals, PyObject *v)
 /***                         Main loop                         ***/
 /***************************************************************/
 
+#if LE_HAS_EXCEPTION_TABLE
+/* A virtual exception raised for real, as C code raises one
+   (PyErr_SetObject): chained to the exception being handled, which is
+   still the one there was where it was raised, as handlers are left only by
+   their own instructions. The traceback it has so far goes with it. Takes
+   the references, as PyErr_Restore. */
+static void
+cimpl_raise_virtual(PyObject *type, PyObject *value, PyObject *tb)
+{
+    PyObject *t, *v, *none;
+    PyErr_SetObject(type, value);
+    Py_DECREF(type);
+    Py_XDECREF(value);
+    if (tb != NULL) {
+        PyErr_Fetch(&t, &v, &none);
+        Py_XDECREF(none);
+        PyErr_Restore(t, v, tb);
+    }
+}
+#endif
+
 static bool
 compute_and_raise_exception(PsycoObject *po)
 {
@@ -4673,8 +4875,14 @@ compute_and_raise_exception(PsycoObject *po)
         }
         args[0] = 'v';
         consume_reference(po, po->pr.exc);
-        return (psyco_generic_call(po, PyErr_Restore, CfNoReturnValue, args,
-                                   po->pr.exc, po->pr.val, po->pr.tb) != NULL);
+        return (psyco_generic_call(po,
+#if LE_HAS_EXCEPTION_TABLE
+                                   cimpl_raise_virtual,
+#else
+                                   PyErr_Restore,
+#endif
+                                   CfNoReturnValue, args, po->pr.exc,
+                                   po->pr.val, po->pr.tb) != NULL);
     }
     else
         return true;
@@ -5198,6 +5406,11 @@ psyco_pycompiler_mainloop(PsycoObject *po)
     int saved_rec_limit;
     int unwound = 0;  /* the frame went on interpreted (resume_if_tracing) */
     int reraised = 0; /* exception_unwind: an exception raised again */
+#if LE_HAS_EXCEPTION_TABLE
+    /* the place, as ceval's lasti, of an exception RERAISE raises again
+       from the place under it; else -1 */
+    int raise_lasti = -1;
+#endif
     int resumed = 0;
 #if LE_CODESTATS
     PsycoObject *cs_saved_owner = cs_owner;
@@ -6427,7 +6640,27 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 }
 #endif
 
-#if LE_HAS_OPCODE_RERAISE
+#if LE_HAS_EXCEPTION_TABLE
+                /* the exception value on top raised again; with an
+                   argument, from the place under it, which a handler that
+                   wants one is given (raise_lasti) */
+                case RERAISE:
+                    if (oparg) {
+                        v = NTOP(oparg + 1);
+                        if (!is_offset_int(v)) {
+                            PycException_SetString(po, PyExc_SystemError,
+                                                   "lasti is not an int");
+                            break;
+                        }
+                        raise_lasti = (int)PyLong_AsLong(
+                            (PyObject *)CompileTime_Get(v->source)->value);
+                    }
+                    psyco_generic_call(po, cimpl_reraise_value,
+                                       CfPyErrAlways | CfNoPython, "v", TOP());
+                    if (locals_wanted_now(po))
+                        traceback_locals(po, NULL);
+                    goto exception_unwind;
+#elif LE_HAS_OPCODE_RERAISE
                 case RERAISE: {
                     vinfo_t *exc;
                     vinfo_t *tb;
@@ -8061,7 +8294,18 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 }
 #endif
 
-#if LE_HAS_OPCODE_WITH_EXCEPT_START
+#if LE_HAS_EXCEPTION_TABLE
+                /* __exit__ is fourth, under the lasti and the exception
+                   saved by PUSH_EXC_INFO */
+                case WITH_EXCEPT_START:
+                    x = psyco_generic_call(po, cimpl_with_exit_exc,
+                                           CfCommonNewRefPyObject, "vv",
+                                           NTOP(4), TOP());
+                    if (x == NULL)
+                        break;
+                    PUSH(x);
+                    goto fine;
+#elif LE_HAS_OPCODE_WITH_EXCEPT_START
                 case WITH_EXCEPT_START: {
                     int _t1;
                     int _t2;
@@ -8578,18 +8822,84 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
+#if LE_HAS_EXCEPTION_TABLE
+                /* the handled exception PUSH_EXC_INFO saved is put back */
+                case POP_EXCEPT: {
+                    vinfo_t *word = catcher_word(po);
+                    if (psyco_generic_call(po, cimpl_pop_exc_value,
+                                           CfNoReturnValue,
+                                           word != NULL ? "vr" : "vl", TOP(),
+                                           (long)word) == NULL)
+                        break;
+                    POP_DECREF();
+                    goto fine;
+                }
+
+                /* the exception caught becomes the handled one; the one it
+                   replaces goes under it */
+                case PUSH_EXC_INFO:
+                    x = psyco_generic_call(po, cimpl_push_exc_value,
+                                           CfCommonNewRefPyObject | CfNoPython,
+                                           "v", TOP());
+                    if (x == NULL)
+                        break;
+                    POP(v);
+                    PUSH(x);
+                    PUSH(v);
+                    goto fine;
+
+                /* whether the exception under the class (or tuple) on top
+                   is one of them */
+                case CHECK_EXC_MATCH:
+                    if (!except_type_valid(po, TOP()))
+                        break;
+                    x = psyco_generic_call(
+                        po, PyErr_GivenExceptionMatches,
+                        CfCommonIntBoolOrError | CfNoPython | CfNoBlock, "vv",
+                        NTOP(2), TOP());
+                    if (x == NULL)
+                        break;
+                    cc = integer_non_null(po, x);
+                    vinfo_decref(x, po);
+                    if (cc == CC_ERROR)
+                        break;
+                    x = PsycoBool_FromCondition(po, cc);
+                    if (x == NULL)
+                        break;
+                    POP_DECREF();
+                    PUSH(x);
+                    goto fine;
+
+                /* with: the bound __exit__ replaces the manager, and
+                   __enter__'s result goes over it */
+                case BEFORE_WITH: {
+                    vinfo_array_t *array = array_new(2);
+                    if (!psyco_generic_call(po, cimpl_before_with,
+                                            CfCommonIntZeroOk, "vA", TOP(),
+                                            array)) {
+                        array_release(array);
+                        break;
+                    }
+                    POP_DECREF();
+                    PUSH(array->items[0]);
+                    PUSH(array->items[1]);
+                    array_release(array);
+                    goto fine;
+                }
+#else
                 case POP_EXCEPT:
                     /* from 3.8 the items above the handler's three stay (a
                        return value under them, by ROT_FOUR) */
                     if (!pop_except_handler(po, LE_HAS_POP_EXCEPT_UNWINDS))
                         break;
                     goto fine;
+#endif
 
                 /* Where the bytecode has them (3.8), a finally block is
                    entered by BEGIN_FINALLY's NULL (LeJIT's 0), CALL_FINALLY's
                    offset to return to, or an exception's six items;
                    END_FINALLY and POP_FINALLY tell them apart. The offset is
-                   ceval's int object, a fixed constant (finally_return), so
+                   ceval's int object, a fixed constant (offset_int), so
                    END_FINALLY's jump is made at compile time and a frame going
                    on in ceval finds what ceval pushes. */
                 case BEGIN_FINALLY:
@@ -8597,7 +8907,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
 
                 case CALL_FINALLY:
-                    PUSH(finally_return(INSTR_OFFSET()));
+                    PUSH(offset_int(INSTR_OFFSET()));
                     JUMPBY(LE_JUMP_BYTES(oparg));
                     JUMPED();
 
@@ -8606,7 +8916,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     bool ok = true;
                     if (oparg)
                         POP(res);
-                    if (psyco_knowntobe(TOP(), 0) || is_finally_return(TOP()))
+                    if (psyco_knowntobe(TOP(), 0) || is_offset_int(TOP()))
                         POP_DECREF();
                     else
                         ok = pop_except_handler(po, true);
@@ -8631,7 +8941,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                         vinfo_decref(v, po);
                         goto fine;
                     }
-                    if (is_finally_return(v)) {
+                    if (is_offset_int(v)) {
                         /* back to just after the CALL_FINALLY */
                         JUMPTO((int)PyLong_AsLong(
                             (PyObject *)CompileTime_Get(v->source)->value));
@@ -9306,6 +9616,50 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 PsycoTraceBack_Here(po, po->pr.next_instr);
             }
         }
+
+#if LE_HAS_EXCEPTION_TABLE
+        /* the handler the exception table gives for the instruction that
+           raised, as ceval's exception_unwind: the stack cut to the
+           handler's depth, the place of the instruction pushed if the
+           handler wants it, then the exception caught (cimpl_catch). A
+           virtual exception is raised for real first, so that the run-time
+           code can fetch it. Pseudo-exceptions have no handler. */
+        if (PycException_IsPython(po)) {
+            le_handler_t h;
+            int lasti = raise_lasti >= 0
+                            ? raise_lasti
+                            : le_lasti_of(le_place(le_code(po->pr.co),
+                                                   po->pr.next_instr));
+            raise_lasti = -1;
+            if (le_handler_find(po->pr.co, po->pr.next_instr, &h)) {
+                int next_instr;
+                vinfo_t *word = catcher_word(po), *own;
+                if (!compute_and_raise_exception(po))
+                    break;
+                clear_pseudo_exception(po);
+                while (STACK_LEVEL() > h.depth) POP_DECREF();
+                if (h.lasti)
+                    PUSH(offset_int(lasti));
+                if (word != NULL) {
+                    own = own_slot();
+                    v = psyco_generic_call(po, cimpl_catch,
+                                           CfCommonNewRefPyObject, "rr", word,
+                                           own);
+                    vinfo_decref(own, po);
+                }
+                else
+                    v = psyco_generic_call(
+                        po, cimpl_catch, CfCommonNewRefPyObject, "ll", 0L, 0L);
+                if (v == NULL)
+                    break;
+                PUSH(v);
+                JUMPTO(h.handler);
+                SAVE_NEXT_INSTR(next_instr);
+                /* a callee that raised may have started tracing */
+                po->pr.resume_pending = 1;
+            }
+        }
+#endif
 
         /* Unwind the Python stack until we find a handler for
            the (pseudo) exception. You will recognize here

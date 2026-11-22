@@ -1851,33 +1851,35 @@ psyco_frames_init(void)
     frame_builtins_init();
     fn = PyDescr_NewGetSet(&PyFrame_Type, &back_getset);
     if (fn == NULL ||
-        PyDict_SetItemString(PyFrame_Type.tp_dict, "f_back", fn) < 0)
+        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_back", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
-    lineno_descr = PyDict_GetItemString(PyFrame_Type.tp_dict, "f_lineno");
+    lineno_descr =
+        PyDict_GetItemString(le_type_dict(&PyFrame_Type), "f_lineno");
     Py_XINCREF(lineno_descr);
     fn = lineno_descr == NULL
              ? NULL
              : PyDescr_NewGetSet(&PyFrame_Type, &lineno_getset);
     if (fn == NULL ||
-        PyDict_SetItemString(PyFrame_Type.tp_dict, "f_lineno", fn) < 0)
+        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_lineno", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
-    locals_descr = PyDict_GetItemString(PyFrame_Type.tp_dict, "f_locals");
+    locals_descr =
+        PyDict_GetItemString(le_type_dict(&PyFrame_Type), "f_locals");
     Py_XINCREF(locals_descr);
     fn = locals_descr == NULL
              ? NULL
              : PyDescr_NewGetSet(&PyFrame_Type, &locals_getset);
     if (fn == NULL ||
-        PyDict_SetItemString(PyFrame_Type.tp_dict, "f_locals", fn) < 0)
+        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_locals", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
-    clear_descr = PyDict_GetItemString(PyFrame_Type.tp_dict, "clear");
+    clear_descr = PyDict_GetItemString(le_type_dict(&PyFrame_Type), "clear");
     Py_XINCREF(clear_descr);
     fn = clear_descr == NULL ? NULL
                              : PyDescr_NewMethod(&PyFrame_Type, &clear_def);
     if (fn == NULL ||
-        PyDict_SetItemString(PyFrame_Type.tp_dict, "clear", fn) < 0)
+        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "clear", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
     PyType_Modified(&PyFrame_Type);

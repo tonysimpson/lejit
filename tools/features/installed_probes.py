@@ -334,10 +334,18 @@ def MATCH_KEYS_PUSHES_BOOL():
 
 
 @probe
+def MONITORING():
+    """sys.monitoring exists"""
+    return hasattr(sys, 'monitoring'), 'sys.monitoring'
+
+
+@probe
 def KWARGS_MERGE_EX():
-    """CALL_FUNCTION_EX given a mapping whose keys() repeats a key reports
-    the repeat (TypeError "multiple values"), as _PyDict_MergeEx does,
-    rather than keeping the last value as PyDict_Update does (run)"""
+    """CALL_FUNCTION_EX given a dict subclass whose keys() repeats a key
+    reports the repeat (TypeError "multiple values"), as _PyDict_MergeEx
+    does, rather than keeping the last value as PyDict_Update does, or
+    passing the dict on as it is, as where DICT_MERGE has made every
+    mapping a dict (run)"""
     _need_ops('CALL_FUNCTION_EX', 'LOAD_CONST', 'RETURN_VALUE')
     # the callable is pushed with CALL_FUNCTION, or (from 3.11) with a
     # NULL under it
@@ -349,9 +357,14 @@ def KWARGS_MERGE_EX():
         raise Unanswered('the probe needs opcode CALL_FUNCTION or PUSH_NULL,'
                          ' which this interpreter lacks')
 
-    class M(object):
+    # a dict, which CALL_FUNCTION_EX may take as it is; its own __iter__
+    # makes a merge read keys()
+    class M(dict):
         def keys(self):
             return ['a', 'a']
+
+        def __iter__(self):
+            return iter(self.keys())
 
         def __getitem__(self, key):
             return 1
@@ -547,6 +560,30 @@ def FLOAT_ASDOUBLE_INDEX():
     if isinstance(e, TypeError):
         return False, 'math.sqrt(__index__ only): TypeError'
     raise Unanswered('math.sqrt: %r' % e)
+
+
+@probe
+def LASTI_PAST_PREFIXES():
+    """a traceback's tb_lasti for an instruction with an EXTENDED_ARG prefix
+    (a local numbered 300, unbound) is the instruction's own unit, not the
+    prefix"""
+    src = ('def f():\n' + ''.join('    v%d = 0\n' % i for i in range(301))
+           + '    del v300\n    return v300\n')
+    g = {}
+    exec(src, g)
+    try:
+        g['f']()
+    except NameError as e:
+        lasti = e.__traceback__.tb_next.tb_lasti
+    else:
+        raise Unanswered('reading an unbound local raised nothing')
+    code = g['f'].__code__.co_code
+    prefix = opcode.opmap['EXTENDED_ARG']
+    if code[lasti] == prefix:
+        return False, 'tb_lasti %d: the EXTENDED_ARG prefix' % lasti
+    if lasti >= 2 and code[lasti - 2] == prefix:
+        return True, 'tb_lasti %d: the instruction after its prefix' % lasti
+    raise Unanswered('tb_lasti %d is neither a prefix nor after one' % lasti)
 
 
 @probe
