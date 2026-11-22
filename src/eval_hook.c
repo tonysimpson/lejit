@@ -14,7 +14,11 @@ le_eval_breaker_at_entry(PyCodeObject *co); /* pyruntime.c */
 static PyObject *
 LeCode_Run(PyObject *codebuf, le_frame_t *f)
 {
-    stack_frame_info_t **finfo;
+    /* the chain of compiled frames is empty until the code starts: a
+       frame walk (frames.c:pvisitframes) from Python that the
+       eval_breaker test below runs finds only its end mark */
+    stack_frame_info_t *no_frames = (stack_frame_info_t *)-1;
+    stack_frame_info_t **finfo = &no_frames;
     FrameRuntime fr;
     PyObject *result;
 
