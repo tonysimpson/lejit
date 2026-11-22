@@ -22,7 +22,7 @@ BANNED = {
         'test_support test_script_helper test_regrtest test_crashers test_gdb test_check_c_globals',
     "compiled frames aren't kept up to date (line numbers, locals, stacks)":
         'test_sys test_frame test_traceback test_tracemalloc test_warnings test_logging '
-        'test_coroutines test_asyncio test_compile test_raise test_exceptions test_builtin '
+        'test_coroutines test_asyncio test_compile test_raise test_builtin '
         'test_doctest test_capi',
     'compiled code holds what it specialised on':
         'test_weakref test_gc test_module test_descr',

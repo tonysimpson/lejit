@@ -367,6 +367,37 @@ CASES += [
 ]
 
 
+# the line a frame shows once an exception has left it through a finally
+# block or an except clause that doesn't match: that of the instruction
+# that raised it again
+def leaves_through_finally(a):
+    try:
+        a // 0
+    finally:
+        pass
+
+
+def leaves_through_other_except(a):
+    try:
+        a // 0
+    except TypeError:
+        pass
+
+
+def line_left_from(f):
+    try:
+        f(1)
+    except ZeroDivisionError as e:
+        frame = e.__traceback__.tb_next.tb_frame
+        return frame.f_lineno - frame.f_code.co_firstlineno
+
+
+CASES += [
+    ('line_left_from',
+     '[(leaves_through_finally,), (leaves_through_other_except,)]', {}),
+]
+
+
 # 'print >> f' gets 3.7's hint (CPython's test_print)
 def print_rshift(f):
     try:
