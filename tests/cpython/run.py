@@ -95,8 +95,9 @@ if sys.argv[1] == 'lejit':
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
 for name in sys.argv[4:]:
     cls, meth = name.split('.')
-    cls = getattr(mod, cls)
-    setattr(cls, meth, unittest.skip('skipped by run.py')(getattr(cls, meth)))
+    cls = getattr(mod, cls, None)
+    if hasattr(cls, meth):
+        setattr(cls, meth, unittest.skip('skipped by run.py')(getattr(cls, meth)))
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)
 r = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
 bad = r.failures + r.errors
