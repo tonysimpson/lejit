@@ -1,4 +1,4 @@
-/* Built with Py_BUILD_CORE (as pycore_copies.c is), for what the runtime and
+/* Built with Py_BUILD_CORE, for what the runtime and
    interpreter states (_PyRuntime, PyInterpreterState, in the internal
    headers) hold, which the extension headers don't describe. Which header
    that is, where the current thread state and eval_breaker are, and the
