@@ -61,20 +61,21 @@ static PyCFunction cfunc_dict_setdefault;
 #define DKIX_EMPTY (-1)
 #define DKIX_DUMMY (-2)
 #define DKIX_ERROR (-3)
-#define DK_SIZE(dk) ((dk)->dk_size)
-#define DK_IXSIZE(dk)                \
-    (DK_SIZE(dk) <= 0xff         ? 1 \
-     : DK_SIZE(dk) <= 0xffff     ? 2 \
-     : DK_SIZE(dk) <= 0xffffffff ? 4 \
-                                 : sizeof(int64_t))
-#define DK_ENTRIES(dk)     \
-    ((PyDictKeyEntry *)(&( \
-        (int8_t *)((dk)->dk_indices))[DK_SIZE(dk) * DK_IXSIZE(dk)]))
+#define DK_SIZE(dk) le_dict_size((le_dictkeys_t *)(dk))
 #define DK_MASK(dk) (DK_SIZE(dk) - 1)
 
 static PyObject *
 cimpl_dict_get_impl(PyDictObject *self, PyObject *key, PyObject *default_value)
 {
+#if LE_HAS_DICT_KEYS_KIND
+    /* dict_get_impl's lookup, _Py_dict_lookup, is hidden */
+    PyObject *val = PyDict_GetItemWithError((PyObject *)self, key);
+    if (val == NULL) {
+        if (PyErr_Occurred())
+            return NULL;
+        val = default_value;
+    }
+#else
     PyObject *val = NULL;
     Py_hash_t hash;
     Py_ssize_t ix;
@@ -90,6 +91,7 @@ cimpl_dict_get_impl(PyDictObject *self, PyObject *key, PyObject *default_value)
     if (ix == DKIX_EMPTY || val == NULL) {
         val = default_value;
     }
+#endif
     Py_INCREF(val);
     return val;
 }
@@ -151,21 +153,21 @@ static Py_ssize_t
 cimpl_lookdict_unicode_str_key(PyDictObject *mp, const le_strkey_t *key,
                                Py_hash_t hash, PyObject **value_addr)
 {
-    PyDictKeyEntry *ep0 = DK_ENTRIES(mp->ma_keys);
-    size_t mask = DK_MASK(mp->ma_keys);
+    le_dictkeys_t *dk = (le_dictkeys_t *)mp->ma_keys;
+    size_t mask = DK_MASK(dk);
     size_t perturb = (size_t)hash;
     size_t i = (size_t)hash & mask;
     for (;;) {
-        Py_ssize_t ix = cimpl_dictkeys_get_index(mp->ma_keys, i);
+        Py_ssize_t ix = cimpl_dictkeys_get_index(dk, i);
         if (ix == DKIX_EMPTY) {
             *value_addr = NULL;
             return DKIX_EMPTY;
         }
         if (ix >= 0) {
-            PyDictKeyEntry *ep = &ep0[ix];
-            if (ep->me_hash == hash &&
-                cimpl_unicode_eq_str_key(ep->me_key, key)) {
-                *value_addr = ep->me_value;
+            PyObject **ep = le_dict_key_slot(dk, ix);
+            if (le_dict_hash(dk, ix) == hash &&
+                cimpl_unicode_eq_str_key(ep[0], key)) {
+                *value_addr = ep[1];
                 return ix;
             }
         }
@@ -175,24 +177,26 @@ cimpl_lookdict_unicode_str_key(PyDictObject *mp, const le_strkey_t *key,
     Py_UNREACHABLE();
 }
 
+#if !LE_HAS_DICT_KEYS_KIND
 static Py_ssize_t
 cimpl_lookdict_unicode_nodummy_str_key(PyDictObject *mp,
                                        const le_strkey_t *key, Py_hash_t hash,
                                        PyObject **value_addr)
 {
-    PyDictKeyEntry *ep0 = DK_ENTRIES(mp->ma_keys);
-    size_t mask = DK_MASK(mp->ma_keys);
+    le_dictkeys_t *dk = (le_dictkeys_t *)mp->ma_keys;
+    size_t mask = DK_MASK(dk);
     size_t perturb = (size_t)hash;
     size_t i = (size_t)hash & mask;
     for (;;) {
-        Py_ssize_t ix = cimpl_dictkeys_get_index(mp->ma_keys, i);
+        Py_ssize_t ix = cimpl_dictkeys_get_index(dk, i);
         if (ix == DKIX_EMPTY) {
             *value_addr = NULL;
             return DKIX_EMPTY;
         }
-        PyDictKeyEntry *ep = &ep0[ix];
-        if (ep->me_hash == hash && cimpl_unicode_eq_str_key(ep->me_key, key)) {
-            *value_addr = ep->me_value;
+        PyObject **ep = le_dict_key_slot(dk, ix);
+        if (le_dict_hash(dk, ix) == hash &&
+            cimpl_unicode_eq_str_key(ep[0], key)) {
+            *value_addr = ep[1];
             return ix;
         }
         perturb >>= 5;
@@ -200,6 +204,36 @@ cimpl_lookdict_unicode_nodummy_str_key(PyDictObject *mp,
     }
     Py_UNREACHABLE();
 }
+#else
+/* unicodekeys_lookup_unicode, for keys that are all exact str */
+static Py_ssize_t
+cimpl_lookdict_unicode(PyDictObject *mp, PyObject *key, Py_hash_t hash,
+                       PyObject **value_addr)
+{
+    le_dictkeys_t *dk = (le_dictkeys_t *)mp->ma_keys;
+    size_t mask = DK_MASK(dk);
+    size_t perturb = (size_t)hash;
+    size_t i = (size_t)hash & mask;
+    for (;;) {
+        Py_ssize_t ix = cimpl_dictkeys_get_index(dk, i);
+        if (ix == DKIX_EMPTY) {
+            *value_addr = NULL;
+            return DKIX_EMPTY;
+        }
+        if (ix >= 0) {
+            PyObject **ep = le_dict_key_slot(dk, ix);
+            if (ep[0] == key ||
+                (le_dict_hash(dk, ix) == hash && _PyUnicode_EQ(ep[0], key))) {
+                *value_addr = ep[1];
+                return ix;
+            }
+        }
+        perturb >>= 5;
+        i = mask & (i * 5 + perturb + 1);
+    }
+    Py_UNREACHABLE();
+}
+#endif
 
 static vinfo_t *
 dict_get(PsycoObject *po, vinfo_t *, vinfo_t *);
@@ -301,21 +335,24 @@ gen_dictobject_methods_init(void)
 
 /* The exact-str key probe of d[k], k in d and d[k] = v. A dict whose keys
    are all exact str looks a key up with lookdict_unicode or
-   lookdict_unicode_nodummy (dk_lookup), which compare by identity, hash
-   and bytes, run no Python and cannot fail. The metas below take an exact
-   dict and a key that may be a str; at run time, for an exact str key and
-   one of those two lookups, the helpers call it directly with the str's
-   own hash (PyObject_Hash computes and caches it if not yet known, as
+   lookdict_unicode_nodummy (dk_lookup), or where keys have a kind,
+   DICT_KEYS_UNICODE's unicodekeys_lookup_unicode, which compare by
+   identity, hash and bytes, run no Python and cannot fail. The metas below
+   take an exact dict and a key that may be a str; at run time, for an exact
+   str key and one of those two lookups, the helpers call it directly with the
+   str's own hash (PyObject_Hash computes and caches it if not yet known, as
    dictobject.c does), and otherwise CPython's own function, so a str
    subclass or a key with its own __eq__ anywhere in the dict takes
    CPython's path. A store over a key found is insertdict's own
    replacement; a new key is _PyDict_SetItem_KnownHash's. d.get is the
    translated meta's copy of dict_get_impl, which already calls dk_lookup
-   with the cached hash, except in a fused get then store. A view or a
-   case map key is probed without being built (below); where it must be
-   built, a case map is built with its hash (PsycoUnicode_ForceKey), which
-   the probe then reads. */
+   with the cached hash (or PyDict_GetItemWithError, which does the same),
+   except in a fused get then store. A view or a case map key is probed without
+   being built (below); where it must be built, a case map is built with its
+   hash (PsycoUnicode_ForceKey), which the probe then reads. */
+#if !LE_HAS_DICT_KEYS_KIND
 static dict_lookup_func lookdict_unicode_fn, lookdict_unicode_nodummy_fn;
+#endif
 static binaryfunc dict_subscript_fn;
 static objobjargproc dict_ass_sub_fn;
 static _PyCFunctionFast dict_get_fn;
@@ -325,16 +362,27 @@ static _PyCFunctionFast dict_get_fn;
 static Py_ssize_t
 str_probe(PyDictObject *mp, PyObject *key, Py_hash_t *phash, PyObject **pvalue)
 {
+#if LE_HAS_DICT_KEYS_KIND
+    Py_hash_t hash;
+    if (!PyUnicode_CheckExact(key) ||
+        ((le_dictkeys_t *)mp->ma_keys)->dk_kind != DICT_KEYS_UNICODE)
+        return -2;
+#else
     dict_lookup_func f = mp->ma_keys->dk_lookup;
     Py_hash_t hash;
     if (!PyUnicode_CheckExact(key) ||
         (f != lookdict_unicode_nodummy_fn && f != lookdict_unicode_fn))
         return -2;
+#endif
     hash = ((PyASCIIObject *)key)->hash;
     if (hash == -1 && (hash = PyObject_Hash(key)) == -1)
         return -3;
     *phash = hash;
+#if LE_HAS_DICT_KEYS_KIND
+    return cimpl_lookdict_unicode(mp, key, hash, pvalue);
+#else
     return f(mp, key, hash, pvalue);
+#endif
 }
 
 /* The slot the get of a fused get then store found (pycompiler.c:
@@ -402,14 +450,14 @@ cimpl_dictstr_forget(void)
 static int
 store_found(PyDictObject *mp, PyObject *key, Py_ssize_t ix, PyObject *value)
 {
-    le_dictentry_t *ep = &le_dict_entries((le_dictkeys_t *)mp->ma_keys)[ix];
-    PyObject *old = ep->me_value;
+    PyObject **slot = le_dict_key_slot((le_dictkeys_t *)mp->ma_keys, ix) + 1;
+    PyObject *old = *slot;
     Py_XINCREF(key);
     Py_INCREF(value);
     if (!LE_GC_IS_TRACKED(mp) &&
         ((key != NULL && MAY_BE_TRACKED(key)) || MAY_BE_TRACKED(value)))
         PyObject_GC_Track(mp);
-    ep->me_value = value;
+    *slot = value;
     mp->ma_version_tag = ++le_dict_version;
     Py_XDECREF(old); /* may run any code */
     Py_XDECREF(key);
@@ -525,16 +573,23 @@ static Py_ssize_t
 key_probe(PyDictObject *mp, PyObject *root, Py_ssize_t start, Py_ssize_t len,
           long map, PyObject **pvalue)
 {
-    dict_lookup_func f = mp->ma_keys->dk_lookup;
     le_strkey_t k;
     Py_hash_t hash;
     char buf[LE_KEY_BUF];
+#if LE_HAS_DICT_KEYS_KIND
+    if (((le_dictkeys_t *)mp->ma_keys)->dk_kind != DICT_KEYS_UNICODE)
+        return -2;
+#else
+    dict_lookup_func f = mp->ma_keys->dk_lookup;
     if (f != lookdict_unicode_nodummy_fn && f != lookdict_unicode_fn)
         return -2;
+#endif
     if (!PsycoUnicode_KeyChars(&k, &hash, buf, root, start, len, map))
         return -2;
+#if !LE_HAS_DICT_KEYS_KIND
     if (f == lookdict_unicode_nodummy_fn)
         return cimpl_lookdict_unicode_nodummy_str_key(mp, &k, hash, pvalue);
+#endif
     return cimpl_lookdict_unicode_str_key(mp, &k, hash, pvalue);
 }
 
@@ -845,14 +900,16 @@ pdict_get(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
     return dict_get(po, self, vargs);
 }
 
-/* lookdict_unicode_nodummy is the lookup of a new dict of str keys, and
-   lookdict_unicode that of one which has lost a key; a key of another
-   type gives a third. dict.get's C function serves a fused get's other
-   keys. Without all of them the probe is not used. */
+/* Where keys have no kind, lookdict_unicode_nodummy is the lookup of a new
+   dict of str keys, and lookdict_unicode that of one which has lost a key;
+   a key of another type gives a third. dict.get's C function serves a fused
+   get's other keys. Without all of them the probe is not used. */
 static void
 define_str_probes(void)
 {
-    PyObject *d = PyDict_New(), *e = PyDict_New(), *get;
+    PyObject *get;
+#if !LE_HAS_DICT_KEYS_KIND
+    PyObject *d = PyDict_New(), *e = PyDict_New();
     dict_lookup_func a = NULL, b = NULL, c = NULL;
     if (d != NULL && PyDict_SetItemString(d, "a", Py_None) == 0) {
         a = ((PyDictObject *)d)->ma_keys->dk_lookup;
@@ -864,13 +921,17 @@ define_str_probes(void)
     Py_XDECREF(d);
     Py_XDECREF(e);
     PyErr_Clear();
+    if (a == NULL || b == NULL || c == NULL || a == b || c == a || c == b)
+        return;
+#endif
     get = PyDict_GetItemString(PyDict_Type.tp_dict, "get");
-    if (a == NULL || b == NULL || c == NULL || a == b || c == a || c == b ||
-        get == NULL || Py_TYPE(get) != &PyMethodDescr_Type ||
+    if (get == NULL || Py_TYPE(get) != &PyMethodDescr_Type ||
         ((PyMethodDescrObject *)get)->d_method->ml_flags != METH_FASTCALL)
         return;
+#if !LE_HAS_DICT_KEYS_KIND
     lookdict_unicode_nodummy_fn = a;
     lookdict_unicode_fn = b;
+#endif
     dict_get_fn =
         (_PyCFunctionFast)(void (*)(void))((PyMethodDescrObject *)get)
             ->d_method->ml_meth;

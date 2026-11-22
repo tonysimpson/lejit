@@ -643,6 +643,10 @@ compiled_opcode(int op)
         case JUMP_IF_FALSE_OR_POP:
         case JUMP_IF_TRUE_OR_POP:
         case RETURN_VALUE:
+        /* globals */
+        case LOAD_GLOBAL:
+        case STORE_GLOBAL:
+        case DELETE_GLOBAL:
             return 1;
     }
 #if !LE_HAS_EXCEPTION_TABLE
@@ -684,10 +688,7 @@ compiled_opcode(int op)
         case JUMP_IF_NOT_EXC_MATCH:
 #endif
         case BEFORE_ASYNC_WITH:
-        /* globals and names */
-        case LOAD_GLOBAL:
-        case STORE_GLOBAL:
-        case DELETE_GLOBAL:
+        /* names */
         case LOAD_NAME:
         case STORE_NAME:
         case DELETE_NAME:
@@ -822,7 +823,8 @@ _build_merge_points(PyCodeObject *co, int module)
         pos = in.next;
         if (!compiled_opcode(opcode))
             goto not_ok;
-        if (opcode == LOAD_GLOBAL && loads_frame_locals_builtin(co, oparg))
+        if (opcode == LOAD_GLOBAL &&
+            loads_frame_locals_builtin(co, LE_GLOBAL_NAME(oparg)))
             goto not_ok;
         if (reads_class && oparg == 0 &&
             (opcode == STORE_FAST || opcode == DELETE_FAST))

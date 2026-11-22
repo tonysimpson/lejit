@@ -1613,7 +1613,7 @@ done:
    cimpl_load_global does at run time, and the value becomes a
    compile-time constant behind a guard (x64/ipyencoding.c:
    psyco_global_guard). A name found in globals is guarded as Psyco did:
-   the keys of globals still have the size, and hold the same name and
+   the keys of globals still have the shape, and hold the same name and
    value at the entry, written into the code, so writes to other names
    don't fail it. A name found in builtins relies on its absence from
    globals too: the guard walks the probe of globals as it was, slot by
@@ -1659,26 +1659,27 @@ typedef struct {
 } changed_global_t;
 enum { GLOBAL_TAGS, GLOBAL_ENTRY, GLOBAL_ABSENT }; /* the guard's forms */
 
-/* Where the entry holding name and value is in the keys of a dict:
-   false if there is none (a key equal to the name but another object,
-   values kept apart from the keys, or keys too large for the code's
-   32-bit fields). */
+/* The shape of the keys of a dict and where in them the entry holding
+   name and value has its key, its value in the next word: false if there
+   is none (a key equal to the name but another object, values kept apart
+   from the keys, or keys too large for the code's 32-bit fields). */
 static bool
 global_entry_find(PyObject *globals, PyObject *name, PyObject *value,
-                  long *size, long *offset)
+                  long *shape, long *offset)
 {
     PyDictObject *mp = (PyDictObject *)globals;
     le_dictkeys_t *keys = (le_dictkeys_t *)mp->ma_keys;
-    le_dictentry_t *ep = le_dict_entries(keys);
     Py_ssize_t i;
     if (mp->ma_values != NULL)
         return false;
-    for (i = 0; i < keys->dk_nentries; i++)
-        if (ep[i].me_key == name && ep[i].me_value == value) {
-            *size = keys->dk_size;
-            *offset = (char *)&ep[i] - (char *)keys;
-            return *offset + sizeof(le_dictentry_t) <= INT32_MAX;
+    for (i = 0; i < keys->dk_nentries; i++) {
+        PyObject **key = le_dict_key_slot(keys, i);
+        if (key[0] == name && key[1] == value) {
+            *shape = le_dict_shape(keys);
+            *offset = (char *)key - (char *)keys;
+            return *offset + 2 * sizeof(PyObject *) <= INT32_MAX;
         }
+    }
     return false;
 }
 
@@ -1700,7 +1701,7 @@ DEFINEVAR long psyco_stat_global_fails = 0;
 static code_t *
 do_changed_global(changed_global_t *cg)
 {
-    long size, offset;
+    long shape, offset;
     code_t *code;
     changed_global_t *prev = respawning_global;
     PyObject *x = PyDict_GetItem(cg->globals, cg->name);
@@ -1710,8 +1711,8 @@ do_changed_global(changed_global_t *cg)
     if (x != cg->value) {
         /* the respawn compiles a version that never comes back here */
         if (cg->form == GLOBAL_ENTRY && x != NULL &&
-            global_entry_find(cg->globals, cg->name, x, &size, &offset))
-            psyco_global_guard_move(&cg->guard->entry, size, offset);
+            global_entry_find(cg->globals, cg->name, x, &shape, &offset))
+            psyco_global_guard_move(&cg->guard->entry, shape, offset);
         respawning_global = cg->form == GLOBAL_ENTRY ? cg : NULL;
         code = psyco_do_respawn(cg, sizeof(*cg));
         respawning_global = prev;
@@ -1722,8 +1723,8 @@ do_changed_global(changed_global_t *cg)
     else if (cg->form == GLOBAL_ABSENT)
         psyco_global_absent_rearm(&cg->guard->absent, cg->globals,
                                   cg->builtins, cg->name);
-    else if (global_entry_find(cg->globals, cg->name, x, &size, &offset))
-        psyco_global_guard_move(&cg->guard->entry, size, offset);
+    else if (global_entry_find(cg->globals, cg->name, x, &shape, &offset))
+        psyco_global_guard_move(&cg->guard->entry, shape, offset);
     else
         return psyco_do_respawn(cg, sizeof(*cg));
     return psyco_dont_respawn(cg, sizeof(*cg));
@@ -1743,15 +1744,15 @@ cimpl_load_global(PyObject *globals, PyObject *builtins, PyObject *w);
 static PyObject *
 cimpl_load_global_miss(varying_global_t *vg)
 {
-    long size, offset;
+    long shape, offset;
     PyObject *x = cimpl_load_global(vg->globals, vg->builtins, vg->name);
     if (x != NULL &&
-        global_entry_find(vg->globals, vg->name, x, &size, &offset))
-        psyco_global_guard_move(&vg->entry, size, offset);
+        global_entry_find(vg->globals, vg->name, x, &shape, &offset))
+        psyco_global_guard_move(&vg->entry, shape, offset);
     return x;
 }
 
-/* Emitted whether or not globals hold the name now (a size of -1 never
+/* Emitted whether or not globals hold the name now (a shape of -1 never
    matches), so that a replay changes the compiler's state the same way. */
 static bool
 load_global_varying(PsycoObject *po, PyObject *globals, PyObject *builtins,
@@ -1760,10 +1761,10 @@ load_global_varying(PsycoObject *po, PyObject *globals, PyObject *builtins,
     static varying_global_t respawn_vg; /* written for trashed code only */
     varying_global_t *vg;
     PyObject *x = PyDict_GetItem(globals, name);
-    long size = -1, offset = 0;
+    long shape = -1, offset = 0;
     vinfo_t *v;
-    if (x != NULL && !global_entry_find(globals, name, x, &size, &offset))
-        size = -1;
+    if (x != NULL && !global_entry_find(globals, name, x, &shape, &offset))
+        shape = -1;
     if (is_respawning(po))
         vg = &respawn_vg;
     else {
@@ -1776,7 +1777,7 @@ load_global_varying(PsycoObject *po, PyObject *globals, PyObject *builtins,
         if (vgp != NULL)
             *vgp = vg;
     }
-    v = psyco_global_load(po, globals, name, &vg->entry, size, offset,
+    v = psyco_global_load(po, globals, name, &vg->entry, shape, offset,
                           load_global_miss_glue, vg);
     if (runtime_condition_f(po, CC_E)) {
         vinfo_decref(v, po);
@@ -1803,14 +1804,14 @@ typedef struct {
 static code_t *
 do_stale_global(stale_global_t *sg)
 {
-    long size, offset;
+    long shape, offset;
     PyObject *x = PyDict_GetItem(sg->globals, sg->name);
     if (x == NULL ||
-        !global_entry_find(sg->globals, sg->name, x, &size, &offset))
+        !global_entry_find(sg->globals, sg->name, x, &shape, &offset))
         return sg->varying; /* its load calls C */
-    psyco_global_guard_move(sg->guard, size, offset);
-    psyco_global_guard_move(&sg->check, size, offset);
-    psyco_global_guard_move(&sg->vg->entry, size, offset);
+    psyco_global_guard_move(sg->guard, shape, offset);
+    psyco_global_guard_move(&sg->check, shape, offset);
+    psyco_global_guard_move(&sg->vg->entry, shape, offset);
     return x == sg->value ? sg->resume : sg->varying;
 }
 
@@ -1819,20 +1820,20 @@ do_stale_global(stale_global_t *sg)
 static bool
 load_global_rearmed(PsycoObject *po, changed_global_t *cg, vinfo_t **result)
 {
-    long size = -1, offset = 0;
+    long shape = -1, offset = 0;
     code_t *stub;
     stale_global_t *sg;
     PyObject *x = PyDict_GetItem(cg->globals, cg->name);
     if (x != NULL &&
-        !global_entry_find(cg->globals, cg->name, x, &size, &offset))
-        size = -1;
+        !global_entry_find(cg->globals, cg->name, x, &shape, &offset))
+        shape = -1;
     sg = psyco_new_stub(&do_stale_global, sizeof(stale_global_t), &stub);
     sg->guard = &cg->guard->entry;
     sg->globals = cg->globals;
     sg->name = cg->name;
     sg->value = cg->value;
     sg->resume = cg->resume;
-    psyco_global_stale(po, cg->globals, cg->name, &sg->check, size, offset,
+    psyco_global_stale(po, cg->globals, cg->name, &sg->check, shape, offset,
                        stub);
     sg->varying = po->code;
     return load_global_varying(po, cg->globals, cg->builtins, cg->name,
@@ -1851,7 +1852,7 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
     condition_code_t cc;
     changed_global_t *cg;
     global_absent_t absent;
-    long size = 0, offset = 0;
+    long shape = 0, offset = 0;
     char form = GLOBAL_TAGS;
 
     *result = NULL;
@@ -1868,7 +1869,7 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
 
     value = PyDict_GetItem(globals, name);
     if (value != NULL) {
-        if (global_entry_find(globals, name, value, &size, &offset))
+        if (global_entry_find(globals, name, value, &shape, &offset))
             form = GLOBAL_ENTRY;
     }
     else {
@@ -1894,7 +1895,7 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
     if (form == GLOBAL_TAGS)
         *guard = tags;
     cc = psyco_global_guard(po, globals, builtins, name, value,
-                            form == GLOBAL_ENTRY ? &guard->entry : NULL, size,
+                            form == GLOBAL_ENTRY ? &guard->entry : NULL, shape,
                             offset, form == GLOBAL_ABSENT ? &absent : NULL,
                             &guard->absent,
                             form == GLOBAL_TAGS ? guard->tags : tags.tags);
@@ -8739,20 +8740,23 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                    CPython calls their __getitem__ */
                 case LOAD_NAME:
                 case LOAD_GLOBAL: {
-                    PyObject *namev = GETNAMEV(oparg);
+                    bool push_null =
+                        opcode == LOAD_GLOBAL && LE_GLOBAL_PUSHES_NULL(oparg);
+                    PyObject *namev = GETNAMEV(
+                        opcode == LOAD_GLOBAL ? LE_GLOBAL_NAME(oparg) : oparg);
                     if (!load_global_cached(po, namev, &v))
                         break;
-                    if (v != NULL) {
-                        PUSH(v);
-                        goto fine;
-                    }
                     /* not cached: globals unknown, the name varying or not
                      * found */
-                    v = psyco_generic_call(po, cimpl_load_global,
-                                           CfCommonNewRefPyObject, "vvl",
-                                           LOC_GLOBALS, LOC_BUILTINS, namev);
-                    if (v == NULL)
-                        break;
+                    if (v == NULL) {
+                        v = psyco_generic_call(
+                            po, cimpl_load_global, CfCommonNewRefPyObject,
+                            "vvl", LOC_GLOBALS, LOC_BUILTINS, namev);
+                        if (v == NULL)
+                            break;
+                    }
+                    if (push_null)
+                        PUSH(psyco_vi_Zero());
                     PUSH(v);
                     goto fine;
                 }

@@ -319,6 +319,35 @@ add_layout(PyObject *d, const char *name, Py_ssize_t size, int fields_ok)
     return err ? -1 : 0;
 }
 
+/* The size of the header of d's keys, which hold one item, key: value, read
+   through psyco.h's copy: what _PyDict_SizeOf counts past the index bytes
+   and the entries. -1 if they don't read as they should, their entries
+   holding the hash or not as 'hashed' says. */
+static Py_ssize_t
+keys_header(PyObject *d, PyObject *key, PyObject *value, bool hashed)
+{
+    le_dictkeys_t *k = (le_dictkeys_t *)((PyDictObject *)d)->ma_keys;
+    Py_ssize_t size = le_dict_size(k), usable = size * 2 / 3;
+    Py_ssize_t entry =
+        hashed ? sizeof(le_dictentry_t) : 2 * sizeof(PyObject *);
+    PyObject **e;
+    if (k->dk_refcnt != 1 || size < 8 || (size & (size - 1)) != 0 ||
+        size > 0xff || k->dk_nentries != 1 || k->dk_usable != usable - 1 ||
+#if LE_HAS_DICT_KEYS_KIND
+        k->dk_log2_index_bytes != k->dk_log2_size ||
+#else
+        k->dk_lookup == NULL ||
+#endif
+        le_dict_hashed(k) != hashed)
+        return -1;
+    e = le_dict_key_slot(k, 0);
+    if (e[0] != key || e[1] != value ||
+        le_dict_hash(k, 0) != PyObject_Hash(key))
+        return -1;
+    return _PyDict_SizeOf((PyDictObject *)d) -
+           (Py_ssize_t)sizeof(PyDictObject) - size - entry * usable;
+}
+
 static PyObject *
 le_layouts(PyObject *self, PyObject *unused)
 {
@@ -367,29 +396,30 @@ le_layouts(PyObject *self, PyObject *unused)
                    ok) < 0)
         goto error;
 
-    /* Objects/dict-common.h's keys and entries: a dict of one item has keys
-       of its own, whose size _PyDict_SizeOf counts from the real structs */
+    /* the dict keys and entries: a dict of one item has keys of its own,
+       whose size _PyDict_SizeOf counts from the real structs. Where keys
+       have a kind, a str key's entries hold no hash, an int key's do. */
     one = PyLong_FromLong(1);
     if (one == NULL || PyDict_SetItem(d, one, one) < 0)
         goto error;
     {
-        le_dictkeys_t *k = (le_dictkeys_t *)((PyDictObject *)d)->ma_keys;
-        Py_ssize_t size = k->dk_size, usable = size * 2 / 3;
-        Py_ssize_t whole = _PyDict_SizeOf((PyDictObject *)d), header = 0;
-        ok = k->dk_refcnt == 1 && size >= 8 && (size & (size - 1)) == 0 &&
-             size <= 0xff && k->dk_nentries == 1 &&
-             k->dk_usable == usable - 1 && k->dk_lookup != NULL;
-        if (ok) {
-            le_dictentry_t *e = le_dict_entries(k);
-            /* what the interpreter's own keys header takes, past the index
-               bytes and the entries */
-            header = whole - (Py_ssize_t)sizeof(PyDictObject) - size -
-                     (Py_ssize_t)sizeof(le_dictentry_t) * usable;
-            ok = e[0].me_key == one && e[0].me_value == one &&
-                 e[0].me_hash == 1;
+        Py_ssize_t header = keys_header(d, one, one, true);
+#if LE_HAS_DICT_KEYS_KIND
+        PyObject *s = PyDict_New(), *name = PyUnicode_FromString("one");
+        if (s == NULL || name == NULL || PyDict_SetItem(s, name, one) < 0) {
+            Py_XDECREF(s);
+            Py_XDECREF(name);
+            goto error;
         }
-        if (add_layout(result, "PyDictKeysObject", ok ? header : whole, ok) <
-            0)
+        if (keys_header(s, name, one, false) != header)
+            header = -1;
+        Py_DECREF(s);
+        Py_DECREF(name);
+#endif
+        if (add_layout(
+                result, "PyDictKeysObject",
+                header >= 0 ? header : _PyDict_SizeOf((PyDictObject *)d),
+                header >= 0) < 0)
             goto error;
     }
     Py_DECREF(one);
