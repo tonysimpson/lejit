@@ -8,15 +8,16 @@ Placeholders are {name} or {name:kind}: registers (r, rm, base, index...),
 ':d' 32-bit, ':b' 8-bit, offsets ':d8' ':d32', immediates ':i8' ':i16'
 ':i32' ':i64' ':u16' ':sh', cc (condition code), scale.
 
-    python3 tests/encoder/check.py [-k MACRO] [-v]
+    python3 tests/encoder/check.py PYTHON [-k MACRO] [-v]
+
+PYTHON is the interpreter whose headers and in-place checked build
+(LEJIT_DEV_TRACE=1 PYTHON setup.py build_ext --inplace) are used.
 """
 import concurrent.futures, itertools, json, os, re, subprocess, sys, sysconfig, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HEADER = os.path.join(ROOT, 'src', 'x64', 'iencoding.h')
-# the interpreter whose headers and build are used (make's PY)
-PY = (os.environ.get('LE_PYTHON') or os.environ.get('LE_PY37')
-      or os.path.expanduser('~/.pyenv/versions/3.7.17/bin/python3.7'))
+PY = None   # the interpreter, from the command line
 # the header that interpreter's build writes: psyco.h includes le_features_gen.h
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import build_temp
@@ -341,7 +342,10 @@ def check_jump_decoder(workdir):
 
 
 def main():
-    args = sys.argv[1:]
+    global PY
+    if len(sys.argv) < 2 or sys.argv[1].startswith('-'):
+        sys.exit(__doc__)
+    PY, args = sys.argv[1], sys.argv[2:]
     filt = args[args.index('-k') + 1] if '-k' in args else None
     verbose = '-v' in args
     annotations = parse_annotations(HEADER)

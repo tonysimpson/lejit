@@ -15,8 +15,7 @@ CPython that moves a definition needs the detector updated, never a guess.
 
     features.py --python EXE --out DIR [--src DIR]
         write DIR/le_features_gen.h for the interpreter EXE; the source is
-        --src, else LE_CPYTHON_SRC, else the release tarball from the
-        cache (cpython_src.py)
+        --src, else the release tarball from the cache (cpython_src.py)
     features.py SRC [SRC...]
         print the features of one or more source trees
 

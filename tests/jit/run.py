@@ -11,30 +11,25 @@ list of argument tuples, or a Python expression for one. Options:
     python3.X tests/jit/run.py [-k substring] [-v]
 """
 import glob, os, subprocess, sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common import LE_DIR, SLOWDOWN, child_env, save_stderr
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CASES = os.path.join(ROOT, 'tests', 'jit', 'cases')
-TIMEOUT = 20 * SLOWDOWN
+TIMEOUT = 20
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
 
 
 def run_child(modname, fname, calls, use_lejit, warmup=9):
     if not isinstance(calls, str):
         calls = repr(calls)
-    cmd = [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), LE_DIR, CASES,
+    cmd = [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
            modname, fname, calls, '1' if use_lejit else '0', str(warmup)]
-    tag = '%s.%s.%s' % (modname, fname, 'lejit' if use_lejit else 'plain')
     try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             env=child_env(tag))
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = p.communicate(timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
         p.kill()
         p.communicate()
         return None, 'timeout after %ds' % TIMEOUT
-    save_stderr(tag, p.pid, err)
     if p.returncode != 0:
         err = err.decode(errors='replace').strip().splitlines()
         return None, 'exit %d: %s' % (p.returncode, ' | '.join(err[-3:]))

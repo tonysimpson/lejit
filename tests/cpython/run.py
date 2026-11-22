@@ -7,10 +7,9 @@ runs except BANNED, and every test except SKIPPED.
 import fnmatch, json, os, resource, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common import (LE_DIR, SANITIZE_LOGS, SANITIZE_SKIP, SLOWDOWN,
-                     child_env, save_stderr)
+from common import ROOT
 
-TIMEOUT = 600 * SLOWDOWN        # seconds per run
+TIMEOUT = 600                   # seconds per run
 MEMORY_LIMIT = 4 << 30          # bytes of address space per run
 
 # reason: names (fnmatch patterns); a name no version has is fine
@@ -106,15 +105,14 @@ def stderr_tail(err):
 
 def run(mode, name):
     """The run's counts and exit status, and lines that say why tests failed."""
-    tag = name + '.' + mode
     with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd, \
             tempfile.TemporaryFile() as errf:
         skip = [t.split('.', 1)[1] for ts in SKIPPED.values() for t in ts.split()
                 if t.split('.', 1)[0] == name]
-        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, LE_DIR] + skip,
+        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, ROOT] + skip,
                              stdout=subprocess.PIPE, stderr=errf,
-                             stdin=subprocess.DEVNULL, cwd=cwd, env=child_env(tag),
-                             preexec_fn=None if SANITIZE_LOGS else limit_memory)
+                             stdin=subprocess.DEVNULL, cwd=cwd,
+                             preexec_fn=limit_memory)
         try:
             out, _ = p.communicate(timeout=TIMEOUT)
         except subprocess.TimeoutExpired:
@@ -122,11 +120,10 @@ def run(mode, name):
             p.communicate()
             out = None
         size = errf.seek(0, os.SEEK_END)
-        errf.seek(0 if SANITIZE_LOGS else max(0, size - 4096))
+        errf.seek(max(0, size - 4096))
         err = errf.read()
     if out is None:
         return 'timeout', stderr_tail(err)
-    save_stderr(tag, p.pid, err)
     out = out.decode().strip().splitlines()
     counted = out[-1:] and out[-1].startswith('run=')
     why = []
@@ -175,8 +172,6 @@ def main():
         jobs = int(args[k + 1])
         del args[k:k + 2]
     names = args or modules()
-    if SANITIZE_LOGS:
-        names = [n for n in names if n not in SANITIZE_SKIP]
     bad = 0
     with ThreadPoolExecutor(jobs) as ex:
         for ok, line in ex.map(check, names):
