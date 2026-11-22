@@ -15,6 +15,7 @@
    stacktop, counted from localsplus. A frame the thread runs is running,
    as frame.clear() sees it, by its owner; a frame object's own frame is
    never running. */
+#include "code.h"
 #define Py_BUILD_CORE
 #include "internal/pycore_frame.h"
 #undef Py_BUILD_CORE
@@ -52,13 +53,30 @@ le_frame_complete(le_frame_t *f)
 {
     return !_PyFrame_IsIncomplete(f);
 }
-/* the frame's code starts running compiled: placed as ceval places it
-   once past the instructions before the first traceable one (RESUME), so
-   that it is complete */
-static inline void
+/* the frame's code starts running compiled: what the instructions before
+   the first traceable one (RESUME) do, done here as ceval's MAKE_CELL and
+   COPY_FREE_VARS do it, and the frame placed past them, so that it is
+   complete; compiled code runs them as no-ops. -1 with an exception set
+   if a cell can't be made. */
+static inline int
 le_frame_start(le_frame_t *f)
 {
-    f->prev_instr = _PyCode_CODE(f->f_code) + f->f_code->_co_firsttraceable;
+    PyCodeObject *co = f->f_code;
+    int k, nfrees = co->co_nfreevars, n = co->co_nlocalsplus - nfrees;
+    f->prev_instr = _PyCode_CODE(co) + co->_co_firsttraceable;
+    for (k = 0; k < n; k++)
+        if (_PyLocals_GetKind(co->co_localspluskinds, k) & CO_FAST_CELL) {
+            PyObject *cell = PyCell_New(f->localsplus[k]);
+            if (cell == NULL)
+                return -1;
+            Py_XSETREF(f->localsplus[k], cell);
+        }
+    for (k = 0; k < nfrees; k++) {
+        PyObject *o = PyTuple_GET_ITEM(f->f_func->func_closure, k);
+        Py_INCREF(o);
+        f->localsplus[n + k] = o;
+    }
+    return 0;
 }
 /* the frame object Python sees (borrowed), made if it has none:
    PyEval_GetFrame makes the current frame's, so the frame is made current
@@ -323,10 +341,11 @@ le_frame_complete(le_frame_t *f)
     return 1;
 }
 /* the frame's code starts running compiled */
-static inline void
+static inline int
 le_frame_start(le_frame_t *f)
 {
     (void)f;
+    return 0;
 }
 /* the frame object Python sees (borrowed) */
 static inline PyFrameObject *

@@ -134,7 +134,9 @@ report_destructor(PyObject *capsule)
      (op) == EXTENDED_ARG || (op) == RESUME || (op) == COPY ||                \
      (op) == SWAP || (op) == PUSH_NULL || (op) == JUMP_BACKWARD ||            \
      (op) == POP_JUMP_FORWARD_IF_FALSE || (op) == POP_JUMP_FORWARD_IF_TRUE || \
-     (op) == POP_JUMP_BACKWARD_IF_FALSE || (op) == POP_JUMP_BACKWARD_IF_TRUE)
+     (op) == POP_JUMP_BACKWARD_IF_FALSE ||                                    \
+     (op) == POP_JUMP_BACKWARD_IF_TRUE || (op) == PRECALL ||                  \
+     (op) == KW_NAMES || (op) == MAKE_CELL || (op) == COPY_FREE_VARS)
 
 /* ceval tests eval_breaker before every instruction it reaches through
    DISPATCH(): after most opcodes, and at a frame's start. Compiled code
@@ -654,15 +656,17 @@ compiled_opcode(int op)
         case KW_NAMES:
         case CALL:
         case MAKE_FUNCTION:
-            return 1;
-    }
-#if !LE_HAS_EXCEPTION_TABLE
-    switch (op) {
         /* cells */
+        case MAKE_CELL:
+        case COPY_FREE_VARS:
         case LOAD_CLOSURE:
         case LOAD_DEREF:
         case STORE_DEREF:
         case DELETE_DEREF:
+            return 1;
+    }
+#if !LE_HAS_EXCEPTION_TABLE
+    switch (op) {
         /* exceptions, and the blocks that handle them */
         case RAISE_VARARGS:
         case SETUP_LOOP:

@@ -2126,7 +2126,7 @@ unicode_concatenate(PsycoObject *po, int next_instr)
         SETLOCAL(oparg, psyco_vi_Zero());
     }
     else if (opcode == STORE_DEREF) {
-        vinfo_t *cell = GETLOCAL(le_code_nlocals(co) + oparg), *zero;
+        vinfo_t *cell = GETLOCAL(le_code_deref_slot(co, oparg)), *zero;
         bool ok;
         if (left->refcount != 1)
             return 0;
@@ -3117,16 +3117,13 @@ ct_format_exc_unbound(PsycoObject *po, PyCodeObject *co, int oparg)
     PyObject *name;
     if (PycException_Occurred(po))
         return;
-    if (oparg < le_code_ncells(co)) {
-        name = le_code_cell_name(co, oparg);
+    name = le_code_deref_name(co, oparg);
+    if (le_code_deref_slot(co, oparg) < le_code_free_slot(co, 0))
         ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
                                 LE_MSG_LOCAL_UNBOUND, name);
-    }
-    else {
-        name = le_code_free_name(co, oparg - le_code_ncells(co));
+    else
         ct_format_exc_check_arg(po, PyExc_NameError, LE_MSG_FREE_UNBOUND,
                                 name);
-    }
 }
 
 static PyObject *
@@ -5313,8 +5310,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                Python code objects using a bytecode instruction not listed
                in mergepoints.c are never Psyco-ified. */
 
-            if (opcode == BINARY_SUBSCR || opcode == CALL_METHOD ||
-                opcode == STORE_SUBSCR) {
+            /* the patterns are of bytecode without caches */
+            if ((opcode == BINARY_SUBSCR || opcode == CALL_METHOD ||
+                 opcode == STORE_SUBSCR) &&
+                LE_CACHE_BYTES(opcode) == 0) {
                 int done = dict_str_fusion(po, next_instr);
                 if (done < 0)
                     break;
@@ -6588,7 +6587,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     vinfo_t *_t5;
                     vinfo_t *cell;
                     vinfo_t *oldobj;
-                    cell = GETLOCAL(le_code_nlocals(co) + oparg);
+                    cell = GETLOCAL(le_code_deref_slot(co, oparg));
                     _t1 = psyco_get_field(po, cell, CELL_ob_ref);
                     if (_t1 == NULL) {
                         break;
@@ -6621,7 +6620,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
                 case LOAD_CLOSURE: {
                     vinfo_t *cell;
-                    cell = GETLOCAL(le_code_nlocals(co) + oparg);
+                    cell = GETLOCAL(le_code_deref_slot(co, oparg));
                     vinfo_incref(cell);
                     PUSH(cell);
                     goto fine;
@@ -6633,7 +6632,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     int _t3;
                     vinfo_t *cell;
                     vinfo_t *value;
-                    cell = GETLOCAL(le_code_nlocals(co) + oparg);
+                    cell = GETLOCAL(le_code_deref_slot(co, oparg));
                     _t1 = psyco_get_field(po, cell, CELL_ob_ref);
                     if (_t1 == NULL) {
                         break;
@@ -6663,7 +6662,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     vinfo_t *oldobj;
                     vinfo_t *v;
                     v = NTOP(1);
-                    cell = GETLOCAL(le_code_nlocals(co) + oparg);
+                    cell = GETLOCAL(le_code_deref_slot(co, oparg));
                     _t1 = psyco_get_field(po, cell, CELL_ob_ref);
                     if (_t1 == NULL) {
                         break;
@@ -8981,19 +8980,29 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
 
                 /* the bound method PRECALL would split is called as it
-                   is; KW_NAMES's names are read by its CALL */
+                   is; KW_NAMES's names are read by its CALL. The frame's
+                   cells and free variables are in place before the code
+                   runs (frames.h:le_frame_start). */
                 case PRECALL:
                 case KW_NAMES:
+                case MAKE_CELL:
+                case COPY_FREE_VARS:
                     goto fine;
 
                 case CALL_METHOD:
                 case CALL: {
-                    /* always the (NULL, callable) form: LOAD_METHOD looks the
-                       attribute up and pushes NULL under it, as PUSH_NULL
-                       does before other callables */
-                    int i, stack_to_pop;
+                    /* LOAD_METHOD looks the attribute up and pushes NULL
+                       under it, as PUSH_NULL does before other callables:
+                       the (NULL, callable) form. CALL's other form, a
+                       callable under its first argument, comes from
+                       elsewhere (a decorator, a with statement's exit). */
+                    int i, stack_to_pop, null = 1;
                     PyObject *kwnames = NULL;
-                    extra_assert(psyco_knowntobe(NTOP(oparg + 2), 0));
+                    if (!psyco_knowntobe(NTOP(oparg + 2), 0)) {
+                        extra_assert(opcode == CALL);
+                        null = 0;
+                        oparg++;
+                    }
 #if LE_HAS_OPCODE_CALL
                     if (opcode == CALL &&
                         !call_kwnames(po, co, po->pr.next_instr, &kwnames))
@@ -9006,7 +9015,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     end_call_site(po);
                     if (x == NULL)
                         break;
-                    for (i = stack_to_pop + 1;
+                    for (i = stack_to_pop + null;
                          i--;) /* args, callable and the NULL */
                         POP_DECREF();
                     PUSH(x);

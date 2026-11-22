@@ -929,14 +929,17 @@ psuper_noargs(PsycoObject *po)
     int fv = psyco_class_cell(co);
     vinfo_t *obj, *objcell = NULL, *classcell = NULL, *zero, *r;
     zero = psyco_vi_Zero();
-    obj = co->co_argcount > 0 ? LOC_LOCALS_PLUS[0] : zero;
+    /* the first argument, or the cell it went into */
+    obj = co->co_argcount > 0 && !le_code_local_is_cell(co, 0)
+              ? LOC_LOCALS_PLUS[0]
+              : zero;
     if (obj == NULL)
         obj = zero;
     for (i = 0; i < ncells; i++)
         if (le_code_cell_arg(co, (int)i) == 0)
-            objcell = LOC_LOCALS_PLUS[le_code_nlocals(co) + i];
+            objcell = LOC_LOCALS_PLUS[le_code_cell_slot(co, (int)i)];
     if (fv >= 0)
-        classcell = LOC_LOCALS_PLUS[le_code_nlocals(co) + ncells + fv];
+        classcell = LOC_LOCALS_PLUS[le_code_free_slot(co, fv)];
     r = psyco_generic_call(po, cimpl_super_noargs, CfCommonNewRefPyObject,
                            "lvvv", (long)co->co_argcount, obj,
                            objcell ? objcell : zero,
