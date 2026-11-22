@@ -76,9 +76,6 @@ SKIPPED = {
     'vectorcall, so their argument errors read differently':
         'test_super.TestSuper.test_super_argcount '
         'test_super.TestSuper.test_super_argtype',
-    "a respawn into a with statement's handler reaches WITH_EXCEPT_START "
-    "with a short stack (checked builds' assertion)":
-        'test_unparse.UnparseTestCase.test_invalid_yield_from',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,

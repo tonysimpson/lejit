@@ -7062,6 +7062,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                the instruction that called it */
             if (resumed)
                 po->pr.resume_pending = 1;
+            resumed = 0; /* the caller's handlers are still to run */
 
             if (PycException_Is(po, &EReturn)) {
                 /* caught EReturn from the inlined frame */
@@ -7102,8 +7103,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
            handler's depth, the place of the instruction pushed if the
            handler wants it, then the exception caught (cimpl_catch). A
            virtual exception is raised for real first, so that the run-time
-           code can fetch it. Pseudo-exceptions have no handler. */
-        if (PycException_IsPython(po)) {
+           code can fetch it. Pseudo-exceptions have no handler, and an
+           exception from a frame ceval went on with has been through its
+           handlers there. */
+        if (PycException_IsPython(po) && !resumed) {
             le_handler_t h;
             int lasti = raise_lasti >= 0
                             ? raise_lasti
