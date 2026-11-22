@@ -72,10 +72,8 @@ psyco_mp_flags(PyObject *mergepoints);
    position (a byte offset) */
 EXTERNFN int
 psyco_breaker_check_at(PyObject *mergepoints, int position);
-/* the instructions before which ceval doesn't test eval_breaker: it tests
-   before the next one, as these go on with DISPATCH(). YIELD_FROM is
-   never compiled. */
-#define BREAKER_SKIPS(op)                           \
-    ((op) == SETUP_FINALLY || (op) == SETUP_WITH || \
-     (op) == BEFORE_ASYNC_WITH || (op) == YIELD_FROM)
+/* whether ceval doesn't test eval_breaker before an instruction, but
+   before the next one, as it goes on with DISPATCH(): op is the code unit
+   ceval reads there, not the LeJIT opcode (bytecode.h) */
+#define BREAKER_SKIPS(op) (le_op_flags(op) & LE_OPF_BREAKER_SKIPS)
 #endif /* _MERGEPOINTS_H */
