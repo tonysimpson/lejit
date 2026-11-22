@@ -104,18 +104,37 @@ _Static_assert(sizeof(((PyFloatObject *)0)->ob_fval) == 8,
 _Static_assert(__builtin_classify_type(((PyFloatObject *)0)->ob_fval) == 8,
                "LeJIT: PyFloatObject.ob_fval: LeJIT reads it as floating");
 
-#define LE_OFS_PyLongObject__ob_digit offsetof(PyLongObject, ob_digit)
+#if LE_HAS_LONG_VALUE
+/* the digits are long_value's; its lv_tag, where ob_size was, holds the
+   digit count and the sign as flags (plongobject.h:LONG_lv_tag) */
+#define LE_PyLongObject_digits long_value.ob_digit
+/* an int's signed digit count, as ob_size was */
+static inline Py_ssize_t
+le_long_size(PyObject *o)
+{
+    uintptr_t tag = ((PyLongObject *)o)->long_value.lv_tag;
+    return (Py_ssize_t)(1 - (tag & 3)) * (Py_ssize_t)(tag >> 3);
+}
+#else
+#define LE_PyLongObject_digits ob_digit
+#define le_long_size(o) Py_SIZE(o)
+#endif
+#define LE_OFS_PyLongObject__ob_digit \
+    offsetof(PyLongObject, LE_PyLongObject_digits)
 #define LE_SIZE2_PyLongObject__ob_digit 2
 #define LE_UNSIGNED_PyLongObject__ob_digit 1
 _Static_assert(__builtin_types_compatible_p(
-                   __typeof__(((PyLongObject *)0)->ob_digit), digit[1]),
+                   __typeof__(((PyLongObject *)0)->LE_PyLongObject_digits),
+                   digit[1]),
                "LeJIT: PyLongObject.ob_digit is not digit[1]");
-_Static_assert(sizeof(((PyLongObject *)0)->ob_digit[0]) == 4,
+_Static_assert(sizeof(((PyLongObject *)0)->LE_PyLongObject_digits[0]) == 4,
                "LeJIT: PyLongObject.ob_digit: LeJIT reads 4 bytes");
-_Static_assert(__builtin_classify_type(((PyLongObject *)0)->ob_digit[0]) == 1,
+_Static_assert(__builtin_classify_type(
+                   ((PyLongObject *)0)->LE_PyLongObject_digits[0]) == 1,
                "LeJIT: PyLongObject.ob_digit: LeJIT reads it as an integer");
-_Static_assert(((__typeof__(((PyLongObject *)0)->ob_digit[0]))-1 < 0) == 0,
-               "LeJIT: PyLongObject.ob_digit: LeJIT reads it as unsigned");
+_Static_assert(
+    ((__typeof__(((PyLongObject *)0)->LE_PyLongObject_digits[0]))-1 < 0) == 0,
+    "LeJIT: PyLongObject.ob_digit: LeJIT reads it as unsigned");
 
 #define LE_OFS_PyListObject__ob_item offsetof(PyListObject, ob_item)
 #define LE_SIZE2_PyListObject__ob_item 3
@@ -876,6 +895,20 @@ PyAPI_FUNC(Py_hash_t) _Py_HashBytes(const void *, Py_ssize_t);
 #define le_unicode_from_ascii _PyUnicode_FromASCII
 #else
 #define le_unicode_from_ascii(s, size) PyUnicode_DecodeASCII(s, size, NULL)
+#endif
+/* a type's dict, borrowed (NULL if the type isn't ready): its tp_dict, or
+   PyType_GetDict's, as a static builtin type keeps its dict in the
+   interpreter, which holds it as long as the type */
+#if LE_HAS_TYPE_GET_DICT
+static inline PyObject *
+le_type_dict(PyTypeObject *tp)
+{
+    PyObject *d = PyType_GetDict(tp);
+    Py_XDECREF(d);
+    return d;
+}
+#else
+#define le_type_dict(tp) ((tp)->tp_dict)
 #endif
 
 typedef unsigned char code_t;

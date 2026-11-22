@@ -842,6 +842,14 @@ typedef enum {
 #define SUB_A_I8(rm, i)                                  \
     INDIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x28, 0, rm); \
     WRITE_8BIT(i)
+/* @asm: add dword ptr [{rm}], {i:i8} */
+#define ADD_DA_I8(rm, i)                               \
+    INDIRECT_ENCODING(false, 1, 0x83, 0, 0, 0, 0, rm); \
+    WRITE_8BIT(i)
+/* @asm: sbb dword ptr [{rm}], {i:i8} */
+#define SBB_DA_I8(rm, i)                                  \
+    INDIRECT_ENCODING(false, 1, 0x83, 0, 0, 0x18, 0, rm); \
+    WRITE_8BIT(i)
 /* inc and dec leave CF alone, so only ZF/SF/OF tests may follow */
 /* @asm: inc qword ptr [{rm}] */
 #define INC_A(rm) INDIRECT_ENCODING(true, 1, 0xFF, 0, 0, 0, 0, rm)
@@ -1798,5 +1806,10 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
     SAVE_IMMED_TO_EBP_BASE((long)(finfo), INITIAL_STACK_DEPTH)
 #define RETURNED_FROM_SUBFUNCTION() \
     SAVE_IMM8_TO_EBP_BASE(-1, INITIAL_STACK_DEPTH)
+/* the frame's own slot while it clears its locals on the way out: what
+   their finalisers run no longer counts it (frames.c:pvisitframes) */
+#define FINFO_RETURNING (-3)
+#define ABOUT_TO_RETURN() \
+    SAVE_IMM8_TO_EBP_BASE(FINFO_RETURNING, INITIAL_STACK_DEPTH)
 
 #endif /* _IENCODING_H */

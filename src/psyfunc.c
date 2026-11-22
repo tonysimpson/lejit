@@ -650,7 +650,7 @@ add_cannot_block(void *c_function)
 static void
 add_method(PyTypeObject *tp, const char *name)
 {
-    PyObject *d = PyDict_GetItemString(tp->tp_dict, name);
+    PyObject *d = PyDict_GetItemString(le_type_dict(tp), name);
     psyco_assert(d != NULL && Py_TYPE(d) == &PyMethodDescr_Type);
     add_cannot_block(((PyMethodDescrObject *)d)->d_method->ml_meth);
 }
@@ -1227,7 +1227,7 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
 
 DEFINEFN
 void
-psycofunction_init()
+psycofunction_init(void)
 {
     psyco_assert(le_tstate_check());
     psyco_assert(le_eval_breaker_address() != NULL);

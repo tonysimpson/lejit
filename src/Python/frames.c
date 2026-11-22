@@ -340,7 +340,7 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
     long *p, regs[REG_TOTAL], *pregs = NULL;
     char *data;
     int i, n = n_locals_plus(co);
-    if (v == -1)
+    if (v == -1 || v == FINFO_RETURNING)
         return false;
     if ((v & 1) != 0) {
         /* a note is for the call the frame is in only if that call returns
@@ -607,7 +607,7 @@ static int
 kept_lasti(activation_t *a)
 {
     long v = (long)*a->own;
-    if (v == -1)
+    if (v == -1 || v == FINFO_RETURNING)
         return -1;
     if ((v & 1) != 0)
         return psyco_note_map(v)->lasti;
@@ -857,6 +857,8 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
             stack_frame_info_t *fdata;
             stack_frame_info_t *flimit;
             int lasti = -1; /* the place of the frame visited next */
+            bool returning; /* the innermost frame is clearing its locals on
+                               the way out (ABOUT_TO_RETURN): skipped */
             finfo = *(fstart->psy_frames_start);
 
             /* Enumerate the frames and store them in a
@@ -879,7 +881,8 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
                     break; /* stack top is an inline frame */
             }
             /* the innermost frame's place, if it noted one */
-            if ((((long)*f1) & 1) != 0 && (long)*f1 != -1)
+            returning = (long)*f1 == FINFO_RETURNING;
+            if ((((long)*f1) & 1) != 0 && (long)*f1 != -1 && !returning)
                 lasti = psyco_note_map((long)*f1)->lasti;
 
             /* now actually visit them in the correct order */
@@ -891,7 +894,9 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
                     tag = (long)(p->fi);
                     fdata = *p->fi;
                     flimit = finfo_last(fdata);
-                    if (hidden_frames != NULL && is_hidden(p->fi)) {
+                    if (returning ||
+                        (hidden_frames != NULL && is_hidden(p->fi))) {
+                        returning = false;
                         lasti = fdata->back_lasti;
                         if (fdata == flimit)
                             goto next_record;
@@ -925,6 +930,10 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
                which is shadowed by a Psyco frame, i.e. a
                proxy function. Represented as
                (co, globals, f, lasti) */
+            if (returning) {
+                fo = le_frame_object_back(fo);
+                continue;
+            }
             o = Py_BuildValue("OOOi", fstart->psy_code, fstart->psy_globals,
                               fo, lasti);
             if (o == NULL)
@@ -1115,11 +1124,12 @@ visit_back_frame(PyObject *o, void *data)
         return Py_None;
     }
     if (!PyTuple_Check(o) || PyFrame_Check(PyTuple_GET_ITEM(o, 2))) {
-        /* a real frame: the one out, as a rule */
+        /* a real frame: the one out, as a rule, or the one past it while
+           that one returns (pvisitframes) */
         if (b->prev != NULL)
             b->prev->f_back = f; /* takes the reference */
         else
-            Py_DECREF(f);
+            b->top = f;
         return Py_None;
     }
     if (b->prev == NULL)
@@ -1427,6 +1437,33 @@ psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
     Py_INCREF(f);
     callee->f_back = f;
     Py_XDECREF(back);
+}
+
+/* A frame that has just run and outlives its call keeps as f_back the
+   frame it was called from. Where that is a real frame LeCode_Run runs
+   while its code is in a compiled callee or inlined frame, which made
+   the call, f_back is that frame instead, emulated and linked to the ones
+   out of it, as CPython's would be: frame_get_back can't find it once the
+   call is over. */
+DEFINEFN
+void
+psyco_frame_returned(le_frame_t *f)
+{
+    le_frame_t *back = le_frame_back(f);
+    FrameRuntime *fr = back == NULL ? NULL : psyco_frame_start_get(back);
+    PyFrameObject *top;
+    PyObject *t, *v, *tb;
+    /* the root slot is even while the code is in a compiled callee or
+       inlined frame (psyco_running_real_frame) */
+    if (fr == NULL || fr->resumed || !le_frame_executing(back) ||
+        (((long)**fr->psy_frames_start) & 1) != 0)
+        return;
+    PyErr_Fetch(&t, &v, &tb);
+    top = linked_frame(0, NULL);
+    if (top != NULL)
+        le_frame_set_back_at_exit(f, top);
+    PyErr_Clear();
+    PyErr_Restore(t, v, tb);
 }
 
 DEFINEFN
@@ -1880,41 +1917,43 @@ psyco_frames_init(void)
     frame_builtins_init();
     fn = PyDescr_NewGetSet(&PyFrame_Type, &back_getset);
     if (fn == NULL ||
-        PyDict_SetItemString(PyFrame_Type.tp_dict, "f_back", fn) < 0)
+        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_back", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
-    lineno_descr = PyDict_GetItemString(PyFrame_Type.tp_dict, "f_lineno");
+    lineno_descr =
+        PyDict_GetItemString(le_type_dict(&PyFrame_Type), "f_lineno");
     Py_XINCREF(lineno_descr);
     fn = lineno_descr == NULL
              ? NULL
              : PyDescr_NewGetSet(&PyFrame_Type, &lineno_getset);
     if (fn == NULL ||
-        PyDict_SetItemString(PyFrame_Type.tp_dict, "f_lineno", fn) < 0)
+        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_lineno", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
-    locals_descr = PyDict_GetItemString(PyFrame_Type.tp_dict, "f_locals");
+    locals_descr =
+        PyDict_GetItemString(le_type_dict(&PyFrame_Type), "f_locals");
     Py_XINCREF(locals_descr);
     fn = locals_descr == NULL
              ? NULL
              : PyDescr_NewGetSet(&PyFrame_Type, &locals_getset);
     if (fn == NULL ||
-        PyDict_SetItemString(PyFrame_Type.tp_dict, "f_locals", fn) < 0)
+        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_locals", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
-    lasti_descr = PyDict_GetItemString(PyFrame_Type.tp_dict, "f_lasti");
+    lasti_descr = PyDict_GetItemString(le_type_dict(&PyFrame_Type), "f_lasti");
     Py_XINCREF(lasti_descr);
     fn = lasti_descr == NULL ? NULL
                              : PyDescr_NewGetSet(&PyFrame_Type, &lasti_getset);
     if (fn == NULL ||
-        PyDict_SetItemString(PyFrame_Type.tp_dict, "f_lasti", fn) < 0)
+        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_lasti", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
-    clear_descr = PyDict_GetItemString(PyFrame_Type.tp_dict, "clear");
+    clear_descr = PyDict_GetItemString(le_type_dict(&PyFrame_Type), "clear");
     Py_XINCREF(clear_descr);
     fn = clear_descr == NULL ? NULL
                              : PyDescr_NewMethod(&PyFrame_Type, &clear_def);
     if (fn == NULL ||
-        PyDict_SetItemString(PyFrame_Type.tp_dict, "clear", fn) < 0)
+        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "clear", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
     PyType_Modified(&PyFrame_Type);

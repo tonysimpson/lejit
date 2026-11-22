@@ -96,4 +96,79 @@ le_jump_target(le_instr_t in)
     return in.next + (LE_IS_JBACK(in.op) ? -1 : 1) * LE_JUMP_BYTES(in.arg);
 }
 
+/* the place CPython's frame gives the instruction that starts at pos (its
+   lasti, a traceback's tb_lasti): past its EXTENDED_ARG prefixes, or the
+   first of them */
+static inline int
+le_place(le_code_t c, int pos)
+{
+#if LE_HAS_LASTI_PAST_PREFIXES
+    while (pos + LE_UNIT < c.size && le_op(c, pos) == EXTENDED_ARG)
+        pos += LE_UNIT;
+#endif
+    return pos;
+}
+
+#if LE_HAS_EXCEPTION_TABLE
+/* one entry of a code object's exception table: an exception raised by an
+   instruction from start up to end goes to handler, with the value stack
+   cut to depth items, then the failing instruction's place pushed if lasti
+   is set, then the exception. Positions in bytes. */
+typedef struct {
+    int start, end, handler, depth, lasti;
+} le_handler_t;
+
+/* ceval.c:parse_varint */
+static inline const unsigned char *
+le_varint(const unsigned char *p, int *result)
+{
+    int val = p[0] & 63;
+    while (p[0] & 64) {
+        p++;
+        val = (val << 6) | (p[0] & 63);
+    }
+    *result = val;
+    return p + 1;
+}
+
+/* the entry at *at (0 for the first) into h, and *at moved past it; false
+   after the last */
+static inline int
+le_handler_next(PyCodeObject *co, Py_ssize_t *at, le_handler_t *h)
+{
+    const unsigned char *t =
+        (const unsigned char *)PyBytes_AS_STRING(co->co_exceptiontable);
+    const unsigned char *p = t + *at;
+    int size, depth_lasti;
+    if (*at >= PyBytes_GET_SIZE(co->co_exceptiontable))
+        return 0;
+    p = le_varint(p, &h->start);
+    p = le_varint(p, &size);
+    p = le_varint(p, &h->handler);
+    p = le_varint(p, &depth_lasti);
+    h->end = (h->start + size) * LE_UNIT;
+    h->start *= LE_UNIT;
+    h->handler *= LE_UNIT;
+    h->depth = depth_lasti >> 1;
+    h->lasti = depth_lasti & 1;
+    *at = p - t;
+    return 1;
+}
+
+/* the entry for an exception raised by the instruction at pos, as
+   ceval.c:get_exception_handler finds it; false if none */
+static inline int
+le_handler_find(PyCodeObject *co, int pos, le_handler_t *h)
+{
+    Py_ssize_t at = 0;
+    while (le_handler_next(co, &at, h)) {
+        if (h->start > pos)
+            return 0;
+        if (pos < h->end)
+            return 1;
+    }
+    return 0;
+}
+#endif
+
 #endif /* _BYTECODE_H */

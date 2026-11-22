@@ -183,13 +183,16 @@ def signals_pending(h):
 
 def eval_frame_handle_pending(h):
     """headers: eval_breaker is a field of the interpreter's struct
-    _ceval_state (where it is, ceval handles it in a function of its own);
-    unanswered where the headers declare _Py_HandlePending, a sign the
-    handling has left ceval"""
+    _ceval_state (where it is, ceval handles it in a function of its own),
+    and gc_scheduled isn't (the handling has left ceval, with the GC);
+    unanswered where the headers declare _Py_HandlePending without
+    gc_scheduled, another sign the handling has left ceval"""
     h.need_internal()
     path, fields = h.struct('_ceval_state')
     if fields is None or 'eval_breaker' not in fields:
         return False, '%s:_ceval_state.eval_breaker' % (path or 'every header')
+    if 'gc_scheduled' in fields:
+        return False, '%s:_ceval_state.gc_scheduled' % path
     if h.declares('_Py_HandlePending'):
         raise Unanswered('%s declares _Py_HandlePending'
                          % h.declares('_Py_HandlePending'))
@@ -222,7 +225,8 @@ def frame_state(h):
 
 def cframe(h):
     """headers: use_tracing is a field of the thread state's CFrame, not
-    of struct _ts"""
+    of struct _ts; no, where neither has it and the interpreter has
+    sys.monitoring's monitors"""
     path, ts = h.struct('_ts')
     if ts is None:
         raise Unanswered('no struct _ts in the headers')
@@ -233,6 +237,10 @@ def cframe(h):
         cpath, cf = h.struct(name)
         if cf is not None and 'use_tracing' in cf:
             return True, '%s:%s.use_tracing' % (cpath, name)
+    h.need_internal()
+    has_monitoring, evidence = features.monitoring(h)
+    if has_monitoring:
+        return False, '%s:_ts has no use_tracing, %s' % (path, evidence)
     raise Unanswered('%s:_ts has no use_tracing, nor a CFrame with one' % path)
 
 
@@ -295,6 +303,15 @@ def public(function):
     return detect
 
 
+def internal(detector):
+    """features.py's detector, on the internal headers"""
+    def detect(h):
+        h.need_internal()
+        return detector(h)
+    detect.__doc__ = 'headers: ' + ' '.join(detector.__doc__.split())
+    return detect
+
+
 def tuple_get_empty(h):
     """headers: the interpreter state holds the tuple free lists, whose
     first entry is the empty tuple (struct _Py_tuple_state with free_list,
@@ -333,6 +350,14 @@ HEADER_DETECTORS = {
     'EXC_INFO_VALUE_ONLY': features.exc_info_value_only,
     'DICT_VALUES_STRUCT': features.dict_values_struct,
     'CEVAL_TRACE_INFO': ceval_trace_info,
+    'THREAD_LOCAL_TSTATE': internal(features.thread_local_tstate),
+    'PY_RECURSION_REMAINING': features.py_recursion_remaining,
+    'CURRENT_EXCEPTION': features.current_exception,
+    'EVAL_BREAKER_GC': internal(features.eval_breaker_gc),
+    'EVAL_FRAME_POPS': internal(features.eval_frame_pops),
+    'LONG_VALUE': features.long_value,
+    'TYPE_GET_DICT': public('PyType_GetDict'),
+    'IMMORTAL_OBJECTS': public('_Py_IsImmortal'),
     # where the interpreter's probe can't answer: a frame object with no
     # f_lasti of its own
     'LASTI_IN_INSTRUCTIONS': features.interpreter_frame_lasti,
@@ -421,7 +446,8 @@ def opcodes(probed):
         ins(probed['hasjrel']), ins(probed['hasjabs']), ins(probed['jback']),
         max(ops.values()),
         sorted(((name, ops[name], n) for name, n in probed['caches'].items()
-                if n and ops.get(name, 256) < 256), key=lambda x: x[1]))
+                if n and ops.get(name, 256) < 256), key=lambda x: x[1]),
+        features.pseudo(ops))
 
 
 def build(python):

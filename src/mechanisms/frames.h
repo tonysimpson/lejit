@@ -261,6 +261,24 @@ le_pyframe_eval_end(PyFrameObject *f, int marked)
     if (marked)
         le_pyframe_set_executing(f, 0);
 }
+/* the frame object of a frame that has just run, if something besides
+   the frame holds it, so that it outlives the call */
+static inline PyFrameObject *
+le_frame_outlives(le_frame_t *f)
+{
+    if (f->owner != FRAME_OWNED_BY_THREAD || f->frame_obj == NULL ||
+        Py_REFCNT(f->frame_obj) < 2)
+        return NULL;
+    return f->frame_obj;
+}
+/* 'back' (a reference it takes) is its caller from now on, in place of
+   the frame it was called from, which CPython gives it as it clears it */
+static inline void
+le_frame_set_back_at_exit(le_frame_t *f, PyFrameObject *back)
+{
+    Py_XSETREF(f->frame_obj->f_back, back);
+    f->previous = NULL;
+}
 /* the frame object is the thread's innermost, for C code that reads it
    (frames.c:le_warn): a frame object's own frame is its frame object
    until le_pyframe_current_end, which it holds a reference to meanwhile,
@@ -523,6 +541,19 @@ le_pyframe_eval_end(PyFrameObject *f, int marked)
     (void)f;
     (void)marked;
 }
+/* the frame of a call that has just run (not a generator's), if
+   something besides the call holds it, so that it outlives the call */
+static inline PyFrameObject *
+le_frame_outlives(le_frame_t *f)
+{
+    return Py_REFCNT(f) < 2 ? NULL : f;
+}
+/* 'back' (a reference it takes) is its caller from now on */
+static inline void
+le_frame_set_back_at_exit(le_frame_t *f, PyFrameObject *back)
+{
+    Py_XSETREF(f->f_back, back);
+}
 /* the frame object is the thread's innermost, for C code that reads it
    (frames.c:le_warn), until le_pyframe_current_end */
 static inline void
@@ -548,4 +579,63 @@ le_pyframe_stack(PyFrameObject *f)
 {
     return le_frame_stack(le_frame_of(f));
 }
+
+/* The frame entry handed to compiled code (eval_hook.c:LeCode_Run) ends:
+   'result' (a new reference, or NULL with the exception set) is what it
+   returns, after le_frame_finish. */
+#if LE_HAS_EVAL_FRAME_POPS
+/* Whoever runs the frame clears and pops it, with functions CPython hides,
+   so ceval is given it to end: run from before its first instruction
+   (incomplete, so ceval adds no traceback entry and finds no handler) with
+   an exception set and throwflag, it unwinds it at once, clearing and
+   popping it as ceval does a frame that raises. For a result, the
+   exception is 'done', which is taken back. sys.monitoring's events for
+   the unwind are not given (tstate->tracing). A frame object that
+   outlives the frame keeps its place, which ceval would show as the
+   first line. */
+extern int
+le_monitoring_on(PyThreadState *ts); /* pyruntime.c */
+static inline PyObject *
+le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
+                PyObject *done)
+{
+    PyFrameObject *fo = f->frame_obj;
+    _Py_CODEUNIT *at = f->prev_instr;
+    int quiet = le_monitoring_on(ts);
+    PyObject *r;
+    Py_XINCREF(fo);
+    f->prev_instr = _PyCode_CODE(f->f_code) - 1;
+    if (result != NULL)
+        PyErr_SetRaisedException(Py_NewRef(done));
+    if (quiet)
+        ts->tracing++;
+    r = _PyEval_EvalFrameDefault(ts, f, 1);
+    if (quiet)
+        ts->tracing--;
+    if (r != NULL)
+        Py_FatalError("LeJIT: ceval ended a frame with a result");
+    if (result != NULL) {
+        /* ceval raised another exception (RecursionError on entering it)
+           in place of 'done' */
+        PyObject *e = PyErr_GetRaisedException();
+        if (e == done)
+            Py_DECREF(e);
+        else {
+            PyErr_SetRaisedException(e);
+            Py_CLEAR(result);
+        }
+    }
+    if (fo != NULL) {
+        /* its own copy now, since this holds a reference */
+        le_frame_t *own = fo->f_frame;
+        if (at >= _PyCode_CODE(own->f_code) + own->f_code->_co_firsttraceable)
+            own->prev_instr = at;
+        Py_DECREF(fo);
+    }
+    return result;
+}
+#else
+/* the frame's caller pops it */
+#define le_frame_finish(ts, f, result, done) (result)
+#endif
 #endif /* LE_MECHANISMS_FRAMES_H */

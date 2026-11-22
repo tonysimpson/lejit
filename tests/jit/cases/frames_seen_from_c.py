@@ -261,6 +261,25 @@ def back_names(n):
     return out
 
 
+def own_frame(_):
+    return sys._getframe()
+
+
+def own_frame_through_c():
+    return list(map(own_frame, [0]))[0]
+
+
+# a frame that outlives its call through C from a compiled callee keeps
+# that callee as f_back
+def returned_back_names():
+    f = own_frame_through_c()
+    out = []
+    while f is not None and len(out) < 3:
+        out.append(f.f_code.co_name)
+        f = f.f_back
+    return out
+
+
 def gen_frames():
     yield back_names(3)
 
@@ -325,6 +344,7 @@ CASES = [
     ('log_gen_caller', "[()]", {}),
     ('warn_through', "[(1,), (2,)]", {}),
     ('init_frames_caller', "[()]", {}),
+    ('returned_back_names', "[()]", {}),
     ('raised_middle', "[()]", {}),
     ('caught_middle', "[()]",
      {'warmup': (20, 'a call site that gets new lambdas each round compiles '

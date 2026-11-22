@@ -2401,8 +2401,8 @@ canonical_int(PsycoObject *po, int index)
         sv = &psyco_computed_bool;
         value = o == Py_True;
     }
-    else if (Py_TYPE(o) == &PyLong_Type && -1 <= Py_SIZE(o) &&
-             Py_SIZE(o) <= 1) {
+    else if (Py_TYPE(o) == &PyLong_Type && -1 <= le_long_size(o) &&
+             le_long_size(o) <= 1) {
         value = PyLong_AsLong(o);
         if (value < -5 || value > 256) /* longobject.c's small_ints */
             return;

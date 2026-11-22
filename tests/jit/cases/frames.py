@@ -78,6 +78,35 @@ def traceback_frames(a):
         return out
 
 
+class SeesCaller:
+    def __init__(self, seen):
+        self.seen = seen
+
+    def __del__(self):
+        f = sys._getframe(1)
+        self.seen.append((f.f_code.co_name, sys._getframe(1).f_code.co_name))
+
+
+def drops_local(seen):
+    ref = SeesCaller(seen)
+
+
+def drops_local_middle(seen):
+    drops_local(seen)
+    return 0
+
+
+# a finaliser that a returning frame's locals run sees that frame's caller,
+# as CPython pops the frame first (CPython's test_frame
+# test_sneaky_frame_object_teardown)
+def finaliser_caller():
+    seen = []
+    drops_local(seen)
+    drops_local_middle(seen)
+    list(map(drops_local, [seen]))
+    return seen
+
+
 def too_deep():
     return sys._getframe(10000)
 
@@ -88,5 +117,6 @@ CASES = [
     ('call_caller_globals', "[()]", {}),
     ('make_namedtuple', "[()]", {}),
     ('too_deep', "[()]", {}),
+    ('finaliser_caller', "[()]", {}),
     ('traceback_frames', "[([1],)]", {}),
 ]
