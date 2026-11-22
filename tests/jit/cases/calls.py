@@ -103,6 +103,39 @@ def new_class_bases():
         return name, bases, sorted(ns), kw
     return types.new_class('X', (int, object), dict(metaclass=meta, x=0))
 
+# functions made on each run, called from a frame with handlers (which
+# makes them real objects): each is a new object, so the calls must not
+# specialise on it
+def nested_function_calls(n):
+    def add(a, b=n, *rest):
+        return a + b + len(rest)
+    sq = (lambda x, y=2: x ** y)
+    t = 0
+    for i in range(n):
+        t += add(i) + add(i, 1) + add(i, 1, 2) + sq(i) + sq(i, 3)
+    try:
+        add()
+    except TypeError as e:
+        return t, str(e)
+    return t
+
+
+# a nested function whose code is replaced between two calls
+def three():
+    return 3
+
+def nested_code_changes(k):
+    def f():
+        return None
+    def g():
+        return k
+    out = [f(), g()]
+    f.__code__ = three.__code__
+    g.__code__ = (lambda: -k).__code__
+    out += [f(), g()]
+    return out
+
+
 CASES = [
     ('call_helper', [(1,), (-4,)], {}),
     ('call_in_loop', [(0,), (50,)], {}),
@@ -117,4 +150,6 @@ CASES = [
     ('generator_names', [()], {}),
     ('tuple_identity_through_call', "[(int,)]", {}),
     ('new_class_bases', [()], {}),
+    ('nested_function_calls', [(4,)], {}),
+    ('nested_code_changes', [(4,), (2.5,)], {}),
 ]
