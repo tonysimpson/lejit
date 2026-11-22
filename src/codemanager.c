@@ -150,7 +150,8 @@ owner_add_extent(le_owner_t *o, code_t *start, code_t *end)
         int cap = o->extentscap ? 2 * o->extentscap : 4;
         void *n = PyMem_Realloc(o->extents, cap * sizeof(extent_t));
         if (n == NULL)
-            OUT_OF_MEMORY();
+            return; /* out of memory: kept for good, as an abandoned
+                       compile must not run out again */
         o->extents = n;
         o->extentscap = cap;
     }
