@@ -89,13 +89,6 @@ le_eval_breaker_handler(void)
         _Py_atomic_load_relaxed(&ceval2->pending.calls_to_do)) {
         if (Py_MakePendingCalls() < 0)
             return -1;
-        /* Py_MakePendingCalls ends by recomputing eval_breaker from the
-           flags, which ceval doesn't do after a signal's handlers: a
-           signal arriving between that load and store would wait for the
-           next one. */
-        if (_Py_atomic_load_relaxed(&ceval->signals_pending) &&
-            _Py_ThreadCanHandleSignals(interp))
-            _Py_atomic_store_relaxed(&ceval2->eval_breaker, 1);
     }
     if (_Py_atomic_load_relaxed(&ceval2->gil_drop_request))
         PyEval_RestoreThread(PyEval_SaveThread());
@@ -173,14 +166,6 @@ le_eval_breaker_handler(void)
         _Py_atomic_load_relaxed(&ceval->pending.calls_to_do)) {
         if (Py_MakePendingCalls() < 0)
             return -1;
-        /* Py_MakePendingCalls ends by recomputing eval_breaker from the
-           flags, which ceval doesn't do after a signal's handlers: a
-           signal arriving between that load and store would wait for the
-           next one. */
-        if (_Py_atomic_load_relaxed(&ceval->signals_pending) &&
-            PyThread_get_thread_ident() == _PyRuntime.main_thread &&
-            tstate->interp == _PyRuntime.interpreters.main)
-            _Py_atomic_store_relaxed(&ceval->eval_breaker, 1);
     }
     if (_Py_atomic_load_relaxed(&ceval->gil_drop_request))
         PyEval_RestoreThread(PyEval_SaveThread());

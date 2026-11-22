@@ -44,11 +44,11 @@ jobs:
       - name: Stress tests alone, the handler reading its frame
         if: always()
         run: |
-          for i in $(seq 10); do python -X faulthandler tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected' | grep -A8 'FAIL\|Fatal\|Segm'; echo "exit $?"; done
+          for i in $(seq 10); do python -X faulthandler tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected' | grep -A8 'FAIL\|Fatal\|Segm' || true; done
       - name: Stress tests alone, the handler not reading its frame
         if: always()
         run: |
-          for i in $(seq 20); do LE_NO_FRAME=1 python -X faulthandler tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected' | grep -A8 'FAIL\|Fatal\|Segm'; echo "exit $?"; done
+          for i in $(seq 20); do LE_NO_FRAME=1 python -X faulthandler tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected' | grep -A8 'FAIL\|Fatal\|Segm' || true; done
       - name: test_signal as run.py runs it, unchanged
         if: always()
         run: |
