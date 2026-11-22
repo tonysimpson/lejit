@@ -44,12 +44,15 @@ SKIPPED = {
     'a deadline on the whole run, which slow machines miss':
         'test_signal.StressTest.test_stress_delivery_dependent '
         'test_signal.StressTest.test_stress_delivery_simultaneous',
-    "CPython doesn't specialise Python calls and __getitem__ while a "
-    'frame-evaluation hook is installed (specialize.c, SPEC_FAIL_CALL_PEP_523)':
+    "CPython doesn't specialise Python calls, __getitem__ and properties "
+    'while a frame-evaluation hook is installed (specialize.c, '
+    'SPEC_FAIL_CALL_PEP_523)':
         'test_dis.DisTests.test_loop_quicken '
         'test_dis.DisWithFileTests.test_loop_quicken '
         'test_type_cache.TypeCacheWithSpecializationTests.'
-        'test_binary_subscript_specialization_user_type',
+        'test_binary_subscript_specialization_user_type '
+        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test_property_load_attr_specialization_user_type',
     'CPython counts each frame a frame-evaluation hook is given as a C call '
     'too, so a Python recursion 90,000 deep passes the C recursion limit '
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
