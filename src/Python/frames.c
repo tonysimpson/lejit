@@ -36,8 +36,8 @@
  * other frames, inlined frames' locals, a read from another thread or
  * from Python run outside a call that may run it (a finaliser), which
  * see the last written.
- * frame.f_back, frame.f_lineno, frame.f_locals and frame.clear are replaced
- * in PyFrame_Type's dict: a real frame entered
+ * frame.f_back, frame.f_lineno, frame.f_lasti, frame.f_locals and
+ * frame.clear are replaced in PyFrame_Type's dict: a real frame entered
  * through C from compiled code keeps the f_back ceval gave it, which the
  * evaluators put tstate->frame back to, and the getter gives the compiled
  * frames it skips (frame_get_back); a real frame LeCode_Run runs gets its
@@ -1281,24 +1281,36 @@ line_object(int line)
     return PyLong_FromLong(line);
 }
 
-static PyObject *
-frame_get_lineno(PyFrameObject *frame, void *closure)
+/* where compiled code running the frame is now (bytes), or -1: a kept
+   frame is placed there too */
+static int
+compiled_place(PyFrameObject *frame)
 {
     activation_t *a;
-    if (frame->f_trace == NULL && (a = live_activation(frame)) != NULL) {
-        int lasti = kept_lasti(a);
+    PyObject *o;
+    int lasti = -1;
+    if (frame->f_trace != NULL)
+        return -1;
+    if ((a = live_activation(frame)) != NULL) {
+        lasti = kept_lasti(a);
         if (lasti >= 0)
             le_frame_set_lasti(le_frame_of(frame), le_lasti_of(lasti));
     }
-    else if (frame->f_trace == NULL && runs_compiled(frame)) {
-        PyObject *o = pvisitframes(visit_root_lasti, frame);
-        int lasti = o == NULL ? -1 : (int)PyLong_AsLong(o);
+    else if (runs_compiled(frame)) {
+        o = pvisitframes(visit_root_lasti, frame);
+        lasti = o == NULL ? -1 : (int)PyLong_AsLong(o);
         Py_XDECREF(o);
         PyErr_Clear();
-        if (lasti >= 0)
-            return line_object(
-                PyCode_Addr2Line(le_pyframe_code(frame), lasti));
     }
+    return lasti;
+}
+
+static PyObject *
+frame_get_lineno(PyFrameObject *frame, void *closure)
+{
+    int lasti = compiled_place(frame);
+    if (lasti >= 0 && runs_compiled(frame))
+        return line_object(PyCode_Addr2Line(le_pyframe_code(frame), lasti));
     return line_object(PyFrame_GetLineNumber(frame));
 }
 
@@ -1311,6 +1323,23 @@ frame_set_lineno(PyFrameObject *frame, PyObject *v, void *c)
 
 static PyGetSetDef lineno_getset = {"f_lineno", (getter)frame_get_lineno,
                                     (setter)frame_set_lineno, NULL, NULL};
+
+/* frame.f_lasti, replaced too, from the same place as f_lineno */
+static PyObject *lasti_descr = NULL;
+
+static PyObject *
+frame_get_lasti(PyFrameObject *frame, void *closure)
+{
+    int lasti = compiled_place(frame);
+    if (lasti >= 0 && runs_compiled(frame))
+        return PyLong_FromLong(lasti);
+    return Py_TYPE(lasti_descr)
+        ->tp_descr_get(lasti_descr, (PyObject *)frame,
+                       (PyObject *)&PyFrame_Type);
+}
+
+static PyGetSetDef lasti_getset = {"f_lasti", (getter)frame_get_lasti, NULL,
+                                   NULL, NULL};
 
 /* frame.f_locals, replaced in PyFrame_Type's dict: PyFrame_FastToLocals
    reads f_localsplus, which frame_sync_locals brings up to date */
@@ -1872,6 +1901,14 @@ psyco_frames_init(void)
         PyDict_SetItemString(PyFrame_Type.tp_dict, "f_locals", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
+    lasti_descr = PyDict_GetItemString(PyFrame_Type.tp_dict, "f_lasti");
+    Py_XINCREF(lasti_descr);
+    fn = lasti_descr == NULL ? NULL
+                             : PyDescr_NewGetSet(&PyFrame_Type, &lasti_getset);
+    if (fn == NULL ||
+        PyDict_SetItemString(PyFrame_Type.tp_dict, "f_lasti", fn) < 0)
+        PyErr_Print();
+    Py_XDECREF(fn);
     clear_descr = PyDict_GetItemString(PyFrame_Type.tp_dict, "clear");
     Py_XINCREF(clear_descr);
     fn = clear_descr == NULL ? NULL
@@ -2012,7 +2049,9 @@ psyco_resume_block(struct resume_s *st, long type, long handler, long level)
 /* Stand-ins for the trace and profile functions while the resumed frame
    starts: ceval would give it a 'call' event, which CPython never gives a
    frame already running when tracing starts. Each puts its own function
-   back on its first event, before any of the frame's code runs. */
+   back on its first event, before any of the frame's code runs. Where the
+   'call' event is RESUME's, a frame resumed past it gets none, and the
+   first event may be a callee's 'call': no stand-in then. */
 typedef struct {
     Py_tracefunc func;
     PyObject *obj;
@@ -2089,7 +2128,7 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
         hidden_frames = &hidden;
     if (fr != NULL)
         fr->resumed = 1;
-    if (!ts->tracing) {
+    if (!LE_HAS_OPCODE_RESUME && !ts->tracing) {
         if (trace.func != NULL) {
             ts->c_tracefunc = skip_call_trace;
             ts->c_traceobj = (PyObject *)&trace;

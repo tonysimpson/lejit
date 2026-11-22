@@ -2,6 +2,7 @@
 # an adversarial test's frames_logging: the f_back of a
 # frame a keyword call runs, warnings' stacklevel, which _warnings walks in
 # C from tstate->frame, and emulated frames' current lines.
+import inspect
 import io
 import logging
 import sys
@@ -85,6 +86,20 @@ def lineno_middle():
 
 def lineno_chain():
     return lineno_middle()
+
+
+def lasti_seen(_):
+    f = sys._getframe(1)
+    return f.f_lasti, f.f_lineno - f.f_code.co_firstlineno
+
+
+# the place of a frame calling Python through C, as f_lasti and as inspect
+# finds it
+def lasti_through_c():
+    x = 1
+    seen = list(map(lasti_seen, [x]))
+    stack = list(map(lambda _: inspect.stack()[1], [x]))
+    return seen, stack[0].lineno - lasti_through_c.__code__.co_firstlineno
 
 
 class Where:
@@ -314,6 +329,7 @@ CASES = [
     ('caught_middle', "[()]", {}),
     ('lineno_chain', "[()]", {}),
     ('attr_line', "[()]", {}),
+    ('lasti_through_c', "[()]", {}),
     ('getframe_through', "[()]", {}),
     ('trim_arity_case', "[()]", {}),
 ]

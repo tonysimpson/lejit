@@ -51,9 +51,6 @@ SKIPPED = {
     'as it runs it':
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_load_method_specialization_user_type',
-    "a compiled frame's f_lasti isn't kept up to date while it calls Python, "
-    "and 3.11's inspect takes the line from it":
-        'test_inspect.TestInterpreterStack.test_stack',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
