@@ -1231,6 +1231,40 @@ psyco_group_new(PyObject *key, void *site)
     return &g->owner;
 }
 
+static bool
+holds_all(le_owner_t *o, vinfo_array_t *a)
+{
+    int i;
+    for (i = a->count; i--;) {
+        vinfo_t *v = a->items[i];
+        if (v == NULL)
+            continue;
+        if (is_compiletime(v->source)) {
+            source_known_t *sk = CompileTime_Get(v->source);
+            PyObject *p = (PyObject *)sk->value;
+            if ((sk->refcount1_flags & (SkFlagPyObj | SkFlagBorrowed)) ==
+                    SkFlagPyObj &&
+                !(PyType_Check(p) &&
+                  !(((PyTypeObject *)p)->tp_flags & Py_TPFLAGS_HEAPTYPE)) &&
+                (o->pins == NULL || o->pins[pin_slot(o, p)] != p))
+                return false;
+        }
+        if (v->array != NullArray && !holds_all(o, v->array))
+            return false;
+    }
+    return true;
+}
+
+DEFINEFN le_owner_t *
+psyco_owner_root_holding(vinfo_array_t *a)
+{
+    le_owner_t *root;
+    if (psyco_owner == NULL || psyco_owner->parent == NULL)
+        return NULL;
+    root = owner_root(psyco_owner);
+    return holds_all(root, a) ? root : NULL;
+}
+
 DEFINEFN void
 psyco_owner_depend(CodeBufferObject *b)
 {

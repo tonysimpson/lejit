@@ -125,6 +125,10 @@ psyco_group_new(PyObject *key, void *site);
 /* the current owner's code jumps into 'b' */
 EXTERNFN void
 psyco_owner_depend(CodeBufferObject *b);
+/* the code object's owner above the current owner, if that is a group
+   and the code object's owner holds every constant 'a' has; else NULL */
+EXTERNFN le_owner_t *
+psyco_owner_root_holding(vinfo_array_t *a);
 /* frames.c: calls 'mark' on the code object of every compiled frame
    running on any thread, and on some more; -1 if it can't tell */
 EXTERNFN int
