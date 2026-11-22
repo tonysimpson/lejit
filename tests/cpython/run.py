@@ -103,9 +103,14 @@ import sys, unittest, io, json
 if sys.argv[1] == 'lejit':
     sys.path.insert(0, sys.argv[3]); import lejit; lejit.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
+# a package's tests may be in its module of the same name (test_inspect)
+try:
+    sub = __import__('test.%s.%s' % (sys.argv[2], sys.argv[2]), fromlist=['x'])
+except ImportError:
+    sub = None
 for name in sys.argv[4:]:
     cls, meth = name.split('.')
-    cls = getattr(mod, cls, None)
+    cls = getattr(mod, cls, None) or getattr(sub, cls, None)
     if hasattr(cls, meth):
         setattr(cls, meth, unittest.skip('skipped by run.py')(getattr(cls, meth)))
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)
