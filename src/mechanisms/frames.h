@@ -176,10 +176,13 @@ le_frame_set_executing(le_frame_t *f, int on)
     (void)f;
     (void)on;
 }
-/* the frame is running, as frame.clear() sees it */
+/* the frame is running, as frame.clear() sees it: the thread's, or a
+   generator's while it runs */
 static inline int
 le_frame_executing(le_frame_t *f)
 {
+    if (f->owner == FRAME_OWNED_BY_GENERATOR)
+        return _PyFrame_GetGenerator(f)->gi_frame_state == FRAME_EXECUTING;
     return f->owner == FRAME_OWNED_BY_THREAD;
 }
 static inline int
