@@ -806,8 +806,8 @@ psyco_fatal_error(char *msg, char *filename, int lineno);
 #define extra_assert(x) (void)0 /* nothing */
 #endif
 
-/* Under AddressSanitizer (setup.py LEJIT_SANITIZE), LeJIT's own allocators mark
-   what they hold free as unaddressable, so that an access through a stale
+/* Under AddressSanitizer (setup.py LEJIT_SANITIZE), LeJIT's own allocators
+   mark what they hold free as unaddressable, so that an access through a stale
    pointer is reported as malloc'd memory would be; and LeakSanitizer is
    told to scan executable memory, where stub and pause records point to
    what they hold (LE_LSAN_ROOT) */
