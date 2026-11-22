@@ -1776,14 +1776,14 @@ done:
     return r;
 }
 
-#define STRIP_META(NAME, TYPE)                                              \
-    static vinfo_t *p##NAME(PsycoObject *po, vinfo_t *self, vinfo_t *vargs) \
-    {                                                                       \
-        vinfo_t *r = strip_view(po, self, vargs, TYPE);                     \
-        return r != VIEW_NOT_ONE ? r                                        \
-                                 : PsycoCFunction_CallFast(                 \
-                                       po, cfunc_##NAME, METH_FASTCALL,     \
-                                       self, vargs);                        \
+#define STRIP_META(NAME, TYPE)                                                \
+    static vinfo_t *p##NAME(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)   \
+    {                                                                         \
+        vinfo_t *r = strip_view(po, self, vargs, TYPE);                       \
+        return r != VIEW_NOT_ONE                                              \
+                   ? r                                                        \
+                   : PsycoCFunction_CallFast(po, cfunc_##NAME, METH_FASTCALL, \
+                                             self, vargs);                    \
     }
 STRIP_META(unicode_lstrip, 0)
 STRIP_META(unicode_rstrip, 1)
@@ -1888,10 +1888,9 @@ punicode_rpartition(PsycoObject *po, vinfo_t *self, vinfo_t *sep)
    builds one string. Forced, it is ascii_upper_or_lower's body:
    PyUnicode_New(len, 127), so '' is the shared one and one character a
    new object, as CPython's, then the map. A force for a dict key
-   (PsycoUnicode_ForceKey) also stores the hash, computed in the same pass
-   as the map where CPython's hash is the SipHash-2-4 below. len reads it
-   unforced, == and != against a real str compare through the map, and
-   anything else forces it. */
+   (PsycoUnicode_ForceKey) also stores the hash. len reads it unforced,
+   == and != against a real str compare through the map, and anything
+   else forces it. */
 
 /* the bytes in 'A'..'Z' (or 'a'..'z') of 8 ASCII bytes, case flipped: no
    byte's sum carries, as each is below 0x80 */
@@ -1907,8 +1906,8 @@ case_map8(uint64_t x, long upper)
 /* The tail of fewer than 8 bytes as a little-endian word, and its store:
    two loads or stores of a fixed size that overlap where n is not a power
    of two (the overlapping bytes are the same), so no call to memcpy for a
-   length known only at run time, which costs more than the hash rounds on
-   a short word, and no byte past the n given is read or written. */
+   length known only at run time, which costs more than the map on a short
+   word, and no byte past the n given is read or written. */
 static inline uint64_t
 load_tail(const unsigned char *s, Py_ssize_t n)
 {
@@ -1961,60 +1960,6 @@ case_map(char *dst, const char *src, Py_ssize_t n, long upper)
     store_tail(dst, w, n);
 }
 
-/* pyhash.c's siphash24 on the mapped bytes as they are written, x86-64
-   being little-endian; used only if it gives le_hash_bytes's values
-   (case_hash_checked) */
-#define SIP_ROTATE(x, b) (uint64_t)(((x) << (b)) | ((x) >> (64 - (b))))
-#define SIP_HALF_ROUND(a, b, c, d, s, t) \
-    a += b;                              \
-    c += d;                              \
-    b = SIP_ROTATE(b, s) ^ a;            \
-    d = SIP_ROTATE(d, t) ^ c;            \
-    a = SIP_ROTATE(a, 32);
-#define SIP_DOUBLE_ROUND(v0, v1, v2, v3)    \
-    SIP_HALF_ROUND(v0, v1, v2, v3, 13, 16); \
-    SIP_HALF_ROUND(v2, v1, v0, v3, 17, 21); \
-    SIP_HALF_ROUND(v0, v1, v2, v3, 13, 16); \
-    SIP_HALF_ROUND(v2, v1, v0, v3, 17, 21);
-
-static Py_hash_t
-case_map_hash(char *dst, const char *src, Py_ssize_t n, long upper)
-{
-    uint64_t k0 = (uint64_t)_Py_HashSecret.siphash.k0;
-    uint64_t k1 = (uint64_t)_Py_HashSecret.siphash.k1;
-    uint64_t b = (uint64_t)n << 56, w, t;
-    uint64_t v0 = k0 ^ 0x736f6d6570736575ULL;
-    uint64_t v1 = k1 ^ 0x646f72616e646f6dULL;
-    uint64_t v2 = k0 ^ 0x6c7967656e657261ULL;
-    uint64_t v3 = k1 ^ 0x7465646279746573ULL;
-    Py_hash_t x;
-    for (; n >= 8; n -= 8, src += 8, dst += 8) {
-        memcpy(&w, src, 8);
-        w = case_map8(w, upper);
-        memcpy(dst, &w, 8);
-        v3 ^= w;
-        SIP_DOUBLE_ROUND(v0, v1, v2, v3);
-        v0 ^= w;
-    }
-    w = case_map8(load_tail((const unsigned char *)src, n), upper);
-    store_tail(dst, w, n);
-    b |= w;
-    v3 ^= b;
-    SIP_DOUBLE_ROUND(v0, v1, v2, v3);
-    v0 ^= b;
-    v2 ^= 0xff;
-    SIP_DOUBLE_ROUND(v0, v1, v2, v3);
-    SIP_DOUBLE_ROUND(v0, v1, v2, v3);
-    t = (v0 ^ v1) ^ (v2 ^ v3);
-    x = (Py_hash_t)t;
-    return x == -1 ? -2 : x; /* le_hash_bytes's */
-}
-#undef SIP_DOUBLE_ROUND
-#undef SIP_HALF_ROUND
-#undef SIP_ROTATE
-
-static int case_hash_checked; /* case_map_hash is le_hash_bytes */
-
 /* ascii_upper_or_lower on root[start:start+len]; 'hashed': with the hash
    set, as unicode_hash would set it */
 static PyObject *
@@ -2027,14 +1972,9 @@ cimpl_casemap(PyObject *root, Py_ssize_t start, Py_ssize_t len, long upper,
     if (r == NULL || len == 0)
         return r;
     dst = (char *)((PyASCIIObject *)r + 1);
-    if (!hashed)
-        case_map(dst, src, len, upper);
-    else if (case_hash_checked)
-        ((PyASCIIObject *)r)->hash = case_map_hash(dst, src, len, upper);
-    else {
-        case_map(dst, src, len, upper);
+    case_map(dst, src, len, upper);
+    if (hashed)
         ((PyASCIIObject *)r)->hash = le_hash_bytes(dst, len);
-    }
     return r;
 }
 
@@ -2110,7 +2050,7 @@ PsycoUnicode_KeyParts(vinfo_t *v, vinfo_t **root, vinfo_t **start,
 
 /* A view's characters are its root's, of the canonical kind where the
    root is ASCII; a case map's are mapped into 'buf' as cimpl_casemap
-   writes them, hashed in the same pass. The empty str's hash is 0, as
+   writes them. The empty str's hash is 0, as
    unicode_hash's. */
 DEFINEFN
 int
@@ -2132,8 +2072,6 @@ PsycoUnicode_KeyChars(le_strkey_t *k, Py_hash_t *hash, char *buf,
     k->data = (const Py_UCS1 *)buf;
     if (len == 0)
         *hash = 0;
-    else if (case_hash_checked)
-        *hash = case_map_hash(buf, src, len, map);
     else {
         case_map(buf, src, len, map);
         *hash = le_hash_bytes(buf, len);
@@ -3079,34 +3017,26 @@ PsycoUnicode_BuildParts(PsycoObject *po, vinfo_t **items, int n,
     return 1;
 }
 
-/* case_map_hash against le_hash_bytes on every length to 40 and each
-   case of byte, so another algorithm, a small-string cut-off or another
-   byte order is never taken for CPython's hash; and the map itself
-   against Py_TOLOWER and Py_TOUPPER, with nothing written past the
-   length */
+/* case_map against Py_TOLOWER and Py_TOUPPER on every length to 40 and
+   each case of byte, with nothing written past the length */
 static void
-check_case_hash(void)
+check_case_map(void)
 {
-    char src[41], a[42], b[42];
+    char src[41], b[42];
     int n, k, i;
     for (k = 0; k < 40; k++) src[k] = "aZ0 Mz.@[`{~"[k % 12] + (k / 12);
     for (n = 0; n <= 40; n++)
         for (k = 0; k < 2; k++) {
-            Py_hash_t h;
-            a[n] = b[n] = '#';
-            h = case_map_hash(a, src, n, k);
+            b[n] = '#';
             case_map(b, src, n, k);
             for (i = 0; i < n; i++)
                 if (b[i] !=
                     (char)(k ? Py_TOUPPER(src[i]) : Py_TOLOWER(src[i])))
                     Py_FatalError(
                         "lejit: case_map is not ascii_upper_or_lower's map");
-            if (a[n] != '#' || b[n] != '#')
+            if (b[n] != '#')
                 Py_FatalError("lejit: case_map writes past the length");
-            if (memcmp(a, b, n) != 0 || (n > 0 && h != le_hash_bytes(b, n)))
-                return;
         }
-    case_hash_checked = 1;
 }
 
 INITIALIZATIONFN
@@ -3151,7 +3081,7 @@ psy_unicodeobject_init(void)
                                                METH_NOARGS, punicode_lower);
     cfunc_unicode_upper = Psyco_DefineMethodFn(&PyUnicode_Type, "upper",
                                                METH_NOARGS, punicode_upper);
-    check_case_hash();
+    check_case_map();
     unicode_mod = PyUnicode_Type.tp_as_number->nb_remainder;
     Psyco_DefineMeta(unicode_mod, punicode_mod);
     cfunc_unicode_join =
