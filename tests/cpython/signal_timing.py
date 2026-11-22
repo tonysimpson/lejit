@@ -67,7 +67,8 @@ def wrap(mod, mode, out):
                 return handler(signum, frame)
             finally:
                 where = '%s:%s' % (frame.f_code.co_name, frame.f_lineno) \
-                    if frame is not None else '?'
+                    if frame is not None and not os.environ.get('LE_NO_FRAME') \
+                    else '?'
                 events.append((t, time.perf_counter() - t, signum, where))
         if handler.__name__ in ('handler', 'second_handler') and \
                 handler.__code__.co_argcount == 2:

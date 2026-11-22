@@ -41,26 +41,22 @@ jobs:
           grep -E '^(steal|procs_running)|^cpu ' /proc/stat || true
       - name: Checked build
         run: make checked-build PY=python
-      - name: Stress tests alone
+      - name: Stress tests alone, the handler reading its frame
         if: always()
         run: |
-          python tests/cpython/signal_timing.py plain 3 2>&1 | grep -v '^detected'
-          python tests/cpython/signal_timing.py lejit 3 2>&1 | grep -v '^detected'
-      - name: Every CPython test module, as make check runs them
+          for i in 1 2 3 4 5; do python -X faulthandler tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected'; echo "exit $?"; done
+      - name: Stress tests alone, the handler not reading its frame
         if: always()
         run: |
-          LE_SIGNAL_TIMING=$PWD/timing.txt python tests/cpython/run.py | grep -v '^ok ' || true
-          echo '--- test_signal stress timings'
-          cat timing.txt || true
-          grep -E '^cpu |^steal' /proc/stat || true
-      - name: Stress tests beside six jobs of CPython tests
+          for i in 1 2 3 4 5; do LE_NO_FRAME=1 python -X faulthandler tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected'; echo "exit $?"; done
+      - name: test_signal as run.py runs it, unchanged
         if: always()
         run: |
-          (for i in 1 2 3; do python tests/cpython/run.py -j 6 test_set test_shelve test_shlex test_shutil test_site test_slice test_smtpd test_smtplib test_socketserver test_sort test_sqlite test_statistics test_string test_struct test_subprocess >/dev/null 2>&1; done) &
-          bg=$!
-          sleep 20
+          for i in 1 2 3 4 5; do python tests/cpython/run.py test_signal || true; done
+      - name: Under gdb
+        if: always()
+        run: |
+          apt-get install -y --no-install-recommends gdb >/dev/null
           for i in 1 2 3; do
-            python tests/cpython/signal_timing.py plain 1 2>&1 | grep -v '^detected'
-            python tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected'
+            gdb -q -batch -ex 'handle SIGALRM SIGUSR1 SIGPROF nostop noprint pass' -ex run -ex bt -ex 'info registers' -ex 'x/24i $pc-48' -ex 'info proc mappings' --args python tests/cpython/signal_timing.py lejit 1 2>&1 | grep -v '^detected' | head -150
           done
-          kill $bg || true
