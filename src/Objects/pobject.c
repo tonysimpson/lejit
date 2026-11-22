@@ -1286,7 +1286,9 @@ store_cache(PyTypeObject *tp, PyObject *name)
     c->name = name;
     c->version = &le_dict_version;
     c->refreshes = 0;
+#if LE_HAS_MANAGED_VALUES_POINTER
     c->nentries = -1;
+#endif
     if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) /* a first hint */
         store_cache_set(
             c, (le_dictkeys_t *)((PyHeapTypeObject *)tp)->ht_cached_keys);

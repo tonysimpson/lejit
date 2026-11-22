@@ -326,16 +326,18 @@ PsycoObject_RichCompareBool(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op);
    psyco_inline_load) reads it at run time and checks it against the live
    keys of the dict it uses, so a wrong cache only costs a miss. */
 typedef struct {
-    Py_ssize_t shape;    /* of the keys this was computed for (le_dict_shape);
-                            0: none */
-    Py_ssize_t kword;    /* entries[ix].me_key in such keys, in words */
-    Py_ssize_t ix;       /* the name's index in them */
-    PyObject *name;      /* interned; held by the table's key */
-    uint64_t *version;   /* &le_dict_version */
-    long refreshes;      /* misses that changed the cache */
+    Py_ssize_t shape;  /* of the keys this was computed for (le_dict_shape);
+                          0: none */
+    Py_ssize_t kword;  /* entries[ix].me_key in such keys, in words */
+    Py_ssize_t ix;     /* the name's index in them */
+    PyObject *name;    /* interned; held by the table's key */
+    uint64_t *version; /* &le_dict_version */
+    long refreshes;    /* misses that changed the cache */
+#if LE_HAS_MANAGED_VALUES_POINTER
     Py_ssize_t nentries; /* where the keys are a managed dict's class keys,
                             which only grow: their entry count when the
                             name was last found absent; -1: never */
+#endif
 } store_cache_t;
 
 /* the slots of the keys' hash table */

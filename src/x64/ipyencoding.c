@@ -141,6 +141,9 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
     return could_eat;
 }
 
+/* whether an inline load or store is into a managed dict's values */
+#define IN_VALUES(s) (LE_HAS_MANAGED_VALUES_POINTER && (s)->keys != NULL)
+
 /* Inline attribute store (ipyencoding.h).
    Registers: RDI the object, RSI the value, RDX the cache, RCX
    the dict, R8 its values, R9 its keys then the index, RAX scratch then
@@ -243,7 +246,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     load_operand(po, &code, s->obj->source, REG_X64_RDI, start);
     load_operand(po, &code, s->value->source, REG_X64_RSI, start);
     LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
-    if (s->keys != NULL) {
+    if (IN_VALUES(s)) {
         MOV_R_O(REG_X64_R8, REG_X64_RDI, s->dictoffset);
         TEST_R_R(REG_X64_R8, REG_X64_R8);
         JCC_MISS(CC_E); /* the dict was made */
@@ -294,7 +297,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     store = code;
     MOV_X8_R(REG_X64_R8, 0, REG_X64_R9, 8, REG_X64_RSI);
     INC_STORED(REG_X64_RSI);
-    if (s->keys == NULL) { /* a dict's new version tag */
+    if (!IN_VALUES(s)) { /* a dict's new version tag */
         MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX,
                 offsetof(store_cache_t, version));
         INC_A(REG_TRANSIENT_1);
@@ -493,7 +496,8 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         ro = REG_X64_RDI;
         load_operand(po, &code, s->obj->source, ro, start);
     }
-    if (s->keys != NULL) {
+    if (IN_VALUES(s)) {
+#if LE_HAS_MANAGED_VALUES_POINTER
         code_t *jpresent;
         MOV_R_R(REG_X64_RCX, ro); /* for the miss call */
         MOV_R_O(REG_X64_R8, ro, s->dictoffset);
@@ -516,6 +520,7 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, ix));
         MOV_R_X8(rg, REG_X64_R8, 0, REG_X64_RAX, 8);
         NEAR_JMP(jdone, ndone);
+#endif
     }
     /* the probe reads entries that hold their hash, which keys with a kind
        may not: there an absent name is a miss */
