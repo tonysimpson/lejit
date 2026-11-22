@@ -326,7 +326,9 @@ CASES = [
     ('warn_through', "[(1,), (2,)]", {}),
     ('init_frames_caller', "[()]", {}),
     ('raised_middle', "[()]", {}),
-    ('caught_middle', "[()]", {}),
+    ('caught_middle', "[()]",
+     {'warmup': (20, 'a call site that gets new lambdas each round compiles '
+                     'for them until it goes megamorphic, about 11 rounds')}),
     ('lineno_chain', "[()]", {}),
     ('attr_line', "[()]", {}),
     ('lasti_through_c', "[()]", {}),
