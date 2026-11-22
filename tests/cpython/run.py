@@ -15,7 +15,7 @@ MEMORY_LIMIT = 4 << 30          # bytes of address space per run
 # reason: names (fnmatch patterns); a name no version has is fine
 BANNED = {
     "can't run here, with or without LeJIT":
-        'test_curses test_idle test_tcl test_tix test_tk test_ttk_* test_turtle '
+        'test_curses test_idle test_tcl test_tix test_tk test_tkinter test_ttk test_ttk_* test_turtle '
         'test_*net test_nntplib test_ssl test_timeout test_codecmaps_* test_normalization '
         'test_win* test_msilib test_startfile test_osx_env test_kqueue test_devpoll test_ossaudiodev '
         'test_big* test_largefile test_zipfile64 test_multiprocessing_* test_concurrent_futures '
