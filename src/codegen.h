@@ -36,24 +36,6 @@ psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true);
 #define psyco_vsource_cc(src) CC_ALWAYS_FALSE
 #endif
 
-#if 0
-/* XXX to do: references from the code buffers. This is tricky because
-   we can have quite indirect references, or references to a subobject of
-   a Python object, or to a field only of a Python object, etc... */
-PSY_INLINE long reference_from_code(PsycoObject* po, CompileTimeSource source)
-{
-	--- DISABLED ---
-	source_known_t* sk = CompileTime_Get(source);
-	if ((sk->refcount1_flags & SkFlagPyObj) != 0) {
-		/* XXX we get a reference from the code.
-		   Implement freeing such references
-		   together with code buffers. */
-		sk_incref(sk);
-	}
-	return sk->value;
-}
-#endif
-
 /*****************************************************************/
 /***   Calling C functions                                     ***/
 
@@ -229,8 +211,6 @@ integer_xor(PsycoObject *po, vinfo_t *v1, vinfo_t *v2);
 EXTERNFN
 vinfo_t *
 integer_and(PsycoObject *po, vinfo_t *v1, vinfo_t *v2);
-/*EXTERNFN
-  vinfo_t* integer_and_i(PsycoObject* po, vinfo_t* v1, long value2);*/
 EXTERNFN
 vinfo_t *
 integer_lshift(PsycoObject *po, vinfo_t *v1, vinfo_t *v2);
@@ -306,14 +286,6 @@ psyco_emit_header(PsycoObject *po, int nframelocal);
    'retval' may not be virtual-time in the current implementation. */
 EXTERNFN code_t *
 psyco_finish_return(PsycoObject *po, Source retval);
-
-#if 0 /* disabled */
-/* emergency code for out-of-memory conditions in which do not
-   have a code buffer available for psyco_finish_err_xxx().
-   A temporary buffer of the size EMERGENCY_PROXY_SIZE is enough. */
-#define EMERGENCY_PROXY_SIZE 11
-code_t* psyco_emergency_jump(PsycoObject* po, code_t* code);
-#endif
 
 /*****************************************************************/
 /***   run-time switches                                       ***/
