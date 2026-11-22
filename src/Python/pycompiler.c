@@ -2886,6 +2886,7 @@ cimpl_print_expr(PyObject *value)
     return 0;
 }
 
+#if LE_HAS_OPCODE_LOAD_SUPER_ATTR
 /* ceval.c LOAD_SUPER_ATTR, the attribute name of super(class, self),
    or of the global super called with no arguments if n is 0 */
 static PyObject *
@@ -2903,6 +2904,7 @@ cimpl_load_super_attr(PyObject *global_super, PyObject *class, PyObject *self,
     Py_DECREF(super);
     return res;
 }
+#endif
 
 /* the end of ceval.c GET_AITER: iter must have __anext__ */
 static int
@@ -6175,6 +6177,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                    super is given both, as the zero-argument form finds
                    them */
                 case LOAD_SUPER_ATTR:
+#if LE_HAS_OPCODE_LOAD_SUPER_ATTR
                     x = psyco_generic_call(
                         po, cimpl_load_super_attr, CfCommonNewRefPyObject,
                         "vvvll", NTOP(3), NTOP(2), TOP(),
@@ -6187,6 +6190,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     if (oparg & 1)
                         PUSH(psyco_vi_Zero());
                     PUSH(x);
+#endif
                     goto fine;
 
                 case END_FOR:
