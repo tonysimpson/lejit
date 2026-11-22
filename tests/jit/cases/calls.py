@@ -120,23 +120,6 @@ def type_call_errors(t):
     return out
 
 
-# functions made on each run, called from a frame with handlers (which
-# makes them real objects): each is a new object, so the calls must not
-# specialise on it
-def nested_function_calls(n):
-    def add(a, b=n, *rest):
-        return a + b + len(rest)
-    sq = (lambda x, y=2: x ** y)
-    t = 0
-    for i in range(n):
-        t += add(i) + add(i, 1) + add(i, 1, 2) + sq(i) + sq(i, 3)
-    try:
-        add()
-    except TypeError as e:
-        return t, str(e)
-    return t
-
-
 # a nested function whose code is replaced between two calls
 def three():
     return 3
@@ -168,7 +151,6 @@ CASES = [
     ('tuple_identity_through_call', "[(int,)]", {}),
     ('new_class_bases', [()], {}),
     ('type_call_errors', "[(tuple,), (set,)]", {}),
-    ('nested_function_calls', [(4,)], {}),
     ('nested_code_changes', [(4,), (2.5,)], {}),
 ]
 

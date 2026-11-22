@@ -716,6 +716,19 @@ def range_iter_index(s):
     return _body_has(s, 'Objects/rangeobject.c', 'rangeiter_next', 'r->index')
 
 
+def dict_watcher_bits(s):
+    """a dict's version tag keeps in its low 8 bits which watchers watch it
+    (DICT_MAX_WATCHERS is 8), and a change steps it by 1 << 8
+    (DICT_VERSION_INCREMENT); unanswered for another number of watchers"""
+    found = s.definitions('DICT_MAX_WATCHERS')
+    if not found:
+        return False, 'Include, every header: DICT_MAX_WATCHERS'
+    path, body = found[0]
+    if _texts(body) != ['8']:
+        raise Unanswered('%s:DICT_MAX_WATCHERS is %s' % (path, ' '.join(_texts(body))))
+    return True, '%s:DICT_MAX_WATCHERS' % path
+
+
 def interp_recursion_limit(s):
     """the recursion limit is the interpreter's ceval.recursion_limit, not
     the global _Py_CheckRecursionLimit"""
@@ -1206,6 +1219,7 @@ OBJECTS = [
                            lambda s: _public(s, '_Py_IsImmortal'))),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
+    ('DICT_WATCHER_BITS', dict_watcher_bits),
 ]
 
 # Python/ceval.c
