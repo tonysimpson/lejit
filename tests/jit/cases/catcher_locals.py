@@ -363,6 +363,26 @@ def callee_deleted(n):
     return deleted(n), deleted(n)
 
 
+def cleared(n):                       # frame.clear() on the catching frame
+    x = Big()
+    try:
+        raiser(n)
+    except ValueError as e:
+        tb = e.__traceback__
+    try:
+        tb.tb_frame.clear()
+        refused = None
+    except RuntimeError as e:
+        refused = str(e)
+    traceback.clear_frames(tb)
+    x = 'after'
+    return refused, shown(tb.tb_frame.f_locals), tb.tb_next.tb_frame.f_locals
+
+
+def callee_cleared(n):
+    return cleared(n), cleared(n)
+
+
 CASES = [
     ('plain', [(2,)], {}),
     ('callee_plain', [(2,)], {}),
@@ -398,4 +418,6 @@ CASES = [
     ('callee_dropped', [(3,)], {}),
     ('deleted', [(2,)], {}),
     ('callee_deleted', [(2,)], {}),
+    ('cleared', [(2,)], {}),
+    ('callee_cleared', [(2,)], {}),
 ]

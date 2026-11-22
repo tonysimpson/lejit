@@ -235,6 +235,98 @@ CASES = [
 ]
 
 
+# The same with the classes passed in, so that no global is read: these
+# compile wherever the handlers do. 'E' is caught, 'F' isn't.
+def arg_catch_as(a, b, E):
+    try:
+        x = a // b
+    except E as e:
+        return e
+    return x
+
+
+def arg_bare_except(a, b):
+    try:
+        return a // b
+    except:
+        return -1
+
+
+def arg_finally(a, b, E):
+    r = 0
+    try:
+        try:
+            r = a // b
+        finally:
+            r = r + 100
+    except E:
+        return -r
+    return r
+
+
+def arg_reraise(a, b, E):
+    try:
+        a // b
+    except E:
+        raise
+
+
+def arg_raise_in_except(a, b, E, F):
+    try:
+        a // b
+    except E:
+        raise F
+
+
+def arg_nested(a, b, E, F):
+    try:
+        try:
+            a // b
+        except F:
+            return 'inner'
+    except E:
+        return 'outer'
+
+
+def arg_loop_catch(n, E):
+    c = i = 0
+    while i < n:
+        try:
+            c = c + 10 // (i % 3)
+        except E:
+            c = c + 1
+        i = i + 1
+    return c
+
+
+def arg_not_a_class(a, b, what):
+    try:
+        a // b
+    except what:
+        return 'caught'
+
+
+def arg_raise_from(e, cause):
+    raise e from cause
+
+
+Z = ZeroDivisionError
+CASES += [
+    ('arg_catch_as', '[(5, 2, Z), (5, 0, Z)]', {}),
+    ('arg_bare_except', [(5, 2), (5, 0)], {}),
+    ('arg_finally', '[(5, 2, Z), (5, 0, Z)]', {}),
+    ('arg_reraise', '[(5, 0, Z), (5, 1, Z)]', {}),
+    ('arg_raise_in_except', '[(5, 0, Z, ValueError), (5, 0, Z, KeyError(3))]',
+     {}),
+    ('arg_nested', '[(5, 0, Z, KeyError), (5, 0, KeyError, Z),'
+     ' (5, 0, KeyError, ValueError)]', {}),
+    ('arg_loop_catch', '[(0, Z), (10, Z), (5, ValueError)]', {}),
+    ('arg_not_a_class', '[(5, 0, 1), (5, 0, (Z, 1)), (5, 1, 1)]', {}),
+    ('arg_raise_from', '[(ValueError(1), KeyError(2)), (ValueError, KeyError),'
+     ' (ValueError(1), None), (ValueError(1), 3)]', {}),
+]
+
+
 # except with something that is not an exception class (or a tuple of
 # them) raises TypeError, as ceval.c:cmp_outcome, rather than matching or
 # letting the exception through (CPython's test_baseexception)
@@ -254,6 +346,24 @@ CASES += [
     ('except_not_a_class',
      "[('spam',), (int,), (BaseException(),), ((ValueError, 'x'),),"
      " ((KeyError, ValueError),)]", {}),
+]
+
+
+# an exception the compiler finds inside an except clause (iterating an int
+# it knows) has the exception being handled as its context
+def context_in_except(a):
+    try:
+        try:
+            a // 0
+        except ZeroDivisionError:
+            for i in a:
+                pass
+    except TypeError as e:
+        return repr(e), repr(e.__context__)
+
+
+CASES += [
+    ('context_in_except', [(1,)], {}),
 ]
 
 

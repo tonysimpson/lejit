@@ -638,7 +638,7 @@ load_kind(PyTypeObject *tp, PyObject *name)
 {
     PyObject *descr;
     PyTypeObject *dtp;
-    if (tp->tp_getattro != PyObject_GenericGetAttr || tp->tp_dict == NULL)
+    if (tp->tp_getattro != PyObject_GenericGetAttr || le_type_dict(tp) == NULL)
         return LOAD_GENERIC;
     descr = _PyType_Lookup(tp, name); /* borrowed */
     if (descr == NULL)
@@ -1059,6 +1059,12 @@ generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic)
         return Psyco_META3(po, f, CfCommonNewRefPyObject, "lvl", descr, obj,
                            tp);
 
+#if LE_HAS_MANAGED_DICT
+    /* the attributes may be in values with no dict, which only CPython's
+       own lookup reads without making the dict */
+    if (tp->tp_flags & Py_TPFLAGS_MANAGED_DICT)
+        goto generic;
+#endif
     if (tp->tp_dictoffset != 0) {
         bool found;
         v = instance_dict_get(po, obj, tp, name, descr != NULL);
@@ -1280,10 +1286,10 @@ static void *
 store_kind(PyTypeObject *tp, PyObject *name)
 {
     PyObject *descr = NULL;
-    if (tp->tp_dict != NULL)
+    if (le_type_dict(tp) != NULL)
         descr = _PyType_Lookup(tp, name); /* borrowed */
     if (tp->tp_setattro != PyObject_GenericSetAttr || tp->tp_dictoffset <= 0 ||
-        tp->tp_dict == NULL)
+        le_type_dict(tp) == NULL)
         return tp->tp_setattro;
     if (descr != NULL && ((Py_TYPE(descr)->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
                           Py_TYPE(descr)->tp_descr_set != NULL))

@@ -2,6 +2,7 @@
 # an adversarial test's frames_logging: the f_back of a
 # frame a keyword call runs, warnings' stacklevel, which _warnings walks in
 # C from tstate->frame, and emulated frames' current lines.
+import inspect
 import io
 import logging
 import sys
@@ -85,6 +86,20 @@ def lineno_middle():
 
 def lineno_chain():
     return lineno_middle()
+
+
+def lasti_seen(_):
+    f = sys._getframe(1)
+    return f.f_lasti, f.f_lineno - f.f_code.co_firstlineno
+
+
+# the place of a frame calling Python through C, as f_lasti and as inspect
+# finds it
+def lasti_through_c():
+    x = 1
+    seen = list(map(lasti_seen, [x]))
+    stack = list(map(lambda _: inspect.stack()[1], [x]))
+    return seen, stack[0].lineno - lasti_through_c.__code__.co_firstlineno
 
 
 class Where:
@@ -246,6 +261,25 @@ def back_names(n):
     return out
 
 
+def own_frame(_):
+    return sys._getframe()
+
+
+def own_frame_through_c():
+    return list(map(own_frame, [0]))[0]
+
+
+# a frame that outlives its call through C from a compiled callee keeps
+# that callee as f_back
+def returned_back_names():
+    f = own_frame_through_c()
+    out = []
+    while f is not None and len(out) < 3:
+        out.append(f.f_code.co_name)
+        f = f.f_back
+    return out
+
+
 def gen_frames():
     yield back_names(3)
 
@@ -310,10 +344,14 @@ CASES = [
     ('log_gen_caller', "[()]", {}),
     ('warn_through', "[(1,), (2,)]", {}),
     ('init_frames_caller', "[()]", {}),
+    ('returned_back_names', "[()]", {}),
     ('raised_middle', "[()]", {}),
-    ('caught_middle', "[()]", {}),
+    ('caught_middle', "[()]",
+     {'warmup': (20, 'a call site that gets new lambdas each round compiles '
+                     'for them until it goes megamorphic, about 11 rounds')}),
     ('lineno_chain', "[()]", {}),
     ('attr_line', "[()]", {}),
+    ('lasti_through_c', "[()]", {}),
     ('getframe_through', "[()]", {}),
     ('trim_arity_case', "[()]", {}),
 ]

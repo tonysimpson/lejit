@@ -56,6 +56,6 @@ psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a);
 
 EXTERNFN
 void
-psycofunction_init();
+psycofunction_init(void);
 
 #endif /* _PSYFUNC_H */

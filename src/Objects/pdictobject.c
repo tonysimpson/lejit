@@ -479,7 +479,11 @@ cimpl_dictstr_getitem(PyDictObject *mp, PyObject *key, long record)
     if (ix == -3)
         return NULL;
     if (ix < 0) {
-        _PyErr_SetKeyError(key);
+        PyObject *args = PyTuple_Pack(1, key); /* dict_subscript's KeyError */
+        if (args != NULL) {
+            PyErr_SetObject(PyExc_KeyError, args);
+            Py_DECREF(args);
+        }
         return NULL;
     }
     if (record)
@@ -566,7 +570,7 @@ cimpl_dictstr_setitem(PyDictObject *mp, PyObject *key, PyObject *value,
    the variable sees, as in CPython. */
 
 /* 'key needed': a value no dict holds, as nothing else can reach it */
-static PyObject key_needed = {_PyObject_EXTRA_INIT 1, &PyBaseObject_Type};
+static PyObject key_needed = {.ob_refcnt = 1, .ob_type = &PyBaseObject_Type};
 
 /* ix, DKIX_EMPTY, or -2: the key is needed */
 static Py_ssize_t
@@ -924,7 +928,7 @@ define_str_probes(void)
     if (a == NULL || b == NULL || c == NULL || a == b || c == a || c == b)
         return;
 #endif
-    get = PyDict_GetItemString(PyDict_Type.tp_dict, "get");
+    get = PyDict_GetItemString(le_type_dict(&PyDict_Type), "get");
     if (get == NULL || Py_TYPE(get) != &PyMethodDescr_Type ||
         ((PyMethodDescrObject *)get)->d_method->ml_flags != METH_FASTCALL)
         return;

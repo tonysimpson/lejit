@@ -506,6 +506,11 @@ def lineno_when_set(s):
     return 'f_trace' not in texts and 'f_lineno' in texts, fo + ':PyFrame_GetLineNumber'
 
 
+def lasti_past_prefixes(s):
+    """an instruction's place (a frame's lasti, a traceback's tb_lasti) is its own unit, past its EXTENDED_ARG prefixes, not the first prefix (ceval's EXTENDED_ARG dispatches the instruction, which sets the place, rather than going to dispatch_opcode)"""
+    return _not(_case_has(s, 'EXTENDED_ARG', 'dispatch_opcode'))
+
+
 def frame_builtins_of_function(s):
     """a new frame's builtins are its function's (func_builtins, read through
     the PyFrameConstructor), not looked up in its globals"""
@@ -594,7 +599,56 @@ def cframe(s):
         cpath, cf = s.struct(name)
         if cf is not None and 'use_tracing' in cf:
             return True, '%s:%s.use_tracing' % (cpath, name)
+    has_monitoring, evidence = monitoring(s)
+    if has_monitoring:
+        return False, '%s:_ts has no use_tracing, %s' % (path, evidence)
     raise Unanswered('%s:_ts has no use_tracing, nor a CFrame with one' % path)
+
+
+def monitoring(s):
+    """tracing and profiling are sys.monitoring's events (the interpreter's
+    monitors): a thread has no use_tracing flag"""
+    return _field(s, '_is', 'monitors', missing=False)
+
+
+def thread_local_tstate(s):
+    """the running thread's state is a thread-local of libpython's, not
+    _PyRuntime.gilstate.tstate_current"""
+    return _not(_field(s, '_gilstate_runtime_state', 'tstate_current'))
+
+
+def py_recursion_remaining(s):
+    """a thread counts down the Python calls it may still make in
+    py_recursion_remaining, apart from the C calls"""
+    return _field(s, '_ts', 'py_recursion_remaining')
+
+
+def current_exception(s):
+    """the exception being raised is kept as its value alone
+    (current_exception, no curexc_type)"""
+    return _field(s, '_ts', 'current_exception')
+
+
+def eval_breaker_gc(s):
+    """the eval breaker also runs the cyclic GC (the interpreter's
+    ceval.gc_scheduled), in _Py_HandlePending"""
+    return _field(s, '_ceval_state', 'gc_scheduled', missing=False)
+
+
+def eval_frame_pops(s):
+    """ceval clears and pops the frame it is given when it ends, from an
+    entry frame of its own, not its caller (an interpreter frame has no
+    is_entry)"""
+    path, fields = s.struct('_PyInterpreterFrame')
+    if fields is None:
+        return False, 'Include, every header: _PyInterpreterFrame'
+    return 'is_entry' not in fields, '%s:_PyInterpreterFrame.is_entry' % path
+
+
+def long_value(s):
+    """an int's sign, size and digits are its long_value (lv_tag and
+    ob_digit), not ob_size and ob_digit"""
+    return _field(s, '_longobject', 'long_value')
 
 
 def recursion_remaining(s):
@@ -657,11 +711,25 @@ def eval_frame_handle_pending(s):
         if not home:
             raise Unanswered('eval_frame_handle_pending, but no '
                              '_ceval_state.eval_breaker')
+    elif eval_breaker_gc(s)[0]:
+        # the handling has left ceval, with the GC (3.12)
+        return False, '%s, %s' % (evidence, eval_breaker_gc(s)[1])
     elif s.declares('_Py_HandlePending'):
-        # the handling has left ceval (3.12): neither form LeJIT copies
+        # the handling has left ceval: neither form LeJIT copies
         raise Unanswered('no eval_frame_handle_pending in Python/ceval.c, and %s'
                          ' declares _Py_HandlePending' % s.declares('_Py_HandlePending'))
     return found, evidence
+
+
+def call_trace_method_descr(s):
+    """do_call_core traces a method descriptor's call as a C call"""
+    found, evidence = _body_has(s, CE, 'do_call_core', 'PyMethodDescr_Type',
+                                missing=None if not monitoring(s)[0] else 'none')
+    if found != 'none':
+        return found, evidence
+    # sys.monitoring's profiler, where ceval has no do_call_core (3.12)
+    return _body_has(s, 'Python/legacy_tracing.c', 'sys_profile_call_or_return',
+                     'PyMethodDescr_Type')
 
 
 def tuplecontains_item_first(s):
@@ -772,7 +840,12 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'POP_JUMP_FORWARD_IF_TRUE', 'POP_JUMP_FORWARD_IF_NONE',
            'POP_JUMP_FORWARD_IF_NOT_NONE', 'POP_JUMP_BACKWARD_IF_FALSE',
            'POP_JUMP_BACKWARD_IF_TRUE', 'POP_JUMP_BACKWARD_IF_NONE',
-           'POP_JUMP_BACKWARD_IF_NOT_NONE')
+           'POP_JUMP_BACKWARD_IF_NOT_NONE', 'PRECALL', 'KW_NAMES', 'CALL',
+           'MAKE_CELL', 'COPY_FREE_VARS', 'RETURN_GENERATOR',
+           # gone from 3.12: the unary plus, the interactive print and
+           # import * are CALL_INTRINSIC_1's
+           'UNARY_POSITIVE', 'PRINT_EXPR', 'IMPORT_STAR',
+           'JUMP_IF_FALSE_OR_POP', 'JUMP_IF_TRUE_OR_POP')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_TO_TUPLE', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -925,9 +998,16 @@ def backward(src, jrel):
 
 
 # what the header says of the opcodes: jrel and jabs as jumps() gives them,
-# jback as backward() gives it, the highest opcode number, and caches as
-# caches() gives them
-Opcodes = collections.namedtuple('Opcodes', 'jrel jabs jback highest caches')
+# jback as backward() gives it, the highest opcode number, caches as
+# caches() gives them, and pseudo as pseudo() gives it
+Opcodes = collections.namedtuple('Opcodes', 'jrel jabs jback highest caches pseudo')
+
+
+def pseudo(ops):
+    """The names in OPCODES that the opcode table ops gives to the
+    compiler's pseudo-instructions (256 and up, from 3.12): opcode.h
+    defines them, so le_features_gen.h doesn't."""
+    return tuple(op for op in OPCODES if ops.get(op, 0) >= 256)
 
 
 def opcodes(src):
@@ -935,7 +1015,8 @@ def opcodes(src):
     s = Source(src)
     ops = opmap(src)
     jrel, jabs = jumps(s, ops)
-    return Opcodes(jrel, jabs, backward(src, jrel), max(ops.values()), caches(s, ops))
+    return Opcodes(jrel, jabs, backward(src, jrel), max(ops.values()), caches(s, ops),
+                   pseudo(ops))
 
 
 D = _detector
@@ -950,7 +1031,6 @@ EXPORTS = [
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
     ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
     ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
-    ('MODULE_SPEC_IS_INITIALIZING_LINKABLE', '_PyModuleSpec_IsInitializing'),
     ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
     ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
     ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
@@ -992,8 +1072,14 @@ BYTECODE = [
     ('EXCEPTION_TABLE', D('a code object\'s handlers are in its exception table (co_exceptiontable), not set up at run time on a block stack',
                           lambda s: _file_has(s, 'Objects/codeobject.c', '"co_exceptiontable"'))),
     ('CODE_LOCALSPLUS', code_localsplus),
+    ('CODE_QUALNAME', D('a code object has its function\'s qualified name (co_qualname): MAKE_FUNCTION takes it from there, with no name on the stack',
+                        lambda s: _file_has(s, 'Objects/codeobject.c', '"co_qualname"'))),
     ('LOAD_GLOBAL_NULL_BIT', D('LOAD_GLOBAL\'s argument is the name\'s index shifted left once, its low bit pushing a NULL under the global',
                                lambda s: _case_has(s, 'LOAD_GLOBAL', 'oparg>>1'))),
+    ('MATCH_CLASS_PUSHES_BOOL', D('MATCH_CLASS pushes a bool saying whether the class matched, over the attributes or the subject',
+                                  lambda s: _case_has(s, 'MATCH_CLASS', 'PyBool_FromLong', missing=False))),
+    ('MATCH_KEYS_PUSHES_BOOL', D('MATCH_KEYS pushes a bool saying whether the keys matched, over the values or None',
+                                 lambda s: _case_has(s, 'MATCH_KEYS', 'PUSH(Py_True)', missing=False))),
 ]
 
 # frames
@@ -1002,12 +1088,15 @@ FRAMES = [
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
     ('INTERPRETER_FRAME', interpreter_frame),
+    ('LASTI_PAST_PREFIXES', lasti_past_prefixes),
 ]
 
 # types
 TYPES = [
     ('IMMUTABLE_TYPE_FLAG', immutable_type_flag),
     ('VALID_VERSION_TAG_FLAG', valid_version_tag_flag),
+    ('MANAGED_DICT', D('a class with Py_TPFLAGS_MANAGED_DICT keeps its instances\' attributes where the interpreter manages them, maybe in values with no dict, which _PyObject_GetDictPtr makes',
+                       lambda s: _body_has(s, 'Objects/object.c', '_PyObject_GetDictPtr', 'Py_TPFLAGS_MANAGED_DICT'))),
 ]
 
 # how LeJIT's own mechanisms reach the interpreter's state
@@ -1026,6 +1115,12 @@ STATE = [
     ('CFRAME', cframe),
     ('GC_TRACKED_BY_NEXT', gc_tracked_by_next),
     ('GC_HEAD_INTERNAL', gc_head_internal),
+    ('MONITORING', monitoring),
+    ('THREAD_LOCAL_TSTATE', thread_local_tstate),
+    ('PY_RECURSION_REMAINING', py_recursion_remaining),
+    ('CURRENT_EXCEPTION', current_exception),
+    ('EVAL_BREAKER_GC', eval_breaker_gc),
+    ('EVAL_FRAME_POPS', eval_frame_pops),
 ]
 
 # Objects/abstract.c
@@ -1070,6 +1165,11 @@ OBJECTS = [
     ('CORO_GET_AWAITABLE_ITER_LINKABLE', D('_PyCoro_GetAwaitableIter can be called from an extension',
                                            lambda s: _linkable(s, '_PyCoro_GetAwaitableIter'))),
     ('DICT_KEYS_KIND', dict_keys_kind),
+    ('LONG_VALUE', long_value),
+    ('TYPE_GET_DICT', D('PyType_GetDict gives a type\'s dict, which a static builtin type keeps in the interpreter (its tp_dict is NULL)',
+                        lambda s: _public(s, 'PyType_GetDict'))),
+    ('IMMORTAL_OBJECTS', D('an object whose refcount\'s low 32 bits are negative is immortal: Py_INCREF and Py_DECREF leave it alone (_Py_IsImmortal)',
+                           lambda s: _public(s, '_Py_IsImmortal'))),
 ]
 
 # Python/ceval.c
@@ -1078,8 +1178,7 @@ CEVAL = [
                       lambda s: _defines(s, CE, 'cmp_outcome'))),
     ('CEVAL_TRACE_INFO', D('ceval keeps the line bounds it traces with, and the frame\'s CFrame, in a PyTraceInfo of its own (call_trace, do_call_core)',
                            lambda s: _file_has(s, CE, 'CFrame cframe; } PyTraceInfo;'))),
-    ('CALL_TRACE_METHOD_DESCR', D('do_call_core traces a method descriptor\'s call as a C call',
-                                  lambda s: _body_has(s, CE, 'do_call_core', 'PyMethodDescr_Type'))),
+    ('CALL_TRACE_METHOD_DESCR', call_trace_method_descr),
     ('NAME_ERROR_NAME', D('format_exc_check_arg sets a NameError\'s name',
                           lambda s: _body_has(s, CE, 'format_exc_check_arg', 'PyExc_NameError'))),
     ('IMPORT_FROM_SPEC', D('import_from\'s error tells a partially initialised module',
@@ -1131,7 +1230,8 @@ def render(found, ops, version, origin):
         lines += ['/* %s */' % what.replace('*/', '* /'),
                   '#define %s %d' % (name, value)]
     values = dict((name, value) for name, value, _, _ in found)
-    absent = [op for op in OPCODES if not values['LE_HAS_OPCODE_' + op]]
+    absent = [op for op in OPCODES
+              if not values['LE_HAS_OPCODE_' + op] and op not in ops.pseudo]
     if absent:
         lines += ['', '/* opcodes this source lacks: no instruction has these values */']
         # above every opcode, the compiler's pseudo-instructions too, so

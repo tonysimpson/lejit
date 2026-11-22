@@ -11,6 +11,12 @@
 extern int
 le_eval_breaker_at_entry(PyCodeObject *co); /* pyruntime.c */
 
+#if LE_HAS_EVAL_FRAME_POPS
+/* the exception le_frame_finish ends a frame with when it has a result
+   (le_entry_install makes it) */
+static PyObject *frame_done;
+#endif
+
 static PyObject *
 LeCode_Run(PyObject *codebuf, le_frame_t *f)
 {
@@ -26,19 +32,19 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
 
     /* ceval counts the depth on entering every frame */
     if (le_recursion_enter())
-        return NULL;
+        return le_frame_finish(tstate, f, NULL, frame_done);
     psyco_frame_start_register(&fr, f, &finfo);
     /* as ceval: the frame is the current one while its code runs, so that
        sys._getframe, frames made by calls from here (their f_back) and
        pvisitframes() see it */
     le_frame_push(tstate, f);
-    le_frame_start(f);
     /* also as ceval: frame.clear() (traceback.clear_frames, unittest's
        assertRaises) must refuse to clear it, since the compiled code borrows
        the cells and arguments in f_localsplus */
     le_frame_set_executing(f, 1);
     /* ceval's eval_breaker test at the start */
-    if (le_eval_breaker_at_entry(le_frame_code(f)) < 0) {
+    if (le_frame_start(f) < 0 ||
+        le_eval_breaker_at_entry(le_frame_code(f)) < 0) {
         PyTraceBack_Here(le_frame_object(f));
         result = NULL;
     }
@@ -49,7 +55,7 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     le_frame_set_current(tstate, le_frame_back(f));
     le_recursion_leave();
     psyco_frame_start_unregister(&fr);
-    return result;
+    return le_frame_finish(tstate, f, result, frame_done);
 }
 
 #define DEFAULT_RECURSION 10
@@ -77,6 +83,11 @@ compile_entry(PyCodeObject *co, le_code_extra_t *x, PyObject *globals,
     return codebuf;
 }
 
+/* generators are never compiled (mergepoints.c), and every resume comes
+   through the hook: they go on interpreted before any lookup (and their
+   frames have no caller between runs) */
+#define LE_GENERATOR_FLAGS (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)
+
 /* The compiled code to run for 'co' with these globals and builtins,
    compiled now on its first call, or NULL to run it interpreted. 'locals'
    is the frame's locals mapping (NULL for a function). */
@@ -84,10 +95,6 @@ static PyObject *
 le_code_to_run(PyCodeObject *co, PyObject *globals, PyObject *locals,
                PyObject *builtins)
 {
-    /* generators are never compiled (mergepoints.c), and every resume comes
-       through here: leave before any lookup */
-    if (co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR))
-        return NULL;
     /* run interpreted while a trace or profile function is set: compiled
        code is invisible to them */
     if (le_tracing_now(PyThreadState_GET()))
@@ -144,12 +151,19 @@ static le_eval_frame_fn original_eval_frame = NULL;
 static PyObject *
 LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
 {
-    PyObject *entry_point =
+    PyObject *result, *entry_point;
+    if (le_frame_code(frame)->co_flags & LE_GENERATOR_FLAGS)
+        return original_eval_frame(tstate, frame, throwflag);
+    entry_point =
         le_code_to_run(le_frame_code(frame), le_frame_globals(frame),
                        le_frame_locals(frame), le_frame_builtins(frame));
     if (entry_point != NULL)
-        return LeCode_Run(entry_point, frame);
-    return original_eval_frame(tstate, frame, throwflag);
+        result = LeCode_Run(entry_point, frame);
+    else
+        result = original_eval_frame(tstate, frame, throwflag);
+    if (le_frame_outlives(frame) != NULL)
+        psyco_frame_returned(frame);
+    return result;
 }
 
 static le_eval_frame_fn
@@ -189,11 +203,18 @@ static le_eval_frame_fn original_eval_frame = NULL;
 static PyObject *
 LeEval_EvalFrame(PyFrameObject *frame, int throwflag)
 {
-    PyObject *entry_point = le_code_to_run(frame->f_code, frame->f_globals,
-                                           frame->f_locals, frame->f_builtins);
+    PyObject *result, *entry_point;
+    if (frame->f_code->co_flags & LE_GENERATOR_FLAGS)
+        return original_eval_frame(frame, throwflag);
+    entry_point = le_code_to_run(frame->f_code, frame->f_globals,
+                                 frame->f_locals, frame->f_builtins);
     if (entry_point != NULL)
-        return LeCode_Run(entry_point, frame);
-    return original_eval_frame(frame, throwflag);
+        result = LeCode_Run(entry_point, frame);
+    else
+        result = original_eval_frame(frame, throwflag);
+    if (le_frame_outlives(frame) != NULL)
+        psyco_frame_returned(frame);
+    return result;
 }
 
 static le_eval_frame_fn
@@ -218,15 +239,21 @@ le_eval_frame_default(le_frame_t *f)
 /* lejit.start: CPython hands every frame to LeJIT from now on. The evaluator
    that was there is kept, since LeJIT passes it the frames it doesn't
    compile, and it stays kept after lejit.stop for any call already on its
-   way through LeJIT's */
-DEFINEFN void
+   way through LeJIT's. -1 with an exception set if it can't. */
+DEFINEFN int
 le_entry_install(void)
 {
     le_eval_frame_fn now = get_eval_frame();
+#if LE_HAS_EVAL_FRAME_POPS
+    if (frame_done == NULL &&
+        (frame_done = PyObject_CallNoArgs(PyExc_Exception)) == NULL)
+        return -1;
+#endif
     if (now != LeEval_EvalFrame) {
         original_eval_frame = now;
         set_eval_frame(LeEval_EvalFrame);
     }
+    return 0;
 }
 
 /* lejit.stop: new frames go to the evaluator that was there before; frames

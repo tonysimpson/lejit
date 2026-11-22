@@ -15,6 +15,7 @@
    stacktop, counted from localsplus. A frame the thread runs is running,
    as frame.clear() sees it, by its owner; a frame object's own frame is
    never running. */
+#include "code.h"
 #define Py_BUILD_CORE
 #include "internal/pycore_frame.h"
 #undef Py_BUILD_CORE
@@ -52,13 +53,30 @@ le_frame_complete(le_frame_t *f)
 {
     return !_PyFrame_IsIncomplete(f);
 }
-/* the frame's code starts running compiled: placed as ceval places it
-   once past the instructions before the first traceable one (RESUME), so
-   that it is complete */
-static inline void
+/* the frame's code starts running compiled: what the instructions before
+   the first traceable one (RESUME) do, done here as ceval's MAKE_CELL and
+   COPY_FREE_VARS do it, and the frame placed past them, so that it is
+   complete; compiled code runs them as no-ops. -1 with an exception set
+   if a cell can't be made. */
+static inline int
 le_frame_start(le_frame_t *f)
 {
-    f->prev_instr = _PyCode_CODE(f->f_code) + f->f_code->_co_firsttraceable;
+    PyCodeObject *co = f->f_code;
+    int k, nfrees = co->co_nfreevars, n = co->co_nlocalsplus - nfrees;
+    f->prev_instr = _PyCode_CODE(co) + co->_co_firsttraceable;
+    for (k = 0; k < n; k++)
+        if (_PyLocals_GetKind(co->co_localspluskinds, k) & CO_FAST_CELL) {
+            PyObject *cell = PyCell_New(f->localsplus[k]);
+            if (cell == NULL)
+                return -1;
+            Py_XSETREF(f->localsplus[k], cell);
+        }
+    for (k = 0; k < nfrees; k++) {
+        PyObject *o = PyTuple_GET_ITEM(f->f_func->func_closure, k);
+        Py_INCREF(o);
+        f->localsplus[n + k] = o;
+    }
+    return 0;
 }
 /* the frame object Python sees (borrowed), made if it has none:
    PyEval_GetFrame makes the current frame's, so the frame is made current
@@ -143,9 +161,13 @@ le_frame_lasti(le_frame_t *f)
 {
     return _PyInterpreterFrame_LASTI(f);
 }
+/* a place before the first traceable instruction (-1: before the first) is
+   the first, as for a frame ceval has started, so the frame is complete */
 static inline void
 le_frame_set_lasti(le_frame_t *f, int lasti)
 {
+    if (lasti < f->f_code->_co_firsttraceable)
+        lasti = f->f_code->_co_firsttraceable;
     f->prev_instr = _PyCode_CODE(f->f_code) + lasti;
 }
 static inline void
@@ -154,10 +176,130 @@ le_frame_set_executing(le_frame_t *f, int on)
     (void)f;
     (void)on;
 }
+/* the frame is running, as frame.clear() sees it: the thread's, or a
+   generator's while it runs */
+static inline int
+le_frame_executing(le_frame_t *f)
+{
+    if (f->owner == FRAME_OWNED_BY_GENERATOR)
+        return _PyFrame_GetGenerator(f)->gi_frame_state == FRAME_EXECUTING;
+    return f->owner == FRAME_OWNED_BY_THREAD;
+}
 static inline int
 le_frame_is_executing(PyFrameObject *f)
 {
-    return f->f_frame->owner == FRAME_OWNED_BY_THREAD;
+    return le_frame_executing(f->f_frame);
+}
+/* the frame object's frame is its own (PyFrame_New's, or a frame's that
+   has returned), not a view of the thread's or a generator's */
+static inline int
+le_pyframe_owns(PyFrameObject *f)
+{
+    return f->f_frame == (le_frame_t *)f->_f_frame_data;
+}
+/* A frame object made for a call compiled code runs (frames.c:kept_frame)
+   is running while 'on', as the thread's frames are: frame.clear()
+   refuses it, the GC leaves its locals to the call, and it is its own
+   frame's frame object, which CPython looks for when it reaches the frame
+   in the thread's chain. Off, it is a frame object's own frame again. */
+static inline void
+le_pyframe_set_executing(PyFrameObject *f, int on)
+{
+    if (!le_pyframe_owns(f))
+        return;
+    f->f_frame->owner =
+        on ? FRAME_OWNED_BY_THREAD : FRAME_OWNED_BY_FRAME_OBJECT;
+    f->f_frame->frame_obj = on ? f : NULL;
+}
+/* marks a frame object running only for frame.clear(), which then
+   refuses it; le_pyframe_unmark_running puts back what this returns */
+static inline int
+le_pyframe_mark_running(PyFrameObject *f)
+{
+    int old = f->f_frame->owner;
+    if (le_pyframe_owns(f))
+        f->f_frame->owner = FRAME_OWNED_BY_THREAD;
+    return old;
+}
+static inline void
+le_pyframe_unmark_running(PyFrameObject *f, int old)
+{
+    f->f_frame->owner = (char)old;
+}
+/* ceval is to run the frame object's frame itself, as the thread's
+   innermost (frames.c:psyco_resume_run): ceval links it to the thread's
+   innermost, so the frame compiled code runs, if it is that one, is
+   unlinked first; a frame object's own frame runs as kept frames do
+   (le_pyframe_set_executing). What this returns goes to
+   le_pyframe_eval_end. */
+static inline int
+le_pyframe_eval_begin(PyThreadState *ts, PyFrameObject *f)
+{
+    if (ts->cframe->current_frame == f->f_frame)
+        ts->cframe->current_frame = f->f_frame->previous;
+    if (!le_pyframe_owns(f) || le_frame_is_executing(f))
+        return 0;
+    le_pyframe_set_executing(f, 1);
+    return 1;
+}
+/* ceval has run it: a frame object's own frame keeps the frame it was
+   called from as f_back (if it has none), as a frame that outlives its
+   call does, and is no longer in the thread's chain */
+static inline void
+le_pyframe_eval_end(PyFrameObject *f, int marked)
+{
+    le_frame_t *p;
+    if (!le_pyframe_owns(f))
+        return;
+    for (p = f->f_frame->previous; p != NULL && _PyFrame_IsIncomplete(p);)
+        p = p->previous;
+    if (f->f_back == NULL && p != NULL) {
+        f->f_back = le_frame_object(p);
+        Py_XINCREF(f->f_back);
+    }
+    f->f_frame->previous = NULL;
+    if (marked)
+        le_pyframe_set_executing(f, 0);
+}
+/* the frame object of a frame that has just run, if something besides
+   the frame holds it, so that it outlives the call */
+static inline PyFrameObject *
+le_frame_outlives(le_frame_t *f)
+{
+    if (f->owner != FRAME_OWNED_BY_THREAD || f->frame_obj == NULL ||
+        Py_REFCNT(f->frame_obj) < 2)
+        return NULL;
+    return f->frame_obj;
+}
+/* 'back' (a reference it takes) is its caller from now on, in place of
+   the frame it was called from, which CPython gives it as it clears it */
+static inline void
+le_frame_set_back_at_exit(le_frame_t *f, PyFrameObject *back)
+{
+    Py_XSETREF(f->frame_obj->f_back, back);
+    f->previous = NULL;
+}
+/* the frame object is the thread's innermost, for C code that reads it
+   (frames.c:le_warn): a frame object's own frame is its frame object
+   until le_pyframe_current_end, which it holds a reference to meanwhile,
+   as the GC sees it does */
+static inline void
+le_pyframe_make_current(PyThreadState *ts, PyFrameObject *f)
+{
+    if (le_pyframe_owns(f) && f->f_frame->frame_obj == NULL) {
+        Py_INCREF(f);
+        f->f_frame->frame_obj = f;
+    }
+    ts->cframe->current_frame = f->f_frame;
+}
+static inline void
+le_pyframe_current_end(PyFrameObject *f)
+{
+    if (le_pyframe_owns(f) && !le_frame_is_executing(f) &&
+        f->f_frame->frame_obj == f) {
+        f->f_frame->frame_obj = NULL;
+        Py_DECREF(f);
+    }
 }
 /* nothing on the value stack, and ceval not running the frame: frames.c
    may keep its notes in the stack's first slots */
@@ -220,10 +362,11 @@ le_frame_complete(le_frame_t *f)
     return 1;
 }
 /* the frame's code starts running compiled */
-static inline void
+static inline int
 le_frame_start(le_frame_t *f)
 {
     (void)f;
+    return 0;
 }
 /* the frame object Python sees (borrowed) */
 static inline PyFrameObject *
@@ -301,6 +444,20 @@ le_frame_is_executing(PyFrameObject *f)
 {
     return f->f_state == FRAME_EXECUTING;
 }
+/* marks the frame running only for frame.clear(), which then refuses it;
+   le_pyframe_unmark_running puts back what this returns */
+static inline int
+le_pyframe_mark_running(PyFrameObject *f)
+{
+    int old = f->f_state;
+    f->f_state = FRAME_EXECUTING;
+    return old;
+}
+static inline void
+le_pyframe_unmark_running(PyFrameObject *f, int old)
+{
+    f->f_state = (PyFrameState)old;
+}
 /* nothing on the value stack, and ceval not running the frame: frames.c
    may keep its notes in the stack's first slots */
 static inline int
@@ -326,6 +483,20 @@ le_frame_is_executing(PyFrameObject *f)
 {
     return f->f_executing;
 }
+/* marks the frame running only for frame.clear(), which then refuses it;
+   le_pyframe_unmark_running puts back what this returns */
+static inline int
+le_pyframe_mark_running(PyFrameObject *f)
+{
+    int old = f->f_executing;
+    f->f_executing = 1;
+    return old;
+}
+static inline void
+le_pyframe_unmark_running(PyFrameObject *f, int old)
+{
+    f->f_executing = (char)old;
+}
 /* nothing on the value stack, and ceval not running the frame (its
    f_stacktop is NULL then): frames.c may keep its notes in the stack's
    first slots */
@@ -341,6 +512,60 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
     f->f_stacktop = f->f_valuestack + n;
 }
 #endif
+/* the frame is running, as frame.clear() sees it */
+static inline int
+le_frame_executing(le_frame_t *f)
+{
+    return le_frame_is_executing(f);
+}
+/* a frame object made for a call compiled code runs (frames.c:kept_frame)
+   is running while 'on', as the thread's frames are */
+static inline void
+le_pyframe_set_executing(PyFrameObject *f, int on)
+{
+    le_frame_set_executing(f, on);
+}
+/* ceval is to run the frame object itself (frames.c:psyco_resume_run),
+   which needs nothing first: ceval links it and puts back the thread's
+   innermost as its f_back */
+static inline int
+le_pyframe_eval_begin(PyThreadState *ts, PyFrameObject *f)
+{
+    (void)ts;
+    (void)f;
+    return 0;
+}
+static inline void
+le_pyframe_eval_end(PyFrameObject *f, int marked)
+{
+    (void)f;
+    (void)marked;
+}
+/* the frame of a call that has just run (not a generator's), if
+   something besides the call holds it, so that it outlives the call */
+static inline PyFrameObject *
+le_frame_outlives(le_frame_t *f)
+{
+    return Py_REFCNT(f) < 2 ? NULL : f;
+}
+/* 'back' (a reference it takes) is its caller from now on */
+static inline void
+le_frame_set_back_at_exit(le_frame_t *f, PyFrameObject *back)
+{
+    Py_XSETREF(f->f_back, back);
+}
+/* the frame object is the thread's innermost, for C code that reads it
+   (frames.c:le_warn), until le_pyframe_current_end */
+static inline void
+le_pyframe_make_current(PyThreadState *ts, PyFrameObject *f)
+{
+    le_frame_set_current(ts, f);
+}
+static inline void
+le_pyframe_current_end(PyFrameObject *f)
+{
+    (void)f;
+}
 #endif
 
 /* a frame object's code, and its frame's value stack */
@@ -354,4 +579,63 @@ le_pyframe_stack(PyFrameObject *f)
 {
     return le_frame_stack(le_frame_of(f));
 }
+
+/* The frame entry handed to compiled code (eval_hook.c:LeCode_Run) ends:
+   'result' (a new reference, or NULL with the exception set) is what it
+   returns, after le_frame_finish. */
+#if LE_HAS_EVAL_FRAME_POPS
+/* Whoever runs the frame clears and pops it, with functions CPython hides,
+   so ceval is given it to end: run from before its first instruction
+   (incomplete, so ceval adds no traceback entry and finds no handler) with
+   an exception set and throwflag, it unwinds it at once, clearing and
+   popping it as ceval does a frame that raises. For a result, the
+   exception is 'done', which is taken back. sys.monitoring's events for
+   the unwind are not given (tstate->tracing). A frame object that
+   outlives the frame keeps its place, which ceval would show as the
+   first line. */
+extern int
+le_monitoring_on(PyThreadState *ts); /* pyruntime.c */
+static inline PyObject *
+le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
+                PyObject *done)
+{
+    PyFrameObject *fo = f->frame_obj;
+    _Py_CODEUNIT *at = f->prev_instr;
+    int quiet = le_monitoring_on(ts);
+    PyObject *r;
+    Py_XINCREF(fo);
+    f->prev_instr = _PyCode_CODE(f->f_code) - 1;
+    if (result != NULL)
+        PyErr_SetRaisedException(Py_NewRef(done));
+    if (quiet)
+        ts->tracing++;
+    r = _PyEval_EvalFrameDefault(ts, f, 1);
+    if (quiet)
+        ts->tracing--;
+    if (r != NULL)
+        Py_FatalError("LeJIT: ceval ended a frame with a result");
+    if (result != NULL) {
+        /* ceval raised another exception (RecursionError on entering it)
+           in place of 'done' */
+        PyObject *e = PyErr_GetRaisedException();
+        if (e == done)
+            Py_DECREF(e);
+        else {
+            PyErr_SetRaisedException(e);
+            Py_CLEAR(result);
+        }
+    }
+    if (fo != NULL) {
+        /* its own copy now, since this holds a reference */
+        le_frame_t *own = fo->f_frame;
+        if (at >= _PyCode_CODE(own->f_code) + own->f_code->_co_firsttraceable)
+            own->prev_instr = at;
+        Py_DECREF(fo);
+    }
+    return result;
+}
+#else
+/* the frame's caller pops it */
+#define le_frame_finish(ts, f, result, done) (result)
+#endif
 #endif /* LE_MECHANISMS_FRAMES_H */

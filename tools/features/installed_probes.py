@@ -181,7 +181,6 @@ for _feature, _function in [
         ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
         ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
         ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
-        ('MODULE_SPEC_IS_INITIALIZING_LINKABLE', '_PyModuleSpec_IsInitializing'),
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
         ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
         ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
@@ -294,17 +293,59 @@ def POP_EXCEPT_UNWINDS():
 
 
 @probe
+def CODE_QUALNAME():
+    """code objects have co_qualname"""
+    return (hasattr((lambda: None).__code__, 'co_qualname'),
+            'code.co_qualname')
+
+
+@probe
 def EXCEPTION_TABLE():
     """code objects have co_exceptiontable"""
     return (hasattr((lambda: None).__code__, 'co_exceptiontable'),
             'code.co_exceptiontable')
 
 
+def _match_pushes_bool(name, with_bool, without):
+    """(name's stack effect is with_bool, evidence); False where there is
+    no such instruction"""
+    if not _real_op(name):
+        return False, 'opcode.opmap has no %s' % name
+    op = opcode.opmap[name]
+    effect = dis.stack_effect(op, 0) if op >= opcode.HAVE_ARGUMENT \
+        else dis.stack_effect(op)
+    if effect not in (with_bool, without):
+        raise Unanswered('dis.stack_effect(%s, 0) is %d' % (name, effect))
+    return effect == with_bool, 'dis.stack_effect(%s, 0) == %d' % (name, effect)
+
+
+@probe
+def MATCH_CLASS_PUSHES_BOOL():
+    """MATCH_CLASS leaves two values for its three (a bool over the
+    attributes or the subject), not one (dis.stack_effect)"""
+    return _match_pushes_bool('MATCH_CLASS', -1, -2)
+
+
+@probe
+def MATCH_KEYS_PUSHES_BOOL():
+    """MATCH_KEYS pushes two values (the values or None, and a bool), not
+    one (dis.stack_effect)"""
+    return _match_pushes_bool('MATCH_KEYS', 2, 1)
+
+
+@probe
+def MONITORING():
+    """sys.monitoring exists"""
+    return hasattr(sys, 'monitoring'), 'sys.monitoring'
+
+
 @probe
 def KWARGS_MERGE_EX():
-    """CALL_FUNCTION_EX given a mapping whose keys() repeats a key reports
-    the repeat (TypeError "multiple values"), as _PyDict_MergeEx does,
-    rather than keeping the last value as PyDict_Update does (run)"""
+    """CALL_FUNCTION_EX given a dict subclass whose keys() repeats a key
+    reports the repeat (TypeError "multiple values"), as _PyDict_MergeEx
+    does, rather than keeping the last value as PyDict_Update does, or
+    passing the dict on as it is, as where DICT_MERGE has made every
+    mapping a dict (run)"""
     _need_ops('CALL_FUNCTION_EX', 'LOAD_CONST', 'RETURN_VALUE')
     # the callable is pushed with CALL_FUNCTION, or (from 3.11) with a
     # NULL under it
@@ -316,9 +357,14 @@ def KWARGS_MERGE_EX():
         raise Unanswered('the probe needs opcode CALL_FUNCTION or PUSH_NULL,'
                          ' which this interpreter lacks')
 
-    class M(object):
+    # a dict, which CALL_FUNCTION_EX may take as it is; its own __iter__
+    # makes a merge read keys()
+    class M(dict):
         def keys(self):
             return ['a', 'a']
+
+        def __iter__(self):
+            return iter(self.keys())
 
         def __getitem__(self, key):
             return 1
@@ -517,6 +563,30 @@ def FLOAT_ASDOUBLE_INDEX():
 
 
 @probe
+def LASTI_PAST_PREFIXES():
+    """a traceback's tb_lasti for an instruction with an EXTENDED_ARG prefix
+    (a local numbered 300, unbound) is the instruction's own unit, not the
+    prefix"""
+    src = ('def f():\n' + ''.join('    v%d = 0\n' % i for i in range(301))
+           + '    del v300\n    return v300\n')
+    g = {}
+    exec(src, g)
+    try:
+        g['f']()
+    except NameError as e:
+        lasti = e.__traceback__.tb_next.tb_lasti
+    else:
+        raise Unanswered('reading an unbound local raised nothing')
+    code = g['f'].__code__.co_code
+    prefix = opcode.opmap['EXTENDED_ARG']
+    if code[lasti] == prefix:
+        return False, 'tb_lasti %d: the EXTENDED_ARG prefix' % lasti
+    if lasti >= 2 and code[lasti - 2] == prefix:
+        return True, 'tb_lasti %d: the instruction after its prefix' % lasti
+    raise Unanswered('tb_lasti %d is neither a prefix nor after one' % lasti)
+
+
+@probe
 def FRAME_BUILTINS_OF_FUNCTION():
     """a function's frame keeps the builtins its globals had when the
     function was made, after its globals' __builtins__ is replaced (run)"""
@@ -561,6 +631,15 @@ def IMMUTABLE_TYPE_FLAG():
         raise Unanswered('setattr refused %s, __class__ assignment %s' % (a, b))
     return a, 'with 1 << 8 set: setattr and __class__ assignment %s' % (
         'refused' if a else 'allowed')
+
+
+@probe
+def MANAGED_DICT():
+    """a plain class's instances keep their dict at a negative offset
+    (__dictoffset__ < 0), where the interpreter manages it"""
+    class C(object):
+        pass
+    return C.__dictoffset__ < 0, 'class C: __dictoffset__ == %d' % C.__dictoffset__
 
 
 @probe

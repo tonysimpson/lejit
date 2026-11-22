@@ -330,9 +330,21 @@ frag('MINMAX_NAME_MAX', "the name max()'s error shows", 'MINMAX_EMPTY', 0,
      'ValueError', 'max([])', [F('%s', '')])
 
 # ceval.c
+# where Python calls have a count of their own (with sys.monitoring, from
+# 3.12), set as it is; before, ceval adds a 'where' to it
+msg('RECURSION_DEPTH', 'a Python call deeper than the recursion limit',
+    'RecursionError', 'f = lambda: f()\nf()', text=True,
+    requires='hasattr(__import__("sys"), "monitoring")')
 msg('CATCHING_NON_EXCEPTION', 'except given a class not derived from '
     'BaseException', 'TypeError',
     'try:\n    1 / 0\nexcept 1:\n    pass', text=True)
+_BEFORE_WITH = '"BEFORE_WITH" in __import__("opcode").opmap'
+msg('WITH_NO_ENTER', 'with given an object without __enter__', 'TypeError',
+    'with args[0](): pass', [T()], requires=_BEFORE_WITH)
+msg('WITH_NO_EXIT', 'with given an object with __enter__ but no __exit__',
+    'TypeError',
+    'C = cls(args[0].__name__, __enter__=lambda s: s)\nwith C(): pass',
+    [T()], requires=_BEFORE_WITH)
 msg('IMPORT_NAME_UNKNOWN_LOCATION', "from m import x, without x, m without a file",
     'ImportError',
     'newmod(args[1])\nexec("from %s import %s" % (args[1], args[0]), {})',
