@@ -1,0 +1,45 @@
+name: Instruction counts
+
+# Reports, as one comment on the pull request, how many instructions the
+# benchmarks take with the pull request merged and without it. It never
+# fails for a change in the counts.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: instruction-counts-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    uses: tonysimpson/lejit-perf/.github/workflows/measure.yml@ci-instruction-counts
+    with:
+      ref: ${{ github.sha }}
+      base: ${{ github.sha }}^1
+      perf-ref: ci-instruction-counts
+
+  comment:
+    needs: measure
+    # a pull request from a fork gets a read-only token: its report is only
+    # in the measure job's summary
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Post or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT: ${{ needs.measure.outputs.report }}
+          COMMENTS: repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments
+        run: |
+          id="$(gh api --paginate "$COMMENTS" \
+                  -q '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("Instruction counts"))) | .id' | head -1)"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$id" -f body="$REPORT" > /dev/null
+          else
+            gh api "$COMMENTS" -f body="$REPORT" > /dev/null
+          fi
