@@ -843,8 +843,6 @@ EXPORTS = [
     ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
     ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
     ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
-    ('UNICODE_EQ_LINKABLE', '_PyUnicode_EQ'),
-    ('UNICODE_FAST_COPY_LINKABLE', '_PyUnicode_FastCopyCharacters'),
     ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
     ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
     ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),

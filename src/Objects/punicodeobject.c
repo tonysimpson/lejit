@@ -74,9 +74,6 @@ le_unicode_format_long(PyObject *val, int alt, int prec, int type)
 }
 #endif
 
-#if LE_HAS_UNICODE_EQ_LINKABLE
-#define le_unicode_eq _PyUnicode_EQ
-#else
 /* stringlib/eq.h:unicode_eq */
 static int
 le_unicode_eq(PyObject *a, PyObject *b)
@@ -90,7 +87,29 @@ le_unicode_eq(PyObject *a, PyObject *b)
     return memcmp(PyUnicode_1BYTE_DATA(a), PyUnicode_1BYTE_DATA(b),
                   PyUnicode_GET_LENGTH(a) * PyUnicode_KIND(a)) == 0;
 }
-#endif
+
+/* n characters of 'from' into 'to', a string not yet shared and wide
+   enough for them */
+static void
+le_unicode_copy_characters(PyObject *to, Py_ssize_t to_start, PyObject *from,
+                           Py_ssize_t from_start, Py_ssize_t n)
+{
+    int kind = PyUnicode_KIND(from), to_kind = PyUnicode_KIND(to);
+    const void *src = PyUnicode_DATA(from);
+    void *dst = PyUnicode_DATA(to);
+    Py_ssize_t i;
+    if (to_kind == kind)
+        memcpy((char *)dst + to_start * kind,
+               (const char *)src + from_start * kind, n * kind);
+    else
+        for (i = 0; i < n; i++)
+            PyUnicode_WRITE(to_kind, dst, to_start + i,
+                            PyUnicode_READ(kind, src, from_start + i));
+}
+
+/* which ASCII characters are whitespace (Py_UNICODE_ISSPACE), filled at
+   start-up */
+static unsigned char ascii_whitespace[128];
 
 #if LE_HAS_UNICODE_FIND_MAX_CHAR_LINKABLE
 #define le_unicode_find_max_char _PyUnicode_FindMaxChar
@@ -191,7 +210,7 @@ cimpl_do_strip(PyObject *self, int striptype)
         if (striptype != 1) {
             while (i < len) {
                 Py_UCS1 ch = data[i];
-                if (!_Py_ascii_whitespace[ch])
+                if (!ascii_whitespace[ch])
                     break;
                 i++;
             }
@@ -201,7 +220,7 @@ cimpl_do_strip(PyObject *self, int striptype)
             j--;
             while (j >= i) {
                 Py_UCS1 ch = data[j];
-                if (!_Py_ascii_whitespace[ch])
+                if (!ascii_whitespace[ch])
                     break;
                 j--;
             }
@@ -1450,7 +1469,7 @@ view_bound_end(PsycoObject *po)
             BODY(Py_UNICODE_ISSPACE);                                   \
         }                                                               \
     }
-#define ASCII_SPACE(ch) (_Py_ascii_whitespace[ch])
+#define ASCII_SPACE(ch) (ascii_whitespace[ch])
 
 /* do_strip's and _PyUnicode_XStrip's loops on s[i:j] (striptype as
    there): the new i, and the new j in view_bound */
@@ -1614,9 +1633,9 @@ both_str(vinfo_t *v, vinfo_t *w)
            PyType_IsSubtype(wtp, &PyUnicode_Type);
 }
 
-/* _PyUnicode_EQ needs both strings ready (from 3.9 it doesn't ready them
-   itself); a failure to ready one, which only running out of memory can
-   cause, leaves its MemoryError set and compares unequal */
+/* le_unicode_eq needs both strings ready; a failure to ready one, which
+   only running out of memory can cause, leaves its MemoryError set and
+   compares unequal */
 static int
 cimpl_unicode_eq(PyObject *a, PyObject *b)
 {
@@ -3206,7 +3225,7 @@ word_digits(char *end, long x)
    an int not made: the length and widest kind summed first, one
    PyUnicode_New, then the copies, as JoinArray does (a sum of 0 is its
    shared empty str; one part is never given). An int of more than a word
-   is _PyLong_Format's str first, as str() makes it. */
+   is made with PyObject_Str first. */
 static PyObject *
 cimpl_build_parts(long tags, long a0, long a1, long a2, long a3, long a4,
                   long a5)
@@ -3225,7 +3244,7 @@ cimpl_build_parts(long tags, long a0, long a1, long a2, long a3, long a4,
                 a[i] = x;
                 tag[i] = PART_WORD;
             }
-            else if ((made[i] = _PyLong_Format((PyObject *)a[i], 10)) == NULL)
+            else if ((made[i] = PyObject_Str((PyObject *)a[i])) == NULL)
                 goto done;
             else {
                 a[i] = (long)made[i];
@@ -3350,6 +3369,7 @@ void
 psy_unicodeobject_init(void)
 {
     int c;
+    Py_UCS4 ch;
     PyObject *a = PyUnicode_FromOrdinal('a');
     if (a == NULL ||
         (*(unsigned char *)&((PyASCIIObject *)a)->state &
@@ -3358,6 +3378,7 @@ psy_unicodeobject_init(void)
         Py_FatalError(
             "lejit: str layout is not what punicodeobject.c expects");
     Py_DECREF(a);
+    for (ch = 0; ch < 128; ch++) ascii_whitespace[ch] = Py_UNICODE_ISSPACE(ch);
     for (c = 0; c < 256; c++)
         if ((latin1[c] = PyUnicode_FromOrdinal(c)) == NULL)
             Py_FatalError("lejit: no one-character strings");
