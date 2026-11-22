@@ -54,9 +54,6 @@ SKIPPED = {
     'as it runs it':
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_load_method_specialization_user_type',
-    "a compiled frame's f_lasti isn't kept up to date while it calls Python, "
-    "and 3.11's inspect takes the line from it":
-        'test_inspect.TestInterpreterStack.test_stack',
     'CPython counts each frame a frame-evaluation hook is given as a C call '
     'too, so a Python recursion 90,000 deep passes the C recursion limit '
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':

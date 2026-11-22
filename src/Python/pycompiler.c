@@ -838,14 +838,15 @@ cimpl_pyerr_fetch(PyObject *target[])
    the old tb/value; LeJIT's stack can't hold NULL, and None means the same
    to exc_info readers. 'word' is the catching frame's catcher word, which
    takes the frame of the entry made for it (frames.c:psyco_frame_catch),
-   and 'own' its slot. */
+   and 'own' its slot; not where making the exception failed, as the
+   traceback is then the failure's. */
 static void
 cimpl_push_exc_info(PyObject *target[], PyObject **word,
                     stack_frame_info_t **own)
 {
     PyThreadState *tstate = PyThreadState_GET();
     PyObject *otype, *ovalue, *otb;
-    PyObject *exc, *val, *tb;
+    PyObject *exc, *val, *tb, *raised_tb;
     extra_assert(PyErr_Occurred());
     le_exc_info_get(tstate, &otype, &ovalue, &otb);
     target[0] = otb ? otb : Py_None;
@@ -859,6 +860,7 @@ cimpl_push_exc_info(PyObject *target[], PyObject **word,
     if (otype == NULL)
         Py_INCREF(Py_None);
     PyErr_Fetch(&exc, &val, &tb);
+    raised_tb = tb;
     PyErr_NormalizeException(&exc, &val, &tb);
     PyException_SetTraceback(val, tb != NULL ? tb : Py_None);
     Py_INCREF(exc);
@@ -870,7 +872,7 @@ cimpl_push_exc_info(PyObject *target[], PyObject **word,
     target[3] = tb;
     target[4] = val;
     target[5] = exc;
-    if (word != NULL && PyTraceBack_Check(tb))
+    if (word != NULL && tb == raised_tb && PyTraceBack_Check(tb))
         psyco_frame_catch(((PyTracebackObject *)tb)->tb_frame, word, own);
 }
 
