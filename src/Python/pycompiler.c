@@ -8504,6 +8504,13 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                        pop */
                     goto fine;
 
+                case RETURN_GENERATOR:
+                    /* only in a generator expression fused with its consumer:
+                       push the None its first send() would have, for the
+                       POP_TOP that follows */
+                    PUSH(psyco_vi_None());
+                    goto fine;
+
                 case YIELD_VALUE: {
                     /* only in a generator expression fused with its consumer
                        (GENEXPR_*): do the consumer's step, then push the value
