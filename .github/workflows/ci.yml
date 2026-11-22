@@ -41,6 +41,78 @@ jobs:
       - name: make check
         run: make -k check PY=python GEN_PY=python
 
+  # Pythons LeJIT doesn't support yet: installing builds no extension, and
+  # start() warns and does nothing
+  install-newer:
+    name: install only (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    container: python:${{ matrix.python }}-bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11.11", "3.12.9", "3.13.2", "3.14.10", "3.15.2"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: |
+          pip install .
+          cd /
+          python -c "
+          import warnings, lejit
+          with warnings.catch_warnings(record=True) as w:
+              warnings.simplefilter('always')
+              lejit.start()
+          assert lejit._core is None, 'an extension was built'
+          assert [x.category for x in w] == [RuntimeWarning], w
+          "
+
+  install-main:
+    name: install only (CPython main)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CPython main
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libssl-dev zlib1g-dev libffi-dev
+          git clone --depth 1 https://github.com/python/cpython "$RUNNER_TEMP/cpython"
+          cd "$RUNNER_TEMP/cpython"
+          ./configure --prefix="$RUNNER_TEMP/py" --enable-shared LDFLAGS="-Wl,-rpath,$RUNNER_TEMP/py/lib"
+          make -j"$(nproc)"
+          make install
+          ln -s python3 "$RUNNER_TEMP/py/bin/python"
+          echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
+      - name: Install
+        run: |
+          python -m pip install .
+          cd /
+          python -c "
+          import warnings, lejit
+          with warnings.catch_warnings(record=True) as w:
+              warnings.simplefilter('always')
+              lejit.start()
+          assert lejit._core is None, 'an extension was built'
+          assert [x.category for x in w] == [RuntimeWarning], w
+          "
+
+  # the installed detector agrees with the source one, and the message probes
+  # find their messages, on the versions the port has reached: more are added
+  # as it reaches them
+  detectors-newer:
+    name: detectors (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    container: python:${{ matrix.python }}-bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11.11", "3.12.9"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detectors agree with the source
+        run: python tests/features/installed_test.py python
+      - name: Message probes
+        run: make strings-test PY=python GEN_PY=python
+
   format:
     name: make format-check
     runs-on: ubuntu-24.04
