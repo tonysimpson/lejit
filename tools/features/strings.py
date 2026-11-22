@@ -470,11 +470,6 @@ msg('RAISE_CAUSE_NOT_EXCEPTION', 'raise ... from an object that is not an '
     'exception', 'TypeError', 'raise ValueError from 1', text=True)
 msg('NO_IMPORT', 'an import statement without __import__', 'ImportError',
     'exec("import sys", {"__builtins__": {}})', text=True)
-msg('IMPORT_STAR_NO_DICT', 'from m import * of an object without __dict__ '
-    'or __all__', 'ImportError',
-    'import sys\nsys.modules["LeNoDict"] = 5\n'
-    'try:\n    exec("from LeNoDict import *", {})\n'
-    'finally:\n    del sys.modules["LeNoDict"]', text=True)
 msg('GENERATOR_STOP_ITERATION', 'a generator raising StopIteration',
     'RuntimeError',
     'def g():\n    raise StopIteration\n    yield\nnext(g())', text=True)

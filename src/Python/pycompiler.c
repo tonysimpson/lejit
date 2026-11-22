@@ -4566,6 +4566,18 @@ cimpl_load_global(PyObject *globals, PyObject *builtins, PyObject *w)
 {
     PyObject *x;
     le_recursion_suspend();
+    if (!PyDict_CheckExact(globals) || !PyDict_CheckExact(builtins)) {
+        /* as ceval does: their __getitem__ and __missing__ run */
+        x = PyObject_GetItem(globals, w);
+        if (x == NULL && PyErr_ExceptionMatches(PyExc_KeyError)) {
+            PyErr_Clear();
+            x = PyObject_GetItem(builtins, w);
+            if (x == NULL && PyErr_ExceptionMatches(PyExc_KeyError))
+                cimpl_name_error(w);
+        }
+        le_recursion_resume();
+        return x;
+    }
     x = PyDict_GetItem(globals, w);
     if (x == NULL) {
         x = PyDict_GetItem(builtins, w);
@@ -4798,60 +4810,6 @@ cimpl_import_name(PyObject *globals, PyObject *builtins, PyObject *name,
     x = PyEval_CallObject(x, w);
     Py_DECREF(w);
     return x;
-}
-
-static int
-cimpl_import_all_from(PyObject *locals, PyObject *v)
-{
-    PyObject *all = PyObject_GetAttrString(v, "__all__");
-    PyObject *dict, *name, *value;
-    int skip_leading_underscores = 0;
-    int pos, err;
-
-    if (all == NULL) {
-        if (!PyErr_ExceptionMatches(PyExc_AttributeError))
-            return -1; /* Unexpected error */
-        PyErr_Clear();
-        dict = PyObject_GetAttrString(v, "__dict__");
-        if (dict == NULL) {
-            if (!PyErr_ExceptionMatches(PyExc_AttributeError))
-                return -1;
-            PyErr_SetString(PyExc_ImportError, LE_MSG_IMPORT_STAR_NO_DICT);
-            return -1;
-        }
-        all = PyMapping_Keys(dict);
-        Py_DECREF(dict);
-        if (all == NULL)
-            return -1;
-        skip_leading_underscores = 1;
-    }
-
-    for (pos = 0, err = 0;; pos++) {
-        name = PySequence_GetItem(all, pos);
-        if (name == NULL) {
-            if (!PyErr_ExceptionMatches(PyExc_IndexError))
-                err = -1;
-            else
-                PyErr_Clear();
-            break;
-        }
-        if (skip_leading_underscores && PyUnicode_Check(name) &&
-            PyUnicode_AsUTF8(name)[0] == '_') {
-            Py_DECREF(name);
-            continue;
-        }
-        value = PyObject_GetAttr(v, name);
-        if (value == NULL)
-            err = -1;
-        else
-            err = PyDict_SetItem(locals, name, value);
-        Py_DECREF(name);
-        Py_XDECREF(value);
-        if (err != 0)
-            break;
-    }
-    Py_DECREF(all);
-    return err;
 }
 
 /***************************************************************/
@@ -9117,42 +9075,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
-                /* STORE_NAME, DELETE_NAME, LOAD_NAME and IMPORT_STAR act on
-                   the globals, where CPython acts on f_locals, which a
-                   compiled frame has none of at its start */
-                case STORE_NAME: {
-                    PyObject *w = GETNAMEV(oparg);
-                    mark_varying(po, w);
-                    if (!psyco_generic_call(po, PyDict_SetItem,
-                                            CfCommonIntZeroOk, "vlv",
-                                            LOC_GLOBALS, w, TOP()))
-                        break;
-                    POP_DECREF();
-                    goto fine;
-                }
-
-                case DELETE_NAME: {
-                    PyObject *w = GETNAMEV(oparg);
-                    mark_varying(po, w);
-                    if (runtime_NON_NULL_f(
-                            po, psyco_generic_call(po, PyDict_DelItem,
-                                                   CfReturnTypeInt, "vl",
-                                                   LOC_GLOBALS, w))) {
-                        psyco_generic_call(po, cimpl_name_error, CfPyErrAlways,
-                                           "l", w);
-                        break;
-                    }
-                    goto fine;
-                }
-
-                /* globals that are a dict subclass are read as a dict, where
-                   CPython calls their __getitem__ */
-                case LOAD_NAME:
                 case LOAD_GLOBAL: {
-                    bool push_null =
-                        opcode == LOAD_GLOBAL && LE_GLOBAL_PUSHES_NULL(oparg);
-                    PyObject *namev = GETNAMEV(
-                        opcode == LOAD_GLOBAL ? LE_GLOBAL_NAME(oparg) : oparg);
+                    bool push_null = LE_GLOBAL_PUSHES_NULL(oparg);
+                    PyObject *namev = GETNAMEV(LE_GLOBAL_NAME(oparg));
                     if (!load_global_cached(po, namev, &v))
                         break;
                     /* not cached: globals unknown, the name varying or not
@@ -9213,17 +9138,6 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     POP_DECREF();
                     POP_DECREF();
                     PUSH(x);
-                    goto fine;
-                }
-
-                case IMPORT_STAR: {
-                    x = psyco_generic_call(po, cimpl_import_all_from,
-                                           CfReturnTypeInt | CfPyErrIfNonNull,
-                                           "vv", LOC_GLOBALS, TOP());
-                    if (x == NULL)
-                        break;
-                    vinfo_decref(x, po);
-                    POP_DECREF();
                     goto fine;
                 }
 
