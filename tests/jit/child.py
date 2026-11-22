@@ -7,10 +7,13 @@ mod = importlib.import_module(sys.argv[3])
 fn = getattr(mod, sys.argv[4])
 # list of argument tuples: a Python expression evaluated in the case module
 calls = eval(sys.argv[5], dict(vars(mod), nan=float('nan'), inf=float('inf')))
-use_lejit = sys.argv[6] == '1'
+# '0' plain, '1' a checked build of LeJIT, 'release' a release build, which
+# can't say whether it compiled the function
+use_lejit = sys.argv[6] != '0'
+checked = sys.argv[6] == '1'
 if use_lejit:
     import lejit
-    if not hasattr(lejit._core, '_stats'):
+    if checked and not hasattr(lejit._core, '_stats'):
         sys.exit('lejit was not built for tests: build it with LEJIT_DEV_TRACE=1')
     lejit.start()
 out = []
@@ -20,7 +23,7 @@ for args in calls:
         out.append('ok ' + repr(r))
     except Exception as e:
         out.append('exc %s: %s' % (type(e).__name__, e))
-if use_lejit:
+if checked:
     info = lejit._core._code_info(fn.__code__)
     out.append('compiled: yes' if info == 'compiled' else
                'compiled: no (%s)' % info)

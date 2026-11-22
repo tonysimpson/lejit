@@ -13,10 +13,22 @@ jobs:
     # the official images give exact CPython releases, built as shared
     # libraries with their headers
     container: python:${{ matrix.python }}-bookworm
+    # builds the extension on versions it isn't yet installed on (3.11 on);
+    # changes nothing on the others
+    env:
+      LEJIT_DEV_FALLBACK: skip
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16"]
+        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11"]
+        # make check but the encoder test, which doesn't depend on the
+        # version and runs once, in its own job
+        targets: ["no-version-tests features-installed-test strings-test test cpython-test"]
+        include:
+          # 3.12 compiles nothing yet, so tests/jit would fail every case: it
+          # runs the checks that don't need compiled code
+          - python: "3.12.9"
+            targets: "no-version-tests features-installed-test strings-test cpython-test"
     steps:
       - uses: actions/checkout@v4
       - name: Install libffi and libunwind
@@ -39,7 +51,50 @@ jobs:
           (cd "$src/Lib" && find . -type d \( -name test -o -name tests \) -prune -exec cp -r --parents {} "$stdlib" \;)
           python -Wi -m compileall -q -x 'bad_coding|badsyntax|site-packages|lib2to3/tests/data' "$stdlib"
       - name: make check
-        run: make -k check PY=python GEN_PY=python
+        run: make -k ${{ matrix.targets }} PY=python GEN_PY=python
+
+  encoder:
+    name: make encoder-test
+    runs-on: ubuntu-24.04
+    container: python:3.10.16-bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libffi and libunwind
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+      - name: make encoder-test
+        run: make encoder-test PY=python GEN_PY=python
+
+  # the build users get (-O3), which make check never runs: its results must
+  # match plain CPython's too
+  release:
+    name: release build (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    container: python:${{ matrix.python }}-bookworm
+    env:
+      LEJIT_DEV_FALLBACK: skip
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10.16", "3.11.11", "3.12.9"]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libffi and libunwind
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+      - name: Build
+        run: make build PY=python
+      - name: Build info
+        run: python tests/jit/build_info.py
+      - name: Smoke test
+        run: diff <(python tests/jit/smoke.py plain 2>&1) <(python tests/jit/smoke.py lejit 2>&1)
+      - name: tests/jit
+        run: python tests/jit/run.py --release
 
   # Pythons LeJIT doesn't support yet: installing builds no extension, and
   # start() warns and does nothing
@@ -94,24 +149,6 @@ jobs:
           assert lejit._core is None, 'an extension was built'
           assert [x.category for x in w] == [RuntimeWarning], w
           "
-
-  # the installed detector agrees with the source one, and the message probes
-  # find their messages, on the versions the port has reached: more are added
-  # as it reaches them
-  detectors-newer:
-    name: detectors (${{ matrix.python }})
-    runs-on: ubuntu-24.04
-    container: python:${{ matrix.python }}-bookworm
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.11.11", "3.12.9"]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Detectors agree with the source
-        run: python tests/features/installed_test.py python
-      - name: Message probes
-        run: make strings-test PY=python GEN_PY=python
 
   format:
     name: make format-check

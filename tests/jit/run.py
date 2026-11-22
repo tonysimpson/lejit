@@ -8,7 +8,11 @@ list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
 (no leak check), 'warmup': (rounds, reason).
 
-    python3.X tests/jit/run.py [DIR] [-k substring] [-v]
+--release tests a release build, which can't say what it compiled: results
+and leaks are checked, but not whether each function compiled, and an
+'xfail' case that passes isn't an XPASS.
+
+    python3.X tests/jit/run.py [DIR] [-k substring] [-v] [--release]
 """
 import glob, os, subprocess, sys, warnings
 
@@ -18,11 +22,11 @@ TIMEOUT = 20
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
 
 
-def run_child(modname, fname, calls, use_lejit, warmup=9):
+def run_child(modname, fname, calls, lejit_mode, warmup=9):
     if not isinstance(calls, str):
         calls = repr(calls)
     cmd = [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
-           modname, fname, calls, '1' if use_lejit else '0', str(warmup)]
+           modname, fname, calls, lejit_mode, str(warmup)]
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, err = p.communicate(timeout=TIMEOUT)
@@ -59,27 +63,29 @@ def main():
     if args and not args[0].startswith('-'):
         CASES = os.path.abspath(args[0])
     verbose = '-v' in args
+    release = '--release' in args
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
     for name, modname, fname, calls, opts in load_cases(filt):
         warmup = opts.get('warmup', (9,))[0]
-        expected, err = run_child(modname, fname, calls, False, warmup)
+        expected, err = run_child(modname, fname, calls, '0', warmup)
         if err:
             print('ERROR %s: reference run failed: %s' % (name, err))
             counts['FAIL'] += 1
             continue
-        got, err = run_child(modname, fname, calls, True, warmup)
+        got, err = run_child(modname, fname, calls, 'release' if release else '1', warmup)
         problem = None
         if err:
             problem = err
         else:
             leak_ref = int(expected.pop().split()[1])
             leak_lejit = int(got.pop().split()[1])
-            if got[:-1] != expected:
-                problem = 'results differ: expected %r, got %r' % (expected, got[:-1])
+            results = got if release else got[:-1]
+            if results != expected:
+                problem = 'results differ: expected %r, got %r' % (expected, results)
             elif opts.get('interpreted'):
-                if got[-1] == 'compiled: yes':
+                if not release and got[-1] == 'compiled: yes':
                     problem = 'compiled, but expected to be interpreted'
-            elif got[-1] != 'compiled: yes':
+            elif not release and got[-1] != 'compiled: yes':
                 problem = got[-1]
             elif leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks'):
                 problem = 'leaks: %d more blocks after 100 extra rounds (%d without LeJIT)' % (
@@ -90,7 +96,7 @@ def main():
         elif problem:
             status = 'FAIL'
         elif xfail:
-            status = 'XPASS'
+            status = 'xfail' if release else 'XPASS'
         else:
             status = 'pass'
         counts[status] += 1
