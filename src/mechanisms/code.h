@@ -15,6 +15,9 @@
 #define Py_BUILD_CORE
 #include "internal/pycore_code.h"
 #undef Py_BUILD_CORE
+/* where it includes <stdbool.h>, bool is a macro for _Bool: LeJIT's bool
+   is psyco.h's int */
+#undef bool
 
 static inline int
 le_code_nlocals(PyCodeObject *co)

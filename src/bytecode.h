@@ -121,7 +121,9 @@ le_jump_target(le_code_t c, le_instr_t in)
 #endif
 
 /* the rich comparison COMPARE_OP with argument arg makes */
-#if LE_HAS_COMPARE_OP_SHIFT_4
+#if LE_HAS_COMPARE_OP_SHIFT_5
+#define LE_COMPARE_OP(arg) ((arg) >> 5)
+#elif LE_HAS_COMPARE_OP_SHIFT_4
 #define LE_COMPARE_OP(arg) ((arg) >> 4)
 #else
 #define LE_COMPARE_OP(arg) (arg)

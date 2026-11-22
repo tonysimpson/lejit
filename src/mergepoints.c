@@ -596,7 +596,7 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
     if (len < 3 || len > 6)
         return 0; /* none is shorter or longer */
     for (i = 0; frame_locals_builtins[i] != NULL; i++)
-        if (_PyUnicode_EqualToASCIIString(name, frame_locals_builtins[i]))
+        if (!PyUnicode_CompareWithASCIIString(name, frame_locals_builtins[i]))
             return 1;
     return 0;
 }

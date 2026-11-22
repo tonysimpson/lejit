@@ -645,6 +645,45 @@ def eval_frame_pops(s):
     return 'is_entry' not in fields, '%s:_PyInterpreterFrame.is_entry' % path
 
 
+def hash_secret_internal(s):
+    """the hash secret (_Py_HashSecret) is declared only in an internal
+    header, pycore_pyhash.h"""
+    where = []
+    for path, toks in s.headers_with('_Py_HashSecret'):
+        texts = _texts(toks)
+        if any(texts[i] == '_Py_HashSecret' and texts[i + 1] == ';'
+               for i in range(len(texts) - 1)):
+            where.append(path)
+    if not where:
+        raise Unanswered('no header declares _Py_HashSecret')
+    return (all('internal' in p.split(os.sep) for p in where),
+            ', '.join(where) + ':_Py_HashSecret')
+
+
+def frame_executable(s):
+    """an interpreter frame keeps its code as f_executable, a plain object,
+    not f_code"""
+    return _field(s, '_PyInterpreterFrame', 'f_executable', missing=False)
+
+
+def frame_instr_ptr(s):
+    """an interpreter frame's place is the instruction it runs or is about
+    to run (instr_ptr), not the one before (prev_instr)"""
+    return _field(s, '_PyInterpreterFrame', 'instr_ptr', missing=False)
+
+
+def tstate_current_frame(s):
+    """a thread's innermost interpreter frame is its state's current_frame,
+    not its CFrame's"""
+    return _field(s, '_ts', 'current_frame')
+
+
+def tstate_eval_breaker(s):
+    """each thread has its own eval_breaker, in its state: its low bits are
+    the events ceval handles with _Py_HandlePending"""
+    return _field(s, '_ts', 'eval_breaker')
+
+
 def frame_funcobj(s):
     """an interpreter frame keeps its function as a plain object (f_funcobj),
     not a PyFunctionObject (f_func)"""
@@ -730,6 +769,9 @@ def eval_frame_handle_pending(s):
     elif eval_breaker_gc(s)[0]:
         # the handling has left ceval, with the GC (3.12)
         return False, '%s, %s' % (evidence, eval_breaker_gc(s)[1])
+    elif tstate_eval_breaker(s)[0]:
+        # each thread has its own (3.13)
+        return False, '%s, %s' % (evidence, tstate_eval_breaker(s)[1])
     elif s.declares('_Py_HandlePending'):
         # the handling has left ceval: neither form LeJIT copies
         raise Unanswered('no eval_frame_handle_pending in Python/ceval.c, and %s'
@@ -866,7 +908,9 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'END_FOR', 'RETURN_CONST', 'LOAD_FAST_CHECK', 'LOAD_FAST_AND_CLEAR',
            'BINARY_SLICE', 'STORE_SLICE', 'CALL_INTRINSIC_1',
            'CALL_INTRINSIC_2', 'LOAD_SUPER_ATTR', 'POP_JUMP_IF_NONE',
-           'POP_JUMP_IF_NOT_NONE')
+           'POP_JUMP_IF_NOT_NONE',
+           # gone from 3.13: f-strings are CONVERT_VALUE's and FORMAT_SIMPLE's
+           'FORMAT_VALUE')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -1057,6 +1101,9 @@ EXPORTS = [
     ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
     ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
     ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip'),
+    ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
+    ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
+    ('PRIVATE_LONG_AS_INT_LINKABLE', '_PyLong_AsInt'),
 ]
 
 
@@ -1078,6 +1125,8 @@ C_API = [
     ('CHECK_RESULT_TSTATE', check_result_tstate),
     ('OBJECTDICT_SETITEM_LINKABLE', objectdict_setitem_linkable),
     ('FLOAT_ASDOUBLE_INDEX', float_asdouble_index),
+    ('TRACEBACK_FROM_FRAME_API', D('_PyTraceBack_FromFrame is declared PyAPI_FUNC (in an internal header)',
+                                   lambda s: _exported(s, '_PyTraceBack_FromFrame'))),
     ('LOOKUP_SPECIAL_ID', D('an extension can look up a special method by _Py_Identifier, with _PyObject_LookupSpecial',
                             lambda s: _public(s, '_PyObject_LookupSpecial'))),
 ] + [(name, _export_detector(f)) for name, f in EXPORTS]
@@ -1101,6 +1150,8 @@ BYTECODE = [
                                lambda s: _case_has(s, 'LOAD_ATTR', 'oparg>>1'))),
     ('COMPARE_OP_SHIFT_4', D('COMPARE_OP\'s comparison is its argument shifted right four times, the low bits the specialiser\'s',
                              lambda s: _case_has(s, 'COMPARE_OP', 'oparg>>4'))),
+    ('COMPARE_OP_SHIFT_5', D('COMPARE_OP\'s comparison is its argument shifted right five times, the low bits the specialiser\'s and the bool conversion\'s',
+                             lambda s: _case_has(s, 'COMPARE_OP', 'oparg>>5'))),
     ('MATCH_CLASS_PUSHES_BOOL', D('MATCH_CLASS pushes a bool saying whether the class matched, over the attributes or the subject',
                                   lambda s: _case_has(s, 'MATCH_CLASS', 'PyBool_FromLong', missing=False))),
     ('MATCH_KEYS_PUSHES_BOOL', D('MATCH_KEYS pushes a bool saying whether the keys matched, over the values or None',
@@ -1147,6 +1198,10 @@ STATE = [
     ('EVAL_BREAKER_GC', eval_breaker_gc),
     ('EVAL_FRAME_POPS', eval_frame_pops),
     ('FRAME_FUNCOBJ', frame_funcobj),
+    ('FRAME_EXECUTABLE', frame_executable),
+    ('FRAME_INSTR_PTR', frame_instr_ptr),
+    ('TSTATE_CURRENT_FRAME', tstate_current_frame),
+    ('TSTATE_EVAL_BREAKER', tstate_eval_breaker),
 ]
 
 # Objects/abstract.c
@@ -1195,6 +1250,7 @@ OBJECTS = [
     ('IMMORTAL_OBJECTS', D('an object whose refcount\'s low 32 bits are negative is immortal: Py_INCREF and Py_DECREF leave it alone (_Py_IsImmortal)',
                            lambda s: _public(s, '_Py_IsImmortal'))),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
+    ('HASH_SECRET_INTERNAL', hash_secret_internal),
 ]
 
 # Python/ceval.c

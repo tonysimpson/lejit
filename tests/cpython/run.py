@@ -53,7 +53,11 @@ SKIPPED = {
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_binary_subscript_specialization_user_type '
         'test_type_cache.TypeCacheWithSpecializationTests.'
-        'test_property_load_attr_specialization_user_type',
+        'test_property_load_attr_specialization_user_type '
+        'test_opcache.TestRacesDoNotCrash.test_binary_subscr_getitem '
+        'test_opcache.TestRacesDoNotCrash.test_for_iter_gen '
+        'test_opcache.TestRacesDoNotCrash.test_load_attr_getattribute_overridden '
+        'test_opcache.TestRacesDoNotCrash.test_load_attr_property',
     "compiled code doesn't specialise the bytecode it runs, which ceval does "
     'as it runs it':
         'test_type_cache.TypeCacheWithSpecializationTests.'
@@ -62,6 +66,14 @@ SKIPPED = {
     'too, so a Python recursion 90,000 deep passes the C recursion limit '
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
         'test_call.TestRecursion.test_super_deep',
+    'with a frame-evaluation hook installed, a recursion through '
+    "functools' Python lru_cache passes the recursion limit "
+    '(_testinternalcapi.set_eval_frame_record fails it the same way)':
+        'test_functools.TestLRUPy.test_lru_recursion',
+    "LeJIT replaces _warnings.warn and gc.get_referents with functions of "
+    "its own, whose docstrings have no text signature":
+        'test_inspect.TestSignatureDefinitions.test_gc_module_has_signatures '
+        'test_inspect.TestSignatureDefinitions.test_warnings_module_has_signatures',
     'skipped when the machine converts fast enough':
         'test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
         'test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int '

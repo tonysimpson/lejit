@@ -15,6 +15,12 @@
  * equality.
  */
 #include "punicodeobject.h"
+#if LE_HAS_HASH_SECRET_INTERNAL
+/* _Py_HashSecret */
+#define Py_BUILD_CORE
+#include "internal/pycore_pyhash.h"
+#undef Py_BUILD_CORE
+#endif
 #include "pboolobject.h"
 #include "piterobject.h"
 #include "plistobject.h"
@@ -74,20 +80,6 @@ le_unicode_format_long(PyObject *val, int alt, int prec, int type)
 }
 #endif
 
-/* stringlib/eq.h:unicode_eq */
-static int
-le_unicode_eq(PyObject *a, PyObject *b)
-{
-    if (PyUnicode_GET_LENGTH(a) != PyUnicode_GET_LENGTH(b))
-        return 0;
-    if (PyUnicode_GET_LENGTH(a) == 0)
-        return 1;
-    if (PyUnicode_KIND(a) != PyUnicode_KIND(b))
-        return 0;
-    return memcmp(PyUnicode_1BYTE_DATA(a), PyUnicode_1BYTE_DATA(b),
-                  PyUnicode_GET_LENGTH(a) * PyUnicode_KIND(a)) == 0;
-}
-
 /* n characters of 'from' into 'to', a string not yet shared and wide
    enough for them */
 static void
@@ -136,6 +128,10 @@ le_unicode_find_max_char(PyObject *unicode, Py_ssize_t start, Py_ssize_t end)
                            : 0x10ffff;
 }
 #endif
+
+#define LEFTSTRIP 0
+#define RIGHTSTRIP 1
+#define BOTHSTRIP 2
 
 #if LE_HAS_UNICODE_XSTRIP_LINKABLE
 #define le_unicode_xstrip _PyUnicode_XStrip
@@ -195,10 +191,6 @@ static binaryfunc unicode_subscript;
 static PyCFunction cfunc_unicode_lstrip;
 static PyCFunction cfunc_unicode_rstrip;
 static PyCFunction cfunc_unicode_strip;
-
-#define LEFTSTRIP 0
-#define RIGHTSTRIP 1
-#define BOTHSTRIP 2
 
 /* CPython's code, copied for the metas to call at run time */
 static PyObject *
@@ -412,7 +404,7 @@ cimpl_unicode_format_arg_parse(struct unicode_formatter_t *ctx,
                 PyErr_SetString(PyExc_TypeError, LE_MSG_FORMAT_STAR_WANTS_INT);
                 return -1;
             }
-            arg->prec = _PyLong_AsInt(v);
+            arg->prec = le_long_as_int(v);
             if (arg->prec == -1 && PyErr_Occurred())
                 return -1;
             if (arg->prec < 0)

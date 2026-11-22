@@ -1121,7 +1121,7 @@ cimpl_vt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
 #if LE_HAS_CURRENT_EXCEPTION
     /* PyTraceBack_Here needs an exception being raised, which there may not
        be yet: the entry is made directly */
-    newtb = _PyTraceBack_FromFrame(oldtb, f);
+    newtb = le_traceback_entry(oldtb, f);
     Py_XDECREF(oldtb);
     Py_DECREF(f);
     return newtb;
@@ -3634,11 +3634,7 @@ static PyObject *
 cimpl_call_exit(PyObject *exit_func, PyObject *exc, PyObject *val,
                 PyObject *tb)
 {
-    PyObject *stack[3];
-    stack[0] = exc;
-    stack[1] = val;
-    stack[2] = tb;
-    return _PyObject_FastCall(exit_func, stack, 3);
+    return PyObject_CallFunctionObjArgs(exit_func, exc, val, tb, NULL);
 }
 
 static PyObject *
@@ -3887,7 +3883,7 @@ cimpl_import_name(PyObject *globals, PyObject *builtins, PyObject *name,
         w = Py_BuildValue("(OOOO)", name, globals, Py_None, fromlist);
     if (w == NULL)
         return NULL;
-    x = PyEval_CallObject(x, w);
+    x = PyObject_CallObject(x, w);
     Py_DECREF(w);
     return x;
 }

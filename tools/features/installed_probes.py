@@ -185,7 +185,10 @@ for _feature, _function in [
         ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
         ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
         ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
-        ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip')]:
+        ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip'),
+        ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
+        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
+        ('PRIVATE_LONG_AS_INT_LINKABLE', '_PyLong_AsInt')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
@@ -348,11 +351,17 @@ def KWARGS_MERGE_EX():
     mapping a dict (run)"""
     _need_ops('CALL_FUNCTION_EX', 'LOAD_CONST', 'RETURN_VALUE')
     # the callable is pushed with CALL_FUNCTION, or (from 3.11) with a
-    # NULL under it
+    # NULL beside it, on the side the compiler puts it
     if _real_op('CALL_FUNCTION'):
-        start = []
+        start = [('LOAD_CONST', 0)]
     elif _real_op('PUSH_NULL'):
-        start = [('PUSH_NULL', 0)]
+        def g(f, a, k):
+            return f(*a, **k)
+        ops = [x.opname for x in dis.get_instructions(g)]
+        if ops.index('PUSH_NULL') < ops.index('LOAD_FAST'):
+            start = [('PUSH_NULL', 0), ('LOAD_CONST', 0)]
+        else:
+            start = [('LOAD_CONST', 0), ('PUSH_NULL', 0)]
     else:
         raise Unanswered('the probe needs opcode CALL_FUNCTION or PUSH_NULL,'
                          ' which this interpreter lacks')
@@ -371,7 +380,7 @@ def KWARGS_MERGE_EX():
 
     def f(**kw):
         return kw
-    call = _code(start + [('LOAD_CONST', 0), ('LOAD_CONST', 1), ('LOAD_CONST', 2),
+    call = _code(start + [('LOAD_CONST', 1), ('LOAD_CONST', 2),
                   ('CALL_FUNCTION_EX', 1), ('RETURN_VALUE', 0)],
                  [f, (), M()])
     e = _error(call)
@@ -769,7 +778,8 @@ def MEMBER_EX_ERROR_FROM_TYPE():
     msg = str(e)
     if msg == 'zzz':
         return False, 'unset slot: AttributeError %s' % msg
-    if "'S' object has no attribute" in msg:
+    # the type's name, or (from 3.13) its qualified name
+    if "S' object has no attribute" in msg:
         return True, 'unset slot: AttributeError %s' % msg
     raise Unanswered('unset slot: AttributeError %s' % msg)
 
@@ -823,6 +833,26 @@ def COMPARE_OP_SHIFT_4():
             if x.arg == 4:
                 return False, 'dis: COMPARE_OP 4 for a > b'
             if x.arg >> 4 == 4:
+                return True, 'dis: COMPARE_OP %d for a > b' % x.arg
+            if x.arg >> 5 == 4:
+                return False, 'dis: COMPARE_OP %d for a > b, shifted five times' % x.arg
+            raise Unanswered('a > b is COMPARE_OP %d' % x.arg)
+    raise Unanswered('a > b has no COMPARE_OP: %r'
+                     % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
+def COMPARE_OP_SHIFT_5():
+    """a > b compiles to COMPARE_OP whose argument is Py_GT (4) shifted
+    left five times, with the specialiser's bits and the bool conversion's
+    below (dis)"""
+    def f(a, b):
+        return a > b
+    for x in dis.get_instructions(f):
+        if x.opname == 'COMPARE_OP':
+            if x.arg == 4 or x.arg >> 4 == 4:
+                return False, 'dis: COMPARE_OP %d for a > b' % x.arg
+            if x.arg >> 5 == 4:
                 return True, 'dis: COMPARE_OP %d for a > b' % x.arg
             raise Unanswered('a > b is COMPARE_OP %d' % x.arg)
     raise Unanswered('a > b has no COMPARE_OP: %r'
