@@ -61,7 +61,11 @@ SKIPPED = {
         'test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int',
     "code LeJIT compiles doesn't run in ceval, so ceval doesn't quicken it":
         'test_dis.DisTests.test_super_instructions '
-        'test_dis.DisWithFileTests.test_super_instructions',
+        'test_dis.DisWithFileTests.test_super_instructions '
+        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test_load_attr_specialization_user_type '
+        'test_type_cache.TypeCacheWithSpecializationTests.'
+        'test_store_attr_specialization_user_type',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
