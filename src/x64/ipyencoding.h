@@ -321,16 +321,15 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w);
         po->stack_depth = 0;                                        \
     } while (0)
 
-/* The inline attribute store into a split instance dict,
-   behind a type guard emitted
-   before it. Hand-allocated in the caller-saved registers, which hold no
-   tracked values, so the compiler's state is the same on every path
-   through it. psyco_inline_store_begin emits the checks and the store,
-   then the miss path: 'call miss_glue' (miss_glue(obj, value, cache)
-   in RDI, RSI, RDX, returning an int, nonzero on error) and 'test eax,
-   eax'; the caller then emits the error check (runtime_condition_f with
-   CC_NE) and calls psyco_inline_store_end, which points the store's
-   exits past that check. */
+/* The inline attribute store into a split instance dict, or into a
+   managed dict's values, behind a type guard emitted before it. Hand-allocated
+   in the caller-saved registers, which hold no tracked values, so the
+   compiler's state is the same on every path through it.
+   psyco_inline_store_begin emits the checks and the store, then the miss path:
+   'call miss_glue' (miss_glue(obj, value, cache) in RDI, RSI, RDX, returning
+   an int, nonzero on error) and 'test eax, eax'; the caller then emits the
+   error check (runtime_condition_f with CC_NE) and calls
+   psyco_inline_store_end, which points the store's exits past that check. */
 typedef enum {
     STORE_GC_NONE, /* the value's type is known and not GC */
     STORE_GC_DICT, /* it is known and GC: miss if the dict is untracked */
@@ -340,7 +339,11 @@ typedef enum {
 #define STORE_DONE_JUMPS (2 + LE_HAS_IMMORTAL_OBJECTS)
 typedef struct {
     vinfo_t *obj, *value; /* run-time or compile-time */
-    long dictoffset;      /* the type's tp_dictoffset, > 0 */
+    long dictoffset;      /* the type's tp_dictoffset, > 0, or with 'keys'
+                             the offset of the instance's values pointer */
+    void *keys; /* a managed dict's class keys (never replaced), whose
+                   values are at the values pointer, which has none if
+                   the dict was made; NULL: the dict is at dictoffset */
     store_cache_t *cache;
     store_gc_t gc;
     bool fill; /* inline the store into the next empty slot */
@@ -358,12 +361,16 @@ psyco_inline_store_end(PsycoObject *po, inline_store_t *s);
    load expected to find nothing (a class attribute exists): it runs the
    dict's own probe sequence (lookdict_split's) and is done at an empty
    index slot; otherwise the name is read from the dict's values at the
-   index the cache gives, if the keys hold it there. Anything else calls
-   miss_glue(dict, cache), which returns the same. Nothing depends on
-   which keys a dict has when the code is emitted. */
+   index the cache gives, if the keys hold it there. With 'keys' (a
+   managed dict's), that is the only form, and keys whose entry count is
+   the cache's 'nentries' don't hold the name. Anything else calls
+   miss_glue(dict, cache), or with 'keys' miss_glue(obj, cache), which
+   returns the same. Nothing depends on which keys a dict has when the
+   code is emitted. */
 typedef struct {
     vinfo_t *obj;         /* run-time or compile-time */
-    long dictoffset;      /* the type's tp_dictoffset, > 0 */
+    long dictoffset;      /* as inline_store_t's */
+    void *keys;           /* as inline_store_t's */
     store_cache_t *cache; /* (class, name), shared with the stores */
     Py_hash_t hash;       /* the name's */
     bool absent;
