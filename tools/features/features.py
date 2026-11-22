@@ -1056,7 +1056,6 @@ EXPORTS = [
     ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
     ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
     ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
-    ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip'),
 ]
 
 

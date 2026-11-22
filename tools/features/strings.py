@@ -265,11 +265,6 @@ msg('INIT_RETURNED', '__init__ returning something other than None',
     'TypeError', 'r = args[0]; cls("C", __init__=lambda s: r())()', [T()])
 
 # str
-msg('STRIP_ARG', "str's strip given a chars that isn't a str", 'TypeError',
-    "''.strip(1)", [F('%s', 'strip')])
-for _name in ('strip', 'lstrip', 'rstrip'):
-    frag('STRIP_NAME_' + _name.upper(), "the name %s's error shows" % _name,
-         'STRIP_ARG', 0, 'TypeError', "''.%s(1)" % _name, [F('%s', '')])
 msg('FORMAT_NOT_ENOUGH_ARGS', 'str %: fewer arguments than conversions',
     'TypeError', "'%s %s' % (1,)", text=True)
 msg('FORMAT_NEEDS_MAPPING', 'str %: a key given, no mapping', 'TypeError',

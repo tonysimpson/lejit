@@ -184,8 +184,7 @@ for _feature, _function in [
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
         ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
         ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
-        ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
-        ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip')]:
+        ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature

@@ -137,40 +137,6 @@ le_unicode_find_max_char(PyObject *unicode, Py_ssize_t start, Py_ssize_t end)
 }
 #endif
 
-#if LE_HAS_UNICODE_XSTRIP_LINKABLE
-#define le_unicode_xstrip _PyUnicode_XStrip
-#else
-/* unicodeobject.c:_PyUnicode_XStrip, without its bloom filter */
-static PyObject *
-le_unicode_xstrip(PyObject *self, int striptype, PyObject *sepobj)
-{
-    const void *data = PyUnicode_DATA(self);
-    int kind = PyUnicode_KIND(self);
-    Py_ssize_t len = PyUnicode_GET_LENGTH(self);
-    Py_ssize_t seplen = PyUnicode_GET_LENGTH(sepobj);
-    Py_ssize_t i = 0, j = len;
-    if (striptype != RIGHTSTRIP) {
-        while (i < len) {
-            Py_UCS4 ch = PyUnicode_READ(kind, data, i);
-            if (PyUnicode_FindChar(sepobj, ch, 0, seplen, 1) < 0)
-                break;
-            i++;
-        }
-    }
-    if (striptype != LEFTSTRIP) {
-        j--;
-        while (j >= i) {
-            Py_UCS4 ch = PyUnicode_READ(kind, data, j);
-            if (PyUnicode_FindChar(sepobj, ch, 0, seplen, 1) < 0)
-                break;
-            j--;
-        }
-        j++;
-    }
-    return PyUnicode_Substring(self, i, j);
-}
-#endif
-
 /* 'state' is read as its low byte, which holds the bit-fields ready, ascii,
    compact, kind and interned (their masks are LE_BIT_, psyco.h's, from
    the bit order its layouts check, which puts ready, ascii and
@@ -199,83 +165,6 @@ static PyCFunction cfunc_unicode_strip;
 #define LEFTSTRIP 0
 #define RIGHTSTRIP 1
 #define BOTHSTRIP 2
-
-/* CPython's code, copied for the metas to call at run time */
-static PyObject *
-cimpl_do_strip(PyObject *self, int striptype)
-{
-    Py_ssize_t len, i, j;
-    if (PyUnicode_READY(self) == -1)
-        return NULL;
-    len = PyUnicode_GET_LENGTH(self);
-    if (PyUnicode_IS_ASCII(self)) {
-        const Py_UCS1 *data = PyUnicode_1BYTE_DATA(self);
-        i = 0;
-        if (striptype != RIGHTSTRIP) {
-            while (i < len) {
-                Py_UCS1 ch = data[i];
-                if (!ascii_whitespace[ch])
-                    break;
-                i++;
-            }
-        }
-        j = len;
-        if (striptype != LEFTSTRIP) {
-            j--;
-            while (j >= i) {
-                Py_UCS1 ch = data[j];
-                if (!ascii_whitespace[ch])
-                    break;
-                j--;
-            }
-            j++;
-        }
-    }
-    else {
-        int kind = PyUnicode_KIND(self);
-        const void *data = PyUnicode_DATA(self);
-        i = 0;
-        if (striptype != RIGHTSTRIP) {
-            while (i < len) {
-                Py_UCS4 ch = PyUnicode_READ(kind, data, i);
-                if (!Py_UNICODE_ISSPACE(ch))
-                    break;
-                i++;
-            }
-        }
-        j = len;
-        if (striptype != LEFTSTRIP) {
-            j--;
-            while (j >= i) {
-                Py_UCS4 ch = PyUnicode_READ(kind, data, j);
-                if (!Py_UNICODE_ISSPACE(ch))
-                    break;
-                j--;
-            }
-            j++;
-        }
-    }
-    return PyUnicode_Substring(self, i, j);
-}
-
-static const char *cstatic_stripfuncnames[] = {LE_MSG_STRIP_NAME_LSTRIP,
-                                               LE_MSG_STRIP_NAME_RSTRIP,
-                                               LE_MSG_STRIP_NAME_STRIP};
-
-static PyObject *
-cimpl_do_argstrip(PyObject *self, int striptype, PyObject *sep)
-{
-    if (sep != Py_None) {
-        if (PyUnicode_Check(sep))
-            return le_unicode_xstrip(self, striptype, sep);
-        else {
-            PyErr_Format(PyExc_TypeError, LE_MSG_STRIP_ARG,
-                         (cstatic_stripfuncnames[striptype]));
-            return NULL;
-        }
-    }
-    return cimpl_do_strip(self, striptype);
-}
 
 static PyObject *
 cimpl_unicode_format_getnextarg(struct unicode_formatter_t *ctx)
@@ -1012,48 +901,6 @@ unicode_length(PsycoObject *po, vinfo_t *self)
     return psyco_get_field(po, self, UNICODE_length);
 }
 
-/* str.strip, lstrip and rstrip, through their Argument Clinic wrappers:
-   one optional argument, None by default */
-static vinfo_t *
-do_argstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs, PyCFunction cfunc,
-            int striptype)
-{
-    vinfo_t *chars, *return_value;
-    int nargs = PsycoTuple_Load(vargs);
-    if (nargs < 0 || nargs > 1) {
-        return PsycoCFunction_CallFast(po, cfunc, METH_FASTCALL, self, vargs);
-    }
-    if (nargs == 0)
-        chars = psyco_vi_None();
-    else {
-        chars = PsycoTuple_GET_ITEM(vargs, 0);
-        vinfo_incref(chars);
-    }
-    return_value = psyco_generic_call(
-        po, cimpl_do_argstrip, CfCommonNewRefPyObject | CfNoPython | CfNoBlock,
-        "vlv", self, (long)striptype, chars);
-    vinfo_decref(chars, po);
-    return return_value;
-}
-
-static vinfo_t *
-unicode_lstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
-{
-    return do_argstrip(po, self, vargs, cfunc_unicode_lstrip, LEFTSTRIP);
-}
-
-static vinfo_t *
-unicode_rstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
-{
-    return do_argstrip(po, self, vargs, cfunc_unicode_rstrip, RIGHTSTRIP);
-}
-
-static vinfo_t *
-unicode_strip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
-{
-    return do_argstrip(po, self, vargs, cfunc_unicode_strip, BOTHSTRIP);
-}
-
 static void
 gen_unicodeobject_init(void)
 {
@@ -1062,16 +909,6 @@ gen_unicodeobject_init(void)
     Psyco_DefineMeta(PyUnicode_Type.tp_as_sequence->sq_contains,
                      PsycoUnicode_Contains);
     Psyco_DefineMeta(PyUnicode_Type.tp_as_sequence->sq_length, unicode_length);
-}
-static void
-gen_unicodeobject_methods_init(void)
-{
-    cfunc_unicode_lstrip = Psyco_DefineMethodFn(
-        &PyUnicode_Type, "lstrip", METH_FASTCALL, &unicode_lstrip);
-    cfunc_unicode_rstrip = Psyco_DefineMethodFn(
-        &PyUnicode_Type, "rstrip", METH_FASTCALL, &unicode_rstrip);
-    cfunc_unicode_strip = Psyco_DefineMethodFn(&PyUnicode_Type, "strip",
-                                               METH_FASTCALL, &unicode_strip);
 }
 
 /* A view is a str not built yet: 'len' characters of 'root' (a real str,
@@ -1888,8 +1725,8 @@ const_str(vinfo_t *v)
 
 /* lstrip, rstrip and strip (do_argstrip's striptype) with no argument,
    None or a constant str: the bounds of _PyUnicode_XStrip's or do_strip's
-   loops, then their Substring as a view. Anything else is the translated
-   meta. */
+   loops, then their Substring as a view. Anything else calls the C
+   method. */
 static vinfo_t *
 strip_view(PsycoObject *po, vinfo_t *self, vinfo_t *vargs, int striptype)
 {
@@ -1943,7 +1780,10 @@ done:
     static vinfo_t *p##NAME(PsycoObject *po, vinfo_t *self, vinfo_t *vargs) \
     {                                                                       \
         vinfo_t *r = strip_view(po, self, vargs, TYPE);                     \
-        return r != VIEW_NOT_ONE ? r : NAME(po, self, vargs);               \
+        return r != VIEW_NOT_ONE ? r                                        \
+                                 : PsycoCFunction_CallFast(                 \
+                                       po, cfunc_##NAME, METH_FASTCALL,     \
+                                       self, vargs);                        \
     }
 STRIP_META(unicode_lstrip, 0)
 STRIP_META(unicode_rstrip, 1)
@@ -3293,18 +3133,17 @@ psy_unicodeobject_init(void)
     if ((unicode_empty = PyUnicode_New(0, 0)) == NULL)
         Py_FatalError("lejit: no empty string");
     gen_unicodeobject_init();
-    gen_unicodeobject_methods_init();
     /* the views' metas in front of the translated ones they fall back on */
     Psyco_DefineMeta(PyUnicode_Type.tp_as_sequence->sq_length,
                      punicode_length);
     Psyco_DefineMeta(PyUnicode_Type.tp_as_sequence->sq_contains,
                      punicode_contains);
-    if (cfunc_unicode_lstrip != NULL)
-        Psyco_DefineMeta(cfunc_unicode_lstrip, punicode_lstrip);
-    if (cfunc_unicode_rstrip != NULL)
-        Psyco_DefineMeta(cfunc_unicode_rstrip, punicode_rstrip);
-    if (cfunc_unicode_strip != NULL)
-        Psyco_DefineMeta(cfunc_unicode_strip, punicode_strip);
+    cfunc_unicode_lstrip = Psyco_DefineMethodFn(
+        &PyUnicode_Type, "lstrip", METH_FASTCALL, &punicode_lstrip);
+    cfunc_unicode_rstrip = Psyco_DefineMethodFn(
+        &PyUnicode_Type, "rstrip", METH_FASTCALL, &punicode_rstrip);
+    cfunc_unicode_strip = Psyco_DefineMethodFn(&PyUnicode_Type, "strip",
+                                               METH_FASTCALL, &punicode_strip);
     cfunc_unicode_split =
         Psyco_DefineMethodFn(&PyUnicode_Type, "split",
                              METH_FASTCALL | METH_KEYWORDS, punicode_split);
