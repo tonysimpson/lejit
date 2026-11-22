@@ -30,6 +30,7 @@ PyTypeObject *
 Psyco_NeedType(PsycoObject *po, vinfo_t *vi)
 {
     vinfo_t *vtp;
+    c_promotion_t *promotion;
     if (is_compiletime(vi->source) && !Psyco_ConstantClassMutable(vi)) {
         /* optimization for the type of a known object */
         PyObject *o = (PyObject *)CompileTime_Get(vi->source)->value;
@@ -43,10 +44,15 @@ Psyco_NeedType(PsycoObject *po, vinfo_t *vi)
     if (vtp == NULL)
         return NULL;
     /* the callers need a type, so a site past its limit can't go generic:
-       the frame goes on interpreted from here */
+       the frame goes on interpreted from here, or a fused generator
+       expression stops being fused */
     if (psyco_can_go_interpreted(po))
-        return (PyTypeObject *)psyco_pyobj_atcompiletime_interp(po, vtp);
-    return (PyTypeObject *)psyco_pyobj_atcompiletime(po, vtp);
+        promotion = &psyco_interp_pyobj_promotion;
+    else if (po->pr.co->co_flags & CO_GENERATOR)
+        promotion = &psyco_fused_pyobj_promotion;
+    else
+        promotion = &psyco_nonfixed_pyobj_promotion;
+    return (PyTypeObject *)psyco_pyobj_atcompiletime_by(po, vtp, promotion);
 }
 
 DEFINEFN

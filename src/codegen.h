@@ -327,6 +327,7 @@ typedef struct c_promotion_s {
 #define PFlagMegamorphic 2
 #define PFlagStaticType 4 /* with PFlagPyObj|PFlagMegamorphic */
 #define PFlagInterpret 8  /* with PFlagPyObj|PFlagMegamorphic */
+#define PFlagFused 16     /* with PFlagPyObj */
 
 /* The pseudo-exceptions meaning 'promote me' but against no particular
    fixed_switch_t. The second one has the SkFlagPyObj flag. */
@@ -351,6 +352,12 @@ EXTERNVAR c_promotion_t psyco_static_type_promotion;
    (pycompiler.c:psyco_go_interpreted). Psyco_NeedType's, whose callers
    need a type. */
 EXTERNVAR c_promotion_t psyco_interp_pyobj_promotion;
+
+/* Psyco_NeedType's in a generator expression's fused code, which can't go
+   on in ceval: every value gets its version, but past MEGAMORPHIC_MAX
+   values the generator expression stops being fused (mergepoints.h:
+   psyco_fuse_stopped), so calls after this one run it as a generator. */
+EXTERNVAR c_promotion_t psyco_fused_pyobj_promotion;
 
 #define MEGAMORPHIC_MAX 5
 

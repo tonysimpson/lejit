@@ -68,6 +68,13 @@ psyco_join_point(PyObject *mergepoints, int position);
 
 EXTERNFN int
 psyco_mp_flags(PyObject *mergepoints);
+/* a generator expression's flag, set once a type site in its fused code
+   (psyfunc.c:psyco_call_genexpr) has seen more than MEGAMORPHIC_MAX
+   types: from then on its consumers run it as a generator
+   (psyfunc.c:psyco_genexpr_fuse), so classes made per call don't each get
+   fused code that keeps them alive. Never cleared. */
+EXTERNFN int *
+psyco_fuse_stopped(PyObject *mergepoints);
 /* whether compiled code tests eval_breaker before the instruction at
    position (a byte offset) */
 EXTERNFN int

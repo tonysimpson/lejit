@@ -3581,6 +3581,32 @@ promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key, bool interpret)
     return result;
 }
 
+/* psyco_fused_pyobj_promotion: as do_promotion_pyobj, and a value past
+   MEGAMORPHIC_MAX stops the generator expression's fusing */
+static code_t *
+do_promotion_pyobj_fused(rt_promotion_t *fs, PyObject *key)
+{
+#if LE_CODESTATS
+    psyco_cs_promo_miss(fs->cs_site);
+#endif
+    code_t *result;
+    long key1 = (long)key;
+
+    QUICK_LOOKUP_PROMOTION_VALUE(fs, key1, result);
+    if (result == NULL) {
+        rt_local_buf_t *megabuf = NULL;
+        if (lookup_count_previous_values(fs, &megabuf) >= MEGAMORPHIC_MAX) {
+            parked_state_t *ps = &fs->state;
+            PyObject *mps = ps->live != NULL ? ps->live->pr.merge_points
+                                             : ps->merge_points;
+            *psyco_fuse_stopped(mps) = 1;
+        }
+        result = do_promotion_internal(fs, key1, SkFlagFixed | SkFlagPyObj);
+    }
+    promotion_cache_add(fs, key1, result);
+    return result;
+}
+
 static code_t *
 do_promotion_pyobj_mega(rt_promotion_t *fs, PyObject *key)
 {
@@ -3670,6 +3696,9 @@ psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags)
             break;
         case PFlagPyObj | PFlagMegamorphic | PFlagInterpret:
             do_promotion = &do_promotion_pyobj_interp;
+            break;
+        case PFlagPyObj | PFlagFused:
+            do_promotion = &do_promotion_pyobj_fused;
             break;
         default:
             psyco_fatal_msg("bad pflags");

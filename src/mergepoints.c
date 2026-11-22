@@ -34,6 +34,7 @@
 
 typedef struct {
     int flags;
+    int fuse_stopped; /* psyco_fuse_stopped */
     Py_ssize_t mergepoint_count;
     Py_ssize_t unit_count;   /* code units in the bytecode */
     global_entries_t *joins; /* per code unit, or NULL: psyco_join_point */
@@ -543,6 +544,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
         weight <= INLINE_MAXIMUM_WEIGHT)
         flags |= MP_FLAGS_INLINABLE;
     report->flags = flags;
+    report->fuse_stopped = 0;
     report->mergepoint_count = mergepoint_count;
     report->unit_count = entry_count_len - 1;
     report->joins = NULL;
@@ -1075,6 +1077,13 @@ psyco_mp_flags(PyObject *mergepoints)
 {
     co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
     return report->flags;
+}
+
+DEFINEFN int *
+psyco_fuse_stopped(PyObject *mergepoints)
+{
+    co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
+    return &report->fuse_stopped;
 }
 
 DEFINEFN int
