@@ -491,9 +491,11 @@ le_op_flags(int op)
         case LOAD_DEREF:
         case STORE_DEREF:
         case DELETE_DEREF:
-        /* generators fused with their consumer (psyco_is_fusable_generator) */
+        /* generators fused with their consumer (psyco_is_fusable_generator);
+           a resumable coroutine's await (psyco_is_resumable_generator) */
         case RETURN_GENERATOR:
         case YIELD_VALUE:
+        case GET_AWAITABLE:
             return LE_OPF_COMPILED;
         /* exceptions, and the blocks that handle them, where handlers are
            in blocks */
@@ -526,8 +528,9 @@ le_op_flags(int op)
            outermost iterable */
         case GET_AITER:
             return LE_OPF_COMPILED_IN_BLOCKS;
-        case BEFORE_ASYNC_WITH:
         case YIELD_FROM:
+            return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;
+        case BEFORE_ASYNC_WITH:
             return LE_OPF_BREAKER_SKIPS;
     }
     return 0;

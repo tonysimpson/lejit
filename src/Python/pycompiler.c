@@ -4491,7 +4491,7 @@ long
 psyco_generator_mode(PsycoObject *po)
 {
     PyCodeObject *co = po->pr.co;
-    if (!(co->co_flags & CO_GENERATOR))
+    if (!(co->co_flags & (CO_GENERATOR | CO_COROUTINE)))
         return 0;
     return CompileTime_Get(po->vlocals.items[GENEXPR_SLOT_MODE(co)]->source)
         ->value;
@@ -4503,9 +4503,8 @@ psyco_can_go_interpreted(PsycoObject *po)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int i, nstack = STACK_LEVEL();
-    if ((po->pr.co->co_flags &
-         (CO_COROUTINE | CO_ITERABLE_COROUTINE | CO_ASYNC_GENERATOR)) ||
-        ((po->pr.co->co_flags & CO_GENERATOR) &&
+    if ((po->pr.co->co_flags & (CO_ITERABLE_COROUTINE | CO_ASYNC_GENERATOR)) ||
+        ((po->pr.co->co_flags & (CO_GENERATOR | CO_COROUTINE)) &&
          psyco_generator_mode(po) != GENEXPR_RESUMABLE))
         return false;
     for (i = 0; i < nstack; i++)
@@ -6590,6 +6589,103 @@ out:
 #if LE_RESUMES_GENERATORS
 #define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
 
+/* whether coroutine 'coro' is awaiting something, as _PyGen_yf (not
+   exported) tells: paused just before a YIELD_FROM */
+static int
+coro_awaits(PyGenObject *coro)
+{
+    PyFrameObject *f = coro->gi_frame;
+    const unsigned char *code;
+    if (f == NULL || f->f_lasti < 0)
+        return 0;
+#if !LE_HAS_FRAME_STATE
+    if (f->f_stacktop == NULL)
+        return 0;
+#endif
+    code = (const unsigned char *)PyBytes_AS_STRING(f->f_code->co_code);
+    return code[(LE_HAS_LASTI_IN_INSTRUCTIONS ? f->f_lasti * LE_UNIT
+                                              : f->f_lasti) +
+                LE_UNIT] == YIELD_FROM;
+}
+
+/* a generator made by a types.coroutine function */
+static inline int
+is_iterable_coroutine(PyObject *o)
+{
+    return PyGen_CheckExact(o) &&
+           (((PyCodeObject *)((PyGenObject *)o)->gi_code)->co_flags &
+            CO_ITERABLE_COROUTINE);
+}
+
+/* GET_AWAITABLE outside async with: what awaiting 'o' iterates, a new
+   reference, as _PyCoro_GetAwaitableIter (not exported) makes it and
+   ceval checks it */
+static PyObject *
+cimpl_get_awaitable(PyObject *o)
+{
+    PyTypeObject *t = Py_TYPE(o);
+    unaryfunc getter;
+    PyObject *res;
+    if (PyCoro_CheckExact(o) || is_iterable_coroutine(o)) {
+        if (PyCoro_CheckExact(o) && coro_awaits((PyGenObject *)o)) {
+            PyErr_SetString(PyExc_RuntimeError, LE_MSG_CORO_AWAITED_ALREADY);
+            return NULL;
+        }
+        Py_INCREF(o);
+        return o;
+    }
+    getter = t->tp_as_async != NULL ? t->tp_as_async->am_await : NULL;
+    if (getter == NULL) {
+        PyErr_Format(PyExc_TypeError, LE_MSG_AWAIT_NOT_AWAITABLE, t->tp_name);
+        return NULL;
+    }
+    res = getter(o);
+    if (res == NULL)
+        return NULL;
+    if (PyCoro_CheckExact(res) || is_iterable_coroutine(res)) {
+        PyErr_SetString(PyExc_TypeError, LE_MSG_AWAIT_RETURNED_COROUTINE);
+        Py_DECREF(res);
+        return NULL;
+    }
+    if (!PyIter_Check(res)) {
+        PyErr_Format(PyExc_TypeError, LE_MSG_AWAIT_NON_ITERATOR,
+                     Py_TYPE(res)->tp_name);
+        Py_DECREF(res);
+        return NULL;
+    }
+    return res;
+}
+
+/* YIELD_FROM's send of 'v' into 'receiver', as ceval does it with no
+   trace function: 1 with the value it yielded in out[0], 0 with the value
+   it returned, -1 with its exception */
+static int
+cimpl_await_send(PyObject *receiver, PyObject *v, PyObject *out[])
+{
+#if LE_HAS_ITER_SEND
+    PySendResult r = PyIter_Send(receiver, v, &out[0]);
+    if (r == PYGEN_ERROR)
+        return -1;
+    return r == PYGEN_NEXT;
+#else
+    _Py_IDENTIFIER(send);
+    PyObject *res;
+    if (PyGen_CheckExact(receiver) || PyCoro_CheckExact(receiver))
+        res = _PyGen_Send((PyGenObject *)receiver, v);
+    else if (v == Py_None)
+        res = Py_TYPE(receiver)->tp_iternext(receiver);
+    else
+        res = _PyObject_CallMethodIdObjArgs(receiver, &PyId_send, v, NULL);
+    if (res != NULL) {
+        out[0] = res;
+        return 1;
+    }
+    if (_PyGen_FetchStopIterationValue(&out[0]) < 0)
+        return -1;
+    return 0;
+#endif
+}
+
 /* A resumable generator's YIELD_VALUE at 'at': its frame (that of the
    run in the GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it,
    with the locals and the stack items under the value, each a reference it
@@ -6798,6 +6894,53 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             PUSH(psyco_vi_None());
             goto fine;
         }
+
+#if LE_RESUMES_GENERATORS
+        /* a resumable coroutine's await (psyco_is_resumable_generator):
+           GET_AWAITABLE, LOAD_CONST None, YIELD_FROM */
+        case GET_AWAITABLE:
+            extra_assert(psyco_generator_mode(po) == GENEXPR_RESUMABLE);
+            x = psyco_generic_call(po, cimpl_get_awaitable,
+                                   CfCommonNewRefPyObject, "v", TOP());
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+
+        case YIELD_FROM: {
+            /* what the awaited object yields pauses the frame as ceval's
+               YIELD_FROM leaves it, at the instruction before, so that ceval
+               resumes it at the YIELD_FROM with the receiver on the stack */
+            vinfo_array_t *array = array_new(1);
+            extra_assert(psyco_generator_mode(po) == GENEXPR_RESUMABLE);
+            x = psyco_generic_call(po, cimpl_await_send,
+                                   CfReturnTypeInt | CfPyErrIfNeg, "vvA",
+                                   NTOP(2), TOP(), array);
+            if (x == NULL) {
+                array_release(array);
+                break;
+            }
+            cc = integer_non_null(po, x);
+            vinfo_decref(x, po);
+            if (cc == CC_ERROR) {
+                vinfo_decref(array->items[0], po);
+                array_release(array);
+                break;
+            }
+            POP_DECREF(); /* the value sent */
+            if (runtime_condition_f(po, cc)) {
+                PUSH(array->items[0]);
+                array_release(array);
+                yield_resumable(po, next_instr - 2 * LE_UNIT);
+                break;
+            }
+            POP_DECREF(); /* the receiver */
+            PUSH(array->items[0]);
+            array_release(array);
+            goto fine;
+        }
+#endif
 
         case MAKE_FUNCTION: {
             /* the optional fields in the order ceval pops them; each

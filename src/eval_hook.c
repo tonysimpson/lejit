@@ -246,13 +246,17 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
     return NULL;
 }
 
-/* whether a plain generator's frame 'f' may resume compiled: not while
-   it is thrown into, nor once its code is known not to be resumable. Its
-   code's record, if it has one, in '*x'. */
+/* whether a plain generator's or a coroutine's frame 'f' may resume
+   compiled: not while it is thrown into, nor once its code is known not to
+   be resumable. A coroutine runs compiled only from its start: ceval
+   resumes it at an await, sending into what it awaits. Its code's record,
+   if it has one, in '*x'. */
 static inline bool
 gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
 {
-    if (!(f->f_code->co_flags & CO_GENERATOR) || throwflag)
+    int flags = f->f_code->co_flags;
+    if (!(flags & (CO_GENERATOR | CO_COROUTINE)) || throwflag ||
+        ((flags & CO_COROUTINE) && f->f_lasti >= 0))
         return false;
     *x = le_code_extra_get(f->f_code);
     return *x == NULL || (*x)->nresumes >= 0;
@@ -445,8 +449,8 @@ eval_from_callee(PyThreadState *ts, le_frame_t *f, int throwflag)
 #endif
 
 #if LE_RESUMES_GENERATORS
-/* a plain generator's frame, resumed, whose code's record is 'x' (or
-   NULL) */
+/* a plain generator's or a coroutine's frame, resumed, whose code's
+   record is 'x' (or NULL) */
 static __attribute__((noinline)) PyObject *
 LeGen_Eval(PyThreadState *tstate, le_frame_t *frame, le_code_extra_t *x)
 {
@@ -532,8 +536,8 @@ le_set_interp_eval_frame(void *fn);
 
 static le_eval_frame_fn original_eval_frame = NULL;
 
-/* a plain generator's frame, resumed, whose code's record is 'x' (or
-   NULL) */
+/* a plain generator's or a coroutine's frame, resumed, whose code's
+   record is 'x' (or NULL) */
 static __attribute__((noinline)) PyObject *
 LeGen_Eval(PyFrameObject *frame, le_code_extra_t *x)
 {

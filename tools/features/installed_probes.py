@@ -162,6 +162,12 @@ def FUNCTION_STR():
 
 
 @probe
+def ITER_SEND():
+    """libpython exports PyIter_Send (ctypes)"""
+    return _exported('PyIter_Send')
+
+
+@probe
 def FASTCALL_DICT_TSTATE():
     """libpython exports _PyObject_FastCallDictTstate (ctypes)"""
     return _exported('_PyObject_FastCallDictTstate')
