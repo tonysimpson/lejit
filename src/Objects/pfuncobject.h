@@ -45,9 +45,9 @@ PsycoFunction_NewWithQualName(PsycoObject *po, vinfo_t *codeobj,
                               vinfo_t *globals, vinfo_t *qualname);
 
 /* SET_FUNCTION_ATTRIBUTE: the field of func that 'which' names (0 the
-   closure, 1 the annotations, 2 the keyword defaults, 3 the defaults) set
-   to value (borrowed). func is MAKE_FUNCTION's, still virtual unless
-   something made it real. */
+   closure, 1 the annotations, 2 the keyword defaults, 3 the defaults, 4
+   __annotate__) set to value (borrowed). func is MAKE_FUNCTION's, still
+   virtual unless something made it real; __annotate__ makes it real. */
 EXTERNFN bool
 PsycoFunction_SetField(PsycoObject *po, vinfo_t *func, int which,
                        vinfo_t *value);

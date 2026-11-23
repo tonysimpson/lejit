@@ -1719,9 +1719,13 @@ psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
         }
     }
     /* a traceback frame made for the entry (cimpl_new_frame), not the
-       real frame or a kept one, which are running */
+       real frame or a kept one, which are running; nor a generator's
+       where CPython leaves one that has ended without a caller */
     if (!le_frame_is_executing(f) && le_frame_stack_empty(f) &&
-        le_pyframe_code(f)->co_stacksize >= 3) {
+        le_pyframe_code(f)->co_stacksize >= 3 &&
+        !(LE_HAS_FINISHED_GENERATOR_UNLINKED &&
+          (le_pyframe_code(f)->co_flags &
+           (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))) {
 #if ALL_CHECKS
         PyFrameObject *real;
         stack_frame_info_t **last = innermost_slot(&real);
