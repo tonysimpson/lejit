@@ -706,15 +706,21 @@ psyco_is_fusable_generator(PyCodeObject *co)
 #if LE_RESUMES_GENERATORS
 /* whether a YIELD_VALUE can run while an exception handler's block is
    live: reached by plain control flow from a handler's start (a SETUP_*
-   target) before the handler ends, by POP_EXCEPT or by raising again.
-   Over-approximate where a handler's end falls through (END_FINALLY). */
+   target) before the handler ends, by POP_EXCEPT or by raising again, or
+   by END_FINALLY, which falls through only once the handler is done. A
+   finally body that plain flow enters from its try (before 3.9) ends with
+   an END_FINALLY too: 'depth' counts those entered, for their END_FINALLY
+   to go on. */
 static int
 yields_in_handler(le_code_t c)
 {
-    int units = c.size / LE_UNIT, top = 0, pos;
-    unsigned char seen[units + 1];
+    int units = c.size / LE_UNIT, top = 0, pos, u;
+    signed char depth[units + 1];
+    unsigned char handler[units + 1], queued[units + 1];
     int work[units + 1];
-    memset(seen, 0, units + 1);
+    memset(depth, -1, units + 1);
+    memset(handler, 0, units + 1);
+    memset(queued, 0, units + 1);
     for (pos = 0; pos < c.size;) {
         le_instr_t in = le_instr(c, pos);
         pos = in.next;
@@ -722,18 +728,23 @@ yields_in_handler(le_code_t c)
             case SETUP_EXCEPT:
             case SETUP_FINALLY:
             case SETUP_WITH:
-            case SETUP_ASYNC_WITH: {
-                int h = le_jump_target(c, in) / LE_UNIT;
-                if (!seen[h]) {
-                    seen[h] = 1;
-                    work[top++] = h;
+            case SETUP_ASYNC_WITH:
+                u = in.target / LE_UNIT;
+                handler[u] = 1;
+                if (!queued[u]) {
+                    depth[u] = 0;
+                    queued[u] = 1;
+                    work[top++] = u;
                 }
-            }
         }
     }
     while (top > 0) {
-        le_instr_t in = le_instr(c, work[--top] * LE_UNIT);
-        int next[2], n = 0, k;
+        le_instr_t in;
+        int next[2], n = 0, d, k;
+        u = work[--top];
+        queued[u] = 0;
+        d = depth[u];
+        in = le_instr(c, u * LE_UNIT);
         switch (in.op) {
             case YIELD_VALUE:
                 return 1;
@@ -746,21 +757,35 @@ yields_in_handler(le_code_t c)
             case RERAISE:
 #endif
                 break;
+            case END_FINALLY:
+                if (d > 0) {
+                    d--;
+                    next[n++] = in.next;
+                }
+                break;
             case JUMP_ABSOLUTE:
             case JUMP_FORWARD:
             case CONTINUE_LOOP:
-                next[n++] = le_jump_target(c, in);
+                next[n++] = in.target;
                 break;
             default:
                 if (LE_IS_JABS(in.op) || LE_IS_JREL(in.op))
-                    next[n++] = le_jump_target(c, in);
+                    next[n++] = in.target;
                 next[n++] = in.next;
         }
         for (k = 0; k < n; k++) {
-            int u = next[k] / LE_UNIT;
-            if (next[k] < c.size && !seen[u]) {
-                seen[u] = 1;
-                work[top++] = u;
+            int v = next[k] / LE_UNIT, dv;
+            if (next[k] >= c.size)
+                continue;
+            dv = d + handler[v];
+            if (dv > CO_MAXBLOCKS)
+                dv = CO_MAXBLOCKS;
+            if (dv > depth[v]) {
+                depth[v] = dv;
+                if (!queued[v]) {
+                    queued[v] = 1;
+                    work[top++] = v;
+                }
             }
         }
     }

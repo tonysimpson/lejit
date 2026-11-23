@@ -1441,7 +1441,8 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
                          int nstack, const int *blocks, int nblocks)
 {
     int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
-    int count = INDEX_LOC_LOCALS_PLUS + nplus + GENEXPR_SLOTS + co->co_stacksize;
+    int count =
+        INDEX_LOC_LOCALS_PLUS + nplus + GENEXPR_SLOTS + co->co_stacksize;
     int nwords = nplus + nstack + 1, i;
     PsycoObject *po = PsycoObject_New(count);
     vinfo_t **stack_a = po->vlocals.items + count - co->co_stacksize;
@@ -1456,7 +1457,8 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
     /* the last word is pushed first */
     for (i = nwords - 1; i >= 0; i--) {
         bool owned = i < nlocals || (i >= nplus && i < nplus + nstack);
-        bool null = owned && ((nulls >> (i < nplus ? i : nlocals + i - nplus)) & 1);
+        bool null =
+            owned && ((nulls >> (i < nplus ? i : nlocals + i - nplus)) & 1);
         vinfo_t *v;
         po->stack_depth += sizeof(long);
         v = null ? psyco_vi_Zero()

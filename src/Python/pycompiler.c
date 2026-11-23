@@ -4442,8 +4442,8 @@ psyco_can_go_interpreted(PsycoObject *po)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int i, nstack = STACK_LEVEL();
-    if ((po->pr.co->co_flags & (CO_COROUTINE | CO_ITERABLE_COROUTINE |
-                                CO_ASYNC_GENERATOR)) ||
+    if ((po->pr.co->co_flags &
+         (CO_COROUTINE | CO_ITERABLE_COROUTINE | CO_ASYNC_GENERATOR)) ||
         ((po->pr.co->co_flags & CO_GENERATOR) &&
          psyco_generator_mode(po) != GENEXPR_RESUMABLE))
         return false;
@@ -6343,8 +6343,8 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
             if (!psyco_knowntobe(NTOP(oparg + 2), 0)) {
                 /* or a resumed generator's method under its self, as
                    ceval's LOAD_METHOD left them */
-                extra_assert(opcode == CALL || psyco_generator_mode(po) ==
-                                                   GENEXPR_RESUMABLE);
+                extra_assert(opcode == CALL ||
+                             psyco_generator_mode(po) == GENEXPR_RESUMABLE);
                 null = 0;
                 oparg++;
             }
@@ -6446,8 +6446,8 @@ yield_resumable(PsycoObject *po, int at)
                             "vl", frame, (long)pause))
         return;
     for (i = 0; i < nlocals + nstack; i++) {
-        vinfo_t **slot = i < nlocals ? &LOC_LOCALS_PLUS[i]
-                                     : &stack_a[i - nlocals];
+        vinfo_t **slot =
+            i < nlocals ? &LOC_LOCALS_PLUS[i] : &stack_a[i - nlocals];
         v = *slot;
         /* an unbound local or a NULL item: the slot is already empty */
         if (v != NULL && !psyco_knowntobe(v, 0)) {

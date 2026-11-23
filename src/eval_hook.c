@@ -141,8 +141,7 @@ compile_entry(PyCodeObject *co, le_code_extra_t *x, PyObject *globals,
 static int
 lasti_offset(int lasti)
 {
-    return LE_HAS_LASTI_IN_INSTRUCTIONS && lasti > 0 ? lasti * LE_UNIT
-                                                     : lasti;
+    return LE_HAS_LASTI_IN_INSTRUCTIONS && lasti > 0 ? lasti * LE_UNIT : lasti;
 }
 
 /* the entry compiled for resuming 'f' after f_lasti with 'nulls'
@@ -169,8 +168,8 @@ compile_resume(le_frame_t *f, le_code_extra_t *x, PyObject *mergepoints,
         po = PsycoObject_FromGenFrame(
             co, f->f_globals, f->f_builtins, mergepoints, DEFAULT_RECURSION,
             start, nulls, le_frame_stack_depth(f), blocks, f->f_iblock);
-        codebuf = psyco_compile_code(po, start == 0 ? PsycoObject_Ready(po)
-                                                    : NULL);
+        codebuf =
+            psyco_compile_code(po, start == 0 ? PsycoObject_Ready(po) : NULL);
     }
     psyco_guard_pop(&g);
     LE_COMPILE_END(LE_ENTER_CALL);
@@ -239,8 +238,7 @@ le_gen_to_run(le_frame_t *f)
     if (mergepoints == Py_None ||
         !(psyco_mp_flags(mergepoints) & MP_FLAGS_RESUMABLE))
         return NULL;
-    for (i = 0; i < nlocals; i++)
-        nulls |= (uint64_t)(slots[i] == NULL) << i;
+    for (i = 0; i < nlocals; i++) nulls |= (uint64_t)(slots[i] == NULL) << i;
     for (i = 0; i < nstack; i++)
         nulls |= (uint64_t)(stack[i] == NULL) << (nlocals + i);
     p = resume_point(x, co, f->f_lasti);
@@ -291,8 +289,7 @@ LeGen_Run(CodeBufferObject *codebuf, le_frame_t *f)
     le_frame_push(tstate, f);
     le_frame_set_executing(f, 1);
     if (le_eval_breaker_at_entry(
-            co, f->f_lasti < 0 ? 0 : lasti_offset(f->f_lasti) + LE_UNIT) <
-        0) {
+            co, f->f_lasti < 0 ? 0 : lasti_offset(f->f_lasti) + LE_UNIT) < 0) {
         PyTraceBack_Here(f);
         /* ceval's unwinding, top first */
         for (i = nstack; i-- > 0;) Py_CLEAR(stack[i]);

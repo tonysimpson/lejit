@@ -928,8 +928,8 @@ typedef struct le_owner_s {
 #define LE_RESUME_ENTRIES 4
 typedef struct {
     uint64_t nulls;
-    PyObject *code;     /* codebuf, Py_None if compiling failed; owned */
-    PyObject *globals;  /* as entry_globals and entry_builtins */
+    PyObject *code;    /* codebuf, Py_None if compiling failed; owned */
+    PyObject *globals; /* as entry_globals and entry_builtins */
     PyObject *builtins;
 } le_resume_entry_t;
 typedef struct {

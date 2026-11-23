@@ -560,11 +560,13 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
    which follows them, with the stack's depth (le_frame_stack_depth),
    f_lasti at the yield and its blocks. Compiled code stores into
    f_localsplus by its offset. */
-#define LE_OFS_PyFrameObject__f_localsplus offsetof(PyFrameObject, f_localsplus)
+#define LE_OFS_PyFrameObject__f_localsplus \
+    offsetof(PyFrameObject, f_localsplus)
 #define LE_SIZE2_PyFrameObject__f_localsplus 3
 #define LE_UNSIGNED_PyFrameObject__f_localsplus 0
 _Static_assert(__builtin_types_compatible_p(
-                   __typeof__(((PyFrameObject *)0)->f_localsplus), PyObject *[1]),
+                   __typeof__(((PyFrameObject *)0)->f_localsplus),
+                   PyObject *[1]),
                "LeJIT: PyFrameObject.f_localsplus is not PyObject *[1]");
 /* the depth of a paused frame's stack */
 static inline int
