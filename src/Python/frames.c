@@ -69,6 +69,7 @@
 #include "../mechanisms/frames.h"
 /* le_recursion_suspend and le_recursion_resume */
 #include "../codegen.h"
+#include "../mechanisms/tracing.h"
 #include "pycompiler.h"
 #include "../bytecode.h"
 #include "../dispatcher.h"
@@ -144,14 +145,20 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
     return p;
 }
 
+/* Read and written at every entry into compiled code, so kept in the
+   static TLS block (initial-exec), read straight off %fs, not looked up
+   through __tls_get_addr. Both take a few bytes of glibc's reserve for
+   modules loaded later. */
+#define LE_FAST_TLS __attribute__((tls_model("initial-exec")))
+
 /* the records of the real frames LeCode_Run runs on this thread,
    innermost first */
-static _Thread_local FrameRuntime *frame_runs;
+static _Thread_local FrameRuntime *frame_runs LE_FAST_TLS;
 
 /* Every thread's frame_runs, for the owner scan (psyco_frames_running):
    its address is in a capsule in the thread state's dict, which goes when
    the thread state is cleared, before the thread ends. */
-static _Thread_local char runs_listed;
+static _Thread_local char runs_listed LE_FAST_TLS;
 static PyObject *runs_key; /* a key no one else has */
 static bool runs_lost;     /* a thread's frame_runs couldn't be listed */
 
@@ -226,6 +233,7 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
     fr->entry_locals = NULL;
     fr->n_entry_locals = 0;
     fr->resumed = 0;
+    fr->exposed = 0;
     fr->next = frame_runs;
     frame_runs = fr;
     if (fr->next == NULL && !runs_listed)
@@ -250,6 +258,10 @@ psyco_frame_start_unregister(FrameRuntime *fr)
     /* fr is the innermost unless the C stack was switched under it */
     while (*p != fr) p = &(*p)->next;
     *p = fr->next;
+#ifdef PyFrameLocalsProxy_Check
+    if (fr->exposed)
+        psyco_frames_exposed--;
+#endif
     for (i = 0; i < fr->n_entry_locals; i++) Py_XDECREF(fr->entry_locals[i]);
     PyMem_Free(fr->entry_locals);
 }
@@ -568,6 +580,7 @@ typedef struct {
     code_t *ret;               /* the call's return address */
     PyFrameObject *frame;
     int resumed; /* ceval runs it now */
+    int exposed; /* expose */
 } activation_t;
 
 static activation_t *acts = NULL;
@@ -777,6 +790,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
     a->ret = *ret;
     a->frame = f; /* the table's reference */
     a->resumed = 0;
+    a->exposed = 0;
     *ret = psyco_return_barrier;
     Py_INCREF(f);
     return f;
@@ -797,6 +811,10 @@ psyco_activation_returned(long *sp)
     /* the call is over, as its caller is about to say: the frame's
        finaliser may walk the frames */
     *a->slot = (stack_frame_info_t *)-1;
+#ifdef PyFrameLocalsProxy_Check
+    if (a->exposed)
+        psyco_frames_exposed--;
+#endif
     act_remove(a);
     le_pyframe_set_executing(f, 0);
     if (le_pyframe_code(f)->co_stacksize >= 2 &&
@@ -1300,18 +1318,47 @@ catcher_caller(PyFrameObject *f)
     return b.top;
 }
 
+#ifdef PyFrameLocalsProxy_Check
+DEFINEVAR int psyco_frames_exposed = 0;
+
+/* the exposed flag of the compiled frame frame object f stands for, if
+   it is one that can go on in ceval (psyco_resume_begin finds it): the
+   real frame LeCode_Run runs, or a kept frame */
+static int *
+exposed_flag(PyFrameObject *f)
+{
+    FrameRuntime *fr;
+    activation_t *a;
+    if (runs_compiled(f)) {
+        fr = psyco_frame_start_get(le_frame_of(f));
+        if (fr->psy_code == le_pyframe_code(f) && !fr->resumed)
+            return &fr->exposed;
+        return NULL;
+    }
+    if ((a = live_activation(f)) != NULL)
+        return &a->exposed;
+    return NULL;
+}
+#endif
+
 /* A frame's locals as they are now, for each way Python reads them
    (frame.f_locals; locals and vars by another name, cimpl_with_frame;
    gc.get_referents, le_get_referents): a real frame compiled code runs, a
    kept frame, an emulated frame and a catching callee's traceback frame
    read theirs from their compiled frame while it is in a call that says
-   where they are (slot_locals). Else they stay as last written. */
+   where they are (slot_locals). Else they stay as last written. An
+   exposed frame's are its frame object's already (expose). */
 static void
 frame_sync_locals(PyFrameObject *f)
 {
     activation_t *a;
     stack_frame_info_t **own, **tag;
     FrameRuntime *fr;
+#ifdef PyFrameLocalsProxy_Check
+    int *exposed = exposed_flag(f);
+    if (exposed != NULL && *exposed)
+        return;
+#endif
     if (runs_compiled(f)) {
         fr = psyco_frame_start_get(le_frame_of(f));
         if (fr->psy_code == le_pyframe_code(f))
@@ -1328,6 +1375,52 @@ frame_sync_locals(PyFrameObject *f)
         fill_noted_locals(f);
     }
 }
+
+#ifdef PyFrameLocalsProxy_Check
+/* PEP 667's frame-locals proxy reads and writes the frame object's locals
+   directly. Each use brings them up to date first. A write makes them the
+   compiled frame's (exposed): they are left to the proxy from then on, and
+   the compiled frame goes on in ceval with them at its next resume test,
+   which follows the instruction (pycompiler.c:resume_if_tracing). A frame
+   that can't go on there (an emulated or inlined frame) does not see what
+   is written. */
+static void
+expose(PyFrameObject *f, int write)
+{
+    int *exposed = exposed_flag(f);
+    if (exposed != NULL && *exposed)
+        return;
+    frame_sync_locals(f);
+    if (write && exposed != NULL) {
+        *exposed = 1;
+        psyco_frames_exposed++;
+    }
+}
+
+/* the compiled frame for code 'co' that a resume would go on with
+   (psyco_resume_begin) is exposed */
+static int
+exposed_here(PyCodeObject *co)
+{
+    PyFrameObject *real;
+    stack_frame_info_t **slot = innermost_slot(&real);
+    activation_t *a;
+    FrameRuntime *fr;
+    if (slot == NULL && real != NULL && le_pyframe_code(real) == co) {
+        fr = psyco_frame_start_get(le_frame_of(real));
+        return fr != NULL && fr->exposed;
+    }
+    if (slot != NULL && (a = act_at(slot, co)) != NULL && !a->resumed)
+        return a->exposed;
+    return 0;
+}
+
+DEFINEFN int
+psyco_frame_goes_interpreted(PyCodeObject *co)
+{
+    return le_tracing_now(PyThreadState_GET()) || exposed_here(co);
+}
+#endif
 
 static PyObject *
 frame_get_back(PyFrameObject *frame, void *closure)
@@ -1500,14 +1593,16 @@ static PyMethodDef clear_def = {
    none or another emulated frame of the same code made when its entry
    was, or a real frame entered through C whose f_back is the frame
    LeCode_Run runs, while the code that one runs is in a compiled callee
-   or inlined frame, which 'f' is. */
+   or inlined frame, which 'f' is. A fused generator's frame is left
+   without one, as a generator's frame has no caller once it has stopped. */
 DEFINEFN
 void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
 {
     PyFrameObject *back = callee->f_back;
     FrameRuntime *fr;
-    if (callee == f || back == f || le_frame_is_executing(callee))
+    if (callee == f || back == f || le_frame_is_executing(callee) ||
+        (le_pyframe_code(callee)->co_flags & CO_GENERATOR))
         return;
     if (back != NULL && !(le_pyframe_code(back) == le_pyframe_code(f) &&
                           !le_frame_is_executing(back))) {
@@ -1745,7 +1840,7 @@ le_getframemodulename(PyObject *self, PyObject *args, PyObject *kwds)
             return NULL;
         Py_RETURN_NONE;
     }
-    func = le_frame_of(f)->f_funcobj;
+    func = LE_FRAME_FUNCOBJ(le_frame_of(f));
     if (func != NULL && PyFunction_Check(func)) {
         r = PyFunction_GetModule(func);
         if (r == NULL) {
@@ -1970,11 +2065,27 @@ frame_builtins_init(void)
     }
 }
 
-static PyMethodDef le_warn_def = {
-    "warn", (PyCFunction)(void (*)(void))le_warn, METH_VARARGS | METH_KEYWORDS,
-    "warn(message, category=None, stacklevel=1)\n\n"
-    "Issue a warning, or maybe ignore it or raise an exception, counting\n"
-    "frames of code compiled by LeJIT for stacklevel."};
+/* a replacement of a module's C function takes the original's docstring,
+   so its text signature, and is bound to the module as the original is */
+static PyObject *
+replacement_new(PyMethodDef *def, PyObject *mod, PyObject *original)
+{
+    PyObject *name;
+    PyObject *fn;
+    if (original == NULL)
+        return NULL;
+    if (PyCFunction_Check(original))
+        def->ml_doc = ((PyCFunctionObject *)original)->m_ml->ml_doc;
+    name = PyModule_GetNameObject(mod);
+    if (name == NULL)
+        return NULL;
+    fn = PyCFunction_NewEx(def, mod, name);
+    Py_DECREF(name);
+    return fn;
+}
+
+static PyMethodDef le_warn_def = {"warn", (PyCFunction)(void (*)(void))le_warn,
+                                  METH_VARARGS | METH_KEYWORDS, NULL};
 
 /* replaces warn in _warnings and, if imported, warnings */
 static void
@@ -1986,7 +2097,7 @@ warn_init(void)
         return;
     }
     original_warn = PyObject_GetAttrString(mod, "warn");
-    fn = PyCFunction_New(&le_warn_def, NULL);
+    fn = replacement_new(&le_warn_def, mod, original_warn);
     if (original_warn == NULL || fn == NULL ||
         PyObject_SetAttrString(mod, "warn", fn) < 0)
         PyErr_Print();
@@ -2035,30 +2146,207 @@ le_get_referents(PyObject *self, PyObject *args)
     return result;
 }
 
-static PyMethodDef le_get_referents_def = {
-    "get_referents", le_get_referents, METH_VARARGS,
-    "get_referents(*objs) -> list\n"
-    "Return the list of objects that are directly referred to by objs."};
+static PyMethodDef le_get_referents_def = {"get_referents", le_get_referents,
+                                           METH_VARARGS, NULL};
 
 static void
 get_referents_init(void)
 {
-    PyObject *mod = PyImport_ImportModule("gc"), *name, *fn = NULL;
+    PyObject *mod = PyImport_ImportModule("gc"), *fn;
     if (mod == NULL) {
         PyErr_Print();
         return;
     }
     original_get_referents = PyObject_GetAttrString(mod, "get_referents");
-    name = PyUnicode_FromString("gc");
-    if (name != NULL)
-        fn = PyCFunction_NewEx(&le_get_referents_def, NULL, name);
-    if (original_get_referents == NULL || fn == NULL ||
-        PyObject_SetAttrString(mod, "get_referents", fn) < 0)
+    fn = replacement_new(&le_get_referents_def, mod, original_get_referents);
+    if (fn == NULL || PyObject_SetAttrString(mod, "get_referents", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
-    Py_XDECREF(name);
     Py_DECREF(mod);
 }
+
+#ifdef PyFrameLocalsProxy_Check
+/* Every way into PEP 667's frame-locals proxy, its slots and its methods,
+   exposes its frame first (expose): the proxy itself reads
+   and writes the frame object's locals. Its methods' functions are read
+   from their PyMethodDef at each call, so they are replaced there. */
+static void
+expose_proxy(PyObject *o, int write)
+{
+    if (PyFrameLocalsProxy_Check(o))
+        expose(((PyFrameLocalsProxyObject *)o)->frame, write);
+}
+
+static struct {
+    reprfunc tp_repr;
+    richcmpfunc tp_richcompare;
+    getiterfunc tp_iter;
+    binaryfunc nb_or, nb_inplace_or;
+    objobjproc sq_contains;
+    lenfunc mp_length;
+    binaryfunc mp_subscript;
+    objobjargproc mp_ass_subscript;
+} proxy_slots;
+
+static PyObject *
+proxy_repr(PyObject *self)
+{
+    expose_proxy(self, 0);
+    return proxy_slots.tp_repr(self);
+}
+static PyObject *
+proxy_richcompare(PyObject *self, PyObject *other, int op)
+{
+    expose_proxy(self, 0);
+    expose_proxy(other, 0);
+    return proxy_slots.tp_richcompare(self, other, op);
+}
+static PyObject *
+proxy_iter(PyObject *self)
+{
+    expose_proxy(self, 0);
+    return proxy_slots.tp_iter(self);
+}
+static PyObject *
+proxy_or(PyObject *a, PyObject *b)
+{
+    expose_proxy(a, 0);
+    expose_proxy(b, 0);
+    return proxy_slots.nb_or(a, b);
+}
+static PyObject *
+proxy_inplace_or(PyObject *a, PyObject *b)
+{
+    expose_proxy(a, 1);
+    expose_proxy(b, 0);
+    return proxy_slots.nb_inplace_or(a, b);
+}
+static int
+proxy_contains(PyObject *self, PyObject *key)
+{
+    expose_proxy(self, 0);
+    return proxy_slots.sq_contains(self, key);
+}
+static Py_ssize_t
+proxy_length(PyObject *self)
+{
+    expose_proxy(self, 0);
+    return proxy_slots.mp_length(self);
+}
+static PyObject *
+proxy_subscript(PyObject *self, PyObject *key)
+{
+    expose_proxy(self, 0);
+    return proxy_slots.mp_subscript(self, key);
+}
+static int
+proxy_ass_subscript(PyObject *self, PyObject *key, PyObject *v)
+{
+    expose_proxy(self, 1);
+    return proxy_slots.mp_ass_subscript(self, key, v);
+}
+
+/* the methods: one wrapper per entry, for METH_O, METH_NOARGS and plain
+   METH_FASTCALL ones; those that may store are dict's (update, pop,
+   setdefault) */
+#define PROXY_METHODS 16
+static PyCFunction proxy_methods[PROXY_METHODS];
+static int proxy_writes[PROXY_METHODS];
+#define PROXY_METHOD(i)                                                       \
+    static PyObject *proxy_meth_##i(PyObject *self, PyObject *arg)            \
+    {                                                                         \
+        expose_proxy(self, proxy_writes[i]);                                  \
+        return proxy_methods[i](self, arg);                                   \
+    }                                                                         \
+    static PyObject *proxy_fast_##i(PyObject *self, PyObject *const *args,    \
+                                    Py_ssize_t n)                             \
+    {                                                                         \
+        expose_proxy(self, proxy_writes[i]);                                  \
+        return ((_PyCFunctionFast)(void (*)(void))proxy_methods[i])(self,     \
+                                                                    args, n); \
+    }
+/* clang-format off */
+PROXY_METHOD(0)  PROXY_METHOD(1)  PROXY_METHOD(2)  PROXY_METHOD(3)
+PROXY_METHOD(4)  PROXY_METHOD(5)  PROXY_METHOD(6)  PROXY_METHOD(7)
+PROXY_METHOD(8)  PROXY_METHOD(9)  PROXY_METHOD(10) PROXY_METHOD(11)
+PROXY_METHOD(12) PROXY_METHOD(13) PROXY_METHOD(14) PROXY_METHOD(15)
+#define PROXY_ENTRY(i) \
+    {proxy_meth_##i, (PyCFunction)(void (*)(void))proxy_fast_##i}
+static const PyCFunction proxy_wrappers[PROXY_METHODS][2] = {
+    PROXY_ENTRY(0),  PROXY_ENTRY(1),  PROXY_ENTRY(2),  PROXY_ENTRY(3),
+    PROXY_ENTRY(4),  PROXY_ENTRY(5),  PROXY_ENTRY(6),  PROXY_ENTRY(7),
+    PROXY_ENTRY(8),  PROXY_ENTRY(9),  PROXY_ENTRY(10), PROXY_ENTRY(11),
+    PROXY_ENTRY(12), PROXY_ENTRY(13), PROXY_ENTRY(14), PROXY_ENTRY(15)};
+/* clang-format on */
+
+static void
+frame_locals_proxy_init(void)
+{
+    PyTypeObject *t = &PyFrameLocalsProxy_Type;
+    PyMethodDef *m;
+    int i;
+    if (proxy_slots.tp_repr != NULL)
+        return; /* done before */
+#define WRAP_SLOT(where, field, ours)                    \
+    do {                                                 \
+        if ((where) != NULL && (where)->field != NULL) { \
+            proxy_slots.field = (where)->field;          \
+            (where)->field = ours;                       \
+        }                                                \
+    } while (0)
+    psyco_assert(t->tp_repr != NULL);
+    WRAP_SLOT(t, tp_repr, proxy_repr);
+    WRAP_SLOT(t, tp_richcompare, proxy_richcompare);
+    WRAP_SLOT(t, tp_iter, proxy_iter);
+    WRAP_SLOT(t->tp_as_number, nb_or, proxy_or);
+    WRAP_SLOT(t->tp_as_number, nb_inplace_or, proxy_inplace_or);
+    WRAP_SLOT(t->tp_as_sequence, sq_contains, proxy_contains);
+    WRAP_SLOT(t->tp_as_mapping, mp_length, proxy_length);
+    WRAP_SLOT(t->tp_as_mapping, mp_subscript, proxy_subscript);
+    WRAP_SLOT(t->tp_as_mapping, mp_ass_subscript, proxy_ass_subscript);
+#undef WRAP_SLOT
+    /* the slots' own methods (__setitem__, __len__, ...) call the
+       functions they were made with */
+    {
+        PyObject *key, *v;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(le_type_dict(t), &pos, &key, &v)) {
+            PyWrapperDescrObject *d = (PyWrapperDescrObject *)v;
+            if (Py_TYPE(v) != &PyWrapperDescr_Type)
+                continue;
+#define WRAPPED(field, ours)                           \
+    do {                                               \
+        if (proxy_slots.field != NULL &&               \
+            d->d_wrapped == (void *)proxy_slots.field) \
+            d->d_wrapped = (void *)ours;               \
+    } while (0)
+            WRAPPED(tp_repr, proxy_repr);
+            WRAPPED(tp_richcompare, proxy_richcompare);
+            WRAPPED(tp_iter, proxy_iter);
+            WRAPPED(nb_or, proxy_or);
+            WRAPPED(nb_inplace_or, proxy_inplace_or);
+            WRAPPED(sq_contains, proxy_contains);
+            WRAPPED(mp_length, proxy_length);
+            WRAPPED(mp_subscript, proxy_subscript);
+            WRAPPED(mp_ass_subscript, proxy_ass_subscript);
+#undef WRAPPED
+        }
+    }
+    for (i = 0, m = t->tp_methods; m != NULL && m->ml_name != NULL; m++) {
+        int kind = m->ml_flags & ~METH_COEXIST;
+        int fast = kind == METH_FASTCALL;
+        if (kind != METH_O && kind != METH_NOARGS && !fast)
+            continue;
+        psyco_assert(i < PROXY_METHODS);
+        proxy_methods[i] = m->ml_meth;
+        proxy_writes[i] = strcmp(m->ml_name, "update") == 0 ||
+                          strcmp(m->ml_name, "pop") == 0 ||
+                          strcmp(m->ml_name, "setdefault") == 0;
+        m->ml_meth = proxy_wrappers[i][fast];
+        i++;
+    }
+}
+#endif
 
 static PyMethodDef le_getframe_def = {
     "_getframe", (PyCFunction)(void (*)(void))le_getframe,
@@ -2092,6 +2380,9 @@ psyco_frames_init(void)
     Py_XDECREF(sysmod);
     warn_init();
     get_referents_init();
+#ifdef PyFrameLocalsProxy_Check
+    frame_locals_proxy_init();
+#endif
     frame_builtins_init();
     fn = PyDescr_NewGetSet(&PyFrame_Type, &back_getset);
     if (fn == NULL ||
@@ -2152,6 +2443,9 @@ struct resume_s {
     PyFrameObject *catcher;
     stack_frame_info_t **slot; /* the compiled frame's record, or NULL */
     int nvalues;
+    /* 'f' keeps its locals, not the compiled frame's: they were exposed
+       (expose) */
+    int keep_locals;
 #if !LE_HAS_EXCEPTION_TABLE
     int iblock;
     PyTryBlock blocks[CO_MAXBLOCKS];
@@ -2201,15 +2495,33 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         *word = NULL; /* its reference is st->catcher's */
     }
     st->catcher = c;
+    st->keep_locals = 0;
     st->slot = innermost_slot(&real);
     if (st->slot == NULL && real != NULL && le_pyframe_code(real) == co) {
         st->f = real;
         Py_INCREF(real);
+#ifdef PyFrameLocalsProxy_Check
+        {
+            FrameRuntime *fr = psyco_frame_start_get(le_frame_of(real));
+            if (fr != NULL && fr->exposed) {
+                fr->exposed = 0;
+                psyco_frames_exposed--;
+                st->keep_locals = 1;
+            }
+        }
+#endif
     }
     else if (st->slot != NULL && (a = act_at(st->slot, co)) != NULL &&
              !a->resumed) {
         /* the frame asked for while compiled code ran the call */
         a->resumed = 1;
+#ifdef PyFrameLocalsProxy_Check
+        if (a->exposed) {
+            a->exposed = 0;
+            psyco_frames_exposed--;
+            st->keep_locals = 1;
+        }
+#endif
         st->f = a->frame;
         Py_INCREF(st->f);
         if (co->co_stacksize >= 2)
@@ -2316,7 +2628,7 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
 
     /* the old locals go only once all the new ones are in: one may hold
        the last reference to another's value */
-    for (i = 0; i < nlocals; i++) {
+    for (i = 0; i < nlocals && !st->keep_locals; i++) {
         PyObject *old = locals[i];
         locals[i] = st->values[i];
         st->values[i] = old;
@@ -2325,6 +2637,10 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
         le_pyframe_stack(f)[i] = st->values[nlocals + i];
     le_frame_set_stack_depth(f, (int)nstack);
     le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
+#if LE_HAS_FRAME_INSTR_PTR
+    /* ceval goes on from the instruction at the place, not after it */
+    LE_FRAME_PLACE(le_frame_of(f))++;
+#endif
 #if !LE_HAS_EXCEPTION_TABLE
     f->f_iblock = st->iblock;
     memcpy(f->f_blockstack, st->blocks, st->iblock * sizeof(PyTryBlock));
@@ -2363,7 +2679,7 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     }
     else
         kept_back = NULL;
-#if LE_PYFRAME_RUN_TO_END
+#if LE_HAS_EVAL_FRAME_POPS
     (void)marked;
     /* the events of a frame that runs past RESUME, if the code gives
        none yet; without them it still runs */
