@@ -44,9 +44,10 @@ cimpl_ceil_to_int(double x)
         PyTypeObject *t = Psyco_NeedType(po, v);                              \
         if (t == NULL)                                                        \
             return NULL;                                                      \
+        /* the real function may read the module's state, from its self */    \
         if (t != &PyFloat_Type)                                               \
-            return psyco_generic_call(po, fallback_##func,                    \
-                                      CfCommonNewRefPyObject, "lv", NULL, v); \
+            return psyco_generic_call(                                        \
+                po, fallback_##func, CfCommonNewRefPyObject, "vv", vself, v); \
         a = PsycoFloat_AS_DOUBLE(po, v); /* borrowed */                       \
         if (a == NULL)                                                        \
             return NULL;                                                      \

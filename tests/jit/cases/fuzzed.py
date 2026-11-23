@@ -72,11 +72,33 @@ def recursion_message():
         return str(e)
 
 
+def c_calls_counted():
+    import sys
+    # CPython's message names the C check that trips ('in comparison') only
+    # where C calls count in the same depth as Python's, which the limit
+    # then stops a nested repr at
+    old = sys.getrecursionlimit()
+    nested = []
+    for _ in range(500):
+        nested = [nested]
+    sys.setrecursionlimit(100)
+    try:
+        repr(nested)
+        return False
+    except RecursionError:
+        return True
+    finally:
+        sys.setrecursionlimit(old)
+
+
+NAMES_CHECK = c_calls_counted()
+
 CASES = [
     ('str_index_len', [('a',), ('abc',), ('',), ('été',)], {}),
     ('str_index_len_neg', [('a',), ('xyz',)], {}),
     ('folded_nan_in_set', [(2,), (3,)], {}),
     ('tuple_repeat_huge', [()], {}),
     ('repeat_by_constant_index', [(2,), (3,), ('s',), (2**63,)], {}),
-    ('recursion_message', [()], {'xfail': 'the RecursionError message names another check'}),
+    ('recursion_message', [()],
+     {'xfail': 'the RecursionError message names another check'} if NAMES_CHECK else {}),
 ]
