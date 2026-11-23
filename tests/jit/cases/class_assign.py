@@ -215,6 +215,32 @@ def _mod_class(m):
     m.__class__ = Mod
 
 
+def _module_subclass_misread():
+    # Where CPython's specialised attribute load serves a module subclass
+    # from the module's dict, ignoring a property the subclass has, plain
+    # CPython's answer depends on how warm the site is; run here plain, when
+    # run.py reads the cases
+    class P(types.ModuleType):
+        answer = property(lambda self: 42)
+
+    def read(m):
+        return m.answer
+    seen = set()
+    for i in range(20):
+        m = types.ModuleType('probe')
+        m.answer = 'attr'
+        read(m)
+        m.__class__ = P
+        seen.add(read(m))
+    return 'attr' in seen
+
+
+MODULE_SUBCLASS_MISREAD = _module_subclass_misread()
+MISREAD = ({'xfail': "CPython's specialised load of a module's attribute "
+            "ignores a module subclass's property"}
+           if MODULE_SUBCLASS_MISREAD else {})
+
+
 def module_class(n):
     # a plain module (a static type) can become a ModuleType subclass
     out = []
@@ -674,7 +700,7 @@ CASES = [
     ('in_a_condition', [(4,)], {}),
     ('passed_on', [(4,)], {}),
     ('list_subclass', [(4,)], {}),
-    ('module_class', [(3,)], {}),
+    ('module_class', [(3,)], MISREAD),
     ('held_in_tuple', [(4,)], {}),
     ('by_finaliser', [(4,)], {}),
     ('global_instance', [(6,)], {}),
@@ -690,7 +716,7 @@ CASES = [
     ('class_attribute', [(6,)], {}),
     ('default_argument', [(6,)], {}),
     ('in_constant_tuple', [(6,)], {}),
-    ('module_constant', [(4,)], {}),
+    ('module_constant', [(4,)], MISREAD),
     ('enum_constants', [(6,)], {}),
     ('megamorphic_type', [(10, False)] * 5 + [(10, True)] * 6, {}),
     ('changed_mid_instruction', [()], {}),
