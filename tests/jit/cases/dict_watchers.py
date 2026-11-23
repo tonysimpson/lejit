@@ -2,6 +2,8 @@
 # watcher its events, as CPython's own stores do, and must leave the dict
 # watched. _testcapi's watchers record the events; where CPython has no dict
 # watchers, only the stores' results are compared.
+from types import FunctionType
+
 try:
     import _testcapi
 except ImportError:
@@ -152,11 +154,8 @@ def builtin_deleted(n):
     return seen
 
 
-FRESH_GLOBALS = compile('''
 def read_x():
-    return X
-out = [read_x() for i in range(50)]
-''', 'fresh_globals', 'exec')
+    return X  # noqa: F821
 
 
 def fresh_globals(n):
@@ -164,10 +163,12 @@ def fresh_globals(n):
     # as the last is freed, so often at its address
     seen = []
     for i in range(n):
-        g = {'X': i}
-        exec(FRESH_GLOBALS, g)
-        seen.append(g['out'][-1] if g['out'] == [i] * 50 else g['out'])
-        del g
+        f = FunctionType(read_x.__code__, {'X': i})
+        got = 0
+        for j in range(50):
+            got += f()
+        seen.append(got)
+        del f
     return seen
 
 
