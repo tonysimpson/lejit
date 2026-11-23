@@ -438,6 +438,74 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
     f->f_frame->stacktop = LE_FRAME_CODE(f->f_frame)->co_nlocalsplus + n;
 #endif
 }
+/* A generator's frame as ceval leaves it at a yield and resumes it
+   (eval_hook.c:LeGen_Run, pycompiler.c): its locals and its value stack,
+   which follows them, with the stack's depth (le_frame_stack_depth), its
+   place at the yield and its generator's state. Compiled code stores into
+   localsplus by its offset. */
+#define LE_OFS_le_frame_t__localsplus offsetof(le_frame_t, localsplus)
+#define LE_SIZE2_le_frame_t__localsplus 3
+#define LE_UNSIGNED_le_frame_t__localsplus 0
+_Static_assert(sizeof(((le_frame_t *)0)->localsplus[0]) == sizeof(void *),
+               "LeJIT: a frame's localsplus words are not pointers");
+/* the frame is a generator's, resumed: the call of a generator function
+   runs its frame first to RETURN_GENERATOR, which makes the generator */
+static inline int
+le_frame_is_gen(le_frame_t *f)
+{
+    return f->owner == FRAME_OWNED_BY_GENERATOR;
+}
+/* the generator whose frame f is */
+static inline PyGenObject *
+le_frame_gen(le_frame_t *f)
+{
+    return (PyGenObject *)((char *)f - offsetof(PyGenObject, gi_iframe));
+}
+/* the depth of a paused frame's stack */
+static inline int
+le_frame_stack_depth(le_frame_t *f)
+{
+#if LE_HAS_FRAME_STACKREFS
+    return (int)(f->stackpointer - f->localsplus) -
+           LE_FRAME_CODE(f)->co_nlocalsplus;
+#else
+    return f->stacktop - LE_FRAME_CODE(f)->co_nlocalsplus;
+#endif
+}
+static inline void
+le_gen_frame_set_depth(le_frame_t *f, int n)
+{
+#if LE_HAS_FRAME_STACKREFS
+    f->stackpointer = f->localsplus + LE_FRAME_CODE(f)->co_nlocalsplus + n;
+#else
+    f->stacktop = LE_FRAME_CODE(f)->co_nlocalsplus + n;
+#endif
+}
+/* the generator's frame runs, its locals and stack held by compiled code,
+   their slots empty: gen_send_ex has marked it as running */
+static inline void
+le_gen_frame_run(le_frame_t *f)
+{
+    le_gen_frame_set_depth(f, 0);
+}
+/* paused at the yield at 'lasti' with 'nstack' items under the value, as
+   ceval's YIELD_VALUE leaves it */
+static inline void
+le_gen_frame_pause(le_frame_t *f, int lasti, int nstack)
+{
+    LE_FRAME_PLACE(f) = _PyCode_CODE(LE_FRAME_CODE(f)) + lasti;
+    le_gen_frame_set_depth(f, nstack);
+    le_frame_gen(f)->gi_frame_state = FRAME_SUSPENDED;
+}
+/* the run that gave 'result' has ended: paused (le_gen_frame_pause, or
+   ceval's own YIELD_VALUE), else returned or raised with its stack empty,
+   which gen_send_ex then marks and clears */
+static inline void
+le_gen_frame_end(le_frame_t *f, PyObject *result)
+{
+    (void)f;
+    (void)result;
+}
 #else
 /* Frames as Python sees them are PyFrameObjects: the thread's
    innermost is tstate->frame, each links to its caller by f_back, and a
@@ -682,6 +750,14 @@ le_frame_stack_depth(PyFrameObject *f)
 #else
     return (int)(f->f_stacktop - f->f_valuestack);
 #endif
+}
+/* the frame is a generator's, resumed: a generator function's frame is
+   made when the generator is */
+static inline int
+le_frame_is_gen(le_frame_t *f)
+{
+    (void)f;
+    return 1;
 }
 /* the generator's frame runs, its stack held by compiled code: as ceval's
    prologue leaves it */
