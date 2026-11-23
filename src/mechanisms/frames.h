@@ -997,18 +997,38 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
     return result;
 }
 #elif LE_HAS_EVAL_FRAME_POPS
-/* Whoever runs the frame clears and pops it, with functions CPython hides,
-   so ceval is given it to end (le_frame_throw_out). For a result, the
-   exception is 'done', which is taken back. A frame object that outlives
-   the frame keeps its place, which ceval would show as the first line,
-   and the f_back psyco_frame_returned gave it, which ceval would replace
-   with the frame it was called from. */
+/* Whoever runs the frame clears and pops it, with functions CPython hides.
+   A frame of the thread's with no frame object, not the first in its
+   data-stack chunk, is cleared and popped here as ceval's
+   clear_thread_frame does it. Any other is given to ceval to end
+   (le_frame_throw_out): for a result, the exception is 'done', which is
+   taken back. A frame object that outlives the frame keeps its place,
+   which ceval would show as the first line, and the f_back
+   psyco_frame_returned gave it, which ceval would replace with the frame
+   it was called from. */
 static inline PyObject *
 le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
                 PyObject *done)
 {
     PyFrameObject *fo = f->frame_obj, *back = NULL;
     _Py_CODEUNIT *at = LE_FRAME_PLACE(f);
+    if (fo == NULL && f->owner == FRAME_OWNED_BY_THREAD &&
+        (PyObject **)f != &ts->datastack_chunk->data[0]) {
+        PyCodeObject *co = LE_FRAME_CODE(f);
+        int k, n = co->co_nlocalsplus + le_frame_stack_depth(f);
+#if LE_HAS_C_RECURSION_REMAINING
+        ts->c_recursion_remaining--;
+#endif
+        for (k = 0; k < n; k++) Py_XDECREF(le_frame_word_take(f, k));
+        Py_XDECREF(f->f_locals);
+        Py_DECREF(LE_FRAME_FUNCOBJ(f));
+        Py_DECREF(co);
+#if LE_HAS_C_RECURSION_REMAINING
+        ts->c_recursion_remaining++;
+#endif
+        ts->datastack_top = (PyObject **)f;
+        return result;
+    }
     if (fo != NULL) {
         Py_INCREF(fo);
         back = fo->f_back;
