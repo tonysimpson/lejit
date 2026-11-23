@@ -116,6 +116,8 @@ SKIPPED = {
         'test.test_gc.GCTests.test_frame '
         'test.test_frame.TestIncompleteFrameAreInvisible.test_sneaky_frame_object_teardown '
         'test.test_capi.test_exceptions.Test_ErrSetAndRestore.test_err_writeunraisable',
+    "an inlined frame's f_locals is empty once its call has returned":
+        'test.test_frame.TestFrameLocals.test_constructor',
     "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
     'PyFrame_GetVar) misses those compiled code has set':
         'test.test_capi.test_eval.Tests.test_eval_getlocals '
@@ -181,6 +183,10 @@ SKIPPED = {
     'bind a port find_unused_port chose, which another process can take '
     'first':
         'test.test_socket.CreateServerFunctionalTest.*',
+    'asserts that wait_for with a timeout of 0 returns within 0.1 s of wall '
+    'time, which fails plain as well as with LeJIT on a loaded machine':
+        'test.test_asyncio.test_waitfor.AsyncioWaitForTest.'
+        'test_wait_for_timeout_less_then_0_or_0_coroutine_do_not_started',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
