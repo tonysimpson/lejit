@@ -1299,8 +1299,6 @@ new_pooled_respawn(PsycoObject *po, code_t **stub)
         return NULL;
     *stub = stub_pool_reserve(RESPAWN_STUB_SIZE + sizeof(pooled_respawn_t));
     record = psyco_write_respawn_stub(*stub);
-    if (record == NULL)
-        return NULL;
     memset(&r, 0, sizeof(r));
     r.from = (uint32_t)from;
     r.cnt = (uint16_t)po->respawn_cnt;
@@ -1327,6 +1325,11 @@ psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
 
         if (fn == &do_respawn && extrasize == 0)
             record = new_pooled_respawn(po, &stub);
+        /* the record keeps the jump's place as an offset from itself, so a
+           record too far away stays unused */
+        if (record != NULL && (!FITS_IN_32BITS(po->code - record) ||
+                               !FITS_IN_32BITS(po->code + 64 - record)))
+            record = NULL;
         if (record != NULL) {
             int32_t jmp;
 #if ALL_CHECKS
@@ -1586,6 +1589,16 @@ compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
                a block per combination. Not a fixed value: code after it relies
                on it, and promotion would loop. */
             source_known_t *sk;
+            if (is_compiletime(a->source) && is_maybe_null(bsource)) {
+                /* an unbound local joins one that may be unbound */
+                sk = CompileTime_Get(a->source);
+                if (sk->value != 0 ||
+                    (sk->refcount1_flags & SkFlagFixed) == 0 ||
+                    (bsource & RunTime_NoRef) != 0)
+                    return false;
+                compatible_diff(result, a);
+                return bcount == 0 && a->array == NullArray;
+            }
             if (is_compiletime(a->source) && is_megamorphic(bsource)) {
                 /* forgotten (psyco_forget_values) or megamorphic in 'b': a
                    constant joins it, un-promoted, as two constants do;
@@ -1614,7 +1627,7 @@ compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
         switch (gettime(a->source)) {
             case RunTime:
                 if ((diff & (RunTime_NoRef | RunTime_NonNeg |
-                             RunTime_Megamorphic)) != 0) {
+                             RunTime_Megamorphic | RunTime_MaybeNull)) != 0) {
                     /* from 'with ref' to 'without ref' or vice-versa:
                        a source in 'a' with reference cannot pass for
                        a source in 'b' without reference */
@@ -1632,6 +1645,10 @@ compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
                        is not: that code may promote it again */
                     if ((a->source & RunTime_Megamorphic) != 0 &&
                         (bsource & RunTime_Megamorphic) == 0)
+                        return false;
+                    /* nor one that may be NULL for one that cannot */
+                    if ((a->source & RunTime_MaybeNull) != 0 &&
+                        (bsource & RunTime_MaybeNull) == 0)
                         return false;
                 }
                 break;
@@ -1910,10 +1927,17 @@ holds_reference(vinfo_array_t *a)
    since nothing reads it again: so states differing in those share code.
    Not a value something else holds too, nor a virtual one, whose fields
    are its contents, nor fields holding a reference, whose release would
-   emit code (this runs before a function's first buffer, too). */
+   emit code (this runs before a function's first buffer, too).
+   With 'unfix', where code can be emitted, a dead local's constant object
+   (SkFlagPyObj, so never an unbound local's 0) becomes a run-time value,
+   promoted or not: otherwise a loop that binds a different constant to it
+   on each pass, such as a function promoted at a call, starts one block
+   per constant at its head, and the cap can't merge them, as it keeps
+   promoted values (psyco_forget_values). Nothing reads this one before it
+   is rebound. */
 DEFINEFN
 void
-psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge)
+psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
 {
     int i, limit;
     PyObject *plist = ge->fatlist;
@@ -1926,6 +1950,12 @@ psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge)
         if (!PyLong_Check(o1))
             break;
         vi = LOC_LOCALS_PLUS[PyLong_AS_LONG(o1)];
+        if (unfix && vi != NULL && is_compiletime(vi->source) &&
+            vi->refcount == 1 &&
+            (CompileTime_Get(vi->source)->refcount1_flags & SkFlagPyObj)) {
+            psyco_unfix(po, vi);
+            continue;
+        }
         if (vi == NULL || !is_runtime(vi->source) || vi->refcount != 1 ||
             vi->array == NullArray || holds_reference(vi->array))
             continue;
@@ -2037,11 +2067,14 @@ canonical_int(PsycoObject *po, int index)
    state that matches none of them, and there may be hundreds. Per item:
    VARIES_NONE if no block reaches it, VARIES_ONE if every block that
    does holds the constant value[i], VARIES_MANY if two differ or one holds
-   anything else (a link to a shared item counts). Dropped when a block
-   leaves the list (psyco_ge_changed). */
+   anything else (a link to a shared item counts); and VARIES_ZERO added
+   if some block holds the constant 0 (an unbound local). Dropped when a
+   block leaves the list (psyco_ge_changed). */
 #define VARIES_NONE 0
 #define VARIES_ONE 1
 #define VARIES_MANY 2
+#define VARIES_KIND 3
+#define VARIES_ZERO 4
 struct varies_s {
     Py_ssize_t seen; /* items of the fatlist read */
     int cap;
@@ -2086,16 +2119,18 @@ varies_read_block(struct varies_s *vc, CodeBufferObject *b)
             s = fz_getarg();
             fz_parse(opc, false);
         }
-        if (*st == VARIES_MANY)
+        if (is_compiletime(s) && CompileTime_Get(s)->value == 0)
+            *st |= VARIES_ZERO;
+        if ((*st & VARIES_KIND) == VARIES_MANY)
             continue;
         if (!is_compiletime(s))
-            *st = VARIES_MANY;
-        else if (*st == VARIES_NONE) {
-            *st = VARIES_ONE;
+            *st = (*st & VARIES_ZERO) | VARIES_MANY;
+        else if ((*st & VARIES_KIND) == VARIES_NONE) {
+            *st = (*st & VARIES_ZERO) | VARIES_ONE;
             vc->value[n] = CompileTime_Get(s)->value;
         }
         else if (vc->value[n] != CompileTime_Get(s)->value)
-            *st = VARIES_MANY;
+            *st = (*st & VARIES_ZERO) | VARIES_MANY;
     }
 }
 
@@ -2128,11 +2163,63 @@ varies_at(global_entries_t *ge, int nlocals, const long *want, char *varies)
     vc->seen = len;
     for (k = 0; k < nlocals; k++) {
         int index = INDEX_LOC_LOCALS_PLUS + k;
-        int st = index < vc->cap ? vc->state[index] : VARIES_NONE;
+        int st =
+            index < vc->cap ? vc->state[index] & VARIES_KIND : VARIES_NONE;
         varies[k] = want[k] != 0 &&
                     (st == VARIES_MANY ||
                      (st == VARIES_ONE && vc->value[index] != want[k]));
     }
+}
+
+/* Past the cap, once no value is left to forget: a local unbound here
+   and bound in some block, or bound here and unbound in some block,
+   becomes a run-time value that may be NULL (RunTime_MaybeNull), which
+   either joins (compatible_vinfo); forgotten (RunTime_Megamorphic), which
+   a forgotten value joins too; and owning its reference, which a borrowed
+   one joins too (with an incref). A bound one keeps no known fields,
+   since NULL has none, and changes only if nothing else holds it: a
+   shared run-time value never matches two separate ones. Only loads of
+   the constant 0 and increfs are emitted. */
+static bool
+widen_unbound(PsycoObject *po, global_entries_t *ge, int nlocals)
+{
+    struct varies_s *vc = ge->varies;
+    bool changed = false;
+    int i;
+    for (i = 0; i < nlocals; i++) {
+        vinfo_t *a = LOC_LOCALS_PLUS[i];
+        int index = INDEX_LOC_LOCALS_PLUS + i;
+        int st = index < vc->cap ? vc->state[index] : VARIES_NONE;
+        if (a == NULL)
+            continue;
+        if (is_compiletime(a->source)) {
+            source_known_t *sk = CompileTime_Get(a->source);
+            if (sk->value != 0 || (sk->refcount1_flags & SkFlagFixed) == 0 ||
+                (st & VARIES_KIND) == VARIES_NONE ||
+                ((st & VARIES_KIND) == VARIES_ONE && vc->value[index] == 0))
+                continue;
+            if (a->refcount > 1) {
+                LOC_LOCALS_PLUS[i] = psyco_vi_Zero();
+                vinfo_decref(a, po);
+                a = LOC_LOCALS_PLUS[i];
+            }
+            psyco_unfix(po, a);
+        }
+        else if (is_runtime(a->source) && !is_maybe_null(a->source) &&
+                 (st & VARIES_ZERO) && a->refcount == 1) {
+            if (a->array != NullArray) {
+                array_delete(a->array, po);
+                a->array = NullArray;
+            }
+            need_reference(po, a);
+            a->source |= RunTime_MaybeNull;
+        }
+        else
+            continue;
+        a->source = (a->source | RunTime_Megamorphic) & ~RunTime_NonNeg;
+        changed = true;
+    }
+    return changed;
 }
 
 /* The cap's generalisation (vcompiler.c:mp_capped), in the
@@ -2163,6 +2250,8 @@ varies_at(global_entries_t *ge, int nlocals, const long *want, char *varies)
      small ints and bools, which computing gives back as the same object,
      so identity is kept (canonical_int); a constant object is loaded as
      the same object either way.
+   - If none of that changes anything, locals are widened by whether they
+     are bound (widen_unbound).
    Returns whether anything changed. */
 DEFINEFN
 bool
@@ -2249,7 +2338,7 @@ psyco_forget_values(PsycoObject *po, global_entries_t *ge)
         a->source = (a->source | RunTime_Megamorphic) & ~RunTime_NonNeg;
         changed = true;
     }
-    return changed;
+    return changed || widen_unbound(po, ge, nlocals);
 }
 
 /* A second form at a merge point (vcompiler.c:psyco_compile): each constant
@@ -2290,11 +2379,12 @@ DEFINEVAR int psyco_cs_align_rejects = 0;
 
 /* The summary (dispatcher.h) holds only what compatible_array rejects on
    at the top level whatever else it finds: against a snapshot's run-time
-   item that isn't megamorphic, only a run-time one passes (a constant
-   joins only a megamorphic one); against a constant only a constant, and
-   against a virtual only a virtual; NULL, a megamorphic item and anything
-   past the first 64 accept anything. A shared item is compared as the
-   item it is shared with, so the same holds for links. In the live state
+   item that is neither megamorphic nor maybe-NULL, only a run-time one
+   passes (a constant joins only those); against a constant only a
+   constant, and against a virtual only a virtual; NULL, a megamorphic or
+   maybe-NULL item and anything past the first 64 accept anything. A
+   shared item is compared as the item it is shared with, so the same
+   holds for links. In the live state
    00 is NULL. Inside an inlined frame's LOC_INLINING, compared with the
    same rules, the fixed constants it starts with must be equal, and
    compatible_array reads them last, after the whole parent frame, whose
@@ -2338,7 +2428,8 @@ summary_classes(vinfo_array_t *aa, int first, bool snapshot, unsigned long *c1,
             b1 |= 1UL << i;
             b0 |= 1UL << i;
         }
-        else if (!snapshot || !is_megamorphic(a->source))
+        else if (!snapshot ||
+                 !(is_megamorphic(a->source) || is_maybe_null(a->source)))
             b0 |= 1UL << i;
     }
     *c1 = b1;
@@ -3464,6 +3555,14 @@ psyco_unfix(PsycoObject *po, vinfo_t *vi)
        source_known_t may be shared with a snapshot or a callee's frame,
        whose constant it still is */
     sk = CompileTime_Get(vi->source);
-    sk_decref(sk);
-    vinfo_move(po, vi, newvi);
+    {
+        /* the fixed 0 is an unbound local: it becomes one that may be
+           unbound, owning its reference, as a bound one would (NULL owns
+           nothing) */
+        bool unbound = sk->value == 0 && (sk->refcount1_flags & SkFlagFixed);
+        sk_decref(sk);
+        vinfo_move(po, vi, newvi);
+        if (unbound)
+            vi->source = add_rtref(vi->source) | RunTime_MaybeNull;
+    }
 }

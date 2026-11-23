@@ -1,9 +1,9 @@
 # Virtual objects generated from CPython's constructors: tuples,
-# slices and bound methods built by gen_virtual.py, and tupleconcat and
-# tuplerepeat translated from tupleobject.c with the constructor rule (a
-# PyTuple_New of a size known now is a virtual tuple whose items the C's
-# stores fill). Forcing: a constant result is built at compile time, any
-# other by CPython's constructor at run time.
+# slices and bound methods built by gen_virtual.py. Tuple concatenation,
+# repetition and comparison of them: an operand given back or the empty
+# tuple are known now, the rest is CPython's own at run time. Forcing: a
+# constant result is built at compile time, any other by CPython's
+# constructor at run time.
 
 
 class T(tuple):
@@ -21,6 +21,42 @@ class Seq:
 class Idx:
     def __index__(self):
         return 2
+
+
+class Eq:
+    def __init__(self, v):
+        self.v = v
+
+    def __eq__(self, o):
+        if self.v == 'raise':
+            raise ValueError('eq')
+        return isinstance(o, Eq) and self.v == o.v
+
+    def __lt__(self, o):
+        return self.v < o.v
+
+    __hash__ = None
+
+
+# ---- tuple comparisons ----
+def compare_virtual(a, b, c):
+    return ((a, b) == (a, b), (a, b) != (a, c), (a, b) < (a, c),
+            (a, b) <= (a,), (a, b) > (a,), (a,) >= (a, b), (a, b) == [a, b])
+
+
+def compare_items(x, y):
+    try:
+        return (x, 1) == (y, 1), (x, 1) < (y, 2)
+    except Exception as e:
+        return type(e).__name__, str(e)
+
+
+def compare_nan(x):
+    return (x,) == (x,), (x,) == (float(x),), (x, 1) < (x, 2)
+
+
+def compare_subclass(a):
+    return T((a, 1)) == (a, 1), (a, 1) < T((a, 2)), T((a,)) != T((a,))
 
 
 # ---- tuple + tuple ----
@@ -240,6 +276,10 @@ def tuples_tracked(n):
 
 
 CASES = [
+    ('compare_virtual', [(1, 2, 3), ('a', 'b', 'a'), (2.5, 1, 1)], {}),
+    ('compare_items', "[(Eq(1), Eq(1)), (Eq(1), Eq(2)), (Eq('raise'), Eq(1)), (1, 'x')]", {}),
+    ('compare_nan', "[(nan,), (1.0,)]", {}),
+    ('compare_subclass', [(1,), ('z',)], {}),
     ('concat_virtual', [(1, 2, 3), ('a', None, 2.5)], {}),
     ('concat_const', [(4,), ('x',)], {}),
     ('concat_runtime', [((1,), (2,)), ((), (1, 2)), ((1, 2), ()), ((), ()),

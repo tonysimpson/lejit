@@ -52,6 +52,77 @@ PsycoDict_SetItemC(PsycoObject *po, vinfo_t *vdict, PyObject *key,
                               vdict, (long)key, vvalue) != NULL;
 }
 
+/* Pending keywords: a call's keyword arguments, names constant, as the
+   dict CPython would make of them, made only if something needs it. The
+   binder reads them (psyfunc.c:_PsycoEval_EvalCodeWithName); anything
+   else forces them, which builds the dict a keyword call always built.
+   A call site makes one and passes it to its call alone, so it is never a
+   local or on the value stack, and no frame sees it. Layout: [iOB_TYPE],
+   [iDICT_MA_USED] the count, [iPENDING_NAMES] the names, a tuple constant,
+   then the values. */
+static source_virtual_t psyco_pending_keywords;
+#define iPENDING_NAMES FIELDS_TOTAL(DICT_ma_used)
+#define iPENDING_VALUES (iPENDING_NAMES + 1)
+
+static bool
+compute_pending_keywords(PsycoObject *po, vinfo_t *v)
+{
+    PyObject *names =
+        (PyObject *)CompileTime_Get(v->array->items[iPENDING_NAMES]->source)
+            ->value;
+    int i, n = (int)PyTuple_GET_SIZE(names);
+    vinfo_t *d;
+#if LE_HAS_PYDICT_NEWPRESIZED
+    if (n > 5)
+        d = psyco_generic_call(po, _PyDict_NewPresized, CfCommonNewRefPyObject,
+                               "l", (long)n);
+    else
+#endif
+        d = psyco_generic_call(po, PyDict_New, CfCommonNewRefPyObject, "");
+    if (d == NULL)
+        return false;
+    for (i = 0; i < n; i++)
+        if (!PsycoDict_SetItemC(po, d, PyTuple_GET_ITEM(names, i),
+                                v->array->items[iPENDING_VALUES + i])) {
+            vinfo_decref(d, po);
+            return false;
+        }
+    /* only the type stays known: the rest was the call's */
+    vinfo_array_shrink(po, v, iOB_TYPE + 1);
+    vinfo_move(po, v, d);
+    return true;
+}
+
+DEFINEFN
+vinfo_t *
+PsycoDict_PendingKeywords(PyObject *names, vinfo_t **values)
+{
+    int i, n = (int)PyTuple_GET_SIZE(names);
+    vinfo_t *v = vinfo_new(VirtualTime_New(&psyco_pending_keywords));
+    v->array = array_new(iPENDING_VALUES + n);
+    v->array->items[iOB_TYPE] = vinfo_new(CompileTime_New((long)&PyDict_Type));
+    v->array->items[iDICT_MA_USED] = vinfo_new(CompileTime_New(n));
+    /* the code's constant, which the code object holds */
+    v->array->items[iPENDING_NAMES] = vinfo_new(CompileTime_New((long)names));
+    for (i = 0; i < n; i++) {
+        vinfo_incref(values[i]);
+        v->array->items[iPENDING_VALUES + i] = values[i];
+    }
+    return v;
+}
+
+DEFINEFN
+PyObject *
+PsycoDict_PendingNames(vinfo_t *v, vinfo_t ***values)
+{
+    if (!is_virtualtime(v->source) ||
+        VirtualTime_Get(v->source) != &psyco_pending_keywords)
+        return NULL;
+    *values = &v->array->items[iPENDING_VALUES];
+    return (PyObject *)CompileTime_Get(v->array->items[iPENDING_NAMES]->source)
+        ->value;
+}
+
 /* the dict slots and methods translated from dictobject.c */
 /* the C functions, for the fallbacks: set by the registration */
 static PyCFunction cfunc_dict_get;
@@ -967,6 +1038,9 @@ psy_dictobject_init(void)
 {
     gen_dictobject_init();
     gen_dictobject_methods_init();
+    /* a dict is mutable: made real before any call it would go into */
+    INIT_SVIRTUAL_NOCALL(psyco_pending_keywords, compute_pending_keywords,
+                         NW_VLISTS);
     define_str_probes();
     if (cfunc_dict_get != NULL)
         Psyco_DefineMeta(cfunc_dict_get, pdict_get);

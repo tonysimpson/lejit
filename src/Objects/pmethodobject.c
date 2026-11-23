@@ -14,6 +14,7 @@
 #include "ptupleobject.h"
 /* le_tstate_load */
 #include "../mechanisms/tstate.h"
+#include "../Python/frames.h"
 
 static bool
 compute_cfunction(PsycoObject *po, vinfo_t *methobj)
@@ -190,6 +191,13 @@ PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
 
         vinfo_t *(*meta)(PsycoObject *, vinfo_t *, vinfo_t *);
 
+        /* _warnings.warn of a module imported again since LeJIT replaced
+           it walks the frames as the replacement does */
+        if (ml->ml_meth == le_c_warn && le_c_warn != NULL)
+            return psyco_generic_call(po, le_warn_with_frames,
+                                      CfCommonNewRefPyObject, "vvv", func,
+                                      args, kwargs);
+
         if (!psyco_knowntobe(kwargs, (long)NULL))
             goto use_proxy;
 
@@ -222,8 +230,7 @@ PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
     /* default, slow version */
 use_proxy:
     LE_STAT(psyco_stat_cfunc_proxy++);
-    return psyco_generic_call(po, PyCFunction_Call, CfCommonNewRefPyObject,
-                              "vvv", func, args, kwargs);
+    return psyco_residual_call(po, PyCFunction_Call, func, args, kwargs);
 }
 
 #if ALL_CHECKS
