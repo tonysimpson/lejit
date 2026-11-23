@@ -17,11 +17,11 @@ def compiled(*fns):
     lejit = sys.modules.get('lejit')
     if lejit is None:
         return True
-    # where a frame's place is its next instruction, generator bodies stay
+    # where a frame's words are stack references, generator bodies stay
     # interpreted
     features = dict(lejit._core._build['features'])
     if (features.get('LE_HAS_INTERPRETER_FRAME') and
-            features.get('LE_HAS_FRAME_INSTR_PTR')):
+            features.get('LE_HAS_FRAME_STACKREFS')):
         return True
     return all(lejit._core._code_info(f.__code__) == 'compiled'
                for f in fns)

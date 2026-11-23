@@ -12,9 +12,13 @@
 
 extern int
 le_eval_breaker_at_entry(PyCodeObject *co); /* pyruntime.c */
-#if LE_RESUMES_GENERATORS
+#if LE_RESUMES_GENERATORS && LE_HAS_TSTATE_EVAL_BREAKER
+extern int
+le_eval_breaker_pending(void); /* pyruntime.c */
+#elif LE_RESUMES_GENERATORS
 extern void *
 le_eval_breaker_address(void); /* pyruntime.c */
+#define le_eval_breaker_pending() (*(int *)le_eval_breaker_address() != 0)
 #endif
 
 #if LE_HAS_EVAL_FRAME_POPS
@@ -175,7 +179,12 @@ compile_resume(le_frame_t *f, le_code_extra_t *x, PyObject *mergepoints,
     CodeBufferObject *volatile codebuf = NULL;
     le_compile_guard_t g;
     int lasti = le_frame_lasti(f);
+#if LE_HAS_FRAME_INSTR_PTR
+    /* the frame's place is the instruction it goes on with */
+    int start = lasti_offset(lasti);
+#else
     int start = lasti < 0 ? 0 : lasti_offset(lasti) + LE_UNIT;
+#endif
 #if LE_HAS_INTERPRETER_FRAME
     /* no blocks: handlers are the exception table's */
     int *blocks = NULL, nblocks = 0;
@@ -297,7 +306,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
        the frame, whose exception the frame's own handlers may catch, is
        left to ceval */
     if (le_tracing_now(tstate) || le_frame_locals(f) != NULL ||
-        nlocals + nstack > 64 || *(int *)le_eval_breaker_address() != 0)
+        nlocals + nstack > 64 || le_eval_breaker_pending())
         return NULL;
     if (x == NULL && (x = le_code_extra(co)) == NULL) {
         PyErr_Clear(); /* out of memory */
