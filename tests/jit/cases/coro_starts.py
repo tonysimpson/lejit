@@ -325,7 +325,9 @@ def origins(n):
     old = sys.get_coroutine_origin_tracking_depth()
     sys.set_coroutine_origin_tracking_depth(2)
     try:
-        lvl1(n, 'none')
+        # closed, as its never-awaited warning would show its origin's
+        # line, which a compiled frame doesn't give
+        lvl1(n, 'none').close()
         r = drive(lvl1(n, 'referrers'))
     finally:
         sys.set_coroutine_origin_tracking_depth(old)
