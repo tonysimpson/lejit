@@ -171,6 +171,18 @@ psyco_class_cell(PyCodeObject *co)
     return -1;
 }
 
+/* a read (load) or write of local in a set of live locals, going backward */
+static inline __attribute__((always_inline)) void
+_live_access(uint64_t *set, int local, int load, int nlocals)
+{
+    if (local >= nlocals)
+        return;
+    if (load)
+        set[local / 64] |= (uint64_t)1 << (local % 64);
+    else
+        set[local / 64] &= ~((uint64_t)1 << (local % 64));
+}
+
 /* one backward pass of _find_dead_locals's dataflow: whether a set grew */
 static inline __attribute__((always_inline)) int
 _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
@@ -216,6 +228,13 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
              o == LOAD_FAST_AND_CLEAR) &&
             a < nlocals)
             tmp[a / 64] |= (uint64_t)1 << (a % 64);
+        /* two locals, the first in the high four bits: the second's access
+           first, going backward */
+        if (o == LOAD_FAST_LOAD_FAST || o == STORE_FAST_LOAD_FAST ||
+            o == STORE_FAST_STORE_FAST) {
+            _live_access(tmp, a & 15, o != STORE_FAST_STORE_FAST, nlocals);
+            _live_access(tmp, a >> 4, o == LOAD_FAST_LOAD_FAST, nlocals);
+        }
         changed |= _live_union(in, tmp, words);
     }
     return changed;
@@ -605,6 +624,11 @@ _build_merge_points(PyCodeObject *co, int module)
             goto not_ok;
         if (reads_class && oparg == 0 &&
             (opcode == STORE_FAST || opcode == DELETE_FAST))
+            goto not_ok;
+        if (reads_class &&
+            (opcode == STORE_FAST_STORE_FAST
+                 ? (oparg >> 4) == 0 || (oparg & 15) == 0
+                 : opcode == STORE_FAST_LOAD_FAST && (oparg >> 4) == 0))
             goto not_ok;
     }
 
