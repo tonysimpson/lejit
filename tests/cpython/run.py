@@ -116,6 +116,8 @@ SKIPPED = {
         'test.test_gc.GCTests.test_frame '
         'test.test_frame.TestIncompleteFrameAreInvisible.test_sneaky_frame_object_teardown '
         'test.test_capi.test_exceptions.Test_ErrSetAndRestore.test_err_writeunraisable',
+    "an inlined frame's f_locals is empty once its call has returned":
+        'test.test_frame.TestFrameLocals.test_constructor',
     "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
     'PyFrame_GetVar) misses those compiled code has set':
         'test.test_capi.test_eval.Tests.test_eval_getlocals '
