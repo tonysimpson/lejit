@@ -1,8 +1,9 @@
-# Compiled code jumps between code regions with rel32, so a new region must
-# be placed within 2 GB of all the others (platform.c). Here the program maps
-# a little over 2 GB after the first region exists, where the kernel would
-# put the next one by default, and then compiles more code than the first
-# region holds. Run in a child, once: the mapping is never touched.
+# A code region lies wherever the kernel puts it, and a jump to code out of
+# rel32 reach goes through a far jump (codemanager.c:psyco_code_far_jump).
+# Here the program maps a little over 2 GB after the first region exists,
+# where the kernel puts the next one, and then compiles more code than the
+# first region holds, so code in the second jumps to the first through far
+# jumps. Run in a child, once: the mapping is never touched.
 
 CHILD = r'''
 import mmap, sys

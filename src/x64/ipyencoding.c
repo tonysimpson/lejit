@@ -436,7 +436,7 @@ probe:
         long ind = offsetof(le_dictkeys_t, dk_indices);
         Py_hash_t hash = PyObject_Hash(s->cache->name);
         for (i = 0; i < nprobe; i++) {
-            *(dword_t *)(jprobe[i] + 2) = code - (jprobe[i] + 6);
+            *(dword_t *)(jprobe[i] + 2) = REL32(jprobe[i] + 6, code);
             le_trace_jump_cond(jprobe[i], jprobe[i] + 6, code);
         }
         if (IN_VALUES(s)) {
@@ -526,10 +526,10 @@ probe:
         LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
         DICT_NEW_VERSION();
         WRITE_1(0xE9);
-        WRITE_32BIT((long)decref - ((long)code + 4));
+        UPDATABLE_WRITE_32BIT(REL32(code + 4, decref));
         le_trace_jump(code - 5, decref);
         for (i = 0; i < nstub; i++) {
-            *(dword_t *)(jstub[i] + 2) = code - (jstub[i] + 6);
+            *(dword_t *)(jstub[i] + 2) = REL32(jstub[i] + 6, code);
             le_trace_jump_cond(jstub[i], jstub[i] + 6, code);
         }
         load_operand(po, &code, s->obj->source, REG_X64_RDI, start);
@@ -576,7 +576,7 @@ psyco_inline_store_begin(PsycoObject *po, inline_store_t *s)
     code = inline_store_body(po, start, s, near, jat, &nj, &miss);
     for (i = 0; i < nj; i++) {
         if (near[i]) {
-            *(dword_t *)(jat[i] + 2) = miss - (jat[i] + 6);
+            *(dword_t *)(jat[i] + 2) = REL32(jat[i] + 6, miss);
             le_trace_jump_cond(jat[i], jat[i] + 6, miss);
         }
         else {
@@ -599,7 +599,7 @@ psyco_inline_store_end(PsycoObject *po, inline_store_t *s)
         return;
     for (i = 0; i < STORE_DONE_JUMPS; i++) {
         code_t *at = s->done[i], *end = at + (at[0] == 0xE9 ? 5 : 6);
-        *(dword_t *)(end - 4) = po->code - end;
+        *(dword_t *)(end - 4) = REL32(end, po->code);
         le_trace_jump(at, po->code);
     }
 }
@@ -668,17 +668,17 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         WRITE_1(0xE9);    \
         code += 4;        \
     } while (0)
-#define POINT(list, n, target)                          \
-    for (i = 0; i < (n); i++) {                         \
-        at = list[i];                                   \
-        if (at[0] == 0xE9) {                            \
-            *(dword_t *)(at + 1) = (target) - (at + 5); \
-            le_trace_jump(at, (target));                \
-        }                                               \
-        else {                                          \
-            *(dword_t *)(at + 2) = (target) - (at + 6); \
-            le_trace_jump_cond(at, at + 6, (target));   \
-        }                                               \
+#define POINT(list, n, target)                              \
+    for (i = 0; i < (n); i++) {                             \
+        at = list[i];                                       \
+        if (at[0] == 0xE9) {                                \
+            *(dword_t *)(at + 1) = REL32(at + 5, (target)); \
+            le_trace_jump(at, (target));                    \
+        }                                                   \
+        else {                                              \
+            *(dword_t *)(at + 2) = REL32(at + 6, (target)); \
+            le_trace_jump_cond(at, at + 6, (target));       \
+        }                                                   \
     }
 #define SHORT_BACK(cc, target)                            \
     do {                                                  \
@@ -1117,7 +1117,7 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
     if (done == NULL)
         done = code;
     for (i = 0; i < nj; i++) {
-        *(dword_t *)(jne[i] + 2) = done - (jne[i] + 6);
+        *(dword_t *)(jne[i] + 2) = REL32(jne[i] + 6, done);
         if (trace)
             le_trace_jump_cond(jne[i], jne[i] + 6, done);
     }

@@ -264,6 +264,20 @@ typedef enum {
 #define FITS_IN_8BITS(v) (((long)(v) < 128 && (long)(v) >= -128))
 #define FITS_IN_32BITS(v) \
     (((long)(v) < 2147483648 && (long)(v) >= -2147483648))
+/* the rel32 of a jump ending at 'end' to 'target': to the target, or else
+   to a far jump to it within reach (codemanager.c:psyco_code_far_jump) */
+EXTERNFN code_t *
+psyco_code_far_jump(code_t *end, code_t *target);
+#define REL32(end, target)                                           \
+    ((dword_t)((FITS_IN_32BITS((code_t *)(target) - (code_t *)(end)) \
+                    ? (code_t *)(target)                             \
+                    : psyco_code_far_jump((code_t *)(end),           \
+                                          (code_t *)(target))) -     \
+               (code_t *)(end)))
+/* jmp [rip]; the 8-byte target (x64/iprocessor.c:psyco_write_far_jump) */
+#define SIZE_OF_FAR_JUMP_ANYWHERE 14
+EXTERNFN code_t *
+psyco_write_far_jump(code_t *code, code_t *target);
 #define ONLY_UPDATING 0 /* redefine to 1 when updating code */
 #define REX_64 0x48
 #define REX_64_REG(reg) (REX_64 | (reg > 7 ? 4 : 0))
@@ -831,7 +845,7 @@ typedef enum {
         BASE_ENCODING(false, 1, 0x0F, 0, 0, 0x80 | (cc), 0, 0);    \
         le_trace_jump_cond((code_t *)(location), (code_t *)(code), \
                            (code_t *)(address));                   \
-        UPDATABLE_WRITE_32BIT((address) - ((long)code + 4));       \
+        UPDATABLE_WRITE_32BIT(REL32(code + 4, address));           \
     } while (0)
 /* @asm: call {r} */
 #define CALL_R(r)                                          \
@@ -1663,13 +1677,12 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
 /*****************************************************************/
 /***   conditional jumps                                       ***/
 
-#define JUMP_TO(addr)                                                \
-    do {                                                             \
-        le_trace_jump((code_t *)(code), (code_t *)(addr));           \
-        *code++ = 0xE9; /* JMP rel32 */                              \
-        extra_assert(FITS_IN_32BITS((code_t *)(addr) - (code + 4))); \
-        *(dword_t *)(code) = (addr) - (code + 4);                    \
-        code += 4;                                                   \
+#define JUMP_TO(addr)                                      \
+    do {                                                   \
+        le_trace_jump((code_t *)(code), (code_t *)(addr)); \
+        *code++ = 0xE9; /* JMP rel32 */                    \
+        *(dword_t *)(code) = REL32(code + 4, addr);        \
+        code += 4;                                         \
     } while (0)
 
 /* decodes what JUMP_TO wrote (checked by tests/encoder/check.py) */
@@ -1680,24 +1693,22 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
 #define IS_A_SINGLE_JUMP(code, codeend, targetaddr) \
     ((codeend) - (code) == SIZE_OF_FAR_JUMP && IS_A_JUMP(code, targetaddr))
 
-#define FAR_COND_JUMP_TO(addr, condition)                            \
-    do {                                                             \
-        CAPTURE_CODE_LOCATION                                        \
-        *code++ = 0x0F;                                              \
-        *code++ = 0x80 | (code_t)(condition);                        \
-        extra_assert(FITS_IN_32BITS((code_t *)(addr) - (code + 4))); \
-        *(dword_t *)(code) = (addr) - (code + 4);                    \
-        code += 4;                                                   \
-        le_trace_jump_cond((code_t *)(location), (code_t *)(code),   \
-                           (code_t *)(addr));                        \
+#define FAR_COND_JUMP_TO(addr, condition)                          \
+    do {                                                           \
+        CAPTURE_CODE_LOCATION                                      \
+        *code++ = 0x0F;                                            \
+        *code++ = 0x80 | (code_t)(condition);                      \
+        *(dword_t *)(code) = REL32(code + 4, addr);                \
+        code += 4;                                                 \
+        le_trace_jump_cond((code_t *)(location), (code_t *)(code), \
+                           (code_t *)(addr));                      \
     } while (0)
 
 #define CHANGE_JUMP_TO(addr)                                              \
     do {                                                                  \
         le_trace_jump_cond_update((code_t *)(code - 6), (code_t *)(code), \
                                   (code_t *)(addr));                      \
-        extra_assert(FITS_IN_32BITS((code_t *)(addr) - code));            \
-        *(dword_t *)(code - 4) = (addr) - code;                           \
+        *(dword_t *)(code - 4) = REL32(code, addr);                       \
     } while (0)
 
 #define SIZE_OF_FAR_JUMP 5
