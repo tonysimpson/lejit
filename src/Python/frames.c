@@ -322,9 +322,9 @@ psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p)
     FrameRuntime *fr = psyco_frame_start_get(f);
     if (fr != NULL && fr->entry_locals != NULL && p->ntaken > 0) {
         int i;
-        PyObject **keep = PyMem_Realloc(fr->entry_locals,
-                                        (fr->n_entry_locals + p->ntaken) *
-                                            sizeof(PyObject *));
+        PyObject **keep =
+            PyMem_Realloc(fr->entry_locals, (fr->n_entry_locals + p->ntaken) *
+                                                sizeof(PyObject *));
         for (i = 0; i < p->ntaken; i++) {
             PyObject *o = le_frame_word_take(f, p->taken[i]);
             if (o == NULL)

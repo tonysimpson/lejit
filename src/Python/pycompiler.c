@@ -1426,10 +1426,9 @@ gen_locals_end(PsycoObject *po)
         if (end == NULL) {
             /* the frame's words that Python wrote meanwhile go first */
             end = gen_pause_new(po, -1, 0);
-            if (psyco_generic_call(po, psyco_gen_pause,
-                                   CfNoReturnValue | CfNoPython, "vl",
-                                   psyco_frame_words_frame(po),
-                                   (long)end) == NULL)
+            if (psyco_generic_call(
+                    po, psyco_gen_pause, CfNoReturnValue | CfNoPython, "vl",
+                    psyco_frame_words_frame(po), (long)end) == NULL)
                 return false;
         }
         if (is_virtualtime(v->source) && PycException_Is(po, &EReturn) &&
