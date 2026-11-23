@@ -125,6 +125,11 @@ psyco_group_new(PyObject *key, void *site);
 /* the current owner's code jumps into 'b' */
 EXTERNFN void
 psyco_owner_depend(CodeBufferObject *b);
+/* the code object's owner above the current owner, if that is a group
+   and the code object's owner holds every constant 'a' has; else NULL.
+   With it, the type hints in 'a' that owner doesn't hold are dropped. */
+EXTERNFN le_owner_t *
+psyco_owner_root_holding(vinfo_array_t *a);
 /* frames.c: calls 'mark' on the code object of every compiled frame
    running on any thread, and on some more; -1 if it can't tell */
 EXTERNFN int
@@ -174,9 +179,9 @@ psyco_record(le_addrmap_t *map, void *key);
    compile held are lost. Run-time error state is kept, or becomes a
    MemoryError if the compile replaced it. The caller then runs the
    interpreter instead (psyco_guard_pop), or compiles again from a state
-   the compile didn't consume (psyco_guard_retry, which aborts after
-   LE_GUARD_RETRIES tries: compiled code can't go back to the
-   interpreter). */
+   the compile didn't consume (psyco_guard_retry, which releases the
+   emergency reserve before the last of LE_GUARD_RETRIES + 1 tries and
+   aborts after it: compiled code can't go back to the interpreter). */
 #include <setjmp.h>
 #define LE_GUARD_RETRIES 3
 typedef struct le_compile_guard_s {

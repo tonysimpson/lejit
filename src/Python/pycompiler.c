@@ -1051,7 +1051,7 @@ cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
     /* frame objects are not created in stack order with Psyco, so it's
        probably better not to create plain wrong chained lists */
     le_frame_set_current(tstate, NULL);
-    result = PyFrame_New(tstate, code, globals, NULL);
+    result = le_pyframe_new(tstate, code, globals);
     le_frame_set_current(tstate, back);
     if (result != NULL) {
         /* a frame reused from the code's free one may hold a note */
@@ -1645,13 +1645,6 @@ psyco_pycompiler_init(void)
 #define STACK_LEVEL() (po->pr.stack_level)
 #define JUMPBY(offset) (next_instr += (offset))
 #define JUMPTO(target) (next_instr = (target))
-/* the target of the jump instruction being compiled, in bytes: its
-   argument counts from the start or from the next instruction, forwards or
-   backwards, as LE_IS_JABS and LE_IS_JBACK say */
-#define JUMP_DEST()                                                     \
-    (LE_IS_JABS(opcode) ? LE_JUMP_BYTES(oparg)                          \
-                        : next_instr + (LE_IS_JBACK(opcode) ? -1 : 1) * \
-                                           LE_JUMP_BYTES(oparg))
 
 /* a place ceval keeps on the value stack as an int: CALL_FINALLY's return
    offset, or the lasti a handler is given. One object per value, so that
@@ -2143,36 +2136,43 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
    duplicates are impossible here (the bytecode compiler rejects them) and
    the callee checks the rest. */
 #if LE_HAS_OPCODE_CALL
-/* the keyword names of the CALL at 'pos' (its first unit): the constant of
-   the KW_NAMES right before it, or before its PRECALL where CPython has
-   one, or NULL for none. False with SystemError if no PRECALL comes right
-   before where there is one (mergepoints.c refuses such code). Caches are
-   CACHE units, so a unit read here is an instruction's own only if it is
-   the opcode looked for. */
-static bool
-call_kwnames(PsycoObject *po, PyCodeObject *co, int pos, PyObject **kwnames)
+/* where the KW_NAMES naming the keyword arguments of the CALL at 'pos'
+   (its first unit) starts, with its EXTENDED_ARGs, or -1 for none; -2 if
+   no PRECALL comes right before where CPython has one (mergepoints.c
+   refuses such code). Caches are CACHE units, so a unit read here is an
+   instruction's own only if it is the opcode looked for. */
+static int
+call_kwnames_start(le_code_t c, int pos)
 {
-    le_code_t c = le_code(co);
-    int p = pos - LE_UNIT, arg, shift;
-    *kwnames = NULL;
+    int p = pos - LE_UNIT;
 #if LE_HAS_OPCODE_PRECALL
     p -= LE_CACHE_BYTES(PRECALL);
-    if (p < 0 || le_op(c, p) != PRECALL) {
-        PycException_SetString(po, PyExc_SystemError, "CALL without PRECALL");
-        return false;
-    }
+    if (p < 0 || le_op(c, p) != PRECALL)
+        return -2;
     while (p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG) p -= LE_UNIT;
     p -= LE_UNIT;
 #endif
     if (p < 0 || le_op(c, p) != KW_NAMES)
-        return true;
-    arg = le_arg(c, p);
-    for (shift = 8; p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG;
-         shift += 8) {
-        p -= LE_UNIT;
-        arg |= le_arg(c, p) << shift;
+        return -1;
+    while (p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG) p -= LE_UNIT;
+    return p;
+}
+
+/* the keyword names of the CALL at 'pos': the constant of its KW_NAMES,
+   or NULL for none. False with SystemError if it has no PRECALL where
+   CPython has one. */
+static bool
+call_kwnames(PsycoObject *po, PyCodeObject *co, int pos, PyObject **kwnames)
+{
+    le_code_t c = le_code(co);
+    int p = call_kwnames_start(c, pos);
+    *kwnames = NULL;
+    if (p == -2) {
+        PycException_SetString(po, PyExc_SystemError, "CALL without PRECALL");
+        return false;
     }
-    *kwnames = PyTuple_GET_ITEM(co->co_consts, arg);
+    if (p >= 0)
+        *kwnames = PyTuple_GET_ITEM(co->co_consts, le_instr(c, p).arg);
     return true;
 }
 #endif
@@ -2237,8 +2237,9 @@ fail:
 /* the code of the following functions is "copy-pasted" from ceval.c */
 
 /* a frame's own cells, which CPython made before the frame reached LeJIT
-   (PsycoObject_FromCode maps them as borrowed words); a cell can change
-   under any call (nonlocal in a callee), so its content is read each time.
+   (PsycoObject_FromCode maps them as borrowed words) or the caller's
+   binder made (psyfunc.c:bind_cells); a cell can change under any call
+   (nonlocal in a callee), so its content is read each time.
    The translated *_DEREF cases read and store it through this. */
 #define CELL_ob_ref FMUT(CPY_FIELD(PyCellObject, ob_ref, OB_type))
 #define OB_refcnt FMUT(CPY_FIELD(PyObject, ob_refcnt, NO_PREV_FIELD))
@@ -4188,70 +4189,127 @@ fusion_operator(int op)
     return false;
 }
 
-/* The STORE_SUBSCR fused with the get at byte offset 'i', or -1. The
-   forms, d and k local variables, y a constant or a local:
+/* the LeJIT instruction at *p, and *p moved past it; op -1 at the end */
+static le_instr_t
+fusion_next(le_code_t c, int *p)
+{
+    le_instr_t in = {-1, 0, -1, -1, c.size};
+    if (*p < c.size) {
+        in = le_instr(c, *p);
+        *p = in.next;
+    }
+    return in;
+}
+
+/* the LeJIT instruction before *p, and *p moved to its start; op -1 at
+   the start */
+static le_instr_t
+fusion_prev(le_code_t c, int *p)
+{
+    le_instr_t in = {-1, 0, -1, -1, c.size};
+    if (*p > 0) {
+        int after = *p;
+        *p = le_prev(c, after);
+        in = le_instr(c, *p);
+        extra_assert(in.next == after);
+    }
+    return in;
+}
+
+/* The STORE_SUBSCR fused with the get at byte offset 'i', or -1, as LeJIT
+   instructions (bytecode.h). The forms, d and k local variables, y a
+   constant or a local:
      d[k] = d.get(k[, x]) OP y   LOAD_FAST d, LOAD_METHOD get, LOAD_FAST k,
-                                 [LOAD_CONST/LOAD_FAST x,] CALL_METHOD (i),
-                                 LOAD y, OP, LOAD_FAST d, LOAD_FAST k,
-                                 STORE_SUBSCR
+                                 [LOAD_CONST/LOAD_FAST x,] [PRECALL,]
+                                 CALL_METHOD or CALL (i), LOAD y, OP,
+                                 LOAD_FAST d, LOAD_FAST k, STORE_SUBSCR
      d[k] = d[k] OP y            LOAD_FAST d, LOAD_FAST k, BINARY_SUBSCR (i),
                                  LOAD y, OP, LOAD_FAST d, LOAD_FAST k,
                                  STORE_SUBSCR
-     d[k] OP= y                  DUP_TOP_TWO, BINARY_SUBSCR (i), LOAD y, OP,
-                                 ROT_THREE, STORE_SUBSCR
+     d[k] OP= y                  DUP_TOP_TWO (or COPY 2, COPY 2),
+                                 BINARY_SUBSCR (i), LOAD y, OP, ROT_THREE (or
+                                 SWAP 3, SWAP 2), STORE_SUBSCR
    with no merge point from the instruction after the first to the store,
    so the store is reached only through the get. Only loads stand between
-   the two besides OP, so d and k are the get's objects. */
+   the two besides OP, so d and k are the get's objects. '*dlocal' is set
+   to d's local for the get form. */
 static int
-fused_store(PsycoObject *po, int i)
+fused_store(PsycoObject *po, int i, int *dlocal)
 {
     PyCodeObject *co = po->pr.co;
     le_code_t c = le_code(co);
-    int n = c.size, first, s, d, k;
+    le_instr_t get, load, op, in;
+    int first, s, p = i;
     mergepoint_t *mp;
-    /* the unit 'u' units after i (before it, if negative) */
-#define OP(u) le_op(c, i + (u) * LE_UNIT)
-#define ARG(u) le_arg(c, i + (u) * LE_UNIT)
-#define FUSION_LOAD(u) (OP(u) == LOAD_CONST || OP(u) == LOAD_FAST)
-    if (i < LE_UNIT || i + 4 * LE_UNIT >= n || !FUSION_LOAD(1) ||
-        !fusion_operator(OP(2)))
+#define FUSION_LOAD(in) ((in).op == LOAD_CONST || (in).op == LOAD_FAST)
+    get = fusion_next(c, &p);
+    load = fusion_next(c, &p);
+    op = fusion_next(c, &p);
+    if (!FUSION_LOAD(load) || !fusion_operator(op.op))
         return -1;
-    if (OP(0) == BINARY_SUBSCR && OP(-1) == DUP_TOP_TWO) {
-        if (OP(3) != ROT_THREE || OP(4) != STORE_SUBSCR)
+    p = i;
+    in = fusion_prev(c, &p);
+    if (get.op == BINARY_SUBSCR &&
+        (in.op == DUP_TOP_TWO || (in.op == COPY && in.arg == 2))) {
+        if (in.op == COPY) {
+            in = fusion_prev(c, &p);
+            if (in.op != COPY || in.arg != 2)
+                return -1;
+        }
+        p = op.next;
+        in = fusion_next(c, &p);
+        if (in.op == SWAP && in.arg == 3) {
+            in = fusion_next(c, &p);
+            if (in.op != SWAP || in.arg != 2)
+                return -1;
+        }
+        else if (in.op != ROT_THREE)
+            return -1;
+        s = p;
+        if (fusion_next(c, &p).op != STORE_SUBSCR)
             return -1;
         first = i;
-        s = i + 4 * LE_UNIT;
     }
     else {
-        int kpos, dpos; /* in units from i */
-        if (OP(0) == BINARY_SUBSCR) {
-            kpos = -1;
-        }
-        else if (OP(0) == CALL_METHOD && (ARG(0) == 1 || ARG(0) == 2)) {
-            kpos = -ARG(0);
-            if ((ARG(0) == 2 && !FUSION_LOAD(-1)) ||
-                i + (kpos - 1) * LE_UNIT < 0 || OP(kpos - 1) != LOAD_METHOD ||
+        le_instr_t kload, dload, method;
+        if (get.op == BINARY_SUBSCR)
+            kload = in;
+        else if ((get.op == CALL_METHOD || get.op == CALL) &&
+                 (get.arg == 1 || get.arg == 2)) {
+            if (in.op == PRECALL)
+                in = fusion_prev(c, &p);
+            if (get.arg == 2) {
+                if (!FUSION_LOAD(in))
+                    return -1;
+                in = fusion_prev(c, &p);
+            }
+            kload = in;
+            method = fusion_prev(c, &p);
+            if (method.op != LOAD_METHOD ||
                 PyUnicode_CompareWithASCIIString(
-                    PyTuple_GET_ITEM(co->co_names, ARG(kpos - 1)), "get") != 0)
+                    PyTuple_GET_ITEM(co->co_names, method.arg), "get") != 0)
                 return -1;
         }
         else
             return -1;
-        first = i + (OP(0) == BINARY_SUBSCR ? kpos : kpos - 1) * LE_UNIT;
-        dpos = (first - i) / LE_UNIT - 1;
-        if (i + dpos * LE_UNIT < 0 || OP(dpos) != LOAD_FAST ||
-            OP(kpos) != LOAD_FAST)
+        first = p;
+        dload = fusion_prev(c, &p);
+        if (dload.op != LOAD_FAST || kload.op != LOAD_FAST)
             return -1;
-        d = ARG(dpos);
-        k = ARG(kpos);
-        if (i + 5 * LE_UNIT >= n || OP(3) != LOAD_FAST || ARG(3) != d ||
-            OP(4) != LOAD_FAST || ARG(4) != k || OP(5) != STORE_SUBSCR)
+        p = op.next;
+        in = fusion_next(c, &p);
+        if (in.op != LOAD_FAST || in.arg != dload.arg)
             return -1;
-        s = i + 5 * LE_UNIT;
+        in = fusion_next(c, &p);
+        if (in.op != LOAD_FAST || in.arg != kload.arg)
+            return -1;
+        s = p;
+        if (fusion_next(c, &p).op != STORE_SUBSCR)
+            return -1;
+        if (dlocal != NULL)
+            *dlocal = dload.arg;
     }
 #undef FUSION_LOAD
-#undef ARG
-#undef OP
     mp = psyco_next_merge_point(po->pr.merge_points, first);
     if (mp->bytecode_position >= 0 && mp->bytecode_position <= s)
         return -1;
@@ -4261,21 +4319,24 @@ fused_store(PsycoObject *po, int i)
 /* The get then store of one str key in one dict (pdictobject.c's probe):
    the get records the slot it finds and the store reuses it if the dict
    is unchanged (its keys and version tag), checked at run time, else
-   probes again. Called for BINARY_SUBSCR, CALL_METHOD and STORE_SUBSCR at
-   'next_instr' less one instruction; 1 when done, 0 for the translated
+   probes again. Called for BINARY_SUBSCR, CALL_METHOD, CALL and
+   STORE_SUBSCR, before their caches; 1 when done, 0 for the translated
    case, -1 on an error. A get of the forms above that is not this probe
    clears the record, so that the store never meets an older one. */
 static int
 dict_str_fusion(PsycoObject *po, int next_instr)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
-    int i = next_instr - LE_UNIT;
+    int i = po->pr.next_instr, p, j, dlocal = -1;
     le_code_t c = le_code(po->pr.co);
-    int op = le_op(c, i), argc = le_arg(c, i), j;
+    le_instr_t in = le_instr(c, i);
+    int op = in.op, argc = in.arg;
     vinfo_t *d, *k, *res;
     if (op == STORE_SUBSCR) {
-        if (!(i >= 5 * LE_UNIT && fused_store(po, i - 5 * LE_UNIT) == i) &&
-            !(i >= 4 * LE_UNIT && fused_store(po, i - 4 * LE_UNIT) == i))
+        /* the get, four or five instructions back */
+        for (p = i, j = 0; j < 4 && p > 0; j++) p = le_prev(c, p);
+        if (j < 4 || (fused_store(po, p, NULL) != i &&
+                      (p == 0 || fused_store(po, le_prev(c, p), NULL) != i)))
             return 0;
         d = NTOP(2);
         k = NTOP(1);
@@ -4286,7 +4347,7 @@ dict_str_fusion(PsycoObject *po, int next_instr)
         for (j = 3; j--;) POP_DECREF();
         return 1;
     }
-    if (fused_store(po, i) < 0)
+    if (fused_store(po, i, &dlocal) < 0)
         return 0;
     if (op == BINARY_SUBSCR) {
         d = NTOP(2);
@@ -4295,8 +4356,7 @@ dict_str_fusion(PsycoObject *po, int next_instr)
             return -1;
     }
     else {
-        /* the LOAD_FAST d's */
-        d = GETLOCAL(le_arg(c, i - (argc + 2) * LE_UNIT));
+        d = GETLOCAL(dlocal);
         k = NTOP(argc);
     }
     if (!PsycoDict_StrKey(d, k))
@@ -4425,6 +4485,15 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
         }
     }
 #endif
+#if LE_HAS_OPCODE_CALL
+    /* ceval keeps KW_NAMES's names outside the frame, for the CALL after
+       it: a CALL that has them is run from its KW_NAMES */
+    if (le_instr(le_code(co), next_instr).op == CALL) {
+        int kw = call_kwnames_start(le_code(co), next_instr);
+        if (kw >= 0)
+            next_instr = kw;
+    }
+#endif
     result = psyco_generic_call(
         po, psyco_resume_run, CfCommonNewRefPyObject, "vll", st,
         (long)(next_instr - sizeof(_Py_CODEUNIT)), (long)nstack);
@@ -4486,7 +4555,7 @@ enum {
 
 /* locals, constants, cells and the value stack */
 static int
-compile_locals_and_stack(PsycoObject *po, int opcode, int oparg,
+compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
                          int *next_instr_io, mergepoint_t **mp_io,
                          int *raise_lasti_io)
 {
@@ -4785,8 +4854,9 @@ out:
 
 /* unary, binary and in-place operators, subscripts and slices */
 static int
-compile_operators(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
-                  mergepoint_t **mp_io, int *raise_lasti_io)
+compile_operators(PsycoObject *po, int opcode, int oparg, int target,
+                  int *next_instr_io, mergepoint_t **mp_io,
+                  int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     vinfo_t *u, *x;
@@ -4948,8 +5018,8 @@ out:
 
 /* comparisons and pattern matching */
 static int
-compile_compares(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
-                 mergepoint_t **mp_io, int *raise_lasti_io)
+compile_compares(PsycoObject *po, int opcode, int oparg, int target,
+                 int *next_instr_io, mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     vinfo_t *v, *x;
@@ -5127,8 +5197,8 @@ out:
 /* attributes, globals and builtins */
 static int
 compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
-                               int *next_instr_io, mergepoint_t **mp_io,
-                               int *raise_lasti_io)
+                               int target, int *next_instr_io,
+                               mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -5225,8 +5295,7 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             vinfo_t *owner;
             vinfo_t *res;
             owner = NTOP(1);
-            name = vinfo_new(
-                CompileTime_New((long)GETNAMEV(LE_ATTR_NAME(oparg))));
+            name = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
             res = PsycoObject_GetAttr(po, owner, name);
             vinfo_decref(name, po);
             if (res == NULL) {
@@ -5234,9 +5303,6 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             }
             POP(owner);
             vinfo_decref(owner, po);
-            /* the method form as LOAD_METHOD pushes it */
-            if (LE_ATTR_METHOD(oparg))
-                PUSH(psyco_vi_Zero());
             PUSH(res);
             goto fine;
         }
@@ -5313,7 +5379,7 @@ out:
 
 /* building and unpacking tuples, lists, sets, dicts, slices and strings */
 static int
-compile_build_and_unpack(PsycoObject *po, int opcode, int oparg,
+compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
                          int *next_instr_io, mergepoint_t **mp_io,
                          int *raise_lasti_io)
 {
@@ -5975,8 +6041,8 @@ out:
 
 /* jumps */
 static int
-compile_jumps(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
-              mergepoint_t **mp_io, int *raise_lasti_io)
+compile_jumps(PsycoObject *po, int opcode, int oparg, int target,
+              int *next_instr_io, mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     vinfo_t *x;
@@ -5990,13 +6056,11 @@ compile_jumps(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
         case JUMP_ABSOLUTE:
         case JUMP_BACKWARD:
         case JUMP_BACKWARD_NO_INTERRUPT: {
-            JUMPTO(JUMP_DEST());
+            JUMPTO(target);
             JUMPED();
         }
 
         case POP_JUMP_IF_FALSE:
-        case POP_JUMP_FORWARD_IF_FALSE:
-        case POP_JUMP_BACKWARD_IF_FALSE:
             x = PsycoObject_IsTrue(po, TOP());
             if (x == NULL)
                 break;
@@ -6004,13 +6068,11 @@ compile_jumps(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
             vinfo_decref(x, po);
             if (cc == CC_ERROR)
                 break;
-            JUMP_IF_CC(INVERT_CC(cc), JUMPTO(JUMP_DEST()), 1, 1);
+            JUMP_IF_CC(INVERT_CC(cc), JUMPTO(target), 1, 1);
             POP_DECREF();
             goto fine;
 
         case POP_JUMP_IF_TRUE:
-        case POP_JUMP_FORWARD_IF_TRUE:
-        case POP_JUMP_BACKWARD_IF_TRUE:
             x = PsycoObject_IsTrue(po, TOP());
             if (x == NULL)
                 break;
@@ -6018,26 +6080,20 @@ compile_jumps(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
             vinfo_decref(x, po);
             if (cc == CC_ERROR)
                 break;
-            JUMP_IF_CC(cc, JUMPTO(JUMP_DEST()), 1, 1);
+            JUMP_IF_CC(cc, JUMPTO(target), 1, 1);
             POP_DECREF();
             goto fine;
 
         case POP_JUMP_IF_NONE:
-        case POP_JUMP_FORWARD_IF_NONE:
-        case POP_JUMP_BACKWARD_IF_NONE:
-        case POP_JUMP_IF_NOT_NONE:
-        case POP_JUMP_FORWARD_IF_NOT_NONE:
-        case POP_JUMP_BACKWARD_IF_NOT_NONE: {
+        case POP_JUMP_IF_NOT_NONE: {
             vinfo_t *cond = NTOP(1);
             condition_code_t cc =
                 integer_cmp_i(po, cond, (long)Py_None, Py_EQ);
             if (cc == CC_ERROR)
                 break;
-            if (opcode == POP_JUMP_IF_NOT_NONE ||
-                opcode == POP_JUMP_FORWARD_IF_NOT_NONE ||
-                opcode == POP_JUMP_BACKWARD_IF_NOT_NONE)
+            if (opcode == POP_JUMP_IF_NOT_NONE)
                 cc = INVERT_CC(cc);
-            JUMP_IF_CC(cc, JUMPTO(JUMP_DEST()), 1, 1);
+            JUMP_IF_CC(cc, JUMPTO(target), 1, 1);
             POP(cond);
             vinfo_decref(cond, po);
             goto fine;
@@ -6051,7 +6107,7 @@ compile_jumps(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
             vinfo_decref(x, po);
             if (cc == CC_ERROR)
                 break;
-            JUMP_IF_CC(INVERT_CC(cc), JUMPTO(JUMP_DEST()), 0, 1);
+            JUMP_IF_CC(INVERT_CC(cc), JUMPTO(target), 0, 1);
             POP_DECREF();
             goto fine;
 
@@ -6063,7 +6119,7 @@ compile_jumps(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
             vinfo_decref(x, po);
             if (cc == CC_ERROR)
                 break;
-            JUMP_IF_CC(cc, JUMPTO(JUMP_DEST()), 0, 1);
+            JUMP_IF_CC(cc, JUMPTO(target), 0, 1);
             POP_DECREF();
             goto fine;
 
@@ -6082,12 +6138,11 @@ out:
 
 /* iterators and for loops */
 static int
-compile_iteration(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
-                  mergepoint_t **mp_io, int *raise_lasti_io)
+compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
+                  int *next_instr_io, mergepoint_t **mp_io,
+                  int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
-    PyCodeObject *co = po->pr.co;
-    le_code_t bytecode = le_code(co);
     vinfo_t *v, *x;
     int next_instr = *next_instr_io;
     mergepoint_t *mp = *mp_io;
@@ -6178,8 +6233,7 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
                     /* iterator ended normally */
                     PycException_Clear(po);
                     POP_DECREF();
-                    JUMPTO(le_for_iter_exit(
-                        bytecode, next_instr + LE_JUMP_BYTES(oparg)));
+                    JUMPTO(target);
                     mp = psyco_next_merge_point(po->pr.merge_points,
                                                 next_instr);
                 }
@@ -6204,8 +6258,8 @@ out:
 
 /* calls */
 static int
-compile_calls(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
-              mergepoint_t **mp_io, int *raise_lasti_io)
+compile_calls(PsycoObject *po, int opcode, int oparg, int target,
+              int *next_instr_io, mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -6221,6 +6275,31 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
                                     "v", TOP()))
                 break;
             POP_DECREF();
+            goto fine;
+
+        /* the intrinsics left as CALL_INTRINSIC_1 (bytecode.h:le_instr)
+           that mergepoints.c:compiled_intrinsic allows: a generator's
+           PEP 479 handler, and the REPL's print */
+        case CALL_INTRINSIC_1:
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+            if (oparg == INTRINSIC_STOPITERATION_ERROR) {
+                extra_assert(po->pr.co->co_flags & CO_GENERATOR);
+                x = psyco_generic_call(po, cimpl_stopiteration_error,
+                                       CfCommonNewRefPyObject | CfNoPython,
+                                       "v", TOP());
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                PUSH(x);
+                goto fine;
+            }
+            extra_assert(oparg == INTRINSIC_PRINT);
+            if (!psyco_generic_call(po, cimpl_print_expr, CfCommonIntZeroOk,
+                                    "v", TOP()))
+                break;
+            POP_DECREF();
+            PUSH(psyco_vi_None());
+#endif
             goto fine;
 
         /* the bound method PRECALL would split is called as it
@@ -6306,8 +6385,8 @@ out:
 /* returning, yielding and making functions */
 static int
 compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
-                              int *next_instr_io, mergepoint_t **mp_io,
-                              int *raise_lasti_io)
+                              int target, int *next_instr_io,
+                              mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -6481,8 +6560,8 @@ out:
 /* blocks, with statements and exceptions */
 static int
 compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
-                              int *next_instr_io, mergepoint_t **mp_io,
-                              int *raise_lasti_io)
+                              int target, int *next_instr_io,
+                              mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -6558,7 +6637,7 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             POP_DECREF();
             cc = integer_non_null(po, x);
             vinfo_decref(x, po);
-            JUMP_IF_CC(INVERT_CC(cc), JUMPTO(JUMP_DEST()), 0, 0);
+            JUMP_IF_CC(INVERT_CC(cc), JUMPTO(target), 0, 0);
             goto fine;
 #endif
 
@@ -6905,8 +6984,8 @@ out:
 
 /* imports */
 static int
-compile_imports(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
-                mergepoint_t **mp_io, int *raise_lasti_io)
+compile_imports(PsycoObject *po, int opcode, int oparg, int target,
+                int *next_instr_io, mergepoint_t **mp_io, int *raise_lasti_io)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -6954,7 +7033,7 @@ out:
 
 /* the families, in the order ceval.c has their cases */
 static int (*const compile_families[])(PsycoObject *po, int opcode, int oparg,
-                                       int *next_instr_io,
+                                       int target, int *next_instr_io,
                                        mergepoint_t **mp_io,
                                        int *raise_lasti_io) = {
     compile_locals_and_stack,
@@ -6974,18 +7053,18 @@ static int (*const compile_families[])(PsycoObject *po, int opcode, int oparg,
 
 /* the case for opcode, from the family that has it */
 static int
-compile_opcode(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
-               mergepoint_t **mp_io, int *raise_lasti_io)
+compile_opcode(PsycoObject *po, int opcode, int oparg, int target,
+               int *next_instr_io, mergepoint_t **mp_io, int *raise_lasti_io)
 {
     /* each opcode's family, plus one, once a family has compiled it */
     static unsigned char family_of[512];
     int i, ended;
     if (opcode >= 0 && opcode < (int)sizeof(family_of) && family_of[opcode])
         return compile_families[family_of[opcode] - 1](
-            po, opcode, oparg, next_instr_io, mp_io, raise_lasti_io);
+            po, opcode, oparg, target, next_instr_io, mp_io, raise_lasti_io);
     for (i = 0; i < COMPILE_FAMILIES; i++) {
-        ended = compile_families[i](po, opcode, oparg, next_instr_io, mp_io,
-                                    raise_lasti_io);
+        ended = compile_families[i](po, opcode, oparg, target, next_instr_io,
+                                    mp_io, raise_lasti_io);
         if (ended != OPCODE_ELSEWHERE) {
             if (opcode >= 0 && opcode < (int)sizeof(family_of))
                 family_of[opcode] = (unsigned char)(i + 1);
@@ -7006,6 +7085,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int opcode = 0; /* Current opcode */
     int oparg = 0;  /* Current opcode argument, if any */
+    le_instr_t in;  /* the instruction, as bytecode.h:le_instr reads it */
     code_t *code1;
     int saved_rec_limit;
     int unwound = 0;  /* the frame went on interpreted (resume_if_tracing) */
@@ -7092,9 +7172,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             /* no Python error is pending between instructions: a meta that
                tests for one would decide otherwise in a respawn's replay */
             extra_assert(!PyErr_Occurred());
-            opcode = le_op(bytecode, next_instr);
-            oparg = le_arg(bytecode, next_instr);
-            next_instr += LE_UNIT;
+            in = le_instr(bytecode, next_instr);
+            opcode = in.op;
+            oparg = in.arg;
+            next_instr = in.next;
             /* at loop heads and after calls */
             if (psyco_breaker_check_at(po->pr.merge_points,
                                        po->pr.next_instr) &&
@@ -7102,8 +7183,6 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 break;
             po->blocking_call = 0;
             po->pr.python_call = 0;
-        dispatch_opcode:
-            next_instr += LE_CACHE_BYTES(opcode);
 
             /* Main switch on opcode */
 
@@ -7117,14 +7196,11 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                TOP() to get the arguments off the stack and call POP() at the
                end when you are sure everything when fine. */
 
-            /* All opcodes found here must also be listed in mergepoints.c.
-               Python code objects using a bytecode instruction not listed
-               in mergepoints.c are never Psyco-ified. */
+            /* Every opcode compiled here is LE_OPF_COMPILED in
+               bytecode.h:le_op_flags; code with any other runs in ceval. */
 
-            /* the patterns are of bytecode without caches */
-            if ((opcode == BINARY_SUBSCR || opcode == CALL_METHOD ||
-                 opcode == STORE_SUBSCR) &&
-                LE_CACHE_BYTES(opcode) == 0) {
+            if (opcode == BINARY_SUBSCR || opcode == CALL_METHOD ||
+                opcode == CALL || opcode == STORE_SUBSCR) {
                 int done = dict_str_fusion(po, next_instr);
                 if (done < 0)
                     break;
@@ -7150,92 +7226,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
             }
 
-            switch (opcode) {
-#if LE_HAS_OPCODE_BINARY_OP
-                /* an operator by its NB_ number: compiled as the opcode
-                   that had it before (absent here, so its number is
-                   free) */
-                case BINARY_OP: {
-                    static const short ops[] = {
-                        [NB_ADD] = BINARY_ADD,
-                        [NB_AND] = BINARY_AND,
-                        [NB_FLOOR_DIVIDE] = BINARY_FLOOR_DIVIDE,
-                        [NB_LSHIFT] = BINARY_LSHIFT,
-                        [NB_MATRIX_MULTIPLY] = BINARY_MATRIX_MULTIPLY,
-                        [NB_MULTIPLY] = BINARY_MULTIPLY,
-                        [NB_REMAINDER] = BINARY_MODULO,
-                        [NB_OR] = BINARY_OR,
-                        [NB_POWER] = BINARY_POWER,
-                        [NB_RSHIFT] = BINARY_RSHIFT,
-                        [NB_SUBTRACT] = BINARY_SUBTRACT,
-                        [NB_TRUE_DIVIDE] = BINARY_TRUE_DIVIDE,
-                        [NB_XOR] = BINARY_XOR,
-                        [NB_INPLACE_ADD] = INPLACE_ADD,
-                        [NB_INPLACE_AND] = INPLACE_AND,
-                        [NB_INPLACE_FLOOR_DIVIDE] = INPLACE_FLOOR_DIVIDE,
-                        [NB_INPLACE_LSHIFT] = INPLACE_LSHIFT,
-                        [NB_INPLACE_MATRIX_MULTIPLY] = INPLACE_MATRIX_MULTIPLY,
-                        [NB_INPLACE_MULTIPLY] = INPLACE_MULTIPLY,
-                        [NB_INPLACE_REMAINDER] = INPLACE_MODULO,
-                        [NB_INPLACE_OR] = INPLACE_OR,
-                        [NB_INPLACE_POWER] = INPLACE_POWER,
-                        [NB_INPLACE_RSHIFT] = INPLACE_RSHIFT,
-                        [NB_INPLACE_SUBTRACT] = INPLACE_SUBTRACT,
-                        [NB_INPLACE_TRUE_DIVIDE] = INPLACE_TRUE_DIVIDE,
-                        [NB_INPLACE_XOR] = INPLACE_XOR};
-                    extra_assert(oparg >= 0 &&
-                                 oparg < (int)(sizeof(ops) / sizeof(ops[0])));
-                    opcode = ops[oparg];
-                    goto dispatch_opcode;
-                }
-#endif
-
-                /* the intrinsics mergepoints.c:compiled_intrinsic allows:
-                   a generator's PEP 479 handler, and the opcodes the others
-                   replaced */
-                case CALL_INTRINSIC_1:
-#if LE_HAS_OPCODE_CALL_INTRINSIC_1
-                    if (oparg == INTRINSIC_STOPITERATION_ERROR) {
-                        vinfo_t *x;
-                        extra_assert(po->pr.co->co_flags & CO_GENERATOR);
-                        x = psyco_generic_call(
-                            po, cimpl_stopiteration_error,
-                            CfCommonNewRefPyObject | CfNoPython, "v", TOP());
-                        if (x == NULL)
-                            break;
-                        POP_DECREF();
-                        PUSH(x);
-                        goto fine;
-                    }
-                    if (oparg == INTRINSIC_PRINT) {
-                        if (!psyco_generic_call(po, cimpl_print_expr,
-                                                CfCommonIntZeroOk, "v", TOP()))
-                            break;
-                        POP_DECREF();
-                        PUSH(psyco_vi_None());
-                        goto fine;
-                    }
-                    opcode = oparg == INTRINSIC_UNARY_POSITIVE ? UNARY_POSITIVE
-                             : oparg == INTRINSIC_LIST_TO_TUPLE ? LIST_TO_TUPLE
-                                                                : -1;
-                    extra_assert(opcode >= 0);
-                    goto dispatch_opcode;
-#else
-                    goto fine;
-#endif
-
-                case EXTENDED_ARG:
-                    opcode = le_op(bytecode, next_instr);
-                    oparg = oparg << 8 | le_arg(bytecode, next_instr);
-                    next_instr += LE_UNIT;
-                    ;
-                    goto dispatch_opcode;
-                default:
-                    break;
-            } /* switch (opcode) */
-
-            ended = compile_opcode(po, opcode, oparg, &next_instr, &mp,
-                                   &raise_lasti);
+            ended = compile_opcode(po, opcode, oparg, in.target, &next_instr,
+                                   &mp, &raise_lasti);
             if (ended == OPCODE_ELSEWHERE) {
                 fprintf(stderr, "XXX opcode: %d\n", opcode);
                 Py_FatalError("unknown opcode");
@@ -7252,10 +7244,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
         fine:
             extra_assert(!PycException_Occurred(po));
-            if ((po->pr.python_call &&
-                 (opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
-                  opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD ||
-                  opcode == CALL)) ||
+            if ((po->pr.python_call && (le_op_flags(opcode) & LE_OPF_CALL)) ||
                 po->pr.resume_pending) {
                 po->pr.resume_pending = 0;
                 if (!resume_if_tracing(po, next_instr, &unwound))

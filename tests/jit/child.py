@@ -29,7 +29,11 @@ if use_lejit:
 # rounds (9 unless the case says), not one: compiling can go on for a few
 # calls (a call site that sees a new function each time specialises until
 # it goes megamorphic), and that bounded growth is
-# tests/jit/bounds.py's business.
+# tests/jit/bounds.py's business. The collector is off for the 100 rounds
+# and runs at their end: where it is scheduled through eval_breaker, a
+# collection starting in compiled code takes that test's rare path, which
+# is compiled when first taken, so which of them compile during the rounds
+# would depend on when collections happen.
 # The type cache keeps the attribute names it was last asked for, by slot,
 # so a name made afresh for each lookup (PyObject_CallMethod's) stays alive
 # until another lookup takes its slot: an amount that differs from process
@@ -45,12 +49,14 @@ for _ in range(int(sys.argv[7])):
 clear_type_cache()
 gc.collect()
 before = sys.getallocatedblocks()
+gc.disable()
 for _ in range(100):
     for args in calls:
         try:
             fn(*args)
         except Exception:
             pass
+gc.enable()
 clear_type_cache()
 gc.collect()
 out.append('leak: %d' % (sys.getallocatedblocks() - before))

@@ -36,18 +36,20 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc);
 /* The argument binding of ceval.c:_PyEval_EvalCodeWithName, translated
    into psyfunc.c: run while compiling a call, it binds the values in 'args',
    'defs' and 'closure' into the frame's locals, 'f_localsplus' (all NULL on
-   entry), taking a reference for each. -1 where CPython's binding needs what
-   the compiler can't do (a wrong count, **kwargs, cells): the caller releases
-   the locals and makes the real call. The vinfo_t ** parameters are the values
-   bound; the others are the compiler's own. The C function's keyword
-   parameters are left out: a call with keywords is the real one
-   (pfunction_call), and a keyword-only parameter with no argument is left to
-   the real call, which has the defaults. */
+   entry), taking a reference for each, and makes the code's own cells (only
+   if 'make_cells': psyfunc.c:bind_cells). -1 where CPython's binding needs
+   what the compiler can't do (a wrong count, **kwargs): the caller releases
+   the locals and makes the real call; -2 on an error. The vinfo_t **
+   parameters are the values bound; the others are the compiler's own. The
+   C function's keyword parameters are left out: a call with keywords is the
+   real one (pfunction_call), and a keyword-only parameter with no argument
+   is left to the real call, which has the defaults. */
 EXTERNFN int
 _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
                             vinfo_t **f_localsplus, vinfo_t **args,
                             Py_ssize_t argcount, vinfo_t **defs,
-                            Py_ssize_t defcount, vinfo_t **closure);
+                            Py_ssize_t defcount, vinfo_t **closure,
+                            bool make_cells);
 
 /* for pycompiler.c */
 EXTERNFN vinfo_t *

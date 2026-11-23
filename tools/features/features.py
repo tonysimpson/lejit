@@ -916,7 +916,9 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'CALL_INTRINSIC_2', 'LOAD_SUPER_ATTR', 'POP_JUMP_IF_NONE',
            'POP_JUMP_IF_NOT_NONE',
            # gone from 3.13: f-strings are CONVERT_VALUE's and FORMAT_SIMPLE's
-           'FORMAT_VALUE')
+           'FORMAT_VALUE',
+           # new in 3.13
+           'TO_BOOL')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
