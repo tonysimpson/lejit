@@ -588,6 +588,10 @@ _build_merge_points(PyCodeObject *co, int module)
     if (module) {
         goto not_ok;
     }
+#if !LE_HAS_OPCODE_BINARY_SUBSCR
+    /* 3.14's bytecode is not compiled yet */
+    goto not_ok;
+#endif
 #if !LE_HAS_DICT_VERSION_TAG
     /* the guards on globals, builtins and attributes need dicts' version
        tags */
