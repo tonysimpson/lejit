@@ -378,14 +378,23 @@ str_probe(PyDictObject *mp, PyObject *key, Py_hash_t *phash, PyObject **pvalue)
    its own, which the store then fails to match.
    A key not built is named by its root, start, length and map instead
    (start -1 for a key object): the root is held from the get to the
-   store too, and equal parts are equal strings, so the same slot. */
+   store too, and equal parts are equal strings, so the same slot.
+   Where dicts have no version tag, the key object the entry held stands
+   for the tag: the entry holds it still only if no change took it out (a
+   deleted entry's key is NULL, and a key put back goes into a new entry),
+   and an entry of these keys holding that key is the slot a new probe
+   finds. */
 static struct {
     PyDictObject *mp;
     PyObject *key;
     Py_ssize_t start, len;
     long map;
     PyDictKeysObject *keys;
+#if LE_HAS_DICT_VERSION_TAG
     uint64_t tag;
+#else
+    PyObject *held; /* the entry's key, borrowed: only compared */
+#endif
     Py_ssize_t ix;
 } probed;
 
@@ -399,7 +408,11 @@ remember_parts(PyDictObject *mp, PyObject *key, Py_ssize_t start,
     probed.len = len;
     probed.map = map;
     probed.keys = mp->ma_keys;
-    probed.tag = mp->LE_DICT_TAG_FIELD;
+#if LE_HAS_DICT_VERSION_TAG
+    probed.tag = mp->ma_version_tag;
+#else
+    probed.held = *le_dict_key_slot((le_dictkeys_t *)mp->ma_keys, ix);
+#endif
     probed.ix = ix;
 }
 
@@ -415,7 +428,14 @@ recorded(PyDictObject *mp, PyObject *key, Py_ssize_t start, Py_ssize_t len,
 {
     return probed.mp == mp && probed.key == key && probed.start == start &&
            (start < 0 || (probed.len == len && probed.map == map)) &&
-           probed.keys == mp->ma_keys && probed.tag == mp->LE_DICT_TAG_FIELD;
+           probed.keys == mp->ma_keys &&
+#if LE_HAS_DICT_VERSION_TAG
+           probed.tag == mp->ma_version_tag;
+#else
+           probed.ix < ((le_dictkeys_t *)mp->ma_keys)->dk_nentries &&
+           *le_dict_key_slot((le_dictkeys_t *)mp->ma_keys, probed.ix) ==
+               probed.held;
+#endif
 }
 
 static void
@@ -442,7 +462,9 @@ store_found(PyDictObject *mp, PyObject *key, Py_ssize_t ix, PyObject *value)
         ((key != NULL && MAY_BE_TRACKED(key)) || MAY_BE_TRACKED(value)))
         PyObject_GC_Track(mp);
     *slot = value;
-    mp->LE_DICT_TAG_FIELD = le_dict_version += LE_DICT_VERSION_STEP;
+#if LE_HAS_DICT_VERSION_TAG
+    mp->ma_version_tag = le_dict_version += LE_DICT_VERSION_STEP;
+#endif
     Py_XDECREF(old); /* may run any code */
     Py_XDECREF(key);
     return 0;

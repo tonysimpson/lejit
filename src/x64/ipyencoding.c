@@ -155,7 +155,8 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
 
        checks ............ jcc MISS (each failure)
        old = values[ix]; test; jz FILL
-     STORE:  values[ix] = value; incref value; new version tag
+     STORE:  values[ix] = value; incref value; new version tag, where
+             dicts have one
              dec old (not an immortal); jnz DONE; call dealloc_glue;
              jmp DONE
      FILL:   ix == ma_used, else MISS; ma_used++; old = value; jmp STORE
@@ -319,6 +320,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     store = code;
     MOV_X8_R(REG_X64_R8, values_at, REG_X64_R9, 8, REG_X64_RSI);
     INC_STORED(REG_X64_RSI);
+#if LE_HAS_DICT_VERSION_TAG
     if (!IN_VALUES(s)) { /* a dict's new version tag */
         MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX,
                 offsetof(store_cache_t, version));
@@ -335,6 +337,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
                 REG_TRANSIENT_1);
 #endif
     }
+#endif
 #if LE_HAS_IMMORTAL_OBJECTS
     CMP_I8_DA(0, REG_X64_RAX); /* an immortal is left alone */
     s->done[2] = code;
