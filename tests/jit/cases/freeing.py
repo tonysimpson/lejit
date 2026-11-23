@@ -417,7 +417,7 @@ CASES = [
     ('own_namespace_recursion', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
     ('freed_in_subinterpreter', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
     ('unscanned_freed_in_subinterpreter', [()],
-     {'leaks': "plain CPython's count moves by 60 blocks from run to run"}),
+     {'leaks': 'leaks at random, KNOWN_BUGS'}),
     ('namedtuple_code_dies', [()], {}),
     ('isinstance_class_dies', [()], {}),
     ('isinstance_instance_class_dies', [()], {}),

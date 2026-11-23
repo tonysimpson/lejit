@@ -134,7 +134,8 @@ le_binary_op_opcode(int nb)
    'op' is a LeJIT opcode, CPython's name in its oldest spelling where
    versions spell one operation differently (BINARY_OP 0 is BINARY_ADD,
    POP_JUMP_BACKWARD_IF_TRUE is POP_JUMP_IF_TRUE, LOAD_ATTR with the method
-   bit is LOAD_METHOD); 'arg' with its EXTENDED_ARG prefixes folded in, and
+   bit is LOAD_METHOD, CALL_INTRINSIC_1 with INTRINSIC_UNARY_POSITIVE is
+   UNARY_POSITIVE); 'arg' with its EXTENDED_ARG prefixes folded in, and
    no longer holding what 'op' now says; 'raw' the opcode as CPython wrote
    it; 'target' a jump's target in bytes (FOR_ITER's when its iterator
    ends), else -1; 'next' the position after it and its caches. */
@@ -196,6 +197,14 @@ le_instr(le_code_t c, int pos)
             if (in.arg & 1)
                 in.op = LOAD_METHOD;
             in.arg >>= 1;
+            break;
+#endif
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+        case CALL_INTRINSIC_1:
+            if (in.arg == INTRINSIC_UNARY_POSITIVE)
+                in.op = UNARY_POSITIVE;
+            else if (in.arg == INTRINSIC_LIST_TO_TUPLE)
+                in.op = LIST_TO_TUPLE;
             break;
 #endif
     }
@@ -276,7 +285,6 @@ le_op_flags(int op)
         case UNARY_NEGATIVE:
         case UNARY_NOT:
         case UNARY_INVERT:
-        case BINARY_OP:
         case BINARY_POWER:
         case BINARY_MULTIPLY:
         case BINARY_MATRIX_MULTIPLY:
@@ -495,17 +503,6 @@ le_op_flags(int op)
     }
     return 0;
 }
-
-/* the index in co_names of the name LOAD_ATTR with argument arg reads, and
-   whether it pushes the method form: a NULL or the method under the
-   attribute, as LOAD_METHOD does */
-#if LE_HAS_LOAD_ATTR_METHOD_BIT
-#define LE_ATTR_NAME(arg) ((arg) >> 1)
-#define LE_ATTR_METHOD(arg) ((arg) & 1)
-#else
-#define LE_ATTR_NAME(arg) (arg)
-#define LE_ATTR_METHOD(arg) 0
-#endif
 
 /* the rich comparison COMPARE_OP with argument arg makes */
 #if LE_HAS_COMPARE_OP_SHIFT_5

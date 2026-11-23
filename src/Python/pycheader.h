@@ -65,8 +65,7 @@
 #define GENEXPR_MIN 6  /* min(), max(): acc is the best so far, or NULL */
 #define GENEXPR_MAX 7
 #define GENEXPR_SLOTS 2
-#define GENEXPR_SLOT_MODE(co) \
-    (INDEX_LOC_LOCALS_PLUS + le_code_nlocals(co) + le_code_nfrees(co))
+#define GENEXPR_SLOT_MODE(co) (INDEX_LOC_LOCALS_PLUS + le_code_nlocalsplus(co))
 #define GENEXPR_SLOT_ACC(co) (GENEXPR_SLOT_MODE(co) + 1)
 
 #define LOC_CONTINUATION (po->vlocals.items[INDEX_LOC_CONTINUATION])
