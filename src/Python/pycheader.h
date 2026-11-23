@@ -51,7 +51,7 @@
 #define LOC_INLINE_SERIAL 2
 #define TOTAL_LOC_INLINE 3
 
-/* A generator expression compiled into its consumer
+/* A generator compiled into its consumer
    (psyfunc.c:psyco_call_genexpr) has two more slots, after its free
    variables and before the stack: what YIELD_VALUE does (GENEXPR_*, a
    compile-time value, so versions for different consumers never match at
