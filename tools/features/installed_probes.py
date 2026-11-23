@@ -130,6 +130,12 @@ def ARG_CHECK_POSITIONAL():
 
 
 @probe
+def DEALLOC_HOOKS():
+    """libpython exports PyRefTracer_SetTracer (ctypes)"""
+    return _exported('PyRefTracer_SetTracer')
+
+
+@probe
 def OBJECTDICT_SETITEM_LINKABLE():
     """libpython exports _PyObjectDict_SetItem, so an extension can link
     to it (ctypes)"""

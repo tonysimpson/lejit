@@ -1365,6 +1365,8 @@ OBJECTS = [
                         lambda s: _public(s, 'PyType_GetDict'))),
     ('IMMORTAL_OBJECTS', D('an object whose refcount\'s low 32 bits are negative is immortal: Py_INCREF and Py_DECREF leave it alone (_Py_IsImmortal)',
                            lambda s: _public(s, '_Py_IsImmortal'))),
+    ('DEALLOC_HOOKS', D('_Py_Dealloc does more than call tp_dealloc: it reports to the ref tracer (PyRefTracer_SetTracer), and may defer a deep dealloc to the trashcan',
+                        lambda s: _public(s, 'PyRefTracer_SetTracer'))),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
     ('TAGGED_DICT_OR_VALUES', tagged_dict_or_values),

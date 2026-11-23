@@ -460,6 +460,27 @@ def inlined_callee_dies_first():
     return out, [r() is None for r in refs]
 
 
+
+def freed_lists_traced(n):
+    # an object compiled code frees is reported to the ref tracer, which
+    # _Py_Dealloc calls where it has one
+    try:
+        from _testcapi import start_counting_list_destroys as start
+        from _testcapi import stop_counting_list_destroys as stop
+    except ImportError:
+        return None
+    keep = []
+    for i in range(n):
+        keep.append([i])
+    counts = []
+    for i in range(n):
+        start()
+        x = keep.pop()
+        del x
+        counts.append(stop())
+    return counts
+
+
 CASES = [
     ('code_dies_with_shared_globals', [()], {'interpreted': 'calls exec'}),
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec'}),
@@ -479,4 +500,5 @@ CASES = [
     ('call_notes_reused', [()], {}),
     ('made_functions_free', [()], {}),
     ('promoted_reference_released', [()], {}),
+    ('freed_lists_traced', [(50,)], {}),
 ]
