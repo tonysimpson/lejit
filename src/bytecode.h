@@ -453,6 +453,7 @@ le_op_flags(int op)
             return LE_OPF_COMPILED | LE_OPF_LIGHT;
         case LOAD_METHOD:
         case MAKE_FUNCTION:
+        case SET_FUNCTION_ATTRIBUTE:
             return LE_OPF_COMPILED;
         /* cells */
         case MAKE_CELL:
