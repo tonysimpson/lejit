@@ -211,9 +211,6 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
         fastlocals[i] = x;
     }
     if (co->co_flags & CO_VARARGS) {
-#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
-        return -1; /* the tuple: the real call */
-#else
         vinfo_t *u;
         if (argcount - n > 15)
             return -1; /* a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT
@@ -226,7 +223,6 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             vinfo_incref(x);
             PsycoTuple_GET_ITEM(u, i - n) = x;
         }
-#endif
     }
     if (argcount > co->co_argcount && !(co->co_flags & CO_VARARGS)) {
         return -1; /* too_many_positional: the real call */
