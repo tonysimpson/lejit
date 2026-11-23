@@ -164,9 +164,6 @@ SKIPPED = {
     "compiled code makes Python calls without CPython's frame-evaluation "
     'hook, so a hook the test installs sees none of them':
         'test.test_capi.test_misc.Test_Pep523API.*',
-    'on 3.11 a keyword argument is passed by position after a few calls':
-        'test.test_asyncio.test_proactor_events.ProactorDatagramTransportTests.test_sendto_bytearray '
-        'test.test_asyncio.test_proactor_events.ProactorDatagramTransportTests.test_sendto_memoryview',
     'a pool of processes started from threads, which hung here once in a '
     'child that runs without LeJIT':
         'test.test_importlib.test_threaded_import.ThreadedImportTests.'
@@ -178,6 +175,9 @@ SKIPPED = {
     'binds a port find_unused_port chose, and skips itself when another '
     'process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress',
+    "start many threads, and fail with \"can't start new thread\" on a "
+    'loaded machine, plain as well as with LeJIT':
+        'test.test_queue.*SimpleQueueTest.test_many_threads*',
     'bind a port find_unused_port chose, which another process can take '
     'first':
         'test.test_socket.CreateServerFunctionalTest.*',
