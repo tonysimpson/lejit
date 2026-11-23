@@ -371,6 +371,7 @@ HEADER_DETECTORS = {
     'DICT_WATCHER_BITS': internal(features.dict_watcher_bits),
     'PYCORE_INTERPFRAME_H': pycore_header('pycore_interpframe.h'),
     'FRAME_STACKREFS': internal(features.frame_stackrefs),
+    'FRAME_INITIALIZE_TSTATE': internal(features.frame_initialize_tstate),
     'REFCOUNT_32': features.refcount_32,
     'DICT_VERSION_TAG': features.dict_version_tag,
     # where the interpreter's probe can't answer: a frame object with no
