@@ -907,7 +907,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     /* a generator is run only by a consumer that knows it
        (psyco_call_genexpr): until then it is a pending generator, of a
        function known now or still virtual, whose arguments bind here */
-    generator = (co->co_flags & CO_GENERATOR) != 0;
+    generator = (co->co_flags & (CO_GENERATOR | CO_COROUTINE)) != 0;
     if (generator && (vfunc == NULL || is_runtime(vfunc->source) ||
                       !psyco_is_fusable_generator(co)))
         goto fail_to_default;

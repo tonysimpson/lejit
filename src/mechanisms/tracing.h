@@ -5,9 +5,10 @@
    (pyruntime.c:le_monitoring_on): sys.settrace and sys.setprofile are
    tools of its, so other tools are tracing too, and compiled code, which
    gives them no events, does not run. le_tracing_now tests it at run time
-   (the eval hook); le_tracing_test emits a call of the same test in
-   compiled code, on the thread state 'vts' (psyfunc.c:tracing_on).
-   Included after vcompiler.h and codegen.h. */
+   (the eval hook); le_tracing_test emits the same test in compiled code,
+   on the thread state 'vts' (psyfunc.c:tracing_on): the interpreter's
+   table of tools per event, a byte each, read as two words that overlap,
+   OR-ed. Included after vcompiler.h and codegen.h. */
 extern int
 le_monitoring_on(PyThreadState *ts);
 static inline int
@@ -16,33 +17,62 @@ le_tracing_now(PyThreadState *ts)
     return le_monitoring_on(ts);
 }
 
+/* where the interpreter's table of tools is, and its size (8 to 16) */
+extern const long le_monitors_tools_at, le_monitors_tools_size;
+#define TSTATE_interp \
+    FMUT(DEF_FIELD(PyThreadState, PyInterpreterState *, interp, NO_PREV_FIELD))
+
 #ifdef PyFrameLocalsProxy_Check
 /* frames.c:psyco_frames_exposed */
 extern int psyco_frames_exposed;
 #endif
-/* in compiled code, also while a frame's locals are exposed, which a
-   resume test then sees (pycompiler.c:resume_if_tracing) */
-static inline int
-cimpl_tracing_now(PyThreadState *ts)
-{
-#ifdef PyFrameLocalsProxy_Check
-    if (psyco_frames_exposed)
-        return 1;
-#endif
-    return le_tracing_now(ts);
-}
 
+/* compiled code's test, which is also on while a frame's locals are
+   exposed, which a resume test then sees (pycompiler.c:resume_if_tracing) */
 static inline condition_code_t
 le_tracing_test(PsycoObject *po, vinfo_t *vts)
 {
     condition_code_t cc;
-    vinfo_t *vflag =
-        psyco_generic_call(po, cimpl_tracing_now,
-                           CfReturnTypeInt | CfNoBlock | CfNoPython, "v", vts);
-    if (vflag == NULL)
+    vinfo_t *va, *vb, *vany,
+        *vinterp = psyco_get_field(po, vts, TSTATE_interp);
+    if (vinterp == NULL)
         return CC_ERROR;
-    cc = integer_non_null(po, vflag);
-    vinfo_decref(vflag, po);
+    va = psyco_get_field_offset(po, vinterp, FMUT(DEF_ARRAY(long, 0)),
+                                le_monitors_tools_at);
+    vb = va == NULL ? NULL
+                    : psyco_get_field_offset(
+                          po, vinterp, FMUT(DEF_ARRAY(long, 0)),
+                          le_monitors_tools_at + le_monitors_tools_size - 8);
+    vinfo_decref(vinterp, po);
+    if (vb == NULL) {
+        vinfo_xdecref(va, po);
+        return CC_ERROR;
+    }
+    vany = integer_or(po, va, vb);
+    vinfo_decref(va, po);
+    vinfo_decref(vb, po);
+    if (vany == NULL)
+        return CC_ERROR;
+#ifdef PyFrameLocalsProxy_Check
+    {
+        vinfo_t *vk = vinfo_new(CompileTime_New((long)&psyco_frames_exposed));
+        vinfo_t *vx =
+            psyco_get_field_offset(po, vk, FMUT(DEF_ARRAY(int, 0)), 0);
+        vinfo_decref(vk, po);
+        if (vx == NULL) {
+            vinfo_decref(vany, po);
+            return CC_ERROR;
+        }
+        vk = integer_or(po, vany, vx);
+        vinfo_decref(vany, po);
+        vinfo_decref(vx, po);
+        if (vk == NULL)
+            return CC_ERROR;
+        vany = vk;
+    }
+#endif
+    cc = integer_non_null(po, vany);
+    vinfo_decref(vany, po);
     return cc;
 }
 #elif LE_HAS_CFRAME

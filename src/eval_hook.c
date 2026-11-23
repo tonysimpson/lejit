@@ -253,18 +253,25 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
     return NULL;
 }
 
-/* whether a plain generator's frame 'f' may resume compiled: not while
-   it is thrown into, nor once its code is known not to be resumable. Its
-   code's record, if it has one, in '*x'. Generators resumed in a loop are
-   mostly of one code, so the last one found not resumable is kept, to
-   answer it without looking up its record. */
+/* whether a plain generator's or a coroutine's frame 'f' may resume
+   compiled: not while it is thrown into, nor once its code is known not to
+   be resumable. A coroutine runs compiled only from its start: ceval
+   resumes it at an await, sending into what it awaits. Its code's record,
+   if it has one, in '*x'. Generators resumed in a loop are mostly of one
+   code, so the last one found not resumable is kept, to answer it without
+   looking up its record. */
 static inline bool
 gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
 {
     PyCodeObject *co = le_frame_code(f);
-    if (co == le_gen_interpreted || !(co->co_flags & CO_GENERATOR) ||
-        throwflag || !le_frame_is_gen(f))
+    int kinds = CO_GENERATOR | (LE_RESUMES_COROUTINES ? CO_COROUTINE : 0);
+    if (co == le_gen_interpreted || !(co->co_flags & kinds) || throwflag ||
+        !le_frame_is_gen(f))
         return false;
+#if LE_RESUMES_COROUTINES
+    if ((co->co_flags & CO_COROUTINE) && f->f_lasti >= 0)
+        return false;
+#endif
     *x = le_code_extra_get(co);
     if (*x != NULL && (*x)->nresumes < 0) {
         le_gen_interpreted = co;
@@ -480,8 +487,8 @@ eval_from_callee(PyThreadState *ts, le_frame_t *f, int throwflag)
 #endif
 
 #if LE_RESUMES_GENERATORS
-/* a plain generator's frame, resumed, whose code's record is 'x' (or
-   NULL) */
+/* a plain generator's or a coroutine's frame, resumed, whose code's
+   record is 'x' (or NULL) */
 static __attribute__((noinline)) PyObject *
 LeGen_Eval(PyThreadState *tstate, le_frame_t *frame, le_code_extra_t *x)
 {
@@ -567,8 +574,8 @@ le_set_interp_eval_frame(void *fn);
 
 static le_eval_frame_fn original_eval_frame = NULL;
 
-/* a plain generator's frame, resumed, whose code's record is 'x' (or
-   NULL) */
+/* a plain generator's or a coroutine's frame, resumed, whose code's
+   record is 'x' (or NULL) */
 static __attribute__((noinline)) PyObject *
 LeGen_Eval(PyFrameObject *frame, le_code_extra_t *x)
 {
