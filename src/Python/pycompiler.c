@@ -4428,7 +4428,8 @@ fused_store(PsycoObject *po, int i, int *dlocal)
 
 /* The get then store of one str key in one dict (pdictobject.c's probe):
    the get records the slot it finds and the store reuses it if the dict
-   is unchanged (its keys and version tag), checked at run time, else
+   is unchanged (its keys and version tag, or where dicts have none, the
+   key the entry holds), checked at run time, else
    probes again. Called for BINARY_SUBSCR, CALL_METHOD, CALL and
    STORE_SUBSCR, before their caches; 1 when done, 0 for the translated
    case, -1 on an error. A get of the forms above that is not this probe

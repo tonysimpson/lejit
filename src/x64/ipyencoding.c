@@ -149,13 +149,15 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
    the dict, R8 its values, R9 its keys then the index, RAX scratch then
    the old value, R10 and R11 scratch. A watched dict is a miss
    (le_dict_watched). A managed dict's values (s->keys) have no
-   dict and no version tag: R8 is read from the object, or is the object
-   itself where the values are in it (LE_HAS_INLINE_VALUES), R9 is the
+   dict and no version tag: R8 is read from the object (less one, so the
+   values are at R8 + 1, where LE_HAS_TAGGED_DICT_OR_VALUES), or is the
+   object itself where the values are in it (LE_HAS_INLINE_VALUES), R9 is the
    class keys, and RCX is scratch. Laid out as
 
        checks ............ jcc MISS (each failure)
        old = values[ix]; test; jz FILL
-     STORE:  values[ix] = value; incref value; new version tag
+     STORE:  values[ix] = value; incref value; new version tag, where
+             dicts have one
              dec old (not an immortal); jnz DONE; call dealloc_glue;
              jmp DONE
      FILL:   ix == ma_used, else MISS; ma_used++; old = value; jmp STORE
@@ -231,8 +233,10 @@ load_operand(PsycoObject *po, code_t **pcode, Source src, reg_t rg,
 }
 
 /* the dict in RCX gets a new version tag (store_cache_t.version, through
-   the cache in RDX) */
-#if LE_HAS_DICT_WATCHER_BITS
+   the cache in RDX), where dicts have one */
+#if !LE_HAS_DICT_VERSION_TAG
+#define DICT_NEW_VERSION() ((void)0)
+#elif LE_HAS_DICT_WATCHER_BITS
 #define DICT_NEW_VERSION()                                             \
     do {                                                               \
         MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX,                          \
@@ -309,6 +313,11 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         JCC_MISS(CC_NE); /* a dict was made, which may be watched */
         MOV_R_R(REG_X64_R8, REG_X64_RDI);
         values_at = s->dictoffset + LE_VALUES_ARRAY;
+#elif LE_HAS_TAGGED_DICT_OR_VALUES
+        TEST_I8_BO(REG_X64_RDI, s->dictoffset, 1);
+        JCC_PROBE(CC_E); /* the dict, or none */
+        MOV_R_O(REG_X64_R8, REG_X64_RDI, s->dictoffset);
+        values_at = 1;
 #else
         MOV_R_O(REG_X64_R8, REG_X64_RDI, s->dictoffset);
         TEST_R_R(REG_X64_R8, REG_X64_R8);
@@ -400,11 +409,11 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         /* the order's length is the byte below the values, its entries the
            bytes below that, the first nearest; the values have room for
            every entry of the keys */
-        MOVZX_DR_BO(REG_X64_RCX, REG_X64_R8, -2);
+        MOVZX_DR_BO(REG_X64_RCX, REG_X64_R8, values_at - 2);
         ADD_R_I8(REG_X64_RCX, 1);
-        MOV_BO_R(REG_X64_R8, -2, REG_X64_RCX);
+        MOV_BO_R(REG_X64_R8, values_at - 2, REG_X64_RCX);
         UNARY_INSTR_ON_REG(3, REG_X64_RCX); /* neg */
-        MOV_BX8_R(REG_X64_R8, -2, REG_X64_RCX, 1, REG_X64_R9);
+        MOV_BX8_R(REG_X64_R8, values_at - 2, REG_X64_RCX, 1, REG_X64_R9);
     }
     else {
         CMP_R_O8(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
@@ -712,6 +721,11 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         NEAR_JCC(CC_E, jdict, ndict); /* no longer its attributes */
         MOV_R_R(REG_X64_R8, ro);
         values_at = s->dictoffset + LE_VALUES_ARRAY;
+#elif LE_HAS_TAGGED_DICT_OR_VALUES
+        TEST_I8_BO(ro, s->dictoffset, 1);
+        NEAR_JCC(CC_E, jdict, ndict); /* the dict, or none */
+        MOV_R_O(REG_X64_R8, ro, s->dictoffset);
+        values_at = 1;
 #else
         MOV_R_O(REG_X64_R8, ro, s->dictoffset);
         TEST_R_R(REG_X64_R8, REG_X64_R8);
