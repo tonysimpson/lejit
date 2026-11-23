@@ -213,6 +213,9 @@ SKIPPED = {
     'binds a port find_unused_port chose, and skips itself when another '
     'process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress',
+    'skips itself on a sporadic ENOTCONN, so the plain and LeJIT runs can '
+    'skip different counts':
+        'test.test_socket.RecvmsgSCTPStreamTest.testRecvmsgEOF',
     "start many threads, and fail with \"can't start new thread\" on a "
     'loaded machine, plain as well as with LeJIT':
         'test.test_queue.*SimpleQueueTest.test_many_threads* '
