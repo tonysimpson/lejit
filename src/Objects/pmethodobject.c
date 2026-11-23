@@ -230,8 +230,7 @@ PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
     /* default, slow version */
 use_proxy:
     LE_STAT(psyco_stat_cfunc_proxy++);
-    return psyco_generic_call(po, PyCFunction_Call, CfCommonNewRefPyObject,
-                              "vvv", func, args, kwargs);
+    return psyco_residual_call(po, PyCFunction_Call, func, args, kwargs);
 }
 
 #if ALL_CHECKS

@@ -11,6 +11,23 @@
 EXTERNFN vinfo_t *
 PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
                  vinfo_t *kw);
+/* callable(*args[:nargs], **dict(zip(kwnames, args[nargs:]))) as ceval
+   calls it, through PyObject_Vectorcall: kwnames is NULL or a tuple of
+   exact str. NULL with no exception set where it can't be emitted (no
+   vectorcall, or too many values); the caller then calls with a tuple. */
+EXTERNFN vinfo_t *
+psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t **args, int nargs,
+                 PyObject *kwnames);
+/* the same for a virtual tuple of arguments and no keywords (kw known
+   to be NULL) */
+EXTERNFN vinfo_t *
+psyco_vectorcall_tuple(PsycoObject *po, vinfo_t *callable, vinfo_t *args,
+                       vinfo_t *kw);
+/* call(callable, args, kw), a residual call with PyObject_Call's
+   arguments, through psyco_vectorcall_tuple where it can be */
+EXTERNFN vinfo_t *
+psyco_residual_call(PsycoObject *po, void *call, vinfo_t *callable,
+                    vinfo_t *args, vinfo_t *kw);
 /* the meta of calling an object of exactly type 'tp' while its tp_call is
    the one it has now; several types may share one tp_call */
 typedef vinfo_t *(*call_meta_fn)(PsycoObject *, vinfo_t *, vinfo_t *,
