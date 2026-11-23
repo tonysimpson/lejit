@@ -1043,37 +1043,25 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
    give 'result', is left as ceval leaves it, which gen_send_ex expects:
    paused at a yield, the thread's exception state is its caller's again
    and the frame is unlinked; else, ended, ceval clears it as a generator's
-   frame (le_frame_throw_out). That unwind is told apart from the
-   generator's own exception by 'done', which it raises in its place: the
-   frame is complete, so ceval gives 'done' a traceback entry, which is
-   dropped. */
+   frame (le_frame_finish). ceval would give a generator's frame the
+   exception it unwinds with a traceback entry, as it does for any frame
+   it has started (_PyFrame_IsIncomplete), so for the unwind the frame
+   isn't the generator's; ceval tells the two apart only by the owner. */
 static inline PyObject *
 le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
                    PyObject *done)
 {
     PyGenObject *gen = le_frame_gen(f);
-    PyObject *raised, *e;
     if (result != NULL && gen->gi_frame_state == FRAME_SUSPENDED) {
         ts->exc_info = gen->gi_exc_state.previous_item;
         gen->gi_exc_state.previous_item = NULL;
         f->previous = NULL;
         return result;
     }
-    raised = result == NULL ? PyErr_GetRaisedException() : NULL;
-    PyErr_SetRaisedException(Py_NewRef(done));
-    le_frame_throw_out(ts, f);
-    e = PyErr_GetRaisedException();
-    PyException_SetTraceback(done, Py_None);
-    if (e == done) {
-        Py_DECREF(e);
-        PyErr_SetRaisedException(raised);
-        return result;
-    }
-    /* ceval raised another exception (RecursionError on entering it) */
-    Py_XDECREF(raised);
-    Py_CLEAR(result);
-    PyErr_SetRaisedException(e);
-    return NULL;
+    f->owner = FRAME_OWNED_BY_FRAME_OBJECT;
+    result = le_frame_finish(ts, f, result, done);
+    f->owner = FRAME_OWNED_BY_GENERATOR;
+    return result;
 }
 #endif
 #endif /* LE_MECHANISMS_FRAMES_H */
