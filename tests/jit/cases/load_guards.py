@@ -404,7 +404,83 @@ def stores_in_loop(n):
     return p.x, p.y
 
 
+# Stores in __init__ that fill an empty slot of the instance's values add
+# its name to their insertion order, which vars() shows.
+
+
+class _Ordered:
+    def __init__(self, flip):
+        if flip:
+            self.b = 'b'
+            self.a = 'a'
+        else:
+            self.a = 'a'
+            self.b = 'b'
+        self.c = [flip]
+
+
+def init_order(n):
+    os = [_Ordered(i % 3 == 1) for i in range(n)]
+    return [list(vars(o)) for o in os], [o.c for o in os]
+
+
+class _Refilled:
+    def __init__(self, k):
+        self.x = k
+        self.y = k
+        del self.x
+        self.x = -k
+        self.y = self.y + 1
+
+
+def init_delete_and_refill(n):
+    return [list(vars(_Refilled(i)).items()) for i in range(n)]
+
+
+class _Grows:
+    def __init__(self, k):
+        self.first = k
+        setattr(self, 'n%d' % k, k)  # a new name for each instance
+        self.last = k
+
+
+def init_keys_grow(n):
+    # the class keys fill up, then instances get a dict
+    return [list(vars(_Grows(i)).items()) for i in range(n)]
+
+
+class _DictFirst:
+    def __new__(cls, k):
+        o = object.__new__(cls)
+        if k % 2:
+            o.__dict__  # made before __init__ stores
+        return o
+
+    def __init__(self, k):
+        self.a = k
+        self.b = [k]
+
+
+def init_dict_made_first(n):
+    return [list(vars(_DictFirst(i)).items()) for i in range(n)]
+
+
+class _Sub(_Ordered):
+    def __init__(self, flip):
+        self.d = 'd'
+        _Ordered.__init__(self, flip)
+
+
+def init_through_base(n):
+    return [list(vars(_Sub(i % 2 == 0))) for i in range(n)]
+
+
 CASES = [
+    ('init_order', [(9,)], {}),
+    ('init_delete_and_refill', [(4,)], {}),
+    ('init_keys_grow', [(40,)], {}),
+    ('init_dict_made_first', [(6,)], {}),
+    ('init_through_base', [(5,)], {}),
     ('attributes_present_and_absent', [(5,)], {}),
     ('name_added_after_absent', [(4,)], {}),
     ('method_shadowed_then_deleted', [(3,)], {}),
