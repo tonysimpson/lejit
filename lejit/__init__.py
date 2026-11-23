@@ -2,12 +2,8 @@
 
 Importing lejit starts nothing; call start().
 """
-import json as _json
 import os as _os
-import platform as _platform
-import subprocess as _subprocess
 import sys as _sys
-import sysconfig as _sysconfig
 import warnings as _warnings
 
 __all__ = ['start', 'stop', 'check', 'build_features', 'runtime_features']
@@ -25,11 +21,13 @@ _no_headers = None
 
 
 def _unsupported():
-    if _platform.python_implementation() != 'CPython':
+    import platform
+    import sysconfig
+    if platform.python_implementation() != 'CPython':
         return 'LeJIT runs only on CPython'
-    if _sys.platform != 'linux' or _platform.machine() != 'x86_64':
+    if _sys.platform != 'linux' or platform.machine() != 'x86_64':
         return 'LeJIT runs only on x86-64 Linux'
-    if _sysconfig.get_config_var('Py_GIL_DISABLED'):
+    if sysconfig.get_config_var('Py_GIL_DISABLED'):
         return 'LeJIT runs only on CPython with the GIL'
     if _sys.version_info >= (3, 11):
         return 'LeJIT runs only on CPython 3.7 to 3.10'
@@ -59,15 +57,17 @@ def runtime_features():
     if _core is None:
         return frozenset()
     if _runtime is None:
+        import json
+        import subprocess
         # in a subprocess, so a crashing probe can't take this one down
         here = _os.path.dirname(__file__)
-        r = _subprocess.run(
+        r = subprocess.run(
             [_sys.executable, '-I', _os.path.join(here, '_features', 'check.py'),
              _os.path.dirname(here)],
-            stdout=_subprocess.PIPE, stderr=_subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             universal_newlines=True)
         try:
-            answers = _json.loads(r.stdout)
+            answers = json.loads(r.stdout)
         except ValueError:
             raise RuntimeWarning('lejit: the detectors failed: '
                                  + r.stderr.strip()[-300:])
