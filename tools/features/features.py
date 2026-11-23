@@ -989,7 +989,9 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            # gone from 3.13: f-strings are CONVERT_VALUE's and FORMAT_SIMPLE's
            'FORMAT_VALUE',
            # new in 3.13
-           'TO_BOOL',
+           'TO_BOOL', 'CALL_KW', 'CONVERT_VALUE', 'FORMAT_SIMPLE',
+           'FORMAT_WITH_SPEC', 'SET_FUNCTION_ATTRIBUTE', 'LOAD_FAST_LOAD_FAST',
+           'STORE_FAST_LOAD_FAST', 'STORE_FAST_STORE_FAST',
            # gone from 3.14: subscripts are BINARY_OP's, with blocks
            # LOAD_SPECIAL's, constant-key maps BUILD_MAP's
            'BINARY_SUBSCR', 'BEFORE_WITH', 'BEFORE_ASYNC_WITH',
@@ -1232,6 +1234,10 @@ BYTECODE = [
                                   lambda s: _case_has(s, 'MATCH_CLASS', 'PyBool_FromLong', missing=False))),
     ('MATCH_KEYS_PUSHES_BOOL', D('MATCH_KEYS pushes a bool saying whether the keys matched, over the values or None',
                                  lambda s: _case_has(s, 'MATCH_KEYS', 'PUSH(Py_True)', missing=False))),
+    ('CALLABLE_UNDER_NULL', D('a call\'s callable is under its NULL or self (CALL, CALL_FUNCTION_EX): LOAD_GLOBAL, LOAD_ATTR and LOAD_SUPER_ATTR push the NULL or self over what they load',
+                              lambda s: _case_has(s, 'CALL', 'callable = stack_pointer[-2 - oparg]', missing=False))),
+    ('FOR_ITER_EXIT_PAST_POP_TOP', D('a for loop ends with END_FOR, which pops only the item, then a POP_TOP for the iterator; FOR_ITER\'s exit jumps past both',
+                                     lambda s: _case_has(s, 'FOR_ITER', 'JUMPBY(oparg + 2)'))),
 ]
 
 # frames
