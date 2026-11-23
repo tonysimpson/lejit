@@ -847,6 +847,19 @@ PyAPI_FUNC(Py_hash_t) _Py_HashBytes(const void *, Py_ssize_t);
 #else
 #define le_hash_bytes Py_HashBuffer
 #endif
+/* functions that every CPython LeJIT builds for exports, which some
+   declare only in an internal header */
+PyAPI_FUNC(int)
+    _PyDict_SetItem_KnownHash(PyObject *, PyObject *, PyObject *, Py_hash_t);
+PyAPI_FUNC(int) _PySet_Update(PyObject *, PyObject *);
+PyAPI_FUNC(PyObject *) PyCFunction_Call(PyObject *, PyObject *, PyObject *);
+#if LE_HAS_PRIVATE_NUMBER_INDEX
+PyAPI_FUNC(PyObject *) _PyNumber_Index(PyObject *);
+#endif
+#if LE_HAS_CHECK_RESULT_TSTATE
+PyAPI_FUNC(PyObject *) _Py_CheckFunctionResult(PyThreadState *, PyObject *,
+                                               PyObject *, const char *);
+#endif
 /* a type's dict, borrowed (NULL if the type isn't ready): its tp_dict, or
    PyType_GetDict's, as a static builtin type keeps its dict in the
    interpreter, which holds it as long as the type */

@@ -289,6 +289,12 @@ def call_one_arg(h):
     return _declared(h, 'PyObject_CallOneArg')
 
 
+def traceback_from_frame_api(h):
+    """headers: _PyTraceBack_FromFrame is declared PyAPI_FUNC"""
+    h.need_internal()
+    return features._exported(h, '_PyTraceBack_FromFrame')
+
+
 def public(function):
     def detect(h):
         return features._public(h, function)
@@ -309,10 +315,15 @@ def internal(detector):
 def tuple_get_empty(h):
     """headers: the interpreter state holds the tuple free lists, whose
     first entry is the empty tuple (struct _Py_tuple_state with free_list,
-    the field tuple of struct _is)"""
+    the field tuple of struct _is), or where it has none, the runtime's
+    static objects hold it (PyTupleObject tuple_empty)"""
     h.need_internal()
     path, body = _struct_body(h, '_Py_tuple_state')
     if body is None:
+        # the empty tuple is the runtime's static singleton
+        for spath, toks in h.headers_with('tuple_empty'):
+            if features._has_run(_texts(toks), ['PyTupleObject', 'tuple_empty', ';']):
+                return True, '%s: PyTupleObject tuple_empty' % spath
         return False, 'every header: no _Py_tuple_state'
     ipath, interp = h.struct('_is')
     if 'free_list' not in body or interp is None or 'tuple' not in interp:
@@ -348,6 +359,11 @@ HEADER_DETECTORS = {
     'EVAL_BREAKER_GC': internal(features.eval_breaker_gc),
     'EVAL_FRAME_POPS': internal(features.eval_frame_pops),
     'FRAME_FUNCOBJ': internal(features.frame_funcobj),
+    'FRAME_EXECUTABLE': internal(features.frame_executable),
+    'FRAME_INSTR_PTR': internal(features.frame_instr_ptr),
+    'TSTATE_CURRENT_FRAME': features.tstate_current_frame,
+    'TSTATE_EVAL_BREAKER': features.tstate_eval_breaker,
+    'TRACEBACK_FROM_FRAME_API': traceback_from_frame_api,
     'LONG_VALUE': features.long_value,
     'TYPE_GET_DICT': public('PyType_GetDict'),
     'IMMORTAL_OBJECTS': public('_Py_IsImmortal'),
