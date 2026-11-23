@@ -17,6 +17,7 @@
 #include "Python/pycompiler.h"
 #include "codemanager.h"
 #include "pycodegen.h"
+#include "Objects/plistobject.h"
 
 /*** The processor-independent part of the code generator. ***/
 
@@ -231,8 +232,11 @@ vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
 
     va_list vargs;
 
-    va_start(vargs, arguments);
     extra_assert(c_function != NULL);
+    if (po->pr.pieces && !(flags & (CfPure | CfNoPython)) &&
+        !PsycoList_ForcePieces(po, NULL))
+        return NULL;
+    va_start(vargs, arguments);
 
     for (count = 0; arguments[count]; count++) {
         long arg;
