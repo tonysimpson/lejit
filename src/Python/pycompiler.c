@@ -2244,8 +2244,9 @@ fail:
 /* the code of the following functions is "copy-pasted" from ceval.c */
 
 /* a frame's own cells, which CPython made before the frame reached LeJIT
-   (PsycoObject_FromCode maps them as borrowed words); a cell can change
-   under any call (nonlocal in a callee), so its content is read each time.
+   (PsycoObject_FromCode maps them as borrowed words) or the caller's
+   binder made (psyfunc.c:bind_cells); a cell can change under any call
+   (nonlocal in a callee), so its content is read each time.
    The translated *_DEREF cases read and store it through this. */
 #define CELL_ob_ref FMUT(CPY_FIELD(PyCellObject, ob_ref, OB_type))
 #define OB_refcnt FMUT(CPY_FIELD(PyObject, ob_refcnt, NO_PREV_FIELD))
