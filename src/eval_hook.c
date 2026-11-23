@@ -230,17 +230,22 @@ static CodeBufferObject *
 le_gen_to_run(PyThreadState *tstate, le_frame_t *f)
 {
     PyCodeObject *co = f->f_code;
-    le_code_extra_t *x;
+    le_code_extra_t *x = le_code_extra_get(co);
     le_resume_point_t *p;
     le_resume_entry_t *e;
     CodeBufferObject *codebuf;
-    PyObject **slots = le_frame_args(f), **stack = le_frame_stack(f);
-    int nlocals = le_code_nlocals(co), nstack = le_frame_stack_depth(f), i;
+    PyObject **slots, **stack;
+    int nlocals, nstack, i;
     uint64_t nulls = 0;
+    if (x != NULL && x->nresumes < 0)
+        return NULL; /* not resumable */
+    slots = le_frame_args(f);
+    stack = le_frame_stack(f);
+    nlocals = le_code_nlocals(co);
+    nstack = le_frame_stack_depth(f);
     /* as le_code_to_run */
     if (le_tracing_now(tstate) || f->f_locals != NULL || nlocals + nstack > 64)
         return NULL;
-    x = le_code_extra_get(co);
     if (x == NULL && (x = le_code_extra(co)) == NULL) {
         PyErr_Clear(); /* out of memory */
         return NULL;
@@ -420,7 +425,8 @@ LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
     if (le_frame_code(frame)->co_flags & LE_GENERATOR_FLAGS) {
 #if LE_RESUMES_GENERATORS
         CodeBufferObject *resume;
-        if (!throwflag && (resume = le_gen_to_run(tstate, frame)) != NULL)
+        if ((frame->f_code->co_flags & CO_GENERATOR) && !throwflag &&
+            (resume = le_gen_to_run(tstate, frame)) != NULL)
             return LeGen_Run(tstate, resume, frame);
 #endif
         return original_eval_frame(tstate, frame, throwflag);
@@ -485,9 +491,9 @@ LeEval_EvalFrame(PyFrameObject *frame, int throwflag)
     PyObject *result, *entry_point;
     if (frame->f_code->co_flags & LE_GENERATOR_FLAGS) {
         CodeBufferObject *resume;
-        PyThreadState *tstate = PyThreadState_GET();
-        if (!throwflag && (resume = le_gen_to_run(tstate, frame)) != NULL)
-            return LeGen_Run(tstate, resume, frame);
+        if ((frame->f_code->co_flags & CO_GENERATOR) && !throwflag &&
+            (resume = le_gen_to_run(PyThreadState_GET(), frame)) != NULL)
+            return LeGen_Run(PyThreadState_GET(), resume, frame);
         return original_eval_frame(frame, throwflag);
     }
     entry_point = le_code_to_run(frame->f_code, frame->f_globals,
