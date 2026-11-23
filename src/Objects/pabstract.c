@@ -53,19 +53,19 @@ cimpl_vectorcall(PyObject *callable, PyObject *kwnames, PyObject **slots,
                  Py_ssize_t n)
 {
     Py_ssize_t nargs = n - (kwnames == NULL ? 0 : PyTuple_GET_SIZE(kwnames));
-    return PyObject_Vectorcall(callable, slots + 1,
-                               nargs | PY_VECTORCALL_ARGUMENTS_OFFSET, kwnames);
+    return PyObject_Vectorcall(
+        callable, slots + 1, nargs | PY_VECTORCALL_ARGUMENTS_OFFSET, kwnames);
 }
 
 /* psyco_generic_call takes at most 7 arguments: callable, kwnames and
    VECTORCALL_MAX values */
 #define VECTORCALL_MAX 5
-#define VECTORCALL_FN(n, params, ...)                                     \
-    static PyObject *cimpl_vectorcall##n(PyObject *callable,              \
-                                         PyObject *kwnames params)        \
-    {                                                                     \
-        PyObject *slots[] = {NULL, __VA_ARGS__};                          \
-        return cimpl_vectorcall(callable, kwnames, slots, n);             \
+#define VECTORCALL_FN(n, params, ...)                              \
+    static PyObject *cimpl_vectorcall##n(PyObject *callable,       \
+                                         PyObject *kwnames params) \
+    {                                                              \
+        PyObject *slots[] = {NULL, __VA_ARGS__};                   \
+        return cimpl_vectorcall(callable, kwnames, slots, n);      \
     }
 #define P(x) , PyObject *x
 VECTORCALL_FN(0, , NULL)
@@ -84,8 +84,8 @@ static void *const cimpl_vectorcalls[VECTORCALL_MAX + 1] = {
 
 DEFINEFN
 vinfo_t *
-psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t **args,
-                 int nargs, PyObject *kwnames)
+psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t **args, int nargs,
+                 PyObject *kwnames)
 {
 #if LE_HAS_VECTORCALL
     static const char *const fmt[VECTORCALL_MAX + 1] = {
@@ -95,13 +95,13 @@ psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t **args,
     int i, n = nargs + (kwnames == NULL ? 0 : (int)PyTuple_GET_SIZE(kwnames));
     if (n > VECTORCALL_MAX)
         return NULL;
-    for (i = 0; i < n; i++)
-        a[i] = args[i];
+    for (i = 0; i < n; i++) a[i] = args[i];
     if (kwnames == NULL)
         vnames = psyco_vi_Zero();
     else {
         Py_INCREF(kwnames);
-        vnames = vinfo_new(CompileTime_NewSk(sk_new((long)kwnames, SkFlagPyObj)));
+        vnames =
+            vinfo_new(CompileTime_NewSk(sk_new((long)kwnames, SkFlagPyObj)));
     }
     /* fmt[n] stops before the unused (NULL) trailing values */
     r = psyco_generic_call(po, cimpl_vectorcalls[n], CfCommonNewRefPyObject,

@@ -16,8 +16,8 @@ PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
    exact str. NULL with no exception set where it can't be emitted (no
    vectorcall, or too many values); the caller then calls with a tuple. */
 EXTERNFN vinfo_t *
-psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t **args,
-                 int nargs, PyObject *kwnames);
+psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t **args, int nargs,
+                 PyObject *kwnames);
 /* the same for a virtual tuple of arguments and no keywords (kw known
    to be NULL) */
 EXTERNFN vinfo_t *
