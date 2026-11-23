@@ -267,6 +267,9 @@ le_op_flags(int op)
         case COPY:
         case SWAP:
         case PUSH_NULL:
+        case LOAD_FAST_LOAD_FAST:
+        case STORE_FAST_LOAD_FAST:
+        case STORE_FAST_STORE_FAST:
             return LE_OPF_COMPILED | LE_OPF_LIGHT;
         case LOAD_FAST_AND_CLEAR:
 #if LE_HAS_OPCODE_ROT_FOUR

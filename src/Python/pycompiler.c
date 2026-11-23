@@ -4625,6 +4625,50 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
         }
 
+        /* two locals in one instruction, the first in the high four
+           bits */
+        case LOAD_FAST_LOAD_FAST: {
+            int first = oparg >> 4, second = oparg & 15;
+            int unbound = psyco_knowntobe(GETLOCAL(first), 0)    ? first
+                          : psyco_knowntobe(GETLOCAL(second), 0) ? second
+                                                                 : -1;
+            if (unbound >= 0) {
+                ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
+                                        LE_MSG_LOCAL_UNBOUND,
+                                        le_code_local_name(co, unbound));
+                break;
+            }
+            vinfo_incref(GETLOCAL(first));
+            PUSH(GETLOCAL(first));
+            vinfo_incref(GETLOCAL(second));
+            PUSH(GETLOCAL(second));
+            goto fine;
+        }
+
+        case STORE_FAST_LOAD_FAST: {
+            vinfo_t *value = NTOP(1);
+            if (!catcher_local_readable(po, value))
+                break;
+            SETLOCAL(oparg >> 4, value);
+            POP(value);
+            value = GETLOCAL(oparg & 15);
+            vinfo_incref(value);
+            PUSH(value);
+            goto fine;
+        }
+
+        case STORE_FAST_STORE_FAST: {
+            vinfo_t *top = NTOP(1), *second = NTOP(2);
+            if (!catcher_local_readable(po, top) ||
+                !catcher_local_readable(po, second))
+                break;
+            SETLOCAL(oparg >> 4, top);
+            POP(top);
+            SETLOCAL(oparg & 15, second);
+            POP(second);
+            goto fine;
+        }
+
         case ROT_TWO: {
             vinfo_t *second;
             vinfo_t *top;
