@@ -355,6 +355,7 @@ HEADER_DETECTORS = {
     'CEVAL_TRACE_INFO': ceval_trace_info,
     'THREAD_LOCAL_TSTATE': internal(features.thread_local_tstate),
     'PY_RECURSION_REMAINING': features.py_recursion_remaining,
+    'C_RECURSION_REMAINING': features.c_recursion_remaining,
     'CURRENT_EXCEPTION': features.current_exception,
     'EVAL_BREAKER_GC': internal(features.eval_breaker_gc),
     'EVAL_FRAME_POPS': internal(features.eval_frame_pops),
@@ -368,6 +369,10 @@ HEADER_DETECTORS = {
     'TYPE_GET_DICT': public('PyType_GetDict'),
     'IMMORTAL_OBJECTS': public('_Py_IsImmortal'),
     'DICT_WATCHER_BITS': internal(features.dict_watcher_bits),
+    'PYCORE_INTERPFRAME_H': pycore_header('pycore_interpframe.h'),
+    'FRAME_STACKREFS': internal(features.frame_stackrefs),
+    'REFCOUNT_32': features.refcount_32,
+    'DICT_VERSION_TAG': features.dict_version_tag,
     # where the interpreter's probe can't answer: a frame object with no
     # f_lasti of its own
     'LASTI_IN_INSTRUCTIONS': features.interpreter_frame_lasti,

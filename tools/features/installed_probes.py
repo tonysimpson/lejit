@@ -345,7 +345,8 @@ def KWARGS_MERGE_EX():
         def g(f, a, k):
             return f(*a, **k)
         ops = [x.opname for x in dis.get_instructions(g)]
-        if ops.index('PUSH_NULL') < ops.index('LOAD_FAST'):
+        first_load = [o for o in ops if o.startswith('LOAD_FAST')][0]
+        if ops.index('PUSH_NULL') < ops.index(first_load):
             start = [('PUSH_NULL', 0), ('LOAD_CONST', 0)]
         else:
             start = [('LOAD_CONST', 0), ('PUSH_NULL', 0)]

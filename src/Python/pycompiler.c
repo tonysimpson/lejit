@@ -1876,8 +1876,8 @@ global_entry_find(PyObject *globals, PyObject *name, PyObject *value,
 static void
 global_tags_set(global_guard_t *guard, PyObject *globals, PyObject *builtins)
 {
-    guard->tags[0] = ((PyDictObject *)globals)->ma_version_tag;
-    guard->tags[1] = ((PyDictObject *)builtins)->ma_version_tag;
+    guard->tags[0] = ((PyDictObject *)globals)->LE_DICT_TAG_FIELD;
+    guard->tags[1] = ((PyDictObject *)builtins)->LE_DICT_TAG_FIELD;
 }
 
 /* the entry guard being respawned, whose version load_global_cached
@@ -3552,7 +3552,7 @@ cimpl_setup_with(PyObject *mgr, PyObject *out[])
     return 0;
 }
 
-#if LE_HAS_EXCEPTION_TABLE
+#if LE_HAS_EXCEPTION_TABLE && LE_HAS_OPCODE_BEFORE_WITH
 /* ceval.c BEFORE_WITH: out[0] gets the bound __exit__, out[1] __enter__'s
    result. Unlike ceval, mgr stays on the stack (one reference more) while
    __enter__ runs. */
@@ -6759,6 +6759,7 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             PUSH(x);
             goto fine;
 
+#if LE_HAS_OPCODE_BEFORE_WITH
         /* with: the bound __exit__ replaces the manager, and
            __enter__'s result goes over it */
         case BEFORE_WITH: {
@@ -6774,6 +6775,7 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             array_release(array);
             goto fine;
         }
+#endif
 #else
         case POP_EXCEPT:
             /* from 3.8 the items above the handler's three stay (a
