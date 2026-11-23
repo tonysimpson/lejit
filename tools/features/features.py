@@ -751,6 +751,31 @@ def range_iter_index(s):
     return _body_has(s, 'Objects/rangeobject.c', 'rangeiter_next', 'r->index')
 
 
+def inline_values(s):
+    """a class with Py_TPFLAGS_INLINE_VALUES keeps its instances' values in
+    the object, at its tp_basicsize (_PyObject_InlineValues): a PyDictValues
+    whose byte `valid`, its fourth, says whether they are still the
+    attributes, then the values, a word on; a dict made for them is three
+    words before the object (MANAGED_DICT_OFFSET)"""
+    path, fields = s.struct('_dictvalues')
+    if fields is None or 'valid' not in fields:
+        return False, '%s: no _dictvalues.valid' % (path or 'Include')
+    if list(fields) != ['capacity', 'size', 'embedded', 'valid', 'values'] or \
+            any(fields[f] != 'uint8_t' for f in list(fields)[:4]):
+        raise Unanswered('%s:_dictvalues is %r' % (path, fields))
+    obj = 'Include/internal/pycore_object.h'
+    # where it adds sizeof(PyObject), that is the basicsize of every class
+    # with the flag (typeobject.c:type_new_impl sets it only then)
+    at = [_body_has(s, obj, '_PyObject_InlineValues', 'return (PyDictValues *)((char *)obj + ' + where)[0]
+          for where in ('sizeof(PyObject));', 'tp->tp_basicsize);')]
+    if not any(at):
+        raise Unanswered('%s:_PyObject_InlineValues: values elsewhere' % obj)
+    dict_at = s.macros(obj).get('MANAGED_DICT_OFFSET')
+    if dict_at is None or _texts(dict_at.body)[-4:] != ['*', '-', '3', ')']:
+        raise Unanswered('%s:MANAGED_DICT_OFFSET is not three words back' % obj)
+    return True, '%s:_dictvalues, %s:_PyObject_InlineValues, MANAGED_DICT_OFFSET' % (path, obj)
+
+
 def dict_watcher_bits(s):
     """a dict's version tag keeps in its low 8 bits which watchers watch it
     (DICT_MAX_WATCHERS is 8), and a change steps it by 1 << 8
@@ -1246,6 +1271,9 @@ OBJECTS = [
                            lambda s: _public(s, '_Py_IsImmortal'))),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
+
+
+    ('INLINE_VALUES', inline_values),
     ('DICT_WATCHER_BITS', dict_watcher_bits),
 ]
 
