@@ -1,15 +1,24 @@
 name: CI
 
+# Pull requests run nothing while they are drafts, and test 3.10 to 3.12
+# only (3.7 to 3.9 are built, not tested); main tests every version.
 on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+
+# a newer push to main, or to one pull request, cancels its older run
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
     name: make check (${{ matrix.python }})
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     # the official images give exact CPython releases, built as shared
     # libraries with their headers
     container: python:${{ matrix.python }}-bookworm
@@ -20,7 +29,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9"]
+        python: ${{ fromJSON(github.event_name == 'pull_request'
+          && '["3.10.16", "3.11.11", "3.12.9"]'
+          || '["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Install libffi, libunwind and setuptools
@@ -51,9 +62,31 @@ jobs:
           make -k no-version-tests features-installed-test strings-test
           test cpython-test PY=python GEN_PY=python
 
+  # on pull requests, the versions make check leaves to main
+  build:
+    name: build (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    container: python:${{ matrix.python }}-bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.7.17", "3.8.20", "3.9.21"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libffi and libunwind
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+      - name: Release build
+        run: make build PY=python
+      - name: Checked build
+        run: make checked-build PY=python
+
   encoder:
     name: make encoder-test
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     container: python:3.10.16-bookworm
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +102,7 @@ jobs:
   release:
     name: release build (${{ matrix.python }})
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     container: python:${{ matrix.python }}-bookworm
     env:
       LEJIT_DEV_FALLBACK: skip
@@ -101,6 +135,7 @@ jobs:
   install-newer:
     name: install only (${{ matrix.python }})
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     container: python:${{ matrix.python }}-bookworm
     strategy:
       fail-fast: false
@@ -124,6 +159,7 @@ jobs:
   install-main:
     name: install only (CPython main)
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     steps:
       - uses: actions/checkout@v4
       - name: Build CPython main
@@ -153,6 +189,7 @@ jobs:
   format:
     name: make format-check
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     steps:
       - uses: actions/checkout@v4
       # the runner's own Python refuses pip installs (PEP 668)
@@ -170,6 +207,7 @@ jobs:
   lint:
     name: make lint (3.10.16)
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     container: python:3.10.16-bookworm
     continue-on-error: true
     steps:
@@ -185,6 +223,7 @@ jobs:
   wheels:
     name: wheels (built, not released)
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     steps:
       - uses: actions/checkout@v4
       # cibuildwheel 3 dropped Python 3.7
