@@ -37,7 +37,7 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     PyThreadState *tstate = PyThreadState_GET();
 
     /* ceval counts the depth on entering every frame */
-    if (le_recursion_enter())
+    if (le_recursion_enter(tstate))
         return le_frame_finish(tstate, f, NULL, frame_done);
     psyco_frame_start_register(&fr, f, &finfo);
     /* as ceval: the frame is the current one while its code runs, so that
@@ -71,14 +71,14 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     if (fr.frame == NULL) {
         /* ceval ran it on to its end and popped it (frames.c:
            psyco_resume_run) */
-        le_recursion_leave();
+        le_recursion_leave(tstate);
         psyco_frame_start_unregister(&fr);
         return result;
     }
 #endif
     le_frame_set_executing(f, 0);
     le_frame_set_current(tstate, le_frame_back(f));
-    le_recursion_leave();
+    le_recursion_leave(tstate);
     psyco_frame_start_unregister(&fr);
 #if LE_HAS_EVAL_FRAME_POPS
     /* before le_frame_finish pops it */
@@ -205,6 +205,9 @@ static le_resume_point_t *
 resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
 {
     int i;
+    /* a generator resumed in a loop resumes at the same yield each time */
+    if (x->last_resume != NULL && x->last_resume->lasti == lasti)
+        return x->last_resume;
     if (x->resumes == NULL) {
         le_code_t c = le_code(co);
         PyObject *mergepoints = x->merge_points;
@@ -238,7 +241,7 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
         if (p->lasti == -2)
             p->lasti = lasti;
         if (p->lasti == lasti)
-            return p;
+            return x->last_resume = p;
     }
     return NULL;
 }
@@ -259,7 +262,7 @@ gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
    now if needed, or NULL to run it interpreted; 'x' is its code's record,
    if it has one. Its entries tell apart which of its locals and stack
    items are NULL. */
-static __attribute__((noinline)) CodeBufferObject *
+static inline CodeBufferObject *
 le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
 {
     PyCodeObject *co = f->f_code;
@@ -313,7 +316,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
    FrameRuntime (vcompiler.c:PsycoObject_FromGenFrame). The frame is left
    paused at a yield, or ended (le_gen_frame_end); gen_send_ex does the rest.
  */
-static __attribute__((noinline)) PyObject *
+static inline PyObject *
 LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
 {
     stack_frame_info_t *no_frames = (stack_frame_info_t *)-1;
@@ -328,7 +331,7 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
     extra_assert(stack == slots + nplus);
     extra_assert(RUN_ARGC(codebuf) == nplus + nstack + 1);
 
-    if (le_recursion_enter())
+    if (le_recursion_enter(tstate))
         return NULL;
     psyco_frame_start_register(&fr, f, &finfo);
     le_frame_push(tstate, f);
@@ -347,7 +350,7 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
     result = psyco_processor_run(codebuf, words, &finfo);
     le_gen_frame_end(f, result);
     le_frame_set_current(tstate, le_frame_back(f));
-    le_recursion_leave();
+    le_recursion_leave(tstate);
     psyco_frame_start_unregister(&fr);
     return result;
 }
@@ -594,10 +597,17 @@ le_eval_frame_default(le_frame_t *f)
    that was there is kept, since LeJIT passes it the frames it doesn't
    compile, and it stays kept after lejit.stop for any call already on its
    way through LeJIT's. -1 with an exception set if it can't. */
+#if LE_KEEPS_RECURSION_LIMIT
+int *le_recursion_limit;
+#endif
+
 DEFINEFN int
 le_entry_install(void)
 {
     le_eval_frame_fn now = get_eval_frame();
+#if LE_KEEPS_RECURSION_LIMIT
+    le_recursion_limit = le_recursion_limit_address();
+#endif
 #if LE_HAS_EVAL_FRAME_POPS
     if (frame_done == NULL &&
         (frame_done = PyObject_CallNoArgs(PyExc_Exception)) == NULL)

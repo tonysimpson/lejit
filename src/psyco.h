@@ -991,7 +991,8 @@ typedef struct le_code_extra_s {
     le_owner_t owner;         /* what its compiled code holds */
     char counted;             /* in the owner scan's count (codemanager.c) */
     int nresumes; /* a resumable generator's points, or -1: not resumable */
-    le_resume_point_t *resumes; /* one per yield and the start, or NULL */
+    le_resume_point_t *resumes;     /* one per yield and the start, or NULL */
+    le_resume_point_t *last_resume; /* the one the last resume used */
 } le_code_extra_t;
 /* the record lives in a weak reference to its code object (lejit.c) */
 typedef struct {
