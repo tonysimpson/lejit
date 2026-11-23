@@ -530,14 +530,25 @@ def frame_builtins_of_function(s):
 
 
 def immutable_type_flag(s):
-    """a type's attributes and its instances' __class__ are fixed when it has Py_TPFLAGS_IMMUTABLETYPE (type_setattro and object_set_class test the flag), not when it is a static type"""
+    """a type's attributes and its instances' __class__ are fixed when it has Py_TPFLAGS_IMMUTABLETYPE (type_setattro and object_set_class, or the object_set_class_world_stopped it calls, test the flag), not when it is a static type"""
     to = 'Objects/typeobject.c'
+    set_class = 'object_set_class'
+    if _defines(s, to, 'object_set_class_world_stopped')[0]:
+        set_class = 'object_set_class_world_stopped'
     a, _ = _body_has(s, to, 'type_setattro', 'Py_TPFLAGS_IMMUTABLETYPE')
-    b, _ = _body_has(s, to, 'object_set_class', 'Py_TPFLAGS_IMMUTABLETYPE')
+    b, _ = _body_has(s, to, set_class, 'Py_TPFLAGS_IMMUTABLETYPE')
     if a != b:
-        raise Unanswered('%s: type_setattro and object_set_class differ on '
-                         'Py_TPFLAGS_IMMUTABLETYPE' % to)
-    return a, to + ':type_setattro, object_set_class'
+        raise Unanswered('%s: type_setattro and %s differ on '
+                         'Py_TPFLAGS_IMMUTABLETYPE' % (to, set_class))
+    return a, '%s:type_setattro, %s' % (to, set_class)
+
+
+def name_error_name(s):
+    """ceval's format_exc_check_arg (_PyEval_FormatExcCheckArg where ceval exports it) sets a NameError's name"""
+    name = 'format_exc_check_arg'
+    if _defines(s, CE, '_PyEval_FormatExcCheckArg')[0]:
+        name = '_PyEval_FormatExcCheckArg'
+    return _body_has(s, CE, name, 'PyExc_NameError')
 
 
 def eval_hook_tstate(s):
@@ -1243,8 +1254,7 @@ CEVAL = [
     ('CEVAL_TRACE_INFO', D('ceval keeps the line bounds it traces with, and the frame\'s CFrame, in a PyTraceInfo of its own (call_trace, do_call_core)',
                            lambda s: _file_has(s, CE, 'CFrame cframe; } PyTraceInfo;'))),
     ('CALL_TRACE_METHOD_DESCR', call_trace_method_descr),
-    ('NAME_ERROR_NAME', D('format_exc_check_arg sets a NameError\'s name',
-                          lambda s: _body_has(s, CE, 'format_exc_check_arg', 'PyExc_NameError'))),
+    ('NAME_ERROR_NAME', name_error_name),
     ('IMPORT_FROM_SPEC', D('import_from\'s error tells a partially initialised module',
                            lambda s: _body_has(s, CE, 'import_from', '_PyModuleSpec_IsInitializing'))),
     ('KWARGS_MERGE_EX', D('CALL_FUNCTION_EX merges **kwargs with _PyDict_MergeEx, and format_kwargs_error reports it',
