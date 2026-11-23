@@ -39,4 +39,9 @@ psyco_plist_concat(PsycoObject *po, vinfo_t *a, vinfo_t *b);
 EXTERNFN vinfo_t *
 plist_item(PsycoObject *po, vinfo_t *a, vinfo_t *i);
 
+/* make every pieces list (plistobject.c) but 'keep' into a real list,
+   before code that can run Python or change a list */
+EXTERNFN bool
+PsycoList_ForcePieces(PsycoObject *po, vinfo_t *keep);
+
 #endif /* _PSY_LISTOBJECT_H */

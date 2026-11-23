@@ -7771,6 +7771,39 @@ out:
     return ended;
 }
 
+/* whether a pieces list (plistobject.c) may live on into an instruction:
+   one that runs no Python code and changes no list itself, or that forces
+   it where it would (codegen.c:psyco_generic_call, plist_ass_item) */
+static int
+keeps_pieces(int opcode)
+{
+    switch (opcode) {
+        case LOAD_FAST:
+        case LOAD_FAST_CHECK:
+        case LOAD_FAST_LOAD_FAST:
+        case LOAD_CONST:
+        case LOAD_SMALL_INT:
+        case DUP_TOP:
+        case DUP_TOP_TWO:
+        case ROT_TWO:
+        case ROT_THREE:
+        case ROT_FOUR:
+        case COPY:
+        case SWAP:
+        case NOP:
+        case BUILD_SLICE:
+        case BINARY_SLICE:
+        case BINARY_SUBSCR:
+        case BINARY_ADD:
+        case BINARY_SUBTRACT:
+        case UNARY_NEGATIVE:
+        case STORE_SUBSCR:
+        case STORE_SLICE:
+            return 1;
+    }
+    return 0;
+}
+
 /* the families, in the order ceval.c has their cases */
 static int (*const compile_families[])(PsycoObject *po, int opcode, int oparg,
                                        int target, int *next_instr_io,
@@ -7991,6 +8024,16 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 if (!resume_if_tracing(po, next_instr, &unwound))
                     break;
             }
+            /* no pieces list lives on where code could change its sources,
+               nor into a snapshot */
+            if (po->pr.pieces &&
+                (next_instr >= bytecode.size ||
+                 !keeps_pieces(le_instr(bytecode, next_instr).op) ||
+                 mp->bytecode_position == next_instr ||
+                 po->pr.split_after_global ||
+                 (po->codelimit - po->code) < BUFFER_MARGIN) &&
+                !PsycoList_ForcePieces(po, NULL))
+                break;
             /* before the next merge point compares known types */
             Psyco_ForgetClasses(po);
             extra_assert(
