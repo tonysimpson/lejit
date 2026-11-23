@@ -400,27 +400,50 @@ def _deep_lasti():
         return out
 
 
-def _hook_changes_awaits():
+def _probe_tracer(frame, event, arg):
+    if frame.f_code.co_name == '_probe_traced':
+        _PROBE_EVENTS.append(event)
+    return _probe_tracer
+
+
+_PROBE_EVENTS = []
+
+
+async def _probe_traced():
+    sys.settrace(_probe_tracer)
+    await pause()
+    sys.settrace(None)
+
+
+def _traced_events():
+    drive(_probe_traced(), [1])
+    out = _PROBE_EVENTS[:]
+    del _PROBE_EVENTS[:]
+    return out
+
+
+def _hook_changes(probe):
     # whether CPython sends into an awaited coroutine another way while any
-    # frame-evaluation hook is installed, LeJIT's or not: the traceback of
-    # an exception through the await, and a tracer's events, then differ
+    # frame-evaluation hook is installed, LeJIT's or not, as 'probe' sees:
+    # the traceback of an exception through the await, or a tracer's events
     try:
         import _testinternalcapi
         record = _testinternalcapi.set_eval_frame_record
     except (ImportError, AttributeError):
         return False
-    plain = _deep_lasti()
+    plain = probe()
     record([])
     try:
-        hooked = _deep_lasti()
+        hooked = probe()
     finally:
         _testinternalcapi.set_eval_frame_default()
     return plain != hooked
 
 
-HOOKED = ({'xfail': 'CPython sends into an awaited coroutine another way '
-           'while a frame-evaluation hook is installed'}
-          if _hook_changes_awaits() else {})
+HOOKED_WHY = ('CPython sends into an awaited coroutine another way while a '
+              'frame-evaluation hook is installed')
+HOOKED = {'xfail': HOOKED_WHY} if _hook_changes(_deep_lasti) else {}
+HOOKED_TRACE = {'xfail': HOOKED_WHY} if _hook_changes(_traced_events) else {}
 
 
 # with_asyncio's leak check is unreliable: under load, LeJIT sometimes
@@ -439,7 +462,7 @@ CASES = [
      dict({'warmup': (40, "asyncio's paths go on compiling for some rounds")},
           **ASYNCIO_LEAKS)),
     ('origins', [(3,)], {}),
-    ('tracing', [(3,)], HOOKED),
+    ('tracing', [(3,)], HOOKED_TRACE),
     ('recursion_limit', [(0,)], {}),
     ('exc_info', [(0,)], {}),
 ]

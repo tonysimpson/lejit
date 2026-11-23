@@ -13,6 +13,19 @@
 /* the messages (LE_MSG_) of the interpreter built for, from
    tools/features/strings.py */
 #include "le_strings_gen.h"
+
+/* sys.modules, borrowed, or NULL (with no exception) once finalisation has
+   cleared it: PyImport_GetModuleDict is then a fatal error, and LeJIT
+   compiles and collects while finalisers run */
+static inline PyObject *
+le_modules_dict(void)
+{
+    PyObject *t, *v, *tb, *m;
+    PyErr_Fetch(&t, &v, &tb);
+    m = PySys_GetObject("modules");
+    PyErr_Restore(t, v, tb);
+    return m != NULL && PyDict_Check(m) ? m : NULL;
+}
 /* offsets, sizes and private structs of the CPython fields LeJIT relies on
    (vcompiler.h:CPY_FIELD), each checked at compile time against the
    field's type */
@@ -957,10 +970,9 @@ typedef struct le_owner_s {
    code objects compare co_consts recursively). */
 /* Generator bodies run compiled, resumed through the eval hook
    (eval_hook.c:LeGen_Run), where a paused generator's state is its frame's
-   and its place is the instruction last run (prev_instr, not
-   LE_HAS_FRAME_INSTR_PTR) */
+   and its words are objects (not LE_HAS_FRAME_STACKREFS) */
 #define LE_RESUMES_GENERATORS \
-    (!LE_HAS_INTERPRETER_FRAME || !LE_HAS_FRAME_INSTR_PTR)
+    (!LE_HAS_INTERPRETER_FRAME || !LE_HAS_FRAME_STACKREFS)
 /* and coroutine bodies, whose awaits pause the frame object as ceval's
    YIELD_FROM leaves it (pycompiler.c) */
 #define LE_RESUMES_COROUTINES (!LE_HAS_INTERPRETER_FRAME)

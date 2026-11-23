@@ -489,11 +489,13 @@ le_gen_frame_run(le_frame_t *f)
     le_gen_frame_set_depth(f, 0);
 }
 /* paused at the yield at 'lasti' with 'nstack' items under the value, as
-   ceval's YIELD_VALUE leaves it */
+   ceval's YIELD_VALUE leaves it: its place is the yield, or the instruction
+   after it where the place is the one to go on with */
 static inline void
 le_gen_frame_pause(le_frame_t *f, int lasti, int nstack)
 {
-    LE_FRAME_PLACE(f) = _PyCode_CODE(LE_FRAME_CODE(f)) + lasti;
+    LE_FRAME_PLACE(f) =
+        _PyCode_CODE(LE_FRAME_CODE(f)) + lasti + LE_HAS_FRAME_INSTR_PTR;
     le_gen_frame_set_depth(f, nstack);
     le_frame_gen(f)->gi_frame_state = FRAME_SUSPENDED;
 }
