@@ -223,7 +223,7 @@ cimpl_lookdict_unicode(PyDictObject *mp, PyObject *key, Py_hash_t hash,
         if (ix >= 0) {
             PyObject **ep = le_dict_key_slot(dk, ix);
             if (ep[0] == key ||
-                (le_dict_hash(dk, ix) == hash && _PyUnicode_EQ(ep[0], key))) {
+                (le_dict_hash(dk, ix) == hash && le_unicode_eq(ep[0], key))) {
                 *value_addr = ep[1];
                 return ix;
             }

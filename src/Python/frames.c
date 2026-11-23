@@ -132,6 +132,73 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
    innermost first */
 static _Thread_local FrameRuntime *frame_runs;
 
+/* Every thread's frame_runs, for the owner scan (psyco_frames_running):
+   its address is in a capsule in the thread state's dict, which goes when
+   the thread state is cleared, before the thread ends. */
+static _Thread_local char runs_listed;
+static PyObject *runs_key; /* a key no one else has */
+static bool runs_lost;     /* a thread's frame_runs couldn't be listed */
+
+static void
+runs_unlisted(PyObject *capsule)
+{
+    if (PyCapsule_GetPointer(capsule, NULL) == (void *)&frame_runs)
+        runs_listed = 0; /* on its own thread: listed again if it runs on */
+}
+
+static __attribute__((noinline)) void
+runs_list(void)
+{
+    PyObject *t, *v, *tb, *d, *c = NULL;
+    PyErr_Fetch(&t, &v, &tb);
+    if (runs_key == NULL)
+        runs_key = PyCapsule_New(&runs_key, NULL, NULL);
+    d = PyThreadState_GetDict();
+    if (runs_key == NULL || d == NULL ||
+        (c = PyCapsule_New((void *)&frame_runs, NULL, runs_unlisted)) ==
+            NULL ||
+        PyDict_SetItem(d, runs_key, c) < 0) {
+        PyErr_Clear();
+        runs_lost = true;
+    }
+    Py_XDECREF(c);
+    runs_listed = 1;
+    PyErr_Restore(t, v, tb);
+}
+
+DEFINEFN int
+psyco_frames_running(void (*mark)(PyCodeObject *co, void *arg), void *arg)
+{
+    PyThreadState *ts;
+    if (runs_lost)
+        return -1;
+    if (runs_key == NULL)
+        return 0;
+    for (ts = PyInterpreterState_ThreadHead(PyInterpreterState_Main());
+         ts != NULL; ts = PyThreadState_Next(ts)) {
+        PyObject *c =
+            ts->dict == NULL ? NULL : PyDict_GetItem(ts->dict, runs_key);
+        FrameRuntime *fr;
+        if (c == NULL)
+            continue; /* it never ran compiled code */
+        for (fr = *(FrameRuntime **)PyCapsule_GetPointer(c, NULL); fr != NULL;
+             fr = fr->next) {
+            stack_frame_info_t **f1;
+            mark((PyCodeObject *)fr->psy_code, arg);
+            if (fr->resumed)
+                continue;
+            for (f1 = *fr->psy_frames_start; (((long)*f1) & 1) == 0;
+                 f1 = psyco_next_stack_frame(f1)) {
+                stack_frame_info_t *fd = *f1, *last = finfo_last(fd);
+                for (; fd <= last; fd++) mark(fd->co, arg);
+                if ((*f1)->link_stack_depth == 0)
+                    break; /* stack top is an inline frame */
+            }
+        }
+    }
+    return 0;
+}
+
 DEFINEFN void
 psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
                            stack_frame_info_t ***psy_frames_start)
@@ -145,6 +212,8 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
     fr->resumed = 0;
     fr->next = frame_runs;
     frame_runs = fr;
+    if (fr->next == NULL && !runs_listed)
+        runs_list();
 }
 
 DEFINEFN FrameRuntime *
@@ -2036,7 +2105,6 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         Py_INCREF(st->f);
         if (co->co_stacksize >= 2)
             le_pyframe_stack(st->f)[0] = le_pyframe_stack(st->f)[1] = NULL;
-        Py_INCREF(builtins);
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     else if (c != NULL && !le_frame_is_executing(c) &&
@@ -2044,7 +2112,6 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         /* the catching callee's traceback frame, as CPython's is its frame */
         st->f = c;
         Py_INCREF(c);
-        Py_INCREF(builtins);
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     else {
@@ -2054,7 +2121,6 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
             PyMem_Free(st);
             return NULL;
         }
-        Py_INCREF(builtins);
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     st->nvalues = 0;

@@ -190,7 +190,7 @@ owner_add_extent(le_owner_t *o, code_t *start, code_t *end)
         return;
     }
     if (o->nextents == o->extentscap) {
-        int cap = o->extentscap ? 2 * o->extentscap : 4;
+        int cap = o->extentscap ? 2 * o->extentscap : o->parent ? 1 : 4;
         void *n = PyMem_Realloc(o->extents, cap * sizeof(extent_t));
         if (n == NULL)
             return; /* out of memory: kept for good, as an abandoned
@@ -363,7 +363,7 @@ psyco_owner_keep(PyObject *p)
         return;
     }
     o->pins[i] = p;
-    if (o->npins++ == 0)
+    if (o->npins++ == 0 && o->parent == NULL)
         psyco_owner_track(
             (le_code_extra_t *)((char *)o - offsetof(le_code_extra_t, owner)));
 }
@@ -398,10 +398,62 @@ psyco_owner_release_records(le_owner_t *o); /* dispatcher.c */
 EXTERNFN bool
 psyco_ge_in_report(PyObject *mergepoints,
                    global_entries_t *ge); /* mergepoints.c */
+static void
+amap_remove(le_addrmap_t *m, void *key);
 
-DEFINEFN void
-psyco_owner_release(le_owner_t *o, PyObject *mergepoints,
-                    PyObject *entry_point)
+static le_owner_t *
+owner_root(le_owner_t *o)
+{
+    while (o->parent != NULL) o = o->parent;
+    return o;
+}
+
+/* the groups' blocks: block -> group (psyco_owner_depend) */
+static le_addrmap_t group_blocks;
+
+/* moves the references 'from' holds into 'to' */
+static void
+pins_take(le_owner_t *to, le_owner_t *from)
+{
+    size_t j, i;
+    for (j = 0; from->pins != NULL && j <= from->pinmask; j++) {
+        PyObject *p = from->pins[j];
+        if (p == NULL)
+            continue;
+        if (to->pins == NULL || 2 * (to->npins + 1) > to->pinmask + 1)
+            pins_grow(to);
+        i = pin_slot(to, p);
+        if (to->pins[i] == p) {
+            Py_DECREF(p); /* 'to' holds another, so never the last */
+        }
+        else {
+            to->pins[i] = p;
+            to->npins++;
+        }
+    }
+    PyMem_Free(from->pins);
+    from->pins = NULL;
+    from->npins = from->pinmask = 0;
+}
+
+static void
+pins_drop(le_owner_t *o)
+{
+    PyObject **pins = o->pins;
+    size_t j, mask = o->pinmask;
+    o->pins = NULL;
+    o->npins = o->pinmask = 0;
+    if (pins != NULL) {
+        for (j = 0; j <= mask; j++) Py_XDECREF(pins[j]);
+        PyMem_Free(pins);
+    }
+}
+
+/* releases everything 'o' holds but its references, which it keeps: a
+   dealloc may run any code, so they are dropped last. A block listed in
+   'mergepoints' stays listed, since the report dies with it. */
+static void
+owner_free(le_owner_t *o, PyObject *mergepoints, PyObject *entry_point)
 {
     le_owner_t dead;
     int i;
@@ -410,6 +462,8 @@ psyco_owner_release(le_owner_t *o, PyObject *mergepoints,
        point; the callee is held until here (psyfunc.c) */
     for (i = 0; i < o->nbufs; i++) {
         CodeBufferObject *b = o->bufs[i];
+        if (o->parent != NULL)
+            amap_remove(&group_blocks, b);
         if (b->ge != NULL && !psyco_ge_in_report(mergepoints, b->ge))
             codebuf_unlist(b);
     }
@@ -421,6 +475,9 @@ psyco_owner_release(le_owner_t *o, PyObject *mergepoints,
     LE_OWNER_LEAVE();
     dead = *o;
     memset(o, 0, sizeof(*o));
+    o->pins = dead.pins;
+    o->npins = dead.npins;
+    o->pinmask = dead.pinmask;
     for (i = 0; i < dead.nextents; i++) {
         code_t *s = dead.extents[i].start, *e = dead.extents[i].end;
 #if ALL_CHECKS
@@ -438,12 +495,38 @@ psyco_owner_release(le_owner_t *o, PyObject *mergepoints,
         PyMem_Free(dead.blocks);
         dead.blocks = next;
     }
-    /* last, since a dealloc may run any code */
-    if (dead.pins != NULL) {
-        size_t j;
-        for (j = 0; j <= dead.pinmask; j++) Py_XDECREF(dead.pins[j]);
-        PyMem_Free(dead.pins);
+}
+
+/* frees 'g', its references moved into 'pins_to'; 'forget': its site
+   lives on */
+static void
+group_free(le_group_t *g, PyObject *mergepoints, le_owner_t *pins_to,
+           bool forget)
+{
+    if (forget)
+        psyco_promotion_forget(g->site, (long)g->key);
+    Py_XINCREF(mergepoints); /* owner_free releases it */
+    owner_free(&g->owner, mergepoints, NULL);
+    pins_take(pins_to, &g->owner);
+    PyMem_Free(g->deps);
+    le_owners_counted--;
+    LE_STAT(psyco_stat_groups_freed++);
+    PyMem_Free(g);
+}
+
+DEFINEFN void
+psyco_owner_release(le_owner_t *o, PyObject *mergepoints,
+                    PyObject *entry_point)
+{
+    /* its groups first, the newest first, so that a group is freed
+       before the group its site is in; their sites go too */
+    while (o->groups != NULL) {
+        le_group_t *g = o->groups;
+        o->groups = g->next;
+        group_free(g, mergepoints, o, false);
     }
+    owner_free(o, mergepoints, entry_point);
+    pins_drop(o); /* last, since a dealloc may run any code */
 }
 
 /*** Records per address ***/
@@ -615,11 +698,22 @@ psyco_record(le_addrmap_t *map, void *key)
    last: a gc.callbacks entry, listed only once the program has imported
    gc (as any program calling gc.collect() has), and only while there are
    such records, acts on generation 2 only. Importing gc for it would run
-   importlib's Python code, which LeJIT compiles, in every program. */
+   importlib's Python code, which LeJIT compiles, in every program.
+   A group (codemanager.h) is a node too, held by nothing; one of a dead
+   code object dies with it. Otherwise it is alive if an alive group
+   depends on it or is under it, if its code object's own code jumps into
+   it, if a frame of its code object runs on any thread
+   (frames.c:psyco_frames_running), or if every key from it up to its
+   code object is alive. That is decided after the rest, until no more
+   groups come alive; the dead ones of live code objects are freed, each
+   before the one its site is in, and their references dropped last.
+   Groups are counted with the records. */
 
 #if ALL_CHECKS
 DEFINEVAR long psyco_stat_owner_scans = 0;
 DEFINEVAR long psyco_stat_owners_collected = 0;
+DEFINEVAR long psyco_stat_groups_made = 0;
+DEFINEVAR long psyco_stat_groups_freed = 0;
 #endif
 
 DEFINEVAR long le_owners_counted = 0;
@@ -631,10 +725,11 @@ static PyObject *get_objects = NULL; /* gc.get_objects, once imported */
 static PyObject *gc_callbacks = NULL, *scan_callback = NULL;
 
 #define SCAN_MAX_NODES ((size_t)1 << 20)
-enum { NODE_GC, NODE_CODE, NODE_PRUNED };
+enum { NODE_GC, NODE_CODE, NODE_PRUNED, NODE_GROUP };
 typedef struct {
-    PyObject *o;
+    PyObject *o; /* a group's le_group_t */
     Py_ssize_t refs;
+    size_t root; /* a group's: its code object's node */
     char kind, alive;
 } node_t;
 
@@ -644,7 +739,8 @@ static struct {
     le_addrmap_t index; /* object -> node number + 1 */
     size_t *stack;
     size_t nstack, stackcap;
-    bool failed;
+    le_addrmap_t running; /* code objects a frame runs: -> 1 */
+    bool failed, unknown; /* unknown: which frames run is not known */
 } scan;
 
 /* every code object with a record is a node, so that one only garbage
@@ -655,6 +751,15 @@ has_record(PyObject *o)
     return le_code_extra_get((PyCodeObject *)o) != NULL;
 }
 
+static le_owner_t *
+node_owner(size_t i)
+{
+    node_t *nd = &scan.nodes[i];
+    if (nd->kind == NODE_GROUP)
+        return &((le_group_t *)nd->o)->owner;
+    return &le_code_extra_get((PyCodeObject *)nd->o)->owner;
+}
+
 /* the node of 'o', made if it is one; -1 if it isn't or the scan failed */
 static long
 scan_node(PyObject *o, char kind)
@@ -662,7 +767,7 @@ scan_node(PyObject *o, char kind)
     size_t i = (size_t)amap_get(&scan.index, o);
     if (i != 0)
         return i - 1;
-    if (kind != NODE_PRUNED) {
+    if (kind == NODE_GC || kind == NODE_CODE) {
         if (PyCode_Check(o) && has_record(o))
             kind = NODE_CODE;
         else if (PyObject_IS_GC(o) && Py_TYPE(o)->tp_traverse != NULL)
@@ -688,7 +793,9 @@ scan_node(PyObject *o, char kind)
     }
     amap_put(&scan.index, o, (void *)(scan.n + 1));
     scan.nodes[scan.n].o = o;
-    scan.nodes[scan.n].refs = Py_REFCNT(o);
+    /* nothing but its code object's list refers to a group */
+    scan.nodes[scan.n].refs = kind == NODE_GROUP ? 0 : Py_REFCNT(o);
+    scan.nodes[scan.n].root = 0;
     scan.nodes[scan.n].kind = kind;
     scan.nodes[scan.n].alive = false;
     return scan.n++;
@@ -699,8 +806,8 @@ static void
 scan_edges(size_t i, visitproc visit)
 {
     node_t *nd = &scan.nodes[i];
-    if (nd->kind == NODE_CODE) {
-        le_owner_t *o = &le_code_extra_get((PyCodeObject *)nd->o)->owner;
+    if (nd->kind == NODE_CODE || nd->kind == NODE_GROUP) {
+        le_owner_t *o = node_owner(i);
         size_t j;
         for (j = 0; o->pins != NULL && j <= o->pinmask; j++)
             if (o->pins[j] != NULL)
@@ -747,10 +854,60 @@ visit_alive(PyObject *o, void *unused)
     return 0;
 }
 
-/* the garbage code objects, as new references, in *out; their count, or
-   -1 if the scan didn't finish */
+/* everything alive reaches is alive. A group alive keeps the groups its
+   code jumps into, and the one its site is in. */
+static void
+propagate(void)
+{
+    while (scan.nstack > 0 && !scan.failed) {
+        size_t i = scan.stack[--scan.nstack];
+        scan_edges(i, visit_alive);
+        if (scan.nodes[i].kind == NODE_GROUP) {
+            le_group_t *g = (le_group_t *)scan.nodes[i].o;
+            int j;
+            if (g->owner.parent->parent != NULL)
+                visit_alive((PyObject *)g->owner.parent, NULL);
+            for (j = 0; j < g->ndeps; j++)
+                visit_alive((PyObject *)g->deps[j], NULL);
+        }
+    }
+}
+
+static void
+mark_running(PyCodeObject *co, void *unused)
+{
+    if (amap_get(&scan.running, co) != NULL)
+        return;
+    if (amap_reserve(&scan.running) < 0)
+        scan.unknown = true;
+    else
+        amap_put(&scan.running, co, (void *)1);
+}
+
+/* can the group's code be reached? Its site is reached while every key
+   from it up is alive; a frame of its code object may be in it. */
+static bool
+group_reached(size_t i)
+{
+    le_group_t *g = (le_group_t *)scan.nodes[i].o;
+    le_owner_t *p;
+    if (g->held || scan.unknown ||
+        amap_get(&scan.running, scan.nodes[scan.nodes[i].root].o) != NULL)
+        return true;
+    for (p = &g->owner; p->parent != NULL; p = p->parent) {
+        size_t k = (size_t)amap_get(&scan.index, ((le_group_t *)p)->key);
+        if (k != 0 && !scan.nodes[k - 1].alive)
+            return false;
+        /* a key the scan doesn't follow counts as alive */
+    }
+    return true;
+}
+
+/* the garbage code objects, as new references, in *out, and the dead
+   groups of the others in *groups; their count (and *ngroups), or -1 if
+   the scan didn't finish */
 static long
-scan_find(PyCodeObject ***out)
+scan_find(PyCodeObject ***out, le_group_t ***groups, long *ngroups)
 {
     le_code_extra_t *x;
     PyObject *all;
@@ -758,7 +915,8 @@ scan_find(PyCodeObject ***out)
     Py_ssize_t pos = 0;
     PyObject *k, *m;
     size_t i;
-    long n = 0;
+    long n = 0, ng = 0;
+    bool changed;
     while (modules != NULL && PyDict_Check(modules) &&
            PyDict_Next(modules, &pos, &k, &m))
         if (PyModule_Check(m)) {
@@ -788,33 +946,84 @@ scan_find(PyCodeObject ***out)
         if (PyFunction_Check(f)) {
             PyObject *co = PyFunction_GET_CODE(f);
             x = le_code_extra_get((PyCodeObject *)co);
-            if (x != NULL && x->owner.npins > 0)
+            if (x != NULL && (x->owner.npins > 0 || x->owner.groups != NULL))
                 scan_node(co, NODE_CODE);
         }
     }
     Py_DECREF(all);
-    for (i = 0; i < scan.n && !scan.failed; i++) scan_edges(i, visit_count);
+    for (i = 0; i < scan.n && !scan.failed; i++) {
+        scan_edges(i, visit_count);
+        if (scan.nodes[i].kind == NODE_CODE) {
+            le_group_t *g;
+            for (g = node_owner(i)->groups; g != NULL; g = g->next) {
+                long j = scan_node((PyObject *)g, NODE_GROUP);
+                if (j >= 0)
+                    scan.nodes[j].root = i;
+            }
+        }
+    }
     for (i = 0; i < scan.n && !scan.failed; i++)
         if (scan.nodes[i].refs > 0 || scan.nodes[i].kind == NODE_PRUNED)
             push_alive(i);
-    while (scan.nstack > 0 && !scan.failed)
-        scan_edges(scan.stack[--scan.nstack], visit_alive);
+    propagate();
+    /* then the groups reached, until no more are */
+    if (scan.n > 0 && psyco_frames_running(mark_running, NULL) < 0)
+        scan.unknown = true;
+    do {
+        changed = false;
+        for (i = 0; i < scan.n && !scan.failed; i++)
+            if (scan.nodes[i].kind == NODE_GROUP && !scan.nodes[i].alive &&
+                scan.nodes[scan.nodes[i].root].alive && group_reached(i)) {
+                push_alive(i);
+                propagate();
+                changed = true;
+            }
+    } while (changed && !scan.failed);
     if (scan.failed)
         return -1;
     for (i = 0; i < scan.n; i++)
-        if (scan.nodes[i].kind == NODE_CODE && !scan.nodes[i].alive)
-            n++;
-    if (n == 0)
-        return 0;
-    if ((*out = PyMem_Malloc(n * sizeof(PyCodeObject *))) == NULL)
-        return -1;
-    n = 0;
-    for (i = 0; i < scan.n; i++)
-        if (scan.nodes[i].kind == NODE_CODE && !scan.nodes[i].alive) {
-            Py_INCREF(scan.nodes[i].o);
-            (*out)[n++] = (PyCodeObject *)scan.nodes[i].o;
+        if (!scan.nodes[i].alive) {
+            if (scan.nodes[i].kind == NODE_CODE)
+                n++;
+            else if (scan.nodes[i].kind == NODE_GROUP &&
+                     scan.nodes[scan.nodes[i].root].alive)
+                ng++;
         }
+    if ((n > 0 && (*out = PyMem_Malloc(n * sizeof(PyCodeObject *))) == NULL) ||
+        (ng > 0 &&
+         (*groups = PyMem_Malloc(ng * sizeof(le_group_t *))) == NULL))
+        return -1;
+    n = ng = 0;
+    /* a code object's groups are nodes in its list's order, the newest
+       first: a group before the group its site is in */
+    for (i = 0; i < scan.n; i++)
+        if (!scan.nodes[i].alive) {
+            if (scan.nodes[i].kind == NODE_CODE) {
+                Py_INCREF(scan.nodes[i].o);
+                (*out)[n++] = (PyCodeObject *)scan.nodes[i].o;
+            }
+            else if (scan.nodes[i].kind == NODE_GROUP &&
+                     scan.nodes[scan.nodes[i].root].alive)
+                (*groups)[ng++] = (le_group_t *)scan.nodes[i].o;
+        }
+    *ngroups = ng;
     return n;
+}
+
+/* takes the dead groups off their code objects' lists */
+static void
+groups_unlist(le_group_t **dead, long n)
+{
+    long i;
+    for (i = 0; i < n; i++) dead[i]->dead = 1;
+    for (i = 0; i < n; i++) {
+        le_group_t **p = &owner_root(&dead[i]->owner)->groups;
+        while (*p != NULL)
+            if ((*p)->dead)
+                *p = (*p)->next;
+            else
+                p = &(*p)->next;
+    }
 }
 
 static void
@@ -822,18 +1031,34 @@ owners_scan(void)
 {
     PyCodeObject **dead_co = NULL;
     le_code_extra_t **dead = NULL;
-    long i, n = scan_find(&dead_co);
+    le_group_t **dead_groups = NULL;
+    le_owner_t dropped;
+    long i, ng = 0, n = scan_find(&dead_co, &dead_groups, &ng);
     PyMem_Free(scan.nodes);
     PyMem_Free(scan.stack);
     PyMem_Free(scan.index.items);
+    PyMem_Free(scan.running.items);
     memset(&scan, 0, sizeof(scan));
     LE_STAT(psyco_stat_owner_scans++);
-    if (n < 0)
+    if (n < 0) {
+        PyMem_Free(dead_co);
+        PyMem_Free(dead_groups);
+        n = ng = 0;
         scan_after = 2 * (scan_after > le_owners_counted ? scan_after
                                                          : le_owners_counted);
+    }
     else
         scan_after = le_owners_counted / 2 > SCAN_MIN ? le_owners_counted / 2
                                                       : SCAN_MIN;
+    /* the dead groups go first, each before the group its site is in;
+       their references are dropped last */
+    memset(&dropped, 0, sizeof(dropped));
+    if (ng > 0) {
+        groups_unlist(dead_groups, ng);
+        for (i = 0; i < ng; i++)
+            group_free(dead_groups[i], NULL, &dropped, true);
+    }
+    PyMem_Free(dead_groups);
     if (n > 0)
         dead = PyMem_Malloc(n * sizeof(le_code_extra_t *));
     if (dead == NULL) {
@@ -849,6 +1074,7 @@ owners_scan(void)
     PyMem_Free(dead);
     for (i = 0; i < n; i++) Py_DECREF(dead_co[i]);
     PyMem_Free(dead_co);
+    pins_drop(&dropped);
 }
 
 static int
@@ -935,12 +1161,10 @@ done:
     PyErr_Restore(t, v, tb);
 }
 
-DEFINEFN void
-psyco_owner_track(le_code_extra_t *x)
+/* one more record or group counted */
+static void
+owners_count_one(void)
 {
-    if (x->counted)
-        return;
-    x->counted = 1;
     le_owners_counted++;
     extras_since_scan++;
     if (scan_callback == NULL || !scan_listed_last())
@@ -948,6 +1172,138 @@ psyco_owner_track(le_code_extra_t *x)
     if (extras_since_scan >= scan_after && !scan_asked &&
         Py_AddPendingCall(owners_pending, NULL) == 0)
         scan_asked = true; /* a full queue: asked again by the next record */
+}
+
+DEFINEFN void
+psyco_owner_track(le_code_extra_t *x)
+{
+    if (x->counted)
+        return;
+    x->counted = 1;
+    owners_count_one();
+}
+
+/* the dealloc of a class made by Python code (a class statement or
+   type()): one a C extension made has its own */
+static destructor python_class_dealloc;
+
+static bool
+has_locals(PyObject *qualname)
+{
+    static PyObject *marker;
+    if (marker == NULL &&
+        (marker = PyUnicode_InternFromString("<locals>")) == NULL) {
+        PyErr_Clear();
+        return false;
+    }
+    return PyUnicode_Find(qualname, marker, 0, PyUnicode_GET_LENGTH(qualname),
+                          1) >= 0;
+}
+
+/* Does 'o' look as if it may die while code specialised on it lives? A
+   function or class made inside a function ('<locals>' in its qualified
+   name), or a class made by Python code that its module doesn't name (by
+   type(), or replaced); not one a module names, which lives as long as
+   it. Getting it wrong costs memory, never correctness. Only dict
+   lookups, so no Python code runs. */
+static bool
+looks_short_lived(PyObject *o)
+{
+    PyTypeObject *tp = (PyTypeObject *)o;
+    PyObject *qualname, *module, *d, *found = NULL;
+    Py_ssize_t start = 0, i, n;
+    if (PyFunction_Check(o)) {
+        qualname = ((PyFunctionObject *)o)->func_qualname;
+        return qualname != NULL && PyUnicode_Check(qualname) &&
+               has_locals(qualname);
+    }
+    if (!PyType_Check(o) || !(tp->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
+        tp->tp_dealloc != python_class_dealloc)
+        return false;
+    qualname = ((PyHeapTypeObject *)tp)->ht_qualname;
+    module = PyDict_GetItemString(le_type_dict(tp), "__module__");
+    if (qualname == NULL || !PyUnicode_Check(qualname) || module == NULL ||
+        !PyUnicode_Check(module) || has_locals(qualname))
+        return true;
+    d = PyImport_GetModuleDict();
+    if (d != NULL && PyDict_CheckExact(d))
+        found = PyDict_GetItem(d, module);
+    if (found == NULL || !PyModule_Check(found))
+        return true;
+    /* the dotted name, from the module's dict through classes' */
+    n = PyUnicode_GET_LENGTH(qualname);
+    d = PyModule_GetDict(found);
+    for (i = 0; i <= n; i++) {
+        PyObject *part;
+        if (i < n && PyUnicode_READ_CHAR(qualname, i) != '.')
+            continue;
+        if (d == NULL || !PyDict_CheckExact(d))
+            return true;
+        part = PyUnicode_Substring(qualname, start, i);
+        if (part == NULL) {
+            PyErr_Clear();
+            return true;
+        }
+        found = PyDict_GetItem(d, part);
+        Py_DECREF(part);
+        if (found == NULL)
+            return true;
+        d = PyType_Check(found) ? le_type_dict((PyTypeObject *)found) : NULL;
+        start = i + 1;
+    }
+    return found != o;
+}
+
+DEFINEFN le_owner_t *
+psyco_group_new(PyObject *key, void *site)
+{
+    le_owner_t *root;
+    le_group_t *g;
+    if (psyco_owner == NULL || !looks_short_lived(key))
+        return NULL;
+    g = PyMem_Calloc(1, sizeof(le_group_t));
+    if (g == NULL)
+        OUT_OF_MEMORY();
+    root = owner_root(psyco_owner);
+    g->owner.parent = psyco_owner;
+    g->key = key;
+    g->site = site;
+    g->next = root->groups;
+    root->groups = g;
+    LE_STAT(psyco_stat_groups_made++);
+    owners_count_one();
+    return &g->owner;
+}
+
+DEFINEFN void
+psyco_owner_depend(CodeBufferObject *b)
+{
+    le_owner_t *o = psyco_owner, *p;
+    le_group_t *g, *from;
+    int i;
+    if (group_blocks.n == 0 || (g = amap_get(&group_blocks, b)) == NULL)
+        return;
+    for (p = o; p != NULL; p = p->parent)
+        if (p == &g->owner)
+            return; /* its own, or one of a group it is under */
+    if (o == NULL || o->parent == NULL ||
+        owner_root(o) != owner_root(&g->owner)) {
+        g->held = 1;
+        return;
+    }
+    from = (le_group_t *)o;
+    for (i = 0; i < from->ndeps; i++)
+        if (from->deps[i] == g)
+            return;
+    if (from->ndeps == from->depscap) {
+        int cap = from->depscap ? 2 * from->depscap : 2;
+        void *n = PyMem_Realloc(from->deps, cap * sizeof(le_group_t *));
+        if (n == NULL)
+            OUT_OF_MEMORY();
+        from->deps = n;
+        from->depscap = cap;
+    }
+    from->deps[from->ndeps++] = g;
 }
 
 DEFINEFN void
@@ -961,8 +1317,16 @@ psyco_owner_untrack(le_code_extra_t *x)
 static void
 owners_scan_init(void)
 {
+    PyObject *c;
     if (PyType_Ready(&Record_Type) < 0)
         PyErr_Clear();
+    c = PyObject_CallFunction((PyObject *)&PyType_Type, "s()N", "C",
+                              PyDict_New());
+    if (c != NULL)
+        python_class_dealloc = ((PyTypeObject *)c)->tp_dealloc;
+    else
+        PyErr_Clear(); /* then no class gets a group */
+    Py_XDECREF(c);
 }
 
 DEFINEVAR unsigned long psyco_next_serial = 0;
@@ -1276,7 +1640,7 @@ owner_add_buffer(le_owner_t *o, CodeBufferObject *b)
     if (o == NULL)
         return; /* kept for good */
     if (o->nbufs == o->bufscap) {
-        int cap = o->bufscap ? 2 * o->bufscap : 8;
+        int cap = o->bufscap ? 2 * o->bufscap : o->parent ? 2 : 8;
         void *n = PyMem_Realloc(o->bufs, cap * sizeof(CodeBufferObject *));
         if (n == NULL)
             OUT_OF_MEMORY();
@@ -1284,6 +1648,11 @@ owner_add_buffer(le_owner_t *o, CodeBufferObject *b)
         o->bufscap = cap;
     }
     o->bufs[o->nbufs++] = b;
+    if (o->parent != NULL) {
+        if (amap_reserve(&group_blocks) < 0)
+            OUT_OF_MEMORY();
+        amap_put(&group_blocks, b, o);
+    }
 }
 
 static void

@@ -1,7 +1,8 @@
 """The message probes (tools/features/strings.py) give, for each supported
 CPython, a text that is in that version's source: a string literal (with
 adjacent literals joined), or a literal format with one conversion filled
-in by another literal (an operator's name CPython passes as a constant).
+in by another literal (an operator's name CPython passes as a constant,
+or as the argument of a macro that joins it into its literal).
 A fragment (an operator's name) is a literal, or fills its message's
 conversion to make one. 3.11 and 3.12 are shown for information.
 
@@ -24,7 +25,7 @@ import strings  # noqa: E402
 
 PYENV = os.path.expanduser('~/.pyenv/versions')
 SUPPORTED = ['3.7.17', '3.8.20', '3.9.21', '3.10.16']
-INFORMATION = ['3.11.11', '3.12.9']
+INFORMATION = ['3.11.11', '3.12.9', '3.13.2']
 
 # CPython's texts LeJIT keeps as literals: (text, the versions LeJIT uses it on)
 UNREACHABLE = [
@@ -75,8 +76,26 @@ def _joined(toks, into):
             run = []
 
 
-def literals(src):
-    """Every string literal's text in the tree, adjacent ones joined."""
+def _macro_formats(macro, into):
+    """A function-like macro's literal with one parameter joined into it
+    ("bad operand type for "descr": '%.200s'"), with %s for the parameter:
+    the literal a call passes fills it."""
+    run, holes = [], 0
+    for t in list(macro.body) + [None]:
+        if t is not None and t.kind == 'str' and t.text.startswith('"'):
+            run.append(t.text[1:-1])
+        elif t is not None and t.kind == 'id' and t.text in macro.params:
+            run.append('%s')
+            holes += 1
+        else:
+            if holes == 1 and len(run) > 1:
+                into.add(unescape(''.join(run)))
+            run, holes = [], 0
+
+
+def literals(src, formats):
+    """Every string literal's text in the tree, adjacent ones joined; each
+    macro's literal with a parameter in it goes in formats."""
     out = set()
     for top in ('Include', 'Objects', 'Python', 'Modules', 'Parser'):
         for dirpath, _, files in os.walk(os.path.join(src, top)):
@@ -88,6 +107,8 @@ def literals(src):
                 _joined(toks, out)
                 for m in macros.values():
                     _joined(m.body, out)
+                    if m.params:
+                        _macro_formats(m, formats)
     return out
 
 
@@ -124,8 +145,9 @@ def check_version(version, python=None):
     """(problems, notes) for one version."""
     src = cpython_src.find_source(version)
     python = python or interpreter_of(version)
-    lits = literals(src)
-    filled = [l for l in lits if '%' in l]
+    formats = set()
+    lits = literals(src, formats)
+    filled = [l for l in lits if '%' in l] + sorted(formats)
     got = strings.probe(python)
     problems, notes = [], []
     for name in sorted(got):

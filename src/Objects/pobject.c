@@ -24,6 +24,7 @@
 #include "../pycodegen.h"
 #include "../codemanager.h"
 #include "pboolobject.h"
+#include "punicodeobject.h"
 
 DEFINEFN
 PyTypeObject *
@@ -560,7 +561,7 @@ class_keys_index(le_dictkeys_t *keys, PyObject *name)
     for (i = 0; i < keys->dk_nentries; i++) {
         PyObject *key = *le_dict_key_slot(keys, i);
         if (key == name ||
-            (le_dict_hash(keys, i) == hash && _PyUnicode_EQ(key, name)))
+            (le_dict_hash(keys, i) == hash && le_unicode_eq(key, name)))
             return i;
     }
     return -1;
@@ -1507,8 +1508,8 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
     s.gc = vtp == NULL         ? STORE_GC_FULL
            : PyType_IS_GC(vtp) ? STORE_GC_DICT
                                : STORE_GC_NONE;
-    /* filling doesn't add to the insertion order that values keep where
-       keys have a kind */
+    /* filling a dict doesn't add to the insertion order that values keep
+       where keys have a kind */
     s.fill = !LE_HAS_DICT_KEYS_KIND && init_store(po, obj);
     s.miss_glue = store_miss_glue;
 #if LE_HAS_MANAGED_VALUES_POINTER
@@ -1516,6 +1517,7 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
         s.dictoffset = MANAGED_VALUES_OFFSET;
         s.keys = class_keys(tp);
         s.gc = STORE_GC_NONE;
+        s.fill = init_store(po, obj);
         s.miss_glue = managed_store_miss_glue;
     }
 #endif

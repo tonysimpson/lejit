@@ -2,7 +2,7 @@
 #define LE_MECHANISMS_FRAMES_H
 #if LE_HAS_INTERPRETER_FRAME
 /* Frames are interpreter frames (_PyInterpreterFrame): the thread's
-   innermost is tstate->cframe->current_frame, each links to its caller by
+   innermost is LE_CURRENT_FRAME below, each links to its caller by
    previous, and a frame's arguments, locals, cells and free variables are
    its localsplus, its value stack after them. A frame is incomplete until
    ceval has run its first instructions (the copies of the free variables,
@@ -11,36 +11,58 @@
    a view of it (f_frame) while the thread runs it; one made by PyFrame_New
    owns its frame. le_frame_t is the frame entry hands to
    eval_hook.c:LeCode_Run and frames.c walks. Its position is the
-   instruction before the next (prev_instr), its value stack's depth
+   instruction at f_lasti (LE_FRAME_PLACE), its value stack's depth
    stacktop, counted from localsplus. A frame the thread runs is running,
    as frame.clear() sees it, by its owner; a frame object's own frame is
    never running. */
 #include "code.h"
 #define Py_BUILD_CORE
 #include "internal/pycore_frame.h"
+#if LE_HAS_FRAME_CLEAR_AND_POP_LINKABLE
+/* _PyEval_FrameClearAndPop */
+#include "internal/pycore_ceval.h"
+#endif
 #undef Py_BUILD_CORE
 /* its <stdbool.h> makes bool a macro for _Bool: LeJIT's bool is psyco.h's
    int */
 #undef bool
 typedef _PyInterpreterFrame le_frame_t;
 
+/* the frame's code object, its place (the instruction at f_lasti) and
+   the thread's innermost frame, by their fields */
+#if LE_HAS_FRAME_EXECUTABLE
+#define LE_FRAME_CODE(f) ((PyCodeObject *)(f)->f_executable)
+#else
+#define LE_FRAME_CODE(f) ((f)->f_code)
+#endif
+#if LE_HAS_FRAME_INSTR_PTR
+#define LE_FRAME_PLACE(f) ((f)->instr_ptr)
+#else
+#define LE_FRAME_PLACE(f) ((f)->prev_instr)
+#endif
+#if LE_HAS_TSTATE_CURRENT_FRAME
+#define LE_CURRENT_FRAME(ts) ((ts)->current_frame)
+#else
+#define LE_CURRENT_FRAME(ts) ((ts)->cframe->current_frame)
+#endif
+
 static inline le_frame_t *
 le_frame_current(PyThreadState *ts)
 {
-    return ts->cframe->current_frame;
+    return LE_CURRENT_FRAME(ts);
 }
 static inline void
 le_frame_set_current(PyThreadState *ts, le_frame_t *f)
 {
-    ts->cframe->current_frame = f;
+    LE_CURRENT_FRAME(ts) = f;
 }
 /* the frame runs as the thread's innermost, called from the innermost
    before; ceval's prologue does this for a frame it runs */
 static inline void
 le_frame_push(PyThreadState *ts, le_frame_t *f)
 {
-    f->previous = ts->cframe->current_frame;
-    ts->cframe->current_frame = f;
+    f->previous = LE_CURRENT_FRAME(ts);
+    LE_CURRENT_FRAME(ts) = f;
 }
 static inline le_frame_t *
 le_frame_back(le_frame_t *f)
@@ -71,9 +93,9 @@ le_frame_closure(le_frame_t *f)
 static inline int
 le_frame_start(le_frame_t *f)
 {
-    PyCodeObject *co = f->f_code;
+    PyCodeObject *co = LE_FRAME_CODE(f);
     int k, nfrees = co->co_nfreevars, n = co->co_nlocalsplus - nfrees;
-    f->prev_instr = _PyCode_CODE(co) + co->_co_firsttraceable;
+    LE_FRAME_PLACE(f) = _PyCode_CODE(co) + co->_co_firsttraceable;
     for (k = 0; k < n; k++)
         if (_PyLocals_GetKind(co->co_localspluskinds, k) & CO_FAST_CELL) {
             PyObject *cell = PyCell_New(f->localsplus[k]);
@@ -128,7 +150,7 @@ le_frame_object_back(PyFrameObject *f)
 static inline PyCodeObject *
 le_frame_code(le_frame_t *f)
 {
-    return f->f_code;
+    return LE_FRAME_CODE(f);
 }
 static inline PyObject *
 le_frame_globals(le_frame_t *f)
@@ -140,11 +162,22 @@ le_frame_builtins(le_frame_t *f)
 {
     return f->f_builtins;
 }
-/* the frame borrows its builtins (its function's), so the reference 'b'
-   given is never released */
+/* the frame borrows its builtins from its function, which holds them;
+   the frames given others are PyFrame_New's, whose function is their own,
+   so the function's are replaced */
 static inline void
 le_frame_set_builtins(le_frame_t *f, PyObject *b)
 {
+    PyFunctionObject *func;
+    if (f->f_builtins == b)
+        return;
+#if LE_HAS_FRAME_FUNCOBJ
+    func = (PyFunctionObject *)f->f_funcobj;
+#else
+    func = f->f_func;
+#endif
+    Py_INCREF(b);
+    Py_SETREF(func->func_builtins, b);
     f->f_builtins = b;
 }
 /* the mapping its locals are run in, NULL for a function's */
@@ -163,7 +196,7 @@ le_frame_args(le_frame_t *f)
 static inline PyObject **
 le_frame_stack(le_frame_t *f)
 {
-    return f->localsplus + f->f_code->co_nlocalsplus;
+    return f->localsplus + LE_FRAME_CODE(f)->co_nlocalsplus;
 }
 /* f_lasti as CPython counts it (instructions), -1 before the first */
 static inline int
@@ -176,9 +209,9 @@ le_frame_lasti(le_frame_t *f)
 static inline void
 le_frame_set_lasti(le_frame_t *f, int lasti)
 {
-    if (lasti < f->f_code->_co_firsttraceable)
-        lasti = f->f_code->_co_firsttraceable;
-    f->prev_instr = _PyCode_CODE(f->f_code) + lasti;
+    if (lasti < LE_FRAME_CODE(f)->_co_firsttraceable)
+        lasti = LE_FRAME_CODE(f)->_co_firsttraceable;
+    LE_FRAME_PLACE(f) = _PyCode_CODE(LE_FRAME_CODE(f)) + lasti;
 }
 static inline void
 le_frame_set_executing(le_frame_t *f, int on)
@@ -245,8 +278,8 @@ le_pyframe_unmark_running(PyFrameObject *f, int old)
 static inline int
 le_pyframe_eval_begin(PyThreadState *ts, PyFrameObject *f)
 {
-    if (ts->cframe->current_frame == f->f_frame)
-        ts->cframe->current_frame = f->f_frame->previous;
+    if (LE_CURRENT_FRAME(ts) == f->f_frame)
+        LE_CURRENT_FRAME(ts) = f->f_frame->previous;
     if (!le_pyframe_owns(f) || le_frame_is_executing(f))
         return 0;
     le_pyframe_set_executing(f, 1);
@@ -300,7 +333,7 @@ le_pyframe_make_current(PyThreadState *ts, PyFrameObject *f)
         Py_INCREF(f);
         f->f_frame->frame_obj = f;
     }
-    ts->cframe->current_frame = f->f_frame;
+    LE_CURRENT_FRAME(ts) = f->f_frame;
 }
 static inline void
 le_pyframe_current_end(PyFrameObject *f)
@@ -317,13 +350,13 @@ static inline int
 le_frame_stack_empty(PyFrameObject *f)
 {
     return !le_frame_is_executing(f) &&
-           f->f_frame->stacktop == f->f_frame->f_code->co_nlocalsplus;
+           f->f_frame->stacktop == LE_FRAME_CODE(f->f_frame)->co_nlocalsplus;
 }
 /* the stack ceval resumes the frame with: its first n slots */
 static inline void
 le_frame_set_stack_depth(PyFrameObject *f, int n)
 {
-    f->f_frame->stacktop = f->f_frame->f_code->co_nlocalsplus + n;
+    f->f_frame->stacktop = LE_FRAME_CODE(f->f_frame)->co_nlocalsplus + n;
 }
 #else
 /* Frames as Python sees them are PyFrameObjects: the thread's
@@ -405,11 +438,11 @@ le_frame_builtins(le_frame_t *f)
 {
     return f->f_builtins;
 }
-/* the frame holds a reference to its builtins: the old one goes, 'b' is
-   stolen */
+/* the frame holds a reference to its builtins: the old one goes */
 static inline void
 le_frame_set_builtins(le_frame_t *f, PyObject *b)
 {
+    Py_INCREF(b);
     Py_XSETREF(f->f_builtins, b);
 }
 /* the mapping its locals are run in, NULL for a function's */
@@ -593,7 +626,27 @@ le_pyframe_stack(PyFrameObject *f)
 /* The frame entry handed to compiled code (eval_hook.c:LeCode_Run) ends:
    'result' (a new reference, or NULL with the exception set) is what it
    returns, after le_frame_finish. */
-#if LE_HAS_EVAL_FRAME_POPS
+#if LE_HAS_EVAL_FRAME_POPS && LE_HAS_FRAME_CLEAR_AND_POP_LINKABLE
+/* Whoever runs the frame clears and pops it, here with the function ceval
+   uses ('done' is not needed). A frame object that outlives the frame
+   keeps the f_back psyco_frame_returned gave it, which the pop would
+   replace with the frame it was called from. */
+static inline PyObject *
+le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
+                PyObject *done)
+{
+    PyFrameObject *fo = f->frame_obj, *back = NULL;
+    (void)done;
+    if (fo != NULL && Py_REFCNT(fo) > 1) {
+        back = fo->f_back;
+        fo->f_back = NULL;
+    }
+    _PyEval_FrameClearAndPop(ts, f);
+    if (back != NULL)
+        Py_XSETREF(fo->f_back, back);
+    return result;
+}
+#elif LE_HAS_EVAL_FRAME_POPS
 /* Whoever runs the frame clears and pops it, with functions CPython hides,
    so ceval is given it to end: run from before its first instruction
    (incomplete, so ceval adds no traceback entry and finds no handler) with

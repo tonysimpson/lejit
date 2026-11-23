@@ -598,7 +598,7 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
     if (len < 3 || len > 6)
         return 0; /* none is shorter or longer */
     for (i = 0; frame_locals_builtins[i] != NULL; i++)
-        if (_PyUnicode_EqualToASCIIString(name, frame_locals_builtins[i]))
+        if (!PyUnicode_CompareWithASCIIString(name, frame_locals_builtins[i]))
             return 1;
     return 0;
 }
@@ -854,14 +854,15 @@ compiled_opcode(int op)
     return 0;
 }
 
-/* the CALL_INTRINSIC_1 arguments pycompiler.c compiles: those that are the
-   opcodes they replaced */
+/* the CALL_INTRINSIC_1 arguments pycompiler.c compiles: a generator's
+   PEP 479 handler, and those that are the opcodes they replaced */
 static int
 compiled_intrinsic(int arg)
 {
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
     return arg == INTRINSIC_PRINT || arg == INTRINSIC_UNARY_POSITIVE ||
-           arg == INTRINSIC_LIST_TO_TUPLE;
+           arg == INTRINSIC_LIST_TO_TUPLE ||
+           arg == INTRINSIC_STOPITERATION_ERROR;
 #else
     return 0;
 #endif

@@ -9,7 +9,7 @@
  *  - the 0x66 operand-size prefix must come before REX, so it is written
  *    separately, after anything (R11 address loads) emitted ahead of it;
  *  - byte stores from registers 4-7 without REX would mean AH/CH/DH/BH, so
- *    the value is copied to R10 first;
+ *    they get one (REX_BYTE);
  *  - a RIP-relative displacement is relative to the end of the instruction,
  *    including a trailing immediate (ADDRESS_ENCODING's imm_len).
  * Tested by executing the emitted code: tests/encoder/mov_mem.sh.
@@ -41,7 +41,7 @@ v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *index,
     long value = 0;
     long offset_or_address = (offset);
     unsigned char op_len = 0, b1 = 0, b2 = 0, b3 = 0;
-    bool rex_w = false;
+    int rex_w = false; /* or REX_BYTE */
     bool read = false;
 
     /* a virtual base or index would be read as a compile-time value
@@ -174,6 +174,7 @@ v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *index,
         if (v_reg != REG_NONE) {
             /* from register */
             if (scale == V_MEM_MOV_SCALE_BYTE) {
+                rex_w = REX_BYTE;
                 op_len = 1;
                 b1 = 0x88;
             }
@@ -211,13 +212,6 @@ v_mem_mov(PsycoObject *po, vinfo_t *v, vinfo_t *base, vinfo_t *index,
                 b1 = 0xC7;
             }
         }
-    }
-    if (!read && scale == V_MEM_MOV_SCALE_BYTE && v_reg >= 4 && v_reg <= 7) {
-        /* without a REX prefix, registers 4-7 as byte operands mean
-           AH/CH/DH/BH; the encoders only emit REX when needed for R8+,
-           so copy the value to R10 (whose low byte is always R10B) */
-        MOV_R_R(REG_TRANSIENT_1, v_reg);
-        v_reg = REG_TRANSIENT_1;
     }
     if (base_reg == REG_NONE &&
         (index_reg != REG_NONE ||
