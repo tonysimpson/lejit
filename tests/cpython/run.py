@@ -113,7 +113,19 @@ SKIPPED = {
         'test.test_coroutines.OriginTrackingTest.test_unawaited_warning_when_module_broken '
         'test.test_compile.TestSpecifics.test_lineno_after_implicit_return '
         'test.test_raise.TestTracebackType.test_attrs '
-        'test.test_gc.GCTests.test_frame',
+        'test.test_gc.GCTests.test_frame '
+        'test.test_frame.TestIncompleteFrameAreInvisible.test_sneaky_frame_object_teardown '
+        'test.test_capi.test_exceptions.Test_ErrSetAndRestore.test_err_writeunraisable',
+    "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
+    'PyFrame_GetVar) misses those compiled code has set':
+        'test.test_capi.test_eval.Tests.test_eval_getlocals '
+        'test.test_frame.TestCAPI.test_getvar',
+    "sys.settrace on 3.12 sees an async for loop's exception events "
+    'differently':
+        'test.test_sys_settrace.*.test_20_async_for_loop',
+    'a failed task the test drops is freed only by the gc, so its '
+    'exception handler runs late':
+        'test.test_asyncio.test_futures2.PyFutureTests.test_task_exc_handler_correct_context',
     'tracing that starts in a running frame (pdb.set_trace)':
         'test.test_sys_settrace.*.test_09_settrace_and_raise '
         'test.test_pdb.test_* '
@@ -135,7 +147,12 @@ SKIPPED = {
         'ctypes.test.test_python_api.PythonAPITestCase.test_PyLong_Long '
         'ctypes.test.test_refcounts.RefcountTestCase.test_1 '
         'ctypes.test.test_refcounts.RefcountTestCase.test_refcount '
-        'ctypes.test.test_stringptr.StringPtrTestCase.test__POINTER_c_char',
+        'ctypes.test.test_stringptr.StringPtrTestCase.test__POINTER_c_char '
+        'test.test_ctypes.test_memfunctions.MemFunctionsTest.test_string_at '
+        'test.test_ctypes.test_python_api.PythonAPITestCase.test_PyLong_Long '
+        'test.test_ctypes.test_refcounts.RefcountTestCase.test_1 '
+        'test.test_ctypes.test_refcounts.RefcountTestCase.test_refcount '
+        'test.test_ctypes.test_stringptr.StringPtrTestCase.test__POINTER_c_char',
     'compiling allocates memory and objects the gc tracks, while the test '
     'counts them':
         'test.test_descr.ClassPropertiesAndMethods.test_slots '

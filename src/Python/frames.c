@@ -538,7 +538,7 @@ psyco_build_pyframe(PyObject *co, PyObject *globals, PyThreadState *tstate)
        create plain wrong chained lists */
     back = le_frame_current(tstate);
     le_frame_set_current(tstate, NULL);
-    result = PyFrame_New(tstate, (PyCodeObject *)co, globals, NULL);
+    result = le_pyframe_new(tstate, (PyCodeObject *)co, globals);
     if (result == NULL)
         OUT_OF_MEMORY();
     le_frame_set_lasti(le_frame_of(result), -1);
@@ -2224,7 +2224,7 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     else {
-        st->f = PyFrame_New(PyThreadState_GET(), co, globals, NULL);
+        st->f = le_pyframe_new(PyThreadState_GET(), co, globals);
         if (st->f == NULL) {
             Py_XDECREF(c);
             PyMem_Free(st);
@@ -2363,7 +2363,7 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     }
     else
         kept_back = NULL;
-#if LE_HAS_EVAL_FRAME_POPS
+#if LE_PYFRAME_RUN_TO_END
     (void)marked;
     /* the events of a frame that runs past RESUME, if the code gives
        none yet; without them it still runs */
