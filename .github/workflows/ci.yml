@@ -344,3 +344,17 @@ jobs:
         with:
           name: wheels
           path: wheelhouse/*.whl
+
+  # the one check branch protection requires: a job skipped by its `if` is
+  # reported under its unexpanded matrix name, so the build jobs a docs-only
+  # pull request skips can't be required themselves
+  passed:
+    name: all jobs passed
+    needs: [changes, check, encoder, release, build, jit, install-newer,
+            install-main, detectors-newer, format, lint, wheels]
+    if: ${{ always() && !github.event.pull_request.draft }}
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: test "$FAILED" = false
