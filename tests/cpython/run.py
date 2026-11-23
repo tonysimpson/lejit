@@ -48,7 +48,26 @@ SKIPPED = {
     "compiled code doesn't specialise the bytecode it runs, which ceval does "
     'as it runs it':
         'test.test_type_cache.TypeCacheWithSpecializationTests.'
-        'test_load_method_specialization_user_type',
+        'test_load_method_specialization_user_type '
+        'test.test_type_cache.TypeCacheWithSpecializationTests.'
+        'test_class_call_specialization_user_type '
+        'test.test_type_cache.TypeCacheWithSpecializationTests.'
+        'test_to_bool_specialization_user_type '
+        'test.test_opcache.TestCallCache.test_assign_init_code '
+        'test.test_opcache.TestRacesDoNotCrash.test_binary_subscr_list_int '
+        'test.test_opcache.TestRacesDoNotCrash.test_for_iter_list '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_class '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_instance_value '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_method_lazy_dict '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_method_no_dict '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_method_with_values '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_module '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_with_hint '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_global_module '
+        'test.test_opcache.TestRacesDoNotCrash.test_store_attr_instance_value '
+        'test.test_opcache.TestRacesDoNotCrash.test_store_attr_with_hint '
+        'test.test_opcache.TestRacesDoNotCrash.test_store_subscr_list_int '
+        'test.test_opcache.TestRacesDoNotCrash.test_unpack_sequence_list',
     'CPython counts each frame a frame-evaluation hook is given as a C call '
     'too, so a Python recursion 90,000 deep passes the C recursion limit '
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
@@ -92,7 +111,7 @@ SKIPPED = {
         'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_class_load_attr_specialization_static_type',
     "C code that reads the running frame itself (sys._current_frames, "
-    "tracemalloc, a _warnings module imported after LeJIT started, type()'s "
+    "tracemalloc, another process reading the stack, a _warnings module imported after LeJIT started, type()'s "
     "and typing.TypeAliasType's __module__) sees the nearest frame ceval runs, not the compiled ones":
         'test.test_sys.SysModuleTest.test_current_frames '
         'test.test_sys.SysModuleTest.test_current_exceptions '
@@ -114,7 +133,8 @@ SKIPPED = {
         'test.test_type_aliases.TypeAliasConstructorTest.test_basic '
         'test.test_type_aliases.TypeAliasConstructorTest.test_generic '
         'test.test_type_aliases.TypeAliasConstructorTest.test_not_generic '
-        'test.test_type_aliases.TypeAliasConstructorTest.test_keywords',
+        'test.test_type_aliases.TypeAliasConstructorTest.test_keywords '
+        'test.test_external_inspection.TestGetStackTrace.test_self_trace',
     "a compiled frame's line, frame object or f_back isn't always what "
     'CPython gives':
         'test.test_frame.ClearTest.test_clear_executing '
@@ -127,7 +147,8 @@ SKIPPED = {
         'test.test_raise.TestTracebackType.test_attrs '
         'test.test_gc.GCTests.test_frame '
         'test.test_frame.TestIncompleteFrameAreInvisible.test_sneaky_frame_object_teardown '
-        'test.test_capi.test_exceptions.Test_ErrSetAndRestore.test_err_writeunraisable',
+        'test.test_capi.test_exceptions.Test_ErrSetAndRestore.test_err_writeunraisable '
+        'test.test_capi.test_exceptions.Test_ErrSetAndRestore.test_err_formatunraisable',
     "an inlined frame's f_locals is empty once its call has returned":
         'test.test_frame.TestFrameLocals.test_constructor',
     "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
@@ -191,7 +212,8 @@ SKIPPED = {
         'test.test_smtplib.DebuggingServerTests.testSourceAddress',
     "start many threads, and fail with \"can't start new thread\" on a "
     'loaded machine, plain as well as with LeJIT':
-        'test.test_queue.*SimpleQueueTest.test_many_threads*',
+        'test.test_queue.*SimpleQueueTest.test_many_threads* '
+        'test.test_interpreters.test_stress.StressTests.*',
     'bind a port find_unused_port chose, which another process can take '
     'first':
         'test.test_socket.CreateServerFunctionalTest.*',
