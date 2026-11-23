@@ -9,11 +9,15 @@
    as such when the call can't be compiled; never inlined unless
    'allow_inline'. 'kw' is NULL, a known NULL, or the call's keyword
    arguments: pending keywords (pdictobject.c) bind, anything else is the
-   real call. */
+   real call. 'kwdefs', NULL or a dict of exact str keys whose values are
+   held for as long as the code is, gives the keyword-only defaults the
+   call is compiled with; with NULL, a call that needs one is the real
+   call. */
 EXTERNFN vinfo_t *
 psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
                   vinfo_t *vglobals, vinfo_t *vdefaults, vinfo_t *arg_tuple,
-                  vinfo_t *kw, int recursion, bool allow_inline);
+                  vinfo_t *kw, PyObject *kwdefs, int recursion,
+                  bool allow_inline);
 /* the same for a run-time function whose closure code 'co' is known */
 EXTERNFN vinfo_t *
 psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
@@ -57,8 +61,8 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
                             vinfo_t **f_localsplus, vinfo_t **args,
                             Py_ssize_t argcount, PyObject *kwnames,
                             vinfo_t **kwargs, vinfo_t **defs,
-                            Py_ssize_t defcount, vinfo_t **closure,
-                            bool make_cells);
+                            Py_ssize_t defcount, PyObject *kwdefs,
+                            vinfo_t **closure, bool make_cells);
 
 /* for pycompiler.c */
 EXTERNFN vinfo_t *
