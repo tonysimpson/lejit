@@ -848,13 +848,49 @@ yields_in_handler(PyCodeObject *co, le_code_t c)
 #endif
 
 #if LE_RESUMES_GENERATORS
+/* whether plain flow from the instruction at 'from' reaches the one at
+   'to', jumps taken or not, but no exception raised */
+static int
+flows_to(le_code_t c, int from, int to)
+{
+    int units = c.size / LE_UNIT, top = 0;
+    int work[units + 1];
+    unsigned char seen[units + 1];
+    memset(seen, 0, units + 1);
+    seen[from / LE_UNIT] = 1;
+    work[top++] = from;
+    while (top > 0) {
+        int pos = work[--top], next[2], n = 0, k, f;
+        le_instr_t in;
+        if (pos == to)
+            return 1;
+        in = le_instr(c, pos);
+        f = le_op_flags(in.op);
+        if (!(f & LE_OPF_STOPS)) {
+            if (f & (LE_OPF_JUMPS | LE_OPF_BRANCHES))
+                next[n++] = in.target;
+            if (!(f & LE_OPF_JUMPS))
+                next[n++] = in.next;
+        }
+        for (k = 0; k < n; k++)
+            if (next[k] >= 0 && next[k] < c.size && !seen[next[k] / LE_UNIT]) {
+                seen[next[k] / LE_UNIT] = 1;
+                work[top++] = next[k];
+            }
+    }
+    return 0;
+}
+
 /* whether each yield's resumes do enough work for the compiled body to
    be worth its fixed cost per resume (about 330 instructions through the
    hook, against about 150 for ceval): the instructions a resume can run
    before the next yield, taken as the innermost loop around that yield
    (or the whole code), hold a call (a generator expression is one), or a
-   loop with no yield in it. Loops are found by their backward jumps. A
-   coroutine's awaits (YIELD_FROM) count as its yields. */
+   loop with no yield in it. Loops are found by their backward jumps, each
+   around a yield only if flow from the yield reaches it: not one an
+   exception handler ends with (3.12's with statement), which jumps back
+   into code past the yield. A coroutine's awaits (YIELD_FROM) count as
+   its yields. */
 static int
 yields_do_work(le_code_t c)
 {
@@ -891,7 +927,8 @@ yields_do_work(le_code_t c)
     for (i = 0; i < nyields; i++) {
         int y = yields[i], a = 0, b = c.size - LE_UNIT, worked = 0;
         for (j = 0; j < nloops; j++)
-            if (lo[j] <= y && y <= hi[j] && hi[j] - lo[j] < b - a) {
+            if (lo[j] <= y && y <= hi[j] && hi[j] - lo[j] < b - a &&
+                flows_to(c, y, hi[j])) {
                 a = lo[j];
                 b = hi[j];
             }
