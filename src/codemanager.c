@@ -94,14 +94,102 @@ free_insert(code_t *start, code_t *end)
     nfree++;
 }
 
+/* Regions lie wherever the kernel puts them, so a rel32 jump may not reach
+   its target. Such a jump goes to a far jump to it (x64/iprocessor.c:
+   psyco_write_far_jump) in an island within its reach: ISLAND_SIZE bytes
+   at the end of each region, and more taken from the end of a free extent
+   when those are full, all kept for good, since a far jump is never
+   changed or freed. One far jump serves every jump to its target in reach
+   of it. */
+#define ISLAND_SIZE (64 * 1024)
+static extent_t *regions = NULL, *islands = NULL; /* island: start is free */
+static int nregions = 0, nislands = 0;
+static le_addrmap_t far_jumps; /* target -> its latest far jump */
+
 static void
 map_region(void)
 {
     char *p;
+    extent_t *r;
     if (psyco_allocate_executable_buffer(REGION_SIZE, &p) < REGION_SIZE)
         OUT_OF_MEMORY();
+    r = PyMem_Realloc(regions, (nregions + 1) * sizeof(extent_t));
+    if (r == NULL)
+        OUT_OF_MEMORY();
+    regions = r;
+    r = PyMem_Realloc(islands, (nislands + 1) * sizeof(extent_t));
+    if (r == NULL)
+        OUT_OF_MEMORY();
+    islands = r;
+    regions[nregions].start = (code_t *)p;
+    regions[nregions++].end = (code_t *)p + REGION_SIZE;
+    islands[nislands].start = (code_t *)p + REGION_SIZE - ISLAND_SIZE;
+    islands[nislands++].end = (code_t *)p + REGION_SIZE;
     LE_LSAN_ROOT(p, REGION_SIZE);
-    free_insert((code_t *)p, (code_t *)p + REGION_SIZE);
+    free_insert((code_t *)p, (code_t *)p + REGION_SIZE - ISLAND_SIZE);
+}
+
+static int
+amap_reserve(le_addrmap_t *m);
+static void *
+amap_get(le_addrmap_t *m, void *key);
+static void
+amap_put(le_addrmap_t *m, void *key, void *val);
+static void
+amap_remove(le_addrmap_t *m, void *key);
+
+/* both ends of [start, end) are in reach of a jump ending at 'from' */
+#define REACHES(from, start, end) \
+    (FITS_IN_32BITS((start) - (from)) && FITS_IN_32BITS((end) - (from)))
+
+/* an island with room for a far jump in reach of 'from', or -1 */
+static int
+island_find(code_t *from)
+{
+    int i, k;
+    for (k = 0; k < nislands; k++)
+        if (islands[k].end - islands[k].start >= SIZE_OF_FAR_JUMP_ANYWHERE &&
+            REACHES(from, islands[k].start, islands[k].end))
+            return k;
+    for (i = nfree; i--;)
+        if (free_ext[i].end - free_ext[i].start >= ISLAND_SIZE &&
+            REACHES(from, free_ext[i].end - ISLAND_SIZE, free_ext[i].end)) {
+            extent_t *n =
+                PyMem_Realloc(islands, (nislands + 1) * sizeof(extent_t));
+            if (n == NULL)
+                return -1;
+            islands = n;
+            free_ext[i].end -= ISLAND_SIZE;
+            islands[nislands].start = free_ext[i].end;
+            islands[nislands].end = free_ext[i].end + ISLAND_SIZE;
+            LE_UNPOISON(islands[nislands].start, ISLAND_SIZE);
+            return nislands++;
+        }
+    return -1;
+}
+
+DEFINEFN code_t *
+psyco_code_far_jump(code_t *end, code_t *target)
+{
+    code_t *j = amap_get(&far_jumps, target);
+    int i;
+    if (j != NULL && FITS_IN_32BITS(j - end))
+        return j;
+    for (i = 0; i < nregions; i++)
+        if (regions[i].start <= end && end <= regions[i].end)
+            break;
+    if (i == nregions)
+        /* not in executable memory (a throwaway buffer): never run */
+        return target;
+    if ((i = island_find(end)) < 0 && (map_region(), i = island_find(end)) < 0)
+        OUT_OF_MEMORY();
+    if (amap_reserve(&far_jumps) < 0)
+        OUT_OF_MEMORY();
+    j = islands[i].start;
+    islands[i].start = psyco_write_far_jump(j, target);
+    amap_remove(&far_jumps, target);
+    amap_put(&far_jumps, target, j);
+    return j;
 }
 
 /* the first free extent of at least 'n' bytes, or -1 */

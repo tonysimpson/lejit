@@ -1298,8 +1298,6 @@ new_pooled_respawn(PsycoObject *po, code_t **stub)
         return NULL;
     *stub = stub_pool_reserve(RESPAWN_STUB_SIZE + sizeof(pooled_respawn_t));
     record = psyco_write_respawn_stub(*stub);
-    if (record == NULL)
-        return NULL;
     memset(&r, 0, sizeof(r));
     r.from = (uint32_t)from;
     r.cnt = (uint16_t)po->respawn_cnt;
@@ -1326,6 +1324,11 @@ psyco_prepare_respawn_ex(PsycoObject *po, condition_code_t jmpcondition,
 
         if (fn == &do_respawn && extrasize == 0)
             record = new_pooled_respawn(po, &stub);
+        /* the record keeps the jump's place as an offset from itself, so a
+           record too far away stays unused */
+        if (record != NULL && (!FITS_IN_32BITS(po->code - record) ||
+                               !FITS_IN_32BITS(po->code + 64 - record)))
+            record = NULL;
         if (record != NULL) {
             int32_t jmp;
 #if ALL_CHECKS
