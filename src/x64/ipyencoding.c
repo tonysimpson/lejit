@@ -231,14 +231,50 @@ load_operand(PsycoObject *po, code_t **pcode, Source src, reg_t rg,
     *pcode = code;
 }
 
+/* the dict in RCX gets a new version tag (store_cache_t.version, through
+   the cache in RDX), where dicts have one */
+#if !LE_HAS_DICT_VERSION_TAG
+#define DICT_NEW_VERSION() ((void)0)
+#elif LE_HAS_DICT_WATCHER_BITS
+#define DICT_NEW_VERSION()                                             \
+    do {                                                               \
+        MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX,                          \
+                offsetof(store_cache_t, version));                     \
+        MOV_R_A(REG_TRANSIENT_2, REG_TRANSIENT_1);                     \
+        ADD_R_I32(REG_TRANSIENT_2, LE_DICT_VERSION_STEP);              \
+        MOV_A_R(REG_TRANSIENT_1, REG_TRANSIENT_2);                     \
+        MOV_O_R(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag), \
+                REG_TRANSIENT_2);                                      \
+    } while (0)
+#else
+#define DICT_NEW_VERSION()                                             \
+    do {                                                               \
+        MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX,                          \
+                offsetof(store_cache_t, version));                     \
+        INC_A(REG_TRANSIENT_1);                                        \
+        MOV_R_A(REG_TRANSIENT_1, REG_TRANSIENT_1);                     \
+        MOV_O_R(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag), \
+                REG_TRANSIENT_1);                                      \
+    } while (0)
+#endif
+#if LE_HAS_DICT_KEYS_KIND
+/* the mask of keys of 2**n slots, for n up to 7 */
+static signed char le_probe_masks[8] = {0, 1, 3, 7, 15, 31, 63, 127};
+#define STORE_MAX_STUB_JUMPS 10
+#endif
+
 static code_t *
 inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
                   const bool *near, code_t **jat, int *pnj, code_t **pmiss)
 {
     code_t *start = code;
     int nj = 0;
-    code_t *fill_jz = NULL, *gc_ok = NULL, *store;
+    code_t *fill_jz = NULL, *gc_ok = NULL, *store, *decref;
     long values_at = 0; /* the values' array, from R8 */
+#if LE_HAS_DICT_KEYS_KIND
+    code_t *jprobe[2], *jstub[STORE_MAX_STUB_JUMPS];
+    int nprobe = 0, nstub = 0, i;
+#endif
 #define JCC_MISS(cc)                    \
     do {                                \
         jat[nj] = code;                 \
@@ -251,13 +287,26 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         }                               \
         nj++;                           \
     } while (0)
+#define JCC_PROBE(cc)               \
+    do {                            \
+        jprobe[nprobe++] = code;    \
+        WRITE_2(0x0F, 0x80 | (cc)); \
+        code += 4;                  \
+    } while (0)
+#define JCC_STUB(cc)                                \
+    do {                                            \
+        extra_assert(nstub < STORE_MAX_STUB_JUMPS); \
+        jstub[nstub++] = code;                      \
+        WRITE_2(0x0F, 0x80 | (cc));                 \
+        code += 4;                                  \
+    } while (0)
     load_operand(po, &code, s->obj->source, REG_X64_RDI, start);
     load_operand(po, &code, s->value->source, REG_X64_RSI, start);
     LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
     if (IN_VALUES(s)) {
 #if LE_HAS_INLINE_VALUES
         TEST_I8_BO(REG_X64_RDI, s->dictoffset + LE_VALUES_VALID, 1);
-        JCC_MISS(CC_E); /* no longer its attributes */
+        JCC_PROBE(CC_E); /* no longer its attributes */
         MOV_R_O(REG_X64_RAX, REG_X64_RDI, LE_MANAGED_DICT_OFFSET);
         TEST_R_R(REG_X64_RAX, REG_X64_RAX);
         JCC_MISS(CC_NE); /* a dict was made, which may be watched */
@@ -266,7 +315,11 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
 #else
         MOV_R_O(REG_X64_R8, REG_X64_RDI, s->dictoffset);
         TEST_R_R(REG_X64_R8, REG_X64_R8);
+#if LE_HAS_DICT_KEYS_KIND
+        JCC_PROBE(CC_E); /* the dict was made */
+#else
         JCC_MISS(CC_E); /* the dict was made */
+#endif
 #endif
         LOAD_ADDRESS(REG_X64_R9, s->keys, rip_near(start, s->keys));
     }
@@ -276,7 +329,11 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         JCC_MISS(CC_E); /* no dict yet */
         MOV_R_O(REG_X64_R8, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_values));
         TEST_R_R(REG_X64_R8, REG_X64_R8);
+#if LE_HAS_DICT_KEYS_KIND
+        JCC_PROBE(CC_E); /* combined */
+#else
         JCC_MISS(CC_E); /* combined */
+#endif
 #if LE_HAS_DICT_WATCHER_BITS
         TEST_I8_BO(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag),
                    LE_DICT_WATCHER_MASK);
@@ -320,37 +377,25 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     store = code;
     MOV_X8_R(REG_X64_R8, values_at, REG_X64_R9, 8, REG_X64_RSI);
     INC_STORED(REG_X64_RSI);
-#if LE_HAS_DICT_VERSION_TAG
-    if (!IN_VALUES(s)) { /* a dict's new version tag */
-        MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX,
-                offsetof(store_cache_t, version));
-#if LE_HAS_DICT_WATCHER_BITS
-        MOV_R_A(REG_TRANSIENT_2, REG_TRANSIENT_1);
-        ADD_R_I32(REG_TRANSIENT_2, LE_DICT_VERSION_STEP);
-        MOV_A_R(REG_TRANSIENT_1, REG_TRANSIENT_2);
-        MOV_O_R(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag),
-                REG_TRANSIENT_2);
-#else
-        INC_A(REG_TRANSIENT_1);
-        MOV_R_A(REG_TRANSIENT_1, REG_TRANSIENT_1);
-        MOV_O_R(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag),
-                REG_TRANSIENT_1);
-#endif
-    }
-#endif
+    if (!IN_VALUES(s)) /* a dict's new version tag */
+        DICT_NEW_VERSION();
+    decref = code;
 #if LE_HAS_IMMORTAL_OBJECTS
     CMP_I8_DA(0, REG_X64_RAX); /* an immortal is left alone */
     s->done[2] = code;
-    WRITE_2(0x70 | CC_S, 0);
+    WRITE_2(0x0F, 0x80 | CC_S);
+    code += 4;
 #endif
     DEC_A(REG_X64_RAX); /* last: may run any code */
     s->done[0] = code;
-    WRITE_2(0x70 | CC_NE, 0);
+    WRITE_2(0x0F, 0x80 | CC_NE);
+    code += 4;
     CALL_GLUE(psyco_dealloc_rax_glue, rip_near(start, psyco_dealloc_rax_glue));
     s->done[1] = code;
-    WRITE_2(0xEB, 0);
+    WRITE_1(0xE9);
+    code += 4;
     if (!s->fill)
-        goto miss;
+        goto probe;
     extra_assert(code - (fill_jz + 2) < 128);
     fill_jz[1] = (code_t)(code - (fill_jz + 2));
     le_trace_jump_cond(fill_jz, fill_jz + 2, code);
@@ -374,7 +419,118 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     extra_assert(store - (code + 2) >= -128);
     WRITE_2(0xEB, (code_t)(store - (code + 2)));
     le_trace_jump(code - 2, store);
-miss:
+probe:
+    (void)decref;
+#if LE_HAS_DICT_KEYS_KIND
+    if (nprobe > 0) {
+        /* the probe of a combined dict, in RCX (lookdict_unicode's), which
+           replaces the value of a name it finds; the miss arguments are
+           loaded again for every failure */
+        code_t *body, *jnext, *jfound;
+        long ind = offsetof(le_dictkeys_t, dk_indices);
+        Py_hash_t hash = PyObject_Hash(s->cache->name);
+        for (i = 0; i < nprobe; i++) {
+            *(dword_t *)(jprobe[i] + 2) = code - (jprobe[i] + 6);
+            le_trace_jump_cond(jprobe[i], jprobe[i] + 6, code);
+        }
+        if (IN_VALUES(s)) {
+            MOV_R_O(REG_X64_RCX, REG_X64_RDI, LE_MANAGED_DICT_OFFSET);
+            TEST_R_R(REG_X64_RCX, REG_X64_RCX);
+            JCC_STUB(CC_E);
+            MOV_R_O(REG_X64_R8, REG_X64_RCX,
+                    CPY_OFFSET(PyDictObject, ma_values));
+            TEST_R_R(REG_X64_R8, REG_X64_R8);
+            JCC_STUB(CC_NE); /* split */
+        }
+#if LE_HAS_DICT_WATCHER_BITS
+        TEST_I8_BO(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag),
+                   LE_DICT_WATCHER_MASK);
+        JCC_STUB(CC_NE); /* watched (le_dict_watched) */
+#endif
+        MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
+        MOVZX_DR_BO(REG_X64_RAX, REG_X64_R9, offsetof(le_dictkeys_t, dk_kind));
+        CMP_I8_R(DICT_KEYS_UNICODE, REG_X64_RAX);
+        JCC_STUB(CC_NE); /* keys that hold hashes */
+        MOVZX_DR_BO(REG_X64_R8, REG_X64_R9,
+                    offsetof(le_dictkeys_t, dk_log2_size));
+        CMP_I8_R(7, REG_X64_R8);
+        JCC_STUB(CC_uG); /* wider indices */
+        LOAD_ADDRESS(REG_X64_RDX, le_probe_masks,
+                     rip_near(start, le_probe_masks));
+        MOVSX_R_BX8(REG_X64_R8, REG_X64_RDX, 0, REG_X64_R8, 1);
+        MOV_R_I(REG_TRANSIENT_1, hash);
+        MOV_R_R(REG_X64_RSI, REG_TRANSIENT_1);
+        LOAD_ADDRESS(REG_TRANSIENT_2, s->cache->name,
+                     rip_near(start, s->cache->name));
+        MOV_R_I(REG_X64_RDI, hash & 127);
+        AND_R_R(REG_X64_RDI, REG_X64_R8);
+        MOVSX_R_BX8(REG_X64_RAX, REG_X64_R9, ind, REG_X64_RDI, 1);
+        body = code;
+        CMP_I8_R(-1, REG_X64_RAX);
+        JCC_STUB(CC_E); /* absent: a new entry */
+        TEST_R_R(REG_X64_RAX, REG_X64_RAX);
+        jnext = code;
+        WRITE_2(0x70 | CC_S, 0); /* a dummy */
+        /* the entry's key is at keys + ind + size + 16 * ix */
+        SHIFT_LEFT_BY(REG_X64_RAX, 4);
+        ADD_R_R(REG_X64_RAX, REG_X64_R8);
+        MOV_R_X8(REG_X64_RDX, REG_X64_R9, ind + 1, REG_X64_RAX, 1);
+        CMP_R_R(REG_TRANSIENT_2, REG_X64_RDX);
+        jfound = code;
+        WRITE_2(0x70 | CC_E, 0);
+        CMP_R_O8(REG_TRANSIENT_1, REG_X64_RDX,
+                 CPY_OFFSET(PyASCIIObject, hash));
+        JCC_STUB(CC_E); /* the same hash */
+        jnext[1] = (code_t)(code - (jnext + 2));
+        le_trace_jump_cond(jnext, jnext + 2, code);
+        SHIFT_RIGHT_BY(REG_X64_RSI, 5);
+        LEA_R_X8(REG_X64_RDI, REG_X64_RDI, 0, REG_X64_RDI, 4);
+        LEA_R_X8(REG_X64_RDI, REG_X64_RDI, 1, REG_X64_RSI, 1);
+        AND_R_R(REG_X64_RDI, REG_X64_R8);
+        MOVSX_R_BX8(REG_X64_RAX, REG_X64_R9, ind, REG_X64_RDI, 1);
+        extra_assert(body - (code + 2) >= -128);
+        WRITE_2(0xEB, (code_t)(body - (code + 2)));
+        le_trace_jump(code - 2, body);
+        jfound[1] = (code_t)(code - (jfound + 2));
+        le_trace_jump_cond(jfound, jfound + 2, code);
+        /* R9: the entry's value */
+        LEA_R_X8(REG_X64_R9, REG_X64_R9, ind + 9, REG_X64_RAX, 1);
+        load_operand(po, &code, s->value->source, REG_X64_RSI, start);
+        if (s->dict_gc != STORE_GC_NONE) {     /* MAINTAIN_TRACKING */
+            LE_GC_UNTRACKED_TEST(REG_X64_RCX); /* mechanisms/store_gc.h */
+            if (s->dict_gc == STORE_GC_DICT) {
+                JCC_STUB(CC_E);
+            }
+            else {
+                code_t *tracked = code;
+                WRITE_2(0x70 | CC_NE, 0);
+                MOV_R_O(REG_TRANSIENT_1, REG_X64_RSI,
+                        CPY_OFFSET(PyObject, ob_type));
+                TEST_I8_BO(REG_TRANSIENT_1,
+                           CPY_OFFSET(PyTypeObject, tp_flags) + 1,
+                           Py_TPFLAGS_HAVE_GC >> 8);
+                JCC_STUB(CC_NE);
+                tracked[1] = (code_t)(code - (tracked + 2));
+                le_trace_jump_cond(tracked, tracked + 2, code);
+            }
+        }
+        MOV_R_A(REG_X64_RAX, REG_X64_R9);
+        MOV_A_R(REG_X64_R9, REG_X64_RSI);
+        INC_STORED(REG_X64_RSI);
+        LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
+        DICT_NEW_VERSION();
+        WRITE_1(0xE9);
+        WRITE_32BIT((long)decref - ((long)code + 4));
+        le_trace_jump(code - 5, decref);
+        for (i = 0; i < nstub; i++) {
+            *(dword_t *)(jstub[i] + 2) = code - (jstub[i] + 6);
+            le_trace_jump_cond(jstub[i], jstub[i] + 6, code);
+        }
+        load_operand(po, &code, s->obj->source, REG_X64_RDI, start);
+        load_operand(po, &code, s->value->source, REG_X64_RSI, start);
+        LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
+    }
+#endif
     *pmiss = code;
     CALL_GLUE(s->miss_glue, rip_near(start, s->miss_glue));
     TEST_DR_DR(REG_X64_RAX, REG_X64_RAX);
@@ -382,6 +538,8 @@ miss:
     *pnj = nj;
     return code;
 #undef JCC_MISS
+#undef JCC_PROBE
+#undef JCC_STUB
 }
 
 DEFINEFN
@@ -393,7 +551,7 @@ psyco_inline_store_begin(PsycoObject *po, inline_store_t *s)
     int i, nj;
     extra_assert(!is_virtualtime(s->obj->source) &&
                  !is_virtualtime(s->value->source));
-    if (!is_respawning(po) && po->codelimit - po->code < 512)
+    if (!is_respawning(po) && po->codelimit - po->code < 1024)
         PsycoObject_EmergencyCodeRoom(po); /* room for both passes */
     BEGIN_CODE
     NEED_CC();
@@ -434,9 +592,9 @@ psyco_inline_store_end(PsycoObject *po, inline_store_t *s)
     if (is_respawning(po))
         return;
     for (i = 0; i < STORE_DONE_JUMPS; i++) {
-        psyco_assert(po->code - (s->done[i] + 2) < 128);
-        s->done[i][1] = (code_t)(po->code - (s->done[i] + 2));
-        le_trace_jump(s->done[i], po->code);
+        code_t *at = s->done[i], *end = at + (at[0] == 0xE9 ? 5 : 6);
+        *(dword_t *)(end - 4) = po->code - end;
+        le_trace_jump(at, po->code);
     }
 }
 
@@ -479,13 +637,17 @@ psyco_inline_store_end(PsycoObject *po, inline_store_t *s)
 _Static_assert(offsetof(le_dictentry_t, me_hash) == 0 &&
                    sizeof(le_dictentry_t) == 24,
                "an entry is found at 24 * index and its hash first");
-#define LOAD_MAX_JUMPS 8
+#define LOAD_MAX_JUMPS 12
 DEFINEFN
 vinfo_t *
 psyco_inline_load(PsycoObject *po, inline_load_t *s)
 {
-    code_t *jmiss[LOAD_MAX_JUMPS], *jnone[2], *jdone[3], *start, *at;
+    code_t *jmiss[LOAD_MAX_JUMPS], *jnone[2], *jdone[5], *start, *at;
     int nmiss = 0, nnone = 0, ndone = 0, i;
+#if LE_HAS_DICT_KEYS_KIND
+    code_t *jdict[2];
+    int ndict = 0;
+#endif
     vinfo_t *v;
     reg_t rg, ro;
 #define NEAR_JCC(cc, list, n)       \
@@ -523,7 +685,7 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
             le_trace_jump_cond(code - 2, code, (target)); \
     } while (0)
     extra_assert(!is_virtualtime(s->obj->source));
-    if (!is_respawning(po) && po->codelimit - po->code < 256)
+    if (!is_respawning(po) && po->codelimit - po->code < 512)
         PsycoObject_EmergencyCodeRoom(po);
     BEGIN_CODE
     NEED_CC();
@@ -550,13 +712,13 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         MOV_R_R(REG_X64_RCX, ro); /* for the miss call */
 #if LE_HAS_INLINE_VALUES
         TEST_I8_BO(ro, s->dictoffset + LE_VALUES_VALID, 1);
-        NEAR_JCC(CC_E, jmiss, nmiss); /* no longer its attributes */
+        NEAR_JCC(CC_E, jdict, ndict); /* no longer its attributes */
         MOV_R_R(REG_X64_R8, ro);
         values_at = s->dictoffset + LE_VALUES_ARRAY;
 #else
         MOV_R_O(REG_X64_R8, ro, s->dictoffset);
         TEST_R_R(REG_X64_R8, REG_X64_R8);
-        NEAR_JCC(CC_E, jmiss, nmiss); /* the dict was made */
+        NEAR_JCC(CC_E, jdict, ndict); /* the dict was made */
 #endif
         LOAD_ADDRESS(REG_X64_R9, s->keys, rip_near(start, s->keys));
         LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
@@ -575,6 +737,15 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, ix));
         MOV_R_X8(rg, REG_X64_R8, values_at, REG_X64_RAX, 8);
         NEAR_JMP(jdone, ndone);
+        POINT(jdict, ndict, code);
+        ndict = 0;
+        MOV_R_O(REG_X64_RSI, REG_X64_RCX, LE_MANAGED_DICT_OFFSET);
+        TEST_R_R(REG_X64_RSI, REG_X64_RSI);
+        NEAR_JCC(CC_E, jmiss, nmiss);
+        MOV_R_O(REG_X64_R8, REG_X64_RSI, CPY_OFFSET(PyDictObject, ma_values));
+        TEST_R_R(REG_X64_R8, REG_X64_R8);
+        NEAR_JCC(CC_E, jdict, ndict); /* combined: the probe */
+        NEAR_JMP(jmiss, nmiss);
 #endif
     }
     /* the probe reads entries that hold their hash, which keys with a kind
@@ -585,7 +756,11 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         NEAR_JCC(CC_E, jnone, nnone); /* no dict yet */
         MOV_R_O(REG_X64_R8, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_values));
         TEST_R_R(REG_X64_R8, REG_X64_R8);
+#if LE_HAS_DICT_KEYS_KIND
+        NEAR_JCC(CC_E, jdict, ndict); /* combined: the probe */
+#else
         NEAR_JCC(CC_E, jmiss, nmiss); /* combined */
+#endif
         MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
         LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
         KEYS_SHAPE_LOAD(REG_X64_RAX, REG_X64_R9);
@@ -649,6 +824,67 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         CMP_I8_R(-1, REG_X64_RAX);
         SHORT_BACK(CC_NE, body);
         SHORT_BACK(-1, none); /* empty: absent */
+    }
+#endif
+#if LE_HAS_DICT_KEYS_KIND
+    if (ndict > 0) {
+        /* the probe of a combined dict, in RSI, or RCX outside values */
+        code_t *body, *jnext, *jfound;
+        long ind = offsetof(le_dictkeys_t, dk_indices);
+        POINT(jdict, ndict, code);
+        nnone = 0;
+        if (!IN_VALUES(s))
+            MOV_R_R(REG_X64_RSI, REG_X64_RCX);
+        MOV_R_O(REG_X64_R9, REG_X64_RSI, CPY_OFFSET(PyDictObject, ma_keys));
+        MOVZX_DR_BO(REG_X64_RAX, REG_X64_R9, offsetof(le_dictkeys_t, dk_kind));
+        CMP_I8_R(DICT_KEYS_UNICODE, REG_X64_RAX);
+        NEAR_JCC(CC_NE, jmiss, nmiss); /* keys that hold hashes */
+        MOVZX_DR_BO(REG_X64_R8, REG_X64_R9,
+                    offsetof(le_dictkeys_t, dk_log2_size));
+        CMP_I8_R(7, REG_X64_R8);
+        NEAR_JCC(CC_uG, jmiss, nmiss); /* wider indices */
+        LOAD_ADDRESS(REG_X64_RDX, le_probe_masks,
+                     rip_near(start, le_probe_masks));
+        MOVSX_R_BX8(REG_X64_R8, REG_X64_RDX, 0, REG_X64_R8, 1);
+        MOV_R_I(REG_TRANSIENT_1, s->hash);
+        MOV_R_R(REG_X64_RSI, REG_TRANSIENT_1);
+        LOAD_ADDRESS(REG_TRANSIENT_2, s->cache->name,
+                     rip_near(start, s->cache->name));
+        MOV_R_I(REG_X64_RDI, s->hash & 127);
+        AND_R_R(REG_X64_RDI, REG_X64_R8);
+        MOVSX_R_BX8(REG_X64_RAX, REG_X64_R9, ind, REG_X64_RDI, 1);
+        body = code;
+        CMP_I8_R(-1, REG_X64_RAX);
+        NEAR_JCC(CC_E, jnone, nnone); /* empty: absent */
+        TEST_R_R(REG_X64_RAX, REG_X64_RAX);
+        jnext = code;
+        WRITE_2(0x70 | CC_S, 0); /* a dummy */
+        /* the entry's key is at keys + ind + size + 16 * ix */
+        SHIFT_LEFT_BY(REG_X64_RAX, 4);
+        ADD_R_R(REG_X64_RAX, REG_X64_R8);
+        MOV_R_X8(REG_X64_RDX, REG_X64_R9, ind + 1, REG_X64_RAX, 1);
+        CMP_R_R(REG_TRANSIENT_2, REG_X64_RDX);
+        jfound = code;
+        WRITE_2(0x70 | CC_E, 0);
+        CMP_R_O8(REG_TRANSIENT_1, REG_X64_RDX,
+                 CPY_OFFSET(PyASCIIObject, hash));
+        NEAR_JCC(CC_E, jmiss, nmiss); /* the same hash */
+        jnext[1] = (code_t)(code - (jnext + 2));
+        le_trace_jump_cond(jnext, jnext + 2, code);
+        SHIFT_RIGHT_BY(REG_X64_RSI, 5);
+        LEA_R_X8(REG_X64_RDI, REG_X64_RDI, 0, REG_X64_RDI, 4);
+        LEA_R_X8(REG_X64_RDI, REG_X64_RDI, 1, REG_X64_RSI, 1);
+        AND_R_R(REG_X64_RDI, REG_X64_R8);
+        MOVSX_R_BX8(REG_X64_RAX, REG_X64_R9, ind, REG_X64_RDI, 1);
+        SHORT_BACK(-1, body);
+        jfound[1] = (code_t)(code - (jfound + 2));
+        le_trace_jump_cond(jfound, jfound + 2, code);
+        MOV_R_X8(rg, REG_X64_R9, ind + 9, REG_X64_RAX, 1);
+        NEAR_JMP(jdone, ndone);
+        POINT(jnone, nnone, code);
+        nnone = 0;
+        XOR_R_R(rg, rg);
+        NEAR_JMP(jdone, ndone);
     }
 #endif
     POINT(jmiss, nmiss, code);

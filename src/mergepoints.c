@@ -514,7 +514,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
             report->mergepoints[mergepoint_index].bytecode_position =
                 entry_count_index * LE_UNIT;
             report->mergepoints[mergepoint_index].entries.fatlist =
-                PyList_New(0);
+                psyco_fatlist_new();
             if (report->mergepoints[mergepoint_index].entries.fatlist ==
                 NULL) {
                 report->mergepoint_count = mergepoint_index;
@@ -588,8 +588,8 @@ _build_merge_points(PyCodeObject *co, int module)
     if (module) {
         goto not_ok;
     }
-#if LE_HAS_OPCODE_TO_BOOL
-    /* 3.13's bytecode is not compiled yet */
+#if !LE_HAS_OPCODE_BINARY_SUBSCR
+    /* 3.14's bytecode is not compiled yet */
     goto not_ok;
 #endif
     if (le_code_prepare(co) < 0)
@@ -996,7 +996,7 @@ psyco_join_point(PyObject *mergepoints, int position)
     }
     ge = &report->joins[position / 2];
     if (ge->fatlist == NULL) {
-        ge->fatlist = PyList_New(0);
+        ge->fatlist = psyco_fatlist_new();
         if (ge->fatlist == NULL) {
             PyErr_Clear();
             return NULL;

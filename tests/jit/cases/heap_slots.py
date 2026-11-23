@@ -296,7 +296,16 @@ def added_index():
     return r
 
 
+def unready_static_type():
+    # a static type CPython readies only on its first attribute lookup
+    # (code.co_positions()'s iterator), tested before it is: it has no
+    # number, mapping or sequence table yet
+    make = getattr(truth.__code__, 'co_positions', None)
+    return [truth(make() if make else iter(())) for _ in range(3)]
+
+
 CASES = [
+    ('unready_static_type', [()], {}),
     ('added_bool', [()], {}),
     ('deleted_len', [()], {}),
     ('added_add', [()], {}),

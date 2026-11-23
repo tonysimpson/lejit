@@ -336,6 +336,13 @@ PsycoObject_IsTrue(PsycoObject *po, vinfo_t *vi)
     /* XXX tony: Should make sure result is 0 or 1 like cPython */
     if (tp == Py_None->ob_type)
         return psyco_vi_Zero();
+    else if (Psyco_SlotsMutable(tp) &&
+             (tp->tp_as_number == NULL || tp->tp_as_mapping == NULL ||
+              tp->tp_as_sequence == NULL))
+        /* a static type PyType_Ready hasn't flagged immutable yet, which
+           may lack a table and gain one from its base when it is */
+        return psyco_generic_call(po, PyObject_IsTrue, CfCommonInquiry, "v",
+                                  vi);
     else if (Psyco_SlotsMutable(tp)) {
         /* PyObject_IsTrue's order, each slot behind its own guard: a class
            with none of them is true only while it still has none (a heap
@@ -1617,6 +1624,7 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
     s.gc = vtp == NULL         ? STORE_GC_FULL
            : PyType_IS_GC(vtp) ? STORE_GC_DICT
                                : STORE_GC_NONE;
+    s.dict_gc = s.gc;
     /* filling a dict doesn't add to the insertion order that values keep
        where keys have a kind */
     s.fill = !LE_HAS_DICT_KEYS_KIND && init_store(po, obj);
