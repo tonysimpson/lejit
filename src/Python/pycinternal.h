@@ -11,7 +11,9 @@
 #include "le_features_gen.h"
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
 /* CALL_INTRINSIC_1's and CALL_INTRINSIC_2's arguments */
+#define Py_BUILD_CORE
 #include "internal/pycore_intrinsics.h"
+#undef Py_BUILD_CORE
 #endif
 
 /* LeJIT keeps every position in the bytecode in bytes (merge points, the

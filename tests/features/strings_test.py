@@ -24,7 +24,7 @@ import strings  # noqa: E402
 
 PYENV = os.path.expanduser('~/.pyenv/versions')
 SUPPORTED = ['3.7.17', '3.8.20', '3.9.21', '3.10.16']
-INFORMATION = ['3.11.11', '3.12.9']
+INFORMATION = ['3.11.11', '3.12.9', '3.13.2']
 
 # CPython's texts LeJIT keeps as literals: (text, the versions LeJIT uses it on)
 UNREACHABLE = [

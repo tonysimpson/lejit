@@ -1121,7 +1121,7 @@ cimpl_vt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
 #if LE_HAS_CURRENT_EXCEPTION
     /* PyTraceBack_Here needs an exception being raised, which there may not
        be yet: the entry is made directly */
-    newtb = _PyTraceBack_FromFrame(oldtb, f);
+    newtb = le_traceback_entry(oldtb, f);
     Py_XDECREF(oldtb);
     Py_DECREF(f);
     return newtb;
@@ -2976,44 +2976,6 @@ cimpl_get_aiter(PyObject *obj)
     return iter;
 }
 
-#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
-/* the end of ceval.c GET_ANEXT: the awaitable for next_iter */
-static PyObject *
-cimpl_anext_awaitable(PyObject *next_iter)
-{
-    PyObject *awaitable = _PyCoro_GetAwaitableIter(next_iter);
-    if (awaitable == NULL) {
-        _PyErr_FormatFromCause(PyExc_TypeError, LE_MSG_ASYNC_FOR_BAD_ANEXT,
-                               Py_TYPE(next_iter)->tp_name);
-    }
-    return awaitable;
-}
-
-/* ceval.c GET_ANEXT */
-static PyObject *
-cimpl_get_anext(PyObject *aiter)
-{
-    unaryfunc getter = NULL;
-    PyObject *next_iter, *awaitable;
-    PyTypeObject *type = Py_TYPE(aiter);
-
-    if (type->tp_as_async != NULL) {
-        getter = type->tp_as_async->am_anext;
-    }
-    if (getter == NULL) {
-        PyErr_Format(PyExc_TypeError, LE_MSG_ASYNC_FOR_NO_ANEXT,
-                     type->tp_name);
-        return NULL;
-    }
-    next_iter = (*getter)(aiter);
-    if (next_iter == NULL)
-        return NULL;
-    awaitable = cimpl_anext_awaitable(next_iter);
-    Py_DECREF(next_iter);
-    return awaitable;
-}
-#endif
-
 /* ceval.c LOAD_BUILD_CLASS */
 static PyObject *
 cimpl_load_build_class(PyObject *builtins)
@@ -3315,9 +3277,6 @@ cimpl_copy_dict_without_keys(PyObject *subject, PyObject *keys)
     return rest;
 }
 #endif
-
-_Py_IDENTIFIER(__aenter__);
-_Py_IDENTIFIER(__aexit__);
 
 static int
 cimpl_check_args_iterable(PyObject *func, PyObject *args)
@@ -3634,11 +3593,7 @@ static PyObject *
 cimpl_call_exit(PyObject *exit_func, PyObject *exc, PyObject *val,
                 PyObject *tb)
 {
-    PyObject *stack[3];
-    stack[0] = exc;
-    stack[1] = val;
-    stack[2] = tb;
-    return _PyObject_FastCall(exit_func, stack, 3);
+    return PyObject_CallFunctionObjArgs(exit_func, exc, val, tb, NULL);
 }
 
 static PyObject *
@@ -3887,7 +3842,7 @@ cimpl_import_name(PyObject *globals, PyObject *builtins, PyObject *name,
         w = Py_BuildValue("(OOOO)", name, globals, Py_None, fromlist);
     if (w == NULL)
         return NULL;
-    x = PyEval_CallObject(x, w);
+    x = PyObject_CallObject(x, w);
     Py_DECREF(w);
     return x;
 }
@@ -4001,6 +3956,30 @@ cimpl_generator_stop(void)
         PyErr_Restore(e2, v2, t2);
     }
 }
+
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+/* intrinsics.c:stopiteration_error, for a generator expression's code, the
+   only generator code compiled (mergepoints.c:_build_merge_points):
+   StopIteration leaving it becomes RuntimeError */
+static PyObject *
+cimpl_stopiteration_error(PyObject *exc)
+{
+    PyObject *error;
+    if (!PyErr_GivenExceptionMatches(exc, PyExc_StopIteration)) {
+        Py_INCREF(exc);
+        return exc;
+    }
+    error = PyObject_CallFunction(PyExc_RuntimeError, "s",
+                                  LE_MSG_GENERATOR_STOP_ITERATION);
+    if (error == NULL)
+        return NULL;
+    Py_INCREF(exc);
+    PyException_SetCause(error, exc);
+    Py_INCREF(exc);
+    PyException_SetContext(error, exc);
+    return error;
+}
+#endif
 
 static code_t *
 exit_function(PsycoObject *po)
@@ -5071,52 +5050,6 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
-#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
-                case GET_ANEXT: {
-                    unaryfunc getter = NULL;
-                    vinfo_t *aiter = TOP(), *next_iter, *awaitable;
-                    PyTypeObject *type;
-                    int known;
-                    type = Psyco_NeedType(po, aiter);
-                    if (type == NULL)
-                        break;
-                    if (type->tp_as_async != NULL) {
-                        known = Psyco_TypeSlot(po, type,
-                                               &type->tp_as_async->am_anext,
-                                               (void **)&getter);
-                        if (known < 0)
-                            break;
-                        if (known == 0) {
-                            awaitable = psyco_generic_call(
-                                po, cimpl_get_anext, CfCommonNewRefPyObject,
-                                "v", aiter);
-                            if (awaitable == NULL)
-                                break;
-                            PUSH(awaitable);
-                            goto fine;
-                        }
-                    }
-                    if (getter == NULL) {
-                        PycException_SetTypeFormat(po, PyExc_TypeError,
-                                                   LE_MSG_ASYNC_FOR_NO_ANEXT,
-                                                   NULL, type, NULL);
-                        break;
-                    }
-                    next_iter = Psyco_META1(po, getter, CfCommonNewRefPyObject,
-                                            "v", aiter);
-                    if (next_iter == NULL)
-                        break;
-                    awaitable = psyco_generic_call(po, cimpl_anext_awaitable,
-                                                   CfCommonNewRefPyObject, "v",
-                                                   next_iter);
-                    vinfo_decref(next_iter, po);
-                    if (awaitable == NULL)
-                        break;
-                    PUSH(awaitable);
-                    goto fine;
-                }
-#endif
-
 #if LE_HAS_EXCEPTION_TABLE
                 /* the exception value on top raised again; with an
                    argument, from the place under it, which a handler that
@@ -6045,89 +5978,6 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
                     UNARY_OPCODE(GET_ITER, PsycoObject_GetIter);
 
-                case GET_YIELD_FROM_ITER: {
-                    vinfo_t *iter;
-                    vinfo_t *iterable;
-                    PyTypeObject *tp_iterable;
-                    iterable = NTOP(1);
-                    tp_iterable = Psyco_NeedType(po, iterable);
-                    if (tp_iterable == NULL) {
-                        break;
-                    }
-                    if (tp_iterable == &PyCoro_Type) {
-                        if (!(co->co_flags &
-                              (CO_COROUTINE | CO_ITERABLE_COROUTINE))) {
-                            PycException_SetString(
-                                po, PyExc_TypeError,
-                                LE_MSG_YIELD_FROM_COROUTINE);
-                            break;
-                        }
-                    }
-                    else {
-                        if (tp_iterable != &PyGen_Type) {
-                            iter = PsycoObject_GetIter(po, iterable);
-                            if (iter == NULL) {
-                                break;
-                            }
-                            POP(iterable);
-                            vinfo_decref(iterable, po);
-                            PUSH(iter);
-                            goto fine;
-                        }
-                        else {
-                            goto fine;
-                        }
-                    }
-                    goto fine;
-                }
-
-                case BEFORE_ASYNC_WITH: {
-                    vinfo_t *enter;
-                    vinfo_t *exit;
-                    vinfo_t *res;
-#if LE_HAS_AENTER_LOOKUP_FIRST
-                    enter = psyco_generic_call(po, special_lookup,
-                                               CfCommonNewRefPyObject, "vl",
-                                               TOP(), (long)&PyId___aenter__);
-                    if (enter == NULL) {
-                        break;
-                    }
-                    exit = psyco_generic_call(po, special_lookup,
-                                              CfCommonNewRefPyObject, "vl",
-                                              TOP(), (long)&PyId___aexit__);
-                    if (exit == NULL) {
-                        vinfo_decref(enter, po);
-                        break;
-                    }
-#else
-                    exit = psyco_generic_call(po, special_lookup,
-                                              CfCommonNewRefPyObject, "vl",
-                                              TOP(), (long)&PyId___aexit__);
-                    if (exit == NULL) {
-                        break;
-                    }
-                    enter = psyco_generic_call(po, special_lookup,
-                                               CfCommonNewRefPyObject, "vl",
-                                               TOP(), (long)&PyId___aenter__);
-                    if (enter == NULL) {
-                        vinfo_decref(exit, po);
-                        break;
-                    }
-#endif
-                    res = psyco_generic_call(po, PyObject_CallObject,
-                                             CfCommonNewRefPyObject, "vl",
-                                             enter, 0L);
-                    vinfo_decref(enter, po);
-                    if (res == NULL) {
-                        vinfo_decref(exit, po);
-                        break;
-                    }
-                    POP_DECREF();
-                    PUSH(exit);
-                    PUSH(res);
-                    goto fine;
-                }
-
 #if LE_HAS_EXCEPTION_TABLE
                 /* __exit__ is fourth, under the lasti and the exception
                    saved by PUSH_EXC_INFO */
@@ -6194,10 +6044,22 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
-                /* the intrinsics mergepoints.c:compiled_intrinsic allows,
-                   as the opcodes they replaced */
+                /* the intrinsics mergepoints.c:compiled_intrinsic allows:
+                   a generator's PEP 479 handler, and the opcodes the others
+                   replaced */
                 case CALL_INTRINSIC_1:
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
+                    if (oparg == INTRINSIC_STOPITERATION_ERROR) {
+                        extra_assert(po->pr.co->co_flags & CO_GENERATOR);
+                        x = psyco_generic_call(
+                            po, cimpl_stopiteration_error,
+                            CfCommonNewRefPyObject | CfNoPython, "v", TOP());
+                        if (x == NULL)
+                            break;
+                        POP_DECREF();
+                        PUSH(x);
+                        goto fine;
+                    }
                     if (oparg == INTRINSIC_PRINT) {
                         if (!psyco_generic_call(po, cimpl_print_expr,
                                                 CfCommonIntZeroOk, "v", TOP()))
