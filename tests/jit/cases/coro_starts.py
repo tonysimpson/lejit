@@ -6,6 +6,7 @@
 # Each case returns what CPython shows of the coroutines, at one, two and
 # three levels of awaits.
 import gc, inspect, sys, threading, types, weakref
+from coro_bodies import HOOKED
 
 
 def work(x):
@@ -21,11 +22,26 @@ def started(*fns):
     # whether the bodies of fns ran only as calls from their awaits, never
     # through the eval hook, where LeJIT starts them so
     lejit = sys.modules.get('lejit')
-    if lejit is None or dict(lejit._core._build['features']).get(
-            'LE_HAS_INTERPRETER_FRAME'):
+    if lejit is None or not lejit._started or not FRAME_OBJECTS:
         return True
     return all(lejit._core._code_info(f.__code__) == 'no entry point'
                for f in fns)
+
+
+def _frame_objects():
+    # whether a frame is a frame object, where LeJIT starts coroutines so:
+    # elsewhere 'objects' below would test only CPython, which crashes in
+    # it (closing the awaited coroutine on 3.11, a later collection on
+    # 3.12)
+    try:
+        import lejit._core
+    except ImportError:
+        return True
+    return not dict(lejit._core._build['features']).get(
+        'LE_HAS_INTERPRETER_FRAME')
+
+
+FRAME_OBJECTS = _frame_objects()
 
 
 def drive(c, sends=()):
@@ -113,9 +129,8 @@ async def lvl3(k, how):
         inner = cs[-1]
         LOG.append(inner.cr_frame is me)
         LOG.append(sorted(inspect.getcoroutinelocals(inner)))
-        # not close(): CPython 3.11 crashes closing an awaited coroutine
-        # while it runs
-        for call in (lambda: inner.send(None), inner.cr_frame.clear):
+        for call in (lambda: inner.send(None), lambda: inner.throw(KeyError),
+                     inner.close, inner.cr_frame.clear):
             try:
                 call()
             except Exception as e:
@@ -153,7 +168,8 @@ def realised(n):
     # each way to find the running inner coroutines, then the same objects
     # once their bodies have returned, raised or suspended
     out = []
-    for how in ('objects', 'referrers', 'rename', 'suspend', 'raise', 'none'):
+    hows = ('referrers', 'rename', 'suspend', 'raise', 'none')
+    for how in ('objects',) * FRAME_OBJECTS + hows:
         out.append((how, drive(lvl1(n, how), [7]), LOG[:]))
         del LOG[:]
         for c in HELD:
@@ -279,20 +295,20 @@ def origins(n):
     sys.set_coroutine_origin_tracking_depth(2)
     try:
         lvl1(n, 'none')
-        r = drive(lvl1(n, 'objects'))
+        r = drive(lvl1(n, 'referrers'))
     finally:
         sys.set_coroutine_origin_tracking_depth(old)
-    out = [r, LOG[:2], [c.cr_origin is None for c in HELD]]
+    out = [r, LOG[:1], [c.cr_origin is None for c in HELD]]
     del LOG[:]
     del HELD[:]
     return out
 
 
 CASES = [
-    ('raised', [(3,)], {}),
+    ('raised', [(3,)], HOOKED),
     ('realised', [(0,), (2,)], {}),
     ('threads', [(0,)], {}),
-    ('tracing', [(0,)], {}),
+    ('tracing', [(0,)], HOOKED),
     ('handled', [(1,)], {'warmup': (40, 'its paths go on compiling for some rounds')}),
     ('origins', [(1,)], {}),
 ]
