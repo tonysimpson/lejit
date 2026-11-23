@@ -448,15 +448,18 @@ def exc_seen():
 
 
 def exception_state(n):
-    # a pause gives the caller back its own exception state
+    # a pause gives the caller back its own exception state, which the body
+    # sees again once its own handler has ended
     out = []
     try:
         raise ValueError('outer')
     except ValueError:
         g = exc_seen()
-        out += [next(g), repr(sys.exc_info()[1])]
-    out += [next(g), repr(sys.exc_info()[1]), run(lambda: next(g)),
-            repr(sys.exc_info()[1])]
+        out += [next(g), repr(sys.exc_info()[1]), next(g),
+                repr(sys.exc_info()[1])]
+    out += [run(lambda: next(g)), repr(sys.exc_info()[1])]
+    g = exc_seen()
+    out += [next(g), next(g), run(lambda: next(g))]
     return out, compiled(exc_seen)
 
 

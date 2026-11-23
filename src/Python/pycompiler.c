@@ -942,15 +942,19 @@ cimpl_push_exc_value(PyObject *value)
 }
 
 /* POP_EXCEPT: 'value', which PUSH_EXC_INFO saved, is the handled exception
-   again (not consumed: the caller decrefs it). With it, as a rule, goes the
-   last hold on the frame in the catcher word 'word', as in
-   cimpl_pop_exc_info. */
+   again (not consumed: the caller decrefs it); None, for none, is stored as
+   NULL, as from 3.13 ceval does: a generator's exception state then gives
+   way to its caller's, which _PyErr_GetTopmostException finds past a NULL
+   but from 3.13 not past None. With it, as a rule, goes the last hold on
+   the frame in the catcher word 'word', as in cimpl_pop_exc_info. */
 static void
 cimpl_pop_exc_value(PyObject *value, PyObject **word)
 {
     PyThreadState *tstate = PyThreadState_GET();
     PyObject *old = le_exc_info_value(tstate);
-    Py_INCREF(value);
+    if (value == Py_None)
+        value = NULL;
+    Py_XINCREF(value);
     le_exc_info_put_value(tstate, value);
     Py_XDECREF(old);
     if (word != NULL)
