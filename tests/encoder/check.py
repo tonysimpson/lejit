@@ -295,6 +295,8 @@ JUMP_DECODER = r'''
 #include <iencoding.h>
 #include <stdio.h>
 static code_t buf[1 << 18];
+/* every jump here is in reach */
+code_t *psyco_code_far_jump(code_t *end, code_t *target) { return target; }
 int main(void) {
   static const long disps[] = {0, 1, -1, 0xE9, -0x17, 0xE9E9, 0x12E9,
                                -0x1000, 0x10000, -0x1FF17};
