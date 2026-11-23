@@ -281,7 +281,7 @@ SKIPPED = {
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
 # so CPython aborts at it, LeJIT's own callback makes these abort.
-GC_CALLBACK_ABORTS = 'test_json test_pickle'
+GC_CALLBACK_ABORTS = 'test_functools test_json test_pickle'
 GC_CALLBACK_PROBE = r'''
 import gc, sys
 gc.callbacks.append(lambda phase, info: None)
