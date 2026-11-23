@@ -155,9 +155,9 @@ write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax)
     PUSH_R(REG_X64_RBP);
     MOV_R_R(REG_X64_RBP, REG_X64_RSP);
     AND_R_I8(REG_X64_RSP, -16);
-    if (dealloc_rax) { /* tp_dealloc of the object in RAX */
+    if (dealloc_rax) { /* deallocates the object in RAX, as DEC_OB_REFCNT */
         MOV_R_R(REG_X64_RDI, REG_X64_RAX);
-#ifdef Py_TRACE_REFS
+#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_HOOKS
         CALL_I(_Py_Dealloc);
 #else
         MOV_R_O8(REG_X64_RAX, REG_X64_RDI, CPY_OFFSET(PyObject, ob_type));
@@ -231,10 +231,21 @@ psyco_write_stub(code_t *code, void *record)
 }
 
 DEFINEFN code_t *
+psyco_write_far_jump(code_t *code, code_t *target)
+{
+    code[0] = 0xFF; /* jmp qword ptr [rip] */
+    code[1] = 0x25;
+    *(dword_t *)(code + 2) = 0;
+    *(code_t **)(code + 6) = target;
+    le_trace_begin_simple_code(code);
+    le_trace_jump(code, target);
+    le_trace_end_simple_code(code + SIZE_OF_FAR_JUMP_ANYWHERE);
+    return code + SIZE_OF_FAR_JUMP_ANYWHERE;
+}
+
+DEFINEFN code_t *
 psyco_write_respawn_stub(code_t *code)
 {
-    if (!FITS_IN_32BITS(psyco_respawn_trampoline - (code + RESPAWN_STUB_SIZE)))
-        return NULL;
     LEA_R_RIP(REG_X64_R11, SIZE_OF_FAR_JUMP); /* the record, after the jump */
     JUMP_TO(psyco_respawn_trampoline);
     return code;

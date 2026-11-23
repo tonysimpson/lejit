@@ -87,13 +87,14 @@ gettime(Source s)
 #endif
 
 /* flags */
-#define RunTime_StackMask 0x0000000001FFFFFC
+#define RunTime_StackMask 0x0000000000FFFFFC
 #define RunTime_StackMax RunTime_StackMask
 #define RunTime_StackNone 0x0000000000000000
 #define RunTime_RegMask 0xFFFFFFFFF0000000
 #define RunTime_NoRef 0x0000000008000000
 #define RunTime_NonNeg 0x0000000004000000
 #define RunTime_Megamorphic 0x0000000002000000
+#define RunTime_MaybeNull 0x0000000001000000
 #define RunTime_FlagsMask RunTime_NoRef
 
 /* construction */
@@ -167,6 +168,17 @@ PSY_INLINE bool
 is_megamorphic(Source s)
 {
     return is_runtime(s) && (s & RunTime_Megamorphic) != 0;
+}
+
+/* a local that may be unbound: the word is NULL then, and owns nothing,
+   though the value is always one that owns its reference, so that nothing
+   increfs it. Reads test it (pycompiler.c:local_bound) and its release is
+   an XDECREF (vcompiler.c:vinfo_release). Only widening past a merge
+   point's cap makes one (dispatcher.c:psyco_forget_values) */
+PSY_INLINE bool
+is_maybe_null(Source s)
+{
+    return is_runtime(s) && (s & RunTime_MaybeNull) != 0;
 }
 
 /* mutation */
@@ -1028,11 +1040,9 @@ PsycoObject_Ready(PsycoObject *po);
 EXTERNFN PsycoObject *
 PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
                      PyObject *mergepoints, int recursion);
-#if LE_RESUMES_GENERATORS
 EXTERNFN PsycoObject *
 PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
                          PyObject *builtins, PyObject *merge_points,
                          int recursion, int next_instr, uint64_t nulls,
                          int nstack, const int *blocks, int nblocks);
-#endif
 #endif /* _VCOMPILER_H */

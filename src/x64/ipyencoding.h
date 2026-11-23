@@ -143,15 +143,9 @@ _Static_assert(_Py_IMMORTAL_INITIAL_REFCNT == 0xC0000000,
 EXTERNFN code_t *
 decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn);
 
-/* the equivalent of Py_DECREF().
-   XXX Same remark as INC_OB_REFCNT().
-   We correctly handle the Py_TRACE_REFS case,
-   however, by calling the _Py_Dealloc() function.
-   Slow but correct (and you have the debugging Python
-   version anyway, so you are not looking for top speed
-   but just testing things). */
-#ifdef Py_TRACE_REFS
-/* debugging only */
+/* the equivalent of Py_DECREF(): it calls tp_dealloc itself where that is
+   all _Py_Dealloc would do, and _Py_Dealloc where it does more */
+#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_HOOKS
 #define DEC_OB_REFCNT(rg) \
     (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
 #else
@@ -160,8 +154,7 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn);
 
 /* the equivalent of Py_DECREF() when we know the type of the object
    (assuming that tp_dealloc never changes for a given type) */
-#ifdef Py_TRACE_REFS
-/* debugging only */
+#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_HOOKS
 #define DEC_OB_REFCNT_T(rg, type) \
     (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
 #else
@@ -224,9 +217,10 @@ psyco_decref_rt(PsycoObject *po, vinfo_t *v)
     END_CODE
 }
 
-/* emit Py_XDECREF(v) for run-time v, a word LeJIT holds no reference to that
-   may be NULL at run time: the old content of a field the C code has just
-   overwritten, whose reference it now releases (STORE_DEREF's cell). The
+/* emit Py_XDECREF(v) for run-time v, a word that may be NULL at run time: a
+   maybe-unbound local (RunTime_MaybeNull), or the old content of a field the
+   C code has just overwritten, whose reference it now releases
+   (STORE_DEREF's cell), and which LeJIT holds no reference to. The
    register load and the cc save are made before the NULL test, so both
    paths leave the compiler's state the same. */
 PSY_INLINE void

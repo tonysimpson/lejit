@@ -114,6 +114,18 @@ _Static_assert(__builtin_classify_type(((PyTypeObject *)0)->tp_flags) == 1,
                "LeJIT: PyTypeObject.tp_flags: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyTypeObject *)0)->tp_flags))-1 < 0) == 0,
                "LeJIT: PyTypeObject.tp_flags: LeJIT reads it as unsigned");
+#define LE_OFS_PyTypeObject__tp_descr_get offsetof(PyTypeObject, tp_descr_get)
+#define LE_SIZE2_PyTypeObject__tp_descr_get 3
+#define LE_UNSIGNED_PyTypeObject__tp_descr_get 0
+_Static_assert(
+    __builtin_types_compatible_p(__typeof__(((PyTypeObject *)0)->tp_descr_get),
+                                 descrgetfunc),
+    "LeJIT: PyTypeObject.tp_descr_get is not descrgetfunc");
+_Static_assert(sizeof(((PyTypeObject *)0)->tp_descr_get) == 8,
+               "LeJIT: PyTypeObject.tp_descr_get: LeJIT reads 8 bytes");
+_Static_assert(
+    __builtin_classify_type(((PyTypeObject *)0)->tp_descr_get) == 5,
+    "LeJIT: PyTypeObject.tp_descr_get: LeJIT reads it as a pointer");
 #define LE_OFS_PyTypeObject__tp_version_tag \
     offsetof(PyTypeObject, tp_version_tag)
 #define LE_SIZE2_PyTypeObject__tp_version_tag 2
@@ -969,12 +981,8 @@ typedef struct le_owner_s {
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
 /* Generator bodies run compiled, resumed through the eval hook
-   (eval_hook.c:LeGen_Run), where a paused generator's state is its frame's
-   and its words are objects (not LE_HAS_FRAME_STACKREFS) */
-#define LE_RESUMES_GENERATORS \
-    (!LE_HAS_INTERPRETER_FRAME || !LE_HAS_FRAME_STACKREFS)
-/* and coroutine bodies, whose awaits pause the frame object as ceval's
-   YIELD_FROM leaves it (pycompiler.c) */
+   (eval_hook.c:LeGen_Run), and coroutine bodies too where their awaits
+   pause the frame object as ceval's YIELD_FROM leaves it (pycompiler.c) */
 #define LE_RESUMES_COROUTINES (!LE_HAS_INTERPRETER_FRAME)
 
 /* A resumable generator's compiled entries at one resume point, one per

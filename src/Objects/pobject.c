@@ -386,6 +386,8 @@ PsycoObject_IsTrue(PsycoObject *po, vinfo_t *vi)
 
 static vinfo_t *
 generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic);
+static vinfo_t *
+class_getattr(PsycoObject *po, vinfo_t *vcls, vinfo_t *vname);
 
 /* The type of 'obj' as a constant, promoted for at most MEGAMORPHIC_MAX
    types at a site: 1 (*tp set), 0 (megamorphic: stay generic), or -1. A
@@ -433,6 +435,10 @@ PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name)
     if (r > 0 && ((tp->tp_flags & Py_TPFLAGS_HEAPTYPE) ||
                   tp->tp_getattro == PyObject_GenericGetAttr))
         return generic_getattr(po, o, attr_name, PyObject_GetAttr);
+    if (r > 0 && tp == &PyType_Type && is_compiletime(o->source) &&
+        (((PyTypeObject *)CompileTime_Get(o->source)->value)->tp_flags &
+         Py_TPFLAGS_HEAPTYPE))
+        return class_getattr(po, o, attr_name);
 generic:
     return psyco_generic_call(po, PyObject_GetAttr, CfCommonNewRefPyObject,
                               "vv", o, attr_name);
@@ -1214,6 +1220,112 @@ generic_getattr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname, void *generic)
     /* not found: the generic call raises AttributeError */
 generic:
     return psyco_generic_call(po, generic, CfCommonNewRefPyObject, "vv", obj,
+                              vname);
+}
+
+/* A load from a heap class whose metaclass is type, as type_getattro
+   does it.
+   An attribute of type itself (static, so looked up now) is CPython's
+   load. Else the class's attribute, compiled under a guard of the class as
+   generic_getattr's, whose kind (class_load_kind) is the attribute with
+   bit 1 set, so loads from instances and from classes keep guards of
+   their own: a function or an attribute that isn't a descriptor is the
+   constant; a static or class method's __get__ is called with no
+   instance; anything else, or no attribute, is CPython's load. An
+   instance of a heap type may have or gain a __get__ (in its class, or by
+   a new __class__) that the guard doesn't see: compiled code checks its
+   type's tp_descr_get is NULL, and is CPython's load if not, so that the
+   kind doesn't depend on it. */
+#define CLASS_KIND(descr) ((PyObject *)((uintptr_t)(descr) | 2))
+static PyObject *
+class_load_kind(PyTypeObject *cls, PyObject *name)
+{
+    PyObject *descr;
+    PyTypeObject *dtp;
+    if (_PyType_Lookup(&PyType_Type, name) != NULL)
+        return LOAD_GENERIC;
+    descr = _PyType_Lookup(cls, name); /* borrowed */
+    if (descr == NULL)
+        return LOAD_GENERIC;
+    dtp = Py_TYPE(descr);
+    if ((dtp->tp_flags & Py_TPFLAGS_HEAPTYPE) || dtp->tp_descr_get == NULL ||
+        dtp == &PyFunction_Type || dtp == &PyStaticMethod_Type ||
+        dtp == &PyClassMethod_Type)
+        return descr;
+    return LOAD_GENERIC;
+}
+
+static PyObject *
+cimpl_class_load_changed(PyObject *cls, PyObject *name)
+{
+    load_guard_t *g;
+    LE_STAT(psyco_stat_load_type_changes++);
+    enable_version_tag((PyTypeObject *)cls);
+    g = load_guard((PyTypeObject *)cls, name,
+                   CLASS_KIND(class_load_kind((PyTypeObject *)cls, name)),
+                   false);
+    if (g != NULL) {
+        load_guard_set(&g->guard, (PyTypeObject *)cls);
+        LE_STAT(psyco_stat_load_repairs++);
+    }
+    return PyObject_GetAttr(cls, name);
+}
+
+#define TYPE_tp_descr_get \
+    FMUT(CPY_FIELD(PyTypeObject, tp_descr_get, NO_PREV_FIELD))
+
+static vinfo_t *
+class_getattr(PsycoObject *po, vinfo_t *vcls, vinfo_t *vname)
+{
+    PyTypeObject *cls = (PyTypeObject *)CompileTime_Get(vcls->source)->value;
+    PyObject *name = (PyObject *)CompileTime_Get(vname->source)->value;
+    PyObject *descr;
+    PyTypeObject *dtp;
+    load_guard_t *guard;
+    condition_code_t cc;
+    void *generic = PyObject_GetAttr;
+
+    enable_version_tag(cls);
+    descr = class_load_kind(cls, name);
+    guard = load_guard(cls, name, CLASS_KIND(descr), true);
+    load_guard_set(&guard->guard, cls);
+    cc = type_changed(po, cls, &guard->guard);
+    if (cc == CC_ERROR)
+        return NULL;
+    po->pr.split_after_global = 1;
+    if (runtime_condition_f(po, cc)) {
+        generic = cimpl_class_load_changed;
+        goto generic;
+    }
+    if (descr == LOAD_GENERIC)
+        goto generic;
+    psyco_owner_pin(descr); /* held while the compiled code lives */
+    dtp = Py_TYPE(descr);
+    if (dtp->tp_flags & Py_TPFLAGS_HEAPTYPE) {
+        vinfo_t *vd = vinfo_new(CompileTime_New((long)descr));
+        vinfo_t *vt = psyco_get_field_offset(po, vd, FMUT(OB_type), 0);
+        vinfo_t *vget;
+        vinfo_decref(vd, po);
+        if (vt == NULL)
+            return NULL;
+        vget = psyco_get_field(po, vt, TYPE_tp_descr_get);
+        vinfo_decref(vt, po);
+        if (vget == NULL)
+            return NULL;
+        cc = integer_non_null(po, vget);
+        vinfo_decref(vget, po);
+        if (cc == CC_ERROR)
+            return NULL;
+        if (runtime_condition_f(po, cc))
+            goto generic;
+    }
+    else if (dtp->tp_descr_get != NULL && dtp != &PyFunction_Type)
+        return Psyco_META3(po, dtp->tp_descr_get, CfCommonNewRefPyObject,
+                           "lll", descr, 0, cls);
+    Py_INCREF(descr);
+    return vinfo_new(CompileTime_NewSk(sk_new((long)descr, SkFlagPyObj)));
+generic:
+    return psyco_generic_call(po, generic, CfCommonNewRefPyObject, "vv", vcls,
                               vname);
 }
 

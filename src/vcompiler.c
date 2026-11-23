@@ -130,7 +130,10 @@ vinfo_release(vinfo_t *vi, PsycoObject *po)
                     /* write Py_DECREF() when releasing the last reference to
                        a run-time vinfo_t holding a reference to a Python
                        object */
-                    psyco_decref_rt(po, vi);
+                    if (is_maybe_null(vi->source))
+                        psyco_xdecref_rt(po, vi);
+                    else
+                        psyco_decref_rt(po, vi);
                 }
                 RTVINFO_RELEASE(vi->source);
             }
@@ -1271,7 +1274,7 @@ PsycoObject_Ready(PsycoObject *po)
     mergepoint_t *mp;
     psyco_assert_coherent(po);
     mp = psyco_first_merge_point(po->pr.merge_points);
-    psyco_forget_dead_vars(po, &mp->entries);
+    psyco_forget_dead_vars(po, &mp->entries, false);
     return mp;
 }
 
@@ -1426,7 +1429,6 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     return po;
 }
 
-#if LE_RESUMES_GENERATORS
 /* A resumable generator's body entered at 'next_instr' (eval_hook.c:
    LeGen_Run), on the words of its frame in this order: the locals, owned,
    the cells and free variables, borrowed, the 'nstack' stack items, owned,
@@ -1485,4 +1487,3 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
         vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
     return po;
 }
-#endif

@@ -18,8 +18,9 @@
  * keywords (pdictobject.c). Anything else (keyword-only arguments, a
  * **kwargs dict, unknown arity,
  * recursion depth used up) becomes a residual call of the function object,
- * as does a call made while a trace or profile function is set (tested at
- * run time: tracing_on).
+ * as does a call made while a trace or profile function is set, or while
+ * an eval hook other than LeJIT's is installed (tested at run time:
+ * direct_call_refused).
  */
 #include "psyfunc.h"
 #include "Objects/pdictobject.h"
@@ -216,8 +217,8 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
                             vinfo_t **f_localsplus, vinfo_t **args,
                             Py_ssize_t argcount, PyObject *kwnames,
                             vinfo_t **kwargs, vinfo_t **defs,
-                            Py_ssize_t defcount, vinfo_t **closure,
-                            bool make_cells)
+                            Py_ssize_t defcount, PyObject *kwdefs,
+                            vinfo_t **closure, bool make_cells)
 {
     PyCodeObject *co = (PyCodeObject *)_co;
     Py_ssize_t total_args = co->co_argcount + co->co_kwonlyargcount;
@@ -236,9 +237,6 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
         fastlocals[i] = x;
     }
     if (co->co_flags & CO_VARARGS) {
-#if LE_HAS_FRAME_BUILTINS_OF_FUNCTION
-        return -1; /* the tuple: the real call */
-#else
         vinfo_t *u;
         if (argcount - n > 15)
             return -1; /* a PyTuple_Type of more than CT_TUPLE_LOAD_SIZE_LIMIT
@@ -251,7 +249,6 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             vinfo_incref(x);
             PsycoTuple_GET_ITEM(u, i - n) = x;
         }
-#endif
     }
     if (kwnames != NULL) {
         Py_ssize_t k;
@@ -299,9 +296,23 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
     }
     if (co->co_kwonlyargcount > 0) {
         for (i = co->co_argcount; i < total_args; i++) {
-            if (fastlocals[i] == NULL) {
-                return -1; /* missing_arguments: the real call */
+            PyObject *def;
+            if (fastlocals[i] != NULL) {
+                continue;
             }
+            if (kwdefs == NULL) {
+                return -1; /* the defaults aren't known: the real call */
+            }
+            /* only exact str keys: the lookup runs no code */
+            def = PyDict_GetItemWithError(kwdefs,
+                                          le_code_local_name(co, (int)i));
+            if (def == NULL) {
+                /* missing_arguments: the real call */
+                return PyErr_Occurred() ? -2 : -1;
+            }
+            Py_INCREF(def);
+            fastlocals[i] =
+                vinfo_new(CompileTime_NewSk(sk_new((long)def, SkFlagPyObj)));
         }
     }
     if (co->co_flags & CO_VARKEYWORDS) {
@@ -352,8 +363,8 @@ static int
 fncall_bind(struct fncall_arg_s *fncall, PsycoObject *po, vinfo_t *vglobals,
             vinfo_t *vbuiltins, vinfo_t **argarray, int argcount,
             PyObject *kwnames, vinfo_t **kwargs, vinfo_t **defarray,
-            int defcount, vinfo_t **frees, int nextra, vinfo_t **extra,
-            bool make_cells)
+            int defcount, PyObject *kwdefs, vinfo_t **frees, int nextra,
+            vinfo_t **extra, bool make_cells)
 {
     PyCodeObject *co = fncall->co;
     int i, nlocals = le_code_nlocals(co), nslots = le_code_nlocalsplus(co);
@@ -367,7 +378,7 @@ fncall_bind(struct fncall_arg_s *fncall, PsycoObject *po, vinfo_t *vglobals,
     a->items[INDEX_LOC_BUILTINS] = vbuiltins;
     bound = _PsycoEval_EvalCodeWithName(po, (PyObject *)co, locals, argarray,
                                         argcount, kwnames, kwargs, defarray,
-                                        defcount, frees, make_cells);
+                                        defcount, kwdefs, frees, make_cells);
     if (bound < 0) {
         array_delete(a, po);
         return bound == -1 ? 0 : -1;
@@ -758,6 +769,15 @@ tracing_on(PsycoObject *po, vinfo_t *vts)
     return runtime_condition_f(po, le_tracing_test(po, vts));
 }
 
+/* Whether a compiled call or inlined frame must be the real call
+   instead, which is tracing_on or another eval hook installed over
+   LeJIT's (le_direct_call_test): one test, with the same rare path */
+static bool
+direct_call_refused(PsycoObject *po, vinfo_t *vts)
+{
+    return runtime_condition_f(po, le_direct_call_test(po, vts));
+}
+
 DEFINEFN
 int
 psyco_tracing_on(PsycoObject *po)
@@ -990,7 +1010,8 @@ DEFINEFN
 vinfo_t *
 psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
                   vinfo_t *vglobals, vinfo_t *vdefaults, vinfo_t *arg_tuple,
-                  vinfo_t *kw, int recursion, bool allow_inline)
+                  vinfo_t *kw, PyObject *kwdefs, int recursion,
+                  bool allow_inline)
 {
     PyObject *kwnames = NULL;
     vinfo_t **kwargs = NULL;
@@ -1030,11 +1051,9 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     if (nfrees != 0 && (vfunc == NULL || nfrees > MAX_CALL_FREES))
         goto fail_to_default;
 
-    /* XXX tony: kw only args are a Py3 feature that we need to add support for
-     */
-    if (co->co_kwonlyargcount != 0) {
+    /* a pending generator's arguments are positional only */
+    if (generator && co->co_kwonlyargcount != 0)
         goto fail_to_default;
-    }
 
     tuple_size = PsycoTuple_Load(arg_tuple);
     if (tuple_size == -1)
@@ -1092,7 +1111,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     switch (fncall_bind(&fncall, po, vglobals, vbuiltins,
                         &PsycoTuple_GET_ITEM(arg_tuple, 0), tuple_size,
                         kwnames, kwargs, &PsycoTuple_GET_ITEM(vdefaults, 0),
-                        defcount, frees, 0, NULL,
+                        defcount, kwdefs, frees, 0, NULL,
                         !generator && (!inlining || LOC_INLINING == NULL))) {
         case 1:
             break;
@@ -1132,8 +1151,9 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         int i;
         for (i = 0; i < nfrees; i++) need_reference(po, freebuf[i]);
     }
-    /* a traced call goes through the eval hook (tracing_on). Not again when
-       the instruction restarts after the inlined body with its result. */
+    /* a traced call, or one under another eval hook, goes through the
+       hook (direct_call_refused). Not again when the instruction restarts
+       after the inlined body with its result. */
     if (!inlining || LOC_INLINING == NULL) {
         bool traced, entered = true;
         vinfo_t *vts = load_tstate(po);
@@ -1142,7 +1162,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
             vinfo_decref(vbuiltins, po);
             return NULL;
         }
-        traced = tracing_on(po, vts);
+        traced = direct_call_refused(po, vts);
         /* count the call's depth, as ceval does on entering a frame, so that
            deep recursion raises RecursionError instead of overflowing the C
            stack; psyco_call_psyco leaves it after the call.
@@ -1235,8 +1255,9 @@ psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     if (runtime_condition_f(po, cc))
         goto fallback;
     vnodefaults = psyco_vi_Zero();
-    result = psyco_call_pyfunc(po, vfunc, co, LOC_GLOBALS, vnodefaults,
-                               arg_tuple, NULL, po->pr.auto_recursion, true);
+    result =
+        psyco_call_pyfunc(po, vfunc, co, LOC_GLOBALS, vnodefaults, arg_tuple,
+                          NULL, NULL, po->pr.auto_recursion, true);
     vinfo_decref(vnodefaults, po);
     return result;
 
@@ -1293,7 +1314,7 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
        count bound at the call */
     switch (fncall_bind(&fncall, po, vglobals, vbuiltins,
                         &PsycoTuple_GET_ITEM(args, 0), PsycoTuple_Load(args),
-                        NULL, NULL, NULL, 0, frees, GENEXPR_SLOTS, extra,
+                        NULL, NULL, NULL, 0, NULL, frees, GENEXPR_SLOTS, extra,
                         true)) {
         case 1:
             break;
@@ -1405,17 +1426,23 @@ fuse_stopped(PsycoObject *po, vinfo_t *v)
     return runtime_condition_f(po, cc);
 }
 
-/* the fused body is the generator's frame: a tracer must see it */
+/* the fused body is the generator's frame: a tracer, or another eval
+   hook, must see it */
 DEFINEFN
 int
 psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
 {
     int on;
+    vinfo_t *vts;
     if (!psyco_genexpr_fusable(po, v))
         return 0;
-    on = psyco_tracing_on(po);
-    if (on != 0)
-        return on < 0 ? -1 : 0;
+    vts = load_tstate(po);
+    if (vts == NULL)
+        return -1;
+    on = direct_call_refused(po, vts);
+    vinfo_decref(vts, po);
+    if (on)
+        return 0;
     on = fuse_stopped(po, v);
     return on < 0 ? -1 : !on;
 }

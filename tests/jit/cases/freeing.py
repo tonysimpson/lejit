@@ -460,13 +460,34 @@ def inlined_callee_dies_first():
     return out, [r() is None for r in refs]
 
 
+
+def freed_lists_traced(n):
+    # an object compiled code frees is reported to the ref tracer, which
+    # _Py_Dealloc calls where it has one
+    try:
+        from _testcapi import start_counting_list_destroys as start
+        from _testcapi import stop_counting_list_destroys as stop
+    except ImportError:
+        return None
+    keep = []
+    for i in range(n):
+        keep.append([i])
+    counts = []
+    for i in range(n):
+        start()
+        x = keep.pop()
+        del x
+        counts.append(stop())
+    return counts
+
+
 CASES = [
     ('code_dies_with_shared_globals', [()], {'interpreted': 'calls exec'}),
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec'}),
-    ('own_namespace_calls', [()], {'interpreted': 'calls exec'}),
-    ('own_namespace_recursion', [()], {'interpreted': 'calls exec'}),
-    ('inlined_callee_dies_first', [()], {'interpreted': 'calls exec'}),
-    ('freed_in_subinterpreter', [()], {'interpreted': 'calls exec'}),
+    ('own_namespace_calls', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
+    ('own_namespace_recursion', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
+    ('inlined_callee_dies_first', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
+    ('freed_in_subinterpreter', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
     ('unscanned_freed_in_subinterpreter', [()],
      {'leaks': 'leaks at random, KNOWN_BUGS'}),
     ('namedtuple_code_dies', [()], {}),
@@ -476,7 +497,8 @@ CASES = [
     ('borrowed_globals_reused', [()], {}),
     ('other_code_extra_user', [()], {}),
     ('recompiled_loops_free', [()], {}),
-    ('call_notes_reused', [()], {}),
-    ('made_functions_free', [()], {}),
+    ('call_notes_reused', [()], {'checked': 'reads lejit._core._stats'}),
+    ('made_functions_free', [()], {'checked': 'reads lejit._core._stats'}),
     ('promoted_reference_released', [()], {}),
+    ('freed_lists_traced', [(50,)], {}),
 ]

@@ -6,7 +6,7 @@
 # Each case returns what CPython shows of the coroutines, at one, two and
 # three levels of awaits.
 import gc, inspect, sys, threading, types, weakref
-from coro_bodies import HOOKED
+from coro_bodies import HOOKED, HOOKED_TRACE
 
 
 def work(x):
@@ -23,6 +23,9 @@ def started(*fns):
     # through the eval hook, where LeJIT starts them so
     lejit = sys.modules.get('lejit')
     if lejit is None or not lejit._started or not FRAME_OBJECTS:
+        return True
+    # a release build can't say what compiled
+    if not hasattr(lejit._core, '_code_info'):
         return True
     return all(lejit._core._code_info(f.__code__) == 'no entry point'
                for f in fns)
@@ -341,12 +344,12 @@ CASES = [
     ('raised', [(3,)], HOOKED),
     ('realised', [(0,), (2,)], {}),
     ('threads', [(0,)], {}),
-    ('tracing', [(0,)], HOOKED),
+    ('tracing', [(0,)], HOOKED_TRACE),
     ('handled', [(1,)],
      {'warmup': (40, 'its paths go on compiling for some rounds'),
-      'leaks': 'with address-space randomisation on, LeJIT keeps a fixed '
-               'number of blocks more (up to about 90) that depends on '
-               'addresses and does not grow with the rounds'}),
+      'leaks_with_aslr': 'LeJIT keeps a fixed number of blocks more (up to '
+                         'about 90) that depends on addresses and does not '
+                         'grow with the rounds'}),
     ('traced_handler', [(1,)], {}),
     ('origins', [(1,)], {}),
 ]

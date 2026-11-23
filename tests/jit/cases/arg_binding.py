@@ -196,9 +196,37 @@ def builtin_errors(x):
     return out
 
 
+# *args callees called directly with their tuple virtual, then forwarded
+# through f(*args) wrappers, read through f_locals, kept and compared
+def star_seen(*rest):
+    import sys
+    return sys._getframe().f_locals['rest'] == rest, type(rest) is tuple, rest
+
+
+def star_wrap(*rest):
+    return star_seen(*rest)
+
+
+def star_wrap2(a, *rest):
+    return star_wrap(a, *rest)
+
+
+def star_forwarding(n):
+    out = []
+    kept = []
+    for i in range(n):
+        out.append(star_wrap2(i, i + 1, 'x'))
+        out.append(star_wrap2(i))
+        r = star(i, *range(i))
+        kept.append(r[1])
+        out.append((r, r[1] is kept[-1], len(r[1])))
+    return out, (kept[0] is ()) if kept else None, kept
+
+
 CASES = [
     ('defaults_and_star', [(0,), (3,)], {}),
     ('many_extras', [(2,)], {}),
+    ('star_forwarding', [(0,), (4,)], {}),
     ('kwonly_defaults', [(3,)], {}),
     ('wrong_counts', [(2,)], {}),
     ('methods', [(4,)], {}),

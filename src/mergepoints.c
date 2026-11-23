@@ -588,10 +588,6 @@ _build_merge_points(PyCodeObject *co, int module)
     if (module) {
         goto not_ok;
     }
-#if !LE_HAS_OPCODE_BINARY_SUBSCR
-    /* 3.14's bytecode is not compiled yet */
-    goto not_ok;
-#endif
     if (le_code_prepare(co) < 0)
         return NULL;
     if (le_code_nlocalsplus(co) + co->co_stacksize > MAX_FRAME_VALUES)
@@ -734,28 +730,18 @@ psyco_is_fusable_generator(PyCodeObject *co)
     return yields == 1 && !yield_has_handler(co, c, yield);
 }
 
-#if LE_RESUMES_GENERATORS
 /* whether a YIELD_VALUE can run while an exception handler's block is
    live: reached by plain control flow from a handler's start (a SETUP_*
    target, or an exception table entry's handler) before the handler ends,
    by POP_EXCEPT or by raising again, or by END_FINALLY, which falls
    through only once the handler is done. A finally body that plain flow
    enters from its try (before 3.9) ends with an END_FINALLY too: 'depth'
-   counts those entered, for their END_FINALLY to go on. */
+   counts those entered, for their END_FINALLY to go on. With 'from' a
+   handler's start, only that handler's flow counts (-1: every handler's).
+   With 'at' an instruction's position, whether that instruction can run
+   there instead of a yield (-1: whether a yield can). */
 static int
-handler_reach(PyCodeObject *co, le_code_t c, int at);
-
-static int
-yields_in_handler(PyCodeObject *co, le_code_t c)
-{
-    return handler_reach(co, c, -1);
-}
-
-/* with 'at' an instruction's position: whether it can run while an
-   exception handler's block is live, as yields_in_handler finds the
-   yields; with -1, whether a yield can */
-static int
-handler_reach(PyCodeObject *co, le_code_t c, int at)
+handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
 {
     int units = c.size / LE_UNIT, top = 0, pos, u;
     signed char depth[units + 1];
@@ -771,7 +757,7 @@ handler_reach(PyCodeObject *co, le_code_t c, int at)
         while (le_handler_next(co, &at, &h)) {
             u = h.handler / LE_UNIT;
             handler[u] = 1;
-            if (!queued[u]) {
+            if (!queued[u] && (from < 0 || h.handler == from)) {
                 depth[u] = 0;
                 queued[u] = 1;
                 work[top++] = u;
@@ -791,7 +777,7 @@ handler_reach(PyCodeObject *co, le_code_t c, int at)
             case SETUP_ASYNC_WITH:
                 u = in.target / LE_UNIT;
                 handler[u] = 1;
-                if (!queued[u]) {
+                if (!queued[u] && (from < 0 || in.target == from)) {
                     depth[u] = 0;
                     queued[u] = 1;
                     work[top++] = u;
@@ -857,9 +843,72 @@ handler_reach(PyCodeObject *co, le_code_t c, int at)
     }
     return 0;
 }
+
+static int
+yields_in_handler(PyCodeObject *co, le_code_t c)
+{
+    return handler_reach(co, c, -1, -1);
+}
+
+#if LE_HAS_OPCODE_BREAK_LOOP
+/* whether a return, break or continue can leave a finally block's body,
+   which LeJIT enters with a pseudo-exception (pycompiler.c's unwind loop),
+   which no frame going on in ceval can hold */
+static int
+leaves_finally(le_code_t c)
+{
+    int pos, end = -1;
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        pos = in.next;
+        switch (in.op) {
+            case SETUP_FINALLY:
+            case SETUP_WITH:
+            case SETUP_ASYNC_WITH:
+                if (in.target > end)
+                    end = in.target;
+                break;
+            case RETURN_VALUE:
+            case BREAK_LOOP:
+            case CONTINUE_LOOP:
+                if (in.next <= end)
+                    return 1;
+        }
+    }
+    return 0;
+}
 #endif
 
-#if LE_RESUMES_GENERATORS
+/* a coroutine body's yields where a handler is live: CPython keeps the
+   handled exception in the coroutine, so any handler that can await runs
+   in ceval (psyco_handler_awaits); not where that can't take the frame */
+static int
+handler_yields_kept(PyCodeObject *co, le_code_t c)
+{
+#if LE_HAS_OPCODE_BREAK_LOOP
+    return !yields_in_handler(co, c) || !leaves_finally(c);
+#else
+    (void)co;
+    (void)c;
+    return 1;
+#endif
+}
+
+/* whether the handler at 'handler' in a coroutine's body can await, which
+   makes it run in ceval (handler_yields_kept) */
+DEFINEFN int
+psyco_handler_awaits(PyCodeObject *co, int handler)
+{
+#if LE_RESUMES_COROUTINES
+    return (co->co_flags & CO_COROUTINE) &&
+           handler_reach(co, le_code(co), handler, -1);
+#else
+    (void)co;
+    (void)handler;
+    return 0;
+#endif
+}
+
 /* whether plain flow from the instruction at 'from' reaches the one at
    'to', jumps taken or not, but no exception raised */
 static int
@@ -959,15 +1008,14 @@ yields_do_work(le_code_t c)
     }
     return 1;
 }
-#endif
 
-#if LE_RESUMES_GENERATORS
 /* whether the body of 'co', a plain generator or a coroutine, can run
    compiled in its own frame: no yield from (a coroutine's awaits are
-   GET_AWAITABLE, LOAD_CONST None, YIELD_FROM), no async for or async with,
-   and no yield or await inside an exception handler, whose stack and
-   blocks LeJIT keeps apart from the frame's (an EXCEPT_HANDLER block, a
-   finally block's pseudo-exception) */
+   GET_AWAITABLE, LOAD_CONST None, YIELD_FROM), no async for, and no yield
+   inside an exception handler, whose stack and blocks LeJIT keeps apart
+   from the frame's (an EXCEPT_HANDLER block, a finally block's
+   pseudo-exception); a coroutine's handlers that can await run in ceval
+   instead (handler_yields_kept) */
 static int
 body_compilable(PyCodeObject *co, le_code_t *c)
 {
@@ -991,17 +1039,17 @@ body_compilable(PyCodeObject *co, le_code_t *c)
                     return 0;
                 break;
             case GET_YIELD_FROM_ITER:
+            /* async for */
             case GET_AITER:
             case GET_ANEXT:
-            case BEFORE_ASYNC_WITH:
-            case SETUP_ASYNC_WITH:
             case END_ASYNC_FOR:
                 return 0;
         }
     }
+    if (kind == CO_COROUTINE)
+        return handler_yields_kept(co, *c);
     return !yields_in_handler(co, *c);
 }
-#endif
 
 /* the code of a generator or coroutine whose body can run compiled,
    resumed at each yield through the eval hook (eval_hook.c:LeGen_Run), its
@@ -1011,13 +1059,8 @@ body_compilable(PyCodeObject *co, le_code_t *c)
 DEFINEFN int
 psyco_is_resumable_generator(PyCodeObject *co)
 {
-#if LE_RESUMES_GENERATORS
     le_code_t c;
     return body_compilable(co, &c) && yields_do_work(c);
-#else
-    (void)co;
-    return 0;
-#endif
 }
 
 /* whether the instruction at 'pos' in a coroutine's body that can run as
@@ -1027,7 +1070,7 @@ DEFINEFN int
 psyco_in_handler(PyCodeObject *co, int pos)
 {
 #if LE_RESUMES_COROUTINES
-    return handler_reach(co, le_code(co), pos);
+    return handler_reach(co, le_code(co), -1, pos);
 #else
     (void)co;
     (void)pos;

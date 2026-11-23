@@ -201,7 +201,10 @@ data_free_unused(code_t *code, struct dmove_s *dm, vinfo_array_t *aa)
 
                 saved_code = po->code;
                 po->code = code;
-                psyco_decref_rt(po, a);
+                if (is_maybe_null(a->source))
+                    psyco_xdecref_rt(po, a);
+                else
+                    psyco_decref_rt(po, a);
                 code = po->code;
                 po->code = saved_code;
 

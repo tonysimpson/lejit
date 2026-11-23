@@ -15,13 +15,8 @@ def work(x):
 
 def compiled(*fns):
     lejit = sys.modules.get('lejit')
-    if lejit is None:
-        return True
-    # where a frame's words are stack references, generator bodies stay
-    # interpreted
-    features = dict(lejit._core._build['features'])
-    if (features.get('LE_HAS_INTERPRETER_FRAME') and
-            features.get('LE_HAS_FRAME_STACKREFS')):
+    # a release build can't say what compiled
+    if lejit is None or not hasattr(lejit._core, '_code_info'):
         return True
     return all(lejit._core._code_info(f.__code__) == 'compiled'
                for f in fns)
@@ -437,6 +432,40 @@ def resumed_by_ceval(n):
     return out, compiled(appending)
 
 
+def frame_words(xs):
+    # paused with immortal objects and NULLs (an unbound local, the NULL
+    # under a called function) in its locals and on its stack, which ceval
+    # reads by their words once it resumes the frame
+    off, nothing = False, None
+    out = []
+    for x in xs:
+        out.append((off, work((yield work(x)))))
+        if off:
+            out.append('off')
+        if nothing is not None:
+            out.append('nothing')
+        try:
+            out.append(late)
+        except UnboundLocalError:
+            out.append('unbound')
+    late = 1
+    yield out, late
+
+
+def words_resumed_by_ceval(n):
+    out = []
+    g = frame_words(range(n))
+    out.append(next(g))
+    sys.setprofile(lambda *a: None)
+    try:
+        out += [g.send(1), g.send(2)]
+    finally:
+        sys.setprofile(None)
+    out.append(run(lambda: g.send(3)))
+    out.append(run(lambda: next(g)))
+    return out, compiled(frame_words)
+
+
 def exc_seen():
     # the exception being handled, as the body sees it at each resume
     yield repr(sys.exc_info()[1])
@@ -525,7 +554,8 @@ def interrupted_in_try(n):
 
 def interpreted(*fns):
     lejit = sys.modules.get('lejit')
-    if lejit is None:
+    # a release build can't say what compiled
+    if lejit is None or not hasattr(lejit._core, '_code_info'):
         return True
     return all(lejit._core._code_info(f.__code__) != 'compiled'
                for f in fns)
@@ -577,5 +607,6 @@ CASES = [
     ('light_bodies', [(3,)], {}),
     ('send_at_start', [(3,)], {}),
     ('resumed_by_ceval', [(3,)], {}),
+    ('words_resumed_by_ceval', [(3,)], {}),
     ('exception_state', [(3,)], {}),
 ]

@@ -7,13 +7,19 @@ run doesn't.
 A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
-(no leak check), 'warmup': (rounds, reason), 'clear_type_cache': reason (the
+(no leak check), 'leaks_with_aslr': reason (no leak check when address-space
+randomisation can't be turned off: what it counts depends on addresses),
+'warmup': (rounds, reason), 'clear_type_cache': reason (the
 leak check empties CPython's type cache first; only where that keeps the
-types' version tags, as from 3.11), 'expected': [result, ...] (LeJIT's
-results must be these, one per call, not plain CPython's: for a language
-rule some CPython gets wrong).
+types' version tags, as from 3.11), 'checked': reason (needs a checked build),
+'expected': [result, ...] (LeJIT's results must be these, one per call, not
+plain CPython's: for a language rule some CPython gets wrong).
 
-    python3.X tests/jit/run.py [DIR] [-k substring] [-v]
+--release tests a release build, which can't say what it compiled: results
+and leaks are checked, but not whether each function compiled, an 'xfail'
+case that passes isn't an XPASS, and 'checked' cases are skipped.
+
+    python3.X tests/jit/run.py [DIR] [-k substring] [-v] [--release]
 """
 import glob, os, random, subprocess, sys, warnings
 
@@ -21,14 +27,28 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CASES = os.path.join(ROOT, 'tests', 'jit', 'cases')
 TIMEOUT = 20
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
+# each child runs with address-space randomisation off: what the leak check
+# counts can depend on where objects land (a table keyed by id() is sized
+# by them), so a plain run and a LeJIT run of the same case could differ
+ASLR_OFF = ['setarch', os.uname().machine, '-R']
 
 
-def run_child(modname, fname, calls, use_lejit, warmup=9, env=None,
+def aslr_off_works():
+    # a container's seccomp profile can refuse it
+    try:
+        return subprocess.run(ASLR_OFF + [sys.executable, '-c', ''],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+    except OSError:
+        return False
+
+
+def run_child(modname, fname, calls, lejit_mode, warmup=9, env=None,
               clear_type_cache=False):
     if not isinstance(calls, str):
         calls = repr(calls)
-    cmd = [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
-           modname, fname, calls, '1' if use_lejit else '0', str(warmup),
+    cmd = ASLR_OFF + [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
+           modname, fname, calls, lejit_mode, str(warmup),
            '1' if clear_type_cache else '0']
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
@@ -66,8 +86,18 @@ def main():
     if args and not args[0].startswith('-'):
         CASES = os.path.abspath(args[0])
     verbose = '-v' in args
+    release = '--release' in args
+    aslr_off = aslr_off_works()
+    if not aslr_off:
+        print('address-space randomisation stays on: setarch -R is refused here')
+        ASLR_OFF[:] = []
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
+    if release:
+        counts['skip'] = 0
     for name, modname, fname, calls, opts in load_cases(filt):
+        if release and opts.get('checked'):
+            counts['skip'] += 1
+            continue
         warmup = opts.get('warmup', (9,))[0]
         # both runs hash alike: what plain CPython itself keeps after the
         # rounds can depend on the seed (a subinterpreter's, by tens of
@@ -75,12 +105,13 @@ def main():
         clear = 'clear_type_cache' in opts
         env = dict(os.environ)
         env.setdefault('PYTHONHASHSEED', str(random.randrange(4294967296)))
-        expected, ref_err = run_child(modname, fname, calls, False, warmup, env, clear)
+        expected, ref_err = run_child(modname, fname, calls, '0', warmup, env, clear)
         if expected is None:
             print('ERROR %s: reference run failed: %s' % (name, ref_err))
             counts['FAIL'] += 1
             continue
-        got, err = run_child(modname, fname, calls, True, warmup, env, clear)
+        got, err = run_child(modname, fname, calls, 'release' if release else '1',
+                             warmup, env, clear)
         problem = None
         if got is None:
             problem = err
@@ -88,16 +119,18 @@ def main():
             extra = [l for l in err if l not in ref_err]
             leak_ref = int(expected.pop().split()[1])
             leak_lejit = int(got.pop().split()[1])
+            results = got if release else got[:-1]
             if 'expected' in opts:
                 expected = ['ok ' + repr(r) for r in opts['expected']]
-            if got[:-1] != expected:
-                problem = 'results differ: expected %r, got %r' % (expected, got[:-1])
+            if results != expected:
+                problem = 'results differ: expected %r, got %r' % (expected, results)
             elif opts.get('interpreted'):
-                if got[-1] == 'compiled: yes':
+                if not release and got[-1] == 'compiled: yes':
                     problem = 'compiled, but expected to be interpreted'
-            elif got[-1] != 'compiled: yes':
+            elif not release and got[-1] != 'compiled: yes':
                 problem = got[-1]
-            elif leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks'):
+            elif (leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks') and
+                  (aslr_off or not opts.get('leaks_with_aslr'))):
                 problem = 'leaks: %d more blocks after 100 extra rounds (%d without LeJIT)' % (
                     leak_lejit, leak_ref)
             elif extra:
@@ -108,7 +141,7 @@ def main():
         elif problem:
             status = 'FAIL'
         elif xfail:
-            status = 'XPASS'
+            status = 'xfail' if release else 'XPASS'
         else:
             status = 'pass'
         counts[status] += 1

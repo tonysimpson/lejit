@@ -17,4 +17,9 @@ EXTERNFN int
 PsycoSlice_Unpack(PsycoObject *po, vinfo_t *slice, vinfo_t **pstart,
                   vinfo_t **pstop);
 
+/* the same for bounds that are None or exact ints, also for a constant step
+   of -1: *pstep is 1 or -1 */
+EXTERNFN int
+PsycoSlice_UnpackStep(PsycoObject *po, vinfo_t *slice, vinfo_t **pstart,
+                      vinfo_t **pstop, int *pstep);
 #endif /* _PSY_SLICEOBJECT_H */
