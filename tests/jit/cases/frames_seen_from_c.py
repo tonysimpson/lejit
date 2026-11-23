@@ -280,6 +280,43 @@ def returned_back_names():
     return out
 
 
+def own_frame_interpreted(_):          # locals(): never compiled
+    locals()
+    return sys._getframe()
+
+
+def interpreted_through_c():
+    return list(map(own_frame_interpreted, [0]))[0]
+
+
+# the same for a frame the interpreter runs
+def returned_back_names_interpreted():
+    f = interpreted_through_c()
+    out = []
+    while f is not None and len(out) < 3:
+        out.append(f.f_code.co_name)
+        f = f.f_back
+    return out
+
+
+def module_names():
+    getname = getattr(sys, '_getframemodulename', None)
+    if getname is None:                  # before 3.12
+        return [sys._getframe(d).f_globals['__name__'] for d in range(4)]
+    return [getname(d) for d in range(4)]
+
+
+def ask_module_names():
+    for _ in range(1):
+        pass
+    return module_names()
+
+
+# sys._getframemodulename counts compiled frames: the last is the harness's
+def caller_module_name():
+    return ask_module_names()
+
+
 def gen_frames():
     yield back_names(3)
 
@@ -345,6 +382,8 @@ CASES = [
     ('warn_through', "[(1,), (2,)]", {}),
     ('init_frames_caller', "[()]", {}),
     ('returned_back_names', "[()]", {}),
+    ('returned_back_names_interpreted', "[()]", {}),
+    ('caller_module_name', "[()]", {}),
     ('raised_middle', "[()]", {}),
     ('caught_middle', "[()]",
      {'warmup': (20, 'a call site that gets new lambdas each round compiles '

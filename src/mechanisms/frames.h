@@ -684,11 +684,11 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
         Py_FatalError("LeJIT: ceval ended a frame with a result");
     if (result != NULL) {
         /* ceval raised another exception (RecursionError on entering it)
-           in place of 'done' */
+           in place of 'done', or a finaliser the clear ran dropped it */
         PyObject *e = PyErr_GetRaisedException();
         if (e == done)
             Py_DECREF(e);
-        else {
+        else if (e != NULL) {
             PyErr_SetRaisedException(e);
             Py_CLEAR(result);
         }
@@ -704,8 +704,82 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
     }
     return result;
 }
+
+/* room on the thread's data stack for a frame of 'size' words, which
+   ceval's pop gives back, as pystate.c:_PyThreadState_PushFrame makes it;
+   its new chunk (push_chunk) is hidden, so is copied here. NULL if there
+   is no memory. */
+static inline le_frame_t *
+le_frame_push_room(PyThreadState *ts, int size)
+{
+    PyObjectArenaAllocator arena;
+    _PyStackChunk *chunk;
+    PyObject **res;
+    int bytes = 16 * 1024;
+    if (_PyThreadState_HasStackSpace(ts, size)) {
+        res = ts->datastack_top;
+        ts->datastack_top += size;
+        return (le_frame_t *)res;
+    }
+    while (bytes < (int)sizeof(PyObject *) * (size + 1000)) bytes *= 2;
+    PyObject_GetArenaAllocator(&arena);
+    chunk = arena.alloc(arena.ctx, bytes);
+    if (chunk == NULL)
+        return NULL;
+    chunk->previous = ts->datastack_chunk;
+    chunk->size = bytes;
+    chunk->top = 0;
+    if (ts->datastack_chunk != NULL)
+        ts->datastack_chunk->top =
+            ts->datastack_top - &ts->datastack_chunk->data[0];
+    ts->datastack_chunk = chunk;
+    ts->datastack_limit = (PyObject **)((char *)chunk + bytes);
+    /* the root chunk's first word is skipped, so that no pop frees it */
+    res = &chunk->data[chunk->previous == NULL];
+    ts->datastack_top = res + size;
+    return (le_frame_t *)res;
+}
+
+/* ceval runs frame object f's frame on from where it is to its end and
+   clears and pops it (frames.c:psyco_resume_run). The thread's frame (the
+   real frame LeCode_Run runs) runs as it is. A frame object's own frame,
+   which ceval would end as a generator's, moves for the run to a frame on
+   the thread's data stack: ceval's clear gives it back to the frame
+   object, as for any frame that outlives its call (frameobject.c:
+   take_ownership). The frame object keeps the f_back it has, which
+   take_ownership would replace. The caller holds a reference to f. */
+static inline PyObject *
+le_pyframe_run_to_end(PyThreadState *ts, PyFrameObject *f)
+{
+    le_frame_t *frame = f->f_frame;
+    PyFrameObject *back = f->f_back;
+    PyObject *r;
+    if (le_pyframe_owns(f)) {
+        int size = frame->f_code->co_framesize;
+        le_frame_t *t = le_frame_push_room(ts, size);
+        if (t == NULL)
+            return PyErr_NoMemory();
+        memcpy(t, frame, size * sizeof(PyObject *));
+        t->owner = FRAME_OWNED_BY_THREAD;
+        t->frame_obj = (PyFrameObject *)Py_NewRef(f);
+        f->f_frame = t;
+        frame = t;
+    }
+    if (le_frame_current(ts) == frame)
+        le_frame_set_current(ts, frame->previous);
+    f->f_back = NULL;
+    r = _PyEval_EvalFrameDefault(ts, frame, 0);
+    if (back != NULL)
+        Py_XSETREF(f->f_back, back);
+    return r;
+}
+#define LE_PYFRAME_RUN_TO_END 1
 #else
 /* the frame's caller pops it */
 #define le_frame_finish(ts, f, result, done) (result)
+#endif
+/* le_pyframe_run_to_end and le_frame_push_room exist */
+#ifndef LE_PYFRAME_RUN_TO_END
+#define LE_PYFRAME_RUN_TO_END 0
 #endif
 #endif /* LE_MECHANISMS_FRAMES_H */
