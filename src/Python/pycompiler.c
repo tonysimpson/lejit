@@ -6728,7 +6728,6 @@ out:
     return ended;
 }
 
-#if LE_RESUMES_GENERATORS
 #if LE_HAS_INTERPRETER_FRAME
 #define FRAME_localsplus FMUT(CPY_ARRAY(le_frame_t, localsplus))
 #else
@@ -6927,10 +6926,17 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
         /* an unbound local's slot is already empty (LeGen_Run took the
            locals), but a stack slot of a frame CPython reused may still
            hold an old word: a NULL item (LOAD_METHOD's, under a method) is
-           stored */
-        if (v != NULL && psyco_knowntobe(v, 0) && i >= nlocals) {
-            if (!psyco_put_nth_field(po, frame, FRAME_localsplus,
-                                     nplus + i - nlocals, v)) {
+           stored. Where the words are _PyStackRefs, every one is stored as
+           an object, and psyco_gen_words_own makes them the frame's. */
+        if ((v == NULL || psyco_knowntobe(v, 0)) &&
+            (i >= nlocals || LE_HAS_FRAME_STACKREFS)) {
+            vinfo_t *null = v != NULL ? v : psyco_vi_Zero();
+            bool ok = psyco_put_nth_field(
+                po, frame, FRAME_localsplus,
+                i < nlocals ? i : nplus + i - nlocals, null);
+            if (v == NULL)
+                vinfo_decref(null, po);
+            if (!ok) {
                 vinfo_decref(frame, po);
                 return;
             }
@@ -6949,6 +6955,10 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
             *slot = NULL;
         }
     }
+#if LE_HAS_FRAME_STACKREFS
+    psyco_generic_call(po, psyco_gen_words_own, CfNoReturnValue | CfNoPython,
+                       "vl", frame, (long)nstack);
+#endif
     v = stack_a[nstack];
 #if LE_RESUMES_COROUTINES
     if (traced) {
@@ -7021,7 +7031,6 @@ yield_direct(PsycoObject *po, int at)
     po->pr.iblock = 0;
     PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
 }
-#endif
 #endif
 
 /* returning, yielding and making functions */
@@ -7099,12 +7108,10 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                 CompileTime_Get(po->vlocals.items[slot]->source)->value;
             vinfo_t *acc = po->vlocals.items[slot + 1];
             v = TOP();
-#if LE_RESUMES_GENERATORS
             if (mode == GENEXPR_RESUMABLE) {
                 yield_resumable(po, next_instr - LE_UNIT, false);
                 break;
             }
-#endif
             if (mode == GENEXPR_LIST) {
                 if (!PsycoList_Append(po, acc, v))
                     break;
@@ -7850,6 +7857,39 @@ out:
     return ended;
 }
 
+/* whether a pieces list (plistobject.c) may live on into an instruction:
+   one that runs no Python code and changes no list itself, or that forces
+   it where it would (codegen.c:psyco_generic_call, plist_ass_item) */
+static int
+keeps_pieces(int opcode)
+{
+    switch (opcode) {
+        case LOAD_FAST:
+        case LOAD_FAST_CHECK:
+        case LOAD_FAST_LOAD_FAST:
+        case LOAD_CONST:
+        case LOAD_SMALL_INT:
+        case DUP_TOP:
+        case DUP_TOP_TWO:
+        case ROT_TWO:
+        case ROT_THREE:
+        case ROT_FOUR:
+        case COPY:
+        case SWAP:
+        case NOP:
+        case BUILD_SLICE:
+        case BINARY_SLICE:
+        case BINARY_SUBSCR:
+        case BINARY_ADD:
+        case BINARY_SUBTRACT:
+        case UNARY_NEGATIVE:
+        case STORE_SUBSCR:
+        case STORE_SLICE:
+            return 1;
+    }
+    return 0;
+}
+
 /* the families, in the order ceval.c has their cases */
 static int (*const compile_families[])(PsycoObject *po, int opcode, int oparg,
                                        int target, int *next_instr_io,
@@ -8070,6 +8110,16 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 if (!resume_if_tracing(po, next_instr, &unwound))
                     break;
             }
+            /* no pieces list lives on where code could change its sources,
+               nor into a snapshot */
+            if (po->pr.pieces &&
+                (next_instr >= bytecode.size ||
+                 !keeps_pieces(le_instr(bytecode, next_instr).op) ||
+                 mp->bytecode_position == next_instr ||
+                 po->pr.split_after_global ||
+                 (po->codelimit - po->code) < BUFFER_MARGIN) &&
+                !PsycoList_ForcePieces(po, NULL))
+                break;
             /* before the next merge point compares known types */
             Psyco_ForgetClasses(po);
             extra_assert(
