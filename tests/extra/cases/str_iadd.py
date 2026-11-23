@@ -128,18 +128,48 @@ def _vmsize():
                 return int(line.split()[1]) * 1024
 
 
-def append_fails(shared):
-    s = 'a' * (48 << 20)
-    keep = s if shared else None
+def _limit():
+    """Caps the address space just above what is in use; returns the limits
+    to put back."""
     soft, hard = resource.getrlimit(resource.RLIMIT_AS)
     resource.setrlimit(resource.RLIMIT_AS, (_vmsize() + (32 << 20), hard))
+    return soft, hard
+
+
+def append_fails():
+    s = 'a' * (48 << 20)
+    limits = _limit()
+    try:
+        # empty pieces first, which change nothing: CPython 3.11 and later
+        # then run this += in its specialised form, which unbinds 's' before
+        # the append, as 3.10's does when 's' holds the only other reference
+        for piece in ('',) * 100 + (PIECE,):
+            s += piece
+        out = 'appended'
+    except MemoryError:
+        out = 's' in sys._getframe().f_locals
+    finally:
+        resource.setrlimit(resource.RLIMIT_AS, limits)
+    try:
+        return out, len(s)
+    except UnboundLocalError as e:
+        return out, str(e)
+
+
+def append_fails_shared():
+    # run too few times for CPython 3.11 and later to specialise the +=,
+    # whose specialised form unbinds 's' even when it is shared; their
+    # generic form, as under any eval hook, and 3.10's keep it
+    s = 'a' * (48 << 20)
+    keep = s
+    limits = _limit()
     try:
         s += PIECE
         out = 'appended'
     except MemoryError:
         out = 's' in sys._getframe().f_locals
     finally:
-        resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
+        resource.setrlimit(resource.RLIMIT_AS, limits)
     try:
         return out, len(s), keep is s
     except UnboundLocalError as e:
@@ -159,5 +189,6 @@ CASES = [
     ('subclass_left', [(3,)], {}),
     ('cell', [(1000,)], {}),
     ('via_other', [(5,)], {}),
-    ('append_fails', [(False,), (True,)], {}),
+    ('append_fails', [()], {'warmup': (300, 'compiling the MemoryError path goes on for up to 200 rounds')}),
+    ('append_fails_shared', [()], {'warmup': (300, 'compiling the MemoryError path goes on for up to 200 rounds')}),
 ]

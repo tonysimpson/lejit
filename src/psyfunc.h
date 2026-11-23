@@ -22,7 +22,7 @@ psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
 EXTERNFN int
 psyco_tracing_on(PsycoObject *po);
 
-/* generator expressions fused with their consumer (pycheader.h GENEXPR_*) */
+/* generators fused with their consumer (pycheader.h GENEXPR_*) */
 EXTERNFN bool
 psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v);
 /* psyco_genexpr_fusable, and not while tracing nor once its fusing has

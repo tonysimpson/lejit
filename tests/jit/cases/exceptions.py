@@ -310,6 +310,11 @@ def arg_raise_from(e, cause):
     raise e from cause
 
 
+class MakesNone(BaseException):
+    def __new__(cls):
+        return None
+
+
 Z = ZeroDivisionError
 CASES += [
     ('arg_catch_as', '[(5, 2, Z), (5, 0, Z)]', {}),
@@ -323,7 +328,8 @@ CASES += [
     ('arg_loop_catch', '[(0, Z), (10, Z), (5, ValueError)]', {}),
     ('arg_not_a_class', '[(5, 0, 1), (5, 0, (Z, 1)), (5, 1, 1)]', {}),
     ('arg_raise_from', '[(ValueError(1), KeyError(2)), (ValueError, KeyError),'
-     ' (ValueError(1), None), (ValueError(1), 3)]', {}),
+     ' (ValueError(1), None), (ValueError(1), 3), (ValueError, MakesNone)]',
+     {}),
 ]
 
 
@@ -523,8 +529,8 @@ CASES += [
 
 # A message naming a class is made when compiling, behind a guard on the
 # class: renamed afterwards, the class is named by its new name, as CPython
-# names it at each raise. Any other change to the class fails the guard
-# too, and the message is still right.
+# names it at each raise. Any other change to the class leaves the message
+# as it was.
 import math
 
 
@@ -691,9 +697,6 @@ if HAS_EXCEPT_STAR:
     exec(EXCEPT_STAR_SRC)
     CASES += [
         ('except_star', [(1,)], {'interpreted': 'except*'}),
-        # CPython's except* allocates for a few hundred rounds before it
-        # levels off, by an amount that differs from process to process,
-        # plain as well
         ('except_star_caller', [(1,), (2,), (3,), (4,)],
-         {'warmup': (700, 'growth lasting a few hundred rounds, plain too')}),
+         {'clear_type_cache': 'split() looks derive up by a new name each time'}),
     ]

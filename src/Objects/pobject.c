@@ -525,7 +525,12 @@ cimpl_dict_get_known(PyObject *dict, PyObject *name, Py_hash_t hash)
 static bool
 has_managed_values(PyTypeObject *tp)
 {
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_HAS_INLINE_VALUES
+    /* emitted code reaches the values with a byte displacement */
+    return (tp->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
+           ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL &&
+           tp->tp_basicsize + LE_VALUES_ARRAY < 128;
+#elif LE_HAS_MANAGED_VALUES_POINTER
     return (tp->tp_flags & Py_TPFLAGS_MANAGED_DICT) &&
            ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL;
 #else
@@ -533,17 +538,37 @@ has_managed_values(PyTypeObject *tp)
 #endif
 }
 
-#if LE_HAS_MANAGED_VALUES_POINTER
-/* where such an instance's values pointer is (NULL once its dict is made),
-   and its dict pointer */
-#define MANAGED_VALUES_OFFSET (-4 * (long)sizeof(PyObject *))
-#define MANAGED_DICT_POINTER_OFFSET (-3 * (long)sizeof(PyObject *))
+#if LE_MANAGED_VALUES
+#if LE_HAS_INLINE_VALUES
+/* where such an instance's values are */
+static long
+values_offset(PyTypeObject *tp)
+{
+    return tp->tp_basicsize;
+}
+
+/* its values, or NULL where they are no longer its attributes */
+static PyObject **
+instance_values(PyObject *obj)
+{
+    char *values = (char *)obj + values_offset(Py_TYPE(obj));
+    return values[LE_VALUES_VALID] ? (PyObject **)(values + LE_VALUES_ARRAY)
+                                   : NULL;
+}
+#else
+/* where such an instance's values pointer is (NULL once its dict is made) */
+static long
+values_offset(PyTypeObject *tp)
+{
+    return -4 * (long)sizeof(PyObject *);
+}
 
 static PyObject **
 instance_values(PyObject *obj)
 {
-    return *(PyObject ***)((char *)obj + MANAGED_VALUES_OFFSET);
+    return *(PyObject ***)((char *)obj + values_offset(Py_TYPE(obj)));
 }
+#endif
 
 static le_dictkeys_t *
 class_keys(PyTypeObject *tp)
@@ -574,7 +599,7 @@ class_keys_index(le_dictkeys_t *keys, PyObject *name)
 static store_cache_t *
 store_cache(PyTypeObject *tp, PyObject *name);
 static code_t *load_miss_glue;
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
 static code_t *managed_load_miss_glue;
 #endif
 
@@ -630,13 +655,13 @@ instance_dict_get(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
 {
     vinfo_t *vd, *v;
     condition_code_t cc;
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
     if (has_managed_values(tp)) {
         inline_load_t s;
         if (!compute_vinfo(obj, po))
             return NULL;
         s.obj = obj;
-        s.dictoffset = MANAGED_VALUES_OFFSET;
+        s.dictoffset = values_offset(tp);
         s.keys = class_keys(tp);
         s.cache = store_cache(tp, name);
         s.hash = PyObject_Hash(name);
@@ -931,36 +956,36 @@ load_guard_set(attr_guard_t *guard, PyTypeObject *tp)
     guard->flags = version_tag_valid(tp) ? tp->tp_flags : 0;
 }
 
-/* The guards of the messages that name a class (pycompiler.c:
-   PycException_SetTypeFormat): one per (type, name), which any site may set
-   to the type as it is while it has that name. A rename changes the
-   version tag, so a site compiled with the old name fails its guard from
-   then on; so does any other change to the class until a site with the
-   same name is compiled again. A record (dict_record). */
+/* The guard of a message that names a class (pycompiler.c:
+   PycException_SetTypeFormat): the class's tp_name as it is now. A rename
+   points tp_name at the new name's text (typeobject.c:type_set_name),
+   which is all that every version does: 3.13 renames a class without a
+   new version tag. Each name a guard compares with is kept, so that its
+   text is never freed and its address never stands for another name. */
+#define TYPE_tp_name FMUT(CPY_FIELD(PyTypeObject, tp_name, NO_PREV_FIELD))
 DEFINEFN
 condition_code_t
 Psyco_TypeNameChanged(PsycoObject *po, PyTypeObject *tp)
 {
-    static PyObject *guards = NULL, *lookup_name;
-    PyObject *key;
-    attr_guard_t *guard;
-    bool made;
-    if (guards == NULL) {
-        guards = PyDict_New();
-        lookup_name = PyUnicode_InternFromString("__name__");
-        if (guards == NULL || lookup_name == NULL)
-            OUT_OF_MEMORY();
-    }
-    enable_version_tag(tp);
-    _PyType_Lookup(tp, lookup_name); /* assigns the version tag */
-    key = Py_BuildValue("(ky)", (unsigned long)tp, tp->tp_name);
-    if (key == NULL)
+    static PyObject *names = NULL;
+    PyObject *name = ((PyHeapTypeObject *)tp)->ht_name, *key;
+    vinfo_t *vtp, *vname;
+    condition_code_t cc;
+    if (names == NULL && (names = PyDict_New()) == NULL)
         OUT_OF_MEMORY();
-    guard = dict_record(guards, key, sizeof(attr_guard_t), true, &made);
+    key = PyLong_FromVoidPtr(name);
+    if (key == NULL || PyDict_SetItem(names, key, name) < 0)
+        OUT_OF_MEMORY();
     Py_DECREF(key);
-    load_guard_set(guard, tp);
-    psyco_owner_pin((PyObject *)tp); /* its address keys the record */
-    return type_changed(po, tp, guard);
+    psyco_owner_pin((PyObject *)tp); /* the code reads it by its address */
+    vtp = vinfo_new(CompileTime_New((long)tp));
+    vname = psyco_get_field(po, vtp, TYPE_tp_name);
+    vinfo_decref(vtp, po);
+    if (vname == NULL)
+        return CC_ERROR;
+    cc = integer_cmp_i(po, vname, (long)tp->tp_name, Py_NE);
+    vinfo_decref(vname, po);
+    return cc;
 }
 
 #if ALL_CHECKS
@@ -1293,7 +1318,7 @@ store_cache(PyTypeObject *tp, PyObject *name)
     c->name = name;
     c->version = &le_dict_version;
     c->refreshes = 0;
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
     c->nentries = -1;
 #endif
     if (((PyHeapTypeObject *)tp)->ht_cached_keys != NULL) /* a first hint */
@@ -1354,7 +1379,7 @@ cimpl_load_miss(PyObject *dict, store_cache_t *c)
     return v;
 }
 
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
 /* point 'c' at the class keys' entry 'ix' of its name, or (-1) record
    that they don't hold it at their present size */
 static void
@@ -1379,8 +1404,7 @@ cimpl_managed_load_miss(PyObject *obj, store_cache_t *c)
     le_dictkeys_t *keys = class_keys(Py_TYPE(obj));
     Py_ssize_t ix;
     if (values == NULL) {
-        PyObject *dict =
-            *(PyObject **)((char *)obj + MANAGED_DICT_POINTER_OFFSET);
+        PyObject *dict = *(PyObject **)((char *)obj + LE_MANAGED_DICT_OFFSET);
         if (dict == NULL)
             return NULL;
         return cimpl_dict_get_known(dict, c->name, PyObject_Hash(c->name));
@@ -1512,12 +1536,13 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
        where keys have a kind */
     s.fill = !LE_HAS_DICT_KEYS_KIND && init_store(po, obj);
     s.miss_glue = store_miss_glue;
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
     if (has_managed_values(tp)) { /* values with no dict, nor its tracking */
-        s.dictoffset = MANAGED_VALUES_OFFSET;
+        s.dictoffset = values_offset(tp);
         s.keys = class_keys(tp);
         s.gc = STORE_GC_NONE;
-        s.fill = init_store(po, obj);
+        /* FILL keeps the insertion order of values behind a pointer only */
+        s.fill = !LE_HAS_INLINE_VALUES && init_store(po, obj);
         s.miss_glue = managed_store_miss_glue;
     }
 #endif
@@ -1929,7 +1954,7 @@ psy_object_init(void)
     gen_object_init();
     store_miss_glue = psyco_aligned_call_glue(cimpl_store_miss);
     load_miss_glue = psyco_aligned_call_glue(cimpl_load_miss);
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
     managed_load_miss_glue = psyco_aligned_call_glue(cimpl_managed_load_miss);
     managed_store_miss_glue =
         psyco_aligned_call_glue(cimpl_managed_store_miss);
