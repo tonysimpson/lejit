@@ -7225,6 +7225,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 case CALL_INTRINSIC_1:
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
                     if (oparg == INTRINSIC_STOPITERATION_ERROR) {
+                        vinfo_t *x;
                         extra_assert(po->pr.co->co_flags & CO_GENERATOR);
                         x = psyco_generic_call(
                             po, cimpl_stopiteration_error,
