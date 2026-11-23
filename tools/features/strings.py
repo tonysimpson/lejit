@@ -85,6 +85,13 @@ def P():
     return {'k': 'P'}
 
 
+def D():
+    """A double shown by repr, %s of the C string LeJIT makes of it. The probe
+    gets an int, makes its double from it and says what it shows in
+    shown[i]."""
+    return {'k': 'D'}
+
+
 ENTRIES = []
 
 
@@ -122,7 +129,17 @@ def frag(name, what, parent, hole, exc, code, args):
 
 # math
 msg('MATH_DOMAIN_ERROR', 'a math function given an argument outside its domain',
-    'ValueError', 'import math; math.sqrt(-1.0)', text=True)
+    'ValueError', 'import math; math.fmod(1.0, 0.0)', text=True)
+# where a function's domain error names its argument
+_MATH_NAMES = 'says("import math; math.sqrt(-1.5)").endswith("-1.5")'
+for _f, _x in [('sqrt', '-(args[0] + 0.5)'), ('acos', 'args[0] + 1.5'),
+               ('asin', 'args[0] + 1.5'), ('cos', '(-1) ** args[0] * math.inf'),
+               ('sin', '(-1) ** args[0] * math.inf'),
+               ('tan', '(-1) ** args[0] * math.inf')]:
+    msg('MATH_DOMAIN_ERROR_' + _f.upper(),
+        'math.%s given an argument outside its domain' % _f, 'ValueError',
+        'import math\nx = %s\nshown[0] = repr(x)\nmath.%s(x)' % (_x, _f),
+        [D()], requires=_MATH_NAMES)
 msg('MATH_RANGE_ERROR', "a math function's result too large for a float",
     'OverflowError', 'import math; math.exp(1000.0)', text=True)
 
@@ -506,6 +523,13 @@ def newmod(name, **attrs):
     MODS.append(name)
     return m
 
+def says(src):
+    try:
+        exec(src, {})
+    except Exception as x:
+        return str(x)
+    return ""
+
 def compiles(src):
     try:
         compile(src, "<probe>", "exec")
@@ -575,7 +599,8 @@ def run_probe(e, shape, run):
 
 result = {}
 for e in entries:
-    if e["requires"] and not eval(e["requires"], {"compiles": compiles}):
+    if e["requires"] and not eval(e["requires"], {"compiles": compiles,
+                                               "says": says}):
         result[e["name"]] = None
         continue
     result[e["name"]] = [[run_probe(e, s, run) for run in range(3)]
