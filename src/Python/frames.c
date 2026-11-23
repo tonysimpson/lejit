@@ -263,7 +263,7 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
                          int count)
 {
     PyCodeObject *co = le_pyframe_code(f);
-    PyObject **locals = le_frame_args(le_frame_of(f));
+    le_frame_t *frame = le_frame_of(f);
     int n = le_code_nlocalsplus(co);
     int i;
     /* an emulated frame isn't executing, and the first write is from 0 */
@@ -275,20 +275,18 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
         if (keep == NULL)
             return; /* the locals stay as they were */
         for (i = 0; i < n; i++) {
-            keep[i] = locals[i];
+            keep[i] = LE_FRAME_WORD(frame, i);
             Py_XINCREF(keep[i]);
         }
         fr->entry_locals = keep;
         fr->n_entry_locals = n;
     }
     for (i = 0; i < count && start + i < n; i++) {
-        PyObject *old = locals[start + i];
         if (values[i] == LE_LOCAL_UNKNOWN)
             continue;
         /* NULL: unbound, or deleted since the last write */
         Py_XINCREF(values[i]);
-        locals[start + i] = values[i];
-        Py_XDECREF(old);
+        le_frame_word_set(frame, start + i, values[i]);
     }
 }
 
@@ -862,9 +860,12 @@ psyco_emulate_frame(PyObject *o)
                 le_pyframe_stack(result)[1] = (PyObject *)tag;
             }
             else {
-                slot_locals(psyco_next_stack_frame((stack_frame_info_t **)tag),
-                            (PyCodeObject *)co,
-                            le_frame_args(le_frame_of(result)));
+                if (slot_locals(
+                        psyco_next_stack_frame((stack_frame_info_t **)tag),
+                        (PyCodeObject *)co,
+                        le_frame_args(le_frame_of(result))))
+                    le_frame_words_own(le_frame_of(result),
+                                       n_locals_plus((PyCodeObject *)co));
             }
         }
         return result;
@@ -1845,6 +1846,7 @@ root_copy(PyFrameObject *f)
         Py_DECREF(c);
         return f;
     }
+    le_frame_words_own(le_frame_of(c), n_locals_plus(le_pyframe_code(f)));
     o = pvisitframes(visit_root_lasti, f);
     le_frame_set_lasti(le_frame_of(c),
                        o == NULL ? -1 : le_lasti_of((int)PyLong_AsLong(o)));
@@ -2300,7 +2302,7 @@ PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack)
 {
     PyFrameObject *f = st->f, *cur;
-    PyObject **locals = le_frame_args(le_frame_of(f));
+    le_frame_t *frame = le_frame_of(f);
     PyThreadState *ts = PyThreadState_GET();
     int nlocals = st->nvalues - nstack;
     int i, marked;
@@ -2317,12 +2319,12 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     /* the old locals go only once all the new ones are in: one may hold
        the last reference to another's value */
     for (i = 0; i < nlocals; i++) {
-        PyObject *old = locals[i];
-        locals[i] = st->values[i];
+        PyObject *old = le_frame_word_take(frame, i);
+        le_frame_word_put(frame, i, st->values[i]);
         st->values[i] = old;
     }
     for (i = 0; i < nstack; i++)
-        le_pyframe_stack(f)[i] = st->values[nlocals + i];
+        le_frame_word_put(frame, nlocals + i, st->values[nlocals + i]);
     le_frame_set_stack_depth(f, (int)nstack);
     le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
 #if !LE_HAS_EXCEPTION_TABLE
@@ -2333,8 +2335,15 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     if (st->catcher != NULL) {
         /* another frame object stood for the call: it keeps the locals as
            they are now */
-        if (st->catcher != f)
+        if (st->catcher != f) {
+#if LE_HAS_FRAME_STACKREFS
+            PyObject *locals[nlocals > 0 ? nlocals : 1];
+            for (i = 0; i < nlocals; i++) locals[i] = LE_FRAME_WORD(frame, i);
+#else
+            PyObject **locals = le_frame_args(frame);
+#endif
             psyco_frame_write_locals(st->catcher, 0, locals, nlocals);
+        }
         Py_DECREF(st->catcher);
     }
 

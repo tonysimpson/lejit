@@ -48,9 +48,19 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
         PyTraceBack_Here(le_frame_object(f));
         result = NULL;
     }
-    else
-        result = psyco_processor_run((CodeBufferObject *)codebuf,
-                                     (long *)le_frame_args(f), &finfo);
+    else {
+#if LE_HAS_FRAME_STACKREFS
+        /* compiled code runs on the words as objects, which the frame
+           holds: a tagged word is the object less its tag bit */
+        int k, n = RUN_ARGC(codebuf);
+        PyObject *args[n > 0 ? n : 1];
+        for (k = 0; k < n; k++) args[k] = LE_FRAME_WORD(f, k);
+#else
+        PyObject **args = le_frame_args(f);
+#endif
+        result = psyco_processor_run((CodeBufferObject *)codebuf, (long *)args,
+                                     &finfo);
+    }
 #if LE_HAS_EVAL_FRAME_POPS
     if (fr.frame == NULL) {
         /* ceval ran it on to its end and popped it (frames.c:
