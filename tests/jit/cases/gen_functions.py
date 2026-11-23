@@ -393,3 +393,15 @@ CASES = [
     ('many_types', [(2,)], {}),
     ('tracing', [(4,)], {}),
 ]
+
+
+def stored_locals(n):
+    # a generator a local holds is made as it is stored, so the frame's
+    # locals show it
+    g = counted(n)
+    h = (x for x in range(n))
+    loc = sys._getframe().f_locals
+    return sorted(loc), type(loc['g']).__name__, list(g), list(h)
+
+
+CASES.append(('stored_locals', [(3,)], {}))
