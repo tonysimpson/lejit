@@ -401,9 +401,11 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
     le_resume_point_t *p;
     le_resume_entry_t *e;
     CodeBufferObject *codebuf;
-    int nlocals, nplus, nstack, i;
+    int nplus, nstack, i;
+#if !LE_HAS_FRAME_STACKREFS
+    int nlocals = le_code_nlocals(co);
+#endif
     uint64_t nulls = 0;
-    nlocals = le_code_nlocals(co);
     nplus = le_code_nlocalsplus(co);
     nstack = le_frame_stack_depth(f);
     /* as le_code_to_run; and ceval's test of eval_breaker as it resumes
