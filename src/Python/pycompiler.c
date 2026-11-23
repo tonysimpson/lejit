@@ -4089,6 +4089,7 @@ exit_function(PsycoObject *po)
 {
     vinfo_t **locals_plus;
     vinfo_t **pp;
+    long i;
     Source retsource;
     long mode = psyco_generator_mode(po); /* before the locals go */
     extra_assert(!po->pr.is_inlining);
@@ -4097,8 +4098,9 @@ exit_function(PsycoObject *po)
     if (!catcher_flush(po, true))
         return NULL;
     /* clear the locals, first to last as frame_dealloc does (finalisers run
-       in that order), then the stack. On a return CPython has popped the
-       frame first. */
+       in that order), then the stack; where FRAME_CLEARED_LAST_FIRST, the
+       stack top down, then the locals last to first. On a return CPython
+       has popped the frame first. */
     locals_plus = LOC_LOCALS_PLUS;
     for (pp = locals_plus; PycException_Is(po, &EReturn) &&
                            pp < po->vlocals.items + po->vlocals.count;
@@ -4109,11 +4111,15 @@ exit_function(PsycoObject *po)
             END_CODE
             break;
         }
-    for (pp = locals_plus; pp < po->vlocals.items + po->vlocals.count; pp++)
+    for (i = 0; locals_plus + i < po->vlocals.items + po->vlocals.count; i++) {
+        pp = LE_HAS_FRAME_CLEARED_LAST_FIRST
+                 ? po->vlocals.items + po->vlocals.count - 1 - i
+                 : locals_plus + i;
         if (*pp != NULL) {
             vinfo_decref(*pp, po);
             *pp = NULL;
         }
+    }
 
     if (PycException_Is(po, &EReturn)) {
         /* load the return value */
