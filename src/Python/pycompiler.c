@@ -3988,6 +3988,7 @@ exit_function(PsycoObject *po)
     vinfo_t **locals_plus;
     vinfo_t **pp;
     Source retsource;
+    long mode = psyco_generator_mode(po); /* before the locals go */
     extra_assert(!po->pr.is_inlining);
 
     /* the frame that stood for the call keeps its locals as they end */
@@ -4029,9 +4030,10 @@ exit_function(PsycoObject *po)
     else {
         if (!compute_and_raise_exception(po))
             return NULL;
-        /* PEP 479, as gen_send_ex: StopIteration leaving a generator (a fused
-           generator) becomes RuntimeError */
-        if ((po->pr.co->co_flags & CO_GENERATOR) &&
+        /* PEP 479, as gen_send_ex: StopIteration leaving a fused generator
+           becomes RuntimeError. A resumable one's gen_send_ex does it, once
+           the frame has gone, so the traceback has no more entries. */
+        if (mode != 0 && mode != GENEXPR_RESUMABLE &&
             !psyco_generic_call(po, cimpl_generator_stop, CfNoReturnValue, ""))
             return NULL;
         clear_pseudo_exception(po);
@@ -4365,13 +4367,26 @@ resume_if_tracing(PsycoObject *po, int next_instr, int *unwound)
 }
 
 DEFINEFN
+long
+psyco_generator_mode(PsycoObject *po)
+{
+    PyCodeObject *co = po->pr.co;
+    if (!(co->co_flags & CO_GENERATOR))
+        return 0;
+    return CompileTime_Get(po->vlocals.items[GENEXPR_SLOT_MODE(co)]->source)
+        ->value;
+}
+
+DEFINEFN
 bool
 psyco_can_go_interpreted(PsycoObject *po)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int i, nstack = STACK_LEVEL();
-    if (po->pr.co->co_flags & (CO_GENERATOR | CO_COROUTINE |
-                               CO_ITERABLE_COROUTINE | CO_ASYNC_GENERATOR))
+    if ((po->pr.co->co_flags & (CO_COROUTINE | CO_ITERABLE_COROUTINE |
+                                CO_ASYNC_GENERATOR)) ||
+        ((po->pr.co->co_flags & CO_GENERATOR) &&
+         psyco_generator_mode(po) != GENEXPR_RESUMABLE))
         return false;
     for (i = 0; i < nstack; i++)
         if (is_pseudo_exception_tuple(stack_a[i]))
@@ -6248,7 +6263,10 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int *next_instr_io,
             int i, stack_to_pop, null = 1;
             PyObject *kwnames = NULL;
             if (!psyco_knowntobe(NTOP(oparg + 2), 0)) {
-                extra_assert(opcode == CALL);
+                /* or a resumed generator's method under its self, as
+                   ceval's LOAD_METHOD left them */
+                extra_assert(opcode == CALL || psyco_generator_mode(po) ==
+                                                   GENEXPR_RESUMABLE);
                 null = 0;
                 oparg++;
             }
@@ -6309,6 +6327,70 @@ out:
     return ended;
 }
 
+#if LE_RESUMES_GENERATORS
+#define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
+
+/* A resumable generator's YIELD_VALUE at 'at': its frame (the
+   GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it, with
+   the locals and the stack items under the value, each a reference it
+   takes, and the run ends returning the value (EReturn), with no block
+   run. The cells and free variables stay the frame's. Its caught
+   exception's frame is let go first, given the locals (catcher_flush). */
+static void
+yield_resumable(PsycoObject *po, int at)
+{
+    vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+    PyCodeObject *co = po->pr.co;
+    int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
+    int nstack = STACK_LEVEL() - 1, i;
+    vinfo_t *frame = po->vlocals.items[GENEXPR_SLOT_ACC(co)], *v;
+    le_gen_pause_t *pause;
+    if (!catcher_flush(po, true))
+        return;
+    /* every item real before anything is stored: making one may call */
+    for (i = 0; i < nlocals + nstack; i++) {
+        v = i < nlocals ? LOC_LOCALS_PLUS[i] : stack_a[i - nlocals];
+        if (v != NULL && !psyco_knowntobe(v, 0) && !compute_vinfo(v, po))
+            return;
+    }
+    pause = psyco_owner_alloc(sizeof(le_gen_pause_t) +
+                              po->pr.iblock * sizeof(PyTryBlock));
+    pause->lasti = le_lasti_of(at);
+    pause->nstack = nstack;
+    pause->iblock = po->pr.iblock;
+    for (i = 0; i < po->pr.iblock; i++) {
+        pause->blocks[i].b_type = po->pr.blockstack[i].b_type;
+        pause->blocks[i].b_handler =
+            le_lasti_of(po->pr.blockstack[i].b_handler);
+        pause->blocks[i].b_level = po->pr.blockstack[i].b_level;
+    }
+    if (!psyco_generic_call(po, psyco_gen_pause, CfNoReturnValue | CfNoPython,
+                            "vl", frame, (long)pause))
+        return;
+    for (i = 0; i < nlocals + nstack; i++) {
+        vinfo_t **slot = i < nlocals ? &LOC_LOCALS_PLUS[i]
+                                     : &stack_a[i - nlocals];
+        v = *slot;
+        /* an unbound local or a NULL item: the slot is already empty */
+        if (v != NULL && !psyco_knowntobe(v, 0)) {
+            if (!psyco_put_nth_field(po, frame, FRAME_localsplus,
+                                     i < nlocals ? i : nplus + i - nlocals, v))
+                return;
+            consume_reference(po, v);
+        }
+        if (v != NULL) {
+            vinfo_decref(v, po);
+            *slot = NULL;
+        }
+    }
+    v = stack_a[nstack];
+    stack_a[nstack] = NULL;
+    po->pr.stack_level = 0;
+    po->pr.iblock = 0;
+    PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
+}
+#endif
+
 /* returning, yielding and making functions */
 static int
 compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
@@ -6330,7 +6412,10 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
         case RETURN_VALUE:
             POP(v);
         return_value:
-            if (co->co_flags & CO_GENERATOR) {
+            /* a resumable generator returns its value, which gen_send_ex
+               makes StopIteration's */
+            if ((co->co_flags & CO_GENERATOR) &&
+                psyco_generator_mode(po) != GENEXPR_RESUMABLE) {
                 /* a fused generator: return the consumer's result; the
                  * generator's own return value is dropped, as the
                  * consumers drop StopIteration's value */
@@ -6359,9 +6444,10 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             break;
 
         case GEN_START:
-            /* only in a generator fused with its consumer, which is
-               entered with nothing pushed: no value sent to
-               pop */
+            /* a resumable generator pops the None gen_send_ex pushed; one
+               fused with its consumer is entered with nothing pushed */
+            if (psyco_generator_mode(po) == GENEXPR_RESUMABLE)
+                POP_DECREF();
             goto fine;
 
         case RETURN_GENERATOR:
@@ -6372,7 +6458,7 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             goto fine;
 
         case YIELD_VALUE: {
-            /* only in a generator fused with its consumer (GENEXPR_*): do the
+            /* in a generator fused with its consumer (GENEXPR_*): do the
                consumer's step, then push the value send() would have, for the
                POP_TOP that follows */
             int slot = GENEXPR_SLOT_MODE(co);
@@ -6380,6 +6466,12 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                 CompileTime_Get(po->vlocals.items[slot]->source)->value;
             vinfo_t *acc = po->vlocals.items[slot + 1];
             v = TOP();
+#if LE_RESUMES_GENERATORS
+            if (mode == GENEXPR_RESUMABLE) {
+                yield_resumable(po, next_instr - LE_UNIT);
+                break;
+            }
+#endif
             if (mode == GENEXPR_LIST) {
                 if (!PsycoList_Append(po, acc, v))
                     break;

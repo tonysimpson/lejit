@@ -71,6 +71,17 @@ EXTERNFN void
 psyco_frame_catcher_end(PyObject **word);
 EXTERNFN void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
+#if LE_RESUMES_GENERATORS
+/* A resumable generator's frame pausing at a yield (pycompiler.c), as
+   ceval's YIELD_VALUE leaves it: its f_lasti, stack depth and blocks. The
+   compiled code then stores its locals and stack items in it. */
+typedef struct {
+    int lasti, nstack, iblock;
+    PyTryBlock blocks[1];
+} le_gen_pause_t;
+EXTERNFN void
+psyco_gen_pause(PyFrameObject *f, const le_gen_pause_t *p);
+#endif
 /* the frame 'f' has just run and outlives its call (le_frame_outlives) */
 EXTERNFN void
 psyco_frame_returned(le_frame_t *f);

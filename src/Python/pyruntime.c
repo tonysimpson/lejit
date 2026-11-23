@@ -92,10 +92,11 @@ le_eval_breaker_handler(void)
    test after each call instead. -1 with the exception set, for the caller
    to give the frame a traceback entry, as ceval's error path would. */
 int
-le_eval_breaker_at_entry(PyCodeObject *co)
+le_eval_breaker_at_entry(PyCodeObject *co, int position)
 {
     PyThreadState *ts = PyThreadState_GET();
     (void)co;
+    (void)position;
     if (!(_Py_atomic_load_uintptr_relaxed(&ts->eval_breaker) &
           _PY_EVAL_EVENTS_MASK))
         return 0;
@@ -192,9 +193,10 @@ le_eval_breaker_handler(void)
    test after each call instead. -1 with the exception set, for the caller
    to give the frame a traceback entry, as ceval's error path would. */
 int
-le_eval_breaker_at_entry(PyCodeObject *co)
+le_eval_breaker_at_entry(PyCodeObject *co, int position)
 {
     (void)co;
+    (void)position;
     if (!_Py_atomic_load_relaxed(&le_ceval2()->eval_breaker))
         return 0;
     return le_eval_breaker_handler();
@@ -274,18 +276,19 @@ le_eval_breaker_handler(void)
     return 0;
 }
 
-/* The same test before a frame's first instruction, for compiled code
-   entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
-   instructions ceval's loop top skips. Compiled callers test after each
+/* The same test before the instruction at 'position' (bytes) where
+   compiled code entered through the eval hook starts (eval_hook.c:
+   LeCode_Run, LeGen_Run), skipping the instructions ceval's loop top
+   skips. Compiled callers test after each
    call instead. -1 with the exception set, for the caller to give the
    frame a traceback entry, as ceval's error path would. */
 int
-le_eval_breaker_at_entry(PyCodeObject *co)
+le_eval_breaker_at_entry(PyCodeObject *co, int position)
 {
     int op;
     if (!_Py_atomic_load_relaxed(&le_ceval2()->eval_breaker))
         return 0;
-    op = le_op(le_code(co), 0);
+    op = le_op(le_code(co), position);
     if (op == SETUP_FINALLY || op == SETUP_WITH || op == BEFORE_ASYNC_WITH ||
         op == YIELD_FROM)
         return 0;
@@ -354,18 +357,19 @@ le_eval_breaker_handler(void)
     return 0;
 }
 
-/* The same test before a frame's first instruction, for compiled code
-   entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
-   instructions ceval's loop top skips. Compiled callers test after each
+/* The same test before the instruction at 'position' (bytes) where
+   compiled code entered through the eval hook starts (eval_hook.c:
+   LeCode_Run, LeGen_Run), skipping the instructions ceval's loop top
+   skips. Compiled callers test after each
    call instead. -1 with the exception set, for the caller to give the
    frame a traceback entry, as ceval's error path would. */
 int
-le_eval_breaker_at_entry(PyCodeObject *co)
+le_eval_breaker_at_entry(PyCodeObject *co, int position)
 {
     int op;
     if (!_Py_atomic_load_relaxed(&_PyRuntime.ceval.eval_breaker))
         return 0;
-    op = le_op(le_code(co), 0);
+    op = le_op(le_code(co), position);
     if (op == SETUP_FINALLY || op == SETUP_WITH || op == BEFORE_ASYNC_WITH ||
         op == YIELD_FROM)
         return 0;
@@ -421,18 +425,19 @@ le_eval_breaker_handler(void)
     return 0;
 }
 
-/* The same test before a frame's first instruction, for compiled code
-   entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
-   instructions ceval's loop top skips. Compiled callers test after each
+/* The same test before the instruction at 'position' (bytes) where
+   compiled code entered through the eval hook starts (eval_hook.c:
+   LeCode_Run, LeGen_Run), skipping the instructions ceval's loop top
+   skips. Compiled callers test after each
    call instead. -1 with the exception set, for the caller to give the
    frame a traceback entry, as ceval's error path would. */
 int
-le_eval_breaker_at_entry(PyCodeObject *co)
+le_eval_breaker_at_entry(PyCodeObject *co, int position)
 {
     int op;
     if (!_Py_atomic_load_relaxed(&_PyRuntime.ceval.eval_breaker))
         return 0;
-    op = le_op(le_code(co), 0);
+    op = le_op(le_code(co), position);
     if (op == SETUP_FINALLY || op == SETUP_WITH || op == BEFORE_ASYNC_WITH ||
         op == YIELD_FROM)
         return 0;

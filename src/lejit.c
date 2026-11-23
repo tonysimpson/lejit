@@ -159,6 +159,11 @@ static PyObject *record_died_fn = NULL;
 DEFINEFN void
 le_code_extra_free(le_code_extra_t *x)
 {
+    int i, j;
+    for (i = 0; i < x->nresumes; i++)
+        for (j = 0; j < x->resumes[i].count; j++)
+            Py_XDECREF(x->resumes[i].entries[j].code);
+    PyMem_Free(x->resumes);
     psyco_owner_release(&x->owner, x->merge_points, x->entry_point);
     psyco_owner_untrack(x); /* after: releasing can keep into the owner */
     Py_DECREF(RECORD_OF(x));

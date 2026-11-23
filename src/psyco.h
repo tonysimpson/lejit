@@ -917,6 +917,27 @@ typedef struct le_owner_s {
 /* What LeJIT keeps per code object, on its weak references (lejit.c): found by
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
+/* Generator bodies run compiled, resumed through the eval hook
+   (eval_hook.c:LeGen_Run), where a paused generator's state is its frame
+   object's */
+#define LE_RESUMES_GENERATORS (!LE_HAS_INTERPRETER_FRAME)
+
+/* A resumable generator's compiled entries at one resume point, one per
+   set of NULL locals and stack items (a bit each, locals first), compiled
+   when first needed, at most LE_RESUME_ENTRIES */
+#define LE_RESUME_ENTRIES 4
+typedef struct {
+    uint64_t nulls;
+    PyObject *code;     /* codebuf, Py_None if compiling failed; owned */
+    PyObject *globals;  /* as entry_globals and entry_builtins */
+    PyObject *builtins;
+} le_resume_entry_t;
+typedef struct {
+    int lasti; /* f_lasti there, -1 for the start */
+    int count;
+    le_resume_entry_t entries[LE_RESUME_ENTRIES];
+} le_resume_point_t;
+
 typedef struct le_code_extra_s {
     PyObject *merge_points;   /* capsule, Py_None if unsupported, NULL if not
                                  built yet; owned */
@@ -931,6 +952,8 @@ typedef struct le_code_extra_s {
                                  address (psyfunc.c:psyco_save_inline_po) */
     le_owner_t owner;         /* what its compiled code holds */
     char counted;             /* in the owner scan's count (codemanager.c) */
+    int nresumes;             /* a resumable generator's points: */
+    le_resume_point_t *resumes; /* one per yield and the start, or NULL */
 } le_code_extra_t;
 /* the record for 'co', made on first use; NULL with an exception set */
 EXTERNFN le_code_extra_t *

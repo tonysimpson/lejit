@@ -189,8 +189,15 @@ le_code_info(PyObject *self, PyObject *co)
         return PyUnicode_FromString("not seen");
     if (e->merge_points == Py_None)
         return PyUnicode_FromString("unsupported");
-    if (e->entry_point == NULL || e->entry_point == Py_None)
+    if (e->entry_point == NULL || e->entry_point == Py_None) {
+        /* a resumable generator's body: an entry at its start or a yield */
+        int i, j;
+        for (i = 0; i < e->nresumes; i++)
+            for (j = 0; j < e->resumes[i].count; j++)
+                if (e->resumes[i].entries[j].code != Py_None)
+                    return PyUnicode_FromString("compiled");
         return PyUnicode_FromString("no entry point");
+    }
     return PyUnicode_FromString("compiled");
 }
 

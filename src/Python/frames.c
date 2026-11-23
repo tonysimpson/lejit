@@ -276,6 +276,36 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
     }
 }
 
+#if LE_RESUMES_GENERATORS
+/* What Python wrote in the locals while the body ran
+   (psyco_frame_write_locals) is released as the run ends
+   (psyco_frame_start_unregister), not here, where it could run code: the
+   slots take the compiled code's values after this. */
+DEFINEFN void
+psyco_gen_pause(PyFrameObject *f, const le_gen_pause_t *p)
+{
+    FrameRuntime *fr = psyco_frame_start_get(f);
+    if (fr != NULL && fr->entry_locals != NULL) {
+        PyObject **locals = le_frame_args(f);
+        int i, n = le_code_nlocals(le_frame_code(f));
+        PyObject **keep = PyMem_Realloc(
+            fr->entry_locals, (fr->n_entry_locals + n) * sizeof(PyObject *));
+        for (i = 0; i < n; i++) {
+            if (locals[i] == NULL)
+                continue;
+            if (keep != NULL)
+                keep[fr->n_entry_locals++] = locals[i];
+            else
+                Py_DECREF(locals[i]); /* out of memory */
+            locals[i] = NULL;
+        }
+        if (keep != NULL)
+            fr->entry_locals = keep;
+    }
+    le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
+}
+#endif
+
 /* The callee-saved registers of the compiled frame whose slot is
    'slot', as it called C, which keeps them or saves them in its frame:
    found by unwinding the C frames from here down to it. LeJIT's code has no

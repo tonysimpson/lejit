@@ -874,7 +874,7 @@ _build_merge_points(PyCodeObject *co, int module)
     le_code_t c;
     int pos, opcode = -1, oparg;
     co_report_t *report;
-    int reads_class, bad = 0;
+    int reads_class, resumable, bad = 0;
 
     /* XXX tony: all these not supported/buggy currently */
     if (module) {
@@ -888,11 +888,13 @@ _build_merge_points(PyCodeObject *co, int module)
 #endif
     if (le_code_prepare(co) < 0)
         return NULL;
-    /* a generator compiles only into its consumer
-       (psyfunc.c:psyco_call_genexpr): the eval hook never runs generator
-       code, and psyco_call_pyfunc makes a pending generator of it */
+    /* a generator compiles into its consumer (psyfunc.c:psyco_call_genexpr)
+       or, resumable, as its own body run through the eval hook
+       (eval_hook.c:LeGen_Run); psyco_call_pyfunc makes a pending generator
+       of a fusable one */
+    resumable = psyco_is_resumable_generator(co);
     if (co->co_flags & (CO_COROUTINE | CO_GENERATOR | CO_ASYNC_GENERATOR) &&
-        !psyco_is_fusable_generator(co)) {
+        !resumable && !psyco_is_fusable_generator(co)) {
         goto not_ok;
     }
     /* zero-argument super() reads the __class__ cell and the first
@@ -930,6 +932,8 @@ _build_merge_points(PyCodeObject *co, int module)
         goto not_ok;
     if (report == NULL)
         return NULL;
+    if (resumable)
+        report->flags |= MP_FLAGS_RESUMABLE;
     {
         PyObject *capsule = PyCapsule_New(report, NULL, report_destructor);
         if (capsule == NULL)
@@ -1014,6 +1018,104 @@ psyco_is_fusable_generator(PyCodeObject *co)
             return 0;
     }
     return yields == 1 && !yield_has_handler(co, c, yield);
+}
+
+#if LE_RESUMES_GENERATORS
+/* whether a YIELD_VALUE can run while an exception handler's block is
+   live: reached by plain control flow from a handler's start (a SETUP_*
+   target) before the handler ends, by POP_EXCEPT or by raising again.
+   Over-approximate where a handler's end falls through (END_FINALLY). */
+static int
+yields_in_handler(le_code_t c)
+{
+    int units = c.size / LE_UNIT, top = 0, pos;
+    unsigned char seen[units + 1];
+    int work[units + 1];
+    memset(seen, 0, units + 1);
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        pos = in.next;
+        switch (in.op) {
+            case SETUP_EXCEPT:
+            case SETUP_FINALLY:
+            case SETUP_WITH:
+            case SETUP_ASYNC_WITH: {
+                int h = le_jump_target(c, in) / LE_UNIT;
+                if (!seen[h]) {
+                    seen[h] = 1;
+                    work[top++] = h;
+                }
+            }
+        }
+    }
+    while (top > 0) {
+        le_instr_t in = le_instr(c, work[--top] * LE_UNIT);
+        int next[2], n = 0, k;
+        switch (in.op) {
+            case YIELD_VALUE:
+                return 1;
+            /* the handler's end, or a jump out of it that unwinds it */
+            case POP_EXCEPT:
+            case RETURN_VALUE:
+            case RAISE_VARARGS:
+            case BREAK_LOOP:
+#if LE_HAS_OPCODE_RERAISE
+            case RERAISE:
+#endif
+                break;
+            case JUMP_ABSOLUTE:
+            case JUMP_FORWARD:
+            case CONTINUE_LOOP:
+                next[n++] = le_jump_target(c, in);
+                break;
+            default:
+                if (LE_IS_JABS(in.op) || LE_IS_JREL(in.op))
+                    next[n++] = le_jump_target(c, in);
+                next[n++] = in.next;
+        }
+        for (k = 0; k < n; k++) {
+            int u = next[k] / LE_UNIT;
+            if (next[k] < c.size && !seen[u]) {
+                seen[u] = 1;
+                work[top++] = u;
+            }
+        }
+    }
+    return 0;
+}
+#endif
+
+/* the code of a generator whose body can run compiled, resumed at each
+   yield through the eval hook (eval_hook.c:LeGen_Run), its state kept in
+   its frame between resumes: a plain generator with no yield from, and no
+   yield inside an exception handler, whose stack and blocks LeJIT keeps
+   apart from the frame's (an EXCEPT_HANDLER block, a finally block's
+   pseudo-exception) */
+DEFINEFN int
+psyco_is_resumable_generator(PyCodeObject *co)
+{
+#if LE_RESUMES_GENERATORS
+    le_code_t c;
+    int pos;
+    if ((co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR |
+                         CO_ITERABLE_COROUTINE)) != CO_GENERATOR)
+        return 0;
+    if (le_code_prepare(co) < 0) {
+        PyErr_Clear(); /* out of memory: runs interpreted */
+        return 0;
+    }
+    c = le_code(co);
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        pos = in.next;
+        if (in.op == YIELD_FROM || in.op == GET_YIELD_FROM_ITER)
+            return 0;
+    }
+    return !yields_in_handler(c);
+#else
+    (void)co;
+    return 0;
+#endif
 }
 
 DEFINEFN PyObject *
