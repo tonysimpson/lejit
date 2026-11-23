@@ -253,15 +253,21 @@ psyco_frame_start_get(le_frame_t *f)
 DEFINEFN void
 psyco_frame_start_unregister(FrameRuntime *fr)
 {
-    FrameRuntime **p = &frame_runs;
     int i;
     /* fr is the innermost unless the C stack was switched under it */
-    while (*p != fr) p = &(*p)->next;
-    *p = fr->next;
+    if (frame_runs == fr)
+        frame_runs = fr->next;
+    else {
+        FrameRuntime **p = &frame_runs;
+        while (*p != fr) p = &(*p)->next;
+        *p = fr->next;
+    }
 #ifdef PyFrameLocalsProxy_Check
     if (fr->exposed)
         psyco_frames_exposed--;
 #endif
+    if (fr->entry_locals == NULL)
+        return;
     for (i = 0; i < fr->n_entry_locals; i++) Py_XDECREF(fr->entry_locals[i]);
     PyMem_Free(fr->entry_locals);
 }
@@ -275,7 +281,7 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
                          int count)
 {
     PyCodeObject *co = le_pyframe_code(f);
-    PyObject **locals = le_frame_args(le_frame_of(f));
+    le_frame_t *frame = le_frame_of(f);
     int n = le_code_nlocalsplus(co);
     int i;
     /* an emulated frame isn't executing, and the first write is from 0 */
@@ -287,22 +293,55 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
         if (keep == NULL)
             return; /* the locals stay as they were */
         for (i = 0; i < n; i++) {
-            keep[i] = locals[i];
+            keep[i] = LE_FRAME_WORD(frame, i);
             Py_XINCREF(keep[i]);
         }
         fr->entry_locals = keep;
         fr->n_entry_locals = n;
     }
     for (i = 0; i < count && start + i < n; i++) {
-        PyObject *old = locals[start + i];
         if (values[i] == LE_LOCAL_UNKNOWN)
             continue;
         /* NULL: unbound, or deleted since the last write */
         Py_XINCREF(values[i]);
-        locals[start + i] = values[i];
-        Py_XDECREF(old);
+        le_frame_word_set(frame, start + i, values[i]);
     }
 }
+
+#if LE_RESUMES_GENERATORS
+/* What Python wrote in the locals while the body ran
+   (psyco_frame_write_locals) is released as the run ends
+   (psyco_frame_start_unregister), not here, where it could run code: the
+   slots take the compiled code's values after this. */
+DEFINEFN le_frame_t *
+psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
+{
+    le_frame_t *f = fr->frame;
+    if (fr->entry_locals != NULL) {
+        PyObject **locals = le_frame_args(f);
+        int i, n = le_code_nlocals(le_frame_code(f));
+        PyObject **keep = PyMem_Realloc(
+            fr->entry_locals, (fr->n_entry_locals + n) * sizeof(PyObject *));
+        for (i = 0; i < n; i++) {
+            if (locals[i] == NULL)
+                continue;
+            if (keep != NULL)
+                keep[fr->n_entry_locals++] = locals[i];
+            else
+                Py_DECREF(locals[i]); /* out of memory */
+            locals[i] = NULL;
+        }
+        if (keep != NULL)
+            fr->entry_locals = keep;
+    }
+#if LE_HAS_INTERPRETER_FRAME
+    le_gen_frame_pause(f, p->lasti, p->nstack);
+#else
+    le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
+#endif
+    return f;
+}
+#endif
 
 /* The callee-saved registers of the compiled frame whose slot is
    'slot', as it called C, which keeps them or saves them in its frame:
@@ -880,9 +919,12 @@ psyco_emulate_frame(PyObject *o)
                 le_pyframe_stack(result)[1] = (PyObject *)tag;
             }
             else {
-                slot_locals(psyco_next_stack_frame((stack_frame_info_t **)tag),
-                            (PyCodeObject *)co,
-                            le_frame_args(le_frame_of(result)));
+                if (slot_locals(
+                        psyco_next_stack_frame((stack_frame_info_t **)tag),
+                        (PyCodeObject *)co,
+                        le_frame_args(le_frame_of(result))))
+                    le_frame_words_own(le_frame_of(result),
+                                       n_locals_plus((PyCodeObject *)co));
             }
         }
         return result;
@@ -1677,9 +1719,13 @@ psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
         }
     }
     /* a traceback frame made for the entry (cimpl_new_frame), not the
-       real frame or a kept one, which are running */
+       real frame or a kept one, which are running; nor a generator's
+       where CPython leaves one that has ended without a caller */
     if (!le_frame_is_executing(f) && le_frame_stack_empty(f) &&
-        le_pyframe_code(f)->co_stacksize >= 3) {
+        le_pyframe_code(f)->co_stacksize >= 3 &&
+        !(LE_HAS_FINISHED_GENERATOR_UNLINKED &&
+          (le_pyframe_code(f)->co_flags &
+           (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))) {
 #if ALL_CHECKS
         PyFrameObject *real;
         stack_frame_info_t **last = innermost_slot(&real);
@@ -1940,6 +1986,7 @@ root_copy(PyFrameObject *f)
         Py_DECREF(c);
         return f;
     }
+    le_frame_words_own(le_frame_of(c), n_locals_plus(le_pyframe_code(f)));
     o = pvisitframes(visit_root_lasti, f);
     le_frame_set_lasti(le_frame_of(c),
                        o == NULL ? -1 : le_lasti_of((int)PyLong_AsLong(o)));
@@ -2612,7 +2659,7 @@ PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack)
 {
     PyFrameObject *f = st->f, *cur;
-    PyObject **locals = le_frame_args(le_frame_of(f));
+    le_frame_t *frame = le_frame_of(f);
     PyThreadState *ts = PyThreadState_GET();
     int nlocals = st->nvalues - nstack;
     int i, marked;
@@ -2629,12 +2676,12 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     /* the old locals go only once all the new ones are in: one may hold
        the last reference to another's value */
     for (i = 0; i < nlocals && !st->keep_locals; i++) {
-        PyObject *old = locals[i];
-        locals[i] = st->values[i];
+        PyObject *old = le_frame_word_take(frame, i);
+        le_frame_word_put(frame, i, st->values[i]);
         st->values[i] = old;
     }
     for (i = 0; i < nstack; i++)
-        le_pyframe_stack(f)[i] = st->values[nlocals + i];
+        le_frame_word_put(frame, nlocals + i, st->values[nlocals + i]);
     le_frame_set_stack_depth(f, (int)nstack);
     le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
 #if LE_HAS_FRAME_INSTR_PTR
@@ -2649,8 +2696,15 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     if (st->catcher != NULL) {
         /* another frame object stood for the call: it keeps the locals as
            they are now */
-        if (st->catcher != f)
+        if (st->catcher != f) {
+#if LE_HAS_FRAME_STACKREFS
+            PyObject *locals[nlocals > 0 ? nlocals : 1];
+            for (i = 0; i < nlocals; i++) locals[i] = LE_FRAME_WORD(frame, i);
+#else
+            PyObject **locals = le_frame_args(frame);
+#endif
             psyco_frame_write_locals(st->catcher, 0, locals, nlocals);
+        }
         Py_DECREF(st->catcher);
     }
 

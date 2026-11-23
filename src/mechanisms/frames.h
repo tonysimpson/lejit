@@ -51,29 +51,53 @@ typedef _PyInterpreterFrame le_frame_t;
 #else
 #define LE_CURRENT_FRAME(ts) ((ts)->cframe->current_frame)
 #endif
-/* its function (borrowed) where LE_HAS_FRAME_FUNCOBJ, and its word k: the
-   object (borrowed, NULL for none), and le_frame_word_set's new one, a
-   reference it takes (NULL for none), in place of the one it drops */
+/* its function (borrowed) where LE_HAS_FRAME_FUNCOBJ, and its word k
+   (its locals, then its value stack): LE_FRAME_WORD the object (borrowed,
+   NULL for none), le_frame_word_take the reference it holds (NULL for
+   none), leaving none, and le_frame_word_put one it takes (NULL for none)
+   where it holds none. Where the words are _PyStackRefs, one may be a
+   reference it doesn't own (tagged), which take makes a new one of. */
 #if LE_HAS_FRAME_STACKREFS
 #define LE_FRAME_FUNCOBJ(f) PyStackRef_AsPyObjectBorrow((f)->f_funcobj)
 #define LE_FRAME_WORD(f, k) PyStackRef_AsPyObjectBorrow((f)->localsplus[k])
-static inline void
-le_frame_word_set(le_frame_t *f, int k, PyObject *o)
+static inline PyObject *
+le_frame_word_take(le_frame_t *f, int k)
 {
-    _PyStackRef old = f->localsplus[k];
+    _PyStackRef r = f->localsplus[k];
+    f->localsplus[k] = PyStackRef_NULL;
+    return PyStackRef_IsNull(r) ? NULL : PyStackRef_AsPyObjectSteal(r);
+}
+static inline void
+le_frame_word_put(le_frame_t *f, int k, PyObject *o)
+{
     f->localsplus[k] =
         o == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(o);
-    PyStackRef_XCLOSE(old);
 }
 #else
 #define LE_FRAME_FUNCOBJ(f) ((f)->f_funcobj)
 #define LE_FRAME_WORD(f, k) ((f)->localsplus[k])
+static inline PyObject *
+le_frame_word_take(le_frame_t *f, int k)
+{
+    PyObject *o = f->localsplus[k];
+    f->localsplus[k] = NULL;
+    return o;
+}
+static inline void
+le_frame_word_put(le_frame_t *f, int k, PyObject *o)
+{
+    f->localsplus[k] = o;
+}
+#endif
+/* word k becomes 'o' (a reference it takes, NULL for none), and the one
+   before goes */
 static inline void
 le_frame_word_set(le_frame_t *f, int k, PyObject *o)
 {
-    Py_XSETREF(f->localsplus[k], o);
+    PyObject *old = le_frame_word_take(f, k);
+    le_frame_word_put(f, k, o);
+    Py_XDECREF(old);
 }
-#endif
 
 static inline le_frame_t *
 le_frame_current(PyThreadState *ts)
@@ -214,12 +238,27 @@ le_frame_locals(le_frame_t *f)
 {
     return f->f_locals;
 }
-/* the argument words compiled code runs on, owned by the frame; where
-   they are _PyStackRefs, no code is compiled */
+/* the argument words compiled code runs on, owned by the frame, where
+   they are plain objects; where they are _PyStackRefs, its words to write
+   as objects, which le_frame_words_own then makes the frame's */
 static inline PyObject **
 le_frame_args(le_frame_t *f)
 {
     return (PyObject **)f->localsplus;
+}
+/* its first n words, written through le_frame_args as objects (each a
+   reference it holds, NULL for none), are the frame's own */
+static inline void
+le_frame_words_own(le_frame_t *f, int n)
+{
+#if LE_HAS_FRAME_STACKREFS
+    int k;
+    for (k = 0; k < n; k++)
+        le_frame_word_put(f, k, ((PyObject **)f->localsplus)[k]);
+#else
+    (void)f;
+    (void)n;
+#endif
 }
 /* its value stack */
 static inline PyObject **
@@ -399,6 +438,74 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
     f->f_frame->stacktop = LE_FRAME_CODE(f->f_frame)->co_nlocalsplus + n;
 #endif
 }
+/* A generator's frame as ceval leaves it at a yield and resumes it
+   (eval_hook.c:LeGen_Run, pycompiler.c): its locals and its value stack,
+   which follows them, with the stack's depth (le_frame_stack_depth), its
+   place at the yield and its generator's state. Compiled code stores into
+   localsplus by its offset. */
+#define LE_OFS_le_frame_t__localsplus offsetof(le_frame_t, localsplus)
+#define LE_SIZE2_le_frame_t__localsplus 3
+#define LE_UNSIGNED_le_frame_t__localsplus 0
+_Static_assert(sizeof(((le_frame_t *)0)->localsplus[0]) == sizeof(void *),
+               "LeJIT: a frame's localsplus words are not pointers");
+/* the frame is a generator's, resumed: the call of a generator function
+   runs its frame first to RETURN_GENERATOR, which makes the generator */
+static inline int
+le_frame_is_gen(le_frame_t *f)
+{
+    return f->owner == FRAME_OWNED_BY_GENERATOR;
+}
+/* the generator whose frame f is */
+static inline PyGenObject *
+le_frame_gen(le_frame_t *f)
+{
+    return (PyGenObject *)((char *)f - offsetof(PyGenObject, gi_iframe));
+}
+/* the depth of a paused frame's stack */
+static inline int
+le_frame_stack_depth(le_frame_t *f)
+{
+#if LE_HAS_FRAME_STACKREFS
+    return (int)(f->stackpointer - f->localsplus) -
+           LE_FRAME_CODE(f)->co_nlocalsplus;
+#else
+    return f->stacktop - LE_FRAME_CODE(f)->co_nlocalsplus;
+#endif
+}
+static inline void
+le_gen_frame_set_depth(le_frame_t *f, int n)
+{
+#if LE_HAS_FRAME_STACKREFS
+    f->stackpointer = f->localsplus + LE_FRAME_CODE(f)->co_nlocalsplus + n;
+#else
+    f->stacktop = LE_FRAME_CODE(f)->co_nlocalsplus + n;
+#endif
+}
+/* the generator's frame runs, its locals and stack held by compiled code,
+   their slots empty: gen_send_ex has marked it as running */
+static inline void
+le_gen_frame_run(le_frame_t *f)
+{
+    le_gen_frame_set_depth(f, 0);
+}
+/* paused at the yield at 'lasti' with 'nstack' items under the value, as
+   ceval's YIELD_VALUE leaves it */
+static inline void
+le_gen_frame_pause(le_frame_t *f, int lasti, int nstack)
+{
+    LE_FRAME_PLACE(f) = _PyCode_CODE(LE_FRAME_CODE(f)) + lasti;
+    le_gen_frame_set_depth(f, nstack);
+    le_frame_gen(f)->gi_frame_state = FRAME_SUSPENDED;
+}
+/* the run that gave 'result' has ended: paused (le_gen_frame_pause, or
+   ceval's own YIELD_VALUE), else returned or raised with its stack empty,
+   which gen_send_ex then marks and clears */
+static inline void
+le_gen_frame_end(le_frame_t *f, PyObject *result)
+{
+    (void)f;
+    (void)result;
+}
 #else
 /* Frames as Python sees them are PyFrameObjects: the thread's
    innermost is tstate->frame, each links to its caller by f_back, and a
@@ -498,6 +605,31 @@ le_frame_args(le_frame_t *f)
 {
     return f->f_localsplus;
 }
+/* its word k, its locals then its value stack, as above */
+#define LE_FRAME_WORD(f, k) ((f)->f_localsplus[k])
+static inline PyObject *
+le_frame_word_take(le_frame_t *f, int k)
+{
+    PyObject *o = f->f_localsplus[k];
+    f->f_localsplus[k] = NULL;
+    return o;
+}
+static inline void
+le_frame_word_put(le_frame_t *f, int k, PyObject *o)
+{
+    f->f_localsplus[k] = o;
+}
+static inline void
+le_frame_word_set(le_frame_t *f, int k, PyObject *o)
+{
+    Py_XSETREF(f->f_localsplus[k], o);
+}
+static inline void
+le_frame_words_own(le_frame_t *f, int n)
+{
+    (void)f;
+    (void)n;
+}
 /* its value stack */
 static inline PyObject **
 le_frame_stack(le_frame_t *f)
@@ -596,6 +728,80 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
     f->f_stacktop = f->f_valuestack + n;
 }
 #endif
+/* A generator's frame as ceval leaves it at a yield and resumes it
+   (eval_hook.c:LeGen_Run, pycompiler.c): its locals and its value stack,
+   which follows them, with the stack's depth (le_frame_stack_depth),
+   f_lasti at the yield and its blocks. Compiled code stores into
+   f_localsplus by its offset. */
+#define LE_OFS_PyFrameObject__f_localsplus \
+    offsetof(PyFrameObject, f_localsplus)
+#define LE_SIZE2_PyFrameObject__f_localsplus 3
+#define LE_UNSIGNED_PyFrameObject__f_localsplus 0
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((PyFrameObject *)0)->f_localsplus),
+                   PyObject *[1]),
+               "LeJIT: PyFrameObject.f_localsplus is not PyObject *[1]");
+/* the depth of a paused frame's stack */
+static inline int
+le_frame_stack_depth(PyFrameObject *f)
+{
+#if LE_HAS_FRAME_STATE
+    return f->f_stackdepth;
+#else
+    return (int)(f->f_stacktop - f->f_valuestack);
+#endif
+}
+/* the frame is a generator's, resumed: a generator function's frame is
+   made when the generator is */
+static inline int
+le_frame_is_gen(le_frame_t *f)
+{
+    (void)f;
+    return 1;
+}
+/* the generator's frame runs, its stack held by compiled code: as ceval's
+   prologue leaves it */
+static inline void
+le_gen_frame_run(PyFrameObject *f)
+{
+#if LE_HAS_FRAME_STATE
+    f->f_stackdepth = -1;
+    f->f_state = FRAME_EXECUTING;
+#else
+    f->f_stacktop = NULL;
+    f->f_executing = 1;
+#endif
+}
+/* compiled code pauses it at a yield, before storing its locals and stack
+   items */
+static inline void
+le_gen_frame_pause(PyFrameObject *f, int lasti, int nstack, int iblock,
+                   const PyTryBlock *blocks)
+{
+    int i;
+    f->f_lasti = lasti;
+    le_frame_set_stack_depth(f, nstack);
+    f->f_iblock = iblock;
+    for (i = 0; i < iblock; i++) f->f_blockstack[i] = blocks[i];
+#if LE_HAS_FRAME_STATE
+    f->f_state = FRAME_SUSPENDED;
+#endif
+}
+/* the run that gave 'result' has ended: paused (le_gen_frame_pause, or
+   ceval's own YIELD_VALUE), else returned or raised, as ceval leaves it */
+static inline void
+le_gen_frame_end(PyFrameObject *f, PyObject *result)
+{
+#if LE_HAS_FRAME_STATE
+    if (f->f_state == FRAME_EXECUTING) {
+        f->f_stackdepth = 0;
+        f->f_state = result != NULL ? FRAME_RETURNED : FRAME_RAISED;
+    }
+#else
+    (void)result;
+    f->f_executing = 0;
+#endif
+}
 /* the frame is running, as frame.clear() sees it */
 static inline int
 le_frame_executing(le_frame_t *f)
@@ -744,6 +950,11 @@ le_pyframe_run_to_end(PyThreadState *ts, PyFrameObject *f)
         if (t == NULL)
             return PyErr_NoMemory();
         memcpy(t, frame, size * sizeof(PyObject *));
+#if LE_HAS_FRAME_STACKREFS
+        /* the stack's top is a pointer into the frame copied */
+        t->stackpointer =
+            t->localsplus + (frame->stackpointer - frame->localsplus);
+#endif
         t->owner = FRAME_OWNED_BY_THREAD;
         t->frame_obj = (PyFrameObject *)Py_NewRef(f);
         f->f_frame = t;

@@ -995,7 +995,11 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            # gone from 3.14: subscripts are BINARY_OP's, with blocks
            # LOAD_SPECIAL's, constant-key maps BUILD_MAP's
            'BINARY_SUBSCR', 'BEFORE_WITH', 'BEFORE_ASYNC_WITH',
-           'BUILD_CONST_KEY_MAP', 'LOAD_METHOD')
+           'BUILD_CONST_KEY_MAP', 'LOAD_METHOD',
+           # new in 3.14
+           'LOAD_FAST_BORROW', 'LOAD_FAST_BORROW_LOAD_FAST_BORROW',
+           'LOAD_SMALL_INT', 'LOAD_COMMON_CONSTANT', 'NOT_TAKEN', 'POP_ITER',
+           'LOAD_SPECIAL', 'BUILD_TEMPLATE', 'BUILD_INTERPOLATION')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -1238,10 +1242,22 @@ BYTECODE = [
                               lambda s: _case_has(s, 'CALL', 'callable = stack_pointer[-2 - oparg]', missing=False))),
     ('FOR_ITER_EXIT_PAST_POP_TOP', D('a for loop ends with END_FOR, which pops only the item, then a POP_TOP for the iterator; FOR_ITER\'s exit jumps past both',
                                      lambda s: _case_has(s, 'FOR_ITER', 'JUMPBY(oparg + 2)'))),
+    ('FOR_ITER_EXIT_KEEPS_ITER', D('FOR_ITER\'s exit leaves the iterator on the stack and jumps past END_FOR to POP_ITER, which pops it',
+                                   lambda s: _case_has(s, 'FOR_ITER', 'JUMPBY(oparg + 1)'))),
+    ('CALL_EX_KWARGS_SLOT', D('CALL_FUNCTION_EX always has a slot for the keywords dict, NULL where the call has none',
+                              lambda s: _case_has(s, 'CALL_FUNCTION_EX', 'kwargs_st = stack_pointer[-1]', missing=False))),
+    ('BINARY_OP_SUBSCR', D('a subscript is BINARY_OP with NB_SUBSCR',
+                           lambda s: ('NB_SUBSCR' in (s.macros('Include/opcode.h') or {}), 'Include/opcode.h: NB_SUBSCR'))),
+    ('FUNCTION_ANNOTATE', D('SET_FUNCTION_ATTRIBUTE can set a function\'s __annotate__ (MAKE_FUNCTION_ANNOTATE), the annotations made lazily',
+                            lambda s: _case_has(s, 'SET_FUNCTION_ATTRIBUTE', 'MAKE_FUNCTION_ANNOTATE', missing=False))),
 ]
 
 # frames
 FRAMES = [
+    ('FRAME_CLEARED_LAST_FIRST', D('a frame that ends releases its value stack and locals last to first (_PyFrame_ClearLocals), not first to last',
+                                   lambda s: _body_has(s, 'Python/frame.c', '_PyFrame_ClearLocals', 'sp--', missing=False))),
+    ('FINISHED_GENERATOR_UNLINKED', D('a generator\'s frame is cut from its caller before it is cleared (clear_gen_frame, or before it had one, each time it stops), so a generator that has ended or raised leaves no f_back',
+                                      lambda s: _body_has(s, CE, 'clear_gen_frame', 'frame->previous = NULL; _PyFrame_ClearExceptCode(frame);', missing=True))),
     ('LASTI_IN_INSTRUCTIONS', lasti_in_instructions),
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),

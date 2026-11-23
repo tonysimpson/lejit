@@ -49,7 +49,8 @@ Psyco_NeedType(PsycoObject *po, vinfo_t *vi)
        expression stops being fused */
     if (psyco_can_go_interpreted(po))
         promotion = &psyco_interp_pyobj_promotion;
-    else if (po->pr.co->co_flags & CO_GENERATOR)
+    else if (psyco_generator_mode(po) != 0 &&
+             psyco_generator_mode(po) != GENEXPR_RESUMABLE)
         promotion = &psyco_fused_pyobj_promotion;
     else
         promotion = &psyco_nonfixed_pyobj_promotion;
@@ -335,6 +336,13 @@ PsycoObject_IsTrue(PsycoObject *po, vinfo_t *vi)
     /* XXX tony: Should make sure result is 0 or 1 like cPython */
     if (tp == Py_None->ob_type)
         return psyco_vi_Zero();
+    else if (Psyco_SlotsMutable(tp) &&
+             (tp->tp_as_number == NULL || tp->tp_as_mapping == NULL ||
+              tp->tp_as_sequence == NULL))
+        /* a static type PyType_Ready hasn't flagged immutable yet, which
+           may lack a table and gain one from its base when it is */
+        return psyco_generic_call(po, PyObject_IsTrue, CfCommonInquiry, "v",
+                                  vi);
     else if (Psyco_SlotsMutable(tp)) {
         /* PyObject_IsTrue's order, each slot behind its own guard: a class
            with none of them is true only while it still has none (a heap
@@ -1274,6 +1282,90 @@ cimpl_dict_set_known(PyObject *dict, PyObject *name, PyObject *value,
 
 DEFINEVAR uint64_t le_dict_version = (uint64_t)1 << 63;
 
+#if !LE_HAS_DICT_VERSION_TAG
+/* the counts, open addressed by dict address: each a record of its own,
+   so its address stays when the table grows */
+typedef struct {
+    PyDictObject *dict;
+    uint64_t count;
+} dict_count_t;
+static dict_count_t **dict_counts;
+static size_t dict_counts_size, dict_counts_used;
+/* -2 until first asked for, -1 if none could be had */
+static int dict_watcher_id = -2;
+
+static size_t
+dict_count_slot(dict_count_t **table, size_t size, PyDictObject *mp)
+{
+    size_t i = ((uintptr_t)mp >> 4) * 0x9E3779B97F4A7C15u & (size - 1);
+    while (table[i] != NULL && table[i]->dict != mp) i = (i + 1) & (size - 1);
+    return i;
+}
+
+/* every event of a watched dict comes before the change */
+static int
+dict_event(PyDict_WatchEvent event, PyObject *dict, PyObject *key,
+           PyObject *value)
+{
+    dict_count_t *c;
+    if (dict_counts_size == 0)
+        return 0;
+    c = dict_counts[dict_count_slot(dict_counts, dict_counts_size,
+                                    (PyDictObject *)dict)];
+    if (c != NULL)
+        c->count++;
+    return 0;
+}
+
+static bool
+dict_counts_grow(void)
+{
+    size_t i, size = dict_counts_size ? 2 * dict_counts_size : 64;
+    dict_count_t **table = PyMem_RawCalloc(size, sizeof(dict_count_t *));
+    if (table == NULL)
+        return false;
+    for (i = 0; i < dict_counts_size; i++)
+        if (dict_counts[i] != NULL)
+            table[dict_count_slot(table, size, dict_counts[i]->dict)] =
+                dict_counts[i];
+    PyMem_RawFree(dict_counts);
+    dict_counts = table;
+    dict_counts_size = size;
+    return true;
+}
+
+DEFINEFN
+uint64_t *
+le_dict_counter(PyDictObject *mp)
+{
+    size_t i;
+    dict_count_t *c;
+    if (dict_watcher_id == -2) {
+        dict_watcher_id = PyDict_AddWatcher(dict_event);
+        if (dict_watcher_id < 0)
+            PyErr_Clear(); /* all taken: compiled code caches less */
+    }
+    if (dict_watcher_id < 0)
+        return NULL;
+    if (2 * (dict_counts_used + 1) > dict_counts_size && !dict_counts_grow())
+        OUT_OF_MEMORY();
+    i = dict_count_slot(dict_counts, dict_counts_size, mp);
+    c = dict_counts[i];
+    if (c == NULL) {
+        c = PyMem_RawMalloc(sizeof(dict_count_t));
+        if (c == NULL)
+            OUT_OF_MEMORY();
+        c->dict = mp;
+        c->count = 0;
+        dict_counts[i] = c;
+        dict_counts_used++;
+    }
+    if (PyDict_Watch(dict_watcher_id, (PyObject *)mp) < 0)
+        OUT_OF_MEMORY(); /* only for a bad id or a non-dict */
+    return &c->count;
+}
+#endif
+
 #if ALL_CHECKS
 DEFINEVAR long psyco_stat_store_misses = 0;
 DEFINEVAR long psyco_stat_store_type_changes = 0;
@@ -1532,6 +1624,7 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
     s.gc = vtp == NULL         ? STORE_GC_FULL
            : PyType_IS_GC(vtp) ? STORE_GC_DICT
                                : STORE_GC_NONE;
+    s.dict_gc = s.gc;
     /* filling a dict doesn't add to the insertion order that values keep
        where keys have a kind */
     s.fill = !LE_HAS_DICT_KEYS_KIND && init_store(po, obj);

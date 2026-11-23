@@ -206,7 +206,55 @@ def undefined_global(a):
         return str(e)
 
 
+class Suppressing:
+    def __init__(self, log):
+        self.log = log
+
+    def __enter__(self):
+        self.log.append('enter')
+        return len(self.log)
+
+    def __exit__(self, kind, value, tb):
+        self.log.append((kind.__name__ if kind else None, str(value)))
+        return kind is KeyError
+
+
+class OnlyAsync:
+    async def __aenter__(self):
+        pass
+
+    async def __aexit__(self, *exc):
+        pass
+
+
+class OnlyEnter:
+    def __enter__(self):
+        pass
+
+
+def _one_with(manager, key):
+    with manager as got:
+        {}[key] if key else None
+        return got
+
+
+# with blocks: __enter__ and __exit__ found as ceval finds them, an
+# exception __exit__ suppresses or not, and ceval's errors for a manager
+# without them
+def with_statements(n):
+    log = []
+    out = [_one_with(Suppressing(log), None), _one_with(Suppressing(log), n)]
+    for manager, key in ((Suppressing(log), [n]), (object(), None),
+                         (OnlyAsync(), None), (OnlyEnter(), None)):
+        try:
+            out.append(_one_with(manager, key))
+        except TypeError as e:
+            out.append(str(e))
+    return out, log
+
+
 CASES = [
+    ('with_statements', [(1,), ('k',)], {}),
     ('catch_as', [(5, 2), (5, 0)], {}),
     ('exc_info_inside', '[(L,)]', {}),
     ('exc_info_after', '[(L,)]', {}),

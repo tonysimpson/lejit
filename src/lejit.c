@@ -140,13 +140,10 @@ le_trace_unify(PsycoObject *po, CodeBufferObject *match)
    holds one reference to it while it is attached (or being freed), and
    its owner releases the compiled code (codemanager.c). It is visible
    only to weakref.getweakrefs on the code object. */
-typedef struct {
-    PyWeakReference wr;
-    char attached;
-    le_code_extra_t x;
-} code_record_t;
+DEFINEVAR PyCodeObject *le_gen_interpreted = NULL;
+DEFINEVAR le_code_extra_t *le_gen_interpreted_x = NULL;
 
-static PyTypeObject CodeRecord_Type = {
+DEFINEVAR PyTypeObject CodeRecord_Type = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name = "lejit._core.code_record",
     .tp_basicsize = sizeof(code_record_t),
     .tp_flags = Py_TPFLAGS_DEFAULT,
@@ -159,6 +156,13 @@ static PyObject *record_died_fn = NULL;
 DEFINEFN void
 le_code_extra_free(le_code_extra_t *x)
 {
+    int i, j;
+    if (x == le_gen_interpreted_x)
+        le_gen_interpreted = NULL;
+    for (i = 0; i < x->nresumes; i++)
+        for (j = 0; j < x->resumes[i].count; j++)
+            Py_XDECREF(x->resumes[i].entries[j].code);
+    PyMem_Free(x->resumes);
     psyco_owner_release(&x->owner, x->merge_points, x->entry_point);
     psyco_owner_untrack(x); /* after: releasing can keep into the owner */
     Py_DECREF(RECORD_OF(x));
@@ -194,17 +198,6 @@ record_died(PyObject *self, PyObject *ref)
 
 static PyMethodDef record_died_def = {"le_record_died", record_died, METH_O,
                                       NULL};
-
-DEFINEFN
-le_code_extra_t *
-le_code_extra_get(PyCodeObject *co)
-{
-    PyWeakReference *r = (PyWeakReference *)co->co_weakreflist;
-    for (; r != NULL; r = r->wr_next)
-        if (Py_TYPE(r) == &CodeRecord_Type)
-            return &((code_record_t *)r)->x;
-    return NULL;
-}
 
 /* unlinked without its callback; freeing it is the caller's */
 DEFINEFN
