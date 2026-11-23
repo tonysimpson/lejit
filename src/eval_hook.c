@@ -331,7 +331,8 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
    items go to the compiled code, which owns them while it runs, and it
    borrows the cells and free variables, and it is given this run's
    FrameRuntime (vcompiler.c:PsycoObject_FromGenFrame). The frame is left
-   paused at a yield, or ended (le_gen_frame_end); gen_send_ex does the rest.
+   paused at a yield, or ended (le_gen_frame_end); gen_send_ex does the rest,
+   with le_gen_frame_leave where the evaluator pops frames.
  */
 static inline PyObject *
 LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
@@ -348,8 +349,13 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
     extra_assert(stack == slots + nplus);
     extra_assert(RUN_ARGC(codebuf) == nplus + nstack + 1);
 
-    if (le_recursion_enter(tstate))
+    if (le_recursion_enter(tstate)) {
+#if LE_HAS_EVAL_FRAME_POPS
+        return le_gen_frame_leave(tstate, f, NULL, frame_done);
+#else
         return NULL;
+#endif
+    }
     psyco_frame_start_register(&fr, f, &finfo);
     le_frame_push(tstate, f);
     le_frame_set_executing(f, 1);
@@ -365,10 +371,22 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
     words[nplus + nstack] = (long)&fr;
     le_gen_frame_run(f);
     result = psyco_processor_run(codebuf, words, &finfo);
+#if LE_HAS_EVAL_FRAME_POPS
+    if (fr.frame == NULL) {
+        /* ceval ran it on to a yield or its end (frames.c:
+           psyco_resume_run) */
+        le_recursion_leave(tstate);
+        psyco_frame_start_unregister(&fr);
+        return result;
+    }
+#endif
     le_gen_frame_end(f, result);
     le_frame_set_current(tstate, le_frame_back(f));
     le_recursion_leave(tstate);
     psyco_frame_start_unregister(&fr);
+#if LE_HAS_EVAL_FRAME_POPS
+    result = le_gen_frame_leave(tstate, f, result, frame_done);
+#endif
     return result;
 }
 #endif
