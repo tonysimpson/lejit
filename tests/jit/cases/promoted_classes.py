@@ -126,9 +126,7 @@ def megamorphic_stays():
 
 CASES = [
     ('classes_die', [()], {}),
-    ('classes_die_at_loop_heads', [()],
-     {'xfail': 'the loop head compiled for the first class is kept by '
-               'the code the site compiles once megamorphic'}),
+    ('classes_die_at_loop_heads', [()], {}),
     ('classes_die_through_slots', [()],
      {'xfail': "__add__ called through the slot is compiled for each "
                "class under its own code object"}),
