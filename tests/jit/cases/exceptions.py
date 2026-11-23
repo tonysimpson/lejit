@@ -697,3 +697,21 @@ if HAS_EXCEPT_STAR:
         ('except_star_caller', [(1,), (2,), (3,), (4,)],
          {'warmup': (700, 'growth lasting a few hundred rounds, plain too')}),
     ]
+
+
+# a math function's error for an argument outside its domain, whose text
+# may name the argument
+def math_domain(x):
+    out = []
+    for f in (math.sqrt, math.acos, math.asin, math.cos, math.sin, math.tan,
+              math.atan, math.fabs, math.tanh):
+        try:
+            out.append(f(x))
+        except ValueError as e:
+            out.append(str(e))
+    return out
+
+
+CASES += [
+    ('math_domain', '[(-1.5,), (2.5,), (inf,), (-inf,), (0.5,)]', {}),
+]
