@@ -6588,7 +6588,11 @@ out:
 }
 
 #if LE_RESUMES_GENERATORS
+#if LE_HAS_INTERPRETER_FRAME
+#define FRAME_localsplus FMUT(CPY_ARRAY(le_frame_t, localsplus))
+#else
 #define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
+#endif
 
 /* A resumable generator's YIELD_VALUE at 'at': its frame (that of the
    run in the GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it,
@@ -6613,10 +6617,15 @@ yield_resumable(PsycoObject *po, int at)
         if (v != NULL && !psyco_knowntobe(v, 0) && !compute_vinfo(v, po))
             return;
     }
+#if LE_HAS_INTERPRETER_FRAME
+    pause = psyco_owner_alloc(sizeof(le_gen_pause_t));
+#else
     pause = psyco_owner_alloc(sizeof(le_gen_pause_t) +
                               po->pr.iblock * sizeof(PyTryBlock));
+#endif
     pause->lasti = le_lasti_of(at);
     pause->nstack = nstack;
+#if !LE_HAS_INTERPRETER_FRAME
     pause->iblock = po->pr.iblock;
     for (i = 0; i < po->pr.iblock; i++) {
         pause->blocks[i].b_type = po->pr.blockstack[i].b_type;
@@ -6624,6 +6633,7 @@ yield_resumable(PsycoObject *po, int at)
             le_lasti_of(po->pr.blockstack[i].b_handler);
         pause->blocks[i].b_level = po->pr.blockstack[i].b_level;
     }
+#endif
     frame =
         psyco_generic_call(po, psyco_gen_pause, CfReturnTypePtr | CfNoPython,
                            "vl", run, (long)pause);

@@ -956,9 +956,11 @@ typedef struct le_owner_s {
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
 /* Generator bodies run compiled, resumed through the eval hook
-   (eval_hook.c:LeGen_Run), where a paused generator's state is its frame
-   object's */
-#define LE_RESUMES_GENERATORS (!LE_HAS_INTERPRETER_FRAME)
+   (eval_hook.c:LeGen_Run), where a paused generator's state is its frame's
+   and gen_send_ex clears the frame of one that has ended (not the
+   evaluator, LE_HAS_EVAL_FRAME_POPS) */
+#define LE_RESUMES_GENERATORS \
+    (!LE_HAS_INTERPRETER_FRAME || !LE_HAS_EVAL_FRAME_POPS)
 
 /* A resumable generator's compiled entries at one resume point, one per
    set of NULL locals and stack items (a bit each, locals first), compiled
