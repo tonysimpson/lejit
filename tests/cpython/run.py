@@ -92,6 +92,9 @@ SKIPPED = {
     'binds a port find_unused_port chose, and skips itself when another '
     'process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress',
+    "start many threads, and fail with \"can't start new thread\" on a "
+    'loaded machine, plain as well as with LeJIT':
+        'test.test_queue.*SimpleQueueTest.test_many_threads*',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
