@@ -96,9 +96,8 @@ cimpl_check_recursive_call(void);
 #define LE_C_RECURSION_GIVE(ts) ((void)(ts))
 #endif
 static inline int
-le_recursion_enter(void)
+le_recursion_enter(PyThreadState *ts)
 {
-    PyThreadState *ts = PyThreadState_GET();
     LE_C_RECURSION_TAKE(ts);
     if (Py_EnterRecursiveCall("")) {
         LE_C_RECURSION_GIVE(ts);
@@ -112,24 +111,57 @@ le_recursion_enter(void)
     return 0;
 }
 static inline void
-le_recursion_leave(void)
+le_recursion_leave(PyThreadState *ts)
 {
-    PyThreadState *ts = PyThreadState_GET();
     ts->py_recursion_remaining++;
     Py_LeaveRecursiveCall();
     LE_C_RECURSION_GIVE(ts);
 }
+#elif LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING
+/* Py_EnterRecursiveCall and Py_LeaveRecursiveCall in place, as compiled
+   code counts (enter_recursive_call): only an overflow calls C */
+#if !LE_HAS_RECURSION_REMAINING
+/* le_recursion_limit_address, kept by eval_hook.c:le_entry_install */
+#define LE_KEEPS_RECURSION_LIMIT 1
+extern int *le_recursion_limit;
+#endif
+static int
+cimpl_check_recursive_call(void);
+static inline int
+le_recursion_enter(PyThreadState *ts)
+{
+#if LE_HAS_RECURSION_REMAINING
+    return --ts->recursion_remaining < 0 && cimpl_check_recursive_call();
+#else
+    return ++ts->recursion_depth > *le_recursion_limit &&
+           cimpl_check_recursive_call();
+#endif
+}
+static inline void
+le_recursion_leave(PyThreadState *ts)
+{
+#if LE_HAS_RECURSION_REMAINING
+    ts->recursion_remaining++;
+#else
+    ts->recursion_depth--;
+#endif
+}
 #else
 static inline int
-le_recursion_enter(void)
+le_recursion_enter(PyThreadState *ts)
 {
+    (void)ts;
     return Py_EnterRecursiveCall("");
 }
 static inline void
-le_recursion_leave(void)
+le_recursion_leave(PyThreadState *ts)
 {
+    (void)ts;
     Py_LeaveRecursiveCall();
 }
+#endif
+#ifndef LE_KEEPS_RECURSION_LIMIT
+#define LE_KEEPS_RECURSION_LIMIT 0
 #endif
 /* the count compiled code changes, and by how much for one call */
 #if LE_HAS_PY_RECURSION_REMAINING
