@@ -136,8 +136,8 @@ static _Thread_local FrameRuntime *frame_runs;
    its address is in a capsule in the thread state's dict, which goes when
    the thread state is cleared, before the thread ends. */
 static _Thread_local char runs_listed;
-static PyObject *runs_key;  /* a key no one else has */
-static bool runs_lost;      /* a thread's frame_runs couldn't be listed */
+static PyObject *runs_key; /* a key no one else has */
+static bool runs_lost;     /* a thread's frame_runs couldn't be listed */
 
 static void
 runs_unlisted(PyObject *capsule)
@@ -176,13 +176,13 @@ psyco_frames_running(void (*mark)(PyCodeObject *co, void *arg), void *arg)
         return 0;
     for (ts = PyInterpreterState_ThreadHead(PyInterpreterState_Main());
          ts != NULL; ts = PyThreadState_Next(ts)) {
-        PyObject *c = ts->dict == NULL ? NULL
-                                       : PyDict_GetItem(ts->dict, runs_key);
+        PyObject *c =
+            ts->dict == NULL ? NULL : PyDict_GetItem(ts->dict, runs_key);
         FrameRuntime *fr;
         if (c == NULL)
             continue; /* it never ran compiled code */
-        for (fr = *(FrameRuntime **)PyCapsule_GetPointer(c, NULL);
-             fr != NULL; fr = fr->next) {
+        for (fr = *(FrameRuntime **)PyCapsule_GetPointer(c, NULL); fr != NULL;
+             fr = fr->next) {
             stack_frame_info_t **f1;
             mark((PyCodeObject *)fr->psy_code, arg);
             if (fr->resumed)
