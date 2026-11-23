@@ -957,10 +957,10 @@ typedef struct le_owner_s {
    code objects compare co_consts recursively). */
 /* Generator bodies run compiled, resumed through the eval hook
    (eval_hook.c:LeGen_Run), where a paused generator's state is its frame's
-   and gen_send_ex clears the frame of one that has ended (not the
-   evaluator, LE_HAS_EVAL_FRAME_POPS) */
+   and its place is the instruction last run (prev_instr, not
+   LE_HAS_FRAME_INSTR_PTR) */
 #define LE_RESUMES_GENERATORS \
-    (!LE_HAS_INTERPRETER_FRAME || !LE_HAS_EVAL_FRAME_POPS)
+    (!LE_HAS_INTERPRETER_FRAME || !LE_HAS_FRAME_INSTR_PTR)
 /* and coroutine bodies, whose awaits pause the frame object as ceval's
    YIELD_FROM leaves it (pycompiler.c) */
 #define LE_RESUMES_COROUTINES (!LE_HAS_INTERPRETER_FRAME)
