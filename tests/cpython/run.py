@@ -88,6 +88,9 @@ SKIPPED = {
         'test_load_attr_specialization_user_type '
         'test_type_cache.TypeCacheWithSpecializationTests.'
         'test_store_attr_specialization_user_type',
+    'binds a port find_unused_port chose, and skips itself when another '
+    'process took it first':
+        'test_smtplib.DebuggingServerTests.testSourceAddress',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
@@ -177,7 +180,7 @@ def run(mode, name):
         err = errf.read()
     if out is None:
         return 'timeout', stderr_tail(err)
-    out = out.decode().strip().splitlines()
+    out = out.decode(errors='replace').strip().splitlines()
     counted = out[-1:] and out[-1].startswith('run=')
     why = []
     if counted and len(out) > 1:
