@@ -2143,36 +2143,43 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
    duplicates are impossible here (the bytecode compiler rejects them) and
    the callee checks the rest. */
 #if LE_HAS_OPCODE_CALL
-/* the keyword names of the CALL at 'pos' (its first unit): the constant of
-   the KW_NAMES right before it, or before its PRECALL where CPython has
-   one, or NULL for none. False with SystemError if no PRECALL comes right
-   before where there is one (mergepoints.c refuses such code). Caches are
-   CACHE units, so a unit read here is an instruction's own only if it is
-   the opcode looked for. */
-static bool
-call_kwnames(PsycoObject *po, PyCodeObject *co, int pos, PyObject **kwnames)
+/* where the KW_NAMES naming the keyword arguments of the CALL at 'pos'
+   (its first unit) starts, with its EXTENDED_ARGs, or -1 for none; -2 if
+   no PRECALL comes right before where CPython has one (mergepoints.c
+   refuses such code). Caches are CACHE units, so a unit read here is an
+   instruction's own only if it is the opcode looked for. */
+static int
+call_kwnames_start(le_code_t c, int pos)
 {
-    le_code_t c = le_code(co);
-    int p = pos - LE_UNIT, arg, shift;
-    *kwnames = NULL;
+    int p = pos - LE_UNIT;
 #if LE_HAS_OPCODE_PRECALL
     p -= LE_CACHE_BYTES(PRECALL);
-    if (p < 0 || le_op(c, p) != PRECALL) {
-        PycException_SetString(po, PyExc_SystemError, "CALL without PRECALL");
-        return false;
-    }
+    if (p < 0 || le_op(c, p) != PRECALL)
+        return -2;
     while (p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG) p -= LE_UNIT;
     p -= LE_UNIT;
 #endif
     if (p < 0 || le_op(c, p) != KW_NAMES)
-        return true;
-    arg = le_arg(c, p);
-    for (shift = 8; p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG;
-         shift += 8) {
-        p -= LE_UNIT;
-        arg |= le_arg(c, p) << shift;
+        return -1;
+    while (p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG) p -= LE_UNIT;
+    return p;
+}
+
+/* the keyword names of the CALL at 'pos': the constant of its KW_NAMES,
+   or NULL for none. False with SystemError if it has no PRECALL where
+   CPython has one. */
+static bool
+call_kwnames(PsycoObject *po, PyCodeObject *co, int pos, PyObject **kwnames)
+{
+    le_code_t c = le_code(co);
+    int p = call_kwnames_start(c, pos);
+    *kwnames = NULL;
+    if (p == -2) {
+        PycException_SetString(po, PyExc_SystemError, "CALL without PRECALL");
+        return false;
     }
-    *kwnames = PyTuple_GET_ITEM(co->co_consts, arg);
+    if (p >= 0)
+        *kwnames = PyTuple_GET_ITEM(co->co_consts, le_instr(c, p).arg);
     return true;
 }
 #endif
@@ -4482,6 +4489,15 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
             vinfo_decref(st, po);
             return 0;
         }
+    }
+#endif
+#if LE_HAS_OPCODE_CALL
+    /* ceval keeps KW_NAMES's names outside the frame, for the CALL after
+       it: a CALL that has them is run from its KW_NAMES */
+    if (le_instr(le_code(co), next_instr).op == CALL) {
+        int kw = call_kwnames_start(le_code(co), next_instr);
+        if (kw >= 0)
+            next_instr = kw;
     }
 #endif
     result = psyco_generic_call(
