@@ -31,19 +31,55 @@
 /* le_tstate_load and the recursion count */
 #include "mechanisms/tstate.h"
 #include "mechanisms/recursion.h"
+extern int
+le_eval_breaker_handler(void);
+#if LE_HAS_TSTATE_EVAL_BREAKER
+/* ceval's eval_breaker is the running thread's, in its state, and its
+   events are its low byte (Python/pyruntime.c, with the handler):
+   compiled code loads the thread state and tests that byte */
+static inline condition_code_t
+le_eval_breaker_test(PsycoObject *po)
+{
+    condition_code_t cc;
+    vinfo_t *vevents, *vts = le_tstate_load(po);
+    if (vts == NULL)
+        return CC_ERROR;
+    vevents =
+        psyco_get_field_offset(po, vts, FMUT(UNSIGNED_ARRAY(unsigned char, 0)),
+                               offsetof(PyThreadState, eval_breaker));
+    vinfo_decref(vts, po);
+    if (vevents == NULL)
+        return CC_ERROR;
+    cc = integer_non_null(po, vevents);
+    vinfo_decref(vevents, po);
+    return cc;
+}
+
+static inline bool
+le_eval_breaker_check(void)
+{
+    return true;
+}
+#else
 /* ceval's eval_breaker is a 32-bit int at an address fixed for the
    process: compiled code compares it with 0 in place. The
    address and the handler are Python/pyruntime.c's. */
 extern void *
 le_eval_breaker_address(void);
-extern int
-le_eval_breaker_handler(void);
 
 static inline condition_code_t
 le_eval_breaker_test(PsycoObject *po)
 {
     return psyco_int32_nonzero_at(po, le_eval_breaker_address());
 }
+
+/* at start-up */
+static inline bool
+le_eval_breaker_check(void)
+{
+    return le_eval_breaker_address() != NULL;
+}
+#endif
 
 /***************************************************************/
 /***   Frame and arguments building                            ***/
@@ -462,6 +498,8 @@ bool
 psyco_check_eval_breaker(PsycoObject *po)
 {
     condition_code_t cc = le_eval_breaker_test(po);
+    if (cc == CC_ERROR)
+        return false;
     if (runtime_condition_f(po, cc))
         return psyco_generic_call(po, le_eval_breaker_handler,
                                   CfCommonIntZeroOk, "") != NULL;
@@ -1112,6 +1150,6 @@ void
 psycofunction_init(void)
 {
     psyco_assert(le_tstate_check());
-    psyco_assert(le_eval_breaker_address() != NULL);
+    psyco_assert(le_eval_breaker_check());
     cannot_block_init();
 }

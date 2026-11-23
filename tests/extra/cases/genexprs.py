@@ -85,6 +85,29 @@ def stop_iteration_inside(xs):
         return str(e), type(e.__cause__).__name__
 
 
+def stop_iteration_shown(xs):
+    # the RuntimeError's cause and context, and the frames in each traceback
+    try:
+        return sum(next(iter(())) for x in xs)
+    except RuntimeError as e:
+        names = []
+        for exc in (e, e.__cause__):
+            tb, frames = exc.__traceback__, []
+            while tb is not None:
+                frames.append((tb.tb_frame.f_code.co_name, tb.tb_lineno))
+                tb = tb.tb_next
+            names.append(frames)
+        return str(e), e.__cause__ is e.__context__, names
+
+
+def other_error_inside(xs):
+    # only StopIteration becomes RuntimeError
+    try:
+        return list(x[0] for x in xs)
+    except IndexError as e:
+        return type(e).__name__, e.__cause__, e.__context__
+
+
 def shadowed_builtin(xs):
     sum = len               # not the builtin: no fusing, len(generator) fails
     try:
@@ -123,6 +146,8 @@ CASES = [
     ('raises_midway', [([5, 0, 2],)], {}),
     ('raises_in_temporary', [([5, 0, 2],), ([1, 2],)], {}),
     ('stop_iteration_inside', [([1],), ([],)], {}),
+    ('stop_iteration_shown', [([1],)], {}),
+    ('other_error_inside', [([[1], []],)], {}),
     ('shadowed_builtin', [([1, 2],)], {}),
     ('min_max', [([1, 5, 3], {1: 9, 5: 2, 3: 4})], {}),
 ]
