@@ -908,7 +908,8 @@ psyco_is_resumable_generator(PyCodeObject *co)
     int pos;
     int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
                                CO_ASYNC_GENERATOR | CO_ITERABLE_COROUTINE);
-    if (kind != CO_GENERATOR && kind != CO_COROUTINE)
+    if (kind != CO_GENERATOR &&
+        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES))
         return 0;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: runs interpreted */

@@ -6589,6 +6589,7 @@ out:
 #if LE_RESUMES_GENERATORS
 #define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
 
+#if LE_RESUMES_COROUTINES
 /* whether coroutine 'coro' is awaiting something, as _PyGen_yf (not
    exported) tells: paused just before a YIELD_FROM */
 static int
@@ -6685,6 +6686,8 @@ cimpl_await_send(PyObject *receiver, PyObject *v, PyObject *out[])
     return 0;
 #endif
 }
+
+#endif
 
 /* A resumable generator's YIELD_VALUE at 'at': its frame (that of the
    run in the GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it,
@@ -6895,7 +6898,7 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
-#if LE_RESUMES_GENERATORS
+#if LE_RESUMES_COROUTINES
         /* a resumable coroutine's await (psyco_is_resumable_generator):
            GET_AWAITABLE, LOAD_CONST None, YIELD_FROM */
         case GET_AWAITABLE:
