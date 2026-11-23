@@ -6,7 +6,7 @@
 # Each case returns what CPython shows of the coroutines, at one, two and
 # three levels of awaits.
 import gc, inspect, sys, threading, types, weakref
-from coro_bodies import HOOKED
+from coro_bodies import HOOKED, HOOKED_TRACE
 
 
 def work(x):
@@ -341,7 +341,7 @@ CASES = [
     ('raised', [(3,)], HOOKED),
     ('realised', [(0,), (2,)], {}),
     ('threads', [(0,)], {}),
-    ('tracing', [(0,)], HOOKED),
+    ('tracing', [(0,)], HOOKED_TRACE),
     ('handled', [(1,)],
      {'warmup': (40, 'its paths go on compiling for some rounds'),
       'leaks': 'with address-space randomisation on, LeJIT keeps a fixed '

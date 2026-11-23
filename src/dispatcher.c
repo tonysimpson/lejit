@@ -599,6 +599,7 @@ fpo_unfreeze(FrozenPsycoObject *fpo)
     frozen_copy(&po->pr, fpo->fz_pyc_data);
     po->pr.next_instr = fpo->fz_next_instr;
     pyc_data_build(po, psyco_get_merge_points(po->pr.co, -1));
+    po->pr.pieces = 1;
     psyco_assert_coherent(po);
     return po;
 }

@@ -6,6 +6,7 @@
    source (the LE_HAS_ features below). */
 #define Py_BUILD_CORE
 #include <Python.h>
+#include <stddef.h>
 #include "le_features_gen.h"
 /* internal/pystate.h, or where the source declares _PyRuntime */
 #if LE_HAS_PYCORE_INTERP_H
@@ -611,6 +612,13 @@ le_recursion_limit_address(void)
 /* The recursion limit is where LeJIT's build sees it: nothing to give
    here. */
 #endif
+
+/* where the interpreter's frame-evaluation function is, which compiled
+   code compares with LeJIT's before a direct call
+   (mechanisms/tracing.h:le_direct_call_test) */
+_Static_assert(sizeof(((PyInterpreterState *)0)->eval_frame) == 8,
+               "LeJIT: the interpreter's eval_frame is read as a word");
+const long le_interp_eval_frame_at = offsetof(PyInterpreterState, eval_frame);
 
 /* the interpreter's frame-evaluation function, PEP 523's hook
    (eval_hook.c) */

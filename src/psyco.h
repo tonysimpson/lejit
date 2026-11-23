@@ -981,12 +981,8 @@ typedef struct le_owner_s {
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
 /* Generator bodies run compiled, resumed through the eval hook
-   (eval_hook.c:LeGen_Run), where a paused generator's state is its frame's
-   and its words are objects (not LE_HAS_FRAME_STACKREFS) */
-#define LE_RESUMES_GENERATORS \
-    (!LE_HAS_INTERPRETER_FRAME || !LE_HAS_FRAME_STACKREFS)
-/* and coroutine bodies, whose awaits pause the frame object as ceval's
-   YIELD_FROM leaves it (pycompiler.c) */
+   (eval_hook.c:LeGen_Run), and coroutine bodies too where their awaits
+   pause the frame object as ceval's YIELD_FROM leaves it (pycompiler.c) */
 #define LE_RESUMES_COROUTINES (!LE_HAS_INTERPRETER_FRAME)
 
 /* A resumable generator's compiled entries at one resume point, one per
