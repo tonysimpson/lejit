@@ -811,7 +811,7 @@ compiled_opcode(int op)
         case LOAD_DEREF:
         case STORE_DEREF:
         case DELETE_DEREF:
-        /* generator expressions (psyco_is_genexpr) */
+        /* generators (psyco_is_fusable_generator) */
         case RETURN_GENERATOR:
         case YIELD_VALUE:
             return 1;
@@ -888,11 +888,11 @@ _build_merge_points(PyCodeObject *co, int module)
 #endif
     if (le_code_prepare(co) < 0)
         return NULL;
-    /* a generator expression compiles only into its consumer
+    /* a generator compiles only into its consumer
        (psyfunc.c:psyco_call_genexpr): the eval hook never runs generator
        code, and psyco_call_pyfunc makes a pending generator of it */
     if (co->co_flags & (CO_COROUTINE | CO_GENERATOR | CO_ASYNC_GENERATOR) &&
-        !psyco_is_genexpr(co)) {
+        !psyco_is_fusable_generator(co)) {
         goto not_ok;
     }
     /* zero-argument super() reads the __class__ cell and the first
@@ -943,19 +943,59 @@ not_ok:
     Py_RETURN_NONE;
 }
 
-/* the code of a generator expression: one argument (the iterator), no
-   cells, one yield (3.7 still allows a yield expression inside one) */
+/* whether an exception raised at 'yield' (the position of the code's one
+   YIELD_VALUE) has a handler in the code, so that closing the generator
+   there would run code: a try or with around it. 3.12's implicit PEP 479
+   handler only turns StopIteration into RuntimeError. */
+static int
+yield_has_handler(PyCodeObject *co, le_code_t c, int yield)
+{
+#if LE_HAS_EXCEPTION_TABLE
+    le_handler_t h;
+    (void)c;
+    if (!le_handler_find(co, yield, &h))
+        return 0;
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+    {
+        le_instr_t in = le_instr(c, h.handler);
+        if (in.op == CALL_INTRINSIC_1 &&
+            in.arg == INTRINSIC_STOPITERATION_ERROR)
+            return 0;
+    }
+#endif
+    return 1;
+#else
+    int pos;
+    (void)co;
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        int at = pos;
+        pos = in.next;
+        switch (in.op) {
+            case SETUP_EXCEPT:
+            case SETUP_FINALLY:
+            case SETUP_WITH:
+            case SETUP_ASYNC_WITH:
+                if (at < yield && yield < le_jump_target(c, in))
+                    return 1;
+        }
+    }
+    return 0;
+#endif
+}
+
+/* the code of a generator a builtin consumer can run fused
+   (psyfunc.c:psyco_call_genexpr), as a generator expression's: a plain
+   generator with one yield (3.7 also allows a yield expression inside a
+   generator expression), no yield from, and no handler around its yield,
+   so that a consumer stopping early can drop it with no code run */
 DEFINEFN int
-psyco_is_genexpr(PyCodeObject *co)
+psyco_is_fusable_generator(PyCodeObject *co)
 {
     le_code_t c;
-    int pos, yields = 0;
+    int pos, yields = 0, yield = -1;
     if ((co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR |
-                         CO_ITERABLE_COROUTINE)) != CO_GENERATOR ||
-        co->co_argcount != 1 || co->co_kwonlyargcount != 0 ||
-        (co->co_flags & (CO_VARARGS | CO_VARKEYWORDS)) ||
-        le_code_ncells(co) != 0 ||
-        PyUnicode_CompareWithASCIIString(co->co_name, "<genexpr>") != 0)
+                         CO_ITERABLE_COROUTINE)) != CO_GENERATOR)
         return 0;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: made as a plain generator */
@@ -964,14 +1004,16 @@ psyco_is_genexpr(PyCodeObject *co)
     c = le_code(co);
     for (pos = 0; pos < c.size;) {
         le_instr_t in = le_instr(c, pos);
-        int op = in.op;
+        int at = pos;
         pos = in.next;
-        if (op == YIELD_VALUE)
+        if (in.op == YIELD_VALUE) {
             yields++;
-        else if (op == YIELD_FROM || op == GET_YIELD_FROM_ITER)
+            yield = at;
+        }
+        else if (in.op == YIELD_FROM || in.op == GET_YIELD_FROM_ITER)
             return 0;
     }
-    return yields == 1;
+    return yields == 1 && !yield_has_handler(co, c, yield);
 }
 
 DEFINEFN PyObject *

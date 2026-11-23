@@ -1728,7 +1728,7 @@ static PyCFunction cfunc_unicode_join;
 
 /* unicode_join is PyUnicode_Join(self, x), which for an exact list or
    tuple is _PyUnicode_JoinArray over its items, one buffer: called
-   directly. A generator expression only the call holds is first run
+   directly. A pending generator only the call holds is first run
    fused into a list (GENEXPR_LIST, as list() runs it: psyfunc.c), which
    is the list PySequence_Fast would make of the generator, so the items,
    their order and the errors are the same, without the generator. */

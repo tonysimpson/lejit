@@ -1484,14 +1484,16 @@ static PyMethodDef clear_def = {
    none or another emulated frame of the same code made when its entry
    was, or a real frame entered through C whose f_back is the frame
    LeCode_Run runs, while the code that one runs is in a compiled callee
-   or inlined frame, which 'f' is. */
+   or inlined frame, which 'f' is. A fused generator's frame is left
+   without one, as a generator's frame has no caller once it has stopped. */
 DEFINEFN
 void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
 {
     PyFrameObject *back = callee->f_back;
     FrameRuntime *fr;
-    if (callee == f || back == f || le_frame_is_executing(callee))
+    if (callee == f || back == f || le_frame_is_executing(callee) ||
+        (le_pyframe_code(callee)->co_flags & CO_GENERATOR))
         return;
     if (back != NULL && !(le_pyframe_code(back) == le_pyframe_code(f) &&
                           !le_frame_is_executing(back))) {

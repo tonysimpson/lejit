@@ -778,6 +778,65 @@ callee_builtins(PsycoObject *po, vinfo_t *vfunc, vinfo_t *vglobals,
 
 #define MAX_CALL_FREES 64
 
+/* The cells of the free variables of 'vfunc' (not NULL), whose code has
+   'nfrees' of them, in *frees: a function still virtual (MAKE_FUNCTION
+   here: a comprehension, say) has them as its closure tuple's items, any
+   other in func_closure, read into buf. func_closure can't be set from
+   Python, and its length is the code's number of free variables
+   (funcobject.c:func_set_code checks it), as ceval assumes. A constant
+   function's cells are constants read now: borrowed, since code compiled
+   for a cell only ever uses its address, which a new cell at the same
+   address may as well share. 1, or 0 where they aren't known, or -1 on an
+   error. */
+static int
+load_frees(PsycoObject *po, vinfo_t *vfunc, int nfrees, vinfo_t **buf,
+           vinfo_t ***frees)
+{
+    vinfo_t *closure;
+    int i;
+    if (nfrees > MAX_CALL_FREES)
+        return 0;
+    if (is_virtualtime(vfunc->source)) {
+        closure = vinfo_getitem(vfunc, iFUNC_CLOSURE);
+        if (closure == NULL || PsycoTuple_Load(closure) != nfrees)
+            return 0;
+        *frees = &PsycoTuple_GET_ITEM(closure, 0);
+        return 1;
+    }
+    closure = psyco_get_const(po, vfunc, FUNC_closure);
+    for (i = 0; closure != NULL && i < nfrees; i++)
+        if ((buf[i] = psyco_get_nth_const(po, closure, TUPLE_ob_item, i)) ==
+            NULL)
+            closure = NULL;
+    if (closure == NULL)
+        return -1;
+    *frees = buf;
+    return 1;
+}
+
+/* The positional arguments of a call that binding gave 'nargs' arguments
+   and the last of 'ndefs' defaults: the arguments, then the defaults it
+   used. A new reference. */
+static vinfo_t *
+args_with_defaults(PyCodeObject *co, vinfo_t *arg_tuple, int nargs,
+                   vinfo_t **defs, int ndefs)
+{
+    int i, n = co->co_argcount;
+    vinfo_t *t;
+    if (nargs >= n) {
+        vinfo_incref(arg_tuple);
+        return arg_tuple;
+    }
+    t = PsycoTuple_New(n, NULL);
+    for (i = 0; i < n; i++) {
+        vinfo_t *x = i < nargs ? PsycoTuple_GET_ITEM(arg_tuple, i)
+                               : defs[ndefs - (n - i)];
+        vinfo_incref(x);
+        PsycoTuple_GET_ITEM(t, i) = x;
+    }
+    return t;
+}
+
 static void
 pin_constant(source_known_t *sk)
 {
@@ -837,7 +896,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     stack_frame_info_t *finfo;
     int tuple_size, argcount, defcount = -2;
     int nfrees;
-    bool inlining;
+    bool inlining, generator;
     vinfo_t *vbuiltins;
     vinfo_t **frees = NULL;
     vinfo_t *freebuf[MAX_CALL_FREES];
@@ -845,29 +904,17 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
 
     if (--recursion < 0)
         goto fail_to_default;
-    /* a generator expression is run only by a consumer that knows it
-       (psyco_call_genexpr); until then it is a pending generator */
-    if (co->co_flags & CO_GENERATOR) {
-        if (vfunc != NULL && is_virtualtime(vfunc->source) &&
-            psyco_is_genexpr(co) && PsycoTuple_Load(arg_tuple) == 1)
-            return PsycoGenexpr_New(vfunc, arg_tuple);
+    /* a generator is run only by a consumer that knows it
+       (psyco_call_genexpr): until then it is a pending generator, of a
+       function known now or still virtual, whose arguments bind here */
+    generator = (co->co_flags & CO_GENERATOR) != 0;
+    if (generator && (vfunc == NULL || is_runtime(vfunc->source) ||
+                      !psyco_is_fusable_generator(co)))
         goto fail_to_default;
-    }
-    /* closure code: the cells of a function still virtual (MAKE_FUNCTION
-       here: a comprehension, say) are its closure tuple's items; those of
-       any other are read from func_closure below */
+    /* closure code: the cells, read below (load_frees) */
     nfrees = PyCode_GetNumFree(co);
-    if (nfrees != 0) {
-        vinfo_t *closure;
-        if (vfunc == NULL || nfrees > MAX_CALL_FREES)
-            goto fail_to_default;
-        if (is_virtualtime(vfunc->source)) {
-            closure = vinfo_getitem(vfunc, iFUNC_CLOSURE);
-            if (closure == NULL || PsycoTuple_Load(closure) != nfrees)
-                goto fail_to_default;
-            frees = &PsycoTuple_GET_ITEM(closure, 0);
-        }
-    }
+    if (nfrees != 0 && (vfunc == NULL || nfrees > MAX_CALL_FREES))
+        goto fail_to_default;
 
     /* XXX tony: kw only args are a Py3 feature that we need to add support for
      */
@@ -906,35 +953,31 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         default:
             return NULL;
     }
-    if (nfrees != 0 && frees == NULL) {
-        /* func_closure can't be set from Python, and its length is the code's
-           number of free variables (funcobject.c:func_set_code checks it), as
-           ceval assumes. A constant function's cells are constants read now:
-           borrowed, since code compiled for a cell only ever uses its address,
-           which a new cell at the same address may as well share. */
-        int i;
-        vinfo_t *closure = psyco_get_const(po, vfunc, FUNC_closure);
-        for (i = 0; closure != NULL && i < nfrees; i++)
-            if ((freebuf[i] = psyco_get_nth_const(po, closure, TUPLE_ob_item,
-                                                  i)) == NULL)
-                closure = NULL;
-        if (closure == NULL) {
-            vinfo_decref(vbuiltins, po);
-            return NULL;
+    if (nfrees != 0) {
+        switch (load_frees(po, vfunc, nfrees, freebuf, &frees)) {
+            case 1:
+                break;
+            case 0:
+                vinfo_decref(vbuiltins, po);
+                goto fail_to_default;
+            default:
+                vinfo_decref(vbuiltins, po);
+                return NULL;
         }
-        frees = freebuf;
     }
     /* not into itself: inlined calls aren't counted in the recursion depth,
        and a closure calling itself through its cell would
        reach RecursionError at twice CPython's depth */
-    inlining = allow_inline && !po->pr.is_inlining && co != po->pr.co &&
+    inlining = !generator && allow_inline && !po->pr.is_inlining &&
+               co != po->pr.co &&
                (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE);
     /* the instruction restarting with the inlined body's result binds again
-       only to check it: its cells were made for the body */
-    switch (fncall_bind(&fncall, po, vglobals, vbuiltins,
-                        &PsycoTuple_GET_ITEM(arg_tuple, 0), tuple_size,
-                        &PsycoTuple_GET_ITEM(vdefaults, 0), defcount, frees, 0,
-                        NULL, !inlining || LOC_INLINING == NULL)) {
+       only to check it: its cells were made for the body. A generator's
+       binding is checked here and done again by its consumer. */
+    switch (fncall_bind(
+        &fncall, po, vglobals, vbuiltins, &PsycoTuple_GET_ITEM(arg_tuple, 0),
+        tuple_size, &PsycoTuple_GET_ITEM(vdefaults, 0), defcount, frees, 0,
+        NULL, !generator && (!inlining || LOC_INLINING == NULL))) {
         case 1:
             break;
         case 0:
@@ -947,6 +990,16 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         default:
             vinfo_decref(vbuiltins, po);
             return NULL;
+    }
+    if (generator) {
+        vinfo_t *args =
+            args_with_defaults(co, arg_tuple, tuple_size,
+                               &PsycoTuple_GET_ITEM(vdefaults, 0), defcount);
+        array_delete(fncall.inputvinfos, po);
+        vinfo_decref(vbuiltins, po);
+        result = PsycoGenexpr_New(vfunc, args, vglobals, co);
+        vinfo_decref(args, po);
+        return result;
     }
     if (inlining && frees == freebuf && is_runtime(vfunc->source)) {
         /* Cells loaded from a run-time function are borrowed from it, which is
@@ -1068,53 +1121,63 @@ fallback:
                               (long)0);
 }
 
-/* Run a pending generator expression (PsycoGenexpr_New) for its consumer:
-   its code compiled with 'mode' and 'acc' in the two GENEXPR slots
-   (pycheader.h), called like a function of its iterator, returning the
-   consumer's result as a new reference. */
+/* the code of a pending generator */
+static PyCodeObject *
+pending_code(vinfo_t *vgen)
+{
+    vinfo_t *vcode = vgen->array->items[iGENEXPR_CODE];
+    return (PyCodeObject *)CompileTime_Get(vcode->source)->value;
+}
+
+/* Run a pending generator (PsycoGenexpr_New) for its consumer: its code
+   compiled with 'mode' and 'acc' in the two GENEXPR slots (pycheader.h),
+   called like a function of its arguments, returning the consumer's result
+   as a new reference. */
 DEFINEFN
 vinfo_t *
 psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
 {
     vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
-    vinfo_t *vcode, *vglobals, *vbuiltins, *closure, *vmode, *result, *vts;
-    vinfo_t *extra[64];
-    PyCodeObject *co;
+    vinfo_t *vglobals = vgen->array->items[iGENEXPR_GLOBALS];
+    PyCodeObject *co = pending_code(vgen);
+    vinfo_t *vbuiltins, *vmode, *result, *vts;
+    vinfo_t *extra[GENEXPR_SLOTS], *freebuf[MAX_CALL_FREES];
+    vinfo_t **frees = NULL;
     CodeBufferObject *codebuf;
     PsycoObject *mypo;
     Source *sources;
     stack_frame_info_t *finfo;
-    int i, nfrees, argcount;
+    int nfrees = PyCode_GetNumFree(co), argcount;
     struct fncall_arg_s fncall;
 
-    vcode = vinfo_getitem(vfunc, iFUNC_CODE);
-    vglobals = vinfo_getitem(vfunc, iFUNC_GLOBALS);
-    extra_assert(vcode != NULL && is_compiletime(vcode->source));
-    co = (PyCodeObject *)CompileTime_Get(vcode->source)->value;
-    nfrees = PyCode_GetNumFree(co);
-    if (vglobals == NULL || nfrees + GENEXPR_SLOTS > 64)
-        return NULL; /* XXX */
-    for (i = 0; i < nfrees; i++) {
-        closure = vinfo_getitem(vfunc, iFUNC_CLOSURE);
-        if (closure == NULL || PsycoTuple_Load(closure) != nfrees)
-            psyco_fatal_msg("genexpr closure"); /* checked by the consumer */
-        extra[i] = PsycoTuple_GET_ITEM(closure, i);
-    }
+    /* each checked by the consumer (psyco_genexpr_fusable) */
+    if (nfrees != 0 && load_frees(po, vfunc, nfrees, freebuf, &frees) != 1)
+        psyco_fatal_msg("generator closure");
+    if (!psyco_forking(po, args->array) || !fncall_init(&fncall, co, nfrees))
+        psyco_fatal_msg("generator call");
     /* fixed: the fused code reads it at compile time (pycompiler.c), so a
        snapshot for another consumer must not match by un-promoting it */
     vmode = vinfo_new(CompileTime_NewSk(sk_new(mode, SkFlagFixed)));
-    extra[nfrees] = vmode;
-    extra[nfrees + 1] = acc;
-
-    if (!psyco_forking(po, args->array) || !fncall_init(&fncall, co, nfrees))
-        psyco_fatal_msg("genexpr call"); /* checked by the consumer */
-    /* made by MAKE_FUNCTION here, so with this frame's globals and builtins */
-    if (callee_builtins(po, vfunc, vglobals, &vbuiltins) != 1 ||
-        fncall_bind(&fncall, po, vglobals, vbuiltins,
-                    &PsycoTuple_GET_ITEM(args, 0), 1, NULL, 0, extra,
-                    GENEXPR_SLOTS, extra + nfrees, true) != 1)
-        psyco_fatal_msg("genexpr arguments");
+    extra[0] = vmode;
+    extra[1] = acc;
+    if (callee_builtins(po, vfunc, vglobals, &vbuiltins) != 1)
+        psyco_fatal_msg("generator builtins");
+    /* the defaults are among the arguments (args_with_defaults), and their
+       count bound at the call */
+    switch (fncall_bind(&fncall, po, vglobals, vbuiltins,
+                        &PsycoTuple_GET_ITEM(args, 0), PsycoTuple_Load(args),
+                        NULL, 0, frees, GENEXPR_SLOTS, extra, true)) {
+        case 1:
+            break;
+        case 0:
+            psyco_fatal_msg("generator arguments");
+            break;
+        default:
+            vinfo_decref(vmode, po);
+            vinfo_decref(vbuiltins, po);
+            return NULL;
+    }
 
     /* as psyco_call_pyfunc's non-inlining call */
     result = NULL;
@@ -1149,8 +1212,9 @@ DEFINEFN
 bool
 psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v)
 {
-    vinfo_t *vfunc, *vcode, *vglobals, *closure, *args, *vbuiltins;
+    vinfo_t *vfunc, *closure, *args, *vbuiltins;
     PyCodeObject *co;
+    int nfrees;
     if (!PsycoGenexpr_Check(v))
         return false;
     /* only a temporary: the stack and the argument tuple hold it. A
@@ -1161,26 +1225,22 @@ psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v)
         return false;
     vfunc = v->array->items[iGENEXPR_FUNC];
     args = v->array->items[iGENEXPR_ARGS];
-    if (args == NULL || PsycoTuple_Load(args) != 1)
+    if (args == NULL || PsycoTuple_Load(args) < 0)
         return false;
-    vcode = vinfo_getitem(vfunc, iFUNC_CODE);
-    if (vcode == NULL || !is_compiletime(vcode->source))
+    co = pending_code(v);
+    nfrees = PyCode_GetNumFree(co);
+    if (psyco_get_merge_points(co, 0) == Py_None || nfrees > MAX_CALL_FREES)
         return false;
-    co = (PyCodeObject *)CompileTime_Get(vcode->source)->value;
-    if (!psyco_is_genexpr(co) || psyco_get_merge_points(co, 0) == Py_None ||
-        PyCode_GetNumFree(co) + GENEXPR_SLOTS > 64)
-        return false;
-    if (PyCode_GetNumFree(co) > 0) {
+    /* a virtual function's cells: its closure tuple's (load_frees) */
+    if (nfrees > 0 && is_virtualtime(vfunc->source)) {
         closure = vinfo_getitem(vfunc, iFUNC_CLOSURE);
-        if (closure == NULL ||
-            PsycoTuple_Load(closure) != PyCode_GetNumFree(co))
+        if (closure == NULL || PsycoTuple_Load(closure) != nfrees)
             return false;
     }
-    /* psyco_call_genexpr's builtins: of a function still virtual, so known
-       now or not, with nothing emitted */
-    vglobals = vinfo_getitem(vfunc, iFUNC_GLOBALS);
-    if (vglobals == NULL ||
-        callee_builtins(po, vfunc, vglobals, &vbuiltins) != 1)
+    /* psyco_call_genexpr's builtins: of a function known now or still
+       virtual (psyco_call_pyfunc), so with nothing emitted */
+    if (callee_builtins(po, vfunc, v->array->items[iGENEXPR_GLOBALS],
+                        &vbuiltins) != 1)
         return false;
     vinfo_decref(vbuiltins, po);
     return true;
@@ -1192,8 +1252,7 @@ psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v)
 static int
 fuse_stopped(PsycoObject *po, vinfo_t *v)
 {
-    vinfo_t *vcode = vinfo_getitem(v->array->items[iGENEXPR_FUNC], iFUNC_CODE);
-    PyCodeObject *co = (PyCodeObject *)CompileTime_Get(vcode->source)->value;
+    PyCodeObject *co = pending_code(v);
     vinfo_t *vslot = vinfo_new(CompileTime_New(
         (long)psyco_fuse_stopped(psyco_get_merge_points(co, 0))));
     vinfo_t *vflag = psyco_get_field(po, vslot, INT_value);
