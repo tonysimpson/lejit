@@ -83,7 +83,8 @@ le_after(le_code_t c, int pos)
 /* where FOR_ITER's iterator ending goes: its target, past the END_FOR
    there that pops the iterator and its item where FOR_ITER pops the
    iterator itself, and past the POP_TOP after it where that pops the
-   iterator */
+   iterator. Where FOR_ITER leaves the iterator, the POP_ITER past the
+   END_FOR pops it. */
 static inline int
 le_for_iter_exit(le_code_t c, int target)
 {
@@ -197,6 +198,10 @@ le_instr(le_code_t c, int pos)
         case POP_JUMP_FORWARD_IF_NOT_NONE:
         case POP_JUMP_BACKWARD_IF_NOT_NONE:
             in.op = POP_JUMP_IF_NOT_NONE;
+            break;
+        /* pops the iterator a for loop's FOR_ITER left at its end */
+        case POP_ITER:
+            in.op = POP_TOP;
             break;
 #if LE_HAS_LOAD_ATTR_METHOD_BIT
         case LOAD_ATTR:
