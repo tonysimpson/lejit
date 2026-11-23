@@ -553,6 +553,11 @@ PsycoObject_IsInstance(PsycoObject *po, vinfo_t *vobj, vinfo_t *vcls)
         r = psyco_atcompiletime_static_type(po, x, (PyObject **)&tp);
         if (r < 0)
             return NULL;
+        /* not a static type: the load is flagged megamorphic, which would
+           keep the object's attributes from promoting its type; forgotten,
+           their next use loads it again */
+        if (r == 0 && is_runtime(vobj->source))
+            psyco_forget_field(po, vobj, OB_type);
     }
     if (r == 0)
         r = -1;
