@@ -178,6 +178,9 @@ SKIPPED = {
     'binds a port find_unused_port chose, and skips itself when another '
     'process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress',
+    "start many threads, and fail with \"can't start new thread\" on a "
+    'loaded machine, plain as well as with LeJIT':
+        'test.test_queue.*SimpleQueueTest.test_many_threads*',
     'bind a port find_unused_port chose, which another process can take '
     'first':
         'test.test_socket.CreateServerFunctionalTest.*',
