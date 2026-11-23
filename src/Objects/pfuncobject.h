@@ -35,6 +35,10 @@ EXTERNFN ternaryfunc
 le_function_tp_call(void);
 /* a call of the function 'f' (promoted, 'func' at compile time), with
    'kw' NULL or as psyfunc.c:psyco_call_pyfunc takes it */
+/* the real call of a Python function, as compiled code makes it */
+EXTERNFN vinfo_t *
+PsycoFunction_RealCall(PsycoObject *po, vinfo_t *vfunc, vinfo_t *arg,
+                       vinfo_t *kw);
 EXTERNFN vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
                       vinfo_t *arg, vinfo_t *kw, bool allow_inline);

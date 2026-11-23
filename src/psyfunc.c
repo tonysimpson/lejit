@@ -1161,13 +1161,7 @@ fail_to_default:
        globals and defaults, as upstream's cimpl_call_pyfunc did, would lose
        its name and qualname (generators take co_name), closure and
        keyword-only defaults */
-    if (kw != NULL)
-        return psyco_generic_call(po, le_function_tp_call(),
-                                  CfCommonNewRefPyObject, "vvv", vfunc,
-                                  arg_tuple, kw);
-    return psyco_generic_call(po, le_function_tp_call(),
-                              CfCommonNewRefPyObject, "vvl", vfunc, arg_tuple,
-                              (long)0);
+    return PsycoFunction_RealCall(po, vfunc, arg_tuple, kw);
 
 pyerr:
     psyco_virtualize_exception(po);
@@ -1208,9 +1202,7 @@ psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     return result;
 
 fallback:
-    return psyco_generic_call(po, le_function_tp_call(),
-                              CfCommonNewRefPyObject, "vvl", vfunc, arg_tuple,
-                              (long)0);
+    return PsycoFunction_RealCall(po, vfunc, arg_tuple, NULL);
 }
 
 /* the code of a pending generator */

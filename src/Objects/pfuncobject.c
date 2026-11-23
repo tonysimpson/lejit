@@ -14,6 +14,7 @@
 #include "pfuncobject.h"
 #include "../psyfunc.h"
 #include "pclassobject.h"
+#include "pabstract.h"
 #include "pdictobject.h"
 #include "ptupleobject.h"
 
@@ -314,6 +315,47 @@ vectorcall_replaced(PsycoObject *po, vinfo_t *func)
 }
 #endif
 
+/* The real call of the Python function 'vfunc' with the arguments 'arg'
+   and 'kw' (NULL, a known NULL, pending keywords or a dict), through
+   vectorcall as ceval makes it where the arguments are known one by one,
+   else through its tp_call. The function runs Python code, which tests
+   eval_breaker itself: the call leaves no test after it to do
+   (pycompiler.c:breaker_after_call), as tp_call doesn't. */
+DEFINEFN
+vinfo_t *
+PsycoFunction_RealCall(PsycoObject *po, vinfo_t *vfunc, vinfo_t *arg,
+                       vinfo_t *kw)
+{
+    PyObject *kwnames = NULL;
+    vinfo_t **kwvalues = NULL;
+    vinfo_t *values[8]; /* psyco_vectorcall takes fewer */
+    vinfo_t *r = NULL;
+    char blocking = po->blocking_call;
+    int i, n = is_virtualtime(arg->source) ? PsycoTuple_Load(arg) : -1;
+    bool keywords = kw != NULL && !psyco_known_NULL(kw);
+    if (keywords)
+        kwnames = PsycoDict_PendingNames(kw, &kwvalues);
+    if (n >= 0 && (!keywords || kwnames != NULL)) {
+        int k = kwnames == NULL ? 0 : (int)PyTuple_GET_SIZE(kwnames);
+        if (n + k <= 8) {
+            for (i = 0; i < n; i++) values[i] = PsycoTuple_GET_ITEM(arg, i);
+            for (i = 0; i < k; i++) values[n + i] = kwvalues[i];
+            r = psyco_vectorcall(po, vfunc, values, n, kwnames);
+            if (r == NULL && PycException_Occurred(po))
+                return NULL;
+        }
+    }
+    if (r == NULL && keywords)
+        r = psyco_generic_call(po, le_function_tp_call(),
+                               CfCommonNewRefPyObject, "vvv", vfunc, arg, kw);
+    else if (r == NULL)
+        r = psyco_generic_call(po, le_function_tp_call(),
+                               CfCommonNewRefPyObject, "vvl", vfunc, arg,
+                               (long)0);
+    po->blocking_call = blocking;
+    return r;
+}
+
 DEFINEFN
 vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
@@ -324,7 +366,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     PyCodeObject *co;
     vinfo_t *fglobals;
     vinfo_t *fdefaults;
-    vinfo_t *result;
+    vinfo_t *result, *vf;
     int tuple_size;
 
     /* the code and the defaults are those compiled while f still has
@@ -382,13 +424,11 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     return result;
 
 fallback:
-    if (kw != NULL)
-        return psyco_generic_call(po, le_function_tp_call(),
-                                  CfCommonNewRefPyObject, "lvv", (long)f, arg,
-                                  kw);
-    return psyco_generic_call(po, le_function_tp_call(),
-                              CfCommonNewRefPyObject, "lvl", (long)f, arg,
-                              (long)0);
+    Py_INCREF(f);
+    vf = vinfo_new(CompileTime_NewSk(sk_new((long)f, SkFlagPyObj)));
+    result = PsycoFunction_RealCall(po, vf, arg, kw);
+    vinfo_decref(vf, po);
+    return result;
 }
 
 DEFINEFN
@@ -494,9 +534,7 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
     }
 
 fallback:
-
-    return psyco_generic_call(po, le_function_tp_call(),
-                              CfCommonNewRefPyObject, "vvv", func, arg, kw);
+    return PsycoFunction_RealCall(po, func, arg, kw);
 }
 
 static vinfo_t *
