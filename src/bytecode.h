@@ -128,7 +128,11 @@ le_binary_op_opcode(int nb)
         [NB_INPLACE_RSHIFT] = INPLACE_RSHIFT,
         [NB_INPLACE_SUBTRACT] = INPLACE_SUBTRACT,
         [NB_INPLACE_TRUE_DIVIDE] = INPLACE_TRUE_DIVIDE,
-        [NB_INPLACE_XOR] = INPLACE_XOR};
+        [NB_INPLACE_XOR] = INPLACE_XOR,
+#if LE_HAS_BINARY_OP_SUBSCR
+        [NB_SUBSCR] = BINARY_SUBSCR,
+#endif
+    };
     if (nb < 0 || nb >= (int)(sizeof(ops) / sizeof(ops[0])) || ops[nb] == 0)
         return -1;
     return ops[nb];
@@ -138,6 +142,7 @@ le_binary_op_opcode(int nb)
 /* One instruction, as LeJIT's passes read it, the same on every version:
    'op' is a LeJIT opcode, CPython's name in its oldest spelling where
    versions spell one operation differently (BINARY_OP 0 is BINARY_ADD,
+   BINARY_OP with NB_SUBSCR is BINARY_SUBSCR,
    POP_JUMP_BACKWARD_IF_TRUE is POP_JUMP_IF_TRUE, LOAD_ATTR with the method
    bit is LOAD_METHOD, CALL_INTRINSIC_1 with INTRINSIC_UNARY_POSITIVE is
    UNARY_POSITIVE, FORMAT_SIMPLE is FORMAT_VALUE 0); 'arg' with its
