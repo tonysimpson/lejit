@@ -1274,6 +1274,90 @@ cimpl_dict_set_known(PyObject *dict, PyObject *name, PyObject *value,
 
 DEFINEVAR uint64_t le_dict_version = (uint64_t)1 << 63;
 
+#if !LE_HAS_DICT_VERSION_TAG
+/* the counts, open addressed by dict address: each a record of its own,
+   so its address stays when the table grows */
+typedef struct {
+    PyDictObject *dict;
+    uint64_t count;
+} dict_count_t;
+static dict_count_t **dict_counts;
+static size_t dict_counts_size, dict_counts_used;
+/* -2 until first asked for, -1 if none could be had */
+static int dict_watcher_id = -2;
+
+static size_t
+dict_count_slot(dict_count_t **table, size_t size, PyDictObject *mp)
+{
+    size_t i = ((uintptr_t)mp >> 4) * 0x9E3779B97F4A7C15u & (size - 1);
+    while (table[i] != NULL && table[i]->dict != mp) i = (i + 1) & (size - 1);
+    return i;
+}
+
+/* every event of a watched dict comes before the change */
+static int
+dict_event(PyDict_WatchEvent event, PyObject *dict, PyObject *key,
+           PyObject *value)
+{
+    dict_count_t *c;
+    if (dict_counts_size == 0)
+        return 0;
+    c = dict_counts[dict_count_slot(dict_counts, dict_counts_size,
+                                    (PyDictObject *)dict)];
+    if (c != NULL)
+        c->count++;
+    return 0;
+}
+
+static bool
+dict_counts_grow(void)
+{
+    size_t i, size = dict_counts_size ? 2 * dict_counts_size : 64;
+    dict_count_t **table = PyMem_RawCalloc(size, sizeof(dict_count_t *));
+    if (table == NULL)
+        return false;
+    for (i = 0; i < dict_counts_size; i++)
+        if (dict_counts[i] != NULL)
+            table[dict_count_slot(table, size, dict_counts[i]->dict)] =
+                dict_counts[i];
+    PyMem_RawFree(dict_counts);
+    dict_counts = table;
+    dict_counts_size = size;
+    return true;
+}
+
+DEFINEFN
+uint64_t *
+le_dict_counter(PyDictObject *mp)
+{
+    size_t i;
+    dict_count_t *c;
+    if (dict_watcher_id == -2) {
+        dict_watcher_id = PyDict_AddWatcher(dict_event);
+        if (dict_watcher_id < 0)
+            PyErr_Clear(); /* all taken: compiled code caches less */
+    }
+    if (dict_watcher_id < 0)
+        return NULL;
+    if (2 * (dict_counts_used + 1) > dict_counts_size && !dict_counts_grow())
+        OUT_OF_MEMORY();
+    i = dict_count_slot(dict_counts, dict_counts_size, mp);
+    c = dict_counts[i];
+    if (c == NULL) {
+        c = PyMem_RawMalloc(sizeof(dict_count_t));
+        if (c == NULL)
+            OUT_OF_MEMORY();
+        c->dict = mp;
+        c->count = 0;
+        dict_counts[i] = c;
+        dict_counts_used++;
+    }
+    if (PyDict_Watch(dict_watcher_id, (PyObject *)mp) < 0)
+        OUT_OF_MEMORY(); /* only for a bad id or a non-dict */
+    return &c->count;
+}
+#endif
+
 #if ALL_CHECKS
 DEFINEVAR long psyco_stat_store_misses = 0;
 DEFINEVAR long psyco_stat_store_type_changes = 0;

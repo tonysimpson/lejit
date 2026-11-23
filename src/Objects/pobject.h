@@ -448,6 +448,16 @@ EXTERNVAR uint64_t le_dict_version;
 #define LE_DICT_VERSION_STEP 1
 #endif
 
+#if !LE_HAS_DICT_VERSION_TAG
+/* Where dicts have no version tag, LeJIT's dict watcher counts the events
+   of each dict it watches: the address of the count of 'mp', which is
+   watched from now on (one count per dict address, never freed, so code
+   may hold it; a new dict at the address has the same count, already
+   moved), or NULL when no watcher could be had. */
+EXTERNFN uint64_t *
+le_dict_counter(PyDictObject *mp);
+#endif
+
 /* a watcher watches the dict: a store must go through CPython, which sends
    the watchers the event */
 PSY_INLINE bool

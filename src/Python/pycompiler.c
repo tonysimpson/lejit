@@ -1883,8 +1883,16 @@ global_entry_find(PyObject *globals, PyObject *name, PyObject *value,
 static void
 global_tags_set(global_guard_t *guard, PyObject *globals, PyObject *builtins)
 {
-    guard->tags[0] = ((PyDictObject *)globals)->LE_DICT_TAG_FIELD;
-    guard->tags[1] = ((PyDictObject *)builtins)->LE_DICT_TAG_FIELD;
+#if LE_HAS_DICT_VERSION_TAG
+    guard->tags[0] = ((PyDictObject *)globals)->ma_version_tag;
+    guard->tags[1] = ((PyDictObject *)builtins)->ma_version_tag;
+#else
+    /* the entry form, which reads none, has them where there are none */
+    uint64_t *g = le_dict_counter((PyDictObject *)globals);
+    uint64_t *b = le_dict_counter((PyDictObject *)builtins);
+    guard->tags[0] = g != NULL ? *g : 0;
+    guard->tags[1] = b != NULL ? *b : 0;
+#endif
 }
 
 /* the entry guard being respawned, whose version load_global_cached
@@ -2074,6 +2082,13 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
         if (value != NULL && psyco_global_absent(globals, name, &absent))
             form = GLOBAL_ABSENT;
     }
+#if !LE_HAS_DICT_VERSION_TAG
+    /* the other forms compare the counts of LeJIT's dict watcher */
+    if (form != GLOBAL_ENTRY &&
+        (le_dict_counter((PyDictObject *)globals) == NULL ||
+         le_dict_counter((PyDictObject *)builtins) == NULL))
+        return load_global_varying(po, globals, builtins, name, NULL, result);
+#endif
 
     /* A respawn replays compilation from the block's snapshot with the
        dicts as they are then, so a cached site must not be re-decided:
