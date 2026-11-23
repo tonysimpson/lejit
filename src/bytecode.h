@@ -82,12 +82,17 @@ le_after(le_code_t c, int pos)
 
 /* where FOR_ITER's iterator ending goes: its target, past the END_FOR
    there that pops the iterator and its item where FOR_ITER pops the
-   iterator itself */
+   iterator itself, and past the POP_TOP after it where that pops the
+   iterator */
 static inline int
 le_for_iter_exit(le_code_t c, int target)
 {
-    if (target < c.size && le_op(c, target) == END_FOR)
-        return le_after(c, target);
+    if (target < c.size && le_op(c, target) == END_FOR) {
+        target = le_after(c, target);
+        if (LE_HAS_FOR_ITER_EXIT_PAST_POP_TOP && target < c.size &&
+            le_op(c, target) == POP_TOP)
+            target = le_after(c, target);
+    }
     return target;
 }
 
@@ -267,6 +272,9 @@ le_op_flags(int op)
         case COPY:
         case SWAP:
         case PUSH_NULL:
+        case LOAD_FAST_LOAD_FAST:
+        case STORE_FAST_LOAD_FAST:
+        case STORE_FAST_STORE_FAST:
             return LE_OPF_COMPILED | LE_OPF_LIGHT;
         case LOAD_FAST_AND_CLEAR:
 #if LE_HAS_OPCODE_ROT_FOUR
@@ -418,6 +426,9 @@ le_op_flags(int op)
             return LE_OPF_COMPILED;
         case FOR_ITER:
             return LE_OPF_COMPILED | LE_OPF_BRANCHES;
+        /* the truth a jump tests, as the jump found it itself before */
+        case TO_BOOL:
+            return LE_OPF_COMPILED | LE_OPF_LIGHT;
         /* jumps and return */
         case JUMP_FORWARD:
         case JUMP_ABSOLUTE:
@@ -447,6 +458,7 @@ le_op_flags(int op)
         case CALL_FUNCTION_EX:
         case CALL_METHOD:
         case CALL:
+        case CALL_KW:
             return LE_OPF_COMPILED | LE_OPF_CALL;
         case PRECALL:
         case KW_NAMES:
