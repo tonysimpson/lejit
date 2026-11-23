@@ -531,7 +531,7 @@ has_managed_values(PyTypeObject *tp)
     return (tp->tp_flags & Py_TPFLAGS_INLINE_VALUES) &&
            ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL &&
            tp->tp_basicsize + LE_VALUES_ARRAY < 128;
-#elif LE_HAS_MANAGED_VALUES_POINTER
+#elif LE_HAS_MANAGED_VALUES_POINTER || LE_HAS_TAGGED_DICT_OR_VALUES
     return (tp->tp_flags & Py_TPFLAGS_MANAGED_DICT) &&
            ((PyHeapTypeObject *)tp)->ht_cached_keys != NULL;
 #else
@@ -555,6 +555,20 @@ instance_values(PyObject *obj)
     char *values = (char *)obj + values_offset(Py_TYPE(obj));
     return values[LE_VALUES_VALID] ? (PyObject **)(values + LE_VALUES_ARRAY)
                                    : NULL;
+}
+#elif LE_HAS_TAGGED_DICT_OR_VALUES
+/* where such an instance's values pointer, less one, or its dict is */
+static long
+values_offset(PyTypeObject *tp)
+{
+    return LE_MANAGED_DICT_OFFSET;
+}
+
+static PyObject **
+instance_values(PyObject *obj)
+{
+    char *w = *(char **)((char *)obj + LE_MANAGED_DICT_OFFSET);
+    return ((uintptr_t)w & 1) ? (PyObject **)(w + 1) : NULL;
 }
 #else
 /* where such an instance's values pointer is (NULL once its dict is made) */

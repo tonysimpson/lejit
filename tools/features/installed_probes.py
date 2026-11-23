@@ -641,6 +641,31 @@ def MANAGED_VALUES_POINTER():
 
 
 @probe
+def TAGGED_DICT_OR_VALUES():
+    """an instance with an attribute and no __dict__ made yet has, three
+    words before it, its values pointer less one (the low bit set); once
+    __dict__ is made, the dict is there"""
+    class C(object):
+        pass
+    if C.__dictoffset__ >= 0:
+        return False, 'class C: __dictoffset__ == %d' % C.__dictoffset__
+    c = C()
+    c.a = 1000
+    word = ctypes.c_void_p.from_address
+    before = word(id(c) - 24).value
+    tagged = before is not None and before & 1 == 1
+    first = tagged and word(before + 1).value == id(c.a)
+    d = c.__dict__
+    after = word(id(c) - 24).value
+    found = tagged and first and after == id(d)
+    if tagged and not found:
+        raise Unanswered('class C: word -3 %#x, values[0] %r, then with'
+                         ' __dict__ %r' % (before, first, after))
+    return found, 'class C: word -3 %r, then with __dict__ %r' % (
+        before, after)
+
+
+@probe
 def RANGE_ITER_INDEX():
     """an iterator over range(1, 7, 2) that has given one item pickles as the
     whole range and the index 1, not as range(3, 7, 2) with no index
