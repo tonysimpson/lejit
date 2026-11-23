@@ -565,10 +565,8 @@ _build_merge_points(PyCodeObject *co, int module)
     if (module) {
         goto not_ok;
     }
-#if LE_HAS_MONITORING
-    /* where tracing is sys.monitoring's (3.12 on), a compiled frame is not
-       resumed in ceval when tracing starts: every code object runs in
-       ceval */
+#if LE_HAS_OPCODE_TO_BOOL
+    /* 3.13's bytecode is not compiled yet */
     goto not_ok;
 #endif
     if (le_code_prepare(co) < 0)

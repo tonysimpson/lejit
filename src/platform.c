@@ -80,6 +80,20 @@ psyco_allocate_executable_buffer(long size, char **result)
 #endif
 }
 
+void *
+psyco_map_reserve(long size)
+{
+    void *p = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return p == MAP_FAILED ? NULL : p;
+}
+
+void
+psyco_unmap_reserve(void *p, long size)
+{
+    munmap(p, size);
+}
+
 /************************************************************/
 #endif /* !MS_WINDOWS */
 /************************************************************/
