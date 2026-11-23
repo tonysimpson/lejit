@@ -3800,6 +3800,13 @@ cimpl_do_raise(PyObject *exc, PyObject *cause)
             fixed_cause = PyObject_CallObject(cause, NULL);
             if (fixed_cause == NULL)
                 goto raise_error;
+            if (LE_HAS_RAISE_CAUSE_CHECKED &&
+                !PyExceptionInstance_Check(fixed_cause)) {
+                PyErr_Format(PyExc_TypeError, LE_MSG_RAISE_NOT_INSTANCE, cause,
+                             Py_TYPE(fixed_cause));
+                Py_DECREF(fixed_cause);
+                goto raise_error;
+            }
             Py_DECREF(cause);
         }
         else if (PyExceptionInstance_Check(cause)) {
