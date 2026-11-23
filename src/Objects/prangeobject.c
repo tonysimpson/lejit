@@ -8,10 +8,10 @@
  * when every argument is an exact int that is one digit at run time
  * (PsycoLong_MediumValue) and the step is non-zero; anything else is the
  * real call. GET_ITER on a virtual range gives a virtual range iterator
- * with rangeiterobject's layout (index, start, step, len: all words,
- * index mutable), and the iternext meta works on virtual and real fast
- * iterators alike. The long iterator (longrangeiterobject, a different
- * type) is never specialised.
+ * with rangeiterobject's layout (all words: index, start, step and len with
+ * index mutable, or start, step and len with start and len mutable), and
+ * the iternext meta works on virtual and real fast iterators alike. The long
+ * iterator (longrangeiterobject, a different type) is never specialised.
  */
 #include "prangeobject.h"
 #include "plongobject.h"
@@ -28,11 +28,17 @@
 #define iVRANGE_STEP (iVRANGE_START + 2)
 #define VRANGE_TOTAL (iVRANGE_START + 3)
 
+#if LE_HAS_RANGE_ITER_INDEX
 #define RANGEITER_index FMUT(CPY_FIELD(rangeiterobject, index, OB_type))
 #define RANGEITER_start CPY_FIELD(rangeiterobject, start, RANGEITER_index)
 #define RANGEITER_step CPY_FIELD(rangeiterobject, step, RANGEITER_start)
 #define RANGEITER_len CPY_FIELD(rangeiterobject, len, RANGEITER_step)
 #define iRANGEITER_INDEX FIELD_INDEX(RANGEITER_index)
+#else
+#define RANGEITER_start FMUT(CPY_FIELD(rangeiterobject, start, OB_type))
+#define RANGEITER_step CPY_FIELD(rangeiterobject, step, RANGEITER_start)
+#define RANGEITER_len FMUT(CPY_FIELD(rangeiterobject, len, RANGEITER_step))
+#endif
 #define iRANGEITER_START FIELD_INDEX(RANGEITER_start)
 #define iRANGEITER_STEP FIELD_INDEX(RANGEITER_step)
 #define iRANGEITER_LEN FIELD_INDEX(RANGEITER_len)
@@ -63,6 +69,7 @@ cimpl_range_new(long start, long stop, long step)
                                  step);
 }
 
+#if LE_HAS_RANGE_ITER_INDEX
 /* rangeobject.c:fast_range_iter with the index already advanced */
 static PyObject *
 cimpl_rangeiter_new(long index, long start, long step, long len)
@@ -76,6 +83,20 @@ cimpl_rangeiter_new(long index, long start, long step, long len)
     it->len = len;
     return (PyObject *)it;
 }
+#else
+/* rangeobject.c:fast_range_iter with start and len already moved on */
+static PyObject *
+cimpl_rangeiter_new(long start, long step, long len)
+{
+    rangeiterobject *it = PyObject_New(rangeiterobject, &PyRangeIter_Type);
+    if (it == NULL)
+        return NULL;
+    it->start = start;
+    it->step = step;
+    it->len = len;
+    return (PyObject *)it;
+}
+#endif
 
 static bool
 compute_range(PsycoObject *po, vinfo_t *v)
@@ -95,6 +116,7 @@ compute_range(PsycoObject *po, vinfo_t *v)
 static bool
 compute_rangeiter(PsycoObject *po, vinfo_t *v)
 {
+#if LE_HAS_RANGE_ITER_INDEX
     vinfo_t *newobj = psyco_generic_call(
         po, cimpl_rangeiter_new, CfCommonNewRefPyObject, "vvvv",
         v->array->items[iRANGEITER_INDEX], v->array->items[iRANGEITER_START],
@@ -103,6 +125,17 @@ compute_rangeiter(PsycoObject *po, vinfo_t *v)
         return false;
     /* anyone may advance the real iterator from now on */
     psyco_forget_field(po, v, RANGEITER_index);
+#else
+    vinfo_t *newobj = psyco_generic_call(
+        po, cimpl_rangeiter_new, CfCommonNewRefPyObject, "vvv",
+        v->array->items[iRANGEITER_START], v->array->items[iRANGEITER_STEP],
+        v->array->items[iRANGEITER_LEN]);
+    if (newobj == NULL)
+        return false;
+    /* anyone may advance the real iterator from now on */
+    psyco_forget_field(po, v, RANGEITER_start);
+    psyco_forget_field(po, v, RANGEITER_len);
+#endif
     vinfo_move(po, v, newobj);
     return true;
 }
@@ -164,7 +197,10 @@ error:
 static vinfo_t *
 prange_iter(PsycoObject *po, vinfo_t *v)
 {
-    vinfo_t *it, *len, *zero;
+    vinfo_t *it, *len;
+#if LE_HAS_RANGE_ITER_INDEX
+    vinfo_t *zero;
+#endif
     vinfo_t **items;
     if (v->source != VirtualTime_New(&psyco_computed_range))
         return psyco_generic_call(po, range_iter, CfCommonNewRefPyObject, "v",
@@ -181,18 +217,26 @@ prange_iter(PsycoObject *po, vinfo_t *v)
         vinfo_new(CompileTime_New((long)&PyRangeIter_Type));
     /* run-time at once, so the loop counter isn't specialised on (as for
        the virtual seq-iterator) */
+#if LE_HAS_RANGE_ITER_INDEX
     zero = psyco_vi_Zero();
     it->array->items[iRANGEITER_INDEX] = make_runtime_copy(po, zero);
     vinfo_decref(zero, po);
     vinfo_incref(items[iVRANGE_START]);
     it->array->items[iRANGEITER_START] = items[iVRANGE_START];
+    it->array->items[iRANGEITER_LEN] = len;
+#else
+    it->array->items[iRANGEITER_START] =
+        make_runtime_copy(po, items[iVRANGE_START]);
+    it->array->items[iRANGEITER_LEN] = make_runtime_copy(po, len);
+    vinfo_decref(len, po);
+#endif
     vinfo_incref(items[iVRANGE_STEP]);
     it->array->items[iRANGEITER_STEP] = items[iVRANGE_STEP];
-    it->array->items[iRANGEITER_LEN] = len;
     return it;
 }
 
 /* rangeiter_next */
+#if LE_HAS_RANGE_ITER_INDEX
 static vinfo_t *
 prangeiter_next(PsycoObject *po, vinfo_t *v)
 {
@@ -237,6 +281,50 @@ error:
     vinfo_decref(index, po);
     return NULL;
 }
+#else
+static vinfo_t *
+prangeiter_next(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *start, *step, *len, *next;
+    condition_code_t cc;
+    bool ok;
+    if ((step = psyco_get_const(po, v, RANGEITER_step)) == NULL)
+        return NULL;
+    len = psyco_get_field(po, v, RANGEITER_len);
+    if (len == NULL)
+        return NULL;
+    cc = integer_cmp_i(po, len, 0, Py_GT);
+    if (cc == CC_ERROR) {
+        vinfo_decref(len, po);
+        return NULL;
+    }
+    if (!runtime_condition_t(po, cc)) {
+        /* exhausted: FOR_ITER and PsycoIter_Next's callers expect the
+           exception that a NULL from tp_iternext stands for */
+        vinfo_decref(len, po);
+        PycException_SetVInfo(po, PyExc_StopIteration, psyco_vi_None());
+        return NULL;
+    }
+    start = psyco_get_field(po, v, RANGEITER_start);
+    if (start == NULL) {
+        vinfo_decref(len, po);
+        return NULL;
+    }
+    /* the machine word wraps as the C does */
+    next = integer_add(po, start, step, false);
+    ok = next != NULL && psyco_put_field(po, v, RANGEITER_start, next);
+    vinfo_xdecref(next, po);
+    next = ok ? integer_add_i(po, len, -1, false) : NULL;
+    ok = next != NULL && psyco_put_field(po, v, RANGEITER_len, next);
+    vinfo_xdecref(next, po);
+    vinfo_decref(len, po);
+    if (!ok) {
+        vinfo_decref(start, po);
+        return NULL;
+    }
+    return PsycoLong_FROM_WORD(start);
+}
+#endif
 
 INITIALIZATIONFN
 void

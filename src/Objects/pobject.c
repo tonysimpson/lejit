@@ -24,6 +24,7 @@
 #include "../pycodegen.h"
 #include "../codemanager.h"
 #include "pboolobject.h"
+#include "punicodeobject.h"
 
 DEFINEFN
 PyTypeObject *
@@ -560,7 +561,7 @@ class_keys_index(le_dictkeys_t *keys, PyObject *name)
     for (i = 0; i < keys->dk_nentries; i++) {
         PyObject *key = *le_dict_key_slot(keys, i);
         if (key == name ||
-            (le_dict_hash(keys, i) == hash && _PyUnicode_EQ(key, name)))
+            (le_dict_hash(keys, i) == hash && le_unicode_eq(key, name)))
             return i;
     }
     return -1;
