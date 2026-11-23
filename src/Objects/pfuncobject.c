@@ -130,8 +130,8 @@ PsycoFunction_SetField(PsycoObject *po, vinfo_t *func, int which,
     if (!is_virtualtime(func->source) ||
         VirtualTime_Get(func->source) != &psyco_computed_function)
         return psyco_generic_call(po, cimpl_func_set,
-                                  CfNoReturnValue | CfNoPython, "vlv",
-                                  func, (long)which, value) != NULL;
+                                  CfNoReturnValue | CfNoPython, "vlv", func,
+                                  (long)which, value) != NULL;
     /* fit to cross calls, as the function's other fields are */
     if (!psyco_forking(po, value->array))
         return false;
