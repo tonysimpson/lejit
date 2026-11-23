@@ -6352,7 +6352,8 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
 
         case END_FOR:
             POP_DECREF();
-            POP_DECREF();
+            if (!LE_HAS_FOR_ITER_EXIT_PAST_POP_TOP)
+                POP_DECREF();
             goto fine;
 
         case FOR_ITER:

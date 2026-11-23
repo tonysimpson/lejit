@@ -82,12 +82,17 @@ le_after(le_code_t c, int pos)
 
 /* where FOR_ITER's iterator ending goes: its target, past the END_FOR
    there that pops the iterator and its item where FOR_ITER pops the
-   iterator itself */
+   iterator itself, and past the POP_TOP after it where that pops the
+   iterator */
 static inline int
 le_for_iter_exit(le_code_t c, int target)
 {
-    if (target < c.size && le_op(c, target) == END_FOR)
-        return le_after(c, target);
+    if (target < c.size && le_op(c, target) == END_FOR) {
+        target = le_after(c, target);
+        if (LE_HAS_FOR_ITER_EXIT_PAST_POP_TOP && target < c.size &&
+            le_op(c, target) == POP_TOP)
+            target = le_after(c, target);
+    }
     return target;
 }
 
