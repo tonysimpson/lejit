@@ -229,17 +229,16 @@ psyco_pyobj_atcompiletime(PsycoObject *po, vinfo_t *vi)
         return (PyObject *)sk->value;
     }
 }
-/* the same, for a site with no generic path: past MEGAMORPHIC_MAX values
-   its version goes on in ceval from the promoting instruction
-   (psyco_interp_pyobj_promotion). Only where that is possible
-   (psyco_can_go_interpreted). */
+/* the same, by 'promotion': Psyco_NeedType's, for a site with no generic
+   path (psyco_interp_pyobj_promotion, psyco_fused_pyobj_promotion) */
 PSY_INLINE PyObject *
-psyco_pyobj_atcompiletime_interp(PsycoObject *po, vinfo_t *vi)
+psyco_pyobj_atcompiletime_by(PsycoObject *po, vinfo_t *vi,
+                             c_promotion_t *promotion)
 {
     if (!compute_vinfo(vi, po))
         return NULL;
     if (is_runtime(vi->source)) {
-        PycException_Promote(po, vi, &psyco_interp_pyobj_promotion);
+        PycException_Promote(po, vi, promotion);
         return NULL;
     }
     else {

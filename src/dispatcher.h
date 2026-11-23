@@ -17,24 +17,16 @@
    the original to let the next few Python instructions produce
    exactly the same machine code as the original. See
    psyco_prepare_respawn(). Be careful, there are a lot of such
-   snapshots around in memory; keep them as small as possible.
-
-   The first implementation (with VLOCALS_OPC=0) stores a copy
-   of the PsycoObject vlocals. So does the second implementation
-   (VLOCALS_OPC=1), but it compresses the copy into a very compact
-   pseudo-code. */
-#define VLOCALS_OPC 1
+   snapshots around in memory; keep them as small as possible:
+   the copy of the PsycoObject vlocals is compressed into a very
+   compact pseudo-code. */
 
 struct FrozenPsycoObject_s {
     union {
         int fz_stack_depth;
         struct respawn_s *respawning;
     } fz_stuff;
-#if VLOCALS_OPC
     Source *fz_vlocals_opc; /* compact pseudo-code copy */
-#else
-    vinfo_array_t *fz_vlocals; /* verbatim copy */
-#endif
     PROCESSOR_FROZENOBJECT_FIELDS
     short fz_respawned_cnt;
     int fz_next_instr; /* pr.next_instr, which fz_pyc_data leaves out */
@@ -54,11 +46,7 @@ fpo_mark_new(FrozenPsycoObject *fpo)
 PSY_INLINE void
 fpo_mark_unused(FrozenPsycoObject *fpo)
 {
-#if VLOCALS_OPC
     fpo->fz_vlocals_opc = NULL;
-#else
-    fpo->fz_vlocals = NullArray;
-#endif
     fpo->fz_pyc_data = NULL;
 }
 EXTERNFN void

@@ -654,3 +654,42 @@ CASES += [
     ('renamed_class', [()], {}),
     ('changed_unrenamed_class', [()], {}),
 ]
+
+
+# except* (PEP 654), which runs interpreted, called from compiled code. A
+# source without it has no cases here.
+try:
+    compile('try:\n    pass\nexcept* ValueError:\n    pass', '<probe>', 'exec')
+    HAS_EXCEPT_STAR = True
+except SyntaxError:
+    HAS_EXCEPT_STAR = False
+
+EXCEPT_STAR_SRC = '''
+def except_star(n):
+    out = []
+    errors = [ValueError(n), TypeError(n), KeyError(n), ValueError(-n)][:n]
+    try:
+        raise ExceptionGroup('g', errors)
+    except* ValueError as e:
+        out.append(('V', repr(e.exceptions)))
+    except* TypeError as e:
+        out.append(('T', repr(e.exceptions)))
+        if n == 2:
+            raise OSError('in handler')
+    return out
+
+
+def except_star_caller(n):
+    try:
+        return except_star(n)
+    except Exception as e:
+        return (type(e).__name__, repr(getattr(e, 'exceptions', None)),
+                repr(e.__context__))
+'''
+
+if HAS_EXCEPT_STAR:
+    exec(EXCEPT_STAR_SRC)
+    CASES += [
+        ('except_star', [(1,)], {'interpreted': 'except*'}),
+        ('except_star_caller', [(1,), (2,), (3,), (4,)], {}),
+    ]

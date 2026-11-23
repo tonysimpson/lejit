@@ -23,12 +23,27 @@ typedef struct {
     int size; /* in bytes */
 } le_code_t;
 
+/* Where CPython makes a code object's bytes when first asked for them
+   (PyCode_GetCode), and keeps them until it dies: 0 once they are made,
+   -1 with a MemoryError set. le_code is only used after this. */
+static inline int
+le_code_prepare(PyCodeObject *co)
+{
+#if LE_HAS_CODE_GET_CODE
+    PyObject *b = PyCode_GetCode(co);
+    if (b == NULL)
+        return -1;
+    Py_DECREF(b);
+#endif
+    return 0;
+}
+
 static inline le_code_t
 le_code(PyCodeObject *co)
 {
     le_code_t c;
 #if LE_HAS_CODE_GET_CODE
-    /* a new reference to bytes the code object keeps until it dies */
+    /* a new reference to the bytes le_code_prepare made */
     PyObject *b = PyCode_GetCode(co);
     if (b == NULL)
         Py_FatalError("PyCode_GetCode failed");
@@ -121,7 +136,9 @@ le_jump_target(le_code_t c, le_instr_t in)
 #endif
 
 /* the rich comparison COMPARE_OP with argument arg makes */
-#if LE_HAS_COMPARE_OP_SHIFT_4
+#if LE_HAS_COMPARE_OP_SHIFT_5
+#define LE_COMPARE_OP(arg) ((arg) >> 5)
+#elif LE_HAS_COMPARE_OP_SHIFT_4
 #define LE_COMPARE_OP(arg) ((arg) >> 4)
 #else
 #define LE_COMPARE_OP(arg) (arg)
