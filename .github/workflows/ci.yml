@@ -192,6 +192,7 @@ jobs:
   detectors-newer:
     name: detectors (${{ matrix.python }})
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     container: python:${{ matrix.python }}-bookworm
     strategy:
       fail-fast: false
