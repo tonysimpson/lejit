@@ -131,8 +131,7 @@ pinstancemethod_call(PsycoObject *po, vinfo_t *methobj, vinfo_t *arg,
     return result;
 
 fallback:
-    return psyco_generic_call(po, PyMethod_Type.tp_call,
-                              CfCommonNewRefPyObject, "vvv", methobj, arg, kw);
+    return psyco_residual_call(po, PyMethod_Type.tp_call, methobj, arg, kw);
 }
 
 INITIALIZATIONFN

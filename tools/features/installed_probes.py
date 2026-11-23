@@ -301,6 +301,13 @@ def POP_EXCEPT_UNWINDS():
 
 
 @probe
+def CODE_POSONLY_ARGS():
+    """code objects have co_posonlyargcount"""
+    return (hasattr((lambda: None).__code__, 'co_posonlyargcount'),
+            'code.co_posonlyargcount')
+
+
+@probe
 def CODE_QUALNAME():
     """code objects have co_qualname"""
     return (hasattr((lambda: None).__code__, 'co_qualname'),
@@ -895,6 +902,36 @@ def LOAD_GLOBAL_NULL_BIT():
             return x.arg == 1, 'dis: LOAD_GLOBAL %d for zzz()' % x.arg
     raise Unanswered('zzz() is not LOAD_GLOBAL 0 or 1: %r'
                      % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
+def AWAIT_ERROR_BY_ARG():
+    """async with's awaits of __aenter__'s and __aexit__'s results are
+    GET_AWAITABLE 1 and 2, the argument ceval's error reads (dis)"""
+    src = 'async def f(m):\n    async with m:\n        pass\n'
+    g = {}
+    exec(src, g)
+    args = [x.arg for x in dis.get_instructions(g['f'])
+            if x.opname == 'GET_AWAITABLE']
+    if not args:
+        raise Unanswered('async with has no GET_AWAITABLE')
+    return args[:2] == [1, 2], 'dis: GET_AWAITABLE %r in async with' % args
+
+
+@probe
+def AWITH_EXIT_FIRST():
+    """async with on an object with neither method names __aexit__ as the
+    one missing (run)"""
+    async def f():
+        async with object():
+            pass
+    try:
+        f().send(None)
+    except AttributeError as e:
+        return str(e) == '__aexit__', 'async with object(): %s' % e
+    except TypeError as e:
+        return False, 'async with object(): TypeError %s' % e
+    raise Unanswered('async with object() raised nothing')
 
 
 @probe

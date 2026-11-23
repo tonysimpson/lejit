@@ -289,6 +289,11 @@ def call_one_arg(h):
     return _declared(h, 'PyObject_CallOneArg')
 
 
+def vectorcall(h):
+    """headers: PyObject_Vectorcall is declared (it may be static inline)"""
+    return _declared(h, 'PyObject_Vectorcall')
+
+
 def traceback_from_frame_api(h):
     """headers: _PyTraceBack_FromFrame is declared PyAPI_FUNC"""
     h.need_internal()
@@ -346,6 +351,7 @@ HEADER_DETECTORS = {
     'INLINE_CALL_TSTATE_GET': inline_call_tstate_get,
     'LOOKUP_SPECIAL_ID': public('_PyObject_LookupSpecial'),
     'CALL_ONE_ARG': call_one_arg,
+    'VECTORCALL': vectorcall,
     'TUPLE_GET_EMPTY': tuple_get_empty,
     'INTERPRETER_FRAME': features.interpreter_frame,
     'CODE_LOCALSPLUS': features.code_localsplus,

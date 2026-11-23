@@ -4,8 +4,8 @@
  * has been compiled (coding pauses, respawn). A promotion site starts with a
  * patchable 'MOV R10, imm64; CMP reg, R10; JE target' holding the first
  * value seen, and a chain of more out of line (below): a polymorphic inline
- * cache in front of the C dispatcher. All jumps are rel32, so every code
- * buffer must be within +-2 GB of every other, and nothing guarantees this.
+ * cache in front of the C dispatcher. All jumps are rel32; one whose target
+ * is out of reach goes through a far jump (codemanager.c:psyco_code_far_jump).
  */
 /***************************************************************/
 /***       Processor-specific routines for dispatcher.c        ***/
@@ -152,7 +152,7 @@ psyco_stub_set_release(void *closure, void (*fn)(void *));
    (dispatcher.c) is given; not a 'call', which would leave the CPU's
    return-address predictor a call it never returns from.
    psyco_write_respawn_stub writes one at 'code' and returns its end, the
-   record's address, or NULL if the trampoline is out of a jump's reach. */
+   record's address. */
 #define RESPAWN_STUB_SIZE 12
 EXTERNVAR code_t *psyco_respawn_trampoline;
 EXTERNFN code_t *

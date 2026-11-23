@@ -867,8 +867,7 @@ ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg, vinfo_t *vkw)
         return PsycoFloat_FROM_DOUBLE(x);
     }
 fallback:
-    return psyco_generic_call(po, PyObject_Call, CfCommonNewRefPyObject, "vvv",
-                              vtype, varg, vkw);
+    return psyco_residual_call(po, PyObject_Call, vtype, varg, vkw);
 }
 
 /***************************************************************/

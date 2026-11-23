@@ -14,6 +14,14 @@ EXTERNFN bool
 PsycoDict_SetItemC(PsycoObject *po, vinfo_t *vdict, PyObject *key,
                    vinfo_t *vvalue);
 
+/* Pending keywords (pdictobject.c): a virtual dict of 'names' (a tuple
+   constant) to values, for a keyword call to bind; PendingNames gives the
+   names and sets *values, or gives NULL for anything else. */
+EXTERNFN vinfo_t *
+PsycoDict_PendingKeywords(PyObject *names, vinfo_t **values);
+EXTERNFN PyObject *
+PsycoDict_PendingNames(vinfo_t *v, vinfo_t ***values);
+
 /* The exact-str key probe (pdictobject.c), for pycompiler.c's fused get
    then store: StrKey says whether the probe serves d[k] at compile time;
    'record' makes a get record the slot it finds, 'fused' makes a store

@@ -44,6 +44,102 @@ Psyco_DefineCallMeta(PyTypeObject *tp, call_meta_fn meta)
     ncall_metas++;
 }
 
+#if LE_HAS_VECTORCALL
+/* ceval's call: the values in an array with a spare slot in front, which
+   PY_VECTORCALL_ARGUMENTS_OFFSET lets the callee use; the last
+   len(kwnames) values are the keyword ones */
+static PyObject *
+cimpl_vectorcall(PyObject *callable, PyObject *kwnames, PyObject **slots,
+                 Py_ssize_t n)
+{
+    Py_ssize_t nargs = n - (kwnames == NULL ? 0 : PyTuple_GET_SIZE(kwnames));
+    return PyObject_Vectorcall(
+        callable, slots + 1, nargs | PY_VECTORCALL_ARGUMENTS_OFFSET, kwnames);
+}
+
+/* psyco_generic_call takes at most 7 arguments: callable, kwnames and
+   VECTORCALL_MAX values */
+#define VECTORCALL_MAX 5
+#define VECTORCALL_FN(n, params, ...)                              \
+    static PyObject *cimpl_vectorcall##n(PyObject *callable,       \
+                                         PyObject *kwnames params) \
+    {                                                              \
+        PyObject *slots[] = {NULL, __VA_ARGS__};                   \
+        return cimpl_vectorcall(callable, kwnames, slots, n);      \
+    }
+#define P(x) , PyObject *x
+VECTORCALL_FN(0, , NULL)
+VECTORCALL_FN(1, P(a0), a0)
+VECTORCALL_FN(2, P(a0) P(a1), a0, a1)
+VECTORCALL_FN(3, P(a0) P(a1) P(a2), a0, a1, a2)
+VECTORCALL_FN(4, P(a0) P(a1) P(a2) P(a3), a0, a1, a2, a3)
+VECTORCALL_FN(5, P(a0) P(a1) P(a2) P(a3) P(a4), a0, a1, a2, a3, a4)
+#undef P
+#undef VECTORCALL_FN
+
+static void *const cimpl_vectorcalls[VECTORCALL_MAX + 1] = {
+    cimpl_vectorcall0, cimpl_vectorcall1, cimpl_vectorcall2,
+    cimpl_vectorcall3, cimpl_vectorcall4, cimpl_vectorcall5};
+#endif
+
+DEFINEFN
+vinfo_t *
+psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t **args, int nargs,
+                 PyObject *kwnames)
+{
+#if LE_HAS_VECTORCALL
+    static const char *const fmt[VECTORCALL_MAX + 1] = {
+        "vv", "vvv", "vvvv", "vvvvv", "vvvvvv", "vvvvvvv"};
+    vinfo_t *a[VECTORCALL_MAX] = {NULL};
+    vinfo_t *vnames, *r;
+    int i, n = nargs + (kwnames == NULL ? 0 : (int)PyTuple_GET_SIZE(kwnames));
+    if (n > VECTORCALL_MAX)
+        return NULL;
+    for (i = 0; i < n; i++) a[i] = args[i];
+    if (kwnames == NULL)
+        vnames = psyco_vi_Zero();
+    else {
+        Py_INCREF(kwnames);
+        vnames =
+            vinfo_new(CompileTime_NewSk(sk_new((long)kwnames, SkFlagPyObj)));
+    }
+    /* fmt[n] stops before the unused (NULL) trailing values */
+    r = psyco_generic_call(po, cimpl_vectorcalls[n], CfCommonNewRefPyObject,
+                           fmt[n], callable, vnames, a[0], a[1], a[2], a[3],
+                           a[4]);
+    vinfo_decref(vnames, po);
+    return r;
+#else
+    return NULL;
+#endif
+}
+
+DEFINEFN
+vinfo_t *
+psyco_vectorcall_tuple(PsycoObject *po, vinfo_t *callable, vinfo_t *args,
+                       vinfo_t *kw)
+{
+    int n;
+    if (!psyco_knowntobe(kw, 0) || !is_virtualtime(args->source))
+        return NULL;
+    n = PsycoTuple_Load(args);
+    if (n < 0)
+        return NULL;
+    return psyco_vectorcall(po, callable, &PsycoTuple_GET_ITEM(args, 0), n,
+                            NULL);
+}
+
+DEFINEFN
+vinfo_t *
+psyco_residual_call(PsycoObject *po, void *call, vinfo_t *callable,
+                    vinfo_t *args, vinfo_t *kw)
+{
+    vinfo_t *r = psyco_vectorcall_tuple(po, callable, args, kw);
+    if (r != NULL || PycException_Occurred(po))
+        return r;
+    return psyco_generic_call(po, call, CfCommonNewRefPyObject, "vvv",
+                              callable, args, kw);
+}
 DEFINEFN
 vinfo_t *
 PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
@@ -58,9 +154,8 @@ PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
         case 1:
             break;
         case 0: /* a heap type's tp_call changed; kw is 0 for none */
-            return psyco_generic_call(po, PyObject_Call,
-                                      CfCommonNewRefPyObject, "vvv",
-                                      callable_object, args, kw);
+            return psyco_residual_call(po, PyObject_Call, callable_object,
+                                       args, kw);
         default:
             return NULL;
     }
@@ -74,9 +169,8 @@ PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
            holds, which may not do what tp_call does */
         if ((tp->tp_flags & Py_TPFLAGS_HAVE_VECTORCALL) &&
             Psyco_Lookup((void *)call) == NULL)
-            return psyco_generic_call(po, PyObject_Call,
-                                      CfCommonNewRefPyObject, "vvv",
-                                      callable_object, args, kw);
+            return psyco_residual_call(po, PyObject_Call, callable_object,
+                                       args, kw);
 #endif
         return Psyco_META3(po, call, CfCommonNewRefPyObject, "vvv",
                            callable_object, args, kw);
