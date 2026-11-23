@@ -49,7 +49,8 @@ Psyco_NeedType(PsycoObject *po, vinfo_t *vi)
        expression stops being fused */
     if (psyco_can_go_interpreted(po))
         promotion = &psyco_interp_pyobj_promotion;
-    else if (po->pr.co->co_flags & CO_GENERATOR)
+    else if (psyco_generator_mode(po) != 0 &&
+             psyco_generator_mode(po) != GENEXPR_RESUMABLE)
         promotion = &psyco_fused_pyobj_promotion;
     else
         promotion = &psyco_nonfixed_pyobj_promotion;

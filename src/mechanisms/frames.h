@@ -660,6 +660,72 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
     f->f_stacktop = f->f_valuestack + n;
 }
 #endif
+/* A generator's frame as ceval leaves it at a yield and resumes it
+   (eval_hook.c:LeGen_Run, pycompiler.c): its locals and its value stack,
+   which follows them, with the stack's depth (le_frame_stack_depth),
+   f_lasti at the yield and its blocks. Compiled code stores into
+   f_localsplus by its offset. */
+#define LE_OFS_PyFrameObject__f_localsplus \
+    offsetof(PyFrameObject, f_localsplus)
+#define LE_SIZE2_PyFrameObject__f_localsplus 3
+#define LE_UNSIGNED_PyFrameObject__f_localsplus 0
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((PyFrameObject *)0)->f_localsplus),
+                   PyObject *[1]),
+               "LeJIT: PyFrameObject.f_localsplus is not PyObject *[1]");
+/* the depth of a paused frame's stack */
+static inline int
+le_frame_stack_depth(PyFrameObject *f)
+{
+#if LE_HAS_FRAME_STATE
+    return f->f_stackdepth;
+#else
+    return (int)(f->f_stacktop - f->f_valuestack);
+#endif
+}
+/* the generator's frame runs, its stack held by compiled code: as ceval's
+   prologue leaves it */
+static inline void
+le_gen_frame_run(PyFrameObject *f)
+{
+#if LE_HAS_FRAME_STATE
+    f->f_stackdepth = -1;
+    f->f_state = FRAME_EXECUTING;
+#else
+    f->f_stacktop = NULL;
+    f->f_executing = 1;
+#endif
+}
+/* compiled code pauses it at a yield, before storing its locals and stack
+   items */
+static inline void
+le_gen_frame_pause(PyFrameObject *f, int lasti, int nstack, int iblock,
+                   const PyTryBlock *blocks)
+{
+    int i;
+    f->f_lasti = lasti;
+    le_frame_set_stack_depth(f, nstack);
+    f->f_iblock = iblock;
+    for (i = 0; i < iblock; i++) f->f_blockstack[i] = blocks[i];
+#if LE_HAS_FRAME_STATE
+    f->f_state = FRAME_SUSPENDED;
+#endif
+}
+/* the run that gave 'result' has ended: paused (le_gen_frame_pause, or
+   ceval's own YIELD_VALUE), else returned or raised, as ceval leaves it */
+static inline void
+le_gen_frame_end(PyFrameObject *f, PyObject *result)
+{
+#if LE_HAS_FRAME_STATE
+    if (f->f_state == FRAME_EXECUTING) {
+        f->f_stackdepth = 0;
+        f->f_state = result != NULL ? FRAME_RETURNED : FRAME_RAISED;
+    }
+#else
+    (void)result;
+    f->f_executing = 0;
+#endif
+}
 /* the frame is running, as frame.clear() sees it */
 static inline int
 le_frame_executing(le_frame_t *f)
