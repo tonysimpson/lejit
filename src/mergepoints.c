@@ -120,6 +120,11 @@ report_destructor(PyObject *capsule)
 
 #define MAX_MP_DISTANCE 170
 
+/* the compiler copies a frame's locals and stack at each merge point it
+   keeps, so code with more than this many of them runs it out of memory
+   (a namedtuple of thousands of fields) and stays in ceval */
+#define MAX_FRAME_VALUES 1000
+
 /* inlining (upstream's rule): one merge point (the start), no block, no
    LOAD_GLOBAL, and at most this many instructions that are not "light"
    (produce little or no code) */
@@ -571,6 +576,8 @@ _build_merge_points(PyCodeObject *co, int module)
 #endif
     if (le_code_prepare(co) < 0)
         return NULL;
+    if (le_code_nlocalsplus(co) + co->co_stacksize > MAX_FRAME_VALUES)
+        goto not_ok;
     /* a generator expression compiles only into its consumer
        (psyfunc.c:psyco_call_genexpr): the eval hook never runs generator
        code, and psyco_call_pyfunc makes a pending generator of it */
