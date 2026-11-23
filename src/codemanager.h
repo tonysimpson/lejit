@@ -126,7 +126,8 @@ psyco_group_new(PyObject *key, void *site);
 EXTERNFN void
 psyco_owner_depend(CodeBufferObject *b);
 /* the code object's owner above the current owner, if that is a group
-   and the code object's owner holds every constant 'a' has; else NULL */
+   and the code object's owner holds every constant 'a' has; else NULL.
+   With it, the type hints in 'a' that owner doesn't hold are dropped. */
 EXTERNFN le_owner_t *
 psyco_owner_root_holding(vinfo_array_t *a);
 /* frames.c: calls 'mark' on the code object of every compiled frame
