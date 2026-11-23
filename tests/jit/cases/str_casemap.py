@@ -202,7 +202,32 @@ def ascii_bytes():
     return out
 
 
+class Moves:
+    # adding to it takes its key out of the dict and puts it back, so the
+    # store of d[k] += x goes to another entry than the get found
+    def __init__(self, d, k):
+        self.d, self.k = d, k
+
+    def __add__(self, x):
+        del self.d[self.k]
+        self.d[self.k] = 0
+        return x
+
+
+def store_after_move(n):
+    d = {}
+    out = []
+    for i in range(n):
+        k = 'key%d' % (i % 3)
+        d['other'] = i
+        d[k] = Moves(d, k)
+        d[k] += i
+        out.append(sorted(d.items()))
+    return out
+
+
 CASES = [
+    ('store_after_move', [(4,), (7,)], {}),
     ('maps', [(WORDS,)], {}),
     ('identity', [(WORDS,)], {}),
     ('compares', [(WORDS,)], {}),

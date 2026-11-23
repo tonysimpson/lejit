@@ -2,6 +2,8 @@
 # watcher its events, as CPython's own stores do, and must leave the dict
 # watched. _testcapi's watchers record the events; where CPython has no dict
 # watchers, only the stores' results are compared.
+from types import FunctionType
+
 try:
     import _testcapi
 except ImportError:
@@ -133,7 +135,46 @@ def no_watcher_left(n):
     return seen
 
 
+def read_added():
+    return lejit_test_added  # noqa: F821
+
+
+def builtin_deleted(n):
+    # a builtin added, read, then deleted: compiled code must raise
+    import builtins
+    seen = []
+    for i in range(n):
+        builtins.lejit_test_added = i
+        seen.append(read_added())
+        del builtins.lejit_test_added
+        try:
+            read_added()
+        except NameError as e:
+            seen.append(str(e))
+    return seen
+
+
+def read_x():
+    return X  # noqa: F821
+
+
+def fresh_globals(n):
+    # one function's code run with a new globals dict each time, each made
+    # as the last is freed, so often at its address
+    seen = []
+    for i in range(n):
+        f = FunctionType(read_x.__code__, {'X': i})
+        got = 0
+        for j in range(50):
+            got += f()
+        seen.append(got)
+        del f
+    return seen
+
+
 CASES = [
+    ('builtin_deleted', [(3,)], {}),
+    ('fresh_globals', [(20,)], {}),
     ('builtin_under_watch', [(3,)], {}),
     ('no_watcher_left', [(0,), (3,)], {}),
     ('store_existing', [(0,), (3,)], {}),
