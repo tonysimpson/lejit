@@ -87,19 +87,27 @@ static int
 cimpl_check_recursive_call(void);
 /* ceval's entry takes two from the C count where there is one (its
    PY_EVAL_C_STACK_UNITS), the second by Py_EnterRecursiveCall's test, and
-   one from the Python count, as _Py_EnterRecursivePy */
+   one from the Python count, as _Py_EnterRecursivePy. The second is
+   taken in place while the C count is above 0, where ceval's own test
+   neither raises nor calls its check; at 0 or below it is
+   Py_EnterRecursiveCall's, whose test is the version's. */
 #if LE_HAS_C_RECURSION_REMAINING
 #define LE_C_RECURSION_TAKE(ts) ((ts)->c_recursion_remaining--)
 #define LE_C_RECURSION_GIVE(ts) ((ts)->c_recursion_remaining++)
+#define LE_C_RECURSION_ENTER(ts)               \
+    ((ts)->c_recursion_remaining > 0           \
+         ? ((ts)->c_recursion_remaining--, 0) \
+         : Py_EnterRecursiveCall(""))
 #else
 #define LE_C_RECURSION_TAKE(ts) ((void)(ts))
 #define LE_C_RECURSION_GIVE(ts) ((void)(ts))
+#define LE_C_RECURSION_ENTER(ts) Py_EnterRecursiveCall("")
 #endif
 static inline int
 le_recursion_enter(PyThreadState *ts)
 {
     LE_C_RECURSION_TAKE(ts);
-    if (Py_EnterRecursiveCall("")) {
+    if (LE_C_RECURSION_ENTER(ts)) {
         LE_C_RECURSION_GIVE(ts);
         return -1;
     }
@@ -114,8 +122,11 @@ static inline void
 le_recursion_leave(PyThreadState *ts)
 {
     ts->py_recursion_remaining++;
+#if LE_HAS_C_RECURSION_REMAINING
+    ts->c_recursion_remaining += 2;
+#else
     Py_LeaveRecursiveCall();
-    LE_C_RECURSION_GIVE(ts);
+#endif
 }
 #elif LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING
 /* Py_EnterRecursiveCall and Py_LeaveRecursiveCall in place, as compiled

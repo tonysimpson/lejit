@@ -19,6 +19,7 @@
 #include "../dispatcher.h"
 #include "../vcompiler.h"
 #include "ipyencoding.h"
+#include "../mechanisms/tstate.h"
 
 DEFINEVAR reg_t RegistersLoop[REG_TOTAL] = {
     /* RAX > */ REG_NONE,
@@ -216,6 +217,8 @@ run_time_result_check(PsycoObject *po, int flags)
 {
     condition_code_t error_cc;
     int mark; /* TEMP_PUSH_R */
+    long tstate_at;
+    bool tstate_fs;
 #define CMP_RETURN_MINUS_1()                                 \
     do {                                                     \
         BEGIN_CODE                                           \
@@ -316,21 +319,33 @@ test_condition_and_pyerr_occured:
     if (!runtime_condition_f(po, error_cc)) {
         return VINFO_OK;
     }
-    /* PyErr_Occurred() while the result is still only in RAX: save RAX
-       around the call to PyThreadState_Get. Nothing between the PUSH and
-       the POP may go through the register allocator, which can spill with
-       a PUSH of its own, so that the POP restores the wrong value and the
-       spilled vinfo is left above the top of the stack.
-       The exception word (LE_EXC_OCCURRED_OFFSET) is read into the
-       scratch register instead. */
+    /* PyErr_Occurred() while the result is still only in RAX: the thread
+       state and its exception word (LE_EXC_OCCURRED_OFFSET) are read into
+       the scratch register, from where compiled code loads the state
+       (mechanisms/tstate.h), or else by a call to PyThreadState_Get with
+       RAX saved around it. Nothing between the PUSH and the POP may go
+       through the register allocator, which can spill with a PUSH of its
+       own, so that the POP restores the wrong value and the spilled vinfo
+       is left above the top of the stack. */
     BEGIN_CODE
     NEED_CC(); /* before the PUSH: it may take a register */
-    /* counted: the call's alignment and RSP-relative addressing use it */
-    TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
-    BEGIN_CALL(0);
-    END_CALL_I(PyThreadState_Get);
-    MOV_R_O(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN, LE_EXC_OCCURRED_OFFSET);
-    TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
+    if (le_tstate_word(&tstate_at, &tstate_fs)) {
+        if (tstate_fs)
+            MOV_R_FS(REG_TRANSIENT_1, tstate_at);
+        else {
+            MOV_R_I(REG_TRANSIENT_1, tstate_at);
+            MOV_R_A(REG_TRANSIENT_1, REG_TRANSIENT_1);
+        }
+        MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1, LE_EXC_OCCURRED_OFFSET);
+    }
+    else {
+        /* counted: the call's alignment and RSP-relative addressing use it */
+        TEMP_PUSH_R(REG_FUNCTIONS_RETURN, mark);
+        BEGIN_CALL(0);
+        END_CALL_I(PyThreadState_Get);
+        MOV_R_O(REG_TRANSIENT_1, REG_FUNCTIONS_RETURN, LE_EXC_OCCURRED_OFFSET);
+        TEMP_POP_R(REG_FUNCTIONS_RETURN, mark);
+    }
     TEST_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
     END_CODE
     error_cc = CC_NE;

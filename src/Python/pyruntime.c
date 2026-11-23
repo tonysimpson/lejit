@@ -230,15 +230,6 @@ le_eval_breaker_handler(void)
     return _Py_HandlePending(PyThreadState_GET());
 }
 
-/* whether an event is flagged for the thread (eval_hook.c:le_gen_to_run) */
-int
-le_eval_breaker_pending(void)
-{
-    return (_Py_atomic_load_uintptr_relaxed(
-                &PyThreadState_GET()->eval_breaker) &
-            _PY_EVAL_EVENTS_MASK) != 0;
-}
-
 /* The same test before a frame's first instruction, for compiled code
    entered through the eval hook (eval_hook.c:LeCode_Run). Compiled callers
    test after each call instead. -1 with the exception set, for the caller

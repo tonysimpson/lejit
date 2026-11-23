@@ -9,16 +9,17 @@
    on the thread state 'vts' (psyfunc.c:tracing_on): the interpreter's
    table of tools per event, a byte each, read as two words that overlap,
    OR-ed. Included after vcompiler.h and codegen.h. */
-extern int
-le_monitoring_on(PyThreadState *ts);
+/* where the interpreter's table of tools is, and its size (8 to 16) */
+extern const long le_monitors_tools_at, le_monitors_tools_size;
 static inline int
 le_tracing_now(PyThreadState *ts)
 {
-    return le_monitoring_on(ts);
+    const char *t = (const char *)ts->interp + le_monitors_tools_at;
+    uint64_t a, b;
+    memcpy(&a, t, 8);
+    memcpy(&b, t + le_monitors_tools_size - 8, 8);
+    return (a | b) != 0;
 }
-
-/* where the interpreter's table of tools is, and its size (8 to 16) */
-extern const long le_monitors_tools_at, le_monitors_tools_size;
 #define TSTATE_interp \
     FMUT(DEF_FIELD(PyThreadState, PyInterpreterState *, interp, NO_PREV_FIELD))
 

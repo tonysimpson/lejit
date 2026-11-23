@@ -23,6 +23,15 @@ le_tstate_load(PsycoObject *po)
                               CfReturnTypePtr | CfNoBlock | CfNoPython, "");
 }
 
+/* where compiled code finds the state: the word at '*at' from the thread
+   pointer ('*fs' true); false if it calls PyThreadState_Get instead */
+static inline bool
+le_tstate_word(long *at, bool *fs)
+{
+    *fs = true;
+    return le_tstate_thread_offset(at);
+}
+
 /* at start-up: finds the offset, which then holds what PyThreadState_Get()
    gives */
 static inline bool
@@ -59,6 +68,16 @@ le_tstate_load(PsycoObject *po)
     vinfo_t *vts = psyco_get_field(po, vslot, TSTATE_current);
     vinfo_decref(vslot, po);
     return vts;
+}
+
+/* where compiled code finds the state: the word at address '*at' ('*fs'
+   false) */
+static inline bool
+le_tstate_word(long *at, bool *fs)
+{
+    *fs = false;
+    *at = (long)le_tstate_current_address();
+    return true;
 }
 
 /* at start-up: the word holds what PyThreadState_GET() gives */
