@@ -5789,10 +5789,13 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
 #endif
 
 #if LE_HAS_OPCODE_DICT_MERGE
+        /* an error names the callable: under the arguments, and under
+           its NULL too where CALLABLE_UNDER_NULL */
         case DICT_MERGE:
-            x = psyco_generic_call(po, cimpl_dict_merge,
-                                   CfCommonIntBoolOrError, "vvv",
-                                   NTOP(oparg + 1), TOP(), NTOP(oparg + 3));
+            x = psyco_generic_call(
+                po, cimpl_dict_merge, CfCommonIntBoolOrError, "vvv",
+                NTOP(oparg + 1), TOP(),
+                NTOP(oparg + 3 + LE_HAS_CALLABLE_UNDER_NULL));
             if (x == NULL)
                 break;
             vinfo_decref(x, po);
