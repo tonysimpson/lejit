@@ -3545,20 +3545,25 @@ cimpl_name_error(PyObject *w)
 }
 
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
-   [kwargs], args, and the callable beside its NULL. f(*tuple) goes straight to
+   [kwargs], args, and the callable beside its NULL. The kwargs slot is
+   there whenever argument bit 0 is set, or always where CALL_EX_KWARGS_SLOT
+   (a NULL there for a call with none). f(*tuple) goes straight to
    PsycoObject_Call, which can specialise the call; anything else runs
    CPython's whole case at run time (its copy cimpl_call_function_ex). */
 static vinfo_t *
 psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
                      int *stack_to_pop)
 {
-    vinfo_t *kwargs = (oparg & 1) ? stack_top[-1] : NULL;
-    vinfo_t *callargs = stack_top[-1 - (oparg & 1)];
-    vinfo_t *func = stack_top[-2 - (oparg & 1) - LE_HAS_CALLABLE_UNDER_NULL];
+    int slot = LE_HAS_CALL_EX_KWARGS_SLOT || (oparg & 1);
+    vinfo_t *kwargs = slot ? stack_top[-1] : NULL;
+    vinfo_t *callargs = stack_top[-1 - slot];
+    vinfo_t *func = stack_top[-2 - slot - LE_HAS_CALLABLE_UNDER_NULL];
     vinfo_t *zero = NULL, *result;
     PyTypeObject *t;
     /* and the NULL under the callable, where PUSH_NULL puts one there */
-    *stack_to_pop = 2 + (oparg & 1) + LE_HAS_OPCODE_PUSH_NULL;
+    *stack_to_pop = 2 + slot + LE_HAS_OPCODE_PUSH_NULL;
+    if (kwargs != NULL && psyco_knowntobe(kwargs, 0))
+        kwargs = NULL;
 
     t = Psyco_NeedType(po, callargs);
     if (t == NULL)
