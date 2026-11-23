@@ -1024,10 +1024,9 @@ yields_do_work(le_code_t c)
    inside an exception handler, whose stack and blocks LeJIT keeps apart
    from the frame's (an EXCEPT_HANDLER block, a finally block's
    pseudo-exception); a coroutine's handlers that can await run in ceval
-   instead (handler_yields_kept). With 'direct', a body run as a call,
-   which can't go on in ceval: no async with, and no await in a handler. */
+   instead (handler_yields_kept) */
 static int
-body_compilable(PyCodeObject *co, le_code_t *c, int direct)
+body_compilable(PyCodeObject *co, le_code_t *c)
 {
     int pos;
     int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
@@ -1048,11 +1047,6 @@ body_compilable(PyCodeObject *co, le_code_t *c, int direct)
                 if (kind == CO_GENERATOR)
                     return 0;
                 break;
-            case BEFORE_ASYNC_WITH:
-            case SETUP_ASYNC_WITH:
-                if (direct)
-                    return 0;
-                break;
             case GET_YIELD_FROM_ITER:
             /* async for */
             case GET_AITER:
@@ -1061,7 +1055,7 @@ body_compilable(PyCodeObject *co, le_code_t *c, int direct)
                 return 0;
         }
     }
-    if (kind == CO_COROUTINE && !direct)
+    if (kind == CO_COROUTINE)
         return handler_yields_kept(co, *c);
     return !yields_in_handler(co, *c);
 }
@@ -1077,7 +1071,7 @@ psyco_is_resumable_generator(PyCodeObject *co)
 {
 #if LE_RESUMES_GENERATORS
     le_code_t c;
-    return body_compilable(co, &c, 0) && yields_do_work(c);
+    return body_compilable(co, &c) && yields_do_work(c);
 #else
     (void)co;
     return 0;
@@ -1106,7 +1100,7 @@ psyco_is_startable_coroutine(PyCodeObject *co)
 {
 #if LE_RESUMES_COROUTINES
     le_code_t c;
-    return (co->co_flags & CO_COROUTINE) && body_compilable(co, &c, 1);
+    return (co->co_flags & CO_COROUTINE) && body_compilable(co, &c);
 #else
     (void)co;
     return 0;
