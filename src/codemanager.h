@@ -136,9 +136,9 @@ psyco_record(le_addrmap_t *map, void *key);
    compile held are lost. Run-time error state is kept, or becomes a
    MemoryError if the compile replaced it. The caller then runs the
    interpreter instead (psyco_guard_pop), or compiles again from a state
-   the compile didn't consume (psyco_guard_retry, which aborts after
-   LE_GUARD_RETRIES tries: compiled code can't go back to the
-   interpreter). */
+   the compile didn't consume (psyco_guard_retry, which releases the
+   emergency reserve before the last of LE_GUARD_RETRIES + 1 tries and
+   aborts after it: compiled code can't go back to the interpreter). */
 #include <setjmp.h>
 #define LE_GUARD_RETRIES 3
 typedef struct le_compile_guard_s {

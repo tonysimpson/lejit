@@ -115,6 +115,49 @@ free_find(size_t n)
     return -1;
 }
 
+/*** The emergency reserve ***/
+
+/* A compile entered from compiled code (a pause, respawn or promotion) must
+   finish, as the code can't go back to the interpreter or raise without
+   it. Memory is held back for it: released just before such a compile's
+   last try (psyco_guard_retry), so that the try can allocate when memory
+   has run out for good, and taken again by a later compile once memory
+   allows. RESERVE_SIZE covers a new pymalloc arena (1 MB), a new piece of
+   malloc's heap (1 MB) and what one compile allocates (under 0.5 MB in
+   all but one of the pyperformance benchmarks on 3.10; unpack_sequence's
+   largest needed 2.5 MB). Its code needed at most 170 kB there: the
+   reserve holds SPARE_CODE_SIZE at the end of a free extent too, for when
+   no new region can be mapped. */
+#define RESERVE_SIZE (4 * 1024 * 1024)
+#define SPARE_CODE_SIZE (1024 * 1024)
+static void *reserve = NULL;
+static code_t *spare_code = NULL;
+
+static void
+reserve_refill(void)
+{
+    int i;
+    if (reserve == NULL)
+        reserve = psyco_map_reserve(RESERVE_SIZE);
+    if (spare_code == NULL && (i = free_find(SPARE_CODE_SIZE + 1)) >= 0) {
+        free_ext[i].end -= SPARE_CODE_SIZE;
+        spare_code = free_ext[i].end;
+    }
+}
+
+static void
+reserve_release(void)
+{
+    if (reserve != NULL) {
+        psyco_unmap_reserve(reserve, RESERVE_SIZE);
+        reserve = NULL;
+    }
+    if (spare_code != NULL) {
+        free_insert(spare_code, spare_code + SPARE_CODE_SIZE);
+        spare_code = NULL;
+    }
+}
+
 static code_t *
 take_extent(size_t want, size_t need, code_t **end)
 {
@@ -1151,6 +1194,8 @@ psyco_guard_push(le_compile_guard_t *g)
     g->nopen = nopen;
     g->njournal = njournal;
     g->tries = 0;
+    if (psyco_compile_guard == NULL && (reserve == NULL || spare_code == NULL))
+        reserve_refill(); /* not while a compile may need what was released */
     le_exc_get_current(ts, &g->exc_type, &g->exc_value, &g->exc_tb);
 #if ALL_CHECKS
     g->respawn_file = psyco_respawn_file;
@@ -1171,7 +1216,9 @@ psyco_guard_pop(le_compile_guard_t *g)
 DEFINEFN void
 psyco_guard_retry(le_compile_guard_t *g)
 {
-    if (g->tries > LE_GUARD_RETRIES) {
+    if (g->tries == LE_GUARD_RETRIES)
+        reserve_release();
+    else if (g->tries > LE_GUARD_RETRIES) {
         psyco_guard_pop(g);
         psyco_out_of_memory(__FILE__, __LINE__);
     }

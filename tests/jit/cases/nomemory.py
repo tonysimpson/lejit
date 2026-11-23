@@ -142,6 +142,132 @@ def memory_runs_out_later(lo, hi):
     return _cache['later', lo, hi]
 
 
+# memory_runs_out_for_good: real exhaustion under an address-space limit,
+# at the n-th tick, which fills memory and keeps it; g goes on compiled and
+# needs more compiles (the run-time ones take the emergency reserve,
+# codemanager.c:reserve_release). The fill's loop is in C (list.extend over
+# map), and its code is compiled before, so that no compile of its own
+# takes what the reserve released. Plain CPython finishes from every tick.
+FOR_GOOD = """
+import sys, resource
+from itertools import repeat
+mode, n = sys.argv[1], int(sys.argv[2])
+if mode == 'lejit':
+    sys.path.insert(0, %r)
+    import lejit
+    lejit.start()
+hog = []
+ticks = 0
+
+def fill():
+    for size in SIZES:
+        try:
+            hog.extend(map(bytearray, repeat(size)))
+        except MemoryError:
+            pass
+
+SIZES = [1 << k for k in range(20, -1, -1)]
+
+def tick():
+    global ticks
+    ticks += 1
+    if ticks == n:
+        fill()
+
+def h(x):
+    return x * 2
+
+class A:
+    def m(self):
+        return 1
+
+class B(A):
+    def m(self):
+        return 2
+
+def g(n):
+    t = 0
+    for i in range(n):
+        tick()
+        if i %% 3:
+            t += h(i)
+        else:
+            t -= len(str(i))
+    for v in [1, 'a', 2.0, (1,), A(), B(), None, [3]]:
+        tick()
+        t += 1 if isinstance(v, A) and v.m() == 2 else 0
+        t += len(type(v).__name__)
+    try:
+        t += [][n]
+    except IndexError as e:
+        tick()
+        t += len(e.args)
+    return t
+
+for line in open('/proc/self/status'):
+    if line.startswith('VmSize:'):
+        limit = int(line.split()[1]) * 1024 + (64 << 20)
+resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+fill()
+del hog[:]
+try:
+    r = g(50), g(70)
+except MemoryError:
+    r = 'MemoryError'
+del hog[:]
+print(r)
+""" % ROOT
+
+
+def memory_runs_out_for_good(lo, hi):
+    if ('for good', lo, hi) not in _cache:
+        mode = 'lejit' if 'lejit' in sys.modules else 'plain'
+        expected = _run(INJECT, 'plain', 0)[1][:-5]
+        bad = []
+        for n in range(lo, hi):
+            c, out = _run(FOR_GOOD, mode, n)
+            if c != 0 or out not in (expected, b'MemoryError'):
+                bad.append((n, c, out))
+        _cache['for good', lo, hi] = bad
+    return _cache['for good', lo, hi]
+
+
+# memory_runs_out_at_megamorphic_site: isinstance's site has a megamorphic
+# version (made for A, a heap type) when a new static type comes with every
+# allocation failing: that version runs it, as no compile can
+MEGA_SITE = """
+import sys, _testcapi
+if sys.argv[1] == 'lejit':
+    sys.path.insert(0, %r)
+    import lejit
+    lejit.start()
+
+class A:
+    pass
+
+def f(v):
+    return isinstance(v, A)
+
+for v in [1, A(), 'a', A()]:
+    f(v)
+_testcapi.set_nomemory(0, 0)
+try:
+    r = f(2.0)
+except MemoryError:
+    r = 'MemoryError'
+finally:
+    _testcapi.remove_mem_hooks()
+print(r)
+""" % ROOT
+
+
+def memory_runs_out_at_megamorphic_site():
+    if 'mega' not in _cache:
+        mode = 'lejit' if 'lejit' in sys.modules else 'plain'
+        _cache['mega'] = _run(MEGA_SITE, mode)
+    return _cache['mega']
+
+
 def injected(counts):
     # the plain run has nothing to inject: the oracle is []
     if 'lejit' not in sys.modules:
@@ -172,5 +298,9 @@ INJECT_COUNTS = tuple(range(1, 10)) + tuple(range(15, 300, 30))
 CASES = [
     ('memory_runs_out', [(0, 50)], {'leaks': 'runs child processes'}),
     ('memory_runs_out_later', [(0, 300)], {'leaks': 'runs child processes'}),
+    ('memory_runs_out_for_good', [(1, 140)],
+     {'leaks': 'runs child processes'}),
+    ('memory_runs_out_at_megamorphic_site', [()],
+     {'leaks': 'runs child processes'}),
     ('injected', [(INJECT_COUNTS,)], {'leaks': 'runs child processes'}),
 ]

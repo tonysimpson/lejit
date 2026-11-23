@@ -2832,12 +2832,25 @@ do_promotion_internal(rt_promotion_t *fs, long key, long flags)
 #endif
     LE_COMPILE_BEGIN(LE_ENTER_PROMOTION);
     psyco_guard_push(&g);
-    if (sigsetjmp(g.env, 0) != 0)
+    if (sigsetjmp(g.env, 0) != 0) {
+        rt_local_buf_t *megabuf = NULL;
+        /* the last try would take the emergency reserve: the site's
+           megamorphic version, if it has one, runs any object instead (at
+           a site of longs, -1 is a value, not that version's mark) */
+        if (g.tries == LE_GUARD_RETRIES && (flags & SkFlagPyObj))
+            lookup_count_previous_values(fs, &megabuf);
+        if (megabuf != NULL) {
+            psyco_guard_pop(&g);
+            r = (code_t *)(megabuf + 1);
+            goto done;
+        }
         psyco_guard_retry(&g); /* the parked state is still whole */
+    }
     if (flags & SkFlagPyObj)
         Py_INCREF((PyObject *)key);
     r = do_promotion_internal_body(fs, key, sk_new(key, flags));
     psyco_guard_pop(&g);
+done:
     LE_COMPILE_END(LE_ENTER_PROMOTION);
 #if LE_CODESTATS
     psyco_cs_promo_end();
