@@ -30,13 +30,19 @@ if use_lejit:
 # calls (a call site that sees a new function each time specialises until
 # it goes megamorphic), and that bounded growth is
 # tests/jit/bounds.py's business.
+# The type cache keeps the attribute names it was last asked for, by slot,
+# so a name made afresh for each lookup (PyObject_CallMethod's) stays alive
+# until another lookup takes its slot: an amount that differs from process
+# to process. A case that makes such names can ask for the cache emptied.
 import gc
+clear_type_cache = sys._clear_type_cache if sys.argv[8] == '1' else (lambda: None)
 for _ in range(int(sys.argv[7])):
     for args in calls:
         try:
             fn(*args)
         except Exception:
             pass
+clear_type_cache()
 gc.collect()
 before = sys.getallocatedblocks()
 for _ in range(100):
@@ -45,6 +51,7 @@ for _ in range(100):
             fn(*args)
         except Exception:
             pass
+clear_type_cache()
 gc.collect()
 out.append('leak: %d' % (sys.getallocatedblocks() - before))
 for line in out:
