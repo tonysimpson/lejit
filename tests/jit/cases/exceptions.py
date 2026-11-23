@@ -691,11 +691,8 @@ if HAS_EXCEPT_STAR:
     exec(EXCEPT_STAR_SRC)
     CASES += [
         ('except_star', [(1,)], {'interpreted': 'except*'}),
-        # CPython's except* allocates for a few hundred rounds before it
-        # levels off, by an amount that differs from process to process,
-        # plain as well
         ('except_star_caller', [(1,), (2,), (3,), (4,)],
-         {'warmup': (700, 'growth lasting a few hundred rounds, plain too')}),
+         {'clear_type_cache': 'split() looks derive up by a new name each time'}),
     ]
 
 
