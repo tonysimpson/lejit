@@ -303,10 +303,12 @@ static PyCFunction cimpl_round;
 static PyCFunction cimpl_sum;
 /* the fastcall builtins' own ml_flags (Psyco_DefineModuleFast) */
 static int round_flags, sum_flags;
+/* min's and max's, METH_VARARGS | METH_KEYWORDS or a fastcall convention */
+static int min_max_flags;
 static PyCFunction cimpl_any;
 static PyCFunction cimpl_all;
 
-/* a pending generator expression (pfuncobject.h) consumed whole by a
+/* a pending generator (pfuncobject.h) consumed whole by a
    builtin: run its code fused with the consumer's step, so neither the
    generator nor its frame exists (psyfunc.c:psyco_call_genexpr). 'start'
    is sum()'s, or NULL. */
@@ -392,22 +394,26 @@ pbuiltin_globals(PsycoObject *po, vinfo_t *vself, vinfo_t *vnull)
    (a user __gt__ twice). A comparison after one that may have changed a
    class is CPython's (pobject.h:Psyco_TypesStale). One iterable argument,
    or key=/default=, goes to CPython: walking a sequence of run-time length
-   can't be compiled (the NFS branch tried). */
+   can't be compiled (the NFS branch tried). vkw is NULL for a fastcall
+   min and max, whose metas get no keywords. */
 static vinfo_t *
-pbuiltin_min_max(PsycoObject *po, vinfo_t *vargs, vinfo_t *vkw, int op,
-                 PyCFunction cimpl)
+pbuiltin_min_max(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs, vinfo_t *vkw,
+                 int op, PyCFunction cimpl)
 {
     int i, n = PsycoTuple_Load(vargs);
     vinfo_t *best, *item, *cmp;
     int fuse = 0;
-    if (n == 1 && psyco_knowntobe(vkw, (long)NULL) &&
+    bool no_kw = vkw == NULL || psyco_knowntobe(vkw, (long)NULL);
+    if (n == 1 && no_kw &&
         (fuse = psyco_genexpr_fuse(po, PsycoTuple_GET_ITEM(vargs, 0))) < 0)
         return NULL;
     if (fuse)
         return genexpr_consume(po, PsycoTuple_GET_ITEM(vargs, 0),
                                op == Py_LT ? GENEXPR_MIN : GENEXPR_MAX, NULL,
                                NULL);
-    if (n < 2 || !psyco_knowntobe(vkw, (long)NULL))
+    if (vkw == NULL && n < 2)
+        return PsycoCFunction_CallFast(po, cimpl, min_max_flags, vself, vargs);
+    if (n < 2 || !no_kw)
         return psyco_generic_call(po, cimpl, CfCommonNewRefPyObject, "lvv",
                                   NULL, vargs, vkw);
     for (i = 0; i < n; i++)
@@ -436,13 +442,25 @@ pbuiltin_min_max(PsycoObject *po, vinfo_t *vargs, vinfo_t *vkw, int op,
 static vinfo_t *
 pbuiltin_min(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs, vinfo_t *vkw)
 {
-    return pbuiltin_min_max(po, vargs, vkw, Py_LT, cimpl_min);
+    return pbuiltin_min_max(po, vself, vargs, vkw, Py_LT, cimpl_min);
 }
 
 static vinfo_t *
 pbuiltin_max(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs, vinfo_t *vkw)
 {
-    return pbuiltin_min_max(po, vargs, vkw, Py_GT, cimpl_max);
+    return pbuiltin_min_max(po, vself, vargs, vkw, Py_GT, cimpl_max);
+}
+
+static vinfo_t *
+pbuiltin_min_fast(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs)
+{
+    return pbuiltin_min_max(po, vself, vargs, NULL, Py_LT, cimpl_min);
+}
+
+static vinfo_t *
+pbuiltin_max_fast(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs)
+{
+    return pbuiltin_min_max(po, vself, vargs, NULL, Py_GT, cimpl_max);
 }
 
 /* builtin_isinstance: Objects/abstract.c:PyObject_IsInstance decided at
@@ -861,16 +879,28 @@ psyco_bltinmodule_init(void)
        lists a virtual seq-iterator, right for a for loop but the wrong type
        for iter() to hand out. */
     PyObject *md = Psyco_DefineMetaModule("builtins");
+    PyObject *min;
 
     gen_bltinmodule_init(md);
 #define DEFMETA(name, flags) \
     cimpl_##name = Psyco_DefineModuleFn(md, #name, flags, &pbuiltin_##name)
     DEFMETA(globals, METH_NOARGS);
-    DEFMETA(min, METH_VARARGS | METH_KEYWORDS);
-    DEFMETA(max, METH_VARARGS | METH_KEYWORDS);
 #define DEFFAST(name) \
     cimpl_##name =    \
         Psyco_DefineModuleFast(md, #name, &name##_flags, &pbuiltin_##name)
+    min_max_flags = METH_VARARGS | METH_KEYWORDS;
+    min = Psyco_GetModuleObject(md, "min", &PyCFunction_Type);
+    if (min != NULL && (PyCFunction_GET_FLAGS(min) & METH_FASTCALL)) {
+        cimpl_min = Psyco_DefineModuleFast(md, "min", &min_max_flags,
+                                           &pbuiltin_min_fast);
+        cimpl_max =
+            Psyco_DefineModuleFn(md, "max", min_max_flags, &pbuiltin_max_fast);
+    }
+    else {
+        DEFMETA(min, METH_VARARGS | METH_KEYWORDS);
+        DEFMETA(max, METH_VARARGS | METH_KEYWORDS);
+    }
+    Py_XDECREF(min);
     DEFFAST(round);
     DEFFAST(sum);
     DEFMETA(any, METH_O);

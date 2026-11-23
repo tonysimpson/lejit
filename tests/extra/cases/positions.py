@@ -6,6 +6,7 @@
 # function compiled while tracing is off and run with it on (resuming in
 # ceval at the instruction it reached); a generator suspended with items on
 # its stack (f_stackdepth); a generator expression run fused.
+import dis
 import sys
 
 
@@ -37,6 +38,19 @@ def _fail(x):
     return 1 // x
 
 
+def _instruction_at(code, offset):
+    """The name of the instruction whose code units hold offset: from 3.11
+    a call's inline caches follow it, and tb_lasti is the last of them
+    where ceval runs the callee inside the caller's frame, the call itself
+    under an eval hook"""
+    name = None
+    for ins in dis.get_instructions(code):
+        if ins.offset > offset:
+            break
+        name = ins.opname
+    return name
+
+
 def tb_positions(x):
     try:
         a = 1
@@ -48,8 +62,8 @@ def tb_positions(x):
         while tb is not None:
             f = tb.tb_frame
             code = f.f_code
-            # the instruction tb_lasti names is the call, on its line
-            op = code.co_code[tb.tb_lasti]
+            # the instruction tb_lasti is in is the call, on its line
+            op = _instruction_at(code, tb.tb_lasti)
             out.append((code.co_name, tb.tb_lineno - code.co_firstlineno, op))
             tb = tb.tb_next
         return out

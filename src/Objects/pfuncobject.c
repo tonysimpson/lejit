@@ -3,9 +3,9 @@
  * meta. The callee is promoted to a constant (with a megamorphic cut-off) and
  * the call goes to psyfunc.c:psyco_call_pyfunc, which may inline it. A call to
  * a function that is still virtual reads its code, globals and defaults
- * directly and never materialises it. A generator expression called from
- * here stays a pending generator (PsycoGenexpr_New) until a consumer fuses it
- * or it escapes. A promoted function's code and defaults are checked at run
+ * directly and never materialises it. A generator called from here may stay
+ * a pending generator (PsycoGenexpr_New) until a consumer fuses it or it
+ * escapes. A promoted function's code and defaults are checked at run
  * time (compiled_code, compiled_defaults).
  * A nested function (a closure, a lambda, a def inside a function) only
  * known at run time is not promoted, only its code
@@ -21,23 +21,27 @@
 
 static source_virtual_t psyco_computed_function;
 
-/* 0 or -1, as a long so that the whole register is meaningful */
-static long
+/* a field of a function MAKE_FUNCTION has just made, stored as ceval
+   stores it, without the setters' checks and function watcher events:
+   0 the closure, 1 the annotations, 2 the keyword defaults, 3 the defaults */
+static void
 cimpl_func_set(PyObject *f, long which, PyObject *value)
 {
+    PyFunctionObject *func = (PyFunctionObject *)f;
+    Py_INCREF(value);
     switch (which) {
         case 0:
-            return PyFunction_SetClosure(f, value);
+            Py_XSETREF(func->func_closure, value);
+            break;
         case 1:
-            /* stored as ceval's MAKE_FUNCTION stores it: 3.10's compiler gives
-               a tuple of names and values, which the setter refuses */
-            Py_INCREF(value);
-            Py_XSETREF(((PyFunctionObject *)f)->func_annotations, value);
-            return 0;
+            Py_XSETREF(func->func_annotations, value);
+            break;
         case 2:
-            return PyFunction_SetKwDefaults(f, value);
+            Py_XSETREF(func->func_kwdefaults, value);
+            break;
         default:
-            return PyFunction_SetDefaults(f, value);
+            Py_XSETREF(func->func_defaults, value);
+            break;
     }
 }
 
@@ -68,17 +72,16 @@ compute_function(PsycoObject *po, vinfo_t *v)
     if (newobj == NULL)
         return false;
 
-    /* the optional fields go through CPython's setters, which take their
-       own references */
-#define SET_FIELD(def, which)                                                 \
-    do {                                                                      \
-        other = vinfo_getitem(v, FIELD_INDEX(def));                           \
-        if (other != NULL && !psyco_known_NULL(other)) {                      \
-            if (psyco_generic_call(po, cimpl_func_set,                        \
-                                   CfNoReturnValue | CfPyErrIfNonNull, "vlv", \
-                                   newobj, (long)(which), other) == NULL)     \
-                return false;                                                 \
-        }                                                                     \
+    /* the optional fields, each a new reference cimpl_func_set takes */
+#define SET_FIELD(def, which)                                             \
+    do {                                                                  \
+        other = vinfo_getitem(v, FIELD_INDEX(def));                       \
+        if (other != NULL && !psyco_known_NULL(other)) {                  \
+            if (psyco_generic_call(po, cimpl_func_set,                    \
+                                   CfNoReturnValue | CfNoPython, "vlv",   \
+                                   newobj, (long)(which), other) == NULL) \
+                return false;                                             \
+        }                                                                 \
     } while (0)
 
     SET_FIELD(FUNC_closure, 0);
@@ -138,16 +141,22 @@ compute_genexpr(PsycoObject *po, vinfo_t *v)
 
 DEFINEFN
 vinfo_t *
-PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple)
+PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple, vinfo_t *vglobals,
+                 PyCodeObject *co)
 {
     vinfo_t *r = vinfo_new(VirtualTime_New(&psyco_pending_genexpr));
-    r->array = array_new(iGENEXPR_ARGS + 1);
+    r->array = array_new(iGENEXPR_CODE + 1);
     r->array->items[iOB_TYPE] =
         vinfo_new(CompileTime_New((long)(&PyGen_Type)));
     vinfo_incref(vfunc);
     r->array->items[iGENEXPR_FUNC] = vfunc;
     vinfo_incref(arg_tuple);
     r->array->items[iGENEXPR_ARGS] = arg_tuple;
+    vinfo_incref(vglobals);
+    r->array->items[iGENEXPR_GLOBALS] = vglobals;
+    Py_INCREF(co);
+    r->array->items[iGENEXPR_CODE] = vinfo_new(
+        CompileTime_NewSk(sk_new((long)co, SkFlagPyObj | SkFlagFixed)));
     return r;
 }
 
