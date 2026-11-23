@@ -132,7 +132,8 @@ SKIPPED = {
         'test.test_doctest.test_pdb_set_trace*',
     "compiled code's direct and inlined calls skip CPython's recursion "
     'depth count, so the limit trips somewhere else':
-        'test.test_sys.SysModuleTest.test_recursionlimit_recovery',
+        'test.test_sys.SysModuleTest.test_recursionlimit_recovery '
+        'test.test_pickle.*.test_bad_getattr',
     'compiled code holds what it specialised on':
         'test.test_weakref.ReferencesTestCase.test_callback_in_cycle_resurrection '
         'test.test_weakref.WeakMethodTestCase.test_callback_when_method_dead '
