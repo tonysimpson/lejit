@@ -926,6 +926,60 @@ def FOR_ITER_EXIT_PAST_POP_TOP():
 
 
 @probe
+def FOR_ITER_EXIT_KEEPS_ITER():
+    """a for loop ends with END_FOR then POP_ITER (dis)"""
+    if not _real_op('POP_ITER'):
+        return False, 'opcode.opmap: no POP_ITER'
+
+    def f(y):
+        for x in y:
+            pass
+    ins = list(dis.get_instructions(f))
+    for i, x in enumerate(ins[:-1]):
+        if x.opname == 'END_FOR':
+            return (ins[i + 1].opname == 'POP_ITER',
+                    'dis: END_FOR then %s' % ins[i + 1].opname)
+    raise Unanswered('a for loop has no END_FOR: %r'
+                     % [x.opname for x in ins])
+
+
+@probe
+def CALL_EX_KWARGS_SLOT():
+    """CALL_FUNCTION_EX pops as many values without keywords (argument 0)
+    as with them (argument 1) (dis.stack_effect)"""
+    _need_ops('CALL_FUNCTION_EX')
+    without = dis.stack_effect(opcode.opmap['CALL_FUNCTION_EX'], 0)
+    with_kw = dis.stack_effect(opcode.opmap['CALL_FUNCTION_EX'], 1)
+    return (without == with_kw,
+            'dis.stack_effect: CALL_FUNCTION_EX %d without keywords, %d with'
+            % (without, with_kw))
+
+
+@probe
+def BINARY_OP_SUBSCR():
+    """a[b] compiles to BINARY_OP with NB_SUBSCR (dis)"""
+    nb_ops = [name for name, _ in getattr(opcode, '_nb_ops', ())]
+    if 'NB_SUBSCR' not in nb_ops:
+        return False, 'opcode._nb_ops: no NB_SUBSCR'
+
+    def f(a, b):
+        return a[b]
+    ops = [(x.opname, x.arg) for x in dis.get_instructions(f)]
+    return (('BINARY_OP', nb_ops.index('NB_SUBSCR')) in ops,
+            'dis: a[b] is %r' % ops)
+
+
+@probe
+def FUNCTION_ANNOTATE():
+    """a function with annotations gets an __annotate__ function (run)"""
+    def f(x: int):
+        pass
+    if getattr(f, '__annotate__', None) is None:
+        return False, 'def f(x: int): f has no __annotate__'
+    return True, 'def f(x: int): f.__annotate__ is a function'
+
+
+@probe
 def DICT_KEYS_KIND():
     """a dict of 5 str keys is smaller than one of 5 int keys, because its
     entries hold no hash (sys.getsizeof)"""
