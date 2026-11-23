@@ -418,6 +418,9 @@ le_op_flags(int op)
             return LE_OPF_COMPILED;
         case FOR_ITER:
             return LE_OPF_COMPILED | LE_OPF_BRANCHES;
+        /* the truth a jump tests, as the jump found it itself before */
+        case TO_BOOL:
+            return LE_OPF_COMPILED | LE_OPF_LIGHT;
         /* jumps and return */
         case JUMP_FORWARD:
         case JUMP_ABSOLUTE:
