@@ -6,7 +6,9 @@ mustn't leak.
 A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
-(no leak check), 'warmup': (rounds, reason).
+(no leak check), 'warmup': (rounds, reason), 'clear_type_cache': reason (the
+leak check empties CPython's type cache first; only where that keeps the
+types' version tags, as from 3.11).
 
     python3.X tests/jit/run.py [DIR] [-k substring] [-v]
 """
@@ -18,11 +20,13 @@ TIMEOUT = 20
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
 
 
-def run_child(modname, fname, calls, use_lejit, warmup=9, env=None):
+def run_child(modname, fname, calls, use_lejit, warmup=9, env=None,
+              clear_type_cache=False):
     if not isinstance(calls, str):
         calls = repr(calls)
     cmd = [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
-           modname, fname, calls, '1' if use_lejit else '0', str(warmup)]
+           modname, fname, calls, '1' if use_lejit else '0', str(warmup),
+           '1' if clear_type_cache else '0']
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
         out, err = p.communicate(timeout=TIMEOUT)
@@ -65,14 +69,15 @@ def main():
         # both runs hash alike: what plain CPython itself keeps after the
         # rounds can depend on the seed (a subinterpreter's, by tens of
         # blocks), more than the leak check allows between two seeds
+        clear = 'clear_type_cache' in opts
         env = dict(os.environ)
         env.setdefault('PYTHONHASHSEED', str(random.randrange(4294967296)))
-        expected, err = run_child(modname, fname, calls, False, warmup, env)
+        expected, err = run_child(modname, fname, calls, False, warmup, env, clear)
         if err:
             print('ERROR %s: reference run failed: %s' % (name, err))
             counts['FAIL'] += 1
             continue
-        got, err = run_child(modname, fname, calls, True, warmup, env)
+        got, err = run_child(modname, fname, calls, True, warmup, env, clear)
         problem = None
         if err:
             problem = err
