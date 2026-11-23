@@ -695,5 +695,6 @@ if HAS_EXCEPT_STAR:
         # levels off, by an amount that differs from process to process,
         # plain as well
         ('except_star_caller', [(1,), (2,), (3,), (4,)],
-         {'warmup': (700, 'growth lasting a few hundred rounds, plain too')}),
+         {'warmup': (700, 'growth lasting a few hundred rounds, plain too'),
+          'leaks': 'keeps about 100 blocks more than plain in some runs'}),
     ]

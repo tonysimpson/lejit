@@ -2711,6 +2711,7 @@ typedef struct { /* produced at compile time and read by the dispatcher */
     parked_state_t state; /* before promotion, and the variable to promote */
 
     rt_local_buf_t *local_chained_list;
+    int forgotten; /* values whose groups were freed (codemanager.h) */
 #if LE_CODESTATS
     int cs_site; /* pycompiler.c, psyco_cs_promo_site */
 #endif
@@ -2800,13 +2801,13 @@ static int quick_lookup_counter = 0;
     } while (0)
 #endif
 
-/* the values compiled at the site; the megamorphic version (marker -1) is
-   not one: at a static-type site it is made for the first heap type, and
-   counting it would leave room for one static type fewer */
+/* the values compiled at the site, freed or not; the megamorphic version
+   (marker -1) is not one: at a static-type site it is made for the first
+   heap type, and counting it would leave room for one static type fewer */
 PSY_INLINE int
 lookup_count_previous_values(rt_promotion_t *fs, rt_local_buf_t **megabuf)
 {
-    int result = 0;
+    int result = fs->forgotten;
     rt_local_buf_t *buf = fs->local_chained_list;
     while (buf) {
         if (buf->key == -1) /* use (PyObject*)(-1) as a marker */
@@ -2827,6 +2828,7 @@ do_promotion_internal(rt_promotion_t *fs, long key, long flags)
 {
     code_t *r;
     le_compile_guard_t g;
+    le_owner_t *volatile group = NULL;
 #if LE_CODESTATS
     psyco_cs_promo_begin(fs->cs_site, key, (flags & SkFlagPyObj) != 0);
 #endif
@@ -2834,9 +2836,17 @@ do_promotion_internal(rt_promotion_t *fs, long key, long flags)
     psyco_guard_push(&g);
     if (sigsetjmp(g.env, 0) != 0)
         psyco_guard_retry(&g); /* the parked state is still whole */
-    if (flags & SkFlagPyObj)
-        Py_INCREF((PyObject *)key);
-    r = do_promotion_internal_body(fs, key, sk_new(key, flags));
+    /* an object that may die soon: what its code holds is held by a
+       group of its own, which a retry goes on with */
+    if ((flags & SkFlagPyObj) && group == NULL)
+        group = psyco_group_new((PyObject *)key, fs);
+    {
+        LE_OWNER_ENTER(group != NULL ? group : psyco_owner);
+        if (flags & SkFlagPyObj)
+            Py_INCREF((PyObject *)key);
+        r = do_promotion_internal_body(fs, key, sk_new(key, flags));
+        LE_OWNER_LEAVE();
+    }
     psyco_guard_pop(&g);
     LE_COMPILE_END(LE_ENTER_PROMOTION);
 #if LE_CODESTATS
@@ -3093,9 +3103,37 @@ promotion_cache_fallback(rt_promotion_t *fs, code_t *mega)
             promotion_chain_end(fs);
     }
 }
+
+/* the cache no longer holds 'key': the entries after it move up */
+static void
+promotion_cache_forget(rt_promotion_t *fs, long key)
+{
+    long values[1 + PROMOTION_CHAIN_MAX];
+    code_t *targets[1 + PROMOTION_CHAIN_MAX];
+    int i, n = 0, count = fs->ncached;
+    for (i = 0; i < count; i++) {
+        code_t *entry =
+            i == 0 ? fs->jump_if_equal_code : CHAIN_ENTRY(fs, i - 1);
+        ipromotion_read_entry(entry, &values[n], &targets[n]);
+        if (values[n] != key)
+            n++;
+    }
+    if (n == count)
+        return;
+    /* empty, as ipromotion_finish wrote it */
+    ipromotion_update_entry(fs->jump_if_equal_code, 0,
+                            fs->jump_if_equal_code + PROMOTION_ENTRY_SIZE);
+    fs->ncached = 0;
+    for (i = 0; i < n; i++) promotion_cache_add(fs, values[i], targets[i]);
+    if (fs->chain != NULL)
+        promotion_chain_end(fs);
+}
 #else
 #define promotion_cache_add(fs, value, target) \
     do {                                       \
+    } while (0)
+#define promotion_cache_forget(fs, key) \
+    do {                                \
     } while (0)
 #define promotion_cache_fallback(fs, mega) \
     do {                                   \
@@ -3255,6 +3293,20 @@ do_promotion_static_type(rt_promotion_t *fs, PyObject *key)
     return result;
 }
 
+DEFINEFN void
+psyco_promotion_forget(void *site, long key)
+{
+    rt_promotion_t *fs = (rt_promotion_t *)site;
+    rt_local_buf_t **p;
+    for (p = &fs->local_chained_list; *p != NULL; p = &(*p)->next)
+        if ((*p)->key == key) {
+            *p = (*p)->next;
+            fs->forgotten++;
+            promotion_cache_forget(fs, key);
+            return;
+        }
+}
+
 /* the site's state, when its owner dies */
 static void
 promotion_release(void *closure)
@@ -3315,6 +3367,7 @@ psyco_finish_promotion(PsycoObject *po, vinfo_t *fix, int pflags)
     clear_tmp_marks(&po->vlocals);
     psyco_assert_coherent(po);
     fs->local_chained_list = NULL;
+    fs->forgotten = 0;
     psyco_stub_set_release(fs, &promotion_release);
     code = po->code;
     psyco_park(&fs->state, po, fix);
