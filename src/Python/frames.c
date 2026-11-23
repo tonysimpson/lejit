@@ -145,14 +145,20 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
     return p;
 }
 
+/* Read and written at every entry into compiled code, so kept in the
+   static TLS block (initial-exec), read straight off %fs, not looked up
+   through __tls_get_addr. Both take a few bytes of glibc's reserve for
+   modules loaded later. */
+#define LE_FAST_TLS __attribute__((tls_model("initial-exec")))
+
 /* the records of the real frames LeCode_Run runs on this thread,
    innermost first */
-static _Thread_local FrameRuntime *frame_runs;
+static _Thread_local FrameRuntime *frame_runs LE_FAST_TLS;
 
 /* Every thread's frame_runs, for the owner scan (psyco_frames_running):
    its address is in a capsule in the thread state's dict, which goes when
    the thread state is cleared, before the thread ends. */
-static _Thread_local char runs_listed;
+static _Thread_local char runs_listed LE_FAST_TLS;
 static PyObject *runs_key; /* a key no one else has */
 static bool runs_lost;     /* a thread's frame_runs couldn't be listed */
 
@@ -1588,14 +1594,16 @@ static PyMethodDef clear_def = {
    none or another emulated frame of the same code made when its entry
    was, or a real frame entered through C whose f_back is the frame
    LeCode_Run runs, while the code that one runs is in a compiled callee
-   or inlined frame, which 'f' is. */
+   or inlined frame, which 'f' is. A fused generator's frame is left
+   without one, as a generator's frame has no caller once it has stopped. */
 DEFINEFN
 void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
 {
     PyFrameObject *back = callee->f_back;
     FrameRuntime *fr;
-    if (callee == f || back == f || le_frame_is_executing(callee))
+    if (callee == f || back == f || le_frame_is_executing(callee) ||
+        (le_pyframe_code(callee)->co_flags & CO_GENERATOR))
         return;
     if (back != NULL && !(le_pyframe_code(back) == le_pyframe_code(f) &&
                           !le_frame_is_executing(back))) {
@@ -2059,11 +2067,27 @@ frame_builtins_init(void)
     }
 }
 
-static PyMethodDef le_warn_def = {
-    "warn", (PyCFunction)(void (*)(void))le_warn, METH_VARARGS | METH_KEYWORDS,
-    "warn(message, category=None, stacklevel=1)\n\n"
-    "Issue a warning, or maybe ignore it or raise an exception, counting\n"
-    "frames of code compiled by LeJIT for stacklevel."};
+/* a replacement of a module's C function takes the original's docstring,
+   so its text signature, and is bound to the module as the original is */
+static PyObject *
+replacement_new(PyMethodDef *def, PyObject *mod, PyObject *original)
+{
+    PyObject *name;
+    PyObject *fn;
+    if (original == NULL)
+        return NULL;
+    if (PyCFunction_Check(original))
+        def->ml_doc = ((PyCFunctionObject *)original)->m_ml->ml_doc;
+    name = PyModule_GetNameObject(mod);
+    if (name == NULL)
+        return NULL;
+    fn = PyCFunction_NewEx(def, mod, name);
+    Py_DECREF(name);
+    return fn;
+}
+
+static PyMethodDef le_warn_def = {"warn", (PyCFunction)(void (*)(void))le_warn,
+                                  METH_VARARGS | METH_KEYWORDS, NULL};
 
 /* replaces warn in _warnings and, if imported, warnings */
 static void
@@ -2075,7 +2099,7 @@ warn_init(void)
         return;
     }
     original_warn = PyObject_GetAttrString(mod, "warn");
-    fn = PyCFunction_New(&le_warn_def, NULL);
+    fn = replacement_new(&le_warn_def, mod, original_warn);
     if (original_warn == NULL || fn == NULL ||
         PyObject_SetAttrString(mod, "warn", fn) < 0)
         PyErr_Print();
@@ -2124,28 +2148,22 @@ le_get_referents(PyObject *self, PyObject *args)
     return result;
 }
 
-static PyMethodDef le_get_referents_def = {
-    "get_referents", le_get_referents, METH_VARARGS,
-    "get_referents(*objs) -> list\n"
-    "Return the list of objects that are directly referred to by objs."};
+static PyMethodDef le_get_referents_def = {"get_referents", le_get_referents,
+                                           METH_VARARGS, NULL};
 
 static void
 get_referents_init(void)
 {
-    PyObject *mod = PyImport_ImportModule("gc"), *name, *fn = NULL;
+    PyObject *mod = PyImport_ImportModule("gc"), *fn;
     if (mod == NULL) {
         PyErr_Print();
         return;
     }
     original_get_referents = PyObject_GetAttrString(mod, "get_referents");
-    name = PyUnicode_FromString("gc");
-    if (name != NULL)
-        fn = PyCFunction_NewEx(&le_get_referents_def, NULL, name);
-    if (original_get_referents == NULL || fn == NULL ||
-        PyObject_SetAttrString(mod, "get_referents", fn) < 0)
+    fn = replacement_new(&le_get_referents_def, mod, original_get_referents);
+    if (fn == NULL || PyObject_SetAttrString(mod, "get_referents", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
-    Py_XDECREF(name);
     Py_DECREF(mod);
 }
 
@@ -2621,6 +2639,10 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
         le_frame_word_put(frame, nlocals + i, st->values[nlocals + i]);
     le_frame_set_stack_depth(f, (int)nstack);
     le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
+#if LE_HAS_FRAME_INSTR_PTR
+    /* ceval goes on from the instruction at the place, not after it */
+    LE_FRAME_PLACE(le_frame_of(f))++;
+#endif
 #if !LE_HAS_EXCEPTION_TABLE
     f->f_iblock = st->iblock;
     memcpy(f->f_blockstack, st->blocks, st->iblock * sizeof(PyTryBlock));
@@ -2666,7 +2688,7 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     }
     else
         kept_back = NULL;
-#if LE_PYFRAME_RUN_TO_END
+#if LE_HAS_EVAL_FRAME_POPS
     (void)marked;
     /* the events of a frame that runs past RESUME, if the code gives
        none yet; without them it still runs */

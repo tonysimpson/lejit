@@ -82,12 +82,13 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     return le_frame_finish(tstate, f, result, frame_done);
 }
 
-#if LE_PYFRAME_RUN_TO_END
+#if LE_HAS_EVAL_FRAME_POPS
 /* ceval instruments code for sys.monitoring as a frame of it starts
    (RESUME) or has an exception thrown in, so a frame resumed past RESUME
    (frames.c:psyco_resume_run) would run code that gives no events: a frame
    of the same code is ended before its first instruction by a throw
-   (le_frame_finish), which instruments the code. 'f' is a frame of it. */
+   (le_frame_throw_out), which instruments the code. 'f' is a frame of
+   it. */
 DEFINEFN int
 le_code_instrument(le_frame_t *f)
 {
@@ -102,7 +103,7 @@ le_code_instrument(le_frame_t *f)
     _PyFrame_Initialize(t, (PyFunctionObject *)Py_NewRef(f->f_funcobj), NULL,
                         co, 0);
     PyErr_SetRaisedException(Py_NewRef(frame_done));
-    le_frame_finish(ts, t, NULL, frame_done);
+    le_frame_throw_out(ts, t);
     e = PyErr_GetRaisedException();
     if (e == frame_done) {
         Py_DECREF(e);
@@ -202,7 +203,7 @@ typedef PyObject *(*le_eval_frame_fn)(PyThreadState *, le_frame_t *, int);
 
 static le_eval_frame_fn original_eval_frame = NULL;
 
-#if LE_PYFRAME_RUN_TO_END
+#if LE_HAS_EVAL_FRAME_POPS
 /* ceval runs a frame called from a compiled callee or inlined frame and
    pops it, giving a frame object that outlives it the real frame as
    f_back: the frame object is made first, so it is still at hand to be
@@ -212,11 +213,11 @@ eval_from_callee(PyThreadState *ts, le_frame_t *f, int throwflag)
 {
     PyFrameObject *fo;
     PyObject *result;
-    _Py_CODEUNIT *at = f->prev_instr;
+    _Py_CODEUNIT *at = LE_FRAME_PLACE(f);
     /* complete for the while, or it would have none */
     le_frame_set_lasti(f, 0);
     fo = le_frame_object(f);
-    f->prev_instr = at;
+    LE_FRAME_PLACE(f) = at;
     if (fo == NULL)
         return original_eval_frame(ts, f, throwflag);
     Py_INCREF(fo);
@@ -242,7 +243,7 @@ LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
                        le_frame_locals(frame), le_frame_builtins(frame));
     if (entry_point != NULL)
         result = LeCode_Run(entry_point, frame);
-#if LE_PYFRAME_RUN_TO_END
+#if LE_HAS_EVAL_FRAME_POPS
     /* ceval links the frame to its caller, the current frame */
     else if (psyco_frame_called_from_callee(le_frame_current(tstate)))
         result = eval_from_callee(tstate, frame, throwflag);

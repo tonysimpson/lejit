@@ -1380,39 +1380,40 @@ handler_drops_exception(PyCodeObject *co, int handler)
 {
     le_code_t c = le_code(co);
     int p = handler, q, i;
-#define OP_AT(pos) ((pos) < c.size ? le_op(c, (pos)) : -1)
+#define OP_AT(pos) ((pos) < c.size ? le_instr(c, (pos)).op : -1)
+#define NEXT(pos) (le_instr(c, (pos)).next)
 #if LE_HAS_EXCEPTION_TABLE
     if (OP_AT(p) != PUSH_EXC_INFO)
         return false;
-    p = le_after(c, p);
+    p = NEXT(p);
     i = OP_AT(p);
     if (i == LOAD_GLOBAL || i == LOAD_FAST || i == LOAD_DEREF) {
-        q = le_after(c, p);
-        if (OP_AT(q) == CHECK_EXC_MATCH &&
-            (OP_AT(le_after(c, q)) == POP_JUMP_FORWARD_IF_FALSE ||
-             OP_AT(le_after(c, q)) == POP_JUMP_IF_FALSE))
-            p = le_after(c, le_after(c, q));
+        q = NEXT(p);
+        if (OP_AT(q) == CHECK_EXC_MATCH && OP_AT(NEXT(q)) == POP_JUMP_IF_FALSE)
+            p = NEXT(NEXT(q));
     }
-    return OP_AT(p) == POP_TOP && OP_AT(le_after(c, p)) == POP_EXCEPT;
+    return OP_AT(p) == POP_TOP && OP_AT(NEXT(p)) == POP_EXCEPT;
 #else
     if (OP_AT(p) == DUP_TOP) {
-        q = le_after(c, p);
+        q = NEXT(p);
         i = OP_AT(q);
         if (i == LOAD_GLOBAL || i == LOAD_NAME || i == LOAD_FAST ||
             i == LOAD_DEREF) {
-            q = le_after(c, q);
-            if (OP_AT(q) == COMPARE_OP && le_arg(c, q) == PyCmp_EXC_MATCH &&
-                OP_AT(le_after(c, q)) == POP_JUMP_IF_FALSE)
-                p = le_after(c, le_after(c, q));
+            q = NEXT(q);
+            if (OP_AT(q) == COMPARE_OP &&
+                le_instr(c, q).arg == PyCmp_EXC_MATCH &&
+                OP_AT(NEXT(q)) == POP_JUMP_IF_FALSE)
+                p = NEXT(NEXT(q));
             else if (OP_AT(q) == JUMP_IF_NOT_EXC_MATCH)
-                p = le_after(c, q);
+                p = NEXT(q);
         }
     }
-    for (i = 0; i < 3; i++, p = le_after(c, p))
+    for (i = 0; i < 3; i++, p = NEXT(p))
         if (OP_AT(p) != POP_TOP)
             return false;
     return OP_AT(p) == POP_EXCEPT;
 #endif
+#undef NEXT
 #undef OP_AT
 }
 
@@ -2139,23 +2140,17 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
 /* where the KW_NAMES naming the keyword arguments of the CALL at 'pos'
    (its first unit) starts, with its EXTENDED_ARGs, or -1 for none; -2 if
    no PRECALL comes right before where CPython has one (mergepoints.c
-   refuses such code). Caches are CACHE units, so a unit read here is an
-   instruction's own only if it is the opcode looked for. */
+   refuses such code). */
 static int
 call_kwnames_start(le_code_t c, int pos)
 {
-    int p = pos - LE_UNIT;
 #if LE_HAS_OPCODE_PRECALL
-    p -= LE_CACHE_BYTES(PRECALL);
-    if (p < 0 || le_op(c, p) != PRECALL)
+    if (pos <= 0 || le_instr(c, pos = le_prev(c, pos)).op != PRECALL)
         return -2;
-    while (p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG) p -= LE_UNIT;
-    p -= LE_UNIT;
 #endif
-    if (p < 0 || le_op(c, p) != KW_NAMES)
+    if (pos <= 0 || le_instr(c, pos = le_prev(c, pos)).op != KW_NAMES)
         return -1;
-    while (p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG) p -= LE_UNIT;
-    return p;
+    return pos;
 }
 
 /* the keyword names of the CALL at 'pos': the constant of its KW_NAMES,
@@ -2379,8 +2374,10 @@ feeds_build_string(PyCodeObject *co, int next_instr)
 {
     le_code_t c = le_code(co);
     int depth = 1;
-    for (; next_instr < c.size; next_instr = le_after(c, next_instr)) {
-        int op = le_op(c, next_instr), arg = le_arg(c, next_instr);
+    while (next_instr < c.size) {
+        le_instr_t in = le_instr(c, next_instr);
+        int op = in.op, arg = in.arg;
+        next_instr = in.next;
         if (op == LOAD_CONST || op == LOAD_FAST || op == LOAD_DEREF)
             depth++;
         else if (op == FORMAT_VALUE)
@@ -3966,7 +3963,7 @@ cimpl_generator_stop(void)
 }
 
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
-/* intrinsics.c:stopiteration_error, for a generator expression's code, the
+/* intrinsics.c:stopiteration_error, for a fused generator's code, the
    only generator code compiled (mergepoints.c:_build_merge_points):
    StopIteration leaving it becomes RuntimeError */
 static PyObject *
@@ -4037,7 +4034,7 @@ exit_function(PsycoObject *po)
         if (!compute_and_raise_exception(po))
             return NULL;
         /* PEP 479, as gen_send_ex: StopIteration leaving a generator (a fused
-           generator expression) becomes RuntimeError */
+           generator) becomes RuntimeError */
         if ((po->pr.co->co_flags & CO_GENERATOR) &&
             !psyco_generic_call(po, cimpl_generator_stop, CfNoReturnValue, ""))
             return NULL;
@@ -4412,7 +4409,7 @@ is_pseudo_exception_tuple(vinfo_t *v)
    (frames.c:psyco_resume_run), then ends this frame with ceval's result:
    ceval has run its handlers and recorded its traceback entry, so the
    blocks are dropped and '*unwound' is set. Not inside a
-   fused generator expression, nor while a finally block entered by a
+   fused generator, nor while a finally block entered by a
    pseudo-exception holds its 3-tuple. 1 to go on, 0 with a
    pseudo-exception set. */
 static int
@@ -4649,6 +4646,11 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
             vinfo_t *value;
             value = NTOP(1);
             if (!catcher_local_readable(po, value))
+                break;
+            /* a pending generator a local holds is never fused (more
+               than a temporary holds it), and the frame's locals maps
+               can't give it: it is made as it becomes a local */
+            if (PsycoGenexpr_Check(value) && !compute_vinfo(value, po))
                 break;
             SETLOCAL(oparg, value);
             POP(value);
@@ -6442,8 +6444,9 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             POP(v);
         return_value:
             if (co->co_flags & CO_GENERATOR) {
-                /* a fused generator expression: return the consumer's
-                 * result */
+                /* a fused generator: return the consumer's result; the
+                 * generator's own return value is dropped, as the
+                 * consumers drop StopIteration's value */
                 int slot = GENEXPR_SLOT_MODE(co);
                 long mode =
                     CompileTime_Get(po->vlocals.items[slot]->source)->value;
@@ -6469,22 +6472,22 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             break;
 
         case GEN_START:
-            /* only in a generator expression fused with its consumer,
-               which is entered with nothing pushed: no value sent to
+            /* only in a generator fused with its consumer, which is
+               entered with nothing pushed: no value sent to
                pop */
             goto fine;
 
         case RETURN_GENERATOR:
-            /* only in a generator expression fused with its consumer:
-               push the None its first send() would have, for the
+            /* only in a generator fused with its consumer: push the
+               None its first send() would have, for the
                POP_TOP that follows */
             PUSH(psyco_vi_None());
             goto fine;
 
         case YIELD_VALUE: {
-            /* only in a generator expression fused with its consumer
-               (GENEXPR_*): do the consumer's step, then push the value
-               send() would have, for the POP_TOP that follows */
+            /* only in a generator fused with its consumer (GENEXPR_*): do the
+               consumer's step, then push the value send() would have, for the
+               POP_TOP that follows */
             int slot = GENEXPR_SLOT_MODE(co);
             long mode =
                 CompileTime_Get(po->vlocals.items[slot]->source)->value;
