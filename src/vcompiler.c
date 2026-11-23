@@ -130,7 +130,10 @@ vinfo_release(vinfo_t *vi, PsycoObject *po)
                     /* write Py_DECREF() when releasing the last reference to
                        a run-time vinfo_t holding a reference to a Python
                        object */
-                    psyco_decref_rt(po, vi);
+                    if (is_maybe_null(vi->source))
+                        psyco_xdecref_rt(po, vi);
+                    else
+                        psyco_decref_rt(po, vi);
                 }
                 RTVINFO_RELEASE(vi->source);
             }

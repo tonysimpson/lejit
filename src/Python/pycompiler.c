@@ -3116,6 +3116,37 @@ ct_format_exc_check_arg(PsycoObject *po, PyObject *exc, const char *format_str,
                        (long)exc, (long)format_str, (long)obj);
 }
 
+/* whether local i is bound, raising UnboundLocalError if not. A local
+   that may be unbound (RunTime_MaybeNull) is tested: on the path where it
+   is NULL it becomes the unbound constant, and on the other it is known
+   bound from then on. */
+static bool
+local_bound(PsycoObject *po, int i)
+{
+    PyCodeObject *co = po->pr.co;
+    vinfo_t *v = GETLOCAL(i);
+    if (v != NULL && is_maybe_null(v->source)) {
+        condition_code_t cc = integer_non_null(po, v);
+        if (cc == CC_ERROR)
+            return false;
+        if (!runtime_condition_f(po, INVERT_CC(cc))) {
+            v->source &= ~RunTime_MaybeNull;
+            return true;
+        }
+        /* NULL owns nothing */
+        v->source = remove_rtref(v->source);
+        SETLOCAL(i, psyco_vi_Zero());
+        v = GETLOCAL(i);
+    }
+    if (psyco_knowntobe(v, 0)) {
+        ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
+                                LE_MSG_LOCAL_UNBOUND,
+                                le_code_local_name(co, i));
+        return false;
+    }
+    return true;
+}
+
 /* ceval.c DELETE_GLOBAL */
 static int
 cimpl_delete_global(PyObject *name, PyObject *globals)
@@ -4770,13 +4801,9 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
         case LOAD_FAST:
         case LOAD_FAST_CHECK: {
             vinfo_t *value;
-            value = GETLOCAL(oparg);
-            if (psyco_knowntobe(value, 0)) {
-                ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
-                                        LE_MSG_LOCAL_UNBOUND,
-                                        le_code_local_name(co, oparg));
+            if (!local_bound(po, oparg))
                 break;
-            }
+            value = GETLOCAL(oparg);
             vinfo_incref(value);
             PUSH(value);
             goto fine;
@@ -4842,15 +4869,8 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
            bits */
         case LOAD_FAST_LOAD_FAST: {
             int first = oparg >> 4, second = oparg & 15;
-            int unbound = psyco_knowntobe(GETLOCAL(first), 0)    ? first
-                          : psyco_knowntobe(GETLOCAL(second), 0) ? second
-                                                                 : -1;
-            if (unbound >= 0) {
-                ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
-                                        LE_MSG_LOCAL_UNBOUND,
-                                        le_code_local_name(co, unbound));
+            if (!local_bound(po, first) || !local_bound(po, second))
                 break;
-            }
             vinfo_incref(GETLOCAL(first));
             PUSH(GETLOCAL(first));
             vinfo_incref(GETLOCAL(second));
@@ -4864,6 +4884,8 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
                 break;
             SETLOCAL(oparg >> 4, value);
             POP(value);
+            if (!local_bound(po, oparg & 15))
+                break;
             value = GETLOCAL(oparg & 15);
             vinfo_incref(value);
             PUSH(value);
@@ -4976,16 +4998,10 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
 
         case DELETE_FAST: {
-            vinfo_t *v;
-            v = GETLOCAL(oparg);
-            if (!psyco_knowntobe(v, 0)) {
-                SETLOCAL(oparg, psyco_vi_Zero());
-                goto fine;
-            }
-            ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
-                                    LE_MSG_LOCAL_UNBOUND,
-                                    le_code_local_name(co, oparg));
-            break;
+            if (!local_bound(po, oparg))
+                break;
+            SETLOCAL(oparg, psyco_vi_Zero());
+            goto fine;
         }
 
         case DELETE_DEREF: {
