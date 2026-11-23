@@ -794,6 +794,7 @@ yields_in_handler(PyCodeObject *co, le_code_t c)
         in = le_instr(c, u * LE_UNIT);
         switch (in.op) {
             case YIELD_VALUE:
+            case YIELD_FROM:
                 return 1;
             /* the handler's end, or a jump out of it that unwinds it */
             case POP_EXCEPT:
@@ -883,7 +884,8 @@ flows_to(le_code_t c, int from, int to)
    loop with no yield in it. Loops are found by their backward jumps, each
    around a yield only if flow from the yield reaches it: not one an
    exception handler ends with (3.12's with statement), which jumps back
-   into code past the yield. */
+   into code past the yield. A coroutine's awaits (YIELD_FROM) count as
+   its yields. */
 static int
 yields_do_work(le_code_t c)
 {
@@ -902,6 +904,7 @@ yields_do_work(le_code_t c)
                 calls[pos / LE_UNIT] = 1;
                 break;
             case YIELD_VALUE:
+            case YIELD_FROM:
                 yields[nyields++] = pos;
                 break;
             default:
@@ -913,8 +916,9 @@ yields_do_work(le_code_t c)
         }
         pos = in.next;
     }
+    /* a coroutine that never awaits runs once, from its start */
     if (nyields == 0)
-        return 0;
+        yields[nyields++] = 0;
     for (i = 0; i < nyields; i++) {
         int y = yields[i], a = 0, b = c.size - LE_UNIT, worked = 0;
         for (j = 0; j < nloops; j++)
@@ -953,8 +957,10 @@ psyco_is_resumable_generator(PyCodeObject *co)
 #if LE_RESUMES_GENERATORS
     le_code_t c;
     int pos;
-    if ((co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR |
-                         CO_ITERABLE_COROUTINE)) != CO_GENERATOR)
+    int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
+                               CO_ASYNC_GENERATOR | CO_ITERABLE_COROUTINE);
+    if (kind != CO_GENERATOR &&
+        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES))
         return 0;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: runs interpreted */
@@ -964,8 +970,22 @@ psyco_is_resumable_generator(PyCodeObject *co)
     for (pos = 0; pos < c.size;) {
         le_instr_t in = le_instr(c, pos);
         pos = in.next;
-        if (in.op == YIELD_FROM || in.op == GET_YIELD_FROM_ITER)
-            return 0;
+        switch (in.op) {
+            /* a coroutine's await is GET_AWAITABLE, LOAD_CONST None,
+               YIELD_FROM; a generator's yield from is not compiled */
+            case YIELD_FROM:
+                if (kind == CO_GENERATOR)
+                    return 0;
+                break;
+            case GET_YIELD_FROM_ITER:
+            /* async for and async with */
+            case GET_AITER:
+            case GET_ANEXT:
+            case BEFORE_ASYNC_WITH:
+            case SETUP_ASYNC_WITH:
+            case END_ASYNC_FOR:
+                return 0;
+        }
     }
     return !yields_in_handler(co, c) && yields_do_work(c);
 #else

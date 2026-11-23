@@ -1339,6 +1339,8 @@ ABSTRACT = [
                                             'Include, every header: PyObject_CallOneArg'))),
     ('CALL_ONE_ARG', D('PyObject_CallOneArg exists',
                        lambda s: _declared(s, 'PyObject_CallOneArg'))),
+    ('ITER_SEND', D('PyIter_Send sends a value into an iterator, telling a yield from a return',
+                    lambda s: _declared(s, 'PyIter_Send'))),
     ('FUNCTION_STR', D('_PyObject_FunctionStr names a function in error messages',
                        lambda s: _declared(s, '_PyObject_FunctionStr'))),
     ('FASTCALL_DICT_TSTATE', D('_PyObject_FastCallDictTstate exists',
