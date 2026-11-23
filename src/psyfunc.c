@@ -31,19 +31,55 @@
 /* le_tstate_load and the recursion count */
 #include "mechanisms/tstate.h"
 #include "mechanisms/recursion.h"
+extern int
+le_eval_breaker_handler(void);
+#if LE_HAS_TSTATE_EVAL_BREAKER
+/* ceval's eval_breaker is the running thread's, in its state, and its
+   events are its low byte (Python/pyruntime.c, with the handler):
+   compiled code loads the thread state and tests that byte */
+static inline condition_code_t
+le_eval_breaker_test(PsycoObject *po)
+{
+    condition_code_t cc;
+    vinfo_t *vevents, *vts = le_tstate_load(po);
+    if (vts == NULL)
+        return CC_ERROR;
+    vevents =
+        psyco_get_field_offset(po, vts, FMUT(UNSIGNED_ARRAY(unsigned char, 0)),
+                               offsetof(PyThreadState, eval_breaker));
+    vinfo_decref(vts, po);
+    if (vevents == NULL)
+        return CC_ERROR;
+    cc = integer_non_null(po, vevents);
+    vinfo_decref(vevents, po);
+    return cc;
+}
+
+static inline bool
+le_eval_breaker_check(void)
+{
+    return true;
+}
+#else
 /* ceval's eval_breaker is a 32-bit int at an address fixed for the
    process: compiled code compares it with 0 in place. The
    address and the handler are Python/pyruntime.c's. */
 extern void *
 le_eval_breaker_address(void);
-extern int
-le_eval_breaker_handler(void);
 
 static inline condition_code_t
 le_eval_breaker_test(PsycoObject *po)
 {
     return psyco_int32_nonzero_at(po, le_eval_breaker_address());
 }
+
+/* at start-up */
+static inline bool
+le_eval_breaker_check(void)
+{
+    return le_eval_breaker_address() != NULL;
+}
+#endif
 
 /***************************************************************/
 /***   Frame and arguments building                            ***/
@@ -462,6 +498,8 @@ bool
 psyco_check_eval_breaker(PsycoObject *po)
 {
     condition_code_t cc = le_eval_breaker_test(po);
+    if (cc == CC_ERROR)
+        return false;
     if (runtime_condition_f(po, cc))
         return psyco_generic_call(po, le_eval_breaker_handler,
                                   CfCommonIntZeroOk, "") != NULL;
@@ -1070,6 +1108,28 @@ psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v)
     return true;
 }
 
+/* whether a type site in the fused code of 'v' (fusable) has seen too
+   many types (mergepoints.h:psyco_fuse_stopped), tested at run time: read
+   now, the flag could change between a compile and its replay */
+static int
+fuse_stopped(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *vcode = vinfo_getitem(v->array->items[iGENEXPR_FUNC], iFUNC_CODE);
+    PyCodeObject *co = (PyCodeObject *)CompileTime_Get(vcode->source)->value;
+    vinfo_t *vslot = vinfo_new(CompileTime_New(
+        (long)psyco_fuse_stopped(psyco_get_merge_points(co, 0))));
+    vinfo_t *vflag = psyco_get_field(po, vslot, INT_value);
+    condition_code_t cc;
+    vinfo_decref(vslot, po);
+    if (vflag == NULL)
+        return -1;
+    cc = integer_non_null(po, vflag);
+    vinfo_decref(vflag, po);
+    if (cc == CC_ERROR)
+        return -1;
+    return runtime_condition_f(po, cc);
+}
+
 /* the fused body is the generator's frame: a tracer must see it */
 DEFINEFN
 int
@@ -1079,6 +1139,9 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
     if (!psyco_genexpr_fusable(po, v))
         return 0;
     on = psyco_tracing_on(po);
+    if (on != 0)
+        return on < 0 ? -1 : 0;
+    on = fuse_stopped(po, v);
     return on < 0 ? -1 : !on;
 }
 
@@ -1087,6 +1150,6 @@ void
 psycofunction_init(void)
 {
     psyco_assert(le_tstate_check());
-    psyco_assert(le_eval_breaker_address() != NULL);
+    psyco_assert(le_eval_breaker_check());
     cannot_block_init();
 }
