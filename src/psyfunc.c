@@ -14,13 +14,16 @@
  * global), or loaded at run time from func_closure (psyco_call_closure).
  * The code's own cells are made by the binder, as CPython makes them for
  * the call, and are the callee frame's to free.
- * Anything else (keyword-only arguments, a **kwargs dict, unknown arity,
+ * Keyword arguments are bound the same way, from the call's pending
+ * keywords (pdictobject.c). Anything else (keyword-only arguments, a
+ * **kwargs dict, unknown arity,
  * recursion depth used up) becomes a residual call of the function object,
  * as does a call made while a trace or profile function is set, or while
  * an eval hook other than LeJIT's is installed (tested at run time:
  * direct_call_refused).
  */
 #include "psyfunc.h"
+#include "Objects/pdictobject.h"
 #include "Objects/pfuncobject.h"
 #include "Objects/ptupleobject.h"
 #include "Python/frames.h"
@@ -185,13 +188,36 @@ bind_cells(PsycoObject *po, PyCodeObject *co, vinfo_t **f_localsplus,
     return true;
 }
 
+/* The parameter a keyword argument named 'name' binds, as ceval's binder
+   finds it: among those after the positional-only ones, the same object
+   first, then an equal string (both are exact str constants, so comparing
+   runs no code). -1 for none. */
+static Py_ssize_t
+keyword_slot(PyCodeObject *co, PyObject *name)
+{
+    Py_ssize_t i, total_args = co->co_argcount + co->co_kwonlyargcount;
+#if LE_HAS_CODE_POSONLY_ARGS
+    Py_ssize_t first = co->co_posonlyargcount;
+#else
+    Py_ssize_t first = 0;
+#endif
+    for (i = first; i < total_args; i++)
+        if (le_code_local_name(co, (int)i) == name)
+            return i;
+    for (i = first; i < total_args; i++)
+        if (PyUnicode_Compare(le_code_local_name(co, (int)i), name) == 0)
+            return i;
+    return -1;
+}
+
 /* the arguments' part of ceval.c:_PyEval_EvalCodeWithName: -1 where it
    needs the real call, -2 on an error */
 DEFINEFN
 int
 _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
                             vinfo_t **f_localsplus, vinfo_t **args,
-                            Py_ssize_t argcount, vinfo_t **defs,
+                            Py_ssize_t argcount, PyObject *kwnames,
+                            vinfo_t **kwargs, vinfo_t **defs,
                             Py_ssize_t defcount, vinfo_t **closure,
                             bool make_cells)
 {
@@ -223,6 +249,21 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             x = args[i];
             vinfo_incref(x);
             PsycoTuple_GET_ITEM(u, i - n) = x;
+        }
+    }
+    if (kwnames != NULL) {
+        Py_ssize_t k;
+        for (k = 0; k < PyTuple_GET_SIZE(kwnames); k++) {
+            Py_ssize_t j = keyword_slot(co, PyTuple_GET_ITEM(kwnames, k));
+            if (j < 0) {
+                return -1; /* unexpected, or positional-only: the real call */
+            }
+            if (fastlocals[j] != NULL) {
+                return -1; /* multiple values: the real call */
+            }
+            x = kwargs[k];
+            vinfo_incref(x);
+            fastlocals[j] = x;
         }
     }
     if (argcount > co->co_argcount && !(co->co_flags & CO_VARARGS)) {
@@ -265,18 +306,20 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
     return 0;
 }
 
-/* The callee frame's locals: the call's arguments, defaults, cells and
-   free variables bound as _PyEval_EvalCodeWithName binds them (the
-   translated binder), and the 'nextra' values of 'extra' after them. Its
-   own cells are made only if 'make_cells' (bind_cells). 0 when that binding
-   needs the real call: a wrong count (whose TypeError's wording CPython's
-   own call gives), or more extra positional arguments than a virtual
-   tuple holds; -1 on an error. */
+/* The callee frame's locals: the call's arguments (keyword ones named by
+   'kwnames', or none), defaults, cells and free variables bound as
+   _PyEval_EvalCodeWithName binds them (the translated binder), and the
+   'nextra' values of 'extra' after them. Its own cells are made only if
+   'make_cells' (bind_cells). 0 when that binding needs the real call: a
+   wrong count or a keyword it doesn't take (whose TypeError's wording
+   CPython's own call gives), or more extra positional arguments than a
+   virtual tuple holds; -1 on an error. */
 static int
 fncall_bind(struct fncall_arg_s *fncall, PsycoObject *po, vinfo_t *vglobals,
             vinfo_t *vbuiltins, vinfo_t **argarray, int argcount,
-            vinfo_t **defarray, int defcount, vinfo_t **frees, int nextra,
-            vinfo_t **extra, bool make_cells)
+            PyObject *kwnames, vinfo_t **kwargs, vinfo_t **defarray,
+            int defcount, vinfo_t **frees, int nextra, vinfo_t **extra,
+            bool make_cells)
 {
     PyCodeObject *co = fncall->co;
     int i, nlocals = le_code_nlocals(co), nslots = le_code_nlocalsplus(co);
@@ -289,8 +332,8 @@ fncall_bind(struct fncall_arg_s *fncall, PsycoObject *po, vinfo_t *vglobals,
     vinfo_incref(vbuiltins);
     a->items[INDEX_LOC_BUILTINS] = vbuiltins;
     bound = _PsycoEval_EvalCodeWithName(po, (PyObject *)co, locals, argarray,
-                                        argcount, defarray, defcount, frees,
-                                        make_cells);
+                                        argcount, kwnames, kwargs, defarray,
+                                        defcount, frees, make_cells);
     if (bound < 0) {
         array_delete(a, po);
         return bound == -1 ? 0 : -1;
@@ -913,8 +956,10 @@ DEFINEFN
 vinfo_t *
 psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
                   vinfo_t *vglobals, vinfo_t *vdefaults, vinfo_t *arg_tuple,
-                  int recursion, bool allow_inline)
+                  vinfo_t *kw, int recursion, bool allow_inline)
 {
+    PyObject *kwnames = NULL;
+    vinfo_t **kwargs = NULL;
     CodeBufferObject *codebuf;
     PsycoObject *mypo;
     Source *sources;
@@ -939,6 +984,13 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         (vfunc == NULL || is_runtime(vfunc->source) ||
          !(psyco_is_fusable_generator(co) || awaited_at_once(po, co))))
         goto fail_to_default;
+    /* keyword arguments, pending (pdictobject.c) for the binder; a
+       generator's binding is positional only */
+    if (kw != NULL && !psyco_known_NULL(kw)) {
+        kwnames = PsycoDict_PendingNames(kw, &kwargs);
+        if (kwnames == NULL || generator)
+            goto fail_to_default;
+    }
     /* closure code: the cells, read below (load_frees) */
     nfrees = PyCode_GetNumFree(co);
     if (nfrees != 0 && (vfunc == NULL || nfrees > MAX_CALL_FREES))
@@ -967,7 +1019,8 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
        including the processor condition codes */
     /* This is expected to have already been done on default arguments;
        see PsycoFunction_New() */
-    if (!psyco_forking(po, arg_tuple->array))
+    if (!psyco_forking(po, arg_tuple->array) ||
+        (kwnames != NULL && !psyco_forking(po, kw->array)))
         return NULL;
 
     /* prepare a frame */
@@ -1002,10 +1055,11 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     /* the instruction restarting with the inlined body's result binds again
        only to check it: its cells were made for the body. A generator's
        binding is checked here and done again by its consumer. */
-    switch (fncall_bind(
-        &fncall, po, vglobals, vbuiltins, &PsycoTuple_GET_ITEM(arg_tuple, 0),
-        tuple_size, &PsycoTuple_GET_ITEM(vdefaults, 0), defcount, frees, 0,
-        NULL, !generator && (!inlining || LOC_INLINING == NULL))) {
+    switch (fncall_bind(&fncall, po, vglobals, vbuiltins,
+                        &PsycoTuple_GET_ITEM(arg_tuple, 0), tuple_size,
+                        kwnames, kwargs, &PsycoTuple_GET_ITEM(vdefaults, 0),
+                        defcount, frees, 0, NULL,
+                        !generator && (!inlining || LOC_INLINING == NULL))) {
         case 1:
             break;
         case 0:
@@ -1107,6 +1161,10 @@ fail_to_default:
        globals and defaults, as upstream's cimpl_call_pyfunc did, would lose
        its name and qualname (generators take co_name), closure and
        keyword-only defaults */
+    if (kw != NULL)
+        return psyco_generic_call(po, le_function_tp_call(),
+                                  CfCommonNewRefPyObject, "vvv", vfunc,
+                                  arg_tuple, kw);
     return psyco_generic_call(po, le_function_tp_call(),
                               CfCommonNewRefPyObject, "vvl", vfunc, arg_tuple,
                               (long)0);
@@ -1145,7 +1203,7 @@ psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         goto fallback;
     vnodefaults = psyco_vi_Zero();
     result = psyco_call_pyfunc(po, vfunc, co, LOC_GLOBALS, vnodefaults,
-                               arg_tuple, po->pr.auto_recursion, true);
+                               arg_tuple, NULL, po->pr.auto_recursion, true);
     vinfo_decref(vnodefaults, po);
     return result;
 
@@ -1202,7 +1260,8 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
        count bound at the call */
     switch (fncall_bind(&fncall, po, vglobals, vbuiltins,
                         &PsycoTuple_GET_ITEM(args, 0), PsycoTuple_Load(args),
-                        NULL, 0, frees, GENEXPR_SLOTS, extra, true)) {
+                        NULL, NULL, NULL, 0, frees, GENEXPR_SLOTS, extra,
+                        true)) {
         case 1:
             break;
         case 0:

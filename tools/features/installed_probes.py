@@ -301,6 +301,13 @@ def POP_EXCEPT_UNWINDS():
 
 
 @probe
+def CODE_POSONLY_ARGS():
+    """code objects have co_posonlyargcount"""
+    return (hasattr((lambda: None).__code__, 'co_posonlyargcount'),
+            'code.co_posonlyargcount')
+
+
+@probe
 def CODE_QUALNAME():
     """code objects have co_qualname"""
     return (hasattr((lambda: None).__code__, 'co_qualname'),

@@ -14,6 +14,7 @@
 #include "pfuncobject.h"
 #include "../psyfunc.h"
 #include "pclassobject.h"
+#include "pdictobject.h"
 #include "ptupleobject.h"
 
 /***************************************************************/
@@ -316,7 +317,7 @@ vectorcall_replaced(PsycoObject *po, vinfo_t *func)
 DEFINEFN
 vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
-                      vinfo_t *arg, bool allow_inline)
+                      vinfo_t *arg, vinfo_t *kw, bool allow_inline)
 {
     PyObject *glob;
     PyObject *defl;
@@ -349,8 +350,8 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
             return NULL;
     }
 
-    /* a call that gives every positional argument doesn't use the
-       defaults (keyword-only ones went to the fallback) */
+    /* a call that gives every positional argument by position doesn't
+       use the defaults (keyword-only ones went to the fallback) */
     defl = compiled_defaults(f);
     tuple_size = PsycoTuple_Load(arg);
     if (tuple_size < 0 || tuple_size < co->co_argcount)
@@ -374,13 +375,17 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
             vinfo_new(CompileTime_NewSk(sk_new((long)defl, SkFlagPyObj)));
     }
 
-    result = psyco_call_pyfunc(po, func, co, fglobals, fdefaults, arg,
+    result = psyco_call_pyfunc(po, func, co, fglobals, fdefaults, arg, kw,
                                po->pr.auto_recursion, allow_inline);
     vinfo_decref(fdefaults, po);
     vinfo_decref(fglobals, po);
     return result;
 
 fallback:
+    if (kw != NULL)
+        return psyco_generic_call(po, le_function_tp_call(),
+                                  CfCommonNewRefPyObject, "lvv", (long)f, arg,
+                                  kw);
     return psyco_generic_call(po, le_function_tp_call(),
                               CfCommonNewRefPyObject, "lvl", (long)f, arg,
                               (long)0);
@@ -390,7 +395,11 @@ DEFINEFN
 vinfo_t *
 pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
 {
-    if (!psyco_known_NULL(kw))
+    /* keyword arguments: only pending ones (pdictobject.c), which the
+       binder takes; a call with them always has them */
+    vinfo_t **kwvalues;
+    bool keywords = !psyco_known_NULL(kw);
+    if (keywords && PsycoDict_PendingNames(kw, &kwvalues) == NULL)
         goto fallback;
 
     if (!is_virtualtime(func->source)) {
@@ -419,6 +428,9 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
             if (r == 0 || ((PyCodeObject *)c)->co_kwonlyargcount > 0)
                 goto fallback;
             if (((PyCodeObject *)c)->co_flags & CO_NESTED) {
+                /* its defaults are its own: positional calls only */
+                if (keywords)
+                    goto fallback;
                 condition_code_t cc;
                 vinfo_t *now = psyco_get_field(po, func, FUNC_code_now);
                 if (now == NULL)
@@ -444,7 +456,7 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         }
         switch (psyco_pyobj_atcompiletime_mega(po, func, &f)) {
             case 1: /* promotion ok */
-                return pfunction_simple_call(po, func, f, arg, true);
+                return pfunction_simple_call(po, func, f, arg, kw, true);
 
             case 0:            /* megamorphic site */
                 goto fallback; /* XXX could do better */
@@ -477,7 +489,7 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         if (fdefaults == NULL)
             return NULL;
 
-        return psyco_call_pyfunc(po, func, co, fglobals, fdefaults, arg,
+        return psyco_call_pyfunc(po, func, co, fglobals, fdefaults, arg, kw,
                                  po->pr.auto_recursion, true);
     }
 

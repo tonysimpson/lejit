@@ -113,7 +113,7 @@ call_special_n(PsycoObject *po, PyObject *f, vinfo_t *self, vinfo_t **arg,
     }
     Py_INCREF(f);
     vf = vinfo_new(CompileTime_NewSk(sk_new((long)f, SkFlagPyObj)));
-    r = pfunction_simple_call(po, vf, f, args, false);
+    r = pfunction_simple_call(po, vf, f, args, NULL, false);
     vinfo_decref(vf, po);
     vinfo_decref(args, po);
     return r;
@@ -496,7 +496,7 @@ psyco_heap_type_call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vtype,
     }
     Py_INCREF(m);
     vf = vinfo_new(CompileTime_NewSk(sk_new((long)m, SkFlagPyObj)));
-    r = pfunction_simple_call(po, vf, m, args, false);
+    r = pfunction_simple_call(po, vf, m, args, NULL, false);
     vinfo_decref(vf, po);
     vinfo_decref(args, po);
     if (r == NULL)
