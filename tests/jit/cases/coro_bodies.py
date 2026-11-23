@@ -422,12 +422,6 @@ HOOKED = ({'xfail': 'CPython sends into an awaited coroutine another way '
           if _hook_changes_awaits() else {})
 
 
-# with_asyncio's leak check is unreliable: under load, LeJIT sometimes
-# keeps tens of blocks more than plain CPython (seen on 3.10 and 3.11)
-ASYNCIO_LEAKS = {'leaks': 'intermittent extra blocks under LeJIT under load, '
-                          'seen on 3.10 and 3.11, KNOWN_BUGS'}
-
-
 CASES = [
     ('basics', [(3,), (0,)], {}),
     ('states', [(3,)], {}),
@@ -435,8 +429,7 @@ CASES = [
     ('raised', [(3,)], HOOKED),
     ('await_errors', [(2,)], {}),
     ('with_asyncio', [(3,)],
-     dict({'warmup': (40, "asyncio's paths go on compiling for some rounds")},
-          **ASYNCIO_LEAKS)),
+     {'warmup': (40, "asyncio's paths go on compiling for some rounds")}),
     ('origins', [(3,)], {}),
     ('tracing', [(3,)], HOOKED),
     ('recursion_limit', [(0,)], {}),
