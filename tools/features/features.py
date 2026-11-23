@@ -1254,6 +1254,8 @@ BYTECODE = [
 
 # frames
 FRAMES = [
+    ('FRAME_CLEARED_LAST_FIRST', D('a frame that ends releases its value stack and locals last to first (_PyFrame_ClearLocals), not first to last',
+                                   lambda s: _body_has(s, 'Python/frame.c', '_PyFrame_ClearLocals', 'sp--', missing=False))),
     ('FINISHED_GENERATOR_UNLINKED', D('a generator\'s frame is cut from its caller before it is cleared (clear_gen_frame, or before it had one, each time it stops), so a generator that has ended or raised leaves no f_back',
                                       lambda s: _body_has(s, CE, 'clear_gen_frame', 'frame->previous = NULL; _PyFrame_ClearExceptCode(frame);', missing=True))),
     ('LASTI_IN_INSTRUCTIONS', lasti_in_instructions),

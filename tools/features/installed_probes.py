@@ -477,6 +477,30 @@ def IMPORT_FROM_SPEC():
 
 
 @probe
+def FRAME_CLEARED_LAST_FIRST():
+    """a function's three locals are released last to first when it
+    returns (run: their finalisers)"""
+    order = []
+
+    class Handle:
+        def __init__(self, name):
+            self.name = name
+
+        def __del__(self):
+            order.append(self.name)
+
+    def f():
+        a = Handle('a')
+        b = Handle('b')
+        c = Handle('c')
+        return a is b is c
+    f()
+    if order not in (['a', 'b', 'c'], ['c', 'b', 'a']):
+        raise Unanswered('locals released in the order %r' % order)
+    return order == ['c', 'b', 'a'], 'run: locals released %r' % order
+
+
+@probe
 def LINENO_WHEN_SET():
     """a frame given an f_trace while no trace function runs reports the
     line it is on, not the line where f_trace was set (frame.f_lineno)"""
