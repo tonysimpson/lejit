@@ -645,6 +645,30 @@ def eval_frame_pops(s):
     return 'is_entry' not in fields, '%s:_PyInterpreterFrame.is_entry' % path
 
 
+def frame_executable(s):
+    """an interpreter frame keeps its code as f_executable, a plain object,
+    not f_code"""
+    return _field(s, '_PyInterpreterFrame', 'f_executable', missing=False)
+
+
+def frame_instr_ptr(s):
+    """an interpreter frame's place is the instruction it runs or is about
+    to run (instr_ptr), not the one before (prev_instr)"""
+    return _field(s, '_PyInterpreterFrame', 'instr_ptr', missing=False)
+
+
+def tstate_current_frame(s):
+    """a thread's innermost interpreter frame is its state's current_frame,
+    not its CFrame's"""
+    return _field(s, '_ts', 'current_frame')
+
+
+def tstate_eval_breaker(s):
+    """each thread has its own eval_breaker, in its state: its low bits are
+    the events ceval handles with _Py_HandlePending"""
+    return _field(s, '_ts', 'eval_breaker')
+
+
 def frame_funcobj(s):
     """an interpreter frame keeps its function as a plain object (f_funcobj),
     not a PyFunctionObject (f_func)"""
@@ -706,6 +730,16 @@ def managed_values_pointer(s):
                      'return ((PyDictValues **)obj)-4;')
 
 
+def range_iter_index(s):
+    """a range iterator counts the items it has given in index, from a start
+    that stays put; without it, it moves start on and counts len down"""
+    path, fields = s.struct('_PyRangeIterObject')
+    if fields is not None:
+        return 'index' in fields, path + ':_PyRangeIterObject.index'
+    # until 3.11 the struct is private to Objects/rangeobject.c
+    return _body_has(s, 'Objects/rangeobject.c', 'rangeiter_next', 'r->index')
+
+
 def dict_watcher_bits(s):
     """a dict's version tag keeps in its low 8 bits which watchers watch it
     (DICT_MAX_WATCHERS is 8), and a change steps it by 1 << 8
@@ -743,6 +777,9 @@ def eval_frame_handle_pending(s):
     elif eval_breaker_gc(s)[0]:
         # the handling has left ceval, with the GC (3.12)
         return False, '%s, %s' % (evidence, eval_breaker_gc(s)[1])
+    elif tstate_eval_breaker(s)[0]:
+        # each thread has its own (3.13)
+        return False, '%s, %s' % (evidence, tstate_eval_breaker(s)[1])
     elif s.declares('_Py_HandlePending'):
         # the handling has left ceval: neither form LeJIT copies
         raise Unanswered('no eval_frame_handle_pending in Python/ceval.c, and %s'
@@ -765,19 +802,6 @@ def tuplecontains_item_first(s):
     """`in` on a tuple compares each item with the value, the item first"""
     return _body_has(s, 'Objects/tupleobject.c', 'tuplecontains',
                      'PyObject_RichCompareBool(PyTuple_GET_ITEM(a, i), el')
-
-
-def aenter_lookup_first(s):
-    """BEFORE_ASYNC_WITH looks __aenter__ up before __aexit__"""
-    case = _case_tokens(s, 'BEFORE_ASYNC_WITH')
-    # the names by _Py_IDENTIFIER (PyId___aenter__), or from 3.11 _Py_ID
-    for enter, exit in (['PyId___aenter__'], ['PyId___aexit__']), \
-            (_c('_Py_ID(__aenter__)'), _c('_Py_ID(__aexit__)')):
-        at = [_run_at(case or [], want) for want in (enter, exit)]
-        if None not in at:
-            return at[0] < at[1], 'Python/ceval.c:TARGET(BEFORE_ASYNC_WITH)'
-    raise Unanswered('Python/ceval.c: no TARGET(BEFORE_ASYNC_WITH) naming'
-                     ' __aenter__ and __aexit__')
 
 
 def valid_version_tag_flag(s):
@@ -879,7 +903,9 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'END_FOR', 'RETURN_CONST', 'LOAD_FAST_CHECK', 'LOAD_FAST_AND_CLEAR',
            'BINARY_SLICE', 'STORE_SLICE', 'CALL_INTRINSIC_1',
            'CALL_INTRINSIC_2', 'LOAD_SUPER_ATTR', 'POP_JUMP_IF_NONE',
-           'POP_JUMP_IF_NOT_NONE')
+           'POP_JUMP_IF_NOT_NONE',
+           # gone from 3.13: f-strings are CONVERT_VALUE's and FORMAT_SIMPLE's
+           'FORMAT_VALUE')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -1056,7 +1082,6 @@ def opcodes(src):
 D = _detector
 AB = 'Objects/abstract.c'
 CE = 'Python/ceval.c'
-UO = 'Objects/unicodeobject.c'
 
 # C API functions that LeJIT calls where libpython exports them, and
 # replaces where it doesn't
@@ -1064,12 +1089,9 @@ EXPORTS = [
     ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
     ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
-    ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
     ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
-    ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
-    ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
-    ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
-    ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip'),
+    ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
+    ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
 ]
 
 
@@ -1091,6 +1113,8 @@ C_API = [
     ('CHECK_RESULT_TSTATE', check_result_tstate),
     ('OBJECTDICT_SETITEM_LINKABLE', objectdict_setitem_linkable),
     ('FLOAT_ASDOUBLE_INDEX', float_asdouble_index),
+    ('TRACEBACK_FROM_FRAME_API', D('_PyTraceBack_FromFrame is declared PyAPI_FUNC (in an internal header)',
+                                   lambda s: _exported(s, '_PyTraceBack_FromFrame'))),
     ('LOOKUP_SPECIAL_ID', D('an extension can look up a special method by _Py_Identifier, with _PyObject_LookupSpecial',
                             lambda s: _public(s, '_PyObject_LookupSpecial'))),
 ] + [(name, _export_detector(f)) for name, f in EXPORTS]
@@ -1114,6 +1138,8 @@ BYTECODE = [
                                lambda s: _case_has(s, 'LOAD_ATTR', 'oparg>>1'))),
     ('COMPARE_OP_SHIFT_4', D('COMPARE_OP\'s comparison is its argument shifted right four times, the low bits the specialiser\'s',
                              lambda s: _case_has(s, 'COMPARE_OP', 'oparg>>4'))),
+    ('COMPARE_OP_SHIFT_5', D('COMPARE_OP\'s comparison is its argument shifted right five times, the low bits the specialiser\'s and the bool conversion\'s',
+                             lambda s: _case_has(s, 'COMPARE_OP', 'oparg>>5'))),
     ('MATCH_CLASS_PUSHES_BOOL', D('MATCH_CLASS pushes a bool saying whether the class matched, over the attributes or the subject',
                                   lambda s: _case_has(s, 'MATCH_CLASS', 'PyBool_FromLong', missing=False))),
     ('MATCH_KEYS_PUSHES_BOOL', D('MATCH_KEYS pushes a bool saying whether the keys matched, over the values or None',
@@ -1160,6 +1186,10 @@ STATE = [
     ('EVAL_BREAKER_GC', eval_breaker_gc),
     ('EVAL_FRAME_POPS', eval_frame_pops),
     ('FRAME_FUNCOBJ', frame_funcobj),
+    ('FRAME_EXECUTABLE', frame_executable),
+    ('FRAME_INSTR_PTR', frame_instr_ptr),
+    ('TSTATE_CURRENT_FRAME', tstate_current_frame),
+    ('TSTATE_EVAL_BREAKER', tstate_eval_breaker),
 ]
 
 # Objects/abstract.c
@@ -1189,18 +1219,12 @@ OBJECTS = [
                           lambda s: _defines(s, 'Objects/tupleobject.c', 'tuple_get_empty'))),
     ('CONTAINS_ITEM_FIRST', tuplecontains_item_first),
     ('DICT_VALUES_STRUCT', dict_values_struct),
-    ('PYCORE_FORMAT_H', D('the format flags F_LJUST... are the internal pycore_format.h\'s',
-                          lambda s: _file(s, 'Include/internal/pycore_format.h'))),
-    ('FORMATCHAR_INDEX_ONLY', D('%c takes an int, by PyLong_AsLongAndOverflow (no __int__)',
-                                lambda s: _body_has(s, UO, 'formatchar', 'PyLong_AsLongAndOverflow'))),
     ('HASH_DOUBLE_OBJECT', D('_Py_HashDouble is given the float object too',
                              lambda s: _file_has(s, 'Python/pyhash.c', '_Py_HashDouble(PyObject *'))),
     ('MEMBER_EX_ERROR_FROM_TYPE', member_ex_error_from_type),
     ('POW_KEYWORDS', D('pow() takes keyword arguments base, exp and mod',
                        lambda s: _file_has(s, 'Python/clinic/bltinmodule.c.h',
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),
-    ('CORO_GET_AWAITABLE_ITER_LINKABLE', D('_PyCoro_GetAwaitableIter can be called from an extension',
-                                           lambda s: _linkable(s, '_PyCoro_GetAwaitableIter'))),
     ('DICT_KEYS_KIND', dict_keys_kind),
     ('LONG_VALUE', long_value),
     ('TYPE_GET_DICT', D('PyType_GetDict gives a type\'s dict, which a static builtin type keeps in the interpreter (its tp_dict is NULL)',
@@ -1208,6 +1232,7 @@ OBJECTS = [
     ('IMMORTAL_OBJECTS', D('an object whose refcount\'s low 32 bits are negative is immortal: Py_INCREF and Py_DECREF leave it alone (_Py_IsImmortal)',
                            lambda s: _public(s, '_Py_IsImmortal'))),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
+    ('RANGE_ITER_INDEX', range_iter_index),
     ('DICT_WATCHER_BITS', dict_watcher_bits),
 ]
 
@@ -1225,7 +1250,6 @@ CEVAL = [
     ('KWARGS_MERGE_EX', D('CALL_FUNCTION_EX merges **kwargs with _PyDict_MergeEx, and format_kwargs_error reports it',
                           lambda s: _case_has(s, 'CALL_FUNCTION_EX', '_PyDict_MergeEx'))),
     ('DELETE_GLOBAL_KEYERROR_ONLY', delete_global_keyerror_only),
-    ('AENTER_LOOKUP_FIRST', aenter_lookup_first),
 ]
 
 # the opcodes that some CPython lacks

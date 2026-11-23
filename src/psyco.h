@@ -507,12 +507,22 @@ _Static_assert(sizeof(((rangeobject *)0)->length) == 8,
 _Static_assert(__builtin_classify_type(((rangeobject *)0)->length) == 5,
                "LeJIT: rangeobject.length: LeJIT reads it as a pointer");
 
+#if LE_HAS_RANGE_ITER_INDEX
 typedef struct {
     PyObject_HEAD long index;
     long start;
     long step;
     long len;
 } rangeiterobject;
+#else
+/* rangeiter_next moves start on and counts len down */
+typedef struct {
+    PyObject_HEAD long start;
+    long step;
+    long len;
+} rangeiterobject;
+#endif
+#if LE_HAS_RANGE_ITER_INDEX
 #define LE_OFS_rangeiterobject__index offsetof(rangeiterobject, index)
 #define LE_SIZE2_rangeiterobject__index 3
 #define LE_UNSIGNED_rangeiterobject__index 0
@@ -525,6 +535,7 @@ _Static_assert(__builtin_classify_type(((rangeiterobject *)0)->index) == 1,
                "LeJIT: rangeiterobject.index: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((rangeiterobject *)0)->index))-1 < 0) == 1,
                "LeJIT: rangeiterobject.index: LeJIT reads it as signed");
+#endif
 #define LE_OFS_rangeiterobject__start offsetof(rangeiterobject, start)
 #define LE_SIZE2_rangeiterobject__start 3
 #define LE_UNSIGNED_rangeiterobject__start 0
@@ -662,89 +673,6 @@ _Static_assert(__builtin_types_compatible_p(
 _Static_assert(sizeof(((le_dictkeys_t *)0)->dk_indices[0]) == 1,
                "LeJIT: PyDictKeysObject.dk_indices: LeJIT reads 1 byte");
 #endif
-
-struct unicode_formatter_t {
-    PyObject *args;
-    int args_owned;
-    Py_ssize_t arglen, argidx;
-    PyObject *dict;
-    enum PyUnicode_Kind fmtkind;
-    Py_ssize_t fmtcnt, fmtpos;
-    const void *fmtdata;
-    PyObject *fmtstr;
-    _PyUnicodeWriter writer;
-};
-typedef struct unicode_formatter_t le_formatter_t;
-#define LE_OFS_le_formatter_t__args offsetof(le_formatter_t, args)
-#define LE_SIZE2_le_formatter_t__args 3
-#define LE_UNSIGNED_le_formatter_t__args 0
-_Static_assert(__builtin_types_compatible_p(
-                   __typeof__(((le_formatter_t *)0)->args), PyObject *),
-               "LeJIT: unicode_formatter_t.args is not PyObject *");
-_Static_assert(sizeof(((le_formatter_t *)0)->args) == 8,
-               "LeJIT: unicode_formatter_t.args: LeJIT reads 8 bytes");
-_Static_assert(__builtin_classify_type(((le_formatter_t *)0)->args) == 5,
-               "LeJIT: unicode_formatter_t.args: LeJIT reads it as a pointer");
-#define LE_OFS_le_formatter_t__arglen offsetof(le_formatter_t, arglen)
-#define LE_SIZE2_le_formatter_t__arglen 3
-#define LE_UNSIGNED_le_formatter_t__arglen 0
-_Static_assert(__builtin_types_compatible_p(
-                   __typeof__(((le_formatter_t *)0)->arglen), Py_ssize_t),
-               "LeJIT: unicode_formatter_t.arglen is not Py_ssize_t");
-_Static_assert(sizeof(((le_formatter_t *)0)->arglen) == 8,
-               "LeJIT: unicode_formatter_t.arglen: LeJIT reads 8 bytes");
-_Static_assert(
-    __builtin_classify_type(((le_formatter_t *)0)->arglen) == 1,
-    "LeJIT: unicode_formatter_t.arglen: LeJIT reads it as an integer");
-_Static_assert(((__typeof__(((le_formatter_t *)0)->arglen))-1 < 0) == 1,
-               "LeJIT: unicode_formatter_t.arglen: LeJIT reads it as signed");
-#define LE_OFS_le_formatter_t__argidx offsetof(le_formatter_t, argidx)
-#define LE_SIZE2_le_formatter_t__argidx 3
-#define LE_UNSIGNED_le_formatter_t__argidx 0
-_Static_assert(__builtin_types_compatible_p(
-                   __typeof__(((le_formatter_t *)0)->argidx), Py_ssize_t),
-               "LeJIT: unicode_formatter_t.argidx is not Py_ssize_t");
-_Static_assert(sizeof(((le_formatter_t *)0)->argidx) == 8,
-               "LeJIT: unicode_formatter_t.argidx: LeJIT reads 8 bytes");
-_Static_assert(
-    __builtin_classify_type(((le_formatter_t *)0)->argidx) == 1,
-    "LeJIT: unicode_formatter_t.argidx: LeJIT reads it as an integer");
-_Static_assert(((__typeof__(((le_formatter_t *)0)->argidx))-1 < 0) == 1,
-               "LeJIT: unicode_formatter_t.argidx: LeJIT reads it as signed");
-
-struct unicode_format_arg_t {
-    Py_UCS4 ch;
-    int flags;
-    Py_ssize_t width;
-    int prec;
-    int sign;
-};
-typedef struct unicode_format_arg_t le_format_arg_t;
-#define LE_OFS_le_format_arg_t__ch offsetof(le_format_arg_t, ch)
-#define LE_SIZE2_le_format_arg_t__ch 2
-#define LE_UNSIGNED_le_format_arg_t__ch 1
-_Static_assert(__builtin_types_compatible_p(
-                   __typeof__(((le_format_arg_t *)0)->ch), Py_UCS4),
-               "LeJIT: unicode_format_arg_t.ch is not Py_UCS4");
-_Static_assert(sizeof(((le_format_arg_t *)0)->ch) == 4,
-               "LeJIT: unicode_format_arg_t.ch: LeJIT reads 4 bytes");
-_Static_assert(__builtin_classify_type(((le_format_arg_t *)0)->ch) == 1,
-               "LeJIT: unicode_format_arg_t.ch: LeJIT reads it as an integer");
-_Static_assert(((__typeof__(((le_format_arg_t *)0)->ch))-1 < 0) == 0,
-               "LeJIT: unicode_format_arg_t.ch: LeJIT reads it as unsigned");
-#define LE_OFS_le_format_arg_t__width offsetof(le_format_arg_t, width)
-#define LE_SIZE2_le_format_arg_t__width 3
-#define LE_UNSIGNED_le_format_arg_t__width 0
-_Static_assert(__builtin_types_compatible_p(
-                   __typeof__(((le_format_arg_t *)0)->width), Py_ssize_t),
-               "LeJIT: unicode_format_arg_t.width is not Py_ssize_t");
-_Static_assert(sizeof(((le_format_arg_t *)0)->width) == 8,
-               "LeJIT: unicode_format_arg_t.width: LeJIT reads 8 bytes");
-_Static_assert(
-    __builtin_classify_type(((le_format_arg_t *)0)->width) == 1,
-    "LeJIT: unicode_format_arg_t.width: LeJIT reads it as an integer");
-_Static_assert(((__typeof__(((le_format_arg_t *)0)->width))-1 < 0) == 1,
-               "LeJIT: unicode_format_arg_t.width: LeJIT reads it as signed");
 
 typedef struct {
     Py_hash_t me_hash;
@@ -919,10 +847,18 @@ PyAPI_FUNC(Py_hash_t) _Py_HashBytes(const void *, Py_ssize_t);
 #else
 #define le_hash_bytes Py_HashBuffer
 #endif
-#if LE_HAS_UNICODE_FROM_ASCII_LINKABLE
-#define le_unicode_from_ascii _PyUnicode_FromASCII
-#else
-#define le_unicode_from_ascii(s, size) PyUnicode_DecodeASCII(s, size, NULL)
+/* functions that every CPython LeJIT builds for exports, which some
+   declare only in an internal header */
+PyAPI_FUNC(int)
+    _PyDict_SetItem_KnownHash(PyObject *, PyObject *, PyObject *, Py_hash_t);
+PyAPI_FUNC(int) _PySet_Update(PyObject *, PyObject *);
+PyAPI_FUNC(PyObject *) PyCFunction_Call(PyObject *, PyObject *, PyObject *);
+#if LE_HAS_PRIVATE_NUMBER_INDEX
+PyAPI_FUNC(PyObject *) _PyNumber_Index(PyObject *);
+#endif
+#if LE_HAS_CHECK_RESULT_TSTATE
+PyAPI_FUNC(PyObject *) _Py_CheckFunctionResult(PyThreadState *, PyObject *,
+                                               PyObject *, const char *);
 #endif
 /* a type's dict, borrowed (NULL if the type isn't ready): its tp_dict, or
    PyType_GetDict's, as a static builtin type keeps its dict in the

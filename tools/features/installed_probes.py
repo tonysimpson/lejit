@@ -137,13 +137,6 @@ def OBJECTDICT_SETITEM_LINKABLE():
 
 
 @probe
-def CORO_GET_AWAITABLE_ITER_LINKABLE():
-    """libpython exports _PyCoro_GetAwaitableIter, so an extension can link
-    to it (ctypes)"""
-    return _exported('_PyCoro_GetAwaitableIter')
-
-
-@probe
 def CODE_GET_CODE():
     """libpython exports PyCode_GetCode (ctypes)"""
     return _exported('PyCode_GetCode')
@@ -180,12 +173,9 @@ for _feature, _function in [
         ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
         ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
         ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
-        ('LONG_FORMAT_WRITER_LINKABLE', '_PyLong_FormatWriter'),
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
-        ('UNICODE_FIND_MAX_CHAR_LINKABLE', '_PyUnicode_FindMaxChar'),
-        ('UNICODE_FORMAT_LONG_LINKABLE', '_PyUnicode_FormatLong'),
-        ('UNICODE_FROM_ASCII_LINKABLE', '_PyUnicode_FromASCII'),
-        ('UNICODE_XSTRIP_LINKABLE', '_PyUnicode_XStrip')]:
+        ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
+        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
@@ -348,11 +338,17 @@ def KWARGS_MERGE_EX():
     mapping a dict (run)"""
     _need_ops('CALL_FUNCTION_EX', 'LOAD_CONST', 'RETURN_VALUE')
     # the callable is pushed with CALL_FUNCTION, or (from 3.11) with a
-    # NULL under it
+    # NULL beside it, on the side the compiler puts it
     if _real_op('CALL_FUNCTION'):
-        start = []
+        start = [('LOAD_CONST', 0)]
     elif _real_op('PUSH_NULL'):
-        start = [('PUSH_NULL', 0)]
+        def g(f, a, k):
+            return f(*a, **k)
+        ops = [x.opname for x in dis.get_instructions(g)]
+        if ops.index('PUSH_NULL') < ops.index('LOAD_FAST'):
+            start = [('PUSH_NULL', 0), ('LOAD_CONST', 0)]
+        else:
+            start = [('LOAD_CONST', 0), ('PUSH_NULL', 0)]
     else:
         raise Unanswered('the probe needs opcode CALL_FUNCTION or PUSH_NULL,'
                          ' which this interpreter lacks')
@@ -371,7 +367,7 @@ def KWARGS_MERGE_EX():
 
     def f(**kw):
         return kw
-    call = _code(start + [('LOAD_CONST', 0), ('LOAD_CONST', 1), ('LOAD_CONST', 2),
+    call = _code(start + [('LOAD_CONST', 1), ('LOAD_CONST', 2),
                   ('CALL_FUNCTION_EX', 1), ('RETURN_VALUE', 0)],
                  [f, (), M()])
     e = _error(call)
@@ -402,37 +398,6 @@ def DELETE_GLOBAL_KEYERROR_ONLY():
     if isinstance(e, NameError):
         return False, 'DELETE_GLOBAL run: NameError'
     raise Unanswered('DELETE_GLOBAL run: %r' % e)
-
-
-@probe
-def AENTER_LOOKUP_FIRST():
-    """`async with` an object whose __aenter__ and __aexit__ are
-    descriptors gets __aenter__ first (run)"""
-    order = []
-
-    class Special(object):
-        def __init__(self, name):
-            self.name = name
-
-        def __get__(self, obj, cls=None):
-            order.append(self.name)
-            return lambda *a: None
-
-    class X(object):
-        __aenter__ = Special('__aenter__')
-        __aexit__ = Special('__aexit__')
-
-    async def c():
-        async with X():
-            pass
-    co = c()
-    try:
-        _error(co.send, None)
-    finally:
-        co.close()
-    if sorted(order[:2]) != ['__aenter__', '__aexit__']:
-        raise Unanswered('async with run: looked up %r' % order)
-    return order[0] == '__aenter__', 'async with run: %s first' % order[0]
 
 
 @probe
@@ -662,6 +627,22 @@ def MANAGED_VALUES_POINTER():
 
 
 @probe
+def RANGE_ITER_INDEX():
+    """an iterator over range(1, 7, 2) that has given one item pickles as the
+    whole range and the index 1, not as range(3, 7, 2) with no index
+    (rangeiter_reduce)"""
+    it = iter(range(1, 7, 2))
+    next(it)
+    reduced = it.__reduce__() + (None,)
+    seen = (reduced[1][0], reduced[2])
+    if seen == (range(1, 7, 2), 1):
+        return True, 'iter(range(1, 7, 2)) after one item: %r' % (seen,)
+    if seen == (range(3, 7, 2), None):
+        return False, 'iter(range(1, 7, 2)) after one item: %r' % (seen,)
+    raise Unanswered('iter(range(1, 7, 2)) after one item: %r' % (seen,))
+
+
+@probe
 def VALID_VERSION_TAG_FLAG():
     """a class has the flag 1 << 19 (Py_TPFLAGS_VALID_VERSION_TAG) after a
     lookup on it, and loses it when the class changes (run)"""
@@ -735,18 +716,6 @@ def CONTAINS_ITEM_FIRST():
 
 
 @probe
-def FORMATCHAR_INDEX_ONLY():
-    """'%c' % 2**100 is an OverflowError (out of range), not a TypeError
-    (run)"""
-    e = _error(lambda: '%c' % (2 ** 100))
-    if isinstance(e, OverflowError):
-        return True, "'%c' % 2**100: OverflowError"
-    if isinstance(e, TypeError):
-        return False, "'%c' % 2**100: TypeError"
-    raise Unanswered("'%%c' %% 2**100: %r" % e)
-
-
-@probe
 def HASH_DOUBLE_OBJECT():
     """two NaN floats hash differently (by object), not both to 0 (run)"""
     a, b = float('nan'), float('nan')
@@ -769,7 +738,8 @@ def MEMBER_EX_ERROR_FROM_TYPE():
     msg = str(e)
     if msg == 'zzz':
         return False, 'unset slot: AttributeError %s' % msg
-    if "'S' object has no attribute" in msg:
+    # the type's name, or (from 3.13) its qualified name
+    if "S' object has no attribute" in msg:
         return True, 'unset slot: AttributeError %s' % msg
     raise Unanswered('unset slot: AttributeError %s' % msg)
 
@@ -823,6 +793,26 @@ def COMPARE_OP_SHIFT_4():
             if x.arg == 4:
                 return False, 'dis: COMPARE_OP 4 for a > b'
             if x.arg >> 4 == 4:
+                return True, 'dis: COMPARE_OP %d for a > b' % x.arg
+            if x.arg >> 5 == 4:
+                return False, 'dis: COMPARE_OP %d for a > b, shifted five times' % x.arg
+            raise Unanswered('a > b is COMPARE_OP %d' % x.arg)
+    raise Unanswered('a > b has no COMPARE_OP: %r'
+                     % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
+def COMPARE_OP_SHIFT_5():
+    """a > b compiles to COMPARE_OP whose argument is Py_GT (4) shifted
+    left five times, with the specialiser's bits and the bool conversion's
+    below (dis)"""
+    def f(a, b):
+        return a > b
+    for x in dis.get_instructions(f):
+        if x.opname == 'COMPARE_OP':
+            if x.arg == 4 or x.arg >> 4 == 4:
+                return False, 'dis: COMPARE_OP %d for a > b' % x.arg
+            if x.arg >> 5 == 4:
                 return True, 'dis: COMPARE_OP %d for a > b' % x.arg
             raise Unanswered('a > b is COMPARE_OP %d' % x.arg)
     raise Unanswered('a > b has no COMPARE_OP: %r'

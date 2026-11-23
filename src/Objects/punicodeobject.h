@@ -4,6 +4,20 @@
 #include "pabstract.h"
 #include "pobject.h"
 
+/* stringlib/eq.h:unicode_eq */
+static inline int
+le_unicode_eq(PyObject *a, PyObject *b)
+{
+    if (PyUnicode_GET_LENGTH(a) != PyUnicode_GET_LENGTH(b))
+        return 0;
+    if (PyUnicode_GET_LENGTH(a) == 0)
+        return 1;
+    if (PyUnicode_KIND(a) != PyUnicode_KIND(b))
+        return 0;
+    return memcmp(PyUnicode_1BYTE_DATA(a), PyUnicode_1BYTE_DATA(b),
+                  PyUnicode_GET_LENGTH(a) * PyUnicode_KIND(a)) == 0;
+}
+
 /* s.split() or s.split(sep), not yet built: a virtual list that
    PyUnicode_Split makes when anything else reads it. */
 EXTERNFN bool

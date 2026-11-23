@@ -36,24 +36,6 @@ psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true);
 #define psyco_vsource_cc(src) CC_ALWAYS_FALSE
 #endif
 
-#if 0
-/* XXX to do: references from the code buffers. This is tricky because
-   we can have quite indirect references, or references to a subobject of
-   a Python object, or to a field only of a Python object, etc... */
-PSY_INLINE long reference_from_code(PsycoObject* po, CompileTimeSource source)
-{
-	--- DISABLED ---
-	source_known_t* sk = CompileTime_Get(source);
-	if ((sk->refcount1_flags & SkFlagPyObj) != 0) {
-		/* XXX we get a reference from the code.
-		   Implement freeing such references
-		   together with code buffers. */
-		sk_incref(sk);
-	}
-	return sk->value;
-}
-#endif
-
 /*****************************************************************/
 /***   Calling C functions                                     ***/
 
@@ -229,8 +211,6 @@ integer_xor(PsycoObject *po, vinfo_t *v1, vinfo_t *v2);
 EXTERNFN
 vinfo_t *
 integer_and(PsycoObject *po, vinfo_t *v1, vinfo_t *v2);
-/*EXTERNFN
-  vinfo_t* integer_and_i(PsycoObject* po, vinfo_t* v1, long value2);*/
 EXTERNFN
 vinfo_t *
 integer_lshift(PsycoObject *po, vinfo_t *v1, vinfo_t *v2);
@@ -307,14 +287,6 @@ psyco_emit_header(PsycoObject *po, int nframelocal);
 EXTERNFN code_t *
 psyco_finish_return(PsycoObject *po, Source retval);
 
-#if 0 /* disabled */
-/* emergency code for out-of-memory conditions in which do not
-   have a code buffer available for psyco_finish_err_xxx().
-   A temporary buffer of the size EMERGENCY_PROXY_SIZE is enough. */
-#define EMERGENCY_PROXY_SIZE 11
-code_t* psyco_emergency_jump(PsycoObject* po, code_t* code);
-#endif
-
 /*****************************************************************/
 /***   run-time switches                                       ***/
 
@@ -327,6 +299,7 @@ typedef struct c_promotion_s {
 #define PFlagMegamorphic 2
 #define PFlagStaticType 4 /* with PFlagPyObj|PFlagMegamorphic */
 #define PFlagInterpret 8  /* with PFlagPyObj|PFlagMegamorphic */
+#define PFlagFused 16     /* with PFlagPyObj */
 
 /* The pseudo-exceptions meaning 'promote me' but against no particular
    fixed_switch_t. The second one has the SkFlagPyObj flag. */
@@ -351,6 +324,12 @@ EXTERNVAR c_promotion_t psyco_static_type_promotion;
    (pycompiler.c:psyco_go_interpreted). Psyco_NeedType's, whose callers
    need a type. */
 EXTERNVAR c_promotion_t psyco_interp_pyobj_promotion;
+
+/* Psyco_NeedType's in a generator expression's fused code, which can't go
+   on in ceval: every value gets its version, but past MEGAMORPHIC_MAX
+   values the generator expression stops being fused (mergepoints.h:
+   psyco_fuse_stopped), so calls after this one run it as a generator. */
+EXTERNVAR c_promotion_t psyco_fused_pyobj_promotion;
 
 #define MEGAMORPHIC_MAX 5
 
