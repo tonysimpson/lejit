@@ -344,9 +344,9 @@ CASES = [
     ('tracing', [(0,)], HOOKED),
     ('handled', [(1,)],
      {'warmup': (40, 'its paths go on compiling for some rounds'),
-      'leaks': 'with address-space randomisation on, LeJIT keeps a fixed '
-               'number of blocks more (up to about 90) that depends on '
-               'addresses and does not grow with the rounds'}),
+      'leaks_with_aslr': 'LeJIT keeps a fixed number of blocks more (up to '
+                         'about 90) that depends on addresses and does not '
+                         'grow with the rounds'}),
     ('traced_handler', [(1,)], {}),
     ('origins', [(1,)], {}),
 ]
