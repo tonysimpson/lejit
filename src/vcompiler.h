@@ -1040,9 +1040,16 @@ PsycoObject_Ready(PsycoObject *po);
 EXTERNFN PsycoObject *
 PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
                      PyObject *mergepoints, int recursion);
+#if LE_RESUMES_ON_FRAME
+EXTERNFN PsycoObject *
+PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
+                         PyObject *builtins, PyObject *merge_points,
+                         int recursion, int next_instr, int nstack);
+#else
 EXTERNFN PsycoObject *
 PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
                          PyObject *builtins, PyObject *merge_points,
                          int recursion, int next_instr, uint64_t nulls,
                          int nstack, const int *blocks, int nblocks);
+#endif
 #endif /* _VCOMPILER_H */

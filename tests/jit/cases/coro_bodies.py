@@ -8,8 +8,7 @@ import asyncio, gc, inspect, sys, types, warnings
 
 
 def work(x):
-    # a call: a body runs compiled only where it does work
-    # (mergepoints.c:yields_do_work)
+    # a call, so that a run does some work
     return x
 
 

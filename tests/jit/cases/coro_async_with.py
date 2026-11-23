@@ -227,7 +227,7 @@ CASES = [
     ('basics', [(4,)], {}),
     ('errors', [(0,)], {}),
     ('with_asyncio', [(3,)],
-     {'warmup': (40, "asyncio's paths go on compiling for some rounds"),
+     {'warmup': (60, "asyncio's paths go on compiling for some rounds"),
       'leaks_with_aslr': 'what plain CPython itself keeps after the rounds '
                          'varies with addresses, by tens of blocks'}),
     ('handlers', [(0,)], {}),

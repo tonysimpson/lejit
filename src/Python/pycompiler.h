@@ -256,6 +256,17 @@ psyco_can_go_interpreted(PsycoObject *po);
    pycheader.h), or 0 if it is not a generator's code */
 EXTERNFN long
 psyco_generator_mode(PsycoObject *po);
+#if LE_RESUMES_ON_FRAME
+/* a resumed generator's frame word i, as a virtual value its frame still
+   holds (pycompiler.c says how it is read); which word a value still is,
+   or -1; and the frame, which the resumable body is given */
+EXTERNFN vinfo_t *
+psyco_frame_word(int i);
+EXTERNFN int
+psyco_frame_word_index(vinfo_t *v);
+EXTERNFN vinfo_t *
+psyco_frame_words_frame(PsycoObject *po);
+#endif
 #if LE_RESUMES_COROUTINES
 EXTERNFN int
 psyco_trace_yield(PyFrameObject *frame, PyObject *value);

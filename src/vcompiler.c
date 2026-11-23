@@ -1429,6 +1429,52 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     return po;
 }
 
+#if LE_RESUMES_ON_FRAME
+/* A resumable generator's body entered at 'next_instr' (eval_hook.c:
+   LeGen_Run), given its frame, borrowed, and the value sent, owned, which
+   is on top of the 'nstack' stack items under it. Every local, cell, free
+   variable and stack item starts as the frame's own word
+   (pycompiler.c:psyco_frame_word), read where the code uses it, so the
+   frame may hold anything ceval or Python left in it. */
+DEFINEFN
+PsycoObject *
+PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
+                         PyObject *builtins, PyObject *merge_points,
+                         int recursion, int next_instr, int nstack)
+{
+    int nplus = le_code_nlocalsplus(co);
+    int count =
+        INDEX_LOC_LOCALS_PLUS + nplus + GENEXPR_SLOTS + co->co_stacksize;
+    int i;
+    PsycoObject *po = PsycoObject_New(count);
+    vinfo_t **stack_a = po->vlocals.items + count - co->co_stacksize;
+    po->stack_depth = INITIAL_STACK_DEPTH;
+    po->vlocals.count = count;
+    INIT_PROCESSOR_PSYCOOBJECT(po);
+    po->pr.auto_recursion = AUTO_RECURSION(recursion);
+    frame_globals(po, globals, builtins);
+    /* fixed, as a fused generator's mode (psyfunc.c:psyco_call_genexpr) */
+    po->vlocals.items[GENEXPR_SLOT_MODE(co)] =
+        vinfo_new(CompileTime_NewSk(sk_new(GENEXPR_RESUMABLE, SkFlagFixed)));
+    /* the arguments, the last pushed first */
+    po->stack_depth += sizeof(long);
+    stack_a[nstack] =
+        vinfo_new(RunTime_NewStack(po->stack_depth, true, false));
+    po->stack_depth += sizeof(long);
+    po->vlocals.items[GENEXPR_SLOT_ACC(co)] =
+        vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
+    for (i = 0; i < nplus; i++) LOC_LOCALS_PLUS[i] = psyco_frame_word(i);
+    for (i = 0; i < nstack; i++) stack_a[i] = psyco_frame_word(nplus + i);
+    po->pr.co = co; /* borrowed, as in PsycoObject_FromCode */
+    pyc_data_build(po, merge_points);
+    po->pr.next_instr = next_instr;
+    po->pr.iblock = 0;
+    po->stack_depth += sizeof(long);
+    LOC_CONTINUATION =
+        vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
+    return po;
+}
+#else
 /* A resumable generator's body entered at 'next_instr' (eval_hook.c:
    LeGen_Run), on the words of its frame in this order: the locals, owned,
    the cells and free variables, borrowed, the 'nstack' stack items, owned,
@@ -1486,3 +1532,4 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
         vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
     return po;
 }
+#endif

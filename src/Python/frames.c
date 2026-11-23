@@ -310,6 +310,37 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
     }
 }
 
+#if LE_RESUMES_ON_FRAME
+/* What Python wrote in the locals the run holds while the body ran
+   (psyco_frame_write_locals) is released as the run ends
+   (psyco_frame_start_unregister), not here, where it could run code: the
+   slots take the compiled code's values after this. The frame's other
+   words are its own. */
+DEFINEFN void
+psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p)
+{
+    FrameRuntime *fr = psyco_frame_start_get(f);
+    if (fr != NULL && fr->entry_locals != NULL && p->ntaken > 0) {
+        int i;
+        PyObject **keep = PyMem_Realloc(fr->entry_locals,
+                                        (fr->n_entry_locals + p->ntaken) *
+                                            sizeof(PyObject *));
+        for (i = 0; i < p->ntaken; i++) {
+            PyObject *o = le_frame_word_take(f, p->taken[i]);
+            if (o == NULL)
+                continue;
+            if (keep != NULL)
+                keep[fr->n_entry_locals++] = o;
+            else
+                Py_DECREF(o); /* out of memory */
+        }
+        if (keep != NULL)
+            fr->entry_locals = keep;
+    }
+    if (p->lasti >= 0)
+        le_gen_frame_pause(f, p->lasti, p->nstack);
+}
+#else
 /* What Python wrote in the locals while the body ran
    (psyco_frame_write_locals) is released as the run ends
    (psyco_frame_start_unregister), not here, where it could run code: the
@@ -341,6 +372,7 @@ psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
 #endif
     return f;
 }
+#endif
 
 #if LE_HAS_FRAME_STACKREFS
 DEFINEFN void

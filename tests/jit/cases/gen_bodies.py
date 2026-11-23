@@ -3,13 +3,11 @@
 # blocks live in its frame between resumes, as ceval leaves them. Each case
 # drives generators and returns what CPython shows of them; compiled()
 # says whether a generator's body was compiled, where LeJIT compiles them.
-# Only a body whose resumes do work is compiled (light_bodies).
 import _thread, gc, inspect, itertools, sys
 
 
 def work(x):
-    # a call: a body runs compiled only where its resumes do work
-    # (mergepoints.c:yields_do_work)
+    # a call, so that a resume does some work
     return x
 
 
@@ -552,15 +550,6 @@ def interrupted_in_try(n):
     return out, run(lambda: next(g)), compiled(catches_interrupt)
 
 
-def interpreted(*fns):
-    lejit = sys.modules.get('lejit')
-    # a release build can't say what compiled
-    if lejit is None or not hasattr(lejit._core, '_code_info'):
-        return True
-    return all(lejit._core._code_info(f.__code__) != 'compiled'
-               for f in fns)
-
-
 def ones():
     while True:
         yield 1
@@ -580,10 +569,10 @@ def counting(n):
 
 
 def light_bodies(n):
-    # resumes that do next to nothing cost less interpreted: these stay so
+    # resumes that do next to nothing, compiled as any other body
     g = ones()
     return ([next(g) for _ in range(n)], drain(scenario_ids({1: n, 2: 2})),
-            drain(counting(n)), interpreted(ones, scenario_ids, counting))
+            drain(counting(n)), compiled(ones, scenario_ids, counting))
 
 
 def send_at_start(n):
