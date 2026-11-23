@@ -707,6 +707,16 @@ def frame_stackrefs(s):
     return refs, '%s:_PyInterpreterFrame.localsplus, stackpointer' % path
 
 
+def frame_initialize_tstate(s):
+    """_PyFrame_Initialize takes the thread state first, the function as a
+    _PyStackRef and the frame before as its last argument"""
+    for path, toks in s.headers_with('_PyFrame_Initialize'):
+        if _has_run(_texts(toks), ['_PyFrame_Initialize', '(',
+                                   'PyThreadState', '*']):
+            return True, '%s:_PyFrame_Initialize(PyThreadState *' % path
+    return False, 'Include, every header: _PyFrame_Initialize'
+
+
 def refcount_32(s):
     """an object's refcount is a 32-bit ob_refcnt, the low half of the
     word ob_refcnt_full, whose high half holds ob_overflow and ob_flags"""
@@ -1234,6 +1244,7 @@ FRAMES = [
     ('PYCORE_INTERPFRAME_H', D('the interpreter frame and its inline functions are in the internal pycore_interpframe.h',
                                lambda s: _file(s, 'Include/internal/pycore_interpframe.h'))),
     ('FRAME_STACKREFS', frame_stackrefs),
+    ('FRAME_INITIALIZE_TSTATE', frame_initialize_tstate),
 ]
 
 # types
