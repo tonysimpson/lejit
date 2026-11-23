@@ -17,10 +17,11 @@ def compiled(*fns):
     lejit = sys.modules.get('lejit')
     if lejit is None:
         return True
-    # where ceval pops and clears frames, generator bodies stay interpreted
+    # where a frame's place is its next instruction, generator bodies stay
+    # interpreted
     features = dict(lejit._core._build['features'])
     if (features.get('LE_HAS_INTERPRETER_FRAME') and
-            features.get('LE_HAS_EVAL_FRAME_POPS')):
+            features.get('LE_HAS_FRAME_INSTR_PTR')):
         return True
     return all(lejit._core._code_info(f.__code__) == 'compiled'
                for f in fns)
@@ -436,6 +437,29 @@ def resumed_by_ceval(n):
     return out, compiled(appending)
 
 
+def exc_seen():
+    # the exception being handled, as the body sees it at each resume
+    yield repr(sys.exc_info()[1])
+    try:
+        raise KeyError('inner')
+    except KeyError:
+        pass
+    yield repr(sys.exc_info()[1])
+
+
+def exception_state(n):
+    # a pause gives the caller back its own exception state
+    out = []
+    try:
+        raise ValueError('outer')
+    except ValueError:
+        g = exc_seen()
+        out += [next(g), repr(sys.exc_info()[1])]
+    out += [next(g), repr(sys.exc_info()[1]), run(lambda: next(g)),
+            repr(sys.exc_info()[1])]
+    return out, compiled(exc_seen)
+
+
 def deep(g, depth):
     if depth == 0:
         return next(g)
@@ -550,4 +574,5 @@ CASES = [
     ('light_bodies', [(3,)], {}),
     ('send_at_start', [(3,)], {}),
     ('resumed_by_ceval', [(3,)], {}),
+    ('exception_state', [(3,)], {}),
 ]
