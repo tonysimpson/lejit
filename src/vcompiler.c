@@ -1017,6 +1017,19 @@ psyco_compile(PsycoObject *po, mergepoint_t *mp, bool continue_compilation)
                                       &psyco_resume_compile, NULL, 0);
         }
 
+        /* Code compiled for a promoted value goes on under its code
+           object's owner from a merge point whose state that owner holds
+           all of, in an extent of its own, so that it doesn't keep the
+           value's code alive: other values' code jumps in here too. The
+           owner stays until the promotion's compile ends. */
+        if (mp != NULL) {
+            le_owner_t *root = psyco_owner_root_holding(&po->vlocals);
+            if (root != NULL) {
+                psyco_owner = root;
+                psyco_code_continue(&po->code, &po->codelimit);
+            }
+        }
+
         /* Enough space left, continue in the same buffer. */
         {
             CodeBufferObject *codebuf;

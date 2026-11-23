@@ -4188,70 +4188,127 @@ fusion_operator(int op)
     return false;
 }
 
-/* The STORE_SUBSCR fused with the get at byte offset 'i', or -1. The
-   forms, d and k local variables, y a constant or a local:
+/* the LeJIT instruction at *p, and *p moved past it; op -1 at the end */
+static le_instr_t
+fusion_next(le_code_t c, int *p)
+{
+    le_instr_t in = {-1, 0, -1, -1, c.size};
+    if (*p < c.size) {
+        in = le_instr(c, *p);
+        *p = in.next;
+    }
+    return in;
+}
+
+/* the LeJIT instruction before *p, and *p moved to its start; op -1 at
+   the start */
+static le_instr_t
+fusion_prev(le_code_t c, int *p)
+{
+    le_instr_t in = {-1, 0, -1, -1, c.size};
+    if (*p > 0) {
+        int after = *p;
+        *p = le_prev(c, after);
+        in = le_instr(c, *p);
+        extra_assert(in.next == after);
+    }
+    return in;
+}
+
+/* The STORE_SUBSCR fused with the get at byte offset 'i', or -1, as LeJIT
+   instructions (bytecode.h). The forms, d and k local variables, y a
+   constant or a local:
      d[k] = d.get(k[, x]) OP y   LOAD_FAST d, LOAD_METHOD get, LOAD_FAST k,
-                                 [LOAD_CONST/LOAD_FAST x,] CALL_METHOD (i),
-                                 LOAD y, OP, LOAD_FAST d, LOAD_FAST k,
-                                 STORE_SUBSCR
+                                 [LOAD_CONST/LOAD_FAST x,] [PRECALL,]
+                                 CALL_METHOD or CALL (i), LOAD y, OP,
+                                 LOAD_FAST d, LOAD_FAST k, STORE_SUBSCR
      d[k] = d[k] OP y            LOAD_FAST d, LOAD_FAST k, BINARY_SUBSCR (i),
                                  LOAD y, OP, LOAD_FAST d, LOAD_FAST k,
                                  STORE_SUBSCR
-     d[k] OP= y                  DUP_TOP_TWO, BINARY_SUBSCR (i), LOAD y, OP,
-                                 ROT_THREE, STORE_SUBSCR
+     d[k] OP= y                  DUP_TOP_TWO (or COPY 2, COPY 2),
+                                 BINARY_SUBSCR (i), LOAD y, OP, ROT_THREE (or
+                                 SWAP 3, SWAP 2), STORE_SUBSCR
    with no merge point from the instruction after the first to the store,
    so the store is reached only through the get. Only loads stand between
-   the two besides OP, so d and k are the get's objects. */
+   the two besides OP, so d and k are the get's objects. '*dlocal' is set
+   to d's local for the get form. */
 static int
-fused_store(PsycoObject *po, int i)
+fused_store(PsycoObject *po, int i, int *dlocal)
 {
     PyCodeObject *co = po->pr.co;
     le_code_t c = le_code(co);
-    int n = c.size, first, s, d, k;
+    le_instr_t get, load, op, in;
+    int first, s, p = i;
     mergepoint_t *mp;
-    /* the unit 'u' units after i (before it, if negative) */
-#define OP(u) le_op(c, i + (u) * LE_UNIT)
-#define ARG(u) le_arg(c, i + (u) * LE_UNIT)
-#define FUSION_LOAD(u) (OP(u) == LOAD_CONST || OP(u) == LOAD_FAST)
-    if (i < LE_UNIT || i + 4 * LE_UNIT >= n || !FUSION_LOAD(1) ||
-        !fusion_operator(OP(2)))
+#define FUSION_LOAD(in) ((in).op == LOAD_CONST || (in).op == LOAD_FAST)
+    get = fusion_next(c, &p);
+    load = fusion_next(c, &p);
+    op = fusion_next(c, &p);
+    if (!FUSION_LOAD(load) || !fusion_operator(op.op))
         return -1;
-    if (OP(0) == BINARY_SUBSCR && OP(-1) == DUP_TOP_TWO) {
-        if (OP(3) != ROT_THREE || OP(4) != STORE_SUBSCR)
+    p = i;
+    in = fusion_prev(c, &p);
+    if (get.op == BINARY_SUBSCR &&
+        (in.op == DUP_TOP_TWO || (in.op == COPY && in.arg == 2))) {
+        if (in.op == COPY) {
+            in = fusion_prev(c, &p);
+            if (in.op != COPY || in.arg != 2)
+                return -1;
+        }
+        p = op.next;
+        in = fusion_next(c, &p);
+        if (in.op == SWAP && in.arg == 3) {
+            in = fusion_next(c, &p);
+            if (in.op != SWAP || in.arg != 2)
+                return -1;
+        }
+        else if (in.op != ROT_THREE)
+            return -1;
+        s = p;
+        if (fusion_next(c, &p).op != STORE_SUBSCR)
             return -1;
         first = i;
-        s = i + 4 * LE_UNIT;
     }
     else {
-        int kpos, dpos; /* in units from i */
-        if (OP(0) == BINARY_SUBSCR) {
-            kpos = -1;
-        }
-        else if (OP(0) == CALL_METHOD && (ARG(0) == 1 || ARG(0) == 2)) {
-            kpos = -ARG(0);
-            if ((ARG(0) == 2 && !FUSION_LOAD(-1)) ||
-                i + (kpos - 1) * LE_UNIT < 0 || OP(kpos - 1) != LOAD_METHOD ||
+        le_instr_t kload, dload, method;
+        if (get.op == BINARY_SUBSCR)
+            kload = in;
+        else if ((get.op == CALL_METHOD || get.op == CALL) &&
+                 (get.arg == 1 || get.arg == 2)) {
+            if (in.op == PRECALL)
+                in = fusion_prev(c, &p);
+            if (get.arg == 2) {
+                if (!FUSION_LOAD(in))
+                    return -1;
+                in = fusion_prev(c, &p);
+            }
+            kload = in;
+            method = fusion_prev(c, &p);
+            if (method.op != LOAD_METHOD ||
                 PyUnicode_CompareWithASCIIString(
-                    PyTuple_GET_ITEM(co->co_names, ARG(kpos - 1)), "get") != 0)
+                    PyTuple_GET_ITEM(co->co_names, method.arg), "get") != 0)
                 return -1;
         }
         else
             return -1;
-        first = i + (OP(0) == BINARY_SUBSCR ? kpos : kpos - 1) * LE_UNIT;
-        dpos = (first - i) / LE_UNIT - 1;
-        if (i + dpos * LE_UNIT < 0 || OP(dpos) != LOAD_FAST ||
-            OP(kpos) != LOAD_FAST)
+        first = p;
+        dload = fusion_prev(c, &p);
+        if (dload.op != LOAD_FAST || kload.op != LOAD_FAST)
             return -1;
-        d = ARG(dpos);
-        k = ARG(kpos);
-        if (i + 5 * LE_UNIT >= n || OP(3) != LOAD_FAST || ARG(3) != d ||
-            OP(4) != LOAD_FAST || ARG(4) != k || OP(5) != STORE_SUBSCR)
+        p = op.next;
+        in = fusion_next(c, &p);
+        if (in.op != LOAD_FAST || in.arg != dload.arg)
             return -1;
-        s = i + 5 * LE_UNIT;
+        in = fusion_next(c, &p);
+        if (in.op != LOAD_FAST || in.arg != kload.arg)
+            return -1;
+        s = p;
+        if (fusion_next(c, &p).op != STORE_SUBSCR)
+            return -1;
+        if (dlocal != NULL)
+            *dlocal = dload.arg;
     }
 #undef FUSION_LOAD
-#undef ARG
-#undef OP
     mp = psyco_next_merge_point(po->pr.merge_points, first);
     if (mp->bytecode_position >= 0 && mp->bytecode_position <= s)
         return -1;
@@ -4261,21 +4318,24 @@ fused_store(PsycoObject *po, int i)
 /* The get then store of one str key in one dict (pdictobject.c's probe):
    the get records the slot it finds and the store reuses it if the dict
    is unchanged (its keys and version tag), checked at run time, else
-   probes again. Called for BINARY_SUBSCR, CALL_METHOD and STORE_SUBSCR at
-   'next_instr' less one instruction; 1 when done, 0 for the translated
+   probes again. Called for BINARY_SUBSCR, CALL_METHOD, CALL and
+   STORE_SUBSCR, before their caches; 1 when done, 0 for the translated
    case, -1 on an error. A get of the forms above that is not this probe
    clears the record, so that the store never meets an older one. */
 static int
 dict_str_fusion(PsycoObject *po, int next_instr)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
-    int i = next_instr - LE_UNIT;
+    int i = po->pr.next_instr, p, j, dlocal = -1;
     le_code_t c = le_code(po->pr.co);
-    int op = le_op(c, i), argc = le_arg(c, i), j;
+    le_instr_t in = le_instr(c, i);
+    int op = in.op, argc = in.arg;
     vinfo_t *d, *k, *res;
     if (op == STORE_SUBSCR) {
-        if (!(i >= 5 * LE_UNIT && fused_store(po, i - 5 * LE_UNIT) == i) &&
-            !(i >= 4 * LE_UNIT && fused_store(po, i - 4 * LE_UNIT) == i))
+        /* the get, four or five instructions back */
+        for (p = i, j = 0; j < 4 && p > 0; j++) p = le_prev(c, p);
+        if (j < 4 || (fused_store(po, p, NULL) != i &&
+                      (p == 0 || fused_store(po, le_prev(c, p), NULL) != i)))
             return 0;
         d = NTOP(2);
         k = NTOP(1);
@@ -4286,7 +4346,7 @@ dict_str_fusion(PsycoObject *po, int next_instr)
         for (j = 3; j--;) POP_DECREF();
         return 1;
     }
-    if (fused_store(po, i) < 0)
+    if (fused_store(po, i, &dlocal) < 0)
         return 0;
     if (op == BINARY_SUBSCR) {
         d = NTOP(2);
@@ -4295,8 +4355,7 @@ dict_str_fusion(PsycoObject *po, int next_instr)
             return -1;
     }
     else {
-        /* the LOAD_FAST d's */
-        d = GETLOCAL(le_arg(c, i - (argc + 2) * LE_UNIT));
+        d = GETLOCAL(dlocal);
         k = NTOP(argc);
     }
     if (!PsycoDict_StrKey(d, k))
@@ -7121,10 +7180,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                Python code objects using a bytecode instruction not listed
                in mergepoints.c are never Psyco-ified. */
 
-            /* the patterns are of bytecode without caches */
-            if ((opcode == BINARY_SUBSCR || opcode == CALL_METHOD ||
-                 opcode == STORE_SUBSCR) &&
-                LE_CACHE_BYTES(opcode) == 0) {
+            if (opcode == BINARY_SUBSCR || opcode == CALL_METHOD ||
+                opcode == CALL || opcode == STORE_SUBSCR) {
                 int done = dict_str_fusion(po, next_instr);
                 if (done < 0)
                     break;
@@ -7156,36 +7213,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                    that had it before (absent here, so its number is
                    free) */
                 case BINARY_OP: {
-                    static const short ops[] = {
-                        [NB_ADD] = BINARY_ADD,
-                        [NB_AND] = BINARY_AND,
-                        [NB_FLOOR_DIVIDE] = BINARY_FLOOR_DIVIDE,
-                        [NB_LSHIFT] = BINARY_LSHIFT,
-                        [NB_MATRIX_MULTIPLY] = BINARY_MATRIX_MULTIPLY,
-                        [NB_MULTIPLY] = BINARY_MULTIPLY,
-                        [NB_REMAINDER] = BINARY_MODULO,
-                        [NB_OR] = BINARY_OR,
-                        [NB_POWER] = BINARY_POWER,
-                        [NB_RSHIFT] = BINARY_RSHIFT,
-                        [NB_SUBTRACT] = BINARY_SUBTRACT,
-                        [NB_TRUE_DIVIDE] = BINARY_TRUE_DIVIDE,
-                        [NB_XOR] = BINARY_XOR,
-                        [NB_INPLACE_ADD] = INPLACE_ADD,
-                        [NB_INPLACE_AND] = INPLACE_AND,
-                        [NB_INPLACE_FLOOR_DIVIDE] = INPLACE_FLOOR_DIVIDE,
-                        [NB_INPLACE_LSHIFT] = INPLACE_LSHIFT,
-                        [NB_INPLACE_MATRIX_MULTIPLY] = INPLACE_MATRIX_MULTIPLY,
-                        [NB_INPLACE_MULTIPLY] = INPLACE_MULTIPLY,
-                        [NB_INPLACE_REMAINDER] = INPLACE_MODULO,
-                        [NB_INPLACE_OR] = INPLACE_OR,
-                        [NB_INPLACE_POWER] = INPLACE_POWER,
-                        [NB_INPLACE_RSHIFT] = INPLACE_RSHIFT,
-                        [NB_INPLACE_SUBTRACT] = INPLACE_SUBTRACT,
-                        [NB_INPLACE_TRUE_DIVIDE] = INPLACE_TRUE_DIVIDE,
-                        [NB_INPLACE_XOR] = INPLACE_XOR};
-                    extra_assert(oparg >= 0 &&
-                                 oparg < (int)(sizeof(ops) / sizeof(ops[0])));
-                    opcode = ops[oparg];
+                    opcode = le_binary_op_opcode(oparg);
+                    extra_assert(opcode >= 0);
                     goto dispatch_opcode;
                 }
 #endif
@@ -7252,10 +7281,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
         fine:
             extra_assert(!PycException_Occurred(po));
-            if ((po->pr.python_call &&
-                 (opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
-                  opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD ||
-                  opcode == CALL)) ||
+            if ((po->pr.python_call && (le_op_flags(opcode) & LE_OPF_CALL)) ||
                 po->pr.resume_pending) {
                 po->pr.resume_pending = 0;
                 if (!resume_if_tracing(po, next_instr, &unwound))
