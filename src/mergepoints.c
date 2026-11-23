@@ -854,14 +854,15 @@ compiled_opcode(int op)
     return 0;
 }
 
-/* the CALL_INTRINSIC_1 arguments pycompiler.c compiles: those that are the
-   opcodes they replaced */
+/* the CALL_INTRINSIC_1 arguments pycompiler.c compiles: a generator's
+   PEP 479 handler, and those that are the opcodes they replaced */
 static int
 compiled_intrinsic(int arg)
 {
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
     return arg == INTRINSIC_PRINT || arg == INTRINSIC_UNARY_POSITIVE ||
-           arg == INTRINSIC_LIST_TO_TUPLE;
+           arg == INTRINSIC_LIST_TO_TUPLE ||
+           arg == INTRINSIC_STOPITERATION_ERROR;
 #else
     return 0;
 #endif

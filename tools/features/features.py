@@ -706,6 +706,16 @@ def managed_values_pointer(s):
                      'return ((PyDictValues **)obj)-4;')
 
 
+def range_iter_index(s):
+    """a range iterator counts the items it has given in index, from a start
+    that stays put; without it, it moves start on and counts len down"""
+    path, fields = s.struct('_PyRangeIterObject')
+    if fields is not None:
+        return 'index' in fields, path + ':_PyRangeIterObject.index'
+    # until 3.11 the struct is private to Objects/rangeobject.c
+    return _body_has(s, 'Objects/rangeobject.c', 'rangeiter_next', 'r->index')
+
+
 def dict_watcher_bits(s):
     """a dict's version tag keeps in its low 8 bits which watchers watch it
     (DICT_MAX_WATCHERS is 8), and a change steps it by 1 << 8
@@ -1183,6 +1193,7 @@ OBJECTS = [
     ('IMMORTAL_OBJECTS', D('an object whose refcount\'s low 32 bits are negative is immortal: Py_INCREF and Py_DECREF leave it alone (_Py_IsImmortal)',
                            lambda s: _public(s, '_Py_IsImmortal'))),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
+    ('RANGE_ITER_INDEX', range_iter_index),
     ('DICT_WATCHER_BITS', dict_watcher_bits),
 ]
 

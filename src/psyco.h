@@ -507,12 +507,22 @@ _Static_assert(sizeof(((rangeobject *)0)->length) == 8,
 _Static_assert(__builtin_classify_type(((rangeobject *)0)->length) == 5,
                "LeJIT: rangeobject.length: LeJIT reads it as a pointer");
 
+#if LE_HAS_RANGE_ITER_INDEX
 typedef struct {
     PyObject_HEAD long index;
     long start;
     long step;
     long len;
 } rangeiterobject;
+#else
+/* rangeiter_next moves start on and counts len down */
+typedef struct {
+    PyObject_HEAD long start;
+    long step;
+    long len;
+} rangeiterobject;
+#endif
+#if LE_HAS_RANGE_ITER_INDEX
 #define LE_OFS_rangeiterobject__index offsetof(rangeiterobject, index)
 #define LE_SIZE2_rangeiterobject__index 3
 #define LE_UNSIGNED_rangeiterobject__index 0
@@ -525,6 +535,7 @@ _Static_assert(__builtin_classify_type(((rangeiterobject *)0)->index) == 1,
                "LeJIT: rangeiterobject.index: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((rangeiterobject *)0)->index))-1 < 0) == 1,
                "LeJIT: rangeiterobject.index: LeJIT reads it as signed");
+#endif
 #define LE_OFS_rangeiterobject__start offsetof(rangeiterobject, start)
 #define LE_SIZE2_rangeiterobject__start 3
 #define LE_UNSIGNED_rangeiterobject__start 0

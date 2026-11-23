@@ -3961,6 +3961,30 @@ cimpl_generator_stop(void)
     }
 }
 
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+/* intrinsics.c:stopiteration_error, for a generator expression's code, the
+   only generator code compiled (mergepoints.c:_build_merge_points):
+   StopIteration leaving it becomes RuntimeError */
+static PyObject *
+cimpl_stopiteration_error(PyObject *exc)
+{
+    PyObject *error;
+    if (!PyErr_GivenExceptionMatches(exc, PyExc_StopIteration)) {
+        Py_INCREF(exc);
+        return exc;
+    }
+    error = PyObject_CallFunction(PyExc_RuntimeError, "s",
+                                  LE_MSG_GENERATOR_STOP_ITERATION);
+    if (error == NULL)
+        return NULL;
+    Py_INCREF(exc);
+    PyException_SetCause(error, exc);
+    Py_INCREF(exc);
+    PyException_SetContext(error, exc);
+    return error;
+}
+#endif
+
 static code_t *
 exit_function(PsycoObject *po)
 {
@@ -6024,10 +6048,22 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
-                /* the intrinsics mergepoints.c:compiled_intrinsic allows,
-                   as the opcodes they replaced */
+                /* the intrinsics mergepoints.c:compiled_intrinsic allows:
+                   a generator's PEP 479 handler, and the opcodes the others
+                   replaced */
                 case CALL_INTRINSIC_1:
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
+                    if (oparg == INTRINSIC_STOPITERATION_ERROR) {
+                        extra_assert(po->pr.co->co_flags & CO_GENERATOR);
+                        x = psyco_generic_call(
+                            po, cimpl_stopiteration_error,
+                            CfCommonNewRefPyObject | CfNoPython, "v", TOP());
+                        if (x == NULL)
+                            break;
+                        POP_DECREF();
+                        PUSH(x);
+                        goto fine;
+                    }
                     if (oparg == INTRINSIC_PRINT) {
                         if (!psyco_generic_call(po, cimpl_print_expr,
                                                 CfCommonIntZeroOk, "v", TOP()))
