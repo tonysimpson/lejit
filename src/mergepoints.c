@@ -729,7 +729,6 @@ psyco_is_fusable_generator(PyCodeObject *co)
     return yields == 1 && !yield_has_handler(co, c, yield);
 }
 
-#if LE_RESUMES_GENERATORS
 /* whether a YIELD_VALUE can run while an exception handler's block is
    live: reached by plain control flow from a handler's start (a SETUP_*
    target, or an exception table entry's handler) before the handler ends,
@@ -836,9 +835,7 @@ yields_in_handler(PyCodeObject *co, le_code_t c)
     }
     return 0;
 }
-#endif
 
-#if LE_RESUMES_GENERATORS
 /* whether plain flow from the instruction at 'from' reaches the one at
    'to', jumps taken or not, but no exception raised */
 static int
@@ -938,7 +935,6 @@ yields_do_work(le_code_t c)
     }
     return 1;
 }
-#endif
 
 /* the code of a generator whose body can run compiled, resumed at each
    yield through the eval hook (eval_hook.c:LeGen_Run), its state kept in
@@ -950,7 +946,6 @@ yields_do_work(le_code_t c)
 DEFINEFN int
 psyco_is_resumable_generator(PyCodeObject *co)
 {
-#if LE_RESUMES_GENERATORS
     le_code_t c;
     int pos;
     int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
@@ -984,10 +979,6 @@ psyco_is_resumable_generator(PyCodeObject *co)
         }
     }
     return !yields_in_handler(co, c) && yields_do_work(c);
-#else
-    (void)co;
-    return 0;
-#endif
 }
 
 DEFINEFN PyObject *

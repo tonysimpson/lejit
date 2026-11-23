@@ -1426,7 +1426,6 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     return po;
 }
 
-#if LE_RESUMES_GENERATORS
 /* A resumable generator's body entered at 'next_instr' (eval_hook.c:
    LeGen_Run), on the words of its frame in this order: the locals, owned,
    the cells and free variables, borrowed, the 'nstack' stack items, owned,
@@ -1485,4 +1484,3 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
         vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
     return po;
 }
-#endif
