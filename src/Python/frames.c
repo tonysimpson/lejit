@@ -253,15 +253,21 @@ psyco_frame_start_get(le_frame_t *f)
 DEFINEFN void
 psyco_frame_start_unregister(FrameRuntime *fr)
 {
-    FrameRuntime **p = &frame_runs;
     int i;
     /* fr is the innermost unless the C stack was switched under it */
-    while (*p != fr) p = &(*p)->next;
-    *p = fr->next;
+    if (frame_runs == fr)
+        frame_runs = fr->next;
+    else {
+        FrameRuntime **p = &frame_runs;
+        while (*p != fr) p = &(*p)->next;
+        *p = fr->next;
+    }
 #ifdef PyFrameLocalsProxy_Check
     if (fr->exposed)
         psyco_frames_exposed--;
 #endif
+    if (fr->entry_locals == NULL)
+        return;
     for (i = 0; i < fr->n_entry_locals; i++) Py_XDECREF(fr->entry_locals[i]);
     PyMem_Free(fr->entry_locals);
 }
