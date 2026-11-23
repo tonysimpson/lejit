@@ -6633,8 +6633,18 @@ yield_resumable(PsycoObject *po, int at)
         vinfo_t **slot =
             i < nlocals ? &LOC_LOCALS_PLUS[i] : &stack_a[i - nlocals];
         v = *slot;
-        /* an unbound local or a NULL item: the slot is already empty */
-        if (v != NULL && !psyco_knowntobe(v, 0)) {
+        /* an unbound local's slot is already empty (LeGen_Run took the
+           locals), but a stack slot of a frame CPython reused may still
+           hold an old word: a NULL item (LOAD_METHOD's, under a method) is
+           stored */
+        if (v != NULL && psyco_knowntobe(v, 0) && i >= nlocals) {
+            if (!psyco_put_nth_field(po, frame, FRAME_localsplus,
+                                     nplus + i - nlocals, v)) {
+                vinfo_decref(frame, po);
+                return;
+            }
+        }
+        else if (v != NULL && !psyco_knowntobe(v, 0)) {
             if (!psyco_put_nth_field(po, frame, FRAME_localsplus,
                                      i < nlocals ? i : nplus + i - nlocals,
                                      v)) {
