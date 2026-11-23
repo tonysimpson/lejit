@@ -41,6 +41,36 @@ jobs:
       - name: make check
         run: make -k check PY=python GEN_PY=python
 
+  # versions the port builds on but make check doesn't run on yet: the
+  # checked and release builds must compile and load, and the release build
+  # must not change the smoke test's output
+  build-newer:
+    name: build (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    container: python:${{ matrix.python }}-bookworm
+    env:
+      LEJIT_DEV_FALLBACK: skip
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13.2"]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libffi, libunwind and setuptools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
+          python -c 'import setuptools' 2>/dev/null || pip install setuptools
+      - name: Checked build
+        run: make checked-build PY=python && python tests/jit/build_info.py
+      - name: Release build
+        run: make build PY=python && python tests/jit/build_info.py
+      - name: Smoke test
+        run: diff <(python tests/jit/smoke.py plain 2>&1) <(python tests/jit/smoke.py lejit 2>&1)
+
   # Pythons LeJIT doesn't support yet: installing builds no extension, and
   # start() warns and does nothing
   install-newer:
