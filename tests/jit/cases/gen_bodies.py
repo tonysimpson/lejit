@@ -15,8 +15,12 @@ def work(x):
 
 def compiled(*fns):
     lejit = sys.modules.get('lejit')
-    if lejit is None or dict(lejit._core._build['features']).get(
-            'LE_HAS_INTERPRETER_FRAME'):
+    if lejit is None:
+        return True
+    # where ceval pops and clears frames, generator bodies stay interpreted
+    features = dict(lejit._core._build['features'])
+    if (features.get('LE_HAS_INTERPRETER_FRAME') and
+            features.get('LE_HAS_EVAL_FRAME_POPS')):
         return True
     return all(lejit._core._code_info(f.__code__) == 'compiled'
                for f in fns)
@@ -405,6 +409,33 @@ def tracing(n):
     return out
 
 
+def appending(xs):
+    # paused with the list's append method (and LOAD_METHOD's NULL) on the
+    # stack
+    out = []
+    for x in xs:
+        out.append((yield work(x)))
+    yield out
+
+
+def resumed_by_ceval(n):
+    # ceval resumes the paused frame while a profile function is set, and
+    # unwinds it when thrown into: the stack it finds is what it left
+    out = []
+    g = appending(range(n))
+    out.append(next(g))
+    sys.setprofile(lambda *a: None)
+    try:
+        out += [g.send('a'), g.send('b')]
+    finally:
+        sys.setprofile(None)
+    out.append(run(lambda: g.send('c')))
+    g = appending(range(n))
+    next(g)
+    out.append(run(lambda: g.throw(KeyError('k'))))
+    return out, compiled(appending)
+
+
 def deep(g, depth):
     if depth == 0:
         return next(g)
@@ -518,4 +549,5 @@ CASES = [
     ('interrupted_in_try', [(0,)], {}),
     ('light_bodies', [(3,)], {}),
     ('send_at_start', [(3,)], {}),
+    ('resumed_by_ceval', [(3,)], {}),
 ]

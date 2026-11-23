@@ -8,7 +8,9 @@ list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
 (no leak check), 'warmup': (rounds, reason), 'clear_type_cache': reason (the
 leak check empties CPython's type cache first; only where that keeps the
-types' version tags, as from 3.11), 'checked': reason (needs a checked build).
+types' version tags, as from 3.11), 'checked': reason (needs a checked build),
+'expected': [result, ...] (LeJIT's results must be these, one per call, not
+plain CPython's: for a language rule some CPython gets wrong).
 
 --release tests a release build, which can't say what it compiled: results
 and leaks are checked, but not whether each function compiled, an 'xfail'
@@ -96,6 +98,8 @@ def main():
             leak_ref = int(expected.pop().split()[1])
             leak_lejit = int(got.pop().split()[1])
             results = got if release else got[:-1]
+            if 'expected' in opts:
+                expected = ['ok ' + repr(r) for r in opts['expected']]
             if results != expected:
                 problem = 'results differ: expected %r, got %r' % (expected, results)
             elif opts.get('interpreted'):
