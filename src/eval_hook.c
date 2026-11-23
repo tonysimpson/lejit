@@ -255,15 +255,23 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
 
 /* whether a plain generator's frame 'f' may resume compiled: not while
    it is thrown into, nor once its code is known not to be resumable. Its
-   code's record, if it has one, in '*x'. */
+   code's record, if it has one, in '*x'. Generators resumed in a loop are
+   mostly of one code, so the last one found not resumable is kept, to
+   answer it without looking up its record. */
 static inline bool
 gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
 {
-    if (!(le_frame_code(f)->co_flags & CO_GENERATOR) || throwflag ||
-        !le_frame_is_gen(f))
+    PyCodeObject *co = le_frame_code(f);
+    if (co == le_gen_interpreted || !(co->co_flags & CO_GENERATOR) ||
+        throwflag || !le_frame_is_gen(f))
         return false;
-    *x = le_code_extra_get(le_frame_code(f));
-    return *x == NULL || (*x)->nresumes >= 0;
+    *x = le_code_extra_get(co);
+    if (*x != NULL && (*x)->nresumes < 0) {
+        le_gen_interpreted = co;
+        le_gen_interpreted_x = *x;
+        return false;
+    }
+    return true;
 }
 
 /* The compiled entry to resume the generator's frame 'f' with, compiled

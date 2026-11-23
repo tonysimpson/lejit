@@ -1016,6 +1016,10 @@ le_code_extra_get(PyCodeObject *co)
             return &((code_record_t *)r)->x;
     return NULL;
 }
+/* the code last found not resumable, and its record, which outlives it
+   (eval_hook.c:gen_may_resume) */
+EXTERNVAR PyCodeObject *le_gen_interpreted;
+EXTERNVAR le_code_extra_t *le_gen_interpreted_x;
 /* releases the record and its compiled code; its code object is dead */
 EXTERNFN void
 le_code_extra_free(le_code_extra_t *x);
