@@ -153,6 +153,9 @@ SKIPPED = {
     'binds a port find_unused_port chose, and skips itself when another '
     'process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress',
+    'bind a port find_unused_port chose, which another process can take '
+    'first':
+        'test.test_socket.CreateServerFunctionalTest.*',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
