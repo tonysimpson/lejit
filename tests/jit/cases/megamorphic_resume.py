@@ -79,6 +79,35 @@ def call_in_finally(n):
     return out
 
 
+class Takes:
+    def __call__(self, *args, **kwargs):
+        return len(args), kwargs
+
+    def meth(self, *args, **kwargs):
+        return len(args), kwargs
+
+
+def _call_kw(f, a, b):
+    return f(a, b, addr=a + b)         # the call site promotes f's type
+
+
+def _method_kw(o, a):
+    return o.meth(a, key=a, other=0)
+
+
+# more classes than the limit, made once, so no class dies between rounds
+TAKERS = [type('T%d' % k, (Takes,), {})() for k in range(8)]
+
+
+def call_with_keywords(n):
+    # past the limit ceval runs the call, with its keyword names
+    out = []
+    for k in range(n):
+        out.append(_call_kw(TAKERS[k % 8], k, 1))
+        out.append(_method_kw(TAKERS[k % 8], k))
+    return out
+
+
 class Ctx:
     def __init__(self, out):
         self.out = out
@@ -225,6 +254,7 @@ CASES = [
     ('call_raises_in_except', [(12,)], {}),
     ('call_in_finally', [(12,)], {}),
     ('call_in_with', [(12,)], {}),
+    ('call_with_keywords', [(12,)], {}),
     ('call_in_loop', [(12,)], {}),
     ('attr_in_except', [(12,)], {}),
     ('own_frame_in_except', [(12,)], {}),
