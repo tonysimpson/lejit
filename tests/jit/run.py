@@ -20,13 +20,17 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CASES = os.path.join(ROOT, 'tests', 'jit', 'cases')
 TIMEOUT = 20
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
+# each child runs with address-space randomisation off: what the leak check
+# counts can depend on where objects land (a table keyed by id() is sized
+# by them), so a plain run and a LeJIT run of the same case could differ
+ASLR_OFF = ['setarch', os.uname().machine, '-R']
 
 
 def run_child(modname, fname, calls, use_lejit, warmup=9, env=None,
               clear_type_cache=False):
     if not isinstance(calls, str):
         calls = repr(calls)
-    cmd = [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
+    cmd = ASLR_OFF + [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
            modname, fname, calls, '1' if use_lejit else '0', str(warmup),
            '1' if clear_type_cache else '0']
     try:
