@@ -72,7 +72,7 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     return le_frame_finish(tstate, f, result, frame_done);
 }
 
-#if LE_HAS_EVAL_FRAME_POPS
+#if LE_PYFRAME_RUN_TO_END
 /* ceval instruments code for sys.monitoring as a frame of it starts
    (RESUME) or has an exception thrown in, so a frame resumed past RESUME
    (frames.c:psyco_resume_run) would run code that gives no events: a frame
@@ -192,7 +192,7 @@ typedef PyObject *(*le_eval_frame_fn)(PyThreadState *, le_frame_t *, int);
 
 static le_eval_frame_fn original_eval_frame = NULL;
 
-#if LE_HAS_EVAL_FRAME_POPS
+#if LE_PYFRAME_RUN_TO_END
 /* ceval runs a frame called from a compiled callee or inlined frame and
    pops it, giving a frame object that outlives it the real frame as
    f_back: the frame object is made first, so it is still at hand to be
@@ -232,7 +232,7 @@ LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
                        le_frame_locals(frame), le_frame_builtins(frame));
     if (entry_point != NULL)
         result = LeCode_Run(entry_point, frame);
-#if LE_HAS_EVAL_FRAME_POPS
+#if LE_PYFRAME_RUN_TO_END
     /* ceval links the frame to its caller, the current frame */
     else if (psyco_frame_called_from_callee(le_frame_current(tstate)))
         result = eval_from_callee(tstate, frame, throwflag);

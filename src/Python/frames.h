@@ -25,7 +25,7 @@ psyco_running_real_frame(PyCodeObject *co);
 /* ceval evaluating a frame itself, past the hook (eval_hook.c) */
 EXTERNFN PyObject *
 le_eval_frame_default(le_frame_t *f);
-#if LE_HAS_EVAL_FRAME_POPS
+#if LE_PYFRAME_RUN_TO_END
 /* ceval instruments the code of frame 'f' for sys.monitoring now; -1 with
    an exception set if it can't (eval_hook.c) */
 EXTERNFN int
@@ -77,6 +77,10 @@ EXTERNFN void
 psyco_frame_catcher_end(PyObject **word);
 EXTERNFN void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
+/* PyFrame_New, with no function watcher told of the function it makes */
+EXTERNFN PyFrameObject *
+le_pyframe_new(PyThreadState *ts, PyCodeObject *co,
+               PyObject *globals); /* pyruntime.c */
 /* a frame's place, as CPython gives it, while the instruction at 'pos'
    in its code 'co' calls: the instruction's last unit, past its caches */
 EXTERNFN int

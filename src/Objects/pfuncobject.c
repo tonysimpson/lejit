@@ -226,6 +226,8 @@ field_changed(PsycoObject *po, PyObject *f, defield_t df, PyObject *expected)
 #define FUNC_vectorcall_now                                          \
     STRUCT_FIELD_BUILD(PyFunctionObject, vectorcallfunc, vectorcall, \
                        NO_PREV_FIELD, FIELD_MUTABLE)
+/* the vectorcall function a new function has (psy_funcobject_init) */
+static vectorcallfunc usual_vectorcall;
 static int
 vectorcall_replaced(PsycoObject *po, vinfo_t *func)
 {
@@ -234,7 +236,7 @@ vectorcall_replaced(PsycoObject *po, vinfo_t *func)
     condition_code_t cc;
     if (vnow == NULL)
         return -1;
-    vusual = vinfo_new(CompileTime_New((long)_PyFunction_Vectorcall));
+    vusual = vinfo_new(CompileTime_New((long)usual_vectorcall));
     cc = integer_cmp(po, vnow, vusual, Py_NE);
     vinfo_decref(vusual, po);
     vinfo_decref(vnow, po);
@@ -263,7 +265,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
 #ifdef Py_TPFLAGS_HAVE_VECTORCALL
     /* as vectorcall_replaced, read when compiling the call */
     if (*(vectorcallfunc *)((char *)f + Py_TYPE(f)->tp_vectorcall_offset) !=
-        _PyFunction_Vectorcall)
+        usual_vectorcall)
         goto fallback;
 #endif
     /* psyco_call_pyfunc's own fallback rebuilds the function from code,
@@ -458,6 +460,20 @@ INITIALIZATIONFN
 void
 psy_funcobject_init(void)
 {
+#ifdef Py_TPFLAGS_HAVE_VECTORCALL
+    {
+        /* not every CPython exports it by name */
+        PyObject *glob = PyDict_New();
+        PyCodeObject *co = PyCode_NewEmpty("", "", 0);
+        PyObject *f = glob && co ? PyFunction_New((PyObject *)co, glob) : NULL;
+        if (f == NULL)
+            OUT_OF_MEMORY();
+        usual_vectorcall = ((PyFunctionObject *)f)->vectorcall;
+        Py_DECREF(f);
+        Py_DECREF(co);
+        Py_DECREF(glob);
+    }
+#endif
     Psyco_DefineCallMeta(&PyFunction_Type, pfunction_call);
     Psyco_DefineMeta(PyFunction_Type.tp_descr_get, pfunc_descr_get);
 

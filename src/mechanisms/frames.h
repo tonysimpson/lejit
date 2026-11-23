@@ -773,8 +773,13 @@ le_pyframe_run_to_end(PyThreadState *ts, PyFrameObject *f)
         Py_XSETREF(f->f_back, back);
     return r;
 }
+#define LE_PYFRAME_RUN_TO_END 1
 #else
 /* the frame's caller pops it */
 #define le_frame_finish(ts, f, result, done) (result)
+#endif
+/* le_pyframe_run_to_end and le_frame_push_room exist */
+#ifndef LE_PYFRAME_RUN_TO_END
+#define LE_PYFRAME_RUN_TO_END 0
 #endif
 #endif /* LE_MECHANISMS_FRAMES_H */

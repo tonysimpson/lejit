@@ -1051,7 +1051,7 @@ cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
     /* frame objects are not created in stack order with Psyco, so it's
        probably better not to create plain wrong chained lists */
     le_frame_set_current(tstate, NULL);
-    result = PyFrame_New(tstate, code, globals, NULL);
+    result = le_pyframe_new(tstate, code, globals);
     le_frame_set_current(tstate, back);
     if (result != NULL) {
         /* a frame reused from the code's free one may hold a note */
