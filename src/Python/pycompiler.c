@@ -4852,6 +4852,32 @@ out:
     return ended;
 }
 
+/* bool(v), a new reference: v itself where it is known to be a bool, as
+   ceval's TO_BOOL leaves it. Only a value in the frame can be promoted:
+   the truth of a temporary of unknown type is a run-time call. */
+static vinfo_t *
+to_bool(PsycoObject *po, vinfo_t *v, bool in_frame)
+{
+    vinfo_t *x;
+    condition_code_t cc;
+    PyTypeObject *t = Psyco_KnownType(v);
+    if (t == &PyBool_Type) {
+        vinfo_incref(v);
+        return v;
+    }
+    if (in_frame || t != NULL)
+        x = PsycoObject_IsTrue(po, v);
+    else
+        x = psyco_generic_call(po, PyObject_IsTrue, CfCommonInquiry, "v", v);
+    if (x == NULL)
+        return NULL;
+    cc = integer_non_null(po, x);
+    vinfo_decref(x, po);
+    if (cc == CC_ERROR)
+        return NULL;
+    return PsycoBool_FromCondition(po, cc);
+}
+
 /* unary, binary and in-place operators, subscripts and slices */
 static int
 compile_operators(PsycoObject *po, int opcode, int oparg, int target,
@@ -4878,6 +4904,14 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
             if (cc == CC_ERROR)
                 break;
             x = PsycoBool_FromCondition(po, INVERT_CC(cc));
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+
+        case TO_BOOL:
+            x = to_bool(po, TOP(), true);
+            if (x == NULL)
+                break;
             POP_DECREF();
             PUSH(x);
             goto fine;
@@ -5047,6 +5081,14 @@ compile_compares(PsycoObject *po, int opcode, int oparg, int target,
                                         LE_COMPARE_OP(oparg));
             if (x == NULL)
                 break;
+            /* the bit that asks for bool() of the result */
+            if (LE_HAS_COMPARE_OP_SHIFT_5 && (oparg & 16)) {
+                v = to_bool(po, x, false);
+                vinfo_decref(x, po);
+                if (v == NULL)
+                    break;
+                x = v;
+            }
             POP_DECREF();
             POP_DECREF();
             PUSH(x);
