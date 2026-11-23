@@ -135,7 +135,8 @@ le_binary_op_opcode(int nb)
    versions spell one operation differently (BINARY_OP 0 is BINARY_ADD,
    POP_JUMP_BACKWARD_IF_TRUE is POP_JUMP_IF_TRUE, LOAD_ATTR with the method
    bit is LOAD_METHOD, CALL_INTRINSIC_1 with INTRINSIC_UNARY_POSITIVE is
-   UNARY_POSITIVE); 'arg' with its EXTENDED_ARG prefixes folded in, and
+   UNARY_POSITIVE, FORMAT_SIMPLE is FORMAT_VALUE 0); 'arg' with its
+   EXTENDED_ARG prefixes folded in, and
    no longer holding what 'op' now says; 'raw' the opcode as CPython wrote
    it; 'target' a jump's target in bytes (FOR_ITER's when its iterator
    ends), else -1; 'next' the position after it and its caches. */
@@ -207,6 +208,15 @@ le_instr(le_code_t c, int pos)
                 in.op = LIST_TO_TUPLE;
             break;
 #endif
+        /* FORMAT_VALUE's argument: 4 for a spec on the stack */
+        case FORMAT_SIMPLE:
+            in.op = FORMAT_VALUE;
+            in.arg = 0;
+            break;
+        case FORMAT_WITH_SPEC:
+            in.op = FORMAT_VALUE;
+            in.arg = 4;
+            break;
     }
     return in;
 }
@@ -389,6 +399,7 @@ le_op_flags(int op)
         case IMPORT_NAME:
         case IMPORT_FROM:
         case FORMAT_VALUE:
+        case CONVERT_VALUE:
         case PRINT_EXPR:
         case CALL_INTRINSIC_1: /* mergepoints.c:compiled_intrinsic's */
         case LOAD_BUILD_CLASS:
