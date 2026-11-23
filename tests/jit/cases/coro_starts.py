@@ -289,6 +289,37 @@ def handled(n):
     return out
 
 
+async def trh(k):
+    try:
+        raise KeyError(k)
+    except KeyError:
+        sys.settrace(tracer)
+        EXC.append(sys.exc_info()[0])
+        work(k)
+        EXC.append(sys.exc_info()[0])
+    sys.settrace(None)
+    EXC.append(sys.exc_info()[0])
+    return work(k)
+
+
+async def trhs(k):
+    return await trh(k)
+
+
+def traced_handler(n):
+    # tracing started in a body's own handler: the handled exception stays
+    # the body's, and its caller's is its own again after it
+    try:
+        raise IndexError
+    except IndexError:
+        r = drive(trhs(n))
+        after = sys.exc_info()[0]
+    out = [r, EXC[:], after, EVENTS[:]]
+    del EXC[:]
+    del EVENTS[:]
+    return out
+
+
 def origins(n):
     # no direct start where CPython records the origin
     old = sys.get_coroutine_origin_tracking_depth()
@@ -310,5 +341,6 @@ CASES = [
     ('threads', [(0,)], {}),
     ('tracing', [(0,)], HOOKED),
     ('handled', [(1,)], {'warmup': (40, 'its paths go on compiling for some rounds')}),
+    ('traced_handler', [(1,)], {}),
     ('origins', [(1,)], {}),
 ]

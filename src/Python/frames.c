@@ -3130,6 +3130,39 @@ psyco_resume_suspend(struct resume_s *st, long at, long nstack,
     return psyco_coro_suspended;
 }
 
+/* A body that goes on in its own handler: compiled code made the
+   exception it handles current where its caller's handled exception is
+   ('theirs'), keeping that one under the outermost EXCEPT_HANDLER block,
+   as ceval keeps the coroutine's own. The exception moves to the
+   coroutine, and the caller's goes back. */
+static void
+coro_exc_take(struct resume_s *st, long nstack, PyGenObject *gen,
+              _PyErr_StackItem *theirs)
+{
+    _PyErr_StackItem *mine = &gen->gi_exc_state;
+    PyObject **saved;
+    int i;
+    for (i = 0; i < st->iblock; i++)
+        if (st->blocks[i].b_type == EXCEPT_HANDLER)
+            break;
+    if (i == st->iblock)
+        return;
+    saved = &st->values[st->nvalues - nstack + st->blocks[i].b_level];
+    Py_XDECREF(mine->exc_type);
+    Py_XDECREF(mine->exc_value);
+    Py_XDECREF(mine->exc_traceback);
+    mine->exc_type = theirs->exc_type;
+    mine->exc_value = theirs->exc_value;
+    mine->exc_traceback = theirs->exc_traceback;
+    theirs->exc_traceback = saved[0];
+    theirs->exc_value = saved[1];
+    theirs->exc_type = saved[2];
+    for (i = 0; i < 3; i++) {
+        Py_INCREF(Py_None);
+        saved[i] = Py_None;
+    }
+}
+
 /* As psyco_resume_run, for a coroutine's body started by its await
    (GENEXPR_DIRECT): ceval goes on with it as the coroutine 'func' made
    (realised now, if it isn't yet), as gen_send_ex runs it. What the body
@@ -3163,6 +3196,7 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack,
         Py_CLEAR(((PyCoroObject *)coro)->cr_origin);
     }
     coro_set_running(coro, 1);
+    coro_exc_take(st, nstack, (PyGenObject *)coro, ts->exc_info);
     ((PyGenObject *)coro)->gi_exc_state.previous_item = ts->exc_info;
     ts->exc_info = &((PyGenObject *)coro)->gi_exc_state;
     result = psyco_resume_run(st, lasti, nstack); /* frees st */
