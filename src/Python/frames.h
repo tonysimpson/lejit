@@ -237,4 +237,10 @@ EXTERNFN void
 psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
                          int count);
 
+/* _warnings.warn's C function, and a call of 'warn', one of its function
+   objects, with the compiled frames current as warn walks them */
+EXTERNVAR PyCFunction le_c_warn;
+EXTERNFN PyObject *
+le_warn_with_frames(PyObject *warn, PyObject *args, PyObject *kwds);
+
 #endif /* _FRAMES_H */
