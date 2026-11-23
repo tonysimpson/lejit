@@ -730,7 +730,6 @@ psyco_is_fusable_generator(PyCodeObject *co)
     return yields == 1 && !yield_has_handler(co, c, yield);
 }
 
-#if LE_RESUMES_GENERATORS
 /* whether a YIELD_VALUE can run while an exception handler's block is
    live: reached by plain control flow from a handler's start (a SETUP_*
    target, or an exception table entry's handler) before the handler ends,
@@ -853,9 +852,7 @@ handler_reach(PyCodeObject *co, le_code_t c, int at)
     }
     return 0;
 }
-#endif
 
-#if LE_RESUMES_GENERATORS
 /* whether plain flow from the instruction at 'from' reaches the one at
    'to', jumps taken or not, but no exception raised */
 static int
@@ -955,9 +952,7 @@ yields_do_work(le_code_t c)
     }
     return 1;
 }
-#endif
 
-#if LE_RESUMES_GENERATORS
 /* whether the body of 'co', a plain generator or a coroutine, can run
    compiled in its own frame: no yield from (a coroutine's awaits are
    GET_AWAITABLE, LOAD_CONST None, YIELD_FROM), no async for or async with,
@@ -997,7 +992,6 @@ body_compilable(PyCodeObject *co, le_code_t *c)
     }
     return !yields_in_handler(co, *c);
 }
-#endif
 
 /* the code of a generator or coroutine whose body can run compiled,
    resumed at each yield through the eval hook (eval_hook.c:LeGen_Run), its
@@ -1007,13 +1001,8 @@ body_compilable(PyCodeObject *co, le_code_t *c)
 DEFINEFN int
 psyco_is_resumable_generator(PyCodeObject *co)
 {
-#if LE_RESUMES_GENERATORS
     le_code_t c;
     return body_compilable(co, &c) && yields_do_work(c);
-#else
-    (void)co;
-    return 0;
-#endif
 }
 
 /* whether the instruction at 'pos' in a coroutine's body that can run as

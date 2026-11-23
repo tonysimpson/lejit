@@ -310,7 +310,6 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
     }
 }
 
-#if LE_RESUMES_GENERATORS
 /* What Python wrote in the locals while the body ran
    (psyco_frame_write_locals) is released as the run ends
    (psyco_frame_start_unregister), not here, where it could run code: the
@@ -320,18 +319,17 @@ psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
 {
     le_frame_t *f = fr->frame;
     if (fr->entry_locals != NULL) {
-        PyObject **locals = le_frame_args(f);
         int i, n = le_code_nlocals(le_frame_code(f));
         PyObject **keep = PyMem_Realloc(
             fr->entry_locals, (fr->n_entry_locals + n) * sizeof(PyObject *));
         for (i = 0; i < n; i++) {
-            if (locals[i] == NULL)
+            PyObject *o = le_frame_word_take(f, i);
+            if (o == NULL)
                 continue;
             if (keep != NULL)
-                keep[fr->n_entry_locals++] = locals[i];
+                keep[fr->n_entry_locals++] = o;
             else
-                Py_DECREF(locals[i]); /* out of memory */
-            locals[i] = NULL;
+                Py_DECREF(o); /* out of memory */
         }
         if (keep != NULL)
             fr->entry_locals = keep;
@@ -342,6 +340,17 @@ psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
     le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
 #endif
     return f;
+}
+
+#if LE_HAS_FRAME_STACKREFS
+DEFINEFN void
+psyco_gen_words_own(le_frame_t *f, long nstack)
+{
+    PyObject **words = (PyObject **)f->localsplus;
+    PyCodeObject *co = le_frame_code(f);
+    int i, nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
+    for (i = 0; i < nlocals; i++) le_frame_word_put(f, i, words[i]);
+    for (i = nplus; i < nplus + nstack; i++) le_frame_word_put(f, i, words[i]);
 }
 #endif
 

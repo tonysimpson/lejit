@@ -12,10 +12,10 @@
 
 extern int
 le_eval_breaker_at_entry(PyCodeObject *co); /* pyruntime.c */
-#if LE_RESUMES_GENERATORS && LE_HAS_TSTATE_EVAL_BREAKER
+#if LE_HAS_TSTATE_EVAL_BREAKER
 extern int
 le_eval_breaker_pending(void); /* pyruntime.c */
-#elif LE_RESUMES_GENERATORS
+#else
 extern void *
 le_eval_breaker_address(void); /* pyruntime.c */
 #define le_eval_breaker_pending() (*(int *)le_eval_breaker_address() != 0)
@@ -160,7 +160,6 @@ compile_entry(PyCodeObject *co, le_code_extra_t *x, PyObject *globals,
    runs) */
 #define LE_GENERATOR_FLAGS (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)
 
-#if LE_RESUMES_GENERATORS
 /* f_lasti's bytes, as le_lasti_of's inverse */
 static int
 lasti_offset(int lasti)
@@ -302,11 +301,8 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
     le_resume_point_t *p;
     le_resume_entry_t *e;
     CodeBufferObject *codebuf;
-    PyObject **slots, **stack;
-    int nlocals, nstack, i;
+    int nlocals, nplus, nstack, i;
     uint64_t nulls = 0;
-    slots = le_frame_args(f);
-    stack = le_frame_stack(f);
     nlocals = le_code_nlocals(co);
     nstack = le_frame_stack_depth(f);
     /* as le_code_to_run; and ceval's test of eval_breaker as it resumes
@@ -322,9 +318,12 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
     p = resume_point(x, co, le_frame_lasti(f));
     if (p == NULL)
         return NULL;
-    for (i = 0; i < nlocals; i++) nulls |= (uint64_t)(slots[i] == NULL) << i;
+    nplus = le_code_nlocalsplus(co);
+    for (i = 0; i < nlocals; i++)
+        nulls |= (uint64_t)(LE_FRAME_WORD(f, i) == NULL) << i;
     for (i = 0; i < nstack; i++)
-        nulls |= (uint64_t)(stack[i] == NULL) << (nlocals + i);
+        nulls |= (uint64_t)(LE_FRAME_WORD(f, nplus + i) == NULL)
+                 << (nlocals + i);
     for (e = p->entries; e < p->entries + p->count; e++)
         if (e->nulls == nulls && e->globals == globals &&
             e->builtins == builtins)
@@ -358,11 +357,9 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
     FrameRuntime fr;
     PyObject *result;
     PyCodeObject *co = le_frame_code(f);
-    PyObject **slots = le_frame_args(f), **stack = le_frame_stack(f);
     int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
     int nstack = le_frame_stack_depth(f), i;
     long words[nplus + nstack + 1];
-    extra_assert(stack == slots + nplus);
     extra_assert(RUN_ARGC(codebuf) == nplus + nstack + 1);
 
     if (le_recursion_enter(tstate)) {
@@ -375,15 +372,11 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
     psyco_frame_start_register(&fr, f, &finfo);
     le_frame_push(tstate, f);
     le_frame_set_executing(f, 1);
-    for (i = 0; i < nplus; i++) {
-        words[i] = (long)slots[i];
-        if (i < nlocals)
-            slots[i] = NULL;
-    }
-    for (i = 0; i < nstack; i++) {
-        words[nplus + i] = (long)stack[i];
-        stack[i] = NULL;
-    }
+    /* the compiled code takes the locals and the stack, and borrows the
+       cells and free variables */
+    for (i = 0; i < nplus + nstack; i++)
+        words[i] = (long)(i < nlocals || i >= nplus ? le_frame_word_take(f, i)
+                                                    : LE_FRAME_WORD(f, i));
     words[nplus + nstack] = (long)&fr;
     le_gen_frame_run(f);
     result = psyco_processor_run(codebuf, words, &finfo);
@@ -405,7 +398,6 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
 #endif
     return result;
 }
-#endif
 
 /* The compiled code to run for 'co' with these globals and builtins,
    compiled now on its first call, or NULL to run it interpreted. 'locals'
@@ -495,7 +487,6 @@ eval_from_callee(PyThreadState *ts, le_frame_t *f, int throwflag)
 }
 #endif
 
-#if LE_RESUMES_GENERATORS
 /* a plain generator's or a coroutine's frame, resumed, whose code's
    record is 'x' (or NULL) */
 static __attribute__((noinline)) PyObject *
@@ -506,7 +497,6 @@ LeGen_Eval(PyThreadState *tstate, le_frame_t *frame, le_code_extra_t *x)
         return LeGen_Run(tstate, resume, frame);
     return original_eval_frame(tstate, frame, 0);
 }
-#endif
 
 /* any other frame */
 static __attribute__((noinline)) PyObject *
@@ -539,11 +529,9 @@ static PyObject *
 LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
 {
     if (le_frame_code(frame)->co_flags & LE_GENERATOR_FLAGS) {
-#if LE_RESUMES_GENERATORS
         le_code_extra_t *x;
         if (gen_may_resume(frame, throwflag, &x))
             return LeGen_Eval(tstate, frame, x);
-#endif
         return original_eval_frame(tstate, frame, throwflag);
     }
     return LeFunc_Eval(tstate, frame, throwflag);

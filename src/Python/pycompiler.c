@@ -6705,7 +6705,6 @@ out:
     return ended;
 }
 
-#if LE_RESUMES_GENERATORS
 #if LE_HAS_INTERPRETER_FRAME
 #define FRAME_localsplus FMUT(CPY_ARRAY(le_frame_t, localsplus))
 #else
@@ -6873,10 +6872,17 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
         /* an unbound local's slot is already empty (LeGen_Run took the
            locals), but a stack slot of a frame CPython reused may still
            hold an old word: a NULL item (LOAD_METHOD's, under a method) is
-           stored */
-        if (v != NULL && psyco_knowntobe(v, 0) && i >= nlocals) {
-            if (!psyco_put_nth_field(po, frame, FRAME_localsplus,
-                                     nplus + i - nlocals, v)) {
+           stored. Where the words are _PyStackRefs, every one is stored as
+           an object, and psyco_gen_words_own makes them the frame's. */
+        if ((v == NULL || psyco_knowntobe(v, 0)) &&
+            (i >= nlocals || LE_HAS_FRAME_STACKREFS)) {
+            vinfo_t *null = v != NULL ? v : psyco_vi_Zero();
+            bool ok = psyco_put_nth_field(
+                po, frame, FRAME_localsplus,
+                i < nlocals ? i : nplus + i - nlocals, null);
+            if (v == NULL)
+                vinfo_decref(null, po);
+            if (!ok) {
                 vinfo_decref(frame, po);
                 return;
             }
@@ -6895,6 +6901,10 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
             *slot = NULL;
         }
     }
+#if LE_HAS_FRAME_STACKREFS
+    psyco_generic_call(po, psyco_gen_words_own, CfNoReturnValue | CfNoPython,
+                       "vl", frame, (long)nstack);
+#endif
     v = stack_a[nstack];
 #if LE_RESUMES_COROUTINES
     if (traced) {
@@ -6967,7 +6977,6 @@ yield_direct(PsycoObject *po, int at)
     po->pr.iblock = 0;
     PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
 }
-#endif
 #endif
 
 /* returning, yielding and making functions */
@@ -7045,12 +7054,10 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                 CompileTime_Get(po->vlocals.items[slot]->source)->value;
             vinfo_t *acc = po->vlocals.items[slot + 1];
             v = TOP();
-#if LE_RESUMES_GENERATORS
             if (mode == GENEXPR_RESUMABLE) {
                 yield_resumable(po, next_instr - LE_UNIT, false);
                 break;
             }
-#endif
             if (mode == GENEXPR_LIST) {
                 if (!PsycoList_Append(po, acc, v))
                     break;
