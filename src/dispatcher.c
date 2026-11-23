@@ -1913,10 +1913,17 @@ holds_reference(vinfo_array_t *a)
    since nothing reads it again: so states differing in those share code.
    Not a value something else holds too, nor a virtual one, whose fields
    are its contents, nor fields holding a reference, whose release would
-   emit code (this runs before a function's first buffer, too). */
+   emit code (this runs before a function's first buffer, too).
+   With 'unfix', where code can be emitted, a dead local's constant object
+   (SkFlagPyObj, so never an unbound local's 0) becomes a run-time value,
+   promoted or not: otherwise a loop that binds a different constant to it
+   on each pass, such as a function promoted at a call, starts one block
+   per constant at its head, and the cap can't merge them, as it keeps
+   promoted values (psyco_forget_values). Nothing reads this one before it
+   is rebound. */
 DEFINEFN
 void
-psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge)
+psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
 {
     int i, limit;
     PyObject *plist = ge->fatlist;
@@ -1929,6 +1936,12 @@ psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge)
         if (!PyLong_Check(o1))
             break;
         vi = LOC_LOCALS_PLUS[PyLong_AS_LONG(o1)];
+        if (unfix && vi != NULL && is_compiletime(vi->source) &&
+            vi->refcount == 1 &&
+            (CompileTime_Get(vi->source)->refcount1_flags & SkFlagPyObj)) {
+            psyco_unfix(po, vi);
+            continue;
+        }
         if (vi == NULL || !is_runtime(vi->source) || vi->refcount != 1 ||
             vi->array == NullArray || holds_reference(vi->array))
             continue;
