@@ -721,6 +721,24 @@ psyco_type_guard(PsycoObject *po, PyTypeObject *tp, unsigned long *flags,
    'tags' through r11. An absent guard shown again for a probe it can't
    walk compares globals' tag instead of the probe, as the tags form does
    but with the tag in the code (global_absent_emit). */
+/* the address of a dict's tag, and its load into register 'r': where dicts
+   have no version tag, the count of LeJIT's watcher (le_dict_counter),
+   which the guard's form was chosen knowing there is */
+#if LE_HAS_DICT_VERSION_TAG
+#define LE_DICT_TAG_ADDRESS(d) (&((PyDictObject *)(d))->ma_version_tag)
+#define LOAD_DICT_TAG(r, d)                                      \
+    do {                                                         \
+        MOV_R_I(r, (long)(d));                                   \
+        MOV_R_O(r, r, CPY_OFFSET(PyDictObject, ma_version_tag)); \
+    } while (0)
+#else
+#define LE_DICT_TAG_ADDRESS(d) le_dict_counter((PyDictObject *)(d))
+#define LOAD_DICT_TAG(r, d)                       \
+    do {                                          \
+        MOV_R_I(r, (long)LE_DICT_TAG_ADDRESS(d)); \
+        MOV_R_A(r, r);                            \
+    } while (0)
+#endif
 _Static_assert(offsetof(le_dictentry_t, me_key) ==
                    offsetof(le_dictentry_t, me_hash) + sizeof(PyObject *),
                "an entry's hash is the word before its key");
@@ -800,15 +818,23 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
         WRITE_2(0x0F, 0x80 | CC_NE); \
         code += 4;                   \
     } while (0)
+#if LE_HAS_DICT_VERSION_TAG
     MOV_R_I(REG_TRANSIENT_1, (long)globals);
     if (absent == NULL) {
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_version_tag));
+#else
+    if (absent == NULL) {
+        LOAD_DICT_TAG(REG_TRANSIENT_1, globals);
+#endif
         MOV_R_UI(REG_TRANSIENT_2, (long)gtag);
         CMP_R_R(REG_TRANSIENT_2, REG_TRANSIENT_1);
         JNE_DONE();
     }
     else {
+#if !LE_HAS_DICT_VERSION_TAG
+        MOV_R_I(REG_TRANSIENT_1, (long)globals);
+#endif
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_keys));
         KEYS_SHAPE_CMP(absent->shape, REG_TRANSIENT_1);
@@ -835,9 +861,7 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
         }
     }
 #undef JNE_DONE
-    MOV_R_I(REG_X64_RAX, (long)builtins);
-    MOV_R_O(REG_X64_RAX, REG_X64_RAX,
-            CPY_OFFSET(PyDictObject, ma_version_tag));
+    LOAD_DICT_TAG(REG_X64_RAX, builtins);
     MOV_R_UI(REG_TRANSIENT_1, (long)tag);
     CMP_R_R(REG_TRANSIENT_1, REG_X64_RAX);
     if (done == NULL)
@@ -895,14 +919,17 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
         }
     }
     else {
+#if LE_HAS_DICT_VERSION_TAG
         MOV_R_I(REG_TRANSIENT_1, (long)globals);
         MOV_R_I(REG_TRANSIENT_2, (long)tags);
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_version_tag));
+#else
+        LOAD_DICT_TAG(REG_TRANSIENT_1, globals);
+        MOV_R_I(REG_TRANSIENT_2, (long)tags);
+#endif
         XOR_R_O(REG_TRANSIENT_1, REG_TRANSIENT_2, 0);
-        MOV_R_I(REG_X64_RAX, (long)builtins);
-        MOV_R_O(REG_X64_RAX, REG_X64_RAX,
-                CPY_OFFSET(PyDictObject, ma_version_tag));
+        LOAD_DICT_TAG(REG_X64_RAX, builtins);
         XOR_R_O(REG_X64_RAX, REG_TRANSIENT_2, sizeof(uint64_t));
         OR_R_R(REG_X64_RAX, REG_TRANSIENT_1);
     }
@@ -925,8 +952,8 @@ psyco_global_absent_rearm(global_absent_patch_t *patch, PyObject *globals,
     global_absent_t a, *ap = &a;
     code_t scratch[GLOBAL_ABSENT_CODE_MAX];
     code_t *code, *at, *end = patch->end;
-    uint64_t tag = ((PyDictObject *)builtins)->LE_DICT_TAG_FIELD;
-    uint64_t gtag = ((PyDictObject *)globals)->LE_DICT_TAG_FIELD;
+    uint64_t tag = *LE_DICT_TAG_ADDRESS(builtins);
+    uint64_t gtag = *LE_DICT_TAG_ADDRESS(globals);
     long n;
     if (!psyco_global_absent(globals, name, &a))
         ap = NULL;
