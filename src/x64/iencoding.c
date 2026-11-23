@@ -519,7 +519,8 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
         }
     }
     END_CODE
-    finfo->back_locals = psyco_locals_map(po, po->pr.next_instr - 2, reg_pos);
+    finfo->back_locals = psyco_locals_map(
+        po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos);
     BEGIN_CODE
 
     /* add 16 byte aligned stack */

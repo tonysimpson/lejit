@@ -69,6 +69,15 @@ PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
         for (i = 0; i < ncall_metas; i++)
             if (call_metas[i].tp == tp && call_metas[i].call == call)
                 return call_metas[i].meta(po, callable_object, args, kw);
+#ifdef Py_TPFLAGS_HAVE_VECTORCALL
+        /* CPython calls such an object through the vectorcall function it
+           holds, which may not do what tp_call does */
+        if ((tp->tp_flags & Py_TPFLAGS_HAVE_VECTORCALL) &&
+            Psyco_Lookup((void *)call) == NULL)
+            return psyco_generic_call(po, PyObject_Call,
+                                      CfCommonNewRefPyObject, "vvv",
+                                      callable_object, args, kw);
+#endif
         return Psyco_META3(po, call, CfCommonNewRefPyObject, "vvv",
                            callable_object, args, kw);
     }

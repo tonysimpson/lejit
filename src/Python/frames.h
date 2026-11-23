@@ -25,6 +25,12 @@ psyco_running_real_frame(PyCodeObject *co);
 /* ceval evaluating a frame itself, past the hook (eval_hook.c) */
 EXTERNFN PyObject *
 le_eval_frame_default(le_frame_t *f);
+#if LE_PYFRAME_RUN_TO_END
+/* ceval instruments the code of frame 'f' for sys.monitoring now; -1 with
+   an exception set if it can't (eval_hook.c) */
+EXTERNFN int
+le_code_instrument(le_frame_t *f);
+#endif
 
 EXTERNFN PyObject *
 psyco_get_globals(void);
@@ -82,9 +88,25 @@ typedef struct {
 EXTERNFN void
 psyco_gen_pause(PyFrameObject *f, const le_gen_pause_t *p);
 #endif
+/* PyFrame_New, with no function watcher told of the function it makes */
+EXTERNFN PyFrameObject *
+le_pyframe_new(PyThreadState *ts, PyCodeObject *co,
+               PyObject *globals); /* pyruntime.c */
+/* a frame's place, as CPython gives it, while the instruction at 'pos'
+   in its code 'co' calls: the instruction's last unit, past its caches */
+EXTERNFN int
+psyco_call_lasti(PyCodeObject *co, int pos);
 /* the frame 'f' has just run and outlives its call (le_frame_outlives) */
 EXTERNFN void
 psyco_frame_returned(le_frame_t *f);
+/* a frame whose caller is 'back' is called from a compiled callee or
+   inlined frame of the real frame 'back' */
+EXTERNFN int
+psyco_frame_called_from_callee(le_frame_t *back);
+/* that callee, emulated and linked to the frames out of it (a new
+   reference, or NULL) */
+EXTERNFN PyFrameObject *
+psyco_frame_callee_back(void);
 EXTERNFN PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack);
 /* PyObject* psyco_get_locals(void); this one implemented in psyco.c */

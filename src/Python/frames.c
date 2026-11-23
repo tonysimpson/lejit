@@ -70,6 +70,7 @@
 /* le_recursion_suspend and le_recursion_resume */
 #include "../codegen.h"
 #include "pycompiler.h"
+#include "../bytecode.h"
 #include "../dispatcher.h"
 #include "../processor.h"
 #include "../mechanisms/recursion.h"
@@ -80,17 +81,31 @@
 
 /***************************************************************/
 
-/* the instruction of an inlined frame's parent that called it, or -1 */
+DEFINEFN
+int
+psyco_call_lasti(PyCodeObject *co, int pos)
+{
+    le_code_t c = le_code(co);
+    pos &= ~NEXT_INSTR_POP;
+    if (pos < 0 || pos >= c.size)
+        return -1;
+    return le_instr(c, pos).next - LE_UNIT;
+}
+
+/* the place of an inlined frame's parent while it calls it, or -1 */
 static int
 inline_parent_lasti(PsycoObject *po)
 {
     vinfo_t *v = po->vlocals.items[INDEX_LOC_INLINING];
+    vinfo_t *co;
     if (v == NULL || v->array->count <= LOC_INLINE_NEXT_INSTR ||
         v->array->items[LOC_INLINE_NEXT_INSTR] == NULL)
         return -1;
-    return (int)CompileTime_Get(v->array->items[LOC_INLINE_NEXT_INSTR]->source)
-               ->value -
-           2;
+    co = v->array->items[LOC_INLINE_CO];
+    return psyco_call_lasti(
+        (PyCodeObject *)CompileTime_Get(co->source)->value,
+        (int)CompileTime_Get(v->array->items[LOC_INLINE_NEXT_INSTR]->source)
+            ->value);
 }
 
 /* held by the code that passes it, so it lives as long as that code's
@@ -108,8 +123,9 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
     p->link_stack_depth = -inlining;
     p->nargs = -1;
     p->co = callee->pr.co;
-    p->back_lasti = caller != NULL ? caller->pr.next_instr - 2
-                                   : inline_parent_lasti(callee);
+    p->back_lasti =
+        caller != NULL ? psyco_call_lasti(caller->pr.co, caller->pr.next_instr)
+                       : inline_parent_lasti(callee);
     sglobals = callee->vlocals.items[INDEX_LOC_GLOBALS]->source;
     if (is_compiletime(sglobals))
         p->globals = (PyObject *)CompileTime_Get(sglobals)->value;
@@ -552,7 +568,7 @@ psyco_build_pyframe(PyObject *co, PyObject *globals, PyThreadState *tstate)
        create plain wrong chained lists */
     back = le_frame_current(tstate);
     le_frame_set_current(tstate, NULL);
-    result = PyFrame_New(tstate, (PyCodeObject *)co, globals, NULL);
+    result = le_pyframe_new(tstate, (PyCodeObject *)co, globals);
     if (result == NULL)
         OUT_OF_MEMORY();
     le_frame_set_lasti(le_frame_of(result), -1);
@@ -1547,24 +1563,39 @@ psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
    out of it, as CPython's would be: frame_get_back can't find it once the
    call is over. */
 DEFINEFN
+int
+psyco_frame_called_from_callee(le_frame_t *back)
+{
+    FrameRuntime *fr = back == NULL ? NULL : psyco_frame_start_get(back);
+    /* the root slot is even while the code is in a compiled callee or
+       inlined frame (psyco_running_real_frame) */
+    return fr != NULL && !fr->resumed && le_frame_executing(back) &&
+           (((long)**fr->psy_frames_start) & 1) == 0;
+}
+
+DEFINEFN
+PyFrameObject *
+psyco_frame_callee_back(void)
+{
+    PyFrameObject *top;
+    PyObject *t, *v, *tb;
+    PyErr_Fetch(&t, &v, &tb);
+    top = linked_frame(0, NULL);
+    PyErr_Clear();
+    PyErr_Restore(t, v, tb);
+    return top;
+}
+
+DEFINEFN
 void
 psyco_frame_returned(le_frame_t *f)
 {
-    le_frame_t *back = le_frame_back(f);
-    FrameRuntime *fr = back == NULL ? NULL : psyco_frame_start_get(back);
     PyFrameObject *top;
-    PyObject *t, *v, *tb;
-    /* the root slot is even while the code is in a compiled callee or
-       inlined frame (psyco_running_real_frame) */
-    if (fr == NULL || fr->resumed || !le_frame_executing(back) ||
-        (((long)**fr->psy_frames_start) & 1) != 0)
+    if (!psyco_frame_called_from_callee(le_frame_back(f)))
         return;
-    PyErr_Fetch(&t, &v, &tb);
-    top = linked_frame(0, NULL);
+    top = psyco_frame_callee_back();
     if (top != NULL)
         le_frame_set_back_at_exit(f, top);
-    PyErr_Clear();
-    PyErr_Restore(t, v, tb);
 }
 
 DEFINEFN
@@ -1712,6 +1743,80 @@ le_getframe(PyObject *self, PyObject *args, PyObject *kwds)
     }
     return (PyObject *)top;
 }
+
+#if LE_HAS_FRAME_FUNCOBJ
+/* sys._getframemodulename, where there is one, walks the thread's frames
+   in C: replaced, as sys._getframe is, by a version that counts compiled
+   frames. The module is the frame's function's, as there; a frame
+   LeJIT emulates has the function PyFrame_New made it, whose module is
+   its globals' __name__. */
+static PyObject *original_getframemodulename = NULL;
+
+static PyObject *
+le_getframemodulename(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    static char *kwlist[] = {"depth", NULL};
+    int depth = 0;
+    PyFrameObject *f;
+    PyObject *func, *r = Py_None;
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "|i:_getframemodulename",
+                                     kwlist, &depth)) {
+        PyErr_Clear();
+        r = PyObject_Call(original_getframemodulename, args, kwds);
+        if (r != NULL) { /* never: both refuse the same arguments */
+            Py_DECREF(r);
+            PyErr_BadArgument();
+        }
+        return NULL;
+    }
+    if (PySys_Audit("sys._getframemodulename", "i", depth) < 0)
+        return NULL;
+    f = linked_frame(depth < 0 ? 0 : depth, NULL);
+    if (f == NULL) {
+        if (PyErr_Occurred())
+            return NULL;
+        Py_RETURN_NONE;
+    }
+    func = le_frame_of(f)->f_funcobj;
+    if (func != NULL && PyFunction_Check(func)) {
+        r = PyFunction_GetModule(func);
+        if (r == NULL) {
+            PyErr_Clear();
+            r = Py_None;
+        }
+    }
+    Py_INCREF(r);
+    Py_DECREF(f);
+    return r;
+}
+
+static PyMethodDef le_getframemodulename_def = {
+    "_getframemodulename", (PyCFunction)(void (*)(void))le_getframemodulename,
+    METH_VARARGS | METH_KEYWORDS,
+    "_getframemodulename(depth=0) -> str or None\n\n"
+    "Return the name of the module of a frame on the call stack, counting\n"
+    "frames of code compiled by LeJIT (emulated)."};
+
+static void
+getframemodulename_init(PyObject *sysmod)
+{
+    PyObject *name, *fn = NULL;
+    original_getframemodulename =
+        PyObject_GetAttrString(sysmod, "_getframemodulename");
+    if (original_getframemodulename == NULL) {
+        PyErr_Clear();
+        return;
+    }
+    name = PyUnicode_FromString("sys");
+    if (name != NULL)
+        fn = PyCFunction_NewEx(&le_getframemodulename_def, NULL, name);
+    if (fn == NULL ||
+        PyObject_SetAttrString(sysmod, "_getframemodulename", fn) < 0)
+        PyErr_Print();
+    Py_XDECREF(fn);
+    Py_XDECREF(name);
+}
+#endif
 
 /* _warnings.warn walks tstate->frame in C: it runs with the compiled
    frames over the current real frame emulated and current. */
@@ -2010,6 +2115,10 @@ psyco_frames_init(void)
     if (sysmod == NULL || fn == NULL || original_getframe == NULL ||
         PyObject_SetAttrString(sysmod, "_getframe", fn) < 0)
         PyErr_Print();
+#if LE_HAS_FRAME_FUNCOBJ
+    if (sysmod != NULL)
+        getframemodulename_init(sysmod);
+#endif
     Py_XDECREF(fn);
     Py_XDECREF(name);
     Py_XDECREF(sysmod);
@@ -2147,7 +2256,7 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         le_frame_set_builtins(le_frame_of(st->f), builtins);
     }
     else {
-        st->f = PyFrame_New(PyThreadState_GET(), co, globals, NULL);
+        st->f = le_pyframe_new(PyThreadState_GET(), co, globals);
         if (st->f == NULL) {
             Py_XDECREF(c);
             PyMem_Free(st);
@@ -2286,9 +2395,21 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     }
     else
         kept_back = NULL;
+#if LE_PYFRAME_RUN_TO_END
+    (void)marked;
+    /* the events of a frame that runs past RESUME, if the code gives
+       none yet; without them it still runs */
+    if (le_code_instrument(le_frame_of(f)) < 0)
+        PyErr_Clear();
+    result = le_pyframe_run_to_end(ts, f);
+    /* the real frame is gone: LeCode_Run returns the result as it is */
+    if (fr != NULL)
+        fr->frame = NULL;
+#else
     marked = le_pyframe_eval_begin(ts, f);
     result = le_eval_frame_default(le_frame_of(f));
     le_pyframe_eval_end(f, marked);
+#endif
     if (kept_back != NULL) {
         PyFrameObject *b = f->f_back;
         f->f_back = kept_back;

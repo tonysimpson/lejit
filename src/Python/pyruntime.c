@@ -64,6 +64,23 @@ le_monitoring_on(PyThreadState *ts)
     return any != 0;
 }
 #endif
+/* PyFrame_New, unseen by function watchers: it makes a function for the
+   frame object, which CPython's own frames don't, and a watcher called
+   here would run Python code while compiled code's exception is set */
+PyFrameObject *
+le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals)
+{
+#ifdef PY_FOREACH_FUNC_EVENT
+    uint8_t watchers = ts->interp->active_func_watchers;
+    PyFrameObject *f;
+    ts->interp->active_func_watchers = 0;
+    f = PyFrame_New(ts, co, globals, NULL);
+    ts->interp->active_func_watchers = watchers;
+    return f;
+#else
+    return PyFrame_New(ts, co, globals, NULL);
+#endif
+}
 /* le_eval_breaker_address, le_eval_breaker_handler,
    le_eval_breaker_at_entry */
 #if LE_HAS_TSTATE_EVAL_BREAKER
