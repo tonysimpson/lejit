@@ -25,7 +25,7 @@ psyco_running_real_frame(PyCodeObject *co);
 /* ceval evaluating a frame itself, past the hook (eval_hook.c) */
 EXTERNFN PyObject *
 le_eval_frame_default(le_frame_t *f);
-#if LE_PYFRAME_RUN_TO_END
+#if LE_HAS_EVAL_FRAME_POPS
 /* ceval instruments the code of frame 'f' for sys.monitoring now; -1 with
    an exception set if it can't (eval_hook.c) */
 EXTERNFN int
