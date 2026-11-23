@@ -951,6 +951,11 @@ le_pyframe_run_to_end(PyThreadState *ts, PyFrameObject *f)
         if (t == NULL)
             return PyErr_NoMemory();
         memcpy(t, frame, size * sizeof(PyObject *));
+#if LE_HAS_FRAME_STACKREFS
+        /* the stack's top is a pointer into the frame copied */
+        t->stackpointer =
+            t->localsplus + (frame->stackpointer - frame->localsplus);
+#endif
         t->owner = FRAME_OWNED_BY_THREAD;
         t->frame_obj = (PyFrameObject *)Py_NewRef(f);
         f->f_frame = t;
