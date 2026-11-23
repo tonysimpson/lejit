@@ -195,6 +195,10 @@ SKIPPED = {
     'bind a port find_unused_port chose, which another process can take '
     'first':
         'test.test_socket.CreateServerFunctionalTest.*',
+    "decodes each read the server makes on its own, so one that ends inside "
+    "the data's two-byte character counts it as two, plain as well as with "
+    "LeJIT (the test keeps bytes from 3.11)":
+        'test.test_ftplib.TestFTPClass.test_storlines',
     'asserts that wait_for with a timeout of 0 returns within 0.1 s of wall '
     'time, which fails plain as well as with LeJIT on a loaded machine':
         'test.test_asyncio.test_waitfor.AsyncioWaitForTest.'
