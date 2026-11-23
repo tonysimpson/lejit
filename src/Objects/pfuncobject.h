@@ -59,7 +59,8 @@ PsycoFunction_SetField(PsycoObject *po, vinfo_t *func, int which,
    it (sum, any, all, min, max, list, tuple, set, str.join) runs its code
    fused (psyfunc.c:psyco_call_genexpr); anything else makes the real
    generator by calling the function with those arguments. Delaying is safe
-   because creating a generator runs no code. */
+   because creating a generator runs no code. A coroutine awaited as soon
+   as it is made is one too (psyfunc.c:psyco_coro_start). */
 #define iGENEXPR_FUNC (iOB_TYPE + 1)
 #define iGENEXPR_ARGS (iOB_TYPE + 2)
 #define iGENEXPR_GLOBALS (iOB_TYPE + 3)

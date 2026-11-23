@@ -459,6 +459,9 @@ msg('NO_IMPORT', 'an import statement without __import__', 'ImportError',
 msg('GENERATOR_STOP_ITERATION', 'a generator raising StopIteration',
     'RuntimeError',
     'def g():\n    raise StopIteration\n    yield\nnext(g())', text=True)
+msg('CORO_STOP_ITERATION', 'a coroutine raising StopIteration',
+    'RuntimeError',
+    'async def f():\n    raise StopIteration\nf().send(None)', text=True)
 msg('NEGATIVE_SHIFT', 'a shift by a negative count', 'ValueError', '1 << -1',
     text=True)
 

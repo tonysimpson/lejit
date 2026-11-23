@@ -607,7 +607,8 @@ _build_merge_points(PyCodeObject *co, int module)
        of a fusable one */
     resumable = psyco_is_resumable_generator(co);
     if (co->co_flags & (CO_COROUTINE | CO_GENERATOR | CO_ASYNC_GENERATOR) &&
-        !resumable && !psyco_is_fusable_generator(co)) {
+        !resumable && !psyco_is_fusable_generator(co) &&
+        !psyco_is_startable_coroutine(co)) {
         goto not_ok;
     }
     /* zero-argument super() reads the __class__ cell and the first
@@ -747,7 +748,19 @@ psyco_is_fusable_generator(PyCodeObject *co)
    an END_FINALLY too: 'depth' counts those entered, for their END_FINALLY
    to go on. */
 static int
+handler_reach(le_code_t c, int at);
+
+static int
 yields_in_handler(le_code_t c)
+{
+    return handler_reach(c, -1);
+}
+
+/* with 'at' an instruction's position: whether it can run while an
+   exception handler's block is live, as yields_in_handler finds the
+   yields; with -1, whether a yield can */
+static int
+handler_reach(le_code_t c, int at)
 {
     int units = c.size / LE_UNIT, top = 0, pos, u;
     signed char depth[units + 1];
@@ -780,10 +793,14 @@ yields_in_handler(le_code_t c)
         queued[u] = 0;
         d = depth[u];
         in = le_instr(c, u * LE_UNIT);
+        if (at >= 0 && u * LE_UNIT <= at && at < in.next)
+            return 1;
         switch (in.op) {
             case YIELD_VALUE:
             case YIELD_FROM:
-                return 1;
+                if (at < 0)
+                    return 1;
+                break;
             /* the handler's end, or a jump out of it that unwinds it */
             case POP_EXCEPT:
             case RETURN_VALUE:
@@ -893,18 +910,16 @@ yields_do_work(le_code_t c)
 }
 #endif
 
-/* the code of a generator whose body can run compiled, resumed at each
-   yield through the eval hook (eval_hook.c:LeGen_Run), its state kept in
-   its frame between resumes: a plain generator with no yield from, and no
-   yield inside an exception handler, whose stack and blocks LeJIT keeps
-   apart from the frame's (an EXCEPT_HANDLER block, a finally block's
-   pseudo-exception), and whose resumes do work (yields_do_work): any
-   other runs interpreted, which costs it less per resume */
-DEFINEFN int
-psyco_is_resumable_generator(PyCodeObject *co)
-{
 #if LE_RESUMES_GENERATORS
-    le_code_t c;
+/* whether the body of 'co', a plain generator or a coroutine, can run
+   compiled in its own frame: no yield from (a coroutine's awaits are
+   GET_AWAITABLE, LOAD_CONST None, YIELD_FROM), no async for or async with,
+   and no yield or await inside an exception handler, whose stack and
+   blocks LeJIT keeps apart from the frame's (an EXCEPT_HANDLER block, a
+   finally block's pseudo-exception) */
+static int
+body_compilable(PyCodeObject *co, le_code_t *c)
+{
     int pos;
     int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
                                CO_ASYNC_GENERATOR | CO_ITERABLE_COROUTINE);
@@ -915,19 +930,16 @@ psyco_is_resumable_generator(PyCodeObject *co)
         PyErr_Clear(); /* out of memory: runs interpreted */
         return 0;
     }
-    c = le_code(co);
-    for (pos = 0; pos < c.size;) {
-        le_instr_t in = le_instr(c, pos);
+    *c = le_code(co);
+    for (pos = 0; pos < c->size;) {
+        le_instr_t in = le_instr(*c, pos);
         pos = in.next;
         switch (in.op) {
-            /* a coroutine's await is GET_AWAITABLE, LOAD_CONST None,
-               YIELD_FROM; a generator's yield from is not compiled */
             case YIELD_FROM:
                 if (kind == CO_GENERATOR)
                     return 0;
                 break;
             case GET_YIELD_FROM_ITER:
-            /* async for and async with */
             case GET_AITER:
             case GET_ANEXT:
             case BEFORE_ASYNC_WITH:
@@ -936,7 +948,50 @@ psyco_is_resumable_generator(PyCodeObject *co)
                 return 0;
         }
     }
-    return !yields_in_handler(c) && yields_do_work(c);
+    return !yields_in_handler(*c);
+}
+#endif
+
+/* the code of a generator or coroutine whose body can run compiled,
+   resumed at each yield through the eval hook (eval_hook.c:LeGen_Run), its
+   state kept in its frame between resumes (body_compilable), and whose
+   resumes do work (yields_do_work): any other runs interpreted, which
+   costs it less per resume */
+DEFINEFN int
+psyco_is_resumable_generator(PyCodeObject *co)
+{
+#if LE_RESUMES_GENERATORS
+    le_code_t c;
+    return body_compilable(co, &c) && yields_do_work(c);
+#else
+    (void)co;
+    return 0;
+#endif
+}
+
+/* whether the instruction at 'pos' in a coroutine's body that can run as
+   a call (psyco_is_startable_coroutine) may run inside an exception
+   handler (handler_reach) */
+DEFINEFN int
+psyco_in_handler(PyCodeObject *co, int pos)
+{
+#if LE_RESUMES_COROUTINES
+    return handler_reach(le_code(co), pos);
+#else
+    (void)co;
+    (void)pos;
+    return 0;
+#endif
+}
+
+/* the code of a coroutine whose body can run as a call when it is awaited
+   as soon as it is made (psyfunc.c:psyco_coro_start) */
+DEFINEFN int
+psyco_is_startable_coroutine(PyCodeObject *co)
+{
+#if LE_RESUMES_COROUTINES
+    le_code_t c;
+    return (co->co_flags & CO_COROUTINE) && body_compilable(co, &c);
 #else
     (void)co;
     return 0;
