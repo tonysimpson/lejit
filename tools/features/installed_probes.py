@@ -894,6 +894,20 @@ def CALLABLE_UNDER_NULL():
 
 
 @probe
+def FINISHED_GENERATOR_UNLINKED():
+    """the frame of a generator that raised has no f_back (run)"""
+    def g():
+        yield 1
+        raise ValueError
+    try:
+        list(g())
+    except ValueError as e:
+        back = e.__traceback__.tb_next.tb_frame.f_back
+    return back is None, 'f_back of the frame of a generator that raised: %s' % (
+        None if back is None else back.f_code.co_name)
+
+
+@probe
 def FOR_ITER_EXIT_PAST_POP_TOP():
     """a for loop ends with END_FOR then POP_TOP, END_FOR popping one value
     (dis, dis.stack_effect)"""
