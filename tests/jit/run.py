@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Runs each case in tests/jit/cases/ (or DIR) plain and with LeJIT, in fresh
-processes. Results must match, the function must have been compiled, and it
-mustn't leak.
+processes. Results must match, the function must have been compiled, it
+mustn't leak, and LeJIT's run must write nothing to stderr that the plain
+run doesn't.
 
 A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
@@ -43,7 +44,7 @@ def run_child(modname, fname, calls, use_lejit, warmup=9, env=None,
     if p.returncode != 0:
         err = err.decode(errors='replace').strip().splitlines()
         return None, 'exit %d: %s' % (p.returncode, ' | '.join(err[-3:]))
-    return out.decode().splitlines(), None
+    return out.decode().splitlines(), err.decode(errors='replace').splitlines()
 
 
 def load_cases(filt):
@@ -78,16 +79,17 @@ def main():
         clear = 'clear_type_cache' in opts
         env = dict(os.environ)
         env.setdefault('PYTHONHASHSEED', str(random.randrange(4294967296)))
-        expected, err = run_child(modname, fname, calls, False, warmup, env, clear)
-        if err:
-            print('ERROR %s: reference run failed: %s' % (name, err))
+        expected, ref_err = run_child(modname, fname, calls, False, warmup, env, clear)
+        if expected is None:
+            print('ERROR %s: reference run failed: %s' % (name, ref_err))
             counts['FAIL'] += 1
             continue
         got, err = run_child(modname, fname, calls, True, warmup, env, clear)
         problem = None
-        if err:
+        if got is None:
             problem = err
         else:
+            extra = [l for l in err if l not in ref_err]
             leak_ref = int(expected.pop().split()[1])
             leak_lejit = int(got.pop().split()[1])
             if 'expected' in opts:
@@ -102,6 +104,8 @@ def main():
             elif leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks'):
                 problem = 'leaks: %d more blocks after 100 extra rounds (%d without LeJIT)' % (
                     leak_lejit, leak_ref)
+            elif extra:
+                problem = 'stderr the plain run lacks: %s' % ' | '.join(extra[:3])
         xfail = opts.get('xfail')
         if problem and xfail:
             status = 'xfail'

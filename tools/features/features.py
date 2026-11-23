@@ -787,6 +787,23 @@ def managed_values_pointer(s):
                      'return ((PyDictValues **)obj)-4;')
 
 
+def tagged_dict_or_values(s):
+    """an instance of a class with a managed dict keeps one word three words
+    before it: its dict, or its values pointer less one, whose low bit is
+    then set (_PyObject_DictOrValuesPointer, _PyDictOrValues_SetValues)"""
+    obj = 'Include/internal/pycore_object.h'
+    if s.tokens(obj) is None:
+        return False, 'no %s' % obj
+    word = _file_has(s, obj, 'return ((PyDictOrValues *)obj)-3;')[0]
+    tag = _file_has(s, obj, 'ptr->values = ((char *)values) - 1;')[0]
+    if word != tag:
+        raise Unanswered('%s: PyDictOrValues three words back %r, tagged %r'
+                         % (obj, word, tag))
+    if not word:
+        return False, '%s: no PyDictOrValues' % obj
+    return True, '%s:_PyObject_DictOrValuesPointer, _PyDictOrValues_SetValues' % obj
+
+
 def range_iter_index(s):
     """a range iterator counts the items it has given in index, from a start
     that stays put; without it, it moves start on and counts len down"""
@@ -1322,6 +1339,8 @@ ABSTRACT = [
                                             'Include, every header: PyObject_CallOneArg'))),
     ('CALL_ONE_ARG', D('PyObject_CallOneArg exists',
                        lambda s: _declared(s, 'PyObject_CallOneArg'))),
+    ('ITER_SEND', D('PyIter_Send sends a value into an iterator, telling a yield from a return',
+                    lambda s: _declared(s, 'PyIter_Send'))),
     ('FUNCTION_STR', D('_PyObject_FunctionStr names a function in error messages',
                        lambda s: _declared(s, '_PyObject_FunctionStr'))),
     ('FASTCALL_DICT_TSTATE', D('_PyObject_FastCallDictTstate exists',
@@ -1348,6 +1367,7 @@ OBJECTS = [
                            lambda s: _public(s, '_Py_IsImmortal'))),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
+    ('TAGGED_DICT_OR_VALUES', tagged_dict_or_values),
 
 
     ('INLINE_VALUES', inline_values),

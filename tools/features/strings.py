@@ -364,6 +364,21 @@ msg('ASYNC_FOR_AITER_NO_ANEXT', 'async for whose __aiter__ returns an object '
     'without __anext__', 'TypeError',
     'r = args[0]; o = cls("A", __aiter__=lambda s: r())()\n'
     'async def f():\n    async for x in o:\n        pass\ncoro_run(f())', [T()])
+msg('AWAIT_NOT_AWAITABLE', "await on an object that can't be awaited",
+    'TypeError', 'o = args[0]()\nasync def f():\n    await o\ncoro_run(f())',
+    [T()])
+msg('AWAIT_RETURNED_COROUTINE', '__await__ returning a coroutine', 'TypeError',
+    'async def c():\n    pass\nk = c()\nk.close()\n'
+    'o = cls("A", __await__=lambda s: k)()\n'
+    'async def f():\n    await o\ncoro_run(f())', text=True)
+msg('AWAIT_NON_ITERATOR', '__await__ returning something not an iterator',
+    'TypeError', 'r = args[0]; o = cls("A", __await__=lambda s: r())()\n'
+    'async def f():\n    await o\ncoro_run(f())', [T()])
+msg('CORO_AWAITED_ALREADY', 'await on a coroutine that is awaiting',
+    'RuntimeError',
+    'import types\n@types.coroutine\ndef y():\n    yield\n'
+    'async def i():\n    await y()\nk = i()\nk.send(None)\n'
+    'async def f():\n    await k\ncoro_run(f())', text=True)
 msg('NO_BUILD_CLASS', 'a class statement without __build_class__', 'NameError',
     'exec("class C: pass", {"__builtins__": {}})', text=True)
 msg('NAME_NOT_DEFINED', 'a global name not found', 'NameError',
