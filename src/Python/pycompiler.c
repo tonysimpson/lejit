@@ -3545,20 +3545,25 @@ cimpl_name_error(PyObject *w)
 }
 
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
-   [kwargs], args, and the callable beside its NULL. f(*tuple) goes straight to
+   [kwargs], args, and the callable beside its NULL. The kwargs slot is
+   there whenever argument bit 0 is set, or always where CALL_EX_KWARGS_SLOT
+   (a NULL there for a call with none). f(*tuple) goes straight to
    PsycoObject_Call, which can specialise the call; anything else runs
    CPython's whole case at run time (its copy cimpl_call_function_ex). */
 static vinfo_t *
 psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
                      int *stack_to_pop)
 {
-    vinfo_t *kwargs = (oparg & 1) ? stack_top[-1] : NULL;
-    vinfo_t *callargs = stack_top[-1 - (oparg & 1)];
-    vinfo_t *func = stack_top[-2 - (oparg & 1) - LE_HAS_CALLABLE_UNDER_NULL];
+    int slot = LE_HAS_CALL_EX_KWARGS_SLOT || (oparg & 1);
+    vinfo_t *kwargs = slot ? stack_top[-1] : NULL;
+    vinfo_t *callargs = stack_top[-1 - slot];
+    vinfo_t *func = stack_top[-2 - slot - LE_HAS_CALLABLE_UNDER_NULL];
     vinfo_t *zero = NULL, *result;
     PyTypeObject *t;
     /* and the NULL under the callable, where PUSH_NULL puts one there */
-    *stack_to_pop = 2 + (oparg & 1) + LE_HAS_OPCODE_PUSH_NULL;
+    *stack_to_pop = 2 + slot + LE_HAS_OPCODE_PUSH_NULL;
+    if (kwargs != NULL && psyco_knowntobe(kwargs, 0))
+        kwargs = NULL;
 
     t = Psyco_NeedType(po, callargs);
     if (t == NULL)
@@ -6458,7 +6463,8 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
 
         case END_FOR:
             POP_DECREF();
-            if (!LE_HAS_FOR_ITER_EXIT_PAST_POP_TOP)
+            if (!LE_HAS_FOR_ITER_EXIT_PAST_POP_TOP &&
+                !LE_HAS_FOR_ITER_EXIT_KEEPS_ITER)
                 POP_DECREF();
             goto fine;
 
@@ -6476,7 +6482,8 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
                 if (runtime_NON_NULL_t(po, v) == true) {
                     /* iterator ended normally */
                     PycException_Clear(po);
-                    POP_DECREF();
+                    if (!LE_HAS_FOR_ITER_EXIT_KEEPS_ITER)
+                        POP_DECREF();
                     JUMPTO(target);
                     mp = psyco_next_merge_point(po->pr.merge_points,
                                                 next_instr);
@@ -6691,8 +6698,18 @@ yield_resumable(PsycoObject *po, int at)
         vinfo_t **slot =
             i < nlocals ? &LOC_LOCALS_PLUS[i] : &stack_a[i - nlocals];
         v = *slot;
-        /* an unbound local or a NULL item: the slot is already empty */
-        if (v != NULL && !psyco_knowntobe(v, 0)) {
+        /* an unbound local's slot is already empty (LeGen_Run took the
+           locals), but a stack slot of a frame CPython reused may still
+           hold an old word: a NULL item (LOAD_METHOD's, under a method) is
+           stored */
+        if (v != NULL && psyco_knowntobe(v, 0) && i >= nlocals) {
+            if (!psyco_put_nth_field(po, frame, FRAME_localsplus,
+                                     nplus + i - nlocals, v)) {
+                vinfo_decref(frame, po);
+                return;
+            }
+        }
+        else if (v != NULL && !psyco_knowntobe(v, 0)) {
             if (!psyco_put_nth_field(po, frame, FRAME_localsplus,
                                      i < nlocals ? i : nplus + i - nlocals,
                                      v)) {

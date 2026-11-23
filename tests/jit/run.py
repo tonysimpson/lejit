@@ -8,7 +8,9 @@ list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
 (no leak check), 'warmup': (rounds, reason), 'clear_type_cache': reason (the
 leak check empties CPython's type cache first; only where that keeps the
-types' version tags, as from 3.11).
+types' version tags, as from 3.11), 'expected': [result, ...] (LeJIT's
+results must be these, one per call, not plain CPython's: for a language
+rule some CPython gets wrong).
 
     python3.X tests/jit/run.py [DIR] [-k substring] [-v]
 """
@@ -84,6 +86,8 @@ def main():
         else:
             leak_ref = int(expected.pop().split()[1])
             leak_lejit = int(got.pop().split()[1])
+            if 'expected' in opts:
+                expected = ['ok ' + repr(r) for r in opts['expected']]
             if got[:-1] != expected:
                 problem = 'results differ: expected %r, got %r' % (expected, got[:-1])
             elif opts.get('interpreted'):
