@@ -6,6 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# a newer push to a pull request cancels its older run; every other run has
+# a group of its own, since a group's waiting run is cancelled when another
+# joins, whatever cancel-in-progress says
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     name: make check (${{ matrix.python }})
