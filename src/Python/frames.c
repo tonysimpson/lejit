@@ -253,15 +253,21 @@ psyco_frame_start_get(le_frame_t *f)
 DEFINEFN void
 psyco_frame_start_unregister(FrameRuntime *fr)
 {
-    FrameRuntime **p = &frame_runs;
     int i;
     /* fr is the innermost unless the C stack was switched under it */
-    while (*p != fr) p = &(*p)->next;
-    *p = fr->next;
+    if (frame_runs == fr)
+        frame_runs = fr->next;
+    else {
+        FrameRuntime **p = &frame_runs;
+        while (*p != fr) p = &(*p)->next;
+        *p = fr->next;
+    }
 #ifdef PyFrameLocalsProxy_Check
     if (fr->exposed)
         psyco_frames_exposed--;
 #endif
+    if (fr->entry_locals == NULL)
+        return;
     for (i = 0; i < fr->n_entry_locals; i++) Py_XDECREF(fr->entry_locals[i]);
     PyMem_Free(fr->entry_locals);
 }
@@ -1709,9 +1715,13 @@ psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own)
         }
     }
     /* a traceback frame made for the entry (cimpl_new_frame), not the
-       real frame or a kept one, which are running */
+       real frame or a kept one, which are running; nor a generator's
+       where CPython leaves one that has ended without a caller */
     if (!le_frame_is_executing(f) && le_frame_stack_empty(f) &&
-        le_pyframe_code(f)->co_stacksize >= 3) {
+        le_pyframe_code(f)->co_stacksize >= 3 &&
+        !(LE_HAS_FINISHED_GENERATOR_UNLINKED &&
+          (le_pyframe_code(f)->co_flags &
+           (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))) {
 #if ALL_CHECKS
         PyFrameObject *real;
         stack_frame_info_t **last = innermost_slot(&real);

@@ -34,6 +34,17 @@ def watched(a):
             [e for e in events if e != 'DESTROY'])
 
 
+# from 3.14 a function made with annotations gets an __annotate__ that
+# makes them when asked, named after the function
+def annotated_inner(n):
+    def inner(x: int, y: 'later' = n) -> str:
+        return str(x + y)
+    annotate = getattr(inner, '__annotate__', None)
+    return (inner(1), inner.__annotations__,
+            annotate and annotate.__qualname__)
+
+
 CASES = [
     ('watched', [(1,), (10,)], {}),
+    ('annotated_inner', [(0,), (5,)], {}),
 ]
