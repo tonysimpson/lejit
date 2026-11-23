@@ -101,6 +101,18 @@ _Static_assert(__builtin_classify_type(((PyTypeObject *)0)->tp_flags) == 1,
                "LeJIT: PyTypeObject.tp_flags: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyTypeObject *)0)->tp_flags))-1 < 0) == 0,
                "LeJIT: PyTypeObject.tp_flags: LeJIT reads it as unsigned");
+#define LE_OFS_PyTypeObject__tp_descr_get offsetof(PyTypeObject, tp_descr_get)
+#define LE_SIZE2_PyTypeObject__tp_descr_get 3
+#define LE_UNSIGNED_PyTypeObject__tp_descr_get 0
+_Static_assert(
+    __builtin_types_compatible_p(__typeof__(((PyTypeObject *)0)->tp_descr_get),
+                                 descrgetfunc),
+    "LeJIT: PyTypeObject.tp_descr_get is not descrgetfunc");
+_Static_assert(sizeof(((PyTypeObject *)0)->tp_descr_get) == 8,
+               "LeJIT: PyTypeObject.tp_descr_get: LeJIT reads 8 bytes");
+_Static_assert(
+    __builtin_classify_type(((PyTypeObject *)0)->tp_descr_get) == 5,
+    "LeJIT: PyTypeObject.tp_descr_get: LeJIT reads it as a pointer");
 #define LE_OFS_PyTypeObject__tp_version_tag \
     offsetof(PyTypeObject, tp_version_tag)
 #define LE_SIZE2_PyTypeObject__tp_version_tag 2
