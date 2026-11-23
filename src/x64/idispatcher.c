@@ -306,6 +306,7 @@ psyco_unify(PsycoObject *po, vcompatible_t *lastmatch,
     CodeBufferObject *target_codebuf = lastmatch->matching;
     int sdepth = get_stack_depth(&target_codebuf->snapshot);
     le_trace_unify(po, target_codebuf);
+    psyco_owner_depend(target_codebuf);
     extra_assert(lastmatch->diff ==
                  NullArray); /* unify with exact match only */
     psyco_assert_coherent(po);
