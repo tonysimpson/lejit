@@ -15,7 +15,8 @@ def work(x):
 
 def compiled(*fns):
     lejit = sys.modules.get('lejit')
-    if lejit is None:
+    # a release build can't say what compiled
+    if lejit is None or not hasattr(lejit._core, '_code_info'):
         return True
     # where ceval pops and clears frames, generator bodies stay interpreted
     features = dict(lejit._core._build['features'])
@@ -498,7 +499,8 @@ def interrupted_in_try(n):
 
 def interpreted(*fns):
     lejit = sys.modules.get('lejit')
-    if lejit is None:
+    # a release build can't say what compiled
+    if lejit is None or not hasattr(lejit._core, '_code_info'):
         return True
     return all(lejit._core._code_info(f.__code__) != 'compiled'
                for f in fns)
