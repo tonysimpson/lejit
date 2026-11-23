@@ -2203,9 +2203,10 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
    constant, or none), as 3.7's call_function(). The stack, top down:
    [names tuple], arguments, and the callable under them or under the NULL
    beside them. *stack_to_pop counts everything including the callable
-   (not the NULL). Keyword arguments go in a fresh dict:
-   duplicates are impossible here (the bytecode compiler rejects them) and
-   the callee checks the rest. */
+   (not the NULL). Keyword arguments are pending keywords
+   (pdictobject.c), which a Python function's call binds and anything else
+   makes the dict CPython makes: duplicates are impossible here (the
+   bytecode compiler rejects them) and the callee checks the rest. */
 #if LE_HAS_OPCODE_CALL
 /* where the KW_NAMES naming the keyword arguments of the CALL at 'pos'
    (its first unit) starts, with its EXTENDED_ARGs, or -1 for none; -2 if
@@ -2252,7 +2253,7 @@ static vinfo_t *
 psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg, PyObject *kwnames,
                    vinfo_t *callable, vinfo_t **stack_top, int *stack_to_pop)
 {
-    int na = oparg, nk = 0, i;
+    int na = oparg, nk = 0;
     vinfo_t **args;
     vinfo_t *vargs = NULL;
     vinfo_t *wdict = NULL;
@@ -2279,18 +2280,10 @@ psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg, PyObject *kwnames,
 
     if (nk == 0)
         wdict = psyco_vi_Zero(); /* no keyword arguments */
-    else {
-        wdict = _PsycoDict_NewPresized(po, nk);
-        if (wdict == NULL)
-            goto fail;
-        for (i = 0; i < nk; i++)
-            if (!PsycoDict_SetItemC(po, wdict, PyTuple_GET_ITEM(kwnames, i),
-                                    args[na + i]))
-                goto fail;
-    }
+    else
+        wdict = PsycoDict_PendingKeywords(kwnames, args + na);
     vargs = PsycoTuple_New(na, args); /* virtual tuple */
     result = PsycoObject_Call(po, callable, vargs, wdict);
-fail:
     vinfo_xdecref(vargs, po);
     vinfo_xdecref(wdict, po);
     return result;

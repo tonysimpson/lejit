@@ -33,9 +33,11 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw);
 /* PyFunction_Type's tp_call as compiled code calls it */
 EXTERNFN ternaryfunc
 le_function_tp_call(void);
+/* a call of the function 'f' (promoted, 'func' at compile time), with
+   'kw' NULL or as psyfunc.c:psyco_call_pyfunc takes it */
 EXTERNFN vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
-                      vinfo_t *arg, bool allow_inline);
+                      vinfo_t *arg, vinfo_t *kw, bool allow_inline);
 
 /***************************************************************/
 /* virtual functions.                                          */

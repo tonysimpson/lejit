@@ -1251,6 +1251,8 @@ BYTECODE = [
     ('EXCEPTION_TABLE', D('a code object\'s handlers are in its exception table (co_exceptiontable), not set up at run time on a block stack',
                           lambda s: _file_has(s, 'Objects/codeobject.c', '"co_exceptiontable"'))),
     ('CODE_LOCALSPLUS', code_localsplus),
+    ('CODE_POSONLY_ARGS', D('a code object counts its positional-only parameters (co_posonlyargcount), whose names a keyword argument can\'t bind',
+                            lambda s: _file_has(s, 'Objects/codeobject.c', '"co_posonlyargcount"'))),
     ('CODE_QUALNAME', D('a code object has its function\'s qualified name (co_qualname): MAKE_FUNCTION takes it from there, with no name on the stack',
                         lambda s: _file_has(s, 'Objects/codeobject.c', '"co_qualname"'))),
     ('LOAD_GLOBAL_NULL_BIT', D('LOAD_GLOBAL\'s argument is the name\'s index shifted left once, its low bit pushing a NULL under the global',
