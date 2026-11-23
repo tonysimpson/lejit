@@ -1624,6 +1624,7 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
     s.gc = vtp == NULL         ? STORE_GC_FULL
            : PyType_IS_GC(vtp) ? STORE_GC_DICT
                                : STORE_GC_NONE;
+    s.dict_gc = s.gc;
     /* filling a dict doesn't add to the insertion order that values keep
        where keys have a kind */
     s.fill = !LE_HAS_DICT_KEYS_KIND && init_store(po, obj);
