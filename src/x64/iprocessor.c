@@ -142,6 +142,12 @@ write_stub_trampoline(PsycoObject *po, bool respawn)
     END_CODE
 }
 
+#if LE_HAS_DEALLOC_HOOKS && !LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+/* Python/pyruntime.c */
+extern void *
+le_ref_tracer_word(void);
+#endif
+
 /* Out-of-line slow paths that compiled code calls with its arguments
    already in the SysV registers and the stack at any alignment (the
    inline attribute store's miss and dealloc paths). Each is a matched
@@ -157,8 +163,24 @@ write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax)
     AND_R_I8(REG_X64_RSP, -16);
     if (dealloc_rax) { /* deallocates the object in RAX, as DEC_OB_REFCNT */
         MOV_R_R(REG_X64_RDI, REG_X64_RAX);
-#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_HOOKS
+#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
         CALL_I(_Py_Dealloc);
+#elif LE_HAS_DEALLOC_HOOKS
+        /* _Py_Dealloc while a ref tracer is set */
+        void *tracer = le_ref_tracer_word();
+        if (tracer == NULL)
+            CALL_I(_Py_Dealloc);
+        else {
+            MOV_R_I(REG_X64_RAX, (long)tracer);
+            CMP_I8_A(0, REG_X64_RAX);
+            MOV_R_I(REG_X64_RAX, (long)_Py_Dealloc); /* keeps the flags */
+            BEGIN_SHORT_COND_JUMP(0, CC_NE);
+            MOV_R_O8(REG_X64_RAX, REG_X64_RDI, CPY_OFFSET(PyObject, ob_type));
+            MOV_R_O8(REG_X64_RAX, REG_X64_RAX,
+                     CPY_OFFSET(PyTypeObject, tp_dealloc));
+            END_SHORT_JUMP(0);
+            CALL_R(REG_X64_RAX);
+        }
 #else
         MOV_R_O8(REG_X64_RAX, REG_X64_RDI, CPY_OFFSET(PyObject, ob_type));
         MOV_R_O8(REG_X64_RAX, REG_X64_RAX,

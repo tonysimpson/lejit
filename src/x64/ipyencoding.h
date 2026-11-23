@@ -144,8 +144,10 @@ EXTERNFN code_t *
 decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn);
 
 /* the equivalent of Py_DECREF(): it calls tp_dealloc itself where that is
-   all _Py_Dealloc would do, and _Py_Dealloc where it does more */
-#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_HOOKS
+   all _Py_Dealloc would do, and _Py_Dealloc where it does more; where
+   _Py_Dealloc's only addition is the ref tracer, it tests at run time
+   whether one is set (decref_dealloc_calling) */
+#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
 #define DEC_OB_REFCNT(rg) \
     (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
 #else
@@ -154,7 +156,7 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn);
 
 /* the equivalent of Py_DECREF() when we know the type of the object
    (assuming that tp_dealloc never changes for a given type) */
-#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_HOOKS
+#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
 #define DEC_OB_REFCNT_T(rg, type) \
     (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
 #else

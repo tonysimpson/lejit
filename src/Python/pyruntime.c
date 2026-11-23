@@ -523,3 +523,38 @@ le_set_interp_eval_frame(void *fn)
 {
     PyThreadState_Get()->interp->eval_frame = (_PyFrameEvalFunction)fn;
 }
+
+#if LE_HAS_DEALLOC_HOOKS && !LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+/* The ref tracer's function, where _Py_Dealloc reads it, or NULL. Where
+   none is set, _Py_Dealloc only calls tp_dealloc, which compiled code then
+   calls itself (x64/ipyencoding.c:decref_dealloc_calling). The word is
+   checked once against PyRefTracer_SetTracer, the old tracer put back
+   straight after. */
+static int
+le_tracer_probe(PyObject *op, PyRefTracerEvent event, void *data)
+{
+    (void)op;
+    (void)event;
+    (void)data;
+    return 0;
+}
+
+void *
+le_ref_tracer_word(void)
+{
+    static int found = 0; /* 1 found, -1 not */
+    PyRefTracer *word = &_PyRuntime.ref_tracer.tracer_func;
+    if (found == 0) {
+        void *data;
+        PyRefTracer old = PyRefTracer_GetTracer(&data);
+        found = -1;
+        if (*word == old &&
+            PyRefTracer_SetTracer(le_tracer_probe, NULL) == 0) {
+            if (*word == le_tracer_probe)
+                found = 1;
+            PyRefTracer_SetTracer(old, data);
+        }
+    }
+    return found > 0 ? (void *)word : NULL;
+}
+#endif
