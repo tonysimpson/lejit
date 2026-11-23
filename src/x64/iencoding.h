@@ -755,6 +755,10 @@ typedef enum {
         OFFSET_ENCODING(false, false, 1, 0x81, 0, 0, 0x38, 0, 0, rm, o); \
         WRITE_32BIT(i);                                                  \
     } while (0)
+/* @asm: cmp dword ptr [{rm}], {i:i32} */
+#define CMP_I32_DA(i, rm)                                 \
+    INDIRECT_ENCODING(false, 1, 0x81, 0, 0, 0x38, 0, rm); \
+    WRITE_32BIT(i)
 /* @asm: cmp qword ptr [{rm}], {i:i8} */
 #define CMP_I8_A(i, rm)                                  \
     INDIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x38, 0, rm); \
@@ -860,6 +864,10 @@ typedef enum {
 /* @asm: sub qword ptr [{rm}], {i:i8} */
 #define SUB_A_I8(rm, i)                                  \
     INDIRECT_ENCODING(true, 1, 0x83, 0, 0, 0x28, 0, rm); \
+    WRITE_8BIT(i)
+/* @asm: sub dword ptr [{rm}], {i:i8} */
+#define SUB_DA_I8(rm, i)                                  \
+    INDIRECT_ENCODING(false, 1, 0x83, 0, 0, 0x28, 0, rm); \
     WRITE_8BIT(i)
 /* @asm: add dword ptr [{rm}], {i:i8} */
 #define ADD_DA_I8(rm, i)                               \
