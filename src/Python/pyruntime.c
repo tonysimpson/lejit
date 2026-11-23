@@ -23,6 +23,10 @@
 /* The runtime state (_PyRuntime) as 3.7 describes it. */
 #include "internal/pystate.h"
 #endif
+#if LE_HAS_TSTATE_EVAL_BREAKER
+/* _Py_HandlePending, _PY_EVAL_EVENTS_MASK */
+#include "internal/pycore_ceval.h"
+#endif
 #include "frameobject.h"
 #include "opcode.h"
 #include "../bytecode.h"
@@ -62,7 +66,42 @@ le_monitoring_on(PyThreadState *ts)
 #endif
 /* le_eval_breaker_address, le_eval_breaker_handler,
    le_eval_breaker_at_entry */
-#if LE_HAS_EVAL_BREAKER_GC
+#if LE_HAS_TSTATE_EVAL_BREAKER
+/* Each thread has its own eval_breaker, in its state: the bits under
+   _PY_EVAL_EVENTS_MASK are the events (signals, pending calls, a GIL drop,
+   an async exception, the GC), the bits above them the instrumentation
+   version, which is not an event. ceval handles the events with
+   _Py_HandlePending, which libpython exports. Compiled code loads the
+   thread state and tests the events' byte (psyfunc.c:le_eval_breaker_test);
+   there is no address fixed for the process. */
+#if !LE_HAS_HANDLE_PENDING_LINKABLE
+#error "LeJIT: a per-thread eval_breaker, but _Py_HandlePending is hidden"
+#endif
+_Static_assert(_PY_EVAL_EVENTS_MASK == 0xff,
+               "LeJIT: the eval_breaker's events are tested as its low byte");
+
+/* -1 with an exception set */
+int
+le_eval_breaker_handler(void)
+{
+    return _Py_HandlePending(PyThreadState_GET());
+}
+
+/* The same test before a frame's first instruction, for compiled code
+   entered through the eval hook (eval_hook.c:LeCode_Run). Compiled callers
+   test after each call instead. -1 with the exception set, for the caller
+   to give the frame a traceback entry, as ceval's error path would. */
+int
+le_eval_breaker_at_entry(PyCodeObject *co)
+{
+    PyThreadState *ts = PyThreadState_GET();
+    (void)co;
+    if (!(_Py_atomic_load_uintptr_relaxed(&ts->eval_breaker) &
+          _PY_EVAL_EVENTS_MASK))
+        return 0;
+    return _Py_HandlePending(ts);
+}
+#elif LE_HAS_EVAL_BREAKER_GC
 /* eval_breaker in the interpreter's ceval state, and what ceval does when
    it is set: the hidden _Py_HandlePending (3.12 Python/ceval_gil.c), which
    also runs the cyclic GC when the interpreter's gc_scheduled asks.

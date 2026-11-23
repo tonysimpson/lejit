@@ -25,8 +25,9 @@ psyco_tracing_on(PsycoObject *po);
 /* generator expressions fused with their consumer (pycheader.h GENEXPR_*) */
 EXTERNFN bool
 psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v);
-/* psyco_genexpr_fusable, and not while tracing (emits that test): 1 to
-   fuse, 0 for the consumer's own call, -1 with an exception */
+/* psyco_genexpr_fusable, and not while tracing nor once its fusing has
+   stopped (emits those tests): 1 to fuse, 0 for the consumer's own call,
+   -1 with an exception */
 EXTERNFN int
 psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *

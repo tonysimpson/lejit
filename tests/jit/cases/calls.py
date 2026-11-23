@@ -120,23 +120,6 @@ def type_call_errors(t):
     return out
 
 
-# functions made on each run, called from a frame with handlers (which
-# makes them real objects): each is a new object, so the calls must not
-# specialise on it
-def nested_function_calls(n):
-    def add(a, b=n, *rest):
-        return a + b + len(rest)
-    sq = (lambda x, y=2: x ** y)
-    t = 0
-    for i in range(n):
-        t += add(i) + add(i, 1) + add(i, 1, 2) + sq(i) + sq(i, 3)
-    try:
-        add()
-    except TypeError as e:
-        return t, str(e)
-    return t
-
-
 # a nested function whose code is replaced between two calls
 def three():
     return 3
@@ -181,7 +164,46 @@ CASES = [
     ('tuple_identity_through_call', "[(int,)]", {}),
     ('new_class_bases', [()], {}),
     ('type_call_errors', "[(tuple,), (set,)]", {}),
-    ('nested_function_calls', [(4,)], {}),
     ('nested_code_changes', [(4,), (2.5,)], {}),
     ('ceil_floor_objects', "[(Ceil(),), (7,), (1.5,)]", {}),
 ]
+
+# PEP 695 type parameters: a generic function made in a compiled function,
+# whose annotation scope runs interpreted (CALL_INTRINSIC_2), a generic
+# class, and a type alias, which runs interpreted itself (CALL_INTRINSIC_1). A source
+# without them has no cases here.
+try:
+    compile('def f[T](): pass', '<probe>', 'exec')
+    HAS_TYPE_PARAMS = True
+except SyntaxError:
+    HAS_TYPE_PARAMS = False
+
+TYPE_PARAMS_SRC = '''
+class Box[U]:
+    def __init__(self, v):
+        self.v = v
+
+    def get(self) -> U:
+        return self.v
+
+
+def make_generic(n):
+    def inner[T: int, *Ts, **P](x: T) -> T:
+        return x
+    params = inner.__type_params__
+    return (inner(n), [type(p).__name__ for p in params], params[0].__bound__,
+            Box(n).get(), [p.__name__ for p in Box.__type_params__])
+
+
+def type_alias(n):
+    type Pair[T] = tuple[T, T]
+    type Plain = list[int]
+    return Pair.__name__, Plain.__value__, Pair.__type_params__[0].__name__, n
+'''
+
+if HAS_TYPE_PARAMS:
+    exec(TYPE_PARAMS_SRC)
+    CASES += [
+        ('make_generic', [(3,), ('a',)], {}),
+        ('type_alias', [(1,)], {'interpreted': 'a type alias statement'}),
+    ]

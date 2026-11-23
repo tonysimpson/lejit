@@ -26,7 +26,8 @@ SUPPORTED = [os.path.join(PYENV, v, 'bin', exe) for v, exe in (
     ('3.7.17', 'python3.7'), ('3.8.20', 'python3.8'),
     ('3.9.21', 'python3.9'), ('3.10.16', 'python3.10'))]
 UNSUPPORTED = [os.path.join(PYENV, v, 'bin', exe) for v, exe in (
-    ('3.11.11', 'python3.11'), ('3.12.9', 'python3.12'))]
+    ('3.11.11', 'python3.11'), ('3.12.9', 'python3.12'),
+    ('3.13.2', 'python3.13'))]
 
 
 def source_answers(src):

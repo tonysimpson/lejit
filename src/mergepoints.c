@@ -34,6 +34,7 @@
 
 typedef struct {
     int flags;
+    int fuse_stopped; /* psyco_fuse_stopped */
     Py_ssize_t mergepoint_count;
     Py_ssize_t unit_count;   /* code units in the bytecode */
     global_entries_t *joins; /* per code unit, or NULL: psyco_join_point */
@@ -543,6 +544,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
         weight <= INLINE_MAXIMUM_WEIGHT)
         flags |= MP_FLAGS_INLINABLE;
     report->flags = flags;
+    report->fuse_stopped = 0;
     report->mergepoint_count = mergepoint_count;
     report->unit_count = entry_count_len - 1;
     report->joins = NULL;
@@ -596,7 +598,7 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
     if (len < 3 || len > 6)
         return 0; /* none is shorter or longer */
     for (i = 0; frame_locals_builtins[i] != NULL; i++)
-        if (_PyUnicode_EqualToASCIIString(name, frame_locals_builtins[i]))
+        if (!PyUnicode_CompareWithASCIIString(name, frame_locals_builtins[i]))
             return 1;
     return 0;
 }
@@ -840,29 +842,27 @@ compiled_opcode(int op)
 #if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
         case JUMP_IF_NOT_EXC_MATCH:
 #endif
-        case BEFORE_ASYNC_WITH:
         /* generators */
         case YIELD_VALUE:
         case GEN_START:
-        case GET_YIELD_FROM_ITER:
+        /* in a plain function too: an async generator expression's
+           outermost iterable */
         case GET_AITER:
-#if LE_HAS_CORO_GET_AWAITABLE_ITER_LINKABLE
-        case GET_ANEXT:
-#endif
             return 1;
     }
 #endif
     return 0;
 }
 
-/* the CALL_INTRINSIC_1 arguments pycompiler.c compiles: those that are the
-   opcodes they replaced */
+/* the CALL_INTRINSIC_1 arguments pycompiler.c compiles: a generator's
+   PEP 479 handler, and those that are the opcodes they replaced */
 static int
 compiled_intrinsic(int arg)
 {
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
     return arg == INTRINSIC_PRINT || arg == INTRINSIC_UNARY_POSITIVE ||
-           arg == INTRINSIC_LIST_TO_TUPLE;
+           arg == INTRINSIC_LIST_TO_TUPLE ||
+           arg == INTRINSIC_STOPITERATION_ERROR;
 #else
     return 0;
 #endif
@@ -880,6 +880,8 @@ _build_merge_points(PyCodeObject *co, int module)
     if (module) {
         goto not_ok;
     }
+    if (le_code_prepare(co) < 0)
+        return NULL;
     /* a generator expression compiles only into its consumer
        (psyfunc.c:psyco_call_genexpr): the eval hook never runs generator
        code, and psyco_call_pyfunc makes a pending generator of it */
@@ -949,6 +951,10 @@ psyco_is_genexpr(PyCodeObject *co)
         le_code_ncells(co) != 0 ||
         PyUnicode_CompareWithASCIIString(co->co_name, "<genexpr>") != 0)
         return 0;
+    if (le_code_prepare(co) < 0) {
+        PyErr_Clear(); /* out of memory: made as a plain generator */
+        return 0;
+    }
     c = le_code(co);
     for (pos = 0; pos < c.size;) {
         le_instr_t in = le_instr(c, pos);
@@ -1069,6 +1075,13 @@ psyco_mp_flags(PyObject *mergepoints)
 {
     co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
     return report->flags;
+}
+
+DEFINEFN int *
+psyco_fuse_stopped(PyObject *mergepoints)
+{
+    co_report_t *report = PyCapsule_GetPointer(mergepoints, NULL);
+    return &report->fuse_stopped;
 }
 
 DEFINEFN int

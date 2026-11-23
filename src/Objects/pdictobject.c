@@ -223,7 +223,7 @@ cimpl_lookdict_unicode(PyDictObject *mp, PyObject *key, Py_hash_t hash,
         if (ix >= 0) {
             PyObject **ep = le_dict_key_slot(dk, ix);
             if (ep[0] == key ||
-                (le_dict_hash(dk, ix) == hash && _PyUnicode_EQ(ep[0], key))) {
+                (le_dict_hash(dk, ix) == hash && le_unicode_eq(ep[0], key))) {
                 *value_addr = ep[1];
                 return ix;
             }
@@ -428,8 +428,9 @@ cimpl_dictstr_forget(void)
 #define MAY_BE_TRACKED(o) \
     (PyObject_IS_GC(o) && (!PyTuple_CheckExact(o) || LE_GC_IS_TRACKED(o)))
 
-/* insertdict's path for a key found at ix of a combined table; 'key'
-   NULL for a key not built (a str, which the GC never tracks) */
+/* insertdict's path for a key found at ix of a combined table of a dict
+   no watcher watches; 'key' NULL for a key not built (a str, which the GC
+   never tracks) */
 static int
 store_found(PyDictObject *mp, PyObject *key, Py_ssize_t ix, PyObject *value)
 {
@@ -441,7 +442,7 @@ store_found(PyDictObject *mp, PyObject *key, Py_ssize_t ix, PyObject *value)
         ((key != NULL && MAY_BE_TRACKED(key)) || MAY_BE_TRACKED(value)))
         PyObject_GC_Track(mp);
     *slot = value;
-    mp->ma_version_tag = ++le_dict_version;
+    mp->ma_version_tag = le_dict_version += LE_DICT_VERSION_STEP;
     Py_XDECREF(old); /* may run any code */
     Py_XDECREF(key);
     return 0;
@@ -519,6 +520,10 @@ cimpl_dictstr_setitem(PyDictObject *mp, PyObject *key, PyObject *value,
     PyObject *old;
     Py_hash_t hash;
     Py_ssize_t ix;
+    if (le_dict_watched(mp)) {
+        probed.mp = NULL;
+        return PyDict_SetItem((PyObject *)mp, key, value);
+    }
     if (fused) {
         if (recorded(mp, key, -1, 0, 0)) {
             probed.mp = NULL;
@@ -637,14 +642,19 @@ cimpl_dictkey_contains(PyDictObject *mp, PyObject *root, Py_ssize_t start,
     return ix == -2 ? 2 : ix >= 0;
 }
 
-/* 0 stored over the key found, or 1: the key is needed (to insert it);
-   'fused': the store of a fused pair */
+/* 0 stored over the key found, or 1: the key is needed (to insert it, or
+   to store into a dict a watcher watches); 'fused': the store of a fused
+   pair */
 static int
 cimpl_dictkey_setitem(PyDictObject *mp, PyObject *root, Py_ssize_t start,
                       Py_ssize_t len, long map, PyObject *value, long fused)
 {
     PyObject *old;
     Py_ssize_t ix;
+    if (le_dict_watched(mp)) {
+        probed.mp = NULL;
+        return 1;
+    }
     if (fused) {
         if (recorded(mp, root, start, len, map)) {
             probed.mp = NULL;
