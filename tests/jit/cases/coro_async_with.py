@@ -4,7 +4,7 @@
 # the exception it handles. Each case returns what CPython shows, and
 # whether the bodies were compiled.
 import asyncio, contextlib, dis, sys
-from coro_bodies import compiled, drive, pause, work, HOOKED
+from coro_bodies import compiled, drive, pause, work
 
 # where a return, break or continue can leave a finally block with a
 # pseudo-exception (BREAK_LOOP's bytecode), a body that also awaits in a
@@ -227,6 +227,6 @@ CASES = [
     ('basics', [(4,)], {}),
     ('errors', [(0,)], {}),
     ('with_asyncio', [(3,)], {}),
-    ('handlers', [(0,)], HOOKED),
-    ('started', [(0,)], HOOKED),
+    ('handlers', [(0,)], {}),
+    ('started', [(0,)], {}),
 ]
