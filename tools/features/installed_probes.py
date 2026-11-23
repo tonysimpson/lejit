@@ -853,6 +853,15 @@ def POW_KEYWORDS():
 
 
 @probe
+def SUM_COMPENSATED():
+    """sum([1e100, 1.0, -1e100]) keeps the 1.0 (run)"""
+    r = sum([1e100, 1.0, -1e100])
+    if r not in (0.0, 1.0):
+        raise Unanswered('sum([1e100, 1.0, -1e100]) is %r' % r)
+    return r == 1.0, 'sum([1e100, 1.0, -1e100]) is %r' % r
+
+
+@probe
 def LOAD_GLOBAL_NULL_BIT():
     """a call of a global loads it with LOAD_GLOBAL whose argument is the
     name's index (0) shifted left once, plus one for the NULL it pushes
