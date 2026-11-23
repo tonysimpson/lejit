@@ -523,8 +523,8 @@ CASES += [
 
 # A message naming a class is made when compiling, behind a guard on the
 # class: renamed afterwards, the class is named by its new name, as CPython
-# names it at each raise. Any other change to the class fails the guard
-# too, and the message is still right.
+# names it at each raise. Any other change to the class leaves the message
+# as it was.
 import math
 
 
