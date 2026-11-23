@@ -17,6 +17,19 @@ static source_virtual_t psyco_computed_tuple;
 
 /* PsycoTuple_New, compute_tuple and direct_compute_tuple: a virtual
    PyTuple_New */
+#if LE_HAS_TUPLE_UNTRACKED_AT_BUILD
+/* CPython builds a tuple untracked unless an item's type is one the GC
+   tracks (tupleobject.c:_PyTuple_FromArraySteal); PyTuple_New tracks it */
+static void
+cimpl_tuple_untrack_atoms(PyObject *o)
+{
+    Py_ssize_t i;
+    for (i = 0; i < PyTuple_GET_SIZE(o); i++)
+        if (PyType_IS_GC(Py_TYPE(PyTuple_GET_ITEM(o, i))))
+            return;
+    PyObject_GC_UnTrack(o);
+}
+#endif
 /* PyTuple_New(n) and PyTuple_SET_ITEM for each item, on raw values */
 static PyObject *
 direct_compute_tuple(vinfo_t *v, char *data)
@@ -34,6 +47,9 @@ direct_compute_tuple(vinfo_t *v, char *data)
         }
         PyTuple_SET_ITEM(o, i, item);
     }
+#if LE_HAS_TUPLE_UNTRACKED_AT_BUILD
+    cimpl_tuple_untrack_atoms(o);
+#endif
     return o;
 }
 
@@ -68,6 +84,15 @@ compute_tuple(PsycoObject *po, vinfo_t *v)
                 vinfo_decref(newobj, po);
                 return false;
             }
+#if LE_HAS_TUPLE_UNTRACKED_AT_BUILD
+        if (n > 0 &&
+            !psyco_generic_call(po, cimpl_tuple_untrack_atoms,
+                                CfNoReturnValue | CfNoPython | CfNoBlock, "v",
+                                newobj)) {
+            vinfo_decref(newobj, po);
+            return false;
+        }
+#endif
     }
     vinfo_move(po, v, newobj);
     return true;
