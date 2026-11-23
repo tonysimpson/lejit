@@ -399,7 +399,7 @@ remember_parts(PyDictObject *mp, PyObject *key, Py_ssize_t start,
     probed.len = len;
     probed.map = map;
     probed.keys = mp->ma_keys;
-    probed.tag = mp->ma_version_tag;
+    probed.tag = mp->LE_DICT_TAG_FIELD;
     probed.ix = ix;
 }
 
@@ -415,7 +415,7 @@ recorded(PyDictObject *mp, PyObject *key, Py_ssize_t start, Py_ssize_t len,
 {
     return probed.mp == mp && probed.key == key && probed.start == start &&
            (start < 0 || (probed.len == len && probed.map == map)) &&
-           probed.keys == mp->ma_keys && probed.tag == mp->ma_version_tag;
+           probed.keys == mp->ma_keys && probed.tag == mp->LE_DICT_TAG_FIELD;
 }
 
 static void
@@ -442,7 +442,7 @@ store_found(PyDictObject *mp, PyObject *key, Py_ssize_t ix, PyObject *value)
         ((key != NULL && MAY_BE_TRACKED(key)) || MAY_BE_TRACKED(value)))
         PyObject_GC_Track(mp);
     *slot = value;
-    mp->ma_version_tag = le_dict_version += LE_DICT_VERSION_STEP;
+    mp->LE_DICT_TAG_FIELD = le_dict_version += LE_DICT_VERSION_STEP;
     Py_XDECREF(old); /* may run any code */
     Py_XDECREF(key);
     return 0;

@@ -120,6 +120,11 @@ report_destructor(PyObject *capsule)
 
 #define MAX_MP_DISTANCE 170
 
+/* the compiler copies a frame's locals and stack at each merge point it
+   keeps, so code with more than this many of them runs it out of memory
+   (a namedtuple of thousands of fields) and stays in ceval */
+#define MAX_FRAME_VALUES 1000
+
 /* inlining (upstream's rule): one merge point (the start), no block, no
    LOAD_GLOBAL, and at most this many instructions that are not "light"
    (produce little or no code) */
@@ -171,6 +176,18 @@ psyco_class_cell(PyCodeObject *co)
     return -1;
 }
 
+/* a read (load) or write of local in a set of live locals, going backward */
+static inline __attribute__((always_inline)) void
+_live_access(uint64_t *set, int local, int load, int nlocals)
+{
+    if (local >= nlocals)
+        return;
+    if (load)
+        set[local / 64] |= (uint64_t)1 << (local % 64);
+    else
+        set[local / 64] &= ~((uint64_t)1 << (local % 64));
+}
+
 /* one backward pass of _find_dead_locals's dataflow: whether a set grew */
 static inline __attribute__((always_inline)) int
 _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
@@ -216,6 +233,13 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
              o == LOAD_FAST_AND_CLEAR) &&
             a < nlocals)
             tmp[a / 64] |= (uint64_t)1 << (a % 64);
+        /* two locals, the first in the high four bits: the second's access
+           first, going backward */
+        if (o == LOAD_FAST_LOAD_FAST || o == STORE_FAST_LOAD_FAST ||
+            o == STORE_FAST_STORE_FAST) {
+            _live_access(tmp, a & 15, o != STORE_FAST_STORE_FAST, nlocals);
+            _live_access(tmp, a >> 4, o == LOAD_FAST_LOAD_FAST, nlocals);
+        }
         changed |= _live_union(in, tmp, words);
     }
     return changed;
@@ -539,15 +563,14 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
     return 0;
 }
 
-/* the CALL_INTRINSIC_1 arguments pycompiler.c compiles: a generator's
-   PEP 479 handler, and those that are the opcodes they replaced */
+/* the CALL_INTRINSIC_1 arguments pycompiler.c compiles, besides those
+   bytecode.h:le_instr folds to the opcodes they replaced: a generator's
+   PEP 479 handler, and the REPL's print */
 static int
 compiled_intrinsic(int arg)
 {
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
-    return arg == INTRINSIC_PRINT || arg == INTRINSIC_UNARY_POSITIVE ||
-           arg == INTRINSIC_LIST_TO_TUPLE ||
-           arg == INTRINSIC_STOPITERATION_ERROR;
+    return arg == INTRINSIC_PRINT || arg == INTRINSIC_STOPITERATION_ERROR;
 #else
     return 0;
 #endif
@@ -565,13 +588,20 @@ _build_merge_points(PyCodeObject *co, int module)
     if (module) {
         goto not_ok;
     }
+#if !LE_HAS_DICT_VERSION_TAG
+    /* the guards on globals, builtins and attributes need dicts' version
+       tags */
+    goto not_ok;
+#endif
     if (le_code_prepare(co) < 0)
         return NULL;
-    /* a generator expression compiles only into its consumer
+    if (le_code_nlocalsplus(co) + co->co_stacksize > MAX_FRAME_VALUES)
+        goto not_ok;
+    /* a generator compiles only into its consumer
        (psyfunc.c:psyco_call_genexpr): the eval hook never runs generator
        code, and psyco_call_pyfunc makes a pending generator of it */
     if (co->co_flags & (CO_COROUTINE | CO_GENERATOR | CO_ASYNC_GENERATOR) &&
-        !psyco_is_genexpr(co)) {
+        !psyco_is_fusable_generator(co)) {
         goto not_ok;
     }
     /* zero-argument super() reads the __class__ cell and the first
@@ -602,6 +632,11 @@ _build_merge_points(PyCodeObject *co, int module)
         if (reads_class && oparg == 0 &&
             (opcode == STORE_FAST || opcode == DELETE_FAST))
             goto not_ok;
+        if (reads_class &&
+            (opcode == STORE_FAST_STORE_FAST
+                 ? (oparg >> 4) == 0 || (oparg & 15) == 0
+                 : opcode == STORE_FAST_LOAD_FAST && (oparg >> 4) == 0))
+            goto not_ok;
     }
 
     report = _find_merge_points(co, &bad);
@@ -622,19 +657,59 @@ not_ok:
     Py_RETURN_NONE;
 }
 
-/* the code of a generator expression: one argument (the iterator), no
-   cells, one yield (3.7 still allows a yield expression inside one) */
+/* whether an exception raised at 'yield' (the position of the code's one
+   YIELD_VALUE) has a handler in the code, so that closing the generator
+   there would run code: a try or with around it. 3.12's implicit PEP 479
+   handler only turns StopIteration into RuntimeError. */
+static int
+yield_has_handler(PyCodeObject *co, le_code_t c, int yield)
+{
+#if LE_HAS_EXCEPTION_TABLE
+    le_handler_t h;
+    (void)c;
+    if (!le_handler_find(co, yield, &h))
+        return 0;
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+    {
+        le_instr_t in = le_instr(c, h.handler);
+        if (in.op == CALL_INTRINSIC_1 &&
+            in.arg == INTRINSIC_STOPITERATION_ERROR)
+            return 0;
+    }
+#endif
+    return 1;
+#else
+    int pos;
+    (void)co;
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        int at = pos;
+        pos = in.next;
+        switch (in.op) {
+            case SETUP_EXCEPT:
+            case SETUP_FINALLY:
+            case SETUP_WITH:
+            case SETUP_ASYNC_WITH:
+                if (at < yield && yield < in.target)
+                    return 1;
+        }
+    }
+    return 0;
+#endif
+}
+
+/* the code of a generator a builtin consumer can run fused
+   (psyfunc.c:psyco_call_genexpr), as a generator expression's: a plain
+   generator with one yield (3.7 also allows a yield expression inside a
+   generator expression), no yield from, and no handler around its yield,
+   so that a consumer stopping early can drop it with no code run */
 DEFINEFN int
-psyco_is_genexpr(PyCodeObject *co)
+psyco_is_fusable_generator(PyCodeObject *co)
 {
     le_code_t c;
-    int pos, yields = 0;
+    int pos, yields = 0, yield = -1;
     if ((co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR |
-                         CO_ITERABLE_COROUTINE)) != CO_GENERATOR ||
-        co->co_argcount != 1 || co->co_kwonlyargcount != 0 ||
-        (co->co_flags & (CO_VARARGS | CO_VARKEYWORDS)) ||
-        le_code_ncells(co) != 0 ||
-        PyUnicode_CompareWithASCIIString(co->co_name, "<genexpr>") != 0)
+                         CO_ITERABLE_COROUTINE)) != CO_GENERATOR)
         return 0;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: made as a plain generator */
@@ -643,14 +718,16 @@ psyco_is_genexpr(PyCodeObject *co)
     c = le_code(co);
     for (pos = 0; pos < c.size;) {
         le_instr_t in = le_instr(c, pos);
-        int op = in.op;
+        int at = pos;
         pos = in.next;
-        if (op == YIELD_VALUE)
+        if (in.op == YIELD_VALUE) {
             yields++;
-        else if (op == YIELD_FROM || op == GET_YIELD_FROM_ITER)
+            yield = at;
+        }
+        else if (in.op == YIELD_FROM || in.op == GET_YIELD_FROM_ITER)
             return 0;
     }
-    return yields == 1;
+    return yields == 1 && !yield_has_handler(co, c, yield);
 }
 
 DEFINEFN PyObject *
