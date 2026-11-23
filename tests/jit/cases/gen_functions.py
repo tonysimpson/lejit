@@ -421,3 +421,31 @@ def method_on_temporary(n):
 
 
 CASES.append(('method_on_temporary', [(3,)], {}))
+
+
+def one_yield(arg):
+    yield
+
+
+def arguments_freed(n):
+    # a generator made from a pending one holds its call's arguments
+    # alone: closed or cleared, they go as CPython frees them (which a
+    # fresh generator's close or clear does from 3.14)
+    out = []
+    D.log = []
+    g = one_yield(D('fresh'))
+    g.close()
+    out.append(list(D.log))
+    g = one_yield(D('suspended'))
+    next(g)
+    g.close()
+    out.append(list(D.log))
+    g = one_yield(D('cleared'))
+    g.gi_frame.clear()
+    out.append(list(D.log))
+    del g
+    out.append(list(D.log))
+    return out
+
+
+CASES.append(('arguments_freed', [(1,)], {}))

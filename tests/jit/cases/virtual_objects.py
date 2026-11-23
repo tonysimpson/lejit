@@ -229,6 +229,16 @@ def method_compare(c):
     return c.get == c.get, c.get is c.get
 
 
+# a tuple compiled code builds is tracked by the GC as CPython's own: from
+# 3.14 one whose items' types the GC doesn't track starts untracked
+def tuples_tracked(n):
+    import gc
+    o = object()
+    built = [(n, n + 1), (o,), (n, 'a', 1.5), ([],), (n, {}), ((n, 2), 3),
+             (n, (o,))]
+    return [gc.is_tracked(t) for t in built]
+
+
 CASES = [
     ('concat_virtual', [(1, 2, 3), ('a', None, 2.5)], {}),
     ('concat_const', [(4,), ('x',)], {}),
@@ -265,4 +275,5 @@ CASES = [
     ('method_const', [()], {}),
     ('method_subclass', "[(C(1),), (D(2),)]", {}),
     ('method_compare', "[(C(1),), (D(2),)]", {}),
+    ('tuples_tracked', [(1,), (5,)], {}),
 ]

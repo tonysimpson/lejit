@@ -177,6 +177,7 @@ static bool
 compute_genexpr(PsycoObject *po, vinfo_t *v)
 {
     vinfo_t *f, *a, *g;
+    int i;
     f = vinfo_getitem(v, iGENEXPR_FUNC);
     a = vinfo_getitem(v, iGENEXPR_ARGS);
     if (f == NULL || a == NULL)
@@ -185,6 +186,13 @@ compute_genexpr(PsycoObject *po, vinfo_t *v)
                            "vvl", f, a, 0L);
     if (g == NULL)
         return false;
+    /* the call's function and arguments, which the generator's frame now
+       holds, go as CPython's call drops them: kept, they would outlive a
+       generator closed or cleared before its end */
+    for (i = iGENEXPR_FUNC; i <= iGENEXPR_GLOBALS; i++) {
+        vinfo_xdecref(v->array->items[i], po);
+        v->array->items[i] = NULL;
+    }
     vinfo_move(po, v, g);
     return true;
 }
@@ -196,8 +204,8 @@ PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple, vinfo_t *vglobals,
 {
     vinfo_t *r = vinfo_new(VirtualTime_New(&psyco_pending_genexpr));
     r->array = array_new(iGENEXPR_CODE + 1);
-    r->array->items[iOB_TYPE] =
-        vinfo_new(CompileTime_New((long)(&PyGen_Type)));
+    r->array->items[iOB_TYPE] = vinfo_new(CompileTime_New(
+        (long)((co->co_flags & CO_COROUTINE) ? &PyCoro_Type : &PyGen_Type)));
     vinfo_incref(vfunc);
     r->array->items[iGENEXPR_FUNC] = vfunc;
     vinfo_incref(arg_tuple);

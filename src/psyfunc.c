@@ -26,6 +26,7 @@
 #include "Python/pycompiler.h"
 #include "codemanager.h"
 #include "mergepoints.h"
+#include "bytecode.h"
 #include "pycodegen.h"
 #include "vcompiler.h"
 /* le_tracing_test */
@@ -883,6 +884,25 @@ compile_callee(PsycoObject *mypo, PyCodeObject *co)
     return codebuf;
 }
 
+/* whether the coroutine of 'co' that the call being compiled makes is
+   awaited at once, by the next instruction of a coroutine compiled to run
+   its awaits (GET_AWAITABLE), and its body can run as a call there */
+static bool
+awaited_at_once(PsycoObject *po, PyCodeObject *co)
+{
+    PyCodeObject *caller = po->pr.co;
+    long mode = psyco_generator_mode(po);
+    le_code_t c;
+    le_instr_t in;
+    if (!(caller->co_flags & CO_COROUTINE) ||
+        (mode != GENEXPR_RESUMABLE && mode != GENEXPR_DIRECT) ||
+        !psyco_is_startable_coroutine(co))
+        return false;
+    c = le_code(caller);
+    in = le_instr(c, po->pr.next_instr);
+    return in.next < c.size && le_instr(c, in.next).op == GET_AWAITABLE;
+}
+
 DEFINEFN
 vinfo_t *
 psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
@@ -906,10 +926,12 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         goto fail_to_default;
     /* a generator is run only by a consumer that knows it
        (psyco_call_genexpr): until then it is a pending generator, of a
-       function known now or still virtual, whose arguments bind here */
+       function known now or still virtual, whose arguments bind here; a
+       coroutine too, where it is awaited at once (psyco_coro_start) */
     generator = (co->co_flags & (CO_GENERATOR | CO_COROUTINE)) != 0;
-    if (generator && (vfunc == NULL || is_runtime(vfunc->source) ||
-                      !psyco_is_fusable_generator(co)))
+    if (generator &&
+        (vfunc == NULL || is_runtime(vfunc->source) ||
+         !(psyco_is_fusable_generator(co) || awaited_at_once(po, co))))
         goto fail_to_default;
     /* closure code: the cells, read below (load_frees) */
     nfrees = PyCode_GetNumFree(co);
@@ -1200,6 +1222,9 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
         else {
             argcount = get_arguments_count(&mypo->vlocals);
             finfo = psyco_finfo(po, mypo);
+            if (mode == GENEXPR_DIRECT)
+                finfo->coro_func =
+                    (PyFunctionObject *)CompileTime_Get(vfunc->source)->value;
             codebuf = compile_callee(mypo, co);
             result = psyco_call_psyco(po, codebuf, sources, argcount, finfo);
             PyMem_FREE(sources);
@@ -1213,10 +1238,10 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
     return result;
 }
 
-/* whether psyco_call_genexpr can run 'v' */
-DEFINEFN
-bool
-psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v)
+/* whether psyco_call_genexpr can run 'v', a pending generator or
+   coroutine */
+static bool
+pending_runnable(PsycoObject *po, vinfo_t *v)
 {
     vinfo_t *vfunc, *closure, *args, *vbuiltins;
     PyCodeObject *co;
@@ -1250,6 +1275,14 @@ psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v)
         return false;
     vinfo_decref(vbuiltins, po);
     return true;
+}
+
+DEFINEFN
+bool
+psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v)
+{
+    return pending_runnable(po, v) &&
+           (pending_code(v)->co_flags & CO_GENERATOR);
 }
 
 /* whether a type site in the fused code of 'v' (fusable) has seen too
@@ -1287,6 +1320,64 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
     on = fuse_stopped(po, v);
     return on < 0 ? -1 : !on;
 }
+
+#if LE_RESUMES_COROUTINES
+/* A coroutine made by an await's call (awaited_at_once) can run its body
+   as a call from the await (pycompiler.c, YIELD_FROM): nothing can see
+   the coroutine object CPython would have made while the body runs, and
+   one is made if the body suspends (pycompiler.c:yield_direct). Not where
+   CPython's coroutine would record its origin
+   (sys.set_coroutine_origin_tracking_depth) or a wrapper would get it,
+   nor while tracing, nor once a type site in its body has seen too many
+   types (fuse_stopped): there the coroutine is made and sent into. Emits
+   those tests: 1 to run the body, 0 for the usual await, -1 with an
+   exception. */
+#define TSTATE_origin_depth                                             \
+    FMUT(DEF_FIELD(PyThreadState, int, coroutine_origin_tracking_depth, \
+                   NO_PREV_FIELD))
+#if LE_HAS_COROUTINE_WRAPPER
+#define TSTATE_coroutine_wrapper                                 \
+    FMUT(DEF_FIELD(PyThreadState, PyObject *, coroutine_wrapper, \
+                   NO_PREV_FIELD))
+#endif
+DEFINEFN
+int
+psyco_coro_start(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *vts, *vfield;
+    condition_code_t cc;
+    int on;
+    /* the function is known, for the coroutine made if it is realised
+       (frames.c:psyco_coros_realise) */
+    if (!pending_runnable(po, v) ||
+        !(pending_code(v)->co_flags & CO_COROUTINE) ||
+        !is_compiletime(v->array->items[iGENEXPR_FUNC]->source))
+        return 0;
+    vts = load_tstate(po);
+    if (vts == NULL)
+        return -1;
+    on = tracing_on(po, vts);
+    if (!on) {
+        vfield = psyco_get_field(po, vts, TSTATE_origin_depth);
+        cc = vfield == NULL ? CC_ERROR : integer_non_null(po, vfield);
+        vinfo_xdecref(vfield, po);
+        on = cc == CC_ERROR ? -1 : runtime_condition_f(po, cc);
+    }
+#if LE_HAS_COROUTINE_WRAPPER
+    if (!on) {
+        vfield = psyco_get_field(po, vts, TSTATE_coroutine_wrapper);
+        cc = vfield == NULL ? CC_ERROR : object_non_null(po, vfield);
+        vinfo_xdecref(vfield, po);
+        on = cc == CC_ERROR ? -1 : runtime_condition_f(po, cc);
+    }
+#endif
+    vinfo_decref(vts, po);
+    if (on != 0)
+        return on < 0 ? -1 : 0;
+    on = fuse_stopped(po, v);
+    return on < 0 ? -1 : !on;
+}
+#endif
 
 DEFINEFN
 void

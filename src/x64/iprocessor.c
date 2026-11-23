@@ -155,9 +155,9 @@ write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax)
     PUSH_R(REG_X64_RBP);
     MOV_R_R(REG_X64_RBP, REG_X64_RSP);
     AND_R_I8(REG_X64_RSP, -16);
-    if (dealloc_rax) { /* tp_dealloc of the object in RAX */
+    if (dealloc_rax) { /* deallocates the object in RAX, as DEC_OB_REFCNT */
         MOV_R_R(REG_X64_RDI, REG_X64_RAX);
-#ifdef Py_TRACE_REFS
+#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_HOOKS
         CALL_I(_Py_Dealloc);
 #else
         MOV_R_O8(REG_X64_RAX, REG_X64_RDI, CPY_OFFSET(PyObject, ob_type));

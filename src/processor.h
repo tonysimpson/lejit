@@ -30,7 +30,7 @@ EXTERNVAR char (*psyco_int_mul_ovf)(long a, long b);
 
 /* code that compiled code may 'call' with arguments in the SysV
    registers and the stack at any alignment: it aligns the stack and calls
-   'fn' (made once, at start-up); the dealloc glue calls tp_dealloc on the
+   'fn' (made once, at start-up); the dealloc glue deallocates the
    object in RAX (x64/iprocessor.c) */
 EXTERNFN code_t *
 psyco_aligned_call_glue(void *fn);

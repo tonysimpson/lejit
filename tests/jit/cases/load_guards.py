@@ -475,6 +475,96 @@ def init_through_base(n):
     return [list(_Sub(i % 2 == 0).__dict__) for i in range(n)]
 
 
+# loads from a class (pobject.c:class_getattr), guarded by its version tag
+class _Consts:
+    pass
+
+
+class _ConstsSub(_Consts):
+    pass
+
+
+class _Marker:
+    pass
+
+
+class _Getter:
+    def __get__(self, obj, tp):
+        return ('got', obj, tp.__name__)
+
+
+def _consts_reset():
+    for C in (_Consts, _ConstsSub, _Marker):
+        for k in [k for k in C.__dict__ if not k.startswith('__')]:
+            delattr(C, k)
+    if '__get__' in _Marker.__dict__:
+        del _Marker.__get__
+    _Consts.A = 1
+    _Consts.B = (1, 2)
+    _Consts.s = staticmethod(lambda x: x + 1)
+    _Consts.c = classmethod(lambda cls, x: (cls.__name__, x))
+    _Consts.f = lambda self: 'f'
+    _Consts.m = _Marker()
+    _ConstsSub.B = 'sub'
+
+
+def _class_loads():
+    try:
+        missing = _Consts.missing
+    except AttributeError as e:
+        missing = str(e)
+    return (_Consts.A, _Consts.B, _Consts.s(1), _Consts.c(2),
+            _Consts.f(None), _ConstsSub.A, _ConstsSub.B, _ConstsSub.c(3),
+            _Consts.__name__, _Consts.__qualname__, _Consts.__doc__,
+            type(_Consts.m).__name__, missing)
+
+
+def class_attributes(n):
+    _consts_reset()
+    out = []
+    for i in range(n):
+        out.append(_class_loads())
+        if i == 1:
+            _Consts.A = 10
+        elif i == 2:
+            _Consts.s = staticmethod(lambda x: -x)
+        elif i == 3:
+            _Consts.c = lambda x: ('plain', x)
+        elif i == 4:
+            _ConstsSub.A = 'own'
+        elif i == 5:
+            del _ConstsSub.B
+        elif i == 6:
+            _Consts.missing = 'found'
+        elif i == 7:
+            _Consts.__doc__ = 'doc'
+    _consts_reset()
+    return out
+
+
+def _marker_load():
+    m = _Consts.m
+    return m if isinstance(m, tuple) else type(m).__name__
+
+
+def class_attribute_gains_get(n):
+    # the attribute is an instance of a class that gains a __get__, or whose
+    # class is assigned one with a __get__: _Consts itself is unchanged
+    _consts_reset()
+    out = []
+    for i in range(n):
+        out.append(_marker_load())
+        if i == 1:
+            _Marker.__get__ = lambda self, obj, tp: ('marker', obj, tp.__name__)
+        elif i == 3:
+            del _Marker.__get__
+        elif i == 5:
+            _Consts.__dict__['m'].__class__ = _Getter
+        elif i == 7:
+            _Consts.__dict__['m'].__class__ = _Marker
+    _consts_reset()
+    return out
+
 CASES = [
     ('init_order', [(9,)], {}),
     ('init_delete_and_refill', [(4,)], {}),
@@ -498,4 +588,6 @@ CASES = [
     ('bases_assigned', [(4,)], {}),
     ('custom_mro', [(4,)], {}),
     ('enum_members', [(10,)], {}),
+    ('class_attributes', [(10,)], {}),
+    ('class_attribute_gains_get', [(10,)], {}),
 ]
