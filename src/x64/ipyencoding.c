@@ -1303,6 +1303,21 @@ psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
    are. */
 DEFINEFN
 vinfo_t *
+psyco_thread_word_load(PsycoObject *po, long offset)
+{
+    vinfo_t *v;
+    reg_t rg;
+    BEGIN_CODE
+    NEED_FREE_REG(rg);
+    MOV_R_FS(rg, offset);
+    END_CODE
+    v = vinfo_new(RunTime_New(rg, false, false));
+    REG_NUMBER(po, rg) = v;
+    return v;
+}
+
+DEFINEFN
+vinfo_t *
 psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
                   global_patch_t *entry, long shape, long offset,
                   code_t *miss_glue, void *arg)
