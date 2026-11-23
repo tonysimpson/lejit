@@ -1642,6 +1642,12 @@ psyco_pycompiler_init(void)
 #define SETLOCAL(i, v) psyco_rebind_local(po, &GETLOCAL(i), (v))
 
 #define STACK_POINTER() (stack_a + po->pr.stack_level)
+/* a callable and the NULL beside it, for a call */
+#if LE_HAS_CALLABLE_UNDER_NULL
+#define PUSH_WITH_NULL(v) (PUSH(v), PUSH(psyco_vi_Zero()))
+#else
+#define PUSH_WITH_NULL(v) (PUSH(psyco_vi_Zero()), PUSH(v))
+#endif
 #define INSTR_OFFSET() (next_instr)
 #define STACK_LEVEL() (po->pr.stack_level)
 #define JUMPBY(offset) (next_instr += (offset))
@@ -2132,8 +2138,9 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
    arguments, the last ones named by the constant tuple on top) and CALL
    (oparg arguments, the last ones named by 'kwnames', its KW_NAMES
    constant, or none), as 3.7's call_function(). The stack, top down:
-   [names tuple], arguments, callable. *stack_to_pop counts everything
-   including the callable. Keyword arguments go in a fresh dict:
+   [names tuple], arguments, and the callable under them or under the NULL
+   beside them. *stack_to_pop counts everything including the callable
+   (not the NULL). Keyword arguments go in a fresh dict:
    duplicates are impossible here (the bytecode compiler rejects them) and
    the callee checks the rest. */
 #if LE_HAS_OPCODE_CALL
@@ -2180,7 +2187,7 @@ end_call_site(PsycoObject *po)
 
 static vinfo_t *
 psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg, PyObject *kwnames,
-                   vinfo_t **stack_top, int *stack_to_pop)
+                   vinfo_t *callable, vinfo_t **stack_top, int *stack_to_pop)
 {
     int na = oparg, nk = 0, i;
     vinfo_t **args;
@@ -2219,7 +2226,7 @@ psyco_ext_do_calls(PsycoObject *po, int opcode, int oparg, PyObject *kwnames,
                 goto fail;
     }
     vargs = PsycoTuple_New(na, args); /* virtual tuple */
-    result = PsycoObject_Call(po, args[-1], vargs, wdict);
+    result = PsycoObject_Call(po, callable, vargs, wdict);
 fail:
     vinfo_xdecref(vargs, po);
     vinfo_xdecref(wdict, po);
@@ -3475,16 +3482,16 @@ cimpl_name_error(PyObject *w)
 }
 
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
-   [kwargs], args, callable. f(*tuple) goes straight to PsycoObject_Call,
-   which can specialise the call; anything else runs CPython's whole case
-   at run time (its copy cimpl_call_function_ex). */
+   [kwargs], args, and the callable beside its NULL. f(*tuple) goes straight to
+   PsycoObject_Call, which can specialise the call; anything else runs
+   CPython's whole case at run time (its copy cimpl_call_function_ex). */
 static vinfo_t *
 psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
                      int *stack_to_pop)
 {
     vinfo_t *kwargs = (oparg & 1) ? stack_top[-1] : NULL;
     vinfo_t *callargs = stack_top[-1 - (oparg & 1)];
-    vinfo_t *func = stack_top[-2 - (oparg & 1)];
+    vinfo_t *func = stack_top[-2 - (oparg & 1) - LE_HAS_CALLABLE_UNDER_NULL];
     vinfo_t *zero = NULL, *result;
     PyTypeObject *t;
     /* and the NULL under the callable, where PUSH_NULL puts one there */
@@ -5360,8 +5367,7 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             }
             POP(obj);
             vinfo_decref(obj, po);
-            PUSH(psyco_vi_Zero());
-            PUSH(meth);
+            PUSH_WITH_NULL(meth);
             goto fine;
         }
 
@@ -5380,8 +5386,9 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             POP_DECREF();
             POP_DECREF();
             if (oparg & 1)
-                PUSH(psyco_vi_Zero());
-            PUSH(x);
+                PUSH_WITH_NULL(x);
+            else
+                PUSH(x);
 #endif
             goto fine;
 
@@ -5400,8 +5407,9 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
                     break;
             }
             if (push_null)
-                PUSH(psyco_vi_Zero());
-            PUSH(v);
+                PUSH_WITH_NULL(v);
+            else
+                PUSH(v);
             goto fine;
         }
 
@@ -5821,10 +5829,13 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
 #endif
 
 #if LE_HAS_OPCODE_DICT_MERGE
+        /* an error names the callable: under the arguments, and under
+           its NULL too where CALLABLE_UNDER_NULL */
         case DICT_MERGE:
-            x = psyco_generic_call(po, cimpl_dict_merge,
-                                   CfCommonIntBoolOrError, "vvv",
-                                   NTOP(oparg + 1), TOP(), NTOP(oparg + 3));
+            x = psyco_generic_call(
+                po, cimpl_dict_merge, CfCommonIntBoolOrError, "vvv",
+                NTOP(oparg + 1), TOP(),
+                NTOP(oparg + 3 + LE_HAS_CALLABLE_UNDER_NULL));
             if (x == NULL)
                 break;
             vinfo_decref(x, po);
@@ -6352,19 +6363,32 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
 
         case CALL_METHOD:
-        case CALL: {
+        case CALL:
+        case CALL_KW: {
             /* LOAD_METHOD looks the attribute up and pushes NULL
-               under it, as PUSH_NULL does before other callables:
-               the (NULL, callable) form. CALL's other form, a
-               callable under its first argument, comes from
-               elsewhere (a decorator, a with statement's exit). */
-            int i, stack_to_pop, null = 1;
+               beside it, as PUSH_NULL does beside other callables:
+               the (NULL, callable) form, or (callable, NULL) where the
+               callable is under its NULL. CALL's other form, a
+               callable beside its first argument, comes from
+               elsewhere (a decorator, a with statement's exit).
+               CALL_KW's keyword names are on top. */
+            int i, stack_to_pop, null = 1, kw = opcode == CALL_KW;
             PyObject *kwnames = NULL;
+            vinfo_t *callable;
+#if LE_HAS_CALLABLE_UNDER_NULL
+            callable = NTOP(oparg + 2 + kw);
+            if (!psyco_knowntobe(NTOP(oparg + 1 + kw), 0)) {
+                null = 0;
+                oparg++;
+            }
+#else
             if (!psyco_knowntobe(NTOP(oparg + 2), 0)) {
                 extra_assert(opcode == CALL);
                 null = 0;
                 oparg++;
             }
+            callable = NTOP(oparg + 1);
+#endif
 #if LE_HAS_OPCODE_CALL
             if (opcode == CALL &&
                 !call_kwnames(po, co, po->pr.next_instr, &kwnames))
@@ -6372,8 +6396,9 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
 #endif
             po->pr.call_site =
                 next_instr - LE_CACHE_BYTES(opcode) - LE_UNIT + 1;
-            x = psyco_ext_do_calls(po, CALL_FUNCTION, oparg, kwnames,
-                                   STACK_POINTER(), &stack_to_pop);
+            x = psyco_ext_do_calls(po, kw ? CALL_FUNCTION_KW : CALL_FUNCTION,
+                                   oparg, kwnames, callable, STACK_POINTER(),
+                                   &stack_to_pop);
             end_call_site(po);
             if (x == NULL)
                 break;
@@ -6396,8 +6421,10 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
                 x = psyco_ext_do_call_ex(po, oparg, STACK_POINTER(),
                                          &stack_to_pop);
             else
-                x = psyco_ext_do_calls(po, opcode, oparg, NULL,
-                                       STACK_POINTER(), &stack_to_pop);
+                x = psyco_ext_do_calls(
+                    po, opcode, oparg, NULL,
+                    NTOP(oparg + 1 + (opcode == CALL_FUNCTION_KW)),
+                    STACK_POINTER(), &stack_to_pop);
             end_call_site(po);
             if (x == NULL)
                 break;

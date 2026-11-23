@@ -447,6 +447,7 @@ le_op_flags(int op)
         case CALL_FUNCTION_EX:
         case CALL_METHOD:
         case CALL:
+        case CALL_KW:
             return LE_OPF_COMPILED | LE_OPF_CALL;
         case PRECALL:
         case KW_NAMES:
