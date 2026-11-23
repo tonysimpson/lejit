@@ -410,11 +410,62 @@ def promoted_reference_released():
     return t, sys.getrefcount(_attr_callee) - before < 10
 
 
+INLINED = """
+class M:
+    def get(self, k, d):
+        return d
+    def ctype(self):
+        missing = object()
+        v = self.get('ct', missing)
+        if v is missing:
+            return 'text/plain'
+        return v
+    def maintype(self):
+        return self.ctype().split('/')[0]
+"""
+CALLER = """
+def close(m):
+    return m.maintype() == 'multipart' or split('a/b')[0] == 'x'
+def split(c):
+    return c.split('/')
+def run(n):
+    t = 0
+    for i in range(n):
+        t += close(M())
+    return t
+"""
+
+
+def inlined_callee_dies_first():
+    # close inlines maintype, and a block compiled in that inlined frame is
+    # listed at maintype's join point. All die in one owner scan, which
+    # finds maintype (compiled on its own too, and made after a collection)
+    # before close and frees it first: that list must outlive close.
+    refs = []
+    out = []
+    for k in range(5):
+        ns = {}
+        exec(CALLER, ns)
+        gc.collect()
+        exec(INLINED, ns)
+        refs.append(weakref.ref(ns['close'].__code__))
+        m = ns['M']()
+        for i in range(30):
+            out.append(m.maintype())
+        del m
+        out.append(ns['run'](30 + k))
+    del ns
+    scan_soon()
+    gc.collect()
+    return out, [r() is None for r in refs]
+
+
 CASES = [
     ('code_dies_with_shared_globals', [()], {'interpreted': 'calls exec'}),
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec'}),
     ('own_namespace_calls', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
     ('own_namespace_recursion', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
+    ('inlined_callee_dies_first', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
     ('freed_in_subinterpreter', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
     ('unscanned_freed_in_subinterpreter', [()],
      {'leaks': 'leaks at random, KNOWN_BUGS'}),
