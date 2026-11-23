@@ -181,6 +181,10 @@ SKIPPED = {
     'bind a port find_unused_port chose, which another process can take '
     'first':
         'test.test_socket.CreateServerFunctionalTest.*',
+    'asserts that wait_for with a timeout of 0 returns within 0.1 s of wall '
+    'time, which fails plain as well as with LeJIT on a loaded machine':
+        'test.test_asyncio.test_waitfor.AsyncioWaitForTest.'
+        'test_wait_for_timeout_less_then_0_or_0_coroutine_do_not_started',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
