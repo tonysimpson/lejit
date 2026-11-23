@@ -351,6 +351,7 @@ le_op_flags(int op)
         case PUSH_EXC_INFO:
         case CHECK_EXC_MATCH:
         case BEFORE_WITH:
+        case LOAD_SPECIAL:
             return LE_OPF_COMPILED;
 #endif
         /* subscripts, building and unpacking, imports, f-strings,
