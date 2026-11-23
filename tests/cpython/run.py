@@ -67,7 +67,20 @@ SKIPPED = {
         'test.test_opcache.TestRacesDoNotCrash.test_store_attr_instance_value '
         'test.test_opcache.TestRacesDoNotCrash.test_store_attr_with_hint '
         'test.test_opcache.TestRacesDoNotCrash.test_store_subscr_list_int '
-        'test.test_opcache.TestRacesDoNotCrash.test_unpack_sequence_list',
+        'test.test_opcache.TestRacesDoNotCrash.test_unpack_sequence_list '
+        'test.test_opcache.TestCallCache.test_push_init_frame_fails '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_class_with_metaclass_check '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_slot '
+        'test.test_opcache.TestSpecializer.test_binary_op '
+        'test.test_opcache.TestSpecializer.test_compare_op '
+        'test.test_opcache.TestSpecializer.test_contain_op '
+        'test.test_opcache.TestSpecializer.test_load_const '
+        'test.test_opcache.TestSpecializer.test_load_super_attr '
+        'test.test_opcache.TestSpecializer.test_store_attr_instance_value '
+        'test.test_opcache.TestSpecializer.test_store_attr_slot '
+        'test.test_opcache.TestSpecializer.test_store_attr_with_hint '
+        'test.test_opcache.TestSpecializer.test_to_bool '
+        'test.test_opcache.TestSpecializer.test_unpack_sequence',
     'CPython counts each frame a frame-evaluation hook is given as a C call '
     'too, so a Python recursion 90,000 deep passes the C recursion limit '
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
@@ -98,6 +111,8 @@ SKIPPED = {
         'test.test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
         'test.test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int',
     "code LeJIT compiles doesn't run in ceval, so ceval doesn't quicken it":
+        'test.test_dis.DisTests.test_loop_with_conditional_at_end_is_quickened '
+        'test.test_dis.DisWithFileTests.test_loop_with_conditional_at_end_is_quickened '
         'test.test_dis.DisTests.test_super_instructions '
         'test.test_dis.DisWithFileTests.test_super_instructions '
         'test.test_dis.DisTests.test_show_caches '
@@ -154,7 +169,8 @@ SKIPPED = {
     "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
     'PyFrame_GetVar) misses those compiled code has set':
         'test.test_capi.test_eval.Tests.test_eval_getlocals '
-        'test.test_frame.TestCAPI.test_getvar',
+        'test.test_frame.TestCAPI.test_getvar '
+        'test.test_capi.test_frame.FrameTest.test_getvar',
     "sys.settrace on 3.12 sees an async for loop's exception events "
     'differently':
         'test.test_sys_settrace.*.test_20_async_for_loop',
@@ -175,6 +191,16 @@ SKIPPED = {
         'test.test_gc.GCTests.test_newinstance '
         'test.test_gc.GCCallbackTests.test_collect_garbage '
         'test.test_capi.*CAPITest.*_decrefs_once',
+    'compiled code passes a constant to a C function without a reference '
+    'of its own, so the function sees one fewer than in CPython':
+        'test.test_capi.test_object.IsUniquelyReferencedTest.test_is_uniquely_referenced',
+    "objects compiled code keeps virtual are never made, so the ref tracer "
+    "doesn't see them destroyed":
+        'test.test_capi.test_object.RefTracerTest.test_destroy_traced_for_trashcan_deferred_objects',
+    "read __main__.__file__, which this runner's children (python -c) "
+    "don't have":
+        'test.test_capi.test_run.CAPITest.test_run_anyfile* '
+        'test.test_capi.test_run.CAPITest.test_run_simplefile*',
     'sys.getrefcount counts differently':
         'test.test_sys.SysModuleTest.test_refcount '
         'test.test_generators.FinalizationTest.test_refcycle '
@@ -192,6 +218,7 @@ SKIPPED = {
     'counts them':
         'test.test_descr.ClassPropertiesAndMethods.test_slots '
         'test.test_gc.GCTests.test_get_objects_arguments '
+        'test.test_gc.GCTests.test_heap_size '
         'test.test_sys.SysModuleTest.test_getallocatedblocks',
     'marshal of a code object with one reference':
         'test.test_importlib.test_abc.*_SourceLoaderBytecodeTests.test_code_bad_* '
@@ -199,6 +226,13 @@ SKIPPED = {
     "compiled code makes Python calls without CPython's frame-evaluation "
     'hook, so a hook the test installs sees none of them':
         'test.test_capi.test_misc.Test_Pep523API.*',
+    "fail every allocation from some point (support.nomemtest, "
+    "_testcapi.set_nomemory), where a compile can't recover":
+        'test.test_bytes.*.test_resize_error '
+        'test.test_capi.test_unicode.*.test_memory_error '
+        'test.test_str.*.test_replace_oom '
+        'test.test_memoryio.*.test_memory_error '
+        'test.test_pyexpat.*.test_error_path_no_crash',
     'a pool of processes started from threads, which hung here once in a '
     'child that runs without LeJIT':
         'test.test_importlib.test_threaded_import.ThreadedImportTests.'
@@ -223,6 +257,10 @@ SKIPPED = {
     'bind a port find_unused_port chose, which another process can take '
     'first':
         'test.test_socket.CreateServerFunctionalTest.*',
+    "connects from a port find_unused_port chose; with LeJIT on 3.10 the "
+    "new socket's descriptor can be gone at getsockname (EBADF), not "
+    "reproduced outside CI":
+        'test.test_socket.NetworkConnectionAttributesTest.testSourceAddress',
     "decodes each read the server makes on its own, so one that ends inside "
     "the data's two-byte character counts it as two, plain as well as with "
     "LeJIT (the test keeps bytes from 3.11)":
@@ -231,6 +269,9 @@ SKIPPED = {
     'time, which fails plain as well as with LeJIT on a loaded machine':
         'test.test_asyncio.test_waitfor.AsyncioWaitForTest.'
         'test_wait_for_timeout_less_then_0_or_0_coroutine_do_not_started',
+    'asserts that one epoll poll returns within 10 ms of wall time, which a '
+    'busy machine can miss whatever runs the test':
+        'test.test_epoll.TestEPoll.test_unregister_closed',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,

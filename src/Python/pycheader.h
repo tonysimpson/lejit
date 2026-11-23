@@ -130,6 +130,8 @@ typedef struct {
                                 just compiled: start a new block
                                 (pycompiler.c:load_global_cached,
                                 pobject.c:generic_getattr) */
+    char pieces;             /* a pieces list may be live (plistobject.c:
+                                PsycoList_ForcePieces); set when unsure */
 } pyc_data_t;
 
 #define AUTO_RECURSION_MAX 200
