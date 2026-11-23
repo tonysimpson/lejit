@@ -1232,6 +1232,53 @@ psyco_group_new(PyObject *key, void *site)
     return &g->owner;
 }
 
+static bool
+holds(le_owner_t *o, source_known_t *sk)
+{
+    PyObject *p = (PyObject *)sk->value;
+    return (sk->refcount1_flags & (SkFlagPyObj | SkFlagBorrowed)) !=
+               SkFlagPyObj ||
+           (PyType_Check(p) &&
+            !(((PyTypeObject *)p)->tp_flags & Py_TPFLAGS_HEAPTYPE)) ||
+           (o->pins != NULL && o->pins[pin_slot(o, p)] == p);
+}
+
+/* 'o' holds every constant in 'a'; with 'drop', the type hints it doesn't
+   hold are dropped (they are only hints) */
+static bool
+holds_all(le_owner_t *o, vinfo_array_t *a, bool drop)
+{
+    int i;
+    for (i = a->count; i--;) {
+        vinfo_t *v = a->items[i];
+        if (v == NULL)
+            continue;
+        if (!drop && is_compiletime(v->source) &&
+            !holds(o, CompileTime_Get(v->source)))
+            return false;
+        if (drop && v->type_hint != NULL && !holds(o, v->type_hint)) {
+            sk_decref(v->type_hint);
+            v->type_hint = NULL;
+        }
+        if (v->array != NullArray && !holds_all(o, v->array, drop))
+            return false;
+    }
+    return true;
+}
+
+DEFINEFN le_owner_t *
+psyco_owner_root_holding(vinfo_array_t *a)
+{
+    le_owner_t *root;
+    if (psyco_owner == NULL || psyco_owner->parent == NULL)
+        return NULL;
+    root = owner_root(psyco_owner);
+    if (!holds_all(root, a, false))
+        return NULL;
+    holds_all(root, a, true);
+    return root;
+}
+
 DEFINEFN void
 psyco_owner_depend(CodeBufferObject *b)
 {

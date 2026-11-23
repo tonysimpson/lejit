@@ -106,7 +106,7 @@ report_destructor(PyObject *capsule)
         Py_ssize_t _t = JUMP_TARGET(target);               \
         if (_t <= entry_count_index) {                     \
             entry_count[_t] = 8;                           \
-            if (!LE_IS_JBACK(opcode))                      \
+            if (!LE_IS_JBACK(in.raw))                      \
                 BREAKER_CHECK(_t);                         \
             else if (opcode != JUMP_BACKWARD_NO_INTERRUPT) \
                 breaker_check[entry_count_index] = 1;      \
@@ -116,7 +116,7 @@ report_destructor(PyObject *capsule)
     } while (0)
 
 /* the current instruction's jump target, in code units */
-#define TARGET_UNIT() (le_jump_target(c, in) / LE_UNIT)
+#define TARGET_UNIT() (in.target / LE_UNIT)
 
 #define MAX_MP_DISTANCE 170
 
@@ -124,22 +124,7 @@ report_destructor(PyObject *capsule)
    LOAD_GLOBAL, and at most this many instructions that are not "light"
    (produce little or no code) */
 #define INLINE_MAXIMUM_WEIGHT 6
-#define IS_LIGHT_INSTR(op)                                                    \
-    ((op) == NOP || (op) == POP_TOP || (op) == ROT_TWO ||                     \
-     (op) == ROT_THREE || (op) == DUP_TOP || (op) == DUP_TOP_TWO ||           \
-     (op) == LOAD_CONST || (op) == LOAD_FAST || (op) == STORE_FAST ||         \
-     (op) == DELETE_FAST || (op) == UNPACK_SEQUENCE || (op) == BUILD_TUPLE || \
-     (op) == BUILD_LIST || (op) == BUILD_MAP || (op) == RETURN_VALUE ||       \
-     (op) == JUMP_FORWARD || (op) == JUMP_ABSOLUTE ||                         \
-     (op) == POP_JUMP_IF_FALSE || (op) == POP_JUMP_IF_TRUE ||                 \
-     (op) == JUMP_IF_FALSE_OR_POP || (op) == JUMP_IF_TRUE_OR_POP ||           \
-     (op) == EXTENDED_ARG || (op) == RESUME || (op) == COPY ||                \
-     (op) == SWAP || (op) == PUSH_NULL || (op) == JUMP_BACKWARD ||            \
-     (op) == POP_JUMP_FORWARD_IF_FALSE || (op) == POP_JUMP_FORWARD_IF_TRUE || \
-     (op) == POP_JUMP_BACKWARD_IF_FALSE ||                                    \
-     (op) == POP_JUMP_BACKWARD_IF_TRUE || (op) == PRECALL ||                  \
-     (op) == KW_NAMES || (op) == MAKE_CELL || (op) == COPY_FREE_VARS ||       \
-     (op) == RETURN_CONST || (op) == LOAD_FAST_CHECK)
+#define IS_LIGHT_INSTR(op) (le_op_flags(op) & LE_OPF_LIGHT)
 
 /* ceval tests eval_breaker before every instruction it reaches through
    DISPATCH(): after most opcodes, and at a frame's start. Compiled code
@@ -196,55 +181,30 @@ _live_pass(Py_ssize_t n, const int *op, const int *arg, const int *nxt,
     Py_ssize_t i, k;
     int changed = 0;
     for (i = n - 1; i >= 0; i--) {
-        int o = op[i], a = arg[i];
+        int o = op[i], a = arg[i], f;
         uint64_t *in = live + i * words;
         if (o < 0)
             continue;
+        f = le_op_flags(o);
         memset(tmp, 0, words * sizeof(uint64_t));
         for (k = 0; k < nsetups; k++)
             if (setup_at[k] <= i && i < try_end[k])
                 _live_union(tmp, live + handler_at[k] * words, words);
-        switch (o) {
-            case RETURN_VALUE:
-            case RETURN_CONST:
-            case RAISE_VARARGS:
-#if LE_HAS_EXCEPTION_TABLE
-            case RERAISE:
-#endif
-                break;
-            case JUMP_ABSOLUTE:
-            case JUMP_BACKWARD:
-            case JUMP_BACKWARD_NO_INTERRUPT:
-            case CONTINUE_LOOP:
-            case JUMP_FORWARD:
-            case CALL_FINALLY: /* its return, by END_FINALLY, is an exit_to */
+        if (o == BREAK_LOOP)
+            for (k = 0; k < nbreak; k++)
+                _live_union(tmp, live + break_to[k] * words, words);
+        else if (o == END_FINALLY) {
+            for (k = 0; k < nexit; k++)
+                _live_union(tmp, live + exit_to[k] * words, words);
+            _live_union(tmp, live + nxt[i] * words, words);
+        }
+        /* its return, by END_FINALLY, is an exit_to */
+        else if (o == CALL_FINALLY)
+            _live_union(tmp, live + a * words, words);
+        else if (!(f & LE_OPF_STOPS)) {
+            if (f & (LE_OPF_JUMPS | LE_OPF_BRANCHES))
                 _live_union(tmp, live + a * words, words);
-                break;
-            case POP_JUMP_IF_FALSE:
-            case POP_JUMP_IF_TRUE:
-            case JUMP_IF_FALSE_OR_POP:
-            case JUMP_IF_TRUE_OR_POP:
-            case FOR_ITER:
-            case SETUP_LOOP:
-            case SETUP_EXCEPT:
-            case SETUP_FINALLY:
-            case SETUP_WITH:
-                _live_union(tmp, live + a * words, words);
-                _live_union(tmp, live + nxt[i] * words, words);
-                break;
-            case BREAK_LOOP:
-                for (k = 0; k < nbreak; k++)
-                    _live_union(tmp, live + break_to[k] * words, words);
-                break;
-            case END_FINALLY:
-                for (k = 0; k < nexit; k++)
-                    _live_union(tmp, live + exit_to[k] * words, words);
-                _live_union(tmp, live + nxt[i] * words, words);
-                break;
-            default:
-                /* any other jump the source has may go either way */
-                if (LE_IS_JABS(o) || LE_IS_JREL(o))
-                    _live_union(tmp, live + a * words, words);
+            if (!(f & LE_OPF_JUMPS))
                 _live_union(tmp, live + nxt[i] * words, words);
         }
         /* in = uses | (out - defs) */
@@ -309,8 +269,7 @@ _find_dead_locals(PyCodeObject *co, co_report_t *report)
         le_instr_t in = le_instr(c, (int)i * LE_UNIT);
         int o = in.op, j;
         i = in.next / LE_UNIT;
-        j = LE_IS_JABS(o) || LE_IS_JREL(o) ? le_jump_target(c, in) / LE_UNIT
-                                           : -1;
+        j = in.target >= 0 ? in.target / LE_UNIT : -1;
         op[start] = o;
         arg[start] = j >= 0 ? j : in.arg;
         nxt[start] = (int)i;
@@ -427,41 +386,13 @@ _find_merge_points(PyCodeObject *co, int *bad)
         /* after a call pycompiler.c tests at the end of the call itself,
            if it emitted a call that may block, except before an
            instruction ceval skips: then always, after that one */
-        if ((opcode == CALL_FUNCTION || opcode == CALL_FUNCTION_KW ||
-             opcode == CALL_FUNCTION_EX || opcode == CALL_METHOD ||
-             opcode == CALL) &&
-            next_unit < end_unit && BREAKER_SKIPS(le_op(c, in.next)))
+        if ((le_op_flags(opcode) & LE_OPF_CALL) && next_unit < end_unit &&
+            BREAKER_SKIPS(le_op(c, in.next)))
             BREAKER_CHECK(next_unit);
+        extra_assert(
+            (in.target >= 0) ==
+            ((le_op_flags(opcode) & (LE_OPF_JUMPS | LE_OPF_BRANCHES)) != 0));
         switch (opcode) {
-            /* no successor in this code */
-            case RETURN_VALUE:
-            case RETURN_CONST:
-            case RAISE_VARARGS:
-#if LE_HAS_EXCEPTION_TABLE
-            case RERAISE:
-#endif
-            case BREAK_LOOP: /* to the SETUP_LOOP target, counted there */
-                break;
-            /* unconditional jumps */
-            case JUMP_ABSOLUTE:
-            case JUMP_BACKWARD:
-            case JUMP_BACKWARD_NO_INTERRUPT:
-            case CONTINUE_LOOP:
-            case JUMP_FORWARD:
-                ENTER_JUMP_TO(TARGET_UNIT());
-                break;
-            /* two successors; CALL_FINALLY's are the finally block and the
-               next instruction, where END_FINALLY leaves the block */
-            case CALL_FINALLY:
-            case POP_JUMP_IF_FALSE:
-            case POP_JUMP_IF_TRUE:
-            case JUMP_IF_FALSE_OR_POP:
-            case JUMP_IF_TRUE_OR_POP:
-            case FOR_ITER:
-            case SETUP_LOOP: /* the loop's end, also reached by break */
-                ENTER_JUMP_TO(TARGET_UNIT());
-                ENTER_NEXT();
-                break;
             /* a handler can be entered from anywhere in the block */
             case SETUP_EXCEPT:
                 flags |= MP_FLAGS_HAS_EXCEPT;
@@ -476,11 +407,16 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 entry_count[JUMP_TARGET(TARGET_UNIT())] = 8;
                 ENTER_NEXT();
                 break;
-            /* any other jump the source has may go either way */
+            /* BREAK_LOOP goes to the SETUP_LOOP target, counted there;
+               CALL_FINALLY's successors are the finally block and the next
+               instruction, where END_FINALLY leaves the block */
             default:
-                if (LE_IS_JABS(opcode) || LE_IS_JREL(opcode))
+                if (le_op_flags(opcode) & LE_OPF_STOPS)
+                    break;
+                if (le_op_flags(opcode) & (LE_OPF_JUMPS | LE_OPF_BRANCHES))
                     ENTER_JUMP_TO(TARGET_UNIT());
-                ENTER_NEXT();
+                if (!(le_op_flags(opcode) & LE_OPF_JUMPS))
+                    ENTER_NEXT();
         }
     }
 
@@ -603,257 +539,6 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
     return 0;
 }
 
-/* The opcodes pycompiler.c compiles, family by family: code with any
-   other runs in ceval. Where handlers are in an exception table, only the
-   families ported to that bytecode are compiled. */
-static int
-compiled_opcode(int op)
-{
-    switch (op) {
-        /* locals, constants and the stack */
-        case NOP:
-        case EXTENDED_ARG:
-        case RESUME:
-        case LOAD_FAST:
-        case LOAD_FAST_CHECK:
-        case LOAD_FAST_AND_CLEAR:
-        case LOAD_CONST:
-        case STORE_FAST:
-        case DELETE_FAST:
-        case POP_TOP:
-        case ROT_TWO:
-        case ROT_THREE:
-#if LE_HAS_OPCODE_ROT_FOUR
-        case ROT_FOUR:
-#endif
-#if LE_HAS_OPCODE_ROT_N
-        case ROT_N:
-#endif
-        case DUP_TOP:
-        case DUP_TOP_TWO:
-        case COPY:
-        case SWAP:
-        case PUSH_NULL:
-        /* attributes */
-        case LOAD_ATTR:
-        case STORE_ATTR:
-        case DELETE_ATTR:
-        case LOAD_SUPER_ATTR:
-        /* operators */
-        case UNARY_POSITIVE:
-        case UNARY_NEGATIVE:
-        case UNARY_NOT:
-        case UNARY_INVERT:
-        case BINARY_OP:
-        case BINARY_POWER:
-        case BINARY_MULTIPLY:
-        case BINARY_MATRIX_MULTIPLY:
-        case BINARY_TRUE_DIVIDE:
-        case BINARY_FLOOR_DIVIDE:
-        case BINARY_MODULO:
-        case BINARY_ADD:
-        case BINARY_SUBTRACT:
-        case BINARY_LSHIFT:
-        case BINARY_RSHIFT:
-        case BINARY_AND:
-        case BINARY_XOR:
-        case BINARY_OR:
-        case INPLACE_POWER:
-        case INPLACE_MULTIPLY:
-        case INPLACE_MATRIX_MULTIPLY:
-        case INPLACE_TRUE_DIVIDE:
-        case INPLACE_FLOOR_DIVIDE:
-        case INPLACE_MODULO:
-        case INPLACE_ADD:
-        case INPLACE_SUBTRACT:
-        case INPLACE_LSHIFT:
-        case INPLACE_RSHIFT:
-        case INPLACE_AND:
-        case INPLACE_XOR:
-        case INPLACE_OR:
-        case COMPARE_OP:
-#if LE_HAS_OPCODE_IS_OP
-        case IS_OP:
-#endif
-#if LE_HAS_OPCODE_CONTAINS_OP
-        case CONTAINS_OP:
-#endif
-        /* exceptions (except* stays interpreted where it has opcodes of its
-           own) */
-        case RAISE_VARARGS:
-#if LE_HAS_EXCEPTION_TABLE
-        case PUSH_EXC_INFO:
-        case POP_EXCEPT:
-        case RERAISE:
-        case CHECK_EXC_MATCH:
-        case BEFORE_WITH:
-        case WITH_EXCEPT_START:
-#endif
-        /* subscripts, building and unpacking, imports, f-strings,
-           iteration and pattern matching */
-        case BINARY_SUBSCR:
-        case STORE_SUBSCR:
-        case DELETE_SUBSCR:
-        case BINARY_SLICE:
-        case STORE_SLICE:
-        case BUILD_TUPLE:
-        case BUILD_LIST:
-        case BUILD_SET:
-        case BUILD_MAP:
-        case BUILD_CONST_KEY_MAP:
-        case BUILD_STRING:
-        case BUILD_SLICE:
-        case LIST_APPEND:
-        case SET_ADD:
-        case MAP_ADD:
-#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK_WITH_CALL
-        case BUILD_TUPLE_UNPACK_WITH_CALL:
-#endif
-#if LE_HAS_OPCODE_BUILD_TUPLE_UNPACK
-        case BUILD_TUPLE_UNPACK:
-#endif
-#if LE_HAS_OPCODE_BUILD_LIST_UNPACK
-        case BUILD_LIST_UNPACK:
-#endif
-        case LIST_TO_TUPLE:
-#if LE_HAS_OPCODE_LIST_EXTEND
-        case LIST_EXTEND:
-#endif
-#if LE_HAS_OPCODE_SET_UPDATE
-        case SET_UPDATE:
-#endif
-#if LE_HAS_OPCODE_BUILD_SET_UNPACK
-        case BUILD_SET_UNPACK:
-#endif
-#if LE_HAS_OPCODE_BUILD_MAP_UNPACK
-        case BUILD_MAP_UNPACK:
-#endif
-#if LE_HAS_OPCODE_BUILD_MAP_UNPACK_WITH_CALL
-        case BUILD_MAP_UNPACK_WITH_CALL:
-#endif
-#if LE_HAS_OPCODE_DICT_UPDATE
-        case DICT_UPDATE:
-#endif
-#if LE_HAS_OPCODE_DICT_MERGE
-        case DICT_MERGE:
-#endif
-        case UNPACK_SEQUENCE:
-        case UNPACK_EX:
-        case IMPORT_NAME:
-        case IMPORT_FROM:
-        case FORMAT_VALUE:
-        case PRINT_EXPR:
-        case CALL_INTRINSIC_1: /* compiled_intrinsic's */
-        case LOAD_BUILD_CLASS:
-#if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
-        case LOAD_ASSERTION_ERROR:
-#endif
-        case GET_ITER:
-        case FOR_ITER:
-        case END_FOR:
-#if LE_HAS_OPCODE_GET_LEN
-        case GET_LEN:
-#endif
-#if LE_HAS_OPCODE_MATCH_CLASS
-        case MATCH_CLASS:
-#endif
-#if LE_HAS_OPCODE_MATCH_MAPPING
-        case MATCH_MAPPING:
-#endif
-#if LE_HAS_OPCODE_MATCH_SEQUENCE
-        case MATCH_SEQUENCE:
-#endif
-#if LE_HAS_OPCODE_MATCH_KEYS
-        case MATCH_KEYS:
-#endif
-#if LE_HAS_OPCODE_COPY_DICT_WITHOUT_KEYS
-        case COPY_DICT_WITHOUT_KEYS:
-#endif
-        /* jumps and return */
-        case JUMP_FORWARD:
-        case JUMP_ABSOLUTE:
-        case JUMP_BACKWARD:
-        case JUMP_BACKWARD_NO_INTERRUPT:
-        case POP_JUMP_IF_FALSE:
-        case POP_JUMP_IF_TRUE:
-        case POP_JUMP_FORWARD_IF_FALSE:
-        case POP_JUMP_FORWARD_IF_TRUE:
-        case POP_JUMP_BACKWARD_IF_FALSE:
-        case POP_JUMP_BACKWARD_IF_TRUE:
-        case POP_JUMP_FORWARD_IF_NONE:
-        case POP_JUMP_FORWARD_IF_NOT_NONE:
-        case POP_JUMP_BACKWARD_IF_NONE:
-        case POP_JUMP_BACKWARD_IF_NOT_NONE:
-        case POP_JUMP_IF_NONE:
-        case POP_JUMP_IF_NOT_NONE:
-        case JUMP_IF_FALSE_OR_POP:
-        case JUMP_IF_TRUE_OR_POP:
-        case RETURN_VALUE:
-        case RETURN_CONST:
-        /* globals */
-        case LOAD_GLOBAL:
-        case STORE_GLOBAL:
-        case DELETE_GLOBAL:
-        /* calls and functions */
-        case CALL_FUNCTION:
-        case CALL_FUNCTION_KW:
-        case CALL_FUNCTION_EX:
-        case CALL_METHOD:
-        case LOAD_METHOD:
-        case PRECALL:
-        case KW_NAMES:
-        case CALL:
-        case MAKE_FUNCTION:
-        /* cells */
-        case MAKE_CELL:
-        case COPY_FREE_VARS:
-        case LOAD_CLOSURE:
-        case LOAD_DEREF:
-        case STORE_DEREF:
-        case DELETE_DEREF:
-        /* generator expressions (psyco_is_genexpr) */
-        case RETURN_GENERATOR:
-        case YIELD_VALUE:
-            return 1;
-    }
-#if !LE_HAS_EXCEPTION_TABLE
-    switch (op) {
-        /* exceptions, and the blocks that handle them */
-        case SETUP_LOOP:
-        case SETUP_EXCEPT:
-        case SETUP_FINALLY:
-        case SETUP_WITH:
-        case POP_BLOCK:
-        case POP_EXCEPT:
-        case END_FINALLY:
-        case BEGIN_FINALLY:
-        case CALL_FINALLY:
-        case POP_FINALLY:
-        case BREAK_LOOP:
-        case CONTINUE_LOOP:
-        case WITH_CLEANUP_START:
-        case WITH_CLEANUP_FINISH:
-#if LE_HAS_OPCODE_WITH_EXCEPT_START
-        case WITH_EXCEPT_START:
-#endif
-#if LE_HAS_OPCODE_RERAISE
-        case RERAISE:
-#endif
-#if LE_HAS_OPCODE_JUMP_IF_NOT_EXC_MATCH
-        case JUMP_IF_NOT_EXC_MATCH:
-#endif
-        /* generators */
-        case YIELD_VALUE:
-        case GEN_START:
-        /* in a plain function too: an async generator expression's
-           outermost iterable */
-        case GET_AITER:
-            return 1;
-    }
-#endif
-    return 0;
-}
-
 /* the CALL_INTRINSIC_1 arguments pycompiler.c compiles: a generator's
    PEP 479 handler, and those that are the opcodes they replaced */
 static int
@@ -904,7 +589,7 @@ _build_merge_points(PyCodeObject *co, int module)
         opcode = in.op;
         oparg = in.arg;
         pos = in.next;
-        if (!compiled_opcode(opcode))
+        if (!(le_op_flags(opcode) & LE_OPF_COMPILED))
             goto not_ok;
         /* pycompiler.c:call_kwnames finds a CALL's KW_NAMES before this */
         if (LE_HAS_OPCODE_PRECALL && opcode == CALL && prev != PRECALL)

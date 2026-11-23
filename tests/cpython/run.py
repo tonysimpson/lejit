@@ -20,23 +20,9 @@ BANNED = {
         'test_win* test_msilib test_startfile test_osx_env test_kqueue test_devpoll test_ossaudiodev '
         'test_big* test_largefile test_zipfile64 test_multiprocessing_* test_concurrent_futures '
         'test_support test_script_helper test_regrtest test_crashers test_gdb test_check_c_globals',
-    "compiled frames aren't kept up to date (line numbers, locals, stacks)":
-        'test_sys test_frame test_traceback test_tracemalloc test_warnings test_logging '
-        'test_coroutines test_asyncio test_compile test_raise test_builtin '
-        'test_doctest test_capi',
-    'compiled code holds what it specialised on':
-        'test_weakref test_gc test_module test_descr',
-    'sys.getrefcount counts differently':
-        'test_generators test_ctypes test_memoryio test_socket',
-    'tracing that starts in a running frame':
-        'test_sys_settrace test_pdb',
     'sys.monitoring with a frame-evaluation hook installed '
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
         'test_monitoring',
-    'marshal of a code object with one reference': 'test_importlib',
-    'timing': 'test_email',
-    "SSL tests that race on OpenSSL 3, which the CI images' older CPythons predate":
-        'test_poplib',
 }
 
 # reason: tests skipped in both runs, by id as the report prints it (fnmatch
@@ -93,9 +79,87 @@ SKIPPED = {
         'test_class_load_attr_specialization_user_type '
         'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_class_load_attr_specialization_static_type',
+    "C code that reads the running frame itself (sys._current_frames, "
+    "tracemalloc, a _warnings module imported after LeJIT started, type()'s "
+    "__module__) sees the nearest frame ceval runs, not the compiled ones":
+        'test.test_sys.SysModuleTest.test_current_frames '
+        'test.test_sys.SysModuleTest.test_current_exceptions '
+        'test.test_tracemalloc.TestCAPI.* '
+        'test.test_tracemalloc.TestTracemallocEnabled.test_get_object_traceback '
+        'test.test_tracemalloc.TestTracemallocEnabled.test_get_traced_memory '
+        'test.test_tracemalloc.TestTracemallocEnabled.test_get_traces '
+        'test.test_tracemalloc.TestTracemallocEnabled.test_get_traces_intern_traceback '
+        'test.test_tracemalloc.TestTracemallocEnabled.test_new_reference '
+        'test.test_tracemalloc.TestTracemallocEnabled.test_no_incomplete_frames '
+        'test.test_tracemalloc.TestTracemallocEnabled.test_set_traceback_limit '
+        'test.test_tracemalloc.TestTracemallocEnabled.test_snapshot '
+        'test.test_warnings.CFilterTests.test_error_after_default '
+        'test.test_warnings.CWarnTests.test_filename '
+        'test.test_warnings.CWarnTests.test_stacklevel '
+        'test.test_warnings.CWarnTests.test_stacklevel_import '
+        'test.test_builtin.TestType.test_new_type '
+        'test.test_builtin.TestType.test_type_name',
+    "a compiled frame's line, frame object or f_back isn't always what "
+    'CPython gives':
+        'test.test_frame.ClearTest.test_clear_executing '
+        'test.test_frame.ReprTest.test_repr '
+        'test.test_traceback.TestStack.test_walk_stack '
+        'test.test_coroutines.OriginTrackingTest.test_origin_tracking '
+        'test.test_coroutines.OriginTrackingTest.test_origin_tracking_warning '
+        'test.test_coroutines.OriginTrackingTest.test_unawaited_warning_when_module_broken '
+        'test.test_compile.TestSpecifics.test_lineno_after_implicit_return '
+        'test.test_raise.TestTracebackType.test_attrs '
+        'test.test_gc.GCTests.test_frame',
+    'tracing that starts in a running frame (pdb.set_trace)':
+        'test.test_sys_settrace.*.test_09_settrace_and_raise '
+        'test.test_pdb.test_* '
+        'test.test_doctest.test_pdb_set_trace*',
+    "compiled code's direct and inlined calls skip CPython's recursion "
+    'depth count, so the limit trips somewhere else':
+        'test.test_sys.SysModuleTest.test_recursionlimit_recovery',
+    'compiled code holds what it specialised on':
+        'test.test_weakref.ReferencesTestCase.test_callback_in_cycle_resurrection '
+        'test.test_weakref.WeakMethodTestCase.test_callback_when_method_dead '
+        'test.test_weakref.WeakMethodTestCase.test_method_dead '
+        'test.test_gc.GCTests.test_newinstance '
+        'test.test_gc.GCCallbackTests.test_collect_garbage '
+        'test.test_capi.*CAPITest.*_decrefs_once',
+    'sys.getrefcount counts differently':
+        'test.test_sys.SysModuleTest.test_refcount '
+        'test.test_generators.FinalizationTest.test_refcycle '
+        'ctypes.test.test_memfunctions.MemFunctionsTest.test_string_at '
+        'ctypes.test.test_python_api.PythonAPITestCase.test_PyLong_Long '
+        'ctypes.test.test_refcounts.RefcountTestCase.test_1 '
+        'ctypes.test.test_refcounts.RefcountTestCase.test_refcount '
+        'ctypes.test.test_stringptr.StringPtrTestCase.test__POINTER_c_char',
+    'compiling allocates memory and objects the gc tracks, while the test '
+    'counts them':
+        'test.test_descr.ClassPropertiesAndMethods.test_slots '
+        'test.test_gc.GCTests.test_get_objects_arguments '
+        'test.test_sys.SysModuleTest.test_getallocatedblocks',
+    'marshal of a code object with one reference':
+        'test.test_importlib.test_abc.*_SourceLoaderBytecodeTests.test_code_bad_* '
+        'test.test_importlib.test_abc.*_SourceLoaderBytecodeTests.test_no_bytecode',
+    "compiled code makes Python calls without CPython's frame-evaluation "
+    'hook, so a hook the test installs sees none of them':
+        'test.test_capi.test_misc.Test_Pep523API.*',
+    'on 3.11 a keyword argument is passed by position after a few calls':
+        'test.test_asyncio.test_proactor_events.ProactorDatagramTransportTests.test_sendto_bytearray '
+        'test.test_asyncio.test_proactor_events.ProactorDatagramTransportTests.test_sendto_memoryview',
+    'a pool of processes started from threads, which hung here once in a '
+    'child that runs without LeJIT':
+        'test.test_importlib.test_threaded_import.ThreadedImportTests.'
+        'test_multiprocessing_pool_circular_import',
+    "SSL tests that race on OpenSSL 3, which the CI images' older CPythons predate":
+        'test.test_poplib.TestPOP3_SSLClass.* '
+        'test.test_poplib.TestPOP3_TLSClass.* '
+        'test.test_poplib.TestPOP3Class.test_stls*',
     'binds a port find_unused_port chose, and skips itself when another '
     'process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress',
+    'bind a port find_unused_port chose, which another process can take '
+    'first':
+        'test.test_socket.CreateServerFunctionalTest.*',
     "C code that reads the thread's frames itself sees the nearest real "
     "frame, not a compiled one (typing.TypeAliasType's __module__)":
         'test.test_type_aliases.TypeAliasConstructorTest.test_basic '
