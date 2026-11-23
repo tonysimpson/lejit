@@ -256,6 +256,10 @@ psyco_can_go_interpreted(PsycoObject *po);
    pycheader.h), or 0 if it is not a generator's code */
 EXTERNFN long
 psyco_generator_mode(PsycoObject *po);
+#if LE_RESUMES_COROUTINES
+EXTERNFN int
+psyco_trace_yield(PyFrameObject *frame, PyObject *value);
+#endif
 /* the same again, detecting megamorphic sites: if many different run-time
    values keep showing up, return 0.  If successfully promoted, return 1.
    In case of exception, return -1. */

@@ -2611,6 +2611,35 @@ cimpl_call_trace_protected(Py_tracefunc func, PyObject *obj,
     }
 }
 
+#if LE_RESUMES_COROUTINES
+/* ceval's 'return' events of a frame that yields 'value', when tracing
+   started while it ran compiled, before its await (an awaited body,
+   started by the await, set it): a body that yields compiled is otherwise
+   not traced. -1 with an exception, as ceval's yield then raises. */
+DEFINEFN int
+psyco_trace_yield(PyFrameObject *frame, PyObject *value)
+{
+    PyThreadState *tstate = PyThreadState_GET();
+#if LE_HAS_CEVAL_TRACE_INFO
+    PyTraceInfo trace_info_here = {.code = NULL, .cframe = *tstate->cframe};
+    PyTraceInfo *trace_info = &trace_info_here;
+#endif
+    if (!TSTATE_USE_TRACING(tstate))
+        return 0;
+    if (tstate->c_tracefunc != NULL &&
+        cimpl_call_trace_protected(tstate->c_tracefunc, tstate->c_traceobj,
+                                   frame, TRACE_INFO_ARG PyTrace_RETURN,
+                                   value) < 0)
+        return -1;
+    if (tstate->c_profilefunc != NULL &&
+        cimpl_call_trace_protected(tstate->c_profilefunc, tstate->c_profileobj,
+                                   frame, TRACE_INFO_ARG PyTrace_RETURN,
+                                   value) < 0)
+        return -1;
+    return 0;
+}
+#endif
+
 #define C_TRACE(x, call)                                                      \
     if (CALL_USE_TRACING && tstate->c_profilefunc) {                          \
         if (cimpl_call_trace(tstate->c_profilefunc, tstate->c_profileobj,     \
@@ -4036,7 +4065,7 @@ cimpl_minmax_result(PyObject *best, long is_min)
 }
 
 static void
-cimpl_generator_stop(void)
+cimpl_generator_stop(long coroutine)
 {
     PyObject *exc, *val, *tb;
     if (!PyErr_ExceptionMatches(PyExc_StopIteration))
@@ -4047,7 +4076,9 @@ cimpl_generator_stop(void)
         PyException_SetTraceback(val, tb);
     Py_DECREF(exc);
     Py_XDECREF(tb);
-    PyErr_SetString(PyExc_RuntimeError, LE_MSG_GENERATOR_STOP_ITERATION);
+    PyErr_SetString(PyExc_RuntimeError, coroutine
+                                            ? LE_MSG_CORO_STOP_ITERATION
+                                            : LE_MSG_GENERATOR_STOP_ITERATION);
     /* as _PyErr_ChainExceptions: the new exception's cause and context */
     {
         PyObject *e2, *v2, *t2;
@@ -4139,10 +4170,12 @@ exit_function(PsycoObject *po)
         if (!compute_and_raise_exception(po))
             return NULL;
         /* PEP 479, as gen_send_ex: StopIteration leaving a fused generator
-           becomes RuntimeError. A resumable one's gen_send_ex does it, once
-           the frame has gone, so the traceback has no more entries. */
+           or a direct-started coroutine becomes RuntimeError. A resumable
+           one's gen_send_ex does it, once the frame has gone, so the
+           traceback has no more entries. */
         if (mode != 0 && mode != GENEXPR_RESUMABLE &&
-            !psyco_generic_call(po, cimpl_generator_stop, CfNoReturnValue, ""))
+            !psyco_generic_call(po, cimpl_generator_stop, CfNoReturnValue, "l",
+                                (long)(mode == GENEXPR_DIRECT)))
             return NULL;
         clear_pseudo_exception(po);
         sk_incref(&psyco_skZero);
@@ -4582,9 +4615,10 @@ psyco_can_go_interpreted(PsycoObject *po)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int i, nstack = STACK_LEVEL();
+    long mode = psyco_generator_mode(po);
     if ((po->pr.co->co_flags & (CO_ITERABLE_COROUTINE | CO_ASYNC_GENERATOR)) ||
         ((po->pr.co->co_flags & (CO_GENERATOR | CO_COROUTINE)) &&
-         psyco_generator_mode(po) != GENEXPR_RESUMABLE))
+         mode != GENEXPR_RESUMABLE && mode != GENEXPR_DIRECT))
         return false;
     for (i = 0; i < nstack; i++)
         if (is_pseudo_exception_tuple(stack_a[i]))
@@ -4648,9 +4682,18 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
             next_instr = kw;
     }
 #endif
-    result = psyco_generic_call(
-        po, psyco_resume_run, CfCommonNewRefPyObject, "vll", st,
-        (long)(next_instr - sizeof(_Py_CODEUNIT)), (long)nstack);
+#if LE_RESUMES_COROUTINES
+    /* a coroutine's body started by its await goes on as its coroutine */
+    if (psyco_generator_mode(po) == GENEXPR_DIRECT)
+        result = psyco_generic_call(
+            po, psyco_resume_run_coro, CfCommonNewRefPyObject, "vllv", st,
+            (long)(next_instr - sizeof(_Py_CODEUNIT)), (long)nstack,
+            po->vlocals.items[GENEXPR_SLOT_ACC(co)]);
+    else
+#endif
+        result = psyco_generic_call(
+            po, psyco_resume_run, CfCommonNewRefPyObject, "vll", st,
+            (long)(next_instr - sizeof(_Py_CODEUNIT)), (long)nstack);
     vinfo_decref(st, po);
     if (result == NULL && !PycException_Is(po, &ERtPython))
         return 0;
@@ -6826,7 +6869,7 @@ cimpl_await_send(PyObject *receiver, PyObject *v, PyObject *out[])
    run. The cells and free variables stay the frame's. Its caught
    exception's frame is let go first, given the locals (catcher_flush). */
 static void
-yield_resumable(PsycoObject *po, int at)
+yield_resumable(PsycoObject *po, int at, bool after_await)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     PyCodeObject *co = po->pr.co;
@@ -6834,6 +6877,15 @@ yield_resumable(PsycoObject *po, int at)
     int nstack = STACK_LEVEL() - 1, i;
     vinfo_t *run = po->vlocals.items[GENEXPR_SLOT_ACC(co)], *frame, *v;
     le_gen_pause_t *pause;
+#if LE_RESUMES_COROUTINES
+    int traced = 0;
+    /* the await ran code, which may have started tracing: tested while
+       everything is still in the frame's slots, as a rare branch is */
+    if (after_await && (traced = psyco_tracing_on(po)) < 0)
+        return;
+#else
+    (void)after_await;
+#endif
     if (!catcher_flush(po, true))
         return;
     /* every item real before anything is stored: making one may call */
@@ -6893,13 +6945,79 @@ yield_resumable(PsycoObject *po, int at)
             *slot = NULL;
         }
     }
-    vinfo_decref(frame, po);
     v = stack_a[nstack];
+#if LE_RESUMES_COROUTINES
+    if (traced) {
+        vinfo_t *ok =
+            psyco_generic_call(po, psyco_trace_yield,
+                               CfReturnTypeInt | CfPyErrIfNeg, "vv", frame, v);
+        if (ok == NULL) {
+            vinfo_decref(frame, po);
+            return;
+        }
+        vinfo_decref(ok, po);
+    }
+#endif
+    vinfo_decref(frame, po);
     stack_a[nstack] = NULL;
     po->pr.stack_level = 0;
     po->pr.iblock = 0;
     PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
 }
+
+#if LE_RESUMES_COROUTINES
+/* An await at 'at' that suspends in a coroutine's body run as a call
+   (GENEXPR_DIRECT): the coroutine CPython would have made is made, its
+   frame (the call's, if one was asked for) holding the locals and the
+   stack items under the value, paused as ceval's YIELD_FROM leaves it
+   (frames.c:psyco_resume_suspend), and the call returns the marker that
+   says so, its await taking the coroutine and the value. */
+static void
+yield_direct(PsycoObject *po, int at)
+{
+    vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+    PyCodeObject *co = po->pr.co;
+    int nlocals = le_code_nlocalsplus(co);
+    int nstack = STACK_LEVEL() - 1, i;
+    vinfo_t *st, *v, *word = catcher_word(po);
+    st = psyco_generic_call(
+        po, psyco_resume_begin, CfReturnTypePtr | CfPyErrIfNull,
+        word != NULL ? "lvvlr" : "lvvll", co, LOC_GLOBALS, LOC_BUILTINS,
+        (long)(nlocals + nstack), (long)word);
+    if (st == NULL)
+        return;
+    for (i = 0; i < nlocals + nstack; i++) {
+        v = i < nlocals ? LOC_LOCALS_PLUS[i] : stack_a[i - nlocals];
+        if ((v == NULL
+                 ? psyco_generic_call(po, psyco_resume_value, CfNoReturnValue,
+                                      "vll", st, (long)i, 0L)
+                 : psyco_generic_call(po, psyco_resume_value, CfNoReturnValue,
+                                      "vlv", st, (long)i, v)) == NULL) {
+            vinfo_decref(st, po);
+            return;
+        }
+    }
+    for (i = 0; i < po->pr.iblock; i++) {
+        le_block_t *b = &po->pr.blockstack[i];
+        if (psyco_generic_call(po, psyco_resume_block, CfNoReturnValue, "vlll",
+                               st, (long)b->b_type, (long)b->b_handler,
+                               (long)b->b_level) == NULL) {
+            vinfo_decref(st, po);
+            return;
+        }
+    }
+    v = psyco_generic_call(po, psyco_resume_suspend, CfCommonNewRefPyObject,
+                           "vllvv", st, (long)at, (long)nstack,
+                           po->vlocals.items[GENEXPR_SLOT_ACC(co)],
+                           stack_a[nstack]);
+    vinfo_decref(st, po);
+    if (v == NULL)
+        return;
+    while (STACK_LEVEL() > 0) POP_DECREF();
+    po->pr.iblock = 0;
+    PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
+}
+#endif
 #endif
 
 /* returning, yielding and making functions */
@@ -6979,7 +7097,7 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             v = TOP();
 #if LE_RESUMES_GENERATORS
             if (mode == GENEXPR_RESUMABLE) {
-                yield_resumable(po, next_instr - LE_UNIT);
+                yield_resumable(po, next_instr - LE_UNIT, false);
                 break;
             }
 #endif
@@ -7038,7 +7156,10 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
         /* a resumable coroutine's await (psyco_is_resumable_generator):
            GET_AWAITABLE, LOAD_CONST None, YIELD_FROM */
         case GET_AWAITABLE:
-            extra_assert(psyco_generator_mode(po) == GENEXPR_RESUMABLE);
+            /* a coroutine awaited as soon as it is made stays pending: the
+               YIELD_FROM may run its body as a call */
+            if (PsycoGenexpr_Check(TOP()))
+                goto fine;
             x = psyco_generic_call(
                 po, cimpl_get_awaitable, CfCommonNewRefPyObject, "vl", TOP(),
                 (long)awaitable_kind(le_code(po->pr.co), po->pr.next_instr,
@@ -7053,8 +7174,15 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             /* what the awaited object yields pauses the frame as ceval's
                YIELD_FROM leaves it, at the instruction before, so that ceval
                resumes it at the YIELD_FROM with the receiver on the stack */
-            vinfo_array_t *array = array_new(1);
-            extra_assert(psyco_generator_mode(po) == GENEXPR_RESUMABLE);
+            vinfo_array_t *array;
+            if (PsycoGenexpr_Check(NTOP(2))) {
+                int start = psyco_coro_start(po, NTOP(2));
+                if (start < 0)
+                    break;
+                if (start)
+                    goto start_directly;
+            }
+            array = array_new(1);
             x = psyco_generic_call(po, cimpl_await_send,
                                    CfReturnTypeInt | CfPyErrIfNeg, "vvA",
                                    NTOP(2), TOP(), array);
@@ -7073,13 +7201,52 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             if (runtime_condition_f(po, cc)) {
                 PUSH(array->items[0]);
                 array_release(array);
-                yield_resumable(po, next_instr - 2 * LE_UNIT);
-                break;
+                goto pause_at_await;
             }
             POP_DECREF(); /* the receiver */
             PUSH(array->items[0]);
             array_release(array);
             goto fine;
+
+        start_directly:
+            /* the body returns the await's value, or the marker that it
+               suspended, having made its coroutine */
+            x = psyco_call_genexpr(po, NTOP(2), GENEXPR_DIRECT,
+                                   NTOP(2)->array->items[iGENEXPR_FUNC]);
+            if (x == NULL)
+                break;
+            cc = integer_cmp_i(po, x, (long)psyco_coro_suspended, Py_EQ);
+            if (cc == CC_ERROR) {
+                vinfo_decref(x, po);
+                break;
+            }
+            if (runtime_condition_f(po, cc)) {
+                vinfo_decref(x, po);
+                array = array_new(2);
+                if (psyco_generic_call(po, psyco_coro_taken,
+                                       CfNoReturnValue | CfNoPython, "A",
+                                       array) == NULL) {
+                    array_release(array);
+                    break;
+                }
+                POP_DECREF(); /* the value sent */
+                POP_DECREF(); /* the pending coroutine */
+                PUSH(array->items[0]);
+                PUSH(array->items[1]);
+                array_release(array);
+                goto pause_at_await;
+            }
+            POP_DECREF();
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+
+        pause_at_await:
+            if (psyco_generator_mode(po) == GENEXPR_DIRECT)
+                yield_direct(po, next_instr - 2 * LE_UNIT);
+            else
+                yield_resumable(po, next_instr - 2 * LE_UNIT, true);
+            break;
         }
 #endif
 

@@ -228,7 +228,8 @@ def raised(n):
     except RuntimeError as e:
         out.append((str(e), type(e.__cause__).__name__,
                     type(e.__context__).__name__))
-    return out, compiled(raiser, catcher, deep)
+    # raiser's body runs as a call from its await (coro_starts.py)
+    return out, compiled(catcher, deep)
 
 
 async def await_it(o):
