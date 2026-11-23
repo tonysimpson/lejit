@@ -289,12 +289,19 @@ gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
     return true;
 }
 
+/* A resumed frame's words, at most this many, go to its compiled entry
+   (LeGen_Run) in one array, with the run's FrameRuntime after them */
+#define LE_GEN_WORDS 64
+
 /* The compiled entry to resume the generator's frame 'f' with, compiled
    now if needed, or NULL to run it interpreted; 'x' is its code's record,
-   if it has one. Its entries tell apart which of its locals and stack
-   items are NULL. */
+   if it has one. Its entries tell apart which of its words are NULL. The
+   frame's words are read into 'words' for it: its locals and stack items
+   are taken (where they are plain pointers), the cells and free variables
+   only read. */
 static inline CodeBufferObject *
-le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
+le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
+              long *words)
 {
     PyCodeObject *co = le_frame_code(f);
     PyObject *globals = le_frame_globals(f), *builtins = le_frame_builtins(f);
@@ -304,12 +311,13 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
     int nlocals, nplus, nstack, i;
     uint64_t nulls = 0;
     nlocals = le_code_nlocals(co);
+    nplus = le_code_nlocalsplus(co);
     nstack = le_frame_stack_depth(f);
     /* as le_code_to_run; and ceval's test of eval_breaker as it resumes
        the frame, whose exception the frame's own handlers may catch, is
        left to ceval */
     if (le_tracing_now(tstate) || le_frame_locals(f) != NULL ||
-        nlocals + nstack > 64 || le_eval_breaker_pending())
+        nplus + nstack > LE_GEN_WORDS || le_eval_breaker_pending())
         return NULL;
     if (x == NULL && (x = le_code_extra(co)) == NULL) {
         PyErr_Clear(); /* out of memory */
@@ -318,21 +326,27 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
     p = resume_point(x, co, le_frame_lasti(f));
     if (p == NULL)
         return NULL;
-    nplus = le_code_nlocalsplus(co);
-    for (i = 0; i < nlocals; i++)
-        nulls |= (uint64_t)(LE_FRAME_WORD(f, i) == NULL) << i;
-    for (i = 0; i < nstack; i++)
-        nulls |= (uint64_t)(LE_FRAME_WORD(f, nplus + i) == NULL)
-                 << (nlocals + i);
+    for (i = 0; i < nplus + nstack; i++) {
+        PyObject *o = LE_FRAME_WORD(f, i);
+        words[i] = (long)o;
+        nulls |= (uint64_t)(o == NULL) << i;
+#if !LE_HAS_FRAME_STACKREFS
+        if (i < nlocals || i >= nplus)
+            LE_FRAME_WORD(f, i) = NULL;
+#endif
+    }
     for (e = p->entries; e < p->entries + p->count; e++)
         if (e->nulls == nulls && e->globals == globals &&
-            e->builtins == builtins)
-            return e->code == Py_None ? NULL : (CodeBufferObject *)e->code;
+            e->builtins == builtins) {
+            if (e->code != Py_None)
+                return (CodeBufferObject *)e->code;
+            goto interpreted;
+        }
     if (p->count == LE_RESUME_ENTRIES)
-        return NULL;
+        goto interpreted;
     codebuf = compile_resume(f, x, x->merge_points, nulls);
     if (codebuf == NULL)
-        return NULL; /* out of memory: this resume runs interpreted */
+        goto interpreted; /* out of memory */
     Py_INCREF(codebuf);
     e->nulls = nulls;
     e->code = (PyObject *)codebuf;
@@ -340,6 +354,12 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
     e->builtins = builtins;
     p->count++;
     return codebuf;
+interpreted:
+#if !LE_HAS_FRAME_STACKREFS
+    for (i = 0; i < nplus + nstack; i++)
+        LE_FRAME_WORD(f, i) = (PyObject *)words[i];
+#endif
+    return NULL;
 }
 
 /* As LeCode_Run, for a resumable generator's frame: its locals and stack
@@ -350,19 +370,23 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
    with le_gen_frame_leave where the evaluator pops frames.
  */
 static inline PyObject *
-LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
+LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f,
+          long *words)
 {
     stack_frame_info_t *no_frames = (stack_frame_info_t *)-1;
     stack_frame_info_t **finfo = &no_frames;
     FrameRuntime fr;
     PyObject *result;
     PyCodeObject *co = le_frame_code(f);
-    int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
-    int nstack = le_frame_stack_depth(f), i;
-    long words[nplus + nstack + 1];
+    int nplus = le_code_nlocalsplus(co), nstack = le_frame_stack_depth(f);
     extra_assert(RUN_ARGC(codebuf) == nplus + nstack + 1);
 
     if (le_recursion_enter(tstate)) {
+#if !LE_HAS_FRAME_STACKREFS
+        int i;
+        for (i = 0; i < nplus + nstack; i++)
+            LE_FRAME_WORD(f, i) = (PyObject *)words[i]; /* given back */
+#endif
 #if LE_HAS_EVAL_FRAME_POPS
         return le_gen_frame_leave(tstate, f, NULL, frame_done);
 #else
@@ -372,11 +396,17 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
     psyco_frame_start_register(&fr, f, &finfo);
     le_frame_push(tstate, f);
     le_frame_set_executing(f, 1);
-    /* the compiled code takes the locals and the stack, and borrows the
-       cells and free variables */
-    for (i = 0; i < nplus + nstack; i++)
-        words[i] = (long)(i < nlocals || i >= nplus ? le_frame_word_take(f, i)
-                                                    : LE_FRAME_WORD(f, i));
+    /* the compiled code takes the locals and the stack (read into 'words'
+       by le_gen_to_run), and borrows the cells and free variables */
+#if LE_HAS_FRAME_STACKREFS
+    {
+        int i, nlocals = le_code_nlocals(co);
+        for (i = 0; i < nplus + nstack; i++)
+            words[i] =
+                (long)(i < nlocals || i >= nplus ? le_frame_word_take(f, i)
+                                                 : LE_FRAME_WORD(f, i));
+    }
+#endif
     words[nplus + nstack] = (long)&fr;
     le_gen_frame_run(f);
     result = psyco_processor_run(codebuf, words, &finfo);
@@ -492,11 +522,63 @@ eval_from_callee(PyThreadState *ts, le_frame_t *f, int throwflag)
 static __attribute__((noinline)) PyObject *
 LeGen_Eval(PyThreadState *tstate, le_frame_t *frame, le_code_extra_t *x)
 {
-    CodeBufferObject *resume = le_gen_to_run(tstate, frame, x);
+    long words[LE_GEN_WORDS + 1];
+    CodeBufferObject *resume = le_gen_to_run(tstate, frame, x, words);
     if (resume != NULL)
-        return LeGen_Run(tstate, resume, frame);
+        return LeGen_Run(tstate, resume, frame, words);
     return original_eval_frame(tstate, frame, 0);
 }
+
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* A generator's run that ended (returned or raised) in le_gen_iternext,
+   left for gen_send_ex2 to finish as it finishes any run: the frame, and
+   what the run gave, which the hook gives back at once (LeEval_EvalFrame).
+   Not per thread: the GIL is held from setting them to the hook. */
+static le_frame_t *gen_ending_frame;
+static PyObject *gen_ending_result;
+
+/* gen_iternext, for compiled code: a generator paused at a yield, or not
+   started, whose resume there is compiled, runs it without gen_send_ex2 and
+   the hook, doing what gen_send_ex2 does around a run that yields. A run
+   that ends is finished by gen_send_ex2 itself. Anything else goes to
+   gen_iternext. */
+DEFINEFN PyObject *
+le_gen_iternext(PyObject *self)
+{
+    PyGenObject *gen = (PyGenObject *)self;
+    le_frame_t *f = (le_frame_t *)gen->gi_iframe;
+    PyThreadState *ts;
+    le_code_extra_t *x;
+    CodeBufferObject *resume;
+    PyObject *result;
+    if (gen->gi_frame_state >= FRAME_EXECUTING || !gen_may_resume(f, 0, &x))
+        return PyGen_Type.tp_iternext(self);
+    ts = PyThreadState_GET();
+    /* the value sent, as gen_send_ex2 pushes it */
+    Py_INCREF(Py_None);
+    LE_FRAME_WORD(f, f->stacktop++) = Py_None;
+    long words[LE_GEN_WORDS + 1];
+    resume = le_gen_to_run(ts, f, x, words);
+    if (resume == NULL) {
+        LE_FRAME_WORD(f, --f->stacktop) = NULL;
+        Py_DECREF(Py_None);
+        return PyGen_Type.tp_iternext(self);
+    }
+    gen->gi_exc_state.previous_item = ts->exc_info;
+    ts->exc_info = &gen->gi_exc_state;
+    gen->gi_frame_state = FRAME_EXECUTING;
+    result = LeGen_Run(ts, resume, f, words);
+    ts->exc_info = gen->gi_exc_state.previous_item;
+    gen->gi_exc_state.previous_item = NULL;
+    f->previous = NULL;
+    if (gen->gi_frame_state == FRAME_SUSPENDED)
+        return result;
+    gen->gi_frame_state = FRAME_SUSPENDED;
+    gen_ending_frame = f;
+    gen_ending_result = result;
+    return PyGen_Type.tp_iternext(self);
+}
+#endif
 
 /* any other frame */
 static __attribute__((noinline)) PyObject *
@@ -530,6 +612,15 @@ LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
 {
     if (le_frame_code(frame)->co_flags & LE_GENERATOR_FLAGS) {
         le_code_extra_t *x;
+#if LE_RESUMES_GENERATORS_DIRECTLY
+        if (frame == gen_ending_frame) {
+            /* the value gen_send_ex2 sent */
+            LE_FRAME_WORD(frame, --frame->stacktop) = NULL;
+            Py_DECREF(Py_None);
+            gen_ending_frame = NULL;
+            return gen_ending_result;
+        }
+#endif
         if (gen_may_resume(frame, throwflag, &x))
             return LeGen_Eval(tstate, frame, x);
         return original_eval_frame(tstate, frame, throwflag);
@@ -577,9 +668,10 @@ static __attribute__((noinline)) PyObject *
 LeGen_Eval(PyFrameObject *frame, le_code_extra_t *x)
 {
     PyThreadState *tstate = PyThreadState_GET();
-    CodeBufferObject *resume = le_gen_to_run(tstate, frame, x);
+    long words[LE_GEN_WORDS + 1];
+    CodeBufferObject *resume = le_gen_to_run(tstate, frame, x, words);
     if (resume != NULL)
-        return LeGen_Run(tstate, resume, frame);
+        return LeGen_Run(tstate, resume, frame, words);
     return original_eval_frame(frame, 0);
 }
 

@@ -232,11 +232,24 @@ compute_seqiter(PsycoObject *po, vinfo_t *v)
 
 DEFINEVAR source_virtual_t psyco_computed_seqiter;
 
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* compiled code's step of a generator resumes it directly
+   (eval_hook.c:le_gen_iternext) */
+static vinfo_t *
+pgen_iternext(PsycoObject *po, vinfo_t *v)
+{
+    return psyco_generic_call(po, le_gen_iternext, CfCommonIterNext, "v", v);
+}
+#endif
+
 INITIALIZATIONFN
 void
 psy_iterobject_init(void)
 {
     Psyco_DefineMeta(PySeqIter_Type.tp_iternext, &piter_iternext);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    Psyco_DefineMeta(PyGen_Type.tp_iternext, &pgen_iternext);
+#endif
 
     /* iterator object are mutable;
        they must be forced out of virtual-time across function calls */
