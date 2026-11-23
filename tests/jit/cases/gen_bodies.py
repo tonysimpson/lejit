@@ -3,7 +3,14 @@
 # blocks live in its frame between resumes, as ceval leaves them. Each case
 # drives generators and returns what CPython shows of them; compiled()
 # says whether a generator's body was compiled, where LeJIT compiles them.
+# Only a body whose resumes do work is compiled (light_bodies).
 import _thread, gc, inspect, itertools, sys
+
+
+def work(x):
+    # a call: a body runs compiled only where its resumes do work
+    # (mergepoints.c:yields_do_work)
+    return x
 
 
 def compiled(*fns):
@@ -42,28 +49,28 @@ def taken():
 
 
 def one():
-    yield 1
+    yield work(1)
 
 
 def two(a):
-    yield a
+    yield work(a)
     yield a + 1
 
 
 def counter(n):
     i = 0
     while i < n:
-        x = yield i
+        x = yield work(i)
         i += 1 if x is None else x
 
 
 def held(a, b):
-    yield a + (yield b)
+    yield a + (yield work(b))
 
 
 def in_for(xs):
     for x in xs:
-        yield x * 2
+        yield work(x) * 2
 
 
 def resuming(n):
@@ -136,7 +143,7 @@ def with_block():
 def loop_block(n):
     for i in range(n):
         while True:
-            yield i
+            yield work(i)
             break
     yield 'end'
 
@@ -238,12 +245,12 @@ def from_inside(n):
 
 
 def returns(n):
-    yield n
+    yield work(n)
     return n * 10
 
 
 def raises(n):
-    yield n
+    yield work(n)
     1 / 0
 
 
@@ -327,9 +334,9 @@ def outer(n):
 
     def inner():
         nonlocal m
-        yield m
+        yield work(m)
         m += 1
-        yield m
+        yield work(m)
     return inner
 
 
@@ -444,7 +451,7 @@ def interrupted(n):
 def catches_interrupt():
     try:
         while True:
-            yield 1
+            yield work(1)
     except KeyboardInterrupt:
         seen = 'caught'
     yield seen
@@ -456,6 +463,39 @@ def interrupted_in_try(n):
     next(g)
     out = list(zip(itertools.starmap(_thread.interrupt_main, [()]), g))
     return out, run(lambda: next(g)), compiled(catches_interrupt)
+
+
+def interpreted(*fns):
+    lejit = sys.modules.get('lejit')
+    if lejit is None:
+        return True
+    return all(lejit._core._code_info(f.__code__) != 'compiled'
+               for f in fns)
+
+
+def ones():
+    while True:
+        yield 1
+
+
+def scenario_ids(diff):
+    for k, v in diff.items():
+        for _ in range(v):
+            yield k
+
+
+def counting(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 1
+
+
+def light_bodies(n):
+    # resumes that do next to nothing cost less interpreted: these stay so
+    g = ones()
+    return ([next(g) for _ in range(n)], drain(scenario_ids({1: n, 2: 2})),
+            drain(counting(n)), interpreted(ones, scenario_ids, counting))
 
 
 def send_at_start(n):
@@ -476,5 +516,6 @@ CASES = [
     ('recursion_limit', [(0,)], {}),
     ('interrupted', [(0,)], {}),
     ('interrupted_in_try', [(0,)], {}),
+    ('light_bodies', [(3,)], {}),
     ('send_at_start', [(3,)], {}),
 ]

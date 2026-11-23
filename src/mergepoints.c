@@ -793,12 +793,74 @@ yields_in_handler(le_code_t c)
 }
 #endif
 
+#if LE_RESUMES_GENERATORS
+/* whether each yield's resumes do enough work for the compiled body to
+   be worth its fixed cost per resume (about 330 instructions through the
+   hook, against about 150 for ceval): the instructions a resume can run
+   before the next yield, taken as the innermost loop around that yield
+   (or the whole code), hold a call (a generator expression is one), or a
+   loop with no yield in it. Loops are found by their backward jumps. */
+static int
+yields_do_work(le_code_t c)
+{
+    int units = c.size / LE_UNIT, pos, i, j, nloops = 0, nyields = 0;
+    int lo[units + 1], hi[units + 1], yields[units + 1];
+    unsigned char calls[units + 1];
+    memset(calls, 0, units + 1);
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        switch (in.op) {
+            case CALL_FUNCTION:
+            case CALL_FUNCTION_KW:
+            case CALL_FUNCTION_EX:
+            case CALL_METHOD:
+                calls[pos / LE_UNIT] = 1;
+                break;
+            case YIELD_VALUE:
+                yields[nyields++] = pos;
+                break;
+            default:
+                if ((LE_IS_JABS(in.op) || LE_IS_JREL(in.op)) &&
+                    in.target >= 0 && in.target <= pos) {
+                    lo[nloops] = in.target;
+                    hi[nloops++] = pos;
+                }
+        }
+        pos = in.next;
+    }
+    if (nyields == 0)
+        return 0;
+    for (i = 0; i < nyields; i++) {
+        int y = yields[i], a = 0, b = c.size - LE_UNIT, worked = 0;
+        for (j = 0; j < nloops; j++)
+            if (lo[j] <= y && y <= hi[j] && hi[j] - lo[j] < b - a) {
+                a = lo[j];
+                b = hi[j];
+            }
+        for (pos = a; pos <= b && !worked; pos += LE_UNIT)
+            worked = calls[pos / LE_UNIT];
+        for (j = 0; j < nloops && !worked; j++) {
+            int k, has_yield = 0;
+            if (lo[j] < a || hi[j] > b || (lo[j] == a && hi[j] == b))
+                continue;
+            for (k = 0; k < nyields; k++)
+                has_yield |= lo[j] <= yields[k] && yields[k] <= hi[j];
+            worked = !has_yield;
+        }
+        if (!worked)
+            return 0;
+    }
+    return 1;
+}
+#endif
+
 /* the code of a generator whose body can run compiled, resumed at each
    yield through the eval hook (eval_hook.c:LeGen_Run), its state kept in
    its frame between resumes: a plain generator with no yield from, and no
    yield inside an exception handler, whose stack and blocks LeJIT keeps
    apart from the frame's (an EXCEPT_HANDLER block, a finally block's
-   pseudo-exception) */
+   pseudo-exception), and whose resumes do work (yields_do_work): any
+   other runs interpreted, which costs it less per resume */
 DEFINEFN int
 psyco_is_resumable_generator(PyCodeObject *co)
 {
@@ -819,7 +881,7 @@ psyco_is_resumable_generator(PyCodeObject *co)
         if (in.op == YIELD_FROM || in.op == GET_YIELD_FROM_ITER)
             return 0;
     }
-    return !yields_in_handler(c);
+    return !yields_in_handler(c) && yields_do_work(c);
 #else
     (void)co;
     return 0;
