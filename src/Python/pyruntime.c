@@ -54,14 +54,21 @@ le_tstate_current_address(void)
 /* sys.monitoring has an event on, for any tool, in the interpreter: its
    global monitors (sys.settrace and sys.setprofile are tools too). Events
    set on one code object (set_local_events) are not seen. */
+_Static_assert(8 < sizeof(((PyInterpreterState *)0)->monitors.tools) &&
+                   sizeof(((PyInterpreterState *)0)->monitors.tools) <= 16,
+               "LeJIT: sys.monitoring's tools are read as two words");
+const long le_monitors_tools_at = offsetof(PyInterpreterState, monitors.tools);
+const long le_monitors_tools_size =
+    sizeof(((PyInterpreterState *)0)->monitors.tools);
+
 int
 le_monitoring_on(PyThreadState *ts)
 {
     const uint8_t *t = ts->interp->monitors.tools;
-    size_t i;
-    uint8_t any = 0;
-    for (i = 0; i < sizeof(ts->interp->monitors.tools); i++) any |= t[i];
-    return any != 0;
+    uint64_t a, b;
+    memcpy(&a, t, 8);
+    memcpy(&b, t + sizeof(ts->interp->monitors.tools) - 8, 8);
+    return (a | b) != 0;
 }
 #endif
 #if LE_HAS_OPCODE_LOAD_COMMON_CONSTANT

@@ -588,10 +588,6 @@ _build_merge_points(PyCodeObject *co, int module)
     if (module) {
         goto not_ok;
     }
-#if !LE_HAS_OPCODE_BINARY_SUBSCR
-    /* 3.14's bytecode is not compiled yet */
-    goto not_ok;
-#endif
     if (le_code_prepare(co) < 0)
         return NULL;
     if (le_code_nlocalsplus(co) + co->co_stacksize > MAX_FRAME_VALUES)

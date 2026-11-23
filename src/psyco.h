@@ -13,6 +13,19 @@
 /* the messages (LE_MSG_) of the interpreter built for, from
    tools/features/strings.py */
 #include "le_strings_gen.h"
+
+/* sys.modules, borrowed, or NULL (with no exception) once finalisation has
+   cleared it: PyImport_GetModuleDict is then a fatal error, and LeJIT
+   compiles and collects while finalisers run */
+static inline PyObject *
+le_modules_dict(void)
+{
+    PyObject *t, *v, *tb, *m;
+    PyErr_Fetch(&t, &v, &tb);
+    m = PySys_GetObject("modules");
+    PyErr_Restore(t, v, tb);
+    return m != NULL && PyDict_Check(m) ? m : NULL;
+}
 /* offsets, sizes and private structs of the CPython fields LeJIT relies on
    (vcompiler.h:CPY_FIELD), each checked at compile time against the
    field's type */
