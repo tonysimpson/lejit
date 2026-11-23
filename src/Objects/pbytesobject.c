@@ -2,8 +2,6 @@
 #include "pabstract.h"
 #include "plongobject.h"
 #include "psliceobject.h"
-#include "pmethodobject.h"
-#include "ptupleobject.h"
 
 #define BYTES_sval CPY_ARRAY(PyBytesObject, ob_sval)
 
@@ -94,148 +92,16 @@ fail:
 }
 
 /* the bytes slots translated from bytesobject.c (sq_length) */
-/* the C functions, for the fallbacks: set by the registration */
-static PyCFunction cfunc_bytes_lstrip;
-static PyCFunction cfunc_bytes_rstrip;
-static PyCFunction cfunc_bytes_strip;
-
-#define LEFTSTRIP 0
-#define RIGHTSTRIP 1
-#define BOTHSTRIP 2
-
-/* CPython's code, copied for the metas to call at run time */
-static PyObject *
-cimpl_do_xstrip(PyBytesObject *self, int striptype, PyObject *sepobj)
-{
-    Py_buffer vsep;
-    const char *s = PyBytes_AS_STRING(self);
-    Py_ssize_t len = PyBytes_GET_SIZE(self);
-    char *sep;
-    Py_ssize_t seplen;
-    Py_ssize_t i, j;
-    if (PyObject_GetBuffer(sepobj, &vsep, PyBUF_SIMPLE) != 0)
-        return NULL;
-    sep = vsep.buf;
-    seplen = vsep.len;
-    i = 0;
-    if (striptype != RIGHTSTRIP) {
-        while (i < len && memchr(sep, Py_CHARMASK(s[i]), seplen)) {
-            i++;
-        }
-    }
-    j = len;
-    if (striptype != LEFTSTRIP) {
-        do {
-            j--;
-        } while (j >= i && memchr(sep, Py_CHARMASK(s[j]), seplen));
-        j++;
-    }
-    PyBuffer_Release(&vsep);
-    if (i == 0 && j == len && PyBytes_CheckExact(self)) {
-        Py_INCREF(self);
-        return (PyObject *)self;
-    }
-    else
-        return PyBytes_FromStringAndSize(s + i, j - i);
-}
-
-static PyObject *
-cimpl_do_strip(PyBytesObject *self, int striptype)
-{
-    const char *s = PyBytes_AS_STRING(self);
-    Py_ssize_t len = PyBytes_GET_SIZE(self), i, j;
-    i = 0;
-    if (striptype != RIGHTSTRIP) {
-        while (i < len && Py_ISSPACE(s[i])) {
-            i++;
-        }
-    }
-    j = len;
-    if (striptype != LEFTSTRIP) {
-        do {
-            j--;
-        } while (j >= i && Py_ISSPACE(s[j]));
-        j++;
-    }
-    if (i == 0 && j == len && PyBytes_CheckExact(self)) {
-        Py_INCREF(self);
-        return (PyObject *)self;
-    }
-    else
-        return PyBytes_FromStringAndSize(s + i, j - i);
-}
-
-static PyObject *
-cimpl_do_argstrip(PyBytesObject *self, int striptype, PyObject *bytes)
-{
-    if (bytes != Py_None) {
-        return cimpl_do_xstrip(self, striptype, bytes);
-    }
-    return cimpl_do_strip(self, striptype);
-}
-
 static vinfo_t *
 bytes_length(PsycoObject *po, vinfo_t *a)
 {
     return psyco_get_field(po, a, FIX_size);
 }
 
-/* bytes.strip, lstrip and rstrip, through their Argument Clinic wrappers:
-   one optional argument, None by default */
-static vinfo_t *
-do_argstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs, PyCFunction cfunc,
-            int striptype)
-{
-    vinfo_t *bytes, *return_value;
-    int nargs = PsycoTuple_Load(vargs);
-    if (nargs < 0 || nargs > 1) {
-        return PsycoCFunction_CallFast(po, cfunc, METH_FASTCALL, self, vargs);
-    }
-    if (nargs == 0)
-        bytes = psyco_vi_None();
-    else {
-        bytes = PsycoTuple_GET_ITEM(vargs, 0);
-        vinfo_incref(bytes);
-    }
-    return_value =
-        psyco_generic_call(po, cimpl_do_argstrip, CfCommonNewRefPyObject,
-                           "vlv", self, (long)striptype, bytes);
-    vinfo_decref(bytes, po);
-    return return_value;
-}
-
-static vinfo_t *
-bytes_lstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
-{
-    return do_argstrip(po, self, vargs, cfunc_bytes_lstrip, LEFTSTRIP);
-}
-
-static vinfo_t *
-bytes_rstrip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
-{
-    return do_argstrip(po, self, vargs, cfunc_bytes_rstrip, RIGHTSTRIP);
-}
-
-static vinfo_t *
-bytes_strip(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
-{
-    return do_argstrip(po, self, vargs, cfunc_bytes_strip, BOTHSTRIP);
-}
-
 static void
 gen_bytesobject_init(void)
 {
     Psyco_DefineMeta(PyBytes_Type.tp_as_sequence->sq_length, bytes_length);
-}
-static void
-gen_bytesobject_methods_init(void)
-{
-    cfunc_bytes_lstrip = Psyco_DefineMethodFn(&PyBytes_Type, "lstrip",
-                                              METH_FASTCALL, &bytes_lstrip);
-    cfunc_bytes_rstrip = Psyco_DefineMethodFn(&PyBytes_Type, "rstrip",
-                                              METH_FASTCALL, &bytes_rstrip);
-    cfunc_bytes_strip = Psyco_DefineMethodFn(&PyBytes_Type, "strip",
-                                             METH_FASTCALL, &bytes_strip);
 }
 
 INITIALIZATIONFN
@@ -244,6 +110,5 @@ psy_bytesobject_init(void)
 {
     bytes_subscript = PyBytes_Type.tp_as_mapping->mp_subscript;
     gen_bytesobject_init();
-    gen_bytesobject_methods_init();
     Psyco_DefineMeta(bytes_subscript, pbytes_subscript);
 }
