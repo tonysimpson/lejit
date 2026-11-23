@@ -676,8 +676,16 @@ callee_builtins(PsycoObject *po, vinfo_t *vfunc, vinfo_t *vglobals,
 
 #define MAX_CALL_FREES 64
 
-/* the callee's owner holds every constant object it is given: its code may
-   use one after the caller's last reference has gone */
+static void
+pin_constant(source_known_t *sk)
+{
+    if ((sk->refcount1_flags & (SkFlagPyObj | SkFlagBorrowed)) == SkFlagPyObj)
+        psyco_owner_pin((PyObject *)sk->value);
+}
+
+/* the callee's owner holds every constant object it is given, and every
+   type hinted: its code may use one after the caller's last reference has
+   gone */
 static void
 pin_constants(vinfo_array_t *a)
 {
@@ -686,12 +694,10 @@ pin_constants(vinfo_array_t *a)
         vinfo_t *v = a->items[i];
         if (v == NULL)
             continue;
-        if (is_compiletime(v->source)) {
-            source_known_t *sk = CompileTime_Get(v->source);
-            if ((sk->refcount1_flags & (SkFlagPyObj | SkFlagBorrowed)) ==
-                SkFlagPyObj)
-                psyco_owner_pin((PyObject *)sk->value);
-        }
+        if (is_compiletime(v->source))
+            pin_constant(CompileTime_Get(v->source));
+        if (v->type_hint != NULL)
+            pin_constant(v->type_hint);
         if (v->array != NullArray)
             pin_constants(v->array);
     }
