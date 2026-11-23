@@ -1149,7 +1149,8 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
     Source *sources;
     stack_frame_info_t *finfo;
     int nfrees = PyCode_GetNumFree(co), argcount;
-    struct fncall_arg_s fncall;
+    /* zeroed: gcc can't see that psyco_fatal_msg below doesn't return */
+    struct fncall_arg_s fncall = {0};
 
     /* each checked by the consumer (psyco_genexpr_fusable) */
     if (nfrees != 0 && load_frees(po, vfunc, nfrees, freebuf, &frees) != 1)
