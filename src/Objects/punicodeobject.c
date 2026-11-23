@@ -26,20 +26,6 @@
 #include "../psyfunc.h"
 #include "../Python/pycheader.h"
 
-/* stringlib/eq.h:unicode_eq */
-static int
-le_unicode_eq(PyObject *a, PyObject *b)
-{
-    if (PyUnicode_GET_LENGTH(a) != PyUnicode_GET_LENGTH(b))
-        return 0;
-    if (PyUnicode_GET_LENGTH(a) == 0)
-        return 1;
-    if (PyUnicode_KIND(a) != PyUnicode_KIND(b))
-        return 0;
-    return memcmp(PyUnicode_1BYTE_DATA(a), PyUnicode_1BYTE_DATA(b),
-                  PyUnicode_GET_LENGTH(a) * PyUnicode_KIND(a)) == 0;
-}
-
 /* n characters of 'from' into 'to', a string not yet shared and wide
    enough for them */
 static void

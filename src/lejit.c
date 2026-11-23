@@ -404,7 +404,9 @@ le_layouts(PyObject *self, PyObject *unused)
         goto error;
     ok = Py_TYPE(rit) == &PyRangeIter_Type &&
          PyRangeIter_Type.tp_basicsize == sizeof(rangeiterobject) &&
+#if LE_HAS_RANGE_ITER_INDEX
          ((rangeiterobject *)rit)->index == 0 &&
+#endif
          ((rangeiterobject *)rit)->start == 1 &&
          ((rangeiterobject *)rit)->step == 2 &&
          ((rangeiterobject *)rit)->len == 3;

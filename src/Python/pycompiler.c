@@ -1121,7 +1121,7 @@ cimpl_vt_traceback(PyCodeObject *code, PyObject *globals, int lasti,
 #if LE_HAS_CURRENT_EXCEPTION
     /* PyTraceBack_Here needs an exception being raised, which there may not
        be yet: the entry is made directly */
-    newtb = _PyTraceBack_FromFrame(oldtb, f);
+    newtb = le_traceback_entry(oldtb, f);
     Py_XDECREF(oldtb);
     Py_DECREF(f);
     return newtb;
@@ -3593,11 +3593,7 @@ static PyObject *
 cimpl_call_exit(PyObject *exit_func, PyObject *exc, PyObject *val,
                 PyObject *tb)
 {
-    PyObject *stack[3];
-    stack[0] = exc;
-    stack[1] = val;
-    stack[2] = tb;
-    return _PyObject_FastCall(exit_func, stack, 3);
+    return PyObject_CallFunctionObjArgs(exit_func, exc, val, tb, NULL);
 }
 
 static PyObject *
@@ -3846,7 +3842,7 @@ cimpl_import_name(PyObject *globals, PyObject *builtins, PyObject *name,
         w = Py_BuildValue("(OOOO)", name, globals, Py_None, fromlist);
     if (w == NULL)
         return NULL;
-    x = PyEval_CallObject(x, w);
+    x = PyObject_CallObject(x, w);
     Py_DECREF(w);
     return x;
 }
@@ -3960,6 +3956,30 @@ cimpl_generator_stop(void)
         PyErr_Restore(e2, v2, t2);
     }
 }
+
+#if LE_HAS_OPCODE_CALL_INTRINSIC_1
+/* intrinsics.c:stopiteration_error, for a generator expression's code, the
+   only generator code compiled (mergepoints.c:_build_merge_points):
+   StopIteration leaving it becomes RuntimeError */
+static PyObject *
+cimpl_stopiteration_error(PyObject *exc)
+{
+    PyObject *error;
+    if (!PyErr_GivenExceptionMatches(exc, PyExc_StopIteration)) {
+        Py_INCREF(exc);
+        return exc;
+    }
+    error = PyObject_CallFunction(PyExc_RuntimeError, "s",
+                                  LE_MSG_GENERATOR_STOP_ITERATION);
+    if (error == NULL)
+        return NULL;
+    Py_INCREF(exc);
+    PyException_SetCause(error, exc);
+    Py_INCREF(exc);
+    PyException_SetContext(error, exc);
+    return error;
+}
+#endif
 
 static code_t *
 exit_function(PsycoObject *po)
@@ -6024,10 +6044,22 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                     goto fine;
                 }
 
-                /* the intrinsics mergepoints.c:compiled_intrinsic allows,
-                   as the opcodes they replaced */
+                /* the intrinsics mergepoints.c:compiled_intrinsic allows:
+                   a generator's PEP 479 handler, and the opcodes the others
+                   replaced */
                 case CALL_INTRINSIC_1:
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
+                    if (oparg == INTRINSIC_STOPITERATION_ERROR) {
+                        extra_assert(po->pr.co->co_flags & CO_GENERATOR);
+                        x = psyco_generic_call(
+                            po, cimpl_stopiteration_error,
+                            CfCommonNewRefPyObject | CfNoPython, "v", TOP());
+                        if (x == NULL)
+                            break;
+                        POP_DECREF();
+                        PUSH(x);
+                        goto fine;
+                    }
                     if (oparg == INTRINSIC_PRINT) {
                         if (!psyco_generic_call(po, cimpl_print_expr,
                                                 CfCommonIntZeroOk, "v", TOP()))
