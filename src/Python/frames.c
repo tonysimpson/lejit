@@ -2402,6 +2402,116 @@ static PyMethodDef le_getframe_def = {
     "Return a frame object from the call stack, counting frames of code\n"
     "compiled by LeJIT (emulated)."};
 
+#if LE_HAS_INTERPRETER_FRAME && !LE_HAS_FRAME_INSTR_PTR
+/* CPython's _PyGen_yf, behind a generator's or coroutine's close(),
+   throw(), gi_yieldfrom and cr_await, takes the word after the frame's
+   prev_instr for a RESUME after a yield from even while the frame runs,
+   where it is the current call's inline cache: an eval hook makes the call
+   deoptimise each time, and its counter can then read as such a RESUME,
+   so a stack word is taken as the awaited object. Each of those runs here
+   with a running frame's place moved to before its first instruction,
+   which is never such a RESUME, and put back after. */
+static PyCFunction gen_close_original[2];
+static _PyCFunctionFast gen_throw_original[2];
+static getter gen_getter_original[2];
+
+/* the running frame of 'gen', moved to before its first instruction; NULL
+   if it isn't running */
+static _Py_CODEUNIT *
+gen_place_hide(PyObject *gen)
+{
+    PyGenObject *g = (PyGenObject *)gen;
+    _PyInterpreterFrame *f = (_PyInterpreterFrame *)g->gi_iframe;
+    _Py_CODEUNIT *place;
+    if (g->gi_frame_state != FRAME_EXECUTING)
+        return NULL;
+    place = f->prev_instr;
+    f->prev_instr = _PyCode_CODE(LE_FRAME_CODE(f)) - 1;
+    return place;
+}
+
+static void
+gen_place_restore(PyObject *gen, _Py_CODEUNIT *place)
+{
+    if (place != NULL)
+        ((_PyInterpreterFrame *)((PyGenObject *)gen)->gi_iframe)->prev_instr =
+            place;
+}
+
+#define GEN_GUARDED(name, decl, call)              \
+    static PyObject *name decl                     \
+    {                                              \
+        _Py_CODEUNIT *place = gen_place_hide(gen); \
+        PyObject *result = call;                   \
+        gen_place_restore(gen, place);             \
+        return result;                             \
+    }
+GEN_GUARDED(gen_close_guarded, (PyObject * gen, PyObject *arg),
+            gen_close_original[0](gen, arg))
+GEN_GUARDED(coro_close_guarded, (PyObject * gen, PyObject *arg),
+            gen_close_original[1](gen, arg))
+GEN_GUARDED(gen_throw_guarded,
+            (PyObject * gen, PyObject *const *args, Py_ssize_t n),
+            gen_throw_original[0](gen, args, n))
+GEN_GUARDED(coro_throw_guarded,
+            (PyObject * gen, PyObject *const *args, Py_ssize_t n),
+            gen_throw_original[1](gen, args, n))
+GEN_GUARDED(gen_yf_guarded, (PyObject * gen, void *closure),
+            gen_getter_original[0](gen, closure))
+GEN_GUARDED(coro_yf_guarded, (PyObject * gen, void *closure),
+            gen_getter_original[1](gen, closure))
+
+static PyMethodDef gen_guarded_defs[2][2];
+static PyGetSetDef gen_guarded_getsets[2];
+
+/* each replaced in the type's dict by one like it that guards it */
+static void
+gen_guard_init(void)
+{
+    static PyTypeObject *types[2] = {&PyGen_Type, &PyCoro_Type};
+    static const char *methods[2] = {"close", "throw"};
+    static const char *yf[2] = {"gi_yieldfrom", "cr_await"};
+    static const PyCFunction wraps[2][2] = {
+        {gen_close_guarded, (PyCFunction)(void (*)(void))gen_throw_guarded},
+        {coro_close_guarded, (PyCFunction)(void (*)(void))coro_throw_guarded}};
+    static const getter yf_wraps[2] = {gen_yf_guarded, coro_yf_guarded};
+    int t, k;
+    for (t = 0; t < 2; t++) {
+        PyObject *d = le_type_dict(types[t]), *descr, *fn;
+        for (k = 0; k < 2; k++) {
+            descr = PyDict_GetItemString(d, methods[k]);
+            if (descr == NULL || Py_TYPE(descr) != &PyMethodDescr_Type ||
+                ((PyMethodDescrObject *)descr)->d_method->ml_flags !=
+                    (k == 0 ? METH_NOARGS : METH_FASTCALL))
+                continue;
+            gen_guarded_defs[t][k] = *((PyMethodDescrObject *)descr)->d_method;
+            if (k == 0)
+                gen_close_original[t] = gen_guarded_defs[t][k].ml_meth;
+            else
+                gen_throw_original[t] =
+                    (_PyCFunctionFast)(void (*)(void))gen_guarded_defs[t][k]
+                        .ml_meth;
+            gen_guarded_defs[t][k].ml_meth = wraps[t][k];
+            fn = PyDescr_NewMethod(types[t], &gen_guarded_defs[t][k]);
+            if (fn == NULL || PyDict_SetItemString(d, methods[k], fn) < 0)
+                PyErr_Print();
+            Py_XDECREF(fn);
+        }
+        descr = PyDict_GetItemString(d, yf[t]);
+        if (descr != NULL && Py_TYPE(descr) == &PyGetSetDescr_Type) {
+            gen_guarded_getsets[t] = *((PyGetSetDescrObject *)descr)->d_getset;
+            gen_getter_original[t] = gen_guarded_getsets[t].get;
+            gen_guarded_getsets[t].get = yf_wraps[t];
+            fn = PyDescr_NewGetSet(types[t], &gen_guarded_getsets[t]);
+            if (fn == NULL || PyDict_SetItemString(d, yf[t], fn) < 0)
+                PyErr_Print();
+            Py_XDECREF(fn);
+        }
+        PyType_Modified(types[t]);
+    }
+}
+#endif
+
 INITIALIZATIONFN
 void
 psyco_frames_init(void)
@@ -2427,6 +2537,9 @@ psyco_frames_init(void)
     Py_XDECREF(sysmod);
     warn_init();
     get_referents_init();
+#if LE_HAS_INTERPRETER_FRAME && !LE_HAS_FRAME_INSTR_PTR
+    gen_guard_init();
+#endif
 #ifdef PyFrameLocalsProxy_Check
     frame_locals_proxy_init();
 #endif
