@@ -7,7 +7,9 @@ run doesn't.
 A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
-(no leak check), 'warmup': (rounds, reason), 'clear_type_cache': reason (the
+(no leak check), 'leaks_with_aslr': reason (no leak check when address-space
+randomisation can't be turned off: what it counts depends on addresses),
+'warmup': (rounds, reason), 'clear_type_cache': reason (the
 leak check empties CPython's type cache first; only where that keeps the
 types' version tags, as from 3.11), 'expected': [result, ...] (LeJIT's
 results must be these, one per call, not plain CPython's: for a language
@@ -21,13 +23,27 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CASES = os.path.join(ROOT, 'tests', 'jit', 'cases')
 TIMEOUT = 20
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
+# each child runs with address-space randomisation off: what the leak check
+# counts can depend on where objects land (a table keyed by id() is sized
+# by them), so a plain run and a LeJIT run of the same case could differ
+ASLR_OFF = ['setarch', os.uname().machine, '-R']
+
+
+def aslr_off_works():
+    # a container's seccomp profile can refuse it
+    try:
+        return subprocess.run(ASLR_OFF + [sys.executable, '-c', ''],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+    except OSError:
+        return False
 
 
 def run_child(modname, fname, calls, use_lejit, warmup=9, env=None,
               clear_type_cache=False):
     if not isinstance(calls, str):
         calls = repr(calls)
-    cmd = [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
+    cmd = ASLR_OFF + [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
            modname, fname, calls, '1' if use_lejit else '0', str(warmup),
            '1' if clear_type_cache else '0']
     try:
@@ -66,6 +82,10 @@ def main():
     if args and not args[0].startswith('-'):
         CASES = os.path.abspath(args[0])
     verbose = '-v' in args
+    aslr_off = aslr_off_works()
+    if not aslr_off:
+        print('address-space randomisation stays on: setarch -R is refused here')
+        ASLR_OFF[:] = []
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
     for name, modname, fname, calls, opts in load_cases(filt):
         warmup = opts.get('warmup', (9,))[0]
@@ -97,7 +117,8 @@ def main():
                     problem = 'compiled, but expected to be interpreted'
             elif got[-1] != 'compiled: yes':
                 problem = got[-1]
-            elif leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks'):
+            elif (leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks') and
+                  (aslr_off or not opts.get('leaks_with_aslr'))):
                 problem = 'leaks: %d more blocks after 100 extra rounds (%d without LeJIT)' % (
                     leak_lejit, leak_ref)
             elif extra:
