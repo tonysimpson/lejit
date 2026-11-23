@@ -2621,6 +2621,10 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
         le_pyframe_stack(f)[i] = st->values[nlocals + i];
     le_frame_set_stack_depth(f, (int)nstack);
     le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
+#if LE_HAS_FRAME_INSTR_PTR
+    /* ceval goes on from the instruction at the place, not after it */
+    LE_FRAME_PLACE(le_frame_of(f))++;
+#endif
 #if !LE_HAS_EXCEPTION_TABLE
     f->f_iblock = st->iblock;
     memcpy(f->f_blockstack, st->blocks, st->iblock * sizeof(PyTryBlock));
@@ -2659,7 +2663,7 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     }
     else
         kept_back = NULL;
-#if LE_PYFRAME_RUN_TO_END
+#if LE_HAS_EVAL_FRAME_POPS
     (void)marked;
     /* the events of a frame that runs past RESUME, if the code gives
        none yet; without them it still runs */
