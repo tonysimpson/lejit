@@ -799,6 +799,16 @@ def NOT_A_SEQUENCE_ERROR():
 
 
 @probe
+def TUPLE_UNTRACKED_AT_BUILD():
+    """a tuple built at run time from an object() is not tracked before any
+    collection (run)"""
+    import gc
+    o = object()
+    t = (o,)
+    return not gc.is_tracked(t), 'gc.is_tracked((object(),)) is %r' % gc.is_tracked(t)
+
+
+@probe
 def CONTAINS_ITEM_FIRST():
     """`x in (y,)` calls y.__eq__ before x.__eq__ (run)"""
     order = []

@@ -1361,6 +1361,8 @@ ABSTRACT = [
 
 # the other objects
 OBJECTS = [
+    ('TUPLE_UNTRACKED_AT_BUILD', D('a tuple built from items none of whose types the GC tracks is left untracked from the start (tupleobject.c:maybe_tracked)',
+                                   lambda s: _defines(s, 'Objects/tupleobject.c', 'maybe_tracked'))),
     ('TUPLE_GET_EMPTY', D('the empty tuple is the interpreter\'s, read with tuple_get_empty',
                           lambda s: _defines(s, 'Objects/tupleobject.c', 'tuple_get_empty'))),
     ('CONTAINS_ITEM_FIRST', tuplecontains_item_first),
