@@ -992,9 +992,14 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
             return NULL;
     }
     if (generator) {
+        int i;
         vinfo_t *args =
             args_with_defaults(co, arg_tuple, tuple_size,
                                &PsycoTuple_GET_ITEM(vdefaults, 0), defcount);
+        /* an argument can be borrowed from an object the caller drops
+           before the generator is made (a bound method's self) */
+        for (i = PsycoTuple_Load(args); i--;)
+            need_reference(po, PsycoTuple_GET_ITEM(args, i));
         array_delete(fncall.inputvinfos, po);
         vinfo_decref(vbuiltins, po);
         result = PsycoGenexpr_New(vfunc, args, vglobals, co);
