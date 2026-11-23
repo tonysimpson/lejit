@@ -592,6 +592,11 @@ _build_merge_points(PyCodeObject *co, int module)
     /* 3.13's bytecode is not compiled yet */
     goto not_ok;
 #endif
+#if !LE_HAS_DICT_VERSION_TAG
+    /* the guards on globals, builtins and attributes need dicts' version
+       tags */
+    goto not_ok;
+#endif
     if (le_code_prepare(co) < 0)
         return NULL;
     if (le_code_nlocalsplus(co) + co->co_stacksize > MAX_FRAME_VALUES)

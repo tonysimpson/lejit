@@ -57,6 +57,22 @@ SKIPPED = {
     "functools' Python lru_cache passes the recursion limit "
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
         'test.test_functools.TestLRUPy.test_lru_recursion',
+    "CPython doesn't specialise a class's __getitem__ in BINARY_OP, or a "
+    'for loop over or a send to a generator, while a frame-evaluation hook '
+    'is installed (_testinternalcapi.set_eval_frame_record fails them the '
+    'same way)':
+        'test.test_opcache.TestSpecializer.test_binary_subscr '
+        'test.test_opcache.TestSpecializer.test_for_iter '
+        'test.test_opcache.TestSpecializer.test_send_with '
+        'test.test_opcache.TestSpecializer.test_send_yield_from',
+    'with a frame-evaluation hook installed, a Python call holds its '
+    'arguments in the caller too, so sys.getrefcount counts one more '
+    '(_testinternalcapi.set_eval_frame_record fails it the same way)':
+        'test.test_capi.test_object.CAPITest.test_is_unique_temporary',
+    'with a frame-evaluation hook installed, _remote_debugging sees only '
+    "the thread's innermost frame "
+    '(_testinternalcapi.set_eval_frame_record fails it the same way)':
+        'test.test_external_inspection.TestGetStackTrace.test_self_trace',
     'skipped when the machine converts fast enough':
         'test.test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
         'test.test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int '

@@ -1840,7 +1840,7 @@ le_getframemodulename(PyObject *self, PyObject *args, PyObject *kwds)
             return NULL;
         Py_RETURN_NONE;
     }
-    func = le_frame_of(f)->f_funcobj;
+    func = LE_FRAME_FUNCOBJ(le_frame_of(f));
     if (func != NULL && PyFunction_Check(func)) {
         r = PyFunction_GetModule(func);
         if (r == NULL) {

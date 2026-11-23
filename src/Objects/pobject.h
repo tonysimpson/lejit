@@ -453,7 +453,7 @@ EXTERNVAR uint64_t le_dict_version;
 PSY_INLINE bool
 le_dict_watched(PyDictObject *mp)
 {
-    return (mp->ma_version_tag & LE_DICT_WATCHER_MASK) != 0;
+    return (mp->LE_DICT_TAG_FIELD & LE_DICT_WATCHER_MASK) != 0;
 }
 
 #endif /* _PSY_OBJECT_H */

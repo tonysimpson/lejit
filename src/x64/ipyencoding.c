@@ -925,8 +925,8 @@ psyco_global_absent_rearm(global_absent_patch_t *patch, PyObject *globals,
     global_absent_t a, *ap = &a;
     code_t scratch[GLOBAL_ABSENT_CODE_MAX];
     code_t *code, *at, *end = patch->end;
-    uint64_t tag = ((PyDictObject *)builtins)->ma_version_tag;
-    uint64_t gtag = ((PyDictObject *)globals)->ma_version_tag;
+    uint64_t tag = ((PyDictObject *)builtins)->LE_DICT_TAG_FIELD;
+    uint64_t gtag = ((PyDictObject *)globals)->LE_DICT_TAG_FIELD;
     long n;
     if (!psyco_global_absent(globals, name, &a))
         ap = NULL;

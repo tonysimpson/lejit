@@ -686,6 +686,52 @@ def frame_funcobj(s):
     return _field(s, '_PyInterpreterFrame', 'f_funcobj', missing=False)
 
 
+def c_recursion_remaining(s):
+    """a thread counts down the C calls it may still make, in
+    c_recursion_remaining, not only by its stack pointer"""
+    return _field(s, '_ts', 'c_recursion_remaining')
+
+
+def frame_stackrefs(s):
+    """an interpreter frame's words are _PyStackRefs (f_executable,
+    f_funcobj, localsplus): a word with its low bit set holds no reference
+    of its own, and NULL is that bit alone; its value stack's top is
+    stackpointer, not a count (stacktop)"""
+    path, fields = s.struct('_PyInterpreterFrame')
+    if fields is None:
+        return False, 'Include, every header: _PyInterpreterFrame'
+    refs = fields.get('localsplus') == '_PyStackRef'
+    if refs != ('stackpointer' in fields):
+        raise Unanswered('%s:_PyInterpreterFrame has only one of _PyStackRef'
+                         ' localsplus and stackpointer' % path)
+    return refs, '%s:_PyInterpreterFrame.localsplus, stackpointer' % path
+
+
+def frame_initialize_tstate(s):
+    """_PyFrame_Initialize takes the thread state first, the function as a
+    _PyStackRef and the frame before as its last argument"""
+    for path, toks in s.headers_with('_PyFrame_Initialize'):
+        if _has_run(_texts(toks), ['_PyFrame_Initialize', '(',
+                                   'PyThreadState', '*']):
+            return True, '%s:_PyFrame_Initialize(PyThreadState *' % path
+    return False, 'Include, every header: _PyFrame_Initialize'
+
+
+def refcount_32(s):
+    """an object's refcount is a 32-bit ob_refcnt, the low half of the
+    word ob_refcnt_full, whose high half holds ob_overflow and ob_flags"""
+    for path, toks in s.headers_with('ob_refcnt_full'):
+        if _has_run(_texts(toks), ['uint32_t', 'ob_refcnt', ';']):
+            return True, '%s:ob_refcnt_full, uint32_t ob_refcnt' % path
+    return False, 'Include, every header: ob_refcnt_full'
+
+
+def dict_version_tag(s):
+    """a dict has a version tag (ma_version_tag) that every change to it
+    changes"""
+    return _field(s, 'PyDictObject', 'ma_version_tag')
+
+
 def long_value(s):
     """an int's sign, size and digits are its long_value (lv_tag and
     ob_digit), not ob_size and ob_digit"""
@@ -945,7 +991,11 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            # new in 3.13
            'TO_BOOL', 'CALL_KW', 'CONVERT_VALUE', 'FORMAT_SIMPLE',
            'FORMAT_WITH_SPEC', 'SET_FUNCTION_ATTRIBUTE', 'LOAD_FAST_LOAD_FAST',
-           'STORE_FAST_LOAD_FAST', 'STORE_FAST_STORE_FAST')
+           'STORE_FAST_LOAD_FAST', 'STORE_FAST_STORE_FAST',
+           # gone from 3.14: subscripts are BINARY_OP's, with blocks
+           # LOAD_SPECIAL's, constant-key maps BUILD_MAP's
+           'BINARY_SUBSCR', 'BEFORE_WITH', 'BEFORE_ASYNC_WITH',
+           'BUILD_CONST_KEY_MAP', 'LOAD_METHOD')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -1197,6 +1247,10 @@ FRAMES = [
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
     ('INTERPRETER_FRAME', interpreter_frame),
     ('LASTI_PAST_PREFIXES', lasti_past_prefixes),
+    ('PYCORE_INTERPFRAME_H', D('the interpreter frame and its inline functions are in the internal pycore_interpframe.h',
+                               lambda s: _file(s, 'Include/internal/pycore_interpframe.h'))),
+    ('FRAME_STACKREFS', frame_stackrefs),
+    ('FRAME_INITIALIZE_TSTATE', frame_initialize_tstate),
 ]
 
 # types
@@ -1226,6 +1280,7 @@ STATE = [
     ('MONITORING', monitoring),
     ('THREAD_LOCAL_TSTATE', thread_local_tstate),
     ('PY_RECURSION_REMAINING', py_recursion_remaining),
+    ('C_RECURSION_REMAINING', c_recursion_remaining),
     ('CURRENT_EXCEPTION', current_exception),
     ('EVAL_BREAKER_GC', eval_breaker_gc),
     ('EVAL_FRAME_POPS', eval_frame_pops),
@@ -1281,6 +1336,8 @@ OBJECTS = [
 
     ('INLINE_VALUES', inline_values),
     ('DICT_WATCHER_BITS', dict_watcher_bits),
+    ('REFCOUNT_32', refcount_32),
+    ('DICT_VERSION_TAG', dict_version_tag),
 ]
 
 # Python/ceval.c
