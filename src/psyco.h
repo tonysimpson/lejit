@@ -956,9 +956,11 @@ typedef struct le_owner_s {
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
 /* Generator bodies run compiled, resumed through the eval hook
-   (eval_hook.c:LeGen_Run), where a paused generator's state is its frame
-   object's */
-#define LE_RESUMES_GENERATORS (!LE_HAS_INTERPRETER_FRAME)
+   (eval_hook.c:LeGen_Run), where a paused generator's state is its frame's
+   and gen_send_ex clears the frame of one that has ended (not the
+   evaluator, LE_HAS_EVAL_FRAME_POPS) */
+#define LE_RESUMES_GENERATORS \
+    (!LE_HAS_INTERPRETER_FRAME || !LE_HAS_EVAL_FRAME_POPS)
 
 /* A resumable generator's compiled entries at one resume point, one per
    set of NULL locals and stack items (a bit each, locals first), compiled
@@ -1014,6 +1016,10 @@ le_code_extra_get(PyCodeObject *co)
             return &((code_record_t *)r)->x;
     return NULL;
 }
+/* the code last found not resumable, and its record, which outlives it
+   (eval_hook.c:gen_may_resume) */
+EXTERNVAR PyCodeObject *le_gen_interpreted;
+EXTERNVAR le_code_extra_t *le_gen_interpreted_x;
 /* releases the record and its compiled code; its code object is dead */
 EXTERNFN void
 le_code_extra_free(le_code_extra_t *x);

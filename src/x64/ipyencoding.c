@@ -339,7 +339,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
 #endif
 #if LE_HAS_DICT_WATCHER_BITS
         TEST_I8_BO(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag),
-                   LE_DICT_WATCHER_MASK);
+                   (signed char)LE_DICT_WATCHER_MASK);
         JCC_MISS(CC_NE); /* watched (le_dict_watched) */
 #endif
         MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
@@ -447,7 +447,7 @@ probe:
         }
 #if LE_HAS_DICT_WATCHER_BITS
         TEST_I8_BO(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_version_tag),
-                   LE_DICT_WATCHER_MASK);
+                   (signed char)LE_DICT_WATCHER_MASK);
         JCC_STUB(CC_NE); /* watched (le_dict_watched) */
 #endif
         MOV_R_O(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_keys));
