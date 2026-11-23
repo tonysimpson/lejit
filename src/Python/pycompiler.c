@@ -6841,7 +6841,8 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             }
             else if (mode == GENEXPR_SUM) {
                 /* as builtin_sum's generic loop (its fast paths give
-                   the same results as + on ints and floats) */
+                   the same results as + on ints and floats, where sum()
+                   is compiled: pbltinmodule.c:pbuiltin_sum) */
                 if (Psyco_KnownType(acc) != NULL)
                     x = PsycoNumber_Add(po, acc, v);
                 else

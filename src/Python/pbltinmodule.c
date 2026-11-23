@@ -567,13 +567,13 @@ PsycoObject_IsInstance(PsycoObject *po, vinfo_t *vobj, vinfo_t *vcls)
 }
 
 /* builtin_sum_impl (Python/bltinmodule.c) is a left fold of PyNumber_Add
-   from start (default 0); its C fast paths for exact ints and floats give
-   the same results. Compiled only when the length is known now: a tuple
-   built here or a constant tuple. Every type is promoted before the first
-   addition: a user __add__ must not run
-   twice. A str, bytes or bytearray start raises, and anything else (lists,
-   iterators: items that are not frame values can't be promoted) is
-   CPython's, as before. */
+   from start (default 0); its C fast path for exact ints gives the same
+   results, and so does its one for floats except where SUM_COMPENSATED,
+   where every sum() is CPython's. Compiled only when the length is known
+   now: a tuple built here or a constant tuple. Every type is promoted before
+   the first addition: a user __add__ must not run twice. A str, bytes or
+   bytearray start raises, and anything else (lists, iterators: items that are
+   not frame values can't be promoted) is CPython's, as before. */
 static vinfo_t *
 pbuiltin_sum(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs)
 {
@@ -581,7 +581,7 @@ pbuiltin_sum(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs)
     int i, k;
     vinfo_t *vit, *result, *x;
     PyTypeObject *tp;
-    if (n != 1 && n != 2)
+    if ((n != 1 && n != 2) || LE_HAS_SUM_COMPENSATED)
         goto fallback;
     vit = PsycoTuple_GET_ITEM(vargs, 0);
     if (psyco_genexpr_fusable(po, vit)) {

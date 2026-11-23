@@ -1179,6 +1179,16 @@ CE = 'Python/ceval.c'
 
 # C API functions that LeJIT calls where libpython exports them, and
 # replaces where it doesn't
+def _sum_compensated(s):
+    """builtin_sum_impl's float loop carries a compensation term: c += ... in
+    its own loop, or a cs_add helper"""
+    for text in ('c += (f_result - t) + x', 'cs_add('):
+        found, evidence = _body_has(s, 'Python/bltinmodule.c', 'builtin_sum_impl', text, missing=False)
+        if found:
+            return found, evidence
+    return found, evidence
+
+
 EXPORTS = [
     ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
@@ -1337,6 +1347,8 @@ OBJECTS = [
     ('HASH_DOUBLE_OBJECT', D('_Py_HashDouble is given the float object too',
                              lambda s: _file_has(s, 'Python/pyhash.c', '_Py_HashDouble(PyObject *'))),
     ('MEMBER_EX_ERROR_FROM_TYPE', member_ex_error_from_type),
+    ('SUM_COMPENSATED', D('sum() adds floats with compensated (Neumaier) summation, not plain +',
+                          _sum_compensated)),
     ('POW_KEYWORDS', D('pow() takes keyword arguments base, exp and mod',
                        lambda s: _file_has(s, 'Python/clinic/bltinmodule.c.h',
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),
