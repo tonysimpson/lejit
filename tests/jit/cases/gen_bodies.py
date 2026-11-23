@@ -441,6 +441,23 @@ def interrupted(n):
     return out
 
 
+def catches_interrupt():
+    try:
+        while True:
+            yield 1
+    except KeyboardInterrupt:
+        seen = 'caught'
+    yield seen
+
+
+def interrupted_in_try(n):
+    # the handler runs at the resume, inside the generator's try
+    g = catches_interrupt()
+    next(g)
+    out = list(zip(itertools.starmap(_thread.interrupt_main, [()]), g))
+    return out, run(lambda: next(g)), compiled(catches_interrupt)
+
+
 def send_at_start(n):
     g = counter(n)
     return run(lambda: g.send(1)), next(g), g.send(None)
@@ -458,5 +475,6 @@ CASES = [
     ('tracing', [(3,)], {}),
     ('recursion_limit', [(0,)], {}),
     ('interrupted', [(0,)], {}),
+    ('interrupted_in_try', [(0,)], {}),
     ('send_at_start', [(3,)], {}),
 ]

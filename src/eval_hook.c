@@ -11,7 +11,11 @@
 #include "mechanisms/recursion.h"
 
 extern int
-le_eval_breaker_at_entry(PyCodeObject *co, int position); /* pyruntime.c */
+le_eval_breaker_at_entry(PyCodeObject *co); /* pyruntime.c */
+#if LE_RESUMES_GENERATORS
+extern void *
+le_eval_breaker_address(void); /* pyruntime.c */
+#endif
 
 #if LE_HAS_EVAL_FRAME_POPS
 /* the exception le_frame_finish ends a frame with when it has a result
@@ -46,7 +50,7 @@ LeCode_Run(PyObject *codebuf, le_frame_t *f)
     le_frame_set_executing(f, 1);
     /* ceval's eval_breaker test at the start */
     if (le_frame_start(f) < 0 ||
-        le_eval_breaker_at_entry(le_frame_code(f), 0) < 0) {
+        le_eval_breaker_at_entry(le_frame_code(f)) < 0) {
         PyTraceBack_Here(le_frame_object(f));
         result = NULL;
     }
@@ -253,8 +257,11 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
     stack = le_frame_stack(f);
     nlocals = le_code_nlocals(co);
     nstack = le_frame_stack_depth(f);
-    /* as le_code_to_run */
-    if (le_tracing_now(tstate) || f->f_locals != NULL || nlocals + nstack > 64)
+    /* as le_code_to_run; and ceval's test of eval_breaker as it resumes
+       the frame, whose exception the frame's own handlers may catch, is
+       left to ceval */
+    if (le_tracing_now(tstate) || f->f_locals != NULL ||
+        nlocals + nstack > 64 || *(int *)le_eval_breaker_address() != 0)
         return NULL;
     if (x == NULL && (x = le_code_extra(co)) == NULL) {
         PyErr_Clear(); /* out of memory */
@@ -310,28 +317,18 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
     psyco_frame_start_register(&fr, f, &finfo);
     le_frame_push(tstate, f);
     le_frame_set_executing(f, 1);
-    if (le_eval_breaker_at_entry(
-            co, f->f_lasti < 0 ? 0 : lasti_offset(f->f_lasti) + LE_UNIT) < 0) {
-        PyTraceBack_Here(f);
-        /* ceval's unwinding, top first */
-        for (i = nstack; i-- > 0;) Py_CLEAR(stack[i]);
-        le_gen_frame_run(f);
-        result = NULL;
+    for (i = 0; i < nplus; i++) {
+        words[i] = (long)slots[i];
+        if (i < nlocals)
+            slots[i] = NULL;
     }
-    else {
-        for (i = 0; i < nplus; i++) {
-            words[i] = (long)slots[i];
-            if (i < nlocals)
-                slots[i] = NULL;
-        }
-        for (i = 0; i < nstack; i++) {
-            words[nplus + i] = (long)stack[i];
-            stack[i] = NULL;
-        }
-        words[nplus + nstack] = (long)&fr;
-        le_gen_frame_run(f);
-        result = psyco_processor_run(codebuf, words, &finfo);
+    for (i = 0; i < nstack; i++) {
+        words[nplus + i] = (long)stack[i];
+        stack[i] = NULL;
     }
+    words[nplus + nstack] = (long)&fr;
+    le_gen_frame_run(f);
+    result = psyco_processor_run(codebuf, words, &finfo);
     le_gen_frame_end(f, result);
     le_frame_set_current(tstate, le_frame_back(f));
     le_recursion_leave();
