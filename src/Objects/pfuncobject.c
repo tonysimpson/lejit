@@ -121,6 +121,30 @@ PsycoFunction_NewWithQualName(PsycoObject *po, vinfo_t *codeobj,
     return r;
 }
 
+DEFINEFN
+bool
+PsycoFunction_SetField(PsycoObject *po, vinfo_t *func, int which,
+                       vinfo_t *value)
+{
+    vinfo_t **field;
+    if (!is_virtualtime(func->source) ||
+        VirtualTime_Get(func->source) != &psyco_computed_function)
+        return psyco_generic_call(po, cimpl_func_set,
+                                  CfNoReturnValue | CfNoPython, "vlv", func,
+                                  (long)which, value) != NULL;
+    /* fit to cross calls, as the function's other fields are */
+    if (!psyco_forking(po, value->array))
+        return false;
+    field = &func->array->items[which == 0   ? iFUNC_CLOSURE
+                                : which == 1 ? iFUNC_ANNOTATIONS
+                                : which == 2 ? iFUNC_KWDEFAULTS
+                                             : iFUNC_DEFAULTS];
+    vinfo_incref(value);
+    vinfo_decref(*field, po);
+    *field = value;
+    return true;
+}
+
 static source_virtual_t psyco_pending_genexpr;
 
 static bool

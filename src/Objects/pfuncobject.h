@@ -44,6 +44,14 @@ EXTERNFN vinfo_t *
 PsycoFunction_NewWithQualName(PsycoObject *po, vinfo_t *codeobj,
                               vinfo_t *globals, vinfo_t *qualname);
 
+/* SET_FUNCTION_ATTRIBUTE: the field of func that 'which' names (0 the
+   closure, 1 the annotations, 2 the keyword defaults, 3 the defaults) set
+   to value (borrowed). func is MAKE_FUNCTION's, still virtual unless
+   something made it real. */
+EXTERNFN bool
+PsycoFunction_SetField(PsycoObject *po, vinfo_t *func, int which,
+                       vinfo_t *value);
+
 /* A generator called but not yet run (a generator expression, or a
    generator function psyfunc.c:psyco_call_pyfunc has bound the arguments
    of): the function, its positional arguments with the defaults the call
