@@ -3966,7 +3966,7 @@ cimpl_generator_stop(void)
 }
 
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
-/* intrinsics.c:stopiteration_error, for a generator expression's code, the
+/* intrinsics.c:stopiteration_error, for a fused generator's code, the
    only generator code compiled (mergepoints.c:_build_merge_points):
    StopIteration leaving it becomes RuntimeError */
 static PyObject *
@@ -4037,7 +4037,7 @@ exit_function(PsycoObject *po)
         if (!compute_and_raise_exception(po))
             return NULL;
         /* PEP 479, as gen_send_ex: StopIteration leaving a generator (a fused
-           generator expression) becomes RuntimeError */
+           generator) becomes RuntimeError */
         if ((po->pr.co->co_flags & CO_GENERATOR) &&
             !psyco_generic_call(po, cimpl_generator_stop, CfNoReturnValue, ""))
             return NULL;
@@ -4412,7 +4412,7 @@ is_pseudo_exception_tuple(vinfo_t *v)
    (frames.c:psyco_resume_run), then ends this frame with ceval's result:
    ceval has run its handlers and recorded its traceback entry, so the
    blocks are dropped and '*unwound' is set. Not inside a
-   fused generator expression, nor while a finally block entered by a
+   fused generator, nor while a finally block entered by a
    pseudo-exception holds its 3-tuple. 1 to go on, 0 with a
    pseudo-exception set. */
 static int
@@ -4649,6 +4649,11 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
             vinfo_t *value;
             value = NTOP(1);
             if (!catcher_local_readable(po, value))
+                break;
+            /* a pending generator a local holds is never fused (more
+               than a temporary holds it), and the frame's locals maps
+               can't give it: it is made as it becomes a local */
+            if (PsycoGenexpr_Check(value) && !compute_vinfo(value, po))
                 break;
             SETLOCAL(oparg, value);
             POP(value);
@@ -6442,8 +6447,9 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             POP(v);
         return_value:
             if (co->co_flags & CO_GENERATOR) {
-                /* a fused generator expression: return the consumer's
-                 * result */
+                /* a fused generator: return the consumer's result; the
+                 * generator's own return value is dropped, as the
+                 * consumers drop StopIteration's value */
                 int slot = GENEXPR_SLOT_MODE(co);
                 long mode =
                     CompileTime_Get(po->vlocals.items[slot]->source)->value;
@@ -6469,22 +6475,22 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             break;
 
         case GEN_START:
-            /* only in a generator expression fused with its consumer,
-               which is entered with nothing pushed: no value sent to
+            /* only in a generator fused with its consumer, which is
+               entered with nothing pushed: no value sent to
                pop */
             goto fine;
 
         case RETURN_GENERATOR:
-            /* only in a generator expression fused with its consumer:
-               push the None its first send() would have, for the
+            /* only in a generator fused with its consumer: push the
+               None its first send() would have, for the
                POP_TOP that follows */
             PUSH(psyco_vi_None());
             goto fine;
 
         case YIELD_VALUE: {
-            /* only in a generator expression fused with its consumer
-               (GENEXPR_*): do the consumer's step, then push the value
-               send() would have, for the POP_TOP that follows */
+            /* only in a generator fused with its consumer (GENEXPR_*): do the
+               consumer's step, then push the value send() would have, for the
+               POP_TOP that follows */
             int slot = GENEXPR_SLOT_MODE(co);
             long mode =
                 CompileTime_Get(po->vlocals.items[slot]->source)->value;

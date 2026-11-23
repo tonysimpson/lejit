@@ -3,9 +3,9 @@
  * meta. The callee is promoted to a constant (with a megamorphic cut-off) and
  * the call goes to psyfunc.c:psyco_call_pyfunc, which may inline it. A call to
  * a function that is still virtual reads its code, globals and defaults
- * directly and never materialises it. A generator expression called from
- * here stays a pending generator (PsycoGenexpr_New) until a consumer fuses it
- * or it escapes. A promoted function's code and defaults are checked at run
+ * directly and never materialises it. A generator called from here may stay
+ * a pending generator (PsycoGenexpr_New) until a consumer fuses it or it
+ * escapes. A promoted function's code and defaults are checked at run
  * time (compiled_code, compiled_defaults).
  * A nested function (a closure, a lambda, a def inside a function) only
  * known at run time is not promoted, only its code
@@ -141,16 +141,22 @@ compute_genexpr(PsycoObject *po, vinfo_t *v)
 
 DEFINEFN
 vinfo_t *
-PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple)
+PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple, vinfo_t *vglobals,
+                 PyCodeObject *co)
 {
     vinfo_t *r = vinfo_new(VirtualTime_New(&psyco_pending_genexpr));
-    r->array = array_new(iGENEXPR_ARGS + 1);
+    r->array = array_new(iGENEXPR_CODE + 1);
     r->array->items[iOB_TYPE] =
         vinfo_new(CompileTime_New((long)(&PyGen_Type)));
     vinfo_incref(vfunc);
     r->array->items[iGENEXPR_FUNC] = vfunc;
     vinfo_incref(arg_tuple);
     r->array->items[iGENEXPR_ARGS] = arg_tuple;
+    vinfo_incref(vglobals);
+    r->array->items[iGENEXPR_GLOBALS] = vglobals;
+    Py_INCREF(co);
+    r->array->items[iGENEXPR_CODE] = vinfo_new(
+        CompileTime_NewSk(sk_new((long)co, SkFlagPyObj | SkFlagFixed)));
     return r;
 }
 
