@@ -6677,6 +6677,21 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+        /* one of the fields MAKE_FUNCTION's flags name, set on the
+           function it made */
+        case SET_FUNCTION_ATTRIBUTE: {
+            int which = oparg == 0x08   ? 0  /* the closure */
+                        : oparg == 0x04 ? 1  /* the annotations */
+                        : oparg == 0x02 ? 2  /* the keyword defaults */
+                                        : 3; /* the defaults */
+            if (!PsycoFunction_SetField(po, TOP(), which, NTOP(2)))
+                break;
+            POP(x);
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+        }
+
         default:
             return OPCODE_ELSEWHERE;
     } /* switch (opcode) */
