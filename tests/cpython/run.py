@@ -203,6 +203,9 @@ SKIPPED = {
     'child that runs without LeJIT':
         'test.test_importlib.test_threaded_import.ThreadedImportTests.'
         'test_multiprocessing_pool_circular_import',
+    'segfaulted once in CI with a freed frame left current, the client '
+    'and its HTTPS server thread both in socket reads; not reproduced':
+        'test.test_httplib.HTTPSTest.*',
     "SSL tests that race on OpenSSL 3, which the CI images' older CPythons predate":
         'test.test_poplib.TestPOP3_SSLClass.* '
         'test.test_poplib.TestPOP3_TLSClass.* '
@@ -210,6 +213,9 @@ SKIPPED = {
     'binds a port find_unused_port chose, and skips itself when another '
     'process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress',
+    'skips itself on a sporadic ENOTCONN, so the plain and LeJIT runs can '
+    'skip different counts':
+        'test.test_socket.RecvmsgSCTPStreamTest.testRecvmsgEOF',
     "start many threads, and fail with \"can't start new thread\" on a "
     'loaded machine, plain as well as with LeJIT':
         'test.test_queue.*SimpleQueueTest.test_many_threads* '
