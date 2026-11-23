@@ -94,20 +94,38 @@ def nan_hash_varies():
 SHIFTS = (1, 3, 17, 1007, 2, 5, 64, 4099)
 
 
+# a line's items, as nan_order compares them
+ITEM = re.compile(r"[^\s,'\"{}()\[\]]+")
+
+
+def nan_order(a, b):
+    """Whether lines a and b hold the same items in another order, a NaN
+    among them: the order of a set of NaNs follows their addresses, and a
+    NaN made at run time often takes the address of a float just freed
+    (CPython's float free list), which SHIFTS hardly moves."""
+    items = ITEM.findall(a)
+    return 'nan' in items and sorted(items) == sorted(ITEM.findall(b))
+
+
 def settle(path, kind, plain, jit, timeout):
     """kind, or None for an output mismatch on lines that a NaN's hash
-    makes vary between plain runs (nan_hash_varies): the program runs plain
-    again with its floats moved (SHIFTS), until the lines that differ from
-    the first plain run cover every one LeJIT's run differs on; those are not
-    compared. A plain run that prints another number of lines leaves
-    nothing to compare line by line: the mismatch stands."""
+    makes vary between plain runs (nan_hash_varies): those that only
+    reorder items with a NaN among them (nan_order), and those that differ
+    from the first plain run when it runs again with its floats moved
+    (SHIFTS), until together they cover every line LeJIT's run differs on;
+    those are not compared. A run that prints another number of lines
+    leaves nothing to compare line by line: the mismatch stands."""
     if kind != 'output' or not nan_hash_varies():
         return kind
     first, theirs = plain[1].splitlines(), jit[1].splitlines()
-    varies = [False] * len(first)
+    if len(theirs) != len(first):
+        return kind
+    varies = [nan_order(a, b) for a, b in zip(first, theirs)]
+    if all(v or a == b for v, a, b in zip(varies, first, theirs)):
+        return None
     for shift in SHIFTS:
         again = run_one(path, 'plain', timeout, shift=shift)[1].splitlines()
-        if len(again) != len(first) or len(theirs) != len(first):
+        if len(again) != len(first):
             return kind
         varies = [v or a != b for v, a, b in zip(varies, first, again)]
         if all(v or a == b for v, a, b in zip(varies, first, theirs)):
