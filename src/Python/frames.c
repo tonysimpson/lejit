@@ -2234,29 +2234,32 @@ proxy_ass_subscript(PyObject *self, PyObject *key, PyObject *v)
 #define PROXY_METHODS 16
 static PyCFunction proxy_methods[PROXY_METHODS];
 static int proxy_writes[PROXY_METHODS];
-#define PROXY_METHOD(i)                                                     \
-    static PyObject *proxy_meth_##i(PyObject *self, PyObject *arg)          \
-    {                                                                       \
-        expose_proxy(self, proxy_writes[i]);                                \
-        return proxy_methods[i](self, arg);                                 \
-    }                                                                       \
-    static PyObject *proxy_fast_##i(PyObject *self, PyObject *const *args,  \
-                                    Py_ssize_t n)                           \
-    {                                                                       \
-        expose_proxy(self, proxy_writes[i]);                                \
-        return ((_PyCFunctionFast)(void (*)(void))proxy_methods[i])(self,   \
+#define PROXY_METHOD(i)                                                       \
+    static PyObject *proxy_meth_##i(PyObject *self, PyObject *arg)            \
+    {                                                                         \
+        expose_proxy(self, proxy_writes[i]);                                  \
+        return proxy_methods[i](self, arg);                                   \
+    }                                                                         \
+    static PyObject *proxy_fast_##i(PyObject *self, PyObject *const *args,    \
+                                    Py_ssize_t n)                             \
+    {                                                                         \
+        expose_proxy(self, proxy_writes[i]);                                  \
+        return ((_PyCFunctionFast)(void (*)(void))proxy_methods[i])(self,     \
                                                                     args, n); \
     }
-PROXY_METHOD(0) PROXY_METHOD(1) PROXY_METHOD(2) PROXY_METHOD(3)
-PROXY_METHOD(4) PROXY_METHOD(5) PROXY_METHOD(6) PROXY_METHOD(7)
-PROXY_METHOD(8) PROXY_METHOD(9) PROXY_METHOD(10) PROXY_METHOD(11)
+/* clang-format off */
+PROXY_METHOD(0)  PROXY_METHOD(1)  PROXY_METHOD(2)  PROXY_METHOD(3)
+PROXY_METHOD(4)  PROXY_METHOD(5)  PROXY_METHOD(6)  PROXY_METHOD(7)
+PROXY_METHOD(8)  PROXY_METHOD(9)  PROXY_METHOD(10) PROXY_METHOD(11)
 PROXY_METHOD(12) PROXY_METHOD(13) PROXY_METHOD(14) PROXY_METHOD(15)
-#define PROXY_ENTRY(i) {proxy_meth_##i, (PyCFunction)(void (*)(void))proxy_fast_##i}
+#define PROXY_ENTRY(i) \
+    {proxy_meth_##i, (PyCFunction)(void (*)(void))proxy_fast_##i}
 static const PyCFunction proxy_wrappers[PROXY_METHODS][2] = {
-    PROXY_ENTRY(0), PROXY_ENTRY(1), PROXY_ENTRY(2), PROXY_ENTRY(3),
-    PROXY_ENTRY(4), PROXY_ENTRY(5), PROXY_ENTRY(6), PROXY_ENTRY(7),
-    PROXY_ENTRY(8), PROXY_ENTRY(9), PROXY_ENTRY(10), PROXY_ENTRY(11),
+    PROXY_ENTRY(0),  PROXY_ENTRY(1),  PROXY_ENTRY(2),  PROXY_ENTRY(3),
+    PROXY_ENTRY(4),  PROXY_ENTRY(5),  PROXY_ENTRY(6),  PROXY_ENTRY(7),
+    PROXY_ENTRY(8),  PROXY_ENTRY(9),  PROXY_ENTRY(10), PROXY_ENTRY(11),
     PROXY_ENTRY(12), PROXY_ENTRY(13), PROXY_ENTRY(14), PROXY_ENTRY(15)};
+/* clang-format on */
 
 static void
 frame_locals_proxy_init(void)
@@ -2266,12 +2269,12 @@ frame_locals_proxy_init(void)
     int i;
     if (proxy_slots.tp_repr != NULL)
         return; /* done before */
-#define WRAP_SLOT(where, field, ours)                                       \
-    do {                                                                    \
-        if ((where) != NULL && (where)->field != NULL) {                    \
-            proxy_slots.field = (where)->field;                             \
-            (where)->field = ours;                                          \
-        }                                                                   \
+#define WRAP_SLOT(where, field, ours)                    \
+    do {                                                 \
+        if ((where) != NULL && (where)->field != NULL) { \
+            proxy_slots.field = (where)->field;          \
+            (where)->field = ours;                       \
+        }                                                \
     } while (0)
     psyco_assert(t->tp_repr != NULL);
     WRAP_SLOT(t, tp_repr, proxy_repr);
@@ -2293,18 +2296,21 @@ frame_locals_proxy_init(void)
             PyWrapperDescrObject *d = (PyWrapperDescrObject *)v;
             if (Py_TYPE(v) != &PyWrapperDescr_Type)
                 continue;
-#define WRAPPED(field, ours)                                                \
-    if (proxy_slots.field != NULL && d->d_wrapped == (void *)proxy_slots.field) \
-        d->d_wrapped = (void *)ours;
-            WRAPPED(tp_repr, proxy_repr)
-            else WRAPPED(tp_richcompare, proxy_richcompare)
-            else WRAPPED(tp_iter, proxy_iter)
-            else WRAPPED(nb_or, proxy_or)
-            else WRAPPED(nb_inplace_or, proxy_inplace_or)
-            else WRAPPED(sq_contains, proxy_contains)
-            else WRAPPED(mp_length, proxy_length)
-            else WRAPPED(mp_subscript, proxy_subscript)
-            else WRAPPED(mp_ass_subscript, proxy_ass_subscript)
+#define WRAPPED(field, ours)                           \
+    do {                                               \
+        if (proxy_slots.field != NULL &&               \
+            d->d_wrapped == (void *)proxy_slots.field) \
+            d->d_wrapped = (void *)ours;               \
+    } while (0)
+            WRAPPED(tp_repr, proxy_repr);
+            WRAPPED(tp_richcompare, proxy_richcompare);
+            WRAPPED(tp_iter, proxy_iter);
+            WRAPPED(nb_or, proxy_or);
+            WRAPPED(nb_inplace_or, proxy_inplace_or);
+            WRAPPED(sq_contains, proxy_contains);
+            WRAPPED(mp_length, proxy_length);
+            WRAPPED(mp_subscript, proxy_subscript);
+            WRAPPED(mp_ass_subscript, proxy_ass_subscript);
 #undef WRAPPED
         }
     }

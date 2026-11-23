@@ -174,7 +174,7 @@ typedef struct frame_runtime_s {
     /* ceval now runs the frame (psyco_resume_run): its locals and line are
        ceval's, and the compiled code under it waits for ceval's result */
     int resumed;
-    int exposed; /* frames.c:expose */
+    int exposed;                  /* frames.c:expose */
     struct frame_runtime_s *next; /* the next outer one */
 } FrameRuntime;
 
