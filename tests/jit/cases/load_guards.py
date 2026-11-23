@@ -405,7 +405,7 @@ def stores_in_loop(n):
 
 
 # Stores in __init__ that fill an empty slot of the instance's values add
-# its name to their insertion order, which vars() shows.
+# its name to their insertion order, which __dict__ shows.
 
 
 class _Ordered:
@@ -421,7 +421,7 @@ class _Ordered:
 
 def init_order(n):
     os = [_Ordered(i % 3 == 1) for i in range(n)]
-    return [list(vars(o)) for o in os], [o.c for o in os]
+    return [list(o.__dict__) for o in os], [o.c for o in os]
 
 
 class _Refilled:
@@ -434,7 +434,7 @@ class _Refilled:
 
 
 def init_delete_and_refill(n):
-    return [list(vars(_Refilled(i)).items()) for i in range(n)]
+    return [list(_Refilled(i).__dict__.items()) for i in range(n)]
 
 
 class _Grows:
@@ -446,7 +446,7 @@ class _Grows:
 
 def init_keys_grow(n):
     # the class keys fill up, then instances get a dict
-    return [list(vars(_Grows(i)).items()) for i in range(n)]
+    return [list(_Grows(i).__dict__.items()) for i in range(n)]
 
 
 class _DictFirst:
@@ -462,7 +462,7 @@ class _DictFirst:
 
 
 def init_dict_made_first(n):
-    return [list(vars(_DictFirst(i)).items()) for i in range(n)]
+    return [list(_DictFirst(i).__dict__.items()) for i in range(n)]
 
 
 class _Sub(_Ordered):
@@ -472,7 +472,7 @@ class _Sub(_Ordered):
 
 
 def init_through_base(n):
-    return [list(vars(_Sub(i % 2 == 0))) for i in range(n)]
+    return [list(_Sub(i % 2 == 0).__dict__) for i in range(n)]
 
 
 CASES = [

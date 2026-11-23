@@ -93,15 +93,15 @@ SKIPPED = {
         'test_class_load_attr_specialization_user_type '
         'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_class_load_attr_specialization_static_type',
+    'binds a port find_unused_port chose, and skips itself when another '
+    'process took it first':
+        'test.test_smtplib.DebuggingServerTests.testSourceAddress',
     "C code that reads the thread's frames itself sees the nearest real "
     "frame, not a compiled one (typing.TypeAliasType's __module__)":
         'test.test_type_aliases.TypeAliasConstructorTest.test_basic '
         'test.test_type_aliases.TypeAliasConstructorTest.test_generic '
         'test.test_type_aliases.TypeAliasConstructorTest.test_not_generic '
         'test.test_type_aliases.TypeAliasConstructorTest.test_keywords',
-    'binds a port find_unused_port chose, and skips itself when another '
-    'process took it first':
-        'test.test_smtplib.DebuggingServerTests.testSourceAddress',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
