@@ -32,10 +32,6 @@ SKIPPED = {
     'time can take, and expects the connection to fail':
         'test.test_asyncio.test_events.*EventLoopTests.'
         'test_create_connection_local_addr_skip_different_family',
-    'expects a signal a thread raises to arrive while a Python handler is '
-    'installed, which depends on when the threads switch; failed once under '
-    'LeJIT in CI, not reproduced':
-        'test.test_signal.StressTest.test_stress_modifying_handlers',
     "sys.getrefcount counts a constant once for each compiled block that "
     'uses it, and the code compiled while a test counts holds more':
         'test.test_xml_etree.BugsTest.test_bug_xmltoolkit63 '
