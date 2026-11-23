@@ -390,6 +390,20 @@ def hint_many_classes(n):
     return out
 
 
+def after_isinstance(n):
+    # isinstance on a class's instance, then its attributes, which promote
+    # its type: the class changes half way
+    out = []
+    o = A(0)
+    for i in range(n):
+        if isinstance(o, A):
+            o.x = o.x + 1
+        if i == n // 2:
+            o.__class__ = B
+        out.append((o.x, o.kind, o.who(), isinstance(o, B)))
+    return out
+
+
 def _flip_two(p, q, i):
     if i == 3:
         q.__class__ = B
@@ -709,6 +723,7 @@ CASES = [
     ('hint_fails_later', [(10,)], {}),
     ('hint_across_loop', [(12,)], {}),
     ('hint_many_classes', [(12,)], {}),
+    ('after_isinstance', [(8,)], {}),
     ('hint_two_values', [(6,)], {}),
     ('global_instance_elsewhere', [(4,)], {}),
     ('global_three_classes', [(10,)], {}),

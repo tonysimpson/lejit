@@ -1196,6 +1196,16 @@ CE = 'Python/ceval.c'
 
 # C API functions that LeJIT calls where libpython exports them, and
 # replaces where it doesn't
+def _sum_compensated(s):
+    """builtin_sum_impl's float loop carries a compensation term: c += ... in
+    its own loop, or a cs_add helper"""
+    for text in ('c += (f_result - t) + x', 'cs_add('):
+        found, evidence = _body_has(s, 'Python/bltinmodule.c', 'builtin_sum_impl', text, missing=False)
+        if found:
+            return found, evidence
+    return found, evidence
+
+
 EXPORTS = [
     ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
@@ -1339,6 +1349,8 @@ ABSTRACT = [
                                             'Include, every header: PyObject_CallOneArg'))),
     ('CALL_ONE_ARG', D('PyObject_CallOneArg exists',
                        lambda s: _declared(s, 'PyObject_CallOneArg'))),
+    ('COROUTINE_WRAPPER', D('a thread state has a coroutine wrapper (sys.set_coroutine_wrapper), which ceval calls on each new coroutine',
+                             lambda s: _field(s, '_ts', 'coroutine_wrapper'))),
     ('ITER_SEND', D('PyIter_Send sends a value into an iterator, telling a yield from a return',
                     lambda s: _declared(s, 'PyIter_Send'))),
     ('FUNCTION_STR', D('_PyObject_FunctionStr names a function in error messages',
@@ -1349,6 +1361,8 @@ ABSTRACT = [
 
 # the other objects
 OBJECTS = [
+    ('TUPLE_UNTRACKED_AT_BUILD', D('a tuple built from items none of whose types the GC tracks is left untracked from the start (tupleobject.c:maybe_tracked)',
+                                   lambda s: _defines(s, 'Objects/tupleobject.c', 'maybe_tracked'))),
     ('TUPLE_GET_EMPTY', D('the empty tuple is the interpreter\'s, read with tuple_get_empty',
                           lambda s: _defines(s, 'Objects/tupleobject.c', 'tuple_get_empty'))),
     ('CONTAINS_ITEM_FIRST', tuplecontains_item_first),
@@ -1356,6 +1370,8 @@ OBJECTS = [
     ('HASH_DOUBLE_OBJECT', D('_Py_HashDouble is given the float object too',
                              lambda s: _file_has(s, 'Python/pyhash.c', '_Py_HashDouble(PyObject *'))),
     ('MEMBER_EX_ERROR_FROM_TYPE', member_ex_error_from_type),
+    ('SUM_COMPENSATED', D('sum() adds floats with compensated (Neumaier) summation, not plain +',
+                          _sum_compensated)),
     ('POW_KEYWORDS', D('pow() takes keyword arguments base, exp and mod',
                        lambda s: _file_has(s, 'Python/clinic/bltinmodule.c.h',
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),

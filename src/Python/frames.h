@@ -133,6 +133,9 @@ struct stack_frame_info_s {
                           for an inlined frame (frames.c:kept_frame) */
     struct locals_map_s *back_locals; /* that frame's locals then, or NULL */
     code_t *ret_addr;                 /* a compiled call's return address */
+    /* the function whose coroutine's body this call runs, started by its
+       await (psyfunc.c:psyco_coro_start), or NULL */
+    PyFunctionObject *coro_func;
 };
 
 /* the map of po's locals now, with lasti, or NULL while inlining. A
@@ -197,6 +200,19 @@ psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p);
    become its own _PyStackRefs */
 EXTERNFN void
 psyco_gen_words_own(le_frame_t *f, long nstack);
+#endif
+#if LE_RESUMES_COROUTINES
+EXTERNVAR PyObject *psyco_coro_suspended;
+EXTERNFN PyObject *
+psyco_resume_suspend(struct resume_s *st, long at, long nstack,
+                     PyFunctionObject *func, PyObject *value);
+EXTERNFN void
+psyco_coro_taken(PyObject *out[]);
+EXTERNFN void
+psyco_coros_realise(void);
+EXTERNFN PyObject *
+psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack,
+                      PyFunctionObject *func);
 #endif
 
 EXTERNFN void

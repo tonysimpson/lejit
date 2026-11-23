@@ -162,6 +162,12 @@ def FUNCTION_STR():
 
 
 @probe
+def COROUTINE_WRAPPER():
+    """sys.set_coroutine_wrapper exists, kept in the thread state"""
+    return hasattr(sys, 'set_coroutine_wrapper'), 'sys.set_coroutine_wrapper'
+
+
+@probe
 def ITER_SEND():
     """libpython exports PyIter_Send (ctypes)"""
     return _exported('PyIter_Send')
@@ -793,6 +799,16 @@ def NOT_A_SEQUENCE_ERROR():
 
 
 @probe
+def TUPLE_UNTRACKED_AT_BUILD():
+    """a tuple built at run time from an object() is not tracked before any
+    collection (run)"""
+    import gc
+    o = object()
+    t = (o,)
+    return not gc.is_tracked(t), 'gc.is_tracked((object(),)) is %r' % gc.is_tracked(t)
+
+
+@probe
 def CONTAINS_ITEM_FIRST():
     """`x in (y,)` calls y.__eq__ before x.__eq__ (run)"""
     order = []
@@ -850,6 +866,15 @@ def POW_KEYWORDS():
     if isinstance(e, TypeError):
         return False, 'pow(base=, exp=): TypeError'
     raise Unanswered('pow(base=, exp=): %r' % e)
+
+
+@probe
+def SUM_COMPENSATED():
+    """sum([1e100, 1.0, -1e100]) keeps the 1.0 (run)"""
+    r = sum([1e100, 1.0, -1e100])
+    if r not in (0.0, 1.0):
+        raise Unanswered('sum([1e100, 1.0, -1e100]) is %r' % r)
+    return r == 1.0, 'sum([1e100, 1.0, -1e100]) is %r' % r
 
 
 @probe
