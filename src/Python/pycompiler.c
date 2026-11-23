@@ -4066,6 +4066,7 @@ exit_function(PsycoObject *po)
 {
     vinfo_t **locals_plus;
     vinfo_t **pp;
+    long i;
     Source retsource;
     long mode = psyco_generator_mode(po); /* before the locals go */
     extra_assert(!po->pr.is_inlining);
@@ -4074,8 +4075,9 @@ exit_function(PsycoObject *po)
     if (!catcher_flush(po, true))
         return NULL;
     /* clear the locals, first to last as frame_dealloc does (finalisers run
-       in that order), then the stack. On a return CPython has popped the
-       frame first. */
+       in that order), then the stack; where FRAME_CLEARED_LAST_FIRST, the
+       stack top down, then the locals last to first. On a return CPython
+       has popped the frame first. */
     locals_plus = LOC_LOCALS_PLUS;
     for (pp = locals_plus; PycException_Is(po, &EReturn) &&
                            pp < po->vlocals.items + po->vlocals.count;
@@ -4086,11 +4088,15 @@ exit_function(PsycoObject *po)
             END_CODE
             break;
         }
-    for (pp = locals_plus; pp < po->vlocals.items + po->vlocals.count; pp++)
+    for (i = 0; locals_plus + i < po->vlocals.items + po->vlocals.count; i++) {
+        pp = LE_HAS_FRAME_CLEARED_LAST_FIRST
+                 ? po->vlocals.items + po->vlocals.count - 1 - i
+                 : locals_plus + i;
         if (*pp != NULL) {
             vinfo_decref(*pp, po);
             *pp = NULL;
         }
+    }
 
     if (PycException_Is(po, &EReturn)) {
         /* load the return value */
@@ -6654,7 +6660,11 @@ out:
 }
 
 #if LE_RESUMES_GENERATORS
+#if LE_HAS_INTERPRETER_FRAME
+#define FRAME_localsplus FMUT(CPY_ARRAY(le_frame_t, localsplus))
+#else
 #define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
+#endif
 
 /* A resumable generator's YIELD_VALUE at 'at': its frame (that of the
    run in the GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it,
@@ -6679,10 +6689,15 @@ yield_resumable(PsycoObject *po, int at)
         if (v != NULL && !psyco_knowntobe(v, 0) && !compute_vinfo(v, po))
             return;
     }
+#if LE_HAS_INTERPRETER_FRAME
+    pause = psyco_owner_alloc(sizeof(le_gen_pause_t));
+#else
     pause = psyco_owner_alloc(sizeof(le_gen_pause_t) +
                               po->pr.iblock * sizeof(PyTryBlock));
+#endif
     pause->lasti = le_lasti_of(at);
     pause->nstack = nstack;
+#if !LE_HAS_INTERPRETER_FRAME
     pause->iblock = po->pr.iblock;
     for (i = 0; i < po->pr.iblock; i++) {
         pause->blocks[i].b_type = po->pr.blockstack[i].b_type;
@@ -6690,6 +6705,7 @@ yield_resumable(PsycoObject *po, int at)
             le_lasti_of(po->pr.blockstack[i].b_handler);
         pause->blocks[i].b_level = po->pr.blockstack[i].b_level;
     }
+#endif
     frame =
         psyco_generic_call(po, psyco_gen_pause, CfReturnTypePtr | CfNoPython,
                            "vl", run, (long)pause);

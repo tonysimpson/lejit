@@ -736,13 +736,13 @@ psyco_is_fusable_generator(PyCodeObject *co)
 #if LE_RESUMES_GENERATORS
 /* whether a YIELD_VALUE can run while an exception handler's block is
    live: reached by plain control flow from a handler's start (a SETUP_*
-   target) before the handler ends, by POP_EXCEPT or by raising again, or
-   by END_FINALLY, which falls through only once the handler is done. A
-   finally body that plain flow enters from its try (before 3.9) ends with
-   an END_FINALLY too: 'depth' counts those entered, for their END_FINALLY
-   to go on. */
+   target, or an exception table entry's handler) before the handler ends,
+   by POP_EXCEPT or by raising again, or by END_FINALLY, which falls
+   through only once the handler is done. A finally body that plain flow
+   enters from its try (before 3.9) ends with an END_FINALLY too: 'depth'
+   counts those entered, for their END_FINALLY to go on. */
 static int
-yields_in_handler(le_code_t c)
+yields_in_handler(PyCodeObject *co, le_code_t c)
 {
     int units = c.size / LE_UNIT, top = 0, pos, u;
     signed char depth[units + 1];
@@ -751,6 +751,23 @@ yields_in_handler(le_code_t c)
     memset(depth, -1, units + 1);
     memset(handler, 0, units + 1);
     memset(queued, 0, units + 1);
+#if LE_HAS_EXCEPTION_TABLE
+    {
+        Py_ssize_t at = 0;
+        le_handler_t h;
+        while (le_handler_next(co, &at, &h)) {
+            u = h.handler / LE_UNIT;
+            handler[u] = 1;
+            if (!queued[u]) {
+                depth[u] = 0;
+                queued[u] = 1;
+                work[top++] = u;
+            }
+        }
+    }
+#else
+    (void)co;
+#endif
     for (pos = 0; pos < c.size;) {
         le_instr_t in = le_instr(c, pos);
         pos = in.next;
@@ -781,6 +798,7 @@ yields_in_handler(le_code_t c)
             /* the handler's end, or a jump out of it that unwinds it */
             case POP_EXCEPT:
             case RETURN_VALUE:
+            case RETURN_CONST:
             case RAISE_VARARGS:
             case BREAK_LOOP:
 #if LE_HAS_OPCODE_RERAISE
@@ -844,6 +862,7 @@ yields_do_work(le_code_t c)
             case CALL_FUNCTION_KW:
             case CALL_FUNCTION_EX:
             case CALL_METHOD:
+            case CALL:
                 calls[pos / LE_UNIT] = 1;
                 break;
             case YIELD_VALUE:
@@ -911,7 +930,7 @@ psyco_is_resumable_generator(PyCodeObject *co)
         if (in.op == YIELD_FROM || in.op == GET_YIELD_FROM_ITER)
             return 0;
     }
-    return !yields_in_handler(c) && yields_do_work(c);
+    return !yields_in_handler(co, c) && yields_do_work(c);
 #else
     (void)co;
     return 0;
