@@ -187,10 +187,13 @@ typedef struct frame_runtime_s {
    Gives the frame of the run 'fr', where the compiled code then stores
    its locals and stack items. */
 typedef struct {
-    int lasti, nstack, iblock;
+    int lasti, nstack;
+#if !LE_HAS_INTERPRETER_FRAME
+    int iblock;
     PyTryBlock blocks[1];
+#endif
 } le_gen_pause_t;
-EXTERNFN PyFrameObject *
+EXTERNFN le_frame_t *
 psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p);
 #endif
 #if LE_RESUMES_COROUTINES
