@@ -691,5 +691,6 @@ if HAS_EXCEPT_STAR:
     exec(EXCEPT_STAR_SRC)
     CASES += [
         ('except_star', [(1,)], {'interpreted': 'except*'}),
-        ('except_star_caller', [(1,), (2,), (3,), (4,)], {}),
+        ('except_star_caller', [(1,), (2,), (3,), (4,)],
+         {'leaks': 'leaks 60 to 180 blocks in most runs, not all'}),
     ]
