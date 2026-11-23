@@ -420,12 +420,18 @@ typedef enum {
  * I - Immediat
  * X - base + (index * scale) + offset
  */
-#define REX_ENCODING(rex_w, r, i, rm)                              \
-    do {                                                           \
-        if ((rex_w) || (r) > 7 || (i) > 7 || (rm) > 7) {           \
-            WRITE_1(0x40 | ((rex_w) ? 8 : 0) | ((r) > 7 ? 4 : 0) | \
-                    ((i) > 7 ? 2 : 0) | ((rm) > 7 ? 1 : 0));       \
-        }                                                          \
+/* rex_w: true, false, or REX_BYTE for a byte register 'r': no REX.W, but a
+   REX for SPL, BPL, SIL and DIL, which without one would be AH to BH */
+#define REX_BYTE 2
+#define REX_NEEDED(rex_w, r, i, rm)                                    \
+    ((rex_w) == true || ((rex_w) == REX_BYTE && (r) > 3) || (r) > 7 || \
+     (i) > 7 || (rm) > 7)
+#define REX_ENCODING(rex_w, r, i, rm)                                      \
+    do {                                                                   \
+        if (REX_NEEDED(rex_w, r, i, rm)) {                                 \
+            WRITE_1(0x40 | ((rex_w) == true ? 8 : 0) | ((r) > 7 ? 4 : 0) | \
+                    ((i) > 7 ? 2 : 0) | ((rm) > 7 ? 1 : 0));               \
+        }                                                                  \
     } while (0)
 #define MODRM_ENCODING(mod, r, rm)                \
     do {                                          \
@@ -543,9 +549,9 @@ typedef enum {
 #define ADDRESS_ENCODING(rex_w, op_len, b1, b2, b3, mod, r, address, imm_len) \
     do {                                                                      \
         long rip_offset;                                                      \
-        rip_offset =                                                          \
-            (long)address - ((long)code + 5 + op_len +                        \
-                             ((rex_w || r > 7) ? 1 : 0) + (imm_len));         \
+        rip_offset = (long)address -                                          \
+                     ((long)code + 5 + op_len +                               \
+                      (REX_NEEDED(rex_w, r, 0, 0) ? 1 : 0) + (imm_len));      \
         if (FITS_IN_32BITS(rip_offset)) {                                     \
             REX_ENCODING(rex_w, r, 0, 0);                                     \
             WRITE_OPCODES(op_len, b1, b2, b3);                                \
@@ -619,6 +625,12 @@ typedef enum {
 /* @asm: movzx {r:d}, word ptr [{rm}{o}] */
 #define MOVZX_DR_WO(r, rm, o) \
     OFFSET_ENCODING(false, false, 2, 0x0F, 0xB7, 0, 0, 0, r, rm, o)
+/* @asm: movzx {r:d}, byte ptr [{rm}{o}] */
+#define MOVZX_DR_BO(r, rm, o) \
+    OFFSET_ENCODING(false, false, 2, 0x0F, 0xB6, 0, 0, 0, r, rm, o)
+/* @asm: mov byte ptr [{rm}{o}], {r:b} */
+#define MOV_BO_R(rm, o, r) \
+    OFFSET_ENCODING(false, REX_BYTE, 1, 0x88, 0, 0, 0, 0, r, rm, o)
 /* RIP-relative: 'o' is from the end of the instruction, which is 7 bytes.
    It is evaluated before anything is written, so it may use 'code'. */
 /* @asm: lea {r}, [rip{o:d32}] */
@@ -654,6 +666,10 @@ typedef enum {
 #define MOV_X8_R(base, offset, index, scale, r)                            \
     SIB_ENCODING(false, true, 1, 0x89, 0, 0, 0, 8, r, base, offset, index, \
                  scale)
+/* @asm: mov byte ptr [{base}+{index}*{scale}{offset:d8}], {r:b} */
+#define MOV_BX8_R(base, offset, index, scale, r)                        \
+    SIB_ENCODING(false, REX_BYTE, 1, 0x88, 0, 0, 0, 8, r, base, offset, \
+                 index, scale)
 /* @asm: movsx {r}, byte ptr [{base}+{index}*{scale}{offset:d8}] */
 #define MOVSX_R_BX8(r, base, offset, index, scale)                            \
     SIB_ENCODING(false, true, 2, 0x0F, 0xBE, 0, 0, 8, r, base, offset, index, \

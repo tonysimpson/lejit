@@ -149,8 +149,8 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
    the dict, R8 its values, R9 its keys then the index, RAX scratch then
    the old value, R10 and R11 scratch. A watched dict is a miss
    (le_dict_watched). A managed dict's values (s->keys) have no
-   dict, no version tag and no FILL: R8 is read from the object, R9 is
-   the class keys. Laid out as
+   dict and no version tag: R8 is read from the object, R9 is the class
+   keys, and RCX is scratch. Laid out as
 
        checks ............ jcc MISS (each failure)
        old = values[ix]; test; jz FILL
@@ -158,14 +158,18 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
              dec old (not an immortal); jnz DONE; call dealloc_glue;
              jmp DONE
      FILL:   ix == ma_used, else MISS; ma_used++; old = value; jmp STORE
+       or into a managed dict's values: append ix to their insertion order
+             (_PyDictValues_AddToInsertionOrder); old = value; jmp STORE
      MISS:   call miss_glue; test eax, eax
              (the caller's error check: jne <respawn>)
      DONE:
 
    FILL makes the old value the new one, increfed once more, so STORE's
-   decref can't reach zero. FILL is only where filling the next slot in
-   order is likely (s->fill: stores to self in __init__); elsewhere an
-   empty slot is a miss, which the helper stores as CPython does. The checks
+   decref can't reach zero. FILL is only where filling an empty slot is
+   likely (s->fill: stores to self in __init__); elsewhere an empty slot is
+   a miss, which the helper stores as CPython does. A name the keys don't
+   hold yet is always a miss, so the keys and their version are only ever
+   changed by CPython. The checks
    come before any write, and nothing before the old value's decref runs Python
    code. The jumps to MISS are short where they reach: the body is emitted
    twice, first with every one near, which gives an upper bound on each
@@ -335,9 +339,21 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     extra_assert(code - (fill_jz + 2) < 128);
     fill_jz[1] = (code_t)(code - (fill_jz + 2));
     le_trace_jump_cond(fill_jz, fill_jz + 2, code);
-    CMP_R_O8(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
-    JCC_MISS(CC_NE); /* out of order: CPython converts the dict */
-    INC_O8(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
+    if (IN_VALUES(s)) {
+        /* the order's length is the byte below the values, its entries the
+           bytes below that, the first nearest; the values have room for
+           every entry of the keys */
+        MOVZX_DR_BO(REG_X64_RCX, REG_X64_R8, -2);
+        ADD_R_I8(REG_X64_RCX, 1);
+        MOV_BO_R(REG_X64_R8, -2, REG_X64_RCX);
+        UNARY_INSTR_ON_REG(3, REG_X64_RCX); /* neg */
+        MOV_BX8_R(REG_X64_R8, -2, REG_X64_RCX, 1, REG_X64_R9);
+    }
+    else {
+        CMP_R_O8(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
+        JCC_MISS(CC_NE); /* out of order: CPython converts the dict */
+        INC_O8(REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
+    }
     MOV_R_R(REG_X64_RAX, REG_X64_RSI);
     INC_STORED(REG_X64_RSI);
     extra_assert(store - (code + 2) >= -128);
