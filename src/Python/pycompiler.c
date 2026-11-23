@@ -1380,39 +1380,40 @@ handler_drops_exception(PyCodeObject *co, int handler)
 {
     le_code_t c = le_code(co);
     int p = handler, q, i;
-#define OP_AT(pos) ((pos) < c.size ? le_op(c, (pos)) : -1)
+#define OP_AT(pos) ((pos) < c.size ? le_instr(c, (pos)).op : -1)
+#define NEXT(pos) (le_instr(c, (pos)).next)
 #if LE_HAS_EXCEPTION_TABLE
     if (OP_AT(p) != PUSH_EXC_INFO)
         return false;
-    p = le_after(c, p);
+    p = NEXT(p);
     i = OP_AT(p);
     if (i == LOAD_GLOBAL || i == LOAD_FAST || i == LOAD_DEREF) {
-        q = le_after(c, p);
-        if (OP_AT(q) == CHECK_EXC_MATCH &&
-            (OP_AT(le_after(c, q)) == POP_JUMP_FORWARD_IF_FALSE ||
-             OP_AT(le_after(c, q)) == POP_JUMP_IF_FALSE))
-            p = le_after(c, le_after(c, q));
+        q = NEXT(p);
+        if (OP_AT(q) == CHECK_EXC_MATCH && OP_AT(NEXT(q)) == POP_JUMP_IF_FALSE)
+            p = NEXT(NEXT(q));
     }
-    return OP_AT(p) == POP_TOP && OP_AT(le_after(c, p)) == POP_EXCEPT;
+    return OP_AT(p) == POP_TOP && OP_AT(NEXT(p)) == POP_EXCEPT;
 #else
     if (OP_AT(p) == DUP_TOP) {
-        q = le_after(c, p);
+        q = NEXT(p);
         i = OP_AT(q);
         if (i == LOAD_GLOBAL || i == LOAD_NAME || i == LOAD_FAST ||
             i == LOAD_DEREF) {
-            q = le_after(c, q);
-            if (OP_AT(q) == COMPARE_OP && le_arg(c, q) == PyCmp_EXC_MATCH &&
-                OP_AT(le_after(c, q)) == POP_JUMP_IF_FALSE)
-                p = le_after(c, le_after(c, q));
+            q = NEXT(q);
+            if (OP_AT(q) == COMPARE_OP &&
+                le_instr(c, q).arg == PyCmp_EXC_MATCH &&
+                OP_AT(NEXT(q)) == POP_JUMP_IF_FALSE)
+                p = NEXT(NEXT(q));
             else if (OP_AT(q) == JUMP_IF_NOT_EXC_MATCH)
-                p = le_after(c, q);
+                p = NEXT(q);
         }
     }
-    for (i = 0; i < 3; i++, p = le_after(c, p))
+    for (i = 0; i < 3; i++, p = NEXT(p))
         if (OP_AT(p) != POP_TOP)
             return false;
     return OP_AT(p) == POP_EXCEPT;
 #endif
+#undef NEXT
 #undef OP_AT
 }
 
@@ -2146,33 +2147,24 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
 /* the keyword names of the CALL at 'pos' (its first unit): the constant of
    the KW_NAMES right before it, or before its PRECALL where CPython has
    one, or NULL for none. False with SystemError if no PRECALL comes right
-   before where there is one (mergepoints.c refuses such code). Caches are
-   CACHE units, so a unit read here is an instruction's own only if it is
-   the opcode looked for. */
+   before where there is one (mergepoints.c refuses such code). */
 static bool
 call_kwnames(PsycoObject *po, PyCodeObject *co, int pos, PyObject **kwnames)
 {
     le_code_t c = le_code(co);
-    int p = pos - LE_UNIT, arg, shift;
+    le_instr_t in;
     *kwnames = NULL;
 #if LE_HAS_OPCODE_PRECALL
-    p -= LE_CACHE_BYTES(PRECALL);
-    if (p < 0 || le_op(c, p) != PRECALL) {
+    if (pos <= 0 || le_instr(c, pos = le_prev(c, pos)).op != PRECALL) {
         PycException_SetString(po, PyExc_SystemError, "CALL without PRECALL");
         return false;
     }
-    while (p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG) p -= LE_UNIT;
-    p -= LE_UNIT;
 #endif
-    if (p < 0 || le_op(c, p) != KW_NAMES)
+    if (pos <= 0)
         return true;
-    arg = le_arg(c, p);
-    for (shift = 8; p >= LE_UNIT && le_op(c, p - LE_UNIT) == EXTENDED_ARG;
-         shift += 8) {
-        p -= LE_UNIT;
-        arg |= le_arg(c, p) << shift;
-    }
-    *kwnames = PyTuple_GET_ITEM(co->co_consts, arg);
+    in = le_instr(c, le_prev(c, pos));
+    if (in.op == KW_NAMES)
+        *kwnames = PyTuple_GET_ITEM(co->co_consts, in.arg);
     return true;
 }
 #endif
@@ -2378,8 +2370,10 @@ feeds_build_string(PyCodeObject *co, int next_instr)
 {
     le_code_t c = le_code(co);
     int depth = 1;
-    for (; next_instr < c.size; next_instr = le_after(c, next_instr)) {
-        int op = le_op(c, next_instr), arg = le_arg(c, next_instr);
+    while (next_instr < c.size) {
+        le_instr_t in = le_instr(c, next_instr);
+        int op = in.op, arg = in.arg;
+        next_instr = in.next;
         if (op == LOAD_CONST || op == LOAD_FAST || op == LOAD_DEREF)
             depth++;
         else if (op == FORMAT_VALUE)
