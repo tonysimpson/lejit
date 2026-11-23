@@ -67,7 +67,20 @@ SKIPPED = {
         'test.test_opcache.TestRacesDoNotCrash.test_store_attr_instance_value '
         'test.test_opcache.TestRacesDoNotCrash.test_store_attr_with_hint '
         'test.test_opcache.TestRacesDoNotCrash.test_store_subscr_list_int '
-        'test.test_opcache.TestRacesDoNotCrash.test_unpack_sequence_list',
+        'test.test_opcache.TestRacesDoNotCrash.test_unpack_sequence_list '
+        'test.test_opcache.TestCallCache.test_push_init_frame_fails '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_class_with_metaclass_check '
+        'test.test_opcache.TestRacesDoNotCrash.test_load_attr_slot '
+        'test.test_opcache.TestSpecializer.test_binary_op '
+        'test.test_opcache.TestSpecializer.test_compare_op '
+        'test.test_opcache.TestSpecializer.test_contain_op '
+        'test.test_opcache.TestSpecializer.test_load_const '
+        'test.test_opcache.TestSpecializer.test_load_super_attr '
+        'test.test_opcache.TestSpecializer.test_store_attr_instance_value '
+        'test.test_opcache.TestSpecializer.test_store_attr_slot '
+        'test.test_opcache.TestSpecializer.test_store_attr_with_hint '
+        'test.test_opcache.TestSpecializer.test_to_bool '
+        'test.test_opcache.TestSpecializer.test_unpack_sequence',
     'CPython counts each frame a frame-evaluation hook is given as a C call '
     'too, so a Python recursion 90,000 deep passes the C recursion limit '
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
@@ -98,6 +111,8 @@ SKIPPED = {
         'test.test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
         'test.test_int.IntSubclassStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int',
     "code LeJIT compiles doesn't run in ceval, so ceval doesn't quicken it":
+        'test.test_dis.DisTests.test_loop_with_conditional_at_end_is_quickened '
+        'test.test_dis.DisWithFileTests.test_loop_with_conditional_at_end_is_quickened '
         'test.test_dis.DisTests.test_super_instructions '
         'test.test_dis.DisWithFileTests.test_super_instructions '
         'test.test_dis.DisTests.test_show_caches '
@@ -192,6 +207,7 @@ SKIPPED = {
     'counts them':
         'test.test_descr.ClassPropertiesAndMethods.test_slots '
         'test.test_gc.GCTests.test_get_objects_arguments '
+        'test.test_gc.GCTests.test_heap_size '
         'test.test_sys.SysModuleTest.test_getallocatedblocks',
     'marshal of a code object with one reference':
         'test.test_importlib.test_abc.*_SourceLoaderBytecodeTests.test_code_bad_* '
@@ -199,6 +215,13 @@ SKIPPED = {
     "compiled code makes Python calls without CPython's frame-evaluation "
     'hook, so a hook the test installs sees none of them':
         'test.test_capi.test_misc.Test_Pep523API.*',
+    "fail every allocation from some point (support.nomemtest, "
+    "_testcapi.set_nomemory), where a compile can't recover":
+        'test.test_bytes.*.test_resize_error '
+        'test.test_capi.test_unicode.*.test_memory_error '
+        'test.test_str.*.test_replace_oom '
+        'test.test_memoryio.*.test_memory_error '
+        'test.test_pyexpat.*.test_error_path_no_crash',
     'a pool of processes started from threads, which hung here once in a '
     'child that runs without LeJIT':
         'test.test_importlib.test_threaded_import.ThreadedImportTests.'
