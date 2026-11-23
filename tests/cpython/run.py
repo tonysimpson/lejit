@@ -214,8 +214,9 @@ def gc_callback_aborts():
                           timeout=TIMEOUT).returncode < 0
 
 
-# Prints a JSON list of the failing tests, each its id and, for the first
-# ten, the end of its traceback, then the counts. Tests whose ids match one of
+# Prints a JSON list of the skipped tests, each its id and the reason, then
+# one of the failing tests, each its id and, for the first ten, the end of
+# its traceback, then the counts. Tests whose ids match one of
 # the patterns given are skipped.
 CHILD = r'''
 import sys, unittest, io, json, fnmatch, faulthandler
@@ -235,6 +236,7 @@ def skip(suite):
 skip(suite)
 r = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
 bad = r.failures + r.errors
+print(json.dumps([[t.id(), str(why)[:200]] for t, why in r.skipped]))
 print(json.dumps([[t.id()] + [l[:200] for l in tb.splitlines()[-10:]] * (i < 10)
                   for i, (t, tb) in enumerate(bad)]))
 print('run=%d fail=%d err=%d skip=%d' % (r.testsRun, len(r.failures),
@@ -257,7 +259,8 @@ def stderr_tail(err, lines=10):
 
 def run(mode, name):
     """The run's counts and exit status, its failing tests (id: the end of
-    the traceback), and the end of its stderr if it crashed."""
+    the traceback), the end of its stderr if it crashed, and its skipped
+    tests (id: the reason)."""
     with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd, \
             tempfile.TemporaryFile() as errf:
         skip = [t for ts in SKIPPED.values() for t in ts.split()]
@@ -275,22 +278,24 @@ def run(mode, name):
         errf.seek(max(0, size - 16384))
         err = errf.read()
     if out is None:
-        return 'timeout', {}, stderr_tail(err)
+        return 'timeout', {}, stderr_tail(err), {}
     out = out.decode(errors='replace').strip().splitlines()
     counted = out[-1:] and out[-1].startswith('run=')
-    failed = {}
-    if counted and len(out) > 1:
+    failed, skipped = {}, {}
+    if counted and len(out) > 2:
         try:
             # a subtest's id may show an address
             failed = {re.sub('0x[0-9a-f]+', '0x...', t[0]): t[1:]
                       for t in json.loads(out[-2])}
+            skipped = {re.sub('0x[0-9a-f]+', '0x...', t[0]): t[1]
+                       for t in json.loads(out[-3])}
         except (ValueError, TypeError, IndexError):
             pass
     # killed by a signal: faulthandler's tracebacks, one per thread
     crashed = ([] if counted and not p.returncode else
                stderr_tail(err, 80 if p.returncode < 0 else 10))
     return ('%s exit=%d' % (out[-1] if out else '(no output)', p.returncode),
-            failed, crashed)
+            failed, crashed, skipped)
 
 
 def check(name):
@@ -298,12 +303,15 @@ def check(name):
     if plain[0] == with_lejit[0] and set(plain[1]) == set(with_lejit[1]):
         return True, 'ok     %-24s %s' % (name, plain[0])
     report = ['FAIL   %-24s %s   with LeJIT: %s' % (name, plain[0], with_lejit[0])]
-    for side, (_, failed, crashed), (_, other, _) in (
+    for side, (_, failed, crashed, skipped), (_, other, _, other_skipped) in (
             ('plain', plain, with_lejit), ('with LeJIT', with_lejit, plain)):
         why = []
         for test in sorted(set(failed) - set(other)):
             why += [test] + ['    ' + l for l in failed[test]]
         why += crashed
+        # a count that differs only in skips names the tests
+        for test in sorted(set(skipped) - set(other_skipped)):
+            why.append('skipped only here: %s (%s)' % (test, skipped[test]))
         if why:
             report += ['       %s:' % side] + ['         ' + l for l in why]
     return False, '\n'.join(report)
