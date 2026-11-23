@@ -57,6 +57,22 @@ SKIPPED = {
     "functools' Python lru_cache passes the recursion limit "
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
         'test.test_functools.TestLRUPy.test_lru_recursion',
+    "CPython doesn't specialise a class's __getitem__ in BINARY_OP, or a "
+    'for loop over or a send to a generator, while a frame-evaluation hook '
+    'is installed (_testinternalcapi.set_eval_frame_record fails them the '
+    'same way)':
+        'test.test_opcache.TestSpecializer.test_binary_subscr '
+        'test.test_opcache.TestSpecializer.test_for_iter '
+        'test.test_opcache.TestSpecializer.test_send_with '
+        'test.test_opcache.TestSpecializer.test_send_yield_from',
+    'with a frame-evaluation hook installed, a Python call holds its '
+    'arguments in the caller too, so sys.getrefcount counts one more '
+    '(_testinternalcapi.set_eval_frame_record fails it the same way)':
+        'test.test_capi.test_object.CAPITest.test_is_unique_temporary',
+    'with a frame-evaluation hook installed, _remote_debugging sees only '
+    "the thread's innermost frame "
+    '(_testinternalcapi.set_eval_frame_record fails it the same way)':
+        'test.test_external_inspection.TestGetStackTrace.test_self_trace',
     "LeJIT replaces _warnings.warn and gc.get_referents with functions of "
     "its own, whose docstrings have no text signature":
         'test.test_inspect.*TestSignatureDefinitions.test_gc_module_has_signatures '
