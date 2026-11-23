@@ -2054,9 +2054,11 @@ getframemodulename_init(PyObject *sysmod)
 /* _warnings.warn walks tstate->frame in C: it runs with the compiled
    frames over the current real frame emulated and current. */
 static PyObject *original_warn = NULL;
+DEFINEVAR PyCFunction le_c_warn = NULL;
 
-static PyObject *
-le_warn(PyObject *self, PyObject *args, PyObject *kwds)
+DEFINEFN
+PyObject *
+le_warn_with_frames(PyObject *warn, PyObject *args, PyObject *kwds)
 {
     PyThreadState *ts = PyThreadState_GET();
     le_frame_t *saved = le_frame_current(ts);
@@ -2068,7 +2070,7 @@ le_warn(PyObject *self, PyObject *args, PyObject *kwds)
     top = linked_frame(0, undo);
     if (top != NULL && le_frame_of(top) != saved)
         le_pyframe_make_current(ts, top);
-    result = PyObject_Call(original_warn, args, kwds);
+    result = PyObject_Call(warn, args, kwds);
     le_frame_set_current(ts, saved);
     if (top != NULL && le_frame_of(top) != saved)
         le_pyframe_current_end(top);
@@ -2076,6 +2078,13 @@ le_warn(PyObject *self, PyObject *args, PyObject *kwds)
     Py_DECREF(undo);
     Py_XDECREF(top);
     return result;
+}
+
+static PyObject *
+le_warn(PyObject *self, PyObject *args, PyObject *kwds)
+{
+    (void)self;
+    return le_warn_with_frames(original_warn, args, kwds);
 }
 
 /* locals, vars, dir, eval and exec read their caller's frame through
@@ -2268,6 +2277,10 @@ warn_init(void)
         return;
     }
     original_warn = PyObject_GetAttrString(mod, "warn");
+    /* a _warnings imported again later has the same C function, which
+       compiled code calls with the frames too (pmethodobject.c) */
+    if (original_warn != NULL && PyCFunction_Check(original_warn))
+        le_c_warn = PyCFunction_GET_FUNCTION(original_warn);
     fn = replacement_new(&le_warn_def, mod, original_warn);
     if (original_warn == NULL || fn == NULL ||
         PyObject_SetAttrString(mod, "warn", fn) < 0)
