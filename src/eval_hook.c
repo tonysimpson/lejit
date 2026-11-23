@@ -671,6 +671,14 @@ le_entry_install(void)
     return 0;
 }
 
+/* LeJIT's hook, which compiled code tests is still installed before it
+   calls compiled code directly (mechanisms/tracing.h:le_direct_call_test) */
+DEFINEFN void *
+le_eval_hook(void)
+{
+    return (void *)LeEval_EvalFrame;
+}
+
 /* lejit.stop: new frames go to the evaluator that was there before; frames
    already running compiled code go on to their end compiled. Returns -1
    if another evaluator has been installed over LeJIT's: it would still pass
