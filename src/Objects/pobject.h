@@ -163,7 +163,7 @@ EXTERNFN void
 cimpl_type_lookup_changed(PyTypeObject *tp, PyObject *name, PyObject *descr);
 
 /* A guard for a message made now that names tp, a mutable type: a
-   condition code, true where tp has changed since. */
+   condition code, true where tp has been renamed since. */
 EXTERNFN condition_code_t
 Psyco_TypeNameChanged(PsycoObject *po, PyTypeObject *tp);
 

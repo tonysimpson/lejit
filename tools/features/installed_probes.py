@@ -434,6 +434,19 @@ def NAME_ERROR_NAME():
 
 
 @probe
+def RAISE_CAUSE_CHECKED():
+    """raise ... from a class whose call returns None is a TypeError
+    (run)"""
+    class NoCause(BaseException):
+        def __new__(cls):
+            return None
+    e = _error(exec, 'raise IndexError from C', {'C': NoCause})
+    if not isinstance(e, (TypeError, IndexError)):
+        raise Unanswered('raise run: %r' % e)
+    return isinstance(e, TypeError), '%s: %s' % (type(e).__name__, e)
+
+
+@probe
 def IMPORT_FROM_SPEC():
     """`from m import x`, for a module whose __spec__ says it is still
     initialising, says it is "partially initialized" (run)"""

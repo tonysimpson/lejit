@@ -3800,6 +3800,13 @@ cimpl_do_raise(PyObject *exc, PyObject *cause)
             fixed_cause = PyObject_CallObject(cause, NULL);
             if (fixed_cause == NULL)
                 goto raise_error;
+            if (LE_HAS_RAISE_CAUSE_CHECKED &&
+                !PyExceptionInstance_Check(fixed_cause)) {
+                PyErr_Format(PyExc_TypeError, LE_MSG_RAISE_NOT_INSTANCE, cause,
+                             Py_TYPE(fixed_cause));
+                Py_DECREF(fixed_cause);
+                goto raise_error;
+            }
             Py_DECREF(cause);
         }
         else if (PyExceptionInstance_Check(cause)) {
@@ -4411,6 +4418,19 @@ is_pseudo_exception_tuple(vinfo_t *v)
 static int
 resume_in_ceval(PsycoObject *po, int next_instr, int *unwound);
 
+/* An item stored or deleted by a call may be a frame-locals proxy's,
+   which writes the locals of a frame (frames.c:expose) */
+static inline int
+writes_locals_proxy(int opcode)
+{
+#ifdef PyFrameLocalsProxy_Check
+    return opcode == STORE_SUBSCR || opcode == DELETE_SUBSCR;
+#else
+    (void)opcode;
+    return 0;
+#endif
+}
+
 static int
 resume_if_tracing(PsycoObject *po, int next_instr, int *unwound)
 {
@@ -4420,6 +4440,24 @@ resume_if_tracing(PsycoObject *po, int next_instr, int *unwound)
     on = psyco_tracing_on(po);
     if (on <= 0)
         return on == 0;
+#ifdef PyFrameLocalsProxy_Check
+    {
+        /* the test above is also on while any frame's locals are
+           exposed: this frame goes on interpreted if they are its own */
+        condition_code_t cc;
+        vinfo_t *v = psyco_generic_call(
+            po, psyco_frame_goes_interpreted,
+            CfReturnTypeInt | CfNoBlock | CfNoPython, "l", (long)po->pr.co);
+        if (v == NULL)
+            return 0;
+        cc = integer_non_null(po, v);
+        vinfo_decref(v, po);
+        if (cc == CC_ERROR)
+            return 0;
+        if (!runtime_condition_f(po, cc))
+            return 1;
+    }
+#endif
     return resume_in_ceval(po, next_instr, unwound);
 }
 
@@ -7246,7 +7284,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
         fine:
             extra_assert(!PycException_Occurred(po));
-            if ((po->pr.python_call && (le_op_flags(opcode) & LE_OPF_CALL)) ||
+            if ((po->pr.python_call && ((le_op_flags(opcode) & LE_OPF_CALL) ||
+                                        writes_locals_proxy(opcode))) ||
                 po->pr.resume_pending) {
                 po->pr.resume_pending = 0;
                 if (!resume_if_tracing(po, next_instr, &unwound))

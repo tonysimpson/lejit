@@ -1308,6 +1308,8 @@ CEVAL = [
     ('KWARGS_MERGE_EX', D('CALL_FUNCTION_EX merges **kwargs with _PyDict_MergeEx, and format_kwargs_error reports it',
                           lambda s: _case_has(s, 'CALL_FUNCTION_EX', '_PyDict_MergeEx'))),
     ('DELETE_GLOBAL_KEYERROR_ONLY', delete_global_keyerror_only),
+    ('RAISE_CAUSE_CHECKED', D('raise ... from a class whose call doesn\'t make an exception is a TypeError (do_raise)',
+                              lambda s: _body_has(s, CE, 'do_raise', 'PyExceptionInstance_Check(fixed_cause)'))),
 ]
 
 # the opcodes that some CPython lacks
