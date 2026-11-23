@@ -2374,8 +2374,8 @@ unicode_concatenate(PsycoObject *po, int next_instr)
 }
 
 /* whether the item on top of the stack at next_instr is a part of an
-   f-string's BUILD_STRING with only loads and other FORMAT_VALUEs
-   between, read from the bytecode */
+   f-string's BUILD_STRING with only loads, conversions and other
+   FORMAT_VALUEs between, read from the bytecode */
 static bool
 feeds_build_string(PyCodeObject *co, int next_instr)
 {
@@ -2387,6 +2387,10 @@ feeds_build_string(PyCodeObject *co, int next_instr)
         next_instr = in.next;
         if (op == LOAD_CONST || op == LOAD_FAST || op == LOAD_DEREF)
             depth++;
+        else if (op == LOAD_FAST_LOAD_FAST)
+            depth += 2;
+        else if (op == CONVERT_VALUE)
+            continue;
         else if (op == FORMAT_VALUE)
             depth -= (arg & 0x4) != 0;
         else if (op == BUILD_STRING && arg >= depth)
@@ -6041,6 +6045,20 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
             }
             POP_DECREF_N(1 + have_fmt_spec);
             PUSH(result);
+            goto fine;
+        }
+
+        /* the conversion FORMAT_VALUE's argument has, on its own */
+        case CONVERT_VALUE: {
+            PyObject *(*conv_fn)(PyObject *) = oparg == 1   ? PyObject_Str
+                                               : oparg == 2 ? PyObject_Repr
+                                                            : PyObject_ASCII;
+            x = psyco_generic_call(po, conv_fn, CfCommonNewRefPyObject, "v",
+                                   TOP());
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
             goto fine;
         }
 
