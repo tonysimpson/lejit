@@ -911,7 +911,7 @@ scan_find(PyCodeObject ***out, le_group_t ***groups, long *ngroups)
 {
     le_code_extra_t *x;
     PyObject *all;
-    PyObject *modules = PyImport_GetModuleDict();
+    PyObject *modules = le_modules_dict();
     Py_ssize_t pos = 0;
     PyObject *k, *m;
     size_t i;
@@ -1156,7 +1156,9 @@ scan_callback_list(void)
     PyObject *t, *v, *tb;
     PyErr_Fetch(&t, &v, &tb);
     if (scan_callback == NULL) {
-        PyObject *gc = PyDict_GetItemString(PyImport_GetModuleDict(), "gc");
+        PyObject *modules = le_modules_dict();
+        PyObject *gc =
+            modules != NULL ? PyDict_GetItemString(modules, "gc") : NULL;
         if (gc == NULL || !PyModule_Check(gc))
             goto done;
         gc_callbacks = PyObject_GetAttrString(gc, "callbacks");
@@ -1239,7 +1241,7 @@ looks_short_lived(PyObject *o)
     if (qualname == NULL || !PyUnicode_Check(qualname) || module == NULL ||
         !PyUnicode_Check(module) || has_locals(qualname))
         return true;
-    d = PyImport_GetModuleDict();
+    d = le_modules_dict();
     if (d != NULL && PyDict_CheckExact(d))
         found = PyDict_GetItem(d, module);
     if (found == NULL || !PyModule_Check(found))
