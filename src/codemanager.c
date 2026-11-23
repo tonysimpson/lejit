@@ -172,16 +172,17 @@ island_find(code_t *from)
 DEFINEFN code_t *
 psyco_code_far_jump(code_t *end, code_t *target)
 {
-    code_t *j = amap_get(&far_jumps, target);
+    code_t *j;
     int i, r;
-    if (j != NULL && FITS_IN_32BITS(j - end))
-        return j;
     for (r = 0; r < nregions; r++)
         if (regions[r].start <= end && end <= regions[r].end)
             break;
     if (r == nregions)
         /* not in executable memory (a throwaway buffer): never run */
         return target;
+    j = amap_get(&far_jumps, target);
+    if (j != NULL && FITS_IN_32BITS(j - end))
+        return j;
     if ((i = island_find(end)) < 0) {
         /* none in reach has room: a new region just after this one */
         map_region(regions[r].end);
