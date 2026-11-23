@@ -130,6 +130,12 @@ def ARG_CHECK_POSITIONAL():
 
 
 @probe
+def DEALLOC_HOOKS():
+    """libpython exports PyRefTracer_SetTracer (ctypes)"""
+    return _exported('PyRefTracer_SetTracer')
+
+
+@probe
 def OBJECTDICT_SETITEM_LINKABLE():
     """libpython exports _PyObjectDict_SetItem, so an extension can link
     to it (ctypes)"""
@@ -796,6 +802,16 @@ def NOT_A_SEQUENCE_ERROR():
     if isinstance(e, TypeError) and 'does not support indexing' in msg:
         return False, 'PySequence_GetItem({}): %s' % msg
     raise Unanswered('PySequence_GetItem({}): %r' % e)
+
+
+@probe
+def TUPLE_UNTRACKED_AT_BUILD():
+    """a tuple built at run time from an object() is not tracked before any
+    collection (run)"""
+    import gc
+    o = object()
+    t = (o,)
+    return not gc.is_tracked(t), 'gc.is_tracked((object(),)) is %r' % gc.is_tracked(t)
 
 
 @probe

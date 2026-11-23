@@ -177,6 +177,7 @@ static bool
 compute_genexpr(PsycoObject *po, vinfo_t *v)
 {
     vinfo_t *f, *a, *g;
+    int i;
     f = vinfo_getitem(v, iGENEXPR_FUNC);
     a = vinfo_getitem(v, iGENEXPR_ARGS);
     if (f == NULL || a == NULL)
@@ -185,6 +186,13 @@ compute_genexpr(PsycoObject *po, vinfo_t *v)
                            "vvl", f, a, 0L);
     if (g == NULL)
         return false;
+    /* the call's function and arguments, which the generator's frame now
+       holds, go as CPython's call drops them: kept, they would outlive a
+       generator closed or cleared before its end */
+    for (i = iGENEXPR_FUNC; i <= iGENEXPR_GLOBALS; i++) {
+        vinfo_xdecref(v->array->items[i], po);
+        v->array->items[i] = NULL;
+    }
     vinfo_move(po, v, g);
     return true;
 }

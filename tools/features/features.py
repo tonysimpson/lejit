@@ -1365,6 +1365,8 @@ ABSTRACT = [
 
 # the other objects
 OBJECTS = [
+    ('TUPLE_UNTRACKED_AT_BUILD', D('a tuple built from items none of whose types the GC tracks is left untracked from the start (tupleobject.c:maybe_tracked)',
+                                   lambda s: _defines(s, 'Objects/tupleobject.c', 'maybe_tracked'))),
     ('TUPLE_GET_EMPTY', D('the empty tuple is the interpreter\'s, read with tuple_get_empty',
                           lambda s: _defines(s, 'Objects/tupleobject.c', 'tuple_get_empty'))),
     ('CONTAINS_ITEM_FIRST', tuplecontains_item_first),
@@ -1383,6 +1385,8 @@ OBJECTS = [
                         lambda s: _public(s, 'PyType_GetDict'))),
     ('IMMORTAL_OBJECTS', D('an object whose refcount\'s low 32 bits are negative is immortal: Py_INCREF and Py_DECREF leave it alone (_Py_IsImmortal)',
                            lambda s: _public(s, '_Py_IsImmortal'))),
+    ('DEALLOC_HOOKS', D('_Py_Dealloc does more than call tp_dealloc: it reports to the ref tracer (PyRefTracer_SetTracer), and may defer a deep dealloc to the trashcan',
+                        lambda s: _public(s, 'PyRefTracer_SetTracer'))),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
     ('TAGGED_DICT_OR_VALUES', tagged_dict_or_values),
