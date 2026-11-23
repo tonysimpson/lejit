@@ -263,7 +263,7 @@ psyco_ge_unused_var(global_entries_t *ge, int num)
 }
 
 EXTERNFN void
-psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge);
+psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix);
 
 /*****************************************************************/
 /***   Unification                                             ***/

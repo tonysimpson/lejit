@@ -8084,7 +8084,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 if (!psyco_limit_nested_weight(po, &po->vlocals, NWI_NORMAL,
                                                NESTED_WEIGHT_END))
                     break;
-                psyco_forget_dead_vars(po, &mp->entries);
+                psyco_forget_dead_vars(po, &mp->entries, true);
                 code1 = psyco_compile(po, mp, true);
                 if (code1 != NULL)
                     goto finished;
