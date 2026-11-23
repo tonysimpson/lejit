@@ -52,15 +52,21 @@ EXTERNFN bool
 PsycoFunction_SetField(PsycoObject *po, vinfo_t *func, int which,
                        vinfo_t *value);
 
-/* A generator expression called but not yet run: the virtual function and
-   its argument tuple. A consumer that knows it (sum, any, all, list, tuple,
-   set) runs its code fused (psyfunc.c:psyco_call_genexpr); anything else
-   makes the real generator. Delaying is safe because creating a generator
-   runs no code. */
+/* A generator called but not yet run (a generator expression, or a
+   generator function psyfunc.c:psyco_call_pyfunc has bound the arguments
+   of): the function, its positional arguments with the defaults the call
+   used, the globals and the code (a fixed constant). A consumer that knows
+   it (sum, any, all, min, max, list, tuple, set, str.join) runs its code
+   fused (psyfunc.c:psyco_call_genexpr); anything else makes the real
+   generator by calling the function with those arguments. Delaying is safe
+   because creating a generator runs no code. */
 #define iGENEXPR_FUNC (iOB_TYPE + 1)
 #define iGENEXPR_ARGS (iOB_TYPE + 2)
+#define iGENEXPR_GLOBALS (iOB_TYPE + 3)
+#define iGENEXPR_CODE (iOB_TYPE + 4)
 EXTERNFN vinfo_t *
-PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple);
+PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple, vinfo_t *vglobals,
+                 PyCodeObject *co);
 EXTERNFN bool
 PsycoGenexpr_Check(vinfo_t *v);
 

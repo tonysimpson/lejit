@@ -310,6 +310,11 @@ def arg_raise_from(e, cause):
     raise e from cause
 
 
+class MakesNone(BaseException):
+    def __new__(cls):
+        return None
+
+
 Z = ZeroDivisionError
 CASES += [
     ('arg_catch_as', '[(5, 2, Z), (5, 0, Z)]', {}),
@@ -323,7 +328,8 @@ CASES += [
     ('arg_loop_catch', '[(0, Z), (10, Z), (5, ValueError)]', {}),
     ('arg_not_a_class', '[(5, 0, 1), (5, 0, (Z, 1)), (5, 1, 1)]', {}),
     ('arg_raise_from', '[(ValueError(1), KeyError(2)), (ValueError, KeyError),'
-     ' (ValueError(1), None), (ValueError(1), 3)]', {}),
+     ' (ValueError(1), None), (ValueError(1), 3), (ValueError, MakesNone)]',
+     {}),
 ]
 
 

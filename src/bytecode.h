@@ -463,7 +463,7 @@ le_op_flags(int op)
         case LOAD_DEREF:
         case STORE_DEREF:
         case DELETE_DEREF:
-        /* generator expressions (psyco_is_genexpr) */
+        /* generators fused with their consumer (psyco_is_fusable_generator) */
         case RETURN_GENERATOR:
         case YIELD_VALUE:
             return LE_OPF_COMPILED;
