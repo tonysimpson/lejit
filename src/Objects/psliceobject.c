@@ -11,8 +11,9 @@
  * fields of the real object; with constant bounds the slice is a constant. A
  * type's meta calls PsycoSlice_Unpack and, if that gives the bounds, its own C
  * helper, which does PySlice_AdjustIndices and the type's step-1 case exactly
- * as its mp_subscript does. Only step None is handled, and only bounds that
- * are None or ints: anything else (__index__, a step) is the real slice.
+ * as its mp_subscript does. Only step None is handled (and -1 for a list's
+ * pieces, plistobject.c), and only bounds that are None or ints: anything
+ * else (__index__, another step) is the real slice.
  */
 #include "psliceobject.h"
 #include "plongobject.h"
@@ -167,6 +168,46 @@ PsycoSlice_Unpack(PsycoObject *po, vinfo_t *slice, vinfo_t **pstart,
     if (k <= 0)
         return k;
     k = slice_index(po, slice->array->items[iSLICE_STOP], PY_SSIZE_T_MAX,
+                    pstop);
+    if (k <= 0)
+        vinfo_decref(*pstart, po);
+    return k;
+}
+
+/* the same, only for bounds that are None or exact ints, and also for a
+   step that is the constant -1, with PySlice_Unpack's bounds for a negative
+   step when they are None; *pstep is 1 or -1 */
+DEFINEFN
+int
+PsycoSlice_UnpackStep(PsycoObject *po, vinfo_t *slice, vinfo_t **pstart,
+                      vinfo_t **pstop, int *pstep)
+{
+    vinfo_t *step;
+    PyObject *o;
+    int k, overflow;
+    if (slice->source != VirtualTime_New(&psyco_computed_slice))
+        return 0;
+    for (k = iSLICE_START; k <= iSLICE_STOP; k++)
+        if (!is_none(slice->array->items[k]) &&
+            Psyco_KnownType(slice->array->items[k]) != &PyLong_Type)
+            return 0;
+    step = slice->array->items[iSLICE_STEP];
+    if (is_none(step)) {
+        *pstep = 1;
+        return PsycoSlice_Unpack(po, slice, pstart, pstop);
+    }
+    if (!is_compiletime(step->source))
+        return 0;
+    o = (PyObject *)CompileTime_Get(step->source)->value;
+    if (!PyLong_CheckExact(o) ||
+        PyLong_AsLongAndOverflow(o, &overflow) != -1 || overflow)
+        return 0;
+    *pstep = -1;
+    k = slice_index(po, slice->array->items[iSLICE_START], PY_SSIZE_T_MAX,
+                    pstart);
+    if (k <= 0)
+        return k;
+    k = slice_index(po, slice->array->items[iSLICE_STOP], PY_SSIZE_T_MIN,
                     pstop);
     if (k <= 0)
         vinfo_decref(*pstart, po);
