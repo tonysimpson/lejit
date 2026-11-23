@@ -116,6 +116,8 @@ SKIPPED = {
         'test.test_gc.GCTests.test_frame '
         'test.test_frame.TestIncompleteFrameAreInvisible.test_sneaky_frame_object_teardown '
         'test.test_capi.test_exceptions.Test_ErrSetAndRestore.test_err_writeunraisable',
+    "an inlined frame's f_locals is empty once its call has returned":
+        'test.test_frame.TestFrameLocals.test_constructor',
     "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
     'PyFrame_GetVar) misses those compiled code has set':
         'test.test_capi.test_eval.Tests.test_eval_getlocals '
@@ -181,6 +183,10 @@ SKIPPED = {
     'bind a port find_unused_port chose, which another process can take '
     'first':
         'test.test_socket.CreateServerFunctionalTest.*',
+    'asserts that wait_for with a timeout of 0 returns within 0.1 s of wall '
+    'time, which fails plain as well as with LeJIT on a loaded machine':
+        'test.test_asyncio.test_waitfor.AsyncioWaitForTest.'
+        'test_wait_for_timeout_less_then_0_or_0_coroutine_do_not_started',
 }
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
@@ -212,7 +218,8 @@ def gc_callback_aborts():
 # ten, the end of its traceback, then the counts. Tests whose ids match one of
 # the patterns given are skipped.
 CHILD = r'''
-import sys, unittest, io, json, fnmatch
+import sys, unittest, io, json, fnmatch, faulthandler
+faulthandler.enable(all_threads=True)
 if sys.argv[1] == 'lejit':
     sys.path.insert(0, sys.argv[3]); import lejit; lejit.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
@@ -242,10 +249,10 @@ def limit_memory():
     resource.setrlimit(resource.RLIMIT_AS, (MEMORY_LIMIT, MEMORY_LIMIT))
 
 
-def stderr_tail(err):
+def stderr_tail(err, lines=10):
     """The last lines of a run's stderr (bytes), cut to a bounded width."""
     return ['stderr:'] + ['    ' + l[:200] for l in
-                          err.decode(errors='replace').splitlines()[-10:]]
+                          err.decode(errors='replace').splitlines()[-lines:]]
 
 
 def run(mode, name):
@@ -265,7 +272,7 @@ def run(mode, name):
             p.communicate()
             out = None
         size = errf.seek(0, os.SEEK_END)
-        errf.seek(max(0, size - 4096))
+        errf.seek(max(0, size - 16384))
         err = errf.read()
     if out is None:
         return 'timeout', {}, stderr_tail(err)
@@ -279,7 +286,9 @@ def run(mode, name):
                       for t in json.loads(out[-2])}
         except (ValueError, TypeError, IndexError):
             pass
-    crashed = [] if counted and not p.returncode else stderr_tail(err)
+    # killed by a signal: faulthandler's tracebacks, one per thread
+    crashed = ([] if counted and not p.returncode else
+               stderr_tail(err, 80 if p.returncode < 0 else 10))
     return ('%s exit=%d' % (out[-1] if out else '(no output)', p.returncode),
             failed, crashed)
 

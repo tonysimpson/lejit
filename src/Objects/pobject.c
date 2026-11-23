@@ -931,36 +931,36 @@ load_guard_set(attr_guard_t *guard, PyTypeObject *tp)
     guard->flags = version_tag_valid(tp) ? tp->tp_flags : 0;
 }
 
-/* The guards of the messages that name a class (pycompiler.c:
-   PycException_SetTypeFormat): one per (type, name), which any site may set
-   to the type as it is while it has that name. A rename changes the
-   version tag, so a site compiled with the old name fails its guard from
-   then on; so does any other change to the class until a site with the
-   same name is compiled again. A record (dict_record). */
+/* The guard of a message that names a class (pycompiler.c:
+   PycException_SetTypeFormat): the class's tp_name as it is now. A rename
+   points tp_name at the new name's text (typeobject.c:type_set_name),
+   which is all that every version does: 3.13 renames a class without a
+   new version tag. Each name a guard compares with is kept, so that its
+   text is never freed and its address never stands for another name. */
+#define TYPE_tp_name FMUT(CPY_FIELD(PyTypeObject, tp_name, NO_PREV_FIELD))
 DEFINEFN
 condition_code_t
 Psyco_TypeNameChanged(PsycoObject *po, PyTypeObject *tp)
 {
-    static PyObject *guards = NULL, *lookup_name;
-    PyObject *key;
-    attr_guard_t *guard;
-    bool made;
-    if (guards == NULL) {
-        guards = PyDict_New();
-        lookup_name = PyUnicode_InternFromString("__name__");
-        if (guards == NULL || lookup_name == NULL)
-            OUT_OF_MEMORY();
-    }
-    enable_version_tag(tp);
-    _PyType_Lookup(tp, lookup_name); /* assigns the version tag */
-    key = Py_BuildValue("(ky)", (unsigned long)tp, tp->tp_name);
-    if (key == NULL)
+    static PyObject *names = NULL;
+    PyObject *name = ((PyHeapTypeObject *)tp)->ht_name, *key;
+    vinfo_t *vtp, *vname;
+    condition_code_t cc;
+    if (names == NULL && (names = PyDict_New()) == NULL)
         OUT_OF_MEMORY();
-    guard = dict_record(guards, key, sizeof(attr_guard_t), true, &made);
+    key = PyLong_FromVoidPtr(name);
+    if (key == NULL || PyDict_SetItem(names, key, name) < 0)
+        OUT_OF_MEMORY();
     Py_DECREF(key);
-    load_guard_set(guard, tp);
-    psyco_owner_pin((PyObject *)tp); /* its address keys the record */
-    return type_changed(po, tp, guard);
+    psyco_owner_pin((PyObject *)tp); /* the code reads it by its address */
+    vtp = vinfo_new(CompileTime_New((long)tp));
+    vname = psyco_get_field(po, vtp, TYPE_tp_name);
+    vinfo_decref(vtp, po);
+    if (vname == NULL)
+        return CC_ERROR;
+    cc = integer_cmp_i(po, vname, (long)tp->tp_name, Py_NE);
+    vinfo_decref(vname, po);
+    return cc;
 }
 
 #if ALL_CHECKS

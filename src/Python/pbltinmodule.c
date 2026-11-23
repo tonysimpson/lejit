@@ -306,7 +306,7 @@ static int round_flags, sum_flags;
 static PyCFunction cimpl_any;
 static PyCFunction cimpl_all;
 
-/* a pending generator expression (pfuncobject.h) consumed whole by a
+/* a pending generator (pfuncobject.h) consumed whole by a
    builtin: run its code fused with the consumer's step, so neither the
    generator nor its frame exists (psyfunc.c:psyco_call_genexpr). 'start'
    is sum()'s, or NULL. */
