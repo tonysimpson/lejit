@@ -2284,6 +2284,30 @@ frame_locals_proxy_init(void)
     WRAP_SLOT(t->tp_as_mapping, mp_subscript, proxy_subscript);
     WRAP_SLOT(t->tp_as_mapping, mp_ass_subscript, proxy_ass_subscript);
 #undef WRAP_SLOT
+    /* the slots' own methods (__setitem__, __len__, ...) call the
+       functions they were made with */
+    {
+        PyObject *key, *v;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(le_type_dict(t), &pos, &key, &v)) {
+            PyWrapperDescrObject *d = (PyWrapperDescrObject *)v;
+            if (Py_TYPE(v) != &PyWrapperDescr_Type)
+                continue;
+#define WRAPPED(field, ours)                                                \
+    if (proxy_slots.field != NULL && d->d_wrapped == (void *)proxy_slots.field) \
+        d->d_wrapped = (void *)ours;
+            WRAPPED(tp_repr, proxy_repr)
+            else WRAPPED(tp_richcompare, proxy_richcompare)
+            else WRAPPED(tp_iter, proxy_iter)
+            else WRAPPED(nb_or, proxy_or)
+            else WRAPPED(nb_inplace_or, proxy_inplace_or)
+            else WRAPPED(sq_contains, proxy_contains)
+            else WRAPPED(mp_length, proxy_length)
+            else WRAPPED(mp_subscript, proxy_subscript)
+            else WRAPPED(mp_ass_subscript, proxy_ass_subscript)
+#undef WRAPPED
+        }
+    }
     for (i = 0, m = t->tp_methods; m != NULL && m->ml_name != NULL; m++) {
         int kind = m->ml_flags & ~METH_COEXIST;
         int fast = kind == METH_FASTCALL;
