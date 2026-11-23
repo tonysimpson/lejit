@@ -42,6 +42,7 @@
 #include "../mergepoints.h"
 #include "../processor.h"
 #include "../psyfunc.h"
+#include "pbltinmodule.h"
 #include "../bytecode.h"
 #include "frames.h"
 /* le_frame_current, le_frame_set_current */
@@ -7016,6 +7017,16 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                     if (v == NULL)
                         break;
                 }
+#if LE_HAS_SUM_COMPENSATED
+                else if (mode == GENEXPR_SUM_FLOAT ||
+                         mode == GENEXPR_SUM_COMPLEX) {
+                    v = psyco_sum_result(po, (int)mode,
+                                         po->vlocals.items[slot + 1],
+                                         po->vlocals.items[slot + 2]);
+                    if (v == NULL)
+                        break;
+                }
+#endif
                 else {
                     v = po->vlocals.items[slot + 1];
                     vinfo_incref(v);
@@ -7060,10 +7071,26 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                                         acc, v))
                     break;
             }
+#if LE_HAS_SUM_COMPENSATED
+            else if (mode == GENEXPR_SUM || mode == GENEXPR_SUM_FLOAT ||
+                     mode == GENEXPR_SUM_COMPLEX ||
+                     mode == GENEXPR_SUM_GENERIC) {
+                /* builtin_sum_impl's loop for the phase it is in; another
+                   phase is another version of the fused code */
+                int phase = (int)mode;
+                if (!psyco_sum_step(po, &phase, &po->vlocals.items[slot + 1],
+                                    &po->vlocals.items[slot + 2], v))
+                    break;
+                if (phase != mode) {
+                    vinfo_decref(po->vlocals.items[slot], po);
+                    po->vlocals.items[slot] = vinfo_new(
+                        CompileTime_NewSk(sk_new(phase, SkFlagFixed)));
+                }
+            }
+#else
             else if (mode == GENEXPR_SUM) {
                 /* as builtin_sum's generic loop (its fast paths give
-                   the same results as + on ints and floats, where sum()
-                   is compiled: pbltinmodule.c:pbuiltin_sum) */
+                   the same results as + on ints and floats) */
                 if (Psyco_KnownType(acc) != NULL)
                     x = PsycoNumber_Add(po, acc, v);
                 else
@@ -7075,6 +7102,7 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                 po->vlocals.items[slot + 1] = x;
                 vinfo_decref(acc, po);
             }
+#endif
             else if (mode == GENEXPR_MIN || mode == GENEXPR_MAX) {
                 x = psyco_generic_call(
                     po, cimpl_minmax_step, CfCommonNewRefPyObject, "vvl", acc,
@@ -7161,7 +7189,7 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             /* the body returns the await's value, or the marker that it
                suspended, having made its coroutine */
             x = psyco_call_genexpr(po, NTOP(2), GENEXPR_DIRECT,
-                                   NTOP(2)->array->items[iGENEXPR_FUNC]);
+                                   NTOP(2)->array->items[iGENEXPR_FUNC], NULL);
             if (x == NULL)
                 break;
             cc = integer_cmp_i(po, x, (long)psyco_coro_suspended, Py_EQ);

@@ -1454,6 +1454,9 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
     /* fixed, as a fused generator's mode (psyfunc.c:psyco_call_genexpr) */
     po->vlocals.items[GENEXPR_SLOT_MODE(co)] =
         vinfo_new(CompileTime_NewSk(sk_new(GENEXPR_RESUMABLE, SkFlagFixed)));
+#if LE_HAS_SUM_COMPENSATED
+    po->vlocals.items[GENEXPR_SLOT_COMP(co)] = psyco_vi_Zero();
+#endif
     /* the last word is pushed first */
     for (i = nwords - 1; i >= 0; i--) {
         bool owned = i < nlocals || (i >= nplus && i < nplus + nstack);
