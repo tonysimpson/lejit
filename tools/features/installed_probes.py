@@ -866,8 +866,16 @@ def CALLABLE_UNDER_NULL():
     """CALL_FUNCTION_EX given two callables under its arguments, and no
     NULL, calls the lower one (run)"""
     _need_ops('CALL_FUNCTION_EX', 'LOAD_CONST', 'RETURN_VALUE')
-    call = _code([('LOAD_CONST', 0), ('LOAD_CONST', 1), ('LOAD_CONST', 2),
-                  ('CALL_FUNCTION_EX', 0), ('RETURN_VALUE', 0)],
+
+    def f(g, a):
+        return g(*a)
+    ops = [x.opname for x in dis.get_instructions(f)]
+    # a slot for the keywords, NULL when there are none, where the compiler
+    # pushes one
+    kwargs = ops[ops.index('CALL_FUNCTION_EX') - 1] == 'PUSH_NULL'
+    call = _code([('LOAD_CONST', 0), ('LOAD_CONST', 1), ('LOAD_CONST', 2)] +
+                 [('PUSH_NULL', 0)] * kwargs +
+                 [('CALL_FUNCTION_EX', 0), ('RETURN_VALUE', 0)],
                  [lambda: 'lower', lambda: 'upper', ()])
     called = call()
     return called == 'lower', 'CALL_FUNCTION_EX run: called the %s' % called
