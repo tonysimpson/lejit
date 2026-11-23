@@ -345,7 +345,8 @@ def KWARGS_MERGE_EX():
         def g(f, a, k):
             return f(*a, **k)
         ops = [x.opname for x in dis.get_instructions(g)]
-        if ops.index('PUSH_NULL') < ops.index('LOAD_FAST'):
+        first_load = [o for o in ops if o.startswith('LOAD_FAST')][0]
+        if ops.index('PUSH_NULL') < ops.index(first_load):
             start = [('PUSH_NULL', 0), ('LOAD_CONST', 0)]
         else:
             start = [('LOAD_CONST', 0), ('PUSH_NULL', 0)]
@@ -656,6 +657,34 @@ def RANGE_ITER_INDEX():
 
 
 @probe
+def INLINE_VALUES():
+    """a plain class has the flag 1 << 2 (Py_TPFLAGS_INLINE_VALUES), and
+    its instance with an attribute keeps it in the object, a word after
+    its basicsize, with the byte three after the basicsize set (valid) and
+    no dict three words before; once __dict__ is made it is there, and the
+    values stay valid until a __class__ assignment"""
+    class C(object):
+        pass
+
+    class D(object):
+        pass
+    if not C.__flags__ & (1 << 2):
+        return False, 'class C: no 1 << 2 in its flags'
+    c = C()
+    c.a = 1000
+    word = ctypes.c_void_p.from_address
+    at = id(c) + C.__basicsize__
+    valid = ctypes.c_uint8.from_address(at + 3)
+    seen = [(valid.value, word(at + 8).value == id(c.a), word(id(c) - 24).value)]
+    d = c.__dict__
+    seen.append((valid.value, word(at + 8).value == id(c.a), word(id(c) - 24).value == id(d)))
+    c.__class__ = D
+    seen.append(valid.value)
+    found = seen == [(1, True, None), (1, True, True), 0]
+    return found, 'class C: valid, value at +8, dict word %r' % seen
+
+
+@probe
 def VALID_VERSION_TAG_FLAG():
     """a class has the flag 1 << 19 (Py_TPFLAGS_VALID_VERSION_TAG) after a
     lookup on it, and loses it when the class changes (run)"""
@@ -837,8 +866,16 @@ def CALLABLE_UNDER_NULL():
     """CALL_FUNCTION_EX given two callables under its arguments, and no
     NULL, calls the lower one (run)"""
     _need_ops('CALL_FUNCTION_EX', 'LOAD_CONST', 'RETURN_VALUE')
-    call = _code([('LOAD_CONST', 0), ('LOAD_CONST', 1), ('LOAD_CONST', 2),
-                  ('CALL_FUNCTION_EX', 0), ('RETURN_VALUE', 0)],
+
+    def f(g, a):
+        return g(*a)
+    ops = [x.opname for x in dis.get_instructions(f)]
+    # a slot for the keywords, NULL when there are none, where the compiler
+    # pushes one
+    kwargs = ops[ops.index('CALL_FUNCTION_EX') - 1] == 'PUSH_NULL'
+    call = _code([('LOAD_CONST', 0), ('LOAD_CONST', 1), ('LOAD_CONST', 2)] +
+                 [('PUSH_NULL', 0)] * kwargs +
+                 [('CALL_FUNCTION_EX', 0), ('RETURN_VALUE', 0)],
                  [lambda: 'lower', lambda: 'upper', ()])
     called = call()
     return called == 'lower', 'CALL_FUNCTION_EX run: called the %s' % called

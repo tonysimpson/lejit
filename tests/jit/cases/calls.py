@@ -149,6 +149,14 @@ def ceil_floor_objects(x):
     return math.ceil(x), math.floor(2.5), math.ceil(Ceil())
 
 
+# f(*a, **k) whose k is not a mapping: the error names the callable
+def star_call_errors(a, k):
+    try:
+        return defaults(*a, **k)
+    except TypeError as e:
+        return str(e)
+
+
 CASES = [
     ('call_helper', [(1,), (-4,)], {}),
     ('call_in_loop', [(0,), (50,)], {}),
@@ -166,6 +174,8 @@ CASES = [
     ('type_call_errors', "[(tuple,), (set,)]", {}),
     ('nested_code_changes', [(4,), (2.5,)], {}),
     ('ceil_floor_objects', "[(Ceil(),), (7,), (1.5,)]", {}),
+    ('star_call_errors', "[((1,), {'b': 2}), ((1,), []), (1, {}), ((), {'a': 1, 'x': 2})]",
+     {}),
 ]
 
 # PEP 695 type parameters: a generic function made in a compiled function,

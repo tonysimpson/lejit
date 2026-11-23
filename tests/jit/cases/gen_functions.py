@@ -405,3 +405,19 @@ def stored_locals(n):
 
 
 CASES.append(('stored_locals', [(3,)], {}))
+
+
+class Holder:
+    def items(self, n):
+        for i in range(n):
+            yield i
+
+
+def method_on_temporary(n):
+    # the instance lives only as the bound method's self, and the method
+    # is gone before the generator is made
+    g = Holder().items(n)
+    return list(g)
+
+
+CASES.append(('method_on_temporary', [(3,)], {}))
