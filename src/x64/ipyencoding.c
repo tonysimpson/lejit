@@ -155,7 +155,8 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
 
        checks ............ jcc MISS (each failure)
        old = values[ix]; test; jz FILL
-     STORE:  values[ix] = value; incref value; new version tag
+     STORE:  values[ix] = value; incref value; new version tag, where
+             dicts have one
              dec old (not an immortal); jnz DONE; call dealloc_glue;
              jmp DONE
      FILL:   ix == ma_used, else MISS; ma_used++; old = value; jmp STORE
@@ -231,8 +232,10 @@ load_operand(PsycoObject *po, code_t **pcode, Source src, reg_t rg,
 }
 
 /* the dict in RCX gets a new version tag (store_cache_t.version, through
-   the cache in RDX) */
-#if LE_HAS_DICT_WATCHER_BITS
+   the cache in RDX), where dicts have one */
+#if !LE_HAS_DICT_VERSION_TAG
+#define DICT_NEW_VERSION() ((void)0)
+#elif LE_HAS_DICT_WATCHER_BITS
 #define DICT_NEW_VERSION()                                             \
     do {                                                               \
         MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX,                          \
