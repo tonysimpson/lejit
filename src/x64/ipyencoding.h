@@ -41,6 +41,21 @@
 #if LE_HAS_IMMORTAL_OBJECTS
 _Static_assert(offsetof(PyObject, ob_refcnt) == 0,
                "LeJIT: the refcount is at the object's address");
+#if LE_HAS_REFCOUNT_32
+/* as Py_INCREF: the 32-bit count goes up by one, unless it is
+   _Py_IMMORTAL_INITIAL_REFCNT or more (an immortal's) */
+_Static_assert(_Py_IMMORTAL_INITIAL_REFCNT == 0xC0000000,
+               "LeJIT: an immortal's count is 3 << 30");
+#define INC_OB_REFCNT_internal(rg)       \
+    do {                                 \
+        CMP_I32_DA((int)0xC0000000, rg); \
+        BEGIN_SHORT_COND_JUMP(8, CC_NB); \
+        ADD_DA_I8(rg, 1);                \
+        END_SHORT_JUMP(8);               \
+    } while (0)
+/* a mortal's count, which Py_DECREF changes as 32 bits */
+#define LE_SUB_OB_REFCNT(rg) SUB_DA_I8(rg, 1)
+#else
 /* as Py_INCREF: the count's low 32 bits go up by one, unless they are all
    ones (an immortal), which the carry puts back */
 #define INC_OB_REFCNT_internal(rg) \
@@ -48,6 +63,9 @@ _Static_assert(offsetof(PyObject, ob_refcnt) == 0,
         ADD_DA_I8(rg, 1);          \
         SBB_DA_I8(rg, 0);          \
     } while (0)
+/* a mortal's count, whose high 32 bits are 0 */
+#define LE_SUB_OB_REFCNT(rg) SUB_A_I8(rg, 1)
+#endif
 
 /* Py_INCREF() for a compile-time-known 'pyobj': nothing for an immortal,
    which stays one */
@@ -82,7 +100,7 @@ _Static_assert(offsetof(PyObject, ob_refcnt) == 0,
     do {                                \
         CMP_I8_DA(0, rg);               \
         BEGIN_SHORT_COND_JUMP(9, CC_S); \
-        SUB_A_I8(rg, 1);                \
+        LE_SUB_OB_REFCNT(rg);           \
         END_SHORT_JUMP(9);              \
     } while (0)
 #else

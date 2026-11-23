@@ -1297,6 +1297,30 @@ has_cell_local(PyCodeObject *co, int argc)
     return false;
 }
 
+/* The frame's globals and builtins, as constants. The globals are
+   borrowed: compiled code holds its constants until its code object dies
+   (sk_new), and here that would close a cycle the GC can't see, globals
+   -> function -> code -> record -> owner -> globals, in all code with
+   globals of its own (exec, namedtuple), which only the owner scan
+   (codemanager.c) would find. Borrowing is safe because compiled code
+   uses the dict only as an argument to run-time calls, never its contents
+   at compile time: it runs only in a frame that holds the dict, and if a
+   new dict later gets a dead one's address, the old code does for it what
+   new code would. Code that reads globals at compile time (say a cached
+   LOAD_GLOBAL) must take its own reference. */
+static void
+frame_globals(PsycoObject *po, PyObject *globals, PyObject *builtins)
+{
+    source_known_t *sk;
+    sk = sk_new((long)globals, SkFlagPyObj | SkFlagBorrowed);
+    LOC_GLOBALS = vinfo_new(CompileTime_NewSk(sk));
+    /* the frame's f_builtins, owned: lookups read it at compile time, and a
+       dict swapped in for a while may not outlive the code */
+    Py_INCREF(builtins);
+    LOC_BUILTINS =
+        vinfo_new(CompileTime_NewSk(sk_new((long)builtins, SkFlagPyObj)));
+}
+
 DEFINEFN
 PsycoObject *
 PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
@@ -1305,7 +1329,6 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     int i, argc, extras;
     PsycoObject *po;
     Source rsrc;
-    source_known_t *sk;
     vinfo_t *v;
 
     extras = co->co_stacksize + le_code_nlocalsplus(co);
@@ -1316,24 +1339,7 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     INIT_PROCESSOR_PSYCOOBJECT(po);
     po->pr.auto_recursion = AUTO_RECURSION(recursion);
 
-    /* initialize po->vlocals. The globals are borrowed: compiled code holds
-       its constants until its code object dies (sk_new), and here that
-       would close a cycle the GC can't see, globals -> function -> code ->
-       record -> owner -> globals, in all code with globals of its own
-       (exec, namedtuple), which only the owner scan (codemanager.c) would
-       find. Borrowing is safe because compiled code
-       uses the dict only as an argument to run-time calls, never its
-       contents at compile time: it runs only in a frame that holds the dict,
-       and if a new dict later gets a dead one's address, the old code does
-       for it what new code would. Code that reads globals at compile time
-       (say a cached LOAD_GLOBAL) must take its own reference. */
-    sk = sk_new((long)globals, SkFlagPyObj | SkFlagBorrowed);
-    LOC_GLOBALS = vinfo_new(CompileTime_NewSk(sk));
-    /* the frame's f_builtins, owned: lookups read it at compile time, and a
-       dict swapped in for a while may not outlive the code */
-    Py_INCREF(builtins);
-    LOC_BUILTINS =
-        vinfo_new(CompileTime_NewSk(sk_new((long)builtins, SkFlagPyObj)));
+    frame_globals(po, globals, builtins);
 
     /* keyword-only arguments follow the positional ones in the frame, filled
        in by CPython (only frame entries get here with any: psyfunc.c) */
@@ -1419,3 +1425,64 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     LOC_CONTINUATION = vinfo_new(rsrc);
     return po;
 }
+
+#if LE_RESUMES_GENERATORS
+/* A resumable generator's body entered at 'next_instr' (eval_hook.c:
+   LeGen_Run), on the words of its frame in this order: the locals, owned,
+   the cells and free variables, borrowed, the 'nstack' stack items, owned,
+   then the run's FrameRuntime (Python/frames.h), whose frame it is. A local or
+   stack item whose bit is set in 'nulls' (locals first) is NULL, and its word
+   not used. 'blocks' are the frame's 'nblocks' blocks, as (type, handler in
+   bytes, level). */
+DEFINEFN
+PsycoObject *
+PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
+                         PyObject *builtins, PyObject *merge_points,
+                         int recursion, int next_instr, uint64_t nulls,
+                         int nstack, const int *blocks, int nblocks)
+{
+    int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
+    int count =
+        INDEX_LOC_LOCALS_PLUS + nplus + GENEXPR_SLOTS + co->co_stacksize;
+    int nwords = nplus + nstack + 1, i;
+    PsycoObject *po = PsycoObject_New(count);
+    vinfo_t **stack_a = po->vlocals.items + count - co->co_stacksize;
+    po->stack_depth = INITIAL_STACK_DEPTH;
+    po->vlocals.count = count;
+    INIT_PROCESSOR_PSYCOOBJECT(po);
+    po->pr.auto_recursion = AUTO_RECURSION(recursion);
+    frame_globals(po, globals, builtins);
+    /* fixed, as a fused generator's mode (psyfunc.c:psyco_call_genexpr) */
+    po->vlocals.items[GENEXPR_SLOT_MODE(co)] =
+        vinfo_new(CompileTime_NewSk(sk_new(GENEXPR_RESUMABLE, SkFlagFixed)));
+    /* the last word is pushed first */
+    for (i = nwords - 1; i >= 0; i--) {
+        bool owned = i < nlocals || (i >= nplus && i < nplus + nstack);
+        bool null =
+            owned && ((nulls >> (i < nplus ? i : nlocals + i - nplus)) & 1);
+        vinfo_t *v;
+        po->stack_depth += sizeof(long);
+        v = null ? psyco_vi_Zero()
+                 : vinfo_new(RunTime_NewStack(po->stack_depth, owned, false));
+        if (i == nwords - 1)
+            po->vlocals.items[GENEXPR_SLOT_ACC(co)] = v;
+        else if (i >= nplus)
+            stack_a[i - nplus] = v;
+        else
+            LOC_LOCALS_PLUS[i] = v;
+    }
+    po->pr.co = co; /* borrowed, as in PsycoObject_FromCode */
+    pyc_data_build(po, merge_points);
+    po->pr.next_instr = next_instr;
+    for (i = 0; i < nblocks; i++) {
+        po->pr.blockstack[i].b_type = blocks[3 * i];
+        po->pr.blockstack[i].b_handler = blocks[3 * i + 1];
+        po->pr.blockstack[i].b_level = blocks[3 * i + 2];
+    }
+    po->pr.iblock = nblocks;
+    po->stack_depth += sizeof(long);
+    LOC_CONTINUATION =
+        vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
+    return po;
+}
+#endif

@@ -9,10 +9,12 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
-# a newer push to main, or to one pull request, cancels its older run
+# a newer push to a pull request cancels its older run; every other run has
+# a group of its own, since a group's waiting run is cancelled when another
+# joins, whatever cancel-in-progress says
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -143,7 +145,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.13.2"]
+        python: ["3.13.2", "3.14.10"]
     defaults:
       run:
         shell: bash

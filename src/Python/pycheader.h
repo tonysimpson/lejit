@@ -51,7 +51,7 @@
 #define LOC_INLINE_SERIAL 2
 #define TOTAL_LOC_INLINE 3
 
-/* A generator expression compiled into its consumer
+/* A generator compiled into its consumer
    (psyfunc.c:psyco_call_genexpr) has two more slots, after its free
    variables and before the stack: what YIELD_VALUE does (GENEXPR_*, a
    compile-time value, so versions for different consumers never match at
@@ -64,6 +64,11 @@
 #define GENEXPR_ALL 5  /* all(): return False on a false value */
 #define GENEXPR_MIN 6  /* min(), max(): acc is the best so far, or NULL */
 #define GENEXPR_MAX 7
+/* Not fused: the generator's own body, resumed through the eval hook
+   (eval_hook.c:LeGen_Run). acc is its frame object, borrowed: YIELD_VALUE
+   saves the locals, stack and blocks into it, as ceval leaves a paused
+   generator's frame, and returns the value. */
+#define GENEXPR_RESUMABLE 8
 #define GENEXPR_SLOTS 2
 #define GENEXPR_SLOT_MODE(co) (INDEX_LOC_LOCALS_PLUS + le_code_nlocalsplus(co))
 #define GENEXPR_SLOT_ACC(co) (GENEXPR_SLOT_MODE(co) + 1)

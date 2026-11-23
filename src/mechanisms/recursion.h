@@ -2,7 +2,9 @@
 #define LE_MECHANISMS_RECURSION_H
 #if LE_HAS_PY_RECURSION_REMAINING
 /* A thread counts down the Python calls it may still make, in
-   py_recursion_remaining, apart from the C calls (c_recursion_remaining);
+   py_recursion_remaining, apart from the C calls (c_recursion_remaining,
+   or where it has none, Py_EnterRecursiveCall's test of the stack
+   pointer);
    below 0 its check, the hidden _Py_CheckRecursiveCallPy, raises
    RecursionError, unless the thread is already raising one (its
    recursion_headroom). sys.setrecursionlimit sets the count for each
@@ -83,21 +85,28 @@
 #if LE_HAS_PY_RECURSION_REMAINING
 static int
 cimpl_check_recursive_call(void);
-/* ceval's entry takes two from the C count (its PY_EVAL_C_STACK_UNITS),
-   the second by Py_EnterRecursiveCall's test, and one from the Python
-   count, as _Py_EnterRecursivePy */
+/* ceval's entry takes two from the C count where there is one (its
+   PY_EVAL_C_STACK_UNITS), the second by Py_EnterRecursiveCall's test, and
+   one from the Python count, as _Py_EnterRecursivePy */
+#if LE_HAS_C_RECURSION_REMAINING
+#define LE_C_RECURSION_TAKE(ts) ((ts)->c_recursion_remaining--)
+#define LE_C_RECURSION_GIVE(ts) ((ts)->c_recursion_remaining++)
+#else
+#define LE_C_RECURSION_TAKE(ts) ((void)(ts))
+#define LE_C_RECURSION_GIVE(ts) ((void)(ts))
+#endif
 static inline int
 le_recursion_enter(void)
 {
     PyThreadState *ts = PyThreadState_GET();
-    ts->c_recursion_remaining--;
+    LE_C_RECURSION_TAKE(ts);
     if (Py_EnterRecursiveCall("")) {
-        ts->c_recursion_remaining++;
+        LE_C_RECURSION_GIVE(ts);
         return -1;
     }
     if (--ts->py_recursion_remaining < 0 && cimpl_check_recursive_call()) {
         Py_LeaveRecursiveCall();
-        ts->c_recursion_remaining++;
+        LE_C_RECURSION_GIVE(ts);
         return -1;
     }
     return 0;
@@ -108,7 +117,7 @@ le_recursion_leave(void)
     PyThreadState *ts = PyThreadState_GET();
     ts->py_recursion_remaining++;
     Py_LeaveRecursiveCall();
-    ts->c_recursion_remaining++;
+    LE_C_RECURSION_GIVE(ts);
 }
 #else
 static inline int

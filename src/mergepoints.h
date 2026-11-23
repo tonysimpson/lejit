@@ -35,7 +35,9 @@ psyco_get_merge_points(PyCodeObject *co, int module);
 EXTERNFN PyObject *
 psyco_analyse_code(PyCodeObject *co, le_code_extra_t *x, int module);
 EXTERNFN int
-psyco_is_genexpr(PyCodeObject *co);
+psyco_is_fusable_generator(PyCodeObject *co);
+EXTERNFN int
+psyco_is_resumable_generator(PyCodeObject *co);
 /* the index among the free variables of '__class__', or -1 */
 EXTERNFN int
 psyco_class_cell(PyCodeObject *co);
@@ -64,6 +66,7 @@ psyco_join_point(PyObject *mergepoints, int position);
 #define MP_FLAGS_INLINABLE 4    /* function could be inlined             */
 #define MP_FLAGS_MODULE 8       /* can only run as module top-level code */
 #define MP_FLAGS_CONTROLFLOW 16 /* can use early deletion of locals      */
+#define MP_FLAGS_RESUMABLE 32   /* psyco_is_resumable_generator          */
 #define MP_FLAGS_EXTRA (-256)
 
 EXTERNFN int

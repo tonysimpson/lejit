@@ -18,6 +18,20 @@
    field's type */
 #include <stddef.h>
 
+#if LE_HAS_REFCOUNT_32
+#define LE_OFS_PyObject__ob_refcnt offsetof(PyObject, ob_refcnt)
+#define LE_SIZE2_PyObject__ob_refcnt 2
+#define LE_UNSIGNED_PyObject__ob_refcnt 1
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((PyObject *)0)->ob_refcnt), uint32_t),
+               "LeJIT: PyObject.ob_refcnt is not uint32_t");
+_Static_assert(sizeof(((PyObject *)0)->ob_refcnt) == 4,
+               "LeJIT: PyObject.ob_refcnt: LeJIT reads 4 bytes");
+_Static_assert(__builtin_classify_type(((PyObject *)0)->ob_refcnt) == 1,
+               "LeJIT: PyObject.ob_refcnt: LeJIT reads it as an integer");
+_Static_assert(((__typeof__(((PyObject *)0)->ob_refcnt))-1 < 0) == 0,
+               "LeJIT: PyObject.ob_refcnt: LeJIT reads it as unsigned");
+#else
 #define LE_OFS_PyObject__ob_refcnt offsetof(PyObject, ob_refcnt)
 #define LE_SIZE2_PyObject__ob_refcnt 3
 #define LE_UNSIGNED_PyObject__ob_refcnt 0
@@ -30,6 +44,7 @@ _Static_assert(__builtin_classify_type(((PyObject *)0)->ob_refcnt) == 1,
                "LeJIT: PyObject.ob_refcnt: LeJIT reads it as an integer");
 _Static_assert(((__typeof__(((PyObject *)0)->ob_refcnt))-1 < 0) == 1,
                "LeJIT: PyObject.ob_refcnt: LeJIT reads it as signed");
+#endif
 #define LE_OFS_PyObject__ob_type offsetof(PyObject, ob_type)
 #define LE_SIZE2_PyObject__ob_type 3
 #define LE_UNSIGNED_PyObject__ob_type 0
@@ -54,6 +69,16 @@ _Static_assert(__builtin_classify_type(((PyVarObject *)0)->ob_size) == 1,
 _Static_assert(((__typeof__(((PyVarObject *)0)->ob_size))-1 < 0) == 1,
                "LeJIT: PyVarObject.ob_size: LeJIT reads it as signed");
 
+#define LE_OFS_PyTypeObject__tp_name offsetof(PyTypeObject, tp_name)
+#define LE_SIZE2_PyTypeObject__tp_name 3
+#define LE_UNSIGNED_PyTypeObject__tp_name 0
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((PyTypeObject *)0)->tp_name), const char *),
+               "LeJIT: PyTypeObject.tp_name is not const char *");
+_Static_assert(sizeof(((PyTypeObject *)0)->tp_name) == 8,
+               "LeJIT: PyTypeObject.tp_name: LeJIT reads 8 bytes");
+_Static_assert(__builtin_classify_type(((PyTypeObject *)0)->tp_name) == 5,
+               "LeJIT: PyTypeObject.tp_name: LeJIT reads it as a pointer");
 #define LE_OFS_PyTypeObject__tp_dealloc offsetof(PyTypeObject, tp_dealloc)
 #define LE_SIZE2_PyTypeObject__tp_dealloc 3
 #define LE_UNSIGNED_PyTypeObject__tp_dealloc 0
@@ -175,20 +200,30 @@ _Static_assert(__builtin_types_compatible_p(
                "LeJIT: PyDictObject.ma_used is not Py_ssize_t");
 _Static_assert(sizeof(((PyDictObject *)0)->ma_used) >= 4,
                "LeJIT: PyDictObject.ma_used: LeJIT reads 4 bytes");
+/* a dict's version tag, whose low 8 bits say which watchers watch it where
+   LE_HAS_DICT_WATCHER_BITS. A dict with no version tag has the watcher
+   bits alone, in _ma_watcher_tag: nothing tells its changes, so no code
+   is compiled (mergepoints.c:_build_merge_points). */
+#if LE_HAS_DICT_VERSION_TAG
+#define LE_DICT_TAG_FIELD ma_version_tag
+#else
+#define LE_DICT_TAG_FIELD _ma_watcher_tag
+#endif
 #define LE_OFS_PyDictObject__ma_version_tag \
-    offsetof(PyDictObject, ma_version_tag)
+    offsetof(PyDictObject, LE_DICT_TAG_FIELD)
 #define LE_SIZE2_PyDictObject__ma_version_tag 3
 #define LE_UNSIGNED_PyDictObject__ma_version_tag 1
 _Static_assert(__builtin_types_compatible_p(
-                   __typeof__(((PyDictObject *)0)->ma_version_tag), uint64_t),
+                   __typeof__(((PyDictObject *)0)->LE_DICT_TAG_FIELD),
+                   uint64_t),
                "LeJIT: PyDictObject.ma_version_tag is not uint64_t");
-_Static_assert(sizeof(((PyDictObject *)0)->ma_version_tag) == 8,
+_Static_assert(sizeof(((PyDictObject *)0)->LE_DICT_TAG_FIELD) == 8,
                "LeJIT: PyDictObject.ma_version_tag: LeJIT reads 8 bytes");
 _Static_assert(
-    __builtin_classify_type(((PyDictObject *)0)->ma_version_tag) == 1,
+    __builtin_classify_type(((PyDictObject *)0)->LE_DICT_TAG_FIELD) == 1,
     "LeJIT: PyDictObject.ma_version_tag: LeJIT reads it as an integer");
 _Static_assert(
-    ((__typeof__(((PyDictObject *)0)->ma_version_tag))-1 < 0) == 0,
+    ((__typeof__(((PyDictObject *)0)->LE_DICT_TAG_FIELD))-1 < 0) == 0,
     "LeJIT: PyDictObject.ma_version_tag: LeJIT reads it as unsigned");
 #define LE_OFS_PyDictObject__ma_keys offsetof(PyDictObject, ma_keys)
 #define LE_SIZE2_PyDictObject__ma_keys 3
@@ -853,6 +888,9 @@ PyAPI_FUNC(int)
     _PyDict_SetItem_KnownHash(PyObject *, PyObject *, PyObject *, Py_hash_t);
 PyAPI_FUNC(int) _PySet_Update(PyObject *, PyObject *);
 PyAPI_FUNC(PyObject *) PyCFunction_Call(PyObject *, PyObject *, PyObject *);
+PyAPI_FUNC(PyObject *) _PyList_Extend(PyListObject *, PyObject *);
+PyAPI_FUNC(PyObject *)
+    _PyUnicode_JoinArray(PyObject *, PyObject *const *, Py_ssize_t);
 #if LE_HAS_PRIVATE_NUMBER_INDEX
 PyAPI_FUNC(PyObject *) _PyNumber_Index(PyObject *);
 #endif
@@ -917,6 +955,27 @@ typedef struct le_owner_s {
 /* What LeJIT keeps per code object, on its weak references (lejit.c): found by
    identity, not by value as a dict keyed by code objects would be (equal
    code objects compare co_consts recursively). */
+/* Generator bodies run compiled, resumed through the eval hook
+   (eval_hook.c:LeGen_Run), where a paused generator's state is its frame
+   object's */
+#define LE_RESUMES_GENERATORS (!LE_HAS_INTERPRETER_FRAME)
+
+/* A resumable generator's compiled entries at one resume point, one per
+   set of NULL locals and stack items (a bit each, locals first), compiled
+   when first needed, at most LE_RESUME_ENTRIES */
+#define LE_RESUME_ENTRIES 4
+typedef struct {
+    uint64_t nulls;
+    PyObject *code;    /* codebuf, Py_None if compiling failed; owned */
+    PyObject *globals; /* as entry_globals and entry_builtins */
+    PyObject *builtins;
+} le_resume_entry_t;
+typedef struct {
+    int lasti; /* f_lasti there, -1 for the start */
+    int count;
+    le_resume_entry_t entries[LE_RESUME_ENTRIES];
+} le_resume_point_t;
+
 typedef struct le_code_extra_s {
     PyObject *merge_points;   /* capsule, Py_None if unsupported, NULL if not
                                  built yet; owned */
@@ -931,13 +990,29 @@ typedef struct le_code_extra_s {
                                  address (psyfunc.c:psyco_save_inline_po) */
     le_owner_t owner;         /* what its compiled code holds */
     char counted;             /* in the owner scan's count (codemanager.c) */
+    int nresumes; /* a resumable generator's points, or -1: not resumable */
+    le_resume_point_t *resumes; /* one per yield and the start, or NULL */
 } le_code_extra_t;
+/* the record lives in a weak reference to its code object (lejit.c) */
+typedef struct {
+    PyWeakReference wr;
+    char attached;
+    le_code_extra_t x;
+} code_record_t;
+EXTERNVAR PyTypeObject CodeRecord_Type;
 /* the record for 'co', made on first use; NULL with an exception set */
 EXTERNFN le_code_extra_t *
 le_code_extra(PyCodeObject *co);
 /* the record for 'co' if it has one, never raising */
-EXTERNFN le_code_extra_t *
-le_code_extra_get(PyCodeObject *co);
+static inline le_code_extra_t *
+le_code_extra_get(PyCodeObject *co)
+{
+    PyWeakReference *r = (PyWeakReference *)co->co_weakreflist;
+    for (; r != NULL; r = r->wr_next)
+        if (Py_TYPE(r) == &CodeRecord_Type)
+            return &((code_record_t *)r)->x;
+    return NULL;
+}
 /* releases the record and its compiled code; its code object is dead */
 EXTERNFN void
 le_code_extra_free(le_code_extra_t *x);

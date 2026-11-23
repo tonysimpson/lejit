@@ -79,12 +79,67 @@ cimpl_is_error(double x)
     return result;
 }
 
+/* math_1's domain error: a function whose message names its argument
+   shows it as repr does */
+static void
+cimpl_domain_error(double x, const char *fmt)
+{
+    char *buf;
+    if (fmt == NULL) {
+        PyErr_SetString(PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR);
+        return;
+    }
+    buf = PyOS_double_to_string(x, 'r', 0, Py_DTSF_ADD_DOT_0, NULL);
+    if (buf != NULL) {
+        PyErr_Format(PyExc_ValueError, fmt, buf);
+        PyMem_Free(buf);
+    }
+}
+
+/* the functions whose domain error names the argument, where it does */
+#ifdef LE_MSG_MATH_DOMAIN_ERROR_ACOS
+#define DOMAIN_acos LE_MSG_MATH_DOMAIN_ERROR_ACOS
+#else
+#define DOMAIN_acos NULL
+#endif
+#ifdef LE_MSG_MATH_DOMAIN_ERROR_ASIN
+#define DOMAIN_asin LE_MSG_MATH_DOMAIN_ERROR_ASIN
+#else
+#define DOMAIN_asin NULL
+#endif
+#ifdef LE_MSG_MATH_DOMAIN_ERROR_COS
+#define DOMAIN_cos LE_MSG_MATH_DOMAIN_ERROR_COS
+#else
+#define DOMAIN_cos NULL
+#endif
+#ifdef LE_MSG_MATH_DOMAIN_ERROR_SIN
+#define DOMAIN_sin LE_MSG_MATH_DOMAIN_ERROR_SIN
+#else
+#define DOMAIN_sin NULL
+#endif
+#ifdef LE_MSG_MATH_DOMAIN_ERROR_SQRT
+#define DOMAIN_sqrt LE_MSG_MATH_DOMAIN_ERROR_SQRT
+#else
+#define DOMAIN_sqrt NULL
+#endif
+#ifdef LE_MSG_MATH_DOMAIN_ERROR_TAN
+#define DOMAIN_tan LE_MSG_MATH_DOMAIN_ERROR_TAN
+#else
+#define DOMAIN_tan NULL
+#endif
+#define DOMAIN_atan NULL
+#define DOMAIN_cosh NULL
+#define DOMAIN_exp NULL
+#define DOMAIN_fabs NULL
+#define DOMAIN_sinh NULL
+#define DOMAIN_tanh NULL
+
 /* A one-argument function on doubles: math_1's code in a helper, and the
-   meta that calls it. An infinite result from a finite argument raises
-   inf_exc with inf_msg: OverflowError for the functions that can overflow
-   (cosh, exp, sinh), ValueError for the others. cfunc_math_<func> is the C
+   meta that calls it. An infinite result from a finite argument is an
+   OverflowError for the functions that can overflow (cosh, exp, sinh),
+   and a domain error for the others. cfunc_math_<func> is the C
    function, set by the registration. */
-#define MATH_1(func, inf_exc, inf_msg)                                     \
+#define MATH_1(func, can_overflow)                                         \
     static PyCFunction cfunc_math_##func;                                  \
                                                                            \
     static int cimpl_math_##func(double x, double *_r)                     \
@@ -93,11 +148,15 @@ cimpl_is_error(double x)
         errno = 0;                                                         \
         r = func(x);                                                       \
         if (isnan(r) && !isnan(x)) {                                       \
-            PyErr_SetString(PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR);   \
+            cimpl_domain_error(x, DOMAIN_##func);                          \
             return -1;                                                     \
         }                                                                  \
         if (isinf(r) && isfinite(x)) {                                     \
-            PyErr_SetString(inf_exc, inf_msg);                             \
+            if (can_overflow)                                              \
+                PyErr_SetString(PyExc_OverflowError,                       \
+                                LE_MSG_MATH_RANGE_ERROR);                  \
+            else                                                           \
+                cimpl_domain_error(x, DOMAIN_##func);                      \
             return -1;                                                     \
         }                                                                  \
         if (isfinite(r) && errno && cimpl_is_error(r))                     \
@@ -131,18 +190,18 @@ cimpl_is_error(double x)
         return r;                                                          \
     }
 
-MATH_1(acos, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
-MATH_1(asin, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
-MATH_1(atan, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
-MATH_1(cos, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
-MATH_1(cosh, PyExc_OverflowError, LE_MSG_MATH_RANGE_ERROR)
-MATH_1(exp, PyExc_OverflowError, LE_MSG_MATH_RANGE_ERROR)
-MATH_1(fabs, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
-MATH_1(sin, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
-MATH_1(sinh, PyExc_OverflowError, LE_MSG_MATH_RANGE_ERROR)
-MATH_1(sqrt, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
-MATH_1(tan, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
-MATH_1(tanh, PyExc_ValueError, LE_MSG_MATH_DOMAIN_ERROR)
+MATH_1(acos, 0)
+MATH_1(asin, 0)
+MATH_1(atan, 0)
+MATH_1(cos, 0)
+MATH_1(cosh, 1)
+MATH_1(exp, 1)
+MATH_1(fabs, 0)
+MATH_1(sin, 0)
+MATH_1(sinh, 1)
+MATH_1(sqrt, 0)
+MATH_1(tan, 0)
+MATH_1(tanh, 0)
 
 static void
 gen_mathmodule_init(PyObject *md)

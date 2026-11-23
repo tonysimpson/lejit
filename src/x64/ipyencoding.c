@@ -80,7 +80,7 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
     NEED_CC_REG(rg);
     CMP_I8_DA(0, rg);
     BEGIN_SHORT_COND_JUMP(1, CC_S);
-    SUB_A_I8(rg, 1);
+    LE_SUB_OB_REFCNT(rg);
 #else
     DEC_OB_REFCNT_NZ(rg);
 #endif
@@ -142,15 +142,16 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
 }
 
 /* whether an inline load or store is into a managed dict's values */
-#define IN_VALUES(s) (LE_HAS_MANAGED_VALUES_POINTER && (s)->keys != NULL)
+#define IN_VALUES(s) (LE_MANAGED_VALUES && (s)->keys != NULL)
 
 /* Inline attribute store (ipyencoding.h).
    Registers: RDI the object, RSI the value, RDX the cache, RCX
    the dict, R8 its values, R9 its keys then the index, RAX scratch then
    the old value, R10 and R11 scratch. A watched dict is a miss
    (le_dict_watched). A managed dict's values (s->keys) have no
-   dict and no version tag: R8 is read from the object, R9 is the class
-   keys, and RCX is scratch. Laid out as
+   dict and no version tag: R8 is read from the object, or is the object
+   itself where the values are in it (LE_HAS_INLINE_VALUES), R9 is the
+   class keys, and RCX is scratch. Laid out as
 
        checks ............ jcc MISS (each failure)
        old = values[ix]; test; jz FILL
@@ -236,6 +237,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     code_t *start = code;
     int nj = 0;
     code_t *fill_jz = NULL, *gc_ok = NULL, *store;
+    long values_at = 0; /* the values' array, from R8 */
 #define JCC_MISS(cc)                    \
     do {                                \
         jat[nj] = code;                 \
@@ -252,9 +254,19 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     load_operand(po, &code, s->value->source, REG_X64_RSI, start);
     LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
     if (IN_VALUES(s)) {
+#if LE_HAS_INLINE_VALUES
+        TEST_I8_BO(REG_X64_RDI, s->dictoffset + LE_VALUES_VALID, 1);
+        JCC_MISS(CC_E); /* no longer its attributes */
+        MOV_R_O(REG_X64_RAX, REG_X64_RDI, LE_MANAGED_DICT_OFFSET);
+        TEST_R_R(REG_X64_RAX, REG_X64_RAX);
+        JCC_MISS(CC_NE); /* a dict was made, which may be watched */
+        MOV_R_R(REG_X64_R8, REG_X64_RDI);
+        values_at = s->dictoffset + LE_VALUES_ARRAY;
+#else
         MOV_R_O(REG_X64_R8, REG_X64_RDI, s->dictoffset);
         TEST_R_R(REG_X64_R8, REG_X64_R8);
         JCC_MISS(CC_E); /* the dict was made */
+#endif
         LOAD_ADDRESS(REG_X64_R9, s->keys, rip_near(start, s->keys));
     }
     else {
@@ -295,7 +307,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
             gc_ok[1] = (code_t)(code - (gc_ok + 2));
         }
     }
-    MOV_R_X8(REG_X64_RAX, REG_X64_R8, 0, REG_X64_R9, 8);
+    MOV_R_X8(REG_X64_RAX, REG_X64_R8, values_at, REG_X64_R9, 8);
     TEST_R_R(REG_X64_RAX, REG_X64_RAX);
     if (s->fill) {
         fill_jz = code;
@@ -305,7 +317,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         JCC_MISS(CC_E); /* an empty slot */
     }
     store = code;
-    MOV_X8_R(REG_X64_R8, 0, REG_X64_R9, 8, REG_X64_RSI);
+    MOV_X8_R(REG_X64_R8, values_at, REG_X64_R9, 8, REG_X64_RSI);
     INC_STORED(REG_X64_RSI);
     if (!IN_VALUES(s)) { /* a dict's new version tag */
         MOV_R_O(REG_TRANSIENT_1, REG_X64_RDX,
@@ -445,6 +457,8 @@ psyco_inline_store_end(PsycoObject *po, inline_store_t *s)
        rax = indices[i]; cmp rax, -1; jne LOOP; jmp NONE
    with 'keys' (a managed dict's values, at the values pointer):
      rcx = OBJ; r8 = [OBJ + dictoffset]; test r8, r8; jz MISS
+     (or, with the values in the object, test [OBJ + dictoffset + valid];
+     jz MISS; r8 = OBJ, and the array is further on)
      r9 = keys, rdx = cache
      cmp [r9 + kword*8], name; je PRESENT
      cmp [r9 + dk_nentries], [rdx + nentries]; jne MISS
@@ -527,12 +541,20 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         load_operand(po, &code, s->obj->source, ro, start);
     }
     if (IN_VALUES(s)) {
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
         code_t *jpresent;
+        long values_at = 0;       /* the values' array, from R8 */
         MOV_R_R(REG_X64_RCX, ro); /* for the miss call */
+#if LE_HAS_INLINE_VALUES
+        TEST_I8_BO(ro, s->dictoffset + LE_VALUES_VALID, 1);
+        NEAR_JCC(CC_E, jmiss, nmiss); /* no longer its attributes */
+        MOV_R_R(REG_X64_R8, ro);
+        values_at = s->dictoffset + LE_VALUES_ARRAY;
+#else
         MOV_R_O(REG_X64_R8, ro, s->dictoffset);
         TEST_R_R(REG_X64_R8, REG_X64_R8);
         NEAR_JCC(CC_E, jmiss, nmiss); /* the dict was made */
+#endif
         LOAD_ADDRESS(REG_X64_R9, s->keys, rip_near(start, s->keys));
         LOAD_ADDRESS(REG_X64_RDX, s->cache, rip_near(start, s->cache));
         MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, kword));
@@ -548,7 +570,7 @@ psyco_inline_load(PsycoObject *po, inline_load_t *s)
         jpresent[1] = (code_t)(code - (jpresent + 2));
         le_trace_jump_cond(jpresent, jpresent + 2, code);
         MOV_R_O(REG_X64_RAX, REG_X64_RDX, offsetof(store_cache_t, ix));
-        MOV_R_X8(rg, REG_X64_R8, 0, REG_X64_RAX, 8);
+        MOV_R_X8(rg, REG_X64_R8, values_at, REG_X64_RAX, 8);
         NEAR_JMP(jdone, ndone);
 #endif
     }
@@ -699,6 +721,24 @@ psyco_type_guard(PsycoObject *po, PyTypeObject *tp, unsigned long *flags,
    'tags' through r11. An absent guard shown again for a probe it can't
    walk compares globals' tag instead of the probe, as the tags form does
    but with the tag in the code (global_absent_emit). */
+/* the address of a dict's tag, and its load into register 'r': where dicts
+   have no version tag, the count of LeJIT's watcher (le_dict_counter),
+   which the guard's form was chosen knowing there is */
+#if LE_HAS_DICT_VERSION_TAG
+#define LE_DICT_TAG_ADDRESS(d) (&((PyDictObject *)(d))->ma_version_tag)
+#define LOAD_DICT_TAG(r, d)                                      \
+    do {                                                         \
+        MOV_R_I(r, (long)(d));                                   \
+        MOV_R_O(r, r, CPY_OFFSET(PyDictObject, ma_version_tag)); \
+    } while (0)
+#else
+#define LE_DICT_TAG_ADDRESS(d) le_dict_counter((PyDictObject *)(d))
+#define LOAD_DICT_TAG(r, d)                       \
+    do {                                          \
+        MOV_R_I(r, (long)LE_DICT_TAG_ADDRESS(d)); \
+        MOV_R_A(r, r);                            \
+    } while (0)
+#endif
 _Static_assert(offsetof(le_dictentry_t, me_key) ==
                    offsetof(le_dictentry_t, me_hash) + sizeof(PyObject *),
                "an entry's hash is the word before its key");
@@ -778,15 +818,23 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
         WRITE_2(0x0F, 0x80 | CC_NE); \
         code += 4;                   \
     } while (0)
+#if LE_HAS_DICT_VERSION_TAG
     MOV_R_I(REG_TRANSIENT_1, (long)globals);
     if (absent == NULL) {
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_version_tag));
+#else
+    if (absent == NULL) {
+        LOAD_DICT_TAG(REG_TRANSIENT_1, globals);
+#endif
         MOV_R_UI(REG_TRANSIENT_2, (long)gtag);
         CMP_R_R(REG_TRANSIENT_2, REG_TRANSIENT_1);
         JNE_DONE();
     }
     else {
+#if !LE_HAS_DICT_VERSION_TAG
+        MOV_R_I(REG_TRANSIENT_1, (long)globals);
+#endif
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_keys));
         KEYS_SHAPE_CMP(absent->shape, REG_TRANSIENT_1);
@@ -813,9 +861,7 @@ global_absent_emit(code_t *code, code_t *done, PyObject *globals,
         }
     }
 #undef JNE_DONE
-    MOV_R_I(REG_X64_RAX, (long)builtins);
-    MOV_R_O(REG_X64_RAX, REG_X64_RAX,
-            CPY_OFFSET(PyDictObject, ma_version_tag));
+    LOAD_DICT_TAG(REG_X64_RAX, builtins);
     MOV_R_UI(REG_TRANSIENT_1, (long)tag);
     CMP_R_R(REG_TRANSIENT_1, REG_X64_RAX);
     if (done == NULL)
@@ -873,14 +919,17 @@ psyco_global_guard(PsycoObject *po, PyObject *globals, PyObject *builtins,
         }
     }
     else {
+#if LE_HAS_DICT_VERSION_TAG
         MOV_R_I(REG_TRANSIENT_1, (long)globals);
         MOV_R_I(REG_TRANSIENT_2, (long)tags);
         MOV_R_O(REG_TRANSIENT_1, REG_TRANSIENT_1,
                 CPY_OFFSET(PyDictObject, ma_version_tag));
+#else
+        LOAD_DICT_TAG(REG_TRANSIENT_1, globals);
+        MOV_R_I(REG_TRANSIENT_2, (long)tags);
+#endif
         XOR_R_O(REG_TRANSIENT_1, REG_TRANSIENT_2, 0);
-        MOV_R_I(REG_X64_RAX, (long)builtins);
-        MOV_R_O(REG_X64_RAX, REG_X64_RAX,
-                CPY_OFFSET(PyDictObject, ma_version_tag));
+        LOAD_DICT_TAG(REG_X64_RAX, builtins);
         XOR_R_O(REG_X64_RAX, REG_TRANSIENT_2, sizeof(uint64_t));
         OR_R_R(REG_X64_RAX, REG_TRANSIENT_1);
     }
@@ -903,8 +952,8 @@ psyco_global_absent_rearm(global_absent_patch_t *patch, PyObject *globals,
     global_absent_t a, *ap = &a;
     code_t scratch[GLOBAL_ABSENT_CODE_MAX];
     code_t *code, *at, *end = patch->end;
-    uint64_t tag = ((PyDictObject *)builtins)->ma_version_tag;
-    uint64_t gtag = ((PyDictObject *)globals)->ma_version_tag;
+    uint64_t tag = *LE_DICT_TAG_ADDRESS(builtins);
+    uint64_t gtag = *LE_DICT_TAG_ADDRESS(globals);
     long n;
     if (!psyco_global_absent(globals, name, &a))
         ap = NULL;

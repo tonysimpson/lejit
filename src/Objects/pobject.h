@@ -163,7 +163,7 @@ EXTERNFN void
 cimpl_type_lookup_changed(PyTypeObject *tp, PyObject *name, PyObject *descr);
 
 /* A guard for a message made now that names tp, a mutable type: a
-   condition code, true where tp has changed since. */
+   condition code, true where tp has been renamed since. */
 EXTERNFN condition_code_t
 Psyco_TypeNameChanged(PsycoObject *po, PyTypeObject *tp);
 
@@ -320,6 +320,20 @@ PsycoObject_RichCompareBool(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op);
    in the installed headers, are copied from the source into psyco.h;
    the entries follow the indices. */
 
+/* Instances that keep their attributes in values with no dict, indexed
+   as their class's keys hold the names: behind a pointer four words before
+   the object, or in the object (LE_HAS_INLINE_VALUES), where a byte says
+   whether they are still its attributes and a dict made for them is three
+   words before it. */
+#define LE_MANAGED_VALUES \
+    (LE_HAS_MANAGED_VALUES_POINTER || LE_HAS_INLINE_VALUES)
+#define LE_MANAGED_DICT_OFFSET (-3 * (long)sizeof(PyObject *))
+#if LE_HAS_INLINE_VALUES
+/* in the values, at the class's basicsize: */
+#define LE_VALUES_VALID 3 /* the byte */
+#define LE_VALUES_ARRAY 8 /* the array of values */
+#endif
+
 /* Inline attribute stores and loads: a cache per (class, name) says where
    the name sits in keys of one size; it holds no reference to any keys.
    The code emitted by x64/ipyencoding.c (psyco_inline_store_begin,
@@ -333,7 +347,7 @@ typedef struct {
     PyObject *name;    /* interned; held by the table's key */
     uint64_t *version; /* &le_dict_version */
     long refreshes;    /* misses that changed the cache */
-#if LE_HAS_MANAGED_VALUES_POINTER
+#if LE_MANAGED_VALUES
     Py_ssize_t nentries; /* where the keys are a managed dict's class keys,
                             which only grow: their entry count when the
                             name was last found absent; -1: never */
@@ -434,12 +448,22 @@ EXTERNVAR uint64_t le_dict_version;
 #define LE_DICT_VERSION_STEP 1
 #endif
 
+#if !LE_HAS_DICT_VERSION_TAG
+/* Where dicts have no version tag, LeJIT's dict watcher counts the events
+   of each dict it watches: the address of the count of 'mp', which is
+   watched from now on (one count per dict address, never freed, so code
+   may hold it; a new dict at the address has the same count, already
+   moved), or NULL when no watcher could be had. */
+EXTERNFN uint64_t *
+le_dict_counter(PyDictObject *mp);
+#endif
+
 /* a watcher watches the dict: a store must go through CPython, which sends
    the watchers the event */
 PSY_INLINE bool
 le_dict_watched(PyDictObject *mp)
 {
-    return (mp->ma_version_tag & LE_DICT_WATCHER_MASK) != 0;
+    return (mp->LE_DICT_TAG_FIELD & LE_DICT_WATCHER_MASK) != 0;
 }
 
 #endif /* _PSY_OBJECT_H */

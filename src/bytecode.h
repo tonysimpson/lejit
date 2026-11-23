@@ -82,12 +82,17 @@ le_after(le_code_t c, int pos)
 
 /* where FOR_ITER's iterator ending goes: its target, past the END_FOR
    there that pops the iterator and its item where FOR_ITER pops the
-   iterator itself */
+   iterator itself, and past the POP_TOP after it where that pops the
+   iterator */
 static inline int
 le_for_iter_exit(le_code_t c, int target)
 {
-    if (target < c.size && le_op(c, target) == END_FOR)
-        return le_after(c, target);
+    if (target < c.size && le_op(c, target) == END_FOR) {
+        target = le_after(c, target);
+        if (LE_HAS_FOR_ITER_EXIT_PAST_POP_TOP && target < c.size &&
+            le_op(c, target) == POP_TOP)
+            target = le_after(c, target);
+    }
     return target;
 }
 
@@ -135,7 +140,8 @@ le_binary_op_opcode(int nb)
    versions spell one operation differently (BINARY_OP 0 is BINARY_ADD,
    POP_JUMP_BACKWARD_IF_TRUE is POP_JUMP_IF_TRUE, LOAD_ATTR with the method
    bit is LOAD_METHOD, CALL_INTRINSIC_1 with INTRINSIC_UNARY_POSITIVE is
-   UNARY_POSITIVE); 'arg' with its EXTENDED_ARG prefixes folded in, and
+   UNARY_POSITIVE, FORMAT_SIMPLE is FORMAT_VALUE 0); 'arg' with its
+   EXTENDED_ARG prefixes folded in, and
    no longer holding what 'op' now says; 'raw' the opcode as CPython wrote
    it; 'target' a jump's target in bytes (FOR_ITER's when its iterator
    ends), else -1; 'next' the position after it and its caches. */
@@ -207,6 +213,15 @@ le_instr(le_code_t c, int pos)
                 in.op = LIST_TO_TUPLE;
             break;
 #endif
+        /* FORMAT_VALUE's argument: 4 for a spec on the stack */
+        case FORMAT_SIMPLE:
+            in.op = FORMAT_VALUE;
+            in.arg = 0;
+            break;
+        case FORMAT_WITH_SPEC:
+            in.op = FORMAT_VALUE;
+            in.arg = 4;
+            break;
     }
     return in;
 }
@@ -267,6 +282,9 @@ le_op_flags(int op)
         case COPY:
         case SWAP:
         case PUSH_NULL:
+        case LOAD_FAST_LOAD_FAST:
+        case STORE_FAST_LOAD_FAST:
+        case STORE_FAST_STORE_FAST:
             return LE_OPF_COMPILED | LE_OPF_LIGHT;
         case LOAD_FAST_AND_CLEAR:
 #if LE_HAS_OPCODE_ROT_FOUR
@@ -389,6 +407,7 @@ le_op_flags(int op)
         case IMPORT_NAME:
         case IMPORT_FROM:
         case FORMAT_VALUE:
+        case CONVERT_VALUE:
         case PRINT_EXPR:
         case CALL_INTRINSIC_1: /* mergepoints.c:compiled_intrinsic's */
         case LOAD_BUILD_CLASS:
@@ -418,6 +437,9 @@ le_op_flags(int op)
             return LE_OPF_COMPILED;
         case FOR_ITER:
             return LE_OPF_COMPILED | LE_OPF_BRANCHES;
+        /* the truth a jump tests, as the jump found it itself before */
+        case TO_BOOL:
+            return LE_OPF_COMPILED | LE_OPF_LIGHT;
         /* jumps and return */
         case JUMP_FORWARD:
         case JUMP_ABSOLUTE:
@@ -447,6 +469,7 @@ le_op_flags(int op)
         case CALL_FUNCTION_EX:
         case CALL_METHOD:
         case CALL:
+        case CALL_KW:
             return LE_OPF_COMPILED | LE_OPF_CALL;
         case PRECALL:
         case KW_NAMES:
@@ -462,7 +485,7 @@ le_op_flags(int op)
         case LOAD_DEREF:
         case STORE_DEREF:
         case DELETE_DEREF:
-        /* generator expressions (psyco_is_genexpr) */
+        /* generators fused with their consumer (psyco_is_fusable_generator) */
         case RETURN_GENERATOR:
         case YIELD_VALUE:
             return LE_OPF_COMPILED;
