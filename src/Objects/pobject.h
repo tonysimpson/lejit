@@ -322,11 +322,14 @@ PsycoObject_RichCompareBool(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op);
 
 /* Instances that keep their attributes in values with no dict, indexed
    as their class's keys hold the names: behind a pointer four words before
-   the object, or in the object (LE_HAS_INLINE_VALUES), where a byte says
-   whether they are still its attributes and a dict made for them is three
-   words before it. */
-#define LE_MANAGED_VALUES \
-    (LE_HAS_MANAGED_VALUES_POINTER || LE_HAS_INLINE_VALUES)
+   the object; behind the word three words before it, less one, while its
+   low bit is set, and otherwise that word is the dict
+   (LE_HAS_TAGGED_DICT_OR_VALUES); or in the object (LE_HAS_INLINE_VALUES),
+   where a byte says whether they are still its attributes and a dict made
+   for them is three words before it. */
+#define LE_MANAGED_VALUES                                             \
+    (LE_HAS_MANAGED_VALUES_POINTER || LE_HAS_TAGGED_DICT_OR_VALUES || \
+     LE_HAS_INLINE_VALUES)
 #define LE_MANAGED_DICT_OFFSET (-3 * (long)sizeof(PyObject *))
 #if LE_HAS_INLINE_VALUES
 /* in the values, at the class's basicsize: */
