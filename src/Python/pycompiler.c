@@ -6458,7 +6458,8 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
 
         case END_FOR:
             POP_DECREF();
-            if (!LE_HAS_FOR_ITER_EXIT_PAST_POP_TOP)
+            if (!LE_HAS_FOR_ITER_EXIT_PAST_POP_TOP &&
+                !LE_HAS_FOR_ITER_EXIT_KEEPS_ITER)
                 POP_DECREF();
             goto fine;
 
@@ -6476,7 +6477,8 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
                 if (runtime_NON_NULL_t(po, v) == true) {
                     /* iterator ended normally */
                     PycException_Clear(po);
-                    POP_DECREF();
+                    if (!LE_HAS_FOR_ITER_EXIT_KEEPS_ITER)
+                        POP_DECREF();
                     JUMPTO(target);
                     mp = psyco_next_merge_point(po->pr.merge_points,
                                                 next_instr);
