@@ -89,7 +89,53 @@ def store_attribute(n):
     return p.x, unwatch(wid, p.__dict__)
 
 
+_len = len
+
+
+def read_len():
+    return len
+
+
+def builtin_under_watch(n):
+    # a builtin shadowed and unshadowed in a module dict another watcher
+    # watches as well
+    g = globals()
+    wid = watch(g)
+    seen = []
+    for i in range(n):
+        g['len'] = i
+        seen.append(read_len())
+        del g['len']
+        seen.append(read_len() is _len)
+    return seen, unwatch(wid, g)
+
+
+def take_all_watchers():
+    # every dict watcher id taken before anything is compiled: compiled code
+    # finds no watcher of its own (a run without LeJIT takes the same)
+    while WATCHERS:
+        try:
+            _testcapi.add_dict_watcher(0)
+        except RuntimeError:
+            break
+
+
+def no_watcher_left(n):
+    global G
+    if n == 0:
+        return take_all_watchers()
+    seen = []
+    for i in range(n):
+        G = i
+        seen.append(read_g())
+        seen.append(read_len() is len)
+    G = 0
+    return seen
+
+
 CASES = [
+    ('builtin_under_watch', [(3,)], {}),
+    ('no_watcher_left', [(0,), (3,)], {}),
     ('store_existing', [(0,), (3,)], {}),
     ('store_unbuilt_keys', [('a b, a. c a',), ('x',)], {}),
     ('store_before_and_after_watch', [(2,), (3,)], {}),
