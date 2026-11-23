@@ -100,8 +100,13 @@ le_code_instrument(le_frame_t *f)
         PyErr_NoMemory();
         return -1;
     }
+#if LE_HAS_FRAME_INITIALIZE_TSTATE
+    _PyFrame_Initialize(ts, t, PyStackRef_FromPyObjectNew(LE_FRAME_FUNCOBJ(f)),
+                        NULL, co, 0, NULL);
+#else
     _PyFrame_Initialize(t, (PyFunctionObject *)Py_NewRef(f->f_funcobj), NULL,
                         co, 0);
+#endif
     PyErr_SetRaisedException(Py_NewRef(frame_done));
     le_frame_throw_out(ts, t);
     e = PyErr_GetRaisedException();
