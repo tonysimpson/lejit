@@ -15,8 +15,10 @@ def work(x):
 
 def compiled(*fns):
     lejit = sys.modules.get('lejit')
-    if lejit is None or dict(lejit._core._build['features']).get(
-            'LE_HAS_INTERPRETER_FRAME'):
+    # a release build can't say what compiled
+    if lejit is None or not hasattr(lejit._core, '_code_info'):
+        return True
+    if dict(lejit._core._build['features']).get('LE_HAS_INTERPRETER_FRAME'):
         return True
     return all(lejit._core._code_info(f.__code__) == 'compiled'
                for f in fns)

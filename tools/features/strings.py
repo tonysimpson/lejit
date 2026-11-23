@@ -367,6 +367,16 @@ msg('ASYNC_FOR_AITER_NO_ANEXT', 'async for whose __aiter__ returns an object '
 msg('AWAIT_NOT_AWAITABLE', "await on an object that can't be awaited",
     'TypeError', 'o = args[0]()\nasync def f():\n    await o\ncoro_run(f())',
     [T()])
+msg('AWITH_ENTER_NOT_AWAITABLE', 'async with whose __aenter__ returns an '
+    "object that can't be awaited", 'TypeError',
+    'r = args[0]; o = cls("A", __aenter__=lambda s: r(),\n'
+    '                     __aexit__=lambda s, *a: r())()\n'
+    'async def f():\n    async with o:\n        pass\ncoro_run(f())', [T()])
+msg('AWITH_EXIT_NOT_AWAITABLE', 'async with whose __aexit__ returns an '
+    "object that can't be awaited", 'TypeError',
+    'async def e(s):\n    pass\n'
+    'r = args[0]; o = cls("A", __aenter__=e, __aexit__=lambda s, *a: r())()\n'
+    'async def f():\n    async with o:\n        pass\ncoro_run(f())', [T()])
 msg('AWAIT_RETURNED_COROUTINE', '__await__ returning a coroutine', 'TypeError',
     'async def c():\n    pass\nk = c()\nk.close()\n'
     'o = cls("A", __await__=lambda s: k)()\n'
