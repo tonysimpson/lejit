@@ -861,6 +861,38 @@ def COMPARE_OP_SHIFT_5():
 
 
 @probe
+def CALLABLE_UNDER_NULL():
+    """CALL_FUNCTION_EX given two callables under its arguments, and no
+    NULL, calls the lower one (run)"""
+    _need_ops('CALL_FUNCTION_EX', 'LOAD_CONST', 'RETURN_VALUE')
+    call = _code([('LOAD_CONST', 0), ('LOAD_CONST', 1), ('LOAD_CONST', 2),
+                  ('CALL_FUNCTION_EX', 0), ('RETURN_VALUE', 0)],
+                 [lambda: 'lower', lambda: 'upper', ()])
+    called = call()
+    return called == 'lower', 'CALL_FUNCTION_EX run: called the %s' % called
+
+
+@probe
+def FOR_ITER_EXIT_PAST_POP_TOP():
+    """a for loop ends with END_FOR then POP_TOP, END_FOR popping one value
+    (dis, dis.stack_effect)"""
+    if not _real_op('END_FOR'):
+        return False, 'opcode.opmap: no END_FOR'
+
+    def f(y):
+        for x in y:
+            pass
+    ins = list(dis.get_instructions(f))
+    for i, x in enumerate(ins[:-1]):
+        if x.opname == 'END_FOR':
+            pops = -dis.stack_effect(x.opcode)
+            return (pops == 1 and ins[i + 1].opname == 'POP_TOP',
+                    'dis: END_FOR (pops %d) then %s' % (pops, ins[i + 1].opname))
+    raise Unanswered('a for loop has no END_FOR: %r'
+                     % [x.opname for x in ins])
+
+
+@probe
 def DICT_KEYS_KIND():
     """a dict of 5 str keys is smaller than one of 5 int keys, because its
     entries hold no hash (sys.getsizeof)"""
