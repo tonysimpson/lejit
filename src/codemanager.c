@@ -1032,6 +1032,7 @@ owners_scan(void)
     PyCodeObject **dead_co = NULL;
     le_code_extra_t **dead = NULL;
     le_group_t **dead_groups = NULL;
+    PyObject **reports = NULL;
     le_owner_t dropped;
     long i, ng = 0, n = scan_find(&dead_co, &dead_groups, &ng);
     PyMem_Free(scan.nodes);
@@ -1061,6 +1062,11 @@ owners_scan(void)
     PyMem_Free(dead_groups);
     if (n > 0)
         dead = PyMem_Malloc(n * sizeof(le_code_extra_t *));
+    if (n > 0 && dead != NULL &&
+        (reports = PyMem_Malloc(n * sizeof(PyObject *))) == NULL) {
+        PyMem_Free(dead);
+        dead = NULL;
+    }
     if (dead == NULL) {
         for (i = 0; i < n; i++)
             Py_DECREF(dead_co[i]); /* found again by the next scan */
@@ -1069,7 +1075,15 @@ owners_scan(void)
     /* all records are taken off their code objects before any reference is
        dropped, so that code a finaliser runs is compiled afresh */
     for (i = 0; i < n; i++) dead[i] = le_code_extra_detach(dead_co[i]);
+    /* a block of one may be listed in another's report (an inlined
+       callee's join point), so every report lives until all are released */
+    for (i = 0; i < n; i++) {
+        reports[i] = dead[i]->merge_points;
+        Py_XINCREF(reports[i]);
+    }
     for (i = 0; i < n; i++) le_code_extra_free(dead[i]);
+    for (i = 0; i < n; i++) Py_XDECREF(reports[i]);
+    PyMem_Free(reports);
     LE_STAT(psyco_stat_owners_collected += n);
     PyMem_Free(dead);
     for (i = 0; i < n; i++) Py_DECREF(dead_co[i]);
