@@ -967,6 +967,18 @@ psyco_int32_nonzero_at(PsycoObject *po, void *address)
 
 DEFINEFN
 condition_code_t
+psyco_thread_byte_nonzero(PsycoObject *po, long at, long offset)
+{
+    BEGIN_CODE
+    NEED_CC();
+    MOV_R_FS(REG_TRANSIENT_2, at);
+    CMP_I8_BO(0, REG_TRANSIENT_2, offset);
+    END_CODE
+    return CC_NE;
+}
+
+DEFINEFN
+condition_code_t
 psyco_int32_nonzero_in(PsycoObject *po, vinfo_t *vbase, long offset)
 {
     BEGIN_CODE

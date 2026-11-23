@@ -94,10 +94,9 @@ cimpl_check_recursive_call(void);
 #if LE_HAS_C_RECURSION_REMAINING
 #define LE_C_RECURSION_TAKE(ts) ((ts)->c_recursion_remaining--)
 #define LE_C_RECURSION_GIVE(ts) ((ts)->c_recursion_remaining++)
-#define LE_C_RECURSION_ENTER(ts)               \
-    ((ts)->c_recursion_remaining > 0           \
-         ? ((ts)->c_recursion_remaining--, 0) \
-         : Py_EnterRecursiveCall(""))
+#define LE_C_RECURSION_ENTER(ts)                                          \
+    ((ts)->c_recursion_remaining > 0 ? ((ts)->c_recursion_remaining--, 0) \
+                                     : Py_EnterRecursiveCall(""))
 #else
 #define LE_C_RECURSION_TAKE(ts) ((void)(ts))
 #define LE_C_RECURSION_GIVE(ts) ((void)(ts))

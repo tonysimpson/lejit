@@ -134,6 +134,11 @@ psyco_int32_nonzero_at(PsycoObject *po, void *address);
    if it isn't 0 */
 EXTERNFN condition_code_t
 psyco_int32_nonzero_in(PsycoObject *po, vinfo_t *vbase, long offset);
+/* tests the byte at 'offset' in the structure whose address is the word at
+   'at' from the thread pointer, through a scratch register that holds
+   nothing after: CC_NE if it isn't 0 */
+EXTERNFN condition_code_t
+psyco_thread_byte_nonzero(PsycoObject *po, long at, long offset);
 /* ceval's eval_breaker test at a loop head or after a call (psyfunc.c);
    false with an exception set */
 EXTERNFN bool

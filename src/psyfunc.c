@@ -40,12 +40,20 @@ le_eval_breaker_handler(void);
 #if LE_HAS_TSTATE_EVAL_BREAKER
 /* ceval's eval_breaker is the running thread's, in its state, and its
    events are its low byte (Python/pyruntime.c, with the handler):
-   compiled code loads the thread state and tests that byte */
+   compiled code loads the thread state and compares that byte with 0 in
+   place, with one scratch register where the state is at one offset from
+   the thread pointer */
 static inline condition_code_t
 le_eval_breaker_test(PsycoObject *po)
 {
     condition_code_t cc;
-    vinfo_t *vevents, *vts = le_tstate_load(po);
+    vinfo_t *vevents, *vts;
+    long at;
+    bool fs;
+    if (le_tstate_word(&at, &fs) && fs)
+        return psyco_thread_byte_nonzero(
+            po, at, offsetof(PyThreadState, eval_breaker));
+    vts = le_tstate_load(po);
     if (vts == NULL)
         return CC_ERROR;
     vevents =
