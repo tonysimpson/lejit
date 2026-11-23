@@ -45,6 +45,26 @@ cimpl_func_set(PyObject *f, long which, PyObject *value)
     }
 }
 
+#if LE_HAS_FUNCTION_ANNOTATE
+/* f.__annotate__ set as ceval sets it: the annotate function's qualified
+   name is then f's with ".__annotate__" */
+static int
+cimpl_func_set_annotate(PyObject *f, PyObject *annotate)
+{
+    PyFunctionObject *func = (PyFunctionObject *)f;
+    PyObject *qualname;
+    Py_INCREF(annotate);
+    Py_XSETREF(func->func_annotate, annotate);
+    if (!PyFunction_Check(annotate))
+        return 0;
+    qualname = PyUnicode_FromFormat("%U.__annotate__", func->func_qualname);
+    if (qualname == NULL)
+        return -1;
+    Py_SETREF(((PyFunctionObject *)annotate)->func_qualname, qualname);
+    return 0;
+}
+#endif
+
 static bool
 compute_function(PsycoObject *po, vinfo_t *v)
 {
@@ -127,6 +147,12 @@ PsycoFunction_SetField(PsycoObject *po, vinfo_t *func, int which,
                        vinfo_t *value)
 {
     vinfo_t **field;
+#if LE_HAS_FUNCTION_ANNOTATE
+    if (which == 4)
+        return psyco_generic_call(po, cimpl_func_set_annotate,
+                                  CfCommonIntZeroOk | CfNoPython, "vv", func,
+                                  value) != NULL;
+#endif
     if (!is_virtualtime(func->source) ||
         VirtualTime_Get(func->source) != &psyco_computed_function)
         return psyco_generic_call(po, cimpl_func_set,

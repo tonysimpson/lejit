@@ -63,6 +63,11 @@
 #include "pycinternal.h"
 #include <ipyencoding.h>
 
+#if LE_HAS_OPCODE_LOAD_COMMON_CONSTANT
+EXTERNFN PyObject *
+le_common_constant(int i); /* pyruntime.c */
+#endif
+
 /* C API calls that some CPython versions don't export: the function where
    libpython exports it, else a copy of CPython's or a public call that
    does the same */
@@ -962,6 +967,7 @@ cimpl_reraise_value(PyObject *value)
     PyErr_Restore(type, value, PyException_GetTraceback(value));
 }
 
+#if !LE_HAS_OPCODE_LOAD_SPECIAL
 /* WITH_EXCEPT_START's call: exit_func(type, value, traceback) of the
    exception value */
 static PyObject *
@@ -971,6 +977,44 @@ cimpl_with_exit_exc(PyObject *exit_func, PyObject *value)
     PyObject *stack[3] = {(PyObject *)Py_TYPE(value), value, tb};
     Py_XDECREF(tb);
     return PyObject_Vectorcall(exit_func, stack, 3, NULL);
+}
+#endif
+#endif
+
+#if LE_HAS_OPCODE_LOAD_SPECIAL
+PyAPI_FUNC(PyObject *) _PyObject_LookupSpecial(PyObject *, PyObject *);
+
+/* LOAD_SPECIAL: the bound special method (__enter__, __exit__ and the
+   async ones) that ceval's _PyObject_LookupSpecialMethod finds, with
+   ceval's error where the type has none */
+static PyObject *
+cimpl_load_special(PyObject *owner, long which)
+{
+    PyObject *res =
+        _PyObject_LookupSpecial(owner, _Py_SpecialMethods[which].name);
+    if (res == NULL && !PyErr_Occurred())
+        PyErr_Format(PyExc_TypeError,
+                     _PyEval_SpecialMethodCanSuggest(owner, (int)which)
+                         ? _Py_SpecialMethods[which].error_suggestion
+                         : _Py_SpecialMethods[which].error,
+                     owner);
+    return res;
+}
+
+/* WITH_EXCEPT_START's call where LOAD_SPECIAL may have left __exit__
+   beside its self: exit_func([self,] type, value, traceback) */
+static PyObject *
+cimpl_with_exit_exc_self(PyObject *exit_func, PyObject *self, PyObject *value)
+{
+    PyObject *tb = PyException_GetTraceback(value);
+    PyObject *stack[4] = {self, (PyObject *)Py_TYPE(value), value, tb};
+    PyObject *res;
+    Py_XDECREF(tb);
+    if (self != NULL)
+        res = PyObject_Vectorcall(exit_func, stack, 4, NULL);
+    else
+        res = PyObject_Vectorcall(exit_func, stack + 1, 3, NULL);
+    return res;
 }
 #endif
 
@@ -3501,20 +3545,25 @@ cimpl_name_error(PyObject *w)
 }
 
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
-   [kwargs], args, and the callable beside its NULL. f(*tuple) goes straight to
+   [kwargs], args, and the callable beside its NULL. The kwargs slot is
+   there whenever argument bit 0 is set, or always where CALL_EX_KWARGS_SLOT
+   (a NULL there for a call with none). f(*tuple) goes straight to
    PsycoObject_Call, which can specialise the call; anything else runs
    CPython's whole case at run time (its copy cimpl_call_function_ex). */
 static vinfo_t *
 psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
                      int *stack_to_pop)
 {
-    vinfo_t *kwargs = (oparg & 1) ? stack_top[-1] : NULL;
-    vinfo_t *callargs = stack_top[-1 - (oparg & 1)];
-    vinfo_t *func = stack_top[-2 - (oparg & 1) - LE_HAS_CALLABLE_UNDER_NULL];
+    int slot = LE_HAS_CALL_EX_KWARGS_SLOT || (oparg & 1);
+    vinfo_t *kwargs = slot ? stack_top[-1] : NULL;
+    vinfo_t *callargs = stack_top[-1 - slot];
+    vinfo_t *func = stack_top[-2 - slot - LE_HAS_CALLABLE_UNDER_NULL];
     vinfo_t *zero = NULL, *result;
     PyTypeObject *t;
     /* and the NULL under the callable, where PUSH_NULL puts one there */
-    *stack_to_pop = 2 + (oparg & 1) + LE_HAS_OPCODE_PUSH_NULL;
+    *stack_to_pop = 2 + slot + LE_HAS_OPCODE_PUSH_NULL;
+    if (kwargs != NULL && psyco_knowntobe(kwargs, 0))
+        kwargs = NULL;
 
     t = Psyco_NeedType(po, callargs);
     if (t == NULL)
@@ -4670,6 +4719,20 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
             PUSH(value);
             goto fine;
         }
+
+#if LE_HAS_OPCODE_LOAD_SMALL_INT
+        case LOAD_SMALL_INT: {
+            /* CPython's small ints are immortal */
+            PyObject *small = PyLong_FromLong(oparg);
+            Py_DECREF(small);
+            PUSH(vinfo_new(CompileTime_New((long)small)));
+            goto fine;
+        }
+
+        case LOAD_COMMON_CONSTANT:
+            PUSH(vinfo_new(CompileTime_New((long)le_common_constant(oparg))));
+            goto fine;
+#endif
 
         /* an inlined comprehension keeps its outer variable's
            value, or NULL, on the stack and restores it with
@@ -6400,7 +6463,8 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
 
         case END_FOR:
             POP_DECREF();
-            if (!LE_HAS_FOR_ITER_EXIT_PAST_POP_TOP)
+            if (!LE_HAS_FOR_ITER_EXIT_PAST_POP_TOP &&
+                !LE_HAS_FOR_ITER_EXIT_KEEPS_ITER)
                 POP_DECREF();
             goto fine;
 
@@ -6418,7 +6482,8 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
                 if (runtime_NON_NULL_t(po, v) == true) {
                     /* iterator ended normally */
                     PycException_Clear(po);
-                    POP_DECREF();
+                    if (!LE_HAS_FOR_ITER_EXIT_KEEPS_ITER)
+                        POP_DECREF();
                     JUMPTO(target);
                     mp = psyco_next_merge_point(po->pr.merge_points,
                                                 next_instr);
@@ -6834,7 +6899,8 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
         /* one of the fields MAKE_FUNCTION's flags name, set on the
            function it made */
         case SET_FUNCTION_ATTRIBUTE: {
-            int which = oparg == 0x08   ? 0  /* the closure */
+            int which = oparg == 0x10   ? 4  /* __annotate__ */
+                        : oparg == 0x08 ? 0  /* the closure */
                         : oparg == 0x04 ? 1  /* the annotations */
                         : oparg == 0x02 ? 2  /* the keyword defaults */
                                         : 3; /* the defaults */
@@ -6942,7 +7008,19 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             goto fine;
 #endif
 
-#if LE_HAS_EXCEPTION_TABLE
+#if LE_HAS_OPCODE_LOAD_SPECIAL
+        /* __exit__ and its self or NULL (LOAD_SPECIAL) are fifth and
+           fourth, under the lasti and the exception saved by
+           PUSH_EXC_INFO */
+        case WITH_EXCEPT_START:
+            x = psyco_generic_call(po, cimpl_with_exit_exc_self,
+                                   CfCommonNewRefPyObject, "vvv", NTOP(5),
+                                   NTOP(4), TOP());
+            if (x == NULL)
+                break;
+            PUSH(x);
+            goto fine;
+#elif LE_HAS_EXCEPTION_TABLE
         /* __exit__ is fourth, under the lasti and the exception
            saved by PUSH_EXC_INFO */
         case WITH_EXCEPT_START:
@@ -7060,6 +7138,20 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             PUSH(x);
             goto fine;
 
+#if LE_HAS_OPCODE_LOAD_SPECIAL
+        /* with: the bound special method, and a NULL over it where
+           ceval may put the method's self */
+        case LOAD_SPECIAL:
+            x = psyco_generic_call(po, cimpl_load_special,
+                                   CfCommonNewRefPyObject, "vl", TOP(),
+                                   (long)oparg);
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
+            PUSH(psyco_vi_Zero());
+            goto fine;
+#endif
 #if LE_HAS_OPCODE_BEFORE_WITH
         /* with: the bound __exit__ replaces the manager, and
            __enter__'s result goes over it */
