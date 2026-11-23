@@ -44,7 +44,7 @@ psyco_allocate_executable_buffer(long size, char **result)
 {
 #if defined(MAP_ANONYMOUS) && defined(MAP_PRIVATE)
     static int first = 1;
-    char *p = (char *)mmap(NULL, size, PROT_EXEC | PROT_READ | PROT_WRITE,
+    char *p = (char *)mmap(*result, size, PROT_EXEC | PROT_READ | PROT_WRITE,
                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (p == MAP_FAILED || p == NULL)
         return 0;

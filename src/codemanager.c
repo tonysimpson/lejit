@@ -106,10 +106,11 @@ static extent_t *regions = NULL, *islands = NULL; /* island: start is free */
 static int nregions = 0, nislands = 0;
 static le_addrmap_t far_jumps; /* target -> its latest far jump */
 
+/* a new region, near 'near' if there is room there (NULL: anywhere) */
 static void
-map_region(void)
+map_region(code_t *near)
 {
-    char *p;
+    char *p = (char *)near;
     extent_t *r;
     if (psyco_allocate_executable_buffer(REGION_SIZE, &p) < REGION_SIZE)
         OUT_OF_MEMORY();
@@ -172,17 +173,21 @@ DEFINEFN code_t *
 psyco_code_far_jump(code_t *end, code_t *target)
 {
     code_t *j = amap_get(&far_jumps, target);
-    int i;
+    int i, r;
     if (j != NULL && FITS_IN_32BITS(j - end))
         return j;
-    for (i = 0; i < nregions; i++)
-        if (regions[i].start <= end && end <= regions[i].end)
+    for (r = 0; r < nregions; r++)
+        if (regions[r].start <= end && end <= regions[r].end)
             break;
-    if (i == nregions)
+    if (r == nregions)
         /* not in executable memory (a throwaway buffer): never run */
         return target;
-    if ((i = island_find(end)) < 0 && (map_region(), i = island_find(end)) < 0)
-        OUT_OF_MEMORY();
+    if ((i = island_find(end)) < 0) {
+        /* none in reach has room: a new region just after this one */
+        map_region(regions[r].end);
+        if ((i = island_find(end)) < 0)
+            OUT_OF_MEMORY();
+    }
     if (amap_reserve(&far_jumps) < 0)
         OUT_OF_MEMORY();
     j = islands[i].start;
@@ -254,7 +259,7 @@ take_extent(size_t want, size_t need, code_t **end)
     if (i < 0 && need < want)
         i = free_find(need);
     if (i < 0) {
-        map_region();
+        map_region(NULL);
         i = free_find(need);
         psyco_assert(i >= 0);
     }
