@@ -169,7 +169,8 @@ SKIPPED = {
     "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
     'PyFrame_GetVar) misses those compiled code has set':
         'test.test_capi.test_eval.Tests.test_eval_getlocals '
-        'test.test_frame.TestCAPI.test_getvar',
+        'test.test_frame.TestCAPI.test_getvar '
+        'test.test_capi.test_frame.FrameTest.test_getvar',
     "sys.settrace on 3.12 sees an async for loop's exception events "
     'differently':
         'test.test_sys_settrace.*.test_20_async_for_loop',
@@ -190,6 +191,16 @@ SKIPPED = {
         'test.test_gc.GCTests.test_newinstance '
         'test.test_gc.GCCallbackTests.test_collect_garbage '
         'test.test_capi.*CAPITest.*_decrefs_once',
+    'compiled code passes a constant to a C function without a reference '
+    'of its own, so the function sees one fewer than in CPython':
+        'test.test_capi.test_object.IsUniquelyReferencedTest.test_is_uniquely_referenced',
+    "objects compiled code keeps virtual are never made, so the ref tracer "
+    "doesn't see them destroyed":
+        'test.test_capi.test_object.RefTracerTest.test_destroy_traced_for_trashcan_deferred_objects',
+    "read __main__.__file__, which this runner's children (python -c) "
+    "don't have":
+        'test.test_capi.test_run.CAPITest.test_run_anyfile* '
+        'test.test_capi.test_run.CAPITest.test_run_simplefile*',
     'sys.getrefcount counts differently':
         'test.test_sys.SysModuleTest.test_refcount '
         'test.test_generators.FinalizationTest.test_refcycle '
