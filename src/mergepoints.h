@@ -35,7 +35,7 @@ psyco_get_merge_points(PyCodeObject *co, int module);
 EXTERNFN PyObject *
 psyco_analyse_code(PyCodeObject *co, le_code_extra_t *x, int module);
 EXTERNFN int
-psyco_is_genexpr(PyCodeObject *co);
+psyco_is_fusable_generator(PyCodeObject *co);
 /* the index among the free variables of '__class__', or -1 */
 EXTERNFN int
 psyco_class_cell(PyCodeObject *co);

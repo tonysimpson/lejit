@@ -371,6 +371,20 @@ def caught_middle():
     return caught_chain()
 
 
+# LeJIT replaces these two with its own functions
+def replaced_functions():
+    import _warnings
+    import gc
+    out = []
+    for fn in (_warnings.warn, gc.get_referents):
+        try:
+            signature = str(inspect.signature(fn))
+        except ValueError as e:
+            signature = str(e)
+        out.append((fn.__doc__, fn.__self__, fn.__module__, signature))
+    return out
+
+
 CASES = [
     ('pos_call_chain', "[()]", {}),
     ('kw_call_chain', "[()]", {}),
@@ -393,4 +407,5 @@ CASES = [
     ('lasti_through_c', "[()]", {}),
     ('getframe_through', "[()]", {}),
     ('trim_arity_case', "[()]", {}),
+    ('replaced_functions', "[()]", {}),
 ]
