@@ -465,7 +465,7 @@ CASES = [
     ('code_dies_with_own_globals', [()], {'interpreted': 'calls exec'}),
     ('own_namespace_calls', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
     ('own_namespace_recursion', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
-    ('inlined_callee_dies_first', [()], {'interpreted': 'calls exec'}),
+    ('inlined_callee_dies_first', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
     ('freed_in_subinterpreter', [()], {'interpreted': 'calls exec', 'checked': 'reads lejit._core._stats'}),
     ('unscanned_freed_in_subinterpreter', [()],
      {'leaks': 'leaks at random, KNOWN_BUGS'}),
