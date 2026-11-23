@@ -960,6 +960,9 @@ typedef struct le_owner_s {
    and its words are objects (not LE_HAS_FRAME_STACKREFS) */
 #define LE_RESUMES_GENERATORS \
     (!LE_HAS_INTERPRETER_FRAME || !LE_HAS_FRAME_STACKREFS)
+/* and coroutine bodies, whose awaits pause the frame object as ceval's
+   YIELD_FROM leaves it (pycompiler.c) */
+#define LE_RESUMES_COROUTINES (!LE_HAS_INTERPRETER_FRAME)
 
 /* A resumable generator's compiled entries at one resume point, one per
    set of NULL locals and stack items (a bit each, locals first), compiled
