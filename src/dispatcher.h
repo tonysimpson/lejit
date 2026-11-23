@@ -223,12 +223,24 @@ struct global_entries_s {
     struct varies_s *varies; /* psyco_forget_values's, or NULL */
 };
 
+/* a new, empty fatlist, untracked: it holds only ints and code buffers,
+   which the GC doesn't track, so walking it in each collection would find
+   nothing */
+PSY_INLINE PyObject *
+psyco_fatlist_new(void)
+{
+    PyObject *l = PyList_New(0);
+    if (l != NULL)
+        PyObject_GC_UnTrack(l);
+    return l;
+}
+
 /* initialize a global_entries_t structure */
 PSY_INLINE void
 psyco_ge_init(global_entries_t *ge)
 {
     ge->varies = NULL;
-    ge->fatlist = PyList_New(0);
+    ge->fatlist = psyco_fatlist_new();
     if (ge->fatlist == NULL)
         OUT_OF_MEMORY();
 }
