@@ -223,22 +223,32 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
     return NULL;
 }
 
+/* whether a plain generator's frame 'f' may resume compiled: not while
+   it is thrown into, nor once its code is known not to be resumable. Its
+   code's record, if it has one, in '*x'. */
+static inline bool
+gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
+{
+    if (!(f->f_code->co_flags & CO_GENERATOR) || throwflag)
+        return false;
+    *x = le_code_extra_get(f->f_code);
+    return *x == NULL || (*x)->nresumes >= 0;
+}
+
 /* The compiled entry to resume the generator's frame 'f' with, compiled
-   now if needed, or NULL to run it interpreted. Its entries tell apart
-   which of its locals and stack items are NULL. */
-static CodeBufferObject *
-le_gen_to_run(PyThreadState *tstate, le_frame_t *f)
+   now if needed, or NULL to run it interpreted; 'x' is its code's record,
+   if it has one. Its entries tell apart which of its locals and stack
+   items are NULL. */
+static __attribute__((noinline)) CodeBufferObject *
+le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x)
 {
     PyCodeObject *co = f->f_code;
-    le_code_extra_t *x = le_code_extra_get(co);
     le_resume_point_t *p;
     le_resume_entry_t *e;
     CodeBufferObject *codebuf;
     PyObject **slots, **stack;
     int nlocals, nstack, i;
     uint64_t nulls = 0;
-    if (x != NULL && x->nresumes < 0)
-        return NULL; /* not resumable */
     slots = le_frame_args(f);
     stack = le_frame_stack(f);
     nlocals = le_code_nlocals(co);
@@ -280,7 +290,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f)
    FrameRuntime (vcompiler.c:PsycoObject_FromGenFrame). The frame is left
    paused at a yield, or ended (le_gen_frame_end); gen_send_ex does the rest.
  */
-static PyObject *
+static __attribute__((noinline)) PyObject *
 LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
 {
     stack_frame_info_t *no_frames = (stack_frame_info_t *)-1;
@@ -418,19 +428,24 @@ eval_from_callee(PyThreadState *ts, le_frame_t *f, int throwflag)
 }
 #endif
 
-static PyObject *
-LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
+#if LE_RESUMES_GENERATORS
+/* a plain generator's frame, resumed, whose code's record is 'x' (or
+   NULL) */
+static __attribute__((noinline)) PyObject *
+LeGen_Eval(PyThreadState *tstate, le_frame_t *frame, le_code_extra_t *x)
+{
+    CodeBufferObject *resume = le_gen_to_run(tstate, frame, x);
+    if (resume != NULL)
+        return LeGen_Run(tstate, resume, frame);
+    return original_eval_frame(tstate, frame, 0);
+}
+#endif
+
+/* any other frame */
+static __attribute__((noinline)) PyObject *
+LeFunc_Eval(PyThreadState *tstate, le_frame_t *frame, int throwflag)
 {
     PyObject *result, *entry_point;
-    if (le_frame_code(frame)->co_flags & LE_GENERATOR_FLAGS) {
-#if LE_RESUMES_GENERATORS
-        CodeBufferObject *resume;
-        if ((frame->f_code->co_flags & CO_GENERATOR) && !throwflag &&
-            (resume = le_gen_to_run(tstate, frame)) != NULL)
-            return LeGen_Run(tstate, resume, frame);
-#endif
-        return original_eval_frame(tstate, frame, throwflag);
-    }
     entry_point =
         le_code_to_run(le_frame_code(frame), le_frame_globals(frame),
                        le_frame_locals(frame), le_frame_builtins(frame));
@@ -449,6 +464,22 @@ LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
         psyco_frame_returned(frame);
 #endif
     return result;
+}
+
+/* the eval hook: kept apart from both paths, so that neither pays for
+   the other's frame */
+static PyObject *
+LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
+{
+    if (le_frame_code(frame)->co_flags & LE_GENERATOR_FLAGS) {
+#if LE_RESUMES_GENERATORS
+        le_code_extra_t *x;
+        if (gen_may_resume(frame, throwflag, &x))
+            return LeGen_Eval(tstate, frame, x);
+#endif
+        return original_eval_frame(tstate, frame, throwflag);
+    }
+    return LeFunc_Eval(tstate, frame, throwflag);
 }
 
 static le_eval_frame_fn
@@ -485,17 +516,23 @@ le_set_interp_eval_frame(void *fn);
 
 static le_eval_frame_fn original_eval_frame = NULL;
 
-static PyObject *
-LeEval_EvalFrame(PyFrameObject *frame, int throwflag)
+/* a plain generator's frame, resumed, whose code's record is 'x' (or
+   NULL) */
+static __attribute__((noinline)) PyObject *
+LeGen_Eval(PyFrameObject *frame, le_code_extra_t *x)
+{
+    PyThreadState *tstate = PyThreadState_GET();
+    CodeBufferObject *resume = le_gen_to_run(tstate, frame, x);
+    if (resume != NULL)
+        return LeGen_Run(tstate, resume, frame);
+    return original_eval_frame(frame, 0);
+}
+
+/* any other frame */
+static __attribute__((noinline)) PyObject *
+LeFunc_Eval(PyFrameObject *frame, int throwflag)
 {
     PyObject *result, *entry_point;
-    if (frame->f_code->co_flags & LE_GENERATOR_FLAGS) {
-        CodeBufferObject *resume;
-        if ((frame->f_code->co_flags & CO_GENERATOR) && !throwflag &&
-            (resume = le_gen_to_run(PyThreadState_GET(), frame)) != NULL)
-            return LeGen_Run(PyThreadState_GET(), resume, frame);
-        return original_eval_frame(frame, throwflag);
-    }
     entry_point = le_code_to_run(frame->f_code, frame->f_globals,
                                  frame->f_locals, frame->f_builtins);
     if (entry_point != NULL)
@@ -505,6 +542,20 @@ LeEval_EvalFrame(PyFrameObject *frame, int throwflag)
     if (le_frame_outlives(frame) != NULL)
         psyco_frame_returned(frame);
     return result;
+}
+
+/* the eval hook: kept apart from both paths, so that neither pays for
+   the other's frame */
+static PyObject *
+LeEval_EvalFrame(PyFrameObject *frame, int throwflag)
+{
+    if (frame->f_code->co_flags & LE_GENERATOR_FLAGS) {
+        le_code_extra_t *x;
+        if (gen_may_resume(frame, throwflag, &x))
+            return LeGen_Eval(frame, x);
+        return original_eval_frame(frame, throwflag);
+    }
+    return LeFunc_Eval(frame, throwflag);
 }
 
 static le_eval_frame_fn

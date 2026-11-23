@@ -140,13 +140,7 @@ le_trace_unify(PsycoObject *po, CodeBufferObject *match)
    holds one reference to it while it is attached (or being freed), and
    its owner releases the compiled code (codemanager.c). It is visible
    only to weakref.getweakrefs on the code object. */
-typedef struct {
-    PyWeakReference wr;
-    char attached;
-    le_code_extra_t x;
-} code_record_t;
-
-static PyTypeObject CodeRecord_Type = {
+DEFINEVAR PyTypeObject CodeRecord_Type = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name = "lejit._core.code_record",
     .tp_basicsize = sizeof(code_record_t),
     .tp_flags = Py_TPFLAGS_DEFAULT,
@@ -199,17 +193,6 @@ record_died(PyObject *self, PyObject *ref)
 
 static PyMethodDef record_died_def = {"le_record_died", record_died, METH_O,
                                       NULL};
-
-DEFINEFN
-le_code_extra_t *
-le_code_extra_get(PyCodeObject *co)
-{
-    PyWeakReference *r = (PyWeakReference *)co->co_weakreflist;
-    for (; r != NULL; r = r->wr_next)
-        if (Py_TYPE(r) == &CodeRecord_Type)
-            return &((code_record_t *)r)->x;
-    return NULL;
-}
 
 /* unlinked without its callback; freeing it is the caller's */
 DEFINEFN

@@ -952,15 +952,29 @@ typedef struct le_code_extra_s {
                                  address (psyfunc.c:psyco_save_inline_po) */
     le_owner_t owner;         /* what its compiled code holds */
     char counted;             /* in the owner scan's count (codemanager.c) */
-    int nresumes;             /* a resumable generator's points: */
+    int nresumes; /* a resumable generator's points, or -1: not resumable */
     le_resume_point_t *resumes; /* one per yield and the start, or NULL */
 } le_code_extra_t;
+/* the record lives in a weak reference to its code object (lejit.c) */
+typedef struct {
+    PyWeakReference wr;
+    char attached;
+    le_code_extra_t x;
+} code_record_t;
+EXTERNVAR PyTypeObject CodeRecord_Type;
 /* the record for 'co', made on first use; NULL with an exception set */
 EXTERNFN le_code_extra_t *
 le_code_extra(PyCodeObject *co);
 /* the record for 'co' if it has one, never raising */
-EXTERNFN le_code_extra_t *
-le_code_extra_get(PyCodeObject *co);
+static inline le_code_extra_t *
+le_code_extra_get(PyCodeObject *co)
+{
+    PyWeakReference *r = (PyWeakReference *)co->co_weakreflist;
+    for (; r != NULL; r = r->wr_next)
+        if (Py_TYPE(r) == &CodeRecord_Type)
+            return &((code_record_t *)r)->x;
+    return NULL;
+}
 /* releases the record and its compiled code; its code object is dead */
 EXTERNFN void
 le_code_extra_free(le_code_extra_t *x);
