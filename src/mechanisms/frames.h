@@ -597,10 +597,11 @@ static inline void
 le_gen_frame_pause(PyFrameObject *f, int lasti, int nstack, int iblock,
                    const PyTryBlock *blocks)
 {
+    int i;
     f->f_lasti = lasti;
     le_frame_set_stack_depth(f, nstack);
     f->f_iblock = iblock;
-    memcpy(f->f_blockstack, blocks, iblock * sizeof(PyTryBlock));
+    for (i = 0; i < iblock; i++) f->f_blockstack[i] = blocks[i];
 #if LE_HAS_FRAME_STATE
     f->f_state = FRAME_SUSPENDED;
 #endif

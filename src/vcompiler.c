@@ -1430,9 +1430,10 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
 /* A resumable generator's body entered at 'next_instr' (eval_hook.c:
    LeGen_Run), on the words of its frame in this order: the locals, owned,
    the cells and free variables, borrowed, the 'nstack' stack items, owned,
-   then the frame object, borrowed. A local or stack item whose bit is set
-   in 'nulls' (locals first) is NULL, and its word not used. 'blocks' are
-   the frame's 'nblocks' blocks, as (type, handler in bytes, level). */
+   then the run's FrameRuntime (Python/frames.h), whose frame it is. A local or
+   stack item whose bit is set in 'nulls' (locals first) is NULL, and its word
+   not used. 'blocks' are the frame's 'nblocks' blocks, as (type, handler in
+   bytes, level). */
 DEFINEFN
 PsycoObject *
 PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,

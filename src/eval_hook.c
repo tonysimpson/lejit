@@ -179,14 +179,29 @@ compile_resume(le_frame_t *f, le_code_extra_t *x, PyObject *mergepoints,
 
 /* the entries at the resume point after f_lasti, -1 for the start: the
    record has one per yield and one for the start, each taken by the
-   first resume there; NULL if out of memory */
+   first resume there. NULL to run interpreted: the code isn't resumable
+   (nresumes -1), or out of memory. */
 static le_resume_point_t *
 resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
 {
     int i;
     if (x->resumes == NULL) {
         le_code_t c = le_code(co);
+        PyObject *mergepoints = x->merge_points;
         int pos, n = 1;
+        if (x->nresumes < 0)
+            return NULL;
+        if (mergepoints == NULL)
+            mergepoints = psyco_analyse_code(co, x, 0);
+        if (mergepoints == NULL) {
+            PyErr_Clear(); /* out of memory */
+            return NULL;
+        }
+        if (mergepoints == Py_None ||
+            !(psyco_mp_flags(mergepoints) & MP_FLAGS_RESUMABLE)) {
+            x->nresumes = -1;
+            return NULL;
+        }
         for (pos = 0; pos < c.size;) {
             le_instr_t in = le_instr(c, pos);
             pos = in.next;
@@ -212,45 +227,37 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
    now if needed, or NULL to run it interpreted. Its entries tell apart
    which of its locals and stack items are NULL. */
 static CodeBufferObject *
-le_gen_to_run(le_frame_t *f)
+le_gen_to_run(PyThreadState *tstate, le_frame_t *f)
 {
     PyCodeObject *co = f->f_code;
     le_code_extra_t *x;
     le_resume_point_t *p;
     le_resume_entry_t *e;
-    PyObject *mergepoints;
     CodeBufferObject *codebuf;
     PyObject **slots = le_frame_args(f), **stack = le_frame_stack(f);
     int nlocals = le_code_nlocals(co), nstack = le_frame_stack_depth(f), i;
     uint64_t nulls = 0;
     /* as le_code_to_run */
-    if (le_tracing_now(PyThreadState_GET()) || f->f_locals != NULL ||
-        nlocals + nstack > 64)
+    if (le_tracing_now(tstate) || f->f_locals != NULL || nlocals + nstack > 64)
         return NULL;
-    x = le_code_extra(co);
-    if (x == NULL) {
+    x = le_code_extra_get(co);
+    if (x == NULL && (x = le_code_extra(co)) == NULL) {
         PyErr_Clear(); /* out of memory */
         return NULL;
     }
-    mergepoints = x->merge_points;
-    if (mergepoints == NULL)
-        mergepoints = psyco_analyse_code(co, x, 0);
-    if (mergepoints == Py_None ||
-        !(psyco_mp_flags(mergepoints) & MP_FLAGS_RESUMABLE))
+    p = resume_point(x, co, f->f_lasti);
+    if (p == NULL)
         return NULL;
     for (i = 0; i < nlocals; i++) nulls |= (uint64_t)(slots[i] == NULL) << i;
     for (i = 0; i < nstack; i++)
         nulls |= (uint64_t)(stack[i] == NULL) << (nlocals + i);
-    p = resume_point(x, co, f->f_lasti);
-    if (p == NULL)
-        return NULL;
     for (e = p->entries; e < p->entries + p->count; e++)
         if (e->nulls == nulls && e->globals == f->f_globals &&
             e->builtins == f->f_builtins)
             return e->code == Py_None ? NULL : (CodeBufferObject *)e->code;
     if (p->count == LE_RESUME_ENTRIES)
         return NULL;
-    codebuf = compile_resume(f, x, mergepoints, nulls);
+    codebuf = compile_resume(f, x, x->merge_points, nulls);
     if (codebuf == NULL)
         return NULL; /* out of memory: this resume runs interpreted */
     Py_INCREF(codebuf);
@@ -264,17 +271,17 @@ le_gen_to_run(le_frame_t *f)
 
 /* As LeCode_Run, for a resumable generator's frame: its locals and stack
    items go to the compiled code, which owns them while it runs, and it
-   borrows the cells, free variables and the frame itself
-   (vcompiler.c:PsycoObject_FromGenFrame). The frame is left paused at a
-   yield, or ended (le_gen_frame_end); gen_send_ex does the rest. */
+   borrows the cells and free variables, and it is given this run's
+   FrameRuntime (vcompiler.c:PsycoObject_FromGenFrame). The frame is left
+   paused at a yield, or ended (le_gen_frame_end); gen_send_ex does the rest.
+ */
 static PyObject *
-LeGen_Run(CodeBufferObject *codebuf, le_frame_t *f)
+LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f)
 {
     stack_frame_info_t *no_frames = (stack_frame_info_t *)-1;
     stack_frame_info_t **finfo = &no_frames;
     FrameRuntime fr;
     PyObject *result;
-    PyThreadState *tstate = PyThreadState_GET();
     PyCodeObject *co = f->f_code;
     PyObject **slots = le_frame_args(f), **stack = le_frame_stack(f);
     int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
@@ -306,7 +313,7 @@ LeGen_Run(CodeBufferObject *codebuf, le_frame_t *f)
             words[nplus + i] = (long)stack[i];
             stack[i] = NULL;
         }
-        words[nplus + nstack] = (long)f;
+        words[nplus + nstack] = (long)&fr;
         le_gen_frame_run(f);
         result = psyco_processor_run(codebuf, words, &finfo);
     }
@@ -413,8 +420,8 @@ LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
     if (le_frame_code(frame)->co_flags & LE_GENERATOR_FLAGS) {
 #if LE_RESUMES_GENERATORS
         CodeBufferObject *resume;
-        if (!throwflag && (resume = le_gen_to_run(frame)) != NULL)
-            return LeGen_Run(resume, frame);
+        if (!throwflag && (resume = le_gen_to_run(tstate, frame)) != NULL)
+            return LeGen_Run(tstate, resume, frame);
 #endif
         return original_eval_frame(tstate, frame, throwflag);
     }
@@ -478,8 +485,9 @@ LeEval_EvalFrame(PyFrameObject *frame, int throwflag)
     PyObject *result, *entry_point;
     if (frame->f_code->co_flags & LE_GENERATOR_FLAGS) {
         CodeBufferObject *resume;
-        if (!throwflag && (resume = le_gen_to_run(frame)) != NULL)
-            return LeGen_Run(resume, frame);
+        PyThreadState *tstate = PyThreadState_GET();
+        if (!throwflag && (resume = le_gen_to_run(tstate, frame)) != NULL)
+            return LeGen_Run(tstate, resume, frame);
         return original_eval_frame(frame, throwflag);
     }
     entry_point = le_code_to_run(frame->f_code, frame->f_globals,

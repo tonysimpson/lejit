@@ -297,11 +297,11 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
    (psyco_frame_write_locals) is released as the run ends
    (psyco_frame_start_unregister), not here, where it could run code: the
    slots take the compiled code's values after this. */
-DEFINEFN void
-psyco_gen_pause(PyFrameObject *f, const le_gen_pause_t *p)
+DEFINEFN PyFrameObject *
+psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
 {
-    FrameRuntime *fr = psyco_frame_start_get(f);
-    if (fr != NULL && fr->entry_locals != NULL) {
+    PyFrameObject *f = fr->frame;
+    if (fr->entry_locals != NULL) {
         PyObject **locals = le_frame_args(f);
         int i, n = le_code_nlocals(le_frame_code(f));
         PyObject **keep = PyMem_Realloc(
@@ -319,6 +319,7 @@ psyco_gen_pause(PyFrameObject *f, const le_gen_pause_t *p)
             fr->entry_locals = keep;
     }
     le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
+    return f;
 }
 #endif
 

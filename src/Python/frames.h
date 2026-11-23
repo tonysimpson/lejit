@@ -77,17 +77,6 @@ EXTERNFN void
 psyco_frame_catcher_end(PyObject **word);
 EXTERNFN void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
-#if LE_RESUMES_GENERATORS
-/* A resumable generator's frame pausing at a yield (pycompiler.c), as
-   ceval's YIELD_VALUE leaves it: its f_lasti, stack depth and blocks. The
-   compiled code then stores its locals and stack items in it. */
-typedef struct {
-    int lasti, nstack, iblock;
-    PyTryBlock blocks[1];
-} le_gen_pause_t;
-EXTERNFN void
-psyco_gen_pause(PyFrameObject *f, const le_gen_pause_t *p);
-#endif
 /* PyFrame_New, with no function watcher told of the function it makes */
 EXTERNFN PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co,
@@ -187,6 +176,19 @@ typedef struct frame_runtime_s {
     int resumed;
     struct frame_runtime_s *next; /* the next outer one */
 } FrameRuntime;
+
+#if LE_RESUMES_GENERATORS
+/* A resumable generator's frame pausing at a yield (pycompiler.c), as
+   ceval's YIELD_VALUE leaves it: its f_lasti, stack depth and blocks.
+   Gives the frame of the run 'fr', where the compiled code then stores
+   its locals and stack items. */
+typedef struct {
+    int lasti, nstack, iblock;
+    PyTryBlock blocks[1];
+} le_gen_pause_t;
+EXTERNFN PyFrameObject *
+psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p);
+#endif
 
 EXTERNFN void
 psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,

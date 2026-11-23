@@ -6408,9 +6408,9 @@ out:
 #if LE_RESUMES_GENERATORS
 #define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
 
-/* A resumable generator's YIELD_VALUE at 'at': its frame (the
-   GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it, with
-   the locals and the stack items under the value, each a reference it
+/* A resumable generator's YIELD_VALUE at 'at': its frame (that of the
+   run in the GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it,
+   with the locals and the stack items under the value, each a reference it
    takes, and the run ends returning the value (EReturn), with no block
    run. The cells and free variables stay the frame's. Its caught
    exception's frame is let go first, given the locals (catcher_flush). */
@@ -6421,7 +6421,7 @@ yield_resumable(PsycoObject *po, int at)
     PyCodeObject *co = po->pr.co;
     int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
     int nstack = STACK_LEVEL() - 1, i;
-    vinfo_t *frame = po->vlocals.items[GENEXPR_SLOT_ACC(co)], *v;
+    vinfo_t *run = po->vlocals.items[GENEXPR_SLOT_ACC(co)], *frame, *v;
     le_gen_pause_t *pause;
     if (!catcher_flush(po, true))
         return;
@@ -6442,8 +6442,10 @@ yield_resumable(PsycoObject *po, int at)
             le_lasti_of(po->pr.blockstack[i].b_handler);
         pause->blocks[i].b_level = po->pr.blockstack[i].b_level;
     }
-    if (!psyco_generic_call(po, psyco_gen_pause, CfNoReturnValue | CfNoPython,
-                            "vl", frame, (long)pause))
+    frame =
+        psyco_generic_call(po, psyco_gen_pause, CfReturnTypePtr | CfNoPython,
+                           "vl", run, (long)pause);
+    if (frame == NULL)
         return;
     for (i = 0; i < nlocals + nstack; i++) {
         vinfo_t **slot =
@@ -6452,8 +6454,11 @@ yield_resumable(PsycoObject *po, int at)
         /* an unbound local or a NULL item: the slot is already empty */
         if (v != NULL && !psyco_knowntobe(v, 0)) {
             if (!psyco_put_nth_field(po, frame, FRAME_localsplus,
-                                     i < nlocals ? i : nplus + i - nlocals, v))
+                                     i < nlocals ? i : nplus + i - nlocals,
+                                     v)) {
+                vinfo_decref(frame, po);
                 return;
+            }
             consume_reference(po, v);
         }
         if (v != NULL) {
@@ -6461,6 +6466,7 @@ yield_resumable(PsycoObject *po, int at)
             *slot = NULL;
         }
     }
+    vinfo_decref(frame, po);
     v = stack_a[nstack];
     stack_a[nstack] = NULL;
     po->pr.stack_level = 0;
