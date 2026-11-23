@@ -16,8 +16,9 @@
  * the call, and are the callee frame's to free.
  * Anything else (keyword-only arguments, a **kwargs dict, unknown arity,
  * recursion depth used up) becomes a residual call of the function object,
- * as does a call made while a trace or profile function is set (tested at
- * run time: tracing_on).
+ * as does a call made while a trace or profile function is set, or while
+ * an eval hook other than LeJIT's is installed (tested at run time:
+ * direct_call_refused).
  */
 #include "psyfunc.h"
 #include "Objects/pfuncobject.h"
@@ -674,6 +675,15 @@ tracing_on(PsycoObject *po, vinfo_t *vts)
     return runtime_condition_f(po, le_tracing_test(po, vts));
 }
 
+/* Whether a compiled call or inlined frame must be the real call
+   instead, which is tracing_on or another eval hook installed over
+   LeJIT's (le_direct_call_test): one test, with the same rare path */
+static bool
+direct_call_refused(PsycoObject *po, vinfo_t *vts)
+{
+    return runtime_condition_f(po, le_direct_call_test(po, vts));
+}
+
 DEFINEFN
 int
 psyco_tracing_on(PsycoObject *po)
@@ -1016,8 +1026,9 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         int i;
         for (i = 0; i < nfrees; i++) need_reference(po, freebuf[i]);
     }
-    /* a traced call goes through the eval hook (tracing_on). Not again when
-       the instruction restarts after the inlined body with its result. */
+    /* a traced call, or one under another eval hook, goes through the
+       hook (direct_call_refused). Not again when the instruction restarts
+       after the inlined body with its result. */
     if (!inlining || LOC_INLINING == NULL) {
         bool traced, entered = true;
         vinfo_t *vts = load_tstate(po);
@@ -1026,7 +1037,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
             vinfo_decref(vbuiltins, po);
             return NULL;
         }
-        traced = tracing_on(po, vts);
+        traced = direct_call_refused(po, vts);
         /* count the call's depth, as ceval does on entering a frame, so that
            deep recursion raises RecursionError instead of overflowing the C
            stack; psyco_call_psyco leaves it after the call.
@@ -1273,17 +1284,23 @@ fuse_stopped(PsycoObject *po, vinfo_t *v)
     return runtime_condition_f(po, cc);
 }
 
-/* the fused body is the generator's frame: a tracer must see it */
+/* the fused body is the generator's frame: a tracer, or another eval
+   hook, must see it */
 DEFINEFN
 int
 psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
 {
     int on;
+    vinfo_t *vts;
     if (!psyco_genexpr_fusable(po, v))
         return 0;
-    on = psyco_tracing_on(po);
-    if (on != 0)
-        return on < 0 ? -1 : 0;
+    vts = load_tstate(po);
+    if (vts == NULL)
+        return -1;
+    on = direct_call_refused(po, vts);
+    vinfo_decref(vts, po);
+    if (on)
+        return 0;
     on = fuse_stopped(po, v);
     return on < 0 ? -1 : !on;
 }
