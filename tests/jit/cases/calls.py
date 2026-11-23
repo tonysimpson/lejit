@@ -157,6 +157,22 @@ def star_call_errors(a, k):
         return str(e)
 
 
+def _pass_through(f, *args, **kwds):
+    return f(*args, **kwds)
+
+
+def _positional_through(f, *args):
+    return f(*args)
+
+
+# f(*args, **kwds) and f(*args), the keywords dict there or not (from 3.14
+# a NULL in its place)
+def star_calls(n):
+    return (_pass_through(max, n, 3), _pass_through(sorted, [n, 1], reverse=True),
+            _pass_through(dict, a=n), _positional_through(min, n, 2),
+            _positional_through(tuple, [n]))
+
+
 CASES = [
     ('call_helper', [(1,), (-4,)], {}),
     ('call_in_loop', [(0,), (50,)], {}),
@@ -176,6 +192,7 @@ CASES = [
     ('ceil_floor_objects', "[(Ceil(),), (7,), (1.5,)]", {}),
     ('star_call_errors', "[((1,), {'b': 2}), ((1,), []), (1, {}), ((), {'a': 1, 'x': 2})]",
      {}),
+    ('star_calls', [(0,), (7,)], {}),
 ]
 
 # PEP 695 type parameters: a generic function made in a compiled function,
