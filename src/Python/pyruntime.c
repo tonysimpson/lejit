@@ -64,6 +64,15 @@ le_monitoring_on(PyThreadState *ts)
     return any != 0;
 }
 #endif
+#if LE_HAS_OPCODE_LOAD_COMMON_CONSTANT
+/* LOAD_COMMON_CONSTANT's object: AssertionError, tuple, all and the rest,
+   held by the interpreter */
+PyObject *
+le_common_constant(int i)
+{
+    return PyInterpreterState_Get()->common_consts[i];
+}
+#endif
 /* PyFrame_New, unseen by function watchers: it makes a function for the
    frame object, which CPython's own frames don't, and a watcher called
    here would run Python code while compiled code's exception is set */

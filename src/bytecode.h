@@ -140,7 +140,8 @@ le_binary_op_opcode(int nb)
    versions spell one operation differently (BINARY_OP 0 is BINARY_ADD,
    POP_JUMP_BACKWARD_IF_TRUE is POP_JUMP_IF_TRUE, LOAD_ATTR with the method
    bit is LOAD_METHOD, CALL_INTRINSIC_1 with INTRINSIC_UNARY_POSITIVE is
-   UNARY_POSITIVE, FORMAT_SIMPLE is FORMAT_VALUE 0); 'arg' with its
+   UNARY_POSITIVE, FORMAT_SIMPLE is FORMAT_VALUE 0, LOAD_FAST_BORROW is
+   LOAD_FAST); 'arg' with its
    EXTENDED_ARG prefixes folded in, and
    no longer holding what 'op' now says; 'raw' the opcode as CPython wrote
    it; 'target' a jump's target in bytes (FOR_ITER's when its iterator
@@ -213,6 +214,17 @@ le_instr(le_code_t c, int pos)
                 in.op = LIST_TO_TUPLE;
             break;
 #endif
+        /* LeJIT holds its own reference to what a borrowed load loads */
+        case LOAD_FAST_BORROW:
+            in.op = LOAD_FAST;
+            break;
+        case LOAD_FAST_BORROW_LOAD_FAST_BORROW:
+            in.op = LOAD_FAST_LOAD_FAST;
+            break;
+        /* marks a branch not taken, for monitoring */
+        case NOT_TAKEN:
+            in.op = NOP;
+            break;
         /* FORMAT_VALUE's argument: 4 for a spec on the stack */
         case FORMAT_SIMPLE:
             in.op = FORMAT_VALUE;
@@ -285,6 +297,8 @@ le_op_flags(int op)
         case LOAD_FAST_LOAD_FAST:
         case STORE_FAST_LOAD_FAST:
         case STORE_FAST_STORE_FAST:
+        case LOAD_SMALL_INT:
+        case LOAD_COMMON_CONSTANT:
             return LE_OPF_COMPILED | LE_OPF_LIGHT;
         case LOAD_FAST_AND_CLEAR:
 #if LE_HAS_OPCODE_ROT_FOUR

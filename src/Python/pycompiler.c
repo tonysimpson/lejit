@@ -63,6 +63,11 @@
 #include "pycinternal.h"
 #include <ipyencoding.h>
 
+#if LE_HAS_OPCODE_LOAD_COMMON_CONSTANT
+EXTERNFN PyObject *
+le_common_constant(int i); /* pyruntime.c */
+#endif
+
 /* C API calls that some CPython versions don't export: the function where
    libpython exports it, else a copy of CPython's or a public call that
    does the same */
@@ -4670,6 +4675,20 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
             PUSH(value);
             goto fine;
         }
+
+#if LE_HAS_OPCODE_LOAD_SMALL_INT
+        case LOAD_SMALL_INT: {
+            /* CPython's small ints are immortal */
+            PyObject *small = PyLong_FromLong(oparg);
+            Py_DECREF(small);
+            PUSH(vinfo_new(CompileTime_New((long)small)));
+            goto fine;
+        }
+
+        case LOAD_COMMON_CONSTANT:
+            PUSH(vinfo_new(CompileTime_New((long)le_common_constant(oparg))));
+            goto fine;
+#endif
 
         /* an inlined comprehension keeps its outer variable's
            value, or NULL, on the stack and restores it with
