@@ -139,9 +139,6 @@ SKIPPED = {
     "compiled code makes Python calls without CPython's frame-evaluation "
     'hook, so a hook the test installs sees none of them':
         'test.test_capi.test_misc.Test_Pep523API.*',
-    'on 3.11 a keyword argument is passed by position after a few calls':
-        'test.test_asyncio.test_proactor_events.ProactorDatagramTransportTests.test_sendto_bytearray '
-        'test.test_asyncio.test_proactor_events.ProactorDatagramTransportTests.test_sendto_memoryview',
     'a pool of processes started from threads, which hung here once in a '
     'child that runs without LeJIT':
         'test.test_importlib.test_threaded_import.ThreadedImportTests.'

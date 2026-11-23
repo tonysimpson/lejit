@@ -95,12 +95,16 @@ def _method_kw(o, a):
     return o.meth(a, key=a, other=0)
 
 
+# more classes than the limit, made once, so no class dies between rounds
+TAKERS = [type('T%d' % k, (Takes,), {})() for k in range(8)]
+
+
 def call_with_keywords(n):
     # past the limit ceval runs the call, with its keyword names
     out = []
     for k in range(n):
-        out.append(_call_kw(type('T%d' % k, (Takes,), {})(), k, 1))
-        out.append(_method_kw(type('T%d' % k, (Takes,), {})(), k))
+        out.append(_call_kw(TAKERS[k % 8], k, 1))
+        out.append(_method_kw(TAKERS[k % 8], k))
     return out
 
 
