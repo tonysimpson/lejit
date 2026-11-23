@@ -80,7 +80,7 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
     NEED_CC_REG(rg);
     CMP_I8_DA(0, rg);
     BEGIN_SHORT_COND_JUMP(1, CC_S);
-    SUB_A_I8(rg, 1);
+    LE_SUB_OB_REFCNT(rg);
 #else
     DEC_OB_REFCNT_NZ(rg);
 #endif

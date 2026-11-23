@@ -51,29 +51,53 @@ typedef _PyInterpreterFrame le_frame_t;
 #else
 #define LE_CURRENT_FRAME(ts) ((ts)->cframe->current_frame)
 #endif
-/* its function (borrowed) where LE_HAS_FRAME_FUNCOBJ, and its word k: the
-   object (borrowed, NULL for none), and le_frame_word_set's new one, a
-   reference it takes (NULL for none), in place of the one it drops */
+/* its function (borrowed) where LE_HAS_FRAME_FUNCOBJ, and its word k
+   (its locals, then its value stack): LE_FRAME_WORD the object (borrowed,
+   NULL for none), le_frame_word_take the reference it holds (NULL for
+   none), leaving none, and le_frame_word_put one it takes (NULL for none)
+   where it holds none. Where the words are _PyStackRefs, one may be a
+   reference it doesn't own (tagged), which take makes a new one of. */
 #if LE_HAS_FRAME_STACKREFS
 #define LE_FRAME_FUNCOBJ(f) PyStackRef_AsPyObjectBorrow((f)->f_funcobj)
 #define LE_FRAME_WORD(f, k) PyStackRef_AsPyObjectBorrow((f)->localsplus[k])
-static inline void
-le_frame_word_set(le_frame_t *f, int k, PyObject *o)
+static inline PyObject *
+le_frame_word_take(le_frame_t *f, int k)
 {
-    _PyStackRef old = f->localsplus[k];
+    _PyStackRef r = f->localsplus[k];
+    f->localsplus[k] = PyStackRef_NULL;
+    return PyStackRef_IsNull(r) ? NULL : PyStackRef_AsPyObjectSteal(r);
+}
+static inline void
+le_frame_word_put(le_frame_t *f, int k, PyObject *o)
+{
     f->localsplus[k] =
         o == NULL ? PyStackRef_NULL : PyStackRef_FromPyObjectSteal(o);
-    PyStackRef_XCLOSE(old);
 }
 #else
 #define LE_FRAME_FUNCOBJ(f) ((f)->f_funcobj)
 #define LE_FRAME_WORD(f, k) ((f)->localsplus[k])
+static inline PyObject *
+le_frame_word_take(le_frame_t *f, int k)
+{
+    PyObject *o = f->localsplus[k];
+    f->localsplus[k] = NULL;
+    return o;
+}
+static inline void
+le_frame_word_put(le_frame_t *f, int k, PyObject *o)
+{
+    f->localsplus[k] = o;
+}
+#endif
+/* word k becomes 'o' (a reference it takes, NULL for none), and the one
+   before goes */
 static inline void
 le_frame_word_set(le_frame_t *f, int k, PyObject *o)
 {
-    Py_XSETREF(f->localsplus[k], o);
+    PyObject *old = le_frame_word_take(f, k);
+    le_frame_word_put(f, k, o);
+    Py_XDECREF(old);
 }
-#endif
 
 static inline le_frame_t *
 le_frame_current(PyThreadState *ts)
@@ -214,12 +238,27 @@ le_frame_locals(le_frame_t *f)
 {
     return f->f_locals;
 }
-/* the argument words compiled code runs on, owned by the frame; where
-   they are _PyStackRefs, no code is compiled */
+/* the argument words compiled code runs on, owned by the frame, where
+   they are plain objects; where they are _PyStackRefs, its words to write
+   as objects, which le_frame_words_own then makes the frame's */
 static inline PyObject **
 le_frame_args(le_frame_t *f)
 {
     return (PyObject **)f->localsplus;
+}
+/* its first n words, written through le_frame_args as objects (each a
+   reference it holds, NULL for none), are the frame's own */
+static inline void
+le_frame_words_own(le_frame_t *f, int n)
+{
+#if LE_HAS_FRAME_STACKREFS
+    int k;
+    for (k = 0; k < n; k++)
+        le_frame_word_put(f, k, ((PyObject **)f->localsplus)[k]);
+#else
+    (void)f;
+    (void)n;
+#endif
 }
 /* its value stack */
 static inline PyObject **
@@ -498,6 +537,31 @@ le_frame_args(le_frame_t *f)
 {
     return f->f_localsplus;
 }
+/* its word k, its locals then its value stack, as above */
+#define LE_FRAME_WORD(f, k) ((f)->f_localsplus[k])
+static inline PyObject *
+le_frame_word_take(le_frame_t *f, int k)
+{
+    PyObject *o = f->f_localsplus[k];
+    f->f_localsplus[k] = NULL;
+    return o;
+}
+static inline void
+le_frame_word_put(le_frame_t *f, int k, PyObject *o)
+{
+    f->f_localsplus[k] = o;
+}
+static inline void
+le_frame_word_set(le_frame_t *f, int k, PyObject *o)
+{
+    Py_XSETREF(f->f_localsplus[k], o);
+}
+static inline void
+le_frame_words_own(le_frame_t *f, int n)
+{
+    (void)f;
+    (void)n;
+}
 /* its value stack */
 static inline PyObject **
 le_frame_stack(le_frame_t *f)
@@ -596,6 +660,72 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
     f->f_stacktop = f->f_valuestack + n;
 }
 #endif
+/* A generator's frame as ceval leaves it at a yield and resumes it
+   (eval_hook.c:LeGen_Run, pycompiler.c): its locals and its value stack,
+   which follows them, with the stack's depth (le_frame_stack_depth),
+   f_lasti at the yield and its blocks. Compiled code stores into
+   f_localsplus by its offset. */
+#define LE_OFS_PyFrameObject__f_localsplus \
+    offsetof(PyFrameObject, f_localsplus)
+#define LE_SIZE2_PyFrameObject__f_localsplus 3
+#define LE_UNSIGNED_PyFrameObject__f_localsplus 0
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((PyFrameObject *)0)->f_localsplus),
+                   PyObject *[1]),
+               "LeJIT: PyFrameObject.f_localsplus is not PyObject *[1]");
+/* the depth of a paused frame's stack */
+static inline int
+le_frame_stack_depth(PyFrameObject *f)
+{
+#if LE_HAS_FRAME_STATE
+    return f->f_stackdepth;
+#else
+    return (int)(f->f_stacktop - f->f_valuestack);
+#endif
+}
+/* the generator's frame runs, its stack held by compiled code: as ceval's
+   prologue leaves it */
+static inline void
+le_gen_frame_run(PyFrameObject *f)
+{
+#if LE_HAS_FRAME_STATE
+    f->f_stackdepth = -1;
+    f->f_state = FRAME_EXECUTING;
+#else
+    f->f_stacktop = NULL;
+    f->f_executing = 1;
+#endif
+}
+/* compiled code pauses it at a yield, before storing its locals and stack
+   items */
+static inline void
+le_gen_frame_pause(PyFrameObject *f, int lasti, int nstack, int iblock,
+                   const PyTryBlock *blocks)
+{
+    int i;
+    f->f_lasti = lasti;
+    le_frame_set_stack_depth(f, nstack);
+    f->f_iblock = iblock;
+    for (i = 0; i < iblock; i++) f->f_blockstack[i] = blocks[i];
+#if LE_HAS_FRAME_STATE
+    f->f_state = FRAME_SUSPENDED;
+#endif
+}
+/* the run that gave 'result' has ended: paused (le_gen_frame_pause, or
+   ceval's own YIELD_VALUE), else returned or raised, as ceval leaves it */
+static inline void
+le_gen_frame_end(PyFrameObject *f, PyObject *result)
+{
+#if LE_HAS_FRAME_STATE
+    if (f->f_state == FRAME_EXECUTING) {
+        f->f_stackdepth = 0;
+        f->f_state = result != NULL ? FRAME_RETURNED : FRAME_RAISED;
+    }
+#else
+    (void)result;
+    f->f_executing = 0;
+#endif
+}
 /* the frame is running, as frame.clear() sees it */
 static inline int
 le_frame_executing(le_frame_t *f)

@@ -582,7 +582,7 @@ _build_merge_points(PyCodeObject *co, int module)
     le_code_t c;
     int pos, opcode = -1, oparg;
     co_report_t *report;
-    int reads_class, bad = 0;
+    int reads_class, resumable, bad = 0;
 
     /* XXX tony: all these not supported/buggy currently */
     if (module) {
@@ -601,11 +601,13 @@ _build_merge_points(PyCodeObject *co, int module)
         return NULL;
     if (le_code_nlocalsplus(co) + co->co_stacksize > MAX_FRAME_VALUES)
         goto not_ok;
-    /* a generator compiles only into its consumer
-       (psyfunc.c:psyco_call_genexpr): the eval hook never runs generator
-       code, and psyco_call_pyfunc makes a pending generator of it */
+    /* a generator compiles into its consumer (psyfunc.c:psyco_call_genexpr)
+       or, resumable, as its own body run through the eval hook
+       (eval_hook.c:LeGen_Run); psyco_call_pyfunc makes a pending generator
+       of a fusable one */
+    resumable = psyco_is_resumable_generator(co);
     if (co->co_flags & (CO_COROUTINE | CO_GENERATOR | CO_ASYNC_GENERATOR) &&
-        !psyco_is_fusable_generator(co)) {
+        !resumable && !psyco_is_fusable_generator(co)) {
         goto not_ok;
     }
     /* zero-argument super() reads the __class__ cell and the first
@@ -648,6 +650,8 @@ _build_merge_points(PyCodeObject *co, int module)
         goto not_ok;
     if (report == NULL)
         return NULL;
+    if (resumable)
+        report->flags |= MP_FLAGS_RESUMABLE;
     {
         PyObject *capsule = PyCapsule_New(report, NULL, report_destructor);
         if (capsule == NULL)
@@ -732,6 +736,191 @@ psyco_is_fusable_generator(PyCodeObject *co)
             return 0;
     }
     return yields == 1 && !yield_has_handler(co, c, yield);
+}
+
+#if LE_RESUMES_GENERATORS
+/* whether a YIELD_VALUE can run while an exception handler's block is
+   live: reached by plain control flow from a handler's start (a SETUP_*
+   target) before the handler ends, by POP_EXCEPT or by raising again, or
+   by END_FINALLY, which falls through only once the handler is done. A
+   finally body that plain flow enters from its try (before 3.9) ends with
+   an END_FINALLY too: 'depth' counts those entered, for their END_FINALLY
+   to go on. */
+static int
+yields_in_handler(le_code_t c)
+{
+    int units = c.size / LE_UNIT, top = 0, pos, u;
+    signed char depth[units + 1];
+    unsigned char handler[units + 1], queued[units + 1];
+    int work[units + 1];
+    memset(depth, -1, units + 1);
+    memset(handler, 0, units + 1);
+    memset(queued, 0, units + 1);
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        pos = in.next;
+        switch (in.op) {
+            case SETUP_EXCEPT:
+            case SETUP_FINALLY:
+            case SETUP_WITH:
+            case SETUP_ASYNC_WITH:
+                u = in.target / LE_UNIT;
+                handler[u] = 1;
+                if (!queued[u]) {
+                    depth[u] = 0;
+                    queued[u] = 1;
+                    work[top++] = u;
+                }
+        }
+    }
+    while (top > 0) {
+        le_instr_t in;
+        int next[2], n = 0, d, k;
+        u = work[--top];
+        queued[u] = 0;
+        d = depth[u];
+        in = le_instr(c, u * LE_UNIT);
+        switch (in.op) {
+            case YIELD_VALUE:
+                return 1;
+            /* the handler's end, or a jump out of it that unwinds it */
+            case POP_EXCEPT:
+            case RETURN_VALUE:
+            case RAISE_VARARGS:
+            case BREAK_LOOP:
+#if LE_HAS_OPCODE_RERAISE
+            case RERAISE:
+#endif
+                break;
+            case END_FINALLY:
+                if (d > 0) {
+                    d--;
+                    next[n++] = in.next;
+                }
+                break;
+            case JUMP_ABSOLUTE:
+            case JUMP_FORWARD:
+            case CONTINUE_LOOP:
+                next[n++] = in.target;
+                break;
+            default:
+                if (LE_IS_JABS(in.op) || LE_IS_JREL(in.op))
+                    next[n++] = in.target;
+                next[n++] = in.next;
+        }
+        for (k = 0; k < n; k++) {
+            int v = next[k] / LE_UNIT, dv;
+            if (next[k] >= c.size)
+                continue;
+            dv = d + handler[v];
+            if (dv > CO_MAXBLOCKS)
+                dv = CO_MAXBLOCKS;
+            if (dv > depth[v]) {
+                depth[v] = dv;
+                if (!queued[v]) {
+                    queued[v] = 1;
+                    work[top++] = v;
+                }
+            }
+        }
+    }
+    return 0;
+}
+#endif
+
+#if LE_RESUMES_GENERATORS
+/* whether each yield's resumes do enough work for the compiled body to
+   be worth its fixed cost per resume (about 330 instructions through the
+   hook, against about 150 for ceval): the instructions a resume can run
+   before the next yield, taken as the innermost loop around that yield
+   (or the whole code), hold a call (a generator expression is one), or a
+   loop with no yield in it. Loops are found by their backward jumps. */
+static int
+yields_do_work(le_code_t c)
+{
+    int units = c.size / LE_UNIT, pos, i, j, nloops = 0, nyields = 0;
+    int lo[units + 1], hi[units + 1], yields[units + 1];
+    unsigned char calls[units + 1];
+    memset(calls, 0, units + 1);
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        switch (in.op) {
+            case CALL_FUNCTION:
+            case CALL_FUNCTION_KW:
+            case CALL_FUNCTION_EX:
+            case CALL_METHOD:
+                calls[pos / LE_UNIT] = 1;
+                break;
+            case YIELD_VALUE:
+                yields[nyields++] = pos;
+                break;
+            default:
+                if ((LE_IS_JABS(in.op) || LE_IS_JREL(in.op)) &&
+                    in.target >= 0 && in.target <= pos) {
+                    lo[nloops] = in.target;
+                    hi[nloops++] = pos;
+                }
+        }
+        pos = in.next;
+    }
+    if (nyields == 0)
+        return 0;
+    for (i = 0; i < nyields; i++) {
+        int y = yields[i], a = 0, b = c.size - LE_UNIT, worked = 0;
+        for (j = 0; j < nloops; j++)
+            if (lo[j] <= y && y <= hi[j] && hi[j] - lo[j] < b - a) {
+                a = lo[j];
+                b = hi[j];
+            }
+        for (pos = a; pos <= b && !worked; pos += LE_UNIT)
+            worked = calls[pos / LE_UNIT];
+        for (j = 0; j < nloops && !worked; j++) {
+            int k, has_yield = 0;
+            if (lo[j] < a || hi[j] > b || (lo[j] == a && hi[j] == b))
+                continue;
+            for (k = 0; k < nyields; k++)
+                has_yield |= lo[j] <= yields[k] && yields[k] <= hi[j];
+            worked = !has_yield;
+        }
+        if (!worked)
+            return 0;
+    }
+    return 1;
+}
+#endif
+
+/* the code of a generator whose body can run compiled, resumed at each
+   yield through the eval hook (eval_hook.c:LeGen_Run), its state kept in
+   its frame between resumes: a plain generator with no yield from, and no
+   yield inside an exception handler, whose stack and blocks LeJIT keeps
+   apart from the frame's (an EXCEPT_HANDLER block, a finally block's
+   pseudo-exception), and whose resumes do work (yields_do_work): any
+   other runs interpreted, which costs it less per resume */
+DEFINEFN int
+psyco_is_resumable_generator(PyCodeObject *co)
+{
+#if LE_RESUMES_GENERATORS
+    le_code_t c;
+    int pos;
+    if ((co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR |
+                         CO_ITERABLE_COROUTINE)) != CO_GENERATOR)
+        return 0;
+    if (le_code_prepare(co) < 0) {
+        PyErr_Clear(); /* out of memory: runs interpreted */
+        return 0;
+    }
+    c = le_code(co);
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        pos = in.next;
+        if (in.op == YIELD_FROM || in.op == GET_YIELD_FROM_ITER)
+            return 0;
+    }
+    return !yields_in_handler(c) && yields_do_work(c);
+#else
+    (void)co;
+    return 0;
+#endif
 }
 
 DEFINEFN PyObject *
