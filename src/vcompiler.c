@@ -980,6 +980,14 @@ mp_new_block(PsycoObject *po, mergepoint_t *mp)
     if (mp == NULL)
         return;
     mp->blocks++;
+    if (mp->blocks == MP_BLOCK_CAP && !po->pr.is_inlining) {
+        /* a code object with a merge point at its cap compiles many copies
+           of its code: blocks made from now on inline no calls, whose
+           bodies would be copied too (psyfunc.c:psyco_call_pyfunc) */
+        le_code_extra_t *x = le_code_extra_get(po->pr.co);
+        if (x != NULL && x->inline_end == 0)
+            x->inline_end = psyco_next_serial + 1;
+    }
     po->mp_serial = po->respawn_proxy->serial;
 #if LE_CODESTATS
     cs_state(po);
