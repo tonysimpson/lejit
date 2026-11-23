@@ -24,6 +24,9 @@ def started(*fns):
     lejit = sys.modules.get('lejit')
     if lejit is None or not lejit._started or not FRAME_OBJECTS:
         return True
+    # a release build can't say what compiled
+    if not hasattr(lejit._core, '_code_info'):
+        return True
     return all(lejit._core._code_info(f.__code__) == 'no entry point'
                for f in fns)
 

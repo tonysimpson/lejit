@@ -302,5 +302,6 @@ CASES = [
      {'leaks': 'runs child processes'}),
     ('memory_runs_out_at_megamorphic_site', [()],
      {'leaks': 'runs child processes'}),
-    ('injected', [(INJECT_COUNTS,)], {'leaks': 'runs child processes'}),
+    ('injected', [(INJECT_COUNTS,)], {'leaks': 'runs child processes',
+                                   'checked': 'calls lejit._core._fail_after'}),
 ]
