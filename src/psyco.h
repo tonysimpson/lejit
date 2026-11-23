@@ -54,6 +54,16 @@ _Static_assert(__builtin_classify_type(((PyVarObject *)0)->ob_size) == 1,
 _Static_assert(((__typeof__(((PyVarObject *)0)->ob_size))-1 < 0) == 1,
                "LeJIT: PyVarObject.ob_size: LeJIT reads it as signed");
 
+#define LE_OFS_PyTypeObject__tp_name offsetof(PyTypeObject, tp_name)
+#define LE_SIZE2_PyTypeObject__tp_name 3
+#define LE_UNSIGNED_PyTypeObject__tp_name 0
+_Static_assert(__builtin_types_compatible_p(
+                   __typeof__(((PyTypeObject *)0)->tp_name), const char *),
+               "LeJIT: PyTypeObject.tp_name is not const char *");
+_Static_assert(sizeof(((PyTypeObject *)0)->tp_name) == 8,
+               "LeJIT: PyTypeObject.tp_name: LeJIT reads 8 bytes");
+_Static_assert(__builtin_classify_type(((PyTypeObject *)0)->tp_name) == 5,
+               "LeJIT: PyTypeObject.tp_name: LeJIT reads it as a pointer");
 #define LE_OFS_PyTypeObject__tp_dealloc offsetof(PyTypeObject, tp_dealloc)
 #define LE_SIZE2_PyTypeObject__tp_dealloc 3
 #define LE_UNSIGNED_PyTypeObject__tp_dealloc 0

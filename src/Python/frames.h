@@ -25,7 +25,7 @@ psyco_running_real_frame(PyCodeObject *co);
 /* ceval evaluating a frame itself, past the hook (eval_hook.c) */
 EXTERNFN PyObject *
 le_eval_frame_default(le_frame_t *f);
-#if LE_PYFRAME_RUN_TO_END
+#if LE_HAS_EVAL_FRAME_POPS
 /* ceval instruments the code of frame 'f' for sys.monitoring now; -1 with
    an exception set if it can't (eval_hook.c) */
 EXTERNFN int
@@ -174,6 +174,7 @@ typedef struct frame_runtime_s {
     /* ceval now runs the frame (psyco_resume_run): its locals and line are
        ceval's, and the compiled code under it waits for ceval's result */
     int resumed;
+    int exposed;                  /* frames.c:expose */
     struct frame_runtime_s *next; /* the next outer one */
 } FrameRuntime;
 
@@ -195,6 +196,15 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
                            stack_frame_info_t ***psy_frames_start);
 EXTERNFN void
 psyco_frame_start_unregister(FrameRuntime *fr);
+#ifdef PyFrameLocalsProxy_Check
+/* how many compiled frames' locals are their frame objects' now
+   (frames.c:expose); compiled code tests it with tracing */
+EXTERNVAR int psyco_frames_exposed;
+/* the compiled frame running code 'co' goes on in ceval at its next
+   resume test: tracing is on, or its locals are exposed */
+EXTERNFN int
+psyco_frame_goes_interpreted(PyCodeObject *co);
+#endif
 /* f's record if LeCode_Run runs it on this thread, else NULL */
 EXTERNFN FrameRuntime *
 psyco_frame_start_get(le_frame_t *f);

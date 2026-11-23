@@ -433,6 +433,19 @@ def NAME_ERROR_NAME():
 
 
 @probe
+def RAISE_CAUSE_CHECKED():
+    """raise ... from a class whose call returns None is a TypeError
+    (run)"""
+    class NoCause(BaseException):
+        def __new__(cls):
+            return None
+    e = _error(exec, 'raise IndexError from C', {'C': NoCause})
+    if not isinstance(e, (TypeError, IndexError)):
+        raise Unanswered('raise run: %r' % e)
+    return isinstance(e, TypeError), '%s: %s' % (type(e).__name__, e)
+
+
+@probe
 def IMPORT_FROM_SPEC():
     """`from m import x`, for a module whose __spec__ says it is still
     initialising, says it is "partially initialized" (run)"""
@@ -640,6 +653,34 @@ def RANGE_ITER_INDEX():
     if seen == (range(3, 7, 2), None):
         return False, 'iter(range(1, 7, 2)) after one item: %r' % (seen,)
     raise Unanswered('iter(range(1, 7, 2)) after one item: %r' % (seen,))
+
+
+@probe
+def INLINE_VALUES():
+    """a plain class has the flag 1 << 2 (Py_TPFLAGS_INLINE_VALUES), and
+    its instance with an attribute keeps it in the object, a word after
+    its basicsize, with the byte three after the basicsize set (valid) and
+    no dict three words before; once __dict__ is made it is there, and the
+    values stay valid until a __class__ assignment"""
+    class C(object):
+        pass
+
+    class D(object):
+        pass
+    if not C.__flags__ & (1 << 2):
+        return False, 'class C: no 1 << 2 in its flags'
+    c = C()
+    c.a = 1000
+    word = ctypes.c_void_p.from_address
+    at = id(c) + C.__basicsize__
+    valid = ctypes.c_uint8.from_address(at + 3)
+    seen = [(valid.value, word(at + 8).value == id(c.a), word(id(c) - 24).value)]
+    d = c.__dict__
+    seen.append((valid.value, word(at + 8).value == id(c.a), word(id(c) - 24).value == id(d)))
+    c.__class__ = D
+    seen.append(valid.value)
+    found = seen == [(1, True, None), (1, True, True), 0]
+    return found, 'class C: valid, value at +8, dict word %r' % seen
 
 
 @probe

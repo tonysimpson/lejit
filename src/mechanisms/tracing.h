@@ -16,9 +16,19 @@ le_tracing_now(PyThreadState *ts)
     return le_monitoring_on(ts);
 }
 
+#ifdef PyFrameLocalsProxy_Check
+/* frames.c:psyco_frames_exposed */
+extern int psyco_frames_exposed;
+#endif
+/* in compiled code, also while a frame's locals are exposed, which a
+   resume test then sees (pycompiler.c:resume_if_tracing) */
 static inline int
 cimpl_tracing_now(PyThreadState *ts)
 {
+#ifdef PyFrameLocalsProxy_Check
+    if (psyco_frames_exposed)
+        return 1;
+#endif
     return le_tracing_now(ts);
 }
 
