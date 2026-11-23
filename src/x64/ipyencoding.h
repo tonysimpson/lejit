@@ -364,6 +364,7 @@ typedef struct {
                    the dict was made; NULL: the dict is at dictoffset */
     store_cache_t *cache;
     store_gc_t gc;
+    store_gc_t dict_gc; /* as gc, for a store into a combined dict */
     bool fill; /* inline the store into an empty slot: a dict's next one */
     code_t *miss_glue;
     code_t *done[STORE_DONE_JUMPS]; /* for psyco_inline_store_end to point */
