@@ -144,14 +144,20 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
     return p;
 }
 
+/* Read and written at every entry into compiled code, so kept in the
+   static TLS block (initial-exec), read straight off %fs, not looked up
+   through __tls_get_addr. Both take a few bytes of glibc's reserve for
+   modules loaded later. */
+#define LE_FAST_TLS __attribute__((tls_model("initial-exec")))
+
 /* the records of the real frames LeCode_Run runs on this thread,
    innermost first */
-static _Thread_local FrameRuntime *frame_runs;
+static _Thread_local FrameRuntime *frame_runs LE_FAST_TLS;
 
 /* Every thread's frame_runs, for the owner scan (psyco_frames_running):
    its address is in a capsule in the thread state's dict, which goes when
    the thread state is cleared, before the thread ends. */
-static _Thread_local char runs_listed;
+static _Thread_local char runs_listed LE_FAST_TLS;
 static PyObject *runs_key; /* a key no one else has */
 static bool runs_lost;     /* a thread's frame_runs couldn't be listed */
 
