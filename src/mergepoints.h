@@ -38,6 +38,8 @@ EXTERNFN int
 psyco_is_fusable_generator(PyCodeObject *co);
 EXTERNFN int
 psyco_is_resumable_generator(PyCodeObject *co);
+EXTERNFN int
+psyco_handler_awaits(PyCodeObject *co, int handler);
 /* the index among the free variables of '__class__', or -1 */
 EXTERNFN int
 psyco_class_cell(PyCodeObject *co);

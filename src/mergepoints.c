@@ -745,9 +745,10 @@ psyco_is_fusable_generator(PyCodeObject *co)
    by POP_EXCEPT or by raising again, or by END_FINALLY, which falls
    through only once the handler is done. A finally body that plain flow
    enters from its try (before 3.9) ends with an END_FINALLY too: 'depth'
-   counts those entered, for their END_FINALLY to go on. */
+   counts those entered, for their END_FINALLY to go on. With 'from' a
+   handler's start, whether that handler's can. */
 static int
-yields_in_handler(PyCodeObject *co, le_code_t c)
+handler_yields(PyCodeObject *co, le_code_t c, int from)
 {
     int units = c.size / LE_UNIT, top = 0, pos, u;
     signed char depth[units + 1];
@@ -763,7 +764,7 @@ yields_in_handler(PyCodeObject *co, le_code_t c)
         while (le_handler_next(co, &at, &h)) {
             u = h.handler / LE_UNIT;
             handler[u] = 1;
-            if (!queued[u]) {
+            if (!queued[u] && (from < 0 || h.handler == from)) {
                 depth[u] = 0;
                 queued[u] = 1;
                 work[top++] = u;
@@ -783,7 +784,7 @@ yields_in_handler(PyCodeObject *co, le_code_t c)
             case SETUP_ASYNC_WITH:
                 u = in.target / LE_UNIT;
                 handler[u] = 1;
-                if (!queued[u]) {
+                if (!queued[u] && (from < 0 || in.target == from)) {
                     depth[u] = 0;
                     queued[u] = 1;
                     work[top++] = u;
@@ -845,7 +846,72 @@ yields_in_handler(PyCodeObject *co, le_code_t c)
     }
     return 0;
 }
+
+static int
+yields_in_handler(PyCodeObject *co, le_code_t c)
+{
+    return handler_yields(co, c, -1);
+}
+
+#if LE_HAS_OPCODE_BREAK_LOOP
+/* whether a return, break or continue can leave a finally block's body,
+   which LeJIT enters with a pseudo-exception (pycompiler.c's unwind loop),
+   which no frame going on in ceval can hold */
+static int
+leaves_finally(le_code_t c)
+{
+    int pos, end = -1;
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        pos = in.next;
+        switch (in.op) {
+            case SETUP_FINALLY:
+            case SETUP_WITH:
+            case SETUP_ASYNC_WITH:
+                if (in.target > end)
+                    end = in.target;
+                break;
+            case RETURN_VALUE:
+            case BREAK_LOOP:
+            case CONTINUE_LOOP:
+                if (in.next <= end)
+                    return 1;
+        }
+    }
+    return 0;
+}
 #endif
+
+/* a coroutine body's yields where a handler is live: CPython keeps the
+   handled exception in the coroutine, so any handler that can await runs
+   in ceval (psyco_handler_awaits); not where that can't take the frame */
+static int
+handler_yields_kept(PyCodeObject *co, le_code_t c)
+{
+#if LE_HAS_OPCODE_BREAK_LOOP
+    return !yields_in_handler(co, c) || !leaves_finally(c);
+#else
+    (void)co;
+    (void)c;
+    return 1;
+#endif
+}
+#endif
+
+/* whether the handler at 'handler' in a coroutine's body can await, which
+   makes it run in ceval (handler_yields_kept) */
+DEFINEFN int
+psyco_handler_awaits(PyCodeObject *co, int handler)
+{
+#if LE_RESUMES_COROUTINES
+    return (co->co_flags & CO_COROUTINE) &&
+           handler_yields(co, le_code(co), handler);
+#else
+    (void)co;
+    (void)handler;
+    return 0;
+#endif
+}
 
 #if LE_RESUMES_GENERATORS
 /* whether each yield's resumes do enough work for the compiled body to
@@ -917,8 +983,10 @@ yields_do_work(le_code_t c)
    its frame between resumes: a plain generator with no yield from, and no
    yield inside an exception handler, whose stack and blocks LeJIT keeps
    apart from the frame's (an EXCEPT_HANDLER block, a finally block's
-   pseudo-exception), and whose resumes do work (yields_do_work): any
-   other runs interpreted, which costs it less per resume */
+   pseudo-exception), or a coroutine with no async for, whose handlers
+   that can await run in ceval (handler_yields_kept); and whose resumes do
+   work (yields_do_work): any other runs interpreted, which costs it less
+   per resume */
 DEFINEFN int
 psyco_is_resumable_generator(PyCodeObject *co)
 {
@@ -946,16 +1014,17 @@ psyco_is_resumable_generator(PyCodeObject *co)
                     return 0;
                 break;
             case GET_YIELD_FROM_ITER:
-            /* async for and async with */
+            /* async for */
             case GET_AITER:
             case GET_ANEXT:
-            case BEFORE_ASYNC_WITH:
-            case SETUP_ASYNC_WITH:
             case END_ASYNC_FOR:
                 return 0;
         }
     }
-    return !yields_in_handler(co, c) && yields_do_work(c);
+    if (kind == CO_COROUTINE ? !handler_yields_kept(co, c)
+                             : yields_in_handler(co, c))
+        return 0;
+    return yields_do_work(c);
 #else
     (void)co;
     return 0;

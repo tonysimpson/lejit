@@ -550,8 +550,11 @@ le_op_flags(int op)
             return LE_OPF_COMPILED_IN_BLOCKS;
         case YIELD_FROM:
             return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;
+        /* async with, in a coroutine's body */
         case BEFORE_ASYNC_WITH:
-            return LE_OPF_BREAKER_SKIPS;
+            return LE_OPF_COMPILED_IN_BLOCKS | LE_OPF_BREAKER_SKIPS;
+        case SETUP_ASYNC_WITH:
+            return LE_OPF_COMPILED_IN_BLOCKS | LE_OPF_BRANCHES;
     }
     return 0;
 }
