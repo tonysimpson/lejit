@@ -127,6 +127,14 @@ le_stats(PyObject *self, PyObject *unused)
             Py_CLEAR(d);
         Py_XDECREF(t);
     }
+    if (d != NULL) {
+        /* promotion groups made and freed (codemanager.h, le_group_t) */
+        PyObject *t = Py_BuildValue("(ll)", psyco_stat_groups_made,
+                                    psyco_stat_groups_freed);
+        if (t == NULL || PyDict_SetItemString(d, "groups", t) < 0)
+            Py_CLEAR(d);
+        Py_XDECREF(t);
+    }
 #if !defined(__SANITIZE_ADDRESS__)
     if (d != NULL) {
         /* vinfos and source_knowns in use: made, less those on the free list

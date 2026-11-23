@@ -97,6 +97,47 @@ EXTERNFN void
 psyco_owner_release(le_owner_t *o, PyObject *mergepoints,
                     PyObject *entry_point);
 
+/* A group is a child owner: the code a promotion site compiles for one
+   value that can die, and everything that compile and the code it leads
+   to hold. Its code is reached only through its site, through blocks it
+   registered (a compile that jumps into one depends on it,
+   psyco_owner_depend), and from a frame running its code object, so the
+   owner scan frees it once its key, or a key of a group above it, is
+   found dead, no frame of its code object runs, and nothing alive
+   depends on it: the site forgets the value but still counts it
+   (dispatcher.c:psyco_promotion_forget). It lives at most as long as its
+   code object. */
+typedef struct le_group_s {
+    le_owner_t owner;         /* first: a group is its owner */
+    struct le_group_s *next;  /* in its code object's list */
+    PyObject *key;            /* the promoted value, held in owner.pins */
+    void *site;               /* the promotion site, in its parent's code */
+    struct le_group_s **deps; /* other groups its code jumps into */
+    int ndeps, depscap;
+    char held; /* its code object's own code jumps into it */
+    char dead; /* being freed by the owner scan */
+} le_group_t;
+/* a new group under the current owner, for 'key' (held by the caller) at
+   'site'; NULL if no owner is current or 'key' looks as if it lives as
+   long as its module */
+EXTERNFN le_owner_t *
+psyco_group_new(PyObject *key, void *site);
+/* the current owner's code jumps into 'b' */
+EXTERNFN void
+psyco_owner_depend(CodeBufferObject *b);
+/* the code object's owner above the current owner, if that is a group
+   and the code object's owner holds every constant 'a' has; else NULL.
+   With it, the type hints in 'a' that owner doesn't hold are dropped. */
+EXTERNFN le_owner_t *
+psyco_owner_root_holding(vinfo_array_t *a);
+/* frames.c: calls 'mark' on the code object of every compiled frame
+   running on any thread, and on some more; -1 if it can't tell */
+EXTERNFN int
+psyco_frames_running(void (*mark)(PyCodeObject *co, void *arg), void *arg);
+/* dispatcher.c: the site forgets the code it compiled for 'key', if any */
+EXTERNFN void
+psyco_promotion_forget(void *site, long key);
+
 /* A record is counted once its owner holds a reference (psyco_owner_keep):
    the count since the last scan decides when the scan that frees owners
    whose code objects are reachable only from garbage runs (codemanager.c,
@@ -110,6 +151,8 @@ psyco_owner_untrack(le_code_extra_t *x);
 #if ALL_CHECKS
 EXTERNVAR long psyco_stat_owner_scans;
 EXTERNVAR long psyco_stat_owners_collected;
+EXTERNVAR long psyco_stat_groups_made;
+EXTERNVAR long psyco_stat_groups_freed;
 #endif
 EXTERNVAR long le_owners_counted;
 

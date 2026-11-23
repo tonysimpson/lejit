@@ -233,6 +233,18 @@ def traced_in_except():
     return out, events[:]
 
 
+def builtins_refs(n):
+    # n frames go on in ceval: none keeps a reference to the builtins.
+    # Compiled code may hold one or two more as constants of new blocks.
+    import builtins, gc
+    call_in_except(n)
+    gc.collect()
+    before = sys.getrefcount(builtins.__dict__)
+    call_in_except(n)
+    gc.collect()
+    return sys.getrefcount(builtins.__dict__) - before < n // 2
+
+
 CASES = [
     ('call_in_except', [(12,)], {}),
     ('call_raises_in_except', [(12,)], {}),
@@ -244,4 +256,5 @@ CASES = [
     ('own_frame_in_except', [(12,)], {}),
     ('traceback_lines', [(12,)], {}),
     ('traced_in_except', [()], {}),
+    ('builtins_refs', [(40,)], {}),
 ]
