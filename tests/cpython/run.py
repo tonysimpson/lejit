@@ -132,8 +132,7 @@ SKIPPED = {
         'test.test_doctest.test_pdb_set_trace*',
     "compiled code's direct and inlined calls skip CPython's recursion "
     'depth count, so the limit trips somewhere else':
-        'test.test_sys.SysModuleTest.test_recursionlimit_recovery '
-        'test.test_pickle.*.test_bad_getattr',
+        'test.test_sys.SysModuleTest.test_recursionlimit_recovery',
     'compiled code holds what it specialised on':
         'test.test_weakref.ReferencesTestCase.test_callback_in_cycle_resurrection '
         'test.test_weakref.WeakMethodTestCase.test_callback_when_method_dead '
@@ -186,7 +185,7 @@ SKIPPED = {
 
 # Where a gc callback that fails at the recursion limit leaves the limit off,
 # so CPython aborts at it, LeJIT's own callback makes these abort.
-GC_CALLBACK_ABORTS = 'test_json'
+GC_CALLBACK_ABORTS = 'test_json test_pickle'
 GC_CALLBACK_PROBE = r'''
 import gc, sys
 gc.callbacks.append(lambda phase, info: None)
