@@ -46,6 +46,7 @@ jobs:
   # must not change the smoke test's output
   build-newer:
     name: build (${{ matrix.python }})
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
     env:
@@ -53,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.13.2"]
+        python: ["3.13.2", "3.14.10"]
     defaults:
       run:
         shell: bash
