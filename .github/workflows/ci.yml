@@ -105,7 +105,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11.11", "3.12.9"]
+        python: ["3.11.11", "3.12.9", "3.13.2"]
     steps:
       - uses: actions/checkout@v4
       - name: Detectors agree with the source
