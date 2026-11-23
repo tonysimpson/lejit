@@ -162,6 +162,12 @@ def FUNCTION_STR():
 
 
 @probe
+def COROUTINE_WRAPPER():
+    """sys.set_coroutine_wrapper exists, kept in the thread state"""
+    return hasattr(sys, 'set_coroutine_wrapper'), 'sys.set_coroutine_wrapper'
+
+
+@probe
 def ITER_SEND():
     """libpython exports PyIter_Send (ctypes)"""
     return _exported('PyIter_Send')

@@ -69,6 +69,12 @@
    saves the locals, stack and blocks into it, as ceval leaves a paused
    generator's frame, and returns the value. */
 #define GENEXPR_RESUMABLE 8
+/* A coroutine awaited as soon as it is made (await f(x)), run as a call
+   (psyfunc.c:psyco_coro_start): its RETURN_VALUE returns the await's
+   value, and an await inside that suspends makes the coroutine and its
+   frame, as they would be, and returns le_coro_suspended
+   (pycompiler.c:yield_direct). acc is unused. */
+#define GENEXPR_DIRECT 9
 #define GENEXPR_SLOTS 2
 #define GENEXPR_SLOT_MODE(co) (INDEX_LOC_LOCALS_PLUS + le_code_nlocalsplus(co))
 #define GENEXPR_SLOT_ACC(co) (GENEXPR_SLOT_MODE(co) + 1)

@@ -1349,6 +1349,8 @@ ABSTRACT = [
                                             'Include, every header: PyObject_CallOneArg'))),
     ('CALL_ONE_ARG', D('PyObject_CallOneArg exists',
                        lambda s: _declared(s, 'PyObject_CallOneArg'))),
+    ('COROUTINE_WRAPPER', D('a thread state has a coroutine wrapper (sys.set_coroutine_wrapper), which ceval calls on each new coroutine',
+                             lambda s: _field(s, '_ts', 'coroutine_wrapper'))),
     ('ITER_SEND', D('PyIter_Send sends a value into an iterator, telling a yield from a return',
                     lambda s: _declared(s, 'PyIter_Send'))),
     ('FUNCTION_STR', D('_PyObject_FunctionStr names a function in error messages',

@@ -196,8 +196,8 @@ PsycoGenexpr_New(vinfo_t *vfunc, vinfo_t *arg_tuple, vinfo_t *vglobals,
 {
     vinfo_t *r = vinfo_new(VirtualTime_New(&psyco_pending_genexpr));
     r->array = array_new(iGENEXPR_CODE + 1);
-    r->array->items[iOB_TYPE] =
-        vinfo_new(CompileTime_New((long)(&PyGen_Type)));
+    r->array->items[iOB_TYPE] = vinfo_new(CompileTime_New(
+        (long)((co->co_flags & CO_COROUTINE) ? &PyCoro_Type : &PyGen_Type)));
     vinfo_incref(vfunc);
     r->array->items[iGENEXPR_FUNC] = vfunc;
     vinfo_incref(arg_tuple);
