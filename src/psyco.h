@@ -881,13 +881,13 @@ typedef struct le_owner_s {
     int nreleases, releasescap; /* its records holding something */
     void *blocks;               /* records freed with the owner */
     code_t *stub_pool, *stub_pool_end;
-    size_t stub_chunk;    /* the size of stub_pool's chunk */
-    int *notes;           /* its call sites' psyco_locals_maps */
-    int nnotes, notescap; /* indices, reused once it dies */
-    struct le_owner_s *parent;  /* a group's: the owner of its site;
-                                   NULL for a code object's own */
-    struct le_group_s *groups;  /* a code object's: its groups, newest
-                                   first */
+    size_t stub_chunk;         /* the size of stub_pool's chunk */
+    int *notes;                /* its call sites' psyco_locals_maps */
+    int nnotes, notescap;      /* indices, reused once it dies */
+    struct le_owner_s *parent; /* a group's: the owner of its site;
+                                  NULL for a code object's own */
+    struct le_group_s *groups; /* a code object's: its groups, newest
+                                  first */
 } le_owner_t;
 
 /* What LeJIT keeps per code object, on its weak references (lejit.c): found by

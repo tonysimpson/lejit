@@ -947,7 +947,8 @@ scan_find(PyCodeObject ***out, le_group_t ***groups, long *ngroups)
                 ng++;
         }
     if ((n > 0 && (*out = PyMem_Malloc(n * sizeof(PyCodeObject *))) == NULL) ||
-        (ng > 0 && (*groups = PyMem_Malloc(ng * sizeof(le_group_t *))) == NULL))
+        (ng > 0 &&
+         (*groups = PyMem_Malloc(ng * sizeof(le_group_t *))) == NULL))
         return -1;
     n = ng = 0;
     /* a code object's groups are nodes in its list's order, the newest
@@ -1147,8 +1148,8 @@ static bool
 has_locals(PyObject *qualname)
 {
     static PyObject *marker;
-    if (marker == NULL && (marker = PyUnicode_InternFromString("<locals>")) ==
-                              NULL) {
+    if (marker == NULL &&
+        (marker = PyUnicode_InternFromString("<locals>")) == NULL) {
         PyErr_Clear();
         return false;
     }

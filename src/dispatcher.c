@@ -3112,7 +3112,8 @@ promotion_cache_forget(rt_promotion_t *fs, long key)
     code_t *targets[1 + PROMOTION_CHAIN_MAX];
     int i, n = 0, count = fs->ncached;
     for (i = 0; i < count; i++) {
-        code_t *entry = i == 0 ? fs->jump_if_equal_code : CHAIN_ENTRY(fs, i - 1);
+        code_t *entry =
+            i == 0 ? fs->jump_if_equal_code : CHAIN_ENTRY(fs, i - 1);
         ipromotion_read_entry(entry, &values[n], &targets[n]);
         if (values[n] != key)
             n++;
