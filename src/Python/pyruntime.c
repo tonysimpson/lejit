@@ -29,6 +29,12 @@
 #include "internal/pycore_ceval.h"
 #endif
 #include "frameobject.h"
+#if LE_HAS_INTERPRETER_FRAME
+#include "internal/pycore_frame.h"
+#if LE_HAS_PYCORE_INTERPFRAME_H
+#include "internal/pycore_interpframe.h"
+#endif
+#endif
 #include "opcode.h"
 #include "../bytecode.h"
 
@@ -81,22 +87,54 @@ le_common_constant(int i)
     return PyInterpreterState_Get()->common_consts[i];
 }
 #endif
+#if LE_HAS_INTERPRETER_FRAME
+/* PyFrame_New makes the frame object a function of its own, which
+   CPython's frames for a call don't have. Its code is made an empty one,
+   so that gc.get_referrers(code) finds only the code's real functions
+   (trace names a caller's class by them): the frame keeps its own code,
+   and these frames run in ceval only past their first instruction, so
+   the function's code isn't read. */
+static void
+function_without_code(PyFrameObject *f)
+{
+    static PyCodeObject *empty = NULL;
+#if LE_HAS_FRAME_STACKREFS
+    PyFunctionObject *func =
+        (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(f->f_frame->f_funcobj);
+#elif LE_HAS_FRAME_FUNCOBJ
+    PyFunctionObject *func = (PyFunctionObject *)f->f_frame->f_funcobj;
+#else
+    PyFunctionObject *func = f->f_frame->f_func;
+#endif
+    if (empty == NULL && (empty = PyCode_NewEmpty("", "", 0)) == NULL) {
+        PyErr_Clear();
+        return;
+    }
+    Py_INCREF(empty);
+    Py_SETREF(func->func_code, (PyObject *)empty);
+}
+#endif
+
 /* PyFrame_New, unseen by function watchers: it makes a function for the
    frame object, which CPython's own frames don't, and a watcher called
    here would run Python code while compiled code's exception is set */
 PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals)
 {
+    PyFrameObject *f;
 #ifdef PY_FOREACH_FUNC_EVENT
     uint8_t watchers = ts->interp->active_func_watchers;
-    PyFrameObject *f;
     ts->interp->active_func_watchers = 0;
     f = PyFrame_New(ts, co, globals, NULL);
     ts->interp->active_func_watchers = watchers;
-    return f;
 #else
-    return PyFrame_New(ts, co, globals, NULL);
+    f = PyFrame_New(ts, co, globals, NULL);
 #endif
+#if LE_HAS_INTERPRETER_FRAME
+    if (f != NULL)
+        function_without_code(f);
+#endif
+    return f;
 }
 /* le_eval_breaker_address, le_eval_breaker_handler,
    le_eval_breaker_at_entry */
