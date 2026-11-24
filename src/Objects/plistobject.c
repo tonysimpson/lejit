@@ -5,9 +5,8 @@
  * forced out of virtual time at any call boundary (INIT_SVIRTUAL_NOCALL) and
  * whenever they are indexed with a run-time index. compute_vlist emits
  * PyList_New and the item stores, then forgets the size, which becomes
- * mutable. The list tp_iter slot is redirected to the generic virtual
- * seq-iterator (piterobject.c), so a materialised iterator would be an
- * 'iterator' rather than a 'list_iterator'.
+ * mutable. The list tp_iter slot is redirected to a virtual list_iterator
+ * (piterobject.c).
  *
  * Pieces lists: an exact list's slice, or a concatenation of slices, whole
  * lists and items, not made yet (psyco_computed_pieces, below).
@@ -852,7 +851,7 @@ plist_iter(PsycoObject *po, vinfo_t *v)
 {
     if (PsycoUnicode_IsSplitList(v))
         return PsycoUnicode_SplitIter(po, v);
-    return PsycoSeqIter_New(po, v);
+    return PsycoListIter_New(po, v);
 }
 
 /* listobject.c's sq_length */
@@ -885,9 +884,7 @@ psy_listobject_init(void)
         Psyco_DefineMeta(mm->mp_ass_subscript, plist_ass_subscript);
     }
 
-    /* CPython gives lists their own iterator type for speed; a
-       virtual sequence iterator costs compiled code nothing, so
-       iter(l) is one here, never a listiterator */
+    /* iter(l) is a virtual list_iterator (piterobject.c) */
     if (PyList_Type.tp_iter != NULL)
         Psyco_DefineMeta(PyList_Type.tp_iter, &plist_iter);
 

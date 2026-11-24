@@ -4,8 +4,12 @@
  * [iSEQITER_IT_SEQ]. piter_iternext is a translation of iter_iternext
  * (IndexError or StopIteration ends it and drops it_seq) with a
  * shortcut for lists. it_seq is cached like an immutable field, so a
- * run-time iterator's is checked against memory (see piter_iternext). List
- * iteration also comes here, because plistobject.c redirects tp_iter.
+ * run-time iterator's is checked against memory (see piter_iternext).
+ * List iterators (listiter_next) come here too: plistobject.c redirects
+ * list's tp_iter to a virtual one of type list_iterator, whose layout is
+ * seqiterobject's (checked by lejit.c:le_layouts). A list iterator ends at
+ * the list's size, with no IndexError, and is finished by CPython's own
+ * listiter_next, which leaves its exhausted state as CPython does.
  * seqiterobject is re-declared in the header because CPython keeps it private.
  */
 #include "piterobject.h"
@@ -14,14 +18,13 @@
 #include "../psyfunc.h"
 /* for plist_getitem */
 
-DEFINEFN vinfo_t *
-PsycoSeqIter_NEW(PsycoObject *po, vinfo_t *seq)
+static vinfo_t *
+new_iter(PsycoObject *po, vinfo_t *seq, PyTypeObject *tp)
 {
     vinfo_t *zero;
     vinfo_t *result = vinfo_new(VirtualTime_New(&psyco_computed_seqiter));
     result->array = array_new(SEQITER_TOTAL);
-    result->array->items[iOB_TYPE] =
-        vinfo_new(CompileTime_New((long)(&PySeqIter_Type)));
+    result->array->items[iOB_TYPE] = vinfo_new(CompileTime_New((long)tp));
     /* the iterator index is immediately run-time because it is
        very likely to be unpromoted to run-time anyway */
     zero = psyco_vi_Zero();
@@ -33,11 +36,52 @@ PsycoSeqIter_NEW(PsycoObject *po, vinfo_t *seq)
     return result;
 }
 
+DEFINEFN vinfo_t *
+PsycoSeqIter_NEW(PsycoObject *po, vinfo_t *seq)
+{
+    return new_iter(po, seq, &PySeqIter_Type);
+}
+
+DEFINEFN vinfo_t *
+PsycoListIter_NEW(PsycoObject *po, vinfo_t *list)
+{
+    return new_iter(po, list, &PyListIter_Type);
+}
+
+static bool
+is_listiter(vinfo_t *v)
+{
+    return (PyTypeObject *)CompileTime_Get(v->array->items[iOB_TYPE]->source)
+               ->value == &PyListIter_Type;
+}
+
+/* a list iterator at its list's end: CPython's listiter_next finishes it */
+static void
+cimpl_listiter_finish(PyObject *it)
+{
+    PyObject *r = Py_TYPE(it)->tp_iternext(it);
+    extra_assert(r == NULL && !PyErr_Occurred());
+    (void)r;
+}
+
 /* An exhausted iterator has dropped its sequence (it_seq = NULL). */
 static void
 cimpl_seqiter_drop_seq(seqiterobject *it)
 {
     Py_CLEAR(it->it_seq);
+}
+
+static PyObject *
+cimpl_listiter_exhausted(void)
+{
+    PyObject *empty = PyList_New(0), *it;
+    if (empty == NULL)
+        return NULL;
+    it = PyObject_GetIter(empty);
+    Py_DECREF(empty);
+    if (it != NULL)
+        cimpl_listiter_finish(it);
+    return it;
 }
 
 static PyObject *
@@ -89,6 +133,7 @@ piter_iternext(PsycoObject *po, vinfo_t *v)
     PyTypeObject *tp;
     bool cached =
         is_virtualtime(v->source) || vinfo_getitem(v, iSEQITER_IT_SEQ) != NULL;
+    bool list = is_listiter(v);
 
     if (vinfo_getitem(v, iSEQITER_SPLIT_POS) != NULL) {
         seq = vinfo_getitem(v, iSEQITER_IT_SEQ);
@@ -122,7 +167,9 @@ piter_iternext(PsycoObject *po, vinfo_t *v)
                 return piter_stop(po);
             }
             psyco_forget_field(po, v, SEQITER_it_seq);
-            return psyco_generic_call(po, PySeqIter_Type.tp_iternext,
+            return psyco_generic_call(po,
+                                      list ? PyListIter_Type.tp_iternext
+                                           : PySeqIter_Type.tp_iternext,
                                       CfCommonIterNext, "v", v);
         }
     }
@@ -134,6 +181,20 @@ piter_iternext(PsycoObject *po, vinfo_t *v)
     index = psyco_get_field(po, v, SEQITER_it_index);
     if (index == NULL)
         return NULL;
+    if (list && !is_virtualtime(v->source)) {
+        /* an exhausted list iterator may keep its list (its index is -1
+           where __setstate__(-1) put it) */
+        condition_code_t cc = integer_cmp_i(po, index, 0, Py_LT);
+        if (cc == CC_ERROR) {
+            vinfo_decref(index, po);
+            return NULL;
+        }
+        if (runtime_condition_f(po, cc)) {
+            vinfo_decref(index, po);
+            return psyco_generic_call(po, PyListIter_Type.tp_iternext,
+                                      CfCommonIterNext, "v", v);
+        }
+    }
     assert_nonneg(index);
 
     if (PyType_IsSubtype(tp, &PyList_Type)) {
@@ -156,8 +217,10 @@ piter_iternext(PsycoObject *po, vinfo_t *v)
                 goto fail;
         }
         else {
-            if (psyco_generic_call(po, cimpl_seqiter_drop_seq, CfNoReturnValue,
-                                   "v", v) == NULL)
+            if (psyco_generic_call(po,
+                                   list ? (void *)cimpl_listiter_finish
+                                        : (void *)cimpl_seqiter_drop_seq,
+                                   CfNoReturnValue, "v", v) == NULL)
                 goto fail;
             vinfo_setitem(po, v, iSEQITER_IT_SEQ, psyco_vi_Zero());
         }
@@ -194,7 +257,9 @@ compute_seqiter(PsycoObject *po, vinfo_t *v)
 
     if (psyco_knowntobe(seq, 0)) {
         /* exhausted: its index is never read again */
-        newobj = psyco_generic_call(po, cimpl_seqiter_exhausted,
+        newobj = psyco_generic_call(po,
+                                    is_listiter(v) ? cimpl_listiter_exhausted
+                                                   : cimpl_seqiter_exhausted,
                                     CfCommonNewRefPyObject, "");
         if (newobj == NULL)
             return false;
@@ -204,8 +269,9 @@ compute_seqiter(PsycoObject *po, vinfo_t *v)
         return true;
     }
 
-    newobj = psyco_generic_call(po, PySeqIter_New, CfCommonNewRefPyObject, "v",
-                                seq);
+    newobj = psyco_generic_call(
+        po, is_listiter(v) ? PyObject_GetIter : PySeqIter_New,
+        CfCommonNewRefPyObject, "v", seq);
     if (newobj == NULL)
         return false;
 
@@ -248,6 +314,7 @@ void
 psy_iterobject_init(void)
 {
     Psyco_DefineMeta(PySeqIter_Type.tp_iternext, &piter_iternext);
+    Psyco_DefineMeta(PyListIter_Type.tp_iternext, &piter_iternext);
 #if LE_RESUMES_GENERATORS_DIRECTLY
     Psyco_DefineMeta(PyGen_Type.tp_iternext, &pgen_iternext);
 #endif
