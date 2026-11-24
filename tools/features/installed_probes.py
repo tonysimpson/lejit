@@ -985,6 +985,20 @@ def LOAD_GLOBAL_NULL_BIT():
 
 
 @probe
+def IMPORT_NAME_LAZY_BITS():
+    """an import in a function loads it with IMPORT_NAME whose argument is
+    the name's index (0) shifted left twice, plus two for an import that is
+    always eager (dis)"""
+    def f():
+        import zzz  # noqa: F401
+    for x in dis.get_instructions(f):
+        if x.opname == 'IMPORT_NAME' and x.arg in (0, 2):
+            return x.arg == 2, 'dis: IMPORT_NAME %d for import zzz' % x.arg
+    raise Unanswered('import zzz is not IMPORT_NAME 0 or 2: %r'
+                     % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
 def AWAIT_ERROR_BY_ARG():
     """async with's awaits of __aenter__'s and __aexit__'s results are
     GET_AWAITABLE 1 and 2, the argument ceval's error reads (dis)"""

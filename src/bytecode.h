@@ -602,6 +602,17 @@ le_op_flags(int op)
 #define LE_GLOBAL_PUSHES_NULL(arg) 0
 #endif
 
+/* the index in co_names of the module IMPORT_NAME with argument arg
+   imports, and whether the import is lazy (a lazy import statement, at
+   module level only) */
+#if LE_HAS_IMPORT_NAME_LAZY_BITS
+#define LE_IMPORT_NAME(arg) ((arg) >> 2)
+#define LE_IMPORT_LAZY(arg) ((arg) & 1)
+#else
+#define LE_IMPORT_NAME(arg) (arg)
+#define LE_IMPORT_LAZY(arg) 0
+#endif
+
 /* the place CPython's frame gives the instruction that starts at pos (its
    lasti, a traceback's tb_lasti): past its EXTENDED_ARG prefixes, or the
    first of them */
