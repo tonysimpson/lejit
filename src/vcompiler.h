@@ -90,7 +90,8 @@ gettime(Source s)
 #define RunTime_StackMask 0x0000000000FFFFFC
 #define RunTime_StackMax RunTime_StackMask
 #define RunTime_StackNone 0x0000000000000000
-#define RunTime_RegMask 0xFFFFFFFFF0000000
+#define RunTime_RegMask 0xFFFFFFFF00000000
+#define RunTime_Mortal 0x0000000010000000
 #define RunTime_NoRef 0x0000000008000000
 #define RunTime_NonNeg 0x0000000004000000
 #define RunTime_Megamorphic 0x0000000002000000
@@ -107,7 +108,7 @@ RunTime_New1(int stack_position,
 {
     long result = RunTime + stack_position;
 #if REG_TOTAL > 0
-    result += (long)reg << 28;
+    result += (long)reg << 32;
 #endif
     if (!ref)
         result += RunTime_NoRef;
@@ -135,7 +136,7 @@ PSY_INLINE reg_t
 getreg(RunTimeSource s)
 {
     CHKTIME(s, RunTime);
-    return (reg_t)(s >> 28);
+    return (reg_t)(s >> 32);
 }
 #endif
 PSY_INLINE bool
@@ -153,7 +154,7 @@ getstack(RunTimeSource s)
 PSY_INLINE bool
 is_runtime_with_reg(Source s)
 {
-    return (s & (TimeMask | (1 << 31))) == 0;
+    return (s & (TimeMask | (1L << 63))) == 0;
 }
 PSY_INLINE bool
 is_rtnonneg(RunTimeSource s)
@@ -168,6 +169,20 @@ PSY_INLINE bool
 is_megamorphic(Source s)
 {
     return is_runtime(s) && (s & RunTime_Megamorphic) != 0;
+}
+
+/* an object that compiled code has just allocated, which is never
+   immortal: its count is changed without the immortal test */
+PSY_INLINE bool
+is_rtmortal(Source s)
+{
+    return is_runtime(s) && (s & RunTime_Mortal) != 0;
+}
+PSY_INLINE RunTimeSource
+set_rtmortal(RunTimeSource s)
+{
+    CHKTIME(s, RunTime);
+    return s | RunTime_Mortal;
 }
 
 /* a local that may be unbound: the word is NULL then, and owns nothing,
@@ -199,13 +214,13 @@ PSY_INLINE RunTimeSource
 set_rtreg_to(RunTimeSource s, reg_t newreg)
 {
     CHKTIME(s, RunTime);
-    return (s & ~RunTime_RegMask) | ((long)newreg << 28);
+    return (s & ~RunTime_RegMask) | ((long)newreg << 32);
 }
 PSY_INLINE RunTimeSource
 set_rtreg_to_none(RunTimeSource s)
 {
     CHKTIME(s, RunTime);
-    return s | ((long)REG_NONE << 28);
+    return s | ((long)REG_NONE << 32);
 }
 #endif
 PSY_INLINE RunTimeSource

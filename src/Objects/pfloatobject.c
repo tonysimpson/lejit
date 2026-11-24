@@ -138,6 +138,7 @@ compute_float(PsycoObject *po, vinfo_t *floatobj)
 
     if (newobj == NULL)
         return false;
+    newobj->source = set_rtmortal(newobj->source);
 
     /* move the resulting non-virtual Python object back into 'floatobj' */
     vinfo_move(po, floatobj, newobj);

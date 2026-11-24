@@ -1626,7 +1626,7 @@ compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
 
         switch (gettime(a->source)) {
             case RunTime:
-                if ((diff & (RunTime_NoRef | RunTime_NonNeg |
+                if ((diff & (RunTime_NoRef | RunTime_NonNeg | RunTime_Mortal |
                              RunTime_Megamorphic | RunTime_MaybeNull)) != 0) {
                     /* from 'with ref' to 'without ref' or vice-versa:
                        a source in 'a' with reference cannot pass for
@@ -1639,6 +1639,10 @@ compatible_vinfo(vinfo_t *a, Source bsource, int bcount,
                        pass for a source in 'b' which cannot */
                     if ((a->source & RunTime_NonNeg) == 0 &&
                         (bsource & RunTime_NonNeg) != 0)
+                        return false;
+                    /* nor one that may be immortal for one that cannot */
+                    if ((a->source & RunTime_Mortal) == 0 &&
+                        (bsource & RunTime_Mortal) != 0)
                         return false;
                     /* a source in 'a' which is flagged as megamorphic (or
                        forgotten) should not fall back to a source in 'b' which
@@ -2216,7 +2220,8 @@ widen_unbound(PsycoObject *po, global_entries_t *ge, int nlocals)
         }
         else
             continue;
-        a->source = (a->source | RunTime_Megamorphic) & ~RunTime_NonNeg;
+        a->source = (a->source | RunTime_Megamorphic) &
+                    ~(RunTime_NonNeg | RunTime_Mortal);
         changed = true;
     }
     return changed;
@@ -2335,7 +2340,8 @@ psyco_forget_values(PsycoObject *po, global_entries_t *ge)
             a = b;
         }
         psyco_unfix(po, a);
-        a->source = (a->source | RunTime_Megamorphic) & ~RunTime_NonNeg;
+        a->source = (a->source | RunTime_Megamorphic) &
+                    ~(RunTime_NonNeg | RunTime_Mortal);
         changed = true;
     }
     return changed || widen_unbound(po, ge, nlocals);

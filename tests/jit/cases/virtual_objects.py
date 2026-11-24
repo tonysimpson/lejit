@@ -3,7 +3,8 @@
 # repetition and comparison of them: an operand given back or the empty
 # tuple are known now, the rest is CPython's own at run time. Forcing: a
 # constant result is built at compile time, any other by CPython's
-# constructor at run time.
+# constructor at run time. A float or list LeJIT has just built is never
+# immortal, and its count is CPython's as it is shared and let go.
 
 
 class T(tuple):
@@ -275,6 +276,23 @@ def tuples_tracked(n):
     return [gc.is_tracked(t) for t in built]
 
 
+def fresh_counts(n):
+    import sys
+    out = []
+    keep = []
+    for i in range(n):
+        x = i * 0.5 + n
+        lst = [x, i]
+        keep.append(lst)
+        a, b = sys.getrefcount(x), sys.getrefcount(lst)
+        keep.append(x)
+        keep.append(lst)
+        out.append((sys.getrefcount(x) - a, sys.getrefcount(lst) - b))
+        if i % 3 == 0:
+            del keep[:]
+    return out, len(keep)
+
+
 CASES = [
     ('compare_virtual', [(1, 2, 3), ('a', 'b', 'a'), (2.5, 1, 1)], {}),
     ('compare_items', "[(Eq(1), Eq(1)), (Eq(1), Eq(2)), (Eq('raise'), Eq(1)), (1, 'x')]", {}),
@@ -316,4 +334,5 @@ CASES = [
     ('method_subclass', "[(C(1),), (D(2),)]", {}),
     ('method_compare', "[(C(1),), (D(2),)]", {}),
     ('tuples_tracked', [(1,), (5,)], {}),
+    ('fresh_counts', [(1,), (40,)], {}),
 ]

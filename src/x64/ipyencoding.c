@@ -70,16 +70,22 @@ function_return(PsycoObject *po, Source retval, int nframelocal, long retpos)
 
 DEFINEFN
 code_t *
-decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
+decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn,
+                       bool mortal)
 {
     extra_assert(CPY_OFFSET(PyObject, ob_type) < 128);
     extra_assert(CPY_OFFSET(PyTypeObject, tp_dealloc) < 128);
 #if LE_HAS_IMMORTAL_OBJECTS
     /* as Py_DECREF, an immortal (its count's low 32 bits negative) is left
        alone */
+    code_t *immortal_js = NULL;
     NEED_CC_REG(rg);
-    CMP_I8_DA(0, rg);
-    BEGIN_SHORT_COND_JUMP(1, CC_S);
+    if (!mortal) {
+        CMP_I8_DA(0, rg);
+        immortal_js = code;
+        code[0] = 0x70 | CC_S;
+        code += 2;
+    }
     LE_SUB_OB_REFCNT(rg);
 #else
     DEC_OB_REFCNT_NZ(rg);
@@ -100,7 +106,11 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
     }
     END_SHORT_JUMP(0);
 #if LE_HAS_IMMORTAL_OBJECTS
-    END_SHORT_JUMP(1);
+    if (immortal_js != NULL) {
+        extra_assert(code - (immortal_js + 2) < 128);
+        immortal_js[1] = (code_t)(code - (immortal_js + 2));
+        le_trace_jump_cond(immortal_js, immortal_js + 2, code);
+    }
 #endif
     return code;
 }
@@ -116,7 +126,10 @@ decref_create_new_ref(PsycoObject *po, vinfo_t *w)
     else {
         /* 'w' is in a register because of write_array_item() */
         extra_assert(!RUNTIME_REG_IS_NONE(w));
-        INC_OB_REFCNT(RUNTIME_REG(w));
+        if (is_rtmortal(w->source))
+            INC_MORTAL_OB_REFCNT(RUNTIME_REG(w));
+        else
+            INC_OB_REFCNT(RUNTIME_REG(w));
     }
     END_CODE
 }
@@ -134,7 +147,10 @@ decref_create_new_lastref(PsycoObject *po, vinfo_t *w)
         else {
             /* 'w' is in a register because of write_array_item() */
             extra_assert(!RUNTIME_REG_IS_NONE(w));
-            INC_OB_REFCNT(RUNTIME_REG(w));
+            if (is_rtmortal(w->source))
+                INC_MORTAL_OB_REFCNT(RUNTIME_REG(w));
+            else
+                INC_OB_REFCNT(RUNTIME_REG(w));
         }
         END_CODE
     }

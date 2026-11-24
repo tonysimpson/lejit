@@ -48,6 +48,7 @@ compute_vlist(PsycoObject *po, vinfo_t *v)
                                 (long)length);
     if (newobj == NULL)
         return false;
+    newobj->source = set_rtmortal(newobj->source);
 
     /* write the storing of the objects in the list */
     if (length > 0) {

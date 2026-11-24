@@ -53,7 +53,8 @@ _Static_assert(_Py_IMMORTAL_INITIAL_REFCNT == 0xC0000000,
         ADD_DA_I8(rg, 1);                \
         END_SHORT_JUMP(8);               \
     } while (0)
-/* a mortal's count, which Py_DECREF changes as 32 bits */
+/* a mortal's count, which Py_INCREF and Py_DECREF change as 32 bits */
+#define LE_ADD_OB_REFCNT(rg) ADD_DA_I8(rg, 1)
 #define LE_SUB_OB_REFCNT(rg) SUB_DA_I8(rg, 1)
 #else
 /* as Py_INCREF: the count's low 32 bits go up by one, unless they are all
@@ -64,8 +65,16 @@ _Static_assert(_Py_IMMORTAL_INITIAL_REFCNT == 0xC0000000,
         SBB_DA_I8(rg, 0);          \
     } while (0)
 /* a mortal's count, whose high 32 bits are 0 */
+#define LE_ADD_OB_REFCNT(rg) ADD_A_I8(rg, 1)
 #define LE_SUB_OB_REFCNT(rg) SUB_A_I8(rg, 1)
 #endif
+
+/* Py_INCREF() for an object known to be mortal */
+#define INC_MORTAL_OB_REFCNT(rg) \
+    do {                         \
+        NEED_CC_REG(rg);         \
+        LE_ADD_OB_REFCNT(rg);    \
+    } while (0)
 
 /* Py_INCREF() for a compile-time-known 'pyobj': nothing for an immortal,
    which stays one */
@@ -114,6 +123,8 @@ _Static_assert(_Py_IMMORTAL_INITIAL_REFCNT == 0xC0000000,
         }                                                      \
     } while (0)
 
+#define INC_MORTAL_OB_REFCNT(rg) INC_OB_REFCNT(rg)
+
 /* Py_INCREF() for a compile-time-known 'pyobj' */
 #define INC_KNOWN_OB_REFCNT(pyobj)                     \
     do {                                               \
@@ -141,25 +152,28 @@ _Static_assert(_Py_IMMORTAL_INITIAL_REFCNT == 0xC0000000,
 
 /* internal utilities for the macros below */
 EXTERNFN code_t *
-decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn);
+decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn,
+                       bool mortal);
 
 /* the equivalent of Py_DECREF(): it calls tp_dealloc itself where that is
    all _Py_Dealloc would do, and _Py_Dealloc where it does more */
 #if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_HOOKS
 #define DEC_OB_REFCNT(rg) \
-    (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
+    (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc, false))
 #else
-#define DEC_OB_REFCNT(rg) (code = decref_dealloc_calling(code, po, rg, NULL))
+#define DEC_OB_REFCNT(rg) \
+    (code = decref_dealloc_calling(code, po, rg, NULL, false))
 #endif
 
 /* the equivalent of Py_DECREF() when we know the type of the object
-   (assuming that tp_dealloc never changes for a given type) */
+   (assuming that tp_dealloc never changes for a given type), and whether it
+   is mortal */
 #if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_HOOKS
-#define DEC_OB_REFCNT_T(rg, type) \
-    (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
+#define DEC_OB_REFCNT_T(rg, type, mortal) \
+    (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc, mortal))
 #else
-#define DEC_OB_REFCNT_T(rg, type) \
-    (code = decref_dealloc_calling(code, po, rg, (type)->tp_dealloc))
+#define DEC_OB_REFCNT_T(rg, type, mortal) \
+    (code = decref_dealloc_calling(code, po, rg, (type)->tp_dealloc, mortal))
 #endif
 
 /***************************************************************/
@@ -173,7 +187,10 @@ psyco_incref_rt(PsycoObject *po, vinfo_t *v)
     BEGIN_CODE
     RTVINFO_IN_REG(v);
     rg = RUNTIME_REG(v);
-    INC_OB_REFCNT(rg);
+    if (is_rtmortal(v->source))
+        INC_MORTAL_OB_REFCNT(rg);
+    else
+        INC_OB_REFCNT(rg);
     END_CODE
 }
 
@@ -211,7 +228,7 @@ psyco_decref_rt(PsycoObject *po, vinfo_t *v)
     RTVINFO_IN_REG(v);
     rg = RUNTIME_REG(v);
     if (tp != NULL)
-        DEC_OB_REFCNT_T(rg, tp);
+        DEC_OB_REFCNT_T(rg, tp, is_rtmortal(v->source));
     else
         DEC_OB_REFCNT(rg);
     END_CODE
@@ -236,7 +253,7 @@ psyco_xdecref_rt(PsycoObject *po, vinfo_t *v)
     TEST_R_R(rg, rg);
     BEGIN_SHORT_COND_JUMP(1, CC_E);
     if (tp != NULL)
-        DEC_OB_REFCNT_T(rg, tp);
+        DEC_OB_REFCNT_T(rg, tp, is_rtmortal(v->source));
     else
         DEC_OB_REFCNT(rg);
     END_SHORT_JUMP(1);
