@@ -13,11 +13,6 @@
 /* le_frame_t */
 #include "../mechanisms/frames.h"
 
-/* A frame object for one item pvisitframes() visits: a real frame, the
-   real frame of a (code, globals, frame) tuple, or a new emulated frame for
-   a compiled frame's (code, globals, tag, lasti). New reference. */
-EXTERNFN PyFrameObject *
-psyco_emulate_frame(PyObject *o);
 /* the real frame, if the compiled code 'co' making the current C call is
    the one LeCode_Run runs (not a compiled callee); borrowed, or NULL */
 EXTERNFN PyFrameObject *
