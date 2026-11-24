@@ -3531,6 +3531,26 @@ cimpl_list_extend(PyObject *list, PyObject *iterable)
 }
 #endif
 
+#if LE_HAS_UNPACK_KEEPS_ATTRIBUTE_ERROR
+/* the AttributeError {**o} or f(**o) raised says o is not a mapping only
+   where o has no keys: then it is cleared and 1; else 0, with it, or the
+   error looking for keys raised with it as its context */
+static int
+le_not_a_mapping(PyObject *o)
+{
+    PyObject *exc = PyErr_GetRaisedException();
+    int has_keys = PyObject_HasAttrStringWithError(o, "keys");
+    if (has_keys == 0) {
+        Py_DECREF(exc);
+        return 1;
+    }
+    _PyErr_ChainExceptions1(exc);
+    return 0;
+}
+#else
+#define le_not_a_mapping(o) 1
+#endif
+
 #if LE_HAS_OPCODE_DICT_UPDATE
 /* ceval.c DICT_UPDATE */
 static int
@@ -3538,7 +3558,8 @@ cimpl_dict_update(PyObject *dict, PyObject *update)
 {
     int err = PyDict_Update(dict, update);
     if (err < 0) {
-        if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        if (PyErr_ExceptionMatches(PyExc_AttributeError) &&
+            le_not_a_mapping(update)) {
             PyErr_Format(PyExc_TypeError, LE_MSG_DICT_STAR_NOT_MAPPING,
                          Py_TYPE(update)->tp_name);
         }
@@ -3552,6 +3573,8 @@ static void
 cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 {
     if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        if (!le_not_a_mapping(kwargs))
+            return;
 #if LE_HAS_FUNCTION_STR
         PyErr_Clear();
         PyObject *funcstr = _PyObject_FunctionStr(func);

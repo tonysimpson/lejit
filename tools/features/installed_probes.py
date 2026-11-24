@@ -427,6 +427,24 @@ def DELETE_GLOBAL_KEYERROR_ONLY():
 
 
 @probe
+def UNPACK_KEEPS_ATTRIBUTE_ERROR():
+    """{**x} and f(**x) of an x whose keys() raises AttributeError keep it
+    (run)"""
+    class Keys(object):
+        def keys(self):
+            raise AttributeError('keys')
+
+    def f(**kw):
+        return kw
+    kinds = {type(_error(lambda: {**Keys()})), type(_error(lambda: f(**Keys())))}
+    if kinds == {AttributeError}:
+        return True, '{**x}, f(**x) run: AttributeError'
+    if kinds == {TypeError}:
+        return False, '{**x}, f(**x) run: TypeError'
+    raise Unanswered('{**x}, f(**x) run: %r' % kinds)
+
+
+@probe
 def CALL_TRACE_METHOD_DESCR():
     """a method descriptor called with f(*args) gives the profiler a
     c_call event (sys.setprofile)"""
