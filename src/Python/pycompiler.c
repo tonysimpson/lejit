@@ -3117,6 +3117,37 @@ ct_format_exc_check_arg(PsycoObject *po, PyObject *exc, const char *format_str,
                        (long)exc, (long)format_str, (long)obj);
 }
 
+/* whether local i is bound, raising UnboundLocalError if not. A local
+   that may be unbound (RunTime_MaybeNull) is tested: on the path where it
+   is NULL it becomes the unbound constant, and on the other it is known
+   bound from then on. */
+static bool
+local_bound(PsycoObject *po, int i)
+{
+    PyCodeObject *co = po->pr.co;
+    vinfo_t *v = GETLOCAL(i);
+    if (v != NULL && is_maybe_null(v->source)) {
+        condition_code_t cc = integer_non_null(po, v);
+        if (cc == CC_ERROR)
+            return false;
+        if (!runtime_condition_f(po, INVERT_CC(cc))) {
+            v->source &= ~RunTime_MaybeNull;
+            return true;
+        }
+        /* NULL owns nothing */
+        v->source = remove_rtref(v->source);
+        SETLOCAL(i, psyco_vi_Zero());
+        v = GETLOCAL(i);
+    }
+    if (psyco_knowntobe(v, 0)) {
+        ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
+                                LE_MSG_LOCAL_UNBOUND,
+                                le_code_local_name(co, i));
+        return false;
+    }
+    return true;
+}
+
 /* ceval.c DELETE_GLOBAL */
 static int
 cimpl_delete_global(PyObject *name, PyObject *globals)
@@ -3625,18 +3656,22 @@ special_lookup(PyObject *o, _Py_Identifier *id)
 }
 
 /* ceval.c SETUP_WITH up to the block setup: out[0] gets the bound
-   __exit__, out[1] __enter__'s result. Unlike ceval, mgr stays on the stack
-   (one reference more) while __enter__ runs. */
+   __exit__, out[1] __enter__'s result, the exit method looked up first
+   where 'exit_first' says. Unlike ceval, mgr stays on the stack (one
+   reference more) while __enter__ runs. */
 static int
-cimpl_setup_with(PyObject *mgr, PyObject *out[])
+with_enter(PyObject *mgr, _Py_Identifier *enter_id, _Py_Identifier *exit_id,
+           bool exit_first, PyObject *out[])
 {
-    _Py_IDENTIFIER(__exit__);
-    _Py_IDENTIFIER(__enter__);
-    PyObject *enter = special_lookup(mgr, &PyId___enter__), *exit, *res;
-    if (enter == NULL)
+    PyObject *enter = NULL, *exit = NULL, *res;
+    if (exit_first && (exit = special_lookup(mgr, exit_id)) == NULL)
         return -1;
-    exit = special_lookup(mgr, &PyId___exit__);
-    if (exit == NULL) {
+    enter = special_lookup(mgr, enter_id);
+    if (enter == NULL) {
+        Py_XDECREF(exit);
+        return -1;
+    }
+    if (!exit_first && (exit = special_lookup(mgr, exit_id)) == NULL) {
         Py_DECREF(enter);
         return -1;
     }
@@ -3649,6 +3684,25 @@ cimpl_setup_with(PyObject *mgr, PyObject *out[])
     out[0] = exit;
     out[1] = res;
     return 0;
+}
+
+static int
+cimpl_setup_with(PyObject *mgr, PyObject *out[])
+{
+    _Py_IDENTIFIER(__exit__);
+    _Py_IDENTIFIER(__enter__);
+    return with_enter(mgr, &PyId___enter__, &PyId___exit__, false, out);
+}
+
+/* ceval.c BEFORE_ASYNC_WITH, as cimpl_setup_with: out[1] is what
+   __aenter__ returns, to be awaited */
+static int
+cimpl_before_async_with(PyObject *mgr, PyObject *out[])
+{
+    _Py_IDENTIFIER(__aexit__);
+    _Py_IDENTIFIER(__aenter__);
+    return with_enter(mgr, &PyId___aenter__, &PyId___aexit__,
+                      LE_HAS_AWITH_EXIT_FIRST, out);
 }
 
 #if LE_HAS_EXCEPTION_TABLE && LE_HAS_OPCODE_BEFORE_WITH
@@ -4748,13 +4802,9 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
         case LOAD_FAST:
         case LOAD_FAST_CHECK: {
             vinfo_t *value;
-            value = GETLOCAL(oparg);
-            if (psyco_knowntobe(value, 0)) {
-                ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
-                                        LE_MSG_LOCAL_UNBOUND,
-                                        le_code_local_name(co, oparg));
+            if (!local_bound(po, oparg))
                 break;
-            }
+            value = GETLOCAL(oparg);
             vinfo_incref(value);
             PUSH(value);
             goto fine;
@@ -4820,15 +4870,8 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
            bits */
         case LOAD_FAST_LOAD_FAST: {
             int first = oparg >> 4, second = oparg & 15;
-            int unbound = psyco_knowntobe(GETLOCAL(first), 0)    ? first
-                          : psyco_knowntobe(GETLOCAL(second), 0) ? second
-                                                                 : -1;
-            if (unbound >= 0) {
-                ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
-                                        LE_MSG_LOCAL_UNBOUND,
-                                        le_code_local_name(co, unbound));
+            if (!local_bound(po, first) || !local_bound(po, second))
                 break;
-            }
             vinfo_incref(GETLOCAL(first));
             PUSH(GETLOCAL(first));
             vinfo_incref(GETLOCAL(second));
@@ -4842,6 +4885,8 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
                 break;
             SETLOCAL(oparg >> 4, value);
             POP(value);
+            if (!local_bound(po, oparg & 15))
+                break;
             value = GETLOCAL(oparg & 15);
             vinfo_incref(value);
             PUSH(value);
@@ -4954,16 +4999,10 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
 
         case DELETE_FAST: {
-            vinfo_t *v;
-            v = GETLOCAL(oparg);
-            if (!psyco_knowntobe(v, 0)) {
-                SETLOCAL(oparg, psyco_vi_Zero());
-                goto fine;
-            }
-            ct_format_exc_check_arg(po, PyExc_UnboundLocalError,
-                                    LE_MSG_LOCAL_UNBOUND,
-                                    le_code_local_name(co, oparg));
-            break;
+            if (!local_bound(po, oparg))
+                break;
+            SETLOCAL(oparg, psyco_vi_Zero());
+            goto fine;
         }
 
         case DELETE_DEREF: {
@@ -6734,11 +6773,38 @@ is_iterable_coroutine(PyObject *o)
             CO_ITERABLE_COROUTINE);
 }
 
-/* GET_AWAITABLE outside async with: what awaiting 'o' iterates, a new
-   reference, as _PyCoro_GetAwaitableIter (not exported) makes it and
-   ceval checks it */
+/* which await GET_AWAITABLE at 'at' (with argument 'oparg') is, for its
+   error, as ceval's format_awaitable_error tells: 1 that of __aenter__'s
+   result, 2 that of __aexit__'s, 0 another */
+static int
+awaitable_kind(le_code_t c, int at, int oparg)
+{
+#if LE_HAS_AWAIT_ERROR_BY_ARG
+    (void)c;
+    (void)at;
+    return oparg;
+#else
+    int prev = at >= LE_UNIT ? le_op(c, at - LE_UNIT) : -1;
+    (void)oparg;
+    if (prev == BEFORE_ASYNC_WITH)
+        return 1;
+#if LE_HAS_OPCODE_WITH_CLEANUP_START
+    return prev == WITH_CLEANUP_START ? 2 : 0;
+#else
+    if (prev == WITH_EXCEPT_START ||
+        (prev == CALL_FUNCTION && at >= 2 * LE_UNIT &&
+         le_op(c, at - 2 * LE_UNIT) == DUP_TOP))
+        return 2;
+    return 0;
+#endif
+#endif
+}
+
+/* GET_AWAITABLE: what awaiting 'o' iterates, a new reference, as
+   _PyCoro_GetAwaitableIter (not exported) makes it and ceval checks it;
+   'kind' as awaitable_kind gives it */
 static PyObject *
-cimpl_get_awaitable(PyObject *o)
+cimpl_get_awaitable(PyObject *o, long kind)
 {
     PyTypeObject *t = Py_TYPE(o);
     unaryfunc getter;
@@ -6753,7 +6819,11 @@ cimpl_get_awaitable(PyObject *o)
     }
     getter = t->tp_as_async != NULL ? t->tp_as_async->am_await : NULL;
     if (getter == NULL) {
-        PyErr_Format(PyExc_TypeError, LE_MSG_AWAIT_NOT_AWAITABLE, t->tp_name);
+        PyErr_Format(PyExc_TypeError,
+                     kind == 1   ? LE_MSG_AWITH_ENTER_NOT_AWAITABLE
+                     : kind == 2 ? LE_MSG_AWITH_EXIT_NOT_AWAITABLE
+                                 : LE_MSG_AWAIT_NOT_AWAITABLE,
+                     t->tp_name);
         return NULL;
     }
     res = getter(o);
@@ -7139,8 +7209,10 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                YIELD_FROM may run its body as a call */
             if (PsycoGenexpr_Check(TOP()))
                 goto fine;
-            x = psyco_generic_call(po, cimpl_get_awaitable,
-                                   CfCommonNewRefPyObject, "v", TOP());
+            x = psyco_generic_call(
+                po, cimpl_get_awaitable, CfCommonNewRefPyObject, "vl", TOP(),
+                (long)awaitable_kind(le_code(po->pr.co), po->pr.next_instr,
+                                     oparg));
             if (x == NULL)
                 break;
             POP_DECREF();
@@ -7662,6 +7734,29 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+        /* async with: as SETUP_WITH, in two steps around the await of
+           __aenter__'s result, whose result the block goes under */
+        case BEFORE_ASYNC_WITH: {
+            vinfo_array_t *array = array_new(2);
+            if (!psyco_generic_call(po, cimpl_before_async_with,
+                                    CfCommonIntZeroOk, "vA", TOP(), array)) {
+                array_release(array);
+                break;
+            }
+            POP_DECREF();
+            PUSH(array->items[0]);
+            PUSH(array->items[1]);
+            array_release(array);
+            goto fine;
+        }
+
+        case SETUP_ASYNC_WITH:
+            POP(v);
+            block_setup(po, SETUP_FINALLY,
+                        INSTR_OFFSET() + LE_JUMP_BYTES(oparg), STACK_LEVEL());
+            PUSH(v);
+            goto fine;
+
         case WITH_CLEANUP_START: {
             le_block_t *b = po->pr.iblock > 0
                                 ? &po->pr.blockstack[(int)po->pr.iblock - 1]
@@ -8112,7 +8207,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 if (!psyco_limit_nested_weight(po, &po->vlocals, NWI_NORMAL,
                                                NESTED_WEIGHT_END))
                     break;
-                psyco_forget_dead_vars(po, &mp->entries);
+                psyco_forget_dead_vars(po, &mp->entries, true);
                 code1 = psyco_compile(po, mp, true);
                 if (code1 != NULL)
                     goto finished;
@@ -8359,8 +8454,16 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 array_release(array);
                 JUMPTO(handler);
                 SAVE_NEXT_INSTR(next_instr);
-                /* a callee that raised may have started tracing */
-                po->pr.resume_pending = 1;
+                /* a coroutine's handler that can await runs in ceval,
+                   which suspends the coroutine in it with its handled
+                   exception (mergepoints.c:handler_yields_kept) */
+                if (psyco_handler_awaits(po->pr.co, handler)) {
+                    extra_assert(psyco_can_go_interpreted(po));
+                    po->pr.go_interpreted = 1;
+                }
+                else
+                    /* a callee that raised may have started tracing */
+                    po->pr.resume_pending = 1;
                 break;
             }
             if (b->b_type == SETUP_FINALLY) {

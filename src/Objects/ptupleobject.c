@@ -236,30 +236,9 @@ tupleconcat(PsycoObject *po, vinfo_t *a, vinfo_t *bb)
     if (alen + blen == 0) {
         return made_tuple(po, tuple_get_empty(po));
     }
+#endif
     return made_tuple(po,
                       psyco_generic_call(po, concat, CF_TUPLE, "vv", a, bb));
-#else
-    {
-        vinfo_t *np, *v;
-        int i;
-        if (alen + blen > CT_TUPLE_LOAD_SIZE_LIMIT) {
-            return made_tuple(
-                po, psyco_generic_call(po, concat, CF_TUPLE, "vv", a, bb));
-        }
-        np = PsycoTuple_New(alen + blen, NULL);
-        for (i = 0; i < alen; i++) {
-            v = PsycoTuple_GET_ITEM(a, i);
-            vinfo_incref(v);
-            PsycoTuple_GET_ITEM(np, i) = v;
-        }
-        for (i = 0; i < blen; i++) {
-            v = PsycoTuple_GET_ITEM(bb, i);
-            vinfo_incref(v);
-            PsycoTuple_GET_ITEM(np, alen + i) = v;
-        }
-        return np;
-    }
-#endif
 }
 
 /* the types of the items of a, a tuple of n known items */
@@ -360,11 +339,6 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
             po, psyco_generic_call(po, repeat, CF_TUPLE, "vv", a, n));
     }
     n_k = (Py_ssize_t)CompileTime_Get(n->source)->value;
-#if !LE_HAS_TUPLE_GET_EMPTY
-    if (n_k < 0) {
-        n_k = 0;
-    }
-#endif
     len = PsycoTuple_Load(a);
     if (len < 0 || len > 16) {
         return made_tuple(
@@ -379,35 +353,19 @@ tuplerepeat(PsycoObject *po, vinfo_t *a, vinfo_t *n)
             vinfo_incref(a);
             return a;
         }
-#if !LE_HAS_TUPLE_GET_EMPTY
-        if (len == 0) {
-            return PsycoTuple_New(0, NULL);
-        }
-#endif
     }
-#if LE_HAS_TUPLE_GET_EMPTY
     if (len == 0 || n_k <= 0) {
+#if LE_HAS_TUPLE_GET_EMPTY
         return made_tuple(po, tuple_get_empty(po));
-    }
+#else
+        return made_tuple(
+            po, psyco_generic_call(po, repeat, CF_TUPLE, "vl", a, (long)n_k));
 #endif
+    }
     if (n_k > PY_SSIZE_T_MAX / len) {
         return made_tuple(
             po, psyco_generic_call(po, PyErr_NoMemory, CF_TUPLE, ""));
     }
-#if !LE_HAS_TUPLE_GET_EMPTY
-    if (len * n_k <= CT_TUPLE_LOAD_SIZE_LIMIT && n_k <= 16) {
-        vinfo_t *np = PsycoTuple_New(len * n_k, NULL);
-        Py_ssize_t i, j, p = 0;
-        for (i = 0; i < n_k; i++) {
-            for (j = 0; j < len; j++) {
-                PsycoTuple_GET_ITEM(np, p) = PsycoTuple_GET_ITEM(a, j);
-                vinfo_incref(PsycoTuple_GET_ITEM(np, p));
-                p++;
-            }
-        }
-        return np;
-    }
-#endif
     return made_tuple(
         po, psyco_generic_call(po, repeat, CF_TUPLE, "vl", a, (long)n_k));
 }
@@ -416,10 +374,6 @@ static vinfo_t *
 tuplerichcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
 {
     PyTypeObject *tp_v, *tp_w;
-    vinfo_t *k;
-    condition_code_t cc;
-    Py_ssize_t i;
-    int vlen, wlen;
 
     tp_v = Psyco_NeedType(po, v);
     if (tp_v == NULL) {
@@ -435,67 +389,9 @@ tuplerichcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
     if ((tp_w->tp_flags & Py_TPFLAGS_TUPLE_SUBCLASS) == 0) {
         return psyco_vi_NotImplemented();
     }
-    vlen = PsycoTuple_Load(v);
-    wlen = vlen < 0 || vlen > 16 ? -1 : PsycoTuple_Load(w);
-    if (wlen < 0 || wlen > 16) {
-        return psyco_generic_call(po, PyTuple_Type.tp_richcompare,
-                                  CfCommonCheckNotImplemented, "vvl", v, w,
-                                  (long)op);
-    }
-    if (!need_item_types(po, v, vlen) || !need_item_types(po, w, wlen)) {
-        return NULL;
-    }
-    for (i = 0; i < vlen && i < wlen; i++) {
-        k = PsycoObject_RichCompareBool(po, PsycoTuple_GET_ITEM(v, i),
-                                        PsycoTuple_GET_ITEM(w, i), Py_EQ);
-        if (k == NULL) {
-            return NULL;
-        }
-        cc = integer_non_null(po, k);
-        if (cc == CC_ERROR) {
-            vinfo_decref(k, po);
-            return NULL;
-        }
-        if (!runtime_condition_t(po, cc)) {
-            vinfo_decref(k, po);
-            break;
-        }
-        vinfo_decref(k, po);
-    }
-    if (i >= vlen || i >= wlen) {
-        bool res;
-        switch (op) {
-            case Py_EQ:
-                res = vlen == wlen;
-                break;
-            case Py_NE:
-                res = vlen != wlen;
-                break;
-            case Py_LT:
-                res = vlen < wlen;
-                break;
-            case Py_GT:
-                res = vlen > wlen;
-                break;
-            case Py_LE:
-                res = vlen <= wlen;
-                break;
-            case Py_GE:
-                res = vlen >= wlen;
-                break;
-            default:
-                abort();
-        }
-        return res ? psyco_vi_Py_True() : psyco_vi_Py_False();
-    }
-    if (op == Py_EQ) {
-        return psyco_vi_Py_False();
-    }
-    if (op == Py_NE) {
-        return psyco_vi_Py_True();
-    }
-    return PsycoObject_RichCompare(po, PsycoTuple_GET_ITEM(v, i),
-                                   PsycoTuple_GET_ITEM(w, i), op);
+    return psyco_generic_call(po, PyTuple_Type.tp_richcompare,
+                              CfCommonCheckNotImplemented, "vvl", v, w,
+                              (long)op);
 }
 
 static void
