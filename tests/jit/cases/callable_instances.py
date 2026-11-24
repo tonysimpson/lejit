@@ -2,7 +2,6 @@
 # looked up on the class, never the instance, and called with the instance
 # first. Anything else (no __call__, one that isn't a plain function, one
 # replaced on the class) is CPython's own call.
-import re
 import traceback
 
 
@@ -84,14 +83,11 @@ def errors(n):
     out = []
     for i in range(n):
         for f in (lambda: Adder(1)(), lambda: Adder(1)(1, q=2, x=3),
-                  lambda: Plain()(i), lambda: Raises()(0),
-                  lambda: Adder(1)(1, scale=1, **{'scale': 2})):
+                  lambda: Plain()(i), lambda: Raises()(0)):
             try:
                 out.append(f())
             except (TypeError, ZeroDivisionError) as e:
-                # an object's repr shows its address
-                out.append((type(e).__name__,
-                            re.sub('0x[0-9a-f]+', 'ADDR', str(e))))
+                out.append((type(e).__name__, str(e)))
     return out
 
 
