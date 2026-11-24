@@ -193,6 +193,49 @@ def kept_after_error(n):
     return out
 
 
+class Holder:
+    def __init__(self):
+        self.w = None
+
+
+def nothing():                         # not inlined: a loop
+    for i in ():
+        pass
+
+
+def leave_by_jump(h, f):               # inlined: runs Python, then jumps
+    f()                                # to a return, popping h.w
+    if h.w is not None:
+        return 2
+    return 1
+
+
+def leave_many(h, n):
+    t = 0
+    for i in range(n):
+        t += leave_by_jump(h, nothing)
+    return t
+
+
+def ask_frame():
+    return sys._getframe(1)
+
+
+def keep_then_call(h, ask, run):       # inlined: its frame kept during run
+    f = ask()
+    return run(h, 3), f.f_code.co_name
+
+
+def kept_during_jump_exit(n):
+    # leave_many is compiled while no inlined frame's frame object is kept,
+    # then runs while one is: that branch is compiled by replaying from the
+    # state leave_by_jump's jump left, which must give the first compile's
+    h = Holder()
+    first = [leave_many(h, 3) for i in range(n)]
+    later = [keep_then_call(h, ask_frame, leave_many) for i in range(n)]
+    return first, later
+
+
 CASES = [
     ('caller', [(3,)], {}),
     ('property_caller', [(3,)], {}),
@@ -203,4 +246,5 @@ CASES = [
     ('parent_local_written', [(3,)], {}),
     ('locals_seen', [(3,)], {}),
     ('kept_after_error', [(3,)], {}),
+    ('kept_during_jump_exit', [(3,)], {}),
 ]
