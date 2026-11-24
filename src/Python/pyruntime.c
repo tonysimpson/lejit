@@ -196,6 +196,11 @@ le_monitoring_version_address(void)
     return &LE_MONITORING_VERSION(PyInterpreterState_Main());
 }
 
+/* where the interpreter's tools table is (mechanisms/tracing.h) */
+const long le_monitors_tools_at = offsetof(PyInterpreterState, monitors.tools);
+const long le_monitors_tools_size =
+    sizeof(((PyInterpreterState *)0)->monitors.tools);
+
 /* sys.monitoring has an event on, for any tool, in the interpreter: its
    global monitors (sys.settrace and sys.setprofile are tools too). Events
    set on one code object (set_local_events) are not seen. */
@@ -303,15 +308,6 @@ int
 le_eval_breaker_handler(void)
 {
     return _Py_HandlePending(PyThreadState_GET());
-}
-
-/* whether an event is flagged for the thread (eval_hook.c:le_gen_to_run) */
-int
-le_eval_breaker_pending(void)
-{
-    return (_Py_atomic_load_uintptr_relaxed(
-                &PyThreadState_GET()->eval_breaker) &
-            _PY_EVAL_EVENTS_MASK) != 0;
 }
 
 /* The same test before a frame's first instruction, for compiled code
@@ -742,4 +738,11 @@ le_ref_tracer_word(void)
     }
     return found > 0 ? (void *)word : NULL;
 }
+#endif
+
+#if LE_HAS_C_STACK_SOFT_LIMIT
+#include "internal/pycore_tstate.h"
+/* where a thread's C stack limit is (mechanisms/recursion.h) */
+const long le_c_stack_soft_limit_at =
+    offsetof(_PyThreadStateImpl, c_stack_soft_limit);
 #endif

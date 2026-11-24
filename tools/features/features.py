@@ -693,6 +693,27 @@ def frame_funcobj(s):
     return _field(s, '_PyInterpreterFrame', 'f_funcobj', missing=False)
 
 
+def c_stack_soft_limit(s):
+    """a thread's C calls are checked by its stack pointer alone, against
+    c_stack_soft_limit: Py_EnterRecursiveCall's test fails only below it,
+    and Py_LeaveRecursiveCall does nothing"""
+    has, where = _field(s, '_PyThreadStateImpl', 'c_stack_soft_limit',
+                        missing=False)
+    if not has:
+        return False, where
+    for name, empty in (('_Py_MakeRecCheck', False),
+                        ('_Py_LeaveRecursiveCall', True)):
+        defs = s.definitions(name)
+        if not defs:
+            raise Unanswered('Include, every header: no %s' % name)
+        for path, body in defs:
+            texts = _texts(body)
+            if (not texts) != empty or \
+                    not empty and 'c_stack_soft_limit' not in texts:
+                return False, '%s:%s' % (path, name)
+    return True, where + ', _Py_MakeRecCheck, _Py_LeaveRecursiveCall'
+
+
 def c_recursion_remaining(s):
     """a thread counts down the C calls it may still make, in
     c_recursion_remaining, not only by its stack pointer"""
@@ -1357,6 +1378,7 @@ STATE = [
     ('THREAD_LOCAL_TSTATE', thread_local_tstate),
     ('PY_RECURSION_REMAINING', py_recursion_remaining),
     ('C_RECURSION_REMAINING', c_recursion_remaining),
+    ('C_STACK_SOFT_LIMIT', c_stack_soft_limit),
     ('CURRENT_EXCEPTION', current_exception),
     ('EVAL_BREAKER_GC', eval_breaker_gc),
     ('EVAL_FRAME_POPS', eval_frame_pops),

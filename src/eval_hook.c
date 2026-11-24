@@ -13,12 +13,17 @@
 extern int
 le_eval_breaker_at_entry(PyCodeObject *co); /* pyruntime.c */
 #if LE_HAS_TSTATE_EVAL_BREAKER
-extern int
-le_eval_breaker_pending(void); /* pyruntime.c */
+/* whether an event is flagged for the thread: its eval_breaker's low byte
+   (pyruntime.c:le_eval_breaker_handler) */
+static inline int
+le_eval_breaker_pending(PyThreadState *ts)
+{
+    return (_Py_atomic_load_uintptr_relaxed(&ts->eval_breaker) & 0xff) != 0;
+}
 #else
 extern void *
 le_eval_breaker_address(void); /* pyruntime.c */
-#define le_eval_breaker_pending() (*(int *)le_eval_breaker_address() != 0)
+#define le_eval_breaker_pending(ts) (*(int *)le_eval_breaker_address() != 0)
 #endif
 
 #if LE_HAS_EVAL_FRAME_POPS
@@ -364,7 +369,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
        left to ceval */
     if (le_tracing_now(tstate) || le_frame_locals(f) != NULL ||
         le_code_nlocalsplus(co) + co->co_stacksize > LE_FRAME_WORDS_MAX ||
-        le_eval_breaker_pending())
+        le_eval_breaker_pending(tstate))
         return NULL;
     if (x == NULL && (x = le_code_extra(co)) == NULL) {
         PyErr_Clear(); /* out of memory */
@@ -469,7 +474,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
        the frame, whose exception the frame's own handlers may catch, is
        left to ceval */
     if (le_tracing_now(tstate) || le_frame_locals(f) != NULL ||
-        nplus + nstack > LE_GEN_WORDS || le_eval_breaker_pending())
+        nplus + nstack > LE_GEN_WORDS || le_eval_breaker_pending(tstate))
         return NULL;
     if (x == NULL && (x = le_code_extra(co)) == NULL) {
         PyErr_Clear(); /* out of memory */
