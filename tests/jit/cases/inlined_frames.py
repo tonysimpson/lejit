@@ -177,17 +177,19 @@ def relay_fail(get, box):             # inlined: left by its callee's error
 
 
 def kept_after_error(n):
-    # the frame outlives its code, which left it by an exception, and the
-    # next call has a frame of its own
+    # the frame outlives its code, which left it by an exception: it is
+    # the traceback's, with the locals as they ended, and the next call has
+    # a frame of its own
     out = []
     for i in range(n):
-        box = []
+        box, tbs = [], []
         for j in range(2):
             try:
                 relay_fail(grab_then_fail, box)
-            except ZeroDivisionError:
-                pass
-        out.append((box[0].f_code.co_name, box[0] is box[1]))
+            except ZeroDivisionError as e:
+                tbs.append(e.__traceback__.tb_next.tb_frame)
+        out.append((box[0].f_code.co_name, box[0] is box[1],
+                    box[0] is tbs[0], box[0].f_locals.get('x')))
     return out
 
 

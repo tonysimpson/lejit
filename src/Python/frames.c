@@ -1403,7 +1403,11 @@ psyco_innermost_activation(PyCodeObject *co)
     PyFrameObject *real, *g;
     stack_frame_info_t **slot;
     activation_t *a;
-    if ((slot = innermost_slot(&real)) == NULL)
+    slot = innermost_slot(&real);
+    /* the frame inlined in it, until its code leaves it */
+    if ((a = inline_kept_at(slot, real, co)) != NULL)
+        return a->frame;
+    if (slot == NULL)
         return NULL;
     /* a generator's frame stands for its body's call from the start */
     if (gen_frame_at(slot) != NULL && (*slot)->co == co &&

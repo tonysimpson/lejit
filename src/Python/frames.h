@@ -40,8 +40,8 @@ psyco_get_globals(void);
    gives the call's real return address */
 EXTERNFN code_t *
 psyco_activation_returned(long *sp);
-/* the frame object kept for the innermost compiled frame, if it is a
-   compiled callee of code 'co' (borrowed), else NULL */
+/* the frame object kept for the innermost compiled frame, or the frame
+   inlined in it, if it is of code 'co' (borrowed), else NULL */
 EXTERNFN PyFrameObject *
 psyco_innermost_activation(PyCodeObject *co);
 /* how many frame objects of inlined frames are kept: compiled code
