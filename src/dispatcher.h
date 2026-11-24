@@ -264,6 +264,8 @@ psyco_ge_unused_var(global_entries_t *ge, int num)
 
 EXTERNFN void
 psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix);
+EXTERNFN bool
+psyco_make_dead_virtuals_real(PsycoObject *po, mergepoint_t *mp);
 
 /*****************************************************************/
 /***   Unification                                             ***/

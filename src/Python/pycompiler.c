@@ -8774,11 +8774,12 @@ psyco_pycompiler_mainloop(PsycoObject *po)
            POP_JUMP_IF_xxx. With the pop done the state is the target's, so its
            merge point (often a loop head, for a jump back) is checked before
            the first instruction; otherwise the path would be compiled afresh
-           up to the next merge point, every back-edge a new copy of the loop
-         */
+           up to the next merge point, every back-edge a new copy of the loop.
+           A replay checks it too, as its original compile did: making dead
+           virtual locals real there can emit a respawn point */
         POP_DECREF();
         po->pr.next_instr &= ~NEXT_INSTR_POP;
-        at_jump_target = !is_respawning(po);
+        at_jump_target = 1;
     }
 
     while (1) {
@@ -8963,8 +8964,11 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
             /* mark merge points via a call to psyco_compile() */
             if (mp->bytecode_position == next_instr) {
-                extra_assert(!is_respawning(po));
                 SAVE_NEXT_INSTR(next_instr);
+                /* the last place a replay can stop in this block */
+                if (!psyco_make_dead_virtuals_real(po, mp))
+                    break;
+                extra_assert(!is_respawning(po));
                 /* simplify the po->vlocals array */
                 if (!psyco_limit_nested_weight(po, &po->vlocals, NWI_NORMAL,
                                                NESTED_WEIGHT_END))
