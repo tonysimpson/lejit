@@ -3,7 +3,7 @@
 # blocks live in its frame between resumes, as ceval leaves them. Each case
 # drives generators and returns what CPython shows of them; compiled()
 # says whether a generator's body was compiled, where LeJIT compiles them.
-import _thread, gc, inspect, itertools, sys
+import _thread, gc, inspect, itertools, subprocess, sys, types
 
 
 def work(x):
@@ -773,6 +773,35 @@ def readied_late(n):
     return out, compiled(line_starts)
 
 
+# a generator expression made over an object that isn't an iterator,
+# as its .0: CPython's FOR_ITER raises TypeError where it tests the slot,
+# and crashes where it doesn't, so a child tells which
+NOT_ITERATOR_PROBE = (
+    'import types\n'
+    'f = types.FunctionType((x for x in ()).gi_code, {})\n'
+    'try:\n    list(f(42))\nexcept TypeError:\n    pass\n')
+FOR_ITER_TESTS_SLOT = subprocess.run(
+    [sys.executable, '-c', NOT_ITERATOR_PROBE],
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def genexpr_over(n):
+    return (x * 2 for x in range(n))
+
+
+def genexpr_not_iterator(n):
+    if not FOR_ITER_TESTS_SLOT:
+        return None
+    f = types.FunctionType(genexpr_over(0).gi_code, {})
+    out = []
+    for obj in (range(n), [1, 2], 42, iter(range(n))):
+        try:
+            out.append(list(f(obj)))
+        except TypeError as e:
+            out.append(str(e))
+    return out
+
+
 CASES = [
     ('resuming', [(3,), (0,)], {}),
     ('local_masks', [(3,)], {}),
@@ -796,4 +825,5 @@ CASES = [
     ('for_recursion_limit', [(0,)], {}),
     ('for_traced', [(3,)], {}),
     ('for_exception_state', [(3,)], {}),
+    ('genexpr_not_iterator', [(3,)], {}),
 ]

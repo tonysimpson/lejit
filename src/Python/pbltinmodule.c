@@ -26,6 +26,9 @@ static PyCFunction cfunc_builtin_id;
 static PyCFunction cfunc_builtin_isinstance;
 static PyCFunction cfunc_builtin_issubclass;
 static PyCFunction cfunc_builtin_len;
+#if LE_RESUMES_GENERATORS_DIRECTLY
+static PyCFunction cfunc_builtin_next;
+#endif
 static PyCFunction cfunc_builtin_pow;
 static PyCFunction cfunc_builtin_setattr;
 
@@ -230,6 +233,25 @@ builtin_len(PsycoObject *po, vinfo_t *module, vinfo_t *obj)
     return x;
 }
 
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* next(g) of a generator is its step, as a compiled for loop's
+   (piterobject.c:pgen_iternext); next() of anything else, or with a
+   default, is CPython's */
+static vinfo_t *
+builtin_next(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
+{
+    if (nargs_between(vargs, 1, 1) == 1) {
+        PyTypeObject *tp = Psyco_NeedType(po, ARG(0));
+        if (tp == NULL)
+            return NULL;
+        if (tp == &PyGen_Type)
+            return PsycoIter_Next(po, ARG(0));
+    }
+    return PsycoCFunction_CallFast(po, cfunc_builtin_next, METH_FASTCALL, self,
+                                   vargs);
+}
+#endif
+
 #if LE_HAS_POW_KEYWORDS
 #define POW_FLAGS (METH_FASTCALL | METH_KEYWORDS)
 #else
@@ -290,6 +312,10 @@ gen_bltinmodule_init(PyObject *md)
     cfunc_builtin_issubclass = Psyco_DefineModuleFn(
         md, "issubclass", METH_FASTCALL, &builtin_issubclass);
     cfunc_builtin_len = Psyco_DefineModuleFn(md, "len", METH_O, &builtin_len);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    cfunc_builtin_next =
+        Psyco_DefineModuleFn(md, "next", METH_FASTCALL, &builtin_next);
+#endif
     cfunc_builtin_pow =
         Psyco_DefineModuleFn(md, "pow", POW_FLAGS, &builtin_pow);
     cfunc_builtin_setattr =

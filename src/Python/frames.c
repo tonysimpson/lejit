@@ -340,6 +340,41 @@ psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p)
     if (p->lasti >= 0)
         le_gen_frame_pause(f, p->lasti, p->nstack);
 }
+
+#if LE_HAS_FRAME_STACKREFS
+DEFINEFN PyObject *
+psyco_frame_word_borrow(le_frame_t *f, long k)
+{
+    return LE_FRAME_WORD(f, (int)k);
+}
+
+DEFINEFN PyObject *
+psyco_frame_word_take(le_frame_t *f, long k)
+{
+    return le_frame_word_take(f, (int)k);
+}
+
+/* word k, stored as an object or still a _PyStackRef (one whose tag bits
+   are set, or a plain pointer to an object that isn't immortal, which are
+   the same either way), as a _PyStackRef */
+static void
+word_owned(le_frame_t *f, int k)
+{
+    _PyStackRef r = f->localsplus[k];
+    if (r.bits == 0)
+        f->localsplus[k] = PyStackRef_NULL;
+    else if ((r.bits & Py_TAG_BITS) == 0)
+        le_frame_word_put(f, k, (PyObject *)r.bits);
+}
+
+DEFINEFN void
+psyco_gen_words_own(le_frame_t *f, const le_gen_pause_t *p)
+{
+    int i, nplus = le_code_nlocalsplus(le_frame_code(f));
+    for (i = 0; i < p->ntaken; i++) word_owned(f, p->taken[i]);
+    for (i = 0; i < p->nstack; i++) word_owned(f, nplus + i);
+}
+#endif
 #else
 /* What Python wrote in the locals while the body ran
    (psyco_frame_write_locals) is released as the run ends
@@ -365,24 +400,8 @@ psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
         if (keep != NULL)
             fr->entry_locals = keep;
     }
-#if LE_HAS_INTERPRETER_FRAME
-    le_gen_frame_pause(f, p->lasti, p->nstack);
-#else
     le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
-#endif
     return f;
-}
-#endif
-
-#if LE_HAS_FRAME_STACKREFS
-DEFINEFN void
-psyco_gen_words_own(le_frame_t *f, long nstack)
-{
-    PyObject **words = (PyObject **)f->localsplus;
-    PyCodeObject *co = le_frame_code(f);
-    int i, nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
-    for (i = 0; i < nlocals; i++) le_frame_word_put(f, i, words[i]);
-    for (i = nplus; i < nplus + nstack; i++) le_frame_word_put(f, i, words[i]);
 }
 #endif
 

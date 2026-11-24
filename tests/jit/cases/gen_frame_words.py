@@ -377,6 +377,33 @@ def limits(n):
     return out, compiled(stops_late, nested, self_resuming)
 
 
+
+# next() from compiled code: of a generator, to its end and past it, with
+# a default, of another iterator, and of a generator running it
+def returns_after(n):
+    for i in range(n):
+        yield work(i)
+    return 'done'
+
+
+def nexts(n):
+    g = returns_after(n)
+    out = [next(g) for _ in range(n)]
+    out.append(run(lambda: next(g)))
+    try:
+        next(returns_after(0))
+    except StopIteration as e:
+        out.append(('stop', e.value))
+    out.append(run(lambda: next(g)))
+    out.append(next(g, 'default'))
+    out.append(next(returns_after(1), 'default'))
+    out.append(next(iter([5, 6])))
+    out.append(run(lambda: next(7)))
+    g = self_resuming()
+    next(g)
+    out.append(g.send(g))
+    return out, compiled(returns_after)
+
 CASES = [
     ('store_and_end', [(3,)], {}),
     ('bound_and_not', [(0,)], {}),
@@ -385,4 +412,5 @@ CASES = [
     ('frames_inside', [(3,)], {}),
     ('changed_while_paused', [(2,)], {}),
     ('limits', [(4,)], {}),
+    ('nexts', [(3,)], {}),
 ]
