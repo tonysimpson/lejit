@@ -1384,6 +1384,58 @@ null_tested(PsycoObject *po, vinfo_t *v)
     return 0;
 }
 
+#if LE_HAS_GET_ITER_INDEX
+static int
+cimpl_frame_iterators_real(le_frame_t *f, long nstack)
+{
+    if (le_frame_iterators_real(f, (int)nstack))
+        return 0;
+    PyErr_NoMemory();
+    return -1;
+}
+
+/* Where ceval made or paused the resumed frame, an index (a tagged int)
+   may be above an exact list, tuple, str or bytes on its stack. Compiled
+   code that steps the generator directly (psyfunc.c:gen_send) passes no
+   eval hook to make each such pair an iterator and NULL
+   (le_frame_iterators_real), so the entry does, before any item is taken. */
+static bool
+stack_iterators_real(PsycoObject *po)
+{
+    vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+    vinfo_t *frame = psyco_frame_words_frame(po);
+    int nplus = le_code_nlocalsplus(po->pr.co), nstack = 0, k;
+    while (nstack < po->pr.stack_level &&
+           psyco_frame_word_index(stack_a[nstack]) == nplus + nstack)
+        nstack++;
+    for (k = nstack - 1; k >= 1; k--) {
+        vinfo_t *w = psyco_get_nth_field(po, frame, FRAME_localsplus,
+                                         nplus + k),
+                *mask, *tag;
+        condition_code_t cc;
+        if (w == NULL)
+            return false;
+        mask = vinfo_new(CompileTime_New(Py_TAG_BITS));
+        tag = integer_and(po, w, mask);
+        vinfo_decref(mask, po);
+        vinfo_decref(w, po);
+        if (tag == NULL)
+            return false;
+        cc = integer_cmp_i(po, tag, Py_INT_TAG, Py_EQ);
+        vinfo_decref(tag, po);
+        if (cc == CC_ERROR)
+            return false;
+        if (runtime_condition_f(po, cc))
+            return psyco_generic_call(po, cimpl_frame_iterators_real,
+                                      CfCommonIntZeroOk | CfNoPython, "vl",
+                                      frame, (long)nstack) != NULL;
+    }
+    return true;
+}
+#else
+#define stack_iterators_real(po) true
+#endif
+
 /* the stack items a resumed entry starts with, taken from the frame and
    tested before any instruction reads them: a NULL one (PUSH_NULL's) must
    be the NULL constant */
@@ -1392,6 +1444,8 @@ stack_words_taken(PsycoObject *po)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int k, bound;
+    if (!stack_iterators_real(po))
+        return false;
     for (k = 0; k < po->pr.stack_level; k++) {
         vinfo_t *v = stack_a[k];
         if (psyco_frame_word_index(v) < 0)

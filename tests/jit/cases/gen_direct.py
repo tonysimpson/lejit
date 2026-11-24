@@ -247,6 +247,32 @@ def ceval_steps(n):
     return out
 
 
+# a generator expression over a list, tuple, str or bytes, which ceval
+# may leave itself with an index above it on the frame's stack (as it
+# makes the generator, or at a step it runs, here traced), then stepped
+def made(seq):
+    return (work(x) for x in seq)
+
+
+def _quiet(frame, event, arg):
+    return None
+
+
+def over_sequences(n):
+    out = []
+    for seq in ([1, 2, 3], (4, 5, 6), 'abc', b'xyz'):
+        out.append(next(made(seq)))
+        out.append(next_all(made(seq)))
+        g = made(seq)
+        sys.settrace(_quiet)
+        try:
+            out.append(next(g))
+        finally:
+            sys.settrace(None)
+        out.append(next_all(g))
+    return out
+
+
 # tracing and profiling switched on while the body runs
 EVENTS = []
 
@@ -540,6 +566,7 @@ CASES = [
     ('running', [(0,)], {}),
     ('between', [(3,)], {}),
     ('ceval_steps', [(3,)], {}),
+    ('over_sequences', [(0,)], {}),
     ('tracing', [(3,)], {}),
     ('exception_state', [(0,)], {}),
     ('recursion_limit', [(0,)], {}),
