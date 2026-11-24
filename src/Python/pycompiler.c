@@ -4388,6 +4388,37 @@ fusion_prev(le_code_t c, int *p)
     return in;
 }
 
+/* A subscript by a slice whose bounds are all constants is a constant
+   slice object where the compiler folds them; for a container whose
+   slicing compiled code does itself (it never hands the slice to Python
+   code, so nothing can tell the object from another equal one), the
+   subscript becomes the slice built from those constants, as BINARY_SLICE
+   and STORE_SLICE make it. 'sub' is borrowed; returns a new reference. */
+static vinfo_t *
+unfolded_slice(vinfo_t *container, vinfo_t *sub)
+{
+    PyTypeObject *tp = Psyco_KnownType(container);
+    PySliceObject *s;
+    vinfo_t *parts[3], *slice;
+    int i;
+    if (!is_compiletime(sub->source) ||
+        Py_TYPE((PyObject *)CompileTime_Get(sub->source)->value) !=
+            &PySlice_Type ||
+        (tp != &PyList_Type && tp != &PyTuple_Type && tp != &PyUnicode_Type &&
+         tp != &PyBytes_Type)) {
+        vinfo_incref(sub);
+        return sub;
+    }
+    s = (PySliceObject *)CompileTime_Get(sub->source)->value;
+    parts[0] = vinfo_new(CompileTime_New((long)s->start));
+    parts[1] = vinfo_new(CompileTime_New((long)s->stop));
+    parts[2] =
+        s->step == Py_None ? NULL : vinfo_new(CompileTime_New((long)s->step));
+    slice = PsycoSlice_New(parts[0], parts[1], parts[2]);
+    for (i = 0; i < 3; i++) vinfo_xdecref(parts[i], NULL);
+    return slice;
+}
+
 /* The STORE_SUBSCR fused with the get at byte offset 'i', or -1, as LeJIT
    instructions (bytecode.h). The forms, d and k local variables, y a
    constant or a local:
@@ -5226,7 +5257,17 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
 
             BINARY_OPCODE(BINARY_SUBTRACT, PsycoNumber_Subtract);
 
-            BINARY_OPCODE(BINARY_SUBSCR, PsycoObject_GetItem);
+        case BINARY_SUBSCR: {
+            vinfo_t *sub = unfolded_slice(NTOP(2), NTOP(1));
+            x = PsycoObject_GetItem(po, NTOP(2), sub);
+            vinfo_decref(sub, po);
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+        }
 
             BINARY_OPCODE(BINARY_LSHIFT, PsycoNumber_Lshift);
 
@@ -5271,19 +5312,17 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
             bool err;
             vinfo_t *sub;
             vinfo_t *v;
-            sub = NTOP(1);
             container = NTOP(2);
             v = NTOP(3);
+            sub = unfolded_slice(container, NTOP(1));
             err = PsycoObject_SetItem(po, container, sub, v);
+            vinfo_decref(sub, po);
             if (!err) {
                 break;
             }
-            POP(sub);
-            POP(container);
-            POP(v);
-            vinfo_decref(sub, po);
-            vinfo_decref(container, po);
-            vinfo_decref(v, po);
+            POP_DECREF();
+            POP_DECREF();
+            POP_DECREF();
             goto fine;
         }
 
@@ -5291,16 +5330,15 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
             vinfo_t *container;
             bool err;
             vinfo_t *sub;
-            sub = NTOP(1);
             container = NTOP(2);
+            sub = unfolded_slice(container, NTOP(1));
             err = PsycoObject_DelItem(po, container, sub);
+            vinfo_decref(sub, po);
             if (!err) {
                 break;
             }
-            POP(sub);
-            POP(container);
-            vinfo_decref(sub, po);
-            vinfo_decref(container, po);
+            POP_DECREF();
+            POP_DECREF();
             goto fine;
         }
 
