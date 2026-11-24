@@ -549,9 +549,11 @@ n_locals_plus(PyCodeObject *co)
    'slot', as new references in values[n_locals_plus(co)], NULL where
    unknown (unbound, dead, or a virtual value not computable here). False
    if the slot doesn't say: the frame is between calls that may run
-   Python, or is inlined. Read while the frame is in that call. */
+   Python. Read while the frame is in that call. With 'own', the frame is
+   inlined in the frame whose slot it is, and its own record says. */
 static bool
-slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
+slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values,
+            int own)
 {
     long v = (long)*slot;
     struct locals_map_s *map;
@@ -561,7 +563,25 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
     int i, n = n_locals_plus(co);
     if (v == -1 || v == FINFO_RETURNING)
         return false;
-    if ((v & 1) != 0) {
+    if (own) {
+        stack_frame_info_t *rec = (stack_frame_info_t *)v, *in;
+        code_t *ip;
+        if ((v & 1) != 0)
+            return false;
+        in = rec->link_stack_depth == 0 ? rec : rec + 1;
+        map = in->own_locals;
+        if ((rec->link_stack_depth != 0 && rec->link_stack_depth != -1) ||
+            in->co != co || map == NULL || map->nvalues != n)
+            return false;
+        /* at a call through C, as for its parent's (below) */
+        if (in == rec && rec->back_locals->retaddr != NULL) {
+            if (!slot_registers(slot, regs, &ip) ||
+                ip != rec->back_locals->retaddr)
+                return false;
+            pregs = regs;
+        }
+    }
+    else if ((v & 1) != 0) {
         /* a note is for the call the frame is in only if that call returns
            where the note's did */
         code_t *ip;
@@ -606,13 +626,13 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
 /* f's locals now, from the compiled frame whose slot is 'slot', if it
    says (slot_locals): an unknown cell or free variable is left as it is */
 static void
-locals_from_slot(PyFrameObject *f, stack_frame_info_t **slot)
+locals_from_slot(PyFrameObject *f, stack_frame_info_t **slot, int own)
 {
     int i, n = n_locals_plus(le_pyframe_code(f));
     PyObject **values = PyMem_Malloc(n * sizeof(PyObject *) + 1);
     if (values == NULL)
         return;
-    if (slot_locals(slot, le_pyframe_code(f), values)) {
+    if (slot_locals(slot, le_pyframe_code(f), values, own)) {
         for (i = le_code_nlocals(le_pyframe_code(f)); i < n; i++)
             if (values[i] == NULL)
                 values[i] = LE_LOCAL_UNKNOWN;
@@ -650,11 +670,29 @@ visit_tag(PyObject *o, void *f)
     return NULL;
 }
 
+/* the slot that says where the locals of the frame of a walk's 'tag'
+   (pvisitframes) are, and whether it is that of the frame it is inlined
+   in (slot_locals) */
+static stack_frame_info_t **
+tag_locals_slot(long tag, int *own)
+{
+    stack_frame_info_t **slot = (stack_frame_info_t **)(tag + ((-tag) & 7));
+    stack_frame_info_t **next;
+    *own = 1;
+    if ((stack_frame_info_t **)tag != slot)
+        return slot;
+    next = psyco_next_stack_frame(slot);
+    *own = next == slot;
+    return next;
+}
+
 static void
 fill_noted_locals(PyFrameObject *f)
 {
     PyObject *found;
+    stack_frame_info_t **slot;
     long tag;
+    int own;
     if (le_frame_is_executing(f) || !le_frame_stack_empty(f) ||
         le_pyframe_code(f)->co_stacksize < 2 ||
         le_pyframe_stack(f)[0] != LOCALS_NOTE)
@@ -666,7 +704,8 @@ fill_noted_locals(PyFrameObject *f)
         return;
     }
     Py_DECREF(found);
-    locals_from_slot(f, psyco_next_stack_frame((stack_frame_info_t **)tag));
+    slot = tag_locals_slot(tag, &own);
+    locals_from_slot(f, slot, own);
 }
 
 PSY_INLINE PyFrameObject *
@@ -1404,23 +1443,17 @@ psyco_emulate_frame(PyObject *o)
             return result;
         result = psyco_build_pyframe(co, globals, PyThreadState_GET());
         le_frame_set_lasti(le_frame_of(result), le_lasti_of(lasti));
-        /* an inlined frame's locals aren't noted: its record's are its
-           parent's */
-        if ((tag & (sizeof(long) - 1)) == 0 &&
-            psyco_next_stack_frame((stack_frame_info_t **)tag) !=
-                (stack_frame_info_t **)tag) {
-            if (((PyCodeObject *)co)->co_stacksize >= 2) {
-                le_pyframe_stack(result)[0] = LOCALS_NOTE;
-                le_pyframe_stack(result)[1] = (PyObject *)tag;
-            }
-            else {
-                if (slot_locals(
-                        psyco_next_stack_frame((stack_frame_info_t **)tag),
-                        (PyCodeObject *)co,
-                        le_frame_args(le_frame_of(result))))
-                    le_frame_words_own(le_frame_of(result),
-                                       n_locals_plus((PyCodeObject *)co));
-            }
+        if (((PyCodeObject *)co)->co_stacksize >= 2) {
+            le_pyframe_stack(result)[0] = LOCALS_NOTE;
+            le_pyframe_stack(result)[1] = (PyObject *)tag;
+        }
+        else {
+            int own;
+            stack_frame_info_t **slot = tag_locals_slot(tag, &own);
+            if (slot_locals(slot, (PyCodeObject *)co,
+                            le_frame_args(le_frame_of(result)), own))
+                le_frame_words_own(le_frame_of(result),
+                                   n_locals_plus((PyCodeObject *)co));
         }
         return result;
     }
@@ -1910,15 +1943,14 @@ frame_sync_locals(PyFrameObject *f)
     if (runs_compiled(f)) {
         fr = psyco_frame_start_get(le_frame_of(f));
         if (fr->psy_code == le_pyframe_code(f))
-            locals_from_slot(f, *fr->psy_frames_start);
+            locals_from_slot(f, *fr->psy_frames_start, 0);
     }
     else if ((a = live_activation(f)) != NULL) {
-        if (!a->inlined)
-            locals_from_slot(f, a->own);
+        locals_from_slot(f, a->inlined ? a->slot : a->own, a->inlined);
     }
     else if (has_catcher_note(f)) {
         if ((own = catcher_slot(f, &tag, &fr)) != NULL)
-            locals_from_slot(f, own);
+            locals_from_slot(f, own, 0);
     }
     else {
         fill_noted_locals(f);
@@ -2513,7 +2545,7 @@ root_copy(PyFrameObject *f)
                             le_frame_globals(le_frame_of(f)),
                             PyThreadState_GET());
     if (!slot_locals(*fr->psy_frames_start, le_pyframe_code(f),
-                     le_frame_args(le_frame_of(c)))) {
+                     le_frame_args(le_frame_of(c)), 0)) {
         Py_DECREF(c);
         return f;
     }

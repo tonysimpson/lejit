@@ -142,6 +142,8 @@ struct stack_frame_info_s {
     /* an inlined frame's own instruction, at a call through C
        (codegen.c:psyco_note_call_site), or -1 */
     int own_lasti;
+    /* an inlined frame's own locals then, or NULL */
+    struct locals_map_s *own_locals;
     /* the function whose coroutine's body this call runs, started by its
        await (psyfunc.c:psyco_coro_start), or NULL */
     PyFunctionObject *coro_func;
@@ -152,12 +154,12 @@ struct stack_frame_info_s {
 };
 
 /* the map of po's locals now, with lasti; while inlining, of the
-   inlined frame's parent's, whose slot the call uses. A
+   inlined frame's parent's, whose slot the call uses, unless 'own'. A
    local only in a register is found there (LM_REG), or with reg_pos at
    the position its register is pushed at for this call
    (psyco_call_psyco). Nothing is emitted. */
 EXTERNFN struct locals_map_s *
-psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos);
+psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own);
 EXTERNVAR struct locals_map_s **psyco_locals_maps;
 EXTERNFN bool
 psyco_locals_map_reads(vinfo_t *vi, int level);

@@ -520,7 +520,10 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     }
     END_CODE
     finfo->back_locals = psyco_locals_map(
-        po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos);
+        po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 0);
+    if (po->pr.is_inlining)
+        finfo[1].own_locals = psyco_locals_map(
+            po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 1);
     BEGIN_CODE
 
     /* add 16 byte aligned stack */
@@ -647,7 +650,10 @@ psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
     }
     END_CODE
     finfo->back_locals = psyco_locals_map(
-        po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos);
+        po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 0);
+    if (po->pr.is_inlining)
+        finfo[1].own_locals = psyco_locals_map(
+            po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos, 1);
     BEGIN_CODE
     /* aligned as psyco_call_psyco's, with the frame's word too */
     stack_correction =

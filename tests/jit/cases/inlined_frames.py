@@ -1,7 +1,7 @@
 # A small body inlined into its compiled caller, seen from what it calls:
-# the inlined frame's line, its caller's locals, and the frame itself, one
-# object for the call, which goes on with what was set on it, must be
-# CPython's.
+# the inlined frame's line, its own and its caller's locals, and the frame
+# itself, one object for the call, which goes on with what was set on it,
+# must be CPython's.
 import sys
 
 
@@ -145,6 +145,27 @@ def parent_local_written(n):
     return out
 
 
+def callers_locals(up=1):
+    return sorted((k, v) for k, v in sys._getframe(up).f_locals.items()
+                  if not callable(v))
+
+
+def own_locals(k, read):               # inlined: its callee reads its locals
+    a = k + 1
+    return read()
+
+
+def own_locals_through_c(k, read):     # the same, through map
+    a = k * 2
+    return [*map(read, (1,))]
+
+
+def locals_seen(n):
+    return [(own_locals(i, callers_locals),
+             own_locals_through_c(i, callers_locals))
+            for i in range(n)]
+
+
 CASES = [
     ('caller', [(3,)], {}),
     ('property_caller', [(3,)], {}),
@@ -153,4 +174,5 @@ CASES = [
     ('across_calls', [(3,)], {}),
     ('local_written', [(3,)], {}),
     ('parent_local_written', [(3,)], {}),
+    ('locals_seen', [(3,)], {}),
 ]
