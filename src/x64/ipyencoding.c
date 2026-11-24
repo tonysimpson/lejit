@@ -81,10 +81,12 @@ DEFINEFN
 code_t *
 decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
 {
-    void *tracer = NULL;
+    /* the tracer word, and what to call while a tracer is set */
+    void *tracer = NULL, *traced = NULL;
 #if LE_HAS_DEALLOC_HOOKS
     if (fn != _Py_Dealloc && (tracer = le_ref_tracer_word()) == NULL)
         fn = _Py_Dealloc;
+    traced = (void *)_Py_Dealloc;
 #endif
     extra_assert(CPY_OFFSET(PyObject, ob_type) < 128);
     extra_assert(CPY_OFFSET(PyTypeObject, tp_dealloc) < 128);
@@ -104,7 +106,7 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
         CALL_SET_ARG_FROM_REG(rg, 0);
         MOV_R_I(REG_TRANSIENT_1, (long)tracer);
         CMP_I8_A(0, REG_TRANSIENT_1);
-        MOV_R_I(REG_TRANSIENT_1, (long)_Py_Dealloc); /* keeps the flags */
+        MOV_R_I(REG_TRANSIENT_1, (long)traced); /* keeps the flags */
         BEGIN_SHORT_COND_JUMP(2, CC_NE);
         if (fn == NULL) {
             MOV_R_O8(REG_TRANSIENT_1, rg, CPY_OFFSET(PyObject, ob_type));
