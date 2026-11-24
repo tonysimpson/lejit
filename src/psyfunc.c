@@ -1281,7 +1281,8 @@ pending_code(vinfo_t *vgen)
    as a new reference. */
 DEFINEFN
 vinfo_t *
-psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
+psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
+                   vinfo_t *comp)
 {
     vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
@@ -1308,6 +1309,13 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
     vmode = vinfo_new(CompileTime_NewSk(sk_new(mode, SkFlagFixed)));
     extra[0] = vmode;
     extra[1] = acc;
+#if LE_HAS_SUM_COMPENSATED
+    if (comp != NULL)
+        vinfo_incref(comp);
+    else
+        comp = psyco_vi_Zero();
+    extra[2] = comp;
+#endif
     if (callee_builtins(po, vfunc, vglobals, &vbuiltins) != 1)
         psyco_fatal_msg("generator builtins");
     /* the defaults are among the arguments (args_with_defaults), and their
@@ -1323,6 +1331,9 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
             break;
         default:
             vinfo_decref(vmode, po);
+#if LE_HAS_SUM_COMPENSATED
+            vinfo_decref(comp, po);
+#endif
             vinfo_decref(vbuiltins, po);
             return NULL;
     }
@@ -1354,6 +1365,9 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
         array_delete(fncall.inputvinfos, po);
     vinfo_xdecref(vts, po);
     vinfo_decref(vmode, po);
+#if LE_HAS_SUM_COMPENSATED
+    vinfo_decref(comp, po);
+#endif
     vinfo_decref(vbuiltins, po);
     return result;
 }

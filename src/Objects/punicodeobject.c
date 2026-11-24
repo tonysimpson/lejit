@@ -1745,7 +1745,7 @@ punicode_join(PsycoObject *po, vinfo_t *self, vinfo_t *x)
                                           CfCommonNewRefPyObject, "l", 0L);
         if (acc == NULL)
             return NULL;
-        list = psyco_call_genexpr(po, x, GENEXPR_LIST, acc);
+        list = psyco_call_genexpr(po, x, GENEXPR_LIST, acc, NULL);
         vinfo_decref(acc, po);
         if (list == NULL)
             return NULL;

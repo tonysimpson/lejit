@@ -36,8 +36,11 @@ psyco_genexpr_fusable(PsycoObject *po, vinfo_t *v);
    -1 with an exception */
 EXTERNFN int
 psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v);
+/* 'comp' is sum()'s compensation where it compensates float sums
+   (pbltinmodule.c:psyco_sum_step), or NULL */
 EXTERNFN vinfo_t *
-psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc);
+psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
+                   vinfo_t *comp);
 /* whether the await being compiled runs the body of the pending coroutine
    'v' as a call, emitting the tests: 1 to, 0 not to, -1 with an
    exception */
