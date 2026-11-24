@@ -11,6 +11,7 @@
 #include "piterobject.h"
 #include "plistobject.h"
 #include "punicodeobject.h"
+#include "../psyfunc.h"
 /* for plist_getitem */
 
 DEFINEFN vinfo_t *
@@ -234,11 +235,11 @@ DEFINEVAR source_virtual_t psyco_computed_seqiter;
 
 #if LE_RESUMES_GENERATORS_DIRECTLY
 /* compiled code's step of a generator resumes it directly
-   (eval_hook.c:le_gen_iternext) */
+   (psyfunc.c:psyco_gen_step) */
 static vinfo_t *
 pgen_iternext(PsycoObject *po, vinfo_t *v)
 {
-    return psyco_generic_call(po, le_gen_iternext, CfCommonIterNext, "v", v);
+    return psyco_gen_step(po, v);
 }
 #endif
 
