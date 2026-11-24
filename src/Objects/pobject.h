@@ -167,16 +167,16 @@ Psyco_TypeLookup(PsycoObject *po, PyTypeObject *tp, void *key, PyObject *name,
 EXTERNFN void
 cimpl_type_lookup_changed(PyTypeObject *tp, PyObject *name, PyObject *descr);
 
-/* super(class, self).name for a call (LOAD_SUPER_ATTR's method form),
-   resolved while compiling where CPython's lookup would find a Python
-   function: the builtin super, a class, and self an instance of it whose
-   type is known and loads methods generically. 1 with *f the function
-   (to call with self), under a guard of self's type, as Psyco_TypeLookup's,
-   on the lookup in its MRO after class; 0 to load as CPython does; -1 on
-   error. 'key' is an address of the site's. */
+/* super(class, self).name (LOAD_SUPER_ATTR), resolved while compiling
+   where CPython's lookup would find a Python function: the builtin super,
+   a class, and self an instance of it whose type is known and, for a
+   method load, loads methods generically. 1 with *f the function (to call
+   with self, or to bind to it), under a guard of self's type, as
+   Psyco_TypeLookup's, on the lookup in its MRO after class; 0 to load as
+   CPython does; -1 on error. 'key' is an address of the site's. */
 EXTERNFN int
 PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
-                        vinfo_t *self, PyObject *name, void *key,
+                        vinfo_t *self, PyObject *name, bool method, void *key,
                         PyObject **f);
 
 /* A guard for a message made now that names tp, a mutable type: a
