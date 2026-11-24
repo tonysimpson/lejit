@@ -3552,7 +3552,11 @@ static void
 cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 {
     if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
-#if LE_HAS_FUNCTION_STR
+#ifdef LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION
+        PyErr_Clear();
+        PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION,
+                     kwargs);
+#elif LE_HAS_FUNCTION_STR
         PyErr_Clear();
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
@@ -3720,7 +3724,13 @@ cimpl_copy_dict_without_keys(PyObject *subject, PyObject *keys)
 static int
 cimpl_check_args_iterable(PyObject *func, PyObject *args)
 {
-#if LE_HAS_FUNCTION_STR
+#ifdef LE_MSG_STAR_NOT_ITERABLE_NO_FUNCTION
+    if (Py_TYPE(args)->tp_iter == NULL && !PySequence_Check(args)) {
+        PyErr_Format(PyExc_TypeError, LE_MSG_STAR_NOT_ITERABLE_NO_FUNCTION,
+                     Py_TYPE(args)->tp_name);
+        return -1;
+    }
+#elif LE_HAS_FUNCTION_STR
     if (Py_TYPE(args)->tp_iter == NULL && !PySequence_Check(args)) {
         PyErr_Clear();
         PyObject *funcstr = _PyObject_FunctionStr(func);
