@@ -1,6 +1,6 @@
 #ifndef LE_MECHANISMS_TRACING_H
 #define LE_MECHANISMS_TRACING_H
-/* the thread's interpreter, whose eval_frame le_direct_call_test reads */
+/* the thread's interpreter, whose eval_frame le_direct_call_refused reads */
 #define TSTATE_interp \
     FMUT(DEF_FIELD(PyThreadState, PyInterpreterState *, interp, NO_PREV_FIELD))
 #if LE_HAS_MONITORING
@@ -107,7 +107,7 @@ typedef __typeof__(*((PyThreadState *)0)->cframe) le_cframe_t;
     FMUT(DEF_FIELD(le_cframe_t, __typeof__(((le_cframe_t *)0)->use_tracing), \
                    use_tracing, NO_PREV_FIELD))
 
-/* the flag itself, for le_direct_call_test ('vinterp' unused here) */
+/* the flag itself, for le_direct_call_refused ('vinterp' unused here) */
 static inline vinfo_t *
 le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp)
 {
@@ -163,7 +163,7 @@ le_tracing_test(PsycoObject *po, vinfo_t *vts)
                                   offsetof(PyThreadState, use_tracing));
 }
 
-/* the flag itself, for le_direct_call_test ('vinterp' unused here) */
+/* the flag itself, for le_direct_call_refused ('vinterp' unused here) */
 static inline vinfo_t *
 le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp)
 {
@@ -177,49 +177,42 @@ le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp)
 /* A compiled call or inlined frame skips the eval hook, so it is made only
    while the installed hook is LeJIT's (eval_hook.c:le_eval_hook): under
    another (torch.compile's, a debugger's), or after lejit.stop, the call
-   is CPython's, so that hook sees the frame. le_direct_call_test emits
-   that test and the tracing one as one: on the thread state 'vts', the
-   interpreter's eval_frame XOR LeJIT's hook, OR-ed with the tracing flag,
-   is nonzero where the real call is needed. */
+   is CPython's, so that hook sees the frame. le_direct_call_refused emits
+   that test, a compare of the interpreter's eval_frame with LeJIT's hook,
+   then the tracing one, on the thread state 'vts', each a branch to the
+   real call; true where the real call is needed, as on an error. */
 extern void *
 le_eval_hook(void);
 extern const long le_interp_eval_frame_at;
 
-static inline condition_code_t
-le_direct_call_test(PsycoObject *po, vinfo_t *vts)
+static inline bool
+le_direct_call_refused(PsycoObject *po, vinfo_t *vts)
 {
     condition_code_t cc;
-    vinfo_t *vhook, *vmine, *vforeign, *vany, *vflag,
+    vinfo_t *vhook, *vmine, *vflag,
         *vinterp = psyco_get_field(po, vts, TSTATE_interp);
     if (vinterp == NULL)
-        return CC_ERROR;
+        return true;
     vhook = psyco_get_field_offset(po, vinterp, FMUT(DEF_ARRAY(long, 0)),
                                    le_interp_eval_frame_at);
     if (vhook == NULL) {
         vinfo_decref(vinterp, po);
-        return CC_ERROR;
+        return true;
     }
     vmine = vinfo_new(CompileTime_New((long)le_eval_hook()));
-    vforeign = integer_xor(po, vhook, vmine);
+    cc = integer_cmp(po, vhook, vmine, Py_NE);
     vinfo_decref(vmine, po);
     vinfo_decref(vhook, po);
-    if (vforeign == NULL) {
+    if (cc == CC_ERROR || runtime_condition_f(po, cc)) {
         vinfo_decref(vinterp, po);
-        return CC_ERROR;
+        return true;
     }
     vflag = le_tracing_flag(po, vts, vinterp);
     vinfo_decref(vinterp, po);
-    if (vflag == NULL) {
-        vinfo_decref(vforeign, po);
-        return CC_ERROR;
-    }
-    vany = integer_or(po, vforeign, vflag);
-    vinfo_decref(vforeign, po);
+    if (vflag == NULL)
+        return true;
+    cc = integer_non_null(po, vflag);
     vinfo_decref(vflag, po);
-    if (vany == NULL)
-        return CC_ERROR;
-    cc = integer_non_null(po, vany);
-    vinfo_decref(vany, po);
-    return cc;
+    return cc == CC_ERROR || runtime_condition_f(po, cc);
 }
 #endif /* LE_MECHANISMS_TRACING_H */

@@ -39,6 +39,8 @@ psyco_is_fusable_generator(PyCodeObject *co);
 EXTERNFN int
 psyco_is_resumable_generator(PyCodeObject *co);
 EXTERNFN int
+psyco_handler_awaits(PyCodeObject *co, int handler);
+EXTERNFN int
 psyco_is_startable_coroutine(PyCodeObject *co);
 EXTERNFN int
 psyco_in_handler(PyCodeObject *co, int pos);
