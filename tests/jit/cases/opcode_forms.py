@@ -1,6 +1,7 @@
 # Forms the bytecode compiler chooses differently across versions: truth
 # tests, pairs of locals, f-string conversions, function attributes, calls
-# by keyword or through a bound attribute, and the end of for loops.
+# by keyword or through a bound attribute, the end of for loops, and
+# imports (whose argument carries the name's index with other bits).
 from ref_tracer import count_made, made
 
 
@@ -165,6 +166,15 @@ def fstring_parts_made(n, a, b, c):
     return out
 
 
+def imports(name):
+    first = name.upper()
+    import os.path
+    from collections import OrderedDict as od, deque
+    import json as j
+    return (first, os.path.basename('/a/b'), od.__name__, deque.__name__,
+            j.__name__)
+
+
 CASES = [
     ('truth', "[([0, 1, '', 'x', [], [0], None, Truthy(True), Truthy(False)],)]",
      {}),
@@ -181,4 +191,5 @@ CASES = [
     ('super_by_keyword', [(1,)], {}),
     ('loop_ends', [([0, 1, 2],), ([],)], {}),
     ('fstring_parts_made', [(3, 'x', 'yy', 'zzz'), (2, '', 'é', '')], {}),
+    ('imports', [('json',)], {}),
 ]

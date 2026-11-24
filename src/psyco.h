@@ -990,6 +990,10 @@ le_gen_iternext(PyObject *gen);
    reads where it uses them (vcompiler.c:PsycoObject_FromGenFrame), so one
    entry serves every resume at a point */
 #define LE_RESUMES_ON_FRAME LE_HAS_INTERPRETER_FRAME
+/* coroutine bodies run compiled: on the frame object, or on the frame
+   inside the coroutine with each await a SEND loop */
+#define LE_RESUMES_COROUTINES_COMPILED \
+    (LE_RESUMES_COROUTINES || LE_RESUMES_ON_FRAME)
 /* a frame with more words (locals plus stack) resumes interpreted */
 #define LE_FRAME_WORDS_MAX 1024
 
@@ -1013,6 +1017,9 @@ typedef struct {
 typedef struct {
     int lasti; /* f_lasti there, -1 for the start */
     int count;
+    int in_handler; /* a coroutine's place inside an exception handler,
+                       which resumes interpreted (pycompiler.c: a handler
+                       that can await runs in ceval) */
     le_resume_entry_t entries[LE_RESUME_ENTRIES];
 } le_resume_point_t;
 

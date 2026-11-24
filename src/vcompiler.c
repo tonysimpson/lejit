@@ -980,6 +980,10 @@ mp_new_block(PsycoObject *po, mergepoint_t *mp)
     if (mp == NULL)
         return;
     mp->blocks++;
+    /* blocks made from now on make dead virtual locals real here
+       (dispatcher.c:psyco_make_dead_virtuals_real) */
+    if (mp->blocks == MP_BLOCK_CAP && mp->real_from == 0)
+        mp->real_from = psyco_next_serial + 1;
     if (mp->blocks == MP_BLOCK_CAP && !po->pr.is_inlining) {
         /* a code object with a merge point at its cap compiles many copies
            of its code: blocks made from now on inline no calls, whose

@@ -15,6 +15,13 @@
 #include "internal/pycore_intrinsics.h"
 #undef Py_BUILD_CORE
 #endif
+#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
+/* a module's dict may hold a lazy import's proxy (PyLazyImport_Type),
+   which a global's load replaces with the module (_PyLazyImport_Reify) */
+#define Py_BUILD_CORE
+#include "internal/pycore_lazyimportobject.h"
+#undef Py_BUILD_CORE
+#endif
 
 /* LeJIT keeps every position in the bytecode in bytes (merge points, the
    compiler's next_instr, a block's handler). A jump's argument is converted
