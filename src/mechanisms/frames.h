@@ -882,6 +882,8 @@ le_pyframe_stack(PyFrameObject *f)
 #if LE_HAS_EVAL_FRAME_POPS
 extern int
 le_monitoring_on(PyThreadState *ts); /* pyruntime.c */
+extern int
+le_code_monitored(PyCodeObject *co); /* pyruntime.c */
 /* ceval ends frame 'f', the thread's innermost, with the exception set:
    run from before its first instruction (incomplete, so ceval adds no
    traceback entry and finds no handler) with throwflag, it unwinds it at
@@ -892,7 +894,7 @@ le_monitoring_on(PyThreadState *ts); /* pyruntime.c */
 static inline void
 le_frame_throw_out(PyThreadState *ts, le_frame_t *f)
 {
-    int quiet = le_monitoring_on(ts);
+    int quiet = le_monitoring_on(ts) || le_code_monitored(LE_FRAME_CODE(f));
     PyObject *r;
     LE_FRAME_PLACE(f) = _PyCode_CODE(LE_FRAME_CODE(f)) - 1;
     if (quiet)

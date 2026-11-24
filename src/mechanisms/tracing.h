@@ -4,34 +4,42 @@
 #define TSTATE_interp \
     FMUT(DEF_FIELD(PyThreadState, PyInterpreterState *, interp, NO_PREV_FIELD))
 #if LE_HAS_MONITORING
-/* Tracing is on while sys.monitoring has any event on in the interpreter
-   (pyruntime.c:le_monitoring_on): sys.settrace and sys.setprofile are
-   tools of its, so other tools are tracing too, and compiled code, which
-   gives them no events, does not run. le_tracing_now tests it at run time
-   (the eval hook). Compiled code tests it as le_tracing_flag: the main
-   interpreter's monitoring version against the last one seen with no tool
-   set (pyruntime.c:le_quiet_version), which is -1 while a frame's locals
-   are exposed. Only where they differ does it make the exact test
-   (psyfunc.c:tracing_on). Included after vcompiler.h and codegen.h. */
+/* Tracing is on for a code object while sys.monitoring has any event on
+   in the interpreter (pyruntime.c:le_monitoring_on), or on that code
+   object alone (le_code_monitored, set_local_events): sys.settrace and
+   sys.setprofile are tools of its, so other tools are tracing too, and
+   compiled code, which gives them no events, does not run. le_tracing_now
+   tests it at run time (the eval hook). Compiled code tests it as
+   le_tracing_flag: the main interpreter's monitoring version against the
+   last one seen with no tool set (pyruntime.c:le_quiet_version), which is
+   -1 while a frame's locals are exposed, and the code's monitoring data,
+   which CPython makes only once a tool has instrumented it. Only where
+   either test fails does it make the exact test (psyfunc.c:tracing_on).
+   Included after vcompiler.h and codegen.h. */
 extern int
 le_monitoring_on(PyThreadState *ts);
+extern int
+le_code_monitored(PyCodeObject *co);
 static inline int
-le_tracing_now(PyThreadState *ts)
+le_tracing_now(PyThreadState *ts, PyCodeObject *co)
 {
-    return le_monitoring_on(ts);
+    return le_monitoring_on(ts) ||
+           (co->_co_monitoring != NULL && le_code_monitored(co));
 }
 extern uint64_t le_quiet_version;
 extern const void *
 le_monitoring_version_address(void);
 extern int
-le_tracing_recheck(void);
+le_tracing_recheck(PyCodeObject *co);
 
 /* nonzero where the tools may have changed since they were last seen
-   empty, or a frame's locals are exposed ('vts' and 'vinterp' unused) */
+   empty, a frame's locals are exposed, or code 'co' has monitoring data
+   ('vts' and 'vinterp' unused) */
 static inline vinfo_t *
-le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp)
+le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp,
+                PyCodeObject *co)
 {
-    vinfo_t *vk, *vv, *vq, *vany;
+    vinfo_t *vk, *vv, *vq, *vm, *vany;
     (void)vts;
     (void)vinterp;
     vk = vinfo_new(CompileTime_New((long)le_monitoring_version_address()));
@@ -49,14 +57,30 @@ le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp)
     vany = integer_xor(po, vv, vq);
     vinfo_decref(vv, po);
     vinfo_decref(vq, po);
+    if (vany == NULL)
+        return NULL;
+    /* the compiled code holds its own code; a callee's is held for it */
+    if (co != po->pr.co && !is_respawning(po))
+        psyco_owner_pin((PyObject *)co);
+    vk = vinfo_new(CompileTime_New((long)&co->_co_monitoring));
+    vm = psyco_get_field_offset(po, vk, FMUT(DEF_ARRAY(long, 0)), 0);
+    vinfo_decref(vk, po);
+    if (vm == NULL) {
+        vinfo_decref(vany, po);
+        return NULL;
+    }
+    vv = vany;
+    vany = integer_or(po, vv, vm);
+    vinfo_decref(vv, po);
+    vinfo_decref(vm, po);
     return vany;
 }
 
 static inline condition_code_t
-le_tracing_test(PsycoObject *po, vinfo_t *vts)
+le_tracing_test(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
 {
     condition_code_t cc;
-    vinfo_t *vflag = le_tracing_flag(po, vts, NULL);
+    vinfo_t *vflag = le_tracing_flag(po, vts, NULL, co);
     if (vflag == NULL)
         return CC_ERROR;
     cc = integer_non_null(po, vflag);
@@ -75,8 +99,9 @@ le_tracing_test(PsycoObject *po, vinfo_t *vts)
    compare of an int flag in memory (a byte's is loaded first)
    (psyfunc.c:tracing_on). Included after vcompiler.h and codegen.h. */
 static inline int
-le_tracing_now(PyThreadState *ts)
+le_tracing_now(PyThreadState *ts, PyCodeObject *co)
 {
+    (void)co;
     return ts->cframe->use_tracing != 0;
 }
 
@@ -87,12 +112,15 @@ typedef __typeof__(*((PyThreadState *)0)->cframe) le_cframe_t;
     FMUT(DEF_FIELD(le_cframe_t, __typeof__(((le_cframe_t *)0)->use_tracing), \
                    use_tracing, NO_PREV_FIELD))
 
-/* the flag itself, for le_direct_call_refused ('vinterp' unused here) */
+/* the flag itself, for le_direct_call_refused ('vinterp' and 'co' unused
+   here) */
 static inline vinfo_t *
-le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp)
+le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp,
+                PyCodeObject *co)
 {
     vinfo_t *vflag, *vcframe = psyco_get_field(po, vts, TSTATE_cframe);
     (void)vinterp;
+    (void)co;
     if (vcframe == NULL)
         return NULL;
     vflag = psyco_get_field(po, vcframe, CFRAME_use_tracing);
@@ -101,10 +129,11 @@ le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp)
 }
 
 static inline condition_code_t
-le_tracing_test(PsycoObject *po, vinfo_t *vts)
+le_tracing_test(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
 {
     condition_code_t cc;
     vinfo_t *vflag, *vcframe = psyco_get_field(po, vts, TSTATE_cframe);
+    (void)co;
     if (vcframe == NULL)
         return CC_ERROR;
     if (sizeof(((le_cframe_t *)0)->use_tracing) == 4) {
@@ -129,25 +158,30 @@ le_tracing_test(PsycoObject *po, vinfo_t *vts)
    thread state 'vts' (psyfunc.c:tracing_on). Included after vcompiler.h and
    codegen.h. */
 static inline int
-le_tracing_now(PyThreadState *ts)
+le_tracing_now(PyThreadState *ts, PyCodeObject *co)
 {
+    (void)co;
     return ts->use_tracing;
 }
 
 _Static_assert(sizeof(((PyThreadState *)0)->use_tracing) == 4,
                "LeJIT: PyThreadState.use_tracing is tested as a 32-bit int");
 static inline condition_code_t
-le_tracing_test(PsycoObject *po, vinfo_t *vts)
+le_tracing_test(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
 {
+    (void)co;
     return psyco_int32_nonzero_in(po, vts,
                                   offsetof(PyThreadState, use_tracing));
 }
 
-/* the flag itself, for le_direct_call_refused ('vinterp' unused here) */
+/* the flag itself, for le_direct_call_refused ('vinterp' and 'co' unused
+   here) */
 static inline vinfo_t *
-le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp)
+le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp,
+                PyCodeObject *co)
 {
     (void)vinterp;
+    (void)co;
     return psyco_get_field(
         po, vts,
         FMUT(DEF_FIELD(PyThreadState, int, use_tracing, NO_PREV_FIELD)));
@@ -159,14 +193,15 @@ le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp)
    another (torch.compile's, a debugger's), or after lejit.stop, the call
    is CPython's, so that hook sees the frame. le_direct_call_refused emits
    that test, a compare of the interpreter's eval_frame with LeJIT's hook,
-   then the tracing one, on the thread state 'vts', each a branch to the
-   real call; true where the real call is needed, as on an error. */
+   then the tracing one for the callee's code 'co', on the thread state
+   'vts', each a branch to the real call; true where the real call is
+   needed, as on an error. */
 extern void *
 le_eval_hook(void);
 extern const long le_interp_eval_frame_at;
 
 static inline bool
-le_direct_call_refused(PsycoObject *po, vinfo_t *vts)
+le_direct_call_refused(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
 {
     condition_code_t cc;
     vinfo_t *vhook, *vmine, *vflag,
@@ -187,7 +222,7 @@ le_direct_call_refused(PsycoObject *po, vinfo_t *vts)
         vinfo_decref(vinterp, po);
         return true;
     }
-    vflag = le_tracing_flag(po, vts, vinterp);
+    vflag = le_tracing_flag(po, vts, vinterp, co);
     vinfo_decref(vinterp, po);
     if (vflag == NULL)
         return true;
@@ -198,11 +233,18 @@ le_direct_call_refused(PsycoObject *po, vinfo_t *vts)
     if (!runtime_condition_f(po, cc))
         return false;
 #if LE_HAS_MONITORING
-    /* the real call is right either way; the exact test makes the
-       version's pass again once no tool is set */
-    psyco_generic_call(po, le_tracing_recheck,
-                       CfNoReturnValue | CfNoBlock | CfNoPython, "");
-#endif
+    /* the exact test, which also makes the version's pass again once no
+       tool is set */
+    vflag = psyco_generic_call(po, le_tracing_recheck,
+                               CfReturnTypeInt | CfNoBlock | CfNoPython, "l",
+                               (long)co);
+    if (vflag == NULL)
+        return true;
+    cc = integer_non_null(po, vflag);
+    vinfo_decref(vflag, po);
+    return cc == CC_ERROR || runtime_condition_f(po, cc);
+#else
     return true;
+#endif
 }
 #endif /* LE_MECHANISMS_TRACING_H */
