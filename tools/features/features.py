@@ -273,6 +273,15 @@ def _body_has(s, path, function, text, missing=None):
     return _has_run(_texts(body), _c(text)), '%s:%s' % (path, function)
 
 
+def _first_body_has(s, places, text):
+    """the first of places, [(path, function)], whose function is there
+    has the tokens of text in a row in its body"""
+    for path, function in places:
+        if s.body_of(s.tokens(path) or [], function) is not None:
+            return _body_has(s, path, function, text)
+    raise Unanswered('no %s' % ' or '.join('%s in %s' % (f, p) for p, f in places))
+
+
 def _file_has(s, path, text):
     """path has the tokens of text in a row"""
     toks = s.tokens(path)
@@ -578,9 +587,19 @@ def gc_head_internal(s):
     path, fields = s.struct('PyGC_Head')
     if path is None or not path.startswith('Include/internal/'):
         return False, (path or 'Include, every header') + ':PyGC_Head'
-    if list(fields.items()) != [('_gc_next', 'uintptr_t'), ('_gc_prev', 'uintptr_t')]:
+    if not gc_head_two_words(fields):
         raise Unanswered('%s:PyGC_Head is not _gc_next, _gc_prev' % path)
     return True, path + ':PyGC_Head'
+
+
+def gc_head_two_words(fields):
+    """PyGC_Head's fields are the words _gc_next and _gc_prev; _gc_next may
+    be declared through _Py_ALIGNED_DEF(N, uintptr_t), which keeps its size
+    and offset (store_gc.h asserts both)"""
+    return (list(fields) == ['_gc_next', '_gc_prev']
+            and fields['_gc_prev'] == 'uintptr_t'
+            and re.fullmatch(r'uintptr_t|_Py_ALIGNED_DEF \( \w+ , uintptr_t \)',
+                             fields['_gc_next']) is not None)
 
 
 def frame_state(s):
@@ -847,10 +866,13 @@ def inline_values(s):
     if list(fields) != ['capacity', 'size', 'embedded', 'valid', 'values'] or \
             any(fields[f] != 'uint8_t' for f in list(fields)[:4]):
         raise Unanswered('%s:_dictvalues is %r' % (path, fields))
+    # the stores are plain but for the free-threaded build
     if not (_body_has(s, path, 'get_insertion_order_array',
                       'return (uint8_t *)&values->values[values->capacity];')[0] and
-            _body_has(s, path, '_PyDictValues_AddToInsertionOrder',
-                      'array[size] = (uint8_t)ix; values->size = size+1;')[0]):
+            any(_body_has(s, path, '_PyDictValues_AddToInsertionOrder', stores)[0] for stores in (
+                'array[size] = (uint8_t)ix; values->size = size+1;',
+                'FT_ATOMIC_STORE_UINT8_RELAXED(array[size], (uint8_t)ix);'
+                ' FT_ATOMIC_STORE_UINT8_RELEASE(values->size, size+1);'))):
         raise Unanswered('%s: the insertion order is elsewhere' % path)
     obj = 'Include/internal/pycore_object.h'
     # where it adds sizeof(PyObject), that is the basicsize of every class
@@ -923,10 +945,21 @@ def call_trace_method_descr(s):
                      'PyMethodDescr_Type')
 
 
+def function_annotate(s):
+    """SET_FUNCTION_ATTRIBUTE can set a function's __annotate__
+    (MAKE_FUNCTION_ANNOTATE), the annotations made lazily: named in its
+    case, or in the offsets table the case reads"""
+    found, evidence = _case_has(s, 'SET_FUNCTION_ATTRIBUTE', 'MAKE_FUNCTION_ANNOTATE', missing=False)
+    if found or not _case_has(s, 'SET_FUNCTION_ATTRIBUTE', '_Py_FunctionAttributeOffsets[oparg]', missing=False)[0]:
+        return found, evidence
+    return _file_has(s, CE, '[MAKE_FUNCTION_ANNOTATE] = offsetof(PyFunctionObject, func_annotate)')
+
+
 def tuplecontains_item_first(s):
     """`in` on a tuple compares each item with the value, the item first"""
-    return _body_has(s, 'Objects/tupleobject.c', 'tuplecontains',
-                     'PyObject_RichCompareBool(PyTuple_GET_ITEM(a, i), el')
+    tuples = 'Objects/tupleobject.c'
+    return _first_body_has(s, [(tuples, 'tuplecontains'), (tuples, 'tuple_contains')],
+                           'PyObject_RichCompareBool(PyTuple_GET_ITEM(a, i), el')
 
 
 def valid_version_tag_flag(s):
@@ -1320,8 +1353,7 @@ BYTECODE = [
                               lambda s: _case_has(s, 'CALL_FUNCTION_EX', 'kwargs_st = stack_pointer[-1]', missing=False))),
     ('BINARY_OP_SUBSCR', D('a subscript is BINARY_OP with NB_SUBSCR',
                            lambda s: ('NB_SUBSCR' in (s.macros('Include/opcode.h') or {}), 'Include/opcode.h: NB_SUBSCR'))),
-    ('FUNCTION_ANNOTATE', D('SET_FUNCTION_ATTRIBUTE can set a function\'s __annotate__ (MAKE_FUNCTION_ANNOTATE), the annotations made lazily',
-                            lambda s: _case_has(s, 'SET_FUNCTION_ATTRIBUTE', 'MAKE_FUNCTION_ANNOTATE', missing=False))),
+    ('FUNCTION_ANNOTATE', function_annotate),
 ]
 
 # frames
@@ -1458,13 +1490,15 @@ CEVAL = [
     ('CALL_TRACE_METHOD_DESCR', call_trace_method_descr),
     ('NAME_ERROR_NAME', name_error_name),
     ('IMPORT_FROM_SPEC', D('import_from\'s error tells a partially initialised module',
-                           lambda s: _body_has(s, CE, 'import_from', '_PyModuleSpec_IsInitializing'))),
+                           lambda s: _first_body_has(s, [(CE, 'import_from'), (CE, '_PyEval_ImportFrom')],
+                                                     '_PyModuleSpec_IsInitializing'))),
     ('KWARGS_MERGE_EX', D('CALL_FUNCTION_EX merges **kwargs with _PyDict_MergeEx, and format_kwargs_error reports it',
                           lambda s: _case_has(s, 'CALL_FUNCTION_EX', '_PyDict_MergeEx'))),
     ('DELETE_GLOBAL_KEYERROR_ONLY', delete_global_keyerror_only),
     ('UNPACK_KEEPS_ATTRIBUTE_ERROR', unpack_keeps_attribute_error),
     ('RAISE_CAUSE_CHECKED', D('raise ... from a class whose call doesn\'t make an exception is a TypeError (do_raise)',
-                              lambda s: _body_has(s, CE, 'do_raise', 'PyExceptionInstance_Check(fixed_cause)'))),
+                              lambda s: _first_body_has(s, [(CE, 'do_raise'), ('Python/ceval.h', 'do_raise')],
+                                                        'PyExceptionInstance_Check(fixed_cause)'))),
 ]
 
 # the opcodes that some CPython lacks

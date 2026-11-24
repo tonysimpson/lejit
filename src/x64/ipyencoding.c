@@ -3,6 +3,10 @@
 #include "../codemanager.h"
 /* LE_GC_UNTRACKED_TEST */
 #include "../mechanisms/store_gc.h"
+#if LE_HAS_FRAME_STACKREFS
+/* Py_TAG_REFCNT, PyStackRef_NULL */
+#include "../mechanisms/frames.h"
+#endif
 
 /* Emitted code's view of the shape of dict keys (pobject.h:le_dict_shape):
    a compare of the keys at 'rk' with an immediate, which ends the
@@ -1421,3 +1425,70 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     REG_NUMBER(po, rg) = v;
     return v;
 }
+
+#if LE_HAS_FRAME_STACKREFS
+_Static_assert(Py_TAG_REFCNT == 1 && offsetof(_PyStackRef, bits) == 0 &&
+                   sizeof(_PyStackRef) == sizeof(long),
+               "LeJIT: a _PyStackRef is a word whose tag is its low bit");
+
+DEFINEFN vinfo_t *
+psyco_stackref_steal(PsycoObject *po, vinfo_t *w)
+{
+    vinfo_t *v;
+    reg_t rg;
+    BEGIN_CODE
+    NEED_CC();
+    COPY_IN_REG(w, rg);
+    TEST_R_I(rg, Py_TAG_REFCNT);
+    BEGIN_SHORT_COND_JUMP(0, CC_E);
+    AND_R_I8(rg, ~Py_TAG_REFCNT);
+    /* PyStackRef_NULL, now zero */
+    BEGIN_SHORT_COND_JUMP(1, CC_E);
+    INC_OB_REFCNT_internal(rg);
+    END_SHORT_JUMP(1);
+    END_SHORT_JUMP(0);
+    END_CODE
+    v = vinfo_new(RunTime_New(rg, false, false));
+    REG_NUMBER(po, rg) = v;
+    return v;
+}
+
+/* the object in 'rg' (not NULL) tagged as an immortal is */
+#define STACKREF_TAG(rg)                                                \
+    do {                                                                \
+        MOVZX_DR_WO(REG_TRANSIENT_1, rg, offsetof(PyObject, ob_flags)); \
+        AND_R_I8(REG_TRANSIENT_1, Py_TAG_REFCNT);                       \
+        OR_R_R(rg, REG_TRANSIENT_1);                                    \
+    } while (0)
+
+DEFINEFN vinfo_t *
+psyco_stackref_from_steal(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *w;
+    reg_t rg;
+    if (is_compiletime(v->source)) {
+        PyObject *o = (PyObject *)CompileTime_Get(v->source)->value;
+        return vinfo_new(CompileTime_New(
+            o == NULL ? (long)PyStackRef_NULL.bits
+                      : (long)PyStackRef_FromPyObjectSteal(o).bits));
+    }
+    BEGIN_CODE
+    NEED_CC();
+    COPY_IN_REG(v, rg);
+    if (is_maybe_null(v->source)) {
+        TEST_R_R(rg, rg);
+        BEGIN_SHORT_COND_JUMP(0, CC_NE);
+        MOV_R_I(rg, PyStackRef_NULL.bits);
+        BEGIN_SHORT_JUMP(1);
+        END_SHORT_JUMP(0);
+        STACKREF_TAG(rg);
+        END_SHORT_JUMP(1);
+    }
+    else
+        STACKREF_TAG(rg);
+    END_CODE
+    w = vinfo_new(RunTime_New(rg, false, false));
+    REG_NUMBER(po, rg) = w;
+    return w;
+}
+#endif

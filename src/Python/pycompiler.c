@@ -1266,12 +1266,32 @@ static vinfo_t *
 frame_word_read(PsycoObject *po, int i)
 {
 #if LE_HAS_FRAME_STACKREFS
-    return psyco_generic_call(po, psyco_frame_word_borrow,
-                              CfReturnTypePtr | CfNoPython, "vl",
-                              psyco_frame_words_frame(po), (long)i);
+    /* PyStackRef_AsPyObjectBorrow: the word less its tag bit */
+    vinfo_t *w = psyco_get_nth_field(po, psyco_frame_words_frame(po),
+                                     FRAME_localsplus, i);
+    vinfo_t *mask, *o;
+    if (w == NULL)
+        return NULL;
+    mask = vinfo_new(CompileTime_New(~(long)Py_TAG_REFCNT));
+    o = integer_and(po, w, mask);
+    vinfo_decref(mask, po);
+    vinfo_decref(w, po);
+    return o;
 #else
     return psyco_get_nth_field(po, psyco_frame_words_frame(po),
                                FRAME_localsplus, i);
+#endif
+}
+
+/* the word that leaves word i of the frame empty: NULL, or PyStackRef_NULL
+   where the words are _PyStackRefs */
+static vinfo_t *
+frame_word_empty(void)
+{
+#if LE_HAS_FRAME_STACKREFS
+    return vinfo_new(CompileTime_New((long)PyStackRef_NULL.bits));
+#else
+    return psyco_vi_Zero();
 #endif
 }
 
@@ -1280,28 +1300,26 @@ frame_word_read(PsycoObject *po, int i)
 static vinfo_t *
 frame_word_take(PsycoObject *po, int i)
 {
-    vinfo_t *w;
-#if LE_HAS_FRAME_STACKREFS
-    w = psyco_generic_call(po, psyco_frame_word_take,
-                           CfReturnTypePtr | CfNoPython, "vl",
-                           psyco_frame_words_frame(po), (long)i);
-#else
-    vinfo_t *zero;
+    vinfo_t *frame = psyco_frame_words_frame(po), *w, *empty;
     bool ok;
-    w = frame_word_read(po, i);
+    w = psyco_get_nth_field(po, frame, FRAME_localsplus, i);
     if (w == NULL)
         return NULL;
-    zero = psyco_vi_Zero();
-    ok = psyco_put_nth_field(po, psyco_frame_words_frame(po), FRAME_localsplus,
-                             i, zero);
-    vinfo_decref(zero, po);
+    empty = frame_word_empty();
+    ok = psyco_put_nth_field(po, frame, FRAME_localsplus, i, empty);
+    vinfo_decref(empty, po);
     if (!ok) {
         vinfo_decref(w, po);
         return NULL;
     }
+#if LE_HAS_FRAME_STACKREFS
+    {
+        vinfo_t *o = psyco_stackref_steal(po, w);
+        vinfo_decref(w, po);
+        w = o;
+    }
 #endif
-    if (w != NULL)
-        w->source = add_rtref(w->source) | RunTime_MaybeNull;
+    w->source = add_rtref(w->source) | RunTime_MaybeNull;
     return w;
 }
 
@@ -1418,39 +1436,30 @@ gen_pause_new(PsycoObject *po, int lasti, int nstack)
 }
 
 /* word k of the frame becomes 'v', a reference it takes, or NULL for the
-   NULL constant or none: an object, which frame_words_owned then makes
-   the frame's */
+   NULL constant or none */
 static bool
 frame_word_store(PsycoObject *po, int k, vinfo_t *v)
 {
-    vinfo_t *frame = psyco_frame_words_frame(po);
+    vinfo_t *frame = psyco_frame_words_frame(po), *w;
     bool ok;
     if (v == NULL || psyco_knowntobe(v, 0)) {
-        vinfo_t *zero = psyco_vi_Zero();
-        ok = psyco_put_nth_field(po, frame, FRAME_localsplus, k, zero);
-        vinfo_decref(zero, po);
+        vinfo_t *empty = frame_word_empty();
+        ok = psyco_put_nth_field(po, frame, FRAME_localsplus, k, empty);
+        vinfo_decref(empty, po);
         return ok;
     }
-    if (!psyco_put_nth_field(po, frame, FRAME_localsplus, k, v))
+#if LE_HAS_FRAME_STACKREFS
+    w = psyco_stackref_from_steal(po, v);
+#else
+    w = v;
+    vinfo_incref(w);
+#endif
+    ok = psyco_put_nth_field(po, frame, FRAME_localsplus, k, w);
+    vinfo_decref(w, po);
+    if (!ok)
         return false;
     consume_reference(po, v);
     return true;
-}
-
-/* the words stored at the pause or end 'p' (frame_word_store), the
-   frame's own */
-static bool
-frame_words_owned(PsycoObject *po, le_gen_pause_t *p)
-{
-#if LE_HAS_FRAME_STACKREFS
-    return psyco_generic_call(po, psyco_gen_words_own,
-                              CfNoReturnValue | CfNoPython, "vl",
-                              psyco_frame_words_frame(po), (long)p) != NULL;
-#else
-    (void)po;
-    (void)p;
-    return true;
-#endif
 }
 
 /* A resumable generator's run that ends (returns or raises) leaves its
@@ -1484,7 +1493,7 @@ gen_locals_end(PsycoObject *po)
         vinfo_decref(v, po);
         LOC_LOCALS_PLUS[i] = NULL;
     }
-    return end == NULL || frame_words_owned(po, end);
+    return true;
 }
 #else
 #define psyco_frame_word_index(v) (-1)
@@ -3576,7 +3585,11 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
     if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
         if (!le_not_a_mapping(kwargs))
             return;
-#if LE_HAS_FUNCTION_STR
+#ifdef LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION
+        PyErr_Clear();
+        PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION,
+                     kwargs);
+#elif LE_HAS_FUNCTION_STR
         PyErr_Clear();
         PyObject *funcstr = _PyObject_FunctionStr(func);
         if (funcstr != NULL) {
@@ -3744,7 +3757,13 @@ cimpl_copy_dict_without_keys(PyObject *subject, PyObject *keys)
 static int
 cimpl_check_args_iterable(PyObject *func, PyObject *args)
 {
-#if LE_HAS_FUNCTION_STR
+#ifdef LE_MSG_STAR_NOT_ITERABLE_NO_FUNCTION
+    if (Py_TYPE(args)->tp_iter == NULL && !PySequence_Check(args)) {
+        PyErr_Format(PyExc_TypeError, LE_MSG_STAR_NOT_ITERABLE_NO_FUNCTION,
+                     Py_TYPE(args)->tp_name);
+        return -1;
+    }
+#elif LE_HAS_FUNCTION_STR
     if (Py_TYPE(args)->tp_iter == NULL && !PySequence_Check(args)) {
         PyErr_Clear();
         PyObject *funcstr = _PyObject_FunctionStr(func);
@@ -7379,8 +7398,6 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
             *slot = NULL;
         }
     }
-    if (!frame_words_owned(po, pause))
-        return;
     v = stack_a[nstack];
     stack_a[nstack] = NULL;
     po->pr.stack_level = 0;
