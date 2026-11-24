@@ -3568,21 +3568,29 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 #endif
     }
     else if (PyErr_ExceptionMatches(PyExc_KeyError)) {
+#if LE_HAS_CURRENT_EXCEPTION
+        /* the KeyError is an instance: the key is in its args */
+        PyObject *exc = PyErr_GetRaisedException();
+        PyObject *args = ((PyBaseExceptionObject *)exc)->args;
+        if (PyTuple_Check(args) && PyTuple_GET_SIZE(args) == 1) {
+#else
         PyObject *exc, *val, *tb;
         PyErr_Fetch(&exc, &val, &tb);
+        PyObject *args = val;
         if (val && PyTuple_Check(val) && PyTuple_GET_SIZE(val) == 1) {
+#endif
 #if LE_HAS_FUNCTION_STR
             PyErr_Clear();
             PyObject *funcstr = _PyObject_FunctionStr(func);
             if (funcstr != NULL) {
-                PyObject *key = PyTuple_GET_ITEM(val, 0);
+                PyObject *key = PyTuple_GET_ITEM(args, 0);
                 PyErr_Format(PyExc_TypeError,
                              LE_MSG_KWARGS_DUPLICATE_FUNCTION_STR, funcstr,
                              key);
                 Py_DECREF(funcstr);
             }
 #else
-            PyObject *key = PyTuple_GET_ITEM(val, 0);
+            PyObject *key = PyTuple_GET_ITEM(args, 0);
             if (!PyUnicode_Check(key)) {
                 PyErr_Format(
                     PyExc_TypeError, LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
@@ -3594,6 +3602,13 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
                     PyEval_GetFuncName(func), PyEval_GetFuncDesc(func), key);
             }
 #endif
+#if LE_HAS_CURRENT_EXCEPTION
+            Py_DECREF(exc);
+        }
+        else {
+            PyErr_SetRaisedException(exc);
+        }
+#else
             Py_XDECREF(exc);
             Py_XDECREF(val);
             Py_XDECREF(tb);
@@ -3601,6 +3616,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
         else {
             PyErr_Restore(exc, val, tb);
         }
+#endif
     }
 }
 
