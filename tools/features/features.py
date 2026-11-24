@@ -726,6 +726,18 @@ def refcount_32(s):
     return False, 'Include, every header: ob_refcnt_full'
 
 
+def dealloc_defers_to_trashcan(s):
+    """_Py_Dealloc itself defers a dealloc deep in the C stack to the
+    trashcan, and empties the chain after, so tp_dealloc can't be called in
+    its place: Py_TRASHCAN_BEGIN, which deallocs did that with before, is
+    empty"""
+    for path, _ in s.headers_with('Py_TRASHCAN_BEGIN'):
+        m = (s.macros(path) or {}).get('Py_TRASHCAN_BEGIN')
+        if m is not None:
+            return not _texts(m.body), '%s:Py_TRASHCAN_BEGIN' % path
+    return False, 'Include, every header: no Py_TRASHCAN_BEGIN'
+
+
 def dict_version_tag(s):
     """a dict has a version tag (ma_version_tag) that every change to it
     changes"""
@@ -1397,6 +1409,7 @@ OBJECTS = [
                            lambda s: _public(s, '_Py_IsImmortal'))),
     ('DEALLOC_HOOKS', D('_Py_Dealloc does more than call tp_dealloc: it reports to the ref tracer (PyRefTracer_SetTracer), and may defer a deep dealloc to the trashcan',
                         lambda s: _public(s, 'PyRefTracer_SetTracer'))),
+    ('DEALLOC_DEFERS_TO_TRASHCAN', dealloc_defers_to_trashcan),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
     ('TAGGED_DICT_OR_VALUES', tagged_dict_or_values),

@@ -68,10 +68,26 @@ function_return(PsycoObject *po, Source retval, int nframelocal, long retpos)
     END_CODE
 }
 
+#if LE_HAS_DEALLOC_HOOKS
+/* Python/pyruntime.c */
+extern void *
+le_ref_tracer_word(void);
+#endif
+
+/* 'fn' is the dealloc to call, or NULL for the object's type's; with a ref
+   tracer that _Py_Dealloc reports to, _Py_Dealloc is called instead while
+   one is set: the word is compared with 0 before each call */
 DEFINEFN
 code_t *
 decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
 {
+    /* the tracer word, and what to call while a tracer is set */
+    void *tracer = NULL, *traced = NULL;
+#if LE_HAS_DEALLOC_HOOKS
+    if (fn != _Py_Dealloc && (tracer = le_ref_tracer_word()) == NULL)
+        fn = _Py_Dealloc;
+    traced = (void *)_Py_Dealloc;
+#endif
     extra_assert(CPY_OFFSET(PyObject, ob_type) < 128);
     extra_assert(CPY_OFFSET(PyTypeObject, tp_dealloc) < 128);
 #if LE_HAS_IMMORTAL_OBJECTS
@@ -85,7 +101,24 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
     DEC_OB_REFCNT_NZ(rg);
 #endif
     BEGIN_SHORT_COND_JUMP(0, CC_NE); /* NE is the not zero flag */
-    if (fn == NULL) {
+    if (tracer != NULL) {
+        BEGIN_CALL(1);
+        CALL_SET_ARG_FROM_REG(rg, 0);
+        MOV_R_I(REG_TRANSIENT_1, (long)tracer);
+        CMP_I8_A(0, REG_TRANSIENT_1);
+        MOV_R_I(REG_TRANSIENT_1, (long)traced); /* keeps the flags */
+        BEGIN_SHORT_COND_JUMP(2, CC_NE);
+        if (fn == NULL) {
+            MOV_R_O8(REG_TRANSIENT_1, rg, CPY_OFFSET(PyObject, ob_type));
+            MOV_R_O8(REG_TRANSIENT_1, REG_TRANSIENT_1,
+                     CPY_OFFSET(PyTypeObject, tp_dealloc));
+        }
+        else
+            MOV_R_I(REG_TRANSIENT_1, (long)fn);
+        END_SHORT_JUMP(2);
+        END_CALL_R(REG_TRANSIENT_1);
+    }
+    else if (fn == NULL) {
         BEGIN_CALL(1);
         CALL_SET_ARG_FROM_REG(rg, 0);
         MOV_R_O8(REG_TRANSIENT_1, rg, CPY_OFFSET(PyObject, ob_type));
