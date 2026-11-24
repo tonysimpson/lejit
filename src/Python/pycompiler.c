@@ -123,7 +123,7 @@ le_lookup_special_id(PyObject *self, _Py_Identifier *attrid)
 /* names looked up by the run-time helpers, interned at start-up
    (psyco_pycompiler_init) */
 static PyObject *s_initializing, *s_name, *s_spec, *s_match_args, *s_get,
-    *s_build_class;
+    *s_build_class, *s_keys;
 
 #if LE_HAS_IMPORT_FROM_SPEC
 /* moduleobject.c:_PyModuleSpec_IsInitializing: spec._initializing is
@@ -1883,9 +1883,10 @@ psyco_pycompiler_init(void)
     s_match_args = PyUnicode_InternFromString("__match_args__");
     s_get = PyUnicode_InternFromString("get");
     s_build_class = PyUnicode_InternFromString("__build_class__");
+    s_keys = PyUnicode_InternFromString("keys");
     if (s_builtin_object == NULL || s_initializing == NULL || s_name == NULL ||
         s_spec == NULL || s_match_args == NULL || s_get == NULL ||
-        s_build_class == NULL)
+        s_build_class == NULL || s_keys == NULL)
         Py_FatalError("lejit: no names for the compiler");
     load_global_miss_glue = psyco_aligned_call_glue(cimpl_load_global_miss);
 
@@ -3539,7 +3540,7 @@ static int
 le_not_a_mapping(PyObject *o)
 {
     PyObject *exc = PyErr_GetRaisedException();
-    int has_keys = PyObject_HasAttrStringWithError(o, "keys");
+    int has_keys = PyObject_HasAttrWithError(o, s_keys);
     if (has_keys == 0) {
         Py_DECREF(exc);
         return 1;
