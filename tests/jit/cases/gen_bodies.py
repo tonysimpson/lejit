@@ -15,7 +15,8 @@ def work(x):
 
 def compiled(*fns):
     lejit = sys.modules.get('lejit')
-    if lejit is None:
+    # a release build can't say what compiled
+    if lejit is None or not hasattr(lejit._core, '_code_info'):
         return True
     return all(lejit._core._code_info(f.__code__) == 'compiled'
                for f in fns)
@@ -553,7 +554,8 @@ def interrupted_in_try(n):
 
 def interpreted(*fns):
     lejit = sys.modules.get('lejit')
-    if lejit is None:
+    # a release build can't say what compiled
+    if lejit is None or not hasattr(lejit._core, '_code_info'):
         return True
     return all(lejit._core._code_info(f.__code__) != 'compiled'
                for f in fns)

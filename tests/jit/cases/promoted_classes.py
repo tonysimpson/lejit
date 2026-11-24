@@ -130,5 +130,5 @@ CASES = [
     ('classes_die_through_slots', [()],
      {'xfail': "__add__ called through the slot is compiled for each "
                "class under its own code object"}),
-    ('megamorphic_stays', [()], {}),
+    ('megamorphic_stays', [()], {'checked': 'reads lejit._core._stats'}),
 ]

@@ -264,6 +264,96 @@ compiled_code(PyObject *f)
     return (PyCodeObject *)*c;
 }
 
+/* The keyword-only defaults a call to 'f' is compiled with, recorded as
+   compiled_defaults records the defaults: Py_None where f had none, or
+   where they can't be kept known (a key that isn't an exact str, or no
+   tag to watch them by); else (dict, tag address, tag, copy). The dict is
+   f's own, which can change in place, so a guard compares f's
+   func_kwdefaults with it and the tag at the address with the one
+   recorded; the copy, whose values the call binds, never changes. Where
+   dicts have no tag, LeJIT's watcher counts the dict's changes. */
+static PyObject *
+compiled_kwdefaults(PyObject *f)
+{
+    static le_addrmap_t seen; /* function address -> record */
+    PyObject **r = psyco_record(&seen, f);
+    if (*r == NULL) {
+        PyObject *d = PyFunction_GET_KW_DEFAULTS(f), *key, *value, *copy;
+        Py_ssize_t pos = 0;
+        uint64_t *tag;
+        *r = Py_None;
+        Py_INCREF(Py_None);
+        if (d == NULL || !PyDict_CheckExact(d))
+            return NULL;
+        while (PyDict_Next(d, &pos, &key, &value))
+            if (!PyUnicode_CheckExact(key))
+                return NULL;
+#if LE_HAS_DICT_VERSION_TAG
+        tag = (uint64_t *)&((PyDictObject *)d)->ma_version_tag;
+#else
+        tag = le_dict_counter((PyDictObject *)d);
+        if (tag == NULL)
+            return NULL;
+#endif
+        copy = PyDict_Copy(d);
+        if (copy == NULL) {
+            PyErr_Clear();
+            return NULL;
+        }
+        Py_SETREF(*r, Py_BuildValue("(ONKN)", d, PyLong_FromVoidPtr(tag),
+                                    (unsigned long long)*tag, copy));
+        if (*r == NULL) {
+            PyErr_Clear();
+            *r = Py_None;
+            Py_INCREF(Py_None);
+        }
+    }
+    return *r == Py_None ? NULL : *r;
+}
+
+/* the call names every keyword-only parameter, so their defaults aren't
+   read */
+static bool
+names_every_kwonly(PyCodeObject *co, PyObject *kwnames)
+{
+    int i, j;
+    for (i = co->co_argcount; i < co->co_argcount + co->co_kwonlyargcount;
+         i++) {
+        PyObject *name = le_code_local_name(co, i);
+        bool found = false;
+        for (j = 0; kwnames != NULL && j < PyTuple_GET_SIZE(kwnames) && !found;
+             j++) {
+            PyObject *k = PyTuple_GET_ITEM(kwnames, j);
+            found = k == name || PyUnicode_Compare(k, name) == 0;
+        }
+        if (!found)
+            return false;
+    }
+    return true;
+}
+
+/* emits 'the word at 'address' != expected' and says if it is true at run
+   time */
+static int
+word_changed(PsycoObject *po, void *address, uint64_t expected)
+{
+    vinfo_t *va = vinfo_new(CompileTime_New((long)address));
+    vinfo_t *vnow =
+        psyco_get_field_offset(po, va, FMUT(DEF_ARRAY(long, 0)), 0);
+    vinfo_t *vexp;
+    condition_code_t cc;
+    vinfo_decref(va, po);
+    if (vnow == NULL)
+        return -1;
+    vexp = vinfo_new(CompileTime_New((long)expected));
+    cc = integer_cmp(po, vnow, vexp, Py_NE);
+    vinfo_decref(vexp, po);
+    vinfo_decref(vnow, po);
+    if (cc == CC_ERROR)
+        return -1;
+    return runtime_condition_f(po, cc);
+}
+
 /* emits 'f's field != expected' and says if it is true at run time */
 static int
 field_changed(PsycoObject *po, PyObject *f, defield_t df, PyObject *expected)
@@ -286,6 +376,7 @@ field_changed(PsycoObject *po, PyObject *f, defield_t df, PyObject *expected)
 
 #define FUNC_code_now FMUT(FUNC_code)
 #define FUNC_defaults_now FMUT(FUNC_defaults)
+#define FUNC_kwdefaults_now FMUT(FUNC_kwdefaults)
 
 #ifdef Py_TPFLAGS_HAVE_VECTORCALL
 /* CPython calls a function through its vectorcall function, which C code
@@ -325,6 +416,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     vinfo_t *fglobals;
     vinfo_t *fdefaults;
     vinfo_t *result;
+    PyObject *kwdefs = NULL;
     int tuple_size;
 
     /* the code and the defaults are those compiled while f still has
@@ -336,11 +428,6 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
         usual_vectorcall)
         goto fallback;
 #endif
-    /* psyco_call_pyfunc's own fallback rebuilds the function from code,
-       globals and defaults, losing keyword-only defaults: call the real
-       function instead */
-    if (co->co_kwonlyargcount > 0)
-        goto fallback;
     switch (field_changed(po, f, FUNC_code_now, (PyObject *)co)) {
         case 0:
             break;
@@ -350,8 +437,40 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
             return NULL;
     }
 
+    /* keyword-only defaults, unless the call names them all: those
+       recorded, while f has that dict and it is unchanged */
+    if (co->co_kwonlyargcount > 0) {
+        vinfo_t **kwvalues;
+        PyObject *kwnames =
+            kw == NULL ? NULL : PsycoDict_PendingNames(kw, &kwvalues);
+        PyObject *rec;
+        if (!names_every_kwonly(co, kwnames) &&
+            (rec = compiled_kwdefaults(f)) != NULL) {
+            switch (field_changed(po, f, FUNC_kwdefaults_now,
+                                  PyTuple_GET_ITEM(rec, 0))) {
+                case 0:
+                    break;
+                case 1:
+                    goto fallback;
+                default:
+                    return NULL;
+            }
+            switch (word_changed(
+                po, PyLong_AsVoidPtr(PyTuple_GET_ITEM(rec, 1)),
+                PyLong_AsUnsignedLongLong(PyTuple_GET_ITEM(rec, 2)))) {
+                case 0:
+                    break;
+                case 1:
+                    goto fallback;
+                default:
+                    return NULL;
+            }
+            kwdefs = PyTuple_GET_ITEM(rec, 3);
+        }
+    }
+
     /* a call that gives every positional argument by position doesn't
-       use the defaults (keyword-only ones went to the fallback) */
+       use the defaults */
     defl = compiled_defaults(f);
     tuple_size = PsycoTuple_Load(arg);
     if (tuple_size < 0 || tuple_size < co->co_argcount)
@@ -376,7 +495,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
     }
 
     result = psyco_call_pyfunc(po, func, co, fglobals, fdefaults, arg, kw,
-                               po->pr.auto_recursion, allow_inline);
+                               kwdefs, po->pr.auto_recursion, allow_inline);
     vinfo_decref(fdefaults, po);
     vinfo_decref(fglobals, po);
     return result;
@@ -425,7 +544,7 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
             r = psyco_pyobj_atcompiletime_mega(po, fcode, &c);
             if (r < 0)
                 return NULL;
-            if (r == 0 || ((PyCodeObject *)c)->co_kwonlyargcount > 0)
+            if (r == 0)
                 goto fallback;
             if (((PyCodeObject *)c)->co_flags & CO_NESTED) {
                 /* its defaults are its own: positional calls only */
@@ -478,8 +597,6 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         co = (PyCodeObject *)psyco_pyobj_atcompiletime(po, fcode);
         if (co == NULL)
             return NULL;
-        if (co->co_kwonlyargcount > 0)
-            goto fallback; /* as in pfunction_simple_call */
 
         fglobals = vinfo_getitem(func, iFUNC_GLOBALS);
         if (fglobals == NULL)
@@ -489,8 +606,10 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
         if (fdefaults == NULL)
             return NULL;
 
+        /* its keyword-only defaults aren't known: a call that needs them
+           is the real one */
         return psyco_call_pyfunc(po, func, co, fglobals, fdefaults, arg, kw,
-                                 po->pr.auto_recursion, true);
+                                 NULL, po->pr.auto_recursion, true);
     }
 
 fallback:
