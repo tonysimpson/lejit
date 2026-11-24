@@ -205,10 +205,12 @@ le_instr(le_code_t c, int pos)
         case POP_JUMP_BACKWARD_IF_NOT_NONE:
             in.op = POP_JUMP_IF_NOT_NONE;
             break;
+#if !LE_HAS_GET_ITER_INDEX
         /* pops the iterator a for loop's FOR_ITER left at its end */
         case POP_ITER:
             in.op = POP_TOP;
             break;
+#endif
 #if LE_HAS_LOAD_ATTR_METHOD_BIT
         case LOAD_ATTR:
             if (in.arg & 1)
@@ -305,6 +307,7 @@ le_op_flags(int op)
         case STORE_FAST:
         case DELETE_FAST:
         case POP_TOP:
+        case POP_ITER:
         case ROT_TWO:
         case ROT_THREE:
         case DUP_TOP:

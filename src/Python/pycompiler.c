@@ -7066,7 +7066,23 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
         }
 
-            UNARY_OPCODE(GET_ITER, PsycoObject_GetIter);
+        /* where GET_ITER leaves an index or NULL above the iterator, the
+           iterator is always a real one, so the index is NULL */
+        case GET_ITER:
+            x = PsycoObject_GetIter(po, TOP());
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
+            if (LE_HAS_GET_ITER_INDEX)
+                PUSH(psyco_vi_Zero());
+            goto fine;
+
+        /* the index or NULL, then the iterator */
+        case POP_ITER:
+            POP_DECREF();
+            POP_DECREF();
+            goto fine;
 
         case END_FOR:
             POP_DECREF();
@@ -7076,7 +7092,7 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
 
         case FOR_ITER:
-            v = PsycoIter_Next(po, TOP());
+            v = PsycoIter_Next(po, LE_HAS_GET_ITER_INDEX ? NTOP(2) : TOP());
             if (v != NULL) {
                 /* iterator not exhausted */
                 PUSH(v);

@@ -1075,6 +1075,15 @@ def FOR_ITER_EXIT_PAST_POP_TOP():
 
 
 @probe
+def GET_ITER_INDEX():
+    """GET_ITER pushes two items, the iterator and an index or NULL
+    (dis)"""
+    op = dis.opmap['GET_ITER']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 2, 'dis: GET_ITER pushes %d' % pushes
+
+
+@probe
 def FOR_ITER_EXIT_KEEPS_ITER():
     """a for loop ends with END_FOR then POP_ITER (dis)"""
     if not _real_op('POP_ITER'):
