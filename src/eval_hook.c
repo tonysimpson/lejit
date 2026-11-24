@@ -933,7 +933,8 @@ le_entry_install(void)
 }
 
 /* LeJIT's hook, which compiled code tests is still installed before it
-   calls compiled code directly (mechanisms/tracing.h:le_direct_call_test) */
+   calls compiled code directly (mechanisms/tracing.h:le_direct_call_refused)
+ */
 DEFINEFN void *
 le_eval_hook(void)
 {

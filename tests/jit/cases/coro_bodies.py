@@ -454,7 +454,7 @@ CASES = [
     ('raised', [(3,)], HOOKED),
     ('await_errors', [(2,)], {}),
     ('with_asyncio', [(3,)],
-     {'warmup': (60, "asyncio's paths go on compiling for some rounds"),
+     {'warmup': (120, "asyncio's paths go on compiling for some rounds"),
       'leaks_with_aslr': 'what plain CPython itself keeps after the rounds '
                          'varies with addresses, by tens of blocks'}),
     ('origins', [(3,)], {}),

@@ -587,14 +587,21 @@ struct locals_map_s *
 psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos)
 {
     PyCodeObject *co = po->pr.co;
-    int i, n = le_code_nlocalsplus(co);
+    vinfo_t **locals = LOC_LOCALS_PLUS;
+    int i, n;
     /* kept between maps, as there is one per call site */
     static struct lm_build b = {NULL, 0, 0};
     struct locals_map_s *map;
-    if (po->pr.is_inlining)
-        return NULL;
+    if (po->pr.is_inlining) {
+        /* the call's slot is the inlined frame's parent's: map its locals */
+        vinfo_array_t *a = LOC_INLINING->array;
+        co = (PyCodeObject *)CompileTime_Get(a->items[LOC_INLINE_CO]->source)
+                 ->value;
+        locals = a->items + TOTAL_LOC_INLINE + INDEX_LOC_LOCALS_PLUS;
+    }
+    n = le_code_nlocalsplus(co);
     b.count = 0;
-    for (i = 0; i < n; i++) lm_value(po, &b, LOC_LOCALS_PLUS[i], reg_pos, 0);
+    for (i = 0; i < n; i++) lm_value(po, &b, locals[i], reg_pos, 0);
     map = psyco_owner_alloc(offsetof(struct locals_map_s, items) +
                             (b.count + 1) * sizeof(long));
     map->lasti = lasti;

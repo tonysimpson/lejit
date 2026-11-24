@@ -148,16 +148,11 @@ struct fncall_arg_s {
     int po_size;
 };
 
-/* What LeJIT's frames support, tested before anything is emitted: no
-   **kwargs dict (the binder would refuse it later, after the closure's
-   cells were loaded), and free variables only when the caller has the
-   cells (psyco_call_pyfunc). */
+/* What LeJIT's frames support, tested before anything is emitted: free
+   variables only when the caller has the cells (psyco_call_pyfunc). */
 static bool
 fncall_init(struct fncall_arg_s *fncall, PyCodeObject *co, int nfrees)
 {
-    if (co->co_flags & CO_VARKEYWORDS) {
-        return false;
-    }
     if (le_code_nfrees(co) != nfrees) {
         return false;
     }
@@ -204,6 +199,10 @@ bind_cells(PsycoObject *po, PyCodeObject *co, vinfo_t **f_localsplus,
     return true;
 }
 
+/* the most keyword arguments a call's **kwargs takes when it is compiled;
+   more is the real call */
+#define LE_MAX_KEYWORDS_LEFT 16
+
 /* The parameter a keyword argument named 'name' binds, as ceval's binder
    finds it: among those after the positional-only ones, the same object
    first, then an equal string (both are exact str constants, so comparing
@@ -242,10 +241,10 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
     vinfo_t **fastlocals = f_localsplus;
     Py_ssize_t i, n, m, missing;
     vinfo_t *x;
+    /* the keyword arguments **kwargs takes, made last, once the binding is
+       known not to need the real call */
+    Py_ssize_t left[LE_MAX_KEYWORDS_LEFT], nleft = 0;
 
-    if (co->co_flags & CO_VARKEYWORDS) {
-        return -1; /* PyDict_New: the real call */
-    }
     n = argcount > co->co_argcount ? co->co_argcount : argcount;
     for (i = 0; i < n; i++) {
         x = args[i];
@@ -272,7 +271,14 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
         for (k = 0; k < PyTuple_GET_SIZE(kwnames); k++) {
             Py_ssize_t j = keyword_slot(co, PyTuple_GET_ITEM(kwnames, k));
             if (j < 0) {
-                return -1; /* unexpected, or positional-only: the real call */
+                /* unexpected, or positional-only: into **kwargs, else the
+                   real call */
+                if (!(co->co_flags & CO_VARKEYWORDS) ||
+                    nleft == LE_MAX_KEYWORDS_LEFT) {
+                    return -1;
+                }
+                left[nleft++] = k;
+                continue;
             }
             if (fastlocals[j] != NULL) {
                 return -1; /* multiple values: the real call */
@@ -324,6 +330,31 @@ _PsycoEval_EvalCodeWithName(PsycoObject *po, PyObject *_co,
             fastlocals[i] =
                 vinfo_new(CompileTime_NewSk(sk_new((long)def, SkFlagPyObj)));
         }
+    }
+    if (co->co_flags & CO_VARKEYWORDS) {
+        /* a new dict, as CPython makes for every call, in the call's order;
+           not made when the binding is only checked again (bind_cells) */
+        Py_ssize_t slot = total_args + ((co->co_flags & CO_VARARGS) ? 1 : 0);
+        vinfo_t *d;
+        if (!make_cells) {
+            d = psyco_vi_Zero();
+        }
+        else {
+            d = psyco_generic_call(po, PyDict_New, CfCommonNewRefPyObject, "");
+            if (d == NULL) {
+                return -2;
+            }
+            for (i = 0; i < nleft; i++) {
+                if (!PsycoDict_SetItemC(po, d,
+                                        PyTuple_GET_ITEM(kwnames, left[i]),
+                                        kwargs[left[i]])) {
+                    vinfo_decref(d, po);
+                    return -2;
+                }
+            }
+        }
+        vinfo_xdecref(fastlocals[slot], po);
+        fastlocals[slot] = d;
     }
     if (!bind_cells(po, co, f_localsplus, make_cells)) {
         return -2;
@@ -407,27 +438,36 @@ fncall_store_arguments(struct fncall_arg_s *fncall, vinfo_t **vlocals)
     memcpy(vlocals, a->items, a->count * sizeof(vinfo_t *));
 }
 
-/* The cells the binder made are the callee's, which frees them with its
-   other locals, in CPython's order (pycompiler.c:exit_function): the
+/* The cells and the **kwargs dict the binder made are the callee's, which
+   frees them with its other locals, in CPython's order
+   (pycompiler.c:exit_function): the
    reference goes from the caller's value, so that releasing it emits
    nothing, to the callee's argument. The caller's value goes as the bound
    locals do, before the call is emitted; nothing emitted in between uses
    its register, which the call pushes (psyco_call_psyco). */
 static void
+give_slot(struct fncall_arg_s *fncall, vinfo_array_t *callee, int slot)
+{
+    int k = INDEX_LOC_LOCALS_PLUS + slot;
+    vinfo_t *mine = fncall->inputvinfos->items[k];
+    vinfo_t *theirs = callee->items[k];
+    if (mine != NULL && theirs != NULL && has_rtref(mine->source) &&
+        is_runtime(theirs->source)) {
+        mine->source = remove_rtref(mine->source);
+        theirs->source = add_rtref(theirs->source);
+    }
+}
+static void
 give_cells(struct fncall_arg_s *fncall, vinfo_array_t *callee)
 {
     PyCodeObject *co = fncall->co;
     int i;
-    for (i = 0; i < le_code_ncells(co); i++) {
-        int k = INDEX_LOC_LOCALS_PLUS + le_code_cell_slot(co, i);
-        vinfo_t *mine = fncall->inputvinfos->items[k];
-        vinfo_t *theirs = callee->items[k];
-        if (mine != NULL && theirs != NULL && has_rtref(mine->source) &&
-            is_runtime(theirs->source)) {
-            mine->source = remove_rtref(mine->source);
-            theirs->source = add_rtref(theirs->source);
-        }
-    }
+    for (i = 0; i < le_code_ncells(co); i++)
+        give_slot(fncall, callee, le_code_cell_slot(co, i));
+    if (co->co_flags & CO_VARKEYWORDS)
+        give_slot(fncall, callee,
+                  co->co_argcount + co->co_kwonlyargcount +
+                      ((co->co_flags & CO_VARARGS) ? 1 : 0));
 }
 
 /* Build a PsycoObject "frame" corresponding to the call of a Python
@@ -747,11 +787,11 @@ tracing_on(PsycoObject *po, vinfo_t *vts)
 
 /* Whether a compiled call or inlined frame must be the real call
    instead, which is tracing_on or another eval hook installed over
-   LeJIT's (le_direct_call_test): one test, with the same rare path */
+   LeJIT's (le_direct_call_refused) */
 static bool
 direct_call_refused(PsycoObject *po, vinfo_t *vts)
 {
-    return runtime_condition_f(po, le_direct_call_test(po, vts));
+    return le_direct_call_refused(po, vts);
 }
 
 DEFINEFN

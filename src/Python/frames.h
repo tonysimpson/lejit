@@ -142,7 +142,8 @@ struct stack_frame_info_s {
     int on_gen_frame;
 };
 
-/* the map of po's locals now, with lasti, or NULL while inlining. A
+/* the map of po's locals now, with lasti; while inlining, of the
+   inlined frame's parent's, whose slot the call uses. A
    local only in a register is found there (LM_REG), or with reg_pos at
    the position its register is pushed at for this call
    (psyco_call_psyco). Nothing is emitted. */

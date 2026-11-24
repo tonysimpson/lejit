@@ -28,6 +28,10 @@ BANNED = {
 # reason: tests skipped in both runs, by id as the report prints it (fnmatch
 # patterns)
 SKIPPED = {
+    'connects to a port it found unused, which a test running at the same '
+    'time can take, and expects the connection to fail':
+        'test.test_asyncio.test_events.*EventLoopTests.'
+        'test_create_connection_local_addr_skip_different_family',
     "sys.getrefcount counts a constant once for each compiled block that "
     'uses it, and the code compiled while a test counts holds more':
         'test.test_xml_etree.BugsTest.test_bug_xmltoolkit63 '
