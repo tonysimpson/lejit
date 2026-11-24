@@ -233,7 +233,10 @@ vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
     va_list vargs;
 
     extra_assert(c_function != NULL);
-    if (po->pr.pieces && !(flags & (CfPure | CfNoPython)) &&
+    /* still so when the call is made at run time, without CfPure */
+    if (flags & CfPure)
+        flags |= CfNoPython;
+    if (po->pr.pieces && !(flags & CfNoPython) &&
         !PsycoList_ForcePieces(po, NULL))
         return NULL;
     va_start(vargs, arguments);
@@ -355,7 +358,7 @@ vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
         /* compile the run time call */
         if (!(flags & CfNoBlock) && !psyco_cannot_block(c_function))
             po->blocking_call = 1;
-        if (!(flags & (CfPure | CfNoPython))) {
+        if (!(flags & CfNoPython)) {
             po->pr.class_unchecked = 1; /* it may assign __class__ */
             po->pr.python_call = 1;
             psyco_note_call_site(
