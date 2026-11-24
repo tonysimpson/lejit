@@ -250,6 +250,12 @@ PsycoObject_IsTrue(PsycoObject *po, vinfo_t *vi);
    that would happend to contain zero). */
 EXTERNFN vinfo_t *
 PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name);
+/* ceval's method load, o.name for a call: 1 with *meth the function to
+   call with o first, 0 with *meth the attribute to call as it is, -1 on an
+   error */
+EXTERNFN int
+PsycoObject_GetMethod(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
+                      vinfo_t **meth);
 EXTERNFN bool
 PsycoObject_SetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
                     vinfo_t *v);

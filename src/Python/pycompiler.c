@@ -6062,20 +6062,29 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+        /* ceval's two forms: the function and self, or the attribute
+           and the NULL */
         case LOAD_METHOD: {
             vinfo_t *meth;
             vinfo_t *name;
             vinfo_t *obj;
+            int unbound;
             obj = NTOP(1);
             name = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
-            meth = PsycoObject_GetAttr(po, obj, name);
+            unbound = PsycoObject_GetMethod(po, obj, name, &meth);
             vinfo_decref(name, po);
-            if (meth == NULL) {
+            if (unbound < 0) {
                 break;
             }
             POP(obj);
-            vinfo_decref(obj, po);
-            PUSH_WITH_NULL(meth);
+            if (unbound) {
+                PUSH(meth);
+                PUSH(obj);
+            }
+            else {
+                vinfo_decref(obj, po);
+                PUSH_WITH_NULL(meth);
+            }
             goto fine;
         }
 
@@ -7119,12 +7128,12 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
         case CALL_METHOD:
         case CALL:
         case CALL_KW: {
-            /* LOAD_METHOD looks the attribute up and pushes NULL
-               beside it, as PUSH_NULL does beside other callables:
-               the (NULL, callable) form, or (callable, NULL) where the
-               callable is under its NULL. CALL's other form, a
-               callable beside its first argument, comes from
-               elsewhere (a decorator, a with statement's exit).
+            /* LOAD_METHOD pushes a function and its self, or the
+               attribute and NULL beside it, as PUSH_NULL does beside
+               other callables: the (NULL, callable) form, or
+               (callable, NULL) where the callable is under its NULL.
+               The function-and-self form also comes from elsewhere (a
+               decorator, a with statement's exit).
                CALL_KW's keyword names are on top. */
             int i, stack_to_pop, null = 1, kw = opcode == CALL_KW;
             PyObject *kwnames = NULL;
@@ -7137,10 +7146,8 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
             }
 #else
             if (!psyco_knowntobe(NTOP(oparg + 2), 0)) {
-                /* or a resumed generator's method under its self, as
-                   ceval's LOAD_METHOD left them */
-                extra_assert(opcode == CALL ||
-                             psyco_generator_mode(po) == GENEXPR_RESUMABLE);
+                /* or a function under its self, as LOAD_METHOD leaves
+                   them */
                 null = 0;
                 oparg++;
             }
