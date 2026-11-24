@@ -3494,9 +3494,11 @@ ct_format_exc_unbound(PsycoObject *po, PyCodeObject *co, int oparg)
 /* ceval.c BUILD_STRING: with count < 0, item0 is a tuple of the items */
 static PyObject *
 cimpl_build_string_array(long count, PyObject *item0, PyObject *item1,
-                         PyObject *item2, PyObject *item3)
+                         PyObject *item2, PyObject *item3, PyObject *item4,
+                         PyObject *item5, PyObject *item6)
 {
-    PyObject *words[4] = {item0, item1, item2, item3};
+    PyObject *words[ARRAY_ARGS_MAX] = {item0, item1, item2, item3,
+                                       item4, item5, item6};
     PyObject **items = words;
     Py_ssize_t n = count;
     PyObject *empty, *str;
@@ -6169,19 +6171,21 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
         case BUILD_STRING: {
             vinfo_t *str;
             if (oparg <= ARRAY_ARGS_MAX) {
+                vinfo_t *items[ARRAY_ARGS_MAX];
+                int i;
                 u = psyco_vi_Zero();
+                for (i = 0; i < ARRAY_ARGS_MAX; i++)
+                    items[i] = i < oparg ? NTOP(oparg - i) : u;
                 str = psyco_generic_call(
                     po, cimpl_build_string_array, CfCommonNewRefPyObject,
-                    "lvvvv", (long)oparg, oparg > 0 ? NTOP(oparg - 0) : u,
-                    oparg > 1 ? NTOP(oparg - 1) : u,
-                    oparg > 2 ? NTOP(oparg - 2) : u,
-                    oparg > 3 ? NTOP(oparg - 3) : u);
+                    "lvvvvvvv", (long)oparg, items[0], items[1], items[2],
+                    items[3], items[4], items[5], items[6]);
             }
             else {
                 u = PsycoTuple_New(oparg, STACK_POINTER() - oparg);
                 str = psyco_generic_call(po, cimpl_build_string_array,
-                                         CfCommonNewRefPyObject, "lvlll", -1L,
-                                         u, 0L, 0L, 0L);
+                                         CfCommonNewRefPyObject, "lvllllll",
+                                         -1L, u, 0L, 0L, 0L, 0L, 0L, 0L);
             }
             vinfo_decref(u, po);
             if (str == NULL) {
