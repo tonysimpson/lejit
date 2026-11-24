@@ -4403,8 +4403,9 @@ fusion_prev(le_code_t c, int *p)
                                  SWAP 3, SWAP 2), STORE_SUBSCR
    with no merge point from the instruction after the first to the store,
    so the store is reached only through the get. Only loads stand between
-   the two besides OP, so d and k are the get's objects. '*dlocal' is set
-   to d's local for the get form. */
+   the two besides OP, so d and k are the get's objects. A LOAD_FAST d,
+   LOAD_FAST k pair may be one LOAD_FAST_LOAD_FAST, and y a LOAD_SMALL_INT.
+   '*dlocal' is set to d's local for the get form. */
 static int
 fused_store(PsycoObject *po, int i, int *dlocal)
 {
@@ -4413,7 +4414,9 @@ fused_store(PsycoObject *po, int i, int *dlocal)
     le_instr_t get, load, op, in;
     int first, s, p = i;
     mergepoint_t *mp;
-#define FUSION_LOAD(in) ((in).op == LOAD_CONST || (in).op == LOAD_FAST)
+#define FUSION_LOAD(in)                               \
+    ((in).op == LOAD_CONST || (in).op == LOAD_FAST || \
+     (in).op == LOAD_SMALL_INT)
     get = fusion_next(c, &p);
     load = fusion_next(c, &p);
     op = fusion_next(c, &p);
@@ -4444,6 +4447,14 @@ fused_store(PsycoObject *po, int i, int *dlocal)
     }
     else {
         le_instr_t kload, dload, method;
+        if (get.op == BINARY_SUBSCR && in.op == LOAD_FAST_LOAD_FAST) {
+            first = p;
+            dload = kload = in;
+            dload.op = kload.op = LOAD_FAST;
+            dload.arg = in.arg >> 4;
+            kload.arg = in.arg & 15;
+            goto loaded;
+        }
         if (get.op == BINARY_SUBSCR)
             kload = in;
         else if ((get.op == CALL_METHOD || get.op == CALL) &&
@@ -4466,15 +4477,22 @@ fused_store(PsycoObject *po, int i, int *dlocal)
             return -1;
         first = p;
         dload = fusion_prev(c, &p);
+    loaded:
         if (dload.op != LOAD_FAST || kload.op != LOAD_FAST)
             return -1;
         p = op.next;
         in = fusion_next(c, &p);
-        if (in.op != LOAD_FAST || in.arg != dload.arg)
-            return -1;
-        in = fusion_next(c, &p);
-        if (in.op != LOAD_FAST || in.arg != kload.arg)
-            return -1;
+        if (in.op == LOAD_FAST_LOAD_FAST) {
+            if (in.arg >> 4 != dload.arg || (in.arg & 15) != kload.arg)
+                return -1;
+        }
+        else {
+            if (in.op != LOAD_FAST || in.arg != dload.arg)
+                return -1;
+            in = fusion_next(c, &p);
+            if (in.op != LOAD_FAST || in.arg != kload.arg)
+                return -1;
+        }
         s = p;
         if (fusion_next(c, &p).op != STORE_SUBSCR)
             return -1;
