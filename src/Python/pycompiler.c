@@ -3323,22 +3323,44 @@ cimpl_print_expr(PyObject *value)
 }
 
 #if LE_HAS_OPCODE_LOAD_SUPER_ATTR
-/* ceval.c LOAD_SUPER_ATTR, the attribute name of super(class, self),
-   or of the global super called with no arguments if n is 0 */
-static PyObject *
+#if LE_HAS_SUPER_LOOKUP_LINKABLE
+/* declared only in an internal header */
+PyAPI_FUNC(PyObject *) _PySuper_Lookup(PyTypeObject *su_type, PyObject *su_obj,
+                                       PyObject *name, int *meth_found);
+#endif
+/* ceval.c LOAD_SUPER_ATTR: out[0] the attribute 'name' of super(class,
+   self), or of the global super called with no arguments if oparg's bit 1
+   is clear. For the builtin super and a class, where libpython exports
+   it, CPython's specialised forms' lookup, which makes no super object,
+   and for a method load (oparg's bit 0) no bound method either: then 1
+   says out[0] is the function, to call with self. */
+static int
 cimpl_load_super_attr(PyObject *global_super, PyObject *class, PyObject *self,
-                      PyObject *name, long n)
+                      PyObject *name, long oparg, PyObject *out[])
 {
     PyObject *stack[] = {class, self};
-    PyObject *super, *res;
+    PyObject *super;
+    long n = oparg & 2;
+#if LE_HAS_SUPER_LOOKUP_LINKABLE
+    if (global_super == (PyObject *)&PySuper_Type && PyType_Check(class)) {
+        int found = 0;
+        bool method = (oparg & 1) &&
+                      Py_TYPE(self)->tp_getattro == PyObject_GenericGetAttr;
+        out[0] = _PySuper_Lookup((PyTypeObject *)class, self, name,
+                                 method ? &found : NULL);
+        return out[0] == NULL ? -1 : found;
+    }
+#endif
+    /* the builtin super is given both, as the zero-argument form finds
+       them */
     if (global_super == (PyObject *)&PySuper_Type)
         n = 2;
     super = PyObject_Vectorcall(global_super, stack, n, NULL);
     if (super == NULL)
-        return NULL;
-    res = PyObject_GetAttr(super, name);
+        return -1;
+    out[0] = PyObject_GetAttr(super, name);
     Py_DECREF(super);
-    return res;
+    return out[0] == NULL ? -1 : 0;
 }
 #endif
 
@@ -6049,26 +6071,48 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
-        /* super().name, or super(class, self).name: the builtin
-           super is given both, as the zero-argument form finds
-           them */
-        case LOAD_SUPER_ATTR:
+        /* super().name, or super(class, self).name: the attribute, or
+           for a method call the function and self as LOAD_METHOD
+           leaves them */
+        case LOAD_SUPER_ATTR: {
 #if LE_HAS_OPCODE_LOAD_SUPER_ATTR
+            vinfo_array_t *out = array_new(1);
+            vinfo_t *self;
+            int found;
             x = psyco_generic_call(po, cimpl_load_super_attr,
-                                   CfCommonNewRefPyObject, "vvvll", NTOP(3),
+                                   CfCommonIntBoolOrError, "vvvllA", NTOP(3),
                                    NTOP(2), TOP(), (long)GETNAMEV(oparg >> 2),
-                                   (long)(oparg & 2));
-            if (x == NULL)
+                                   (long)oparg, out);
+            if (x == NULL) {
+                array_release(out);
                 break;
+            }
+            v = out->items[0];
+            array_release(out);
+            found = (oparg & 1) ? runtime_NON_NULL_t(po, x) : 0;
+            if (!(oparg & 1))
+                vinfo_decref(x, po);
+            if (found < 0) {
+                vinfo_decref(v, po);
+                break;
+            }
+            POP(self);
             POP_DECREF();
             POP_DECREF();
-            POP_DECREF();
-            if (oparg & 1)
-                PUSH_WITH_NULL(x);
-            else
-                PUSH(x);
+            if (found) {
+                PUSH(v);
+                PUSH(self);
+            }
+            else {
+                vinfo_decref(self, po);
+                if (oparg & 1)
+                    PUSH_WITH_NULL(v);
+                else
+                    PUSH(v);
+            }
 #endif
             goto fine;
+        }
 
         case LOAD_GLOBAL: {
             bool push_null = LE_GLOBAL_PUSHES_NULL(oparg);
