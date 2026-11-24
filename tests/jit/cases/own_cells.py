@@ -325,6 +325,35 @@ def order_arg_cell_loop(x):
     return 0
 
 
+def order_inlined(make):              # inlined: reads no global
+    a = make('a')
+    b = make('b')
+    c = make('c')
+    g = lambda: b
+    return 0
+
+
+def order_inlined_raises(make):
+    a = make('a')
+    b = make('b')
+    c = make('c')
+    g = lambda: b
+    raise ValueError
+
+
+def free_order_inlined(n):
+    # the same for a frame inlined into its caller, left by a return or
+    # an exception
+    D.log = []
+    for _ in range(n):
+        order_inlined(D)
+        try:
+            order_inlined_raises(D)
+        except ValueError:
+            pass
+    return D.log[:6]
+
+
 def free_order(n):
     # the frame's locals and its cells are freed in its slots' order
     D.log = []
@@ -404,6 +433,7 @@ CASES = [
     ('tracer_events', [(3,)], {}),
     ('traced_from_callee', [(3,)], {}),
     ('free_order', [(2,)], {}),
+    ('free_order_inlined', [(2,)], {}),
     ('kept_by_closure', [(3,)], {}),
     ('defaults_and_varargs', [(3,)], {}),
     ('wrong_count', [(2,)], {}),

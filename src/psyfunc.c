@@ -641,7 +641,11 @@ psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a)
     /* leaving an inlined frame restores its (never inlining) parent; on
        entry the old locals were already moved out (psyco_save_inline_po) */
     po->pr.is_inlining = false;
-    for (i = oldcount; i--;) vinfo_xdecref(old[i], po);
+    /* in CPython's order, as the end of a called frame (pycompiler.c:
+       exit_function) */
+    for (i = 0; i < oldcount; i++)
+        vinfo_xdecref(
+            old[LE_HAS_FRAME_CLEARED_LAST_FIRST ? oldcount - 1 - i : i], po);
     po->pr.is_inlining = was_inlining;
     PyMem_Free(old);
     return po;
