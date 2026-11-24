@@ -4827,17 +4827,14 @@ fusion_prev(le_code_t c, int *p)
 
 /* A subscript by a slice whose bounds are all constants is a constant
    slice object where the compiler folds them; for a container whose
-   slicing compiled code does itself (it never hands the slice to Python
-   code, so nothing can tell the object from another equal one), the
-   subscript becomes the slice built from those constants, as BINARY_SLICE
-   and STORE_SLICE make it. 'sub' is borrowed; returns a new reference. */
+   slicing compiled code does itself, the subscript becomes a virtual slice
+   of those constants, as BINARY_SLICE and STORE_SLICE make it, which is the
+   constant again wherever it is forced. 'sub' is borrowed; returns a new
+   reference. */
 static vinfo_t *
 unfolded_slice(vinfo_t *container, vinfo_t *sub)
 {
     PyTypeObject *tp = Psyco_KnownType(container);
-    PySliceObject *s;
-    vinfo_t *parts[3], *slice;
-    int i;
     if (!is_compiletime(sub->source) ||
         Py_TYPE((PyObject *)CompileTime_Get(sub->source)->value) !=
             &PySlice_Type ||
@@ -4846,14 +4843,8 @@ unfolded_slice(vinfo_t *container, vinfo_t *sub)
         vinfo_incref(sub);
         return sub;
     }
-    s = (PySliceObject *)CompileTime_Get(sub->source)->value;
-    parts[0] = vinfo_new(CompileTime_New((long)s->start));
-    parts[1] = vinfo_new(CompileTime_New((long)s->stop));
-    parts[2] =
-        s->step == Py_None ? NULL : vinfo_new(CompileTime_New((long)s->step));
-    slice = PsycoSlice_New(parts[0], parts[1], parts[2]);
-    for (i = 0; i < 3; i++) vinfo_xdecref(parts[i], NULL);
-    return slice;
+    return PsycoSlice_FromConstant(
+        (PyObject *)CompileTime_Get(sub->source)->value);
 }
 
 /* The STORE_SUBSCR fused with the get at byte offset 'i', or -1, as LeJIT
