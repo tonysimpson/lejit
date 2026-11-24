@@ -136,6 +136,10 @@ struct stack_frame_info_s {
     /* the function whose coroutine's body this call runs, started by its
        await (psyfunc.c:psyco_coro_start), or NULL */
     PyFunctionObject *coro_func;
+    /* this call runs a generator's body on the generator's own frame,
+       whose address is the word above the callee's own slot
+       (psyfunc.c:psyco_gen_step) */
+    int on_gen_frame;
 };
 
 /* the map of po's locals now, with lasti; while inlining, of the
@@ -165,6 +169,12 @@ finfo_last(stack_frame_info_t *finfo)
 
 EXTERNFN stack_frame_info_t *
 psyco_finfo(PsycoObject *caller, PsycoObject *callee);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* the record of a call from 'caller' that runs a body of the generator
+   code 'co' on the generator's own frame (on_gen_frame) */
+EXTERNFN stack_frame_info_t *
+psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co);
+#endif
 
 /* A real frame LeCode_Run runs: on its C stack, linked into this
    thread's list from start to return (frames.c:frame_runs) */

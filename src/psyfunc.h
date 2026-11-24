@@ -41,6 +41,11 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v);
 EXTERNFN vinfo_t *
 psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
                    vinfo_t *comp);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* compiled code's step of the generator 'vgen', as tp_iternext */
+EXTERNFN vinfo_t *
+psyco_gen_step(PsycoObject *po, vinfo_t *vgen);
+#endif
 /* whether the await being compiled runs the body of the pending coroutine
    'v' as a call, emitting the tests: 1 to, 0 not to, -1 with an
    exception */
