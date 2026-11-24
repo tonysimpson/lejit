@@ -405,35 +405,38 @@ def nexts(n):
     return out, compiled(returns_after)
 
 # Immortal and mortal objects in the locals and on the stack across
-# resumes, and what is left of a mortal one's count once the generator is
-# done. (While it is paused the count differs: CPython's stack may borrow.)
+# resumes, and when the mortal ones die.
 def holds(n):
     big = 10 ** 20 + n
-    lst = [n]
+    obj = D('local')
     none, flag, small, name = None, True, 7, 'name'
-    yield work(len(lst))
-    yield pair(lst, (yield work((none, flag, small, name))), big, None, 3)
-    gone = lst
-    del lst
-    yield work((len(gone), big, none, flag, small))
-    lst = gone
-    yield work(lst)
+    yield work(label(obj))
+    t = pair(D('stacked'), (yield work((none, flag, small, name))), big,
+             None, 3)
+    yield work(tuple(label(x) for x in t))
+    del t
+    gone = obj
+    del obj
+    yield work((label(gone), big, none, flag, small))
+    obj = gone
+    del gone
+    yield work(label(obj))
 
 
 def held_counts(n):
     out = []
     for k in range(4):
         g = holds(n)
-        x = next(g)
-        lst = g.gi_frame.f_locals['lst']
-        out.append([x, next(g), g.send('sent'), next(g), next(g)])
-        out.append((by_next(g), sys.getrefcount(lst)))
+        out.append([label(x) for x in (next(g), next(g), g.send('sent'))])
+        out.append(taken())
+        out.append([next(g), next(g)])
+        out.append((by_next(g), taken()))
         g = holds(n)
         next(g)
         next(g)
-        lst = g.gi_frame.f_locals['lst']
         del g
-        out.append((by_for(holds(n)), sys.getrefcount(lst)))
+        out.append(taken())
+        out.append((by_for(holds(n)), taken()))
     return out, compiled(holds)
 
 CASES = [
