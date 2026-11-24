@@ -483,11 +483,16 @@ le_gen_frame_set_depth(le_frame_t *f, int n)
 }
 /* the generator's frame runs, its stack held by compiled code (and its
    locals, but where LE_RESUMES_ON_FRAME those the code hasn't taken):
-   gen_send_ex has marked it as running */
+   gen_send_ex has marked it as running. Its place moves off the yield
+   (LE_GEN_RUN_STEP), as ceval's would: gen.close() and gi_yieldfrom
+   read a frame at a yield as paused there. */
+#define LE_GEN_RUN_STEP ((long)sizeof(_Py_CODEUNIT))
 static inline void
 le_gen_frame_run(le_frame_t *f)
 {
     le_gen_frame_set_depth(f, 0);
+    LE_FRAME_PLACE(f) =
+        (_Py_CODEUNIT *)((char *)LE_FRAME_PLACE(f) + LE_GEN_RUN_STEP);
 }
 /* paused at the yield at 'lasti' with 'nstack' items under the value, as
    ceval's YIELD_VALUE leaves it: its place is the yield, or the instruction
