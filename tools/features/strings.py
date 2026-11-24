@@ -496,7 +496,7 @@ msg('MATCH_TOO_MANY_POSITIONAL', 'a class pattern with more positional '
     'range(args[1])))\nshown[2] = "" if args[1] == 1 else "s"\n'
     'exec("match C():\\n case C(%s): pass" % ", ".join(["1"] * args[3]),'
     ' {"C": C})',
-    [T(), I('d'), P(), I('d')], ints=[[0, 1, 0, 3], [0, 2, 0, 5]],
+    [T(), I('zd'), P(), I('zd')], ints=[[0, 1, 0, 3], [0, 2, 0, 5]],
     requires=_MATCH)
 msg('MATCH_ARGS_NOT_STR', "a class pattern whose __match_args__ holds a "
     "non-str", 'TypeError',
