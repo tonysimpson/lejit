@@ -1041,7 +1041,35 @@ typedef struct le_code_extra_s {
     int nresumes; /* a resumable generator's points, or -1: not resumable */
     le_resume_point_t *resumes;     /* one per yield and the start, or NULL */
     le_resume_point_t *last_resume; /* the one the last resume used */
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    struct le_gen_direct_s *direct; /* le_gen_direct_t, or NULL */
+#endif
 } le_code_extra_t;
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* A resumable generator's compiled entries as compiled code that steps it
+   calls them (psyfunc.c:psyco_gen_step): indexed by its frame's place
+   (le_gen_direct_index), each the start of the entry's code, or NULL
+   where none is compiled yet; one entry serves all the code's frames
+   with these globals and builtins, set by the first entry put in. The
+   entries' buffers are the resume points' (le_resume_entry_t). */
+typedef struct le_gen_direct_s {
+    PyObject *globals, *builtins; /* borrowed, as entry_globals */
+    code_t *entries[1];
+} le_gen_direct_t;
+/* the table of 'co' (record 'x'), made if the code is a resumable
+   generator's that compiled code may step; NULL if not, or out of
+   memory (eval_hook.c) */
+EXTERNFN le_gen_direct_t *
+le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x);
+/* what compiled code calls after a direct step of the generator 'gen'
+   whose run gave 'result' and didn't simply pause at a yield
+   (eval_hook.c), as gen_iternext returns */
+EXTERNFN PyObject *
+le_gen_direct_end(PyObject *gen, PyObject *result);
+/* the same after a step made by send(), as gen_send returns */
+EXTERNFN PyObject *
+le_gen_direct_send_end(PyObject *gen, PyObject *result);
+#endif
 /* the record lives in a weak reference to its code object (lejit.c) */
 typedef struct {
     PyWeakReference wr;

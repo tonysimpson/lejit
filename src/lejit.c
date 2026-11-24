@@ -163,6 +163,9 @@ le_code_extra_free(le_code_extra_t *x)
         for (j = 0; j < x->resumes[i].count; j++)
             Py_XDECREF(x->resumes[i].entries[j].code);
     PyMem_Free(x->resumes);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    PyMem_Free(x->direct);
+#endif
     psyco_owner_release(&x->owner, x->merge_points, x->entry_point);
     psyco_owner_untrack(x); /* after: releasing can keep into the owner */
     Py_DECREF(RECORD_OF(x));
@@ -366,11 +369,20 @@ le_layouts(PyObject *self, PyObject *unused)
     if (result == NULL || list == NULL || d == NULL)
         goto error;
 
-    /* Objects/iterobject.c's seqiterobject */
+    /* Objects/iterobject.c's seqiterobject, whose layout piterobject.c also
+       uses for Objects/listobject.c's list iterators */
     it = PySeqIter_New(list);
     if (it == NULL)
         goto error;
     ok = PySeqIter_Type.tp_basicsize == sizeof(seqiterobject) &&
+         ((seqiterobject *)it)->it_seq == list &&
+         ((seqiterobject *)it)->it_index == 0;
+    Py_DECREF(it);
+    it = PyObject_GetIter(list);
+    if (it == NULL)
+        goto error;
+    ok = ok && Py_TYPE(it) == &PyListIter_Type &&
+         PyListIter_Type.tp_basicsize == sizeof(seqiterobject) &&
          ((seqiterobject *)it)->it_seq == list &&
          ((seqiterobject *)it)->it_index == 0;
     if (add_layout(result, "seqiterobject", PySeqIter_Type.tp_basicsize, ok) <
