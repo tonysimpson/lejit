@@ -1283,6 +1283,8 @@ BYTECODE = [
                         lambda s: _file_has(s, 'Objects/codeobject.c', '"co_qualname"'))),
     ('LOAD_GLOBAL_NULL_BIT', D('LOAD_GLOBAL\'s argument is the name\'s index shifted left once, its low bit pushing a NULL under the global',
                                lambda s: _case_has(s, 'LOAD_GLOBAL', 'oparg>>1'))),
+    ('IMPORT_NAME_LAZY_BITS', D('IMPORT_NAME\'s argument is the name\'s index shifted left twice, its low two bits saying whether the import is lazy (1) or always eager (2)',
+                                lambda s: _case_has(s, 'IMPORT_NAME', 'oparg>>2'))),
     ('AWAIT_ERROR_BY_ARG', D('GET_AWAITABLE\'s argument tells its error which of async with\'s awaits it is (1 __aenter__\'s, 2 __aexit__\'s), not the instructions before it',
                              lambda s: _case_uses(s, 'GET_AWAITABLE', 'oparg'))),
     ('AWITH_EXIT_FIRST', D('BEFORE_ASYNC_WITH looks up __aexit__ before __aenter__',

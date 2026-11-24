@@ -1,6 +1,7 @@
 # Forms the bytecode compiler chooses differently across versions: truth
 # tests, pairs of locals, f-string conversions, function attributes, calls
-# by keyword or through a bound attribute, and the end of for loops.
+# by keyword or through a bound attribute, the end of for loops, and
+# imports (whose argument carries the name's index with other bits).
 
 
 class Truthy:
@@ -150,6 +151,15 @@ def loop_ends(items):
     return out, [i * 2 for i in items if i], sum(i for i in items)
 
 
+def imports(name):
+    first = name.upper()
+    import os.path
+    from collections import OrderedDict as od, deque
+    import json as j
+    return (first, os.path.basename('/a/b'), od.__name__, deque.__name__,
+            j.__name__)
+
+
 CASES = [
     ('truth', "[([0, 1, '', 'x', [], [0], None, Truthy(True), Truthy(False)],)]",
      {}),
@@ -165,4 +175,5 @@ CASES = [
     ('calls_by_keyword', "[(Obj(), lambda x, y=0: (x * 2, y))]", {}),
     ('super_by_keyword', [(1,)], {}),
     ('loop_ends', [([0, 1, 2],), ([],)], {}),
+    ('imports', [('json',)], {}),
 ]

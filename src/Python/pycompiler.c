@@ -8346,7 +8346,7 @@ compile_imports(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
 
         case IMPORT_NAME: {
-            PyObject *w = GETNAMEV(oparg);
+            PyObject *w = GETNAMEV(LE_IMPORT_NAME(oparg));
             v = TOP();
             u = NTOP(2);
             x = psyco_generic_call(po, cimpl_import_name,

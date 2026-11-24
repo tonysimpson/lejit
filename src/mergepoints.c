@@ -624,6 +624,9 @@ _build_merge_points(PyCodeObject *co, int module)
             goto not_ok;
         if (opcode == CALL_INTRINSIC_1 && !compiled_intrinsic(oparg))
             goto not_ok;
+        /* cimpl_import_name imports eagerly */
+        if (opcode == IMPORT_NAME && LE_IMPORT_LAZY(oparg))
+            goto not_ok;
         if (opcode == LOAD_GLOBAL &&
             loads_frame_locals_builtin(co, LE_GLOBAL_NAME(oparg)))
             goto not_ok;
