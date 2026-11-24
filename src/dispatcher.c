@@ -33,13 +33,16 @@
  *    from stays live for the PARK_LIVE_MAX newest, and is frozen after,
  *    with what a snapshot leaves out kept beside it (psyco_park).
  * psyco_forget_dead_vars drops what is known about the dead locals that
- * mergepoints.c lists first in each fatlist, keeping their values. State
+ * mergepoints.c lists first in each fatlist, keeping their values;
+ * psyco_make_dead_virtuals_real makes their virtual values real once a
+ * merge point has reached its cap. State
  * is global and non-re-entrant (cmpinternal,
  * the static result in psyco_compatible).
  */
 #include "dispatcher.h"
 #include "Objects/pobject.h"
 #include "Objects/pboolobject.h"
+#include "Objects/pfloatobject.h"
 #include "Objects/plongobject.h"
 #include "Python/pycompiler.h" /* for pyc_data_xxx() */
 #include "blockalloc.h"
@@ -1963,6 +1966,65 @@ psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
         vi->array = NullArray;
         array_delete(a, po);
     }
+}
+
+/* whether a dead local's virtual value is made real at a merge point past
+   its cap: an int or bool only if its value is known, so that making it
+   is a constant, and never a float, as a numeric loop would box them on
+   every pass (scimark +2 to +5% warm); nor a resumed generator's frame
+   word, which is no object to make but one its frame still holds */
+static bool
+made_real_when_dead(vinfo_t *vi)
+{
+    source_virtual_t *sv;
+    if (vi == NULL || !is_virtualtime(vi->source))
+        return false;
+#if LE_RESUMES_ON_FRAME
+    if (psyco_frame_word_index(vi) >= 0)
+        return false;
+#endif
+    sv = VirtualTime_Get(vi->source);
+    if (sv == &psyco_computed_long || sv == &psyco_computed_bool) {
+        vinfo_t *value = vi->array->count > iLONG_VALUE
+                             ? vi->array->items[iLONG_VALUE]
+                             : NULL;
+        return value != NULL && is_compiletime(value->source);
+    }
+    return sv != &psyco_computed_float;
+}
+
+/* Past a merge point's cap, a dead local holding a virtual object is made
+   real there: it is the object CPython holds in that local anyway, and
+   then psyco_forget_dead_vars drops what is known about it, so states
+   that differ only in it share a block. Otherwise a big function's loop
+   heads keep one block per combination of what its dead locals held
+   (re's parser: a character set's list and its bound append method,
+   kept after use). Not before the cap: making real costs an allocation
+   on every pass, which a small hot loop would pay.
+   Making real can emit a call with an error check, a respawn point, so a
+   replay must decide the same: only blocks made after the merge point
+   reached its cap do it (mp->real_from, read by the block's serial,
+   codemanager.h:psyco_block_serial), and pycompiler.c's main loop calls
+   this before it asserts that no replay goes on past a merge point. */
+DEFINEFN
+bool
+psyco_make_dead_virtuals_real(PsycoObject *po, mergepoint_t *mp)
+{
+    int i, limit;
+    PyObject *plist = mp->entries.fatlist;
+    if (mp->real_from == 0 || psyco_block_serial(po) + 1 < mp->real_from)
+        return true;
+    limit = PyList_GET_SIZE(plist);
+    for (i = 0; i < limit; i++) {
+        vinfo_t *vi;
+        PyObject *o1 = PyList_GET_ITEM(plist, i);
+        if (!PyLong_Check(o1))
+            break;
+        vi = LOC_LOCALS_PLUS[PyLong_AS_LONG(o1)];
+        if (made_real_when_dead(vi) && !compute_vinfo(vi, po))
+            return false;
+    }
+    return true;
 }
 
 /* Call alignment. Compiled code aligns its C calls

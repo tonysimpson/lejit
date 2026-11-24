@@ -416,6 +416,64 @@ need_type_mega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp)
     return psyco_pyobj_atcompiletime_mega(po, vtp, (PyObject **)tp);
 }
 
+/* exported by every CPython; internal, so undeclared here, from 3.13 */
+PyAPI_FUNC(int)
+    _PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method);
+
+/* ceval's method load: out[0] the function (1) or the attribute (0) */
+static int
+cimpl_get_method(PyObject *obj, PyObject *name, PyObject *out[])
+{
+    PyObject *meth = NULL;
+    int found = _PyObject_GetMethod(obj, name, &meth);
+    if (meth == NULL)
+        return -1;
+    out[0] = meth;
+    return found != 0;
+}
+
+/* For a type LeJIT knows, the attribute, which a call of a virtual bound
+   method unpacks; for one it doesn't, the load CPython does at run time,
+   which makes no bound method for a function found on the type */
+DEFINEFN
+int
+PsycoObject_GetMethod(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
+                      vinfo_t **meth)
+{
+    PyTypeObject *tp;
+    vinfo_array_t *out;
+    vinfo_t *found;
+    int r;
+    /* a module: _PyObject_GetMethod's load is PyObject_GetAttr, as for
+       any type whose tp_getattro isn't the generic one */
+    if (is_compiletime(o->source) &&
+        PyModule_Check((PyObject *)CompileTime_Get(o->source)->value) &&
+        Py_TYPE((PyObject *)CompileTime_Get(o->source)->value)->tp_getattro !=
+            PyObject_GenericGetAttr)
+        r = 1;
+    else
+        r = need_type_mega(po, o, &tp);
+    if (r < 0)
+        return -1;
+    if (r > 0) {
+        *meth = PsycoObject_GetAttr(po, o, attr_name);
+        return *meth == NULL ? -1 : 0;
+    }
+    out = array_new(1);
+    found = psyco_generic_call(po, cimpl_get_method, CfCommonIntBoolOrError,
+                               "vvA", o, attr_name, out);
+    if (found == NULL) {
+        array_release(out);
+        return -1;
+    }
+    *meth = out->items[0];
+    array_release(out);
+    r = runtime_NON_NULL_t(po, found); /* consumes found */
+    if (r < 0)
+        vinfo_decref(*meth, po);
+    return r;
+}
+
 DEFINEFN
 vinfo_t *
 PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name)
@@ -1116,6 +1174,145 @@ cimpl_type_lookup_changed(PyTypeObject *tp, PyObject *name, PyObject *descr)
     }
 }
 
+/* typeobject.c:do_super_lookup's search: 'name' in the classes of tp's
+   MRO after cls, borrowed, or NULL (none, or cls not in it) */
+static PyObject *
+super_lookup_now(PyTypeObject *tp, PyTypeObject *cls, PyObject *name)
+{
+    PyObject *mro = tp->tp_mro, *r;
+    Py_ssize_t i = 0, n;
+    if (mro == NULL)
+        return NULL;
+    n = PyTuple_GET_SIZE(mro);
+    while (i < n && PyTuple_GET_ITEM(mro, i) != (PyObject *)cls) i++;
+    for (i++; i < n; i++) {
+        PyObject *d = le_type_dict((PyTypeObject *)PyTuple_GET_ITEM(mro, i));
+        if (d == NULL)
+            return NULL;
+        r = PyDict_GetItemWithError(d, name);
+        if (r != NULL)
+            return r;
+        if (PyErr_Occurred()) {
+            PyErr_Clear();
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
+/* A super lookup's guards are load guards whose kind is the record of
+   what the site first found, a tuple (descr or None,), with bit 2 set (as
+   Psyco_TypeLookup's): never another lookup's or load's kind. */
+#define SUPER_KIND(rec) LOOKUP_KIND(rec)
+
+/* Psyco_TypeLookup for typeobject.c:do_super_lookup: 'name' in obj's
+   type tp's MRO after cls, for super(cls, obj); *kind is the record of
+   what the site first found, for the repair */
+static int
+super_lookup(PsycoObject *po, PyTypeObject *tp, PyTypeObject *cls, void *key,
+             PyObject *name, PyObject **descr, PyObject **kind)
+{
+    /* key -> {(tp, cls): (the attribute first seen, or None,)} */
+    static le_addrmap_t seen;
+    PyObject **rec = psyco_record(&seen, key), *k, *first, *t;
+    PyObject *now;
+    load_guard_t *guard;
+    bool fresh;
+    condition_code_t cc;
+
+    enable_version_tag(tp);
+    _PyType_Lookup(tp, name); /* assigns the version tag */
+    now = super_lookup_now(tp, cls, name);
+    if (*rec == NULL && (*rec = PyDict_New()) == NULL)
+        OUT_OF_MEMORY();
+    k = PyTuple_Pack(2, (PyObject *)tp, (PyObject *)cls);
+    t = PyTuple_Pack(1, now != NULL ? now : Py_None);
+    if (k == NULL || t == NULL)
+        OUT_OF_MEMORY();
+    first = PyDict_SetDefault(*rec, k, t); /* borrowed */
+    Py_DECREF(k);
+    Py_DECREF(t);
+    if (first == NULL)
+        OUT_OF_MEMORY();
+    *kind = first;
+    *descr = PyTuple_GET_ITEM(first, 0);
+    if (*descr == Py_None)
+        *descr = NULL;
+    fresh = load_guard(tp, name, SUPER_KIND(first), false) == NULL;
+    guard = load_guard(tp, name, SUPER_KIND(first), true);
+    if (now == *descr)
+        load_guard_set(&guard->guard, tp);
+    else if (fresh) {
+        guard->guard.flags = 0;
+        guard->guard.tag = 0;
+    }
+    cc = type_changed(po, tp, &guard->guard);
+    if (cc == CC_ERROR)
+        return -1;
+    return !runtime_condition_f(po, cc);
+}
+
+/* 'kind' is the record, which the compiled code holds */
+static void
+cimpl_super_lookup_changed(PyTypeObject *tp, PyTypeObject *cls, PyObject *name,
+                           PyObject *kind)
+{
+    load_guard_t *g;
+    PyObject *descr = PyTuple_GET_ITEM(kind, 0);
+    LE_STAT(psyco_stat_load_type_changes++);
+    enable_version_tag(tp);
+    _PyType_Lookup(tp, name);
+    if (super_lookup_now(tp, cls, name) != (descr == Py_None ? NULL : descr))
+        return;
+    g = load_guard(tp, name, SUPER_KIND(kind), false);
+    if (g != NULL) {
+        load_guard_set(&g->guard, tp);
+        LE_STAT(psyco_stat_load_repairs++);
+    }
+}
+
+DEFINEFN
+int
+PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
+                        vinfo_t *self, PyObject *name, bool method, void *key,
+                        PyObject **f)
+{
+    PyObject *cls, *descr, *kind;
+    PyTypeObject *tp;
+    int r;
+    if (!psyco_knowntobe(vsuper, (long)&PySuper_Type) ||
+        !PyUnicode_CheckExact(name) ||
+        PyUnicode_CompareWithASCIIString(name, "__class__") == 0)
+        return 0;
+    r = psyco_pyobj_atcompiletime_mega(po, vclass, &cls);
+    if (r <= 0 || !PyType_Check(cls))
+        return r < 0 ? -1 : 0;
+    r = need_type_mega(po, self, &tp);
+    if (r <= 0)
+        return r;
+    /* typeobject.c:supercheck's case of an instance, and for a method a
+       type whose method load is the generic one */
+    if ((method && tp->tp_getattro != PyObject_GenericGetAttr) ||
+        PyType_IsSubtype(tp, &PyType_Type) ||
+        !PyType_IsSubtype(tp, (PyTypeObject *)cls))
+        return 0;
+    r = super_lookup(po, tp, (PyTypeObject *)cls, key, name, &descr, &kind);
+    if (r < 0)
+        return -1;
+    if (r == 0)
+        return psyco_generic_call(po, cimpl_super_lookup_changed,
+                                  CfNoReturnValue | CfNoPython | CfNoBlock,
+                                  "llll", (long)tp, (long)cls, (long)name,
+                                  (long)kind) == NULL
+                   ? -1
+                   : 0;
+    if (descr == NULL || !PyFunction_Check(descr))
+        return 0;
+    psyco_owner_pin(descr); /* the compiled code calls it */
+    *f = descr;
+    return 1;
+}
+
 /* 'generic' is the function the compiled code calls when the type has
    changed: PyObject_GetAttr from PsycoObject_GetAttr, because the change
    may have given the type a __getattr__ or __getattribute__. */
@@ -1336,6 +1533,13 @@ PsycoObject_GenericGetAttr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname)
     return generic_getattr(po, obj, vname, PyObject_GenericGetAttr);
 }
 
+#if LE_HAS_OBJECTDICT_SETITEM_LINKABLE && LE_HAS_OBJECTDICT_SETITEM_OBJECT
+/* exported, declared in an internal header */
+PyAPI_FUNC(int)
+    _PyObjectDict_SetItem(PyTypeObject *tp, PyObject *obj, PyObject **dictptr,
+                          PyObject *name, PyObject *value);
+#endif
+
 /* The instance dict part of 3.7's _PyObject_GenericSetAttrWithDict:
    _PyObjectDict_SetItem creates the dict if there is none, keeps the
    class's shared keys as CPython does, and deletes if value is NULL.
@@ -1355,7 +1559,12 @@ cimpl_instance_dict_set(PyObject *obj, PyObject *name, PyObject *value)
        descriptor for the name) */
     if (has_managed_values(tp))
         return PyObject_GenericSetAttr(obj, name, value);
-#if LE_HAS_OBJECTDICT_SETITEM_LINKABLE
+#if LE_HAS_OBJECTDICT_SETITEM_LINKABLE && LE_HAS_OBJECTDICT_SETITEM_OBJECT
+    /* a missing name's error is CPython's own, which names the type */
+    if (value == NULL)
+        return PyObject_GenericSetAttr(obj, name, value);
+    return _PyObjectDict_SetItem(tp, obj, dictptr, name, value);
+#elif LE_HAS_OBJECTDICT_SETITEM_LINKABLE
     int r = _PyObjectDict_SetItem(tp, dictptr, name, value);
     if (r < 0 && PyErr_ExceptionMatches(PyExc_KeyError))
         PyErr_SetObject(PyExc_AttributeError, name);

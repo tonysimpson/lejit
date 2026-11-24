@@ -5,11 +5,15 @@
  * descrobject.c's descr_check; generic_getattr uses them only when obj's
  * type is a subtype of the descriptor's d_type (assumed by member_get,
  * below). method_get stays here: its result is LeJIT's virtual
- * PyCFunction, which has no TYPES constructor.
+ * PyCFunction, which has no TYPES constructor, or for a method taking its
+ * defining class a pending bound method.
  */
 #include "pdescrobject.h"
 #include "pstructmember.h"
 #include "pmethodobject.h"
+#include "pabstract.h"
+#include "pdictobject.h"
+#include "ptupleobject.h"
 
 static vinfo_t *
 member_get(PsycoObject *po, PyMemberDescrObject *descr, vinfo_t *obj,
@@ -35,6 +39,67 @@ gen_descrobject_init(void)
     Psyco_DefineMeta(PyMemberDescr_Type.tp_descr_get, member_get);
 }
 
+#ifdef METH_METHOD
+/* A method that takes its defining class (METH_METHOD) bound to obj, not
+   made yet: [iOB_TYPE] PyCMethod_Type, the descriptor, then obj. A call
+   is the descriptor's vectorcall with obj first, as after ceval's method
+   load (PsycoCMethod_Call); anything else makes the bound method that
+   method_get makes. */
+static source_virtual_t psyco_pending_cmethod;
+#define iPENDING_DESCR (iOB_TYPE + 1)
+#define iPENDING_SELF (iOB_TYPE + 2)
+
+static PyObject *
+cimpl_method_get(PyObject *descr, PyObject *obj)
+{
+    return PyMethodDescr_Type.tp_descr_get(descr, obj,
+                                           (PyObject *)Py_TYPE(obj));
+}
+
+static bool
+compute_pending_cmethod(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *m = psyco_generic_call(
+        po, cimpl_method_get, CfCommonNewRefPyObject, "vv",
+        v->array->items[iPENDING_DESCR], v->array->items[iPENDING_SELF]);
+    if (m == NULL)
+        return false;
+    vinfo_array_shrink(po, v, iOB_TYPE + 1);
+    vinfo_move(po, v, m);
+    return true;
+}
+
+/* PyCMethod_Type's tp_call */
+static vinfo_t *
+PsycoCMethod_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args, vinfo_t *kw)
+{
+    vinfo_t *a[8], **kwvalues = NULL;
+    PyObject *kwnames = NULL;
+    vinfo_t *r;
+    int i, n = PsycoTuple_Load(args), k = 0;
+    if (!is_virtualtime(func->source) ||
+        VirtualTime_Get(func->source) != &psyco_pending_cmethod || n < 0)
+        goto generic;
+    if (kw != NULL && !psyco_known_NULL(kw)) {
+        kwnames = PsycoDict_PendingNames(kw, &kwvalues);
+        if (kwnames == NULL)
+            goto generic;
+        k = (int)PyTuple_GET_SIZE(kwnames);
+    }
+    if (n + k + 1 > 8)
+        goto generic;
+    a[0] = func->array->items[iPENDING_SELF];
+    for (i = 0; i < n; i++) a[i + 1] = PsycoTuple_GET_ITEM(args, i);
+    for (i = 0; i < k; i++) a[n + 1 + i] = kwvalues[i];
+    r = psyco_vectorcall(po, func->array->items[iPENDING_DESCR], a, n + 1,
+                         kwnames);
+    if (r != NULL || PycException_Occurred(po))
+        return r;
+generic:
+    return psyco_residual_call(po, PyObject_Call, func, args, kw);
+}
+#endif
+
 static vinfo_t *
 pmethod_get(PsycoObject *po, PyMethodDescrObject *descr, vinfo_t *obj,
             PyTypeObject *type)
@@ -44,10 +109,18 @@ pmethod_get(PsycoObject *po, PyMethodDescrObject *descr, vinfo_t *obj,
 #ifdef METH_METHOD
     /* a method that takes its defining class is a PyCMethod, which the
        virtual PyCFunction does not hold */
-    if (descr->d_method->ml_flags & METH_METHOD)
-        return psyco_generic_call(po, PyMethodDescr_Type.tp_descr_get,
-                                  CfCommonNewRefPyObject, "lvl", descr, obj,
-                                  type);
+    if (descr->d_method->ml_flags & METH_METHOD) {
+        vinfo_t *v = vinfo_new(VirtualTime_New(&psyco_pending_cmethod));
+        v->array = array_new(iPENDING_SELF + 1);
+        v->array->items[iOB_TYPE] =
+            vinfo_new(CompileTime_New((long)&PyCMethod_Type));
+        /* the compiled code holds the descriptor (generic_getattr) */
+        v->array->items[iPENDING_DESCR] =
+            vinfo_new(CompileTime_New((long)descr));
+        vinfo_incref(obj);
+        v->array->items[iPENDING_SELF] = obj;
+        return v;
+    }
 #endif
     return PsycoCFunction_New(po, descr->d_method, obj);
 }
@@ -58,4 +131,9 @@ psy_descrobject_init(void)
 {
     gen_descrobject_init();
     Psyco_DefineMeta(PyMethodDescr_Type.tp_descr_get, pmethod_get);
+#ifdef METH_METHOD
+    /* a bound method holds the pending one's descriptor and obj */
+    INIT_SVIRTUAL_NOCALL(psyco_pending_cmethod, compute_pending_cmethod, 1);
+    Psyco_DefineCallMeta(&PyCMethod_Type, PsycoCMethod_Call);
+#endif
 }

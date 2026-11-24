@@ -19,6 +19,9 @@ struct mergepoint_s {
     int bytecode_position;
     int blocks; /* blocks compiled from here (vcompiler.c, the cap) */
     global_entries_t entries;
+    /* 0, or 1 + the first block serial that makes dead virtual locals
+       real here (dispatcher.c:psyco_make_dead_virtuals_real) */
+    unsigned long real_from;
 };
 
 /* 'bytecode_ptr' gives the position of the merge point in the bytecode.

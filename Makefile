@@ -42,6 +42,7 @@ test: checked-build
 	$(PY) tests/jit/build_info.py
 	$(PY) tests/jit/bounds.py
 	$(PY) tests/jit/out_of_memory.py
+	$(PY) tests/jit/no_threads.py
 	diff <($(PY) tests/jit/smoke.py plain 2>&1) <($(PY) tests/jit/smoke.py lejit 2>&1)
 
 cpython-test: checked-build

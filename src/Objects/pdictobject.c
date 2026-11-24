@@ -57,7 +57,9 @@ PsycoDict_SetItemC(PsycoObject *po, vinfo_t *vdict, PyObject *key,
    binder reads them (psyfunc.c:_PsycoEval_EvalCodeWithName); anything
    else forces them, which builds the dict a keyword call always built.
    A call site makes one and passes it to its call alone, so it is never a
-   local or on the value stack, and no frame sees it. Layout: [iOB_TYPE],
+   local, and no frame sees it. An empty one is also the dict of
+   f(*a, **k), on the value stack from its BUILD_MAP to its call, where
+   nothing runs code. Layout: [iOB_TYPE],
    [iDICT_MA_USED] the count, [iPENDING_NAMES] the names, a tuple constant,
    then the values. */
 static source_virtual_t psyco_pending_keywords;
@@ -121,6 +123,41 @@ PsycoDict_PendingNames(vinfo_t *v, vinfo_t ***values)
     *values = &v->array->items[iPENDING_VALUES];
     return (PyObject *)CompileTime_Get(v->array->items[iPENDING_NAMES]->source)
         ->value;
+}
+
+static PyObject *no_names;
+
+DEFINEFN
+vinfo_t *
+PsycoDict_PendingEmpty(void)
+{
+    return PsycoDict_PendingKeywords(no_names, NULL);
+}
+
+DEFINEFN
+int
+PsycoDict_MergeEmpty(PsycoObject *po, vinfo_t *d, vinfo_t *update)
+{
+    vinfo_t **values;
+    PyObject *names = PsycoDict_PendingNames(d, &values);
+    PyTypeObject *t;
+    if (names == NULL || PyTuple_GET_SIZE(names) != 0)
+        return 0;
+    t = Psyco_NeedType(po, update);
+    if (t == NULL)
+        return -1;
+    if (t != &PyDict_Type)
+        return 0;
+    /* merging an empty exact dict changes nothing and runs no code */
+    switch (
+        runtime_NON_NULL_f(po, psyco_get_field(po, update, DICT_ma_used))) {
+        case 0:
+            return 1;
+        case 1:
+            return 0;
+        default:
+            return -1;
+    }
 }
 
 /* the dict slots and methods translated from dictobject.c */
@@ -556,11 +593,7 @@ cimpl_dictstr_getitem(PyDictObject *mp, PyObject *key, long record)
     if (ix == -3)
         return NULL;
     if (ix < 0) {
-        PyObject *args = PyTuple_Pack(1, key); /* dict_subscript's KeyError */
-        if (args != NULL) {
-            PyErr_SetObject(PyExc_KeyError, args);
-            Py_DECREF(args);
-        }
+        _PyErr_SetKeyError(key); /* dict_subscript's KeyError */
         return NULL;
     }
     if (record)
@@ -1041,6 +1074,7 @@ psy_dictobject_init(void)
     /* a dict is mutable: made real before any call it would go into */
     INIT_SVIRTUAL_NOCALL(psyco_pending_keywords, compute_pending_keywords,
                          NW_VLISTS);
+    no_names = PyTuple_New(0);
     define_str_probes();
     if (cfunc_dict_get != NULL)
         Psyco_DefineMeta(cfunc_dict_get, pdict_get);

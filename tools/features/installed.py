@@ -270,7 +270,7 @@ def gc_head_internal(h):
     path, fields = h.struct('PyGC_Head')
     if path is None or not path.startswith('internal' + os.sep):
         return False, (path or 'every header') + ':PyGC_Head'
-    if list(fields.items()) != [('_gc_next', 'uintptr_t'), ('_gc_prev', 'uintptr_t')]:
+    if not features.gc_head_two_words(fields):
         raise Unanswered('%s:PyGC_Head is not _gc_next, _gc_prev' % path)
     return True, path + ':PyGC_Head'
 
@@ -338,9 +338,12 @@ def tuple_get_empty(h):
 
 HEADER_DETECTORS = {
     'CHECK_RESULT_TSTATE': check_result_tstate,
+    'OBJECTDICT_SETITEM_OBJECT': features.objectdict_setitem_object,
     'PYCORE_PYSTATE_H': pycore_header('pycore_pystate.h'),
     'PYCORE_INTERP_H': pycore_header('pycore_interp.h'),
     'EVAL_HOOK_TSTATE': eval_hook_tstate,
+    'GENERATOR_RETURN_KIND': internal(features.generator_return_kind),
+    'LAST_PROFILED_FRAME': features.last_profiled_frame,
     'SIGNALS_PENDING': signals_pending,
     'EVAL_FRAME_HANDLE_PENDING': eval_frame_handle_pending,
     'INTERP_RECURSION_LIMIT': interp_recursion_limit,
@@ -362,6 +365,7 @@ HEADER_DETECTORS = {
     'THREAD_LOCAL_TSTATE': internal(features.thread_local_tstate),
     'PY_RECURSION_REMAINING': features.py_recursion_remaining,
     'C_RECURSION_REMAINING': features.c_recursion_remaining,
+    'C_STACK_SOFT_LIMIT': internal(features.c_stack_soft_limit),
     'CURRENT_EXCEPTION': features.current_exception,
     'EVAL_BREAKER_GC': internal(features.eval_breaker_gc),
     'EVAL_FRAME_POPS': internal(features.eval_frame_pops),
@@ -370,6 +374,7 @@ HEADER_DETECTORS = {
     'FRAME_INSTR_PTR': internal(features.frame_instr_ptr),
     'TSTATE_CURRENT_FRAME': features.tstate_current_frame,
     'TSTATE_EVAL_BREAKER': features.tstate_eval_breaker,
+    'INTERP_MONITORING_VERSION': internal(features.interp_monitoring_version),
     'TRACEBACK_FROM_FRAME_API': traceback_from_frame_api,
     'LONG_VALUE': features.long_value,
     'TYPE_GET_DICT': public('PyType_GetDict'),

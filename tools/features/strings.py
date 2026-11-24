@@ -60,10 +60,20 @@ def S():
     return {'k': 'S'}
 
 
+def Q():
+    """A type shown by its fully qualified name: the module, a dot and the
+    qualified name, the module left out for builtins and __main__. CPython
+    passes %T an object or %N its type, which show the same; LeJIT passes
+    the type, %N. The probe gets a new class with a recognisable name, as
+    for T()."""
+    return {'k': 'Q'}
+
+
 def O(conv):
     """An object: 'U' or 'S' shows a str (the probe gets a recognisable
-    one) as it is, 'R' by repr. A str shows the same by %U and %S, so the
-    entry says which the call passes."""
+    one) as it is, 'R' by repr; 'V' is %V, a str or NULL and the text shown
+    for NULL, which the call passes as "function". A str shows the same by
+    %U, %S and %V, so the entry says which the call passes."""
     return {'k': 'O', 'conv': conv}
 
 
@@ -219,11 +229,9 @@ msg('NO_ITEM_DELETION', "deleting an item of an object with neither "
     [F('%.200s', 'int')])
 msg('NOT_ITERABLE', "iter() of an object that isn't iterable", 'TypeError',
     'iter(args[0]())', [T()])
-msg('NEXT_NOT_IMPLEMENTED', "a for loop's iterator whose __next__ has gone",
-    'TypeError',
-    'I = cls(args[0].__name__)\nI.__iter__ = lambda s: s\n'
-    'def n(s):\n    del I.__next__\n    return 1\nI.__next__ = n\n'
-    'for x in I():\n    pass', [T()])
+msg('NEXT_NOT_ITERATOR', "next() of an object that isn't an iterator, as "
+    "a for loop's iterator with no __next__ slot", 'TypeError',
+    'next(args[0]())', [T()])
 
 # the operators' names, as a binary operator's message shows them
 for _name, _code in [
@@ -253,15 +261,20 @@ for _name, _op in [('LT', '<'), ('LE', '<='), ('GT', '>'), ('GE', '>=')]:
 # bytes, float, list, tuple
 msg('BYTES_INDEX_RANGE', 'a bytes index out of range', 'IndexError',
     "b'a'[5]", text=True)
+# (from 3.15 these name their types by qualified name: shape QUALIFIED)
+_FLOAT_NON_FLOAT = ('r = args[1]; c = cls(args[0].__name__, __float__=lambda s: r())\n'
+                    'capi("PyFloat_AsDouble", "double", "obj")(c())')
 msg('FLOAT_RETURNED_NON_FLOAT', "PyFloat_AsDouble of an object whose __float__ "
-    "returns a non-float", 'TypeError',
-    'r = args[1]; c = cls(args[0].__name__, __float__=lambda s: r())\n'
-    'capi("PyFloat_AsDouble", "double", "obj")(c())', [T(), T()])
+    "returns a non-float", 'TypeError', None, shapes=[
+        ('', [T(), T()], _FLOAT_NON_FLOAT),
+        ('QUALIFIED', [Q(), Q()], _FLOAT_NON_FLOAT)])
+_FLOAT_SUBCLASS = ('r = cls(args[1].__name__, float); c = cls(args[0].__name__, '
+                   '__float__=lambda s: r(1.5))\n'
+                   'capi("PyFloat_AsDouble", "double", "obj")(c())')
 msg('FLOAT_RETURNED_FLOAT_SUBCLASS', "PyFloat_AsDouble of an object whose "
-    "__float__ returns a float subclass", 'DeprecationWarning',
-    'r = cls(args[1].__name__, float); c = cls(args[0].__name__, '
-    '__float__=lambda s: r(1.5))\n'
-    'capi("PyFloat_AsDouble", "double", "obj")(c())', [T(), T()])
+    "__float__ returns a float subclass", 'DeprecationWarning', None, shapes=[
+        ('', [T(), T()], _FLOAT_SUBCLASS),
+        ('QUALIFIED', [Q(), Q()], _FLOAT_SUBCLASS)])
 msg('MUST_BE_REAL_NUMBER', 'PyFloat_AsDouble of an object without __float__',
     'TypeError', 'capi("PyFloat_AsDouble", "double", "obj")(args[0]())', [T()])
 msg('FLOAT_DIVISION_BY_ZERO', 'a float divided by zero', 'ZeroDivisionError',
@@ -330,6 +343,17 @@ msg('WITH_NO_EXIT', 'with given an object with __enter__ but no __exit__',
     'TypeError',
     'C = cls(args[0].__name__, __enter__=lambda s: s)\nwith C(): pass',
     [T()], requires=_BEFORE_WITH)
+_BEFORE_ASYNC_WITH = '"BEFORE_ASYNC_WITH" in __import__("opcode").opmap and ' + _BEFORE_WITH
+msg('AWITH_NO_AENTER', 'async with given an object without __aenter__',
+    'TypeError',
+    'o = args[0]()\nasync def f():\n    async with o:\n        pass\n'
+    'coro_run(f())', [T()], requires=_BEFORE_ASYNC_WITH)
+msg('AWITH_NO_AEXIT', 'async with given an object with __aenter__ but no '
+    '__aexit__', 'TypeError',
+    'async def e(s):\n    pass\n'
+    'o = cls(args[0].__name__, __aenter__=e)()\n'
+    'async def f():\n    async with o:\n        pass\ncoro_run(f())',
+    [T()], requires=_BEFORE_ASYNC_WITH)
 msg('IMPORT_NAME_UNKNOWN_LOCATION', "from m import x, without x, m without a file",
     'ImportError',
     'newmod(args[1])\nexec("from %s import %s" % (args[1], args[0]), {})',
@@ -377,18 +401,30 @@ msg('AWITH_EXIT_NOT_AWAITABLE', 'async with whose __aexit__ returns an '
     'async def e(s):\n    pass\n'
     'r = args[0]; o = cls("A", __aenter__=e, __aexit__=lambda s, *a: r())()\n'
     'async def f():\n    async with o:\n        pass\ncoro_run(f())', [T()])
+# (from 3.15 these name the awaited object's type: shape QUALIFIED)
+_AWAIT_COROUTINE = ('async def c():\n    pass\nk = c()\nk.close()\n'
+                    'o = cls(%s, __await__=lambda s: k)()\n'
+                    'async def f():\n    await o\ncoro_run(f())')
 msg('AWAIT_RETURNED_COROUTINE', '__await__ returning a coroutine', 'TypeError',
-    'async def c():\n    pass\nk = c()\nk.close()\n'
-    'o = cls("A", __await__=lambda s: k)()\n'
-    'async def f():\n    await o\ncoro_run(f())', text=True)
+    None, text=True, shapes=[
+        ('', [], _AWAIT_COROUTINE % '"A"'),
+        ('QUALIFIED', [Q()], _AWAIT_COROUTINE % 'args[0].__name__')])
 msg('AWAIT_NON_ITERATOR', '__await__ returning something not an iterator',
-    'TypeError', 'r = args[0]; o = cls("A", __await__=lambda s: r())()\n'
-    'async def f():\n    await o\ncoro_run(f())', [T()])
+    'TypeError', None, shapes=[
+        ('', [T()], 'r = args[0]; o = cls("A", __await__=lambda s: r())()\n'
+         'async def f():\n    await o\ncoro_run(f())'),
+        ('QUALIFIED', [Q(), Q()],
+         'r = args[1]; o = cls(args[0].__name__, __await__=lambda s: r())()\n'
+         'async def f():\n    await o\ncoro_run(f())')])
 msg('CORO_AWAITED_ALREADY', 'await on a coroutine that is awaiting',
     'RuntimeError',
     'import types\n@types.coroutine\ndef y():\n    yield\n'
     'async def i():\n    await y()\nk = i()\nk.send(None)\n'
     'async def f():\n    await k\ncoro_run(f())', text=True)
+msg('YIELD_FROM_COROUTINE', 'yield from a coroutine in a plain generator',
+    'TypeError',
+    'async def c():\n    pass\nk = c()\ndef g():\n    yield from k\n'
+    'try:\n    next(g())\nfinally:\n    k.close()', text=True)
 msg('NO_BUILD_CLASS', 'a class statement without __build_class__', 'NameError',
     'exec("class C: pass", {"__builtins__": {}})', text=True)
 msg('NAME_NOT_DEFINED', 'a global name not found', 'NameError',
@@ -402,7 +438,8 @@ msg('FREE_UNBOUND', "a free variable read before it is set", 'NameError',
 msg('LIST_STAR_NOT_ITERABLE', '[*x] of an x that is not iterable', 'TypeError',
     '[*args[0]()]', [T()])
 msg('DICT_STAR_NOT_MAPPING', '{**x} of an x that is not a mapping', 'TypeError',
-    '{**args[0]()}', [T()])
+    None, shapes=[('', [T()], '{**args[0]()}'),
+                  ('QUALIFIED', [Q()], '{**args[0]()}')])
 
 # a call's * and ** arguments: the function is shown by its name and
 # description until 3.8, by its qualified name from 3.9
@@ -412,27 +449,54 @@ _FN = ('def f(*a, **k): pass\n'
 _FN_STR = ('def f(*a, **k): pass\n'
            'f.__name__ = "LeName"; f.__qualname__ = args[0]; '
            'f.__module__ = "builtins"\n')
+# and from 3.15 not at all
+_NO_FN = ('def f(*a, **k): pass\n'
+          'f.__name__ = f.__qualname__ = "LeShown"\n'
+          'try:\n    %s\nexcept TypeError as x:\n'
+          '    if "LeShown" in str(x):\n'
+          '        raise ValueError("the function is shown: %%s" %% x)\n'
+          '    raise\n')
 msg('STAR_NOT_ITERABLE', 'f(*x) of an x that is not iterable', 'TypeError',
     None, shapes=[
         ('FUNC_NAME', [S(), F('%.200s', '()'), T()], _FN + 'f(*args[2]())'),
         ('FUNCTION_STR', [O('U'), T()],
-         _FN_STR + 'shown[0] = args[0] + "()"; f(*args[1]())')])
+         _FN_STR + 'shown[0] = args[0] + "()"; f(*args[1]())'),
+        ('NO_FUNCTION', [T()], _NO_FN % 'f(*args[0]())')])
 msg('KWARGS_NOT_MAPPING', 'f(**x) of an x that is not a mapping', 'TypeError',
     None, shapes=[
         ('FUNC_NAME', [S(), F('%.200s', '()'), T()], _FN + 'f(**args[2]())'),
         ('FUNCTION_STR', [O('U'), T()],
-         _FN_STR + 'shown[0] = args[0] + "()"; f(**args[1]())')])
+         _FN_STR + 'shown[0] = args[0] + "()"; f(**args[1]())'),
+        ('NO_FUNCTION', [Q()], _NO_FN % 'f(**args[0]())')])
 # (from 3.9 a key that is not a str, given twice, is shown as a duplicate)
+# (from 3.15 a function whose name can't be made, its __qualname__ raising,
+# is shown as "function" (%V), not the error: shape OR_FUNCTION)
+_NAMELESS = ('class Nameless:\n'
+             '    def __call__(self, *a, **k): pass\n'
+             '    def __getattribute__(self, n):\n'
+             '        if n == "__qualname__": raise RuntimeError("no name")\n'
+             '        return object.__getattribute__(self, n)\n'
+             'try:\n    Nameless()(**{1: 1}, **{1: 2})\n'
+             'except TypeError as x:\n    shown_as_function = str(x).startswith("function ")\n'
+             'except RuntimeError:\n    shown_as_function = False\n')
+_UNNAMED_ERROR = _NAMELESS + ('if shown_as_function:\n'
+                              '    raise ValueError("a nameless function is shown as function")\n')
+_UNNAMED_FUNCTION = _NAMELESS + ('if not shown_as_function:\n'
+                                 '    raise ValueError("a nameless function\'s error is raised")\n')
 msg('KWARGS_NOT_STRINGS', 'f(**x, **y) with a key that is not a str in both',
     'TypeError', None, shapes=[
         ('FUNC_NAME', [S(), F('%.200s', '()')],
          _FN + 'f(**{1: 1}, **{1: 2})'),
-        ('FUNCTION_STR', [O('U'), F('%S', '1')],
+        ('FUNCTION_STR', [O('U'), F('%S', '1')], _UNNAMED_ERROR +
+         _FN_STR + 'shown[0] = args[0] + "()"; f(**{1: 1}, **{1: 2})'),
+        ('OR_FUNCTION', [O('V'), F('%S', '1')], _UNNAMED_FUNCTION +
          _FN_STR + 'shown[0] = args[0] + "()"; f(**{1: 1}, **{1: 2})')])
 msg('KWARGS_DUPLICATE', 'f(x=1, **{"x": 2})', 'TypeError', None, shapes=[
     ('FUNC_NAME', [S(), F('%.200s', '()'), O('U')],
      _FN + 'f(**{args[2]: 1}, **{args[2]: 2})'),
-    ('FUNCTION_STR', [O('U'), O('S')],
+    ('FUNCTION_STR', [O('U'), O('S')], _UNNAMED_ERROR +
+     _FN_STR + 'shown[0] = args[0] + "()"; f(**{args[1]: 1}, **{args[1]: 2})'),
+    ('OR_FUNCTION', [O('V'), O('S')], _UNNAMED_FUNCTION +
      _FN_STR + 'shown[0] = args[0] + "()"; f(**{args[1]: 1}, **{args[1]: 2})')])
 
 msg('UNPACK_NON_ITERABLE', 'unpacking an object that is not iterable',
@@ -448,6 +512,11 @@ msg('UNPACK_NOT_ENOUGH_STAR', 'a, b, *c = fewer values than before the star',
 msg('UNPACK_TOO_MANY', 'a, b = more values', 'ValueError',
     'exec(%s + ", = range(args[0] + 3)", {"args": args})'
     % _TARGETS.format('args[0]'), [I('d')], ints=[[7], [9]])
+msg('UNPACK_TOO_MANY_SIZED', 'a, b = a list, tuple or dict of more values',
+    'ValueError',
+    'exec(%s + " = list(range(args[1]))", {"args": args})'
+    % _TARGETS.format('args[0]'), [I('d'), I('zd')], ints=[[7, 10], [9, 13]],
+    requires='", got " in says("a, b = [1, 2, 3]")')
 msg('UNPACK_NOT_ENOUGH_AFTER_STAR', 'a, *b, c, d = fewer values than after '
     'the star', 'ValueError',
     'exec("v0, *s, " + ", ".join("w%d" % i for i in range(args[0] - 1))'
@@ -515,6 +584,10 @@ msg('MATCH_DUPLICATE_KEY', 'a mapping pattern whose keys are equal',
 # ---------------------------------------------------------------------------
 # What runs in the target: each probe three times, the messages as JSON.
 
+# the module of the probes' classes (T(), Q(), cls): a message that shows
+# it names a type by its qualified name, which Q() recovers
+MODULE = 'lemod'
+
 DRIVER = r'''
 import json, sys, io, warnings
 entries = json.loads(sys.stdin.read())
@@ -524,6 +597,7 @@ DEFAULT_INTS = [[11, 23, 37, 53], [13, 29, 41, 61]]
 MODS = []
 
 def cls(name, *bases, **attrs):
+    attrs.setdefault("__module__", "lemod")
     return type(name, bases or (object,), attrs)
 
 def capi(name, restype, *argtypes):
@@ -572,9 +646,13 @@ def make_args(spec, run, ints):
         k = a["k"]
         if k == "T":
             name = MARK[run](i)
-            args.append(type(name, (object,), {}))
+            args.append(type(name, (object,), {"__module__": "lemod"}))
             shown.append(name)
-        elif k == "S" or (k == "O" and a["conv"] in "US"):
+        elif k == "Q":
+            name = MARK[run](i)
+            args.append(type(name, (object,), {"__module__": "lemod"}))
+            shown.append("lemod." + name)
+        elif k == "S" or (k == "O" and a["conv"] in "USV"):
             args.append(MARK[run](i))
             shown.append(MARK[run](i))
         elif k == "O":
@@ -703,7 +781,7 @@ def split(runs, nargs):
 
 
 def _is_name(a):
-    return a['k'] in 'TS' or a['k'] == 'O' and a['conv'] != 'R'
+    return a['k'] in 'TSQ' or a['k'] == 'O' and a['conv'] != 'R'
 
 
 def long_shown(pieces, args, long_run):
@@ -739,11 +817,15 @@ def recover(entry, shape, runs):
             raise StringError(r['error'])
     args = shape['args']
     if entry['text'] and not args:
+        if MODULE + '.' in runs[0]['msg']:
+            raise StringError('a type is shown with its module: %r' % runs[0]['msg'])
         if runs[0]['msg'] != runs[1]['msg']:
             raise StringError('the message changes from run to run: %r, %r'
                               % (runs[0]['msg'], runs[1]['msg']))
         return runs[0]['msg']
     pieces = split(runs, len(args))
+    if any(MODULE + '.' in p for p in pieces):
+        raise StringError('a type is shown with its module: %r' % runs[0]['msg'])
     longs = long_shown(pieces, args, runs[2])
     specs = []
     for i, a in enumerate(args):
@@ -755,6 +837,10 @@ def recover(entry, shape, runs):
             if _is_name(a) and precision(longs[i], runs[2]['shown'][i]):
                 raise StringError('an object is shown cut short')
             specs.append('%' + a['conv'])
+        elif k == 'Q':
+            if precision(longs[i], runs[2]['shown'][i]):
+                raise StringError('a type is shown cut short')
+            specs.append('%N')
         elif k == 'I':
             specs.append('%' + a['conv'])
         elif k == 'F':

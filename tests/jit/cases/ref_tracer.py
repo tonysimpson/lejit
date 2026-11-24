@@ -21,6 +21,18 @@ TRACER = bytes([
     0x31, 0xC0,              # done: xor eax, eax
     0xC3,                    # ret
 ])
+# counts in MADE[1] the create events of objects whose type is at MADE[0]
+MADE_TRACER = bytes([
+    0x85, 0xF6,              # test esi, esi (PyRefTracer_CREATE)
+    0x75, 0x0D,              # jne done
+    0x48, 0x8B, 0x47, 0x08,  # mov rax, [rdi + 8] (ob_type)
+    0x48, 0x3B, 0x02,        # cmp rax, [rdx]
+    0x75, 0x04,              # jne done
+    0x48, 0xFF, 0x42, 0x08,  # inc qword [rdx + 8]
+    0x31, 0xC0,              # done: xor eax, eax
+    0xC3,                    # ret
+])
+MADE = (ctypes.c_ssize_t * 2)()
 SET = getattr(ctypes.pythonapi, 'PyRefTracer_SetTracer', None)
 WATCH = (ctypes.c_ssize_t * 2)()
 if SET is not None:
@@ -30,6 +42,26 @@ if SET is not None:
     _code.write(TRACER)
     FN = ctypes.addressof(ctypes.c_char.from_buffer(_code))
     ARG = ctypes.addressof(WATCH)
+    _code.seek(64)
+    _code.write(MADE_TRACER)
+    MADE_FN = FN + 64
+    MADE_ARG = ctypes.addressof(MADE)
+
+
+def count_made(tp):
+    # for other cases: counts the objects of type tp made until made();
+    # without a ref tracer, made() is None
+    if SET is not None:
+        MADE[0] = id(tp)
+        MADE[1] = 0
+        SET(MADE_FN, MADE_ARG)
+
+
+def made():
+    if SET is None:
+        return None
+    SET(None, None)
+    return MADE[1]
 
 
 class Thing:

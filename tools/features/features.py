@@ -273,6 +273,15 @@ def _body_has(s, path, function, text, missing=None):
     return _has_run(_texts(body), _c(text)), '%s:%s' % (path, function)
 
 
+def _first_body_has(s, places, text):
+    """the first of places, [(path, function)], whose function is there
+    has the tokens of text in a row in its body"""
+    for path, function in places:
+        if s.body_of(s.tokens(path) or [], function) is not None:
+            return _body_has(s, path, function, text)
+    raise Unanswered('no %s' % ' or '.join('%s in %s' % (f, p) for p, f in places))
+
+
 def _file_has(s, path, text):
     """path has the tokens of text in a row"""
     toks = s.tokens(path)
@@ -396,6 +405,30 @@ def objectdict_setitem_linkable(s):
     """_PyObjectDict_SetItem, the instance dict store that keeps a class's
     shared keys, can be called from an extension"""
     return _linkable(s, '_PyObjectDict_SetItem')
+
+
+def _parameters(s, name):
+    """(path, [each parameter's token texts]) of function name's header
+    declaration; Unanswered if there is none"""
+    path, decl = s.declaration(name)
+    if decl is None:
+        raise Unanswered('no declaration of %s' % name)
+    toks = s.tokens(path)
+    for i, t in enumerate(toks[:-1]):
+        if t.text == name and toks[i + 1].text == '(':
+            inside = toks[i + 2:ctokens.match_close(toks, i + 1)]
+            return path, [_texts(p) for p in ctokens.split_top(inside, ',')]
+    raise Unanswered('%s: no parameters of %s' % (path, name))
+
+
+def objectdict_setitem_object(s):
+    """_PyObjectDict_SetItem takes the object after its type: (tp, obj,
+    dictptr, name, value)"""
+    path, params = _parameters(s, '_PyObjectDict_SetItem')
+    if len(params) not in (4, 5):
+        raise Unanswered('%s:_PyObjectDict_SetItem has %d parameters'
+                         % (path, len(params)))
+    return len(params) == 5, path + ':_PyObjectDict_SetItem'
 
 
 def check_result_tstate(s):
@@ -578,9 +611,19 @@ def gc_head_internal(s):
     path, fields = s.struct('PyGC_Head')
     if path is None or not path.startswith('Include/internal/'):
         return False, (path or 'Include, every header') + ':PyGC_Head'
-    if list(fields.items()) != [('_gc_next', 'uintptr_t'), ('_gc_prev', 'uintptr_t')]:
+    if not gc_head_two_words(fields):
         raise Unanswered('%s:PyGC_Head is not _gc_next, _gc_prev' % path)
     return True, path + ':PyGC_Head'
+
+
+def gc_head_two_words(fields):
+    """PyGC_Head's fields are the words _gc_next and _gc_prev; _gc_next may
+    be declared through _Py_ALIGNED_DEF(N, uintptr_t), which keeps its size
+    and offset (store_gc.h asserts both)"""
+    return (list(fields) == ['_gc_next', '_gc_prev']
+            and fields['_gc_prev'] == 'uintptr_t'
+            and re.fullmatch(r'uintptr_t|_Py_ALIGNED_DEF \( \w+ , uintptr_t \)',
+                             fields['_gc_next']) is not None)
 
 
 def frame_state(s):
@@ -620,6 +663,13 @@ def monitoring(s):
     """tracing and profiling are sys.monitoring's events (the interpreter's
     monitors): a thread has no use_tracing flag"""
     return _field(s, '_is', 'monitors', missing=False)
+
+
+def interp_monitoring_version(s):
+    """the interpreter's monitoring version, which changes with every
+    change to its tools table, is its own monitoring_version, not its ceval
+    state's instrumentation_version"""
+    return _field(s, '_is', 'monitoring_version', missing=False)
 
 
 def thread_local_tstate(s):
@@ -674,6 +724,19 @@ def tstate_current_frame(s):
     return _field(s, '_ts', 'current_frame')
 
 
+def generator_return_kind(s):
+    """a generator's run tells gen_send_ex2 whether it yielded or returned
+    by its thread's generator_return_kind, not its frame's state"""
+    return _field(s, '_PyThreadStateImpl', 'generator_return_kind', missing=False)
+
+
+def last_profiled_frame(s):
+    """a thread's state keeps the frame a remote profiler last saw
+    (last_profiled_frame), which a frame leaving the thread's chain hands
+    to the frame under it"""
+    return _field(s, '_ts', 'last_profiled_frame')
+
+
 def tstate_eval_breaker(s):
     """each thread has its own eval_breaker, in its state: its low bits are
     the events ceval handles with _Py_HandlePending"""
@@ -684,6 +747,27 @@ def frame_funcobj(s):
     """an interpreter frame keeps its function as a plain object (f_funcobj),
     not a PyFunctionObject (f_func)"""
     return _field(s, '_PyInterpreterFrame', 'f_funcobj', missing=False)
+
+
+def c_stack_soft_limit(s):
+    """a thread's C calls are checked by its stack pointer alone, against
+    c_stack_soft_limit: Py_EnterRecursiveCall's test fails only below it,
+    and Py_LeaveRecursiveCall does nothing"""
+    has, where = _field(s, '_PyThreadStateImpl', 'c_stack_soft_limit',
+                        missing=False)
+    if not has:
+        return False, where
+    for name, empty in (('_Py_MakeRecCheck', False),
+                        ('_Py_LeaveRecursiveCall', True)):
+        defs = s.definitions(name)
+        if not defs:
+            raise Unanswered('Include, every header: no %s' % name)
+        for path, body in defs:
+            texts = _texts(body)
+            if (not texts) != empty or \
+                    not empty and 'c_stack_soft_limit' not in texts:
+                return False, '%s:%s' % (path, name)
+    return True, where + ', _Py_MakeRecCheck, _Py_LeaveRecursiveCall'
 
 
 def c_recursion_remaining(s):
@@ -840,10 +924,13 @@ def inline_values(s):
     if list(fields) != ['capacity', 'size', 'embedded', 'valid', 'values'] or \
             any(fields[f] != 'uint8_t' for f in list(fields)[:4]):
         raise Unanswered('%s:_dictvalues is %r' % (path, fields))
+    # the stores are plain but for the free-threaded build
     if not (_body_has(s, path, 'get_insertion_order_array',
                       'return (uint8_t *)&values->values[values->capacity];')[0] and
-            _body_has(s, path, '_PyDictValues_AddToInsertionOrder',
-                      'array[size] = (uint8_t)ix; values->size = size+1;')[0]):
+            any(_body_has(s, path, '_PyDictValues_AddToInsertionOrder', stores)[0] for stores in (
+                'array[size] = (uint8_t)ix; values->size = size+1;',
+                'FT_ATOMIC_STORE_UINT8_RELAXED(array[size], (uint8_t)ix);'
+                ' FT_ATOMIC_STORE_UINT8_RELEASE(values->size, size+1);'))):
         raise Unanswered('%s: the insertion order is elsewhere' % path)
     obj = 'Include/internal/pycore_object.h'
     # where it adds sizeof(PyObject), that is the basicsize of every class
@@ -916,10 +1003,21 @@ def call_trace_method_descr(s):
                      'PyMethodDescr_Type')
 
 
+def function_annotate(s):
+    """SET_FUNCTION_ATTRIBUTE can set a function's __annotate__
+    (MAKE_FUNCTION_ANNOTATE), the annotations made lazily: named in its
+    case, or in the offsets table the case reads"""
+    found, evidence = _case_has(s, 'SET_FUNCTION_ATTRIBUTE', 'MAKE_FUNCTION_ANNOTATE', missing=False)
+    if found or not _case_has(s, 'SET_FUNCTION_ATTRIBUTE', '_Py_FunctionAttributeOffsets[oparg]', missing=False)[0]:
+        return found, evidence
+    return _file_has(s, CE, '[MAKE_FUNCTION_ANNOTATE] = offsetof(PyFunctionObject, func_annotate)')
+
+
 def tuplecontains_item_first(s):
     """`in` on a tuple compares each item with the value, the item first"""
-    return _body_has(s, 'Objects/tupleobject.c', 'tuplecontains',
-                     'PyObject_RichCompareBool(PyTuple_GET_ITEM(a, i), el')
+    tuples = 'Objects/tupleobject.c'
+    return _first_body_has(s, [(tuples, 'tuplecontains'), (tuples, 'tuple_contains')],
+                           'PyObject_RichCompareBool(PyTuple_GET_ITEM(a, i), el')
 
 
 def valid_version_tag_flag(s):
@@ -940,6 +1038,19 @@ def member_ex_error_from_type(s):
     # from 3.13 the error is raised by a helper given obj_addr
     return (any(t.kind == 'str' and 'object has no attribute' in t.text
                 for t in s.tokens(sm)), sm + ': "... object has no attribute ..."')
+
+
+def unpack_keeps_attribute_error(s):
+    """{**x} and f(**x) keep an AttributeError of an x that has keys (one
+    its keys() or __getitem__ raised), where a TypeError said it is no
+    mapping: DICT_UPDATE and the kwargs error look for keys first"""
+    update, where = _case_has(s, 'DICT_UPDATE', 'PyObject_HasAttrWithError(update_o, &_Py_ID(keys))',
+                              missing=False)
+    kwargs, kwargs_where = _body_has(s, CE, '_PyEval_FormatKwargsError',
+                                     'PyObject_HasAttrWithError(kwargs, &_Py_ID(keys))', missing=False)
+    if update != kwargs:
+        raise Unanswered('%s and %s disagree' % (where, kwargs_where))
+    return update, '%s, %s' % (where, kwargs_where)
 
 
 def delete_global_keyerror_only(s):
@@ -1012,7 +1123,7 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'POP_JUMP_FORWARD_IF_NOT_NONE', 'POP_JUMP_BACKWARD_IF_FALSE',
            'POP_JUMP_BACKWARD_IF_TRUE', 'POP_JUMP_BACKWARD_IF_NONE',
            'POP_JUMP_BACKWARD_IF_NOT_NONE', 'PRECALL', 'KW_NAMES', 'CALL',
-           'MAKE_CELL', 'COPY_FREE_VARS', 'RETURN_GENERATOR',
+           'MAKE_CELL', 'COPY_FREE_VARS', 'RETURN_GENERATOR', 'SEND',
            # gone from 3.12: the unary plus, the interactive print, import *
            # and LIST_TO_TUPLE are CALL_INTRINSIC_1's
            'UNARY_POSITIVE', 'PRINT_EXPR', 'IMPORT_STAR', 'LIST_TO_TUPLE',
@@ -1021,7 +1132,7 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'END_FOR', 'RETURN_CONST', 'LOAD_FAST_CHECK', 'LOAD_FAST_AND_CLEAR',
            'BINARY_SLICE', 'STORE_SLICE', 'CALL_INTRINSIC_1',
            'CALL_INTRINSIC_2', 'LOAD_SUPER_ATTR', 'POP_JUMP_IF_NONE',
-           'POP_JUMP_IF_NOT_NONE',
+           'POP_JUMP_IF_NOT_NONE', 'END_SEND', 'CLEANUP_THROW',
            # gone from 3.13: f-strings are CONVERT_VALUE's and FORMAT_SIMPLE's
            'FORMAT_VALUE',
            # new in 3.13
@@ -1035,7 +1146,9 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            # new in 3.14
            'LOAD_FAST_BORROW', 'LOAD_FAST_BORROW_LOAD_FAST_BORROW',
            'LOAD_SMALL_INT', 'LOAD_COMMON_CONSTANT', 'NOT_TAKEN', 'POP_ITER',
-           'LOAD_SPECIAL', 'BUILD_TEMPLATE', 'BUILD_INTERPOLATION')
+           'LOAD_SPECIAL', 'BUILD_TEMPLATE', 'BUILD_INTERPOLATION',
+           # gone from 3.15: yield from's is GET_ITER with an argument
+           'GET_YIELD_FROM_ITER')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
@@ -1232,6 +1345,8 @@ EXPORTS = [
     ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
     ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
     ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
+    ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup'),
+    ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify'),
 ]
 
 
@@ -1252,6 +1367,7 @@ C_API = [
     ('ARG_CHECK_POSITIONAL', arg_check_positional),
     ('CHECK_RESULT_TSTATE', check_result_tstate),
     ('OBJECTDICT_SETITEM_LINKABLE', objectdict_setitem_linkable),
+    ('OBJECTDICT_SETITEM_OBJECT', objectdict_setitem_object),
     ('FLOAT_ASDOUBLE_INDEX', float_asdouble_index),
     ('TRACEBACK_FROM_FRAME_API', D('_PyTraceBack_FromFrame is declared PyAPI_FUNC (in an internal header)',
                                    lambda s: _exported(s, '_PyTraceBack_FromFrame'))),
@@ -1276,6 +1392,8 @@ BYTECODE = [
                         lambda s: _file_has(s, 'Objects/codeobject.c', '"co_qualname"'))),
     ('LOAD_GLOBAL_NULL_BIT', D('LOAD_GLOBAL\'s argument is the name\'s index shifted left once, its low bit pushing a NULL under the global',
                                lambda s: _case_has(s, 'LOAD_GLOBAL', 'oparg>>1'))),
+    ('IMPORT_NAME_LAZY_BITS', D('IMPORT_NAME\'s argument is the name\'s index shifted left twice, its low two bits saying whether the import is lazy (1) or always eager (2)',
+                                lambda s: _case_has(s, 'IMPORT_NAME', 'oparg>>2'))),
     ('AWAIT_ERROR_BY_ARG', D('GET_AWAITABLE\'s argument tells its error which of async with\'s awaits it is (1 __aenter__\'s, 2 __aexit__\'s), not the instructions before it',
                              lambda s: _case_uses(s, 'GET_AWAITABLE', 'oparg'))),
     ('AWITH_EXIT_FIRST', D('BEFORE_ASYNC_WITH looks up __aexit__ before __aenter__',
@@ -1296,12 +1414,13 @@ BYTECODE = [
                                      lambda s: _case_has(s, 'FOR_ITER', 'JUMPBY(oparg + 2)'))),
     ('FOR_ITER_EXIT_KEEPS_ITER', D('FOR_ITER\'s exit leaves the iterator on the stack and jumps past END_FOR to POP_ITER, which pops it',
                                    lambda s: _case_has(s, 'FOR_ITER', 'JUMPBY(oparg + 1)'))),
+    ('GET_ITER_INDEX', D('GET_ITER pushes the iterator then an index or NULL above it, which FOR_ITER reads and POP_ITER pops with it',
+                         lambda s: _case_has(s, 'GET_ITER', 'index_or_null'))),
     ('CALL_EX_KWARGS_SLOT', D('CALL_FUNCTION_EX always has a slot for the keywords dict, NULL where the call has none',
                               lambda s: _case_has(s, 'CALL_FUNCTION_EX', 'kwargs_st = stack_pointer[-1]', missing=False))),
     ('BINARY_OP_SUBSCR', D('a subscript is BINARY_OP with NB_SUBSCR',
                            lambda s: ('NB_SUBSCR' in (s.macros('Include/opcode.h') or {}), 'Include/opcode.h: NB_SUBSCR'))),
-    ('FUNCTION_ANNOTATE', D('SET_FUNCTION_ATTRIBUTE can set a function\'s __annotate__ (MAKE_FUNCTION_ANNOTATE), the annotations made lazily',
-                            lambda s: _case_has(s, 'SET_FUNCTION_ATTRIBUTE', 'MAKE_FUNCTION_ANNOTATE', missing=False))),
+    ('FUNCTION_ANNOTATE', function_annotate),
 ]
 
 # frames
@@ -1319,6 +1438,8 @@ FRAMES = [
                                lambda s: _file(s, 'Include/internal/pycore_interpframe.h'))),
     ('FRAME_STACKREFS', frame_stackrefs),
     ('FRAME_INITIALIZE_TSTATE', frame_initialize_tstate),
+    ('GETFRAME_AUDITS_RESULT', D('sys._getframe\'s audit event names the frame it returns, after the walk (none when the stack is too shallow), not the current frame before it',
+                                 lambda s: _body_has(s, 'Python/sysmodule.c', 'sys__getframe_impl', '"sys._getframe", "(O)", pyFrame', missing=False))),
 ]
 
 # types
@@ -1336,6 +1457,8 @@ STATE = [
     ('PYCORE_INTERP_H', D('the interpreter state has an internal header of its own, pycore_interp.h',
                           lambda s: _file(s, 'Include/internal/pycore_interp.h'))),
     ('EVAL_HOOK_TSTATE', eval_hook_tstate),
+    ('GENERATOR_RETURN_KIND', generator_return_kind),
+    ('LAST_PROFILED_FRAME', last_profiled_frame),
     ('SIGNALS_PENDING', signals_pending),
     ('EVAL_FRAME_HANDLE_PENDING', eval_frame_handle_pending),
     ('INTERP_RECURSION_LIMIT', interp_recursion_limit),
@@ -1346,9 +1469,11 @@ STATE = [
     ('GC_TRACKED_BY_NEXT', gc_tracked_by_next),
     ('GC_HEAD_INTERNAL', gc_head_internal),
     ('MONITORING', monitoring),
+    ('INTERP_MONITORING_VERSION', interp_monitoring_version),
     ('THREAD_LOCAL_TSTATE', thread_local_tstate),
     ('PY_RECURSION_REMAINING', py_recursion_remaining),
     ('C_RECURSION_REMAINING', c_recursion_remaining),
+    ('C_STACK_SOFT_LIMIT', c_stack_soft_limit),
     ('CURRENT_EXCEPTION', current_exception),
     ('EVAL_BREAKER_GC', eval_breaker_gc),
     ('EVAL_FRAME_POPS', eval_frame_pops),
@@ -1437,12 +1562,15 @@ CEVAL = [
     ('CALL_TRACE_METHOD_DESCR', call_trace_method_descr),
     ('NAME_ERROR_NAME', name_error_name),
     ('IMPORT_FROM_SPEC', D('import_from\'s error tells a partially initialised module',
-                           lambda s: _body_has(s, CE, 'import_from', '_PyModuleSpec_IsInitializing'))),
+                           lambda s: _first_body_has(s, [(CE, 'import_from'), (CE, '_PyEval_ImportFrom')],
+                                                     '_PyModuleSpec_IsInitializing'))),
     ('KWARGS_MERGE_EX', D('CALL_FUNCTION_EX merges **kwargs with _PyDict_MergeEx, and format_kwargs_error reports it',
                           lambda s: _case_has(s, 'CALL_FUNCTION_EX', '_PyDict_MergeEx'))),
     ('DELETE_GLOBAL_KEYERROR_ONLY', delete_global_keyerror_only),
+    ('UNPACK_KEEPS_ATTRIBUTE_ERROR', unpack_keeps_attribute_error),
     ('RAISE_CAUSE_CHECKED', D('raise ... from a class whose call doesn\'t make an exception is a TypeError (do_raise)',
-                              lambda s: _body_has(s, CE, 'do_raise', 'PyExceptionInstance_Check(fixed_cause)'))),
+                              lambda s: _first_body_has(s, [(CE, 'do_raise'), ('Python/ceval.h', 'do_raise')],
+                                                        'PyExceptionInstance_Check(fixed_cause)'))),
 ]
 
 # the opcodes that some CPython lacks

@@ -13,12 +13,27 @@
  * helper, which does PySlice_AdjustIndices and the type's step-1 case exactly
  * as its mp_subscript does. Only step None is handled (and -1 for a list's
  * pieces, plistobject.c), and only bounds that are None or ints: anything
- * else (__index__, another step) is the real slice.
+ * else (__index__, another step) is the real slice. A slice made from a
+ * slice constant (PsycoSlice_FromConstant) keeps that object one past the
+ * fields, and is that object when forced, as CPython uses the constant.
  */
 #include "psliceobject.h"
 #include "plongobject.h"
 
 static source_virtual_t psyco_computed_slice;
+
+#define iSLICE_CONSTANT SLICE_TOTAL
+
+/* the slice constant v was made from, or NULL */
+static PyObject *
+slice_constant(vinfo_t *v)
+{
+    if (v->array->count <= iSLICE_CONSTANT)
+        return NULL;
+    return (PyObject *)CompileTime_Get(
+               v->array->items[iSLICE_CONSTANT]->source)
+        ->value;
+}
 
 /* SLICE_* descriptors: pobject.h; PsycoSlice_New, compute_slice and
    direct_compute_slice: a virtual PySlice_New */
@@ -26,10 +41,15 @@ static source_virtual_t psyco_computed_slice;
 static PyObject *
 direct_compute_slice(vinfo_t *v, char *data)
 {
-    PyObject *o = NULL;
-    PyObject *start = direct_xobj_vinfo(v->array->items[iSLICE_START], data);
-    PyObject *stop = direct_xobj_vinfo(v->array->items[iSLICE_STOP], data);
-    PyObject *step = direct_xobj_vinfo(v->array->items[iSLICE_STEP], data);
+    PyObject *o = slice_constant(v);
+    PyObject *start, *stop, *step;
+    if (o != NULL) {
+        Py_INCREF(o);
+        return o;
+    }
+    start = direct_xobj_vinfo(v->array->items[iSLICE_START], data);
+    stop = direct_xobj_vinfo(v->array->items[iSLICE_STOP], data);
+    step = direct_xobj_vinfo(v->array->items[iSLICE_STEP], data);
     if (start != NULL && stop != NULL && step != NULL)
         o = PySlice_New(start, stop, step);
     Py_XDECREF(step);
@@ -38,15 +58,19 @@ direct_compute_slice(vinfo_t *v, char *data)
     return o;
 }
 
-/* forced: a constant if every field is one and CPython would share the
-   object (rule allocator_pure), else PySlice_New at run time */
+/* forced: the slice constant it was made from; a constant if every field is
+   one and CPython would share the object (rule allocator_pure); else
+   PySlice_New at run time */
 static bool
 compute_slice(PsycoObject *po, vinfo_t *v)
 {
     vinfo_t *newobj = NULL;
-    if (is_compiletime(v->array->items[iSLICE_START]->source) &&
-        is_compiletime(v->array->items[iSLICE_STOP]->source) &&
-        is_compiletime(v->array->items[iSLICE_STEP]->source)) {
+    PyObject *constant = slice_constant(v);
+    if (constant != NULL)
+        newobj = vinfo_new(CompileTime_New((long)constant));
+    else if (is_compiletime(v->array->items[iSLICE_START]->source) &&
+             is_compiletime(v->array->items[iSLICE_STOP]->source) &&
+             is_compiletime(v->array->items[iSLICE_STEP]->source)) {
         PyObject *o = direct_compute_slice(v, NULL);
         if (o == NULL)
             OUT_OF_MEMORY();
@@ -90,6 +114,26 @@ PsycoSlice_New(vinfo_t *start, vinfo_t *stop, vinfo_t *step)
     else
         vinfo_incref(step);
     v->array->items[iSLICE_STEP] = step;
+    return v;
+}
+
+/* a virtual slice of a slice constant's start, stop and step, which is the
+   constant itself when forced; 'slice' is borrowed and must outlive the
+   compiled code, as a code object's constants do */
+DEFINEFN
+vinfo_t *
+PsycoSlice_FromConstant(PyObject *slice)
+{
+    PySliceObject *s = (PySliceObject *)slice;
+    vinfo_t *start = vinfo_new(CompileTime_New((long)s->start));
+    vinfo_t *stop = vinfo_new(CompileTime_New((long)s->stop));
+    vinfo_t *step = vinfo_new(CompileTime_New((long)s->step));
+    vinfo_t *v = PsycoSlice_New(start, stop, step);
+    vinfo_decref(step, NULL);
+    vinfo_decref(stop, NULL);
+    vinfo_decref(start, NULL);
+    v->array = array_grow1(v->array, iSLICE_CONSTANT + 1);
+    v->array->items[iSLICE_CONSTANT] = vinfo_new(CompileTime_New((long)slice));
     return v;
 }
 

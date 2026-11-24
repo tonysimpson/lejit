@@ -128,7 +128,7 @@ report_destructor(PyObject *capsule)
 /* inlining (upstream's rule): one merge point (the start), no block, no
    LOAD_GLOBAL, and at most this many instructions that are not "light"
    (produce little or no code) */
-#define INLINE_MAXIMUM_WEIGHT 6
+#define INLINE_MAXIMUM_WEIGHT 16
 #define IS_LIGHT_INSTR(op) (le_op_flags(op) & LE_OPF_LIGHT)
 
 /* ceval tests eval_breaker before every instruction it reaches through
@@ -523,6 +523,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
             }
             report->mergepoints[mergepoint_index].blocks = 0;
             report->mergepoints[mergepoint_index].entries.varies = NULL;
+            report->mergepoints[mergepoint_index].real_from = 0;
             mergepoint_index++;
         }
     }
@@ -530,6 +531,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     report->mergepoints[mergepoint_count].entries.fatlist = NULL;
     report->mergepoints[mergepoint_count].blocks = 0;
     report->mergepoints[mergepoint_count].entries.varies = NULL;
+    report->mergepoints[mergepoint_count].real_from = 0;
     if (!_find_dead_locals(co, report)) {
         /* out of memory: keep every local (the lists may hold some) */
         PyErr_Clear();
@@ -623,6 +625,9 @@ _build_merge_points(PyCodeObject *co, int module)
         if (LE_HAS_OPCODE_PRECALL && opcode == CALL && prev != PRECALL)
             goto not_ok;
         if (opcode == CALL_INTRINSIC_1 && !compiled_intrinsic(oparg))
+            goto not_ok;
+        /* cimpl_import_name imports eagerly */
+        if (opcode == IMPORT_NAME && LE_IMPORT_LAZY(oparg))
             goto not_ok;
         if (opcode == LOAD_GLOBAL &&
             loads_frame_locals_builtin(co, LE_GLOBAL_NAME(oparg)))
@@ -794,12 +799,17 @@ handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
         if (at >= 0 && u * LE_UNIT <= at && at < in.next)
             return 1;
         switch (in.op) {
+            /* a handler may go on after a yield in it */
             case YIELD_VALUE:
             case YIELD_FROM:
                 if (at < 0)
                     return 1;
+                next[n++] = in.next;
                 break;
-            /* the handler's end, or a jump out of it that unwinds it */
+            /* the handler's end, or a jump out of it that unwinds it;
+               a throw's into yield from ends at CLEANUP_THROW, which takes
+               the exception off the stack and re-raises it or goes on */
+            case CLEANUP_THROW:
             case POP_EXCEPT:
             case RETURN_VALUE:
             case RETURN_CONST:
@@ -899,7 +909,7 @@ handler_yields_kept(PyCodeObject *co, le_code_t c)
 DEFINEFN int
 psyco_handler_awaits(PyCodeObject *co, int handler)
 {
-#if LE_RESUMES_COROUTINES
+#if LE_RESUMES_COROUTINES_COMPILED
     return (co->co_flags & CO_COROUTINE) &&
            handler_reach(co, le_code(co), handler, -1);
 #else
@@ -909,109 +919,10 @@ psyco_handler_awaits(PyCodeObject *co, int handler)
 #endif
 }
 
-/* whether plain flow from the instruction at 'from' reaches the one at
-   'to', jumps taken or not, but no exception raised */
-static int
-flows_to(le_code_t c, int from, int to)
-{
-    int units = c.size / LE_UNIT, top = 0;
-    int work[units + 1];
-    unsigned char seen[units + 1];
-    memset(seen, 0, units + 1);
-    seen[from / LE_UNIT] = 1;
-    work[top++] = from;
-    while (top > 0) {
-        int pos = work[--top], next[2], n = 0, k, f;
-        le_instr_t in;
-        if (pos == to)
-            return 1;
-        in = le_instr(c, pos);
-        f = le_op_flags(in.op);
-        if (!(f & LE_OPF_STOPS)) {
-            if (f & (LE_OPF_JUMPS | LE_OPF_BRANCHES))
-                next[n++] = in.target;
-            if (!(f & LE_OPF_JUMPS))
-                next[n++] = in.next;
-        }
-        for (k = 0; k < n; k++)
-            if (next[k] >= 0 && next[k] < c.size && !seen[next[k] / LE_UNIT]) {
-                seen[next[k] / LE_UNIT] = 1;
-                work[top++] = next[k];
-            }
-    }
-    return 0;
-}
-
-/* whether each yield's resumes do enough work for the compiled body to
-   be worth its fixed cost per resume (about 330 instructions through the
-   hook, against about 150 for ceval): the instructions a resume can run
-   before the next yield, taken as the innermost loop around that yield
-   (or the whole code), hold a call (a generator expression is one), or a
-   loop with no yield in it. Loops are found by their backward jumps, each
-   around a yield only if flow from the yield reaches it: not one an
-   exception handler ends with (3.12's with statement), which jumps back
-   into code past the yield. A coroutine's awaits (YIELD_FROM) count as
-   its yields. */
-static int
-yields_do_work(le_code_t c)
-{
-    int units = c.size / LE_UNIT, pos, i, j, nloops = 0, nyields = 0;
-    int lo[units + 1], hi[units + 1], yields[units + 1];
-    unsigned char calls[units + 1];
-    memset(calls, 0, units + 1);
-    for (pos = 0; pos < c.size;) {
-        le_instr_t in = le_instr(c, pos);
-        switch (in.op) {
-            case CALL_FUNCTION:
-            case CALL_FUNCTION_KW:
-            case CALL_FUNCTION_EX:
-            case CALL_METHOD:
-            case CALL:
-                calls[pos / LE_UNIT] = 1;
-                break;
-            case YIELD_VALUE:
-            case YIELD_FROM:
-                yields[nyields++] = pos;
-                break;
-            default:
-                if ((LE_IS_JABS(in.op) || LE_IS_JREL(in.op)) &&
-                    in.target >= 0 && in.target <= pos) {
-                    lo[nloops] = in.target;
-                    hi[nloops++] = pos;
-                }
-        }
-        pos = in.next;
-    }
-    /* a coroutine that never awaits runs once, from its start */
-    if (nyields == 0)
-        yields[nyields++] = 0;
-    for (i = 0; i < nyields; i++) {
-        int y = yields[i], a = 0, b = c.size - LE_UNIT, worked = 0;
-        for (j = 0; j < nloops; j++)
-            if (lo[j] <= y && y <= hi[j] && hi[j] - lo[j] < b - a &&
-                flows_to(c, y, hi[j])) {
-                a = lo[j];
-                b = hi[j];
-            }
-        for (pos = a; pos <= b && !worked; pos += LE_UNIT)
-            worked = calls[pos / LE_UNIT];
-        for (j = 0; j < nloops && !worked; j++) {
-            int k, has_yield = 0;
-            if (lo[j] < a || hi[j] > b || (lo[j] == a && hi[j] == b))
-                continue;
-            for (k = 0; k < nyields; k++)
-                has_yield |= lo[j] <= yields[k] && yields[k] <= hi[j];
-            worked = !has_yield;
-        }
-        if (!worked)
-            return 0;
-    }
-    return 1;
-}
-
 /* whether the body of 'co', a plain generator or a coroutine, can run
-   compiled in its own frame: no yield from (a coroutine's awaits are
-   GET_AWAITABLE, LOAD_CONST None, YIELD_FROM), no async for, and no yield
+   compiled in its own frame: no YIELD_FROM (a coroutine's awaits are
+   GET_AWAITABLE, LOAD_CONST None, YIELD_FROM; a generator's yield from is
+   compiled only as SEND's loop), no async for, and no yield
    inside an exception handler, whose stack and blocks LeJIT keeps apart
    from the frame's (an EXCEPT_HANDLER block, a finally block's
    pseudo-exception); a coroutine's handlers that can await run in ceval
@@ -1023,7 +934,7 @@ body_compilable(PyCodeObject *co, le_code_t *c)
     int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
                                CO_ASYNC_GENERATOR | CO_ITERABLE_COROUTINE);
     if (kind != CO_GENERATOR &&
-        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES))
+        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED))
         return 0;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: runs interpreted */
@@ -1039,6 +950,9 @@ body_compilable(PyCodeObject *co, le_code_t *c)
                     return 0;
                 break;
             case GET_YIELD_FROM_ITER:
+                if (!LE_HAS_OPCODE_SEND || !LE_RESUMES_ON_FRAME)
+                    return 0;
+                break;
             /* async for */
             case GET_AITER:
             case GET_ANEXT:
@@ -1053,14 +967,12 @@ body_compilable(PyCodeObject *co, le_code_t *c)
 
 /* the code of a generator or coroutine whose body can run compiled,
    resumed at each yield through the eval hook (eval_hook.c:LeGen_Run), its
-   state kept in its frame between resumes (body_compilable), and whose
-   resumes do work (yields_do_work): any other runs interpreted, which
-   costs it less per resume */
+   state kept in its frame between resumes (body_compilable) */
 DEFINEFN int
 psyco_is_resumable_generator(PyCodeObject *co)
 {
     le_code_t c;
-    return body_compilable(co, &c) && yields_do_work(c);
+    return body_compilable(co, &c);
 }
 
 /* whether the instruction at 'pos' in a coroutine's body that can run as
@@ -1069,7 +981,7 @@ psyco_is_resumable_generator(PyCodeObject *co)
 DEFINEFN int
 psyco_in_handler(PyCodeObject *co, int pos)
 {
-#if LE_RESUMES_COROUTINES
+#if LE_RESUMES_COROUTINES_COMPILED
     return handler_reach(co, le_code(co), -1, pos);
 #else
     (void)co;

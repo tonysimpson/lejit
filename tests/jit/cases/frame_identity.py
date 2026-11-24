@@ -5,6 +5,8 @@
 # tested, which has a loop, so it is called compiled, not inlined.
 import gc, sys
 
+from ref_tracer import count_made, made
+
 
 def via(fn, n):
     t = 0
@@ -251,7 +253,84 @@ def run_mid_call(n): return via(mid_call, n)
 def run_generator_frame(n): return via(generator_frame, n)
 
 
+def getframe_caller(n):
+    t = 0
+    for i in range(n):
+        t += i
+    return sys._getframe(1)
+
+
+def raises(n):
+    t = 0
+    for i in range(n):
+        t += i
+    raise KeyError(t)
+
+
+def reraises(n):
+    t = 0
+    for i in range(n):
+        t += i
+    try:
+        raises(n)
+    except KeyError:
+        raise
+
+
+def catches(n):
+    t = 0
+    for i in range(n):
+        t += i
+    try:
+        reraises(n)
+    except KeyError:
+        return t
+
+
+def walks_made(n):
+    # tuples made per sys._getframe(1) from a compiled callee, and per
+    # exception a compiled callee catches and raises again, whose traceback
+    # frame is linked to its caller as the call ends (counted after the
+    # first round, which compiles)
+    out = []
+    for i in range(n):
+        count_made(tuple)
+        for k in range(100):
+            f = getframe_caller(2)
+        getframe_count = made()
+        count_made(tuple)
+        for k in range(100):
+            catches(2)
+        catch_count = made()
+        if i and getframe_count is not None:
+            out.append((f.f_code.co_name, getframe_count // 100,
+                        catch_count // 100))
+    return out
+
+
+class Index:
+    def __index__(self):
+        return 1
+
+
+def getframe_arguments(n):
+    # what sys._getframe takes and refuses, and its messages
+    out = []
+    for args, kwargs in [((), {}), ((0,), {}), ((-5,), {}), ((True,), {}),
+                         ((Index(),), {}), (('1',), {}), ((1.0,), {}),
+                         ((1, 2), {}), ((2 ** 70,), {}), ((), {'depth': 1}),
+                         ((1000,), {})]:
+        for i in range(n):
+            try:
+                out.append(sys._getframe(*args, **kwargs).f_code.co_name)
+            except Exception as e:
+                out.append('%s: %s' % (type(e).__name__, e))
+    return out
+
+
 CASES = [
+    ('walks_made', [(3,)], {}),
+    ('getframe_arguments', [(2,)], {}),
     ('run_me_twice', [(2,)], {}),
     ('run_caller_seen', [(2,)], {}),
     ('run_back_same', [(2,)], {}),

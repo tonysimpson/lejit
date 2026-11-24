@@ -3,13 +3,11 @@
 # blocks live in its frame between resumes, as ceval leaves them. Each case
 # drives generators and returns what CPython shows of them; compiled()
 # says whether a generator's body was compiled, where LeJIT compiles them.
-# Only a body whose resumes do work is compiled (light_bodies).
-import _thread, gc, inspect, itertools, sys
+import _thread, gc, inspect, itertools, subprocess, sys, types
 
 
 def work(x):
-    # a call: a body runs compiled only where its resumes do work
-    # (mergepoints.c:yields_do_work)
+    # a call, so that a resume does some work
     return x
 
 
@@ -432,6 +430,34 @@ def resumed_by_ceval(n):
     return out, compiled(appending)
 
 
+def seq_items(seq):
+    for x in seq:
+        yield x
+
+
+def started_by_ceval(make, seq, steps):
+    # made, and resumed 'steps' times, while a profile function is set, so
+    # ceval runs the loop's start; the rest is resumed compiled
+    sys.setprofile(lambda *a: None)
+    try:
+        g = make(seq)
+        first = [run(lambda: next(g)) for _ in range(steps)]
+    finally:
+        sys.setprofile(None)
+    return first, list(g)
+
+
+def loops_from_ceval(n):
+    # where ceval loops over a list, tuple, str or bytes by an index, not an
+    # iterator, a compiled resume goes on from that index
+    out = []
+    for seq in ([1, 2, 3, 4][:n], (5, 6, 7), 'abc', b'xyz'):
+        for steps in range(3):
+            out.append(started_by_ceval(seq_items, seq, steps))
+            out.append(started_by_ceval(lambda s: (x for x in s), seq, steps))
+    return out, compiled(seq_items)
+
+
 def frame_words(xs):
     # paused with immortal objects and NULLs (an unbound local, the NULL
     # under a called function) in its locals and on its stack, which ceval
@@ -552,15 +578,6 @@ def interrupted_in_try(n):
     return out, run(lambda: next(g)), compiled(catches_interrupt)
 
 
-def interpreted(*fns):
-    lejit = sys.modules.get('lejit')
-    # a release build can't say what compiled
-    if lejit is None or not hasattr(lejit._core, '_code_info'):
-        return True
-    return all(lejit._core._code_info(f.__code__) != 'compiled'
-               for f in fns)
-
-
 def ones():
     while True:
         yield 1
@@ -580,10 +597,10 @@ def counting(n):
 
 
 def light_bodies(n):
-    # resumes that do next to nothing cost less interpreted: these stay so
+    # resumes that do next to nothing, compiled as any other body
     g = ones()
     return ([next(g) for _ in range(n)], drain(scenario_ids({1: n, 2: 2})),
-            drain(counting(n)), interpreted(ones, scenario_ids, counting))
+            drain(counting(n)), compiled(ones, scenario_ids, counting))
 
 
 def send_at_start(n):
@@ -758,6 +775,61 @@ def for_exception_state(n):
     return out
 
 
+
+# A static type CPython readies only when an attribute is first looked up
+# on it (3.11's line_iterator), iterated by a body compiled before and
+# after that.
+def line_starts(code):
+    last = None
+    for start, end, line in code.co_lines():
+        if line is not None and line != last:
+            last = line
+            yield start, line
+
+
+def readied_late(n):
+    # resumed, but not to its end, before the type is readied, and to its
+    # end only after
+    out = []
+    for f in (counting, ones, light_bodies):
+        g = line_starts(f.__code__)
+        out.append([next(g) != () for _ in range(2)])
+    for f in (counting, ones):
+        list(f.__code__.co_lines())
+    for f in (light_bodies, counting, readied_late):
+        out.append(dict(line_starts(f.__code__)) != {})
+    return out, compiled(line_starts)
+
+
+# a generator expression made over an object that isn't an iterator,
+# as its .0: CPython's FOR_ITER raises TypeError where it tests the slot,
+# and crashes where it doesn't, so a child tells which
+NOT_ITERATOR_PROBE = (
+    'import types\n'
+    'f = types.FunctionType((x for x in ()).gi_code, {})\n'
+    'try:\n    list(f(42))\nexcept TypeError:\n    pass\n')
+FOR_ITER_TESTS_SLOT = subprocess.run(
+    [sys.executable, '-c', NOT_ITERATOR_PROBE],
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def genexpr_over(n):
+    return (x * 2 for x in range(n))
+
+
+def genexpr_not_iterator(n):
+    if not FOR_ITER_TESTS_SLOT:
+        return None
+    f = types.FunctionType(genexpr_over(0).gi_code, {})
+    out = []
+    for obj in (range(n), [1, 2], 42, iter(range(n))):
+        try:
+            out.append(list(f(obj)))
+        except TypeError as e:
+            out.append(str(e))
+    return out
+
+
 CASES = [
     ('resuming', [(3,), (0,)], {}),
     ('local_masks', [(3,)], {}),
@@ -772,12 +844,15 @@ CASES = [
     ('interrupted', [(0,)], {}),
     ('interrupted_in_try', [(0,)], {}),
     ('light_bodies', [(3,)], {}),
+    ('readied_late', [(0,)], {}),
     ('send_at_start', [(3,)], {}),
     ('resumed_by_ceval', [(3,)], {}),
+    ('loops_from_ceval', [(3,), (0,)], {}),
     ('words_resumed_by_ceval', [(3,)], {}),
     ('exception_state', [(3,)], {}),
     ('for_loops', [(3,), (0,)], {}),
     ('for_recursion_limit', [(0,)], {}),
     ('for_traced', [(3,)], {}),
     ('for_exception_state', [(3,)], {}),
+    ('genexpr_not_iterator', [(3,)], {}),
 ]

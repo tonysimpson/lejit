@@ -8,6 +8,9 @@
 #include <Python.h>
 #include <structmember.h> /* for offsetof() */
 #include <stdint.h>
+/* C's own bool, which CPython's internal headers give too: a function
+   returning one must read the same in every file */
+#include <stdbool.h>
 /* the LE_HAS_ features of the CPython source built for */
 #include "le_features_gen.h"
 /* the messages (LE_MSG_) of the interpreter built for, from
@@ -874,16 +877,6 @@ psyco_fatal_error(char *msg, char *filename, int lineno);
 #define PSY_INLINE static
 #endif
 
-#ifndef bool
-typedef int bool;
-#endif
-#ifndef false
-#define false 0
-#endif
-#ifndef true
-#define true 1
-#endif
-
 #ifndef PyObject_TypeCheck
 #define PyObject_TypeCheck(o, t) ((o)->ob_type == (t))
 #endif
@@ -914,6 +907,7 @@ PyAPI_FUNC(int)
 PyAPI_FUNC(int) _PySet_Update(PyObject *, PyObject *);
 PyAPI_FUNC(PyObject *) PyCFunction_Call(PyObject *, PyObject *, PyObject *);
 PyAPI_FUNC(PyObject *) _PyList_Extend(PyListObject *, PyObject *);
+PyAPI_FUNC(void) _PyErr_SetKeyError(PyObject *);
 PyAPI_FUNC(PyObject *)
     _PyUnicode_JoinArray(PyObject *, PyObject *const *, Py_ssize_t);
 #if LE_HAS_PRIVATE_NUMBER_INDEX
@@ -986,20 +980,36 @@ typedef struct le_owner_s {
 #define LE_RESUMES_COROUTINES (!LE_HAS_INTERPRETER_FRAME)
 /* and compiled code resumes a generator itself, without gen_send_ex2 and
    the eval hook (eval_hook.c:le_gen_iternext), where its frame is inside
-   it and the evaluator's caller pops it */
-#define LE_RESUMES_GENERATORS_DIRECTLY \
-    (LE_HAS_INTERPRETER_FRAME && !LE_HAS_EVAL_FRAME_POPS)
+   it */
+#define LE_RESUMES_GENERATORS_DIRECTLY LE_HAS_INTERPRETER_FRAME
 #if LE_RESUMES_GENERATORS_DIRECTLY
 EXTERNFN PyObject *
 le_gen_iternext(PyObject *gen);
 #endif
+/* and a resume's compiled code is given the frame itself, whose words it
+   reads where it uses them (vcompiler.c:PsycoObject_FromGenFrame), so one
+   entry serves every resume at a point */
+#define LE_RESUMES_ON_FRAME LE_HAS_INTERPRETER_FRAME
+/* coroutine bodies run compiled: on the frame object, or on the frame
+   inside the coroutine with each await a SEND loop */
+#define LE_RESUMES_COROUTINES_COMPILED \
+    (LE_RESUMES_COROUTINES || LE_RESUMES_ON_FRAME)
+/* a frame with more words (locals plus stack) resumes interpreted */
+#define LE_FRAME_WORDS_MAX 1024
 
-/* A resumable generator's compiled entries at one resume point, one per
-   set of NULL words in its frame (a bit each, in the frame's order),
-   compiled when first needed, at most LE_RESUME_ENTRIES */
+/* A resumable generator's compiled entries at one resume point, compiled
+   when first needed, at most LE_RESUME_ENTRIES: where LE_RESUMES_ON_FRAME,
+   one; otherwise one per set of NULL words in its frame (a bit each, in
+   the frame's order) */
+#if LE_RESUMES_ON_FRAME
+#define LE_RESUME_ENTRIES 1
+#else
 #define LE_RESUME_ENTRIES 4
+#endif
 typedef struct {
+#if !LE_RESUMES_ON_FRAME
     uint64_t nulls;
+#endif
     PyObject *code;    /* codebuf, Py_None if compiling failed; owned */
     PyObject *globals; /* as entry_globals and entry_builtins */
     PyObject *builtins;
@@ -1007,6 +1017,9 @@ typedef struct {
 typedef struct {
     int lasti; /* f_lasti there, -1 for the start */
     int count;
+    int in_handler; /* a coroutine's place inside an exception handler,
+                       which resumes interpreted (pycompiler.c: a handler
+                       that can await runs in ceval) */
     le_resume_entry_t entries[LE_RESUME_ENTRIES];
 } le_resume_point_t;
 
@@ -1029,7 +1042,40 @@ typedef struct le_code_extra_s {
     int nresumes; /* a resumable generator's points, or -1: not resumable */
     le_resume_point_t *resumes;     /* one per yield and the start, or NULL */
     le_resume_point_t *last_resume; /* the one the last resume used */
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    struct le_gen_direct_s *direct; /* le_gen_direct_t, or NULL */
+#endif
 } le_code_extra_t;
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* A resumable generator's compiled entries as compiled code that steps it
+   calls them (psyfunc.c:psyco_gen_step): indexed by its frame's place
+   (le_gen_direct_index), each the start of the entry's code, or NULL
+   where none is compiled yet; one entry serves all the code's frames
+   with these globals and builtins, set by the first entry put in. The
+   entries' buffers are the resume points' (le_resume_entry_t). */
+typedef struct le_gen_direct_s {
+    PyObject *globals, *builtins; /* borrowed, as entry_globals */
+    code_t *entries[1];
+} le_gen_direct_t;
+/* the table of 'co' (record 'x'), made if the code is a resumable
+   generator's that compiled code may step; NULL if not, or out of
+   memory (eval_hook.c) */
+EXTERNFN le_gen_direct_t *
+le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x);
+/* what compiled code calls after a direct step of the generator 'gen'
+   whose run gave 'result' and didn't simply pause at a yield
+   (eval_hook.c), as gen_iternext returns */
+EXTERNFN PyObject *
+le_gen_direct_end(PyObject *gen, PyObject *result);
+/* the same after a step made by send(), as gen_send returns */
+EXTERNFN PyObject *
+le_gen_direct_send_end(PyObject *gen, PyObject *result);
+/* the same after a step made by yield from's SEND, as PyIter_Send:
+   1 with the value yielded in out[0], 0 with the value returned, -1 with
+   the exception */
+EXTERNFN int
+le_gen_direct_send_status(PyObject *gen, PyObject *result, PyObject *out[]);
+#endif
 /* the record lives in a weak reference to its code object (lejit.c) */
 typedef struct {
     PyWeakReference wr;

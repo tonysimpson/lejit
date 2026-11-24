@@ -497,6 +497,19 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
                   global_patch_t *entry, long shape, long offset,
                   code_t *miss_glue, void *arg);
 
+#if LE_HAS_FRAME_STACKREFS
+/* A frame's word, a _PyStackRef read at run time, as the object
+   PyStackRef_AsPyObjectSteal gives: a reference, or NULL for
+   PyStackRef_NULL. A word with its tag bit set holds no reference of its
+   own, so one is made. */
+EXTERNFN vinfo_t *
+psyco_stackref_steal(PsycoObject *po, vinfo_t *w);
+/* object 'v' (a reference, or NULL) as the _PyStackRef a frame's word
+   takes it as: PyStackRef_FromPyObjectSteal's, PyStackRef_NULL for NULL */
+EXTERNFN vinfo_t *
+psyco_stackref_from_steal(PsycoObject *po, vinfo_t *v);
+#endif
+
 EXTERNFN void
 function_return(PsycoObject *po, Source retval, int nframelocal, long retpos);
 

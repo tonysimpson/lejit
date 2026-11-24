@@ -238,6 +238,19 @@ cimpl_float_asdouble_result(PyObject *op, PyObject *res)
 {
     double val;
     if (!PyFloat_CheckExact(res)) {
+#ifdef LE_MSG_FLOAT_RETURNED_NON_FLOAT_QUALIFIED
+        if (!PyFloat_Check(res)) {
+            PyErr_Format(PyExc_TypeError,
+                         LE_MSG_FLOAT_RETURNED_NON_FLOAT_QUALIFIED,
+                         Py_TYPE(op), Py_TYPE(res));
+            return -1;
+        }
+        if (PyErr_WarnFormat(PyExc_DeprecationWarning, 1,
+                             LE_MSG_FLOAT_RETURNED_FLOAT_SUBCLASS_QUALIFIED,
+                             Py_TYPE(op), Py_TYPE(res))) {
+            return -1;
+        }
+#else
         if (!PyFloat_Check(res)) {
             PyErr_Format(PyExc_TypeError, LE_MSG_FLOAT_RETURNED_NON_FLOAT,
                          Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name);
@@ -248,6 +261,7 @@ cimpl_float_asdouble_result(PyObject *op, PyObject *res)
                              Py_TYPE(op)->tp_name, Py_TYPE(res)->tp_name)) {
             return -1;
         }
+#endif
     }
     val = PyFloat_AS_DOUBLE(res);
     return val;
@@ -570,6 +584,9 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
         vinfo_decref(res, po);
         return val;
     }
+    /* a message naming the types by their qualified names, which can change
+       after compiling, is made at run time, by cimpl_float_asdouble_result */
+#ifndef LE_MSG_FLOAT_RETURNED_NON_FLOAT_QUALIFIED
     if (tp_res != NULL) {
         switch (Psyco_TypeIsSubtype(po, tp_res, &PyFloat_Type, &is_float)) {
             case 1:
@@ -588,6 +605,7 @@ PsycoFloat_AsDouble(PsycoObject *po, vinfo_t *op)
                 return NULL;
         }
     }
+#endif
     val = psyco_generic_call(po, cimpl_float_asdouble_result,
                              CfReturnTypeDouble | CfPyErrCheck, "vv", op, res);
     vinfo_decref(res, po);

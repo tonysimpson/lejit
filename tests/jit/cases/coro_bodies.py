@@ -1,15 +1,15 @@
-# A coroutine's body runs compiled from its start, through the eval hook
-# (eval_hook.c:LeGen_Run), until an await suspends it: the frame is then
-# paused as ceval's YIELD_FROM leaves it, and ceval runs the rest. Each case
+# A coroutine's body runs compiled through the eval hook
+# (eval_hook.c:LeGen_Run): where the frame is a frame object, from its
+# start until an await suspends it as ceval's YIELD_FROM leaves it, ceval
+# running the rest; where the frame is inside the coroutine, at each
+# resume too, each await a SEND loop that pauses it as ceval does. Each case
 # drives coroutines, by send() or with asyncio, and returns what CPython
-# shows of them; compiled() says whether their bodies were compiled, where
-# LeJIT compiles them.
+# shows of them; compiled() says whether their bodies were compiled.
 import asyncio, gc, inspect, sys, types, warnings
 
 
 def work(x):
-    # a call: a body runs compiled only where it does work
-    # (mergepoints.c:yields_do_work)
+    # a call, so that a run does some work
     return x
 
 
@@ -17,8 +17,6 @@ def compiled(*fns):
     lejit = sys.modules.get('lejit')
     # a release build can't say what compiled
     if lejit is None or not hasattr(lejit._core, '_code_info'):
-        return True
-    if dict(lejit._core._build['features']).get('LE_HAS_INTERPRETER_FRAME'):
         return True
     return all(lejit._core._code_info(f.__code__) == 'compiled'
                for f in fns)
@@ -168,8 +166,30 @@ async def guarded(k):
         D.log.append('finally')
 
 
+async def returns_on_throw(k):
+    try:
+        await pause(k)
+    except KeyError as e:
+        return ('inner returned', str(e))
+
+
+async def outer_of_thrown(k):
+    # a throw whose awaited coroutine returns goes on after the await
+    r = await returns_on_throw(k)
+    v = await pause(('outer', r))
+    return work(v)
+
+
 def thrown(n):
     out = []
+    c = outer_of_thrown(n)
+    out.append(c.send(None))
+    out.append((type(c.cr_await).__name__, c.cr_await.cr_await is not None))
+    out.append(outcome(lambda: c.throw(KeyError('k'))))
+    out.append((type(c.cr_await).__name__,
+                c.cr_frame.f_lineno - c.cr_code.co_firstlineno))
+    out.append(outcome(lambda: c.send(n)))
+    out.append(compiled(outer_of_thrown))
     for how in ('send', 'throw', 'throw_other', 'close', 'drop'):
         c = guarded(n)
         out.append(c.send(None))
@@ -455,7 +475,7 @@ CASES = [
     ('raised', [(3,)], HOOKED),
     ('await_errors', [(2,)], {}),
     ('with_asyncio', [(3,)],
-     {'warmup': (40, "asyncio's paths go on compiling for some rounds"),
+     {'warmup': (120, "asyncio's paths go on compiling for some rounds"),
       'leaks_with_aslr': 'what plain CPython itself keeps after the rounds '
                          'varies with addresses, by tens of blocks'}),
     ('origins', [(3,)], {}),

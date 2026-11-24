@@ -46,11 +46,16 @@
 /* A type whose attributes type_setattro lets be set: a heap type, or where
    CPython has the flag, a type without Py_TPFLAGS_IMMUTABLETYPE (which
    PyType_Ready gives every static type, and an extension's heap type may
-   ask for, as array's does). */
+   ask for, as array's does). Some static types are readied, and so given
+   the flag, only when an attribute is first looked up on them (3.11's
+   line_iterator): one is readied here first, so that the answer can't
+   change between a compile and its replay. */
 PSY_INLINE bool
 Psyco_TypeMutable(PyTypeObject *tp)
 {
 #if LE_HAS_IMMUTABLE_TYPE_FLAG
+    if (!(tp->tp_flags & Py_TPFLAGS_READY) && PyType_Ready(tp) < 0)
+        PyErr_Clear(); /* out of memory: taken as mutable */
     return (tp->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) == 0;
 #else
     return (tp->tp_flags & Py_TPFLAGS_HEAPTYPE) != 0;
@@ -162,6 +167,18 @@ Psyco_TypeLookup(PsycoObject *po, PyTypeObject *tp, void *key, PyObject *name,
 EXTERNFN void
 cimpl_type_lookup_changed(PyTypeObject *tp, PyObject *name, PyObject *descr);
 
+/* super(class, self).name (LOAD_SUPER_ATTR), resolved while compiling
+   where CPython's lookup would find a Python function: the builtin super,
+   a class, and self an instance of it whose type is known and, for a
+   method load, loads methods generically. 1 with *f the function (to call
+   with self, or to bind to it), under a guard of self's type, as
+   Psyco_TypeLookup's, on the lookup in its MRO after class; 0 to load as
+   CPython does; -1 on error. 'key' is an address of the site's. */
+EXTERNFN int
+PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
+                        vinfo_t *self, PyObject *name, bool method, void *key,
+                        PyObject **f);
+
 /* A guard for a message made now that names tp, a mutable type: a
    condition code, true where tp has been renamed since. */
 EXTERNFN condition_code_t
@@ -245,6 +262,12 @@ PsycoObject_IsTrue(PsycoObject *po, vinfo_t *vi);
    that would happend to contain zero). */
 EXTERNFN vinfo_t *
 PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name);
+/* ceval's method load, o.name for a call: 1 with *meth the function to
+   call with o first, 0 with *meth the attribute to call as it is, -1 on an
+   error */
+EXTERNFN int
+PsycoObject_GetMethod(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
+                      vinfo_t **meth);
 EXTERNFN bool
 PsycoObject_SetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
                     vinfo_t *v);

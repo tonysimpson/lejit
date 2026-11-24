@@ -58,8 +58,11 @@ def _need_ops(*names):
 
 def _code(ops, consts):
     """A function running the instructions ops, [(name, arg)], with the
-    constants consts. Only for instructions without inline caches."""
-    raw = b''.join(bytes([opcode.opmap[name], arg]) for name, arg in ops)
+    constants consts. Each instruction is followed by its inline caches,
+    zeroed, which a jump's argument counts."""
+    caches = _caches()
+    raw = b''.join(bytes([opcode.opmap[name], arg])
+                   + bytes(2 * caches.get(name, 0)) for name, arg in ops)
     template = (lambda: None).__code__
     if hasattr(template, 'replace'):
         code = template.replace(co_code=raw, co_consts=tuple(consts),
@@ -193,7 +196,9 @@ for _feature, _function in [
         ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
         ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
-        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending')]:
+        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
+        ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup'),
+        ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
@@ -427,6 +432,24 @@ def DELETE_GLOBAL_KEYERROR_ONLY():
 
 
 @probe
+def UNPACK_KEEPS_ATTRIBUTE_ERROR():
+    """{**x} and f(**x) of an x whose keys() raises AttributeError keep it
+    (run)"""
+    class Keys(object):
+        def keys(self):
+            raise AttributeError('keys')
+
+    def f(**kw):
+        return kw
+    kinds = {type(_error(lambda: {**Keys()})), type(_error(lambda: f(**Keys())))}
+    if kinds == {AttributeError}:
+        return True, '{**x}, f(**x) run: AttributeError'
+    if kinds == {TypeError}:
+        return False, '{**x}, f(**x) run: TypeError'
+    raise Unanswered('{**x}, f(**x) run: %r' % kinds)
+
+
+@probe
 def CALL_TRACE_METHOD_DESCR():
     """a method descriptor called with f(*args) gives the profiler a
     c_call event (sys.setprofile)"""
@@ -511,6 +534,32 @@ def FRAME_CLEARED_LAST_FIRST():
     if order not in (['a', 'b', 'c'], ['c', 'b', 'a']):
         raise Unanswered('locals released in the order %r' % order)
     return order == ['c', 'b', 'a'], 'run: locals released %r' % order
+
+
+@probe
+def GETFRAME_AUDITS_RESULT():
+    """sys._getframe(1)'s audit event names the caller's frame, which it
+    returns, not the current one (run: an audit hook)"""
+    if not hasattr(sys, 'addaudithook'):
+        return False, 'no sys.addaudithook'
+    seen = []
+
+    def hook(event, args):
+        if event == 'sys._getframe' and seen is not None:
+            seen.append(args[0])
+    sys.addaudithook(hook)
+
+    def inner():
+        return sys._getframe(1), sys._getframe(0)
+    try:
+        caller, current = inner()
+        named = seen[-2]
+    finally:
+        seen = None
+    if named is not caller and named is not current:
+        raise Unanswered('the audit event named neither frame: %r' % named)
+    return named is caller, 'run: the event named the %s frame' % (
+        'returned' if named is caller else 'current')
 
 
 @probe
@@ -937,6 +986,20 @@ def LOAD_GLOBAL_NULL_BIT():
 
 
 @probe
+def IMPORT_NAME_LAZY_BITS():
+    """an import in a function loads it with IMPORT_NAME whose argument is
+    the name's index (0) shifted left twice, plus two for an import that is
+    always eager (dis)"""
+    def f():
+        import zzz  # noqa: F401
+    for x in dis.get_instructions(f):
+        if x.opname == 'IMPORT_NAME' and x.arg in (0, 2):
+            return x.arg == 2, 'dis: IMPORT_NAME %d for import zzz' % x.arg
+    raise Unanswered('import zzz is not IMPORT_NAME 0 or 2: %r'
+                     % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
 def AWAIT_ERROR_BY_ARG():
     """async with's awaits of __aenter__'s and __aexit__'s results are
     GET_AWAITABLE 1 and 2, the argument ceval's error reads (dis)"""
@@ -1068,6 +1131,15 @@ def FOR_ITER_EXIT_PAST_POP_TOP():
                     'dis: END_FOR (pops %d) then %s' % (pops, ins[i + 1].opname))
     raise Unanswered('a for loop has no END_FOR: %r'
                      % [x.opname for x in ins])
+
+
+@probe
+def GET_ITER_INDEX():
+    """GET_ITER pushes two items, the iterator and an index or NULL
+    (dis)"""
+    op = dis.opmap['GET_ITER']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 2, 'dis: GET_ITER pushes %d' % pushes
 
 
 @probe

@@ -66,9 +66,10 @@
 #define GENEXPR_MIN 6  /* min(), max(): acc is the best so far, or NULL */
 #define GENEXPR_MAX 7
 /* Not fused: the generator's own body, resumed through the eval hook
-   (eval_hook.c:LeGen_Run). acc is its frame object, borrowed: YIELD_VALUE
-   saves the locals, stack and blocks into it, as ceval leaves a paused
-   generator's frame, and returns the value. */
+   (eval_hook.c:LeGen_Run). acc is its run (FrameRuntime), or where
+   LE_RESUMES_ON_FRAME its frame, borrowed: YIELD_VALUE saves the locals,
+   stack and blocks into the frame, as ceval leaves a paused generator's
+   frame, and returns the value. */
 #define GENEXPR_RESUMABLE 8
 /* A coroutine awaited as soon as it is made (await f(x)), run as a call
    (psyfunc.c:psyco_coro_start): its RETURN_VALUE returns the await's
@@ -113,6 +114,8 @@ typedef struct {
     char python_call;     /* a call that may run Python code, so may have
                              started tracing, was emitted in this instruction
                              (pycompiler.c:resume_if_tracing) */
+    char proxy_write;     /* this instruction stores or deletes an item of
+                             what may be a frame-locals proxy */
     char resume_pending;  /* test for tracing at the next instruction: after
                              an inlined frame's return, or at a handler */
     char go_interpreted;  /* the frame goes on in ceval from the next

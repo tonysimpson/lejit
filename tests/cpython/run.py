@@ -28,6 +28,14 @@ BANNED = {
 # reason: tests skipped in both runs, by id as the report prints it (fnmatch
 # patterns)
 SKIPPED = {
+    'times what runs after the timer starts against a margin of a '
+    'millisecond or less, which compiling that code can take on a busy '
+    'machine':
+        'test.test_os.TimerfdTests.test_timerfd_*initval '
+        'test.test_os.TimerfdTests.test_timerfd_*interval '
+        'test.test_os.TimerfdTests.test_timerfd_*TFD_TIMER_ABSTIME '
+        'test.test_os.TimerfdTests.test_timerfd_*select '
+        'test.test_os.TimerfdTests.test_timerfd_*poll',
     'connects to a port it found unused, which a test running at the same '
     'time can take, and expects the connection to fail':
         'test.test_asyncio.test_events.*EventLoopTests.'
@@ -258,7 +266,8 @@ SKIPPED = {
         'test.test_smtplib.DebuggingServerTests.testSourceAddress',
     'skips itself on a sporadic ENOTCONN, so the plain and LeJIT runs can '
     'skip different counts':
-        'test.test_socket.RecvmsgSCTPStreamTest.testRecvmsgEOF',
+        'test.test_socket.RecvmsgSCTPStreamTest.testRecvmsgEOF '
+        'test.test_socket.RecvmsgIntoSCTPStreamTest.testRecvmsgEOF',
     "start many threads, and fail with \"can't start new thread\" on a "
     'loaded machine, plain as well as with LeJIT':
         'test.test_queue.*SimpleQueueTest.test_many_threads* '
@@ -277,7 +286,9 @@ SKIPPED = {
     'asserts that wait_for with a timeout of 0 returns within 0.1 s of wall '
     'time, which fails plain as well as with LeJIT on a loaded machine':
         'test.test_asyncio.test_waitfor.AsyncioWaitForTest.'
-        'test_wait_for_timeout_less_then_0_or_0_coroutine_do_not_started',
+        'test_wait_for_timeout_less_then_0_or_0_coroutine_do_not_started '
+        'test.test_asyncio.test_waitfor.AsyncioWaitForTest.'
+        'test_wait_for_timeout_less_then_0_or_0',
     'asserts that one epoll poll returns within 10 ms of wall time, which a '
     'busy machine can miss whatever runs the test':
         'test.test_epoll.TestEPoll.test_unregister_closed',

@@ -3,6 +3,12 @@
 #include "../codemanager.h"
 /* LE_GC_UNTRACKED_TEST */
 #include "../mechanisms/store_gc.h"
+#if LE_HAS_FRAME_STACKREFS
+/* Py_TAG_REFCNT, PyStackRef_NULL */
+#include "../mechanisms/frames.h"
+#endif
+/* PyLazyImport_Type */
+#include "../Python/pycinternal.h"
 
 /* Emitted code's view of the shape of dict keys (pobject.h:le_dict_shape):
    a compare of the keys at 'rk' with an immediate, which ends the
@@ -1367,7 +1373,9 @@ psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
 /*   mov r10, globals; mov r10, [r10 + ma_keys]
      cmp [r10 + shape], SHAPE; jne MISS
      cmp [r10 + KEY], name; jne MISS
-     RG = [r10 + KEY + 8]; incref RG; jmp DONE
+     RG = [r10 + KEY + 8]
+     (where there are lazy imports: cmp [RG + ob_type], proxy type; je MISS)
+     incref RG; jmp DONE
    MISS: rdi = arg; call miss_glue; RG = rax
    DONE: test RG, RG
    Hand-allocated like psyco_inline_load, RG callee-saved, so the
@@ -1394,10 +1402,10 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
                   global_patch_t *entry, long shape, long offset,
                   code_t *miss_glue, void *arg)
 {
-    code_t *jmiss[2], *jdone, *start;
+    code_t *jmiss[3], *jdone, *start;
     vinfo_t *v;
     reg_t rg;
-    int i;
+    int i, nmiss = 2;
     if (!is_respawning(po) && po->codelimit - po->code < 128)
         PsycoObject_EmergencyCodeRoom(po);
     BEGIN_CODE
@@ -1425,10 +1433,17 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     WRITE_2(0x70 | CC_NE, 0);
     MOV_R_O32(rg, REG_TRANSIENT_1, offset + sizeof(PyObject *));
     entry->at_value = (dword_t *)code - 1;
+#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
+    /* a proxy is the miss's to replace with its module */
+    MOV_R_I(REG_X64_RAX, (long)&PyLazyImport_Type);
+    CMP_R_O8(REG_X64_RAX, rg, offsetof(PyObject, ob_type));
+    jmiss[nmiss++] = code;
+    WRITE_2(0x70 | CC_E, 0);
+#endif
     INC_OB_REFCNT_internal(rg);
     jdone = code;
     WRITE_2(0xEB, 0);
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < nmiss; i++) {
         extra_assert(code - (jmiss[i] + 2) < 128);
         jmiss[i][1] = (code_t)(code - (jmiss[i] + 2));
         le_trace_jump_cond(jmiss[i], jmiss[i] + 2, code);
@@ -1445,3 +1460,70 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     REG_NUMBER(po, rg) = v;
     return v;
 }
+
+#if LE_HAS_FRAME_STACKREFS
+_Static_assert(Py_TAG_REFCNT == 1 && offsetof(_PyStackRef, bits) == 0 &&
+                   sizeof(_PyStackRef) == sizeof(long),
+               "LeJIT: a _PyStackRef is a word whose tag is its low bit");
+
+DEFINEFN vinfo_t *
+psyco_stackref_steal(PsycoObject *po, vinfo_t *w)
+{
+    vinfo_t *v;
+    reg_t rg;
+    BEGIN_CODE
+    NEED_CC();
+    COPY_IN_REG(w, rg);
+    TEST_R_I(rg, Py_TAG_REFCNT);
+    BEGIN_SHORT_COND_JUMP(0, CC_E);
+    AND_R_I8(rg, ~Py_TAG_REFCNT);
+    /* PyStackRef_NULL, now zero */
+    BEGIN_SHORT_COND_JUMP(1, CC_E);
+    INC_OB_REFCNT_internal(rg);
+    END_SHORT_JUMP(1);
+    END_SHORT_JUMP(0);
+    END_CODE
+    v = vinfo_new(RunTime_New(rg, false, false));
+    REG_NUMBER(po, rg) = v;
+    return v;
+}
+
+/* the object in 'rg' (not NULL) tagged as an immortal is */
+#define STACKREF_TAG(rg)                                                \
+    do {                                                                \
+        MOVZX_DR_WO(REG_TRANSIENT_1, rg, offsetof(PyObject, ob_flags)); \
+        AND_R_I8(REG_TRANSIENT_1, Py_TAG_REFCNT);                       \
+        OR_R_R(rg, REG_TRANSIENT_1);                                    \
+    } while (0)
+
+DEFINEFN vinfo_t *
+psyco_stackref_from_steal(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *w;
+    reg_t rg;
+    if (is_compiletime(v->source)) {
+        PyObject *o = (PyObject *)CompileTime_Get(v->source)->value;
+        return vinfo_new(CompileTime_New(
+            o == NULL ? (long)PyStackRef_NULL.bits
+                      : (long)PyStackRef_FromPyObjectSteal(o).bits));
+    }
+    BEGIN_CODE
+    NEED_CC();
+    COPY_IN_REG(v, rg);
+    if (is_maybe_null(v->source)) {
+        TEST_R_R(rg, rg);
+        BEGIN_SHORT_COND_JUMP(0, CC_NE);
+        MOV_R_I(rg, PyStackRef_NULL.bits);
+        BEGIN_SHORT_JUMP(1);
+        END_SHORT_JUMP(0);
+        STACKREF_TAG(rg);
+        END_SHORT_JUMP(1);
+    }
+    else
+        STACKREF_TAG(rg);
+    END_CODE
+    w = vinfo_new(RunTime_New(rg, false, false));
+    REG_NUMBER(po, rg) = w;
+    return w;
+}
+#endif

@@ -84,7 +84,8 @@ le_after(le_code_t c, int pos)
    there that pops the iterator and its item where FOR_ITER pops the
    iterator itself, and past the POP_TOP after it where that pops the
    iterator. Where FOR_ITER leaves the iterator, the POP_ITER past the
-   END_FOR pops it. */
+   END_FOR pops it, and the index or NULL above it where GET_ITER pushes
+   one. */
 static inline int
 le_for_iter_exit(le_code_t c, int target)
 {
@@ -147,11 +148,11 @@ le_binary_op_opcode(int nb)
    POP_JUMP_BACKWARD_IF_TRUE is POP_JUMP_IF_TRUE, LOAD_ATTR with the method
    bit is LOAD_METHOD, CALL_INTRINSIC_1 with INTRINSIC_UNARY_POSITIVE is
    UNARY_POSITIVE, FORMAT_SIMPLE is FORMAT_VALUE 0, LOAD_FAST_BORROW is
-   LOAD_FAST); 'arg' with its
-   EXTENDED_ARG prefixes folded in, and
-   no longer holding what 'op' now says; 'raw' the opcode as CPython wrote
-   it; 'target' a jump's target in bytes (FOR_ITER's when its iterator
-   ends), else -1; 'next' the position after it and its caches. */
+   LOAD_FAST, GET_ITER with an argument is GET_YIELD_FROM_ITER); 'arg'
+   with its EXTENDED_ARG prefixes folded in, and no longer holding what 'op'
+   now says; 'raw' the opcode as CPython wrote it; 'target' a jump's target in
+   bytes (FOR_ITER's when its iterator ends), else -1; 'next' the position
+   after it and its caches. */
 typedef struct {
     int op, arg, raw, target, next;
 } le_instr_t;
@@ -205,10 +206,12 @@ le_instr(le_code_t c, int pos)
         case POP_JUMP_BACKWARD_IF_NOT_NONE:
             in.op = POP_JUMP_IF_NOT_NONE;
             break;
+#if !LE_HAS_GET_ITER_INDEX
         /* pops the iterator a for loop's FOR_ITER left at its end */
         case POP_ITER:
             in.op = POP_TOP;
             break;
+#endif
 #if LE_HAS_LOAD_ATTR_METHOD_BIT
         case LOAD_ATTR:
             if (in.arg & 1)
@@ -231,6 +234,14 @@ le_instr(le_code_t c, int pos)
         case LOAD_FAST_BORROW_LOAD_FAST_BORROW:
             in.op = LOAD_FAST_LOAD_FAST;
             break;
+#if !LE_HAS_OPCODE_GET_YIELD_FROM_ITER
+        /* yield from's GET_ITER has an argument, a for loop's none */
+        case GET_ITER:
+            if (in.arg != 0)
+                in.op = GET_YIELD_FROM_ITER;
+            in.arg = 0;
+            break;
+#endif
         /* marks a branch not taken, for monitoring */
         case NOT_TAKEN:
             in.op = NOP;
@@ -297,6 +308,7 @@ le_op_flags(int op)
         case STORE_FAST:
         case DELETE_FAST:
         case POP_TOP:
+        case POP_ITER:
         case ROT_TWO:
         case ROT_THREE:
         case DUP_TOP:
@@ -550,9 +562,21 @@ le_op_flags(int op)
             return LE_OPF_COMPILED_IN_BLOCKS;
         case YIELD_FROM:
             return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;
+#if LE_HAS_OPCODE_SEND
+        /* yield from in a resumable generator: GET_YIELD_FROM_ITER, then
+           SEND's loop, which sends into the iterator and yields what it
+           yields, and its end (END_SEND), or a throw's (CLEANUP_THROW) */
+        case GET_YIELD_FROM_ITER:
+        case CLEANUP_THROW:
+            return LE_OPF_COMPILED;
+        case SEND:
+            return LE_OPF_COMPILED | LE_OPF_BRANCHES | LE_OPF_CALL;
+        case END_SEND:
+            return LE_OPF_COMPILED | LE_OPF_LIGHT;
+#endif
         /* async with, in a coroutine's body */
         case BEFORE_ASYNC_WITH:
-            return LE_OPF_COMPILED_IN_BLOCKS | LE_OPF_BREAKER_SKIPS;
+            return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;
         case SETUP_ASYNC_WITH:
             return LE_OPF_COMPILED_IN_BLOCKS | LE_OPF_BRANCHES;
     }
@@ -576,6 +600,17 @@ le_op_flags(int op)
 #else
 #define LE_GLOBAL_NAME(arg) (arg)
 #define LE_GLOBAL_PUSHES_NULL(arg) 0
+#endif
+
+/* the index in co_names of the module IMPORT_NAME with argument arg
+   imports, and whether the import is lazy (a lazy import statement, at
+   module level only) */
+#if LE_HAS_IMPORT_NAME_LAZY_BITS
+#define LE_IMPORT_NAME(arg) ((arg) >> 2)
+#define LE_IMPORT_LAZY(arg) ((arg) & 1)
+#else
+#define LE_IMPORT_NAME(arg) (arg)
+#define LE_IMPORT_LAZY(arg) 0
 #endif
 
 /* the place CPython's frame gives the instruction that starts at pos (its

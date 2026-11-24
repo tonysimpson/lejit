@@ -13,11 +13,6 @@
 /* le_frame_t */
 #include "../mechanisms/frames.h"
 
-/* A frame object for one item pvisitframes() visits: a real frame, the
-   real frame of a (code, globals, frame) tuple, or a new emulated frame for
-   a compiled frame's (code, globals, tag, lasti). New reference. */
-EXTERNFN PyFrameObject *
-psyco_emulate_frame(PyObject *o);
 /* the real frame, if the compiled code 'co' making the current C call is
    the one LeCode_Run runs (not a compiled callee); borrowed, or NULL */
 EXTERNFN PyFrameObject *
@@ -136,6 +131,10 @@ struct stack_frame_info_s {
     /* the function whose coroutine's body this call runs, started by its
        await (psyfunc.c:psyco_coro_start), or NULL */
     PyFunctionObject *coro_func;
+    /* this call runs a generator's body on the generator's own frame,
+       whose address is the word above the callee's own slot
+       (psyfunc.c:psyco_gen_step) */
+    int on_gen_frame;
 };
 
 /* the map of po's locals now, with lasti; while inlining, of the
@@ -165,6 +164,12 @@ finfo_last(stack_frame_info_t *finfo)
 
 EXTERNFN stack_frame_info_t *
 psyco_finfo(PsycoObject *caller, PsycoObject *callee);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* the record of a call from 'caller' that runs a body of the generator
+   code 'co' on the generator's own frame (on_gen_frame) */
+EXTERNFN stack_frame_info_t *
+psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co);
+#endif
 
 /* A real frame LeCode_Run runs: on its C stack, linked into this
    thread's list from start to return (frames.c:frame_runs) */
@@ -182,25 +187,30 @@ typedef struct frame_runtime_s {
     struct frame_runtime_s *next; /* the next outer one */
 } FrameRuntime;
 
+#if LE_RESUMES_ON_FRAME
+/* A resumable generator's frame 'f' pausing at a yield (pycompiler.c), as
+   ceval's YIELD_VALUE leaves it: its f_lasti and stack depth; or, with
+   lasti -1, its run ending. The compiled code then stores in it the
+   'ntaken' locals listed, which the run holds. */
+typedef struct {
+    int lasti, nstack;
+    int ntaken;
+    int taken[1];
+} le_gen_pause_t;
+EXTERNFN void
+psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p);
+#else
 /* A resumable generator's frame pausing at a yield (pycompiler.c), as
    ceval's YIELD_VALUE leaves it: its f_lasti, stack depth and blocks.
    Gives the frame of the run 'fr', where the compiled code then stores
    its locals and stack items. */
 typedef struct {
     int lasti, nstack;
-#if !LE_HAS_INTERPRETER_FRAME
     int iblock;
     PyTryBlock blocks[1];
-#endif
 } le_gen_pause_t;
 EXTERNFN le_frame_t *
 psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p);
-#if LE_HAS_FRAME_STACKREFS
-/* the paused frame's locals and its first 'nstack' stack items, stored by
-   the compiled code as objects (each a reference it holds, NULL for none),
-   become its own _PyStackRefs */
-EXTERNFN void
-psyco_gen_words_own(le_frame_t *f, long nstack);
 #endif
 #if LE_RESUMES_COROUTINES
 EXTERNVAR PyObject *psyco_coro_suspended;
