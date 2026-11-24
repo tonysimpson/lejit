@@ -1969,9 +1969,10 @@ psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
 }
 
 /* whether a dead local's virtual value is made real at a merge point past
-   its cap: not a number, which a numeric loop would box on every pass
-   (scimark +5% warm), nor a resumed generator's frame word, which is no
-   object to make but one its frame still holds */
+   its cap: an int or bool only if its value is known, so that making it
+   is a constant, and never a float, as a numeric loop would box them on
+   every pass (scimark +2 to +5% warm); nor a resumed generator's frame
+   word, which is no object to make but one its frame still holds */
 static bool
 made_real_when_dead(vinfo_t *vi)
 {
@@ -1983,8 +1984,13 @@ made_real_when_dead(vinfo_t *vi)
         return false;
 #endif
     sv = VirtualTime_Get(vi->source);
-    return sv != &psyco_computed_long && sv != &psyco_computed_bool &&
-           sv != &psyco_computed_float;
+    if (sv == &psyco_computed_long || sv == &psyco_computed_bool) {
+        vinfo_t *value = vi->array->count > iLONG_VALUE
+                             ? vi->array->items[iLONG_VALUE]
+                             : NULL;
+        return value != NULL && is_compiletime(value->source);
+    }
+    return sv != &psyco_computed_float;
 }
 
 /* Past a merge point's cap, a dead local holding a virtual object is made
