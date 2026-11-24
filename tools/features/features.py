@@ -724,6 +724,19 @@ def tstate_current_frame(s):
     return _field(s, '_ts', 'current_frame')
 
 
+def generator_return_kind(s):
+    """a generator's run tells gen_send_ex2 whether it yielded or returned
+    by its thread's generator_return_kind, not its frame's state"""
+    return _field(s, '_PyThreadStateImpl', 'generator_return_kind', missing=False)
+
+
+def last_profiled_frame(s):
+    """a thread's state keeps the frame a remote profiler last saw
+    (last_profiled_frame), which a frame leaving the thread's chain hands
+    to the frame under it"""
+    return _field(s, '_ts', 'last_profiled_frame')
+
+
 def tstate_eval_breaker(s):
     """each thread has its own eval_breaker, in its state: its low bits are
     the events ceval handles with _Py_HandlePending"""
@@ -1097,7 +1110,7 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'POP_JUMP_FORWARD_IF_NOT_NONE', 'POP_JUMP_BACKWARD_IF_FALSE',
            'POP_JUMP_BACKWARD_IF_TRUE', 'POP_JUMP_BACKWARD_IF_NONE',
            'POP_JUMP_BACKWARD_IF_NOT_NONE', 'PRECALL', 'KW_NAMES', 'CALL',
-           'MAKE_CELL', 'COPY_FREE_VARS', 'RETURN_GENERATOR',
+           'MAKE_CELL', 'COPY_FREE_VARS', 'RETURN_GENERATOR', 'SEND',
            # gone from 3.12: the unary plus, the interactive print, import *
            # and LIST_TO_TUPLE are CALL_INTRINSIC_1's
            'UNARY_POSITIVE', 'PRINT_EXPR', 'IMPORT_STAR', 'LIST_TO_TUPLE',
@@ -1106,7 +1119,7 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'END_FOR', 'RETURN_CONST', 'LOAD_FAST_CHECK', 'LOAD_FAST_AND_CLEAR',
            'BINARY_SLICE', 'STORE_SLICE', 'CALL_INTRINSIC_1',
            'CALL_INTRINSIC_2', 'LOAD_SUPER_ATTR', 'POP_JUMP_IF_NONE',
-           'POP_JUMP_IF_NOT_NONE',
+           'POP_JUMP_IF_NOT_NONE', 'END_SEND', 'CLEANUP_THROW',
            # gone from 3.13: f-strings are CONVERT_VALUE's and FORMAT_SIMPLE's
            'FORMAT_VALUE',
            # new in 3.13
@@ -1385,6 +1398,8 @@ BYTECODE = [
                                      lambda s: _case_has(s, 'FOR_ITER', 'JUMPBY(oparg + 2)'))),
     ('FOR_ITER_EXIT_KEEPS_ITER', D('FOR_ITER\'s exit leaves the iterator on the stack and jumps past END_FOR to POP_ITER, which pops it',
                                    lambda s: _case_has(s, 'FOR_ITER', 'JUMPBY(oparg + 1)'))),
+    ('GET_ITER_INDEX', D('GET_ITER pushes the iterator then an index or NULL above it, which FOR_ITER reads and POP_ITER pops with it',
+                         lambda s: _case_has(s, 'GET_ITER', 'index_or_null'))),
     ('CALL_EX_KWARGS_SLOT', D('CALL_FUNCTION_EX always has a slot for the keywords dict, NULL where the call has none',
                               lambda s: _case_has(s, 'CALL_FUNCTION_EX', 'kwargs_st = stack_pointer[-1]', missing=False))),
     ('BINARY_OP_SUBSCR', D('a subscript is BINARY_OP with NB_SUBSCR',
@@ -1426,6 +1441,8 @@ STATE = [
     ('PYCORE_INTERP_H', D('the interpreter state has an internal header of its own, pycore_interp.h',
                           lambda s: _file(s, 'Include/internal/pycore_interp.h'))),
     ('EVAL_HOOK_TSTATE', eval_hook_tstate),
+    ('GENERATOR_RETURN_KIND', generator_return_kind),
+    ('LAST_PROFILED_FRAME', last_profiled_frame),
     ('SIGNALS_PENDING', signals_pending),
     ('EVAL_FRAME_HANDLE_PENDING', eval_frame_handle_pending),
     ('INTERP_RECURSION_LIMIT', interp_recursion_limit),

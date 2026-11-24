@@ -6108,9 +6108,27 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
            leaves them */
         case LOAD_SUPER_ATTR: {
 #if LE_HAS_OPCODE_LOAD_SUPER_ATTR
-            vinfo_array_t *out = array_new(1);
+            vinfo_array_t *out;
             vinfo_t *self;
-            int found;
+            PyObject *f;
+            int found = 0;
+            if (oparg & 1)
+                found = PsycoObject_SuperMethod(
+                    po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2),
+                    (void *)(le_code(po->pr.co).bytes + next_instr), &f);
+            if (found < 0)
+                break;
+            if (found) {
+                POP(self);
+                POP_DECREF();
+                POP_DECREF();
+                Py_INCREF(f);
+                PUSH(vinfo_new(
+                    CompileTime_NewSk(sk_new((long)f, SkFlagPyObj))));
+                PUSH(self);
+                goto fine;
+            }
+            out = array_new(1);
             x = psyco_generic_call(po, cimpl_load_super_attr,
                                    CfCommonIntBoolOrError, "vvvllA", NTOP(3),
                                    NTOP(2), TOP(), (long)GETNAMEV(oparg >> 2),
@@ -6986,6 +7004,35 @@ out:
     return ended;
 }
 
+#if LE_HAS_OPCODE_SEND && LE_RESUMES_ON_FRAME
+/* GET_YIELD_FROM_ITER in a plain generator: what yield from iterates, a
+   new reference, 'o' itself if it is a generator */
+static PyObject *
+cimpl_yield_from_iter(PyObject *o)
+{
+    if (PyCoro_CheckExact(o)) {
+        PyErr_SetString(PyExc_TypeError, LE_MSG_YIELD_FROM_COROUTINE);
+        return NULL;
+    }
+    if (PyGen_CheckExact(o)) {
+        Py_INCREF(o);
+        return o;
+    }
+    return PyObject_GetIter(o);
+}
+#endif
+
+#if LE_HAS_OPCODE_CLEANUP_THROW && LE_RESUMES_ON_FRAME
+/* CLEANUP_THROW: the value of 'exc', a StopIteration, a new reference */
+static PyObject *
+cimpl_stop_iteration_value(PyObject *exc)
+{
+    PyObject *v = ((PyStopIterationObject *)exc)->value;
+    Py_INCREF(v);
+    return v;
+}
+#endif
+
 /* iterators and for loops */
 static int
 compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
@@ -7061,7 +7108,88 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
         }
 
-            UNARY_OPCODE(GET_ITER, PsycoObject_GetIter);
+        /* where GET_ITER leaves an index or NULL above the iterator, the
+           iterator is always a real one, so the index is NULL */
+        case GET_ITER:
+            x = PsycoObject_GetIter(po, TOP());
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
+            if (LE_HAS_GET_ITER_INDEX)
+                PUSH(psyco_vi_Zero());
+            goto fine;
+
+        /* the index or NULL, then the iterator */
+        case POP_ITER:
+            POP_DECREF();
+            POP_DECREF();
+            goto fine;
+
+#if LE_HAS_OPCODE_SEND && LE_RESUMES_ON_FRAME
+        /* yield from, in a resumable plain generator
+           (mergepoints.c:body_compilable): what it iterates */
+        case GET_YIELD_FROM_ITER:
+            if (Psyco_KnownType(TOP()) == &PyGen_Type)
+                goto fine;
+            x = psyco_generic_call(po, cimpl_yield_from_iter,
+                                   CfCommonNewRefPyObject, "v", TOP());
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+
+        /* its loop: the value on top is sent into the iterator under it,
+           which yields, for the YIELD_VALUE after, which pauses the frame
+           with the iterator under what it yielded, as ceval leaves it; or
+           returns, going to the loop's end, where the iterator is popped
+           (by END_SEND where there is one) */
+        case SEND: {
+            vinfo_array_t *array = array_new(1);
+            condition_code_t cc;
+            bool yielded;
+            PyTypeObject *tp = Psyco_NeedType(po, NTOP(2));
+            if (tp == NULL) {
+                array_release(array);
+                break;
+            }
+            if (tp == &PyGen_Type)
+                x = psyco_gen_send_status(po, NTOP(2), TOP(), array);
+            else
+                x = psyco_generic_call(po, le_iter_send,
+                                       CfReturnTypeInt | CfPyErrIfNeg, "vvA",
+                                       NTOP(2), TOP(), array);
+            if (x == NULL) {
+                array_release(array);
+                break;
+            }
+            cc = integer_non_null(po, x);
+            vinfo_decref(x, po);
+            if (cc == CC_ERROR) {
+                vinfo_decref(array->items[0], po);
+                array_release(array);
+                break;
+            }
+            yielded = runtime_condition_t(po, cc);
+            POP_DECREF(); /* the value sent */
+            if (!yielded && !LE_HAS_OPCODE_END_SEND)
+                POP_DECREF(); /* the iterator */
+            PUSH(array->items[0]);
+            array_release(array);
+            if (yielded)
+                goto fine;
+            JUMPTO(target);
+            mp = psyco_next_merge_point(po->pr.merge_points, next_instr);
+            goto fine;
+        }
+
+        case END_SEND:
+            POP(v);
+            POP_DECREF(); /* the iterator */
+            PUSH(v);
+            goto fine;
+#endif
 
         case END_FOR:
             POP_DECREF();
@@ -7071,7 +7199,7 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
 
         case FOR_ITER:
-            v = PsycoIter_Next(po, TOP());
+            v = PsycoIter_Next(po, LE_HAS_GET_ITER_INDEX ? NTOP(2) : TOP());
             if (v != NULL) {
                 /* iterator not exhausted */
                 PUSH(v);
@@ -7963,6 +8091,43 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             if (locals_wanted_now(po))
                 traceback_locals(po, NULL);
             goto exception_unwind;
+
+#if LE_HAS_OPCODE_CLEANUP_THROW && LE_RESUMES_ON_FRAME
+        /* where a throw into yield from goes, under the iterator and the
+           value last sent: the StopIteration it ended with gives the
+           loop's value (with a None under it), any other exception is
+           raised again */
+        case CLEANUP_THROW:
+            x = psyco_generic_call(
+                po, PyErr_GivenExceptionMatches,
+                CfCommonIntBoolOrError | CfNoPython | CfNoBlock, "vl", TOP(),
+                (long)PyExc_StopIteration);
+            if (x == NULL)
+                break;
+            cc = integer_non_null(po, x);
+            vinfo_decref(x, po);
+            if (cc == CC_ERROR)
+                break;
+            if (runtime_condition_f(po, cc)) {
+                v = psyco_generic_call(po, cimpl_stop_iteration_value,
+                                       CfCommonNewRefPyObject | CfNoPython,
+                                       "v", TOP());
+                if (v == NULL)
+                    break;
+                POP_DECREF();
+                POP_DECREF();
+                POP_DECREF();
+                PUSH(psyco_vi_None());
+                PUSH(v);
+                goto fine;
+            }
+            psyco_generic_call(po, cimpl_reraise_value,
+                               CfPyErrAlways | CfNoPython, "v", TOP());
+            reraise_place(po, po->pr.next_instr);
+            if (locals_wanted_now(po))
+                traceback_locals(po, NULL);
+            goto exception_unwind;
+#endif
 #elif LE_HAS_OPCODE_RERAISE
         case RERAISE: {
             vinfo_t *exc;

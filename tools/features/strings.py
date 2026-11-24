@@ -395,6 +395,10 @@ msg('CORO_AWAITED_ALREADY', 'await on a coroutine that is awaiting',
     'import types\n@types.coroutine\ndef y():\n    yield\n'
     'async def i():\n    await y()\nk = i()\nk.send(None)\n'
     'async def f():\n    await k\ncoro_run(f())', text=True)
+msg('YIELD_FROM_COROUTINE', 'yield from a coroutine in a plain generator',
+    'TypeError',
+    'async def c():\n    pass\nk = c()\ndef g():\n    yield from k\n'
+    'try:\n    next(g())\nfinally:\n    k.close()', text=True)
 msg('NO_BUILD_CLASS', 'a class statement without __build_class__', 'NameError',
     'exec("class C: pass", {"__builtins__": {}})', text=True)
 msg('NAME_NOT_DEFINED', 'a global name not found', 'NameError',
