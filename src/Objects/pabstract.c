@@ -2148,14 +2148,15 @@ generic:
 
 /* ceval.c's FOR_ITER: GET_ITER made sure the slot was there, but a heap
    type's can have gone since (CPython leaves _PyObject_NextNotImplemented,
-   which raises TypeError); NULL is tested only in case LeJIT's GET_ITER was
-   bypassed, and raises what _PyObject_NextNotImplemented does. */
+   which raises TypeError). The iterator of a frame that didn't make it
+   (a generator expression's .0, replaced or given) may have none: that
+   raises what next() and 3.14's FOR_ITER do. */
 static PyObject *
 cimpl_iternext(PyObject *iter)
 {
     iternextfunc f = Py_TYPE(iter)->tp_iternext;
     if (f == NULL) {
-        PyErr_Format(PyExc_TypeError, LE_MSG_NEXT_NOT_IMPLEMENTED,
+        PyErr_Format(PyExc_TypeError, LE_MSG_NEXT_NOT_ITERATOR,
                      Py_TYPE(iter)->tp_name);
         return NULL;
     }
@@ -2180,8 +2181,8 @@ PsycoIter_Next(PsycoObject *po, vinfo_t *iter)
             return NULL;
     }
     if (f == NULL) {
-        PycException_SetTypeFormat(
-            po, PyExc_TypeError, LE_MSG_NEXT_NOT_IMPLEMENTED, NULL, tp, NULL);
+        PycException_SetTypeFormat(po, PyExc_TypeError,
+                                   LE_MSG_NEXT_NOT_ITERATOR, NULL, tp, NULL);
         return NULL;
     }
     return Psyco_META1(po, f, CfCommonIterNext, "v", iter);

@@ -3918,9 +3918,10 @@ cimpl_name_error(PyObject *w)
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
    [kwargs], args, and the callable beside its NULL. The kwargs slot is
    there whenever argument bit 0 is set, or always where CALL_EX_KWARGS_SLOT
-   (a NULL there for a call with none). f(*tuple) goes straight to
-   PsycoObject_Call, which can specialise the call; anything else runs
-   CPython's whole case at run time (its copy cimpl_call_function_ex). */
+   (a NULL there for a call with none). f(*tuple), and f(*tuple, **k)
+   while k is empty, go straight to PsycoObject_Call, which can specialise
+   the call; anything else runs CPython's whole case at run time (its copy
+   cimpl_call_function_ex). */
 static vinfo_t *
 psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
                      int *stack_to_pop)
@@ -3929,7 +3930,7 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
     vinfo_t *kwargs = slot ? stack_top[-1] : NULL;
     vinfo_t *callargs = stack_top[-1 - slot];
     vinfo_t *func = stack_top[-2 - slot - LE_HAS_CALLABLE_UNDER_NULL];
-    vinfo_t *zero = NULL, *result;
+    vinfo_t *zero = NULL, *result, **kwvalues;
     PyTypeObject *t;
     /* and the NULL under the callable, where PUSH_NULL puts one there */
     *stack_to_pop = 2 + slot + LE_HAS_OPCODE_PUSH_NULL;
@@ -3941,6 +3942,18 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
         return NULL;
     if (kwargs == NULL)
         kwargs = zero = psyco_vi_Zero();
+    if (t == &PyTuple_Type && zero == NULL &&
+        PsycoDict_PendingNames(kwargs, &kwvalues) != NULL) {
+        /* f(*args, **k) with k empty (DICT_MERGE): a function's or a
+           method's vectorcall takes an empty dict as none */
+        PyTypeObject *ft = Psyco_NeedType(po, func);
+        if (ft == NULL)
+            return NULL;
+        if (ft == &PyFunction_Type || ft == &PyMethod_Type)
+            kwargs = zero = psyco_vi_Zero();
+        result = PsycoObject_Call(po, func, callargs, kwargs);
+        goto done;
+    }
     if (t == &PyTuple_Type && zero != NULL) {
         /* f(*args): the call can be specialised. With **kwargs it goes to the
            run-time helper, which holds a reference to the dict as ceval does
@@ -4951,14 +4964,16 @@ static int
 resume_in_ceval(PsycoObject *po, int next_instr, int *unwound);
 
 /* An item stored or deleted by a call may be a frame-locals proxy's,
-   which writes the locals of a frame (frames.c:expose) */
-static inline int
-writes_locals_proxy(int opcode)
+   which writes the locals of a frame (frames.c:expose): not where the
+   container's type is known and isn't the proxy's */
+static inline char
+may_write_locals_proxy(vinfo_t *container)
 {
 #ifdef PyFrameLocalsProxy_Check
-    return opcode == STORE_SUBSCR || opcode == DELETE_SUBSCR;
+    PyTypeObject *tp = Psyco_KnownType(container);
+    return tp == NULL || PyType_IsSubtype(tp, &PyFrameLocalsProxy_Type);
 #else
-    (void)opcode;
+    (void)container;
     return 0;
 #endif
 }
@@ -5652,6 +5667,7 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
             v = NTOP(3);
             sub = unfolded_slice(container, NTOP(1));
             err = PsycoObject_SetItem(po, container, sub, v);
+            po->pr.proxy_write = may_write_locals_proxy(container);
             vinfo_decref(sub, po);
             if (!err) {
                 break;
@@ -5669,6 +5685,7 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
             container = NTOP(2);
             sub = unfolded_slice(container, NTOP(1));
             err = PsycoObject_DelItem(po, container, sub);
+            po->pr.proxy_write = may_write_locals_proxy(container);
             vinfo_decref(sub, po);
             if (!err) {
                 break;
@@ -6086,6 +6103,23 @@ out:
     return ended;
 }
 
+#if LE_HAS_OPCODE_DICT_MERGE
+/* whether a BUILD_MAP 0 ending at next_instr makes the dict of a call
+   f(*a, **k) with k a local: a load of k, DICT_MERGE, CALL_FUNCTION_EX */
+static bool
+forwards_local_dict(PyCodeObject *co, int next_instr)
+{
+    le_code_t c = le_code(co);
+    le_instr_t in;
+    if (next_instr >= c.size ||
+        (in = le_instr(c, next_instr)).op != LOAD_FAST || in.next >= c.size ||
+        (in = le_instr(c, in.next)).op != DICT_MERGE || in.arg != 1 ||
+        in.next >= c.size)
+        return false;
+    return le_instr(c, in.next).op == CALL_FUNCTION_EX;
+}
+#endif
+
 /* building and unpacking tuples, lists, sets, dicts, slices and strings */
 static int
 compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
@@ -6398,6 +6432,12 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
             vinfo_t *err;
             vinfo_t *map;
             int i;
+#if LE_HAS_OPCODE_DICT_MERGE
+            if (oparg == 0 && forwards_local_dict(po->pr.co, next_instr)) {
+                PUSH(PsycoDict_PendingEmpty());
+                goto fine;
+            }
+#endif
             map = _PsycoDict_NewPresized(po, (Py_ssize_t)oparg);
             if (map == NULL) {
                 break;
@@ -6492,16 +6532,22 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
 #if LE_HAS_OPCODE_DICT_MERGE
         /* an error names the callable: under the arguments, and under
            its NULL too where CALLABLE_UNDER_NULL */
-        case DICT_MERGE:
-            x = psyco_generic_call(
-                po, cimpl_dict_merge, CfCommonIntBoolOrError, "vvv",
-                NTOP(oparg + 1), TOP(),
-                NTOP(oparg + 3 + LE_HAS_CALLABLE_UNDER_NULL));
-            if (x == NULL)
+        case DICT_MERGE: {
+            int empty = PsycoDict_MergeEmpty(po, NTOP(oparg + 1), TOP());
+            if (empty < 0)
                 break;
-            vinfo_decref(x, po);
+            if (empty == 0) {
+                x = psyco_generic_call(
+                    po, cimpl_dict_merge, CfCommonIntBoolOrError, "vvv",
+                    NTOP(oparg + 1), TOP(),
+                    NTOP(oparg + 3 + LE_HAS_CALLABLE_UNDER_NULL));
+                if (x == NULL)
+                    break;
+                vinfo_decref(x, po);
+            }
             POP_DECREF();
             goto fine;
+        }
 #endif
 
         case MAP_ADD: {
@@ -8515,6 +8561,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 break;
             po->blocking_call = 0;
             po->pr.python_call = 0;
+            po->pr.proxy_write = 0;
 
             /* Main switch on opcode */
 
@@ -8577,7 +8624,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
         fine:
             extra_assert(!PycException_Occurred(po));
             if ((po->pr.python_call && ((le_op_flags(opcode) & LE_OPF_CALL) ||
-                                        writes_locals_proxy(opcode))) ||
+                                        po->pr.proxy_write)) ||
                 po->pr.resume_pending) {
                 po->pr.resume_pending = 0;
                 if (!resume_if_tracing(po, next_instr, &unwound))

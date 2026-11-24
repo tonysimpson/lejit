@@ -277,7 +277,9 @@ SKIPPED = {
     'asserts that wait_for with a timeout of 0 returns within 0.1 s of wall '
     'time, which fails plain as well as with LeJIT on a loaded machine':
         'test.test_asyncio.test_waitfor.AsyncioWaitForTest.'
-        'test_wait_for_timeout_less_then_0_or_0_coroutine_do_not_started',
+        'test_wait_for_timeout_less_then_0_or_0_coroutine_do_not_started '
+        'test.test_asyncio.test_waitfor.AsyncioWaitForTest.'
+        'test_wait_for_timeout_less_then_0_or_0',
     'asserts that one epoll poll returns within 10 ms of wall time, which a '
     'busy machine can miss whatever runs the test':
         'test.test_epoll.TestEPoll.test_unregister_closed',
