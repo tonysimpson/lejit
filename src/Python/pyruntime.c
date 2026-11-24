@@ -29,6 +29,12 @@
 #include "internal/pycore_ceval.h"
 #endif
 #include "frameobject.h"
+#if LE_HAS_INTERPRETER_FRAME
+#include "internal/pycore_frame.h"
+#if LE_HAS_PYCORE_INTERPFRAME_H
+#include "internal/pycore_interpframe.h"
+#endif
+#endif
 #include "opcode.h"
 #include "../bytecode.h"
 
@@ -49,6 +55,116 @@ void *
 le_tstate_current_address(void)
 {
     return &_PyRuntime.gilstate.tstate_current;
+}
+#endif
+#if LE_HAS_THREAD_LOCAL_TSTATE
+/* The running thread's state is the thread-local _Py_tss_tstate of the
+   object that defines PyThreadState_Get (libpython, or the executable),
+   a local symbol no other object can name. Where that object's TLS is
+   static, the variable is at one offset from every thread's thread
+   pointer (%fs:0 on x86-64), which compiled code loads in one move. The
+   offset is found at start-up: the word of the object's TLS block that
+   holds PyThreadState_Get(), and only if it is the only one; and a
+   thread started for the test must find the object's block at the same
+   offset from its own thread pointer, which dynamic TLS doesn't give. */
+#include <link.h>
+#include <pthread.h>
+
+typedef struct {
+    const void *in; /* an address in the object */
+    void *block;    /* its TLS block in the calling thread, or NULL */
+    size_t size;
+} tls_find_t;
+
+static int
+tls_find_one(struct dl_phdr_info *info, size_t size, void *arg)
+{
+    tls_find_t *f = arg;
+    const ElfW(Phdr) *tls = NULL;
+    bool here = false;
+    int i;
+    (void)size;
+    for (i = 0; i < info->dlpi_phnum; i++) {
+        const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
+        uintptr_t lo = info->dlpi_addr + ph->p_vaddr;
+        if (ph->p_type == PT_TLS)
+            tls = ph;
+        else if (ph->p_type == PT_LOAD && (uintptr_t)f->in >= lo &&
+                 (uintptr_t)f->in < lo + ph->p_memsz)
+            here = true;
+    }
+    if (!here)
+        return 0;
+    f->block = tls != NULL ? info->dlpi_tls_data : NULL;
+    f->size = tls != NULL ? tls->p_memsz : 0;
+    return 1;
+}
+
+static char *
+thread_pointer(void)
+{
+    char *tp;
+    __asm__("mov %%fs:0, %0" : "=r"(tp));
+    return tp;
+}
+
+/* the calling thread's block, as an offset from its thread pointer */
+static bool
+tls_block_offset(tls_find_t *f, long *off)
+{
+    f->in = (const void *)PyThreadState_Get;
+    f->block = NULL;
+    if (dl_iterate_phdr(tls_find_one, f) != 1 || f->block == NULL)
+        return false;
+    *off = (char *)f->block - thread_pointer();
+    return true;
+}
+
+static void *
+tls_test_thread(void *arg)
+{
+    tls_find_t f;
+    long *off = arg;
+    if (!tls_block_offset(&f, off))
+        *off = 1; /* never a block's offset: blocks are aligned */
+    return NULL;
+}
+
+static bool
+tstate_tls_find(long *offset)
+{
+    tls_find_t f;
+    long block, other;
+    PyThreadState *ts = PyThreadState_Get();
+    size_t i, found = 0, at = 0;
+    pthread_t t;
+    if (!tls_block_offset(&f, &block))
+        return false;
+    for (i = 0; i + sizeof(void *) <= f.size; i += sizeof(void *))
+        if (*(PyThreadState **)((char *)f.block + i) == ts) {
+            found++;
+            at = i;
+        }
+    if (found != 1 || pthread_create(&t, NULL, tls_test_thread, &other) != 0)
+        return false;
+    pthread_join(t, NULL);
+    if (other != block)
+        return false;
+    *offset = block + (long)at;
+    return true;
+}
+
+/* the offset of the running thread's state from the thread pointer, or
+   false where it isn't one offset for every thread; found once */
+bool
+le_tstate_thread_offset(long *offset)
+{
+    static int found = 0; /* 1 found, -1 not */
+    static long at;
+    if (found == 0)
+        found = tstate_tls_find(&at) ? 1 : -1;
+    *offset = at;
+    return found > 0;
 }
 #endif
 #if LE_HAS_MONITORING
@@ -81,22 +197,54 @@ le_common_constant(int i)
     return PyInterpreterState_Get()->common_consts[i];
 }
 #endif
+#if LE_HAS_INTERPRETER_FRAME
+/* PyFrame_New makes the frame object a function of its own, which
+   CPython's frames for a call don't have. Its code is made an empty one,
+   so that gc.get_referrers(code) finds only the code's real functions
+   (trace names a caller's class by them): the frame keeps its own code,
+   and these frames run in ceval only past their first instruction, so
+   the function's code isn't read. */
+static void
+function_without_code(PyFrameObject *f)
+{
+    static PyCodeObject *empty = NULL;
+#if LE_HAS_FRAME_STACKREFS
+    PyFunctionObject *func =
+        (PyFunctionObject *)PyStackRef_AsPyObjectBorrow(f->f_frame->f_funcobj);
+#elif LE_HAS_FRAME_FUNCOBJ
+    PyFunctionObject *func = (PyFunctionObject *)f->f_frame->f_funcobj;
+#else
+    PyFunctionObject *func = f->f_frame->f_func;
+#endif
+    if (empty == NULL && (empty = PyCode_NewEmpty("", "", 0)) == NULL) {
+        PyErr_Clear();
+        return;
+    }
+    Py_INCREF(empty);
+    Py_SETREF(func->func_code, (PyObject *)empty);
+}
+#endif
+
 /* PyFrame_New, unseen by function watchers: it makes a function for the
    frame object, which CPython's own frames don't, and a watcher called
    here would run Python code while compiled code's exception is set */
 PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals)
 {
+    PyFrameObject *f;
 #ifdef PY_FOREACH_FUNC_EVENT
     uint8_t watchers = ts->interp->active_func_watchers;
-    PyFrameObject *f;
     ts->interp->active_func_watchers = 0;
     f = PyFrame_New(ts, co, globals, NULL);
     ts->interp->active_func_watchers = watchers;
-    return f;
 #else
-    return PyFrame_New(ts, co, globals, NULL);
+    f = PyFrame_New(ts, co, globals, NULL);
 #endif
+#if LE_HAS_INTERPRETER_FRAME
+    if (f != NULL)
+        function_without_code(f);
+#endif
+    return f;
 }
 /* le_eval_breaker_address, le_eval_breaker_handler,
    le_eval_breaker_at_entry */
@@ -505,7 +653,7 @@ le_recursion_limit_address(void)
 
 /* where the interpreter's frame-evaluation function is, which compiled
    code compares with LeJIT's before a direct call
-   (mechanisms/tracing.h:le_direct_call_test) */
+   (mechanisms/tracing.h:le_direct_call_refused) */
 _Static_assert(sizeof(((PyInterpreterState *)0)->eval_frame) == 8,
                "LeJIT: the interpreter's eval_frame is read as a word");
 const long le_interp_eval_frame_at = offsetof(PyInterpreterState, eval_frame);
