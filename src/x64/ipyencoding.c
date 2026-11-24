@@ -3,6 +3,8 @@
 #include "../codemanager.h"
 /* LE_GC_UNTRACKED_TEST */
 #include "../mechanisms/store_gc.h"
+/* PyLazyImport_Type */
+#include "../Python/pycinternal.h"
 
 /* Emitted code's view of the shape of dict keys (pobject.h:le_dict_shape):
    a compare of the keys at 'rk' with an immediate, which ends the
@@ -1343,7 +1345,9 @@ psyco_global_stale(PsycoObject *po, PyObject *globals, PyObject *name,
 /*   mov r10, globals; mov r10, [r10 + ma_keys]
      cmp [r10 + shape], SHAPE; jne MISS
      cmp [r10 + KEY], name; jne MISS
-     RG = [r10 + KEY + 8]; incref RG; jmp DONE
+     RG = [r10 + KEY + 8]
+     (where there are lazy imports: cmp [RG + ob_type], proxy type; je MISS)
+     incref RG; jmp DONE
    MISS: rdi = arg; call miss_glue; RG = rax
    DONE: test RG, RG
    Hand-allocated like psyco_inline_load, RG callee-saved, so the
@@ -1370,10 +1374,10 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
                   global_patch_t *entry, long shape, long offset,
                   code_t *miss_glue, void *arg)
 {
-    code_t *jmiss[2], *jdone, *start;
+    code_t *jmiss[3], *jdone, *start;
     vinfo_t *v;
     reg_t rg;
-    int i;
+    int i, nmiss = 2;
     if (!is_respawning(po) && po->codelimit - po->code < 128)
         PsycoObject_EmergencyCodeRoom(po);
     BEGIN_CODE
@@ -1401,10 +1405,17 @@ psyco_global_load(PsycoObject *po, PyObject *globals, PyObject *name,
     WRITE_2(0x70 | CC_NE, 0);
     MOV_R_O32(rg, REG_TRANSIENT_1, offset + sizeof(PyObject *));
     entry->at_value = (dword_t *)code - 1;
+#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
+    /* a proxy is the miss's to replace with its module */
+    MOV_R_I(REG_X64_RAX, (long)&PyLazyImport_Type);
+    CMP_R_O8(REG_X64_RAX, rg, offsetof(PyObject, ob_type));
+    jmiss[nmiss++] = code;
+    WRITE_2(0x70 | CC_E, 0);
+#endif
     INC_OB_REFCNT_internal(rg);
     jdone = code;
     WRITE_2(0xEB, 0);
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < nmiss; i++) {
         extra_assert(code - (jmiss[i] + 2) < 128);
         jmiss[i][1] = (code_t)(code - (jmiss[i] + 2));
         le_trace_jump_cond(jmiss[i], jmiss[i] + 2, code);

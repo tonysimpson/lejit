@@ -193,7 +193,8 @@ for _feature, _function in [
         ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
         ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
-        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending')]:
+        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
+        ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
