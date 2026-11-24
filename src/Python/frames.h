@@ -194,19 +194,6 @@ typedef struct {
 } le_gen_pause_t;
 EXTERNFN void
 psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p);
-#if LE_HAS_FRAME_STACKREFS
-/* Where the frame's words are _PyStackRefs, compiled code reads them
-   through these: word k borrowed (NULL for none), or taken, a reference
-   (NULL for none), which leaves none there. It stores objects (each a
-   reference the frame takes, NULL for none), which psyco_gen_words_own
-   makes _PyStackRefs: the locals 'p' lists and its stack items. */
-EXTERNFN PyObject *
-psyco_frame_word_borrow(le_frame_t *f, long k);
-EXTERNFN PyObject *
-psyco_frame_word_take(le_frame_t *f, long k);
-EXTERNFN void
-psyco_gen_words_own(le_frame_t *f, const le_gen_pause_t *p);
-#endif
 #else
 /* A resumable generator's frame pausing at a yield (pycompiler.c), as
    ceval's YIELD_VALUE leaves it: its f_lasti, stack depth and blocks.

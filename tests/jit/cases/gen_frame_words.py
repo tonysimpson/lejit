@@ -404,6 +404,38 @@ def nexts(n):
     out.append(g.send(g))
     return out, compiled(returns_after)
 
+# Immortal and mortal objects in the locals and on the stack across
+# resumes, and what is left of a mortal one's count once the generator is
+# done. (While it is paused the count differs: CPython's stack may borrow.)
+def holds(n):
+    big = 10 ** 20 + n
+    lst = [n]
+    none, flag, small, name = None, True, 7, 'name'
+    yield work(len(lst))
+    yield pair(lst, (yield work((none, flag, small, name))), big, None, 3)
+    gone = lst
+    del lst
+    yield work((len(gone), big, none, flag, small))
+    lst = gone
+    yield work(lst)
+
+
+def held_counts(n):
+    out = []
+    for k in range(4):
+        g = holds(n)
+        x = next(g)
+        lst = g.gi_frame.f_locals['lst']
+        out.append([x, next(g), g.send('sent'), next(g), next(g)])
+        out.append((by_next(g), sys.getrefcount(lst)))
+        g = holds(n)
+        next(g)
+        next(g)
+        lst = g.gi_frame.f_locals['lst']
+        del g
+        out.append((by_for(holds(n)), sys.getrefcount(lst)))
+    return out, compiled(holds)
+
 CASES = [
     ('store_and_end', [(3,)], {}),
     ('bound_and_not', [(0,)], {}),
@@ -413,4 +445,5 @@ CASES = [
     ('changed_while_paused', [(2,)], {}),
     ('limits', [(4,)], {}),
     ('nexts', [(3,)], {}),
+    ('held_counts', [(3,)], {}),
 ]
