@@ -5,6 +5,8 @@
 # pending, subclasses and bounds of other types.
 import sys
 
+from ref_tracer import count_made, made
+
 BOUNDS = [None, -1000, -9, -8, -5, -1, 0, 1, 3, 7, 8, 9, 1000, 2 ** 70,
           -2 ** 70]
 
@@ -302,8 +304,28 @@ def constant_slices(n):
     return out
 
 
+def constant_slices_made(n):
+    # where the compiler folds a slice of constants into one slice object,
+    # it is used, not made again: slices of a tuple, and steps the compiled
+    # slicing leaves to the real slice; slices made per round (after the
+    # first, which compiles)
+    out = []
+    l = list(range(9))
+    t = tuple(l)
+    s = 'abcdefghi'
+    b = b'abcdefghi'
+    for i in range(n):
+        count_made(slice)
+        for k in range(100):
+            r = (t[1:], t[:3], t[::2], l[::2], l[1::3], s[::2], b[::3], l[:])
+        count = made()
+        out.append((r, count // 100 if i and count is not None else None))
+    return out
+
+
 CASES = [
     ('constant_slices', [(1,), (3,)], {}),
+    ('constant_slices_made', [(3,)], {}),
     ('reverse_prefix', [(0,), (1,), (5,), (12,)], {}),
     ('rotate', [(0,), (1,), (8,)], {}),
     ('move_to_front', [(0,), (3,), (9,)], {}),
