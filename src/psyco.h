@@ -907,6 +907,7 @@ PyAPI_FUNC(int)
 PyAPI_FUNC(int) _PySet_Update(PyObject *, PyObject *);
 PyAPI_FUNC(PyObject *) PyCFunction_Call(PyObject *, PyObject *, PyObject *);
 PyAPI_FUNC(PyObject *) _PyList_Extend(PyListObject *, PyObject *);
+PyAPI_FUNC(void) _PyErr_SetKeyError(PyObject *);
 PyAPI_FUNC(PyObject *)
     _PyUnicode_JoinArray(PyObject *, PyObject *const *, Py_ssize_t);
 #if LE_HAS_PRIVATE_NUMBER_INDEX

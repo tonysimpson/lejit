@@ -593,11 +593,7 @@ cimpl_dictstr_getitem(PyDictObject *mp, PyObject *key, long record)
     if (ix == -3)
         return NULL;
     if (ix < 0) {
-        PyObject *args = PyTuple_Pack(1, key); /* dict_subscript's KeyError */
-        if (args != NULL) {
-            PyErr_SetObject(PyExc_KeyError, args);
-            Py_DECREF(args);
-        }
+        _PyErr_SetKeyError(key); /* dict_subscript's KeyError */
         return NULL;
     }
     if (record)
