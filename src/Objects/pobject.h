@@ -333,8 +333,10 @@ PsycoObject_RichCompareBool(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op);
 #define LE_MANAGED_DICT_OFFSET (-3 * (long)sizeof(PyObject *))
 #if LE_HAS_INLINE_VALUES
 /* in the values, at the class's basicsize: */
-#define LE_VALUES_VALID 3 /* the byte */
-#define LE_VALUES_ARRAY 8 /* the array of values */
+#define LE_VALUES_CAPACITY 0 /* the byte: the words of values */
+#define LE_VALUES_SIZE 1     /* the byte: the insertion order's length */
+#define LE_VALUES_VALID 3    /* the byte */
+#define LE_VALUES_ARRAY 8    /* the array of values */
 #endif
 
 /* Inline attribute stores and loads: a cache per (class, name) says where

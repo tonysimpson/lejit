@@ -830,7 +830,9 @@ def inline_values(s):
     """a class with Py_TPFLAGS_INLINE_VALUES keeps its instances' values in
     the object, at its tp_basicsize (_PyObject_InlineValues): a PyDictValues
     whose byte `valid`, its fourth, says whether they are still the
-    attributes, then the values, a word on; a dict made for them is three
+    attributes, then the values, a word on; their insertion order is
+    `size` bytes after the `capacity` values, each new index appended
+    (_PyDictValues_AddToInsertionOrder); a dict made for them is three
     words before the object (MANAGED_DICT_OFFSET)"""
     path, fields = s.struct('_dictvalues')
     if fields is None or 'valid' not in fields:
@@ -838,6 +840,11 @@ def inline_values(s):
     if list(fields) != ['capacity', 'size', 'embedded', 'valid', 'values'] or \
             any(fields[f] != 'uint8_t' for f in list(fields)[:4]):
         raise Unanswered('%s:_dictvalues is %r' % (path, fields))
+    if not (_body_has(s, path, 'get_insertion_order_array',
+                      'return (uint8_t *)&values->values[values->capacity];')[0] and
+            _body_has(s, path, '_PyDictValues_AddToInsertionOrder',
+                      'array[size] = (uint8_t)ix; values->size = size+1;')[0]):
+        raise Unanswered('%s: the insertion order is elsewhere' % path)
     obj = 'Include/internal/pycore_object.h'
     # where it adds sizeof(PyObject), that is the basicsize of every class
     # with the flag (typeobject.c:type_new_impl sets it only then)
