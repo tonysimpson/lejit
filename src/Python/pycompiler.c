@@ -4824,12 +4824,13 @@ codestats_begin(PsycoObject *po, int instr, int opcode)
    unless psyfunc.c:psyco_cannot_block accepts the function). A call that
    was inlined, folded, made virtual or made directly into compiled code
    emits none: that code tests at its own loop heads and after its own
-   calls. The test is part of the CALL_*, not of the next instruction: a
-   merge point there is matched before the next instruction is compiled,
-   and code compiled after a call that needed no test would then serve one
-   that did. None when the next instruction tests anyway (a loop head), or
-   is one ceval skips, after which mergepoints.c marks a test that is
-   always made. False with an exception set. */
+   calls, and a direct call before it (psyfunc.c:psyco_call_pyfunc). The test
+   is part of the CALL_*, not of the next instruction: a merge point there is
+   matched before the next instruction is compiled, and code compiled after a
+   call that needed no test would then serve one that did. None when the next
+   instruction tests anyway (a loop head), or is one ceval skips, after which
+   mergepoints.c marks a test that is always made. False with an exception set.
+ */
 static bool
 breaker_after_call(PsycoObject *po, int next_instr)
 {
@@ -5538,8 +5539,8 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
         }
 
-        /* the frame's start (LeCode_Run tested eval_breaker), or a
-           generator's resumption, which isn't compiled */
+        /* the frame's start (LeCode_Run, or a direct caller, tested
+           eval_breaker), or a generator's resumption, which isn't compiled */
         case RESUME:
             goto fine;
 

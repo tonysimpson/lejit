@@ -133,9 +133,10 @@ report_destructor(PyObject *capsule)
 
 /* ceval tests eval_breaker before every instruction it reaches through
    DISPATCH(): after most opcodes, and at a frame's start. Compiled code
-   tests it at every backward jump (ENTER_JUMP_TO), after calls (below) and
-   LeCode_Run at the start; before one of BREAKER_SKIPS, the test is before
-   the next instruction instead. */
+   tests it at every backward jump (ENTER_JUMP_TO), after calls (below), at
+   a block's handler, and LeCode_Run or a direct caller at the start;
+   before one of BREAKER_SKIPS, the test is before the next instruction
+   instead. */
 #define BREAKER_CHECK(unit)              \
     do {                                 \
         int _p = (int)(unit) * LE_UNIT;  \
@@ -417,11 +418,13 @@ _find_merge_points(PyCodeObject *co, int *bad)
             (in.target >= 0) ==
             ((le_op_flags(opcode) & (LE_OPF_JUMPS | LE_OPF_BRANCHES)) != 0));
         switch (opcode) {
-            /* a handler can be entered from anywhere in the block */
+            /* a handler can be entered from anywhere in the block; ceval
+               goes on from it at its loop top, which tests eval_breaker */
             case SETUP_EXCEPT:
                 flags |= MP_FLAGS_HAS_EXCEPT;
                 MP_HERE();
                 entry_count[JUMP_TARGET(TARGET_UNIT())] = 8;
+                BREAKER_CHECK(TARGET_UNIT());
                 ENTER_NEXT();
                 break;
             case SETUP_FINALLY:
@@ -429,6 +432,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 flags |= MP_FLAGS_HAS_FINALLY;
                 MP_HERE();
                 entry_count[JUMP_TARGET(TARGET_UNIT())] = 8;
+                BREAKER_CHECK(TARGET_UNIT());
                 ENTER_NEXT();
                 break;
             /* BREAK_LOOP goes to the SETUP_LOOP target, counted there;
