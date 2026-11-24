@@ -796,10 +796,12 @@ handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
         if (at >= 0 && u * LE_UNIT <= at && at < in.next)
             return 1;
         switch (in.op) {
+            /* a handler may go on after a yield in it */
             case YIELD_VALUE:
             case YIELD_FROM:
                 if (at < 0)
                     return 1;
+                next[n++] = in.next;
                 break;
             /* the handler's end, or a jump out of it that unwinds it;
                a throw's into yield from ends at CLEANUP_THROW, which takes
@@ -904,7 +906,7 @@ handler_yields_kept(PyCodeObject *co, le_code_t c)
 DEFINEFN int
 psyco_handler_awaits(PyCodeObject *co, int handler)
 {
-#if LE_RESUMES_COROUTINES
+#if LE_RESUMES_COROUTINES_COMPILED
     return (co->co_flags & CO_COROUTINE) &&
            handler_reach(co, le_code(co), handler, -1);
 #else
@@ -929,7 +931,7 @@ body_compilable(PyCodeObject *co, le_code_t *c)
     int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
                                CO_ASYNC_GENERATOR | CO_ITERABLE_COROUTINE);
     if (kind != CO_GENERATOR &&
-        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES))
+        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED))
         return 0;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: runs interpreted */
@@ -976,7 +978,7 @@ psyco_is_resumable_generator(PyCodeObject *co)
 DEFINEFN int
 psyco_in_handler(PyCodeObject *co, int pos)
 {
-#if LE_RESUMES_COROUTINES
+#if LE_RESUMES_COROUTINES_COMPILED
     return handler_reach(co, le_code(co), -1, pos);
 #else
     (void)co;

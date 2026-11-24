@@ -4115,26 +4115,24 @@ cimpl_before_async_with(PyObject *mgr, PyObject *out[])
 }
 
 #if LE_HAS_EXCEPTION_TABLE && LE_HAS_OPCODE_BEFORE_WITH
-/* ceval.c BEFORE_WITH: out[0] gets the bound __exit__, out[1] __enter__'s
-   result. Unlike ceval, mgr stays on the stack (one reference more) while
-   __enter__ runs. */
+/* ceval.c BEFORE_WITH and BEFORE_ASYNC_WITH: out[0] gets the bound exit
+   method, out[1] what the enter method returns ('no_enter' and 'no_exit'
+   the messages for a missing one). Unlike ceval, mgr stays on the stack
+   (one reference more) while the enter method runs. */
 static int
-cimpl_before_with(PyObject *mgr, PyObject *out[])
+before_with(PyObject *mgr, _Py_Identifier *enter_id, _Py_Identifier *exit_id,
+            const char *no_enter, const char *no_exit, PyObject *out[])
 {
-    _Py_IDENTIFIER(__exit__);
-    _Py_IDENTIFIER(__enter__);
-    PyObject *enter = le_lookup_special_id(mgr, &PyId___enter__), *exit, *res;
+    PyObject *enter = le_lookup_special_id(mgr, enter_id), *exit, *res;
     if (enter == NULL) {
         if (!PyErr_Occurred())
-            PyErr_Format(PyExc_TypeError, LE_MSG_WITH_NO_ENTER,
-                         Py_TYPE(mgr)->tp_name);
+            PyErr_Format(PyExc_TypeError, no_enter, Py_TYPE(mgr)->tp_name);
         return -1;
     }
-    exit = le_lookup_special_id(mgr, &PyId___exit__);
+    exit = le_lookup_special_id(mgr, exit_id);
     if (exit == NULL) {
         if (!PyErr_Occurred())
-            PyErr_Format(PyExc_TypeError, LE_MSG_WITH_NO_EXIT,
-                         Py_TYPE(mgr)->tp_name);
+            PyErr_Format(PyExc_TypeError, no_exit, Py_TYPE(mgr)->tp_name);
         Py_DECREF(enter);
         return -1;
     }
@@ -4149,6 +4147,25 @@ cimpl_before_with(PyObject *mgr, PyObject *out[])
     return 0;
 }
 
+static int
+cimpl_before_with(PyObject *mgr, PyObject *out[])
+{
+    _Py_IDENTIFIER(__exit__);
+    _Py_IDENTIFIER(__enter__);
+    return before_with(mgr, &PyId___enter__, &PyId___exit__,
+                       LE_MSG_WITH_NO_ENTER, LE_MSG_WITH_NO_EXIT, out);
+}
+
+static int
+cimpl_before_awith(PyObject *mgr, PyObject *out[])
+{
+    _Py_IDENTIFIER(__aexit__);
+    _Py_IDENTIFIER(__aenter__);
+    return before_with(mgr, &PyId___aenter__, &PyId___aexit__,
+                       LE_MSG_AWITH_NO_AENTER, LE_MSG_AWITH_NO_AEXIT, out);
+}
+#else
+#define cimpl_before_awith cimpl_before_async_with
 #endif
 
 /* WITH_CLEANUP_START's call */
@@ -4545,15 +4562,14 @@ cimpl_generator_stop(long coroutine)
    only generator code compiled (mergepoints.c:_build_merge_points):
    StopIteration leaving it becomes RuntimeError */
 static PyObject *
-cimpl_stopiteration_error(PyObject *exc)
+cimpl_stopiteration_error(PyObject *exc, const char *msg)
 {
     PyObject *error;
     if (!PyErr_GivenExceptionMatches(exc, PyExc_StopIteration)) {
         Py_INCREF(exc);
         return exc;
     }
-    error = PyObject_CallFunction(PyExc_RuntimeError, "s",
-                                  LE_MSG_GENERATOR_STOP_ITERATION);
+    error = PyObject_CallFunction(PyExc_RuntimeError, "s", msg);
     if (error == NULL)
         return NULL;
     Py_INCREF(exc);
@@ -7194,7 +7210,7 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
                 array_release(array);
                 break;
             }
-            if (tp == &PyGen_Type)
+            if (tp == &PyGen_Type || tp == &PyCoro_Type)
                 x = psyco_gen_send_status(po, NTOP(2), TOP(), array);
             else
                 x = psyco_generic_call(po, le_iter_send,
@@ -7304,10 +7320,14 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
         case CALL_INTRINSIC_1:
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
             if (oparg == INTRINSIC_STOPITERATION_ERROR) {
-                extra_assert(po->pr.co->co_flags & CO_GENERATOR);
-                x = psyco_generic_call(po, cimpl_stopiteration_error,
-                                       CfCommonNewRefPyObject | CfNoPython,
-                                       "v", TOP());
+                extra_assert(po->pr.co->co_flags &
+                             (CO_GENERATOR | CO_COROUTINE));
+                x = psyco_generic_call(
+                    po, cimpl_stopiteration_error,
+                    CfCommonNewRefPyObject | CfNoPython, "vl", TOP(),
+                    (long)(po->pr.co->co_flags & CO_COROUTINE
+                               ? LE_MSG_CORO_STOP_ITERATION
+                               : LE_MSG_GENERATOR_STOP_ITERATION));
                 if (x == NULL)
                     break;
                 POP_DECREF();
@@ -7420,12 +7440,32 @@ out:
     return ended;
 }
 
-#if LE_RESUMES_COROUTINES
+#if LE_RESUMES_COROUTINES || LE_RESUMES_ON_FRAME
 /* whether coroutine 'coro' is awaiting something, as _PyGen_yf (not
-   exported) tells: paused just before a YIELD_FROM */
+   exported) tells: paused just before a YIELD_FROM, or where the frame
+   is on the coroutine, at a yield whose resume is after an await */
 static int
 coro_awaits(PyGenObject *coro)
 {
+#if LE_RESUMES_ON_FRAME
+#ifdef FRAME_STATE_SUSPENDED
+    return coro->gi_frame_state == FRAME_SUSPENDED_YIELD_FROM;
+#else
+    le_frame_t *f =
+        (le_frame_t *)((char *)coro + offsetof(PyGenObject, gi_iframe));
+    PyCodeObject *co = LE_FRAME_CODE(f);
+    int at;
+    le_instr_t in;
+    if (coro->gi_frame_state >= FRAME_CLEARED ||
+        coro->gi_frame_state == FRAME_CREATED)
+        return 0;
+    at = (int)((char *)LE_FRAME_PLACE(f) - (char *)_PyCode_CODE(co)) + LE_UNIT;
+    if (at < 0 || at >= le_code(co).size)
+        return 0;
+    in = le_instr(le_code(co), at);
+    return in.op == RESUME && in.arg >= 2;
+#endif
+#else
     PyFrameObject *f = coro->gi_frame;
     const unsigned char *code;
     if (f == NULL || f->f_lasti < 0)
@@ -7438,15 +7478,24 @@ coro_awaits(PyGenObject *coro)
     return code[(LE_HAS_LASTI_IN_INSTRUCTIONS ? f->f_lasti * LE_UNIT
                                               : f->f_lasti) +
                 LE_UNIT] == YIELD_FROM;
+#endif
 }
 
 /* a generator made by a types.coroutine function */
 static inline int
 is_iterable_coroutine(PyObject *o)
 {
+#if LE_RESUMES_ON_FRAME
+    return PyGen_CheckExact(o) &&
+           (LE_FRAME_CODE(
+                (le_frame_t *)((char *)o + offsetof(PyGenObject, gi_iframe)))
+                ->co_flags &
+            CO_ITERABLE_COROUTINE);
+#else
     return PyGen_CheckExact(o) &&
            (((PyCodeObject *)((PyGenObject *)o)->gi_code)->co_flags &
             CO_ITERABLE_COROUTINE);
+#endif
 }
 
 /* which await GET_AWAITABLE at 'at' (with argument 'oparg') is, for its
@@ -7519,6 +7568,7 @@ cimpl_get_awaitable(PyObject *o, long kind)
     return res;
 }
 
+#if LE_RESUMES_COROUTINES
 /* YIELD_FROM's send of 'v' into 'receiver', as ceval does it with no
    trace function: 1 with the value it yielded in out[0], 0 with the value
    it returned, -1 with its exception */
@@ -7548,6 +7598,7 @@ cimpl_await_send(PyObject *receiver, PyObject *v, PyObject *out[])
     return 0;
 #endif
 }
+#endif
 
 #endif
 
@@ -7921,6 +7972,20 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+#if LE_RESUMES_ON_FRAME
+        /* a resumable coroutine's await (psyco_is_resumable_generator):
+           GET_AWAITABLE, then SEND's loop */
+        case GET_AWAITABLE:
+            x = psyco_generic_call(
+                po, cimpl_get_awaitable, CfCommonNewRefPyObject, "vl", TOP(),
+                (long)awaitable_kind(le_code(po->pr.co), po->pr.next_instr,
+                                     oparg));
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+#endif
 #if LE_RESUMES_COROUTINES
         /* a resumable coroutine's await (psyco_is_resumable_generator):
            GET_AWAITABLE, LOAD_CONST None, YIELD_FROM */
@@ -8495,7 +8560,10 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
            __aenter__'s result, whose result the block goes under */
         case BEFORE_ASYNC_WITH: {
             vinfo_array_t *array = array_new(2);
-            if (!psyco_generic_call(po, cimpl_before_async_with,
+            if (!psyco_generic_call(po,
+                                    LE_HAS_EXCEPTION_TABLE
+                                        ? cimpl_before_awith
+                                        : cimpl_before_async_with,
                                     CfCommonIntZeroOk, "vA", TOP(), array)) {
                 array_release(array);
                 break;
@@ -9133,8 +9201,16 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 PUSH(v);
                 JUMPTO(h.handler);
                 SAVE_NEXT_INSTR(next_instr);
-                /* a callee that raised may have started tracing */
-                po->pr.resume_pending = 1;
+                /* a coroutine's handler that can await runs in ceval,
+                   which suspends the coroutine in it with its handled
+                   exception (mergepoints.c:psyco_handler_awaits) */
+                if (psyco_handler_awaits(po->pr.co, h.handler)) {
+                    extra_assert(psyco_can_go_interpreted(po));
+                    po->pr.go_interpreted = 1;
+                }
+                else
+                    /* a callee that raised may have started tracing */
+                    po->pr.resume_pending = 1;
             }
         }
 #endif
