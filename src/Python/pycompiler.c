@@ -2415,6 +2415,19 @@ load_global_rearmed(PsycoObject *po, changed_global_t *cg, vinfo_t **result)
                                &sg->vg, result);
 }
 
+/* o is a lazy import's proxy (PEP 810), which only a load at run time
+   may replace with its module */
+static inline bool
+le_lazy_import(PyObject *o)
+{
+#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
+    return PyLazyImport_CheckExact(o);
+#else
+    (void)o;
+    return false;
+#endif
+}
+
 /* Returns true with *result a new vinfo for the global, or with *result
    NULL if it isn't cached here (the caller loads it at run time); false
    on error. */
@@ -2510,8 +2523,9 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
         cg->form = form;
     }
     /* not found: a run-time load raises NameError; the guard catches a
-       later definition */
-    if (value != NULL) {
+       later definition. A lazy import's proxy is replaced by the run-time
+       load, which imports then, as ceval does; the guard then fails. */
+    if (value != NULL && !le_lazy_import(value)) {
         Py_INCREF(value);
         *result =
             vinfo_new(CompileTime_NewSk(sk_new((long)value, SkFlagPyObj)));
@@ -3050,11 +3064,26 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
 }
 #endif
 
+/* IMPORT_FROM of name from v, at place 'lasti' of code co */
 static PyObject *
-cimpl_import_from(PyObject *v, PyObject *name)
+cimpl_import_from(PyObject *v, PyObject *name, PyCodeObject *co, long lasti)
 {
     PyObject *x;
     PyObject *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
+
+#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
+    if (PyLazyImport_CheckExact(v)) {
+        /* another proxy, for the attribute, which keeps where it was made:
+           the code and place are all it reads of the frame */
+        le_frame_t f;
+        f.f_executable = PyStackRef_FromPyObjectBorrow((PyObject *)co);
+        LE_FRAME_PLACE(&f) = _PyCode_CODE(co) + lasti;
+        return _PyEval_LazyImportFrom(PyThreadState_GET(), &f, v, name);
+    }
+#else
+    (void)co;
+    (void)lasti;
+#endif
 
     if (le_lookup_attr(v, name, &x) != 0) {
         return x;
@@ -4177,25 +4206,48 @@ cimpl_call_exit(PyObject *exit_func, PyObject *exc, PyObject *val,
     return PyObject_CallFunctionObjArgs(exit_func, exc, val, tb, NULL);
 }
 
+/* x, a new reference, as the global w found in 'namespace': where x is a
+   lazy import's proxy, the module it imports, which also replaces it there
+   (ceval.c:_PyEval_LoadGlobalStackRef). Takes the reference. */
+static PyObject *
+loaded_global(PyObject *x, PyObject *w, PyObject *namespace)
+{
+#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
+    if (x != NULL && PyLazyImport_CheckExact(x)) {
+        PyObject *module =
+            _PyLazyImport_Reify(PyThreadState_GET(), x, w, namespace);
+        Py_DECREF(x);
+        return module;
+    }
+#else
+    (void)w;
+    (void)namespace;
+#endif
+    return x;
+}
+
 static PyObject *
 cimpl_load_global(PyObject *globals, PyObject *builtins, PyObject *w)
 {
-    PyObject *x;
+    PyObject *x, *namespace = globals;
     le_recursion_suspend();
     if (!PyDict_CheckExact(globals) || !PyDict_CheckExact(builtins)) {
         /* as ceval does: their __getitem__ and __missing__ run */
         x = PyObject_GetItem(globals, w);
         if (x == NULL && PyErr_ExceptionMatches(PyExc_KeyError)) {
             PyErr_Clear();
+            namespace = builtins;
             x = PyObject_GetItem(builtins, w);
             if (x == NULL && PyErr_ExceptionMatches(PyExc_KeyError))
                 cimpl_name_error(w);
         }
+        x = loaded_global(x, w, namespace);
         le_recursion_resume();
         return x;
     }
     x = PyDict_GetItem(globals, w);
     if (x == NULL) {
+        namespace = builtins;
         x = PyDict_GetItem(builtins, w);
         if (x == NULL) {
             cimpl_name_error(w);
@@ -4203,8 +4255,9 @@ cimpl_load_global(PyObject *globals, PyObject *builtins, PyObject *w)
             return NULL;
         }
     }
-    le_recursion_resume();
     Py_INCREF(x);
+    x = loaded_global(x, w, namespace);
+    le_recursion_resume();
     return x;
 }
 
@@ -6233,8 +6286,8 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             PyObject *namev = GETNAMEV(LE_GLOBAL_NAME(oparg));
             if (!load_global_cached(po, namev, &v))
                 break;
-            /* not cached: globals unknown, the name varying or not
-             * found */
+            /* not cached: globals unknown, the name varying, not found or
+             * a lazy import */
             if (v == NULL) {
                 v = psyco_generic_call(po, cimpl_load_global,
                                        CfCommonNewRefPyObject, "vvl",
@@ -8692,8 +8745,11 @@ compile_imports(PsycoObject *po, int opcode, int oparg, int target,
     switch (opcode) {
         case IMPORT_FROM:
             v = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
-            x = psyco_generic_call(po, cimpl_import_from,
-                                   CfCommonNewRefPyObject, "vv", TOP(), v);
+            x = psyco_generic_call(
+                po, cimpl_import_from, CfCommonNewRefPyObject, "vvll", TOP(),
+                v, (long)po->pr.co,
+                (long)le_lasti_of(
+                    le_place(le_code(po->pr.co), po->pr.next_instr)));
             vinfo_decref(v, po);
             if (x == NULL)
                 break;
