@@ -84,7 +84,8 @@ le_after(le_code_t c, int pos)
    there that pops the iterator and its item where FOR_ITER pops the
    iterator itself, and past the POP_TOP after it where that pops the
    iterator. Where FOR_ITER leaves the iterator, the POP_ITER past the
-   END_FOR pops it. */
+   END_FOR pops it, and the index or NULL above it where GET_ITER pushes
+   one. */
 static inline int
 le_for_iter_exit(le_code_t c, int target)
 {
