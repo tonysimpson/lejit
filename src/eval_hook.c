@@ -597,6 +597,7 @@ eval_from_callee(PyThreadState *ts, le_frame_t *f, int throwflag)
 static __attribute__((noinline)) PyObject *
 LeGen_Eval(PyThreadState *tstate, le_frame_t *frame, le_code_extra_t *x)
 {
+#if LE_RESUMES_ON_FRAME
     int nstack = le_frame_stack_depth(frame) - 1;
     CodeBufferObject *resume = le_gen_to_run(tstate, frame, x, nstack);
     if (resume != NULL) {
@@ -606,6 +607,12 @@ LeGen_Eval(PyThreadState *tstate, le_frame_t *frame, le_code_extra_t *x)
         le_gen_frame_set_depth(frame, nstack);
         return LeGen_Run(tstate, resume, frame, sent);
     }
+#else
+    long words[LE_GEN_WORDS + 1];
+    CodeBufferObject *resume = le_gen_to_run(tstate, frame, x, words);
+    if (resume != NULL)
+        return LeGen_Run(tstate, resume, frame, words);
+#endif
     return original_eval_frame(tstate, frame, 0);
 }
 
