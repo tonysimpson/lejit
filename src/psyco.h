@@ -1034,6 +1034,8 @@ typedef struct le_code_extra_s {
                                  the compiled code owns it */
     long serial;              /* never reused, unlike the code object's
                                  address (psyfunc.c:psyco_save_inline_po) */
+    unsigned long inline_end; /* 0, or 1 + the first block serial whose
+                                 code inlines no calls (psyfunc.c) */
     le_owner_t owner;         /* what its compiled code holds */
     char counted;             /* in the owner scan's count (codemanager.c) */
     int nresumes; /* a resumable generator's points, or -1: not resumable */

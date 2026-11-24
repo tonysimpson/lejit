@@ -21,6 +21,14 @@ EXTERNFN vinfo_t *
 PsycoDict_PendingKeywords(PyObject *names, vinfo_t **values);
 EXTERNFN PyObject *
 PsycoDict_PendingNames(vinfo_t *v, vinfo_t ***values);
+/* PendingEmpty: pending keywords with no names, an empty dict not made
+   yet. MergeEmpty: DICT_MERGE of 'update' into 'd' at compile time, 1 when
+   'd' is such a dict and 'update' an empty exact dict (tested at run
+   time), so 'd' stays as it is; 0 for the real merge; -1 on an error. */
+EXTERNFN vinfo_t *
+PsycoDict_PendingEmpty(void);
+EXTERNFN int
+PsycoDict_MergeEmpty(PsycoObject *po, vinfo_t *d, vinfo_t *update);
 
 /* The exact-str key probe (pdictobject.c), for pycompiler.c's fused get
    then store: StrKey says whether the probe serves d[k] at compile time;

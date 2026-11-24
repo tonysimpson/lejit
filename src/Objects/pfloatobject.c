@@ -395,6 +395,74 @@ cimpl_float_rem(double vx, double wx, double *result)
     return 0;
 }
 
+#define DOUBLE_IS_ODD_INTEGER(x) (fmod(fabs(x), 2.0) == 1.0)
+
+/* float_pow on two doubles where its result is a float: 1 with it in
+   *result, or 0 for an error or a complex result, which float_pow itself
+   then gives */
+static int
+cimpl_float_pow(double iv, double iw, double *result)
+{
+    double ix;
+    bool negate_result = false;
+    if (iw == 0) {
+        *result = 1.0;
+        return 1;
+    }
+    if (isnan(iv)) {
+        *result = iv;
+        return 1;
+    }
+    if (isnan(iw)) {
+        *result = iv == 1.0 ? 1.0 : iw;
+        return 1;
+    }
+    if (isinf(iw)) {
+        iv = fabs(iv);
+        if (iv == 1.0)
+            *result = 1.0;
+        else if ((iw > 0.0) == (iv > 1.0))
+            *result = fabs(iw);
+        else
+            *result = 0.0;
+        return 1;
+    }
+    if (isinf(iv)) {
+        bool iw_is_odd = DOUBLE_IS_ODD_INTEGER(iw);
+        if (iw > 0.0)
+            *result = iw_is_odd ? iv : fabs(iv);
+        else
+            *result = iw_is_odd ? copysign(0.0, iv) : 0.0;
+        return 1;
+    }
+    if (iv == 0.0) {
+        if (iw < 0.0)
+            return 0;
+        *result = DOUBLE_IS_ODD_INTEGER(iw) ? iv : 0.0;
+        return 1;
+    }
+    if (iv < 0.0) {
+        if (iw != floor(iw))
+            return 0;
+        iv = -iv;
+        negate_result = DOUBLE_IS_ODD_INTEGER(iw);
+    }
+    if (iv == 1.0) {
+        *result = negate_result ? -1.0 : 1.0;
+        return 1;
+    }
+    errno = 0;
+    ix = pow(iv, iw);
+    if (errno == 0) {
+        if (ix == HUGE_VAL || ix == -HUGE_VAL)
+            return 0;
+    }
+    else if (errno != ERANGE || ix != 0.0)
+        return 0;
+    *result = negate_result ? -ix : ix;
+    return 1;
+}
+
 static double
 cimpl_float_abs(double v)
 {
@@ -662,6 +730,70 @@ float_rem(PsycoObject *po, vinfo_t *v, vinfo_t *w)
                        cimpl_float_rem_w, cimpl_float_rem, true);
 }
 
+static vinfo_t *
+float_pow(PsycoObject *po, vinfo_t *v, vinfo_t *w, vinfo_t *z)
+{
+    ternaryfunc slot = PyFloat_Type.tp_as_number->nb_power;
+    PyTypeObject *tp_v, *tp_w;
+    vinfo_t *a, *b, *x;
+    vinfo_array_t *result;
+    int ok;
+
+    if (!psyco_knowntobe(z, (long)Py_None))
+        goto in_c;
+    tp_v = Psyco_NeedType(po, v);
+    if (tp_v == NULL)
+        return NULL;
+    tp_w = Psyco_NeedType(po, w);
+    if (tp_w == NULL)
+        return NULL;
+    switch (pconvert_to_double(po, v, tp_v, &a)) {
+        case 1:
+            break;
+        case 0:
+            goto in_c;
+        case 2:
+            return psyco_vi_NotImplemented();
+        default:
+            return NULL;
+    }
+    switch (pconvert_to_double(po, w, tp_w, &b)) {
+        case 1:
+            break;
+        case 0:
+            vinfo_decref(a, po);
+            goto in_c;
+        case 2:
+            vinfo_decref(a, po);
+            return psyco_vi_NotImplemented();
+        default:
+            vinfo_decref(a, po);
+            return NULL;
+    }
+    result = array_new(1);
+    x = psyco_generic_call(po, cimpl_float_pow,
+                           CfReturnTypeInt | CfNoPython | CfNoBlock, "dda", a,
+                           b, result);
+    vinfo_decref(a, po);
+    vinfo_decref(b, po);
+    if (x == NULL) {
+        array_release(result);
+        return NULL;
+    }
+    a = result->items[0];
+    array_release(result);
+    ok = runtime_NON_NULL_t(po, x); /* consumes x */
+    if (ok == 1)
+        return PsycoFloat_FROM_DOUBLE(a);
+    vinfo_decref(a, po);
+    if (ok < 0)
+        return NULL;
+in_c:
+    return psyco_generic_call(
+        po, slot, CfCommonCheckNotImplemented | CfNoPython | CfNoBlock, "vvv",
+        v, w, z);
+}
+
 /* a unary operation whose double code is 'scalar', giving a 'flags' result
  */
 static vinfo_t *
@@ -743,6 +875,7 @@ gen_floatobject_init(void)
     Psyco_DefineMeta(PyFloat_Type.tp_as_number->nb_bool, float_bool);
     Psyco_DefineMeta(PyFloat_Type.tp_as_number->nb_true_divide, float_div);
     Psyco_DefineMeta(PyFloat_Type.tp_as_number->nb_positive, float_float);
+    Psyco_DefineMeta(PyFloat_Type.tp_as_number->nb_power, float_pow);
     Psyco_DefineMeta(PyFloat_Type.tp_hash, float_hash);
     Psyco_DefineMeta(PyFloat_Type.tp_as_number->nb_multiply, float_mul);
     Psyco_DefineMeta(PyFloat_Type.tp_as_number->nb_negative, float_neg);

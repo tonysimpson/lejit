@@ -575,6 +575,20 @@ psyco_save_inline_po(PsycoObject *po)
     return v;
 }
 
+/* whether the code being compiled may inline a call: not in blocks made
+   after one of its merge points reached its cap (vcompiler.c:mp_new_block).
+   One-way and read by the block's serial, so a replay decides the same
+   (codemanager.h:psyco_block_serial). An inlined call's instruction, which
+   restarts with the body's result (LOC_INLINING), is inlining whatever
+   the block it restarts in. */
+static bool
+inline_into(PsycoObject *po)
+{
+    le_code_extra_t *x = le_code_extra_get(po->pr.co);
+    return x == NULL || x->inline_end == 0 ||
+           psyco_block_serial(po) + 1 < x->inline_end;
+}
+
 DEFINEFN
 PsycoObject *
 psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a)
@@ -763,10 +777,30 @@ cannot_block_init(void)
    call (pycompiler.c:resume_if_tracing). use_tracing is per thread and
    set by every way in, C ones too
    (PyEval_SetTrace and PyEval_SetProfile, as cProfile uses). */
-static bool
+static int
 tracing_on(PsycoObject *po, vinfo_t *vts)
 {
-    return runtime_condition_f(po, le_tracing_test(po, vts));
+    if (!runtime_condition_f(po, le_tracing_test(po, vts)))
+        return 0;
+#if LE_HAS_MONITORING
+    {
+        /* the test above is the version's: the exact one, on its rare
+           path, also brings le_quiet_version up to date */
+        condition_code_t cc;
+        vinfo_t *v =
+            psyco_generic_call(po, le_tracing_recheck,
+                               CfReturnTypeInt | CfNoBlock | CfNoPython, "");
+        if (v == NULL)
+            return -1;
+        cc = integer_non_null(po, v);
+        vinfo_decref(v, po);
+        if (cc == CC_ERROR)
+            return -1;
+        return runtime_condition_f(po, cc);
+    }
+#else
+    return 1;
+#endif
 }
 
 /* Whether a compiled call or inlined frame must be the real call
@@ -782,13 +816,17 @@ DEFINEFN
 int
 psyco_tracing_on(PsycoObject *po)
 {
-    bool on;
+    int on;
     vinfo_t *vts;
+#if LE_HAS_MONITORING
+    vts = NULL; /* le_tracing_test reads none */
+#else
     vts = load_tstate(po);
     if (vts == NULL)
         return -1;
+#endif
     on = tracing_on(po, vts);
-    vinfo_decref(vts, po);
+    vinfo_xdecref(vts, po);
     return on;
 }
 
@@ -1104,7 +1142,8 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
        reach RecursionError at twice CPython's depth */
     inlining = !generator && allow_inline && !po->pr.is_inlining &&
                co != po->pr.co &&
-               (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE);
+               (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE) &&
+               (LOC_INLINING != NULL || inline_into(po));
     /* the instruction restarting with the inlined body's result binds again
        only to check it: its cells were made for the body. A generator's
        binding is checked here and done again by its consumer. */
@@ -1281,7 +1320,8 @@ pending_code(vinfo_t *vgen)
    as a new reference. */
 DEFINEFN
 vinfo_t *
-psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
+psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
+                   vinfo_t *comp)
 {
     vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
@@ -1308,6 +1348,13 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
     vmode = vinfo_new(CompileTime_NewSk(sk_new(mode, SkFlagFixed)));
     extra[0] = vmode;
     extra[1] = acc;
+#if LE_HAS_SUM_COMPENSATED
+    if (comp != NULL)
+        vinfo_incref(comp);
+    else
+        comp = psyco_vi_Zero();
+    extra[2] = comp;
+#endif
     if (callee_builtins(po, vfunc, vglobals, &vbuiltins) != 1)
         psyco_fatal_msg("generator builtins");
     /* the defaults are among the arguments (args_with_defaults), and their
@@ -1323,6 +1370,9 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
             break;
         default:
             vinfo_decref(vmode, po);
+#if LE_HAS_SUM_COMPENSATED
+            vinfo_decref(comp, po);
+#endif
             vinfo_decref(vbuiltins, po);
             return NULL;
     }
@@ -1354,6 +1404,9 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
         array_delete(fncall.inputvinfos, po);
     vinfo_xdecref(vts, po);
     vinfo_decref(vmode, po);
+#if LE_HAS_SUM_COMPENSATED
+    vinfo_decref(comp, po);
+#endif
     vinfo_decref(vbuiltins, po);
     return result;
 }
@@ -1511,5 +1564,8 @@ psycofunction_init(void)
 {
     psyco_assert(le_tstate_check());
     psyco_assert(le_eval_breaker_check());
+#if LE_HAS_MONITORING
+    le_tracing_recheck(); /* the first version seen */
+#endif
     cannot_block_init();
 }

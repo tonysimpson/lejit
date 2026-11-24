@@ -42,6 +42,7 @@
 #include "../mergepoints.h"
 #include "../processor.h"
 #include "../psyfunc.h"
+#include "pbltinmodule.h"
 #include "../bytecode.h"
 #include "frames.h"
 /* le_frame_current, le_frame_set_current */
@@ -3917,9 +3918,10 @@ cimpl_name_error(PyObject *w)
 /* CALL_FUNCTION_EX: f(*args) or f(*args, **kwargs). The stack, top down:
    [kwargs], args, and the callable beside its NULL. The kwargs slot is
    there whenever argument bit 0 is set, or always where CALL_EX_KWARGS_SLOT
-   (a NULL there for a call with none). f(*tuple) goes straight to
-   PsycoObject_Call, which can specialise the call; anything else runs
-   CPython's whole case at run time (its copy cimpl_call_function_ex). */
+   (a NULL there for a call with none). f(*tuple), and f(*tuple, **k)
+   while k is empty, go straight to PsycoObject_Call, which can specialise
+   the call; anything else runs CPython's whole case at run time (its copy
+   cimpl_call_function_ex). */
 static vinfo_t *
 psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
                      int *stack_to_pop)
@@ -3928,7 +3930,7 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
     vinfo_t *kwargs = slot ? stack_top[-1] : NULL;
     vinfo_t *callargs = stack_top[-1 - slot];
     vinfo_t *func = stack_top[-2 - slot - LE_HAS_CALLABLE_UNDER_NULL];
-    vinfo_t *zero = NULL, *result;
+    vinfo_t *zero = NULL, *result, **kwvalues;
     PyTypeObject *t;
     /* and the NULL under the callable, where PUSH_NULL puts one there */
     *stack_to_pop = 2 + slot + LE_HAS_OPCODE_PUSH_NULL;
@@ -3940,6 +3942,18 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
         return NULL;
     if (kwargs == NULL)
         kwargs = zero = psyco_vi_Zero();
+    if (t == &PyTuple_Type && zero == NULL &&
+        PsycoDict_PendingNames(kwargs, &kwvalues) != NULL) {
+        /* f(*args, **k) with k empty (DICT_MERGE): a function's or a
+           method's vectorcall takes an empty dict as none */
+        PyTypeObject *ft = Psyco_NeedType(po, func);
+        if (ft == NULL)
+            return NULL;
+        if (ft == &PyFunction_Type || ft == &PyMethod_Type)
+            kwargs = zero = psyco_vi_Zero();
+        result = PsycoObject_Call(po, func, callargs, kwargs);
+        goto done;
+    }
     if (t == &PyTuple_Type && zero != NULL) {
         /* f(*args): the call can be specialised. With **kwargs it goes to the
            run-time helper, which holds a reference to the dict as ceval does
@@ -4704,6 +4718,37 @@ fusion_prev(le_code_t c, int *p)
     return in;
 }
 
+/* A subscript by a slice whose bounds are all constants is a constant
+   slice object where the compiler folds them; for a container whose
+   slicing compiled code does itself (it never hands the slice to Python
+   code, so nothing can tell the object from another equal one), the
+   subscript becomes the slice built from those constants, as BINARY_SLICE
+   and STORE_SLICE make it. 'sub' is borrowed; returns a new reference. */
+static vinfo_t *
+unfolded_slice(vinfo_t *container, vinfo_t *sub)
+{
+    PyTypeObject *tp = Psyco_KnownType(container);
+    PySliceObject *s;
+    vinfo_t *parts[3], *slice;
+    int i;
+    if (!is_compiletime(sub->source) ||
+        Py_TYPE((PyObject *)CompileTime_Get(sub->source)->value) !=
+            &PySlice_Type ||
+        (tp != &PyList_Type && tp != &PyTuple_Type && tp != &PyUnicode_Type &&
+         tp != &PyBytes_Type)) {
+        vinfo_incref(sub);
+        return sub;
+    }
+    s = (PySliceObject *)CompileTime_Get(sub->source)->value;
+    parts[0] = vinfo_new(CompileTime_New((long)s->start));
+    parts[1] = vinfo_new(CompileTime_New((long)s->stop));
+    parts[2] =
+        s->step == Py_None ? NULL : vinfo_new(CompileTime_New((long)s->step));
+    slice = PsycoSlice_New(parts[0], parts[1], parts[2]);
+    for (i = 0; i < 3; i++) vinfo_xdecref(parts[i], NULL);
+    return slice;
+}
+
 /* The STORE_SUBSCR fused with the get at byte offset 'i', or -1, as LeJIT
    instructions (bytecode.h). The forms, d and k local variables, y a
    constant or a local:
@@ -4719,8 +4764,9 @@ fusion_prev(le_code_t c, int *p)
                                  SWAP 3, SWAP 2), STORE_SUBSCR
    with no merge point from the instruction after the first to the store,
    so the store is reached only through the get. Only loads stand between
-   the two besides OP, so d and k are the get's objects. '*dlocal' is set
-   to d's local for the get form. */
+   the two besides OP, so d and k are the get's objects. A LOAD_FAST d,
+   LOAD_FAST k pair may be one LOAD_FAST_LOAD_FAST, and y a LOAD_SMALL_INT.
+   '*dlocal' is set to d's local for the get form. */
 static int
 fused_store(PsycoObject *po, int i, int *dlocal)
 {
@@ -4729,7 +4775,9 @@ fused_store(PsycoObject *po, int i, int *dlocal)
     le_instr_t get, load, op, in;
     int first, s, p = i;
     mergepoint_t *mp;
-#define FUSION_LOAD(in) ((in).op == LOAD_CONST || (in).op == LOAD_FAST)
+#define FUSION_LOAD(in)                               \
+    ((in).op == LOAD_CONST || (in).op == LOAD_FAST || \
+     (in).op == LOAD_SMALL_INT)
     get = fusion_next(c, &p);
     load = fusion_next(c, &p);
     op = fusion_next(c, &p);
@@ -4760,6 +4808,14 @@ fused_store(PsycoObject *po, int i, int *dlocal)
     }
     else {
         le_instr_t kload, dload, method;
+        if (get.op == BINARY_SUBSCR && in.op == LOAD_FAST_LOAD_FAST) {
+            first = p;
+            dload = kload = in;
+            dload.op = kload.op = LOAD_FAST;
+            dload.arg = in.arg >> 4;
+            kload.arg = in.arg & 15;
+            goto loaded;
+        }
         if (get.op == BINARY_SUBSCR)
             kload = in;
         else if ((get.op == CALL_METHOD || get.op == CALL) &&
@@ -4782,15 +4838,22 @@ fused_store(PsycoObject *po, int i, int *dlocal)
             return -1;
         first = p;
         dload = fusion_prev(c, &p);
+    loaded:
         if (dload.op != LOAD_FAST || kload.op != LOAD_FAST)
             return -1;
         p = op.next;
         in = fusion_next(c, &p);
-        if (in.op != LOAD_FAST || in.arg != dload.arg)
-            return -1;
-        in = fusion_next(c, &p);
-        if (in.op != LOAD_FAST || in.arg != kload.arg)
-            return -1;
+        if (in.op == LOAD_FAST_LOAD_FAST) {
+            if (in.arg >> 4 != dload.arg || (in.arg & 15) != kload.arg)
+                return -1;
+        }
+        else {
+            if (in.op != LOAD_FAST || in.arg != dload.arg)
+                return -1;
+            in = fusion_next(c, &p);
+            if (in.op != LOAD_FAST || in.arg != kload.arg)
+                return -1;
+        }
         s = p;
         if (fusion_next(c, &p).op != STORE_SUBSCR)
             return -1;
@@ -5543,7 +5606,17 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
 
             BINARY_OPCODE(BINARY_SUBTRACT, PsycoNumber_Subtract);
 
-            BINARY_OPCODE(BINARY_SUBSCR, PsycoObject_GetItem);
+        case BINARY_SUBSCR: {
+            vinfo_t *sub = unfolded_slice(NTOP(2), NTOP(1));
+            x = PsycoObject_GetItem(po, NTOP(2), sub);
+            vinfo_decref(sub, po);
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+        }
 
             BINARY_OPCODE(BINARY_LSHIFT, PsycoNumber_Lshift);
 
@@ -5588,19 +5661,17 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
             bool err;
             vinfo_t *sub;
             vinfo_t *v;
-            sub = NTOP(1);
             container = NTOP(2);
             v = NTOP(3);
+            sub = unfolded_slice(container, NTOP(1));
             err = PsycoObject_SetItem(po, container, sub, v);
+            vinfo_decref(sub, po);
             if (!err) {
                 break;
             }
-            POP(sub);
-            POP(container);
-            POP(v);
-            vinfo_decref(sub, po);
-            vinfo_decref(container, po);
-            vinfo_decref(v, po);
+            POP_DECREF();
+            POP_DECREF();
+            POP_DECREF();
             goto fine;
         }
 
@@ -5608,16 +5679,15 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
             vinfo_t *container;
             bool err;
             vinfo_t *sub;
-            sub = NTOP(1);
             container = NTOP(2);
+            sub = unfolded_slice(container, NTOP(1));
             err = PsycoObject_DelItem(po, container, sub);
+            vinfo_decref(sub, po);
             if (!err) {
                 break;
             }
-            POP(sub);
-            POP(container);
-            vinfo_decref(sub, po);
-            vinfo_decref(container, po);
+            POP_DECREF();
+            POP_DECREF();
             goto fine;
         }
 
@@ -6029,6 +6099,23 @@ out:
     return ended;
 }
 
+#if LE_HAS_OPCODE_DICT_MERGE
+/* whether a BUILD_MAP 0 ending at next_instr makes the dict of a call
+   f(*a, **k) with k a local: a load of k, DICT_MERGE, CALL_FUNCTION_EX */
+static bool
+forwards_local_dict(PyCodeObject *co, int next_instr)
+{
+    le_code_t c = le_code(co);
+    le_instr_t in;
+    if (next_instr >= c.size ||
+        (in = le_instr(c, next_instr)).op != LOAD_FAST || in.next >= c.size ||
+        (in = le_instr(c, in.next)).op != DICT_MERGE || in.arg != 1 ||
+        in.next >= c.size)
+        return false;
+    return le_instr(c, in.next).op == CALL_FUNCTION_EX;
+}
+#endif
+
 /* building and unpacking tuples, lists, sets, dicts, slices and strings */
 static int
 compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
@@ -6341,6 +6428,12 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
             vinfo_t *err;
             vinfo_t *map;
             int i;
+#if LE_HAS_OPCODE_DICT_MERGE
+            if (oparg == 0 && forwards_local_dict(po->pr.co, next_instr)) {
+                PUSH(PsycoDict_PendingEmpty());
+                goto fine;
+            }
+#endif
             map = _PsycoDict_NewPresized(po, (Py_ssize_t)oparg);
             if (map == NULL) {
                 break;
@@ -6435,16 +6528,22 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
 #if LE_HAS_OPCODE_DICT_MERGE
         /* an error names the callable: under the arguments, and under
            its NULL too where CALLABLE_UNDER_NULL */
-        case DICT_MERGE:
-            x = psyco_generic_call(
-                po, cimpl_dict_merge, CfCommonIntBoolOrError, "vvv",
-                NTOP(oparg + 1), TOP(),
-                NTOP(oparg + 3 + LE_HAS_CALLABLE_UNDER_NULL));
-            if (x == NULL)
+        case DICT_MERGE: {
+            int empty = PsycoDict_MergeEmpty(po, NTOP(oparg + 1), TOP());
+            if (empty < 0)
                 break;
-            vinfo_decref(x, po);
+            if (empty == 0) {
+                x = psyco_generic_call(
+                    po, cimpl_dict_merge, CfCommonIntBoolOrError, "vvv",
+                    NTOP(oparg + 1), TOP(),
+                    NTOP(oparg + 3 + LE_HAS_CALLABLE_UNDER_NULL));
+                if (x == NULL)
+                    break;
+                vinfo_decref(x, po);
+            }
             POP_DECREF();
             goto fine;
+        }
 #endif
 
         case MAP_ADD: {
@@ -7462,6 +7561,16 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                     if (v == NULL)
                         break;
                 }
+#if LE_HAS_SUM_COMPENSATED
+                else if (mode == GENEXPR_SUM_FLOAT ||
+                         mode == GENEXPR_SUM_COMPLEX) {
+                    v = psyco_sum_result(po, (int)mode,
+                                         po->vlocals.items[slot + 1],
+                                         po->vlocals.items[slot + 2]);
+                    if (v == NULL)
+                        break;
+                }
+#endif
                 else {
                     v = po->vlocals.items[slot + 1];
                     vinfo_incref(v);
@@ -7506,10 +7615,26 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                                         acc, v))
                     break;
             }
+#if LE_HAS_SUM_COMPENSATED
+            else if (mode == GENEXPR_SUM || mode == GENEXPR_SUM_FLOAT ||
+                     mode == GENEXPR_SUM_COMPLEX ||
+                     mode == GENEXPR_SUM_GENERIC) {
+                /* builtin_sum_impl's loop for the phase it is in; another
+                   phase is another version of the fused code */
+                int phase = (int)mode;
+                if (!psyco_sum_step(po, &phase, &po->vlocals.items[slot + 1],
+                                    &po->vlocals.items[slot + 2], v))
+                    break;
+                if (phase != mode) {
+                    vinfo_decref(po->vlocals.items[slot], po);
+                    po->vlocals.items[slot] = vinfo_new(
+                        CompileTime_NewSk(sk_new(phase, SkFlagFixed)));
+                }
+            }
+#else
             else if (mode == GENEXPR_SUM) {
                 /* as builtin_sum's generic loop (its fast paths give
-                   the same results as + on ints and floats, where sum()
-                   is compiled: pbltinmodule.c:pbuiltin_sum) */
+                   the same results as + on ints and floats) */
                 if (Psyco_KnownType(acc) != NULL)
                     x = PsycoNumber_Add(po, acc, v);
                 else
@@ -7521,6 +7646,7 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
                 po->vlocals.items[slot + 1] = x;
                 vinfo_decref(acc, po);
             }
+#endif
             else if (mode == GENEXPR_MIN || mode == GENEXPR_MAX) {
                 x = psyco_generic_call(
                     po, cimpl_minmax_step, CfCommonNewRefPyObject, "vvl", acc,
@@ -7609,7 +7735,7 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             /* the body returns the await's value, or the marker that it
                suspended, having made its coroutine */
             x = psyco_call_genexpr(po, NTOP(2), GENEXPR_DIRECT,
-                                   NTOP(2)->array->items[iGENEXPR_FUNC]);
+                                   NTOP(2)->array->items[iGENEXPR_FUNC], NULL);
             if (x == NULL)
                 break;
             cc = integer_cmp_i(po, x, (long)psyco_coro_suspended, Py_EQ);

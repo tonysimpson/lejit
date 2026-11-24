@@ -735,8 +735,10 @@ def INLINE_VALUES():
     """a plain class has the flag 1 << 2 (Py_TPFLAGS_INLINE_VALUES), and
     its instance with an attribute keeps it in the object, a word after
     its basicsize, with the byte three after the basicsize set (valid) and
-    no dict three words before; once __dict__ is made it is there, and the
-    values stay valid until a __class__ assignment"""
+    no dict three words before; the next byte (size) counts the attributes,
+    and their indices follow the values, as many words as the first byte
+    (capacity) says, in the order they were added; once __dict__ is made it
+    is there, and the values stay valid until a __class__ assignment"""
     class C(object):
         pass
 
@@ -746,9 +748,21 @@ def INLINE_VALUES():
         return False, 'class C: no 1 << 2 in its flags'
     c = C()
     c.a = 1000
+    c.b = 1001
+    e = C()
+    e.b = 1002
+    e.a = 1003
     word = ctypes.c_void_p.from_address
+    byte = ctypes.c_uint8.from_address
     at = id(c) + C.__basicsize__
-    valid = ctypes.c_uint8.from_address(at + 3)
+    valid = byte(at + 3)
+    order = []
+    for o in (c, e):
+        values = id(o) + C.__basicsize__
+        order.append([byte(values + 8 + 8 * byte(values).value + i).value
+                      for i in range(byte(values + 1).value)])
+    if order != [[0, 1], [1, 0]]:
+        return False, 'class C: insertion orders %r' % order
     seen = [(valid.value, word(at + 8).value == id(c.a), word(id(c) - 24).value)]
     d = c.__dict__
     seen.append((valid.value, word(at + 8).value == id(c.a), word(id(c) - 24).value == id(d)))
@@ -888,6 +902,24 @@ def SUM_COMPENSATED():
     if r not in (0.0, 1.0):
         raise Unanswered('sum([1e100, 1.0, -1e100]) is %r' % r)
     return r == 1.0, 'sum([1e100, 1.0, -1e100]) is %r' % r
+
+
+@probe
+def SUM_INT_AS_DOUBLE():
+    """sum([1e100, 1, -1e100]) keeps the int 1 (run)"""
+    r = sum([1e100, 1, -1e100])
+    if r not in (0.0, 1.0):
+        raise Unanswered('sum([1e100, 1, -1e100]) is %r' % r)
+    return r == 1.0, 'sum([1e100, 1, -1e100]) is %r' % r
+
+
+@probe
+def SUM_COMPLEX_COMPENSATED():
+    """sum([1e100j, 1j, -1e100j]) keeps the 1j (run)"""
+    r = sum([1e100j, 1j, -1e100j])
+    if r not in (0j, 1j):
+        raise Unanswered('sum([1e100j, 1j, -1e100j]) is %r' % r)
+    return r == 1j, 'sum([1e100j, 1j, -1e100j]) is %r' % r
 
 
 @probe

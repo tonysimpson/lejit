@@ -226,8 +226,26 @@ def store_after_move(n):
     return out
 
 
+def store_after_move_forms(n):
+    # the same for d[k] = d.get(k, 0) + x and d[k] = d[k] + x, whose loads
+    # of d and k may be one instruction
+    d = {}
+    out = []
+    for i in range(n):
+        k = 'key%d' % (i % 3)
+        d['other'] = i
+        d[k] = Moves(d, k)
+        d[k] = d.get(k, 0) + i
+        out.append(sorted(d.items()))
+        d[k] = Moves(d, k)
+        d[k] = d[k] + i
+        out.append(sorted(d.items()))
+    return out
+
+
 CASES = [
     ('store_after_move', [(4,), (7,)], {}),
+    ('store_after_move_forms', [(4,), (7,)], {}),
     ('maps', [(WORDS,)], {}),
     ('identity', [(WORDS,)], {}),
     ('compares', [(WORDS,)], {}),

@@ -980,6 +980,14 @@ mp_new_block(PsycoObject *po, mergepoint_t *mp)
     if (mp == NULL)
         return;
     mp->blocks++;
+    if (mp->blocks == MP_BLOCK_CAP && !po->pr.is_inlining) {
+        /* a code object with a merge point at its cap compiles many copies
+           of its code: blocks made from now on inline no calls, whose
+           bodies would be copied too (psyfunc.c:psyco_call_pyfunc) */
+        le_code_extra_t *x = le_code_extra_get(po->pr.co);
+        if (x != NULL && x->inline_end == 0)
+            x->inline_end = psyco_next_serial + 1;
+    }
     po->mp_serial = po->respawn_proxy->serial;
 #if LE_CODESTATS
     cs_state(po);
@@ -1288,6 +1296,29 @@ is_cell_arg(PyCodeObject *co, int arg)
     return false;
 }
 
+/* an argument CPython moved into its cell, leaving its own slot NULL
+   (ceval.c:_PyEval_EvalCodeWithName); only LOAD_DEREF reads it then */
+static bool
+unbound_cell_arg(PyCodeObject *co, int arg)
+{
+    return is_cell_arg(co, arg) && !le_code_local_is_cell(co, arg);
+}
+
+/* the *args or **kwargs argument in the frame slot at the stack depth,
+   of type 'tp', or the unbound constant if CPython moved it into its
+   cell */
+static vinfo_t *
+star_argument(PsycoObject *po, PyCodeObject *co, int arg, PyTypeObject *tp)
+{
+    vinfo_t *v;
+    if (unbound_cell_arg(co, arg))
+        return psyco_vi_Zero();
+    v = vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
+    v->array = array_new(iOB_TYPE + 1);
+    v->array->items[iOB_TYPE] = vinfo_new(CompileTime_New((long)tp));
+    return v;
+}
+
 /* a local after the arguments is also a cell (an inlined comprehension's
    variable that a closure in it reads) */
 static bool
@@ -1378,35 +1409,22 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
             v = psyco_vi_Zero();
         LOC_LOCALS_PLUS[i] = v;
     }
-    /* initialize the keyword arguments dict */
+    /* initialize the keyword arguments dict, known to be a dict */
     if (co->co_flags & CO_VARKEYWORDS) {
         po->stack_depth += sizeof(long);
-        rsrc = RunTime_NewStack(po->stack_depth, false, false);
-        v = vinfo_new(rsrc);
-        /* known to be a dict */
-        /*Psyco_AssertType(NULL, v, &PyDict_Type);*/
-        rsrc = CompileTime_New((long)&PyDict_Type);
-        v->array = array_new(FIELDS_TOTAL(OB_type));
-        v->array->items[iOB_TYPE] = vinfo_new(rsrc);
-        LOC_LOCALS_PLUS[--i] = v;
+        i--;
+        LOC_LOCALS_PLUS[i] = star_argument(po, co, i, &PyDict_Type);
     }
-    /* initialize the extra arguments tuple */
+    /* initialize the extra arguments tuple, known to be a tuple */
     if (co->co_flags & CO_VARARGS) {
         po->stack_depth += sizeof(long);
-        rsrc = RunTime_NewStack(po->stack_depth, false, false);
-        v = vinfo_new(rsrc);
-        /* known to be a tuple */
-        rsrc = CompileTime_New((long)&PyTuple_Type);
-        v->array = array_new(iOB_TYPE + 1);
-        v->array->items[iOB_TYPE] = vinfo_new(rsrc);
-        LOC_LOCALS_PLUS[--i] = v;
+        i--;
+        LOC_LOCALS_PLUS[i] = star_argument(po, co, i, &PyTuple_Type);
     }
     /* initialize the regular arguments */
     while (i > 0) {
         po->stack_depth += sizeof(long);
-        if (is_cell_arg(co, i - 1) && !le_code_local_is_cell(co, i - 1)) {
-            /* CPython moved it into its cell and left NULL (ceval.c:
-               _PyEval_EvalCodeWithName); only LOAD_DEREF reads it now */
+        if (unbound_cell_arg(co, i - 1)) {
             LOC_LOCALS_PLUS[--i] = psyco_vi_Zero();
             continue;
         }
@@ -1503,6 +1521,9 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
     /* fixed, as a fused generator's mode (psyfunc.c:psyco_call_genexpr) */
     po->vlocals.items[GENEXPR_SLOT_MODE(co)] =
         vinfo_new(CompileTime_NewSk(sk_new(GENEXPR_RESUMABLE, SkFlagFixed)));
+#if LE_HAS_SUM_COMPENSATED
+    po->vlocals.items[GENEXPR_SLOT_COMP(co)] = psyco_vi_Zero();
+#endif
     /* the last word is pushed first */
     for (i = nwords - 1; i >= 0; i--) {
         bool owned = i < nlocals || (i >= nplus && i < nplus + nstack);

@@ -1,6 +1,7 @@
 """The message probes (tools/features/strings.py) give, for each supported
 CPython, a text that is in that version's source: a string literal (with
-adjacent literals joined), or a literal format with one conversion filled
+adjacent literals joined, and an integer conversion's length modifier,
+%zd or %ld, taken as %d's), or a literal format with one conversion filled
 in by another literal (an operator's name CPython passes as a constant,
 or as the argument of a macro that joins it into its literal).
 A fragment (an operator's name) is a literal, or fills its message's
@@ -113,11 +114,20 @@ def literals(src, formats):
 
 
 CONV = re.compile(r'%[-.0-9]*(?:z|l)?[a-zA-Z]')
+# an integer conversion's length modifier, which follows the C argument's
+# type (the caller's) and shows the same digits
+INT_LENGTH = re.compile(r'%(?:z|l)d')
 
 
-def found(text, lits, filled):
+def same_digits(text):
+    return INT_LENGTH.sub('%d', text)
+
+
+def found(text, lits, filled, lits_digits=frozenset()):
     """How `text` is in the source: 'literal', 'filled' or None."""
     if text in lits:
+        return 'literal'
+    if same_digits(text) in lits_digits:
         return 'literal'
     for lit in filled:
         for m in CONV.finditer(lit):
@@ -148,6 +158,7 @@ def check_version(version, python=None):
     formats = set()
     lits = literals(src, formats)
     filled = [l for l in lits if '%' in l] + sorted(formats)
+    lits_digits = {same_digits(l) for l in lits if '%' in l}
     got = strings.probe(python)
     problems, notes = [], []
     for name in sorted(got):
@@ -155,7 +166,7 @@ def check_version(version, python=None):
         if text is None:
             notes.append('%s: no such case' % name)
             continue
-        how = found(text, lits, filled)
+        how = found(text, lits, filled, lits_digits)
         if how is None and 'parent' in e:
             pieces, convs = strings._format_pieces(got[e['parent']])
             whole = ''.join(

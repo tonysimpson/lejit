@@ -370,6 +370,7 @@ HEADER_DETECTORS = {
     'FRAME_INSTR_PTR': internal(features.frame_instr_ptr),
     'TSTATE_CURRENT_FRAME': features.tstate_current_frame,
     'TSTATE_EVAL_BREAKER': features.tstate_eval_breaker,
+    'INTERP_MONITORING_VERSION': internal(features.interp_monitoring_version),
     'TRACEBACK_FROM_FRAME_API': traceback_from_frame_api,
     'LONG_VALUE': features.long_value,
     'TYPE_GET_DICT': public('PyType_GetDict'),
@@ -380,6 +381,7 @@ HEADER_DETECTORS = {
     'FRAME_INITIALIZE_TSTATE': internal(features.frame_initialize_tstate),
     'REFCOUNT_32': features.refcount_32,
     'DICT_VERSION_TAG': features.dict_version_tag,
+    'DEALLOC_DEFERS_TO_TRASHCAN': features.dealloc_defers_to_trashcan,
     # where the interpreter's probe can't answer: a frame object with no
     # f_lasti of its own
     'LASTI_IN_INSTRUCTIONS': features.interpreter_frame_lasti,
