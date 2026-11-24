@@ -724,6 +724,19 @@ def tstate_current_frame(s):
     return _field(s, '_ts', 'current_frame')
 
 
+def generator_return_kind(s):
+    """a generator's run tells gen_send_ex2 whether it yielded or returned
+    by its thread's generator_return_kind, not its frame's state"""
+    return _field(s, '_PyThreadStateImpl', 'generator_return_kind', missing=False)
+
+
+def last_profiled_frame(s):
+    """a thread's state keeps the frame a remote profiler last saw
+    (last_profiled_frame), which a frame leaving the thread's chain hands
+    to the frame under it"""
+    return _field(s, '_ts', 'last_profiled_frame')
+
+
 def tstate_eval_breaker(s):
     """each thread has its own eval_breaker, in its state: its low bits are
     the events ceval handles with _Py_HandlePending"""
@@ -1428,6 +1441,8 @@ STATE = [
     ('PYCORE_INTERP_H', D('the interpreter state has an internal header of its own, pycore_interp.h',
                           lambda s: _file(s, 'Include/internal/pycore_interp.h'))),
     ('EVAL_HOOK_TSTATE', eval_hook_tstate),
+    ('GENERATOR_RETURN_KIND', generator_return_kind),
+    ('LAST_PROFILED_FRAME', last_profiled_frame),
     ('SIGNALS_PENDING', signals_pending),
     ('EVAL_FRAME_HANDLE_PENDING', eval_frame_handle_pending),
     ('INTERP_RECURSION_LIMIT', interp_recursion_limit),
