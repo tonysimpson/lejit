@@ -1,6 +1,8 @@
 # Exceptions: catching (3.7's EXCEPT_HANDLER block), exc_info, raise forms,
 # finally, and leaving an except clause by return/break/continue/raise.
 import sys
+
+from ref_tracer import count_made, made
 exc_info = sys.exc_info  # a global call: LOAD_METHOD isn't supported
 
 def catch_as(a, b):
@@ -765,4 +767,25 @@ def math_domain(x):
 
 CASES += [
     ('math_domain', '[(-1.5,), (2.5,), (inf,), (-inf,), (0.5,)]', {}),
+]
+
+
+def dict_miss_made(d, n):
+    # a missing str key's KeyError, made as dict_subscript makes it: the
+    # tuples made per miss (after the first round, which compiles)
+    out = []
+    for i in range(n):
+        count_made(tuple)
+        for k in range(100):
+            try:
+                d['missing']
+            except KeyError as e:
+                args = e.args
+        count = made()
+        out.append((args, count // 100 if i and count is not None else None))
+    return out
+
+
+CASES += [
+    ('dict_miss_made', [({'a': 1}, 3)], {}),
 ]
