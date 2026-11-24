@@ -51,7 +51,9 @@ def errors(n):
 
 
 CASES = [
-    ('calls', [(0,), (3,)], {}),
+    ('calls', [(0,), (3,)],
+     {'warmup': (150, "on 3.10, list() of finditer's matches keeps more "
+                      'blocks for some rounds, then stops')}),
     ('kept', [(2,)], {}),
     ('passed', [(2,)], {}),
     ('errors', [(2,)], {}),
