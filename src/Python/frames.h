@@ -44,6 +44,12 @@ psyco_activation_returned(long *sp);
    compiled callee of code 'co' (borrowed), else NULL */
 EXTERNFN PyFrameObject *
 psyco_innermost_activation(PyCodeObject *co);
+/* how many frame objects of inlined frames are kept: compiled code
+   leaving an inlined frame that ran Python then calls
+   psyco_inline_frame_left, which lets its own go */
+EXTERNVAR int psyco_inline_frames_kept;
+EXTERNFN int
+psyco_inline_frame_left(void);
 
 /* A compiled frame going on interpreted: psyco_resume_begin, then each of
    its f_localsplus and value stack items in order (psyco_resume_value) and

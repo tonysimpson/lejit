@@ -1,6 +1,7 @@
-# A small body inlined into its compiled caller, seen from Python that
-# its call through C runs: the inlined frame's line, and its caller's
-# locals, must be CPython's.
+# A small body inlined into its compiled caller, seen from what it calls:
+# the inlined frame's line, its caller's locals, and the frame itself, one
+# object for the call, which goes on with what was set on it, must be
+# CPython's.
 import sys
 
 
@@ -50,7 +51,106 @@ def property_caller(n):
     return out, w
 
 
+def start_tracing(tf):
+    sys.settrace(tf)
+    sys._getframe(1).f_trace = tf      # the inlined frame's
+
+
+def traced_inline(tf, start):          # inlined: sets nothing itself
+    start(tf)
+    start = None
+
+
+def traced(n):
+    out = []
+    for i in range(n):
+        seen = []
+
+        def tf(frame, event, arg):
+            # (a resumed frame's caller during its return event isn't
+            # CPython's yet)
+            seen.append((frame.f_code.co_name, event,
+                         event != 'return' and frame.f_back.f_code.co_name))
+            return tf
+        traced_inline(tf, start_tracing)
+        sys.settrace(None)
+        out.append(seen)
+    return out
+
+
+def same_frame():
+    f = sys._getframe(1)
+    return f is sys._getframe(1), f.f_code.co_name
+
+
+def ask_twice(g):                      # inlined: asked for by its callee
+    return g()
+
+
+def ask_through_c(g):                  # inlined: asked for through map
+    return [*map(lambda _: g(), (0,))]
+
+
+def identity(n):
+    return [(ask_twice(same_frame), ask_through_c(same_frame))
+            for i in range(n)]
+
+
+def caller_frame():
+    return sys._getframe(1)
+
+
+def line_now(f):
+    return f.f_lineno - f.f_code.co_firstlineno
+
+
+def two_calls(get, read):              # inlined: its frame outlives a call
+    f = get()
+    return f is get(), read(
+        f)
+
+
+def across_calls(n):
+    return [two_calls(caller_frame, line_now) for i in range(n)]
+
+
+def write_caller_local():
+    sys._getframe(1).f_locals['x'] = 'written'
+
+
+def writes_its_local(w):               # inlined: its local written by w
+    x = 'mine'
+    w()
+    return x
+
+
+def local_written(n):
+    return [writes_its_local(write_caller_local) for i in range(n)]
+
+
+def write_local_two_up():
+    sys._getframe(2).f_locals['x'] = 'written'
+
+
+def relay(w):                          # inlined: its callee writes its caller
+    w()
+
+
+def parent_local_written(n):
+    out = []
+    for i in range(n):
+        x = 'mine'
+        relay(write_local_two_up)
+        out.append(x)
+    return out
+
+
 CASES = [
     ('caller', [(3,)], {}),
     ('property_caller', [(3,)], {}),
+    ('traced', [(3,)], {}),
+    ('identity', [(3,)], {}),
+    ('across_calls', [(3,)], {}),
+    ('local_written', [(3,)], {}),
+    ('parent_local_written', [(3,)], {}),
 ]

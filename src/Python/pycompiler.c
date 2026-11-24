@@ -5023,6 +5023,28 @@ may_write_locals_proxy(vinfo_t *container)
 #endif
 }
 
+/* the frame object kept for an inlined frame being left, if any, goes
+   (frames.c:psyco_inline_frame_left): 'test' first whether any is kept */
+static bool
+let_inline_frame_go(PsycoObject *po, bool test)
+{
+    vinfo_t *v;
+    if (test) {
+        condition_code_t cc =
+            psyco_int32_nonzero_at(po, &psyco_inline_frames_kept);
+        if (cc == CC_ERROR)
+            return false;
+        if (!runtime_condition_f(po, cc))
+            return true;
+    }
+    v = psyco_generic_call(po, psyco_inline_frame_left,
+                           CfReturnTypeInt | CfNoPython, "");
+    if (v == NULL)
+        return false;
+    vinfo_decref(v, po);
+    return true;
+}
+
 static int
 resume_if_tracing(PsycoObject *po, int next_instr, int *unwound)
 {
@@ -8865,6 +8887,13 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             if ((po->pr.python_call && ((le_op_flags(opcode) & LE_OPF_CALL) ||
                                         po->pr.proxy_write)) ||
                 po->pr.resume_pending) {
+                if (po->pr.is_inlining && po->pr.python_call)
+                    po->pr.inline_ran_python = 1;
+                if (po->pr.inline_left) {
+                    po->pr.inline_left = 0;
+                    if (!let_inline_frame_go(po, true))
+                        break;
+                }
                 po->pr.resume_pending = 0;
                 if (!resume_if_tracing(po, next_instr, &unwound))
                     break;
@@ -8974,6 +9003,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             extra_assert(LOC_INLINING == NULL);
             LOC_INLINING = v;
             po->pr.is_inlining = true;
+            po->pr.inline_ran_python = 0;
             /* mark this point as an inline frame entry */
             psyco_inline_enter(po);
             Psyco_ForgetClasses(po); /* the arguments' types */
@@ -9010,10 +9040,19 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             po->pr.is_inlining = false;
             if (!returned)
                 psyco_inline_exit(po);
-            /* the inlined frame went on interpreted: so may the caller, after
-               the instruction that called it */
-            if (resumed)
+            /* the inlined frame went on interpreted, or ran Python that may
+               have exposed the caller's frame: so may the caller, after the
+               instruction that called it */
+            if (resumed || po->pr.inline_ran_python)
                 po->pr.resume_pending = 1;
+            /* its frame object, if one was asked for, goes now */
+            if (po->pr.inline_ran_python) {
+                if (returned)
+                    po->pr.inline_left = 1;
+                else if (!let_inline_frame_go(po, false))
+                    break;
+            }
+            po->pr.inline_ran_python = 0;
             resumed = 0; /* the caller's handlers are still to run */
 
             if (PycException_Is(po, &EReturn)) {
