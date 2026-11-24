@@ -4177,6 +4177,17 @@ unpack_iterable(PyObject *v, int argcnt, int argcntafter, PyObject **sp)
             return 0;
         }
         Py_DECREF(w);
+#ifdef LE_MSG_UNPACK_TOO_MANY_SIZED
+        if (PyList_CheckExact(v) || PyTuple_CheckExact(v) ||
+            PyDict_CheckExact(v)) {
+            ll = PyDict_CheckExact(v) ? PyDict_Size(v) : Py_SIZE(v);
+            if (ll > argcnt) {
+                PyErr_Format(PyExc_ValueError, LE_MSG_UNPACK_TOO_MANY_SIZED,
+                             argcnt, ll);
+                goto Error;
+            }
+        }
+#endif
         PyErr_Format(PyExc_ValueError, LE_MSG_UNPACK_TOO_MANY, argcnt);
         goto Error;
     }
