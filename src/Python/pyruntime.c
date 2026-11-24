@@ -651,7 +651,7 @@ le_recursion_limit_address(void)
 
 /* where the interpreter's frame-evaluation function is, which compiled
    code compares with LeJIT's before a direct call
-   (mechanisms/tracing.h:le_direct_call_test) */
+   (mechanisms/tracing.h:le_direct_call_refused) */
 _Static_assert(sizeof(((PyInterpreterState *)0)->eval_frame) == 8,
                "LeJIT: the interpreter's eval_frame is read as a word");
 const long le_interp_eval_frame_at = offsetof(PyInterpreterState, eval_frame);

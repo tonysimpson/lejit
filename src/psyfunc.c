@@ -751,19 +751,11 @@ tracing_on(PsycoObject *po, vinfo_t *vts)
 
 /* Whether a compiled call or inlined frame must be the real call
    instead, which is tracing_on or another eval hook installed over
-   LeJIT's (le_direct_call_test): one test, with the same rare path */
+   LeJIT's (le_direct_call_refused) */
 static bool
 direct_call_refused(PsycoObject *po, vinfo_t *vts)
 {
-    if (!runtime_condition_f(po, le_direct_call_test(po, vts)))
-        return false;
-#if LE_HAS_MONITORING
-    /* the real call is right either way; the exact test makes the
-       version's pass again once no tool is set */
-    psyco_generic_call(po, le_tracing_recheck,
-                       CfNoReturnValue | CfNoBlock | CfNoPython, "");
-#endif
-    return true;
+    return le_direct_call_refused(po, vts);
 }
 
 DEFINEFN
