@@ -3,6 +3,7 @@
 # has the original C function, which compiled code calls with the compiled
 # frames current all the same (pmethodobject.c:PsycoCFunction_Call), so
 # stacklevel finds the callee's frame, called directly or by keyword.
+# It is imported once: a fresh module each round leaks, even plainly.
 import importlib
 import sys
 import warnings
@@ -17,7 +18,7 @@ def fresh_warn():
             sys.modules['_warnings'] = saved
 
 
-WARN = [None]
+WARN = [fresh_warn()]
 
 
 def inner(message, stacklevel=1):
@@ -29,7 +30,6 @@ def inner_positional(message, stacklevel=1):
 
 
 def where(n):
-    WARN[0] = fresh_warn()
     out = []
     for i in range(n):
         with warnings.catch_warnings(record=True) as w:
