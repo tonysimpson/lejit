@@ -145,9 +145,9 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn);
 
 /* the equivalent of Py_DECREF(): it calls tp_dealloc itself where that is
    all _Py_Dealloc would do, and _Py_Dealloc where it does more; where
-   _Py_Dealloc's only addition is the ref tracer, it tests at run time
-   whether one is set (decref_dealloc_calling) */
-#if defined(Py_TRACE_REFS) || LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+   _Py_Dealloc's only additions are the ref tracer and, for a type the GC
+   tracks, the trashcan, it tests both at run time (decref_dealloc_calling) */
+#if defined(Py_TRACE_REFS)
 #define DEC_OB_REFCNT(rg) \
     (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
 #else
