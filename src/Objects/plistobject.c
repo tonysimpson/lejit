@@ -607,7 +607,7 @@ plist_item(PsycoObject *po, vinfo_t *a, vinfo_t *i)
     return result;
 }
 
-static bool
+static vinfo_t *
 plist_ass_item(PsycoObject *po, vinfo_t *a, vinfo_t *i, vinfo_t *v)
 {
     condition_code_t cc;
@@ -619,26 +619,25 @@ plist_ass_item(PsycoObject *po, vinfo_t *a, vinfo_t *i, vinfo_t *v)
     if (v == NULL) {
         /* XXX implement item deletion */
         return psyco_generic_call(po, PyList_Type.tp_as_sequence->sq_ass_item,
-                                  CfCommonIntZeroOk, "vvl", a, i,
-                                  (long)NULL) != NULL;
+                                  CfCommonIntZeroOk, "vvl", a, i, (long)NULL);
     }
 
     /* the list may be a piece's source */
     if (!PsycoList_ForcePieces(po, NULL))
-        return false;
+        return NULL;
     vlen = psyco_get_field(po, a, VAR_size);
     if (vlen == NULL)
-        return false;
+        return NULL;
 
     cc = integer_cmp(po, i, vlen, Py_GE | COMPARE_UNSIGNED);
     vinfo_decref(vlen, po);
     if (cc == CC_ERROR)
-        return false;
+        return NULL;
 
     if (runtime_condition_f(po, cc)) {
         PycException_SetString(po, PyExc_IndexError,
                                LE_MSG_LIST_ASSIGN_INDEX_RANGE);
-        return false;
+        return NULL;
     }
     assert_nonneg(i);
 
@@ -649,12 +648,12 @@ plist_ass_item(PsycoObject *po, vinfo_t *a, vinfo_t *i, vinfo_t *v)
         vinfo_incref(v);
         vinfo_setitem(po, a, VLIST_ITEMS + CompileTime_Get(i->source)->value,
                       v);
-        return true;
+        return VINFO_OK;
     }
 
     ob_item = psyco_get_field(po, a, LIST_ob_item);
     if (ob_item == NULL)
-        return false;
+        return NULL;
 
     old_value = psyco_get_field_array(po, ob_item, LIST_itemsarray, i);
     ok = (old_value != NULL) &&
@@ -665,7 +664,7 @@ plist_ass_item(PsycoObject *po, vinfo_t *a, vinfo_t *i, vinfo_t *v)
         psyco_decref_v(po, old_value);
     vinfo_xdecref(old_value, po);
 
-    return ok;
+    return ok ? VINFO_OK : NULL;
 }
 
 DEFINEFN
@@ -813,17 +812,17 @@ plist_subscript(PsycoObject *po, vinfo_t *o, vinfo_t *key)
 }
 
 /* list_ass_subscript: a virtual slice is cimpl_list_ass_slice */
-static bool
+static vinfo_t *
 plist_ass_subscript(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
 {
     PyTypeObject *ktp = Psyco_NeedType(po, key);
     if (ktp == NULL)
-        return false;
+        return NULL;
     if (ktp == &PySlice_Type) {
         vinfo_t *i, *j, *r;
         switch (PsycoSlice_Unpack(po, key, &i, &j)) {
             case -1:
-                return false;
+                return NULL;
             case 1:
                 if (value != NULL && is_pieces(value) &&
                     Psyco_KnownType(o) == &PyList_Type &&
@@ -839,10 +838,10 @@ plist_ass_subscript(PsycoObject *po, vinfo_t *o, vinfo_t *key, vinfo_t *value)
                                            0L);
                 vinfo_decref(j, po);
                 vinfo_decref(i, po);
-                return r != NULL;
+                return r;
         }
     }
-    return psyco_generic_ass_subscript(po, o, key, value);
+    return psyco_generic_ass_subscript(po, o, key, value) ? VINFO_OK : NULL;
 }
 
 /* list_iter; a str.split() list held only by the caller is iterated
