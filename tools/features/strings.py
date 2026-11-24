@@ -446,6 +446,11 @@ msg('UNPACK_NOT_ENOUGH_STAR', 'a, b, *c = fewer values than before the star',
 msg('UNPACK_TOO_MANY', 'a, b = more values', 'ValueError',
     'exec(%s + ", = range(args[0] + 3)", {"args": args})'
     % _TARGETS.format('args[0]'), [I('d')], ints=[[7], [9]])
+msg('UNPACK_TOO_MANY_SIZED', 'a, b = a list, tuple or dict of more values',
+    'ValueError',
+    'exec(%s + " = list(range(args[1]))", {"args": args})'
+    % _TARGETS.format('args[0]'), [I('d'), I('zd')], ints=[[7, 10], [9, 13]],
+    requires='", got " in says("a, b = [1, 2, 3]")')
 msg('UNPACK_NOT_ENOUGH_AFTER_STAR', 'a, *b, c, d = fewer values than after '
     'the star', 'ValueError',
     'exec("v0, *s, " + ", ".join("w%d" % i for i in range(args[0] - 1))'
