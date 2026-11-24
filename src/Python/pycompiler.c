@@ -57,6 +57,7 @@
 #include "../Objects/plistobject.h"
 #include "../Objects/plongobject.h"
 #include "../Objects/pboolobject.h"
+#include "../Objects/pclassobject.h"
 #include "../Objects/ptupleobject.h"
 #include "../Objects/psliceobject.h"
 #include "../Objects/punicodeobject.h"
@@ -6111,11 +6112,9 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             vinfo_array_t *out;
             vinfo_t *self;
             PyObject *f;
-            int found = 0;
-            if (oparg & 1)
-                found = PsycoObject_SuperMethod(
-                    po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2),
-                    (void *)(le_code(po->pr.co).bytes + next_instr), &f);
+            int found = PsycoObject_SuperMethod(
+                po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2), oparg & 1,
+                (void *)(le_code(po->pr.co).bytes + next_instr), &f);
             if (found < 0)
                 break;
             if (found) {
@@ -6123,9 +6122,18 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
                 POP_DECREF();
                 POP_DECREF();
                 Py_INCREF(f);
-                PUSH(vinfo_new(
-                    CompileTime_NewSk(sk_new((long)f, SkFlagPyObj))));
-                PUSH(self);
+                v = vinfo_new(CompileTime_NewSk(sk_new((long)f, SkFlagPyObj)));
+                if (oparg & 1) {
+                    PUSH(v);
+                    PUSH(self);
+                }
+                else {
+                    /* the function's __get__: a bound method */
+                    x = PsycoMethod_New(v, self);
+                    vinfo_decref(v, po);
+                    vinfo_decref(self, po);
+                    PUSH(x);
+                }
                 goto fine;
             }
             out = array_new(1);
