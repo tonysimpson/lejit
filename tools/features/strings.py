@@ -219,11 +219,9 @@ msg('NO_ITEM_DELETION', "deleting an item of an object with neither "
     [F('%.200s', 'int')])
 msg('NOT_ITERABLE', "iter() of an object that isn't iterable", 'TypeError',
     'iter(args[0]())', [T()])
-msg('NEXT_NOT_IMPLEMENTED', "a for loop's iterator whose __next__ has gone",
-    'TypeError',
-    'I = cls(args[0].__name__)\nI.__iter__ = lambda s: s\n'
-    'def n(s):\n    del I.__next__\n    return 1\nI.__next__ = n\n'
-    'for x in I():\n    pass', [T()])
+msg('NEXT_NOT_ITERATOR', "next() of an object that isn't an iterator, as "
+    "a for loop's iterator with no __next__ slot", 'TypeError',
+    'next(args[0]())', [T()])
 
 # the operators' names, as a binary operator's message shows them
 for _name, _code in [
