@@ -94,12 +94,13 @@ def many_types(n):
     return [[s().m(i) for s in subs] for i in range(n)]
 
 
+NEW_CLASSES = (40, "each round's classes are new: the sites promote them for "
+                   'some rounds before they stop')
+
 CASES = [
-    ('base_changes', [(10,)], {}),
+    ('base_changes', [(10,)], {'warmup': NEW_CLASSES}),
     ('bases_changed', [(6,)], {}),
-    ('class_cell', [(8,)],
-     {'warmup': (40, "each round's classes are new: the site promotes the "
-                     'class from the cell for some rounds before it stops')}),
+    ('class_cell', [(8,)], {'warmup': NEW_CLASSES}),
     ('getattribute_added', [(5,)], {}),
     ('many_types', [(3,)], {}),
 ]
