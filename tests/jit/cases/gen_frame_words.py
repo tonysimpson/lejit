@@ -404,6 +404,41 @@ def nexts(n):
     out.append(g.send(g))
     return out, compiled(returns_after)
 
+# Immortal and mortal objects in the locals and on the stack across
+# resumes, and when the mortal ones die.
+def holds(n):
+    big = 10 ** 20 + n
+    obj = D('local')
+    none, flag, small, name = None, True, 7, 'name'
+    yield work(label(obj))
+    t = pair(D('stacked'), (yield work((none, flag, small, name))), big,
+             None, 3)
+    yield work(tuple(label(x) for x in t))
+    del t
+    gone = obj
+    del obj
+    yield work((label(gone), big, none, flag, small))
+    obj = gone
+    del gone
+    yield work(label(obj))
+
+
+def held_counts(n):
+    out = []
+    for k in range(4):
+        g = holds(n)
+        out.append([label(x) for x in (next(g), next(g), g.send('sent'))])
+        out.append(taken())
+        out.append([next(g), next(g)])
+        out.append((by_next(g), taken()))
+        g = holds(n)
+        next(g)
+        next(g)
+        del g
+        out.append(taken())
+        out.append((by_for(holds(n)), taken()))
+    return out, compiled(holds)
+
 CASES = [
     ('store_and_end', [(3,)], {}),
     ('bound_and_not', [(0,)], {}),
@@ -413,4 +448,5 @@ CASES = [
     ('changed_while_paused', [(2,)], {}),
     ('limits', [(4,)], {}),
     ('nexts', [(3,)], {}),
+    ('held_counts', [(3,)], {}),
 ]
