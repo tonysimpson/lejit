@@ -406,6 +406,20 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     fill_jz[1] = (code_t)(code - (fill_jz + 2));
     le_trace_jump_cond(fill_jz, fill_jz + 2, code);
     if (IN_VALUES(s)) {
+#if LE_HAS_INLINE_VALUES
+        /* the order's entries follow the values' 'capacity' words, and
+           'size' is its length; every index the keys hold is below the
+           capacity */
+        MOVZX_DR_BO(REG_X64_RCX, REG_X64_R8,
+                    values_at - LE_VALUES_ARRAY + LE_VALUES_CAPACITY);
+        LEA_R_X8(REG_X64_RCX, REG_X64_R8, values_at, REG_X64_RCX, 8);
+        MOVZX_DR_BO(REG_X64_RAX, REG_X64_R8,
+                    values_at - LE_VALUES_ARRAY + LE_VALUES_SIZE);
+        MOV_BX8_R(REG_X64_RCX, 0, REG_X64_RAX, 1, REG_X64_R9);
+        ADD_R_I8(REG_X64_RAX, 1);
+        MOV_BO_R(REG_X64_R8, values_at - LE_VALUES_ARRAY + LE_VALUES_SIZE,
+                 REG_X64_RAX);
+#else
         /* the order's length is the byte below the values, its entries the
            bytes below that, the first nearest; the values have room for
            every entry of the keys */
@@ -414,6 +428,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         MOV_BO_R(REG_X64_R8, values_at - 2, REG_X64_RCX);
         UNARY_INSTR_ON_REG(3, REG_X64_RCX); /* neg */
         MOV_BX8_R(REG_X64_R8, values_at - 2, REG_X64_RCX, 1, REG_X64_R9);
+#endif
     }
     else {
         CMP_R_O8(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));

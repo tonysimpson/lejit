@@ -1760,8 +1760,7 @@ inline_store(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp, vinfo_t *v,
         s.dictoffset = values_offset(tp);
         s.keys = class_keys(tp);
         s.gc = STORE_GC_NONE;
-        /* FILL keeps the insertion order of values behind a pointer only */
-        s.fill = !LE_HAS_INLINE_VALUES && init_store(po, obj);
+        s.fill = init_store(po, obj);
         s.miss_glue = managed_store_miss_glue;
     }
 #endif
