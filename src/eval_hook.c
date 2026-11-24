@@ -759,6 +759,17 @@ le_gen_direct_end(PyObject *self, PyObject *result)
     return PyGen_Type.tp_iternext(self);
 #endif
 }
+
+/* gen_iternext and gen_send differ only in a return of None, where
+   send raises StopIteration */
+DEFINEFN PyObject *
+le_gen_direct_send_end(PyObject *self, PyObject *result)
+{
+    result = le_gen_direct_end(self, result);
+    if (result == NULL && !PyErr_Occurred())
+        PyErr_SetNone(PyExc_StopIteration);
+    return result;
+}
 #endif
 
 /* any other frame */

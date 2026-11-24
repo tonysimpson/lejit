@@ -45,6 +45,10 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
 /* compiled code's step of the generator 'vgen', as tp_iternext */
 EXTERNFN vinfo_t *
 psyco_gen_step(PsycoObject *po, vinfo_t *vgen);
+/* the same as vgen.send(varg), whose C function is 'send' */
+EXTERNFN vinfo_t *
+psyco_gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg,
+               PyCFunction send);
 #endif
 /* whether the await being compiled runs the body of the pending coroutine
    'v' as a call, emitting the tests: 1 to, 0 not to, -1 with an
