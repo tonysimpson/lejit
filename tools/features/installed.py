@@ -370,6 +370,7 @@ HEADER_DETECTORS = {
     'FRAME_INSTR_PTR': internal(features.frame_instr_ptr),
     'TSTATE_CURRENT_FRAME': features.tstate_current_frame,
     'TSTATE_EVAL_BREAKER': features.tstate_eval_breaker,
+    'INTERP_MONITORING_VERSION': internal(features.interp_monitoring_version),
     'TRACEBACK_FROM_FRAME_API': traceback_from_frame_api,
     'LONG_VALUE': features.long_value,
     'TYPE_GET_DICT': public('PyType_GetDict'),
