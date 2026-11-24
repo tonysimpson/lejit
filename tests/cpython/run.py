@@ -28,6 +28,14 @@ BANNED = {
 # reason: tests skipped in both runs, by id as the report prints it (fnmatch
 # patterns)
 SKIPPED = {
+    'times what runs after the timer starts against a margin of a '
+    'millisecond or less, which compiling that code can take on a busy '
+    'machine':
+        'test.test_os.TimerfdTests.test_timerfd_*initval '
+        'test.test_os.TimerfdTests.test_timerfd_*interval '
+        'test.test_os.TimerfdTests.test_timerfd_*TFD_TIMER_ABSTIME '
+        'test.test_os.TimerfdTests.test_timerfd_*select '
+        'test.test_os.TimerfdTests.test_timerfd_*poll',
     'connects to a port it found unused, which a test running at the same '
     'time can take, and expects the connection to fail':
         'test.test_asyncio.test_events.*EventLoopTests.'
