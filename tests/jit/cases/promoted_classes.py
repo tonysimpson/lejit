@@ -124,6 +124,43 @@ def megamorphic_stays():
     return total, grown
 
 
+# A function exec'd into a namespace of its own, as template engines and
+# code generators make them, called by long-lived code: it dies once nothing
+# refers to it, though its qualified name has no '<locals>'.
+FRESH_SOURCE = """
+def fresh(x):
+    return sorted(x, key=abs), x
+"""
+
+
+def call_fresh(f, x):
+    return f(x)
+
+
+def make_fresh():
+    ns = {}
+    exec(compile(FRESH_SOURCE, 'fresh', 'exec'), ns)
+    return ns['fresh']
+
+
+# has a loop, so it isn't inlined into its caller: no frame of it runs when
+# its caller collects
+def call_fresh_ones(refs):
+    total = 0
+    for k in range(20):
+        f = make_fresh()
+        total += len(call_fresh(f, [k, -1])[0])
+        refs.append(weakref.ref(f))
+    return total
+
+
+def fresh_functions_die():
+    refs = []
+    total = call_fresh_ones(refs)
+    gc.collect()
+    return total, sum(r() is None for r in refs)
+
+
 CASES = [
     ('classes_die', [()], {}),
     ('classes_die_at_loop_heads', [()], {}),
@@ -131,4 +168,5 @@ CASES = [
      {'xfail': "__add__ called through the slot is compiled for each "
                "class under its own code object"}),
     ('megamorphic_stays', [()], {'checked': 'reads lejit._core._stats'}),
+    ('fresh_functions_die', [()], {}),
 ]

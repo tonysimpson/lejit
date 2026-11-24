@@ -1310,8 +1310,11 @@ has_locals(PyObject *qualname)
                           1) >= 0;
 }
 
-/* Does 'o' look as if it may die while code specialised on it lives? A
-   function or class made inside a function ('<locals>' in its qualified
+/* Does 'o' look as if it may die while code specialised on it lives? Any
+   code object, as nothing in one tells whether a module holds it (a call
+   site promotes its callee's code, and the code of a function exec'd into
+   a namespace of its own holds that namespace through its compiled code),
+   a function or class made inside a function ('<locals>' in its qualified
    name), or a class made by Python code that its module doesn't name (by
    type(), or replaced); not one a module names, which lives as long as
    it. Getting it wrong costs memory, never correctness. Only dict
@@ -1322,6 +1325,8 @@ looks_short_lived(PyObject *o)
     PyTypeObject *tp = (PyTypeObject *)o;
     PyObject *qualname, *module, *d, *found = NULL;
     Py_ssize_t start = 0, i, n;
+    if (PyCode_Check(o))
+        return true;
     if (PyFunction_Check(o)) {
         qualname = ((PyFunctionObject *)o)->func_qualname;
         return qualname != NULL && PyUnicode_Check(qualname) &&
