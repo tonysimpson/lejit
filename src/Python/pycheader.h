@@ -55,8 +55,9 @@
    (psyfunc.c:psyco_call_genexpr) has two more slots, after its free
    variables and before the stack: what YIELD_VALUE does (GENEXPR_*, a
    compile-time value, so versions for different consumers never match at
-   a merge point) and the accumulator. Its RETURN_VALUE returns the
-   result. */
+   a merge point) and the accumulator; and where sum() compensates float
+   sums, a third, the compensation (pbltinmodule.c:psyco_sum_step). Its
+   RETURN_VALUE returns the result. */
 #define GENEXPR_LIST 1 /* list(), tuple(): acc is a list, append */
 #define GENEXPR_SET 2  /* set(): acc is a set, add */
 #define GENEXPR_SUM 3  /* sum(): acc = acc + value */
@@ -76,9 +77,16 @@
    frame, as they would be, and returns le_coro_suspended
    (pycompiler.c:yield_direct). acc is unused. */
 #define GENEXPR_DIRECT 9
-#define GENEXPR_SLOTS 2
+/* sum() where it compensates float sums, in the phase of builtin_sum_impl's
+   loop its result is in (pbltinmodule.c:psyco_sum_step): GENEXPR_SUM is
+   its int loop, then these */
+#define GENEXPR_SUM_FLOAT 10   /* acc a float, the compensation a double */
+#define GENEXPR_SUM_COMPLEX 11 /* acc the complex sum's state */
+#define GENEXPR_SUM_GENERIC 12 /* plain +, for good */
+#define GENEXPR_SLOTS (2 + LE_HAS_SUM_COMPENSATED)
 #define GENEXPR_SLOT_MODE(co) (INDEX_LOC_LOCALS_PLUS + le_code_nlocalsplus(co))
 #define GENEXPR_SLOT_ACC(co) (GENEXPR_SLOT_MODE(co) + 1)
+#define GENEXPR_SLOT_COMP(co) (GENEXPR_SLOT_MODE(co) + 2)
 
 #define LOC_CONTINUATION (po->vlocals.items[INDEX_LOC_CONTINUATION])
 #define LOC_GLOBALS (po->vlocals.items[INDEX_LOC_GLOBALS])

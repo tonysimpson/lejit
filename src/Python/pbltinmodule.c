@@ -342,7 +342,7 @@ static vinfo_t *
 genexpr_consume(PsycoObject *po, vinfo_t *vgen, int mode, PyTypeObject *tp,
                 vinfo_t *start)
 {
-    vinfo_t *acc, *result, *t;
+    vinfo_t *acc, *result, *t, *comp = NULL;
     if (mode == GENEXPR_LIST)
         acc = psyco_generic_call(po, PyList_New, CfCommonNewRefPyObject, "l",
                                  0L);
@@ -350,19 +350,28 @@ genexpr_consume(PsycoObject *po, vinfo_t *vgen, int mode, PyTypeObject *tp,
         acc =
             psyco_generic_call(po, PySet_New, CfCommonNewRefPyObject, "l", 0L);
     else if (mode == GENEXPR_SUM) {
+#if LE_HAS_SUM_COMPENSATED
+        /* the fused code goes on from the phase the start is in */
+        if (!psyco_sum_start(po, start, &mode, &acc, &comp))
+            return NULL;
+#else
         if (start != NULL) {
             vinfo_incref(start);
             acc = start;
         }
         else
             acc = PsycoLong_FROM_LONG(po, psyco_vi_Zero());
+#endif
     }
     else
         acc = psyco_vi_Zero();
-    if (acc == NULL)
+    if (acc == NULL) {
+        vinfo_xdecref(comp, po);
         return NULL;
-    result = psyco_call_genexpr(po, vgen, mode, acc);
+    }
+    result = psyco_call_genexpr(po, vgen, mode, acc, comp);
     vinfo_decref(acc, po);
+    vinfo_xdecref(comp, po);
     if (result != NULL && tp == &PyTuple_Type) {
         t = psyco_generic_call(po, PyList_AsTuple, CfCommonNewRefPyObject, "v",
                                result);
@@ -597,6 +606,512 @@ PsycoObject_IsInstance(PsycoObject *po, vinfo_t *vobj, vinfo_t *vcls)
                               "vv", vobj, vcls);
 }
 
+#if LE_HAS_SUM_COMPENSATED
+/* builtin_sum_impl (Python/bltinmodule.c) where it compensates float sums
+   runs in phases, one loop each, and never goes back to an earlier one:
+   its int loop while the result is an exact int that fits a C long
+   (GENEXPR_SUM: 'acc' the int), its float loop while it is an exact float
+   (GENEXPR_SUM_FLOAT: 'acc' the float, 'comp' the compensation, a double),
+   where SUM_COMPLEX_COMPENSATED its complex loop while it is an exact
+   complex (GENEXPR_SUM_COMPLEX: 'acc' cimpl_sum_complex_*'s state), then
+   plain + (GENEXPR_SUM_GENERIC). Compiled code follows the phase at
+   compile time, and tests at run time only what CPython's loops test then:
+   whether an int fits, and the result's type on leaving a loop. Types are
+   promoted only before an addition: a promotion restarts the instruction,
+   which would add again. */
+
+/* the compensated sum (bltinmodule.c's float loop, or its cs_add and
+   cs_to_double) */
+static double
+cimpl_cs_hi(double hi, double x)
+{
+    return hi + x;
+}
+
+static double
+cimpl_cs_lo(double hi, double lo, double x)
+{
+    double t = hi + x;
+    if (fabs(hi) >= fabs(x))
+        lo += (hi - t) + x;
+    else
+        lo += (x - t) + hi;
+    return lo;
+}
+
+/* the sum's double: the compensation is added only where it can't lose a
+   negative zero's sign or turn an infinite or overflowed sum into a NaN */
+static double
+cimpl_cs_to_double(double hi, double lo)
+{
+    if (lo && isfinite(lo))
+        return hi + lo;
+    return hi;
+}
+
+/* whether an int fits a C long, as PyLong_AsLongAndOverflow tells */
+static int
+cimpl_long_fits(PyObject *v)
+{
+    int overflow;
+    PyLong_AsLongAndOverflow(v, &overflow);
+    return !overflow;
+}
+
+static int
+cimpl_sum_int_fits(PyObject *item, PyObject *sum)
+{
+    return cimpl_long_fits(item) && cimpl_long_fits(sum);
+}
+
+#if !LE_HAS_SUM_INT_AS_DOUBLE
+/* the float loop's int that fits a C long, as it converts it */
+static double
+cimpl_long_as_double(PyObject *v)
+{
+    return (double)PyLong_AsLong(v);
+}
+#endif
+
+#if LE_HAS_SUM_COMPLEX_COMPENSATED
+/* the complex loop's state: a bytearray of the real and the imaginary
+   parts' compensated sums, (sum, compensation) each */
+static PyObject *
+cimpl_sum_complex_begin(PyObject *z)
+{
+    PyObject *box = PyByteArray_FromStringAndSize(NULL, 4 * sizeof(double));
+    double *d;
+    if (box == NULL)
+        return NULL;
+    d = (double *)PyByteArray_AS_STRING(box);
+    d[0] = PyComplex_RealAsDouble(z);
+    d[1] = 0.0;
+    d[2] = PyComplex_ImagAsDouble(z);
+    d[3] = 0.0;
+    return box;
+}
+
+static void
+complex_box_add(double *d, double x)
+{
+    double hi = d[0];
+    d[0] = cimpl_cs_hi(hi, x);
+    d[1] = cimpl_cs_lo(hi, d[1], x);
+}
+
+static PyObject *
+complex_box_value(PyObject *box)
+{
+    double *d = (double *)PyByteArray_AS_STRING(box);
+    return PyComplex_FromDoubles(cimpl_cs_to_double(d[0], d[1]),
+                                 cimpl_cs_to_double(d[2], d[3]));
+}
+
+/* one item of the complex loop: the state itself (a new reference) while
+   the loop goes on, or the result of leaving it, the sum + item; NULL on
+   error */
+static PyObject *
+cimpl_sum_complex_step(PyObject *box, PyObject *item)
+{
+    double *d = (double *)PyByteArray_AS_STRING(box);
+    PyObject *result, *x;
+    if (PyComplex_CheckExact(item)) {
+        Py_complex z = PyComplex_AsCComplex(item);
+        complex_box_add(d, z.real);
+        d += 2;
+        complex_box_add(d, z.imag);
+    }
+    else if (PyLong_Check(item)) {
+        double value = PyLong_AsDouble(item);
+        if (value == -1.0 && PyErr_Occurred())
+            return NULL;
+        complex_box_add(d, value);
+    }
+    else if (PyFloat_Check(item))
+        complex_box_add(d, PyFloat_AS_DOUBLE(item));
+    else {
+        result = complex_box_value(box);
+        if (result == NULL)
+            return NULL;
+        x = PyNumber_Add(result, item);
+        Py_DECREF(result);
+        return x;
+    }
+    Py_INCREF(box);
+    return box;
+}
+
+static PyObject *
+cimpl_sum_complex_end(PyObject *box)
+{
+    return complex_box_value(box);
+}
+#endif
+
+/* 1 if x's type is tp at run time, known from then on; 0 if not; -1 on
+   error. A run-time test, not a promotion. */
+static int
+sum_type_is(PsycoObject *po, vinfo_t *x, PyTypeObject *tp)
+{
+    PyTypeObject *known = Psyco_KnownType(x);
+    vinfo_t *vtp;
+    condition_code_t cc;
+    bool t;
+    if (known != NULL)
+        return known == tp;
+    vtp = psyco_get_field(po, x, OB_type);
+    if (vtp == NULL)
+        return -1;
+    cc = integer_cmp_i(po, vtp, (long)tp, Py_EQ);
+    if (cc == CC_ERROR) {
+        vinfo_decref(vtp, po);
+        return -1;
+    }
+    t = runtime_condition_t(po, cc);
+    vinfo_decref(vtp, po);
+    if (!t)
+        return 0;
+    Psyco_AssertType(po, x, tp);
+    return 1;
+}
+
+/* a value whose type is known to be tp, for its later uses */
+static void
+sum_know_type(PsycoObject *po, vinfo_t *v, PyTypeObject *tp)
+{
+    if (!is_compiletime(v->source) && Psyco_KnownType(v) == NULL)
+        Psyco_AssertType(po, v, tp);
+}
+
+static int
+sum_rank(int phase)
+{
+    switch (phase) {
+        case 0:
+            return 0;
+        case GENEXPR_SUM:
+            return 1;
+        case GENEXPR_SUM_FLOAT:
+            return 2;
+        case GENEXPR_SUM_COMPLEX:
+            return 3;
+        default:
+            return 4;
+    }
+}
+
+/* the phase that 'x' (consumed), the result after leaving phase 'after'
+   (0 at the start), goes on in: the first later loop whose test it passes */
+static bool
+sum_enter(PsycoObject *po, int after, vinfo_t *x, int *phase, vinfo_t **acc,
+          vinfo_t **comp)
+{
+    int r = sum_rank(after), t;
+    *comp = psyco_vi_Zero();
+    if (r < 1) {
+        if ((t = sum_type_is(po, x, &PyLong_Type)) < 0)
+            goto fail;
+        if (t) {
+            if (!PsycoLong_IsVirtual(x) && !is_compiletime(x->source)) {
+                vinfo_t *fits = psyco_generic_call(
+                    po, cimpl_long_fits,
+                    CfReturnTypeInt | CfNoPython | CfNoBlock, "v", x);
+                if (fits == NULL || (t = runtime_NON_NULL_t(po, fits)) < 0)
+                    goto fail;
+            }
+            else if (is_compiletime(x->source))
+                t = cimpl_long_fits(
+                    (PyObject *)CompileTime_Get(x->source)->value);
+            if (t) {
+                *phase = GENEXPR_SUM;
+                *acc = x;
+                return true;
+            }
+        }
+    }
+    if (r < 2) {
+        if ((t = sum_type_is(po, x, &PyFloat_Type)) < 0)
+            goto fail;
+        if (t) {
+            *phase = GENEXPR_SUM_FLOAT;
+            *acc = x;
+            return true;
+        }
+    }
+#if LE_HAS_SUM_COMPLEX_COMPENSATED
+    if (r < 3) {
+        if ((t = sum_type_is(po, x, &PyComplex_Type)) < 0)
+            goto fail;
+        if (t) {
+            vinfo_t *box = psyco_generic_call(po, cimpl_sum_complex_begin,
+                                              CfCommonNewRefPyObject, "v", x);
+            vinfo_decref(x, po);
+            if (box == NULL) {
+                vinfo_decref(*comp, po);
+                return false;
+            }
+            *phase = GENEXPR_SUM_COMPLEX;
+            *acc = box;
+            return true;
+        }
+    }
+#endif
+    *phase = GENEXPR_SUM_GENERIC;
+    *acc = x;
+    return true;
+fail:
+    vinfo_decref(*comp, po);
+    vinfo_decref(x, po);
+    return false;
+}
+
+/* the start of a sum(): 'start' is its start argument, or NULL for 0 */
+DEFINEFN
+bool
+psyco_sum_start(PsycoObject *po, vinfo_t *start, int *phase, vinfo_t **acc,
+                vinfo_t **comp)
+{
+    vinfo_t *x;
+    if (start != NULL) {
+        vinfo_incref(start);
+        x = start;
+    }
+    else
+        x = PsycoLong_FROM_LONG(po, psyco_vi_Zero());
+    if (x == NULL)
+        return false;
+    return sum_enter(po, 0, x, phase, acc, comp);
+}
+
+/* the float loop's step for an exact float or int's double 'xd' */
+static bool
+sum_float_add(PsycoObject *po, vinfo_t **acc, vinfo_t **comp, vinfo_t *xd,
+              bool compensated)
+{
+    vinfo_t *hi = PsycoFloat_AS_DOUBLE(po, *acc), *nhi, *nlo;
+    if (hi == NULL)
+        return false;
+    nhi = psyco_generic_call(
+        po, cimpl_cs_hi, CfPure | CfReturnTypeDouble | CfNoPython | CfNoBlock,
+        "dd", hi, xd);
+    if (nhi == NULL)
+        return false;
+    if (compensated) {
+        nlo = psyco_generic_call(
+            po, cimpl_cs_lo,
+            CfPure | CfReturnTypeDouble | CfNoPython | CfNoBlock, "ddd", hi,
+            *comp, xd);
+        if (nlo == NULL) {
+            vinfo_decref(nhi, po);
+            return false;
+        }
+        vinfo_decref(*comp, po);
+        *comp = nlo;
+    }
+    vinfo_decref(*acc, po);
+    *acc = PsycoFloat_FROM_DOUBLE(nhi);
+    return true;
+}
+
+/* the float loop's double: a new reference */
+static vinfo_t *
+sum_float_value(PsycoObject *po, vinfo_t *acc, vinfo_t *comp)
+{
+    vinfo_t *hi = PsycoFloat_AS_DOUBLE(po, acc), *d;
+    if (hi == NULL)
+        return NULL;
+    d = psyco_generic_call(
+        po, cimpl_cs_to_double,
+        CfPure | CfReturnTypeDouble | CfNoPython | CfNoBlock, "dd", hi, comp);
+    return d != NULL ? PsycoFloat_FROM_DOUBLE(d) : NULL;
+}
+
+/* one item of a sum() in its phase: *acc and *comp (and *phase) replaced
+   by the next ones; false on error, leaving them */
+DEFINEFN
+bool
+psyco_sum_step(PsycoObject *po, int *phase, vinfo_t **acc, vinfo_t **comp,
+               vinfo_t *item)
+{
+    PyTypeObject *tp;
+    vinfo_t *x, *res, *xd, *fits;
+    vinfo_t *nacc = *acc, *ncomp = *comp;
+    int nphase = *phase, t;
+    if (*phase == GENEXPR_SUM_GENERIC) {
+        if (Psyco_KnownType(*acc) != NULL)
+            x = PsycoNumber_Add(po, *acc, item);
+        else
+            x = psyco_generic_call(po, PyNumber_Add, CfCommonNewRefPyObject,
+                                   "vv", *acc, item);
+        if (x == NULL)
+            return false;
+        vinfo_decref(*acc, po);
+        *acc = x;
+        return true;
+    }
+#if LE_HAS_SUM_COMPLEX_COMPENSATED
+    if (*phase == GENEXPR_SUM_COMPLEX) {
+        condition_code_t cc;
+        x = psyco_generic_call(po, cimpl_sum_complex_step,
+                               CfCommonNewRefPyObject, "vv", *acc, item);
+        if (x == NULL)
+            return false;
+        cc = integer_cmp(po, x, *acc, Py_EQ);
+        if (cc == CC_ERROR) {
+            vinfo_decref(x, po);
+            return false;
+        }
+        if (!runtime_condition_t(po, cc))
+            *phase = GENEXPR_SUM_GENERIC;
+        vinfo_decref(*acc, po);
+        *acc = x;
+        return true;
+    }
+#endif
+    /* every promotion first, before anything adds */
+    tp = Psyco_NeedType(po, item);
+    if (tp == NULL)
+        return false;
+    if (*phase == GENEXPR_SUM) {
+        sum_know_type(po, *acc, &PyLong_Type);
+        x = PsycoNumber_Add(po, *acc, item);
+        if (x == NULL)
+            return false;
+        if (tp != &PyLong_Type && tp != &PyBool_Type) {
+            /* the int loop ends: its result + item */
+            if (!sum_enter(po, GENEXPR_SUM, x, &nphase, &nacc, &ncomp))
+                return false;
+            vinfo_decref(*acc, po);
+            vinfo_decref(*comp, po);
+            *phase = nphase;
+            *acc = nacc;
+            *comp = ncomp;
+            return true;
+        }
+        /* it goes on while the item and the sum fit a C long; else the
+           sum is an int, which goes on with plain + */
+        t = 1;
+        if (!PsycoLong_IsVirtual(x)) {
+            if (PsycoLong_IsVirtual(item))
+                fits = psyco_generic_call(
+                    po, cimpl_long_fits,
+                    CfReturnTypeInt | CfNoPython | CfNoBlock, "v", x);
+            else
+                fits = psyco_generic_call(
+                    po, cimpl_sum_int_fits,
+                    CfReturnTypeInt | CfNoPython | CfNoBlock, "vv", item, x);
+            if (fits == NULL || (t = runtime_NON_NULL_t(po, fits)) < 0) {
+                vinfo_decref(x, po);
+                return false;
+            }
+        }
+        else if (!PsycoLong_IsVirtual(item) && !is_compiletime(item->source)) {
+            fits = psyco_generic_call(po, cimpl_long_fits,
+                                      CfReturnTypeInt | CfNoPython | CfNoBlock,
+                                      "v", item);
+            if (fits == NULL || (t = runtime_NON_NULL_t(po, fits)) < 0) {
+                vinfo_decref(x, po);
+                return false;
+            }
+        }
+        else if (is_compiletime(item->source))
+            t = cimpl_long_fits(
+                (PyObject *)CompileTime_Get(item->source)->value);
+        if (!t)
+            *phase = GENEXPR_SUM_GENERIC;
+        sum_know_type(po, x, &PyLong_Type);
+        vinfo_decref(*acc, po);
+        *acc = x;
+        return true;
+    }
+    /* the float loop */
+    sum_know_type(po, *acc, &PyFloat_Type);
+    if (tp == &PyFloat_Type) {
+        xd = PsycoFloat_AS_DOUBLE(po, item);
+        return xd != NULL && sum_float_add(po, acc, comp, xd, true);
+    }
+    if (PyType_IsSubtype(tp, &PyLong_Type)) {
+#if LE_HAS_SUM_INT_AS_DOUBLE
+        bool ok;
+        xd = PsycoLong_AsDouble(po, item);
+        if (xd == NULL)
+            return false;
+        ok = sum_float_add(po, acc, comp, xd, true);
+        vinfo_decref(xd, po);
+        return ok;
+#else
+        /* added as a C long, with plain +; one that doesn't fit ends the
+           loop */
+        bool ok;
+        if (PsycoLong_IsVirtual(item)) {
+            xd = psyco_generic_call(
+                po, cimpl_fp_from_long,
+                CfPure | CfReturnTypeDouble | CfNoPython | CfNoBlock, "v",
+                item->array->items[iLONG_VALUE]);
+            if (xd == NULL)
+                return false;
+        }
+        else {
+            if (is_compiletime(item->source))
+                t = cimpl_long_fits(
+                    (PyObject *)CompileTime_Get(item->source)->value);
+            else {
+                fits = psyco_generic_call(
+                    po, cimpl_long_fits,
+                    CfReturnTypeInt | CfNoPython | CfNoBlock, "v", item);
+                if (fits == NULL || (t = runtime_NON_NULL_t(po, fits)) < 0)
+                    return false;
+            }
+            xd = !t ? NULL
+                    : psyco_generic_call(
+                          po, cimpl_long_as_double,
+                          CfReturnTypeDouble | CfNoPython | CfNoBlock, "v",
+                          item);
+            if (t && xd == NULL)
+                return false;
+        }
+        if (xd != NULL) {
+            ok = sum_float_add(po, acc, comp, xd, false);
+            vinfo_decref(xd, po);
+            return ok;
+        }
+#endif
+    }
+    /* the float loop ends: its result + item */
+    res = sum_float_value(po, *acc, *comp);
+    if (res == NULL)
+        return false;
+    x = PsycoNumber_Add(po, res, item);
+    vinfo_decref(res, po);
+    if (x == NULL)
+        return false;
+    if (!sum_enter(po, GENEXPR_SUM_FLOAT, x, &nphase, &nacc, &ncomp))
+        return false;
+    vinfo_decref(*acc, po);
+    vinfo_decref(*comp, po);
+    *phase = nphase;
+    *acc = nacc;
+    *comp = ncomp;
+    return true;
+}
+
+/* the sum's result, a new reference */
+DEFINEFN
+vinfo_t *
+psyco_sum_result(PsycoObject *po, int phase, vinfo_t *acc, vinfo_t *comp)
+{
+    if (phase == GENEXPR_SUM_FLOAT)
+        return sum_float_value(po, acc, comp);
+#if LE_HAS_SUM_COMPLEX_COMPENSATED
+    if (phase == GENEXPR_SUM_COMPLEX)
+        return psyco_generic_call(po, cimpl_sum_complex_end,
+                                  CfCommonNewRefPyObject, "v", acc);
+#endif
+    vinfo_incref(acc);
+    return acc;
+}
+#endif /* LE_HAS_SUM_COMPENSATED */
+
 /* builtin_sum_impl (Python/bltinmodule.c) is a left fold of PyNumber_Add
    from start (default 0); its C fast path for exact ints gives the same
    results, and so does its one for floats except where SUM_COMPENSATED,
@@ -610,9 +1125,10 @@ pbuiltin_sum(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs)
 {
     int n = PsycoTuple_Load(vargs);
     int i, k;
+
     vinfo_t *vit, *result, *x;
     PyTypeObject *tp;
-    if ((n != 1 && n != 2) || LE_HAS_SUM_COMPENSATED)
+    if (n != 1 && n != 2)
         goto fallback;
     vit = PsycoTuple_GET_ITEM(vargs, 0);
     if (psyco_genexpr_fusable(po, vit)) {
@@ -656,6 +1172,23 @@ pbuiltin_sum(PsycoObject *po, vinfo_t *vself, vinfo_t *vargs)
     for (i = 0; i < k; i++)
         if (Psyco_NeedType(po, PsycoTuple_GET_ITEM(vit, i)) == NULL)
             return NULL;
+#if LE_HAS_SUM_COMPENSATED
+    {
+        int phase;
+        vinfo_t *comp;
+        if (!psyco_sum_start(po, n == 2 ? PsycoTuple_GET_ITEM(vargs, 1) : NULL,
+                             &phase, &result, &comp))
+            return NULL;
+        for (i = 0; i < k; i++)
+            if (!psyco_sum_step(po, &phase, &result, &comp,
+                                PsycoTuple_GET_ITEM(vit, i)))
+                break;
+        x = i < k ? NULL : psyco_sum_result(po, phase, result, comp);
+        vinfo_decref(result, po);
+        vinfo_decref(comp, po);
+        return x;
+    }
+#endif
     if (n == 2) {
         result = PsycoTuple_GET_ITEM(vargs, 1);
         vinfo_incref(result);

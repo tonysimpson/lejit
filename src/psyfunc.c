@@ -591,6 +591,20 @@ psyco_save_inline_po(PsycoObject *po)
     return v;
 }
 
+/* whether the code being compiled may inline a call: not in blocks made
+   after one of its merge points reached its cap (vcompiler.c:mp_new_block).
+   One-way and read by the block's serial, so a replay decides the same
+   (codemanager.h:psyco_block_serial). An inlined call's instruction, which
+   restarts with the body's result (LOC_INLINING), is inlining whatever
+   the block it restarts in. */
+static bool
+inline_into(PsycoObject *po)
+{
+    le_code_extra_t *x = le_code_extra_get(po->pr.co);
+    return x == NULL || x->inline_end == 0 ||
+           psyco_block_serial(po) + 1 < x->inline_end;
+}
+
 DEFINEFN
 PsycoObject *
 psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a)
@@ -1120,7 +1134,8 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
        reach RecursionError at twice CPython's depth */
     inlining = !generator && allow_inline && !po->pr.is_inlining &&
                co != po->pr.co &&
-               (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE);
+               (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE) &&
+               (LOC_INLINING != NULL || inline_into(po));
     /* the instruction restarting with the inlined body's result binds again
        only to check it: its cells were made for the body. A generator's
        binding is checked here and done again by its consumer. */
@@ -1297,7 +1312,8 @@ pending_code(vinfo_t *vgen)
    as a new reference. */
 DEFINEFN
 vinfo_t *
-psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
+psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
+                   vinfo_t *comp)
 {
     vinfo_t *vfunc = vgen->array->items[iGENEXPR_FUNC];
     vinfo_t *args = vgen->array->items[iGENEXPR_ARGS];
@@ -1324,6 +1340,13 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
     vmode = vinfo_new(CompileTime_NewSk(sk_new(mode, SkFlagFixed)));
     extra[0] = vmode;
     extra[1] = acc;
+#if LE_HAS_SUM_COMPENSATED
+    if (comp != NULL)
+        vinfo_incref(comp);
+    else
+        comp = psyco_vi_Zero();
+    extra[2] = comp;
+#endif
     if (callee_builtins(po, vfunc, vglobals, &vbuiltins) != 1)
         psyco_fatal_msg("generator builtins");
     /* the defaults are among the arguments (args_with_defaults), and their
@@ -1339,6 +1362,9 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
             break;
         default:
             vinfo_decref(vmode, po);
+#if LE_HAS_SUM_COMPENSATED
+            vinfo_decref(comp, po);
+#endif
             vinfo_decref(vbuiltins, po);
             return NULL;
     }
@@ -1370,6 +1396,9 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc)
         array_delete(fncall.inputvinfos, po);
     vinfo_xdecref(vts, po);
     vinfo_decref(vmode, po);
+#if LE_HAS_SUM_COMPENSATED
+    vinfo_decref(comp, po);
+#endif
     vinfo_decref(vbuiltins, po);
     return result;
 }
@@ -1523,8 +1552,9 @@ gen_step_tests(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
                               Py_GE)) != 0 ||
         (r = gen_field_test_i(po, vgen, GEN_locals, 0, Py_NE)) != 0)
         return r < 0 ? -1 : 0;
-    if ((r = gen_test(po, le_direct_call_test(po, vts))) != 0 ||
-        (r = gen_test(po, le_eval_breaker_test_on(po, vts))) != 0)
+    if (le_direct_call_refused(po, vts))
+        return 0;
+    if ((r = gen_test(po, le_eval_breaker_test_on(po, vts))) != 0)
         return r < 0 ? -1 : 0;
     vt = vinfo_new(CompileTime_New((long)t));
     vg = psyco_get_field(po, vt, DIRECT_globals);

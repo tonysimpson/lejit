@@ -263,7 +263,47 @@ def errors(n):
     return out
 
 
+class Sliced:
+    # sees the slice object itself: a constant slice is one object here
+    def __getitem__(self, k):
+        return k
+
+    def __setitem__(self, k, v):
+        self.k = k
+
+
+class SubList(list):
+    pass
+
+
+def constant_slices(n):
+    # slices whose bounds are all constants, which the compiler may fold
+    # into one slice object
+    out = []
+    for k in range(n):
+        l = list(range(8))
+        t = tuple(l)
+        s = 'abcdefgh'
+        b = b'abcdefgh'
+        out.append((l[:], l[2:], l[:3], l[1:6:2], l[::-1], l[-3:]))
+        out.append((t[1:4], s[2:], s[::2], b[:5], b[5:1:-1]))
+        l[:] = l[3:] + l[:3]
+        l[1:3] = 'xy'
+        l[::2] = l[1::2]
+        del l[:2]
+        del l[::3]
+        out.append(l)
+        m = SubList(range(5))
+        m[1:] = [9]
+        out.append((m, m[:2], type(m[:2]).__name__))
+        z = Sliced()
+        z[1:2] = 0
+        out.append((z[1:2], z[1:2] is z[1:2], z.k == z[1:2], z[::] ))
+    return out
+
+
 CASES = [
+    ('constant_slices', [(1,), (3,)], {}),
     ('reverse_prefix', [(0,), (1,), (5,), (12,)], {}),
     ('rotate', [(0,), (1,), (8,)], {}),
     ('move_to_front', [(0,), (3,), (9,)], {}),

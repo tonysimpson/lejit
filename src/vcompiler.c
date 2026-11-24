@@ -980,6 +980,14 @@ mp_new_block(PsycoObject *po, mergepoint_t *mp)
     if (mp == NULL)
         return;
     mp->blocks++;
+    if (mp->blocks == MP_BLOCK_CAP && !po->pr.is_inlining) {
+        /* a code object with a merge point at its cap compiles many copies
+           of its code: blocks made from now on inline no calls, whose
+           bodies would be copied too (psyfunc.c:psyco_call_pyfunc) */
+        le_code_extra_t *x = le_code_extra_get(po->pr.co);
+        if (x != NULL && x->inline_end == 0)
+            x->inline_end = psyco_next_serial + 1;
+    }
     po->mp_serial = po->respawn_proxy->serial;
 #if LE_CODESTATS
     cs_state(po);
@@ -1503,6 +1511,9 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
     /* fixed, as a fused generator's mode (psyfunc.c:psyco_call_genexpr) */
     po->vlocals.items[GENEXPR_SLOT_MODE(co)] =
         vinfo_new(CompileTime_NewSk(sk_new(GENEXPR_RESUMABLE, SkFlagFixed)));
+#if LE_HAS_SUM_COMPENSATED
+    po->vlocals.items[GENEXPR_SLOT_COMP(co)] = psyco_vi_Zero();
+#endif
     /* the last word is pushed first */
     for (i = nwords - 1; i >= 0; i--) {
         bool owned = i < nlocals || (i >= nplus && i < nplus + nstack);

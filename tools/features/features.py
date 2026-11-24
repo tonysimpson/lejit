@@ -726,6 +726,18 @@ def refcount_32(s):
     return False, 'Include, every header: ob_refcnt_full'
 
 
+def dealloc_defers_to_trashcan(s):
+    """_Py_Dealloc itself defers a dealloc deep in the C stack to the
+    trashcan, and empties the chain after, so tp_dealloc can't be called in
+    its place: Py_TRASHCAN_BEGIN, which deallocs did that with before, is
+    empty"""
+    for path, _ in s.headers_with('Py_TRASHCAN_BEGIN'):
+        m = (s.macros(path) or {}).get('Py_TRASHCAN_BEGIN')
+        if m is not None:
+            return not _texts(m.body), '%s:Py_TRASHCAN_BEGIN' % path
+    return False, 'Include, every header: no Py_TRASHCAN_BEGIN'
+
+
 def dict_version_tag(s):
     """a dict has a version tag (ma_version_tag) that every change to it
     changes"""
@@ -818,7 +830,9 @@ def inline_values(s):
     """a class with Py_TPFLAGS_INLINE_VALUES keeps its instances' values in
     the object, at its tp_basicsize (_PyObject_InlineValues): a PyDictValues
     whose byte `valid`, its fourth, says whether they are still the
-    attributes, then the values, a word on; a dict made for them is three
+    attributes, then the values, a word on; their insertion order is
+    `size` bytes after the `capacity` values, each new index appended
+    (_PyDictValues_AddToInsertionOrder); a dict made for them is three
     words before the object (MANAGED_DICT_OFFSET)"""
     path, fields = s.struct('_dictvalues')
     if fields is None or 'valid' not in fields:
@@ -826,6 +840,11 @@ def inline_values(s):
     if list(fields) != ['capacity', 'size', 'embedded', 'valid', 'values'] or \
             any(fields[f] != 'uint8_t' for f in list(fields)[:4]):
         raise Unanswered('%s:_dictvalues is %r' % (path, fields))
+    if not (_body_has(s, path, 'get_insertion_order_array',
+                      'return (uint8_t *)&values->values[values->capacity];')[0] and
+            _body_has(s, path, '_PyDictValues_AddToInsertionOrder',
+                      'array[size] = (uint8_t)ix; values->size = size+1;')[0]):
+        raise Unanswered('%s: the insertion order is elsewhere' % path)
     obj = 'Include/internal/pycore_object.h'
     # where it adds sizeof(PyObject), that is the basicsize of every class
     # with the flag (typeobject.c:type_new_impl sets it only then)
@@ -1380,6 +1399,12 @@ OBJECTS = [
     ('MEMBER_EX_ERROR_FROM_TYPE', member_ex_error_from_type),
     ('SUM_COMPENSATED', D('sum() adds floats with compensated (Neumaier) summation, not plain +',
                           _sum_compensated)),
+    ('SUM_INT_AS_DOUBLE', D('sum()\'s float loop adds an int item with PyLong_AsDouble and compensation, raising its OverflowError, not as a C long with plain +',
+                            lambda s: _body_has(s, 'Python/bltinmodule.c', 'builtin_sum_impl',
+                                                'PyLong_AsDouble(item)', missing=False))),
+    ('SUM_COMPLEX_COMPENSATED', D('sum() adds complex numbers with compensated summation of each part',
+                                  lambda s: _body_has(s, 'Python/bltinmodule.c', 'builtin_sum_impl',
+                                                      'PyComplex_CheckExact(result)', missing=False))),
     ('POW_KEYWORDS', D('pow() takes keyword arguments base, exp and mod',
                        lambda s: _file_has(s, 'Python/clinic/bltinmodule.c.h',
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),
@@ -1391,6 +1416,7 @@ OBJECTS = [
                            lambda s: _public(s, '_Py_IsImmortal'))),
     ('DEALLOC_HOOKS', D('_Py_Dealloc does more than call tp_dealloc: it reports to the ref tracer (PyRefTracer_SetTracer), and may defer a deep dealloc to the trashcan',
                         lambda s: _public(s, 'PyRefTracer_SetTracer'))),
+    ('DEALLOC_DEFERS_TO_TRASHCAN', dealloc_defers_to_trashcan),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
     ('TAGGED_DICT_OR_VALUES', tagged_dict_or_values),

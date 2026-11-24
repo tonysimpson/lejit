@@ -68,10 +68,26 @@ function_return(PsycoObject *po, Source retval, int nframelocal, long retpos)
     END_CODE
 }
 
+#if LE_HAS_DEALLOC_HOOKS
+/* Python/pyruntime.c */
+extern void *
+le_ref_tracer_word(void);
+#endif
+
+/* 'fn' is the dealloc to call, or NULL for the object's type's; with a ref
+   tracer that _Py_Dealloc reports to, _Py_Dealloc is called instead while
+   one is set: the word is compared with 0 before each call */
 DEFINEFN
 code_t *
 decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
 {
+    /* the tracer word, and what to call while a tracer is set */
+    void *tracer = NULL, *traced = NULL;
+#if LE_HAS_DEALLOC_HOOKS
+    if (fn != _Py_Dealloc && (tracer = le_ref_tracer_word()) == NULL)
+        fn = _Py_Dealloc;
+    traced = (void *)_Py_Dealloc;
+#endif
     extra_assert(CPY_OFFSET(PyObject, ob_type) < 128);
     extra_assert(CPY_OFFSET(PyTypeObject, tp_dealloc) < 128);
 #if LE_HAS_IMMORTAL_OBJECTS
@@ -85,7 +101,24 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
     DEC_OB_REFCNT_NZ(rg);
 #endif
     BEGIN_SHORT_COND_JUMP(0, CC_NE); /* NE is the not zero flag */
-    if (fn == NULL) {
+    if (tracer != NULL) {
+        BEGIN_CALL(1);
+        CALL_SET_ARG_FROM_REG(rg, 0);
+        MOV_R_I(REG_TRANSIENT_1, (long)tracer);
+        CMP_I8_A(0, REG_TRANSIENT_1);
+        MOV_R_I(REG_TRANSIENT_1, (long)traced); /* keeps the flags */
+        BEGIN_SHORT_COND_JUMP(2, CC_NE);
+        if (fn == NULL) {
+            MOV_R_O8(REG_TRANSIENT_1, rg, CPY_OFFSET(PyObject, ob_type));
+            MOV_R_O8(REG_TRANSIENT_1, REG_TRANSIENT_1,
+                     CPY_OFFSET(PyTypeObject, tp_dealloc));
+        }
+        else
+            MOV_R_I(REG_TRANSIENT_1, (long)fn);
+        END_SHORT_JUMP(2);
+        END_CALL_R(REG_TRANSIENT_1);
+    }
+    else if (fn == NULL) {
         BEGIN_CALL(1);
         CALL_SET_ARG_FROM_REG(rg, 0);
         MOV_R_O8(REG_TRANSIENT_1, rg, CPY_OFFSET(PyObject, ob_type));
@@ -406,6 +439,20 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
     fill_jz[1] = (code_t)(code - (fill_jz + 2));
     le_trace_jump_cond(fill_jz, fill_jz + 2, code);
     if (IN_VALUES(s)) {
+#if LE_HAS_INLINE_VALUES
+        /* the order's entries follow the values' 'capacity' words, and
+           'size' is its length; every index the keys hold is below the
+           capacity */
+        MOVZX_DR_BO(REG_X64_RCX, REG_X64_R8,
+                    values_at - LE_VALUES_ARRAY + LE_VALUES_CAPACITY);
+        LEA_R_X8(REG_X64_RCX, REG_X64_R8, values_at, REG_X64_RCX, 8);
+        MOVZX_DR_BO(REG_X64_RAX, REG_X64_R8,
+                    values_at - LE_VALUES_ARRAY + LE_VALUES_SIZE);
+        MOV_BX8_R(REG_X64_RCX, 0, REG_X64_RAX, 1, REG_X64_R9);
+        ADD_R_I8(REG_X64_RAX, 1);
+        MOV_BO_R(REG_X64_R8, values_at - LE_VALUES_ARRAY + LE_VALUES_SIZE,
+                 REG_X64_RAX);
+#else
         /* the order's length is the byte below the values, its entries the
            bytes below that, the first nearest; the values have room for
            every entry of the keys */
@@ -414,6 +461,7 @@ inline_store_body(PsycoObject *po, code_t *code, inline_store_t *s,
         MOV_BO_R(REG_X64_R8, values_at - 2, REG_X64_RCX);
         UNARY_INSTR_ON_REG(3, REG_X64_RCX); /* neg */
         MOV_BX8_R(REG_X64_R8, values_at - 2, REG_X64_RCX, 1, REG_X64_R9);
+#endif
     }
     else {
         CMP_R_O8(REG_X64_R9, REG_X64_RCX, CPY_OFFSET(PyDictObject, ma_used));
