@@ -94,12 +94,14 @@ def many_types(n):
     return [[s().m(i) for s in subs] for i in range(n)]
 
 
+# each round's classes are new: compiling goes on for some rounds before
+# it stops, in the methods inlined into their callers too
+NEW_CLASSES = {'warmup': (40, "each round's classes are new")}
+
 CASES = [
-    ('base_changes', [(10,)], {}),
-    ('bases_changed', [(6,)], {}),
-    ('class_cell', [(8,)],
-     {'warmup': (40, "each round's classes are new: the site promotes the "
-                     'class from the cell for some rounds before it stops')}),
-    ('getattribute_added', [(5,)], {}),
-    ('many_types', [(3,)], {}),
+    ('base_changes', [(10,)], NEW_CLASSES),
+    ('bases_changed', [(6,)], NEW_CLASSES),
+    ('class_cell', [(8,)], NEW_CLASSES),
+    ('getattribute_added', [(5,)], NEW_CLASSES),
+    ('many_types', [(3,)], NEW_CLASSES),
 ]

@@ -125,9 +125,10 @@ report_destructor(PyObject *capsule)
    (a namedtuple of thousands of fields) and stays in ceval */
 #define MAX_FRAME_VALUES 1000
 
-/* inlining (upstream's rule): one merge point (the start), no block, no
-   LOAD_GLOBAL, and at most this many instructions that are not "light"
-   (produce little or no code) */
+/* inlining (upstream's rule): one merge point (the start), no block, and at
+   most this many instructions that are not "light" (produce little or no
+   code). A global read may be inlined: its guard ends the block there, which
+   inside an inlined frame is a join point like any other (vcompiler.c) */
 #define INLINE_MAXIMUM_WEIGHT 16
 #define IS_LIGHT_INSTR(op) (le_op_flags(op) & LE_OPF_LIGHT)
 
@@ -380,7 +381,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     Py_ssize_t mergepoint_index = 0;
     co_report_t *report;
     int flags = 0;
-    int weight = 0, loads_global = 0;
+    int weight = 0, loop_block = 0;
     Py_ssize_t entry_count_index = -1;
     Py_ssize_t entry_count_len = end_unit + 1;
     unsigned char entry_count[entry_count_len];
@@ -405,8 +406,6 @@ _find_merge_points(PyCodeObject *co, int *bad)
         is_start[entry_count_index] = 1;
         if (!IS_LIGHT_INSTR(opcode))
             weight++;
-        if (opcode == LOAD_GLOBAL)
-            loads_global = 1;
         /* after a call pycompiler.c tests at the end of the call itself,
            if it emitted a call that may block, except before an
            instruction ceval skips: then always, after that one */
@@ -431,6 +430,11 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 entry_count[JUMP_TARGET(TARGET_UNIT())] = 8;
                 ENTER_NEXT();
                 break;
+            /* a block too, though a loop that returns from its first round
+               makes no join */
+            case SETUP_LOOP:
+                loop_block = 1;
+                /* fall through */
             /* BREAK_LOOP goes to the SETUP_LOOP target, counted there;
                CALL_FINALLY's successors are the finally block and the next
                instruction, where END_FINALLY leaves the block */
@@ -500,7 +504,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     /* the single merge point means no loop and no join: after the call
        enters the inlined body (pycompiler.c, EInline) the next merge point
        looked for is past the start, so inlined state is never snapshotted */
-    if (mergepoint_count == 1 && flags == 0 && !loads_global &&
+    if (mergepoint_count == 1 && flags == 0 && !loop_block &&
         weight <= INLINE_MAXIMUM_WEIGHT)
         flags |= MP_FLAGS_INLINABLE;
     report->flags = flags;
