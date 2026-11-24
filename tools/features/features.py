@@ -622,6 +622,13 @@ def monitoring(s):
     return _field(s, '_is', 'monitors', missing=False)
 
 
+def interp_monitoring_version(s):
+    """the interpreter's monitoring version, which changes with every
+    change to its tools table, is its own monitoring_version, not its ceval
+    state's instrumentation_version"""
+    return _field(s, '_is', 'monitoring_version', missing=False)
+
+
 def thread_local_tstate(s):
     """the running thread's state is a thread-local of libpython's, not
     _PyRuntime.gilstate.tstate_current"""
@@ -1327,6 +1334,7 @@ STATE = [
     ('GC_TRACKED_BY_NEXT', gc_tracked_by_next),
     ('GC_HEAD_INTERNAL', gc_head_internal),
     ('MONITORING', monitoring),
+    ('INTERP_MONITORING_VERSION', interp_monitoring_version),
     ('THREAD_LOCAL_TSTATE', thread_local_tstate),
     ('PY_RECURSION_REMAINING', py_recursion_remaining),
     ('C_RECURSION_REMAINING', c_recursion_remaining),

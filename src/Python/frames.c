@@ -1569,6 +1569,9 @@ expose(PyFrameObject *f, int write)
     if (write && exposed != NULL) {
         *exposed = 1;
         psyco_frames_exposed++;
+#if LE_HAS_MONITORING
+        le_quiet_version = (uint64_t)-1; /* compiled code's test fails */
+#endif
     }
 }
 

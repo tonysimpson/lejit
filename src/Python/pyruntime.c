@@ -162,16 +162,37 @@ le_tstate_thread_offset(long *offset)
 }
 #endif
 #if LE_HAS_MONITORING
-/* sys.monitoring has an event on, for any tool, in the interpreter: its
-   global monitors (sys.settrace and sys.setprofile are tools too). Events
-   set on one code object (set_local_events) are not seen. */
 _Static_assert(8 < sizeof(((PyInterpreterState *)0)->monitors.tools) &&
                    sizeof(((PyInterpreterState *)0)->monitors.tools) <= 16,
                "LeJIT: sys.monitoring's tools are read as two words");
-const long le_monitors_tools_at = offsetof(PyInterpreterState, monitors.tools);
-const long le_monitors_tools_size =
-    sizeof(((PyInterpreterState *)0)->monitors.tools);
+/* The interpreter's monitoring version, which CPython changes with every
+   change to its tools table, and the last one seen in the main interpreter
+   while no tool was set and no frame's locals were exposed, or -1. While
+   they are equal, no tool is set (mechanisms/tracing.h:le_tracing_flag). */
+#if LE_HAS_INTERP_MONITORING_VERSION
+#define LE_MONITORING_VERSION(i) ((i)->monitoring_version)
+#else
+#define LE_MONITORING_VERSION(i) ((i)->ceval.instrumentation_version)
+#endif
+_Static_assert(sizeof(LE_MONITORING_VERSION((PyInterpreterState *)0)) == 8,
+               "LeJIT: the monitoring version is read as one word");
+uint64_t le_quiet_version = (uint64_t)-1;
+#ifdef PyFrameLocalsProxy_Check
+extern int psyco_frames_exposed; /* frames.c */
+#define LE_FRAMES_EXPOSED psyco_frames_exposed
+#else
+#define LE_FRAMES_EXPOSED 0
+#endif
 
+const void *
+le_monitoring_version_address(void)
+{
+    return &LE_MONITORING_VERSION(PyInterpreterState_Main());
+}
+
+/* sys.monitoring has an event on, for any tool, in the interpreter: its
+   global monitors (sys.settrace and sys.setprofile are tools too). Events
+   set on one code object (set_local_events) are not seen. */
 int
 le_monitoring_on(PyThreadState *ts)
 {
@@ -180,6 +201,21 @@ le_monitoring_on(PyThreadState *ts)
     memcpy(&a, t, 8);
     memcpy(&b, t + sizeof(ts->interp->monitors.tools) - 8, 8);
     return (a | b) != 0;
+}
+
+/* compiled code's exact test, once the version has moved, which brings
+   le_quiet_version up to date */
+int
+le_tracing_recheck(void)
+{
+    PyThreadState *ts = PyThreadState_GET();
+    if (le_monitoring_on(ts))
+        return 1;
+    if (LE_FRAMES_EXPOSED)
+        return 1;
+    if (ts->interp == PyInterpreterState_Main())
+        le_quiet_version = LE_MONITORING_VERSION(ts->interp);
+    return 0;
 }
 #endif
 #if LE_HAS_OPCODE_LOAD_COMMON_CONSTANT
