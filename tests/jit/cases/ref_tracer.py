@@ -35,8 +35,9 @@ class Thing:
 
 
 def destroys_seen(n):
-    # a Thing and a list (whose type compiled code knows), each freed by
-    # compiled code, with the tracer set in every other round
+    # a Thing, a list and a float (whose types compiled code knows, the
+    # float's one the GC doesn't track), each freed by compiled code, with
+    # the tracer set in every other round
     if SET is None:
         return True
     out = []
@@ -51,10 +52,13 @@ def destroys_seen(n):
         y = [i]
         WATCH[0] = id(y)
         y = None
+        z = i * 1.5
+        WATCH[0] = id(z)
+        z = None
         if traced:
             SET(None, None)
         out.append(WATCH[1])
-    return out == [i % 2 * 2 for i in range(n)]
+    return out == [i % 2 * 3 for i in range(n)]
 
 
 CASES = [

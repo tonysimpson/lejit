@@ -524,10 +524,11 @@ le_set_interp_eval_frame(void *fn)
     PyThreadState_Get()->interp->eval_frame = (_PyFrameEvalFunction)fn;
 }
 
-#if LE_HAS_DEALLOC_HOOKS && !LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+#if LE_HAS_DEALLOC_HOOKS
 /* The ref tracer's function, where _Py_Dealloc reads it, or NULL. Where
-   none is set, _Py_Dealloc only calls tp_dealloc, which compiled code then
-   calls itself (x64/ipyencoding.c:decref_dealloc_calling). The word is
+   none is set, _Py_Dealloc only calls tp_dealloc (where it can defer a free
+   to the trashcan, for a type the GC doesn't track), which compiled code
+   then calls itself (x64/ipyencoding.c:decref_dealloc_calling). The word is
    checked once against PyRefTracer_SetTracer, the old tracer put back
    straight after. */
 static int

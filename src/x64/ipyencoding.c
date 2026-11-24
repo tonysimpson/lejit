@@ -68,7 +68,7 @@ function_return(PsycoObject *po, Source retval, int nframelocal, long retpos)
     END_CODE
 }
 
-#if LE_HAS_DEALLOC_HOOKS && !LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+#if LE_HAS_DEALLOC_HOOKS
 /* Python/pyruntime.c */
 extern void *
 le_ref_tracer_word(void);
@@ -82,7 +82,7 @@ code_t *
 decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
 {
     void *tracer = NULL;
-#if LE_HAS_DEALLOC_HOOKS && !LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+#if LE_HAS_DEALLOC_HOOKS
     if (fn != _Py_Dealloc && (tracer = le_ref_tracer_word()) == NULL)
         fn = _Py_Dealloc;
 #endif

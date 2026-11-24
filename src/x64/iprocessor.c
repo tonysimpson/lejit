@@ -142,7 +142,7 @@ write_stub_trampoline(PsycoObject *po, bool respawn)
     END_CODE
 }
 
-#if LE_HAS_DEALLOC_HOOKS && !LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+#if LE_HAS_DEALLOC_HOOKS
 /* Python/pyruntime.c */
 extern void *
 le_ref_tracer_word(void);
