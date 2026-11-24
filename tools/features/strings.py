@@ -61,17 +61,19 @@ def S():
 
 
 def Q():
-    """An object whose type is shown by its fully qualified name, %T: the
-    module, a dot and the qualified name, the module left out for builtins
-    and __main__. The probe gets an instance of a new class with a
-    recognisable name, in a module of its own."""
+    """A type shown by its fully qualified name: the module, a dot and the
+    qualified name, the module left out for builtins and __main__. CPython
+    passes %T an object or %N its type, which show the same; LeJIT passes
+    the type, %N. The probe gets a new class with a recognisable name, as
+    for T()."""
     return {'k': 'Q'}
 
 
 def O(conv):
     """An object: 'U' or 'S' shows a str (the probe gets a recognisable
-    one) as it is, 'R' by repr. A str shows the same by %U and %S, so the
-    entry says which the call passes."""
+    one) as it is, 'R' by repr; 'V' is %V, a str or NULL and the text shown
+    for NULL, which the call passes as "function". A str shows the same by
+    %U, %S and %V, so the entry says which the call passes."""
     return {'k': 'O', 'conv': conv}
 
 
@@ -259,15 +261,20 @@ for _name, _op in [('LT', '<'), ('LE', '<='), ('GT', '>'), ('GE', '>=')]:
 # bytes, float, list, tuple
 msg('BYTES_INDEX_RANGE', 'a bytes index out of range', 'IndexError',
     "b'a'[5]", text=True)
+# (from 3.15 these name their types by qualified name: shape QUALIFIED)
+_FLOAT_NON_FLOAT = ('r = args[1]; c = cls(args[0].__name__, __float__=lambda s: r())\n'
+                    'capi("PyFloat_AsDouble", "double", "obj")(c())')
 msg('FLOAT_RETURNED_NON_FLOAT', "PyFloat_AsDouble of an object whose __float__ "
-    "returns a non-float", 'TypeError',
-    'r = args[1]; c = cls(args[0].__name__, __float__=lambda s: r())\n'
-    'capi("PyFloat_AsDouble", "double", "obj")(c())', [T(), T()])
+    "returns a non-float", 'TypeError', None, shapes=[
+        ('', [T(), T()], _FLOAT_NON_FLOAT),
+        ('QUALIFIED', [Q(), Q()], _FLOAT_NON_FLOAT)])
+_FLOAT_SUBCLASS = ('r = cls(args[1].__name__, float); c = cls(args[0].__name__, '
+                   '__float__=lambda s: r(1.5))\n'
+                   'capi("PyFloat_AsDouble", "double", "obj")(c())')
 msg('FLOAT_RETURNED_FLOAT_SUBCLASS', "PyFloat_AsDouble of an object whose "
-    "__float__ returns a float subclass", 'DeprecationWarning',
-    'r = cls(args[1].__name__, float); c = cls(args[0].__name__, '
-    '__float__=lambda s: r(1.5))\n'
-    'capi("PyFloat_AsDouble", "double", "obj")(c())', [T(), T()])
+    "__float__ returns a float subclass", 'DeprecationWarning', None, shapes=[
+        ('', [T(), T()], _FLOAT_SUBCLASS),
+        ('QUALIFIED', [Q(), Q()], _FLOAT_SUBCLASS)])
 msg('MUST_BE_REAL_NUMBER', 'PyFloat_AsDouble of an object without __float__',
     'TypeError', 'capi("PyFloat_AsDouble", "double", "obj")(args[0]())', [T()])
 msg('FLOAT_DIVISION_BY_ZERO', 'a float divided by zero', 'ZeroDivisionError',
@@ -383,13 +390,21 @@ msg('AWITH_EXIT_NOT_AWAITABLE', 'async with whose __aexit__ returns an '
     'async def e(s):\n    pass\n'
     'r = args[0]; o = cls("A", __aenter__=e, __aexit__=lambda s, *a: r())()\n'
     'async def f():\n    async with o:\n        pass\ncoro_run(f())', [T()])
+# (from 3.15 these name the awaited object's type: shape QUALIFIED)
+_AWAIT_COROUTINE = ('async def c():\n    pass\nk = c()\nk.close()\n'
+                    'o = cls(%s, __await__=lambda s: k)()\n'
+                    'async def f():\n    await o\ncoro_run(f())')
 msg('AWAIT_RETURNED_COROUTINE', '__await__ returning a coroutine', 'TypeError',
-    'async def c():\n    pass\nk = c()\nk.close()\n'
-    'o = cls("A", __await__=lambda s: k)()\n'
-    'async def f():\n    await o\ncoro_run(f())', text=True)
+    None, text=True, shapes=[
+        ('', [], _AWAIT_COROUTINE % '"A"'),
+        ('QUALIFIED', [Q()], _AWAIT_COROUTINE % 'args[0].__name__')])
 msg('AWAIT_NON_ITERATOR', '__await__ returning something not an iterator',
-    'TypeError', 'r = args[0]; o = cls("A", __await__=lambda s: r())()\n'
-    'async def f():\n    await o\ncoro_run(f())', [T()])
+    'TypeError', None, shapes=[
+        ('', [T()], 'r = args[0]; o = cls("A", __await__=lambda s: r())()\n'
+         'async def f():\n    await o\ncoro_run(f())'),
+        ('QUALIFIED', [Q(), Q()],
+         'r = args[1]; o = cls(args[0].__name__, __await__=lambda s: r())()\n'
+         'async def f():\n    await o\ncoro_run(f())')])
 msg('CORO_AWAITED_ALREADY', 'await on a coroutine that is awaiting',
     'RuntimeError',
     'import types\n@types.coroutine\ndef y():\n    yield\n'
@@ -408,7 +423,8 @@ msg('FREE_UNBOUND', "a free variable read before it is set", 'NameError',
 msg('LIST_STAR_NOT_ITERABLE', '[*x] of an x that is not iterable', 'TypeError',
     '[*args[0]()]', [T()])
 msg('DICT_STAR_NOT_MAPPING', '{**x} of an x that is not a mapping', 'TypeError',
-    '{**args[0]()}', [T()])
+    None, shapes=[('', [T()], '{**args[0]()}'),
+                  ('QUALIFIED', [Q()], '{**args[0]()}')])
 
 # a call's * and ** arguments: the function is shown by its name and
 # description until 3.8, by its qualified name from 3.9
@@ -436,18 +452,36 @@ msg('KWARGS_NOT_MAPPING', 'f(**x) of an x that is not a mapping', 'TypeError',
         ('FUNC_NAME', [S(), F('%.200s', '()'), T()], _FN + 'f(**args[2]())'),
         ('FUNCTION_STR', [O('U'), T()],
          _FN_STR + 'shown[0] = args[0] + "()"; f(**args[1]())'),
-        ('NO_FUNCTION', [Q()], _NO_FN % 'f(**args[0])')])
+        ('NO_FUNCTION', [Q()], _NO_FN % 'f(**args[0]())')])
 # (from 3.9 a key that is not a str, given twice, is shown as a duplicate)
+# (from 3.15 a function whose name can't be made, its __qualname__ raising,
+# is shown as "function" (%V), not the error: shape OR_FUNCTION)
+_NAMELESS = ('class Nameless:\n'
+             '    def __call__(self, *a, **k): pass\n'
+             '    def __getattribute__(self, n):\n'
+             '        if n == "__qualname__": raise RuntimeError("no name")\n'
+             '        return object.__getattribute__(self, n)\n'
+             'try:\n    Nameless()(**{1: 1}, **{1: 2})\n'
+             'except TypeError as x:\n    shown_as_function = str(x).startswith("function ")\n'
+             'except RuntimeError:\n    shown_as_function = False\n')
+_UNNAMED_ERROR = _NAMELESS + ('if shown_as_function:\n'
+                              '    raise ValueError("a nameless function is shown as function")\n')
+_UNNAMED_FUNCTION = _NAMELESS + ('if not shown_as_function:\n'
+                                 '    raise ValueError("a nameless function\'s error is raised")\n')
 msg('KWARGS_NOT_STRINGS', 'f(**x, **y) with a key that is not a str in both',
     'TypeError', None, shapes=[
         ('FUNC_NAME', [S(), F('%.200s', '()')],
          _FN + 'f(**{1: 1}, **{1: 2})'),
-        ('FUNCTION_STR', [O('U'), F('%S', '1')],
+        ('FUNCTION_STR', [O('U'), F('%S', '1')], _UNNAMED_ERROR +
+         _FN_STR + 'shown[0] = args[0] + "()"; f(**{1: 1}, **{1: 2})'),
+        ('OR_FUNCTION', [O('V'), F('%S', '1')], _UNNAMED_FUNCTION +
          _FN_STR + 'shown[0] = args[0] + "()"; f(**{1: 1}, **{1: 2})')])
 msg('KWARGS_DUPLICATE', 'f(x=1, **{"x": 2})', 'TypeError', None, shapes=[
     ('FUNC_NAME', [S(), F('%.200s', '()'), O('U')],
      _FN + 'f(**{args[2]: 1}, **{args[2]: 2})'),
-    ('FUNCTION_STR', [O('U'), O('S')],
+    ('FUNCTION_STR', [O('U'), O('S')], _UNNAMED_ERROR +
+     _FN_STR + 'shown[0] = args[0] + "()"; f(**{args[1]: 1}, **{args[1]: 2})'),
+    ('OR_FUNCTION', [O('V'), O('S')], _UNNAMED_FUNCTION +
      _FN_STR + 'shown[0] = args[0] + "()"; f(**{args[1]: 1}, **{args[1]: 2})')])
 
 msg('UNPACK_NON_ITERABLE', 'unpacking an object that is not iterable',
@@ -530,6 +564,10 @@ msg('MATCH_DUPLICATE_KEY', 'a mapping pattern whose keys are equal',
 # ---------------------------------------------------------------------------
 # What runs in the target: each probe three times, the messages as JSON.
 
+# the module of the probes' classes (T(), Q(), cls): a message that shows
+# it names a type by its qualified name, which Q() recovers
+MODULE = 'lemod'
+
 DRIVER = r'''
 import json, sys, io, warnings
 entries = json.loads(sys.stdin.read())
@@ -539,6 +577,7 @@ DEFAULT_INTS = [[11, 23, 37, 53], [13, 29, 41, 61]]
 MODS = []
 
 def cls(name, *bases, **attrs):
+    attrs.setdefault("__module__", "lemod")
     return type(name, bases or (object,), attrs)
 
 def capi(name, restype, *argtypes):
@@ -587,13 +626,13 @@ def make_args(spec, run, ints):
         k = a["k"]
         if k == "T":
             name = MARK[run](i)
-            args.append(type(name, (object,), {}))
+            args.append(type(name, (object,), {"__module__": "lemod"}))
             shown.append(name)
         elif k == "Q":
             name = MARK[run](i)
-            args.append(type(name, (object,), {"__module__": "lemod"})())
+            args.append(type(name, (object,), {"__module__": "lemod"}))
             shown.append("lemod." + name)
-        elif k == "S" or (k == "O" and a["conv"] in "US"):
+        elif k == "S" or (k == "O" and a["conv"] in "USV"):
             args.append(MARK[run](i))
             shown.append(MARK[run](i))
         elif k == "O":
@@ -758,11 +797,15 @@ def recover(entry, shape, runs):
             raise StringError(r['error'])
     args = shape['args']
     if entry['text'] and not args:
+        if MODULE + '.' in runs[0]['msg']:
+            raise StringError('a type is shown with its module: %r' % runs[0]['msg'])
         if runs[0]['msg'] != runs[1]['msg']:
             raise StringError('the message changes from run to run: %r, %r'
                               % (runs[0]['msg'], runs[1]['msg']))
         return runs[0]['msg']
     pieces = split(runs, len(args))
+    if any(MODULE + '.' in p for p in pieces):
+        raise StringError('a type is shown with its module: %r' % runs[0]['msg'])
     longs = long_shown(pieces, args, runs[2])
     specs = []
     for i, a in enumerate(args):
@@ -777,7 +820,7 @@ def recover(entry, shape, runs):
         elif k == 'Q':
             if precision(longs[i], runs[2]['shown'][i]):
                 raise StringError('a type is shown cut short')
-            specs.append('%T')
+            specs.append('%N')
         elif k == 'I':
             specs.append('%' + a['conv'])
         elif k == 'F':

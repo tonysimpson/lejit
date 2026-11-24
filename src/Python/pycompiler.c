@@ -3539,8 +3539,14 @@ cimpl_dict_update(PyObject *dict, PyObject *update)
     int err = PyDict_Update(dict, update);
     if (err < 0) {
         if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+#ifdef LE_MSG_DICT_STAR_NOT_MAPPING_QUALIFIED
+            PyErr_Format(PyExc_TypeError,
+                         LE_MSG_DICT_STAR_NOT_MAPPING_QUALIFIED,
+                         Py_TYPE(update));
+#else
             PyErr_Format(PyExc_TypeError, LE_MSG_DICT_STAR_NOT_MAPPING,
                          Py_TYPE(update)->tp_name);
+#endif
         }
     }
     return err;
@@ -3555,7 +3561,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 #ifdef LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION
         PyErr_Clear();
         PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION,
-                     kwargs);
+                     Py_TYPE(kwargs));
 #elif LE_HAS_FUNCTION_STR
         PyErr_Clear();
         PyObject *funcstr = _PyObject_FunctionStr(func);
@@ -3575,7 +3581,13 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
         PyObject *exc, *val, *tb;
         PyErr_Fetch(&exc, &val, &tb);
         if (val && PyTuple_Check(val) && PyTuple_GET_SIZE(val) == 1) {
-#if LE_HAS_FUNCTION_STR
+#ifdef LE_MSG_KWARGS_DUPLICATE_OR_FUNCTION
+            /* a function whose name can't be made is shown as "function" */
+            PyObject *funcstr = _PyObject_FunctionStr(func);
+            PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_DUPLICATE_OR_FUNCTION,
+                         funcstr, "function", PyTuple_GET_ITEM(val, 0));
+            Py_XDECREF(funcstr);
+#elif LE_HAS_FUNCTION_STR
             PyErr_Clear();
             PyObject *funcstr = _PyObject_FunctionStr(func);
             if (funcstr != NULL) {
@@ -7272,13 +7284,23 @@ cimpl_get_awaitable(PyObject *o, long kind)
     if (res == NULL)
         return NULL;
     if (PyCoro_CheckExact(res) || is_iterable_coroutine(res)) {
+#ifdef LE_MSG_AWAIT_RETURNED_COROUTINE_QUALIFIED
+        PyErr_Format(PyExc_TypeError,
+                     LE_MSG_AWAIT_RETURNED_COROUTINE_QUALIFIED, t);
+#else
         PyErr_SetString(PyExc_TypeError, LE_MSG_AWAIT_RETURNED_COROUTINE);
+#endif
         Py_DECREF(res);
         return NULL;
     }
     if (!PyIter_Check(res)) {
+#ifdef LE_MSG_AWAIT_NON_ITERATOR_QUALIFIED
+        PyErr_Format(PyExc_TypeError, LE_MSG_AWAIT_NON_ITERATOR_QUALIFIED, t,
+                     Py_TYPE(res));
+#else
         PyErr_Format(PyExc_TypeError, LE_MSG_AWAIT_NON_ITERATOR,
                      Py_TYPE(res)->tp_name);
+#endif
         Py_DECREF(res);
         return NULL;
     }
