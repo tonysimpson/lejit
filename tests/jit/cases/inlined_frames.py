@@ -166,6 +166,31 @@ def locals_seen(n):
             for i in range(n)]
 
 
+def grab_then_fail(box):
+    box.append(sys._getframe(1))
+    return 1 / 0
+
+
+def relay_fail(get, box):             # inlined: left by its callee's error
+    x = 5
+    return get(box)
+
+
+def kept_after_error(n):
+    # the frame outlives its code, which left it by an exception, and the
+    # next call has a frame of its own
+    out = []
+    for i in range(n):
+        box = []
+        for j in range(2):
+            try:
+                relay_fail(grab_then_fail, box)
+            except ZeroDivisionError:
+                pass
+        out.append((box[0].f_code.co_name, box[0] is box[1]))
+    return out
+
+
 CASES = [
     ('caller', [(3,)], {}),
     ('property_caller', [(3,)], {}),
@@ -175,4 +200,5 @@ CASES = [
     ('local_written', [(3,)], {}),
     ('parent_local_written', [(3,)], {}),
     ('locals_seen', [(3,)], {}),
+    ('kept_after_error', [(3,)], {}),
 ]

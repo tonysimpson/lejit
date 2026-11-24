@@ -9021,6 +9021,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             /* unwind the inlined frame by restoring the parent one */
             vinfo_t *v = LOC_INLINING;
             bool returned = PycException_Is(po, &EReturn);
+            /* the instruction left by an exception may have run Python */
+            if (po->pr.python_call)
+                po->pr.inline_ran_python = 1;
             /* mark this point as an inline frame exit: on a return, before
                its locals go, as CPython pops the frame first */
             if (returned)
