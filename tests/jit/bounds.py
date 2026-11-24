@@ -134,13 +134,23 @@ def uses_global(a):
     return len(a)
 
 
+# 16 arithmetic operations, the most an inlined body may have, and 17
+def at_cap(a, b):
+    return ((a + b) * (a - b) + (a * b) - (a + 1) * (b + 1) + (a - 1) *
+            (b - 1) + a * 2 + b)
+
+
+def past_cap(a, b):
+    return ((a + b) * (a - b) + (a * b) - (a + 1) * (b + 1) + (a - 1) *
+            (b - 1) + a * 2 + b + a)
+
+
 def check_inlinable():
-    got = (lejit._core._inlinable(small.__code__),
-           lejit._core._inlinable(with_loop.__code__),
-           lejit._core._inlinable(uses_global.__code__))
-    ok = got == (True, False, False)
+    got = tuple(lejit._core._inlinable(f.__code__) for f in
+                (small, with_loop, uses_global, at_cap, past_cap))
+    ok = got == (True, False, False, True, False)
     if not ok or VERBOSE:
-        print('%-4s inlinable small/with_loop/uses_global: %r'
+        print('%-4s inlinable small/with_loop/uses_global/at_cap/past_cap: %r'
               % ('ok' if ok else 'FAIL', got))
     return 0 if ok else 1
 
