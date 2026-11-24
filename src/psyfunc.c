@@ -542,12 +542,7 @@ call_with_inline_frame(PsycoObject *po, struct fncall_arg_s *fncall,
     else {
         /* initial case: move the bound locals into an EInline
            pseudo-exception */
-        vinfo_t *v;
-        if (!psyco_catcher_flush(po)) {
-            array_delete(fncall->inputvinfos, po);
-            return NULL;
-        }
-        v = vinfo_new(SOURCE_NOT_IMPORTANT);
+        vinfo_t *v = vinfo_new(SOURCE_NOT_IMPORTANT);
         v->array = array_new(TOTAL_LOC_INLINE + fncall->po_size);
         v->array->items[LOC_INLINE_CO] = vinfo_new(
             CompileTime_New((long)fncall->co)); /* borrowed, as above */

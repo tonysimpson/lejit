@@ -1595,11 +1595,10 @@ traceback_locals(PsycoObject *po, vinfo_t *tb)
    the entry made for it (frames.c:psyco_frame_catch): a frame reads its
    locals from while the call runs, which stands for the call in its later
    entries too (cimpl_new_frame). So the locals are written when Python
-   reads them, as they are then, not as the exception passes. Where reads
-   can't find them, they are written before the call goes into an inlined
-   frame (psyco_catcher_flush), and once more as it ends, while something
-   besides the word holds the frame (catcher_flush). NULL in an inlined
-   frame, which has no handlers. */
+   reads them, as they are then, not as the exception passes, and once
+   more as the call ends, while something besides the word holds the frame
+   (catcher_flush). NULL in an inlined frame, which has no handlers: its
+   calls map its parent's locals too (codegen.c:psyco_note_call_site). */
 static vinfo_t *
 catcher_word(PsycoObject *po)
 {
@@ -1663,10 +1662,10 @@ cimpl_catcher_locals(PyObject **word, long start, PyObject *v0, PyObject *v1,
 }
 
 /* If the catcher word holds a frame something else holds too, it gets
-   the locals now, and with 'end' is let go after; one nothing else holds
-   is let go. The tests are compiled out of line when first taken. */
+   the locals now, and is let go after; one nothing else holds is let
+   go. The tests are compiled out of line when first taken. */
 static bool
-catcher_flush(PsycoObject *po, bool end)
+catcher_flush(PsycoObject *po)
 {
     vinfo_t *word = catcher_word(po), *now, *shared, *held = NULL;
     int on;
@@ -1699,17 +1698,10 @@ catcher_flush(PsycoObject *po, bool end)
                                CfNoReturnValue | CfNoPython, "v", held);
         vinfo_decref(held, po);
     }
-    if (on && end)
+    if (on)
         on = psyco_generic_call(po, psyco_frame_catcher_end, CfNoReturnValue,
                                 "r", word) != NULL;
     return on;
-}
-
-DEFINEFN
-bool
-psyco_catcher_flush(PsycoObject *po)
-{
-    return catcher_flush(po, false);
 }
 
 /* Whether the handler at 'handler' drops the exception unseen
@@ -4535,7 +4527,7 @@ exit_function(PsycoObject *po)
     extra_assert(!po->pr.is_inlining);
 
     /* the frame that stood for the call keeps its locals as they end */
-    if (!catcher_flush(po, true))
+    if (!catcher_flush(po))
         return NULL;
 #if LE_RESUMES_ON_FRAME
     if (mode == GENEXPR_RESUMABLE && !gen_locals_end(po))
@@ -7552,7 +7544,7 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
     vinfo_t *v;
     le_gen_pause_t *pause;
     (void)after_await;
-    if (!catcher_flush(po, true))
+    if (!catcher_flush(po))
         return;
     /* every item real before anything is stored: making one may call */
     for (i = 0; i < nlocals + nstack; i++) {
@@ -7612,7 +7604,7 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
 #else
     (void)after_await;
 #endif
-    if (!catcher_flush(po, true))
+    if (!catcher_flush(po))
         return;
     /* every item real before anything is stored: making one may call */
     for (i = 0; i < nlocals + nstack; i++) {
