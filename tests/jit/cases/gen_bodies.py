@@ -591,6 +591,173 @@ def send_at_start(n):
     return run(lambda: g.send(1)), next(g), g.send(None)
 
 
+# Compiled code's for loop resumes a generator itself where it can
+# (eval_hook.c:le_gen_iternext), without gen_send_ex2 and the hook: what
+# CPython shows of each way a resume ends must be the same.
+def for_each(g):
+    out = []
+    for x in g:
+        out.append(x)
+    return out
+
+
+def for_first(g, n):
+    out = []
+    for x in g:
+        out.append(x)
+        if len(out) == n:
+            break
+    return out
+
+
+def for_catching(g):
+    out = []
+    try:
+        for x in g:
+            out.append(x)
+    except Exception as e:
+        out.append('%s: %s %r %r' % (type(e).__name__, e, e.__cause__,
+                                     e.__context__))
+    return out
+
+
+def gives_back(n):
+    for i in range(n):
+        yield work(i)
+    return D('returned')
+
+
+def raises_late(n):
+    yield work(n)
+    raise KeyError(n)
+
+
+def stops_inside(n):
+    yield work(n)
+    raise StopIteration(n)
+
+
+def dropping(n):
+    a = D('a')
+    yield work(1)
+    b = D('b')
+    yield work(2)
+    yield a, b
+
+
+def finally_dropped(n):
+    try:
+        yield work(1)
+        yield work(2)
+    finally:
+        D.log.append('finally')
+
+
+def frames_seen(n):
+    yield sys._getframe().f_back.f_code.co_name
+    yield sys._getframe() is sys._getframe()
+    f = sys._getframe()
+    yield f.f_lineno - f.f_code.co_firstlineno
+
+
+def written_while_paused(n):
+    a = n
+    yield work(a)
+    yield work(a)
+
+
+def running_state():
+    g = yield work(0)
+    yield work(g.gi_running)
+    yield run(lambda: next(g))
+
+
+def inner_gen(n):
+    for i in range(n):
+        yield work(i)
+
+
+def outer_gen(n):
+    for x in inner_gen(n):
+        yield work(x) * 10
+
+
+def for_loops(n):
+    out = [for_each(counter(n)), for_each(gives_back(n)), taken(),
+           for_catching(raises_late(n)), for_catching(stops_inside(n)),
+           for_each(outer_gen(n))]
+    g = counter(n)
+    out.append((next(g), for_first(g, 1), next(g), for_each(g),
+                run(lambda: next(g))))
+    out.append((for_first(dropping(n), 2), taken()))
+    out.append((for_first(finally_dropped(n), 1), taken()))
+    g = finally_dropped(n)
+    out.append((for_first(g, 1), taken(), inspect.getgeneratorstate(g)))
+    del g
+    out.append(taken())
+    out.append(for_each(frames_seen(n)))
+    g = written_while_paused(n)
+    out.append(for_first(g, 1))
+    locals_seen = g.gi_frame.f_locals
+    locals_seen['a'] = 'written'
+    out.append((sorted(locals_seen), for_each(g)))
+    g = running_state()
+    next(g)
+    out.append((g.send(g), for_each(g)))
+    out.append(compiled(counter, gives_back, raises_late, stops_inside,
+                        dropping, finally_dropped, frames_seen,
+                        written_while_paused, outer_gen))
+    return out
+
+
+def deep_for(g, depth):
+    if depth == 0:
+        for x in g:
+            return x
+    return deep_for(g, depth - 1)
+
+
+def for_recursion_limit(n):
+    old = sys.getrecursionlimit()
+    g = counter(1000)
+    next(g)
+    out = []
+    try:
+        sys.setrecursionlimit(80)
+        for depth in range(50, 100):
+            try:
+                deep_for(g, depth)
+            except RecursionError:
+                out.append('RecursionError')
+                break
+    finally:
+        sys.setrecursionlimit(old)
+    out.append(run(lambda: next(g)))
+    return out
+
+
+def for_traced(n):
+    del EVENTS[:]
+    try:
+        out = for_each(traced_gen(n))
+    finally:
+        sys.settrace(None)
+    out.append(EVENTS[:])
+    del EVENTS[:]
+    return out
+
+
+def for_exception_state(n):
+    out = []
+    try:
+        raise ValueError('outer')
+    except ValueError:
+        out.append(for_each(exc_seen()))
+        out.append(repr(sys.exc_info()[1]))
+    out.append(for_each(exc_seen()))
+    return out
+
+
 CASES = [
     ('resuming', [(3,), (0,)], {}),
     ('local_masks', [(3,)], {}),
@@ -609,4 +776,8 @@ CASES = [
     ('resumed_by_ceval', [(3,)], {}),
     ('words_resumed_by_ceval', [(3,)], {}),
     ('exception_state', [(3,)], {}),
+    ('for_loops', [(3,), (0,)], {}),
+    ('for_recursion_limit', [(0,)], {}),
+    ('for_traced', [(3,)], {}),
+    ('for_exception_state', [(3,)], {}),
 ]

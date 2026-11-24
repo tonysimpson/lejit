@@ -984,10 +984,19 @@ typedef struct le_owner_s {
    (eval_hook.c:LeGen_Run), and coroutine bodies too where their awaits
    pause the frame object as ceval's YIELD_FROM leaves it (pycompiler.c) */
 #define LE_RESUMES_COROUTINES (!LE_HAS_INTERPRETER_FRAME)
+/* and compiled code resumes a generator itself, without gen_send_ex2 and
+   the eval hook (eval_hook.c:le_gen_iternext), where its frame is inside
+   it and the evaluator's caller pops it */
+#define LE_RESUMES_GENERATORS_DIRECTLY \
+    (LE_HAS_INTERPRETER_FRAME && !LE_HAS_EVAL_FRAME_POPS)
+#if LE_RESUMES_GENERATORS_DIRECTLY
+EXTERNFN PyObject *
+le_gen_iternext(PyObject *gen);
+#endif
 
 /* A resumable generator's compiled entries at one resume point, one per
-   set of NULL locals and stack items (a bit each, locals first), compiled
-   when first needed, at most LE_RESUME_ENTRIES */
+   set of NULL words in its frame (a bit each, in the frame's order),
+   compiled when first needed, at most LE_RESUME_ENTRIES */
 #define LE_RESUME_ENTRIES 4
 typedef struct {
     uint64_t nulls;

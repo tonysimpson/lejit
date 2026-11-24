@@ -1433,9 +1433,9 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
    LeGen_Run), on the words of its frame in this order: the locals, owned,
    the cells and free variables, borrowed, the 'nstack' stack items, owned,
    then the run's FrameRuntime (Python/frames.h), whose frame it is. A local or
-   stack item whose bit is set in 'nulls' (locals first) is NULL, and its word
-   not used. 'blocks' are the frame's 'nblocks' blocks, as (type, handler in
-   bytes, level). */
+   stack item whose bit is set in 'nulls' (one for each word, in that
+   order) is NULL, and its word not used. 'blocks' are the frame's 'nblocks'
+   blocks, as (type, handler in bytes, level). */
 DEFINEFN
 PsycoObject *
 PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
@@ -1460,8 +1460,7 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
     /* the last word is pushed first */
     for (i = nwords - 1; i >= 0; i--) {
         bool owned = i < nlocals || (i >= nplus && i < nplus + nstack);
-        bool null =
-            owned && ((nulls >> (i < nplus ? i : nlocals + i - nplus)) & 1);
+        bool null = owned && ((nulls >> i) & 1);
         vinfo_t *v;
         po->stack_depth += sizeof(long);
         v = null ? psyco_vi_Zero()
