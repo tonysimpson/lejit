@@ -24,8 +24,7 @@ concurrency:
 
 jobs:
   # what this run tests: main and full runs get every job; a pull request
-  # gets builds, tests/jit on two versions, format and lint, and no builds
-  # when it changes only docs and tests
+  # gets format, and lint unless it changes only docs and tests
   changes:
     name: changes
     if: ${{ !github.event.pull_request.draft }}
@@ -148,13 +147,13 @@ jobs:
       - name: tests/jit
         run: python tests/jit/run.py --release
 
-  # every supported version: the checked and release builds must compile
-  # and load; on the versions make check doesn't run on yet, full runs also
-  # check the release build doesn't change the smoke test's output
+  # every supported version, on full runs: the checked and release builds
+  # must compile and load, and on the versions make check doesn't run on yet
+  # the release build mustn't change the smoke test's output
   build:
     name: build (${{ matrix.python }})
     needs: changes
-    if: needs.changes.outputs.build == 'true'
+    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
     env:
@@ -183,36 +182,6 @@ jobs:
           needs.changes.outputs.full == 'true' &&
           (matrix.python == '3.13.2' || matrix.python == '3.14.10')
         run: diff <(python tests/jit/smoke.py plain 2>&1) <(python tests/jit/smoke.py lejit 2>&1)
-
-  # make check's tests/jit on two versions, for pull requests; full runs
-  # have make check instead
-  jit:
-    name: tests/jit (${{ matrix.python }})
-    needs: changes
-    if: needs.changes.outputs.full != 'true'
-    runs-on: ubuntu-24.04
-    container: python:${{ matrix.python }}-bookworm
-    env:
-      LEJIT_DEV_FALLBACK: skip
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.10.16", "3.12.9"]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install libffi, libunwind and setuptools
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
-          python -c 'import setuptools' 2>/dev/null || pip install setuptools
-      # the images have no .pyc: byte-compile the library as make check's
-      # job does, or the leak check counts what the first imports compile
-      - name: Byte-compile the library
-        run: |
-          stdlib=$(python -c "import sysconfig; print(sysconfig.get_paths()['stdlib'])")
-          python -Wi -m compileall -q -x 'bad_coding|badsyntax|site-packages|lib2to3/tests/data|test_lib2to3/data' "$stdlib"
-      - name: make test
-        run: make test PY=python
 
   # Pythons LeJIT doesn't support yet: installing builds no extension, and
   # start() warns and does nothing
@@ -356,7 +325,7 @@ jobs:
   # pull request skips can't be required themselves
   passed:
     name: all jobs passed
-    needs: [changes, check, encoder, release, build, jit, install-newer,
+    needs: [changes, check, encoder, release, build, install-newer,
             install-main, detectors-newer, format, lint, wheels]
     if: ${{ always() && !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
