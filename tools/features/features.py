@@ -407,6 +407,30 @@ def objectdict_setitem_linkable(s):
     return _linkable(s, '_PyObjectDict_SetItem')
 
 
+def _parameters(s, name):
+    """(path, [each parameter's token texts]) of function name's header
+    declaration; Unanswered if there is none"""
+    path, decl = s.declaration(name)
+    if decl is None:
+        raise Unanswered('no declaration of %s' % name)
+    toks = s.tokens(path)
+    for i, t in enumerate(toks[:-1]):
+        if t.text == name and toks[i + 1].text == '(':
+            inside = toks[i + 2:ctokens.match_close(toks, i + 1)]
+            return path, [_texts(p) for p in ctokens.split_top(inside, ',')]
+    raise Unanswered('%s: no parameters of %s' % (path, name))
+
+
+def objectdict_setitem_object(s):
+    """_PyObjectDict_SetItem takes the object after its type: (tp, obj,
+    dictptr, name, value)"""
+    path, params = _parameters(s, '_PyObjectDict_SetItem')
+    if len(params) not in (4, 5):
+        raise Unanswered('%s:_PyObjectDict_SetItem has %d parameters'
+                         % (path, len(params)))
+    return len(params) == 5, path + ':_PyObjectDict_SetItem'
+
+
 def check_result_tstate(s):
     """_Py_CheckFunctionResult takes the thread state first"""
     return _takes_tstate(s, '_Py_CheckFunctionResult')
@@ -1294,6 +1318,7 @@ C_API = [
     ('ARG_CHECK_POSITIONAL', arg_check_positional),
     ('CHECK_RESULT_TSTATE', check_result_tstate),
     ('OBJECTDICT_SETITEM_LINKABLE', objectdict_setitem_linkable),
+    ('OBJECTDICT_SETITEM_OBJECT', objectdict_setitem_object),
     ('FLOAT_ASDOUBLE_INDEX', float_asdouble_index),
     ('TRACEBACK_FROM_FRAME_API', D('_PyTraceBack_FromFrame is declared PyAPI_FUNC (in an internal header)',
                                    lambda s: _exported(s, '_PyTraceBack_FromFrame'))),

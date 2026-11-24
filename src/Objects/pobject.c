@@ -1394,6 +1394,13 @@ PsycoObject_GenericGetAttr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname)
     return generic_getattr(po, obj, vname, PyObject_GenericGetAttr);
 }
 
+#if LE_HAS_OBJECTDICT_SETITEM_LINKABLE && LE_HAS_OBJECTDICT_SETITEM_OBJECT
+/* exported, declared in an internal header */
+PyAPI_FUNC(int)
+    _PyObjectDict_SetItem(PyTypeObject *tp, PyObject *obj, PyObject **dictptr,
+                          PyObject *name, PyObject *value);
+#endif
+
 /* The instance dict part of 3.7's _PyObject_GenericSetAttrWithDict:
    _PyObjectDict_SetItem creates the dict if there is none, keeps the
    class's shared keys as CPython does, and deletes if value is NULL.
@@ -1413,7 +1420,12 @@ cimpl_instance_dict_set(PyObject *obj, PyObject *name, PyObject *value)
        descriptor for the name) */
     if (has_managed_values(tp))
         return PyObject_GenericSetAttr(obj, name, value);
-#if LE_HAS_OBJECTDICT_SETITEM_LINKABLE
+#if LE_HAS_OBJECTDICT_SETITEM_LINKABLE && LE_HAS_OBJECTDICT_SETITEM_OBJECT
+    /* a missing name's error is CPython's own, which names the type */
+    if (value == NULL)
+        return PyObject_GenericSetAttr(obj, name, value);
+    return _PyObjectDict_SetItem(tp, obj, dictptr, name, value);
+#elif LE_HAS_OBJECTDICT_SETITEM_LINKABLE
     int r = _PyObjectDict_SetItem(tp, dictptr, name, value);
     if (r < 0 && PyErr_ExceptionMatches(PyExc_KeyError))
         PyErr_SetObject(PyExc_AttributeError, name);

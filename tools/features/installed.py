@@ -338,6 +338,7 @@ def tuple_get_empty(h):
 
 HEADER_DETECTORS = {
     'CHECK_RESULT_TSTATE': check_result_tstate,
+    'OBJECTDICT_SETITEM_OBJECT': features.objectdict_setitem_object,
     'PYCORE_PYSTATE_H': pycore_header('pycore_pystate.h'),
     'PYCORE_INTERP_H': pycore_header('pycore_interp.h'),
     'EVAL_HOOK_TSTATE': eval_hook_tstate,
