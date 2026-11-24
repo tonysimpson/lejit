@@ -464,9 +464,21 @@ psyco_note_call_site(PsycoObject *po, int lasti)
 {
     struct locals_map_s *map;
     long i;
-    if (po->pr.is_inlining || lasti < 0)
+    if (lasti < 0)
         return;
     map = psyco_locals_map(po, lasti, NULL);
+    if (po->pr.is_inlining) {
+        /* the slot keeps a record of the inlined frame, here with its place
+           and its parent's locals, read as a note's (frames.c:slot_locals) */
+        stack_frame_info_t *rec = psyco_finfo(NULL, po);
+        rec->own_lasti = lasti;
+        rec->back_locals = map;
+        po->pr.pending_map = map;
+        BEGIN_CODE
+        ABOUT_TO_CALL_SUBFUNCTION((long)rec);
+        END_CODE
+        return;
+    }
     i = note_index();
     psyco_locals_maps[i] = map;
     po->pr.pending_map = map;

@@ -118,6 +118,7 @@ finfo_inlined_caller(stack_frame_info_t *p, PsycoObject *caller)
     Source sglobals = caller->vlocals.items[INDEX_LOC_GLOBALS]->source;
     p->co = caller->pr.co;
     p->nargs = -1;
+    p->own_lasti = -1;
     p->back_lasti = inline_parent_lasti(caller);
     if (is_compiletime(sglobals))
         p->globals = (PyObject *)CompileTime_Get(sglobals)->value;
@@ -140,6 +141,7 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
     memset(p, 0, (inlining + 1) * sizeof(stack_frame_info_t));
     p->link_stack_depth = -inlining;
     p->nargs = -1;
+    p->own_lasti = -1;
     p->co = callee->pr.co;
     p->back_lasti =
         caller != NULL ? psyco_call_lasti(caller->pr.co, caller->pr.next_instr)
@@ -166,6 +168,7 @@ psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co)
     memset(p, 0, (inlining + 1) * sizeof(stack_frame_info_t));
     p->link_stack_depth = -inlining;
     p->nargs = -1;
+    p->own_lasti = -1;
     p->co = co;
     p->back_lasti = psyco_call_lasti(caller->pr.co, caller->pr.next_instr);
     p->on_gen_frame = 1;
@@ -569,9 +572,17 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
         pregs = regs;
     }
     else {
+        code_t *ip;
         map = ((stack_frame_info_t *)v)->back_locals;
         if (map == NULL || map->nvalues != n)
             return false;
+        /* an inlined frame's call through C, which may have left the
+           parent's locals in callee-saved registers, as for a note */
+        if (map->retaddr != NULL) {
+            if (!slot_registers(slot, regs, &ip) || ip != map->retaddr)
+                return false;
+            pregs = regs;
+        }
     }
     data = (char *)slot - map->below;
     p = map->items;
@@ -1402,6 +1413,8 @@ pvisitframes(PyObject *(*callback)(PyObject *, void *), void *data)
             returning = (long)*f1 == FINFO_RETURNING;
             if ((((long)*f1) & 1) != 0 && (long)*f1 != -1 && !returning)
                 lasti = psyco_note_map((long)*f1)->lasti;
+            else if ((((long)*f1) & 1) == 0)
+                lasti = (*f1)->own_lasti;
 
             /* now actually visit them in the correct order */
             while (revlist) {

@@ -133,6 +133,9 @@ struct stack_frame_info_s {
                           for an inlined frame (frames.c:kept_frame) */
     struct locals_map_s *back_locals; /* that frame's locals then, or NULL */
     code_t *ret_addr;                 /* a compiled call's return address */
+    /* an inlined frame's own instruction, at a call through C
+       (codegen.c:psyco_note_call_site), or -1 */
+    int own_lasti;
     /* the function whose coroutine's body this call runs, started by its
        await (psyfunc.c:psyco_coro_start), or NULL */
     PyFunctionObject *coro_func;
