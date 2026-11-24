@@ -747,6 +747,32 @@ def for_exception_state(n):
     return out
 
 
+
+# A static type CPython readies only when an attribute is first looked up
+# on it (3.11's line_iterator), iterated by a body compiled before and
+# after that.
+def line_starts(code):
+    last = None
+    for start, end, line in code.co_lines():
+        if line is not None and line != last:
+            last = line
+            yield start, line
+
+
+def readied_late(n):
+    # resumed, but not to its end, before the type is readied, and to its
+    # end only after
+    out = []
+    for f in (counting, ones, light_bodies):
+        g = line_starts(f.__code__)
+        out.append([next(g) != () for _ in range(2)])
+    for f in (counting, ones):
+        list(f.__code__.co_lines())
+    for f in (light_bodies, counting, readied_late):
+        out.append(dict(line_starts(f.__code__)) != {})
+    return out, compiled(line_starts)
+
+
 CASES = [
     ('resuming', [(3,), (0,)], {}),
     ('local_masks', [(3,)], {}),
@@ -761,6 +787,7 @@ CASES = [
     ('interrupted', [(0,)], {}),
     ('interrupted_in_try', [(0,)], {}),
     ('light_bodies', [(3,)], {}),
+    ('readied_late', [(0,)], {}),
     ('send_at_start', [(3,)], {}),
     ('resumed_by_ceval', [(3,)], {}),
     ('words_resumed_by_ceval', [(3,)], {}),

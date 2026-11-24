@@ -46,11 +46,16 @@
 /* A type whose attributes type_setattro lets be set: a heap type, or where
    CPython has the flag, a type without Py_TPFLAGS_IMMUTABLETYPE (which
    PyType_Ready gives every static type, and an extension's heap type may
-   ask for, as array's does). */
+   ask for, as array's does). Some static types are readied, and so given
+   the flag, only when an attribute is first looked up on them (3.11's
+   line_iterator): one is readied here first, so that the answer can't
+   change between a compile and its replay. */
 PSY_INLINE bool
 Psyco_TypeMutable(PyTypeObject *tp)
 {
 #if LE_HAS_IMMUTABLE_TYPE_FLAG
+    if (!(tp->tp_flags & Py_TPFLAGS_READY) && PyType_Ready(tp) < 0)
+        PyErr_Clear(); /* out of memory: taken as mutable */
     return (tp->tp_flags & Py_TPFLAGS_IMMUTABLETYPE) == 0;
 #else
     return (tp->tp_flags & Py_TPFLAGS_HEAPTYPE) != 0;
