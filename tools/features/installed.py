@@ -342,6 +342,8 @@ HEADER_DETECTORS = {
     'PYCORE_PYSTATE_H': pycore_header('pycore_pystate.h'),
     'PYCORE_INTERP_H': pycore_header('pycore_interp.h'),
     'EVAL_HOOK_TSTATE': eval_hook_tstate,
+    'GENERATOR_RETURN_KIND': internal(features.generator_return_kind),
+    'LAST_PROFILED_FRAME': features.last_profiled_frame,
     'SIGNALS_PENDING': signals_pending,
     'EVAL_FRAME_HANDLE_PENDING': eval_frame_handle_pending,
     'INTERP_RECURSION_LIMIT': interp_recursion_limit,

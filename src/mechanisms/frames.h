@@ -25,6 +25,10 @@
 /* _PyEval_FrameClearAndPop */
 #include "internal/pycore_ceval.h"
 #endif
+#if LE_HAS_GENERATOR_RETURN_KIND
+/* _PyThreadStateImpl */
+#include "internal/pycore_tstate.h"
+#endif
 #undef Py_BUILD_CORE
 typedef _PyInterpreterFrame le_frame_t;
 
@@ -1172,12 +1176,24 @@ le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
     if (result != NULL && gen->gi_frame_state == FRAME_SUSPENDED) {
         ts->exc_info = gen->gi_exc_state.previous_item;
         gen->gi_exc_state.previous_item = NULL;
+#if LE_HAS_LAST_PROFILED_FRAME
+        _PyThreadState_UpdateLastProfiledFrame(ts, f, f->previous);
+#endif
         f->previous = NULL;
+#if LE_HAS_GENERATOR_RETURN_KIND
+        /* last: gen_send_ex2 reads it as the run's */
+        ((_PyThreadStateImpl *)ts)->generator_return_kind = GENERATOR_YIELD;
+#endif
         return result;
     }
     f->owner = FRAME_OWNED_BY_FRAME_OBJECT;
     result = le_frame_finish(ts, f, result, done);
     f->owner = FRAME_OWNED_BY_GENERATOR;
+#if LE_HAS_GENERATOR_RETURN_KIND
+    /* as ceval's clear of a generator's frame says, which a frame owned
+       by its object doesn't get */
+    ((_PyThreadStateImpl *)ts)->generator_return_kind = GENERATOR_RETURN;
+#endif
     return result;
 }
 #endif
