@@ -986,9 +986,8 @@ typedef struct le_owner_s {
 #define LE_RESUMES_COROUTINES (!LE_HAS_INTERPRETER_FRAME)
 /* and compiled code resumes a generator itself, without gen_send_ex2 and
    the eval hook (eval_hook.c:le_gen_iternext), where its frame is inside
-   it and the evaluator's caller pops it */
-#define LE_RESUMES_GENERATORS_DIRECTLY \
-    (LE_HAS_INTERPRETER_FRAME && !LE_HAS_EVAL_FRAME_POPS)
+   it */
+#define LE_RESUMES_GENERATORS_DIRECTLY LE_HAS_INTERPRETER_FRAME
 #if LE_RESUMES_GENERATORS_DIRECTLY
 EXTERNFN PyObject *
 le_gen_iternext(PyObject *gen);
@@ -996,7 +995,7 @@ le_gen_iternext(PyObject *gen);
 /* and a resume's compiled code is given the frame itself, whose words it
    reads where it uses them (vcompiler.c:PsycoObject_FromGenFrame), so one
    entry serves every resume at a point */
-#define LE_RESUMES_ON_FRAME LE_RESUMES_GENERATORS_DIRECTLY
+#define LE_RESUMES_ON_FRAME LE_HAS_INTERPRETER_FRAME
 /* a frame with more words (locals plus stack) resumes interpreted */
 #define LE_FRAME_WORDS_MAX 1024
 
