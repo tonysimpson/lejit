@@ -519,6 +519,32 @@ def FRAME_CLEARED_LAST_FIRST():
 
 
 @probe
+def GETFRAME_AUDITS_RESULT():
+    """sys._getframe(1)'s audit event names the caller's frame, which it
+    returns, not the current one (run: an audit hook)"""
+    if not hasattr(sys, 'addaudithook'):
+        return False, 'no sys.addaudithook'
+    seen = []
+
+    def hook(event, args):
+        if event == 'sys._getframe' and seen is not None:
+            seen.append(args[0])
+    sys.addaudithook(hook)
+
+    def inner():
+        return sys._getframe(1), sys._getframe(0)
+    try:
+        caller, current = inner()
+        named = seen[-2]
+    finally:
+        seen = None
+    if named is not caller and named is not current:
+        raise Unanswered('the audit event named neither frame: %r' % named)
+    return named is caller, 'run: the event named the %s frame' % (
+        'returned' if named is caller else 'current')
+
+
+@probe
 def LINENO_WHEN_SET():
     """a frame given an f_trace while no trace function runs reports the
     line it is on, not the line where f_trace was set (frame.f_lineno)"""
@@ -1073,6 +1099,15 @@ def FOR_ITER_EXIT_PAST_POP_TOP():
                     'dis: END_FOR (pops %d) then %s' % (pops, ins[i + 1].opname))
     raise Unanswered('a for loop has no END_FOR: %r'
                      % [x.opname for x in ins])
+
+
+@probe
+def GET_ITER_INDEX():
+    """GET_ITER pushes two items, the iterator and an index or NULL
+    (dis)"""
+    op = dis.opmap['GET_ITER']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 2, 'dis: GET_ITER pushes %d' % pushes
 
 
 @probe

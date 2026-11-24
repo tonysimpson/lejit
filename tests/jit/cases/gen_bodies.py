@@ -430,6 +430,34 @@ def resumed_by_ceval(n):
     return out, compiled(appending)
 
 
+def seq_items(seq):
+    for x in seq:
+        yield x
+
+
+def started_by_ceval(make, seq, steps):
+    # made, and resumed 'steps' times, while a profile function is set, so
+    # ceval runs the loop's start; the rest is resumed compiled
+    sys.setprofile(lambda *a: None)
+    try:
+        g = make(seq)
+        first = [run(lambda: next(g)) for _ in range(steps)]
+    finally:
+        sys.setprofile(None)
+    return first, list(g)
+
+
+def loops_from_ceval(n):
+    # where ceval loops over a list, tuple, str or bytes by an index, not an
+    # iterator, a compiled resume goes on from that index
+    out = []
+    for seq in ([1, 2, 3, 4][:n], (5, 6, 7), 'abc', b'xyz'):
+        for steps in range(3):
+            out.append(started_by_ceval(seq_items, seq, steps))
+            out.append(started_by_ceval(lambda s: (x for x in s), seq, steps))
+    return out, compiled(seq_items)
+
+
 def frame_words(xs):
     # paused with immortal objects and NULLs (an unbound local, the NULL
     # under a called function) in its locals and on its stack, which ceval
@@ -819,6 +847,7 @@ CASES = [
     ('readied_late', [(0,)], {}),
     ('send_at_start', [(3,)], {}),
     ('resumed_by_ceval', [(3,)], {}),
+    ('loops_from_ceval', [(3,), (0,)], {}),
     ('words_resumed_by_ceval', [(3,)], {}),
     ('exception_state', [(3,)], {}),
     ('for_loops', [(3,), (0,)], {}),

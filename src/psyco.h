@@ -1063,6 +1063,11 @@ le_gen_direct_end(PyObject *gen, PyObject *result);
 /* the same after a step made by send(), as gen_send returns */
 EXTERNFN PyObject *
 le_gen_direct_send_end(PyObject *gen, PyObject *result);
+/* the same after a step made by yield from's SEND, as PyIter_Send:
+   1 with the value yielded in out[0], 0 with the value returned, -1 with
+   the exception */
+EXTERNFN int
+le_gen_direct_send_status(PyObject *gen, PyObject *result, PyObject *out[]);
 #endif
 /* the record lives in a weak reference to its code object (lejit.c) */
 typedef struct {
