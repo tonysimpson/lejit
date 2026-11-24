@@ -85,6 +85,17 @@ def extra_key_deleted(n):
     return x, 'extra' in d
 
 
+# a list local compiled code keeps virtual, which the proxy can't read,
+# goes on in ceval with the write
+def written_beside_a_list(n):
+    x = -1
+    out = []
+    for i in range(n):
+        sys._getframe().f_locals['x'] = i
+        out.append(x)
+    return out
+
+
 CASES = [
     ('written_then_read', "[(1,), (2,)]", {}),
     ('kept_then_changed', "[(1,), (2,)]", {}),
@@ -95,4 +106,5 @@ CASES = [
     ('written_through_kept_proxy', "[(5,)]", {}),
     ('written_after_list_store', "[([0], 5)]", {}),
     ('extra_key_deleted', "[(3,)]", {}),
+    ('written_beside_a_list', "[(5,)]", {}),
 ]

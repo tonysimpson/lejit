@@ -1569,6 +1569,9 @@ expose(PyFrameObject *f, int write)
     if (write && exposed != NULL) {
         *exposed = 1;
         psyco_frames_exposed++;
+#if LE_HAS_MONITORING
+        le_quiet_version = (uint64_t)-1; /* compiled code's test fails */
+#endif
     }
 }
 
@@ -3071,6 +3074,26 @@ skip_call_profile(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg)
     return h->func(h->obj, frame, what, arg);
 }
 
+/* The compiled frame's locals go into the frame, each old one left in
+   st->values for the caller to release once all the new ones are in: one
+   may hold the last reference to another's value. A frame that keeps its
+   locals (keep_locals) takes only those it has none for, which its
+   frame-locals proxy could not read (a virtual value) and cannot have
+   deleted. */
+static void
+resume_locals(struct resume_s *st, le_frame_t *frame, int nlocals)
+{
+    int i;
+    for (i = 0; i < nlocals; i++) {
+        PyObject *old;
+        if (st->keep_locals && LE_FRAME_WORD(frame, i) != NULL)
+            continue;
+        old = le_frame_word_take(frame, i);
+        le_frame_word_put(frame, i, st->values[i]);
+        st->values[i] = old;
+    }
+}
+
 DEFINEFN
 PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack)
@@ -3090,13 +3113,7 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     extra_assert(nlocals == le_code_nlocalsplus(le_pyframe_code(f)));
     extra_assert(nstack <= le_pyframe_code(f)->co_stacksize);
 
-    /* the old locals go only once all the new ones are in: one may hold
-       the last reference to another's value */
-    for (i = 0; i < nlocals && !st->keep_locals; i++) {
-        PyObject *old = le_frame_word_take(frame, i);
-        le_frame_word_put(frame, i, st->values[i]);
-        st->values[i] = old;
-    }
+    resume_locals(st, frame, nlocals);
     for (i = 0; i < nstack; i++)
         le_frame_word_put(frame, nlocals + i, st->values[nlocals + i]);
     le_frame_set_stack_depth(f, (int)nstack);
@@ -3216,11 +3233,7 @@ psyco_resume_suspend(struct resume_s *st, long at, long nstack,
     int i;
     PyObject *coro;
     activation_t *a;
-    for (i = 0; i < nlocals && !st->keep_locals; i++) {
-        PyObject *old = le_frame_word_take(frame, i);
-        le_frame_word_put(frame, i, st->values[i]);
-        st->values[i] = old;
-    }
+    resume_locals(st, frame, nlocals);
     for (i = 0; i < nstack; i++)
         le_frame_word_put(frame, nlocals + i, st->values[nlocals + i]);
     le_gen_frame_pause(f, le_lasti_of((int)at), (int)nstack, st->iblock,

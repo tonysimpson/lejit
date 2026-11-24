@@ -777,10 +777,30 @@ cannot_block_init(void)
    call (pycompiler.c:resume_if_tracing). use_tracing is per thread and
    set by every way in, C ones too
    (PyEval_SetTrace and PyEval_SetProfile, as cProfile uses). */
-static bool
+static int
 tracing_on(PsycoObject *po, vinfo_t *vts)
 {
-    return runtime_condition_f(po, le_tracing_test(po, vts));
+    if (!runtime_condition_f(po, le_tracing_test(po, vts)))
+        return 0;
+#if LE_HAS_MONITORING
+    {
+        /* the test above is the version's: the exact one, on its rare
+           path, also brings le_quiet_version up to date */
+        condition_code_t cc;
+        vinfo_t *v =
+            psyco_generic_call(po, le_tracing_recheck,
+                               CfReturnTypeInt | CfNoBlock | CfNoPython, "");
+        if (v == NULL)
+            return -1;
+        cc = integer_non_null(po, v);
+        vinfo_decref(v, po);
+        if (cc == CC_ERROR)
+            return -1;
+        return runtime_condition_f(po, cc);
+    }
+#else
+    return 1;
+#endif
 }
 
 /* Whether a compiled call or inlined frame must be the real call
@@ -796,13 +816,17 @@ DEFINEFN
 int
 psyco_tracing_on(PsycoObject *po)
 {
-    bool on;
+    int on;
     vinfo_t *vts;
+#if LE_HAS_MONITORING
+    vts = NULL; /* le_tracing_test reads none */
+#else
     vts = load_tstate(po);
     if (vts == NULL)
         return -1;
+#endif
     on = tracing_on(po, vts);
-    vinfo_decref(vts, po);
+    vinfo_xdecref(vts, po);
     return on;
 }
 
@@ -1540,5 +1564,8 @@ psycofunction_init(void)
 {
     psyco_assert(le_tstate_check());
     psyco_assert(le_eval_breaker_check());
+#if LE_HAS_MONITORING
+    le_tracing_recheck(); /* the first version seen */
+#endif
     cannot_block_init();
 }
