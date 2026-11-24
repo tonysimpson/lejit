@@ -575,6 +575,20 @@ psyco_save_inline_po(PsycoObject *po)
     return v;
 }
 
+/* whether the code being compiled may inline a call: not in blocks made
+   after one of its merge points reached its cap (vcompiler.c:mp_new_block).
+   One-way and read by the block's serial, so a replay decides the same
+   (codemanager.h:psyco_block_serial). An inlined call's instruction, which
+   restarts with the body's result (LOC_INLINING), is inlining whatever
+   the block it restarts in. */
+static bool
+inline_into(PsycoObject *po)
+{
+    le_code_extra_t *x = le_code_extra_get(po->pr.co);
+    return x == NULL || x->inline_end == 0 ||
+           psyco_block_serial(po) + 1 < x->inline_end;
+}
+
 DEFINEFN
 PsycoObject *
 psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a)
@@ -1104,7 +1118,8 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
        reach RecursionError at twice CPython's depth */
     inlining = !generator && allow_inline && !po->pr.is_inlining &&
                co != po->pr.co &&
-               (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE);
+               (psyco_mp_flags(fncall.merge_points) & MP_FLAGS_INLINABLE) &&
+               (LOC_INLINING != NULL || inline_into(po));
     /* the instruction restarting with the inlined body's result binds again
        only to check it: its cells were made for the body. A generator's
        binding is checked here and done again by its consumer. */
