@@ -195,6 +195,38 @@ def local_events_on_callee(n):
     return t, mapped, starts
 
 
+def counter(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 1
+
+
+def local_events_on_generator(n):
+    # events set on a generator's code alone: its resumes are seen from
+    # then on, stepped from compiled code
+    if not hasattr(sys, 'monitoring'):
+        return None
+    mon = sys.monitoring
+    tool = mon.DEBUGGER_ID
+    code = counter.__code__
+    resumes = []
+    mon.use_tool_id(tool, 'test')
+    mon.register_callback(tool, mon.events.PY_RESUME,
+                          lambda c, off: resumes.append(c.co_name))
+    g = counter(n)
+    t = 0
+    try:
+        for i in range(n):
+            if i == n // 2:
+                mon.set_local_events(tool, code, mon.events.PY_RESUME)
+            t += next(g)
+    finally:
+        mon.set_local_events(tool, code, 0)
+        mon.free_tool_id(tool)
+    return t, resumes
+
+
 CASES = [
     ('thread_turns_on_monitoring', "[(40,)]", {}),
     ('thread_traces_all', "[(40,)]", {}),
@@ -203,4 +235,5 @@ CASES = [
     ('written_after_tracing', "[(20,)]", {}),
     ('callee_sets_local_events', "[(20,)]", {}),
     ('local_events_on_callee', "[(20,)]", {}),
+    ('local_events_on_generator', "[(20,)]", {}),
 ]

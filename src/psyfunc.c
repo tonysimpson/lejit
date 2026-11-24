@@ -1573,7 +1573,7 @@ gen_step_tests(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
                                             FRAME_CREATED, Py_EQ)) != 0) ||
         (r = gen_field_test_i(po, vgen, GEN_locals, 0, Py_NE)) != 0)
         return r < 0 ? -1 : 0;
-    if (le_direct_call_refused(po, vts))
+    if (le_direct_call_refused(po, vts, co))
         return 0;
     if ((r = gen_test(po, le_eval_breaker_test_on(po, vts))) != 0)
         return r < 0 ? -1 : 0;
