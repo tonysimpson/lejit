@@ -416,6 +416,55 @@ need_type_mega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp)
     return psyco_pyobj_atcompiletime_mega(po, vtp, (PyObject **)tp);
 }
 
+/* exported by every CPython; internal, so undeclared here, from 3.13 */
+PyAPI_FUNC(int)
+    _PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method);
+
+/* ceval's method load: out[0] the function (1) or the attribute (0) */
+static int
+cimpl_get_method(PyObject *obj, PyObject *name, PyObject *out[])
+{
+    PyObject *meth = NULL;
+    int found = _PyObject_GetMethod(obj, name, &meth);
+    if (meth == NULL)
+        return -1;
+    out[0] = meth;
+    return found != 0;
+}
+
+/* For a type LeJIT knows, the attribute, which a call of a virtual bound
+   method unpacks; for one it doesn't, the load CPython does at run time,
+   which makes no bound method for a function found on the type */
+DEFINEFN
+int
+PsycoObject_GetMethod(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
+                      vinfo_t **meth)
+{
+    PyTypeObject *tp;
+    vinfo_array_t *out;
+    vinfo_t *found;
+    int r = need_type_mega(po, o, &tp);
+    if (r < 0)
+        return -1;
+    if (r > 0) {
+        *meth = PsycoObject_GetAttr(po, o, attr_name);
+        return *meth == NULL ? -1 : 0;
+    }
+    out = array_new(1);
+    found = psyco_generic_call(po, cimpl_get_method, CfCommonIntBoolOrError,
+                               "vvA", o, attr_name, out);
+    if (found == NULL) {
+        array_release(out);
+        return -1;
+    }
+    *meth = out->items[0];
+    array_release(out);
+    r = runtime_NON_NULL_t(po, found); /* consumes found */
+    if (r < 0)
+        vinfo_decref(*meth, po);
+    return r;
+}
+
 DEFINEFN
 vinfo_t *
 PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name)
