@@ -43,6 +43,5 @@ def where(n):
 
 
 CASES = [
-    ('where', [(3,)],
-     {'warmup': (40, 'compiling goes on until round 34 on 3.12')}),
+    ('where', [(3,)], {}),
 ]
