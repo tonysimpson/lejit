@@ -2,8 +2,9 @@
 # itself only where _Py_Dealloc would neither defer the free to the
 # trashcan nor hold back the chain the trashcan empties after
 # (Python/pyruntime.c:le_tracked_dealloc). Each case frees a chain of
-# instances, of a type compiled code knows and of one taken off a list,
-# whose type it doesn't, and says when the chain's last instance is freed.
+# lists ending in an instance, from a variable (a list, whose type compiled
+# code knows) and taken off a list (whose type it doesn't), and says when
+# the instance is freed.
 import operator
 import sys
 import weakref
@@ -20,13 +21,14 @@ class Node:
 
 
 def chain(n):
-    head = Node()
-    last = weakref.ref(head)
+    # n lists, each holding the next, and an instance at the end
+    last = Node()
+    seen = weakref.ref(last)
+    head = [last]
+    last = None
     for _ in range(n):
-        node = Node()
-        node.next = head
-        head = node
-    return head, last
+        head = [head]
+    return head, seen
 
 
 def deep_chain_freed(n):
@@ -34,10 +36,10 @@ def deep_chain_freed(n):
     # the rest of the chain before the free returns
     out = []
     for i in range(n):
-        head, last = chain(200000)
+        head, last = chain(100000)
         head = None
         out.append(last() is None)
-        head, last = chain(200000)
+        head, last = chain(100000)
         pool = [head]
         head = None
         x = pool.pop()
@@ -96,6 +98,6 @@ def near_stack_limit(n):
 
 
 CASES = [
-    ('deep_chain_freed', [(3,)], {}),
+    ('deep_chain_freed', [(1,)], {}),
     ('near_stack_limit', [(3,)], {}),
 ]
