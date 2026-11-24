@@ -6108,9 +6108,27 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
            leaves them */
         case LOAD_SUPER_ATTR: {
 #if LE_HAS_OPCODE_LOAD_SUPER_ATTR
-            vinfo_array_t *out = array_new(1);
+            vinfo_array_t *out;
             vinfo_t *self;
-            int found;
+            PyObject *f;
+            int found = 0;
+            if (oparg & 1)
+                found = PsycoObject_SuperMethod(
+                    po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2),
+                    (void *)(le_code(po->pr.co).bytes + next_instr), &f);
+            if (found < 0)
+                break;
+            if (found) {
+                POP(self);
+                POP_DECREF();
+                POP_DECREF();
+                Py_INCREF(f);
+                PUSH(vinfo_new(
+                    CompileTime_NewSk(sk_new((long)f, SkFlagPyObj))));
+                PUSH(self);
+                goto fine;
+            }
+            out = array_new(1);
             x = psyco_generic_call(po, cimpl_load_super_attr,
                                    CfCommonIntBoolOrError, "vvvllA", NTOP(3),
                                    NTOP(2), TOP(), (long)GETNAMEV(oparg >> 2),
