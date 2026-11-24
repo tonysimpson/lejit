@@ -1,8 +1,9 @@
 /*
  * typeobject.c's slot functions for special methods defined in Python
  * (slot_nb_add and the rest of SLOT1BINFULL, the SLOT0 unary ones,
- * slot_tp_richcompare, slot_mp_subscript, slot_mp_ass_subscript): a user's
- * __add__ or __getitem__ called from compiled code is a
+ * slot_tp_richcompare, slot_mp_subscript, slot_mp_ass_subscript,
+ * slot_tp_call): a user's __add__, __getitem__ or __call__ called from
+ * compiled code is a
  * direct call of the compiled function, as CALL_FUNCTION's, instead of the
  * residual slot function entering it from C through the eval hook.
  *
@@ -97,10 +98,11 @@ special_method(PsycoObject *po, PyTypeObject *tp, void *key, PyObject *name,
 }
 
 /* call_unbound(1, f, self, {args}): a direct call of f with self and
-   'n' more arguments, compiled separately (see the header) */
+   'n' more arguments and the keywords 'kw' (NULL: none), compiled
+   separately (see the header) */
 static vinfo_t *
 call_special_n(PsycoObject *po, PyObject *f, vinfo_t *self, vinfo_t **arg,
-               int n)
+               int n, vinfo_t *kw)
 {
     vinfo_t *vf, *args, *r;
     int i;
@@ -113,7 +115,7 @@ call_special_n(PsycoObject *po, PyObject *f, vinfo_t *self, vinfo_t **arg,
     }
     Py_INCREF(f);
     vf = vinfo_new(CompileTime_NewSk(sk_new((long)f, SkFlagPyObj)));
-    r = pfunction_simple_call(po, vf, f, args, NULL, false);
+    r = pfunction_simple_call(po, vf, f, args, kw, false);
     vinfo_decref(vf, po);
     vinfo_decref(args, po);
     return r;
@@ -122,7 +124,7 @@ call_special_n(PsycoObject *po, PyObject *f, vinfo_t *self, vinfo_t **arg,
 static vinfo_t *
 call_special(PsycoObject *po, PyObject *f, vinfo_t *self, vinfo_t *arg)
 {
-    return call_special_n(po, f, self, &arg, arg != NULL);
+    return call_special_n(po, f, self, &arg, arg != NULL, NULL);
 }
 
 /* r, or exactly psyco_vi_NotImplemented() on the path where it is
@@ -364,6 +366,34 @@ generic:
                               "vv", self, key);
 }
 
+/* slot_tp_call: __call__ looked up on the type, called with self first */
+static ternaryfunc slot_tp_call;
+static PyObject *call_name;
+
+static vinfo_t *
+pslot_tp_call(PsycoObject *po, vinfo_t *self, vinfo_t *args, vinfo_t *kw)
+{
+    PyTypeObject *ts = Psyco_KnownType(self);
+    PyObject *m = NULL;
+    int n = PsycoTuple_Load(args);
+    if (ts == NULL || n < 0 || po->pr.class_unchecked)
+        goto generic;
+    switch (special_method(po, ts, &ts->tp_call, call_name, &m)) {
+        case 1:
+            break;
+        case -1:
+            return NULL;
+        default:
+            goto generic;
+    }
+    if (m != NULL)
+        return call_special_n(po, m, self, &PsycoTuple_GET_ITEM(args, 0), n,
+                              kw);
+generic:
+    return psyco_generic_call(po, slot_tp_call, CfCommonNewRefPyObject, "vvv",
+                              self, args, kw);
+}
+
 static vinfo_t *
 pslot_mp_ass_subscript(PsycoObject *po, vinfo_t *self, vinfo_t *key,
                        vinfo_t *value)
@@ -387,7 +417,7 @@ pslot_mp_ass_subscript(PsycoObject *po, vinfo_t *self, vinfo_t *key,
         goto generic;
     args[0] = key;
     args[1] = value;
-    r = call_special_n(po, m, self, args, value != NULL ? 2 : 1);
+    r = call_special_n(po, m, self, args, value != NULL ? 2 : 1, NULL);
     if (r == NULL)
         return NULL;
     vinfo_decref(r, po);
@@ -576,7 +606,8 @@ probe_slots(void)
             goto done;
     if (PyDict_SetItemString(d, "__init__", Py_True) < 0 ||
         PyDict_SetItemString(d, "__getitem__", Py_True) < 0 ||
-        PyDict_SetItemString(d, "__setitem__", Py_True) < 0)
+        PyDict_SetItemString(d, "__setitem__", Py_True) < 0 ||
+        PyDict_SetItemString(d, "__call__", Py_True) < 0)
         goto done;
     t = PyObject_CallFunction((PyObject *)&PyType_Type, "s(O)O", "le_slots",
                               (PyObject *)&PyBaseObject_Type, d);
@@ -620,5 +651,9 @@ psy_typeobject_init(void)
         Psyco_DefineMeta(slot_mp_subscript, pslot_mp_subscript);
     if (slot_mp_ass_subscript != NULL)
         Psyco_DefineMeta(slot_mp_ass_subscript, pslot_mp_ass_subscript);
+    call_name = slot_name("__call__");
+    slot_tp_call = t->tp_call;
+    if (slot_tp_call != NULL)
+        Psyco_DefineMeta(slot_tp_call, pslot_tp_call);
     Py_DECREF(t);
 }
