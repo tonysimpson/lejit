@@ -1,7 +1,9 @@
 # Locals bound on some paths and not others: a loop head sees more
 # combinations than a merge point compiles blocks for, so past the cap a
 # local may be unbound at run time. Reading or deleting one raises as
-# CPython does, and a bound one is released exactly once.
+# CPython does, and a bound one is released exactly once. Before 3.11 a
+# *args or **kwargs that a closure reads is moved into its cell, leaving
+# its own slot unbound.
 import sys
 import weakref
 
@@ -143,6 +145,23 @@ def gen_all(n):
     return list(gen_pauses(n))
 
 
+def _star_cell(a0, *rest, **kw):
+    v = int('2')
+    for x in a0:
+        y = x if x == 3 else v
+    return (lambda: (rest, kw))()
+
+
+def _star_cell_caller():
+    return _star_cell([1])
+
+
+def star_args_in_cells(n):
+    # map calls it from C, so it is also entered from a frame
+    return [_star_cell_caller(), list(map(_star_cell, [[2 ** 63 - 1]], [n])),
+            _star_cell_caller()]
+
+
 CASES = [
     ('read_all', [(40,)], {}),
     ('delete_all', [(40,)], {}),
@@ -150,4 +169,5 @@ CASES = [
     ('seen_by_frame', [(32,)], {}),
     ('in_traceback', [(32,)], {}),
     ('gen_all', [(32,)], {}),
+    ('star_args_in_cells', [(1,)], {}),
 ]
