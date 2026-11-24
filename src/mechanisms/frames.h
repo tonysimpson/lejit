@@ -26,9 +26,6 @@
 #include "internal/pycore_ceval.h"
 #endif
 #undef Py_BUILD_CORE
-/* its <stdbool.h> makes bool a macro for _Bool: LeJIT's bool is psyco.h's
-   int */
-#undef bool
 typedef _PyInterpreterFrame le_frame_t;
 
 /* the frame's code object, its place (the instruction at f_lasti) and

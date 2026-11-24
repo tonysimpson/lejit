@@ -8,6 +8,9 @@
 #include <Python.h>
 #include <structmember.h> /* for offsetof() */
 #include <stdint.h>
+/* C's own bool, which CPython's internal headers give too: a function
+   returning one must read the same in every file */
+#include <stdbool.h>
 /* the LE_HAS_ features of the CPython source built for */
 #include "le_features_gen.h"
 /* the messages (LE_MSG_) of the interpreter built for, from
@@ -872,16 +875,6 @@ psyco_fatal_error(char *msg, char *filename, int lineno);
 #define PSY_INLINE __inline static
 #else
 #define PSY_INLINE static
-#endif
-
-#ifndef bool
-typedef int bool;
-#endif
-#ifndef false
-#define false 0
-#endif
-#ifndef true
-#define true 1
 #endif
 
 #ifndef PyObject_TypeCheck
