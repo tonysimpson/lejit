@@ -1042,7 +1042,9 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            # new in 3.14
            'LOAD_FAST_BORROW', 'LOAD_FAST_BORROW_LOAD_FAST_BORROW',
            'LOAD_SMALL_INT', 'LOAD_COMMON_CONSTANT', 'NOT_TAKEN', 'POP_ITER',
-           'LOAD_SPECIAL', 'BUILD_TEMPLATE', 'BUILD_INTERPOLATION')
+           'LOAD_SPECIAL', 'BUILD_TEMPLATE', 'BUILD_INTERPOLATION',
+           # gone from 3.15: yield from's is GET_ITER with an argument
+           'GET_YIELD_FROM_ITER')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
