@@ -53,6 +53,17 @@ def written_in_loop(n):
     return total
 
 
+# a list local compiled code keeps virtual, which the proxy can't read,
+# goes on in ceval with the write
+def written_beside_a_list(n):
+    x = -1
+    out = []
+    for i in range(n):
+        sys._getframe().f_locals['x'] = i
+        out.append(x)
+    return out
+
+
 CASES = [
     ('written_then_read', "[(1,), (2,)]", {}),
     ('kept_then_changed', "[(1,), (2,)]", {}),
@@ -60,4 +71,5 @@ CASES = [
     ('set_default_and_pop', "[(1,)]", {}),
     ('caller_written', "[(2,)]", {}),
     ('written_in_loop', "[(5,)]", {}),
+    ('written_beside_a_list', "[(5,)]", {}),
 ]
