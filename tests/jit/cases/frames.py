@@ -111,8 +111,46 @@ def too_deep():
     return sys._getframe(10000)
 
 
+# the frames sys._getframe's audit events name, while AUDITED is a list
+AUDITED = None
+
+
+def audit_hook(event, args):
+    if event == 'sys._getframe' and AUDITED is not None:
+        AUDITED.append(args[0])
+
+
+if hasattr(sys, 'addaudithook'):
+    sys.addaudithook(audit_hook)
+
+
+def audited_inner(depth):
+    try:
+        f = sys._getframe(depth)
+    except ValueError as e:
+        f = e
+    return f
+
+
+def audited_names(n):
+    # the frame each sys._getframe audit event names, as it returns: the
+    # caller asked for (from 3.11) or the current frame; none for too deep
+    # a stack from 3.11
+    global AUDITED
+    out = []
+    for depth in (0, 1, 2, 1000):
+        for i in range(n):
+            AUDITED = []
+            got = audited_inner(depth)
+            out.append((depth, [f.f_code.co_name for f in AUDITED],
+                        [f is got for f in AUDITED]))
+            AUDITED = None
+    return out
+
+
 CASES = [
     ('depth_names', "[(4,)]", {}),
+    ('audited_names', [(2,)], {}),
     ('call_back_chain', "[()]", {}),
     ('call_caller_globals', "[()]", {}),
     ('make_namedtuple', "[()]", {}),

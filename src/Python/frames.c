@@ -2021,7 +2021,7 @@ le_getframe(PyObject *self, PyObject *args, PyObject *kwds)
     }
     if (depth < 0)
         depth = 0;
-#if LE_HAS_AUDIT_HOOKS
+#if LE_HAS_AUDIT_HOOKS && !LE_HAS_GETFRAME_AUDITS_RESULT
     {
         /* sys._getframe's audit event names the current frame */
         PyFrameObject *cur = linked_frame(0, NULL);
@@ -2037,6 +2037,13 @@ le_getframe(PyObject *self, PyObject *args, PyObject *kwds)
         PyErr_SetString(PyExc_ValueError, LE_MSG_CALL_STACK_NOT_DEEP);
         return NULL;
     }
+#if LE_HAS_GETFRAME_AUDITS_RESULT
+    /* the audit event names the frame returned */
+    if (PySys_Audit("sys._getframe", "(O)", (PyObject *)top) < 0) {
+        Py_DECREF(top);
+        return NULL;
+    }
+#endif
     return (PyObject *)top;
 }
 
