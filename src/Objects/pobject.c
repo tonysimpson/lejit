@@ -443,7 +443,16 @@ PsycoObject_GetMethod(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
     PyTypeObject *tp;
     vinfo_array_t *out;
     vinfo_t *found;
-    int r = need_type_mega(po, o, &tp);
+    int r;
+    /* a module: _PyObject_GetMethod's load is PyObject_GetAttr, as for
+       any type whose tp_getattro isn't the generic one */
+    if (is_compiletime(o->source) &&
+        PyModule_Check((PyObject *)CompileTime_Get(o->source)->value) &&
+        Py_TYPE((PyObject *)CompileTime_Get(o->source)->value)->tp_getattro !=
+            PyObject_GenericGetAttr)
+        r = 1;
+    else
+        r = need_type_mega(po, o, &tp);
     if (r < 0)
         return -1;
     if (r > 0) {
