@@ -731,11 +731,11 @@ tracing_on(PsycoObject *po, vinfo_t *vts)
 
 /* Whether a compiled call or inlined frame must be the real call
    instead, which is tracing_on or another eval hook installed over
-   LeJIT's (le_direct_call_refused) */
+   LeJIT's (le_direct_call_test): one test, with the same rare path */
 static bool
 direct_call_refused(PsycoObject *po, vinfo_t *vts)
 {
-    return le_direct_call_refused(po, vts);
+    return runtime_condition_f(po, le_direct_call_test(po, vts));
 }
 
 DEFINEFN

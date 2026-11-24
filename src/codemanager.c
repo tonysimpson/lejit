@@ -1824,6 +1824,7 @@ codebuf_unlist(CodeBufferObject *b)
             break;
         }
     b->ge = NULL;
+    b->exact_key = 0;
 }
 
 /* a block at 'codestart' of the state 'po' (none if NULL), registered in

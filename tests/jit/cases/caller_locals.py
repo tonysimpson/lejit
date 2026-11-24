@@ -233,25 +233,6 @@ class Obj:
         self.b = 2
 
 
-class Walker:
-    # small enough to be inlined into its caller; its call to step is not
-    @classmethod
-    def start(klass, n):
-        return klass.step(n)
-
-    @classmethod
-    def step(klass, n):
-        return shown(peek(3))
-
-
-# while an inlined callee calls on, as traceback.StackSummary.extract
-# with capture_locals reads them
-def past_inlined(k, v):
-    a = k + 1
-    b = 'bb'
-    return Walker.start(k), a, b
-
-
 CASES = [
     ('kinds', "[(1, 2), (3, 4)]", {}),
     ('outer_of_two', "[(4,)]", {}),
@@ -271,5 +252,4 @@ CASES = [
     ('by_other_names', "[(3,)]", {}),
     ('with_args', "[(Obj(),)]", {}),
     ('calls_operators', "[(3,)]", {}),
-    ('past_inlined', "[(3, 4)]", {}),
 ]

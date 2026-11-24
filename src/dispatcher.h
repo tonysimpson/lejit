@@ -153,6 +153,20 @@ EXTERNFN vcompatible_t *
 psyco_compatible_join(PsycoObject *po, global_entries_t *pattern,
                       bool drop_fields);
 
+/* A hash of what an exact match without dropped facts has equal to the
+   state: the non-NULL items of the top level and, down to the arrays where
+   compatible_array starts dropping extra items (CHECK_FOR_NULL, the first
+   three levels), of virtual values' contents, each with its kind, its
+   constant or its virtual source. Not the known fields of a run-time
+   value: where the snapshot shares the value with a deeper position, its
+   extra fields are dropped. psyco_compatible_join without 'drop_fields',
+   which takes only an exact match, compares only the blocks whose key is
+   the state's. */
+EXTERNFN unsigned long
+psyco_exact_key(vinfo_array_t *aa);
+/* the state's key, set by psyco_compatible_join without 'drop_fields' */
+EXTERNVAR unsigned long psyco_join_key;
+
 /* What psyco_compatible() can reject a snapshot by without reading it:
    for the first 63 vlocals, two bits each of what the item must be in a
    state that matches (b1:b0 = 00 anything, 01 run-time, 10 compile-time,

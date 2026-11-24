@@ -1482,6 +1482,9 @@ static bool compatible_drop_extra = false;
 static bool compatible_rt_parent = false;
 /* set by psyco_compatible_join: rule 1 does not apply at join points */
 static bool compatible_at_join = false;
+/* set by psyco_compatible_join when only an exact match is taken
+   (psyco_exact_key) */
+static bool compatible_exact = false;
 
 /* At a merge point, a known field of
    a run-time value (its type, mostly) that the snapshot lacks is dropped if
@@ -1514,6 +1517,7 @@ DEFINEFN void
 psyco_compile_abandoned(void)
 {
     compatible_drop_extra = compatible_rt_parent = compatible_at_join = false;
+    compatible_exact = false;
     compatible_drop_unused = psyco_compatible_keep_facts = false;
 }
 
@@ -2495,6 +2499,40 @@ summary_rejects(fz_summary_t *a, CodeBufferObject *codebuf)
            ((f->p1 | f->p0) & ((a->p1 ^ f->p1) | (a->p0 ^ f->p0))) != 0;
 }
 
+static unsigned long
+exact_key_array(vinfo_array_t *aa, int recdepth, unsigned long h)
+{
+    int i;
+    for (i = 0; i < aa->count; i++) {
+        vinfo_t *a = aa->items[i];
+        unsigned long x;
+        if (a == NULL)
+            continue;
+        if (is_compiletime(a->source))
+            x = (unsigned long)CompileTime_Get(a->source)->value;
+        else if (is_virtualtime(a->source))
+            x = (unsigned long)a->source;
+        else
+            x = 0;
+        /* the items in preorder, each with its depth, give the tree */
+        h = ((h ^ ((unsigned long)i << 4 | (unsigned long)recdepth << 2 |
+                   gettime(a->source))) *
+             0x9E3779B97F4A7C15UL) ^
+            x;
+        if (is_virtualtime(a->source) && recdepth < 2)
+            h = exact_key_array(a->array, recdepth + 1, h);
+    }
+    return h;
+}
+
+DEFINEVAR unsigned long psyco_join_key;
+
+DEFINEFN unsigned long
+psyco_exact_key(vinfo_array_t *aa)
+{
+    return exact_key_array(aa, 0, 0);
+}
+
 DEFINEFN
 vcompatible_t *
 psyco_compatible(PsycoObject *po, global_entries_t *patterns)
@@ -2507,6 +2545,7 @@ psyco_compatible(PsycoObject *po, global_entries_t *patterns)
     CodeBufferObject *dropbuf = NULL; /* first match that drops facts */
     fz_summary_t summary;
     bool summarised = false;
+    unsigned long key = 0;
     int i;
     PyObject *plist = patterns->fatlist;
     extra_assert(PyList_Check(plist));
@@ -2521,6 +2560,8 @@ psyco_compatible(PsycoObject *po, global_entries_t *patterns)
 #if LE_CODESTATS
     psyco_cs_align_rejects = 0;
 #endif
+    if (compatible_exact)
+        key = psyco_join_key = psyco_exact_key(&po->vlocals);
     i = PyList_GET_SIZE(plist);
     while (i--) /* the most dummy algorithm: step by step in the list, */
     {           /* checking for a match at each step.                  */
@@ -2530,6 +2571,26 @@ psyco_compatible(PsycoObject *po, global_entries_t *patterns)
         if (PyLong_CheckExact(o1))
             break;
         codebuf = (CodeBufferObject *)o1;
+        if (compatible_exact && codebuf->exact_key != key) {
+#if ALL_CHECKS
+            /* the full compare must find no exact match either */
+            vcompatible_t check = {codebuf, NullArray};
+            int drops = compatible_drops;
+            bool ok;
+            compatible_drops = 0;
+            fz_check_invariant(&codebuf->snapshot);
+            ok = fz_compatible_array(&po->vlocals, &codebuf->snapshot, &check);
+            extra_assert(!ok || check.diff != NullArray ||
+                         compatible_drops > 0);
+            if (ok)
+                fz_restore_invariant(&codebuf->snapshot);
+            else
+                fz_check_invariant(&codebuf->snapshot);
+            array_release(check.diff);
+            compatible_drops = drops;
+#endif
+            continue;
+        }
         if (!summarised) {
             summary_of(&summary, &po->vlocals, false);
             summarised = true;
@@ -2636,9 +2697,11 @@ psyco_compatible_join(PsycoObject *po, global_entries_t *patterns,
 {
     vcompatible_t *r;
     compatible_drop_extra = drop_fields;
+    compatible_exact = !drop_fields;
     compatible_at_join = true;
     r = psyco_compatible(po, patterns);
     compatible_at_join = false;
+    compatible_exact = false;
     compatible_drop_extra = false;
     return r;
 }

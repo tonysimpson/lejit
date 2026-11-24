@@ -3,17 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
-  # a draft runs nothing: its jobs are all skipped until it is marked ready
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  # by hand, on any branch: the pull request set, or with full every job, as
-  # main runs
   workflow_dispatch:
-    inputs:
-      full:
-        description: Run every job, as on main
-        type: boolean
-        default: false
 
 # a newer push to a pull request cancels its older run; every other run has
 # a group of its own, since a group's waiting run is cancelled when another
@@ -23,39 +14,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # what this run tests: main and full runs get every job; a pull request
-  # gets format, and lint unless it changes only docs and tests
-  changes:
-    name: changes
-    if: ${{ !github.event.pull_request.draft }}
-    runs-on: ubuntu-24.04
-    outputs:
-      full: ${{ steps.what.outputs.full }}
-      build: ${{ steps.what.outputs.build }}
-    steps:
-      # a pull request's checkout is its merge into the base: the first
-      # parent is the base
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-      - id: what
-        env:
-          FULL: ${{ (github.event_name == 'push' || inputs.full) && 'true' || 'false' }}
-          EVENT: ${{ github.event_name }}
-        run: |
-          echo "full=$FULL" >> "$GITHUB_OUTPUT"
-          changed=$(git diff --name-only HEAD^1 HEAD)
-          if [ "$EVENT" != pull_request ] ||
-             grep -qvE '^(docs/|tests/|[^/]*\.md$)' <<< "$changed"; then
-            echo build=true >> "$GITHUB_OUTPUT"
-          else
-            echo build=false >> "$GITHUB_OUTPUT"
-          fi
-
   check:
     name: make check (${{ matrix.python }})
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     # the official images give exact CPython releases, built as shared
     # libraries with their headers
@@ -100,8 +60,6 @@ jobs:
 
   encoder:
     name: make encoder-test
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     container: python:3.10.16-bookworm
     steps:
@@ -117,8 +75,6 @@ jobs:
   # match plain CPython's too
   release:
     name: release build (${{ matrix.python }})
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
     env:
@@ -147,13 +103,12 @@ jobs:
       - name: tests/jit
         run: python tests/jit/run.py --release
 
-  # every supported version, on full runs: the checked and release builds
-  # must compile and load, and on the versions make check doesn't run on yet
-  # the release build mustn't change the smoke test's output
-  build:
+  # versions the port builds on but make check doesn't run on yet: the
+  # checked and release builds must compile and load, and the release build
+  # must not change the smoke test's output
+  build-newer:
     name: build (${{ matrix.python }})
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
     env:
@@ -161,8 +116,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9",
-                 "3.13.2", "3.14.10"]
+        python: ["3.13.2", "3.14.10"]
     defaults:
       run:
         shell: bash
@@ -178,17 +132,12 @@ jobs:
       - name: Release build
         run: make build PY=python && python tests/jit/build_info.py
       - name: Smoke test
-        if: >-
-          needs.changes.outputs.full == 'true' &&
-          (matrix.python == '3.13.2' || matrix.python == '3.14.10')
         run: diff <(python tests/jit/smoke.py plain 2>&1) <(python tests/jit/smoke.py lejit 2>&1)
 
   # Pythons LeJIT doesn't support yet: installing builds no extension, and
   # start() warns and does nothing
   install-newer:
     name: install only (${{ matrix.python }})
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
     strategy:
@@ -212,8 +161,6 @@ jobs:
 
   install-main:
     name: install only (CPython main)
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -246,8 +193,6 @@ jobs:
   # doesn't run on yet
   detectors-newer:
     name: detectors (${{ matrix.python }})
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
     strategy:
@@ -263,7 +208,6 @@ jobs:
 
   format:
     name: make format-check
-    needs: changes
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -281,8 +225,6 @@ jobs:
   # the run
   lint:
     name: make lint (3.10.16)
-    needs: changes
-    if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-24.04
     container: python:3.10.16-bookworm
     continue-on-error: true
@@ -298,8 +240,6 @@ jobs:
 
   wheels:
     name: wheels (built, not released)
-    needs: changes
-    if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -319,17 +259,3 @@ jobs:
         with:
           name: wheels
           path: wheelhouse/*.whl
-
-  # the one check branch protection requires: a job skipped by its `if` is
-  # reported under its unexpanded matrix name, so the build jobs a docs-only
-  # pull request skips can't be required themselves
-  passed:
-    name: all jobs passed
-    needs: [changes, check, encoder, release, build, install-newer,
-            install-main, detectors-newer, format, lint, wheels]
-    if: ${{ always() && !github.event.pull_request.draft }}
-    runs-on: ubuntu-24.04
-    steps:
-      - env:
-          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
-        run: test "$FAILED" = false

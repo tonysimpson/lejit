@@ -1117,6 +1117,9 @@ compile_join(PsycoObject *po, global_entries_t *ge, bool branch, bool first)
     if (branch && first)
         LE_STAT(psyco_stat_joins[cmp != NULL ? 1 : 2]++);
     codebuf = psyco_proxy_code_buffer(po, ge);
+    if (ge != NULL)
+        codebuf->exact_key =
+            branch ? psyco_exact_key(&po->vlocals) : psyco_join_key;
     po->code = insn_code_label(codebuf->codestart);
     if (cmp != NULL) {
         int i;

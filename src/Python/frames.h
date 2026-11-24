@@ -138,8 +138,7 @@ struct stack_frame_info_s {
     PyFunctionObject *coro_func;
 };
 
-/* the map of po's locals now, with lasti; while inlining, of the
-   inlined frame's parent's, whose slot the call uses. A
+/* the map of po's locals now, with lasti, or NULL while inlining. A
    local only in a register is found there (LM_REG), or with reg_pos at
    the position its register is pushed at for this call
    (psyco_call_psyco). Nothing is emitted. */

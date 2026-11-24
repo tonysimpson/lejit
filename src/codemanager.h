@@ -54,8 +54,9 @@ psyco_codestats_buffer(const char *kind, code_t *start, code_t *end);
 struct CodeBufferObject_s {
     PyObject_HEAD void *codestart;
     FrozenPsycoObject snapshot;
-    unsigned long serial; /* order of creation: psyco_block_serial() */
-    global_entries_t *ge; /* the list it is registered in, or NULL */
+    unsigned long serial;    /* order of creation: psyco_block_serial() */
+    global_entries_t *ge;    /* the list it is registered in, or NULL */
+    unsigned long exact_key; /* at a join point (dispatcher.h) */
     /* of the snapshot, if 'ge' (dispatcher.h); last, and as large as its
        type says: none in a CodeBuffer_Type, 'head' in a
        CodeBufferShort_Type, 'full' in a CodeBufferSummary_Type */
