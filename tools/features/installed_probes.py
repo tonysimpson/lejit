@@ -58,8 +58,11 @@ def _need_ops(*names):
 
 def _code(ops, consts):
     """A function running the instructions ops, [(name, arg)], with the
-    constants consts. Only for instructions without inline caches."""
-    raw = b''.join(bytes([opcode.opmap[name], arg]) for name, arg in ops)
+    constants consts. Each instruction is followed by its inline caches,
+    zeroed, which a jump's argument counts."""
+    caches = _caches()
+    raw = b''.join(bytes([opcode.opmap[name], arg])
+                   + bytes(2 * caches.get(name, 0)) for name, arg in ops)
     template = (lambda: None).__code__
     if hasattr(template, 'replace'):
         code = template.replace(co_code=raw, co_consts=tuple(consts),
@@ -193,7 +196,8 @@ for _feature, _function in [
         ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
         ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
-        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending')]:
+        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
+        ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
@@ -511,6 +515,32 @@ def FRAME_CLEARED_LAST_FIRST():
     if order not in (['a', 'b', 'c'], ['c', 'b', 'a']):
         raise Unanswered('locals released in the order %r' % order)
     return order == ['c', 'b', 'a'], 'run: locals released %r' % order
+
+
+@probe
+def GETFRAME_AUDITS_RESULT():
+    """sys._getframe(1)'s audit event names the caller's frame, which it
+    returns, not the current one (run: an audit hook)"""
+    if not hasattr(sys, 'addaudithook'):
+        return False, 'no sys.addaudithook'
+    seen = []
+
+    def hook(event, args):
+        if event == 'sys._getframe' and seen is not None:
+            seen.append(args[0])
+    sys.addaudithook(hook)
+
+    def inner():
+        return sys._getframe(1), sys._getframe(0)
+    try:
+        caller, current = inner()
+        named = seen[-2]
+    finally:
+        seen = None
+    if named is not caller and named is not current:
+        raise Unanswered('the audit event named neither frame: %r' % named)
+    return named is caller, 'run: the event named the %s frame' % (
+        'returned' if named is caller else 'current')
 
 
 @probe

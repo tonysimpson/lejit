@@ -147,11 +147,11 @@ le_binary_op_opcode(int nb)
    POP_JUMP_BACKWARD_IF_TRUE is POP_JUMP_IF_TRUE, LOAD_ATTR with the method
    bit is LOAD_METHOD, CALL_INTRINSIC_1 with INTRINSIC_UNARY_POSITIVE is
    UNARY_POSITIVE, FORMAT_SIMPLE is FORMAT_VALUE 0, LOAD_FAST_BORROW is
-   LOAD_FAST); 'arg' with its
-   EXTENDED_ARG prefixes folded in, and
-   no longer holding what 'op' now says; 'raw' the opcode as CPython wrote
-   it; 'target' a jump's target in bytes (FOR_ITER's when its iterator
-   ends), else -1; 'next' the position after it and its caches. */
+   LOAD_FAST, GET_ITER with an argument is GET_YIELD_FROM_ITER); 'arg'
+   with its EXTENDED_ARG prefixes folded in, and no longer holding what 'op'
+   now says; 'raw' the opcode as CPython wrote it; 'target' a jump's target in
+   bytes (FOR_ITER's when its iterator ends), else -1; 'next' the position
+   after it and its caches. */
 typedef struct {
     int op, arg, raw, target, next;
 } le_instr_t;
@@ -231,6 +231,14 @@ le_instr(le_code_t c, int pos)
         case LOAD_FAST_BORROW_LOAD_FAST_BORROW:
             in.op = LOAD_FAST_LOAD_FAST;
             break;
+#if !LE_HAS_OPCODE_GET_YIELD_FROM_ITER
+        /* yield from's GET_ITER has an argument, a for loop's none */
+        case GET_ITER:
+            if (in.arg != 0)
+                in.op = GET_YIELD_FROM_ITER;
+            in.arg = 0;
+            break;
+#endif
         /* marks a branch not taken, for monitoring */
         case NOT_TAKEN:
             in.op = NOP;

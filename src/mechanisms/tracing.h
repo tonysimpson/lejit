@@ -9,21 +9,27 @@
    object alone (le_code_monitored, set_local_events): sys.settrace and
    sys.setprofile are tools of its, so other tools are tracing too, and
    compiled code, which gives them no events, does not run. le_tracing_now
-   tests it at run time (the eval hook). Compiled code tests it as
-   le_tracing_flag: the main interpreter's monitoring version against the
-   last one seen with no tool set (pyruntime.c:le_quiet_version), which is
-   -1 while a frame's locals are exposed, and the code's monitoring data,
-   which CPython makes only once a tool has instrumented it. Only where
-   either test fails does it make the exact test (psyfunc.c:tracing_on).
-   Included after vcompiler.h and codegen.h. */
+   makes the interpreter's test in place at run time (the eval hook).
+   Compiled code tests it as le_tracing_flag: the main interpreter's
+   monitoring version against the last one seen with no tool set
+   (pyruntime.c:le_quiet_version), which is -1 while a frame's locals are
+   exposed, and the code's monitoring data, which CPython makes only once a
+   tool has instrumented it. Only where either test fails does it make the
+   exact test (psyfunc.c:tracing_on). Included after vcompiler.h and
+   codegen.h. */
 extern int
 le_monitoring_on(PyThreadState *ts);
 extern int
 le_code_monitored(PyCodeObject *co);
+extern const long le_monitors_tools_at, le_monitors_tools_size;
 static inline int
 le_tracing_now(PyThreadState *ts, PyCodeObject *co)
 {
-    return le_monitoring_on(ts) ||
+    const char *t = (const char *)ts->interp + le_monitors_tools_at;
+    uint64_t a, b;
+    memcpy(&a, t, 8);
+    memcpy(&b, t + le_monitors_tools_size - 8, 8);
+    return (a | b) != 0 ||
            (co->_co_monitoring != NULL && le_code_monitored(co));
 }
 extern uint64_t le_quiet_version;
@@ -153,10 +159,10 @@ le_tracing_test(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
 #else
 /* Tracing is on in a thread while its PyThreadState.use_tracing is set: by
    sys.settrace, sys.setprofile and their C forms PyEval_SetTrace and
-   PyEval_SetProfile. le_tracing_now tests it at run time (the
-   eval hook); le_tracing_test emits the same test in compiled code, on the
-   thread state 'vts' (psyfunc.c:tracing_on). Included after vcompiler.h and
-   codegen.h. */
+   PyEval_SetProfile. le_tracing_now makes the same test in place at run time
+   (the eval hook); le_tracing_test emits the same test in compiled code, on
+   the thread state 'vts' (psyfunc.c:tracing_on). Included after vcompiler.h
+   and codegen.h. */
 static inline int
 le_tracing_now(PyThreadState *ts, PyCodeObject *co)
 {

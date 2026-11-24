@@ -64,9 +64,12 @@ le_tstate_current_address(void)
    static, the variable is at one offset from every thread's thread
    pointer (%fs:0 on x86-64), which compiled code loads in one move. The
    offset is found at start-up: the word of the object's TLS block that
-   holds PyThreadState_Get(), and only if it is the only one; and a
-   thread started for the test must find the object's block at the same
-   offset from its own thread pointer, which dynamic TLS doesn't give. */
+   holds PyThreadState_Get() while the thread is attached and not while
+   it is detached (PyEval_SaveThread), which tells it from a word that
+   keeps the thread's state bound for PyGILState_Ensure, and only if it
+   is the only one; and a thread started for the test must find the
+   object's block at the same offset from its own thread pointer, which
+   dynamic TLS doesn't give. */
 #include <link.h>
 #include <pthread.h>
 
@@ -136,15 +139,25 @@ tstate_tls_find(long *offset)
     tls_find_t f;
     long block, other;
     PyThreadState *ts = PyThreadState_Get();
-    size_t i, found = 0, at = 0;
+    PyThreadState **attached, **words;
+    size_t i, n, found = 0, at = 0;
     pthread_t t;
     if (!tls_block_offset(&f, &block))
         return false;
-    for (i = 0; i + sizeof(void *) <= f.size; i += sizeof(void *))
-        if (*(PyThreadState **)((char *)f.block + i) == ts) {
+    n = f.size / sizeof(void *);
+    words = f.block;
+    attached = PyMem_RawMalloc(n * sizeof(void *));
+    if (attached == NULL)
+        return false;
+    memcpy(attached, words, n * sizeof(void *));
+    PyEval_SaveThread();
+    for (i = 0; i < n; i++)
+        if (attached[i] == ts && words[i] != ts) {
             found++;
-            at = i;
+            at = i * sizeof(void *);
         }
+    PyEval_RestoreThread(ts);
+    PyMem_RawFree(attached);
     if (found != 1 || pthread_create(&t, NULL, tls_test_thread, &other) != 0)
         return false;
     pthread_join(t, NULL);
@@ -195,6 +208,11 @@ le_monitoring_version_address(void)
 {
     return &LE_MONITORING_VERSION(PyInterpreterState_Main());
 }
+
+/* where the interpreter's tools table is (mechanisms/tracing.h) */
+const long le_monitors_tools_at = offsetof(PyInterpreterState, monitors.tools);
+const long le_monitors_tools_size =
+    sizeof(((PyInterpreterState *)0)->monitors.tools);
 
 /* sys.monitoring has an event on, for any tool, in the interpreter: its
    global monitors (sys.settrace and sys.setprofile are tools too) */
@@ -323,15 +341,6 @@ int
 le_eval_breaker_handler(void)
 {
     return _Py_HandlePending(PyThreadState_GET());
-}
-
-/* whether an event is flagged for the thread (eval_hook.c:le_gen_to_run) */
-int
-le_eval_breaker_pending(void)
-{
-    return (_Py_atomic_load_uintptr_relaxed(
-                &PyThreadState_GET()->eval_breaker) &
-            _PY_EVAL_EVENTS_MASK) != 0;
 }
 
 /* The same test before a frame's first instruction, for compiled code
@@ -762,4 +771,11 @@ le_ref_tracer_word(void)
     }
     return found > 0 ? (void *)word : NULL;
 }
+#endif
+
+#if LE_HAS_C_STACK_SOFT_LIMIT
+#include "internal/pycore_tstate.h"
+/* where a thread's C stack limit is (mechanisms/recursion.h) */
+const long le_c_stack_soft_limit_at =
+    offsetof(_PyThreadStateImpl, c_stack_soft_limit);
 #endif

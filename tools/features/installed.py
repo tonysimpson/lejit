@@ -270,7 +270,7 @@ def gc_head_internal(h):
     path, fields = h.struct('PyGC_Head')
     if path is None or not path.startswith('internal' + os.sep):
         return False, (path or 'every header') + ':PyGC_Head'
-    if list(fields.items()) != [('_gc_next', 'uintptr_t'), ('_gc_prev', 'uintptr_t')]:
+    if not features.gc_head_two_words(fields):
         raise Unanswered('%s:PyGC_Head is not _gc_next, _gc_prev' % path)
     return True, path + ':PyGC_Head'
 
@@ -338,6 +338,7 @@ def tuple_get_empty(h):
 
 HEADER_DETECTORS = {
     'CHECK_RESULT_TSTATE': check_result_tstate,
+    'OBJECTDICT_SETITEM_OBJECT': features.objectdict_setitem_object,
     'PYCORE_PYSTATE_H': pycore_header('pycore_pystate.h'),
     'PYCORE_INTERP_H': pycore_header('pycore_interp.h'),
     'EVAL_HOOK_TSTATE': eval_hook_tstate,
@@ -362,6 +363,7 @@ HEADER_DETECTORS = {
     'THREAD_LOCAL_TSTATE': internal(features.thread_local_tstate),
     'PY_RECURSION_REMAINING': features.py_recursion_remaining,
     'C_RECURSION_REMAINING': features.c_recursion_remaining,
+    'C_STACK_SOFT_LIMIT': internal(features.c_stack_soft_limit),
     'CURRENT_EXCEPTION': features.current_exception,
     'EVAL_BREAKER_GC': internal(features.eval_breaker_gc),
     'EVAL_FRAME_POPS': internal(features.eval_frame_pops),

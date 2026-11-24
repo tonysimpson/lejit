@@ -60,6 +60,14 @@ def S():
     return {'k': 'S'}
 
 
+def Q():
+    """An object whose type is shown by its fully qualified name, %T: the
+    module, a dot and the qualified name, the module left out for builtins
+    and __main__. The probe gets an instance of a new class with a
+    recognisable name, in a module of its own."""
+    return {'k': 'Q'}
+
+
 def O(conv):
     """An object: 'U' or 'S' shows a str (the probe gets a recognisable
     one) as it is, 'R' by repr. A str shows the same by %U and %S, so the
@@ -410,16 +418,25 @@ _FN = ('def f(*a, **k): pass\n'
 _FN_STR = ('def f(*a, **k): pass\n'
            'f.__name__ = "LeName"; f.__qualname__ = args[0]; '
            'f.__module__ = "builtins"\n')
+# and from 3.15 not at all
+_NO_FN = ('def f(*a, **k): pass\n'
+          'f.__name__ = f.__qualname__ = "LeShown"\n'
+          'try:\n    %s\nexcept TypeError as x:\n'
+          '    if "LeShown" in str(x):\n'
+          '        raise ValueError("the function is shown: %%s" %% x)\n'
+          '    raise\n')
 msg('STAR_NOT_ITERABLE', 'f(*x) of an x that is not iterable', 'TypeError',
     None, shapes=[
         ('FUNC_NAME', [S(), F('%.200s', '()'), T()], _FN + 'f(*args[2]())'),
         ('FUNCTION_STR', [O('U'), T()],
-         _FN_STR + 'shown[0] = args[0] + "()"; f(*args[1]())')])
+         _FN_STR + 'shown[0] = args[0] + "()"; f(*args[1]())'),
+        ('NO_FUNCTION', [T()], _NO_FN % 'f(*args[0]())')])
 msg('KWARGS_NOT_MAPPING', 'f(**x) of an x that is not a mapping', 'TypeError',
     None, shapes=[
         ('FUNC_NAME', [S(), F('%.200s', '()'), T()], _FN + 'f(**args[2]())'),
         ('FUNCTION_STR', [O('U'), T()],
-         _FN_STR + 'shown[0] = args[0] + "()"; f(**args[1]())')])
+         _FN_STR + 'shown[0] = args[0] + "()"; f(**args[1]())'),
+        ('NO_FUNCTION', [Q()], _NO_FN % 'f(**args[0])')])
 # (from 3.9 a key that is not a str, given twice, is shown as a duplicate)
 msg('KWARGS_NOT_STRINGS', 'f(**x, **y) with a key that is not a str in both',
     'TypeError', None, shapes=[
@@ -446,6 +463,11 @@ msg('UNPACK_NOT_ENOUGH_STAR', 'a, b, *c = fewer values than before the star',
 msg('UNPACK_TOO_MANY', 'a, b = more values', 'ValueError',
     'exec(%s + ", = range(args[0] + 3)", {"args": args})'
     % _TARGETS.format('args[0]'), [I('d')], ints=[[7], [9]])
+msg('UNPACK_TOO_MANY_SIZED', 'a, b = a list, tuple or dict of more values',
+    'ValueError',
+    'exec(%s + " = list(range(args[1]))", {"args": args})'
+    % _TARGETS.format('args[0]'), [I('d'), I('zd')], ints=[[7, 10], [9, 13]],
+    requires='", got " in says("a, b = [1, 2, 3]")')
 msg('UNPACK_NOT_ENOUGH_AFTER_STAR', 'a, *b, c, d = fewer values than after '
     'the star', 'ValueError',
     'exec("v0, *s, " + ", ".join("w%d" % i for i in range(args[0] - 1))'
@@ -572,6 +594,10 @@ def make_args(spec, run, ints):
             name = MARK[run](i)
             args.append(type(name, (object,), {}))
             shown.append(name)
+        elif k == "Q":
+            name = MARK[run](i)
+            args.append(type(name, (object,), {"__module__": "lemod"})())
+            shown.append("lemod." + name)
         elif k == "S" or (k == "O" and a["conv"] in "US"):
             args.append(MARK[run](i))
             shown.append(MARK[run](i))
@@ -701,7 +727,7 @@ def split(runs, nargs):
 
 
 def _is_name(a):
-    return a['k'] in 'TS' or a['k'] == 'O' and a['conv'] != 'R'
+    return a['k'] in 'TSQ' or a['k'] == 'O' and a['conv'] != 'R'
 
 
 def long_shown(pieces, args, long_run):
@@ -753,6 +779,10 @@ def recover(entry, shape, runs):
             if _is_name(a) and precision(longs[i], runs[2]['shown'][i]):
                 raise StringError('an object is shown cut short')
             specs.append('%' + a['conv'])
+        elif k == 'Q':
+            if precision(longs[i], runs[2]['shown'][i]):
+                raise StringError('a type is shown cut short')
+            specs.append('%T')
         elif k == 'I':
             specs.append('%' + a['conv'])
         elif k == 'F':

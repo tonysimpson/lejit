@@ -95,16 +95,37 @@ cimpl_check_recursive_call(void);
 #define LE_C_RECURSION_TAKE(ts) ((void)(ts))
 #define LE_C_RECURSION_GIVE(ts) ((void)(ts))
 #endif
+/* Py_EnterRecursiveCall's test and Py_LeaveRecursiveCall's count, in
+   place where they would neither raise nor call the check: while the C
+   count is above 0, or the stack pointer is above the thread's soft limit
+   (below it CPython's own test decides) */
+#if LE_HAS_C_RECURSION_REMAINING
+#define LE_C_RECURSION_ENTER(ts)                                          \
+    ((ts)->c_recursion_remaining > 0 ? ((ts)->c_recursion_remaining--, 0) \
+                                     : Py_EnterRecursiveCall(""))
+#define LE_C_RECURSION_LEAVE(ts) ((ts)->c_recursion_remaining++)
+#elif LE_HAS_C_STACK_SOFT_LIMIT
+/* pyruntime.c: the offset of _PyThreadStateImpl's c_stack_soft_limit */
+extern const long le_c_stack_soft_limit_at;
+#define LE_C_RECURSION_ENTER(ts)                                    \
+    ((uintptr_t)__builtin_frame_address(0) <                        \
+         *(uintptr_t *)((char *)(ts) + le_c_stack_soft_limit_at) && \
+     Py_EnterRecursiveCall(""))
+#define LE_C_RECURSION_LEAVE(ts) ((void)(ts))
+#else
+#define LE_C_RECURSION_ENTER(ts) Py_EnterRecursiveCall("")
+#define LE_C_RECURSION_LEAVE(ts) Py_LeaveRecursiveCall()
+#endif
 static inline int
 le_recursion_enter(PyThreadState *ts)
 {
     LE_C_RECURSION_TAKE(ts);
-    if (Py_EnterRecursiveCall("")) {
+    if (LE_C_RECURSION_ENTER(ts)) {
         LE_C_RECURSION_GIVE(ts);
         return -1;
     }
     if (--ts->py_recursion_remaining < 0 && cimpl_check_recursive_call()) {
-        Py_LeaveRecursiveCall();
+        LE_C_RECURSION_LEAVE(ts);
         LE_C_RECURSION_GIVE(ts);
         return -1;
     }
@@ -114,7 +135,7 @@ static inline void
 le_recursion_leave(PyThreadState *ts)
 {
     ts->py_recursion_remaining++;
-    Py_LeaveRecursiveCall();
+    LE_C_RECURSION_LEAVE(ts);
     LE_C_RECURSION_GIVE(ts);
 }
 #elif LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING
@@ -319,6 +340,32 @@ enter_recursive_call(PsycoObject *po, vinfo_t *vts)
 #endif
     return true;
 }
+
+#if LE_HAS_RECURSION_REMAINING || LE_HAS_PY_RECURSION_REMAINING
+/* enter_recursive_call where an overflow is not raised here but left to
+   another path: 1 if counted, 0 if it would overflow (counted back, the
+   count's rare path taken), -1 with an exception set in 'po' */
+static inline int
+enter_recursive_call_or_not(PsycoObject *po, vinfo_t *vts)
+{
+    condition_code_t cc;
+    vinfo_t *vdepth = add_to_depth(po, LE_RECURSION_STEP, vts);
+    if (vdepth == NULL)
+        return -1;
+    cc = integer_cmp_i(po, vdepth, 0, Py_LT);
+    vinfo_decref(vdepth, po);
+    if (cc == CC_ERROR)
+        return -1;
+    if (runtime_condition_f(po, cc)) {
+        vdepth = add_to_depth(po, -LE_RECURSION_STEP, vts);
+        if (vdepth == NULL)
+            return -1;
+        vinfo_decref(vdepth, po);
+        return 0;
+    }
+    return 1;
+}
+#endif
 
 /* consumes 'vts'; false with an exception set in 'po' */
 static inline bool
