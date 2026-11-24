@@ -794,18 +794,19 @@ cannot_block_init(void)
    set by every way in, C ones too
    (PyEval_SetTrace and PyEval_SetProfile, as cProfile uses). */
 static int
-tracing_on(PsycoObject *po, vinfo_t *vts)
+tracing_on(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
 {
-    if (!runtime_condition_f(po, le_tracing_test(po, vts)))
+    if (!runtime_condition_f(po, le_tracing_test(po, vts, co)))
         return 0;
 #if LE_HAS_MONITORING
     {
-        /* the test above is the version's: the exact one, on its rare
-           path, also brings le_quiet_version up to date */
+        /* the test above is the version's and the code's monitoring
+           data's: the exact one, on its rare path, also brings
+           le_quiet_version up to date */
         condition_code_t cc;
-        vinfo_t *v =
-            psyco_generic_call(po, le_tracing_recheck,
-                               CfReturnTypeInt | CfNoBlock | CfNoPython, "");
+        vinfo_t *v = psyco_generic_call(
+            po, le_tracing_recheck, CfReturnTypeInt | CfNoBlock | CfNoPython,
+            "l", (long)co);
         if (v == NULL)
             return -1;
         cc = integer_non_null(po, v);
@@ -823,9 +824,9 @@ tracing_on(PsycoObject *po, vinfo_t *vts)
    instead, which is tracing_on or another eval hook installed over
    LeJIT's (le_direct_call_refused) */
 static bool
-direct_call_refused(PsycoObject *po, vinfo_t *vts)
+direct_call_refused(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
 {
-    return le_direct_call_refused(po, vts);
+    return le_direct_call_refused(po, vts, co);
 }
 
 DEFINEFN
@@ -841,7 +842,7 @@ psyco_tracing_on(PsycoObject *po)
     if (vts == NULL)
         return -1;
 #endif
-    on = tracing_on(po, vts);
+    on = tracing_on(po, vts, po->pr.co);
     vinfo_xdecref(vts, po);
     return on;
 }
@@ -1217,7 +1218,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
             vinfo_decref(vbuiltins, po);
             return NULL;
         }
-        traced = direct_call_refused(po, vts);
+        traced = direct_call_refused(po, vts, co);
         /* count the call's depth, as ceval does on entering a frame, so that
            deep recursion raises RecursionError instead of overflowing the C
            stack; psyco_call_psyco leaves it after the call.
@@ -1572,7 +1573,7 @@ gen_step_tests(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
                                             FRAME_CREATED, Py_EQ)) != 0) ||
         (r = gen_field_test_i(po, vgen, GEN_locals, 0, Py_NE)) != 0)
         return r < 0 ? -1 : 0;
-    if (le_direct_call_refused(po, vts))
+    if (le_direct_call_refused(po, vts, co))
         return 0;
     if ((r = gen_test(po, le_eval_breaker_test_on(po, vts))) != 0)
         return r < 0 ? -1 : 0;
@@ -1925,7 +1926,7 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
     vts = load_tstate(po);
     if (vts == NULL)
         return -1;
-    on = direct_call_refused(po, vts);
+    on = direct_call_refused(po, vts, pending_code(v));
     vinfo_decref(vts, po);
     if (on)
         return 0;
@@ -1968,7 +1969,7 @@ psyco_coro_start(PsycoObject *po, vinfo_t *v)
     vts = load_tstate(po);
     if (vts == NULL)
         return -1;
-    on = tracing_on(po, vts);
+    on = tracing_on(po, vts, pending_code(v));
     if (!on) {
         vfield = psyco_get_field(po, vts, TSTATE_origin_depth);
         cc = vfield == NULL ? CC_ERROR : integer_non_null(po, vfield);
@@ -1998,7 +1999,7 @@ psycofunction_init(void)
     psyco_assert(le_tstate_check());
     psyco_assert(le_eval_breaker_check());
 #if LE_HAS_MONITORING
-    le_tracing_recheck(); /* the first version seen */
+    le_tracing_recheck(NULL); /* the first version seen */
 #endif
     cannot_block_init();
 }

@@ -1,7 +1,7 @@
 # Compiled code sees tracing, profiling and sys.monitoring switched on
 # while it runs, however they are switched on: from another thread, from a
-# callee, and again after they were on and off; and a frame's locals
-# written by a callee after that. Each loop below calls step() each round,
+# callee, for one code object alone, and again after they were on and off;
+# and a frame's locals written by a callee after that. Each loop below calls step() each round,
 # and the change comes partway through.
 import sys
 import threading
@@ -139,10 +139,101 @@ def written_after_tracing(n):
     return first[0], written(n, n - 2)
 
 
+def watch_lines(code, tool, events):
+    mon = sys.monitoring
+    mon.register_callback(
+        tool, mon.events.LINE,
+        lambda c, line: events.append(line - code.co_firstlineno)
+        if c is code else None)
+    mon.set_local_events(tool, code, mon.events.LINE)
+
+
+def callee_sets_local_events(n):
+    # events set on the running loop's code alone: its lines are seen from
+    # the call on
+    if not hasattr(sys, 'monitoring'):
+        return None
+    mon = sys.monitoring
+    tool = mon.DEBUGGER_ID
+    me = callee_sets_local_events.__code__
+    events = []
+    mon.use_tool_id(tool, 'test')
+    t = 0
+    try:
+        for i in range(n):
+            if i == n // 2:
+                watch_lines(me, tool, events)
+            t = step(t)
+    finally:
+        mon.set_local_events(tool, me, 0)
+        mon.free_tool_id(tool)
+    return t, events
+
+
+def local_events_on_callee(n):
+    # events set on a callee's code alone: its calls are seen from then
+    # on, made from compiled code or from C (map)
+    if not hasattr(sys, 'monitoring'):
+        return None
+    mon = sys.monitoring
+    tool = mon.DEBUGGER_ID
+    code = step.__code__
+    starts = []
+    mon.use_tool_id(tool, 'test')
+    mon.register_callback(tool, mon.events.PY_START,
+                          lambda c, off: starts.append(c.co_name))
+    t = 0
+    try:
+        for i in range(n):
+            if i == n // 2:
+                mon.set_local_events(tool, code, mon.events.PY_START)
+            t = step(t)
+        mapped = list(map(step, range(3)))
+    finally:
+        mon.set_local_events(tool, code, 0)
+        mon.free_tool_id(tool)
+    return t, mapped, starts
+
+
+def counter(n):
+    i = 0
+    while i < n:
+        yield i
+        i += 1
+
+
+def local_events_on_generator(n):
+    # events set on a generator's code alone: its resumes are seen from
+    # then on, stepped from compiled code
+    if not hasattr(sys, 'monitoring'):
+        return None
+    mon = sys.monitoring
+    tool = mon.DEBUGGER_ID
+    code = counter.__code__
+    resumes = []
+    mon.use_tool_id(tool, 'test')
+    mon.register_callback(tool, mon.events.PY_RESUME,
+                          lambda c, off: resumes.append(c.co_name))
+    g = counter(n)
+    t = 0
+    try:
+        for i in range(n):
+            if i == n // 2:
+                mon.set_local_events(tool, code, mon.events.PY_RESUME)
+            t += next(g)
+    finally:
+        mon.set_local_events(tool, code, 0)
+        mon.free_tool_id(tool)
+    return t, resumes
+
+
 CASES = [
     ('thread_turns_on_monitoring', "[(40,)]", {}),
     ('thread_traces_all', "[(40,)]", {}),
     ('callee_turns_on_profiling', "[(40,)]", {}),
     ('on_off_on', "[(20,)]", {}),
     ('written_after_tracing', "[(20,)]", {}),
+    ('callee_sets_local_events', "[(20,)]", {}),
+    ('local_events_on_callee', "[(20,)]", {}),
+    ('local_events_on_generator', "[(20,)]", {}),
 ]
