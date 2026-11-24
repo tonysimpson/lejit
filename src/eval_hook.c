@@ -234,7 +234,9 @@ compile_resume(le_frame_t *f, le_code_extra_t *x, PyObject *mergepoints,
 }
 
 /* the entries at the resume point after f_lasti, -1 for the start: the
-   record has one per yield and one for the start, each taken by the
+   record has one per yield, one per SEND (a throw into a yield from whose
+   iterator returns resumes the frame after its loop, where the evaluator
+   doesn't jump there itself) and one for the start, each taken by the
    first resume there. NULL to run interpreted: the code isn't resumable
    (nresumes -1), or out of memory. */
 static le_resume_point_t *
@@ -264,7 +266,7 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
         for (pos = 0; pos < c.size;) {
             le_instr_t in = le_instr(c, pos);
             pos = in.next;
-            n += in.op == YIELD_VALUE;
+            n += in.op == YIELD_VALUE || in.op == SEND;
         }
         x->resumes = PyMem_Calloc(n, sizeof(le_resume_point_t));
         if (x->resumes == NULL)
@@ -753,7 +755,7 @@ le_gen_iternext(PyObject *self)
     Py_INCREF(Py_None);
     result = LeGen_Run(ts, resume, f, Py_None);
 #if LE_HAS_EVAL_FRAME_POPS
-    if (gen->gi_frame_state == FRAME_SUSPENDED || result == NULL)
+    if (LE_GEN_PAUSED(gen->gi_frame_state) || result == NULL)
         return result;
     if (result != Py_None)
         _PyGen_SetStopIterationValue(result);
@@ -763,7 +765,7 @@ le_gen_iternext(PyObject *self)
     ts->exc_info = gen->gi_exc_state.previous_item;
     gen->gi_exc_state.previous_item = NULL;
     f->previous = NULL;
-    if (gen->gi_frame_state == FRAME_SUSPENDED)
+    if (LE_GEN_PAUSED(gen->gi_frame_state))
         return result;
     gen->gi_frame_state = FRAME_SUSPENDED;
     gen_ending_frame = f;
@@ -790,7 +792,7 @@ le_gen_direct_end(PyObject *self, PyObject *result)
         result =
             le_gen_frame_leave(PyThreadState_GET(), f, result, frame_done);
     }
-    if (gen->gi_frame_state == FRAME_SUSPENDED || result == NULL)
+    if (LE_GEN_PAUSED(gen->gi_frame_state) || result == NULL)
         return result;
     if (result != Py_None)
         _PyGen_SetStopIterationValue(result);
@@ -802,7 +804,7 @@ le_gen_direct_end(PyObject *self, PyObject *result)
     ts->exc_info = gen->gi_exc_state.previous_item;
     gen->gi_exc_state.previous_item = NULL;
     f->previous = NULL;
-    if (gen->gi_frame_state == FRAME_SUSPENDED)
+    if (LE_GEN_PAUSED(gen->gi_frame_state))
         return result;
     gen->gi_frame_state = FRAME_SUSPENDED;
     gen_ending_frame = f;
@@ -820,6 +822,45 @@ le_gen_direct_send_end(PyObject *self, PyObject *result)
     if (result == NULL && !PyErr_Occurred())
         PyErr_SetNone(PyExc_StopIteration);
     return result;
+}
+
+DEFINEFN int
+le_gen_direct_send_status(PyObject *self, PyObject *result, PyObject *out[])
+{
+    PyGenObject *gen = (PyGenObject *)self;
+    le_frame_t *f =
+        (le_frame_t *)((char *)gen + offsetof(PyGenObject, gi_iframe));
+#if LE_HAS_EVAL_FRAME_POPS
+    if (gen->gi_exc_state.previous_item != NULL) {
+        le_gen_frame_end(f, result);
+        result =
+            le_gen_frame_leave(PyThreadState_GET(), f, result, frame_done);
+    }
+    if (result == NULL)
+        return -1;
+    out[0] = result;
+    return LE_GEN_PAUSED(gen->gi_frame_state);
+#else
+    PyThreadState *ts = PyThreadState_GET();
+    PySendResult r;
+    le_gen_frame_end(f, result);
+    ts->exc_info = gen->gi_exc_state.previous_item;
+    gen->gi_exc_state.previous_item = NULL;
+    f->previous = NULL;
+    if (LE_GEN_PAUSED(gen->gi_frame_state)) {
+        out[0] = result;
+        return 1;
+    }
+    /* gen_send_ex2 finishes the run, as for le_gen_direct_end, sending
+       None as the hook takes it back */
+    gen->gi_frame_state = FRAME_SUSPENDED;
+    gen_ending_frame = f;
+    gen_ending_result = result;
+    r = PyIter_Send(self, Py_None, &out[0]);
+    if (r == PYGEN_ERROR)
+        return -1;
+    return r == PYGEN_NEXT;
+#endif
 }
 #endif
 
