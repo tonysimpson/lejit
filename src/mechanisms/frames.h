@@ -481,8 +481,9 @@ le_gen_frame_set_depth(le_frame_t *f, int n)
     f->stacktop = LE_FRAME_CODE(f)->co_nlocalsplus + n;
 #endif
 }
-/* the generator's frame runs, its locals and stack held by compiled code,
-   their slots empty: gen_send_ex has marked it as running */
+/* the generator's frame runs, its stack held by compiled code (and its
+   locals, but where LE_RESUMES_ON_FRAME those the code hasn't taken):
+   gen_send_ex has marked it as running */
 static inline void
 le_gen_frame_run(le_frame_t *f)
 {

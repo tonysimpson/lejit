@@ -544,6 +544,16 @@ lm_value(PsycoObject *po, struct lm_build *b, vinfo_t *vi, const long *reg_pos,
         default: {
             source_virtual_t *sv = VirtualTime_Get(vi->source);
             int i, n = vi->array->count;
+#if LE_RESUMES_ON_FRAME
+            if (psyco_frame_word_index(vi) >= 0) {
+                /* read from the frame (pycompiler.c:
+                   direct_compute_frame_word), its only item */
+                lm_add(b, LM_VIRTUAL, (long)sv, 1);
+                lm_value(po, b, psyco_frame_words_frame(po), reg_pos,
+                         level + 1);
+                return;
+            }
+#endif
             if (sv->direct_compute_fn == NULL || level > 3) {
                 lm_add(b, LM_NONE, 0, 0);
                 return;

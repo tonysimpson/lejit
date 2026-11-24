@@ -1209,6 +1209,245 @@ cimpl_exc_restore(PyObject **held)
     }
 }
 
+#if LE_HAS_INTERPRETER_FRAME
+#define FRAME_localsplus FMUT(CPY_ARRAY(le_frame_t, localsplus))
+#else
+#define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
+#endif
+
+#if LE_RESUMES_ON_FRAME
+/* A resumed generator's word i (a local, cell, free variable or stack
+   item, in the frame's order) that its frame still holds
+   (vcompiler.c:PsycoObject_FromGenFrame): a virtual value, one source
+   per word, read only where the code uses it. A local or stack item is
+   then taken from the frame, which is left NULL there, as a value that may
+   be NULL (RunTime_MaybeNull) and owns its reference: a read tests it
+   (local_bound, stack_words_taken), and a store over it drops it there,
+   as ceval's does (set_local). A cell or free variable is only read, and
+   stays the frame's. So the frame holds every word still virtual, and
+   only the others are stored at a pause (yield_resumable). */
+static source_virtual_t frame_words[LE_FRAME_WORDS_MAX];
+
+DEFINEFN vinfo_t *
+psyco_frame_word(int i)
+{
+    return vinfo_new(VirtualTime_New(&frame_words[i]));
+}
+
+DEFINEFN int
+psyco_frame_word_index(vinfo_t *v)
+{
+    source_virtual_t *sv;
+    if (v == NULL || !is_virtualtime(v->source))
+        return -1;
+    sv = VirtualTime_Get(v->source);
+    if (sv < frame_words || sv >= frame_words + LE_FRAME_WORDS_MAX)
+        return -1;
+    return (int)(sv - frame_words);
+}
+
+DEFINEFN vinfo_t *
+psyco_frame_words_frame(PsycoObject *po)
+{
+    return po->vlocals.items[GENEXPR_SLOT_ACC(po->pr.co)];
+}
+
+/* whether word i is a cell or free variable, which the frame keeps */
+static bool
+frame_word_kept(PyCodeObject *co, int i)
+{
+    if (i >= le_code_nlocals(co))
+        return i < le_code_nlocalsplus(co);
+    return le_code_local_is_cell(co, i);
+}
+
+/* word i as the frame holds it now, borrowed, NULL for none */
+static vinfo_t *
+frame_word_read(PsycoObject *po, int i)
+{
+    return psyco_get_nth_field(po, psyco_frame_words_frame(po),
+                               FRAME_localsplus, i);
+}
+
+static bool
+compute_frame_word(PsycoObject *po, vinfo_t *v)
+{
+    int i = psyco_frame_word_index(v);
+    vinfo_t *w = frame_word_read(po, i);
+    if (w == NULL)
+        return false;
+    if (!frame_word_kept(po->pr.co, i)) {
+        vinfo_t *zero = psyco_vi_Zero();
+        bool ok = psyco_put_nth_field(po, psyco_frame_words_frame(po),
+                                      FRAME_localsplus, i, zero);
+        vinfo_decref(zero, po);
+        if (!ok) {
+            vinfo_decref(w, po);
+            return false;
+        }
+        w->source = add_rtref(w->source) | RunTime_MaybeNull;
+    }
+    vinfo_move(po, v, w);
+    return true;
+}
+
+/* from a locals map (codegen.c:lm_value), whose only item is the frame */
+static PyObject *
+direct_compute_frame_word(vinfo_t *v, char *data)
+{
+    vinfo_t *f = v->array->items[0];
+    le_frame_t *frame;
+    PyObject *o;
+    if (is_compiletime(f->source))
+        frame = (le_frame_t *)CompileTime_Get(f->source)->value;
+    else
+        frame = *(le_frame_t **)(data + getstack(f->source));
+    o = LE_FRAME_WORD(frame, psyco_frame_word_index(v));
+    Py_XINCREF(o);
+    return o;
+}
+
+/* a word still the frame's, for a call that reads it (locals_calls,
+   resume_in_ceval): read, not taken. Any other value as it is. The result
+   is a new vinfo reference. */
+static vinfo_t *
+frame_word_peek(PsycoObject *po, vinfo_t *v)
+{
+    int i = psyco_frame_word_index(v);
+    if (i < 0) {
+        vinfo_incref(v);
+        return v;
+    }
+    return frame_word_read(po, i);
+}
+
+/* a value that may be NULL (RunTime_MaybeNull), tested: 1 on the path
+   where it isn't, from then on known not to be; 0 on the path where it
+   is, where it owns nothing (and its holder replaces it with the NULL
+   constant); -1 on an error */
+static int
+null_tested(PsycoObject *po, vinfo_t *v)
+{
+    condition_code_t cc = integer_non_null(po, v);
+    if (cc == CC_ERROR)
+        return -1;
+    if (!runtime_condition_f(po, INVERT_CC(cc))) {
+        v->source &= ~RunTime_MaybeNull;
+        return 1;
+    }
+    v->source = remove_rtref(v->source);
+    return 0;
+}
+
+/* the stack items a resumed entry starts with, taken from the frame and
+   tested before any instruction reads them: a NULL one (PUSH_NULL's) must
+   be the NULL constant */
+static bool
+stack_words_taken(PsycoObject *po)
+{
+    vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+    int k, bound;
+    for (k = 0; k < po->pr.stack_level; k++) {
+        vinfo_t *v = stack_a[k];
+        if (psyco_frame_word_index(v) < 0)
+            continue;
+        if (!compute_vinfo(v, po) || (bound = null_tested(po, v)) < 0)
+            return false;
+        if (!bound) {
+            stack_a[k] = psyco_vi_Zero();
+            vinfo_decref(v, po);
+        }
+    }
+    return true;
+}
+
+/* whether the run holds local i, not its frame: neither the word the
+   frame still holds nor a cell, which the frame keeps, nor NULL (no longer
+   used, the frame keeps whatever it has) */
+static bool
+local_is_runs(PsycoObject *po, int i)
+{
+    vinfo_t *v = LOC_LOCALS_PLUS[i];
+    return v != NULL && psyco_frame_word_index(v) != i &&
+           !le_code_local_is_cell(po->pr.co, i);
+}
+
+/* a pause (or end) of a run of the frame, listing the locals the run
+   holds (frames.c:psyco_gen_pause); its stores come after */
+static le_gen_pause_t *
+gen_pause_new(PsycoObject *po, int lasti, int nstack)
+{
+    int i, n = 0, nlocals = le_code_nlocals(po->pr.co);
+    le_gen_pause_t *p;
+    for (i = 0; i < nlocals; i++) n += local_is_runs(po, i);
+    p = psyco_owner_alloc(offsetof(le_gen_pause_t, taken) +
+                          (n > 0 ? n : 1) * sizeof(int));
+    p->lasti = lasti;
+    p->nstack = nstack;
+    p->ntaken = 0;
+    for (i = 0; i < nlocals; i++)
+        if (local_is_runs(po, i))
+            p->taken[p->ntaken++] = i;
+    return p;
+}
+
+/* word k of the frame becomes 'v', a reference it takes, or NULL for the
+   NULL constant or none */
+static bool
+frame_word_store(PsycoObject *po, int k, vinfo_t *v)
+{
+    vinfo_t *frame = psyco_frame_words_frame(po);
+    bool ok;
+    if (v == NULL || psyco_knowntobe(v, 0)) {
+        vinfo_t *zero = psyco_vi_Zero();
+        ok = psyco_put_nth_field(po, frame, FRAME_localsplus, k, zero);
+        vinfo_decref(zero, po);
+        return ok;
+    }
+    if (!psyco_put_nth_field(po, frame, FRAME_localsplus, k, v))
+        return false;
+    consume_reference(po, v);
+    return true;
+}
+
+/* A resumable generator's run that ends (returns or raises) leaves its
+   locals in its frame, as ceval does, for gen_send_ex2 to free in the
+   frame's order: those the run holds are stored, a virtual one made real
+   on a return; on a raise it is let go (making it could see the pending
+   exception), as only compiled code saw it. The slots are emptied. */
+static bool
+gen_locals_end(PsycoObject *po)
+{
+    int i, nlocals = le_code_nlocals(po->pr.co);
+    le_gen_pause_t *end = NULL;
+    for (i = 0; i < nlocals; i++) {
+        vinfo_t *v = LOC_LOCALS_PLUS[i];
+        if (!local_is_runs(po, i))
+            continue;
+        if (end == NULL) {
+            /* the frame's words that Python wrote meanwhile go first */
+            end = gen_pause_new(po, -1, 0);
+            if (psyco_generic_call(
+                    po, psyco_gen_pause, CfNoReturnValue | CfNoPython, "vl",
+                    psyco_frame_words_frame(po), (long)end) == NULL)
+                return false;
+        }
+        if (is_virtualtime(v->source) && PycException_Is(po, &EReturn) &&
+            !compute_vinfo(v, po))
+            return false;
+        if (!is_virtualtime(v->source) && !psyco_knowntobe(v, 0) &&
+            !frame_word_store(po, i, v))
+            return false;
+        vinfo_decref(v, po);
+        LOC_LOCALS_PLUS[i] = NULL;
+    }
+    return true;
+}
+#else
+#define psyco_frame_word_index(v) (-1)
+#define frame_word_peek(po, v) (vinfo_incref(v), (v))
+#endif
+
 /* as cimpl_tb_locals, for the exception set aside by cimpl_exc_hold */
 static void
 cimpl_held_tb_locals(PyObject **held, long start, PyObject *v0, PyObject *v1,
@@ -1228,9 +1467,11 @@ locals_calls(PsycoObject *po, void *fn, char tag, long target)
     PyCodeObject *co = po->pr.co;
     int n = le_code_nlocalsplus(co);
     int i, j;
+    bool ok;
     for (i = 0; i < n; i += 5) {
         char tags[8] = "?lvvvvv";
         long args[5];
+        vinfo_t *peeked[5];
         tags[0] = tag;
         for (j = 0; j < 5; j++) {
             vinfo_t *v = i + j < n ? LOC_LOCALS_PLUS[i + j] : NULL;
@@ -1239,13 +1480,16 @@ locals_calls(PsycoObject *po, void *fn, char tag, long target)
                 args[j] = v == NULL && i + j < le_code_nlocals(co)
                               ? 0
                               : (long)LE_LOCAL_UNKNOWN;
+                peeked[j] = NULL;
             }
             else
-                args[j] = (long)v;
+                args[j] = (long)(peeked[j] = frame_word_peek(po, v));
         }
-        if (psyco_generic_call(po, fn, CfNoReturnValue, tags, target, (long)i,
-                               args[0], args[1], args[2], args[3],
-                               args[4]) == NULL)
+        ok = psyco_generic_call(po, fn, CfNoReturnValue, tags, target, (long)i,
+                                args[0], args[1], args[2], args[3],
+                                args[4]) != NULL;
+        for (j = 0; j < 5; j++) vinfo_xdecref(peeked[j], po);
+        if (!ok)
             return false;
     }
     return true;
@@ -1264,7 +1508,7 @@ has_virtual_local(PsycoObject *po)
     for (i = 0; i < n; i++) {
         vinfo_t *v = LOC_LOCALS_PLUS[i];
         if (v != NULL && v->source != SOURCE_NOT_IMPORTANT &&
-            is_virtualtime(v->source))
+            is_virtualtime(v->source) && psyco_frame_word_index(v) < 0)
             return true;
     }
     return false;
@@ -1615,6 +1859,14 @@ psyco_pycompiler_init(void)
     psyco_skNotImplemented.refcount1_flags = SkFlagFixed;
     psyco_skNotImplemented.value = (long)Py_NotImplemented;
 
+#if LE_RESUMES_ON_FRAME
+    {
+        int i;
+        for (i = 0; i < LE_FRAME_WORDS_MAX; i++)
+            INIT_SVIRTUAL(frame_words[i], compute_frame_word,
+                          direct_compute_frame_word, 0, 0, 0);
+    }
+#endif
     ERtPython = psyco_vsource_not_important;
     EReturn = psyco_vsource_not_important;
     EContinue = psyco_vsource_not_important;
@@ -1688,7 +1940,22 @@ psyco_pycompiler_init(void)
 #define GETNAMEV(i) (PyTuple_GET_ITEM(co->co_names, i))
 
 #define GETLOCAL(i) (LOC_LOCALS_PLUS[i])
-#define SETLOCAL(i, v) psyco_rebind_local(po, &GETLOCAL(i), (v))
+#define SETLOCAL(i, v) set_local(po, i, v)
+
+/* local i becomes 'v', and what it was goes: where that is a word its
+   frame still holds, it is taken from the frame first, to be dropped here
+   as ceval drops it */
+static inline void
+set_local(PsycoObject *po, int i, vinfo_t *v)
+{
+    vinfo_t *old = LOC_LOCALS_PLUS[i];
+    if (psyco_frame_word_index(old) >= 0 && !compute_vinfo(old, po)) {
+        /* out of memory: the frame keeps it */
+        vinfo_decref(old, po);
+        LOC_LOCALS_PLUS[i] = NULL;
+    }
+    psyco_rebind_local(po, &LOC_LOCALS_PLUS[i], v);
+}
 
 #define STACK_POINTER() (stack_a + po->pr.stack_level)
 /* a callable and the NULL beside it, for a call */
@@ -3118,14 +3385,17 @@ ct_format_exc_check_arg(PsycoObject *po, PyObject *exc, const char *format_str,
 }
 
 /* whether local i is bound, raising UnboundLocalError if not. A local
-   that may be unbound (RunTime_MaybeNull) is tested: on the path where it
-   is NULL it becomes the unbound constant, and on the other it is known
-   bound from then on. */
+   that may be unbound (RunTime_MaybeNull, or a word its frame still holds,
+   which is taken first) is tested: on the path where it is NULL it becomes
+   the unbound constant, and on the other it is known bound from then
+   on. */
 static bool
 local_bound(PsycoObject *po, int i)
 {
     PyCodeObject *co = po->pr.co;
     vinfo_t *v = GETLOCAL(i);
+    if (psyco_frame_word_index(v) >= 0 && !compute_vinfo(v, po))
+        return false;
     if (v != NULL && is_maybe_null(v->source)) {
         condition_code_t cc = integer_non_null(po, v);
         if (cc == CC_ERROR)
@@ -4170,6 +4440,10 @@ exit_function(PsycoObject *po)
     /* the frame that stood for the call keeps its locals as they end */
     if (!catcher_flush(po, true))
         return NULL;
+#if LE_RESUMES_ON_FRAME
+    if (mode == GENEXPR_RESUMABLE && !gen_locals_end(po))
+        return NULL;
+#endif
     /* clear the locals, first to last as frame_dealloc does (finalisers run
        in that order), then the stack; where FRAME_CLEARED_LAST_FIRST, the
        stack top down, then the locals last to first. On a return CPython
@@ -4740,12 +5014,19 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
         return 0;
     for (i = 0; i < nlocals + nstack; i++) {
         vinfo_t *v = i < nlocals ? LOC_LOCALS_PLUS[i] : stack_a[i - nlocals];
-        vinfo_t *ok =
-            v == NULL
-                ? psyco_generic_call(po, psyco_resume_value, CfNoReturnValue,
-                                     "vll", st, (long)i, 0L)
-                : psyco_generic_call(po, psyco_resume_value, CfNoReturnValue,
-                                     "vlv", st, (long)i, v);
+        vinfo_t *ok;
+        if (v == NULL)
+            ok = psyco_generic_call(po, psyco_resume_value, CfNoReturnValue,
+                                    "vll", st, (long)i, 0L);
+        else {
+            /* a word the frame still holds is given as it is */
+            v = frame_word_peek(po, v);
+            ok = v == NULL ? NULL
+                           : psyco_generic_call(po, psyco_resume_value,
+                                                CfNoReturnValue, "vlv", st,
+                                                (long)i, v);
+            vinfo_xdecref(v, po);
+        }
         if (ok == NULL) {
             vinfo_decref(st, po);
             return 0;
@@ -4789,6 +5070,15 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
     if (result == NULL && !PycException_Is(po, &ERtPython))
         return 0;
     while (STACK_LEVEL() > 0) POP_DECREF();
+#if LE_RESUMES_ON_FRAME
+    /* the generator's frame is ceval's now: the end stores nothing in it
+       (gen_locals_end) */
+    if (!po->pr.is_inlining && psyco_generator_mode(po) == GENEXPR_RESUMABLE)
+        for (i = 0; i < le_code_nlocals(co); i++) {
+            vinfo_xdecref(LOC_LOCALS_PLUS[i], po);
+            LOC_LOCALS_PLUS[i] = NULL;
+        }
+#endif
     if (!po->pr.is_inlining)
         po->pr.iblock = 0;
     *unwound = 1;
@@ -5101,6 +5391,9 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
         case LOAD_CLOSURE: {
             vinfo_t *cell;
             cell = GETLOCAL(le_code_deref_slot(co, oparg));
+            /* read here, not where the closure is made */
+            if (!compute_vinfo(cell, po))
+                break;
             vinfo_incref(cell);
             PUSH(cell);
             goto fine;
@@ -6836,12 +7129,6 @@ out:
     return ended;
 }
 
-#if LE_HAS_INTERPRETER_FRAME
-#define FRAME_localsplus FMUT(CPY_ARRAY(le_frame_t, localsplus))
-#else
-#define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
-#endif
-
 #if LE_RESUMES_COROUTINES
 /* whether coroutine 'coro' is awaiting something, as _PyGen_yf (not
    exported) tells: paused just before a YIELD_FROM */
@@ -6973,6 +7260,60 @@ cimpl_await_send(PyObject *receiver, PyObject *v, PyObject *out[])
 
 #endif
 
+#if LE_RESUMES_ON_FRAME
+/* A resumable generator's YIELD_VALUE at 'at': its frame (in the
+   GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it, and the
+   run ends returning the value (EReturn). The frame already holds the
+   words still its own, and its cells and free variables; the run's
+   locals and the stack items under the value are stored, each a reference
+   the frame takes (a local's word is NULL already where the run holds
+   NULL). Its caught exception's frame is let go first, given the locals
+   (catcher_flush). */
+static void
+yield_resumable(PsycoObject *po, int at, bool after_await)
+{
+    vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+    PyCodeObject *co = po->pr.co;
+    int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
+    int nstack = STACK_LEVEL() - 1, i;
+    vinfo_t *v;
+    (void)after_await;
+    if (!catcher_flush(po, true))
+        return;
+    /* every item real before anything is stored: making one may call */
+    for (i = 0; i < nlocals + nstack; i++) {
+        v = i < nlocals ? LOC_LOCALS_PLUS[i] : stack_a[i - nlocals];
+        if ((i >= nlocals || local_is_runs(po, i)) && v != NULL &&
+            !psyco_knowntobe(v, 0) && !compute_vinfo(v, po))
+            return;
+    }
+    if (psyco_generic_call(po, psyco_gen_pause, CfNoReturnValue | CfNoPython,
+                           "vl", psyco_frame_words_frame(po),
+                           (long)gen_pause_new(po, le_lasti_of(at), nstack)) ==
+        NULL)
+        return;
+    for (i = 0; i < nlocals + nstack; i++) {
+        vinfo_t **slot =
+            i < nlocals ? &LOC_LOCALS_PLUS[i] : &stack_a[i - nlocals];
+        v = *slot;
+        /* a stack slot of a frame CPython reused may still hold an old
+           word: a NULL item (PUSH_NULL's) is stored */
+        if ((i >= nlocals ||
+             (local_is_runs(po, i) && !psyco_knowntobe(v, 0))) &&
+            !frame_word_store(po, i < nlocals ? i : nplus + i - nlocals, v))
+            return;
+        if (v != NULL) {
+            vinfo_decref(v, po);
+            *slot = NULL;
+        }
+    }
+    v = stack_a[nstack];
+    stack_a[nstack] = NULL;
+    po->pr.stack_level = 0;
+    po->pr.iblock = 0;
+    PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
+}
+#else
 /* A resumable generator's YIELD_VALUE at 'at': its frame (that of the
    run in the GENEXPR_SLOT_ACC word) is left as ceval's YIELD_VALUE leaves it,
    with the locals and the stack items under the value, each a reference it
@@ -7086,6 +7427,7 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
     po->pr.iblock = 0;
     PycException_Raise(po, vinfo_new(VirtualTime_New(&EReturn)), v);
 }
+#endif
 
 #if LE_RESUMES_COROUTINES
 /* An await at 'at' that suspends in a coroutine's body run as a call
@@ -8154,6 +8496,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                frame from this instruction, which the promotion restarted
                (Psyco_NeedType). A replay from a snapshot taken here does the
                same, as the flag is part of the snapshot. */
+#if LE_RESUMES_ON_FRAME
+            if (!stack_words_taken(po))
+                break;
+#endif
             if (po->pr.go_interpreted) {
                 po->pr.go_interpreted = 0;
                 if (!resume_in_ceval(po, next_instr, &unwound))

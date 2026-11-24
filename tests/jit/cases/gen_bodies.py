@@ -3,13 +3,11 @@
 # blocks live in its frame between resumes, as ceval leaves them. Each case
 # drives generators and returns what CPython shows of them; compiled()
 # says whether a generator's body was compiled, where LeJIT compiles them.
-# Only a body whose resumes do work is compiled (light_bodies).
 import _thread, gc, inspect, itertools, sys
 
 
 def work(x):
-    # a call: a body runs compiled only where its resumes do work
-    # (mergepoints.c:yields_do_work)
+    # a call, so that a resume does some work
     return x
 
 
@@ -552,15 +550,6 @@ def interrupted_in_try(n):
     return out, run(lambda: next(g)), compiled(catches_interrupt)
 
 
-def interpreted(*fns):
-    lejit = sys.modules.get('lejit')
-    # a release build can't say what compiled
-    if lejit is None or not hasattr(lejit._core, '_code_info'):
-        return True
-    return all(lejit._core._code_info(f.__code__) != 'compiled'
-               for f in fns)
-
-
 def ones():
     while True:
         yield 1
@@ -580,10 +569,10 @@ def counting(n):
 
 
 def light_bodies(n):
-    # resumes that do next to nothing cost less interpreted: these stay so
+    # resumes that do next to nothing, compiled as any other body
     g = ones()
     return ([next(g) for _ in range(n)], drain(scenario_ids({1: n, 2: 2})),
-            drain(counting(n)), interpreted(ones, scenario_ids, counting))
+            drain(counting(n)), compiled(ones, scenario_ids, counting))
 
 
 def send_at_start(n):
@@ -758,6 +747,32 @@ def for_exception_state(n):
     return out
 
 
+
+# A static type CPython readies only when an attribute is first looked up
+# on it (3.11's line_iterator), iterated by a body compiled before and
+# after that.
+def line_starts(code):
+    last = None
+    for start, end, line in code.co_lines():
+        if line is not None and line != last:
+            last = line
+            yield start, line
+
+
+def readied_late(n):
+    # resumed, but not to its end, before the type is readied, and to its
+    # end only after
+    out = []
+    for f in (counting, ones, light_bodies):
+        g = line_starts(f.__code__)
+        out.append([next(g) != () for _ in range(2)])
+    for f in (counting, ones):
+        list(f.__code__.co_lines())
+    for f in (light_bodies, counting, readied_late):
+        out.append(dict(line_starts(f.__code__)) != {})
+    return out, compiled(line_starts)
+
+
 CASES = [
     ('resuming', [(3,), (0,)], {}),
     ('local_masks', [(3,)], {}),
@@ -772,6 +787,7 @@ CASES = [
     ('interrupted', [(0,)], {}),
     ('interrupted_in_try', [(0,)], {}),
     ('light_bodies', [(3,)], {}),
+    ('readied_late', [(0,)], {}),
     ('send_at_start', [(3,)], {}),
     ('resumed_by_ceval', [(3,)], {}),
     ('words_resumed_by_ceval', [(3,)], {}),

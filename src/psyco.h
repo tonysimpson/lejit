@@ -993,13 +993,26 @@ typedef struct le_owner_s {
 EXTERNFN PyObject *
 le_gen_iternext(PyObject *gen);
 #endif
+/* and a resume's compiled code is given the frame itself, whose words it
+   reads where it uses them (vcompiler.c:PsycoObject_FromGenFrame), so one
+   entry serves every resume at a point */
+#define LE_RESUMES_ON_FRAME LE_RESUMES_GENERATORS_DIRECTLY
+/* a frame with more words (locals plus stack) resumes interpreted */
+#define LE_FRAME_WORDS_MAX 1024
 
-/* A resumable generator's compiled entries at one resume point, one per
-   set of NULL words in its frame (a bit each, in the frame's order),
-   compiled when first needed, at most LE_RESUME_ENTRIES */
+/* A resumable generator's compiled entries at one resume point, compiled
+   when first needed, at most LE_RESUME_ENTRIES: where LE_RESUMES_ON_FRAME,
+   one; otherwise one per set of NULL words in its frame (a bit each, in
+   the frame's order) */
+#if LE_RESUMES_ON_FRAME
+#define LE_RESUME_ENTRIES 1
+#else
 #define LE_RESUME_ENTRIES 4
+#endif
 typedef struct {
+#if !LE_RESUMES_ON_FRAME
     uint64_t nulls;
+#endif
     PyObject *code;    /* codebuf, Py_None if compiling failed; owned */
     PyObject *globals; /* as entry_globals and entry_builtins */
     PyObject *builtins;

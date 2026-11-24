@@ -182,6 +182,19 @@ typedef struct frame_runtime_s {
     struct frame_runtime_s *next; /* the next outer one */
 } FrameRuntime;
 
+#if LE_RESUMES_ON_FRAME
+/* A resumable generator's frame 'f' pausing at a yield (pycompiler.c), as
+   ceval's YIELD_VALUE leaves it: its f_lasti and stack depth; or, with
+   lasti -1, its run ending. The compiled code then stores in it the
+   'ntaken' locals listed, which the run holds. */
+typedef struct {
+    int lasti, nstack;
+    int ntaken;
+    int taken[1];
+} le_gen_pause_t;
+EXTERNFN void
+psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p);
+#else
 /* A resumable generator's frame pausing at a yield (pycompiler.c), as
    ceval's YIELD_VALUE leaves it: its f_lasti, stack depth and blocks.
    Gives the frame of the run 'fr', where the compiled code then stores
@@ -195,6 +208,7 @@ typedef struct {
 } le_gen_pause_t;
 EXTERNFN le_frame_t *
 psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p);
+#endif
 #if LE_HAS_FRAME_STACKREFS
 /* the paused frame's locals and its first 'nstack' stack items, stored by
    the compiled code as objects (each a reference it holds, NULL for none),
