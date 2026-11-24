@@ -100,13 +100,21 @@ ipromotion_write_jump(code_t *code, code_t *target)
     return code;
 }
 
-/* read back an entry written by ipromotion_write_entry */
+/* read back an entry written by ipromotion_write_entry. The target is
+   where the je ends up: past the far jump it goes through when the target
+   is out of its reach (codemanager.c:psyco_code_far_jump), which a copy of
+   the entry elsewhere may not reach, and which isn't the code compared
+   with the megamorphic version (dispatcher.c:promotion_cache_add). */
 PSY_INLINE void
 ipromotion_read_entry(code_t *code, long *value, code_t **target)
 {
+    code_t *t = code + PROMOTION_ENTRY_SIZE +
+                *(dword_t *)(code + PROMOTION_ENTRY_SIZE - 4); /* je rel32 */
+    /* jmp [rip], as x64/iprocessor.c:psyco_write_far_jump writes it */
+    while (t[0] == 0xFF && t[1] == 0x25 && *(dword_t *)(t + 2) == 0)
+        t = *(code_t **)(t + 6);
     *value = *(long *)(code + 2); /* REX, B8+r, imm64 */
-    *target = code + PROMOTION_ENTRY_SIZE +
-              *(dword_t *)(code + PROMOTION_ENTRY_SIZE - 4); /* je rel32 */
+    *target = t;
 }
 
 /* repoint an existing entry (inline or in the chain) at 'code' */
