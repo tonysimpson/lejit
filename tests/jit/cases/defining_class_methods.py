@@ -26,11 +26,11 @@ def iterated(n):
 def kept(n):
     out = []
     for i in range(n):
-        f = P.finditer
+        f = P.findall
         g = P.match('a1').group
         out.append((type(f).__name__, f.__self__ is P, f.__name__,
-                    [m.group() for m in f('x y')], g(1), f == P.finditer,
-                    f is P.finditer))
+                    f('x y'), g(1), f == P.findall,
+                    f is P.findall))
     return out
 
 
