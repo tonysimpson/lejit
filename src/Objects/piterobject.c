@@ -307,6 +307,21 @@ pgen_iternext(PsycoObject *po, vinfo_t *v)
 {
     return psyco_gen_step(po, v);
 }
+
+/* and send() the same way; coroutines share its C function */
+static PyCFunction cfunc_gen_send;
+
+static vinfo_t *
+pgen_send(PsycoObject *po, vinfo_t *self, vinfo_t *arg)
+{
+    PyTypeObject *tp = Psyco_NeedType(po, self);
+    if (tp == NULL)
+        return NULL;
+    if (tp == &PyGen_Type)
+        return psyco_gen_send(po, self, arg, cfunc_gen_send);
+    return psyco_generic_call(po, cfunc_gen_send, CfCommonNewRefPyObject, "vv",
+                              self, arg);
+}
 #endif
 
 INITIALIZATIONFN
@@ -317,6 +332,8 @@ psy_iterobject_init(void)
     Psyco_DefineMeta(PyListIter_Type.tp_iternext, &piter_iternext);
 #if LE_RESUMES_GENERATORS_DIRECTLY
     Psyco_DefineMeta(PyGen_Type.tp_iternext, &pgen_iternext);
+    cfunc_gen_send =
+        Psyco_DefineMethodFn(&PyGen_Type, "send", METH_O, &pgen_send);
 #endif
 
     /* iterator object are mutable;

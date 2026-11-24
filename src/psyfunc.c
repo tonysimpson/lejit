@@ -1553,19 +1553,23 @@ gen_current_frame(PsycoObject *po, vinfo_t *vts)
 
 /* The tests before a direct step of the run-time generator 'vgen' of
    code 'co', whose table is 't', on the thread state 'vts': 1 if all pass,
-   with the entry to call in '*ventry', 0 for le_gen_iternext instead
-   (anything gen_iternext or le_gen_to_run would do other than run the
-   entry: the generator running or finished, frame locals made, tracing
-   or another eval hook, a pending event, other globals or builtins, no
-   entry compiled yet), -1 on error. */
+   with the entry to call in '*ventry', 0 for the step's fallback instead
+   (anything gen_send_ex2 or le_gen_to_run would do other than run the
+   entry: the generator running or finished, or not started when the value
+   sent may not be None, frame locals made, tracing or another eval hook,
+   a pending event, other globals or builtins, no entry compiled yet), -1
+   on error. */
 static int
 gen_step_tests(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
-               le_gen_direct_t *t, vinfo_t *vts, vinfo_t **ventry)
+               le_gen_direct_t *t, vinfo_t *vts, bool sends_any,
+               vinfo_t **ventry)
 {
     vinfo_t *vt, *vg, *vb, *vplace, *vstart, *vdiff, *vindex, *ve;
     int r;
     if ((r = gen_field_test_i(po, vgen, GEN_frame_state, FRAME_EXECUTING,
                               Py_GE)) != 0 ||
+        (sends_any && (r = gen_field_test_i(po, vgen, GEN_frame_state,
+                                            FRAME_CREATED, Py_EQ)) != 0) ||
         (r = gen_field_test_i(po, vgen, GEN_locals, 0, Py_NE)) != 0)
         return r < 0 ? -1 : 0;
     if (le_direct_call_refused(po, vts))
@@ -1614,18 +1618,19 @@ gen_step_tests(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     return 1;
 }
 
-/* Compiled code's step of the generator 'vgen' (next(), a for loop),
-   which gen_iternext would run compiled (eval_hook.c:le_gen_iternext):
-   a direct call of the compiled entry at the frame's place, doing what
-   gen_send_ex2 and ceval's FOR_ITER_GEN do around the run, inline. The
-   frame is linked to the thread's innermost and the generator's
-   exception state into the thread's, but the frame isn't pushed: the
-   call's record says the body runs on it (Python/frames.h:on_gen_frame),
-   so that the frame walk finds it there. Anything else is
-   le_gen_iternext's. */
+/* Compiled code's step of the generator 'vgen' (next(), a for loop, or
+   send(varg) when 'varg' isn't NULL), which gen_send_ex2 would run
+   compiled (eval_hook.c:le_gen_iternext): a direct call of the compiled
+   entry at the frame's place, doing what gen_send_ex2 and ceval's
+   FOR_ITER_GEN do around the run, inline. The frame is linked to the
+   thread's innermost and the generator's exception state into the
+   thread's, but the frame isn't pushed: the call's record says the body
+   runs on it (Python/frames.h:on_gen_frame), so that the frame walk finds
+   it there. Anything else is le_gen_iternext's, or for send() the C
+   function 'send' (gen_send). */
 DEFINEFN
 vinfo_t *
-psyco_gen_step(PsycoObject *po, vinfo_t *vgen)
+psyco_gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send)
 {
     vinfo_t *vcode, *vts = NULL, *ventry = NULL, *vf = NULL, *vsent = NULL;
     vinfo_t *v, *vresult = NULL;
@@ -1638,6 +1643,9 @@ psyco_gen_step(PsycoObject *po, vinfo_t *vgen)
     int r;
     if (!is_runtime(vgen->source))
         goto generic;
+    /* the value sent is made real before anything is changed */
+    if (varg != NULL && !compute_vinfo(varg, po))
+        return NULL;
     vcode = gen_code(po, vgen);
     if (vcode == NULL)
         return NULL;
@@ -1658,7 +1666,12 @@ psyco_gen_step(PsycoObject *po, vinfo_t *vgen)
     vts = le_tstate_load(po);
     if (vts == NULL)
         return NULL;
-    r = gen_step_tests(po, vgen, co, t, vts, &ventry);
+    r = gen_step_tests(
+        po, vgen, co, t, vts,
+        varg != NULL &&
+            !(is_compiletime(varg->source) &&
+              CompileTime_Get(varg->source)->value == (long)Py_None),
+        &ventry);
     if (r == 1)
         r = enter_recursive_call_or_not(po, vts);
     if (r <= 0) {
@@ -1709,7 +1722,7 @@ psyco_gen_step(PsycoObject *po, vinfo_t *vgen)
 #endif
 
     /* the value sent, as gen_send_ex2 sends it, and the frame */
-    vsent = psyco_vi_None();
+    vsent = varg != NULL ? (vinfo_incref(varg), varg) : psyco_vi_None();
     if (!psyco_incref_v(po, vsent))
         goto error_nov;
     v = make_runtime_copy(po, vsent);
@@ -1743,8 +1756,13 @@ psyco_gen_step(PsycoObject *po, vinfo_t *vgen)
         goto error_nov;
     if (r > 0) {
         vinfo_decref(vts, po);
-        v = psyco_generic_call(po, le_gen_direct_end, CfCommonIterNext, "vv",
-                               vgen, vresult);
+        if (varg != NULL)
+            v = psyco_generic_call(po, le_gen_direct_send_end,
+                                   CfCommonNewRefPyObject, "vv", vgen,
+                                   vresult);
+        else
+            v = psyco_generic_call(po, le_gen_direct_end, CfCommonIterNext,
+                                   "vv", vgen, vresult);
         vinfo_decref(vresult, po);
         return v;
     }
@@ -1772,8 +1790,18 @@ error_nov:
     return NULL;
 
 generic:
+    if (varg != NULL)
+        return psyco_generic_call(po, send, CfCommonNewRefPyObject, "vv", vgen,
+                                  varg);
     return psyco_generic_call(po, le_gen_iternext, CfCommonIterNext, "v",
                               vgen);
+}
+
+DEFINEFN
+vinfo_t *
+psyco_gen_step(PsycoObject *po, vinfo_t *vgen)
+{
+    return psyco_gen_send(po, vgen, NULL, NULL);
 }
 #endif
 

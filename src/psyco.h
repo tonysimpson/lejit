@@ -1066,6 +1066,9 @@ le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x);
    (eval_hook.c), as gen_iternext returns */
 EXTERNFN PyObject *
 le_gen_direct_end(PyObject *gen, PyObject *result);
+/* the same after a step made by send(), as gen_send returns */
+EXTERNFN PyObject *
+le_gen_direct_send_end(PyObject *gen, PyObject *result);
 #endif
 /* the record lives in a weak reference to its code object (lejit.c) */
 typedef struct {

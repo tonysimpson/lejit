@@ -1,5 +1,5 @@
-# A for loop or next() in compiled code steps a generator whose body is
-# compiled by calling that body directly (psyfunc.c:psyco_gen_step), doing
+# A for loop, next() or send() in compiled code steps a generator whose body
+# is compiled by calling that body directly (psyfunc.c:psyco_gen_send), doing
 # what gen_send_ex2 does around the run itself. The body runs on the
 # generator's own frame without it being the thread's innermost: each case
 # checks that what Python sees of the frame, its caller, the generator and
@@ -359,6 +359,178 @@ def recursion_limit(n):
     return out
 
 
+# send() from compiled code: the value the body gets, and what it returns
+def adder(n):
+    total = 0
+    while True:
+        x = yield total
+        if x is None:
+            return ('ended', total)
+        total += x[0] if type(x) is tuple else x
+
+
+def sends(n):
+    out = []
+    g = adder(n)
+    out.append(g.send(None))
+    for i in range(n):
+        out.append(g.send(i))
+        out.append(g.send((i, i)))
+        k = [i]
+        out.append(g.send(k[0]))
+    out.append(run(lambda: g.send(None)))
+    out.append(run(lambda: g.send(1)))
+    out.append(run(lambda: g.send(None)))
+    g = adder(n)
+    none = [None][0]
+    out.append(g.send(none))
+    s = g.send
+    out.append(s(5))
+    try:
+        g.send(None)
+    except StopIteration as e:
+        out.append(('stop', e.value, e.args))
+    g = counter(n)
+    for i in range(n):
+        out.append(g.send(None))
+    try:
+        g.send(None)
+    except StopIteration as e:
+        out.append(('stop', e.value, e.args))
+    return out, compiled(adder)
+
+
+# send() to a generator that hasn't started
+def not_started(n):
+    out = []
+    for v in [1, (n,), 'x', [None][0]]:
+        g = adder(n)
+        out.append(run(lambda: g.send(v)))
+        out.append(g.gi_frame is not None and g.gi_frame.f_lasti)
+        out.append(run(lambda: g.send(None)))
+        out.append(run(lambda: g.send(v)))
+    g = adder(n)
+    out.append(run(lambda: g.send(n)))
+    out.append(run(lambda: next(g)))
+    out.append(run(lambda: g.send(n)))
+    return out
+
+
+# the body raising, PEP 479, and send() while the body runs
+def raises_on(n):
+    while True:
+        x = yield
+        if x == 'zero':
+            work(1) // 0
+        if x == 'stop':
+            raise StopIteration(x)
+        if x == 'self':
+            yield run(lambda: HOLDER[0].send(None)), HOLDER[0].gi_running
+
+
+HOLDER = [None]
+
+
+def send_errors(n):
+    out = []
+    g = raises_on(n)
+    next(g)
+    try:
+        g.send('zero')
+    except ZeroDivisionError as e:
+        out.append(tb_entries(e))
+    out.append(run(lambda: g.send(1)))
+    g = raises_on(n)
+    next(g)
+    try:
+        g.send('stop')
+    except RuntimeError as e:
+        out.append((str(e), repr(e.__cause__), repr(e.__context__)))
+    HOLDER[0] = g = raises_on(n)
+    next(g)
+    out.append(g.send('self'))
+    out.append(g.gi_running)
+    HOLDER[0] = None
+    return out, compiled(raises_on)
+
+
+# throw and close between sends, and the frame and caller the body sees
+def seen_on_send(n):
+    while True:
+        x = yield caller_names(sys._getframe()), sys._getframe().f_back is None
+        if x == 'raise':
+            raise KeyError(x)
+
+
+def sends_between(n):
+    out = []
+    g = takes(n)
+    out.append(g.send(None))
+    for i in range(n):
+        out.append(g.send(i))
+        out.append(g.throw(KeyError))
+        out.append(g.send(None))
+    g.close()
+    out.append(run(lambda: g.send(1)))
+    g = seen_on_send(n)
+    out.append(g.send(None))
+    out.append(g.send(1))
+    out.append(caller_names(g.gi_frame))
+    try:
+        g.send('raise')
+    except KeyError as e:
+        out.append(tb_entries(e))
+    out.append(g.gi_frame)
+    return out, compiled(takes, seen_on_send)
+
+
+# tracing switched on in a body that send() runs
+def traced_send(n):
+    x = yield work(1)
+    sys.settrace(_tracer)
+    x = yield work(x)
+    yield work(x)
+
+
+def send_tracing(n):
+    del EVENTS[:]
+    g = traced_send(n)
+    out = [g.send(None)]
+    try:
+        out.append(g.send(2))
+        out.append(g.send(3))
+    finally:
+        sys.settrace(None)
+    out.append(run(lambda: g.send(4)))
+    out.append([e for e in EVENTS])
+    del EVENTS[:]
+    return out
+
+
+# a coroutine's send() is the same C function as a generator's
+class Ready:
+    def __await__(self):
+        return (yield 'waiting')
+
+
+async def awaits(n):
+    x = await Ready()
+    return x, n
+
+
+def coro_send(n):
+    out = []
+    c = awaits(n)
+    out.append(run(lambda: c.send(1)))
+    out.append(c.send(None))
+    try:
+        c.send('sent')
+    except StopIteration as e:
+        out.append(('stop', e.value))
+    out.append(run(lambda: c.send(None)))
+    return out
+
+
 CASES = [
     ('plain', [(3,), (0,)], {}),
     ('frames', [(2,)], {}),
@@ -371,4 +543,10 @@ CASES = [
     ('tracing', [(3,)], {}),
     ('exception_state', [(0,)], {}),
     ('recursion_limit', [(0,)], {}),
+    ('sends', [(3,), (0,)], {}),
+    ('not_started', [(2,)], {}),
+    ('send_errors', [(0,)], {}),
+    ('sends_between', [(2,)], {}),
+    ('send_tracing', [(0,)], {}),
+    ('coro_send', [(1,)], {}),
 ]
