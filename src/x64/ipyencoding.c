@@ -103,23 +103,25 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn)
     BEGIN_SHORT_COND_JUMP(0, CC_NE); /* NE is the not zero flag */
 #if LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
     if (tracer != NULL && fn == NULL) {
-        /* the type is known only at run time: _Py_Dealloc for one the GC
-           tracks or while a tracer is set, else its tp_dealloc */
+        /* the type is known only at run time: _Py_Dealloc while a tracer
+           is set, else le_tracked_dealloc for a type the GC tracks, and
+           the type's tp_dealloc for one it doesn't */
         BEGIN_CALL(1);
         CALL_SET_ARG_FROM_REG(rg, 0);
-        MOV_R_O8(REG_TRANSIENT_1, rg, CPY_OFFSET(PyObject, ob_type));
-        TEST_I8_BO(REG_TRANSIENT_1, CPY_OFFSET(PyTypeObject, tp_flags) + 1,
-                   Py_TPFLAGS_HAVE_GC >> 8);
+        MOV_R_O8(REG_TRANSIENT_2, rg, CPY_OFFSET(PyObject, ob_type));
+        MOV_R_I(REG_TRANSIENT_1, (long)tracer);
+        CMP_I8_A(0, REG_TRANSIENT_1);
         BEGIN_SHORT_COND_JUMP(3, CC_NE);
-        MOV_R_I(REG_TRANSIENT_2, (long)tracer);
-        CMP_I8_A(0, REG_TRANSIENT_2);
-        BEGIN_SHORT_COND_JUMP(4, CC_NE);
-        MOV_R_O8(REG_TRANSIENT_1, REG_TRANSIENT_1,
+        TEST_I8_BO(REG_TRANSIENT_2, CPY_OFFSET(PyTypeObject, tp_flags) + 1,
+                   Py_TPFLAGS_HAVE_GC >> 8);
+        MOV_R_O8(REG_TRANSIENT_1, REG_TRANSIENT_2, /* keeps the flags */
                  CPY_OFFSET(PyTypeObject, tp_dealloc));
+        BEGIN_SHORT_COND_JUMP(4, CC_E);
+        MOV_R_I(REG_TRANSIENT_1, (long)le_tracked_dealloc());
         BEGIN_SHORT_JUMP(5);
         END_SHORT_JUMP(3);
-        END_SHORT_JUMP(4);
         MOV_R_I(REG_TRANSIENT_1, (long)traced);
+        END_SHORT_JUMP(4);
         END_SHORT_JUMP(5);
         END_CALL_R(REG_TRANSIENT_1);
     }

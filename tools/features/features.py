@@ -738,6 +738,13 @@ def dealloc_defers_to_trashcan(s):
     return False, 'Include, every header: no Py_TRASHCAN_BEGIN'
 
 
+def stack_margin(s):
+    """a thread's C stack margin, how far its stack pointer is above the
+    soft limit in steps, is _Py_RecursionLimit_GetMargin's (in an internal
+    header), which _Py_Dealloc decides by"""
+    return _declared(s, '_Py_RecursionLimit_GetMargin')
+
+
 def dict_version_tag(s):
     """a dict has a version tag (ma_version_tag) that every change to it
     changes"""
@@ -1417,6 +1424,7 @@ OBJECTS = [
     ('DEALLOC_HOOKS', D('_Py_Dealloc does more than call tp_dealloc: it reports to the ref tracer (PyRefTracer_SetTracer), and may defer a deep dealloc to the trashcan',
                         lambda s: _public(s, 'PyRefTracer_SetTracer'))),
     ('DEALLOC_DEFERS_TO_TRASHCAN', dealloc_defers_to_trashcan),
+    ('STACK_MARGIN', stack_margin),
     ('MANAGED_VALUES_POINTER', managed_values_pointer),
     ('RANGE_ITER_INDEX', range_iter_index),
     ('TAGGED_DICT_OR_VALUES', tagged_dict_or_values),

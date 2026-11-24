@@ -147,6 +147,10 @@ write_stub_trampoline(PsycoObject *po, bool respawn)
 extern void *
 le_ref_tracer_word(void);
 #endif
+#if LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+extern destructor
+le_tracked_dealloc(void);
+#endif
 
 _Static_assert(Py_TPFLAGS_HAVE_GC >> 8 < 256 &&
                    (Py_TPFLAGS_HAVE_GC & 255) == 0,
@@ -170,25 +174,27 @@ write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax)
 #if defined(Py_TRACE_REFS)
         CALL_I(_Py_Dealloc);
 #elif LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
-        /* _Py_Dealloc for a type the GC tracks (it may defer the free to
-           the trashcan) or while a ref tracer is set */
+        /* _Py_Dealloc while a ref tracer is set, else le_tracked_dealloc
+           for a type the GC tracks and the type's tp_dealloc for one it
+           doesn't */
         void *tracer = le_ref_tracer_word();
         if (tracer == NULL)
             CALL_I(_Py_Dealloc);
         else {
-            MOV_R_O8(REG_X64_RAX, REG_X64_RDI, CPY_OFFSET(PyObject, ob_type));
-            TEST_I8_BO(REG_X64_RAX, CPY_OFFSET(PyTypeObject, tp_flags) + 1,
-                       Py_TPFLAGS_HAVE_GC >> 8);
+            MOV_R_O8(REG_X64_R11, REG_X64_RDI, CPY_OFFSET(PyObject, ob_type));
+            MOV_R_I(REG_X64_RAX, (long)tracer);
+            CMP_I8_A(0, REG_X64_RAX);
             BEGIN_SHORT_COND_JUMP(1, CC_NE);
-            MOV_R_I(REG_X64_R11, (long)tracer);
-            CMP_I8_A(0, REG_X64_R11);
-            BEGIN_SHORT_COND_JUMP(2, CC_NE);
-            MOV_R_O8(REG_X64_RAX, REG_X64_RAX,
+            TEST_I8_BO(REG_X64_R11, CPY_OFFSET(PyTypeObject, tp_flags) + 1,
+                       Py_TPFLAGS_HAVE_GC >> 8);
+            MOV_R_O8(REG_X64_RAX, REG_X64_R11, /* keeps the flags */
                      CPY_OFFSET(PyTypeObject, tp_dealloc));
+            BEGIN_SHORT_COND_JUMP(2, CC_E);
+            MOV_R_I(REG_X64_RAX, (long)le_tracked_dealloc());
             BEGIN_SHORT_JUMP(3);
             END_SHORT_JUMP(1);
-            END_SHORT_JUMP(2);
             MOV_R_I(REG_X64_RAX, (long)_Py_Dealloc);
+            END_SHORT_JUMP(2);
             END_SHORT_JUMP(3);
             CALL_R(REG_X64_RAX);
         }

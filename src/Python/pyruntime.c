@@ -674,9 +674,10 @@ le_set_interp_eval_frame(void *fn)
 
 #if LE_HAS_DEALLOC_HOOKS
 /* The ref tracer's function, where _Py_Dealloc reads it, or NULL. Where
-   none is set, _Py_Dealloc only calls tp_dealloc (where it can defer a free
-   to the trashcan, for a type the GC doesn't track), which compiled code
-   then calls itself (x64/ipyencoding.c:decref_dealloc_calling). The word is
+   none is set, _Py_Dealloc only calls tp_dealloc (and, where it can defer
+   a free to the trashcan, does so only for a type the GC tracks), which
+   compiled code then calls itself (x64/ipyencoding.c:decref_dealloc_calling,
+   and le_tracked_dealloc below for a type the GC tracks). The word is
    checked once against PyRefTracer_SetTracer, the old tracer put back
    straight after. */
 static int
@@ -705,5 +706,43 @@ le_ref_tracer_word(void)
         }
     }
     return found > 0 ? (void *)word : NULL;
+}
+#endif
+#if LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN && LE_HAS_STACK_MARGIN && \
+    LE_HAS_THREAD_LOCAL_TSTATE
+/* _Py_Dealloc for an object the GC tracks, with no ref tracer set, without
+   its __tls_get_addr. _Py_Dealloc defers the free to the trashcan at a
+   stack margin below 2, and empties the trashcan after the free at 4 or
+   more; this asks for 5, as _Py_Dealloc's frame would sit a little below
+   its own, and nearer the limit calls _Py_Dealloc to decide. */
+static long tracked_tstate_at;
+
+static void
+tracked_dealloc(PyObject *op)
+{
+    char *tp;
+    PyThreadState *ts;
+    __asm__("mov %%fs:0, %0" : "=r"(tp));
+    ts = *(PyThreadState **)(tp + tracked_tstate_at);
+    if (_Py_RecursionLimit_GetMargin(ts) < 5) {
+        _Py_Dealloc(op);
+        return;
+    }
+    Py_TYPE(op)->tp_dealloc(op);
+    if (ts->delete_later != NULL)
+        _PyTrash_thread_destroy_chain(ts);
+}
+#endif
+#if LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+/* what compiled code calls to free an object the GC tracks while no ref
+   tracer is set */
+destructor
+le_tracked_dealloc(void)
+{
+#if LE_HAS_STACK_MARGIN && LE_HAS_THREAD_LOCAL_TSTATE
+    if (le_tstate_thread_offset(&tracked_tstate_at))
+        return tracked_dealloc;
+#endif
+    return _Py_Dealloc;
 }
 #endif

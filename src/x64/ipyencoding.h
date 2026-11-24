@@ -157,15 +157,19 @@ decref_dealloc_calling(code_t *code, PsycoObject *po, reg_t rg, destructor fn);
 /* the equivalent of Py_DECREF() when we know the type of the object
    (assuming that tp_dealloc never changes for a given type); where
    _Py_Dealloc may defer a free to the trashcan, it does so only for a type
-   the GC tracks */
+   the GC tracks, which le_tracked_dealloc frees as it does */
 #if defined(Py_TRACE_REFS)
 #define DEC_OB_REFCNT_T(rg, type) \
     (code = decref_dealloc_calling(code, po, rg, _Py_Dealloc))
 #elif LE_HAS_DEALLOC_DEFERS_TO_TRASHCAN
+/* Python/pyruntime.c: what to call in _Py_Dealloc's place, with no ref
+   tracer set, for an object the GC tracks */
+extern destructor
+le_tracked_dealloc(void);
 #define DEC_OB_REFCNT_T(rg, type)                                          \
     (code = decref_dealloc_calling(code, po, rg,                           \
                                    ((type)->tp_flags & Py_TPFLAGS_HAVE_GC) \
-                                       ? _Py_Dealloc                       \
+                                       ? le_tracked_dealloc()              \
                                        : (type)->tp_dealloc))
 #else
 #define DEC_OB_REFCNT_T(rg, type) \
