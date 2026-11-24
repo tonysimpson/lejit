@@ -8752,6 +8752,10 @@ psyco_pycompiler_mainloop(PsycoObject *po)
          */
         POP_DECREF();
         po->pr.next_instr &= ~NEXT_INSTR_POP;
+        /* forgotten here, as 'fine' does before the merge point check, which
+           a replay skips: so a replay reaches each later run-time test in
+           the state the first compile had */
+        Psyco_ForgetClasses(po);
         at_jump_target = !is_respawning(po);
     }
 
