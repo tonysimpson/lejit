@@ -11,12 +11,16 @@ def calls(n):
     out = []
     for i in range(n):
         s = 'a1 b c%d' % i
-        out.append(([m.group(0) for m in P.finditer(s)], P.sub('-', s),
+        out.append((P.sub('-', s),
                      P.sub(repl='+', string=s, count=1), P.findall(s),
                      P.split(s, maxsplit=1), P.match(s).groups(),
                      P.fullmatch('a1') is not None, P.search(s).span(),
                      P.match(s).group(1, 2)))
     return out
+
+
+def iterated(n):
+    return [[m.group(0) for m in P.finditer('a1 b c%d' % i)] for i in range(n)]
 
 
 def kept(n):
@@ -51,9 +55,9 @@ def errors(n):
 
 
 CASES = [
-    ('calls', [(0,), (3,)],
-     {'warmup': (150, "on 3.10, list() of finditer's matches keeps more "
-                      'blocks for some rounds, then stops')}),
+    ('calls', [(0,), (3,)], {}),
+    ('iterated', [(0,), (3,)],
+     {'leaks': "plain CPython keeps more blocks after finditer's rounds too"}),
     ('kept', [(2,)], {}),
     ('passed', [(2,)], {}),
     ('errors', [(2,)], {}),
