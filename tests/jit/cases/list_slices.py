@@ -308,7 +308,10 @@ def constant_slices_made(n):
     # where the compiler folds a slice of constants into one slice object,
     # it is used, not made again: slices of a tuple, and steps the compiled
     # slicing leaves to the real slice; slices made per round (after the
-    # first, which compiles)
+    # first, which compiles). Without such constants CPython makes a slice
+    # for each, and LeJIT may make fewer (it copies l[:] without one), so
+    # there is nothing to compare.
+    folded = any(type(c) is slice for c in constant_slices_made.__code__.co_consts)
     out = []
     l = list(range(9))
     t = tuple(l)
@@ -319,7 +322,7 @@ def constant_slices_made(n):
         for k in range(100):
             r = (t[1:], t[:3], t[::2], l[::2], l[1::3], s[::2], b[::3], l[:])
         count = made()
-        out.append((r, count // 100 if i and count is not None else None))
+        out.append((r, count // 100 if i and folded and count is not None else None))
     return out
 
 

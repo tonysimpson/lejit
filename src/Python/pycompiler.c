@@ -123,7 +123,7 @@ le_lookup_special_id(PyObject *self, _Py_Identifier *attrid)
 /* names looked up by the run-time helpers, interned at start-up
    (psyco_pycompiler_init) */
 static PyObject *s_initializing, *s_name, *s_spec, *s_match_args, *s_get,
-    *s_build_class;
+    *s_build_class, *s_keys;
 
 #if LE_HAS_IMPORT_FROM_SPEC
 /* moduleobject.c:_PyModuleSpec_IsInitializing: spec._initializing is
@@ -1892,9 +1892,10 @@ psyco_pycompiler_init(void)
     s_match_args = PyUnicode_InternFromString("__match_args__");
     s_get = PyUnicode_InternFromString("get");
     s_build_class = PyUnicode_InternFromString("__build_class__");
+    s_keys = PyUnicode_InternFromString("keys");
     if (s_builtin_object == NULL || s_initializing == NULL || s_name == NULL ||
         s_spec == NULL || s_match_args == NULL || s_get == NULL ||
-        s_build_class == NULL)
+        s_build_class == NULL || s_keys == NULL)
         Py_FatalError("lejit: no names for the compiler");
     load_global_miss_glue = psyco_aligned_call_glue(cimpl_load_global_miss);
 
@@ -3564,6 +3565,26 @@ cimpl_list_extend(PyObject *list, PyObject *iterable)
 }
 #endif
 
+#if LE_HAS_UNPACK_KEEPS_ATTRIBUTE_ERROR
+/* the AttributeError {**o} or f(**o) raised says o is not a mapping only
+   where o has no keys: then it is cleared and 1; else 0, with it, or the
+   error looking for keys raised with it as its context */
+static int
+le_not_a_mapping(PyObject *o)
+{
+    PyObject *exc = PyErr_GetRaisedException();
+    int has_keys = PyObject_HasAttrWithError(o, s_keys);
+    if (has_keys == 0) {
+        Py_DECREF(exc);
+        return 1;
+    }
+    _PyErr_ChainExceptions1(exc);
+    return 0;
+}
+#else
+#define le_not_a_mapping(o) 1
+#endif
+
 #if LE_HAS_OPCODE_DICT_UPDATE
 /* ceval.c DICT_UPDATE */
 static int
@@ -3571,7 +3592,8 @@ cimpl_dict_update(PyObject *dict, PyObject *update)
 {
     int err = PyDict_Update(dict, update);
     if (err < 0) {
-        if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        if (PyErr_ExceptionMatches(PyExc_AttributeError) &&
+            le_not_a_mapping(update)) {
             PyErr_Format(PyExc_TypeError, LE_MSG_DICT_STAR_NOT_MAPPING,
                          Py_TYPE(update)->tp_name);
         }
@@ -3585,6 +3607,8 @@ static void
 cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 {
     if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        if (!le_not_a_mapping(kwargs))
+            return;
 #ifdef LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION
         PyErr_Clear();
         PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION,
@@ -3605,21 +3629,29 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 #endif
     }
     else if (PyErr_ExceptionMatches(PyExc_KeyError)) {
+#if LE_HAS_CURRENT_EXCEPTION
+        /* the KeyError is an instance: the key is in its args */
+        PyObject *exc = PyErr_GetRaisedException();
+        PyObject *args = ((PyBaseExceptionObject *)exc)->args;
+        if (PyTuple_Check(args) && PyTuple_GET_SIZE(args) == 1) {
+#else
         PyObject *exc, *val, *tb;
         PyErr_Fetch(&exc, &val, &tb);
+        PyObject *args = val;
         if (val && PyTuple_Check(val) && PyTuple_GET_SIZE(val) == 1) {
+#endif
 #if LE_HAS_FUNCTION_STR
             PyErr_Clear();
             PyObject *funcstr = _PyObject_FunctionStr(func);
             if (funcstr != NULL) {
-                PyObject *key = PyTuple_GET_ITEM(val, 0);
+                PyObject *key = PyTuple_GET_ITEM(args, 0);
                 PyErr_Format(PyExc_TypeError,
                              LE_MSG_KWARGS_DUPLICATE_FUNCTION_STR, funcstr,
                              key);
                 Py_DECREF(funcstr);
             }
 #else
-            PyObject *key = PyTuple_GET_ITEM(val, 0);
+            PyObject *key = PyTuple_GET_ITEM(args, 0);
             if (!PyUnicode_Check(key)) {
                 PyErr_Format(
                     PyExc_TypeError, LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
@@ -3631,6 +3663,13 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
                     PyEval_GetFuncName(func), PyEval_GetFuncDesc(func), key);
             }
 #endif
+#if LE_HAS_CURRENT_EXCEPTION
+            Py_DECREF(exc);
+        }
+        else {
+            PyErr_SetRaisedException(exc);
+        }
+#else
             Py_XDECREF(exc);
             Py_XDECREF(val);
             Py_XDECREF(tb);
@@ -3638,6 +3677,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
         else {
             PyErr_Restore(exc, val, tb);
         }
+#endif
     }
 }
 
