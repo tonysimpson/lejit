@@ -320,6 +320,32 @@ enter_recursive_call(PsycoObject *po, vinfo_t *vts)
     return true;
 }
 
+#if LE_HAS_RECURSION_REMAINING || LE_HAS_PY_RECURSION_REMAINING
+/* enter_recursive_call where an overflow is not raised here but left to
+   another path: 1 if counted, 0 if it would overflow (counted back, the
+   count's rare path taken), -1 with an exception set in 'po' */
+static inline int
+enter_recursive_call_or_not(PsycoObject *po, vinfo_t *vts)
+{
+    condition_code_t cc;
+    vinfo_t *vdepth = add_to_depth(po, LE_RECURSION_STEP, vts);
+    if (vdepth == NULL)
+        return -1;
+    cc = integer_cmp_i(po, vdepth, 0, Py_LT);
+    vinfo_decref(vdepth, po);
+    if (cc == CC_ERROR)
+        return -1;
+    if (runtime_condition_f(po, cc)) {
+        vdepth = add_to_depth(po, -LE_RECURSION_STEP, vts);
+        if (vdepth == NULL)
+            return -1;
+        vinfo_decref(vdepth, po);
+        return 0;
+    }
+    return 1;
+}
+#endif
+
 /* consumes 'vts'; false with an exception set in 'po' */
 static inline bool
 leave_recursive_call(PsycoObject *po, vinfo_t *vts)

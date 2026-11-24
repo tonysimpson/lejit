@@ -131,6 +131,10 @@ struct stack_frame_info_s {
     /* the function whose coroutine's body this call runs, started by its
        await (psyfunc.c:psyco_coro_start), or NULL */
     PyFunctionObject *coro_func;
+    /* this call runs a generator's body on the generator's own frame,
+       whose address is the word above the callee's own slot
+       (psyfunc.c:psyco_gen_step) */
+    int on_gen_frame;
 };
 
 /* the map of po's locals now, with lasti; while inlining, of the
@@ -160,6 +164,12 @@ finfo_last(stack_frame_info_t *finfo)
 
 EXTERNFN stack_frame_info_t *
 psyco_finfo(PsycoObject *caller, PsycoObject *callee);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* the record of a call from 'caller' that runs a body of the generator
+   code 'co' on the generator's own frame (on_gen_frame) */
+EXTERNFN stack_frame_info_t *
+psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co);
+#endif
 
 /* A real frame LeCode_Run runs: on its C stack, linked into this
    thread's list from start to return (frames.c:frame_runs) */
@@ -189,19 +199,6 @@ typedef struct {
 } le_gen_pause_t;
 EXTERNFN void
 psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p);
-#if LE_HAS_FRAME_STACKREFS
-/* Where the frame's words are _PyStackRefs, compiled code reads them
-   through these: word k borrowed (NULL for none), or taken, a reference
-   (NULL for none), which leaves none there. It stores objects (each a
-   reference the frame takes, NULL for none), which psyco_gen_words_own
-   makes _PyStackRefs: the locals 'p' lists and its stack items. */
-EXTERNFN PyObject *
-psyco_frame_word_borrow(le_frame_t *f, long k);
-EXTERNFN PyObject *
-psyco_frame_word_take(le_frame_t *f, long k);
-EXTERNFN void
-psyco_gen_words_own(le_frame_t *f, const le_gen_pause_t *p);
-#endif
 #else
 /* A resumable generator's frame pausing at a yield (pycompiler.c), as
    ceval's YIELD_VALUE leaves it: its f_lasti, stack depth and blocks.

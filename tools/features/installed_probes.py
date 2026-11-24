@@ -58,8 +58,11 @@ def _need_ops(*names):
 
 def _code(ops, consts):
     """A function running the instructions ops, [(name, arg)], with the
-    constants consts. Only for instructions without inline caches."""
-    raw = b''.join(bytes([opcode.opmap[name], arg]) for name, arg in ops)
+    constants consts. Each instruction is followed by its inline caches,
+    zeroed, which a jump's argument counts."""
+    caches = _caches()
+    raw = b''.join(bytes([opcode.opmap[name], arg])
+                   + bytes(2 * caches.get(name, 0)) for name, arg in ops)
     template = (lambda: None).__code__
     if hasattr(template, 'replace'):
         code = template.replace(co_code=raw, co_consts=tuple(consts),
@@ -193,7 +196,8 @@ for _feature, _function in [
         ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
         ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
-        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending')]:
+        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
+        ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
