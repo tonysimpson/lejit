@@ -345,9 +345,10 @@ EXTERNVAR c_promotion_t psyco_fused_pyobj_promotion;
 #define MEGAMORPHIC_MAX 5
 
 /* an input array that a translated case passes to a C function
-   (BUILD_STRING) goes as this many words at most, the
-   rest NULL; a longer one as a tuple of its items */
-#define ARRAY_ARGS_MAX 4
+   (BUILD_STRING) goes as this many words at most (psyco_generic_call's
+   eight arguments, less a count), the rest NULL; a longer one as a tuple
+   of its items */
+#define ARRAY_ARGS_MAX 7
 
 /* Check if the given virtual source is a promotion exception */
 EXTERNFN bool
