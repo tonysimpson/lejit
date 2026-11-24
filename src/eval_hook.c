@@ -172,6 +172,18 @@ lasti_offset(int lasti)
     return LE_HAS_LASTI_IN_INSTRUCTIONS && lasti > 0 ? lasti * LE_UNIT : lasti;
 }
 
+/* where a frame paused at f_lasti 'lasti' goes on */
+static inline int
+resume_start(int lasti)
+{
+#if LE_HAS_FRAME_INSTR_PTR
+    /* the frame's place is the instruction it goes on with */
+    return lasti_offset(lasti);
+#else
+    return lasti < 0 ? 0 : lasti_offset(lasti) + LE_UNIT;
+#endif
+}
+
 #if LE_RESUMES_ON_FRAME
 /* the entry compiled for resuming 'f' after f_lasti, with 'nstack' stack
    items under the value sent; NULL if out of memory */
@@ -191,12 +203,7 @@ compile_resume(le_frame_t *f, le_code_extra_t *x, PyObject *mergepoints,
     CodeBufferObject *volatile codebuf = NULL;
     le_compile_guard_t g;
     int lasti = le_frame_lasti(f);
-#if LE_HAS_FRAME_INSTR_PTR
-    /* the frame's place is the instruction it goes on with */
-    int start = lasti_offset(lasti);
-#else
-    int start = lasti < 0 ? 0 : lasti_offset(lasti) + LE_UNIT;
-#endif
+    int start = resume_start(lasti);
 #if LE_HAS_INTERPRETER_FRAME
     /* no blocks: handlers are the exception table's */
     int *blocks = NULL, nblocks = 0;
@@ -276,10 +283,13 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
     }
     for (i = 0; i < x->nresumes; i++) {
         le_resume_point_t *p = &x->resumes[i];
-        if (p->lasti == -2)
+        if (p->lasti == -2) {
             p->lasti = lasti;
+            p->in_handler = (co->co_flags & CO_COROUTINE) && lasti >= 0 &&
+                            psyco_in_handler(co, resume_start(lasti));
+        }
         if (p->lasti == lasti)
-            return x->last_resume = p;
+            return p->in_handler ? NULL : (x->last_resume = p);
     }
     return NULL;
 }
@@ -295,7 +305,8 @@ static inline bool
 gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
 {
     PyCodeObject *co = le_frame_code(f);
-    int kinds = CO_GENERATOR | (LE_RESUMES_COROUTINES ? CO_COROUTINE : 0);
+    int kinds =
+        CO_GENERATOR | (LE_RESUMES_COROUTINES_COMPILED ? CO_COROUTINE : 0);
     if (co == le_gen_interpreted || !(co->co_flags & kinds) || throwflag ||
         !le_frame_is_gen(f))
         return false;
@@ -320,7 +331,7 @@ le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x)
     int n;
     if (x->direct != NULL)
         return x->direct;
-    if (x->nresumes < 0 || !(co->co_flags & CO_GENERATOR) ||
+    if (x->nresumes < 0 || !(co->co_flags & (CO_GENERATOR | CO_COROUTINE)) ||
         le_code_nlocalsplus(co) + co->co_stacksize > LE_FRAME_WORDS_MAX)
         return NULL;
     mergepoints = psyco_get_merge_points(co, 0);
