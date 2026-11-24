@@ -366,11 +366,20 @@ le_layouts(PyObject *self, PyObject *unused)
     if (result == NULL || list == NULL || d == NULL)
         goto error;
 
-    /* Objects/iterobject.c's seqiterobject */
+    /* Objects/iterobject.c's seqiterobject, whose layout piterobject.c also
+       uses for Objects/listobject.c's list iterators */
     it = PySeqIter_New(list);
     if (it == NULL)
         goto error;
     ok = PySeqIter_Type.tp_basicsize == sizeof(seqiterobject) &&
+         ((seqiterobject *)it)->it_seq == list &&
+         ((seqiterobject *)it)->it_index == 0;
+    Py_DECREF(it);
+    it = PyObject_GetIter(list);
+    if (it == NULL)
+        goto error;
+    ok = ok && Py_TYPE(it) == &PyListIter_Type &&
+         PyListIter_Type.tp_basicsize == sizeof(seqiterobject) &&
          ((seqiterobject *)it)->it_seq == list &&
          ((seqiterobject *)it)->it_index == 0;
     if (add_layout(result, "seqiterobject", PySeqIter_Type.tp_basicsize, ok) <

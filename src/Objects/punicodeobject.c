@@ -1580,14 +1580,14 @@ PsycoUnicode_SplitIter(PsycoObject *po, vinfo_t *list)
     int ascii = sep != NULL && PyUnicode_GET_LENGTH(sep) > 1;
     vinfo_t *it, *zero;
     if (list->refcount != 1)
-        return PsycoSeqIter_New(po, list);
+        return PsycoListIter_New(po, list);
     if (first != NULL)
         src = list->array->items[iSPLIT_ROOT];
     if (is_compiletime(src->source)) {
         PyObject *o = (PyObject *)CompileTime_Get(src->source)->value;
         if (!PyUnicode_IS_READY(o) ||
             (ascii && !PyUnicode_IS_COMPACT_ASCII(o)))
-            return PsycoSeqIter_New(po, list);
+            return PsycoListIter_New(po, list);
     }
     else {
         condition_code_t cc = state_at_least(
@@ -1596,9 +1596,9 @@ PsycoUnicode_SplitIter(PsycoObject *po, vinfo_t *list)
         if (cc == CC_ERROR)
             return NULL;
         if (!runtime_condition_t(po, cc))
-            return PsycoSeqIter_New(po, list);
+            return PsycoListIter_New(po, list);
     }
-    it = PsycoSeqIter_New(po, list);
+    it = PsycoListIter_New(po, list);
     zero = first != NULL ? first : psyco_vi_Zero();
     vinfo_setitem(po, it, iSEQITER_SPLIT_POS, make_runtime_copy(po, zero));
     if (first == NULL)
