@@ -205,6 +205,12 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends libffi-dev libunwind-dev
           python -c 'import setuptools' 2>/dev/null || pip install setuptools
+      # the images have no .pyc: byte-compile the library as make check's
+      # job does, or the leak check counts what the first imports compile
+      - name: Byte-compile the library
+        run: |
+          stdlib=$(python -c "import sysconfig; print(sysconfig.get_paths()['stdlib'])")
+          python -Wi -m compileall -q -x 'bad_coding|badsyntax|site-packages|lib2to3/tests/data|test_lib2to3/data' "$stdlib"
       - name: make test
         run: make test PY=python
 
