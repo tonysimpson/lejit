@@ -518,6 +518,32 @@ def FRAME_CLEARED_LAST_FIRST():
 
 
 @probe
+def GETFRAME_AUDITS_RESULT():
+    """sys._getframe(1)'s audit event names the caller's frame, which it
+    returns, not the current one (run: an audit hook)"""
+    if not hasattr(sys, 'addaudithook'):
+        return False, 'no sys.addaudithook'
+    seen = []
+
+    def hook(event, args):
+        if event == 'sys._getframe' and seen is not None:
+            seen.append(args[0])
+    sys.addaudithook(hook)
+
+    def inner():
+        return sys._getframe(1), sys._getframe(0)
+    try:
+        caller, current = inner()
+        named = seen[-2]
+    finally:
+        seen = None
+    if named is not caller and named is not current:
+        raise Unanswered('the audit event named neither frame: %r' % named)
+    return named is caller, 'run: the event named the %s frame' % (
+        'returned' if named is caller else 'current')
+
+
+@probe
 def LINENO_WHEN_SET():
     """a frame given an f_trace while no trace function runs reports the
     line it is on, not the line where f_trace was set (frame.f_lineno)"""

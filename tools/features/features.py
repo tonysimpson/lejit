@@ -1407,6 +1407,8 @@ FRAMES = [
                                lambda s: _file(s, 'Include/internal/pycore_interpframe.h'))),
     ('FRAME_STACKREFS', frame_stackrefs),
     ('FRAME_INITIALIZE_TSTATE', frame_initialize_tstate),
+    ('GETFRAME_AUDITS_RESULT', D('sys._getframe\'s audit event names the frame it returns, after the walk (none when the stack is too shallow), not the current frame before it',
+                                 lambda s: _body_has(s, 'Python/sysmodule.c', 'sys__getframe_impl', '"sys._getframe", "(O)", pyFrame', missing=False))),
 ]
 
 # types
