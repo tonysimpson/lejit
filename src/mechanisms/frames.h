@@ -25,6 +25,10 @@
 /* _PyEval_FrameClearAndPop */
 #include "internal/pycore_ceval.h"
 #endif
+#if LE_HAS_GENERATOR_RETURN_KIND
+/* _PyThreadStateImpl */
+#include "internal/pycore_tstate.h"
+#endif
 #undef Py_BUILD_CORE
 typedef _PyInterpreterFrame le_frame_t;
 
@@ -580,15 +584,23 @@ le_gen_frame_run(le_frame_t *f)
 }
 /* paused at the yield at 'lasti' with 'nstack' items under the value, as
    ceval's YIELD_VALUE leaves it: its place is the yield, or the instruction
-   after it where the place is the one to go on with */
+   after it where the place is the one to go on with. Where the state says
+   whether the frame is in a yield from, the yield's argument says. */
 static inline void
 le_gen_frame_pause(le_frame_t *f, int lasti, int nstack)
 {
-    LE_FRAME_PLACE(f) =
-        _PyCode_CODE(LE_FRAME_CODE(f)) + lasti + LE_HAS_FRAME_INSTR_PTR;
+    _Py_CODEUNIT *yield = _PyCode_CODE(LE_FRAME_CODE(f)) + lasti;
+    LE_FRAME_PLACE(f) = yield + LE_HAS_FRAME_INSTR_PTR;
     le_gen_frame_set_depth(f, nstack);
+#ifdef FRAME_STATE_SUSPENDED
+    le_frame_gen(f)->gi_frame_state = FRAME_SUSPENDED + (yield->op.arg != 0);
+#else
+    (void)yield;
     le_frame_gen(f)->gi_frame_state = FRAME_SUSPENDED;
+#endif
 }
+/* whether the generator whose state is 'state' is paused, after a run */
+#define LE_GEN_PAUSED(state) ((state) < FRAME_EXECUTING)
 /* the run that gave 'result' has ended: paused (le_gen_frame_pause, or
    ceval's own YIELD_VALUE), else returned or raised with its stack empty,
    which gen_send_ex then marks and clears, or le_gen_frame_leave where
@@ -1169,15 +1181,27 @@ le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
                    PyObject *done)
 {
     PyGenObject *gen = le_frame_gen(f);
-    if (result != NULL && gen->gi_frame_state == FRAME_SUSPENDED) {
+    if (result != NULL && LE_GEN_PAUSED(gen->gi_frame_state)) {
         ts->exc_info = gen->gi_exc_state.previous_item;
         gen->gi_exc_state.previous_item = NULL;
+#if LE_HAS_LAST_PROFILED_FRAME
+        _PyThreadState_UpdateLastProfiledFrame(ts, f, f->previous);
+#endif
         f->previous = NULL;
+#if LE_HAS_GENERATOR_RETURN_KIND
+        /* last: gen_send_ex2 reads it as the run's */
+        ((_PyThreadStateImpl *)ts)->generator_return_kind = GENERATOR_YIELD;
+#endif
         return result;
     }
     f->owner = FRAME_OWNED_BY_FRAME_OBJECT;
     result = le_frame_finish(ts, f, result, done);
     f->owner = FRAME_OWNED_BY_GENERATOR;
+#if LE_HAS_GENERATOR_RETURN_KIND
+    /* as ceval's clear of a generator's frame says, which a frame owned
+       by its object doesn't get */
+    ((_PyThreadStateImpl *)ts)->generator_return_kind = GENERATOR_RETURN;
+#endif
     return result;
 }
 #endif

@@ -84,7 +84,8 @@ le_after(le_code_t c, int pos)
    there that pops the iterator and its item where FOR_ITER pops the
    iterator itself, and past the POP_TOP after it where that pops the
    iterator. Where FOR_ITER leaves the iterator, the POP_ITER past the
-   END_FOR pops it. */
+   END_FOR pops it, and the index or NULL above it where GET_ITER pushes
+   one. */
 static inline int
 le_for_iter_exit(le_code_t c, int target)
 {
@@ -205,10 +206,12 @@ le_instr(le_code_t c, int pos)
         case POP_JUMP_BACKWARD_IF_NOT_NONE:
             in.op = POP_JUMP_IF_NOT_NONE;
             break;
+#if !LE_HAS_GET_ITER_INDEX
         /* pops the iterator a for loop's FOR_ITER left at its end */
         case POP_ITER:
             in.op = POP_TOP;
             break;
+#endif
 #if LE_HAS_LOAD_ATTR_METHOD_BIT
         case LOAD_ATTR:
             if (in.arg & 1)
@@ -305,6 +308,7 @@ le_op_flags(int op)
         case STORE_FAST:
         case DELETE_FAST:
         case POP_TOP:
+        case POP_ITER:
         case ROT_TWO:
         case ROT_THREE:
         case DUP_TOP:
@@ -558,6 +562,18 @@ le_op_flags(int op)
             return LE_OPF_COMPILED_IN_BLOCKS;
         case YIELD_FROM:
             return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;
+#if LE_HAS_OPCODE_SEND
+        /* yield from in a resumable generator: GET_YIELD_FROM_ITER, then
+           SEND's loop, which sends into the iterator and yields what it
+           yields, and its end (END_SEND), or a throw's (CLEANUP_THROW) */
+        case GET_YIELD_FROM_ITER:
+        case CLEANUP_THROW:
+            return LE_OPF_COMPILED;
+        case SEND:
+            return LE_OPF_COMPILED | LE_OPF_BRANCHES | LE_OPF_CALL;
+        case END_SEND:
+            return LE_OPF_COMPILED | LE_OPF_LIGHT;
+#endif
         /* async with, in a coroutine's body */
         case BEFORE_ASYNC_WITH:
             return LE_OPF_COMPILED_IN_BLOCKS | LE_OPF_BREAKER_SKIPS;
