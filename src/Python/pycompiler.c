@@ -4634,14 +4634,16 @@ static int
 resume_in_ceval(PsycoObject *po, int next_instr, int *unwound);
 
 /* An item stored or deleted by a call may be a frame-locals proxy's,
-   which writes the locals of a frame (frames.c:expose) */
-static inline int
-writes_locals_proxy(int opcode)
+   which writes the locals of a frame (frames.c:expose): not where the
+   container's type is known and isn't the proxy's */
+static inline char
+may_write_locals_proxy(vinfo_t *container)
 {
 #ifdef PyFrameLocalsProxy_Check
-    return opcode == STORE_SUBSCR || opcode == DELETE_SUBSCR;
+    PyTypeObject *tp = Psyco_KnownType(container);
+    return tp == NULL || PyType_IsSubtype(tp, &PyFrameLocalsProxy_Type);
 #else
-    (void)opcode;
+    (void)container;
     return 0;
 #endif
 }
@@ -5316,6 +5318,7 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
             v = NTOP(3);
             sub = unfolded_slice(container, NTOP(1));
             err = PsycoObject_SetItem(po, container, sub, v);
+            po->pr.proxy_write = may_write_locals_proxy(container);
             vinfo_decref(sub, po);
             if (!err) {
                 break;
@@ -5333,6 +5336,7 @@ compile_operators(PsycoObject *po, int opcode, int oparg, int target,
             container = NTOP(2);
             sub = unfolded_slice(container, NTOP(1));
             err = PsycoObject_DelItem(po, container, sub);
+            po->pr.proxy_write = may_write_locals_proxy(container);
             vinfo_decref(sub, po);
             if (!err) {
                 break;
@@ -8135,6 +8139,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 break;
             po->blocking_call = 0;
             po->pr.python_call = 0;
+            po->pr.proxy_write = 0;
 
             /* Main switch on opcode */
 
@@ -8197,7 +8202,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
         fine:
             extra_assert(!PycException_Occurred(po));
             if ((po->pr.python_call && ((le_op_flags(opcode) & LE_OPF_CALL) ||
-                                        writes_locals_proxy(opcode))) ||
+                                        po->pr.proxy_write)) ||
                 po->pr.resume_pending) {
                 po->pr.resume_pending = 0;
                 if (!resume_if_tracing(po, next_instr, &unwound))
