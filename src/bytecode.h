@@ -550,6 +550,18 @@ le_op_flags(int op)
             return LE_OPF_COMPILED_IN_BLOCKS;
         case YIELD_FROM:
             return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;
+#if LE_HAS_OPCODE_SEND
+        /* yield from in a resumable generator: GET_YIELD_FROM_ITER, then
+           SEND's loop, which sends into the iterator and yields what it
+           yields, and its end (END_SEND), or a throw's (CLEANUP_THROW) */
+        case GET_YIELD_FROM_ITER:
+        case CLEANUP_THROW:
+            return LE_OPF_COMPILED;
+        case SEND:
+            return LE_OPF_COMPILED | LE_OPF_BRANCHES | LE_OPF_CALL;
+        case END_SEND:
+            return LE_OPF_COMPILED | LE_OPF_LIGHT;
+#endif
         /* async with, in a coroutine's body */
         case BEFORE_ASYNC_WITH:
             return LE_OPF_COMPILED_IN_BLOCKS | LE_OPF_BREAKER_SKIPS;
