@@ -2,6 +2,7 @@
 # tests, pairs of locals, f-string conversions, function attributes, calls
 # by keyword or through a bound attribute, the end of for loops, and
 # imports (whose argument carries the name's index with other bits).
+from ref_tracer import count_made, made
 
 
 class Truthy:
@@ -151,6 +152,20 @@ def loop_ends(items):
     return out, [i * 2 for i in items if i], sum(i for i in items)
 
 
+def fstring_parts_made(n, a, b, c):
+    # f-strings of up to 7 parts whose values aren't known: the tuples made
+    # joining them, per round of the five (after the first, which compiles)
+    out = []
+    for i in range(n):
+        count_made(tuple)
+        for k in range(100):
+            r = [f'{a}{b}', f'<{a}|{b}>', f'{a}{b}{c}{a}{b}{c}',
+                 f'<{a}|{b}|{c}>', f'{a}{b}{c}{a}{b}{c}{a}']
+        count = made()
+        out.append((r, count // 100 if i and count is not None else None))
+    return out
+
+
 def imports(name):
     first = name.upper()
     import os.path
@@ -175,5 +190,6 @@ CASES = [
     ('calls_by_keyword', "[(Obj(), lambda x, y=0: (x * 2, y))]", {}),
     ('super_by_keyword', [(1,)], {}),
     ('loop_ends', [([0, 1, 2],), ([],)], {}),
+    ('fstring_parts_made', [(3, 'x', 'yy', 'zzz'), (2, '', 'é', '')], {}),
     ('imports', [('json',)], {}),
 ]

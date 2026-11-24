@@ -146,6 +146,17 @@ EXTERNFN vinfo_t *
 psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
                  Source argsources[], int argcount,
                  struct stack_frame_info_s *finfo);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* As psyco_call_psyco, to the compiled code at 'ventry' (run time), with
+   'vframe' (run time) in the word above the callee's own slot, where the
+   record says to find it (Python/frames.h:on_gen_frame). The callee's
+   result as it is, with no reference and not checked; the depth is left
+   to the caller. */
+EXTERNFN vinfo_t *
+psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
+                          Source argsources[], int argcount, vinfo_t *vframe,
+                          struct stack_frame_info_s *finfo);
+#endif
 
 PSY_INLINE int
 get_arguments_count(vinfo_array_t *vlocals)
@@ -334,9 +345,10 @@ EXTERNVAR c_promotion_t psyco_fused_pyobj_promotion;
 #define MEGAMORPHIC_MAX 5
 
 /* an input array that a translated case passes to a C function
-   (BUILD_STRING) goes as this many words at most, the
-   rest NULL; a longer one as a tuple of its items */
-#define ARRAY_ARGS_MAX 4
+   (BUILD_STRING) goes as this many words at most (psyco_generic_call's
+   eight arguments, less a count), the rest NULL; a longer one as a tuple
+   of its items */
+#define ARRAY_ARGS_MAX 7
 
 /* Check if the given virtual source is a promotion exception */
 EXTERNFN bool

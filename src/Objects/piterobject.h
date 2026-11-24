@@ -34,4 +34,15 @@ PsycoSeqIter_New(PsycoObject *po, vinfo_t *seq)
     return PsycoSeqIter_NEW(po, seq);
 }
 
+/* the same, of type list_iterator, for a list */
+EXTERNFN vinfo_t *
+PsycoListIter_NEW(PsycoObject *po, vinfo_t *list);
+
+PSY_INLINE vinfo_t *
+PsycoListIter_New(PsycoObject *po, vinfo_t *list)
+{
+    vinfo_incref(list);
+    return PsycoListIter_NEW(po, list);
+}
+
 #endif /* _PSY_ITEROBJECT_H */

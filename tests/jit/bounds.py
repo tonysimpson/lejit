@@ -134,13 +134,23 @@ def uses_global(a):
     return len(a)
 
 
+# 16 arithmetic operations, the most an inlined body may have, and 17
+def at_cap(a, b):
+    return ((a + b) * (a - b) + (a * b) - (a + 1) * (b + 1) + (a - 1) *
+            (b - 1) + a * 2 + b)
+
+
+def past_cap(a, b):
+    return ((a + b) * (a - b) + (a * b) - (a + 1) * (b + 1) + (a - 1) *
+            (b - 1) + a * 2 + b + a)
+
+
 def check_inlinable():
-    got = (lejit._core._inlinable(small.__code__),
-           lejit._core._inlinable(with_loop.__code__),
-           lejit._core._inlinable(uses_global.__code__))
-    ok = got == (True, False, False)
+    got = tuple(lejit._core._inlinable(f.__code__) for f in
+                (small, with_loop, uses_global, at_cap, past_cap))
+    ok = got == (True, False, False, True, False)
     if not ok or VERBOSE:
-        print('%-4s inlinable small/with_loop/uses_global: %r'
+        print('%-4s inlinable small/with_loop/uses_global/at_cap/past_cap: %r'
               % ('ok' if ok else 'FAIL', got))
     return 0 if ok else 1
 
@@ -163,8 +173,8 @@ def kw_call(xs):
 
 
 def check_fastcall_direct():
-    # a METH_FASTCALL builtin without keywords is called with an array,
-    # not through PyCFunction_Call; with keywords it still is. Called by eval,
+    # a METH_FASTCALL builtin is called with an array, not through
+    # PyCFunction_Call, with keywords as without. Called by eval,
     # so they are compiled here, not inlined into this function earlier
     s0 = lejit._core._stats()
     eval("fast_calls([1, 2], 'a')")
@@ -174,7 +184,7 @@ def check_fastcall_direct():
     got = (s1['cfunc_fast'] - s0['cfunc_fast'],
            s1['cfunc_proxy'] - s0['cfunc_proxy'],
            s2['cfunc_proxy'] - s1['cfunc_proxy'])
-    ok = got[0] >= 3 and got[1] == 0 and got[2] >= 1
+    ok = got[0] >= 3 and got[1] == 0 and got[2] == 0
     if not ok or VERBOSE:
         print('%-4s fastcall direct/residual, keyword residual: %r'
               % ('ok' if ok else 'FAIL', got))

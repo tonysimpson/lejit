@@ -602,6 +602,102 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     return vresult;
 }
 
+#if LE_RESUMES_GENERATORS_DIRECTLY
+/* the word at run-time source 'src' pushed */
+#define PUSH_SOURCE(src)                                               \
+    do {                                                               \
+        if (RSOURCE_REG_IS_NONE(src)) {                                \
+            extra_assert(getstack(src) != RUNTIME_STACK_NONE);         \
+            PUSH_O(REG_X64_RSP, STACK_POS_OFFSET(RSOURCE_STACK(src))); \
+        }                                                              \
+        else {                                                         \
+            PUSH_R(getreg(src));                                       \
+        }                                                              \
+        psyco_inc_stackdepth(po);                                      \
+    } while (0)
+
+DEFINEFN
+vinfo_t *
+psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
+                          Source argsources[], int argcount, vinfo_t *vframe,
+                          struct stack_frame_info_s *finfo)
+{
+    int i;
+    bool ccflags;
+    int initial_stack_depth;
+    int stack_correction;
+    long reg_pos[REG_TOTAL];
+    Source sentry = ventry->source, sframe = vframe->source;
+    extra_assert(is_runtime(sentry) && is_runtime(sframe));
+
+    po->pr.class_unchecked = 1; /* the callee may assign __class__ */
+    po->pr.python_call = 1;
+    BEGIN_CODE
+    ccflags = HAS_CCREG(po);
+    if (ccflags)
+        PUSH_CC();
+    for (i = 0; i < REG_TOTAL; i++) {
+        vinfo_t *content = REG_NUMBER(po, i);
+        reg_pos[i] = RUNTIME_STACK_NONE;
+        if (content != NULL) {
+            PUSH_R(i);
+            psyco_inc_stackdepth(po);
+            reg_pos[i] = po->stack_depth;
+        }
+    }
+    END_CODE
+    finfo->back_locals = psyco_locals_map(
+        po, psyco_call_lasti(po->pr.co, po->pr.next_instr), reg_pos);
+    BEGIN_CODE
+    /* aligned as psyco_call_psyco's, with the frame's word too */
+    stack_correction =
+        (16 - ((((argcount + 1) * sizeof(long)) + STACK_DEPTH_SINCE_CALL() +
+                INITIAL_STACK_DEPTH) %
+               16)) %
+        16;
+    STACK_CORRECTION(stack_correction);
+    po->stack_depth += stack_correction;
+    PUSH_SOURCE(sframe);
+    PUSH_I(-1); /* finfo */
+    psyco_inc_stackdepth(po);
+    ABOUT_TO_CALL_SUBFUNCTION(finfo);
+    finfo->nargs = argcount;
+    finfo_last(finfo)->link_stack_depth =
+        po->stack_depth - INITIAL_STACK_DEPTH;
+    initial_stack_depth = po->stack_depth;
+    for (i = 0; i < argcount; i++) PUSH_SOURCE(argsources[i]);
+    /* every register is saved and still holds what it did */
+    if (RSOURCE_REG_IS_NONE(sentry)) {
+        MOV_R_O(REG_X64_RAX, REG_X64_RSP,
+                STACK_POS_OFFSET(RSOURCE_STACK(sentry)));
+        CALL_R(REG_X64_RAX);
+    }
+    else {
+        CALL_R(getreg(sentry));
+    }
+    finfo->ret_addr = code;
+    /* the callee removes its arguments */
+    po->stack_depth = initial_stack_depth;
+    RETURNED_FROM_SUBFUNCTION();
+    ADD_R_I8(REG_X64_RSP, 2 * sizeof(long));
+    po->stack_depth -= 2 * sizeof(long);
+    STACK_CORRECTION(-stack_correction);
+    po->stack_depth -= stack_correction;
+    for (i = REG_TOTAL - 1; i >= 0; i--) {
+        vinfo_t *content = REG_NUMBER(po, i);
+        if (content != NULL) {
+            POP_R(i);
+            psyco_dec_stackdepth(po);
+        }
+    }
+    if (ccflags)
+        POP_CC();
+    END_CODE
+    return run_time_result(po, CfReturnTypePtr);
+}
+#undef PUSH_SOURCE
+#endif
+
 /* internal, see NEED_CC() */
 EXTERNFN condition_code_t
 cc_from_vsource(Source source); /* in codegen.c */
