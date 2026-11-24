@@ -53,6 +53,38 @@ def written_in_loop(n):
     return total
 
 
+def written_through_kept_proxy(n):
+    # the same f_locals each round, so its type is known after the first
+    x = -1
+    d = sys._getframe().f_locals
+    total = 0
+    for i in range(n):
+        d['x'] = i
+        total = total * 10 + x
+    return total
+
+
+def written_after_list_store(items, n):
+    # a store into a list, whose type is known, then one through f_locals
+    x = 0
+    d = sys._getframe().f_locals
+    total = 0
+    for i in range(n):
+        items[0] = i
+        d['x'] = items[0] * 2
+        total = total * 10 + x
+    return total, items
+
+
+def extra_key_deleted(n):
+    x = n
+    d = sys._getframe().f_locals
+    d['extra'] = 1
+    del d['extra']
+    d['x'] = n + 1
+    return x, 'extra' in d
+
+
 # a list local compiled code keeps virtual, which the proxy can't read,
 # goes on in ceval with the write
 def written_beside_a_list(n):
@@ -71,5 +103,8 @@ CASES = [
     ('set_default_and_pop', "[(1,)]", {}),
     ('caller_written', "[(2,)]", {}),
     ('written_in_loop', "[(5,)]", {}),
+    ('written_through_kept_proxy', "[(5,)]", {}),
+    ('written_after_list_store', "[([0], 5)]", {}),
+    ('extra_key_deleted', "[(3,)]", {}),
     ('written_beside_a_list', "[(5,)]", {}),
 ]

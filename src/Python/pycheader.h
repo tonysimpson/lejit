@@ -114,6 +114,8 @@ typedef struct {
     char python_call;     /* a call that may run Python code, so may have
                              started tracing, was emitted in this instruction
                              (pycompiler.c:resume_if_tracing) */
+    char proxy_write;     /* this instruction stores or deletes an item of
+                             what may be a frame-locals proxy */
     char resume_pending;  /* test for tracing at the next instruction: after
                              an inlined frame's return, or at a handler */
     char go_interpreted;  /* the frame goes on in ceval from the next
