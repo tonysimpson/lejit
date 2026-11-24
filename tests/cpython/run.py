@@ -205,11 +205,6 @@ SKIPPED = {
     "don't have":
         'test.test_capi.test_run.CAPITest.test_run_anyfile* '
         'test.test_capi.test_run.CAPITest.test_run_simplefile*',
-    "compiled FOR_ITER on an object with no tp_iternext says 'not "
-    "iterable', where 3.14's says 'not an iterator' (a generator "
-    "expression given a non-iterator as its .0)":
-        'test.test_generators.ModifyUnderlyingIterableTest.test_modify_f_locals '
-        'test.test_generators.ModifyUnderlyingIterableTest.test_new_gen_from_gi_code',
     'sys.getrefcount counts differently':
         'test.test_sys.SysModuleTest.test_refcount '
         'test.test_generators.FinalizationTest.test_refcycle '
