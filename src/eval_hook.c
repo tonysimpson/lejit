@@ -305,6 +305,47 @@ gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
     return true;
 }
 
+#if LE_RESUMES_GENERATORS_DIRECTLY
+DEFINEFN le_gen_direct_t *
+le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x)
+{
+    PyObject *mergepoints;
+    int n;
+    if (x->direct != NULL)
+        return x->direct;
+    if (x->nresumes < 0 || !(co->co_flags & CO_GENERATOR) ||
+        le_code_nlocalsplus(co) + co->co_stacksize > LE_FRAME_WORDS_MAX)
+        return NULL;
+    mergepoints = psyco_get_merge_points(co, 0);
+    if (mergepoints == Py_None ||
+        !(psyco_mp_flags(mergepoints) & MP_FLAGS_RESUMABLE))
+        return NULL;
+    n = le_code(co).size / LE_UNIT + 2;
+    x->direct = PyMem_Calloc(
+        1, offsetof(le_gen_direct_t, entries) + n * sizeof(code_t *));
+    return x->direct;
+}
+
+/* the entry 'codebuf' resumes 'f' with, into its code's table of direct
+   entries if it has one for these globals and builtins */
+static inline void
+direct_entry_put(le_code_extra_t *x, le_frame_t *f, CodeBufferObject *codebuf)
+{
+    le_gen_direct_t *t = x->direct;
+    if (t == NULL)
+        return;
+    if (t->globals == NULL) {
+        t->globals = le_frame_globals(f);
+        t->builtins = le_frame_builtins(f);
+    }
+    if (t->globals == le_frame_globals(f) &&
+        t->builtins == le_frame_builtins(f))
+        t->entries[le_gen_direct_index(f)] = codebuf->codestart;
+}
+#else
+#define direct_entry_put(x, f, codebuf) ((void)0)
+#endif
+
 #if LE_RESUMES_ON_FRAME
 /* The compiled entry to resume the generator's frame 'f' with, compiled
    now if needed, or NULL to run it interpreted; 'x' is its code's record,
@@ -333,11 +374,13 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
     if (p == NULL)
         return NULL;
     e = p->entries;
-    if (p->count > 0)
-        return e->code != Py_None && e->globals == globals &&
-                       e->builtins == builtins
-                   ? (CodeBufferObject *)e->code
-                   : NULL;
+    if (p->count > 0) {
+        if (e->code == Py_None || e->globals != globals ||
+            e->builtins != builtins)
+            return NULL;
+        direct_entry_put(x, f, (CodeBufferObject *)e->code);
+        return (CodeBufferObject *)e->code;
+    }
     codebuf = compile_resume(f, x, x->merge_points, nstack);
     if (codebuf == NULL)
         return NULL; /* out of memory */
@@ -346,6 +389,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
     e->globals = globals;
     e->builtins = builtins;
     p->count = 1;
+    direct_entry_put(x, f, codebuf);
     return codebuf;
 }
 
@@ -675,6 +719,56 @@ le_gen_iternext(PyObject *self)
     gen_ending_result = result;
     return PyGen_Type.tp_iternext(self);
 #endif
+}
+
+/* The rest of a step compiled code made itself (psyfunc.c:psyco_gen_step)
+   whose run didn't pause at a yield in compiled code, as le_gen_iternext
+   finishes a run of LeGen_Run: here the frame was never the thread's
+   innermost, and the depth is counted back already. Where ceval ran it on
+   (psyco_resume_run) and the evaluator pops frames, ceval has left it as
+   gen_send_ex2 expects, its exception state unlinked. */
+DEFINEFN PyObject *
+le_gen_direct_end(PyObject *self, PyObject *result)
+{
+    PyGenObject *gen = (PyGenObject *)self;
+    le_frame_t *f =
+        (le_frame_t *)((char *)gen + offsetof(PyGenObject, gi_iframe));
+#if LE_HAS_EVAL_FRAME_POPS
+    if (gen->gi_exc_state.previous_item != NULL) {
+        le_gen_frame_end(f, result);
+        result =
+            le_gen_frame_leave(PyThreadState_GET(), f, result, frame_done);
+    }
+    if (gen->gi_frame_state == FRAME_SUSPENDED || result == NULL)
+        return result;
+    if (result != Py_None)
+        _PyGen_SetStopIterationValue(result);
+    Py_DECREF(result);
+    return NULL;
+#else
+    PyThreadState *ts = PyThreadState_GET();
+    le_gen_frame_end(f, result);
+    ts->exc_info = gen->gi_exc_state.previous_item;
+    gen->gi_exc_state.previous_item = NULL;
+    f->previous = NULL;
+    if (gen->gi_frame_state == FRAME_SUSPENDED)
+        return result;
+    gen->gi_frame_state = FRAME_SUSPENDED;
+    gen_ending_frame = f;
+    gen_ending_result = result;
+    return PyGen_Type.tp_iternext(self);
+#endif
+}
+
+/* gen_iternext and gen_send differ only in a return of None, where
+   send raises StopIteration */
+DEFINEFN PyObject *
+le_gen_direct_send_end(PyObject *self, PyObject *result)
+{
+    result = le_gen_direct_end(self, result);
+    if (result == NULL && !PyErr_Occurred())
+        PyErr_SetNone(PyExc_StopIteration);
+    return result;
 }
 #endif
 

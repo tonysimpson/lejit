@@ -128,7 +128,7 @@ report_destructor(PyObject *capsule)
 /* inlining (upstream's rule): one merge point (the start), no block, no
    LOAD_GLOBAL, and at most this many instructions that are not "light"
    (produce little or no code) */
-#define INLINE_MAXIMUM_WEIGHT 6
+#define INLINE_MAXIMUM_WEIGHT 16
 #define IS_LIGHT_INSTR(op) (le_op_flags(op) & LE_OPF_LIGHT)
 
 /* ceval tests eval_breaker before every instruction it reaches through

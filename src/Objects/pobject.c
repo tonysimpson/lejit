@@ -416,6 +416,64 @@ need_type_mega(PsycoObject *po, vinfo_t *obj, PyTypeObject **tp)
     return psyco_pyobj_atcompiletime_mega(po, vtp, (PyObject **)tp);
 }
 
+/* exported by every CPython; internal, so undeclared here, from 3.13 */
+PyAPI_FUNC(int)
+    _PyObject_GetMethod(PyObject *obj, PyObject *name, PyObject **method);
+
+/* ceval's method load: out[0] the function (1) or the attribute (0) */
+static int
+cimpl_get_method(PyObject *obj, PyObject *name, PyObject *out[])
+{
+    PyObject *meth = NULL;
+    int found = _PyObject_GetMethod(obj, name, &meth);
+    if (meth == NULL)
+        return -1;
+    out[0] = meth;
+    return found != 0;
+}
+
+/* For a type LeJIT knows, the attribute, which a call of a virtual bound
+   method unpacks; for one it doesn't, the load CPython does at run time,
+   which makes no bound method for a function found on the type */
+DEFINEFN
+int
+PsycoObject_GetMethod(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
+                      vinfo_t **meth)
+{
+    PyTypeObject *tp;
+    vinfo_array_t *out;
+    vinfo_t *found;
+    int r;
+    /* a module: _PyObject_GetMethod's load is PyObject_GetAttr, as for
+       any type whose tp_getattro isn't the generic one */
+    if (is_compiletime(o->source) &&
+        PyModule_Check((PyObject *)CompileTime_Get(o->source)->value) &&
+        Py_TYPE((PyObject *)CompileTime_Get(o->source)->value)->tp_getattro !=
+            PyObject_GenericGetAttr)
+        r = 1;
+    else
+        r = need_type_mega(po, o, &tp);
+    if (r < 0)
+        return -1;
+    if (r > 0) {
+        *meth = PsycoObject_GetAttr(po, o, attr_name);
+        return *meth == NULL ? -1 : 0;
+    }
+    out = array_new(1);
+    found = psyco_generic_call(po, cimpl_get_method, CfCommonIntBoolOrError,
+                               "vvA", o, attr_name, out);
+    if (found == NULL) {
+        array_release(out);
+        return -1;
+    }
+    *meth = out->items[0];
+    array_release(out);
+    r = runtime_NON_NULL_t(po, found); /* consumes found */
+    if (r < 0)
+        vinfo_decref(*meth, po);
+    return r;
+}
+
 DEFINEFN
 vinfo_t *
 PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name)
@@ -1336,6 +1394,13 @@ PsycoObject_GenericGetAttr(PsycoObject *po, vinfo_t *obj, vinfo_t *vname)
     return generic_getattr(po, obj, vname, PyObject_GenericGetAttr);
 }
 
+#if LE_HAS_OBJECTDICT_SETITEM_LINKABLE && LE_HAS_OBJECTDICT_SETITEM_OBJECT
+/* exported, declared in an internal header */
+PyAPI_FUNC(int)
+    _PyObjectDict_SetItem(PyTypeObject *tp, PyObject *obj, PyObject **dictptr,
+                          PyObject *name, PyObject *value);
+#endif
+
 /* The instance dict part of 3.7's _PyObject_GenericSetAttrWithDict:
    _PyObjectDict_SetItem creates the dict if there is none, keeps the
    class's shared keys as CPython does, and deletes if value is NULL.
@@ -1355,7 +1420,12 @@ cimpl_instance_dict_set(PyObject *obj, PyObject *name, PyObject *value)
        descriptor for the name) */
     if (has_managed_values(tp))
         return PyObject_GenericSetAttr(obj, name, value);
-#if LE_HAS_OBJECTDICT_SETITEM_LINKABLE
+#if LE_HAS_OBJECTDICT_SETITEM_LINKABLE && LE_HAS_OBJECTDICT_SETITEM_OBJECT
+    /* a missing name's error is CPython's own, which names the type */
+    if (value == NULL)
+        return PyObject_GenericSetAttr(obj, name, value);
+    return _PyObjectDict_SetItem(tp, obj, dictptr, name, value);
+#elif LE_HAS_OBJECTDICT_SETITEM_LINKABLE
     int r = _PyObjectDict_SetItem(tp, dictptr, name, value);
     if (r < 0 && PyErr_ExceptionMatches(PyExc_KeyError))
         PyErr_SetObject(PyExc_AttributeError, name);
