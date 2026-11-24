@@ -196,7 +196,8 @@ for _feature, _function in [
         ('PRIVATE_IS_FINALIZING_LINKABLE', '_Py_IsFinalizing'),
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
         ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
-        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending')]:
+        ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
+        ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
@@ -430,6 +431,24 @@ def DELETE_GLOBAL_KEYERROR_ONLY():
 
 
 @probe
+def UNPACK_KEEPS_ATTRIBUTE_ERROR():
+    """{**x} and f(**x) of an x whose keys() raises AttributeError keep it
+    (run)"""
+    class Keys(object):
+        def keys(self):
+            raise AttributeError('keys')
+
+    def f(**kw):
+        return kw
+    kinds = {type(_error(lambda: {**Keys()})), type(_error(lambda: f(**Keys())))}
+    if kinds == {AttributeError}:
+        return True, '{**x}, f(**x) run: AttributeError'
+    if kinds == {TypeError}:
+        return False, '{**x}, f(**x) run: TypeError'
+    raise Unanswered('{**x}, f(**x) run: %r' % kinds)
+
+
+@probe
 def CALL_TRACE_METHOD_DESCR():
     """a method descriptor called with f(*args) gives the profiler a
     c_call event (sys.setprofile)"""
@@ -514,6 +533,32 @@ def FRAME_CLEARED_LAST_FIRST():
     if order not in (['a', 'b', 'c'], ['c', 'b', 'a']):
         raise Unanswered('locals released in the order %r' % order)
     return order == ['c', 'b', 'a'], 'run: locals released %r' % order
+
+
+@probe
+def GETFRAME_AUDITS_RESULT():
+    """sys._getframe(1)'s audit event names the caller's frame, which it
+    returns, not the current one (run: an audit hook)"""
+    if not hasattr(sys, 'addaudithook'):
+        return False, 'no sys.addaudithook'
+    seen = []
+
+    def hook(event, args):
+        if event == 'sys._getframe' and seen is not None:
+            seen.append(args[0])
+    sys.addaudithook(hook)
+
+    def inner():
+        return sys._getframe(1), sys._getframe(0)
+    try:
+        caller, current = inner()
+        named = seen[-2]
+    finally:
+        seen = None
+    if named is not caller and named is not current:
+        raise Unanswered('the audit event named neither frame: %r' % named)
+    return named is caller, 'run: the event named the %s frame' % (
+        'returned' if named is caller else 'current')
 
 
 @probe
@@ -1071,6 +1116,15 @@ def FOR_ITER_EXIT_PAST_POP_TOP():
                     'dis: END_FOR (pops %d) then %s' % (pops, ins[i + 1].opname))
     raise Unanswered('a for loop has no END_FOR: %r'
                      % [x.opname for x in ins])
+
+
+@probe
+def GET_ITER_INDEX():
+    """GET_ITER pushes two items, the iterator and an index or NULL
+    (dis)"""
+    op = dis.opmap['GET_ITER']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 2, 'dis: GET_ITER pushes %d' % pushes
 
 
 @probe

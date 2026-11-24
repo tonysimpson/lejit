@@ -9,6 +9,12 @@
 EXTERNFN vinfo_t *
 PsycoSlice_New(vinfo_t *start, vinfo_t *stop, vinfo_t *step);
 
+/* the same of a slice constant's start, stop and step, which is that
+   constant when forced; 'slice' is borrowed and must outlive the compiled
+   code */
+EXTERNFN vinfo_t *
+PsycoSlice_FromConstant(PyObject *slice);
+
 /* PySlice_Unpack for a virtual slice whose step is None and whose bounds
    are None or ints: start and stop as Py_ssize_t words, new references in
    *pstart and *pstop. Returns 1; 0 for anything else (the caller passes the

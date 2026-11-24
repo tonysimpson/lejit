@@ -1627,10 +1627,12 @@ gen_step_tests(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
    thread's, but the frame isn't pushed: the call's record says the body
    runs on it (Python/frames.h:on_gen_frame), so that the frame walk finds
    it there. Anything else is le_gen_iternext's, or for send() the C
-   function 'send' (gen_send). */
-DEFINEFN
-vinfo_t *
-psyco_gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send)
+   function 'send' (gen_send). With 'out', for yield from's SEND, the
+   result is an int, as le_iter_send's: 1 with what the body yielded in
+   out's item, 0 with what it returned. */
+static vinfo_t *
+gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
+         vinfo_array_t *out)
 {
     vinfo_t *vcode, *vts = NULL, *ventry = NULL, *vf = NULL, *vsent = NULL;
     vinfo_t *v, *vresult = NULL;
@@ -1749,14 +1751,18 @@ psyco_gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send)
         goto error_nov;
 
     /* paused at a yield, compiled: what gen_send_ex2 does then */
-    r = gen_field_test_i(po, vgen, GEN_frame_state, FRAME_SUSPENDED, Py_NE);
+    r = gen_field_test_i(po, vgen, GEN_frame_state, FRAME_EXECUTING, Py_GE);
     if (r == 0)
         r = gen_field_test_i(po, vgen, GEN_exc_previous, 0, Py_EQ);
     if (r < 0)
         goto error_nov;
     if (r > 0) {
         vinfo_decref(vts, po);
-        if (varg != NULL)
+        if (out != NULL)
+            v = psyco_generic_call(po, le_gen_direct_send_status,
+                                   CfReturnTypeInt | CfPyErrIfNeg, "vvA", vgen,
+                                   vresult, out);
+        else if (varg != NULL)
             v = psyco_generic_call(po, le_gen_direct_send_end,
                                    CfCommonNewRefPyObject, "vv", vgen,
                                    vresult);
@@ -1777,6 +1783,10 @@ psyco_gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send)
         return NULL;
     }
     vresult->source = add_rtref(vresult->source);
+    if (out != NULL) {
+        out->items[0] = vresult;
+        return psyco_vi_One();
+    }
     return vresult;
 
 error:
@@ -1790,6 +1800,10 @@ error_nov:
     return NULL;
 
 generic:
+    if (out != NULL)
+        return psyco_generic_call(po, le_iter_send,
+                                  CfReturnTypeInt | CfPyErrIfNeg, "vvA", vgen,
+                                  varg, out);
     if (varg != NULL)
         return psyco_generic_call(po, send, CfCommonNewRefPyObject, "vv", vgen,
                                   varg);
@@ -1799,9 +1813,34 @@ generic:
 
 DEFINEFN
 vinfo_t *
+psyco_gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send)
+{
+    return gen_send(po, vgen, varg, send, NULL);
+}
+
+DEFINEFN
+vinfo_t *
 psyco_gen_step(PsycoObject *po, vinfo_t *vgen)
 {
-    return psyco_gen_send(po, vgen, NULL, NULL);
+    return gen_send(po, vgen, NULL, NULL, NULL);
+}
+
+DEFINEFN
+int
+le_iter_send(PyObject *iter, PyObject *v, PyObject *out[])
+{
+    PySendResult r = PyIter_Send(iter, v, &out[0]);
+    if (r == PYGEN_ERROR)
+        return -1;
+    return r == PYGEN_NEXT;
+}
+
+DEFINEFN
+vinfo_t *
+psyco_gen_send_status(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg,
+                      vinfo_array_t *out)
+{
+    return gen_send(po, vgen, varg, NULL, out);
 }
 #endif
 

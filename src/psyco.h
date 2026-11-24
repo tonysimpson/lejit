@@ -8,6 +8,9 @@
 #include <Python.h>
 #include <structmember.h> /* for offsetof() */
 #include <stdint.h>
+/* C's own bool, which CPython's internal headers give too: a function
+   returning one must read the same in every file */
+#include <stdbool.h>
 /* the LE_HAS_ features of the CPython source built for */
 #include "le_features_gen.h"
 /* the messages (LE_MSG_) of the interpreter built for, from
@@ -874,16 +877,6 @@ psyco_fatal_error(char *msg, char *filename, int lineno);
 #define PSY_INLINE static
 #endif
 
-#ifndef bool
-typedef int bool;
-#endif
-#ifndef false
-#define false 0
-#endif
-#ifndef true
-#define true 1
-#endif
-
 #ifndef PyObject_TypeCheck
 #define PyObject_TypeCheck(o, t) ((o)->ob_type == (t))
 #endif
@@ -914,6 +907,7 @@ PyAPI_FUNC(int)
 PyAPI_FUNC(int) _PySet_Update(PyObject *, PyObject *);
 PyAPI_FUNC(PyObject *) PyCFunction_Call(PyObject *, PyObject *, PyObject *);
 PyAPI_FUNC(PyObject *) _PyList_Extend(PyListObject *, PyObject *);
+PyAPI_FUNC(void) _PyErr_SetKeyError(PyObject *);
 PyAPI_FUNC(PyObject *)
     _PyUnicode_JoinArray(PyObject *, PyObject *const *, Py_ssize_t);
 #if LE_HAS_PRIVATE_NUMBER_INDEX
@@ -1069,6 +1063,11 @@ le_gen_direct_end(PyObject *gen, PyObject *result);
 /* the same after a step made by send(), as gen_send returns */
 EXTERNFN PyObject *
 le_gen_direct_send_end(PyObject *gen, PyObject *result);
+/* the same after a step made by yield from's SEND, as PyIter_Send:
+   1 with the value yielded in out[0], 0 with the value returned, -1 with
+   the exception */
+EXTERNFN int
+le_gen_direct_send_status(PyObject *gen, PyObject *result, PyObject *out[]);
 #endif
 /* the record lives in a weak reference to its code object (lejit.c) */
 typedef struct {

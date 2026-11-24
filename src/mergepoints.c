@@ -128,7 +128,7 @@ report_destructor(PyObject *capsule)
 /* inlining (upstream's rule): one merge point (the start), no block, no
    LOAD_GLOBAL, and at most this many instructions that are not "light"
    (produce little or no code) */
-#define INLINE_MAXIMUM_WEIGHT 6
+#define INLINE_MAXIMUM_WEIGHT 16
 #define IS_LIGHT_INSTR(op) (le_op_flags(op) & LE_OPF_LIGHT)
 
 /* ceval tests eval_breaker before every instruction it reaches through
@@ -799,7 +799,10 @@ handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
                 if (at < 0)
                     return 1;
                 break;
-            /* the handler's end, or a jump out of it that unwinds it */
+            /* the handler's end, or a jump out of it that unwinds it;
+               a throw's into yield from ends at CLEANUP_THROW, which takes
+               the exception off the stack and re-raises it or goes on */
+            case CLEANUP_THROW:
             case POP_EXCEPT:
             case RETURN_VALUE:
             case RETURN_CONST:
@@ -910,8 +913,9 @@ psyco_handler_awaits(PyCodeObject *co, int handler)
 }
 
 /* whether the body of 'co', a plain generator or a coroutine, can run
-   compiled in its own frame: no yield from (a coroutine's awaits are
-   GET_AWAITABLE, LOAD_CONST None, YIELD_FROM), no async for, and no yield
+   compiled in its own frame: no YIELD_FROM (a coroutine's awaits are
+   GET_AWAITABLE, LOAD_CONST None, YIELD_FROM; a generator's yield from is
+   compiled only as SEND's loop), no async for, and no yield
    inside an exception handler, whose stack and blocks LeJIT keeps apart
    from the frame's (an EXCEPT_HANDLER block, a finally block's
    pseudo-exception); a coroutine's handlers that can await run in ceval
@@ -939,6 +943,9 @@ body_compilable(PyCodeObject *co, le_code_t *c)
                     return 0;
                 break;
             case GET_YIELD_FROM_ITER:
+                if (!LE_HAS_OPCODE_SEND || !LE_RESUMES_ON_FRAME)
+                    return 0;
+                break;
             /* async for */
             case GET_AITER:
             case GET_ANEXT:

@@ -49,6 +49,16 @@ psyco_gen_step(PsycoObject *po, vinfo_t *vgen);
 EXTERNFN vinfo_t *
 psyco_gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg,
                PyCFunction send);
+/* yield from's SEND of 'v' into 'iter', as PyIter_Send: 1 with the value
+   it yielded in out[0], 0 with the value it returned, -1 with its
+   exception */
+EXTERNFN int
+le_iter_send(PyObject *iter, PyObject *v, PyObject *out[]);
+/* the same, compiled, for the generator 'vgen': an int, with the value in
+   out's item */
+EXTERNFN vinfo_t *
+psyco_gen_send_status(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg,
+                      vinfo_array_t *out);
 #endif
 /* whether the await being compiled runs the body of the pending coroutine
    'v' as a call, emitting the tests: 1 to, 0 not to, -1 with an

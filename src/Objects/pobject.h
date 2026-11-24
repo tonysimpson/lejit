@@ -167,6 +167,18 @@ Psyco_TypeLookup(PsycoObject *po, PyTypeObject *tp, void *key, PyObject *name,
 EXTERNFN void
 cimpl_type_lookup_changed(PyTypeObject *tp, PyObject *name, PyObject *descr);
 
+/* super(class, self).name for a call (LOAD_SUPER_ATTR's method form),
+   resolved while compiling where CPython's lookup would find a Python
+   function: the builtin super, a class, and self an instance of it whose
+   type is known and loads methods generically. 1 with *f the function
+   (to call with self), under a guard of self's type, as Psyco_TypeLookup's,
+   on the lookup in its MRO after class; 0 to load as CPython does; -1 on
+   error. 'key' is an address of the site's. */
+EXTERNFN int
+PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
+                        vinfo_t *self, PyObject *name, void *key,
+                        PyObject **f);
+
 /* A guard for a message made now that names tp, a mutable type: a
    condition code, true where tp has been renamed since. */
 EXTERNFN condition_code_t
@@ -250,6 +262,12 @@ PsycoObject_IsTrue(PsycoObject *po, vinfo_t *vi);
    that would happend to contain zero). */
 EXTERNFN vinfo_t *
 PsycoObject_GetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name);
+/* ceval's method load, o.name for a call: 1 with *meth the function to
+   call with o first, 0 with *meth the attribute to call as it is, -1 on an
+   error */
+EXTERNFN int
+PsycoObject_GetMethod(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
+                      vinfo_t **meth);
 EXTERNFN bool
 PsycoObject_SetAttr(PsycoObject *po, vinfo_t *o, vinfo_t *attr_name,
                     vinfo_t *v);

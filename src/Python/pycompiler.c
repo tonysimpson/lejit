@@ -123,7 +123,7 @@ le_lookup_special_id(PyObject *self, _Py_Identifier *attrid)
 /* names looked up by the run-time helpers, interned at start-up
    (psyco_pycompiler_init) */
 static PyObject *s_initializing, *s_name, *s_spec, *s_match_args, *s_get,
-    *s_build_class;
+    *s_build_class, *s_keys;
 
 #if LE_HAS_IMPORT_FROM_SPEC
 /* moduleobject.c:_PyModuleSpec_IsInitializing: spec._initializing is
@@ -1892,9 +1892,10 @@ psyco_pycompiler_init(void)
     s_match_args = PyUnicode_InternFromString("__match_args__");
     s_get = PyUnicode_InternFromString("get");
     s_build_class = PyUnicode_InternFromString("__build_class__");
+    s_keys = PyUnicode_InternFromString("keys");
     if (s_builtin_object == NULL || s_initializing == NULL || s_name == NULL ||
         s_spec == NULL || s_match_args == NULL || s_get == NULL ||
-        s_build_class == NULL)
+        s_build_class == NULL || s_keys == NULL)
         Py_FatalError("lejit: no names for the compiler");
     load_global_miss_glue = psyco_aligned_call_glue(cimpl_load_global_miss);
 
@@ -3332,22 +3333,44 @@ cimpl_print_expr(PyObject *value)
 }
 
 #if LE_HAS_OPCODE_LOAD_SUPER_ATTR
-/* ceval.c LOAD_SUPER_ATTR, the attribute name of super(class, self),
-   or of the global super called with no arguments if n is 0 */
-static PyObject *
+#if LE_HAS_SUPER_LOOKUP_LINKABLE
+/* declared only in an internal header */
+PyAPI_FUNC(PyObject *) _PySuper_Lookup(PyTypeObject *su_type, PyObject *su_obj,
+                                       PyObject *name, int *meth_found);
+#endif
+/* ceval.c LOAD_SUPER_ATTR: out[0] the attribute 'name' of super(class,
+   self), or of the global super called with no arguments if oparg's bit 1
+   is clear. For the builtin super and a class, where libpython exports
+   it, CPython's specialised forms' lookup, which makes no super object,
+   and for a method load (oparg's bit 0) no bound method either: then 1
+   says out[0] is the function, to call with self. */
+static int
 cimpl_load_super_attr(PyObject *global_super, PyObject *class, PyObject *self,
-                      PyObject *name, long n)
+                      PyObject *name, long oparg, PyObject *out[])
 {
     PyObject *stack[] = {class, self};
-    PyObject *super, *res;
+    PyObject *super;
+    long n = oparg & 2;
+#if LE_HAS_SUPER_LOOKUP_LINKABLE
+    if (global_super == (PyObject *)&PySuper_Type && PyType_Check(class)) {
+        int found = 0;
+        bool method = (oparg & 1) &&
+                      Py_TYPE(self)->tp_getattro == PyObject_GenericGetAttr;
+        out[0] = _PySuper_Lookup((PyTypeObject *)class, self, name,
+                                 method ? &found : NULL);
+        return out[0] == NULL ? -1 : found;
+    }
+#endif
+    /* the builtin super is given both, as the zero-argument form finds
+       them */
     if (global_super == (PyObject *)&PySuper_Type)
         n = 2;
     super = PyObject_Vectorcall(global_super, stack, n, NULL);
     if (super == NULL)
-        return NULL;
-    res = PyObject_GetAttr(super, name);
+        return -1;
+    out[0] = PyObject_GetAttr(super, name);
     Py_DECREF(super);
-    return res;
+    return out[0] == NULL ? -1 : 0;
 }
 #endif
 
@@ -3503,9 +3526,11 @@ ct_format_exc_unbound(PsycoObject *po, PyCodeObject *co, int oparg)
 /* ceval.c BUILD_STRING: with count < 0, item0 is a tuple of the items */
 static PyObject *
 cimpl_build_string_array(long count, PyObject *item0, PyObject *item1,
-                         PyObject *item2, PyObject *item3)
+                         PyObject *item2, PyObject *item3, PyObject *item4,
+                         PyObject *item5, PyObject *item6)
 {
-    PyObject *words[4] = {item0, item1, item2, item3};
+    PyObject *words[ARRAY_ARGS_MAX] = {item0, item1, item2, item3,
+                                       item4, item5, item6};
     PyObject **items = words;
     Py_ssize_t n = count;
     PyObject *empty, *str;
@@ -3540,6 +3565,26 @@ cimpl_list_extend(PyObject *list, PyObject *iterable)
 }
 #endif
 
+#if LE_HAS_UNPACK_KEEPS_ATTRIBUTE_ERROR
+/* the AttributeError {**o} or f(**o) raised says o is not a mapping only
+   where o has no keys: then it is cleared and 1; else 0, with it, or the
+   error looking for keys raised with it as its context */
+static int
+le_not_a_mapping(PyObject *o)
+{
+    PyObject *exc = PyErr_GetRaisedException();
+    int has_keys = PyObject_HasAttrWithError(o, s_keys);
+    if (has_keys == 0) {
+        Py_DECREF(exc);
+        return 1;
+    }
+    _PyErr_ChainExceptions1(exc);
+    return 0;
+}
+#else
+#define le_not_a_mapping(o) 1
+#endif
+
 #if LE_HAS_OPCODE_DICT_UPDATE
 /* ceval.c DICT_UPDATE */
 static int
@@ -3547,7 +3592,8 @@ cimpl_dict_update(PyObject *dict, PyObject *update)
 {
     int err = PyDict_Update(dict, update);
     if (err < 0) {
-        if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        if (PyErr_ExceptionMatches(PyExc_AttributeError) &&
+            le_not_a_mapping(update)) {
 #ifdef LE_MSG_DICT_STAR_NOT_MAPPING_QUALIFIED
             PyErr_Format(PyExc_TypeError,
                          LE_MSG_DICT_STAR_NOT_MAPPING_QUALIFIED,
@@ -3567,6 +3613,8 @@ static void
 cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 {
     if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        if (!le_not_a_mapping(kwargs))
+            return;
 #ifdef LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION
         PyErr_Clear();
         PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION,
@@ -3587,38 +3635,52 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 #endif
     }
     else if (PyErr_ExceptionMatches(PyExc_KeyError)) {
+#if LE_HAS_CURRENT_EXCEPTION
+        /* the KeyError is an instance: the key is in its args */
+        PyObject *exc = PyErr_GetRaisedException();
+        PyObject *args = ((PyBaseExceptionObject *)exc)->args;
+        if (PyTuple_Check(args) && PyTuple_GET_SIZE(args) == 1) {
+#else
         PyObject *exc, *val, *tb;
         PyErr_Fetch(&exc, &val, &tb);
+        PyObject *args = val;
         if (val && PyTuple_Check(val) && PyTuple_GET_SIZE(val) == 1) {
+#endif
 #ifdef LE_MSG_KWARGS_DUPLICATE_OR_FUNCTION
             /* a function whose name can't be made is shown as "function" */
             PyObject *funcstr = _PyObject_FunctionStr(func);
             PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_DUPLICATE_OR_FUNCTION,
-                         funcstr, "function", PyTuple_GET_ITEM(val, 0));
+                         funcstr, "function", PyTuple_GET_ITEM(args, 0));
             Py_XDECREF(funcstr);
 #elif LE_HAS_FUNCTION_STR
             PyErr_Clear();
             PyObject *funcstr = _PyObject_FunctionStr(func);
             if (funcstr != NULL) {
-                PyObject *key = PyTuple_GET_ITEM(val, 0);
+                PyObject *key = PyTuple_GET_ITEM(args, 0);
                 PyErr_Format(PyExc_TypeError,
                              LE_MSG_KWARGS_DUPLICATE_FUNCTION_STR, funcstr,
                              key);
                 Py_DECREF(funcstr);
             }
 #else
-            PyObject *key = PyTuple_GET_ITEM(val, 0);
-            if (!PyUnicode_Check(key)) {
-                PyErr_Format(
-                    PyExc_TypeError, LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
-                    PyEval_GetFuncName(func), PyEval_GetFuncDesc(func));
-            }
-            else {
-                PyErr_Format(
-                    PyExc_TypeError, LE_MSG_KWARGS_DUPLICATE_FUNC_NAME,
-                    PyEval_GetFuncName(func), PyEval_GetFuncDesc(func), key);
-            }
+        PyObject *key = PyTuple_GET_ITEM(args, 0);
+        if (!PyUnicode_Check(key)) {
+            PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
+                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func));
+        }
+        else {
+            PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_DUPLICATE_FUNC_NAME,
+                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
+                         key);
+        }
 #endif
+#if LE_HAS_CURRENT_EXCEPTION
+            Py_DECREF(exc);
+        }
+        else {
+            PyErr_SetRaisedException(exc);
+        }
+#else
             Py_XDECREF(exc);
             Py_XDECREF(val);
             Py_XDECREF(tb);
@@ -3626,6 +3688,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
         else {
             PyErr_Restore(exc, val, tb);
         }
+#endif
     }
 }
 
@@ -4189,6 +4252,17 @@ unpack_iterable(PyObject *v, int argcnt, int argcntafter, PyObject **sp)
             return 0;
         }
         Py_DECREF(w);
+#ifdef LE_MSG_UNPACK_TOO_MANY_SIZED
+        if (PyList_CheckExact(v) || PyTuple_CheckExact(v) ||
+            PyDict_CheckExact(v)) {
+            ll = PyDict_CheckExact(v) ? PyDict_Size(v) : Py_SIZE(v);
+            if (ll > argcnt) {
+                PyErr_Format(PyExc_ValueError, LE_MSG_UNPACK_TOO_MANY_SIZED,
+                             argcnt, ll);
+                goto Error;
+            }
+        }
+#endif
         PyErr_Format(PyExc_ValueError, LE_MSG_UNPACK_TOO_MANY, argcnt);
         goto Error;
     }
@@ -4751,17 +4825,14 @@ fusion_prev(le_code_t c, int *p)
 
 /* A subscript by a slice whose bounds are all constants is a constant
    slice object where the compiler folds them; for a container whose
-   slicing compiled code does itself (it never hands the slice to Python
-   code, so nothing can tell the object from another equal one), the
-   subscript becomes the slice built from those constants, as BINARY_SLICE
-   and STORE_SLICE make it. 'sub' is borrowed; returns a new reference. */
+   slicing compiled code does itself, the subscript becomes a virtual slice
+   of those constants, as BINARY_SLICE and STORE_SLICE make it, which is the
+   constant again wherever it is forced. 'sub' is borrowed; returns a new
+   reference. */
 static vinfo_t *
 unfolded_slice(vinfo_t *container, vinfo_t *sub)
 {
     PyTypeObject *tp = Psyco_KnownType(container);
-    PySliceObject *s;
-    vinfo_t *parts[3], *slice;
-    int i;
     if (!is_compiletime(sub->source) ||
         Py_TYPE((PyObject *)CompileTime_Get(sub->source)->value) !=
             &PySlice_Type ||
@@ -4770,14 +4841,8 @@ unfolded_slice(vinfo_t *container, vinfo_t *sub)
         vinfo_incref(sub);
         return sub;
     }
-    s = (PySliceObject *)CompileTime_Get(sub->source)->value;
-    parts[0] = vinfo_new(CompileTime_New((long)s->start));
-    parts[1] = vinfo_new(CompileTime_New((long)s->stop));
-    parts[2] =
-        s->step == Py_None ? NULL : vinfo_new(CompileTime_New((long)s->step));
-    slice = PsycoSlice_New(parts[0], parts[1], parts[2]);
-    for (i = 0; i < 3; i++) vinfo_xdecref(parts[i], NULL);
-    return slice;
+    return PsycoSlice_FromConstant(
+        (PyObject *)CompileTime_Get(sub->source)->value);
 }
 
 /* The STORE_SUBSCR fused with the get at byte offset 'i', or -1, as LeJIT
@@ -6063,43 +6128,92 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+        /* ceval's two forms: the function and self, or the attribute
+           and the NULL */
         case LOAD_METHOD: {
             vinfo_t *meth;
             vinfo_t *name;
             vinfo_t *obj;
+            int unbound;
             obj = NTOP(1);
             name = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
-            meth = PsycoObject_GetAttr(po, obj, name);
+            unbound = PsycoObject_GetMethod(po, obj, name, &meth);
             vinfo_decref(name, po);
-            if (meth == NULL) {
+            if (unbound < 0) {
                 break;
             }
             POP(obj);
-            vinfo_decref(obj, po);
-            PUSH_WITH_NULL(meth);
+            if (unbound) {
+                PUSH(meth);
+                PUSH(obj);
+            }
+            else {
+                vinfo_decref(obj, po);
+                PUSH_WITH_NULL(meth);
+            }
             goto fine;
         }
 
-        /* super().name, or super(class, self).name: the builtin
-           super is given both, as the zero-argument form finds
-           them */
-        case LOAD_SUPER_ATTR:
+        /* super().name, or super(class, self).name: the attribute, or
+           for a method call the function and self as LOAD_METHOD
+           leaves them */
+        case LOAD_SUPER_ATTR: {
 #if LE_HAS_OPCODE_LOAD_SUPER_ATTR
-            x = psyco_generic_call(po, cimpl_load_super_attr,
-                                   CfCommonNewRefPyObject, "vvvll", NTOP(3),
-                                   NTOP(2), TOP(), (long)GETNAMEV(oparg >> 2),
-                                   (long)(oparg & 2));
-            if (x == NULL)
-                break;
-            POP_DECREF();
-            POP_DECREF();
-            POP_DECREF();
+            vinfo_array_t *out;
+            vinfo_t *self;
+            PyObject *f;
+            int found = 0;
             if (oparg & 1)
-                PUSH_WITH_NULL(x);
-            else
-                PUSH(x);
+                found = PsycoObject_SuperMethod(
+                    po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2),
+                    (void *)(le_code(po->pr.co).bytes + next_instr), &f);
+            if (found < 0)
+                break;
+            if (found) {
+                POP(self);
+                POP_DECREF();
+                POP_DECREF();
+                Py_INCREF(f);
+                PUSH(vinfo_new(
+                    CompileTime_NewSk(sk_new((long)f, SkFlagPyObj))));
+                PUSH(self);
+                goto fine;
+            }
+            out = array_new(1);
+            x = psyco_generic_call(po, cimpl_load_super_attr,
+                                   CfCommonIntBoolOrError, "vvvllA", NTOP(3),
+                                   NTOP(2), TOP(), (long)GETNAMEV(oparg >> 2),
+                                   (long)oparg, out);
+            if (x == NULL) {
+                array_release(out);
+                break;
+            }
+            v = out->items[0];
+            array_release(out);
+            found = (oparg & 1) ? runtime_NON_NULL_t(po, x) : 0;
+            if (!(oparg & 1))
+                vinfo_decref(x, po);
+            if (found < 0) {
+                vinfo_decref(v, po);
+                break;
+            }
+            POP(self);
+            POP_DECREF();
+            POP_DECREF();
+            if (found) {
+                PUSH(v);
+                PUSH(self);
+            }
+            else {
+                vinfo_decref(self, po);
+                if (oparg & 1)
+                    PUSH_WITH_NULL(v);
+                else
+                    PUSH(v);
+            }
 #endif
             goto fine;
+        }
 
         case LOAD_GLOBAL: {
             bool push_null = LE_GLOBAL_PUSHES_NULL(oparg);
@@ -6200,19 +6314,21 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
         case BUILD_STRING: {
             vinfo_t *str;
             if (oparg <= ARRAY_ARGS_MAX) {
+                vinfo_t *items[ARRAY_ARGS_MAX];
+                int i;
                 u = psyco_vi_Zero();
+                for (i = 0; i < ARRAY_ARGS_MAX; i++)
+                    items[i] = i < oparg ? NTOP(oparg - i) : u;
                 str = psyco_generic_call(
                     po, cimpl_build_string_array, CfCommonNewRefPyObject,
-                    "lvvvv", (long)oparg, oparg > 0 ? NTOP(oparg - 0) : u,
-                    oparg > 1 ? NTOP(oparg - 1) : u,
-                    oparg > 2 ? NTOP(oparg - 2) : u,
-                    oparg > 3 ? NTOP(oparg - 3) : u);
+                    "lvvvvvvv", (long)oparg, items[0], items[1], items[2],
+                    items[3], items[4], items[5], items[6]);
             }
             else {
                 u = PsycoTuple_New(oparg, STACK_POINTER() - oparg);
                 str = psyco_generic_call(po, cimpl_build_string_array,
-                                         CfCommonNewRefPyObject, "lvlll", -1L,
-                                         u, 0L, 0L, 0L);
+                                         CfCommonNewRefPyObject, "lvllllll",
+                                         -1L, u, 0L, 0L, 0L, 0L, 0L, 0L);
             }
             vinfo_decref(u, po);
             if (str == NULL) {
@@ -6939,6 +7055,35 @@ out:
     return ended;
 }
 
+#if LE_HAS_OPCODE_SEND && LE_RESUMES_ON_FRAME
+/* GET_YIELD_FROM_ITER in a plain generator: what yield from iterates, a
+   new reference, 'o' itself if it is a generator */
+static PyObject *
+cimpl_yield_from_iter(PyObject *o)
+{
+    if (PyCoro_CheckExact(o)) {
+        PyErr_SetString(PyExc_TypeError, LE_MSG_YIELD_FROM_COROUTINE);
+        return NULL;
+    }
+    if (PyGen_CheckExact(o)) {
+        Py_INCREF(o);
+        return o;
+    }
+    return PyObject_GetIter(o);
+}
+#endif
+
+#if LE_HAS_OPCODE_CLEANUP_THROW && LE_RESUMES_ON_FRAME
+/* CLEANUP_THROW: the value of 'exc', a StopIteration, a new reference */
+static PyObject *
+cimpl_stop_iteration_value(PyObject *exc)
+{
+    PyObject *v = ((PyStopIterationObject *)exc)->value;
+    Py_INCREF(v);
+    return v;
+}
+#endif
+
 /* iterators and for loops */
 static int
 compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
@@ -7014,7 +7159,88 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
         }
 
-            UNARY_OPCODE(GET_ITER, PsycoObject_GetIter);
+        /* where GET_ITER leaves an index or NULL above the iterator, the
+           iterator is always a real one, so the index is NULL */
+        case GET_ITER:
+            x = PsycoObject_GetIter(po, TOP());
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
+            if (LE_HAS_GET_ITER_INDEX)
+                PUSH(psyco_vi_Zero());
+            goto fine;
+
+        /* the index or NULL, then the iterator */
+        case POP_ITER:
+            POP_DECREF();
+            POP_DECREF();
+            goto fine;
+
+#if LE_HAS_OPCODE_SEND && LE_RESUMES_ON_FRAME
+        /* yield from, in a resumable plain generator
+           (mergepoints.c:body_compilable): what it iterates */
+        case GET_YIELD_FROM_ITER:
+            if (Psyco_KnownType(TOP()) == &PyGen_Type)
+                goto fine;
+            x = psyco_generic_call(po, cimpl_yield_from_iter,
+                                   CfCommonNewRefPyObject, "v", TOP());
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+
+        /* its loop: the value on top is sent into the iterator under it,
+           which yields, for the YIELD_VALUE after, which pauses the frame
+           with the iterator under what it yielded, as ceval leaves it; or
+           returns, going to the loop's end, where the iterator is popped
+           (by END_SEND where there is one) */
+        case SEND: {
+            vinfo_array_t *array = array_new(1);
+            condition_code_t cc;
+            bool yielded;
+            PyTypeObject *tp = Psyco_NeedType(po, NTOP(2));
+            if (tp == NULL) {
+                array_release(array);
+                break;
+            }
+            if (tp == &PyGen_Type)
+                x = psyco_gen_send_status(po, NTOP(2), TOP(), array);
+            else
+                x = psyco_generic_call(po, le_iter_send,
+                                       CfReturnTypeInt | CfPyErrIfNeg, "vvA",
+                                       NTOP(2), TOP(), array);
+            if (x == NULL) {
+                array_release(array);
+                break;
+            }
+            cc = integer_non_null(po, x);
+            vinfo_decref(x, po);
+            if (cc == CC_ERROR) {
+                vinfo_decref(array->items[0], po);
+                array_release(array);
+                break;
+            }
+            yielded = runtime_condition_t(po, cc);
+            POP_DECREF(); /* the value sent */
+            if (!yielded && !LE_HAS_OPCODE_END_SEND)
+                POP_DECREF(); /* the iterator */
+            PUSH(array->items[0]);
+            array_release(array);
+            if (yielded)
+                goto fine;
+            JUMPTO(target);
+            mp = psyco_next_merge_point(po->pr.merge_points, next_instr);
+            goto fine;
+        }
+
+        case END_SEND:
+            POP(v);
+            POP_DECREF(); /* the iterator */
+            PUSH(v);
+            goto fine;
+#endif
 
         case END_FOR:
             POP_DECREF();
@@ -7024,7 +7250,7 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
 
         case FOR_ITER:
-            v = PsycoIter_Next(po, TOP());
+            v = PsycoIter_Next(po, LE_HAS_GET_ITER_INDEX ? NTOP(2) : TOP());
             if (v != NULL) {
                 /* iterator not exhausted */
                 PUSH(v);
@@ -7120,12 +7346,12 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
         case CALL_METHOD:
         case CALL:
         case CALL_KW: {
-            /* LOAD_METHOD looks the attribute up and pushes NULL
-               beside it, as PUSH_NULL does beside other callables:
-               the (NULL, callable) form, or (callable, NULL) where the
-               callable is under its NULL. CALL's other form, a
-               callable beside its first argument, comes from
-               elsewhere (a decorator, a with statement's exit).
+            /* LOAD_METHOD pushes a function and its self, or the
+               attribute and NULL beside it, as PUSH_NULL does beside
+               other callables: the (NULL, callable) form, or
+               (callable, NULL) where the callable is under its NULL.
+               The function-and-self form also comes from elsewhere (a
+               decorator, a with statement's exit).
                CALL_KW's keyword names are on top. */
             int i, stack_to_pop, null = 1, kw = opcode == CALL_KW;
             PyObject *kwnames = NULL;
@@ -7138,10 +7364,8 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
             }
 #else
             if (!psyco_knowntobe(NTOP(oparg + 2), 0)) {
-                /* or a resumed generator's method under its self, as
-                   ceval's LOAD_METHOD left them */
-                extra_assert(opcode == CALL ||
-                             psyco_generator_mode(po) == GENEXPR_RESUMABLE);
+                /* or a function under its self, as LOAD_METHOD leaves
+                   them */
                 null = 0;
                 oparg++;
             }
@@ -7928,6 +8152,43 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             if (locals_wanted_now(po))
                 traceback_locals(po, NULL);
             goto exception_unwind;
+
+#if LE_HAS_OPCODE_CLEANUP_THROW && LE_RESUMES_ON_FRAME
+        /* where a throw into yield from goes, under the iterator and the
+           value last sent: the StopIteration it ended with gives the
+           loop's value (with a None under it), any other exception is
+           raised again */
+        case CLEANUP_THROW:
+            x = psyco_generic_call(
+                po, PyErr_GivenExceptionMatches,
+                CfCommonIntBoolOrError | CfNoPython | CfNoBlock, "vl", TOP(),
+                (long)PyExc_StopIteration);
+            if (x == NULL)
+                break;
+            cc = integer_non_null(po, x);
+            vinfo_decref(x, po);
+            if (cc == CC_ERROR)
+                break;
+            if (runtime_condition_f(po, cc)) {
+                v = psyco_generic_call(po, cimpl_stop_iteration_value,
+                                       CfCommonNewRefPyObject | CfNoPython,
+                                       "v", TOP());
+                if (v == NULL)
+                    break;
+                POP_DECREF();
+                POP_DECREF();
+                POP_DECREF();
+                PUSH(psyco_vi_None());
+                PUSH(v);
+                goto fine;
+            }
+            psyco_generic_call(po, cimpl_reraise_value,
+                               CfPyErrAlways | CfNoPython, "v", TOP());
+            reraise_place(po, po->pr.next_instr);
+            if (locals_wanted_now(po))
+                traceback_locals(po, NULL);
+            goto exception_unwind;
+#endif
 #elif LE_HAS_OPCODE_RERAISE
         case RERAISE: {
             vinfo_t *exc;
