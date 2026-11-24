@@ -1274,7 +1274,8 @@ cimpl_super_lookup_changed(PyTypeObject *tp, PyTypeObject *cls, PyObject *name,
 DEFINEFN
 int
 PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
-                        vinfo_t *self, PyObject *name, void *key, PyObject **f)
+                        vinfo_t *self, PyObject *name, bool method, void *key,
+                        PyObject **f)
 {
     PyObject *cls, *descr, *kind;
     PyTypeObject *tp;
@@ -1289,9 +1290,9 @@ PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
     r = need_type_mega(po, self, &tp);
     if (r <= 0)
         return r;
-    /* typeobject.c:supercheck's case of an instance, and a type whose
-       method load is the generic one */
-    if (tp->tp_getattro != PyObject_GenericGetAttr ||
+    /* typeobject.c:supercheck's case of an instance, and for a method a
+       type whose method load is the generic one */
+    if ((method && tp->tp_getattro != PyObject_GenericGetAttr) ||
         PyType_IsSubtype(tp, &PyType_Type) ||
         !PyType_IsSubtype(tp, (PyTypeObject *)cls))
         return 0;

@@ -57,6 +57,7 @@
 #include "../Objects/plistobject.h"
 #include "../Objects/plongobject.h"
 #include "../Objects/pboolobject.h"
+#include "../Objects/pclassobject.h"
 #include "../Objects/ptupleobject.h"
 #include "../Objects/psliceobject.h"
 #include "../Objects/punicodeobject.h"
@@ -123,7 +124,7 @@ le_lookup_special_id(PyObject *self, _Py_Identifier *attrid)
 /* names looked up by the run-time helpers, interned at start-up
    (psyco_pycompiler_init) */
 static PyObject *s_initializing, *s_name, *s_spec, *s_match_args, *s_get,
-    *s_build_class;
+    *s_build_class, *s_keys;
 
 #if LE_HAS_IMPORT_FROM_SPEC
 /* moduleobject.c:_PyModuleSpec_IsInitializing: spec._initializing is
@@ -1884,9 +1885,10 @@ psyco_pycompiler_init(void)
     s_match_args = PyUnicode_InternFromString("__match_args__");
     s_get = PyUnicode_InternFromString("get");
     s_build_class = PyUnicode_InternFromString("__build_class__");
+    s_keys = PyUnicode_InternFromString("keys");
     if (s_builtin_object == NULL || s_initializing == NULL || s_name == NULL ||
         s_spec == NULL || s_match_args == NULL || s_get == NULL ||
-        s_build_class == NULL)
+        s_build_class == NULL || s_keys == NULL)
         Py_FatalError("lejit: no names for the compiler");
     load_global_miss_glue = psyco_aligned_call_glue(cimpl_load_global_miss);
 
@@ -2405,6 +2407,19 @@ load_global_rearmed(PsycoObject *po, changed_global_t *cg, vinfo_t **result)
                                &sg->vg, result);
 }
 
+/* o is a lazy import's proxy (PEP 810), which only a load at run time
+   may replace with its module */
+static inline bool
+le_lazy_import(PyObject *o)
+{
+#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
+    return PyLazyImport_CheckExact(o);
+#else
+    (void)o;
+    return false;
+#endif
+}
+
 /* Returns true with *result a new vinfo for the global, or with *result
    NULL if it isn't cached here (the caller loads it at run time); false
    on error. */
@@ -2500,8 +2515,9 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
         cg->form = form;
     }
     /* not found: a run-time load raises NameError; the guard catches a
-       later definition */
-    if (value != NULL) {
+       later definition. A lazy import's proxy is replaced by the run-time
+       load, which imports then, as ceval does; the guard then fails. */
+    if (value != NULL && !le_lazy_import(value)) {
         Py_INCREF(value);
         *result =
             vinfo_new(CompileTime_NewSk(sk_new((long)value, SkFlagPyObj)));
@@ -3040,11 +3056,26 @@ cimpl_do_call_core(PyObject *func, PyObject *callargs, PyObject *kwdict)
 }
 #endif
 
+/* IMPORT_FROM of name from v, at place 'lasti' of code co */
 static PyObject *
-cimpl_import_from(PyObject *v, PyObject *name)
+cimpl_import_from(PyObject *v, PyObject *name, PyCodeObject *co, long lasti)
 {
     PyObject *x;
     PyObject *fullmodname, *pkgname, *pkgpath, *pkgname_or_unknown, *errmsg;
+
+#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
+    if (PyLazyImport_CheckExact(v)) {
+        /* another proxy, for the attribute, which keeps where it was made:
+           the code and place are all it reads of the frame */
+        le_frame_t f;
+        f.f_executable = PyStackRef_FromPyObjectBorrow((PyObject *)co);
+        LE_FRAME_PLACE(&f) = _PyCode_CODE(co) + lasti;
+        return _PyEval_LazyImportFrom(PyThreadState_GET(), &f, v, name);
+    }
+#else
+    (void)co;
+    (void)lasti;
+#endif
 
     if (le_lookup_attr(v, name, &x) != 0) {
         return x;
@@ -3556,6 +3587,26 @@ cimpl_list_extend(PyObject *list, PyObject *iterable)
 }
 #endif
 
+#if LE_HAS_UNPACK_KEEPS_ATTRIBUTE_ERROR
+/* the AttributeError {**o} or f(**o) raised says o is not a mapping only
+   where o has no keys: then it is cleared and 1; else 0, with it, or the
+   error looking for keys raised with it as its context */
+static int
+le_not_a_mapping(PyObject *o)
+{
+    PyObject *exc = PyErr_GetRaisedException();
+    int has_keys = PyObject_HasAttrWithError(o, s_keys);
+    if (has_keys == 0) {
+        Py_DECREF(exc);
+        return 1;
+    }
+    _PyErr_ChainExceptions1(exc);
+    return 0;
+}
+#else
+#define le_not_a_mapping(o) 1
+#endif
+
 #if LE_HAS_OPCODE_DICT_UPDATE
 /* ceval.c DICT_UPDATE */
 static int
@@ -3563,7 +3614,8 @@ cimpl_dict_update(PyObject *dict, PyObject *update)
 {
     int err = PyDict_Update(dict, update);
     if (err < 0) {
-        if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        if (PyErr_ExceptionMatches(PyExc_AttributeError) &&
+            le_not_a_mapping(update)) {
             PyErr_Format(PyExc_TypeError, LE_MSG_DICT_STAR_NOT_MAPPING,
                          Py_TYPE(update)->tp_name);
         }
@@ -3577,6 +3629,8 @@ static void
 cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 {
     if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        if (!le_not_a_mapping(kwargs))
+            return;
 #ifdef LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION
         PyErr_Clear();
         PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION,
@@ -3597,21 +3651,29 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 #endif
     }
     else if (PyErr_ExceptionMatches(PyExc_KeyError)) {
+#if LE_HAS_CURRENT_EXCEPTION
+        /* the KeyError is an instance: the key is in its args */
+        PyObject *exc = PyErr_GetRaisedException();
+        PyObject *args = ((PyBaseExceptionObject *)exc)->args;
+        if (PyTuple_Check(args) && PyTuple_GET_SIZE(args) == 1) {
+#else
         PyObject *exc, *val, *tb;
         PyErr_Fetch(&exc, &val, &tb);
+        PyObject *args = val;
         if (val && PyTuple_Check(val) && PyTuple_GET_SIZE(val) == 1) {
+#endif
 #if LE_HAS_FUNCTION_STR
             PyErr_Clear();
             PyObject *funcstr = _PyObject_FunctionStr(func);
             if (funcstr != NULL) {
-                PyObject *key = PyTuple_GET_ITEM(val, 0);
+                PyObject *key = PyTuple_GET_ITEM(args, 0);
                 PyErr_Format(PyExc_TypeError,
                              LE_MSG_KWARGS_DUPLICATE_FUNCTION_STR, funcstr,
                              key);
                 Py_DECREF(funcstr);
             }
 #else
-            PyObject *key = PyTuple_GET_ITEM(val, 0);
+            PyObject *key = PyTuple_GET_ITEM(args, 0);
             if (!PyUnicode_Check(key)) {
                 PyErr_Format(
                     PyExc_TypeError, LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
@@ -3623,6 +3685,13 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
                     PyEval_GetFuncName(func), PyEval_GetFuncDesc(func), key);
             }
 #endif
+#if LE_HAS_CURRENT_EXCEPTION
+            Py_DECREF(exc);
+        }
+        else {
+            PyErr_SetRaisedException(exc);
+        }
+#else
             Py_XDECREF(exc);
             Py_XDECREF(val);
             Py_XDECREF(tb);
@@ -3630,6 +3699,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
         else {
             PyErr_Restore(exc, val, tb);
         }
+#endif
     }
 }
 
@@ -4067,26 +4137,24 @@ cimpl_before_async_with(PyObject *mgr, PyObject *out[])
 }
 
 #if LE_HAS_EXCEPTION_TABLE && LE_HAS_OPCODE_BEFORE_WITH
-/* ceval.c BEFORE_WITH: out[0] gets the bound __exit__, out[1] __enter__'s
-   result. Unlike ceval, mgr stays on the stack (one reference more) while
-   __enter__ runs. */
+/* ceval.c BEFORE_WITH and BEFORE_ASYNC_WITH: out[0] gets the bound exit
+   method, out[1] what the enter method returns ('no_enter' and 'no_exit'
+   the messages for a missing one). Unlike ceval, mgr stays on the stack
+   (one reference more) while the enter method runs. */
 static int
-cimpl_before_with(PyObject *mgr, PyObject *out[])
+before_with(PyObject *mgr, _Py_Identifier *enter_id, _Py_Identifier *exit_id,
+            const char *no_enter, const char *no_exit, PyObject *out[])
 {
-    _Py_IDENTIFIER(__exit__);
-    _Py_IDENTIFIER(__enter__);
-    PyObject *enter = le_lookup_special_id(mgr, &PyId___enter__), *exit, *res;
+    PyObject *enter = le_lookup_special_id(mgr, enter_id), *exit, *res;
     if (enter == NULL) {
         if (!PyErr_Occurred())
-            PyErr_Format(PyExc_TypeError, LE_MSG_WITH_NO_ENTER,
-                         Py_TYPE(mgr)->tp_name);
+            PyErr_Format(PyExc_TypeError, no_enter, Py_TYPE(mgr)->tp_name);
         return -1;
     }
-    exit = le_lookup_special_id(mgr, &PyId___exit__);
+    exit = le_lookup_special_id(mgr, exit_id);
     if (exit == NULL) {
         if (!PyErr_Occurred())
-            PyErr_Format(PyExc_TypeError, LE_MSG_WITH_NO_EXIT,
-                         Py_TYPE(mgr)->tp_name);
+            PyErr_Format(PyExc_TypeError, no_exit, Py_TYPE(mgr)->tp_name);
         Py_DECREF(enter);
         return -1;
     }
@@ -4101,6 +4169,25 @@ cimpl_before_with(PyObject *mgr, PyObject *out[])
     return 0;
 }
 
+static int
+cimpl_before_with(PyObject *mgr, PyObject *out[])
+{
+    _Py_IDENTIFIER(__exit__);
+    _Py_IDENTIFIER(__enter__);
+    return before_with(mgr, &PyId___enter__, &PyId___exit__,
+                       LE_MSG_WITH_NO_ENTER, LE_MSG_WITH_NO_EXIT, out);
+}
+
+static int
+cimpl_before_awith(PyObject *mgr, PyObject *out[])
+{
+    _Py_IDENTIFIER(__aexit__);
+    _Py_IDENTIFIER(__aenter__);
+    return before_with(mgr, &PyId___aenter__, &PyId___aexit__,
+                       LE_MSG_AWITH_NO_AENTER, LE_MSG_AWITH_NO_AEXIT, out);
+}
+#else
+#define cimpl_before_awith cimpl_before_async_with
 #endif
 
 /* WITH_CLEANUP_START's call */
@@ -4111,25 +4198,48 @@ cimpl_call_exit(PyObject *exit_func, PyObject *exc, PyObject *val,
     return PyObject_CallFunctionObjArgs(exit_func, exc, val, tb, NULL);
 }
 
+/* x, a new reference, as the global w found in 'namespace': where x is a
+   lazy import's proxy, the module it imports, which also replaces it there
+   (ceval.c:_PyEval_LoadGlobalStackRef). Takes the reference. */
+static PyObject *
+loaded_global(PyObject *x, PyObject *w, PyObject *namespace)
+{
+#if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
+    if (x != NULL && PyLazyImport_CheckExact(x)) {
+        PyObject *module =
+            _PyLazyImport_Reify(PyThreadState_GET(), x, w, namespace);
+        Py_DECREF(x);
+        return module;
+    }
+#else
+    (void)w;
+    (void)namespace;
+#endif
+    return x;
+}
+
 static PyObject *
 cimpl_load_global(PyObject *globals, PyObject *builtins, PyObject *w)
 {
-    PyObject *x;
+    PyObject *x, *namespace = globals;
     le_recursion_suspend();
     if (!PyDict_CheckExact(globals) || !PyDict_CheckExact(builtins)) {
         /* as ceval does: their __getitem__ and __missing__ run */
         x = PyObject_GetItem(globals, w);
         if (x == NULL && PyErr_ExceptionMatches(PyExc_KeyError)) {
             PyErr_Clear();
+            namespace = builtins;
             x = PyObject_GetItem(builtins, w);
             if (x == NULL && PyErr_ExceptionMatches(PyExc_KeyError))
                 cimpl_name_error(w);
         }
+        x = loaded_global(x, w, namespace);
         le_recursion_resume();
         return x;
     }
     x = PyDict_GetItem(globals, w);
     if (x == NULL) {
+        namespace = builtins;
         x = PyDict_GetItem(builtins, w);
         if (x == NULL) {
             cimpl_name_error(w);
@@ -4137,8 +4247,9 @@ cimpl_load_global(PyObject *globals, PyObject *builtins, PyObject *w)
             return NULL;
         }
     }
-    le_recursion_resume();
     Py_INCREF(x);
+    x = loaded_global(x, w, namespace);
+    le_recursion_resume();
     return x;
 }
 
@@ -4497,15 +4608,14 @@ cimpl_generator_stop(long coroutine)
    only generator code compiled (mergepoints.c:_build_merge_points):
    StopIteration leaving it becomes RuntimeError */
 static PyObject *
-cimpl_stopiteration_error(PyObject *exc)
+cimpl_stopiteration_error(PyObject *exc, const char *msg)
 {
     PyObject *error;
     if (!PyErr_GivenExceptionMatches(exc, PyExc_StopIteration)) {
         Py_INCREF(exc);
         return exc;
     }
-    error = PyObject_CallFunction(PyExc_RuntimeError, "s",
-                                  LE_MSG_GENERATOR_STOP_ITERATION);
+    error = PyObject_CallFunction(PyExc_RuntimeError, "s", msg);
     if (error == NULL)
         return NULL;
     Py_INCREF(exc);
@@ -6125,11 +6235,9 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             vinfo_array_t *out;
             vinfo_t *self;
             PyObject *f;
-            int found = 0;
-            if (oparg & 1)
-                found = PsycoObject_SuperMethod(
-                    po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2),
-                    (void *)(le_code(po->pr.co).bytes + next_instr), &f);
+            int found = PsycoObject_SuperMethod(
+                po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2), oparg & 1,
+                (void *)(le_code(po->pr.co).bytes + next_instr), &f);
             if (found < 0)
                 break;
             if (found) {
@@ -6137,9 +6245,18 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
                 POP_DECREF();
                 POP_DECREF();
                 Py_INCREF(f);
-                PUSH(vinfo_new(
-                    CompileTime_NewSk(sk_new((long)f, SkFlagPyObj))));
-                PUSH(self);
+                v = vinfo_new(CompileTime_NewSk(sk_new((long)f, SkFlagPyObj)));
+                if (oparg & 1) {
+                    PUSH(v);
+                    PUSH(self);
+                }
+                else {
+                    /* the function's __get__: a bound method */
+                    x = PsycoMethod_New(v, self);
+                    vinfo_decref(v, po);
+                    vinfo_decref(self, po);
+                    PUSH(x);
+                }
                 goto fine;
             }
             out = array_new(1);
@@ -6183,8 +6300,8 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             PyObject *namev = GETNAMEV(LE_GLOBAL_NAME(oparg));
             if (!load_global_cached(po, namev, &v))
                 break;
-            /* not cached: globals unknown, the name varying or not
-             * found */
+            /* not cached: globals unknown, the name varying, not found or
+             * a lazy import */
             if (v == NULL) {
                 v = psyco_generic_call(po, cimpl_load_global,
                                        CfCommonNewRefPyObject, "vvl",
@@ -7168,7 +7285,7 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
                 array_release(array);
                 break;
             }
-            if (tp == &PyGen_Type)
+            if (tp == &PyGen_Type || tp == &PyCoro_Type)
                 x = psyco_gen_send_status(po, NTOP(2), TOP(), array);
             else
                 x = psyco_generic_call(po, le_iter_send,
@@ -7278,10 +7395,14 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
         case CALL_INTRINSIC_1:
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
             if (oparg == INTRINSIC_STOPITERATION_ERROR) {
-                extra_assert(po->pr.co->co_flags & CO_GENERATOR);
-                x = psyco_generic_call(po, cimpl_stopiteration_error,
-                                       CfCommonNewRefPyObject | CfNoPython,
-                                       "v", TOP());
+                extra_assert(po->pr.co->co_flags &
+                             (CO_GENERATOR | CO_COROUTINE));
+                x = psyco_generic_call(
+                    po, cimpl_stopiteration_error,
+                    CfCommonNewRefPyObject | CfNoPython, "vl", TOP(),
+                    (long)(po->pr.co->co_flags & CO_COROUTINE
+                               ? LE_MSG_CORO_STOP_ITERATION
+                               : LE_MSG_GENERATOR_STOP_ITERATION));
                 if (x == NULL)
                     break;
                 POP_DECREF();
@@ -7394,12 +7515,32 @@ out:
     return ended;
 }
 
-#if LE_RESUMES_COROUTINES
+#if LE_RESUMES_COROUTINES || LE_RESUMES_ON_FRAME
 /* whether coroutine 'coro' is awaiting something, as _PyGen_yf (not
-   exported) tells: paused just before a YIELD_FROM */
+   exported) tells: paused just before a YIELD_FROM, or where the frame
+   is on the coroutine, at a yield whose resume is after an await */
 static int
 coro_awaits(PyGenObject *coro)
 {
+#if LE_RESUMES_ON_FRAME
+#ifdef FRAME_STATE_SUSPENDED
+    return coro->gi_frame_state == FRAME_SUSPENDED_YIELD_FROM;
+#else
+    le_frame_t *f =
+        (le_frame_t *)((char *)coro + offsetof(PyGenObject, gi_iframe));
+    PyCodeObject *co = LE_FRAME_CODE(f);
+    int at;
+    le_instr_t in;
+    if (coro->gi_frame_state >= FRAME_CLEARED ||
+        coro->gi_frame_state == FRAME_CREATED)
+        return 0;
+    at = (int)((char *)LE_FRAME_PLACE(f) - (char *)_PyCode_CODE(co)) + LE_UNIT;
+    if (at < 0 || at >= le_code(co).size)
+        return 0;
+    in = le_instr(le_code(co), at);
+    return in.op == RESUME && in.arg >= 2;
+#endif
+#else
     PyFrameObject *f = coro->gi_frame;
     const unsigned char *code;
     if (f == NULL || f->f_lasti < 0)
@@ -7412,15 +7553,24 @@ coro_awaits(PyGenObject *coro)
     return code[(LE_HAS_LASTI_IN_INSTRUCTIONS ? f->f_lasti * LE_UNIT
                                               : f->f_lasti) +
                 LE_UNIT] == YIELD_FROM;
+#endif
 }
 
 /* a generator made by a types.coroutine function */
 static inline int
 is_iterable_coroutine(PyObject *o)
 {
+#if LE_RESUMES_ON_FRAME
+    return PyGen_CheckExact(o) &&
+           (LE_FRAME_CODE(
+                (le_frame_t *)((char *)o + offsetof(PyGenObject, gi_iframe)))
+                ->co_flags &
+            CO_ITERABLE_COROUTINE);
+#else
     return PyGen_CheckExact(o) &&
            (((PyCodeObject *)((PyGenObject *)o)->gi_code)->co_flags &
             CO_ITERABLE_COROUTINE);
+#endif
 }
 
 /* which await GET_AWAITABLE at 'at' (with argument 'oparg') is, for its
@@ -7493,6 +7643,7 @@ cimpl_get_awaitable(PyObject *o, long kind)
     return res;
 }
 
+#if LE_RESUMES_COROUTINES
 /* YIELD_FROM's send of 'v' into 'receiver', as ceval does it with no
    trace function: 1 with the value it yielded in out[0], 0 with the value
    it returned, -1 with its exception */
@@ -7522,6 +7673,7 @@ cimpl_await_send(PyObject *receiver, PyObject *v, PyObject *out[])
     return 0;
 #endif
 }
+#endif
 
 #endif
 
@@ -7895,6 +8047,20 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+#if LE_RESUMES_ON_FRAME
+        /* a resumable coroutine's await (psyco_is_resumable_generator):
+           GET_AWAITABLE, then SEND's loop */
+        case GET_AWAITABLE:
+            x = psyco_generic_call(
+                po, cimpl_get_awaitable, CfCommonNewRefPyObject, "vl", TOP(),
+                (long)awaitable_kind(le_code(po->pr.co), po->pr.next_instr,
+                                     oparg));
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+#endif
 #if LE_RESUMES_COROUTINES
         /* a resumable coroutine's await (psyco_is_resumable_generator):
            GET_AWAITABLE, LOAD_CONST None, YIELD_FROM */
@@ -8469,7 +8635,10 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
            __aenter__'s result, whose result the block goes under */
         case BEFORE_ASYNC_WITH: {
             vinfo_array_t *array = array_new(2);
-            if (!psyco_generic_call(po, cimpl_before_async_with,
+            if (!psyco_generic_call(po,
+                                    LE_HAS_EXCEPTION_TABLE
+                                        ? cimpl_before_awith
+                                        : cimpl_before_async_with,
                                     CfCommonIntZeroOk, "vA", TOP(), array)) {
                 array_release(array);
                 break;
@@ -8590,8 +8759,11 @@ compile_imports(PsycoObject *po, int opcode, int oparg, int target,
     switch (opcode) {
         case IMPORT_FROM:
             v = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
-            x = psyco_generic_call(po, cimpl_import_from,
-                                   CfCommonNewRefPyObject, "vv", TOP(), v);
+            x = psyco_generic_call(
+                po, cimpl_import_from, CfCommonNewRefPyObject, "vvll", TOP(),
+                v, (long)po->pr.co,
+                (long)le_lasti_of(
+                    le_place(le_code(po->pr.co), po->pr.next_instr)));
             vinfo_decref(v, po);
             if (x == NULL)
                 break;
@@ -8599,7 +8771,7 @@ compile_imports(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
 
         case IMPORT_NAME: {
-            PyObject *w = GETNAMEV(oparg);
+            PyObject *w = GETNAMEV(LE_IMPORT_NAME(oparg));
             v = TOP();
             u = NTOP(2);
             x = psyco_generic_call(po, cimpl_import_name,
@@ -8748,15 +8920,12 @@ psyco_pycompiler_mainloop(PsycoObject *po)
            POP_JUMP_IF_xxx. With the pop done the state is the target's, so its
            merge point (often a loop head, for a jump back) is checked before
            the first instruction; otherwise the path would be compiled afresh
-           up to the next merge point, every back-edge a new copy of the loop
-         */
+           up to the next merge point, every back-edge a new copy of the loop.
+           A replay checks it too, as its original compile did: making dead
+           virtual locals real there can emit a respawn point */
         POP_DECREF();
         po->pr.next_instr &= ~NEXT_INSTR_POP;
-        /* forgotten here, as 'fine' does before the merge point check, which
-           a replay skips: so a replay reaches each later run-time test in
-           the state the first compile had */
-        Psyco_ForgetClasses(po);
-        at_jump_target = !is_respawning(po);
+        at_jump_target = 1;
     }
 
     while (1) {
@@ -8948,8 +9117,11 @@ psyco_pycompiler_mainloop(PsycoObject *po)
 
             /* mark merge points via a call to psyco_compile() */
             if (mp->bytecode_position == next_instr) {
-                extra_assert(!is_respawning(po));
                 SAVE_NEXT_INSTR(next_instr);
+                /* the last place a replay can stop in this block */
+                if (!psyco_make_dead_virtuals_real(po, mp))
+                    break;
+                extra_assert(!is_respawning(po));
                 /* simplify the po->vlocals array */
                 if (!psyco_limit_nested_weight(po, &po->vlocals, NWI_NORMAL,
                                                NESTED_WEIGHT_END))
@@ -9127,8 +9299,16 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 PUSH(v);
                 JUMPTO(h.handler);
                 SAVE_NEXT_INSTR(next_instr);
-                /* a callee that raised may have started tracing */
-                po->pr.resume_pending = 1;
+                /* a coroutine's handler that can await runs in ceval,
+                   which suspends the coroutine in it with its handled
+                   exception (mergepoints.c:psyco_handler_awaits) */
+                if (psyco_handler_awaits(po->pr.co, h.handler)) {
+                    extra_assert(psyco_can_go_interpreted(po));
+                    po->pr.go_interpreted = 1;
+                }
+                else
+                    /* a callee that raised may have started tracing */
+                    po->pr.resume_pending = 1;
             }
         }
 #endif

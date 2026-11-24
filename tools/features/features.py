@@ -1040,6 +1040,19 @@ def member_ex_error_from_type(s):
                 for t in s.tokens(sm)), sm + ': "... object has no attribute ..."')
 
 
+def unpack_keeps_attribute_error(s):
+    """{**x} and f(**x) keep an AttributeError of an x that has keys (one
+    its keys() or __getitem__ raised), where a TypeError said it is no
+    mapping: DICT_UPDATE and the kwargs error look for keys first"""
+    update, where = _case_has(s, 'DICT_UPDATE', 'PyObject_HasAttrWithError(update_o, &_Py_ID(keys))',
+                              missing=False)
+    kwargs, kwargs_where = _body_has(s, CE, '_PyEval_FormatKwargsError',
+                                     'PyObject_HasAttrWithError(kwargs, &_Py_ID(keys))', missing=False)
+    if update != kwargs:
+        raise Unanswered('%s and %s disagree' % (where, kwargs_where))
+    return update, '%s, %s' % (where, kwargs_where)
+
+
 def delete_global_keyerror_only(s):
     """DELETE_GLOBAL raises NameError only for a KeyError"""
     found, evidence = _case_has(s, 'DELETE_GLOBAL', 'PyExc_KeyError')
@@ -1333,6 +1346,7 @@ EXPORTS = [
     ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
     ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
     ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup'),
+    ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify'),
 ]
 
 
@@ -1378,6 +1392,8 @@ BYTECODE = [
                         lambda s: _file_has(s, 'Objects/codeobject.c', '"co_qualname"'))),
     ('LOAD_GLOBAL_NULL_BIT', D('LOAD_GLOBAL\'s argument is the name\'s index shifted left once, its low bit pushing a NULL under the global',
                                lambda s: _case_has(s, 'LOAD_GLOBAL', 'oparg>>1'))),
+    ('IMPORT_NAME_LAZY_BITS', D('IMPORT_NAME\'s argument is the name\'s index shifted left twice, its low two bits saying whether the import is lazy (1) or always eager (2)',
+                                lambda s: _case_has(s, 'IMPORT_NAME', 'oparg>>2'))),
     ('AWAIT_ERROR_BY_ARG', D('GET_AWAITABLE\'s argument tells its error which of async with\'s awaits it is (1 __aenter__\'s, 2 __aexit__\'s), not the instructions before it',
                              lambda s: _case_uses(s, 'GET_AWAITABLE', 'oparg'))),
     ('AWITH_EXIT_FIRST', D('BEFORE_ASYNC_WITH looks up __aexit__ before __aenter__',
@@ -1551,6 +1567,7 @@ CEVAL = [
     ('KWARGS_MERGE_EX', D('CALL_FUNCTION_EX merges **kwargs with _PyDict_MergeEx, and format_kwargs_error reports it',
                           lambda s: _case_has(s, 'CALL_FUNCTION_EX', '_PyDict_MergeEx'))),
     ('DELETE_GLOBAL_KEYERROR_ONLY', delete_global_keyerror_only),
+    ('UNPACK_KEEPS_ATTRIBUTE_ERROR', unpack_keeps_attribute_error),
     ('RAISE_CAUSE_CHECKED', D('raise ... from a class whose call doesn\'t make an exception is a TypeError (do_raise)',
                               lambda s: _first_body_has(s, [(CE, 'do_raise'), ('Python/ceval.h', 'do_raise')],
                                                         'PyExceptionInstance_Check(fixed_cause)'))),

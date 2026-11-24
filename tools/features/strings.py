@@ -336,6 +336,17 @@ msg('WITH_NO_EXIT', 'with given an object with __enter__ but no __exit__',
     'TypeError',
     'C = cls(args[0].__name__, __enter__=lambda s: s)\nwith C(): pass',
     [T()], requires=_BEFORE_WITH)
+_BEFORE_ASYNC_WITH = '"BEFORE_ASYNC_WITH" in __import__("opcode").opmap and ' + _BEFORE_WITH
+msg('AWITH_NO_AENTER', 'async with given an object without __aenter__',
+    'TypeError',
+    'o = args[0]()\nasync def f():\n    async with o:\n        pass\n'
+    'coro_run(f())', [T()], requires=_BEFORE_ASYNC_WITH)
+msg('AWITH_NO_AEXIT', 'async with given an object with __aenter__ but no '
+    '__aexit__', 'TypeError',
+    'async def e(s):\n    pass\n'
+    'o = cls(args[0].__name__, __aenter__=e)()\n'
+    'async def f():\n    async with o:\n        pass\ncoro_run(f())',
+    [T()], requires=_BEFORE_ASYNC_WITH)
 msg('IMPORT_NAME_UNKNOWN_LOCATION', "from m import x, without x, m without a file",
     'ImportError',
     'newmod(args[1])\nexec("from %s import %s" % (args[1], args[0]), {})',

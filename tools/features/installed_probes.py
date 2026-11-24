@@ -197,7 +197,8 @@ for _feature, _function in [
         ('LOOKUP_ATTR_LINKABLE', '_PyObject_LookupAttr'),
         ('FRAME_CLEAR_AND_POP_LINKABLE', '_PyEval_FrameClearAndPop'),
         ('HANDLE_PENDING_LINKABLE', '_Py_HandlePending'),
-        ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup')]:
+        ('SUPER_LOOKUP_LINKABLE', '_PySuper_Lookup'),
+        ('LAZY_IMPORT_REIFY_LINKABLE', '_PyLazyImport_Reify')]:
     def _export_probe(function=_function):
         return _exported(function)
     _export_probe.__name__ = _feature
@@ -428,6 +429,24 @@ def DELETE_GLOBAL_KEYERROR_ONLY():
     if isinstance(e, NameError):
         return False, 'DELETE_GLOBAL run: NameError'
     raise Unanswered('DELETE_GLOBAL run: %r' % e)
+
+
+@probe
+def UNPACK_KEEPS_ATTRIBUTE_ERROR():
+    """{**x} and f(**x) of an x whose keys() raises AttributeError keep it
+    (run)"""
+    class Keys(object):
+        def keys(self):
+            raise AttributeError('keys')
+
+    def f(**kw):
+        return kw
+    kinds = {type(_error(lambda: {**Keys()})), type(_error(lambda: f(**Keys())))}
+    if kinds == {AttributeError}:
+        return True, '{**x}, f(**x) run: AttributeError'
+    if kinds == {TypeError}:
+        return False, '{**x}, f(**x) run: TypeError'
+    raise Unanswered('{**x}, f(**x) run: %r' % kinds)
 
 
 @probe
@@ -963,6 +982,20 @@ def LOAD_GLOBAL_NULL_BIT():
         if x.opname == 'LOAD_GLOBAL' and x.arg in (0, 1):
             return x.arg == 1, 'dis: LOAD_GLOBAL %d for zzz()' % x.arg
     raise Unanswered('zzz() is not LOAD_GLOBAL 0 or 1: %r'
+                     % [(x.opname, x.arg) for x in dis.get_instructions(f)])
+
+
+@probe
+def IMPORT_NAME_LAZY_BITS():
+    """an import in a function loads it with IMPORT_NAME whose argument is
+    the name's index (0) shifted left twice, plus two for an import that is
+    always eager (dis)"""
+    def f():
+        import zzz  # noqa: F401
+    for x in dis.get_instructions(f):
+        if x.opname == 'IMPORT_NAME' and x.arg in (0, 2):
+            return x.arg == 2, 'dis: IMPORT_NAME %d for import zzz' % x.arg
+    raise Unanswered('import zzz is not IMPORT_NAME 0 or 2: %r'
                      % [(x.opname, x.arg) for x in dis.get_instructions(f)])
 
 

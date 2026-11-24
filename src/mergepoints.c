@@ -523,6 +523,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
             }
             report->mergepoints[mergepoint_index].blocks = 0;
             report->mergepoints[mergepoint_index].entries.varies = NULL;
+            report->mergepoints[mergepoint_index].real_from = 0;
             mergepoint_index++;
         }
     }
@@ -530,6 +531,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     report->mergepoints[mergepoint_count].entries.fatlist = NULL;
     report->mergepoints[mergepoint_count].blocks = 0;
     report->mergepoints[mergepoint_count].entries.varies = NULL;
+    report->mergepoints[mergepoint_count].real_from = 0;
     if (!_find_dead_locals(co, report)) {
         /* out of memory: keep every local (the lists may hold some) */
         PyErr_Clear();
@@ -623,6 +625,9 @@ _build_merge_points(PyCodeObject *co, int module)
         if (LE_HAS_OPCODE_PRECALL && opcode == CALL && prev != PRECALL)
             goto not_ok;
         if (opcode == CALL_INTRINSIC_1 && !compiled_intrinsic(oparg))
+            goto not_ok;
+        /* cimpl_import_name imports eagerly */
+        if (opcode == IMPORT_NAME && LE_IMPORT_LAZY(oparg))
             goto not_ok;
         if (opcode == LOAD_GLOBAL &&
             loads_frame_locals_builtin(co, LE_GLOBAL_NAME(oparg)))
@@ -794,10 +799,12 @@ handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
         if (at >= 0 && u * LE_UNIT <= at && at < in.next)
             return 1;
         switch (in.op) {
+            /* a handler may go on after a yield in it */
             case YIELD_VALUE:
             case YIELD_FROM:
                 if (at < 0)
                     return 1;
+                next[n++] = in.next;
                 break;
             /* the handler's end, or a jump out of it that unwinds it;
                a throw's into yield from ends at CLEANUP_THROW, which takes
@@ -902,7 +909,7 @@ handler_yields_kept(PyCodeObject *co, le_code_t c)
 DEFINEFN int
 psyco_handler_awaits(PyCodeObject *co, int handler)
 {
-#if LE_RESUMES_COROUTINES
+#if LE_RESUMES_COROUTINES_COMPILED
     return (co->co_flags & CO_COROUTINE) &&
            handler_reach(co, le_code(co), handler, -1);
 #else
@@ -927,7 +934,7 @@ body_compilable(PyCodeObject *co, le_code_t *c)
     int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
                                CO_ASYNC_GENERATOR | CO_ITERABLE_COROUTINE);
     if (kind != CO_GENERATOR &&
-        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES))
+        (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED))
         return 0;
     if (le_code_prepare(co) < 0) {
         PyErr_Clear(); /* out of memory: runs interpreted */
@@ -974,7 +981,7 @@ psyco_is_resumable_generator(PyCodeObject *co)
 DEFINEFN int
 psyco_in_handler(PyCodeObject *co, int pos)
 {
-#if LE_RESUMES_COROUTINES
+#if LE_RESUMES_COROUTINES_COMPILED
     return handler_reach(co, le_code(co), -1, pos);
 #else
     (void)co;
