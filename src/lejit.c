@@ -163,11 +163,6 @@ le_code_extra_free(le_code_extra_t *x)
         for (j = 0; j < x->resumes[i].count; j++)
             Py_XDECREF(x->resumes[i].entries[j].code);
     PyMem_Free(x->resumes);
-    for (i = 0; i < x->nosr; i++)
-        for (j = 0; j < x->osr[i].point.count; j++)
-            Py_XDECREF(x->osr[i].point.entries[j].code);
-    PyMem_Free(x->osr);
-    PyMem_Free(x->loop_heads);
 #if LE_RESUMES_GENERATORS_DIRECTLY
     PyMem_Free(x->direct);
 #endif
