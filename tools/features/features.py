@@ -1094,12 +1094,16 @@ def unpack_keeps_attribute_error(s):
 
 
 def delete_global_keyerror_only(s):
-    """DELETE_GLOBAL raises NameError only for a KeyError"""
-    found, evidence = _case_has(s, 'DELETE_GLOBAL', 'PyExc_KeyError')
+    """`del` of a global raises NameError only for a KeyError"""
+    # `del` is DELETE_GLOBAL, or STORE_GLOBAL of a NULL where that is gone
+    op = 'DELETE_GLOBAL'
+    if _case_file(s, op)[1] is None:
+        op = 'STORE_GLOBAL'
+    found, evidence = _case_has(s, op, 'PyExc_KeyError')
     if found:
         return found, evidence
     # from 3.13 PyDict_Pop tells a missing name from an error
-    return _case_has(s, 'DELETE_GLOBAL', 'PyDict_Pop(GLOBALS(), name, NULL)')
+    return _case_has(s, op, 'PyDict_Pop(GLOBALS(), name, NULL)')
 
 
 def _instructions(s):
@@ -1188,7 +1192,9 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'LOAD_SMALL_INT', 'LOAD_COMMON_CONSTANT', 'NOT_TAKEN', 'POP_ITER',
            'LOAD_SPECIAL', 'BUILD_TEMPLATE', 'BUILD_INTERPOLATION',
            # gone from 3.15: yield from's is GET_ITER with an argument
-           'GET_YIELD_FROM_ITER')
+           'GET_YIELD_FROM_ITER',
+           # gone from 3.16: del is PUSH_NULL and the store
+           'DELETE_ATTR', 'DELETE_GLOBAL')
 # and the opcodes with a case of their own only where they exist
 CASE_OPCODES = ('LOAD_ASSERTION_ERROR', 'LIST_EXTEND',
                 'SET_UPDATE', 'DICT_UPDATE', 'DICT_MERGE', 'IS_OP',
