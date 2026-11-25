@@ -155,6 +155,12 @@ tls_test_thread(void *arg)
     return NULL;
 }
 
+/* Where CPython also keeps the running thread's interpreter in a
+   thread-local (_Py_tss_interp), set on attach and cleared on detach with
+   the thread state: its offset from the thread pointer, 0 if there is no
+   such word, -1 if more than one word could be it */
+static long le_interp_tls_offset;
+
 static bool
 tstate_tls_find(long *offset)
 {
@@ -162,7 +168,7 @@ tstate_tls_find(long *offset)
     long block, other;
     PyThreadState *ts = PyThreadState_Get();
     PyThreadState **attached, **words;
-    size_t i, n, found = 0, at = 0;
+    size_t i, n, found = 0, at = 0, ifound = 0, iat = 0;
     pthread_t t;
     if (!tls_block_offset(&f, &block))
         return false;
@@ -173,11 +179,17 @@ tstate_tls_find(long *offset)
         return false;
     memcpy(attached, words, n * sizeof(void *));
     PyEval_SaveThread();
-    for (i = 0; i < n; i++)
+    for (i = 0; i < n; i++) {
         if (attached[i] == ts && words[i] != ts) {
             found++;
             at = i * sizeof(void *);
         }
+        if ((void *)attached[i] == (void *)ts->interp &&
+            (void *)words[i] != (void *)ts->interp) {
+            ifound++;
+            iat = i * sizeof(void *);
+        }
+    }
     PyEval_RestoreThread(ts);
     PyMem_RawFree(attached);
     if (found != 1 || pthread_create(&t, NULL, tls_test_thread, &other) != 0)
@@ -186,6 +198,9 @@ tstate_tls_find(long *offset)
     if (other != block)
         return false;
     *offset = block + (long)at;
+    le_interp_tls_offset = ifound == 0   ? 0
+                           : ifound == 1 ? block + (long)iat
+                                         : -1;
     return true;
 }
 
@@ -949,6 +964,8 @@ _Static_assert(
 #if LE_HAS_THREAD_LOCAL_TSTATE
 static long le_gil_tls_offset;
 #define LE_CURRENT() ((PyThreadState **)(thread_pointer() + le_gil_tls_offset))
+#define LE_INTERP_CURRENT() \
+    ((PyInterpreterState **)(thread_pointer() + le_interp_tls_offset))
 #else
 #define LE_CURRENT() LE_TSTATE(_PyRuntime.gilstate.tstate_current)
 #endif
@@ -1071,6 +1088,10 @@ le_gil_release(PyThreadState *ts)
     ts->state = _Py_THREAD_DETACHED;
 #endif
     LE_STORE(LE_CURRENT(), NULL);
+#if LE_HAS_THREAD_LOCAL_TSTATE
+    if (le_interp_tls_offset != 0)
+        LE_STORE(LE_INTERP_CURRENT(), NULL);
+#endif
     /* drop_gil */
     if (!LE_LOAD(LE_INT(gil->locked)))
         Py_FatalError("drop_gil: GIL is not locked");
@@ -1156,6 +1177,10 @@ le_gil_take(PyThreadState *ts)
     /* the attach: current_fast_set, tstate_activate, tstate_try_attach, or
        _PyThreadState_Swap(ts) */
     LE_STORE(LE_CURRENT(), ts);
+#if LE_HAS_THREAD_LOCAL_TSTATE
+    if (le_interp_tls_offset != 0)
+        LE_STORE(LE_INTERP_CURRENT(), ts->interp);
+#endif
 #if LE_HAS_TSTATE_STATUS
     ts->_status.active = 1;
 #endif
@@ -1183,7 +1208,8 @@ le_gil_calls(void **release, void **take)
 {
 #if LE_GIL_COPY
 #if LE_HAS_THREAD_LOCAL_TSTATE
-    if (le_tstate_thread_offset(&le_gil_tls_offset))
+    if (le_tstate_thread_offset(&le_gil_tls_offset) &&
+        le_interp_tls_offset != -1)
 #endif
     {
         *release = (void *)le_gil_release;
