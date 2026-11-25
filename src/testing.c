@@ -124,6 +124,16 @@ le_stats(PyObject *self, PyObject *unused)
             Py_CLEAR(d);
         Py_XDECREF(t);
     }
+#if LE_HAS_MONITORING
+    if (d != NULL) {
+        /* compiled code's exact tracing tests (pyruntime.c) */
+        extern long le_stat_tracing_rechecks;
+        PyObject *t = PyLong_FromLong(le_stat_tracing_rechecks);
+        if (t == NULL || PyDict_SetItemString(d, "tracing_rechecks", t) < 0)
+            Py_CLEAR(d);
+        Py_XDECREF(t);
+    }
+#endif
     if (d != NULL) {
         /* failed guards of cached globals (pycompiler.c:do_changed_global) */
         PyObject *t = PyLong_FromLong(psyco_stat_global_fails);

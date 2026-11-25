@@ -38,6 +38,28 @@
 #include "opcode.h"
 #include "../bytecode.h"
 
+#if LE_HAS_CTYPES_CALL_AUDITED
+/* the two words PySys_Audit's should_audit (Python/sysmodule.c) tests
+   for a hook: the runtime's list and the main interpreter's. False where a
+   dtrace probe can also want the event, which only PySys_Audit can tell
+   (Modules/pctypes.c) */
+bool
+le_audit_hook_words(void **runtime_head, void **interp_hooks)
+{
+#ifdef WITH_DTRACE
+    return false;
+#else
+    _Static_assert(
+        sizeof(_PyRuntime.audit_hooks.head) == sizeof(void *) &&
+            sizeof(((PyInterpreterState *)0)->audit_hooks) == sizeof(void *),
+        "LeJIT: the audit hook lists are loaded as pointers");
+    *runtime_head = &_PyRuntime.audit_hooks.head;
+    *interp_hooks = &PyInterpreterState_Main()->audit_hooks;
+    return true;
+#endif
+}
+#endif
+
 /* le_tstate_current_address, where the thread state isn't a thread-local
    (mechanisms/tstate.h) */
 #if !LE_HAS_THREAD_LOCAL_TSTATE
@@ -246,13 +268,19 @@ le_code_monitored(PyCodeObject *co)
     return (a | b) != 0;
 }
 
+#if ALL_CHECKS
+long le_stat_tracing_rechecks = 0; /* read by lejit._core._stats */
+#endif
+
 /* compiled code's exact test for code co (NULL for none), once the
-   version has moved or co has monitoring data, which brings
-   le_quiet_version up to date */
+   version has moved, which brings le_quiet_version up to date */
 int
 le_tracing_recheck(PyCodeObject *co)
 {
     PyThreadState *ts = PyThreadState_GET();
+#if ALL_CHECKS
+    le_stat_tracing_rechecks++;
+#endif
     if (le_monitoring_on(ts))
         return 1;
     if (LE_FRAMES_EXPOSED)

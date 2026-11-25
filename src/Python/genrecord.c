@@ -338,23 +338,23 @@ le_gen_record_escape_running(le_frame_t *f)
    where CPython's C does it (where the bytecode doesn't), and the frame is
    cleared, in CPython's order. */
 static PyObject *
-record_end(le_gen_record_t *r, PyObject *result, int form, int *paused)
+record_end(PyThreadState *ts, le_gen_record_t *r, PyObject *result, int form,
+           int *paused)
 {
-    PyThreadState *ts = PyThreadState_GET();
     *paused = 0;
     if (r->escaped != NULL) {
         /* made real while it ran: ended as a generator's run */
         PyObject *gen = r->escaped;
         if (form == 2) {
             PyObject *out[1];
-            int st = le_gen_direct_send_status(gen, result, out);
+            int st = le_gen_direct_send_status(ts, gen, result, out);
             if (st < 0)
                 return NULL;
             *paused = st;
             return out[0];
         }
-        result = form == 1 ? le_gen_direct_send_end(gen, result)
-                           : le_gen_direct_end(gen, result);
+        result = form == 1 ? le_gen_direct_send_end(ts, gen, result)
+                           : le_gen_direct_end(ts, gen, result);
         *paused = result != NULL;
         return result;
     }
@@ -389,10 +389,10 @@ record_end(le_gen_record_t *r, PyObject *result, int form, int *paused)
 }
 
 DEFINEFN PyObject *
-le_gen_record_end(PyObject *rec, PyObject *result)
+le_gen_record_end(PyThreadState *ts, PyObject *rec, PyObject *result)
 {
     int paused;
-    result = record_end((le_gen_record_t *)rec, result, 0, &paused);
+    result = record_end(ts, (le_gen_record_t *)rec, result, 0, &paused);
     if (paused || result == NULL)
         return result;
     if (result != Py_None)
@@ -402,10 +402,10 @@ le_gen_record_end(PyObject *rec, PyObject *result)
 }
 
 DEFINEFN PyObject *
-le_gen_record_send_end(PyObject *rec, PyObject *result)
+le_gen_record_send_end(PyThreadState *ts, PyObject *rec, PyObject *result)
 {
     int paused;
-    result = record_end((le_gen_record_t *)rec, result, 1, &paused);
+    result = record_end(ts, (le_gen_record_t *)rec, result, 1, &paused);
     if (paused || result == NULL)
         return result;
     if (result == Py_None)
@@ -417,10 +417,11 @@ le_gen_record_send_end(PyObject *rec, PyObject *result)
 }
 
 DEFINEFN int
-le_gen_record_send_status(PyObject *rec, PyObject *result, PyObject *out[])
+le_gen_record_send_status(PyThreadState *ts, PyObject *rec, PyObject *result,
+                          PyObject *out[])
 {
     int paused;
-    result = record_end((le_gen_record_t *)rec, result, 2, &paused);
+    result = record_end(ts, (le_gen_record_t *)rec, result, 2, &paused);
     if (result == NULL)
         return -1;
     out[0] = result;

@@ -4,6 +4,8 @@
 # int. Past the cap they are made real there. Their values stay what
 # CPython shows: in f_locals, in a traceback's frame, the same object
 # where two locals share one, and each released once when rebound.
+# A loop whose locals hold only ints keeps its computed ints virtual
+# past the cap instead; they too must show CPython's values.
 import sys
 import weakref
 
@@ -105,9 +107,57 @@ def released(n):
     return out
 
 
+def numeric(n):
+    out = []
+    total = 0
+    for i in range(n):
+        if i & 1:
+            a = i * 3
+            total += a
+        if i & 2:
+            b = i + 7
+            total -= b
+        if i & 4:
+            c = i ^ 5
+            total += c
+        if i & 8:
+            d = i * i
+            total += d & 15
+        loc = sys._getframe().f_locals
+        out.append((total, loc.get('a'), loc.get('b'), loc.get('c'),
+                    loc.get('d')))
+    return out
+
+
+def numeric_in_traceback(n):
+    out = []
+    total = 0
+    for i in range(n):
+        if i & 1:
+            a = i * 3
+            total += a
+        if i & 2:
+            b = i + 7
+            total -= b
+        if i & 4:
+            c = i ^ 5
+            total += c
+        if i & 8:
+            total += i
+        try:
+            if i % 3 == 0:
+                raise ValueError(i)
+        except ValueError as e:
+            loc = e.__traceback__.tb_frame.f_locals
+            out.append((loc.get('a'), loc.get('b'), loc.get('c'), total))
+    return out
+
+
 CASES = [
     ('shapes', [(64,)], {}),
     ('seen_by_frame', [(48,)], {}),
     ('in_traceback', [(48,)], {}),
     ('released', [(48,)], {}),
+    ('numeric', [(48,)], {}),
+    ('numeric_in_traceback', [(48,)], {}),
 ]

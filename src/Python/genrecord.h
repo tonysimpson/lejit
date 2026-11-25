@@ -35,11 +35,12 @@ le_gen_record_escape_frame(le_frame_t *f);
    it ran. As eval_hook.c's le_gen_direct_end, le_gen_direct_send_end and
    le_gen_direct_send_status do for a generator. */
 EXTERNFN PyObject *
-le_gen_record_end(PyObject *rec, PyObject *result);
+le_gen_record_end(PyThreadState *ts, PyObject *rec, PyObject *result);
 EXTERNFN PyObject *
-le_gen_record_send_end(PyObject *rec, PyObject *result);
+le_gen_record_send_end(PyThreadState *ts, PyObject *rec, PyObject *result);
 EXTERNFN int
-le_gen_record_send_status(PyObject *rec, PyObject *result, PyObject *out[]);
+le_gen_record_send_status(PyThreadState *ts, PyObject *rec, PyObject *result,
+                          PyObject *out[]);
 /* the unit of RETURN_GENERATOR in the code of a generator function, -1 if
    it has none */
 EXTERNFN long
