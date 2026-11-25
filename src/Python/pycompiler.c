@@ -4817,6 +4817,18 @@ cimpl_generator_stop(long coroutine)
     }
 }
 
+#ifdef INTRINSIC_BUILD_FROZENSET
+/* frozenset() of a set display or comprehension: the new set becomes the
+   frozenset, through CPython's own intrinsic, which _PySet_Freeze (not
+   exported) does */
+static PyObject *
+cimpl_build_frozenset(PyObject *set)
+{
+    return _PyIntrinsics_UnaryFunctions[INTRINSIC_BUILD_FROZENSET].func(
+        PyThreadState_GET(), set);
+}
+#endif
+
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
 /* intrinsics.c:stopiteration_error, for a fused generator's code, the
    only generator code compiled (mergepoints.c:_build_merge_points):
@@ -7581,8 +7593,22 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
 
         /* the intrinsics left as CALL_INTRINSIC_1 (bytecode.h:le_instr)
            that mergepoints.c:compiled_intrinsic allows: a generator's
-           PEP 479 handler, and the REPL's print */
+           PEP 479 handler, frozenset() of a new set, and the REPL's print */
         case CALL_INTRINSIC_1:
+#ifdef INTRINSIC_BUILD_FROZENSET
+            if (oparg == INTRINSIC_BUILD_FROZENSET) {
+                x = psyco_generic_call(
+                    po, cimpl_build_frozenset,
+                    CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v",
+                    TOP());
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                Psyco_AssertType(po, x, &PyFrozenSet_Type);
+                PUSH(x);
+                goto fine;
+            }
+#endif
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
             if (oparg == INTRINSIC_STOPITERATION_ERROR) {
                 extra_assert(po->pr.co->co_flags &

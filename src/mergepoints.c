@@ -581,10 +581,14 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
 
 /* the CALL_INTRINSIC_1 arguments pycompiler.c compiles, besides those
    bytecode.h:le_instr folds to the opcodes they replaced: a generator's
-   PEP 479 handler, and the REPL's print */
+   PEP 479 handler, frozenset() of a new set, and the REPL's print */
 static int
 compiled_intrinsic(int arg)
 {
+#ifdef INTRINSIC_BUILD_FROZENSET
+    if (arg == INTRINSIC_BUILD_FROZENSET)
+        return 1;
+#endif
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
     return arg == INTRINSIC_PRINT || arg == INTRINSIC_STOPITERATION_ERROR;
 #else
