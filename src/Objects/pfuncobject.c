@@ -18,6 +18,7 @@
 #include "pabstract.h"
 #include "pdictobject.h"
 #include "ptupleobject.h"
+#include "../segments.h"
 
 /***************************************************************/
 /***   Virtual functions                                     ***/
@@ -454,11 +455,13 @@ vectorcall_replaced(PsycoObject *po, vinfo_t *func)
    vectorcall as ceval makes it where the arguments are known one by one,
    else through its tp_call. The function runs Python code, which tests
    eval_breaker itself: the call leaves no test after it to do
-   (pycompiler.c:breaker_after_call), as tp_call doesn't. */
+   (pycompiler.c:breaker_after_call), as tp_call doesn't. With
+   'on_segment', it stands for a direct call and is made on a stack
+   segment (segments.c). */
 DEFINEFN
 vinfo_t *
 PsycoFunction_RealCall(PsycoObject *po, vinfo_t *vfunc, vinfo_t *arg,
-                       vinfo_t *kw)
+                       vinfo_t *kw, bool on_segment)
 {
     PyObject *kwnames = NULL;
     vinfo_t **kwvalues = NULL;
@@ -469,15 +472,31 @@ PsycoFunction_RealCall(PsycoObject *po, vinfo_t *vfunc, vinfo_t *arg,
     if (keywords)
         kwnames = PsycoDict_PendingNames(kw, &kwvalues);
     if (n >= 0 && (!keywords || kwnames != NULL)) {
-        r = psyco_vectorcall(po, vfunc, NULL, &PsycoTuple_GET_ITEM(arg, 0), n,
-                             kwnames, kwvalues);
+#if LE_STACK_SEGMENTS
+        if (on_segment)
+            r = psyco_vectorcall_on_segment(
+                po, vfunc, &PsycoTuple_GET_ITEM(arg, 0), n, kwnames, kwvalues);
+        else
+#endif
+            r = psyco_vectorcall(po, vfunc, NULL, &PsycoTuple_GET_ITEM(arg, 0),
+                                 n, kwnames, kwvalues);
         if (r == NULL && PycException_Occurred(po))
             return NULL;
     }
-    if (r == NULL && keywords)
+#if LE_STACK_SEGMENTS
+    if (r == NULL && on_segment && keywords)
+        r = psyco_generic_call(po, le_call_on_segment, CfCommonNewRefPyObject,
+                               "lvvv", (long)le_function_tp_call(), vfunc, arg,
+                               kw);
+    else if (r == NULL && on_segment)
+        r = psyco_generic_call(po, le_call_on_segment, CfCommonNewRefPyObject,
+                               "lvvl", (long)le_function_tp_call(), vfunc, arg,
+                               (long)0);
+#endif
+    if (r == NULL && !on_segment && keywords)
         r = psyco_generic_call(po, le_function_tp_call(),
                                CfCommonNewRefPyObject, "vvv", vfunc, arg, kw);
-    else if (r == NULL)
+    else if (r == NULL && !on_segment)
         r = psyco_generic_call(po, le_function_tp_call(),
                                CfCommonNewRefPyObject, "vvl", vfunc, arg,
                                (long)0);
@@ -583,7 +602,7 @@ pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
 fallback:
     Py_INCREF(f);
     vf = vinfo_new(CompileTime_NewSk(sk_new((long)f, SkFlagPyObj)));
-    result = PsycoFunction_RealCall(po, vf, arg, kw);
+    result = PsycoFunction_RealCall(po, vf, arg, kw, false);
     vinfo_decref(vf, po);
     return result;
 }
@@ -691,7 +710,7 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw)
     }
 
 fallback:
-    return PsycoFunction_RealCall(po, func, arg, kw);
+    return PsycoFunction_RealCall(po, func, arg, kw, false);
 }
 
 static vinfo_t *

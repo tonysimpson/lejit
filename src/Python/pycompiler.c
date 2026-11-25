@@ -1736,7 +1736,8 @@ traceback_locals(PsycoObject *po, vinfo_t *tb)
    entries too (cimpl_new_frame). So the locals are written when Python
    reads them, as they are then, not as the exception passes. Where reads
    can't find them, they are written before the call goes into an inlined
-   frame (psyco_catcher_flush), and once more as it ends, while something
+   frame (psyco_catcher_flush) and taken back as it returns
+   (psyco_catcher_unflush), and once more as it ends, while something
    besides the word holds the frame (catcher_flush). NULL in an inlined
    frame, which has no handlers. */
 static vinfo_t *
@@ -1849,6 +1850,25 @@ bool
 psyco_catcher_flush(PsycoObject *po)
 {
     return catcher_flush(po, false);
+}
+
+/* after the inlined call: the locals catcher_flush wrote for it go again
+   (frames.c:psyco_frame_catcher_unflush). The test is compiled out of line
+   when first taken. */
+DEFINEFN
+bool
+psyco_catcher_unflush(PsycoObject *po)
+{
+    vinfo_t *word = catcher_word(po), *now;
+    int on;
+    if (word == NULL)
+        return true;
+    now = vinfo_new(RunTime_NewStack(getstack(word->source), false, false));
+    on = runtime_NON_NULL_f(po, now);
+    if (on <= 0)
+        return on == 0;
+    return psyco_generic_call(po, psyco_frame_catcher_unflush, CfNoReturnValue,
+                              "r", word) != NULL;
 }
 
 /* Whether the handler at 'handler' drops the exception unseen
@@ -5605,7 +5625,7 @@ psyco_can_go_interpreted(PsycoObject *po)
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int i, nstack = STACK_LEVEL();
     long mode = psyco_generator_mode(po);
-    if ((po->pr.co->co_flags & (CO_ITERABLE_COROUTINE | CO_ASYNC_GENERATOR)) ||
+    if ((po->pr.co->co_flags & CO_ASYNC_GENERATOR) ||
         ((po->pr.co->co_flags & (CO_GENERATOR | CO_COROUTINE)) &&
          mode != GENEXPR_RESUMABLE && mode != GENEXPR_DIRECT))
         return false;
@@ -7565,15 +7585,16 @@ out:
 
 #if LE_HAS_OPCODE_SEND && LE_RESUMES_ON_FRAME
 /* GET_YIELD_FROM_ITER in a plain generator: what yield from iterates, a
-   new reference, 'o' itself if it is a generator */
+   new reference, 'o' itself if it is a generator, or a coroutine where
+   'iterable_coro' (a types.coroutine generator's body) */
 static PyObject *
-cimpl_yield_from_iter(PyObject *o)
+cimpl_yield_from_iter(PyObject *o, long iterable_coro)
 {
-    if (PyCoro_CheckExact(o)) {
+    if (PyCoro_CheckExact(o) && !iterable_coro) {
         PyErr_SetString(PyExc_TypeError, LE_MSG_YIELD_FROM_COROUTINE);
         return NULL;
     }
-    if (PyGen_CheckExact(o)) {
+    if (PyGen_CheckExact(o) || PyCoro_CheckExact(o)) {
         Py_INCREF(o);
         return o;
     }
@@ -7693,8 +7714,10 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
            (mergepoints.c:body_compilable): what it iterates */
         case GET_YIELD_FROM_ITER:
             if (Psyco_KnownType(TOP()) != &PyGen_Type) {
-                x = psyco_generic_call(po, cimpl_yield_from_iter,
-                                       CfCommonNewRefPyObject, "v", TOP());
+                x = psyco_generic_call(
+                    po, cimpl_yield_from_iter, CfCommonNewRefPyObject, "vl",
+                    TOP(),
+                    (long)(po->pr.co->co_flags & CO_ITERABLE_COROUTINE));
                 if (x == NULL)
                     break;
                 POP_DECREF();

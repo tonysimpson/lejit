@@ -38,7 +38,7 @@ le_function_tp_call(void);
 /* the real call of a Python function, as compiled code makes it */
 EXTERNFN vinfo_t *
 PsycoFunction_RealCall(PsycoObject *po, vinfo_t *vfunc, vinfo_t *arg,
-                       vinfo_t *kw);
+                       vinfo_t *kw, bool on_segment);
 EXTERNFN vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
                       vinfo_t *arg, vinfo_t *kw, bool allow_inline);
