@@ -409,34 +409,50 @@ def handler_lasti(n):
 
 async def holds_exception(k):
     # what the gc sees holding the exception while the coroutine that
-    # caught it runs: ceval's running frame shows the gc no words where it
-    # marks them so
+    # caught it runs: ceval's running frame shows the gc its locals where
+    # it doesn't mark them hidden
     exc = None
     try:
         async with Exits():
             raise KeyError(k)
     except KeyError as e:
         exc = e
-    return sorted(type(r).__name__ for r in gc.get_referrers(exc))
+    return holders(exc)
 
 
-def running_frame_hidden():
-    # whether ceval shows the gc no words of a frame while it runs
-    try:
-        import lejit._core
-    except ImportError:
-        return True
-    return dict(lejit._core._build['features']).get(
-        'LE_HAS_RUNNING_STACK_HIDDEN')
+def holders(o):
+    return sorted(type(r).__name__ for r in gc.get_referrers(o))
+
+
+class Held:
+    pass
+
+
+def gen_holds(k):
+    # a generator's local, before and after the generator pauses
+    held = Held()
+    for i in range(k):
+        work(i)
+    yield holders(held)
+    yield holders(held)
+
+
+async def resumed_holds(k):
+    # a coroutine's local, after the coroutine has paused
+    held = Held()
+    await pause(k)
+    for i in range(k):
+        work(i)
+    return holders(held)
 
 
 def referrers(n):
-    # where the gc sees a running frame's locals, compiled code that holds
-    # them itself shows it fewer
     out = [outcome(holds_exception(k)) for k in range(3)]
+    out.append([list(gen_holds(k)) for k in range(3)])
+    out.append([outcome(resumed_holds(k)) for k in range(3)])
     ok = compiled(holds_exception) if HANDLERS_COMPILED else True
     # (after compiled(), which reads whether lejit is imported)
-    return out if running_frame_hidden() else len(out), ok
+    return out, ok
 
 
 CASES = [
