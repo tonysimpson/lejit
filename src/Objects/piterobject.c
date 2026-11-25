@@ -131,9 +131,17 @@ piter_iternext(PsycoObject *po, vinfo_t *v)
     vinfo_t *index;
     vinfo_t *result;
     PyTypeObject *tp;
-    bool cached =
+    bool cached, list;
+
+    /* a constant iterator's fields change under the compiled code */
+    if (is_compiletime(v->source)) {
+        PyObject *it = (PyObject *)CompileTime_Get(v->source)->value;
+        return psyco_generic_call(po, Py_TYPE(it)->tp_iternext,
+                                  CfCommonIterNext, "v", v);
+    }
+    cached =
         is_virtualtime(v->source) || vinfo_getitem(v, iSEQITER_IT_SEQ) != NULL;
-    bool list = is_listiter(v);
+    list = is_listiter(v);
 
     if (vinfo_getitem(v, iSEQITER_SPLIT_POS) != NULL) {
         seq = vinfo_getitem(v, iSEQITER_IT_SEQ);

@@ -746,7 +746,7 @@ le_gen_iternext(PyObject *self)
    (psyco_resume_run) and the evaluator pops frames, ceval has left it as
    gen_send_ex2 expects, its exception state unlinked. */
 DEFINEFN PyObject *
-le_gen_direct_end(PyObject *self, PyObject *result)
+le_gen_direct_end(PyThreadState *ts, PyObject *self, PyObject *result)
 {
     PyGenObject *gen = (PyGenObject *)self;
     le_frame_t *f =
@@ -754,8 +754,7 @@ le_gen_direct_end(PyObject *self, PyObject *result)
 #if LE_HAS_EVAL_FRAME_POPS
     if (gen->gi_exc_state.previous_item != NULL) {
         le_gen_frame_end(f, result);
-        result =
-            le_gen_frame_leave(PyThreadState_GET(), f, result, frame_done);
+        result = le_gen_frame_leave(ts, f, result, frame_done);
     }
     if (LE_GEN_PAUSED(gen->gi_frame_state) || result == NULL)
         return result;
@@ -764,7 +763,6 @@ le_gen_direct_end(PyObject *self, PyObject *result)
     Py_DECREF(result);
     return NULL;
 #else
-    PyThreadState *ts = PyThreadState_GET();
     le_gen_frame_end(f, result);
     ts->exc_info = gen->gi_exc_state.previous_item;
     gen->gi_exc_state.previous_item = NULL;
@@ -781,16 +779,17 @@ le_gen_direct_end(PyObject *self, PyObject *result)
 /* gen_iternext and gen_send differ only in a return of None, where
    send raises StopIteration */
 DEFINEFN PyObject *
-le_gen_direct_send_end(PyObject *self, PyObject *result)
+le_gen_direct_send_end(PyThreadState *ts, PyObject *self, PyObject *result)
 {
-    result = le_gen_direct_end(self, result);
+    result = le_gen_direct_end(ts, self, result);
     if (result == NULL && !PyErr_Occurred())
         PyErr_SetNone(PyExc_StopIteration);
     return result;
 }
 
 DEFINEFN int
-le_gen_direct_send_status(PyObject *self, PyObject *result, PyObject *out[])
+le_gen_direct_send_status(PyThreadState *ts, PyObject *self, PyObject *result,
+                          PyObject *out[])
 {
     PyGenObject *gen = (PyGenObject *)self;
     le_frame_t *f =
@@ -798,15 +797,13 @@ le_gen_direct_send_status(PyObject *self, PyObject *result, PyObject *out[])
 #if LE_HAS_EVAL_FRAME_POPS
     if (gen->gi_exc_state.previous_item != NULL) {
         le_gen_frame_end(f, result);
-        result =
-            le_gen_frame_leave(PyThreadState_GET(), f, result, frame_done);
+        result = le_gen_frame_leave(ts, f, result, frame_done);
     }
     if (result == NULL)
         return -1;
     out[0] = result;
     return LE_GEN_PAUSED(gen->gi_frame_state);
 #else
-    PyThreadState *ts = PyThreadState_GET();
     PySendResult r;
     le_gen_frame_end(f, result);
     ts->exc_info = gen->gi_exc_state.previous_item;

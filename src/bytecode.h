@@ -449,6 +449,7 @@ le_op_flags(int op)
         case CONVERT_VALUE:
         case PRINT_EXPR:
         case CALL_INTRINSIC_1: /* mergepoints.c:compiled_intrinsic's */
+        case CALL_INTRINSIC_2: /* mergepoints.c:compiled_intrinsic's */
         case LOAD_BUILD_CLASS:
 #if LE_HAS_OPCODE_LOAD_ASSERTION_ERROR
         case LOAD_ASSERTION_ERROR:

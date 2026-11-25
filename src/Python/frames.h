@@ -110,6 +110,7 @@ struct locals_map_s {
     int lasti;       /* the call's instruction */
     int nvalues;
     long below;
+    long ret_below; /* a note's: where the frame keeps its return address */
     long items[1];
 };
 
@@ -135,6 +136,9 @@ struct stack_frame_info_s {
        whose address is the word above the callee's own slot
        (psyfunc.c:psyco_gen_step) */
     int on_gen_frame;
+    /* where the frame that makes the call keeps its own return address
+       meanwhile (codegen.h:psyco_ret_below); in a record's first entry */
+    long ret_below;
 };
 
 /* the map of po's locals now, with lasti; while inlining, of the
@@ -183,8 +187,9 @@ typedef struct frame_runtime_s {
     /* ceval now runs the frame (psyco_resume_run): its locals and line are
        ceval's, and the compiled code under it waits for ceval's result */
     int resumed;
-    int exposed;                  /* frames.c:expose */
-    struct frame_runtime_s *next; /* the next outer one */
+    int exposed;                   /* frames.c:expose */
+    struct walked_calls_s *walked; /* frames.c:innermost_slot, or NULL */
+    struct frame_runtime_s *next;  /* the next outer one */
 } FrameRuntime;
 
 #if LE_RESUMES_ON_FRAME
