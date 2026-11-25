@@ -1273,14 +1273,13 @@ cimpl_super_lookup_changed(PyTypeObject *tp, PyTypeObject *cls, PyObject *name,
 
 DEFINEFN
 int
-PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
-                        vinfo_t *self, PyObject *name, void *key, PyObject **f)
+PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vclass, vinfo_t *self,
+                        PyObject *name, void *key, PyObject **f)
 {
     PyObject *cls, *descr, *kind;
     PyTypeObject *tp;
     int r;
-    if (!psyco_knowntobe(vsuper, (long)&PySuper_Type) ||
-        !PyUnicode_CheckExact(name) ||
+    if (!PyUnicode_CheckExact(name) ||
         PyUnicode_CompareWithASCIIString(name, "__class__") == 0)
         return 0;
     r = psyco_pyobj_atcompiletime_mega(po, vclass, &cls);

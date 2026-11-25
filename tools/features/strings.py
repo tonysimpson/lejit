@@ -388,6 +388,16 @@ msg('ASYNC_FOR_AITER_NO_ANEXT', 'async for whose __aiter__ returns an object '
     'without __anext__', 'TypeError',
     'r = args[0]; o = cls("A", __aiter__=lambda s: r())()\n'
     'async def f():\n    async for x in o:\n        pass\ncoro_run(f())', [T()])
+msg('ASYNC_FOR_NO_ANEXT', 'async for whose async iterator has lost its '
+    '__anext__', 'TypeError',
+    'C = args[0]\nasync def anext(s):\n    del C.__anext__\n    return 1\n'
+    'C.__aiter__ = lambda s: s\nC.__anext__ = anext\no = C()\n'
+    'async def f():\n    async for x in o:\n        pass\ncoro_run(f())',
+    [T()])
+msg('ASYNC_FOR_BAD_ANEXT', "async for whose __anext__ returns an object "
+    "that can't be awaited", 'TypeError',
+    'r = args[0]; o = cls("A", __aiter__=lambda s: s, __anext__=lambda s: r())()\n'
+    'async def f():\n    async for x in o:\n        pass\ncoro_run(f())', [T()])
 msg('AWAIT_NOT_AWAITABLE', "await on an object that can't be awaited",
     'TypeError', 'o = args[0]()\nasync def f():\n    await o\ncoro_run(f())',
     [T()])
