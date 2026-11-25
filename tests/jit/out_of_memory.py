@@ -10,6 +10,7 @@ import lejit
 if not hasattr(lejit._core, '_fail_after'):
     sys.exit('lejit was not built for tests: build it with LEJIT_DEV_TRACE=1')
 lejit.start()
+lejit._core._hot_calls(1)  # what compiles at the first call
 
 
 def item(i):
