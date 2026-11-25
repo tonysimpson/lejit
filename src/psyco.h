@@ -1024,20 +1024,6 @@ typedef struct {
     le_resume_entry_t entries[LE_RESUME_ENTRIES];
 } le_resume_point_t;
 
-/* A loop head where a function's frame that ceval runs is taken over
-   (eval_hook.c:le_osr_switch), with its entry there, compiled when first
-   needed */
-typedef struct {
-    int head;    /* in bytes */
-    int refused; /* never taken over here (eval_hook.c:osr_point) */
-#if LE_HAS_EXCEPTION_TABLE
-    /* where a handler covers the head, the RERAISE 1 no handler covers,
-       which a raise leaves the frame by; else -1 */
-    int reraise;
-#endif
-    le_resume_point_t point;
-} le_osr_point_t;
-
 typedef struct le_code_extra_s {
     PyObject *merge_points;   /* capsule, Py_None if unsupported, NULL if not
                                  built yet; owned */
@@ -1060,13 +1046,6 @@ typedef struct le_code_extra_s {
 #if LE_RESUMES_GENERATORS_DIRECTLY
     struct le_gen_direct_s *direct; /* le_gen_direct_t, or NULL */
 #endif
-    int nosr;                  /* loop heads its frames were taken over at */
-    le_osr_point_t *osr;       /* one per such head, or NULL */
-    long osr_left;             /* backward jumps its frames make before one is
-                                  taken over (osr.c), 0 while not counted */
-    unsigned char *loop_heads; /* a bit per code unit, set at each
-                                  backward jump's target, or NULL
-                                  (osr.c:le_osr_loop_head) */
 } le_code_extra_t;
 #if LE_RESUMES_GENERATORS_DIRECTLY
 /* A resumable generator's compiled entries as compiled code that steps it
