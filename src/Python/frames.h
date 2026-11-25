@@ -35,10 +35,16 @@ psyco_get_globals(void);
    gives the call's real return address */
 EXTERNFN code_t *
 psyco_activation_returned(long *sp);
-/* the frame object kept for the innermost compiled frame, if it is a
-   compiled callee of code 'co' (borrowed), else NULL */
+/* the frame object kept for the innermost compiled frame, or the frame
+   inlined in it, if it is of code 'co' (borrowed), else NULL */
 EXTERNFN PyFrameObject *
 psyco_innermost_activation(PyCodeObject *co);
+/* how many frame objects of inlined frames are kept: compiled code
+   leaving an inlined frame that ran Python then calls
+   psyco_inline_frame_left, which lets its own go */
+EXTERNVAR int psyco_inline_frames_kept;
+EXTERNFN int
+psyco_inline_frame_left(void);
 
 /* A compiled frame going on interpreted: psyco_resume_begin, then each of
    its f_localsplus and value stack items in order (psyco_resume_value) and
@@ -60,17 +66,14 @@ psyco_resume_block(struct resume_s *st, long type, long handler, long level);
    until its call ends (pycompiler.c:catcher_word). psyco_frame_catch puts
    'f' in it as the frame catches, the innermost compiled frame, whose own
    slot is 'own'; _drop lets it go if nothing else holds it, _shared does
-   too and says whether something does, _unflush takes back the locals
-   _shared's caller gave it for an inlined call, and _end lets it go once
-   given its locals, as the call ends. */
+   too and says whether something does, and _end lets it go once given its
+   locals, as the call ends. */
 EXTERNFN void
 psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own);
 EXTERNFN void
 psyco_frame_catcher_drop(PyObject **word);
 EXTERNFN long
 psyco_frame_catcher_shared(PyObject **word);
-EXTERNFN void
-psyco_frame_catcher_unflush(PyObject **word);
 EXTERNFN void
 psyco_frame_catcher_end(PyObject **word);
 EXTERNFN void
@@ -157,6 +160,11 @@ struct stack_frame_info_s {
                           for an inlined frame (frames.c:kept_frame) */
     struct locals_map_s *back_locals; /* that frame's locals then, or NULL */
     code_t *ret_addr;                 /* a compiled call's return address */
+    /* an inlined frame's own instruction, at a call through C
+       (codegen.c:psyco_note_call_site), or -1 */
+    int own_lasti;
+    /* an inlined frame's own locals then, or NULL */
+    struct locals_map_s *own_locals;
     /* the function whose coroutine's body this call runs, started by its
        await (psyfunc.c:psyco_coro_start), or NULL */
     PyFunctionObject *coro_func;
@@ -173,12 +181,12 @@ struct stack_frame_info_s {
 };
 
 /* the map of po's locals now, with lasti; while inlining, of the
-   inlined frame's parent's, whose slot the call uses. A
+   inlined frame's parent's, whose slot the call uses, unless 'own'. A
    local only in a register is found there (LM_REG), or with reg_pos at
    the position its register is pushed at for this call
    (psyco_call_psyco). Nothing is emitted. */
 EXTERNFN struct locals_map_s *
-psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos);
+psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own);
 EXTERNVAR struct locals_map_s **psyco_locals_maps;
 EXTERNFN bool
 psyco_locals_map_reads(vinfo_t *vi, int level);

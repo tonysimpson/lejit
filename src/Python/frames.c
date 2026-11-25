@@ -30,10 +30,10 @@
  * the locals when the exception leaves the frame (psyco_frame_write_locals);
  * the frame that catches it is held by its catcher word until its call
  * ends and reads them like an emulated frame (CATCHER_NOTE), and gets them
- * for an inlined call while it runs and at the end while something else
- * holds it (pycompiler.c:catcher_word); a virtual list becomes real as it
- * becomes one of its locals (catcher_local_readable). Known gaps: virtual
- * lists in other frames, inlined frames' locals, a read from another thread or
+ * at the end while something else holds it (pycompiler.c:catcher_word); a
+ * virtual list becomes real as it becomes one of its locals
+ * (catcher_local_readable). Known gaps: virtual lists in other frames,
+ * inlined frames' locals, a read from another thread or
  * from Python run outside a call that may run it (a finaliser), which
  * see the last written.
  * frame.f_back, frame.f_lineno, frame.f_lasti, frame.f_locals and
@@ -119,6 +119,7 @@ finfo_inlined_caller(stack_frame_info_t *p, PsycoObject *caller)
     Source sglobals = caller->vlocals.items[INDEX_LOC_GLOBALS]->source;
     p->co = caller->pr.co;
     p->nargs = -1;
+    p->own_lasti = -1;
     p->back_lasti = inline_parent_lasti(caller);
     if (is_compiletime(sglobals))
         p->globals = (PyObject *)CompileTime_Get(sglobals)->value;
@@ -141,6 +142,7 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
     memset(p, 0, (inlining + 1) * sizeof(stack_frame_info_t));
     p->link_stack_depth = -inlining;
     p->nargs = -1;
+    p->own_lasti = -1;
     p->co = callee->pr.co;
     p->ret_below = psyco_ret_below(caller != NULL ? caller : callee);
     p->back_lasti =
@@ -168,6 +170,7 @@ psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co)
     memset(p, 0, (inlining + 1) * sizeof(stack_frame_info_t));
     p->link_stack_depth = -inlining;
     p->nargs = -1;
+    p->own_lasti = -1;
     p->co = co;
     p->ret_below = psyco_ret_below(caller);
     p->back_lasti = psyco_call_lasti(caller->pr.co, caller->pr.next_instr);
@@ -590,9 +593,11 @@ n_locals_plus(PyCodeObject *co)
    'slot', as new references in values[n_locals_plus(co)], NULL where
    unknown (unbound, dead, or a virtual value not computable here). False
    if the slot doesn't say: the frame is between calls that may run
-   Python, or is inlined. Read while the frame is in that call. */
+   Python. Read while the frame is in that call. With 'own', the frame is
+   inlined in the frame whose slot it is, and its own record says. */
 static bool
-slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
+slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values,
+            int own)
 {
     long v = (long)*slot;
     struct locals_map_s *map;
@@ -602,7 +607,25 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
     int i, n = n_locals_plus(co);
     if (v == -1 || v == FINFO_RETURNING)
         return false;
-    if ((v & 1) != 0) {
+    if (own) {
+        stack_frame_info_t *rec = (stack_frame_info_t *)v, *in;
+        code_t *ip;
+        if ((v & 1) != 0)
+            return false;
+        in = rec->link_stack_depth == 0 ? rec : rec + 1;
+        map = in->own_locals;
+        if ((rec->link_stack_depth != 0 && rec->link_stack_depth != -1) ||
+            in->co != co || map == NULL || map->nvalues != n)
+            return false;
+        /* at a call through C, as for its parent's (below) */
+        if (in == rec && rec->back_locals->retaddr != NULL) {
+            if (!slot_registers(slot, regs, &ip) ||
+                ip != rec->back_locals->retaddr)
+                return false;
+            pregs = regs;
+        }
+    }
+    else if ((v & 1) != 0) {
         /* a note is for the call the frame is in only if that call returns
            where the note's did */
         code_t *ip;
@@ -613,9 +636,17 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
         pregs = regs;
     }
     else {
+        code_t *ip;
         map = ((stack_frame_info_t *)v)->back_locals;
         if (map == NULL || map->nvalues != n)
             return false;
+        /* an inlined frame's call through C, which may have left the
+           parent's locals in callee-saved registers, as for a note */
+        if (map->retaddr != NULL) {
+            if (!slot_registers(slot, regs, &ip) || ip != map->retaddr)
+                return false;
+            pregs = regs;
+        }
     }
     data = (char *)slot - map->below;
     p = map->items;
@@ -639,13 +670,13 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values)
 /* f's locals now, from the compiled frame whose slot is 'slot', if it
    says (slot_locals): an unknown cell or free variable is left as it is */
 static void
-locals_from_slot(PyFrameObject *f, stack_frame_info_t **slot)
+locals_from_slot(PyFrameObject *f, stack_frame_info_t **slot, int own)
 {
     int i, n = n_locals_plus(le_pyframe_code(f));
     PyObject **values = PyMem_Malloc(n * sizeof(PyObject *) + 1);
     if (values == NULL)
         return;
-    if (slot_locals(slot, le_pyframe_code(f), values)) {
+    if (slot_locals(slot, le_pyframe_code(f), values, own)) {
         for (i = le_code_nlocals(le_pyframe_code(f)); i < n; i++)
             if (values[i] == NULL)
                 values[i] = LE_LOCAL_UNKNOWN;
@@ -693,11 +724,29 @@ visit_tag(const visited_frame_t *v, void *f)
     return NULL;
 }
 
+/* the slot that says where the locals of the frame of a walk's 'tag'
+   (pvisitframes) are, and whether it is that of the frame it is inlined
+   in (slot_locals) */
+static stack_frame_info_t **
+tag_locals_slot(long tag, int *own)
+{
+    stack_frame_info_t **slot = (stack_frame_info_t **)(tag + ((-tag) & 7));
+    stack_frame_info_t **next;
+    *own = 1;
+    if ((stack_frame_info_t **)tag != slot)
+        return slot;
+    next = psyco_next_stack_frame(slot);
+    *own = next == slot;
+    return next;
+}
+
 static void
 fill_noted_locals(PyFrameObject *f)
 {
     PyObject *found;
+    stack_frame_info_t **slot;
     long tag;
+    int own;
     if (le_frame_is_executing(f) || !le_frame_stack_empty(f) ||
         le_pyframe_code(f)->co_stacksize < 2 ||
         le_pyframe_stack(f)[0] != LOCALS_NOTE)
@@ -709,7 +758,8 @@ fill_noted_locals(PyFrameObject *f)
         return;
     }
     Py_DECREF(found);
-    locals_from_slot(f, psyco_next_stack_frame((stack_frame_info_t **)tag));
+    slot = tag_locals_slot(tag, &own);
+    locals_from_slot(f, slot, own);
 }
 
 PSY_INLINE PyFrameObject *
@@ -745,8 +795,10 @@ psyco_build_pyframe(PyObject *co, PyObject *globals, PyThreadState *tstate)
    is asked for. A kept frame's locals and line are read from the call
    when asked for (frame_sync_locals, kept_lasti). Keyed by the callee's own
    slot, a stack address, unique among the calls running in every thread.
-   An inlined frame has no call of its own whose end could be seen, so its
-   frame objects are still new each time. */
+   An inlined frame has no call of its own whose return could be seen: its
+   frame is kept until the code it is inlined in leaves it, which then
+   lets it go (psyco_inline_frame_left); keyed by its parent's slot plus
+   one. */
 typedef struct {
     stack_frame_info_t **own;  /* the callee's slot; NULL: a free entry */
     stack_frame_info_t **slot; /* its caller's, holding the callee's record */
@@ -765,7 +817,14 @@ typedef struct {
     int gen;
     PyObject **keep;
     int nkeep;
+    int inlined; /* an inlined frame's */
 } activation_t;
+
+#define INLINE_KEY(own) ((stack_frame_info_t **)((char *)(own) + 1))
+
+/* how many inlined frames' frames are kept: the code leaving an inlined
+   frame that ran Python tests it */
+DEFINEVAR int psyco_inline_frames_kept = 0;
 
 static activation_t *acts = NULL;
 static size_t acts_mask = 0, acts_count = 0;
@@ -917,7 +976,17 @@ live_activation(PyFrameObject *f)
 static int
 kept_lasti(activation_t *a)
 {
-    long v = (long)*a->own;
+    long v = (long)*(a->inlined ? a->slot : a->own);
+    if (a->inlined) {
+        /* in the parent's slot: the inlined frame's own record, or that of
+           the compiled call it makes, after the callee's entry */
+        stack_frame_info_t *rec = (stack_frame_info_t *)v;
+        if ((v & 1) != 0)
+            return -1;
+        if (rec->link_stack_depth == 0)
+            return rec->own_lasti;
+        return finfo_last(rec) == rec + 1 ? rec->back_lasti : -1;
+    }
     if (v == -1 || v == FINFO_RETURNING)
         return -1;
     if ((v & 1) != 0)
@@ -1205,6 +1274,7 @@ gen_kept_frame(stack_frame_info_t **slot, int lasti)
     a->gen = 1;
     a->keep = NULL;
     a->nkeep = 0;
+    a->inlined = 0;
     Py_INCREF(f);
     Py_INCREF(f);
     return f;
@@ -1266,20 +1336,80 @@ gen_activation_find(PyFrameObject *f)
 #define visited_gen_frame(v) ((le_frame_t *)NULL)
 #endif
 
-static PyFrameObject *
-kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
+/* a kept frame no call can see any more goes */
+static void
+drop_activation(activation_t *a)
 {
-    stack_frame_info_t **slot = (stack_frame_info_t **)tag, **own;
-    stack_frame_info_t *rec = *slot;
+    PyFrameObject *f = a->frame;
+    PyObject *t, *v, *tb;
+#ifdef PyFrameLocalsProxy_Check
+    if (a->exposed)
+        psyco_frames_exposed--;
+#endif
+    if (a->inlined)
+        psyco_inline_frames_kept--;
+    le_pyframe_set_executing(f, 0);
+    act_remove(a);
+    if (le_pyframe_code(f)->co_stacksize >= 2 &&
+        le_pyframe_stack(f)[0] == ACTIVATION_NOTE)
+        le_pyframe_stack(f)[0] = le_pyframe_stack(f)[1] = NULL;
+    PyErr_Fetch(&t, &v, &tb);
+    Py_DECREF(f);
+    PyErr_Restore(t, v, tb);
+}
+
+static stack_frame_info_t **
+innermost_slot(PyFrameObject **real);
+
+/* the slot of the innermost compiled frame, as innermost_slot gives it */
+static stack_frame_info_t **
+innermost_own(stack_frame_info_t **slot, PyFrameObject *real)
+{
+    FrameRuntime *fr;
+    if (slot != NULL)
+        return (*slot)->link_stack_depth == 0 ? slot
+                                              : psyco_next_stack_frame(slot);
+    fr = real == NULL ? NULL : psyco_frame_start_get(le_frame_of(real));
+    return fr == NULL ? NULL : *fr->psy_frames_start;
+}
+
+/* the kept frame of the frame of code 'co' inlined in the innermost
+   compiled frame, if any and ceval doesn't run it */
+static activation_t *
+inline_kept_at(stack_frame_info_t **slot, PyFrameObject *real,
+               PyCodeObject *co)
+{
+    stack_frame_info_t **own = innermost_own(slot, real);
     activation_t *a;
-    code_t **ret;
+    if (psyco_inline_frames_kept == 0 || own == NULL ||
+        (a = act_find(INLINE_KEY(own))) == NULL || a->resumed ||
+        le_pyframe_code(a->frame) != co)
+        return NULL;
+    return a;
+}
+
+DEFINEFN int
+psyco_inline_frame_left(void)
+{
+    PyFrameObject *real;
+    stack_frame_info_t **slot = innermost_slot(&real), **own;
+    activation_t *a;
+    own = innermost_own(slot, real);
+    if (own != NULL && (a = act_find(INLINE_KEY(own))) != NULL)
+        drop_activation(a);
+    return 0;
+}
+
+/* the activation with key 'own' for the frame of code 'co' whose record
+   is in 'slot', made if need be. A compiled callee's call's return address
+   is at 'ret' (NULL: not found, and none is made); an inlined frame's has
+   none. The frame, a new reference, or NULL. */
+static PyFrameObject *
+keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
+           code_t **ret, PyObject *co, PyObject *globals, int lasti)
+{
+    activation_t *a = act_find(own);
     PyFrameObject *f;
-    if (rec->nargs < 0 || rec->co != (PyCodeObject *)co)
-        return NULL; /* an inlined frame */
-    if (gen_frame_at(slot) != NULL)
-        return gen_kept_frame(slot, lasti);
-    own = psyco_next_stack_frame(slot);
-    a = act_find(own);
     if (a != NULL) {
         if (a->slot != slot || le_pyframe_code(a->frame) != (PyCodeObject *)co)
             return NULL;
@@ -1289,8 +1419,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
             le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
         return f;
     }
-    ret = return_address(own, rec);
-    if (ret == NULL)
+    if (!inlined && ret == NULL)
         return NULL;
     f = psyco_build_pyframe(co, globals, PyThreadState_GET());
     le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
@@ -1302,7 +1431,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
     }
     a = act_add(own);
     a->slot = slot;
-    a->ret = barrier_taken(own, ret);
+    a->inlined = inlined;
     a->frame = f; /* the table's reference */
     a->resumed = 0;
     a->exposed = 0;
@@ -1311,8 +1440,38 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
     a->gen = 0;
     a->keep = NULL;
     a->nkeep = 0;
+    if (inlined)
+        psyco_inline_frames_kept++;
+    else
+        a->ret = barrier_taken(own, ret);
     Py_INCREF(f);
     return f;
+}
+
+/* 'tag' is the slot holding the frame's record, less one per inlined
+   frame before it (pvisitframes) */
+static PyFrameObject *
+kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
+{
+    long entry = (-tag) & (sizeof(long) - 1);
+    stack_frame_info_t **slot = (stack_frame_info_t **)(tag + entry), **own;
+    stack_frame_info_t *rec = *slot;
+    if (entry == 0 && rec->nargs >= 0 && rec->co == (PyCodeObject *)co) {
+        /* a compiled callee */
+        if (gen_frame_at(slot) != NULL)
+            return gen_kept_frame(slot, lasti);
+        own = psyco_next_stack_frame(slot);
+        return keep_frame(own, slot, 0, return_address(own, rec), co, globals,
+                          lasti);
+    }
+    if ((entry == 1 && rec->nargs >= 0 && finfo_last(rec) == rec + 1 &&
+         (rec + 1)->co == (PyCodeObject *)co) ||
+        (entry == 0 && rec->link_stack_depth == 0 &&
+         rec->co == (PyCodeObject *)co))
+        /* an inlined frame, in the compiled call it makes or in its own
+           record: its parent's slot is the one holding them */
+        return keep_frame(INLINE_KEY(slot), slot, 1, NULL, co, globals, lasti);
+    return NULL;
 }
 
 /* CPython's public constructors make the generator around a frame object,
@@ -1555,7 +1714,11 @@ psyco_innermost_activation(PyCodeObject *co)
     PyFrameObject *real, *g;
     stack_frame_info_t **slot;
     activation_t *a;
-    if ((slot = innermost_slot(&real)) == NULL)
+    slot = innermost_slot(&real);
+    /* the frame inlined in it, until its code leaves it */
+    if ((a = inline_kept_at(slot, real, co)) != NULL)
+        return a->frame;
+    if (slot == NULL)
         return NULL;
     /* a generator's frame stands for its body's call from the start */
     if (gen_frame_at(slot) != NULL && (*slot)->co == co &&
@@ -1585,26 +1748,21 @@ emulate_frame(const visited_frame_t *v)
         int lasti = v->lasti;
         extra_assert(co != NULL);
         extra_assert(globals != NULL);
-        /* the tag is the slot holding the frame's record, or less one per
-           inlined frame before it */
-        if ((tag & (sizeof(long) - 1)) == 0 &&
-            (result = kept_frame(tag, co, globals, lasti)) != NULL)
+        if ((result = kept_frame(tag, co, globals, lasti)) != NULL)
             return result;
         result = psyco_build_pyframe(co, globals, PyThreadState_GET());
         le_frame_set_lasti(le_frame_of(result), le_lasti_of(lasti));
-        if ((tag & (sizeof(long) - 1)) == 0) {
-            if (((PyCodeObject *)co)->co_stacksize >= 2) {
-                le_pyframe_stack(result)[0] = LOCALS_NOTE;
-                le_pyframe_stack(result)[1] = (PyObject *)tag;
-            }
-            else {
-                if (slot_locals(
-                        psyco_next_stack_frame((stack_frame_info_t **)tag),
-                        (PyCodeObject *)co,
-                        le_frame_args(le_frame_of(result))))
-                    le_frame_words_own(le_frame_of(result),
-                                       n_locals_plus((PyCodeObject *)co));
-            }
+        if (((PyCodeObject *)co)->co_stacksize >= 2) {
+            le_pyframe_stack(result)[0] = LOCALS_NOTE;
+            le_pyframe_stack(result)[1] = (PyObject *)tag;
+        }
+        else {
+            int own;
+            stack_frame_info_t **slot = tag_locals_slot(tag, &own);
+            if (slot_locals(slot, (PyCodeObject *)co,
+                            le_frame_args(le_frame_of(result)), own))
+                le_frame_words_own(le_frame_of(result),
+                                   n_locals_plus((PyCodeObject *)co));
         }
         return result;
     }
@@ -1709,6 +1867,8 @@ pvisitframes(PyObject *(*callback)(const visited_frame_t *, void *),
             returning = (long)*f1 == FINFO_RETURNING;
             if ((((long)*f1) & 1) != 0 && (long)*f1 != -1 && !returning)
                 lasti = psyco_note_map((long)*f1)->lasti;
+            else if ((((long)*f1) & 1) == 0)
+                lasti = (*f1)->own_lasti;
 
             /* now actually visit them in the correct order */
             while (revlist) {
@@ -2085,14 +2245,14 @@ frame_sync_locals(PyFrameObject *f)
     if (runs_compiled(f)) {
         fr = psyco_frame_start_get(le_frame_of(f));
         if (fr->psy_code == le_pyframe_code(f))
-            locals_from_slot(f, *fr->psy_frames_start);
+            locals_from_slot(f, *fr->psy_frames_start, 0);
     }
     else if ((a = live_activation(f)) != NULL) {
-        locals_from_slot(f, a->own);
+        locals_from_slot(f, a->inlined ? a->slot : a->own, a->inlined);
     }
     else if (has_catcher_note(f)) {
         if ((own = catcher_slot(f, &tag, &fr)) != NULL)
-            locals_from_slot(f, own);
+            locals_from_slot(f, own, 0);
     }
     else {
         fill_noted_locals(f);
@@ -2132,6 +2292,8 @@ exposed_here(PyCodeObject *co)
     stack_frame_info_t **slot = innermost_slot(&real);
     activation_t *a;
     FrameRuntime *fr;
+    if ((a = inline_kept_at(slot, real, co)) != NULL)
+        return a->exposed;
     if (slot == NULL && real != NULL && le_pyframe_code(real) == co) {
         fr = psyco_frame_start_get(le_frame_of(real));
         return fr != NULL && fr->exposed;
@@ -2560,27 +2722,6 @@ psyco_frame_catcher_shared(PyObject **word)
     return 0;
 }
 
-/* The locals written into the frame for an inlined call's reads, which
-   can't find them through the note: once it returns, reads find them
-   again (frame_sync_locals), and a copy would hold what the frame has let
-   go since, such as an exception it deletes, whose traceback holds the
-   frame back. Cells are left, as locals_calls leaves them. */
-DEFINEFN
-void
-psyco_frame_catcher_unflush(PyObject **word)
-{
-    PyFrameObject *f = (PyFrameObject *)*word;
-    le_frame_t *frame;
-    int i, n;
-    if (f == NULL || !has_catcher_note(f))
-        return;
-    frame = le_frame_of(f);
-    n = le_code_nlocals(le_pyframe_code(f));
-    Py_INCREF(f);
-    for (i = 0; i < n; i++) le_frame_word_set(frame, i, NULL);
-    Py_DECREF(f);
-}
-
 DEFINEFN
 void
 psyco_frame_catcher_end(PyObject **word)
@@ -2850,7 +2991,7 @@ root_copy(PyFrameObject *f)
                             le_frame_globals(le_frame_of(f)),
                             PyThreadState_GET());
     if (!slot_locals(*fr->psy_frames_start, le_pyframe_code(f),
-                     le_frame_args(le_frame_of(c)))) {
+                     le_frame_args(le_frame_of(c)), 0)) {
         Py_DECREF(c);
         return f;
     }
@@ -3587,6 +3728,8 @@ struct resume_s {
     /* the frame the catcher word held, if not 'f': given the locals now */
     PyFrameObject *catcher;
     stack_frame_info_t **slot; /* the compiled frame's record, or NULL */
+    /* the key of the inlined frame's kept frame 'f' is, let go at its end */
+    stack_frame_info_t **inline_key;
     int nvalues;
     /* 'f' keeps its locals, not the compiled frame's: they were exposed
        (expose) */
@@ -3702,9 +3845,28 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
     st->catcher = c;
     st->keep_locals = 0;
     st->gen = 0;
+    st->inline_key = NULL;
     st->slot = innermost_slot(&real);
-    if (st->slot != NULL && gen_frame_at(st->slot) != NULL &&
-        (*st->slot)->co == co && (g = gen_kept_frame(st->slot, -1)) != NULL) {
+    if ((a = inline_kept_at(st->slot, real, co)) != NULL) {
+        /* the inlined frame, asked for while it ran */
+        st->inline_key = a->own;
+        a->resumed = 1;
+#ifdef PyFrameLocalsProxy_Check
+        if (a->exposed) {
+            a->exposed = 0;
+            psyco_frames_exposed--;
+            st->keep_locals = 1;
+        }
+#endif
+        st->f = a->frame;
+        Py_INCREF(st->f);
+        if (co->co_stacksize >= 2)
+            le_pyframe_stack(st->f)[0] = le_pyframe_stack(st->f)[1] = NULL;
+        le_frame_set_builtins(le_frame_of(st->f), builtins);
+    }
+    else if (st->slot != NULL && gen_frame_at(st->slot) != NULL &&
+             (*st->slot)->co == co &&
+             (g = gen_kept_frame(st->slot, -1)) != NULL) {
         /* the generator's own frame, which ceval goes on with as it
            resumes it: it is linked and has its builtins already */
         a = act_find(psyco_next_stack_frame(st->slot));
@@ -3986,6 +4148,11 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
         struct hidden_s **h = &hidden_frames;
         while (*h != &hidden) h = &(*h)->next;
         *h = hidden.next;
+    }
+    if (st->inline_key != NULL) {
+        activation_t *a = act_find(st->inline_key);
+        if (a != NULL)
+            drop_activation(a);
     }
     Py_DECREF(f);
     PyMem_Free(st);

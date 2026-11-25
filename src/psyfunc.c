@@ -539,21 +539,11 @@ call_with_inline_frame(PsycoObject *po, struct fncall_arg_s *fncall,
     {
         vresult = LOC_INLINING;
         LOC_INLINING = NULL;
-        if (!psyco_catcher_unflush(po)) {
-            vinfo_decref(vresult, po);
-            array_delete(fncall->inputvinfos, po);
-            return NULL;
-        }
     }
     else {
         /* initial case: move the bound locals into an EInline
            pseudo-exception */
-        vinfo_t *v;
-        if (!psyco_catcher_flush(po)) {
-            array_delete(fncall->inputvinfos, po);
-            return NULL;
-        }
-        v = vinfo_new(SOURCE_NOT_IMPORTANT);
+        vinfo_t *v = vinfo_new(SOURCE_NOT_IMPORTANT);
         v->array = array_new(TOTAL_LOC_INLINE + fncall->po_size);
         v->array->items[LOC_INLINE_CO] = vinfo_new(
             CompileTime_New((long)fncall->co)); /* borrowed, as above */
@@ -652,7 +642,11 @@ psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a)
     /* leaving an inlined frame restores its (never inlining) parent; on
        entry the old locals were already moved out (psyco_save_inline_po) */
     po->pr.is_inlining = false;
-    for (i = oldcount; i--;) vinfo_xdecref(old[i], po);
+    /* in CPython's order, as the end of a called frame (pycompiler.c:
+       exit_function) */
+    for (i = 0; i < oldcount; i++)
+        vinfo_xdecref(
+            old[LE_HAS_FRAME_CLEARED_LAST_FIRST ? oldcount - 1 - i : i], po);
     po->pr.is_inlining = was_inlining;
     PyMem_Free(old);
     return po;
@@ -669,19 +663,42 @@ load_tstate(PsycoObject *po)
     return le_tstate_load(po);
 }
 
-/* Py_LeaveRecursiveCall after a compiled call; entering
-   is mechanisms/recursion.h's enter_recursive_call, or through C
-   enter_c_recursive_call, on a thread state the caller has loaded */
+/* Py_LeaveRecursiveCall after a compiled call, and the inlined frame's
+   level psyco_enter_recursive_call added; 'through_c' as there */
 DEFINEFN
 bool
 psyco_leave_recursive_call(PsycoObject *po, int through_c)
 {
-    vinfo_t *vts = load_tstate(po);
+    vinfo_t *vts = load_tstate(po), *vdepth;
     if (vts == NULL)
         return false;
+    if (po->pr.is_inlining) {
+        vdepth = add_to_depth(po, -LE_RECURSION_STEP, vts);
+        if (vdepth == NULL) {
+            vinfo_decref(vts, po);
+            return false;
+        }
+        vinfo_decref(vdepth, po);
+    }
     if (through_c != LE_C_NONE)
         return leave_c_recursive_call(po, vts, through_c);
     return leave_recursive_call(po, vts);
+}
+
+/* Py_EnterRecursiveCall before a compiled call, on a thread state the
+   caller has loaded. From an inlined frame, for that frame too while the
+   call runs: CPython counted it as it entered, and the test of the call's
+   level stands for its (a call through C from an inlined frame doesn't
+   count the frame). With 'through_c', where CPython enters the frame from
+   C (mechanisms/recursion.h:enter_c_recursive_levels). False with an
+   exception set in 'po'. */
+static bool
+psyco_enter_recursive_call(PsycoObject *po, vinfo_t *vts, int through_c)
+{
+    int levels = po->pr.is_inlining ? 2 : 1;
+    return through_c != LE_C_NONE
+               ? enter_c_recursive_levels(po, vts, levels, through_c)
+               : enter_recursive_levels(po, vts, levels);
 }
 
 /* ceval's test of eval_breaker before an instruction:
@@ -1252,7 +1269,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
            stack; psyco_call_psyco leaves it after the call.
            Emitted before the frame is built, so no argument source moves. */
         if (!refused && entered && !inlining)
-            entered = enter_recursive_call(po, vts);
+            entered = psyco_enter_recursive_call(po, vts, LE_C_NONE);
         vinfo_decref(vts, po);
         if (refused || !entered) {
             array_delete(fncall.inputvinfos, po);
@@ -1421,9 +1438,7 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
     result = NULL;
     through_c = mode != GENEXPR_DIRECT ? LE_C_CONSUMER : LE_C_NONE;
     vts = load_tstate(po);
-    if (vts != NULL &&
-        (through_c != LE_C_NONE ? enter_c_recursive_call(po, vts, through_c)
-                                : enter_recursive_call(po, vts))) {
+    if (vts != NULL && psyco_enter_recursive_call(po, vts, through_c)) {
         vinfo_decref(vts, po);
         vts = NULL;
         Psyco_ForgetClasses(po);
