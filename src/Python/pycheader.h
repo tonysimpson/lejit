@@ -83,6 +83,14 @@
 #define GENEXPR_SUM_FLOAT 10   /* acc a float, the compensation a double */
 #define GENEXPR_SUM_COMPLEX 11 /* acc the complex sum's state */
 #define GENEXPR_SUM_GENERIC 12 /* plain +, for good */
+/* Not a generator: a function's frame that ceval is running, taken over
+   at a loop head (eval_hook.c:le_osr_switch) and given back to ceval as
+   it ends. acc is as for GENEXPR_RESUMABLE; a return leaves
+   the locals in the frame and its place at the return
+   (pycompiler.c:osr_return), with the value on its stack where that
+   instruction takes it from there. Only such a frame of a function's code
+   has the slots (psyco_generator_mode). */
+#define GENEXPR_OSR 13
 #define GENEXPR_SLOTS (2 + LE_HAS_SUM_COMPENSATED)
 /* the code whose body may run compiled on its own frame, with the slots
    above (psyco_generator_mode) */

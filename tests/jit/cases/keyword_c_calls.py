@@ -113,5 +113,5 @@ CASES = [
     ('many_values', "[(3,), (4,)]", {}),
     ('varargs', "[(3,), (4,)]", {}),
     ('errors', "[(2,), (3,)]", {}),
-    ('no_residual_calls', "[(3,)]", {'checked': 'reads lejit._core._stats'}),
+    ('no_residual_calls', "[(3,)]", {'compiles_each_call': 'compiles a fresh code object', 'checked': 'reads lejit._core._stats'}),
 ]
