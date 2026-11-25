@@ -54,6 +54,7 @@ psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true);
       r      a run-time 'vinfo_t*' value passed as a reference
       a      a 'vinfo_array_t*' used by the C function as output buffer
       A      same as 'a', but the C function creates new references
+      i      a 'vinfo_array_t*' of values the C function reads
 
    'r' means that the C function wants to get a reference to a
    single-word value (typically it is an output argument). The
@@ -64,10 +65,23 @@ psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true);
    containing as many words as specified by the array count.
    psyco_generic_call() fills the array with run-time vinfo_ts
    representing the output values.
+
+   'i' means that the C function gets a pointer to as many words as the
+   array count, filled before the call with the items' values, run-time or
+   compile-time, in the caller's frame; a NULL item's word is left unset.
+   The words are borrowed: the items keep their references. The call is
+   always made at run time (no CfPure).
 */
 EXTERNFN vinfo_t *
 psyco_generic_call(PsycoObject *po, void *c_function, int flags,
                    const char *arguments, ...);
+
+/* the stack an 'i' array of 'count' words takes: whole 16-byte units, so
+   that the depth after the call keeps the parity it would have without
+   the array. A block is matched only at the same return-address slot mod
+   16 (dispatcher.c:compare_return_address); a path reached at the other
+   parity would compile its blocks again. */
+#define INPUT_ARRAY_BYTES(count) ((((count) + 1) & ~1) * (int)sizeof(long))
 
 /* compile_time_call's result for a fresh object (psyco_shared_constant):
    psyco_generic_call then emits the call */

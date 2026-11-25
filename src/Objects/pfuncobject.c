@@ -419,22 +419,17 @@ PsycoFunction_RealCall(PsycoObject *po, vinfo_t *vfunc, vinfo_t *arg,
 {
     PyObject *kwnames = NULL;
     vinfo_t **kwvalues = NULL;
-    vinfo_t *values[8]; /* psyco_vectorcall takes fewer */
     vinfo_t *r = NULL;
     char blocking = po->blocking_call;
-    int i, n = is_virtualtime(arg->source) ? PsycoTuple_Load(arg) : -1;
+    int n = is_virtualtime(arg->source) ? PsycoTuple_Load(arg) : -1;
     bool keywords = kw != NULL && !psyco_known_NULL(kw);
     if (keywords)
         kwnames = PsycoDict_PendingNames(kw, &kwvalues);
     if (n >= 0 && (!keywords || kwnames != NULL)) {
-        int k = kwnames == NULL ? 0 : (int)PyTuple_GET_SIZE(kwnames);
-        if (n + k <= 8) {
-            for (i = 0; i < n; i++) values[i] = PsycoTuple_GET_ITEM(arg, i);
-            for (i = 0; i < k; i++) values[n + i] = kwvalues[i];
-            r = psyco_vectorcall(po, vfunc, values, n, kwnames);
-            if (r == NULL && PycException_Occurred(po))
-                return NULL;
-        }
+        r = psyco_vectorcall(po, vfunc, NULL, &PsycoTuple_GET_ITEM(arg, 0), n,
+                             kwnames, kwvalues);
+        if (r == NULL && PycException_Occurred(po))
+            return NULL;
     }
     if (r == NULL && keywords)
         r = psyco_generic_call(po, le_function_tp_call(),
