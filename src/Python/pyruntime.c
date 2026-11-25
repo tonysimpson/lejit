@@ -38,6 +38,28 @@
 #include "opcode.h"
 #include "../bytecode.h"
 
+#if LE_HAS_CTYPES_CALL_AUDITED
+/* the two words PySys_Audit's should_audit (Python/sysmodule.c) tests
+   for a hook: the runtime's list and the main interpreter's. False where a
+   dtrace probe can also want the event, which only PySys_Audit can tell
+   (Modules/pctypes.c) */
+bool
+le_audit_hook_words(void **runtime_head, void **interp_hooks)
+{
+#ifdef WITH_DTRACE
+    return false;
+#else
+    _Static_assert(
+        sizeof(_PyRuntime.audit_hooks.head) == sizeof(void *) &&
+            sizeof(((PyInterpreterState *)0)->audit_hooks) == sizeof(void *),
+        "LeJIT: the audit hook lists are loaded as pointers");
+    *runtime_head = &_PyRuntime.audit_hooks.head;
+    *interp_hooks = &PyInterpreterState_Main()->audit_hooks;
+    return true;
+#endif
+}
+#endif
+
 /* le_tstate_current_address, where the thread state isn't a thread-local
    (mechanisms/tstate.h) */
 #if !LE_HAS_THREAD_LOCAL_TSTATE

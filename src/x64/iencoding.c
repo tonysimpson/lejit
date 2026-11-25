@@ -382,8 +382,9 @@ run_time_result(PsycoObject *po, int flags)
 }
 
 DEFINEFN vinfo_t *
-run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
-              char argtags[], long args[], int total_output_array_size)
+run_time_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
+              int arg_count, char argtags[], long args[],
+              int total_output_array_size)
 {
     int stackbase, i, double_arg_count, double_arg_i, int_arg_i;
     vinfo_t *vresult;
@@ -491,7 +492,17 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
                 abort();
         }
     }
-    END_CALL_I(c_function);
+    if (vtarget != NULL) {
+        /* the arguments are set, and the address is in a callee-saved
+           register or the stack (iencoding.h) */
+        Source s = vtarget->source;
+        if (RSOURCE_REG_IS_NONE(s))
+            MOV_R_O(REG_TRANSIENT_2, REG_X64_RSP,
+                    STACK_POS_OFFSET(RSOURCE_STACK(s)));
+        else
+            MOV_R_R(REG_TRANSIENT_2, getreg(s));
+    }
+    END_CALL_I_OR_R(c_function, REG_TRANSIENT_2);
     END_CODE
     if (po->pr.pending_map != NULL) {
         po->pr.pending_map->retaddr = po->call_end;
