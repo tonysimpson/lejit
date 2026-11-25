@@ -7464,6 +7464,33 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
 #endif
             goto fine;
 
+        /* the one intrinsic mergepoints.c:compiled_intrinsic_2 allows: a
+           class pattern with no arguments, isinstance with
+           _PyEval_MatchClass's error for a pattern that is not a class */
+        case CALL_INTRINSIC_2: {
+#ifdef INTRINSIC_MATCH_CLASS_ISINSTANCE
+            vinfo_t *is;
+            PyTypeObject *tp_type;
+            extra_assert(oparg == INTRINSIC_MATCH_CLASS_ISINSTANCE);
+            tp_type = Psyco_NeedType(po, TOP());
+            if (tp_type == NULL)
+                break;
+            if ((tp_type->tp_flags & Py_TPFLAGS_TYPE_SUBCLASS) == 0) {
+                PycException_SetFormat(po, PyExc_TypeError,
+                                       LE_MSG_MATCH_NOT_A_TYPE);
+                break;
+            }
+            is = PsycoObject_IsInstance(po, NTOP(2), TOP());
+            if (is == NULL)
+                break;
+            x = PsycoBool_FromZeroOrOne(po, is);
+            vinfo_decref(is, po);
+            POP_DECREF_N(2);
+            PUSH(x);
+#endif
+            goto fine;
+        }
+
         /* the bound method PRECALL would split is called as it
            is; KW_NAMES's names are read by its CALL. The frame's
            cells and free variables are in place before the code
