@@ -361,7 +361,9 @@ CASES = [
     ('handled_then_reraised', [(50,)], WARM),
     ('try_caught', [(50,)], WARM),
     ('free_order', [(30,)], WARM),
-    ('kept_frame', [(50,)], WARM),
+    ('kept_frame', [(50,)],
+     dict(WARM, checked="without _osr_arm the frame is compiled from its "
+                        "start, whose kept frame shows its def line")),
     ('tracing_started', [(40,)], WARM),
     ('with_loop', [(50,)], WARM),
     ('with_each_pass', [(50,)], WARM),
