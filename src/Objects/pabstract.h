@@ -22,8 +22,8 @@ psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
 #if LE_STACK_SEGMENTS
 /* the same with no self, made on a stack segment (segments.c) */
 EXTERNFN vinfo_t *
-psyco_vectorcall_on_segment(PsycoObject *po, vinfo_t *callable, vinfo_t **args,
-                            int nargs, PyObject *kwnames, vinfo_t **kwvalues);
+psyco_vectorcall_as_direct(PsycoObject *po, vinfo_t *callable, vinfo_t **args,
+                           int nargs, PyObject *kwnames, vinfo_t **kwvalues);
 #endif
 /* the same for a virtual tuple of arguments and no keywords (kw known
    to be NULL) */

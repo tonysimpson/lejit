@@ -277,15 +277,30 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
 
 #if LE_STACK_SEGMENTS
 DEFINEFN long
-psyco_direct_calls_size(const char *lo, const char *hi)
+psyco_direct_calls_size(const char *lo, const char *hi,
+                        const le_direct_entry_t *e)
 {
     FrameRuntime *fr;
     long size = 0;
-    for (fr = frame_runs;
-         fr != NULL && (const char *)fr >= lo && (const char *)fr < hi;
-         fr = fr->next) {
+    bool spanned = false;
+#define ON_STACK(p) \
+    ((p) != NULL && (const char *)(p) >= lo && (const char *)(p) < hi)
+    for (fr = frame_runs; ON_STACK(fr); fr = fr->next) {
         stack_frame_info_t **f1;
-        if (fr->resumed)
+        bool inside = spanned;
+        /* a run that le_call_as_direct entered: all from the run it was
+           called from, whose own calls that leaves no need to count */
+        while (ON_STACK(e) && (const char *)e < (const char *)fr) e = e->next;
+        spanned = false;
+        if (ON_STACK(e)) {
+            if (!ON_STACK(fr->next))
+                size += (const char *)e - (const char *)fr;
+            else if ((const char *)e < (const char *)fr->next) {
+                size += (const char *)fr->next - (const char *)fr;
+                spanned = true;
+            }
+        }
+        if (inside || fr->resumed)
             continue;
         for (f1 = *fr->psy_frames_start; (((long)*f1) & 1) == 0;
              f1 = psyco_next_stack_frame(f1)) {
@@ -297,6 +312,7 @@ psyco_direct_calls_size(const char *lo, const char *hi)
         }
     }
     return size;
+#undef ON_STACK
 }
 #endif
 

@@ -12,6 +12,7 @@
 #include <idispatcher.h>
 /* le_frame_t */
 #include "../mechanisms/frames.h"
+#include "../segments.h"
 
 /* the real frame, if the compiled code 'co' making the current C call is
    the one LeCode_Run runs (not a compiled callee); borrowed, or NULL */
@@ -247,11 +248,13 @@ psyco_frame_goes_interpreted(PyCodeObject *co);
 EXTERNFN FrameRuntime *
 psyco_frame_start_get(le_frame_t *f);
 #if LE_STACK_SEGMENTS
-/* the C stack that this thread's compiled calls on its stack from 'lo' up
-   to 'hi' take, of those CPython makes with none (not through_c): the runs
-   on it, innermost first, are walked (segments.c) */
+/* the C stack that this thread's calls on its stack from 'lo' up to 'hi'
+   take, of those CPython makes with none: compiled calls not through_c,
+   and the calls in 'e' (segments.c) down to the run each entered. The
+   runs on it, innermost first, are walked. */
 EXTERNFN long
-psyco_direct_calls_size(const char *lo, const char *hi);
+psyco_direct_calls_size(const char *lo, const char *hi,
+                        const le_direct_entry_t *e);
 #endif
 
 /* f_localsplus[start...] = values (up to count, within the frame's

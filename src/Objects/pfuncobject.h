@@ -33,12 +33,16 @@ pfunction_call(PsycoObject *po, vinfo_t *func, vinfo_t *arg, vinfo_t *kw);
 /* PyFunction_Type's tp_call as compiled code calls it */
 EXTERNFN ternaryfunc
 le_function_tp_call(void);
+#ifdef Py_TPFLAGS_HAVE_VECTORCALL
+/* the vectorcall function a new function has (psy_funcobject_init) */
+EXTERNVAR vectorcallfunc le_usual_vectorcall;
+#endif
 /* a call of the function 'f' (promoted, 'func' at compile time), with
    'kw' NULL or as psyfunc.c:psyco_call_pyfunc takes it */
 /* the real call of a Python function, as compiled code makes it */
 EXTERNFN vinfo_t *
 PsycoFunction_RealCall(PsycoObject *po, vinfo_t *vfunc, vinfo_t *arg,
-                       vinfo_t *kw, bool on_segment);
+                       vinfo_t *kw, bool as_direct);
 EXTERNFN vinfo_t *
 pfunction_simple_call(PsycoObject *po, vinfo_t *func, PyObject *f,
                       vinfo_t *arg, vinfo_t *kw, bool allow_inline);
