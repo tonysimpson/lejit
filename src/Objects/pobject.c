@@ -1672,13 +1672,19 @@ DEFINEVAR uint64_t le_dict_version = (uint64_t)1 << 63;
 
 #if !LE_HAS_DICT_VERSION_TAG
 /* the counts, open addressed by dict address: each a record of its own,
-   so its address stays when the table grows */
+   so its address stays when the table grows. Compiled code reads them, so
+   the first are kept in LeJIT's own storage, each on a cache line: on the
+   heap their place moves with every allocation made before them, and that
+   alone moved a loop's cycles by 2-3%. */
 typedef struct {
     PyDictObject *dict;
     uint64_t count;
-} dict_count_t;
+} __attribute__((aligned(64))) dict_count_t;
 static dict_count_t **dict_counts;
 static size_t dict_counts_size, dict_counts_used;
+#define DICT_COUNTS_POOL 256
+static dict_count_t dict_counts_pool[DICT_COUNTS_POOL];
+static size_t dict_counts_pool_used;
 /* -2 until first asked for, -1 if none could be had */
 static int dict_watcher_id = -2;
 
@@ -1740,7 +1746,9 @@ le_dict_counter(PyDictObject *mp)
     i = dict_count_slot(dict_counts, dict_counts_size, mp);
     c = dict_counts[i];
     if (c == NULL) {
-        c = PyMem_RawMalloc(sizeof(dict_count_t));
+        c = dict_counts_pool_used < DICT_COUNTS_POOL
+                ? &dict_counts_pool[dict_counts_pool_used++]
+                : aligned_alloc(_Alignof(dict_count_t), sizeof(dict_count_t));
         if (c == NULL)
             OUT_OF_MEMORY();
         c->dict = mp;
