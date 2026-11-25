@@ -54,8 +54,9 @@ PsycoDict_SetItemC(PsycoObject *po, vinfo_t *vdict, PyObject *key,
 
 /* Pending keywords: a call's keyword arguments, names constant, as the
    dict CPython would make of them, made only if something needs it. The
-   binder reads them (psyfunc.c:_PsycoEval_EvalCodeWithName); anything
-   else forces them, which builds the dict a keyword call always built.
+   binder reads them (psyfunc.c:_PsycoEval_EvalCodeWithName), a vectorcall
+   passes them with the names (pabstract.c:psyco_vectorcall); anything
+   else forces them, which builds the dict CPython's tp_call gets.
    A call site makes one and passes it to its call alone, so it is never a
    local, and no frame sees it. An empty one is also the dict of
    f(*a, **k), on the value stack from its BUILD_MAP to its call, where
