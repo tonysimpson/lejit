@@ -48,6 +48,52 @@ def rem(a, b):
     return a % b
 
 
+def lt(a, b):
+    return a < b
+
+
+def le(a, b):
+    return a <= b
+
+
+def gt(a, b):
+    return a > b
+
+
+def ge(a, b):
+    return a >= b
+
+
+def eq(a, b):
+    return a == b
+
+
+def ne(a, b):
+    return a != b
+
+
+def branches(a, b):
+    # each compare as a branch, as well as a value
+    n = 0
+    if a < b:
+        n += 1
+    if a <= b:
+        n += 2
+    if a > b:
+        n += 4
+    if a >= b:
+        n += 8
+    if a == b:
+        n += 16
+    if a != b:
+        n += 32
+    if a:
+        n += 64
+    if not b:
+        n += 128
+    return n
+
+
 def chain(a, b):
     x = a * 0.5 + b
     y = (x - a) * (b + 2.0)
@@ -56,12 +102,35 @@ def chain(a, b):
 
 def table(n):
     out = []
-    for f in (add, sub, mul, div, rem, chain):
+    for f in (add, sub, mul, div, rem, chain, lt, le, gt, ge, eq, ne,
+              branches):
         for a in VALUES:
             for b in VALUES:
                 if isinstance(a, float) or isinstance(b, float):
                     if not (a != a and b != b):   # one NaN at a time
                         out.append(shown(f, a, b))
+    return out
+
+
+def unary(n):
+    out = []
+    for a in VALUES:
+        if isinstance(a, float):
+            x = a * n               # a run-time float
+            out.append((bits(-x), bits(abs(x)), bool(x), not x,
+                        bits(-(x + 1.0)), bits(abs(x - 2.0))))
+    return out
+
+
+def known_ints(n):
+    # a float against an int literal, small and big
+    out = []
+    for a in VALUES:
+        if isinstance(a, float):
+            x = a * n
+            out.append((x < 0, x <= 0, x > 0, x >= 0, x == 0, x != 0,
+                        x < 3, x == -1, x > -7, x >= 2 ** 47,
+                        x < 2 ** 53 + 1, x == 2 ** 60, x != -(2 ** 49)))
     return out
 
 
@@ -227,6 +296,8 @@ def signal_between(n):
 
 CASES = [
     ('table', [(0,)], {}),
+    ('unary', [(1,), (-1,)], {}),
+    ('known_ints', [(1,), (-1,)], {}),
     ('from_ints', [(5,), (-(2 ** 61),)], {}),
     ('across_calls', [(3,), (-2,)], {}),
     ('dealloc_few_live', [(3,), (-1.5,)], {}),

@@ -7,7 +7,7 @@ by assembling both with GNU as and comparing objdump's disassembly:
 Placeholders are {name} or {name:kind}: registers (r, rm, base, index...),
 XMM registers (x, x1, x2),
 ':d' 32-bit, ':b' 8-bit, offsets ':d8' ':d32', immediates ':i8' ':i16'
-':i32' ':i64' ':u16' ':sh', cc (condition code), scale.
+':i32' ':i64' ':u8' ':u16' ':sh', cc (condition code), scale.
 
     python3 tests/encoder/check.py PYTHON [-k MACRO] [-v]
 
@@ -46,6 +46,7 @@ DOMAINS = {
     'i16': [0, 1, -1, 127, -128, 128, 0x7fff, -0x8000],
     'i32': [0, 1, -1, 128, -129, 0x7fffffff, -0x80000000],
     'i64': [0, -1, 0x7fffffff, 0x80000000, 0x123456789abcdef0, -0x123456789abc],
+    'u8': [0, 1, 4, 7],
     'u16': [8, 0x1000],
     'sh': [1, 3, 63],
     'cc': list(range(16)),

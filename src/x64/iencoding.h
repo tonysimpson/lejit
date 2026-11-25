@@ -93,6 +93,7 @@ typedef enum {
 #define REG_IS_XMM(rg) ((rg) >= REG_X64_XMM8)
 #define XMM_HW(rg) ((rg) - 8) /* a tracked register's number for encoders */
 #define XMM_SCRATCH 15        /* XMM15, an encoder number */
+#define XMM_SCRATCH_2 0       /* XMM0: free between calls */
 /* po->xmm_call: no XMM value may be live at a call; they are stored to
    stack slots (the call may clobber the registers); the callee keeps
    them (glue that saves them) */
@@ -1432,6 +1433,16 @@ bfunction_result(PsycoObject *po, bool ref);
 #define UCOMISD_XMM_XMM(x1, x2) SSE_DIRECT(0x66, false, 0x2E, x1, x2)
 /* @asm: xorpd {x1}, {x2} */
 #define XORPD_XMM_XMM(x1, x2) SSE_DIRECT(0x66, false, 0x57, x1, x2)
+/* @asm: andpd {x1}, {x2} */
+#define ANDPD_XMM_XMM(x1, x2) SSE_DIRECT(0x66, false, 0x54, x1, x2)
+/* x1's low half becomes all ones if predicate 'i' holds of x1 and x2, else
+   zero (0 equal, false if unordered; 4 not equal, true if unordered) */
+/* @asm: cmpsd {x1}, {x2}, {i:u8} */
+#define CMPSD_XMM_XMM_U8(x1, x2, i)            \
+    do {                                       \
+        SSE_DIRECT(0xF2, false, 0xC2, x1, x2); \
+        WRITE_8BIT(i);                         \
+    } while (0)
 /* writes only x's low half: zero x first (XORPD) so that it doesn't wait
    for x's last writer */
 /* @asm: cvtsi2sd {x}, {r} */
@@ -1759,6 +1770,13 @@ psyco_xmm_live(PsycoObject *po);
 #define FLOAT_OP_DIV 3 /* b must not be zero: psyco_float_is_zero */
 EXTERNFN vinfo_t *
 psyco_float_op(PsycoObject *po, int op, vinfo_t *a, vinfo_t *b);
+/* -a, or abs(a) if not 'neg' (only the sign bit changes, NaNs too) */
+EXTERNFN vinfo_t *
+psyco_float_neg_abs(PsycoObject *po, bool neg, vinfo_t *a);
+/* the condition that 'a <py_op> b' holds (Py_LT...), as C's double
+   compare: a NaN makes all but Py_NE false */
+EXTERNFN condition_code_t
+psyco_float_cmp(PsycoObject *po, int py_op, vinfo_t *a, vinfo_t *b);
 /* the condition that run-time double 'vi' is +0.0 or -0.0 */
 EXTERNFN condition_code_t
 psyco_float_is_zero(PsycoObject *po, vinfo_t *vi);
