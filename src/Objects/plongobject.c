@@ -207,13 +207,15 @@ DEFINEFN
 vinfo_t *
 PsycoLong_AsDouble(PsycoObject *po, vinfo_t *v)
 {
-    /* the backend has no int-to-double conversion: a C helper. A virtual
-       int's word converts directly; (double)long rounds to nearest even,
-       as PyLong_AsDouble does. */
-    if (PsycoLong_IsVirtual(v))
+    /* a virtual int's word converts directly; (double)long rounds to
+       nearest even, as PyLong_AsDouble does */
+    if (PsycoLong_IsVirtual(v)) {
+        vinfo_t *word = v->array->items[iLONG_VALUE];
+        if (is_runtime(word->source))
+            return psyco_float_from_word(po, word);
         return psyco_generic_call(po, cimpl_fp_from_long,
-                                  CfPure | CfReturnTypeDouble, "v",
-                                  v->array->items[iLONG_VALUE]);
+                                  CfPure | CfReturnTypeDouble, "v", word);
+    }
     return psyco_generic_call(po, PyLong_AsDouble,
                               CfPyErrCheck | CfReturnTypeDouble, "v", v);
 }
