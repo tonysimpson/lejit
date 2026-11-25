@@ -1803,18 +1803,18 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     if (r < 0)
         goto error_nov;
     if (r > 0) {
-        vinfo_decref(vts, po);
         if (out != NULL)
             v = psyco_generic_call(po, le_gen_direct_send_status,
-                                   CfReturnTypeInt | CfPyErrIfNeg, "vvA", vgen,
-                                   vresult, out);
+                                   CfReturnTypeInt | CfPyErrIfNeg, "vvvA", vts,
+                                   vgen, vresult, out);
         else if (varg != NULL)
             v = psyco_generic_call(po, le_gen_direct_send_end,
-                                   CfCommonNewRefPyObject, "vv", vgen,
+                                   CfCommonNewRefPyObject, "vvv", vts, vgen,
                                    vresult);
         else
             v = psyco_generic_call(po, le_gen_direct_end, CfCommonIterNext,
-                                   "vv", vgen, vresult);
+                                   "vvv", vts, vgen, vresult);
+        vinfo_decref(vts, po);
         vinfo_decref(vresult, po);
         return v;
     }

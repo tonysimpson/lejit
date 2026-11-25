@@ -596,6 +596,19 @@ compiled_intrinsic(int arg)
 #endif
 }
 
+/* the CALL_INTRINSIC_2 arguments pycompiler.c compiles: a class pattern
+   with no arguments (`case C():`), where CPython has one for it */
+static int
+compiled_intrinsic_2(int arg)
+{
+#ifdef INTRINSIC_MATCH_CLASS_ISINSTANCE
+    return arg == INTRINSIC_MATCH_CLASS_ISINSTANCE;
+#else
+    (void)arg;
+    return 0;
+#endif
+}
+
 static PyObject *
 _build_merge_points(PyCodeObject *co, int module)
 {
@@ -643,6 +656,8 @@ _build_merge_points(PyCodeObject *co, int module)
         if (LE_HAS_OPCODE_PRECALL && opcode == CALL && prev != PRECALL)
             goto not_ok;
         if (opcode == CALL_INTRINSIC_1 && !compiled_intrinsic(oparg))
+            goto not_ok;
+        if (opcode == CALL_INTRINSIC_2 && !compiled_intrinsic_2(oparg))
             goto not_ok;
         /* cimpl_import_name imports eagerly */
         if (opcode == IMPORT_NAME && LE_IMPORT_LAZY(oparg))

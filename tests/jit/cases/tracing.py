@@ -278,5 +278,8 @@ CASES = [
     ('c_calls', [(1,)], {}),
     ('genexpr', [(4,)], {}),
     ('turned_off', [(20000,)], {}),
-    ('after_a_tool', [(name, 200) for name in sorted(TOOLS)], {}),
+    ('after_a_tool', [(name, 200) for name in sorted(TOOLS)],
+     {'clear_type_cache': "cProfile's enable and disable look its callbacks "
+                          'up by names made afresh each time'}
+     if hasattr(sys, 'monitoring') else {}),
 ]
