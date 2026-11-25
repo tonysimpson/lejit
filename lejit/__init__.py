@@ -1,4 +1,4 @@
-"""LeJIT, a JIT compiler for CPython 3.7 to 3.10 on x86-64 Linux.
+"""LeJIT, a JIT compiler for CPython 3.7 to 3.15 on x86-64 Linux.
 
 Importing lejit starts nothing; call start().
 """
@@ -29,8 +29,8 @@ def _unsupported():
         return 'LeJIT runs only on x86-64 Linux'
     if sysconfig.get_config_var('Py_GIL_DISABLED'):
         return 'LeJIT runs only on CPython with the GIL'
-    if _sys.version_info >= (3, 11):
-        return 'LeJIT runs only on CPython 3.7 to 3.10'
+    if _sys.version_info >= (3, 16):
+        return 'LeJIT runs only on CPython 3.7 to 3.15'
     return _missing
 
 
