@@ -51,11 +51,18 @@ def recursion_depth():
 
 
 # With no Python limit in reach, C's own check stops the nesting before the
-# stack runs out, at the same depth (since sys.monitoring came; before,
-# plain CPython crashes here). The error branch is first compiled there.
+# stack runs out (since sys.monitoring came; before, plain CPython crashes
+# here), at the same depth where C counts levels. Where it measures the
+# stack instead, compiled levels take less of it and go deeper, so only the
+# error is compared. The error branch is first compiled there.
 def stack_limit():
     if not hasattr(sys, 'monitoring'):
         return None
+    try:
+        import _testinternalcapi
+    except ImportError:
+        _testinternalcapi = None
+    stack_measured = hasattr(_testinternalcapi, 'get_stack_margin')
     old = sys.getrecursionlimit()
     try:
         sys.setrecursionlimit(10 ** 7)
@@ -64,7 +71,8 @@ def stack_limit():
             try:
                 sum(nest(k))
             except RecursionError:
-                return k, sum(nest(30)), compiled(nest)
+                depth = 'stopped' if stack_measured else k
+                return depth, sum(nest(30)), compiled(nest)
             k *= 2
         return 'no error'
     finally:

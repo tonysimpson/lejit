@@ -4,7 +4,7 @@ interpreter's test package runs except BANNED, and every test except SKIPPED.
 
     python3.X tests/cpython/run.py [-j N] [module ...]
 """
-import fnmatch, json, os, re, resource, signal, subprocess, sys, tempfile
+import contextlib, fnmatch, json, os, re, resource, signal, subprocess, sys, tempfile, threading
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import ROOT
@@ -289,6 +289,12 @@ SKIPPED = {
         'test.test_epoll.TestEPoll.test_unregister_closed',
 }
 
+# Modules that never run at the same time as each other: test_perf_profiler
+# deletes every /tmp/perf-*.map it didn't see at setUp, and test_perfmaps
+# reads the one it writes.
+ONE_AT_A_TIME = {'test_perf_profiler', 'test_perfmaps'}
+one_at_a_time = threading.Lock()
+
 # Where a gc callback that fails at the recursion limit leaves the limit off,
 # so CPython aborts at it, LeJIT's own callback makes these abort.
 GC_CALLBACK_ABORTS = 'test_functools test_json test_pickle'
@@ -409,7 +415,8 @@ def run(mode, name):
 
 
 def check(name):
-    plain, with_lejit = run('plain', name), run('lejit', name)
+    with one_at_a_time if name in ONE_AT_A_TIME else contextlib.nullcontext():
+        plain, with_lejit = run('plain', name), run('lejit', name)
     if plain[0] == with_lejit[0] and set(plain[1]) == set(with_lejit[1]):
         return True, 'ok     %-24s %s' % (name, plain[0])
     report = ['FAIL   %-24s %s   with LeJIT: %s' % (name, plain[0], with_lejit[0])]
