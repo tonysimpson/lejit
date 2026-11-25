@@ -111,6 +111,7 @@ struct locals_map_s {
     int lasti;       /* the call's instruction */
     int nvalues;
     long below;
+    long ret_below; /* a note's: where the frame keeps its return address */
     long items[1];
 };
 
@@ -139,6 +140,9 @@ struct stack_frame_info_s {
     /* CPython makes this call from C, taking C stack, where compiled code
        makes it directly (psyco_call_psyco's 'through_c') */
     int through_c;
+    /* where the frame that makes the call keeps its own return address
+       meanwhile (codegen.h:psyco_ret_below); in a record's first entry */
+    long ret_below;
 };
 
 /* the map of po's locals now, with lasti; while inlining, of the
