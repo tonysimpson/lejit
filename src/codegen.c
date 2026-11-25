@@ -213,16 +213,18 @@ EXTERNFN vinfo_t *
 compile_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
                   char argtags[], long args[]);
 EXTERNFN vinfo_t *
-run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
-              char argtags[], long args[], int total_output_array_size);
+run_time_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
+              int arg_count, char argtags[], long args[],
+              int total_output_array_size);
 
 #define MAX_ARGUMENTS_COUNT                          \
     8 /* as the psyco_generic_call macro (codegen.h) \
        */
 
 DEFINEFN
-vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
-                              const char *arguments, ...)
+static vinfo_t *
+generic_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
+             const char *arguments, va_list vargs)
 {
     char argtags[MAX_ARGUMENTS_COUNT];
     long raw_args[MAX_ARGUMENTS_COUNT], args[MAX_ARGUMENTS_COUNT];
@@ -230,13 +232,12 @@ vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
     vinfo_t *vresult;
     bool has_refs = false;
 
-    va_list vargs;
-
-    extra_assert(c_function != NULL);
+    extra_assert(c_function != NULL || vtarget != NULL);
+    if (vtarget != NULL)
+        flags &= ~CfPure;
     if (po->pr.pieces && !(flags & (CfPure | CfNoPython)) &&
         !PsycoList_ForcePieces(po, NULL))
         return NULL;
-    va_start(vargs, arguments);
 
     for (count = 0; arguments[count]; count++) {
         long arg;
@@ -320,7 +321,6 @@ vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
         args[count] = arg;
         argtags[count] = tag;
     }
-    va_end(vargs);
     vresult = VINFO_FRESH;
     if (flags & CfPure) {
         /* calling a pure function with no run-time argument now at compile
@@ -363,8 +363,14 @@ vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
     }
     if (vresult == VINFO_FRESH) {
         /* compile the run time call */
-        if (!(flags & CfNoBlock) && !psyco_cannot_block(c_function))
+        if (!(flags & CfNoBlock) &&
+            (vtarget != NULL || !psyco_cannot_block(c_function)))
             po->blocking_call = 1;
+        /* the call clobbers the XMM registers: their values go to stack
+           slots now, where the locals map finds them */
+        BEGIN_CODE
+        code = psyco_xmm_store(po, code);
+        END_CODE
         if (!(flags & (CfPure | CfNoPython))) {
             po->pr.class_unchecked = 1; /* it may assign __class__ */
             po->pr.python_call = 1;
@@ -372,8 +378,8 @@ vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
                 po, po->pr.call_site ? po->pr.call_site - 1
                                      : po->pr.next_instr & ~NEXT_INSTR_POP);
         }
-        vresult = run_time_call(po, c_function, flags, count, argtags, args,
-                                totalstackspace);
+        vresult = run_time_call(po, c_function, vtarget, flags, count, argtags,
+                                args, totalstackspace);
         po->pr.pending_map = NULL;
         if (vresult == NULL && has_refs) {
             /* error - we should free the vinfo_ts we created */
@@ -392,6 +398,31 @@ vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
         }
     }
     return vresult;
+}
+
+DEFINEFN
+vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
+                              const char *arguments, ...)
+{
+    vinfo_t *r;
+    va_list vargs;
+    va_start(vargs, arguments);
+    r = generic_call(po, c_function, NULL, flags, arguments, vargs);
+    va_end(vargs);
+    return r;
+}
+
+DEFINEFN
+vinfo_t *
+psyco_call_address(PsycoObject *po, vinfo_t *vtarget, int flags,
+                   const char *arguments, ...)
+{
+    vinfo_t *r;
+    va_list vargs;
+    va_start(vargs, arguments);
+    r = generic_call(po, NULL, vtarget, flags, arguments, vargs);
+    va_end(vargs);
+    return r;
 }
 
 DEFINEFN
@@ -477,12 +508,21 @@ psyco_note_call_site(PsycoObject *po, int lasti)
     if (po->pr.is_inlining || lasti < 0)
         return;
     map = psyco_locals_map(po, lasti, NULL);
+    map->ret_below = psyco_ret_below(po);
     i = note_index();
     psyco_locals_maps[i] = map;
     po->pr.pending_map = map;
     BEGIN_CODE
     SAVE_IMMED_TO_EBP_BASE((i << 1) | 1, INITIAL_STACK_DEPTH);
     END_CODE
+}
+
+DEFINEFN
+long
+psyco_ret_below(PsycoObject *po)
+{
+    return po->stack_depth + sizeof(long) - STACK_DEPTH_SINCE_CALL() -
+           INITIAL_STACK_DEPTH;
 }
 
 struct lm_build {
@@ -521,6 +561,8 @@ lm_value(PsycoObject *po, struct lm_build *b, vinfo_t *vi, const long *reg_pos,
             long pos = getstack(vi->source);
             if (pos == RUNTIME_STACK_NONE) {
                 reg_t rg = getreg(vi->source);
+                /* a call stores XMM values first (psyco_xmm_store) */
+                extra_assert(rg == REG_NONE || !REG_IS_XMM(rg));
                 if (rg == REG_NONE) {
                     lm_add(b, LM_NONE, 0, 0);
                     return;

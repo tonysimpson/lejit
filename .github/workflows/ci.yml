@@ -67,7 +67,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9"]
+        python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9",
+                 "3.13.2", "3.14.10"]
     steps:
       - uses: actions/checkout@v4
       - name: Install libffi, libunwind and setuptools
@@ -148,8 +149,7 @@ jobs:
         run: python tests/jit/run.py --release
 
   # every supported version, on full runs: the checked and release builds
-  # must compile and load, and on the versions make check doesn't run on yet
-  # the release build mustn't change the smoke test's output
+  # must compile and load
   build:
     name: build (${{ matrix.python }})
     needs: changes
@@ -163,9 +163,6 @@ jobs:
       matrix:
         python: ["3.7.17", "3.8.20", "3.9.21", "3.10.16", "3.11.11", "3.12.9",
                  "3.13.2", "3.14.10", "3.15.2"]
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Install libffi, libunwind and setuptools
@@ -177,11 +174,34 @@ jobs:
         run: make checked-build PY=python && python tests/jit/build_info.py
       - name: Release build
         run: make build PY=python && python tests/jit/build_info.py
-      - name: Smoke test
-        if: >-
-          needs.changes.outputs.full == 'true' &&
-          (matrix.python == '3.13.2' || matrix.python == '3.14.10')
-        run: diff <(python tests/jit/smoke.py plain 2>&1) <(python tests/jit/smoke.py lejit 2>&1)
+      # what the parity job compares across versions, on the release build
+      - name: Constructs for the parity check
+        run: python tools/parity.py measure "parity-${{ matrix.python }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parity-${{ matrix.python }}
+          path: parity-${{ matrix.python }}.json
+
+  # every version runs the same constructs the same way: a construct that
+  # goes to ceval, or costs much more against plain CPython, on some
+  # versions and not others fails it unless tools/parity_gaps.txt lists it,
+  # and a listed gap that has closed fails it too
+  parity:
+    name: same on every version
+    needs: [changes, build]
+    if: needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: parity-*
+          path: parity
+          merge-multiple: true
+      - name: The check's own test
+        run: python3 tools/parity.py test
+      - name: Compare with tools/parity_gaps.txt
+        run: python3 tools/parity.py check parity
 
   # Pythons LeJIT doesn't support yet: installing builds no extension, and
   # start() warns and does nothing
@@ -242,7 +262,7 @@ jobs:
           "
 
   # the installed detector agrees with the source one, and the message probes
-  # find their messages, on the versions the port has reached that make check
+  # find their messages, on the version the port has reached that make check
   # doesn't run on yet
   detectors-newer:
     name: detectors (${{ matrix.python }})
@@ -253,7 +273,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.13.2", "3.15.2"]
+        python: ["3.15.2"]
     steps:
       - uses: actions/checkout@v4
       - name: Detectors agree with the source
@@ -325,7 +345,7 @@ jobs:
   # pull request skips can't be required themselves
   passed:
     name: all jobs passed
-    needs: [changes, check, encoder, release, build, install-newer,
+    needs: [changes, check, encoder, release, build, parity, install-newer,
             install-main, detectors-newer, format, lint, wheels]
     if: ${{ always() && !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04

@@ -127,6 +127,19 @@ def AUDIT_HOOKS():
 
 
 @probe
+def CTYPES_CALL_AUDITED():
+    """a call of a ctypes function raises the audit event
+    ctypes.call_function (run)"""
+    if not hasattr(sys, 'addaudithook'):
+        return False, 'no sys.addaudithook'
+    seen = []
+    sys.addaudithook(lambda event, args: event == 'ctypes.call_function'
+                     and seen.append(args))
+    ctypes.CDLL(None).abs(-3)
+    return bool(seen), 'CDLL(None).abs(-3) audited: %s' % bool(seen)
+
+
+@probe
 def ARG_CHECK_POSITIONAL():
     """libpython exports _PyArg_CheckPositional (ctypes)"""
     return _exported('_PyArg_CheckPositional')
@@ -972,6 +985,19 @@ def SUM_COMPLEX_COMPENSATED():
 
 
 @probe
+def SUM_EXACT_NUMBERS():
+    """sum([1e100, True, -1e100]) loses the True, which leaves the float
+    loop; where that loop adds no int compensated, it can't be seen, and
+    the loop takes a subclass as its int, as it did then (run)"""
+    if sum([1e100, 1, -1e100]) == 0.0:
+        return False, 'sum([1e100, 1, -1e100]) is 0.0'
+    r = sum([1e100, True, -1e100])
+    if r not in (0.0, 1.0):
+        raise Unanswered('sum([1e100, True, -1e100]) is %r' % r)
+    return r == 0.0, 'sum([1e100, True, -1e100]) is %r' % r
+
+
+@probe
 def LOAD_GLOBAL_NULL_BIT():
     """a call of a global loads it with LOAD_GLOBAL whose argument is the
     name's index (0) shifted left once, plus one for the NULL it pushes
@@ -1140,6 +1166,54 @@ def GET_ITER_INDEX():
     op = dis.opmap['GET_ITER']
     pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
     return pushes == 2, 'dis: GET_ITER pushes %d' % pushes
+
+
+@probe
+def RUNNING_STACK_HIDDEN():
+    """a running generator's referents (gc) don't include its locals"""
+    import gc
+    if not hasattr((lambda: None).__code__, 'co_exceptiontable'):
+        return False, 'code objects have no co_exceptiontable'
+    token = object()
+
+    def gen():
+        x = token
+        yield token in gc.get_referents(it)
+    it = gen()
+    seen = next(it)
+    return not seen, 'gc.get_referents of the running generator: local %s' % (
+        'seen' if seen else 'not seen')
+
+
+@probe
+def TAGGED_LASTI():
+    """a coroutine paused in an awaiting __aexit__ that an exception
+    called holds the lasti under the exception as no object: the
+    coroutine's referents (gc) have no int"""
+    import gc
+    if not hasattr((lambda: None).__code__, 'co_exceptiontable'):
+        return False, 'code objects have no co_exceptiontable'
+
+    class Aw:
+        def __await__(self):
+            yield
+            return False
+
+    class CM:
+        async def __aenter__(self):
+            pass
+
+        def __aexit__(self, *a):
+            return Aw()
+
+    async def f():
+        async with CM():
+            raise KeyError
+    c = f()
+    c.send(None)
+    ints = [r for r in gc.get_referents(c) if type(r) is int]
+    c.close()
+    return not ints, 'gc.get_referents: ints %r' % ints
 
 
 @probe
