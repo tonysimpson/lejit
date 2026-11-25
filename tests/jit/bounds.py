@@ -120,7 +120,7 @@ def check_dead_locals():
     return 0 if ok else 1
 
 
-# which code is inlined: small straight-line code without globals
+# which code is inlined: small straight-line code, globals or not
 def small(a, b):
     return a + b
 
@@ -148,7 +148,7 @@ def past_cap(a, b):
 def check_inlinable():
     got = tuple(lejit._core._inlinable(f.__code__) for f in
                 (small, with_loop, uses_global, at_cap, past_cap))
-    ok = got == (True, False, False, True, False)
+    ok = got == (True, False, True, True, False)
     if not ok or VERBOSE:
         print('%-4s inlinable small/with_loop/uses_global/at_cap/past_cap: %r'
               % ('ok' if ok else 'FAIL', got))

@@ -108,13 +108,14 @@ def many_types(n):
 
 
 NEW_CLASSES = (40, "each round's classes are new: the sites promote them for "
-                   'some rounds before they stop')
+                   'some rounds before they stop, in the methods inlined '
+                   'into their callers too')
 
 CASES = [
     ('base_changes', [(10,)], {'warmup': NEW_CLASSES}),
-    ('bases_changed', [(6,)], {}),
+    ('bases_changed', [(6,)], {'warmup': NEW_CLASSES}),
     ('class_cell', [(8,)], {'warmup': NEW_CLASSES}),
     ('getattribute_added', [(5,)], {'warmup': NEW_CLASSES}),
-    ('getattribute_added_called_from_c', [(4,)], {}),
-    ('many_types', [(3,)], {}),
+    ('getattribute_added_called_from_c', [(4,)], {'warmup': NEW_CLASSES}),
+    ('many_types', [(3,)], {'warmup': NEW_CLASSES}),
 ]
