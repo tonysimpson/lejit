@@ -9678,6 +9678,11 @@ psyco_pycompiler_mainloop(PsycoObject *po)
     /* the place, as ceval's lasti, of an exception RERAISE raises again
        from the place under it; else -1 */
     int raise_lasti = -1;
+#if LE_HAS_BREAKER_AFTER_BACK_JUMP
+    /* where the exception table is read for an exception the
+       eval_breaker test at a backward jump raised; else -1 */
+    int handler_at = -1;
+#endif
     int resumed = 0;
     int ended; /* what the instruction's case left to do */
 #if LE_CODESTATS
@@ -9767,10 +9772,21 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             oparg = in.arg;
             next_instr = in.next;
             /* at loop heads and after calls */
+#if LE_HAS_BREAKER_AFTER_BACK_JUMP
+            handler_at = -1;
+#endif
             if (psyco_breaker_check_at(po->pr.merge_points,
                                        po->pr.next_instr) &&
-                !psyco_check_eval_breaker(po))
+                !psyco_check_eval_breaker(po)) {
+#if LE_HAS_BREAKER_AFTER_BACK_JUMP
+                /* ceval has jumped when it tests, and reads the table at
+                   the unit before the loop head: the jump itself may be in
+                   no handler's range */
+                if (LE_IS_JBACK(in.raw))
+                    handler_at = in.target - LE_UNIT;
+#endif
                 break;
+            }
             po->blocking_call = 0;
             po->pr.python_call = 0;
             po->pr.proxy_write = 0;
@@ -10060,8 +10076,14 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                             ? raise_lasti
                             : le_lasti_of(le_place(le_code(po->pr.co),
                                                    po->pr.next_instr));
+            int handler_pos = po->pr.next_instr;
             raise_lasti = -1;
-            if (le_handler_find(po->pr.co, po->pr.next_instr, &h)) {
+#if LE_HAS_BREAKER_AFTER_BACK_JUMP
+            if (handler_at >= 0)
+                handler_pos = handler_at;
+            handler_at = -1;
+#endif
+            if (le_handler_find(po->pr.co, handler_pos, &h)) {
                 int next_instr;
                 vinfo_t *word = catcher_word(po), *own, *v;
                 if (!compute_and_raise_exception(po))
