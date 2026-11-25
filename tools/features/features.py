@@ -776,6 +776,28 @@ def c_recursion_remaining(s):
     return _field(s, '_ts', 'c_recursion_remaining')
 
 
+def gen_new_around_frame(s):
+    """PyGen_NewWithQualName, PyCoro_New and PyAsyncGen_New make a
+    generator around a frame object: a header outside internal/ declares
+    each"""
+    where = []
+    for name in ('PyGen_NewWithQualName', 'PyCoro_New', 'PyAsyncGen_New'):
+        has, path = _public(s, name)
+        if not has:
+            return False, path
+        where.append(path)
+    return True, ', '.join(where)
+
+
+def gen_keeps_code(s):
+    """a generator keeps its frame's code once the frame is cleared, for
+    gi_code and its dealloc: a header declares _PyFrame_ClearExceptCode"""
+    for path, toks in s.headers_with('_PyFrame_ClearExceptCode'):
+        if any(t.text == '_PyFrame_ClearExceptCode' for t in toks):
+            return True, '%s:_PyFrame_ClearExceptCode' % path
+    return False, 'every header: _PyFrame_ClearExceptCode'
+
+
 def frame_stackrefs(s):
     """an interpreter frame's words are _PyStackRefs (f_executable,
     f_funcobj, localsplus): a word with its low bit set holds no reference
@@ -1438,6 +1460,8 @@ FRAMES = [
                                lambda s: _file(s, 'Include/internal/pycore_interpframe.h'))),
     ('FRAME_STACKREFS', frame_stackrefs),
     ('FRAME_INITIALIZE_TSTATE', frame_initialize_tstate),
+    ('GEN_NEW_AROUND_FRAME', gen_new_around_frame),
+    ('GEN_KEEPS_CODE', gen_keeps_code),
     ('GETFRAME_AUDITS_RESULT', D('sys._getframe\'s audit event names the frame it returns, after the walk (none when the stack is too shallow), not the current frame before it',
                                  lambda s: _body_has(s, 'Python/sysmodule.c', 'sys__getframe_impl', '"sys._getframe", "(O)", pyFrame', missing=False))),
 ]
