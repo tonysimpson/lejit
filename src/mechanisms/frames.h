@@ -341,6 +341,10 @@ le_frame_gen(le_frame_t *f)
 {
     return (PyGenObject *)((char *)f - offsetof(PyGenObject, gi_iframe));
 }
+/* the state of a generator whose run returned or raised: the one between
+   running and cleared, where CPython has one (FRAME_COMPLETED) */
+#define LE_GEN_ENDED_STATE \
+    (FRAME_CLEARED - FRAME_EXECUTING > 1 ? FRAME_EXECUTING + 1 : FRAME_CLEARED)
 /* A virtual generator's record (Python/genrecord.c): where a generator's
    body that compiled code runs before any generator object exists keeps
    its paused state between runs. Its frame is an interpreter frame laid

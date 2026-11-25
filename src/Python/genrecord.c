@@ -296,7 +296,7 @@ le_gen_record_escape(PyObject *rec, PyObject *func)
 #else
     r->frame.f_func = (PyFunctionObject *)Py_NewRef(func);
 #endif
-    gen = record_escape(r, (PyFunctionObject *)func, FRAME_COMPLETED);
+    gen = record_escape(r, (PyFunctionObject *)func, LE_GEN_ENDED_STATE);
     return gen;
 }
 
@@ -503,7 +503,9 @@ psyco_genrecord_init(void)
 }
 
 /* the unit of RETURN_GENERATOR in the code of a generator function, -1 if
-   it has none */
+   it has none or something before it a record's start doesn't do
+   (le_gen_record_start), such as the iterator a generator expression
+   takes before it (GET_ITER) */
 DEFINEFN long
 le_gen_record_start_unit(PyCodeObject *co)
 {
@@ -513,6 +515,9 @@ le_gen_record_start_unit(PyCodeObject *co)
         le_instr_t in = le_instr(c, pos);
         if (in.op == RETURN_GENERATOR)
             return pos / LE_UNIT;
+        if (in.op != MAKE_CELL && in.op != COPY_FREE_VARS && in.op != RESUME &&
+            in.op != NOP)
+            return -1;
         pos = in.next;
     }
     return -1;
