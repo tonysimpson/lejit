@@ -4,7 +4,7 @@
  * returns in CPython would overflow the thread's stack. Before such a call
  * compiled code compares the stack pointer with this thread's low mark
  * (x64/iencoding.c:psyco_stack_low); below it, it makes the call through
- * CPython instead, with le_call_on_segment, which runs it on a segment: a
+ * CPython instead, with le_call_as_direct, which runs it on a segment: a
  * stack of its own, with a guard page below. The callee is then a real
  * frame entered through the eval hook, as for any call made through C, so
  * nothing that walks frames needs to know about segments.
@@ -14,10 +14,16 @@
  * segment for the next call; others are unmapped when their call returns,
  * and the kept one when the thread ends.
  *
+ * A call compiled code makes through CPython where CPython would make it
+ * with no C stack (a callee taking **kwargs, f(*args), a property's
+ * getter) goes through le_call_as_direct too, which makes the same test,
+ * so deep recursion through it moves to segments as well.
+ *
  * Where CPython checks C calls by the stack pointer, the limits are the
  * segment's while on it. The room above its soft limit is what was left on
- * the stack it came from, plus what the compiled calls there that CPython
- * makes with no C stack took: only C, and calls CPython makes through C,
+ * the stack it came from, plus what the calls there that CPython makes with
+ * no C stack took (compiled direct calls, and le_call_as_direct's calls
+ * down to the callee's run): only C, and calls CPython makes through C,
  * use it up, so C recursion between compiled calls (sum() of a generator
  * whose body calls on) still raises RecursionError.
  */
@@ -40,6 +46,12 @@ static _Thread_local uintptr_t stack_low
 static _Thread_local char *stack_lo, *stack_hi;
 /* this thread's free segment, or NULL */
 static _Thread_local char *spare_segment;
+#if LE_HAS_C_STACK_SOFT_LIMIT
+/* the calls le_call_as_direct is making on the thread's stacks, innermost
+   first */
+static _Thread_local le_direct_entry_t *direct_entries
+    __attribute__((tls_model("initial-exec")));
+#endif
 
 DEFINEVAR long le_stack_low_at;
 
@@ -181,29 +193,25 @@ le_c_stack_limits_put_back(PyThreadState *ts, const uintptr_t saved[3]);
 extern long le_c_entry_charge;
 #endif
 
-DEFINEFN long
-le_call_on_segment(void *fn, long a, long b, long c, long d)
+static long
+call_on_segment(segment_call_t *call)
 {
-    segment_call_t call = {
-        (long (*)(long, long, long, long))fn, a, b, c, d, 0};
     uintptr_t low = stack_low;
     char *lo = stack_lo, *hi = stack_hi, *s, *base;
-#if LE_HAS_C_STACK_SOFT_LIMIT || LE_HAS_C_RECURSION_REMAINING
-    PyThreadState *ts = PyThreadState_GET();
-#endif
 #if LE_HAS_C_STACK_SOFT_LIMIT
+    PyThreadState *ts = PyThreadState_GET();
     uintptr_t saved[3];
     uintptr_t soft = *(uintptr_t *)((char *)ts + le_c_stack_soft_limit_at);
     long room = SEGMENT_SIZE; /* CPython hasn't set the limits yet */
     if (soft != 0)
         room = (long)((uintptr_t)__builtin_frame_address(0) - soft) +
-               psyco_direct_calls_size(lo, hi) + le_c_entry_charge;
+               psyco_direct_calls_size(lo, hi, direct_entries);
 #endif
     s = segment_take();
     if (s == NULL) {
         /* no memory for one: on this stack, as before */
-        segment_run(&call);
-        return call.result;
+        segment_run(call);
+        return call->result;
     }
     base = s + sysconf(_SC_PAGESIZE);
     stack_lo = base;
@@ -213,13 +221,7 @@ le_call_on_segment(void *fn, long a, long b, long c, long d)
     le_c_stack_limits_set(ts, (uintptr_t)base, (uintptr_t)stack_hi, room,
                           saved);
 #endif
-#if LE_HAS_C_RECURSION_REMAINING
-    ts->c_recursion_remaining += ENTRY_C_UNITS;
-#endif
-    le_switch_call(&call, segment_run, stack_hi);
-#if LE_HAS_C_RECURSION_REMAINING
-    ts->c_recursion_remaining -= ENTRY_C_UNITS;
-#endif
+    le_switch_call(call, segment_run, stack_hi);
 #if LE_HAS_C_STACK_SOFT_LIMIT
     le_c_stack_limits_put_back(ts, saved);
 #endif
@@ -227,6 +229,41 @@ le_call_on_segment(void *fn, long a, long b, long c, long d)
     stack_lo = lo;
     stack_hi = hi;
     segment_give(s);
+    return call->result;
+}
+
+DEFINEFN long
+le_call_as_direct(void *fn, long a, long b, long c, long d)
+{
+    segment_call_t call = {
+        (long (*)(long, long, long, long))fn, a, b, c, d, 0};
+#if LE_HAS_C_RECURSION_REMAINING || LE_HAS_C_STACK_SOFT_LIMIT
+    PyThreadState *ts = PyThreadState_GET();
+#endif
+#if LE_HAS_C_RECURSION_REMAINING
+    ts->c_recursion_remaining += ENTRY_C_UNITS;
+#elif LE_HAS_C_STACK_SOFT_LIMIT
+    uintptr_t *soft = (uintptr_t *)((char *)ts + le_c_stack_soft_limit_at);
+    long charge = *soft != 0 ? le_c_entry_charge : 0;
+    *soft -= charge;
+#endif
+    if ((uintptr_t)__builtin_frame_address(0) < stack_low)
+        call_on_segment(&call);
+    else {
+#if LE_HAS_C_STACK_SOFT_LIMIT
+        le_direct_entry_t entry = {direct_entries};
+        direct_entries = &entry;
+        segment_run(&call);
+        direct_entries = entry.next;
+#else
+        segment_run(&call);
+#endif
+    }
+#if LE_HAS_C_RECURSION_REMAINING
+    ts->c_recursion_remaining -= ENTRY_C_UNITS;
+#elif LE_HAS_C_STACK_SOFT_LIMIT
+    *soft += charge;
+#endif
     return call.result;
 }
 #endif /* LE_STACK_SEGMENTS */

@@ -319,13 +319,29 @@ add_to_depth(PsycoObject *po, long delta, vinfo_t *vts)
     return add_to_count(po, vts, TSTATE_depth, delta);
 }
 
-/* counts a call in thread state 'vts': the condition under which the
-   count's rare path must be taken */
+/* the check of a count taken for two levels at once
+   (enter_recursive_levels): the second is given back too when it raises */
+static int
+cimpl_check_two_levels(void)
+{
+#if LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING || \
+    LE_HAS_PY_RECURSION_REMAINING
+    if (cimpl_check_recursive_call() == 0)
+#else
+    if (_Py_CheckRecursiveCall("") == 0)
+#endif
+        return 0;
+    le_recursion_suspend();
+    return -1;
+}
+
+/* counts 'levels' calls in thread state 'vts': the condition under which
+   the count's rare path must be taken */
 static inline condition_code_t
-recursion_count_over(PsycoObject *po, vinfo_t *vts)
+recursion_count_over(PsycoObject *po, vinfo_t *vts, int levels)
 {
     condition_code_t cc = CC_ERROR;
-    vinfo_t *vdepth = add_to_depth(po, LE_RECURSION_STEP, vts);
+    vinfo_t *vdepth = add_to_depth(po, levels * LE_RECURSION_STEP, vts);
     if (vdepth == NULL)
         return CC_ERROR;
 #if LE_HAS_RECURSION_REMAINING || LE_HAS_PY_RECURSION_REMAINING
@@ -351,35 +367,51 @@ recursion_count_over(PsycoObject *po, vinfo_t *vts)
     return cc;
 }
 
-/* enter_recursive_call, whose count's rare path calls 'check' */
+/* 'levels' (1 or 2) calls entered at once, the limit tested on the
+   innermost, whose count's rare path calls 'check' (for two levels, one
+   that gives the second back when it raises) */
 static inline bool
-enter_recursive_call_checked_by(PsycoObject *po, vinfo_t *vts, void *check)
+enter_recursive_levels_checked_by(PsycoObject *po, vinfo_t *vts, int levels,
+                                  void *check)
 {
-    condition_code_t cc = recursion_count_over(po, vts);
+    condition_code_t cc = recursion_count_over(po, vts, levels);
     if (cc == CC_ERROR)
         return false;
-    if (runtime_condition_f(po, cc))
+    if (!runtime_condition_f(po, cc))
+        return true;
 #if LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING || \
     LE_HAS_PY_RECURSION_REMAINING
-        return psyco_generic_call(po, check, CfCommonIntZeroOk, "") != NULL;
+    return psyco_generic_call(po, check, CfCommonIntZeroOk, "") != NULL;
 #else
-        return psyco_generic_call(po, check, CfCommonIntZeroOk, "l",
-                                  (long)"") != NULL;
+    if (levels == 2)
+        return psyco_generic_call(po, check, CfCommonIntZeroOk, "") != NULL;
+    return psyco_generic_call(po, check, CfCommonIntZeroOk, "l", (long)"") !=
+           NULL;
 #endif
-    return true;
+}
+
+/* false with an exception set in 'po' */
+static inline bool
+enter_recursive_levels(PsycoObject *po, vinfo_t *vts, int levels)
+{
+    if (levels == 2)
+        return enter_recursive_levels_checked_by(po, vts, 2,
+                                                 cimpl_check_two_levels);
+#if LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING || \
+    LE_HAS_PY_RECURSION_REMAINING
+    return enter_recursive_levels_checked_by(po, vts, 1,
+                                             cimpl_check_recursive_call);
+#else
+    return enter_recursive_levels_checked_by(po, vts, 1,
+                                             _Py_CheckRecursiveCall);
+#endif
 }
 
 /* false with an exception set in 'po' */
 static inline bool
 enter_recursive_call(PsycoObject *po, vinfo_t *vts)
 {
-#if LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING || \
-    LE_HAS_PY_RECURSION_REMAINING
-    return enter_recursive_call_checked_by(po, vts,
-                                           cimpl_check_recursive_call);
-#else
-    return enter_recursive_call_checked_by(po, vts, _Py_CheckRecursiveCall);
-#endif
+    return enter_recursive_levels(po, vts, 1);
 }
 
 #if LE_HAS_RECURSION_REMAINING || LE_HAS_PY_RECURSION_REMAINING
@@ -542,10 +574,24 @@ c_recursion_give(PsycoObject *po, vinfo_t *vts, int through_c)
 #define LE_C_RECURSION_CHECKED 0
 #endif
 
-/* enter_recursive_call where CPython enters the frame from C, the way
+#if LE_C_RECURSION_CHECKED
+/* cimpl_check_recursive_call_after_c for two levels at once: the second is
+   given back too when it raises */
+static int
+cimpl_check_two_levels_after_c(long through_c)
+{
+    if (cimpl_check_recursive_call_after_c(through_c) == 0)
+        return 0;
+    le_recursion_suspend();
+    return -1;
+}
+#endif
+
+/* enter_recursive_levels where CPython enters the frame from C, the way
    'through_c' */
 static inline bool
-enter_c_recursive_call(PsycoObject *po, vinfo_t *vts, int through_c)
+enter_c_recursive_levels(PsycoObject *po, vinfo_t *vts, int levels,
+                         int through_c)
 {
 #if LE_C_RECURSION_CHECKED
     condition_code_t cc = c_recursion_low(po, vts, through_c);
@@ -555,17 +601,19 @@ enter_c_recursive_call(PsycoObject *po, vinfo_t *vts, int through_c)
         psyco_generic_call(po, cimpl_c_recursion_enter, CfCommonIntZeroOk, "l",
                            (long)through_c) == NULL)
         return false;
-    cc = recursion_count_over(po, vts);
+    cc = recursion_count_over(po, vts, levels);
     if (cc == CC_ERROR)
         return false;
     if (runtime_condition_f(po, cc))
-        return psyco_generic_call(po, cimpl_check_recursive_call_after_c,
-                                  CfCommonIntZeroOk, "l",
-                                  (long)through_c) != NULL;
+        return psyco_generic_call(
+                   po,
+                   levels == 2 ? (void *)cimpl_check_two_levels_after_c
+                               : (void *)cimpl_check_recursive_call_after_c,
+                   CfCommonIntZeroOk, "l", (long)through_c) != NULL;
     return true;
 #else
     (void)through_c;
-    return enter_recursive_call(po, vts);
+    return enter_recursive_levels(po, vts, levels);
 #endif
 }
 
