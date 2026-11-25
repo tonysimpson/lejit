@@ -1305,6 +1305,13 @@ le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func)
     own->owner = FRAME_OWNED_BY_FRAME_OBJECT;
     memcpy(&unlinked, own, offsetof(le_frame_t, localsplus));
     unlinked.frame_obj = NULL;
+    /* a collection as the constructor allocates visits f's words through
+       f->f_frame: the copy has none */
+#if LE_HAS_FRAME_STACKREFS
+    unlinked.stackpointer = unlinked.localsplus;
+#else
+    unlinked.stacktop = 0;
+#endif
     f->f_frame = &unlinked;
     own->frame_obj = f;
     Py_INCREF(f);
@@ -1420,10 +1427,14 @@ coro_realise(stack_frame_info_t **slot)
 DEFINEFN void
 psyco_coros_realise(void)
 {
+    /* making one can collect, and a collector's callback can look again
+       (codemanager.c:owners_scan): that look finds none being made */
+    static int realising = 0;
     PyThreadState *ts;
     PyObject *t, *v, *tb;
-    if (runs_key == NULL)
+    if (runs_key == NULL || realising)
         return;
+    realising = 1;
     PyErr_Fetch(&t, &v, &tb);
     for (ts = PyInterpreterState_ThreadHead(PyInterpreterState_Main());
          ts != NULL; ts = PyThreadState_Next(ts)) {
@@ -1447,6 +1458,7 @@ psyco_coros_realise(void)
         }
     }
     PyErr_Restore(t, v, tb);
+    realising = 0;
 }
 
 DEFINEFN

@@ -412,6 +412,32 @@ def origins(n):
     return out
 
 
+async def gc3(k):
+    # a collection as the coroutine of this running body is made, which
+    # visits its frame's words
+    a, b, c, d, e, f, g, h = [work(k)] * 8
+    # objects the collector counts, for the coroutine's to start one
+    held = [[] for _ in range(50)]
+    old = gc.get_threshold()
+    gc.set_threshold(1)
+    objs = gc.get_objects()
+    gc.set_threshold(*old)
+    found = [o for o in objs if inspect.iscoroutine(o) and
+             o.__qualname__ == 'gc3' and
+             inspect.getcoroutinestate(o) != 'CORO_CLOSED']
+    del objs
+    return len(found), len(held), a + b + c + d + e + f + g + h
+
+
+async def gc2(k):
+    return await gc3(k)
+
+
+def collected(n):
+    out = [drive(gc2(n)) for _ in range(20)]
+    return out[0], all(o == out[0] for o in out), started(gc3)
+
+
 CASES = [
     ('raised', [(3,)], HOOKED),
     ('realised', [(0,), (2,)], {}),
@@ -426,4 +452,5 @@ CASES = [
     ('origins', [(1,)], {}),
     ('frame_generator', [(1,)], {}),
     ('thrown', [(1,)], {}),
+    ('collected', [(1,)], {}),
 ]
