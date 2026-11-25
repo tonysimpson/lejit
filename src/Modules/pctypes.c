@@ -108,6 +108,47 @@ static PyTypeObject *pointer_base;
 static PyMethodDef *simple_from_param, *pointer_from_param;
 /* c_char_p's and c_void_p's own from_param */
 static PyMethodDef *char_p_from_param, *void_p_from_param;
+/* byref(), kept by the module, and the type of what it takes */
+static PyObject *byref_function;
+static PyTypeObject *cdata_base;
+
+/* A virtual byref(obj): [iOB_TYPE] the PyCArgObject type, [iBYREF_OBJ]
+   obj, a ctypes instance. Made, when it must be, by byref itself. */
+#define iBYREF_OBJ 1
+#define BYREF_TOTAL 2
+static source_virtual_t computed_byref;
+
+static PyObject *
+cimpl_byref(PyObject *obj)
+{
+    return PyObject_CallFunctionObjArgs(byref_function, obj, NULL);
+}
+
+static bool
+compute_byref(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *obj = vinfo_getitem(v, iBYREF_OBJ), *newobj;
+    if (obj == NULL)
+        return false;
+    newobj = psyco_generic_call(
+        po, cimpl_byref, CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v",
+        obj);
+    if (newobj == NULL)
+        return false;
+    vinfo_move(po, v, newobj);
+    return true;
+}
+
+static PyObject *
+direct_compute_byref(vinfo_t *v, char *data)
+{
+    PyObject *r = NULL;
+    PyObject *obj = direct_xobj_vinfo(vinfo_getitem(v, iBYREF_OBJ), data);
+    if (obj != NULL)
+        r = cimpl_byref(obj);
+    Py_XDECREF(obj);
+    return r;
+}
 
 static PyMethodDef *
 meta_method(PyTypeObject *meta, const char *name)
@@ -215,6 +256,17 @@ ctypes_probe(PyTypeObject *tp)
         Py_TYPE(ref)->tp_basicsize)
         goto done;
     carg_type = Py_TYPE(ref); /* static, or kept by the module */
+    /* what byref() takes: PyCData_Type, the base of c_int's base */
+    cdata_base = simple_base->tp_base;
+    if (!PyCFunction_Check(byref) || cdata_base == NULL ||
+        !PyObject_TypeCheck(i7, cdata_base) ||
+        !PyType_IsSubtype(pointer_base, cdata_base) ||
+        cdata_base == &PyBaseObject_Type)
+        goto done;
+    Py_INCREF(byref);
+    byref_function = byref; /* kept for ever */
+    INIT_SVIRTUAL(computed_byref, compute_byref, direct_compute_byref,
+                  1 << iBYREF_OBJ, 0, 0);
     ok = 1;
 done:
     Py_XDECREF(ref);
@@ -449,10 +501,13 @@ static int
 carg_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *argtype, vinfo_t **pw)
 {
     bool error = false;
+    /* a virtual byref(obj): obj's buffer, its type known */
+    vinfo_t *vobj = v->source == VirtualTime_New(&computed_byref)
+                        ? v->array->items[iBYREF_OBJ]
+                        : NULL;
     if (argtype != NULL) {
         PyObject *target =
             PyObject_GetAttrString((PyObject *)argtype, "_type_");
-        vinfo_t *vobj;
         bool same;
         if (target == NULL) {
             PyErr_Clear();
@@ -461,6 +516,11 @@ carg_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *argtype, vinfo_t **pw)
         Py_DECREF(target); /* the pointer type keeps it */
         if (!PyType_Check(target))
             return 0;
+        if (vobj != NULL) {
+            if (Psyco_KnownType(vobj) != (PyTypeObject *)target)
+                return 0;
+            goto virtual;
+        }
         vobj = load_word(po, v, carg_obj_offset, 8, true);
         if (vobj == NULL)
             return -1;
@@ -470,10 +530,14 @@ carg_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *argtype, vinfo_t **pw)
         if (!same)
             return error ? -1 : 0;
     }
+    else if (vobj != NULL)
+        goto virtual;
     if (!word_is(po, v, offsetof(le_carg_t, tag), carg_tag_size, carg_tag_word,
                  &error))
         return error ? -1 : 0;
     *pw = load_word(po, v, offsetof(le_carg_t, value), 8, true);
+    return *pw == NULL ? -1 : 1;
+    virtual : *pw = data_pointer(po, vobj);
     return *pw == NULL ? -1 : 1;
 }
 
@@ -809,6 +873,47 @@ pointer_result_length(PyTypeObject *tp, Py_ssize_t *length)
     *length = c->b_length;
     Py_DECREF(c);
     return ok;
+}
+
+DEFINEFN
+vinfo_t *
+PsycoCtypes_Byref(PsycoObject *po, PyMethodDef *ml, vinfo_t *vargs)
+{
+    vinfo_t *vobj, *v;
+    PyTypeObject *tp;
+    if (strcmp(ml->ml_name, "byref") != 0)
+        return NULL;
+    if (ctypes_state == 0) {
+        /* probed with a function ctypes makes itself, memmove */
+        PyObject *modules = PySys_GetObject("modules");
+        PyObject *mod, *f;
+        if (modules == NULL || !PyDict_Check(modules))
+            return NULL;
+        mod = PyDict_GetItemString(modules, "ctypes");
+        if (mod == NULL)
+            return NULL;
+        f = PyObject_GetAttrString(mod, "memmove");
+        if (f == NULL) {
+            PyErr_Clear();
+            return NULL;
+        }
+        PsycoCtypes_IsFunction(Py_TYPE(f), Py_TYPE(f)->tp_call);
+        Py_DECREF(f);
+    }
+    if (ctypes_state != 1 || ml != ((PyCFunctionObject *)byref_function)->m_ml)
+        return NULL;
+    if (!is_virtualtime(vargs->source) || PsycoTuple_Load(vargs) != 1)
+        return NULL;
+    vobj = PsycoTuple_GET_ITEM(vargs, 0);
+    tp = Psyco_NeedType(po, vobj);
+    if (tp == NULL || !PyType_IsSubtype(tp, cdata_base))
+        return NULL;
+    v = vinfo_new(VirtualTime_New(&computed_byref));
+    v->array = array_new(BYREF_TOTAL);
+    v->array->items[iOB_TYPE] = vinfo_new(CompileTime_New((long)carg_type));
+    vinfo_incref(vobj);
+    v->array->items[iBYREF_OBJ] = vobj;
+    return v;
 }
 
 #define MAX_INT_ARGS 6
