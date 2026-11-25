@@ -11,13 +11,14 @@
 EXTERNFN vinfo_t *
 PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
                  vinfo_t *kw);
-/* callable(*args[:nargs], **dict(zip(kwnames, args[nargs:]))) as ceval
-   calls it, through PyObject_Vectorcall: kwnames is NULL or a tuple of
-   exact str. NULL with no exception set where it can't be emitted (no
-   vectorcall, or too many values); the caller then calls with a tuple. */
+/* callable([self,] *args[:nargs], **dict(zip(kwnames, kwvalues))) as
+   ceval calls it, through PyObject_Vectorcall: self may be NULL, kwnames
+   is NULL or a tuple of exact str. NULL with no exception set where there
+   is no vectorcall; the caller then calls with a tuple. */
 EXTERNFN vinfo_t *
-psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t **args, int nargs,
-                 PyObject *kwnames);
+psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
+                 vinfo_t **args, int nargs, PyObject *kwnames,
+                 vinfo_t **kwvalues);
 /* the same for a virtual tuple of arguments and no keywords (kw known
    to be NULL) */
 EXTERNFN vinfo_t *

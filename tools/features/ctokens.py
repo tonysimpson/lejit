@@ -3,7 +3,8 @@
 Comments are skipped, string and character literals are single tokens, and
 preprocessor lines are taken out of the stream: #define becomes a Macro, the
 rest is dropped. No preprocessing is done, so a macro's uses stay visible
-as calls, and both branches of an #if are kept.
+as calls, and both branches of an #if are kept. ` and $ are tokens too, for
+the JavaScript an EM_JS macro holds.
 """
 import re
 from collections import namedtuple
@@ -14,7 +15,8 @@ Tok = namedtuple('Tok', 'kind text line sp')
 Macro = namedtuple('Macro', 'name params body line')   # params None: no ()
 
 _PUNCT = sorted('''... <<= >>= -> ++ -- << >> <= >= == != && || += -= *= /=
-%= &= ^= |= ## { } [ ] ( ) ; , : ? . + - * / % & | ^ ! ~ < > = #'''.split(),
+%= &= ^= |= ## { } [ ] ( ) ; , : ? . + - * / % & | ^ ! ~ < > = #
+` $'''.split(),
                 key=len, reverse=True)
 _TOKEN = re.compile(r'''
     (?P<ws>[ \t\r\f\v]+|\\\n)

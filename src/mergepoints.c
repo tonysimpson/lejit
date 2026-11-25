@@ -134,9 +134,10 @@ report_destructor(PyObject *capsule)
 
 /* ceval tests eval_breaker before every instruction it reaches through
    DISPATCH(): after most opcodes, and at a frame's start. Compiled code
-   tests it at every backward jump (ENTER_JUMP_TO), after calls (below) and
-   LeCode_Run at the start; before one of BREAKER_SKIPS, the test is before
-   the next instruction instead. */
+   tests it at every backward jump (ENTER_JUMP_TO), after calls (below), at
+   a block's handler, and LeCode_Run or a direct caller at the start;
+   before one of BREAKER_SKIPS, the test is before the next instruction
+   instead. */
 #define BREAKER_CHECK(unit)              \
     do {                                 \
         int _p = (int)(unit) * LE_UNIT;  \
@@ -384,15 +385,16 @@ _find_merge_points(PyCodeObject *co, int *bad)
     int weight = 0, loop_block = 0;
     Py_ssize_t entry_count_index = -1;
     Py_ssize_t entry_count_len = end_unit + 1;
-    unsigned char entry_count[entry_count_len];
-    unsigned char is_start[entry_count_len];
-    unsigned char breaker_check[entry_count_len];
-    unsigned char is_target[entry_count_len];
+    /* a byte per code unit each, on the heap: a function's code can be
+       longer than the C stack */
+    unsigned char *entry_count = PyMem_Calloc(4, entry_count_len);
+    unsigned char *is_start, *breaker_check, *is_target;
     int bad_jump = 0;
-    memset(entry_count, 0, entry_count_len);
-    memset(is_start, 0, entry_count_len);
-    memset(breaker_check, 0, entry_count_len);
-    memset(is_target, 0, entry_count_len);
+    if (entry_count == NULL)
+        return NULL;
+    is_start = entry_count + entry_count_len;
+    breaker_check = is_start + entry_count_len;
+    is_target = breaker_check + entry_count_len;
 
     entry_count[0] = 2; /* start of code is always a merge point */
     while (next_unit < end_unit) {
@@ -416,11 +418,13 @@ _find_merge_points(PyCodeObject *co, int *bad)
             (in.target >= 0) ==
             ((le_op_flags(opcode) & (LE_OPF_JUMPS | LE_OPF_BRANCHES)) != 0));
         switch (opcode) {
-            /* a handler can be entered from anywhere in the block */
+            /* a handler can be entered from anywhere in the block; ceval
+               goes on from it at its loop top, which tests eval_breaker */
             case SETUP_EXCEPT:
                 flags |= MP_FLAGS_HAS_EXCEPT;
                 MP_HERE();
                 entry_count[JUMP_TARGET(TARGET_UNIT())] = 8;
+                BREAKER_CHECK(TARGET_UNIT());
                 ENTER_NEXT();
                 break;
             case SETUP_FINALLY:
@@ -428,6 +432,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 flags |= MP_FLAGS_HAS_FINALLY;
                 MP_HERE();
                 entry_count[JUMP_TARGET(TARGET_UNIT())] = 8;
+                BREAKER_CHECK(TARGET_UNIT());
                 ENTER_NEXT();
                 break;
             /* a block too, though a loop that returns from its first round
@@ -466,6 +471,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
             bad_jump = 1;
     if (bad_jump) {
         *bad = 1;
+        PyMem_Free(entry_count);
         return NULL;
     }
 
@@ -496,8 +502,10 @@ _find_merge_points(PyCodeObject *co, int *bad)
     report = (co_report_t *)PyMem_Malloc(
         sizeof(co_report_t) + (sizeof(mergepoint_t) * mergepoint_count) +
         entry_count_len);
-    if (report == NULL)
+    if (report == NULL) {
+        PyMem_Free(entry_count);
         return NULL;
+    }
     report->breaker_checks =
         (unsigned char *)&report->mergepoints[mergepoint_count + 1];
     memcpy(report->breaker_checks, breaker_check, entry_count_len);
@@ -523,6 +531,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 NULL) {
                 report->mergepoint_count = mergepoint_index;
                 report_free(report);
+                PyMem_Free(entry_count);
                 return NULL;
             }
             report->mergepoints[mergepoint_index].blocks = 0;
@@ -536,6 +545,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     report->mergepoints[mergepoint_count].blocks = 0;
     report->mergepoints[mergepoint_count].entries.varies = NULL;
     report->mergepoints[mergepoint_count].real_from = 0;
+    PyMem_Free(entry_count);
     if (!_find_dead_locals(co, report)) {
         /* out of memory: keep every local (the lists may hold some) */
         PyErr_Clear();
@@ -752,10 +762,17 @@ psyco_is_fusable_generator(PyCodeObject *co)
 static int
 handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
 {
-    int units = c.size / LE_UNIT, top = 0, pos, u;
-    signed char depth[units + 1];
-    unsigned char handler[units + 1], queued[units + 1];
-    int work[units + 1];
+    int units = c.size / LE_UNIT, top = 0, pos, u, reach = 0;
+    /* per code unit, on the heap: a function's code can be longer than
+       the C stack */
+    int *work = PyMem_Malloc((units + 1) * (sizeof(int) + 3));
+    signed char *depth;
+    unsigned char *handler, *queued;
+    if (work == NULL)
+        return 1; /* out of memory: it may */
+    depth = (signed char *)(work + units + 1);
+    handler = (unsigned char *)depth + units + 1;
+    queued = handler + units + 1;
     memset(depth, -1, units + 1);
     memset(handler, 0, units + 1);
     memset(queued, 0, units + 1);
@@ -800,14 +817,18 @@ handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
         queued[u] = 0;
         d = depth[u];
         in = le_instr(c, u * LE_UNIT);
-        if (at >= 0 && u * LE_UNIT <= at && at < in.next)
-            return 1;
+        if (at >= 0 && u * LE_UNIT <= at && at < in.next) {
+            reach = 1;
+            goto done;
+        }
         switch (in.op) {
             /* a handler may go on after a yield in it */
             case YIELD_VALUE:
             case YIELD_FROM:
-                if (at < 0)
-                    return 1;
+                if (at < 0) {
+                    reach = 1;
+                    goto done;
+                }
                 next[n++] = in.next;
                 break;
             /* the handler's end, or a jump out of it that unwinds it;
@@ -855,7 +876,9 @@ handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
             }
         }
     }
-    return 0;
+done:
+    PyMem_Free(work);
+    return reach;
 }
 
 static int

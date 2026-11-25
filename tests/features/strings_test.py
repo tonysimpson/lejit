@@ -120,7 +120,10 @@ INT_LENGTH = re.compile(r'%(?:z|l)d')
 
 
 def same_digits(text):
-    return INT_LENGTH.sub('%d', text)
+    """text with the conversions that show the same as another made that
+    one: an integer's length modifier dropped, and %N (a type's qualified
+    name, which LeJIT passes the type for) as %T (an object's type's)"""
+    return INT_LENGTH.sub('%d', text).replace('%N', '%T')
 
 
 def found(text, lits, filled, lits_digits=frozenset()):

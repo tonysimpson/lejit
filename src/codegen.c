@@ -305,6 +305,16 @@ vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
                 totalstackspace +=
                     sizeof(long) * ((vinfo_array_t *)arg)->count;
                 break;
+            case 'i': {
+                vinfo_array_t *array = (vinfo_array_t *)arg;
+                for (i = 0; i < array->count; i++)
+                    if (array->items[i] != NULL &&
+                        !compute_vinfo(array->items[i], po))
+                        return NULL;
+                flags &= ~CfPure;
+                totalstackspace += INPUT_ARRAY_BYTES(array->count);
+                break;
+            }
             default:
                 Py_FatalError(
                     "unknown character argument in"
