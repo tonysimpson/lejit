@@ -45,8 +45,8 @@ def fallback_reason():
                                                            platform.machine())
     if sysconfig.get_config_var('Py_GIL_DISABLED'):
         return 'LeJIT runs only on CPython with the GIL, not a free-threaded build'
-    if sys.version_info >= (3, 11):
-        return 'LeJIT runs only on CPython 3.7 to 3.10, not %d.%d' % sys.version_info[:2]
+    if sys.version_info >= (3, 16):
+        return 'LeJIT runs only on CPython 3.7 to 3.15, not %d.%d' % sys.version_info[:2]
     return None
 
 
