@@ -1014,10 +1014,144 @@ le_eval_frame_default(le_frame_t *f)
 int *le_recursion_limit;
 #endif
 
+#if LE_HAS_C_STACK_SOFT_LIMIT
+long le_c_entry_charge, le_c_step_charge[LE_C_WAYS];
+
+/* The C stack a level of recursion through C takes, measured once with
+   small recursions for mechanisms/recursion.h's charges, as it depends on
+   how CPython and LeJIT were built: in CPython's evaluator through a C
+   call, sum(), next() and send(), then in LeJIT through a C call. */
+static PyObject *
+stack_probe_sp(PyObject *self, PyObject *unused)
+{
+    return PyLong_FromVoidPtr(__builtin_frame_address(0));
+}
+
+static PyObject *
+stack_probe_call(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    if (nargs != 2) {
+        PyErr_SetString(PyExc_TypeError, "two arguments");
+        return NULL;
+    }
+    return PyObject_CallOneArg(args[0], args[1]);
+}
+
+static PyMethodDef stack_probes[] = {
+    {"sp", stack_probe_sp, METH_NOARGS, NULL},
+    {"call", (PyCFunction)(void (*)(void))stack_probe_call, METH_FASTCALL,
+     NULL},
+    {NULL, NULL, 0, NULL}};
+
+static const char stack_probe_source[] =
+    "def call_(n):\n"
+    "    return sp() if n == 0 else call(call_, n - 1)\n"
+    "def sum_(n):\n"
+    "    yield sp() if n == 0 else sum(sum_(n - 1))\n"
+    "def next_(n):\n"
+    "    yield sp() if n == 0 else next(next_(n - 1))\n"
+    "def send_(n):\n"
+    "    yield sp() if n == 0 else send_(n - 1).send(None)\n";
+
+/* the C stack pointer at the bottom of 'fn'(depth), a generator stepped
+   once if 'gen'; 0 with an exception set */
+static __attribute__((noinline)) uintptr_t
+stack_probe_bottom(PyObject *fn, long depth, int gen)
+{
+    uintptr_t sp = 0;
+    PyObject *n = PyLong_FromLong(depth), *r, *v;
+    if (n == NULL)
+        return 0;
+    r = PyObject_CallOneArg(fn, n);
+    Py_DECREF(n);
+    if (r == NULL)
+        return 0;
+    v = gen ? PyIter_Next(r) : (Py_INCREF(r), r);
+    Py_DECREF(r);
+    if (v != NULL) {
+        sp = (uintptr_t)PyLong_AsVoidPtr(v);
+        Py_DECREF(v);
+    }
+    return sp;
+}
+
+/* the C stack one level of the probe 'name' takes, warm; 0 if it fails */
+static long
+stack_probe_level(PyObject *ns, const char *name)
+{
+    PyObject *fn = PyDict_GetItemString(ns, name);
+    uintptr_t one = 0, two = 0;
+    int gen = strcmp(name, "call_") != 0, round;
+    if (fn == NULL)
+        return 0;
+    for (round = 0; round < 3; round++) {
+        one = stack_probe_bottom(fn, 1, gen);
+        two = stack_probe_bottom(fn, 2, gen);
+        if (one == 0 || two == 0 || two >= one) {
+            PyErr_Clear();
+            return 0;
+        }
+    }
+    return (long)(one - two);
+}
+
+/* the probes' namespace, or NULL */
+static PyObject *
+stack_probes_load(void)
+{
+    PyObject *ns, *code, *r;
+    PyMethodDef *m;
+    ns = PyDict_New();
+    if (ns == NULL)
+        goto error;
+    if (PyDict_SetItemString(ns, "__builtins__", PyEval_GetBuiltins()) < 0)
+        goto error;
+    for (m = stack_probes; m->ml_name != NULL; m++) {
+        PyObject *f = PyCFunction_New(m, NULL);
+        if (f == NULL || PyDict_SetItemString(ns, m->ml_name, f) < 0) {
+            Py_XDECREF(f);
+            goto error;
+        }
+        Py_DECREF(f);
+    }
+    code = Py_CompileString(stack_probe_source, "<lejit stack probe>",
+                            Py_file_input);
+    if (code == NULL)
+        goto error;
+    r = PyEval_EvalCode(code, ns, ns);
+    Py_DECREF(code);
+    if (r == NULL)
+        goto error;
+    Py_DECREF(r);
+    return ns;
+error:
+    PyErr_Clear();
+    Py_XDECREF(ns);
+    return NULL;
+}
+#endif
+
 DEFINEFN int
 le_entry_install(void)
 {
     le_eval_frame_fn now = get_eval_frame();
+#if LE_HAS_C_STACK_SOFT_LIMIT
+    /* the first time only, when no LeJIT level is running to hold a
+       charge, and before LeJIT's hook goes in */
+    static int charges_measured = 0;
+    PyObject *probes = NULL;
+    long plain_call = 0, plain_step[LE_C_WAYS] = {0};
+    if (!charges_measured && now != LeEval_EvalFrame) {
+        charges_measured = 1;
+        probes = stack_probes_load();
+        if (probes != NULL) {
+            plain_call = stack_probe_level(probes, "call_");
+            plain_step[LE_C_CONSUMER] = stack_probe_level(probes, "sum_");
+            plain_step[LE_C_NEXT] = stack_probe_level(probes, "next_");
+            plain_step[LE_C_SEND] = stack_probe_level(probes, "send_");
+        }
+    }
+#endif
 #if LE_KEEPS_RECURSION_LIMIT
     le_recursion_limit = le_recursion_limit_address();
 #endif
@@ -1030,6 +1164,21 @@ le_entry_install(void)
         original_eval_frame = now;
         set_eval_frame(LeEval_EvalFrame);
     }
+#if LE_HAS_C_STACK_SOFT_LIMIT
+    if (probes != NULL) {
+        /* each compiled on its first call; LeJIT runs sum_'s level as
+           compiled code alone, which is taken as what its steps take */
+        long lejit_call = stack_probe_level(probes, "call_");
+        long lejit_step = stack_probe_level(probes, "sum_");
+        int way;
+        if (lejit_call > 0 && plain_call > lejit_call)
+            le_c_entry_charge = plain_call - lejit_call;
+        for (way = LE_C_CONSUMER; way < LE_C_WAYS; way++)
+            if (lejit_step > 0 && plain_step[way] > lejit_step)
+                le_c_step_charge[way] = plain_step[way] - lejit_step;
+        Py_DECREF(probes);
+    }
+#endif
     return 0;
 }
 
