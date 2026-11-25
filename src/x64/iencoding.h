@@ -3,8 +3,10 @@
  * condition-code model stored in PsycoObject, spill/reload, SysV C-call macros
  * and jumps. Conventions to know before editing:
  *  - Only callee-saved registers (R13, R14, R15, RBX, RBP: see RegistersLoop
- * in iencoding.c) hold tracked values, which is why C calls need no spilling.
- *    R10/R11 are encoder scratch (REG_TRANSIENT_1/2); RAX is the return value.
+ * in iencoding.c) hold tracked values, which is why C calls need no spilling,
+ *    and XMM8-XMM14, which hold only doubles and are stored at every call
+ *    (iencoding.c:psyco_xmm_store). R10/R11 and XMM15 are encoder scratch
+ *    (REG_TRANSIENT_1/2, XMM_SCRATCH); RAX is the return value.
  *  - Values are addressed relative to RSP using po->stack_depth. The
  * *_EBP_BASE names are i386 leftovers.
  *  - Any emitter that clobbers the flags must call NEED_CC* first.
@@ -48,7 +50,7 @@
 
 /* Set to 0 to limit registers to RAX>RDI */
 
-#define REG_TOTAL 16
+#define REG_TOTAL 23
 typedef enum {
     REG_X64_RAX = 0,  /* reserved for return values */
     REG_X64_RCX = 1,  /* 4th ARG */
@@ -77,10 +79,26 @@ typedef enum {
     REG_X64_XMM6 = 6,
     REG_X64_XMM7 = 7,
 
+    /* XMM8-XMM14 as tracked registers, holding run-time doubles: these are
+       their numbers in a Source and reg_array, not the encoders' (XMM_HW).
+       Call arguments are XMM0-XMM7, so setting them up never overwrites a
+       tracked value */
+    REG_X64_XMM8 = 16,
+    REG_X64_XMM14 = 22,
+
     REG_NONE = -1
 } reg_t;
 
 #define REG_LOOP_START REG_X64_R13
+#define REG_IS_XMM(rg) ((rg) >= REG_X64_XMM8)
+#define XMM_HW(rg) ((rg) - 8) /* a tracked register's number for encoders */
+#define XMM_SCRATCH 15        /* XMM15, an encoder number */
+/* po->xmm_call: no XMM value may be live at a call; they are stored to
+   stack slots (the call may clobber the registers); the callee keeps
+   them (glue that saves them) */
+#define XMM_CALL_NONE 0
+#define XMM_CALL_STORED 1
+#define XMM_CALL_KEPT 2
 
 #define REG_ANY_CALLEE_SAVED REG_X64_RBX /* saved by C functions */
 #define REG_FUNCTIONS_RETURN REG_X64_RAX
@@ -135,22 +153,29 @@ typedef enum {
 #define HAS_CCREG(po) ((po)->ccregs[0] != NULL || (po)->ccregs[1] != NULL)
 
 /* processor-depend part of PsycoObject */
-#define PROCESSOR_PSYCOOBJECT_FIELDS                                        \
-    int stack_depth; /* the size of data currently pushed in the stack */   \
-    vinfo_t                                                                 \
-        *reg_array[REG_TOTAL]; /* the 'vinfo_t' currently stored in regs */ \
-    vinfo_t *ccregs[2];        /* processor condition codes (aka flags)  */ \
-                               /* ccregs[0] is for "positive" conditions */ \
-                               /* and ccregs[1] for "negative" ones      */ \
-    reg_t last_used_reg;       /* the most recently used register        */ \
-    code_t *call_end;          /* just after the last END_CALL_I's call   */
-#define INIT_PROCESSOR_PSYCOOBJECT(po) (po->last_used_reg = REG_LOOP_START)
+#define PROCESSOR_PSYCOOBJECT_FIELDS                                          \
+    int stack_depth; /* the size of data currently pushed in the stack */     \
+    vinfo_t                                                                   \
+        *reg_array[REG_TOTAL]; /* the 'vinfo_t' currently stored in regs */   \
+    vinfo_t *ccregs[2];        /* processor condition codes (aka flags)  */   \
+                               /* ccregs[0] is for "positive" conditions */   \
+                               /* and ccregs[1] for "negative" ones      */   \
+    reg_t last_used_reg;       /* the most recently used register        */   \
+    reg_t last_used_xmm;       /* and XMM register                       */   \
+    char xmm_call;    /* XMM_CALL_*: how live XMM values survive a call    */ \
+    code_t *call_end; /* just after the last END_CALL_I's call   */
+#define INIT_PROCESSOR_PSYCOOBJECT(po) \
+    (po->last_used_reg = REG_LOOP_START, po->last_used_xmm = REG_X64_XMM14)
 
+/* a respawn replays the compilation, which must choose the same registers:
+   both round-robin positions, the XMM one in the high byte */
 #define PROCESSOR_FROZENOBJECT_FIELDS short fz_last_used_reg;
 #define SAVE_PROCESSOR_FROZENOBJECT(fpo, po) \
-    (fpo->fz_last_used_reg = (int)po->last_used_reg)
-#define RESTORE_PROCESSOR_FROZENOBJECT(fpo, po) \
-    (po->last_used_reg = (reg_t)fpo->fz_last_used_reg)
+    (fpo->fz_last_used_reg =                 \
+         (short)((int)po->last_used_reg | (int)po->last_used_xmm << 8))
+#define RESTORE_PROCESSOR_FROZENOBJECT(fpo, po)                 \
+    (po->last_used_reg = (reg_t)(fpo->fz_last_used_reg & 0xFF), \
+     po->last_used_xmm = (reg_t)(fpo->fz_last_used_reg >> 8))
 
 #define INIT_CODE_EMISSION(code) \
     do { /* nothing */           \
@@ -226,6 +251,7 @@ typedef enum {
                                                                 \
         result->stack_depth = po->stack_depth;                  \
         result->last_used_reg = po->last_used_reg;              \
+        result->last_used_xmm = po->last_used_xmm;              \
     } while (0)
 
 #define RTVINFO_CHECK(po, vsource, found)                                 \
@@ -285,9 +311,9 @@ psyco_write_far_jump(code_t *code, code_t *target);
 #define REX_64_REG_RM(reg, rm) (0x48 | (reg > 7 ? 4 : 0) | (rm > 7 ? 1 : 0))
 #define REX_64_REG_X_B(reg, index, base) \
     (REX_64_REG_RM(reg, base) | (index > 7 ? 2 : 0))
-#define REG_IN_OPCODE(opcode, reg) (opcode | (reg & 0x7))
+#define REG_IN_OPCODE(opcode, reg) (opcode | (HW_REG(reg) & 0x7))
 #define MODRM_GENERAL(type_code, reg, rm) \
-    (type_code | ((reg & 0x7) << 3) | (rm & 0x7))
+    (type_code | ((HW_REG(reg) & 0x7) << 3) | (HW_REG(rm) & 0x7))
 #define MODRM_REG_A(reg, rm) MODRM_GENERAL(0x0, reg, rm)
 #define MODRM_REG_O8(reg, rm) MODRM_GENERAL(0x40, reg, rm)
 #define MODRM_REG_O32(reg, rm) MODRM_GENERAL(0x80, reg, rm)
@@ -440,16 +466,19 @@ psyco_write_far_jump(code_t *code, code_t *target);
 #define REX_NEEDED(rex_w, r, i, rm)                                    \
     ((rex_w) == true || ((rex_w) == REX_BYTE && (r) > 3) || (r) > 7 || \
      (i) > 7 || (rm) > 7)
+/* an encoder's register: 0-15. A tracked XMM register's number (16 and up)
+   must be turned into XMM_HW first, and REG_NONE never reaches one */
+#define HW_REG(r) (extra_assert((unsigned long)(r) < 16), (r))
 #define REX_ENCODING(rex_w, r, i, rm)                                      \
     do {                                                                   \
-        if (REX_NEEDED(rex_w, r, i, rm)) {                                 \
+        if (REX_NEEDED(rex_w, HW_REG(r), i, HW_REG(rm))) {                 \
             WRITE_1(0x40 | ((rex_w) == true ? 8 : 0) | ((r) > 7 ? 4 : 0) | \
                     ((i) > 7 ? 2 : 0) | ((rm) > 7 ? 1 : 0));               \
         }                                                                  \
     } while (0)
-#define MODRM_ENCODING(mod, r, rm)                \
-    do {                                          \
-        WRITE_1(mod | ((r & 7) << 3) | (rm & 7)); \
+#define MODRM_ENCODING(mod, r, rm)                                \
+    do {                                                          \
+        WRITE_1(mod | ((HW_REG(r) & 7) << 3) | (HW_REG(rm) & 7)); \
     } while (0)
 #define DECODE_SIZE(size, offset) \
     (((size) == 0) ? (FITS_IN_8BITS(offset) ? 8 : 32) : (size))
@@ -859,20 +888,46 @@ psyco_write_far_jump(code_t *code, code_t *target);
                            (code_t *)(address));                   \
         UPDATABLE_WRITE_32BIT(REL32(code + 4, address));           \
     } while (0)
+/* a checked build clobbers XMM8-XMM14 after a call that XMM values are
+   live across in their stack slots, as any C callee may, so that a value
+   wrongly read from its register after the call shows in tests; code that
+   saves them around a call does the same before loading them back.
+   po->call_end, the return address END_CALL_I records, is then taken
+   before that code */
+#if ALL_CHECKS
+EXTERNFN code_t *
+psyco_clobber_xmm(code_t *code);
+#define CLOBBER_XMM_AFTER_CALL()                                   \
+    do {                                                           \
+        po->call_end = code;                                       \
+        if (po->xmm_call == XMM_CALL_STORED && psyco_xmm_live(po)) \
+            code = psyco_clobber_xmm(code);                        \
+    } while (0)
+#define CALL_END_HERE() ((void)0)
+#else
+#define CLOBBER_XMM_AFTER_CALL() \
+    do {                         \
+    } while (0)
+#define CALL_END_HERE() (po->call_end = code)
+#endif
 /* @asm: call {r} */
 #define CALL_R(r)                                          \
     do {                                                   \
+        extra_assert(psyco_xmm_may_call(po));              \
         le_trace_call_reg((code_t *)(code), r);            \
         DIRECT_ENCODING(false, 1, 0xFF, 0, 0, 0xD0, 0, r); \
+        CLOBBER_XMM_AFTER_CALL();                          \
     } while (0)
 #define CALL_I(i)                                       \
     do {                                                \
         long jump_amount;                               \
+        extra_assert(psyco_xmm_may_call(po));           \
         le_trace_call((code_t *)(code), (code_t *)(i)); \
         jump_amount = (long)(i) - ((long)code + 5);     \
         if (FITS_IN_32BITS(jump_amount)) {              \
             WRITE_1(0xE8);                              \
             WRITE_32BIT(jump_amount);                   \
+            CLOBBER_XMM_AFTER_CALL();                   \
         }                                               \
         else {                                          \
             MOV_R_I(REG_TRANSIENT_1, i);                \
@@ -1267,8 +1322,14 @@ bfunction_result(PsycoObject *po, bool ref);
     MOV_R_O(dst, REG_X64_RSP, STACK_POS_OFFSET(stack_pos))
 #define LOAD_REG_FROM_RT(source, dst) \
     DIRECT_OR_RSP_OFFSET_ENCODING(true, 1, 0x8B, 0, 0, 0, dst, source)
-#define SAVE_REG_TO_EBP_BASE(src, stack_pos) \
-    MOV_O_R(REG_X64_RSP, STACK_POS_OFFSET(stack_pos), src)
+#define SAVE_REG_TO_EBP_BASE(src, stack_pos)                        \
+    do {                                                            \
+        if (REG_IS_XMM(src))                                        \
+            MOVSD_O_XMM(REG_X64_RSP, STACK_POS_OFFSET(stack_pos),   \
+                        XMM_HW(src));                               \
+        else                                                        \
+            MOV_O_R(REG_X64_RSP, STACK_POS_OFFSET(stack_pos), src); \
+    } while (0)
 #define XCHG_REG_AND_EBP_BASE(src, stack_pos) \
     XCHG_R_O(src, REG_X64_RSP, STACK_POS_OFFSET(stack_pos))
 #define SAVE_IMMED_TO_EBP_BASE(immed, stack_pos)                          \
@@ -1467,7 +1528,7 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
     do {                                                                 \
         extra_assert(_last_arg_index == 0); /* every argument was set */ \
         CALL_I(immed);                                                   \
-        po->call_end = code;                                             \
+        CALL_END_HERE();                                                 \
         STACK_CORRECTION(_initial_stack_depth - po->stack_depth);        \
         po->stack_depth = _initial_stack_depth;                          \
         (void)_last_arg_index; /* read only by extra_assert */           \
@@ -1543,17 +1604,20 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
             CALL_SET_ARG_FROM_REG(getreg(source), arg_index);                 \
         }                                                                     \
     } while (0)
-#define CALL_SET_ARG_FROM_RT_DOUBLE(source, double_arg_index)       \
-    do {                                                            \
-        if (RSOURCE_REG_IS_NONE(source)) {                          \
-            extra_assert(getstack(source) != RUNTIME_STACK_NONE);   \
-            /* we assume all doubles are passed in xmm registers */ \
-            MOVQ_XMM_O(double_arg_index, REG_X64_RSP,               \
-                       STACK_POS_OFFSET(RSOURCE_STACK(source)));    \
-        }                                                           \
-        else {                                                      \
-            MOVQ_XMM_QR(double_arg_index, getreg(source));          \
-        }                                                           \
+#define CALL_SET_ARG_FROM_RT_DOUBLE(source, double_arg_index)         \
+    do {                                                              \
+        if (RSOURCE_REG_IS_NONE(source)) {                            \
+            extra_assert(getstack(source) != RUNTIME_STACK_NONE);     \
+            /* we assume all doubles are passed in xmm registers */   \
+            MOVQ_XMM_O(double_arg_index, REG_X64_RSP,                 \
+                       STACK_POS_OFFSET(RSOURCE_STACK(source)));      \
+        }                                                             \
+        else if (REG_IS_XMM(getreg(source))) {                        \
+            MOVAPD_XMM_XMM(double_arg_index, XMM_HW(getreg(source))); \
+        }                                                             \
+        else {                                                        \
+            MOVQ_XMM_QR(double_arg_index, getreg(source));            \
+        }                                                             \
     } while (0)
 #define CALL_SET_ARG_IMMED_DOUBLE(immed, double_arg_index)      \
     do {                                                        \
@@ -1587,12 +1651,18 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
 /*****************************************************************/
 /***   vinfo_t saving                                          ***/
 
-/* save 'vi', which is currently in register 'rg'. */
-#define SAVE_REG_VINFO(vi, rg)                     \
-    do {                                           \
-        PUSH_R(rg);                                \
-        psyco_inc_stackdepth(po);                  \
-        SET_RUNTIME_STACK_TO(vi, po->stack_depth); \
+/* save 'vi', which is currently in register 'rg', to a new stack slot;
+   LEA keeps the flags, as PUSH does */
+#define SAVE_REG_VINFO(vi, rg)                       \
+    do {                                             \
+        if (REG_IS_XMM(rg)) {                        \
+            LEA_R_O(REG_X64_RSP, REG_X64_RSP, -8);   \
+            MOVSD_O_XMM(REG_X64_RSP, 0, XMM_HW(rg)); \
+        }                                            \
+        else                                         \
+            PUSH_R(rg);                              \
+        psyco_inc_stackdepth(po);                    \
+        SET_RUNTIME_STACK_TO(vi, po->stack_depth);   \
     } while (0)
 
 /* ensure that the register 'rg' is free */
@@ -1649,6 +1719,59 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
         POP_CC();                                                       \
     } while (0)
 
+/* XMM registers (iencoding.c). A run-time double may be in one;
+   nothing else is. Code that needs it in a general register uses
+   RTVINFO_IN_REG, which moves it there. */
+/* a free tracked XMM register in 'targ', its value stored if none is free */
+#define NEED_FREE_XMM(targ) (code = psyco_need_free_xmm(po, code, &(targ)))
+/* every XMM value to its stack slot, the registers forgotten: before a C
+   call, and at merge points, whose snapshots hold no XMM register */
+#define XMM_SPILL()                       \
+    do {                                  \
+        code = psyco_xmm_store(po, code); \
+        psyco_xmm_forget(po);             \
+    } while (0)
+EXTERNFN code_t *
+psyco_need_free_xmm(PsycoObject *po, code_t *code, reg_t *targ);
+/* 'vi', in an XMM register, into a general one */
+EXTERNFN code_t *
+psyco_xmm_to_reg(PsycoObject *po, code_t *code, vinfo_t *vi);
+/* a C call clobbers every XMM register. Straight-line code stores each XMM
+   value that has no stack slot to a new one before the call
+   (psyco_xmm_store), and forgets the registers after it
+   (psyco_xmm_forget). A call on a conditional path, which must leave the
+   state as it was, saves the live ones around it
+   (ipyencoding.c:decref_dealloc_calling) or goes through the copy of its
+   glue that keeps them (processor.h:psyco_glue_keeping_xmm). */
+EXTERNFN code_t *
+psyco_xmm_store(PsycoObject *po, code_t *code);
+EXTERNFN void
+psyco_xmm_forget(PsycoObject *po);
+EXTERNFN bool
+psyco_xmm_live(PsycoObject *po);
+
+/* float operations inline, on run-time or known doubles (not both known):
+   a new run-time double in an XMM register. With two NaNs, a + b and
+   a * b give a's, as CPython's specialised float instructions do */
+#define FLOAT_OP_ADD 0
+#define FLOAT_OP_SUB 1
+#define FLOAT_OP_MUL 2
+#define FLOAT_OP_DIV 3 /* b must not be zero: psyco_float_is_zero */
+EXTERNFN vinfo_t *
+psyco_float_op(PsycoObject *po, int op, vinfo_t *a, vinfo_t *b);
+/* the condition that run-time double 'vi' is +0.0 or -0.0 */
+EXTERNFN condition_code_t
+psyco_float_is_zero(PsycoObject *po, vinfo_t *vi);
+/* (double) of a run-time word, rounded to nearest even as C's cast */
+EXTERNFN vinfo_t *
+psyco_float_from_word(PsycoObject *po, vinfo_t *w);
+#if ALL_CHECKS
+/* whether a call may be emitted now: no XMM value is live, or they are
+   stored or saved */
+EXTERNFN bool
+psyco_xmm_may_call(PsycoObject *po);
+#endif
+
 /* make sure that the register 'reg' will not
    be returned by the next call to NEED_FREE_REG() */
 #define DELAY_USE_OF(reg)                                   \
@@ -1684,19 +1807,21 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
         SET_RUNTIME_REG_TO(v, r);                    \
     } while (0)
 
-/* ensure that a run-time vinfo is in a register */
-#define RTVINFO_IN_REG(vi)                        \
-    do {                                          \
-        if (RUNTIME_REG_IS_NONE(vi)) {            \
-            /* reload the vinfo from the stack */ \
-            reg_t _rg;                            \
-            long _stack;                          \
-            NEED_FREE_REG(_rg);                   \
-            REG_NUMBER(po, _rg) = (vi);           \
-            _stack = RUNTIME_STACK(vi);           \
-            SET_RUNTIME_REG_TO(vi, _rg);          \
-            LOAD_REG_FROM_EBP_BASE(_rg, _stack);  \
-        }                                         \
+/* ensure that a run-time vinfo is in a general register */
+#define RTVINFO_IN_REG(vi)                                           \
+    do {                                                             \
+        if (!RUNTIME_REG_IS_NONE(vi) && REG_IS_XMM(RUNTIME_REG(vi))) \
+            code = psyco_xmm_to_reg(po, code, vi);                   \
+        else if (RUNTIME_REG_IS_NONE(vi)) {                          \
+            /* reload the vinfo from the stack */                    \
+            reg_t _rg;                                               \
+            long _stack;                                             \
+            NEED_FREE_REG(_rg);                                      \
+            REG_NUMBER(po, _rg) = (vi);                              \
+            _stack = RUNTIME_STACK(vi);                              \
+            SET_RUNTIME_REG_TO(vi, _rg);                             \
+            LOAD_REG_FROM_EBP_BASE(_rg, _stack);                     \
+        }                                                            \
     } while (0)
 
 #define RTVINFO_IN_BYTE_REG(vi, resrv1, resrv2)      \
@@ -1794,6 +1919,34 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
                           (code_t *)(code));                            \
         }                                                               \
         *(_short_jump_op_end_##id - 1) = (code_t)_jump_amount;          \
+    } while (0)
+
+/* a forward conditional jump, 8-bit or (if 'near') 32-bit */
+#define BEGIN_COND_JUMP_OF(id, condition, near) \
+    int _near_##id = (near);                    \
+    if (_near_##id) {                           \
+        code[0] = 0x0F;                         \
+        code[1] = 0x80 | (condition);           \
+        code += 6;                              \
+    }                                           \
+    else {                                      \
+        code[0] = 0x70 | (condition);           \
+        code += 2;                              \
+    }                                           \
+    code_t *_jump_op_end_##id = code;           \
+    do {                                        \
+    } while (0)
+#define END_JUMP_OF(id)                                                  \
+    do {                                                                 \
+        long _jump_amount = (long)code - (long)_jump_op_end_##id;        \
+        le_trace_jump_cond(_jump_op_end_##id - (_near_##id ? 6 : 2),     \
+                           _jump_op_end_##id, (code_t *)(code));         \
+        if (_near_##id)                                                  \
+            *(dword_t *)(_jump_op_end_##id - 4) = (dword_t)_jump_amount; \
+        else {                                                           \
+            extra_assert(_jump_amount < 128);                            \
+            *(_jump_op_end_##id - 1) = (code_t)_jump_amount;             \
+        }                                                                \
     } while (0)
 
 #define BEGIN_REVERSE_SHORT_JUMP(id) \

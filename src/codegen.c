@@ -355,6 +355,11 @@ vinfo_t *(psyco_generic_call)(PsycoObject *po, void *c_function, int flags,
         /* compile the run time call */
         if (!(flags & CfNoBlock) && !psyco_cannot_block(c_function))
             po->blocking_call = 1;
+        /* the call clobbers the XMM registers: their values go to stack
+           slots now, where the locals map finds them */
+        BEGIN_CODE
+        code = psyco_xmm_store(po, code);
+        END_CODE
         if (!(flags & (CfPure | CfNoPython))) {
             po->pr.class_unchecked = 1; /* it may assign __class__ */
             po->pr.python_call = 1;
@@ -511,6 +516,8 @@ lm_value(PsycoObject *po, struct lm_build *b, vinfo_t *vi, const long *reg_pos,
             long pos = getstack(vi->source);
             if (pos == RUNTIME_STACK_NONE) {
                 reg_t rg = getreg(vi->source);
+                /* a call stores XMM values first (psyco_xmm_store) */
+                extra_assert(rg == REG_NONE || !REG_IS_XMM(rg));
                 if (rg == REG_NONE) {
                     lm_add(b, LM_NONE, 0, 0);
                     return;
