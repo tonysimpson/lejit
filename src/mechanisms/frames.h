@@ -496,6 +496,11 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
 #define LE_UNSIGNED_le_frame_t__localsplus 0
 _Static_assert(sizeof(((le_frame_t *)0)->localsplus[0]) == sizeof(void *),
                "LeJIT: a frame's localsplus words are not pointers");
+/* the frame's object, or NULL: Python can see the frame's words only
+   through it */
+#define LE_OFS_le_frame_t__frame_obj offsetof(le_frame_t, frame_obj)
+#define LE_SIZE2_le_frame_t__frame_obj 3
+#define LE_UNSIGNED_le_frame_t__frame_obj 0
 /* the frame is a generator's, resumed: the call of a generator function
    runs its frame first to RETURN_GENERATOR, which makes the generator */
 static inline int
@@ -624,7 +629,12 @@ le_gen_frame_set_depth(le_frame_t *f, int n)
 static inline void
 le_gen_frame_run(le_frame_t *f)
 {
+#if LE_HAS_RUNNING_STACK_HIDDEN
+    /* as ceval marks the frame it runs: the gc sees none of its words */
+    f->stacktop = -1;
+#else
     le_gen_frame_set_depth(f, 0);
+#endif
     LE_FRAME_PLACE(f) =
         (_Py_CODEUNIT *)((char *)LE_FRAME_PLACE(f) + LE_GEN_RUN_STEP);
 }
@@ -645,6 +655,46 @@ le_gen_frame_pause(le_frame_t *f, int lasti, int nstack)
     le_frame_gen(f)->gi_frame_state = FRAME_SUSPENDED;
 #endif
 }
+/* The generator 'gen', made around a frame object (frames.c:
+   le_gen_of_frame), whose body has returned or raised while compiled code
+   ran it, is closed as gen_send_ex closes it: its frame goes back to the
+   frame object, which keeps the words, as for a frame that outlives its
+   run (frame.c:take_ownership), and the generator's reference to the
+   frame object goes. Nothing more if ceval has closed it. */
+static inline void
+le_gen_frame_give_back(PyGenObject *gen)
+{
+    le_frame_t *g =
+        (le_frame_t *)((char *)gen + offsetof(PyGenObject, gi_iframe));
+    le_frame_t *own;
+    PyFrameObject *f = g->frame_obj;
+    gen->gi_frame_state = FRAME_CLEARED;
+    Py_CLEAR(gen->gi_exc_state.exc_value);
+    if (f == NULL)
+        return;
+    own = (le_frame_t *)f->_f_frame_data;
+    memcpy(own, g,
+           (char *)&g->localsplus[LE_FRAME_CODE(g)->co_nlocalsplus +
+                                  le_frame_stack_depth(g)] -
+               (char *)g);
+#if LE_HAS_FRAME_STACKREFS
+    own->stackpointer = own->localsplus + (g->stackpointer - g->localsplus);
+#endif
+#if LE_HAS_GEN_KEEPS_CODE
+    /* and a reference of its own to the code, which its dealloc releases */
+#if LE_HAS_FRAME_STACKREFS
+    g->f_executable = PyStackRef_DUP(g->f_executable);
+#else
+    Py_INCREF(LE_FRAME_CODE(g));
+#endif
+#endif
+    own->owner = FRAME_OWNED_BY_FRAME_OBJECT;
+    own->frame_obj = NULL;
+    own->previous = NULL;
+    f->f_frame = own;
+    g->frame_obj = NULL;
+    Py_DECREF(f);
+}
 /* whether the generator whose state is 'state' is paused, after a run */
 #define LE_GEN_PAUSED(state) ((state) < FRAME_EXECUTING)
 /* the run that gave 'result' has ended: paused (le_gen_frame_pause, or
@@ -654,8 +704,15 @@ le_gen_frame_pause(le_frame_t *f, int lasti, int nstack)
 static inline void
 le_gen_frame_end(le_frame_t *f, PyObject *result)
 {
-    (void)f;
     (void)result;
+#if LE_HAS_RUNNING_STACK_HIDDEN
+    /* returned or raised: the locals left in it are for gen_send_ex to
+       clear */
+    if (f->stacktop < 0)
+        le_gen_frame_set_depth(f, 0);
+#else
+    (void)f;
+#endif
 }
 #else
 /* Frames as Python sees them are PyFrameObjects: the thread's
@@ -1156,6 +1213,23 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
    which ceval would show as the first line, and the f_back
    psyco_frame_returned gave it, which ceval would replace with the frame
    it was called from. */
+/* frame 'f', with no frame object, lets go of what it holds but its code,
+   as ceval's _PyFrame_ClearExceptCode does */
+static inline void
+le_frame_clear_except_code(PyThreadState *ts, le_frame_t *f)
+{
+    int k, n = LE_FRAME_CODE(f)->co_nlocalsplus + le_frame_stack_depth(f);
+#if LE_HAS_C_RECURSION_REMAINING
+    ts->c_recursion_remaining--;
+#endif
+    for (k = 0; k < n; k++) Py_XDECREF(le_frame_word_take(f, k));
+    Py_XDECREF(f->f_locals);
+    Py_DECREF(LE_FRAME_FUNCOBJ(f));
+#if LE_HAS_C_RECURSION_REMAINING
+    ts->c_recursion_remaining++;
+#endif
+}
+
 static inline PyObject *
 le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
                 PyObject *done)
@@ -1164,18 +1238,8 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
     _Py_CODEUNIT *at = LE_FRAME_PLACE(f);
     if (fo == NULL && f->owner == FRAME_OWNED_BY_THREAD &&
         (PyObject **)f != &ts->datastack_chunk->data[0]) {
-        PyCodeObject *co = LE_FRAME_CODE(f);
-        int k, n = co->co_nlocalsplus + le_frame_stack_depth(f);
-#if LE_HAS_C_RECURSION_REMAINING
-        ts->c_recursion_remaining--;
-#endif
-        for (k = 0; k < n; k++) Py_XDECREF(le_frame_word_take(f, k));
-        Py_XDECREF(f->f_locals);
-        Py_DECREF(LE_FRAME_FUNCOBJ(f));
-        Py_DECREF(co);
-#if LE_HAS_C_RECURSION_REMAINING
-        ts->c_recursion_remaining++;
-#endif
+        le_frame_clear_except_code(ts, f);
+        Py_DECREF(LE_FRAME_CODE(f));
         ts->datastack_top = (PyObject **)f;
         return result;
     }
@@ -1219,11 +1283,10 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
 /* A generator's frame 'f', run by compiled code (eval_hook.c:LeGen_Run) to
    give 'result', is left as ceval leaves it, which gen_send_ex expects:
    paused at a yield, the thread's exception state is its caller's again
-   and the frame is unlinked; else, ended, ceval clears it as a generator's
-   frame (le_frame_finish). ceval would give a generator's frame the
-   exception it unwinds with a traceback entry, as it does for any frame
-   it has started (_PyFrame_IsIncomplete), so for the unwind the frame
-   isn't the generator's; ceval tells the two apart only by the owner. */
+   and the frame is unlinked; else, ended, it is cleared as ceval clears a
+   generator's frame. Where CPython hides that clear, a frame with a frame
+   object is given to ceval to unwind (le_frame_finish), which clears it
+   as a generator's frame. */
 static inline PyObject *
 le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
                    PyObject *done)
@@ -1242,12 +1305,38 @@ le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
 #endif
         return result;
     }
-    f->owner = FRAME_OWNED_BY_FRAME_OBJECT;
+#if LE_HAS_FRAME_CLEAR_AND_POP_LINKABLE
     result = le_frame_finish(ts, f, result, done);
-    f->owner = FRAME_OWNED_BY_GENERATOR;
+#else
+    if (f->frame_obj == NULL) {
+        /* as ceval's clear_gen_frame does */
+        gen->gi_frame_state = FRAME_CLEARED;
+        ts->exc_info = gen->gi_exc_state.previous_item;
+        gen->gi_exc_state.previous_item = NULL;
+        le_frame_clear_except_code(ts, f);
+        f->previous = NULL;
+    }
+    else {
+        /* ceval unwinds it with 'done' raised in place of any exception
+           of the generator's, which already has the frame's traceback
+           entry: ceval gives 'done' one, dropped after */
+        PyObject *raised = result == NULL ? PyErr_GetRaisedException() : NULL;
+        PyObject *ended = le_frame_finish(
+            ts, f, result != NULL ? result : Py_NewRef(Py_None), done);
+        PyException_SetTraceback(done, Py_None);
+        if (result != NULL)
+            result = ended;
+        else if (ended == NULL)
+            Py_XDECREF(raised); /* ceval raised another in its place */
+        else {
+            Py_DECREF(ended);
+            PyErr_SetRaisedException(raised);
+        }
+    }
+#endif
 #if LE_HAS_GENERATOR_RETURN_KIND
-    /* as ceval's clear of a generator's frame says, which a frame owned
-       by its object doesn't get */
+    /* as ceval's clear of a generator's frame says, set again after
+       anything le_frame_finish ran since */
     ((_PyThreadStateImpl *)ts)->generator_return_kind = GENERATOR_RETURN;
 #endif
     return result;

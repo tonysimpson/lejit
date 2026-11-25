@@ -831,7 +831,7 @@ DEFINEFN
 vinfo_t *
 psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
                  Source argsources[], int argcount,
-                 struct stack_frame_info_s *finfo, bool through_c)
+                 struct stack_frame_info_s *finfo, int through_c)
 {
     /* this is a simplified version of psyco_generic_call() which
         assumes Psyco's calling convention instead of the C's. */
@@ -887,7 +887,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     /* offset in stack to this this finfo */
     finfo_last(finfo)->link_stack_depth =
         po->stack_depth - INITIAL_STACK_DEPTH;
-    finfo_last(finfo)->through_c = through_c;
+    finfo_last(finfo)->through_c = through_c != LE_C_NONE;
     initial_stack_depth = po->stack_depth;
     /* We assume that compiler register state is not changed by the call macros
      */

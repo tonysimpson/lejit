@@ -185,9 +185,13 @@ EXTERNFN void
 le_c_stack_limits_put_back(PyThreadState *ts, const uintptr_t saved[3]);
 #endif
 
-/* CPython's entry takes from the C count where it has one; the call it
+/* CPython's entry takes from the C count where it has one, or is charged
+   on the soft limit where it measures the stack (eval_hook.c); the call it
    stands for takes nothing (mechanisms/recursion.h, LE_C_RECURSION_UNITS) */
 #define ENTRY_C_UNITS 2
+#if LE_HAS_C_STACK_SOFT_LIMIT
+extern long le_c_entry_charge;
+#endif
 
 static long
 call_on_segment(segment_call_t *call)
