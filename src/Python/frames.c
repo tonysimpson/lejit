@@ -2796,6 +2796,8 @@ le_get_objects(PyObject *self, PyObject *args, PyObject *kwds)
     return PyObject_Call(original_get_objects, args, kwds);
 }
 
+/* get_referrers leaves out the tuple of arguments it was called with, but
+   would find another: each calls the original as it was called */
 static PyObject *
 le_get_referrers(PyObject *self, PyObject *args)
 {
@@ -2803,11 +2805,26 @@ le_get_referrers(PyObject *self, PyObject *args)
     return PyObject_Call(original_get_referrers, args, NULL);
 }
 
+static PyObject *
+le_get_referrers_fast(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    psyco_coros_realise();
+#if LE_HAS_VECTORCALL
+    return PyObject_Vectorcall(original_get_referrers, args, nargs, NULL);
+#else
+    return _PyObject_FastCall(original_get_referrers, (PyObject **)args,
+                              nargs);
+#endif
+}
+
 static PyMethodDef le_get_objects_def = {
     "get_objects", (PyCFunction)(void (*)(void))le_get_objects,
     METH_VARARGS | METH_KEYWORDS, NULL};
 static PyMethodDef le_get_referrers_def = {"get_referrers", le_get_referrers,
                                            METH_VARARGS, NULL};
+static PyMethodDef le_get_referrers_fast_def = {
+    "get_referrers", (PyCFunction)(void (*)(void))le_get_referrers_fast,
+    METH_FASTCALL, NULL};
 
 static setter original_func_set[2];
 
@@ -2845,8 +2862,13 @@ coros_realised_init(PyObject *gcmod)
     original_get_referrers = PyObject_GetAttrString(gcmod, "get_referrers");
     fn = original_get_referrers == NULL
              ? NULL
-             : replacement_new(&le_get_referrers_def, gcmod,
-                               original_get_referrers);
+             : replacement_new(
+                   PyCFunction_Check(original_get_referrers) &&
+                           (PyCFunction_GET_FLAGS(original_get_referrers) &
+                            METH_FASTCALL)
+                       ? &le_get_referrers_fast_def
+                       : &le_get_referrers_def,
+                   gcmod, original_get_referrers);
     if (fn == NULL || PyObject_SetAttrString(gcmod, "get_referrers", fn) < 0)
         PyErr_Print();
     Py_XDECREF(fn);
