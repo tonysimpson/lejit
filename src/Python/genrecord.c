@@ -495,22 +495,21 @@ PyTypeObject le_gen_record_type = {
     .tp_flags = Py_TPFLAGS_DEFAULT,
 };
 
-INITIALIZATIONFN void
-psyco_genrecord_init(void)
-{
-    if (PyType_Ready(&le_gen_record_type) < 0)
-        PyErr_Clear();
-}
-
 /* the unit of RETURN_GENERATOR in the code of a generator function, -1 if
    it has none or something before it a record's start doesn't do
    (le_gen_record_start), such as the iterator a generator expression
-   takes before it (GET_ITER) */
+   takes before it (GET_ITER). The record's type is made ready here, when
+   code that makes records is first compiled, not before. */
 DEFINEFN long
 le_gen_record_start_unit(PyCodeObject *co)
 {
     le_code_t c = le_code(co);
     int pos;
+    if (!(le_gen_record_type.tp_flags & Py_TPFLAGS_READY) &&
+        PyType_Ready(&le_gen_record_type) < 0) {
+        PyErr_Clear();
+        return -1;
+    }
     for (pos = 0; pos < c.size;) {
         le_instr_t in = le_instr(c, pos);
         if (in.op == RETURN_GENERATOR)

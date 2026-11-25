@@ -1142,15 +1142,23 @@ def FINISHED_GENERATOR_UNLINKED():
 @probe
 def GEN_CLOSE_UNRUN():
     """a generator paused at a yield in no try block, which RESUME's
-    argument says (dis), is left where it paused by close (run)"""
+    argument tells from one in a try block (dis), is left where it paused
+    by close (run)"""
     def g():
         yield sys._getframe()
-    ins = list(dis.get_instructions(g))
-    after = [b for a, b in zip(ins, ins[1:]) if a.opname == 'YIELD_VALUE']
-    if not after or after[0].opname != 'RESUME':
-        return False, 'dis: no RESUME after a yield'
-    if not after[0].arg & 4:
-        return False, 'dis: RESUME after a yield has argument %d' % after[0].arg
+
+    def in_try():
+        try:
+            yield 1
+        finally:
+            pass
+
+    def resume_arg(f):
+        ins = list(dis.get_instructions(f))
+        after = [b for a, b in zip(ins, ins[1:]) if a.opname == 'YIELD_VALUE']
+        return after[0].arg if after and after[0].opname == 'RESUME' else None
+    if resume_arg(g) is None or resume_arg(g) == resume_arg(in_try):
+        return False, 'dis: RESUME after a yield has argument %r in a try block too' % resume_arg(g)
     gen = g()
     f = next(gen)
     before = f.f_lasti

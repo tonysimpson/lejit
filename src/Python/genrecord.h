@@ -42,11 +42,9 @@ EXTERNFN int
 le_gen_record_send_status(PyThreadState *ts, PyObject *rec, PyObject *result,
                           PyObject *out[]);
 /* the unit of RETURN_GENERATOR in the code of a generator function, -1 if
-   it has none */
+   a record can't start there */
 EXTERNFN long
 le_gen_record_start_unit(PyCodeObject *co);
-INITIALIZATIONFN void
-psyco_genrecord_init(void);
 /* whether 'o' is a record */
 EXTERNFN bool
 le_gen_record_check(PyObject *o);
