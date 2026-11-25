@@ -1736,7 +1736,8 @@ traceback_locals(PsycoObject *po, vinfo_t *tb)
    entries too (cimpl_new_frame). So the locals are written when Python
    reads them, as they are then, not as the exception passes. Where reads
    can't find them, they are written before the call goes into an inlined
-   frame (psyco_catcher_flush), and once more as it ends, while something
+   frame (psyco_catcher_flush) and taken back as it returns
+   (psyco_catcher_unflush), and once more as it ends, while something
    besides the word holds the frame (catcher_flush). NULL in an inlined
    frame, which has no handlers. */
 static vinfo_t *
@@ -1849,6 +1850,25 @@ bool
 psyco_catcher_flush(PsycoObject *po)
 {
     return catcher_flush(po, false);
+}
+
+/* after the inlined call: the locals catcher_flush wrote for it go again
+   (frames.c:psyco_frame_catcher_unflush). The test is compiled out of line
+   when first taken. */
+DEFINEFN
+bool
+psyco_catcher_unflush(PsycoObject *po)
+{
+    vinfo_t *word = catcher_word(po), *now;
+    int on;
+    if (word == NULL)
+        return true;
+    now = vinfo_new(RunTime_NewStack(getstack(word->source), false, false));
+    on = runtime_NON_NULL_f(po, now);
+    if (on <= 0)
+        return on == 0;
+    return psyco_generic_call(po, psyco_frame_catcher_unflush, CfNoReturnValue,
+                              "r", word) != NULL;
 }
 
 /* Whether the handler at 'handler' drops the exception unseen
@@ -4941,6 +4961,18 @@ cimpl_async_gen_wrap(PyObject *v)
     return o;
 }
 
+#ifdef INTRINSIC_BUILD_FROZENSET
+/* frozenset() of a set display or comprehension: the new set becomes the
+   frozenset, through CPython's own intrinsic, which _PySet_Freeze (not
+   exported) does */
+static PyObject *
+cimpl_build_frozenset(PyObject *set)
+{
+    return _PyIntrinsics_UnaryFunctions[INTRINSIC_BUILD_FROZENSET].func(
+        PyThreadState_GET(), set);
+}
+#endif
+
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
 /* intrinsics.c:stopiteration_error, for a fused generator's code, the
    only generator code compiled (mergepoints.c:_build_merge_points):
@@ -5624,9 +5656,8 @@ psyco_can_go_interpreted(PsycoObject *po)
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int i, nstack = STACK_LEVEL();
     long mode = psyco_generator_mode(po);
-    if ((po->pr.co->co_flags & CO_ITERABLE_COROUTINE) ||
-        ((po->pr.co->co_flags & LE_BODY_FLAGS) && mode != GENEXPR_RESUMABLE &&
-         mode != GENEXPR_DIRECT))
+    if ((po->pr.co->co_flags & LE_BODY_FLAGS) && mode != GENEXPR_RESUMABLE &&
+        mode != GENEXPR_DIRECT)
         return false;
     for (i = 0; i < nstack; i++)
         if (is_pseudo_exception_tuple(stack_a[i]))
@@ -7582,15 +7613,16 @@ out:
 
 #if LE_HAS_OPCODE_SEND && LE_RESUMES_ON_FRAME
 /* GET_YIELD_FROM_ITER in a plain generator: what yield from iterates, a
-   new reference, 'o' itself if it is a generator */
+   new reference, 'o' itself if it is a generator, or a coroutine where
+   'iterable_coro' (a types.coroutine generator's body) */
 static PyObject *
-cimpl_yield_from_iter(PyObject *o)
+cimpl_yield_from_iter(PyObject *o, long iterable_coro)
 {
-    if (PyCoro_CheckExact(o)) {
+    if (PyCoro_CheckExact(o) && !iterable_coro) {
         PyErr_SetString(PyExc_TypeError, LE_MSG_YIELD_FROM_COROUTINE);
         return NULL;
     }
-    if (PyGen_CheckExact(o)) {
+    if (PyGen_CheckExact(o) || PyCoro_CheckExact(o)) {
         Py_INCREF(o);
         return o;
     }
@@ -7710,8 +7742,10 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
            (mergepoints.c:body_compilable): what it iterates */
         case GET_YIELD_FROM_ITER:
             if (Psyco_KnownType(TOP()) != &PyGen_Type) {
-                x = psyco_generic_call(po, cimpl_yield_from_iter,
-                                       CfCommonNewRefPyObject, "v", TOP());
+                x = psyco_generic_call(
+                    po, cimpl_yield_from_iter, CfCommonNewRefPyObject, "vl",
+                    TOP(),
+                    (long)(po->pr.co->co_flags & CO_ITERABLE_COROUTINE));
                 if (x == NULL)
                     break;
                 POP_DECREF();
@@ -7879,8 +7913,22 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
 
         /* the intrinsics left as CALL_INTRINSIC_1 (bytecode.h:le_instr)
            that mergepoints.c:compiled_intrinsic allows: a generator's
-           PEP 479 handler, and the REPL's print */
+           PEP 479 handler, frozenset() of a new set, and the REPL's print */
         case CALL_INTRINSIC_1:
+#ifdef INTRINSIC_BUILD_FROZENSET
+            if (oparg == INTRINSIC_BUILD_FROZENSET) {
+                x = psyco_generic_call(
+                    po, cimpl_build_frozenset,
+                    CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v",
+                    TOP());
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                Psyco_AssertType(po, x, &PyFrozenSet_Type);
+                PUSH(x);
+                goto fine;
+            }
+#endif
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
             if (oparg == INTRINSIC_STOPITERATION_ERROR) {
                 int flags = po->pr.co->co_flags;
@@ -8005,6 +8053,15 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
                  i--;) /* args, callable and the NULL */
                 POP_DECREF();
             PUSH(x);
+#if LE_HAS_BREAKER_SKIPPED_AFTER_LOAD_SPECIAL
+            /* ceval doesn't test eval_breaker after the call that follows
+               LOAD_SPECIAL (__enter__'s, __aenter__'s), so an interrupt
+               landing there is raised inside the with block, whose
+               __exit__ runs */
+            if (le_op(le_code(co), next_instr - LE_CACHE_BYTES(opcode) -
+                                       2 * LE_UNIT) == LOAD_SPECIAL)
+                goto fine;
+#endif
             if (!breaker_after_call(po, next_instr))
                 break;
             goto fine;

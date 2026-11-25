@@ -121,9 +121,12 @@ EXTERNFN void
 PycException_Reraise(PsycoObject *po, vinfo_t *exc, vinfo_t *val, vinfo_t *tb);
 /* before po's frame goes into an inlined one, where reads of its locals
    can't find them: the frame that stands for it, if something reads it,
-   gets them now (pycompiler.c:catcher_word). False on an error. */
+   gets them now (pycompiler.c:catcher_word), and _unflush takes them
+   back once the inlined frame returns. False on an error. */
 EXTERNFN bool
 psyco_catcher_flush(PsycoObject *po);
+EXTERNFN bool
+psyco_catcher_unflush(PsycoObject *po);
 
 /* checking for the Python class of an exception */
 EXTERNFN vinfo_t *

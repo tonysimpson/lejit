@@ -7,11 +7,11 @@ run doesn't.
 A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
-(no leak check), 'leaks_with_aslr': reason (no leak check when address-space
-randomisation can't be turned off: what it counts depends on addresses),
-'warmup': (rounds, reason), 'clear_type_cache': reason (the
-leak check empties CPython's type cache first; only where that keeps the
-types' version tags, as from 3.11), 'checked': reason (needs a checked build),
+(no leak check), 'warmup': (rounds, reason), 'clear_type_cache': reason (the
+leak check empties CPython's type cache around the rounds; where that also
+drops the types' version tags, before 3.11, compiled code that checks them
+compiles again in every run of the rounds, which are then run four times),
+'checked': reason (needs a checked build),
 'expected': [result, ...] (LeJIT's results must be these, one per call, not
 plain CPython's: for a language rule some CPython gets wrong),
 'compiles_each_call': reason (the function makes and compiles new code on
@@ -101,8 +101,7 @@ def main():
         CASES = os.path.abspath(args[0])
     verbose = '-v' in args
     release = '--release' in args
-    aslr_off = aslr_off_works()
-    if not aslr_off:
+    if not aslr_off_works():
         print('address-space randomisation stays on: setarch -R is refused here')
         ASLR_OFF[:] = []
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
@@ -148,8 +147,7 @@ def main():
                     problem = 'compiled, but expected to be interpreted'
             elif not release and got[-1] != 'compiled: yes':
                 problem = got[-1]
-            elif (leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks') and
-                  (aslr_off or not opts.get('leaks_with_aslr'))):
+            elif leak_lejit - leak_ref > LEAK_SLACK and not opts.get('leaks'):
                 problem = 'leaks: %d more blocks after 100 extra rounds (%d without LeJIT)' % (
                     leak_lejit, leak_ref)
                 if repeated:

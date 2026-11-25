@@ -582,10 +582,14 @@ loads_frame_locals_builtin(PyCodeObject *co, int namei)
 
 /* the CALL_INTRINSIC_1 arguments pycompiler.c compiles, besides those
    bytecode.h:le_instr folds to the opcodes they replaced: a generator's
-   PEP 479 handler, and the REPL's print */
+   PEP 479 handler, frozenset() of a new set, and the REPL's print */
 static int
 compiled_intrinsic(int arg)
 {
+#ifdef INTRINSIC_BUILD_FROZENSET
+    if (arg == INTRINSIC_BUILD_FROZENSET)
+        return 1;
+#endif
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
     return arg == INTRINSIC_PRINT || arg == INTRINSIC_STOPITERATION_ERROR;
 #else
@@ -981,13 +985,13 @@ async_gens_compiled(void)
    ceval instead (handler_yields_kept). With an exception table, a
    handler's state is items on the frame's stack and the exception it
    handles is the generator's own, which a pause leaves where ceval's
-   does. */
+   does. A types.coroutine generator's body is a plain generator's. */
 static int
 body_compilable(PyCodeObject *co, le_code_t *c)
 {
     int pos;
-    int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
-                               CO_ASYNC_GENERATOR | CO_ITERABLE_COROUTINE);
+    int kind =
+        co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR);
     if (kind != CO_GENERATOR &&
         (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED) &&
         (kind != CO_ASYNC_GENERATOR || !async_gens_compiled()))

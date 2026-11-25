@@ -308,6 +308,12 @@ integer_conditional(PsycoObject *po, condition_code_t cc, long immed_true,
 /* make a run-time copy of a vinfo_t */
 EXTERNFN vinfo_t *
 make_runtime_copy(PsycoObject *po, vinfo_t *v);
+#if LE_STACK_SEGMENTS
+/* CC_uL if the stack is below this thread's low mark (segments.c), and a
+   Python call should be made on a segment */
+EXTERNFN condition_code_t
+psyco_stack_low(PsycoObject *po);
+#endif
 #if LE_HAS_C_STACK_SOFT_LIMIT
 /* the machine's stack pointer, at run time */
 EXTERNFN vinfo_t *

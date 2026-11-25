@@ -506,8 +506,8 @@ CASES = [
     ('await_errors', [(2,)], {}),
     ('with_asyncio', [(3,)],
      {'warmup': (300, "asyncio's paths go on compiling for some rounds"),
-      'leaks_with_aslr': 'what plain CPython itself keeps after the rounds '
-                         'varies with addresses, by tens of blocks'}),
+      'clear_type_cache': "asyncio's task_wakeup looks up the result of "
+                          "gather()'s future by a name made afresh each time"}),
     ('origins', [(3,)], {}),
     ('tracing', [(3,)], HOOKED_TRACE),
     ('recursion_limit', [(0,)], {}),

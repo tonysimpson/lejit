@@ -60,14 +60,17 @@ psyco_resume_block(struct resume_s *st, long type, long handler, long level);
    until its call ends (pycompiler.c:catcher_word). psyco_frame_catch puts
    'f' in it as the frame catches, the innermost compiled frame, whose own
    slot is 'own'; _drop lets it go if nothing else holds it, _shared does
-   too and says whether something does, and _end lets it go once given its
-   locals, as the call ends. */
+   too and says whether something does, _unflush takes back the locals
+   _shared's caller gave it for an inlined call, and _end lets it go once
+   given its locals, as the call ends. */
 EXTERNFN void
 psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own);
 EXTERNFN void
 psyco_frame_catcher_drop(PyObject **word);
 EXTERNFN long
 psyco_frame_catcher_shared(PyObject **word);
+EXTERNFN void
+psyco_frame_catcher_unflush(PyObject **word);
 EXTERNFN void
 psyco_frame_catcher_end(PyObject **word);
 EXTERNFN void
@@ -161,6 +164,9 @@ struct stack_frame_info_s {
        whose address is the word above the callee's own slot
        (psyfunc.c:psyco_gen_step) */
     int on_gen_frame;
+    /* CPython makes this call from C, taking C stack, where compiled code
+       makes it directly (psyco_call_psyco's 'through_c') */
+    int through_c;
     /* where the frame that makes the call keeps its own return address
        meanwhile (codegen.h:psyco_ret_below); in a record's first entry */
     long ret_below;
@@ -275,6 +281,13 @@ psyco_frame_goes_interpreted(PyCodeObject *co);
 /* f's record if LeCode_Run runs it on this thread, else NULL */
 EXTERNFN FrameRuntime *
 psyco_frame_start_get(le_frame_t *f);
+#if LE_STACK_SEGMENTS
+/* the C stack that this thread's compiled calls on its stack from 'lo' up
+   to 'hi' take, of those CPython makes with none (not through_c): the runs
+   on it, innermost first, are walked (segments.c) */
+EXTERNFN long
+psyco_direct_calls_size(const char *lo, const char *hi);
+#endif
 
 /* f_localsplus[start...] = values (up to count, within the frame's
    locals), each with a new reference: the locals of a compiled frame, put
