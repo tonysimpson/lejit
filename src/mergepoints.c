@@ -953,13 +953,14 @@ psyco_handler_awaits(PyCodeObject *co, int handler)
    inside an exception handler, whose stack and blocks LeJIT keeps apart
    from the frame's (an EXCEPT_HANDLER block, a finally block's
    pseudo-exception); a coroutine's handlers that can await run in ceval
-   instead (handler_yields_kept) */
+   instead (handler_yields_kept). A types.coroutine generator's body is a
+   plain generator's. */
 static int
 body_compilable(PyCodeObject *co, le_code_t *c)
 {
     int pos;
-    int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
-                               CO_ASYNC_GENERATOR | CO_ITERABLE_COROUTINE);
+    int kind =
+        co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR);
     if (kind != CO_GENERATOR &&
         (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED))
         return 0;
