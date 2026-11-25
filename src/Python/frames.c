@@ -30,10 +30,10 @@
  * the locals when the exception leaves the frame (psyco_frame_write_locals);
  * the frame that catches it is held by its catcher word until its call
  * ends and reads them like an emulated frame (CATCHER_NOTE), and gets them
- * before an inlined call and at the end while something else holds it
- * (pycompiler.c:catcher_word); a virtual list becomes real as it becomes
- * one of its locals (catcher_local_readable). Known gaps: virtual lists in
- * other frames, inlined frames' locals, a read from another thread or
+ * for an inlined call while it runs and at the end while something else
+ * holds it (pycompiler.c:catcher_word); a virtual list becomes real as it
+ * becomes one of its locals (catcher_local_readable). Known gaps: virtual
+ * lists in other frames, inlined frames' locals, a read from another thread or
  * from Python run outside a call that may run it (a finaliser), which
  * see the last written.
  * frame.f_back, frame.f_lineno, frame.f_lasti, frame.f_locals and
@@ -267,6 +267,7 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
     fr->n_entry_locals = 0;
     fr->resumed = 0;
     fr->exposed = 0;
+    fr->osr = 0;
     fr->walked = NULL;
     fr->next = frame_runs;
     frame_runs = fr;
@@ -443,8 +444,10 @@ psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p)
         if (keep != NULL)
             *kept = keep;
     }
-    if (p->lasti >= 0)
+    if (p->lasti >= 0 && le_frame_is_gen(f))
         le_gen_frame_pause(f, p->lasti, p->nstack);
+    else if (p->lasti >= 0)
+        le_osr_frame_pause(f, p->lasti, p->nstack);
 }
 
 #else
@@ -472,7 +475,10 @@ psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
         if (keep != NULL)
             fr->entry_locals = keep;
     }
-    le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
+    if (fr->osr)
+        le_osr_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
+    else
+        le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
     return f;
 }
 #endif
@@ -2425,8 +2431,8 @@ frame_clear(PyFrameObject *frame, PyObject *unused)
    none or another emulated frame of the same code made when its entry
    was, or a real frame entered through C whose f_back is the frame
    LeCode_Run runs, while the code that one runs is in a compiled callee
-   or inlined frame, which 'f' is. A fused generator's frame is left
-   without one, as a generator's frame has no caller once it has stopped. */
+   or inlined frame, which 'f' is. A fused generator's or coroutine's frame is
+   left without one, as it has no caller once it has stopped. */
 DEFINEFN
 void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
@@ -2434,7 +2440,8 @@ psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
     PyFrameObject *back = callee->f_back;
     FrameRuntime *fr;
     if (callee == f || back == f || le_frame_is_executing(callee) ||
-        (le_pyframe_code(callee)->co_flags & CO_GENERATOR))
+        (le_pyframe_code(callee)->co_flags &
+         (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))
         return;
     if (back != NULL && !(le_pyframe_code(back) == le_pyframe_code(f) &&
                           !le_frame_is_executing(back))) {
@@ -2567,6 +2574,27 @@ psyco_frame_catcher_shared(PyObject **word)
         return 1;
     catcher_release(word);
     return 0;
+}
+
+/* The locals written into the frame for an inlined call's reads, which
+   can't find them through the note: once it returns, reads find them
+   again (frame_sync_locals), and a copy would hold what the frame has let
+   go since, such as an exception it deletes, whose traceback holds the
+   frame back. Cells are left, as locals_calls leaves them. */
+DEFINEFN
+void
+psyco_frame_catcher_unflush(PyObject **word)
+{
+    PyFrameObject *f = (PyFrameObject *)*word;
+    le_frame_t *frame;
+    int i, n;
+    if (f == NULL || !has_catcher_note(f))
+        return;
+    frame = le_frame_of(f);
+    n = le_code_nlocals(le_pyframe_code(f));
+    Py_INCREF(f);
+    for (i = 0; i < n; i++) le_frame_word_set(frame, i, NULL);
+    Py_DECREF(f);
 }
 
 DEFINEFN
@@ -3886,11 +3914,17 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
             le_frame_word_put(frame, nlocals + i, v);
     }
     le_frame_set_stack_depth(f, (int)nstack);
-    le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
+    if (fr != NULL && fr->osr)
+        /* the ceval running it reads its place again as the event that
+           took it returns, and runs the instruction there */
+        le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti + LE_UNIT));
+    else {
+        le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
 #if LE_HAS_FRAME_INSTR_PTR
-    /* ceval goes on from the instruction at the place, not after it */
-    LE_FRAME_PLACE(le_frame_of(f))++;
+        /* ceval goes on from the instruction at the place, not after it */
+        LE_FRAME_PLACE(le_frame_of(f))++;
 #endif
+    }
 #if !LE_HAS_EXCEPTION_TABLE
     f->f_iblock = st->iblock;
     memcpy(f->f_blockstack, st->blocks, st->iblock * sizeof(PyTryBlock));
@@ -3900,6 +3934,12 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
         if (st->catcher != f)
             catcher_write_locals(st->catcher, frame, nlocals);
         Py_DECREF(st->catcher);
+    }
+    if (fr != NULL && fr->osr) {
+        Py_DECREF(f);
+        PyMem_Free(st);
+        Py_INCREF(le_osr_ceval_goes_on);
+        return le_osr_ceval_goes_on;
     }
 
     if (st->slot != NULL)

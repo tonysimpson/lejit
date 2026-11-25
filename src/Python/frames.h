@@ -61,14 +61,17 @@ psyco_resume_block(struct resume_s *st, long type, long handler, long level);
    until its call ends (pycompiler.c:catcher_word). psyco_frame_catch puts
    'f' in it as the frame catches, the innermost compiled frame, whose own
    slot is 'own'; _drop lets it go if nothing else holds it, _shared does
-   too and says whether something does, and _end lets it go once given its
-   locals, as the call ends. */
+   too and says whether something does, _unflush takes back the locals
+   _shared's caller gave it for an inlined call, and _end lets it go once
+   given its locals, as the call ends. */
 EXTERNFN void
 psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own);
 EXTERNFN void
 psyco_frame_catcher_drop(PyObject **word);
 EXTERNFN long
 psyco_frame_catcher_shared(PyObject **word);
+EXTERNFN void
+psyco_frame_catcher_unflush(PyObject **word);
 EXTERNFN void
 psyco_frame_catcher_end(PyObject **word);
 EXTERNFN void
@@ -101,6 +104,24 @@ EXTERNFN PyFrameObject *
 psyco_frame_callee_back(void);
 EXTERNFN PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack);
+/* what psyco_resume_run returns for a frame taken over at a loop head
+   (FrameRuntime.osr): the frame is left for the ceval running it to go on
+   with (eval_hook.c) */
+EXTERNVAR PyObject *le_osr_ceval_goes_on;
+/* The function's frame 'f' that ceval runs, stopped in an event at the
+   loop head 'head' (bytes), goes on there in compiled code
+   (eval_hook.c): 0 if it wasn't taken over, 1 if ceval goes on with it as
+   left, -1 with an exception, which ceval raises from where it is left. */
+EXTERNFN int
+le_osr_switch(PyThreadState *ts, le_frame_t *f, int head);
+/* Counts 'k' more backward jumps of 'co' (k > 0) in its frames that ceval
+   runs, after which the frame that makes the last is taken over at that
+   loop head (osr.c), or stops counting (k == 0): 1, or 0 where a tool
+   holds the event it is counted in, -1 with an exception. */
+EXTERNFN int
+le_osr_arm(PyCodeObject *co, long k);
+/* frames taken over so far, for tests */
+EXTERNVAR long le_osr_switches;
 /* PyObject* psyco_get_locals(void); this one implemented in psyco.c */
 
 /* Where a compiled frame's locals (co_nlocals, then cells and frees)
@@ -198,7 +219,11 @@ typedef struct frame_runtime_s {
     /* ceval now runs the frame (psyco_resume_run): its locals and line are
        ceval's, and the compiled code under it waits for ceval's result */
     int resumed;
-    int exposed;                   /* frames.c:expose */
+    int exposed; /* frames.c:expose */
+    /* the frame is a function's that ceval runs, taken over at a loop
+       head (eval_hook.c:le_osr_switch): it goes on in ceval by returning
+       to that ceval, not by running in another (psyco_resume_run) */
+    int osr;
     struct walked_calls_s *walked; /* frames.c:innermost_slot, or NULL */
     struct frame_runtime_s *next;  /* the next outer one */
 } FrameRuntime;

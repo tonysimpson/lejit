@@ -19,3 +19,4 @@ async with, left by return | 3.11+ | the coroutines are made by ceval's RETURN_G
 async for | 3.11+ | __anext__'s coroutines are made by ceval's RETURN_GENERATOR (async for itself is in ceval on every version)
 async generator | 3.11+ | the coroutines are made by ceval's RETURN_GENERATOR (async generators are in ceval on every version)
 locals() in a list comprehension | 3.12+ | CPython inlines comprehensions, so the whole function names locals() and isn't compiled
+yield in except | 3.7-3.10 | the handler's blocks and exception triple live outside the frame there, so a generator that yields in a handler runs in ceval; 3.11+ keep them in the frame and compile it

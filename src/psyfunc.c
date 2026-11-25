@@ -539,6 +539,11 @@ call_with_inline_frame(PsycoObject *po, struct fncall_arg_s *fncall,
     {
         vresult = LOC_INLINING;
         LOC_INLINING = NULL;
+        if (!psyco_catcher_unflush(po)) {
+            vinfo_decref(vresult, po);
+            array_delete(fncall->inputvinfos, po);
+            return NULL;
+        }
     }
     else {
         /* initial case: move the bound locals into an EInline
