@@ -102,9 +102,11 @@ def deep_generators():
 # json's pure-Python scanner, an array in an array 2,000 deep left by the
 # error at the end of the text: each level's frame is kept as the
 # traceback passes, and must be found again without a search each time
+json_scan = json.scanner.py_make_scanner(json.JSONDecoder())
+
+
 def json_arrays(n):
-    scan = json.scanner.py_make_scanner(json.JSONDecoder())
-    return scan('[' * n, 0)
+    return json_scan('[' * n, 0)
 
 
 def deep_json():
