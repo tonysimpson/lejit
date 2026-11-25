@@ -666,7 +666,7 @@ load_tstate(PsycoObject *po)
    level psyco_enter_recursive_call added; 'through_c' as there */
 DEFINEFN
 bool
-psyco_leave_recursive_call(PsycoObject *po, bool through_c)
+psyco_leave_recursive_call(PsycoObject *po, int through_c)
 {
     vinfo_t *vts = load_tstate(po), *vdepth;
     if (vts == NULL)
@@ -679,8 +679,8 @@ psyco_leave_recursive_call(PsycoObject *po, bool through_c)
         }
         vinfo_decref(vdepth, po);
     }
-    if (through_c)
-        return leave_c_recursive_call(po, vts);
+    if (through_c != LE_C_NONE)
+        return leave_c_recursive_call(po, vts, through_c);
     return leave_recursive_call(po, vts);
 }
 
@@ -692,11 +692,12 @@ psyco_leave_recursive_call(PsycoObject *po, bool through_c)
    C (mechanisms/recursion.h:enter_c_recursive_levels). False with an
    exception set in 'po'. */
 static bool
-psyco_enter_recursive_call(PsycoObject *po, vinfo_t *vts, bool through_c)
+psyco_enter_recursive_call(PsycoObject *po, vinfo_t *vts, int through_c)
 {
     int levels = po->pr.is_inlining ? 2 : 1;
-    return through_c ? enter_c_recursive_levels(po, vts, levels)
-                     : enter_recursive_levels(po, vts, levels);
+    return through_c != LE_C_NONE
+               ? enter_c_recursive_levels(po, vts, levels, through_c)
+               : enter_recursive_levels(po, vts, levels);
 }
 
 /* ceval's test of eval_breaker before an instruction:
@@ -1261,7 +1262,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
            stack; psyco_call_psyco leaves it after the call.
            Emitted before the frame is built, so no argument source moves. */
         if (!refused && entered && !inlining)
-            entered = psyco_enter_recursive_call(po, vts, false);
+            entered = psyco_enter_recursive_call(po, vts, LE_C_NONE);
         vinfo_decref(vts, po);
         if (refused || !entered) {
             array_delete(fncall.inputvinfos, po);
@@ -1285,7 +1286,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         Psyco_ForgetClasses(po);
         mypo = psyco_build_frame(po, &fncall, recursion, &sources);
         if (mypo == NULL) {
-            psyco_leave_recursive_call(po, false);
+            psyco_leave_recursive_call(po, LE_C_NONE);
             goto pyerr;
         }
         argcount = get_arguments_count(&mypo->vlocals);
@@ -1297,7 +1298,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
         /* get the run-time argument sources and push them on the stack
            and write the actual CALL */
         result =
-            psyco_call_psyco(po, codebuf, sources, argcount, finfo, false);
+            psyco_call_psyco(po, codebuf, sources, argcount, finfo, LE_C_NONE);
         PyMem_FREE(sources);
     }
     vinfo_decref(vbuiltins, po);
@@ -1382,7 +1383,7 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
     Source *sources;
     stack_frame_info_t *finfo;
     int nfrees = PyCode_GetNumFree(co), argcount;
-    bool through_c;
+    int through_c;
     /* zeroed: gcc can't see that psyco_fatal_msg below doesn't return */
     struct fncall_arg_s fncall = {0};
 
@@ -1428,7 +1429,7 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
     /* as psyco_call_pyfunc's non-inlining call; CPython runs the body from
        C, its consumer's, but awaits a coroutine with no C between */
     result = NULL;
-    through_c = mode != GENEXPR_DIRECT;
+    through_c = mode != GENEXPR_DIRECT ? LE_C_CONSUMER : LE_C_NONE;
     vts = load_tstate(po);
     if (vts != NULL && psyco_enter_recursive_call(po, vts, through_c)) {
         vinfo_decref(vts, po);
@@ -1672,11 +1673,12 @@ gen_step_tests(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
    it there. Anything else is le_gen_iternext's, or for send() the C
    function 'send' (gen_send). With 'out', for yield from's SEND, the
    result is an int, as le_iter_send's: 1 with what the body yielded in
-   out's item, 0 with what it returned. 'through_c' where CPython runs
-   the step from C (next(), send()), not as FOR_ITER_GEN and SEND_GEN do. */
+   out's item, 0 with what it returned. 'through_c' how CPython runs the
+   step from C (next(), send()), or LE_C_NONE as FOR_ITER_GEN and SEND_GEN
+   run it. */
 static vinfo_t *
 gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
-         vinfo_array_t *out, bool through_c)
+         vinfo_array_t *out, int through_c)
 {
     vinfo_t *vcode, *vts = NULL, *ventry = NULL, *vf = NULL, *vsent = NULL;
     vinfo_t *v, *vresult = NULL;
@@ -1719,8 +1721,9 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
               CompileTime_Get(varg->source)->value == (long)Py_None),
         &ventry);
     if (r == 1)
-        r = through_c ? enter_c_recursive_call_or_not(po, vts)
-                      : enter_recursive_call_or_not(po, vts);
+        r = through_c != LE_C_NONE
+                ? enter_c_recursive_call_or_not(po, vts, through_c)
+                : enter_recursive_call_or_not(po, vts);
     if (r <= 0) {
         vinfo_decref(vts, po);
         vinfo_xdecref(ventry, po);
@@ -1764,7 +1767,8 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         goto error;
     vinfo_decref(v, po);
 #else
-    if (!gen_put_i(po, vgen, GEN_stacktop, le_code_nlocalsplus(co)))
+    if (!gen_put_i(po, vgen, GEN_stacktop,
+                   LE_HAS_RUNNING_STACK_HIDDEN ? -1 : le_code_nlocalsplus(co)))
         goto error_nov;
 #endif
 
@@ -1792,8 +1796,8 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     vinfo_decref(ventry, po);
     ventry = NULL;
     vinfo_incref(vts);
-    if (!(through_c ? leave_c_recursive_call(po, vts)
-                    : leave_recursive_call(po, vts)))
+    if (!(through_c != LE_C_NONE ? leave_c_recursive_call(po, vts, through_c)
+                                 : leave_recursive_call(po, vts)))
         goto error_nov;
 
     /* paused at a yield, compiled: what gen_send_ex2 does then */
@@ -1861,21 +1865,21 @@ DEFINEFN
 vinfo_t *
 psyco_gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send)
 {
-    return gen_send(po, vgen, varg, send, NULL, true);
+    return gen_send(po, vgen, varg, send, NULL, LE_C_SEND);
 }
 
 DEFINEFN
 vinfo_t *
 psyco_gen_step(PsycoObject *po, vinfo_t *vgen)
 {
-    return gen_send(po, vgen, NULL, NULL, NULL, false);
+    return gen_send(po, vgen, NULL, NULL, NULL, LE_C_NONE);
 }
 
 DEFINEFN
 vinfo_t *
 psyco_gen_next(PsycoObject *po, vinfo_t *vgen)
 {
-    return gen_send(po, vgen, NULL, NULL, NULL, true);
+    return gen_send(po, vgen, NULL, NULL, NULL, LE_C_NEXT);
 }
 
 DEFINEFN
@@ -1893,7 +1897,7 @@ vinfo_t *
 psyco_gen_send_status(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg,
                       vinfo_array_t *out)
 {
-    return gen_send(po, vgen, varg, NULL, out, false);
+    return gen_send(po, vgen, varg, NULL, out, LE_C_NONE);
 }
 #endif
 
@@ -1986,11 +1990,11 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
     return on < 0 ? -1 : !on;
 }
 
-#if LE_RESUMES_COROUTINES
 /* A coroutine made by an await's call (awaited_at_once) can run its body
-   as a call from the await (pycompiler.c, YIELD_FROM): nothing can see
-   the coroutine object CPython would have made while the body runs, and
-   one is made if the body suspends (pycompiler.c:yield_direct). Not where
+   as a call from the await (pycompiler.c, YIELD_FROM or SEND): nothing can
+   see the coroutine object CPython would have made while the body runs,
+   and one is made if the body suspends (pycompiler.c:yield_direct), or
+   something could find it (frames.c:psyco_coros_realise). Not where
    CPython's coroutine would record its origin
    (sys.set_coroutine_origin_tracking_depth) or a wrapper would get it,
    nor while tracing, nor once a type site in its body has seen too many
@@ -2042,7 +2046,6 @@ psyco_coro_start(PsycoObject *po, vinfo_t *v)
     on = fuse_stopped(po, v);
     return on < 0 ? -1 : !on;
 }
-#endif
 
 DEFINEFN
 void
