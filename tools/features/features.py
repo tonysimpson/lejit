@@ -843,6 +843,31 @@ def last_profiled_frame(s):
     return _field(s, '_ts', 'last_profiled_frame')
 
 
+def tstate_what_event(s):
+    """a thread's state says which sys.monitoring event's callback is
+    running (what_event), which ceval sets around each callback with its
+    tracing count"""
+    return _field(s, '_ts', 'what_event')
+
+
+def tracing_possible_runtime(s):
+    """ceval counts the threads with a trace function in the runtime's
+    ceval state (tracing_possible), and dispatches without the line-event
+    test while it is 0"""
+    return _field(s, '_ceval_runtime_state', 'tracing_possible', missing=False)
+
+
+def tracing_possible_interp(s):
+    """the same count is the interpreter's ceval state's"""
+    return _field(s, '_ceval_state', 'tracing_possible', missing=False)
+
+
+def reraise_lasti_tagged(s):
+    """RERAISE 1 reads the place under the exception as a tagged int
+    (PyStackRef_UntagInt), not an int object"""
+    return _case_has(s, 'RERAISE', 'PyStackRef_UntagInt', missing=False)
+
+
 def tstate_eval_breaker(s):
     """each thread has its own eval_breaker, in its state: its low bits are
     the events ceval handles with _Py_HandlePending"""
@@ -1676,6 +1701,10 @@ STATE = [
     ('FRAME_INSTR_PTR', frame_instr_ptr),
     ('TSTATE_CURRENT_FRAME', tstate_current_frame),
     ('TSTATE_EVAL_BREAKER', tstate_eval_breaker),
+    ('TSTATE_WHAT_EVENT', tstate_what_event),
+    ('TRACING_POSSIBLE_RUNTIME', tracing_possible_runtime),
+    ('TRACING_POSSIBLE_INTERP', tracing_possible_interp),
+    ('RERAISE_LASTI_TAGGED', reraise_lasti_tagged),
 ]
 
 # Objects/abstract.c

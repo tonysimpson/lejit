@@ -1040,12 +1040,13 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
 EXTERNFN PsycoObject *
 PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
                          PyObject *builtins, PyObject *merge_points,
-                         int recursion, int next_instr, int nstack);
+                         int recursion, int next_instr, int nstack, long mode);
 #else
 EXTERNFN PsycoObject *
 PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
                          PyObject *builtins, PyObject *merge_points,
                          int recursion, int next_instr, uint64_t nulls,
-                         int nstack, const int *blocks, int nblocks);
+                         int nstack, const int *blocks, int nblocks,
+                         long mode);
 #endif
 #endif /* _VCOMPILER_H */

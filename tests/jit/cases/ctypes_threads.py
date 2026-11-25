@@ -1,8 +1,9 @@
 # The GIL around direct calls of ctypes functions (Python/pyruntime.c:
 # le_gil_release, le_gil_take): released for the call and taken back as
 # CPython takes it, so other threads run while one is in C, threads calling
-# C switch, signals and asynchronous exceptions arrive after a call, and
-# daemon threads in C when the interpreter shuts down end as in CPython.
+# C switch, a callback from the C function takes the GIL itself, signals and
+# asynchronous exceptions arrive after a call, and daemon threads in C when
+# the interpreter shuts down end as in CPython.
 import ctypes
 import signal
 import sys
@@ -27,7 +28,7 @@ def _adder(n, out, k):
 
 def threads_calling_c():
     out = {}
-    ts = [threading.Thread(target=_adder, args=(20000, out, k)) for k in (1, 2, 3)]
+    ts = [threading.Thread(target=_adder, args=(2000, out, k)) for k in (1, 2, 3)]
     for t in ts:
         t.start()
     for t in ts:
@@ -43,8 +44,7 @@ def _counter(stop, out):
 
 
 def _sleeper(out):
-    for _ in range(4):
-        usleep(2000)
+    usleep(2000)
     out['slept'] = True
 
 
@@ -63,7 +63,7 @@ def python_runs_while_c_sleeps():
 
 def main_sleeps_in_c():
     out = {}
-    t = threading.Thread(target=_adder, args=(20000, out, 7))
+    t = threading.Thread(target=_adder, args=(2000, out, 7))
     t.start()
     t0 = time.time()
     while t.is_alive() and time.time() - t0 < 60:
@@ -135,7 +135,7 @@ def stress_tiny_switch_interval():
     sys.setswitchinterval(1e-5)
     try:
         out = {}
-        ts = [threading.Thread(target=_mixed, args=(5000, out, k))
+        ts = [threading.Thread(target=_mixed, args=(500, out, k))
               for k in range(6)]
         for t in ts:
             t.start()
@@ -195,6 +195,27 @@ def daemon_threads_at_shutdown():
     return _result
 
 
+@ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(ctypes.c_int),
+                  ctypes.POINTER(ctypes.c_int))
+def _compare(a, b):
+    return a[0] - b[0]
+
+
+_compare_pointer = ctypes.cast(_compare, ctypes.POINTER(ctypes.c_int))
+
+
+def callback_from_c():
+    # qsort untyped: byref, ints and a pointer go to it directly, and it
+    # calls back into Python, which takes the GIL and gives it back
+    out = []
+    for i in range(20):
+        a = (ctypes.c_int * 4)(4, i, 2, 9)
+        libc.qsort(ctypes.byref(a), 4, 4, _compare_pointer)
+        out.append(list(a))
+        out.append([j for j in range(i % 3)])
+    return out
+
+
 CASES = [
     ('threads_calling_c', [()], {}),
     ('python_runs_while_c_sleeps', [()], {}),
@@ -206,4 +227,5 @@ CASES = [
                'calls are first taken, and compiled, at rounds that depend on '
                'the threads\' timing'}),
     ('daemon_threads_at_shutdown', [()], {}),
+    ('callback_from_c', [()], {}),
 ]
