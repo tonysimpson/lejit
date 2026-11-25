@@ -516,7 +516,7 @@ DEFINEFN
 vinfo_t *
 psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
                  Source argsources[], int argcount,
-                 struct stack_frame_info_s *finfo)
+                 struct stack_frame_info_s *finfo, bool through_c)
 {
     /* this is a simplified version of psyco_generic_call() which
         assumes Psyco's calling convention instead of the C's. */
@@ -615,7 +615,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
        error check, with the result in a register and no reference yet, so
        that the error path doesn't release it */
     vresult = run_time_result(po, CfReturnTypePtr);
-    if (!psyco_leave_recursive_call(po)) {
+    if (!psyco_leave_recursive_call(po, through_c)) {
         vinfo_decref(vresult, po);
         return NULL;
     }
@@ -998,6 +998,20 @@ make_runtime_copy(PsycoObject *po, vinfo_t *v)
     END_CODE
     return new_rtvinfo(po, rg, false, is_nonneg(v->source));
 }
+
+#if LE_HAS_C_STACK_SOFT_LIMIT
+DEFINEFN
+vinfo_t *
+psyco_stack_pointer(PsycoObject *po)
+{
+    reg_t rg;
+    BEGIN_CODE
+    NEED_FREE_REG(rg);
+    MOV_R_R(rg, REG_X64_RSP);
+    END_CODE
+    return new_rtvinfo(po, rg, false, true);
+}
+#endif
 
 /* A local rebound while it alone holds its old value: each run-time part of
    the new value that is only in a register takes the stack slot of the

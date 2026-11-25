@@ -52,14 +52,12 @@ def recursion_depth():
 
 # With no Python limit in reach, C's own check stops the nesting before the
 # stack runs out, at the same depth (since sys.monitoring came; before,
-# plain CPython crashes here). The error branch is compiled first at a
-# shallow depth: compiling near the stack's end is a known bug.
+# plain CPython crashes here). The error branch is first compiled there.
 def stack_limit():
     if not hasattr(sys, 'monitoring'):
         return None
     old = sys.getrecursionlimit()
     try:
-        deepest(60)
         sys.setrecursionlimit(10 ** 7)
         k = 1000
         while k < 10 ** 6:
