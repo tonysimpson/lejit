@@ -1897,14 +1897,18 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     if (PsycoGenexpr_Check(vgen) || PsycoVgen_Check(vgen)) {
         co = pending_code(vgen);
         /* a generator's body pausing would make one it steps real at
-           once, its record in the body's frame */
+           once, its record in the body's frame: such a one is made real
+           now and stepped as a real one */
         if (PsycoGenexpr_Check(vgen) &&
             (!vgen_startable(vgen, co) ||
-             psyco_generator_mode(po) == GENEXPR_RESUMABLE))
-            goto generic;
-        L = &record_layout;
+             psyco_generator_mode(po) == GENEXPR_RESUMABLE)) {
+            if (!compute_vinfo(vgen, po))
+                return NULL;
+        }
+        else
+            L = &record_layout;
     }
-    else if (!is_runtime(vgen->source))
+    if (L == &gen_layout && !is_runtime(vgen->source))
         goto generic;
     /* the value sent is made real before anything is changed */
     if (varg != NULL && !compute_vinfo(varg, po))
