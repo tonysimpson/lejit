@@ -3263,6 +3263,7 @@ typedef struct {
 static char not_lent;
 #define NOT_LENT ((PyObject *)&not_lent)
 
+#if !LE_HAS_RUNNING_STACK_HIDDEN
 static void
 lend_locals(lent_t **lent, int *nlent, int *cap, le_frame_t *frame,
             stack_frame_info_t **slot, int own)
@@ -3303,14 +3304,15 @@ lend_locals(lent_t **lent, int *nlent, int *cap, le_frame_t *frame,
     (*lent)[*nlent].held = values;
     (*nlent)++;
 }
+#endif
 
 static lent_t *
 running_locals_lend(int *nlent)
 {
     lent_t *lent = NULL;
-    int cap = 0;
     *nlent = 0;
 #if !LE_HAS_RUNNING_STACK_HIDDEN
+    int cap = 0;
     PyThreadState *ts;
     size_t k;
     if (runs_key != NULL)

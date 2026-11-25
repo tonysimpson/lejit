@@ -407,21 +407,30 @@ def handler_lasti(n):
     return out
 
 
+# What the gc sees holding a local of a running coroutine or generator.
+# Each looks twice: calling the gc itself, and in a call to Python code
+# (holders). ceval shows the gc a running frame's locals, except where it
+# hides them while the frame calls C (running_frame_hidden): there it
+# shows them during a call to Python code, and compiled code doesn't.
 async def holds_exception(k):
-    # what the gc sees holding the exception while the coroutine that
-    # caught it runs: ceval's running frame shows the gc its locals where
-    # it doesn't mark them hidden
     exc = None
     try:
         async with Exits():
             raise KeyError(k)
     except KeyError as e:
         exc = e
-    return holders(exc)
+    refs = gc.get_referrers(exc)
+    return holders(exc), names(refs)
 
 
 def holders(o):
-    return sorted(type(r).__name__ for r in gc.get_referrers(o))
+    if HIDDEN_IN_C_CALLS:
+        return None
+    return names(gc.get_referrers(o))
+
+
+def names(refs):
+    return sorted(type(r).__name__ for r in refs)
 
 
 class Held:
@@ -429,21 +438,36 @@ class Held:
 
 
 def gen_holds(k):
-    # a generator's local, before and after the generator pauses
+    # before and after the generator pauses
     held = Held()
     for i in range(k):
         work(i)
-    yield holders(held)
-    yield holders(held)
+    refs = gc.get_referrers(held)
+    yield holders(held), names(refs)
+    refs = gc.get_referrers(held)
+    yield holders(held), names(refs)
 
 
 async def resumed_holds(k):
-    # a coroutine's local, after the coroutine has paused
+    # after the coroutine has paused
     held = Held()
     await pause(k)
     for i in range(k):
         work(i)
-    return holders(held)
+    refs = gc.get_referrers(held)
+    return holders(held), names(refs)
+
+
+def running_frame_hidden():
+    # whether ceval hides a running frame's locals from the gc while the
+    # frame calls C
+    def gen():
+        x = Held()
+        yield gc.get_referrers(x)
+    return not next(gen())
+
+
+HIDDEN_IN_C_CALLS = running_frame_hidden()
 
 
 def referrers(n):
