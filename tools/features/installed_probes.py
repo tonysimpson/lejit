@@ -1143,6 +1143,37 @@ def GET_ITER_INDEX():
 
 
 @probe
+def TAGGED_LASTI():
+    """a coroutine paused in an awaiting __aexit__ that an exception
+    called holds the lasti under the exception as no object: the
+    coroutine's referents (gc) have no int"""
+    import gc
+    if not hasattr((lambda: None).__code__, 'co_exceptiontable'):
+        return False, 'code objects have no co_exceptiontable'
+
+    class Aw:
+        def __await__(self):
+            yield
+            return False
+
+    class CM:
+        async def __aenter__(self):
+            pass
+
+        def __aexit__(self, *a):
+            return Aw()
+
+    async def f():
+        async with CM():
+            raise KeyError
+    c = f()
+    c.send(None)
+    ints = [r for r in gc.get_referents(c) if type(r) is int]
+    c.close()
+    return not ints, 'gc.get_referents: ints %r' % ints
+
+
+@probe
 def FOR_ITER_EXIT_KEEPS_ITER():
     """a for loop ends with END_FOR then POP_ITER (dis)"""
     if not _real_op('POP_ITER'):

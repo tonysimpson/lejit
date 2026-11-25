@@ -3355,7 +3355,11 @@ DEFINEFN
 void
 psyco_resume_value(struct resume_s *st, long i, PyObject *v)
 {
-    Py_XINCREF(v);
+#if LE_HAS_TAGGED_LASTI
+    /* a handler's lasti, as the frame holds it (pycompiler.c:offset_int) */
+    if (((uintptr_t)v & Py_INT_TAG) != Py_INT_TAG)
+#endif
+        Py_XINCREF(v);
     st->values[i] = v;
     st->nvalues = i + 1;
 }
@@ -3447,8 +3451,15 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     extra_assert(nstack <= le_pyframe_code(f)->co_stacksize);
 
     resume_locals(st, frame, nlocals);
-    for (i = 0; i < nstack; i++)
-        le_frame_word_put(frame, nlocals + i, st->values[nlocals + i]);
+    for (i = 0; i < nstack; i++) {
+        PyObject *v = st->values[nlocals + i];
+#if LE_HAS_TAGGED_LASTI
+        if (((uintptr_t)v & Py_INT_TAG) == Py_INT_TAG)
+            frame->localsplus[nlocals + i].bits = (uintptr_t)v;
+        else
+#endif
+            le_frame_word_put(frame, nlocals + i, v);
+    }
     le_frame_set_stack_depth(f, (int)nstack);
     le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
 #if LE_HAS_FRAME_INSTR_PTR

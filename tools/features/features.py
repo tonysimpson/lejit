@@ -1416,6 +1416,8 @@ BYTECODE = [
                                    lambda s: _case_has(s, 'FOR_ITER', 'JUMPBY(oparg + 1)'))),
     ('GET_ITER_INDEX', D('GET_ITER pushes the iterator then an index or NULL above it, which FOR_ITER reads and POP_ITER pops with it; SEND, END_SEND and CLEANUP_THROW have it between yield from\'s iterator and the value sent, as an await\'s PUSH_NULL leaves it',
                          lambda s: _case_has(s, 'GET_ITER', 'index_or_null'))),
+    ('TAGGED_LASTI', D('the lasti an exception handler is given, which RERAISE reads, is a tagged int on the frame\'s stack, not an int object',
+                       lambda s: _case_has(s, 'RERAISE', 'PyStackRef_UntagInt', missing=False))),
     ('CALL_EX_KWARGS_SLOT', D('CALL_FUNCTION_EX always has a slot for the keywords dict, NULL where the call has none',
                               lambda s: _case_has(s, 'CALL_FUNCTION_EX', 'kwargs_st = stack_pointer[-1]', missing=False))),
     ('BINARY_OP_SUBSCR', D('a subscript is BINARY_OP with NB_SUBSCR',

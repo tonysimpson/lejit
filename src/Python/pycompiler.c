@@ -1216,6 +1216,9 @@ cimpl_exc_restore(PyObject **held)
 #define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
 #endif
 
+static bool
+is_offset_int(vinfo_t *v);
+
 #if LE_RESUMES_ON_FRAME
 /* A resumed generator's word i (a local, cell, free variable or stack
    item, in the frame's order) that its frame still holds
@@ -1436,6 +1439,44 @@ stack_iterators_real(PsycoObject *po)
 #define stack_iterators_real(po) true
 #endif
 
+#if LE_HAS_TAGGED_LASTI
+/* stack item 'v', still the frame's word, where the entry may be inside an
+   exception handler: a handler's lasti there is a tagged int, no object,
+   which is taken and promoted to the constant compiled code pushes for it
+   (offset_int). True when it isn't one; false when the promotion or an
+   error is pending */
+static bool
+stack_word_not_lasti(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *frame = psyco_frame_words_frame(po), *w, *mask, *tag, *empty;
+    int i = psyco_frame_word_index(v);
+    condition_code_t cc;
+    bool ok;
+    w = psyco_get_nth_field(po, frame, FRAME_localsplus, i);
+    if (w == NULL)
+        return false;
+    mask = vinfo_new(CompileTime_New(Py_INT_TAG));
+    tag = integer_and(po, w, mask);
+    vinfo_decref(mask, po);
+    cc = tag == NULL ? CC_ERROR : integer_cmp_i(po, tag, Py_INT_TAG, Py_EQ);
+    vinfo_xdecref(tag, po);
+    if (cc == CC_ERROR || !runtime_condition_f(po, cc)) {
+        vinfo_decref(w, po);
+        return cc != CC_ERROR;
+    }
+    empty = frame_word_empty();
+    ok = psyco_put_nth_field(po, frame, FRAME_localsplus, i, empty);
+    vinfo_decref(empty, po);
+    if (!ok) {
+        vinfo_decref(w, po);
+        return false;
+    }
+    vinfo_move(po, v, w);
+    psyco_atcompiletime(po, v);
+    return false;
+}
+#endif
+
 /* the stack items a resumed entry starts with, taken from the frame and
    tested before any instruction reads them: a NULL one (PUSH_NULL's) must
    be the NULL constant */
@@ -1444,12 +1485,21 @@ stack_words_taken(PsycoObject *po)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int k, bound;
+#if LE_HAS_TAGGED_LASTI
+    int in_handler = -1;
+#endif
     if (!stack_iterators_real(po))
         return false;
     for (k = 0; k < po->pr.stack_level; k++) {
         vinfo_t *v = stack_a[k];
         if (psyco_frame_word_index(v) < 0)
             continue;
+#if LE_HAS_TAGGED_LASTI
+        if (in_handler < 0)
+            in_handler = psyco_in_handler(po->pr.co, po->pr.next_instr);
+        if (in_handler && !stack_word_not_lasti(po, v))
+            return false;
+#endif
         if (!compute_vinfo(v, po) || (bound = null_tested(po, v)) < 0)
             return false;
         if (!bound) {
@@ -1503,6 +1553,10 @@ frame_word_store(PsycoObject *po, int k, vinfo_t *v)
         vinfo_decref(empty, po);
         return ok;
     }
+#if LE_HAS_TAGGED_LASTI
+    if (is_offset_int(v))
+        return psyco_put_nth_field(po, frame, FRAME_localsplus, k, v);
+#endif
 #if LE_HAS_FRAME_STACKREFS
     w = psyco_stackref_from_steal(po, v);
 #else
@@ -2077,13 +2131,18 @@ set_local(PsycoObject *po, int i, vinfo_t *v)
 #define JUMPBY(offset) (next_instr += (offset))
 #define JUMPTO(target) (next_instr = (target))
 
-/* a place ceval keeps on the value stack as an int: CALL_FINALLY's return
-   offset, or the lasti a handler is given. One object per value, so that
-   two states pushing it compare equal (a fixed constant must match
-   exactly) */
+/* a place ceval keeps on the value stack: CALL_FINALLY's return offset, or
+   the lasti a handler is given. ceval's int object for it, or, where the
+   frame holds a handler's lasti as a tagged int, that word, which is no
+   object. One constant per value, so that two states pushing it compare
+   equal (a fixed constant must match exactly) */
 static vinfo_t *
 offset_int(int offset)
 {
+#if LE_HAS_TAGGED_LASTI
+    return vinfo_new(CompileTime_NewSk(
+        sk_new((long)PyStackRef_TagInt(offset).bits, SkFlagFixed)));
+#else
     static PyObject *ints = NULL;
     PyObject *o, *x;
     if (ints == NULL && (ints = PyDict_New()) == NULL)
@@ -2095,14 +2154,34 @@ offset_int(int offset)
     Py_DECREF(x);
     return vinfo_new(
         CompileTime_NewSk(sk_new((long)o, SkFlagFixed | SkFlagPyObj)));
+#endif
 }
 
 static bool
 is_offset_int(vinfo_t *v)
 {
-    return is_compiletime(v->source) &&
-           (CompileTime_Get(v->source)->refcount1_flags & SkFlagPyObj) &&
-           PyLong_CheckExact((PyObject *)CompileTime_Get(v->source)->value);
+    source_known_t *sk;
+    if (!is_compiletime(v->source))
+        return false;
+    sk = CompileTime_Get(v->source);
+#if LE_HAS_TAGGED_LASTI
+    return !(sk->refcount1_flags & SkFlagPyObj) &&
+           (sk->value & Py_INT_TAG) == Py_INT_TAG;
+#else
+    return (sk->refcount1_flags & SkFlagPyObj) &&
+           PyLong_CheckExact((PyObject *)sk->value);
+#endif
+}
+
+static int
+offset_int_value(vinfo_t *v)
+{
+    long w = CompileTime_Get(v->source)->value;
+#if LE_HAS_TAGGED_LASTI
+    return (int)PyStackRef_UntagInt((_PyStackRef){.bits = (uintptr_t)w});
+#else
+    return (int)PyLong_AsLong((PyObject *)w);
+#endif
 }
 
 /* ceval's UNWIND_EXCEPT_HANDLER: drop what the handler left above its six
@@ -8321,13 +8400,31 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
         case RERAISE:
             if (oparg) {
                 v = NTOP(oparg + 1);
-                if (!is_offset_int(v)) {
-                    PycException_SetString(po, PyExc_SystemError,
-                                           "lasti is not an int");
-                    break;
+                if (is_offset_int(v))
+                    raise_lasti = offset_int_value(v);
+                else {
+                    /* a frame resumed inside the handler holds the int
+                       ceval or a pause left there (a tagged one is read as
+                       the constant, stack_words_taken): its value is
+                       promoted, one continuation per place raised from */
+                    PyTypeObject *t = Psyco_NeedType(po, v);
+                    long lasti;
+                    if (t == NULL)
+                        break;
+                    if (!PyType_IsSubtype(t, &PyLong_Type)) {
+                        PycException_SetString(po, PyExc_SystemError,
+                                               "lasti is not an int");
+                        break;
+                    }
+                    x = psyco_get_field(po, v, LONG_ob_digit0);
+                    if (x == NULL)
+                        break;
+                    lasti = psyco_atcompiletime(po, x);
+                    vinfo_decref(x, po);
+                    if (lasti == -1 && PycException_Occurred(po))
+                        break;
+                    raise_lasti = (int)lasti;
                 }
-                raise_lasti = (int)PyLong_AsLong(
-                    (PyObject *)CompileTime_Get(v->source)->value);
             }
             psyco_generic_call(po, cimpl_reraise_value,
                                CfPyErrAlways | CfNoPython, "v", TOP());
@@ -8640,8 +8737,7 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             }
             if (is_offset_int(v)) {
                 /* back to just after the CALL_FINALLY */
-                JUMPTO((int)PyLong_AsLong(
-                    (PyObject *)CompileTime_Get(v->source)->value));
+                JUMPTO(offset_int_value(v));
                 vinfo_decref(v, po);
                 JUMPED();
             }
@@ -9352,16 +9448,8 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 PUSH(v);
                 JUMPTO(h.handler);
                 SAVE_NEXT_INSTR(next_instr);
-                /* a coroutine's handler that can await runs in ceval,
-                   which suspends the coroutine in it with its handled
-                   exception (mergepoints.c:psyco_handler_awaits) */
-                if (psyco_handler_awaits(po->pr.co, h.handler)) {
-                    extra_assert(psyco_can_go_interpreted(po));
-                    po->pr.go_interpreted = 1;
-                }
-                else
-                    /* a callee that raised may have started tracing */
-                    po->pr.resume_pending = 1;
+                /* a callee that raised may have started tracing */
+                po->pr.resume_pending = 1;
             }
         }
 #endif

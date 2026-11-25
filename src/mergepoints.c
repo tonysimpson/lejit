@@ -932,7 +932,7 @@ handler_yields_kept(PyCodeObject *co, le_code_t c)
 DEFINEFN int
 psyco_handler_awaits(PyCodeObject *co, int handler)
 {
-#if LE_RESUMES_COROUTINES_COMPILED
+#if LE_RESUMES_COROUTINES
     return (co->co_flags & CO_COROUTINE) &&
            handler_reach(co, le_code(co), handler, -1);
 #else
@@ -945,11 +945,14 @@ psyco_handler_awaits(PyCodeObject *co, int handler)
 /* whether the body of 'co', a plain generator or a coroutine, can run
    compiled in its own frame: no YIELD_FROM (a coroutine's awaits are
    GET_AWAITABLE, LOAD_CONST None, YIELD_FROM; a generator's yield from is
-   compiled only as SEND's loop), no async for, and no yield
-   inside an exception handler, whose stack and blocks LeJIT keeps apart
-   from the frame's (an EXCEPT_HANDLER block, a finally block's
-   pseudo-exception); a coroutine's handlers that can await run in ceval
-   instead (handler_yields_kept) */
+   compiled only as SEND's loop), no async for, and, where handlers have
+   blocks, no yield inside an exception handler, whose stack and blocks
+   LeJIT keeps apart from the frame's (an EXCEPT_HANDLER block, a finally
+   block's pseudo-exception); a coroutine's handlers that can await run in
+   ceval instead (handler_yields_kept). With an exception table, a
+   handler's state is items on the frame's stack and the exception it
+   handles is the generator's own, which a pause leaves where ceval's
+   does. */
 static int
 body_compilable(PyCodeObject *co, le_code_t *c)
 {
@@ -983,6 +986,8 @@ body_compilable(PyCodeObject *co, le_code_t *c)
                 return 0;
         }
     }
+    if (LE_HAS_EXCEPTION_TABLE)
+        return 1;
     if (kind == CO_COROUTINE)
         return handler_yields_kept(co, *c);
     return !yields_in_handler(co, *c);
@@ -998,13 +1003,14 @@ psyco_is_resumable_generator(PyCodeObject *co)
     return body_compilable(co, &c);
 }
 
-/* whether the instruction at 'pos' in a coroutine's body that can run as
-   a call (psyco_is_startable_coroutine) may run inside an exception
-   handler (handler_reach) */
+/* whether the instruction at 'pos' may run inside an exception handler
+   (handler_reach): in a coroutine's body that can run as a call
+   (psyco_is_startable_coroutine), or where a resumed frame holds a
+   handler's lasti as a tagged int (pycompiler.c:stack_words_taken) */
 DEFINEFN int
 psyco_in_handler(PyCodeObject *co, int pos)
 {
-#if LE_RESUMES_COROUTINES_COMPILED
+#if LE_RESUMES_COROUTINES || LE_HAS_TAGGED_LASTI
     return handler_reach(co, le_code(co), -1, pos);
 #else
     (void)co;
