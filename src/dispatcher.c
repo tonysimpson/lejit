@@ -1968,14 +1968,15 @@ psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
     }
 }
 
-/* whether a dead local's virtual value is made real at a merge point past
-   its cap: not a float, which a numeric loop would box on every pass;
+/* whether a dead local's virtual value is made real at merge point 'mp'
+   past its cap: not a float, which a numeric loop would box on every pass;
    nor a resumed generator's frame word, which is no object to make but
-   one its frame still holds. Ints and bools are, run-time ones too: they
-   split re's parser's loop heads as much as its objects do, though a
-   numeric loop past its cap then boxes its int temporaries on every pass */
+   one its frame still holds. An int or bool with a run-time value only
+   where the blocks here held virtual objects (vcompiler.c:mp_new_block):
+   there they split loop heads as much as the objects do (re's parser),
+   while a numeric loop would box its int temporaries on every pass */
 static bool
-made_real_when_dead(vinfo_t *vi)
+made_real_when_dead(vinfo_t *vi, mergepoint_t *mp)
 {
     source_virtual_t *sv;
     if (vi == NULL || !is_virtualtime(vi->source))
@@ -1985,6 +1986,13 @@ made_real_when_dead(vinfo_t *vi)
         return false;
 #endif
     sv = VirtualTime_Get(vi->source);
+    if (sv == &psyco_computed_long || sv == &psyco_computed_bool) {
+        vinfo_t *value = vinfo_getitem(vi, iLONG_VALUE);
+        if (value != NULL && is_compiletime(value->source))
+            return true;
+        return mp->virtual_objects > 0 &&
+               4 * mp->virtual_objects >= mp->virtual_numbers;
+    }
     return sv != &psyco_computed_float;
 }
 
@@ -2016,7 +2024,7 @@ psyco_make_dead_virtuals_real(PsycoObject *po, mergepoint_t *mp)
         if (!PyLong_Check(o1))
             break;
         vi = LOC_LOCALS_PLUS[PyLong_AS_LONG(o1)];
-        if (made_real_when_dead(vi) && !compute_vinfo(vi, po))
+        if (made_real_when_dead(vi, mp) && !compute_vinfo(vi, po))
             return false;
     }
     return true;

@@ -112,10 +112,35 @@ write_psyco_int_mul_ovf(PsycoObject *po)
    calls psyco_stub_enter(record, RSI) on an aligned stack, and jumps to the
    code it returns with RSP as it was. RSI must stay untouched until the
    call: a promotion stub passes its run-time value there.
-   Other registers need no saving (only callee-saved ones are allocated);
+   Other registers need no saving (only callee-saved ones are allocated,
+   and XMM8-XMM14, which are saved here);
    the flags are not saved: promotion spills them first (NEED_CC) and
    psyco_coding_pause asserts none is left. */
 DEFINEVAR code_t *psyco_stub_trampoline;
+
+/* XMM8-XMM14 below RSP, which must be 16-byte aligned and stays so: C
+   code clobbers every XMM register, and compiled code may hold doubles in
+   these */
+#define XMM_SAVE_AREA 64
+static code_t *
+save_tracked_xmm(code_t *code)
+{
+    int i;
+    SUB_R_I8(REG_X64_RSP, XMM_SAVE_AREA);
+    for (i = 0; i < 7; i++) MOVSD_O_XMM(REG_X64_RSP, 8 * i, 8 + i);
+    return code;
+}
+static code_t *
+restore_tracked_xmm(code_t *code)
+{
+    int i;
+#if ALL_CHECKS
+    code = psyco_clobber_xmm(code); /* as the C code may */
+#endif
+    for (i = 0; i < 7; i++) MOVSD_XMM_O(8 + i, REG_X64_RSP, 8 * i);
+    ADD_R_I8(REG_X64_RSP, XMM_SAVE_AREA);
+    return code;
+}
 /* The same for a respawn's stub, which loads its record's address (just
    after the stub) and comes here to run psyco_respawn_enter. */
 DEFINEVAR code_t *psyco_respawn_trampoline;
@@ -130,10 +155,12 @@ write_stub_trampoline(PsycoObject *po, bool respawn)
     AND_R_I8(REG_X64_RSP, -16);
     PUSH_R(REG_X64_RAX); /* the unaligned RSP */
     SUB_R_I8(REG_X64_RSP, 8);
+    code = save_tracked_xmm(code);
     if (respawn)
         CALL_I(psyco_respawn_enter);
     else
         CALL_I(psyco_stub_enter);
+    code = restore_tracked_xmm(code);
     ADD_R_I8(REG_X64_RSP, 8);
     POP_R(REG_X64_RSP);
     MOV_R_R(REG_X64_R11, REG_X64_RAX);
@@ -157,14 +184,17 @@ _Static_assert(Py_TPFLAGS_HAVE_GC >> 8 < 256 &&
    inline attribute store's miss and dealloc paths). Each is a matched
    call and ret, so the return-address predictor stays in step. RBP
    is saved here and holds the unaligned RSP; compiled code keeps its
-   values only in callee-saved registers, which the C callee preserves. */
+   values in callee-saved registers, which the C callee preserves, and in
+   XMM8-XMM14, which the copy that 'keep_xmm' writes saves too. */
 static void
-write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax)
+write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax, bool keep_xmm)
 {
     BEGIN_CODE
     PUSH_R(REG_X64_RBP);
     MOV_R_R(REG_X64_RBP, REG_X64_RSP);
     AND_R_I8(REG_X64_RSP, -16);
+    if (keep_xmm)
+        code = save_tracked_xmm(code);
     if (dealloc_rax) { /* deallocates the object in RAX, as DEC_OB_REFCNT */
         MOV_R_R(REG_X64_RDI, REG_X64_RAX);
 #if defined(Py_TRACE_REFS)
@@ -218,21 +248,36 @@ write_aligned_call(PsycoObject *po, void *fn, bool dealloc_rax)
     else {
         CALL_I(fn);
     }
+    if (keep_xmm)
+        code = restore_tracked_xmm(code);
     MOV_R_R(REG_X64_RSP, REG_X64_RBP);
     POP_R(REG_X64_RBP);
     RET();
     END_CODE
 }
 
+/* the glue, and just before it the word psyco_glue_keeping_xmm reads:
+   the address of its copy that keeps XMM8-XMM14 */
 static code_t *
 new_aligned_call(void *fn, bool dealloc_rax)
 {
     PsycoObject *po = PsycoObject_New(0);
-    code_t *start = po->code = psyco_code_open(&po->codelimit);
-    write_aligned_call(po, fn, dealloc_rax);
-    CLOSE_CODE("glue", start, po->code);
+    code_t *keeping = po->code = psyco_code_open(&po->codelimit);
+    code_t *start;
+    write_aligned_call(po, fn, dealloc_rax, true);
+    while ((long)po->code % sizeof(code_t *) != 0) *po->code++ = 0xCC;
+    *(code_t **)po->code = keeping;
+    start = po->code += sizeof(code_t *);
+    write_aligned_call(po, fn, dealloc_rax, false);
+    CLOSE_CODE("glue", keeping, po->code);
     PsycoObject_Delete(po);
     return start;
+}
+
+DEFINEFN code_t *
+psyco_glue_keeping_xmm(code_t *glue)
+{
+    return ((code_t **)glue)[-1];
 }
 
 DEFINEVAR code_t *psyco_dealloc_rax_glue;

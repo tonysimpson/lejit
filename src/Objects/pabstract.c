@@ -7,12 +7,14 @@
  */
 #include "pabstract.h"
 #include "pclassobject.h"
+#include "pdictobject.h"
 #include "pfuncobject.h"
 #include "piterobject.h"
 #include "plongobject.h"
 #include "pmethodobject.h"
 #include "ptupleobject.h"
 #include "../segments.h"
+#include "../Modules/pctypes.h"
 
 /* abstract.c's type_error: msg has one %.200s for the type's name */
 static vinfo_t *
@@ -124,14 +126,23 @@ vinfo_t *
 psyco_vectorcall_tuple(PsycoObject *po, vinfo_t *callable, vinfo_t *args,
                        vinfo_t *kw)
 {
+    PyObject *kwnames = NULL;
+    vinfo_t **kwvalues = NULL;
     int n;
-    if (!psyco_knowntobe(kw, 0) || !is_virtualtime(args->source))
+    if (!psyco_knowntobe(kw, 0)) {
+        /* pending keywords with no names are the empty dict of
+           f(*a, **{}), which CPython passes on as a dict */
+        kwnames = PsycoDict_PendingNames(kw, &kwvalues);
+        if (kwnames == NULL || PyTuple_GET_SIZE(kwnames) == 0)
+            return NULL;
+    }
+    if (!is_virtualtime(args->source))
         return NULL;
     n = PsycoTuple_Load(args);
     if (n < 0)
         return NULL;
     return psyco_vectorcall(po, callable, NULL, &PsycoTuple_GET_ITEM(args, 0),
-                            n, NULL, NULL);
+                            n, kwnames, kwvalues);
 }
 
 DEFINEFN
@@ -177,6 +188,11 @@ PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
             return psyco_residual_call(po, PyObject_Call, callable_object,
                                        args, kw);
 #endif
+        if (PsycoCtypes_IsFunction(tp, call)) {
+            vinfo_t *r = PsycoCtypes_Call(po, tp, callable_object, args, kw);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
+        }
         return Psyco_META3(po, call, CfCommonNewRefPyObject, "vvv",
                            callable_object, args, kw);
     }
