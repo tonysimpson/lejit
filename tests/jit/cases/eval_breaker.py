@@ -187,10 +187,25 @@ class _InterruptingManager:
         self.box.exited = exc[0].__name__ if exc[0] else 'no exception'
 
 
+def _loop_in_with(box):
+    try:
+        with _InterruptingManager(box):
+            # a loop, tested at its backward jump as in ceval (an inlined
+            # call is tested at no entry)
+            while box.n < 1000:
+                box.n += 1
+    except KeyboardInterrupt:
+        return 'interrupted'
+    return 'not interrupted'
+
+
 # an interrupt during __enter__: where ceval tests no eval_breaker after
 # its call, the KeyboardInterrupt is raised inside the with block, and
 # __exit__ sees it; elsewhere it is raised as the call ends, before the
-# block, and __exit__ isn't called
+# block, and __exit__ isn't called. Raised at the loop's backward jump, it
+# is caught where ceval's exception table catches it: where ceval tests
+# after jumping, the jump itself may be in no handler's range; where it
+# tests before, the exception leaves the frame from such a jump
 def interrupt_in_enter():
     old = signal.signal(signal.SIGINT, signal.default_int_handler)
     box = Box()
@@ -198,14 +213,9 @@ def interrupt_in_enter():
     box.exited = 'not called'
     try:
         try:
-            with _InterruptingManager(box):
-                # a loop, tested at its head as in ceval (an inlined call
-                # is tested at no entry)
-                while box.n < 1000:
-                    box.n += 1
+            return (_loop_in_with(box), box.exited)
         except KeyboardInterrupt:
-            return ('interrupted', box.exited)
-        return ('not interrupted', box.exited)
+            return ('left the frame', box.exited)
     finally:
         signal.signal(signal.SIGINT, old)
 

@@ -802,6 +802,31 @@ def eval_breaker_gc(s):
     return _field(s, '_ceval_state', 'gc_scheduled', missing=False)
 
 
+def breaker_after_back_jump(s):
+    """ceval's JUMP_BACKWARD jumps before it tests eval_breaker, so an
+    exception the test raises is looked up in the exception table at the
+    code unit before the loop head, not at the jump"""
+    path, case = _case_file(s, 'JUMP_BACKWARD')
+    if case is None:
+        return False, '%s: no TARGET(JUMP_BACKWARD)' % ', '.join(CASE_FILES)
+    where = '%s:TARGET(JUMP_BACKWARD)' % path
+    # where the case goes on in a quickened one (JUMP_TO_INSTRUCTION)
+    at = _run_at(case, ['JUMP_TO_INSTRUCTION', '('])
+    if at is not None:
+        quick = case[at + 2]
+        path, case = _case_file(s, quick)
+        if case is None:
+            raise Unanswered('no TARGET(%s)' % quick)
+        where = '%s:TARGET(%s)' % (path, quick)
+    jump = _run_at(case, ['JUMPBY'])
+    tests = [i for i in (_run_at(case, [name]) for name in
+                         ('CHECK_EVAL_BREAKER', '_Py_HandlePending',
+                          'check_periodics')) if i is not None]
+    if jump is None or not tests:
+        raise Unanswered('%s: no JUMPBY or eval_breaker test' % where)
+    return jump < min(tests), where
+
+
 def eval_frame_pops(s):
     """ceval clears and pops the frame it is given when it ends, from an
     entry frame of its own, not its caller (an interpreter frame has no
@@ -1695,6 +1720,7 @@ STATE = [
     ('COMMON_CONSTS_STACKREFS', common_consts_stackrefs),
     ('FRAME_EXECUTABLE', frame_executable),
     ('FRAME_INSTR_PTR', frame_instr_ptr),
+    ('BREAKER_AFTER_BACK_JUMP', breaker_after_back_jump),
     ('TSTATE_CURRENT_FRAME', tstate_current_frame),
     ('TSTATE_EVAL_BREAKER', tstate_eval_breaker),
     ('TSTATE_WHAT_EVENT', tstate_what_event),
