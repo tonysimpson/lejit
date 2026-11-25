@@ -2031,21 +2031,49 @@ psyco_frame_goes_interpreted(PyCodeObject *co)
 }
 #endif
 
-/* LeJIT's getter or setter for type 'tp''s getset descriptor 'name',
-   given in 'ours' (NULL keeps CPython's): 'ours' takes the rest of
-   CPython's definition and the descriptor is pointed at it. The
-   descriptor stays the one CPython's caches and specialised instructions
-   may hold, so the type needn't be given a new version tag, which a
-   static builtin type mustn't be. Returns CPython's definition, or NULL
-   if there is no such descriptor. */
+/* a field a member descriptor reads and writes, as a getset's functions
+   ('field' is its definition) */
+static PyObject *
+member_get(PyObject *obj, void *field)
+{
+    return PyMember_GetOne((const char *)obj, (PyMemberDef *)field);
+}
+static int
+member_set(PyObject *obj, PyObject *v, void *field)
+{
+    return PyMember_SetOne((char *)obj, (PyMemberDef *)field, v);
+}
+
+/* LeJIT's getter or setter for type 'tp''s attribute 'name', given in
+   'ours' (NULL keeps CPython's), which takes the rest of CPython's
+   definition. A getset descriptor is pointed at 'ours': it stays the one
+   CPython's caches and specialised instructions may hold, so the type
+   needn't be given a new version tag, which a static builtin type mustn't
+   be. A member descriptor (a field, as f_back and f_lasti are where the
+   frame object has them) is replaced in the dict by a getset descriptor
+   for 'ours', and the type is given a new version tag. Returns CPython's
+   definition, or NULL if the type has neither. */
 static PyGetSetDef *
 getset_replace(PyTypeObject *tp, const char *name, PyGetSetDef *ours)
 {
-    PyObject *descr = PyDict_GetItemString(le_type_dict(tp), name);
+    PyObject *d = le_type_dict(tp);
+    PyObject *descr = PyDict_GetItemString(d, name), *fn;
     PyGetSetDef *cpython;
-    if (descr == NULL || Py_TYPE(descr) != &PyGetSetDescr_Type)
+    if (descr != NULL && Py_TYPE(descr) == &PyGetSetDescr_Type)
+        cpython = ((PyGetSetDescrObject *)descr)->d_getset;
+    else if (descr != NULL && Py_TYPE(descr) == &PyMemberDescr_Type) {
+        PyMemberDef *field = ((PyMemberDescrObject *)descr)->d_member;
+        cpython = PyMem_Malloc(sizeof(PyGetSetDef));
+        if (cpython == NULL)
+            OUT_OF_MEMORY();
+        cpython->name = field->name;
+        cpython->get = member_get;
+        cpython->set = member_set;
+        cpython->doc = field->doc;
+        cpython->closure = field;
+    }
+    else
         return NULL;
-    cpython = ((PyGetSetDescrObject *)descr)->d_getset;
     ours->name = cpython->name;
     ours->doc = cpython->doc;
     ours->closure = cpython->closure;
@@ -2053,7 +2081,15 @@ getset_replace(PyTypeObject *tp, const char *name, PyGetSetDef *ours)
         ours->get = cpython->get;
     if (ours->set == NULL)
         ours->set = cpython->set;
-    ((PyGetSetDescrObject *)descr)->d_getset = ours;
+    if (Py_TYPE(descr) == &PyGetSetDescr_Type) {
+        ((PyGetSetDescrObject *)descr)->d_getset = ours;
+        return cpython;
+    }
+    fn = PyDescr_NewGetSet(tp, ours);
+    if (fn == NULL || PyDict_SetItemString(d, name, fn) < 0)
+        PyErr_Print();
+    Py_XDECREF(fn);
+    PyType_Modified(tp);
     return cpython;
 }
 
