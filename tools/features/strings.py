@@ -229,6 +229,10 @@ msg('NO_ITEM_DELETION', "deleting an item of an object with neither "
     [F('%.200s', 'int')])
 msg('NOT_ITERABLE', "iter() of an object that isn't iterable", 'TypeError',
     'iter(args[0]())', [T()])
+msg('ITER_RETURNED_NON_ITERATOR', "iter() of an object whose __iter__ "
+    "returns something that isn't an iterator", 'TypeError',
+    'r = args[0](); o = type("A", (), {"__iter__": lambda s: r})()\n'
+    'iter(o)', [T()])
 msg('NEXT_NOT_ITERATOR', "next() of an object that isn't an iterator, as "
     "a for loop's iterator with no __next__ slot", 'TypeError',
     'next(args[0]())', [T()])

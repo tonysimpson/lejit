@@ -2132,6 +2132,34 @@ PsycoIter_Check(PsycoObject *po, vinfo_t *obj)
 }
 #endif
 
+/* PyObject_GetIter's end: its result 'res' if an iterator, else its
+   TypeError */
+static PyObject *
+cimpl_iter_result(PyObject *res)
+{
+    if (!PyIter_Check(res)) {
+        PyErr_Format(PyExc_TypeError, LE_MSG_ITER_RETURNED_NON_ITERATOR,
+                     Py_TYPE(res)->tp_name);
+        return NULL;
+    }
+    Py_INCREF(res);
+    return res;
+}
+
+/* the same on 'r', which it consumes: no test where r is known to be a
+   generator, pending or not */
+static vinfo_t *
+iter_result(PsycoObject *po, vinfo_t *r)
+{
+    vinfo_t *checked;
+    if (Psyco_KnownType(r) == &PyGen_Type)
+        return r;
+    checked = psyco_generic_call(po, cimpl_iter_result,
+                                 CfCommonNewRefPyObject | CfNoPython, "v", r);
+    vinfo_decref(r, po);
+    return checked;
+}
+
 DEFINEFN
 vinfo_t *
 PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi)
@@ -2164,10 +2192,14 @@ PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi)
             return PsycoSeqIter_New(po, vi);
         return type_error_tp(po, LE_MSG_NOT_ITERABLE, t);
     }
-    /* a heap type's __iter__ may return a non-iterator, which
-       PyObject_GetIter checks */
     if (!Psyco_SlotsMutable(t))
         return Psyco_META1(po, f, CfCommonNewRefPyObject, "v", vi);
+    /* a heap type's __iter__ from its slot function's meta (ptypeobject.c),
+       and PyObject_GetIter's check that it returned an iterator */
+    if (Psyco_Lookup(f) != NULL) {
+        vinfo_t *r = Psyco_META1(po, f, CfCommonNewRefPyObject, "v", vi);
+        return r == NULL ? NULL : iter_result(po, r);
+    }
 generic:
     return psyco_generic_call(po, PyObject_GetIter, CfCommonNewRefPyObject,
                               "v", vi);
