@@ -363,6 +363,43 @@ def callee_deleted(n):
     return deleted(n), deleted(n)
 
 
+class Logged:
+    def __init__(self, log):
+        self.log = log
+
+    def __del__(self):
+        self.log.append('freed')
+
+
+def raiser_holding(n, log):           # a loop: called, not inlined
+    held = Logged(log)
+    for i in range(n):
+        held.i = i
+    raise ValueError(n)
+
+
+def small(x):                         # small: inlined into the catcher
+    return [x]
+
+
+# an inlined call in the handler, then the exception deleted: the
+# traceback, and the raise's frame and locals, go with the handler
+def deleted_after_inlined_call(n):
+    log = []
+    try:
+        raiser_holding(n, log)
+    except ValueError as e:
+        tb = e.__traceback__
+        small(tb.tb_next.tb_frame.f_code.co_name)
+        del e, tb
+    gc.collect()
+    return log[:]
+
+
+def callee_deleted_after_inlined_call(n):
+    return deleted_after_inlined_call(n), deleted_after_inlined_call(n)
+
+
 def cleared(n):                       # frame.clear() on the catching frame
     x = Big()
     try:
@@ -418,6 +455,10 @@ CASES = [
     ('callee_dropped', [(3,)], {}),
     ('deleted', [(2,)], {}),
     ('callee_deleted', [(2,)], {}),
+    ('deleted_after_inlined_call', [(2,)],
+     {'xfail': 'the running frame keeps the locals written for an inlined '
+               'call until it returns'}),
+    ('callee_deleted_after_inlined_call', [(2,)], {}),
     ('cleared', [(2,)], {}),
     ('callee_cleared', [(2,)], {}),
 ]

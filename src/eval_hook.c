@@ -1,4 +1,5 @@
 #include "Python/frames.h"
+#include "Python/pycompiler.h"
 #include "bytecode.h"
 #include "processor.h"
 #include "codegen.h"
@@ -185,24 +186,25 @@ resume_start(int lasti)
 }
 
 #if LE_RESUMES_ON_FRAME
-/* the entry compiled for resuming 'f' after f_lasti, with 'nstack' stack
-   items under the value sent; NULL if out of memory */
+/* the entry compiled for going on with 'f' at 'start' (bytes) in 'mode'
+   (GENEXPR_RESUMABLE, with 'nstack' stack items under the value sent, or
+   GENEXPR_OSR, with 'nstack' items); NULL if out of memory */
 static __attribute__((noinline)) CodeBufferObject *
 compile_resume(le_frame_t *f, le_code_extra_t *x, PyObject *mergepoints,
-               int nstack)
+               int start, long mode, int nstack)
 #else
-/* the entry compiled for resuming 'f' after f_lasti with 'nulls'
-   (le_resume_entry_t); NULL if out of memory */
+/* the entry compiled for going on with 'f' at 'start' (bytes) in 'mode'
+   (GENEXPR_RESUMABLE or GENEXPR_OSR) with 'nulls' (le_resume_entry_t);
+   NULL if out of memory */
 static __attribute__((noinline)) CodeBufferObject *
 compile_resume(le_frame_t *f, le_code_extra_t *x, PyObject *mergepoints,
-               uint64_t nulls)
+               int start, long mode, uint64_t nulls)
 #endif
 {
     PyCodeObject *co = le_frame_code(f);
     PsycoObject *po;
     CodeBufferObject *volatile codebuf = NULL;
     le_compile_guard_t g;
-    int lasti = le_frame_lasti(f);
 #if LE_HAS_INTERPRETER_FRAME
     /* no blocks: handlers are the exception table's */
     int *blocks = NULL, nblocks = 0;
@@ -218,21 +220,21 @@ compile_resume(le_frame_t *f, le_code_extra_t *x, PyObject *mergepoints,
     LE_COMPILE_BEGIN(LE_ENTER_CALL);
     psyco_guard_push(&g);
     if (sigsetjmp(g.env, 0) == 0) {
-        int start = resume_start(lasti);
 #if LE_RESUMES_ON_FRAME
         (void)blocks;
         (void)nblocks;
         po = PsycoObject_FromGenFrame(co, le_frame_globals(f),
                                       le_frame_builtins(f), mergepoints,
-                                      DEFAULT_RECURSION, start, nstack);
+                                      DEFAULT_RECURSION, start, nstack, mode);
 #else
         po = PsycoObject_FromGenFrame(
             co, le_frame_globals(f), le_frame_builtins(f), mergepoints,
             DEFAULT_RECURSION, start, nulls, le_frame_stack_depth(f), blocks,
-            nblocks);
+            nblocks, mode);
 #endif
-        codebuf =
-            psyco_compile_code(po, start == 0 ? PsycoObject_Ready(po) : NULL);
+        codebuf = psyco_compile_code(
+            po, start == 0 && mode == GENEXPR_RESUMABLE ? PsycoObject_Ready(po)
+                                                        : NULL);
     }
     psyco_guard_pop(&g);
     LE_COMPILE_END(LE_ENTER_CALL);
@@ -396,7 +398,9 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
         direct_entry_put(x, f, (CodeBufferObject *)e->code);
         return (CodeBufferObject *)e->code;
     }
-    codebuf = compile_resume(f, x, x->merge_points, nstack);
+    codebuf =
+        compile_resume(f, x, x->merge_points, resume_start(le_frame_lasti(f)),
+                       GENEXPR_RESUMABLE, nstack);
     if (codebuf == NULL)
         return NULL; /* out of memory */
     Py_INCREF(codebuf);
@@ -509,7 +513,9 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
         }
     if (p->count == LE_RESUME_ENTRIES)
         goto interpreted;
-    codebuf = compile_resume(f, x, x->merge_points, nulls);
+    codebuf =
+        compile_resume(f, x, x->merge_points, resume_start(le_frame_lasti(f)),
+                       GENEXPR_RESUMABLE, nulls);
     if (codebuf == NULL)
         goto interpreted; /* out of memory */
     Py_INCREF(codebuf);
@@ -563,6 +569,294 @@ LeGen_Run(PyThreadState *tstate, CodeBufferObject *codebuf, le_frame_t *f,
 }
 #endif
 
+/* On-stack replacement. A function's frame that ceval runs, stopped at a
+   loop head in an event of ceval's (osr.c), goes on there in compiled
+   code, from inside the event: the frame stays ceval's (current, running,
+   its depth counted once), and the compiled code leaves it for ceval to
+   go on with as the event returns, one of three ways. A return leaves the
+   frame at its return instruction (pycompiler.c:osr_return). Going on
+   interpreted leaves it where it is (frames.c:psyco_resume_run). A raise
+   leaves it at the raise, with its traceback entry: ceval adds the entry
+   again as the event fails, from where the frame is, and the hook drops
+   the copy (osr_raise_end); or, where a handler covers the loop head, which
+   ceval would look in, at a RERAISE 1 no handler covers, with the place
+   and the exception on its stack. */
+#if LE_HAS_EXCEPTION_TABLE
+/* a RERAISE 1 that no handler covers, -1 if there is none */
+static int
+uncovered_reraise(PyCodeObject *co)
+{
+    le_code_t c = le_code(co);
+    le_handler_t h;
+    int pos;
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        if (in.op == RERAISE && in.arg == 1 && !le_handler_find(co, pos, &h))
+            return pos;
+        pos = in.next;
+    }
+    return -1;
+}
+#endif
+
+/* the record's point for the loop head 'head' (bytes), made on first use;
+   NULL if out of memory */
+static le_osr_point_t *
+osr_point(le_code_extra_t *x, PyCodeObject *co, int head)
+{
+    le_osr_point_t *p;
+    int i;
+    for (i = 0; i < x->nosr; i++)
+        if (x->osr[i].head == head)
+            return &x->osr[i];
+    p = PyMem_Realloc(x->osr, (x->nosr + 1) * sizeof(le_osr_point_t));
+    if (p == NULL)
+        return NULL;
+    x->osr = p;
+    p += x->nosr++;
+    memset(p, 0, sizeof(le_osr_point_t));
+    p->head = head;
+    /* a handler's body is left to ceval, as a coroutine's is */
+    p->refused = psyco_in_handler(co, head);
+#if LE_HAS_EXCEPTION_TABLE
+    p->reraise = -1;
+    if (!p->refused) {
+        le_handler_t h;
+        if (le_handler_find(co, head, &h)) {
+            p->reraise = uncovered_reraise(co);
+            p->refused = p->reraise < 0;
+        }
+    }
+#endif
+    return p;
+}
+
+/* that point's entry for the frame 'f', compiled now if needed, or NULL
+   to stay interpreted */
+static CodeBufferObject *
+osr_entry_get(le_resume_entry_t *e, le_frame_t *f)
+{
+    if (e->code == Py_None || e->globals != le_frame_globals(f) ||
+        e->builtins != le_frame_builtins(f))
+        return NULL;
+    return (CodeBufferObject *)e->code;
+}
+
+static void
+osr_entry_put(le_resume_point_t *p, le_frame_t *f, CodeBufferObject *codebuf)
+{
+    le_resume_entry_t *e = &p->entries[p->count++];
+    Py_INCREF(codebuf);
+    e->code = (PyObject *)codebuf;
+    e->globals = le_frame_globals(f);
+    e->builtins = le_frame_builtins(f);
+}
+
+DEFINEVAR PyObject *le_osr_ceval_goes_on = NULL;
+DEFINEVAR long le_osr_switches = 0;
+
+/* the frame taken over in this thread that raised and whose ceval adds its
+   traceback entry again (osr_raise_end) */
+static _Thread_local le_frame_t *osr_raised;
+
+/* The frame's traceback entry was made by its compiled code, at the raise,
+   and again by ceval, which the frame was left at the raise for: the
+   compiled code's is the one kept, which Python may hold already. */
+static __attribute__((noinline)) void
+osr_raise_end(PyThreadState *ts)
+{
+    PyTracebackObject *tb = (PyTracebackObject *)le_exc_traceback(ts);
+    osr_raised = NULL;
+    if (tb != NULL && PyTraceBack_Check(tb) && tb->tb_next != NULL &&
+        tb->tb_next->tb_frame == tb->tb_frame) {
+        Py_INCREF(tb->tb_next);
+        le_exc_put_traceback(ts, (PyObject *)tb->tb_next);
+        Py_DECREF(tb);
+    }
+}
+
+/* The compiled code ended with an exception: the frame is left as a raise
+   leaves it for ceval (above); 1 where ceval then goes on without one
+   (the RERAISE 1), else -1 */
+static int
+osr_raised_out(PyThreadState *ts, le_frame_t *f, le_osr_point_t *p)
+{
+    PyTracebackObject *tb = (PyTracebackObject *)le_exc_traceback(ts);
+    int lasti;
+    /* the compiled code's entry is the frame's own, at the raise */
+    if (tb == NULL || !PyTraceBack_Check(tb) ||
+        tb->tb_frame != le_frame_object(f)) {
+        extra_assert(0);
+        return -1;
+    }
+    lasti = le_lasti_of(tb->tb_lasti);
+#if LE_HAS_EXCEPTION_TABLE
+    if (p->reraise >= 0) {
+        int nplus = le_code_nlocalsplus(le_frame_code(f));
+        PyObject *exc;
+#if LE_HAS_CURRENT_EXCEPTION
+        exc = PyErr_GetRaisedException();
+#else
+        PyObject *type, *tbo;
+        PyErr_Fetch(&type, &exc, &tbo);
+        PyErr_NormalizeException(&type, &exc, &tbo);
+        if (tbo != NULL)
+            PyException_SetTraceback(exc, tbo);
+        Py_XDECREF(type);
+        Py_XDECREF(tbo);
+#endif
+#if LE_HAS_RERAISE_LASTI_TAGGED
+        f->localsplus[nplus] = PyStackRef_TagInt(lasti);
+#else
+        {
+            PyObject *place = PyLong_FromLong(lasti);
+            if (place == NULL) {
+                Py_DECREF(exc);
+                return -1;
+            }
+            le_frame_word_put(f, nplus, place);
+        }
+#endif
+        le_frame_word_put(f, nplus + 1, exc);
+        le_osr_frame_pause(f, le_lasti_of(p->reraise), 2);
+        return 1;
+    }
+    le_osr_frame_pause(f, lasti, 0);
+#else
+    (void)p;
+    le_osr_frame_pause(f, lasti, 0, 0, NULL);
+#endif
+    osr_raised = f;
+    return -1;
+}
+
+/* Runs the entry 'codebuf' on the frame 'f' with its arguments 'args'
+   (the last of which, where the run holds the frame's words, is the run's
+   FrameRuntime): as LeGen_Run, but the frame is the thread's current one
+   already, counted and running. The event the code runs from marks the
+   thread as tracing (and on 3.12+ in which event), which is undone while
+   it runs, so frames ceval runs from it give events to the tools as
+   ever. */
+static PyObject *
+osr_run(PyThreadState *ts, CodeBufferObject *codebuf, le_frame_t *f,
+        long *args, int nargs)
+{
+    stack_frame_info_t *no_frames = (stack_frame_info_t *)-1;
+    stack_frame_info_t **finfo = &no_frames;
+    FrameRuntime fr;
+    PyObject *result;
+#if LE_HAS_TSTATE_WHAT_EVENT
+    int what = ts->what_event;
+    ts->what_event = -1;
+#endif
+    psyco_frame_start_register(&fr, f, &finfo);
+    fr.osr = 1;
+    if (!LE_RESUMES_ON_FRAME)
+        args[nargs - 1] = (long)&fr;
+    ts->tracing--;
+    result = psyco_processor_run(codebuf, args, &finfo);
+    ts->tracing++;
+#if LE_HAS_TSTATE_WHAT_EVENT
+    ts->what_event = what;
+#endif
+    psyco_frame_start_unregister(&fr);
+    return result;
+}
+
+DEFINEFN int
+le_osr_switch(PyThreadState *ts, le_frame_t *f, int head)
+{
+    PyCodeObject *co = le_frame_code(f);
+    le_code_extra_t *x;
+    le_osr_point_t *p;
+    PyObject *mergepoints, *result;
+    CodeBufferObject *codebuf;
+    int nplus = le_code_nlocalsplus(co), nstack = le_frame_stack_depth(f);
+#if !LE_RESUMES_ON_FRAME
+    long words[LE_GEN_WORDS + 1];
+    int nlocals = le_code_nlocals(co), i;
+    uint64_t nulls = 0;
+    le_resume_entry_t *e;
+#endif
+    /* only a function's frame, while no tool is watching */
+    if ((co->co_flags & LE_GENERATOR_FLAGS) || le_frame_locals(f) != NULL ||
+        le_tracing_now(ts, co) ||
+        nplus + co->co_stacksize > LE_FRAME_WORDS_MAX)
+        return 0;
+    x = le_code_extra_get(co);
+    if (x == NULL)
+        return 0;
+    mergepoints = x->merge_points;
+    if (mergepoints == NULL)
+        mergepoints = psyco_analyse_code(co, x, 0);
+    if (mergepoints == NULL) {
+        PyErr_Clear(); /* out of memory */
+        return 0;
+    }
+    if (mergepoints == Py_None)
+        return 0;
+    p = osr_point(x, co, head);
+    if (p == NULL || p->refused)
+        return 0;
+#if LE_RESUMES_ON_FRAME
+    if (!le_frame_iterators_real(f, nstack))
+        return 0;
+    if (p->point.count > 0)
+        codebuf = osr_entry_get(p->point.entries, f);
+    else {
+        codebuf = compile_resume(f, x, mergepoints, head, GENEXPR_OSR, nstack);
+        if (codebuf != NULL)
+            osr_entry_put(&p->point, f, codebuf);
+    }
+    if (codebuf == NULL)
+        return 0;
+    {
+        long frame_arg = (long)f;
+        result = osr_run(ts, codebuf, f, &frame_arg, 1);
+    }
+#else
+    /* the locals and stack items go to the compiled code, as for a
+       generator's resume (le_gen_to_run) */
+    if (nplus + nstack > LE_GEN_WORDS)
+        return 0;
+    for (i = 0; i < nplus + nstack; i++) {
+        PyObject *o = LE_FRAME_WORD(f, i);
+        words[i] = (long)o;
+        nulls |= (uint64_t)(o == NULL) << i;
+        if (i < nlocals || i >= nplus)
+            LE_FRAME_WORD(f, i) = NULL;
+    }
+    codebuf = NULL;
+    for (e = p->point.entries; e < p->point.entries + p->point.count; e++)
+        if (e->nulls == nulls && e->globals == le_frame_globals(f) &&
+            e->builtins == le_frame_builtins(f)) {
+            codebuf = osr_entry_get(e, f);
+            break;
+        }
+    if (codebuf == NULL && e == p->point.entries + p->point.count &&
+        p->point.count < LE_RESUME_ENTRIES) {
+        codebuf = compile_resume(f, x, mergepoints, head, GENEXPR_OSR, nulls);
+        if (codebuf != NULL) {
+            p->point.entries[p->point.count].nulls = nulls;
+            osr_entry_put(&p->point, f, codebuf);
+        }
+    }
+    if (codebuf == NULL) {
+        for (i = 0; i < nplus + nstack; i++)
+            LE_FRAME_WORD(f, i) = (PyObject *)words[i];
+        return 0;
+    }
+    le_frame_set_stack_depth(f, 0);
+    result = osr_run(ts, codebuf, f, words, nplus + nstack + 1);
+#endif
+    le_osr_switches++;
+    if (result == NULL)
+        return osr_raised_out(ts, f, p);
+    /* the frame holds the value it returns, or ceval goes on with it */
+    Py_DECREF(result);
+    return 1;
+}
+
 /* The compiled code to run for 'co' with these globals and builtins,
    compiled now on its first call, or NULL to run it interpreted. 'locals'
    is the frame's locals mapping (NULL for a function). */
@@ -583,6 +877,9 @@ le_code_to_run(PyCodeObject *co, PyObject *globals, PyObject *locals,
             PyErr_Clear(); /* out of memory: this call runs interpreted */
             return NULL;
         }
+        /* its frames are counted in ceval until one is taken over */
+        if (x->osr_left > 0)
+            return NULL;
         mergepoints = x->merge_points;
         if (mergepoints == NULL)
             mergepoints = psyco_analyse_code(co, x, 0);
@@ -881,6 +1178,8 @@ LeFunc_Eval(PyThreadState *tstate, le_frame_t *frame, int throwflag)
     if (le_frame_outlives(frame) != NULL)
         psyco_frame_returned(frame);
 #endif
+    if (result == NULL && frame == osr_raised)
+        osr_raise_end(tstate);
     return result;
 }
 
@@ -967,6 +1266,8 @@ LeFunc_Eval(PyFrameObject *frame, int throwflag)
         result = original_eval_frame(frame, throwflag);
     if (le_frame_outlives(frame) != NULL)
         psyco_frame_returned(frame);
+    if (result == NULL && frame == osr_raised)
+        osr_raise_end(PyThreadState_GET());
     return result;
 }
 
@@ -1157,6 +1458,10 @@ le_entry_install(void)
         (frame_done = PyObject_CallNoArgs(PyExc_Exception)) == NULL)
         return -1;
 #endif
+    if (le_osr_ceval_goes_on == NULL &&
+        (le_osr_ceval_goes_on = PyObject_CallObject(
+             (PyObject *)&PyBaseObject_Type, NULL)) == NULL)
+        return -1;
     if (now != LeEval_EvalFrame) {
         original_eval_frame = now;
         set_eval_frame(LeEval_EvalFrame);

@@ -444,8 +444,8 @@ CASES = [
     ('errors', [(0,)], {}),
     ('with_asyncio', [(3,)],
      {'warmup': (60, "asyncio's paths go on compiling for some rounds"),
-      'leaks_with_aslr': 'what plain CPython itself keeps after the rounds '
-                         'varies with addresses, by tens of blocks'}),
+      'clear_type_cache': "asyncio's task_wakeup looks up the result of "
+                          "gather()'s future by a name made afresh each time"}),
     ('handlers', [(0,)], {}),
     ('started', [(0,)], {}),
     ('suspended_in_handlers', [(0,)], {}),
