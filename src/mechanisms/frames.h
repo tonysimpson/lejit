@@ -240,6 +240,52 @@ le_frame_locals(le_frame_t *f)
 {
     return f->f_locals;
 }
+#if LE_HAS_GET_ITER_INDEX
+/* ceval's GET_ITER leaves an exact list, tuple, str or bytes itself, with
+   its index (a tagged int) above it, where compiled code holds a real
+   iterator and NULL: each such pair of the paused frame 'f's 'nstack'
+   items becomes that, the iterator moved on past as many items, once for
+   the frame. False, with no exception set, if one can't be: the frame is
+   then as valid for ceval as it was. A generator expression's frame has
+   such a pair from the start: its GET_ITER runs before RETURN_GENERATOR. */
+static inline bool
+le_frame_iterators_real(le_frame_t *f, int nstack)
+{
+    int base = le_code_nlocalsplus(le_frame_code(f)), k;
+    for (k = base + 1; k < base + nstack; k++) {
+        _PyStackRef index = f->localsplus[k];
+        PyObject *seq, *it;
+        Py_ssize_t i;
+        if (!PyStackRef_IsTaggedInt(index))
+            continue;
+        seq = LE_FRAME_WORD(f, k - 1);
+        i = PyStackRef_UntagInt(index);
+        if (seq == NULL || Py_TYPE(seq)->_tp_iteritem == NULL)
+            continue; /* an exception's place, pushed by its handler */
+        if (i < 0)
+            return false;
+        it = PyObject_GetIter(seq);
+        for (; it != NULL && i > 0; i--) {
+            PyObject *item = PyIter_Next(it);
+            if (item == NULL) {
+                if (PyErr_Occurred())
+                    Py_CLEAR(it);
+                break; /* ended, as ceval's index past the end would */
+            }
+            Py_DECREF(item);
+        }
+        if (it == NULL) {
+            PyErr_Clear();
+            return false;
+        }
+        le_frame_word_set(f, k - 1, it);
+        f->localsplus[k] = PyStackRef_NULL;
+    }
+    return true;
+}
+#else
+#define le_frame_iterators_real(f, nstack) true
+#endif
 /* the argument words compiled code runs on, owned by the frame, where
    they are plain objects; where they are _PyStackRefs, its words to write
    as objects, which le_frame_words_own then makes the frame's */
