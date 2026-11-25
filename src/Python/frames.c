@@ -264,6 +264,7 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
     fr->n_entry_locals = 0;
     fr->resumed = 0;
     fr->exposed = 0;
+    fr->osr = 0;
     fr->walked = NULL;
     fr->next = frame_runs;
     frame_runs = fr;
@@ -395,8 +396,10 @@ psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p)
         if (keep != NULL)
             *kept = keep;
     }
-    if (p->lasti >= 0)
+    if (p->lasti >= 0 && le_frame_is_gen(f))
         le_gen_frame_pause(f, p->lasti, p->nstack);
+    else if (p->lasti >= 0)
+        le_osr_frame_pause(f, p->lasti, p->nstack);
 }
 
 #else
@@ -424,7 +427,10 @@ psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
         if (keep != NULL)
             fr->entry_locals = keep;
     }
-    le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
+    if (fr->osr)
+        le_osr_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
+    else
+        le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
     return f;
 }
 #endif
@@ -3693,11 +3699,17 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
     for (i = 0; i < nstack; i++)
         le_frame_word_put(frame, nlocals + i, st->values[nlocals + i]);
     le_frame_set_stack_depth(f, (int)nstack);
-    le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
+    if (fr != NULL && fr->osr)
+        /* the ceval running it reads its place again as the event that
+           took it returns, and runs the instruction there */
+        le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti + LE_UNIT));
+    else {
+        le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
 #if LE_HAS_FRAME_INSTR_PTR
-    /* ceval goes on from the instruction at the place, not after it */
-    LE_FRAME_PLACE(le_frame_of(f))++;
+        /* ceval goes on from the instruction at the place, not after it */
+        LE_FRAME_PLACE(le_frame_of(f))++;
 #endif
+    }
 #if !LE_HAS_EXCEPTION_TABLE
     f->f_iblock = st->iblock;
     memcpy(f->f_blockstack, st->blocks, st->iblock * sizeof(PyTryBlock));
@@ -3716,6 +3728,12 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
             psyco_frame_write_locals(st->catcher, 0, locals, nlocals);
         }
         Py_DECREF(st->catcher);
+    }
+    if (fr != NULL && fr->osr) {
+        Py_DECREF(f);
+        PyMem_Free(st);
+        Py_INCREF(le_osr_ceval_goes_on);
+        return le_osr_ceval_goes_on;
     }
 
     if (st->slot != NULL)

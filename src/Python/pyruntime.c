@@ -812,3 +812,34 @@ le_ref_tracer_word(void)
 const long le_c_stack_soft_limit_at =
     offsetof(_PyThreadStateImpl, c_stack_soft_limit);
 #endif
+
+#if !LE_HAS_MONITORING
+/* Sets the running thread's C trace function to 'fn' with no object, or
+   clears it (NULL), as PyEval_SetTrace does but without its sys.settrace
+   audit event: LeJIT's own (osr.c), which no Python code sees, and which
+   is never set over a tool's. */
+void
+le_trace_set_hidden(Py_tracefunc fn)
+{
+    PyThreadState *ts = PyThreadState_GET();
+    int on = fn != NULL || ts->c_profilefunc != NULL;
+#if LE_HAS_TRACING_POSSIBLE_RUNTIME
+    _PyRuntime.ceval.tracing_possible +=
+        (fn != NULL) - (ts->c_tracefunc != NULL);
+#elif LE_HAS_TRACING_POSSIBLE_INTERP
+    ts->interp->ceval.tracing_possible +=
+        (fn != NULL) - (ts->c_tracefunc != NULL);
+#endif
+    ts->c_tracefunc = fn;
+#if LE_HAS_CFRAME
+    /* 0 or 255 where the flag is a byte, and off while a trace function
+       runs (_PyThreadState_UpdateTracingState) */
+    if (sizeof(ts->cframe->use_tracing) == 1)
+        ts->cframe->use_tracing = on && ts->tracing == 0 ? 255 : 0;
+    else
+        ts->cframe->use_tracing = on;
+#else
+    ts->use_tracing = on;
+#endif
+}
+#endif
