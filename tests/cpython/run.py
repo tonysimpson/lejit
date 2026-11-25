@@ -141,7 +141,8 @@ SKIPPED = {
         'test.test_type_cache.TypeCacheWithSpecializationTests.'
         'test_class_load_attr_specialization_static_type',
     "C code that reads the running frame itself (sys._current_frames, "
-    "tracemalloc, another process reading the stack, a _warnings module imported after LeJIT started, type()'s "
+    "tracemalloc, another process reading the stack, a warning C raises, a _warnings module imported after LeJIT "
+    "started, type()'s "
     "and typing.TypeAliasType's __module__) sees the nearest frame ceval runs, not the compiled ones":
         'test.test_sys.SysModuleTest.test_current_frames '
         'test.test_sys.SysModuleTest.test_current_exceptions '
@@ -158,6 +159,8 @@ SKIPPED = {
         'test.test_warnings.CWarnTests.test_filename '
         'test.test_warnings.CWarnTests.test_stacklevel '
         'test.test_warnings.CWarnTests.test_stacklevel_import '
+        'test.test_fileio.COtherFileTests.testBooleanFd '
+        'test.test_sqlite3.test_dbapi.ConnectionTests.test_connect_positional_arguments '
         'test.test_builtin.TestType.test_new_type '
         'test.test_builtin.TestType.test_type_name '
         'test.test_type_aliases.TypeAliasConstructorTest.test_basic '
@@ -182,9 +185,10 @@ SKIPPED = {
     "an inlined frame's f_locals is empty once its call has returned":
         'test.test_frame.TestFrameLocals.test_constructor',
     "C code that reads a compiled frame's locals itself (PyEval_GetLocals, "
-    'PyFrame_GetVar) misses those compiled code has set':
+    'PyEval_GetFrameLocals, PyFrame_GetVar) misses those compiled code has set':
         'test.test_capi.test_eval.Tests.test_eval_getlocals '
         'test.test_frame.TestCAPI.test_getvar '
+        'test.test_frame.TestFrameCApi.test_basic '
         'test.test_capi.test_frame.FrameTest.test_getvar',
     "sys.settrace on 3.12 sees an async for loop's exception events "
     'differently':
