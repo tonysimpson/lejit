@@ -116,6 +116,32 @@ le_osr_switch(PyThreadState *ts, le_frame_t *f, int head);
    holds the event it is counted in, -1 with an exception. */
 EXTERNFN int
 le_osr_arm(PyCodeObject *co, long k);
+/* Code that ceval or C calls compiles at its le_hot_calls-th call, or
+   where it has a loop, once its loops have jumped back LE_HOT_JUMPS times
+   in all, when the frame that makes the last jump is taken over at that
+   loop head (eval_hook.c:le_code_to_run). le_hot_calls is 100; tests can
+   set it (testing.c). */
+#define LE_HOT_JUMPS 1000
+EXTERNVAR unsigned int le_hot_calls;
+/* whether 'co' has a backward jump */
+EXTERNFN bool
+le_osr_has_loop(PyCodeObject *co);
+#if !LE_HAS_MONITORING
+/* Where LeJIT's own trace function counts the jumps (osr.c), it is set in
+   a thread only while a frame of code being counted runs in ceval there
+   (le_osr_frame_enter, which says whether it set it, for
+   le_osr_frame_leave to clear), and cleared while compiled code runs
+   (le_osr_hide, which says whether to set it again after, with
+   le_osr_unhide). */
+EXTERNFN bool
+le_osr_frame_enter(PyThreadState *ts);
+EXTERNFN void
+le_osr_frame_leave(PyThreadState *ts, bool set);
+EXTERNFN bool
+le_osr_hide(PyThreadState *ts);
+EXTERNFN void
+le_osr_unhide(PyThreadState *ts, bool hidden);
+#endif
 /* frames taken over so far, for tests */
 EXTERNVAR long le_osr_switches;
 /* PyObject* psyco_get_locals(void); this one implemented in psyco.c */

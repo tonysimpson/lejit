@@ -325,7 +325,23 @@ le_osr_arm_py(PyObject *self, PyObject *args)
     r = le_osr_arm((PyCodeObject *)co, k);
     if (r < 0)
         return NULL;
+    le_code_extra_get((PyCodeObject *)co)->osr_held = r > 0 && k > 0;
     return PyBool_FromLong(r);
+}
+
+/* for tests: sets le_hot_calls, giving what it was */
+static PyObject *
+le_hot_calls_py(PyObject *self, PyObject *arg)
+{
+    long n = PyLong_AsLong(arg), old = le_hot_calls;
+    if (n == -1 && PyErr_Occurred())
+        return NULL;
+    if (n < 1) {
+        PyErr_SetString(PyExc_ValueError, "_hot_calls() needs n >= 1");
+        return NULL;
+    }
+    le_hot_calls = (unsigned int)n;
+    return PyLong_FromLong(old);
 }
 
 static PyObject *
@@ -352,6 +368,8 @@ DEFINEVAR PyMethodDef le_testing_methods[] = {
      "True if calls to this code object are inlined."},
     {"_osr_arm", le_osr_arm_py, METH_VARARGS,
      "Take a frame of the code over after k more backward jumps."},
+    {"_hot_calls", le_hot_calls_py, METH_O,
+     "Compile code at its n-th call from ceval; gives the old n."},
     {"_osr_switches", le_osr_switches_py, METH_NOARGS,
      "Frames taken over at a loop head so far."},
     {"_unregistered_metas", le_unregistered_metas, METH_NOARGS,

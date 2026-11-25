@@ -16,6 +16,10 @@ if use_lejit:
     if checked and not hasattr(lejit._core, '_stats'):
         sys.exit('lejit was not built for tests: build it with LEJIT_DEV_TRACE=1')
     lejit.start()
+    # each case checks what compiles at its first call: the rule that
+    # waits for hot code is tested in cases/hot_code.py
+    if checked:
+        lejit._core._hot_calls(1)
 out = []
 for args in calls:
     try:

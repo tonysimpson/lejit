@@ -13,10 +13,22 @@
 #include <Python.h>
 #include "mechanisms/frames.h"
 
+DEFINEFN bool
+le_osr_has_loop(PyCodeObject *co)
+{
+    le_code_t c = le_code(co);
+    int pos;
+    for (pos = 0; pos < c.size;) {
+        le_instr_t in = le_instr(c, pos);
+        if (in.target >= 0 && in.target <= pos)
+            return true;
+        pos = in.next;
+    }
+    return false;
+}
+
 #if LE_HAS_MONITORING
-/* sys.monitoring's tool id for optimizers, as CPython names it
-   (OPTIMIZER_ID) */
-#define LE_OSR_TOOL 5
+#include "mechanisms/osr_tool.h"
 
 /* 1 once LeJIT holds the tool id, -1 if another tool held it */
 static int tool_held;
@@ -80,6 +92,7 @@ osr_jump(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
     }
     if (x == NULL || x->osr_left <= 0 || --x->osr_left > 0)
         Py_RETURN_NONE;
+    x->calls = le_hot_calls; /* its next call compiles */
     /* before anything runs, so that the compiled code isn't traced */
     if (code_events_set(co, 0) < 0)
         return NULL;
@@ -186,13 +199,12 @@ le_trace_set_hidden(Py_tracefunc fn); /* pyruntime.c */
 
 /* a line event at a loop head of a code being counted counts one: a
    backward jump always gives one there */
-static int
-osr_trace(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg)
+DEFINEFN int
+le_osr_trace(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg)
 {
     le_frame_t *f;
     le_code_extra_t *x;
     int lasti, head;
-    PyThreadState *ts;
     (void)obj;
     (void)arg;
     if (what != PyTrace_LINE)
@@ -206,27 +218,50 @@ osr_trace(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg)
     if (!(x->loop_heads[head / LE_UNIT / 8] & (1 << (head / LE_UNIT % 8))) ||
         --x->osr_left > 0)
         return 0;
-    /* before anything runs, so that the compiled code isn't traced */
-    le_trace_set_hidden(NULL);
-    ts = PyThreadState_GET();
-    return le_osr_switch(ts, f, head) < 0 ? -1 : 0;
+    x->calls = le_hot_calls; /* its next call compiles */
+    return le_osr_switch(PyThreadState_GET(), f, head) < 0 ? -1 : 0;
 }
 
 DEFINEFN int
 le_osr_arm(PyCodeObject *co, long k)
 {
-    PyThreadState *ts = PyThreadState_GET();
     le_code_extra_t *x = le_code_extra(co);
     if (x == NULL || (x->loop_heads == NULL && loop_heads_make(x, co) < 0))
         return -1;
-    /* not over a tool's trace function */
-    if (ts->c_tracefunc != NULL && ts->c_tracefunc != osr_trace)
-        return 0;
     x->osr_left = k;
-    if (k > 0 && ts->c_tracefunc == NULL)
-        le_trace_set_hidden(osr_trace);
-    else if (k == 0 && ts->c_tracefunc == osr_trace)
-        le_trace_set_hidden(NULL);
     return 1;
+}
+
+DEFINEFN bool
+le_osr_frame_enter(PyThreadState *ts)
+{
+    /* never over a tool's */
+    if (ts->c_tracefunc != NULL)
+        return false;
+    le_trace_set_hidden(le_osr_trace);
+    return true;
+}
+
+DEFINEFN void
+le_osr_frame_leave(PyThreadState *ts, bool set)
+{
+    if (set && ts->c_tracefunc == le_osr_trace)
+        le_trace_set_hidden(NULL);
+}
+
+DEFINEFN bool
+le_osr_hide(PyThreadState *ts)
+{
+    if (ts->c_tracefunc != le_osr_trace)
+        return false;
+    le_trace_set_hidden(NULL);
+    return true;
+}
+
+DEFINEFN void
+le_osr_unhide(PyThreadState *ts, bool hidden)
+{
+    if (hidden && ts->c_tracefunc == NULL)
+        le_trace_set_hidden(le_osr_trace);
 }
 #endif

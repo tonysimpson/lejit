@@ -28,6 +28,8 @@ if sys.argv[2] == 'lejit':
     sys.path.insert(0, %r)
     import lejit
     lejit.start()
+    if hasattr(lejit._core, '_hot_calls'):
+        lejit._core._hot_calls(1)
 SRC = """
 def g():
     a = 500
@@ -53,6 +55,8 @@ if site != 'plain':
     sys.path.insert(0, %r)
     import lejit
     lejit.start()
+    if hasattr(lejit._core, '_hot_calls'):
+        lejit._core._hot_calls(1)
 
 def h(x):
     return x * 2
@@ -156,6 +160,8 @@ if mode == 'lejit':
     sys.path.insert(0, %r)
     import lejit
     lejit.start()
+    if hasattr(lejit._core, '_hot_calls'):
+        lejit._core._hot_calls(1)
 hog = []
 ticks = 0
 
@@ -241,6 +247,8 @@ if sys.argv[1] == 'lejit':
     sys.path.insert(0, %r)
     import lejit
     lejit.start()
+    if hasattr(lejit._core, '_hot_calls'):
+        lejit._core._hot_calls(1)
 
 class A:
     pass

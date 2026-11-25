@@ -653,7 +653,32 @@ osr_entry_put(le_resume_point_t *p, le_frame_t *f, CodeBufferObject *codebuf)
 }
 
 DEFINEVAR PyObject *le_osr_ceval_goes_on = NULL;
+DEFINEVAR unsigned int le_hot_calls = 100;
 DEFINEVAR long le_osr_switches = 0;
+
+/* 'call', a run of compiled code the hook starts, with LeJIT's own trace
+   function cleared meanwhile (osr.c:le_osr_hide) */
+#if LE_HAS_MONITORING
+#define OSR_HIDDEN(ts, call) (call)
+#else
+#define OSR_HIDDEN(ts, call)            \
+    ({                                  \
+        bool hidden_ = le_osr_hide(ts); \
+        PyObject *result_ = (call);     \
+        le_osr_unhide((ts), hidden_);   \
+        result_;                        \
+    })
+#endif
+
+#if !LE_HAS_MONITORING
+/* whether frames of 'co' are being counted (osr.c) */
+static inline bool
+osr_counted(PyCodeObject *co)
+{
+    le_code_extra_t *x = le_code_extra_get(co);
+    return x != NULL && x->osr_left > 0;
+}
+#endif
 
 /* the frame taken over in this thread that raised and whose ceval adds its
    traceback entry again (osr_raise_end) */
@@ -749,6 +774,9 @@ osr_run(PyThreadState *ts, CodeBufferObject *codebuf, le_frame_t *f,
     int what = ts->what_event;
     ts->what_event = -1;
 #endif
+#if !LE_HAS_MONITORING
+    bool hidden = le_osr_hide(ts);
+#endif
     psyco_frame_start_register(&fr, f, &finfo);
     fr.osr = 1;
     if (!LE_RESUMES_ON_FRAME)
@@ -756,6 +784,9 @@ osr_run(PyThreadState *ts, CodeBufferObject *codebuf, le_frame_t *f,
     ts->tracing--;
     result = psyco_processor_run(codebuf, args, &finfo);
     ts->tracing++;
+#if !LE_HAS_MONITORING
+    le_osr_unhide(ts, hidden);
+#endif
 #if LE_HAS_TSTATE_WHAT_EVENT
     ts->what_event = what;
 #endif
@@ -877,9 +908,20 @@ le_code_to_run(PyCodeObject *co, PyObject *globals, PyObject *locals,
             PyErr_Clear(); /* out of memory: this call runs interpreted */
             return NULL;
         }
-        /* its frames are counted in ceval until one is taken over */
-        if (x->osr_left > 0)
+        if (x->osr_held && x->osr_left > 0)
             return NULL;
+        /* cold: run in ceval, its loops counted (le_hot_calls) */
+        if (x->entry_point == NULL && x->calls + 1 < le_hot_calls) {
+            x->calls++;
+            if (x->has_loop == 0)
+                x->has_loop = le_osr_has_loop(co) ? 1 : -1;
+            if (x->has_loop > 0 && x->osr_left == 0 &&
+                le_osr_arm(co, LE_HOT_JUMPS) < 0)
+                PyErr_Clear(); /* out of memory: not counted */
+            return NULL;
+        }
+        if (x->osr_left > 0 && le_osr_arm(co, 0) < 0)
+            PyErr_Clear();
         mergepoints = x->merge_points;
         if (mergepoints == NULL)
             mergepoints = psyco_analyse_code(co, x, 0);
@@ -961,13 +1003,13 @@ LeGen_Eval(PyThreadState *tstate, le_frame_t *frame, le_code_extra_t *x)
         PyObject *sent = le_frame_word_take(
             frame, le_code_nlocalsplus(le_frame_code(frame)) + nstack);
         le_gen_frame_set_depth(frame, nstack);
-        return LeGen_Run(tstate, resume, frame, sent);
+        return OSR_HIDDEN(tstate, LeGen_Run(tstate, resume, frame, sent));
     }
 #else
     long words[LE_GEN_WORDS + 1];
     CodeBufferObject *resume = le_gen_to_run(tstate, frame, x, words);
     if (resume != NULL)
-        return LeGen_Run(tstate, resume, frame, words);
+        return OSR_HIDDEN(tstate, LeGen_Run(tstate, resume, frame, words));
 #endif
     return original_eval_frame(tstate, frame, 0);
 }
@@ -1165,11 +1207,18 @@ LeFunc_Eval(PyThreadState *tstate, le_frame_t *frame, int throwflag)
         le_code_to_run(le_frame_code(frame), le_frame_globals(frame),
                        le_frame_locals(frame), le_frame_builtins(frame));
     if (entry_point != NULL)
-        result = LeCode_Run(entry_point, frame);
+        result = OSR_HIDDEN(tstate, LeCode_Run(entry_point, frame));
 #if LE_HAS_EVAL_FRAME_POPS
     /* ceval links the frame to its caller, the current frame */
     else if (psyco_frame_called_from_callee(le_frame_current(tstate)))
         result = eval_from_callee(tstate, frame, throwflag);
+#endif
+#if !LE_HAS_MONITORING
+    else if (osr_counted(le_frame_code(frame))) {
+        bool set = le_osr_frame_enter(tstate);
+        result = original_eval_frame(tstate, frame, throwflag);
+        le_osr_frame_leave(tstate, set);
+    }
 #endif
     else
         result = original_eval_frame(tstate, frame, throwflag);
@@ -1249,7 +1298,7 @@ LeGen_Eval(PyFrameObject *frame, le_code_extra_t *x)
     long words[LE_GEN_WORDS + 1];
     CodeBufferObject *resume = le_gen_to_run(tstate, frame, x, words);
     if (resume != NULL)
-        return LeGen_Run(tstate, resume, frame, words);
+        return OSR_HIDDEN(tstate, LeGen_Run(tstate, resume, frame, words));
     return original_eval_frame(frame, 0);
 }
 
@@ -1261,7 +1310,14 @@ LeFunc_Eval(PyFrameObject *frame, int throwflag)
     entry_point = le_code_to_run(frame->f_code, frame->f_globals,
                                  frame->f_locals, frame->f_builtins);
     if (entry_point != NULL)
-        result = LeCode_Run(entry_point, frame);
+        result =
+            OSR_HIDDEN(PyThreadState_GET(), LeCode_Run(entry_point, frame));
+    else if (osr_counted(frame->f_code)) {
+        PyThreadState *ts = PyThreadState_GET();
+        bool set = le_osr_frame_enter(ts);
+        result = original_eval_frame(frame, throwflag);
+        le_osr_frame_leave(ts, set);
+    }
     else
         result = original_eval_frame(frame, throwflag);
     if (le_frame_outlives(frame) != NULL)

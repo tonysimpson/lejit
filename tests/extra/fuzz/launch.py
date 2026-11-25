@@ -12,6 +12,8 @@ if mode == 'lejit':
     sys.path.insert(0, root)
     import lejit
     lejit.start()
+    if hasattr(lejit._core, '_hot_calls'):
+        lejit._core._hot_calls(1)  # fuzz what compiles, from the first call
     if fail != '-' and hasattr(lejit._core, '_fail_after'):
         site, n = fail.split(':')
         lejit._core._fail_after(site, int(n))
