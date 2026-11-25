@@ -7,6 +7,7 @@
  */
 #include "pabstract.h"
 #include "pclassobject.h"
+#include "pdictobject.h"
 #include "pfuncobject.h"
 #include "piterobject.h"
 #include "plongobject.h"
@@ -96,14 +97,23 @@ vinfo_t *
 psyco_vectorcall_tuple(PsycoObject *po, vinfo_t *callable, vinfo_t *args,
                        vinfo_t *kw)
 {
+    PyObject *kwnames = NULL;
+    vinfo_t **kwvalues = NULL;
     int n;
-    if (!psyco_knowntobe(kw, 0) || !is_virtualtime(args->source))
+    if (!psyco_knowntobe(kw, 0)) {
+        /* pending keywords with no names are the empty dict of
+           f(*a, **{}), which CPython passes on as a dict */
+        kwnames = PsycoDict_PendingNames(kw, &kwvalues);
+        if (kwnames == NULL || PyTuple_GET_SIZE(kwnames) == 0)
+            return NULL;
+    }
+    if (!is_virtualtime(args->source))
         return NULL;
     n = PsycoTuple_Load(args);
     if (n < 0)
         return NULL;
     return psyco_vectorcall(po, callable, NULL, &PsycoTuple_GET_ITEM(args, 0),
-                            n, NULL, NULL);
+                            n, kwnames, kwvalues);
 }
 
 DEFINEFN
