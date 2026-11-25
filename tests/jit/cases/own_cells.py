@@ -429,7 +429,9 @@ CASES = [
     ('frame_from_inner', [(3,)], {}),
     ('traceback_cells', [(3,)], {}),
     ('recursion', [(6,)], {}),
-    ('recursion_limit', [()], {}),
+    ('recursion_limit', [()],
+     {'leaks': 'the leak check runs with gc off, and its first round '
+               'compiles one more path once (3.14: 72 blocks, none after)'}),
     ('tracer_events', [(3,)], {}),
     ('traced_from_callee', [(3,)], {}),
     ('free_order', [(2,)], {}),

@@ -1,6 +1,6 @@
-# Bodies of up to 16 instructions that make code, with no loop, join or
-# global, are inlined into their compiled caller: their results, errors,
-# tracebacks and frames must be CPython's.
+# Bodies of up to 16 instructions that make code, with no loop or join, are
+# inlined into their compiled caller: their results, errors, tracebacks and
+# frames must be CPython's.
 import sys
 
 
