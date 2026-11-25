@@ -343,11 +343,11 @@ def _raise_from_handler(n):
         raise
 
 
-def _interrupted(f, *args):
+def _interrupted(f, *args, after=0.002):
     old = signal.signal(signal.SIGALRM, signal.default_int_handler)
     try:
         try:
-            signal.setitimer(signal.ITIMER_REAL, 0.002)
+            signal.setitimer(signal.ITIMER_REAL, after)
             f(*args)
         except KeyboardInterrupt:
             return 'interrupted'
@@ -364,9 +364,12 @@ def signal_in_direct_recursion():
     return _interrupted(_tree, 60)
 
 
-# the same where every call raises, from a handler
+# the same where every call raises, from a handler. The signal lands at the
+# entry check of each of the two calls only now and then, as rarely as one
+# round in a thousand, and the first time it does compiles that check's
+# branch: the case warms up for thousands of rounds, so its timer is short
 def signal_in_recursion_from_handler():
-    return _interrupted(_raise_from_handler, 60)
+    return _interrupted(_raise_from_handler, 60, after=0.0002)
 
 
 CASES = [
@@ -386,5 +389,7 @@ CASES = [
     ('switch_interval', [()], {}),
     ('pending_call_reads_lines_at_entry', [()], {}),
     ('signal_in_direct_recursion', [()], {}),
-    ('signal_in_recursion_from_handler', [()], {}),
+    ('signal_in_recursion_from_handler', [()],
+     {'warmup': (5000, 'a call\'s entry check compiles its branch the first '
+                       'time the signal lands there')}),
 ]

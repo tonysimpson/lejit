@@ -127,6 +127,19 @@ def AUDIT_HOOKS():
 
 
 @probe
+def CTYPES_CALL_AUDITED():
+    """a call of a ctypes function raises the audit event
+    ctypes.call_function (run)"""
+    if not hasattr(sys, 'addaudithook'):
+        return False, 'no sys.addaudithook'
+    seen = []
+    sys.addaudithook(lambda event, args: event == 'ctypes.call_function'
+                     and seen.append(args))
+    ctypes.CDLL(None).abs(-3)
+    return bool(seen), 'CDLL(None).abs(-3) audited: %s' % bool(seen)
+
+
+@probe
 def ARG_CHECK_POSITIONAL():
     """libpython exports _PyArg_CheckPositional (ctypes)"""
     return _exported('_PyArg_CheckPositional')
@@ -969,6 +982,19 @@ def SUM_COMPLEX_COMPENSATED():
     if r not in (0j, 1j):
         raise Unanswered('sum([1e100j, 1j, -1e100j]) is %r' % r)
     return r == 1j, 'sum([1e100j, 1j, -1e100j]) is %r' % r
+
+
+@probe
+def SUM_EXACT_NUMBERS():
+    """sum([1e100, True, -1e100]) loses the True, which leaves the float
+    loop; where that loop adds no int compensated, it can't be seen, and
+    the loop takes a subclass as its int, as it did then (run)"""
+    if sum([1e100, 1, -1e100]) == 0.0:
+        return False, 'sum([1e100, 1, -1e100]) is 0.0'
+    r = sum([1e100, True, -1e100])
+    if r not in (0.0, 1.0):
+        raise Unanswered('sum([1e100, True, -1e100]) is %r' % r)
+    return r == 0.0, 'sum([1e100, True, -1e100]) is %r' % r
 
 
 @probe

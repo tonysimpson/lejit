@@ -533,6 +533,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
             report->mergepoints[mergepoint_index].blocks = 0;
             report->mergepoints[mergepoint_index].entries.varies = NULL;
             report->mergepoints[mergepoint_index].real_from = 0;
+            report->mergepoints[mergepoint_index].virtual_numbers = 0;
+            report->mergepoints[mergepoint_index].virtual_objects = 0;
             mergepoint_index++;
         }
     }
@@ -541,6 +543,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
     report->mergepoints[mergepoint_count].blocks = 0;
     report->mergepoints[mergepoint_count].entries.varies = NULL;
     report->mergepoints[mergepoint_count].real_from = 0;
+    report->mergepoints[mergepoint_count].virtual_numbers = 0;
+    report->mergepoints[mergepoint_count].virtual_objects = 0;
     PyMem_Free(entry_count);
     if (!_find_dead_locals(co, report)) {
         /* out of memory: keep every local (the lists may hold some) */
@@ -584,6 +588,19 @@ compiled_intrinsic(int arg)
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
     return arg == INTRINSIC_PRINT || arg == INTRINSIC_STOPITERATION_ERROR;
 #else
+    return 0;
+#endif
+}
+
+/* the CALL_INTRINSIC_2 arguments pycompiler.c compiles: a class pattern
+   with no arguments (`case C():`), where CPython has one for it */
+static int
+compiled_intrinsic_2(int arg)
+{
+#ifdef INTRINSIC_MATCH_CLASS_ISINSTANCE
+    return arg == INTRINSIC_MATCH_CLASS_ISINSTANCE;
+#else
+    (void)arg;
     return 0;
 #endif
 }
@@ -635,6 +652,8 @@ _build_merge_points(PyCodeObject *co, int module)
         if (LE_HAS_OPCODE_PRECALL && opcode == CALL && prev != PRECALL)
             goto not_ok;
         if (opcode == CALL_INTRINSIC_1 && !compiled_intrinsic(oparg))
+            goto not_ok;
+        if (opcode == CALL_INTRINSIC_2 && !compiled_intrinsic_2(oparg))
             goto not_ok;
         /* cimpl_import_name imports eagerly */
         if (opcode == IMPORT_NAME && LE_IMPORT_LAZY(oparg))

@@ -124,12 +124,15 @@ def main():
         got, err = run_child(modname, fname, calls, 'release' if release else '1',
                              warmup, env, clear)
         problem = None
+        repeated = ''
         if got is None:
             problem = err
         else:
             extra = [l for l in err if l not in ref_err]
             leak_ref = int(expected.pop().split()[1])
-            leak_lejit = int(got.pop().split()[1])
+            leak_lejit, repeats = map(int, got.pop().split()[1:])
+            if repeats:
+                repeated = 'code compiled during the rounds, so they were run %d times' % (repeats + 1)
             results = got if release else got[:-1]
             if 'expected' in opts:
                 expected = ['ok ' + repr(r) for r in opts['expected']]
@@ -144,6 +147,8 @@ def main():
                   (aslr_off or not opts.get('leaks_with_aslr'))):
                 problem = 'leaks: %d more blocks after 100 extra rounds (%d without LeJIT)' % (
                     leak_lejit, leak_ref)
+                if repeated:
+                    problem += '; ' + repeated
             elif extra:
                 problem = 'stderr the plain run lacks: %s' % ' | '.join(extra[:3])
         xfail = opts.get('xfail')
@@ -162,6 +167,8 @@ def main():
                 line += ': ' + problem
             if xfail:
                 line += '  [xfail: %s]' % xfail
+            if repeated and not problem:
+                line += '  [%s]' % repeated
             print(line)
     print(' '.join('%s=%d' % kv for kv in counts.items()))
     return 1 if counts['FAIL'] or counts['XPASS'] else 0

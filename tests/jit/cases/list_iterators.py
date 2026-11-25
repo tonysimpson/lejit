@@ -68,6 +68,21 @@ def run_time(it):
     return out
 
 
+# list iterators in globals, which compiled code holds as constants
+loop_it = iter([1, 2])
+fused_it = iter([0, 3])
+
+
+def from_global(fused):
+    if fused:
+        return [any(x for x in fused_it), next(fused_it, 'end')]
+    out = []
+    for x in loop_it:
+        out.append(x)
+    out.append(next(loop_it, 'end'))
+    return out
+
+
 def make(items, index):
     it = iter(items)
     it.__setstate__(index)
@@ -80,6 +95,7 @@ CASES = [
     ('growing', [(0,), (3,)], {}),
     ('tuples', [(4, 2), (3, 3), (2, 0)], {}),
     ('split_words', [('a b c',), ('',), ('one',)], {}),
+    ('from_global', [(False,), (True,)], {}),
     ('run_time', "[(iter([1, 2, 3]),), (make([1, 2, 3], 1),),"
                  " (make([1, 2, 3], -1),), (make([1, 2, 3], 9),)]", {}),
 ]

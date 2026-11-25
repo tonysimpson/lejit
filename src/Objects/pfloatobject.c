@@ -1,15 +1,15 @@
 /*
  * Virtual floats. Every arithmetic result is a new virtual float whose
  * [iFLOAT_OB_FVAL] holds the double, so 'a + b * c' is never boxed unless it
- * escapes. The backend has no floating-point instructions, so operations
- * are tiny C helpers called with CfPure, which fold at compile time when
- * the operands are constants.
+ * escapes. + - * / are done inline in XMM registers
+ * (x64/iencoding.c:psyco_float_op); the rest are C helpers called with
+ * CfPure, which fold at compile time when the operands are constants.
  *
  * + - * / % unary + - abs and bool follow floatobject.c (below), their
  * double code copied into helpers. The representation (compute functions),
  * comparisons and the conversions pbltinmodule.c uses are LeJIT's own.
- * The double is one word holding its bits, at run time (a stack slot) and
- * at compile time (source_known_t.value).
+ * The double is one word holding its bits, at run time (a general or XMM
+ * register, or a stack slot) and at compile time (source_known_t.value).
  */
 #include "pfloatobject.h"
 #include "pboolobject.h"
@@ -181,6 +181,22 @@ pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
         return NULL;
 
     if (PyType_TypeCheck(wtp, &PyLong_Type)) {
+        /* a known int of at most 48 bits is compared as a double, exactly
+           as float_richcompare does (an infinity or a NaN is compared with
+           0.0 there, which gives the same answers) */
+        if (!is_compiletime(a->source) && is_compiletime(w->source)) {
+            PyObject *o = (PyObject *)CompileTime_Get(w->source)->value;
+            if (_PyLong_NumBits(o) <= 48) {
+                double d = PyLong_AsDouble(o);
+                long bits;
+                condition_code_t cc;
+                memcpy(&bits, &d, sizeof(bits));
+                b = vinfo_new(CompileTime_New(bits));
+                cc = psyco_float_cmp(po, op, a, b);
+                vinfo_decref(b, po);
+                return PsycoBool_FROM_WORD(psyco_vinfo_condition(po, cc));
+            }
+        }
         /* fall back; NULL on MemoryError */
         return psyco_generic_call(po, PyFloat_Type.tp_richcompare,
                                   CfCommonNewRefPyObject | CfPure, "vvl", v, w,
@@ -190,6 +206,10 @@ pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
         b = PsycoFloat_AS_DOUBLE(po, w);
         if (b == NULL)
             return NULL;
+        if (!(is_compiletime(a->source) && is_compiletime(b->source))) {
+            condition_code_t cc = psyco_float_cmp(po, op, a, b);
+            return PsycoBool_FROM_WORD(psyco_vinfo_condition(po, cc));
+        }
 #define SWAP_A_B \
     r = a;       \
     a = b;       \
@@ -299,7 +319,7 @@ cimpl_float_add_w(PyObject *w, double a)
 {
     double b;
     CONVERT_TO_DOUBLE(w, b);
-    a = a + b;
+    a = psyco_addsd(a, b);
     return PyFloat_FromDouble(a);
 }
 
@@ -317,7 +337,7 @@ cimpl_float_mul_w(PyObject *w, double a)
 {
     double b;
     CONVERT_TO_DOUBLE(w, b);
-    a = a * b;
+    a = psyco_mulsd(a, b);
     return PyFloat_FromDouble(a);
 }
 
@@ -361,7 +381,7 @@ cimpl_float_rem_w(PyObject *w, double vx)
 static double
 cimpl_float_add(double a, double b)
 {
-    return a + b;
+    return psyco_addsd(a, b);
 }
 
 static double
@@ -373,7 +393,7 @@ cimpl_float_sub(double a, double b)
 static double
 cimpl_float_mul(double a, double b)
 {
-    return a * b;
+    return psyco_mulsd(a, b);
 }
 
 static int
@@ -650,10 +670,10 @@ pconvert_to_double(PsycoObject *po, vinfo_t *obj, PyTypeObject *tp,
 
 /* a binary operation: 'slot' is the whole of it, 'rest' its run-time rest
    (cimpl_float_add_w...) and 'scalar' its double code, which fails only
-   if 'can_fail' */
+   if 'can_fail'; 'op' (FLOAT_OP_ADD...) is done inline, or is -1 */
 static vinfo_t *
 float_binop(PsycoObject *po, vinfo_t *v, vinfo_t *w, binaryfunc slot,
-            void *rest, void *scalar, bool can_fail)
+            void *rest, void *scalar, bool can_fail, int op)
 {
     PyTypeObject *tp_v, *tp_w;
     vinfo_t *a, *b, *x;
@@ -692,13 +712,24 @@ float_binop(PsycoObject *po, vinfo_t *v, vinfo_t *w, binaryfunc slot,
             vinfo_decref(a, po);
             return NULL;
     }
-    if (!can_fail) {
+    if (op >= 0 && !(is_compiletime(a->source) && is_compiletime(b->source)) &&
+        !(op == FLOAT_OP_DIV && is_compiletime(b->source) &&
+          CompileTime_Get(b->source)->value << 1 == 0)) {
+        /* a run-time divisor of zero raises, in the helper */
+        if (op == FLOAT_OP_DIV && !is_compiletime(b->source) &&
+            runtime_condition_f(po, psyco_float_is_zero(po, b)))
+            goto call;
+        x = psyco_float_op(po, op, a, b);
+    }
+    else if (!can_fail) {
         x = psyco_generic_call(
             po, scalar, CfPure | CfReturnTypeDouble | CfNoPython | CfNoBlock,
             "dd", a, b);
     }
     else {
-        vinfo_array_t *result = array_new(1);
+        vinfo_array_t *result;
+    call:
+        result = array_new(1);
         x = NULL;
         if (psyco_generic_call(po, scalar,
                                CfCommonIntZeroOk | CfNoPython | CfNoBlock,
@@ -717,35 +748,38 @@ static vinfo_t *
 float_add(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
     return float_binop(po, v, w, PyFloat_Type.tp_as_number->nb_add,
-                       cimpl_float_add_w, cimpl_float_add, false);
+                       cimpl_float_add_w, cimpl_float_add, false,
+                       FLOAT_OP_ADD);
 }
 
 static vinfo_t *
 float_sub(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
     return float_binop(po, v, w, PyFloat_Type.tp_as_number->nb_subtract,
-                       cimpl_float_sub_w, cimpl_float_sub, false);
+                       cimpl_float_sub_w, cimpl_float_sub, false,
+                       FLOAT_OP_SUB);
 }
 
 static vinfo_t *
 float_mul(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
     return float_binop(po, v, w, PyFloat_Type.tp_as_number->nb_multiply,
-                       cimpl_float_mul_w, cimpl_float_mul, false);
+                       cimpl_float_mul_w, cimpl_float_mul, false,
+                       FLOAT_OP_MUL);
 }
 
 static vinfo_t *
 float_div(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
     return float_binop(po, v, w, PyFloat_Type.tp_as_number->nb_true_divide,
-                       cimpl_float_div_w, cimpl_float_div, true);
+                       cimpl_float_div_w, cimpl_float_div, true, FLOAT_OP_DIV);
 }
 
 static vinfo_t *
 float_rem(PsycoObject *po, vinfo_t *v, vinfo_t *w)
 {
     return float_binop(po, v, w, PyFloat_Type.tp_as_number->nb_remainder,
-                       cimpl_float_rem_w, cimpl_float_rem, true);
+                       cimpl_float_rem_w, cimpl_float_rem, true, -1);
 }
 
 static vinfo_t *
@@ -827,24 +861,44 @@ float_unary(PsycoObject *po, vinfo_t *v, void *scalar, int flags)
     return v;
 }
 
+/* -v or abs(v): inline at run time, folded when known */
+static vinfo_t *
+float_neg_abs(PsycoObject *po, vinfo_t *v, bool neg)
+{
+    vinfo_t *x = PsycoFloat_AS_DOUBLE(po, v);
+    if (x == NULL)
+        return NULL;
+    if (is_compiletime(x->source))
+        x = float_unary(
+            po, v, neg ? (void *)cimpl_float_neg : (void *)cimpl_float_abs,
+            CfReturnTypeDouble);
+    else
+        x = psyco_float_neg_abs(po, neg, x);
+    return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;
+}
+
 static vinfo_t *
 float_abs(PsycoObject *po, vinfo_t *v)
 {
-    v = float_unary(po, v, cimpl_float_abs, CfReturnTypeDouble);
-    return v != NULL ? PsycoFloat_FROM_DOUBLE(v) : NULL;
+    return float_neg_abs(po, v, false);
 }
 
 static vinfo_t *
 float_neg(PsycoObject *po, vinfo_t *v)
 {
-    v = float_unary(po, v, cimpl_float_neg, CfReturnTypeDouble);
-    return v != NULL ? PsycoFloat_FROM_DOUBLE(v) : NULL;
+    return float_neg_abs(po, v, true);
 }
 
 static vinfo_t *
 float_bool(PsycoObject *po, vinfo_t *v)
 {
-    return float_unary(po, v, cimpl_float_bool, CfReturnTypeInt);
+    vinfo_t *x = PsycoFloat_AS_DOUBLE(po, v);
+    if (x == NULL)
+        return NULL;
+    if (is_compiletime(x->source))
+        return float_unary(po, v, cimpl_float_bool, CfReturnTypeInt);
+    /* true for a NaN, as v != 0.0 */
+    return psyco_vinfo_condition(po, INVERT_CC(psyco_float_is_zero(po, x)));
 }
 
 static vinfo_t *
