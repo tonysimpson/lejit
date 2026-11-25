@@ -386,5 +386,7 @@ CASES = [
     ('switch_interval', [()], {}),
     ('pending_call_reads_lines_at_entry', [()], {}),
     ('signal_in_direct_recursion', [()], {}),
-    ('signal_in_recursion_from_handler', [()], {}),
+    ('signal_in_recursion_from_handler', [()],
+     {'warmup': (300, 'the signal lands somewhere new each round, and a '
+                      'place it first lands compiles a branch')}),
 ]
