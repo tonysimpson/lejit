@@ -257,6 +257,8 @@ def nested_loops(n):
     return run(nest, n)
 
 
+# a handler's body: taken over where resuming in one can be compiled
+# (mergepoints.c:psyco_in_handler), else left to ceval
 def loop_in_except(n):
     try:
         raise KeyError
@@ -264,7 +266,7 @@ def loop_in_except(n):
         total = 0
         for i in range(n):
             total += i
-        return total
+        return total, sys.exc_info()[0].__name__
 
 
 def head_in_except(n):
@@ -314,8 +316,7 @@ def hidden(n):
 # whether each shape was taken over: LeJIT's own count, for a checked build
 def taken_over(n):
     out = []
-    for fn, args in ((sum_to, (n,)), (loop_in_except, (n,)),
-                     (nest, (n,)), (returns_none, (n,))):
+    for fn, args in ((sum_to, (n,)), (nest, (n,)), (returns_none, (n,))):
         before = switches()
         run(fn, *args)
         out.append(switches() > before)
@@ -381,5 +382,5 @@ CASES = [
     ('blocks_level', [('kept_frame', 50, 100)], {'leaks': 'checks its own'}),
     ('blocks_level', [('tracing_started', 40, 100)], {'leaks': 'checks its own'}),
     ('taken_over', [(50,)], dict(WARM, checked='reads lejit._core._osr_switches',
-                             expected=[[True, False, True, True]])),
+                             expected=[[True, True, True]])),
 ]
