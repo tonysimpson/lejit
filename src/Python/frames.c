@@ -30,10 +30,10 @@
  * the locals when the exception leaves the frame (psyco_frame_write_locals);
  * the frame that catches it is held by its catcher word until its call
  * ends and reads them like an emulated frame (CATCHER_NOTE), and gets them
- * before an inlined call and at the end while something else holds it
- * (pycompiler.c:catcher_word); a virtual list becomes real as it becomes
- * one of its locals (catcher_local_readable). Known gaps: virtual lists in
- * other frames, inlined frames' locals, a read from another thread or
+ * for an inlined call while it runs and at the end while something else
+ * holds it (pycompiler.c:catcher_word); a virtual list becomes real as it
+ * becomes one of its locals (catcher_local_readable). Known gaps: virtual
+ * lists in other frames, inlined frames' locals, a read from another thread or
  * from Python run outside a call that may run it (a finaliser), which
  * see the last written.
  * frame.f_back, frame.f_lineno, frame.f_lasti, frame.f_locals and
@@ -2402,6 +2402,27 @@ psyco_frame_catcher_shared(PyObject **word)
         return 1;
     catcher_release(word);
     return 0;
+}
+
+/* The locals written into the frame for an inlined call's reads, which
+   can't find them through the note: once it returns, reads find them
+   again (frame_sync_locals), and a copy would hold what the frame has let
+   go since, such as an exception it deletes, whose traceback holds the
+   frame back. Cells are left, as locals_calls leaves them. */
+DEFINEFN
+void
+psyco_frame_catcher_unflush(PyObject **word)
+{
+    PyFrameObject *f = (PyFrameObject *)*word;
+    le_frame_t *frame;
+    int i, n;
+    if (f == NULL || !has_catcher_note(f))
+        return;
+    frame = le_frame_of(f);
+    n = le_code_nlocals(le_pyframe_code(f));
+    Py_INCREF(f);
+    for (i = 0; i < n; i++) le_frame_word_set(frame, i, NULL);
+    Py_DECREF(f);
 }
 
 DEFINEFN
