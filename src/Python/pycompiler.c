@@ -6288,7 +6288,7 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             vinfo_t *self;
             PyObject *f;
             int found = PsycoObject_SuperMethod(
-                po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2), oparg & 1,
+                po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2),
                 (void *)(le_code(po->pr.co).bytes + next_instr), &f);
             if (found < 0)
                 break;
