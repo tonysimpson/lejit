@@ -697,6 +697,93 @@ def thread_local_tstate(s):
     return _not(_field(s, '_gilstate_runtime_state', 'tstate_current'))
 
 
+# the GIL's fields that Python/pyruntime.c:le_gil_release and le_gil_take
+# use, copying drop_gil and take_gil
+GIL_FIELDS = ('locked', 'last_holder', 'switch_number', 'mutex', 'cond',
+              'switch_mutex', 'switch_cond')
+
+
+def gil_per_interpreter(s):
+    """the GIL is the interpreter's (its ceval state's gil, a pointer), not
+    the runtime's (_PyRuntime.ceval.gil)"""
+    path, gil = s.struct('_gil_runtime_state')
+    if gil is None:
+        raise Unanswered('no struct _gil_runtime_state')
+    missing = [f for f in GIL_FIELDS if f not in gil]
+    if missing:
+        raise Unanswered('%s:_gil_runtime_state has no %s'
+                         % (path, ', '.join(missing)))
+    ipath, interp = s.struct('_ceval_state')
+    if interp is not None and '*' in interp.get('gil', ''):
+        return True, '%s:_ceval_state.gil' % ipath
+    rpath, runtime = s.struct('_ceval_runtime_state')
+    if runtime is not None and 'gil' in runtime:
+        return False, '%s:_ceval_runtime_state.gil' % rpath
+    raise Unanswered('the GIL is neither _ceval_state.gil (a pointer) nor'
+                     ' _ceval_runtime_state.gil')
+
+
+
+def get_finalizing(s):
+    """_PyRuntimeState_GetFinalizing reads the runtime's finalising thread
+    (else it is _PyRuntime.finalizing)"""
+    return _declared(s, '_PyRuntimeState_GetFinalizing')
+
+
+def interp_get_finalizing(s):
+    """an interpreter has a finalising thread of its own, read with
+    _PyInterpreterState_GetFinalizing"""
+    return _declared(s, '_PyInterpreterState_GetFinalizing')
+
+def _struct_texts(s, tag):
+    """(path, token texts) of the body of `struct tag {...}`, nested
+    structs' fields included, or (None, None)"""
+    for path, toks in s.headers_with(tag):
+        for i in range(len(toks) - 2):
+            if (toks[i].text == 'struct' and toks[i + 1].text == tag
+                    and toks[i + 2].text == '{'):
+                end = ctokens.match_close(toks, i + 2)
+                return path, _texts(toks[i + 3:end])
+    return None, None
+
+
+def tstate_status(s):
+    """a thread state's _status bits say whether it is active and bound
+    to its thread's gilstate (active, bound_gilstate)"""
+    path, texts = _struct_texts(s, '_ts')
+    if texts is None:
+        raise Unanswered('no struct _ts')
+    has = [_has_run(texts, [f, ':', '1']) for f in ('active', 'bound_gilstate')]
+    if has[0] != has[1]:
+        raise Unanswered('%s:_ts has only one of the bits active and'
+                         ' bound_gilstate' % path)
+    return has[0], '%s:_ts._status.active' % path
+
+
+def tstate_attach(s):
+    """a thread state is attached or detached (_ts.state), and keeps the
+    critical sections it holds (_ts.critical_section)"""
+    path, ts = s.struct('_ts')
+    if ts is None:
+        raise Unanswered('no struct _ts')
+    if ('state' in ts) != ('critical_section' in ts):
+        raise Unanswered('%s:_ts has only one of state and critical_section'
+                         % path)
+    return 'state' in ts, '%s:_ts.state' % path
+
+
+
+def tstate_holds_gil(s):
+    """a thread state says whether it holds the GIL in a field of its own,
+    holds_gil (else in its _status bits)"""
+    return _field(s, '_ts', 'holds_gil')
+
+
+def tstate_gil_requested(s):
+    """a thread state says whether it is waiting for the GIL
+    (gil_requested)"""
+    return _field(s, '_ts', 'gil_requested')
+
 def py_recursion_remaining(s):
     """a thread counts down the Python calls it may still make in
     py_recursion_remaining, apart from the C calls"""
@@ -1515,6 +1602,13 @@ STATE = [
     ('PYCORE_INTERP_H', D('the interpreter state has an internal header of its own, pycore_interp.h',
                           lambda s: _file(s, 'Include/internal/pycore_interp.h'))),
     ('EVAL_HOOK_TSTATE', eval_hook_tstate),
+    ('GIL_PER_INTERPRETER', gil_per_interpreter),
+    ('GET_FINALIZING', get_finalizing),
+    ('INTERP_GET_FINALIZING', interp_get_finalizing),
+    ('TSTATE_STATUS', tstate_status),
+    ('TSTATE_ATTACH', tstate_attach),
+    ('TSTATE_HOLDS_GIL', tstate_holds_gil),
+    ('TSTATE_GIL_REQUESTED', tstate_gil_requested),
     ('GENERATOR_RETURN_KIND', generator_return_kind),
     ('LAST_PROFILED_FRAME', last_profiled_frame),
     ('SIGNALS_PENDING', signals_pending),
