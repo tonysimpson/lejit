@@ -381,7 +381,13 @@ le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals)
 #if !LE_HAS_HANDLE_PENDING_LINKABLE
 #error "LeJIT: a per-thread eval_breaker, but _Py_HandlePending is hidden"
 #endif
-_Static_assert(_PY_EVAL_EVENTS_MASK == 0xff,
+/* the events above the low byte are the free-threaded build's alone */
+#ifdef _PY_EVAL_PROCESS_DELAYED_BIT
+#define LE_EVENTS_FREE_THREADED_ONLY _PY_EVAL_PROCESS_DELAYED_BIT
+#else
+#define LE_EVENTS_FREE_THREADED_ONLY 0
+#endif
+_Static_assert((_PY_EVAL_EVENTS_MASK & ~LE_EVENTS_FREE_THREADED_ONLY) == 0xff,
                "LeJIT: the eval_breaker's events are tested as its low byte");
 
 /* -1 with an exception set */
