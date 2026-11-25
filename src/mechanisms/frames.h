@@ -655,6 +655,16 @@ le_gen_frame_pause(le_frame_t *f, int lasti, int nstack)
     le_frame_gen(f)->gi_frame_state = FRAME_SUSPENDED;
 #endif
 }
+/* a function's frame that ceval runs, taken over at a loop head
+   (eval_hook.c:le_osr_switch), goes on in ceval at the instruction at
+   'lasti' with 'nstack' items on its stack, as ceval reads them again
+   once the event that took it returns */
+static inline void
+le_osr_frame_pause(le_frame_t *f, int lasti, int nstack)
+{
+    LE_FRAME_PLACE(f) = _PyCode_CODE(LE_FRAME_CODE(f)) + lasti;
+    le_gen_frame_set_depth(f, nstack);
+}
 /* The generator 'gen', made around a frame object (frames.c:
    le_gen_of_frame), whose body has returned or raised while compiled code
    ran it, is closed as gen_send_ex closes it: its frame goes back to the
@@ -994,6 +1004,20 @@ le_gen_frame_pause(PyFrameObject *f, int lasti, int nstack, int iblock,
 #if LE_HAS_FRAME_STATE
     f->f_state = FRAME_SUSPENDED;
 #endif
+}
+/* a function's frame that ceval runs, taken over at a loop head
+   (eval_hook.c:le_osr_switch), goes on in ceval at the instruction at
+   f_lasti 'lasti' with 'nstack' items on its stack and these blocks, as
+   ceval reads them again once the trace function that took it returns */
+static inline void
+le_osr_frame_pause(PyFrameObject *f, int lasti, int nstack, int iblock,
+                   const PyTryBlock *blocks)
+{
+    int i;
+    f->f_lasti = lasti;
+    le_frame_set_stack_depth(f, nstack);
+    f->f_iblock = iblock;
+    for (i = 0; i < iblock; i++) f->f_blockstack[i] = blocks[i];
 }
 /* the run that gave 'result' has ended: paused (le_gen_frame_pause, or
    ceval's own YIELD_VALUE), else returned or raised, as ceval leaves it */
