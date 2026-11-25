@@ -1507,14 +1507,12 @@ PsycoObject_FromCode(PyCodeObject *co, PyObject *globals, PyObject *builtins,
    is on top of the 'nstack' stack items under it. Every local, cell, free
    variable and stack item starts as the frame's own word
    (pycompiler.c:psyco_frame_word), read where the code uses it, so the
-   frame may hold anything ceval or Python left in it. With 'mode'
-   GENEXPR_OSR, a function's frame taken over at a loop head
-   (eval_hook.c:le_osr_switch), given its frame alone. */
+   frame may hold anything ceval or Python left in it. */
 DEFINEFN
 PsycoObject *
 PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
                          PyObject *builtins, PyObject *merge_points,
-                         int recursion, int next_instr, int nstack, long mode)
+                         int recursion, int next_instr, int nstack)
 {
     int nplus = le_code_nlocalsplus(co);
     int count =
@@ -1529,13 +1527,11 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
     frame_globals(po, globals, builtins);
     /* fixed, as a fused generator's mode (psyfunc.c:psyco_call_genexpr) */
     po->vlocals.items[GENEXPR_SLOT_MODE(co)] =
-        vinfo_new(CompileTime_NewSk(sk_new(mode, SkFlagFixed)));
+        vinfo_new(CompileTime_NewSk(sk_new(GENEXPR_RESUMABLE, SkFlagFixed)));
     /* the arguments, the last pushed first */
-    if (mode == GENEXPR_RESUMABLE) {
-        po->stack_depth += sizeof(long);
-        stack_a[nstack] =
-            vinfo_new(RunTime_NewStack(po->stack_depth, true, false));
-    }
+    po->stack_depth += sizeof(long);
+    stack_a[nstack] =
+        vinfo_new(RunTime_NewStack(po->stack_depth, true, false));
     po->stack_depth += sizeof(long);
     po->vlocals.items[GENEXPR_SLOT_ACC(co)] =
         vinfo_new(RunTime_NewStack(po->stack_depth, false, false));
@@ -1557,15 +1553,13 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
    then the run's FrameRuntime (Python/frames.h), whose frame it is. A local or
    stack item whose bit is set in 'nulls' (one for each word, in that
    order) is NULL, and its word not used. 'blocks' are the frame's 'nblocks'
-   blocks, as (type, handler in bytes, level). With 'mode' GENEXPR_OSR, a
-   function's frame taken over at a loop head (eval_hook.c:
-   le_osr_switch), on the same words. */
+   blocks, as (type, handler in bytes, level). */
 DEFINEFN
 PsycoObject *
 PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
                          PyObject *builtins, PyObject *merge_points,
                          int recursion, int next_instr, uint64_t nulls,
-                         int nstack, const int *blocks, int nblocks, long mode)
+                         int nstack, const int *blocks, int nblocks)
 {
     int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co);
     int count =
@@ -1580,7 +1574,7 @@ PsycoObject_FromGenFrame(PyCodeObject *co, PyObject *globals,
     frame_globals(po, globals, builtins);
     /* fixed, as a fused generator's mode (psyfunc.c:psyco_call_genexpr) */
     po->vlocals.items[GENEXPR_SLOT_MODE(co)] =
-        vinfo_new(CompileTime_NewSk(sk_new(mode, SkFlagFixed)));
+        vinfo_new(CompileTime_NewSk(sk_new(GENEXPR_RESUMABLE, SkFlagFixed)));
 #if LE_HAS_SUM_COMPENSATED
     po->vlocals.items[GENEXPR_SLOT_COMP(co)] = psyco_vi_Zero();
 #endif

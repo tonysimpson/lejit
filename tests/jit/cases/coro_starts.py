@@ -522,8 +522,9 @@ async def nested(k, how):
         raise KeyError(k)
     except KeyError:
         if how == 'objects':
-            me = running('nested')[0]
-            LOG.append((me.cr_frame is sys._getframe(),
+            found = running('nested')
+            me = found[0]
+            LOG.append((len(found), me.cr_frame is sys._getframe(),
                         inspect.getcoroutinestate(me), errors(me), now()))
         try:
             raise ValueError(k)

@@ -802,6 +802,31 @@ def eval_breaker_gc(s):
     return _field(s, '_ceval_state', 'gc_scheduled', missing=False)
 
 
+def breaker_after_back_jump(s):
+    """ceval's JUMP_BACKWARD jumps before it tests eval_breaker, so an
+    exception the test raises is looked up in the exception table at the
+    code unit before the loop head, not at the jump"""
+    path, case = _case_file(s, 'JUMP_BACKWARD')
+    if case is None:
+        return False, '%s: no TARGET(JUMP_BACKWARD)' % ', '.join(CASE_FILES)
+    where = '%s:TARGET(JUMP_BACKWARD)' % path
+    # where the case goes on in a quickened one (JUMP_TO_INSTRUCTION)
+    at = _run_at(case, ['JUMP_TO_INSTRUCTION', '('])
+    if at is not None:
+        quick = case[at + 2]
+        path, case = _case_file(s, quick)
+        if case is None:
+            raise Unanswered('no TARGET(%s)' % quick)
+        where = '%s:TARGET(%s)' % (path, quick)
+    jump = _run_at(case, ['JUMPBY'])
+    tests = [i for i in (_run_at(case, [name]) for name in
+                         ('CHECK_EVAL_BREAKER', '_Py_HandlePending',
+                          'check_periodics')) if i is not None]
+    if jump is None or not tests:
+        raise Unanswered('%s: no JUMPBY or eval_breaker test' % where)
+    return jump < min(tests), where
+
+
 def eval_frame_pops(s):
     """ceval clears and pops the frame it is given when it ends, from an
     entry frame of its own, not its caller (an interpreter frame has no
@@ -841,31 +866,6 @@ def last_profiled_frame(s):
     (last_profiled_frame), which a frame leaving the thread's chain hands
     to the frame under it"""
     return _field(s, '_ts', 'last_profiled_frame')
-
-
-def tstate_what_event(s):
-    """a thread's state says which sys.monitoring event's callback is
-    running (what_event), which ceval sets around each callback with its
-    tracing count"""
-    return _field(s, '_ts', 'what_event')
-
-
-def tracing_possible_runtime(s):
-    """ceval counts the threads with a trace function in the runtime's
-    ceval state (tracing_possible), and dispatches without the line-event
-    test while it is 0"""
-    return _field(s, '_ceval_runtime_state', 'tracing_possible', missing=False)
-
-
-def tracing_possible_interp(s):
-    """the same count is the interpreter's ceval state's"""
-    return _field(s, '_ceval_state', 'tracing_possible', missing=False)
-
-
-def reraise_lasti_tagged(s):
-    """RERAISE 1 reads the place under the exception as a tagged int
-    (PyStackRef_UntagInt), not an int object"""
-    return _case_has(s, 'RERAISE', 'PyStackRef_UntagInt', missing=False)
 
 
 def tstate_eval_breaker(s):
@@ -1540,6 +1540,20 @@ def _sum_compensated(s):
     return found, evidence
 
 
+def _finished_generator_unlinked(s):
+    """clear_gen_frame sets frame->previous to NULL before it clears the
+    frame (the two may have other statements between them)"""
+    body = s.body_of(s.tokens(CE) or [], 'clear_gen_frame')
+    if body is None:
+        return True, '%s: no clear_gen_frame' % CE
+    texts = _texts(body)
+    unlink = _run_at(texts, _c('frame->previous = NULL;'))
+    clear = _run_at(texts, _c('_PyFrame_ClearExceptCode(frame);'))
+    if clear is None:
+        raise Unanswered('%s:clear_gen_frame: no _PyFrame_ClearExceptCode(frame)' % CE)
+    return unlink is not None and unlink < clear, '%s:clear_gen_frame' % CE
+
+
 EXPORTS = [
     ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
@@ -1640,7 +1654,7 @@ FRAMES = [
     ('FRAME_CLEARED_LAST_FIRST', D('a frame that ends releases its value stack and locals last to first (_PyFrame_ClearLocals), not first to last',
                                    lambda s: _body_has(s, 'Python/frame.c', '_PyFrame_ClearLocals', 'sp--', missing=False))),
     ('FINISHED_GENERATOR_UNLINKED', D('a generator\'s frame is cut from its caller before it is cleared (clear_gen_frame, or before it had one, each time it stops), so a generator that has ended or raised leaves no f_back',
-                                      lambda s: _body_has(s, CE, 'clear_gen_frame', 'frame->previous = NULL; _PyFrame_ClearExceptCode(frame);', missing=True))),
+                                      _finished_generator_unlinked)),
     ('LASTI_IN_INSTRUCTIONS', lasti_in_instructions),
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
@@ -1702,12 +1716,9 @@ STATE = [
     ('COMMON_CONSTS_STACKREFS', common_consts_stackrefs),
     ('FRAME_EXECUTABLE', frame_executable),
     ('FRAME_INSTR_PTR', frame_instr_ptr),
+    ('BREAKER_AFTER_BACK_JUMP', breaker_after_back_jump),
     ('TSTATE_CURRENT_FRAME', tstate_current_frame),
     ('TSTATE_EVAL_BREAKER', tstate_eval_breaker),
-    ('TSTATE_WHAT_EVENT', tstate_what_event),
-    ('TRACING_POSSIBLE_RUNTIME', tracing_possible_runtime),
-    ('TRACING_POSSIBLE_INTERP', tracing_possible_interp),
-    ('RERAISE_LASTI_TAGGED', reraise_lasti_tagged),
 ]
 
 # Objects/abstract.c

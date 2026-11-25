@@ -1267,9 +1267,18 @@ psyco_frame_word_index(vinfo_t *v)
     return (int)(sv - frame_words);
 }
 
+/* the resumed generator's frame, whose words these are: in an inlined
+   frame, its parent's (psyfunc.c:psyco_save_inline_po) */
 DEFINEFN vinfo_t *
 psyco_frame_words_frame(PsycoObject *po)
 {
+    if (po->pr.is_inlining) {
+        vinfo_t **parent = LOC_INLINING->array->items;
+        PyCodeObject *co =
+            (PyCodeObject *)CompileTime_Get(parent[LOC_INLINE_CO]->source)
+                ->value;
+        return parent[TOTAL_LOC_INLINE + GENEXPR_SLOT_ACC(co)];
+    }
     return po->vlocals.items[GENEXPR_SLOT_ACC(po->pr.co)];
 }
 
@@ -1592,22 +1601,19 @@ frame_word_store(PsycoObject *po, int k, vinfo_t *v)
    locals in its frame, as ceval does, for gen_send_ex2 to free in the
    frame's order: those the run holds are stored, a virtual one made real
    on a return; on a raise it is let go (making it could see the pending
-   exception), as only compiled code saw it. The slots are emptied. With
-   'lasti' (not -1), the frame is also left at that place with 'nstack'
-   items on its stack (psyco_gen_pause), which the caller stores. */
+   exception), as only compiled code saw it. The slots are emptied. */
 static bool
-gen_locals_end(PsycoObject *po, int lasti, int nstack)
+gen_locals_end(PsycoObject *po)
 {
     int i, nlocals = le_code_nlocals(po->pr.co);
     le_gen_pause_t *end = NULL;
-    for (i = lasti >= 0 ? -1 : 0; i < nlocals; i++) {
-        vinfo_t *v = i < 0 ? NULL : LOC_LOCALS_PLUS[i];
-        if (i >= 0 && !local_is_runs(po, i))
+    for (i = 0; i < nlocals; i++) {
+        vinfo_t *v = LOC_LOCALS_PLUS[i];
+        if (!local_is_runs(po, i))
             continue;
         if (end == NULL) {
             /* the frame's words that Python wrote meanwhile go first:
-               only Python holding the frame's object can have; and a
-               frame left at a place always pauses there */
+               only Python holding the frame's object can have */
             vinfo_t *frame = psyco_frame_words_frame(po);
             vinfo_t *fo = psyco_get_field(po, frame, FRAME_frame_obj);
             condition_code_t cc =
@@ -1615,15 +1621,13 @@ gen_locals_end(PsycoObject *po, int lasti, int nstack)
             vinfo_xdecref(fo, po);
             if (cc == CC_ERROR)
                 return false;
-            end = gen_pause_new(po, lasti, nstack);
-            if ((lasti >= 0 || runtime_condition_f(po, cc)) &&
+            end = gen_pause_new(po, -1, 0);
+            if (runtime_condition_f(po, cc) &&
                 psyco_generic_call(po, psyco_gen_pause,
                                    CfNoReturnValue | CfNoPython, "vl", frame,
                                    (long)end) == NULL)
                 return false;
         }
-        if (i < 0)
-            continue;
         if (is_virtualtime(v->source) && PycException_Is(po, &EReturn) &&
             !compute_vinfo(v, po))
             return false;
@@ -4991,108 +4995,6 @@ cimpl_stopiteration_error(PyObject *exc, const char *msg,
 }
 #endif
 
-/* the return instruction a frame taken over at a loop head (GENEXPR_OSR)
-   is left at when its compiled code returns from 'pos': that one, or,
-   where the return ran a finally block or a with's exit first and ends at
-   its END_FINALLY, the code's last RETURN_VALUE, which ceval runs alike
-   with no blocks left */
-static int
-osr_return_place(PyCodeObject *co, int pos)
-{
-    le_code_t c = le_code(co);
-    le_instr_t in = le_instr(c, pos);
-    int at, last = pos;
-    if (in.op == RETURN_VALUE || in.op == RETURN_CONST)
-        return pos;
-    for (at = 0; at < c.size; at = in.next) {
-        in = le_instr(c, at);
-        if (in.op == RETURN_VALUE)
-            last = at;
-    }
-    extra_assert(le_instr(c, last).op == RETURN_VALUE);
-    return last;
-}
-
-/* the value compiled code returns where the frame went on in ceval
-   (resume_in_ceval) */
-static bool
-osr_went_on(vinfo_t *retval)
-{
-    return is_compiletime(retval->source) &&
-           CompileTime_Get(retval->source)->value ==
-               (long)le_osr_ceval_goes_on;
-}
-
-#if LE_RESUMES_ON_FRAME
-/* A frame taken over at a loop head (GENEXPR_OSR) that returns is left
-   for ceval to finish as its return instruction would: its locals in it,
-   its place at that instruction and the value on its stack where the
-   instruction takes it from there (RETURN_VALUE, not RETURN_CONST), a
-   reference of its own; the compiled code then returns the value. */
-static bool
-osr_return(PsycoObject *po)
-{
-    PyCodeObject *co = po->pr.co;
-    vinfo_t *retval = po->pr.val;
-    int at = osr_return_place(co, po->pr.next_instr);
-    int push = le_instr(le_code(co), at).op == RETURN_VALUE;
-    if (osr_went_on(retval))
-        return true;
-    if (push && !compute_vinfo(retval, po))
-        return false;
-    if (!gen_locals_end(po, le_lasti_of(at), push))
-        return false;
-    return !push || frame_word_store(po, le_code_nlocalsplus(co), retval);
-}
-#else
-/* As above, where the run holds the frame's locals (the GENEXPR_SLOT_ACC
-   word is the run, psyco_gen_pause gives its frame): each is stored back,
-   made real first. */
-static bool
-osr_return(PsycoObject *po)
-{
-    PyCodeObject *co = po->pr.co;
-    int nlocals = le_code_nlocals(co), nplus = le_code_nlocalsplus(co), i;
-    vinfo_t *retval = po->pr.val, *frame, *v;
-    int at = osr_return_place(co, po->pr.next_instr);
-    int push = le_instr(le_code(co), at).op == RETURN_VALUE;
-    le_gen_pause_t *pause;
-    if (osr_went_on(retval))
-        return true;
-    for (i = 0; i < nlocals + push; i++) {
-        v = i < nlocals ? LOC_LOCALS_PLUS[i] : retval;
-        if (v != NULL && !psyco_knowntobe(v, 0) && !compute_vinfo(v, po))
-            return false;
-    }
-    pause = psyco_owner_alloc(sizeof(le_gen_pause_t));
-    pause->lasti = le_lasti_of(at);
-    pause->nstack = push;
-    pause->iblock = 0;
-    frame = psyco_generic_call(
-        po, psyco_gen_pause, CfReturnTypePtr | CfNoPython, "vl",
-        po->vlocals.items[GENEXPR_SLOT_ACC(co)], (long)pause);
-    if (frame == NULL)
-        return false;
-    for (i = 0; i < nlocals + push; i++) {
-        v = i < nlocals ? LOC_LOCALS_PLUS[i] : retval;
-        if (v != NULL && !psyco_knowntobe(v, 0)) {
-            if (!psyco_put_nth_field(po, frame, FRAME_localsplus,
-                                     i < nlocals ? i : nplus, v)) {
-                vinfo_decref(frame, po);
-                return false;
-            }
-            consume_reference(po, v);
-        }
-        if (i < nlocals && v != NULL) {
-            vinfo_decref(v, po);
-            LOC_LOCALS_PLUS[i] = NULL;
-        }
-    }
-    vinfo_decref(frame, po);
-    return true;
-}
-#endif
-
 static code_t *
 exit_function(PsycoObject *po)
 {
@@ -5107,12 +5009,9 @@ exit_function(PsycoObject *po)
     if (!catcher_flush(po))
         return NULL;
 #if LE_RESUMES_ON_FRAME
-    if (mode == GENEXPR_RESUMABLE && !gen_locals_end(po, -1, 0))
+    if (mode == GENEXPR_RESUMABLE && !gen_locals_end(po))
         return NULL;
 #endif
-    if (mode == GENEXPR_OSR && PycException_Is(po, &EReturn) &&
-        !osr_return(po))
-        return NULL;
     /* clear the locals, first to last as frame_dealloc does (finalisers run
        in that order), then the stack; where FRAME_CLEARED_LAST_FIRST, the
        stack top down, then the locals last to first. On a return CPython
@@ -5158,7 +5057,7 @@ exit_function(PsycoObject *po)
            or a direct-started coroutine becomes RuntimeError. A resumable
            one's gen_send_ex does it, once the frame has gone, so the
            traceback has no more entries. */
-        if (mode != 0 && mode != GENEXPR_RESUMABLE && mode != GENEXPR_OSR &&
+        if (mode != 0 && mode != GENEXPR_RESUMABLE &&
             !psyco_generic_call(po, cimpl_generator_stop, CfNoReturnValue, "l",
                                 (long)(mode == GENEXPR_DIRECT)))
             return NULL;
@@ -5653,10 +5552,7 @@ long
 psyco_generator_mode(PsycoObject *po)
 {
     PyCodeObject *co = po->pr.co;
-    /* a function's code has the slots only in a frame taken over at a
-       loop head (GENEXPR_OSR): its stack starts after them */
-    if (!(co->co_flags & LE_BODY_FLAGS) &&
-        po->pr.stack_base == GENEXPR_SLOT_MODE(co))
+    if (!(co->co_flags & LE_BODY_FLAGS))
         return 0;
     return CompileTime_Get(po->vlocals.items[GENEXPR_SLOT_MODE(co)]->source)
         ->value;
@@ -5791,27 +5687,17 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
     if (result == NULL && !PycException_Is(po, &ERtPython))
         return 0;
     while (STACK_LEVEL() > 0) POP_DECREF();
+#if LE_RESUMES_ON_FRAME
     /* the generator's frame is ceval's now: the end stores nothing in it
-       (gen_locals_end); nor in a frame taken over at a loop head, which
-       the ceval running it goes on with, given the marker that says so
-       (osr_return) */
-    if (!po->pr.is_inlining &&
-        ((LE_RESUMES_ON_FRAME &&
-          psyco_generator_mode(po) == GENEXPR_RESUMABLE) ||
-         psyco_generator_mode(po) == GENEXPR_OSR)) {
+       (gen_locals_end) */
+    if (!po->pr.is_inlining && psyco_generator_mode(po) == GENEXPR_RESUMABLE) {
         int i;
         for (i = 0; i < le_code_nlocals(co); i++) {
             vinfo_xdecref(LOC_LOCALS_PLUS[i], po);
             LOC_LOCALS_PLUS[i] = NULL;
         }
     }
-    if (!po->pr.is_inlining && psyco_generator_mode(po) == GENEXPR_OSR &&
-        result != NULL) {
-        vinfo_decref(result, po);
-        Py_INCREF(le_osr_ceval_goes_on);
-        result = vinfo_new(CompileTime_NewSk(
-            sk_new((long)le_osr_ceval_goes_on, SkFlagPyObj)));
-    }
+#endif
     if (!po->pr.is_inlining)
         po->pr.iblock = 0;
     *unwound = 1;
@@ -9726,6 +9612,11 @@ psyco_pycompiler_mainloop(PsycoObject *po)
     /* the place, as ceval's lasti, of an exception RERAISE raises again
        from the place under it; else -1 */
     int raise_lasti = -1;
+#if LE_HAS_BREAKER_AFTER_BACK_JUMP
+    /* where the exception table is read for an exception the
+       eval_breaker test at a backward jump raised; else -1 */
+    int handler_at = -1;
+#endif
     int resumed = 0;
     int ended; /* what the instruction's case left to do */
 #if LE_CODESTATS
@@ -9815,10 +9706,21 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             oparg = in.arg;
             next_instr = in.next;
             /* at loop heads and after calls */
+#if LE_HAS_BREAKER_AFTER_BACK_JUMP
+            handler_at = -1;
+#endif
             if (psyco_breaker_check_at(po->pr.merge_points,
                                        po->pr.next_instr) &&
-                !psyco_check_eval_breaker(po))
+                !psyco_check_eval_breaker(po)) {
+#if LE_HAS_BREAKER_AFTER_BACK_JUMP
+                /* ceval has jumped when it tests, and reads the table at
+                   the unit before the loop head: the jump itself may be in
+                   no handler's range */
+                if (LE_IS_JBACK(in.raw))
+                    handler_at = in.target - LE_UNIT;
+#endif
                 break;
+            }
             po->blocking_call = 0;
             po->pr.python_call = 0;
             po->pr.proxy_write = 0;
@@ -10108,8 +10010,14 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                             ? raise_lasti
                             : le_lasti_of(le_place(le_code(po->pr.co),
                                                    po->pr.next_instr));
+            int handler_pos = po->pr.next_instr;
             raise_lasti = -1;
-            if (le_handler_find(po->pr.co, po->pr.next_instr, &h)) {
+#if LE_HAS_BREAKER_AFTER_BACK_JUMP
+            if (handler_at >= 0)
+                handler_pos = handler_at;
+            handler_at = -1;
+#endif
+            if (le_handler_find(po->pr.co, handler_pos, &h)) {
                 int next_instr;
                 vinfo_t *word = catcher_word(po), *own, *v;
                 if (!compute_and_raise_exception(po))

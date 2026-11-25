@@ -11,7 +11,7 @@ and passes CPython's own test suite.
 
 LeJIT is a research project. It keeps Psyco's design, with Psyco's
 "compile-time CPython" (the layer that mirrors CPython's C code) translated
-from CPython's own C source. One LeJIT source tree serves CPython 3.7 to 3.10:
+from CPython's own C source. One LeJIT source tree serves CPython 3.7 to 3.15:
 where they differ, the code follows the features the build detects in the
 installed CPython it is built for (`tools/features/installed.py`), never a
 version number. A second detector reads CPython's source
@@ -32,7 +32,7 @@ nothing.
 The package is `lejit/` (its API, in Python, is `lejit/__init__.py`) over the
 compiled module `lejit._core`, built from the C sources in `src/`. On a Python
 LeJIT can't run on (not CPython, not x86-64 Linux, a free-threaded build, or
-3.11 and later) only the package is installed: `lejit.start()` warns and does
+3.16 and later) only the package is installed: `lejit.start()` warns and does
 nothing.
 
 ## Status
