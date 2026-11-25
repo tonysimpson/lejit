@@ -1091,7 +1091,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
        (psyco_call_genexpr): until then it is a pending generator, of a
        function known now or still virtual, whose arguments bind here; a
        coroutine too, where it is awaited at once (psyco_coro_start) */
-    generator = (co->co_flags & (CO_GENERATOR | CO_COROUTINE)) != 0;
+    generator = (co->co_flags & LE_BODY_FLAGS) != 0;
     if (generator &&
         (vfunc == NULL || is_runtime(vfunc->source) ||
          !(psyco_is_fusable_generator(co) || awaited_at_once(po, co))))

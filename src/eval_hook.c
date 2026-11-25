@@ -4,6 +4,7 @@
 #include "codegen.h"
 #include "codemanager.h"
 #include "mergepoints.h"
+#include "Python/pycompiler.h"
 #include <Python.h>
 /* how CPython's frames, tracing flag and recursion count are reached */
 #include "mechanisms/frames.h"
@@ -302,13 +303,15 @@ static inline bool
 gen_may_resume(le_frame_t *f, int throwflag, le_code_extra_t **x)
 {
     PyCodeObject *co = le_frame_code(f);
-    int kinds =
-        CO_GENERATOR | (LE_RESUMES_COROUTINES_COMPILED ? CO_COROUTINE : 0);
+    int kinds = CO_GENERATOR | (LE_RESUMES_COROUTINES_COMPILED
+                                    ? CO_COROUTINE | CO_ASYNC_GENERATOR
+                                    : 0);
     if (co == le_gen_interpreted || !(co->co_flags & kinds) || throwflag ||
         !le_frame_is_gen(f))
         return false;
 #if LE_RESUMES_COROUTINES
-    if ((co->co_flags & CO_COROUTINE) && f->f_lasti >= 0)
+    if ((co->co_flags & (CO_COROUTINE | CO_ASYNC_GENERATOR)) &&
+        f->f_lasti >= 0)
         return false;
 #endif
     *x = le_code_extra_get(co);
@@ -970,6 +973,101 @@ le_eval_frame_default(le_frame_t *f)
 }
 #endif
 
+/* The type of the object an async generator's yield wraps its value in,
+   for asend() to tell it from what an await in the body yields: an object
+   head and the value. CPython exports neither the type nor the function
+   that makes one, so it is taken once, as LeJIT starts, from what the
+   frame evaluator returns for such a yield: a probe of its own, installed
+   for the while, runs one async generator to its end. NULL where what it
+   returned isn't laid out as expected: async generators then run
+   interpreted. */
+DEFINEVAR PyTypeObject *psyco_async_gen_wrapper = NULL;
+static PyCodeObject *wrap_code;
+static PyObject *wrap_value, *wrap_seen;
+static le_eval_frame_fn wrap_next;
+
+/* the first object other than the value, and other than the generator
+   itself, which the call returns where the frame runs to make it */
+static void
+wrap_saw(PyCodeObject *co, PyObject *r)
+{
+    if (co == wrap_code && r != NULL && wrap_seen == NULL && r != wrap_value &&
+        !PyAsyncGen_CheckExact(r)) {
+        Py_INCREF(r);
+        wrap_seen = r;
+    }
+}
+
+#if LE_HAS_EVAL_HOOK_TSTATE
+static PyObject *
+wrap_probe(PyThreadState *ts, le_frame_t *f, int throwflag)
+{
+    PyObject *r = wrap_next(ts, f, throwflag);
+    wrap_saw(le_frame_code(f), r);
+    return r;
+}
+#else
+static PyObject *
+wrap_probe(PyFrameObject *f, int throwflag)
+{
+    PyObject *r = wrap_next(f, throwflag);
+    wrap_saw(f->f_code, r);
+    return r;
+}
+#endif
+
+static void
+find_async_gen_wrapper(void)
+{
+    static int done = 0;
+    PyObject *g, *w, *r;
+    if (done)
+        return;
+    done = 1;
+    g = PyDict_New();
+    wrap_value = PyObject_CallObject((PyObject *)&PyBaseObject_Type, NULL);
+    if (g == NULL || wrap_value == NULL ||
+        PyDict_SetItemString(g, "__builtins__", PyEval_GetBuiltins()) < 0 ||
+        PyDict_SetItemString(g, "v", wrap_value) < 0)
+        goto done;
+    r = PyRun_String("async def w():\n    yield v\n", Py_file_input, g, g);
+    if (r == NULL)
+        goto done;
+    Py_DECREF(r);
+    w = PyDict_GetItemString(g, "w");
+    if (w == NULL || !PyFunction_Check(w))
+        goto done;
+    wrap_code = (PyCodeObject *)PyFunction_GET_CODE(w);
+    wrap_next = get_eval_frame();
+    set_eval_frame(wrap_probe);
+    r = PyRun_String(
+        "g = w()\n"
+        "for _ in 0, 1:\n"
+        "    try:\n"
+        "        g.asend(None).send(None)\n"
+        "    except (StopIteration, StopAsyncIteration):\n"
+        "        pass\n",
+        Py_file_input, g, g);
+    set_eval_frame(wrap_next);
+    Py_XDECREF(r);
+    if (wrap_seen != NULL) {
+        PyTypeObject *t = Py_TYPE(wrap_seen);
+        if (t->tp_basicsize == sizeof(PyObject) + sizeof(PyObject *) &&
+            t->tp_itemsize == 0 && PyType_HasFeature(t, Py_TPFLAGS_HAVE_GC) &&
+            t->tp_dealloc != NULL &&
+            *(PyObject **)(wrap_seen + 1) == wrap_value)
+            psyco_async_gen_wrapper = t;
+    }
+done:
+    PyErr_Clear();
+    if (g != NULL)
+        PyDict_Clear(g);
+    Py_XDECREF(g);
+    Py_CLEAR(wrap_seen);
+    Py_CLEAR(wrap_value);
+    wrap_code = NULL;
+}
+
 /* lejit.start: CPython hands every frame to LeJIT from now on. The evaluator
    that was there is kept, since LeJIT passes it the frames it doesn't
    compile, and it stays kept after lejit.stop for any call already on its
@@ -990,6 +1088,7 @@ le_entry_install(void)
         (frame_done = PyObject_CallNoArgs(PyExc_Exception)) == NULL)
         return -1;
 #endif
+    find_async_gen_wrapper();
     if (now != LeEval_EvalFrame) {
         original_eval_frame = now;
         set_eval_frame(LeEval_EvalFrame);

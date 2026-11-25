@@ -58,6 +58,9 @@ DEF_SK_AND_VI(NotImplemented) /* 'Py_NotImplemented' */
  * call to PyErr_Fetch().
  */
 EXTERNVAR source_virtual_t ERtPython; /* Exception raised by Python */
+/* the type an async generator's yield wraps its value in, or NULL
+   (eval_hook.c) */
+EXTERNVAR PyTypeObject *psyco_async_gen_wrapper;
 EXTERNVAR source_virtual_t EReturn;   /* 'return' statement */
 EXTERNVAR source_virtual_t EBreak;    /* 'break' statement */
 EXTERNVAR source_virtual_t EContinue; /* 'continue' statement */

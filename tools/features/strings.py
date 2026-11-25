@@ -541,6 +541,14 @@ msg('GENERATOR_STOP_ITERATION', 'a generator raising StopIteration',
 msg('CORO_STOP_ITERATION', 'a coroutine raising StopIteration',
     'RuntimeError',
     'async def f():\n    raise StopIteration\nf().send(None)', text=True)
+msg('ASYNC_GEN_STOP_ITERATION', 'an async generator raising StopIteration',
+    'RuntimeError',
+    'async def f():\n    raise StopIteration\n    yield\n'
+    'f().__anext__().send(None)', text=True)
+msg('ASYNC_GEN_STOP_ASYNC_ITERATION', 'an async generator raising '
+    'StopAsyncIteration', 'RuntimeError',
+    'async def f():\n    raise StopAsyncIteration\n    yield\n'
+    'f().__anext__().send(None)', text=True)
 msg('NEGATIVE_SHIFT', 'a shift by a negative count', 'ValueError', '1 << -1',
     text=True)
 

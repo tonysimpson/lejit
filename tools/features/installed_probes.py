@@ -1143,6 +1143,20 @@ def GET_ITER_INDEX():
 
 
 @probe
+def YIELD_VALUE_WRAPS():
+    """an async generator's yield is YIELD_VALUE alone, with no
+    ASYNC_GEN_WRAP or CALL_INTRINSIC_1 before it (dis)"""
+    ns = {}
+    exec('async def f():\n    yield 1\n', ns)
+    ins = [x.opname for x in dis.get_instructions(ns['f'])]
+    if 'YIELD_VALUE' not in ins:
+        raise Unanswered('an async generator has no YIELD_VALUE: %r' % ins)
+    before = ins[ins.index('YIELD_VALUE') - 1]
+    return (before not in ('ASYNC_GEN_WRAP', 'CALL_INTRINSIC_1'),
+            'dis: %s before YIELD_VALUE' % before)
+
+
+@probe
 def RUNNING_STACK_HIDDEN():
     """a running generator's referents (gc) don't include its locals"""
     import gc

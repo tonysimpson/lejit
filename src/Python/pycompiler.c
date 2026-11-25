@@ -4755,15 +4755,34 @@ cimpl_generator_stop(long coroutine)
     }
 }
 
+/* what CPython's _PyAsyncGenValueWrapperNew makes (eval_hook.c:
+   psyco_async_gen_wrapper): a wrapper made the way that makes one past
+   its free list, which its dealloc takes back */
+static PyObject *
+cimpl_async_gen_wrap(PyObject *v)
+{
+    PyObject *o = _PyObject_GC_New(psyco_async_gen_wrapper);
+    if (o == NULL)
+        return NULL;
+    Py_INCREF(v);
+    *(PyObject **)(o + 1) = v;
+    PyObject_GC_Track(o);
+    return o;
+}
+
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
 /* intrinsics.c:stopiteration_error, for a fused generator's code, the
    only generator code compiled (mergepoints.c:_build_merge_points):
    StopIteration leaving it becomes RuntimeError */
 static PyObject *
-cimpl_stopiteration_error(PyObject *exc, const char *msg)
+cimpl_stopiteration_error(PyObject *exc, const char *msg,
+                          const char *async_msg)
 {
     PyObject *error;
-    if (!PyErr_GivenExceptionMatches(exc, PyExc_StopIteration)) {
+    if (async_msg != NULL &&
+        PyErr_GivenExceptionMatches(exc, PyExc_StopAsyncIteration))
+        msg = async_msg;
+    else if (!PyErr_GivenExceptionMatches(exc, PyExc_StopIteration)) {
         Py_INCREF(exc);
         return exc;
     }
@@ -5313,7 +5332,7 @@ long
 psyco_generator_mode(PsycoObject *po)
 {
     PyCodeObject *co = po->pr.co;
-    if (!(co->co_flags & (CO_GENERATOR | CO_COROUTINE)))
+    if (!(co->co_flags & LE_BODY_FLAGS))
         return 0;
     return CompileTime_Get(po->vlocals.items[GENEXPR_SLOT_MODE(co)]->source)
         ->value;
@@ -5326,9 +5345,9 @@ psyco_can_go_interpreted(PsycoObject *po)
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int i, nstack = STACK_LEVEL();
     long mode = psyco_generator_mode(po);
-    if ((po->pr.co->co_flags & (CO_ITERABLE_COROUTINE | CO_ASYNC_GENERATOR)) ||
-        ((po->pr.co->co_flags & (CO_GENERATOR | CO_COROUTINE)) &&
-         mode != GENEXPR_RESUMABLE && mode != GENEXPR_DIRECT))
+    if ((po->pr.co->co_flags & CO_ITERABLE_COROUTINE) ||
+        ((po->pr.co->co_flags & LE_BODY_FLAGS) && mode != GENEXPR_RESUMABLE &&
+         mode != GENEXPR_DIRECT))
         return false;
     for (i = 0; i < nstack; i++)
         if (is_pseudo_exception_tuple(stack_a[i]))
@@ -7527,20 +7546,37 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
             POP_DECREF();
             goto fine;
 
+        /* an async generator's yield: its value wrapped
+           (psyco_async_gen_wrapper) */
+        case ASYNC_GEN_WRAP:
+            x = psyco_generic_call(po, cimpl_async_gen_wrap,
+                                   CfCommonNewRefPyObject | CfNoPython, "v",
+                                   TOP());
+            if (x == NULL)
+                break;
+            POP_DECREF();
+            PUSH(x);
+            goto fine;
+
         /* the intrinsics left as CALL_INTRINSIC_1 (bytecode.h:le_instr)
            that mergepoints.c:compiled_intrinsic allows: a generator's
            PEP 479 handler, and the REPL's print */
         case CALL_INTRINSIC_1:
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
             if (oparg == INTRINSIC_STOPITERATION_ERROR) {
-                extra_assert(po->pr.co->co_flags &
-                             (CO_GENERATOR | CO_COROUTINE));
+                int flags = po->pr.co->co_flags;
+                extra_assert(flags & LE_BODY_FLAGS);
                 x = psyco_generic_call(
                     po, cimpl_stopiteration_error,
-                    CfCommonNewRefPyObject | CfNoPython, "vl", TOP(),
-                    (long)(po->pr.co->co_flags & CO_COROUTINE
+                    CfCommonNewRefPyObject | CfNoPython, "vll", TOP(),
+                    (long)(flags & CO_ASYNC_GENERATOR
+                               ? LE_MSG_ASYNC_GEN_STOP_ITERATION
+                           : flags & CO_COROUTINE
                                ? LE_MSG_CORO_STOP_ITERATION
-                               : LE_MSG_GENERATOR_STOP_ITERATION));
+                               : LE_MSG_GENERATOR_STOP_ITERATION),
+                    (long)(flags & CO_ASYNC_GENERATOR
+                               ? LE_MSG_ASYNC_GEN_STOP_ASYNC_ITERATION
+                               : NULL));
                 if (x == NULL)
                     break;
                 POP_DECREF();
@@ -8121,6 +8157,19 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             long mode =
                 CompileTime_Get(po->vlocals.items[slot]->source)->value;
             vinfo_t *acc = po->vlocals.items[slot + 1];
+#if LE_HAS_YIELD_VALUE_WRAPS
+            /* an async generator's yield wraps its value, as ASYNC_GEN_WRAP
+               does where that is an instruction of its own */
+            if (co->co_flags & CO_ASYNC_GENERATOR) {
+                x = psyco_generic_call(po, cimpl_async_gen_wrap,
+                                       CfCommonNewRefPyObject | CfNoPython,
+                                       "v", TOP());
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                PUSH(x);
+            }
+#endif
             v = TOP();
             if (mode == GENEXPR_RESUMABLE) {
                 yield_resumable(po, next_instr - LE_UNIT, false);

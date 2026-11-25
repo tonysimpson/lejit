@@ -1124,9 +1124,10 @@ OPCODES = ('SETUP_LOOP', 'SETUP_EXCEPT', 'BREAK_LOOP', 'CONTINUE_LOOP',
            'POP_JUMP_BACKWARD_IF_TRUE', 'POP_JUMP_BACKWARD_IF_NONE',
            'POP_JUMP_BACKWARD_IF_NOT_NONE', 'PRECALL', 'KW_NAMES', 'CALL',
            'MAKE_CELL', 'COPY_FREE_VARS', 'RETURN_GENERATOR', 'SEND',
-           # gone from 3.12: the unary plus, the interactive print, import *
-           # and LIST_TO_TUPLE are CALL_INTRINSIC_1's
+           # gone from 3.12: the unary plus, the interactive print, import *,
+           # LIST_TO_TUPLE and ASYNC_GEN_WRAP are CALL_INTRINSIC_1's
            'UNARY_POSITIVE', 'PRINT_EXPR', 'IMPORT_STAR', 'LIST_TO_TUPLE',
+           'ASYNC_GEN_WRAP',
            'JUMP_IF_FALSE_OR_POP', 'JUMP_IF_TRUE_OR_POP',
            # new in 3.12
            'END_FOR', 'RETURN_CONST', 'LOAD_FAST_CHECK', 'LOAD_FAST_AND_CLEAR',
@@ -1427,6 +1428,8 @@ BYTECODE = [
     ('GET_ITER_INDEX', D('GET_ITER pushes the iterator then an index or NULL above it, which FOR_ITER reads and POP_ITER pops with it; SEND, END_SEND and CLEANUP_THROW have it between yield from\'s iterator and the value sent, as an await\'s PUSH_NULL leaves it',
                          lambda s: _case_has(s, 'GET_ITER', 'index_or_null'))),
     ('RUNNING_STACK_HIDDEN', running_stack_hidden),
+    ('YIELD_VALUE_WRAPS', D('YIELD_VALUE in an async generator wraps the value it yields (_PyAsyncGenValueWrapperNew), which no instruction before it has',
+                            lambda s: _case_has(s, 'YIELD_VALUE', '_PyAsyncGenValueWrapperNew', missing=False))),
     ('TAGGED_LASTI', D('the lasti an exception handler is given, which RERAISE reads, is a tagged int on the frame\'s stack, not an int object',
                        lambda s: _case_has(s, 'RERAISE', 'PyStackRef_UntagInt', missing=False))),
     ('CALL_EX_KWARGS_SLOT', D('CALL_FUNCTION_EX always has a slot for the keywords dict, NULL where the call has none',
