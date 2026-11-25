@@ -22,6 +22,9 @@
 #include "vcompiler.h"
 #include "Python/pycompiler.h"
 #include "Objects/pobject.h"
+#include "Objects/pboolobject.h"
+#include "Objects/pfloatobject.h"
+#include "Objects/plongobject.h"
 #include "codemanager.h"
 #include "dispatcher.h"
 #include "mergepoints.h"
@@ -974,12 +977,38 @@ mp_capped(mergepoint_t *mp)
     return MP_BLOCK_CAP > 0 && mp != NULL && mp->blocks >= MP_BLOCK_CAP;
 }
 
+/* counts what kinds of virtual values the locals of a new block at 'mp'
+   hold, for dispatcher.c:made_real_when_dead */
+static void
+mp_count_virtuals(PsycoObject *po, mergepoint_t *mp)
+{
+    int i, n = le_code_nlocalsplus(po->pr.co);
+    if (po->pr.is_inlining)
+        return;
+    for (i = 0; i < n && INDEX_LOC_LOCALS_PLUS + i < po->vlocals.count; i++) {
+        vinfo_t *vi = LOC_LOCALS_PLUS[i];
+        source_virtual_t *sv;
+        if (vi == NULL || !is_virtualtime(vi->source))
+            continue;
+        sv = VirtualTime_Get(vi->source);
+        if (sv == &psyco_computed_long || sv == &psyco_computed_bool ||
+            sv == &psyco_computed_float)
+            mp->virtual_numbers++;
+        else
+            mp->virtual_objects++;
+    }
+}
+
 static void
 mp_new_block(PsycoObject *po, mergepoint_t *mp)
 {
     if (mp == NULL)
         return;
     mp->blocks++;
+    /* only up to the cap, so every block that makes values real here sees
+       the same counts */
+    if (mp->blocks <= MP_BLOCK_CAP)
+        mp_count_virtuals(po, mp);
     /* blocks made from now on make dead virtual locals real here
        (dispatcher.c:psyco_make_dead_virtuals_real) */
     if (mp->blocks == MP_BLOCK_CAP && mp->real_from == 0)

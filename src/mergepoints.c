@@ -533,6 +533,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
             report->mergepoints[mergepoint_index].blocks = 0;
             report->mergepoints[mergepoint_index].entries.varies = NULL;
             report->mergepoints[mergepoint_index].real_from = 0;
+            report->mergepoints[mergepoint_index].virtual_numbers = 0;
+            report->mergepoints[mergepoint_index].virtual_objects = 0;
             mergepoint_index++;
         }
     }
@@ -541,6 +543,8 @@ _find_merge_points(PyCodeObject *co, int *bad)
     report->mergepoints[mergepoint_count].blocks = 0;
     report->mergepoints[mergepoint_count].entries.varies = NULL;
     report->mergepoints[mergepoint_count].real_from = 0;
+    report->mergepoints[mergepoint_count].virtual_numbers = 0;
+    report->mergepoints[mergepoint_count].virtual_objects = 0;
     PyMem_Free(entry_count);
     if (!_find_dead_locals(co, report)) {
         /* out of memory: keep every local (the lists may hold some) */
