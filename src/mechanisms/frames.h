@@ -655,6 +655,46 @@ le_gen_frame_pause(le_frame_t *f, int lasti, int nstack)
     le_frame_gen(f)->gi_frame_state = FRAME_SUSPENDED;
 #endif
 }
+/* The generator 'gen', made around a frame object (frames.c:
+   le_gen_of_frame), whose body has returned or raised while compiled code
+   ran it, is closed as gen_send_ex closes it: its frame goes back to the
+   frame object, which keeps the words, as for a frame that outlives its
+   run (frame.c:take_ownership), and the generator's reference to the
+   frame object goes. Nothing more if ceval has closed it. */
+static inline void
+le_gen_frame_give_back(PyGenObject *gen)
+{
+    le_frame_t *g =
+        (le_frame_t *)((char *)gen + offsetof(PyGenObject, gi_iframe));
+    le_frame_t *own;
+    PyFrameObject *f = g->frame_obj;
+    gen->gi_frame_state = FRAME_CLEARED;
+    Py_CLEAR(gen->gi_exc_state.exc_value);
+    if (f == NULL)
+        return;
+    own = (le_frame_t *)f->_f_frame_data;
+    memcpy(own, g,
+           (char *)&g->localsplus[LE_FRAME_CODE(g)->co_nlocalsplus +
+                                  le_frame_stack_depth(g)] -
+               (char *)g);
+#if LE_HAS_FRAME_STACKREFS
+    own->stackpointer = own->localsplus + (g->stackpointer - g->localsplus);
+#endif
+#if LE_HAS_GEN_KEEPS_CODE
+    /* and a reference of its own to the code, which its dealloc releases */
+#if LE_HAS_FRAME_STACKREFS
+    g->f_executable = PyStackRef_DUP(g->f_executable);
+#else
+    Py_INCREF(LE_FRAME_CODE(g));
+#endif
+#endif
+    own->owner = FRAME_OWNED_BY_FRAME_OBJECT;
+    own->frame_obj = NULL;
+    own->previous = NULL;
+    f->f_frame = own;
+    g->frame_obj = NULL;
+    Py_DECREF(f);
+}
 /* whether the generator whose state is 'state' is paused, after a run */
 #define LE_GEN_PAUSED(state) ((state) < FRAME_EXECUTING)
 /* the run that gave 'result' has ended: paused (le_gen_frame_pause, or

@@ -1967,11 +1967,11 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
     return on < 0 ? -1 : !on;
 }
 
-#if LE_RESUMES_COROUTINES
 /* A coroutine made by an await's call (awaited_at_once) can run its body
-   as a call from the await (pycompiler.c, YIELD_FROM): nothing can see
-   the coroutine object CPython would have made while the body runs, and
-   one is made if the body suspends (pycompiler.c:yield_direct). Not where
+   as a call from the await (pycompiler.c, YIELD_FROM or SEND): nothing can
+   see the coroutine object CPython would have made while the body runs,
+   and one is made if the body suspends (pycompiler.c:yield_direct), or
+   something could find it (frames.c:psyco_coros_realise). Not where
    CPython's coroutine would record its origin
    (sys.set_coroutine_origin_tracking_depth) or a wrapper would get it,
    nor while tracing, nor once a type site in its body has seen too many
@@ -2023,7 +2023,6 @@ psyco_coro_start(PsycoObject *po, vinfo_t *v)
     on = fuse_stopped(po, v);
     return on < 0 ? -1 : !on;
 }
-#endif
 
 DEFINEFN
 void

@@ -1038,18 +1038,35 @@ psyco_in_handler(PyCodeObject *co, int pos)
 #endif
 }
 
+/* whether a handler of 'co' could make an exception the one handled while
+   its body runs as a call: it would be in its awaiter's exception state,
+   where only a block stack shows which is the coroutine's
+   (frames.c:coro_exc_take). Its PEP 479 handler and its awaits' handlers
+   (CLEANUP_THROW) handle none. */
+static int
+handles_apart(PyCodeObject *co, le_code_t c)
+{
+#if LE_HAS_EXCEPTION_TABLE
+    Py_ssize_t at = 0;
+    le_handler_t h;
+    while (le_handler_next(co, &at, &h))
+        if (le_instr(c, h.handler).op == PUSH_EXC_INFO)
+            return 1;
+#else
+    (void)co;
+    (void)c;
+#endif
+    return 0;
+}
+
 /* the code of a coroutine whose body can run as a call when it is awaited
    as soon as it is made (psyfunc.c:psyco_coro_start) */
 DEFINEFN int
 psyco_is_startable_coroutine(PyCodeObject *co)
 {
-#if LE_RESUMES_COROUTINES
     le_code_t c;
-    return (co->co_flags & CO_COROUTINE) && body_compilable(co, &c);
-#else
-    (void)co;
-    return 0;
-#endif
+    return LE_HAS_GEN_NEW_AROUND_FRAME && (co->co_flags & CO_COROUTINE) &&
+           body_compilable(co, &c) && !handles_apart(co, c);
 }
 
 DEFINEFN PyObject *
