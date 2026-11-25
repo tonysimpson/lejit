@@ -41,6 +41,9 @@ if checked:
 # so a name made afresh for each lookup (PyObject_CallMethod's) stays alive
 # until another lookup takes its slot: an amount that differs from process
 # to process. A case that makes such names can ask for the cache emptied.
+# Where emptying it also drops the types' version tags (before 3.11),
+# compiled code that checks a tag compiles again on its next run, so the
+# calls run once more after the cache is emptied, before the count starts.
 import gc
 clear_type_cache = sys._clear_type_cache if sys.argv[8] == '1' else (lambda: None)
 for _ in range(int(sys.argv[7])):
@@ -60,6 +63,13 @@ repeats = 0
 while True:
     clear_type_cache()
     gc.collect()
+    if sys.argv[8] == '1':
+        for args in calls:
+            try:
+                fn(*args)
+            except Exception:
+                pass
+        gc.collect()
     buffers = lejit._core._stats()['code_buffers'] if checked else 0
     before = sys.getallocatedblocks()
     gc.disable()
