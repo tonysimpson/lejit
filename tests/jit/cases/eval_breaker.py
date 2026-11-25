@@ -2,8 +2,8 @@
 # and on entry from the interpreter: other threads get the
 # GIL, signal handlers run and async exceptions arrive while a compiled loop
 # spins. Without the test these loops never end (the harness's timeout).
-import ctypes, functools, itertools, operator, os, signal, sys, threading, \
-    time, zlib
+import _thread, ctypes, functools, itertools, operator, os, signal, sys, \
+    threading, time, zlib
 
 
 class Box:
@@ -174,6 +174,40 @@ def signal_in_c_loop():
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, old)
+
+
+class _InterruptingManager:
+    # a C call that marks SIGINT as arrived and handles nothing itself
+    __enter__ = staticmethod(functools.partial(_thread.interrupt_main))
+
+    def __init__(self, box):
+        self.box = box
+
+    def __exit__(self, *exc):
+        self.box.exited = exc[0].__name__ if exc[0] else 'no exception'
+
+
+# an interrupt during __enter__: where ceval tests no eval_breaker after
+# its call, the KeyboardInterrupt is raised inside the with block, and
+# __exit__ sees it; elsewhere it is raised as the call ends, before the
+# block, and __exit__ isn't called
+def interrupt_in_enter():
+    old = signal.signal(signal.SIGINT, signal.default_int_handler)
+    box = Box()
+    box.n = 0
+    box.exited = 'not called'
+    try:
+        try:
+            with _InterruptingManager(box):
+                # a loop, tested at its head as in ceval (an inlined call
+                # is tested at no entry)
+                while box.n < 1000:
+                    box.n += 1
+        except KeyboardInterrupt:
+            return ('interrupted', box.exited)
+        return ('not interrupted', box.exited)
+    finally:
+        signal.signal(signal.SIGINT, old)
 
 
 _DATA = bytes(64 << 20)
@@ -381,6 +415,7 @@ CASES = [
     ('keyboard_interrupt', [()], {}),
     ('keyboard_interrupt_from_timer', [()], {}),
     ('signal_at_entry', [()], {}),
+    ('interrupt_in_enter', [()], {}),
     ('signal_in_c_loop', [()], {}),
     ('signal_in_c_call_from_c_loop', [()], {}),
     ('keyboard_interrupt_inlined_body', [()], {}),

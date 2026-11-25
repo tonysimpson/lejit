@@ -8018,6 +8018,15 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
                  i--;) /* args, callable and the NULL */
                 POP_DECREF();
             PUSH(x);
+#if LE_HAS_BREAKER_SKIPPED_AFTER_LOAD_SPECIAL
+            /* ceval doesn't test eval_breaker after the call that follows
+               LOAD_SPECIAL (__enter__'s, __aenter__'s), so an interrupt
+               landing there is raised inside the with block, whose
+               __exit__ runs */
+            if (le_op(le_code(co), next_instr - LE_CACHE_BYTES(opcode) -
+                                       2 * LE_UNIT) == LOAD_SPECIAL)
+                goto fine;
+#endif
             if (!breaker_after_call(po, next_instr))
                 break;
             goto fine;
