@@ -14,6 +14,7 @@
 #include "pmethodobject.h"
 #include "ptupleobject.h"
 #include "../segments.h"
+#include "../Modules/pcffi.h"
 #include "../Modules/pctypes.h"
 
 /* abstract.c's type_error: msg has one %.200s for the type's name */
@@ -190,6 +191,11 @@ PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
 #endif
         if (PsycoCtypes_IsFunction(tp, call)) {
             vinfo_t *r = PsycoCtypes_Call(po, tp, callable_object, args, kw);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
+        }
+        if (PsycoCffi_IsCData(tp)) {
+            vinfo_t *r = PsycoCffi_Call(po, callable_object, args, kw);
             if (r != NULL || PycException_Occurred(po))
                 return r;
         }
