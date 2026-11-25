@@ -173,9 +173,13 @@ EXTERNFN void
 le_c_stack_limits_put_back(PyThreadState *ts, const uintptr_t saved[3]);
 #endif
 
-/* CPython's entry takes from the C count where it has one; the call it
+/* CPython's entry takes from the C count where it has one, or is charged
+   on the soft limit where it measures the stack (eval_hook.c); the call it
    stands for takes nothing (mechanisms/recursion.h, LE_C_RECURSION_UNITS) */
 #define ENTRY_C_UNITS 2
+#if LE_HAS_C_STACK_SOFT_LIMIT
+extern long le_c_entry_charge;
+#endif
 
 DEFINEFN long
 le_call_on_segment(void *fn, long a, long b, long c, long d)
@@ -193,7 +197,7 @@ le_call_on_segment(void *fn, long a, long b, long c, long d)
     long room = SEGMENT_SIZE; /* CPython hasn't set the limits yet */
     if (soft != 0)
         room = (long)((uintptr_t)__builtin_frame_address(0) - soft) +
-               psyco_direct_calls_size(lo, hi);
+               psyco_direct_calls_size(lo, hi) + le_c_entry_charge;
 #endif
     s = segment_take();
     if (s == NULL) {
