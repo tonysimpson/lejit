@@ -1220,10 +1220,11 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
    give 'result', is left as ceval leaves it, which gen_send_ex expects:
    paused at a yield, the thread's exception state is its caller's again
    and the frame is unlinked; else, ended, ceval clears it as a generator's
-   frame (le_frame_finish). ceval would give a generator's frame the
-   exception it unwinds with a traceback entry, as it does for any frame
-   it has started (_PyFrame_IsIncomplete), so for the unwind the frame
-   isn't the generator's; ceval tells the two apart only by the owner. */
+   frame (le_frame_finish). Where le_frame_finish has ceval unwind the
+   frame to clear it, ceval would give a generator's frame the exception
+   it unwinds with a traceback entry, as it does for any frame it has
+   started (_PyFrame_IsIncomplete), so for the unwind the frame isn't the
+   generator's; ceval tells the two apart only by the owner. */
 static inline PyObject *
 le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
                    PyObject *done)
@@ -1242,12 +1243,16 @@ le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
 #endif
         return result;
     }
+#if LE_HAS_FRAME_CLEAR_AND_POP_LINKABLE
+    result = le_frame_finish(ts, f, result, done);
+#else
     f->owner = FRAME_OWNED_BY_FRAME_OBJECT;
     result = le_frame_finish(ts, f, result, done);
     f->owner = FRAME_OWNED_BY_GENERATOR;
+#endif
 #if LE_HAS_GENERATOR_RETURN_KIND
-    /* as ceval's clear of a generator's frame says, which a frame owned
-       by its object doesn't get */
+    /* as ceval's clear of a generator's frame says, set again after
+       anything le_frame_finish ran since */
     ((_PyThreadStateImpl *)ts)->generator_return_kind = GENERATOR_RETURN;
 #endif
     return result;
