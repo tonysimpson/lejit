@@ -430,11 +430,11 @@ generic:
                               "vvv", self, key, value);
 }
 
-/* type_call(tp, args, NULL) for a heap class whose tp_new is object_new
-   and whose tp_init is slot_tp_init with a plain function as __init__,
-   or object_init with no arguments; anything else is PyObject_Call. The
-   instance is new, so its type is tp and type_call's subtype test
-   passes. */
+/* type_call(tp, args, NULL) for a heap class with no vectorcall whose
+   tp_new is object_new and whose tp_init is slot_tp_init with a plain
+   function as __init__, or object_init with no arguments; anything else is
+   class_call. The instance is new, so its type is tp and type_call's
+   subtype test passes. */
 static initproc slot_tp_init;
 
 /* object_new once its excess_args test has passed at compile time: the
@@ -463,6 +463,31 @@ init_result_error(PyObject *res)
     return NULL;
 }
 
+static bool
+has_vectorcall(PyTypeObject *tp)
+{
+#if LE_HAS_VECTORCALL
+    return PyVectorcall_Function((PyObject *)tp) != NULL;
+#else
+    return false;
+#endif
+}
+
+/* PyObject_Call's call of the class tp: through its vectorcall where it
+   has one, with the arguments in an array where they are known; else
+   type_call, which takes the tuple and the dict (made of pending keywords)
+   that PyObject_Vectorcall would make. A vectorcall gained later is still
+   called: PyObject_Call reads it at run time. */
+static vinfo_t *
+class_call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vtype, vinfo_t *varg,
+           vinfo_t *vkw)
+{
+    if (has_vectorcall(tp))
+        return psyco_residual_call(po, PyObject_Call, vtype, varg, vkw);
+    return psyco_generic_call(po, PyObject_Call, CfCommonNewRefPyObject, "vvv",
+                              vtype, varg, vkw);
+}
+
 DEFINEFN
 vinfo_t *
 psyco_heap_type_call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vtype,
@@ -475,7 +500,8 @@ psyco_heap_type_call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vtype,
     condition_code_t cc;
     int i, n = PsycoTuple_Load(varg);
 
-    if (n < 0 || slot_tp_init == NULL || !(tp->tp_flags & Py_TPFLAGS_HEAPTYPE))
+    if (n < 0 || !psyco_knowntobe(vkw, 0) || slot_tp_init == NULL ||
+        !(tp->tp_flags & Py_TPFLAGS_HEAPTYPE) || has_vectorcall(tp))
         goto fallback;
     switch (Psyco_TypeSlot(po, tp, &tp->tp_new, (void **)&new)) {
         case 1:
@@ -548,8 +574,7 @@ error:
     vinfo_decref(vobj, po);
     return NULL;
 fallback:
-    return psyco_generic_call(po, PyObject_Call, CfCommonNewRefPyObject, "vvv",
-                              vtype, varg, vkw);
+    return class_call(po, tp, vtype, varg, vkw);
 }
 
 #define BINARY(i)                                                             \
