@@ -127,6 +127,19 @@ def AUDIT_HOOKS():
 
 
 @probe
+def CTYPES_CALL_AUDITED():
+    """a call of a ctypes function raises the audit event
+    ctypes.call_function (run)"""
+    if not hasattr(sys, 'addaudithook'):
+        return False, 'no sys.addaudithook'
+    seen = []
+    sys.addaudithook(lambda event, args: event == 'ctypes.call_function'
+                     and seen.append(args))
+    ctypes.CDLL(None).abs(-3)
+    return bool(seen), 'CDLL(None).abs(-3) audited: %s' % bool(seen)
+
+
+@probe
 def ARG_CHECK_POSITIONAL():
     """libpython exports _PyArg_CheckPositional (ctypes)"""
     return _exported('_PyArg_CheckPositional')

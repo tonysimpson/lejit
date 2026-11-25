@@ -624,7 +624,7 @@ PsycoObject_IsInstance(PsycoObject *po, vinfo_t *vobj, vinfo_t *vcls)
 static double
 cimpl_cs_hi(double hi, double x)
 {
-    return hi + x;
+    return psyco_addsd(hi, x);
 }
 
 static double
