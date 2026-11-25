@@ -42,9 +42,12 @@ EXTERNFN vinfo_t *
 psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
                    vinfo_t *comp);
 #if LE_RESUMES_GENERATORS_DIRECTLY
-/* compiled code's step of the generator 'vgen', as tp_iternext */
+/* compiled code's step of the generator 'vgen', as a for loop's */
 EXTERNFN vinfo_t *
 psyco_gen_step(PsycoObject *po, vinfo_t *vgen);
+/* the same as next(vgen) */
+EXTERNFN vinfo_t *
+psyco_gen_next(PsycoObject *po, vinfo_t *vgen);
 /* the same as vgen.send(varg), whose C function is 'send' */
 EXTERNFN vinfo_t *
 psyco_gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg,

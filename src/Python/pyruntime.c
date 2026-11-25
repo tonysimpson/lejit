@@ -344,9 +344,10 @@ le_eval_breaker_handler(void)
 }
 
 /* The same test before a frame's first instruction, for compiled code
-   entered through the eval hook (eval_hook.c:LeCode_Run). Compiled callers
-   test after each call instead. -1 with the exception set, for the caller
-   to give the frame a traceback entry, as ceval's error path would. */
+   entered through the eval hook (eval_hook.c:LeCode_Run). A direct call
+   from compiled code tests before it (psyfunc.c:psyco_call_pyfunc). -1 with
+   the exception set, for the caller to give the frame a traceback entry, as
+   ceval's error path would. */
 int
 le_eval_breaker_at_entry(PyCodeObject *co)
 {
@@ -444,9 +445,10 @@ le_eval_breaker_handler(void)
 }
 
 /* The same test before a frame's first instruction, for compiled code
-   entered through the eval hook (eval_hook.c:LeCode_Run). Compiled callers
-   test after each call instead. -1 with the exception set, for the caller
-   to give the frame a traceback entry, as ceval's error path would. */
+   entered through the eval hook (eval_hook.c:LeCode_Run). A direct call
+   from compiled code tests before it (psyfunc.c:psyco_call_pyfunc). -1 with
+   the exception set, for the caller to give the frame a traceback entry, as
+   ceval's error path would. */
 int
 le_eval_breaker_at_entry(PyCodeObject *co)
 {
@@ -532,9 +534,10 @@ le_eval_breaker_handler(void)
 
 /* The same test before a frame's first instruction, for compiled code
    entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
-   instructions ceval's loop top skips. Compiled callers test after each
-   call instead. -1 with the exception set, for the caller to give the
-   frame a traceback entry, as ceval's error path would. */
+   instructions ceval's loop top skips. A direct call from compiled code
+   tests before it (psyfunc.c:psyco_call_pyfunc). -1 with the exception
+   set, for the caller to give the frame a traceback entry, as ceval's error
+   path would. */
 int
 le_eval_breaker_at_entry(PyCodeObject *co)
 {
@@ -612,9 +615,10 @@ le_eval_breaker_handler(void)
 
 /* The same test before a frame's first instruction, for compiled code
    entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
-   instructions ceval's loop top skips. Compiled callers test after each
-   call instead. -1 with the exception set, for the caller to give the
-   frame a traceback entry, as ceval's error path would. */
+   instructions ceval's loop top skips. A direct call from compiled code
+   tests before it (psyfunc.c:psyco_call_pyfunc). -1 with the exception
+   set, for the caller to give the frame a traceback entry, as ceval's error
+   path would. */
 int
 le_eval_breaker_at_entry(PyCodeObject *co)
 {
@@ -679,9 +683,10 @@ le_eval_breaker_handler(void)
 
 /* The same test before a frame's first instruction, for compiled code
    entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
-   instructions ceval's loop top skips. Compiled callers test after each
-   call instead. -1 with the exception set, for the caller to give the
-   frame a traceback entry, as ceval's error path would. */
+   instructions ceval's loop top skips. A direct call from compiled code
+   tests before it (psyfunc.c:psyco_call_pyfunc). -1 with the exception
+   set, for the caller to give the frame a traceback entry, as ceval's error
+   path would. */
 int
 le_eval_breaker_at_entry(PyCodeObject *co)
 {

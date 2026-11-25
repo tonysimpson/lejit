@@ -281,27 +281,34 @@ cimpl_leave_overflowed(void)
 }
 #endif
 
-/* adds 'delta' to the count of thread state 'vts': the new count */
+/* adds 'delta' to the count 'df' of thread state 'vts': the new count */
 static inline vinfo_t *
-add_to_depth(PsycoObject *po, long delta, vinfo_t *vts)
+add_to_count(PsycoObject *po, vinfo_t *vts, defield_t df, long delta)
 {
     vinfo_t *vdepth, *vnew;
-    vdepth = psyco_get_field(po, vts, TSTATE_depth);
+    vdepth = psyco_get_field(po, vts, df);
     if (vdepth == NULL)
         return NULL;
     vnew = integer_add_i(po, vdepth, delta, true);
     vinfo_decref(vdepth, po);
     if (vnew == NULL)
         return NULL;
-    if (psyco_put_field(po, vts, TSTATE_depth, vnew))
+    if (psyco_put_field(po, vts, df, vnew))
         return vnew;
     vinfo_decref(vnew, po);
     return NULL;
 }
 
-/* false with an exception set in 'po' */
+/* adds 'delta' to the Python count of thread state 'vts': the new count */
+static inline vinfo_t *
+add_to_depth(PsycoObject *po, long delta, vinfo_t *vts)
+{
+    return add_to_count(po, vts, TSTATE_depth, delta);
+}
+
+/* enter_recursive_call, whose count's rare path calls 'check' */
 static inline bool
-enter_recursive_call(PsycoObject *po, vinfo_t *vts)
+enter_recursive_call_checked_by(PsycoObject *po, vinfo_t *vts, void *check)
 {
     condition_code_t cc = CC_ERROR;
     vinfo_t *vdepth = add_to_depth(po, LE_RECURSION_STEP, vts);
@@ -332,13 +339,25 @@ enter_recursive_call(PsycoObject *po, vinfo_t *vts)
     if (runtime_condition_f(po, cc))
 #if LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING || \
     LE_HAS_PY_RECURSION_REMAINING
-        return psyco_generic_call(po, cimpl_check_recursive_call,
-                                  CfCommonIntZeroOk, "") != NULL;
+        return psyco_generic_call(po, check, CfCommonIntZeroOk, "") != NULL;
 #else
-        return psyco_generic_call(po, _Py_CheckRecursiveCall,
-                                  CfCommonIntZeroOk, "l", (long)"") != NULL;
+        return psyco_generic_call(po, check, CfCommonIntZeroOk, "l",
+                                  (long)"") != NULL;
 #endif
     return true;
+}
+
+/* false with an exception set in 'po' */
+static inline bool
+enter_recursive_call(PsycoObject *po, vinfo_t *vts)
+{
+#if LE_HAS_INTERP_RECURSION_LIMIT || LE_HAS_RECURSION_REMAINING || \
+    LE_HAS_PY_RECURSION_REMAINING
+    return enter_recursive_call_checked_by(po, vts,
+                                           cimpl_check_recursive_call);
+#else
+    return enter_recursive_call_checked_by(po, vts, _Py_CheckRecursiveCall);
+#endif
 }
 
 #if LE_HAS_RECURSION_REMAINING || LE_HAS_PY_RECURSION_REMAINING
@@ -364,6 +383,143 @@ enter_recursive_call_or_not(PsycoObject *po, vinfo_t *vts)
         return 0;
     }
     return 1;
+}
+#endif
+
+#if LE_HAS_C_RECURSION_REMAINING || LE_HAS_C_STACK_SOFT_LIMIT
+/* Where compiled code runs a frame that CPython runs from C (a generator
+   consumed by sum() or stepped by next()), it also takes ceval's entry's
+   C check, which a direct call (Python to Python, no C stack in CPython)
+   doesn't. Inline: the C count less the units ceval's entry takes, below
+   0, or the stack pointer at or below the thread's soft limit, tests
+   whether the check could fail; only then is it made in C, by
+   le_recursion_enter's own C part. */
+#define LE_C_RECURSION_CHECKED 1
+#if LE_HAS_C_RECURSION_REMAINING
+#define LE_C_RECURSION_UNITS 2
+#define TSTATE_c_count \
+    FMUT(DEF_FIELD(PyThreadState, int, c_recursion_remaining, NO_PREV_FIELD))
+#endif
+
+/* the C part of le_recursion_enter, after compiled code took the units */
+static int
+cimpl_c_recursion_enter(void)
+{
+    PyThreadState *ts = PyThreadState_GET();
+#if LE_HAS_C_RECURSION_REMAINING
+    ts->c_recursion_remaining += LE_C_RECURSION_UNITS;
+#endif
+    LE_C_RECURSION_TAKE(ts);
+    if (LE_C_RECURSION_ENTER(ts)) {
+        LE_C_RECURSION_GIVE(ts);
+        return -1;
+    }
+    return 0;
+}
+
+/* cimpl_check_recursive_call after the C part, which it gives back when it
+   raises, as le_recursion_enter */
+static int
+cimpl_check_recursive_call_after_c(void)
+{
+    PyThreadState *ts;
+    if (!cimpl_check_recursive_call())
+        return 0;
+    ts = PyThreadState_GET();
+    LE_C_RECURSION_LEAVE(ts);
+    LE_C_RECURSION_GIVE(ts);
+    return -1;
+}
+
+/* takes the C units of thread state 'vts' (inline); the condition under
+   which the C check could fail */
+static inline condition_code_t
+c_recursion_low(PsycoObject *po, vinfo_t *vts)
+{
+    condition_code_t cc;
+#if LE_HAS_C_RECURSION_REMAINING
+    vinfo_t *vcount =
+        add_to_count(po, vts, TSTATE_c_count, -LE_C_RECURSION_UNITS);
+    if (vcount == NULL)
+        return CC_ERROR;
+    cc = integer_cmp_i(po, vcount, 0, Py_LT);
+    vinfo_decref(vcount, po);
+#else
+    vinfo_t *vlimit, *vsp;
+    vlimit = psyco_get_field_offset(po, vts, FMUT(DEF_ARRAY(long, 0)),
+                                    le_c_stack_soft_limit_at);
+    if (vlimit == NULL)
+        return CC_ERROR;
+    vsp = psyco_stack_pointer(po);
+    if (vsp == NULL) {
+        vinfo_decref(vlimit, po);
+        return CC_ERROR;
+    }
+    cc = integer_cmp(po, vsp, vlimit, Py_LE | COMPARE_UNSIGNED);
+    vinfo_decref(vsp, po);
+    vinfo_decref(vlimit, po);
+#endif
+    return cc;
+}
+
+/* gives back the C units of thread state 'vts' */
+static inline bool
+c_recursion_give(PsycoObject *po, vinfo_t *vts)
+{
+#if LE_HAS_C_RECURSION_REMAINING
+    vinfo_t *vcount =
+        add_to_count(po, vts, TSTATE_c_count, LE_C_RECURSION_UNITS);
+    if (vcount == NULL)
+        return false;
+    vinfo_decref(vcount, po);
+#else
+    (void)po;
+    (void)vts;
+#endif
+    return true;
+}
+#else
+#define LE_C_RECURSION_CHECKED 0
+#endif
+
+/* enter_recursive_call where CPython enters the frame from C */
+static inline bool
+enter_c_recursive_call(PsycoObject *po, vinfo_t *vts)
+{
+#if LE_C_RECURSION_CHECKED
+    condition_code_t cc = c_recursion_low(po, vts);
+    if (cc == CC_ERROR)
+        return false;
+    if (runtime_condition_f(po, cc) &&
+        psyco_generic_call(po, cimpl_c_recursion_enter, CfCommonIntZeroOk,
+                           "") == NULL)
+        return false;
+    return enter_recursive_call_checked_by(po, vts,
+                                           cimpl_check_recursive_call_after_c);
+#else
+    return enter_recursive_call(po, vts);
+#endif
+}
+
+#if LE_HAS_RECURSION_REMAINING || LE_HAS_PY_RECURSION_REMAINING
+/* enter_recursive_call_or_not where CPython enters the frame from C */
+static inline int
+enter_c_recursive_call_or_not(PsycoObject *po, vinfo_t *vts)
+{
+#if LE_C_RECURSION_CHECKED
+    int r;
+    condition_code_t cc = c_recursion_low(po, vts);
+    if (cc == CC_ERROR)
+        return -1;
+    if (runtime_condition_f(po, cc))
+        return c_recursion_give(po, vts) ? 0 : -1;
+    r = enter_recursive_call_or_not(po, vts);
+    if (r == 0 && !c_recursion_give(po, vts))
+        return -1;
+    return r;
+#else
+    return enter_recursive_call_or_not(po, vts);
+#endif
 }
 #endif
 
@@ -397,5 +553,19 @@ leave_recursive_call(PsycoObject *po, vinfo_t *vts)
                                   "") != NULL;
 #endif
     return true;
+}
+
+/* leave_recursive_call where CPython entered the frame from C; consumes
+   'vts' */
+static inline bool
+leave_c_recursive_call(PsycoObject *po, vinfo_t *vts)
+{
+#if LE_C_RECURSION_CHECKED
+    if (!c_recursion_give(po, vts)) {
+        vinfo_decref(vts, po);
+        return false;
+    }
+#endif
+    return leave_recursive_call(po, vts);
 }
 #endif /* LE_MECHANISMS_RECURSION_H */
