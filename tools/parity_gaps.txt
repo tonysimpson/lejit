@@ -14,6 +14,7 @@ genexpr into any() | 3.14+ | CPython turns any(genexpr) into a loop over a real 
 genexpr into list() | 3.15+ | as any(): CPython makes list(genexpr) a loop over a real generator
 coroutine awaited at once | 3.11+ | every coroutine is made by ceval's RETURN_GENERATOR; 3.7-3.10 start one with no object
 coroutine that pauses | 3.7-3.10 | once a coroutine pauses, the rest of its life runs in ceval; 3.11+ resume it compiled
+coroutine that pauses | 3.11+ | the types.coroutine generator it awaits is made by ceval's RETURN_GENERATOR, as every generator (once each; it then runs compiled)
 async with, left by return | 3.7 | 3.7's finally blocks use a pseudo-exception no ceval frame can hold, so the coroutine isn't compiled
 async with, left by return | 3.11+ | the coroutines are made by ceval's RETURN_GENERATOR
 async for | 3.11+ | __anext__'s coroutines are made by ceval's RETURN_GENERATOR (async for itself is in ceval on every version)
