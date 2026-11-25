@@ -126,10 +126,16 @@ typedef struct {
                              what may be a frame-locals proxy */
     char resume_pending;  /* test for tracing at the next instruction: after
                              an inlined frame's return, or at a handler */
-    char go_interpreted;  /* the frame goes on in ceval from the next
-                             instruction: a type-promotion site's
-                             megamorphic version (Psyco_NeedType) */
-    int call_site;        /* 1 + the CALL_* instruction being compiled, or 0 */
+    char inline_ran_python; /* the inlined frame made a call that may run
+                               Python, which may have written its caller's
+                               locals through a proxy */
+    char inline_left;       /* an inlined frame that ran Python returned: the
+                               instruction that called it lets its kept frame
+                               go (pycompiler.c:let_inline_frame_go) */
+    char go_interpreted;    /* the frame goes on in ceval from the next
+                               instruction: a type-promotion site's
+                               megamorphic version (Psyco_NeedType) */
+    int call_site; /* 1 + the CALL_* instruction being compiled, or 0 */
     struct locals_map_s *pending_map; /* noted for the C call being emitted,
                                          which gives it its return address */
     PyObject *changing_globals; /* names of globals detected to change: saved

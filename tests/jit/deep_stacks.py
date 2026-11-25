@@ -35,12 +35,69 @@ def deep_keyword_calls():
     return [kdown(3 * 10 ** 5), adown(3 * 10 ** 5, 1)]
 
 
+# calls compiled code makes through CPython, which CPython makes with no
+# C stack
+def vkdown(n, **kw):
+    return vkdown(n - 1, **kw) + 1 if n else 0
+
+
+def vadown(n, *a):
+    return vadown(n - 1, *a) + 1 if n else 0
+
+
+class Deep:
+    def __init__(self, n):
+        self.n = n
+
+    @property
+    def down(self):
+        if not self.n:
+            return 0
+        self.n -= 1
+        return self.down + 1
+
+
+class DeepGetattribute:
+    def __init__(self, n):
+        self.n = n
+
+    def __getattribute__(self, name):
+        n = object.__getattribute__(self, 'n')
+        if not n:
+            return 0
+        self.n = n - 1
+        return self.down + 1
+
+
+def deep_calls_through_cpython():
+    sys.setrecursionlimit(10 ** 6 + 100)
+    return [vkdown(3 * 10 ** 5, k=1), vadown(3 * 10 ** 5, 1),
+            Deep(3 * 10 ** 5).down, DeepGetattribute(3 * 10 ** 5).down]
+
+
+# a bound method's f(*a, **kw) is a call through C in CPython too
+class Bound:
+    def down(self, n, **kw):
+        return self.down(n - 1, **kw) + 1 if n else 0
+
+
+def through_c_still_limited():
+    sys.setrecursionlimit(10 ** 6 + 100)
+    try:
+        return Bound().down(3 * 10 ** 5, k=1)
+    except RecursionError:
+        return 'RecursionError'
+
+
 def limit_raised_then_reached():
     sys.setrecursionlimit(3000)
-    try:
-        down(5000)
-    except RecursionError as e:
-        return [str(e), down(2000)]
+    out = []
+    for f in down, vkdown, vadown:
+        try:
+            f(5000)
+        except RecursionError as e:
+            out += [str(e), f(2000)]
+    return out
 
 
 def nest(k):
@@ -117,7 +174,8 @@ def caller_locals_across_segments():
     return in_threads(run, 1)
 
 
-CASES = [deep_returns, deep_keyword_calls, limit_raised_then_reached, generator_for_loops,
+CASES = [deep_returns, deep_keyword_calls, deep_calls_through_cpython,
+         through_c_still_limited, limit_raised_then_reached, generator_for_loops,
          small_thread_stacks, traceback_from_deep,
          caller_locals_across_segments]
 

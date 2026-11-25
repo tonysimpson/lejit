@@ -51,6 +51,8 @@ EXTERNFN int
 psyco_is_startable_coroutine(PyCodeObject *co);
 EXTERNFN int
 psyco_in_handler(PyCodeObject *co, int pos);
+EXTERNFN int
+psyco_handled_saved(PyCodeObject *co, int at);
 /* the index among the free variables of '__class__', or -1 */
 EXTERNFN int
 psyco_class_cell(PyCodeObject *co);

@@ -533,6 +533,92 @@ def BREAKER_SKIPPED_AFTER_LOAD_SPECIAL():
     return bool(exited), '__exit__ saw %r' % exited
 
 
+def _table_entries(code):
+    """code's exception table: [start, end, target, depth << 1 | lasti],
+    in code units"""
+    entries, item, entry = [], 0, []
+    for byte in code.co_exceptiontable:
+        item = item << 6 | byte & 63
+        if not byte & 64:
+            entry.append(item)
+            item = 0
+            if len(entry) == 4:
+                entry[1] += entry[0]
+                entries.append(entry)
+                entry = []
+    return entries
+
+
+def _table(entries):
+    """the exception table of entries, as _table_entries gives them"""
+    out = bytearray()
+    for start, end, target, depth_lasti in entries:
+        for n, item in enumerate((start, end - start, target, depth_lasti)):
+            chunks = []
+            while True:
+                chunks.insert(0, item & 63)
+                item >>= 6
+                if not item:
+                    break
+            for i, chunk in enumerate(chunks):
+                out.append(chunk | (64 if i < len(chunks) - 1 else 0)
+                           | (128 if n == 0 and i == 0 else 0))
+    return bytes(out)
+
+
+@probe
+def BREAKER_AFTER_BACK_JUMP():
+    """a signal handled at a loop's backward jump is caught by an exception
+    table entry for the code unit before the loop head alone (run: a loop
+    whose table is cut to that entry, with another thread sending the
+    signal)"""
+    if not _real_op('JUMP_BACKWARD'):
+        return False, 'no JUMP_BACKWARD'
+    import _thread, signal, threading, time
+
+    class Raised(Exception):
+        pass
+
+    def handler(signum, frame):
+        raise Raised()
+
+    def loop():
+        try:
+            while True:
+                pass
+        except Raised:
+            return 'caught'
+
+    code = loop.__code__
+    jumps = [i for i in dis.get_instructions(code)
+             if i.opname == 'JUMP_BACKWARD']
+    if len(jumps) != 1:
+        raise Unanswered('the loop has %d JUMP_BACKWARD' % len(jumps))
+    head = jumps[0].argval // 2
+    entries = _table_entries(code)
+    body = [e for e in entries if e[0] <= head < e[1]]
+    if len(body) != 1 or head == 0:
+        raise Unanswered('no one exception table entry covers the loop head')
+    handler_at = body[0][2]
+    cut = [[head - 1, head, handler_at, body[0][3]]] + [
+        e for e in entries if e[0] >= handler_at]
+    f = types.FunctionType(code.replace(co_exceptiontable=_table(cut)),
+                           globals(), 'loop', None, loop.__closure__)
+    old = signal.signal(signal.SIGUSR1, handler)
+    sender = threading.Thread(
+        target=lambda: (time.sleep(0.01), _thread.interrupt_main(signal.SIGUSR1)))
+    try:
+        sender.start()
+        try:
+            result = f()
+        except Raised:
+            result = 'raised from the loop'
+    finally:
+        sender.join()
+        signal.signal(signal.SIGUSR1, old)
+    return result == 'caught', result
+
+
 @probe
 def RAISE_CAUSE_CHECKED():
     """raise ... from a class whose call returns None is a TypeError
@@ -1205,6 +1291,24 @@ def GET_ITER_INDEX():
     op = dis.opmap['GET_ITER']
     pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
     return pushes == 2, 'dis: GET_ITER pushes %d' % pushes
+
+
+@probe
+def AWAITABLE_PUSHES_SEND_ARGS():
+    """GET_AWAITABLE pushes three items, the iterator, a NULL and None
+    (dis)"""
+    op = dis.opmap['GET_AWAITABLE']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 3, 'dis: GET_AWAITABLE pushes %d' % pushes
+
+
+@probe
+def ANEXT_PUSHES_SEND_ARGS():
+    """GET_ANEXT pushes four items, the async iterator, the awaitable, a
+    NULL and None (dis)"""
+    op = dis.opmap['GET_ANEXT']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 4, 'dis: GET_ANEXT pushes %d' % pushes
 
 
 @probe

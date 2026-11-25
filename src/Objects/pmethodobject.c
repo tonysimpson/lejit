@@ -17,6 +17,7 @@
 /* le_tstate_load */
 #include "../mechanisms/tstate.h"
 #include "../Python/frames.h"
+#include "../Modules/pcffi.h"
 #include "../Modules/pctypes.h"
 
 static bool
@@ -214,6 +215,11 @@ PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
 
         {
             vinfo_t *r = PsycoCtypes_Byref(po, ml, args);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
+        }
+        if (flags == METH_O || flags == METH_NOARGS || flags == METH_VARARGS) {
+            vinfo_t *r = PsycoCffi_ApiCall(po, ml, vself, args);
             if (r != NULL || PycException_Occurred(po))
                 return r;
         }

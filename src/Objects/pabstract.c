@@ -14,6 +14,7 @@
 #include "pmethodobject.h"
 #include "ptupleobject.h"
 #include "../segments.h"
+#include "../Modules/pcffi.h"
 #include "../Modules/pctypes.h"
 
 /* abstract.c's type_error: msg has one %.200s for the type's name */
@@ -61,10 +62,10 @@ cimpl_vectorcall(PyObject *callable, PyObject *kwnames, PyObject **slots,
 }
 #endif
 
-/* psyco_vectorcall, or with 'on_segment' psyco_vectorcall_on_segment */
+/* psyco_vectorcall, or with 'as_direct' psyco_vectorcall_as_direct */
 static vinfo_t *
 vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self, vinfo_t **args,
-           int nargs, PyObject *kwnames, vinfo_t **kwvalues, bool on_segment)
+           int nargs, PyObject *kwnames, vinfo_t **kwvalues, bool as_direct)
 {
 #if LE_HAS_VECTORCALL
     int i, k = kwnames == NULL ? 0 : (int)PyTuple_GET_SIZE(kwnames);
@@ -84,8 +85,8 @@ vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self, vinfo_t **args,
             vinfo_new(CompileTime_NewSk(sk_new((long)kwnames, SkFlagPyObj)));
     }
 #if LE_STACK_SEGMENTS
-    if (on_segment)
-        r = psyco_generic_call(po, le_call_on_segment, CfCommonNewRefPyObject,
+    if (as_direct)
+        r = psyco_generic_call(po, le_call_as_direct, CfCommonNewRefPyObject,
                                "lvvil", (long)cimpl_vectorcall, callable,
                                vnames, slots, (long)n);
     else
@@ -113,8 +114,8 @@ psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
 #if LE_STACK_SEGMENTS
 DEFINEFN
 vinfo_t *
-psyco_vectorcall_on_segment(PsycoObject *po, vinfo_t *callable, vinfo_t **args,
-                            int nargs, PyObject *kwnames, vinfo_t **kwvalues)
+psyco_vectorcall_as_direct(PsycoObject *po, vinfo_t *callable, vinfo_t **args,
+                           int nargs, PyObject *kwnames, vinfo_t **kwvalues)
 {
     return vectorcall(po, callable, NULL, args, nargs, kwnames, kwvalues,
                       true);
@@ -190,6 +191,11 @@ PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
 #endif
         if (PsycoCtypes_IsFunction(tp, call)) {
             vinfo_t *r = PsycoCtypes_Call(po, tp, callable_object, args, kw);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
+        }
+        if (PsycoCffi_IsCData(tp)) {
+            vinfo_t *r = PsycoCffi_Call(po, callable_object, args, kw);
             if (r != NULL || PycException_Occurred(po))
                 return r;
         }
