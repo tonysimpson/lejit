@@ -18,6 +18,9 @@
 struct mergepoint_s {
     int bytecode_position;
     int blocks; /* blocks compiled from here (vcompiler.c, the cap) */
+    /* and those of frames taken over at a loop head (GENEXPR_OSR), whose
+       states no other block's match: counted apart (vcompiler.c:mp_count) */
+    int osr_blocks;
     global_entries_t entries;
     /* 0, or 1 + the first block serial that makes dead virtual locals
        real here (dispatcher.c:psyco_make_dead_virtuals_real) */

@@ -971,10 +971,22 @@ cs_state(PsycoObject *po)
 #ifndef MP_BLOCK_CAP
 #define MP_BLOCK_CAP 6
 #endif
-static bool
-mp_capped(mergepoint_t *mp)
+/* The count of the blocks at 'mp' of the kind being compiled. A frame
+   taken over at a loop head keeps the generator slots in its state
+   (pycompiler.c:psyco_generator_mode), so its blocks never match the
+   others: each kind is capped on its own, and only the others' cap stops
+   inlining and makes dead virtual locals real. */
+static int *
+mp_count(PsycoObject *po, mergepoint_t *mp)
 {
-    return MP_BLOCK_CAP > 0 && mp != NULL && mp->blocks >= MP_BLOCK_CAP;
+    return psyco_generator_mode(po) == GENEXPR_OSR ? &mp->osr_blocks
+                                                   : &mp->blocks;
+}
+
+static bool
+mp_capped(PsycoObject *po, mergepoint_t *mp)
+{
+    return MP_BLOCK_CAP > 0 && mp != NULL && *mp_count(po, mp) >= MP_BLOCK_CAP;
 }
 
 /* counts what kinds of virtual values the locals of a new block at 'mp'
@@ -1004,6 +1016,14 @@ mp_new_block(PsycoObject *po, mergepoint_t *mp)
 {
     if (mp == NULL)
         return;
+    if (mp_count(po, mp) == &mp->osr_blocks) {
+        mp->osr_blocks++;
+        po->mp_serial = po->respawn_proxy->serial;
+#if LE_CODESTATS
+        cs_state(po);
+#endif
+        return;
+    }
     mp->blocks++;
     /* only up to the cap, so every block that makes values real here sees
        the same counts */
@@ -1099,10 +1119,11 @@ psyco_compile(PsycoObject *po, mergepoint_t *mp, bool continue_compilation)
         /* a second block at this merge point: large int constants become
            run-time objects first. Replay-safe for the same
            reasons as the cap. */
-        if (mp != NULL && mp->blocks > 0 && psyco_unpromote_large_ints(po))
+        if (mp != NULL && *mp_count(po, mp) > 0 &&
+            psyco_unpromote_large_ints(po))
             return psyco_compile(po, mp, continue_compilation);
 
-        if (mp_capped(mp) && psyco_forget_values(po, &mp->entries))
+        if (mp_capped(po, mp) && psyco_forget_values(po, &mp->entries))
             return psyco_compile(po, mp, continue_compilation);
 
         /* a promotion's compare at its own instruction ends here: what is
@@ -1268,10 +1289,10 @@ psyco_compile_code(PsycoObject *po, mergepoint_t *mp)
                                     &po->codelimit);
     po->code = insn_code_label(codebuf->codestart);
 
-    if (compile_now && mp != NULL && mp->blocks > 0 &&
+    if (compile_now && mp != NULL && *mp_count(po, mp) > 0 &&
         psyco_unpromote_large_ints(po))
         code1 = psyco_compile(po, mp, false);
-    else if (compile_now && mp_capped(mp) &&
+    else if (compile_now && mp_capped(po, mp) &&
              psyco_forget_values(po, &mp->entries))
         code1 = psyco_compile(po, mp, false);
     else if (compile_now) {

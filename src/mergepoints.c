@@ -531,6 +531,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
                 return NULL;
             }
             report->mergepoints[mergepoint_index].blocks = 0;
+            report->mergepoints[mergepoint_index].osr_blocks = 0;
             report->mergepoints[mergepoint_index].entries.varies = NULL;
             report->mergepoints[mergepoint_index].real_from = 0;
             report->mergepoints[mergepoint_index].virtual_numbers = 0;
@@ -541,6 +542,7 @@ _find_merge_points(PyCodeObject *co, int *bad)
     report->mergepoints[mergepoint_count].bytecode_position = -1;
     report->mergepoints[mergepoint_count].entries.fatlist = NULL;
     report->mergepoints[mergepoint_count].blocks = 0;
+    report->mergepoints[mergepoint_count].osr_blocks = 0;
     report->mergepoints[mergepoint_count].entries.varies = NULL;
     report->mergepoints[mergepoint_count].real_from = 0;
     report->mergepoints[mergepoint_count].virtual_numbers = 0;
