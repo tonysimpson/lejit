@@ -17,6 +17,7 @@
 /* le_tstate_load */
 #include "../mechanisms/tstate.h"
 #include "../Python/frames.h"
+#include "../Modules/pctypes.h"
 
 static bool
 compute_cfunction(PsycoObject *po, vinfo_t *methobj)
@@ -209,6 +210,12 @@ PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
             if (r != NULL || PycException_Occurred(po))
                 return r;
             goto use_proxy;
+        }
+
+        {
+            vinfo_t *r = PsycoCtypes_Byref(po, ml, args);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
         }
 
         meta = Psyco_Lookup(ml->ml_meth);

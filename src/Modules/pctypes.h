@@ -13,4 +13,10 @@ EXTERNFN vinfo_t *
 PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
                  vinfo_t *vargs, vinfo_t *kw);
 
+/* the call ml(*vargs) of a builtin, if it is ctypes' byref(obj): a
+   virtual result, made only if it escapes; NULL with no exception set
+   where the builtin's own call is to be made */
+EXTERNFN vinfo_t *
+PsycoCtypes_Byref(PsycoObject *po, PyMethodDef *ml, vinfo_t *vargs);
+
 #endif /* _PSY_CTYPES_H */
