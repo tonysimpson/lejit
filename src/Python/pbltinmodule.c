@@ -1389,8 +1389,7 @@ ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg, vinfo_t *vkw)
     /* a class known now (a cached global, a class attribute): its code
        already holds it */
     if (m != 0 && PyType_Check(t) &&
-        (((PyTypeObject *)t)->tp_flags & Py_TPFLAGS_HEAPTYPE) &&
-        psyco_knowntobe(vkw, 0))
+        (((PyTypeObject *)t)->tp_flags & Py_TPFLAGS_HEAPTYPE))
         return psyco_heap_type_call(po, (PyTypeObject *)t, vtype, varg, vkw);
     if (m == 0 || !psyco_knowntobe(vkw, 0) || PsycoTuple_Load(varg) != 1 ||
         (t != (PyObject *)&PyType_Type && t != (PyObject *)&PyLong_Type &&
