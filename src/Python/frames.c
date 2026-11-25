@@ -2940,7 +2940,7 @@ coros_exc_lend(PyObject *args, int on)
 #endif
             continue;
         }
-        lasti = PyObject_GetAttrString((PyObject *)acts[k].frame, "f_lasti");
+        lasti = frame_get_lasti(acts[k].frame, NULL);
         pos = lasti == NULL ? -1 : PyLong_AsLong(lasti);
         Py_XDECREF(lasti);
         PyErr_Clear();

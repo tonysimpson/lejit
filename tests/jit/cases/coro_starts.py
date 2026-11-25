@@ -601,8 +601,5 @@ CASES = [
     ('thrown', [(1,)], {}),
     ('collected', [(1,)], {}),
     ('handler_kinds', [(1,)], {}),
-    ('handler_resumed', [(1,)],
-     {'leaks': 'as handled: LeJIT keeps up to about 70 blocks more, '
-               'depending on addresses (none on some builds), levelling off '
-               'over thousands of rounds, with no more objects'}),
+    ('handler_resumed', [(1,)], {}),
 ]
