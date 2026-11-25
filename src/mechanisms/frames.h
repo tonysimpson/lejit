@@ -1213,6 +1213,23 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
    which ceval would show as the first line, and the f_back
    psyco_frame_returned gave it, which ceval would replace with the frame
    it was called from. */
+/* frame 'f', with no frame object, lets go of what it holds but its code,
+   as ceval's _PyFrame_ClearExceptCode does */
+static inline void
+le_frame_clear_except_code(PyThreadState *ts, le_frame_t *f)
+{
+    int k, n = LE_FRAME_CODE(f)->co_nlocalsplus + le_frame_stack_depth(f);
+#if LE_HAS_C_RECURSION_REMAINING
+    ts->c_recursion_remaining--;
+#endif
+    for (k = 0; k < n; k++) Py_XDECREF(le_frame_word_take(f, k));
+    Py_XDECREF(f->f_locals);
+    Py_DECREF(LE_FRAME_FUNCOBJ(f));
+#if LE_HAS_C_RECURSION_REMAINING
+    ts->c_recursion_remaining++;
+#endif
+}
+
 static inline PyObject *
 le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
                 PyObject *done)
@@ -1221,18 +1238,8 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
     _Py_CODEUNIT *at = LE_FRAME_PLACE(f);
     if (fo == NULL && f->owner == FRAME_OWNED_BY_THREAD &&
         (PyObject **)f != &ts->datastack_chunk->data[0]) {
-        PyCodeObject *co = LE_FRAME_CODE(f);
-        int k, n = co->co_nlocalsplus + le_frame_stack_depth(f);
-#if LE_HAS_C_RECURSION_REMAINING
-        ts->c_recursion_remaining--;
-#endif
-        for (k = 0; k < n; k++) Py_XDECREF(le_frame_word_take(f, k));
-        Py_XDECREF(f->f_locals);
-        Py_DECREF(LE_FRAME_FUNCOBJ(f));
-        Py_DECREF(co);
-#if LE_HAS_C_RECURSION_REMAINING
-        ts->c_recursion_remaining++;
-#endif
+        le_frame_clear_except_code(ts, f);
+        Py_DECREF(LE_FRAME_CODE(f));
         ts->datastack_top = (PyObject **)f;
         return result;
     }
@@ -1276,11 +1283,10 @@ le_frame_finish(PyThreadState *ts, le_frame_t *f, PyObject *result,
 /* A generator's frame 'f', run by compiled code (eval_hook.c:LeGen_Run) to
    give 'result', is left as ceval leaves it, which gen_send_ex expects:
    paused at a yield, the thread's exception state is its caller's again
-   and the frame is unlinked; else, ended, ceval clears it as a generator's
-   frame (le_frame_finish). ceval would give a generator's frame the
-   exception it unwinds with a traceback entry, as it does for any frame
-   it has started (_PyFrame_IsIncomplete), so for the unwind the frame
-   isn't the generator's; ceval tells the two apart only by the owner. */
+   and the frame is unlinked; else, ended, it is cleared as ceval clears a
+   generator's frame. Where CPython hides that clear, a frame with a frame
+   object is given to ceval to unwind (le_frame_finish), which clears it
+   as a generator's frame. */
 static inline PyObject *
 le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
                    PyObject *done)
@@ -1299,12 +1305,38 @@ le_gen_frame_leave(PyThreadState *ts, le_frame_t *f, PyObject *result,
 #endif
         return result;
     }
-    f->owner = FRAME_OWNED_BY_FRAME_OBJECT;
+#if LE_HAS_FRAME_CLEAR_AND_POP_LINKABLE
     result = le_frame_finish(ts, f, result, done);
-    f->owner = FRAME_OWNED_BY_GENERATOR;
+#else
+    if (f->frame_obj == NULL) {
+        /* as ceval's clear_gen_frame does */
+        gen->gi_frame_state = FRAME_CLEARED;
+        ts->exc_info = gen->gi_exc_state.previous_item;
+        gen->gi_exc_state.previous_item = NULL;
+        le_frame_clear_except_code(ts, f);
+        f->previous = NULL;
+    }
+    else {
+        /* ceval unwinds it with 'done' raised in place of any exception
+           of the generator's, which already has the frame's traceback
+           entry: ceval gives 'done' one, dropped after */
+        PyObject *raised = result == NULL ? PyErr_GetRaisedException() : NULL;
+        PyObject *ended = le_frame_finish(
+            ts, f, result != NULL ? result : Py_NewRef(Py_None), done);
+        PyException_SetTraceback(done, Py_None);
+        if (result != NULL)
+            result = ended;
+        else if (ended == NULL)
+            Py_XDECREF(raised); /* ceval raised another in its place */
+        else {
+            Py_DECREF(ended);
+            PyErr_SetRaisedException(raised);
+        }
+    }
+#endif
 #if LE_HAS_GENERATOR_RETURN_KIND
-    /* as ceval's clear of a generator's frame says, which a frame owned
-       by its object doesn't get */
+    /* as ceval's clear of a generator's frame says, set again after
+       anything le_frame_finish ran since */
     ((_PyThreadStateImpl *)ts)->generator_return_kind = GENERATOR_RETURN;
 #endif
     return result;
