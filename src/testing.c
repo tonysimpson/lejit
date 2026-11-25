@@ -325,7 +325,6 @@ le_osr_arm_py(PyObject *self, PyObject *args)
     r = le_osr_arm((PyCodeObject *)co, k);
     if (r < 0)
         return NULL;
-    le_code_extra_get((PyCodeObject *)co)->osr_held = r > 0 && k > 0;
     return PyBool_FromLong(r);
 }
 

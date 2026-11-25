@@ -289,17 +289,6 @@ SKIPPED = {
         'test.test_epoll.TestEPoll.test_unregister_closed',
 }
 
-# Without sys.monitoring, LeJIT counts a cold frame's backward jumps with a
-# trace function; with one set, ceval makes a bound method for each call of
-# a C method descriptor (ceval.c:trace_call_function), between evaluating
-# the arguments and the call, so a collection can run __del__ there, as
-# plain CPython does under sys.settrace
-if not hasattr(sys, 'monitoring'):
-    SKIPPED['a trace function moves where collections run: ceval makes a '
-            'bound method for each C method call while one is set, plain '
-            'CPython under sys.settrace too'] = \
-        'test.test_queue.*SimpleQueueTest.test_reentrancy'
-
 # Modules that never run at the same time as each other: test_perf_profiler
 # deletes every /tmp/perf-*.map it didn't see at setUp, and test_perfmaps
 # reads the one it writes.

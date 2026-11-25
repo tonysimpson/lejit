@@ -16,7 +16,6 @@
    exposed; only where that fails does it make the exact test
    (psyfunc.c:tracing_on). Where it passes, le_code_tools_on tests the code's
    own tools. Included after vcompiler.h and codegen.h. */
-#include "osr_tool.h"
 extern int
 le_monitoring_on(PyThreadState *ts);
 extern int
@@ -107,14 +106,7 @@ le_code_tools_on(PsycoObject *po, PyCodeObject *co)
     vany = integer_or(po, va, vb);
     vinfo_decref(va, po);
     vinfo_decref(vb, po);
-    if (vany == NULL)
-        return -1;
-    /* but for LeJIT's own counting (osr.c) */
-    vk = vinfo_new(CompileTime_New(~(long)LE_OSR_TOOL_BITS));
-    va = integer_and(po, vany, vk);
-    vinfo_decref(vk, po);
-    vinfo_decref(vany, po);
-    return runtime_NON_NULL_f(po, va);
+    return runtime_NON_NULL_f(po, vany);
 }
 
 static inline condition_code_t
@@ -139,16 +131,11 @@ le_tracing_test(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
    compiled code on the thread state 'vts': a load of the CFrame and a
    compare of an int flag in memory (a byte's is loaded first)
    (psyfunc.c:tracing_on). Included after vcompiler.h and codegen.h. */
-/* LeJIT's own trace function (osr.c), which counts backward jumps: not a
-   tool's, and cleared while compiled code runs (le_osr_hide) */
-extern int
-le_osr_trace(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg);
 static inline int
 le_tracing_now(PyThreadState *ts, PyCodeObject *co)
 {
     (void)co;
-    return ts->cframe->use_tracing != 0 &&
-           (ts->c_tracefunc != le_osr_trace || ts->c_profilefunc != NULL);
+    return ts->cframe->use_tracing != 0;
 }
 
 typedef __typeof__(*((PyThreadState *)0)->cframe) le_cframe_t;
@@ -203,14 +190,11 @@ le_tracing_test(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
    (the eval hook); le_tracing_test emits the same test in compiled code, on
    the thread state 'vts' (psyfunc.c:tracing_on). Included after vcompiler.h
    and codegen.h. */
-extern int
-le_osr_trace(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg);
 static inline int
 le_tracing_now(PyThreadState *ts, PyCodeObject *co)
 {
     (void)co;
-    return ts->use_tracing &&
-           (ts->c_tracefunc != le_osr_trace || ts->c_profilefunc != NULL);
+    return ts->use_tracing;
 }
 
 _Static_assert(sizeof(((PyThreadState *)0)->use_tracing) == 4,

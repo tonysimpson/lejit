@@ -37,7 +37,6 @@
 #endif
 #include "opcode.h"
 #include "../bytecode.h"
-#include "../mechanisms/osr_tool.h"
 
 #if LE_HAS_CTYPES_CALL_AUDITED
 /* the two words PySys_Audit's should_audit (Python/sysmodule.c) tests
@@ -281,8 +280,7 @@ le_code_monitored(PyCodeObject *co)
     t = m->local_monitors.tools;
     memcpy(&a, t, 8);
     memcpy(&b, t + sizeof(m->local_monitors.tools) - 8, 8);
-    /* but for LeJIT's own counting (osr.c) */
-    return ((a | b) & ~LE_OSR_TOOL_BITS) != 0;
+    return (a | b) != 0;
 }
 
 #if ALL_CHECKS

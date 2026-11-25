@@ -1064,11 +1064,9 @@ typedef struct le_code_extra_s {
                                   (eval_hook.c:le_code_to_run) */
     signed char has_loop;      /* 1 if it has a backward jump, -1 if not, 0
                                   not known yet */
-    bool osr_held;             /* counted for a test (testing.c:_osr_arm),
-                                  in ceval however hot until taken over */
     unsigned char *loop_heads; /* a bit per code unit, set at each
                                   backward jump's target, or NULL
-                                  (osr.c:loop_heads_make) */
+                                  (osr.c:le_osr_loop_head) */
 } le_code_extra_t;
 #if LE_RESUMES_GENERATORS_DIRECTLY
 /* A resumable generator's compiled entries as compiled code that steps it
