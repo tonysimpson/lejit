@@ -1891,7 +1891,7 @@ cimpl_build_parts(long tags, long a0, long a1, long a2, long a3, long a4,
         if (tag[i] == PART_WORD) {
             lens[i] = word_digits(digits[i] + sizeof(digits[i]), a[i]);
             sz += lens[i];
-            maxchar = Py_MAX(maxchar, 127);
+            maxchar = Py_MAX(maxchar, (Py_UCS4)127);
             continue;
         }
         s = (PyObject *)a[i];
