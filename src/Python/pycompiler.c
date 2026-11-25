@@ -61,6 +61,7 @@
 #include "../Objects/ptupleobject.h"
 #include "../Objects/psliceobject.h"
 #include "../Objects/punicodeobject.h"
+#include "../segments.h"
 
 #include "pycinternal.h"
 #include <ipyencoding.h>
@@ -4249,6 +4250,24 @@ error:
     return NULL;
 }
 
+#if LE_STACK_SEGMENTS
+/* cimpl_call_function_ex, as a direct call where CPython pushes the
+   function's frame itself (segments.c:le_call_as_direct) */
+static PyObject *
+cimpl_call_function_ex_maybe_direct(PyObject *func, PyObject *callargs,
+                                    PyObject *kwargs)
+{
+    if (Py_TYPE(func) == &PyFunction_Type &&
+        ((PyFunctionObject *)func)->vectorcall == le_usual_vectorcall)
+        return (PyObject *)le_call_as_direct(cimpl_call_function_ex,
+                                             (long)func, (long)callargs,
+                                             (long)kwargs, 0);
+    return cimpl_call_function_ex(func, callargs, kwargs);
+}
+#else
+#define cimpl_call_function_ex_maybe_direct cimpl_call_function_ex
+#endif
+
 #if LE_HAS_CMP_OUTCOME
 static vinfo_t *
 cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
@@ -4381,9 +4400,9 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
         result = PsycoObject_Call(po, func, callargs, kwargs);
         goto done;
     }
-    result =
-        psyco_generic_call(po, cimpl_call_function_ex, CfCommonNewRefPyObject,
-                           "vvv", func, callargs, kwargs);
+    result = psyco_generic_call(po, cimpl_call_function_ex_maybe_direct,
+                                CfCommonNewRefPyObject, "vvv", func, callargs,
+                                kwargs);
 done:
     vinfo_xdecref(zero, po);
     return result;

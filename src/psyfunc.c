@@ -1106,19 +1106,19 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     stack_frame_info_t *finfo;
     int tuple_size, argcount, defcount = -2;
     int nfrees;
-    bool inlining, generator, on_segment = false;
+    bool inlining, generator;
     vinfo_t *vbuiltins;
     vinfo_t **frees = NULL;
     vinfo_t *freebuf[MAX_CALL_FREES];
     struct fncall_arg_s fncall;
 
-    if (--recursion < 0)
-        goto fail_to_default;
     /* a generator is run only by a consumer that knows it
        (psyco_call_genexpr): until then it is a pending generator, of a
        function known now or still virtual, whose arguments bind here; a
        coroutine too, where it is awaited at once (psyco_coro_start) */
     generator = (co->co_flags & (CO_GENERATOR | CO_COROUTINE)) != 0;
+    if (--recursion < 0)
+        goto fail_to_default;
     if (generator &&
         (vfunc == NULL || is_runtime(vfunc->source) ||
          !(psyco_is_fusable_generator(co) || awaited_at_once(po, co))))
@@ -1261,8 +1261,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
 #if LE_STACK_SEGMENTS
         /* with the stack low, the real call instead, on a segment */
         if (!refused && entered && !inlining)
-            refused = on_segment =
-                runtime_condition_f(po, psyco_stack_low(po));
+            refused = runtime_condition_f(po, psyco_stack_low(po));
 #endif
         /* count the call's depth, as ceval does on entering a frame, so that
            deep recursion raises RecursionError instead of overflowing the C
@@ -1315,8 +1314,8 @@ fail_to_default:
     /* call the function object itself: rebuilding the call from its code,
        globals and defaults, as upstream's cimpl_call_pyfunc did, would lose
        its name and qualname (generators take co_name), closure and
-       keyword-only defaults */
-    return PsycoFunction_RealCall(po, vfunc, arg_tuple, kw, on_segment);
+       keyword-only defaults. Only a call that runs the body can recurse. */
+    return PsycoFunction_RealCall(po, vfunc, arg_tuple, kw, !generator);
 
 pyerr:
     psyco_virtualize_exception(po);
@@ -1358,7 +1357,7 @@ psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     return result;
 
 fallback:
-    return PsycoFunction_RealCall(po, vfunc, arg_tuple, NULL, false);
+    return PsycoFunction_RealCall(po, vfunc, arg_tuple, NULL, true);
 }
 
 /* the code of a pending generator */
@@ -1670,7 +1669,7 @@ gen_step_tests(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
 }
 
 #if LE_STACK_SEGMENTS
-/* le_iter_send, its result widened for le_call_on_segment */
+/* le_iter_send, its result widened for le_call_as_direct */
 static long
 iter_send_long(PyObject *iter, PyObject *v, PyObject *out[])
 {
@@ -1705,7 +1704,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     stack_frame_info_t *finfo;
     Source sources[2];
     int r;
-    bool on_segment = false;
+    bool as_direct = false;
     if (!is_runtime(vgen->source))
         goto generic;
     /* the value sent is made real before anything is changed */
@@ -1743,7 +1742,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         runtime_condition_f(po, psyco_stack_low(po))) {
         vinfo_decref(vts, po);
         vinfo_xdecref(ventry, po);
-        on_segment = true;
+        as_direct = true;
         goto generic;
     }
 #endif
@@ -1879,12 +1878,12 @@ error_nov:
 
 generic:
 #if LE_STACK_SEGMENTS
-    if (on_segment && out != NULL)
-        return psyco_generic_call(po, le_call_on_segment,
+    if (as_direct && out != NULL)
+        return psyco_generic_call(po, le_call_as_direct,
                                   CfReturnTypeInt | CfPyErrIfNeg, "lvvA",
                                   (long)iter_send_long, vgen, varg, out);
-    if (on_segment)
-        return psyco_generic_call(po, le_call_on_segment, CfCommonIterNext,
+    if (as_direct)
+        return psyco_generic_call(po, le_call_as_direct, CfCommonIterNext,
                                   "lv", (long)le_gen_iternext, vgen);
 #endif
     if (out != NULL)
