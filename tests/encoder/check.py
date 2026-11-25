@@ -5,6 +5,7 @@ by assembling both with GNU as and comparing objdump's disassembly:
     /* @asm: mov {r}, qword ptr [{rm}{o}] */
 
 Placeholders are {name} or {name:kind}: registers (r, rm, base, index...),
+XMM registers (x, x1, x2),
 ':d' 32-bit, ':b' 8-bit, offsets ':d8' ':d32', immediates ':i8' ':i16'
 ':i32' ':i64' ':u16' ':sh', cc (condition code), scale.
 
@@ -33,8 +34,10 @@ REG8 = ['al', 'cl', 'dl', 'bl', 'spl', 'bpl', 'sil', 'dil'] + ['r%db' % i for i 
 CC = ['o', 'no', 'b', 'ae', 'e', 'ne', 'be', 'a', 's', 'ns', 'p', 'np', 'l', 'ge', 'le', 'g']
 
 REG_PARAMS = {'r', 'rm', 'rg', 'rg1', 'rg2', 'r1', 'r2', 'base'}
+XMM_PARAMS = {'x', 'x1', 'x2'}
 DOMAINS = {
     'reg': list(range(16)),
+    'xmm': list(range(16)),
     'index': [i for i in range(16) if i != 4],
     'off': [0, 8, -8, 127, -128, 128, -129, 0x12345, -0x12345],
     'd8': [0, 8, -8, 127, -128],
@@ -84,6 +87,8 @@ def domain_for(param, kind):
         return 'index'
     if param in REG_PARAMS:
         return 'reg'
+    if param in XMM_PARAMS:
+        return 'xmm'
     if param == 'cc':
         return 'cc'
     if param == 'scale':
@@ -101,6 +106,8 @@ def render(intent, values):
         v = values[name]
         if name in REG_PARAMS or name == 'index':
             return {'b': REG8, 'd': REG32}.get(kind, REG64)[v]
+        if name in XMM_PARAMS:
+            return 'xmm%d' % v
         if name == 'cc':
             return CC[v]
         if name in ('o', 'offset'):
@@ -162,7 +169,7 @@ def build_emitted(case_list, workdir):
                 if i > p0:
                     src.append('}')
                 src.append('void f%d(void) {' % (i // CHUNK))
-            args = ', '.join(c_literal(v) if p not in REG_PARAMS | {'index'} else str(v)
+            args = ', '.join(c_literal(v) if p not in REG_PARAMS | XMM_PARAMS | {'index'} else str(v)
                              for p, v in zip(params, combo))
             src.append('  printf("%%d %%ld\\n", %d, (long)(code - buf)); { %s(%s); }' % (i, name, args))
         src.append('}')
