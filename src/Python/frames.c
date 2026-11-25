@@ -1100,9 +1100,20 @@ le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func)
     int flags = ((PyCodeObject *)func->func_code)->co_flags;
     PyObject *gen;
 #if LE_HAS_INTERPRETER_FRAME
-    le_frame_t *own = le_frame_of(f);
+    /* what the constructor checks: f->f_frame owned by f and not yet
+       linked to it, and the frame it copies (f's own) linked to f; it reads
+       f->f_frame only for the code, before pointing it at the copy. A
+       frame compiled code runs is marked as the thread's
+       (le_pyframe_set_executing): the coroutine's frame is marked so
+       instead (coro_set_running). */
+    le_frame_t *own = le_frame_of(f), unlinked;
     PyFrameObject *own_obj = own->frame_obj;
+    char own_owner = own->owner;
     extra_assert(le_pyframe_owns(f));
+    own->owner = FRAME_OWNED_BY_FRAME_OBJECT;
+    memcpy(&unlinked, own, offsetof(le_frame_t, localsplus));
+    unlinked.frame_obj = NULL;
+    f->f_frame = &unlinked;
     own->frame_obj = f;
     Py_INCREF(f);
 #endif
@@ -1114,7 +1125,9 @@ le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func)
         gen = PyGen_NewWithQualName(f, func->func_name, func->func_qualname);
 #if LE_HAS_INTERPRETER_FRAME
     if (gen == NULL) {
+        f->f_frame = own;
         own->frame_obj = own_obj;
+        own->owner = own_owner;
         Py_DECREF(f);
     }
     else if (flags & CO_COROUTINE)
