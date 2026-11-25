@@ -1598,6 +1598,16 @@ coro_finish(PyObject *coro)
     Py_DECREF(coro);
 }
 
+/* the bodies ceval goes on with as their coroutines, while it runs them
+   (psyco_resume_run_coro), by the slot of their compiled call: the call's
+   record stays on the stack, and its coroutine is that one */
+struct coro_run_s {
+    stack_frame_info_t **slot;
+    PyObject *coro;
+    struct coro_run_s *next;
+};
+static struct coro_run_s *coro_runs = NULL;
+
 /* The coroutine of the body whose call's record is in 'slot' (its
    record's coro_func set), made as CPython made it at the call, around the
    call's kept frame, and running: the same object each time. Borrowed;
@@ -1610,6 +1620,10 @@ coro_realise(stack_frame_info_t **slot)
     activation_t *a = act_find(psyco_next_stack_frame(slot));
     PyFrameObject *f;
     PyObject *coro;
+    struct coro_run_s *r;
+    for (r = coro_runs; r != NULL; r = r->next)
+        if (r->slot == slot)
+            return r->coro;
     if (a != NULL && a->coro != NULL)
         return a->coro;
     f = kept_frame((long)slot, (PyObject *)rec->co, func->func_globals, -1);
@@ -4329,6 +4343,7 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack, long level,
     PyGenObject *gen;
     activation_t *a;
     int suspended;
+    struct coro_run_s run, **r;
     if (slot != NULL && (a = act_at(slot, le_pyframe_code(f))) != NULL &&
         a->frame == f) {
         coro = a->coro;
@@ -4351,7 +4366,14 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack, long level,
     coro_exc_take(st, level, nstack, &gen->gi_exc_state, ts->exc_info);
     gen->gi_exc_state.previous_item = ts->exc_info;
     ts->exc_info = &gen->gi_exc_state;
+    run.slot = slot;
+    run.coro = coro;
+    run.next = coro_runs;
+    coro_runs = &run;
     result = psyco_resume_run(st, lasti, nstack); /* frees st */
+    /* other threads' runs may have begun and ended meanwhile */
+    for (r = &coro_runs; *r != &run; r = &(*r)->next);
+    *r = run.next;
     /* where ceval unlinks a generator's exception state and frame itself
        as it yields or ends, it has */
     if (gen->gi_exc_state.previous_item != NULL) {
