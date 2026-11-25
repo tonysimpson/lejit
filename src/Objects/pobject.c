@@ -1274,8 +1274,7 @@ cimpl_super_lookup_changed(PyTypeObject *tp, PyTypeObject *cls, PyObject *name,
 DEFINEFN
 int
 PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
-                        vinfo_t *self, PyObject *name, bool method, void *key,
-                        PyObject **f)
+                        vinfo_t *self, PyObject *name, void *key, PyObject **f)
 {
     PyObject *cls, *descr, *kind;
     PyTypeObject *tp;
@@ -1290,11 +1289,8 @@ PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
     r = need_type_mega(po, self, &tp);
     if (r <= 0)
         return r;
-    /* typeobject.c:supercheck's case of an instance, and for a method a
-       type whose method load is the generic one */
-    if ((method && tp->tp_getattro != PyObject_GenericGetAttr) ||
-        PyType_IsSubtype(tp, &PyType_Type) ||
-        !PyType_IsSubtype(tp, (PyTypeObject *)cls))
+    /* typeobject.c:supercheck's case of an instance */
+    if (PyType_IsSubtype(tp, &PyType_Type))
         return 0;
     r = super_lookup(po, tp, (PyTypeObject *)cls, key, name, &descr, &kind);
     if (r < 0)
@@ -1306,7 +1302,13 @@ PsycoObject_SuperMethod(PsycoObject *po, vinfo_t *vsuper, vinfo_t *vclass,
                                   (long)kind) == NULL
                    ? -1
                    : 0;
-    if (descr == NULL || !PyFunction_Check(descr))
+    /* tp's MRO and slots can have changed when a respawn replays this, so
+       they are read only under the guard. For a method load ceval asks
+       for the method form only where tp's tp_getattro is the generic one,
+       but a function called with self or bound to it does the same, so
+       tp_getattro doesn't matter. */
+    if (!PyType_IsSubtype(tp, (PyTypeObject *)cls) || descr == NULL ||
+        !PyFunction_Check(descr))
         return 0;
     psyco_owner_pin(descr); /* the compiled code calls it */
     *f = descr;

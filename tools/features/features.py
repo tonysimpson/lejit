@@ -395,6 +395,25 @@ def audit_hooks(s):
     return _exported(s, 'PySys_Audit')
 
 
+def ctypes_call_audited(s):
+    """a call of a ctypes function raises the audit event
+    ctypes.call_function"""
+    # the body's braces are split by #if branches, so only its start is
+    # read: the audit comes before anything else
+    path = 'Modules/_ctypes/callproc.c'
+    toks = s.tokens(path)
+    if toks is None:
+        raise Unanswered('no %s' % path)
+    for i, t in enumerate(toks[:-1]):
+        if t.text != '_ctypes_callproc' or toks[i + 1].text != '(':
+            continue
+        close = ctokens.match_close(toks, i + 1)
+        if close + 1 < len(toks) and toks[close + 1].text == '{':
+            start = _texts(toks[close + 2:close + 120])
+            return '"ctypes.call_function"' in start, path + ':_ctypes_callproc'
+    raise Unanswered('no _ctypes_callproc in %s' % path)
+
+
 def arg_check_positional(s):
     """Argument Clinic's wrappers check positional counts with
     _PyArg_CheckPositional"""
@@ -1364,6 +1383,7 @@ def _export_detector(function):
 C_API = [
     ('PYDICT_NEWPRESIZED', pydict_newpresized),
     ('AUDIT_HOOKS', audit_hooks),
+    ('CTYPES_CALL_AUDITED', ctypes_call_audited),
     ('ARG_CHECK_POSITIONAL', arg_check_positional),
     ('CHECK_RESULT_TSTATE', check_result_tstate),
     ('OBJECTDICT_SETITEM_LINKABLE', objectdict_setitem_linkable),

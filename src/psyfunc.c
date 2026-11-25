@@ -799,13 +799,17 @@ cannot_block_init(void)
 static int
 tracing_on(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
 {
+#if LE_HAS_MONITORING
+    if (!runtime_condition_f(po, le_tracing_test(po, vts, co)))
+        return le_code_tools_on(po, co);
+#else
     if (!runtime_condition_f(po, le_tracing_test(po, vts, co)))
         return 0;
+#endif
 #if LE_HAS_MONITORING
     {
-        /* the test above is the version's and the code's monitoring
-           data's: the exact one, on its rare path, also brings
-           le_quiet_version up to date */
+        /* the test above is the version's: the exact one, on its rare
+           path, also brings le_quiet_version up to date */
         condition_code_t cc;
         vinfo_t *v = psyco_generic_call(
             po, le_tracing_recheck, CfReturnTypeInt | CfNoBlock | CfNoPython,

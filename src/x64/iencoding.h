@@ -1329,8 +1329,9 @@ bfunction_result(PsycoObject *po, bool ref);
                          rm, offset)                                          \
     do {                                                                      \
         if ((rm & 7) == 4) {                                                  \
+            /* as OFFSET_ENCODING: index RSP without REX.X is none */         \
             SIB_ENCODING2(updatable, pre_rex, rex_w, post_rex, mod, size, r,  \
-                          rm, offset, rm, 0);                                 \
+                          rm, offset, REG_X64_RSP, 0);                        \
         }                                                                     \
         else {                                                                \
             pre_rex;                                                          \
@@ -1342,13 +1343,50 @@ bfunction_result(PsycoObject *po, bool ref);
         }                                                                     \
     } while (0)
 
-#define MOVQ_QR_XMM(r1, r2) \
-    WRITE_5(0x66, REX_64_REG_RM(r2, r1), 0x0F, 0x7E, MODRM_REG_RM(r2, r1))
-#define MOVQ_XMM_QR(r1, r2) \
-    WRITE_5(0x66, REX_64_REG_RM(r1, r2), 0x0F, 0x6E, MODRM_REG_RM(r1, r2))
-#define MOVQ_XMM_O(r1, r2, offset)                                          \
-    OFFSET_ENCODING2(false, WRITE_1(0x66), true, WRITE_2(0x0F, 0x6E), 0, 0, \
-                     r1, r2, offset)
+/* SSE2 scalar double instructions: a mandatory prefix, then REX, then
+   0F and the opcode. x, x1 and x2 are XMM register numbers 0-15; x1 is
+   the destination. None of these changes the flags, except UCOMISD */
+#define SSE_DIRECT(prefix, rex_w, op, r, rm)              \
+    do {                                                  \
+        WRITE_1(prefix);                                  \
+        DIRECT_ENCODING(rex_w, 2, 0x0F, op, 0, 0, r, rm); \
+    } while (0)
+#define SSE_OFFSET(prefix, rex_w, op, r, rm, offset)                         \
+    OFFSET_ENCODING2(false, WRITE_1(prefix), rex_w, WRITE_2(0x0F, op), 0, 0, \
+                     r, rm, offset)
+
+/* @asm: movq {r}, {x} */
+#define MOVQ_QR_XMM(r, x) SSE_DIRECT(0x66, true, 0x7E, x, r)
+/* @asm: movq {x}, {r} */
+#define MOVQ_XMM_QR(x, r) SSE_DIRECT(0x66, true, 0x6E, x, r)
+/* @asm: movq {x}, qword ptr [{rm}{o}] */
+#define MOVQ_XMM_O(x, rm, o) SSE_OFFSET(0x66, true, 0x6E, x, rm, o)
+/* @asm: movsd {x}, qword ptr [{rm}{o}] */
+#define MOVSD_XMM_O(x, rm, o) SSE_OFFSET(0xF2, false, 0x10, x, rm, o)
+/* @asm: movsd qword ptr [{rm}{o}], {x} */
+#define MOVSD_O_XMM(rm, o, x) SSE_OFFSET(0xF2, false, 0x11, x, rm, o)
+/* a whole-register copy: MOVSD between registers keeps x1's high half, so
+   it would wait for x1's last writer */
+/* @asm: movapd {x1}, {x2} */
+#define MOVAPD_XMM_XMM(x1, x2) SSE_DIRECT(0x66, false, 0x28, x1, x2)
+/* @asm: addsd {x1}, {x2} */
+#define ADDSD_XMM_XMM(x1, x2) SSE_DIRECT(0xF2, false, 0x58, x1, x2)
+/* @asm: subsd {x1}, {x2} */
+#define SUBSD_XMM_XMM(x1, x2) SSE_DIRECT(0xF2, false, 0x5C, x1, x2)
+/* @asm: mulsd {x1}, {x2} */
+#define MULSD_XMM_XMM(x1, x2) SSE_DIRECT(0xF2, false, 0x59, x1, x2)
+/* @asm: divsd {x1}, {x2} */
+#define DIVSD_XMM_XMM(x1, x2) SSE_DIRECT(0xF2, false, 0x5E, x1, x2)
+/* sets ZF, PF and CF as an unsigned compare of x1 with x2; all three
+   when either is a NaN. Call NEED_CC first */
+/* @asm: ucomisd {x1}, {x2} */
+#define UCOMISD_XMM_XMM(x1, x2) SSE_DIRECT(0x66, false, 0x2E, x1, x2)
+/* @asm: xorpd {x1}, {x2} */
+#define XORPD_XMM_XMM(x1, x2) SSE_DIRECT(0x66, false, 0x57, x1, x2)
+/* writes only x's low half: zero x first (XORPD) so that it doesn't wait
+   for x's last writer */
+/* @asm: cvtsi2sd {x}, {r} */
+#define CVTSI2SD_XMM_QR(x, r) SSE_DIRECT(0xF2, true, 0x2A, x, r)
 
 /*******************************************************************
  * Call a C function.
@@ -1441,6 +1479,21 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
     do {                                                                 \
         extra_assert(_last_arg_index == 0); /* every argument was set */ \
         CALL_I(immed);                                                   \
+        po->call_end = code;                                             \
+        STACK_CORRECTION(_initial_stack_depth - po->stack_depth);        \
+        po->stack_depth = _initial_stack_depth;                          \
+        (void)_last_arg_index; /* read only by extra_assert */           \
+    } while (0);                                                         \
+    }                                                                    \
+    while (0)
+/* END_CALL_I, or END_CALL_R(r) where immed is NULL */
+#define END_CALL_I_OR_R(immed, r)                                        \
+    do {                                                                 \
+        extra_assert(_last_arg_index == 0); /* every argument was set */ \
+        if ((immed) != NULL)                                             \
+            CALL_I(immed);                                               \
+        else                                                             \
+            CALL_R(r);                                                   \
         po->call_end = code;                                             \
         STACK_CORRECTION(_initial_stack_depth - po->stack_depth);        \
         po->stack_depth = _initial_stack_depth;                          \
@@ -1637,13 +1690,6 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
         DELAY_USE_OF(rg1);       \
         DELAY_USE_OF(rg2);       \
         DELAY_USE_OF(rg1);       \
-    } while (0)
-
-/* the same if the given source is run-time and in a register */
-#define DONT_OVERWRITE_SOURCE(src)          \
-    do {                                    \
-        if (is_runtime_with_reg(src))       \
-            DELAY_USE_OF(RSOURCE_REG(src)); \
     } while (0)
 
 /*****************************************************************/
