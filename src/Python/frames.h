@@ -224,7 +224,6 @@ typedef struct {
 EXTERNFN le_frame_t *
 psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p);
 #endif
-#if LE_RESUMES_COROUTINES
 EXTERNVAR PyObject *psyco_coro_suspended;
 EXTERNFN PyObject *
 psyco_resume_suspend(struct resume_s *st, long at, long nstack,
@@ -236,7 +235,6 @@ psyco_coros_realise(void);
 EXTERNFN PyObject *
 psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack,
                       PyFunctionObject *func);
-#endif
 
 EXTERNFN void
 psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,

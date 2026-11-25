@@ -903,6 +903,28 @@ def c_recursion_remaining(s):
     return _field(s, '_ts', 'c_recursion_remaining')
 
 
+def gen_new_around_frame(s):
+    """PyGen_NewWithQualName, PyCoro_New and PyAsyncGen_New make a
+    generator around a frame object: a header outside internal/ declares
+    each"""
+    where = []
+    for name in ('PyGen_NewWithQualName', 'PyCoro_New', 'PyAsyncGen_New'):
+        has, path = _public(s, name)
+        if not has:
+            return False, path
+        where.append(path)
+    return True, ', '.join(where)
+
+
+def gen_keeps_code(s):
+    """a generator keeps its frame's code once the frame is cleared, for
+    gi_code and its dealloc: a header declares _PyFrame_ClearExceptCode"""
+    for path, toks in s.headers_with('_PyFrame_ClearExceptCode'):
+        if any(t.text == '_PyFrame_ClearExceptCode' for t in toks):
+            return True, '%s:_PyFrame_ClearExceptCode' % path
+    return False, 'every header: _PyFrame_ClearExceptCode'
+
+
 def frame_stackrefs(s):
     """an interpreter frame's words are _PyStackRefs (f_executable,
     f_funcobj, localsplus): a word with its low bit set holds no reference
@@ -1461,6 +1483,16 @@ CE = 'Python/ceval.c'
 
 # C API functions that LeJIT calls where libpython exports them, and
 # replaces where it doesn't
+def running_stack_hidden(s):
+    """ceval marks the frame it runs as holding no words (stacktop -1), so
+    the gc sees none of its locals and stack until it pauses or calls"""
+    for path in ('Python/ceval.c', 'Include/internal/pycore_frame.h'):
+        toks = s.tokens(path)
+        if toks is not None and _has_run(_texts(toks), _c('stacktop = -1')):
+            return True, path
+    return False, 'Python/ceval.c, Include/internal/pycore_frame.h: no stacktop = -1'
+
+
 def _sum_exact_numbers(s):
     """builtin_sum_impl converts ints to doubles (PyLong_AsDouble) and tests
     no item with PyLong_Check, only PyLong_CheckExact"""
@@ -1561,6 +1593,9 @@ BYTECODE = [
                                    lambda s: _case_has(s, 'FOR_ITER', 'JUMPBY(oparg + 1)'))),
     ('GET_ITER_INDEX', D('GET_ITER pushes the iterator then an index or NULL above it, which FOR_ITER reads and POP_ITER pops with it; SEND, END_SEND and CLEANUP_THROW have it between yield from\'s iterator and the value sent, as an await\'s PUSH_NULL leaves it',
                          lambda s: _case_has(s, 'GET_ITER', 'index_or_null'))),
+    ('RUNNING_STACK_HIDDEN', running_stack_hidden),
+    ('TAGGED_LASTI', D('the lasti an exception handler is given, which RERAISE reads, is a tagged int on the frame\'s stack, not an int object',
+                       lambda s: _case_has(s, 'RERAISE', 'PyStackRef_UntagInt', missing=False))),
     ('CALL_EX_KWARGS_SLOT', D('CALL_FUNCTION_EX always has a slot for the keywords dict, NULL where the call has none',
                               lambda s: _case_has(s, 'CALL_FUNCTION_EX', 'kwargs_st = stack_pointer[-1]', missing=False))),
     ('BINARY_OP_SUBSCR', D('a subscript is BINARY_OP with NB_SUBSCR',
@@ -1583,6 +1618,8 @@ FRAMES = [
                                lambda s: _file(s, 'Include/internal/pycore_interpframe.h'))),
     ('FRAME_STACKREFS', frame_stackrefs),
     ('FRAME_INITIALIZE_TSTATE', frame_initialize_tstate),
+    ('GEN_NEW_AROUND_FRAME', gen_new_around_frame),
+    ('GEN_KEEPS_CODE', gen_keeps_code),
     ('GETFRAME_AUDITS_RESULT', D('sys._getframe\'s audit event names the frame it returns, after the walk (none when the stack is too shallow), not the current frame before it',
                                  lambda s: _body_has(s, 'Python/sysmodule.c', 'sys__getframe_impl', '"sys._getframe", "(O)", pyFrame', missing=False))),
 ]
