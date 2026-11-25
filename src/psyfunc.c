@@ -540,21 +540,11 @@ call_with_inline_frame(PsycoObject *po, struct fncall_arg_s *fncall,
     {
         vresult = LOC_INLINING;
         LOC_INLINING = NULL;
-        if (!psyco_catcher_unflush(po)) {
-            vinfo_decref(vresult, po);
-            array_delete(fncall->inputvinfos, po);
-            return NULL;
-        }
     }
     else {
         /* initial case: move the bound locals into an EInline
            pseudo-exception */
-        vinfo_t *v;
-        if (!psyco_catcher_flush(po)) {
-            array_delete(fncall->inputvinfos, po);
-            return NULL;
-        }
-        v = vinfo_new(SOURCE_NOT_IMPORTANT);
+        vinfo_t *v = vinfo_new(SOURCE_NOT_IMPORTANT);
         v->array = array_new(TOTAL_LOC_INLINE + fncall->po_size);
         v->array->items[LOC_INLINE_CO] = vinfo_new(
             CompileTime_New((long)fncall->co)); /* borrowed, as above */
@@ -653,7 +643,11 @@ psyco_restore_inline_po(PsycoObject *po, vinfo_array_t **a)
     /* leaving an inlined frame restores its (never inlining) parent; on
        entry the old locals were already moved out (psyco_save_inline_po) */
     po->pr.is_inlining = false;
-    for (i = oldcount; i--;) vinfo_xdecref(old[i], po);
+    /* in CPython's order, as the end of a called frame (pycompiler.c:
+       exit_function) */
+    for (i = 0; i < oldcount; i++)
+        vinfo_xdecref(
+            old[LE_HAS_FRAME_CLEARED_LAST_FIRST ? oldcount - 1 - i : i], po);
     po->pr.is_inlining = was_inlining;
     PyMem_Free(old);
     return po;
@@ -670,19 +664,42 @@ load_tstate(PsycoObject *po)
     return le_tstate_load(po);
 }
 
-/* Py_LeaveRecursiveCall after a compiled call; entering
-   is mechanisms/recursion.h's enter_recursive_call, or through C
-   enter_c_recursive_call, on a thread state the caller has loaded */
+/* Py_LeaveRecursiveCall after a compiled call, and the inlined frame's
+   level psyco_enter_recursive_call added; 'through_c' as there */
 DEFINEFN
 bool
 psyco_leave_recursive_call(PsycoObject *po, int through_c)
 {
-    vinfo_t *vts = load_tstate(po);
+    vinfo_t *vts = load_tstate(po), *vdepth;
     if (vts == NULL)
         return false;
+    if (po->pr.is_inlining) {
+        vdepth = add_to_depth(po, -LE_RECURSION_STEP, vts);
+        if (vdepth == NULL) {
+            vinfo_decref(vts, po);
+            return false;
+        }
+        vinfo_decref(vdepth, po);
+    }
     if (through_c != LE_C_NONE)
         return leave_c_recursive_call(po, vts, through_c);
     return leave_recursive_call(po, vts);
+}
+
+/* Py_EnterRecursiveCall before a compiled call, on a thread state the
+   caller has loaded. From an inlined frame, for that frame too while the
+   call runs: CPython counted it as it entered, and the test of the call's
+   level stands for its (a call through C from an inlined frame doesn't
+   count the frame). With 'through_c', where CPython enters the frame from
+   C (mechanisms/recursion.h:enter_c_recursive_levels). False with an
+   exception set in 'po'. */
+static bool
+psyco_enter_recursive_call(PsycoObject *po, vinfo_t *vts, int through_c)
+{
+    int levels = po->pr.is_inlining ? 2 : 1;
+    return through_c != LE_C_NONE
+               ? enter_c_recursive_levels(po, vts, levels, through_c)
+               : enter_recursive_levels(po, vts, levels);
 }
 
 /* ceval's test of eval_breaker before an instruction:
@@ -1105,19 +1122,19 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     stack_frame_info_t *finfo;
     int tuple_size, argcount, defcount = -2;
     int nfrees;
-    bool inlining, generator, on_segment = false;
+    bool inlining, generator;
     vinfo_t *vbuiltins;
     vinfo_t **frees = NULL;
     vinfo_t *freebuf[MAX_CALL_FREES];
     struct fncall_arg_s fncall;
 
-    if (--recursion < 0)
-        goto fail_to_default;
     /* a generator is run only by a consumer that knows it
        (psyco_call_genexpr): until then it is a pending generator, of a
        function known now or still virtual, whose arguments bind here; a
        coroutine too, where it is awaited at once (psyco_coro_start) */
     generator = (co->co_flags & (CO_GENERATOR | CO_COROUTINE)) != 0;
+    if (--recursion < 0)
+        goto fail_to_default;
     if (generator && (vfunc == NULL || is_runtime(vfunc->source) ||
                       !(psyco_is_fusable_generator(co) ||
                         awaited_at_once(po, co) || pending_steppable(co))))
@@ -1260,15 +1277,14 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
 #if LE_STACK_SEGMENTS
         /* with the stack low, the real call instead, on a segment */
         if (!refused && entered && !inlining)
-            refused = on_segment =
-                runtime_condition_f(po, psyco_stack_low(po));
+            refused = runtime_condition_f(po, psyco_stack_low(po));
 #endif
         /* count the call's depth, as ceval does on entering a frame, so that
            deep recursion raises RecursionError instead of overflowing the C
            stack; psyco_call_psyco leaves it after the call.
            Emitted before the frame is built, so no argument source moves. */
         if (!refused && entered && !inlining)
-            entered = enter_recursive_call(po, vts);
+            entered = psyco_enter_recursive_call(po, vts, LE_C_NONE);
         vinfo_decref(vts, po);
         if (refused || !entered) {
             array_delete(fncall.inputvinfos, po);
@@ -1314,8 +1330,8 @@ fail_to_default:
     /* call the function object itself: rebuilding the call from its code,
        globals and defaults, as upstream's cimpl_call_pyfunc did, would lose
        its name and qualname (generators take co_name), closure and
-       keyword-only defaults */
-    return PsycoFunction_RealCall(po, vfunc, arg_tuple, kw, on_segment);
+       keyword-only defaults. Only a call that runs the body can recurse. */
+    return PsycoFunction_RealCall(po, vfunc, arg_tuple, kw, !generator);
 
 pyerr:
     psyco_virtualize_exception(po);
@@ -1357,7 +1373,7 @@ psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     return result;
 
 fallback:
-    return PsycoFunction_RealCall(po, vfunc, arg_tuple, NULL, false);
+    return PsycoFunction_RealCall(po, vfunc, arg_tuple, NULL, true);
 }
 
 /* the code of a pending generator */
@@ -1437,9 +1453,7 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
     result = NULL;
     through_c = mode != GENEXPR_DIRECT ? LE_C_CONSUMER : LE_C_NONE;
     vts = load_tstate(po);
-    if (vts != NULL &&
-        (through_c != LE_C_NONE ? enter_c_recursive_call(po, vts, through_c)
-                                : enter_recursive_call(po, vts))) {
+    if (vts != NULL && psyco_enter_recursive_call(po, vts, through_c)) {
         vinfo_decref(vts, po);
         vts = NULL;
         Psyco_ForgetClasses(po);
@@ -1854,7 +1868,7 @@ error:
 }
 
 #if LE_STACK_SEGMENTS
-/* le_iter_send, its result widened for le_call_on_segment */
+/* le_iter_send, its result widened for le_call_as_direct */
 static long
 iter_send_long(PyObject *iter, PyObject *v, PyObject *out[])
 {
@@ -1893,7 +1907,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     Source sources[2];
     bool sends_any;
     int r;
-    bool on_segment = false;
+    bool as_direct = false;
     if (PsycoGenexpr_Check(vgen) || PsycoVgen_Check(vgen)) {
         co = pending_code(vgen);
         /* a generator's body pausing would make one it steps real at
@@ -1952,7 +1966,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         runtime_condition_f(po, psyco_stack_low(po))) {
         vinfo_decref(vts, po);
         vinfo_xdecref(ventry, po);
-        on_segment = true;
+        as_direct = true;
         goto generic;
     }
 #endif
@@ -2094,12 +2108,12 @@ error_nov:
 
 generic:
 #if LE_STACK_SEGMENTS
-    if (on_segment && out != NULL)
-        return psyco_generic_call(po, le_call_on_segment,
+    if (as_direct && out != NULL)
+        return psyco_generic_call(po, le_call_as_direct,
                                   CfReturnTypeInt | CfPyErrIfNeg, "lvvA",
                                   (long)iter_send_long, vgen, varg, out);
-    if (on_segment)
-        return psyco_generic_call(po, le_call_on_segment, CfCommonIterNext,
+    if (as_direct)
+        return psyco_generic_call(po, le_call_as_direct, CfCommonIterNext,
                                   "lv", (long)le_gen_iternext, vgen);
 #endif
     if (out != NULL)

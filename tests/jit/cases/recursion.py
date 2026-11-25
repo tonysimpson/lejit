@@ -1,6 +1,4 @@
-# The recursion depth that compiled calls count inline.
-# Depths differ between CPython and LeJIT (inlined calls aren't counted), so
-# the cases return only what both agree on.
+# The recursion depth that compiled calls count inline, inlined ones too.
 import sys
 import threading
 
@@ -106,6 +104,75 @@ def recursion_through_exceptions():
     return out
 
 
+def base_case():                      # a loop: called, not inlined
+    for _ in ():
+        pass
+    return 0
+
+
+def step(f, n):                       # inlined: a level of its own
+    return f(n - 1) + 1
+
+
+def through_inlined(n):
+    if not n:
+        return base_case()
+    return step(through_inlined, n)
+
+
+def ping(me, other, n):               # each inlined into the other
+    if not n:
+        return other(None, None, -1)
+    if n < 0:
+        return base_case()
+    return other(other, me, n - 1) + 1
+
+
+def pong(me, other, n):
+    if not n:
+        return other(None, None, -1)
+    if n < 0:
+        return base_case()
+    return other(other, me, n - 1) + 1
+
+
+def through_ping(n):
+    return ping(ping, pong, n)
+
+
+def fails(n):                         # inlined, left by an exception
+    raise ValueError(n)
+
+
+def deepest(f):
+    n = 1
+    while True:
+        try:
+            f(n)
+        except RecursionError:
+            return n
+        n += 1
+
+
+# where RecursionError comes is CPython's with an inlined frame at every
+# level that makes a compiled call (one that makes none isn't tested
+# against the limit), and the depth is given back by an inlined frame left
+# by an exception
+def inlined_levels_counted():
+    old = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(150)
+        first = deepest(through_inlined)
+        for i in range(500):
+            try:
+                fails(i)
+            except ValueError:
+                pass
+        return first, deepest(through_inlined), deepest(through_ping)
+    finally:
+        sys.setrecursionlimit(old)
+
+
 # Generators run from C in CPython (by sum(), next(), send()) and run
 # directly by compiled code: each level is a call, then a generator, so
 # only C's own check stops the nesting before the stack runs out (since
@@ -191,5 +258,6 @@ CASES = [
     ('limit_changed_at_run_time', [()], {}),
     ('overflow_handled_twice', [()], {}),
     ('recursion_through_exceptions', [()], {}),
+    ('inlined_levels_counted', [()], {}),
     ('c_stack_limit', [()], {}),
 ]

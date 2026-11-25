@@ -61,6 +61,7 @@
 #include "../Objects/ptupleobject.h"
 #include "../Objects/psliceobject.h"
 #include "../Objects/punicodeobject.h"
+#include "../segments.h"
 
 #include "pycinternal.h"
 #include <ipyencoding.h>
@@ -1734,12 +1735,10 @@ traceback_locals(PsycoObject *po, vinfo_t *tb)
    the entry made for it (frames.c:psyco_frame_catch): a frame reads its
    locals from while the call runs, which stands for the call in its later
    entries too (cimpl_new_frame). So the locals are written when Python
-   reads them, as they are then, not as the exception passes. Where reads
-   can't find them, they are written before the call goes into an inlined
-   frame (psyco_catcher_flush) and taken back as it returns
-   (psyco_catcher_unflush), and once more as it ends, while something
-   besides the word holds the frame (catcher_flush). NULL in an inlined
-   frame, which has no handlers. */
+   reads them, as they are then, not as the exception passes, and once
+   more as the call ends, while something besides the word holds the frame
+   (catcher_flush). NULL in an inlined frame, which has no handlers: its
+   calls map its parent's locals too (codegen.c:psyco_note_call_site). */
 static vinfo_t *
 catcher_word(PsycoObject *po)
 {
@@ -1803,10 +1802,10 @@ cimpl_catcher_locals(PyObject **word, long start, PyObject *v0, PyObject *v1,
 }
 
 /* If the catcher word holds a frame something else holds too, it gets
-   the locals now, and with 'end' is let go after; one nothing else holds
-   is let go. The tests are compiled out of line when first taken. */
+   the locals now, and is let go after; one nothing else holds is let
+   go. The tests are compiled out of line when first taken. */
 static bool
-catcher_flush(PsycoObject *po, bool end)
+catcher_flush(PsycoObject *po)
 {
     vinfo_t *word = catcher_word(po), *now, *shared, *held = NULL;
     int on;
@@ -1839,36 +1838,10 @@ catcher_flush(PsycoObject *po, bool end)
                                CfNoReturnValue | CfNoPython, "v", held);
         vinfo_decref(held, po);
     }
-    if (on && end)
+    if (on)
         on = psyco_generic_call(po, psyco_frame_catcher_end, CfNoReturnValue,
                                 "r", word) != NULL;
     return on;
-}
-
-DEFINEFN
-bool
-psyco_catcher_flush(PsycoObject *po)
-{
-    return catcher_flush(po, false);
-}
-
-/* after the inlined call: the locals catcher_flush wrote for it go again
-   (frames.c:psyco_frame_catcher_unflush). The test is compiled out of line
-   when first taken. */
-DEFINEFN
-bool
-psyco_catcher_unflush(PsycoObject *po)
-{
-    vinfo_t *word = catcher_word(po), *now;
-    int on;
-    if (word == NULL)
-        return true;
-    now = vinfo_new(RunTime_NewStack(getstack(word->source), false, false));
-    on = runtime_NON_NULL_f(po, now);
-    if (on <= 0)
-        return on == 0;
-    return psyco_generic_call(po, psyco_frame_catcher_unflush, CfNoReturnValue,
-                              "r", word) != NULL;
 }
 
 /* Whether the handler at 'handler' drops the exception unseen
@@ -4277,6 +4250,24 @@ error:
     return NULL;
 }
 
+#if LE_STACK_SEGMENTS
+/* cimpl_call_function_ex, as a direct call where CPython pushes the
+   function's frame itself (segments.c:le_call_as_direct) */
+static PyObject *
+cimpl_call_function_ex_maybe_direct(PyObject *func, PyObject *callargs,
+                                    PyObject *kwargs)
+{
+    if (Py_TYPE(func) == &PyFunction_Type &&
+        ((PyFunctionObject *)func)->vectorcall == le_usual_vectorcall)
+        return (PyObject *)le_call_as_direct(cimpl_call_function_ex,
+                                             (long)func, (long)callargs,
+                                             (long)kwargs, 0);
+    return cimpl_call_function_ex(func, callargs, kwargs);
+}
+#else
+#define cimpl_call_function_ex_maybe_direct cimpl_call_function_ex
+#endif
+
 #if LE_HAS_CMP_OUTCOME
 static vinfo_t *
 cmp_outcome(PsycoObject *po, int op, vinfo_t *v, vinfo_t *w)
@@ -4409,9 +4400,9 @@ psyco_ext_do_call_ex(PsycoObject *po, int oparg, vinfo_t **stack_top,
         result = PsycoObject_Call(po, func, callargs, kwargs);
         goto done;
     }
-    result =
-        psyco_generic_call(po, cimpl_call_function_ex, CfCommonNewRefPyObject,
-                           "vvv", func, callargs, kwargs);
+    result = psyco_generic_call(po, cimpl_call_function_ex_maybe_direct,
+                                CfCommonNewRefPyObject, "vvv", func, callargs,
+                                kwargs);
 done:
     vinfo_xdecref(zero, po);
     return result;
@@ -4946,6 +4937,18 @@ cimpl_generator_stop(long coroutine)
     }
 }
 
+#ifdef INTRINSIC_BUILD_FROZENSET
+/* frozenset() of a set display or comprehension: the new set becomes the
+   frozenset, through CPython's own intrinsic, which _PySet_Freeze (not
+   exported) does */
+static PyObject *
+cimpl_build_frozenset(PyObject *set)
+{
+    return _PyIntrinsics_UnaryFunctions[INTRINSIC_BUILD_FROZENSET].func(
+        PyThreadState_GET(), set);
+}
+#endif
+
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
 /* intrinsics.c:stopiteration_error, for a fused generator's code, the
    only generator code compiled (mergepoints.c:_build_merge_points):
@@ -5082,7 +5085,7 @@ exit_function(PsycoObject *po)
     extra_assert(!po->pr.is_inlining);
 
     /* the frame that stood for the call keeps its locals as they end */
-    if (!catcher_flush(po, true))
+    if (!catcher_flush(po))
         return NULL;
 #if LE_RESUMES_ON_FRAME
     if (mode == GENEXPR_RESUMABLE && !gen_locals_end(po, -1, 0))
@@ -5574,6 +5577,28 @@ may_write_locals_proxy(vinfo_t *container)
 #endif
 }
 
+/* the frame object kept for an inlined frame being left, if any, goes
+   (frames.c:psyco_inline_frame_left): 'test' first whether any is kept */
+static bool
+let_inline_frame_go(PsycoObject *po, bool test)
+{
+    vinfo_t *v;
+    if (test) {
+        condition_code_t cc =
+            psyco_int32_nonzero_at(po, &psyco_inline_frames_kept);
+        if (cc == CC_ERROR)
+            return false;
+        if (!runtime_condition_f(po, cc))
+            return true;
+    }
+    v = psyco_generic_call(po, psyco_inline_frame_left,
+                           CfReturnTypeInt | CfNoPython, "");
+    if (v == NULL)
+        return false;
+    vinfo_decref(v, po);
+    return true;
+}
+
 static int
 resume_if_tracing(PsycoObject *po, int next_instr, int *unwound)
 {
@@ -5692,6 +5717,25 @@ resume_state(PsycoObject *po, int nstack)
     return st;
 }
 
+/* where the outermost handler running at 'at', in a coroutine's body,
+   saved the exception handled before it, as a stack position: its
+   EXCEPT_HANDLER block's level, or PUSH_EXC_INFO's place; -1 if no handler
+   runs there (frames.c:coro_exc_take) */
+static long
+handled_level(PsycoObject *po, int at)
+{
+#if LE_HAS_EXCEPTION_TABLE
+    return psyco_handled_saved(po->pr.co, at);
+#else
+    int i, nblocks = po->pr.is_inlining ? 0 : po->pr.iblock;
+    (void)at;
+    for (i = 0; i < nblocks; i++)
+        if (po->pr.blockstack[i].b_type == EXCEPT_HANDLER)
+            return po->pr.blockstack[i].b_level;
+    return -1;
+#endif
+}
+
 /* The rare path itself: ceval runs the frame from 'next_instr' and this
    frame ends with its result. 0, with EReturn or an exception set. */
 static int
@@ -5717,8 +5761,9 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
     /* a coroutine's body started by its await goes on as its coroutine */
     if (psyco_generator_mode(po) == GENEXPR_DIRECT)
         result = psyco_generic_call(
-            po, psyco_resume_run_coro, CfCommonNewRefPyObject, "vllv", st,
+            po, psyco_resume_run_coro, CfCommonNewRefPyObject, "vlllv", st,
             (long)(next_instr - sizeof(_Py_CODEUNIT)), (long)nstack,
+            handled_level(po, next_instr),
             po->vlocals.items[GENEXPR_SLOT_ACC(co)]);
     else
         result = psyco_generic_call(
@@ -7733,7 +7778,7 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
            returns, going to the loop's end, where the iterator is popped
            (by END_SEND where there is one). Where GET_ITER leaves an index
            or NULL, a NULL is between the iterator and the value, as an
-           await's PUSH_NULL leaves it too. */
+           await leaves it too. */
         case SEND: {
             vinfo_array_t *array = array_new(1);
             condition_code_t cc;
@@ -7873,8 +7918,22 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
 
         /* the intrinsics left as CALL_INTRINSIC_1 (bytecode.h:le_instr)
            that mergepoints.c:compiled_intrinsic allows: a generator's
-           PEP 479 handler, and the REPL's print */
+           PEP 479 handler, frozenset() of a new set, and the REPL's print */
         case CALL_INTRINSIC_1:
+#ifdef INTRINSIC_BUILD_FROZENSET
+            if (oparg == INTRINSIC_BUILD_FROZENSET) {
+                x = psyco_generic_call(
+                    po, cimpl_build_frozenset,
+                    CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v",
+                    TOP());
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                Psyco_AssertType(po, x, &PyFrozenSet_Type);
+                PUSH(x);
+                goto fine;
+            }
+#endif
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
             if (oparg == INTRINSIC_STOPITERATION_ERROR) {
                 extra_assert(po->pr.co->co_flags &
@@ -7994,6 +8053,15 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
                  i--;) /* args, callable and the NULL */
                 POP_DECREF();
             PUSH(x);
+#if LE_HAS_BREAKER_SKIPPED_AFTER_LOAD_SPECIAL
+            /* ceval doesn't test eval_breaker after the call that follows
+               LOAD_SPECIAL (__enter__'s, __aenter__'s), so an interrupt
+               landing there is raised inside the with block, whose
+               __exit__ runs */
+            if (le_op(le_code(co), next_instr - LE_CACHE_BYTES(opcode) -
+                                       2 * LE_UNIT) == LOAD_SPECIAL)
+                goto fine;
+#endif
             if (!breaker_after_call(po, next_instr))
                 break;
             goto fine;
@@ -8298,7 +8366,7 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
     vinfo_t *v;
     le_gen_pause_t *pause;
     (void)after_await;
-    if (!catcher_flush(po, true))
+    if (!catcher_flush(po))
         return;
     /* every item real before anything is stored: making one may call */
     for (i = 0; i < nlocals + nstack; i++) {
@@ -8358,7 +8426,7 @@ yield_resumable(PsycoObject *po, int at, bool after_await)
 #else
     (void)after_await;
 #endif
-    if (!catcher_flush(po, true))
+    if (!catcher_flush(po))
         return;
     /* every item real before anything is stored: making one may call */
     for (i = 0; i < nlocals + nstack; i++) {
@@ -8452,10 +8520,10 @@ yield_direct(PsycoObject *po, int at)
     st = resume_state(po, nstack);
     if (st == NULL)
         return;
-    v = psyco_generic_call(po, psyco_resume_suspend, CfCommonNewRefPyObject,
-                           "vllvv", st, (long)at, (long)nstack,
-                           po->vlocals.items[GENEXPR_SLOT_ACC(po->pr.co)],
-                           stack_a[nstack]);
+    v = psyco_generic_call(
+        po, psyco_resume_suspend, CfCommonNewRefPyObject, "vlllvv", st,
+        (long)at, (long)nstack, handled_level(po, at),
+        po->vlocals.items[GENEXPR_SLOT_ACC(po->pr.co)], stack_a[nstack]);
     vinfo_decref(st, po);
     if (v == NULL)
         return;
@@ -8681,24 +8749,34 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             if (x == NULL)
                 break;
             PUSH(x);
+            if (LE_HAS_ANEXT_PUSHES_SEND_ARGS) {
+                PUSH(psyco_vi_Zero());
+                PUSH(psyco_vi_None());
+            }
             goto fine;
 
 #if LE_RESUMES_ON_FRAME
         /* a resumable coroutine's await (psyco_is_resumable_generator):
-           GET_AWAITABLE, then SEND's loop */
+           GET_AWAITABLE, then SEND's loop; where GET_AWAITABLE doesn't push
+           SEND's NULL and None, PUSH_NULL and LOAD_CONST do */
         case GET_AWAITABLE:
             /* a coroutine awaited as soon as it is made stays pending: the
                SEND may run its body as a call */
-            if (PsycoGenexpr_Check(TOP()))
-                goto fine;
-            x = psyco_generic_call(
-                po, cimpl_get_awaitable, CfCommonNewRefPyObject, "vl", TOP(),
-                (long)awaitable_kind(le_code(po->pr.co), po->pr.next_instr,
-                                     oparg));
-            if (x == NULL)
-                break;
-            POP_DECREF();
-            PUSH(x);
+            if (!PsycoGenexpr_Check(TOP())) {
+                x = psyco_generic_call(
+                    po, cimpl_get_awaitable, CfCommonNewRefPyObject, "vl",
+                    TOP(),
+                    (long)awaitable_kind(le_code(po->pr.co), po->pr.next_instr,
+                                         oparg));
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                PUSH(x);
+            }
+            if (LE_HAS_AWAITABLE_PUSHES_SEND_ARGS) {
+                PUSH(psyco_vi_Zero());
+                PUSH(psyco_vi_None());
+            }
             goto fine;
 #endif
 #if LE_RESUMES_COROUTINES
@@ -9762,6 +9840,13 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             if ((po->pr.python_call && ((le_op_flags(opcode) & LE_OPF_CALL) ||
                                         po->pr.proxy_write)) ||
                 po->pr.resume_pending) {
+                if (po->pr.is_inlining && po->pr.python_call)
+                    po->pr.inline_ran_python = 1;
+                if (po->pr.inline_left) {
+                    po->pr.inline_left = 0;
+                    if (!let_inline_frame_go(po, true))
+                        break;
+                }
                 po->pr.resume_pending = 0;
                 if (!resume_if_tracing(po, next_instr, &unwound))
                     break;
@@ -9874,6 +9959,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             extra_assert(LOC_INLINING == NULL);
             LOC_INLINING = v;
             po->pr.is_inlining = true;
+            po->pr.inline_ran_python = 0;
             /* mark this point as an inline frame entry */
             psyco_inline_enter(po);
             Psyco_ForgetClasses(po); /* the arguments' types */
@@ -9899,6 +9985,9 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             /* unwind the inlined frame by restoring the parent one */
             vinfo_t *v = LOC_INLINING;
             bool returned = PycException_Is(po, &EReturn);
+            /* the instruction left by an exception may have run Python */
+            if (po->pr.python_call)
+                po->pr.inline_ran_python = 1;
             /* mark this point as an inline frame exit: on a return, before
                its locals go, as CPython pops the frame first */
             if (returned)
@@ -9910,10 +9999,19 @@ psyco_pycompiler_mainloop(PsycoObject *po)
             po->pr.is_inlining = false;
             if (!returned)
                 psyco_inline_exit(po);
-            /* the inlined frame went on interpreted: so may the caller, after
-               the instruction that called it */
-            if (resumed)
+            /* the inlined frame went on interpreted, or ran Python that may
+               have exposed the caller's frame: so may the caller, after the
+               instruction that called it */
+            if (resumed || po->pr.inline_ran_python)
                 po->pr.resume_pending = 1;
+            /* its frame object, if one was asked for, goes now */
+            if (po->pr.inline_ran_python) {
+                if (returned)
+                    po->pr.inline_left = 1;
+                else if (!let_inline_frame_go(po, false))
+                    break;
+            }
+            po->pr.inline_ran_python = 0;
             resumed = 0; /* the caller's handlers are still to run */
 
             if (PycException_Is(po, &EReturn)) {

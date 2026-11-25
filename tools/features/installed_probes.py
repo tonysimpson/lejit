@@ -495,6 +495,45 @@ def NAME_ERROR_NAME():
 
 
 @probe
+def BREAKER_SKIPPED_AFTER_LOAD_SPECIAL():
+    """a signal that __enter__ (a C call, LOAD_SPECIAL's) marks as arrived
+    is handled inside the with block, where __exit__ sees its exception,
+    not as the call ends (run)"""
+    if not _real_op('LOAD_SPECIAL'):
+        return False, 'no LOAD_SPECIAL'
+    import _thread, functools, signal
+
+    class Raised(Exception):
+        pass
+
+    def handler(signum, frame):
+        raise Raised()
+
+    exited = []
+
+    class Manager:
+        # (os.kill would run the handler itself)
+        __enter__ = staticmethod(functools.partial(_thread.interrupt_main,
+                                                   signal.SIGUSR1))
+
+        def __exit__(self, *exc):
+            exited.append(exc[0])
+
+    old = signal.signal(signal.SIGUSR1, handler)
+    try:
+        try:
+            with Manager():
+                len(())
+        except Raised:
+            pass
+        else:
+            raise Unanswered('the handler raised nothing')
+    finally:
+        signal.signal(signal.SIGUSR1, old)
+    return bool(exited), '__exit__ saw %r' % exited
+
+
+@probe
 def RAISE_CAUSE_CHECKED():
     """raise ... from a class whose call returns None is a TypeError
     (run)"""
@@ -1209,6 +1248,24 @@ def GET_ITER_INDEX():
     op = dis.opmap['GET_ITER']
     pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
     return pushes == 2, 'dis: GET_ITER pushes %d' % pushes
+
+
+@probe
+def AWAITABLE_PUSHES_SEND_ARGS():
+    """GET_AWAITABLE pushes three items, the iterator, a NULL and None
+    (dis)"""
+    op = dis.opmap['GET_AWAITABLE']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 3, 'dis: GET_AWAITABLE pushes %d' % pushes
+
+
+@probe
+def ANEXT_PUSHES_SEND_ARGS():
+    """GET_ANEXT pushes four items, the async iterator, the awaitable, a
+    NULL and None (dis)"""
+    op = dis.opmap['GET_ANEXT']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 4, 'dis: GET_ANEXT pushes %d' % pushes
 
 
 @probe
