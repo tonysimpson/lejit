@@ -1347,6 +1347,17 @@ CE = 'Python/ceval.c'
 
 # C API functions that LeJIT calls where libpython exports them, and
 # replaces where it doesn't
+def _sum_exact_numbers(s):
+    """builtin_sum_impl converts ints to doubles (PyLong_AsDouble) and tests
+    no item with PyLong_Check, only PyLong_CheckExact"""
+    found, evidence = _body_has(s, 'Python/bltinmodule.c', 'builtin_sum_impl',
+                                'PyLong_AsDouble(item)', missing=False)
+    if not found:
+        return found, evidence
+    return _not(_body_has(s, 'Python/bltinmodule.c', 'builtin_sum_impl',
+                          'PyLong_Check(item)'))
+
+
 def _sum_compensated(s):
     """builtin_sum_impl's float loop carries a compensation term: c += ... in
     its own loop, or a cs_add helper"""
@@ -1550,6 +1561,8 @@ OBJECTS = [
     ('SUM_COMPLEX_COMPENSATED', D('sum() adds complex numbers with compensated summation of each part',
                                   lambda s: _body_has(s, 'Python/bltinmodule.c', 'builtin_sum_impl',
                                                       'PyComplex_CheckExact(result)', missing=False))),
+    ('SUM_EXACT_NUMBERS', D('sum()\'s float loop adds ints with PyLong_AsDouble, and it and the complex loop take only exact ints and floats: a bool or a subclass leaves the loop, for the sum + item',
+                            _sum_exact_numbers)),
     ('POW_KEYWORDS', D('pow() takes keyword arguments base, exp and mod',
                        lambda s: _file_has(s, 'Python/clinic/bltinmodule.c.h',
                                            'builtin_pow_impl(PyObject *module, PyObject *base'))),

@@ -720,13 +720,21 @@ cimpl_sum_complex_step(PyObject *box, PyObject *item)
         d += 2;
         complex_box_add(d, z.imag);
     }
+#if LE_HAS_SUM_EXACT_NUMBERS
+    else if (PyLong_CheckExact(item)) {
+#else
     else if (PyLong_Check(item)) {
+#endif
         double value = PyLong_AsDouble(item);
         if (value == -1.0 && PyErr_Occurred())
             return NULL;
         complex_box_add(d, value);
     }
+#if LE_HAS_SUM_EXACT_NUMBERS
+    else if (PyFloat_CheckExact(item))
+#else
     else if (PyFloat_Check(item))
+#endif
         complex_box_add(d, PyFloat_AS_DOUBLE(item));
     else {
         result = complex_box_value(box);
@@ -1029,7 +1037,11 @@ psyco_sum_step(PsycoObject *po, int *phase, vinfo_t **acc, vinfo_t **comp,
         xd = PsycoFloat_AS_DOUBLE(po, item);
         return xd != NULL && sum_float_add(po, acc, comp, xd, true);
     }
+#if LE_HAS_SUM_EXACT_NUMBERS
+    if (tp == &PyLong_Type) {
+#else
     if (PyType_IsSubtype(tp, &PyLong_Type)) {
+#endif
 #if LE_HAS_SUM_INT_AS_DOUBLE
         bool ok;
         xd = PsycoLong_AsDouble(po, item);
