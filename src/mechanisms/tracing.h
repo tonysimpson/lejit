@@ -13,10 +13,9 @@
    Compiled code tests it as le_tracing_flag: the main interpreter's
    monitoring version against the last one seen with no tool set
    (pyruntime.c:le_quiet_version), which is -1 while a frame's locals are
-   exposed, and the code's monitoring data, which CPython makes only once a
-   tool has instrumented it. Only where either test fails does it make the
-   exact test (psyfunc.c:tracing_on). Included after vcompiler.h and
-   codegen.h. */
+   exposed; only where that fails does it make the exact test
+   (psyfunc.c:tracing_on). Where it passes, le_code_tools_on tests the code's
+   own tools. Included after vcompiler.h and codegen.h. */
 extern int
 le_monitoring_on(PyThreadState *ts);
 extern int
@@ -39,15 +38,16 @@ extern int
 le_tracing_recheck(PyCodeObject *co);
 
 /* nonzero where the tools may have changed since they were last seen
-   empty, a frame's locals are exposed, or code 'co' has monitoring data
-   ('vts' and 'vinterp' unused) */
+   empty, or a frame's locals are exposed ('vts', 'vinterp' and 'co'
+   unused) */
 static inline vinfo_t *
 le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp,
                 PyCodeObject *co)
 {
-    vinfo_t *vk, *vv, *vq, *vm, *vany;
+    vinfo_t *vk, *vv, *vq, *vany;
     (void)vts;
     (void)vinterp;
+    (void)co;
     vk = vinfo_new(CompileTime_New((long)le_monitoring_version_address()));
     vv = psyco_get_field_offset(po, vk, FMUT(DEF_ARRAY(long, 0)), 0);
     vinfo_decref(vk, po);
@@ -63,23 +63,50 @@ le_tracing_flag(PsycoObject *po, vinfo_t *vts, vinfo_t *vinterp,
     vany = integer_xor(po, vv, vq);
     vinfo_decref(vv, po);
     vinfo_decref(vq, po);
-    if (vany == NULL)
-        return NULL;
+    return vany;
+}
+
+/* Whether code 'co' has a tool of its own on (le_code_monitored), for
+   compiled code once le_tracing_flag has passed: 1, 0, or -1 on an error.
+   It tests the code's monitoring data first, which CPython makes the first
+   time a tool instruments the code and keeps for the code's life. Only on
+   the rare path where that exists, compiled when first taken, are its
+   local tools read, from where the data now is, so code that a tool
+   watched once goes on without a C call once none watches it. */
+static inline int
+le_code_tools_on(PsycoObject *po, PyCodeObject *co)
+{
+    const _PyCoMonitoringData *m;
+    const char *tools;
+    vinfo_t *vk, *va, *vb, *vany;
+    int on;
     /* the compiled code holds its own code; a callee's is held for it */
     if (co != po->pr.co && !is_respawning(po))
         psyco_owner_pin((PyObject *)co);
     vk = vinfo_new(CompileTime_New((long)&co->_co_monitoring));
-    vm = psyco_get_field_offset(po, vk, FMUT(DEF_ARRAY(long, 0)), 0);
+    va = psyco_get_field_offset(po, vk, FMUT(DEF_ARRAY(long, 0)), 0);
     vinfo_decref(vk, po);
-    if (vm == NULL) {
-        vinfo_decref(vany, po);
-        return NULL;
+    on = runtime_NON_NULL_f(po, va);
+    if (on <= 0)
+        return on;
+    m = co->_co_monitoring;
+    if (m == NULL)
+        return 1; /* not reached: the data, once made, is kept */
+    tools = (const char *)m->local_monitors.tools;
+    vk = vinfo_new(CompileTime_New((long)tools));
+    va = psyco_get_field_offset(po, vk, FMUT(DEF_ARRAY(long, 0)), 0);
+    vb = psyco_get_field_offset(po, vk, FMUT(DEF_ARRAY(long, 0)),
+                                sizeof(m->local_monitors.tools) - 8);
+    vinfo_decref(vk, po);
+    if (va == NULL || vb == NULL) {
+        vinfo_xdecref(va, po);
+        vinfo_xdecref(vb, po);
+        return -1;
     }
-    vv = vany;
-    vany = integer_or(po, vv, vm);
-    vinfo_decref(vv, po);
-    vinfo_decref(vm, po);
-    return vany;
+    vany = integer_or(po, va, vb);
+    vinfo_decref(va, po);
+    vinfo_decref(vb, po);
+    return runtime_NON_NULL_f(po, vany);
 }
 
 static inline condition_code_t
@@ -236,8 +263,13 @@ le_direct_call_refused(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
     vinfo_decref(vflag, po);
     if (cc == CC_ERROR)
         return true;
+#if LE_HAS_MONITORING
+    if (!runtime_condition_f(po, cc))
+        return le_code_tools_on(po, co) != 0;
+#else
     if (!runtime_condition_f(po, cc))
         return false;
+#endif
 #if LE_HAS_MONITORING
     /* the exact test, which also makes the version's pass again once no
        tool is set */
