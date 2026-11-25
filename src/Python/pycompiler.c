@@ -1247,9 +1247,18 @@ psyco_frame_word_index(vinfo_t *v)
     return (int)(sv - frame_words);
 }
 
+/* the resumed generator's frame, whose words these are: in an inlined
+   frame, its parent's (psyfunc.c:psyco_save_inline_po) */
 DEFINEFN vinfo_t *
 psyco_frame_words_frame(PsycoObject *po)
 {
+    if (po->pr.is_inlining) {
+        vinfo_t **parent = LOC_INLINING->array->items;
+        PyCodeObject *co =
+            (PyCodeObject *)CompileTime_Get(parent[LOC_INLINE_CO]->source)
+                ->value;
+        return parent[TOTAL_LOC_INLINE + GENEXPR_SLOT_ACC(co)];
+    }
     return po->vlocals.items[GENEXPR_SLOT_ACC(po->pr.co)];
 }
 

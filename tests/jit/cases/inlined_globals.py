@@ -124,6 +124,33 @@ def first_items(n):
     return out
 
 
+async def started(unread, box, factory):
+    try:
+        box.append(1)
+        return factory()
+    except ZeroDivisionError:
+        box.clear()
+        raise
+
+
+async def awaits_started(factory):
+    return await started(None, [], factory)
+
+
+def coroutine_raises_inlined(n):
+    # a raise in a body inlined into a coroutine maps the coroutine's
+    # locals, 'unread' still its frame's where coroutines run on their frame
+    out = []
+    for i in range(n):
+        def factory():                 # inlined: reads a global
+            raise ZeroDivisionError
+        try:
+            awaits_started(factory).send(None)
+        except ZeroDivisionError:
+            out.append(i)
+    return out
+
+
 CASES = [
     ('rebound', [(8,)], {}),
     ('deleted', [(6,)], {}),
@@ -133,4 +160,5 @@ CASES = [
     ('frames', [(4,)], {}),
     ('traceback_locals', [(3,)], {}),
     ('first_items', [(6,)], {}),
+    ('coroutine_raises_inlined', [(3,)], {}),
 ]
