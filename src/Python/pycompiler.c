@@ -7659,9 +7659,13 @@ awaitable_kind(le_code_t c, int at, int oparg)
 #endif
 }
 
+/* GET_ANEXT's kind of await: _PyCoro_GetAwaitableIter's alone, without
+   GET_AWAITABLE's test of a coroutine awaiting already */
+#define AWAITABLE_ITER 3
+
 /* GET_AWAITABLE: what awaiting 'o' iterates, a new reference, as
    _PyCoro_GetAwaitableIter (not exported) makes it and ceval checks it;
-   'kind' as awaitable_kind gives it */
+   'kind' as awaitable_kind gives it, or AWAITABLE_ITER */
 static PyObject *
 cimpl_get_awaitable(PyObject *o, long kind)
 {
@@ -7669,7 +7673,8 @@ cimpl_get_awaitable(PyObject *o, long kind)
     unaryfunc getter;
     PyObject *res;
     if (PyCoro_CheckExact(o) || is_iterable_coroutine(o)) {
-        if (PyCoro_CheckExact(o) && coro_awaits((PyGenObject *)o)) {
+        if (kind != AWAITABLE_ITER && PyCoro_CheckExact(o) &&
+            coro_awaits((PyGenObject *)o)) {
             PyErr_SetString(PyExc_RuntimeError, LE_MSG_CORO_AWAITED_ALREADY);
             return NULL;
         }
@@ -7710,6 +7715,51 @@ cimpl_get_awaitable(PyObject *o, long kind)
         return NULL;
     }
     return res;
+}
+
+/* GET_ANEXT, as ceval's (_PyEval_GetANext): what awaiting the async
+   iterator's __anext__() iterates, a new reference */
+static PyObject *
+cimpl_get_anext(PyObject *aiter)
+{
+    PyTypeObject *type = Py_TYPE(aiter);
+    unaryfunc getter =
+        type->tp_as_async != NULL ? type->tp_as_async->am_anext : NULL;
+    PyObject *next_iter, *awaitable, *exc, *val, *tb;
+    if (PyAsyncGen_CheckExact(aiter))
+        return getter(aiter);
+    if (getter == NULL) {
+        PyErr_Format(PyExc_TypeError, LE_MSG_ASYNC_FOR_NO_ANEXT,
+                     type->tp_name);
+        return NULL;
+    }
+    next_iter = getter(aiter);
+    if (next_iter == NULL)
+        return NULL;
+    awaitable = cimpl_get_awaitable(next_iter, AWAITABLE_ITER);
+    if (awaitable == NULL) {
+        /* as _PyErr_FormatFromCause: the error is the new one's cause and
+           context */
+        PyErr_Fetch(&exc, &val, &tb);
+        PyErr_NormalizeException(&exc, &val, &tb);
+        if (tb != NULL)
+            PyException_SetTraceback(val, tb);
+        Py_DECREF(exc);
+        Py_XDECREF(tb);
+        PyErr_Format(PyExc_TypeError, LE_MSG_ASYNC_FOR_BAD_ANEXT,
+                     Py_TYPE(next_iter)->tp_name);
+        {
+            PyObject *e2, *v2, *t2;
+            PyErr_Fetch(&e2, &v2, &t2);
+            PyErr_NormalizeException(&e2, &v2, &t2);
+            Py_INCREF(val);
+            PyException_SetCause(v2, val);
+            PyException_SetContext(v2, val);
+            PyErr_Restore(e2, v2, t2);
+        }
+    }
+    Py_DECREF(next_iter);
+    return awaitable;
 }
 
 #if LE_RESUMES_COROUTINES
@@ -8116,6 +8166,16 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+        /* async for's next value: what awaiting __anext__() iterates,
+           above the async iterator; the await follows */
+        case GET_ANEXT:
+            x = psyco_generic_call(po, cimpl_get_anext, CfCommonNewRefPyObject,
+                                   "v", TOP());
+            if (x == NULL)
+                break;
+            PUSH(x);
+            goto fine;
+
 #if LE_RESUMES_ON_FRAME
         /* a resumable coroutine's await (psyco_is_resumable_generator):
            GET_AWAITABLE, then SEND's loop */
@@ -8337,6 +8397,32 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
                               : LE_HAS_LASTI_IN_INSTRUCTIONS
                                   ? raise_lasti * LE_UNIT
                                   : raise_lasti);
+            if (locals_wanted_now(po))
+                traceback_locals(po, NULL);
+            goto exception_unwind;
+
+        /* async for's handler, for its await of __anext__(), with the
+           exception above the async iterator: StopAsyncIteration ends the
+           loop, any other is raised again */
+        case END_ASYNC_FOR:
+            x = psyco_generic_call(
+                po, PyErr_GivenExceptionMatches,
+                CfCommonIntBoolOrError | CfNoPython | CfNoBlock, "vl", TOP(),
+                (long)PyExc_StopAsyncIteration);
+            if (x == NULL)
+                break;
+            cc = integer_non_null(po, x);
+            vinfo_decref(x, po);
+            if (cc == CC_ERROR)
+                break;
+            if (runtime_condition_f(po, cc)) {
+                POP_DECREF(); /* the exception */
+                POP_DECREF(); /* the async iterator */
+                goto fine;
+            }
+            psyco_generic_call(po, cimpl_reraise_value,
+                               CfPyErrAlways | CfNoPython, "v", TOP());
+            reraise_place(po, po->pr.next_instr);
             if (locals_wanted_now(po))
                 traceback_locals(po, NULL);
             goto exception_unwind;
@@ -8624,6 +8710,39 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
                 break;
             goto fine;
         }
+
+#if !LE_HAS_EXCEPTION_TABLE
+        /* async for's handler, for its await of __anext__(), entered
+           with an exception's six items above the async iterator:
+           StopAsyncIteration ends the loop, any other is raised again */
+        case END_ASYNC_FOR:
+            x = psyco_generic_call(
+                po, PyErr_GivenExceptionMatches,
+                CfCommonIntBoolOrError | CfNoPython | CfNoBlock, "vl", TOP(),
+                (long)PyExc_StopAsyncIteration);
+            if (x == NULL)
+                break;
+            cc = integer_non_null(po, x);
+            vinfo_decref(x, po);
+            if (cc == CC_ERROR)
+                break;
+            if (runtime_condition_f(po, cc)) {
+                POP_DECREF(); /* the exception */
+                if (!pop_except_handler(po, true))
+                    break;
+                POP_DECREF(); /* the async iterator */
+                goto fine;
+            }
+            POP(v);
+            POP(w);
+            POP(x);
+            reraise_place(po, po->pr.next_instr);
+            PycException_Reraise(po, v, w, x);
+            vinfo_decref(v, po);
+            vinfo_decref(w, po);
+            vinfo_decref(x, po);
+            goto exception_unwind;
+#endif
 
         case END_FINALLY:
             /* First make extra sure no exception is pending */

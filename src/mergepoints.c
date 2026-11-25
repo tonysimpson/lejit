@@ -852,7 +852,7 @@ handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
                 next[n++] = in.target;
                 break;
             default:
-                if (LE_IS_JABS(in.op) || LE_IS_JREL(in.op))
+                if (in.target >= 0)
                     next[n++] = in.target;
                 next[n++] = in.next;
         }
@@ -945,7 +945,7 @@ psyco_handler_awaits(PyCodeObject *co, int handler)
 /* whether the body of 'co', a plain generator or a coroutine, can run
    compiled in its own frame: no YIELD_FROM (a coroutine's awaits are
    GET_AWAITABLE, LOAD_CONST None, YIELD_FROM; a generator's yield from is
-   compiled only as SEND's loop), no async for, and no yield
+   compiled only as SEND's loop), and no yield
    inside an exception handler, whose stack and blocks LeJIT keeps apart
    from the frame's (an EXCEPT_HANDLER block, a finally block's
    pseudo-exception); a coroutine's handlers that can await run in ceval
@@ -976,11 +976,6 @@ body_compilable(PyCodeObject *co, le_code_t *c)
                 if (!LE_HAS_OPCODE_SEND || !LE_RESUMES_ON_FRAME)
                     return 0;
                 break;
-            /* async for */
-            case GET_AITER:
-            case GET_ANEXT:
-            case END_ASYNC_FOR:
-                return 0;
         }
     }
     if (kind == CO_COROUTINE)
