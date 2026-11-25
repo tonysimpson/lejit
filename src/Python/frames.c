@@ -141,6 +141,7 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
     p->link_stack_depth = -inlining;
     p->nargs = -1;
     p->co = callee->pr.co;
+    p->ret_below = psyco_ret_below(caller != NULL ? caller : callee);
     p->back_lasti =
         caller != NULL ? psyco_call_lasti(caller->pr.co, caller->pr.next_instr)
                        : inline_parent_lasti(callee);
@@ -167,6 +168,7 @@ psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co)
     p->link_stack_depth = -inlining;
     p->nargs = -1;
     p->co = co;
+    p->ret_below = psyco_ret_below(caller);
     p->back_lasti = psyco_call_lasti(caller->pr.co, caller->pr.next_instr);
     p->on_gen_frame = 1;
     if (inlining)
@@ -882,20 +884,28 @@ kept_lasti(activation_t *a)
 }
 
 /* Where the return address of the compiled callee whose slot is 'own' is:
-   after the arguments the call pushed, unless a block the callee went on
-   in keeps it elsewhere (a unification may move it, as any stack value).
-   Then it is looked for between the slot and the callee's own callee, or
-   the next run of compiled code nearer here (or here): NULL if it isn't
-   there once, so that nothing but it is replaced. */
+   where the record or note in that slot says the callee keeps it, or after
+   the arguments the call pushed if the slot says nothing. A unification
+   may have moved it, and the word it left still holds it. A note may be
+   left from an earlier call: if the word doesn't hold the address, it is
+   looked for between the slot and the callee's own callee, or the next run
+   of compiled code nearer here (or here): NULL if it isn't there once, so
+   that nothing but it is replaced. */
 #define RET_SEARCH_MAX 8192
 static code_t **
 return_address(stack_frame_info_t **own, stack_frame_info_t *rec)
 {
-    code_t **p = (code_t **)(own - rec->nargs - 1), **lo, **q, **found = NULL;
+    long v = (long)*own, below = (rec->nargs + 1) * (long)sizeof(long);
+    code_t **p, **lo, **q, **found = NULL;
     le_frame_t *t;
+    if ((v & 1) == 0)
+        below = ((stack_frame_info_t *)v)->ret_below;
+    else if (v != -1 && v != FINFO_RETURNING)
+        below = psyco_note_map(v)->ret_below;
+    p = (code_t **)((char *)own - below);
     if (*p == rec->ret_addr)
         return p;
-    if ((((long)*own) & 1) == 0) {
+    if ((v & 1) == 0) {
         lo = (code_t **)psyco_next_stack_frame(own) + 1;
     }
     else {

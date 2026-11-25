@@ -189,6 +189,11 @@ EXTERNFN void
 psyco_inline_exit(PsycoObject *po);
 EXTERNFN void
 psyco_note_call_site(PsycoObject *po, int lasti);
+/* where po's machine frame keeps its return address now, in bytes below
+   its own slot: where the call pushed it, unless a block it went on in
+   keeps it elsewhere (a unification may move it, as any stack value) */
+EXTERNFN long
+psyco_ret_below(PsycoObject *po);
 /* give back the psyco_locals_maps indices of a dead owner's call sites */
 EXTERNFN void
 psyco_release_notes(int *notes, int n);

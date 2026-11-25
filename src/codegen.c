@@ -477,12 +477,21 @@ psyco_note_call_site(PsycoObject *po, int lasti)
     if (po->pr.is_inlining || lasti < 0)
         return;
     map = psyco_locals_map(po, lasti, NULL);
+    map->ret_below = psyco_ret_below(po);
     i = note_index();
     psyco_locals_maps[i] = map;
     po->pr.pending_map = map;
     BEGIN_CODE
     SAVE_IMMED_TO_EBP_BASE((i << 1) | 1, INITIAL_STACK_DEPTH);
     END_CODE
+}
+
+DEFINEFN
+long
+psyco_ret_below(PsycoObject *po)
+{
+    return po->stack_depth + sizeof(long) - STACK_DEPTH_SINCE_CALL() -
+           INITIAL_STACK_DEPTH;
 }
 
 struct lm_build {
