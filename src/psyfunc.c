@@ -1211,22 +1211,32 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
        hook (direct_call_refused). Not again when the instruction restarts
        after the inlined body with its result. */
     if (!inlining || LOC_INLINING == NULL) {
-        bool traced, entered = true;
+        bool refused, entered = true;
         vinfo_t *vts = load_tstate(po);
         if (vts == NULL) {
             array_delete(fncall.inputvinfos, po);
             vinfo_decref(vbuiltins, po);
             return NULL;
         }
-        traced = direct_call_refused(po, vts, co);
+        refused = direct_call_refused(po, vts, co);
+        /* ceval tests eval_breaker as the callee's frame starts, and a
+           direct call skips that test: with an event flagged it is the real
+           call instead, whose entry handles the event (LeCode_Run) */
+        if (!refused && !inlining && !BREAKER_SKIPS(le_op(le_code(co), 0))) {
+            condition_code_t cc = le_eval_breaker_test_on(po, vts);
+            if (cc == CC_ERROR)
+                entered = false;
+            else
+                refused = runtime_condition_f(po, cc);
+        }
         /* count the call's depth, as ceval does on entering a frame, so that
            deep recursion raises RecursionError instead of overflowing the C
            stack; psyco_call_psyco leaves it after the call.
            Emitted before the frame is built, so no argument source moves. */
-        if (!traced && !inlining)
+        if (!refused && entered && !inlining)
             entered = enter_recursive_call(po, vts);
         vinfo_decref(vts, po);
-        if (traced || !entered) {
+        if (refused || !entered) {
             array_delete(fncall.inputvinfos, po);
             vinfo_decref(vbuiltins, po);
             if (!entered)
