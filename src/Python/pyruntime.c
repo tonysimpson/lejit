@@ -246,13 +246,19 @@ le_code_monitored(PyCodeObject *co)
     return (a | b) != 0;
 }
 
+#if ALL_CHECKS
+long le_stat_tracing_rechecks = 0; /* read by lejit._core._stats */
+#endif
+
 /* compiled code's exact test for code co (NULL for none), once the
-   version has moved or co has monitoring data, which brings
-   le_quiet_version up to date */
+   version has moved, which brings le_quiet_version up to date */
 int
 le_tracing_recheck(PyCodeObject *co)
 {
     PyThreadState *ts = PyThreadState_GET();
+#if ALL_CHECKS
+    le_stat_tracing_rechecks++;
+#endif
     if (le_monitoring_on(ts))
         return 1;
     if (LE_FRAMES_EXPOSED)
