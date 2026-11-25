@@ -8,7 +8,7 @@
 #if ALL_CHECKS
 /* records made, and escapes: of a paused or new one, of one dropped
    paused, of one running, of one ended (lejit._core._stats) */
-EXTERNVAR long le_stat_gen_records[5];
+EXTERNVAR long le_stat_gen_records[6];
 #endif
 /* A new record for a generator of the function 'func', paused as
    RETURN_GENERATOR leaves a new generator, which is at code unit 'start'

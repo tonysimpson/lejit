@@ -5,7 +5,7 @@
 # every way a step ends, the order objects die in when it is dropped
 # paused or ends, frames and tracebacks from inside its body, and every way
 # it is made real (escapes) followed by each use of the real one.
-import gc, sys
+import dis, gc, sys
 
 LOG = []
 
@@ -129,7 +129,9 @@ def yield_from(n):
     out = []
     for x in delegating(n):
         out.append(x)
-    return out, compiled(delegating, inner_gen)
+    # without SEND a body with yield from runs interpreted
+    return out, compiled(*([delegating] if 'SEND' in dis.opmap else []),
+                         inner_gen)
 
 
 # how a run ends: StopIteration's value, an exception, PEP 479
@@ -364,6 +366,35 @@ def recursion(n):
     return [x for x in [0]] + list_of(recurse_gen(n))
 
 
+# closed where it paused: with a frame object kept, and inside any() and
+# all()
+def keeping_gen(n):
+    a = Noted('f1')
+    KEPT.append(sys._getframe())
+    for i in range(n):
+        yield work(i)
+
+
+def closes(n):
+    out = []
+    LOG.clear()
+    for x in keeping_gen(n):
+        if x == 1:
+            break
+    f = KEPT.pop()
+    # not f_locals: on some versions the frame object copies only the
+    # cleared frame's header, so its locals are whatever memory it had
+    out.append((list(LOG), f.f_lasti, f.f_back is None, f.f_lineno))
+    del f
+    LOG.clear()
+    ws = [Noted('w%d' % i) for i in range(n)]
+    out.append(any(w.name == 'w1' for w in ws))
+    out.append(all(w.name != 'w1' for w in ws))
+    out.append(list(LOG))
+    del ws
+    return out
+
+
 def list_of(g):
     out = []
     for x in g:
@@ -385,6 +416,7 @@ CASES = [
     ('yield_from', [(3,)], {}),
     ('ends', [(2,)], {}),
     ('drops', [(3,)], {}),
+    ('closes', [(3,)], {}),
     ('frames', [(2,)], {}),
     ('kept_frames', [(3,)], {}),
     ('frame_clear', [(0,)], {}),

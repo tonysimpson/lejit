@@ -27,7 +27,7 @@ PyAPI_FUNC(PyObject *)
     _PyErr_FormatFromCause(PyObject *exception, const char *format, ...);
 
 #if ALL_CHECKS
-DEFINEVAR long le_stat_gen_records[5];
+DEFINEVAR long le_stat_gen_records[6];
 #endif
 
 DEFINEFN bool
@@ -167,15 +167,27 @@ frame_give(PyFrameObject *fo, le_frame_t *f, bool ended)
         PyObject_GC_Track(fo);
 }
 
+/* the frame's words released in the order CPython frees them, then its
+   locals mapping (_PyFrame_ClearLocals) */
+static void
+frame_clear_locals(le_frame_t *f)
+{
+    int k, n = frame_nwords(f);
+    for (k = 0; k < n; k++)
+        Py_XDECREF(le_frame_word_take(
+            f, LE_HAS_FRAME_CLEARED_LAST_FIRST ? n - 1 - k : k));
+    le_gen_frame_set_depth(f, 0);
+    Py_CLEAR(f->f_locals);
+}
+
 /* the record's frame cleared, as CPython clears a generator's frame: a
-   frame object that outlives it takes it; else its words go in the order
-   CPython frees them, then its locals mapping and function. Its code stays
-   for the record's life, as a generator keeps its own. */
+   frame object that outlives it takes it; else its locals go, then its
+   function. Its code stays for the record's life, as a generator keeps its
+   own. */
 static void
 frame_clear(le_frame_t *f)
 {
     PyFrameObject *fo = f->frame_obj;
-    int k, n;
     PyObject *o;
     if (fo != NULL) {
         if (Py_REFCNT(fo) > 1) {
@@ -186,15 +198,30 @@ frame_clear(le_frame_t *f)
         f->frame_obj = NULL;
         Py_DECREF(fo);
     }
-    n = frame_nwords(f);
-    for (k = 0; k < n; k++)
-        Py_XDECREF(le_frame_word_take(
-            f, LE_HAS_FRAME_CLEARED_LAST_FIRST ? n - 1 - k : k));
-    le_gen_frame_set_depth(f, 0);
-    Py_CLEAR(f->f_locals);
+    frame_clear_locals(f);
     o = frame_func_take(f);
     Py_XDECREF(o);
 }
+
+#if LE_HAS_GEN_CLOSE_UNRUN
+/* CPython closes a generator paused at a yield in no try block of the
+   body's own (the one around the body is PEP 479's) without running it,
+   unless a tool would see the unwinding (gen_close). A record closes so
+   only while no tool is on at all; otherwise its generator is made and
+   CPython chooses. */
+static bool
+record_closes_unrun(le_gen_record_t *r)
+{
+    le_frame_t *f = &r->frame;
+    PyCodeObject *co = LE_FRAME_CODE(f);
+    le_instr_t in;
+    if (le_monitoring_on(PyThreadState_GET()) || le_code_monitored(co))
+        return false;
+    in = le_instr(le_code(co),
+                  (int)((char *)LE_FRAME_PLACE(f) - (char *)_PyCode_CODE(co)));
+    return in.op == RESUME && (in.arg & RESUME_OPARG_DEPTH1_MASK) != 0;
+}
+#endif
 
 /* The real generator made from the record 'r', in the state 'state': a
    frame object for its frame (the one Python asked for, or a new one)
@@ -413,6 +440,17 @@ record_dealloc(PyObject *self)
             r->state = FRAME_CLEARED;
             frame_clear(&r->frame);
         }
+#if LE_HAS_GEN_CLOSE_UNRUN
+        else if (record_closes_unrun(r)) {
+            /* as CPython's close, then its dealloc */
+            LE_STAT(le_stat_gen_records[5]++);
+            if (LE_HAS_GEN_CLOSE_LOCALS_ONLY)
+                frame_clear_locals(&r->frame);
+            r->state = FRAME_CLEARED;
+            frame_clear(&r->frame);
+            Py_CLEAR(r->exc_state.exc_value);
+        }
+#endif
         else {
             PyObject *t, *v, *tb;
             PyErr_Fetch(&t, &v, &tb);

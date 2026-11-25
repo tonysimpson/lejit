@@ -100,10 +100,10 @@ le_stats(PyObject *self, PyObject *unused)
     if (d != NULL) {
         /* virtual generators' records (Python/genrecord.c) */
         PyObject *t = Py_BuildValue(
-            "{slslslslsl}", "made", le_stat_gen_records[0], "escaped",
+            "{slslslslslsl}", "made", le_stat_gen_records[0], "escaped",
             le_stat_gen_records[1], "dropped_paused", le_stat_gen_records[2],
-            "running", le_stat_gen_records[3], "ended",
-            le_stat_gen_records[4]);
+            "running", le_stat_gen_records[3], "ended", le_stat_gen_records[4],
+            "closed_unrun", le_stat_gen_records[5]);
         if (t == NULL || PyDict_SetItemString(d, "gen_records", t) < 0)
             Py_CLEAR(d);
         Py_XDECREF(t);

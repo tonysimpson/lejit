@@ -1114,6 +1114,41 @@ def FINISHED_GENERATOR_UNLINKED():
 
 
 @probe
+def GEN_CLOSE_UNRUN():
+    """a generator paused at a yield in no try block, which RESUME's
+    argument says (dis), is left where it paused by close (run)"""
+    def g():
+        yield sys._getframe()
+    ins = list(dis.get_instructions(g))
+    after = [b for a, b in zip(ins, ins[1:]) if a.opname == 'YIELD_VALUE']
+    if not after or after[0].opname != 'RESUME':
+        return False, 'dis: no RESUME after a yield'
+    if not after[0].arg & 4:
+        return False, 'dis: RESUME after a yield has argument %d' % after[0].arg
+    gen = g()
+    f = next(gen)
+    before = f.f_lasti
+    gen.close()
+    return f.f_lasti == before, 'run: f_lasti %d before close, %d after' % (before, f.f_lasti)
+
+
+@probe
+def GEN_CLOSE_LOCALS_ONLY():
+    """a generator closed at a yield in no try block still holds its
+    function until it goes (run: a weak reference)"""
+    import weakref
+    ns = {}
+    exec('def g():\n    yield 1\n', ns)
+    gen = ns['g']()
+    next(gen)
+    r = weakref.ref(ns.pop('g'))
+    gen.close()
+    alive = r() is not None
+    del gen
+    return alive, 'run: the function %s after close' % ('kept' if alive else 'released')
+
+
+@probe
 def FOR_ITER_EXIT_PAST_POP_TOP():
     """a for loop ends with END_FOR then POP_TOP, END_FOR popping one value
     (dis, dis.stack_effect)"""

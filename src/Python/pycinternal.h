@@ -15,6 +15,12 @@
 #include "internal/pycore_intrinsics.h"
 #undef Py_BUILD_CORE
 #endif
+#if LE_HAS_GEN_CLOSE_UNRUN
+/* RESUME's argument bits (RESUME_OPARG_DEPTH1_MASK) */
+#define Py_BUILD_CORE
+#include "internal/pycore_opcode_utils.h"
+#undef Py_BUILD_CORE
+#endif
 #if LE_HAS_LAZY_IMPORT_REIFY_LINKABLE
 /* a module's dict may hold a lazy import's proxy (PyLazyImport_Type),
    which a global's load replaces with the module (_PyLazyImport_Reify) */

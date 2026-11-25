@@ -3346,12 +3346,14 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
         /* the generator's own frame, which ceval goes on with as it
            resumes it: it is linked and has its builtins already. A
            record's is made a generator's first. */
+#if LE_RESUMES_GENERATORS_DIRECTLY
         if (le_frame_is_record(le_frame_of(g)) &&
             le_gen_record_escape_running(le_frame_of(g)) == NULL) {
             Py_DECREF(g);
             PyMem_Free(st);
             return NULL;
         }
+#endif
         a = act_find(psyco_next_stack_frame(st->slot));
         a->resumed = 1;
 #ifdef PyFrameLocalsProxy_Check
