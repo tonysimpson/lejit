@@ -1606,9 +1606,7 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
 #define NEED_FREE_BYTE_REG(targ, resrv1, resrv2)                        \
     do {                                                                \
         NEED_FREE_REG_COND(targ, targ != (resrv1) && targ != (resrv2)); \
-        PUSH_CC();                                                      \
-        XOR_R_R(targ, targ); /* need to zero before use */              \
-        POP_CC();                                                       \
+        MOV_R_I(targ, 0); /* zero before use; MOV keeps the flags */    \
     } while (0)
 
 /* make sure that the register 'reg' will not

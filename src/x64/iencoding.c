@@ -392,6 +392,34 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
     stackbase = po->stack_depth;
     po->stack_depth += total_output_array_size;
     STACK_CORRECTION(total_output_array_size);
+    /* input arrays are filled now, before any argument register is set,
+       their first words deepest; args[i] becomes the run-time source of
+       the first */
+    for (i = 0; i < arg_count; i++) {
+        vinfo_array_t *array;
+        int j;
+        if (argtags[i] != 'i')
+            continue;
+        array = (vinfo_array_t *)args[i];
+        stackbase += INPUT_ARRAY_BYTES(array->count);
+        for (j = 0; j < array->count; j++) {
+            vinfo_t *v = array->items[j];
+            long at = stackbase - j * sizeof(long);
+            Source src;
+            if (v == NULL)
+                continue;
+            src = v->source;
+            if (is_compiletime(src))
+                SAVE_IMMED_TO_EBP_BASE(CompileTime_Get(src)->value, at);
+            else if (RSOURCE_REG_IS_NONE(src)) {
+                LOAD_REG_FROM_EBP_BASE(REG_TRANSIENT_1, getstack(src));
+                SAVE_REG_TO_EBP_BASE(REG_TRANSIENT_1, at);
+            }
+            else
+                SAVE_REG_TO_EBP_BASE(getreg(src), at);
+        }
+        args[i] = (long)RunTime_NewStack(stackbase, false, false);
+    }
     for (i = 0, double_arg_count = 0; i < arg_count; i++) {
         if (argtags[i] == 'd' || argtags[i] == 'D') {
             double_arg_count++;
@@ -424,6 +452,7 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
                 CALL_SET_ARG_FROM_RT(((vinfo_t *)args[i])->source, int_arg_i);
                 break;
             case 'r':
+            case 'i':
                 CALL_SET_ARG_FROM_STACK_REF(args[i], int_arg_i);
                 break;
             case 'a':

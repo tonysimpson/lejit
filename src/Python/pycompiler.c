@@ -1384,6 +1384,58 @@ null_tested(PsycoObject *po, vinfo_t *v)
     return 0;
 }
 
+#if LE_HAS_GET_ITER_INDEX
+static int
+cimpl_frame_iterators_real(le_frame_t *f, long nstack)
+{
+    if (le_frame_iterators_real(f, (int)nstack))
+        return 0;
+    PyErr_NoMemory();
+    return -1;
+}
+
+/* Where ceval made or paused the resumed frame, an index (a tagged int)
+   may be above an exact list, tuple, str or bytes on its stack. Compiled
+   code that steps the generator directly (psyfunc.c:gen_send) passes no
+   eval hook to make each such pair an iterator and NULL
+   (le_frame_iterators_real), so the entry does, before any item is taken. */
+static bool
+stack_iterators_real(PsycoObject *po)
+{
+    vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
+    vinfo_t *frame = psyco_frame_words_frame(po);
+    int nplus = le_code_nlocalsplus(po->pr.co), nstack = 0, k;
+    while (nstack < po->pr.stack_level &&
+           psyco_frame_word_index(stack_a[nstack]) == nplus + nstack)
+        nstack++;
+    for (k = nstack - 1; k >= 1; k--) {
+        vinfo_t *w = psyco_get_nth_field(po, frame, FRAME_localsplus,
+                                         nplus + k),
+                *mask, *tag;
+        condition_code_t cc;
+        if (w == NULL)
+            return false;
+        mask = vinfo_new(CompileTime_New(Py_TAG_BITS));
+        tag = integer_and(po, w, mask);
+        vinfo_decref(mask, po);
+        vinfo_decref(w, po);
+        if (tag == NULL)
+            return false;
+        cc = integer_cmp_i(po, tag, Py_INT_TAG, Py_EQ);
+        vinfo_decref(tag, po);
+        if (cc == CC_ERROR)
+            return false;
+        if (runtime_condition_f(po, cc))
+            return psyco_generic_call(po, cimpl_frame_iterators_real,
+                                      CfCommonIntZeroOk | CfNoPython, "vl",
+                                      frame, (long)nstack) != NULL;
+    }
+    return true;
+}
+#else
+#define stack_iterators_real(po) true
+#endif
+
 /* the stack items a resumed entry starts with, taken from the frame and
    tested before any instruction reads them: a NULL one (PUSH_NULL's) must
    be the NULL constant */
@@ -1392,6 +1444,8 @@ stack_words_taken(PsycoObject *po)
 {
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int k, bound;
+    if (!stack_iterators_real(po))
+        return false;
     for (k = 0; k < po->pr.stack_level; k++) {
         vinfo_t *v = stack_a[k];
         if (psyco_frame_word_index(v) < 0)
@@ -3616,8 +3670,14 @@ cimpl_dict_update(PyObject *dict, PyObject *update)
     if (err < 0) {
         if (PyErr_ExceptionMatches(PyExc_AttributeError) &&
             le_not_a_mapping(update)) {
+#ifdef LE_MSG_DICT_STAR_NOT_MAPPING_QUALIFIED
+            PyErr_Format(PyExc_TypeError,
+                         LE_MSG_DICT_STAR_NOT_MAPPING_QUALIFIED,
+                         Py_TYPE(update));
+#else
             PyErr_Format(PyExc_TypeError, LE_MSG_DICT_STAR_NOT_MAPPING,
                          Py_TYPE(update)->tp_name);
+#endif
         }
     }
     return err;
@@ -3634,7 +3694,7 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
 #ifdef LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION
         PyErr_Clear();
         PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_MAPPING_NO_FUNCTION,
-                     kwargs);
+                     Py_TYPE(kwargs));
 #elif LE_HAS_FUNCTION_STR
         PyErr_Clear();
         PyObject *funcstr = _PyObject_FunctionStr(func);
@@ -3662,7 +3722,13 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
         PyObject *args = val;
         if (val && PyTuple_Check(val) && PyTuple_GET_SIZE(val) == 1) {
 #endif
-#if LE_HAS_FUNCTION_STR
+#ifdef LE_MSG_KWARGS_DUPLICATE_OR_FUNCTION
+            /* a function whose name can't be made is shown as "function" */
+            PyObject *funcstr = _PyObject_FunctionStr(func);
+            PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_DUPLICATE_OR_FUNCTION,
+                         funcstr, "function", PyTuple_GET_ITEM(args, 0));
+            Py_XDECREF(funcstr);
+#elif LE_HAS_FUNCTION_STR
             PyErr_Clear();
             PyObject *funcstr = _PyObject_FunctionStr(func);
             if (funcstr != NULL) {
@@ -3673,17 +3739,16 @@ cimpl_format_kwargs_error(PyObject *func, PyObject *kwargs)
                 Py_DECREF(funcstr);
             }
 #else
-            PyObject *key = PyTuple_GET_ITEM(args, 0);
-            if (!PyUnicode_Check(key)) {
-                PyErr_Format(
-                    PyExc_TypeError, LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
-                    PyEval_GetFuncName(func), PyEval_GetFuncDesc(func));
-            }
-            else {
-                PyErr_Format(
-                    PyExc_TypeError, LE_MSG_KWARGS_DUPLICATE_FUNC_NAME,
-                    PyEval_GetFuncName(func), PyEval_GetFuncDesc(func), key);
-            }
+        PyObject *key = PyTuple_GET_ITEM(args, 0);
+        if (!PyUnicode_Check(key)) {
+            PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_NOT_STRINGS_FUNC_NAME,
+                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func));
+        }
+        else {
+            PyErr_Format(PyExc_TypeError, LE_MSG_KWARGS_DUPLICATE_FUNC_NAME,
+                         PyEval_GetFuncName(func), PyEval_GetFuncDesc(func),
+                         key);
+        }
 #endif
 #if LE_HAS_CURRENT_EXCEPTION
             Py_DECREF(exc);
@@ -4805,12 +4870,13 @@ codestats_begin(PsycoObject *po, int instr, int opcode)
    unless psyfunc.c:psyco_cannot_block accepts the function). A call that
    was inlined, folded, made virtual or made directly into compiled code
    emits none: that code tests at its own loop heads and after its own
-   calls. The test is part of the CALL_*, not of the next instruction: a
-   merge point there is matched before the next instruction is compiled,
-   and code compiled after a call that needed no test would then serve one
-   that did. None when the next instruction tests anyway (a loop head), or
-   is one ceval skips, after which mergepoints.c marks a test that is
-   always made. False with an exception set. */
+   calls, and a direct call before it (psyfunc.c:psyco_call_pyfunc). The test
+   is part of the CALL_*, not of the next instruction: a merge point there is
+   matched before the next instruction is compiled, and code compiled after a
+   call that needed no test would then serve one that did. None when the next
+   instruction tests anyway (a loop head), or is one ceval skips, after which
+   mergepoints.c marks a test that is always made. False with an exception set.
+ */
 static bool
 breaker_after_call(PsycoObject *po, int next_instr)
 {
@@ -5541,8 +5607,8 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
             goto fine;
         }
 
-        /* the frame's start (LeCode_Run tested eval_breaker), or a
-           generator's resumption, which isn't compiled */
+        /* the frame's start (LeCode_Run, or a direct caller, tested
+           eval_breaker), or a generator's resumption, which isn't compiled */
         case RESUME:
             goto fine;
 
@@ -7261,36 +7327,41 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
         /* yield from, in a resumable plain generator
            (mergepoints.c:body_compilable): what it iterates */
         case GET_YIELD_FROM_ITER:
-            if (Psyco_KnownType(TOP()) == &PyGen_Type)
-                goto fine;
-            x = psyco_generic_call(po, cimpl_yield_from_iter,
-                                   CfCommonNewRefPyObject, "v", TOP());
-            if (x == NULL)
-                break;
-            POP_DECREF();
-            PUSH(x);
+            if (Psyco_KnownType(TOP()) != &PyGen_Type) {
+                x = psyco_generic_call(po, cimpl_yield_from_iter,
+                                       CfCommonNewRefPyObject, "v", TOP());
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                PUSH(x);
+            }
+            if (LE_HAS_GET_ITER_INDEX)
+                PUSH(psyco_vi_Zero());
             goto fine;
 
         /* its loop: the value on top is sent into the iterator under it,
            which yields, for the YIELD_VALUE after, which pauses the frame
            with the iterator under what it yielded, as ceval leaves it; or
            returns, going to the loop's end, where the iterator is popped
-           (by END_SEND where there is one) */
+           (by END_SEND where there is one). Where GET_ITER leaves an index
+           or NULL, a NULL is between the iterator and the value, as an
+           await's PUSH_NULL leaves it too. */
         case SEND: {
             vinfo_array_t *array = array_new(1);
             condition_code_t cc;
             bool yielded;
-            PyTypeObject *tp = Psyco_NeedType(po, NTOP(2));
+            vinfo_t *iter = NTOP(LE_HAS_GET_ITER_INDEX ? 3 : 2);
+            PyTypeObject *tp = Psyco_NeedType(po, iter);
             if (tp == NULL) {
                 array_release(array);
                 break;
             }
             if (tp == &PyGen_Type || tp == &PyCoro_Type)
-                x = psyco_gen_send_status(po, NTOP(2), TOP(), array);
+                x = psyco_gen_send_status(po, iter, TOP(), array);
             else
                 x = psyco_generic_call(po, le_iter_send,
                                        CfReturnTypeInt | CfPyErrIfNeg, "vvA",
-                                       NTOP(2), TOP(), array);
+                                       iter, TOP(), array);
             if (x == NULL) {
                 array_release(array);
                 break;
@@ -7317,7 +7388,9 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
 
         case END_SEND:
             POP(v);
-            POP_DECREF(); /* the iterator */
+            if (LE_HAS_GET_ITER_INDEX)
+                POP_DECREF(); /* the NULL */
+            POP_DECREF();     /* the iterator */
             PUSH(v);
             goto fine;
 #endif
@@ -7630,13 +7703,23 @@ cimpl_get_awaitable(PyObject *o, long kind)
     if (res == NULL)
         return NULL;
     if (PyCoro_CheckExact(res) || is_iterable_coroutine(res)) {
+#ifdef LE_MSG_AWAIT_RETURNED_COROUTINE_QUALIFIED
+        PyErr_Format(PyExc_TypeError,
+                     LE_MSG_AWAIT_RETURNED_COROUTINE_QUALIFIED, t);
+#else
         PyErr_SetString(PyExc_TypeError, LE_MSG_AWAIT_RETURNED_COROUTINE);
+#endif
         Py_DECREF(res);
         return NULL;
     }
     if (!PyIter_Check(res)) {
+#ifdef LE_MSG_AWAIT_NON_ITERATOR_QUALIFIED
+        PyErr_Format(PyExc_TypeError, LE_MSG_AWAIT_NON_ITERATOR_QUALIFIED, t,
+                     Py_TYPE(res));
+#else
         PyErr_Format(PyExc_TypeError, LE_MSG_AWAIT_NON_ITERATOR,
                      Py_TYPE(res)->tp_name);
+#endif
         Py_DECREF(res);
         return NULL;
     }
@@ -8294,10 +8377,14 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
                                        "v", TOP());
                 if (v == NULL)
                     break;
-                POP_DECREF();
-                POP_DECREF();
-                POP_DECREF();
+                POP_DECREF(); /* the exception */
+                POP_DECREF(); /* the value last sent */
+                if (LE_HAS_GET_ITER_INDEX)
+                    POP_DECREF(); /* the NULL, pushed again */
+                POP_DECREF();     /* the iterator */
                 PUSH(psyco_vi_None());
+                if (LE_HAS_GET_ITER_INDEX)
+                    PUSH(psyco_vi_Zero());
                 PUSH(v);
                 goto fine;
             }

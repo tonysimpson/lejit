@@ -73,10 +73,10 @@ compute_pending_cmethod(PsycoObject *po, vinfo_t *v)
 static vinfo_t *
 PsycoCMethod_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args, vinfo_t *kw)
 {
-    vinfo_t *a[8], **kwvalues = NULL;
+    vinfo_t **kwvalues = NULL;
     PyObject *kwnames = NULL;
     vinfo_t *r;
-    int i, n = PsycoTuple_Load(args), k = 0;
+    int n = PsycoTuple_Load(args);
     if (!is_virtualtime(func->source) ||
         VirtualTime_Get(func->source) != &psyco_pending_cmethod || n < 0)
         goto generic;
@@ -84,15 +84,10 @@ PsycoCMethod_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args, vinfo_t *kw)
         kwnames = PsycoDict_PendingNames(kw, &kwvalues);
         if (kwnames == NULL)
             goto generic;
-        k = (int)PyTuple_GET_SIZE(kwnames);
     }
-    if (n + k + 1 > 8)
-        goto generic;
-    a[0] = func->array->items[iPENDING_SELF];
-    for (i = 0; i < n; i++) a[i + 1] = PsycoTuple_GET_ITEM(args, i);
-    for (i = 0; i < k; i++) a[n + 1 + i] = kwvalues[i];
-    r = psyco_vectorcall(po, func->array->items[iPENDING_DESCR], a, n + 1,
-                         kwnames);
+    r = psyco_vectorcall(po, func->array->items[iPENDING_DESCR],
+                         func->array->items[iPENDING_SELF],
+                         &PsycoTuple_GET_ITEM(args, 0), n, kwnames, kwvalues);
     if (r != NULL || PycException_Occurred(po))
         return r;
 generic:

@@ -1969,10 +1969,11 @@ psyco_forget_dead_vars(PsycoObject *po, global_entries_t *ge, bool unfix)
 }
 
 /* whether a dead local's virtual value is made real at a merge point past
-   its cap: an int or bool only if its value is known, so that making it
-   is a constant, and never a float, as a numeric loop would box them on
-   every pass (scimark +2 to +5% warm); nor a resumed generator's frame
-   word, which is no object to make but one its frame still holds */
+   its cap: not a float, which a numeric loop would box on every pass;
+   nor a resumed generator's frame word, which is no object to make but
+   one its frame still holds. Ints and bools are, run-time ones too: they
+   split re's parser's loop heads as much as its objects do, though a
+   numeric loop past its cap then boxes its int temporaries on every pass */
 static bool
 made_real_when_dead(vinfo_t *vi)
 {
@@ -1984,12 +1985,6 @@ made_real_when_dead(vinfo_t *vi)
         return false;
 #endif
     sv = VirtualTime_Get(vi->source);
-    if (sv == &psyco_computed_long || sv == &psyco_computed_bool) {
-        vinfo_t *value = vi->array->count > iLONG_VALUE
-                             ? vi->array->items[iLONG_VALUE]
-                             : NULL;
-        return value != NULL && is_compiletime(value->source);
-    }
     return sv != &psyco_computed_float;
 }
 

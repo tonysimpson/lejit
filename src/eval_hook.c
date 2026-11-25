@@ -365,52 +365,6 @@ direct_entry_put(le_code_extra_t *x, le_frame_t *f, CodeBufferObject *codebuf)
 #endif
 
 #if LE_RESUMES_ON_FRAME
-#if LE_HAS_GET_ITER_INDEX
-/* ceval's GET_ITER leaves an exact list, tuple, str or bytes itself, with
-   its index (a tagged int) above it, where compiled code holds a real
-   iterator and NULL: each such pair of the paused frame 'f's 'nstack'
-   items becomes that, the iterator moved on past as many items, once for
-   the frame. False, with no exception set, if one can't be: the frame is
-   then as valid for ceval as it was. */
-static bool
-frame_iterators_real(le_frame_t *f, int nstack)
-{
-    int base = le_code_nlocalsplus(le_frame_code(f)), k;
-    for (k = base + 1; k < base + nstack; k++) {
-        _PyStackRef index = f->localsplus[k];
-        PyObject *seq, *it;
-        Py_ssize_t i;
-        if (!PyStackRef_IsTaggedInt(index))
-            continue;
-        seq = LE_FRAME_WORD(f, k - 1);
-        i = PyStackRef_UntagInt(index);
-        if (seq == NULL || Py_TYPE(seq)->_tp_iteritem == NULL)
-            continue; /* an exception's place, pushed by its handler */
-        if (i < 0)
-            return false;
-        it = PyObject_GetIter(seq);
-        for (; it != NULL && i > 0; i--) {
-            PyObject *item = PyIter_Next(it);
-            if (item == NULL) {
-                if (PyErr_Occurred())
-                    Py_CLEAR(it);
-                break; /* ended, as ceval's index past the end would */
-            }
-            Py_DECREF(item);
-        }
-        if (it == NULL) {
-            PyErr_Clear();
-            return false;
-        }
-        le_frame_word_set(f, k - 1, it);
-        f->localsplus[k] = PyStackRef_NULL;
-    }
-    return true;
-}
-#else
-#define frame_iterators_real(f, nstack) true
-#endif
-
 /* The compiled entry to resume the generator's frame 'f' with, compiled
    now if needed, or NULL to run it interpreted; 'x' is its code's record,
    if it has one. 'nstack' items are on its stack under the value sent. */
@@ -426,7 +380,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
     /* as le_code_to_run; and ceval's test of eval_breaker as it resumes
        the frame, whose exception the frame's own handlers may catch, is
        left to ceval */
-    if (le_tracing_now(tstate) || le_frame_locals(f) != NULL ||
+    if (le_tracing_now(tstate, co) || le_frame_locals(f) != NULL ||
         le_code_nlocalsplus(co) + co->co_stacksize > LE_FRAME_WORDS_MAX ||
         le_eval_breaker_pending(tstate))
         return NULL;
@@ -435,7 +389,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
         return NULL;
     }
     p = resume_point(x, co, le_frame_lasti(f));
-    if (p == NULL || !frame_iterators_real(f, nstack))
+    if (p == NULL || !le_frame_iterators_real(f, nstack))
         return NULL;
     e = p->entries;
     if (p->count > 0) {
@@ -532,7 +486,7 @@ le_gen_to_run(PyThreadState *tstate, le_frame_t *f, le_code_extra_t *x,
     /* as le_code_to_run; and ceval's test of eval_breaker as it resumes
        the frame, whose exception the frame's own handlers may catch, is
        left to ceval */
-    if (le_tracing_now(tstate) || le_frame_locals(f) != NULL ||
+    if (le_tracing_now(tstate, co) || le_frame_locals(f) != NULL ||
         nplus + nstack > LE_GEN_WORDS || le_eval_breaker_pending(tstate))
         return NULL;
     if (x == NULL && (x = le_code_extra(co)) == NULL) {
@@ -621,7 +575,7 @@ le_code_to_run(PyCodeObject *co, PyObject *globals, PyObject *locals,
 {
     /* run interpreted while a trace or profile function is set: compiled
        code is invisible to them */
-    if (le_tracing_now(PyThreadState_GET()))
+    if (le_tracing_now(PyThreadState_GET(), co))
         return NULL;
     /* only function frames, whose f_locals is NULL at entry. Module code,
        class bodies and exec or eval with a locals mapping have one */

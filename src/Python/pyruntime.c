@@ -215,8 +215,7 @@ const long le_monitors_tools_size =
     sizeof(((PyInterpreterState *)0)->monitors.tools);
 
 /* sys.monitoring has an event on, for any tool, in the interpreter: its
-   global monitors (sys.settrace and sys.setprofile are tools too). Events
-   set on one code object (set_local_events) are not seen. */
+   global monitors (sys.settrace and sys.setprofile are tools too) */
 int
 le_monitoring_on(PyThreadState *ts)
 {
@@ -227,10 +226,31 @@ le_monitoring_on(PyThreadState *ts)
     return (a | b) != 0;
 }
 
-/* compiled code's exact test, once the version has moved, which brings
+_Static_assert(8 < sizeof(((_PyCoMonitoringData *)0)->local_monitors.tools) &&
+                   sizeof(((_PyCoMonitoringData *)0)->local_monitors.tools) <=
+                       16,
+               "LeJIT: a code object's own tools are read as two words");
+/* sys.monitoring has an event on, for any tool, for code co alone
+   (set_local_events) */
+int
+le_code_monitored(PyCodeObject *co)
+{
+    const _PyCoMonitoringData *m = co->_co_monitoring;
+    const uint8_t *t;
+    uint64_t a, b;
+    if (m == NULL)
+        return 0;
+    t = m->local_monitors.tools;
+    memcpy(&a, t, 8);
+    memcpy(&b, t + sizeof(m->local_monitors.tools) - 8, 8);
+    return (a | b) != 0;
+}
+
+/* compiled code's exact test for code co (NULL for none), once the
+   version has moved or co has monitoring data, which brings
    le_quiet_version up to date */
 int
-le_tracing_recheck(void)
+le_tracing_recheck(PyCodeObject *co)
 {
     PyThreadState *ts = PyThreadState_GET();
     if (le_monitoring_on(ts))
@@ -239,7 +259,7 @@ le_tracing_recheck(void)
         return 1;
     if (ts->interp == PyInterpreterState_Main())
         le_quiet_version = LE_MONITORING_VERSION(ts->interp);
-    return 0;
+    return co != NULL && le_code_monitored(co);
 }
 #endif
 #if LE_HAS_OPCODE_LOAD_COMMON_CONSTANT
@@ -324,9 +344,10 @@ le_eval_breaker_handler(void)
 }
 
 /* The same test before a frame's first instruction, for compiled code
-   entered through the eval hook (eval_hook.c:LeCode_Run). Compiled callers
-   test after each call instead. -1 with the exception set, for the caller
-   to give the frame a traceback entry, as ceval's error path would. */
+   entered through the eval hook (eval_hook.c:LeCode_Run). A direct call
+   from compiled code tests before it (psyfunc.c:psyco_call_pyfunc). -1 with
+   the exception set, for the caller to give the frame a traceback entry, as
+   ceval's error path would. */
 int
 le_eval_breaker_at_entry(PyCodeObject *co)
 {
@@ -424,9 +445,10 @@ le_eval_breaker_handler(void)
 }
 
 /* The same test before a frame's first instruction, for compiled code
-   entered through the eval hook (eval_hook.c:LeCode_Run). Compiled callers
-   test after each call instead. -1 with the exception set, for the caller
-   to give the frame a traceback entry, as ceval's error path would. */
+   entered through the eval hook (eval_hook.c:LeCode_Run). A direct call
+   from compiled code tests before it (psyfunc.c:psyco_call_pyfunc). -1 with
+   the exception set, for the caller to give the frame a traceback entry, as
+   ceval's error path would. */
 int
 le_eval_breaker_at_entry(PyCodeObject *co)
 {
@@ -512,9 +534,10 @@ le_eval_breaker_handler(void)
 
 /* The same test before a frame's first instruction, for compiled code
    entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
-   instructions ceval's loop top skips. Compiled callers test after each
-   call instead. -1 with the exception set, for the caller to give the
-   frame a traceback entry, as ceval's error path would. */
+   instructions ceval's loop top skips. A direct call from compiled code
+   tests before it (psyfunc.c:psyco_call_pyfunc). -1 with the exception
+   set, for the caller to give the frame a traceback entry, as ceval's error
+   path would. */
 int
 le_eval_breaker_at_entry(PyCodeObject *co)
 {
@@ -592,9 +615,10 @@ le_eval_breaker_handler(void)
 
 /* The same test before a frame's first instruction, for compiled code
    entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
-   instructions ceval's loop top skips. Compiled callers test after each
-   call instead. -1 with the exception set, for the caller to give the
-   frame a traceback entry, as ceval's error path would. */
+   instructions ceval's loop top skips. A direct call from compiled code
+   tests before it (psyfunc.c:psyco_call_pyfunc). -1 with the exception
+   set, for the caller to give the frame a traceback entry, as ceval's error
+   path would. */
 int
 le_eval_breaker_at_entry(PyCodeObject *co)
 {
@@ -659,9 +683,10 @@ le_eval_breaker_handler(void)
 
 /* The same test before a frame's first instruction, for compiled code
    entered through the eval hook (eval_hook.c:LeCode_Run), skipping the
-   instructions ceval's loop top skips. Compiled callers test after each
-   call instead. -1 with the exception set, for the caller to give the
-   frame a traceback entry, as ceval's error path would. */
+   instructions ceval's loop top skips. A direct call from compiled code
+   tests before it (psyfunc.c:psyco_call_pyfunc). -1 with the exception
+   set, for the caller to give the frame a traceback entry, as ceval's error
+   path would. */
 int
 le_eval_breaker_at_entry(PyCodeObject *co)
 {

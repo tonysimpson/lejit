@@ -2004,7 +2004,7 @@ exposed_here(PyCodeObject *co)
 DEFINEFN int
 psyco_frame_goes_interpreted(PyCodeObject *co)
 {
-    return le_tracing_now(PyThreadState_GET()) || exposed_here(co);
+    return le_tracing_now(PyThreadState_GET(), co) || exposed_here(co);
 }
 #endif
 
