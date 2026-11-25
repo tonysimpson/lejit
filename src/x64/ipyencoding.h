@@ -244,12 +244,13 @@ psyco_xdecref_rt(PsycoObject *po, vinfo_t *v)
     rg = RUNTIME_REG(v);
     NEED_CC_REG(rg);
     TEST_R_R(rg, rg);
-    BEGIN_SHORT_COND_JUMP(1, CC_E);
+    /* with XMM registers to save, the decref is too long for 8 bits */
+    BEGIN_COND_JUMP_OF(1, CC_E, psyco_xmm_live(po));
     if (tp != NULL)
         DEC_OB_REFCNT_T(rg, tp);
     else
         DEC_OB_REFCNT(rg);
-    END_SHORT_JUMP(1);
+    END_JUMP_OF(1);
     END_CODE
 }
 

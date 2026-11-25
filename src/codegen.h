@@ -76,6 +76,13 @@ EXTERNFN vinfo_t *
 psyco_generic_call(PsycoObject *po, void *c_function, int flags,
                    const char *arguments, ...);
 
+/* the same for a C function whose address is the run-time value
+   'vtarget', which is never called at compile time. The arguments are
+   'v' or 'd' (vinfo_t *), at most six integers and eight doubles. */
+EXTERNFN vinfo_t *
+psyco_call_address(PsycoObject *po, vinfo_t *vtarget, int flags,
+                   const char *arguments, ...);
+
 /* the stack an 'i' array of 'count' words takes: whole 16-byte units, so
    that the depth after the call keeps the parity it would have without
    the array. A block is matched only at the same return-address slot mod
@@ -369,12 +376,6 @@ EXTERNVAR c_promotion_t psyco_interp_pyobj_promotion;
 EXTERNVAR c_promotion_t psyco_fused_pyobj_promotion;
 
 #define MEGAMORPHIC_MAX 5
-
-/* an input array that a translated case passes to a C function
-   (BUILD_STRING) goes as this many words at most (psyco_generic_call's
-   eight arguments, less a count), the rest NULL; a longer one as a tuple
-   of its items */
-#define ARRAY_ARGS_MAX 7
 
 /* Check if the given virtual source is a promotion exception */
 EXTERNFN bool

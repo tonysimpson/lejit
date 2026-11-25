@@ -1,8 +1,7 @@
 # Keyword calls of C functions and methods (pmethodobject.c:call_keywords):
 # a METH_FASTCALL | METH_KEYWORDS one gets its keywords as vectorcall
 # passes them, a METH_VARARGS | METH_KEYWORDS one a tuple and a dict; the
-# others, and calls with more values than the direct path takes, raise
-# CPython's own TypeError through the residual call.
+# others raise CPython's own TypeError through the residual call.
 import io
 import sys
 
@@ -36,7 +35,7 @@ def fastcall(n):
 
 
 def many_values(n):
-    # past the direct path's count, the values go in one tuple
+    # more values than fit in registers
     out = []
     for i in range(n):
         buf = io.StringIO()

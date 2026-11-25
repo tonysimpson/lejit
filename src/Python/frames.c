@@ -266,11 +266,15 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
     fr->n_entry_locals = 0;
     fr->resumed = 0;
     fr->exposed = 0;
+    fr->walked = NULL;
     fr->next = frame_runs;
     frame_runs = fr;
     if (fr->next == NULL && !runs_listed)
         runs_list();
 }
+
+static void
+walked_end(struct walked_calls_s *w);
 
 DEFINEFN FrameRuntime *
 psyco_frame_start_get(le_frame_t *f)
@@ -294,6 +298,8 @@ psyco_frame_start_unregister(FrameRuntime *fr)
         while (*p != fr) p = &(*p)->next;
         *p = fr->next;
     }
+    if (fr->walked != NULL)
+        walked_end(fr->walked);
 #ifdef PyFrameLocalsProxy_Check
     if (fr->exposed)
         psyco_frames_exposed--;
@@ -883,53 +889,231 @@ kept_lasti(activation_t *a)
     return finfo_last((stack_frame_info_t *)v)->back_lasti;
 }
 
+/* innermost_slot's last walk, kept for the next: a run's compiled calls
+   from its root slot in, each by its own slot. A call whose return comes
+   to psyco_activation_returned (through a barrier put in its return
+   address, or its kept frame's) is running until then, and so are the
+   calls out of it, whose slots keep their records: the next walk goes on
+   from the innermost such call. Each walk watches the call out of the
+   innermost one, so a walk from a call that frame returns to, or from
+   one it calls, is short, and unwinding a deep stack walks each call
+   once. */
+typedef struct {
+    stack_frame_info_t **own;
+    code_t *ret; /* what it returns to, if the barrier is one put here */
+    bool seen;   /* its return comes to psyco_activation_returned */
+} walked_call_t;
+
+struct walked_calls_s {
+    size_t n, size; /* the root's first, the innermost's last */
+    walked_call_t calls[1];
+};
+
+/* the seen calls but the roots in this thread's walks */
+static _Thread_local long walked_seen LE_FAST_TLS;
+
+/* a run's walk after its first, which is not kept: most runs that walk at
+   all walk once */
+static struct walked_calls_s walked_once;
+
+static void
+walked_forget(struct walked_calls_s *w)
+{
+    size_t i;
+    for (i = 1; i < w->n; i++)
+        if (w->calls[i].seen)
+            walked_seen--;
+    w->n = 0;
+}
+
+static __attribute__((noinline)) void
+walked_end(struct walked_calls_s *w)
+{
+    if (w == &walked_once)
+        return;
+    walked_forget(w);
+    PyMem_Free(w);
+}
+
+/* the seen call whose own slot is 'own', in any of this thread's runs, or
+   NULL; 'in' is set to its run's walk. The slots go down the stack. */
+static walked_call_t *
+walked_find(stack_frame_info_t **own, struct walked_calls_s **in)
+{
+    FrameRuntime *fr;
+    if (walked_seen == 0)
+        return NULL;
+    for (fr = frame_runs; fr != NULL; fr = fr->next) {
+        struct walked_calls_s *w = fr->walked;
+        size_t lo = 1, hi;
+        if (w == NULL || w->n < 2 || own > w->calls[1].own ||
+            own < w->calls[w->n - 1].own)
+            continue;
+        hi = w->n - 1;
+        while (lo <= hi) {
+            size_t mid = (lo + hi) / 2;
+            if (w->calls[mid].own == own) {
+                if (!w->calls[mid].seen)
+                    break;
+                if (in != NULL)
+                    *in = w;
+                return &w->calls[mid];
+            }
+            if (w->calls[mid].own > own)
+                lo = mid + 1;
+            else
+                hi = mid - 1;
+        }
+    }
+    return NULL;
+}
+
+static walked_call_t *
+walked_call(stack_frame_info_t **own)
+{
+    return walked_find(own, NULL);
+}
+
+/* Where the return address of the compiled callee whose slot is 'own' may
+   be: between the slot and the callee's own callee, or the next run of
+   compiled code nearer here (or here), down from the slot. */
+#define RET_SEARCH_MAX 8192
+static code_t **
+return_search_end(stack_frame_info_t **own)
+{
+    code_t **lo;
+    le_frame_t *t;
+    if ((((long)*own) & 1) == 0)
+        return (code_t **)psyco_next_stack_frame(own) + 1;
+    lo = (code_t **)&lo;
+    for (t = le_frame_current(PyThreadState_GET()); t != NULL;
+         t = le_frame_back(t)) {
+        FrameRuntime *fr = psyco_frame_start_get(t);
+        code_t **root;
+        if (fr == NULL || fr->resumed || !le_frame_executing(t))
+            continue;
+        root = (code_t **)*fr->psy_frames_start;
+        if (root < (code_t **)own && root + 1 > lo)
+            lo = root + 1;
+    }
+    return lo;
+}
+
 /* Where the return address of the compiled callee whose slot is 'own' is:
    where the record or note in that slot says the callee keeps it, or after
    the arguments the call pushed if the slot says nothing. A unification
    may have moved it, and the word it left still holds it. A note may be
    left from an earlier call: if the word doesn't hold the address, it is
-   looked for between the slot and the callee's own callee, or the next run
-   of compiled code nearer here (or here): NULL if it isn't there once, so
-   that nothing but it is replaced. */
-#define RET_SEARCH_MAX 8192
+   looked for as return_search_end says: NULL if it isn't there once, so
+   that nothing but it is replaced. Where innermost_slot put the barrier,
+   any word holding it. */
 static code_t **
 return_address(stack_frame_info_t **own, stack_frame_info_t *rec)
 {
     long v = (long)*own, below = (rec->nargs + 1) * (long)sizeof(long);
     code_t **p, **lo, **q, **found = NULL;
-    le_frame_t *t;
+    walked_call_t *w = walked_call(own);
+    bool barrier = w != NULL && w->ret != NULL;
+    code_t *want = barrier ? psyco_return_barrier : rec->ret_addr;
     if ((v & 1) == 0)
         below = ((stack_frame_info_t *)v)->ret_below;
     else if (v != -1 && v != FINFO_RETURNING)
         below = psyco_note_map(v)->ret_below;
     p = (code_t **)((char *)own - below);
-    if (*p == rec->ret_addr)
+    if (*p == want)
         return p;
-    if ((v & 1) == 0) {
-        lo = (code_t **)psyco_next_stack_frame(own) + 1;
-    }
-    else {
-        lo = (code_t **)&p;
-        for (t = le_frame_current(PyThreadState_GET()); t != NULL;
-             t = le_frame_back(t)) {
-            FrameRuntime *fr = psyco_frame_start_get(t);
-            code_t **root;
-            if (fr == NULL || fr->resumed || !le_frame_executing(t))
-                continue;
-            root = (code_t **)*fr->psy_frames_start;
-            if (root < (code_t **)own && root + 1 > lo)
-                lo = root + 1;
-        }
-    }
+    lo = return_search_end(own);
     if ((code_t **)own - lo > RET_SEARCH_MAX)
         lo = (code_t **)own - RET_SEARCH_MAX;
     for (q = (code_t **)own - 1; q >= lo; q--)
-        if (*q == rec->ret_addr) {
+        if (*q == want) {
             if (found != NULL)
                 return NULL;
+            if (barrier)
+                return q;
             found = q;
         }
     return found;
+}
+
+/* A kept frame's barrier goes in the call's return address at 'ret': what
+   the call returns to, which a barrier innermost_slot put there keeps */
+static code_t *
+barrier_taken(stack_frame_info_t **own, code_t **ret)
+{
+    code_t *to = *ret;
+    walked_call_t *w;
+    if (to == psyco_return_barrier) {
+        w = walked_call(own);
+        if (w == NULL || w->ret == NULL)
+            psyco_fatal_msg("a kept frame's call has an unknown barrier");
+        to = w->ret;
+        w->ret = NULL; /* the kept frame's barrier sees the return */
+    }
+    *ret = psyco_return_barrier;
+    return to;
+}
+
+/* call 'k' of a walk, not the root, is watched: its return comes to
+   psyco_activation_returned, or it is left unseen */
+static void
+walked_watch(struct walked_calls_s *w, size_t k)
+{
+    walked_call_t *c = &w->calls[k];
+    stack_frame_info_t **slot, *rec;
+    activation_t *a;
+    code_t **lo, **q;
+    if (c->seen)
+        return;
+    slot = c[-1].own;
+    rec = *slot;
+    if ((((long)rec) & 1) != 0 || rec->nargs < 0)
+        return;
+    a = act_find(c->own);
+    if (a != NULL && a->slot != slot)
+        return;
+    if ((((long)*c->own) & 1) != 0)
+        return;
+    /* every copy a move left in its frame, above its callee's slot, beside
+       a kept frame's barrier: the call returns from one of them */
+    lo = (code_t **)psyco_next_stack_frame(c->own) + 1;
+    if ((code_t **)c->own - lo > RET_SEARCH_MAX)
+        return;
+    if (a != NULL) {
+        /* a kept frame whose call returned past its barrier is left over
+           from an earlier call */
+        for (q = (code_t **)c->own - 1; q >= lo; q--)
+            if (*q == psyco_return_barrier)
+                break;
+        if (q < lo)
+            return;
+    }
+    for (q = (code_t **)c->own - 1; q >= lo; q--)
+        if (*q == rec->ret_addr) {
+            *q = psyco_return_barrier;
+            c->ret = rec->ret_addr;
+        }
+    c->seen = a != NULL || c->ret != NULL;
+    if (c->seen)
+        walked_seen++;
+}
+
+/* the call whose own slot is 'own' has returned: 'walked' is set if it was
+   watched. What it returns to if it came through a barrier put here, else
+   NULL. */
+static code_t *
+walked_returned(stack_frame_info_t **own, bool *walked)
+{
+    struct walked_calls_s *w;
+    walked_call_t *c = walked_find(own, &w);
+    code_t *ret;
+    *walked = c != NULL;
+    if (c == NULL)
+        return NULL;
+    ret = c->ret;
+    w->n = c - w->calls;
+    walked_seen--;
+    return ret;
 }
 
 #if LE_RESUMES_GENERATORS_DIRECTLY
@@ -976,7 +1160,7 @@ gen_kept_frame(stack_frame_info_t **slot, int lasti)
         return NULL;
     a = act_add(own);
     a->slot = slot;
-    a->ret = *ret;
+    a->ret = barrier_taken(own, ret);
     a->frame = f; /* the table's reference */
     a->resumed = 0;
     a->exposed = 0;
@@ -985,7 +1169,6 @@ gen_kept_frame(stack_frame_info_t **slot, int lasti)
     a->gen = 1;
     a->keep = NULL;
     a->nkeep = 0;
-    *ret = psyco_return_barrier;
     Py_INCREF(f);
     Py_INCREF(f);
     return f;
@@ -1083,7 +1266,7 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
     }
     a = act_add(own);
     a->slot = slot;
-    a->ret = *ret;
+    a->ret = barrier_taken(own, ret);
     a->frame = f; /* the table's reference */
     a->resumed = 0;
     a->exposed = 0;
@@ -1092,7 +1275,6 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
     a->gen = 0;
     a->keep = NULL;
     a->nkeep = 0;
-    *ret = psyco_return_barrier;
     Py_INCREF(f);
     return f;
 }
@@ -1206,6 +1388,8 @@ DEFINEFN
 code_t *
 psyco_activation_returned(long *sp)
 {
+    bool walked;
+    code_t *ret = walked_returned((stack_frame_info_t **)(sp + 1), &walked);
     activation_t *a = act_find((stack_frame_info_t **)(sp + 1));
     PyFrameObject *f;
     PyObject *t, *v, *tb, **keep;
@@ -1213,9 +1397,11 @@ psyco_activation_returned(long *sp)
 #if LE_RESUMES_COROUTINES
     PyObject *coro;
 #endif
-    code_t *ret;
-    if (a == NULL)
+    if (a == NULL) {
+        if (walked && ret != NULL)
+            return ret;
         psyco_fatal_msg("a kept frame's call returned unknown");
+    }
     f = a->frame;
     ret = a->ret;
     gen = a->gen;
@@ -3245,24 +3431,81 @@ struct resume_s {
     PyObject *values[1];
 };
 
+/* one more call in the run's walk, false if there is no memory for it */
+static bool
+walked_push(FrameRuntime *fr, stack_frame_info_t **own)
+{
+    struct walked_calls_s *w = fr->walked == &walked_once ? NULL : fr->walked;
+    if (w == NULL || w->n == w->size) {
+        bool first = w == NULL;
+        size_t size = first ? 16 : 2 * w->size;
+        w = PyMem_Realloc(w, sizeof(struct walked_calls_s) +
+                                 (size - 1) * sizeof(walked_call_t));
+        if (w == NULL)
+            return false;
+        if (first)
+            w->n = 0;
+        w->size = size;
+        fr->walked = w;
+    }
+    w->calls[w->n].own = own;
+    w->calls[w->n].ret = NULL;
+    w->calls[w->n].seen = false;
+    w->n++;
+    return true;
+}
+
 /* the slot of the record whose first entry is the innermost compiled
-   frame, NULL when that frame is the real one 'real' is set to */
+   frame, NULL when that frame is the real one 'real' is set to: walked
+   on from the innermost call the last walk saw that is still running */
 static stack_frame_info_t **
 innermost_slot(PyFrameObject **real)
 {
     le_frame_t *f = le_frame_current(PyThreadState_GET());
     FrameRuntime *fstart = f == NULL ? NULL : psyco_frame_start_get(f);
-    stack_frame_info_t **f1, **last = NULL;
+    stack_frame_info_t **root, **f1, **last = NULL;
+    struct walked_calls_s *w;
+    size_t from = 0;
+    bool kept;
     *real = NULL;
     if (fstart == NULL)
         return NULL;
     *real = le_frame_object(fstart->frame);
-    for (f1 = *(fstart->psy_frames_start); (((long)(*f1)) & 1) == 0;
-         f1 = psyco_next_stack_frame(f1)) {
+    root = *(fstart->psy_frames_start);
+    w = fstart->walked;
+    if (w == NULL) {
+        fstart->walked = &walked_once;
+        kept = false;
+    }
+    else if (w != &walked_once && w->calls[0].own == root) {
+        from = w->n - 1;
+        while (!w->calls[from].seen) from--;
+        w->n = from + 1;
+        if (from > 0)
+            last = w->calls[from - 1].own;
+        kept = true;
+    }
+    else {
+        /* the root slot is set as the code starts */
+        if (w != NULL)
+            walked_forget(w);
+        kept = walked_push(fstart, root);
+        if (kept)
+            fstart->walked->calls[0].seen = true;
+    }
+    for (f1 = kept ? fstart->walked->calls[from].own : root;
+         (((long)(*f1)) & 1) == 0;) {
         last = f1;
         if ((*f1)->link_stack_depth == 0)
             break;
+        f1 = psyco_next_stack_frame(f1);
+        if (kept && !walked_push(fstart, f1))
+            kept = false;
     }
+    if (!kept && fstart->walked != &walked_once)
+        fstart->walked->n = from + 1;
+    else if (kept && fstart->walked->n >= 3)
+        walked_watch(fstart->walked, fstart->walked->n - 2);
     return last;
 }
 

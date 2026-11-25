@@ -3,8 +3,8 @@
 # psyfunc.c:_PsycoEval_EvalCodeWithName); and the calls it leaves to the
 # real one, whose TypeError must be CPython's own text on every version: a
 # keyword it doesn't take, one that repeats a positional, a positional-only
-# name, a missing or extra argument. Calls of anything else (C functions,
-# classes, a megamorphic site) get the dict CPython makes.
+# name, a missing or extra argument. Calls of anything else
+# (residual_keyword_calls.py) get the keywords as CPython passes them.
 import sys
 
 
