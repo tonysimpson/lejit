@@ -72,6 +72,13 @@ EXTERNFN void
 psyco_frame_catcher_end(PyObject **word);
 EXTERNFN void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
+/* A new generator, coroutine or async generator (by the code's flags) of
+   the function 'func', whose frame is the frame object 'f''s own frame,
+   with its words, stack and place: f's reference is taken. Its state is
+   FRAME_CREATED where it has one, and it has no origin recorded. NULL with
+   an exception. */
+EXTERNFN PyObject *
+le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func);
 /* PyFrame_New, with no function watcher told of the function it makes */
 EXTERNFN PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co,
@@ -110,6 +117,7 @@ struct locals_map_s {
     int lasti;       /* the call's instruction */
     int nvalues;
     long below;
+    long ret_below; /* a note's: where the frame keeps its return address */
     long items[1];
 };
 
@@ -135,6 +143,9 @@ struct stack_frame_info_s {
        whose address is the word above the callee's own slot
        (psyfunc.c:psyco_gen_step) */
     int on_gen_frame;
+    /* where the frame that makes the call keeps its own return address
+       meanwhile (codegen.h:psyco_ret_below); in a record's first entry */
+    long ret_below;
 };
 
 /* the map of po's locals now, with lasti; while inlining, of the

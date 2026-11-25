@@ -49,19 +49,31 @@ for _ in range(int(sys.argv[7])):
             fn(*args)
         except Exception:
             pass
-clear_type_cache()
-gc.collect()
-before = sys.getallocatedblocks()
-gc.disable()
-for _ in range(100):
-    for args in calls:
-        try:
-            fn(*args)
-        except Exception:
-            pass
-gc.enable()
-clear_type_cache()
-gc.collect()
-out.append('leak: %d' % (sys.getallocatedblocks() - before))
+# In a checked build, if anything compiled during the rounds, they are run
+# again (up to three times) and the last run counts: a branch first taken
+# late (a thread switch or a signal landing at a check not reached before)
+# compiles then and keeps its code, which is not a leak. A leak grows in
+# every run.
+repeats = 0
+while True:
+    clear_type_cache()
+    gc.collect()
+    buffers = lejit._core._stats()['code_buffers'] if checked else 0
+    before = sys.getallocatedblocks()
+    gc.disable()
+    for _ in range(100):
+        for args in calls:
+            try:
+                fn(*args)
+            except Exception:
+                pass
+    gc.enable()
+    clear_type_cache()
+    gc.collect()
+    leak = sys.getallocatedblocks() - before
+    if not checked or lejit._core._stats()['code_buffers'] == buffers or repeats == 3:
+        break
+    repeats += 1
+out.append('leak: %d %d' % (leak, repeats))
 for line in out:
     print(line)

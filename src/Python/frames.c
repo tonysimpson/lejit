@@ -141,6 +141,7 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
     p->link_stack_depth = -inlining;
     p->nargs = -1;
     p->co = callee->pr.co;
+    p->ret_below = psyco_ret_below(caller != NULL ? caller : callee);
     p->back_lasti =
         caller != NULL ? psyco_call_lasti(caller->pr.co, caller->pr.next_instr)
                        : inline_parent_lasti(callee);
@@ -167,6 +168,7 @@ psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co)
     p->link_stack_depth = -inlining;
     p->nargs = -1;
     p->co = co;
+    p->ret_below = psyco_ret_below(caller);
     p->back_lasti = psyco_call_lasti(caller->pr.co, caller->pr.next_instr);
     p->on_gen_frame = 1;
     if (inlining)
@@ -998,18 +1000,26 @@ return_search_end(stack_frame_info_t **own)
 }
 
 /* Where the return address of the compiled callee whose slot is 'own' is:
-   after the arguments the call pushed, unless a block the callee went on
-   in keeps it elsewhere (a unification may move it, as any stack value).
-   Then it is looked for as return_search_end says: NULL if it isn't there
-   once, so that nothing but it is replaced. Where innermost_slot put the
-   barrier, any word holding it. */
+   where the record or note in that slot says the callee keeps it, or after
+   the arguments the call pushed if the slot says nothing. A unification
+   may have moved it, and the word it left still holds it. A note may be
+   left from an earlier call: if the word doesn't hold the address, it is
+   looked for as return_search_end says: NULL if it isn't there once, so
+   that nothing but it is replaced. Where innermost_slot put the barrier,
+   any word holding it. */
 static code_t **
 return_address(stack_frame_info_t **own, stack_frame_info_t *rec)
 {
-    code_t **p = (code_t **)(own - rec->nargs - 1), **lo, **q, **found = NULL;
+    long v = (long)*own, below = (rec->nargs + 1) * (long)sizeof(long);
+    code_t **p, **lo, **q, **found = NULL;
     walked_call_t *w = walked_call(own);
     bool barrier = w != NULL && w->ret != NULL;
     code_t *want = barrier ? psyco_return_barrier : rec->ret_addr;
+    if ((v & 1) == 0)
+        below = ((stack_frame_info_t *)v)->ret_below;
+    else if (v != -1 && v != FINFO_RETURNING)
+        below = psyco_note_map(v)->ret_below;
+    p = (code_t **)((char *)own - below);
     if (*p == want)
         return p;
     lo = return_search_end(own);
@@ -1269,6 +1279,43 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
     return f;
 }
 
+/* CPython's public constructors make the generator around a frame object,
+   copying the frame object's own frame into the generator where the
+   generator holds its frame: the frame object is then its frame object,
+   which holds the reference given. The origin a coroutine records now is
+   dropped: it stands for one made at a call where the origin depth was 0
+   (psyfunc.c:psyco_coro_start). */
+DEFINEFN PyObject *
+le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func)
+{
+    int flags = ((PyCodeObject *)func->func_code)->co_flags;
+    PyObject *gen;
+#if LE_HAS_INTERPRETER_FRAME
+    le_frame_t *own = le_frame_of(f);
+    PyFrameObject *own_obj = own->frame_obj;
+    own->frame_obj = f;
+    Py_INCREF(f);
+#endif
+    if (flags & CO_COROUTINE)
+        gen = PyCoro_New(f, func->func_name, func->func_qualname);
+    else if (flags & CO_ASYNC_GENERATOR)
+        gen = PyAsyncGen_New(f, func->func_name, func->func_qualname);
+    else
+        gen = PyGen_NewWithQualName(f, func->func_name, func->func_qualname);
+#if LE_HAS_INTERPRETER_FRAME
+    if (gen == NULL) {
+        own->frame_obj = own_obj;
+        Py_DECREF(f);
+    }
+    else if (flags & CO_COROUTINE)
+        Py_CLEAR(((PyCoroObject *)gen)->cr_origin_or_finalizer);
+#else
+    if (gen != NULL && (flags & CO_COROUTINE))
+        Py_CLEAR(((PyCoroObject *)gen)->cr_origin);
+#endif
+    return gen;
+}
+
 #if LE_RESUMES_COROUTINES
 /* a realised coroutine runs (psyco_coros_realise) or not, as gen_send_ex
    marks it: on a frame with no state its own flag says so, and its frame
@@ -1326,13 +1373,11 @@ coro_realise(stack_frame_info_t **slot)
     }
     Py_CLEAR(
         f->f_back); /* a running frame's caller is found by f_back's getter */
-    coro = PyCoro_New(f, func->func_name, func->func_qualname); /* takes f */
+    coro = le_gen_of_frame(f, func);
     if (coro == NULL) {
         PyErr_Clear();
         return NULL;
     }
-    /* made where the origin depth was 0 (psyco_coro_start) */
-    Py_CLEAR(((PyCoroObject *)coro)->cr_origin);
     coro_set_running(coro, 1);
     a->coro = coro;
     return coro;
@@ -3837,11 +3882,9 @@ psyco_resume_suspend(struct resume_s *st, long at, long nstack,
         Py_DECREF(f);
     }
     else {
-        coro =
-            PyCoro_New(f, func->func_name, func->func_qualname); /* takes f */
+        coro = le_gen_of_frame(f, func);
         if (coro == NULL)
             return NULL;
-        Py_CLEAR(((PyCoroObject *)coro)->cr_origin);
     }
     if (psyco_trace_yield(f, value) < 0) {
         Py_DECREF(coro);
@@ -3908,16 +3951,14 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack,
     }
     if (coro == NULL) {
         Py_INCREF(f);
-        coro = PyCoro_New(f, func->func_name, func->func_qualname);
+        coro = le_gen_of_frame(f, func);
         if (coro == NULL) {
-            Py_DECREF(f);
             if (st->catcher != NULL)
                 Py_DECREF(st->catcher);
             Py_DECREF(f);
             PyMem_Free(st);
             return NULL;
         }
-        Py_CLEAR(((PyCoroObject *)coro)->cr_origin);
     }
     coro_set_running(coro, 1);
     coro_exc_take(st, nstack, (PyGenObject *)coro, ts->exc_info);
