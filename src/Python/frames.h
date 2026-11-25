@@ -226,14 +226,14 @@ psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p);
 #endif
 EXTERNVAR PyObject *psyco_coro_suspended;
 EXTERNFN PyObject *
-psyco_resume_suspend(struct resume_s *st, long at, long nstack,
+psyco_resume_suspend(struct resume_s *st, long at, long nstack, long level,
                      PyFunctionObject *func, PyObject *value);
 EXTERNFN void
 psyco_coro_taken(PyObject *out[]);
 EXTERNFN void
 psyco_coros_realise(void);
 EXTERNFN PyObject *
-psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack,
+psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack, long level,
                       PyFunctionObject *func);
 
 EXTERNFN void

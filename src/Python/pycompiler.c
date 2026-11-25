@@ -5541,6 +5541,25 @@ resume_state(PsycoObject *po, int nstack)
     return st;
 }
 
+/* where the outermost handler running at 'at', in a coroutine's body,
+   saved the exception handled before it, as a stack position: its
+   EXCEPT_HANDLER block's level, or PUSH_EXC_INFO's place; -1 if no handler
+   runs there (frames.c:coro_exc_take) */
+static long
+handled_level(PsycoObject *po, int at)
+{
+#if LE_HAS_EXCEPTION_TABLE
+    return psyco_handled_saved(po->pr.co, at);
+#else
+    int i, nblocks = po->pr.is_inlining ? 0 : po->pr.iblock;
+    (void)at;
+    for (i = 0; i < nblocks; i++)
+        if (po->pr.blockstack[i].b_type == EXCEPT_HANDLER)
+            return po->pr.blockstack[i].b_level;
+    return -1;
+#endif
+}
+
 /* The rare path itself: ceval runs the frame from 'next_instr' and this
    frame ends with its result. 0, with EReturn or an exception set. */
 static int
@@ -5566,8 +5585,9 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
     /* a coroutine's body started by its await goes on as its coroutine */
     if (psyco_generator_mode(po) == GENEXPR_DIRECT)
         result = psyco_generic_call(
-            po, psyco_resume_run_coro, CfCommonNewRefPyObject, "vllv", st,
+            po, psyco_resume_run_coro, CfCommonNewRefPyObject, "vlllv", st,
             (long)(next_instr - sizeof(_Py_CODEUNIT)), (long)nstack,
+            handled_level(po, next_instr),
             po->vlocals.items[GENEXPR_SLOT_ACC(co)]);
     else
         result = psyco_generic_call(
@@ -8236,10 +8256,10 @@ yield_direct(PsycoObject *po, int at)
     st = resume_state(po, nstack);
     if (st == NULL)
         return;
-    v = psyco_generic_call(po, psyco_resume_suspend, CfCommonNewRefPyObject,
-                           "vllvv", st, (long)at, (long)nstack,
-                           po->vlocals.items[GENEXPR_SLOT_ACC(po->pr.co)],
-                           stack_a[nstack]);
+    v = psyco_generic_call(
+        po, psyco_resume_suspend, CfCommonNewRefPyObject, "vlllvv", st,
+        (long)at, (long)nstack, handled_level(po, at),
+        po->vlocals.items[GENEXPR_SLOT_ACC(po->pr.co)], stack_a[nstack]);
     vinfo_decref(st, po);
     if (v == NULL)
         return;

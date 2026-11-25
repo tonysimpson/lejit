@@ -3936,34 +3936,16 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
 DEFINEVAR PyObject *psyco_coro_suspended = NULL;
 static PyObject *suspended_coro = NULL, *suspended_value = NULL;
 
-/* where the outermost handler running at 'at' saved the exception
-   handled before it, as a stack position: its EXCEPT_HANDLER block's level,
-   or PUSH_EXC_INFO's place; -1 if no handler runs there */
-static int
-handled_level(struct resume_s *st, long at)
-{
-#if LE_HAS_EXCEPTION_TABLE
-    return psyco_handled_saved(le_pyframe_code(st->f), (int)at);
-#else
-    int i;
-    (void)at;
-    for (i = 0; i < st->iblock; i++)
-        if (st->blocks[i].b_type == EXCEPT_HANDLER)
-            return st->blocks[i].b_level;
-    return -1;
-#endif
-}
-
-/* A body that goes on in its own handler, at 'at': compiled code made the
-   exception it handles current where its caller's handled exception is
-   ('theirs'), keeping that one where the outermost handler saved it
-   (handled_level), as ceval keeps the coroutine's own. The exception moves
-   to the coroutine's state 'mine', and the caller's goes back. */
+/* A body that goes on in its own handler: compiled code made the exception
+   it handles current where its caller's handled exception is ('theirs'),
+   keeping that one at stack position 'level', where the outermost handler
+   saved it (pycompiler.c:handled_level; -1 if none runs), as ceval keeps
+   the coroutine's own. The exception moves to the coroutine's state 'mine',
+   and the caller's goes back. */
 static void
-coro_exc_take(struct resume_s *st, long at, long nstack,
+coro_exc_take(struct resume_s *st, long level, long nstack,
               _PyErr_StackItem *mine, _PyErr_StackItem *theirs)
 {
-    int level = handled_level(st, at);
     PyObject **saved;
     if (level < 0)
         return;
@@ -4017,7 +3999,7 @@ coro_exc_give(_PyErr_StackItem *to, _PyErr_StackItem *from)
    depth is now. 'value' is what it yielded. The marker the body returns,
    or NULL with an exception. */
 DEFINEFN PyObject *
-psyco_resume_suspend(struct resume_s *st, long at, long nstack,
+psyco_resume_suspend(struct resume_s *st, long at, long nstack, long level,
                      PyFunctionObject *func, PyObject *value)
 {
     PyFrameObject *f = st->f;
@@ -4027,7 +4009,7 @@ psyco_resume_suspend(struct resume_s *st, long at, long nstack,
     activation_t *a;
     _PyErr_StackItem held = {0};
     /* suspending in its own handler */
-    coro_exc_take(st, at, nstack, &held, PyThreadState_GET()->exc_info);
+    coro_exc_take(st, level, nstack, &held, PyThreadState_GET()->exc_info);
     resume_locals(st, le_frame_of(f), nlocals);
     for (i = 0; i < nstack; i++)
         le_frame_word_put(le_frame_of(f), nlocals + i,
@@ -4088,7 +4070,7 @@ psyco_resume_suspend(struct resume_s *st, long at, long nstack,
    (realised now, if it isn't yet), as gen_send_ex runs it. What the body
    returns: the marker, if it suspended, else the result. */
 DEFINEFN PyObject *
-psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack,
+psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack, long level,
                       PyFunctionObject *func)
 {
     PyFrameObject *f = st->f;
@@ -4117,8 +4099,7 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack,
     gen = (PyGenObject *)coro;
     Py_INCREF(f); /* for after the run, which may close the coroutine */
     coro_set_running(coro, 1);
-    coro_exc_take(st, lasti + LE_UNIT, nstack, &gen->gi_exc_state,
-                  ts->exc_info);
+    coro_exc_take(st, level, nstack, &gen->gi_exc_state, ts->exc_info);
     gen->gi_exc_state.previous_item = ts->exc_info;
     ts->exc_info = &gen->gi_exc_state;
     result = psyco_resume_run(st, lasti, nstack); /* frees st */
