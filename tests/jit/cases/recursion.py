@@ -1,5 +1,6 @@
 # The recursion depth that compiled calls count inline, inlined ones too.
 import sys
+import threading
 
 
 def down(n):
@@ -176,7 +177,13 @@ def inlined_levels_counted():
 # directly by compiled code: each level is a call, then a generator, so
 # only C's own check stops the nesting before the stack runs out (since
 # sys.monitoring came; before, plain CPython crashes here). Each call
-# catches RecursionError, so it is caught where raised.
+# catches RecursionError, so it is caught where raised. Where the check
+# measures the stack, compiled levels take less of it and go far deeper
+# than plain CPython's, so the levels run in a thread with a small stack;
+# where it counts levels, the thread's stack is the default one, which
+# the count fits. The thread gets the GIL when this one waits in join(),
+# never by asking for it (the switch interval is far longer than this
+# one runs), so no switch lands in the counted rounds' code.
 def level_sum(k):
     try:
         return sum(nest_sum(k))
@@ -220,12 +227,30 @@ def nest_send(k):
 def c_stack_limit():
     if not hasattr(sys, 'monitoring'):
         return None
-    old = sys.getrecursionlimit()
     try:
-        sys.setrecursionlimit(10 ** 7)
-        return [f(10 ** 6) for f in (level_sum, level_next, level_send)]
+        import _testinternalcapi
+    except ImportError:
+        _testinternalcapi = None
+    stack_measured = hasattr(_testinternalcapi, 'get_stack_margin')
+    out = []
+    old_limit = sys.getrecursionlimit()
+    old_size = threading.stack_size(1024 * 1024 if stack_measured else 0)
+    old_interval = sys.getswitchinterval()
+    sys.setrecursionlimit(10 ** 7)
+    sys.setswitchinterval(100)
+    try:
+        def body():
+            for f in (level_sum, level_next, level_send):
+                out.append(f(10 ** 6))
+
+        t = threading.Thread(target=body)
+        t.start()
+        t.join()
     finally:
-        sys.setrecursionlimit(old)
+        sys.setswitchinterval(old_interval)
+        sys.setrecursionlimit(old_limit)
+        threading.stack_size(old_size)
+    return out
 
 
 CASES = [
