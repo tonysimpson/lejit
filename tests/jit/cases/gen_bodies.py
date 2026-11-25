@@ -5,6 +5,9 @@
 # says whether a generator's body was compiled, where LeJIT compiles them.
 import _thread, gc, inspect, itertools, subprocess, sys, types
 
+# where handlers are the exception table's, a yield inside one is compiled
+HANDLERS_COMPILED = hasattr(compile('0', '', 'eval'), 'co_exceptiontable')
+
 
 def work(x):
     # a call, so that a resume does some work
@@ -148,7 +151,8 @@ def loop_block(n):
 
 def nested_handler():
     # a yield in an except body, after a try/finally inside it: runs
-    # interpreted, as the handler's block can't live in compiled code
+    # interpreted where handlers have blocks, which can't live in compiled
+    # code
     try:
         yield 1
         raise KeyError
@@ -188,7 +192,8 @@ def blocks(n):
         next(g)
         next(g)
         out.append((run(lambda: next(g)), taken()))
-    return out, compiled(handlers, with_block, loop_block)
+    return out, compiled(handlers, with_block, loop_block,
+                         *((nested_handler,) if HANDLERS_COMPILED else ()))
 
 
 def suspended_locals(a):
