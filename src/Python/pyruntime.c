@@ -381,7 +381,13 @@ le_pyframe_new(PyThreadState *ts, PyCodeObject *co, PyObject *globals)
 #if !LE_HAS_HANDLE_PENDING_LINKABLE
 #error "LeJIT: a per-thread eval_breaker, but _Py_HandlePending is hidden"
 #endif
-_Static_assert(_PY_EVAL_EVENTS_MASK == 0xff,
+/* the events above the low byte are the free-threaded build's alone */
+#ifdef _PY_EVAL_PROCESS_DELAYED_BIT
+#define LE_EVENTS_FREE_THREADED_ONLY _PY_EVAL_PROCESS_DELAYED_BIT
+#else
+#define LE_EVENTS_FREE_THREADED_ONLY 0
+#endif
+_Static_assert((_PY_EVAL_EVENTS_MASK & ~LE_EVENTS_FREE_THREADED_ONLY) == 0xff,
                "LeJIT: the eval_breaker's events are tested as its low byte");
 
 /* -1 with an exception set */
@@ -856,6 +862,38 @@ le_ref_tracer_word(void)
 /* where a thread's C stack limit is (mechanisms/recursion.h) */
 const long le_c_stack_soft_limit_at =
     offsetof(_PyThreadStateImpl, c_stack_soft_limit);
+
+#include "internal/pycore_pythonrun.h"
+/* A thread's C stack limits set for the stack from 'base' up to 'top', as
+   CPython sets them for a thread's own (_Py_InitializeRecursionLimits),
+   but with no more than 'room' above the soft limit, with the old ones kept
+   in 'saved'; and put back from there (segments.c) */
+void
+le_c_stack_limits_set(PyThreadState *ts, uintptr_t base, uintptr_t top,
+                      long room, uintptr_t saved[3])
+{
+    _PyThreadStateImpl *t = (_PyThreadStateImpl *)ts;
+    uintptr_t soft = base + _PyOS_STACK_MARGIN_BYTES * 2;
+    saved[0] = t->c_stack_top;
+    saved[1] = t->c_stack_soft_limit;
+    saved[2] = t->c_stack_hard_limit;
+    if (room < 0)
+        room = 0;
+    if ((uintptr_t)room < top - soft)
+        soft = top - room;
+    t->c_stack_top = top;
+    t->c_stack_soft_limit = soft;
+    t->c_stack_hard_limit = soft - _PyOS_STACK_MARGIN_BYTES;
+}
+
+void
+le_c_stack_limits_put_back(PyThreadState *ts, const uintptr_t saved[3])
+{
+    _PyThreadStateImpl *t = (_PyThreadStateImpl *)ts;
+    t->c_stack_top = saved[0];
+    t->c_stack_soft_limit = saved[1];
+    t->c_stack_hard_limit = saved[2];
+}
 #endif
 
 #if !LE_HAS_MONITORING

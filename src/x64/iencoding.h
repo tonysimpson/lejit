@@ -686,6 +686,18 @@ psyco_write_far_jump(code_t *code, code_t *target);
         MODRM_ENCODING(0, r, 5);     \
         WRITE_32BIT(_rip_o);         \
     } while (0)
+/* compares with the word at 'o' from the thread pointer */
+/* @asm: cmp {r}, qword ptr fs:[0{o:d32}] */
+#define CMP_R_FS(r, o)               \
+    do {                             \
+        long _fs_o = (o);            \
+        WRITE_1(0x64);               \
+        REX_ENCODING(true, r, 0, 0); \
+        WRITE_1(0x3B);               \
+        MODRM_ENCODING(0, r, 4);     \
+        WRITE_1(0x25);               \
+        WRITE_32BIT(_fs_o);          \
+    } while (0)
 /* the word at 'o' from the thread pointer (%fs base) */
 /* @asm: mov {r}, qword ptr fs:[0{o:d32}] */
 #define MOV_R_FS(r, o)               \

@@ -47,16 +47,54 @@ typedef struct {
 
 /* the start of ctypes' PyCArgObject, what byref() returns; its 'obj'
    follows a union whose size differs between versions, so its offset
-   is found (ctypes_probe) */
+   is found (ctypes_probe). Its tag is a char, or a string; byref()'s is
+   then always the same string. */
 typedef struct {
     PyObject_HEAD void *pffi_type;
-    char tag;
+    union {
+        char c;
+        const char *s;
+    } tag;
     union {
         void *p;
         long double D;
     } value;
 } le_carg_t;
 static long carg_obj_offset;
+/* byref()'s tag: its size (1 or 8) and its value */
+static int carg_tag_size;
+static long carg_tag_word;
+
+/* finds how byref()'s object 'ref' holds its tag, told from those of two
+   other arguments ctypes makes: 'i' for c_int and 'd' for c_double */
+static bool
+carg_tag_found(PyObject *ref, PyObject *c_int, PyObject *c_dbl)
+{
+    PyObject *pi = PyObject_CallMethod(c_int, "from_param", "i", 5);
+    PyObject *pd = PyObject_CallMethod(c_dbl, "from_param", "d", 1.5);
+    bool ok = false;
+    if (pi != NULL && pd != NULL && Py_TYPE(pi) == Py_TYPE(ref) &&
+        Py_TYPE(pd) == Py_TYPE(ref)) {
+        if (((le_carg_t *)ref)->tag.c == 'P' &&
+            ((le_carg_t *)pi)->tag.c == 'i' &&
+            ((le_carg_t *)pd)->tag.c == 'd') {
+            carg_tag_size = 1;
+            carg_tag_word = 'P';
+            ok = true;
+        }
+        else if (strcmp(((le_carg_t *)ref)->tag.s, "P") == 0 &&
+                 strcmp(((le_carg_t *)pi)->tag.s, "i") == 0 &&
+                 strcmp(((le_carg_t *)pd)->tag.s, "d") == 0) {
+            carg_tag_size = sizeof(char *);
+            carg_tag_word = (long)((le_carg_t *)ref)->tag.s;
+            ok = true;
+        }
+    }
+    Py_XDECREF(pi);
+    Py_XDECREF(pd);
+    PyErr_Clear();
+    return ok;
+}
 
 /* _ctypes' FUNCFLAG_CDECL: a CDLL function, the GIL released, no errno */
 #define FUNCFLAG_CDECL 0x1
@@ -140,7 +178,7 @@ ctypes_probe(PyTypeObject *tp)
     /* byref()'s object */
     byref = PyObject_GetAttrString(mod_ctypes, "byref");
     ref = byref == NULL ? NULL : PyObject_CallFunction(byref, "Oi", i7, 4);
-    if (ref == NULL || ((le_carg_t *)ref)->tag != 'P' ||
+    if (ref == NULL || !carg_tag_found(ref, c_int, c_dbl) ||
         ((le_carg_t *)ref)->value.p != ((le_cfuncptr_t *)i7)->b_ptr + 4)
         goto done;
     for (carg_obj_offset = sizeof(le_carg_t);
@@ -392,7 +430,8 @@ carg_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *argtype, vinfo_t **pw)
         if (!same)
             return error ? -1 : 0;
     }
-    if (!word_is(po, v, offsetof(le_carg_t, tag), 1, 'P', &error))
+    if (!word_is(po, v, offsetof(le_carg_t, tag), carg_tag_size, carg_tag_word,
+                 &error))
         return error ? -1 : 0;
     *pw = load_word(po, v, offsetof(le_carg_t, value), 8, true);
     return *pw == NULL ? -1 : 1;

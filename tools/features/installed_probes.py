@@ -495,6 +495,45 @@ def NAME_ERROR_NAME():
 
 
 @probe
+def BREAKER_SKIPPED_AFTER_LOAD_SPECIAL():
+    """a signal that __enter__ (a C call, LOAD_SPECIAL's) marks as arrived
+    is handled inside the with block, where __exit__ sees its exception,
+    not as the call ends (run)"""
+    if not _real_op('LOAD_SPECIAL'):
+        return False, 'no LOAD_SPECIAL'
+    import _thread, functools, signal
+
+    class Raised(Exception):
+        pass
+
+    def handler(signum, frame):
+        raise Raised()
+
+    exited = []
+
+    class Manager:
+        # (os.kill would run the handler itself)
+        __enter__ = staticmethod(functools.partial(_thread.interrupt_main,
+                                                   signal.SIGUSR1))
+
+        def __exit__(self, *exc):
+            exited.append(exc[0])
+
+    old = signal.signal(signal.SIGUSR1, handler)
+    try:
+        try:
+            with Manager():
+                len(())
+        except Raised:
+            pass
+        else:
+            raise Unanswered('the handler raised nothing')
+    finally:
+        signal.signal(signal.SIGUSR1, old)
+    return bool(exited), '__exit__ saw %r' % exited
+
+
+@probe
 def RAISE_CAUSE_CHECKED():
     """raise ... from a class whose call returns None is a TypeError
     (run)"""

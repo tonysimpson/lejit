@@ -4946,6 +4946,18 @@ cimpl_generator_stop(long coroutine)
     }
 }
 
+#ifdef INTRINSIC_BUILD_FROZENSET
+/* frozenset() of a set display or comprehension: the new set becomes the
+   frozenset, through CPython's own intrinsic, which _PySet_Freeze (not
+   exported) does */
+static PyObject *
+cimpl_build_frozenset(PyObject *set)
+{
+    return _PyIntrinsics_UnaryFunctions[INTRINSIC_BUILD_FROZENSET].func(
+        PyThreadState_GET(), set);
+}
+#endif
+
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
 /* intrinsics.c:stopiteration_error, for a fused generator's code, the
    only generator code compiled (mergepoints.c:_build_merge_points):
@@ -5625,7 +5637,7 @@ psyco_can_go_interpreted(PsycoObject *po)
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int i, nstack = STACK_LEVEL();
     long mode = psyco_generator_mode(po);
-    if ((po->pr.co->co_flags & (CO_ITERABLE_COROUTINE | CO_ASYNC_GENERATOR)) ||
+    if ((po->pr.co->co_flags & CO_ASYNC_GENERATOR) ||
         ((po->pr.co->co_flags & (CO_GENERATOR | CO_COROUTINE)) &&
          mode != GENEXPR_RESUMABLE && mode != GENEXPR_DIRECT))
         return false;
@@ -7583,15 +7595,16 @@ out:
 
 #if LE_HAS_OPCODE_SEND && LE_RESUMES_ON_FRAME
 /* GET_YIELD_FROM_ITER in a plain generator: what yield from iterates, a
-   new reference, 'o' itself if it is a generator */
+   new reference, 'o' itself if it is a generator, or a coroutine where
+   'iterable_coro' (a types.coroutine generator's body) */
 static PyObject *
-cimpl_yield_from_iter(PyObject *o)
+cimpl_yield_from_iter(PyObject *o, long iterable_coro)
 {
-    if (PyCoro_CheckExact(o)) {
+    if (PyCoro_CheckExact(o) && !iterable_coro) {
         PyErr_SetString(PyExc_TypeError, LE_MSG_YIELD_FROM_COROUTINE);
         return NULL;
     }
-    if (PyGen_CheckExact(o)) {
+    if (PyGen_CheckExact(o) || PyCoro_CheckExact(o)) {
         Py_INCREF(o);
         return o;
     }
@@ -7711,8 +7724,10 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
            (mergepoints.c:body_compilable): what it iterates */
         case GET_YIELD_FROM_ITER:
             if (Psyco_KnownType(TOP()) != &PyGen_Type) {
-                x = psyco_generic_call(po, cimpl_yield_from_iter,
-                                       CfCommonNewRefPyObject, "v", TOP());
+                x = psyco_generic_call(
+                    po, cimpl_yield_from_iter, CfCommonNewRefPyObject, "vl",
+                    TOP(),
+                    (long)(po->pr.co->co_flags & CO_ITERABLE_COROUTINE));
                 if (x == NULL)
                     break;
                 POP_DECREF();
@@ -7868,8 +7883,22 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
 
         /* the intrinsics left as CALL_INTRINSIC_1 (bytecode.h:le_instr)
            that mergepoints.c:compiled_intrinsic allows: a generator's
-           PEP 479 handler, and the REPL's print */
+           PEP 479 handler, frozenset() of a new set, and the REPL's print */
         case CALL_INTRINSIC_1:
+#ifdef INTRINSIC_BUILD_FROZENSET
+            if (oparg == INTRINSIC_BUILD_FROZENSET) {
+                x = psyco_generic_call(
+                    po, cimpl_build_frozenset,
+                    CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v",
+                    TOP());
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                Psyco_AssertType(po, x, &PyFrozenSet_Type);
+                PUSH(x);
+                goto fine;
+            }
+#endif
 #if LE_HAS_OPCODE_CALL_INTRINSIC_1
             if (oparg == INTRINSIC_STOPITERATION_ERROR) {
                 extra_assert(po->pr.co->co_flags &
@@ -7989,6 +8018,15 @@ compile_calls(PsycoObject *po, int opcode, int oparg, int target,
                  i--;) /* args, callable and the NULL */
                 POP_DECREF();
             PUSH(x);
+#if LE_HAS_BREAKER_SKIPPED_AFTER_LOAD_SPECIAL
+            /* ceval doesn't test eval_breaker after the call that follows
+               LOAD_SPECIAL (__enter__'s, __aenter__'s), so an interrupt
+               landing there is raised inside the with block, whose
+               __exit__ runs */
+            if (le_op(le_code(co), next_instr - LE_CACHE_BYTES(opcode) -
+                                       2 * LE_UNIT) == LOAD_SPECIAL)
+                goto fine;
+#endif
             if (!breaker_after_call(po, next_instr))
                 break;
             goto fine;

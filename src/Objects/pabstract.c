@@ -13,6 +13,7 @@
 #include "plongobject.h"
 #include "pmethodobject.h"
 #include "ptupleobject.h"
+#include "../segments.h"
 #include "../Modules/pcffi.h"
 #include "../Modules/pctypes.h"
 
@@ -61,11 +62,10 @@ cimpl_vectorcall(PyObject *callable, PyObject *kwnames, PyObject **slots,
 }
 #endif
 
-DEFINEFN
-vinfo_t *
-psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
-                 vinfo_t **args, int nargs, PyObject *kwnames,
-                 vinfo_t **kwvalues)
+/* psyco_vectorcall, or with 'on_segment' psyco_vectorcall_on_segment */
+static vinfo_t *
+vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self, vinfo_t **args,
+           int nargs, PyObject *kwnames, vinfo_t **kwvalues, bool on_segment)
 {
 #if LE_HAS_VECTORCALL
     int i, k = kwnames == NULL ? 0 : (int)PyTuple_GET_SIZE(kwnames);
@@ -84,8 +84,15 @@ psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
         vnames =
             vinfo_new(CompileTime_NewSk(sk_new((long)kwnames, SkFlagPyObj)));
     }
-    r = psyco_generic_call(po, cimpl_vectorcall, CfCommonNewRefPyObject,
-                           "vvil", callable, vnames, slots, (long)n);
+#if LE_STACK_SEGMENTS
+    if (on_segment)
+        r = psyco_generic_call(po, le_call_on_segment, CfCommonNewRefPyObject,
+                               "lvvil", (long)cimpl_vectorcall, callable,
+                               vnames, slots, (long)n);
+    else
+#endif
+        r = psyco_generic_call(po, cimpl_vectorcall, CfCommonNewRefPyObject,
+                               "vvil", callable, vnames, slots, (long)n);
     vinfo_decref(vnames, po);
     array_release(slots);
     return r;
@@ -93,6 +100,27 @@ psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
     return NULL;
 #endif
 }
+
+DEFINEFN
+vinfo_t *
+psyco_vectorcall(PsycoObject *po, vinfo_t *callable, vinfo_t *self,
+                 vinfo_t **args, int nargs, PyObject *kwnames,
+                 vinfo_t **kwvalues)
+{
+    return vectorcall(po, callable, self, args, nargs, kwnames, kwvalues,
+                      false);
+}
+
+#if LE_STACK_SEGMENTS
+DEFINEFN
+vinfo_t *
+psyco_vectorcall_on_segment(PsycoObject *po, vinfo_t *callable, vinfo_t **args,
+                            int nargs, PyObject *kwnames, vinfo_t **kwvalues)
+{
+    return vectorcall(po, callable, NULL, args, nargs, kwnames, kwvalues,
+                      true);
+}
+#endif
 
 DEFINEFN
 vinfo_t *
