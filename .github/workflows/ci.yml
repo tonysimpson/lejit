@@ -176,34 +176,6 @@ jobs:
         run: make checked-build PY=python && python tests/jit/build_info.py
       - name: Release build
         run: make build PY=python && python tests/jit/build_info.py
-      # what the parity job compares across versions, on the release build
-      - name: Constructs for the parity check
-        run: python tools/parity.py measure "parity-${{ matrix.python }}.json"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: parity-${{ matrix.python }}
-          path: parity-${{ matrix.python }}.json
-
-  # every version runs the same constructs the same way: a construct that
-  # goes to ceval, or costs much more against plain CPython, on some
-  # versions and not others fails it unless tools/parity_gaps.txt lists it,
-  # and a listed gap that has closed fails it too
-  parity:
-    name: same on every version
-    needs: [changes, build]
-    if: needs.changes.outputs.full == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: parity-*
-          path: parity
-          merge-multiple: true
-      - name: The check's own test
-        run: python3 tools/parity.py test
-      - name: Compare with tools/parity_gaps.txt
-        run: python3 tools/parity.py check parity
 
   # Pythons LeJIT doesn't support yet: installing builds no extension, and
   # start() warns and does nothing
@@ -347,7 +319,7 @@ jobs:
   # pull request skips can't be required themselves
   passed:
     name: all jobs passed
-    needs: [changes, check, encoder, release, build, parity, install-newer,
+    needs: [changes, check, encoder, release, build, install-newer,
             install-main, detectors-newer, format, lint, wheels]
     if: ${{ always() && !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04

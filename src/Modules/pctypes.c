@@ -1,12 +1,12 @@
 /*
  * Direct calls of ctypes functions. A call of a CDLL function whose
  * arguments are all of kinds this file converts exactly as ctypes would
- * (exact ints, floats, None, pointer and simple ctypes instances) calls
- * the C function from compiled code: the GIL is released around it as
- * ctypes releases it, but no tuple, converter call, libffi call or result
- * object is made. Anything else, and any change to the function's
- * argtypes, restype or errcheck, takes ctypes' own call, so every error
- * and message is ctypes'.
+ * (exact ints, floats, bytes, None, pointer and simple ctypes instances)
+ * calls the C function from compiled code: the GIL is released around it
+ * as ctypes releases it, but no tuple, converter call or libffi call is
+ * made, and an int or float result stays unboxed. Anything else, and any
+ * change to the function's argtypes, restype or errcheck, takes ctypes' own
+ * call, so every error and message is ctypes'.
  *
  * It relies on ctypes' object layouts (Modules/_ctypes/ctypes.h): a ctypes
  * instance's b_ptr after the object header, and the fields of a function
@@ -14,6 +14,7 @@
  * (ctypes_probe); if any differs, nothing is called directly.
  */
 #include "pctypes.h"
+#include "../Objects/pboolobject.h"
 #include "../Objects/pfloatobject.h"
 #include "../Objects/plongobject.h"
 #include "../Objects/ptupleobject.h"
@@ -103,7 +104,10 @@ carg_tag_found(PyObject *ref, PyObject *c_int, PyObject *c_dbl)
 static int ctypes_state = 0;
 static ternaryfunc cfuncptr_call;
 static PyTypeObject *simple_meta, *pointer_meta, *simple_base, *carg_type;
+static PyTypeObject *pointer_base;
 static PyMethodDef *simple_from_param, *pointer_from_param;
+/* c_char_p's and c_void_p's own from_param */
+static PyMethodDef *char_p_from_param, *void_p_from_param;
 
 static PyMethodDef *
 meta_method(PyTypeObject *meta, const char *name)
@@ -112,6 +116,22 @@ meta_method(PyTypeObject *meta, const char *name)
     if (d == NULL || !PyObject_TypeCheck(d, &PyMethodDescr_Type))
         return NULL;
     return ((PyMethodDescrObject *)d)->d_method;
+}
+
+/* the from_param of ctypes' class 'name' */
+static PyMethodDef *
+class_from_param(PyObject *ctypes, const char *name)
+{
+    PyObject *cls = PyObject_GetAttrString(ctypes, name), *m;
+    PyMethodDef *ml = NULL;
+    if (cls == NULL)
+        return NULL;
+    m = PyObject_GetAttrString(cls, "from_param");
+    if (m != NULL && PyCFunction_Check(m) && PyCFunction_GET_SELF(m) == cls)
+        ml = ((PyCFunctionObject *)m)->m_ml;
+    Py_XDECREF(m);
+    Py_DECREF(cls);
+    return ml;
 }
 
 /* the function's type tp, of the module ctypes: checks the layout with
@@ -141,6 +161,7 @@ ctypes_probe(PyTypeObject *tp)
         PyObject *ptr = PyObject_GetAttrString(mod_ctypes, "_Pointer");
         if (ptr != NULL) {
             pointer_meta = Py_TYPE(ptr);
+            pointer_base = (PyTypeObject *)ptr;
             Py_DECREF(ptr); /* the module keeps it */
         }
     }
@@ -155,7 +176,10 @@ ctypes_probe(PyTypeObject *tp)
     cfuncptr_call = ((PyTypeObject *)cfuncptr)->tp_call;
     simple_from_param = meta_method(simple_meta, "from_param");
     pointer_from_param = meta_method(pointer_meta, "from_param");
-    if (simple_from_param == NULL || pointer_from_param == NULL)
+    char_p_from_param = class_from_param(ctypes, "c_char_p");
+    void_p_from_param = class_from_param(ctypes, "c_void_p");
+    if (simple_from_param == NULL || pointer_from_param == NULL ||
+        char_p_from_param == NULL || void_p_from_param == NULL)
         goto done;
     /* a function pointer at address 0x1234: its fields */
     probe = PyObject_CallFunction((PyObject *)tp, "l", 0x1234L);
@@ -245,6 +269,10 @@ typedef enum {
     K_NONE,
     K_INT,     /* an integer of 'size' bytes */
     K_DOUBLE,  /* a double */
+    K_FLOAT,   /* a float */
+    K_BOOL,    /* a bool, one byte */
+    K_CHARP,   /* c_char_p: a char *, a bytes object or None in Python */
+    K_VOIDP,   /* c_void_p: a void *, an int or None in Python */
     K_POINTER, /* a pointer */
 } kind_t;
 
@@ -287,6 +315,18 @@ code_ctype(char code)
             break;
         case 'd':
             t.kind = K_DOUBLE, t.size = 8;
+            break;
+        case 'f':
+            t.kind = K_FLOAT, t.size = 4;
+            break;
+        case '?':
+            t.kind = K_BOOL, t.size = 1;
+            break;
+        case 'z':
+            t.kind = K_CHARP, t.size = 8;
+            break;
+        case 'P':
+            t.kind = K_VOIDP, t.size = 8;
             break;
     }
     return t;
@@ -437,6 +477,32 @@ carg_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *argtype, vinfo_t **pw)
     return *pw == NULL ? -1 : 1;
 }
 
+/* a double as the float a C function takes: its bits in the low word */
+static double
+cimpl_float_bits(double x)
+{
+    float f = (float)x;
+    double d = 0;
+    memcpy(&d, &f, sizeof(f));
+    return d;
+}
+
+/* a float result, its bits in the low word, as a double */
+static double
+cimpl_float_of_bits(double d)
+{
+    float f;
+    memcpy(&f, &d, sizeof(f));
+    return f;
+}
+
+/* a pointer to a bytes object's characters, as ctypes passes it */
+static vinfo_t *
+bytes_data(PsycoObject *po, vinfo_t *v)
+{
+    return integer_add_i(po, v, offsetof(PyBytesObject, ob_sval), false);
+}
+
 /* argument 'v' of type 'tp' as ctypes passes it for C type 't' (typed)
    or by ConvParam (untyped: t.kind == K_NONE): 1 with a new reference in
    *pw and *is_double set, 0 to take ctypes' call, -1 to stop */
@@ -489,6 +555,44 @@ convert_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *tp, ctype_t t,
             *is_double = true;
             return 1;
         }
+        if (t.kind == K_FLOAT && tp == &PyFloat_Type) {
+            b = PsycoFloat_AS_DOUBLE(po, v);
+            if (b == NULL)
+                return -1;
+            *pw = psyco_generic_call(
+                po, cimpl_float_bits,
+                CfReturnTypeDouble | CfPure | CfNoPython | CfNoBlock, "d", b);
+            *is_double = true;
+            return *pw == NULL ? -1 : 1;
+        }
+        if (t.kind == K_BOOL && (tp == &PyLong_Type || tp == &PyBool_Type)) {
+            /* bool_set: the int's truth */
+            condition_code_t cc;
+            r = int_word(po, v, &w);
+            if (r != 1)
+                return r;
+            cc = integer_non_null(po, w);
+            vinfo_decref(w, po);
+            if (cc == CC_ERROR)
+                return -1;
+            *pw = psyco_vinfo_condition(po, cc);
+            return *pw == NULL ? -1 : 1;
+        }
+        if (t.kind == K_CHARP || t.kind == K_VOIDP) {
+            /* c_char_p's and c_void_p's from_param: None, bytes, and for
+               c_void_p an int, its address */
+            if (tp == Py_TYPE(Py_None)) {
+                *pw = vinfo_new(CompileTime_New(0));
+                return 1;
+            }
+            if (tp == &PyBytes_Type) {
+                *pw = bytes_data(po, v);
+                return *pw == NULL ? -1 : 1;
+            }
+            if (t.kind == K_VOIDP &&
+                (tp == &PyLong_Type || tp == &PyBool_Type))
+                return int_word(po, v, pw);
+        }
         return 0;
     }
     /* untyped (ConvParam) */
@@ -507,6 +611,10 @@ convert_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *tp, ctype_t t,
     }
     if (tp == carg_type)
         return carg_arg(po, v, NULL, pw);
+    if (tp == &PyBytes_Type) {
+        *pw = bytes_data(po, v);
+        return *pw == NULL ? -1 : 1;
+    }
     if (Py_TYPE(tp) == pointer_meta) {
         b = data_pointer(po, v);
         if (b == NULL)
@@ -524,7 +632,8 @@ instance:
         return -1;
     *pw = load_word(po, b, 0, own.size, own.is_signed);
     vinfo_decref(b, po);
-    *is_double = own.kind == K_DOUBLE;
+    /* a float's bits, zero-extended, as for a float argument */
+    *is_double = own.kind == K_DOUBLE || own.kind == K_FLOAT;
     return *pw == NULL ? -1 : 1;
 }
 
@@ -617,6 +726,91 @@ not_audited(PsycoObject *po, bool *error)
 #endif
 }
 
+/* P_get: None for NULL, else PyLong_FromVoidPtr (consumes r) */
+static vinfo_t *
+void_p_result(PsycoObject *po, vinfo_t *r)
+{
+    vinfo_t *o;
+    condition_code_t cc = integer_cmp_i(po, r, 0, Py_EQ);
+    if (cc == CC_ERROR)
+        goto error;
+    if (runtime_condition_f(po, cc)) {
+        vinfo_decref(r, po);
+        return psyco_vi_None();
+    }
+    cc = integer_cmp_i(po, r, 0, Py_LT);
+    if (cc == CC_ERROR)
+        goto error;
+    if (runtime_condition_f(po, cc)) {
+        o = PsycoLong_FromUnsignedLong(po, r);
+        vinfo_decref(r, po);
+        return o;
+    }
+    return PsycoLong_FROM_LONG(po, r);
+error:
+    vinfo_decref(r, po);
+    return NULL;
+}
+
+/* z_get */
+static PyObject *
+cimpl_charp_result(const char *p)
+{
+    if (p == NULL)
+        Py_RETURN_NONE;
+    return PyBytes_FromStringAndSize(p, strlen(p));
+}
+
+/* PyCData_FromBaseObj for a pointer type tp, with no base: a new
+   instance holding a copy of the pointer in its own buffer */
+static PyObject *
+cimpl_pointer_result(PyTypeObject *tp, Py_ssize_t length, void *p)
+{
+    le_cfuncptr_t *r = (le_cfuncptr_t *)tp->tp_alloc(tp, 0);
+    if (r == NULL)
+        return NULL;
+    r->b_length = length;
+    r->b_size = sizeof(void *);
+    r->b_ptr = r->b_value.c;
+    r->b_needsfree = 1;
+    *(void **)r->b_ptr = p;
+    return (PyObject *)r;
+}
+
+/* whether instances of the pointer type tp are made as
+   cimpl_pointer_result makes them: checked against ctypes' own copy
+   (from_buffer_copy, which also makes the type final as GetResult does),
+   whose length is put in *length */
+static bool
+pointer_result_length(PyTypeObject *tp, Py_ssize_t *length)
+{
+    PyObject *zeros;
+    le_cfuncptr_t *c;
+    bool ok;
+    if (tp->tp_alloc != pointer_base->tp_alloc ||
+        PyDict_GetItemString(tp->tp_dict, "from_buffer_copy") != NULL)
+        return false;
+    zeros = PyBytes_FromStringAndSize(NULL, sizeof(void *));
+    if (zeros == NULL) {
+        PyErr_Clear();
+        return false;
+    }
+    memset(PyBytes_AS_STRING(zeros), 0, sizeof(void *));
+    c = (le_cfuncptr_t *)PyObject_CallMethod((PyObject *)tp,
+                                             "from_buffer_copy", "O", zeros);
+    Py_DECREF(zeros);
+    if (c == NULL) {
+        PyErr_Clear();
+        return false;
+    }
+    ok = Py_TYPE(c) == tp && c->b_ptr == c->b_value.c && c->b_needsfree == 1 &&
+         c->b_base == NULL && c->b_size == sizeof(void *) && c->b_index == 0 &&
+         c->b_objects == NULL;
+    *length = c->b_length;
+    Py_DECREF(c);
+    return ok;
+}
+
 #define MAX_INT_ARGS 6
 #define MAX_ARGS 8
 
@@ -631,6 +825,7 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
     char tags[MAX_ARGS + 1];
     int n, i, nints = 0, ok;
     long lflags;
+    Py_ssize_t rlength = 0;
     ctype_t rt = {K_NONE, 0, false}, at[MAX_ARGS];
     PyTypeObject *argtypes[MAX_ARGS];
     bool error = false, is_double;
@@ -678,7 +873,15 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
     if (restype != Py_None) {
         if (!PyType_Check(restype))
             return NULL;
-        rt = simple_ctype((PyTypeObject *)restype);
+        if (Py_TYPE(restype) == pointer_meta &&
+            ((PyTypeObject *)restype)->tp_base == pointer_base) {
+            if (!pointer_result_length((PyTypeObject *)restype, &rlength))
+                return NULL;
+            rt.kind = K_POINTER;
+            rt.size = 8;
+        }
+        else
+            rt = simple_ctype((PyTypeObject *)restype);
         if (rt.kind == K_NONE)
             return NULL;
         if (PyObject_HasAttrString(restype, "_check_retval_"))
@@ -700,7 +903,17 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
                 at[i].kind = K_POINTER;
             else if (((PyCFunctionObject *)c)->m_ml == simple_from_param) {
                 at[i] = simple_ctype(a);
-                if (at[i].kind == K_NONE)
+                if (at[i].kind == K_NONE || at[i].kind == K_CHARP ||
+                    at[i].kind == K_VOIDP)
+                    return NULL;
+            }
+            else if (((PyCFunctionObject *)c)->m_ml == char_p_from_param ||
+                     ((PyCFunctionObject *)c)->m_ml == void_p_from_param) {
+                at[i] = simple_ctype(a);
+                if (at[i].kind !=
+                    (((PyCFunctionObject *)c)->m_ml == char_p_from_param
+                         ? K_CHARP
+                         : K_VOIDP))
                     return NULL;
             }
             else
@@ -772,9 +985,10 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
         goto fail;
     }
     {
-        int cflags = rt.kind == K_NONE     ? CfNoReturnValue
-                     : rt.kind == K_DOUBLE ? CfReturnTypeDouble
-                                           : CfReturnTypeLong;
+        int cflags = rt.kind == K_NONE ? CfNoReturnValue
+                     : rt.kind == K_DOUBLE || rt.kind == K_FLOAT
+                         ? CfReturnTypeDouble
+                         : CfReturnTypeLong;
         cflags |= CfNoBlock;
         switch (n) {
 #define W(k) w[k]
@@ -831,6 +1045,40 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
             return psyco_vi_None();
         case K_DOUBLE:
             return PsycoFloat_FROM_DOUBLE(r);
+        case K_FLOAT: {
+            vinfo_t *x = psyco_generic_call(
+                po, cimpl_float_of_bits,
+                CfReturnTypeDouble | CfPure | CfNoPython | CfNoBlock, "d", r);
+            vinfo_decref(r, po);
+            return x == NULL ? NULL : PsycoFloat_FROM_DOUBLE(x);
+        }
+        case K_BOOL: {
+            /* bool_get: the byte's truth */
+            vinfo_t *x = extend(po, r, 1, false), *o;
+            vinfo_decref(r, po);
+            if (x == NULL)
+                return NULL;
+            o = PsycoBool_FromLong(po, x);
+            vinfo_decref(x, po);
+            return o;
+        }
+        case K_CHARP: {
+            vinfo_t *o = psyco_generic_call(
+                po, cimpl_charp_result,
+                CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v", r);
+            vinfo_decref(r, po);
+            return o;
+        }
+        case K_VOIDP:
+            return void_p_result(po, r);
+        case K_POINTER: {
+            /* a collection the allocation starts may run finalisers */
+            vinfo_t *o = psyco_generic_call(
+                po, cimpl_pointer_result, CfCommonNewRefPyObject | CfNoBlock,
+                "llv", (long)restype, (long)rlength, r);
+            vinfo_decref(r, po);
+            return o;
+        }
         default: {
             vinfo_t *x = extend(po, r, rt.size, rt.is_signed);
             vinfo_decref(r, po);
