@@ -235,7 +235,10 @@ generic_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
     extra_assert(c_function != NULL || vtarget != NULL);
     if (vtarget != NULL)
         flags &= ~CfPure;
-    if (po->pr.pieces && !(flags & (CfPure | CfNoPython)) &&
+    /* still so when the call is made at run time, without CfPure */
+    if (flags & CfPure)
+        flags |= CfNoPython;
+    if (po->pr.pieces && !(flags & CfNoPython) &&
         !PsycoList_ForcePieces(po, NULL))
         return NULL;
 
@@ -371,7 +374,7 @@ generic_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
         BEGIN_CODE
         code = psyco_xmm_store(po, code);
         END_CODE
-        if (!(flags & (CfPure | CfNoPython))) {
+        if (!(flags & CfNoPython)) {
             po->pr.class_unchecked = 1; /* it may assign __class__ */
             po->pr.python_call = 1;
             psyco_note_call_site(
@@ -505,9 +508,22 @@ psyco_note_call_site(PsycoObject *po, int lasti)
 {
     struct locals_map_s *map;
     long i;
-    if (po->pr.is_inlining || lasti < 0)
+    if (lasti < 0)
         return;
-    map = psyco_locals_map(po, lasti, NULL);
+    map = psyco_locals_map(po, lasti, NULL, 0);
+    if (po->pr.is_inlining) {
+        /* the slot keeps a record of the inlined frame, here with its place
+           and its parent's locals, read as a note's (frames.c:slot_locals) */
+        stack_frame_info_t *rec = psyco_finfo(NULL, po);
+        rec->own_lasti = lasti;
+        rec->back_locals = map;
+        rec->own_locals = psyco_locals_map(po, lasti, NULL, 1);
+        po->pr.pending_map = map;
+        BEGIN_CODE
+        ABOUT_TO_CALL_SUBFUNCTION((long)rec);
+        END_CODE
+        return;
+    }
     map->ret_below = psyco_ret_below(po);
     i = note_index();
     psyco_locals_maps[i] = map;
@@ -636,7 +652,7 @@ psyco_locals_map_reads(vinfo_t *vi, int level)
 
 DEFINEFN
 struct locals_map_s *
-psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos)
+psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own)
 {
     PyCodeObject *co = po->pr.co;
     vinfo_t **locals = LOC_LOCALS_PLUS;
@@ -644,7 +660,7 @@ psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos)
     /* kept between maps, as there is one per call site */
     static struct lm_build b = {NULL, 0, 0};
     struct locals_map_s *map;
-    if (po->pr.is_inlining) {
+    if (po->pr.is_inlining && !own) {
         /* the call's slot is the inlined frame's parent's: map its locals */
         vinfo_array_t *a = LOC_INLINING->array;
         co = (PyCodeObject *)CompileTime_Get(a->items[LOC_INLINE_CO]->source)

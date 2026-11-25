@@ -17,6 +17,7 @@
 /* le_tstate_load */
 #include "../mechanisms/tstate.h"
 #include "../Python/frames.h"
+#include "../Modules/pcffi.h"
 
 static bool
 compute_cfunction(PsycoObject *po, vinfo_t *methobj)
@@ -209,6 +210,12 @@ PsycoCFunction_Call(PsycoObject *po, vinfo_t *func, vinfo_t *args,
             if (r != NULL || PycException_Occurred(po))
                 return r;
             goto use_proxy;
+        }
+
+        if (flags == METH_O || flags == METH_NOARGS || flags == METH_VARARGS) {
+            vinfo_t *r = PsycoCffi_ApiCall(po, ml, vself, args);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
         }
 
         meta = Psyco_Lookup(ml->ml_meth);

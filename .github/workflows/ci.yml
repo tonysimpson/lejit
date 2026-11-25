@@ -71,12 +71,14 @@ jobs:
                  "3.13.2", "3.14.10"]
     steps:
       - uses: actions/checkout@v4
-      - name: Install libffi, libunwind and setuptools
+      - name: Install libffi, libunwind, setuptools and cffi
         run: |
           apt-get update
           apt-get install -y --no-install-recommends libffi-dev libunwind-dev
           # the 3.12 images and later have no setuptools
           python -c 'import setuptools' 2>/dev/null || pip install setuptools
+          # for tests/jit's cffi cases, which are skipped without it
+          pip install cffi
       # the source detector's releases, fetched from python.org once
       - uses: actions/cache@v4
         with:
