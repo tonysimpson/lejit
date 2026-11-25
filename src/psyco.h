@@ -1017,9 +1017,6 @@ typedef struct {
 typedef struct {
     int lasti; /* f_lasti there, -1 for the start */
     int count;
-    int in_handler; /* a coroutine's place inside an exception handler,
-                       which resumes interpreted (pycompiler.c: a handler
-                       that can await runs in ceval) */
     le_resume_entry_t entries[LE_RESUME_ENTRIES];
 } le_resume_point_t;
 

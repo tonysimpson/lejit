@@ -875,7 +875,7 @@ handler_reach(PyCodeObject *co, le_code_t c, int from, int at)
                 next[n++] = in.target;
                 break;
             default:
-                if (LE_IS_JABS(in.op) || LE_IS_JREL(in.op))
+                if (in.target >= 0)
                     next[n++] = in.target;
                 next[n++] = in.next;
         }
@@ -955,7 +955,7 @@ handler_yields_kept(PyCodeObject *co, le_code_t c)
 DEFINEFN int
 psyco_handler_awaits(PyCodeObject *co, int handler)
 {
-#if LE_RESUMES_COROUTINES_COMPILED
+#if LE_RESUMES_COROUTINES
     return (co->co_flags & CO_COROUTINE) &&
            handler_reach(co, le_code(co), handler, -1);
 #else
@@ -968,11 +968,14 @@ psyco_handler_awaits(PyCodeObject *co, int handler)
 /* whether the body of 'co', a plain generator or a coroutine, can run
    compiled in its own frame: no YIELD_FROM (a coroutine's awaits are
    GET_AWAITABLE, LOAD_CONST None, YIELD_FROM; a generator's yield from is
-   compiled only as SEND's loop), no async for, and no yield
-   inside an exception handler, whose stack and blocks LeJIT keeps apart
-   from the frame's (an EXCEPT_HANDLER block, a finally block's
-   pseudo-exception); a coroutine's handlers that can await run in ceval
-   instead (handler_yields_kept) */
+   compiled only as SEND's loop), and, where handlers have
+   blocks, no yield inside an exception handler, whose stack and blocks
+   LeJIT keeps apart from the frame's (an EXCEPT_HANDLER block, a finally
+   block's pseudo-exception); a coroutine's handlers that can await run in
+   ceval instead (handler_yields_kept). With an exception table, a
+   handler's state is items on the frame's stack and the exception it
+   handles is the generator's own, which a pause leaves where ceval's
+   does. */
 static int
 body_compilable(PyCodeObject *co, le_code_t *c)
 {
@@ -999,13 +1002,10 @@ body_compilable(PyCodeObject *co, le_code_t *c)
                 if (!LE_HAS_OPCODE_SEND || !LE_RESUMES_ON_FRAME)
                     return 0;
                 break;
-            /* async for */
-            case GET_AITER:
-            case GET_ANEXT:
-            case END_ASYNC_FOR:
-                return 0;
         }
     }
+    if (LE_HAS_EXCEPTION_TABLE)
+        return 1;
     if (kind == CO_COROUTINE)
         return handler_yields_kept(co, *c);
     return !yields_in_handler(co, *c);
@@ -1021,13 +1021,14 @@ psyco_is_resumable_generator(PyCodeObject *co)
     return body_compilable(co, &c);
 }
 
-/* whether the instruction at 'pos' in a coroutine's body that can run as
-   a call (psyco_is_startable_coroutine) may run inside an exception
-   handler (handler_reach) */
+/* whether the instruction at 'pos' may run inside an exception handler
+   (handler_reach): in a coroutine's body that can run as a call
+   (psyco_is_startable_coroutine), or where a resumed frame holds a
+   handler's lasti as a tagged int (pycompiler.c:stack_words_taken) */
 DEFINEFN int
 psyco_in_handler(PyCodeObject *co, int pos)
 {
-#if LE_RESUMES_COROUTINES_COMPILED
+#if LE_RESUMES_COROUTINES || LE_HAS_TAGGED_LASTI
     return handler_reach(co, le_code(co), -1, pos);
 #else
     (void)co;
@@ -1036,18 +1037,35 @@ psyco_in_handler(PyCodeObject *co, int pos)
 #endif
 }
 
+/* whether a handler of 'co' could make an exception the one handled while
+   its body runs as a call: it would be in its awaiter's exception state,
+   where only a block stack shows which is the coroutine's
+   (frames.c:coro_exc_take). Its PEP 479 handler and its awaits' handlers
+   (CLEANUP_THROW) handle none. */
+static int
+handles_apart(PyCodeObject *co, le_code_t c)
+{
+#if LE_HAS_EXCEPTION_TABLE
+    Py_ssize_t at = 0;
+    le_handler_t h;
+    while (le_handler_next(co, &at, &h))
+        if (le_instr(c, h.handler).op == PUSH_EXC_INFO)
+            return 1;
+#else
+    (void)co;
+    (void)c;
+#endif
+    return 0;
+}
+
 /* the code of a coroutine whose body can run as a call when it is awaited
    as soon as it is made (psyfunc.c:psyco_coro_start) */
 DEFINEFN int
 psyco_is_startable_coroutine(PyCodeObject *co)
 {
-#if LE_RESUMES_COROUTINES
     le_code_t c;
-    return (co->co_flags & CO_COROUTINE) && body_compilable(co, &c);
-#else
-    (void)co;
-    return 0;
-#endif
+    return LE_HAS_GEN_NEW_AROUND_FRAME && (co->co_flags & CO_COROUTINE) &&
+           body_compilable(co, &c) && !handles_apart(co, c);
 }
 
 DEFINEFN PyObject *

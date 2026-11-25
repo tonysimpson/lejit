@@ -830,7 +830,7 @@ DEFINEFN
 vinfo_t *
 psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
                  Source argsources[], int argcount,
-                 struct stack_frame_info_s *finfo, bool through_c)
+                 struct stack_frame_info_s *finfo, int through_c)
 {
     /* this is a simplified version of psyco_generic_call() which
         assumes Psyco's calling convention instead of the C's. */

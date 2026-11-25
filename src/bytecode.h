@@ -242,6 +242,11 @@ le_instr(le_code_t c, int pos)
             in.arg = 0;
             break;
 #endif
+        /* where it has an argument, it says where the await it ends
+           started, for monitoring: it doesn't jump */
+        case END_ASYNC_FOR:
+            in.target = -1;
+            break;
         /* marks a branch not taken, for monitoring */
         case NOT_TAKEN:
             in.op = NOP;
@@ -557,10 +562,13 @@ le_op_flags(int op)
         case WITH_CLEANUP_FINISH:
         /* generators */
         case GEN_START:
-        /* in a plain function too: an async generator expression's
-           outermost iterable */
-        case GET_AITER:
             return LE_OPF_COMPILED_IN_BLOCKS;
+        /* async for; GET_AITER in a plain function too, for an async
+           generator expression's outermost iterable */
+        case GET_AITER:
+        case GET_ANEXT:
+        case END_ASYNC_FOR:
+            return LE_OPF_COMPILED;
         case YIELD_FROM:
             return LE_OPF_COMPILED | LE_OPF_BREAKER_SKIPS;
 #if LE_HAS_OPCODE_SEND
