@@ -5468,8 +5468,10 @@ compile_locals_and_stack(PsycoObject *po, int opcode, int oparg, int target,
                 break;
             /* a pending generator a local holds is never fused (more
                than a temporary holds it), and the frame's locals maps
-               can't give it: it is made as it becomes a local */
-            if (PsycoGenexpr_Check(value) && !compute_vinfo(value, po))
+               can't give it or a virtual one: it is made as it becomes a
+               local */
+            if ((PsycoGenexpr_Check(value) || LE_VGEN_CHECK(value)) &&
+                !compute_vinfo(value, po))
                 break;
             SETLOCAL(oparg, value);
             POP(value);

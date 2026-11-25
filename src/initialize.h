@@ -38,6 +38,10 @@ EXTERNFN void
 psyco_pycompiler_init(void); /* Python/pycompiler.c */
 EXTERNFN void
 psyco_frames_init(void); /* Python/frames.c */
+#if LE_RESUMES_GENERATORS_DIRECTLY
+EXTERNFN void
+psyco_genrecord_init(void); /* Python/genrecord.c */
+#endif
 EXTERNFN void
 psyco_bltinmodule_init(void); /* Python/pbltinmodule.c */
 EXTERNFN void
@@ -87,10 +91,13 @@ PSY_INLINE void
 initialize_all_files(void)
 {
     initialize_processor_files();
-    psyco_compiler_init();    /* vcompiler.c */
-    psyco_codegen_init();     /* codegen.c */
-    psyco_pycompiler_init();  /* Python/pycompiler.c */
-    psyco_frames_init();      /* Python/frames.c */
+    psyco_compiler_init();   /* vcompiler.c */
+    psyco_codegen_init();    /* codegen.c */
+    psyco_pycompiler_init(); /* Python/pycompiler.c */
+    psyco_frames_init();     /* Python/frames.c */
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    psyco_genrecord_init(); /* Python/genrecord.c */
+#endif
     psyco_bltinmodule_init(); /* Python/pbltinmodule.c */
     psy_object_init();        /* Objects/pobject.c */
     psy_bytesobject_init();   /* Objects/pbytesobject.c */
