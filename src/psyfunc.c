@@ -1670,13 +1670,31 @@ gen_entry_at(PsycoObject *po, PyCodeObject *co, vinfo_t *vt, vinfo_t *vplace,
     return 1;
 }
 
-/* the tests that don't depend on the generator: tracing or another eval
-   hook, a pending event, and globals and builtins 'vg' and 'vb' other
-   than those the entries of the table 'vt' were compiled for; as
+/* 'vg', or the field 'df' of 'vgen' where 'vg' is NULL, compared with
+   'v' by 'op', as gen_test */
+static int
+gen_value_test(PsycoObject *po, vinfo_t *vg, vinfo_t *vgen, defield_t df,
+               vinfo_t *v, int op)
+{
+    condition_code_t cc;
+    vinfo_t *vf =
+        vg != NULL ? (vinfo_incref(vg), vg) : psyco_get_field(po, vgen, df);
+    if (vf == NULL)
+        return -1;
+    cc = integer_cmp(po, vf, v, op);
+    vinfo_decref(vf, po);
+    return gen_test(po, cc);
+}
+
+/* the tests that don't depend on the generator's state: tracing or
+   another eval hook, a pending event, and globals and builtins other than
+   those the entries of the table 'vt' were compiled for: 'vg' and 'vb',
+   or where those are NULL the fields of 'vgen' laid out as 'L'; as
    gen_test */
 static int
 gen_run_tests(PsycoObject *po, PyCodeObject *co, vinfo_t *vt, vinfo_t *vts,
-              vinfo_t *vg, vinfo_t *vb)
+              vinfo_t *vgen, const struct gen_layout *L, vinfo_t *vg,
+              vinfo_t *vb)
 {
     vinfo_t *tg, *tb;
     int r;
@@ -1686,13 +1704,11 @@ gen_run_tests(PsycoObject *po, PyCodeObject *co, vinfo_t *vt, vinfo_t *vts,
         return r;
     tg = psyco_get_field(po, vt, DIRECT_globals);
     tb = psyco_get_field(po, vt, DIRECT_builtins);
-    if (tg == NULL || tb == NULL)
-        r = -1;
-    else {
-        r = gen_test(po, integer_cmp(po, vg, tg, Py_NE));
-        if (r == 0)
-            r = gen_test(po, integer_cmp(po, vb, tb, Py_NE));
-    }
+    r = tg == NULL || tb == NULL
+            ? -1
+            : gen_value_test(po, vg, vgen, L->globals, tg, Py_NE);
+    if (r == 0)
+        r = gen_value_test(po, vb, vgen, L->builtins, tb, Py_NE);
     vinfo_xdecref(tg, po);
     vinfo_xdecref(tb, po);
     return r;
@@ -1711,7 +1727,7 @@ gen_step_tests(PsycoObject *po, const struct gen_layout *L, vinfo_t *vgen,
                PyCodeObject *co, le_gen_direct_t *t, vinfo_t *vts,
                bool sends_any, vinfo_t **ventry)
 {
-    vinfo_t *vt, *vg, *vb, *vplace;
+    vinfo_t *vt, *vplace;
     int r;
     if ((r = gen_field_test_i(po, vgen, L->state, FRAME_EXECUTING, Py_GE)) !=
             0 ||
@@ -1720,11 +1736,7 @@ gen_step_tests(PsycoObject *po, const struct gen_layout *L, vinfo_t *vgen,
         (r = gen_field_test_i(po, vgen, L->locals, 0, Py_NE)) != 0)
         return r < 0 ? -1 : 0;
     vt = vinfo_new(CompileTime_New((long)t));
-    vg = psyco_get_field(po, vgen, L->globals);
-    vb = psyco_get_field(po, vgen, L->builtins);
-    r = vg == NULL || vb == NULL ? -1 : gen_run_tests(po, co, vt, vts, vg, vb);
-    vinfo_xdecref(vg, po);
-    vinfo_xdecref(vb, po);
+    r = gen_run_tests(po, co, vt, vts, vgen, L, NULL, NULL);
     if (r != 0) {
         vinfo_decref(vt, po);
         return r < 0 ? -1 : 0;
@@ -1768,7 +1780,7 @@ vgen_start(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
     if (callee_builtins(po, vfunc, vglobals, &vb) != 1)
         return 0;
     vt = vinfo_new(CompileTime_New((long)t));
-    r = gen_run_tests(po, co, vt, vts, vglobals, vb);
+    r = gen_run_tests(po, co, vt, vts, NULL, &record_layout, vglobals, vb);
     vinfo_decref(vb, po);
     if (r == 0) {
         vplace = vinfo_new(CompileTime_New(
