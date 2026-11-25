@@ -4,7 +4,7 @@ interpreter's test package runs except BANNED, and every test except SKIPPED.
 
     python3.X tests/cpython/run.py [-j N] [module ...]
 """
-import fnmatch, json, os, re, resource, subprocess, sys, tempfile
+import fnmatch, json, os, re, resource, signal, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import ROOT
@@ -351,6 +351,13 @@ def limit_memory():
     resource.setrlimit(resource.RLIMIT_AS, (MEMORY_LIMIT, MEMORY_LIMIT))
 
 
+def kill_group(p):
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def stderr_tail(err, lines=10):
     """The last lines of a run's stderr (bytes), cut to a bounded width."""
     return ['stderr:'] + ['    ' + l[:200] for l in
@@ -367,13 +374,16 @@ def run(mode, name):
         p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, ROOT] + skip,
                              stdout=subprocess.PIPE, stderr=errf,
                              stdin=subprocess.DEVNULL, cwd=cwd,
-                             preexec_fn=limit_memory)
+                             preexec_fn=limit_memory, start_new_session=True)
         try:
             out, _ = p.communicate(timeout=TIMEOUT)
         except subprocess.TimeoutExpired:
-            p.kill()
+            kill_group(p)
             p.communicate()
             out = None
+        finally:
+            # processes the tests started and left running
+            kill_group(p)
         size = errf.seek(0, os.SEEK_END)
         errf.seek(max(0, size - 16384))
         err = errf.read()
