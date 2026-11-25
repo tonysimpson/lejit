@@ -580,7 +580,9 @@ def handler_resumed(n):
         out.append((LOG[:], now(), [errors(i) for i in inner],
                     [i.cr_frame for i in inner]))
         del LOG[:]
-    return out, started(nested)
+    # nested resumes from an entry of its own once it has suspended, so
+    # started() can't say how it began
+    return out
 
 
 CASES = [

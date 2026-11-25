@@ -3936,73 +3936,6 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
 DEFINEVAR PyObject *psyco_coro_suspended = NULL;
 static PyObject *suspended_coro = NULL, *suspended_value = NULL;
 
-/* As psyco_resume_run, but the frame, with what psyco_resume_begin and
-   psyco_resume_value gave it, is paused at 'at' as ceval leaves it at the
-   await's yield, and becomes the coroutine 'func' made, as CPython made it at
-   the call: its origin is not recorded (psyco_coro_start), whatever the
-   depth is now. 'value' is what it yielded. The marker the body returns,
-   or NULL with an exception. */
-DEFINEFN PyObject *
-psyco_resume_suspend(struct resume_s *st, long at, long nstack,
-                     PyFunctionObject *func, PyObject *value)
-{
-    PyFrameObject *f = st->f;
-    int nlocals = st->nvalues - (int)nstack;
-    int i;
-    PyObject *coro;
-    activation_t *a;
-    resume_locals(st, le_frame_of(f), nlocals);
-    for (i = 0; i < nstack; i++)
-        le_frame_word_put(le_frame_of(f), nlocals + i,
-                          st->values[nlocals + i]);
-    for (i = 0; i < nlocals; i++) Py_XDECREF(st->values[i]);
-    if (st->catcher != NULL) {
-        if (st->catcher != f)
-            catcher_write_locals(st->catcher, le_frame_of(f), nlocals);
-        Py_DECREF(st->catcher);
-    }
-    coro = NULL;
-    if (st->slot != NULL &&
-        (a = act_at(st->slot, le_pyframe_code(f))) != NULL && a->frame == f) {
-        a->suspended = 1;
-        /* realised already: that coroutine suspends */
-        coro = a->coro;
-        a->coro = NULL;
-    }
-    Py_CLEAR(f->f_back);
-    /* the words to the stack's top go into the coroutine */
-    le_frame_set_stack_depth(f, (int)nstack);
-    if (coro != NULL) {
-        coro_set_running(coro, 0);
-        Py_DECREF(f);
-    }
-    else if ((coro = le_gen_of_frame(f, func)) == NULL) {
-        PyMem_Free(st);
-        return NULL;
-    }
-    /* paused once the coroutine exists, which holds the state where the
-       frame is inside it */
-#if LE_HAS_EXCEPTION_TABLE
-    le_gen_frame_pause(le_frame_of(f), le_lasti_of((int)at), (int)nstack);
-#else
-    le_gen_frame_pause(f, le_lasti_of((int)at), (int)nstack, st->iblock,
-                       st->blocks);
-#endif
-    le_gen_frame_end(le_frame_of(f), value);
-    PyMem_Free(st);
-#if LE_RESUMES_COROUTINES
-    if (psyco_trace_yield(f, value) < 0) {
-        Py_DECREF(coro);
-        return NULL;
-    }
-#endif
-    Py_INCREF(value);
-    suspended_coro = coro;
-    suspended_value = value;
-    Py_INCREF(psyco_coro_suspended);
-    return psyco_coro_suspended;
-}
-
 /* where the outermost handler running at 'at' saved the exception
    handled before it, as a stack position: its EXCEPT_HANDLER block's level,
    or PUSH_EXC_INFO's place; -1 if no handler runs there */
@@ -4025,12 +3958,11 @@ handled_level(struct resume_s *st, long at)
    exception it handles current where its caller's handled exception is
    ('theirs'), keeping that one where the outermost handler saved it
    (handled_level), as ceval keeps the coroutine's own. The exception moves
-   to the coroutine, and the caller's goes back. */
+   to the coroutine's state 'mine', and the caller's goes back. */
 static void
-coro_exc_take(struct resume_s *st, long at, long nstack, PyGenObject *gen,
-              _PyErr_StackItem *theirs)
+coro_exc_take(struct resume_s *st, long at, long nstack,
+              _PyErr_StackItem *mine, _PyErr_StackItem *theirs)
 {
-    _PyErr_StackItem *mine = &gen->gi_exc_state;
     int level = handled_level(st, at);
     PyObject **saved;
     if (level < 0)
@@ -4062,6 +3994,93 @@ coro_exc_take(struct resume_s *st, long at, long nstack, PyGenObject *gen,
         saved[i] = Py_None;
     }
 #endif
+}
+
+/* the coroutine's state 'to' takes what 'from' holds (coro_exc_take's,
+   while the coroutine was being made) */
+static void
+coro_exc_give(_PyErr_StackItem *to, _PyErr_StackItem *from)
+{
+#if LE_HAS_EXC_INFO_VALUE_ONLY
+    Py_XSETREF(to->exc_value, from->exc_value);
+#else
+    Py_XSETREF(to->exc_type, from->exc_type);
+    Py_XSETREF(to->exc_value, from->exc_value);
+    Py_XSETREF(to->exc_traceback, from->exc_traceback);
+#endif
+}
+
+/* As psyco_resume_run, but the frame, with what psyco_resume_begin and
+   psyco_resume_value gave it, is paused at 'at' as ceval leaves it at the
+   await's yield, and becomes the coroutine 'func' made, as CPython made it at
+   the call: its origin is not recorded (psyco_coro_start), whatever the
+   depth is now. 'value' is what it yielded. The marker the body returns,
+   or NULL with an exception. */
+DEFINEFN PyObject *
+psyco_resume_suspend(struct resume_s *st, long at, long nstack,
+                     PyFunctionObject *func, PyObject *value)
+{
+    PyFrameObject *f = st->f;
+    int nlocals = st->nvalues - (int)nstack;
+    int i;
+    PyObject *coro;
+    activation_t *a;
+    _PyErr_StackItem held = {0};
+    /* suspending in its own handler */
+    coro_exc_take(st, at, nstack, &held, PyThreadState_GET()->exc_info);
+    resume_locals(st, le_frame_of(f), nlocals);
+    for (i = 0; i < nstack; i++)
+        le_frame_word_put(le_frame_of(f), nlocals + i,
+                          st->values[nlocals + i]);
+    for (i = 0; i < nlocals; i++) Py_XDECREF(st->values[i]);
+    if (st->catcher != NULL) {
+        if (st->catcher != f)
+            catcher_write_locals(st->catcher, le_frame_of(f), nlocals);
+        Py_DECREF(st->catcher);
+    }
+    coro = NULL;
+    if (st->slot != NULL &&
+        (a = act_at(st->slot, le_pyframe_code(f))) != NULL && a->frame == f) {
+        a->suspended = 1;
+        /* realised already: that coroutine suspends */
+        coro = a->coro;
+        a->coro = NULL;
+    }
+    Py_CLEAR(f->f_back);
+    /* the words to the stack's top go into the coroutine */
+    le_frame_set_stack_depth(f, (int)nstack);
+    if (coro != NULL) {
+        coro_set_running(coro, 0);
+        Py_DECREF(f);
+    }
+    else if ((coro = le_gen_of_frame(f, func)) == NULL) {
+        _PyErr_StackItem none = {0};
+        coro_exc_give(&held, &none); /* it goes with the body */
+        PyMem_Free(st);
+        return NULL;
+    }
+    coro_exc_give(&((PyGenObject *)coro)->gi_exc_state, &held);
+    /* paused once the coroutine exists, which holds the state where the
+       frame is inside it */
+#if LE_HAS_EXCEPTION_TABLE
+    le_gen_frame_pause(le_frame_of(f), le_lasti_of((int)at), (int)nstack);
+#else
+    le_gen_frame_pause(f, le_lasti_of((int)at), (int)nstack, st->iblock,
+                       st->blocks);
+#endif
+    le_gen_frame_end(le_frame_of(f), value);
+    PyMem_Free(st);
+#if LE_RESUMES_COROUTINES
+    if (psyco_trace_yield(f, value) < 0) {
+        Py_DECREF(coro);
+        return NULL;
+    }
+#endif
+    Py_INCREF(value);
+    suspended_coro = coro;
+    suspended_value = value;
+    Py_INCREF(psyco_coro_suspended);
+    return psyco_coro_suspended;
 }
 
 /* As psyco_resume_run, for a coroutine's body started by its await
@@ -4098,7 +4117,8 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack,
     gen = (PyGenObject *)coro;
     Py_INCREF(f); /* for after the run, which may close the coroutine */
     coro_set_running(coro, 1);
-    coro_exc_take(st, lasti + LE_UNIT, nstack, gen, ts->exc_info);
+    coro_exc_take(st, lasti + LE_UNIT, nstack, &gen->gi_exc_state,
+                  ts->exc_info);
     gen->gi_exc_state.previous_item = ts->exc_info;
     ts->exc_info = &gen->gi_exc_state;
     result = psyco_resume_run(st, lasti, nstack); /* frees st */
