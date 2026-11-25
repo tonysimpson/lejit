@@ -1169,6 +1169,24 @@ def GET_ITER_INDEX():
 
 
 @probe
+def AWAITABLE_PUSHES_SEND_ARGS():
+    """GET_AWAITABLE pushes three items, the iterator, a NULL and None
+    (dis)"""
+    op = dis.opmap['GET_AWAITABLE']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 3, 'dis: GET_AWAITABLE pushes %d' % pushes
+
+
+@probe
+def ANEXT_PUSHES_SEND_ARGS():
+    """GET_ANEXT pushes four items, the async iterator, the awaitable, a
+    NULL and None (dis)"""
+    op = dis.opmap['GET_ANEXT']
+    pushes = dis.stack_effect(op, 0 if op >= dis.HAVE_ARGUMENT else None) + 1
+    return pushes == 4, 'dis: GET_ANEXT pushes %d' % pushes
+
+
+@probe
 def RUNNING_STACK_HIDDEN():
     """a running generator's referents (gc) don't include its locals"""
     import gc
