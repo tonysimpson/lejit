@@ -60,14 +60,17 @@ psyco_resume_block(struct resume_s *st, long type, long handler, long level);
    until its call ends (pycompiler.c:catcher_word). psyco_frame_catch puts
    'f' in it as the frame catches, the innermost compiled frame, whose own
    slot is 'own'; _drop lets it go if nothing else holds it, _shared does
-   too and says whether something does, and _end lets it go once given its
-   locals, as the call ends. */
+   too and says whether something does, _unflush takes back the locals
+   _shared's caller gave it for an inlined call, and _end lets it go once
+   given its locals, as the call ends. */
 EXTERNFN void
 psyco_frame_catch(PyFrameObject *f, PyObject **word, stack_frame_info_t **own);
 EXTERNFN void
 psyco_frame_catcher_drop(PyObject **word);
 EXTERNFN long
 psyco_frame_catcher_shared(PyObject **word);
+EXTERNFN void
+psyco_frame_catcher_unflush(PyObject **word);
 EXTERNFN void
 psyco_frame_catcher_end(PyObject **word);
 EXTERNFN void

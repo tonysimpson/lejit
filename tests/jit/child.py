@@ -57,7 +57,9 @@ for _ in range(int(sys.argv[7])):
 # again (up to three times) and the last run counts: a branch first taken
 # late (a thread switch or a signal landing at a check not reached before)
 # compiles then and keeps its code, which is not a leak. A leak grows in
-# every run.
+# every run. A case that compiles new code on every call always compiles
+# during the rounds, so its rounds are run once.
+max_repeats = 0 if sys.argv[9] == '1' else 3
 repeats = 0
 while True:
     clear_type_cache()
@@ -75,7 +77,7 @@ while True:
     clear_type_cache()
     gc.collect()
     leak = sys.getallocatedblocks() - before
-    if not checked or lejit._core._stats()['code_buffers'] == buffers or repeats == 3:
+    if not checked or lejit._core._stats()['code_buffers'] == buffers or repeats == max_repeats:
         break
     repeats += 1
 out.append('leak: %d %d' % (leak, repeats))
