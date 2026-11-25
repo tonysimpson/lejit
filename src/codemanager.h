@@ -279,6 +279,28 @@ EXTERNFN void
 le_untraced_begin(void);
 EXTERNFN void
 le_untraced_end(void);
+/* The outermost compile also runs with the headroom CPython gives the
+   raising of RecursionError (recursion_headroom), where there is a C limit
+   apart from the Python one: a compile entered at that limit (the branch
+   compiled when compiled code first raises RecursionError) still makes C
+   calls that check it, such as a dict lookup comparing keys, which would
+   fail and change what it compiles. */
+static inline void
+le_outer_compile_begin(void)
+{
+    le_untraced_begin();
+#if LE_HAS_PY_RECURSION_REMAINING
+    PyThreadState_GET()->recursion_headroom++;
+#endif
+}
+static inline void
+le_outer_compile_end(void)
+{
+#if LE_HAS_PY_RECURSION_REMAINING
+    PyThreadState_GET()->recursion_headroom--;
+#endif
+    le_untraced_end();
+}
 #if ALL_CHECKS || LE_CODESTATS
 EXTERNFN long
 le_now_ns(void);
@@ -287,31 +309,31 @@ EXTERNVAR int psyco_stat_compile_kind; /* the outermost entry's kind */
 #if ALL_CHECKS
 EXTERNVAR long psyco_stat_compile_ns[LE_ENTER_KINDS];
 EXTERNVAR long psyco_stat_compile_count[LE_ENTER_KINDS];
-#define LE_COMPILE_BEGIN(kind)                \
-    long _le_t0 = le_compile_depth++          \
-                      ? 0                     \
-                      : (le_untraced_begin(), \
+#define LE_COMPILE_BEGIN(kind)                     \
+    long _le_t0 = le_compile_depth++               \
+                      ? 0                          \
+                      : (le_outer_compile_begin(), \
                          psyco_stat_compile_kind = (kind), le_now_ns())
 #define LE_COMPILE_END(kind)                                     \
     do {                                                         \
         if (--le_compile_depth == 0) {                           \
             psyco_stat_compile_ns[kind] += le_now_ns() - _le_t0; \
             psyco_stat_compile_count[kind]++;                    \
-            le_untraced_end();                                   \
+            le_outer_compile_end();                              \
         }                                                        \
     } while (0)
 #elif LE_CODESTATS
-#define LE_COMPILE_BEGIN(kind) \
-    (void)(le_compile_depth++  \
-               ? 0             \
-               : (le_untraced_begin(), psyco_stat_compile_kind = (kind)))
+#define LE_COMPILE_BEGIN(kind)                             \
+    (void)(le_compile_depth++ ? 0                          \
+                              : (le_outer_compile_begin(), \
+                                 psyco_stat_compile_kind = (kind)))
 #define LE_COMPILE_END(kind) \
-    ((void)(--le_compile_depth == 0 ? (le_untraced_end(), 0) : 0))
+    ((void)(--le_compile_depth == 0 ? (le_outer_compile_end(), 0) : 0))
 #else
 #define LE_COMPILE_BEGIN(kind) \
-    ((void)(le_compile_depth++ ? 0 : (le_untraced_begin(), 0)))
+    ((void)(le_compile_depth++ ? 0 : (le_outer_compile_begin(), 0)))
 #define LE_COMPILE_END(kind) \
-    ((void)(--le_compile_depth == 0 ? (le_untraced_end(), 0) : 0))
+    ((void)(--le_compile_depth == 0 ? (le_outer_compile_end(), 0) : 0))
 #endif
 
 /* A block at the start of a new extent (psyco_code_open, whose limit it
