@@ -2909,61 +2909,63 @@ warn_init(void)
 /* A running coroutine of a body started by its await (psyco_coros_realise)
    holds the exception its body is handling, which compiled code keeps in
    the thread's: each one in 'args' is lent it while 'on', for
-   gc.get_referents to visit, if its body is in a handler. Where handlers
-   are the exception table, no such body handles one
-   (mergepoints.c:handles_apart). */
+   gc.get_referents to visit, if its body is in a handler */
 static void
 coros_exc_lend(PyObject *args, int on)
 {
-#if LE_HAS_EXCEPTION_TABLE
-    (void)args;
-    (void)on;
-#else
     Py_ssize_t i, n = PyTuple_GET_SIZE(args);
     for (i = 0; i < n; i++) {
         PyGenObject *gen = (PyGenObject *)PyTuple_GET_ITEM(args, i);
-        _PyErr_StackItem *e = &gen->gi_exc_state, *top;
+        _PyErr_StackItem *e = &gen->gi_exc_state;
+        PyObject *lasti, *type, *value, *tb;
+        PyCodeObject *co;
         size_t k;
-        PyObject *lasti;
         long pos;
-        if (!PyCoro_CheckExact(gen) || gen->gi_frame == NULL ||
-            !le_frame_is_executing(gen->gi_frame))
+        if (!PyCoro_CheckExact(gen) || acts == NULL)
             continue;
-        for (k = 0; k <= acts_mask && acts != NULL; k++)
+        /* running compiled: suspended, ended or gone on in ceval, the
+           table no longer holds it */
+        for (k = 0; k <= acts_mask; k++)
             if (acts[k].own != NULL && acts[k].coro == (PyObject *)gen)
                 break;
-        if (acts == NULL || k > acts_mask)
+        if (k > acts_mask)
             continue;
         if (!on) {
+#if LE_HAS_EXC_INFO_VALUE_ONLY
+            Py_CLEAR(e->exc_value);
+#else
             Py_CLEAR(e->exc_type);
             Py_CLEAR(e->exc_value);
             Py_CLEAR(e->exc_traceback);
+#endif
             continue;
         }
-        lasti = PyObject_GetAttrString((PyObject *)gen->gi_frame, "f_lasti");
+        lasti = PyObject_GetAttrString((PyObject *)acts[k].frame, "f_lasti");
         pos = lasti == NULL ? -1 : PyLong_AsLong(lasti);
         Py_XDECREF(lasti);
         PyErr_Clear();
-        if (pos < 0 || !psyco_in_handler(gen->gi_code == NULL
-                                             ? le_pyframe_code(gen->gi_frame)
-                                             : (PyCodeObject *)gen->gi_code,
-                                         (int)pos))
+        co = le_pyframe_code(acts[k].frame);
+#if LE_HAS_EXCEPTION_TABLE
+        if (pos < 0 || psyco_handled_saved(co, (int)pos) < 0)
             continue;
-        /* as _PyErr_GetTopmostException */
-        top = PyThreadState_GET()->exc_info;
-        while (top != NULL &&
-               (top->exc_type == NULL || top->exc_type == Py_None))
-            top = top->previous_item;
-        if (top == NULL)
+#else
+        if (pos < 0 || !psyco_in_handler(co, (int)pos))
             continue;
-        Py_XINCREF(top->exc_type);
-        Py_XINCREF(top->exc_value);
-        Py_XINCREF(top->exc_traceback);
-        e->exc_type = top->exc_type;
-        e->exc_value = top->exc_value;
-        e->exc_traceback = top->exc_traceback;
-    }
 #endif
+        le_exc_info_topmost(PyThreadState_GET(), &type, &value, &tb);
+        if (value == NULL || value == Py_None)
+            continue;
+        Py_INCREF(value);
+#if LE_HAS_EXC_INFO_VALUE_ONLY
+        e->exc_value = value;
+#else
+        Py_XINCREF(type);
+        Py_XINCREF(tb);
+        e->exc_type = type;
+        e->exc_value = value;
+        e->exc_traceback = tb;
+#endif
+    }
 }
 
 /* gc.get_referents visits a frame's f_localsplus in C, where CPython
@@ -3990,25 +3992,51 @@ psyco_resume_suspend(struct resume_s *st, long at, long nstack,
     return psyco_coro_suspended;
 }
 
-#if !LE_HAS_EXCEPTION_TABLE
-/* A body that goes on in its own handler: compiled code made the
+/* where the outermost handler running at 'at' saved the exception
+   handled before it, as a stack position: its EXCEPT_HANDLER block's level,
+   or PUSH_EXC_INFO's place; -1 if no handler runs there */
+static int
+handled_level(struct resume_s *st, long at)
+{
+#if LE_HAS_EXCEPTION_TABLE
+    return psyco_handled_saved(le_pyframe_code(st->f), (int)at);
+#else
+    int i;
+    (void)at;
+    for (i = 0; i < st->iblock; i++)
+        if (st->blocks[i].b_type == EXCEPT_HANDLER)
+            return st->blocks[i].b_level;
+    return -1;
+#endif
+}
+
+/* A body that goes on in its own handler, at 'at': compiled code made the
    exception it handles current where its caller's handled exception is
-   ('theirs'), keeping that one under the outermost EXCEPT_HANDLER block,
-   as ceval keeps the coroutine's own. The exception moves to the
-   coroutine, and the caller's goes back. */
+   ('theirs'), keeping that one where the outermost handler saved it
+   (handled_level), as ceval keeps the coroutine's own. The exception moves
+   to the coroutine, and the caller's goes back. */
 static void
-coro_exc_take(struct resume_s *st, long nstack, PyGenObject *gen,
+coro_exc_take(struct resume_s *st, long at, long nstack, PyGenObject *gen,
               _PyErr_StackItem *theirs)
 {
     _PyErr_StackItem *mine = &gen->gi_exc_state;
+    int level = handled_level(st, at);
     PyObject **saved;
-    int i;
-    for (i = 0; i < st->iblock; i++)
-        if (st->blocks[i].b_type == EXCEPT_HANDLER)
-            break;
-    if (i == st->iblock)
+    if (level < 0)
         return;
-    saved = &st->values[st->nvalues - nstack + st->blocks[i].b_level];
+    saved = &st->values[st->nvalues - nstack + level];
+#if LE_HAS_EXC_INFO_VALUE_ONLY
+    Py_XSETREF(mine->exc_value, theirs->exc_value);
+    /* none is NULL, as compiled code's POP_EXCEPT leaves it
+       (pycompiler.c:cimpl_pop_exc_value) */
+    theirs->exc_value = saved[0];
+    if (saved[0] == Py_None) {
+        theirs->exc_value = NULL;
+        Py_DECREF(Py_None);
+    }
+    saved[0] = Py_NewRef(Py_None);
+#else
+    int i;
     Py_XDECREF(mine->exc_type);
     Py_XDECREF(mine->exc_value);
     Py_XDECREF(mine->exc_traceback);
@@ -4022,8 +4050,8 @@ coro_exc_take(struct resume_s *st, long nstack, PyGenObject *gen,
         Py_INCREF(Py_None);
         saved[i] = Py_None;
     }
-}
 #endif
+}
 
 /* As psyco_resume_run, for a coroutine's body started by its await
    (GENEXPR_DIRECT): ceval goes on with it as the coroutine 'func' made
@@ -4059,9 +4087,7 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack,
     gen = (PyGenObject *)coro;
     Py_INCREF(f); /* for after the run, which may close the coroutine */
     coro_set_running(coro, 1);
-#if !LE_HAS_EXCEPTION_TABLE
-    coro_exc_take(st, nstack, gen, ts->exc_info);
-#endif
+    coro_exc_take(st, lasti + LE_UNIT, nstack, gen, ts->exc_info);
     gen->gi_exc_state.previous_item = ts->exc_info;
     ts->exc_info = &gen->gi_exc_state;
     result = psyco_resume_run(st, lasti, nstack); /* frees st */

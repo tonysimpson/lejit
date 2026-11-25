@@ -1032,25 +1032,101 @@ psyco_in_handler(PyCodeObject *co, int pos)
 #endif
 }
 
-/* whether a handler of 'co' could make an exception the one handled while
-   its body runs as a call: it would be in its awaiter's exception state,
-   where only a block stack shows which is the coroutine's
-   (frames.c:coro_exc_take). Its PEP 479 handler and its awaits' handlers
-   (CLEANUP_THROW) handle none. */
+#if LE_HAS_EXCEPTION_TABLE
+/* whether the instruction at 'at' runs in the handler at 'h', once its
+   PUSH_EXC_INFO has saved the handled exception before it at stack
+   position 'saved': reached from there by plain flow, or by an exception
+   to a handler that keeps that position, before the handler's own
+   POP_EXCEPT ('nested' counts those of the handlers entered meanwhile) */
 static int
-handles_apart(PyCodeObject *co, le_code_t c)
+handles_at(PyCodeObject *co, le_code_t c, int h, int saved, int at)
+{
+    int units = c.size / LE_UNIT, top = 0, u, reach = 0;
+    int *work = PyMem_Malloc((units + 1) * (sizeof(int) + 1));
+    signed char *nested;
+    if (work == NULL)
+        return 0; /* out of memory: taken as not */
+    nested = (signed char *)(work + units + 1);
+    memset(nested, -1, units + 1);
+    u = le_instr(c, h).next / LE_UNIT;
+    nested[u] = 0;
+    work[top++] = u;
+    while (top > 0) {
+        le_instr_t in;
+        le_handler_t e;
+        int next[3], depth[3], n = 0, d, k, f;
+        u = work[--top];
+        d = nested[u];
+        in = le_instr(c, u * LE_UNIT);
+        if (u * LE_UNIT <= at && at < in.next) {
+            reach = 1;
+            break;
+        }
+        f = le_op_flags(in.op);
+        if (in.op == POP_EXCEPT) {
+            if (d == 0)
+                continue;
+            next[n] = in.next;
+            depth[n++] = d - 1;
+        }
+        else if (in.op == PUSH_EXC_INFO) {
+            next[n] = in.next;
+            depth[n++] = d + 1;
+        }
+        else if (!(f & LE_OPF_STOPS)) {
+            if (in.target >= 0) {
+                next[n] = in.target;
+                depth[n++] = d;
+            }
+            if (!(f & LE_OPF_JUMPS)) {
+                next[n] = in.next;
+                depth[n++] = d;
+            }
+        }
+        if (le_handler_find(co, u * LE_UNIT, &e) && e.depth > saved) {
+            next[n] = e.handler;
+            depth[n++] = d;
+        }
+        for (k = 0; k < n; k++) {
+            int v = next[k] / LE_UNIT;
+            if (next[k] >= c.size || nested[v] >= 0 || depth[k] > CO_MAXBLOCKS)
+                continue;
+            nested[v] = (signed char)depth[k];
+            work[top++] = v;
+        }
+    }
+    PyMem_Free(work);
+    return reach;
+}
+#endif
+
+/* the stack position where the outermost handler running the instruction
+   at 'at' in 'co' keeps the exception handled before it (PUSH_EXC_INFO's
+   saved one), or -1 if no handler runs it; where handlers are blocks,
+   their EXCEPT_HANDLER blocks say it instead */
+DEFINEFN int
+psyco_handled_saved(PyCodeObject *co, int at)
 {
 #if LE_HAS_EXCEPTION_TABLE
-    Py_ssize_t at = 0;
+    le_code_t c = le_code(co);
+    Py_ssize_t i = 0;
     le_handler_t h;
-    while (le_handler_next(co, &at, &h))
-        if (le_instr(c, h.handler).op == PUSH_EXC_INFO)
-            return 1;
+    int found = -1, last = -1;
+    while (le_handler_next(co, &i, &h)) {
+        int saved = h.depth + h.lasti;
+        if (h.handler == last || (found >= 0 && saved >= found) ||
+            le_instr(c, h.handler).op != PUSH_EXC_INFO)
+            continue;
+        last = h.handler;
+        if (handles_at(co, c, h.handler, saved, at))
+            found = saved;
+    }
+    return found;
 #else
     (void)co;
-    (void)c;
+    (void)at;
+    return -1;
 #endif
-    return 0;
 }
 
 /* the code of a coroutine whose body can run as a call when it is awaited
@@ -1060,7 +1136,7 @@ psyco_is_startable_coroutine(PyCodeObject *co)
 {
     le_code_t c;
     return LE_HAS_GEN_NEW_AROUND_FRAME && (co->co_flags & CO_COROUTINE) &&
-           body_compilable(co, &c) && !handles_apart(co, c);
+           body_compilable(co, &c);
 }
 
 DEFINEFN PyObject *
