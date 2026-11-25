@@ -237,9 +237,15 @@ le_call_as_direct(void *fn, long a, long b, long c, long d)
 {
     segment_call_t call = {
         (long (*)(long, long, long, long))fn, a, b, c, d, 0};
-#if LE_HAS_C_RECURSION_REMAINING
+#if LE_HAS_C_RECURSION_REMAINING || LE_HAS_C_STACK_SOFT_LIMIT
     PyThreadState *ts = PyThreadState_GET();
+#endif
+#if LE_HAS_C_RECURSION_REMAINING
     ts->c_recursion_remaining += ENTRY_C_UNITS;
+#elif LE_HAS_C_STACK_SOFT_LIMIT
+    uintptr_t *soft = (uintptr_t *)((char *)ts + le_c_stack_soft_limit_at);
+    long charge = *soft != 0 ? le_c_entry_charge : 0;
+    *soft -= charge;
 #endif
     if ((uintptr_t)__builtin_frame_address(0) < stack_low)
         call_on_segment(&call);
@@ -255,6 +261,8 @@ le_call_as_direct(void *fn, long a, long b, long c, long d)
     }
 #if LE_HAS_C_RECURSION_REMAINING
     ts->c_recursion_remaining -= ENTRY_C_UNITS;
+#elif LE_HAS_C_STACK_SOFT_LIMIT
+    *soft += charge;
 #endif
     return call.result;
 }
