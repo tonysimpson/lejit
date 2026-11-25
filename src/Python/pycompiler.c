@@ -985,23 +985,41 @@ cimpl_with_exit_exc(PyObject *exit_func, PyObject *value)
 #endif
 
 #if LE_HAS_OPCODE_LOAD_SPECIAL
-PyAPI_FUNC(PyObject *) _PyObject_LookupSpecial(PyObject *, PyObject *);
 
-/* LOAD_SPECIAL: the bound special method (__enter__, __exit__ and the
-   async ones) that ceval's _PyObject_LookupSpecialMethod finds, with
-   ceval's error where the type has none */
-static PyObject *
-cimpl_load_special(PyObject *owner, long which)
+/* LOAD_SPECIAL: the special method (__enter__, __exit__ and the async
+   ones) on the type of 'owner', in out[0], as ceval's
+   _PyObject_LookupSpecialMethod finds it: 1 for a method descriptor,
+   which is called with 'owner' as its self; else 0, for the attribute
+   bound to 'owner'. -1 with ceval's error where the type has none. */
+static int
+cimpl_load_special(PyObject *owner, long which, PyObject *out[])
 {
-    PyObject *res =
-        _PyObject_LookupSpecial(owner, _Py_SpecialMethods[which].name);
-    if (res == NULL && !PyErr_Occurred())
+    PyObject *found =
+        _PyType_Lookup(Py_TYPE(owner), _Py_SpecialMethods[which].name);
+    descrgetfunc get;
+    if (found == NULL) {
         PyErr_Format(PyExc_TypeError,
                      _PyEval_SpecialMethodCanSuggest(owner, (int)which)
                          ? _Py_SpecialMethods[which].error_suggestion
                          : _Py_SpecialMethods[which].error,
                      owner);
-    return res;
+        return -1;
+    }
+    Py_INCREF(found);
+    if (PyType_HasFeature(Py_TYPE(found), Py_TPFLAGS_METHOD_DESCRIPTOR)) {
+        out[0] = found;
+        return 1;
+    }
+    get = Py_TYPE(found)->tp_descr_get;
+    if (get != NULL) {
+        out[0] = get(found, owner, (PyObject *)Py_TYPE(owner));
+        Py_DECREF(found);
+        if (out[0] == NULL)
+            return -1;
+    }
+    else
+        out[0] = found;
+    return 0;
 }
 
 /* WITH_EXCEPT_START's call where LOAD_SPECIAL may have left __exit__
@@ -7978,9 +7996,13 @@ awaitable_kind(le_code_t c, int at, int oparg)
 #endif
 }
 
+/* GET_ANEXT's kind of await: _PyCoro_GetAwaitableIter's alone, without
+   GET_AWAITABLE's test of a coroutine awaiting already */
+#define AWAITABLE_ITER 3
+
 /* GET_AWAITABLE: what awaiting 'o' iterates, a new reference, as
    _PyCoro_GetAwaitableIter (not exported) makes it and ceval checks it;
-   'kind' as awaitable_kind gives it */
+   'kind' as awaitable_kind gives it, or AWAITABLE_ITER */
 static PyObject *
 cimpl_get_awaitable(PyObject *o, long kind)
 {
@@ -7988,7 +8010,8 @@ cimpl_get_awaitable(PyObject *o, long kind)
     unaryfunc getter;
     PyObject *res;
     if (PyCoro_CheckExact(o) || is_iterable_coroutine(o)) {
-        if (PyCoro_CheckExact(o) && coro_awaits((PyGenObject *)o)) {
+        if (kind != AWAITABLE_ITER && PyCoro_CheckExact(o) &&
+            coro_awaits((PyGenObject *)o)) {
             PyErr_SetString(PyExc_RuntimeError, LE_MSG_CORO_AWAITED_ALREADY);
             return NULL;
         }
@@ -8029,6 +8052,51 @@ cimpl_get_awaitable(PyObject *o, long kind)
         return NULL;
     }
     return res;
+}
+
+/* GET_ANEXT, as ceval's (_PyEval_GetANext): what awaiting the async
+   iterator's __anext__() iterates, a new reference */
+static PyObject *
+cimpl_get_anext(PyObject *aiter)
+{
+    PyTypeObject *type = Py_TYPE(aiter);
+    unaryfunc getter =
+        type->tp_as_async != NULL ? type->tp_as_async->am_anext : NULL;
+    PyObject *next_iter, *awaitable, *exc, *val, *tb;
+    if (PyAsyncGen_CheckExact(aiter))
+        return getter(aiter);
+    if (getter == NULL) {
+        PyErr_Format(PyExc_TypeError, LE_MSG_ASYNC_FOR_NO_ANEXT,
+                     type->tp_name);
+        return NULL;
+    }
+    next_iter = getter(aiter);
+    if (next_iter == NULL)
+        return NULL;
+    awaitable = cimpl_get_awaitable(next_iter, AWAITABLE_ITER);
+    if (awaitable == NULL) {
+        /* as _PyErr_FormatFromCause: the error is the new one's cause and
+           context */
+        PyErr_Fetch(&exc, &val, &tb);
+        PyErr_NormalizeException(&exc, &val, &tb);
+        if (tb != NULL)
+            PyException_SetTraceback(val, tb);
+        Py_DECREF(exc);
+        Py_XDECREF(tb);
+        PyErr_Format(PyExc_TypeError, LE_MSG_ASYNC_FOR_BAD_ANEXT,
+                     Py_TYPE(next_iter)->tp_name);
+        {
+            PyObject *e2, *v2, *t2;
+            PyErr_Fetch(&e2, &v2, &t2);
+            PyErr_NormalizeException(&e2, &v2, &t2);
+            Py_INCREF(val);
+            PyException_SetCause(v2, val);
+            PyException_SetContext(v2, val);
+            PyErr_Restore(e2, v2, t2);
+        }
+    }
+    Py_DECREF(next_iter);
+    return awaitable;
 }
 
 #if LE_RESUMES_COROUTINES
@@ -8459,6 +8527,16 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             goto fine;
         }
 
+        /* async for's next value: what awaiting __anext__() iterates,
+           above the async iterator; the await follows */
+        case GET_ANEXT:
+            x = psyco_generic_call(po, cimpl_get_anext, CfCommonNewRefPyObject,
+                                   "v", TOP());
+            if (x == NULL)
+                break;
+            PUSH(x);
+            goto fine;
+
 #if LE_RESUMES_ON_FRAME
         /* a resumable coroutine's await (psyco_is_resumable_generator):
            GET_AWAITABLE, then SEND's loop */
@@ -8679,6 +8757,32 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
                 traceback_locals(po, NULL);
             goto exception_unwind;
 
+        /* async for's handler, for its await of __anext__(), with the
+           exception above the async iterator: StopAsyncIteration ends the
+           loop, any other is raised again */
+        case END_ASYNC_FOR:
+            x = psyco_generic_call(
+                po, PyErr_GivenExceptionMatches,
+                CfCommonIntBoolOrError | CfNoPython | CfNoBlock, "vl", TOP(),
+                (long)PyExc_StopAsyncIteration);
+            if (x == NULL)
+                break;
+            cc = integer_non_null(po, x);
+            vinfo_decref(x, po);
+            if (cc == CC_ERROR)
+                break;
+            if (runtime_condition_f(po, cc)) {
+                POP_DECREF(); /* the exception */
+                POP_DECREF(); /* the async iterator */
+                goto fine;
+            }
+            psyco_generic_call(po, cimpl_reraise_value,
+                               CfPyErrAlways | CfNoPython, "v", TOP());
+            reraise_place(po, po->pr.next_instr);
+            if (locals_wanted_now(po))
+                traceback_locals(po, NULL);
+            goto exception_unwind;
+
 #if LE_HAS_OPCODE_CLEANUP_THROW && LE_RESUMES_ON_FRAME
         /* where a throw into yield from goes, under the iterator and the
            value last sent: the StopIteration it ended with gives the
@@ -8892,18 +8996,35 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             goto fine;
 
 #if LE_HAS_OPCODE_LOAD_SPECIAL
-        /* with: the bound special method, and a NULL over it where
-           ceval may put the method's self */
-        case LOAD_SPECIAL:
-            x = psyco_generic_call(po, cimpl_load_special,
-                                   CfCommonNewRefPyObject, "vl", TOP(),
-                                   (long)oparg);
-            if (x == NULL)
+        /* with: the special method and its self over it, or the bound
+           attribute and a NULL */
+        case LOAD_SPECIAL: {
+            vinfo_array_t *array = array_new(1);
+            int unbound;
+            u = psyco_generic_call(po, cimpl_load_special,
+                                   CfCommonIntBoolOrError, "vlA", TOP(),
+                                   (long)oparg, array);
+            if (u == NULL) {
+                array_release(array);
                 break;
-            POP_DECREF();
+            }
+            x = array->items[0];
+            array_release(array);
+            unbound = runtime_NON_NULL_t(po, u); /* consumes u */
+            if (unbound < 0) {
+                vinfo_decref(x, po);
+                break;
+            }
+            POP(v);
             PUSH(x);
-            PUSH(psyco_vi_Zero());
+            if (unbound)
+                PUSH(v);
+            else {
+                vinfo_decref(v, po);
+                PUSH(psyco_vi_Zero());
+            }
             goto fine;
+        }
 #endif
 #if LE_HAS_OPCODE_BEFORE_WITH
         /* with: the bound __exit__ replaces the manager, and
@@ -8962,6 +9083,39 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
                 break;
             goto fine;
         }
+
+#if !LE_HAS_EXCEPTION_TABLE
+        /* async for's handler, for its await of __anext__(), entered
+           with an exception's six items above the async iterator:
+           StopAsyncIteration ends the loop, any other is raised again */
+        case END_ASYNC_FOR:
+            x = psyco_generic_call(
+                po, PyErr_GivenExceptionMatches,
+                CfCommonIntBoolOrError | CfNoPython | CfNoBlock, "vl", TOP(),
+                (long)PyExc_StopAsyncIteration);
+            if (x == NULL)
+                break;
+            cc = integer_non_null(po, x);
+            vinfo_decref(x, po);
+            if (cc == CC_ERROR)
+                break;
+            if (runtime_condition_f(po, cc)) {
+                POP_DECREF(); /* the exception */
+                if (!pop_except_handler(po, true))
+                    break;
+                POP_DECREF(); /* the async iterator */
+                goto fine;
+            }
+            POP(v);
+            POP(w);
+            POP(x);
+            reraise_place(po, po->pr.next_instr);
+            PycException_Reraise(po, v, w, x);
+            vinfo_decref(v, po);
+            vinfo_decref(w, po);
+            vinfo_decref(x, po);
+            goto exception_unwind;
+#endif
 
         case END_FINALLY:
             /* First make extra sure no exception is pending */

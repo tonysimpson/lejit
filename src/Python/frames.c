@@ -2119,6 +2119,86 @@ psyco_frame_goes_interpreted(PyCodeObject *co)
 }
 #endif
 
+/* a field a member descriptor reads and writes, as a getset's functions
+   ('field' is its definition) */
+static PyObject *
+member_get(PyObject *obj, void *field)
+{
+    return PyMember_GetOne((const char *)obj, (PyMemberDef *)field);
+}
+static int
+member_set(PyObject *obj, PyObject *v, void *field)
+{
+    return PyMember_SetOne((char *)obj, (PyMemberDef *)field, v);
+}
+
+/* LeJIT's getter or setter for type 'tp''s attribute 'name', given in
+   'ours' (NULL keeps CPython's), which takes the rest of CPython's
+   definition. A getset descriptor is pointed at 'ours': it stays the one
+   CPython's caches and specialised instructions may hold, so the type
+   needn't be given a new version tag, which a static builtin type mustn't
+   be. A member descriptor (a field, as f_back and f_lasti are where the
+   frame object has them) is replaced in the dict by a getset descriptor
+   for 'ours', and the type is given a new version tag. Returns CPython's
+   definition, or NULL if the type has neither. */
+static PyGetSetDef *
+getset_replace(PyTypeObject *tp, const char *name, PyGetSetDef *ours)
+{
+    PyObject *d = le_type_dict(tp);
+    PyObject *descr = PyDict_GetItemString(d, name), *fn;
+    PyGetSetDef *cpython;
+    if (descr != NULL && Py_TYPE(descr) == &PyGetSetDescr_Type)
+        cpython = ((PyGetSetDescrObject *)descr)->d_getset;
+    else if (descr != NULL && Py_TYPE(descr) == &PyMemberDescr_Type) {
+        PyMemberDef *field = ((PyMemberDescrObject *)descr)->d_member;
+        cpython = PyMem_Malloc(sizeof(PyGetSetDef));
+        if (cpython == NULL)
+            OUT_OF_MEMORY();
+        cpython->name = field->name;
+        cpython->get = member_get;
+        cpython->set = member_set;
+        cpython->doc = field->doc;
+        cpython->closure = field;
+    }
+    else
+        return NULL;
+    ours->name = cpython->name;
+    ours->doc = cpython->doc;
+    ours->closure = cpython->closure;
+    if (ours->get == NULL)
+        ours->get = cpython->get;
+    if (ours->set == NULL)
+        ours->set = cpython->set;
+    if (Py_TYPE(descr) == &PyGetSetDescr_Type) {
+        ((PyGetSetDescrObject *)descr)->d_getset = ours;
+        return cpython;
+    }
+    fn = PyDescr_NewGetSet(tp, ours);
+    if (fn == NULL || PyDict_SetItemString(d, name, fn) < 0)
+        PyErr_Print();
+    Py_XDECREF(fn);
+    PyType_Modified(tp);
+    return cpython;
+}
+
+/* the same for a method descriptor, whose function 'meth' must take its
+   arguments as CPython's does ('flags'), as the descriptor calls it */
+static PyMethodDef *
+method_replace(PyTypeObject *tp, const char *name, int flags, PyCFunction meth,
+               PyMethodDef *ours)
+{
+    PyObject *descr = PyDict_GetItemString(le_type_dict(tp), name);
+    PyMethodDef *cpython;
+    if (descr == NULL || Py_TYPE(descr) != &PyMethodDescr_Type ||
+        ((PyMethodDescrObject *)descr)->d_method->ml_flags != flags)
+        return NULL;
+    cpython = ((PyMethodDescrObject *)descr)->d_method;
+    *ours = *cpython;
+    ours->ml_meth = meth;
+    ((PyMethodDescrObject *)descr)->d_method = ours;
+    return cpython;
+}
+
 static PyObject *
 frame_get_back(PyFrameObject *frame, void *closure)
 {
@@ -2142,30 +2222,27 @@ frame_get_back(PyFrameObject *frame, void *closure)
     return (PyObject *)back;
 }
 
-static PyGetSetDef back_getset = {"f_back", (getter)frame_get_back, NULL, NULL,
-                                  NULL};
+static PyGetSetDef back_getset = {NULL, (getter)frame_get_back};
 
 /* frame.f_generator, where frames have it, replaced too: a running
    coroutine's frame gives the coroutine, so those of the bodies started
    by their awaits are made first (psyco_coros_realise) */
-static PyObject *generator_descr = NULL;
+static PyGetSetDef *generator_cpython;
 
 static PyObject *
 frame_get_generator(PyFrameObject *frame, void *closure)
 {
     psyco_coros_realise();
-    return Py_TYPE(generator_descr)
-        ->tp_descr_get(generator_descr, (PyObject *)frame,
-                       (PyObject *)&PyFrame_Type);
+    return generator_cpython->get((PyObject *)frame,
+                                  generator_cpython->closure);
 }
 
-static PyGetSetDef generator_getset = {
-    "f_generator", (getter)frame_get_generator, NULL, NULL, NULL};
+static PyGetSetDef generator_getset = {NULL, (getter)frame_get_generator};
 
 /* frame.f_lineno, replaced too: a frame LeCode_Run runs doesn't keep its
    f_lasti, so its place comes from LeJIT's chain, which visits it with
    it. The setter (a jump, under tracing) is ceval's. */
-static PyObject *lineno_descr = NULL;
+static PyGetSetDef *lineno_cpython;
 
 /* the place of the frame LeCode_Run runs, 'frame' in it, or -1 */
 struct root_lasti_s {
@@ -2232,15 +2309,14 @@ frame_get_lineno(PyFrameObject *frame, void *closure)
 static int
 frame_set_lineno(PyFrameObject *frame, PyObject *v, void *c)
 {
-    return Py_TYPE(lineno_descr)
-        ->tp_descr_set(lineno_descr, (PyObject *)frame, v);
+    return lineno_cpython->set((PyObject *)frame, v, lineno_cpython->closure);
 }
 
-static PyGetSetDef lineno_getset = {"f_lineno", (getter)frame_get_lineno,
-                                    (setter)frame_set_lineno, NULL, NULL};
+static PyGetSetDef lineno_getset = {NULL, (getter)frame_get_lineno,
+                                    (setter)frame_set_lineno};
 
 /* frame.f_lasti, replaced too, from the same place as f_lineno */
-static PyObject *lasti_descr = NULL;
+static PyGetSetDef *lasti_cpython;
 
 static PyObject *
 frame_get_lasti(PyFrameObject *frame, void *closure)
@@ -2248,36 +2324,30 @@ frame_get_lasti(PyFrameObject *frame, void *closure)
     int lasti = compiled_place(frame);
     if (lasti >= 0 && runs_compiled(frame))
         return PyLong_FromLong(lasti);
-    return Py_TYPE(lasti_descr)
-        ->tp_descr_get(lasti_descr, (PyObject *)frame,
-                       (PyObject *)&PyFrame_Type);
+    return lasti_cpython->get((PyObject *)frame, lasti_cpython->closure);
 }
 
-static PyGetSetDef lasti_getset = {"f_lasti", (getter)frame_get_lasti, NULL,
-                                   NULL, NULL};
+static PyGetSetDef lasti_getset = {NULL, (getter)frame_get_lasti};
 
-/* frame.f_locals, replaced in PyFrame_Type's dict: PyFrame_FastToLocals
+/* frame.f_locals, replaced too: PyFrame_FastToLocals
    reads f_localsplus, which frame_sync_locals brings up to date */
-static PyObject *locals_descr = NULL;
+static PyGetSetDef *locals_cpython;
 
 static PyObject *
 frame_get_locals(PyFrameObject *frame, void *closure)
 {
     frame_sync_locals(frame);
-    return Py_TYPE(locals_descr)
-        ->tp_descr_get(locals_descr, (PyObject *)frame,
-                       (PyObject *)&PyFrame_Type);
+    return locals_cpython->get((PyObject *)frame, locals_cpython->closure);
 }
 
-static PyGetSetDef locals_getset = {"f_locals", (getter)frame_get_locals, NULL,
-                                    NULL, NULL};
+static PyGetSetDef locals_getset = {NULL, (getter)frame_get_locals};
 
 /* frame.clear(), replaced too: a frame object that stands for a call
    compiled code still runs, without being running itself (the catching
    callee's traceback frame, an emulated frame), is refused as CPython
    refuses its running frames, by CPython's method with the frame marked
    running for the call */
-static PyObject *clear_descr = NULL;
+static PyMethodDef *clear_cpython, clear_def;
 
 static bool
 stands_for_running(PyFrameObject *f)
@@ -2308,7 +2378,7 @@ frame_clear(PyFrameObject *frame, PyObject *unused)
        thread's; paused, its generator's, which the clear closes */
     if (le_frame_is_record(f) && le_frame_executing(f)) {
         f->owner = FRAME_OWNED_BY_THREAD;
-        result = PyObject_CallFunctionObjArgs(clear_descr, frame, NULL);
+        result = clear_cpython->ml_meth((PyObject *)frame, NULL);
         f->owner = LE_FRAME_OWNED_BY_RECORD;
         return result;
     }
@@ -2322,15 +2392,11 @@ frame_clear(PyFrameObject *frame, PyObject *unused)
     mark = stands_for_running(frame);
     if (mark)
         old = le_pyframe_mark_running(frame);
-    result = PyObject_CallFunctionObjArgs(clear_descr, frame, NULL);
+    result = clear_cpython->ml_meth((PyObject *)frame, NULL);
     if (mark)
         le_pyframe_unmark_running(frame, old);
     return result;
 }
-
-static PyMethodDef clear_def = {
-    "clear", (PyCFunction)(void (*)(void))frame_clear, METH_NOARGS,
-    "F.clear(): clear most references held by the frame"};
 
 /* A traceback entry for a compiled frame, 'f', is being added over
    'callee''s, the frame the exception came out of: that frame, if it has
@@ -2338,8 +2404,8 @@ static PyMethodDef clear_def = {
    none or another emulated frame of the same code made when its entry
    was, or a real frame entered through C whose f_back is the frame
    LeCode_Run runs, while the code that one runs is in a compiled callee
-   or inlined frame, which 'f' is. A fused generator's frame is left
-   without one, as a generator's frame has no caller once it has stopped. */
+   or inlined frame, which 'f' is. A fused generator's or coroutine's frame is
+   left without one, as it has no caller once it has stopped. */
 DEFINEFN
 void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
@@ -2347,7 +2413,8 @@ psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f)
     PyFrameObject *back = callee->f_back;
     FrameRuntime *fr;
     if (callee == f || back == f || le_frame_is_executing(callee) ||
-        (le_pyframe_code(callee)->co_flags & CO_GENERATOR))
+        (le_pyframe_code(callee)->co_flags &
+         (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)))
         return;
     if (back != NULL && !(le_pyframe_code(back) == le_pyframe_code(f) &&
                           !le_frame_is_executing(back))) {
@@ -3072,20 +3139,20 @@ static PyMethodDef le_get_referrers_fast_def = {
     "get_referrers", (PyCFunction)(void (*)(void))le_get_referrers_fast,
     METH_FASTCALL, NULL};
 
-static setter original_func_set[2];
+static PyGetSetDef *func_name_cpython[2];
 
 static int
 le_func_set_name(PyObject *op, PyObject *value, void *closure)
 {
     psyco_coros_realise();
-    return original_func_set[0](op, value, closure);
+    return func_name_cpython[0]->set(op, value, closure);
 }
 
 static int
 le_func_set_qualname(PyObject *op, PyObject *value, void *closure)
 {
     psyco_coros_realise();
-    return original_func_set[1](op, value, closure);
+    return func_name_cpython[1]->set(op, value, closure);
 }
 
 static PyGetSetDef func_name_getset[2];
@@ -3095,7 +3162,7 @@ coros_realised_init(PyObject *gcmod)
 {
     static const char *names[2] = {"__name__", "__qualname__"};
     static const setter sets[2] = {le_func_set_name, le_func_set_qualname};
-    PyObject *fn, *d = le_type_dict(&PyFunction_Type);
+    PyObject *fn;
     int i;
     original_get_objects = PyObject_GetAttrString(gcmod, "get_objects");
     fn = original_get_objects == NULL
@@ -3119,22 +3186,10 @@ coros_realised_init(PyObject *gcmod)
         PyErr_Print();
     Py_XDECREF(fn);
     for (i = 0; i < 2; i++) {
-        PyObject *descr = PyDict_GetItemString(d, names[i]);
-        PyGetSetDef *old;
-        if (descr == NULL || Py_TYPE(descr) != &PyGetSetDescr_Type) {
-            PyErr_Clear();
-            continue;
-        }
-        old = ((PyGetSetDescrObject *)descr)->d_getset;
-        original_func_set[i] = old->set;
-        func_name_getset[i] = *old;
         func_name_getset[i].set = sets[i];
-        fn = PyDescr_NewGetSet(&PyFunction_Type, &func_name_getset[i]);
-        if (fn == NULL || PyDict_SetItemString(d, names[i], fn) < 0)
-            PyErr_Print();
-        Py_XDECREF(fn);
+        func_name_cpython[i] =
+            getset_replace(&PyFunction_Type, names[i], &func_name_getset[i]);
     }
-    PyType_Modified(&PyFunction_Type);
 }
 
 static void
@@ -3406,50 +3461,35 @@ GEN_GUARDED(coro_yf_guarded, (PyObject * gen, void *closure),
 static PyMethodDef gen_guarded_defs[2][2];
 static PyGetSetDef gen_guarded_getsets[2];
 
-/* each replaced in the type's dict by one like it that guards it */
+/* each replaced by one that guards it */
 static void
 gen_guard_init(void)
 {
     static PyTypeObject *types[2] = {&PyGen_Type, &PyCoro_Type};
-    static const char *methods[2] = {"close", "throw"};
     static const char *yf[2] = {"gi_yieldfrom", "cr_await"};
-    static const PyCFunction wraps[2][2] = {
-        {gen_close_guarded, (PyCFunction)(void (*)(void))gen_throw_guarded},
-        {coro_close_guarded, (PyCFunction)(void (*)(void))coro_throw_guarded}};
+    static const PyCFunction closes[2] = {gen_close_guarded,
+                                          coro_close_guarded};
+    static const _PyCFunctionFast throws[2] = {gen_throw_guarded,
+                                               coro_throw_guarded};
     static const getter yf_wraps[2] = {gen_yf_guarded, coro_yf_guarded};
-    int t, k;
+    PyMethodDef *close, *throw;
+    PyGetSetDef *yf_cpython;
+    int t;
     for (t = 0; t < 2; t++) {
-        PyObject *d = le_type_dict(types[t]), *descr, *fn;
-        for (k = 0; k < 2; k++) {
-            descr = PyDict_GetItemString(d, methods[k]);
-            if (descr == NULL || Py_TYPE(descr) != &PyMethodDescr_Type ||
-                ((PyMethodDescrObject *)descr)->d_method->ml_flags !=
-                    (k == 0 ? METH_NOARGS : METH_FASTCALL))
-                continue;
-            gen_guarded_defs[t][k] = *((PyMethodDescrObject *)descr)->d_method;
-            if (k == 0)
-                gen_close_original[t] = gen_guarded_defs[t][k].ml_meth;
-            else
-                gen_throw_original[t] =
-                    (_PyCFunctionFast)(void (*)(void))gen_guarded_defs[t][k]
-                        .ml_meth;
-            gen_guarded_defs[t][k].ml_meth = wraps[t][k];
-            fn = PyDescr_NewMethod(types[t], &gen_guarded_defs[t][k]);
-            if (fn == NULL || PyDict_SetItemString(d, methods[k], fn) < 0)
-                PyErr_Print();
-            Py_XDECREF(fn);
-        }
-        descr = PyDict_GetItemString(d, yf[t]);
-        if (descr != NULL && Py_TYPE(descr) == &PyGetSetDescr_Type) {
-            gen_guarded_getsets[t] = *((PyGetSetDescrObject *)descr)->d_getset;
-            gen_getter_original[t] = gen_guarded_getsets[t].get;
-            gen_guarded_getsets[t].get = yf_wraps[t];
-            fn = PyDescr_NewGetSet(types[t], &gen_guarded_getsets[t]);
-            if (fn == NULL || PyDict_SetItemString(d, yf[t], fn) < 0)
-                PyErr_Print();
-            Py_XDECREF(fn);
-        }
-        PyType_Modified(types[t]);
+        close = method_replace(types[t], "close", METH_NOARGS, closes[t],
+                               &gen_guarded_defs[t][0]);
+        if (close != NULL)
+            gen_close_original[t] = close->ml_meth;
+        throw = method_replace(types[t], "throw", METH_FASTCALL,
+                               (PyCFunction)(void (*)(void))throws[t],
+                               &gen_guarded_defs[t][1]);
+        if (throw != NULL)
+            gen_throw_original[t] =
+                (_PyCFunctionFast)(void (*)(void)) throw->ml_meth;
+        gen_guarded_getsets[t].get = yf_wraps[t];
+        yf_cpython = getset_replace(types[t], yf[t], &gen_guarded_getsets[t]);
+        if (yf_cpython != NULL)
+            gen_getter_original[t] = yf_cpython->get;
     }
 }
 #endif
@@ -3490,58 +3530,15 @@ psyco_frames_init(void)
     frame_locals_proxy_init();
 #endif
     frame_builtins_init();
-    fn = PyDescr_NewGetSet(&PyFrame_Type, &back_getset);
-    if (fn == NULL ||
-        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_back", fn) < 0)
-        PyErr_Print();
-    Py_XDECREF(fn);
-    generator_descr =
-        PyDict_GetItemString(le_type_dict(&PyFrame_Type), "f_generator");
-    if (generator_descr != NULL) {
-        Py_INCREF(generator_descr);
-        fn = PyDescr_NewGetSet(&PyFrame_Type, &generator_getset);
-        if (fn == NULL || PyDict_SetItemString(le_type_dict(&PyFrame_Type),
-                                               "f_generator", fn) < 0)
-            PyErr_Print();
-        Py_XDECREF(fn);
-    }
-    lineno_descr =
-        PyDict_GetItemString(le_type_dict(&PyFrame_Type), "f_lineno");
-    Py_XINCREF(lineno_descr);
-    fn = lineno_descr == NULL
-             ? NULL
-             : PyDescr_NewGetSet(&PyFrame_Type, &lineno_getset);
-    if (fn == NULL ||
-        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_lineno", fn) < 0)
-        PyErr_Print();
-    Py_XDECREF(fn);
-    locals_descr =
-        PyDict_GetItemString(le_type_dict(&PyFrame_Type), "f_locals");
-    Py_XINCREF(locals_descr);
-    fn = locals_descr == NULL
-             ? NULL
-             : PyDescr_NewGetSet(&PyFrame_Type, &locals_getset);
-    if (fn == NULL ||
-        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_locals", fn) < 0)
-        PyErr_Print();
-    Py_XDECREF(fn);
-    lasti_descr = PyDict_GetItemString(le_type_dict(&PyFrame_Type), "f_lasti");
-    Py_XINCREF(lasti_descr);
-    fn = lasti_descr == NULL ? NULL
-                             : PyDescr_NewGetSet(&PyFrame_Type, &lasti_getset);
-    if (fn == NULL ||
-        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "f_lasti", fn) < 0)
-        PyErr_Print();
-    Py_XDECREF(fn);
-    clear_descr = PyDict_GetItemString(le_type_dict(&PyFrame_Type), "clear");
-    Py_XINCREF(clear_descr);
-    fn = clear_descr == NULL ? NULL
-                             : PyDescr_NewMethod(&PyFrame_Type, &clear_def);
-    if (fn == NULL ||
-        PyDict_SetItemString(le_type_dict(&PyFrame_Type), "clear", fn) < 0)
-        PyErr_Print();
-    Py_XDECREF(fn);
-    PyType_Modified(&PyFrame_Type);
+    getset_replace(&PyFrame_Type, "f_back", &back_getset);
+    generator_cpython =
+        getset_replace(&PyFrame_Type, "f_generator", &generator_getset);
+    lineno_cpython = getset_replace(&PyFrame_Type, "f_lineno", &lineno_getset);
+    locals_cpython = getset_replace(&PyFrame_Type, "f_locals", &locals_getset);
+    lasti_cpython = getset_replace(&PyFrame_Type, "f_lasti", &lasti_getset);
+    clear_cpython =
+        method_replace(&PyFrame_Type, "clear", METH_NOARGS,
+                       (PyCFunction)(void (*)(void))frame_clear, &clear_def);
 }
 
 /***************************************************************/

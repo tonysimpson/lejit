@@ -411,6 +411,36 @@ def exc_info(n):
     return out, compiled(exc_states)
 
 
+async def keeps_error(box):
+    try:
+        raise KeyError('kept')
+    except KeyError as e:
+        box.append(e)
+        await pause(1)
+
+
+def raises(e):
+    if work(e) is e:
+        raise e
+
+
+def reraised_elsewhere(n):
+    # the suspended coroutine's frame heads the traceback of the exception
+    # raised again: it is not given a caller
+    out = []
+    for i in range(n):
+        box = []
+        c = keeps_error(box)
+        c.send(None)
+        try:
+            raises(box[0])
+        except KeyError:
+            pass
+        out.append(c.cr_frame.f_back)
+        c.close()
+    return out, compiled(keeps_error)
+
+
 def _deep_lasti():
     try:
         deep(2).send(None)
@@ -482,4 +512,5 @@ CASES = [
     ('tracing', [(3,)], HOOKED_TRACE),
     ('recursion_limit', [(0,)], {}),
     ('exc_info', [(0,)], {}),
+    ('reraised_elsewhere', [(3,)], {}),
 ]

@@ -221,6 +221,21 @@ class Suppressing:
         return kind is KeyError
 
 
+class Counter:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *args):
+        self.calls.append(len(args))
+
+
+# special methods that aren't functions: ceval calls them bound, with no
+# self of their own on the stack
+class NotFunctions:
+    __enter__ = staticmethod(lambda: 'static enter')
+    __exit__ = Counter()
+
+
 class OnlyAsync:
     async def __aenter__(self):
         pass
@@ -240,12 +255,14 @@ def _one_with(manager, key):
         return got
 
 
-# with blocks: __enter__ and __exit__ found as ceval finds them, an
-# exception __exit__ suppresses or not, and ceval's errors for a manager
-# without them
+# with blocks: __enter__ and __exit__ found as ceval finds them, functions
+# or not, an exception __exit__ suppresses or not, and ceval's errors for a
+# manager without them
 def with_statements(n):
     log = []
-    out = [_one_with(Suppressing(log), None), _one_with(Suppressing(log), n)]
+    out = [_one_with(Suppressing(log), None), _one_with(Suppressing(log), n),
+           _one_with(NotFunctions(), None), list(NotFunctions.__exit__.calls)]
+    NotFunctions.__exit__.calls.clear()
     for manager, key in ((Suppressing(log), [n]), (object(), None),
                          (OnlyAsync(), None), (OnlyEnter(), None)):
         try:
