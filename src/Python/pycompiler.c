@@ -2595,8 +2595,9 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
    [names tuple], arguments, and the callable under them or under the NULL
    beside them. *stack_to_pop counts everything including the callable
    (not the NULL). Keyword arguments are pending keywords
-   (pdictobject.c), which a Python function's call binds and anything else
-   makes the dict CPython makes: duplicates are impossible here (the
+   (pdictobject.c), which a Python function's call binds, a vectorcall
+   passes with their names tuple, and anything else makes into the dict
+   CPython makes: duplicates are impossible here (the
    bytecode compiler rejects them) and the callee checks the rest. */
 #if LE_HAS_OPCODE_CALL
 /* where the KW_NAMES naming the keyword arguments of the CALL at 'pos'
@@ -3608,25 +3609,14 @@ ct_format_exc_unbound(PsycoObject *po, PyCodeObject *co, int oparg)
                                 name);
 }
 
-/* ceval.c BUILD_STRING: with count < 0, item0 is a tuple of the items */
+/* ceval.c BUILD_STRING */
 static PyObject *
-cimpl_build_string_array(long count, PyObject *item0, PyObject *item1,
-                         PyObject *item2, PyObject *item3, PyObject *item4,
-                         PyObject *item5, PyObject *item6)
+cimpl_build_string_array(PyObject **items, long count)
 {
-    PyObject *words[ARRAY_ARGS_MAX] = {item0, item1, item2, item3,
-                                       item4, item5, item6};
-    PyObject **items = words;
-    Py_ssize_t n = count;
-    PyObject *empty, *str;
-    if (count < 0) {
-        items = &PyTuple_GET_ITEM(item0, 0);
-        n = PyTuple_GET_SIZE(item0);
-    }
-    empty = PyUnicode_New(0, 0);
+    PyObject *empty = PyUnicode_New(0, 0), *str;
     if (empty == NULL)
         return NULL;
-    str = _PyUnicode_JoinArray(empty, items, n);
+    str = _PyUnicode_JoinArray(empty, items, count);
     Py_DECREF(empty);
     return str;
 }
@@ -6311,7 +6301,7 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             vinfo_t *self;
             PyObject *f;
             int found = PsycoObject_SuperMethod(
-                po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2), oparg & 1,
+                po, NTOP(3), NTOP(2), TOP(), GETNAMEV(oparg >> 2),
                 (void *)(le_code(po->pr.co).bytes + next_instr), &f);
             if (found < 0)
                 break;
@@ -6467,25 +6457,14 @@ compile_build_and_unpack(PsycoObject *po, int opcode, int oparg, int target,
         }
 
         case BUILD_STRING: {
+            vinfo_array_t *items = array_new(oparg);
             vinfo_t *str;
-            if (oparg <= ARRAY_ARGS_MAX) {
-                vinfo_t *items[ARRAY_ARGS_MAX];
-                int i;
-                u = psyco_vi_Zero();
-                for (i = 0; i < ARRAY_ARGS_MAX; i++)
-                    items[i] = i < oparg ? NTOP(oparg - i) : u;
-                str = psyco_generic_call(
-                    po, cimpl_build_string_array, CfCommonNewRefPyObject,
-                    "lvvvvvvv", (long)oparg, items[0], items[1], items[2],
-                    items[3], items[4], items[5], items[6]);
-            }
-            else {
-                u = PsycoTuple_New(oparg, STACK_POINTER() - oparg);
-                str = psyco_generic_call(po, cimpl_build_string_array,
-                                         CfCommonNewRefPyObject, "lvllllll",
-                                         -1L, u, 0L, 0L, 0L, 0L, 0L, 0L);
-            }
-            vinfo_decref(u, po);
+            int i;
+            for (i = 0; i < oparg; i++) items->items[i] = NTOP(oparg - i);
+            str = psyco_generic_call(po, cimpl_build_string_array,
+                                     CfCommonNewRefPyObject, "il", items,
+                                     (long)oparg);
+            array_release(items);
             if (str == NULL) {
                 break;
             }

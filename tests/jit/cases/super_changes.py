@@ -1,7 +1,7 @@
 # super().m() where the method is found while compiling: the classes
 # change after the call is compiled (a method assigned or deleted on a
-# base, a base's __getattribute__, __bases__ assigned, the __class__ cell
-# replaced), and the site sees several types of self.
+# base, a base's or self's class's __getattribute__, __bases__ assigned,
+# the __class__ cell replaced), and the site sees several types of self.
 
 
 def classes():
@@ -88,6 +88,19 @@ def getattribute_added(n):
     return out
 
 
+def getattribute_added_called_from_c(n):
+    # map calls C.m from C, so its compile isn't inlined into the caller's
+    A, A2, B, C = classes()
+    o = C()
+    out = []
+    for i in range(n):
+        out.extend(map(o.m, [i]))
+        if i == 1:
+            C.__getattribute__ = lambda self, name: object.__getattribute__(
+                self, name)
+    return out
+
+
 def many_types(n):
     A, A2, B, C = classes()
     subs = [type('S%d' % k, (C,), {}) for k in range(8)]
@@ -103,5 +116,6 @@ CASES = [
     ('bases_changed', [(6,)], {'warmup': NEW_CLASSES}),
     ('class_cell', [(8,)], {'warmup': NEW_CLASSES}),
     ('getattribute_added', [(5,)], {'warmup': NEW_CLASSES}),
+    ('getattribute_added_called_from_c', [(4,)], {}),
     ('many_types', [(3,)], {'warmup': NEW_CLASSES}),
 ]

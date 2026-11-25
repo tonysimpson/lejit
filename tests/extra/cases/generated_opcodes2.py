@@ -260,7 +260,7 @@ def fstring_errors(v):
     except TypeError as e:
         return str(e)
 
-
+    # BUILD_STRING: few parts and many, joined from one array
 def join_strings(a, b, c):
     # BUILD_STRING: up to ARRAY_ARGS_MAX parts as words, more as a tuple
     return [f'{a}{b}', f'{a}{b}{c}', f'{a}-{b}', f'<{a}|{b}|{c}>',

@@ -151,11 +151,6 @@ getstack(RunTimeSource s)
     return s & RunTime_StackMask;
 }
 PSY_INLINE bool
-is_runtime_with_reg(Source s)
-{
-    return (s & (TimeMask | (1 << 31))) == 0;
-}
-PSY_INLINE bool
 is_rtnonneg(RunTimeSource s)
 {
     CHKTIME(s, RunTime);

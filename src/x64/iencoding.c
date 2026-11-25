@@ -353,13 +353,291 @@ new_rtvinfo(PsycoObject *po, reg_t reg, bool ref, bool nonneg)
     return vi;
 }
 
+/*****************************************************************/
+/***   XMM registers                                           ***/
+
+/* the next tracked XMM register round XMM8-XMM14 */
+static reg_t
+next_xmm(PsycoObject *po)
+{
+    po->last_used_xmm = po->last_used_xmm == REG_X64_XMM14
+                            ? REG_X64_XMM8
+                            : po->last_used_xmm + 1;
+    return po->last_used_xmm;
+}
+
+DEFINEFN
+code_t *
+psyco_need_free_xmm(PsycoObject *po, code_t *code, reg_t *targ)
+{
+    reg_t rg;
+    int i;
+    for (i = REG_X64_XMM8; i <= REG_X64_XMM14; i++) {
+        rg = next_xmm(po);
+        if (REG_NUMBER(po, rg) == NULL) {
+            *targ = rg;
+            return code;
+        }
+    }
+    rg = next_xmm(po);
+    NEED_REGISTER(rg);
+    *targ = rg;
+    return code;
+}
+
+/* load run-time double 'vi' into XMM register 'hw' (an encoder number)
+   from its general register or its stack slot */
+static code_t *
+xmm_load(PsycoObject *po, code_t *code, int hw, vinfo_t *vi)
+{
+    if (!RUNTIME_REG_IS_NONE(vi))
+        MOVQ_XMM_QR(hw, RUNTIME_REG(vi));
+    else
+        MOVSD_XMM_O(hw, REG_X64_RSP, STACK_POS_OFFSET(RUNTIME_STACK(vi)));
+    return code;
+}
+
+/* the encoder number of an XMM register holding 'vi' (run-time, or a
+   known double): its own, or else 'scratch', loaded */
+static code_t *
+xmm_operand_in(PsycoObject *po, code_t *code, vinfo_t *vi, int scratch,
+               int *hw)
+{
+    if (is_compiletime(vi->source)) {
+        MOV_R_I(REG_TRANSIENT_1, CompileTime_Get(vi->source)->value);
+        MOVQ_XMM_QR(scratch, REG_TRANSIENT_1);
+        *hw = scratch;
+    }
+    else if (!RUNTIME_REG_IS_NONE(vi) && REG_IS_XMM(RUNTIME_REG(vi)))
+        *hw = XMM_HW(RUNTIME_REG(vi));
+    else {
+        code = xmm_load(po, code, scratch, vi);
+        *hw = scratch;
+    }
+    return code;
+}
+#define xmm_operand(po, code, vi, hw) \
+    xmm_operand_in(po, code, vi, XMM_SCRATCH, hw)
+
+DEFINEFN
+code_t *
+psyco_xmm_to_reg(PsycoObject *po, code_t *code, vinfo_t *vi)
+{
+    reg_t xmm = RUNTIME_REG(vi), rg;
+    REG_NUMBER(po, xmm) = NULL;
+    SET_RUNTIME_REG_TO_NONE(vi);
+    NEED_FREE_REG(rg);
+    MOVQ_QR_XMM(rg, XMM_HW(xmm));
+    REG_NUMBER(po, rg) = vi;
+    SET_RUNTIME_REG_TO(vi, rg);
+    return code;
+}
+
+DEFINEFN
+code_t *
+psyco_xmm_store(PsycoObject *po, code_t *code)
+{
+    reg_t rg;
+    for (rg = REG_X64_XMM8; rg <= REG_X64_XMM14; rg++) {
+        vinfo_t *vi = REG_NUMBER(po, rg);
+        if (vi != NULL && RUNTIME_STACK(vi) == RUNTIME_STACK_NONE)
+            SAVE_REG_VINFO(vi, rg);
+    }
+    po->xmm_call = XMM_CALL_STORED;
+    return code;
+}
+
+DEFINEFN
+void
+psyco_xmm_forget(PsycoObject *po)
+{
+    reg_t rg;
+    for (rg = REG_X64_XMM8; rg <= REG_X64_XMM14; rg++) {
+        vinfo_t *vi = REG_NUMBER(po, rg);
+        if (vi != NULL) {
+            extra_assert(RUNTIME_STACK(vi) != RUNTIME_STACK_NONE);
+            SET_RUNTIME_REG_TO_NONE(vi);
+            REG_NUMBER(po, rg) = NULL;
+        }
+    }
+    po->xmm_call = XMM_CALL_NONE;
+}
+
+DEFINEFN
+bool
+psyco_xmm_live(PsycoObject *po)
+{
+    reg_t rg;
+    for (rg = REG_X64_XMM8; rg <= REG_X64_XMM14; rg++)
+        if (REG_NUMBER(po, rg) != NULL)
+            return true;
+    return false;
+}
+
+#if ALL_CHECKS
+DEFINEFN
+code_t *
+psyco_clobber_xmm(code_t *code)
+{
+    int hw;
+    MOV_R_I(REG_TRANSIENT_2, 0x7FF0BAD0BAD0BAD0L);
+    for (hw = XMM_HW(REG_X64_XMM8); hw <= XMM_HW(REG_X64_XMM14); hw++)
+        MOVQ_XMM_QR(hw, REG_TRANSIENT_2);
+    return code;
+}
+
+DEFINEFN
+bool
+psyco_xmm_may_call(PsycoObject *po)
+{
+    return po->xmm_call != XMM_CALL_NONE || !psyco_xmm_live(po);
+}
+#endif
+
+/* load 'vi', run-time or a known double, into XMM register 'hw' */
+static code_t *
+xmm_load_any(PsycoObject *po, code_t *code, int hw, vinfo_t *vi)
+{
+    if (is_compiletime(vi->source)) {
+        MOV_R_I(REG_TRANSIENT_1, CompileTime_Get(vi->source)->value);
+        MOVQ_XMM_QR(hw, REG_TRANSIENT_1);
+    }
+    else if (!RUNTIME_REG_IS_NONE(vi) && REG_IS_XMM(RUNTIME_REG(vi)))
+        MOVAPD_XMM_XMM(hw, XMM_HW(RUNTIME_REG(vi)));
+    else
+        code = xmm_load(po, code, hw, vi);
+    return code;
+}
+
+DEFINEFN
+vinfo_t *
+psyco_float_op(PsycoObject *po, int op, vinfo_t *a, vinfo_t *b)
+{
+    reg_t rg;
+    int hw_b;
+    BEGIN_CODE
+    NEED_FREE_XMM(rg); /* first: it may move a or b to the stack */
+    code = xmm_load_any(po, code, XMM_HW(rg), a);
+    code = xmm_operand(po, code, b, &hw_b);
+    switch (op) {
+        case FLOAT_OP_ADD:
+            ADDSD_XMM_XMM(XMM_HW(rg), hw_b);
+            break;
+        case FLOAT_OP_SUB:
+            SUBSD_XMM_XMM(XMM_HW(rg), hw_b);
+            break;
+        case FLOAT_OP_MUL:
+            MULSD_XMM_XMM(XMM_HW(rg), hw_b);
+            break;
+        default:
+            DIVSD_XMM_XMM(XMM_HW(rg), hw_b);
+            break;
+    }
+    END_CODE
+    return new_rtvinfo(po, rg, false, false);
+}
+
+DEFINEFN
+vinfo_t *
+psyco_float_neg_abs(PsycoObject *po, bool neg, vinfo_t *a)
+{
+    reg_t rg;
+    BEGIN_CODE
+    NEED_FREE_XMM(rg);
+    code = xmm_load_any(po, code, XMM_HW(rg), a);
+    MOV_R_I(REG_TRANSIENT_1,
+            neg ? (long)0x8000000000000000UL : (long)0x7FFFFFFFFFFFFFFFUL);
+    MOVQ_XMM_QR(XMM_SCRATCH, REG_TRANSIENT_1);
+    if (neg)
+        XORPD_XMM_XMM(XMM_HW(rg), XMM_SCRATCH);
+    else
+        ANDPD_XMM_XMM(XMM_HW(rg), XMM_SCRATCH);
+    END_CODE
+    return new_rtvinfo(po, rg, false, false);
+}
+
+DEFINEFN
+condition_code_t
+psyco_float_cmp(PsycoObject *po, int py_op, vinfo_t *a, vinfo_t *b)
+{
+    int hw1, hw2;
+    condition_code_t cc;
+    BEGIN_CODE
+    NEED_CC();
+    if (py_op == Py_EQ || py_op == Py_NE) {
+        /* equal needs ZF set and PF clear after ucomisd: cmpsd makes the
+           answer one test instead (predicate 0 is false for a NaN, 4 true)
+         */
+        code = xmm_load_any(po, code, XMM_SCRATCH, a);
+        code = xmm_operand_in(po, code, b, XMM_SCRATCH_2, &hw2);
+        CMPSD_XMM_XMM_U8(XMM_SCRATCH, hw2, py_op == Py_EQ ? 0 : 4);
+        MOVQ_QR_XMM(REG_TRANSIENT_1, XMM_SCRATCH);
+        TEST_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
+        cc = CC_NE;
+    }
+    else {
+        /* ucomisd x1, x2 sets CF if x1 < x2, ZF if equal, and all of
+           CF, ZF and PF if unordered: "above" and "above or equal" are
+           false for a NaN. a < b is b above a */
+        bool swap = py_op == Py_LT || py_op == Py_LE;
+        code = xmm_operand_in(po, code, swap ? b : a, XMM_SCRATCH_2, &hw1);
+        code = xmm_operand_in(po, code, swap ? a : b, XMM_SCRATCH, &hw2);
+        UCOMISD_XMM_XMM(hw1, hw2);
+        cc = py_op == Py_LT || py_op == Py_GT ? CC_uG : CC_uGE;
+    }
+    END_CODE
+    return cc;
+}
+
+DEFINEFN
+condition_code_t
+psyco_float_is_zero(PsycoObject *po, vinfo_t *vi)
+{
+    BEGIN_CODE
+    NEED_CC();
+    if (!RUNTIME_REG_IS_NONE(vi) && REG_IS_XMM(RUNTIME_REG(vi)))
+        MOVQ_QR_XMM(REG_TRANSIENT_1, XMM_HW(RUNTIME_REG(vi)));
+    else if (!RUNTIME_REG_IS_NONE(vi))
+        MOV_R_R(REG_TRANSIENT_1, RUNTIME_REG(vi));
+    else
+        MOV_R_O(REG_TRANSIENT_1, REG_X64_RSP,
+                STACK_POS_OFFSET(RUNTIME_STACK(vi)));
+    /* the bits shifted out of the sign: zero for +0.0 and -0.0 only */
+    ADD_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
+    END_CODE
+    return CC_E;
+}
+
+DEFINEFN
+vinfo_t *
+psyco_float_from_word(PsycoObject *po, vinfo_t *w)
+{
+    reg_t rg;
+    BEGIN_CODE
+    NEED_FREE_XMM(rg);
+    XORPD_XMM_XMM(XMM_HW(rg), XMM_HW(rg));
+    if (RUNTIME_REG_IS_NONE(w)) {
+        MOV_R_O(REG_TRANSIENT_1, REG_X64_RSP,
+                STACK_POS_OFFSET(RUNTIME_STACK(w)));
+        CVTSI2SD_XMM_QR(XMM_HW(rg), REG_TRANSIENT_1);
+    }
+    else
+        CVTSI2SD_XMM_QR(XMM_HW(rg), RUNTIME_REG(w));
+    END_CODE
+    return new_rtvinfo(po, rg, false, false);
+}
+
 static vinfo_t *
 run_time_result(PsycoObject *po, int flags)
 {
     reg_t rg;
     BEGIN_CODE
-    NEED_FREE_REG(rg);
-    if ((flags & CfReturnTypeMask) == CfReturnTypeInt) {
+    if ((flags & CfReturnTypeMask) == CfReturnTypeDouble) {
+        NEED_FREE_XMM(rg);
+        MOVAPD_XMM_XMM(XMM_HW(rg), REG_X64_XMM0);
+    }
+    else if ((flags & CfReturnTypeMask) == CfReturnTypeInt) {
+        NEED_FREE_REG(rg);
         if (flags & CfReturnUnsigned) {
             MOVZX_QR_DR(
                 rg,
@@ -371,10 +649,9 @@ run_time_result(PsycoObject *po, int flags)
                 REG_X64_RAX); /* mov signed (sign extended) from EAX to rg */
         }
     }
-    else if ((flags & CfReturnTypeMask) == CfReturnTypeDouble) {
-        MOVQ_QR_XMM(rg, REG_X64_XMM0);
-    }
+
     else {
+        NEED_FREE_REG(rg);
         MOV_R_R(rg, REG_X64_RAX);
     }
     END_CODE
@@ -382,13 +659,15 @@ run_time_result(PsycoObject *po, int flags)
 }
 
 DEFINEFN vinfo_t *
-run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
-              char argtags[], long args[], int total_output_array_size)
+run_time_call(PsycoObject *po, void *c_function, vinfo_t *vtarget, int flags,
+              int arg_count, char argtags[], long args[],
+              int total_output_array_size)
 {
     int stackbase, i, double_arg_count, double_arg_i, int_arg_i;
     vinfo_t *vresult;
     BEGIN_CODE
     NEED_CC();
+    code = psyco_xmm_store(po, code);
     stackbase = po->stack_depth;
     po->stack_depth += total_output_array_size;
     STACK_CORRECTION(total_output_array_size);
@@ -491,8 +770,19 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
                 abort();
         }
     }
-    END_CALL_I(c_function);
+    if (vtarget != NULL) {
+        /* the arguments are set, and the address is in a callee-saved
+           register or the stack (iencoding.h) */
+        Source s = vtarget->source;
+        if (RSOURCE_REG_IS_NONE(s))
+            MOV_R_O(REG_TRANSIENT_2, REG_X64_RSP,
+                    STACK_POS_OFFSET(RSOURCE_STACK(s)));
+        else
+            MOV_R_R(REG_TRANSIENT_2, getreg(s));
+    }
+    END_CALL_I_OR_R(c_function, REG_TRANSIENT_2);
     END_CODE
+    psyco_xmm_forget(po);
     if (po->pr.pending_map != NULL) {
         po->pr.pending_map->retaddr = po->call_end;
         po->pr.pending_map = NULL;
@@ -510,6 +800,30 @@ run_time_call(PsycoObject *po, void *c_function, int flags, int arg_count,
         return VINFO_OK;
     }
     return run_time_result(po, flags);
+}
+
+/* the callee clobbers the XMM registers: spill them, and update the
+   copies in 'argsources' of the sources of values that were in one */
+static code_t *
+xmm_spill_args(PsycoObject *po, code_t *code, Source argsources[],
+               int argcount)
+{
+    vinfo_t *live[REG_X64_XMM14 - REG_X64_XMM8 + 1];
+    Source before[REG_X64_XMM14 - REG_X64_XMM8 + 1];
+    int i, k, n = 0;
+    reg_t rg;
+    for (rg = REG_X64_XMM8; rg <= REG_X64_XMM14; rg++)
+        if (REG_NUMBER(po, rg) != NULL) {
+            live[n] = REG_NUMBER(po, rg);
+            before[n] = live[n]->source;
+            n++;
+        }
+    XMM_SPILL();
+    for (i = 0; i < argcount; i++)
+        for (k = 0; k < n; k++)
+            if (argsources[i] == before[k])
+                argsources[i] = live[k]->source;
+    return code;
 }
 
 DEFINEFN
@@ -536,6 +850,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     ccflags = HAS_CCREG(po);
     if (ccflags)
         PUSH_CC();
+    code = xmm_spill_args(po, code, argsources, argcount);
 
     /* PUSH RTs with reg set */
     for (i = 0; i < REG_TOTAL; i++) {
@@ -668,6 +983,7 @@ psyco_call_psyco_on_frame(PsycoObject *po, vinfo_t *ventry,
     ccflags = HAS_CCREG(po);
     if (ccflags)
         PUSH_CC();
+    code = xmm_spill_args(po, code, argsources, argcount);
     for (i = 0; i < REG_TOTAL; i++) {
         vinfo_t *content = REG_NUMBER(po, i);
         reg_pos[i] = RUNTIME_STACK_NONE;

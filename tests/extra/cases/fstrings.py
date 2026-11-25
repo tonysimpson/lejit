@@ -1,6 +1,6 @@
 # f-strings: FORMAT_VALUE (conversions !s !r !a, format specs, a str
-# passed through) and BUILD_STRING (up to four parts in one call, more
-# through a tuple), as in ceval.
+# passed through) and BUILD_STRING (any number of parts, joined from one
+# array), as in ceval.
 import collections
 
 
