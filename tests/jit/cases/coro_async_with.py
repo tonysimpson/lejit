@@ -407,36 +407,76 @@ def handler_lasti(n):
     return out
 
 
+# What the gc sees holding a local of a running coroutine or generator.
+# Each looks twice: calling the gc itself, and in a call to Python code
+# (holders). ceval shows the gc a running frame's locals, except where it
+# hides them while the frame calls C (running_frame_hidden): there it
+# shows them during a call to Python code, and compiled code doesn't.
 async def holds_exception(k):
-    # what the gc sees holding the exception while the coroutine that
-    # caught it runs: ceval's running frame shows the gc no words where it
-    # marks them so
     exc = None
     try:
         async with Exits():
             raise KeyError(k)
     except KeyError as e:
         exc = e
-    return sorted(type(r).__name__ for r in gc.get_referrers(exc))
+    refs = gc.get_referrers(exc)
+    return holders(exc), names(refs)
+
+
+def holders(o):
+    if HIDDEN_IN_C_CALLS:
+        return None
+    return names(gc.get_referrers(o))
+
+
+def names(refs):
+    return sorted(type(r).__name__ for r in refs)
+
+
+class Held:
+    pass
+
+
+def gen_holds(k):
+    # before and after the generator pauses
+    held = Held()
+    for i in range(k):
+        work(i)
+    refs = gc.get_referrers(held)
+    yield holders(held), names(refs)
+    refs = gc.get_referrers(held)
+    yield holders(held), names(refs)
+
+
+async def resumed_holds(k):
+    # after the coroutine has paused
+    held = Held()
+    await pause(k)
+    for i in range(k):
+        work(i)
+    refs = gc.get_referrers(held)
+    return holders(held), names(refs)
 
 
 def running_frame_hidden():
-    # whether ceval shows the gc no words of a frame while it runs
-    try:
-        import lejit._core
-    except ImportError:
-        return True
-    return dict(lejit._core._build['features']).get(
-        'LE_HAS_RUNNING_STACK_HIDDEN')
+    # whether ceval hides a running frame's locals from the gc while the
+    # frame calls C
+    def gen():
+        x = Held()
+        yield gc.get_referrers(x)
+    return not next(gen())
+
+
+HIDDEN_IN_C_CALLS = running_frame_hidden()
 
 
 def referrers(n):
-    # where the gc sees a running frame's locals, compiled code that holds
-    # them itself shows it fewer
     out = [outcome(holds_exception(k)) for k in range(3)]
+    out.append([list(gen_holds(k)) for k in range(3)])
+    out.append([outcome(resumed_holds(k)) for k in range(3)])
     ok = compiled(holds_exception) if HANDLERS_COMPILED else True
     # (after compiled(), which reads whether lejit is imported)
-    return out if running_frame_hidden() else len(out), ok
+    return out, ok
 
 
 CASES = [
