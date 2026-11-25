@@ -12,6 +12,7 @@
 #include "plongobject.h"
 #include "pmethodobject.h"
 #include "ptupleobject.h"
+#include "../Modules/pctypes.h"
 
 /* abstract.c's type_error: msg has one %.200s for the type's name */
 static vinfo_t *
@@ -149,6 +150,11 @@ PsycoObject_Call(PsycoObject *po, vinfo_t *callable_object, vinfo_t *args,
             return psyco_residual_call(po, PyObject_Call, callable_object,
                                        args, kw);
 #endif
+        if (PsycoCtypes_IsFunction(tp, call)) {
+            vinfo_t *r = PsycoCtypes_Call(po, tp, callable_object, args, kw);
+            if (r != NULL || PycException_Occurred(po))
+                return r;
+        }
         return Psyco_META3(po, call, CfCommonNewRefPyObject, "vvv",
                            callable_object, args, kw);
     }

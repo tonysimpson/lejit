@@ -76,6 +76,13 @@ EXTERNFN vinfo_t *
 psyco_generic_call(PsycoObject *po, void *c_function, int flags,
                    const char *arguments, ...);
 
+/* the same for a C function whose address is the run-time value
+   'vtarget', which is never called at compile time. The arguments are
+   'v' or 'd' (vinfo_t *), at most six integers and eight doubles. */
+EXTERNFN vinfo_t *
+psyco_call_address(PsycoObject *po, vinfo_t *vtarget, int flags,
+                   const char *arguments, ...);
+
 /* the stack an 'i' array of 'count' words takes: whole 16-byte units, so
    that the depth after the call keeps the parity it would have without
    the array. A block is matched only at the same return-address slot mod

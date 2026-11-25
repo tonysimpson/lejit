@@ -1474,6 +1474,21 @@ static const bool callee_saved_reg_table[REG_TOTAL] = {
     } while (0);                                                         \
     }                                                                    \
     while (0)
+/* END_CALL_I, or END_CALL_R(r) where immed is NULL */
+#define END_CALL_I_OR_R(immed, r)                                        \
+    do {                                                                 \
+        extra_assert(_last_arg_index == 0); /* every argument was set */ \
+        if ((immed) != NULL)                                             \
+            CALL_I(immed);                                               \
+        else                                                             \
+            CALL_R(r);                                                   \
+        po->call_end = code;                                             \
+        STACK_CORRECTION(_initial_stack_depth - po->stack_depth);        \
+        po->stack_depth = _initial_stack_depth;                          \
+        (void)_last_arg_index; /* read only by extra_assert */           \
+    } while (0);                                                         \
+    }                                                                    \
+    while (0)
 #define CHECK_AND_UPDATE_TARGET_REG(reg)                           \
     do {                                                           \
         vinfo_t *vi = REG_NUMBER(po, reg);                         \
