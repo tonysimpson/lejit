@@ -88,6 +88,16 @@ def counting(box):
         yield n
 
 
+# Runs counting once to its end first, so that it is compiled before the
+# timer is armed. A resume with a signal flagged is left to ceval, so if the
+# timer fired before counting's first resume (a busy machine), the handler
+# would end the loop in that resume and counting would never compile.
+def start_counting(box):
+    collections.deque(counting({'stop': True}), maxlen=0)
+    signal.setitimer(signal.ITIMER_REAL, 0.002)
+    collections.deque(counting(box), maxlen=0)
+
+
 def handler_runs():
     box = {}
 
@@ -95,8 +105,7 @@ def handler_runs():
         box['stop'] = True
     old = signal.signal(signal.SIGALRM, handle)
     try:
-        signal.setitimer(signal.ITIMER_REAL, 0.002)
-        collections.deque(counting(box), maxlen=0)
+        start_counting(box)
         return 'stopped', compiled(counting)
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
@@ -107,8 +116,7 @@ def keyboard_interrupt():
     old = signal.signal(signal.SIGALRM, signal.default_int_handler)
     try:
         try:
-            signal.setitimer(signal.ITIMER_REAL, 0.002)
-            collections.deque(counting({}), maxlen=0)
+            start_counting({})
         except KeyboardInterrupt:
             return 'interrupted', compiled(counting)
         return 'not interrupted'
