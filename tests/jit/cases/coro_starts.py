@@ -22,7 +22,7 @@ def started(*fns):
     # whether the bodies of fns ran only as calls from their awaits, never
     # through the eval hook, where LeJIT starts them so
     lejit = sys.modules.get('lejit')
-    if lejit is None or not lejit._started or not FRAME_OBJECTS:
+    if lejit is None or not lejit._started:
         return True
     # a release build can't say what compiled
     if not hasattr(lejit._core, '_code_info'):
@@ -119,6 +119,19 @@ LOG = []
 HELD = []
 
 
+def poke(inner):
+    # what each way into a running coroutine raises: apart from lvl3, as
+    # a body with a handler that handles an exception starts from its
+    # await only where the handler's exception would be the body's
+    # (frames.c:coro_exc_take)
+    for call in (lambda: inner.send(None), lambda: inner.throw(KeyError),
+                 inner.close, inner.cr_frame.clear):
+        try:
+            call()
+        except Exception as e:
+            LOG.append((type(e).__name__, str(e)))
+
+
 async def lvl3(k, how):
     me = sys._getframe()
     if how == 'objects':
@@ -132,12 +145,7 @@ async def lvl3(k, how):
         inner = cs[-1]
         LOG.append(inner.cr_frame is me)
         LOG.append(sorted(inspect.getcoroutinelocals(inner)))
-        for call in (lambda: inner.send(None), lambda: inner.throw(KeyError),
-                     inner.close, inner.cr_frame.clear):
-            try:
-                call()
-            except Exception as e:
-                LOG.append((type(e).__name__, str(e)))
+        poke(inner)
         LOG.append(weakref.ref(inner)() is inner)
         HELD.append(inner)
     elif how == 'referrers':
@@ -149,10 +157,6 @@ async def lvl3(k, how):
         cs = running('lvl3') + running('renamed_q')
         LOG.append([(c.__name__, c.__qualname__) for c in cs])
         lvl3.__name__ = lvl3.__qualname__ = 'lvl3'
-    elif how == 'suspend':
-        HELD.extend(running('lvl2') + running('lvl3'))
-        LOG.append(('resumed', await pause(work(k))))
-        LOG.append(inspect.getcoroutinestate(HELD[-1]))
     elif how == 'raise':
         HELD.extend(running('lvl3'))
         raise KeyError('x')
@@ -167,13 +171,32 @@ async def lvl1(k, how):
     return await lvl2(k, how) + 1
 
 
+# as lvl1 to lvl3, but suspending: a coroutine resumed where its frame is
+# inside it runs compiled from an entry of its own, which started()
+# would see
+async def sus3(k, how):
+    HELD.extend(running('sus2') + running('sus3'))
+    LOG.append(('resumed', await pause(work(k))))
+    LOG.append(inspect.getcoroutinestate(HELD[-1]))
+    return work(k)
+
+
+async def sus2(k, how):
+    return await sus3(k, how) + 1
+
+
+async def sus1(k, how):
+    return await sus2(k, how) + 1
+
+
 def realised(n):
     # each way to find the running inner coroutines, then the same objects
     # once their bodies have returned, raised or suspended
     out = []
     hows = ('referrers', 'rename', 'suspend', 'raise', 'none')
     for how in ('objects',) * FRAME_OBJECTS + hows:
-        out.append((how, drive(lvl1(n, how), [7]), LOG[:]))
+        top = sus1 if how == 'suspend' else lvl1
+        out.append((how, drive(top(n, how), [7]), LOG[:]))
         del LOG[:]
         for c in HELD:
             out.append((c.__qualname__, inspect.getcoroutinestate(c),
@@ -323,6 +346,55 @@ def traced_handler(n):
     return out
 
 
+async def fg3(k):
+    me = sys._getframe()
+    # frames have no f_generator before 3.14
+    c = getattr(me, 'f_generator', None)
+    return (type(c).__name__, c is not None and c.cr_frame is me,
+            c is not None and inspect.getcoroutinestate(c), work(k))
+
+
+async def fg2(k):
+    return await fg3(k)
+
+
+def frame_generator(n):
+    # a running body's frame gives its coroutine; run a few times, for
+    # them to compile
+    out = [drive(fg2(n)) for _ in range(20)]
+    return out[0], all(o == out[0] for o in out), started(fg3)
+
+
+async def th3(k):
+    return work(await pause(k))
+
+
+async def th2(k):
+    return await th3(k) + 1
+
+
+def thrown(n):
+    # a coroutine its body made as it suspended, then thrown into, closed
+    # or sent into from the coroutine awaiting it
+    out = []
+    for how in ('throw', 'close', 'send'):
+        c = th2(n)
+        out.append(c.send(None))
+        inner = running('th3')
+        try:
+            if how == 'throw':
+                c.throw(KeyError('t'))
+            elif how == 'close':
+                out.append(c.close())
+            else:
+                c.send(5)
+        except BaseException as e:
+            out.append((type(e).__name__, str(e)))
+        out.append([(inspect.getcoroutinestate(i), i.cr_frame, i.cr_await,
+                     i.cr_running) for i in inner])
+    return out
+
+
 def origins(n):
     # no direct start where CPython records the origin
     old = sys.get_coroutine_origin_tracking_depth()
@@ -340,6 +412,32 @@ def origins(n):
     return out
 
 
+async def gc3(k):
+    # a collection as the coroutine of this running body is made, which
+    # visits its frame's words
+    a, b, c, d, e, f, g, h = [work(k)] * 8
+    # objects the collector counts, for the coroutine's to start one
+    held = [[] for _ in range(50)]
+    old = gc.get_threshold()
+    gc.set_threshold(1)
+    objs = gc.get_objects()
+    gc.set_threshold(*old)
+    found = [o for o in objs if inspect.iscoroutine(o) and
+             o.__qualname__ == 'gc3' and
+             inspect.getcoroutinestate(o) != 'CORO_CLOSED']
+    del objs
+    return len(found), len(held), a + b + c + d + e + f + g + h
+
+
+async def gc2(k):
+    return await gc3(k)
+
+
+def collected(n):
+    out = [drive(gc2(n)) for _ in range(20)]
+    return out[0], all(o == out[0] for o in out), started(gc3)
+
+
 CASES = [
     ('raised', [(3,)], HOOKED),
     ('realised', [(0,), (2,)], {}),
@@ -352,4 +450,7 @@ CASES = [
                'does not grow with the rounds'}),
     ('traced_handler', [(1,)], {}),
     ('origins', [(1,)], {}),
+    ('frame_generator', [(1,)], {}),
+    ('thrown', [(1,)], {}),
+    ('collected', [(1,)], {}),
 ]

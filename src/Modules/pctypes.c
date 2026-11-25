@@ -20,6 +20,7 @@
 #include "../Python/pycompiler.h"
 #include "../codemanager.h"
 #include "../mechanisms/tstate.h"
+#include "../mechanisms/gil.h"
 
 /* ctypes' CDataObject and PyCFuncPtrObject on Linux */
 typedef struct {
@@ -726,15 +727,8 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
         goto fail;
 
     /* the GIL released around the call, as ctypes releases it */
-    vts = le_tstate_load(po);
+    vts = le_gil_release_call(po);
     if (vts == NULL) {
-        vinfo_decref(vfn, po);
-        goto fail;
-    }
-    if (psyco_generic_call(po, PyEval_ReleaseThread,
-                           CfNoReturnValue | CfNoPython | CfNoBlock, "v",
-                           vts) == NULL) {
-        vinfo_decref(vts, po);
         vinfo_decref(vfn, po);
         goto fail;
     }
@@ -784,9 +778,7 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
     vinfo_decref(vfn, po);
     for (i = 0; i < n; i++) vinfo_decref(w[i], po);
     n = 0;
-    if (r == NULL ||
-        psyco_generic_call(po, PyEval_AcquireThread,
-                           CfNoReturnValue | CfNoPython, "v", vts) == NULL) {
+    if (r == NULL || !le_gil_take_call(po, vts)) {
         if (r != NULL && r != VINFO_OK)
             vinfo_decref(r, po);
         vinfo_decref(vts, po);

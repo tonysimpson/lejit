@@ -1744,7 +1744,8 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         goto error;
     vinfo_decref(v, po);
 #else
-    if (!gen_put_i(po, vgen, GEN_stacktop, le_code_nlocalsplus(co)))
+    if (!gen_put_i(po, vgen, GEN_stacktop,
+                   LE_HAS_RUNNING_STACK_HIDDEN ? -1 : le_code_nlocalsplus(co)))
         goto error_nov;
 #endif
 
@@ -1783,18 +1784,18 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     if (r < 0)
         goto error_nov;
     if (r > 0) {
-        vinfo_decref(vts, po);
         if (out != NULL)
             v = psyco_generic_call(po, le_gen_direct_send_status,
-                                   CfReturnTypeInt | CfPyErrIfNeg, "vvA", vgen,
-                                   vresult, out);
+                                   CfReturnTypeInt | CfPyErrIfNeg, "vvvA", vts,
+                                   vgen, vresult, out);
         else if (varg != NULL)
             v = psyco_generic_call(po, le_gen_direct_send_end,
-                                   CfCommonNewRefPyObject, "vv", vgen,
+                                   CfCommonNewRefPyObject, "vvv", vts, vgen,
                                    vresult);
         else
             v = psyco_generic_call(po, le_gen_direct_end, CfCommonIterNext,
-                                   "vv", vgen, vresult);
+                                   "vvv", vts, vgen, vresult);
+        vinfo_decref(vts, po);
         vinfo_decref(vresult, po);
         return v;
     }
@@ -1966,11 +1967,11 @@ psyco_genexpr_fuse(PsycoObject *po, vinfo_t *v)
     return on < 0 ? -1 : !on;
 }
 
-#if LE_RESUMES_COROUTINES
 /* A coroutine made by an await's call (awaited_at_once) can run its body
-   as a call from the await (pycompiler.c, YIELD_FROM): nothing can see
-   the coroutine object CPython would have made while the body runs, and
-   one is made if the body suspends (pycompiler.c:yield_direct). Not where
+   as a call from the await (pycompiler.c, YIELD_FROM or SEND): nothing can
+   see the coroutine object CPython would have made while the body runs,
+   and one is made if the body suspends (pycompiler.c:yield_direct), or
+   something could find it (frames.c:psyco_coros_realise). Not where
    CPython's coroutine would record its origin
    (sys.set_coroutine_origin_tracking_depth) or a wrapper would get it,
    nor while tracing, nor once a type site in its body has seen too many
@@ -2022,7 +2023,6 @@ psyco_coro_start(PsycoObject *po, vinfo_t *v)
     on = fuse_stopped(po, v);
     return on < 0 ? -1 : !on;
 }
-#endif
 
 DEFINEFN
 void
