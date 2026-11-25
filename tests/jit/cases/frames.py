@@ -153,7 +153,7 @@ CASES = [
     ('audited_names', [(2,)], {}),
     ('call_back_chain', "[()]", {}),
     ('call_caller_globals', "[()]", {}),
-    ('make_namedtuple', "[()]", {}),
+    ('make_namedtuple', "[()]", {'compiles_each_call': 'makes a namedtuple'}),
     ('too_deep', "[()]", {}),
     ('finaliser_caller', "[()]", {}),
     ('traceback_frames', "[([1],)]", {}),

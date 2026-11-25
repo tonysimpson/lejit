@@ -975,13 +975,13 @@ psyco_handler_awaits(PyCodeObject *co, int handler)
    ceval instead (handler_yields_kept). With an exception table, a
    handler's state is items on the frame's stack and the exception it
    handles is the generator's own, which a pause leaves where ceval's
-   does. */
+   does. A types.coroutine generator's body is a plain generator's. */
 static int
 body_compilable(PyCodeObject *co, le_code_t *c)
 {
     int pos;
-    int kind = co->co_flags & (CO_GENERATOR | CO_COROUTINE |
-                               CO_ASYNC_GENERATOR | CO_ITERABLE_COROUTINE);
+    int kind =
+        co->co_flags & (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR);
     if (kind != CO_GENERATOR &&
         (kind != CO_COROUTINE || !LE_RESUMES_COROUTINES_COMPILED))
         return 0;

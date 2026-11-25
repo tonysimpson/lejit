@@ -266,13 +266,21 @@ def method_compare(c):
 
 
 # a tuple compiled code builds is tracked by the GC as CPython's own: from
-# 3.14 one whose items' types the GC doesn't track starts untracked
+# 3.14 one whose items' types the GC doesn't track starts untracked. The
+# collector is off meanwhile: a collection untracks such a tuple in CPython
+# too, and compiling the first call can start one
 def tuples_tracked(n):
     import gc
     o = object()
-    built = [(n, n + 1), (o,), (n, 'a', 1.5), ([],), (n, {}), ((n, 2), 3),
-             (n, (o,))]
-    return [gc.is_tracked(t) for t in built]
+    on = gc.isenabled()
+    gc.disable()
+    try:
+        built = [(n, n + 1), (o,), (n, 'a', 1.5), ([],), (n, {}),
+                 ((n, 2), 3), (n, (o,))]
+        return [gc.is_tracked(t) for t in built]
+    finally:
+        if on:
+            gc.enable()
 
 
 CASES = [
