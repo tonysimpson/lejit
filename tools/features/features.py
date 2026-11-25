@@ -768,6 +768,18 @@ def frame_funcobj(s):
     return _field(s, '_PyInterpreterFrame', 'f_funcobj', missing=False)
 
 
+def common_consts_stackrefs(s):
+    """the interpreter holds LOAD_COMMON_CONSTANT's objects
+    (common_consts) as _PyStackRefs, not object pointers"""
+    for path, toks in s.headers_with('common_consts'):
+        texts = _texts(toks)
+        if _has_run(texts, ['_PyStackRef', 'common_consts', '[']):
+            return True, '%s: _PyStackRef common_consts' % path
+        if _has_run(texts, ['PyObject', '*', 'common_consts', '[']):
+            return False, '%s: PyObject *common_consts' % path
+    return False, 'Include, every header: no common_consts'
+
+
 def c_stack_soft_limit(s):
     """a thread's C calls are checked by its stack pointer alone, against
     c_stack_soft_limit: Py_EnterRecursiveCall's test fails only below it,
@@ -1498,6 +1510,7 @@ STATE = [
     ('EVAL_BREAKER_GC', eval_breaker_gc),
     ('EVAL_FRAME_POPS', eval_frame_pops),
     ('FRAME_FUNCOBJ', frame_funcobj),
+    ('COMMON_CONSTS_STACKREFS', common_consts_stackrefs),
     ('FRAME_EXECUTABLE', frame_executable),
     ('FRAME_INSTR_PTR', frame_instr_ptr),
     ('TSTATE_CURRENT_FRAME', tstate_current_frame),

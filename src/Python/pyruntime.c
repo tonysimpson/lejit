@@ -296,7 +296,12 @@ le_tracing_recheck(PyCodeObject *co)
 PyObject *
 le_common_constant(int i)
 {
+#if LE_HAS_COMMON_CONSTS_STACKREFS
+    return PyStackRef_AsPyObjectBorrow(
+        PyInterpreterState_Get()->common_consts[i]);
+#else
     return PyInterpreterState_Get()->common_consts[i];
+#endif
 }
 #endif
 #if LE_HAS_INTERPRETER_FRAME
