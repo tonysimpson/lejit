@@ -1212,6 +1212,7 @@ cimpl_exc_restore(PyObject **held)
 
 #if LE_HAS_INTERPRETER_FRAME
 #define FRAME_localsplus FMUT(CPY_ARRAY(le_frame_t, localsplus))
+#define FRAME_frame_obj FMUT(CPY_FIELD(le_frame_t, frame_obj, NO_PREV_FIELD))
 #else
 #define FRAME_localsplus FMUT(CPY_ARRAY(PyFrameObject, f_localsplus))
 #endif
@@ -1532,11 +1533,20 @@ gen_locals_end(PsycoObject *po)
         if (!local_is_runs(po, i))
             continue;
         if (end == NULL) {
-            /* the frame's words that Python wrote meanwhile go first */
+            /* the frame's words that Python wrote meanwhile go first:
+               only Python holding the frame's object can have */
+            vinfo_t *frame = psyco_frame_words_frame(po);
+            vinfo_t *fo = psyco_get_field(po, frame, FRAME_frame_obj);
+            condition_code_t cc =
+                fo == NULL ? CC_ERROR : object_non_null(po, fo);
+            vinfo_xdecref(fo, po);
+            if (cc == CC_ERROR)
+                return false;
             end = gen_pause_new(po, -1, 0);
-            if (psyco_generic_call(
-                    po, psyco_gen_pause, CfNoReturnValue | CfNoPython, "vl",
-                    psyco_frame_words_frame(po), (long)end) == NULL)
+            if (runtime_condition_f(po, cc) &&
+                psyco_generic_call(po, psyco_gen_pause,
+                                   CfNoReturnValue | CfNoPython, "vl", frame,
+                                   (long)end) == NULL)
                 return false;
         }
         if (is_virtualtime(v->source) && PycException_Is(po, &EReturn) &&
