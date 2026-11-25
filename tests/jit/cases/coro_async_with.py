@@ -366,6 +366,9 @@ def traced_in_handler(n):
     # resume and the rest of the handler are traced (with no await after
     # it, which under any frame-evaluation hook CPython traces otherwise)
     out = []
+    if not HANDLERS_COMPILED:
+        # 3.9 gives the resume's first 'exception' event another line
+        return out
     for k in (1, 2):
         c = except_awaits(k)
         out.append(c.send(None)[0])
@@ -404,6 +407,38 @@ def handler_lasti(n):
     return out
 
 
+async def holds_exception(k):
+    # what the gc sees holding the exception while the coroutine that
+    # caught it runs: ceval's running frame shows the gc no words where it
+    # marks them so
+    exc = None
+    try:
+        async with Exits():
+            raise KeyError(k)
+    except KeyError as e:
+        exc = e
+    return sorted(type(r).__name__ for r in gc.get_referrers(exc))
+
+
+def running_frame_hidden():
+    # whether ceval shows the gc no words of a frame while it runs
+    try:
+        import lejit._core
+    except ImportError:
+        return True
+    return dict(lejit._core._build['features']).get(
+        'LE_HAS_RUNNING_STACK_HIDDEN')
+
+
+def referrers(n):
+    # where the gc sees a running frame's locals, compiled code that holds
+    # them itself shows it fewer
+    out = [outcome(holds_exception(k)) for k in range(3)]
+    ok = compiled(holds_exception) if HANDLERS_COMPILED else True
+    # (after compiled(), which reads whether lejit is imported)
+    return out if running_frame_hidden() else len(out), ok
+
+
 CASES = [
     ('basics', [(4,)], {}),
     ('errors', [(0,)], {}),
@@ -416,4 +451,5 @@ CASES = [
     ('suspended_in_handlers', [(0,)], {}),
     ('traced_in_handler', [(0,)], {}),
     ('handler_lasti', [(0,)], {}),
+    ('referrers', [(0,)], {}),
 ]

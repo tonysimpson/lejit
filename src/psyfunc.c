@@ -1740,7 +1740,8 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         goto error;
     vinfo_decref(v, po);
 #else
-    if (!gen_put_i(po, vgen, GEN_stacktop, le_code_nlocalsplus(co)))
+    if (!gen_put_i(po, vgen, GEN_stacktop,
+                   LE_HAS_RUNNING_STACK_HIDDEN ? -1 : le_code_nlocalsplus(co)))
         goto error_nov;
 #endif
 

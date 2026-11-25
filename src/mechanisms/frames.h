@@ -624,7 +624,12 @@ le_gen_frame_set_depth(le_frame_t *f, int n)
 static inline void
 le_gen_frame_run(le_frame_t *f)
 {
+#if LE_HAS_RUNNING_STACK_HIDDEN
+    /* as ceval marks the frame it runs: the gc sees none of its words */
+    f->stacktop = -1;
+#else
     le_gen_frame_set_depth(f, 0);
+#endif
     LE_FRAME_PLACE(f) =
         (_Py_CODEUNIT *)((char *)LE_FRAME_PLACE(f) + LE_GEN_RUN_STEP);
 }
@@ -654,8 +659,15 @@ le_gen_frame_pause(le_frame_t *f, int lasti, int nstack)
 static inline void
 le_gen_frame_end(le_frame_t *f, PyObject *result)
 {
-    (void)f;
     (void)result;
+#if LE_HAS_RUNNING_STACK_HIDDEN
+    /* returned or raised: the locals left in it are for gen_send_ex to
+       clear */
+    if (f->stacktop < 0)
+        le_gen_frame_set_depth(f, 0);
+#else
+    (void)f;
+#endif
 }
 #else
 /* Frames as Python sees them are PyFrameObjects: the thread's

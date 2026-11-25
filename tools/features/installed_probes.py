@@ -1143,6 +1143,23 @@ def GET_ITER_INDEX():
 
 
 @probe
+def RUNNING_STACK_HIDDEN():
+    """a running generator's referents (gc) don't include its locals"""
+    import gc
+    if not hasattr((lambda: None).__code__, 'co_exceptiontable'):
+        return False, 'code objects have no co_exceptiontable'
+    token = object()
+
+    def gen():
+        x = token
+        yield token in gc.get_referents(it)
+    it = gen()
+    seen = next(it)
+    return not seen, 'gc.get_referents of the running generator: local %s' % (
+        'seen' if seen else 'not seen')
+
+
+@probe
 def TAGGED_LASTI():
     """a coroutine paused in an awaiting __aexit__ that an exception
     called holds the lasti under the exception as no object: the
