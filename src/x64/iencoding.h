@@ -1629,13 +1629,6 @@ psyco_compute_cc(PsycoObject *po, code_t *code, reg_t reserved);
         DELAY_USE_OF(rg1);       \
     } while (0)
 
-/* the same if the given source is run-time and in a register */
-#define DONT_OVERWRITE_SOURCE(src)          \
-    do {                                    \
-        if (is_runtime_with_reg(src))       \
-            DELAY_USE_OF(RSOURCE_REG(src)); \
-    } while (0)
-
 /*****************************************************************/
 /***   vinfo_t restoring                                       ***/
 
