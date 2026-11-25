@@ -908,22 +908,19 @@ cimpl_pop_exc_info(PyObject *type, PyObject *value, PyObject *tb,
 
 #if LE_HAS_EXCEPTION_TABLE
 /* Catching an exception at a handler from the exception table, as
-   ceval.c's exception_unwind: the pending error is fetched, normalised and
-   given its traceback, and its value returned for the handler's stack (a
+   ceval.c's exception_unwind: the exception being raised is taken
+   (exc.h:le_exc_take), and its value returned for the handler's stack (a
    new reference). The handled exception changes only at the handler's
    PUSH_EXC_INFO. 'word' and 'own' as for cimpl_push_exc_info. */
 static PyObject *
 cimpl_catch(PyObject **word, stack_frame_info_t **own)
 {
-    PyObject *exc, *val, *tb;
+    PyObject *val, *tb;
     extra_assert(PyErr_Occurred());
-    PyErr_Fetch(&exc, &val, &tb);
-    PyErr_NormalizeException(&exc, &val, &tb);
-    PyException_SetTraceback(val, tb != NULL ? tb : Py_None);
+    val = le_exc_take(PyThreadState_GET());
+    tb = ((PyBaseExceptionObject *)val)->traceback;
     if (word != NULL && tb != NULL && PyTraceBack_Check(tb))
         psyco_frame_catch(((PyTracebackObject *)tb)->tb_frame, word, own);
-    Py_XDECREF(tb);
-    Py_XDECREF(exc);
     return val;
 }
 
