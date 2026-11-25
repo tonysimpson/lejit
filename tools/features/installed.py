@@ -391,6 +391,8 @@ HEADER_DETECTORS = {
     'PYCORE_INTERPFRAME_H': pycore_header('pycore_interpframe.h'),
     'FRAME_STACKREFS': internal(features.frame_stackrefs),
     'FRAME_INITIALIZE_TSTATE': internal(features.frame_initialize_tstate),
+    'GEN_NEW_AROUND_FRAME': features.gen_new_around_frame,
+    'GEN_KEEPS_CODE': internal(features.gen_keeps_code),
     'REFCOUNT_32': features.refcount_32,
     'DICT_VERSION_TAG': features.dict_version_tag,
     'DEALLOC_DEFERS_TO_TRASHCAN': features.dealloc_defers_to_trashcan,

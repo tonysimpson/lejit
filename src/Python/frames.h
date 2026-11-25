@@ -72,6 +72,13 @@ EXTERNFN void
 psyco_frame_catcher_end(PyObject **word);
 EXTERNFN void
 psyco_frame_link_callee(PyFrameObject *callee, PyFrameObject *f);
+/* A new generator, coroutine or async generator (by the code's flags) of
+   the function 'func', whose frame is the frame object 'f''s own frame,
+   with its words, stack and place: f's reference is taken. Its state is
+   FRAME_CREATED where it has one, and it has no origin recorded. NULL with
+   an exception. */
+EXTERNFN PyObject *
+le_gen_of_frame(PyFrameObject *f, PyFunctionObject *func);
 /* PyFrame_New, with no function watcher told of the function it makes */
 EXTERNFN PyFrameObject *
 le_pyframe_new(PyThreadState *ts, PyCodeObject *co,
@@ -217,7 +224,6 @@ typedef struct {
 EXTERNFN le_frame_t *
 psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p);
 #endif
-#if LE_RESUMES_COROUTINES
 EXTERNVAR PyObject *psyco_coro_suspended;
 EXTERNFN PyObject *
 psyco_resume_suspend(struct resume_s *st, long at, long nstack,
@@ -229,7 +235,6 @@ psyco_coros_realise(void);
 EXTERNFN PyObject *
 psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack,
                       PyFunctionObject *func);
-#endif
 
 EXTERNFN void
 psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
