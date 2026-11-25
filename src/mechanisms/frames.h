@@ -562,6 +562,11 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
 #define LE_UNSIGNED_le_frame_t__localsplus 0
 _Static_assert(sizeof(((le_frame_t *)0)->localsplus[0]) == sizeof(void *),
                "LeJIT: a frame's localsplus words are not pointers");
+/* the frame's object, or NULL: Python can see the frame's words only
+   through it */
+#define LE_OFS_le_frame_t__frame_obj offsetof(le_frame_t, frame_obj)
+#define LE_SIZE2_le_frame_t__frame_obj 3
+#define LE_UNSIGNED_le_frame_t__frame_obj 0
 /* Where compiled code that steps a generator itself (psyfunc.c:
    psyco_gen_step) finds what it reads and writes: the generator's fields,
    its frame's (counted from the generator, whose frame is inside it), and
