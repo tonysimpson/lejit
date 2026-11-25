@@ -455,9 +455,7 @@ CASES = [
     ('callee_dropped', [(3,)], {}),
     ('deleted', [(2,)], {}),
     ('callee_deleted', [(2,)], {}),
-    ('deleted_after_inlined_call', [(2,)],
-     {'xfail': 'the running frame keeps the locals written for an inlined '
-               'call until it returns'}),
+    ('deleted_after_inlined_call', [(2,)], {}),
     ('callee_deleted_after_inlined_call', [(2,)], {}),
     ('cleared', [(2,)], {}),
     ('callee_cleared', [(2,)], {}),
