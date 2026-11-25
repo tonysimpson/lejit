@@ -76,6 +76,7 @@
 #include "../dispatcher.h"
 #include "../processor.h"
 #include "../mechanisms/recursion.h"
+#include "../segments.h"
 /* after Python.h, for _GNU_SOURCE: ucontext_t's REG_* */
 #define UNW_LOCAL_ONLY
 #include <dlfcn.h>
@@ -270,9 +271,38 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
     fr->walked = NULL;
     fr->next = frame_runs;
     frame_runs = fr;
-    if (fr->next == NULL && !runs_listed)
+    if (fr->next == NULL && !runs_listed) {
         runs_list();
+#if LE_STACK_SEGMENTS
+        le_stack_init();
+#endif
+    }
 }
+
+#if LE_STACK_SEGMENTS
+DEFINEFN long
+psyco_direct_calls_size(const char *lo, const char *hi)
+{
+    FrameRuntime *fr;
+    long size = 0;
+    for (fr = frame_runs;
+         fr != NULL && (const char *)fr >= lo && (const char *)fr < hi;
+         fr = fr->next) {
+        stack_frame_info_t **f1;
+        if (fr->resumed)
+            continue;
+        for (f1 = *fr->psy_frames_start; (((long)*f1) & 1) == 0;
+             f1 = psyco_next_stack_frame(f1)) {
+            stack_frame_info_t *last = finfo_last(*f1);
+            if (last->link_stack_depth == 0)
+                break; /* stack top is an inline frame */
+            if (!last->through_c)
+                size += last->link_stack_depth;
+        }
+    }
+    return size;
+}
+#endif
 
 static void
 walked_end(struct walked_calls_s *w);
