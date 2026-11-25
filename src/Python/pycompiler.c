@@ -6165,7 +6165,9 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             owner = NTOP(1);
             v = NTOP(2);
             name = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
-            err = PsycoObject_SetAttr(po, owner, name, v);
+            /* a NULL value (`del o.a` where DELETE_ATTR is gone) deletes */
+            err = PsycoObject_SetAttr(po, owner, name,
+                                      psyco_knowntobe(v, 0) ? NULL : v);
             vinfo_decref(name, po);
             if (!err) {
                 break;
@@ -6200,8 +6202,14 @@ compile_attributes_and_globals(PsycoObject *po, int opcode, int oparg,
             v = NTOP(1);
             name = vinfo_new(CompileTime_New((long)GETNAMEV(oparg)));
             mark_varying(po, GETNAMEV(oparg));
-            err = psyco_generic_call(po, PyDict_SetItem, CfCommonIntZeroOk,
-                                     "vvv", LOC_GLOBALS, name, v);
+            /* a NULL value (`del g` where DELETE_GLOBAL is gone) deletes */
+            if (psyco_knowntobe(v, 0))
+                err = psyco_generic_call(po, cimpl_delete_global,
+                                         CfCommonIntZeroOk, "vv", name,
+                                         LOC_GLOBALS);
+            else
+                err = psyco_generic_call(po, PyDict_SetItem, CfCommonIntZeroOk,
+                                         "vvv", LOC_GLOBALS, name, v);
             vinfo_decref(name, po);
             if (err == NULL) {
                 break;
