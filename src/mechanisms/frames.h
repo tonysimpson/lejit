@@ -496,6 +496,11 @@ le_frame_set_stack_depth(PyFrameObject *f, int n)
 #define LE_UNSIGNED_le_frame_t__localsplus 0
 _Static_assert(sizeof(((le_frame_t *)0)->localsplus[0]) == sizeof(void *),
                "LeJIT: a frame's localsplus words are not pointers");
+/* the frame's object, or NULL: Python can see the frame's words only
+   through it */
+#define LE_OFS_le_frame_t__frame_obj offsetof(le_frame_t, frame_obj)
+#define LE_SIZE2_le_frame_t__frame_obj 3
+#define LE_UNSIGNED_le_frame_t__frame_obj 0
 /* the frame is a generator's, resumed: the call of a generator function
    runs its frame first to RETURN_GENERATOR, which makes the generator */
 static inline int

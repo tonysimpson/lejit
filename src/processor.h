@@ -35,6 +35,10 @@ EXTERNVAR char (*psyco_int_mul_ovf)(long a, long b);
 EXTERNFN code_t *
 psyco_aligned_call_glue(void *fn);
 EXTERNVAR code_t *psyco_dealloc_rax_glue;
+/* the copy of a glue that also keeps XMM8-XMM14, for a call made while
+   doubles are live in them */
+EXTERNFN code_t *
+psyco_glue_keeping_xmm(code_t *glue);
 
 /* the return address given to a compiled callee whose frame object is
    kept (x64/iprocessor.c, frames.c:psyco_activation) */

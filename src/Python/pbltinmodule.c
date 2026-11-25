@@ -624,7 +624,7 @@ PsycoObject_IsInstance(PsycoObject *po, vinfo_t *vobj, vinfo_t *vcls)
 static double
 cimpl_cs_hi(double hi, double x)
 {
-    return hi + x;
+    return psyco_addsd(hi, x);
 }
 
 static double
@@ -720,13 +720,21 @@ cimpl_sum_complex_step(PyObject *box, PyObject *item)
         d += 2;
         complex_box_add(d, z.imag);
     }
+#if LE_HAS_SUM_EXACT_NUMBERS
+    else if (PyLong_CheckExact(item)) {
+#else
     else if (PyLong_Check(item)) {
+#endif
         double value = PyLong_AsDouble(item);
         if (value == -1.0 && PyErr_Occurred())
             return NULL;
         complex_box_add(d, value);
     }
+#if LE_HAS_SUM_EXACT_NUMBERS
+    else if (PyFloat_CheckExact(item))
+#else
     else if (PyFloat_Check(item))
+#endif
         complex_box_add(d, PyFloat_AS_DOUBLE(item));
     else {
         result = complex_box_value(box);
@@ -1029,7 +1037,11 @@ psyco_sum_step(PsycoObject *po, int *phase, vinfo_t **acc, vinfo_t **comp,
         xd = PsycoFloat_AS_DOUBLE(po, item);
         return xd != NULL && sum_float_add(po, acc, comp, xd, true);
     }
+#if LE_HAS_SUM_EXACT_NUMBERS
+    if (tp == &PyLong_Type) {
+#else
     if (PyType_IsSubtype(tp, &PyLong_Type)) {
+#endif
 #if LE_HAS_SUM_INT_AS_DOUBLE
         bool ok;
         xd = PsycoLong_AsDouble(po, item);
@@ -1389,8 +1401,7 @@ ptype_call(PsycoObject *po, vinfo_t *vtype, vinfo_t *varg, vinfo_t *vkw)
     /* a class known now (a cached global, a class attribute): its code
        already holds it */
     if (m != 0 && PyType_Check(t) &&
-        (((PyTypeObject *)t)->tp_flags & Py_TPFLAGS_HEAPTYPE) &&
-        psyco_knowntobe(vkw, 0))
+        (((PyTypeObject *)t)->tp_flags & Py_TPFLAGS_HEAPTYPE))
         return psyco_heap_type_call(po, (PyTypeObject *)t, vtype, varg, vkw);
     if (m == 0 || !psyco_knowntobe(vkw, 0) || PsycoTuple_Load(varg) != 1 ||
         (t != (PyObject *)&PyType_Type && t != (PyObject *)&PyLong_Type &&

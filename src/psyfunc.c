@@ -798,13 +798,17 @@ cannot_block_init(void)
 static int
 tracing_on(PsycoObject *po, vinfo_t *vts, PyCodeObject *co)
 {
+#if LE_HAS_MONITORING
+    if (!runtime_condition_f(po, le_tracing_test(po, vts, co)))
+        return le_code_tools_on(po, co);
+#else
     if (!runtime_condition_f(po, le_tracing_test(po, vts, co)))
         return 0;
+#endif
 #if LE_HAS_MONITORING
     {
-        /* the test above is the version's and the code's monitoring
-           data's: the exact one, on its rare path, also brings
-           le_quiet_version up to date */
+        /* the test above is the version's: the exact one, on its rare
+           path, also brings le_quiet_version up to date */
         condition_code_t cc;
         vinfo_t *v = psyco_generic_call(
             po, le_tracing_recheck, CfReturnTypeInt | CfNoBlock | CfNoPython,
@@ -1779,18 +1783,18 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     if (r < 0)
         goto error_nov;
     if (r > 0) {
-        vinfo_decref(vts, po);
         if (out != NULL)
             v = psyco_generic_call(po, le_gen_direct_send_status,
-                                   CfReturnTypeInt | CfPyErrIfNeg, "vvA", vgen,
-                                   vresult, out);
+                                   CfReturnTypeInt | CfPyErrIfNeg, "vvvA", vts,
+                                   vgen, vresult, out);
         else if (varg != NULL)
             v = psyco_generic_call(po, le_gen_direct_send_end,
-                                   CfCommonNewRefPyObject, "vv", vgen,
+                                   CfCommonNewRefPyObject, "vvv", vts, vgen,
                                    vresult);
         else
             v = psyco_generic_call(po, le_gen_direct_end, CfCommonIterNext,
-                                   "vv", vgen, vresult);
+                                   "vvv", vts, vgen, vresult);
+        vinfo_decref(vts, po);
         vinfo_decref(vresult, po);
         return v;
     }
