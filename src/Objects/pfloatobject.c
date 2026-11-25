@@ -181,6 +181,22 @@ pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
         return NULL;
 
     if (PyType_TypeCheck(wtp, &PyLong_Type)) {
+        /* a known int of at most 48 bits is compared as a double, exactly
+           as float_richcompare does (an infinity or a NaN is compared with
+           0.0 there, which gives the same answers) */
+        if (!is_compiletime(a->source) && is_compiletime(w->source)) {
+            PyObject *o = (PyObject *)CompileTime_Get(w->source)->value;
+            if (_PyLong_NumBits(o) <= 48) {
+                double d = PyLong_AsDouble(o);
+                long bits;
+                condition_code_t cc;
+                memcpy(&bits, &d, sizeof(bits));
+                b = vinfo_new(CompileTime_New(bits));
+                cc = psyco_float_cmp(po, op, a, b);
+                vinfo_decref(b, po);
+                return PsycoBool_FROM_WORD(psyco_vinfo_condition(po, cc));
+            }
+        }
         /* fall back; NULL on MemoryError */
         return psyco_generic_call(po, PyFloat_Type.tp_richcompare,
                                   CfCommonNewRefPyObject | CfPure, "vvl", v, w,
@@ -190,6 +206,10 @@ pfloat_richcompare(PsycoObject *po, vinfo_t *v, vinfo_t *w, int op)
         b = PsycoFloat_AS_DOUBLE(po, w);
         if (b == NULL)
             return NULL;
+        if (!(is_compiletime(a->source) && is_compiletime(b->source))) {
+            condition_code_t cc = psyco_float_cmp(po, op, a, b);
+            return PsycoBool_FROM_WORD(psyco_vinfo_condition(po, cc));
+        }
 #define SWAP_A_B \
     r = a;       \
     a = b;       \
@@ -841,24 +861,44 @@ float_unary(PsycoObject *po, vinfo_t *v, void *scalar, int flags)
     return v;
 }
 
+/* -v or abs(v): inline at run time, folded when known */
+static vinfo_t *
+float_neg_abs(PsycoObject *po, vinfo_t *v, bool neg)
+{
+    vinfo_t *x = PsycoFloat_AS_DOUBLE(po, v);
+    if (x == NULL)
+        return NULL;
+    if (is_compiletime(x->source))
+        x = float_unary(
+            po, v, neg ? (void *)cimpl_float_neg : (void *)cimpl_float_abs,
+            CfReturnTypeDouble);
+    else
+        x = psyco_float_neg_abs(po, neg, x);
+    return x != NULL ? PsycoFloat_FROM_DOUBLE(x) : NULL;
+}
+
 static vinfo_t *
 float_abs(PsycoObject *po, vinfo_t *v)
 {
-    v = float_unary(po, v, cimpl_float_abs, CfReturnTypeDouble);
-    return v != NULL ? PsycoFloat_FROM_DOUBLE(v) : NULL;
+    return float_neg_abs(po, v, false);
 }
 
 static vinfo_t *
 float_neg(PsycoObject *po, vinfo_t *v)
 {
-    v = float_unary(po, v, cimpl_float_neg, CfReturnTypeDouble);
-    return v != NULL ? PsycoFloat_FROM_DOUBLE(v) : NULL;
+    return float_neg_abs(po, v, true);
 }
 
 static vinfo_t *
 float_bool(PsycoObject *po, vinfo_t *v)
 {
-    return float_unary(po, v, cimpl_float_bool, CfReturnTypeInt);
+    vinfo_t *x = PsycoFloat_AS_DOUBLE(po, v);
+    if (x == NULL)
+        return NULL;
+    if (is_compiletime(x->source))
+        return float_unary(po, v, cimpl_float_bool, CfReturnTypeInt);
+    /* true for a NaN, as v != 0.0 */
+    return psyco_vinfo_condition(po, INVERT_CC(psyco_float_is_zero(po, x)));
 }
 
 static vinfo_t *

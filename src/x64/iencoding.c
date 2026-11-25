@@ -398,23 +398,26 @@ xmm_load(PsycoObject *po, code_t *code, int hw, vinfo_t *vi)
 }
 
 /* the encoder number of an XMM register holding 'vi' (run-time, or a
-   known double): its own, or else XMM_SCRATCH, loaded */
+   known double): its own, or else 'scratch', loaded */
 static code_t *
-xmm_operand(PsycoObject *po, code_t *code, vinfo_t *vi, int *hw)
+xmm_operand_in(PsycoObject *po, code_t *code, vinfo_t *vi, int scratch,
+               int *hw)
 {
     if (is_compiletime(vi->source)) {
         MOV_R_I(REG_TRANSIENT_1, CompileTime_Get(vi->source)->value);
-        MOVQ_XMM_QR(XMM_SCRATCH, REG_TRANSIENT_1);
-        *hw = XMM_SCRATCH;
+        MOVQ_XMM_QR(scratch, REG_TRANSIENT_1);
+        *hw = scratch;
     }
     else if (!RUNTIME_REG_IS_NONE(vi) && REG_IS_XMM(RUNTIME_REG(vi)))
         *hw = XMM_HW(RUNTIME_REG(vi));
     else {
-        code = xmm_load(po, code, XMM_SCRATCH, vi);
-        *hw = XMM_SCRATCH;
+        code = xmm_load(po, code, scratch, vi);
+        *hw = scratch;
     }
     return code;
 }
+#define xmm_operand(po, code, vi, hw) \
+    xmm_operand_in(po, code, vi, XMM_SCRATCH, hw)
 
 DEFINEFN
 code_t *
@@ -532,6 +535,58 @@ psyco_float_op(PsycoObject *po, int op, vinfo_t *a, vinfo_t *b)
     }
     END_CODE
     return new_rtvinfo(po, rg, false, false);
+}
+
+DEFINEFN
+vinfo_t *
+psyco_float_neg_abs(PsycoObject *po, bool neg, vinfo_t *a)
+{
+    reg_t rg;
+    BEGIN_CODE
+    NEED_FREE_XMM(rg);
+    code = xmm_load_any(po, code, XMM_HW(rg), a);
+    MOV_R_I(REG_TRANSIENT_1,
+            neg ? (long)0x8000000000000000UL : (long)0x7FFFFFFFFFFFFFFFUL);
+    MOVQ_XMM_QR(XMM_SCRATCH, REG_TRANSIENT_1);
+    if (neg)
+        XORPD_XMM_XMM(XMM_HW(rg), XMM_SCRATCH);
+    else
+        ANDPD_XMM_XMM(XMM_HW(rg), XMM_SCRATCH);
+    END_CODE
+    return new_rtvinfo(po, rg, false, false);
+}
+
+DEFINEFN
+condition_code_t
+psyco_float_cmp(PsycoObject *po, int py_op, vinfo_t *a, vinfo_t *b)
+{
+    int hw1, hw2;
+    condition_code_t cc;
+    BEGIN_CODE
+    NEED_CC();
+    if (py_op == Py_EQ || py_op == Py_NE) {
+        /* equal needs ZF set and PF clear after ucomisd: cmpsd makes the
+           answer one test instead (predicate 0 is false for a NaN, 4 true)
+         */
+        code = xmm_load_any(po, code, XMM_SCRATCH, a);
+        code = xmm_operand_in(po, code, b, XMM_SCRATCH_2, &hw2);
+        CMPSD_XMM_XMM_U8(XMM_SCRATCH, hw2, py_op == Py_EQ ? 0 : 4);
+        MOVQ_QR_XMM(REG_TRANSIENT_1, XMM_SCRATCH);
+        TEST_R_R(REG_TRANSIENT_1, REG_TRANSIENT_1);
+        cc = CC_NE;
+    }
+    else {
+        /* ucomisd x1, x2 sets CF if x1 < x2, ZF if equal, and all of
+           CF, ZF and PF if unordered: "above" and "above or equal" are
+           false for a NaN. a < b is b above a */
+        bool swap = py_op == Py_LT || py_op == Py_LE;
+        code = xmm_operand_in(po, code, swap ? b : a, XMM_SCRATCH_2, &hw1);
+        code = xmm_operand_in(po, code, swap ? a : b, XMM_SCRATCH, &hw2);
+        UCOMISD_XMM_XMM(hw1, hw2);
+        cc = py_op == Py_LT || py_op == Py_GT ? CC_uG : CC_uGE;
+    }
+    END_CODE
+    return cc;
 }
 
 DEFINEFN
