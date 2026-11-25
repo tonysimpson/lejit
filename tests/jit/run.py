@@ -8,9 +8,9 @@ A case file has CASES = [(function_name, calls, options), ...]; calls is a
 list of argument tuples, or a Python expression for one. Options:
 'xfail': reason, 'interpreted': reason (must not compile), 'leaks': reason
 (no leak check), 'warmup': (rounds, reason), 'clear_type_cache': reason (the
-leak check empties CPython's type cache around the rounds; where that also
-drops the types' version tags, before 3.11, compiled code that checks them
-compiles again in every run of the rounds, which are then run four times),
+leak check empties CPython's type cache around the rounds, and runs the
+calls once more before them, as emptying it can make compiled code compile
+again),
 'checked': reason (needs a checked build),
 'expected': [result, ...] (LeJIT's results must be these, one per call, not
 plain CPython's: for a language rule some CPython gets wrong),
