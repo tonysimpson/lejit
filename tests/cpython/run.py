@@ -117,6 +117,9 @@ SKIPPED = {
     "the thread's innermost frame "
     '(_testinternalcapi.set_eval_frame_record fails it the same way)':
         'test.test_external_inspection.TestGetStackTrace.test_self_trace',
+    'fails in plain CPython under load: 0 GIL holders seen while the main '
+    'thread runs its busy loop':
+        'test.test_external_inspection.TestGetStackTrace.test_only_active_thread',
     'skipped when the machine converts fast enough':
         'test.test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_int_to_str '
         'test.test_int.IntStrDigitLimitsTests.test_denial_of_service_prevented_str_to_int '
