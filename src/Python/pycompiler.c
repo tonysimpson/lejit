@@ -7776,7 +7776,7 @@ compile_iteration(PsycoObject *po, int opcode, int oparg, int target,
            returns, going to the loop's end, where the iterator is popped
            (by END_SEND where there is one). Where GET_ITER leaves an index
            or NULL, a NULL is between the iterator and the value, as an
-           await's PUSH_NULL leaves it too. */
+           await leaves it too. */
         case SEND: {
             vinfo_array_t *array = array_new(1);
             condition_code_t cc;
@@ -8747,24 +8747,34 @@ compile_functions_and_returns(PsycoObject *po, int opcode, int oparg,
             if (x == NULL)
                 break;
             PUSH(x);
+            if (LE_HAS_ANEXT_PUSHES_SEND_ARGS) {
+                PUSH(psyco_vi_Zero());
+                PUSH(psyco_vi_None());
+            }
             goto fine;
 
 #if LE_RESUMES_ON_FRAME
         /* a resumable coroutine's await (psyco_is_resumable_generator):
-           GET_AWAITABLE, then SEND's loop */
+           GET_AWAITABLE, then SEND's loop; where GET_AWAITABLE doesn't push
+           SEND's NULL and None, PUSH_NULL and LOAD_CONST do */
         case GET_AWAITABLE:
             /* a coroutine awaited as soon as it is made stays pending: the
                SEND may run its body as a call */
-            if (PsycoGenexpr_Check(TOP()))
-                goto fine;
-            x = psyco_generic_call(
-                po, cimpl_get_awaitable, CfCommonNewRefPyObject, "vl", TOP(),
-                (long)awaitable_kind(le_code(po->pr.co), po->pr.next_instr,
-                                     oparg));
-            if (x == NULL)
-                break;
-            POP_DECREF();
-            PUSH(x);
+            if (!PsycoGenexpr_Check(TOP())) {
+                x = psyco_generic_call(
+                    po, cimpl_get_awaitable, CfCommonNewRefPyObject, "vl",
+                    TOP(),
+                    (long)awaitable_kind(le_code(po->pr.co), po->pr.next_instr,
+                                         oparg));
+                if (x == NULL)
+                    break;
+                POP_DECREF();
+                PUSH(x);
+            }
+            if (LE_HAS_AWAITABLE_PUSHES_SEND_ARGS) {
+                PUSH(psyco_vi_Zero());
+                PUSH(psyco_vi_None());
+            }
             goto fine;
 #endif
 #if LE_RESUMES_COROUTINES
