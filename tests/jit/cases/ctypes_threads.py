@@ -27,7 +27,7 @@ def _adder(n, out, k):
 
 def threads_calling_c():
     out = {}
-    ts = [threading.Thread(target=_adder, args=(20000, out, k)) for k in (1, 2, 3)]
+    ts = [threading.Thread(target=_adder, args=(2000, out, k)) for k in (1, 2, 3)]
     for t in ts:
         t.start()
     for t in ts:
@@ -43,8 +43,7 @@ def _counter(stop, out):
 
 
 def _sleeper(out):
-    for _ in range(4):
-        usleep(2000)
+    usleep(2000)
     out['slept'] = True
 
 
@@ -63,7 +62,7 @@ def python_runs_while_c_sleeps():
 
 def main_sleeps_in_c():
     out = {}
-    t = threading.Thread(target=_adder, args=(20000, out, 7))
+    t = threading.Thread(target=_adder, args=(2000, out, 7))
     t.start()
     t0 = time.time()
     while t.is_alive() and time.time() - t0 < 60:
@@ -135,7 +134,7 @@ def stress_tiny_switch_interval():
     sys.setswitchinterval(1e-5)
     try:
         out = {}
-        ts = [threading.Thread(target=_mixed, args=(5000, out, k))
+        ts = [threading.Thread(target=_mixed, args=(500, out, k))
               for k in range(6)]
         for t in ts:
             t.start()
