@@ -296,7 +296,12 @@ le_tracing_recheck(PyCodeObject *co)
 PyObject *
 le_common_constant(int i)
 {
+#if LE_HAS_COMMON_CONSTS_STACKREFS
+    return PyStackRef_AsPyObjectBorrow(
+        PyInterpreterState_Get()->common_consts[i]);
+#else
     return PyInterpreterState_Get()->common_consts[i];
+#endif
 }
 #endif
 #if LE_HAS_INTERPRETER_FRAME
@@ -517,6 +522,22 @@ le_eval_breaker_address(void)
     return &le_ceval2()->eval_breaker;
 }
 
+/* COMPUTE_EVAL_BREAKER */
+static void
+le_compute_eval_breaker(PyInterpreterState *interp)
+{
+    struct _ceval_runtime_state *ceval = &_PyRuntime.ceval;
+    struct _ceval_state *ceval2 = &interp->ceval;
+    _Py_atomic_store_relaxed(
+        &ceval2->eval_breaker,
+        _Py_atomic_load_relaxed(&ceval2->gil_drop_request) |
+            (_Py_atomic_load_relaxed(&ceval->signals_pending) &&
+             _Py_ThreadCanHandleSignals(interp)) |
+            (_Py_atomic_load_relaxed(&ceval2->pending.calls_to_do) &&
+             _Py_ThreadCanHandlePendingCalls()) |
+            ceval2->pending.async_exc);
+}
+
 /* -1 with an exception set */
 int
 le_eval_breaker_handler(void)
@@ -543,16 +564,9 @@ le_eval_breaker_handler(void)
     if (tstate->async_exc != NULL) {
         PyObject *exc = tstate->async_exc;
         tstate->async_exc = NULL;
-        /* UNSIGNAL_ASYNC_EXC(interp): COMPUTE_EVAL_BREAKER */
+        /* UNSIGNAL_ASYNC_EXC(interp) */
         ceval2->pending.async_exc = 0;
-        _Py_atomic_store_relaxed(
-            &ceval2->eval_breaker,
-            _Py_atomic_load_relaxed(&ceval2->gil_drop_request) |
-                (_Py_atomic_load_relaxed(&ceval->signals_pending) &&
-                 _Py_ThreadCanHandleSignals(interp)) |
-                (_Py_atomic_load_relaxed(&ceval2->pending.calls_to_do) &&
-                 _Py_ThreadCanHandlePendingCalls()) |
-                ceval2->pending.async_exc);
+        le_compute_eval_breaker(interp);
         PyErr_SetNone(exc);
         Py_DECREF(exc);
         return -1;
@@ -601,6 +615,20 @@ le_eval_breaker_address(void)
     return &_PyRuntime.ceval.eval_breaker;
 }
 
+/* COMPUTE_EVAL_BREAKER */
+static void
+le_compute_eval_breaker(PyInterpreterState *interp)
+{
+    struct _ceval_runtime_state *ceval = &_PyRuntime.ceval;
+    (void)interp;
+    _Py_atomic_store_relaxed(
+        &ceval->eval_breaker,
+        _Py_atomic_load_relaxed(&ceval->gil_drop_request) |
+            _Py_atomic_load_relaxed(&ceval->signals_pending) |
+            _Py_atomic_load_relaxed(&ceval->pending.calls_to_do) |
+            ceval->pending.async_exc);
+}
+
 /* -1 with an exception set */
 int
 le_eval_breaker_handler(void)
@@ -626,14 +654,9 @@ le_eval_breaker_handler(void)
     if (tstate->async_exc != NULL) {
         PyObject *exc = tstate->async_exc;
         tstate->async_exc = NULL;
-        /* UNSIGNAL_ASYNC_EXC(ceval): COMPUTE_EVAL_BREAKER */
+        /* UNSIGNAL_ASYNC_EXC(ceval) */
         ceval->pending.async_exc = 0;
-        _Py_atomic_store_relaxed(
-            &ceval->eval_breaker,
-            _Py_atomic_load_relaxed(&ceval->gil_drop_request) |
-                _Py_atomic_load_relaxed(&ceval->signals_pending) |
-                _Py_atomic_load_relaxed(&ceval->pending.calls_to_do) |
-                ceval->pending.async_exc);
+        le_compute_eval_breaker(tstate->interp);
         PyErr_SetNone(exc);
         Py_DECREF(exc);
         return -1;
@@ -680,6 +703,18 @@ le_eval_breaker_address(void)
     return &_PyRuntime.ceval.eval_breaker;
 }
 
+/* COMPUTE_EVAL_BREAKER() */
+static void
+le_compute_eval_breaker(PyInterpreterState *interp)
+{
+    (void)interp;
+    _Py_atomic_store_relaxed(
+        &_PyRuntime.ceval.eval_breaker,
+        _Py_atomic_load_relaxed(&_PyRuntime.ceval.gil_drop_request) |
+            _Py_atomic_load_relaxed(&_PyRuntime.ceval.pending.calls_to_do) |
+            _PyRuntime.ceval.pending.async_exc);
+}
+
 /* -1 with an exception set */
 int
 le_eval_breaker_handler(void)
@@ -696,12 +731,7 @@ le_eval_breaker_handler(void)
         tstate->async_exc = NULL;
         /* UNSIGNAL_ASYNC_EXC() */
         _PyRuntime.ceval.pending.async_exc = 0;
-        _Py_atomic_store_relaxed(
-            &_PyRuntime.ceval.eval_breaker,
-            _Py_atomic_load_relaxed(&_PyRuntime.ceval.gil_drop_request) |
-                _Py_atomic_load_relaxed(
-                    &_PyRuntime.ceval.pending.calls_to_do) |
-                _PyRuntime.ceval.pending.async_exc);
+        le_compute_eval_breaker(tstate->interp);
         PyErr_SetNone(exc);
         Py_DECREF(exc);
         return -1;
@@ -843,3 +873,324 @@ le_trace_set_hidden(Py_tracefunc fn)
 #endif
 }
 #endif
+
+/* le_gil_release, le_gil_take: what Py_BEGIN_ALLOW_THREADS and
+   Py_END_ALLOW_THREADS do (PyEval_SaveThread, PyEval_RestoreThread), for
+   compiled code, which has the running thread's state already
+   (mechanisms/gil.h). The common case is CPython's own code, copied: the
+   thread state's detach and attach (Python/pystate.c), drop_gil and
+   take_gil (Python/ceval_gil.c, or ceval_gil.h) and the eval_breaker
+   update take_gil ends with. Where each word is comes from features of the
+   GIL's layout (tools/features/features.py:gil_per_interpreter and the
+   detectors after it) and of eval_breaker's. Everything else is left to
+   CPython's own function: the GIL held by another thread, a finalising
+   runtime or interpreter, a thread state not as the copy expects it, and
+   the builds whose versions of these functions differ (debug,
+   free-threaded, statistics, isolated subinterpreters).
+
+   One saving beyond the copy, with the same behaviour: when the GIL is
+   free and this thread was its last holder, no thread waits on
+   switch_cond (drop_gil waits there only while it is itself the last
+   holder, and the take that ended that signalled it), so the switch mutex
+   and its signal are skipped. */
+#include <errno.h>
+#include <pthread.h>
+#if defined(Py_DEBUG) || defined(Py_GIL_DISABLED) || defined(Py_STATS) || \
+    defined(EXPERIMENTAL_ISOLATED_SUBINTERPRETERS) ||                     \
+    !defined(FORCE_SWITCHING)
+#define LE_GIL_COPY 0
+#else
+#define LE_GIL_COPY 1
+#endif
+
+#if LE_GIL_COPY
+/* relaxed atomics, as CPython's _Py_atomic_*_relaxed: the GIL's words are
+   a _Py_atomic_int or _Py_atomic_address (the value alone in a struct), or
+   a plain int and pointer */
+#define LE_LOAD(p) __atomic_load_n((p), __ATOMIC_RELAXED)
+#define LE_STORE(p, v) __atomic_store_n((p), (v), __ATOMIC_RELAXED)
+#define LE_INT(field) ((int *)&(field))
+#define LE_TSTATE(field) ((PyThreadState **)&(field))
+_Static_assert(
+    sizeof(((struct _gil_runtime_state *)0)->locked) == sizeof(int) &&
+        sizeof(((struct _gil_runtime_state *)0)->last_holder) ==
+            sizeof(void *) &&
+        __builtin_types_compatible_p(
+            __typeof__(((struct _gil_runtime_state *)0)->mutex),
+            pthread_mutex_t) &&
+        __builtin_types_compatible_p(
+            __typeof__(((struct _gil_runtime_state *)0)->cond),
+            pthread_cond_t),
+    "LeJIT: the GIL is an int, a pointer and pthread's mutex and cond");
+
+#define LE_MUTEX_LOCK(m)                                  \
+    do {                                                  \
+        if (pthread_mutex_lock(&(m)))                     \
+            Py_FatalError("PyMUTEX_LOCK(" #m ") failed"); \
+    } while (0)
+#define LE_MUTEX_UNLOCK(m)                                  \
+    do {                                                    \
+        if (pthread_mutex_unlock(&(m)))                     \
+            Py_FatalError("PyMUTEX_UNLOCK(" #m ") failed"); \
+    } while (0)
+#define LE_COND_SIGNAL(c)                                  \
+    do {                                                   \
+        if (pthread_cond_signal(&(c)))                     \
+            Py_FatalError("PyCOND_SIGNAL(" #c ") failed"); \
+    } while (0)
+
+#if LE_HAS_GIL_PER_INTERPRETER
+#define LE_GIL(ts) ((ts)->interp->ceval.gil)
+#else
+#define LE_GIL(ts) (&_PyRuntime.ceval.gil)
+#endif
+
+/* the word that holds the running thread's state */
+#if LE_HAS_THREAD_LOCAL_TSTATE
+static long le_gil_tls_offset;
+#define LE_CURRENT() ((PyThreadState **)(thread_pointer() + le_gil_tls_offset))
+#else
+#define LE_CURRENT() LE_TSTATE(_PyRuntime.gilstate.tstate_current)
+#endif
+
+/* tstate_must_exit or _PyThreadState_MustExit can be true: CPython's
+   take_gil then ends the thread. Read before the thread state, which can
+   be freed memory then where the runtime's finalising thread is the test
+   (a daemon thread after Py_Finalize). */
+#if LE_HAS_GET_FINALIZING
+#define LE_RUNTIME_FINALIZING() \
+    (_PyRuntimeState_GetFinalizing(&_PyRuntime) != NULL)
+#else
+#define LE_RUNTIME_FINALIZING() (_PyRuntime.finalizing != NULL)
+#endif
+#if LE_HAS_INTERP_GET_FINALIZING
+#define LE_FINALIZING(ts)       \
+    (LE_RUNTIME_FINALIZING() || \
+     _PyInterpreterState_GetFinalizing((ts)->interp))
+#else
+#define LE_FINALIZING(ts) LE_RUNTIME_FINALIZING()
+#endif
+
+/* a GIL drop request, which drop_gil waits on and take_gil resets */
+#if LE_HAS_TSTATE_EVAL_BREAKER
+#if LE_HAS_TSTATE_HOLDS_GIL
+#define LE_HOLDS_GIL(ts) ((ts)->holds_gil)
+#else
+#define LE_HOLDS_GIL(ts) ((ts)->_status.holds_gil)
+#endif
+#define le_drop_requested(ts) \
+    _Py_eval_breaker_bit_is_set(ts, _PY_GIL_DROP_REQUEST_BIT)
+#define le_reset_drop_request(ts) \
+    _Py_unset_eval_breaker_bit(ts, _PY_GIL_DROP_REQUEST_BIT)
+
+/* the end of take_gil, update_eval_breaker_for_thread and
+   copy_eval_breaker_bits; the main-thread test is _Py_IsMainThread's
+   (PyThread_get_thread_ident is pthread_self) */
+static inline void
+le_gil_taken(PyThreadState *ts)
+{
+    PyInterpreterState *interp = ts->interp;
+    const uintptr_t mask = ~(uintptr_t)_PY_EVAL_EVENTS_MASK;
+    uintptr_t from, old;
+#if LE_HAS_TSTATE_GIL_REQUESTED
+    ts->gil_requested = 0;
+#endif
+    LE_HOLDS_GIL(ts) = 1;
+    le_reset_drop_request(ts);
+    if (_Py_atomic_load_int32_relaxed(&interp->ceval.pending.npending))
+        _Py_set_eval_breaker_bit(ts, _PY_CALLS_TO_DO_BIT);
+    else if ((unsigned long)pthread_self() == _PyRuntime.main_thread &&
+             _Py_atomic_load_int32_relaxed(
+                 &_PyRuntime.ceval.pending_mainthread.npending))
+        _Py_set_eval_breaker_bit(ts, _PY_CALLS_TO_DO_BIT);
+    from = _Py_atomic_load_uintptr_relaxed(
+               &interp->ceval.instrumentation_version) &
+           mask;
+    old = _Py_atomic_load_uintptr_relaxed(&ts->eval_breaker);
+    if (from != (old & mask)) {
+        uintptr_t new_value;
+        do {
+            new_value = (old & ~mask) | from;
+        } while (!_Py_atomic_compare_exchange_uintptr(&ts->eval_breaker, &old,
+                                                      new_value));
+    }
+}
+#else
+#if LE_HAS_EVAL_BREAKER_GC || LE_HAS_EVAL_FRAME_HANDLE_PENDING
+#define LE_CEVAL(ts) (&(ts)->interp->ceval)
+#else
+#define LE_CEVAL(ts) (&_PyRuntime.ceval)
+#endif
+#define le_drop_requested(ts) LE_LOAD(LE_INT(LE_CEVAL(ts)->gil_drop_request))
+
+/* RESET_GIL_DROP_REQUEST */
+static inline void
+le_reset_drop_request(PyThreadState *ts)
+{
+    LE_STORE(LE_INT(LE_CEVAL(ts)->gil_drop_request), 0);
+    le_compute_eval_breaker(ts->interp);
+}
+
+/* the end of take_gil */
+static inline void
+le_gil_taken(PyThreadState *ts)
+{
+    if (le_drop_requested(ts))
+        le_reset_drop_request(ts);
+#if LE_HAS_EVAL_BREAKER_GC || LE_HAS_EVAL_FRAME_HANDLE_PENDING
+    /* where eval_breaker is the interpreter's, take_gil recomputes it
+       always, for a signal another thread couldn't handle */
+    else
+        le_compute_eval_breaker(ts->interp);
+#endif
+    if (ts->async_exc != NULL) {
+        /* SIGNAL_ASYNC_EXC */
+        LE_CEVAL(ts)->pending.async_exc = 1;
+        LE_STORE(LE_INT(LE_CEVAL(ts)->eval_breaker), 1);
+    }
+}
+#endif
+
+/* PyEval_SaveThread, for the running thread's state */
+static void
+le_gil_release(PyThreadState *ts)
+{
+    struct _gil_runtime_state *gil = LE_GIL(ts);
+#if LE_HAS_TSTATE_ATTACH
+    if (ts->critical_section != 0) {
+        PyEval_SaveThread();
+        return;
+    }
+#endif
+    /* the detach: tstate_deactivate, tstate_set_detached,
+       current_fast_clear, or _PyThreadState_Swap(NULL) */
+#if LE_HAS_TSTATE_STATUS
+    ts->_status.active = 0;
+#endif
+#if LE_HAS_TSTATE_ATTACH
+    ts->state = _Py_THREAD_DETACHED;
+#endif
+    LE_STORE(LE_CURRENT(), NULL);
+    /* drop_gil */
+    if (!LE_LOAD(LE_INT(gil->locked)))
+        Py_FatalError("drop_gil: GIL is not locked");
+    LE_STORE(LE_TSTATE(gil->last_holder), ts);
+    LE_MUTEX_LOCK(gil->mutex);
+    LE_STORE(LE_INT(gil->locked), 0);
+#if LE_HAS_TSTATE_EVAL_BREAKER
+    LE_HOLDS_GIL(ts) = 0;
+#endif
+#if LE_HAS_TSTATE_GIL_REQUESTED
+    ts->gil_requested = 0;
+#endif
+    LE_COND_SIGNAL(gil->cond);
+    LE_MUTEX_UNLOCK(gil->mutex);
+    if (le_drop_requested(ts)) {
+        LE_MUTEX_LOCK(gil->switch_mutex);
+        if (LE_LOAD(LE_TSTATE(gil->last_holder)) == ts) {
+            le_reset_drop_request(ts);
+            if (pthread_cond_wait(&gil->switch_cond, &gil->switch_mutex))
+                Py_FatalError("PyCOND_WAIT(gil->switch_cond) failed");
+        }
+        LE_MUTEX_UNLOCK(gil->switch_mutex);
+    }
+}
+
+/* PyEval_RestoreThread of the running thread's state */
+static void
+le_gil_take(PyThreadState *ts)
+{
+    int err = errno;
+    struct _gil_runtime_state *gil;
+    if (LE_FINALIZING(ts) || LE_LOAD(LE_CURRENT()) != NULL)
+        goto cpython;
+#if LE_HAS_TSTATE_STATUS
+    if (!ts->_status.bound_gilstate)
+        goto cpython;
+#endif
+#if LE_HAS_TSTATE_ATTACH
+    if (LE_LOAD(&ts->state) != _Py_THREAD_DETACHED ||
+        ts->critical_section != 0)
+        goto cpython;
+#endif
+#if LE_HAS_C_STACK_SOFT_LIMIT
+    /* _PyThreadState_Attach sets the limits up the first time */
+    if (((_PyThreadStateImpl *)ts)->c_stack_hard_limit == 0)
+        goto cpython;
+#endif
+    /* take_gil, when the GIL is free */
+    gil = LE_GIL(ts);
+    LE_MUTEX_LOCK(gil->mutex);
+    if (LE_LOAD(LE_INT(gil->locked))) {
+        LE_MUTEX_UNLOCK(gil->mutex);
+        goto cpython;
+    }
+#if LE_HAS_TSTATE_GIL_REQUESTED
+    ts->gil_requested = 1;
+#endif
+    /* the GIL is free and its mutex held, so last_holder is stable */
+    if (LE_LOAD(LE_TSTATE(gil->last_holder)) == ts)
+        LE_STORE(LE_INT(gil->locked), 1);
+    else {
+        LE_MUTEX_LOCK(gil->switch_mutex);
+        LE_STORE(LE_INT(gil->locked), 1);
+        LE_STORE(LE_TSTATE(gil->last_holder), ts);
+        ++gil->switch_number;
+        LE_COND_SIGNAL(gil->switch_cond);
+        LE_MUTEX_UNLOCK(gil->switch_mutex);
+    }
+    if (LE_FINALIZING(ts)) {
+        /* finalisation began meanwhile: the GIL given back, CPython's
+           take_gil ends the thread */
+        LE_STORE(LE_INT(gil->locked), 0);
+#if LE_HAS_TSTATE_GIL_REQUESTED
+        ts->gil_requested = 0;
+#endif
+        LE_COND_SIGNAL(gil->cond);
+        LE_MUTEX_UNLOCK(gil->mutex);
+        goto cpython;
+    }
+    le_gil_taken(ts);
+    LE_MUTEX_UNLOCK(gil->mutex);
+    errno = err;
+    /* the attach: current_fast_set, tstate_activate, tstate_try_attach, or
+       _PyThreadState_Swap(ts) */
+    LE_STORE(LE_CURRENT(), ts);
+#if LE_HAS_TSTATE_STATUS
+    ts->_status.active = 1;
+#endif
+#if LE_HAS_TSTATE_ATTACH
+    ts->state = _Py_THREAD_ATTACHED;
+#endif
+    return;
+cpython:
+    errno = err;
+    PyEval_RestoreThread(ts);
+}
+#endif
+
+static void
+le_gil_release_cpython(PyThreadState *ts)
+{
+    (void)ts;
+    PyEval_SaveThread();
+}
+
+/* the functions compiled code calls to release the GIL and take it back,
+   each given the running thread's state (mechanisms/gil.h) */
+void
+le_gil_calls(void **release, void **take)
+{
+#if LE_GIL_COPY
+#if LE_HAS_THREAD_LOCAL_TSTATE
+    if (le_tstate_thread_offset(&le_gil_tls_offset))
+#endif
+    {
+        *release = (void *)le_gil_release;
+        *take = (void *)le_gil_take;
+        return;
+    }
+#endif
+    *release = (void *)le_gil_release_cpython;
+    *take = (void *)PyEval_RestoreThread;
+}

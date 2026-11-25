@@ -144,11 +144,21 @@ psyco_call_address(PsycoObject *po, vinfo_t *vtarget, int flags,
 /* To emit the call to other code blocks emitted by Psyco. 'argsources' gives
    the run-time sources for the arguments, as specified by
    psyco_build_frame(). */
-/* Py_LeaveRecursiveCall after a compiled call (psyfunc.c), and with
-   'through_c' the C count too, for a frame CPython runs from C; false with
-   an exception set */
+/* How CPython runs a frame that compiled code calls: from Python, with no
+   C between, or from C, as a consumer such as sum() runs a generator, or
+   as next() or a generator's send() steps one */
+enum le_through_c {
+    LE_C_NONE,
+    LE_C_CONSUMER,
+    LE_C_NEXT,
+    LE_C_SEND,
+    LE_C_WAYS
+};
+/* Py_LeaveRecursiveCall after a compiled call (psyfunc.c), and where
+   'through_c' isn't LE_C_NONE the C count too, for a frame CPython runs
+   from C; false with an exception set */
 EXTERNFN bool
-psyco_leave_recursive_call(PsycoObject *po, bool through_c);
+psyco_leave_recursive_call(PsycoObject *po, int through_c);
 /* tests the 32-bit int at 'address' at run time: CC_NE if it isn't 0 */
 EXTERNFN condition_code_t
 psyco_int32_nonzero_at(PsycoObject *po, void *address);
@@ -168,7 +178,7 @@ psyco_cannot_block(void *c_function);
 EXTERNFN vinfo_t *
 psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
                  Source argsources[], int argcount,
-                 struct stack_frame_info_s *finfo, bool through_c);
+                 struct stack_frame_info_s *finfo, int through_c);
 #if LE_RESUMES_GENERATORS_DIRECTLY
 /* As psyco_call_psyco, to the compiled code at 'ventry' (run time), with
    'vframe' (run time) in the word above the callee's own slot, where the
@@ -196,6 +206,11 @@ EXTERNFN void
 psyco_inline_exit(PsycoObject *po);
 EXTERNFN void
 psyco_note_call_site(PsycoObject *po, int lasti);
+/* where po's machine frame keeps its return address now, in bytes below
+   its own slot: where the call pushed it, unless a block it went on in
+   keeps it elsewhere (a unification may move it, as any stack value) */
+EXTERNFN long
+psyco_ret_below(PsycoObject *po);
 /* give back the psyco_locals_maps indices of a dead owner's call sites */
 EXTERNFN void
 psyco_release_notes(int *notes, int n);

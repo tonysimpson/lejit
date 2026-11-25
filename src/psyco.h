@@ -1017,9 +1017,6 @@ typedef struct {
 typedef struct {
     int lasti; /* f_lasti there, -1 for the start */
     int count;
-    int in_handler; /* a coroutine's place inside an exception handler,
-                       which resumes interpreted (pycompiler.c: a handler
-                       that can await runs in ceval) */
     le_resume_entry_t entries[LE_RESUME_ENTRIES];
 } le_resume_point_t;
 
@@ -1083,19 +1080,20 @@ typedef struct le_gen_direct_s {
    memory (eval_hook.c) */
 EXTERNFN le_gen_direct_t *
 le_gen_direct_table(PyCodeObject *co, le_code_extra_t *x);
-/* what compiled code calls after a direct step of the generator 'gen'
-   whose run gave 'result' and didn't simply pause at a yield
-   (eval_hook.c), as gen_iternext returns */
+/* what compiled code calls on thread 'ts' after a direct step of the
+   generator 'gen' whose run gave 'result' and didn't simply pause at a
+   yield (eval_hook.c), as gen_iternext returns */
 EXTERNFN PyObject *
-le_gen_direct_end(PyObject *gen, PyObject *result);
+le_gen_direct_end(PyThreadState *ts, PyObject *gen, PyObject *result);
 /* the same after a step made by send(), as gen_send returns */
 EXTERNFN PyObject *
-le_gen_direct_send_end(PyObject *gen, PyObject *result);
+le_gen_direct_send_end(PyThreadState *ts, PyObject *gen, PyObject *result);
 /* the same after a step made by yield from's SEND, as PyIter_Send:
    1 with the value yielded in out[0], 0 with the value returned, -1 with
    the exception */
 EXTERNFN int
-le_gen_direct_send_status(PyObject *gen, PyObject *result, PyObject *out[]);
+le_gen_direct_send_status(PyThreadState *ts, PyObject *gen, PyObject *result,
+                          PyObject *out[]);
 #endif
 /* the record lives in a weak reference to its code object (lejit.c) */
 typedef struct {

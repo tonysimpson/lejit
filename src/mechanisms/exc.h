@@ -75,6 +75,15 @@ le_exc_put_traceback(PyThreadState *ts, PyObject *tb)
 {
     ((PyBaseExceptionObject *)ts->current_exception)->traceback = tb;
 }
+/* the exception being raised, taken off the thread (a new reference): its
+   value, already normalised, with its traceback */
+static inline PyObject *
+le_exc_take(PyThreadState *ts)
+{
+    PyObject *value = ts->current_exception;
+    ts->current_exception = NULL;
+    return value;
+}
 #else
 /* The exception being raised is the thread state's curexc_type,
    curexc_value and curexc_traceback; the one being handled
@@ -119,6 +128,20 @@ static inline void
 le_exc_put_traceback(PyThreadState *ts, PyObject *tb)
 {
     ts->curexc_traceback = tb;
+}
+/* the exception being raised, taken off the thread (a new reference): its
+   value, normalised and given its traceback */
+static inline PyObject *
+le_exc_take(PyThreadState *ts)
+{
+    PyObject *type, *value, *tb;
+    (void)ts;
+    PyErr_Fetch(&type, &value, &tb);
+    PyErr_NormalizeException(&type, &value, &tb);
+    PyException_SetTraceback(value, tb != NULL ? tb : Py_None);
+    Py_XDECREF(tb);
+    Py_XDECREF(type);
+    return value;
 }
 
 #endif

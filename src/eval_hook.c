@@ -285,13 +285,10 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
     }
     for (i = 0; i < x->nresumes; i++) {
         le_resume_point_t *p = &x->resumes[i];
-        if (p->lasti == -2) {
+        if (p->lasti == -2)
             p->lasti = lasti;
-            p->in_handler = (co->co_flags & CO_COROUTINE) && lasti >= 0 &&
-                            psyco_in_handler(co, resume_start(lasti));
-        }
         if (p->lasti == lasti)
-            return p->in_handler ? NULL : (x->last_resume = p);
+            return x->last_resume = p;
     }
     return NULL;
 }
@@ -1036,6 +1033,32 @@ le_gen_iternext(PyObject *self)
 #endif
 }
 
+#if !LE_HAS_EVAL_FRAME_POPS
+/* A direct step's run of 'gen' that returned, its frame 'f' unlinked,
+   ended as gen_send_ex2 ends it, without going back through it: where the
+   frame has no object, which _PyFrame_Clear would have to hand its words
+   to, 1 with the frame cleared; else 0, for gen_send_ex2 to end it. */
+static int
+gen_returned_clear(PyGenObject *gen, le_frame_t *f)
+{
+    int k, n;
+    if (f->frame_obj != NULL)
+        return 0;
+    Py_CLEAR(gen->gi_exc_state.exc_value);
+    gen->gi_frame_state = FRAME_CLEARED;
+    n = LE_FRAME_CODE(f)->co_nlocalsplus + le_frame_stack_depth(f);
+    for (k = 0; k < n; k++) Py_XDECREF(le_frame_word_take(f, k));
+    Py_CLEAR(f->f_locals);
+#if LE_HAS_FRAME_FUNCOBJ
+    Py_DECREF(LE_FRAME_FUNCOBJ(f));
+#else
+    Py_DECREF(f->f_func);
+#endif
+    Py_DECREF(LE_FRAME_CODE(f));
+    return 1;
+}
+#endif
+
 /* The rest of a step compiled code made itself (psyfunc.c:psyco_gen_step)
    whose run didn't pause at a yield in compiled code, as le_gen_iternext
    finishes a run of LeGen_Run: here the frame was never the thread's
@@ -1043,7 +1066,7 @@ le_gen_iternext(PyObject *self)
    (psyco_resume_run) and the evaluator pops frames, ceval has left it as
    gen_send_ex2 expects, its exception state unlinked. */
 DEFINEFN PyObject *
-le_gen_direct_end(PyObject *self, PyObject *result)
+le_gen_direct_end(PyThreadState *ts, PyObject *self, PyObject *result)
 {
     PyGenObject *gen = (PyGenObject *)self;
     le_frame_t *f =
@@ -1051,8 +1074,7 @@ le_gen_direct_end(PyObject *self, PyObject *result)
 #if LE_HAS_EVAL_FRAME_POPS
     if (gen->gi_exc_state.previous_item != NULL) {
         le_gen_frame_end(f, result);
-        result =
-            le_gen_frame_leave(PyThreadState_GET(), f, result, frame_done);
+        result = le_gen_frame_leave(ts, f, result, frame_done);
     }
     if (LE_GEN_PAUSED(gen->gi_frame_state) || result == NULL)
         return result;
@@ -1061,13 +1083,18 @@ le_gen_direct_end(PyObject *self, PyObject *result)
     Py_DECREF(result);
     return NULL;
 #else
-    PyThreadState *ts = PyThreadState_GET();
     le_gen_frame_end(f, result);
     ts->exc_info = gen->gi_exc_state.previous_item;
     gen->gi_exc_state.previous_item = NULL;
     f->previous = NULL;
     if (LE_GEN_PAUSED(gen->gi_frame_state))
         return result;
+    if (result != NULL && gen_returned_clear(gen, f)) {
+        if (result != Py_None)
+            _PyGen_SetStopIterationValue(result);
+        Py_DECREF(result);
+        return NULL;
+    }
     gen->gi_frame_state = FRAME_SUSPENDED;
     gen_ending_frame = f;
     gen_ending_result = result;
@@ -1078,16 +1105,17 @@ le_gen_direct_end(PyObject *self, PyObject *result)
 /* gen_iternext and gen_send differ only in a return of None, where
    send raises StopIteration */
 DEFINEFN PyObject *
-le_gen_direct_send_end(PyObject *self, PyObject *result)
+le_gen_direct_send_end(PyThreadState *ts, PyObject *self, PyObject *result)
 {
-    result = le_gen_direct_end(self, result);
+    result = le_gen_direct_end(ts, self, result);
     if (result == NULL && !PyErr_Occurred())
         PyErr_SetNone(PyExc_StopIteration);
     return result;
 }
 
 DEFINEFN int
-le_gen_direct_send_status(PyObject *self, PyObject *result, PyObject *out[])
+le_gen_direct_send_status(PyThreadState *ts, PyObject *self, PyObject *result,
+                          PyObject *out[])
 {
     PyGenObject *gen = (PyGenObject *)self;
     le_frame_t *f =
@@ -1095,15 +1123,13 @@ le_gen_direct_send_status(PyObject *self, PyObject *result, PyObject *out[])
 #if LE_HAS_EVAL_FRAME_POPS
     if (gen->gi_exc_state.previous_item != NULL) {
         le_gen_frame_end(f, result);
-        result =
-            le_gen_frame_leave(PyThreadState_GET(), f, result, frame_done);
+        result = le_gen_frame_leave(ts, f, result, frame_done);
     }
     if (result == NULL)
         return -1;
     out[0] = result;
     return LE_GEN_PAUSED(gen->gi_frame_state);
 #else
-    PyThreadState *ts = PyThreadState_GET();
     PySendResult r;
     le_gen_frame_end(f, result);
     ts->exc_info = gen->gi_exc_state.previous_item;
@@ -1112,6 +1138,10 @@ le_gen_direct_send_status(PyObject *self, PyObject *result, PyObject *out[])
     if (LE_GEN_PAUSED(gen->gi_frame_state)) {
         out[0] = result;
         return 1;
+    }
+    if (result != NULL && gen_returned_clear(gen, f)) {
+        out[0] = result;
+        return 0;
     }
     /* gen_send_ex2 finishes the run, as for le_gen_direct_end, sending
        None as the hook takes it back */
@@ -1282,10 +1312,144 @@ le_eval_frame_default(le_frame_t *f)
 int *le_recursion_limit;
 #endif
 
+#if LE_HAS_C_STACK_SOFT_LIMIT
+long le_c_entry_charge, le_c_step_charge[LE_C_WAYS];
+
+/* The C stack a level of recursion through C takes, measured once with
+   small recursions for mechanisms/recursion.h's charges, as it depends on
+   how CPython and LeJIT were built: in CPython's evaluator through a C
+   call, sum(), next() and send(), then in LeJIT through a C call. */
+static PyObject *
+stack_probe_sp(PyObject *self, PyObject *unused)
+{
+    return PyLong_FromVoidPtr(__builtin_frame_address(0));
+}
+
+static PyObject *
+stack_probe_call(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
+{
+    if (nargs != 2) {
+        PyErr_SetString(PyExc_TypeError, "two arguments");
+        return NULL;
+    }
+    return PyObject_CallOneArg(args[0], args[1]);
+}
+
+static PyMethodDef stack_probes[] = {
+    {"sp", stack_probe_sp, METH_NOARGS, NULL},
+    {"call", (PyCFunction)(void (*)(void))stack_probe_call, METH_FASTCALL,
+     NULL},
+    {NULL, NULL, 0, NULL}};
+
+static const char stack_probe_source[] =
+    "def call_(n):\n"
+    "    return sp() if n == 0 else call(call_, n - 1)\n"
+    "def sum_(n):\n"
+    "    yield sp() if n == 0 else sum(sum_(n - 1))\n"
+    "def next_(n):\n"
+    "    yield sp() if n == 0 else next(next_(n - 1))\n"
+    "def send_(n):\n"
+    "    yield sp() if n == 0 else send_(n - 1).send(None)\n";
+
+/* the C stack pointer at the bottom of 'fn'(depth), a generator stepped
+   once if 'gen'; 0 with an exception set */
+static __attribute__((noinline)) uintptr_t
+stack_probe_bottom(PyObject *fn, long depth, int gen)
+{
+    uintptr_t sp = 0;
+    PyObject *n = PyLong_FromLong(depth), *r, *v;
+    if (n == NULL)
+        return 0;
+    r = PyObject_CallOneArg(fn, n);
+    Py_DECREF(n);
+    if (r == NULL)
+        return 0;
+    v = gen ? PyIter_Next(r) : (Py_INCREF(r), r);
+    Py_DECREF(r);
+    if (v != NULL) {
+        sp = (uintptr_t)PyLong_AsVoidPtr(v);
+        Py_DECREF(v);
+    }
+    return sp;
+}
+
+/* the C stack one level of the probe 'name' takes, warm; 0 if it fails */
+static long
+stack_probe_level(PyObject *ns, const char *name)
+{
+    PyObject *fn = PyDict_GetItemString(ns, name);
+    uintptr_t one = 0, two = 0;
+    int gen = strcmp(name, "call_") != 0, round;
+    if (fn == NULL)
+        return 0;
+    for (round = 0; round < 3; round++) {
+        one = stack_probe_bottom(fn, 1, gen);
+        two = stack_probe_bottom(fn, 2, gen);
+        if (one == 0 || two == 0 || two >= one) {
+            PyErr_Clear();
+            return 0;
+        }
+    }
+    return (long)(one - two);
+}
+
+/* the probes' namespace, or NULL */
+static PyObject *
+stack_probes_load(void)
+{
+    PyObject *ns, *code, *r;
+    PyMethodDef *m;
+    ns = PyDict_New();
+    if (ns == NULL)
+        goto error;
+    if (PyDict_SetItemString(ns, "__builtins__", PyEval_GetBuiltins()) < 0)
+        goto error;
+    for (m = stack_probes; m->ml_name != NULL; m++) {
+        PyObject *f = PyCFunction_New(m, NULL);
+        if (f == NULL || PyDict_SetItemString(ns, m->ml_name, f) < 0) {
+            Py_XDECREF(f);
+            goto error;
+        }
+        Py_DECREF(f);
+    }
+    code = Py_CompileString(stack_probe_source, "<lejit stack probe>",
+                            Py_file_input);
+    if (code == NULL)
+        goto error;
+    r = PyEval_EvalCode(code, ns, ns);
+    Py_DECREF(code);
+    if (r == NULL)
+        goto error;
+    Py_DECREF(r);
+    return ns;
+error:
+    PyErr_Clear();
+    Py_XDECREF(ns);
+    return NULL;
+}
+#endif
+
 DEFINEFN int
 le_entry_install(void)
 {
     le_eval_frame_fn now = get_eval_frame();
+#if LE_HAS_C_STACK_SOFT_LIMIT
+    /* the first time only, when no LeJIT level is running to hold a
+       charge, and before LeJIT's hook goes in */
+    static int charges_measured = 0;
+    PyObject *probes = NULL;
+    long plain_call = 0, plain_step[LE_C_WAYS] = {0};
+    if (!charges_measured && now != LeEval_EvalFrame) {
+        charges_measured = 1;
+        probes = stack_probes_load();
+        if (probes != NULL) {
+            plain_call = stack_probe_level(probes, "call_");
+            plain_step[LE_C_CONSUMER] = stack_probe_level(probes, "sum_");
+            plain_step[LE_C_NEXT] = stack_probe_level(probes, "next_");
+            plain_step[LE_C_SEND] = stack_probe_level(probes, "send_");
+        }
+    }
+#endif
 #if LE_KEEPS_RECURSION_LIMIT
     le_recursion_limit = le_recursion_limit_address();
 #endif
@@ -1302,6 +1466,21 @@ le_entry_install(void)
         original_eval_frame = now;
         set_eval_frame(LeEval_EvalFrame);
     }
+#if LE_HAS_C_STACK_SOFT_LIMIT
+    if (probes != NULL) {
+        /* each compiled on its first call; LeJIT runs sum_'s level as
+           compiled code alone, which is taken as what its steps take */
+        long lejit_call = stack_probe_level(probes, "call_");
+        long lejit_step = stack_probe_level(probes, "sum_");
+        int way;
+        if (lejit_call > 0 && plain_call > lejit_call)
+            le_c_entry_charge = plain_call - lejit_call;
+        for (way = LE_C_CONSUMER; way < LE_C_WAYS; way++)
+            if (lejit_step > 0 && plain_step[way] > lejit_step)
+                le_c_step_charge[way] = plain_step[way] - lejit_step;
+        Py_DECREF(probes);
+    }
+#endif
     return 0;
 }
 
