@@ -985,6 +985,19 @@ def SUM_COMPLEX_COMPENSATED():
 
 
 @probe
+def SUM_EXACT_NUMBERS():
+    """sum([1e100, True, -1e100]) loses the True, which leaves the float
+    loop; where that loop adds no int compensated, it can't be seen, and
+    the loop takes a subclass as its int, as it did then (run)"""
+    if sum([1e100, 1, -1e100]) == 0.0:
+        return False, 'sum([1e100, 1, -1e100]) is 0.0'
+    r = sum([1e100, True, -1e100])
+    if r not in (0.0, 1.0):
+        raise Unanswered('sum([1e100, True, -1e100]) is %r' % r)
+    return r == 0.0, 'sum([1e100, True, -1e100]) is %r' % r
+
+
+@probe
 def LOAD_GLOBAL_NULL_BIT():
     """a call of a global loads it with LOAD_GLOBAL whose argument is the
     name's index (0) shifted left once, plus one for the NULL it pushes
