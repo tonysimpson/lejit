@@ -2594,8 +2594,9 @@ load_global_cached(PsycoObject *po, PyObject *name, vinfo_t **result)
    [names tuple], arguments, and the callable under them or under the NULL
    beside them. *stack_to_pop counts everything including the callable
    (not the NULL). Keyword arguments are pending keywords
-   (pdictobject.c), which a Python function's call binds and anything else
-   makes the dict CPython makes: duplicates are impossible here (the
+   (pdictobject.c), which a Python function's call binds, a vectorcall
+   passes with their names tuple, and anything else makes into the dict
+   CPython makes: duplicates are impossible here (the
    bytecode compiler rejects them) and the callee checks the rest. */
 #if LE_HAS_OPCODE_CALL
 /* where the KW_NAMES naming the keyword arguments of the CALL at 'pos'
