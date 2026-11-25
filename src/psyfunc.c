@@ -33,6 +33,7 @@
 #include "bytecode.h"
 #include "pycodegen.h"
 #include "vcompiler.h"
+#include "segments.h"
 /* le_tracing_test */
 #include "mechanisms/tracing.h"
 /* le_tstate_load and the recursion count */
@@ -1079,7 +1080,7 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     stack_frame_info_t *finfo;
     int tuple_size, argcount, defcount = -2;
     int nfrees;
-    bool inlining, generator;
+    bool inlining, generator, on_segment = false;
     vinfo_t *vbuiltins;
     vinfo_t **frees = NULL;
     vinfo_t *freebuf[MAX_CALL_FREES];
@@ -1231,6 +1232,12 @@ psyco_call_pyfunc(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
             else
                 refused = runtime_condition_f(po, cc);
         }
+#if LE_STACK_SEGMENTS
+        /* with the stack low, the real call instead, on a segment */
+        if (!refused && entered && !inlining)
+            refused = on_segment =
+                runtime_condition_f(po, psyco_stack_low(po));
+#endif
         /* count the call's depth, as ceval does on entering a frame, so that
            deep recursion raises RecursionError instead of overflowing the C
            stack; psyco_call_psyco leaves it after the call.
@@ -1283,7 +1290,7 @@ fail_to_default:
        globals and defaults, as upstream's cimpl_call_pyfunc did, would lose
        its name and qualname (generators take co_name), closure and
        keyword-only defaults */
-    return PsycoFunction_RealCall(po, vfunc, arg_tuple, kw);
+    return PsycoFunction_RealCall(po, vfunc, arg_tuple, kw, on_segment);
 
 pyerr:
     psyco_virtualize_exception(po);
@@ -1325,7 +1332,7 @@ psyco_call_closure(PsycoObject *po, vinfo_t *vfunc, PyCodeObject *co,
     return result;
 
 fallback:
-    return PsycoFunction_RealCall(po, vfunc, arg_tuple, NULL);
+    return PsycoFunction_RealCall(po, vfunc, arg_tuple, NULL, false);
 }
 
 /* the code of a pending generator */
@@ -1650,6 +1657,15 @@ gen_step_tests(PsycoObject *po, vinfo_t *vgen, PyCodeObject *co,
    result is an int, as le_iter_send's: 1 with what the body yielded in
    out's item, 0 with what it returned. 'through_c' where CPython runs
    the step from C (next(), send()), not as FOR_ITER_GEN and SEND_GEN do. */
+#if LE_STACK_SEGMENTS
+/* le_iter_send, its result widened for le_call_on_segment */
+static long
+iter_send_long(PyObject *iter, PyObject *v, PyObject *out[])
+{
+    return le_iter_send(iter, v, out);
+}
+#endif
+
 static vinfo_t *
 gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
          vinfo_array_t *out, bool through_c)
@@ -1663,6 +1679,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     stack_frame_info_t *finfo;
     Source sources[2];
     int r;
+    bool on_segment = false;
     if (!is_runtime(vgen->source))
         goto generic;
     /* the value sent is made real before anything is changed */
@@ -1694,6 +1711,15 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
             !(is_compiletime(varg->source) &&
               CompileTime_Get(varg->source)->value == (long)Py_None),
         &ventry);
+#if LE_STACK_SEGMENTS
+    /* with the stack low, the step through C instead, on a segment */
+    if (r == 1 && !through_c && runtime_condition_f(po, psyco_stack_low(po))) {
+        vinfo_decref(vts, po);
+        vinfo_xdecref(ventry, po);
+        on_segment = true;
+        goto generic;
+    }
+#endif
     if (r == 1)
         r = through_c ? enter_c_recursive_call_or_not(po, vts)
                       : enter_recursive_call_or_not(po, vts);
@@ -1760,6 +1786,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     sources[0] = vsent->source;
     sources[1] = vf->source;
     finfo = psyco_finfo_gen(po, co);
+    finfo_last(finfo)->through_c = through_c;
     vresult = psyco_call_psyco_on_frame(po, ventry, sources, 2, vf, finfo);
     vinfo_decref(vsent, po);
     vsent = NULL;
@@ -1822,6 +1849,15 @@ error_nov:
     return NULL;
 
 generic:
+#if LE_STACK_SEGMENTS
+    if (on_segment && out != NULL)
+        return psyco_generic_call(po, le_call_on_segment,
+                                  CfReturnTypeInt | CfPyErrIfNeg, "lvvA",
+                                  (long)iter_send_long, vgen, varg, out);
+    if (on_segment)
+        return psyco_generic_call(po, le_call_on_segment, CfCommonIterNext,
+                                  "lv", (long)le_gen_iternext, vgen);
+#endif
     if (out != NULL)
         return psyco_generic_call(po, le_iter_send,
                                   CfReturnTypeInt | CfPyErrIfNeg, "vvA", vgen,

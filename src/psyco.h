@@ -994,6 +994,10 @@ le_gen_iternext(PyObject *gen);
    inside the coroutine with each await a SEND loop */
 #define LE_RESUMES_COROUTINES_COMPILED \
     (LE_RESUMES_COROUTINES || LE_RESUMES_ON_FRAME)
+/* CPython runs a Python-to-Python call in the caller's C frame, where its
+   frames are interpreter frames: compiled calls switch to a stack segment
+   when the stack is low (segments.c) */
+#define LE_STACK_SEGMENTS LE_HAS_INTERPRETER_FRAME
 /* a frame with more words (locals plus stack) resumes interpreted */
 #define LE_FRAME_WORDS_MAX 1024
 

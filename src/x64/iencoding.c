@@ -17,6 +17,7 @@
 #include "../codegen.h"
 #include "../codemanager.h"
 #include "../dispatcher.h"
+#include "../segments.h"
 #include "../vcompiler.h"
 #include "ipyencoding.h"
 
@@ -571,6 +572,7 @@ psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
     /* offset in stack to this this finfo */
     finfo_last(finfo)->link_stack_depth =
         po->stack_depth - INITIAL_STACK_DEPTH;
+    finfo_last(finfo)->through_c = through_c;
     initial_stack_depth = po->stack_depth;
     /* We assume that compiler register state is not changed by the call macros
      */
@@ -998,6 +1000,19 @@ make_runtime_copy(PsycoObject *po, vinfo_t *v)
     END_CODE
     return new_rtvinfo(po, rg, false, is_nonneg(v->source));
 }
+
+#if LE_STACK_SEGMENTS
+DEFINEFN
+condition_code_t
+psyco_stack_low(PsycoObject *po)
+{
+    BEGIN_CODE
+    NEED_CC();
+    CMP_R_FS(REG_X64_RSP, le_stack_low_at);
+    END_CODE
+    return CC_uL;
+}
+#endif
 
 #if LE_HAS_C_STACK_SOFT_LIMIT
 DEFINEFN
