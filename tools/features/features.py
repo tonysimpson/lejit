@@ -770,23 +770,32 @@ def frame_funcobj(s):
 
 def c_stack_soft_limit(s):
     """a thread's C calls are checked by its stack pointer alone, against
-    c_stack_soft_limit: Py_EnterRecursiveCall's test fails only below it,
-    and Py_LeaveRecursiveCall does nothing"""
+    c_stack_soft_limit: the one test _Py_EnterRecursiveCallTstate calls
+    reads it and fails only below it, and Py_LeaveRecursiveCall does
+    nothing"""
     has, where = _field(s, '_PyThreadStateImpl', 'c_stack_soft_limit',
                         missing=False)
     if not has:
         return False, where
-    for name, empty in (('_Py_MakeRecCheck', False),
-                        ('_Py_LeaveRecursiveCall', True)):
-        defs = s.definitions(name)
-        if not defs:
-            raise Unanswered('Include, every header: no %s' % name)
-        for path, body in defs:
-            texts = _texts(body)
-            if (not texts) != empty or \
-                    not empty and 'c_stack_soft_limit' not in texts:
-                return False, '%s:%s' % (path, name)
-    return True, where + ', _Py_MakeRecCheck, _Py_LeaveRecursiveCall'
+    enters = s.definitions('_Py_EnterRecursiveCallTstate')
+    if not enters:
+        raise Unanswered('Include, every header: no '
+                         '_Py_EnterRecursiveCallTstate')
+    for path, body in enters:
+        texts = _texts(body)
+        tests = [name for k, name in enumerate(texts[:-1])
+                 if texts[k + 1] == '(' and
+                 any('c_stack_soft_limit' in _texts(test)
+                     for _, test in s.definitions(name))]
+        if len(tests) != 1:
+            return False, '%s:_Py_EnterRecursiveCallTstate' % path
+    leaves = s.definitions('_Py_LeaveRecursiveCall')
+    if not leaves:
+        raise Unanswered('Include, every header: no _Py_LeaveRecursiveCall')
+    for path, body in leaves:
+        if _texts(body):
+            return False, '%s:_Py_LeaveRecursiveCall' % path
+    return True, '%s, %s, _Py_LeaveRecursiveCall' % (where, tests[0])
 
 
 def c_recursion_remaining(s):
