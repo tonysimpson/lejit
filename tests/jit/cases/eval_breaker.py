@@ -325,6 +325,50 @@ def pending_call_reads_lines_at_entry():
     return r[1], _lines_seen[:]
 
 
+def _tree(n):
+    if n:
+        _tree(n - 1)
+        _tree(n - 1)
+
+
+def _raise_from_handler(n):
+    try:
+        raise ValueError
+    except ValueError:
+        if n:
+            try:
+                _raise_from_handler(n - 1)
+            except ValueError:
+                _raise_from_handler(n - 1)
+        raise
+
+
+def _interrupted(f, *args):
+    old = signal.signal(signal.SIGALRM, signal.default_int_handler)
+    try:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0.002)
+            f(*args)
+        except KeyboardInterrupt:
+            return 'interrupted'
+        return 'not interrupted'
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
+
+
+# a signal handler runs on entry to a function called directly from
+# compiled code, as ceval runs it on entering a frame: here nothing else
+# tests, since no call returns to a loop
+def signal_in_direct_recursion():
+    return _interrupted(_tree, 60)
+
+
+# the same where every call raises, from a handler
+def signal_in_recursion_from_handler():
+    return _interrupted(_raise_from_handler, 60)
+
+
 CASES = [
     ('thread_sets_attribute', [()], {}),
     ('thread_sets_global', [()], {}),
@@ -341,4 +385,6 @@ CASES = [
     ('async_exc_on_self', [()], {}),
     ('switch_interval', [()], {}),
     ('pending_call_reads_lines_at_entry', [()], {}),
+    ('signal_in_direct_recursion', [()], {}),
+    ('signal_in_recursion_from_handler', [()], {}),
 ]

@@ -54,8 +54,7 @@ def recursion_depth():
 # stack runs out (since sys.monitoring came; before, plain CPython crashes
 # here), at the same depth where C counts levels. Where it measures the
 # stack instead, compiled levels take less of it and go deeper, so only the
-# error is compared. The error branch is compiled first at a shallow depth:
-# compiling near the stack's end is a known bug.
+# error is compared. The error branch is first compiled there.
 def stack_limit():
     if not hasattr(sys, 'monitoring'):
         return None
@@ -66,7 +65,6 @@ def stack_limit():
     stack_measured = hasattr(_testinternalcapi, 'get_stack_margin')
     old = sys.getrecursionlimit()
     try:
-        deepest(60)
         sys.setrecursionlimit(10 ** 7)
         k = 1000
         while k < 10 ** 6:

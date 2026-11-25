@@ -54,6 +54,7 @@ psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true);
       r      a run-time 'vinfo_t*' value passed as a reference
       a      a 'vinfo_array_t*' used by the C function as output buffer
       A      same as 'a', but the C function creates new references
+      i      a 'vinfo_array_t*' of values the C function reads
 
    'r' means that the C function wants to get a reference to a
    single-word value (typically it is an output argument). The
@@ -64,10 +65,23 @@ psyco_resolved_cc(PsycoObject *po, condition_code_t cc_known_true);
    containing as many words as specified by the array count.
    psyco_generic_call() fills the array with run-time vinfo_ts
    representing the output values.
+
+   'i' means that the C function gets a pointer to as many words as the
+   array count, filled before the call with the items' values, run-time or
+   compile-time, in the caller's frame; a NULL item's word is left unset.
+   The words are borrowed: the items keep their references. The call is
+   always made at run time (no CfPure).
 */
 EXTERNFN vinfo_t *
 psyco_generic_call(PsycoObject *po, void *c_function, int flags,
                    const char *arguments, ...);
+
+/* the stack an 'i' array of 'count' words takes: whole 16-byte units, so
+   that the depth after the call keeps the parity it would have without
+   the array. A block is matched only at the same return-address slot mod
+   16 (dispatcher.c:compare_return_address); a path reached at the other
+   parity would compile its blocks again. */
+#define INPUT_ARRAY_BYTES(count) ((((count) + 1) & ~1) * (int)sizeof(long))
 
 /* compile_time_call's result for a fresh object (psyco_shared_constant):
    psyco_generic_call then emits the call */
@@ -123,10 +137,11 @@ psyco_generic_call(PsycoObject *po, void *c_function, int flags,
 /* To emit the call to other code blocks emitted by Psyco. 'argsources' gives
    the run-time sources for the arguments, as specified by
    psyco_build_frame(). */
-/* Py_LeaveRecursiveCall after a compiled call (psyfunc.c); false with an
-   exception set */
+/* Py_LeaveRecursiveCall after a compiled call (psyfunc.c), and with
+   'through_c' the C count too, for a frame CPython runs from C; false with
+   an exception set */
 EXTERNFN bool
-psyco_leave_recursive_call(PsycoObject *po);
+psyco_leave_recursive_call(PsycoObject *po, bool through_c);
 /* tests the 32-bit int at 'address' at run time: CC_NE if it isn't 0 */
 EXTERNFN condition_code_t
 psyco_int32_nonzero_at(PsycoObject *po, void *address);
@@ -142,10 +157,11 @@ psyco_check_eval_breaker(PsycoObject *po);
    test (psyfunc.c) */
 EXTERNFN bool
 psyco_cannot_block(void *c_function);
+/* 'through_c' as psyco_leave_recursive_call's */
 EXTERNFN vinfo_t *
 psyco_call_psyco(PsycoObject *po, CodeBufferObject *codebuf,
                  Source argsources[], int argcount,
-                 struct stack_frame_info_s *finfo);
+                 struct stack_frame_info_s *finfo, bool through_c);
 #if LE_RESUMES_GENERATORS_DIRECTLY
 /* As psyco_call_psyco, to the compiled code at 'ventry' (run time), with
    'vframe' (run time) in the word above the callee's own slot, where the
@@ -270,6 +286,11 @@ integer_conditional(PsycoObject *po, condition_code_t cc, long immed_true,
 /* make a run-time copy of a vinfo_t */
 EXTERNFN vinfo_t *
 make_runtime_copy(PsycoObject *po, vinfo_t *v);
+#if LE_HAS_C_STACK_SOFT_LIMIT
+/* the machine's stack pointer, at run time */
+EXTERNFN vinfo_t *
+psyco_stack_pointer(PsycoObject *po);
+#endif
 
 /* store 'v' in the local '*slot', releasing what it held */
 EXTERNFN void
