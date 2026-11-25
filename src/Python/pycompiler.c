@@ -988,23 +988,41 @@ cimpl_with_exit_exc(PyObject *exit_func, PyObject *value)
 #endif
 
 #if LE_HAS_OPCODE_LOAD_SPECIAL
-PyAPI_FUNC(PyObject *) _PyObject_LookupSpecial(PyObject *, PyObject *);
 
-/* LOAD_SPECIAL: the bound special method (__enter__, __exit__ and the
-   async ones) that ceval's _PyObject_LookupSpecialMethod finds, with
-   ceval's error where the type has none */
-static PyObject *
-cimpl_load_special(PyObject *owner, long which)
+/* LOAD_SPECIAL: the special method (__enter__, __exit__ and the async
+   ones) on the type of 'owner', in out[0], as ceval's
+   _PyObject_LookupSpecialMethod finds it: 1 for a method descriptor,
+   which is called with 'owner' as its self; else 0, for the attribute
+   bound to 'owner'. -1 with ceval's error where the type has none. */
+static int
+cimpl_load_special(PyObject *owner, long which, PyObject *out[])
 {
-    PyObject *res =
-        _PyObject_LookupSpecial(owner, _Py_SpecialMethods[which].name);
-    if (res == NULL && !PyErr_Occurred())
+    PyObject *found =
+        _PyType_Lookup(Py_TYPE(owner), _Py_SpecialMethods[which].name);
+    descrgetfunc get;
+    if (found == NULL) {
         PyErr_Format(PyExc_TypeError,
                      _PyEval_SpecialMethodCanSuggest(owner, (int)which)
                          ? _Py_SpecialMethods[which].error_suggestion
                          : _Py_SpecialMethods[which].error,
                      owner);
-    return res;
+        return -1;
+    }
+    Py_INCREF(found);
+    if (PyType_HasFeature(Py_TYPE(found), Py_TPFLAGS_METHOD_DESCRIPTOR)) {
+        out[0] = found;
+        return 1;
+    }
+    get = Py_TYPE(found)->tp_descr_get;
+    if (get != NULL) {
+        out[0] = get(found, owner, (PyObject *)Py_TYPE(owner));
+        Py_DECREF(found);
+        if (out[0] == NULL)
+            return -1;
+    }
+    else
+        out[0] = found;
+    return 0;
 }
 
 /* WITH_EXCEPT_START's call where LOAD_SPECIAL may have left __exit__
@@ -8533,18 +8551,35 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
             goto fine;
 
 #if LE_HAS_OPCODE_LOAD_SPECIAL
-        /* with: the bound special method, and a NULL over it where
-           ceval may put the method's self */
-        case LOAD_SPECIAL:
-            x = psyco_generic_call(po, cimpl_load_special,
-                                   CfCommonNewRefPyObject, "vl", TOP(),
-                                   (long)oparg);
-            if (x == NULL)
+        /* with: the special method and its self over it, or the bound
+           attribute and a NULL */
+        case LOAD_SPECIAL: {
+            vinfo_array_t *array = array_new(1);
+            int unbound;
+            u = psyco_generic_call(po, cimpl_load_special,
+                                   CfCommonIntBoolOrError, "vlA", TOP(),
+                                   (long)oparg, array);
+            if (u == NULL) {
+                array_release(array);
                 break;
-            POP_DECREF();
+            }
+            x = array->items[0];
+            array_release(array);
+            unbound = runtime_NON_NULL_t(po, u); /* consumes u */
+            if (unbound < 0) {
+                vinfo_decref(x, po);
+                break;
+            }
+            POP(v);
             PUSH(x);
-            PUSH(psyco_vi_Zero());
+            if (unbound)
+                PUSH(v);
+            else {
+                vinfo_decref(v, po);
+                PUSH(psyco_vi_Zero());
+            }
             goto fine;
+        }
 #endif
 #if LE_HAS_OPCODE_BEFORE_WITH
         /* with: the bound __exit__ replaces the manager, and
