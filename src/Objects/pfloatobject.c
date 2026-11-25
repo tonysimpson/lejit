@@ -299,7 +299,7 @@ cimpl_float_add_w(PyObject *w, double a)
 {
     double b;
     CONVERT_TO_DOUBLE(w, b);
-    a = a + b;
+    a = psyco_addsd(a, b);
     return PyFloat_FromDouble(a);
 }
 
@@ -317,7 +317,7 @@ cimpl_float_mul_w(PyObject *w, double a)
 {
     double b;
     CONVERT_TO_DOUBLE(w, b);
-    a = a * b;
+    a = psyco_mulsd(a, b);
     return PyFloat_FromDouble(a);
 }
 
@@ -361,7 +361,7 @@ cimpl_float_rem_w(PyObject *w, double vx)
 static double
 cimpl_float_add(double a, double b)
 {
-    return a + b;
+    return psyco_addsd(a, b);
 }
 
 static double
@@ -373,7 +373,7 @@ cimpl_float_sub(double a, double b)
 static double
 cimpl_float_mul(double a, double b)
 {
-    return a * b;
+    return psyco_mulsd(a, b);
 }
 
 static int

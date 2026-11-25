@@ -24,6 +24,22 @@
 /* not-yet-computed integers; it will call PyFloat_FromDouble */
 EXTERNVAR source_virtual_t psyco_computed_float;
 
+/* a + b and a * b giving a's NaN when both are NaNs, as CPython's
+   specialised float instructions do; in C the compiler may swap a
+   commutative operation's operands */
+PSY_INLINE double
+psyco_addsd(double a, double b)
+{
+    __asm__("addsd %1, %0" : "+x"(a) : "x"(b));
+    return a;
+}
+PSY_INLINE double
+psyco_mulsd(double a, double b)
+{
+    __asm__("mulsd %1, %0" : "+x"(a) : "x"(b));
+    return a;
+}
+
 /* !! consumes a references to vdouble. PsycoFloat_FromLong() does not. */
 PSY_INLINE vinfo_t *
 PsycoFloat_FROM_DOUBLE(vinfo_t *vdouble)
