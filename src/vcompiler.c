@@ -1034,8 +1034,11 @@ DEFINEFN
 code_t *
 psyco_compile(PsycoObject *po, mergepoint_t *mp, bool continue_compilation)
 {
-    vcompatible_t *cmp =
-        mp == NULL ? NULL : psyco_compatible(po, &mp->entries);
+    vcompatible_t *cmp;
+    BEGIN_CODE
+    XMM_SPILL();
+    END_CODE
+    cmp = mp == NULL ? NULL : psyco_compatible(po, &mp->entries);
 
     /*psyco_assert_cleared_tmp_marks(&po->vlocals);  -- not needed -- */
 
@@ -1141,9 +1144,12 @@ DEFINEFN long psyco_stat_joins[4];
 static code_t *
 compile_join(PsycoObject *po, global_entries_t *ge, bool branch, bool first)
 {
-    vcompatible_t *cmp =
-        ge == NULL ? NULL : psyco_compatible_join(po, ge, branch);
+    vcompatible_t *cmp;
     CodeBufferObject *codebuf;
+    BEGIN_CODE
+    XMM_SPILL();
+    END_CODE
+    cmp = ge == NULL ? NULL : psyco_compatible_join(po, ge, branch);
 
     if (cmp != NULL && cmp->diff == NullArray) {
         CodeBufferObject *oldcodebuf;
@@ -1186,7 +1192,12 @@ psyco_compile_cond(PsycoObject *po, mergepoint_t *mp,
     vcompatible_t *cmp;
     psyco_resolved_cc(po2, condition);
     psyco_resolved_cc(po, INVERT_CC(condition));
-    cmp = mp == NULL ? NULL : psyco_compatible(po2, &mp->entries);
+    /* the exact match's moves go in a short block, with no room to spill
+       XMM registers first: a state holding them is compiled later, as a
+       new block, by psyco_compile_code */
+    cmp = mp == NULL || psyco_xmm_live(po2)
+              ? NULL
+              : psyco_compatible(po2, &mp->entries);
 
     extra_assert((int)condition < CC_TOTAL);
 
@@ -1227,8 +1238,18 @@ psyco_compile_code(PsycoObject *po, mergepoint_t *mp)
     code_t *code1;
     CodeBufferObject *codebuf;
     bool compile_now;
-    vcompatible_t *cmp =
-        mp == NULL ? NULL : psyco_compatible(po, &mp->entries);
+    vcompatible_t *cmp;
+
+    if (psyco_xmm_live(po)) {
+        /* a paused state that held XMM registers: a block of its own
+           spills them, then compiles on from the merge point */
+        codebuf = psyco_new_code_buffer(po, NULL, &po->codelimit);
+        po->code = insn_code_label(codebuf->codestart);
+        code1 = psyco_compile(po, mp, false);
+        CLOSE_CODE("block", codebuf->codestart, code1);
+        return codebuf;
+    }
+    cmp = mp == NULL ? NULL : psyco_compatible(po, &mp->entries);
 
     /*psyco_assert_cleared_tmp_marks(&po->vlocals);  -- not needed -- */
 
