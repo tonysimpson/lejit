@@ -11,6 +11,7 @@
  * known at run time is not promoted, only its code
  * (psyfunc.c:psyco_call_closure).
  */
+#include "../Python/genrecord.h"
 #include "pfuncobject.h"
 #include "../psyfunc.h"
 #include "pclassobject.h"
@@ -228,6 +229,48 @@ PsycoGenexpr_Check(vinfo_t *v)
     return is_virtualtime(v->source) &&
            VirtualTime_Get(v->source) == &psyco_pending_genexpr;
 }
+
+#if LE_RESUMES_GENERATORS_DIRECTLY
+static source_virtual_t psyco_virtual_gen;
+
+static bool
+compute_vgen(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *f = vinfo_getitem(v, iGENEXPR_FUNC);
+    vinfo_t *rec = vinfo_getitem(v, iVGEN_RECORD);
+    vinfo_t *g;
+    int i;
+    if (f == NULL || rec == NULL)
+        return false;
+    g = psyco_generic_call(po, le_gen_record_escape, CfCommonNewRefPyObject,
+                           "vv", rec, f);
+    if (g == NULL)
+        return false;
+    for (i = iGENEXPR_FUNC; i <= iGENEXPR_GLOBALS; i++) {
+        vinfo_xdecref(v->array->items[i], po);
+        v->array->items[i] = NULL;
+    }
+    vinfo_move(po, v, g);
+    return true;
+}
+
+DEFINEFN void
+PsycoVgen_FromPending(PsycoObject *po, vinfo_t *v, vinfo_t *rec)
+{
+    vinfo_decref(v->array->items[iGENEXPR_ARGS], po);
+    v->array->items[iVGEN_RECORD] = rec;
+    vinfo_xdecref(v->array->items[iGENEXPR_GLOBALS], po);
+    v->array->items[iGENEXPR_GLOBALS] = NULL;
+    v->source = VirtualTime_New(&psyco_virtual_gen);
+}
+
+DEFINEFN bool
+PsycoVgen_Check(vinfo_t *v)
+{
+    return is_virtualtime(v->source) &&
+           VirtualTime_Get(v->source) == &psyco_virtual_gen;
+}
+#endif
 
 /***************************************************************/
 /*** function objects meta-implementation                    ***/
@@ -738,4 +781,7 @@ psy_funcobject_init(void)
     INIT_SVIRTUAL_NOCALL(psyco_computed_function, compute_function, 1);
     /* a generator has an identity: made real before any call */
     INIT_SVIRTUAL_NOCALL(psyco_pending_genexpr, compute_genexpr, 1);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    INIT_SVIRTUAL_NOCALL(psyco_virtual_gen, compute_vgen, 1);
+#endif
 }

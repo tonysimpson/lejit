@@ -59,6 +59,7 @@
  * compiled code had at the call, which PyFrame_LocalsToFast would write back.
  */
 #include "frames.h"
+#include "genrecord.h"
 #include "../Objects/pobject.h"
 #include "../codemanager.h"
 #include "../vcompiler.h"
@@ -1239,9 +1240,15 @@ static le_frame_t *
 gen_frame_at(stack_frame_info_t **slot)
 {
     stack_frame_info_t *rec = *slot;
+    le_frame_t *f;
     if ((((long)rec) & 1) != 0 || !rec->on_gen_frame)
         return NULL;
-    return *(le_frame_t **)(psyco_next_stack_frame(slot) + 1);
+    f = *(le_frame_t **)(psyco_next_stack_frame(slot) + 1);
+    /* a record made real while its body ran: the generator's */
+    if (le_frame_is_record(f) && le_frame_record(f)->escaped != NULL)
+        f = (le_frame_t *)((char *)le_frame_record(f)->escaped +
+                           offsetof(PyGenObject, gi_iframe));
+    return f;
 }
 
 /* The frame object of that call: the generator's own, kept as a kept
@@ -2589,7 +2596,25 @@ static PyObject *
 frame_clear(PyFrameObject *frame, PyObject *unused)
 {
     PyObject *result;
-    int old = 0, mark = stands_for_running(frame);
+    int old = 0, mark;
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    le_frame_t *f = le_frame_of(frame);
+    /* a record's frame: running, CPython's method refuses it as the
+       thread's; paused, its generator's, which the clear closes */
+    if (le_frame_is_record(f) && le_frame_executing(f)) {
+        f->owner = FRAME_OWNED_BY_THREAD;
+        result = clear_cpython->ml_meth((PyObject *)frame, NULL);
+        f->owner = LE_FRAME_OWNED_BY_RECORD;
+        return result;
+    }
+    if (le_frame_is_record(f)) {
+        PyObject *gen = le_gen_record_escape_frame(f);
+        if (gen == NULL)
+            return NULL;
+        Py_DECREF(gen);
+    }
+#endif
+    mark = stands_for_running(frame);
     if (mark)
         old = le_pyframe_mark_running(frame);
     result = clear_cpython->ml_meth((PyObject *)frame, NULL);
@@ -4025,7 +4050,16 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
              (*st->slot)->co == co &&
              (g = gen_kept_frame(st->slot, -1)) != NULL) {
         /* the generator's own frame, which ceval goes on with as it
-           resumes it: it is linked and has its builtins already */
+           resumes it: it is linked and has its builtins already. A
+           record's is made a generator's first. */
+#if LE_RESUMES_GENERATORS_DIRECTLY
+        if (le_frame_is_record(le_frame_of(g)) &&
+            le_gen_record_escape_running(le_frame_of(g)) == NULL) {
+            Py_DECREF(g);
+            PyMem_Free(st);
+            return NULL;
+        }
+#endif
         a = act_find(psyco_next_stack_frame(st->slot));
         a->resumed = 1;
 #ifdef PyFrameLocalsProxy_Check
