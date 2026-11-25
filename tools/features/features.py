@@ -868,31 +868,6 @@ def last_profiled_frame(s):
     return _field(s, '_ts', 'last_profiled_frame')
 
 
-def tstate_what_event(s):
-    """a thread's state says which sys.monitoring event's callback is
-    running (what_event), which ceval sets around each callback with its
-    tracing count"""
-    return _field(s, '_ts', 'what_event')
-
-
-def tracing_possible_runtime(s):
-    """ceval counts the threads with a trace function in the runtime's
-    ceval state (tracing_possible), and dispatches without the line-event
-    test while it is 0"""
-    return _field(s, '_ceval_runtime_state', 'tracing_possible', missing=False)
-
-
-def tracing_possible_interp(s):
-    """the same count is the interpreter's ceval state's"""
-    return _field(s, '_ceval_state', 'tracing_possible', missing=False)
-
-
-def reraise_lasti_tagged(s):
-    """RERAISE 1 reads the place under the exception as a tagged int
-    (PyStackRef_UntagInt), not an int object"""
-    return _case_has(s, 'RERAISE', 'PyStackRef_UntagInt', missing=False)
-
-
 def tstate_eval_breaker(s):
     """each thread has its own eval_breaker, in its state: its low bits are
     the events ceval handles with _Py_HandlePending"""
@@ -1677,6 +1652,10 @@ FRAMES = [
                                    lambda s: _body_has(s, 'Python/frame.c', '_PyFrame_ClearLocals', 'sp--', missing=False))),
     ('FINISHED_GENERATOR_UNLINKED', D('a generator\'s frame is cut from its caller before it is cleared (clear_gen_frame, or before it had one, each time it stops), so a generator that has ended or raised leaves no f_back',
                                       _finished_generator_unlinked)),
+    ('GEN_CLOSE_UNRUN', D('closing a generator paused at a yield in no try block of its body\'s own (RESUME_OPARG_DEPTH1_MASK) clears it without running it (gen_close)',
+                          lambda s: _body_has(s, 'Objects/genobject.c', 'gen_close', 'oparg & RESUME_OPARG_DEPTH1_MASK', missing=False))),
+    ('GEN_CLOSE_LOCALS_ONLY', D('that close releases only the frame\'s locals, and the rest of the frame when the generator goes (gen_close: _PyFrame_ClearLocals)',
+                                lambda s: _body_has(s, 'Objects/genobject.c', 'gen_close', '_PyFrame_ClearLocals', missing=False))),
     ('LASTI_IN_INSTRUCTIONS', lasti_in_instructions),
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
@@ -1741,10 +1720,6 @@ STATE = [
     ('BREAKER_AFTER_BACK_JUMP', breaker_after_back_jump),
     ('TSTATE_CURRENT_FRAME', tstate_current_frame),
     ('TSTATE_EVAL_BREAKER', tstate_eval_breaker),
-    ('TSTATE_WHAT_EVENT', tstate_what_event),
-    ('TRACING_POSSIBLE_RUNTIME', tracing_possible_runtime),
-    ('TRACING_POSSIBLE_INTERP', tracing_possible_interp),
-    ('RERAISE_LASTI_TAGGED', reraise_lasti_tagged),
 ]
 
 # Objects/abstract.c

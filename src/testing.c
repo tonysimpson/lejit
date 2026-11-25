@@ -2,6 +2,7 @@
    counters and what it made of a code object. Only checked builds
    (LEJIT_DEV_TRACE=1) have them, and the code size counts only codestats
    builds (LEJIT_DEV_CODESTATS=1). lejit.c adds them to the module. */
+#include "Python/genrecord.h"
 #include "Python/frames.h"
 #include "Python/pycompiler.h"
 #include "Objects/pmethodobject.h"
@@ -95,6 +96,19 @@ le_stats(PyObject *self, PyObject *unused)
             Py_CLEAR(d);
         Py_XDECREF(t);
     }
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    if (d != NULL) {
+        /* virtual generators' records (Python/genrecord.c) */
+        PyObject *t = Py_BuildValue(
+            "{slslslslslsl}", "made", le_stat_gen_records[0], "escaped",
+            le_stat_gen_records[1], "dropped_paused", le_stat_gen_records[2],
+            "running", le_stat_gen_records[3], "ended", le_stat_gen_records[4],
+            "closed_unrun", le_stat_gen_records[5]);
+        if (t == NULL || PyDict_SetItemString(d, "gen_records", t) < 0)
+            Py_CLEAR(d);
+        Py_XDECREF(t);
+    }
+#endif
     if (d != NULL) {
         /* call-site notes' map indices made, and free for reuse (codegen.c) */
         PyObject *t = Py_BuildValue("(ll)", le_notes_made, le_notes_free);
@@ -310,31 +324,6 @@ le_fail_after(PyObject *self, PyObject *args)
 }
 #endif
 
-#if ALL_CHECKS
-/* for tests: le_osr_arm */
-static PyObject *
-le_osr_arm_py(PyObject *self, PyObject *args)
-{
-    PyObject *co;
-    long k;
-    int r;
-    if (!PyArg_ParseTuple(args, "O!l", &PyCode_Type, &co, &k))
-        return NULL;
-    if (le_not_set_up("_osr_arm"))
-        return NULL;
-    r = le_osr_arm((PyCodeObject *)co, k);
-    if (r < 0)
-        return NULL;
-    return PyBool_FromLong(r);
-}
-
-static PyObject *
-le_osr_switches_py(PyObject *self, PyObject *unused)
-{
-    return PyLong_FromLong(le_osr_switches);
-}
-#endif
-
 DEFINEVAR PyMethodDef le_testing_methods[] = {
 #if LE_CODESTATS
     {"_codestats", le_codestats, METH_NOARGS, "Code size per instruction."},
@@ -350,10 +339,6 @@ DEFINEVAR PyMethodDef le_testing_methods[] = {
      "{offset: [dead local names]} at each merge point, or None."},
     {"_inlinable", le_inlinable, METH_O,
      "True if calls to this code object are inlined."},
-    {"_osr_arm", le_osr_arm_py, METH_VARARGS,
-     "Take a frame of the code over after k more backward jumps."},
-    {"_osr_switches", le_osr_switches_py, METH_NOARGS,
-     "Frames taken over at a loop head so far."},
     {"_unregistered_metas", le_unregistered_metas, METH_NOARGS,
      "['module.name: why'] for each meta that wasn't registered."},
 #endif

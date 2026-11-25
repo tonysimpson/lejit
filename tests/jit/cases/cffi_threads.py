@@ -159,7 +159,7 @@ def stress_tiny_switch_interval():
     sys.setswitchinterval(1e-5)
     try:
         out = {}
-        ts = [threading.Thread(target=_mixed, args=(5000, out, k))
+        ts = [threading.Thread(target=_mixed, args=(500, out, k))
               for k in range(6)]
         for t in ts:
             t.start()

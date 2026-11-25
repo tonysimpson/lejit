@@ -59,6 +59,7 @@
  * compiled code had at the call, which PyFrame_LocalsToFast would write back.
  */
 #include "frames.h"
+#include "genrecord.h"
 #include "../Objects/pobject.h"
 #include "../codemanager.h"
 #include "../vcompiler.h"
@@ -270,7 +271,6 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
     fr->n_entry_locals = 0;
     fr->resumed = 0;
     fr->exposed = 0;
-    fr->osr = 0;
     fr->walked = NULL;
     fr->next = frame_runs;
     frame_runs = fr;
@@ -447,10 +447,8 @@ psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p)
         if (keep != NULL)
             *kept = keep;
     }
-    if (p->lasti >= 0 && le_frame_is_gen(f))
+    if (p->lasti >= 0)
         le_gen_frame_pause(f, p->lasti, p->nstack);
-    else if (p->lasti >= 0)
-        le_osr_frame_pause(f, p->lasti, p->nstack);
 }
 
 #else
@@ -478,10 +476,7 @@ psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
         if (keep != NULL)
             fr->entry_locals = keep;
     }
-    if (fr->osr)
-        le_osr_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
-    else
-        le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
+    le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
     return f;
 }
 #endif
@@ -1245,9 +1240,15 @@ static le_frame_t *
 gen_frame_at(stack_frame_info_t **slot)
 {
     stack_frame_info_t *rec = *slot;
+    le_frame_t *f;
     if ((((long)rec) & 1) != 0 || !rec->on_gen_frame)
         return NULL;
-    return *(le_frame_t **)(psyco_next_stack_frame(slot) + 1);
+    f = *(le_frame_t **)(psyco_next_stack_frame(slot) + 1);
+    /* a record made real while its body ran: the generator's */
+    if (le_frame_is_record(f) && le_frame_record(f)->escaped != NULL)
+        f = (le_frame_t *)((char *)le_frame_record(f)->escaped +
+                           offsetof(PyGenObject, gi_iframe));
+    return f;
 }
 
 /* The frame object of that call: the generator's own, kept as a kept
@@ -1476,9 +1477,12 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
         /* a compiled callee */
         if (gen_frame_at(slot) != NULL)
             return gen_kept_frame(slot, lasti);
+        /* a frame already kept has its barrier in the return address */
         own = psyco_next_stack_frame(slot);
-        return keep_frame(own, slot, 0, return_address(own, rec), co, globals,
-                          lasti);
+        return keep_frame(
+            own, slot, 0,
+            act_find(own) != NULL ? NULL : return_address(own, rec), co,
+            globals, lasti);
     }
     if ((entry == 1 && rec->nargs >= 0 && finfo_last(rec) == rec + 1 &&
          (rec + 1)->co == (PyCodeObject *)co) ||
@@ -1598,6 +1602,16 @@ coro_finish(PyObject *coro)
     Py_DECREF(coro);
 }
 
+/* the bodies ceval goes on with as their coroutines, while it runs them
+   (psyco_resume_run_coro), by the slot of their compiled call: the call's
+   record stays on the stack, and its coroutine is that one */
+struct coro_run_s {
+    stack_frame_info_t **slot;
+    PyObject *coro;
+    struct coro_run_s *next;
+};
+static struct coro_run_s *coro_runs = NULL;
+
 /* The coroutine of the body whose call's record is in 'slot' (its
    record's coro_func set), made as CPython made it at the call, around the
    call's kept frame, and running: the same object each time. Borrowed;
@@ -1610,6 +1624,10 @@ coro_realise(stack_frame_info_t **slot)
     activation_t *a = act_find(psyco_next_stack_frame(slot));
     PyFrameObject *f;
     PyObject *coro;
+    struct coro_run_s *r;
+    for (r = coro_runs; r != NULL; r = r->next)
+        if (r->slot == slot)
+            return r->coro;
     if (a != NULL && a->coro != NULL)
         return a->coro;
     f = kept_frame((long)slot, (PyObject *)rec->co, func->func_globals, -1);
@@ -2578,7 +2596,25 @@ static PyObject *
 frame_clear(PyFrameObject *frame, PyObject *unused)
 {
     PyObject *result;
-    int old = 0, mark = stands_for_running(frame);
+    int old = 0, mark;
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    le_frame_t *f = le_frame_of(frame);
+    /* a record's frame: running, CPython's method refuses it as the
+       thread's; paused, its generator's, which the clear closes */
+    if (le_frame_is_record(f) && le_frame_executing(f)) {
+        f->owner = FRAME_OWNED_BY_THREAD;
+        result = clear_cpython->ml_meth((PyObject *)frame, NULL);
+        f->owner = LE_FRAME_OWNED_BY_RECORD;
+        return result;
+    }
+    if (le_frame_is_record(f)) {
+        PyObject *gen = le_gen_record_escape_frame(f);
+        if (gen == NULL)
+            return NULL;
+        Py_DECREF(gen);
+    }
+#endif
+    mark = stands_for_running(frame);
     if (mark)
         old = le_pyframe_mark_running(frame);
     result = clear_cpython->ml_meth((PyObject *)frame, NULL);
@@ -3249,6 +3285,118 @@ coros_exc_lend(PyObject *args, int on)
     }
 }
 
+/* A generator or coroutine that compiled code runs has its locals where
+   the compiled code keeps them. Where the gc visits a running one's frame
+   (not LE_HAS_RUNNING_STACK_HIDDEN), they are lent to its frame for a gc
+   call that visits it (le_get_referents, le_get_referrers), and what the
+   frame held goes back after: a real frame LeCode_Run runs, and a frame
+   compiled code runs a body on, or realised as a coroutine's. */
+typedef struct {
+    le_frame_t *frame;
+    int n;
+    PyObject **held; /* NOT_LENT where the word stays the frame's */
+} lent_t;
+static char not_lent;
+#define NOT_LENT ((PyObject *)&not_lent)
+
+#if !LE_HAS_RUNNING_STACK_HIDDEN
+static void
+lend_locals(lent_t **lent, int *nlent, int *cap, le_frame_t *frame,
+            stack_frame_info_t **slot, int own)
+{
+    PyCodeObject *co = le_frame_code(frame);
+    int i, n = le_code_nlocals(co);
+    PyObject **values;
+    if (n == 0)
+        return;
+    if (*nlent == *cap) {
+        int c = *cap == 0 ? 8 : 2 * *cap;
+        lent_t *t = PyMem_Realloc(*lent, c * sizeof(lent_t));
+        if (t == NULL)
+            return;
+        *lent = t;
+        *cap = c;
+    }
+    values = PyMem_Malloc(n_locals_plus(co) * sizeof(PyObject *) + 1);
+    if (values == NULL)
+        return;
+    if (!slot_locals(slot, co, values, own)) {
+        PyMem_Free(values);
+        return;
+    }
+    for (i = n; i < n_locals_plus(co); i++) Py_XDECREF(values[i]);
+    /* the cells are the frame's own; an unknown local stays as it is */
+    for (i = 0; i < n; i++) {
+        PyObject *v = values[i];
+        if (v == NULL) {
+            values[i] = NOT_LENT;
+            continue;
+        }
+        values[i] = le_frame_word_take(frame, i);
+        le_frame_word_put(frame, i, v);
+    }
+    (*lent)[*nlent].frame = frame;
+    (*lent)[*nlent].n = n;
+    (*lent)[*nlent].held = values;
+    (*nlent)++;
+}
+#endif
+
+static lent_t *
+running_locals_lend(int *nlent)
+{
+    lent_t *lent = NULL;
+    *nlent = 0;
+#if !LE_HAS_RUNNING_STACK_HIDDEN
+    int cap = 0;
+    PyThreadState *ts;
+    size_t k;
+    if (runs_key != NULL)
+        for (ts = PyInterpreterState_ThreadHead(PyInterpreterState_Main());
+             ts != NULL; ts = PyThreadState_Next(ts)) {
+            PyObject *c =
+                ts->dict == NULL ? NULL : PyDict_GetItem(ts->dict, runs_key);
+            FrameRuntime *fr;
+            if (c == NULL)
+                continue;
+            for (fr = *(FrameRuntime **)PyCapsule_GetPointer(c, NULL);
+                 fr != NULL; fr = fr->next)
+                if (!fr->resumed && le_frame_is_gen(fr->frame) &&
+                    fr->psy_code == le_frame_code(fr->frame))
+                    lend_locals(&lent, nlent, &cap, fr->frame,
+                                *fr->psy_frames_start, 0);
+        }
+    if (acts != NULL)
+        for (k = 0; k <= acts_mask; k++) {
+            activation_t *a = &acts[k];
+            if (a->own != NULL && !a->resumed && !a->suspended &&
+                (a->gen || a->coro != NULL))
+                lend_locals(&lent, nlent, &cap, le_frame_of(a->frame),
+                            a->inlined ? a->slot : a->own, a->inlined);
+        }
+#endif
+    return lent;
+}
+
+static void
+running_locals_return(lent_t *lent, int nlent)
+{
+    int k, i;
+    /* last lent first, should a frame have been lent twice */
+    for (k = nlent - 1; k >= 0; k--) {
+        for (i = 0; i < lent[k].n; i++) {
+            PyObject *v = lent[k].held[i];
+            if (v == NOT_LENT)
+                continue;
+            v = le_frame_word_take(lent[k].frame, i);
+            le_frame_word_put(lent[k].frame, i, lent[k].held[i]);
+            Py_XDECREF(v);
+        }
+        PyMem_Free(lent[k].held);
+    }
+    PyMem_Free(lent);
+}
+
 /* gc.get_referents visits a frame's f_localsplus in C, where CPython
    visits them for the frame (a running one's too, if its frame object is
    its frame): a frame given to it gets its locals now first, and is
@@ -3261,6 +3409,8 @@ le_get_referents(PyObject *self, PyObject *args)
 {
     Py_ssize_t i, n = PyTuple_GET_SIZE(args);
     PyObject *result;
+    lent_t *lent;
+    int nlent;
     int *old = PyMem_Malloc(n * sizeof(int) + 1);
     if (old == NULL)
         return PyErr_NoMemory();
@@ -3273,9 +3423,11 @@ le_get_referents(PyObject *self, PyObject *args)
         if (stands_for_running(f))
             old[i] = le_pyframe_mark_running(f);
     }
+    lent = running_locals_lend(&nlent);
     coros_exc_lend(args, 1);
     result = PyObject_Call(original_get_referents, args, NULL);
     coros_exc_lend(args, 0);
+    running_locals_return(lent, nlent);
     for (i = 0; i < n; i++)
         if (old[i] != INT_MIN)
             le_pyframe_unmark_running(
@@ -3305,20 +3457,32 @@ le_get_objects(PyObject *self, PyObject *args, PyObject *kwds)
 static PyObject *
 le_get_referrers(PyObject *self, PyObject *args)
 {
+    int nlent;
+    lent_t *lent;
+    PyObject *result;
     psyco_coros_realise();
-    return PyObject_Call(original_get_referrers, args, NULL);
+    lent = running_locals_lend(&nlent);
+    result = PyObject_Call(original_get_referrers, args, NULL);
+    running_locals_return(lent, nlent);
+    return result;
 }
 
 static PyObject *
 le_get_referrers_fast(PyObject *self, PyObject *const *args, Py_ssize_t nargs)
 {
+    int nlent;
+    lent_t *lent;
+    PyObject *result;
     psyco_coros_realise();
+    lent = running_locals_lend(&nlent);
 #if LE_HAS_VECTORCALL
-    return PyObject_Vectorcall(original_get_referrers, args, nargs, NULL);
+    result = PyObject_Vectorcall(original_get_referrers, args, nargs, NULL);
 #else
-    return _PyObject_FastCall(original_get_referrers, (PyObject **)args,
-                              nargs);
+    result =
+        _PyObject_FastCall(original_get_referrers, (PyObject **)args, nargs);
 #endif
+    running_locals_return(lent, nlent);
+    return result;
 }
 
 static PyMethodDef le_get_objects_def = {
@@ -3886,7 +4050,16 @@ psyco_resume_begin(PyCodeObject *co, PyObject *globals, PyObject *builtins,
              (*st->slot)->co == co &&
              (g = gen_kept_frame(st->slot, -1)) != NULL) {
         /* the generator's own frame, which ceval goes on with as it
-           resumes it: it is linked and has its builtins already */
+           resumes it: it is linked and has its builtins already. A
+           record's is made a generator's first. */
+#if LE_RESUMES_GENERATORS_DIRECTLY
+        if (le_frame_is_record(le_frame_of(g)) &&
+            le_gen_record_escape_running(le_frame_of(g)) == NULL) {
+            Py_DECREF(g);
+            PyMem_Free(st);
+            return NULL;
+        }
+#endif
         a = act_find(psyco_next_stack_frame(st->slot));
         a->resumed = 1;
 #ifdef PyFrameLocalsProxy_Check
@@ -4078,17 +4251,11 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
             le_frame_word_put(frame, nlocals + i, v);
     }
     le_frame_set_stack_depth(f, (int)nstack);
-    if (fr != NULL && fr->osr)
-        /* the ceval running it reads its place again as the event that
-           took it returns, and runs the instruction there */
-        le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti + LE_UNIT));
-    else {
-        le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
+    le_frame_set_lasti(le_frame_of(f), le_lasti_of((int)lasti));
 #if LE_HAS_FRAME_INSTR_PTR
-        /* ceval goes on from the instruction at the place, not after it */
-        LE_FRAME_PLACE(le_frame_of(f))++;
+    /* ceval goes on from the instruction at the place, not after it */
+    LE_FRAME_PLACE(le_frame_of(f))++;
 #endif
-    }
 #if !LE_HAS_EXCEPTION_TABLE
     f->f_iblock = st->iblock;
     memcpy(f->f_blockstack, st->blocks, st->iblock * sizeof(PyTryBlock));
@@ -4098,12 +4265,6 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
         if (st->catcher != f)
             catcher_write_locals(st->catcher, frame, nlocals);
         Py_DECREF(st->catcher);
-    }
-    if (fr != NULL && fr->osr) {
-        Py_DECREF(f);
-        PyMem_Free(st);
-        Py_INCREF(le_osr_ceval_goes_on);
-        return le_osr_ceval_goes_on;
     }
 
     if (st->slot != NULL)
@@ -4329,6 +4490,7 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack, long level,
     PyGenObject *gen;
     activation_t *a;
     int suspended;
+    struct coro_run_s run, **r;
     if (slot != NULL && (a = act_at(slot, le_pyframe_code(f))) != NULL &&
         a->frame == f) {
         coro = a->coro;
@@ -4351,7 +4513,14 @@ psyco_resume_run_coro(struct resume_s *st, long lasti, long nstack, long level,
     coro_exc_take(st, level, nstack, &gen->gi_exc_state, ts->exc_info);
     gen->gi_exc_state.previous_item = ts->exc_info;
     ts->exc_info = &gen->gi_exc_state;
+    run.slot = slot;
+    run.coro = coro;
+    run.next = coro_runs;
+    coro_runs = &run;
     result = psyco_resume_run(st, lasti, nstack); /* frees st */
+    /* other threads' runs may have begun and ended meanwhile */
+    for (r = &coro_runs; *r != &run; r = &(*r)->next);
+    *r = run.next;
     /* where ceval unlinks a generator's exception state and frame itself
        as it yields or ends, it has */
     if (gen->gi_exc_state.previous_item != NULL) {

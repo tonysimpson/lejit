@@ -254,6 +254,27 @@ def pointer_results(n):
         out.append((type(p).__name__, p.contents.value, p[0], bool(q),
                     p._b_needsfree_, p._objects, q._objects,
                     ctypes.addressof(p.contents) == vx.value))
+kept = []
+
+
+def byref_objects(n):
+    # byref() passed straight to a C function makes no object; one that
+    # escapes, is kept, or isn't a ctypes instance is byref's own
+    out = []
+    for i in range(n):
+        b = c_int(i)
+        c = c_int(-1)
+        memcpy(byref(c), byref(b), 4)
+        r = byref(c)
+        memset(r, 0, 4)
+        kept.append(byref(b))
+        s = c_short(5)
+        out.append((c.value, type(r).__name__, r._obj is c,
+                    type(kept[-1]).__name__, kept[-1]._obj is b,
+                    error(memset, byref(s), 0, 0), error(byref, 5),
+                    error(byref, b, 'x'), memset_untyped(byref(s, 1), 0, 1),
+                    s.value, error(labs, byref(b))))
+    del kept[:]
     return out
 
 
@@ -329,4 +350,5 @@ CASES = [
     ('big_ints', [(4,)], {}),
     ('big_computed_ints', [(8,)], {}),
     ('prototypes', [(6,)], {}),
+    ('byref_objects', [(6,)], {}),
 ]

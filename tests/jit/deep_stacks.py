@@ -113,6 +113,21 @@ def generator_for_loops():
     return [list(nest(10 ** 6))]
 
 
+def one(n):
+    yield n
+
+
+# a generator that only compiled code sees, stepped at every depth
+def down_stepping(n):
+    for m in one(n):
+        return down_stepping(m - 1) + 1 if m else 0
+
+
+def stepped_generators():
+    sys.setrecursionlimit(10 ** 6 + 100)
+    return [down_stepping(10 ** 6)]
+
+
 def in_threads(target, n, stack_size=256 * 1024):
     out = [None] * n
 
@@ -176,6 +191,7 @@ def caller_locals_across_segments():
 
 CASES = [deep_returns, deep_keyword_calls, deep_calls_through_cpython,
          through_c_still_limited, limit_raised_then_reached, generator_for_loops,
+         stepped_generators,
          small_thread_stacks, traceback_from_deep,
          caller_locals_across_segments]
 

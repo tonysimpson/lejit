@@ -60,10 +60,6 @@ jobs:
     # the official images give exact CPython releases, built as shared
     # libraries with their headers
     container: python:${{ matrix.python }}-bookworm
-    # builds the extension on versions it isn't yet installed on (3.11 on);
-    # changes nothing on the others
-    env:
-      LEJIT_DEV_FALLBACK: skip
     strategy:
       fail-fast: false
       matrix:
@@ -124,8 +120,6 @@ jobs:
     if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
-    env:
-      LEJIT_DEV_FALLBACK: skip
     strategy:
       fail-fast: false
       matrix:
@@ -158,8 +152,6 @@ jobs:
     if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
     container: python:${{ matrix.python }}-bookworm
-    env:
-      LEJIT_DEV_FALLBACK: skip
     strategy:
       fail-fast: false
       matrix:
@@ -177,10 +169,10 @@ jobs:
       - name: Release build
         run: make build PY=python && python tests/jit/build_info.py
 
-  # Pythons LeJIT doesn't support yet: installing builds no extension, and
-  # start() warns and does nothing
+  # a plain install where no wheel is built: it builds the extension, and
+  # start() starts with no warning
   install-newer:
-    name: install only (${{ matrix.python }})
+    name: install (${{ matrix.python }})
     needs: changes
     if: needs.changes.outputs.full == 'true'
     runs-on: ubuntu-24.04
@@ -191,6 +183,10 @@ jobs:
         python: ["3.11.11", "3.12.9", "3.13.2", "3.14.10", "3.15.2"]
     steps:
       - uses: actions/checkout@v4
+      - name: Install libffi and libunwind
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends libffi-dev libunwind-dev
       - name: Install
         run: |
           pip install .
@@ -200,10 +196,12 @@ jobs:
           with warnings.catch_warnings(record=True) as w:
               warnings.simplefilter('always')
               lejit.start()
-          assert lejit._core is None, 'an extension was built'
-          assert [x.category for x in w] == [RuntimeWarning], w
+          assert lejit._core is not None, 'no extension was built'
+          assert not w, [str(x.message) for x in w]
           "
 
+  # a Python newer than LeJIT runs on: installing builds no extension, and
+  # start() warns and does nothing
   install-main:
     name: install only (CPython main)
     needs: changes

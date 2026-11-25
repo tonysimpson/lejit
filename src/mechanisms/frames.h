@@ -335,14 +335,84 @@ le_frame_set_executing(le_frame_t *f, int on)
     (void)f;
     (void)on;
 }
+/* the generator whose frame f is */
+static inline PyGenObject *
+le_frame_gen(le_frame_t *f)
+{
+    return (PyGenObject *)((char *)f - offsetof(PyGenObject, gi_iframe));
+}
+/* the state of a generator whose run returned or raised: the one between
+   running and cleared, where CPython has one (FRAME_COMPLETED) */
+#define LE_GEN_ENDED_STATE \
+    (FRAME_CLEARED - FRAME_EXECUTING > 1 ? FRAME_EXECUTING + 1 : FRAME_CLEARED)
+/* A virtual generator's record (Python/genrecord.c): where a generator's
+   body that compiled code runs before any generator object exists keeps
+   its paused state between runs. Its frame is an interpreter frame laid
+   out as a generator's, so that the body reads and writes either the same
+   way, and its state and exception state are as a generator's. It is
+   never in a thread's chain; a frame object asked for while its body runs
+   is a view of its frame, as of a generator's, until the record lets the
+   frame go. CPython's code tells a generator's frame by its owner, and
+   takes a frame owned by anything but the thread, a generator or a frame
+   object for one it has not started (3.14's _PyFrame_IsIncomplete), so a
+   record's frame is owned as a frame object's own frame is, and is told
+   from one by the record's type, read before the frame: a frame object's
+   own frame has the frame object there. */
+/* how far a generator's state is before its frame, which a record's is
+   too, so that one address serves either */
+#define LE_GEN_STATE_GAP \
+    (offsetof(PyGenObject, gi_iframe) - offsetof(PyGenObject, gi_frame_state))
+typedef struct {
+    PyObject_HEAD
+        /* the real generator it has become, from then on (a reference) */
+        PyObject *escaped;
+    _PyErr_StackItem exc_state;
+    char before_state[(8 - LE_GEN_STATE_GAP % 8) % 8];
+    int8_t state; /* as a generator's gi_frame_state */
+    char after_state[LE_GEN_STATE_GAP - 1];
+    le_frame_t frame; /* last: its words follow */
+} le_gen_record_t;
+#define LE_FRAME_OWNED_BY_RECORD FRAME_OWNED_BY_FRAME_OBJECT
+_Static_assert(offsetof(PyFrameObject, _f_frame_data) >=
+                   offsetof(le_gen_record_t, frame),
+               "LeJIT: a frame object's own frame is too near its start");
+_Static_assert(offsetof(le_gen_record_t, frame) -
+                       offsetof(le_gen_record_t, state) ==
+                   LE_GEN_STATE_GAP,
+               "LeJIT: a record's state is not where a generator's is");
+extern PyTypeObject le_gen_record_type; /* Python/genrecord.c */
+static inline le_gen_record_t *
+le_frame_record(le_frame_t *f)
+{
+    return (le_gen_record_t *)((char *)f - offsetof(le_gen_record_t, frame));
+}
+static inline int
+le_frame_is_record(le_frame_t *f)
+{
+    return f->owner == LE_FRAME_OWNED_BY_RECORD &&
+           Py_TYPE(le_frame_record(f)) == &le_gen_record_type;
+}
+/* the state of the generator or record whose frame f is */
+static inline int8_t *
+le_frame_gen_state(le_frame_t *f)
+{
+    return (int8_t *)((char *)f - LE_GEN_STATE_GAP);
+}
+/* the frame is a generator's, resumed: the call of a generator function
+   runs its frame first to RETURN_GENERATOR, which makes the generator. Or
+   a record's. */
+static inline int
+le_frame_is_gen(le_frame_t *f)
+{
+    return f->owner == FRAME_OWNED_BY_GENERATOR || le_frame_is_record(f);
+}
 /* the frame is running, as frame.clear() sees it: the thread's, or a
-   generator's while it runs */
+   generator's or record's while it runs */
 static inline int
 le_frame_executing(le_frame_t *f)
 {
-    if (f->owner == FRAME_OWNED_BY_GENERATOR)
-        return ((PyGenObject *)((char *)f - offsetof(PyGenObject, gi_iframe)))
-                   ->gi_frame_state == FRAME_EXECUTING;
+    if (le_frame_is_gen(f))
+        return *le_frame_gen_state(f) == FRAME_EXECUTING;
     return f->owner == FRAME_OWNED_BY_THREAD;
 }
 static inline int
@@ -501,19 +571,6 @@ _Static_assert(sizeof(((le_frame_t *)0)->localsplus[0]) == sizeof(void *),
 #define LE_OFS_le_frame_t__frame_obj offsetof(le_frame_t, frame_obj)
 #define LE_SIZE2_le_frame_t__frame_obj 3
 #define LE_UNSIGNED_le_frame_t__frame_obj 0
-/* the frame is a generator's, resumed: the call of a generator function
-   runs its frame first to RETURN_GENERATOR, which makes the generator */
-static inline int
-le_frame_is_gen(le_frame_t *f)
-{
-    return f->owner == FRAME_OWNED_BY_GENERATOR;
-}
-/* the generator whose frame f is */
-static inline PyGenObject *
-le_frame_gen(le_frame_t *f)
-{
-    return (PyGenObject *)((char *)f - offsetof(PyGenObject, gi_iframe));
-}
 /* Where compiled code that steps a generator itself (psyfunc.c:
    psyco_gen_step) finds what it reads and writes: the generator's fields,
    its frame's (counted from the generator, whose frame is inside it), and
@@ -620,6 +677,40 @@ le_gen_frame_set_depth(le_frame_t *f, int n)
     f->stacktop = LE_FRAME_CODE(f)->co_nlocalsplus + n;
 #endif
 }
+/* A frame for the generator function 'func' as RETURN_GENERATOR leaves a
+   new generator's: its function and code (references it holds), globals
+   and builtins (its function's), no locals mapping, no frame object and
+   no caller, every word NULL, the stack empty, its place the
+   RETURN_GENERATOR at 'start' (code units from the first) or the
+   instruction after it, where the place is the one to go on with. Its
+   other fields are 0, as _PyFrame_Initialize leaves them. Owned by
+   'owner'. */
+static inline void
+le_frame_init_gen(le_frame_t *f, PyFunctionObject *func, int start, char owner)
+{
+    PyCodeObject *co = (PyCodeObject *)func->func_code;
+    int k;
+    memset(f, 0, offsetof(le_frame_t, localsplus));
+#if LE_HAS_FRAME_STACKREFS
+    f->f_executable = PyStackRef_FromPyObjectNew((PyObject *)co);
+    f->f_funcobj = PyStackRef_FromPyObjectNew((PyObject *)func);
+#elif LE_HAS_FRAME_EXECUTABLE
+    f->f_executable = Py_NewRef(co);
+    f->f_funcobj = Py_NewRef(func);
+#elif LE_HAS_FRAME_FUNCOBJ
+    f->f_code = (PyCodeObject *)Py_NewRef(co);
+    f->f_funcobj = Py_NewRef(func);
+#else
+    f->f_code = (PyCodeObject *)Py_NewRef(co);
+    f->f_func = (PyFunctionObject *)Py_NewRef(func);
+#endif
+    f->f_globals = func->func_globals;
+    f->f_builtins = func->func_builtins;
+    for (k = 0; k < co->co_nlocalsplus; k++) le_frame_word_put(f, k, NULL);
+    le_gen_frame_set_depth(f, 0);
+    LE_FRAME_PLACE(f) = _PyCode_CODE(co) + start + LE_HAS_FRAME_INSTR_PTR;
+    f->owner = owner;
+}
 /* the generator's frame runs, its stack held by compiled code (and its
    locals, but where LE_RESUMES_ON_FRAME those the code hasn't taken):
    gen_send_ex has marked it as running. Its place moves off the yield
@@ -649,21 +740,11 @@ le_gen_frame_pause(le_frame_t *f, int lasti, int nstack)
     LE_FRAME_PLACE(f) = yield + LE_HAS_FRAME_INSTR_PTR;
     le_gen_frame_set_depth(f, nstack);
 #ifdef FRAME_STATE_SUSPENDED
-    le_frame_gen(f)->gi_frame_state = FRAME_SUSPENDED + (yield->op.arg != 0);
+    *le_frame_gen_state(f) = FRAME_SUSPENDED + (yield->op.arg != 0);
 #else
     (void)yield;
-    le_frame_gen(f)->gi_frame_state = FRAME_SUSPENDED;
+    *le_frame_gen_state(f) = FRAME_SUSPENDED;
 #endif
-}
-/* a function's frame that ceval runs, taken over at a loop head
-   (eval_hook.c:le_osr_switch), goes on in ceval at the instruction at
-   'lasti' with 'nstack' items on its stack, as ceval reads them again
-   once the event that took it returns */
-static inline void
-le_osr_frame_pause(le_frame_t *f, int lasti, int nstack)
-{
-    LE_FRAME_PLACE(f) = _PyCode_CODE(LE_FRAME_CODE(f)) + lasti;
-    le_gen_frame_set_depth(f, nstack);
 }
 /* The generator 'gen', made around a frame object (frames.c:
    le_gen_of_frame), whose body has returned or raised while compiled code
@@ -1004,20 +1085,6 @@ le_gen_frame_pause(PyFrameObject *f, int lasti, int nstack, int iblock,
 #if LE_HAS_FRAME_STATE
     f->f_state = FRAME_SUSPENDED;
 #endif
-}
-/* a function's frame that ceval runs, taken over at a loop head
-   (eval_hook.c:le_osr_switch), goes on in ceval at the instruction at
-   f_lasti 'lasti' with 'nstack' items on its stack and these blocks, as
-   ceval reads them again once the trace function that took it returns */
-static inline void
-le_osr_frame_pause(PyFrameObject *f, int lasti, int nstack, int iblock,
-                   const PyTryBlock *blocks)
-{
-    int i;
-    f->f_lasti = lasti;
-    le_frame_set_stack_depth(f, nstack);
-    f->f_iblock = iblock;
-    for (i = 0; i < iblock; i++) f->f_blockstack[i] = blocks[i];
 }
 /* the run that gave 'result' has ended: paused (le_gen_frame_pause, or
    ceval's own YIELD_VALUE), else returned or raised, as ceval leaves it */

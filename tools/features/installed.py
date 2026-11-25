@@ -336,15 +336,6 @@ def tuple_get_empty(h):
     return True, '%s:_Py_tuple_state.free_list, %s:_is.tuple' % (path, ipath)
 
 
-def reraise_lasti_tagged(h):
-    """headers: the internal headers define PyStackRef_UntagInt, which
-    RERAISE 1 reads its place with where they have it"""
-    h.need_internal()
-    found = h.definitions('PyStackRef_UntagInt')
-    return bool(found), (', '.join(sorted({p for p, _ in found})) or
-                         'every header') + ':PyStackRef_UntagInt'
-
-
 HEADER_DETECTORS = {
     'CHECK_RESULT_TSTATE': check_result_tstate,
     'OBJECTDICT_SETITEM_OBJECT': features.objectdict_setitem_object,
@@ -405,10 +396,6 @@ HEADER_DETECTORS = {
     'REFCOUNT_32': features.refcount_32,
     'DICT_VERSION_TAG': features.dict_version_tag,
     'DEALLOC_DEFERS_TO_TRASHCAN': features.dealloc_defers_to_trashcan,
-    'TSTATE_WHAT_EVENT': features.tstate_what_event,
-    'TRACING_POSSIBLE_RUNTIME': internal(features.tracing_possible_runtime),
-    'TRACING_POSSIBLE_INTERP': internal(features.tracing_possible_interp),
-    'RERAISE_LASTI_TAGGED': reraise_lasti_tagged,
     # where the interpreter's probe can't answer: a frame object with no
     # f_lasti of its own
     'LASTI_IN_INSTRUCTIONS': features.interpreter_frame_lasti,

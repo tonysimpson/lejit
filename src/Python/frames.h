@@ -107,24 +107,6 @@ EXTERNFN PyFrameObject *
 psyco_frame_callee_back(void);
 EXTERNFN PyObject *
 psyco_resume_run(struct resume_s *st, long lasti, long nstack);
-/* what psyco_resume_run returns for a frame taken over at a loop head
-   (FrameRuntime.osr): the frame is left for the ceval running it to go on
-   with (eval_hook.c) */
-EXTERNVAR PyObject *le_osr_ceval_goes_on;
-/* The function's frame 'f' that ceval runs, stopped in an event at the
-   loop head 'head' (bytes), goes on there in compiled code
-   (eval_hook.c): 0 if it wasn't taken over, 1 if ceval goes on with it as
-   left, -1 with an exception, which ceval raises from where it is left. */
-EXTERNFN int
-le_osr_switch(PyThreadState *ts, le_frame_t *f, int head);
-/* Counts 'k' more backward jumps of 'co' (k > 0) in its frames that ceval
-   runs, after which the frame that makes the last is taken over at that
-   loop head (osr.c), or stops counting (k == 0): 1, or 0 where a tool
-   holds the event it is counted in, -1 with an exception. */
-EXTERNFN int
-le_osr_arm(PyCodeObject *co, long k);
-/* frames taken over so far, for tests */
-EXTERNVAR long le_osr_switches;
 /* PyObject* psyco_get_locals(void); this one implemented in psyco.c */
 
 /* Where a compiled frame's locals (co_nlocals, then cells and frees)
@@ -227,11 +209,7 @@ typedef struct frame_runtime_s {
     /* ceval now runs the frame (psyco_resume_run): its locals and line are
        ceval's, and the compiled code under it waits for ceval's result */
     int resumed;
-    int exposed; /* frames.c:expose */
-    /* the frame is a function's that ceval runs, taken over at a loop
-       head (eval_hook.c:le_osr_switch): it goes on in ceval by returning
-       to that ceval, not by running in another (psyco_resume_run) */
-    int osr;
+    int exposed;                   /* frames.c:expose */
     struct walked_calls_s *walked; /* frames.c:innermost_slot, or NULL */
     struct frame_runtime_s *next;  /* the next outer one */
 } FrameRuntime;
