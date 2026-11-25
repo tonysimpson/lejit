@@ -1564,6 +1564,20 @@ def _sum_compensated(s):
     return found, evidence
 
 
+def _finished_generator_unlinked(s):
+    """clear_gen_frame sets frame->previous to NULL before it clears the
+    frame (the two may have other statements between them)"""
+    body = s.body_of(s.tokens(CE) or [], 'clear_gen_frame')
+    if body is None:
+        return True, '%s: no clear_gen_frame' % CE
+    texts = _texts(body)
+    unlink = _run_at(texts, _c('frame->previous = NULL;'))
+    clear = _run_at(texts, _c('_PyFrame_ClearExceptCode(frame);'))
+    if clear is None:
+        raise Unanswered('%s:clear_gen_frame: no _PyFrame_ClearExceptCode(frame)' % CE)
+    return unlink is not None and unlink < clear, '%s:clear_gen_frame' % CE
+
+
 EXPORTS = [
     ('DICT_MERGE_EX_LINKABLE', '_PyDict_MergeEx'),
     ('HASH_BYTES_LINKABLE', '_Py_HashBytes'),
@@ -1662,7 +1676,7 @@ FRAMES = [
     ('FRAME_CLEARED_LAST_FIRST', D('a frame that ends releases its value stack and locals last to first (_PyFrame_ClearLocals), not first to last',
                                    lambda s: _body_has(s, 'Python/frame.c', '_PyFrame_ClearLocals', 'sp--', missing=False))),
     ('FINISHED_GENERATOR_UNLINKED', D('a generator\'s frame is cut from its caller before it is cleared (clear_gen_frame, or before it had one, each time it stops), so a generator that has ended or raised leaves no f_back',
-                                      lambda s: _body_has(s, CE, 'clear_gen_frame', 'frame->previous = NULL; _PyFrame_ClearExceptCode(frame);', missing=True))),
+                                      _finished_generator_unlinked)),
     ('LASTI_IN_INSTRUCTIONS', lasti_in_instructions),
     ('LINENO_WHEN_SET', lineno_when_set),
     ('FRAME_BUILTINS_OF_FUNCTION', frame_builtins_of_function),
