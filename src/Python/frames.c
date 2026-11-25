@@ -1476,9 +1476,12 @@ kept_frame(long tag, PyObject *co, PyObject *globals, int lasti)
         /* a compiled callee */
         if (gen_frame_at(slot) != NULL)
             return gen_kept_frame(slot, lasti);
+        /* a frame already kept has its barrier in the return address */
         own = psyco_next_stack_frame(slot);
-        return keep_frame(own, slot, 0, return_address(own, rec), co, globals,
-                          lasti);
+        return keep_frame(
+            own, slot, 0,
+            act_find(own) != NULL ? NULL : return_address(own, rec), co,
+            globals, lasti);
     }
     if ((entry == 1 && rec->nargs >= 0 && finfo_last(rec) == rec + 1 &&
          (rec + 1)->co == (PyCodeObject *)co) ||
