@@ -116,6 +116,6 @@ CASES = [
     ('bases_changed', [(6,)], {'warmup': NEW_CLASSES}),
     ('class_cell', [(8,)], {'warmup': NEW_CLASSES}),
     ('getattribute_added', [(5,)], {'warmup': NEW_CLASSES}),
-    ('getattribute_added_called_from_c', [(4,)], {}),
+    ('getattribute_added_called_from_c', [(4,)], {'warmup': NEW_CLASSES}),
     ('many_types', [(3,)], {'warmup': NEW_CLASSES}),
 ]
