@@ -1,12 +1,14 @@
 # Calls of ctypes functions (Modules/pctypes.c): with argtypes set or not,
-# exact ints and floats, None, pointer and simple ctypes instances and
-# byref() go to the C function directly; anything else, and a function
-# whose argtypes, restype or errcheck changed, takes ctypes' own call, so
-# results, truncation and every error are ctypes'.
+# exact ints and floats, bytes, None, pointer and simple ctypes instances
+# and byref() go to the C function directly, as do c_char_p, c_void_p,
+# c_float and c_bool arguments and results and pointer results; anything
+# else, and a function whose argtypes, restype or errcheck changed, takes
+# ctypes' own call, so results, truncation and every error are ctypes'.
 import ctypes
 import sys
-from ctypes import (POINTER, byref, c_byte, c_double, c_int, c_long,
-                    c_short, c_size_t, c_ubyte, c_uint, c_ulong, c_ushort)
+from ctypes import (POINTER, byref, c_bool, c_byte, c_char_p, c_double,
+                    c_float, c_int, c_long, c_short, c_size_t, c_ubyte, c_uint,
+                    c_ulong, c_ushort, c_void_p)
 
 libc = ctypes.CDLL(None)
 
@@ -181,6 +183,80 @@ def hooked(n):
     return out, seen[1:20]
 
 
+strlen = fn('strlen', (c_char_p,), c_size_t)
+strlen_voidp = fn('strlen', (c_void_p,), c_size_t)
+strlen_untyped = fn('strlen', None, c_size_t)
+strchr = fn('strchr', (c_char_p, c_int), c_char_p)
+getenv = fn('getenv', (c_char_p,), c_char_p)
+strtoul = fn('strtoul', (c_char_p, c_void_p, c_int), c_void_p)
+labs_voidp = fn('labs', (c_void_p,), c_void_p)
+labs_bool = fn('labs', (c_long,), c_bool)
+abs_bool = fn('abs', (c_bool,))
+fabsf = fn('fabsf', (c_float,), c_float)
+fabsf_untyped = fn('fabsf', None, c_float)
+ldexpf = fn('ldexpf', (c_float, c_int), c_float)
+as_int_pointer = fn('labs', (c_void_p,), IntP)
+
+
+def strings(n):
+    out = []
+    s = c_char_p(b'four')
+    for i in range(n):
+        b = b'x' * i
+        out.append((strlen(b), strlen(b'abc'), strlen(s), strlen_voidp(b),
+                    strlen_untyped(b), strlen_untyped(s), strchr(b'hello', 108),
+                    strchr(b'hello', 122 - i), getenv(b'LEJIT_NO_SUCH_NAME'),
+                    error(strlen, 5), error(strlen, 'str'), error(strlen, b)))
+    return out
+
+
+def void_pointers(n):
+    out = []
+    v = c_void_p(9)
+    for i in range(n):
+        out.append((labs_voidp(-i), labs_voidp(None), labs_voidp(v),
+                    labs_voidp(True), labs_voidp(c_void_p()),
+                    strtoul(b'18446744073709551615', None, 10),
+                    strtoul(b'12', None, 10 - i % 2),
+                    error(labs_voidp, 1.5), error(labs_voidp, 2 ** 70)))
+    return out
+
+
+def floats(n):
+    out = []
+    for i in range(n):
+        x = i * 0.1 - 0.35
+        out.append((fabsf(x), fabsf(-1e40), fabsf(c_float(-2.25)),
+                    fabsf_untyped(c_float(x)), ldexpf(x, i), ldexpf(1.5, -i),
+                    error(fabsf, 1), error(fabsf, 'x'),
+                    error(fabsf_untyped, x)))
+    return out
+
+
+def bools(n):
+    out = []
+    for i in range(n):
+        out.append((abs_bool(i), abs_bool(True), abs_bool(False),
+                    abs_bool(2 ** 70), abs_bool(c_bool(i > 2)),
+                    labs_bool(i), labs_bool(256), labs_bool(257),
+                    abs_bool(None), abs_bool(0.0)))
+    return out
+
+
+def pointer_results(n):
+    out = []
+    x = c_int(41)
+    vx = c_void_p(ctypes.addressof(x))
+    for i in range(n):
+        x.value = 41 + i
+        p = as_int_pointer(vx)
+        q = as_int_pointer(None)
+        out.append((type(p).__name__, p.contents.value, p[0], bool(q),
+                    p._b_needsfree_, p._objects, q._objects,
+                    ctypes.addressof(p.contents) == vx.value))
+    return out
+
+
 CASES = [
     ('typed_ints', [(12,)], {}),
     ('untyped_ints', [(12,)], {}),
@@ -191,4 +267,9 @@ CASES = [
     ('changes', [(12,)], {}),
     ('call_through_list', [(40,)], {}),
     ('hooked', [(5,)], {}),
+    ('strings', [(6,)], {}),
+    ('void_pointers', [(6,)], {}),
+    ('floats', [(8,)], {}),
+    ('bools', [(6,)], {}),
+    ('pointer_results', [(6,)], {}),
 ]
