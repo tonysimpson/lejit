@@ -142,6 +142,7 @@ psyco_finfo(PsycoObject *caller, PsycoObject *callee)
     p->link_stack_depth = -inlining;
     p->nargs = -1;
     p->co = callee->pr.co;
+    p->ret_below = psyco_ret_below(caller != NULL ? caller : callee);
     p->back_lasti =
         caller != NULL ? psyco_call_lasti(caller->pr.co, caller->pr.next_instr)
                        : inline_parent_lasti(callee);
@@ -168,6 +169,7 @@ psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co)
     p->link_stack_depth = -inlining;
     p->nargs = -1;
     p->co = co;
+    p->ret_below = psyco_ret_below(caller);
     p->back_lasti = psyco_call_lasti(caller->pr.co, caller->pr.next_instr);
     p->on_gen_frame = 1;
     if (inlining)
@@ -1028,18 +1030,26 @@ return_search_end(stack_frame_info_t **own)
 }
 
 /* Where the return address of the compiled callee whose slot is 'own' is:
-   after the arguments the call pushed, unless a block the callee went on
-   in keeps it elsewhere (a unification may move it, as any stack value).
-   Then it is looked for as return_search_end says: NULL if it isn't there
-   once, so that nothing but it is replaced. Where innermost_slot put the
-   barrier, any word holding it. */
+   where the record or note in that slot says the callee keeps it, or after
+   the arguments the call pushed if the slot says nothing. A unification
+   may have moved it, and the word it left still holds it. A note may be
+   left from an earlier call: if the word doesn't hold the address, it is
+   looked for as return_search_end says: NULL if it isn't there once, so
+   that nothing but it is replaced. Where innermost_slot put the barrier,
+   any word holding it. */
 static code_t **
 return_address(stack_frame_info_t **own, stack_frame_info_t *rec)
 {
-    code_t **p = (code_t **)(own - rec->nargs - 1), **lo, **q, **found = NULL;
+    long v = (long)*own, below = (rec->nargs + 1) * (long)sizeof(long);
+    code_t **p, **lo, **q, **found = NULL;
     walked_call_t *w = walked_call(own);
     bool barrier = w != NULL && w->ret != NULL;
     code_t *want = barrier ? psyco_return_barrier : rec->ret_addr;
+    if ((v & 1) == 0)
+        below = ((stack_frame_info_t *)v)->ret_below;
+    else if (v != -1 && v != FINFO_RETURNING)
+        below = psyco_note_map(v)->ret_below;
+    p = (code_t **)((char *)own - below);
     if (*p == want)
         return p;
     lo = return_search_end(own);
