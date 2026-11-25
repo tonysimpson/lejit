@@ -69,10 +69,13 @@ frame_func(le_frame_t *f)
 #endif
 }
 
+/* its locals and stack; a running frame's stack is compiled code's
+   (LE_HAS_RUNNING_STACK_HIDDEN: depth -1) */
 static int
 frame_nwords(le_frame_t *f)
 {
-    return LE_FRAME_CODE(f)->co_nlocalsplus + le_frame_stack_depth(f);
+    int depth = le_frame_stack_depth(f);
+    return LE_FRAME_CODE(f)->co_nlocalsplus + (depth > 0 ? depth : 0);
 }
 
 DEFINEFN PyObject *
@@ -151,6 +154,9 @@ frame_give(PyFrameObject *fo, le_frame_t *f, bool ended)
     own->f_executable = Py_NewRef(co);
 #else
     own->f_code = (PyCodeObject *)Py_NewRef(co);
+#endif
+#if !LE_HAS_FRAME_STACKREFS
+    le_gen_frame_set_depth(own, n - co->co_nlocalsplus);
 #endif
     own->owner = FRAME_OWNED_BY_FRAME_OBJECT;
     own->previous = NULL;
@@ -308,6 +314,7 @@ le_gen_record_escape_running(le_frame_t *f)
     PyThreadState *ts = PyThreadState_GET();
     _PyErr_StackItem *previous = r->exc_state.previous_item, **link;
     le_frame_t *caller = f->previous;
+    int hidden = le_frame_stack_depth(f) < 0;
     PyGenObject *gen;
     if (r->escaped != NULL)
         return (PyGenObject *)r->escaped;
@@ -315,6 +322,11 @@ le_gen_record_escape_running(le_frame_t *f)
     gen = (PyGenObject *)record_escape(r, frame_func(f), FRAME_EXECUTING);
     if (gen == NULL)
         return NULL;
+    /* its stack still compiled code's, as it was the record's */
+    if (hidden)
+        le_gen_frame_set_depth(
+            (le_frame_t *)((char *)gen + offsetof(PyGenObject, gi_iframe)),
+            -1 - LE_FRAME_CODE(f)->co_nlocalsplus);
     Py_DECREF(gen); /* the record's */
     /* running, as gen_send_ex2 leaves it: its exception state where the
        record's was in the thread's chain */
@@ -358,6 +370,7 @@ record_end(PyThreadState *ts, le_gen_record_t *r, PyObject *result, int form,
         *paused = result != NULL;
         return result;
     }
+    le_gen_frame_end(&r->frame, result);
     ts->exc_info = r->exc_state.previous_item;
     r->exc_state.previous_item = NULL;
     if (LE_GEN_PAUSED(r->state)) {

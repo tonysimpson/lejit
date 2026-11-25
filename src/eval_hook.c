@@ -203,7 +203,6 @@ compile_resume(le_frame_t *f, le_code_extra_t *x, PyObject *mergepoints,
     CodeBufferObject *volatile codebuf = NULL;
     le_compile_guard_t g;
     int lasti = le_frame_lasti(f);
-    int start = resume_start(lasti);
 #if LE_HAS_INTERPRETER_FRAME
     /* no blocks: handlers are the exception table's */
     int *blocks = NULL, nblocks = 0;
@@ -219,6 +218,7 @@ compile_resume(le_frame_t *f, le_code_extra_t *x, PyObject *mergepoints,
     LE_COMPILE_BEGIN(LE_ENTER_CALL);
     psyco_guard_push(&g);
     if (sigsetjmp(g.env, 0) == 0) {
+        int start = resume_start(lasti);
 #if LE_RESUMES_ON_FRAME
         (void)blocks;
         (void)nblocks;
@@ -283,13 +283,10 @@ resume_point(le_code_extra_t *x, PyCodeObject *co, int lasti)
     }
     for (i = 0; i < x->nresumes; i++) {
         le_resume_point_t *p = &x->resumes[i];
-        if (p->lasti == -2) {
+        if (p->lasti == -2)
             p->lasti = lasti;
-            p->in_handler = (co->co_flags & CO_COROUTINE) && lasti >= 0 &&
-                            psyco_in_handler(co, resume_start(lasti));
-        }
         if (p->lasti == lasti)
-            return p->in_handler ? NULL : (x->last_resume = p);
+            return x->last_resume = p;
     }
     return NULL;
 }
