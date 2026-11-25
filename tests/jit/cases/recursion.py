@@ -172,10 +172,67 @@ def inlined_levels_counted():
         sys.setrecursionlimit(old)
 
 
+# Generators run from C in CPython (by sum(), next(), send()) and run
+# directly by compiled code: each level is a call, then a generator, so
+# only C's own check stops the nesting before the stack runs out (since
+# sys.monitoring came; before, plain CPython crashes here). Each call
+# catches RecursionError, so it is caught where raised.
+def level_sum(k):
+    try:
+        return sum(nest_sum(k))
+    except RecursionError:
+        return -1
+
+
+def nest_sum(k):
+    yield level_sum(k - 1) if k else 1
+
+
+# a generator's second step is run directly
+def level_next(k):
+    try:
+        g = nest_next(k)
+        next(g)
+        return next(g)
+    except RecursionError:
+        return -1
+
+
+def nest_next(k):
+    yield 0
+    yield level_next(k - 1) if k else 1
+
+
+def level_send(k):
+    try:
+        g = nest_send(k)
+        g.send(None)
+        return g.send(None)
+    except RecursionError:
+        return -1
+
+
+def nest_send(k):
+    yield 0
+    yield level_send(k - 1) if k else 1
+
+
+def c_stack_limit():
+    if not hasattr(sys, 'monitoring'):
+        return None
+    old = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(10 ** 7)
+        return [f(10 ** 6) for f in (level_sum, level_next, level_send)]
+    finally:
+        sys.setrecursionlimit(old)
+
+
 CASES = [
     ('recursion_error_recovers', [()], {}),
     ('limit_changed_at_run_time', [()], {}),
     ('overflow_handled_twice', [()], {}),
     ('recursion_through_exceptions', [()], {}),
     ('inlined_levels_counted', [()], {}),
+    ('c_stack_limit', [()], {}),
 ]

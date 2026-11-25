@@ -21,7 +21,7 @@ case that passes isn't an XPASS, and 'checked' cases are skipped.
 
     python3.X tests/jit/run.py [DIR] [-k substring] [-v] [--release]
 """
-import glob, os, random, subprocess, sys, warnings
+import glob, os, random, signal, subprocess, sys, warnings
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CASES = os.path.join(ROOT, 'tests', 'jit', 'cases')
@@ -43,6 +43,13 @@ def aslr_off_works():
         return False
 
 
+def kill_group(p):
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def run_child(modname, fname, calls, lejit_mode, warmup=9, env=None,
               clear_type_cache=False):
     if not isinstance(calls, str):
@@ -50,13 +57,17 @@ def run_child(modname, fname, calls, lejit_mode, warmup=9, env=None,
     cmd = ASLR_OFF + [sys.executable, os.path.join(ROOT, 'tests', 'jit', 'child.py'), ROOT, CASES,
            modname, fname, calls, lejit_mode, str(warmup),
            '1' if clear_type_cache else '0']
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+                         start_new_session=True)
     try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
         out, err = p.communicate(timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
-        p.kill()
+        kill_group(p)
         p.communicate()
         return None, 'timeout after %ds' % TIMEOUT
+    finally:
+        # processes the case started and left running
+        kill_group(p)
     if p.returncode != 0:
         err = err.decode(errors='replace').strip().splitlines()
         return None, 'exit %d: %s' % (p.returncode, ' | '.join(err[-3:]))
