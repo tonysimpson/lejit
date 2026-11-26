@@ -254,6 +254,10 @@ SKIPPED = {
         'test.test_poplib.TestPOP3_SSLClass.* '
         'test.test_poplib.TestPOP3_TLSClass.* '
         'test.test_poplib.TestPOP3Class.test_stls*',
+    "plain CPython 3.14's own run in CI's container misses profile "
+    "events (testfunc's first call of helper) with the simulated timer, "
+    "so its counts and times differ; it doesn't fail outside CI":
+        'test.test_profile.ProfileTest.test_cprofile',
     'binds a port find_unused_port chose, and fails or skips itself when '
     'another process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress '
