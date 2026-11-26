@@ -1,5 +1,5 @@
 # A class made per call and promoted by long-lived code dies once no frame
-# of that code runs: what the code compiled for it is held by a group of
+# runs in the code compiled for it: what the code compiled for it is held by a group of
 # its own, which the owner scan frees (codemanager.h, le_group_t).
 import gc
 import sys
@@ -99,6 +99,21 @@ def classes_die_through_slots():
     return dying_classes([by_add])
 
 
+def collected_while_running(n):
+    # the classes are promoted by this frame's own code, which is running
+    # when it collects, but not in the code compiled for any of them
+    refs = []
+    for i in range(n):
+        class D:
+            pass
+        o = D()
+        o.x = i
+        refs.append(weakref.ref(D))
+        del o, D
+    gc.collect()
+    return sum(r() is None for r in refs)
+
+
 def code_made():
     lejit = sys.modules.get('lejit')
     if lejit is None:
@@ -130,5 +145,6 @@ CASES = [
     ('classes_die_through_slots', [()],
      {'xfail': "__add__ called through the slot is compiled for each "
                "class under its own code object"}),
+    ('collected_while_running', [(20,)], {}),
     ('megamorphic_stays', [()], {'checked': 'reads lejit._core._stats'}),
 ]
