@@ -21,11 +21,16 @@ every call, so the leak check's rounds always compile and aren't repeated).
 and leaks are checked, but not whether each function compiled, an 'xfail'
 case that passes isn't an XPASS, and 'checked' cases are skipped.
 
-    python3.X tests/jit/run.py [DIR] [-k substring] [-v] [--release]
+The cases run in an order a seed chooses, new each run unless --seed gives
+it; the seed also sets each case's hash seed, shared by its two runs.
+
+    python3.X tests/jit/run.py [DIR] [-k substring] [-v] [--release] [--seed N]
 """
-import glob, os, random, signal, subprocess, sys, warnings
+import glob, os, signal, subprocess, sys, warnings
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(ROOT, 'tests'))
+from common import rank, take_seed
 CASES = os.path.join(ROOT, 'tests', 'jit', 'cases')
 TIMEOUT = 20
 LEAK_SLACK = 50   # blocks; noise allowance for the leak check
@@ -96,6 +101,7 @@ def load_cases(filt):
 def main():
     global CASES
     args = sys.argv[1:]
+    seed = take_seed(args)
     filt = args[args.index('-k') + 1] if '-k' in args else None
     if args and not args[0].startswith('-'):
         CASES = os.path.abspath(args[0])
@@ -107,7 +113,14 @@ def main():
     counts = {'pass': 0, 'FAIL': 0, 'xfail': 0, 'XPASS': 0}
     if release:
         counts['skip'] = 0
-    for name, modname, fname, calls, opts in load_cases(filt):
+    print('seed %d' % seed)
+    sys.stdout.flush()
+    cases_dir = [CASES] if CASES != os.path.join(ROOT, 'tests', 'jit', 'cases') else []
+    again = '      again: ' + ' '.join([sys.executable, sys.argv[0]] + cases_dir +
+                                       ['--release'] * release +
+                                       ['--seed', str(seed), '-k', '%s'])
+    for name, modname, fname, calls, opts in sorted(load_cases(filt),
+                                                    key=lambda c: rank(seed, c[0])):
         if release and opts.get('checked'):
             counts['skip'] += 1
             continue
@@ -118,11 +131,12 @@ def main():
         clear = 'clear_type_cache' in opts
         fresh = 'compiles_each_call' in opts
         env = dict(os.environ)
-        env.setdefault('PYTHONHASHSEED', str(random.randrange(4294967296)))
+        env.setdefault('PYTHONHASHSEED', str(int(rank(seed, name), 16) % (1 << 32)))
         expected, ref_err = run_child(modname, fname, calls, '0', warmup, env, clear,
                                        fresh)
         if expected is None:
             print('ERROR %s: reference run failed: %s' % (name, ref_err))
+            print(again % name)
             counts['FAIL'] += 1
             continue
         got, err = run_child(modname, fname, calls, 'release' if release else '1',
@@ -173,7 +187,9 @@ def main():
             if repeated and not problem:
                 line += '  [%s]' % repeated
             print(line)
-    print(' '.join('%s=%d' % kv for kv in counts.items()))
+            if status in ('FAIL', 'XPASS'):
+                print(again % name)
+    print(' '.join('%s=%d' % kv for kv in counts.items()) + ' (seed %d)' % seed)
     return 1 if counts['FAIL'] or counts['XPASS'] else 0
 
 

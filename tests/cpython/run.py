@@ -2,12 +2,15 @@
 status and names of the failing tests must match. Every test_* module of the
 interpreter's test package runs except BANNED, and every test except SKIPPED.
 
-    python3.X tests/cpython/run.py [-j N] [module ...]
+The modules, and the tests in each, run in an order a seed chooses, new each
+run unless --seed gives it; a module's plain and LeJIT runs share its order.
+
+    python3.X tests/cpython/run.py [-j N] [--seed N] [module ...]
 """
 import contextlib, fnmatch, json, os, re, resource, signal, subprocess, sys, tempfile, threading
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common import ROOT
+from common import ROOT, rank, take_seed
 
 TIMEOUT = 600                   # seconds per run
 MEMORY_LIMIT = 4 << 30          # bytes of address space per run
@@ -339,23 +342,43 @@ def gc_callback_aborts():
 # Prints a JSON list of the skipped tests, each its id and the reason, then
 # one of the failing tests, each its id and, for the first ten, the end of
 # its traceback, then the counts. Tests whose ids match one of
-# the patterns given are skipped.
+# the patterns given are skipped. The seed orders each suite's tests by
+# their ids alone, keeping a class's tests together so that its setUpClass
+# and tearDownClass still run once.
 CHILD = r'''
-import sys, unittest, io, json, fnmatch, faulthandler
+import sys, unittest, io, json, fnmatch, faulthandler, hashlib
 faulthandler.enable(all_threads=True)
 if sys.argv[1] == 'lejit':
     sys.path.insert(0, sys.argv[3]); import lejit; lejit.start()
 mod = __import__('test.' + sys.argv[2], fromlist=['x'])
 suite = unittest.defaultTestLoader.loadTestsFromModule(mod)
 
-def skip(suite):
+def rank(name):
+    return hashlib.sha256(('%s %s' % (sys.argv[4], name)).encode()).hexdigest()
+
+def first(test):
+    if not isinstance(test, unittest.TestSuite):
+        return test
+    for t in test:
+        t = first(t)
+        if t is not None:
+            return t
+
+def place(test):
+    t = first(test)
+    if t is None:
+        return ('', '')
+    return (rank(type(t).__module__ + '.' + type(t).__qualname__), rank(t.id()))
+
+def prepare(suite):
     for test in suite:
         if isinstance(test, unittest.TestSuite):
-            skip(test)
-        elif any(fnmatch.fnmatchcase(test.id(), p) for p in sys.argv[4:]):
+            prepare(test)
+        elif any(fnmatch.fnmatchcase(test.id(), p) for p in sys.argv[5:]):
             setattr(test, test._testMethodName,
                     unittest.skip('skipped by run.py')(lambda: None))
-skip(suite)
+    suite._tests.sort(key=place)
+prepare(suite)
 r = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
 bad = r.failures + r.errors
 print(json.dumps([[t.id(), str(why)[:200]] for t, why in r.skipped]))
@@ -386,14 +409,15 @@ def stderr_tail(err, lines=10):
                           err.decode(errors='replace').splitlines()[-lines:]]
 
 
-def run(mode, name):
+def run(mode, name, seed):
     """The run's counts and exit status, its failing tests (id: the end of
     the traceback), the end of its stderr if it crashed, and its skipped
     tests (id: the reason)."""
     with tempfile.TemporaryDirectory(prefix='le_cpython_tests_') as cwd, \
             tempfile.TemporaryFile() as errf:
         skip = [t for ts in SKIPPED.values() for t in ts.split()]
-        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, ROOT] + skip,
+        p = subprocess.Popen([sys.executable, '-c', CHILD, mode, name, ROOT,
+                              str(seed)] + skip,
                              stdout=subprocess.PIPE, stderr=errf,
                              stdin=subprocess.DEVNULL, cwd=cwd,
                              preexec_fn=limit_memory, start_new_session=True)
@@ -430,9 +454,9 @@ def run(mode, name):
             failed, crashed, skipped)
 
 
-def check(name):
+def check(name, seed):
     with one_at_a_time if name in ONE_AT_A_TIME else contextlib.nullcontext():
-        plain, with_lejit = run('plain', name), run('lejit', name)
+        plain, with_lejit = run('plain', name, seed), run('lejit', name, seed)
     if plain[0] == with_lejit[0] and set(plain[1]) == set(with_lejit[1]):
         return True, 'ok     %-24s %s' % (name, plain[0])
     report = ['FAIL   %-24s %s   with LeJIT: %s' % (name, plain[0], with_lejit[0])]
@@ -447,6 +471,8 @@ def check(name):
             why.append('skipped only here: %s (%s)' % (test, skipped[test]))
         if why:
             report += ['       %s:' % side] + ['         ' + l for l in why]
+    report.append('       again: %s tests/cpython/run.py --seed %d %s'
+                  % (sys.executable, seed, name))
     return False, '\n'.join(report)
 
 
@@ -472,14 +498,17 @@ def main():
         k = args.index('-j')
         jobs = int(args[k + 1])
         del args[k:k + 2]
-    names = args or modules()
+    seed = take_seed(args)
+    names = sorted(args or modules(), key=lambda n: rank(seed, n))
+    print('seed %d' % seed)
+    sys.stdout.flush()
     bad = 0
     with ThreadPoolExecutor(jobs) as ex:
-        for ok, line in ex.map(check, names):
+        for ok, line in ex.map(check, names, [seed] * len(names)):
             bad += not ok
             print(line)
             sys.stdout.flush()
-    print('%d modules, %d unexpected' % (len(names), bad))
+    print('%d modules, %d unexpected (seed %d)' % (len(names), bad, seed))
     return 1 if bad else 0
 
 
