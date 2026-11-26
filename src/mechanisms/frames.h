@@ -164,6 +164,8 @@ le_frame_start(le_frame_t *f)
     }
     return 0;
 }
+/* CPython's own PyEval_GetFrame, which LeJIT replaces (frames.c) */
+extern PyFrameObject *(*le_cpython_eval_getframe)(void);
 /* the frame object Python sees (borrowed), made if it has none:
    PyEval_GetFrame makes the current frame's, so the frame is made current
    for it. NULL with no exception set if it can't be made. */
@@ -178,7 +180,7 @@ le_frame_object(le_frame_t *f)
     ts = PyThreadState_GET();
     cur = le_frame_current(ts);
     le_frame_set_current(ts, f);
-    o = PyEval_GetFrame();
+    o = le_cpython_eval_getframe();
     le_frame_set_current(ts, cur);
     return o;
 }

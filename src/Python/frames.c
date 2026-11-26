@@ -81,6 +81,7 @@
 /* after Python.h, for _GNU_SOURCE: ucontext_t's REG_* */
 #define UNW_LOCAL_ONLY
 #include <dlfcn.h>
+#include <ipatch.h>
 #include <libunwind.h>
 
 /***************************************************************/
@@ -3849,12 +3850,305 @@ gen_guard_init(void)
 }
 #endif
 
+/***************************************************************/
+/* CPython's C API functions that read the thread's innermost frame or a
+   frame's locals, replaced at their entries (x64/ipatch.c) for every
+   caller, extensions and CPython itself: the frame they find is the one
+   Python sees (sys._getframe), not the nearest real one, and a frame's
+   locals are its compiled frame's now (frame_sync_locals). Each then runs
+   CPython's own function, with that frame current if need be, as
+   le_warn_with_frames does for _warnings.warn. A function the build
+   doesn't export, or whose entry can't be replaced, stays CPython's; so
+   does a caller that has it inlined (a build with link-time optimisation
+   inlines CPython's own uses of them). A frame's line, writes to its
+   locals (PyFrame_LocalsToFast) and another thread's frame
+   (PyThreadState_GetFrame) are CPython's. */
+
+DEFINEVAR PyFrameObject *(*le_cpython_eval_getframe)(void) = PyEval_GetFrame;
+static PyFrameObject *(*threadstate_getframe_cpython)(PyThreadState *);
+static PyObject *(*eval_getglobals_cpython)(void);
+static PyObject *(*eval_getbuiltins_cpython)(void);
+static PyObject *(*eval_getlocals_cpython)(void);
+static PyObject *(*eval_getframelocals_cpython)(void);
+static PyObject *(*eval_getframeglobals_cpython)(void);
+static PyObject *(*eval_getframebuiltins_cpython)(void);
+static PyFrameObject *(*frame_getback_cpython)(PyFrameObject *);
+static PyObject *(*frame_getlocals_cpython)(PyFrameObject *);
+static PyObject *(*frame_getvar_cpython)(PyFrameObject *, PyObject *);
+static PyObject *(*frame_getvarstring_cpython)(PyFrameObject *, const char *);
+static int (*frame_fasttolocalswitherror_cpython)(PyFrameObject *);
+static void (*frame_fasttolocals_cpython)(PyFrameObject *);
+
+/* set while a frame is found: the C API calls made meanwhile are
+   CPython's own */
+static _Thread_local int capi_finding LE_FAST_TLS;
+/* the frame last given borrowed, if nothing else held it (an emulated
+   frame not kept), held until the next is */
+static PyFrameObject *capi_held = NULL;
+
+/* tracemalloc's settings, where libpython exports them: an enum, then
+   whether it traces. While it traces, it takes a trace's frames with
+   PyThreadState_GetFrame and PyFrame_GetBack holding the lock that making
+   any object takes too (_PyTraceMalloc_NewReference), so those two are
+   CPython's then, which make none. */
+static const int *tracemalloc_config = NULL;
+
+static bool
+capi_may_make_objects(void)
+{
+    return tracemalloc_config == NULL || !tracemalloc_config[1];
+}
+
+/* 'f' (a reference it takes) stays alive at least until the next call */
+static void
+capi_hold(PyFrameObject *f)
+{
+    if (Py_REFCNT(f) == 1)
+        Py_XSETREF(capi_held, f);
+    else
+        Py_DECREF(f);
+}
+
+/* compiled code runs the thread's innermost frame, so the innermost frame
+   Python sees may be another than the thread's */
+static bool
+capi_compiled_innermost(PyThreadState *ts)
+{
+    le_frame_t *f;
+    FrameRuntime *fr;
+    if (capi_finding || ts == NULL || frame_runs == NULL)
+        return false;
+    f = le_frame_current(ts);
+    while (f != NULL && !le_frame_complete(f)) f = le_frame_back(f);
+    if (f == NULL)
+        return false;
+    fr = psyco_frame_start_get(f);
+    return fr != NULL && !fr->resumed;
+}
+
+static PyObject *
+visit_innermost(const visited_frame_t *v, void *unused)
+{
+    (void)unused;
+    return (PyObject *)emulate_frame(v);
+}
+
+/* the innermost frame Python sees, a new reference or NULL, linked by
+   f_back to the frames out as sys._getframe's is if 'linked', with its
+   locals now if 'locals'. Any exception set stays. */
+static PyFrameObject *
+capi_innermost(int linked, int locals)
+{
+    PyObject *t, *v, *tb;
+    PyFrameObject *f;
+    PyErr_Fetch(&t, &v, &tb);
+    capi_finding = 1;
+    f = linked ? linked_frame(0, NULL)
+               : (PyFrameObject *)pvisitframes(visit_innermost, NULL);
+    if (f != NULL && locals)
+        frame_sync_locals(f);
+    capi_finding = 0;
+    PyErr_Restore(t, v, tb);
+    return f;
+}
+
+/* brings the frame's locals up to date. Any exception set stays. */
+static void
+capi_sync(PyFrameObject *f)
+{
+    PyObject *t, *v, *tb;
+    if (capi_finding || f == NULL || frame_runs == NULL)
+        return;
+    PyErr_Fetch(&t, &v, &tb);
+    capi_finding = 1;
+    frame_sync_locals(f);
+    capi_finding = 0;
+    PyErr_Restore(t, v, tb);
+}
+
+/* CPython's 'fn' run with the innermost frame Python sees current */
+static PyObject *
+capi_call_current(PyObject *(*fn)(void), int locals)
+{
+    PyThreadState *ts = PyThreadState_GET();
+    le_frame_t *saved;
+    PyFrameObject *top;
+    PyObject *r;
+    if (!capi_compiled_innermost(ts) ||
+        (top = capi_innermost(0, locals)) == NULL)
+        return fn();
+    saved = le_frame_current(ts);
+    if (le_frame_of(top) != saved)
+        le_pyframe_make_current(ts, top);
+    r = fn();
+    le_frame_set_current(ts, saved);
+    if (le_frame_of(top) != saved)
+        le_pyframe_current_end(top);
+    capi_hold(top); /* what it gave borrowed may be the frame's */
+    return r;
+}
+
+static PyFrameObject *
+capi_eval_getframe(void)
+{
+    PyFrameObject *top;
+    if (!capi_compiled_innermost(PyThreadState_GET()) ||
+        (top = capi_innermost(1, 0)) == NULL)
+        return le_cpython_eval_getframe();
+    capi_hold(top);
+    return top;
+}
+
+static PyFrameObject *
+capi_threadstate_getframe(PyThreadState *ts)
+{
+    PyFrameObject *top;
+    if (ts != PyThreadState_GET() || !capi_may_make_objects() ||
+        !capi_compiled_innermost(ts) || (top = capi_innermost(1, 0)) == NULL)
+        return threadstate_getframe_cpython(ts);
+    return top;
+}
+
+static PyObject *
+capi_eval_getglobals(void)
+{
+    return capi_call_current(eval_getglobals_cpython, 0);
+}
+
+static PyObject *
+capi_eval_getbuiltins(void)
+{
+    return capi_call_current(eval_getbuiltins_cpython, 0);
+}
+
+static PyObject *
+capi_eval_getlocals(void)
+{
+    return capi_call_current(eval_getlocals_cpython, 1);
+}
+
+static PyObject *
+capi_eval_getframelocals(void)
+{
+    return capi_call_current(eval_getframelocals_cpython, 1);
+}
+
+static PyObject *
+capi_eval_getframeglobals(void)
+{
+    return capi_call_current(eval_getframeglobals_cpython, 0);
+}
+
+static PyObject *
+capi_eval_getframebuiltins(void)
+{
+    return capi_call_current(eval_getframebuiltins_cpython, 0);
+}
+
+/* frame.f_back's (frame_get_back), as a new reference or NULL */
+static PyFrameObject *
+capi_frame_getback(PyFrameObject *f)
+{
+    PyObject *t, *v, *tb, *back;
+    if (capi_finding || frame_runs == NULL || !capi_may_make_objects())
+        return frame_getback_cpython(f);
+    PyErr_Fetch(&t, &v, &tb);
+    capi_finding = 1;
+    back = frame_get_back(f, NULL);
+    capi_finding = 0;
+    PyErr_Restore(t, v, tb);
+    if (back == NULL)
+        return frame_getback_cpython(f);
+    if (back == Py_None) {
+        Py_DECREF(back);
+        return NULL;
+    }
+    return (PyFrameObject *)back;
+}
+
+static PyObject *
+capi_frame_getlocals(PyFrameObject *f)
+{
+    capi_sync(f);
+    return frame_getlocals_cpython(f);
+}
+
+static PyObject *
+capi_frame_getvar(PyFrameObject *f, PyObject *name)
+{
+    capi_sync(f);
+    return frame_getvar_cpython(f, name);
+}
+
+static PyObject *
+capi_frame_getvarstring(PyFrameObject *f, const char *name)
+{
+    capi_sync(f);
+    return frame_getvarstring_cpython(f, name);
+}
+
+static int
+capi_frame_fasttolocalswitherror(PyFrameObject *f)
+{
+    capi_sync(f);
+    return frame_fasttolocalswitherror_cpython(f);
+}
+
+static void
+capi_frame_fasttolocals(PyFrameObject *f)
+{
+    capi_sync(f);
+    frame_fasttolocals_cpython(f);
+}
+
+static void
+capi_replace(const char *name, void *ours, void *cpython)
+{
+    void *fn = dlsym(RTLD_DEFAULT, name), *original;
+    if (fn == NULL)
+        return;
+    *(void **)cpython = fn;
+    if ((original = le_patch_entry(fn, ours)) != NULL)
+        *(void **)cpython = original;
+}
+
+static void
+capi_init(void)
+{
+    tracemalloc_config = dlsym(RTLD_DEFAULT, "_Py_tracemalloc_config");
+#define REPLACE(name, ours, cpython) \
+    capi_replace(name, (void *)(ours), (void *)&(cpython))
+    REPLACE("PyEval_GetFrame", capi_eval_getframe, le_cpython_eval_getframe);
+    REPLACE("PyThreadState_GetFrame", capi_threadstate_getframe,
+            threadstate_getframe_cpython);
+    REPLACE("PyEval_GetGlobals", capi_eval_getglobals,
+            eval_getglobals_cpython);
+    REPLACE("PyEval_GetBuiltins", capi_eval_getbuiltins,
+            eval_getbuiltins_cpython);
+    REPLACE("PyEval_GetLocals", capi_eval_getlocals, eval_getlocals_cpython);
+    REPLACE("PyEval_GetFrameLocals", capi_eval_getframelocals,
+            eval_getframelocals_cpython);
+    REPLACE("PyEval_GetFrameGlobals", capi_eval_getframeglobals,
+            eval_getframeglobals_cpython);
+    REPLACE("PyEval_GetFrameBuiltins", capi_eval_getframebuiltins,
+            eval_getframebuiltins_cpython);
+    REPLACE("PyFrame_GetBack", capi_frame_getback, frame_getback_cpython);
+    REPLACE("PyFrame_GetLocals", capi_frame_getlocals,
+            frame_getlocals_cpython);
+    REPLACE("PyFrame_GetVar", capi_frame_getvar, frame_getvar_cpython);
+    REPLACE("PyFrame_GetVarString", capi_frame_getvarstring,
+            frame_getvarstring_cpython);
+    REPLACE("PyFrame_FastToLocalsWithError", capi_frame_fasttolocalswitherror,
+            frame_fasttolocalswitherror_cpython);
+    REPLACE("PyFrame_FastToLocals", capi_frame_fasttolocals,
+            frame_fasttolocals_cpython);
+#undef REPLACE
+}
+
 INITIALIZATIONFN
 void
 psyco_frames_init(void)
 {
-    /* Upstream also hooked _PyThreadState_GetFrame (in 3.7,
-       _PyRuntime.gilstate.getframe, behind PyEval_GetFrame), not done yet */
     PyObject *sysmod = PyImport_ImportModule("sys");
     /* named as sys's, for the messages that name the function */
     PyObject *name = PyUnicode_FromString("sys");
@@ -3894,6 +4188,7 @@ psyco_frames_init(void)
     clear_cpython =
         method_replace(&PyFrame_Type, "clear", METH_NOARGS,
                        (PyCFunction)(void (*)(void))frame_clear, &clear_def);
+    capi_init();
 }
 
 /***************************************************************/
