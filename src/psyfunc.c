@@ -1489,7 +1489,7 @@ psyco_call_genexpr(PsycoObject *po, vinfo_t *vgen, int mode, vinfo_t *acc,
 /* A generator's fields and its frame's (mechanisms/frames.h), and the
    thread state's that a step changes. The code is the one field known
    once read: the frame never changes it. On 3.14 the word is a
-   _PyStackRef, kept here as the object (gen_code). */
+   _PyStackRef, kept here as the object (code_of). */
 #define GEN_code CPY_FIELD(PyGenObject, code, OB_type)
 #define iGEN_CODE FIELD_INDEX(GEN_code)
 #define GEN_code_word FMUT(GEN_code)
@@ -1595,16 +1595,18 @@ gen_layouts_init(void)
     record_layout = r;
 }
 
-/* the generator's code object, read once */
+/* the code object in the field 'df' of the generator, or of the record a
+   frame word holds (yield_resumable), 'vgen': read once, kept in its
+   vinfo, so that it can be promoted */
 static vinfo_t *
-gen_code(PsycoObject *po, vinfo_t *vgen)
+code_of(PsycoObject *po, vinfo_t *vgen, defield_t df)
 {
     vinfo_t *v = vinfo_getitem(vgen, iGEN_CODE);
     if (v != NULL) {
         vinfo_incref(v);
         return v;
     }
-    v = psyco_get_field(po, vgen, GEN_code_word);
+    v = psyco_get_field(po, vgen, df);
     if (v == NULL)
         return NULL;
 #if LE_HAS_FRAME_STACKREFS
@@ -1622,6 +1624,13 @@ gen_code(PsycoObject *po, vinfo_t *vgen)
     vinfo_setitem(po, vgen, iGEN_CODE, v);
     return v;
 }
+#if LE_HAS_FRAME_STACKREFS || LE_HAS_FRAME_EXECUTABLE
+#define REC_code_word \
+    FMUT(DEF_FIELD(le_gen_record_t, void *, frame.f_executable, NO_PREV_FIELD))
+#else
+#define REC_code_word \
+    FMUT(DEF_FIELD(le_gen_record_t, void *, frame.f_code, NO_PREV_FIELD))
+#endif
 
 /* whether 'cc' holds at run time, -1 on error (or a promotion) */
 static int
@@ -1867,12 +1876,31 @@ error:
     return -1;
 }
 
+/* le_iter_send of the real generator of the record 'rec' a frame word
+   holds (yield_resumable) */
+static int
+record_iter_send(PyObject *rec, PyObject *v, PyObject *out[])
+{
+    PyObject *gen = le_gen_record_real(rec);
+    int r;
+    if (gen == NULL)
+        return -1;
+    r = le_iter_send(gen, v, out);
+    Py_DECREF(gen);
+    return r;
+}
+
 #if LE_STACK_SEGMENTS
 /* le_iter_send, its result widened for le_call_as_direct */
 static long
 iter_send_long(PyObject *iter, PyObject *v, PyObject *out[])
 {
     return le_iter_send(iter, v, out);
+}
+static long
+record_iter_send_long(PyObject *rec, PyObject *v, PyObject *out[])
+{
+    return record_iter_send(rec, v, out);
 }
 #endif
 
@@ -1887,7 +1915,9 @@ iter_send_long(PyObject *iter, PyObject *v, PyObject *out[])
    it there. A pending generator's first step makes it a virtual one
    (vgen_start) and a virtual one's steps run on its record the same way.
    Anything else is le_gen_iternext's, or for send() the C function 'send'
-   (gen_send), on the real generator. With 'out', for yield from's SEND,
+   (gen_send), on the real generator. A record a frame word holds
+   (yield_resumable), known by its type, is stepped as a virtual one's,
+   its fallback on its real generator. With 'out', for yield from's SEND,
    the result is an int, as le_iter_send's: 1 with what the body yielded
    in out's item, 0 with what it returned. 'through_c' how CPython runs the
    step from C (next(), send()), or LE_C_NONE as FOR_ITER_GEN and SEND_GEN
@@ -1907,20 +1937,26 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     Source sources[2];
     bool sends_any;
     int r;
-    bool as_direct = false;
+    bool as_direct = false, held = false;
     if (PsycoGenexpr_Check(vgen) || PsycoVgen_Check(vgen)) {
         co = pending_code(vgen);
         /* a generator's body pausing would make one it steps real at
            once, its record in the body's frame: such a one is made real
-           now and stepped as a real one */
+           now and stepped as a real one. yield from's is kept in the
+           frame's word as a record (yield_resumable). */
         if (PsycoGenexpr_Check(vgen) &&
             (!vgen_startable(vgen, co) ||
-             psyco_generator_mode(po) == GENEXPR_RESUMABLE)) {
+             (psyco_generator_mode(po) == GENEXPR_RESUMABLE && out == NULL))) {
             if (!compute_vinfo(vgen, po))
                 return NULL;
         }
         else
             L = &record_layout;
+    }
+    else if (out != NULL && is_runtime(vgen->source) &&
+             Psyco_KnownType(vgen) == &le_gen_record_type) {
+        L = &record_layout;
+        held = true;
     }
     if (L == &gen_layout && !is_runtime(vgen->source))
         goto generic;
@@ -1930,8 +1966,8 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
     sends_any = varg != NULL &&
                 !(is_compiletime(varg->source) &&
                   CompileTime_Get(varg->source)->value == (long)Py_None);
-    if (L == &gen_layout) {
-        vcode = gen_code(po, vgen);
+    if (L == &gen_layout || held) {
+        vcode = code_of(po, vgen, held ? REC_code_word : GEN_code_word);
         if (vcode == NULL)
             return NULL;
         r = psyco_pyobj_atcompiletime_mega(po, vcode, &o);
@@ -1956,7 +1992,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
         /* not started: CPython's TypeError for anything but None */
         r = sends_any ? 0 : vgen_start(po, vgen, co, t, vts, &ventry);
     else {
-        if (L == &record_layout)
+        if (PsycoVgen_Check(vgen))
             vobj = vgen->array->items[iVGEN_RECORD];
         r = gen_step_tests(po, L, vobj, co, t, vts, sends_any, &ventry);
     }
@@ -1981,7 +2017,7 @@ gen_send(PsycoObject *po, vinfo_t *vgen, vinfo_t *varg, PyCFunction send,
             return NULL;
         goto generic;
     }
-    if (L == &record_layout)
+    if (PsycoVgen_Check(vgen))
         vobj = vgen->array->items[iVGEN_RECORD];
     vinfo_incref(vobj); /* until the step ends */
 
@@ -2109,15 +2145,16 @@ error_nov:
 generic:
 #if LE_STACK_SEGMENTS
     if (as_direct && out != NULL)
-        return psyco_generic_call(po, le_call_as_direct,
-                                  CfReturnTypeInt | CfPyErrIfNeg, "lvvA",
-                                  (long)iter_send_long, vgen, varg, out);
+        return psyco_generic_call(
+            po, le_call_as_direct, CfReturnTypeInt | CfPyErrIfNeg, "lvvA",
+            (long)(held ? record_iter_send_long : iter_send_long), vgen, varg,
+            out);
     if (as_direct)
         return psyco_generic_call(po, le_call_as_direct, CfCommonIterNext,
                                   "lv", (long)le_gen_iternext, vgen);
 #endif
     if (out != NULL)
-        return psyco_generic_call(po, le_iter_send,
+        return psyco_generic_call(po, held ? record_iter_send : le_iter_send,
                                   CfReturnTypeInt | CfPyErrIfNeg, "vvA", vgen,
                                   varg, out);
     if (varg != NULL)

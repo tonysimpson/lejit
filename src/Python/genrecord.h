@@ -45,6 +45,12 @@ le_gen_record_send_status(PyThreadState *ts, PyObject *rec, PyObject *result,
    a record can't start there */
 EXTERNFN long
 le_gen_record_start_unit(PyCodeObject *co);
+/* The real generator of the record 'rec' that a frame's word holds
+   (pycompiler.c:yield_resumable), made now unless it has been: a new
+   reference, or NULL with an exception. An ended one, whose function has
+   gone, gives None. */
+EXTERNFN PyObject *
+le_gen_record_real(PyObject *rec);
 /* whether 'o' is a record */
 EXTERNFN bool
 le_gen_record_check(PyObject *o);

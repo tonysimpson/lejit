@@ -2132,30 +2132,38 @@ PsycoIter_Check(PsycoObject *po, vinfo_t *obj)
 }
 #endif
 
-/* PyObject_GetIter's end: its result 'res' if an iterator, else its
-   TypeError */
+/* PyObject_GetIter's end: its result 'res' for 'o' if an iterator, else
+   its TypeError */
 static PyObject *
-cimpl_iter_result(PyObject *res)
+cimpl_iter_result(PyObject *o, PyObject *res)
 {
     if (!PyIter_Check(res)) {
+#ifdef LE_MSG_ITER_RETURNED_NON_ITERATOR_QUALIFIED
+        PyErr_Format(PyExc_TypeError,
+                     LE_MSG_ITER_RETURNED_NON_ITERATOR_QUALIFIED, Py_TYPE(o),
+                     Py_TYPE(res));
+#else
+        (void)o;
         PyErr_Format(PyExc_TypeError, LE_MSG_ITER_RETURNED_NON_ITERATOR,
                      Py_TYPE(res)->tp_name);
+#endif
         return NULL;
     }
     Py_INCREF(res);
     return res;
 }
 
-/* the same on 'r', which it consumes: no test where r is known to be a
-   generator, pending or not */
+/* the same on 'r', the result for 'vi', which it consumes: no test where
+   r is known to be a generator, pending or not */
 static vinfo_t *
-iter_result(PsycoObject *po, vinfo_t *r)
+iter_result(PsycoObject *po, vinfo_t *vi, vinfo_t *r)
 {
     vinfo_t *checked;
     if (Psyco_KnownType(r) == &PyGen_Type)
         return r;
-    checked = psyco_generic_call(po, cimpl_iter_result,
-                                 CfCommonNewRefPyObject | CfNoPython, "v", r);
+    checked =
+        psyco_generic_call(po, cimpl_iter_result,
+                           CfCommonNewRefPyObject | CfNoPython, "vv", vi, r);
     vinfo_decref(r, po);
     return checked;
 }
@@ -2198,7 +2206,7 @@ PsycoObject_GetIter(PsycoObject *po, vinfo_t *vi)
        and PyObject_GetIter's check that it returned an iterator */
     if (Psyco_Lookup(f) != NULL) {
         vinfo_t *r = Psyco_META1(po, f, CfCommonNewRefPyObject, "v", vi);
-        return r == NULL ? NULL : iter_result(po, r);
+        return r == NULL ? NULL : iter_result(po, vi, r);
     }
 generic:
     return psyco_generic_call(po, PyObject_GetIter, CfCommonNewRefPyObject,

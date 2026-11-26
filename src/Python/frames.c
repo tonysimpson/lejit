@@ -3991,11 +3991,22 @@ DEFINEFN
 void
 psyco_resume_value(struct resume_s *st, long i, PyObject *v)
 {
+    bool object = v != NULL;
 #if LE_HAS_TAGGED_LASTI
     /* a handler's lasti, as the frame holds it (pycompiler.c:offset_int) */
-    if (((uintptr_t)v & Py_INT_TAG) != Py_INT_TAG)
+    object = object && ((uintptr_t)v & Py_INT_TAG) != Py_INT_TAG;
 #endif
-        Py_XINCREF(v);
+#if LE_RESUMES_GENERATORS_DIRECTLY
+    /* a record yield from steps: ceval steps its real generator */
+    if (object && le_gen_record_check(v)) {
+        v = le_gen_record_real(v);
+        if (v == NULL)
+            OUT_OF_MEMORY();
+        object = false;
+    }
+#endif
+    if (object)
+        Py_INCREF(v);
     st->values[i] = v;
     st->nvalues = i + 1;
 }

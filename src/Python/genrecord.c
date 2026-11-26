@@ -229,6 +229,54 @@ record_closes_unrun(le_gen_record_t *r)
 }
 #endif
 
+static PyObject *
+record_escape(le_gen_record_t *r, PyFunctionObject *func, int8_t state);
+
+/* whether word k of the frame 'f' is a record: one its body steps by
+   yield from, held there while it is paused (pycompiler.c:yield_resumable) */
+static bool
+word_is_record(le_frame_t *f, int k)
+{
+    PyObject *o;
+#if LE_HAS_TAGGED_LASTI
+    if ((f->localsplus[k].bits & Py_INT_TAG) == Py_INT_TAG)
+        return false; /* a handler's lasti */
+#endif
+    o = LE_FRAME_WORD(f, k);
+    return o != NULL && Py_TYPE(o) == &le_gen_record_type;
+}
+
+/* the records in the stack of the frame 'f' made real, so that a
+   generator made of the frame holds only real ones; -1 with an exception */
+static int
+words_escape(le_frame_t *f)
+{
+    int k, n = frame_nwords(f);
+    for (k = LE_FRAME_CODE(f)->co_nlocalsplus; k < n; k++)
+        if (word_is_record(f, k)) {
+            PyObject *gen = le_gen_record_real(LE_FRAME_WORD(f, k));
+            if (gen == NULL)
+                return -1;
+            le_frame_word_set(f, k, gen);
+        }
+    return 0;
+}
+
+DEFINEFN PyObject *
+le_gen_record_real(PyObject *rec)
+{
+    le_gen_record_t *r = (le_gen_record_t *)rec;
+    if (r->escaped != NULL)
+        return Py_NewRef(r->escaped);
+    if (r->state >= FRAME_CLEARED) {
+        /* ended, its function let go: only the word that held it until
+           END_SEND pops it can still see it, which nothing reads */
+        return Py_NewRef(Py_None);
+    }
+    LE_STAT(le_stat_gen_records[1]++);
+    return record_escape(r, frame_func(&r->frame), r->state);
+}
+
 /* The real generator made from the record 'r', in the state 'state': a
    frame object for its frame (the one Python asked for, or a new one)
    takes the frame, and the generator is made around it. The record holds
@@ -240,6 +288,8 @@ record_escape(le_gen_record_t *r, PyFunctionObject *func, int8_t state)
     _Py_CODEUNIT *at = LE_FRAME_PLACE(f);
     PyFrameObject *fo;
     PyGenObject *gen;
+    if (words_escape(f) < 0)
+        return NULL;
     /* complete for the while, or no frame object is made for it */
     if (!le_frame_complete(f))
         le_frame_set_lasti(f, 0);
