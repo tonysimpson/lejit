@@ -1476,6 +1476,13 @@ psyco_owner_root_holding(vinfo_array_t *a)
     return root;
 }
 
+DEFINEFN bool
+psyco_owner_would_hold(CodeBufferObject *b)
+{
+    return (psyco_owner == NULL || psyco_owner->parent == NULL) &&
+           group_blocks.n != 0 && amap_get(&group_blocks, b) != NULL;
+}
+
 DEFINEFN void
 psyco_owner_depend(CodeBufferObject *b)
 {

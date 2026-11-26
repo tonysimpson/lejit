@@ -128,6 +128,10 @@ psyco_group_new(PyObject *key, void *site);
    last and holding its object; restored by the caller's LE_OWNER_LEAVE */
 EXTERNFN void
 psyco_owner_enter_groups(vinfo_array_t *a);
+/* would the current owner's code jumping into 'b' keep a group alive for
+   as long as its code object lives? */
+EXTERNFN bool
+psyco_owner_would_hold(CodeBufferObject *b);
 /* the current owner's code jumps into 'b' */
 EXTERNFN void
 psyco_owner_depend(CodeBufferObject *b);
