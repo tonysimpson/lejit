@@ -1101,7 +1101,8 @@ cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
     /* The real frame if the code has one (run by LeCode_Run), the one asked
        for, or the one that stood for the call when it caught an exception
        (its catcher word's, 'word'), so that the call's entries share one
-       frame, as CPython's do. Otherwise a minimalistic frame object,
+       frame, as CPython's do. A compiled callee with handlers gets its
+       kept frame made now. Otherwise a minimalistic frame object,
        working around the specific expectations of PyFrame_New(), which is
        the only reasonable way to create frame objects (because of free
        lists etc). Its f_back is the entry's over it
@@ -1111,6 +1112,13 @@ cimpl_new_frame(PyThreadState *tstate, PyCodeObject *code, PyObject *globals,
     le_frame_t *back = le_frame_current(tstate);
     if (result != NULL) {
         Py_INCREF(result);
+        set_frame_place(result, lasti, lineno);
+        return result;
+    }
+    /* a frame with handlers may run on after the entry and be asked for:
+       a compiled callee's is its kept frame from now on */
+    if (word != NULL &&
+        (result = psyco_innermost_keep(code, globals, lasti)) != NULL) {
         set_frame_place(result, lasti, lineno);
         return result;
     }
