@@ -13,8 +13,10 @@
  * runs the original. Only instructions found in function entries are known
  * here: each is moved as it is, with a RIP-relative displacement or rel32
  * target refitted to its new address (the page is near), and a short jump
- * widened to rel32. Anything else, a call, and a branch into the bytes
- * moved refuse the patch.
+ * widened to rel32. A call is moved as a push of the original's own return
+ * address and a jump, so that the stub is never a return address. Anything
+ * else, an indirect call, and a branch into the bytes moved refuse the
+ * patch.
  *
  * The entry's page is made writable for the write, and executable
  * throughout, since other threads may be running other code in it. The
@@ -189,7 +191,8 @@ decode(const unsigned char *p, insn_t *in)
     else if (op == 0xff) { /* inc, dec, push, or an indirect call or jump */
         modrm = 1;
         in->ends = ((p[i] >> 3) & 7) == 4 || ((p[i] >> 3) & 7) == 5;
-        in->call = ((p[i] >> 3) & 7) == 2 || ((p[i] >> 3) & 7) == 3;
+        if (((p[i] >> 3) & 7) == 2 || ((p[i] >> 3) & 7) == 3)
+            return false; /* an indirect call */
     }
     else
         return false;
@@ -246,9 +249,31 @@ move_entry(const unsigned char *fn, unsigned char *out)
     insn_t in;
     while (n < ENTRY_JUMP) {
         const unsigned char *p = fn + n;
-        /* a call from the stub would make it a return address */
-        if (!decode(p, &in) || in.call || (in.ends && n + in.len < ENTRY_JUMP))
+        if (!decode(p, &in) ||
+            ((in.ends || in.call) && n + in.len < ENTRY_JUMP))
             return 0;
+        if (in.call) {
+            /* pushes the original's own return address and jumps, so that
+               the callee returns into the original past the bytes moved and
+               the stub is never a return address: push imm32 (sign
+               extended), mov dword [rsp+4], imm32, jmp rel32 */
+            uint64_t back = (uint64_t)(uintptr_t)(p + in.len);
+            uint32_t lo = (uint32_t)back, hi = (uint32_t)(back >> 32);
+            out[o++] = 0x68;
+            memcpy(out + o, &lo, 4);
+            o += 4;
+            memcpy(out + o, "\xc7\x44\x24\x04", 4);
+            o += 4;
+            memcpy(out + o, &hi, 4);
+            o += 4;
+            out[o++] = 0xe9;
+            if (!put_rel32(out + o, out + o + 4,
+                           (intptr_t)(p + in.len) + read32(p + in.rel32_at)))
+                return 0;
+            o += 4;
+            n += in.len;
+            break;
+        }
         if (in.short_jump) {
             unsigned char op = p[0];
             intptr_t target = (intptr_t)(p + 2) + (signed char)p[1];
@@ -283,7 +308,7 @@ move_entry(const unsigned char *fn, unsigned char *out)
     for (k = 0; k < ntargets; k++)
         if (targets[k] > (intptr_t)fn && targets[k] < (intptr_t)fn + n)
             return 0;
-    if (!in.ends) {
+    if (!in.ends && !in.call) {
         out[o] = 0xe9;
         if (!put_rel32(out + o + 1, out + o + 5, (intptr_t)fn + n))
             return 0;
