@@ -1163,6 +1163,15 @@ compile_join(PsycoObject *po, global_entries_t *ge, bool branch, bool first)
     }
     if (branch && first)
         LE_STAT(psyco_stat_joins[cmp != NULL ? 1 : 2]++);
+    /* a group's compile goes on under its code object's owner, as at a
+       merge point (psyco_compile) */
+    if (ge != NULL) {
+        le_owner_t *root = psyco_owner_root_holding(&po->vlocals);
+        if (root != NULL) {
+            psyco_owner = root;
+            psyco_code_continue(&po->code, &po->codelimit);
+        }
+    }
     codebuf = psyco_proxy_code_buffer(po, ge);
     po->code = insn_code_label(codebuf->codestart);
     if (cmp != NULL) {
