@@ -1893,7 +1893,7 @@ def render(found, ops, version, origin):
 
 def target_version(python):
     """The version (sys.version) of the interpreter being built for."""
-    r = subprocess.run([python, '-I', '-c', 'import sys; print(sys.version.split()[0])'],
+    r = subprocess.run([python, '-I', '-S', '-c', 'import sys; print(sys.version.split()[0])'],
                        stdout=subprocess.PIPE, universal_newlines=True, timeout=60)
     if r.returncode != 0:
         raise FeatureError('cannot run %s' % python)

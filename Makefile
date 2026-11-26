@@ -41,6 +41,7 @@ test: checked-build
 	$(PY) tests/jit/run.py
 	$(PY) tests/jit/leak_check.py
 	$(PY) tests/jit/build_info.py
+	$(PY) tests/jit/check_started.py
 	$(PY) tests/jit/bounds.py
 	$(PY) tests/jit/out_of_memory.py
 	$(PY) tests/jit/no_threads.py

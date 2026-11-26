@@ -57,7 +57,7 @@ def run_probes(python, names=()):
     alone goes unanswered."""
     def run(names):
         try:
-            r = subprocess.run([python, '-I', PROBES] + list(names),
+            r = subprocess.run([python, '-I', '-S', PROBES] + list(names),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                universal_newlines=True, timeout=TIMEOUT)
         except (OSError, subprocess.TimeoutExpired) as e:
