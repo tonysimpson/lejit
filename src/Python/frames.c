@@ -768,29 +768,30 @@ keeps_own_locals(PyCodeObject *co)
 
 /* the catcher word (pycompiler.c:catcher_word) of the compiled frame of
    code 'co' whose own slot is 'slot', while it is in the call its slot
-   says (as slot_locals), if its frame has one; else NULL */
+   says, if its frame has one and it is free; else NULL. Any map the slot
+   names places the word, which stays where the frame's header put it; a
+   note, which may be left from a call that has returned, is checked as
+   slot_locals checks it, by unwinding, only for a free word. */
 static PyObject **
 slot_word(stack_frame_info_t **slot, PyCodeObject *co)
 {
     long v = (long)*slot, regs[REG_TOTAL];
     struct locals_map_s *map;
+    PyObject **word;
     code_t *ip;
     if (v == -1 || v == FINFO_RETURNING || keeps_own_locals(co))
         return NULL;
-    if ((v & 1) != 0) {
-        map = psyco_note_map(v);
-        if (map == NULL || map->word < 0 ||
-            map->nvalues != n_locals_plus(co) ||
-            !slot_registers(slot, regs, &ip) || ip != map->retaddr)
-            return NULL;
-    }
-    else {
-        map = ((stack_frame_info_t *)v)->back_locals;
-        if (map == NULL || map->word < 0 || map->retaddr != NULL ||
-            map->nvalues != n_locals_plus(co))
-            return NULL;
-    }
-    return (PyObject **)((char *)slot - map->below + map->word);
+    map = (v & 1) != 0 ? psyco_note_map(v)
+                       : ((stack_frame_info_t *)v)->back_locals;
+    if (map == NULL || map->word < 0 || map->nvalues != n_locals_plus(co))
+        return NULL;
+    word = (PyObject **)((char *)slot - map->below + map->word);
+    if (*word != NULL)
+        return NULL;
+    if ((v & 1) != 0 ? !slot_registers(slot, regs, &ip) || ip != map->retaddr
+                     : map->retaddr != NULL)
+        return NULL;
+    return word;
 }
 
 /* A frame object made for a compiled call that is running, which may be
