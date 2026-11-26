@@ -4794,15 +4794,24 @@ cimpl_unpack_list(PyObject *listobject, long argcnt, PyObject **sp)
 /* 3.7 ceval.c do_raise's reraise, with ceval's traceback rule: a reraised
    exception gets no entry for this frame (ceval goes to exception_unwind),
    so the unwind loop records none, and the RuntimeError
-   for no active exception gets its entry here instead (ceval's error:) */
+   for no active exception gets its entry here instead (ceval's error:).
+   A handler takes no frame from an exception raised again
+   (psyco_pycompiler_mainloop), so 'word', given when one in this frame will
+   catch it, takes the RuntimeError's frame here ('own' as for
+   cimpl_push_exc_info). */
 static void
-cimpl_reraise(PyCodeObject *code, PyObject *globals, int lasti, int lineno)
+cimpl_reraise(PyCodeObject *code, PyObject *globals, int lasti, int lineno,
+              PyObject **word, stack_frame_info_t **own)
 {
     PyObject *type, *value, *tb;
-    le_exc_info_topmost(PyThreadState_GET(), &type, &value, &tb);
+    PyThreadState *tstate = PyThreadState_GET();
+    le_exc_info_topmost(tstate, &type, &value, &tb);
     if (type == Py_None || type == NULL) {
         PyErr_SetString(PyExc_RuntimeError, LE_MSG_NO_ACTIVE_EXCEPTION);
-        cimpl_rt_traceback(code, globals, lasti, lineno, NULL);
+        cimpl_rt_traceback(code, globals, lasti, lineno, word);
+        tb = le_exc_traceback(tstate);
+        if (word != NULL && tb != NULL && PyTraceBack_Check(tb))
+            psyco_frame_catch(((PyTracebackObject *)tb)->tb_frame, word, own);
         return;
     }
     Py_XINCREF(type);
@@ -9283,10 +9292,21 @@ compile_blocks_and_exceptions(PsycoObject *po, int opcode, int oparg,
                                        w, v);
                     break;
                 case 0:
-                    psyco_generic_call(
-                        po, cimpl_reraise, CfPyErrAlways, "lvll", (long)co,
-                        LOC_GLOBALS, (long)po->pr.next_instr,
-                        (long)PyCode_Addr2Line(co, po->pr.next_instr));
+                    if (caught_here(po)) {
+                        vinfo_t *own = own_slot();
+                        psyco_generic_call(
+                            po, cimpl_reraise, CfPyErrAlways, "lvllrr",
+                            (long)co, LOC_GLOBALS, (long)po->pr.next_instr,
+                            (long)PyCode_Addr2Line(co, po->pr.next_instr),
+                            catcher_word(po), own);
+                        vinfo_decref(own, po);
+                    }
+                    else
+                        psyco_generic_call(
+                            po, cimpl_reraise, CfPyErrAlways, "lvllll",
+                            (long)co, LOC_GLOBALS, (long)po->pr.next_instr,
+                            (long)PyCode_Addr2Line(co, po->pr.next_instr), 0L,
+                            0L);
                     break;
                 default:
                     PycException_SetString(po, PyExc_SystemError,
@@ -9813,6 +9833,11 @@ psyco_pycompiler_mainloop(PsycoObject *po)
     int saved_rec_limit;
     int unwound = 0;  /* the frame went on interpreted (resume_if_tracing) */
     int reraised = 0; /* exception_unwind: an exception raised again */
+    /* the exception being unwound has no entry of this frame's from this
+       raise: its traceback starts at the frame of the call that caught it
+       before, which may be another's, so a handler here takes no frame
+       from it (psyco_frame_catch) */
+    int raised_again = 0;
     /* the place, as ceval's lasti, of an exception RERAISE raises again
        from the place under it; else -1 */
     int raise_lasti = -1;
@@ -10128,6 +10153,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
         }
         resumed = unwound;
         unwound = 0;
+        raised_again = reraised;
         reraised = 0;
 
         /* All exceptions raised inside an inlined frame are passed to the
@@ -10197,6 +10223,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                                    NULL);
                 PsycoTraceBack_Here(po, po->pr.next_instr);
             }
+            raised_again = 0;
         }
 
 #if LE_HAS_EXCEPTION_TABLE
@@ -10230,7 +10257,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 while (STACK_LEVEL() > h.depth) POP_DECREF();
                 if (h.lasti)
                     PUSH(offset_int(lasti));
-                if (word != NULL) {
+                if (word != NULL && !raised_again) {
                     own = own_slot();
                     v = psyco_generic_call(po, cimpl_catch,
                                            CfCommonNewRefPyObject, "rr", word,
@@ -10313,7 +10340,7 @@ psyco_pycompiler_mainloop(PsycoObject *po)
                 block_setup(po, EXCEPT_HANDLER, -1,
                             STACK_LEVEL()); /* reuses *b */
                 array = array_new(6);
-                if (word != NULL) {
+                if (word != NULL && !raised_again) {
                     own = own_slot();
                     ok = psyco_generic_call(po, cimpl_push_exc_info,
                                             CfNoReturnValue, "Arr", array,
