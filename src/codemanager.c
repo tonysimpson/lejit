@@ -422,6 +422,7 @@ DEFINEVAR long psyco_stat_code_moved[3] = {0, 0, 0};
 typedef struct {
     le_owner_t *owner; /* NULL: its owner died */
     code_t *start, *end, *to;
+    int gap; /* bytes before 'to' that go with it */
 } made_t;
 static made_t *made = NULL;
 static int nmade = 0, madecap = 0;
@@ -457,6 +458,7 @@ made_add(le_owner_t *o, code_t *start, code_t *end)
     made[nmade].start = start;
     made[nmade].end = end;
     made[nmade].to = start;
+    made[nmade].gap = 0;
     nmade++;
 }
 
@@ -573,9 +575,10 @@ free_last(int r, size_t n)
     return f;
 }
 
-/* room for 'size' bytes at the same offset from 16 as 'from', or 'from' */
+/* room for 'size' bytes at the same offset from 16 as 'from', or 'from';
+   the bytes skipped to keep that offset go in '*gap' */
 static code_t *
-moved_room(code_t *from, size_t size)
+moved_room(code_t *from, size_t size, int *gap)
 {
     int r = region_of(from), f;
     code_t *d, *old_next = NULL, *old_end = NULL;
@@ -606,9 +609,11 @@ moved_room(code_t *from, size_t size)
         if (old_next != NULL && old_end > old_next)
             free_insert(old_next, old_end);
     }
+    /* the bytes skipped go with the piece, so that they are freed with it:
+       freed alone, between pieces, they would fill the free list with holes
+       too small to use */
     d = moved_next + ((from - moved_next) & 15);
-    if (d > moved_next)
-        free_insert(moved_next, d);
+    *gap = (int)(d - moved_next);
     moved_next = d + size;
     return d;
 }
@@ -702,14 +707,17 @@ static void
 piece_stay(made_t *m)
 {
     if (m->to != m->start) {
-        free_insert(m->to, m->to + (m->end - m->start));
+        free_insert(m->to - m->gap, m->to + (m->end - m->start));
         m->to = m->start;
+        m->gap = 0;
     }
 }
 
-/* the extent of 'o' holding [start, end) is now at 'to' */
+/* the extent of 'o' holding [start, end) is now at 'to', with the 'gap'
+   bytes before it */
 static void
-owner_extent_moved(le_owner_t *o, code_t *start, code_t *end, code_t *to)
+owner_extent_moved(le_owner_t *o, code_t *start, code_t *end, code_t *to,
+                   int gap)
 {
     int k;
     for (k = 0; k < o->nextents; k++) {
@@ -720,7 +728,7 @@ owner_extent_moved(le_owner_t *o, code_t *start, code_t *end, code_t *to)
                 o->extents[k].end = start;
                 i = o->nextents++;
             }
-            o->extents[i].start = to;
+            o->extents[i].start = to - gap;
             o->extents[i].end = to + (end - start);
             if (end < xend) {
                 o->extents[o->nextents].start = end;
@@ -814,7 +822,7 @@ psyco_code_move_made(void)
         made_t *m = &made[k];
         size_t size = m->end - m->start;
         if (m->owner != NULL)
-            m->to = moved_room(m->start, size);
+            m->to = moved_room(m->start, size, &m->gap);
     }
     /* each distance must still reach */
     do {
@@ -921,7 +929,8 @@ psyco_code_move_made(void)
             continue;
         }
         LE_STAT(psyco_stat_code_moved[0] += m->end - m->start);
-        owner_extent_moved(m->owner, m->start, m->end, m->to);
+        owner_extent_moved(m->owner, m->start, m->end, m->to, m->gap);
+        LE_STAT(psyco_stat_code_bytes_live += m->gap);
         memset(m->start, 0xCC, m->end - m->start); /* INT 3 */
         old_add(m->start, m->end);
     }
