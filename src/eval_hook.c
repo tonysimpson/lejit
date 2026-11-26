@@ -889,8 +889,14 @@ LeFunc_Eval(PyThreadState *tstate, le_frame_t *frame, int throwflag)
     else if (psyco_frame_called_from_callee(le_frame_current(tstate)))
         result = eval_from_callee(tstate, frame, throwflag);
 #endif
-    else
+    else {
         result = original_eval_frame(tstate, frame, throwflag);
+#if LE_HAS_EVAL_FRAME_POPS
+        /* ceval has popped the frame, giving one that outlives it its
+           caller's frame object */
+        psyco_frame_back_stands(le_frame_current(tstate));
+#endif
+    }
 #if !LE_HAS_EVAL_FRAME_POPS
     /* where the frame is popped by now, LeCode_Run did this before */
     if (le_frame_outlives(frame) != NULL)
@@ -915,9 +921,24 @@ LeEval_EvalFrame(PyThreadState *tstate, le_frame_t *frame, int throwflag)
             return gen_ending_result;
         }
 #endif
+#if LE_HAS_INTERPRETER_FRAME
+        le_frame_t *back = le_frame_current(tstate);
+        PyObject *result = gen_may_resume(frame, throwflag, &x)
+                               ? LeGen_Eval(tstate, frame, x)
+                               : original_eval_frame(tstate, frame, throwflag);
+        /* a frame object that outlives its generator's ended run has its
+           caller's frame object as f_back (the first run, which makes the
+           generator, runs on the thread's frame) */
+        if (result == NULL || (le_frame_is_gen(frame) &&
+                               !LE_GEN_PAUSED(*le_frame_gen_state(frame))))
+            psyco_frame_back_stands(back);
+        return result;
+#else
+        /* gen_send_ex unlinks the frame's f_back after each run */
         if (gen_may_resume(frame, throwflag, &x))
             return LeGen_Eval(tstate, frame, x);
         return original_eval_frame(tstate, frame, throwflag);
+#endif
     }
     return LeFunc_Eval(tstate, frame, throwflag);
 }

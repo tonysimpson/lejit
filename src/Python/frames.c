@@ -315,6 +315,31 @@ psyco_frames_running(void (*mark)(PyCodeObject **cos, int ncos, code_t *at,
     return 0;
 }
 
+/* Every thread's runs by frame, for psyco_frame_start_get: a frame that
+   isn't a run's is looked up too, often, as a traceback's are when a deep
+   one has its locals written, and a search of this thread's list goes all
+   through it then */
+#define RUN_HASHES 1024
+static FrameRuntime *runs_by_frame[RUN_HASHES];
+
+static FrameRuntime **
+runs_hashed(le_frame_t *f)
+{
+    uintptr_t a = (uintptr_t)f;
+    return &runs_by_frame[((a >> 4) ^ (a >> 14)) % RUN_HASHES];
+}
+
+/* the run is no longer found by its frame */
+static void
+run_unhash(FrameRuntime *fr)
+{
+    FrameRuntime **p;
+    if (fr->frame == NULL)
+        return;
+    for (p = runs_hashed(fr->frame); *p != fr;) p = &(*p)->same_hash;
+    *p = fr->same_hash;
+}
+
 DEFINEFN void
 psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
                            stack_frame_info_t ***psy_frames_start)
@@ -328,8 +353,12 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
     fr->resumed = 0;
     fr->exposed = 0;
     fr->walked = NULL;
+    fr->word = NULL;
     fr->next = frame_runs;
     frame_runs = fr;
+    fr->list = &frame_runs;
+    fr->same_hash = *runs_hashed(f);
+    *runs_hashed(f) = fr;
     if (fr->next == NULL && !runs_listed) {
         runs_list();
 #if LE_STACK_SEGMENTS
@@ -386,8 +415,8 @@ DEFINEFN FrameRuntime *
 psyco_frame_start_get(le_frame_t *f)
 {
     FrameRuntime *fr;
-    for (fr = frame_runs; fr != NULL; fr = fr->next)
-        if (fr->frame == f)
+    for (fr = *runs_hashed(f); fr != NULL; fr = fr->same_hash)
+        if (fr->frame == f && fr->list == &frame_runs)
             return fr;
     return NULL;
 }
@@ -404,6 +433,7 @@ psyco_frame_start_unregister(FrameRuntime *fr)
         while (*p != fr) p = &(*p)->next;
         *p = fr->next;
     }
+    run_unhash(fr);
     if (fr->walked != NULL)
         walked_end(fr->walked);
 #ifdef PyFrameLocalsProxy_Check
@@ -556,6 +586,26 @@ runs_here(stack_frame_info_t **roots[MAX_RUNS],
     return n;
 }
 
+/* whether 'ip' is in a loaded object, not compiled code. dladdr searches
+   the object's symbols, so the addresses found in one are remembered: the
+   same few return addresses come up in every unwinding. One remembered
+   is not trusted in a region of compiled code, where an object unloaded
+   since may have been. */
+#define LOADED_IPS 4096
+static bool
+in_loaded_object(unw_word_t ip)
+{
+    static unw_word_t loaded[LOADED_IPS];
+    unw_word_t *seen = &loaded[(ip ^ (ip >> 12)) % LOADED_IPS];
+    Dl_info info;
+    if (*seen == ip && !psyco_in_code_regions((void *)ip))
+        return true;
+    if (dladdr((void *)ip, &info) == 0)
+        return false;
+    *seen = ip;
+    return true;
+}
+
 /* Where the innermost compiled frame of each of the first 'n' runs
    runs_here found called C, found by unwinding the C frames from here
    down to it: the call's return address in ips[i], and for the last
@@ -569,9 +619,16 @@ static int
 runs_unwind(stack_frame_info_t **roots[], stack_frame_info_t **inners[], int n,
             code_t *ips[], long regs[REG_TOTAL])
 {
+    static bool cached;
     unw_context_t uc;
     unw_cursor_t c;
     int i, steps;
+    /* libunwind's global cache blocks signals around each use of it, a
+       system call each time */
+    if (!cached) {
+        unw_set_caching_policy(unw_local_addr_space, UNW_CACHE_PER_THREAD);
+        cached = true;
+    }
     if (unw_getcontext(&uc) < 0 || unw_init_local(&c, &uc) < 0)
         return 0;
     for (i = 0; i < n; i++) {
@@ -579,10 +636,9 @@ runs_unwind(stack_frame_info_t **roots[], stack_frame_info_t **inners[], int n,
         long *saved = (long *)roots[i], *ret;
         /* the first frame outside every loaded object is compiled code */
         for (steps = 0;; steps++) {
-            Dl_info info;
             if (unw_get_reg(&c, UNW_REG_IP, &ip) < 0)
                 return i;
-            if (dladdr((void *)ip, &info) == 0)
+            if (!in_loaded_object(ip))
                 break;
             if (steps > 4096 || unw_step(&c) <= 0)
                 return i;
@@ -754,6 +810,65 @@ slot_locals(stack_frame_info_t **slot, PyCodeObject *co, PyObject **values,
     }
     PyErr_Restore(t, val, tb);
     return true;
+}
+
+/* a generator's, coroutine's or async generator's frame keeps its own
+   locals, needing no catcher word to stand in */
+static bool
+keeps_own_locals(PyCodeObject *co)
+{
+    return (co->co_flags &
+            (CO_GENERATOR | CO_COROUTINE | CO_ASYNC_GENERATOR)) != 0;
+}
+
+/* the catcher word (pycompiler.c:catcher_word) of the compiled frame of
+   code 'co' whose own slot is 'slot', while it is in the call its slot
+   says, if its frame has one and it is free; else NULL. Any map the slot
+   names places the word, which stays where the frame's header put it; a
+   note, which may be left from a call that has returned, is checked as
+   slot_locals checks it, by unwinding, only for a free word. */
+static PyObject **
+slot_word(stack_frame_info_t **slot, PyCodeObject *co)
+{
+    long v = (long)*slot, regs[REG_TOTAL];
+    struct locals_map_s *map;
+    PyObject **word;
+    code_t *ip;
+    if (v == -1 || v == FINFO_RETURNING || keeps_own_locals(co))
+        return NULL;
+    map = (v & 1) != 0 ? psyco_note_map(v)
+                       : ((stack_frame_info_t *)v)->back_locals;
+    if (map == NULL || map->word < 0 || map->nvalues != n_locals_plus(co))
+        return NULL;
+    word = (PyObject **)((char *)slot - map->below + map->word);
+    if (*word != NULL)
+        return NULL;
+    if ((v & 1) != 0 ? !slot_registers(slot, regs, &ip) || ip != map->retaddr
+                     : map->retaddr != NULL)
+        return NULL;
+    return word;
+}
+
+/* A frame object made for a compiled call that is running, which may be
+   held past the call's end, keeps the call's locals as they end, as
+   CPython's frame does: the call's catcher word holds it, where the frame
+   has one that is free, and the call's end gives it the locals
+   (pycompiler.c:catcher_flush). */
+static void
+stand_in_word(PyFrameObject *f, PyObject **word)
+{
+    if (word == NULL || *word != NULL)
+        return;
+    Py_INCREF(f);
+    *word = (PyObject *)f;
+}
+
+/* the frame object of the compiled callee whose own slot is 'own' stands
+   for its call (stand_in_word) */
+static void
+stand_for_call(PyFrameObject *f, stack_frame_info_t **own)
+{
+    stand_in_word(f, slot_word(own, le_pyframe_code(f)));
 }
 
 /* f's locals now, from the compiled frame whose slot is 'slot', if it
@@ -1510,8 +1625,11 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
             return NULL;
         f = a->frame;
         Py_INCREF(f);
-        if (!a->resumed)
+        if (!a->resumed) {
             le_frame_set_lasti(le_frame_of(f), le_lasti_of(lasti));
+            if (!inlined)
+                stand_for_call(f, own);
+        }
         return f;
     }
     if (!inlined && ret == NULL)
@@ -1537,8 +1655,10 @@ keep_frame(stack_frame_info_t **own, stack_frame_info_t **slot, int inlined,
     a->nkeep = 0;
     if (inlined)
         psyco_inline_frames_kept++;
-    else
+    else {
         a->ret = barrier_taken(own, ret);
+        stand_for_call(f, own);
+    }
     Py_INCREF(f);
     return f;
 }
@@ -1848,6 +1968,7 @@ emulate_frame(const visited_frame_t *v)
 {
     if (v->frame != NULL) {
         /* a real Python frame, or the one whose code LeCode_Run runs */
+        psyco_frame_stands(v->frame);
         Py_INCREF(v->frame);
         return v->frame;
     }
@@ -2181,6 +2302,22 @@ runs_compiled(PyFrameObject *f)
     return fr != NULL && !fr->resumed;
 }
 
+/* the real frame object 'f', if compiled code runs its code, stands for
+   that run (stand_in_word): the word's place is found once a run */
+DEFINEFN void
+psyco_frame_stands(PyFrameObject *f)
+{
+    FrameRuntime *fr;
+    if (f == NULL || keeps_own_locals(le_pyframe_code(f)) || !runs_compiled(f))
+        return;
+    fr = psyco_frame_start_get(le_frame_of(f));
+    if (fr->psy_code != le_pyframe_code(f))
+        return;
+    if (fr->word == NULL)
+        fr->word = slot_word(*fr->psy_frames_start, fr->psy_code);
+    stand_in_word(f, fr->word);
+}
+
 /* frame.f_back, replaced in PyFrame_Type's dict. A running real frame
    entered through C from compiled code has as f_back the real frame
    LeCode_Run runs, which skips any compiled frames in
@@ -2307,6 +2444,7 @@ catcher_caller(PyFrameObject *f)
     pvisitframes(visit_back_frame, &b);
     PyErr_Clear();
     if (b.top == NULL && b.found) {
+        psyco_frame_stands(b.back);
         Py_INCREF(b.back);
         return b.back;
     }
@@ -2764,13 +2902,44 @@ psyco_frame_callee_back(void)
     return top;
 }
 
+/* 'f' or the first complete frame out of it, or NULL */
+static le_frame_t *
+complete_frame(le_frame_t *f)
+{
+    while (f != NULL && !le_frame_complete(f)) f = le_frame_back(f);
+    return f;
+}
+
+DEFINEFN
+void
+psyco_frame_back_stands(le_frame_t *back)
+{
+    PyFrameObject *fo;
+    back = complete_frame(back);
+    if (back == NULL)
+        return;
+#if LE_HAS_INTERPRETER_FRAME
+    fo = back->frame_obj;
+#else
+    fo = back;
+#endif
+    if (fo != NULL && Py_REFCNT(fo) > 1)
+        psyco_frame_stands(fo);
+}
+
 DEFINEFN
 void
 psyco_frame_returned(le_frame_t *f)
 {
     PyFrameObject *top;
-    if (!psyco_frame_called_from_callee(le_frame_back(f)))
+    le_frame_t *back = le_frame_back(f);
+    if (!psyco_frame_called_from_callee(back)) {
+        /* the frame it was called from is its f_back */
+        back = complete_frame(back);
+        if (back != NULL)
+            psyco_frame_stands(le_frame_object(back));
         return;
+    }
     top = psyco_frame_callee_back();
     if (top != NULL)
         le_frame_set_back_at_exit(f, top);
@@ -4877,8 +5046,10 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
         PyErr_Clear();
     result = le_pyframe_run_to_end(ts, f);
     /* the real frame is gone: LeCode_Run returns the result as it is */
-    if (fr != NULL)
+    if (fr != NULL) {
+        run_unhash(fr);
         fr->frame = NULL;
+    }
 #else
     marked = le_pyframe_eval_begin(ts, f);
     result = le_eval_frame_default(le_frame_of(f));

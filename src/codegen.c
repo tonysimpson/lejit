@@ -676,6 +676,10 @@ psyco_locals_map(PsycoObject *po, int lasti, const long *reg_pos, int own)
     map->nvalues = n;
     /* after the pushes: positions are offsets down from the stack top */
     map->below = po->stack_depth - INITIAL_STACK_DEPTH;
+    map->word = -1;
+    if (!po->pr.is_inlining && LOC_CONTINUATION->array->count > 0)
+        map->word = po->stack_depth -
+                    getstack(LOC_CONTINUATION->array->items[0]->source);
     for (i = 0; i < b.count; i += 3) {
         map->items[i] = b.items[i];
         map->items[i + 1] = b.items[i] == LM_STACK

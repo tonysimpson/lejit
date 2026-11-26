@@ -33,8 +33,9 @@
  * gets a single 3-tuple, which END_FINALLY tells apart from an exception
  * type. The one word psyco_emit_header reserves for a function with
  * handlers is its catcher word: the traceback frame of the exception it
- * last caught, held while something else may read that frame's locals
- * (catcher_flush, frames.c psyco_frame_catch).
+ * last caught, or a frame object made for the call while it runs, held
+ * while something else may read that frame's locals (catcher_flush,
+ * frames.c psyco_frame_catch and stand_in_word).
  */
 #include "pycompiler.h"
 #include "../codemanager.h"
@@ -1817,7 +1818,10 @@ traceback_locals(PsycoObject *po, vinfo_t *tb)
    entries too (cimpl_new_frame). So the locals are written when Python
    reads them, as they are then, not as the exception passes, and once
    more as the call ends, while something besides the word holds the frame
-   (catcher_flush). NULL in an inlined frame, which has no handlers: its
+   (catcher_flush). A frame object made for the call while it runs, its
+   kept frame or the real one, goes in a free word too
+   (frames.c:stand_in_word), so that it keeps the locals the call ends
+   with. NULL in an inlined frame, which has no handlers: its
    calls map its parent's locals too (codegen.c:psyco_note_call_site). */
 static vinfo_t *
 catcher_word(PsycoObject *po)
