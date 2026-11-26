@@ -1536,8 +1536,12 @@ punicode_split(PsycoObject *po, vinfo_t *self, vinfo_t *vargs)
     r->array->items[iOB_TYPE] = vinfo_new(CompileTime_New((long)&PyList_Type));
     vinfo_incref(self);
     r->array->items[iSPLIT_SRC] = self;
-    if (sep != NULL)
+    if (sep != NULL) {
+        /* the iterator's code is compiled for this separator, across
+           merge points that would otherwise make it run-time */
+        sk_mark_used(po, CompileTime_Get(sep->source));
         vinfo_incref(sep);
+    }
     else
         sep = psyco_vi_Zero();
     r->array->items[iSPLIT_SEP] = sep;
