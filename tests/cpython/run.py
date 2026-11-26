@@ -258,6 +258,11 @@ SKIPPED = {
     "events (testfunc's first call of helper) with the simulated timer, "
     "so its counts and times differ; it doesn't fail outside CI":
         'test.test_profile.ProfileTest.test_cprofile',
+    'counts on catching at least one signal while it flips between a '
+    'Python handler and SIG_IGN, which CPython says it may not (every one '
+    'can arrive under SIG_IGN); plain 3.8 misses them all too, and LeJIT '
+    'more often':
+        'test.test_signal.StressTest.test_stress_modifying_handlers',
     'binds a port find_unused_port chose, and fails or skips itself when '
     'another process took it first':
         'test.test_smtplib.DebuggingServerTests.testSourceAddress '
