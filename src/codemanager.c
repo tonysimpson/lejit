@@ -796,9 +796,9 @@ psyco_record(le_addrmap_t *map, void *key)
    A group (codemanager.h) is a node too, held by nothing; one of a dead
    code object dies with it. Otherwise it is alive if an alive group
    depends on it or is under it, if its code object's own code jumps into
-   it, if a frame of its code object runs on any thread
-   (frames.c:psyco_frames_running), or if every key from it up to its
-   code object is alive. That is decided after the rest, until no more
+   it, if a frame runs in its code on any thread, or may
+   (frames.c:psyco_frames_running, mark_running), or if every key from it up to
+   its code object is alive. That is decided after the rest, until no more
    groups come alive; the dead ones of live code objects are freed, each
    before the one its site is in, and their references dropped last.
    Groups are counted with the records. */
@@ -833,7 +833,8 @@ static struct {
     le_addrmap_t index; /* object -> node number + 1 */
     size_t *stack;
     size_t nstack, stackcap;
-    le_addrmap_t running; /* code objects a frame runs: -> 1 */
+    le_addrmap_t running; /* code objects a frame runs somewhere: -> 1 */
+    le_addrmap_t placed;  /* groups a frame runs in: -> 1 */
     bool failed, unknown; /* unknown: which frames run is not known */
 } scan;
 
@@ -968,24 +969,62 @@ propagate(void)
 }
 
 static void
-mark_running(PyCodeObject *co, void *unused)
+map_mark(le_addrmap_t *m, void *key)
 {
-    if (amap_get(&scan.running, co) != NULL)
+    if (amap_get(m, key) != NULL)
         return;
-    if (amap_reserve(&scan.running) < 0)
+    if (amap_reserve(m) < 0)
         scan.unknown = true;
     else
-        amap_put(&scan.running, co, (void *)1);
+        amap_put(m, key, (void *)1);
+}
+
+static bool
+owner_holds_code(le_owner_t *o, code_t *p)
+{
+    int k;
+    for (k = 0; k < o->nextents; k++)
+        if (o->extents[k].start <= p && p < o->extents[k].end)
+            return true;
+    return false;
+}
+
+/* A compiled frame runs code of its code object, or of a frame inlined in
+   it: where it goes on, 'at', is in that code object's own code or in one
+   of its groups, which only then is kept for it. Where 'at' is not known,
+   or not found, every group of those code objects is. */
+static void
+mark_running(PyCodeObject **cos, int ncos, code_t *at, void *unused)
+{
+    int k;
+    if (at != NULL) {
+        /* the call ends at 'at': its last byte is before it */
+        code_t *p = at - 1;
+        for (k = 0; k < ncos; k++) {
+            le_code_extra_t *x = le_code_extra_get(cos[k]);
+            le_group_t *g;
+            if (x == NULL)
+                continue;
+            if (owner_holds_code(&x->owner, p))
+                return;
+            for (g = x->owner.groups; g != NULL; g = g->next)
+                if (owner_holds_code(&g->owner, p)) {
+                    map_mark(&scan.placed, g);
+                    return;
+                }
+        }
+    }
+    for (k = 0; k < ncos; k++) map_mark(&scan.running, cos[k]);
 }
 
 /* can the group's code be reached? Its site is reached while every key
-   from it up is alive; a frame of its code object may be in it. */
+   from it up is alive; a frame may be in it (mark_running). */
 static bool
 group_reached(size_t i)
 {
     le_group_t *g = (le_group_t *)scan.nodes[i].o;
     le_owner_t *p;
-    if (g->held || scan.unknown ||
+    if (g->held || scan.unknown || amap_get(&scan.placed, g) != NULL ||
         amap_get(&scan.running, scan.nodes[scan.nodes[i].root].o) != NULL)
         return true;
     for (p = &g->owner; p->parent != NULL; p = p->parent) {
@@ -1133,6 +1172,7 @@ owners_scan(void)
     PyMem_Free(scan.stack);
     PyMem_Free(scan.index.items);
     PyMem_Free(scan.running.items);
+    PyMem_Free(scan.placed.items);
     memset(&scan, 0, sizeof(scan));
     LE_STAT(psyco_stat_owner_scans++);
     if (n < 0) {

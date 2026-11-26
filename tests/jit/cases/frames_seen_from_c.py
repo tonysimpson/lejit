@@ -252,6 +252,42 @@ def warn_through(level):
             for w in caught]
 
 
+class FloatSubclass(float):
+    pass
+
+
+class GivesFloatSubclass:
+    def __float__(self):
+        return FloatSubclass(0.5)
+
+
+def c_warning_callee():
+    float(GivesFloatSubclass())
+
+
+def c_warning_places():
+    """a warning C raises names where it was raised: in the frame ceval
+    entered, and in a callee that frame calls directly; recorded, then
+    shown with its source line"""
+    shown = io.StringIO()
+    stderr = sys.stderr
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        float(GivesFloatSubclass())
+        c_warning_callee()
+    with warnings.catch_warnings():
+        warnings.simplefilter('always')
+        sys.stderr = shown
+        try:
+            float(GivesFloatSubclass())
+            c_warning_callee()
+        finally:
+            sys.stderr = stderr
+    first = c_warning_places.__code__.co_firstlineno
+    return ([(w.filename == __file__, w.lineno - first) for w in caught],
+            shown.getvalue().replace(__file__, 'FILE'))
+
+
 def back_names(n):
     f = sys._getframe(1)
     out = []
@@ -394,6 +430,7 @@ CASES = [
     ('log_init_caller', "[()]", {}),
     ('log_gen_caller', "[()]", {}),
     ('warn_through', "[(1,), (2,)]", {}),
+    ('c_warning_places', "[()]", {}),
     ('init_frames_caller', "[()]", {}),
     ('returned_back_names', "[()]", {}),
     ('returned_back_names_interpreted', "[()]", {}),
