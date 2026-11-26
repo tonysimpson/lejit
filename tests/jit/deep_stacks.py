@@ -189,6 +189,12 @@ def caller_locals_across_segments():
     return in_threads(run, 1)
 
 
+# cases whose plain run has a frame-evaluation hook installed, where
+# CPython has one to install: CPython's specialised f(*a, **kw) call of a
+# Python function (CALL_EX_PY, where it has it) doesn't test the recursion
+# limit, and with a hook installed, as under LeJIT, it isn't specialised
+HOOKED = ['limit_raised_then_reached']
+
 CASES = [deep_returns, deep_keyword_calls, deep_calls_through_cpython,
          through_c_still_limited, limit_raised_then_reached, generator_for_loops,
          stepped_generators,
@@ -201,6 +207,12 @@ def child(name, lejit_mode):
     if lejit_mode == '1':
         import lejit
         lejit.start()
+    elif name in HOOKED:
+        try:
+            import _testinternalcapi
+            _testinternalcapi.set_eval_frame_record([])
+        except (ImportError, AttributeError):
+            pass
     try:
         print(repr(globals()[name]()))
     except Exception as e:
