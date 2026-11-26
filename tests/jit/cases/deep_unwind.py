@@ -5,6 +5,8 @@
 # costs a walk. Run in a thread with a stack big enough for plain
 # CPython's levels where they take C stack, once this thread waits in
 # join(): no switch to it lands in the counted rounds' code.
+import json
+import json.scanner
 import sys
 import threading
 
@@ -97,8 +99,23 @@ def deep_generators():
     return run(lambda n: sum(nest_sum(n)), 2000)
 
 
+# json's pure-Python scanner, an array in an array 2,000 deep left by the
+# error at the end of the text: each level's frame is kept as the
+# traceback passes, and must be found again without a search each time
+json_scan = json.scanner.py_make_scanner(json.JSONDecoder())
+
+
+def json_arrays(n):
+    return json_scan('[' * n, 0)
+
+
+def deep_json():
+    return run(json_arrays, 2000)
+
+
 CASES = [
     ('deep_calls', [()], {}),
+    ('deep_json', [()], {}),
     ('deep_reraises', [()], {}),
     ('deep_generators', [()], {}),
 ]

@@ -108,6 +108,122 @@ static PyTypeObject *pointer_base;
 static PyMethodDef *simple_from_param, *pointer_from_param;
 /* c_char_p's and c_void_p's own from_param */
 static PyMethodDef *char_p_from_param, *void_p_from_param;
+/* byref(), kept by the module, and the type of what it takes */
+static PyObject *byref_function;
+static PyTypeObject *cdata_base;
+
+/* A virtual byref(obj): [iOB_TYPE] the PyCArgObject type, [iBYREF_OBJ]
+   obj, a ctypes instance. Made, when it must be, by byref itself. */
+#define iBYREF_OBJ 1
+#define BYREF_TOTAL 2
+static source_virtual_t computed_byref;
+
+static PyObject *
+cimpl_byref(PyObject *obj)
+{
+    return PyObject_CallFunctionObjArgs(byref_function, obj, NULL);
+}
+
+static bool
+compute_byref(PsycoObject *po, vinfo_t *v)
+{
+    vinfo_t *obj = vinfo_getitem(v, iBYREF_OBJ), *newobj;
+    if (obj == NULL)
+        return false;
+    newobj = psyco_generic_call(
+        po, cimpl_byref, CfCommonNewRefPyObject | CfNoPython | CfNoBlock, "v",
+        obj);
+    if (newobj == NULL)
+        return false;
+    vinfo_move(po, v, newobj);
+    return true;
+}
+
+static PyObject *
+direct_compute_byref(vinfo_t *v, char *data)
+{
+    PyObject *r = NULL;
+    PyObject *obj = direct_xobj_vinfo(vinfo_getitem(v, iBYREF_OBJ), data);
+    if (obj != NULL)
+        r = cimpl_byref(obj);
+    Py_XDECREF(obj);
+    return r;
+}
+
+/* where a prototype's argtypes, converters, restype and checker are
+   (StgDictObject or StgInfo): at proto_offset in its tp_dict if
+   proto_in_dict, else in the type itself; proto_offset 0 if not found */
+static bool proto_in_dict;
+static long proto_offset;
+
+static PyObject **
+proto_fields(PyTypeObject *tp)
+{
+    char *base = proto_in_dict ? (char *)tp->tp_dict : (char *)tp;
+    if (proto_offset == 0 || base == NULL)
+        return NULL;
+    return (PyObject **)(base + proto_offset);
+}
+
+/* a word in [start, end) of o followed by a, converters for a, r and a
+   NULL checker: its offset, or 0 */
+static long
+find_proto_fields(PyObject *o, long start, long end, PyObject *a, PyObject *r)
+{
+    long k;
+    Py_ssize_t i;
+    for (k = start; k + 4 * (long)sizeof(PyObject *) <= end;
+         k += sizeof(PyObject *)) {
+        PyObject **w = (PyObject **)((char *)o + k), *c = w[1];
+        if (w[0] != a || w[2] != r || w[3] != NULL || !PyTuple_Check(c) ||
+            PyTuple_GET_SIZE(c) != PyTuple_GET_SIZE(a))
+            continue;
+        for (i = 0; i < PyTuple_GET_SIZE(a); i++)
+            if (!PyCFunction_Check(PyTuple_GET_ITEM(c, i)) ||
+                PyCFunction_GET_SELF(PyTuple_GET_ITEM(c, i)) !=
+                    PyTuple_GET_ITEM(a, i))
+                break;
+        if (i == PyTuple_GET_SIZE(a))
+            return k;
+    }
+    return 0;
+}
+
+/* finds proto_fields from a prototype made as CFUNCTYPE(c_dbl, c_int,
+   c_dbl) makes it, but by the metaclass itself: CFUNCTYPE is Python code,
+   which could let another thread run while this one compiles */
+static void
+probe_prototypes(PyObject *ctypes, PyObject *c_int, PyObject *c_dbl)
+{
+    PyObject *base = PyObject_GetAttrString(ctypes, "_CFuncPtr");
+    PyObject *d =
+        base == NULL
+            ? NULL
+            : Py_BuildValue("{s(OO)sOsi}", "_argtypes_", c_int, c_dbl,
+                            "_restype_", c_dbl, "_flags_", FUNCFLAG_CDECL);
+    PyObject *p =
+        d == NULL ? NULL
+                  : PyObject_CallFunction((PyObject *)Py_TYPE(base), "s(O)O",
+                                          "CFunctionType", base, d);
+    PyObject *a = p == NULL ? NULL : PyObject_GetAttrString(p, "_argtypes_");
+    if (a != NULL && PyTuple_Check(a) && PyType_Check(p)) {
+        PyTypeObject *tp = (PyTypeObject *)p;
+        if (tp->tp_dict != NULL && Py_TYPE(tp->tp_dict) != &PyDict_Type)
+            proto_offset = find_proto_fields(
+                tp->tp_dict, sizeof(PyDictObject),
+                Py_TYPE(tp->tp_dict)->tp_basicsize, a, c_dbl);
+        proto_in_dict = proto_offset != 0;
+        if (proto_offset == 0)
+            proto_offset =
+                find_proto_fields(p, sizeof(PyHeapTypeObject),
+                                  Py_TYPE(p)->tp_basicsize, a, c_dbl);
+    }
+    Py_XDECREF(a);
+    Py_XDECREF(p);
+    Py_XDECREF(d);
+    Py_XDECREF(base);
+    PyErr_Clear();
+}
 
 static PyMethodDef *
 meta_method(PyTypeObject *meta, const char *name)
@@ -215,6 +331,18 @@ ctypes_probe(PyTypeObject *tp)
         Py_TYPE(ref)->tp_basicsize)
         goto done;
     carg_type = Py_TYPE(ref); /* static, or kept by the module */
+    /* what byref() takes: PyCData_Type, the base of c_int's base */
+    cdata_base = simple_base->tp_base;
+    if (!PyCFunction_Check(byref) || cdata_base == NULL ||
+        !PyObject_TypeCheck(i7, cdata_base) ||
+        !PyType_IsSubtype(pointer_base, cdata_base) ||
+        cdata_base == &PyBaseObject_Type)
+        goto done;
+    Py_INCREF(byref);
+    byref_function = byref; /* kept for ever */
+    INIT_SVIRTUAL(computed_byref, compute_byref, direct_compute_byref,
+                  1 << iBYREF_OBJ, 0, 0);
+    probe_prototypes(ctypes, c_int, c_dbl);
     ok = 1;
 done:
     Py_XDECREF(ref);
@@ -414,12 +542,67 @@ extend(PsycoObject *po, vinfo_t *v, int size, bool is_signed)
     return r;
 }
 
-/* the value of an exact int that is one digit at run time; 0 if it
-   isn't (ctypes' own call then converts it) */
-static int
-int_word(PsycoObject *po, vinfo_t *v, vinfo_t **pw)
+static unsigned long long
+cimpl_int_mask(PyObject *o)
 {
-    return PsycoLong_MediumValue(po, v, pw);
+    return PyLong_AsUnsignedLongLongMask(o);
+}
+
+/* whether ConvParam and PyLong_AsVoidPtr take the int o: -2**63 <= o <
+   2**64 */
+static long
+cimpl_int_fits(PyObject *o)
+{
+    int overflow;
+    PyLong_AsLongLongAndOverflow(o, &overflow);
+    if (overflow < 0)
+        return 0;
+    if (overflow > 0) {
+        PyLong_AsUnsignedLongLong(o);
+        if (PyErr_Occurred()) {
+            PyErr_Clear();
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* the low 64 bits of an exact int, as PyLong_AsUnsignedLongLongMask and
+   ctypes' setters take them; if 'fits', only of an int cimpl_int_fits
+   takes, 0 for any other (ctypes' own call then converts it) */
+static int
+int_word(PsycoObject *po, vinfo_t *v, bool fits, vinfo_t **pw)
+{
+    vinfo_t *f;
+    condition_code_t cc;
+    int r;
+    if (PsycoLong_IsVirtual(v)) {
+        /* a C long */
+        *pw = v->array->items[iLONG_VALUE];
+        vinfo_incref(*pw);
+        return 1;
+    }
+    r = PsycoLong_MediumValue(po, v, pw);
+    if (r != 0)
+        return r;
+    /* more than one digit */
+    if (fits) {
+        f = psyco_generic_call(
+            po, cimpl_int_fits,
+            CfReturnTypeLong | CfPure | CfNoPython | CfNoBlock, "v", v);
+        if (f == NULL)
+            return -1;
+        cc = integer_non_null(po, f);
+        vinfo_decref(f, po);
+        if (cc == CC_ERROR)
+            return -1;
+        if (!runtime_condition_t(po, cc))
+            return 0;
+    }
+    *pw = psyco_generic_call(
+        po, cimpl_int_mask, CfReturnTypeLong | CfPure | CfNoPython | CfNoBlock,
+        "v", v);
+    return *pw == NULL ? -1 : 1;
 }
 
 /* whether the run-time word at 'offset' in 'v' is 'value': true if it is,
@@ -449,10 +632,13 @@ static int
 carg_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *argtype, vinfo_t **pw)
 {
     bool error = false;
+    /* a virtual byref(obj): obj's buffer, its type known */
+    vinfo_t *vobj = v->source == VirtualTime_New(&computed_byref)
+                        ? v->array->items[iBYREF_OBJ]
+                        : NULL;
     if (argtype != NULL) {
         PyObject *target =
             PyObject_GetAttrString((PyObject *)argtype, "_type_");
-        vinfo_t *vobj;
         bool same;
         if (target == NULL) {
             PyErr_Clear();
@@ -461,6 +647,11 @@ carg_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *argtype, vinfo_t **pw)
         Py_DECREF(target); /* the pointer type keeps it */
         if (!PyType_Check(target))
             return 0;
+        if (vobj != NULL) {
+            if (Psyco_KnownType(vobj) != (PyTypeObject *)target)
+                return 0;
+            goto virtual;
+        }
         vobj = load_word(po, v, carg_obj_offset, 8, true);
         if (vobj == NULL)
             return -1;
@@ -470,10 +661,14 @@ carg_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *argtype, vinfo_t **pw)
         if (!same)
             return error ? -1 : 0;
     }
+    else if (vobj != NULL)
+        goto virtual;
     if (!word_is(po, v, offsetof(le_carg_t, tag), carg_tag_size, carg_tag_word,
                  &error))
         return error ? -1 : 0;
     *pw = load_word(po, v, offsetof(le_carg_t, value), 8, true);
+    return *pw == NULL ? -1 : 1;
+    virtual : *pw = data_pointer(po, vobj);
     return *pw == NULL ? -1 : 1;
 }
 
@@ -540,7 +735,7 @@ convert_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *tp, ctype_t t,
             goto instance;
         }
         if (t.kind == K_INT && (tp == &PyLong_Type || tp == &PyBool_Type)) {
-            r = int_word(po, v, &w);
+            r = int_word(po, v, false, &w);
             if (r != 1)
                 return r;
             *pw = extend(po, w, t.size, t.is_signed);
@@ -566,11 +761,22 @@ convert_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *tp, ctype_t t,
             return *pw == NULL ? -1 : 1;
         }
         if (t.kind == K_BOOL && (tp == &PyLong_Type || tp == &PyBool_Type)) {
-            /* bool_set: the int's truth */
+            /* bool_set: the int's truth; one of more than one digit is
+               never 0 */
             condition_code_t cc;
-            r = int_word(po, v, &w);
-            if (r != 1)
-                return r;
+            if (PsycoLong_IsVirtual(v)) {
+                w = v->array->items[iLONG_VALUE];
+                vinfo_incref(w);
+            }
+            else {
+                r = PsycoLong_MediumValue(po, v, &w);
+                if (r < 0)
+                    return r;
+                if (r == 0) {
+                    *pw = vinfo_new(CompileTime_New(1));
+                    return 1;
+                }
+            }
             cc = integer_non_null(po, w);
             vinfo_decref(w, po);
             if (cc == CC_ERROR)
@@ -591,7 +797,7 @@ convert_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *tp, ctype_t t,
             }
             if (t.kind == K_VOIDP &&
                 (tp == &PyLong_Type || tp == &PyBool_Type))
-                return int_word(po, v, pw);
+                return int_word(po, v, true, pw);
         }
         return 0;
     }
@@ -602,7 +808,7 @@ convert_arg(PsycoObject *po, vinfo_t *v, PyTypeObject *tp, ctype_t t,
     }
     if (tp == &PyLong_Type || tp == &PyBool_Type) {
         /* a C int */
-        r = int_word(po, v, &w);
+        r = int_word(po, v, true, &w);
         if (r != 1)
             return r;
         *pw = extend(po, w, 4, true);
@@ -811,6 +1017,47 @@ pointer_result_length(PyTypeObject *tp, Py_ssize_t *length)
     return ok;
 }
 
+DEFINEFN
+vinfo_t *
+PsycoCtypes_Byref(PsycoObject *po, PyMethodDef *ml, vinfo_t *vargs)
+{
+    vinfo_t *vobj, *v;
+    PyTypeObject *tp;
+    if (strcmp(ml->ml_name, "byref") != 0)
+        return NULL;
+    if (ctypes_state == 0) {
+        /* probed with a function ctypes makes itself, memmove */
+        PyObject *modules = PySys_GetObject("modules");
+        PyObject *mod, *f;
+        if (modules == NULL || !PyDict_Check(modules))
+            return NULL;
+        mod = PyDict_GetItemString(modules, "ctypes");
+        if (mod == NULL)
+            return NULL;
+        f = PyObject_GetAttrString(mod, "memmove");
+        if (f == NULL) {
+            PyErr_Clear();
+            return NULL;
+        }
+        PsycoCtypes_IsFunction(Py_TYPE(f), Py_TYPE(f)->tp_call);
+        Py_DECREF(f);
+    }
+    if (ctypes_state != 1 || ml != ((PyCFunctionObject *)byref_function)->m_ml)
+        return NULL;
+    if (!is_virtualtime(vargs->source) || PsycoTuple_Load(vargs) != 1)
+        return NULL;
+    vobj = PsycoTuple_GET_ITEM(vargs, 0);
+    tp = Psyco_NeedType(po, vobj);
+    if (tp == NULL || !PyType_IsSubtype(tp, cdata_base))
+        return NULL;
+    v = vinfo_new(VirtualTime_New(&computed_byref));
+    v->array = array_new(BYREF_TOTAL);
+    v->array->items[iOB_TYPE] = vinfo_new(CompileTime_New((long)carg_type));
+    vinfo_incref(vobj);
+    v->array->items[iBYREF_OBJ] = vobj;
+    return v;
+}
+
 #define MAX_INT_ARGS 6
 #define MAX_ARGS 8
 
@@ -819,7 +1066,7 @@ vinfo_t *
 PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
                  vinfo_t *vargs, vinfo_t *kw)
 {
-    PyObject *f, *flags, *restype;
+    PyObject *f, *flags, *restype, *converters;
     le_cfuncptr_t *fp;
     vinfo_t *w[MAX_ARGS], *vptr, *vfn, *vts, *r;
     char tags[MAX_ARGS + 1];
@@ -887,11 +1134,30 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
         if (PyObject_HasAttrString(restype, "_check_retval_"))
             return NULL;
     }
-    if (fp->converters != NULL) {
-        if (PyTuple_GET_SIZE(fp->converters) != n)
+    converters = fp->converters;
+    if (converters == NULL) {
+        /* untyped, unless its type (a prototype) has argtypes */
+        PyObject *a = PyObject_GetAttrString(f, "argtypes");
+        if (a == NULL) {
+            PyErr_Clear();
+            return NULL;
+        }
+        Py_DECREF(a);
+        if (a != Py_None) {
+            /* the type's, set when it was made */
+            PyObject **pf = proto_fields(tp);
+            if (pf == NULL || pf[0] != a || pf[3] != NULL)
+                return NULL;
+            converters = pf[1];
+        }
+        else
+            for (i = 0; i < n; i++) argtypes[i] = NULL, at[i].kind = K_NONE;
+    }
+    if (converters != NULL) {
+        if (PyTuple_GET_SIZE(converters) != n)
             return NULL;
         for (i = 0; i < n; i++) {
-            PyObject *c = PyTuple_GET_ITEM(fp->converters, i);
+            PyObject *c = PyTuple_GET_ITEM(converters, i);
             PyTypeObject *a;
             if (!PyCFunction_Check(c) || PyCFunction_GET_SELF(c) == NULL ||
                 !PyType_Check(PyCFunction_GET_SELF(c)))
@@ -919,18 +1185,6 @@ PsycoCtypes_Call(PsycoObject *po, PyTypeObject *tp, vinfo_t *vf,
             else
                 return NULL;
         }
-    }
-    else {
-        /* untyped, unless its type has argtypes */
-        PyObject *a = PyObject_GetAttrString(f, "argtypes");
-        if (a == NULL) {
-            PyErr_Clear();
-            return NULL;
-        }
-        Py_DECREF(a);
-        if (a != Py_None)
-            return NULL;
-        for (i = 0; i < n; i++) argtypes[i] = NULL, at[i].kind = K_NONE;
     }
 
     /* the arguments; each kind's guard comes before anything run */

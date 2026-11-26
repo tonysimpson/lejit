@@ -324,31 +324,6 @@ le_fail_after(PyObject *self, PyObject *args)
 }
 #endif
 
-#if ALL_CHECKS
-/* for tests: le_osr_arm */
-static PyObject *
-le_osr_arm_py(PyObject *self, PyObject *args)
-{
-    PyObject *co;
-    long k;
-    int r;
-    if (!PyArg_ParseTuple(args, "O!l", &PyCode_Type, &co, &k))
-        return NULL;
-    if (le_not_set_up("_osr_arm"))
-        return NULL;
-    r = le_osr_arm((PyCodeObject *)co, k);
-    if (r < 0)
-        return NULL;
-    return PyBool_FromLong(r);
-}
-
-static PyObject *
-le_osr_switches_py(PyObject *self, PyObject *unused)
-{
-    return PyLong_FromLong(le_osr_switches);
-}
-#endif
-
 DEFINEVAR PyMethodDef le_testing_methods[] = {
 #if LE_CODESTATS
     {"_codestats", le_codestats, METH_NOARGS, "Code size per instruction."},
@@ -364,10 +339,6 @@ DEFINEVAR PyMethodDef le_testing_methods[] = {
      "{offset: [dead local names]} at each merge point, or None."},
     {"_inlinable", le_inlinable, METH_O,
      "True if calls to this code object are inlined."},
-    {"_osr_arm", le_osr_arm_py, METH_VARARGS,
-     "Take a frame of the code over after k more backward jumps."},
-    {"_osr_switches", le_osr_switches_py, METH_NOARGS,
-     "Frames taken over at a loop head so far."},
     {"_unregistered_metas", le_unregistered_metas, METH_NOARGS,
      "['module.name: why'] for each meta that wasn't registered."},
 #endif
