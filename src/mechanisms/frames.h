@@ -166,6 +166,10 @@ le_frame_start(le_frame_t *f)
 }
 /* CPython's own PyEval_GetFrame, which LeJIT replaces (frames.c) */
 extern PyFrameObject *(*le_cpython_eval_getframe)(void);
+#if ALL_CHECKS
+/* frame objects LeJIT has made (pyruntime.c) */
+extern long le_stat_frame_objects;
+#endif
 /* the frame object Python sees (borrowed), made if it has none:
    PyEval_GetFrame makes the current frame's, so the frame is made current
    for it. NULL with no exception set if it can't be made. */
@@ -182,6 +186,9 @@ le_frame_object(le_frame_t *f)
     le_frame_set_current(ts, f);
     o = le_cpython_eval_getframe();
     le_frame_set_current(ts, cur);
+#if ALL_CHECKS
+    le_stat_frame_objects += o != NULL;
+#endif
     return o;
 }
 /* the frame a frame object is (its own, or the one it is a view of) */
@@ -677,37 +684,6 @@ le_gen_frame_set_depth(le_frame_t *f, int n)
     f->stackpointer = f->localsplus + LE_FRAME_CODE(f)->co_nlocalsplus + n;
 #else
     f->stacktop = LE_FRAME_CODE(f)->co_nlocalsplus + n;
-#endif
-}
-/* the frame's function, the reference it holds taken (NULL for none) */
-static inline PyObject *
-le_frame_func_take(le_frame_t *f)
-{
-    PyObject *o;
-#if LE_HAS_FRAME_STACKREFS
-    if (PyStackRef_IsNull(f->f_funcobj))
-        return NULL;
-    o = PyStackRef_AsPyObjectSteal(f->f_funcobj);
-    f->f_funcobj = PyStackRef_NULL;
-#elif LE_HAS_FRAME_FUNCOBJ
-    o = f->f_funcobj;
-    f->f_funcobj = NULL;
-#else
-    o = (PyObject *)f->f_func;
-    f->f_func = NULL;
-#endif
-    return o;
-}
-/* the frame holds a reference to 'func' as its function, in place of none */
-static inline void
-le_frame_func_put(le_frame_t *f, PyFunctionObject *func)
-{
-#if LE_HAS_FRAME_STACKREFS
-    f->f_funcobj = PyStackRef_FromPyObjectNew((PyObject *)func);
-#elif LE_HAS_FRAME_FUNCOBJ
-    f->f_funcobj = Py_NewRef(func);
-#else
-    f->f_func = (PyFunctionObject *)Py_NewRef(func);
 #endif
 }
 /* A frame for the generator function 'func' as RETURN_GENERATOR leaves a

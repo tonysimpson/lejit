@@ -5712,7 +5712,7 @@ psyco_can_go_interpreted(PsycoObject *po)
    its locals, the first 'nstack' items of the stack and its blocks. NULL
    with an exception. */
 static vinfo_t *
-resume_state(PsycoObject *po, int nstack)
+resume_state(PsycoObject *po, int nstack, bool frameless)
 {
     PyCodeObject *co = po->pr.co;
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
@@ -5725,8 +5725,8 @@ resume_state(PsycoObject *po, int nstack)
 
     st = psyco_generic_call(
         po, psyco_resume_begin, CfReturnTypePtr | CfPyErrIfNull,
-        word != NULL ? "lvvlr" : "lvvll", co, LOC_GLOBALS, LOC_BUILTINS,
-        (long)(nlocals + nstack), (long)word);
+        word != NULL ? "lvvlrl" : "lvvlll", co, LOC_GLOBALS, LOC_BUILTINS,
+        (long)(nlocals + nstack), (long)word, (long)frameless);
     if (st == NULL)
         return 0;
     for (i = 0; i < nlocals + nstack; i++) {
@@ -5794,7 +5794,7 @@ resume_in_ceval(PsycoObject *po, int next_instr, int *unwound)
     int nstack = STACK_LEVEL();
     vinfo_t *st, *result;
 
-    st = resume_state(po, nstack);
+    st = resume_state(po, nstack, false);
     if (st == NULL)
         return 0;
 #if LE_HAS_OPCODE_CALL
@@ -8698,7 +8698,7 @@ yield_direct(PsycoObject *po, int at)
     vinfo_t **stack_a = po->vlocals.items + po->pr.stack_base;
     int nstack = STACK_LEVEL() - 1;
     vinfo_t *st, *v;
-    st = resume_state(po, nstack);
+    st = resume_state(po, nstack, LE_HAS_INTERPRETER_FRAME);
     if (st == NULL)
         return;
     v = psyco_generic_call(
