@@ -210,6 +210,7 @@ psyco_finfo_gen(PsycoObject *caller, PyCodeObject *co);
 
 /* A real frame LeCode_Run runs: on its C stack, linked into this
    thread's list from start to return (frames.c:frame_runs) */
+typedef struct frame_runtime_s *FrameRuntime_list_t;
 typedef struct frame_runtime_s {
     le_frame_t *frame; /* LeCode_Run's caller holds it */
     stack_frame_info_t ***psy_frames_start;
@@ -225,6 +226,10 @@ typedef struct frame_runtime_s {
     PyObject **word; /* the run's catcher word (frames.c:psyco_frame_stands),
                         or NULL if not found yet */
     struct frame_runtime_s *next; /* the next outer one */
+    /* the next run of any thread whose frame hashes alike (frames.c:
+       psyco_frame_start_get) */
+    struct frame_runtime_s *same_hash;
+    FrameRuntime_list_t *list; /* its thread's frame_runs */
 } FrameRuntime;
 
 #if LE_RESUMES_ON_FRAME

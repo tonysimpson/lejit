@@ -315,6 +315,31 @@ psyco_frames_running(void (*mark)(PyCodeObject **cos, int ncos, code_t *at,
     return 0;
 }
 
+/* Every thread's runs by frame, for psyco_frame_start_get: a frame that
+   isn't a run's is looked up too, often, as a traceback's are when a deep
+   one has its locals written, and a search of this thread's list goes all
+   through it then */
+#define RUN_HASHES 1024
+static FrameRuntime *runs_by_frame[RUN_HASHES];
+
+static FrameRuntime **
+runs_hashed(le_frame_t *f)
+{
+    uintptr_t a = (uintptr_t)f;
+    return &runs_by_frame[((a >> 4) ^ (a >> 14)) % RUN_HASHES];
+}
+
+/* the run is no longer found by its frame */
+static void
+run_unhash(FrameRuntime *fr)
+{
+    FrameRuntime **p;
+    if (fr->frame == NULL)
+        return;
+    for (p = runs_hashed(fr->frame); *p != fr;) p = &(*p)->same_hash;
+    *p = fr->same_hash;
+}
+
 DEFINEFN void
 psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
                            stack_frame_info_t ***psy_frames_start)
@@ -331,6 +356,9 @@ psyco_frame_start_register(FrameRuntime *fr, le_frame_t *f,
     fr->word = NULL;
     fr->next = frame_runs;
     frame_runs = fr;
+    fr->list = &frame_runs;
+    fr->same_hash = *runs_hashed(f);
+    *runs_hashed(f) = fr;
     if (fr->next == NULL && !runs_listed) {
         runs_list();
 #if LE_STACK_SEGMENTS
@@ -387,8 +415,8 @@ DEFINEFN FrameRuntime *
 psyco_frame_start_get(le_frame_t *f)
 {
     FrameRuntime *fr;
-    for (fr = frame_runs; fr != NULL; fr = fr->next)
-        if (fr->frame == f)
+    for (fr = *runs_hashed(f); fr != NULL; fr = fr->same_hash)
+        if (fr->frame == f && fr->list == &frame_runs)
             return fr;
     return NULL;
 }
@@ -405,6 +433,7 @@ psyco_frame_start_unregister(FrameRuntime *fr)
         while (*p != fr) p = &(*p)->next;
         *p = fr->next;
     }
+    run_unhash(fr);
     if (fr->walked != NULL)
         walked_end(fr->walked);
 #ifdef PyFrameLocalsProxy_Check
@@ -557,6 +586,25 @@ runs_here(stack_frame_info_t **roots[MAX_RUNS],
     return n;
 }
 
+/* whether 'ip' is in a loaded object, not compiled code. dladdr searches
+   the object's symbols, so the addresses found in one are remembered: the
+   same few return addresses come up in every unwinding, and an object
+   stays loaded. */
+#define LOADED_IPS 4096
+static bool
+in_loaded_object(unw_word_t ip)
+{
+    static unw_word_t loaded[LOADED_IPS];
+    unw_word_t *seen = &loaded[(ip ^ (ip >> 12)) % LOADED_IPS];
+    Dl_info info;
+    if (*seen == ip)
+        return true;
+    if (dladdr((void *)ip, &info) == 0)
+        return false;
+    *seen = ip;
+    return true;
+}
+
 /* Where the innermost compiled frame of each of the first 'n' runs
    runs_here found called C, found by unwinding the C frames from here
    down to it: the call's return address in ips[i], and for the last
@@ -570,9 +618,16 @@ static int
 runs_unwind(stack_frame_info_t **roots[], stack_frame_info_t **inners[], int n,
             code_t *ips[], long regs[REG_TOTAL])
 {
+    static bool cached;
     unw_context_t uc;
     unw_cursor_t c;
     int i, steps;
+    /* libunwind's global cache blocks signals around each use of it, a
+       system call each time */
+    if (!cached) {
+        unw_set_caching_policy(unw_local_addr_space, UNW_CACHE_PER_THREAD);
+        cached = true;
+    }
     if (unw_getcontext(&uc) < 0 || unw_init_local(&c, &uc) < 0)
         return 0;
     for (i = 0; i < n; i++) {
@@ -580,10 +635,9 @@ runs_unwind(stack_frame_info_t **roots[], stack_frame_info_t **inners[], int n,
         long *saved = (long *)roots[i], *ret;
         /* the first frame outside every loaded object is compiled code */
         for (steps = 0;; steps++) {
-            Dl_info info;
             if (unw_get_reg(&c, UNW_REG_IP, &ip) < 0)
                 return i;
-            if (dladdr((void *)ip, &info) == 0)
+            if (!in_loaded_object(ip))
                 break;
             if (steps > 4096 || unw_step(&c) <= 0)
                 return i;
@@ -4977,8 +5031,10 @@ psyco_resume_run(struct resume_s *st, long lasti, long nstack)
         PyErr_Clear();
     result = le_pyframe_run_to_end(ts, f);
     /* the real frame is gone: LeCode_Run returns the result as it is */
-    if (fr != NULL)
+    if (fr != NULL) {
+        run_unhash(fr);
         fr->frame = NULL;
+    }
 #else
     marked = le_pyframe_eval_begin(ts, f);
     result = le_eval_frame_default(le_frame_of(f));
