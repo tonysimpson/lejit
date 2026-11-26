@@ -420,64 +420,56 @@ psyco_frame_write_locals(PyFrameObject *f, int start, PyObject **values,
     }
 }
 
-#if LE_RESUMES_ON_FRAME
 /* What Python wrote in the locals the run holds while the body ran
    (psyco_frame_write_locals) is released as the run ends
    (psyco_frame_start_unregister), not here, where it could run code: the
-   slots take the compiled code's values after this. The frame's other
-   words are its own. */
+   slots take the compiled code's values after this. */
+#if LE_RESUMES_ON_FRAME
 DEFINEFN void
-psyco_gen_pause(le_frame_t *f, const le_gen_pause_t *p)
+psyco_gen_take_written(le_frame_t *f, const le_gen_taken_t *t)
 {
     int *nkeep = NULL;
-    PyObject ***kept = p->ntaken > 0 ? run_keep_of(f, &nkeep) : NULL;
-    if (kept != NULL && *kept != NULL) {
-        int i;
-        PyObject **keep =
-            PyMem_Realloc(*kept, (*nkeep + p->ntaken) * sizeof(PyObject *));
-        for (i = 0; i < p->ntaken; i++) {
-            PyObject *o = le_frame_word_take(f, p->taken[i]);
-            if (o == NULL)
-                continue;
-            if (keep != NULL)
-                keep[(*nkeep)++] = o;
-            else
-                Py_DECREF(o); /* out of memory */
-        }
+    PyObject ***kept = run_keep_of(f, &nkeep);
+    int i;
+    PyObject **keep;
+    if (kept == NULL || *kept == NULL)
+        return;
+    keep = PyMem_Realloc(*kept, (*nkeep + t->ntaken) * sizeof(PyObject *));
+    for (i = 0; i < t->ntaken; i++) {
+        PyObject *o = le_frame_word_take(f, t->taken[i]);
+        if (o == NULL)
+            continue;
         if (keep != NULL)
-            *kept = keep;
+            keep[(*nkeep)++] = o;
+        else
+            Py_DECREF(o); /* out of memory */
     }
-    if (p->lasti >= 0)
-        le_gen_frame_pause(f, p->lasti, p->nstack);
+    if (keep != NULL)
+        *kept = keep;
 }
 
 #else
-/* What Python wrote in the locals while the body ran
-   (psyco_frame_write_locals) is released as the run ends
-   (psyco_frame_start_unregister), not here, where it could run code: the
-   slots take the compiled code's values after this. */
-DEFINEFN le_frame_t *
-psyco_gen_pause(FrameRuntime *fr, const le_gen_pause_t *p)
+DEFINEFN void
+psyco_gen_take_written(FrameRuntime *fr)
 {
     le_frame_t *f = fr->frame;
-    if (fr->entry_locals != NULL) {
-        int i, n = le_code_nlocals(le_frame_code(f));
-        PyObject **keep = PyMem_Realloc(
-            fr->entry_locals, (fr->n_entry_locals + n) * sizeof(PyObject *));
-        for (i = 0; i < n; i++) {
-            PyObject *o = le_frame_word_take(f, i);
-            if (o == NULL)
-                continue;
-            if (keep != NULL)
-                keep[fr->n_entry_locals++] = o;
-            else
-                Py_DECREF(o); /* out of memory */
-        }
+    int i, n = le_code_nlocals(le_frame_code(f));
+    PyObject **keep;
+    if (fr->entry_locals == NULL)
+        return;
+    keep = PyMem_Realloc(fr->entry_locals,
+                         (fr->n_entry_locals + n) * sizeof(PyObject *));
+    for (i = 0; i < n; i++) {
+        PyObject *o = le_frame_word_take(f, i);
+        if (o == NULL)
+            continue;
         if (keep != NULL)
-            fr->entry_locals = keep;
+            keep[fr->n_entry_locals++] = o;
+        else
+            Py_DECREF(o); /* out of memory */
     }
-    le_gen_frame_pause(f, p->lasti, p->nstack, p->iblock, p->blocks);
-    return f;
+    if (keep != NULL)
+        fr->entry_locals = keep;
 }
 #endif
 
@@ -824,7 +816,7 @@ typedef struct {
     /* the call runs a generator's body on its frame (on_gen_frame), whose
        frame object this is; what Python wrote in the locals the body
        holds is kept until the call ends, as a FrameRuntime's
-       entry_locals are (psyco_frame_write_locals, psyco_gen_pause) */
+       entry_locals are (psyco_frame_write_locals, psyco_gen_take_written) */
     int gen;
     PyObject **keep;
     int nkeep;
